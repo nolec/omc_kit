@@ -13,7 +13,11 @@ AI 보조 개발 환경을 위한 TDD 파이프라인 + 멀티 LLM 운영 킷입
 ## 설치
 
 ```bash
+# SSH
 git clone git@github.com:nolec/omc_kit.git
+# 또는 HTTPS
+git clone https://github.com/nolec/omc_kit.git
+
 cd omc_kit
 python3 scripts/install.py --target /path/to/your-project
 ```
