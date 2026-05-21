@@ -631,5 +631,6 @@ def _setup_ethos_section5(tgt: Path) -> None:
     print(f"[ETHOS] 섹션 5 저장 완료 → {ethos_path.relative_to(tgt)}")
 
 
+
 if __name__ == "__main__":
     raise SystemExit(main())

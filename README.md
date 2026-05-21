@@ -13,16 +13,17 @@ AI 보조 개발 환경을 위한 TDD 파이프라인 + 멀티 LLM 운영 킷입
 ## 설치
 
 ```bash
-# SSH
-git clone git@github.com:nolec/omc_kit.git
-# 또는 HTTPS
 git clone https://github.com/nolec/omc_kit.git
-
 cd omc_kit
 python3 scripts/install.py --target /path/to/your-project
+# 설치 완료 후 omc_kit 폴더는 삭제해도 됩니다
+cd .. && rm -rf omc_kit
 ```
 
 `--force` 옵션으로 기존 파일 덮어쓰기 가능.
+
+> **팁**: 여러 프로젝트에 설치할 때는 omc_kit을 로컬에 두고 반복 사용할 수 있습니다.
+> `git pull` 로 최신 버전 유지 → `python3 scripts/install.py --target /other-project`
 
 ## 설치 후 설정
 
