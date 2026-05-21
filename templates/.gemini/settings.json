@@ -1,0 +1,41 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "omc-session-start",
+            "description": "OMC 세션 컨텍스트 자동 주입 (JSON)",
+            "command": ".agent-hooks/omc-session-start.sh gemini"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "omc-session-end",
+            "description": "OMC session_end lifecycle 훅 실행",
+            "command": ".agent-hooks/omc-session-end.sh gemini"
+          }
+        ]
+      }
+    ],
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "omc-before-agent",
+            "description": "사용자 메시지 기반 BM25 교훈 자동 주입 (JSON)",
+            "command": ".agent-hooks/omc-before-agent.sh",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  }
+}
