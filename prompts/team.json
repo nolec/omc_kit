@@ -1,0 +1,52 @@
+{
+  "roles": [
+    {
+      "id": "search",
+      "title": "검색 비서",
+      "path": "ROLE_SEARCH_ASSISTANT.md",
+      "tags": ["search", "docs", "repo", "references"]
+    },
+    {
+      "id": "analysis",
+      "title": "분석 비서",
+      "path": "ROLE_ANALYSIS_ASSISTANT.md",
+      "tags": ["debug", "analysis", "root-cause", "experiments"]
+    },
+    {
+      "id": "code_review",
+      "title": "코드리뷰 비서",
+      "path": "ROLE_CODE_REVIEW_ASSISTANT.md",
+      "tags": ["review", "diff", "risk", "quality"]
+    },
+    {
+      "id": "directive",
+      "title": "실행 지시 비서",
+      "path": "ROLE_DIRECTIVE_ASSISTANT.md",
+      "tags": ["mutating", "execution", "write", "command"]
+    },
+    {
+      "id": "senior_coding",
+      "title": "시니어 코딩 비서",
+      "path": "ROLE_SENIOR_CODING_ASSISTANT.md",
+      "tags": ["design", "implementation", "verification"]
+    },
+    {
+      "id": "tdd",
+      "title": "TDD 비서",
+      "path": "ROLE_SENIOR_CODING_ASSISTANT.md",
+      "tags": ["tdd", "test", "red", "green", "refactor", "pipeline"]
+    }
+  ],
+  "profiles": [
+    {
+      "id": "debugging",
+      "title": "버그/이상징후 대응",
+      "role_ids": ["analysis", "senior_coding", "code_review"]
+    },
+    {
+      "id": "feature_dev",
+      "title": "기능 개발(안전/검증 포함)",
+      "role_ids": ["senior_coding", "code_review"]
+    }
+  ]
+}

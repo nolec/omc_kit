@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def _resolve_install_script(start_dir: Path) -> Path:
+    for base in [start_dir, *start_dir.parents]:
+        for rel in ("omc_kit/scripts/install.py", "scripts/install.py"):
+            candidate = base / rel
+            if candidate.exists():
+                return candidate.resolve()
+    raise SystemExit("could not locate install.py from current script path")
+
+
+def _run(cmd: list[str], *, cwd: Path, env: dict[str, str] | None = None, timeout: int = 240) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        cwd=str(cwd),
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _require_ok(proc: subprocess.CompletedProcess[str], *, label: str) -> None:
+    if proc.returncode == 0:
+        return
+    parts = [f"{label} failed: exit_code={proc.returncode}"]
+    if proc.stdout.strip():
+        parts.append(proc.stdout.strip())
+    if proc.stderr.strip():
+        parts.append(proc.stderr.strip())
+    raise SystemExit("\n".join(parts))
+
+
+def _assert_exists(path: Path) -> None:
+    if not path.exists():
+        raise SystemExit(f"missing expected path: {path}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Install the multi-assistant kit into a temp project and run common OMC smoke checks.")
+    ap.add_argument("--executor", choices=["codex", "gemini"], default=None, help="Also run installed headless/chat smoke with this executor.")
+    ap.add_argument("--headless-timeout-sec", type=int, default=180)
+    ap.add_argument("--chat-timeout-sec", type=int, default=300)
+    ap.add_argument("--chat-exec-timeout-sec", type=int, default=120)
+    args = ap.parse_args()
+
+    install_script = _resolve_install_script(Path(__file__).resolve().parent)
+    repo_root = install_script.parent.parent
+    with tempfile.TemporaryDirectory(prefix="omc-setup-smoke.") as tmp:
+        project_root = Path(tmp).resolve()
+
+        install = _run(
+            [sys.executable, str(install_script), "--target", str(project_root)],
+            cwd=repo_root,
+        )
+        _require_ok(install, label="install")
+
+        for rel in [
+            "run",
+            "scripts/omc.py",
+            "scripts/omc_exec.py",
+            "scripts/omc_domain.py",
+            "scripts/omc_doctor.py",
+            "scripts/omc_chat.py",
+            "scripts/test_omc_headless_smoke.py",
+            "scripts/test_omc_chat_headless_smoke.py",
+            "scripts/test_omc_setup_smoke.py",
+            "docs/verification_checklist.md",
+        ]:
+            _assert_exists(project_root / rel)
+
+        setup = _run([sys.executable, "scripts/omc.py", "setup", "--target", str(project_root)], cwd=project_root)
+        _require_ok(setup, label="setup")
+
+        omc_help = _run([str(project_root / "run"), "omc-help"], cwd=project_root)
+        _require_ok(omc_help, label="run omc-help")
+
+        status = _run([sys.executable, "scripts/omc.py", "state", "status", "--target", str(project_root)], cwd=project_root)
+        _require_ok(status, label="state status")
+        if "enforce_confirm: True" not in status.stdout:
+            raise SystemExit("state status missing enforce_confirm=True")
+
+        domain = _run([str(project_root / "run"), "omc-domain", "sample"], cwd=project_root)
+        _require_ok(domain, label="run omc-domain")
+        _assert_exists(project_root / "project_prompts" / "team.local.json")
+        _assert_exists(project_root / "project_prompts" / "ROLE_PROJECT_SAMPLE_ASSISTANT.md")
+
+        doctor = _run([str(project_root / "run"), "omc-doctor"], cwd=project_root)
+        _require_ok(doctor, label="run omc-doctor")
+
+        _assert_exists(project_root / ".omc" / "policy.json")
+        _assert_exists(project_root / ".omc" / "hooks.json")
+        _assert_exists(project_root / ".omc" / "summary.md")
+        _assert_exists(project_root / ".omc" / "notepad.md")
+
+        if args.executor:
+            env = os.environ.copy()
+            env["OMC_EXEC_TIMEOUT_SEC"] = str(args.chat_exec_timeout_sec)
+            headless = _run(
+                [
+                    sys.executable,
+                    "scripts/test_omc_headless_smoke.py",
+                    "--target",
+                    str(project_root),
+                    "--executor",
+                    args.executor,
+                    "--timeout-sec",
+                    str(args.headless_timeout_sec),
+                ],
+                cwd=project_root,
+                timeout=max(300, args.headless_timeout_sec + 30),
+                env=env,
+            )
+            _require_ok(headless, label=f"headless smoke ({args.executor})")
+
+            chat = _run(
+                [
+                    sys.executable,
+                    "scripts/test_omc_chat_headless_smoke.py",
+                    "--target",
+                    str(project_root),
+                    "--executor",
+                    args.executor,
+                    "--timeout-sec",
+                    str(args.chat_timeout_sec),
+                    "--exec-timeout-sec",
+                    str(args.chat_exec_timeout_sec),
+                ],
+                cwd=project_root,
+                timeout=max(360, args.chat_timeout_sec + 30),
+                env=env,
+            )
+            _require_ok(chat, label=f"chat smoke ({args.executor})")
+
+        print("SMOKE_OK")
+        print(f"[project_root] {project_root}")
+        print("[checked] install, setup, run omc-help, state status, domain overlay, doctor, .omc bootstrap")
+        if args.executor:
+            print(f"[checked] headless smoke, chat smoke ({args.executor})")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

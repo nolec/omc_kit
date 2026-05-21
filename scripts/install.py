@@ -1,0 +1,629 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import stat
+from pathlib import Path
+
+
+def _copy(src: Path, dst: Path, *, force: bool) -> None:
+    if not src.exists():
+        raise FileNotFoundError(src)
+    if dst.exists() and not force:
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+def _write(dst: Path, content: str, *, force: bool) -> None:
+    if dst.exists() and not force:
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(content.rstrip() + "\n", encoding="utf-8")
+
+
+def _ensure_executable(path: Path) -> None:
+    if not path.exists():
+        return
+    mode = path.stat().st_mode
+    try:
+        path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    except PermissionError:
+        print(
+            f"[WARN] 실행 권한 설정 실패: {path}\n"
+            "       현재 환경 권한(샌드박스/OS 정책)으로 chmod가 차단되었습니다.\n"
+            "       권한 허용 후 아래 명령으로 재실행하세요:\n"
+            "       python3 scripts/omc.py setup --target ."
+        )
+
+
+def _install_claude_settings(settings_path: Path, *, force: bool) -> None:
+    """Create or merge .claude/settings.json with OMC SessionStart/End + PreToolUse + UserPromptSubmit hooks."""
+    import json
+
+    omc_hooks = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Write|Edit|MultiEdit",
+                    "hooks": [
+                        {"type": "command", "command": ".agent-hooks/omc-pipeline-check.sh"}
+                    ],
+                }
+            ],
+            "SessionStart": [
+                {"hooks": [{"type": "command", "command": ".agent-hooks/omc-session-start.sh claude"}]}
+            ],
+            "SessionEnd": [
+                {"hooks": [{"type": "command", "command": ".agent-hooks/omc-session-end.sh claude"}]}
+            ],
+            "UserPromptSubmit": [
+                {"hooks": [{"type": "command", "command": ".agent-hooks/omc-prompt-inject.sh", "timeout": 10}]}
+            ],
+        }
+    }
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings_path.exists() and not force:
+        # Merge: add hooks only if not already present
+        try:
+            existing = json.loads(settings_path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+        if "hooks" not in existing:
+            existing["hooks"] = {}
+        hooks = existing["hooks"]
+        if "PreToolUse" not in hooks:
+            hooks["PreToolUse"] = omc_hooks["hooks"]["PreToolUse"]
+        if "SessionStart" not in hooks:
+            hooks["SessionStart"] = omc_hooks["hooks"]["SessionStart"]
+        if "SessionEnd" not in hooks:
+            hooks["SessionEnd"] = omc_hooks["hooks"]["SessionEnd"]
+        if "UserPromptSubmit" not in hooks:
+            hooks["UserPromptSubmit"] = omc_hooks["hooks"]["UserPromptSubmit"]
+        settings_path.write_text(
+            json.dumps(existing, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    else:
+        settings_path.write_text(
+            json.dumps(omc_hooks, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+
+
+def _install_gemini_settings(settings_path: Path, *, force: bool) -> None:
+    """Create or merge .gemini/settings.json with OMC SessionStart/End + BeforeAgent hooks."""
+    import json
+
+    omc_hooks = {
+        "hooks": {
+            "SessionStart": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "name": "omc-session-start",
+                            "description": "OMC 세션 컨텍스트 자동 주입 (JSON)",
+                            "command": ".agent-hooks/omc-session-start.sh gemini",
+                        }
+                    ]
+                }
+            ],
+            "SessionEnd": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "name": "omc-session-end",
+                            "description": "OMC session_end lifecycle 훅 실행",
+                            "command": ".agent-hooks/omc-session-end.sh gemini",
+                        }
+                    ]
+                }
+            ],
+            "BeforeAgent": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "name": "omc-before-agent",
+                            "description": "사용자 메시지 기반 BM25 교훈 자동 주입 (JSON)",
+                            "command": ".agent-hooks/omc-before-agent.sh",
+                            "timeout": 10000,
+                        }
+                    ]
+                }
+            ],
+        }
+    }
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings_path.exists() and not force:
+        try:
+            existing = json.loads(settings_path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+        if "hooks" not in existing:
+            existing["hooks"] = {}
+        hooks = existing["hooks"]
+        if "SessionStart" not in hooks:
+            hooks["SessionStart"] = omc_hooks["hooks"]["SessionStart"]
+        if "SessionEnd" not in hooks:
+            hooks["SessionEnd"] = omc_hooks["hooks"]["SessionEnd"]
+        if "BeforeAgent" not in hooks:
+            hooks["BeforeAgent"] = omc_hooks["hooks"]["BeforeAgent"]
+        settings_path.write_text(
+            json.dumps(existing, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    else:
+        settings_path.write_text(
+            json.dumps(omc_hooks, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+
+
+def _kit_root() -> Path:
+    # omc_kit/scripts/install.py -> kit root is parent of scripts/
+    here = Path(__file__).resolve()
+    candidate = here.parents[1]
+    if (candidate / "templates").is_dir():
+        return candidate
+    # Fallback: install.py was copied to project scripts/ — look for kit as sibling dir
+    for parent in here.parents:
+        nested = parent / "omc_kit"
+        if (nested / "templates").is_dir():
+            return nested
+    return candidate
+
+def _templates_root(kit_root: Path) -> Path:
+    return kit_root / "templates"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Install multi-assistant kit into a target repository.")
+    ap.add_argument("--target", type=Path, required=True, help="Target repository root.")
+    ap.add_argument("--force", action="store_true", help="Overwrite existing files.")
+    args = ap.parse_args()
+
+    kit = _kit_root()
+    templates = _templates_root(kit)
+    tgt = args.target.resolve()
+    force = bool(args.force)
+
+    to_copy = [
+        # ── prompts ──────────────────────────────────────────────────────────
+        (kit / "prompts" / "README.md", tgt / "prompts" / "README.md"),
+        (kit / "prompts" / "team.json", tgt / "prompts" / "team.json"),
+        (kit / "prompts" / "ROLE_ORCHESTRATOR.md", tgt / "prompts" / "ROLE_ORCHESTRATOR.md"),
+        (kit / "prompts" / "MODE_AUTOPILOT.md", tgt / "prompts" / "MODE_AUTOPILOT.md"),
+        (kit / "prompts" / "MODE_TEAM.md", tgt / "prompts" / "MODE_TEAM.md"),
+        (kit / "prompts" / "MODE_ULTRAWORK.md", tgt / "prompts" / "MODE_ULTRAWORK.md"),
+        (kit / "prompts" / "MODE_RALPH.md", tgt / "prompts" / "MODE_RALPH.md"),
+        (kit / "prompts" / "MODE_DEEP_INTERVIEW.md", tgt / "prompts" / "MODE_DEEP_INTERVIEW.md"),
+        (kit / "prompts" / "ROLE_SEARCH_ASSISTANT.md", tgt / "prompts" / "ROLE_SEARCH_ASSISTANT.md"),
+        (kit / "prompts" / "ROLE_ANALYSIS_ASSISTANT.md", tgt / "prompts" / "ROLE_ANALYSIS_ASSISTANT.md"),
+        (kit / "prompts" / "ROLE_CODE_REVIEW_ASSISTANT.md", tgt / "prompts" / "ROLE_CODE_REVIEW_ASSISTANT.md"),
+        (kit / "prompts" / "ROLE_SENIOR_CODING_ASSISTANT.md", tgt / "prompts" / "ROLE_SENIOR_CODING_ASSISTANT.md"),
+        # ── scripts (타겟에 배포되는 공용 스크립트) ───────────────────────────
+        # kit-only (배포 안 됨): safe_trash.py, export_repo.py
+        # 수동 목록 대신 glob 자동 감지 — 새 스크립트 추가 시 자동 포함됨
+    ]
+
+    # scripts: kit/scripts/*.py 전부 자동 복사 (kit-only 제외)
+    _SCRIPTS_EXCLUDE = {"safe_trash.py", "export_repo.py"}
+    scripts_src = kit / "scripts"
+    if scripts_src.exists():
+        for src in sorted(scripts_src.glob("*.py")):
+            if src.name in _SCRIPTS_EXCLUDE:
+                continue
+            to_copy.append((src, tgt / "scripts" / src.name))
+
+    for s, d in to_copy:
+        _copy(s, d, force=force)
+
+    _copy(kit / "docs" / "multi_assistant_workflow.md", tgt / "docs" / "multi_assistant_workflow.md", force=force)
+    _copy(kit / "docs" / "quickstart_kr.md", tgt / "docs" / "quickstart_kr.md", force=force)
+    _copy(kit / "docs" / "kit_map.md", tgt / "docs" / "kit_map.md", force=force)
+    _copy(kit / "docs" / "next_project_pack.md", tgt / "docs" / "next_project_pack.md", force=force)
+    _copy(kit / "docs" / "agent_behavior.md", tgt / "docs" / "agent_behavior.md", force=force)
+    _copy(kit / "docs" / "verification_checklist.md", tgt / "docs" / "verification_checklist.md", force=force)
+    run_template = templates / "run"
+    if run_template.exists():
+        dst = tgt / "run"
+        _copy(run_template, dst, force=force)
+        _ensure_executable(dst)
+
+    # Base prompt template (recommended). Only write if missing unless --force.
+    prompt_common = templates / "PROMPT_COMMON.md"
+    if prompt_common.exists():
+        _copy(prompt_common, tgt / "PROMPT_COMMON.md", force=force)
+    
+    prompt_lean = templates / "PROMPT_COMMON_LEAN.md"
+    if prompt_lean.exists():
+        _copy(prompt_lean, tgt / "PROMPT_COMMON_LEAN.md", force=force)
+
+    # .cursorignore — Cursor가 .agents/ 스킬을 슬래시 커맨드로 노출하지 않도록 차단
+    cursorignore = templates / ".cursorignore"
+    if cursorignore.exists():
+        _copy(cursorignore, tgt / ".cursorignore", force=force)
+
+    quickstart = """# Multi-Assistant Quickstart
+
+## 30초 설치 후 바로 시작
+
+```bash
+# 1. 상태 확인
+python3 scripts/omc_doctor.py --target .
+
+# 2. 첫 작업 요청
+python3 scripts/omc.py "만들고 싶은 것"
+
+# 3. 스프린트 순서 (권장)
+# /brainstorm → /office-hours → /plan → /task → /review → /ship → /retro
+```
+
+## 슬래시 커맨드 / 스킬
+
+### Claude Code · Antigravity IDE (슬래시 커맨드)
+
+| 커맨드 | 설명 |
+|--------|------|
+| `/brainstorm [주제]` | 요구사항 소크라테스식 탐색 |
+| `/office-hours [요청]` | 제품 사고 먼저 — 6개 강제 질문 |
+| `/ceo-review [모드]` | CEO 관점 기능 범위 재검토 |
+| `/plan [작업]` | TDD 태스크 분해 |
+| `/task [설명]` | 7단계 TDD 파이프라인 |
+| `/review` | git diff 코드 리뷰 |
+| `/investigate [이슈]` | 4단계 디버깅 방법론 |
+| `/lesson [키워드]` | BM25 교훈 검색 |
+| `/ship` | TDD 게이트 → 배포 |
+| `/retro` | 회고 + 교훈 캡처 |
+| `/status` | OMC 상태 확인 |
+
+### Codex IDE (Agent Skills)
+
+명시적: `$omc-plan`, `$omc-task`, `$omc-review` 등  
+암묵적: "계획해줘", "태스크 나눠줘" 등 자연어로도 자동 트리거됩니다.
+
+### Cursor
+
+`.cursor/rules/omc-always.md`의 항상 적용 규칙으로 동작합니다. 슬래시 커맨드 없이 자연어로 요청하면 OMC 흐름을 따릅니다.
+
+## 자주 쓰는 CLI 명령
+
+```bash
+python3 scripts/omc.py state status       # 현재 상태
+python3 scripts/omc.py state compact      # 메모리 압축
+python3 scripts/omc_lesson.py search "키워드"  # 교훈 BM25 검색
+python3 scripts/omc_autopilot.py new --id feat-x --title "기능 X"
+python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
+```
+
+## 파일 지도
+
+- `docs/kit_map.md` — 스크립트 전체 목록
+- `docs/quickstart_kr.md` — 시나리오별 사용 가이드
+- `docs/next_project_pack.md` — 다음 프로젝트로 이식하는 방법
+
+"""
+    _write(tgt / "docs" / "multi_assistant_quickstart.md", quickstart, force=force)
+
+    # Bootstrap instructions for agentic tools.
+    # 타겟에 파일이 이미 있으면 OMC 섹션만 추가, 없으면 전체 복사.
+    # 마커가 있는 파일은 중복 추가 방지. 없는 파일은 전체 복사.
+    _MERGE_MARKERS = {
+        "AGENTS.md": "## OMC — Orchestrated Multi-agent Craft",
+        "CLAUDE.md": "## OMC Overlay For Claude",
+        "GEMINI.md": "## OMC Overlay For Gemini",
+        "ETHOS.md":  "## Engineering Ethos",
+        "CODEX.md":  "## OMC Overlay For Codex",
+    }
+    _handled: set[str] = set()
+
+    # 마커 기반 병합 대상 (기존 파일에 섹션 추가)
+    for tgt_name, marker in _MERGE_MARKERS.items():
+        tgt_file = tgt / tgt_name
+        tpl_file = templates / tgt_name
+        if not tpl_file.exists():
+            continue
+        _handled.add(tgt_name)
+        if tgt_file.exists() and not force:
+            cur = tgt_file.read_text(encoding="utf-8")
+            if marker not in cur:
+                block = tpl_file.read_text(encoding="utf-8")
+                tgt_file.write_text(cur.rstrip() + "\n\n" + block.rstrip() + "\n", encoding="utf-8")
+        else:
+            _copy(tpl_file, tgt_file, force=force)
+
+    # templates/ 루트의 나머지 .md 파일 자동 복사 (수동 등록 불필요)
+    for tpl_file in sorted(templates.glob("*.md")):
+        if tpl_file.name in _handled:
+            continue
+        _copy(tpl_file, tgt / tpl_file.name, force=force)
+
+    # ── Shared agent-hooks (.agent-hooks/) ──────────────────────────────────
+    agent_hooks_src = templates / ".agent-hooks"
+    if agent_hooks_src.exists():
+        for src in agent_hooks_src.rglob("*"):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(agent_hooks_src)
+            dst = tgt / ".agent-hooks" / rel
+            _copy(src, dst, force=force)
+            _ensure_executable(dst)
+
+    # ── Claude Code slash commands (.claude/commands/) ───────────────────────
+    claude_cmds_src = templates / ".claude" / "commands"
+    if claude_cmds_src.exists():
+        for src in claude_cmds_src.rglob("*"):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(claude_cmds_src)
+            dst = tgt / ".claude" / "commands" / rel
+            _copy(src, dst, force=force)
+
+    # ── Claude Code SessionStart/End hooks (.claude/settings.json) ──────────
+    claude_settings = tgt / ".claude" / "settings.json"
+    _install_claude_settings(claude_settings, force=force)
+
+    # ── Gemini CLI commands (.gemini/commands/) ──────────────────────────────
+    gemini_cmds_src = templates / ".gemini" / "commands"
+    if gemini_cmds_src.exists():
+        for src in gemini_cmds_src.rglob("*"):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(gemini_cmds_src)
+            dst = tgt / ".gemini" / "commands" / rel
+            _copy(src, dst, force=force)
+
+    # ── Codex CLI commands (.codex/commands/) ────────────────────────────────
+    codex_cmds_src = templates / ".codex" / "commands"
+    if codex_cmds_src.exists():
+        for src in codex_cmds_src.rglob("*"):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(codex_cmds_src)
+            dst = tgt / ".codex" / "commands" / rel
+            _copy(src, dst, force=force)
+
+    # ── Gemini CLI SessionStart/End/BeforeAgent hooks (.gemini/settings.json) ─
+    gemini_settings = tgt / ".gemini" / "settings.json"
+    _install_gemini_settings(gemini_settings, force=force)
+
+    # ── Codex CLI hooks (.codex/hooks.json) ──────────────────────────────────
+    codex_hooks_src = templates / ".codex" / "hooks.json"
+    if codex_hooks_src.exists():
+        _copy(codex_hooks_src, tgt / ".codex" / "hooks.json", force=force)
+
+    # ── Cursor project hooks (optional, when template files exist) ───────────
+    cursor_hooks_json = templates / ".cursor" / "hooks.json"
+    cursor_hook_start = templates / ".cursor" / "hooks" / "omc-session-start.sh"
+    cursor_hook_end = templates / ".cursor" / "hooks" / "omc-session-end.sh"
+    cursor_hook_require = templates / ".cursor" / "hooks" / "omc-require-confirm.sh"
+    cursor_rules_dir = templates / ".cursor" / "rules"
+
+    if cursor_hooks_json.exists():
+        _copy(cursor_hooks_json, tgt / ".cursor" / "hooks.json", force=force)
+    if cursor_hook_start.exists():
+        dst = tgt / ".cursor" / "hooks" / "omc-session-start.sh"
+        _copy(cursor_hook_start, dst, force=force)
+        _ensure_executable(dst)
+    if cursor_hook_end.exists():
+        dst = tgt / ".cursor" / "hooks" / "omc-session-end.sh"
+        _copy(cursor_hook_end, dst, force=force)
+        _ensure_executable(dst)
+    if cursor_hook_require.exists():
+        dst = tgt / ".cursor" / "hooks" / "omc-require-confirm.sh"
+        _copy(cursor_hook_require, dst, force=force)
+        _ensure_executable(dst)
+
+    cursor_hook_pipeline = templates / ".cursor" / "hooks" / "omc-pipeline-check.sh"
+    if cursor_hook_pipeline.exists():
+        dst = tgt / ".cursor" / "hooks" / "omc-pipeline-check.sh"
+        _copy(cursor_hook_pipeline, dst, force=force)
+        _ensure_executable(dst)
+
+    # Cursor rules (optional)
+    if cursor_rules_dir.exists():
+        for src in cursor_rules_dir.rglob("*"):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(cursor_rules_dir)
+            dst = tgt / ".cursor" / "rules" / rel
+            _copy(src, dst, force=force)
+
+    # ── Agent Skills: .agents/skills/ (Codex) + .agent/skills/ (Antigravity) ──
+    # Single source of truth: templates/.agents/skills/
+    # Both .agents/ (Codex, plural) and .agent/ (Antigravity, singular) get identical content.
+    agent_skills_src = templates / ".agents" / "skills"
+    if agent_skills_src.exists():
+        for src in agent_skills_src.rglob("*"):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(agent_skills_src)
+            for base in (".agents", ".agent"):
+                dst = tgt / base / "skills" / rel
+                _copy(src, dst, force=force)
+
+    # ── Antigravity workflows (.agent/workflows/) ─────────────────────────────
+    agent_workflows_src = templates / ".agent" / "workflows"
+    if agent_workflows_src.exists():
+        for src in agent_workflows_src.rglob("*"):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(agent_workflows_src)
+            dst = tgt / ".agent" / "workflows" / rel
+            _copy(src, dst, force=force)
+
+    # ── Antigravity workspace rules (.agent/rules/) ───────────────────────────
+    agent_rules_src = templates / ".agent" / "rules"
+    if agent_rules_src.exists():
+        for src in agent_rules_src.rglob("*"):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(agent_rules_src)
+            dst = tgt / ".agent" / "rules" / rel
+            _copy(src, dst, force=force)
+
+    # ── .omc/lessons/ — Compound Engineering 교훈 디렉토리 ──────────────────
+    lessons_dir = tgt / ".omc" / "lessons"
+    if not lessons_dir.exists():
+        lessons_dir.mkdir(parents=True, exist_ok=True)
+        gitkeep = lessons_dir / ".gitkeep"
+        gitkeep.write_text("# Compound Engineering 교훈 디렉토리\n", encoding="utf-8")
+        print(f"[install] created {lessons_dir.relative_to(tgt)}/")
+
+    # ── .omc/hooks.json — session_start 에 omc_context.py 자동 수집 포함 ────────
+    omc_hooks_path = tgt / ".omc" / "hooks.json"
+    import json as _json
+    _default_hooks = {
+        "version": 1,
+        "hooks": {
+            "session_start": [
+                {"type": "shell", "command": "python3 scripts/omc_context.py --target ."},
+                {"type": "builtin", "name": "refresh_notepad"},
+                {"type": "builtin", "name": "auto_compact"},
+                {
+                    "type": "shell",
+                    "name": "omc_status_check",
+                    "command": "python3 scripts/omc.py state status",
+                    "description": "새 세션 시작 시 OMC 상태 자동 출력 — LLM이 confirmed 여부를 즉시 파악",
+                },
+                {
+                    "type": "shell",
+                    "name": "role_reminder",
+                    "command": "echo '[OMC] 역할 선언 필수: analysis(읽기전용) | directive(파일수정/실행) | analysis+directive(둘다)'",
+                    "description": "역할 구분을 LLM에게 상기시킴",
+                },
+            ],
+            "session_end": [
+                {"type": "builtin", "name": "refresh_notepad"},
+                {"type": "builtin", "name": "auto_compact"},
+            ],
+            "pre_compact": [{"type": "builtin", "name": "snapshot_memory"}],
+            "post_compact": [{"type": "builtin", "name": "refresh_notepad"}],
+        },
+    }
+    if not omc_hooks_path.exists() or force:
+        omc_hooks_path.parent.mkdir(parents=True, exist_ok=True)
+        omc_hooks_path.write_text(
+            _json.dumps(_default_hooks, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"[install] wrote {omc_hooks_path.relative_to(tgt)}")
+    else:
+        # 기존 파일에 누락된 훅을 비침습적으로 추가
+        try:
+            existing = _json.loads(omc_hooks_path.read_text(encoding="utf-8"))
+            ss_hooks = existing.get("hooks", {}).get("session_start", [])
+            changed = False
+
+            # omc_context 훅 누락 시 추가
+            has_ctx = any(h.get("command", "").startswith("python3 scripts/omc_context") for h in ss_hooks)
+            if not has_ctx:
+                ss_hooks.insert(0, {"type": "shell", "command": "python3 scripts/omc_context.py --target ."})
+                changed = True
+
+            # auto_compact 훅 누락 시 추가 (context 다음, status 앞)
+            has_ac = any(h.get("name") == "auto_compact" for h in ss_hooks)
+            if not has_ac:
+                # context 훅 바로 뒤에 삽입
+                ctx_idx = next(
+                    (i for i, h in enumerate(ss_hooks) if h.get("command", "").startswith("python3 scripts/omc_context")),
+                    0,
+                )
+                ss_hooks.insert(ctx_idx + 1, {"type": "builtin", "name": "auto_compact"})
+                changed = True
+
+            if changed:
+                existing.setdefault("hooks", {})["session_start"] = ss_hooks
+                omc_hooks_path.write_text(
+                    _json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                print(f"[install] updated {omc_hooks_path.relative_to(tgt)} (added missing hooks)")
+        except Exception:
+            pass
+
+    # Git pre-commit hook — universal physical guard (works for ALL LLMs)
+    pre_commit_template = templates / "pre-commit"
+    if pre_commit_template.exists():
+        git_hooks_dir = tgt / ".git" / "hooks"
+        if git_hooks_dir.exists():
+            dst = git_hooks_dir / "pre-commit"
+            _copy(pre_commit_template, dst, force=force)
+            _ensure_executable(dst)
+        else:
+            # .git 없으면 scripts/ 에 복사해두고 안내 출력
+            dst = tgt / "scripts" / "pre-commit.sample"
+            _copy(pre_commit_template, dst, force=force)
+            print(
+                "[INFO] .git/hooks/ 폴더 없음 — pre-commit hook 을 수동으로 설치하세요:\n"
+                "  git init  (아직 git repo가 아닌 경우)\n"
+                "  cp scripts/pre-commit.sample .git/hooks/pre-commit\n"
+                "  chmod +x .git/hooks/pre-commit\n"
+                "  또는: python3 scripts/omc_doctor.py --fix"
+            )
+
+    print(f"Installed multi-assistant kit into: {tgt}")
+
+    _setup_ethos_section5(tgt)
+
+    return 0
+
+
+def _setup_ethos_section5(tgt: Path) -> None:
+    """ETHOS.md 섹션 5 (프로젝트 맥락)를 대화형으로 채운다.
+
+    이미 플레이스홀더가 아닌 내용이 있으면 건너뛴다.
+    """
+    ethos_path = tgt / "ETHOS.md"
+    if not ethos_path.exists():
+        return
+
+    content = ethos_path.read_text(encoding="utf-8")
+    # 이미 실제 내용이 채워진 경우 건너뜀
+    if "___" not in content:
+        return
+
+    print()
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print(" ETHOS.md 섹션 5 — 프로젝트 맥락 설정")
+    print(" (Enter만 누르면 건너뜁니다)")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    try:
+        stack = input("스택 (예: TypeScript + React + Nx): ").strip()
+        structure = input("주요 디렉토리 구조 (예: libs/=재사용, apps/=조합): ").strip()
+        patterns = input("패턴 우선순위 (예: 기존 파일 옆 패턴 먼저): ").strip()
+        forbidden = input("금지 사항 (예: any 사용 금지, 컴포넌트 내 직접 API 호출 금지): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\n[ETHOS] 섹션 5 설정 건너뜀")
+        return
+
+    if not any([stack, structure, patterns, forbidden]):
+        print("[ETHOS] 입력 없음 — 섹션 5는 ETHOS.md를 직접 편집해서 채우세요.")
+        return
+
+    section5 = "\n## 5. 이 프로젝트 맥락\n\n"
+    if stack:
+        section5 += f"**스택:** {stack}\n\n"
+    if structure:
+        section5 += f"**디렉토리 구조:** {structure}\n\n"
+    if patterns:
+        section5 += f"**패턴 우선순위:** {patterns}\n\n"
+    if forbidden:
+        section5 += f"**금지:** {forbidden}\n"
+
+    # 플레이스홀더 섹션 교체
+    import re
+    new_content = re.sub(
+        r"## 5\. 이 프로젝트 맥락.*?(?=\n---|\Z)",
+        section5,
+        content,
+        flags=re.DOTALL,
+    )
+    ethos_path.write_text(new_content, encoding="utf-8")
+    print(f"[ETHOS] 섹션 5 저장 완료 → {ethos_path.relative_to(tgt)}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

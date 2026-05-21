@@ -1,0 +1,113 @@
+#!/bin/sh
+# OMC Enforcer Git Hook
+# 0) OMC 세션 동기화 경고 (confirmed 상태에서 staged 파일 있으면 경고)
+# 1) OMC 세션 컨펌 체크 (omc_guard.py)
+# 2) TDD 강제 체크 (omc_tdd_check.py) — staged 파일 기준
+
+PYTHON_BIN="python3"
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+  PYTHON_BIN="python"
+fi
+
+# -----------------------------------------------------------------
+# STEP 0: OMC 세션 동기화 경고
+# confirmed 상태인데 staged 파일이 있으면 → 새 작업 선언 없이 커밋 시도
+# -----------------------------------------------------------------
+"${PYTHON_BIN}" -c "
+import json, sys
+from pathlib import Path
+
+policy_path = Path('.omc/policy.json')
+latest_path = Path('.omc/state/latest.json')
+
+if not policy_path.exists() or not latest_path.exists():
+    sys.exit(0)
+
+try:
+    policy = json.loads(policy_path.read_text(encoding='utf-8'))
+    latest = json.loads(latest_path.read_text(encoding='utf-8'))
+except Exception:
+    sys.exit(0)
+
+if not policy.get('enforce_confirm', False):
+    sys.exit(0)
+
+status = (latest.get('latest_confirmation') or {}).get('status', '')
+request = latest.get('latest_confirmed_request', '(알 수 없음)')
+
+if status == 'confirmed':
+    print()
+    print('=========================================================')
+    print(' [OMC 경고] 활성 세션 없이 커밋을 시도하고 있습니다.')
+    print(f' 마지막 완료 작업: \"{request}\"')
+    print(' 이 커밋이 새 작업이라면 먼저 작업을 선언하세요:')
+    print('   python3 scripts/omc.py \"새 작업 내용\"')
+    print(' 계속 진행하려면 Enter, 취소하려면 Ctrl+C')
+    print('=========================================================')
+" 2>/dev/null || true
+
+# -----------------------------------------------------------------
+# STEP 1: OMC 가드 (미컨펌 세션 차단)
+# -----------------------------------------------------------------
+echo "[OMC Guard] Checking if current session is confirmed..."
+
+GUARD="scripts/omc_guard.py"
+if [ -f "${GUARD}" ]; then
+  "${PYTHON_BIN}" "${GUARD}" require --for "git commit"
+  if [ $? -ne 0 ]; then
+      echo ""
+      echo "==========================================================="
+      echo " OMC GUARD BLOCK"
+      echo " You (or the LLM) attempted to commit without a confirmed OMC session."
+      echo " Run 'python3 scripts/omc.py state confirm' or get user approval first."
+      echo "==========================================================="
+      exit 1
+  fi
+fi
+
+# -----------------------------------------------------------------
+# STEP 2: pipeline_guard CONTRACT 검증 (staged 구현 파일 기준)
+# contract_confirmed=False 상태로 구현 파일을 커밋하려 하면 차단
+# git 레벨이므로 Cursor / Claude / Gemini / Codex 모든 LLM에 자동 적용
+# -----------------------------------------------------------------
+PIPELINE_GUARD="scripts/omc_pipeline_guard.py"
+if [ -f "${PIPELINE_GUARD}" ]; then
+  echo "[CONTRACT Check] Verifying CONTRACT confirmation for staged impl files..."
+  # staged 구현 파일 목록 수집 (A=추가, M=수정)
+  STAGED_IMPL_FILES=$(git diff --cached --name-only --diff-filter=AM 2>/dev/null | grep -E '\.(ts|tsx|py|js|jsx)$' | grep -v -E '(\.spec\.|\.test\.|test_|__test__)' || true)
+  if [ -n "${STAGED_IMPL_FILES}" ]; then
+    CONTRACT_OK=$("${PYTHON_BIN}" "${PIPELINE_GUARD}" status 2>/dev/null | grep -c "CONTRACT.*✅" || echo "0")
+    if [ "${CONTRACT_OK}" = "0" ]; then
+      echo ""
+      echo "==========================================================="
+      echo " CONTRACT BLOCK"
+      echo " Staged implementation files exist but CONTRACT is not confirmed."
+      echo " Files: ${STAGED_IMPL_FILES}"
+      echo " Please confirm the CONTRACT first:"
+      echo "   python3 scripts/omc_pipeline_guard.py contract-done"
+      echo "==========================================================="
+      exit 1
+    fi
+  fi
+fi
+
+# -----------------------------------------------------------------
+# STEP 3: TDD 강제 체크 (staged 파일만, 빠른 체크)
+# -----------------------------------------------------------------
+TDD_CHECK="scripts/omc_tdd_check.py"
+if [ -f "${TDD_CHECK}" ]; then
+  echo "[TDD Check] Verifying test coverage for staged files..."
+  "${PYTHON_BIN}" "${TDD_CHECK}" --staged
+  if [ $? -ne 0 ]; then
+      echo ""
+      echo "==========================================================="
+      echo " TDD BLOCK"
+      echo " Staged files are missing corresponding test files."
+      echo " Write tests first (RED -> GREEN -> REFACTOR)."
+      echo " To skip (report-only): python3 scripts/omc_tdd_check.py --staged --report-only"
+      echo "==========================================================="
+      exit 1
+  fi
+fi
+
+exit 0

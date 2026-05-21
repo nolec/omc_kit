@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeToolCall": [
+      {
+        "command": ".cursor/hooks/omc-pipeline-check.sh",
+        "failClosed": false
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": ".cursor/hooks/omc-require-confirm.sh",
+        "failClosed": true
+      }
+    ],
+    "sessionStart": [
+      {
+        "command": ".agent-hooks/omc-session-start.sh cursor"
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": ".agent-hooks/omc-session-end.sh cursor"
+      }
+    ]
+  }
+}

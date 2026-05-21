@@ -1,0 +1,154 @@
+---
+description: OMC TDD 강제 규칙 — 새 코드에는 반드시 테스트가 있어야 합니다. 이 규칙을 무시하면 ship/commit이 물리적으로 차단됩니다.
+globs:
+  - "**/*.ts"
+  - "**/*.tsx"
+  - "**/*.py"
+alwaysApply: true
+---
+
+# OMC TDD Enforcement
+
+> **이 규칙은 프롬프트 권고가 아닙니다.**
+> `omc_tdd_check.py` 스크립트가 pre-commit + ship + confirm 에서 물리적으로 차단합니다.
+> 테스트 없이 커밋하면 실제로 막힙니다.
+
+---
+
+## 핵심 규칙 (Tier 1 대상)
+
+> **Tier 0 파일** (`*.styled.ts`, `*.constants.ts`, `index.ts`, `*.config.ts`, `*.d.ts` 등)은
+> TDD 대상에서 제외됩니다. 훅도 차단하지 않습니다.
+> **Tier 1 파일** (새 컴포넌트·훅·API·동작 변경)에만 아래 규칙이 적용됩니다.
+
+새 Tier 1 구현 파일을 추가할 때 **반드시** 대응 테스트를 먼저 작성합니다.
+
+순서를 바꾸는 것은 금지입니다: **구현 먼저 → 테스트 나중** = 규칙 위반
+
+---
+
+## RED → GREEN → REFACTOR (강제 순서)
+
+### PHASE 1 — RED (실패 테스트 먼저)
+
+구현 파일을 열기 전에:
+
+1. 테스트 파일을 생성한다
+2. 실패하는 테스트 케이스를 작성한다
+3. 테스트가 실제로 **FAIL** 인지 확인한다
+
+```
+RED 확인:
+  테스트 파일: [경로]
+  테스트 케이스: [이름]
+  실패 메시지: [에러 요약]
+```
+
+**RED 확인 없이 GREEN 단계로 진행하지 않습니다.**
+
+### PHASE 2 — GREEN (최소 구현)
+
+- RED 테스트를 통과하는 **최소한의 코드**만 작성
+- 이 단계에서 리팩토링 금지
+- 구현 후 테스트 재실행 → **PASS** 확인
+
+### PHASE 3 — REFACTOR (정리)
+
+- 테스트 GREEN 유지하면서 코드 개선
+- 리팩토링 중 테스트가 깨지면 즉시 원복
+
+---
+
+## 파일 대응 규칙
+
+| 신규 구현 파일 | 필수 테스트 파일 |
+|---|---|
+| `foo/bar.ts` | `foo/bar.spec.ts` 또는 `foo/__test__/bar.test.ts` |
+| `foo/bar.tsx` | `foo/bar.spec.tsx` 또는 `foo/__test__/bar.test.tsx` |
+| `foo/bar.py` | `foo/test_bar.py` 또는 `foo/bar_test.py` |
+
+**테스트 불필요 파일** (예외, 별도 승인 불필요):
+- `*.d.ts`, `types.ts`, `types/` 폴더
+- `*.config.ts`, `*.config.js`
+- `*.styled.ts`, `*.styled.tsx`
+- `constants/` 폴더
+- `index.ts` (로직 없는 진입점)
+- `queryKey.ts`
+- `*.stories.tsx`
+
+---
+
+## 구현 응답 포맷 (기능 요청 시)
+
+기능 구현 **Tier 1** 요청을 받으면 **반드시** 이 포맷으로 시작합니다:
+
+```
+🔴 RED
+테스트 파일: [경로]
+테스트 케이스: [설명]
+실행: npx jest [파일] → FAIL 예상
+
+🟢 GREEN
+구현 파일: [경로]
+최소 구현: [설명]
+실행: npx jest [파일] → PASS
+
+🔵 REFACTOR
+정리 항목: [있으면]
+TDD 게이트: python3 scripts/omc_tdd_check.py --staged
+```
+
+---
+
+## 물리적 차단 지점
+
+테스트 없는 파일을 커밋/배포하려 하면:
+
+```
+pre-commit hook:
+  → omc_tdd_check.py --staged
+  → 테스트 없으면 exit 1 → 커밋 차단
+
+/ship 커맨드:
+  → omc_tdd_check.py --run-tests
+  → 테스트 없거나 실패 시 → 배포 차단
+
+omc_guard.py require --for "git commit":
+  → TDD 체크 연동
+  → 차단 시 exit code 6
+
+omc.py state confirm:
+  → staged 파일 TDD 체크
+  → --skip-tdd 플래그로만 우회 가능 (사용자 명시 필요)
+```
+
+---
+
+## 버그 수정 시
+
+1. 버그를 재현하는 테스트를 **먼저** RED로 만든다
+2. 수정 후 해당 테스트가 GREEN인지 확인
+3. 기존 전체 테스트가 여전히 GREEN인지 확인
+
+---
+
+## TDD 예외 요청 처리
+
+사용자가 "테스트 없이 해줘"라고 요청하면:
+
+```
+[TDD 예외 요청 감지]
+이 파일은 테스트가 필요합니다: [파일명]
+
+예외를 허용하려면 명시적으로 확인하세요:
+  - "테스트 없이 진행 승인"
+  - python3 scripts/omc_tdd_check.py --staged --report-only
+```
+
+사용자가 명시적으로 승인한 경우에만 예외를 허용합니다.
+
+예외 허용 커맨드 (이유 기록 필수):
+```bash
+python3 scripts/omc_pipeline_guard.py allow <파일> --reason "이유"
+# 이유 없이 사용하면 경고 + .omc/allow_log.jsonl 에 '이유 미기재'로 기록됩니다
+```

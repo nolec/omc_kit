@@ -1,0 +1,149 @@
+#!/bin/bash
+
+COMMAND=$1
+[ -z "$COMMAND" ] && COMMAND="omc-chat"
+
+VENV_PYTHON=".venv/bin/python"
+if [ ! -x "$VENV_PYTHON" ]; then
+    VENV_PYTHON="python3"
+fi
+
+case "$COMMAND" in
+    "omc")
+        shift
+        echo "🧭 OMC single entrypoint..."
+        $VENV_PYTHON scripts/omc.py hook session_start --target .
+        TMP_PROMPT_BASE=$(mktemp /tmp/omc-prompt.XXXXXX)
+        TMP_PROMPT="${TMP_PROMPT_BASE}.md"
+        mv "$TMP_PROMPT_BASE" "$TMP_PROMPT"
+        KEEP_PROMPT=0
+        cleanup() {
+            $VENV_PYTHON scripts/omc.py hook session_end --target . >/dev/null 2>&1 || true
+            if [ "${KEEP_PROMPT}" -eq 0 ] && [ -n "${TMP_PROMPT}" ] && [ -f "${TMP_PROMPT}" ]; then
+                rm -f "$TMP_PROMPT"
+            fi
+        }
+        trap cleanup EXIT
+        EXECUTOR="${OMC_EXECUTOR:-auto}"
+        EXECUTION_MODE="${OMC_EXECUTION_MODE:-interactive}"
+        FRICTION_MODE="${OMC_FRICTION_MODE:-auto}"
+        ROLE_TOP="${OMC_ROLE_TOP:-}"
+        while [[ "$1" == --* ]]; do
+            case "$1" in
+                --executor)
+                    if [[ -n "$2" ]]; then
+                        EXECUTOR="$2"
+                        shift 2
+                        continue
+                    fi
+                    ;;
+                --headless)
+                    EXECUTION_MODE="headless"
+                    shift
+                    continue
+                    ;;
+                --light)
+                    FRICTION_MODE="light"
+                    shift
+                    continue
+                    ;;
+                --strict)
+                    FRICTION_MODE="strict"
+                    shift
+                    continue
+                    ;;
+            esac
+            break
+        done
+        if [[ -n "${ROLE_TOP}" ]]; then
+            if [[ "${EXECUTION_MODE}" == "headless" ]]; then
+                $VENV_PYTHON scripts/omc.py "${@}" --assume-confirm --friction-mode "$FRICTION_MODE" --out "$TMP_PROMPT" --confirm-style compact --quiet-write --context-mode lean --top "${ROLE_TOP}"
+            else
+                $VENV_PYTHON scripts/omc.py "${@}" --friction-mode "$FRICTION_MODE" --out "$TMP_PROMPT" --confirm-style compact --quiet-write --context-mode lean --top "${ROLE_TOP}"
+            fi
+        else
+            if [[ "${EXECUTION_MODE}" == "headless" ]]; then
+                $VENV_PYTHON scripts/omc.py "${@}" --assume-confirm --friction-mode "$FRICTION_MODE" --out "$TMP_PROMPT" --confirm-style compact --quiet-write --context-mode lean
+            else
+                $VENV_PYTHON scripts/omc.py "${@}" --friction-mode "$FRICTION_MODE" --out "$TMP_PROMPT" --confirm-style compact --quiet-write --context-mode lean
+            fi
+        fi
+        if ! $VENV_PYTHON scripts/omc_exec.py --target . --prompt-file "$TMP_PROMPT" --executor "$EXECUTOR" --execution-mode "$EXECUTION_MODE"; then
+            KEEP_PROMPT=1
+        fi
+        ;;
+    "omc-chat")
+        shift
+        echo "🧭 OMC chat wrapper..."
+        EXECUTOR="${OMC_EXECUTOR:-auto}"
+        EXECUTION_MODE="${OMC_EXECUTION_MODE:-interactive}"
+        FRICTION_MODE="${OMC_FRICTION_MODE:-auto}"
+        ROLE_TOP="${OMC_ROLE_TOP:-}"
+        while [[ "$1" == --* ]]; do
+            case "$1" in
+                --executor)
+                    if [[ -n "$2" ]]; then
+                        EXECUTOR="$2"
+                        shift 2
+                        continue
+                    fi
+                    ;;
+                --headless)
+                    EXECUTION_MODE="headless"
+                    shift
+                    continue
+                    ;;
+                --light)
+                    FRICTION_MODE="light"
+                    shift
+                    continue
+                    ;;
+                --strict)
+                    FRICTION_MODE="strict"
+                    shift
+                    continue
+                    ;;
+            esac
+            break
+        done
+        if [[ -n "${ROLE_TOP}" ]]; then
+            $VENV_PYTHON scripts/omc_chat.py --target . --executor "$EXECUTOR" --execution-mode "$EXECUTION_MODE" --friction-mode "$FRICTION_MODE" --top "${ROLE_TOP}" "$@"
+        else
+            $VENV_PYTHON scripts/omc_chat.py --target . --executor "$EXECUTOR" --execution-mode "$EXECUTION_MODE" --friction-mode "$FRICTION_MODE" "$@"
+        fi
+        ;;
+    "omc-setup")
+        shift
+        echo "🧭 OMC setup..."
+        $VENV_PYTHON scripts/omc.py setup --target "${1:-.}"
+        ;;
+    "omc-domain")
+        shift
+        echo "🧭 OMC domain overlay..."
+        $VENV_PYTHON scripts/omc.py domain init "$@"
+        ;;
+    "omc-doctor")
+        shift
+        echo "🧭 OMC doctor..."
+        $VENV_PYTHON scripts/omc.py doctor --target "${1:-.}"
+        ;;
+    "omc-help")
+        echo "🧭 OMC quickstart..."
+        $VENV_PYTHON scripts/omc.py quickstart
+        ;;
+    *)
+        if [ "$#" -gt 0 ]; then
+            echo "🧭 OMC 강제 모드: 일반 입력을 omc-chat으로 자동 라우팅합니다..."
+            exec "$0" omc-chat "$@"
+        fi
+        echo "Usage: ./run {omc|omc-chat|omc-setup|omc-domain|omc-doctor|omc-help}"
+        echo "OMC executor override: ./run omc --executor {codex|gemini|claude|auto} \"작업 요청\""
+        echo "OMC headless smoke: ./run omc --headless --executor {codex|gemini|claude} \"작업 요청\""
+        echo "OMC chat mode: ./run omc-chat --executor {codex|gemini|claude|auto} [--headless]"
+        echo "OMC low-friction mode: ./run omc --light \"짧은 요청\""
+        echo "OMC env override: OMC_FRICTION_MODE=light ./run omc-chat"
+        echo "OMC domain overlay: ./run omc-domain crypto"
+        echo "OMC doctor: ./run omc-doctor"
+        echo "OMC setup smoke: python scripts/test_omc_setup_smoke.py [--executor {codex|gemini|claude}]"
+        ;;
+esac

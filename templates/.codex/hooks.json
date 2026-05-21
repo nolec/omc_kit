@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".agent-hooks/omc-session-start.sh codex",
+            "name": "omc-session-start",
+            "description": "OMC 세션 컨텍스트 + BM25 교훈 자동 주입"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".agent-hooks/omc-prompt-inject.sh",
+            "name": "omc-prompt-inject",
+            "description": "사용자 메시지 기반 BM25 교훈 자동 주입",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

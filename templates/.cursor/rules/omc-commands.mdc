@@ -1,0 +1,93 @@
+---
+description: "OMC 슬래시 커맨드 레퍼런스 — /task /review /investigate /plan /status /retro /lesson /ship"
+globs: []
+alwaysApply: true
+---
+
+# OMC 슬래시 커맨드 (Cursor 전용)
+
+> **Cursor에서만 사용합니다.** Claude Code는 `.claude/commands/`, Codex는 `$omc-*` 스킬, Gemini CLI는 `.gemini/commands/`를 사용합니다.
+
+> 자연어 요청도 자동 파이프라인을 타지만, 슬래시 커맨드를 쓰면 역할·단계가 명시적으로 고정됩니다.
+
+## /task [작업 설명]
+7단계 TDD 파이프라인 명시 실행 | 역할: `senior_coding` + `tdd`
+CONTRACT → DESIGN → RED → GREEN → REFACTOR → TDD GATE → REVIEW
+
+## /review [파일경로 또는 설명]
+`git diff` 기준 코드 리뷰 | 역할: `code_review` + `senior_coding`
+1. `git status -sb` + `git diff` 수집
+2. 치명 / 중대 / 경미 / 제안 4단계 분류
+3. 각 이슈에 파일/라인/근거 첨부 + 수정 제안
+
+## /investigate [이슈 설명]
+버그·이슈 근본 원인 추적 | 역할: `analysis`
+1. 현상 정의 → 가설 2~4개 → 한 번에 하나씩 검증
+2. 3번 실패 시 아키텍처 수준 의심, 범위 재설정
+
+## /plan [작업 설명]
+구현 전 요구사항 인터뷰 + TDD 태스크 분해 | 역할: `analysis` + `senior_coding`
+1. 목표 / 범위 / DoD / 제약 확정
+2. 태스크마다 `RED(테스트) → GREEN(구현) → VERIFY(커맨드)` 명시
+
+## /status
+```bash
+python3 scripts/omc.py state status --target .
+cat .omc/notepad.md
+python3 scripts/omc_pipeline_guard.py status
+```
+
+## /retro [기간]
+`.omc/` 세션 기반 회고: 완료 작업 / 반복 문제 / 미완료 / 다음 우선순위
+**완료 후 Compound Engineering 교훈 캡처 단계 포함**
+
+## /lesson [제목]
+**Compound Engineering 교훈 캡처** | 작업 완료 후 반복 방지 규칙을 `.omc/lessons/` 에 저장
+
+```bash
+python3 scripts/omc_lesson.py add -i          # 대화형 추가
+python3 scripts/omc_lesson.py list            # 목록
+python3 scripts/omc_lesson.py search "키워드"  # 검색
+```
+
+> 전역 지침 파일(AGENTS.md)에 추가하지 않습니다. 작은 파일로 분리합니다.
+
+## /ship [배포 대상]
+1. OMC 가드 → 미확정 세션 있으면 중단
+2. `python3 scripts/omc_tdd_check.py --run-tests` → 테스트 없거나 실패 시 차단
+3. 타입 체크 / 린트 / 테스트 / 빌드
+4. Git 상태 확인 후 배포
+
+---
+
+## allow 예외 처리 (--reason 필수)
+
+TDD 예외를 허용할 때 `--reason` 없으면 **exit 1로 차단**됩니다.
+
+```bash
+# 올바른 사용 (reason 필수)
+python3 scripts/omc_pipeline_guard.py allow <파일> --reason "이유 입력"
+
+# 잘못된 사용 → exit 1 차단
+python3 scripts/omc_pipeline_guard.py allow <파일>
+```
+
+이유는 `.omc/allow_log.jsonl`에 감사 로그로 기록됩니다.
+
+---
+
+## SSOT 동기화 (멀티킷 템플릿)
+
+라이브 파일을 `omc_kit/templates/`에 동기화합니다.
+**작업 완료 후, 또는 OMC 인프라 파일 수정 시 항상 실행하세요.**
+
+```bash
+# 상태 확인만
+python3 scripts/omc_sync_ssot.py --check
+
+# 실제 동기화
+python3 scripts/omc_sync_ssot.py
+
+# 대상 목록만 (복사 안 함)
+python3 scripts/omc_sync_ssot.py --dry-run
+```
