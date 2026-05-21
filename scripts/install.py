@@ -331,6 +331,12 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
                 block = tpl_file.read_text(encoding="utf-8")
                 tgt_file.write_text(cur.rstrip() + "\n\n" + block.rstrip() + "\n", encoding="utf-8")
         else:
+            # ETHOS.md는 섹션 5에 실제 내용이 채워진 경우 --force여도 덮어쓰지 않는다.
+            if tgt_name == "ETHOS.md" and tgt_file.exists() and force:
+                cur = tgt_file.read_text(encoding="utf-8")
+                if "___" not in cur:
+                    print(f"[install] skipped {tgt_name} (섹션 5 이미 채워짐)")
+                    continue
             _copy(tpl_file, tgt_file, force=force)
 
     # templates/ 루트의 나머지 .md 파일 자동 복사 (수동 등록 불필요)
