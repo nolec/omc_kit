@@ -180,10 +180,8 @@ def _build_checks(root: Path) -> list[Check]:
     tdd_in_hook = pre_commit.exists() and "omc_tdd_check" in pre_commit.read_text(encoding="utf-8") if pre_commit.exists() else False
 
     def _fix_pre_commit():
-        kit_pre_commit = root / "omc_kit" / "templates" / "pre-commit"
         sample = root / "scripts" / "pre-commit.sample"
-        # 우선순위: kit template → scripts/pre-commit.sample
-        src = kit_pre_commit if kit_pre_commit.exists() else (sample if sample.exists() else None)
+        src = sample if sample.exists() else None
         if not src:
             return
         git_hooks_dir = root / ".git" / "hooks"
@@ -399,10 +397,6 @@ def _build_checks(root: Path) -> list[Check]:
         ".agent-hooks/*.sh",
         ".cursor/hooks/*.sh",
         ".cursor/rules/*.mdc",
-        "omc_kit/scripts/*.py",
-        "omc_kit/templates/**/*.md",
-        "omc_kit/templates/**/*.sh",
-        "omc_kit/templates/**/*.mdc",
         "*.md",          # 루트 .md (AGENTS.md, CLAUDE.md 등)
     ]
     _STALE_IGNORE_DIRS = {".omc", ".git", "node_modules", ".stylelintcache"}
@@ -428,7 +422,7 @@ def _build_checks(root: Path) -> list[Check]:
         len(stale_files) == 0,
         detail=", ".join(stale_files) if stale_files else "이상 없음",
         fix_cmd=(
-            "find scripts omc_kit .agent-hooks .cursor -type f "
+            "find scripts .agent-hooks .cursor -type f "
             r"\( -name '*.py' -o -name '*.sh' -o -name '*.md' -o -name '*.mdc' \) "
             "| xargs sed -i '' 's|omc_kit|omc_kit|g; "
             "s|Orchestrated Multi-agent Craft|Orchestrated Multi-agent Craft|g'"
@@ -456,31 +450,6 @@ def _build_checks(root: Path) -> list[Check]:
             detail="플레이스홀더가 남아 있습니다. ETHOS.md 섹션 5를 프로젝트에 맞게 채우세요." if not placeholder_filled else "작성 완료",
         ))
 
-    # ── omc_kit/ 폴더 존재 (SSOT 킷) ────────────────────────────────────────
-    omc_kit_path = root / "omc_kit"
-    checks.append(Check(
-        "omc_kit/ 폴더 존재 (SSOT 킷)",
-        omc_kit_path.is_dir(),
-        fix_cmd="git clone <omc_kit repo> omc_kit  # 또는 백업에서 복원",
-    ))
-
-    # ── SSOT 동기화 체크 (scripts/ ↔ omc_kit/scripts/) ──────────────────────
-    kit_scripts = omc_kit_path / "scripts" if omc_kit_path.is_dir() else None
-    live_scripts = root / "scripts"
-    ssot_out_of_sync: list[str] = []
-    if kit_scripts and kit_scripts.is_dir():
-        for kit_file in sorted(kit_scripts.glob("omc_*.py")):
-            live_file = live_scripts / kit_file.name
-            if not live_file.exists():
-                ssot_out_of_sync.append(f"{kit_file.name} (라이브 없음)")
-            elif live_file.read_bytes() != kit_file.read_bytes():
-                ssot_out_of_sync.append(f"{kit_file.name} (내용 불일치)")
-    checks.append(Check(
-        "SSOT 동기화 (scripts/ ↔ omc_kit/scripts/)",
-        len(ssot_out_of_sync) == 0,
-        detail=", ".join(ssot_out_of_sync) if ssot_out_of_sync else "동기화 완료",
-        fix_cmd="python3 scripts/omc_sync_ssot.py",
-    ))
 
     # ── Python 버전 (>= 3.8) ─────────────────────────────────────────────────
     import sys as _sys
