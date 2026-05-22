@@ -77,8 +77,10 @@ esac
 
 # ── OMC 세션 동기화 검사 ──────────────────────────────────────────────────
 # enforce_confirm=true + 활성 세션(pending) 없으면 차단
-OMC_SYNC_MSG="$(
-  "${PYTHON_BIN}" -c '
+# 주의: set -u 환경에서 $() 서브쉘이 non-zero exit 시 스크립트 전체가 중단됨.
+#       임시 파일을 통해 출력을 캡처하여 회피한다.
+_OMC_SYNC_TMP="$(mktemp)"
+"${PYTHON_BIN}" -c '
 import json, sys
 from pathlib import Path
 
@@ -107,7 +109,7 @@ if status == "confirmed":
     msg = (
         f"[OMC BLOCK] 활성 세션 없음 — 마지막 작업: \"{request}\"\n"
         "\n"
-        "⚠️  'state confirm'은 작업 완료 처리입니다. 실행하면 또 막힙니다.\n"
+        "⚠️  '"'"'state confirm'"'"'은 작업 완료 처리입니다. 실행하면 또 막힙니다.\n"
         "\n"
         "▶ 올바른 절차: 새 작업을 선언해서 pending 세션을 만드세요.\n"
         "  python3 scripts/omc.py \"새 작업 내용\"\n"
@@ -115,9 +117,10 @@ if status == "confirmed":
     )
     print(json.dumps({"permission": "deny", "user_message": msg, "agent_message": msg}, ensure_ascii=False))
     sys.exit(1)
-' 2>/dev/null
-)"
+' > "${_OMC_SYNC_TMP}" 2>/dev/null
 OMC_SYNC_EXIT=$?
+OMC_SYNC_MSG="$(cat "${_OMC_SYNC_TMP}")"
+rm -f "${_OMC_SYNC_TMP}"
 
 if [[ ${OMC_SYNC_EXIT} -ne 0 ]]; then
   printf '%s\n' "${OMC_SYNC_MSG}"

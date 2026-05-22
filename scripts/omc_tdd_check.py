@@ -53,6 +53,59 @@ _EXCLUDE_PATTERNS = [
 ]
 
 
+
+# ---------------------------------------------------------------------------
+# Allow 목록 (omc_pipeline_guard.py allow로 등록된 예외 파일)
+# ---------------------------------------------------------------------------
+
+def _get_allowed_files(root: Path) -> set[str]:
+    """omc_pipeline_guard.py allow <파일> 로 등록된 예외 파일 집합 반환.
+
+    allow_log.jsonl의 'file' 필드에서 경로를 읽고,
+    절대경로 / 상대경로 / 파일명 3가지 형태로 매칭한다.
+    """
+    import json as _json
+
+    log_path = Path(str(root)) / ".omc" / "allow_log.jsonl"
+    if not log_path.exists():
+        return set()
+
+    allowed: set[str] = set()
+    try:
+        for line in log_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = _json.loads(line)
+                raw = entry.get("file", "")
+                if not raw:
+                    continue
+                fp = Path(raw)
+                # 절대경로 → 상대경로로 정규화
+                try:
+                    rel = str(fp.relative_to(root))
+                except ValueError:
+                    rel = raw
+                allowed.add(rel)
+                allowed.add(fp.name)      # 파일명만으로도 매칭
+                allowed.add(str(fp))      # 원본 그대로도 저장
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return allowed
+
+
+def _is_allowed(f: pathlib.Path, root: Path, allowed: set[str]) -> bool:
+    """파일이 allow 목록에 있는지 확인 (상대경로 / 파일명 매칭)."""
+    try:
+        rel = str(f.relative_to(root))
+    except ValueError:
+        rel = str(f)
+    return rel in allowed or f.name in allowed or str(f) in allowed
+
+
 # ---------------------------------------------------------------------------
 # Git 유틸
 # ---------------------------------------------------------------------------
@@ -263,6 +316,10 @@ def check(
         print(f"[TDD] ✅ 신규 파일 — 테스트 있음 ({len(added_covered)}개):")
         for f in added_covered:
             print(f"       {f}")
+
+    # allow 목록 로드 — omc_pipeline_guard.py allow 로 등록된 예외 파일
+    _allowed = _get_allowed_files(root)
+    added_missing = [f for f in added_missing if not _is_allowed(f, root, _allowed)]
 
     blocked = False
 
