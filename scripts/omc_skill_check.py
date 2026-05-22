@@ -13,7 +13,6 @@ exit code:
 """
 
 import sys
-import os
 import argparse
 from pathlib import Path
 
@@ -25,6 +24,14 @@ _TEMPLATES = ROOT / "templates"
 if _TEMPLATES.exists() and (ROOT / "scripts" / "install.py").exists():
     # omc_kit 자체에서 실행 중
     ROOT = _TEMPLATES
+
+
+def _rel(p: Path, root: Path) -> Path:
+    """Python 3.8 호환 relative_to — 실패 시 절대 경로 반환."""
+    try:
+        return p.relative_to(root)
+    except ValueError:
+        return p
 
 
 def get_omc_kit_path() -> Path | None:
@@ -117,18 +124,18 @@ def check_skill(skill: str, verbose: bool = True) -> list[dict]:
 
         p: Path = c["path"]
         if not p.exists():
-            results.append({**c, "ok": False, "reason": f"파일 없음: {p.relative_to(ROOT) if p.is_relative_to(ROOT) else p}"})
+            results.append({**c, "ok": False, "reason": f"파일 없음: {_rel(p, ROOT)}"})
             continue
 
         # contains 체크
         file_text = p.read_text(encoding="utf-8")
         if "contains" in c:
             if c["contains"] not in file_text:
-                results.append({**c, "ok": False, "reason": f"'{c['contains']}' 문자열 없음: {p.relative_to(ROOT) if p.is_relative_to(ROOT) else p}"})
+                results.append({**c, "ok": False, "reason": f"'{c['contains']}' 문자열 없음: {_rel(p, ROOT)}"})
                 continue
         if "contains_any" in c:
             if not any(pat in file_text for pat in c["contains_any"]):
-                results.append({**c, "ok": False, "reason": f"{c['contains_any']} 중 없음: {p.relative_to(ROOT) if p.is_relative_to(ROOT) else p}"})
+                results.append({**c, "ok": False, "reason": f"{c['contains_any']} 중 없음: {_rel(p, ROOT)}"})
                 continue
 
         results.append({**c, "ok": True, "reason": ""})
@@ -170,7 +177,7 @@ def print_report(skill: str, results: list[dict], fix_hint: bool = False):
 
 
 def list_all_skills() -> list[str]:
-    skills_dir = ROOT / ".agent" / "skills"
+    skills_dir = ROOT / ".agents" / "skills"
     return sorted([
         d.name for d in skills_dir.iterdir()
         if d.is_dir() and d.name.startswith("omc-")
@@ -190,10 +197,19 @@ def main():
             print("스킬 없음 (.agent/skills/ 에 omc-* 폴더 없음)")
             sys.exit(0)
         total_failed = 0
+        failed_skills = []
         for skill in skills:
             results = check_skill(skill, verbose=False)
             print_report(skill, results, fix_hint=args.fix_hint)
-            total_failed += sum(1 for r in results if r["ok"] is False)
+            f = sum(1 for r in results if r["ok"] is False)
+            if f > 0:
+                failed_skills.append(skill)
+            total_failed += f
+        print(f"{'━'*50}")
+        print(f"전체 요약: {len(skills)}개 스킬  통과 {len(skills)-len(failed_skills)}개  누락 {len(failed_skills)}개")
+        if failed_skills:
+            print(f"누락 스킬: {', '.join(failed_skills)}")
+        print(f"{'━'*50}\n")
         sys.exit(1 if total_failed > 0 else 0)
 
     elif args.skill:
