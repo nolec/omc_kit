@@ -6,26 +6,79 @@ description: "교훈을 .omc/lessons/에 기록해 BM25 자동 주입에 활용.
 # OMC Compound Engineering 교훈 캡처
 
 > **이 스킬을 쓰면 안 되는 상황**:
-> - 교훈이 이미 기록되어 있는지 먼저 확인 → `search` 먼저
 > - 단순 메모 → `.omc/notepad.md` 에 직접 기록
+
+---
+
+## Step 0: 중복 확인 (먼저 실행)
+
+> **AI는 아래 커맨드를 직접 실행하고 유사 교훈이 있는지 확인한다. 건너뛰지 않는다.**
+
+```bash
+python3 scripts/omc_lesson.py search "기록하려는 교훈 키워드" --top 3 2>/dev/null
+```
+
+- 유사 교훈이 있으면 → 새 파일 생성 대신 **기존 교훈 업데이트** 여부를 사용자에게 확인한다.
+- 없으면 → 아래 교훈 추가 단계로 진행한다.
 
 ---
 
 ## 교훈 추가
 
+> **`add -i` 는 인터랙티브 입력이 필요하다. 아래 중 하나를 선택한다.**
+
+### 방법 A — 사용자가 직접 실행 (권장)
+
+아래 커맨드를 **사용자가** 터미널에서 직접 실행한다. AI는 대신 실행할 수 없다.
+
 ```bash
 python3 scripts/omc_lesson.py add -i
 ```
 
-### 작성 양식
+### 방법 B — AI가 양식을 채워서 비인터랙티브 실행
+
+AI가 아래 내용을 채운 후 커맨드를 실행한다.
+
+```bash
+python3 scripts/omc_lesson.py add \
+  --title "제목" \
+  --tags "태그1,태그2" \
+  --symptom "증상 설명" \
+  --cause "원인 설명" \
+  --rule "행동 지침"
+```
+
+### 작성 양식 (방법 A 사용 시 참고)
 
 ```
 제목  : _______________________________________________
+          (예: "git add 전 diff 확인 누락")
+
 태그  : _______________________________________________
+          (예: git, pre-commit, tdd — 쉼표 구분, 소문자)
+
 증상  : (언제, 어떤 상황에서 문제가 발생했는가)
+          (예: "staged 파일 확인 없이 커밋 → 불필요한 파일 포함")
+
 원인  : (왜 그런 일이 생겼는가)
+          (예: "git diff --cached 실행을 생략했음")
+
 규칙  : (다음에 이렇게 하면 된다 — 행동 지침 형태로)
+          (예: "git commit 전 항상 git diff --cached 로 staged 내용 확인한다")
 ```
+
+---
+
+## 교훈 추가 완료 확인
+
+> **추가 후 AI는 아래 커맨드로 기록 여부를 확인한다.**
+
+```bash
+python3 scripts/omc_lesson.py list 2>/dev/null | head -5
+```
+
+- 방금 추가한 제목이 목록에 보이면 완료.
+- 보이지 않으면 → 방법 B로 재시도.
 
 ---
 
@@ -33,16 +86,17 @@ python3 scripts/omc_lesson.py add -i
 
 ```bash
 # 목록 전체 보기
-python3 scripts/omc_lesson.py list
+python3 scripts/omc_lesson.py list 2>/dev/null
 
 # 키워드로 검색 (BM25 유사도)
-python3 scripts/omc_lesson.py search "키워드"
-python3 scripts/omc_lesson.py search "키워드" --top 3
+python3 scripts/omc_lesson.py search "키워드" 2>/dev/null
+python3 scripts/omc_lesson.py search "키워드" --top 3 2>/dev/null
 ```
 
 ---
 
 ## 규칙
 - 한 파일 = 한 교훈 (여러 교훈을 한 파일에 묶지 않음)
+- 유사 교훈이 이미 있으면 새 파일 대신 기존 것을 업데이트한다
 - 다음 세션 시작 시 BM25 유사도 기반으로 관련 교훈이 자동 주입됩니다
-- 교훈은 "규칙" 항목을 행동 지침 형태로 작성해야 자동 주입 효과가 높습니다
+- `규칙` 항목을 행동 지침 형태로 작성해야 BM25 자동 주입 효과가 높습니다
