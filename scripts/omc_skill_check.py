@@ -19,6 +19,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 
+# omc_kit 자체 내부에서 실행될 때: templates/ 하위를 ROOT로 사용
+# (설치된 프로젝트에서 실행될 때는 ROOT = 프로젝트 루트)
+_TEMPLATES = ROOT / "templates"
+if _TEMPLATES.exists() and (ROOT / "scripts" / "install.py").exists():
+    # omc_kit 자체에서 실행 중
+    ROOT = _TEMPLATES
+
 
 def get_omc_kit_path() -> Path | None:
     hub_path_file = ROOT / ".omc" / "hub.path"

@@ -93,6 +93,29 @@ cp .cursor/rules/omc-roles.mdc              $OMC_KIT/templates/.cursor/rules/omc
 
 ---
 
+## 새 스킬이 안 보일 때 체크리스트
+
+설치 후 스킬이 목록에 뜨지 않는 3가지 원인:
+
+| # | 원인 | 해결 |
+|---|---|---|
+| 1 | SSOT 경로 오류 | `templates/.agents/skills/`에 있는지 확인. `.agent/skills/`에만 넣으면 install 시 무시됨 |
+| 2 | install --force 미실행 | `python3 omc_kit/scripts/install.py --target . --force` 재실행 |
+| 3 | Cursor 세션 캐시 | 스킬 파일 저장 후 Cursor 세션 재시작 (Cmd+Shift+P → "Reload Window") |
+
+**빠른 진단:**
+```bash
+# 1. 스킬이 실제로 설치됐는지 확인
+python3 scripts/omc_skill_check.py --all
+
+# 2. 누락된 스킬이 있으면 재설치
+python3 path/to/omc_kit/scripts/install.py --target . --force
+
+# 3. 그래도 안 보이면 → Cursor 재시작
+```
+
+---
+
 ## 각 LLM 파일 최소 요구사항
 
 ### `.agent/skills/omc-[NAME]/SKILL.md` (Cursor + Codex 공통)
