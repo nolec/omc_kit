@@ -78,67 +78,59 @@ print(inp.get("file_path") or inp.get("target_file") or inp.get("path") or "")
 esac
 
 # ── OMC 세션 동기화 검사 ──────────────────────────────────────────────────
-# ── OMC 세션 동기화 검사 ──────────────────────────────────────────────────
-# enforce_confirm=true + 활성 세션(pending) 없으면 파일 생성 차단
-# → "다른 작업 중 OMC 우회"를 물리적으로 차단
-# 주의: $() 서브쉘에서 sys.exit(1) 시 sh 환경에서 exit code가 전파되지 않는 문제 회피
-#       임시 파일을 통해 출력을 캡처한다.
-_OMC_SYNC_TMP="$(mktemp)"
-"${PYTHON_BIN}" -c '
+# 버그 수정: python3 -c '...' 내부 작은따옴표(state confirm 등)가 sh 파서에게
+# 코드 종료로 해석되는 문제 → 큰따옴표(-c "...") + 임시파일 방식으로 전환
+_OMC_TMP="$(mktemp)"
+"${PYTHON_BIN}" -c "
 import json, sys
 from pathlib import Path
 
-policy_path = Path(".omc/policy.json")
-latest_path = Path(".omc/state/latest.json")
+policy_path = Path('.omc/policy.json')
+latest_path = Path('.omc/state/latest.json')
 
-# policy 없으면 검사 생략
 if not policy_path.exists():
     sys.exit(0)
 
 try:
-    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    policy = json.loads(policy_path.read_text(encoding='utf-8'))
 except Exception:
     sys.exit(0)
 
-# enforce_confirm=false 이면 생략
-if not policy.get("enforce_confirm", False):
+if not policy.get('enforce_confirm', False):
     sys.exit(0)
 
-# latest.json 없으면 (초기 프로젝트) 생략
 if not latest_path.exists():
     sys.exit(0)
 
 try:
-    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    latest = json.loads(latest_path.read_text(encoding='utf-8'))
 except Exception:
     sys.exit(0)
 
-status = (latest.get("latest_confirmation") or {}).get("status", "")
-request = latest.get("latest_confirmed_request", "(알 수 없음)")
+status = (latest.get('latest_confirmation') or {}).get('status', '')
+request = latest.get('latest_confirmed_request', '(알 수 없음)')
 
-# pending 이면 활성 세션 존재 → 허용
-if status == "pending":
+if status == 'pending':
     sys.exit(0)
 
-# confirmed 이면 활성 세션 없음 → 차단 메시지 출력 후 exit 1
-if status == "confirmed":
-    print(f"[OMC BLOCK] 활성 세션 없음 — 마지막 작업: \"{request}\"")
+if status == 'confirmed':
+    print(f'[OMC BLOCK] 활성 세션 없음 — 마지막 작업: {request}')
     print()
-    print("⚠️  state confirm은 작업 완료 처리입니다. 실행하면 또 막힙니다.")
+    print('state confirm 은 작업 완료 처리입니다. 실행하면 또 막힙니다.')
     print()
-    print("▶ 올바른 절차: 새 작업을 선언해서 pending 세션을 만드세요.")
-    print("    python3 scripts/omc.py \"새 작업 내용\"")
-    print("  또는 Claude Code에서: /plan [작업] / /task [설명]")
+    print('▶ 올바른 절차: 새 작업을 선언해서 pending 세션을 만드세요.')
+    print('    python3 scripts/omc.py 새작업내용')
+    print('  또는 Claude Code에서: /plan [작업] / /task [설명]')
     sys.exit(1)
-' > "${_OMC_SYNC_TMP}" 2>/dev/null
+" > "${_OMC_TMP}" 2>/dev/null
 OMC_SYNC_EXIT=$?
-OMC_SYNC_RESULT="$(cat "${_OMC_SYNC_TMP}")"
-rm -f "${_OMC_SYNC_TMP}"
 
 if [ "${OMC_SYNC_EXIT}" -ne 0 ]; then
-  echo "${OMC_SYNC_RESULT}"
+  cat "${_OMC_TMP}"
+  rm -f "${_OMC_TMP}"
   exit 2
 fi
+rm -f "${_OMC_TMP}"
 
 # 파일 경로 추출 (Claude Code: tool_input.file_path / Cursor: params.target_file)
 FILE_PATH="$(

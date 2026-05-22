@@ -177,6 +177,63 @@ def _templates_root(kit_root: Path) -> Path:
     return kit_root / "templates"
 
 
+
+def _check_force_regression(kit: Path, tgt: Path) -> bool:
+    """--force 실행 전 kit < live 버전 회귀 위험을 감지해 사용자에게 경고.
+
+    핵심 omc 스크립트를 샘플링해 kit이 더 오래됐으면 경고 후 확인을 요청.
+    True = 계속 진행, False = 사용자가 중단 선택.
+    """
+    import difflib
+
+    kit_scripts = kit / "scripts"
+    live_scripts = tgt / "scripts"
+    if not kit_scripts.is_dir() or not live_scripts.is_dir():
+        return True
+
+    # 핵심 스크립트 샘플링 (전부 비교하면 느림)
+    _SAMPLE = ["omc_tdd_check.py", "omc_pipeline_guard.py", "omc_doctor.py", "omc_hub_push.py"]
+    regressions: list[str] = []
+
+    for name in _SAMPLE:
+        kit_file = kit_scripts / name
+        live_file = live_scripts / name
+        if not kit_file.exists() or not live_file.exists():
+            continue
+        kit_lines = kit_file.read_text(encoding="utf-8").splitlines()
+        live_lines = live_file.read_text(encoding="utf-8").splitlines()
+        if kit_lines == live_lines:
+            continue
+        # 라인 수 차이로 간단 판단: kit이 더 적으면 기능이 빠진 것
+        diff = len(live_lines) - len(kit_lines)
+        if diff > 10:
+            regressions.append(f"  {name}: live +{diff}줄 (kit이 더 오래된 버전)")
+
+    if not regressions:
+        return True
+
+    print()
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print(" ⚠️  --force 버전 회귀 경고")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print(" kit의 스크립트가 live 프로젝트보다 오래된 것 같습니다.")
+    print(" --force 실행 시 live의 최신 수정사항이 덮어써집니다.")
+    print()
+    for r in regressions:
+        print(r)
+    print()
+    print(" 권장 조치:")
+    print("   1. hub에서 최신 pull: cd /path/to/omc_kit && git pull")
+    print("   2. 또는 live → hub 먼저 동기화: python3 scripts/omc_hub_push.py")
+    print("   3. 그 후 install --force 재실행")
+    print()
+    try:
+        ans = input(" 그래도 계속 진행할까요? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        ans = "n"
+    return ans in ("y", "yes")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Install multi-assistant kit into a target repository.")
     ap.add_argument("--target", type=Path, required=True, help="Target repository root.")
@@ -187,6 +244,10 @@ def main() -> int:
     templates = _templates_root(kit)
     tgt = args.target.resolve()
     force = bool(args.force)
+
+    if force and not _check_force_regression(kit, tgt):
+        print("[install] 중단됨")
+        return 1
 
     to_copy = [
         # ── prompts ──────────────────────────────────────────────────────────
