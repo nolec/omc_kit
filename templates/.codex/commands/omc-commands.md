@@ -16,6 +16,7 @@ $omc-investigate 빌드 오류
 $omc-lesson 타입 오류
 $omc-status
 $omc-ship
+$omc-critique
 $omc-retro
 ```
 

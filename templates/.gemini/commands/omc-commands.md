@@ -358,3 +358,10 @@ python3 scripts/omc_autopilot.py status --task-id feat-login
 2. 실패 시: 오류 출력을 다음 retry 프롬프트 앞에 자동 주입 → 재실행
 3. `max_retries` 소진 시 스텝 실패로 기록, 상태 `.omc/state/autopilot/<task-id>.json` 저장
 4. `depends_on` 지정 시 의존 스텝 완료 후에만 실행 (토폴로지 정렬)
+
+### `/critique [계획/코드]`
+계획·코드·전략에 대한 냉정한 Pre-mortem 비판 리뷰
+- 컨텍스트 자동 감지: `git diff` → CODE 모드 / 계획 텍스트 → PLAN 모드
+- PLAN 모드: 강제 질문 10개 (가정·누락·리스크·범위·Red Team)
+- CODE 모드: 강제 질문 8개 (정합성·부작용·설계·TDD·누락)
+- 칭찬 금지 / 근거 필수 / 판정: HOLD / REVISE / PROCEED WITH CAUTION

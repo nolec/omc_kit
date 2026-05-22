@@ -25,6 +25,17 @@ python3 scripts/omc_role_suggest.py "[사용자 요청 텍스트]"
 | 구현, 개발, feature, 추가 | `senior_coding` |
 | 배포, deploy, ship, release | `directive` |
 | 문서, docs, 검색, search | `search` |
+| 계획, plan, 설계, 분해, 태스크 | `analysis` + `senior_coding` |
+| 태스크, task, 구현해줘, 만들어줘 | `senior_coding` + `tdd` |
+| 조사, investigate, 원인, 디버그 | `analysis` |
+| 교훈, lesson, 기록, 배운 거 | `search` |
+| 상태, status, 어디까지, 현재 작업 | — |
+| 브레인스토밍, brainstorm, 아이디어 | `analysis` |
+| 오피스아워, office-hours, 방향 맞아 | `analysis` |
+| CEO 리뷰, ceo-review, 범위 검토 | `analysis` |
+| 회고, retro, 이번 주 리뷰 | `analysis` |
+| 배포, ship, 릴리즈, 출시 | `directive` |
+| 비판, critique, pre-mortem, 약점, 냉정하게, 틀린 거 | `code_review` + `analysis` |
 
 복합: 버그+수정 → `analysis`+`tdd` / 새 기능 → `senior_coding`+`tdd` / 리팩터링 → `senior_coding`+`code_review`
 
