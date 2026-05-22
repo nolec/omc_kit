@@ -626,7 +626,8 @@ def _detect_project_context(tgt: "Path") -> dict:
         if d.is_dir():
             subdirs = sorted(x.name for x in d.iterdir() if x.is_dir())[:5]
             sample = ", ".join(subdirs) + ("..." if len(subdirs) == 5 else "")
-            structure_lines.append(f"`{dname}/` — {hint} ({sample})")
+            if subdirs:  # 서브디렉토리 없는 빈 폴더 제외
+                structure_lines.append(f"`{dname}/` — {hint} ({sample})")
     ctx["structure"] = "\n".join(f"- {s}" for s in structure_lines)
 
     # ── 기본 패턴 / 금지 ────────────────────────────────────────────────────
