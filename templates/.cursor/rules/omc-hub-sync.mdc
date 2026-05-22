@@ -1,0 +1,21 @@
+---
+description: omc 스크립트/룰 수정 후 hub 자동 동기화
+globs:
+  - "scripts/omc_*.py"
+  - ".cursor/rules/omc-*.mdc"
+alwaysApply: false
+---
+
+# OMC Hub 자동 동기화
+
+`scripts/omc_*.py` 또는 `.cursor/rules/omc-*.mdc` 파일을 **수정한 직후**, 반드시 아래 커맨드를 실행합니다.
+
+```bash
+python3 scripts/omc_hub_push.py --push
+```
+
+- `.omc/hub.path`가 없으면 조용히 건너뜁니다
+- 변경 없으면 "모두 최신 상태" 출력 후 종료
+- `afterToolCall` 훅이 자동 실행하므로 별도 명령 없이도 동작합니다
+
+> 수동 확인: `python3 scripts/omc_hub_push.py --dry-run`
