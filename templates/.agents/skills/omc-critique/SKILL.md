@@ -28,7 +28,7 @@ git diff --stat HEAD 2>/dev/null | head -20
 git ls-files --others --exclude-standard 2>/dev/null | head -20
 
 # .gitignore 대상이라도 최근 수정된 파일 확인
-find . -newer .git/index -not -path './.git/*' -name '*.md' -o -name '*.py' -o -name '*.ts' 2>/dev/null | head -10
+find . -newer .git/index -not -path './.git/*' \( -name '*.md' -o -name '*.py' -o -name '*.ts' \) 2>/dev/null | head -10
 
 # 플랜 파일 여부 확인
 ls .omc/tasks/ 2>/dev/null
@@ -43,6 +43,7 @@ python3 scripts/omc.py state status --target .
 - untracked 신규 파일이 있고 방금 만든 것이면 → **CODE 모드** (git diff에 안 잡혀도)
 - `.omc/tasks/` 또는 `.omc/notepad.md`에 계획 있음 → **PLAN 모드**
 - 사용자가 텍스트로 계획/전략을 직접 붙여넣음 → **PLAN 모드**
+- 대상이 `.md`, 스킬 파일, 설정 파일 등 코드가 아닌 문서 → **PLAN 모드**
 - 둘 다 있음 → 사용자에게 선택 요청
 - **git diff 없고 untracked도 없는데 "방금 만든 것들"이라고 하면** → `.gitignore` 제외 파일 가능성 → `find` 결과로 CODE 모드 판단
 
@@ -63,6 +64,7 @@ Q1. 이 계획이 전제하는 가정 3가지는? 그 가정이 틀리면 계획
     → _______________
 
 Q2. "N주 안에 가능하다"는 어떤 근거인가? 지금 당장 검증할 수 없는 낙관론이 포함되어 있는가?
+    (일정이 없는 대상 — 스킬/설계/아키텍처 평가 등 — 은 이 질문을 건너뜁니다)
     → _______________
 
 [누락 탐지]
@@ -193,6 +195,14 @@ MINOR (개선 권장):
 판정: BLOCK / REVISE / APPROVE WITH NOTES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
+
+---
+
+## 이 스킬을 쓰면 안 되는 상황
+
+- 방금 critique를 완료하고 즉시 재실행 → 중복 critique, 시간 낭비
+- 범위가 이미 확정되어 있고 품질만 체크하면 충분한 경우 → `$omc-review` 사용
+- 단순 버그 수정 (원인이 명확한 경우) → `$omc-investigate` 사용
 
 ---
 
