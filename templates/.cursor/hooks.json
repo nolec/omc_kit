@@ -25,7 +25,7 @@
     ],
     "afterToolCall": [
       {
-        "command": ".cursor/hooks/omc-hub-push.sh",
+        "command": ".agent-hooks/omc-hub-push.sh",
         "failClosed": false
       }
     ]

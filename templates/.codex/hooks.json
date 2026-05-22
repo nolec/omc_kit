@@ -24,6 +24,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".agent-hooks/omc-hub-push.sh",
+            "name": "omc-hub-push",
+            "description": "omc_* 파일 수정 후 hub 자동 동기화"
+          }
+        ]
+      }
     ]
   }
 }
