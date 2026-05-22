@@ -5,6 +5,57 @@
 
 ---
 
+## Part 1 — SKILL.md 작성 품질 기준 (먼저 확인)
+
+> **SKILL.md를 작성하기 전에 `SKILL_TEMPLATE.md`를 복사해서 시작한다.**
+> 아래 항목이 모두 포함돼야 스킬이 "완성"으로 간주됩니다.
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SKILL.md 품질 체크리스트
+스킬: omc-[NAME]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[frontmatter]
+[ Q1 ] skill_name 필드 있음
+[ Q2 ] description 필드에 트리거 키워드 포함
+
+[컨텍스트 수집]
+[ Q3 ] 커맨드 블록이 있는 섹션마다 AI 실행 지시문 있음
+       형식: > **AI는 아래 커맨드를 직접 실행하고 결과를 확인한다. 건너뛰지 않는다.**
+[ Q4 ] 수집 커맨드에 2>/dev/null 붙어 있음 (스크립트 없는 환경 대비)
+[ Q5 ] 수집 결과 → 출력 항목 연결 매핑 있음
+       형식: 수집 결과 연결: / - [커맨드] → **항목 N** 에 반영
+
+[출력 포맷]
+[ Q6 ] 출력 포맷(양식)이 명시됨
+[ Q7 ] 데이터 없을 때 처리 기준 있음
+       형식: "없으면 '없음'으로 명시하고 빈칸으로 두지 않는다"
+
+[체크박스]
+[ Q8 ] 완료 체크박스(☐)가 코드블록 밖에 있음
+       (코드블록 안 체크박스는 AI가 인터랙션 불가)
+
+[이후 액션]
+[ Q9 ] "이 스킬을 쓰면 안 되는 상황" 섹션 있음
+[ Q10] "이후 액션" 섹션 있음 (완료/실패 시 다음 스킬 링크 포함)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+완료 기준: Q1~Q10 전부 체크
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**빠른 작성법**: `SKILL_TEMPLATE.md`를 복사하면 Q3~Q8이 자동으로 충족됩니다.
+
+```bash
+cp .agents/skills/SKILL_TEMPLATE.md .agents/skills/omc-[NAME]/SKILL.md
+cp .agents/skills/SKILL_TEMPLATE.md .agent/skills/omc-[NAME]/SKILL.md
+```
+
+---
+
+## Part 2 — 파일 등록 체크리스트
+
 ## 스킬 이름: `omc-[NAME]`
 
 ```
@@ -74,9 +125,11 @@ if [ -z "$OMC_KIT" ] || [ ! -d "$OMC_KIT" ]; then
   exit 1
 fi
 
-# 1-2: Cursor + Codex 스킬 디렉토리 생성
+# 1-2: Cursor + Codex 스킬 디렉토리 생성 (템플릿 복사)
 mkdir -p .agent/skills/omc-$SKILL_NAME
 mkdir -p .agents/skills/omc-$SKILL_NAME
+cp .agents/skills/SKILL_TEMPLATE.md .agent/skills/omc-$SKILL_NAME/SKILL.md
+cp .agents/skills/SKILL_TEMPLATE.md .agents/skills/omc-$SKILL_NAME/SKILL.md
 
 # 9: SSOT 동기화 (파일 작성 후 실행)
 mkdir -p $OMC_KIT/templates/.agent/skills/omc-$SKILL_NAME
@@ -120,6 +173,8 @@ python3 path/to/omc_kit/scripts/install.py --target . --force
 
 ### `.agent/skills/omc-[NAME]/SKILL.md` (Cursor + Codex 공통)
 
+`SKILL_TEMPLATE.md`를 복사해서 시작합니다. 최소 구조는 아래와 같습니다.
+
 ```markdown
 ---
 skill_name: omc-[NAME]
@@ -128,10 +183,18 @@ description: "[한 줄 설명]. 트리거: [트리거 키워드]. [핵심 제약
 
 # [스킬 제목]
 
-## 실행 순서
-...
+> **이 스킬을 쓰면 안 되는 상황**: ...
 
-## 출력 포맷
+## Step 0: 컨텍스트 수집
+
+> **AI는 아래 커맨드를 직접 실행하고 결과를 확인한다. 건너뛰지 않는다.**
+
+[커맨드 블록 + 2>/dev/null]
+
+수집 결과 연결:
+- [커맨드] → **항목 N** 에 반영
+
+## 실행 순서 / 출력 포맷
 ...
 
 ## 이후 액션
