@@ -576,56 +576,141 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
     return 0
 
 
-def _setup_ethos_section5(tgt: Path) -> None:
-    """ETHOS.md 섹션 5 (프로젝트 맥락)를 대화형으로 채운다.
 
-    이미 플레이스홀더가 아닌 내용이 있으면 건너뛴다.
+def _detect_project_context(tgt: "Path") -> dict:
+    """package.json / nx.json / 디렉토리 구조를 스캔해 프로젝트 맥락 자동 감지."""
+    import json as _json
+
+    ctx: dict = {"stack": "", "structure": "", "patterns": "", "forbidden": ""}
+
+    # ── 스택 ─────────────────────────────────────────────────────────────────
+    stack_parts: list = []
+    pkg_path = tgt / "package.json"
+    if pkg_path.exists():
+        try:
+            pkg = _json.loads(pkg_path.read_text(encoding="utf-8"))
+            deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+            if "typescript" in deps or (tgt / "tsconfig.json").exists():
+                stack_parts.append("TypeScript")
+            for fw, label in (
+                ("react", "React"), ("next", "Next.js"),
+                ("vue", "Vue"), ("svelte", "Svelte"),
+                ("express", "Express"), ("fastify", "Fastify"),
+                ("hono", "Hono"),
+            ):
+                if fw in deps:
+                    stack_parts.append(label)
+        except Exception:
+            pass
+    for py_file in ("pyproject.toml", "requirements.txt", "setup.py"):
+        if (tgt / py_file).exists():
+            stack_parts.append("Python")
+            break
+    for tool_file, label in (
+        ("nx.json", "Nx monorepo"), ("turbo.json", "Turborepo"),
+        ("lerna.json", "Lerna"), ("pnpm-workspace.yaml", "pnpm workspace"),
+    ):
+        if (tgt / tool_file).exists():
+            stack_parts.append(label)
+            break
+    ctx["stack"] = " + ".join(stack_parts)
+
+    # ── 디렉토리 구조 ────────────────────────────────────────────────────────
+    structure_lines: list = []
+    for dname, hint in (
+        ("apps", "앱별 진입점"), ("libs", "재사용 라이브러리"),
+        ("packages", "공유 패키지"), ("src", "소스 루트"),
+        ("services", "백엔드 서비스"),
+    ):
+        d = tgt / dname
+        if d.is_dir():
+            subdirs = sorted(x.name for x in d.iterdir() if x.is_dir())[:5]
+            sample = ", ".join(subdirs) + ("..." if len(subdirs) == 5 else "")
+            structure_lines.append(f"`{dname}/` — {hint} ({sample})")
+    ctx["structure"] = "\n".join(f"- {s}" for s in structure_lines)
+
+    # ── 기본 패턴 / 금지 ────────────────────────────────────────────────────
+    ctx["patterns"] = "기존 파일 옆 패턴 먼저 → 같은 lib 내 패턴 → 새 패턴은 팀에 공유"
+    ctx["forbidden"] = (
+        "`any` 사용 금지, 컴포넌트 내 직접 API 호출 금지 (훅 분리)"
+        if "TypeScript" in ctx["stack"]
+        else "(직접 채우세요)"
+    )
+    return ctx
+
+
+def _setup_ethos_section5(tgt: "Path") -> None:
+    """ETHOS.md 섹션 5를 자동 감지 초안으로 채운다.
+
+    대상 프로젝트(tgt)를 스캔해 스택·구조·패턴을 추론하고 초안을 생성.
+    사용자는 Y/n/edit 중 선택만 하면 됨. 플레이스홀더가 없으면 건너뜀.
     """
+    import re as _re
+
     ethos_path = tgt / "ETHOS.md"
     if not ethos_path.exists():
         return
 
     content = ethos_path.read_text(encoding="utf-8")
-    # 이미 실제 내용이 채워진 경우 건너뜀
     if "___" not in content:
         return
 
+    ctx = _detect_project_context(tgt)
+
     print()
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print(" ETHOS.md 섹션 5 — 프로젝트 맥락 설정")
-    print(" (Enter만 누르면 건너뜁니다)")
+    print(" ETHOS.md 섹션 5 — 프로젝트 맥락 자동 감지")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print()
+    print(f"  스택     : {ctx['stack'] or '(감지 실패 — 직접 입력 필요)'}")
+    print(f"  구조     :")
+    for line in ctx["structure"].splitlines():
+        print(f"    {line}")
+    print(f"  패턴     : {ctx['patterns']}")
+    print(f"  금지     : {ctx['forbidden']}")
+    print()
 
     try:
-        stack = input("스택 (예: TypeScript + React + Nx): ").strip()
-        structure = input("주요 디렉토리 구조 (예: libs/=재사용, apps/=조합): ").strip()
-        patterns = input("패턴 우선순위 (예: 기존 파일 옆 패턴 먼저): ").strip()
-        forbidden = input("금지 사항 (예: any 사용 금지, 컴포넌트 내 직접 API 호출 금지): ").strip()
+        ans = input("이 내용으로 채울까요? [Y/n/edit]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
-        print("\n[ETHOS] 섹션 5 설정 건너뜀")
+        print("\n[ETHOS] 건너뜀")
         return
 
-    if not any([stack, structure, patterns, forbidden]):
-        print("[ETHOS] 입력 없음 — 섹션 5는 ETHOS.md를 직접 편집해서 채우세요.")
+    if ans == "n":
+        print("[ETHOS] 건너뜀 — ETHOS.md를 직접 편집하세요.")
         return
+
+    if ans == "edit":
+        print("수정할 항목만 입력하세요. (Enter = 감지값 유지)")
+        try:
+            v = input(f"  스택 [{ctx['stack']}]: ").strip()
+            if v:
+                ctx["stack"] = v
+            v = input(f"  패턴 [{ctx['patterns']}]: ").strip()
+            if v:
+                ctx["patterns"] = v
+            v = input(f"  금지 [{ctx['forbidden']}]: ").strip()
+            if v:
+                ctx["forbidden"] = v
+        except (EOFError, KeyboardInterrupt):
+            print("\n[ETHOS] 건너뜀")
+            return
 
     section5 = "\n## 5. 이 프로젝트 맥락\n\n"
-    if stack:
-        section5 += f"**스택:** {stack}\n\n"
-    if structure:
-        section5 += f"**디렉토리 구조:** {structure}\n\n"
-    if patterns:
-        section5 += f"**패턴 우선순위:** {patterns}\n\n"
-    if forbidden:
-        section5 += f"**금지:** {forbidden}\n"
+    if ctx["stack"]:
+        section5 += f"**스택:** {ctx['stack']}\n\n"
+    if ctx["structure"]:
+        section5 += f"**디렉토리 구조:**\n{ctx['structure']}\n\n"
+    if ctx["patterns"]:
+        section5 += f"**패턴 우선순위:** {ctx['patterns']}\n\n"
+    if ctx["forbidden"]:
+        section5 += f"**금지:** {ctx['forbidden']}\n"
 
-    # 플레이스홀더 섹션 교체
-    import re
-    new_content = re.sub(
+    new_content = _re.sub(
         r"## 5\. 이 프로젝트 맥락.*?(?=\n---|\Z)",
         section5,
         content,
-        flags=re.DOTALL,
+        flags=_re.DOTALL,
     )
     ethos_path.write_text(new_content, encoding="utf-8")
     print(f"[ETHOS] 섹션 5 저장 완료 → {ethos_path.relative_to(tgt)}")
