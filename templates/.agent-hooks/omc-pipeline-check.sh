@@ -78,59 +78,55 @@ print(inp.get("file_path") or inp.get("target_file") or inp.get("path") or "")
 esac
 
 # ── OMC 세션 동기화 검사 ──────────────────────────────────────────────────
-# 버그 수정: python3 -c '...' 내부 작은따옴표(state confirm 등)가 sh 파서에게
-# 코드 종료로 해석되는 문제 → 큰따옴표(-c "...") + 임시파일 방식으로 전환
-_OMC_TMP="$(mktemp)"
-"${PYTHON_BIN}" -c "
+# 인라인 -c "..." 는 Python 코드 내 따옴표 충돌 위험 → 임시 .py 파일 방식 사용
+_OMC_PY="$(mktemp --suffix=.py)"
+_OMC_OUT="$(mktemp)"
+cat > "${_OMC_PY}" << 'OMCPYEOF'
 import json, sys
 from pathlib import Path
 
-policy_path = Path('.omc/policy.json')
-latest_path = Path('.omc/state/latest.json')
+policy_path = Path(".omc/policy.json")
+latest_path = Path(".omc/state/latest.json")
 
 if not policy_path.exists():
     sys.exit(0)
 
 try:
-    policy = json.loads(policy_path.read_text(encoding='utf-8'))
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
 except Exception:
     sys.exit(0)
 
-if not policy.get('enforce_confirm', False):
+if not policy.get("enforce_confirm", False):
     sys.exit(0)
 
 if not latest_path.exists():
     sys.exit(0)
 
 try:
-    latest = json.loads(latest_path.read_text(encoding='utf-8'))
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
 except Exception:
     sys.exit(0)
 
-status = (latest.get('latest_confirmation') or {}).get('status', '')
-request = latest.get('latest_confirmed_request', '(알 수 없음)')
+status = (latest.get("latest_confirmation") or {}).get("status", "")
+request = latest.get("latest_confirmed_request", "(알 수 없음)")
 
-if status == 'pending':
+if status == "pending":
     sys.exit(0)
 
-if status == 'confirmed':
-    print(f'[OMC BLOCK] 활성 세션 없음 — 마지막 작업: {request}')
-    print()
-    print('state confirm 은 작업 완료 처리입니다. 실행하면 또 막힙니다.')
-    print()
-    print('▶ 올바른 절차: 새 작업을 선언해서 pending 세션을 만드세요.')
-    print('    python3 scripts/omc.py 새작업내용')
-    print('  또는 Claude Code에서: /plan [작업] / /task [설명]')
+if status == "confirmed":
+    msg = f"[OMC BLOCK] 활성 세션 없음 — 마지막 작업: {request}"
     sys.exit(1)
-" > "${_OMC_TMP}" 2>/dev/null
+OMCPYEOF
+"${PYTHON_BIN}" "${_OMC_PY}" > "${_OMC_OUT}" 2>/dev/null
 OMC_SYNC_EXIT=$?
+rm -f "${_OMC_PY}"
 
 if [ "${OMC_SYNC_EXIT}" -ne 0 ]; then
-  cat "${_OMC_TMP}"
-  rm -f "${_OMC_TMP}"
+  cat "${_OMC_OUT}"
+  rm -f "${_OMC_OUT}"
   exit 2
 fi
-rm -f "${_OMC_TMP}"
+rm -f "${_OMC_OUT}"
 
 # 파일 경로 추출 (Claude Code: tool_input.file_path / Cursor: params.target_file)
 FILE_PATH="$(

@@ -76,26 +76,33 @@ case "${TOOL_NAME}" in
 esac
 
 # ── OMC 세션 동기화 검사 ──────────────────────────────────────────────────
-# enforce_confirm=true + 활성 세션(pending) 없으면 차단
-_OMC_TMP="$(mktemp)"
-"${PYTHON_BIN}" -c "
-
+# 인라인 -c "..." 는 Python 코드 내 따옴표 충돌 위험 → 임시 .py 파일 방식 사용
+_OMC_PY="$(mktemp --suffix=.py)"
+_OMC_OUT="$(mktemp)"
+cat > "${_OMC_PY}" << 'OMCPYEOF'
 import json, sys
 from pathlib import Path
 
 policy_path = Path(".omc/policy.json")
 latest_path = Path(".omc/state/latest.json")
 
-if not policy_path.exists() or not latest_path.exists():
+if not policy_path.exists():
     sys.exit(0)
 
 try:
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    latest = json.loads(latest_path.read_text(encoding="utf-8"))
 except Exception:
     sys.exit(0)
 
 if not policy.get("enforce_confirm", False):
+    sys.exit(0)
+
+if not latest_path.exists():
+    sys.exit(0)
+
+try:
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+except Exception:
     sys.exit(0)
 
 status = (latest.get("latest_confirmation") or {}).get("status", "")
@@ -105,26 +112,19 @@ if status == "pending":
     sys.exit(0)
 
 if status == "confirmed":
-    msg = (
-        f"[OMC BLOCK] 활성 세션 없음 — 마지막 작업: \"{request}\"\n"
-        "\n"
-        "⚠️  'state confirm'은 작업 완료 처리입니다. 실행하면 또 막힙니다.\n"
-        "\n"
-        "▶ 올바른 절차: 새 작업을 선언해서 pending 세션을 만드세요.\n"
-        "  python3 scripts/omc.py \"새 작업 내용\"\n"
-        "  또는 Cursor에서: /plan [작업]"
-    )
-    print(json.dumps({"permission": "deny", "user_message": msg, "agent_message": msg}, ensure_ascii=False))
+    msg = f"[OMC BLOCK] 활성 세션 없음 — 마지막 작업: {request}"
     sys.exit(1)
-" > "${_OMC_TMP}" 2>/dev/null
+OMCPYEOF
+"${PYTHON_BIN}" "${_OMC_PY}" > "${_OMC_OUT}" 2>/dev/null
 OMC_SYNC_EXIT=$?
+rm -f "${_OMC_PY}"
 
-if [[ ${OMC_SYNC_EXIT} -ne 0 ]]; then
-  cat "${_OMC_TMP}"
-  rm -f "${_OMC_TMP}"
+if [ "${OMC_SYNC_EXIT}" -ne 0 ]; then
+  printf '{"permission":"deny","user_message":"[OMC BLOCK] 활성 세션 없음 — pending 세션을 먼저 선언하세요. python3 scripts/omc.py \"새 작업\"","agent_message":"[OMC BLOCK]"}'
+  rm -f "${_OMC_OUT}"
   exit 0
 fi
-rm -f "${_OMC_TMP}"
+rm -f "${_OMC_OUT}"
 
 # edit_file은 CONTRACT 확인 체크 후 허용
 if [[ "${TOOL_NAME}" == "edit_file" ]]; then
