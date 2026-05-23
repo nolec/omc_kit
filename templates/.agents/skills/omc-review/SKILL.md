@@ -35,6 +35,11 @@ find . -newer .git/index -not -path './.git/*' \( -name '*.ts' -o -name '*.tsx' 
 python3 scripts/omc.py state status --target . 2>/dev/null
 ```
 
+수집 결과 연결:
+- `omc.py state status` → 현재 작업 컨텍스트 파악
+- `git diff HEAD` → 리뷰 대상 변경 전체
+- `git ls-files --others` → untracked 파일 리뷰 범위 포함 여부 판단
+
 **리뷰 범위 확정 규칙**:
 - `git diff HEAD` 있음 → staged/unstaged 변경 전체
 - untracked/신규 파일 있음 → 해당 파일도 리뷰 범위에 포함
@@ -128,9 +133,6 @@ REVIEW RESULT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-수집 결과 연결:
-- `omc.py state status` → 현재 작업 컨텍스트 파악
-- `git diff --stat HEAD` → 리뷰 대상 파일 목록
 
 ---
 

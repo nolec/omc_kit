@@ -18,6 +18,9 @@ description: "교훈을 .omc/lessons/에 기록해 BM25 자동 주입에 활용.
 python3 scripts/omc_lesson.py search "기록하려는 교훈 키워드" --top 3 2>/dev/null
 ```
 
+수집 결과 연결:
+- `search` 결과 → 중복 여부 판단 → 신규 추가 vs 기존 업데이트 결정
+
 - 유사 교훈이 있으면 → 새 파일 생성 대신 **기존 교훈 업데이트** 여부를 사용자에게 확인한다.
 - 없으면 → 아래 교훈 추가 단계로 진행한다.
 
@@ -83,9 +86,6 @@ python3 scripts/omc_lesson.py list 2>/dev/null | head -5
 - 보이지 않으면 → 방법 B로 재시도.
 
 ---
-
-수집 결과 연결:
-- `search` 결과 → 중복 여부 판단에 반영
 
 ## 교훈 조회
 
