@@ -15,6 +15,20 @@ description: "코딩 전 제품 사고 강제. 6개 질문 필수 답변. 트리
 
 ---
 
+## Step 0: 컨텍스트 수집
+
+> **AI는 아래 커맨드를 직접 실행하고 결과를 확인한 후 질문을 시작한다. 건너뛰지 않는다.**
+
+```bash
+python3 scripts/omc.py state status --target . 2>/dev/null
+git branch --show-current 2>/dev/null
+```
+
+수집 결과 연결:
+- `omc.py state status` → 현재 작업 컨텍스트 파악
+
+---
+
 6개 강제 질문에 답하지 않으면 구현 단계로 넘어갈 수 없습니다.
 
 > Q에 답하기 어려우면 `N/A — [이유]` 형식으로 기재한다. 빈칸으로 남기지 않는다.

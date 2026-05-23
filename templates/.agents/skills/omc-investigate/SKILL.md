@@ -33,6 +33,10 @@ git ls-files --others --exclude-standard 2>/dev/null | head -10
 python3 scripts/omc.py state status --target . 2>/dev/null
 ```
 
+수집 결과 연결:
+- `omc.py state status` → 현재 작업 컨텍스트 파악
+- `git log --oneline` → 최근 변경 맥락 파악
+
 ---
 
 ## 4단계 파이프라인
@@ -90,6 +94,8 @@ PHASE 4 ▸ IMPLEMENTATION
 ☐ 교훈 기록 완료
 
 ---
+
+> 답하기 어려운 항목은 `N/A — [이유]` 형식으로 기재한다. 빈칸으로 두지 않는다.
 
 ## 이후 액션
 

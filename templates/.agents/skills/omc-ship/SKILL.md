@@ -38,6 +38,9 @@ git status -sb && git log --oneline -5
 
 ---
 
+수집 결과 연결:
+- TDD 체크 결과 → 체크리스트 항목 판단
+
 ## 배포 전 체크리스트
 
 > **모든 항목이 통과된 후에만 배포 실행 섹션으로 진입한다.**
@@ -101,3 +104,13 @@ npx nx run <app>:deploy
 ```bash
 python3 scripts/omc_lesson.py add -i
 ```
+
+
+> 답하기 어려운 항목은 `N/A — [이유]` 형식으로 기재한다. 빈칸으로 두지 않는다.
+
+## 이후 액션
+
+| 결과 | 다음 단계 |
+|---|---|
+| 배포 성공 | `$omc-retro` 교훈 캡처 |
+| 배포 실패 | `$omc-investigate` 원인 추적 |

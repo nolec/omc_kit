@@ -14,11 +14,17 @@ description: "구현 전 계획·설계·TDD 태스크 분해. 트리거: 계획
 
 ## Phase 0: 현재 상태 확인
 
+> **AI는 아래 커맨드를 직접 실행하고 결과를 확인한 후 Phase 1로 진입한다. 건너뛰지 않는다.**
+
 ```bash
-python3 scripts/omc.py state status --target .
+python3 scripts/omc.py state status --target . 2>/dev/null
 ```
 
 ---
+
+수집 결과 연결:
+- `omc.py state status` → 현재 세션 목표·DoD 파악
+- `git log` → 최근 변경 맥락 파악
 
 ## Phase 1: 요구사항 인터뷰 (답을 모두 채울 것)
 
@@ -104,6 +110,8 @@ python3 scripts/omc.py state confirm --target .
 ☐ confirm 완료
 
 ---
+
+> 답하기 어려운 질문은 `N/A — [이유]` 형식으로 기재한다. 빈칸으로 두지 않는다.
 
 ## 이후 액션
 

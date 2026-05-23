@@ -150,6 +150,8 @@ Draft PR 생성 시: `--draft` 플래그 추가
 
 ---
 
+☐ Step 4 PR 생성 완료
+
 ## Step 5 — 완료 보고
 
 PR 생성 후 URL을 확인하고 사용자에게 전달한다.
@@ -157,3 +159,14 @@ PR 생성 후 URL을 확인하고 사용자에게 전달한다.
 ```bash
 gh pr view --web 2>/dev/null || gh pr view 2>/dev/null | head -5
 ```
+
+
+> 답하기 어려운 항목은 `N/A — [이유]` 형식으로 기재한다. 빈칸으로 두지 않는다.
+
+## 이후 액션
+
+| 결과 | 다음 단계 |
+|---|---|
+| PR 생성 완료 | PR URL을 사용자에게 전달 |
+| 중복 PR 발견 | 기존 PR URL 전달 후 중단 |
+| gh 미인증 | `gh auth login --web` 안내 |

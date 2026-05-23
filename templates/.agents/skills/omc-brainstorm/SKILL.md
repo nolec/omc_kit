@@ -14,6 +14,20 @@ AI는 **소크라테스 방식**으로 진행합니다.
 
 ---
 
+## Step 0: 컨텍스트 수집
+
+> **AI는 아래 커맨드를 직접 실행하고 결과를 확인한 후 Phase 1로 진입한다. 건너뛰지 않는다.**
+
+```bash
+python3 scripts/omc.py state status --target . 2>/dev/null
+git branch --show-current 2>/dev/null
+```
+
+수집 결과 연결:
+- `omc.py state status` → 현재 작업 컨텍스트 파악
+
+---
+
 ## Phase 1 — What: 현상 파악
 
 AI가 아래 질문을 **순서대로 하나씩** 묻는다. 사용자가 답한 후 다음 질문으로 넘어간다.
@@ -108,6 +122,8 @@ BRAINSTORM 결과
 ☐ 사용자 확인 완료
 
 ---
+
+> 답하기 어려운 질문은 `N/A — [이유]` 형식으로 기재한다. 빈칸으로 두지 않는다.
 
 ## 이후 액션
 
