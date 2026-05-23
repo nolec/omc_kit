@@ -90,6 +90,8 @@ cat .github/PULL_REQUEST_TEMPLATE.md 2>/dev/null
 
 ---
 
+> 각 항목에 답하기 어려우면 `N/A — [이유]` 형식으로 기재한다. 빈칸으로 두지 않는다.
+
 ## Step 3 — 본문 작성
 
 > `.github/PULL_REQUEST_TEMPLATE.md` 의 섹션 구조를 **그대로** 유지한다.
@@ -160,8 +162,6 @@ PR 생성 후 URL을 확인하고 사용자에게 전달한다.
 gh pr view --web 2>/dev/null || gh pr view 2>/dev/null | head -5
 ```
 
-
-> 답하기 어려운 항목은 `N/A — [이유]` 형식으로 기재한다. 빈칸으로 두지 않는다.
 
 ## 이후 액션
 

@@ -26,6 +26,8 @@ python3 scripts/omc_guard.py require --for "task" --target . 2>/dev/null
 수집 결과 연결:
 - `omc_guard.py` 결과 → 세션 확정 여부 판단
 
+> 각 항목에 답하기 어려우면 `N/A — [이유]` 형식으로 기재한다. 빈칸으로 두지 않는다.
+
 ## 파이프라인 양식
 
 ```
@@ -107,8 +109,6 @@ PHASE 7 ▸ COMPOUND ENGINEERING
 
 ---
 
-> 답하기 어려운 항목은 `N/A — [이유]` 형식으로 기재한다. 빈칸으로 두지 않는다.
-
 ## 이후 액션
 
 | 상태 | 다음 단계 |
@@ -124,4 +124,3 @@ PHASE 7 ▸ COMPOUND ENGINEERING
 ## 규칙
 - 체크박스를 채우지 않으면 다음 단계로 진행하지 않습니다
 - RED 등록(실제 FAIL 출력 첨부) 없이 구현 파일 생성 금지
-- **신규 스킬 작성 시**: `cp .agents/skills/SKILL_TEMPLATE.md .agents/skills/omc-[NAME]/SKILL.md` 로 시작한다

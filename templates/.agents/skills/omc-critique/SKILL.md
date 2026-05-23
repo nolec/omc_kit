@@ -40,6 +40,10 @@ cat .omc/notepad.md 2>/dev/null
 python3 scripts/omc.py state status --target .
 ```
 
+수집 결과 연결:
+- `omc.py state status` → 현재 세션 상태 파악 → PLAN/CODE 모드 판단
+- `git diff --stat HEAD` → 변경 범위 파악 → CODE 모드 여부 판단
+
 감지 결과에 따라 모드를 자동 선택한다:
 - `git diff`에 내용 있음 → **CODE 모드**
 - untracked 신규 파일이 있고 방금 만든 것이면 → **CODE 모드** (git diff에 안 잡혀도)
@@ -135,9 +139,6 @@ MINOR (개선 권장):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-수집 결과 연결:
-- `omc.py state status` → 현재 작업 컨텍스트 파악
-- `git diff --stat HEAD` → 변경 범위 파악
 
 ---
 
