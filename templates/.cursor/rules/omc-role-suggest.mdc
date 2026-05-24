@@ -1,7 +1,7 @@
 ---
 description: "OMC 진입점 — 세부 규칙은 omc-pipeline / omc-roles / omc-commands / omc-tdd 에 있습니다"
 globs: []
-alwaysApply: true
+alwaysApply: false
 ---
 
 # OMC 운영 규칙 (Cursor)
