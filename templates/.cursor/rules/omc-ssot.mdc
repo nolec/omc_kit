@@ -9,7 +9,7 @@ globs:
   - "AGENTS.md"
   - "CLAUDE.md"
   - "GEMINI.md"
-alwaysApply: false
+alwaysApply: true
 ---
 
 # OMC 인프라 수정 규칙 — SSOT는 omc_kit/templates/
