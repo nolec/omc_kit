@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "enforce_confirm": true,
+  "auto_compact_threshold_count": 50,
+  "auto_compact_keep_entries": 25,
+  "notes": "Mutating commands should be blocked until the latest OMC session is confirmed."
+}

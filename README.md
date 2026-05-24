@@ -2,6 +2,9 @@
 
 AI 보조 개발 환경을 위한 TDD 파이프라인 + 멀티 LLM 운영 킷입니다.
 
+> ⚠️ **SSOT 규칙**: 스킬 파일은 반드시 `templates/.agents/skills/` 에서만 수정합니다.
+> 루트 `.agents/skills/` 를 직접 생성·수정하지 않습니다 — `install.py` 실행 시 덮어써집니다.
+
 ## 무엇인가
 
 - **TDD 파이프라인 강제**: RED → GREEN → REFACTOR 순서를 물리적 훅으로 강제

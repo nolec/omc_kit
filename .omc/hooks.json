@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "hooks": {
+    "session_start": [
+      {
+        "type": "shell",
+        "command": "python3 scripts/omc_context.py --target ."
+      },
+      {
+        "type": "builtin",
+        "name": "refresh_notepad"
+      },
+      {
+        "type": "shell",
+        "name": "omc_status_check",
+        "command": "python3 scripts/omc.py state status",
+        "description": "새 세션 시작 시 OMC 상태 자동 출력 — LLM이 confirmed 여부를 즉시 파악"
+      },
+      {
+        "type": "shell",
+        "name": "role_reminder",
+        "command": "echo '[OMC] 역할 선언 필수: analysis(읽기전용) | directive(파일수정/실행) | analysis+directive(둘다)'",
+        "description": "역할 구분을 LLM에게 상기시킴"
+      }
+    ],
+    "session_end": [
+      {
+        "type": "builtin",
+        "name": "refresh_notepad"
+      },
+      {
+        "type": "builtin",
+        "name": "auto_compact"
+      }
+    ],
+    "pre_compact": [
+      {
+        "type": "builtin",
+        "name": "snapshot_memory"
+      }
+    ],
+    "post_compact": [
+      {
+        "type": "builtin",
+        "name": "refresh_notepad"
+      }
+    ]
+  }
+}
