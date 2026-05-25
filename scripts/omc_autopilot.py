@@ -965,17 +965,19 @@ def main() -> int:
         return cmd_status(root, args.task_id)
     if args.cmd == "pipeline":
         # pre-flight 검증
-        if not args.instruction.strip():
-            print("[PIPELINE] ❌ --instruction이 비어있습니다.", file=__import__("sys").stderr)
+        args.instruction = args.instruction.strip()
+        if not args.instruction:
+            print("[PIPELINE] ❌ --instruction이 비어있습니다.", file=sys.stderr)
             return 1
-        if not args.branch.strip():
-            print("[PIPELINE] ❌ --branch가 비어있습니다.", file=__import__("sys").stderr)
+        args.branch = args.branch.strip()
+        if not args.branch:
+            print("[PIPELINE] ❌ --branch가 비어있습니다.", file=sys.stderr)
             return 1
-        if len(args.instruction.strip()) < 10 and not args.force:
+        if len(args.instruction) < 10 and not args.force:
             print(
-                f"[PIPELINE] ⚠️  지시문이 너무 짧습니다 ({len(args.instruction.strip())}자).\n"
+                f"[PIPELINE] ⚠️  지시문이 너무 짧습니다 ({len(args.instruction)}자).\n"
                 "           구체적인 지시문을 작성하거나 --force로 강제 실행하세요.",
-                file=__import__("sys").stderr,
+                file=sys.stderr,
             )
             return 1
         return cmd_pipeline(
