@@ -1,12 +1,64 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
-.DS_Store
 *.egg-info/
 .pytest_cache/
 .coverage
 htmlcov/
 dist/
 build/
+
+# OS
+.DS_Store
+
+# Env
 *.log
 .env
+
+# ── OMC 런타임 상태 (세션별 자동 생성, 추적 불필요) ─────────────────────
+.omc/state/sessions/
+.omc/state/runs/
+.omc/state/compactions/
+.omc/state/latest.json
+.omc/state/.lock
+.omc/context.md
+.omc/pipeline_session.json
+.omc/notepad.md
+.omc/summary.md
+.omc/project-memory.json
+
+# 추적 대상 (무시하지 않음):
+#   .omc/policy.json  — 프로젝트 정책 설정
+#   .omc/hooks.json   — 세션 훅 설정
+#   .omc/lessons/     — 교훈 (복리 자산)
+
+# cost log는 로컬 전용
+.omc/cost_log.jsonl
+
+# ── install.py 배포 대상 live 파일 (SSOT: templates/) ────────────────────
+# omc_kit 자체는 templates/가 진실의 원천.
+# 루트에 배포된 live 파일은 추적하지 않음 (install.py 재실행으로 재생성 가능)
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+CODEX.md
+ETHOS.md
+CONVENTIONS.md
+PROMPT_COMMON.md
+PROMPT_COMMON_LEAN.md
+run
+.cursorignore
+.agent/
+.agent-hooks/omc-before-agent.sh
+.agent-hooks/omc-hub-push.sh
+.agent-hooks/omc-prompt-inject.sh
+.agent-hooks/omc-session-end.sh
+.agent-hooks/omc-session-start.sh
+.claude/
+.codex/
+.cursor/hooks.json
+.cursor/hooks/omc-require-confirm.sh
+.cursor/rules/
+.gemini/
+docs/multi_assistant_quickstart.md
