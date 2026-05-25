@@ -65,3 +65,41 @@ def test_claude_plan_no_legacy_autopilot():
     assert "omc.py autopilot" not in text, (
         "plan.md에 구버전 omc.py autopilot 참조 남아있음"
     )
+
+
+# ── T5: pipeline-status 문서화 확인 ─────────────────────────────────────────
+
+
+def test_claude_autopilot_deployed_exists():
+    """deployed .claude/commands/autopilot.md가 존재해야 한다."""
+    assert (ROOT / ".claude" / "commands" / "autopilot.md").exists(), (
+        ".claude/commands/autopilot.md 없음 — templates에서 동기화 필요"
+    )
+
+
+def test_templates_include_pipeline_status():
+    """templates 3개 파일 모두 pipeline-status 키워드를 포함해야 한다."""
+    files = [
+        TEMPLATES / ".claude" / "commands" / "autopilot.md",
+        TEMPLATES / ".gemini" / "commands" / "omc-commands.md",
+        TEMPLATES / ".codex" / "commands" / "omc-commands.md",
+    ]
+    for f in files:
+        text = _read(f)
+        assert "pipeline-status" in text, (
+            f"pipeline-status 미문서화: {f.relative_to(ROOT)}"
+        )
+
+
+def test_deployed_include_pipeline_status():
+    """deployed 3개 파일 모두 pipeline-status 키워드를 포함해야 한다."""
+    files = [
+        ROOT / ".claude" / "commands" / "autopilot.md",
+        ROOT / ".gemini" / "commands" / "omc-commands.md",
+        ROOT / ".codex" / "commands" / "omc-commands.md",
+    ]
+    for f in files:
+        text = _read(f)
+        assert "pipeline-status" in text, (
+            f"pipeline-status 미문서화(deployed): {f.relative_to(ROOT)}"
+        )
