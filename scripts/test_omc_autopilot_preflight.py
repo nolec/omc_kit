@@ -101,3 +101,50 @@ def test_uncommitted_change_shows_warning(tmp_path: Path):
         )
     finally:
         dirty_file.unlink(missing_ok=True)
+
+
+# ── dirty 워크트리 차단 / --allow-dirty ─────────────────────────────────
+
+def test_dirty_without_flag_exits_nonzero(tmp_path: Path):
+    """uncommitted 변경이 있고 --allow-dirty 없으면 exit 1 해야 한다.
+    (dry-run 아닌 실제 실행 시뮬레이션 — 하지만 실제 LLM 호출은 없음)"""
+    dirty_file = ROOT / "scripts" / "_test_dirty_flag_delete_me.txt"
+    try:
+        dirty_file.write_text("dirty for allow-dirty test")
+        r = _run([
+            "pipeline",
+            "--instruction", "충분히 긴 테스트 지시문입니다",
+            "--branch", "fix/dirty-block-test",
+            # --dry-run 없음 → 실제 실행 경로 → dirty 차단 기대
+            # 단, LLM 호출 전에 차단돼야 하므로 exit 1이 빠르게 떨어져야 함
+        ])
+        combined = r.stdout + r.stderr
+        assert r.returncode != 0, (
+            f"dirty 상태에서 --allow-dirty 없이 exit 0 반환됨 (차단 기대)\n"
+            f"stdout: {r.stdout[-400:]}"
+        )
+        assert any(kw in combined for kw in ("allow-dirty", "allow_dirty", "dirty", "stash", "commit")), (
+            f"dirty 차단 안내 메시지 없음 — output: {combined[:300]}"
+        )
+    finally:
+        dirty_file.unlink(missing_ok=True)
+
+
+def test_dirty_with_allow_dirty_flag_continues(tmp_path: Path):
+    """--allow-dirty 플래그가 있으면 dirty 상태에서도 dry-run이 계속 진행돼야 한다."""
+    dirty_file = ROOT / "scripts" / "_test_dirty_flag_delete_me.txt"
+    try:
+        dirty_file.write_text("dirty for allow-dirty test")
+        r = _run([
+            "pipeline",
+            "--instruction", "충분히 긴 테스트 지시문입니다",
+            "--branch", "fix/dirty-allow-test",
+            "--allow-dirty",
+            "--dry-run",
+        ])
+        assert r.returncode == 0, (
+            f"--allow-dirty + --dry-run 인데 exit nonzero\n"
+            f"stdout: {r.stdout[-400:]}"
+        )
+    finally:
+        dirty_file.unlink(missing_ok=True)
