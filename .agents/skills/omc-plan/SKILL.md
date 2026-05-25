@@ -118,6 +118,8 @@ python3 scripts/omc.py state confirm --target .
 | 상태 | 다음 단계 |
 |---|---|
 | Phase 1~3 모두 완료 + confirm | → `$omc-task` 진입 |
+> ⛔ **AI는 위 결과를 출력한 뒤 반드시 멈춘다. 사용자가 다음 스킬을 명시적으로 호출하기 전까지 자동으로 진입하지 않는다.**
+
 | Phase 1 DoD 합의 실패 | → `$omc-office-hours` 로 방향 재검토 |
 | Phase 3 태스크 분해 막힘 | → `$omc-brainstorm` 으로 접근 재탐색 |
 | `state confirm` 실패 | → `omc.py` 설치 여부 확인 후 재시도 |

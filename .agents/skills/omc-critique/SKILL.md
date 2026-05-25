@@ -253,4 +253,6 @@ VERDICT: BLOCK / REVISE / APPROVE WITH NOTES / APPROVE
 
 - CRITICAL/WARNING 이슈 있음 → `$omc-plan`으로 재설계 또는 `$omc-investigate`로 근본 원인 추적
 - MINOR 이슈만 있음 → 수정 후 `$omc-review`로 최종 확인
+> ⛔ **AI는 위 결과를 출력한 뒤 반드시 멈춘다. 사용자가 다음 스킬을 명시적으로 호출하기 전까지 자동으로 진입하지 않는다.**
+
 - 판정 HOLD → 재검토 후 다시 `$omc-critique` 실행
