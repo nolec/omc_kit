@@ -489,7 +489,7 @@ def cmd_new(root: Path, task_id: str, title: str) -> int:
 # ---------------------------------------------------------------------------
 
 def _build_step_detail(ss: dict, rich_markup: bool = False) -> str:
-    """단계 상세 정보 문자열을 생성한다."""
+    """pipeline-status 전용 — 단계 상세 정보 문자열을 생성한다."""
     parts = []
     if ss.get("output_preview"):
         parts.append(ss["output_preview"])
@@ -526,9 +526,12 @@ def cmd_pipeline_status(root: Path, watch: bool = False, interval: int = 2) -> i
         return 1
 
     if watch:
+        _clear = "\033[2J\033[H" if sys.stdout.isatty() else ""
         try:
             while True:
-                print("\033[2J\033[H", end="")  # clear screen + cursor home
+                if _clear:
+                    print(_clear, end="")
+                # 반환값 1(JSON 파싱 일시 오류)은 silent skip — 다음 tick에 재시도
                 _cmd_pipeline_status_once(root)
                 time.sleep(interval)
         except KeyboardInterrupt:

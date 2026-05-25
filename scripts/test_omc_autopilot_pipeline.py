@@ -326,7 +326,6 @@ def test_save_pipeline_result_writes_valid_json(tmp_path: Path):
 
     result_path = tmp_path / ".omc" / "pipeline_run_result.json"
     assert result_path.exists(), "result 파일 미생성"
-    import json as _json
-    parsed = _json.loads(result_path.read_text(encoding="utf-8"))
+    parsed = json.loads(result_path.read_text(encoding="utf-8"))
     assert parsed["status"] == "running"
     assert parsed["steps"]["preflight"]["status"] == "completed"
