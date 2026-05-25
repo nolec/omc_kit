@@ -141,3 +141,31 @@ def test_result_file_contains_mode_field(tmp_path: Path):
     data = json.loads(result_file.read_text(encoding="utf-8"))
     assert "mode" in data, f"mode 필드 없음: {list(data.keys())}"
     assert data["mode"] in ("lite", "full")
+
+# ── 리뷰 지적 반영 회귀 케이스 ────────────────────────────────────────────
+
+def test_empty_branch_detects_full():
+    """빈 브랜치는 FULL로 fallback 해야 한다 (안전한 기본값)."""
+    mod = _load_autopilot()
+    assert mod._detect_pipeline_mode("", "짧음", "auto") == "full"
+
+
+def test_lite_review_verdict_only_approve():
+    """LITE review 허용 verdict는 APPROVE뿐이어야 한다 (PROCEED 불허)."""
+    mod = _load_autopilot()
+    src = mod.__spec__.origin
+    text = open(src).read()
+    assert '"APPROVE", "PROCEED"' not in text, (
+        'LITE review verdict가 ("APPROVE", "PROCEED")를 동시 허용 — APPROVE만 허용해야 함'
+    )
+
+
+def test_step_timeout_not_redeclared():
+    """STEP_TIMEOUT이 cmd_pipeline 내에서 두 번 선언되지 않아야 한다."""
+    mod = _load_autopilot()
+    src = open(mod.__spec__.origin).read()
+    fn_start = src.find("def cmd_pipeline(")
+    fn_end = src.find("\ndef ", fn_start + 1)
+    fn_body = src[fn_start:fn_end] if fn_end != -1 else src[fn_start:]
+    count = fn_body.count("STEP_TIMEOUT = 600")
+    assert count <= 1, f"STEP_TIMEOUT = 600이 {count}번 선언됨 (1번만 허용)"

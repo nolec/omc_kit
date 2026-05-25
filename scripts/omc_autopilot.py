@@ -550,6 +550,8 @@ def _detect_pipeline_mode(branch: str, instruction: str, mode_arg: str) -> str:
         return mode_arg
 
     # auto 감지
+    if not branch:
+        return "full"  # 빈 브랜치는 안전 fallback
     for prefix in _LITE_BRANCH_PREFIXES:
         if branch.startswith(prefix):
             return "lite"
@@ -585,7 +587,9 @@ def _run_pipeline_step(
     """단일 파이프라인 스텝을 LLM으로 실행하고 (returncode, output)을 반환한다."""
     if dry_run:
         print(f"  [DRY-RUN] {step_name} 시뮬레이션")
-        return 0, f"[DRY-RUN] {step_name} — VERDICT: PROCEED"
+        # review 스텝은 APPROVE, 그 외는 PROCEED (verdict 일관성)
+        dry_verdict = "APPROVE" if step_name == "review" else "PROCEED"
+        return 0, f"[DRY-RUN] {step_name} — VERDICT: {dry_verdict}"
 
     exec_script = Path(__file__).resolve().parent / "omc_exec.py"
     if not exec_script.exists():
@@ -742,10 +746,10 @@ def cmd_pipeline(
         review_verdict = _grep_verdict(review_out)
         print(f"  VERDICT: {review_verdict or '미감지'}")
         result["steps"]["review"] = {
-            "status": "completed" if review_verdict in ("APPROVE", "PROCEED") else "failed",
+            "status": "completed" if review_verdict == "APPROVE" else "failed",
             "verdict": review_verdict,
         }
-        if review_verdict not in ("APPROVE", "PROCEED"):
+        if review_verdict != "APPROVE":
             save("failed")
             return 1
 
@@ -769,6 +773,7 @@ def cmd_pipeline(
                     print(f"[PIPELINE] ✅ PR 생성: {pr_url}")
                 else:
                     print(f"[PIPELINE] ⚠️  PR 생성 실패: {pr_proc.stderr.strip()[:150]}")
+                    result["steps"]["pr"] = {"status": "failed", "reason": "gh_create_failed"}
             else:
                 print(f"[PIPELINE] ❌ git push 실패: {git_push.stderr.strip()[:150]}")
                 result["steps"]["pr"] = {"status": "failed", "reason": "push_failed"}
@@ -783,7 +788,6 @@ def cmd_pipeline(
         return 0
 
     # ── FULL 모드 ──────────────────────────────────────────────────────
-    STEP_TIMEOUT = 600  # 이하 기존 코드
 
     # ── PLAN 스텝 ────────────────────────────────────────────────────────
     plan_prompt = (
