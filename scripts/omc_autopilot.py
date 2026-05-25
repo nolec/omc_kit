@@ -605,8 +605,6 @@ def cmd_pipeline(
         dry_run: 실제 LLM 호출 없이 흐름만 확인
         auto: 사람 게이트(plan 승인) 없이 자동 진행
     """
-    import re, time
-
     started_at = _now()
     executor = _detect_executor(executor_pref)
     result: dict = {
@@ -684,6 +682,14 @@ def cmd_pipeline(
         save("failed")
         return 1
 
+    # PLAN VERDICT 판별 — HOLD이면 중단
+    plan_verdict = _grep_verdict(out)
+    if plan_verdict == "HOLD":
+        print(f"[PIPELINE] ❌ PLAN VERDICT: HOLD — 재설계 필요")
+        result["steps"]["plan"]["verdict"] = "HOLD"
+        save("plan_hold")
+        return 1
+
     # 사람 게이트 (--auto 없으면)
     if not auto and not dry_run:
         print("\n[PIPELINE] ⏸  PLAN 완료 — 확인 후 계속하려면 Enter, 중단하려면 Ctrl-C:")
@@ -718,7 +724,7 @@ def cmd_pipeline(
     for loop_step in ("critique", "review"):
         verdict_ok = ("PROCEED", "APPROVE")
         retry_count = 0
-        step_status = "failed"
+        # critique PROCEED 통과 후 review 진입
 
         while retry_count <= _PIPELINE_MAX_RETRIES:
             if time.time() > deadline:
@@ -742,7 +748,6 @@ def cmd_pipeline(
 
             if rc == 0 and verdict in verdict_ok:
                 result["steps"][loop_step] = {"status": "completed", "verdict": verdict}
-                step_status = "completed"
                 break
 
             retry_count += 1
@@ -781,7 +786,10 @@ def cmd_pipeline(
             else:
                 print(f"[PIPELINE] ⚠️  PR 생성 실패: {pr_proc.stderr.strip()[:150]}")
         else:
-            print(f"[PIPELINE] ⚠️  git push 실패: {git_push.stderr.strip()[:150]}")
+            print(f"[PIPELINE] ❌ git push 실패: {git_push.stderr.strip()[:150]}")
+            result["steps"]["pr"] = {"status": "failed", "reason": "push_failed"}
+            save("failed")
+            return 1
     else:
         pr_url = "[DRY-RUN] PR URL"
         print(f"[PIPELINE] [DRY-RUN] PR 생성 시뮬레이션")
