@@ -81,7 +81,7 @@ def test_lite_mode_skips_plan_and_critique(tmp_path: Path):
     _run(
         ["--target", str(tmp_path),
          "pipeline",
-         "--instruction", "버그 수정",
+         "--instruction", "버그를 수정합니다 (충분한 길이)",
          "--branch", "fix/test",
          "--mode", "lite",
          "--dry-run"],
@@ -98,7 +98,7 @@ def test_lite_mode_has_task_and_review(tmp_path: Path):
     _run(
         ["--target", str(tmp_path),
          "pipeline",
-         "--instruction", "버그 수정",
+         "--instruction", "버그를 수정합니다 (충분한 길이)",
          "--branch", "fix/test",
          "--mode", "lite",
          "--dry-run"],
@@ -116,7 +116,7 @@ def test_full_mode_includes_plan(tmp_path: Path):
     _run(
         ["--target", str(tmp_path),
          "pipeline",
-         "--instruction", "새 기능 개발",
+         "--instruction", "새로운 기능을 개발합니다",
          "--branch", "feat/new",
          "--mode", "full",
          "--dry-run"],
@@ -133,7 +133,7 @@ def test_result_file_contains_mode_field(tmp_path: Path):
     _run(
         ["--target", str(tmp_path),
          "pipeline",
-         "--instruction", "테스트",
+         "--instruction", "테스트 지시문 충분한 길이",
          "--branch", "fix/x",
          "--dry-run"],
     )

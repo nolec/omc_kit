@@ -105,7 +105,7 @@ def test_git_push_failure_saves_failed_status(tmp_path: Path):
     _run(
         ["--target", str(tmp_path),
          "pipeline",
-         "--instruction", "테스트",
+         "--instruction", "테스트 지시문 충분한 길이",
          "--branch", "feat/x",
          "--dry-run"],
     )

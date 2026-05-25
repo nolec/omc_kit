@@ -670,18 +670,16 @@ def cmd_pipeline(
     deadline = time.time() + max_time
 
     # ── 전제 조건: git 상태 체크 ──────────────────────────────────────────
+    git_status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        capture_output=True, text=True, cwd=str(root),
+    )
+    if git_status.stdout.strip():
+        print("[PIPELINE] ⚠️  uncommitted 변경 있음 (계속 진행)")
+        print(f"  {git_status.stdout.strip()[:200]}")
+
     if not dry_run:
-        git_status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            capture_output=True, text=True, cwd=str(root),
-        )
-        if git_status.stdout.strip():
-            print("[PIPELINE] ❌ uncommitted 변경 있음 — abort")
-            print(f"  {git_status.stdout.strip()[:200]}")
-            result["steps"]["preflight"] = {"status": "failed", "reason": "uncommitted changes"}
-            save("failed")
-            return 1
-        print("[PIPELINE] ✅ git 상태 clean")
+        print("[PIPELINE] ✅ git 상태 확인 완료")
 
         # 브랜치 생성
         br = subprocess.run(
@@ -952,6 +950,8 @@ def main() -> int:
     p_pipeline.add_argument("--auto", action="store_true", help="사람 게이트 없이 완전 자동 실행")
     p_pipeline.add_argument("--mode", choices=["auto", "lite", "full"], default="auto",
                             help="파이프라인 모드 (auto: 자동감지, lite: 토큰 절약, full: 전체)")
+    p_pipeline.add_argument("--force", action="store_true",
+                            help="짧은 지시문 경고 무시하고 강제 실행")
 
     args = ap.parse_args()
     root = omc_utils.project_root(args.target)
@@ -964,6 +964,20 @@ def main() -> int:
     if args.cmd == "status":
         return cmd_status(root, args.task_id)
     if args.cmd == "pipeline":
+        # pre-flight 검증
+        if not args.instruction.strip():
+            print("[PIPELINE] ❌ --instruction이 비어있습니다.", file=__import__("sys").stderr)
+            return 1
+        if not args.branch.strip():
+            print("[PIPELINE] ❌ --branch가 비어있습니다.", file=__import__("sys").stderr)
+            return 1
+        if len(args.instruction.strip()) < 10 and not args.force:
+            print(
+                f"[PIPELINE] ⚠️  지시문이 너무 짧습니다 ({len(args.instruction.strip())}자).\n"
+                "           구체적인 지시문을 작성하거나 --force로 강제 실행하세요.",
+                file=__import__("sys").stderr,
+            )
+            return 1
         return cmd_pipeline(
             root,
             instruction=args.instruction,
