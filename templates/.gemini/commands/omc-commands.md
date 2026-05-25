@@ -316,9 +316,38 @@ python3 scripts/omc_cost.py report
 
 ---
 
-## /autopilot — 멀티 LLM 자율 루프
+## /autopilot — 전체 파이프라인 자동 실행
 
-구조화된 태스크 파일(.omc/tasks/*.json)로 여러 스텝을 자동 실행합니다.
+지시문 하나로 plan → task → review → PR 전체를 자동 실행합니다.
+
+**모드 자동 결정**: fix/hotfix/chore/docs 브랜치 또는 지시문 50자 이하 → LITE (task+review),
+feat + 긴 지시문 → FULL (plan→critique→task→review)
+
+```bash
+# 흐름 먼저 확인 (dry-run)
+python3 scripts/omc_autopilot.py pipeline \
+  --instruction "구현할 내용" \
+  --branch "feat/기능명" \
+  --dry-run
+
+# 백그라운드 실행 (수십 분 소요)
+nohup python3 scripts/omc_autopilot.py pipeline \
+  --instruction "구현할 내용" \
+  --branch "feat/기능명" \
+  --mode auto \
+  > .omc/pipeline.log 2>&1 &
+
+echo "PID: $!  |  로그: .omc/pipeline.log"
+
+# 결과 확인
+python3 -c "import json; d=json.load(open('.omc/pipeline_run_result.json')); print('상태:', d['status'], '| PR:', d.get('pr_url') or '없음')"
+```
+
+**옵션**: `--mode lite/full` 명시 | `--force` 짧은 지시문 강제 실행
+
+### 고급 사용 — task 파일 기반 방식
+
+복잡한 멀티 스텝 자동화가 필요하면 task 파일을 직접 구성할 수 있습니다.
 각 스텝에 `expect` 검증을 설정하면 실패 출력이 다음 retry 프롬프트에 자동 주입됩니다.
 
 ```bash

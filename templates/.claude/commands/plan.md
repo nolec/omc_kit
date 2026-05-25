@@ -64,10 +64,12 @@ python3 scripts/omc.py state status --target .
 python3 scripts/omc.py state confirm --target .
 ```
 
-자율 루프 실행이 필요하면 태스크 파일을 생성합니다:
+자율 실행이 필요하면 pipeline을 사용합니다:
 ```bash
-python3 scripts/omc_autopilot.py new --id <id> --title "$ARGUMENTS"
-python3 scripts/omc.py autopilot --task-file .omc/tasks/<id>.json --dry-run
+python3 scripts/omc_autopilot.py pipeline \
+  --instruction "$ARGUMENTS" \
+  --branch "feat/..." \
+  --dry-run
 ```
 
 ---

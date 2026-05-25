@@ -126,3 +126,35 @@ python3 scripts/omc_pipeline_guard.py status
 ```
 $omc-plan → $omc-task → $omc-review → $omc-ship → $omc-retro
 ```
+
+---
+
+## autopilot — 전체 파이프라인 자동 실행
+
+지시문 하나로 plan → task → review → PR 전체를 자동 실행합니다.
+
+**모드 자동 결정**: fix/hotfix/chore/docs 브랜치 또는 지시문 50자 이하 → LITE,
+feat + 긴 지시문 → FULL (plan→critique→task→review)
+
+```bash
+# 흐름 먼저 확인 (dry-run)
+python3 scripts/omc_autopilot.py pipeline \
+  --instruction "구현할 내용" \
+  --branch "feat/기능명" \
+  --dry-run
+
+# 백그라운드 실행 (수십 분 소요)
+nohup python3 scripts/omc_autopilot.py pipeline \
+  --instruction "구현할 내용" \
+  --branch "feat/기능명" \
+  > .omc/pipeline.log 2>&1 &
+
+echo "PID: $!  |  로그: .omc/pipeline.log"
+```
+
+### 고급 사용 — task 파일 기반 방식
+
+```bash
+python3 scripts/omc_autopilot.py new --id feat-x --title "기능 X"
+python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
+```
