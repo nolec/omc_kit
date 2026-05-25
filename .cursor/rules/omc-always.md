@@ -49,7 +49,7 @@ python3 scripts/omc.py hook session_start --target .
 | `/office-hours [요청]` | 6개 강제 질문 양식 작성: 대상 사용자/고통/성공기준/MVP/비범위/10점 버전 |
 | `/ceo-review [모드]` | 10가지 체크리스트로 기능 범위 재검토. 모드: EXPAND/SELECTIVE/HOLD(기본)/REDUCE |
 | `/retro` | 최근 세션 히스토리 분석 + 회고 포맷 출력 + 교훈 캡처 |
-| `/autopilot` | autopilot 태스크 파일 생성/실행 안내: `python3 scripts/omc_autopilot.py new --id <id>` |
+| `/autopilot` | plan→task→review→PR 자동 실행: `python3 scripts/omc_autopilot.py pipeline --instruction "..." --dry-run` |
 
 ---
 
