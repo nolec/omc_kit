@@ -366,6 +366,12 @@ python3 scripts/omc_autopilot.py status
 python3 scripts/omc_autopilot.py status --task-id feat-login
 ```
 
+
+# 실패한 파이프라인 재개
+python3 scripts/omc_autopilot.py pipeline \
+  --instruction "[이전과 동일한 지시문]" \
+  --branch "[이전 브랜치명]" \
+  --resume
 태스크 파일 스텝에 `expect` 필드를 추가하면 하네스 패턴으로 동작합니다:
 ```json
 {

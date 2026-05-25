@@ -120,6 +120,22 @@ python3 scripts/omc_autopilot.py pipeline \
 
 ---
 
+
+
+### 실패한 파이프라인 재개 (--resume)
+
+```bash
+python3 scripts/omc_autopilot.py pipeline \\
+  --instruction "[이전과 동일한 지시문]" \\
+  --branch "[이전 브랜치명]" \\
+  --resume
+```
+
+| 상태 | 동작 |
+|---|---|
+| result 파일 없음 | exit 1 + 안내 메시지 |
+| 이미 completed | exit 0 + PR URL 출력 |
+| 이전 단계 일부 completed | 완료 단계 건너뜀, 실패 단계부터 재실행 |
 ## Step 3: 실행 후 결과 확인
 
 ```bash

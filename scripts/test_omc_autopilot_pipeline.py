@@ -114,3 +114,94 @@ def test_git_push_failure_saves_failed_status(tmp_path: Path):
     data = json.loads(result_file.read_text(encoding="utf-8"))
     valid_statuses = {"completed", "failed", "retry_exhausted", "aborted", "timeout", "plan_hold"}
     assert data["status"] in valid_statuses, f"알 수 없는 status: {data['status']}"
+
+
+# ── --resume 테스트 ──────────────────────────────────────────────────────
+
+def _run_pipeline(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(AUTOPILOT)] + args,
+        capture_output=True, text=True, cwd=str(cwd),
+    )
+
+
+def test_resume_without_result_file_exits_nonzero(tmp_path: Path):
+    """result 파일 없을 때 --resume은 exit 1 해야 한다."""
+    (tmp_path / ".omc").mkdir()
+    r = _run_pipeline([
+        "pipeline",
+        "--instruction", "충분히 긴 테스트 지시문입니다",
+        "--branch", "fix/resume-test",
+        "--resume",
+        "--dry-run",
+    ], cwd=tmp_path)
+    assert r.returncode != 0, f"result 파일 없는데 exit 0\nstdout: {r.stdout[-300:]}"
+    combined = r.stdout + r.stderr
+    assert any(kw in combined for kw in ("resume", "결과", "없음", "파일")), (
+        f"result 없음 안내 메시지 없음: {combined[:300]}"
+    )
+
+
+def test_resume_skips_completed_steps(tmp_path: Path):
+    """plan=completed 상태에서 --resume 시 plan을 건너뛰어야 한다."""
+    omc_dir = tmp_path / ".omc"
+    omc_dir.mkdir()
+    long_instruction = "FULL 모드를 강제하기 위해 50자를 초과하는 충분히 긴 지시문입니다 여기서 더 길게"
+    result_data = {
+        "status": "failed",
+        "mode": "full",
+        "branch": "feat/resume-test",
+        "instruction": long_instruction,
+        "executor": "codex",
+        "started_at": "2026-01-01T000000Z",
+        "steps": {
+            "preflight": {"status": "completed"},
+            "plan": {"status": "completed", "output_preview": "plan done"},
+            "task": {"status": "failed", "output_preview": "task failed"},
+        },
+    }
+    (omc_dir / "pipeline_run_result.json").write_text(
+        __import__("json").dumps(result_data), encoding="utf-8"
+    )
+    r = _run_pipeline([
+        "pipeline",
+        "--instruction", long_instruction,
+        "--branch", "feat/resume-test",
+        "--resume",
+        "--dry-run",
+        "--allow-dirty",
+        "--mode", "full",
+    ], cwd=tmp_path)
+    combined = r.stdout + r.stderr
+    assert "⏭" in combined or "건너" in combined or "skip" in combined.lower(), (
+        f"completed 단계 skip 메시지 없음\nstdout: {combined[:500]}"
+    )
+
+
+def test_resume_already_completed_exits_zero(tmp_path: Path):
+    """이미 completed인 파이프라인을 --resume 시 exit 0 + 안내 메시지."""
+    omc_dir = tmp_path / ".omc"
+    omc_dir.mkdir()
+    result_data = {
+        "status": "completed",
+        "mode": "lite",
+        "branch": "fix/done",
+        "instruction": "충분히 긴 테스트 지시문입니다",
+        "steps": {},
+    }
+    (omc_dir / "pipeline_run_result.json").write_text(
+        __import__("json").dumps(result_data), encoding="utf-8"
+    )
+    r = _run_pipeline([
+        "pipeline",
+        "--instruction", "충분히 긴 테스트 지시문입니다",
+        "--branch", "fix/done",
+        "--resume",
+        "--dry-run",
+        "--allow-dirty",
+    ], cwd=tmp_path)
+    assert r.returncode == 0, f"completed resume인데 exit nonzero\nstdout: {r.stdout[-300:]}"
+    combined = r.stdout + r.stderr
+    assert any(kw in combined for kw in ("완료", "completed", "이미")), (
+        f"완료 안내 없음: {combined[:300]}"
+    )

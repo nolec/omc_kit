@@ -67,6 +67,12 @@ python3 scripts/omc_autopilot.py pipeline \
   --instruction "$ARGUMENTS" --branch "fix/..." --force
 ```
 
+
+# 실패한 파이프라인 재개
+python3 scripts/omc_autopilot.py pipeline \
+  --instruction "[이전과 동일한 지시문]" \
+  --branch "[이전 브랜치명]" \
+  --resume
 ## 고급 사용 — task 파일 기반 방식
 
 복잡한 멀티 스텝 자동화가 필요하면 task 파일을 직접 구성할 수 있습니다.

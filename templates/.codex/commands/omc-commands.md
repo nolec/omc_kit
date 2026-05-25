@@ -153,6 +153,12 @@ nohup python3 scripts/omc_autopilot.py pipeline \
 echo "PID: $!  |  로그: .omc/pipeline.log"
 ```
 
+# 실패한 파이프라인 재개
+python3 scripts/omc_autopilot.py pipeline \
+  --instruction "[이전과 동일한 지시문]" \
+  --branch "[이전 브랜치명]" \
+  --resume
+
 ### 고급 사용 — task 파일 기반 방식
 
 ```bash

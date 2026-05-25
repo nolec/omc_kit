@@ -528,6 +528,29 @@ def cmd_status(root: Path, task_id: str | None = None) -> int:
 # ---------------------------------------------------------------------------
 
 _PIPELINE_RESULT_PATH = ".omc/pipeline_run_result.json"
+
+
+def _load_resume_state(root: Path) -> dict | None:
+    """이전 pipeline_run_result.json을 읽어 재개 상태를 반환한다.
+
+    Returns:
+        dict: 이전 결과 데이터 (없으면 None)
+    """
+    path = root / _PIPELINE_RESULT_PATH
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _step_already_done(resume_data: dict | None, step: str) -> bool:
+    """재개 데이터에서 특정 단계가 completed인지 확인한다."""
+    if not resume_data:
+        return False
+    steps = resume_data.get("steps", {})
+    return steps.get(step, {}).get("status") == "completed"
 _PIPELINE_MAX_RETRIES = 3
 _VERDICT_PATTERN = r"VERDICT:\s*(PROCEED|APPROVE|BLOCK|REVISE|HOLD)"
 
@@ -627,6 +650,7 @@ def cmd_pipeline(
     auto: bool = False,
     mode_arg: str = "auto",
     allow_dirty: bool = False,
+    resume: bool = False,
 ) -> int:
     """plan→critique→task→review→PR 전체 자동화 파이프라인.
 
@@ -652,6 +676,22 @@ def cmd_pipeline(
         "pr_url": None,
         "finished_at": None,
     }
+
+    # ── resume 처리 ──────────────────────────────────────────────────────
+    _resume_data: dict | None = None
+    if resume:
+        _resume_data = _load_resume_state(root)
+        if _resume_data is None:
+            print("[PIPELINE] ❌ --resume: 재개할 이전 결과 파일이 없습니다.")
+            print(f"  ({root / _PIPELINE_RESULT_PATH} 없음)")
+            return 1
+        if _resume_data.get("status") == "completed":
+            print("[PIPELINE] ✅ 이미 완료된 파이프라인입니다. (--resume 불필요)")
+            print(f"  PR: {_resume_data.get('pr_url') or '없음'}")
+            return 0
+        # 이전 steps를 현재 result에 복원
+        result["steps"] = _resume_data.get("steps", {})
+        print(f"[PIPELINE] 🔄 resume: 이전 실행 결과 로드 완료")
 
     def save(status: str) -> None:
         result["status"] = status
@@ -728,17 +768,20 @@ def cmd_pipeline(
             "3. 구현 후 테스트 GREEN 확인\n"
             "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: BLOCK`을 출력하세요."
         )
-        print("\n[PIPELINE] ▶ TASK 스텝 (LITE)...")
-        task_rc, task_out = _run_pipeline_step(
-            root, "task", task_prompt_lite, executor, STEP_TIMEOUT * 2, dry_run=dry_run
-        )
-        result["steps"]["task"] = {
-            "status": "completed" if task_rc == 0 else "failed",
-            "output_preview": task_out[:300],
-        }
-        if task_rc != 0:
-            save("failed")
-            return 1
+        if _step_already_done(_resume_data, "task"):
+            print("[PIPELINE] ⏭ TASK 건너뜀 (이미 완료)")
+        else:
+            print("\n[PIPELINE] ▶ TASK 스텝 (LITE)...")
+            task_rc, task_out = _run_pipeline_step(
+                root, "task", task_prompt_lite, executor, STEP_TIMEOUT * 2, dry_run=dry_run
+            )
+            result["steps"]["task"] = {
+                "status": "completed" if task_rc == 0 else "failed",
+                "output_preview": task_out[:300],
+            }
+            if task_rc != 0:
+                save("failed")
+                return 1
 
         # REVIEW 스텝 (retry 없음)
         review_prompt_lite = (
@@ -746,10 +789,13 @@ def cmd_pipeline(
             "omc-review 스킬 포맷을 따르세요.\n"
             "반드시 마지막 줄에 `VERDICT: APPROVE` 또는 `VERDICT: BLOCK`을 출력하세요."
         )
-        print("\n[PIPELINE] ▶ REVIEW 스텝 (LITE, retry 없음)...")
-        review_rc, review_out = _run_pipeline_step(
-            root, "review", review_prompt_lite, executor, STEP_TIMEOUT, dry_run=dry_run
-        )
+        if _step_already_done(_resume_data, "review"):
+            print("[PIPELINE] ⏭ REVIEW 건너뜀 (이미 완료)")
+        else:
+            print("\n[PIPELINE] ▶ REVIEW 스텝 (LITE, retry 없음)...")
+            review_rc, review_out = _run_pipeline_step(
+                root, "review", review_prompt_lite, executor, STEP_TIMEOUT, dry_run=dry_run
+            )
         review_verdict = _grep_verdict(review_out)
         print(f"  VERDICT: {review_verdict or '미감지'}")
         result["steps"]["review"] = {
@@ -803,8 +849,12 @@ def cmd_pipeline(
         "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: HOLD`를 출력하세요."
     )
     print("\n[PIPELINE] ▶ PLAN 스텝 실행 중...")
-    rc, out = _run_pipeline_step(root, "plan", plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run)
-    result["steps"]["plan"] = {"status": "completed" if rc == 0 else "failed", "output_preview": out[:300]}
+    if _step_already_done(_resume_data, "plan"):
+        print("[PIPELINE] ⏭ PLAN 건너뜀 (이미 완료)")
+        rc = 0
+    else:
+        rc, out = _run_pipeline_step(root, "plan", plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run)
+        result["steps"]["plan"] = {"status": "completed" if rc == 0 else "failed", "output_preview": out[:300]}
     _save_pipeline_result(root, result)
 
     if rc != 0:
@@ -841,8 +891,13 @@ def cmd_pipeline(
         "반드시 마지막 줄에 `VERDICT: PROCEED` (성공) 또는 `VERDICT: BLOCK` (실패)를 출력하세요."
     )
     print("\n[PIPELINE] ▶ TASK 스텝 실행 중...")
-    task_rc, task_out = _run_pipeline_step(root, "task", task_prompt, executor, STEP_TIMEOUT * 2, dry_run=dry_run)
-    result["steps"]["task"] = {"status": "completed" if task_rc == 0 else "failed", "output_preview": task_out[:300]}
+    if _step_already_done(_resume_data, "task"):
+        print("[PIPELINE] ⏭ TASK 건너뜀 (이미 완료)")
+        task_rc = 0
+        task_out = "[RESUME] task skipped"
+    else:
+        task_rc, task_out = _run_pipeline_step(root, "task", task_prompt, executor, STEP_TIMEOUT * 2, dry_run=dry_run)
+        result["steps"]["task"] = {"status": "completed" if task_rc == 0 else "failed", "output_preview": task_out[:300]}
     _save_pipeline_result(root, result)
 
     if task_rc != 0:
@@ -963,6 +1018,8 @@ def main() -> int:
                             help="짧은 지시문 경고 무시하고 강제 실행")
     p_pipeline.add_argument("--allow-dirty", action="store_true",
                             help="uncommitted 변경이 있어도 강제 실행")
+    p_pipeline.add_argument("--resume", action="store_true",
+                            help="이전 실행 결과에서 실패 단계부터 재개")
 
     args = ap.parse_args()
     root = omc_utils.project_root(args.target)
@@ -1001,6 +1058,7 @@ def main() -> int:
             auto=args.auto,
             mode_arg=args.mode,
             allow_dirty=args.allow_dirty,
+            resume=args.resume,
         )
     return 1
 
