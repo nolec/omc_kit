@@ -281,3 +281,52 @@ def test_pipeline_status_shows_error_message(tmp_path: Path):
     assert "TimeoutError" in combined or "LLM 응답 초과" in combined, (
         f"error_message 미출력: {combined[:500]}"
     )
+
+
+# ── pipeline-status --watch 테스트 ──────────────────────────────────────────
+
+def test_pipeline_status_watch_flag_exists():
+    """pipeline-status --help에 --watch 옵션이 등록돼 있어야 한다."""
+    r = _run(["pipeline-status", "--help"])
+    assert r.returncode == 0, f"pipeline-status --help 실패: {r.stderr}"
+    combined = r.stdout + r.stderr
+    assert "watch" in combined.lower(), (
+        f"--watch 옵션 미등록: {combined[:300]}"
+    )
+
+
+def test_pipeline_status_interval_zero_exits_nonzero(tmp_path: Path):
+    """--interval 0은 exit 1 이어야 한다."""
+    (tmp_path / ".omc").mkdir()
+    r = _run(["--target", str(tmp_path), "pipeline-status", "--watch", "--interval", "0"])
+    assert r.returncode != 0, (
+        f"interval 0인데 exit 0\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    )
+    combined = r.stdout + r.stderr
+    assert any(kw in combined for kw in ("interval", "1 이상", "이상이어야")), (
+        f"interval 오류 메시지 없음: {combined[:300]}"
+    )
+
+
+def test_save_pipeline_result_writes_valid_json(tmp_path: Path):
+    """_save_pipeline_result() 호출 후 result 파일이 유효한 JSON이어야 한다.
+    
+    atomic write 도입 후에도 파일이 항상 파싱 가능한 상태를 보장한다.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "omc_autopilot", str(ROOT / "scripts" / "omc_autopilot.py")
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    (tmp_path / ".omc").mkdir()
+    data = {"status": "running", "steps": {"preflight": {"status": "completed"}}}
+    mod._save_pipeline_result(tmp_path, data)
+
+    result_path = tmp_path / ".omc" / "pipeline_run_result.json"
+    assert result_path.exists(), "result 파일 미생성"
+    import json as _json
+    parsed = _json.loads(result_path.read_text(encoding="utf-8"))
+    assert parsed["status"] == "running"
+    assert parsed["steps"]["preflight"]["status"] == "completed"

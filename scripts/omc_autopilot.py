@@ -514,7 +514,30 @@ _PIPELINE_STATUS_ICON = {
 }
 
 
-def cmd_pipeline_status(root: Path) -> int:
+def cmd_pipeline_status(root: Path, watch: bool = False, interval: int = 2) -> int:
+    """pipeline_run_result.json 기반 파이프라인 진행 상황 출력.
+
+    Args:
+        watch: True이면 interval초 간격으로 화면 갱신
+        interval: --watch 갱신 주기(초). 1 미만이면 exit 1.
+    """
+    if watch and interval < 1:
+        print("[PIPELINE STATUS] --interval은 1 이상이어야 합니다.", file=sys.stderr)
+        return 1
+
+    if watch:
+        try:
+            while True:
+                print("\033[2J\033[H", end="")  # clear screen + cursor home
+                _cmd_pipeline_status_once(root)
+                time.sleep(interval)
+        except KeyboardInterrupt:
+            print("\n[PIPELINE STATUS] 모니터링 종료")
+            return 0
+    return _cmd_pipeline_status_once(root)
+
+
+def _cmd_pipeline_status_once(root: Path) -> int:
     """pipeline_run_result.json 기반 파이프라인 진행 상황 출력."""
     result_path = root / _PIPELINE_RESULT_PATH
 
@@ -1111,7 +1134,9 @@ def main() -> int:
                             help="이전 실행 결과에서 실패 단계부터 재개")
 
 
-    sub.add_parser("pipeline-status", help="pipeline 실행 결과 상태 조회")
+    p_pipeline_status = sub.add_parser("pipeline-status", help="pipeline 실행 결과 상태 조회")
+    p_pipeline_status.add_argument("--watch", action="store_true", help="N초 간격으로 화면을 갱신하며 실시간 모니터링")
+    p_pipeline_status.add_argument("--interval", type=int, default=2, help="--watch 갱신 주기(초, 기본 2, 최소 1)")
 
     args = ap.parse_args()
     root = omc_utils.project_root(args.target)
@@ -1124,7 +1149,7 @@ def main() -> int:
     if args.cmd == "status":
         return cmd_status(root, args.task_id)
     if args.cmd == "pipeline-status":
-        return cmd_pipeline_status(root)
+        return cmd_pipeline_status(root, watch=args.watch, interval=args.interval)
     if args.cmd == "pipeline":
         # pre-flight 검증
         args.instruction = args.instruction.strip()
