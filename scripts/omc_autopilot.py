@@ -36,7 +36,9 @@ import json
 import os
 import subprocess
 import sys
+import re
 import textwrap
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -520,6 +522,276 @@ def cmd_status(root: Path, task_id: str | None = None) -> int:
     return 0
 
 
+
+# ---------------------------------------------------------------------------
+# 커맨드: pipeline
+# ---------------------------------------------------------------------------
+
+_PIPELINE_RESULT_PATH = ".omc/pipeline_run_result.json"
+_PIPELINE_MAX_RETRIES = 3
+_VERDICT_PATTERN = r"VERDICT:\s*(PROCEED|APPROVE|BLOCK|REVISE|HOLD)"
+
+
+def _save_pipeline_result(root: Path, data: dict) -> None:
+    out = root / _PIPELINE_RESULT_PATH
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _grep_verdict(output: str) -> str | None:
+    """LLM 출력에서 VERDICT: <판정> 키워드를 추출한다."""
+    m = re.search(_VERDICT_PATTERN, output, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    return None
+
+
+def _run_pipeline_step(
+    root: Path,
+    step_name: str,
+    prompt: str,
+    executor: str,
+    timeout_sec: int,
+    *,
+    dry_run: bool = False,
+) -> tuple[int, str]:
+    """단일 파이프라인 스텝을 LLM으로 실행하고 (returncode, output)을 반환한다."""
+    if dry_run:
+        print(f"  [DRY-RUN] {step_name} 시뮬레이션")
+        return 0, f"[DRY-RUN] {step_name} — VERDICT: PROCEED"
+
+    exec_script = Path(__file__).resolve().parent / "omc_exec.py"
+    if not exec_script.exists():
+        return 1, f"[ERROR] omc_exec.py 없음"
+
+    cmd = [
+        sys.executable, str(exec_script),
+        "--target", str(root),
+        "--executor", executor,
+        "--headless",
+        "--timeout", str(timeout_sec),
+        "--prompt", prompt,
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, cwd=str(root), capture_output=True, text=True,
+            timeout=timeout_sec + 30,
+        )
+        output = (proc.stdout or "") + (proc.stderr or "")
+        return int(proc.returncode), output.strip()
+    except subprocess.TimeoutExpired:
+        return 1, "[ERROR] 타임아웃"
+    except Exception as exc:
+        return 1, f"[ERROR] {exc}"
+
+
+def cmd_pipeline(
+    root: Path,
+    instruction: str,
+    branch: str,
+    executor_pref: str = "auto",
+    max_time: int = 7200,
+    *,
+    dry_run: bool = False,
+    auto: bool = False,
+) -> int:
+    """plan→critique→task→review→PR 전체 자동화 파이프라인.
+
+    Args:
+        instruction: 사람이 작성한 작업 지시문
+        branch: 생성할 feature 브랜치 이름
+        executor_pref: LLM 실행기 (auto|codex|gemini|claude)
+        max_time: 전체 파이프라인 최대 실행 시간(초)
+        dry_run: 실제 LLM 호출 없이 흐름만 확인
+        auto: 사람 게이트(plan 승인) 없이 자동 진행
+    """
+    import re, time
+
+    started_at = _now()
+    executor = _detect_executor(executor_pref)
+    result: dict = {
+        "status": "running",
+        "branch": branch,
+        "instruction": instruction[:200],
+        "executor": executor,
+        "started_at": started_at,
+        "steps": {},
+        "pr_url": None,
+        "finished_at": None,
+    }
+
+    def save(status: str) -> None:
+        result["status"] = status
+        result["finished_at"] = _now()
+        _save_pipeline_result(root, result)
+
+    print(f"\n[PIPELINE] ▶ 시작: {instruction[:60]}")
+    print(f"           브랜치={branch}  executor={executor}  dry_run={dry_run}")
+
+    deadline = time.time() + max_time
+
+    # ── 전제 조건: git 상태 체크 ──────────────────────────────────────────
+    if not dry_run:
+        git_status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, cwd=str(root),
+        )
+        if git_status.stdout.strip():
+            print("[PIPELINE] ❌ uncommitted 변경 있음 — abort")
+            print(f"  {git_status.stdout.strip()[:200]}")
+            result["steps"]["preflight"] = {"status": "failed", "reason": "uncommitted changes"}
+            save("failed")
+            return 1
+        print("[PIPELINE] ✅ git 상태 clean")
+
+        # 브랜치 생성
+        br = subprocess.run(
+            ["git", "checkout", "-b", branch],
+            capture_output=True, text=True, cwd=str(root),
+        )
+        if br.returncode != 0:
+            print(f"[PIPELINE] ❌ 브랜치 생성 실패: {br.stderr.strip()[:150]}")
+            result["steps"]["branch"] = {"status": "failed", "reason": br.stderr.strip()}
+            save("failed")
+            return 1
+        print(f"[PIPELINE] ✅ 브랜치 생성: {branch}")
+
+    result["steps"]["preflight"] = {"status": "completed"}
+    _save_pipeline_result(root, result)
+
+    # ── pipeline_guard: contract-done + session-start ────────────────────
+    if not dry_run:
+        guard = Path(__file__).resolve().parent / "omc_pipeline_guard.py"
+        subprocess.run([sys.executable, str(guard), "session-start"], cwd=str(root))
+        subprocess.run([sys.executable, str(guard), "contract-done",
+                        "--content", f"pipeline: {instruction[:100]}"], cwd=str(root))
+
+    STEP_TIMEOUT = 600  # 스텝별 기본 타임아웃 (초)
+
+    # ── PLAN 스텝 ────────────────────────────────────────────────────────
+    plan_prompt = (
+        f"다음 지시문에 대한 구현 계획을 작성하세요.\n\n{instruction}\n\n"
+        "omc-task 스킬의 CONTRACT + DESIGN 단계를 채우세요.\n"
+        "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: HOLD`를 출력하세요."
+    )
+    print("\n[PIPELINE] ▶ PLAN 스텝 실행 중...")
+    rc, out = _run_pipeline_step(root, "plan", plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run)
+    result["steps"]["plan"] = {"status": "completed" if rc == 0 else "failed", "output_preview": out[:300]}
+    _save_pipeline_result(root, result)
+
+    if rc != 0:
+        print(f"[PIPELINE] ❌ PLAN 실패")
+        save("failed")
+        return 1
+
+    # 사람 게이트 (--auto 없으면)
+    if not auto and not dry_run:
+        print("\n[PIPELINE] ⏸  PLAN 완료 — 확인 후 계속하려면 Enter, 중단하려면 Ctrl-C:")
+        try:
+            input()
+        except (EOFError, KeyboardInterrupt):
+            print("[PIPELINE] 중단됨")
+            save("aborted")
+            return 1
+
+    # ── TASK 스텝 ────────────────────────────────────────────────────────
+    task_prompt = (
+        f"{instruction}\n\n"
+        "위 계획을 TDD로 구현하세요.\n"
+        "1. 먼저 `python3 scripts/omc_pipeline_guard.py contract-done` 실행\n"
+        "2. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
+        "3. 구현 후 테스트 GREEN 확인\n"
+        "4. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
+        "반드시 마지막 줄에 `VERDICT: PROCEED` (성공) 또는 `VERDICT: BLOCK` (실패)를 출력하세요."
+    )
+    print("\n[PIPELINE] ▶ TASK 스텝 실행 중...")
+    task_rc, task_out = _run_pipeline_step(root, "task", task_prompt, executor, STEP_TIMEOUT * 2, dry_run=dry_run)
+    result["steps"]["task"] = {"status": "completed" if task_rc == 0 else "failed", "output_preview": task_out[:300]}
+    _save_pipeline_result(root, result)
+
+    if task_rc != 0:
+        print("[PIPELINE] ❌ TASK 실패")
+        save("failed")
+        return 1
+
+    # ── CRITIQUE/REVIEW 루프 ────────────────────────────────────────────
+    for loop_step in ("critique", "review"):
+        verdict_ok = ("PROCEED", "APPROVE")
+        retry_count = 0
+        step_status = "failed"
+
+        while retry_count <= _PIPELINE_MAX_RETRIES:
+            if time.time() > deadline:
+                print(f"[PIPELINE] ❌ 최대 실행 시간 초과 ({max_time}s)")
+                result["steps"][loop_step] = {"status": "timeout"}
+                save("timeout")
+                return 1
+
+            loop_prompt = (
+                f"다음 코드 변경에 대해 {'critique(pre-mortem)' if loop_step == 'critique' else 'review'}를 수행하세요.\n"
+                f"지시문: {instruction[:200]}\n\n"
+                f"{'omc-critique 스킬' if loop_step == 'critique' else 'omc-review 스킬'}의 포맷을 따르세요.\n"
+                "반드시 마지막 줄에 `VERDICT: PROCEED` / `VERDICT: APPROVE` / "
+                "`VERDICT: REVISE` / `VERDICT: BLOCK` / `VERDICT: HOLD` 중 하나를 출력하세요."
+            )
+            print(f"\n[PIPELINE] ▶ {loop_step.upper()} 스텝 (시도 {retry_count + 1}/{_PIPELINE_MAX_RETRIES + 1})...")
+            rc, out = _run_pipeline_step(root, loop_step, loop_prompt, executor, STEP_TIMEOUT, dry_run=dry_run)
+
+            verdict = _grep_verdict(out)
+            print(f"  VERDICT: {verdict or '미감지'}")
+
+            if rc == 0 and verdict in verdict_ok:
+                result["steps"][loop_step] = {"status": "completed", "verdict": verdict}
+                step_status = "completed"
+                break
+
+            retry_count += 1
+            if retry_count > _PIPELINE_MAX_RETRIES:
+                print(f"[PIPELINE] ❌ {loop_step.upper()} retry 소진 ({_PIPELINE_MAX_RETRIES}회)")
+                result["steps"][loop_step] = {
+                    "status": "retry_exhausted",
+                    "verdict": verdict,
+                    "last_output": out[:300],
+                }
+                save("retry_exhausted")
+                return 1
+
+            print(f"  재시도 중...")
+
+        _save_pipeline_result(root, result)
+
+    # ── PR 생성 ──────────────────────────────────────────────────────────
+    pr_url = None
+    if not dry_run:
+        git_push = subprocess.run(
+            ["git", "push", "-u", "origin", branch],
+            capture_output=True, text=True, cwd=str(root),
+        )
+        if git_push.returncode == 0:
+            pr_proc = subprocess.run(
+                ["gh", "pr", "create",
+                 "--title", instruction[:72],
+                 "--body", f"자동 생성 PR\n\n지시문: {instruction[:300]}",
+                 "--base", "main"],
+                capture_output=True, text=True, cwd=str(root),
+            )
+            if pr_proc.returncode == 0:
+                pr_url = pr_proc.stdout.strip()
+                print(f"[PIPELINE] ✅ PR 생성: {pr_url}")
+            else:
+                print(f"[PIPELINE] ⚠️  PR 생성 실패: {pr_proc.stderr.strip()[:150]}")
+        else:
+            print(f"[PIPELINE] ⚠️  git push 실패: {git_push.stderr.strip()[:150]}")
+    else:
+        pr_url = "[DRY-RUN] PR URL"
+        print(f"[PIPELINE] [DRY-RUN] PR 생성 시뮬레이션")
+
+    result["pr_url"] = pr_url
+    result["steps"]["pr"] = {"status": "completed" if pr_url else "failed"}
+    save("completed")
+    print(f"\n[PIPELINE] ✅ 완료  결과: {_PIPELINE_RESULT_PATH}")
+    return 0
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -540,6 +812,14 @@ def main() -> int:
     p_status = sub.add_parser("status", help="실행 기록 조회")
     p_status.add_argument("--task-id", default=None, help="특정 태스크 ID 조회")
 
+    p_pipeline = sub.add_parser("pipeline", help="full-pipeline 자동화 (plan→critique→task→review→PR)")
+    p_pipeline.add_argument("--instruction", required=True, help="작업 지시문")
+    p_pipeline.add_argument("--branch", default="feat/autopilot", help="생성할 feature 브랜치 이름")
+    p_pipeline.add_argument("--executor", default="auto", help="LLM 실행기 (auto|codex|gemini|claude)")
+    p_pipeline.add_argument("--max-time", type=int, default=7200, help="전체 최대 실행 시간(초)")
+    p_pipeline.add_argument("--dry-run", action="store_true", help="실제 LLM 호출 없이 흐름 확인")
+    p_pipeline.add_argument("--auto", action="store_true", help="사람 게이트 없이 완전 자동 실행")
+
     args = ap.parse_args()
     root = omc_utils.project_root(args.target)
 
@@ -550,6 +830,16 @@ def main() -> int:
         return cmd_new(root, args.task_id, args.title)
     if args.cmd == "status":
         return cmd_status(root, args.task_id)
+    if args.cmd == "pipeline":
+        return cmd_pipeline(
+            root,
+            instruction=args.instruction,
+            branch=args.branch,
+            executor_pref=args.executor,
+            max_time=args.max_time,
+            dry_run=args.dry_run,
+            auto=args.auto,
+        )
     return 1
 
 

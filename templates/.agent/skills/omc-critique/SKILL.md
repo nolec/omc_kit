@@ -102,6 +102,7 @@ MINOR (개선 권장):
   3. _______________
 
 진행 판정: HOLD / REVISE / PROCEED WITH CAUTION
+VERDICT: HOLD / REVISE / PROCEED WITH CAUTION / PROCEED
 이유: _______________
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
@@ -176,6 +177,7 @@ MINOR (개선 권장):
   □ _______________
 
 판정: BLOCK / REVISE / APPROVE WITH NOTES
+VERDICT: BLOCK / REVISE / APPROVE WITH NOTES / APPROVE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 

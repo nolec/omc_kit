@@ -179,7 +179,13 @@ def _warn_if_large_without_red(abs_path: Path, file_path: str, state: dict) -> N
     print(f"             python3 scripts/omc_pipeline_guard.py red-done <테스트파일>")
 
 def cmd_check(root: Path, file_path: str, bypass: bool = False) -> int:
-    """구현 파일 편집 전 RED 완료 여부 체크. 0=허용, 1=차단"""
+    """구현 파일 편집 전 RED 완료 여부 체크. 0=허용, 1=차단
+
+    bypass=True(--autopilot) 이면 신규 파일 생성 차단을 건너뛴다.
+    """
+    if bypass:
+        return 0  # autopilot 모드 → 신규 파일 차단 없음
+
     if not _is_impl_file(file_path):
         return 0  # 구현 파일 아님 → 통과
 
@@ -332,14 +338,18 @@ def cmd_contract_done(root: Path, content: str = "") -> int:
     print("[PIPELINE] ✅ CONTRACT 확인 완료 — 기존 파일 수정이 허용됩니다.")
     return 0
 
-def cmd_check_edit(root: Path, file_path: str) -> int:
+def cmd_check_edit(root: Path, file_path: str, bypass: bool = False) -> int:
     """기존 파일 수정(edit_file) 전 CONTRACT 확인 여부 체크. 0=허용, 1=차단.
 
     - 구현 파일(_IMPL_EXTENSIONS)이 아니면 통과
     - 예외 파일(_BYPASS_PATTERNS)이면 통과
     - contract_confirmed=True 이면 통과
+    - bypass=True (--autopilot) 이면 무조건 통과
     - 그 외 차단
     """
+    if bypass:
+        return 0  # autopilot 모드 → 통과
+
     if not _is_impl_file(file_path):
         return 0  # 구현 파일 아님 → 통과
 
@@ -494,6 +504,12 @@ def main() -> int:
 
     p_check = sub.add_parser("check", help="구현 파일 편집 전 RED 완료 여부 확인")
     p_check.add_argument("file", help="편집하려는 파일 경로")
+    p_check.add_argument(
+        "--autopilot",
+        action="store_true",
+        default=False,
+        help="자동화 파이프라인 모드 — 신규 파일 생성 차단 우회 (opt-in)",
+    )
 
     p_red = sub.add_parser("red-done", help="RED 단계 완료 등록")
     p_red.add_argument("test_file", help="RED 완료된 테스트 파일 경로")
@@ -507,6 +523,12 @@ def main() -> int:
 
     p_check_edit = sub.add_parser("check-edit", help="기존 파일 수정 전 CONTRACT 확인 여부 체크")
     p_check_edit.add_argument("file", help="수정하려는 파일 경로")
+    p_check_edit.add_argument(
+        "--autopilot",
+        action="store_true",
+        default=False,
+        help="자동화 파이프라인 모드 — CONTRACT 차단 우회 (opt-in)",
+    )
 
     sub.add_parser("status", help="현재 세션 파이프라인 상태 출력")
     sub.add_parser("reset", help="세션 파이프라인 상태 초기화")
@@ -517,7 +539,7 @@ def main() -> int:
     root = Path(args.target).resolve()
 
     if args.cmd == "check":
-        return cmd_check(root, args.file)
+        return cmd_check(root, args.file, bypass=args.autopilot)
     if args.cmd == "red-done":
         return cmd_red_done(root, args.test_file)
     if args.cmd == "allow":
@@ -526,7 +548,7 @@ def main() -> int:
     if args.cmd == "contract-done":
         return cmd_contract_done(root, getattr(args, "content", ""))
     if args.cmd == "check-edit":
-        return cmd_check_edit(root, args.file)
+        return cmd_check_edit(root, args.file, bypass=getattr(args, "autopilot", False))
     if args.cmd == "status":
         return cmd_status(root)
     if args.cmd == "reset":

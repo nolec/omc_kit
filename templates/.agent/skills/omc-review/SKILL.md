@@ -27,3 +27,4 @@ python3 scripts/omc.py state status --target .
 2. **이슈 목록**: [치명] / [중대] / [경미] / [제안]
 3. **수정 제안**: 패치 단위로
 4. **검증 커맨드**
+5. **VERDICT** (grep 자동 판별용): `VERDICT: BLOCK` / `VERDICT: REVISE` / `VERDICT: APPROVE WITH NOTES` / `VERDICT: APPROVE`
