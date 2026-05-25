@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import stat
+import sys
 from pathlib import Path
 
 
@@ -210,6 +211,13 @@ def _check_force_regression(kit: Path, tgt: Path) -> bool:
             regressions.append(f"  {name}: live +{diff}줄 (kit이 더 오래된 버전)")
 
     if not regressions:
+        return True
+
+    if not sys.stdin.isatty():
+        print("[WARN] --force 버전 회귀 감지 (non-interactive 자동 진행):")
+        for r in regressions:
+            print(r)
+        print("[WARN] TTY 환경에서 재실행하면 상세 안내와 확인을 받을 수 있습니다.")
         return True
 
     print()

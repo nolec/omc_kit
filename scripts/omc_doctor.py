@@ -465,6 +465,31 @@ def _build_checks(root: Path) -> list[Check]:
         path = shutil.which(cli)
         checks.append(Check(f"{cli} CLI", bool(path), detail=path or "not found in PATH"))
 
+    # ── macOS 호환성: mktemp --suffix 감지 ─────────────────────────────────
+    sh_scan_dirs = [
+        root / ".agent-hooks",
+        root / ".cursor" / "hooks",
+        root / "templates" / ".agent-hooks",
+        root / "templates" / ".cursor" / "hooks",
+    ]
+    bad_sh: list[str] = []
+    for d in sh_scan_dirs:
+        if not d.is_dir():
+            continue
+        for sh in d.rglob("*.sh"):
+            try:
+                sh_text = sh.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if "mktemp --suffix" in sh_text:
+                bad_sh.append(str(sh.relative_to(root)))
+    checks.append(Check(
+        "macOS 호환성: mktemp --suffix 없음",
+        len(bad_sh) == 0,
+        detail=", ".join(bad_sh) if bad_sh else None,
+        fix_cmd="python3 scripts/install.py --target . --force",
+    ))
+
     return checks
 
 
