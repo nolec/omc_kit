@@ -531,6 +531,33 @@ _PIPELINE_RESULT_PATH = ".omc/pipeline_run_result.json"
 _PIPELINE_MAX_RETRIES = 3
 _VERDICT_PATTERN = r"VERDICT:\s*(PROCEED|APPROVE|BLOCK|REVISE|HOLD)"
 
+_LITE_BRANCH_PREFIXES = ("fix/", "hotfix/", "chore/", "docs/")
+_LITE_INSTRUCTION_MAX_LEN = 50
+
+
+def _detect_pipeline_mode(branch: str, instruction: str, mode_arg: str) -> str:
+    """pipeline 모드를 결정한다.
+
+    Args:
+        branch: feature 브랜치 이름
+        instruction: 작업 지시문
+        mode_arg: CLI --mode 값 ("auto" | "lite" | "full")
+
+    Returns:
+        "lite" 또는 "full"
+    """
+    if mode_arg in ("lite", "full"):
+        return mode_arg
+
+    # auto 감지
+    for prefix in _LITE_BRANCH_PREFIXES:
+        if branch.startswith(prefix):
+            return "lite"
+    if len(instruction) <= _LITE_INSTRUCTION_MAX_LEN:
+        return "lite"
+    return "full"
+
+
 
 def _save_pipeline_result(root: Path, data: dict) -> None:
     out = root / _PIPELINE_RESULT_PATH
@@ -594,6 +621,7 @@ def cmd_pipeline(
     *,
     dry_run: bool = False,
     auto: bool = False,
+    mode_arg: str = "auto",
 ) -> int:
     """plan→critique→task→review→PR 전체 자동화 파이프라인.
 
@@ -607,8 +635,10 @@ def cmd_pipeline(
     """
     started_at = _now()
     executor = _detect_executor(executor_pref)
+    mode = _detect_pipeline_mode(branch, instruction, mode_arg)
     result: dict = {
         "status": "running",
+        "mode": mode,
         "branch": branch,
         "instruction": instruction[:200],
         "executor": executor,
@@ -625,6 +655,13 @@ def cmd_pipeline(
 
     print(f"\n[PIPELINE] ▶ 시작: {instruction[:60]}")
     print(f"           브랜치={branch}  executor={executor}  dry_run={dry_run}")
+    _mode_reason = (
+        f"--mode {mode_arg} 명시" if mode_arg != "auto"
+        else f"브랜치={branch[:20]}, 지시문={len(instruction)}자"
+    )
+    print(f"           모드: {mode.upper()} (근거: {_mode_reason})")
+    if mode_arg == "auto":
+        print(f"           override: --mode {'full' if mode == 'lite' else 'lite'}")
 
     deadline = time.time() + max_time
 
@@ -665,6 +702,88 @@ def cmd_pipeline(
                         "--content", f"pipeline: {instruction[:100]}"], cwd=str(root))
 
     STEP_TIMEOUT = 600  # 스텝별 기본 타임아웃 (초)
+
+    # ── LITE 모드: plan/critique 스킵 ──────────────────────────────────
+    if mode == "lite":
+        print("\n[PIPELINE] ⚡ LITE 모드 — plan/critique 스킵")
+        result["steps"]["preflight"]["mode"] = "lite"
+        _save_pipeline_result(root, result)
+        # TASK 스텝으로 바로 진입
+        task_prompt_lite = (
+            f"{instruction}\n\n"
+            "TDD로 구현하세요.\n"
+            "1. 먼저 `python3 scripts/omc_pipeline_guard.py contract-done` 실행\n"
+            "2. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
+            "3. 구현 후 테스트 GREEN 확인\n"
+            "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: BLOCK`을 출력하세요."
+        )
+        print("\n[PIPELINE] ▶ TASK 스텝 (LITE)...")
+        task_rc, task_out = _run_pipeline_step(
+            root, "task", task_prompt_lite, executor, STEP_TIMEOUT * 2, dry_run=dry_run
+        )
+        result["steps"]["task"] = {
+            "status": "completed" if task_rc == 0 else "failed",
+            "output_preview": task_out[:300],
+        }
+        if task_rc != 0:
+            save("failed")
+            return 1
+
+        # REVIEW 스텝 (retry 없음)
+        review_prompt_lite = (
+            f"다음 코드 변경을 리뷰하세요.\n지시문: {instruction[:200]}\n\n"
+            "omc-review 스킬 포맷을 따르세요.\n"
+            "반드시 마지막 줄에 `VERDICT: APPROVE` 또는 `VERDICT: BLOCK`을 출력하세요."
+        )
+        print("\n[PIPELINE] ▶ REVIEW 스텝 (LITE, retry 없음)...")
+        review_rc, review_out = _run_pipeline_step(
+            root, "review", review_prompt_lite, executor, STEP_TIMEOUT, dry_run=dry_run
+        )
+        review_verdict = _grep_verdict(review_out)
+        print(f"  VERDICT: {review_verdict or '미감지'}")
+        result["steps"]["review"] = {
+            "status": "completed" if review_verdict in ("APPROVE", "PROCEED") else "failed",
+            "verdict": review_verdict,
+        }
+        if review_verdict not in ("APPROVE", "PROCEED"):
+            save("failed")
+            return 1
+
+        # PR 생성 (LITE)
+        pr_url = None
+        if not dry_run:
+            git_push = subprocess.run(
+                ["git", "push", "-u", "origin", branch],
+                capture_output=True, text=True, cwd=str(root),
+            )
+            if git_push.returncode == 0:
+                pr_proc = subprocess.run(
+                    ["gh", "pr", "create",
+                     "--title", instruction[:72],
+                     "--body", f"자동 생성 PR (LITE)\n\n지시문: {instruction[:300]}",
+                     "--base", "main"],
+                    capture_output=True, text=True, cwd=str(root),
+                )
+                if pr_proc.returncode == 0:
+                    pr_url = pr_proc.stdout.strip()
+                    print(f"[PIPELINE] ✅ PR 생성: {pr_url}")
+                else:
+                    print(f"[PIPELINE] ⚠️  PR 생성 실패: {pr_proc.stderr.strip()[:150]}")
+            else:
+                print(f"[PIPELINE] ❌ git push 실패: {git_push.stderr.strip()[:150]}")
+                result["steps"]["pr"] = {"status": "failed", "reason": "push_failed"}
+                save("failed")
+                return 1
+        else:
+            pr_url = "[DRY-RUN] PR URL"
+        result["pr_url"] = pr_url
+        result["steps"]["pr"] = {"status": "completed" if pr_url else "failed"}
+        save("completed")
+        print(f"\n[PIPELINE] ✅ LITE 완료  결과: {_PIPELINE_RESULT_PATH}")
+        return 0
+
+    # ── FULL 모드 ──────────────────────────────────────────────────────
+    STEP_TIMEOUT = 600  # 이하 기존 코드
 
     # ── PLAN 스텝 ────────────────────────────────────────────────────────
     plan_prompt = (
@@ -827,6 +946,8 @@ def main() -> int:
     p_pipeline.add_argument("--max-time", type=int, default=7200, help="전체 최대 실행 시간(초)")
     p_pipeline.add_argument("--dry-run", action="store_true", help="실제 LLM 호출 없이 흐름 확인")
     p_pipeline.add_argument("--auto", action="store_true", help="사람 게이트 없이 완전 자동 실행")
+    p_pipeline.add_argument("--mode", choices=["auto", "lite", "full"], default="auto",
+                            help="파이프라인 모드 (auto: 자동감지, lite: 토큰 절약, full: 전체)")
 
     args = ap.parse_args()
     root = omc_utils.project_root(args.target)
@@ -847,6 +968,7 @@ def main() -> int:
             max_time=args.max_time,
             dry_run=args.dry_run,
             auto=args.auto,
+            mode_arg=args.mode,
         )
     return 1
 
