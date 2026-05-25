@@ -11,6 +11,10 @@
         "name": "refresh_notepad"
       },
       {
+        "type": "builtin",
+        "name": "auto_compact"
+      },
+      {
         "type": "shell",
         "name": "omc_status_check",
         "command": "python3 scripts/omc.py state status",
