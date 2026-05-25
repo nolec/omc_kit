@@ -335,6 +335,7 @@ nohup python3 scripts/omc_autopilot.py pipeline \
   --instruction "구현할 내용" \
   --branch "feat/기능명" \
   --mode auto \
+  --allow-dirty \
   > .omc/pipeline.log 2>&1 &
 
 echo "PID: $!  |  로그: .omc/pipeline.log"

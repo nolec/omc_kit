@@ -626,6 +626,7 @@ def cmd_pipeline(
     dry_run: bool = False,
     auto: bool = False,
     mode_arg: str = "auto",
+    allow_dirty: bool = False,
 ) -> int:
     """plan→critique→task→review→PR 전체 자동화 파이프라인.
 
@@ -675,8 +676,16 @@ def cmd_pipeline(
         capture_output=True, text=True, cwd=str(root),
     )
     if git_status.stdout.strip():
-        print("[PIPELINE] ⚠️  uncommitted 변경 있음 (계속 진행)")
-        print(f"  {git_status.stdout.strip()[:200]}")
+        dirty_files = git_status.stdout.strip()
+        dirty_count = len(dirty_files.splitlines())
+        if not allow_dirty and not dry_run:
+            print(f"[PIPELINE] ❌ uncommitted 변경 감지 ({dirty_count}개 파일)")
+            print(f"  {dirty_files[:200]}")
+            print("  → git commit -am 'wip' 또는 git stash 후 재실행")
+            print("  → 또는 --allow-dirty 플래그 추가하면 강제 진행")
+            return 1
+        print(f"[PIPELINE] ⚠️  uncommitted 변경 있음 ({dirty_count}개) — {'--allow-dirty' if allow_dirty else 'dry-run'} 모드")
+        print(f"  {dirty_files[:200]}")
 
     if not dry_run:
         print("[PIPELINE] ✅ git 상태 확인 완료")
@@ -952,6 +961,8 @@ def main() -> int:
                             help="파이프라인 모드 (auto: 자동감지, lite: 토큰 절약, full: 전체)")
     p_pipeline.add_argument("--force", action="store_true",
                             help="짧은 지시문 경고 무시하고 강제 실행")
+    p_pipeline.add_argument("--allow-dirty", action="store_true",
+                            help="uncommitted 변경이 있어도 강제 실행")
 
     args = ap.parse_args()
     root = omc_utils.project_root(args.target)
@@ -989,6 +1000,7 @@ def main() -> int:
             dry_run=args.dry_run,
             auto=args.auto,
             mode_arg=args.mode,
+            allow_dirty=args.allow_dirty,
         )
     return 1
 

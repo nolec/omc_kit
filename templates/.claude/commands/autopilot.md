@@ -34,6 +34,7 @@ nohup python3 scripts/omc_autopilot.py pipeline \
   --instruction "$ARGUMENTS" \
   --branch "feat/autopilot-$(date +%s)" \
   --mode auto \
+  --allow-dirty \
   > .omc/pipeline.log 2>&1 &
 
 echo "PID: $!  |  로그: .omc/pipeline.log"
