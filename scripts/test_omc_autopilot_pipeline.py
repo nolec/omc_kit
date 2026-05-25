@@ -205,3 +205,79 @@ def test_resume_already_completed_exits_zero(tmp_path: Path):
     assert any(kw in combined for kw in ("완료", "completed", "이미")), (
         f"완료 안내 없음: {combined[:300]}"
     )
+
+
+# ── pipeline-status 테스트 ───────────────────────────────────────────────────
+
+def test_pipeline_status_no_file_exits_zero(tmp_path: Path):
+    """pipeline_run_result.json 없을 때 pipeline-status는 exit 0 + 안내 메시지."""
+    (tmp_path / ".omc").mkdir()
+    r = _run(["--target", str(tmp_path), "pipeline-status"])
+    assert r.returncode == 0, (
+        f"result 없을 때 exit nonzero\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    )
+    combined = r.stdout + r.stderr
+    assert any(kw in combined for kw in ("없음", "기록", "no result", "not found")), (
+        f"파일 없음 안내 메시지 없음: {combined[:300]}"
+    )
+
+
+def test_pipeline_status_shows_completed(tmp_path: Path):
+    """completed result JSON 있을 때 pipeline-status가 completed 상태를 출력한다."""
+    omc_dir = tmp_path / ".omc"
+    omc_dir.mkdir()
+    result_data = {
+        "status": "completed",
+        "mode": "lite",
+        "branch": "feat/test",
+        "executor": "codex",
+        "started_at": "2026-05-26T020000Z",
+        "finished_at": "2026-05-26T020500Z",
+        "steps": {
+            "preflight": {"status": "completed"},
+            "task": {"status": "completed", "output_preview": "VERDICT: PROCEED"},
+            "pr": {"status": "completed"},
+        },
+    }
+    (omc_dir / "pipeline_run_result.json").write_text(
+        json.dumps(result_data), encoding="utf-8"
+    )
+    r = _run(["--target", str(tmp_path), "pipeline-status"])
+    assert r.returncode == 0, (
+        f"pipeline-status exit nonzero\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    )
+    combined = r.stdout + r.stderr
+    assert "completed" in combined.lower(), f"completed 상태 미출력: {combined[:500]}"
+    assert "preflight" in combined.lower(), f"단계명 미출력: {combined[:500]}"
+
+
+def test_pipeline_status_shows_error_message(tmp_path: Path):
+    """실패 단계에 error_message 있으면 pipeline-status가 해당 메시지를 출력한다."""
+    omc_dir = tmp_path / ".omc"
+    omc_dir.mkdir()
+    result_data = {
+        "status": "failed",
+        "mode": "full",
+        "branch": "feat/error-test",
+        "executor": "codex",
+        "started_at": "2026-05-26T020000Z",
+        "steps": {
+            "preflight": {"status": "completed"},
+            "plan": {"status": "completed"},
+            "task": {
+                "status": "failed",
+                "error_message": "TimeoutError: LLM 응답 초과",
+            },
+        },
+    }
+    (omc_dir / "pipeline_run_result.json").write_text(
+        json.dumps(result_data), encoding="utf-8"
+    )
+    r = _run(["--target", str(tmp_path), "pipeline-status"])
+    assert r.returncode == 0, (
+        f"pipeline-status exit nonzero\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    )
+    combined = r.stdout + r.stderr
+    assert "TimeoutError" in combined or "LLM 응답 초과" in combined, (
+        f"error_message 미출력: {combined[:500]}"
+    )

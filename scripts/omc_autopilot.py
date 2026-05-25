@@ -483,6 +483,95 @@ def cmd_new(root: Path, task_id: str, title: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 커맨드: pipeline-status
+# ---------------------------------------------------------------------------
+
+def _build_step_detail(ss: dict, rich_markup: bool = False) -> str:
+    """단계 상세 정보 문자열을 생성한다."""
+    parts = []
+    if ss.get("output_preview"):
+        parts.append(ss["output_preview"])
+    if ss.get("verdict"):
+        parts.append(f"VERDICT: {ss['verdict']}")
+    if ss.get("error_message"):
+        err = ss["error_message"]
+        parts.append(f"[red]ERR: {err}[/red]" if rich_markup else f"ERR: {err}")
+    return "  |  ".join(parts) or "-"
+
+
+_STEP_ICON = {
+    "completed": "✅",
+    "failed": "❌",
+    "running": "⏳",
+    "skipped": "⏭ ",
+    "blocked": "🔒",
+}
+
+_PIPELINE_STATUS_ICON = {
+    "completed": "✅", "failed": "❌", "running": "⏳", "aborted": "🛑",
+}
+
+
+def cmd_pipeline_status(root: Path) -> int:
+    """pipeline_run_result.json 기반 파이프라인 진행 상황 출력."""
+    result_path = root / _PIPELINE_RESULT_PATH
+
+    if not result_path.exists():
+        print("[PIPELINE STATUS] 파이프라인 실행 기록 없음")
+        return 0
+
+    try:
+        data = json.loads(result_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print(f"[PIPELINE STATUS] 결과 파일 손상됨: {result_path} — {e}", file=sys.stderr)
+        return 1
+
+    try:
+        from rich.console import Console
+        from rich.table import Table
+        _use_rich = True
+    except ImportError:
+        _use_rich = False
+
+    status = data.get("status", "?")
+    status_icon = _PIPELINE_STATUS_ICON.get(status, "❓")
+    print(
+        f"\n{status_icon} OMC Pipeline Status  [{status}]  mode={data.get('mode', '?')}\n"
+        f"   branch={data.get('branch', '?')}  executor={data.get('executor', '?')}\n"
+        f"   started={data.get('started_at', '-')}  finished={data.get('finished_at', '-')}\n"
+    )
+
+    steps = data.get("steps", {})
+    if not steps:
+        print("   (단계 기록 없음)")
+        return 0
+
+    if _use_rich:
+        console = Console()
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("단계", style="cyan", min_width=12)
+        table.add_column("상태", min_width=10)
+        table.add_column("상세", min_width=30)
+        for step_name, ss in steps.items():
+            s = ss.get("status", "?")
+            icon = _STEP_ICON.get(s, "❓")
+            table.add_row(step_name, f"{icon} {s}", _build_step_detail(ss, rich_markup=True))
+        console.print(table)
+    else:
+        col_w = max((len(n) for n in steps), default=10) + 2
+        print(f"  {'단계':<{col_w}} {'상태':<12} 상세")
+        print(f"  {'-'*col_w} {'-'*12} {'-'*30}")
+        for step_name, ss in steps.items():
+            s = ss.get("status", "?")
+            icon = _STEP_ICON.get(s, "❓")
+            print(f"  {step_name:<{col_w}} {icon} {s:<10} {_build_step_detail(ss)}")
+
+    print()
+    return 0
+
+
 # 커맨드: status
 # ---------------------------------------------------------------------------
 
@@ -1021,6 +1110,9 @@ def main() -> int:
     p_pipeline.add_argument("--resume", action="store_true",
                             help="이전 실행 결과에서 실패 단계부터 재개")
 
+
+    sub.add_parser("pipeline-status", help="pipeline 실행 결과 상태 조회")
+
     args = ap.parse_args()
     root = omc_utils.project_root(args.target)
 
@@ -1031,6 +1123,8 @@ def main() -> int:
         return cmd_new(root, args.task_id, args.title)
     if args.cmd == "status":
         return cmd_status(root, args.task_id)
+    if args.cmd == "pipeline-status":
+        return cmd_pipeline_status(root)
     if args.cmd == "pipeline":
         # pre-flight 검증
         args.instruction = args.instruction.strip()
