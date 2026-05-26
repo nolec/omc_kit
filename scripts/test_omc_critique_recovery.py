@@ -598,3 +598,106 @@ def test_preflight_does_not_double_init_when_same_guard(tmp_repo, monkeypatch):
     assert contract_done_count == 1, (
         f"contract-done 이중 호출 감지: {contract_done_count}회\n호출 목록: {guard_calls}"
     )
+
+# ─────────────────────────────────────────────
+# C-T1: plan_prompt에 omc-task 참조 없어야 함
+# ─────────────────────────────────────────────
+
+def test_plan_prompt_has_no_omc_task_reference(tmp_repo, monkeypatch):
+    """plan_prompt / retry_plan_prompt 어디에도 'omc-task' 문자열이 없어야 한다.
+    대신 목표/범위/DoD/제약/실패조건 구조 힌트가 있어야 한다."""
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
+    captured: dict[str, str] = {}
+    verdicts = iter(["PROCEED", "PROCEED", "PROCEED", "APPROVE"])
+
+    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+        captured[step] = prompt
+        v = next(verdicts, "PROCEED")
+        return (0, f"output\nVERDICT: {v}")
+
+    import subprocess as _sp
+    def _mock_sp(cmd, **kw):
+        return _sp.CompletedProcess(cmd, 0, stdout="https://github.com/pr/1", stderr="")
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run", side_effect=_mock_sp):
+        _aut.cmd_pipeline(root=tmp_repo,
+                          instruction="test instruction that is long enough",
+                          branch="feat/test", executor_pref="codex", max_time=60,
+                          dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
+
+    plan_prompt = captured.get("plan", "")
+    assert "omc-task" not in plan_prompt, (
+        f"plan_prompt에 'omc-task' 참조가 남아 있음\n앞 300자: {plan_prompt[:300]}"
+    )
+    # 대체 구조 힌트 포함 여부
+    assert any(kw in plan_prompt for kw in ["목표", "범위", "DoD", "실패조건"]), (
+        f"plan_prompt에 구조 힌트(목표/범위/DoD/실패조건) 없음\n앞 300자: {plan_prompt[:300]}"
+    )
+
+
+# ─────────────────────────────────────────────
+# C-T2: task_prompt 3곳에 자동화 모드 헤더 있어야 함
+# ─────────────────────────────────────────────
+
+def test_task_prompts_have_automation_mode_header(tmp_repo, monkeypatch):
+    """task_prompt(full) / task_prompt_lite / task_retry_prompt 모두
+    '[자동화 모드]' 헤더를 포함해야 한다."""
+    # ── full 모드: task_prompt / task_retry_prompt 검증 ──
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
+    captured_full: dict[str, str] = {}
+    # critique REVISE 2회 → task_retry 트리거
+    verdicts_full = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE",
+                          "PROCEED", "PROCEED", "APPROVE"])
+
+    def _mock_full(root, step, prompt, executor, timeout, dry_run=False):
+        captured_full[step] = prompt
+        v = next(verdicts_full, "PROCEED")
+        return (0, f"output\nVERDICT: {v}")
+
+    import subprocess as _sp
+    def _mock_sp(cmd, **kw):
+        return _sp.CompletedProcess(cmd, 0, stdout="https://github.com/pr/1", stderr="")
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock_full), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run", side_effect=_mock_sp):
+        _aut.cmd_pipeline(root=tmp_repo,
+                          instruction="test instruction that is long enough",
+                          branch="feat/test", executor_pref="codex", max_time=60,
+                          dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
+
+    for step_name in ["task", "task_retry"]:
+        prompt = captured_full.get(step_name, "")
+        assert "[자동화 모드]" in prompt or "AUTOMATION MODE" in prompt, (
+            f"[full 모드] step='{step_name}' 프롬프트에 자동화 모드 헤더 없음\n앞 200자: {prompt[:200]}"
+        )
+
+    # ── lite 모드: task_prompt_lite 검증 ──
+    captured_lite: dict[str, str] = {}
+    verdicts_lite = iter(["PROCEED", "APPROVE"])
+
+    def _mock_lite(root, step, prompt, executor, timeout, dry_run=False):
+        captured_lite[step] = prompt
+        v = next(verdicts_lite, "PROCEED")
+        return (0, f"output\nVERDICT: {v}")
+
+    (tmp_repo / "result.json").unlink(missing_ok=True)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result_lite.json"))
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock_lite), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run", side_effect=_mock_sp):
+        _aut.cmd_pipeline(root=tmp_repo,
+                          instruction="test instruction that is long enough",
+                          branch="feat/test", executor_pref="codex", max_time=60,
+                          dry_run=False, auto=True, mode_arg="lite", allow_dirty=True)
+
+    lite_prompt = captured_lite.get("task", "")
+    assert "[자동화 모드]" in lite_prompt or "AUTOMATION MODE" in lite_prompt, (
+        f"[lite 모드] task_prompt_lite에 자동화 모드 헤더 없음\n앞 200자: {lite_prompt[:200]}"
+    )

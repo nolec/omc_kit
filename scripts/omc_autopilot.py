@@ -1034,6 +1034,7 @@ def cmd_pipeline(
         _save_pipeline_result(root, result)
         # TASK 스텝으로 바로 진입
         task_prompt_lite = (
+            "[자동화 모드] 사용자 확인 없이 즉시 실행하세요.\n\n"
             f"{instruction}\n\n"
             "TDD로 구현하세요.\n"
             "1. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
@@ -1118,7 +1119,7 @@ def cmd_pipeline(
     # ── PLAN 스텝 ────────────────────────────────────────────────────────
     plan_prompt = (
         f"다음 지시문에 대한 구현 계획을 작성하세요.\n\n{instruction}\n\n"
-        "omc-task 스킬의 CONTRACT + DESIGN 단계를 채우세요.\n"
+        "목표/범위/DoD/제약/실패조건을 각각 한 줄로 명시하세요.\n"
         "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: HOLD`를 출력하세요."
     )
     print("\n[PIPELINE] ▶ PLAN 스텝 실행 중...")
@@ -1156,6 +1157,7 @@ def cmd_pipeline(
 
     # ── TASK 스텝 ────────────────────────────────────────────────────────
     task_prompt = (
+        "[자동화 모드] 사용자 확인 없이 즉시 실행하세요.\n\n"
         f"{instruction}\n\n"
         "위 계획을 TDD로 구현하세요.\n"
         "1. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
@@ -1282,6 +1284,7 @@ def cmd_pipeline(
                         if critique_issues else ""
                     )
                     task_retry_prompt = (
+                        "[자동화 모드] 사용자 확인 없이 즉시 실행하세요.\n\n"
                         f"{instruction}\n\n"
                         "이전 critique에서 다음 문제가 지적됐습니다. 이를 수정해 재구현하세요."
                         f"{issues_section}"
@@ -1329,7 +1332,7 @@ def cmd_pipeline(
                     retry_plan_prompt = (
                         f"이전 critique에서 다음 문제가 지적됐습니다. 이를 반영해 구현 계획을 수정하세요.{issues_section}"
                         f"\n지시문: {instruction[:200]}\n\n"
-                        "omc-task 스킬의 CONTRACT + DESIGN 단계를 채우세요.\n"
+                        "목표/범위/DoD/제약/실패조건을 각각 한 줄로 명시하세요.\n"
                         "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: HOLD`를 출력하세요."
                     )
                     print("\n[PIPELINE] ▶ PLAN 재실행 (critique 이슈 반영)...")
