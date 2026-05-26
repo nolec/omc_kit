@@ -321,3 +321,127 @@ def test_task_retry_rc_nonzero_exits_hold_with_code_2(tmp_repo, monkeypatch):
     data = json.loads((tmp_repo / "result.json").read_text())
     assert rc == 2, f"rc={rc} (expected 2 for hold)"
     assert data["status"] == "hold", f"status={data['status']}"
+
+# ─────────────────────────────────────────────
+# T1: critique verdict=None(rc=0) × 3 → streak 탈출 → task_retry → completed
+# ─────────────────────────────────────────────
+
+def test_critique_none_verdict_streak_triggers_task_retry(tmp_repo, monkeypatch):
+    """critique rc=0 + verdict=None × 3 연속 → task_retry 실행 → completed."""
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
+    # plan(PROCEED), task(PROCEED),
+    # critique(None×3 탈출), task_retry(PROCEED), critique_retry(PROCEED), review(APPROVE)
+    step_verdicts = {
+        "plan":       iter(["PROCEED"]),
+        "task":       iter(["PROCEED"]),
+        "critique":   iter([None, None, None, "PROCEED"]),  # None×3 → task_retry 후 PROCEED
+        "task_retry": iter(["PROCEED"]),
+        "review":     iter(["APPROVE"]),
+    }
+
+    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+        v = next(step_verdicts.get(step, iter(["PROCEED"])), "PROCEED")
+        body = "output" if v is None else f"output\nVERDICT: {v}"
+        return (0, body)
+
+    import subprocess as _sp
+    def _mock_sp(cmd, **kw):
+        return _sp.CompletedProcess(cmd, 0, stdout="https://github.com/pr/1", stderr="")
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run", side_effect=_mock_sp):
+        rc = _aut.cmd_pipeline(root=tmp_repo,
+                               instruction="test instruction that is long enough",
+                               branch="feat/test", executor_pref="codex", max_time=60,
+                               dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
+
+    data = json.loads((tmp_repo / "result.json").read_text())
+    assert rc == 0, f"rc={rc}"
+    assert data["status"] == "completed", f"status={data['status']}"
+    assert "task_retry" in data.get("steps", {}), "task_retry 가 result.json 에 없음"
+
+
+# ─────────────────────────────────────────────
+# T2: critique verdict=BLOCK 1회 → 즉시 task_retry → completed
+# ─────────────────────────────────────────────
+
+def test_critique_block_verdict_immediate_task_retry(tmp_repo, monkeypatch):
+    """critique BLOCK 1회 → streak 기다리지 않고 즉시 task_retry → completed."""
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
+    # plan(PROCEED), task(PROCEED), critique(BLOCK 1회 즉시 탈출),
+    # task_retry(PROCEED), critique_retry(PROCEED), review(APPROVE)
+    step_verdicts = {
+        "plan":       iter(["PROCEED"]),
+        "task":       iter(["PROCEED"]),
+        "critique":   iter(["BLOCK", "PROCEED"]),  # BLOCK 1회 → 즉시 탈출, retry 후 PROCEED
+        "task_retry": iter(["PROCEED"]),
+        "review":     iter(["APPROVE"]),
+    }
+
+    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+        v = next(step_verdicts.get(step, iter(["PROCEED"])), "PROCEED")
+        return (0, f"output\nVERDICT: {v}")
+
+    import subprocess as _sp
+    def _mock_sp(cmd, **kw):
+        return _sp.CompletedProcess(cmd, 0, stdout="https://github.com/pr/1", stderr="")
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run", side_effect=_mock_sp):
+        rc = _aut.cmd_pipeline(root=tmp_repo,
+                               instruction="test instruction that is long enough",
+                               branch="feat/test", executor_pref="codex", max_time=60,
+                               dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
+
+    data = json.loads((tmp_repo / "result.json").read_text())
+    assert rc == 0, f"rc={rc}"
+    assert data["status"] == "completed", f"status={data['status']}"
+    assert "task_retry" in data.get("steps", {}), "task_retry 가 result.json 에 없음"
+
+# ─────────────────────────────────────────────
+# REVIEW-FIX R3: critique 첫 번째 None만으로 streak이 발동하지 않아야 한다
+# ─────────────────────────────────────────────
+
+def test_critique_first_none_does_not_trigger_streak(tmp_repo, monkeypatch):
+    """critique 첫 번째 verdict=None 은 streak에 포함되지 않아야 한다.
+    None×2 만으로는 탈출이 발동하면 안 되며 (sentinel 초기화 검증),
+    None, REVISE, None 처럼 첫 None 이후 다른 verdict가 끼어들어도
+    streak이 리셋돼 task_retry가 발동하지 않아야 한다."""
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
+    # None × 2 → prev_verdict sentinel 오분류 없이 정상 retry 소진 후 PROCEED
+    # critique(None, None, PROCEED), review(APPROVE) — task_retry 없이 completed
+    step_verdicts = {
+        "plan":     iter(["PROCEED"]),
+        "task":     iter(["PROCEED"]),
+        "critique": iter([None, None, "PROCEED"]),
+        "review":   iter(["APPROVE"]),
+    }
+
+    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+        v = next(step_verdicts.get(step, iter(["PROCEED"])), "PROCEED")
+        body = "output" if v is None else f"output\nVERDICT: {v}"
+        return (0, body)
+
+    import subprocess as _sp
+    def _mock_sp(cmd, **kw):
+        return _sp.CompletedProcess(cmd, 0, stdout="https://github.com/pr/1", stderr="")
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run", side_effect=_mock_sp):
+        rc = _aut.cmd_pipeline(root=tmp_repo,
+                               instruction="test instruction that is long enough",
+                               branch="feat/test", executor_pref="codex", max_time=60,
+                               dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
+
+    data = json.loads((tmp_repo / "result.json").read_text())
+    assert rc == 0, f"rc={rc}"
+    assert data["status"] == "completed", f"status={data['status']}"
+    # None×2 가 sentinel 오분류로 인해 streak 탈출→task_retry로 이어지면 안 됨
+    assert "task_retry" not in data.get("steps", {}), \
+        "None×2 만으로 task_retry가 발동하면 sentinel 초기화 버그"

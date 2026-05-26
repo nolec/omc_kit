@@ -797,6 +797,7 @@ def _grep_verdict(output: str) -> str | None:
     return None
 
 
+_UNSET_VERDICT = object()  # prev_verdict 초기 sentinel — None 과 구분
 _CRITIQUE_AUTO_RETRY_MAX = 1  # critique 루프 탈출 후 plan 자동 재진입 최대 횟수
 _TASK_AUTO_RETRY_MAX = 1      # critique 루프 탈출 후 task 자동 재실행 최대 횟수
 
@@ -1178,7 +1179,7 @@ def cmd_pipeline(
     for loop_step in ("critique", "review"):
         verdict_ok = ("PROCEED", "APPROVE")
         retry_count = 0
-        prev_verdict: str | None = None
+        prev_verdict: object = _UNSET_VERDICT  # sentinel: 아직 verdict 없음
         same_verdict_streak = 0
 
         base_loop_prompt = (
@@ -1209,24 +1210,45 @@ def cmd_pipeline(
                 result["steps"][loop_step] = {"status": "completed", "verdict": verdict}
                 break
 
+            # T2: BLOCK 즉시 탈출 — 재시도 없이 바로 에스컬레이션
+            if rc == 0 and verdict == "BLOCK":
+                print(f"[PIPELINE] ❌ {loop_step.upper()} VERDICT: BLOCK — 즉시 탈출")
+                critique_issues = _extract_critique_issues(out)
+                result["steps"][loop_step] = {
+                    "status": "failed_critique_loop",
+                    "verdict": "BLOCK",
+                    "streak": 1,
+                    "last_output": out[:2000],
+                    "critique_issues": critique_issues,
+                }
+                _save_pipeline_result(root, result)
+                same_verdict_streak = _PIPELINE_MAX_SAME_VERDICT  # 에스컬레이션 트리거
+                # 아래 에스컬레이션 블록으로 fall-through
+
             # 동일 verdict 연속 감지
-            if verdict is not None and verdict == prev_verdict:
+            # T1: rc=0 + None(미감지)도 streak에 포함 — 인프라 오류(rc≠0)는 제외
+            elif rc == 0 and verdict is None and prev_verdict is None:
+                # prev_verdict == _UNSET_VERDICT(sentinel)이면 이 조건 불충족 → streak 미증가
+                same_verdict_streak += 1
+            elif verdict is not None and verdict == prev_verdict:
                 same_verdict_streak += 1
             else:
                 same_verdict_streak = 0
             prev_verdict = verdict
 
             if same_verdict_streak >= _PIPELINE_MAX_SAME_VERDICT:
-                print(f"[PIPELINE] ❌ {loop_step.upper()} 동일 verdict({verdict}) {same_verdict_streak + 1}회 연속 — 탈출")
-                critique_issues = _extract_critique_issues(out)
-                result["steps"][loop_step] = {
-                    "status": "failed_critique_loop",
-                    "verdict": verdict,
-                    "streak": same_verdict_streak + 1,
-                    "last_output": out[:2000],
-                    "critique_issues": critique_issues,
-                }
-                _save_pipeline_result(root, result)
+                # BLOCK 즉시 탈출이 이미 result["steps"]를 저장했으면 덮어쓰지 않음
+                if result["steps"].get(loop_step, {}).get("verdict") != "BLOCK":
+                    print(f"[PIPELINE] ❌ {loop_step.upper()} 동일 verdict({verdict}) {same_verdict_streak + 1}회 연속 — 탈출")
+                    critique_issues = _extract_critique_issues(out)
+                    result["steps"][loop_step] = {
+                        "status": "failed_critique_loop",
+                        "verdict": verdict,
+                        "streak": same_verdict_streak + 1,
+                        "last_output": out[:2000],
+                        "critique_issues": critique_issues,
+                    }
+                    _save_pipeline_result(root, result)
 
                 # ── critique 루프 탈출 시 복구 에스컬레이션 ─────────────────
                 # 1순위: task_retry (critique_issues 반영) → critique 재진입
@@ -1276,7 +1298,7 @@ def cmd_pipeline(
                         return 2
                     # critique 루프 재진입: 카운터·스트릭 초기화
                     retry_count = 0
-                    prev_verdict = None
+                    prev_verdict = _UNSET_VERDICT  # 재진입 후 첫 None 오분류 방지
                     same_verdict_streak = 0
                     continue
 
@@ -1316,7 +1338,7 @@ def cmd_pipeline(
                         return 2
                     # critique 루프 재진입: 카운터·스트릭 초기화
                     retry_count = 0
-                    prev_verdict = None
+                    prev_verdict = _UNSET_VERDICT  # 재진입 후 첫 None 오분류 방지
                     same_verdict_streak = 0
                     continue
 
