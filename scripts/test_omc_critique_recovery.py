@@ -164,3 +164,160 @@ def test_plan_retry_hold_verdict_exits_hold(tmp_repo, monkeypatch):
     # 예상 순서: plan, task, critique(×3), plan_retry
     assert step_calls[-1] == "plan_retry", \
         f"plan_retry 가 마지막 호출이어야 함, 실제: {step_calls}"
+
+# ─────────────────────────────────────────────
+# T1 (B): task 프롬프트에 critique 품질 힌트 포함
+# ─────────────────────────────────────────────
+
+def test_task_prompt_contains_critique_quality_hint(tmp_repo, monkeypatch):
+    """task 에 전달되는 프롬프트에 _CRITIQUE_QUALITY_HINT 텍스트가 포함돼야 한다."""
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
+    captured_prompts: dict[str, str] = {}
+    verdicts = iter(["PROCEED", "PROCEED", "PROCEED", "APPROVE"])
+
+    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+        captured_prompts[step] = prompt
+        v = next(verdicts, "PROCEED")
+        return (0, f"output\nVERDICT: {v}")
+
+    import subprocess as _sp
+    def _mock_sp(cmd, **kw):
+        return _sp.CompletedProcess(cmd, 0, stdout="https://github.com/pr/1", stderr="")
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run", side_effect=_mock_sp):
+        _aut.cmd_pipeline(root=tmp_repo, instruction="test instruction that is long enough",
+                          branch="feat/test", executor_pref="codex", max_time=60,
+                          dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
+
+    assert "task" in captured_prompts, "task 스텝이 호출되지 않음"
+    assert _aut._CRITIQUE_QUALITY_HINT in captured_prompts["task"], \
+        f"task 프롬프트에 _CRITIQUE_QUALITY_HINT 없음\n실제: {captured_prompts['task'][:200]}"
+
+
+# ─────────────────────────────────────────────
+# T2 (A): critique REVISE × 3 탈출 시 task_retry 먼저 실행
+# ─────────────────────────────────────────────
+
+def test_critique_revise_triggers_task_retry_then_proceeds(tmp_repo, monkeypatch):
+    """critique REVISE×3 탈출 → task_retry → critique PROCEED → completed."""
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
+    # plan, task, critique(REVISE×3 탈출), task_retry, critique_retry(PROCEED), review(APPROVE)
+    verdicts = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE",
+                     "PROCEED", "PROCEED", "APPROVE"])
+
+    def _mock_step(root, step, prompt, executor, timeout, dry_run=False):
+        v = next(verdicts, "PROCEED")
+        return (0, f"output\nVERDICT: {v}")
+
+    import subprocess as _sp
+    def _mock_sp(cmd, **kw):
+        return _sp.CompletedProcess(cmd, 0, stdout="https://github.com/pr/1", stderr="")
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock_step), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run", side_effect=_mock_sp):
+        rc = _aut.cmd_pipeline(root=tmp_repo, instruction="test instruction that is long enough",
+                               branch="feat/test", executor_pref="codex", max_time=60,
+                               dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
+
+    data = json.loads((tmp_repo / "result.json").read_text())
+    assert rc == 0, f"rc={rc}"
+    assert data["status"] == "completed", f"status={data['status']}"
+    assert "task_retry" in data.get("steps", {}), "task_retry 스텝이 result.json 에 없음"
+
+
+# ─────────────────────────────────────────────
+# T3: task_retry 후에도 REVISE → plan_retry → hold 에스컬레이션
+# ─────────────────────────────────────────────
+
+def test_task_retry_still_revise_falls_back_to_plan_retry_then_hold(tmp_repo, monkeypatch):
+    """task_retry 후에도 REVISE×3 → plan_retry → REVISE×3 → hold exit 2."""
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
+    # plan, task, critique(REVISE×3 탈출)
+    # → task_retry, critique(REVISE×3 탈출)
+    # → plan_retry(PROCEED), critique(REVISE×3 탈출) → hold
+    verdicts = iter([
+        "PROCEED", "PROCEED",          # plan, task
+        "REVISE", "REVISE", "REVISE",  # critique 1차 탈출
+        "PROCEED",                     # task_retry
+        "REVISE", "REVISE", "REVISE",  # critique 2차 탈출 → plan_retry
+        "PROCEED",                     # plan_retry
+        "REVISE", "REVISE", "REVISE",  # critique 3차 탈출 → hold
+    ])
+
+    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+        v = next(verdicts, "REVISE")
+        return (0, f"output\nVERDICT: {v}")
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run"):
+        rc = _aut.cmd_pipeline(root=tmp_repo, instruction="test instruction that is long enough",
+                               branch="feat/test", executor_pref="codex", max_time=60,
+                               dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
+
+    data = json.loads((tmp_repo / "result.json").read_text())
+    assert rc == 2, f"rc={rc}"
+    assert data["status"] == "hold", f"status={data['status']}"
+
+# ─────────────────────────────────────────────
+# REVIEW-FIX R1: task_retry rc=0 + VERDICT:BLOCK → hold exit 2
+# ─────────────────────────────────────────────
+
+def test_task_retry_block_verdict_exits_hold(tmp_repo, monkeypatch):
+    """task_retry 가 rc=0 이면서 VERDICT:BLOCK 을 반환하면 즉시 hold exit 2."""
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
+    # plan(PROCEED), task(PROCEED), critique(REVISE×3 탈출), task_retry(BLOCK)
+    verdicts = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE", "BLOCK"])
+
+    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+        v = next(verdicts, "BLOCK")
+        return (0, f"output\nVERDICT: {v}")
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run"):
+        rc = _aut.cmd_pipeline(root=tmp_repo,
+                               instruction="test instruction that is long enough",
+                               branch="feat/test", executor_pref="codex", max_time=60,
+                               dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
+
+    data = json.loads((tmp_repo / "result.json").read_text())
+    assert rc == 2, f"rc={rc} (expected 2 for hold)"
+    assert data["status"] == "hold", f"status={data['status']}"
+
+
+# ─────────────────────────────────────────────
+# REVIEW-FIX R2: task_retry rc≠0 → hold exit 2 (not exit 1)
+# ─────────────────────────────────────────────
+
+def test_task_retry_rc_nonzero_exits_hold_with_code_2(tmp_repo, monkeypatch):
+    """task_retry 가 rc≠0(프로세스 실패)이면 status=hold, exit code=2."""
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
+    verdicts_task_retry_fails = iter(["PROCEED", "PROCEED",
+                                      "REVISE", "REVISE", "REVISE"])
+
+    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+        v = next(verdicts_task_retry_fails, "PROCEED")
+        if step == "task_retry":
+            return (1, "fatal error")
+        return (0, f"output\nVERDICT: {v}")
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run"):
+        rc = _aut.cmd_pipeline(root=tmp_repo,
+                               instruction="test instruction that is long enough",
+                               branch="feat/test", executor_pref="codex", max_time=60,
+                               dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
+
+    data = json.loads((tmp_repo / "result.json").read_text())
+    assert rc == 2, f"rc={rc} (expected 2 for hold)"
+    assert data["status"] == "hold", f"status={data['status']}"

@@ -798,6 +798,17 @@ def _grep_verdict(output: str) -> str | None:
 
 
 _CRITIQUE_AUTO_RETRY_MAX = 1  # critique 루프 탈출 후 plan 자동 재진입 최대 횟수
+_TASK_AUTO_RETRY_MAX = 1      # critique 루프 탈출 후 task 자동 재실행 최대 횟수
+
+# critique가 REVISE 판정을 반복하는 핵심 기준 — task 프롬프트에 사전 주입
+_CRITIQUE_QUALITY_HINT = (
+    "\n\n[critique 품질 기준 — 반드시 충족]\n"
+    "- 예외·오류는 침묵 실패 없이 명시적으로 처리(로깅 또는 raise)\n"
+    "- 상태 집합은 완전해야 함 (완료·실패 외 취소·타임아웃·보류 포함)\n"
+    "- 최근성 윈도우: 전체 스캔 대신 최근 N개 또는 기간 기준 필터 제공\n"
+    "- 모든 공개 함수에 타입 힌트와 docstring\n"
+    "- 구현 전 TDD(RED→GREEN→REFACTOR) 절차 준수\n"
+)
 
 
 def _extract_critique_issues(output: str) -> str:
@@ -1009,6 +1020,7 @@ def cmd_pipeline(
             "2. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
             "3. 구현 후 테스트 GREEN 확인\n"
             "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: BLOCK`을 출력하세요."
+            + _CRITIQUE_QUALITY_HINT
         )
         if _step_already_done(_resume_data, "task"):
             print("[PIPELINE] ⏭ TASK 건너뜀 (이미 완료)")
@@ -1132,6 +1144,7 @@ def cmd_pipeline(
         "3. 구현 후 테스트 GREEN 확인\n"
         "4. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
         "반드시 마지막 줄에 `VERDICT: PROCEED` (성공) 또는 `VERDICT: BLOCK` (실패)를 출력하세요."
+        + _CRITIQUE_QUALITY_HINT
     )
     print("\n[PIPELINE] ▶ TASK 스텝 실행 중...")
     if _step_already_done(_resume_data, "task"):
@@ -1160,6 +1173,7 @@ def cmd_pipeline(
 
     # ── CRITIQUE/REVIEW 루프 ────────────────────────────────────────────
     critique_auto_retry_count = 0  # critique 루프 탈출 후 plan 자동 재진입 횟수
+    task_auto_retry_count = 0       # critique 루프 탈출 후 task 재실행 횟수
 
     for loop_step in ("critique", "review"):
         verdict_ok = ("PROCEED", "APPROVE")
@@ -1214,7 +1228,59 @@ def cmd_pipeline(
                 }
                 _save_pipeline_result(root, result)
 
-                # critique 루프 탈출 시 plan 자동 재진입 (최대 1회)
+                # ── critique 루프 탈출 시 복구 에스컬레이션 ─────────────────
+                # 1순위: task_retry (critique_issues 반영) → critique 재진입
+                # 2순위: plan_retry → critique 재진입
+                # 소진 시: hold
+                if loop_step == "critique" and task_auto_retry_count < _TASK_AUTO_RETRY_MAX:
+                    task_auto_retry_count += 1
+                    print(
+                        f"[PIPELINE] 🔄 TASK 재실행 ({task_auto_retry_count}/{_TASK_AUTO_RETRY_MAX})"
+                        " — critique 이슈 반영"
+                    )
+                    issues_section = (
+                        f"\n\n[critique 지적 사항]\n{critique_issues}\n"
+                        if critique_issues else ""
+                    )
+                    task_retry_prompt = (
+                        f"{instruction}\n\n"
+                        "이전 critique에서 다음 문제가 지적됐습니다. 이를 수정해 재구현하세요."
+                        f"{issues_section}"
+                        "TDD로 구현하세요.\n"
+                        "1. 먼저 `python3 scripts/omc_pipeline_guard.py contract-done` 실행\n"
+                        "2. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
+                        "3. 구현 후 테스트 GREEN 확인\n"
+                        "4. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
+                        "반드시 마지막 줄에 `VERDICT: PROCEED` (성공) 또는 `VERDICT: BLOCK` (실패)를 출력하세요."
+                        + _CRITIQUE_QUALITY_HINT
+                    )
+                    print("\n[PIPELINE] ▶ TASK 재실행 (critique 이슈 반영)...")
+                    task_retry_rc, task_retry_out = _run_pipeline_step(
+                        root, "task_retry", task_retry_prompt, executor, STEP_TIMEOUT * 2, dry_run=dry_run
+                    )
+                    result["steps"]["task_retry"] = {
+                        "status": "completed" if task_retry_rc == 0 else "failed",
+                        "output_preview": task_retry_out[:300],
+                    }
+                    _save_pipeline_result(root, result)
+                    if task_retry_rc != 0:
+                        print("[PIPELINE] ❌ TASK 재실행 실패 — HOLD")
+                        save("hold")
+                        return 2
+                    # BLOCK verdict 이면 즉시 탈출
+                    if _grep_verdict(task_retry_out) == "BLOCK":
+                        print("[PIPELINE] ❌ TASK 재실행 VERDICT: BLOCK — HOLD")
+                        result["steps"]["task_retry"]["verdict"] = "BLOCK"
+                        _save_pipeline_result(root, result)
+                        save("hold")
+                        return 2
+                    # critique 루프 재진입: 카운터·스트릭 초기화
+                    retry_count = 0
+                    prev_verdict = None
+                    same_verdict_streak = 0
+                    continue
+
+                # 2순위: plan 자동 재진입 (최대 1회)
                 if loop_step == "critique" and critique_auto_retry_count < _CRITIQUE_AUTO_RETRY_MAX:
                     critique_auto_retry_count += 1
                     print(f"[PIPELINE] 🔄 CRITIQUE 자동 재진입 ({critique_auto_retry_count}/{_CRITIQUE_AUTO_RETRY_MAX}) — plan 재실행")
