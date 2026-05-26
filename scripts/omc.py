@@ -156,7 +156,7 @@ def main() -> int:
         argv = ["prompt", *argv]
     sys.argv = [sys.argv[0], *argv]
 
-    ap = argparse.ArgumentParser(description="OMC-style single entrypoint for the multi-assistant kit.")
+    ap = argparse.ArgumentParser(description="OMC-style single entrypoint for the OMC kit.")
     sub = ap.add_subparsers(dest="command", required=True)
 
     setup = sub.add_parser("setup", help="Install the kit into the current or target project.")

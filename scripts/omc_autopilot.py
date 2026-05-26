@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import tempfile
 import subprocess
 import sys
 import re
@@ -248,17 +249,28 @@ def _run_step(
     if not prompt:
         return 1, "[ERROR] 스텝에 prompt가 없습니다."
 
-    cmd = [
-        sys.executable,
-        str(exec_script),
-        "--target", str(root),
-        "--executor", executor,
-        "--headless",
-        "--timeout", str(timeout_sec),
-        "--prompt", prompt,
-    ]
-
+    prompt_file = None
     try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".md",
+            prefix="omc_run_step_",
+            delete=False,
+            encoding="utf-8",
+        ) as tf:
+            tf.write(prompt)
+            prompt_file = tf.name
+
+        cmd = [
+            sys.executable,
+            str(exec_script),
+            "--target", str(root),
+            "--prompt-file", str(prompt_file),
+            "--executor", executor,
+            "--execution-mode", "headless",
+            "--timeout-sec", str(timeout_sec),
+        ]
+
         proc = subprocess.run(
             cmd,
             cwd=str(root),
@@ -272,6 +284,12 @@ def _run_step(
         return 1, "[ERROR] 타임아웃 초과"
     except Exception as exc:
         return 1, f"[ERROR] 실행 예외: {exc}"
+    finally:
+        if prompt_file:
+            try:
+                Path(prompt_file).unlink()
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -799,15 +817,27 @@ def _run_pipeline_step(
     if not exec_script.exists():
         return 1, f"[ERROR] omc_exec.py 없음"
 
-    cmd = [
-        sys.executable, str(exec_script),
-        "--target", str(root),
-        "--executor", executor,
-        "--headless",
-        "--timeout", str(timeout_sec),
-        "--prompt", prompt,
-    ]
+    prompt_file = None
     try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".md",
+            prefix="omc_pipeline_prompt_",
+            delete=False,
+            encoding="utf-8",
+        ) as tf:
+            tf.write(prompt)
+            prompt_file = tf.name
+
+        cmd = [
+            sys.executable,
+            str(exec_script),
+            "--target", str(root),
+            "--prompt-file", str(prompt_file),
+            "--executor", executor,
+            "--execution-mode", "headless",
+            "--timeout-sec", str(timeout_sec),
+        ]
         proc = subprocess.run(
             cmd, cwd=str(root), capture_output=True, text=True,
             timeout=timeout_sec + 30,
@@ -818,6 +848,12 @@ def _run_pipeline_step(
         return 1, "[ERROR] 타임아웃"
     except Exception as exc:
         return 1, f"[ERROR] {exc}"
+    finally:
+        if prompt_file:
+            try:
+                Path(prompt_file).unlink()
+            except OSError:
+                pass
 
 
 def cmd_pipeline(

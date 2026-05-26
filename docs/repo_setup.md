@@ -7,10 +7,10 @@
 이 프로젝트 루트에서:
 
 ```bash
-python omc_kit/scripts/export_repo.py --dest /tmp/multi-assistant-kit
+python omc_kit/scripts/export_repo.py --dest /tmp/omc_kit
 ```
 
-이후 `/tmp/multi-assistant-kit`를 원하는 원격(GitHub 등)에 push 하면 됩니다.
+이후 `/tmp/omc_kit`를 원하는 원격(GitHub 등)에 push 하면 됩니다.
 
 새 프로젝트에 붙인 뒤에는 `python scripts/omc.py setup --target .`를 먼저 실행하면 부트스트랩 블록과 기본 파일을 한 번에 깔 수 있습니다.
 이 명령은 `.omc/` 상태 디렉터리와 기본 `hooks.json`도 함께 초기화합니다.

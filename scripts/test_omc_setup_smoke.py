@@ -47,7 +47,7 @@ def _assert_exists(path: Path) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Install the multi-assistant kit into a temp project and run common OMC smoke checks.")
+    ap = argparse.ArgumentParser(description="Install the OMC kit into a temp project and run common OMC smoke checks.")
     ap.add_argument("--executor", choices=["codex", "gemini"], default=None, help="Also run installed headless/chat smoke with this executor.")
     ap.add_argument("--headless-timeout-sec", type=int, default=180)
     ap.add_argument("--chat-timeout-sec", type=int, default=300)

@@ -243,7 +243,7 @@ def _check_force_regression(kit: Path, tgt: Path) -> bool:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Install multi-assistant kit into a target repository.")
+    ap = argparse.ArgumentParser(description="Install OMC kit into a target repository.")
     ap.add_argument("--target", type=Path, required=True, help="Target repository root.")
     ap.add_argument("--force", action="store_true", help="Overwrite existing files.")
     args = ap.parse_args()
@@ -295,7 +295,7 @@ def main() -> int:
     for s, d in to_copy:
         _copy(s, d, force=force)
 
-    _copy(kit / "docs" / "multi_assistant_workflow.md", tgt / "docs" / "multi_assistant_workflow.md", force=force)
+    _copy(kit / "docs" / "omc_workflow.md", tgt / "docs" / "omc_workflow.md", force=force)
     _copy(kit / "docs" / "quickstart_kr.md", tgt / "docs" / "quickstart_kr.md", force=force)
     _copy(kit / "docs" / "kit_map.md", tgt / "docs" / "kit_map.md", force=force)
     _copy(kit / "docs" / "next_project_pack.md", tgt / "docs" / "next_project_pack.md", force=force)
@@ -321,7 +321,7 @@ def main() -> int:
     if cursorignore.exists():
         _copy(cursorignore, tgt / ".cursorignore", force=force)
 
-    quickstart = """# Multi-Assistant Quickstart
+    quickstart = """# OMC Kit Quickstart
 
 ## 30초 설치 후 바로 시작
 
@@ -380,7 +380,7 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
 - `docs/next_project_pack.md` — 다음 프로젝트로 이식하는 방법
 
 """
-    _write(tgt / "docs" / "multi_assistant_quickstart.md", quickstart, force=force)
+    _write(tgt / "docs" / "omc_quickstart.md", quickstart, force=force)
 
     # Bootstrap instructions for agentic tools.
     # 타겟에 파일이 이미 있으면 OMC 섹션만 추가, 없으면 전체 복사.
@@ -645,7 +645,7 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
                 "  또는: python3 scripts/omc_doctor.py --fix"
             )
 
-    print(f"Installed multi-assistant kit into: {tgt}")
+    print(f"Installed OMC kit into: {tgt}")
 
     _setup_ethos_section5(tgt)
 
