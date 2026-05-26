@@ -460,3 +460,141 @@ def test_quality_hint_contains_new_three_items():
     assert "데이터 품질" in hint or "invalid_" in hint,         "데이터 품질 실패 강제 분기 기준 누락"
     assert "환경변수" in hint,         "환경변수 의존 정책 기본값 명시 기준 누락"
     assert "운영 기본값" in hint or "기본값 문서" in hint,         "운영 기본값 문서화 기준 누락"
+
+# ─────────────────────────────────────────────
+# B-T1: task 프롬프트에 contract-done 지시 없어야 함
+# ─────────────────────────────────────────────
+
+def test_task_prompts_have_no_contract_done_instruction(tmp_repo, monkeypatch):
+    """task_prompt / task_prompt_lite / task_retry_prompt 어디에도
+    'contract-done' 문자열이 없어야 한다.
+    preflight에서 이미 처리하므로 executor가 재실행할 필요 없음."""
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
+    captured: dict[str, str] = {}
+    verdicts = iter(["PROCEED", "PROCEED", "PROCEED", "APPROVE"])
+
+    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+        captured[step] = prompt
+        v = next(verdicts, "PROCEED")
+        return (0, f"output\nVERDICT: {v}")
+
+    import subprocess as _sp
+    def _mock_sp(cmd, **kw):
+        return _sp.CompletedProcess(cmd, 0, stdout="https://github.com/pr/1", stderr="")
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run", side_effect=_mock_sp):
+        _aut.cmd_pipeline(root=tmp_repo,
+                          instruction="test instruction that is long enough",
+                          branch="feat/test", executor_pref="codex", max_time=60,
+                          dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
+
+    for step_name, prompt in captured.items():
+        assert "contract-done" not in prompt, (
+            f"step='{step_name}' 프롬프트에 'contract-done' 지시가 남아 있음\n"
+            f"프롬프트 앞 200자: {prompt[:200]}"
+        )
+
+
+# ─────────────────────────────────────────────
+# B-T2: preflight에서 타깃 guard session-start + contract-done 호출
+# ─────────────────────────────────────────────
+
+def test_preflight_initializes_target_guard_when_different(tmp_repo, monkeypatch):
+    """cmd_pipeline 실행 시 root/scripts/omc_pipeline_guard.py 가 존재하고
+    omc_kit guard와 다른 파일이면 session-start + contract-done 이 호출돼야 한다."""
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
+
+    # 타깃 프로젝트에 별도 guard 생성 (omc_kit와 다른 경로)
+    target_guard = tmp_repo / "scripts" / "omc_pipeline_guard.py"
+    target_guard.parent.mkdir(parents=True, exist_ok=True)
+    target_guard.write_text("# mock guard\n")
+
+    called_cmds: list[list] = []
+
+    import subprocess as _sp
+    def _mock_sp(cmd, **kw):
+        called_cmds.append(list(cmd))
+        return _sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    verdicts = iter(["PROCEED", "PROCEED", "PROCEED", "APPROVE"])
+    def _mock_step(root, step, prompt, executor, timeout, dry_run=False):
+        v = next(verdicts, "PROCEED")
+        return (0, f"output\nVERDICT: {v}")
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock_step), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run", side_effect=_mock_sp):
+        _aut.cmd_pipeline(root=tmp_repo,
+                          instruction="test instruction that is long enough",
+                          branch="feat/test", executor_pref="codex", max_time=60,
+                          dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
+
+    guard_path = str(target_guard)
+    session_start_called = any(
+        "session-start" in cmd and guard_path in " ".join(cmd)
+        for cmd in called_cmds
+    )
+    contract_done_called = any(
+        "contract-done" in " ".join(cmd) and guard_path in " ".join(cmd)
+        for cmd in called_cmds
+    )
+    assert session_start_called, (
+        f"타깃 guard session-start 미호출\n실제 호출: {called_cmds}"
+    )
+    assert contract_done_called, (
+        f"타깃 guard contract-done 미호출\n실제 호출: {called_cmds}"
+    )
+
+def test_preflight_does_not_double_init_when_same_guard(tmp_repo, monkeypatch):
+    """target_guard.resolve() == omc_kit guard.resolve() 이면
+    추가 session-start / contract-done 이 호출되지 않아야 한다.
+    즉 omc_kit 자기 자신을 대상으로 실행할 때 이중 초기화 금지."""
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
+
+    # 타깃 guard 를 omc_kit guard와 동일하게 설정 (resolve() 같음)
+    import omc_autopilot as _a2
+    real_guard = Path(_a2.__file__).resolve().parent / "omc_pipeline_guard.py"
+
+    called_cmds: list[list] = []
+
+    import subprocess as _sp
+    def _mock_sp(cmd, **kw):
+        called_cmds.append(list(cmd))
+        return _sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    verdicts = iter(["PROCEED", "PROCEED", "PROCEED", "APPROVE"])
+    def _mock_step(root, step, prompt, executor, timeout, dry_run=False):
+        v = next(verdicts, "PROCEED")
+        return (0, f"output\nVERDICT: {v}")
+
+    # tmp_repo/scripts/omc_pipeline_guard.py 를 real_guard 의 심볼릭 링크로 만든다
+    target_scripts = tmp_repo / "scripts"
+    target_scripts.mkdir(parents=True, exist_ok=True)
+    target_link = target_scripts / "omc_pipeline_guard.py"
+    target_link.symlink_to(real_guard)
+
+    with patch.object(_aut, "_run_pipeline_step", side_effect=_mock_step), \
+         patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
+         patch.object(_aut, "_detect_executor", return_value="codex"), \
+         patch("subprocess.run", side_effect=_mock_sp):
+        _aut.cmd_pipeline(root=tmp_repo,
+                          instruction="test instruction that is long enough",
+                          branch="feat/test", executor_pref="codex", max_time=60,
+                          dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
+
+    real_guard_str = str(real_guard)
+    # omc_kit guard 에 대한 정상 session-start/contract-done 은 1회씩만
+    guard_calls = [c for c in called_cmds if real_guard_str in " ".join(c)]
+    session_start_count = sum(1 for c in guard_calls if "session-start" in c)
+    contract_done_count = sum(1 for c in guard_calls if "contract-done" in " ".join(c))
+
+    assert session_start_count == 1, (
+        f"session-start 이중 호출 감지: {session_start_count}회\n호출 목록: {guard_calls}"
+    )
+    assert contract_done_count == 1, (
+        f"contract-done 이중 호출 감지: {contract_done_count}회\n호출 목록: {guard_calls}"
+    )

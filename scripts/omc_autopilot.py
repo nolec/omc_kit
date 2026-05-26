@@ -1008,6 +1008,22 @@ def cmd_pipeline(
         subprocess.run([sys.executable, str(guard), "session-start"], cwd=str(root))
         subprocess.run([sys.executable, str(guard), "contract-done",
                         "--content", f"pipeline: {instruction[:100]}"], cwd=str(root))
+        # 타깃 프로젝트 guard 초기화 (omc_kit와 다른 경우에만)
+        target_guard = root / "scripts" / "omc_pipeline_guard.py"
+        if target_guard.exists() and target_guard.resolve() != guard.resolve():
+            result_target = subprocess.run(
+                [sys.executable, str(target_guard), "session-start"], cwd=str(root)
+            )
+            if result_target.returncode == 0:
+                cd_result = subprocess.run(
+                    [sys.executable, str(target_guard), "contract-done",
+                     "--content", f"pipeline: {instruction[:100]}"],
+                    cwd=str(root)
+                )
+                if cd_result.returncode != 0:
+                    print("[PIPELINE] ⚠️  타깃 guard contract-done 실패 — 계속 진행")
+            else:
+                print("[PIPELINE] ⚠️  타깃 guard session-start 실패 — 계속 진행")
 
     STEP_TIMEOUT = 600  # 스텝별 기본 타임아웃 (초)
 
@@ -1020,9 +1036,8 @@ def cmd_pipeline(
         task_prompt_lite = (
             f"{instruction}\n\n"
             "TDD로 구현하세요.\n"
-            "1. 먼저 `python3 scripts/omc_pipeline_guard.py contract-done` 실행\n"
-            "2. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
-            "3. 구현 후 테스트 GREEN 확인\n"
+            "1. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
+            "2. 구현 후 테스트 GREEN 확인\n"
             "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: BLOCK`을 출력하세요."
             + _CRITIQUE_QUALITY_HINT
         )
@@ -1143,10 +1158,9 @@ def cmd_pipeline(
     task_prompt = (
         f"{instruction}\n\n"
         "위 계획을 TDD로 구현하세요.\n"
-        "1. 먼저 `python3 scripts/omc_pipeline_guard.py contract-done` 실행\n"
-        "2. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
-        "3. 구현 후 테스트 GREEN 확인\n"
-        "4. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
+        "1. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
+        "2. 구현 후 테스트 GREEN 확인\n"
+        "3. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
         "반드시 마지막 줄에 `VERDICT: PROCEED` (성공) 또는 `VERDICT: BLOCK` (실패)를 출력하세요."
         + _CRITIQUE_QUALITY_HINT
     )
@@ -1272,10 +1286,9 @@ def cmd_pipeline(
                         "이전 critique에서 다음 문제가 지적됐습니다. 이를 수정해 재구현하세요."
                         f"{issues_section}"
                         "TDD로 구현하세요.\n"
-                        "1. 먼저 `python3 scripts/omc_pipeline_guard.py contract-done` 실행\n"
-                        "2. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
-                        "3. 구현 후 테스트 GREEN 확인\n"
-                        "4. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
+                        "1. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
+                        "2. 구현 후 테스트 GREEN 확인\n"
+                        "3. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
                         "반드시 마지막 줄에 `VERDICT: PROCEED` (성공) 또는 `VERDICT: BLOCK` (실패)를 출력하세요."
                         + _CRITIQUE_QUALITY_HINT
                     )
