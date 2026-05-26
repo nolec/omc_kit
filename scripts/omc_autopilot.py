@@ -797,6 +797,29 @@ def _grep_verdict(output: str) -> str | None:
     return None
 
 
+_CRITIQUE_AUTO_RETRY_MAX = 1  # critique 루프 탈출 후 plan 자동 재진입 최대 횟수
+
+
+def _extract_critique_issues(output: str) -> str:
+    """critique 출력에서 VERDICT 줄 직전 최대 30줄을 이슈 텍스트로 추출한다.
+
+    VERDICT 줄이 없으면 전체 텍스트를 반환한다.
+    빈 입력이면 빈 문자열을 반환한다.
+    """
+    if not output:
+        return ""
+    lines = output.splitlines()
+    verdict_idx = None
+    for i, line in enumerate(lines):
+        if re.search(r"VERDICT\s*:", line, re.IGNORECASE):
+            verdict_idx = i
+            break
+    if verdict_idx is None:
+        return output
+    start = max(0, verdict_idx - 30)
+    return "\n".join(lines[start:verdict_idx])
+
+
 def _run_pipeline_step(
     root: Path,
     step_name: str,
@@ -1071,6 +1094,7 @@ def cmd_pipeline(
     if _step_already_done(_resume_data, "plan"):
         print("[PIPELINE] ⏭ PLAN 건너뜀 (이미 완료)")
         rc = 0
+        out = "[RESUME] plan skipped"
     else:
         rc, out = _run_pipeline_step(root, "plan", plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run)
         result["steps"]["plan"] = {"status": "completed" if rc == 0 else "failed", "output_preview": out[:300]}
@@ -1135,6 +1159,8 @@ def cmd_pipeline(
         return 1
 
     # ── CRITIQUE/REVIEW 루프 ────────────────────────────────────────────
+    critique_auto_retry_count = 0  # critique 루프 탈출 후 plan 자동 재진입 횟수
+
     for loop_step in ("critique", "review"):
         verdict_ok = ("PROCEED", "APPROVE")
         retry_count = 0
@@ -1178,14 +1204,58 @@ def cmd_pipeline(
 
             if same_verdict_streak >= _PIPELINE_MAX_SAME_VERDICT:
                 print(f"[PIPELINE] ❌ {loop_step.upper()} 동일 verdict({verdict}) {same_verdict_streak + 1}회 연속 — 탈출")
+                critique_issues = _extract_critique_issues(out)
                 result["steps"][loop_step] = {
                     "status": "failed_critique_loop",
                     "verdict": verdict,
                     "streak": same_verdict_streak + 1,
-                    "last_output": out[:300],
+                    "last_output": out[:2000],
+                    "critique_issues": critique_issues,
                 }
-                save("failed_critique_loop")
-                return 1
+                _save_pipeline_result(root, result)
+
+                # critique 루프 탈출 시 plan 자동 재진입 (최대 1회)
+                if loop_step == "critique" and critique_auto_retry_count < _CRITIQUE_AUTO_RETRY_MAX:
+                    critique_auto_retry_count += 1
+                    print(f"[PIPELINE] 🔄 CRITIQUE 자동 재진입 ({critique_auto_retry_count}/{_CRITIQUE_AUTO_RETRY_MAX}) — plan 재실행")
+                    issues_section = (
+                        f"\n\n[이전 critique 지적 사항]\n{critique_issues}\n"
+                        if critique_issues else ""
+                    )
+                    retry_plan_prompt = (
+                        f"이전 critique에서 다음 문제가 지적됐습니다. 이를 반영해 구현 계획을 수정하세요.{issues_section}"
+                        f"\n지시문: {instruction[:200]}\n\n"
+                        "omc-task 스킬의 CONTRACT + DESIGN 단계를 채우세요.\n"
+                        "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: HOLD`를 출력하세요."
+                    )
+                    print("\n[PIPELINE] ▶ PLAN 재실행 (critique 이슈 반영)...")
+                    plan_rc, plan_out = _run_pipeline_step(
+                        root, "plan_retry", retry_plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run
+                    )
+                    result["steps"]["plan_retry"] = {
+                        "status": "completed" if plan_rc == 0 else "failed",
+                        "output_preview": plan_out[:300],
+                    }
+                    _save_pipeline_result(root, result)
+                    if plan_rc != 0:
+                        print("[PIPELINE] ❌ PLAN 재실행 실패 — HOLD")
+                        save("hold")
+                        return 2
+                    # plan_retry VERDICT=HOLD 이면 critique 재진입 없이 즉시 탈출
+                    if _grep_verdict(plan_out) == "HOLD":
+                        print("[PIPELINE] ❌ PLAN 재실행 VERDICT: HOLD — 재설계 필요")
+                        result["steps"]["plan_retry"]["verdict"] = "HOLD"
+                        _save_pipeline_result(root, result)
+                        save("hold")
+                        return 2
+                    # critique 루프 재진입: 카운터·스트릭 초기화
+                    retry_count = 0
+                    prev_verdict = None
+                    same_verdict_streak = 0
+                    continue
+
+                save("hold")
+                return 2
 
             retry_count += 1
             if retry_count > _PIPELINE_MAX_RETRIES:
