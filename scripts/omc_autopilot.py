@@ -39,6 +39,7 @@ import sys
 import re
 import textwrap
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -182,22 +183,43 @@ def _run_expect_checks(
     return results
 
 
-def _build_retry_prompt(original_prompt: str, attempt: int, failures: list[dict]) -> str:
-    """이전 시도 실패 컨텍스트를 프롬프트 앞에 주입합니다."""
-    if not failures:
+def _build_retry_prompt(
+    original_prompt: str,
+    attempt: int,
+    failures: list[dict] | None = None,
+    *,
+    prev_verdict: str | None = None,
+) -> str:
+    """이전 시도 실패 컨텍스트 및/또는 직전 verdict를 프롬프트 앞에 주입합니다.
+
+    - failures: 구체적 실패 목록 (기존 task retry 방식)
+    - prev_verdict: critique/review 루프의 직전 VERDICT 값
+    """
+    if not failures and not prev_verdict:
         return original_prompt
 
-    lines = [
-        f"[이전 시도 {attempt}회 실패 — 아래 문제를 반드시 해결하세요]",
-        "",
-    ]
-    for f in failures:
-        lines.append(f"- {f['label']}: FAIL")
-        if f.get("output"):
-            # 첫 5줄만 발췌
-            snippet = "\n".join(f["output"].splitlines()[:5])
-            lines.append(f"  출력: {snippet}")
-    lines += ["", "위 문제를 해결하면서 아래 작업을 수행하세요:", "", original_prompt]
+    lines: list[str] = []
+
+    if prev_verdict:
+        lines += [
+            f"[재시도 {attempt}회차] 직전 VERDICT: {prev_verdict}.",
+            "이 판정을 극복하기 위해 다른 관점으로 재검토하세요.",
+            "",
+        ]
+
+    if failures:
+        lines += [
+            f"[이전 시도 {attempt}회 실패 — 아래 문제를 반드시 해결하세요]",
+            "",
+        ]
+        for f in failures:
+            lines.append(f"- {f['label']}: FAIL")
+            if f.get("output"):
+                snippet = "\n".join(f["output"].splitlines()[:5])
+                lines.append(f"  출력: {snippet}")
+        lines += ["", "위 문제를 해결하면서 아래 작업을 수행하세요:", ""]
+
+    lines.append(original_prompt)
     return "\n".join(lines)
 
 
@@ -645,13 +667,40 @@ def cmd_status(root: Path, task_id: str | None = None) -> int:
 _PIPELINE_RESULT_PATH = ".omc/pipeline_run_result.json"
 
 
+def _checkout_new_branch(root: Path, name: str, max_retry: int = 3) -> str:
+    """브랜치 생성을 시도하고 충돌 시 suffix(-v2, -v3 ...)로 재시도한다.
+
+    Returns:
+        실제 생성된 브랜치 이름
+    Raises:
+        RuntimeError: max_retry 초과 시
+    """
+    for attempt in range(1, max_retry + 1):
+        candidate = name if attempt == 1 else f"{name}-v{attempt}"
+        br = subprocess.run(
+            ["git", "checkout", "-b", candidate],
+            capture_output=True, text=True, cwd=str(root),
+        )
+        if br.returncode == 0:
+            return candidate
+    raise RuntimeError(f"failed_branch:{name} (tried {max_retry} times)")
+
+
+def _get_result_path(root: Path) -> Path:
+    """OmC_PIPELINE_RESULT_PATH 환경변수 우선, 없으면 root 기준 기본값을 반환한다."""
+    env_val = os.getenv("OmC_PIPELINE_RESULT_PATH", "").strip()
+    if env_val:
+        return Path(env_val)
+    return root / _PIPELINE_RESULT_PATH
+
+
 def _load_resume_state(root: Path) -> dict | None:
     """이전 pipeline_run_result.json을 읽어 재개 상태를 반환한다.
 
     Returns:
         dict: 이전 결과 데이터 (없으면 None)
     """
-    path = root / _PIPELINE_RESULT_PATH
+    path = _get_result_path(root)
     if not path.exists():
         return None
     try:
@@ -667,6 +716,7 @@ def _step_already_done(resume_data: dict | None, step: str) -> bool:
     steps = resume_data.get("steps", {})
     return steps.get(step, {}).get("status") == "completed"
 _PIPELINE_MAX_RETRIES = 3
+_PIPELINE_MAX_SAME_VERDICT = 2  # 동일 verdict 연속 허용 횟수
 _VERDICT_PATTERN = r"VERDICT:\s*(PROCEED|APPROVE|BLOCK|REVISE|HOLD)"
 
 _LITE_BRANCH_PREFIXES = ("fix/", "hotfix/", "chore/", "docs/")
@@ -698,11 +748,27 @@ def _detect_pipeline_mode(branch: str, instruction: str, mode_arg: str) -> str:
     return "full"
 
 
-
 def _save_pipeline_result(root: Path, data: dict) -> None:
-    out = root / _PIPELINE_RESULT_PATH
+    out = _get_result_path(root)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    # 원자적 쓰기 (tmpfile → replace)
+    tmp = out.parent / (out.name + ".tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    tmp.replace(out)
+    # run 이력 분리 저장 (.omc/runs/{run_id}/result.json)
+    try:
+        run_id = datetime.now().strftime("%Y%m%dT%H%M%S") + "-" + str(uuid.uuid4())[:8]
+        run_path = root / ".omc" / "runs" / run_id / "result.json"
+        run_path.parent.mkdir(parents=True, exist_ok=True)
+        run_tmp = run_path.parent / "result.json.tmp"
+        run_tmp.write_text(payload, encoding="utf-8")
+        run_tmp.replace(run_path)
+    except Exception as e:
+        print(f"[PIPELINE] ⚠️  runs 이력 저장 실패 (무시): {e}")
+
+
+
 
 
 def _grep_verdict(output: str) -> str | None:
@@ -845,17 +911,19 @@ def cmd_pipeline(
     if not dry_run:
         print("[PIPELINE] ✅ git 상태 확인 완료")
 
-        # 브랜치 생성
-        br = subprocess.run(
-            ["git", "checkout", "-b", branch],
-            capture_output=True, text=True, cwd=str(root),
-        )
-        if br.returncode != 0:
-            print(f"[PIPELINE] ❌ 브랜치 생성 실패: {br.stderr.strip()[:150]}")
-            result["steps"]["branch"] = {"status": "failed", "reason": br.stderr.strip()}
-            save("failed")
+        # 브랜치 생성 (충돌 시 suffix 재시도)
+        try:
+            actual_branch = _checkout_new_branch(root, branch, max_retry=3)
+            if actual_branch != branch:
+                print(f"[PIPELINE] ⚠️  브랜치 충돌 — {actual_branch} 으로 생성")
+                branch = actual_branch
+                result["branch"] = branch
+            print(f"[PIPELINE] ✅ 브랜치 생성: {branch}")
+        except RuntimeError as e:
+            print(f"[PIPELINE] ❌ 브랜치 생성 실패: {e}")
+            result["steps"]["branch"] = {"status": "failed_branch", "error": str(e)}
+            save("failed_branch")
             return 1
-        print(f"[PIPELINE] ✅ 브랜치 생성: {branch}")
 
     result["steps"]["preflight"] = {"status": "completed"}
     _save_pipeline_result(root, result)
@@ -1012,6 +1080,16 @@ def cmd_pipeline(
         task_out = "[RESUME] task skipped"
     else:
         task_rc, task_out = _run_pipeline_step(root, "task", task_prompt, executor, STEP_TIMEOUT * 2, dry_run=dry_run)
+        # AMBIGUOUS_RESPONSE: verdict None 이면 1회 재시도
+        if task_rc == 0 and _grep_verdict(task_out) is None:
+            print("[PIPELINE] ⚠️  TASK verdict 미감지 (AMBIGUOUS) — 1회 재시도...")
+            retry_prompt = task_prompt + "\n\n반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: BLOCK`을 출력하세요."
+            task_rc, task_out = _run_pipeline_step(root, "task", retry_prompt, executor, STEP_TIMEOUT * 2, dry_run=dry_run)
+            if _grep_verdict(task_out) is None:
+                print("[PIPELINE] ❌ TASK AMBIGUOUS_RESPONSE 2회 연속 — 중단")
+                result["steps"]["task"] = {"status": "failed", "output_preview": task_out[:300]}
+                save("failed_ambiguous_response")
+                return 1
         result["steps"]["task"] = {"status": "completed" if task_rc == 0 else "failed", "output_preview": task_out[:300]}
     _save_pipeline_result(root, result)
 
@@ -1024,7 +1102,16 @@ def cmd_pipeline(
     for loop_step in ("critique", "review"):
         verdict_ok = ("PROCEED", "APPROVE")
         retry_count = 0
-        # critique PROCEED 통과 후 review 진입
+        prev_verdict: str | None = None
+        same_verdict_streak = 0
+
+        base_loop_prompt = (
+            f"다음 코드 변경에 대해 {'critique(pre-mortem)' if loop_step == 'critique' else 'review'}를 수행하세요.\n"
+            f"지시문: {instruction[:200]}\n\n"
+            f"{'omc-critique 스킬' if loop_step == 'critique' else 'omc-review 스킬'}의 포맷을 따르세요.\n"
+            "반드시 마지막 줄에 `VERDICT: PROCEED` / `VERDICT: APPROVE` / "
+            "`VERDICT: REVISE` / `VERDICT: BLOCK` / `VERDICT: HOLD` 중 하나를 출력하세요."
+        )
 
         while retry_count <= _PIPELINE_MAX_RETRIES:
             if time.time() > deadline:
@@ -1033,13 +1120,9 @@ def cmd_pipeline(
                 save("timeout")
                 return 1
 
-            loop_prompt = (
-                f"다음 코드 변경에 대해 {'critique(pre-mortem)' if loop_step == 'critique' else 'review'}를 수행하세요.\n"
-                f"지시문: {instruction[:200]}\n\n"
-                f"{'omc-critique 스킬' if loop_step == 'critique' else 'omc-review 스킬'}의 포맷을 따르세요.\n"
-                "반드시 마지막 줄에 `VERDICT: PROCEED` / `VERDICT: APPROVE` / "
-                "`VERDICT: REVISE` / `VERDICT: BLOCK` / `VERDICT: HOLD` 중 하나를 출력하세요."
-            )
+            # 재시도 시 직전 verdict 컨텍스트 주입
+            loop_prompt = _build_retry_prompt(base_loop_prompt, retry_count, prev_verdict=prev_verdict)
+
             print(f"\n[PIPELINE] ▶ {loop_step.upper()} 스텝 (시도 {retry_count + 1}/{_PIPELINE_MAX_RETRIES + 1})...")
             rc, out = _run_pipeline_step(root, loop_step, loop_prompt, executor, STEP_TIMEOUT, dry_run=dry_run)
 
@@ -1049,6 +1132,24 @@ def cmd_pipeline(
             if rc == 0 and verdict in verdict_ok:
                 result["steps"][loop_step] = {"status": "completed", "verdict": verdict}
                 break
+
+            # 동일 verdict 연속 감지
+            if verdict is not None and verdict == prev_verdict:
+                same_verdict_streak += 1
+            else:
+                same_verdict_streak = 0
+            prev_verdict = verdict
+
+            if same_verdict_streak >= _PIPELINE_MAX_SAME_VERDICT:
+                print(f"[PIPELINE] ❌ {loop_step.upper()} 동일 verdict({verdict}) {same_verdict_streak + 1}회 연속 — 탈출")
+                result["steps"][loop_step] = {
+                    "status": "failed_critique_loop",
+                    "verdict": verdict,
+                    "streak": same_verdict_streak + 1,
+                    "last_output": out[:300],
+                }
+                save("failed_critique_loop")
+                return 1
 
             retry_count += 1
             if retry_count > _PIPELINE_MAX_RETRIES:

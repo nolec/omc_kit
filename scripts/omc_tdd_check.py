@@ -47,6 +47,7 @@ _EXCLUDE_PATTERNS = [
     r"__mocks__",
     r"/node_modules/",
     r"\.min\.",
+    r"/conftest\.py$",               # pytest 공유 픽스처 파일
     r"/api\.ts$",                  # API 클라이언트 단순 wrapper
     r"/queryKey\.(ts|js)$",        # React Query key 파일
     r"\.stories\.(ts|tsx)$",       # Storybook
