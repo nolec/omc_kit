@@ -272,18 +272,25 @@ def main() -> int:
         (kit / "prompts" / "ROLE_CODE_REVIEW_ASSISTANT.md", tgt / "prompts" / "ROLE_CODE_REVIEW_ASSISTANT.md"),
         (kit / "prompts" / "ROLE_SENIOR_CODING_ASSISTANT.md", tgt / "prompts" / "ROLE_SENIOR_CODING_ASSISTANT.md"),
         # ── scripts (타겟에 배포되는 공용 스크립트) ───────────────────────────
-        # kit-only (배포 안 됨): safe_trash.py, export_repo.py
+        # kit-only (배포 안 됨): auto_prompt.py, autopilot.py, safe_trash.py,
+        #   export_repo.py, test_*.py, conftest.py
+        # omc_hub_push.py / omc_sync_ssot.py — omc_* 패턴으로 배포됨 (타겟→hub 역기여 지원)
         # 수동 목록 대신 glob 자동 감지 — 새 스크립트 추가 시 자동 포함됨
     ]
 
-    # scripts: kit/scripts/*.py 전부 자동 복사 (kit-only 제외)
-    _SCRIPTS_EXCLUDE = {"safe_trash.py", "export_repo.py"}
+    # scripts: 화이트리스트 방식 — 명시된 파일만 배포 (기본값: 제외)
+    # omc_*.py 전체 자동 포함 + 비-omc_ 명시 목록
+    # 새 파일 추가 시 이 목록에 없으면 자동 제외됨 (안전한 기본값)
+    _SCRIPTS_EXTRA = {
+        "install.py",        # 인스톨러 자체 — 타겟에서 재실행 가능하도록
+        "omc.py",            # OMC 진입점
+        "compose_prompt.py", # 프롬프트 조합 유틸
+    }
     scripts_src = kit / "scripts"
     if scripts_src.exists():
         for src in sorted(scripts_src.glob("*.py")):
-            if src.name in _SCRIPTS_EXCLUDE:
-                continue
-            to_copy.append((src, tgt / "scripts" / src.name))
+            if src.name.startswith("omc_") or src.name in _SCRIPTS_EXTRA:
+                to_copy.append((src, tgt / "scripts" / src.name))
 
     for s, d in to_copy:
         _copy(s, d, force=force)
