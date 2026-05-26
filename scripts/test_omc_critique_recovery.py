@@ -445,3 +445,18 @@ def test_critique_first_none_does_not_trigger_streak(tmp_repo, monkeypatch):
     # None×2 가 sentinel 오분류로 인해 streak 탈출→task_retry로 이어지면 안 됨
     assert "task_retry" not in data.get("steps", {}), \
         "None×2 만으로 task_retry가 발동하면 sentinel 초기화 버그"
+
+# ─────────────────────────────────────────────
+# T1-NEW: _CRITIQUE_QUALITY_HINT에 3가지 새 기준 포함
+# ─────────────────────────────────────────────
+
+def test_quality_hint_contains_new_three_items():
+    """_CRITIQUE_QUALITY_HINT에 이번 BLOCK 유발 3개 기준이 포함돼야 한다.
+    - 데이터 품질 실패 강제 분기 키워드
+    - 환경변수 의존 정책 기본값 명시 키워드
+    - 조건 분기 테스트 + 운영 기본값 문서화 키워드
+    """
+    hint = _aut._CRITIQUE_QUALITY_HINT
+    assert "데이터 품질" in hint or "invalid_" in hint,         "데이터 품질 실패 강제 분기 기준 누락"
+    assert "환경변수" in hint,         "환경변수 의존 정책 기본값 명시 기준 누락"
+    assert "운영 기본값" in hint or "기본값 문서" in hint,         "운영 기본값 문서화 기준 누락"
