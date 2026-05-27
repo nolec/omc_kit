@@ -805,3 +805,75 @@ def test_critique_retry_prompt_includes_issues(tmp_path: Path, monkeypatch):
     assert ISSUE_MARKER in captured["critique_retry_prompt"], (
         f"critique retry 프롬프트에 이전 지적 내용이 없음:\n{captured['critique_retry_prompt'][:300]}"
     )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# T8: critique 루프 재진입 시 diff 갱신
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_critique_prompt_refreshed_after_task_retry(tmp_path: Path, monkeypatch):
+    """task_retry 후 critique 루프 재진입 시 _get_critique_context가 재호출돼야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    ctx_call_count = {"n": 0}
+    CTX_V1 = "[ctx-v1-initial]"
+    CTX_V2 = "[ctx-v2-after-task-retry]"
+
+    def mock_get_ctx(root, **kwargs):
+        ctx_call_count["n"] += 1
+        return CTX_V2 if ctx_call_count["n"] > 1 else CTX_V1
+
+    monkeypatch.setattr(mod, "_get_critique_context", mock_get_ctx)
+
+    critique_prompts = []
+    task_retry_count = {"n": 0}
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            critique_prompts.append(prompt)
+            # 첫 3번은 REVISE streak → task_retry 유도
+            if len(critique_prompts) <= 3:
+                return 0, "VERDICT: REVISE"
+            # 재진입 후 PROCEED
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task_retry":
+            task_retry_count["n"] += 1
+            return 0, "VERDICT: PROCEED"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/t8-ctx-refresh",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    # task_retry가 실행됐어야 함
+    assert task_retry_count["n"] >= 1, "task_retry가 호출되지 않음"
+    # _get_critique_context가 2회 이상 호출돼야 함 (재진입 시 갱신)
+    assert ctx_call_count["n"] >= 2, (
+        f"critique 루프 재진입 후 _get_critique_context가 재호출되지 않음: {ctx_call_count['n']}회 호출"
+    )
+    # 재진입 후 critique 프롬프트에 새 ctx가 반영돼야 함
+    if len(critique_prompts) > 3:
+        assert CTX_V2 in critique_prompts[-1], (
+            f"재진입 후 critique 프롬프트에 새 diff가 없음:\n{critique_prompts[-1][:200]}"
+        )

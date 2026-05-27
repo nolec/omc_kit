@@ -1252,14 +1252,23 @@ def cmd_pipeline(
         same_verdict_streak = 0
 
         # isolated 컨텍스트: instruction 없이 diff+TDD 결과만 전달 → 편향 제거
-        _critique_ctx = _get_critique_context(root)
-        base_loop_prompt = (
-            f"아래 코드 변경을 {'omc-critique 스킬(pre-mortem)' if loop_step == 'critique' else 'omc-review 스킬'}으로 검토하세요.\n"
-            "구현 의도나 지시문은 제공하지 않습니다 — 코드와 테스트 결과 자체로만 판단하세요.\n\n"
-            f"{_critique_ctx}\n\n"
-            "반드시 마지막 줄에 `VERDICT: PROCEED` / `VERDICT: APPROVE` / "
-            "`VERDICT: REVISE` / `VERDICT: BLOCK` / `VERDICT: HOLD` 중 하나를 출력하세요."
-        )
+        def _make_loop_prompt() -> str:
+            """현재 staged diff를 읽어 critique/review 프롬프트를 생성한다.
+
+            task_retry/plan_retry 후 루프 재진입 시 새 변경을 반영하기 위해 재호출한다.
+            """
+            ctx = _get_critique_context(root)
+            step_label = "omc-critique 스킬(pre-mortem)" if loop_step == "critique" else "omc-review 스킬"
+            return (
+                f"아래 코드 변경을 {step_label}으로 검토하세요.\n"
+                "구현 의도나 지시문은 제공하지 않습니다 — 코드와 테스트 결과 자체로만 판단하세요.\n\n"
+                f"{ctx}\n\n"
+                "반드시 마지막 줄에 `VERDICT: PROCEED` / `VERDICT: APPROVE` / "
+                "`VERDICT: REVISE` / `VERDICT: BLOCK` / `VERDICT: HOLD` 중 하나를 출력하세요."
+            )
+
+        base_loop_prompt = _make_loop_prompt()
+        needs_ctx_refresh = False  # task_retry/plan_retry 후 True → 루프 상단에서 재생성
 
         prev_critique_issues: str = ""  # 직전 critique 지적 내용 — 다음 retry에 전달
         while retry_count <= _PIPELINE_MAX_RETRIES:
@@ -1268,6 +1277,11 @@ def cmd_pipeline(
                 result["steps"][loop_step] = {"status": "timeout"}
                 save("timeout")
                 return 1
+
+            # task_retry/plan_retry 후 재진입 시 staged diff 갱신
+            if needs_ctx_refresh:
+                base_loop_prompt = _make_loop_prompt()
+                needs_ctx_refresh = False
 
             # 재시도 시 직전 verdict + 이전 지적 내용 주입
             loop_prompt = _build_retry_prompt(
@@ -1386,6 +1400,7 @@ def cmd_pipeline(
                     prev_verdict = _UNSET_VERDICT  # 재진입 후 첫 None 오분류 방지
                     same_verdict_streak = 0
                     prev_critique_issues = ""  # 재진입 시 지적 내용 초기화
+                    needs_ctx_refresh = True  # task_retry 후 새 diff 반영
                     continue
 
                 # 2순위: plan 자동 재진입 (최대 1회)
@@ -1426,6 +1441,7 @@ def cmd_pipeline(
                     retry_count = 0
                     prev_verdict = _UNSET_VERDICT  # 재진입 후 첫 None 오분류 방지
                     same_verdict_streak = 0
+                    needs_ctx_refresh = True  # plan_retry 후 새 diff 반영
                     continue
 
                 save("hold")
@@ -1479,6 +1495,7 @@ def cmd_pipeline(
                         prev_verdict = _UNSET_VERDICT
                         same_verdict_streak = 0
                         prev_critique_issues = ""
+                        needs_ctx_refresh = True  # task_retry 후 새 diff 반영
                         continue
                     # task_retry 실패/BLOCK → retry_exhausted 유지
                     print("[PIPELINE] ❌ TASK 재실행 실패 또는 BLOCK — retry_exhausted")
