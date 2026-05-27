@@ -190,13 +190,15 @@ def _build_retry_prompt(
     failures: list[dict] | None = None,
     *,
     prev_verdict: str | None = None,
+    prev_issues: str | None = None,
 ) -> str:
     """이전 시도 실패 컨텍스트 및/또는 직전 verdict를 프롬프트 앞에 주입합니다.
 
     - failures: 구체적 실패 목록 (기존 task retry 방식)
     - prev_verdict: critique/review 루프의 직전 VERDICT 값
+    - prev_issues: 직전 critique가 지적한 이슈 텍스트 (재시도 시 맥락 제공)
     """
-    if not failures and not prev_verdict:
+    if not failures and not prev_verdict and not prev_issues:
         return original_prompt
 
     lines: list[str] = []
@@ -205,6 +207,13 @@ def _build_retry_prompt(
         lines += [
             f"[재시도 {attempt}회차] 직전 VERDICT: {prev_verdict}.",
             "이 판정을 극복하기 위해 다른 관점으로 재검토하세요.",
+            "",
+        ]
+
+    if prev_issues:
+        lines += [
+            "[이전 critique 지적 사항 — 이 이슈들이 해소됐는지 반드시 확인하세요]",
+            prev_issues,
             "",
         ]
 
@@ -801,7 +810,7 @@ def _grep_verdict(output: str) -> str | None:
 
 _UNSET_VERDICT = object()  # prev_verdict 초기 sentinel — None 과 구분
 _CRITIQUE_AUTO_RETRY_MAX = 1  # critique 루프 탈출 후 plan 자동 재진입 최대 횟수
-_TASK_AUTO_RETRY_MAX = 1      # critique 루프 탈출 후 task 자동 재실행 최대 횟수
+_TASK_AUTO_RETRY_MAX = 2      # critique 루프 탈출 후 task 자동 재실행 최대 횟수
 
 # critique가 REVISE 판정을 반복하는 핵심 기준 — task 프롬프트에 사전 주입
 _CRITIQUE_QUALITY_HINT = (
@@ -1252,6 +1261,7 @@ def cmd_pipeline(
             "`VERDICT: REVISE` / `VERDICT: BLOCK` / `VERDICT: HOLD` 중 하나를 출력하세요."
         )
 
+        prev_critique_issues: str = ""  # 직전 critique 지적 내용 — 다음 retry에 전달
         while retry_count <= _PIPELINE_MAX_RETRIES:
             if time.time() > deadline:
                 print(f"[PIPELINE] ❌ 최대 실행 시간 초과 ({max_time}s)")
@@ -1259,8 +1269,12 @@ def cmd_pipeline(
                 save("timeout")
                 return 1
 
-            # 재시도 시 직전 verdict 컨텍스트 주입
-            loop_prompt = _build_retry_prompt(base_loop_prompt, retry_count, prev_verdict=prev_verdict)
+            # 재시도 시 직전 verdict + 이전 지적 내용 주입
+            loop_prompt = _build_retry_prompt(
+                base_loop_prompt, retry_count,
+                prev_verdict=prev_verdict,
+                prev_issues=prev_critique_issues if retry_count > 0 else None,
+            )
 
             print(f"\n[PIPELINE] ▶ {loop_step.upper()} 스텝 (시도 {retry_count + 1}/{_PIPELINE_MAX_RETRIES + 1})...")
             rc, out = _run_pipeline_step(
@@ -1270,6 +1284,12 @@ def cmd_pipeline(
 
             verdict = _grep_verdict(out)
             print(f"  VERDICT: {verdict or '미감지'}")
+
+            # REVISE/HOLD 시 지적 내용 저장 → 다음 retry 프롬프트에 전달
+            if verdict in ("REVISE", "HOLD"):
+                _issues = _extract_critique_issues(out)
+                if _issues:
+                    prev_critique_issues = _issues
 
             if rc == 0 and verdict in verdict_ok:
                 result["steps"][loop_step] = {"status": "completed", "verdict": verdict}
@@ -1365,6 +1385,7 @@ def cmd_pipeline(
                     retry_count = 0
                     prev_verdict = _UNSET_VERDICT  # 재진입 후 첫 None 오분류 방지
                     same_verdict_streak = 0
+                    prev_critique_issues = ""  # 재진입 시 지적 내용 초기화
                     continue
 
                 # 2순위: plan 자동 재진입 (최대 1회)
@@ -1418,6 +1439,50 @@ def cmd_pipeline(
                     "verdict": verdict,
                     "last_output": out[:300],
                 }
+                _save_pipeline_result(root, result)
+
+                # retry_exhausted → task_retry 복구 시도 (critique 스텝에서만)
+                if loop_step == "critique" and task_auto_retry_count < _TASK_AUTO_RETRY_MAX:
+                    task_auto_retry_count += 1
+                    print(
+                        f"[PIPELINE] 🔄 TASK 재실행 ({task_auto_retry_count}/{_TASK_AUTO_RETRY_MAX})"
+                        " — retry_exhausted 복구"
+                    )
+                    issues_section = (
+                        f"\n\n[critique 지적 사항]\n{prev_critique_issues}\n"
+                        if prev_critique_issues else ""
+                    )
+                    task_retry_prompt = (
+                        "[자동화 모드] 사용자 확인 없이 즉시 실행하세요.\n\n"
+                        f"{instruction}\n\n"
+                        "critique에서 다음 문제가 지적됐습니다. 이를 수정해 재구현하세요."
+                        f"{issues_section}"
+                        "TDD로 구현하세요.\n"
+                        "1. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
+                        "2. 구현 후 테스트 GREEN 확인\n"
+                        "3. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
+                        "반드시 마지막 줄에 `VERDICT: PROCEED` (성공) 또는 `VERDICT: BLOCK` (실패)를 출력하세요."
+                        + _CRITIQUE_QUALITY_HINT
+                    )
+                    print("\n[PIPELINE] ▶ TASK 재실행 (retry_exhausted 복구)...")
+                    task_retry_rc, task_retry_out = _run_pipeline_step(
+                        root, "task_retry", task_retry_prompt, executor, STEP_TIMEOUT * 2, dry_run=dry_run
+                    )
+                    result["steps"]["task_retry"] = {
+                        "status": "completed" if task_retry_rc == 0 else "failed",
+                        "output_preview": task_retry_out[:300],
+                    }
+                    _save_pipeline_result(root, result)
+                    if task_retry_rc == 0 and _grep_verdict(task_retry_out) not in ("BLOCK", None):
+                        # critique 루프 재진입
+                        retry_count = 0
+                        prev_verdict = _UNSET_VERDICT
+                        same_verdict_streak = 0
+                        prev_critique_issues = ""
+                        continue
+                    # task_retry 실패/BLOCK → retry_exhausted 유지
+                    print("[PIPELINE] ❌ TASK 재실행 실패 또는 BLOCK — retry_exhausted")
+
                 save("retry_exhausted")
                 return 1
 

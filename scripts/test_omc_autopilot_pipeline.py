@@ -703,3 +703,105 @@ def test_critique_prompt_excludes_instruction(tmp_path: Path, monkeypatch):
     assert MARKER not in critique_prompt, (
         f"critique 프롬프트에 instruction이 포함됨 — 격리 미적용:\n{critique_prompt[:300]}"
     )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# T7: retry_exhausted → task_retry 연결 + critique 재진입
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_retry_exhausted_triggers_task_retry(tmp_path: Path, monkeypatch):
+    """critique retry 소진(retry_exhausted) 시 task_retry가 호출돼야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    call_log = []
+
+    critique_call = {"n": 0}
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        call_log.append(step_name)
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            critique_call["n"] += 1
+            # 1,3회차: REVISE / 2,4회차: HOLD → streak 없이 retry 소진
+            return 0, "VERDICT: REVISE" if critique_call["n"] % 2 == 1 else "VERDICT: HOLD"
+        if step_name == "task_retry":
+            return 0, "VERDICT: PROCEED"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/t7-retry",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert "task_retry" in call_log, (
+        f"retry_exhausted 후 task_retry가 호출되지 않음. 호출 순서: {call_log}"
+    )
+
+
+def test_critique_retry_prompt_includes_issues(tmp_path: Path, monkeypatch):
+    """critique retry 프롬프트에 이전 지적 내용이 포함돼야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    captured = {"critique_retry_prompt": ""}
+    call_count = {"n": 0}
+    ISSUE_MARKER = "[critique-issue-marker]"
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                # 첫 critique: 이슈를 포함한 REVISE 반환
+                return 0, f"발견된 문제:\n{ISSUE_MARKER}\nVERDICT: REVISE"
+            # 두 번째 critique: 프롬프트 캡처
+            captured["critique_retry_prompt"] = prompt
+            return 0, "VERDICT: PROCEED"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/t7-prompt",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert ISSUE_MARKER in captured["critique_retry_prompt"], (
+        f"critique retry 프롬프트에 이전 지적 내용이 없음:\n{captured['critique_retry_prompt'][:300]}"
+    )
