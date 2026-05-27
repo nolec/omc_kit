@@ -414,7 +414,7 @@ def test_critique_same_verdict_repeated_exits_failed_critique_loop(tmp_path: Pat
 
     call_count = {"n": 0}
 
-    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False):
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
         call_count["n"] += 1
         if step_name == "plan":
             return 0, "VERDICT: PROCEED"
@@ -461,7 +461,7 @@ def test_task_ambiguous_response_retries_once_then_succeeds(tmp_path: Path, monk
 
     task_calls = {"n": 0}
 
-    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False):
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
         if step_name == "plan":
             return 0, "VERDICT: PROCEED"
         if step_name == "task":
@@ -506,7 +506,7 @@ def test_task_ambiguous_response_fails_after_two_nones(tmp_path: Path, monkeypat
     import omc_autopilot as mod
     importlib.reload(mod)
 
-    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False):
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
         if step_name == "plan":
             return 0, "VERDICT: PROCEED"
         if step_name == "task":
@@ -606,3 +606,100 @@ def test_pipeline_saves_run_history_to_runs_dir(tmp_path: Path):
     assert result_json.exists(), "runs/{run_id}/result.json 미생성"
     data = __import__("json").loads(result_json.read_text(encoding="utf-8"))
     assert "status" in data
+
+# ─────────────────────────────────────────────────────────────────────────────
+# T6: critique/review 격리 컨텍스트 — isolated=True 검증
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_critique_step_receives_isolated_flag(tmp_path: Path, monkeypatch):
+    """critique 스텝 실행 시 _run_pipeline_step에 isolated=True가 전달돼야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    isolated_calls = {}
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        isolated_calls[step_name] = isolated
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name in ("critique", "review"):
+            return 0, "VERDICT: PROCEED"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/t6-isolated",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert isolated_calls.get("critique") is True, (
+        f"critique 스텝에 isolated=True가 전달되지 않음: {isolated_calls}"
+    )
+    assert isolated_calls.get("review") is True, (
+        f"review 스텝에 isolated=True가 전달되지 않음: {isolated_calls}"
+    )
+    assert isolated_calls.get("task") is False, (
+        f"task 스텝에 isolated=True가 잘못 전달됨: {isolated_calls}"
+    )
+    assert isolated_calls.get("plan") is False, (
+        f"plan 스텝에 isolated=True가 잘못 전달됨: {isolated_calls}"
+    )
+
+
+def test_critique_prompt_excludes_instruction(tmp_path: Path, monkeypatch):
+    """critique 프롬프트에 원본 instruction이 포함되지 않아야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    captured_prompts = {}
+    MARKER = "UNIQUE_XYZ"
+    INSTRUCTION = MARKER + ("충분한길이" * 30)  # [:200] 안에 마커 포함
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        captured_prompts[step_name] = prompt
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name in ("critique", "review"):
+            return 0, "VERDICT: PROCEED"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    mod.cmd_pipeline(
+        root=tmp_path,
+        instruction=INSTRUCTION,
+        branch="feat/t6-prompt",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    critique_prompt = captured_prompts.get("critique", "")
+    assert MARKER not in critique_prompt, (
+        f"critique 프롬프트에 instruction이 포함됨 — 격리 미적용:\n{critique_prompt[:300]}"
+    )

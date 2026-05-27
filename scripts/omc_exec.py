@@ -226,6 +226,11 @@ def main() -> int:
         default=int(os.environ.get("OMC_EXEC_TIMEOUT_SEC", _DEFAULT_HEADLESS_TIMEOUT_SEC)),
         help="Timeout for headless execution mode.",
     )
+    ap.add_argument(
+        "--fresh-context",
+        action="store_true",
+        help="이전 세션 컨텍스트 없이 새 격리 컨텍스트로 실행 (critique/review 에이전트 격리용).",
+    )
     args = ap.parse_args()
 
     project_root = omc_utils.project_root(args.target)
@@ -236,6 +241,9 @@ def main() -> int:
     executor = _detect_executor(args.executor)
     if args.execution_mode == "interactive" and not _is_tty_available():
         args.execution_mode = "headless"
+    if args.fresh_context:
+        # critique/review 에이전트 격리: 환경변수로 전달 (executor별 처리)
+        os.environ["OMC_FRESH_CONTEXT"] = "1"
     prompt_text = _adapt_prompt_for_executor(
         prompt_path.read_text(encoding="utf-8"),
         executor=executor,

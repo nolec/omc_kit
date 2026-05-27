@@ -270,6 +270,8 @@ def _run_step(
             "--execution-mode", "headless",
             "--timeout-sec", str(timeout_sec),
         ]
+        if isolated:
+            cmd.append("--fresh-context")
 
         proc = subprocess.run(
             cmd,
@@ -835,6 +837,40 @@ def _extract_critique_issues(output: str) -> str:
     return "\n".join(lines[start:verdict_idx])
 
 
+
+def _get_critique_context(root: Path, max_diff_lines: int = 200) -> str:
+    """staged diff + TDD 결과를 critique 컨텍스트로 반환한다.
+
+    instruction(구현 의도) 없이 코드 자체만 포함해 critique 편향을 방지한다.
+    """
+    import subprocess as _sp
+
+    diff_proc = _sp.run(
+        ["git", "diff", "--staged", "--stat"],
+        cwd=str(root), capture_output=True, text=True,
+    )
+    diff_detail = _sp.run(
+        ["git", "diff", "--staged"],
+        cwd=str(root), capture_output=True, text=True,
+    )
+    diff_text = diff_detail.stdout or "(staged 변경 없음)"
+    diff_lines = diff_text.splitlines()
+    if len(diff_lines) > max_diff_lines:
+        diff_text = "\n".join(diff_lines[:max_diff_lines]) + f"\n... (이하 {len(diff_lines) - max_diff_lines}줄 생략)"
+
+    tdd_proc = _sp.run(
+        [__import__("sys").executable, "scripts/omc_tdd_check.py", "--staged"],
+        cwd=str(root), capture_output=True, text=True,
+    )
+    tdd_result = (tdd_proc.stdout + tdd_proc.stderr).strip() or "(TDD 결과 없음)"
+
+    return (
+        f"[staged diff 요약]\n{diff_proc.stdout.strip() or '(없음)'}\n\n"
+        f"[staged diff 전체]\n{diff_text}\n\n"
+        f"[TDD 게이트 결과]\n{tdd_result}"
+    )
+
+
 def _run_pipeline_step(
     root: Path,
     step_name: str,
@@ -843,8 +879,13 @@ def _run_pipeline_step(
     timeout_sec: int,
     *,
     dry_run: bool = False,
+    isolated: bool = False,
 ) -> tuple[int, str]:
-    """단일 파이프라인 스텝을 LLM으로 실행하고 (returncode, output)을 반환한다."""
+    """단일 파이프라인 스텝을 LLM으로 실행하고 (returncode, output)을 반환한다.
+
+    isolated=True 이면 이전 세션 컨텍스트 없이 새 컨텍스트로 실행한다.
+    critique/review 스텝에 사용해 task 대화 이력과 격리한다.
+    """
     if dry_run:
         print(f"  [DRY-RUN] {step_name} 시뮬레이션")
         # review 스텝은 APPROVE, 그 외는 PROCEED (verdict 일관성)
@@ -1201,10 +1242,12 @@ def cmd_pipeline(
         prev_verdict: object = _UNSET_VERDICT  # sentinel: 아직 verdict 없음
         same_verdict_streak = 0
 
+        # isolated 컨텍스트: instruction 없이 diff+TDD 결과만 전달 → 편향 제거
+        _critique_ctx = _get_critique_context(root)
         base_loop_prompt = (
-            f"다음 코드 변경에 대해 {'critique(pre-mortem)' if loop_step == 'critique' else 'review'}를 수행하세요.\n"
-            f"지시문: {instruction[:200]}\n\n"
-            f"{'omc-critique 스킬' if loop_step == 'critique' else 'omc-review 스킬'}의 포맷을 따르세요.\n"
+            f"아래 코드 변경을 {'omc-critique 스킬(pre-mortem)' if loop_step == 'critique' else 'omc-review 스킬'}으로 검토하세요.\n"
+            "구현 의도나 지시문은 제공하지 않습니다 — 코드와 테스트 결과 자체로만 판단하세요.\n\n"
+            f"{_critique_ctx}\n\n"
             "반드시 마지막 줄에 `VERDICT: PROCEED` / `VERDICT: APPROVE` / "
             "`VERDICT: REVISE` / `VERDICT: BLOCK` / `VERDICT: HOLD` 중 하나를 출력하세요."
         )
@@ -1220,7 +1263,10 @@ def cmd_pipeline(
             loop_prompt = _build_retry_prompt(base_loop_prompt, retry_count, prev_verdict=prev_verdict)
 
             print(f"\n[PIPELINE] ▶ {loop_step.upper()} 스텝 (시도 {retry_count + 1}/{_PIPELINE_MAX_RETRIES + 1})...")
-            rc, out = _run_pipeline_step(root, loop_step, loop_prompt, executor, STEP_TIMEOUT, dry_run=dry_run)
+            rc, out = _run_pipeline_step(
+                root, loop_step, loop_prompt, executor, STEP_TIMEOUT,
+                dry_run=dry_run, isolated=True,
+            )
 
             verdict = _grep_verdict(out)
             print(f"  VERDICT: {verdict or '미감지'}")
