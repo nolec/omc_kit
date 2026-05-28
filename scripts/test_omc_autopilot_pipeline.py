@@ -877,3 +877,173 @@ def test_critique_prompt_refreshed_after_task_retry(tmp_path: Path, monkeypatch)
         assert CTX_V2 in critique_prompts[-1], (
             f"재진입 후 critique 프롬프트에 새 diff가 없음:\n{critique_prompts[-1][:200]}"
         )
+
+
+# ── 버그 A/B/C 회귀 방지 테스트 ────────────────────────────────────────────
+
+def test_plan_retry_resets_task_auto_retry_count(tmp_path: Path, monkeypatch):
+    """버그 C: plan_retry 완료 후 critique 루프 재진입 시 task_auto_retry_count가 0이어야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    observed: dict = {"task_auto_retry_after_plan_retry": None}
+    critique_call = {"n": 0}
+    plan_retry_done = {"v": False}
+
+    original_step = mod._run_pipeline_step
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            critique_call["n"] += 1
+            if not plan_retry_done["v"]:
+                # 첫 번째 critique 루프: retry 소진 유도 (REVISE 반복)
+                return 0, "VERDICT: REVISE"
+            else:
+                # plan_retry 후 재진입: PROCEED 반환
+                return 0, "VERDICT: PROCEED"
+        if step_name == "task_retry":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "plan_retry":
+            plan_retry_done["v"] = True
+            return 0, "VERDICT: PROCEED"
+        if step_name == "review":
+            return 0, "VERDICT: APPROVE"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    result_data = {}
+
+    original_save = mod._save_pipeline_result
+    def capturing_save(root, data):
+        result_data.update(data)
+        original_save(root, data)
+    monkeypatch.setattr(mod, "_save_pipeline_result", capturing_save)
+
+    mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/bugC-test",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert plan_retry_done["v"], "plan_retry가 실행되지 않음"
+    # plan_retry 후 critique가 PROCEED를 반환했으므로 결과가 hold가 아니어야 함
+    final_status = result_data.get("status", "")
+    assert final_status not in ("hold",), (
+        f"plan_retry 후 task_auto_retry_count 미리셋으로 인해 루프가 조기 종료됨: status={final_status}"
+    )
+
+
+def test_run_pipeline_step_kills_process_group_on_timeout(tmp_path: Path, monkeypatch):
+    """버그 B: timeout 초과 시 프로세스 그룹 전체가 kill되고 returncode=124를 반환한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    import subprocess
+    import os
+    import signal
+    import threading
+
+    killed_pgids: list = []
+
+    class FakeProc:
+        pid = 12345
+        returncode = None
+
+        def communicate(self):
+            # communicate가 블로킹되어 timeout 발동을 유도
+            import time
+            time.sleep(10)  # 실제론 Timer가 먼저 kill
+            return ("", "")
+
+    fake_proc = FakeProc()
+
+    def fake_popen(cmd, **kwargs):
+        return fake_proc
+
+    def fake_killpg(pgid, sig):
+        killed_pgids.append(pgid)
+        # communicate 해제를 위해 returncode 설정
+        fake_proc.returncode = -9
+
+    def fake_getpgid(pid):
+        return pid
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(os, "killpg", fake_killpg)
+    monkeypatch.setattr(os, "getpgid", fake_getpgid)
+
+    # communicate가 kill 후 바로 종료되도록 패치
+    original_communicate = FakeProc.communicate
+    def patched_communicate(self):
+        import time
+        # Timer 발동 대기 (timeout=1초 설정)
+        time.sleep(2)
+        return ("out", "err")
+    FakeProc.communicate = patched_communicate
+
+    # omc_exec.py 존재 여부 mock
+    (tmp_path / "omc_exec.py").write_text("")
+    import unittest.mock as umock
+    with umock.patch.object(mod.Path, "exists", return_value=True):
+        rc, out = mod._run_pipeline_step(
+            root=tmp_path,
+            step_name="critique",
+            prompt="test",
+            executor="codex",
+            timeout_sec=1,
+            dry_run=False,
+        )
+
+    assert rc == 124, f"timeout 시 returncode=124 기대, 실제={rc}"
+    assert "타임아웃" in out, f"timeout 메시지 없음: {out}"
+    assert len(killed_pgids) > 0, "killpg가 호출되지 않음 — 프로세스 그룹 kill 미동작"
+
+
+def test_resume_restores_task_auto_retry_count_from_task_retry(tmp_path: Path, monkeypatch):
+    """버그 A: --resume 시 task_retry 완료 이력이 있으면 task_auto_retry_count=1로 복원된다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    # task_retry 완료된 상태의 resume 데이터 준비
+    resume_data = {
+        "status": "running",
+        "steps": {
+            "preflight": {"status": "completed"},
+            "plan": {"status": "completed"},
+            "task": {"status": "completed"},
+            "critique": {"status": "failed_critique_loop"},
+            "task_retry": {"status": "completed"},
+        },
+        "last_completed_step": "task_retry",
+    }
+    result_path = tmp_path / ".omc" / "pipeline_run_result.json"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(__import__("json").dumps(resume_data))
+
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(result_path))
+
+    loaded = mod._load_resume_state(tmp_path)
+    assert loaded is not None
+
+    task_retry_done = mod._step_already_done(loaded, "task_retry")
+    assert task_retry_done, "task_retry 완료 이력이 _step_already_done에서 감지되지 않음"

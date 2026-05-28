@@ -54,7 +54,7 @@ def test_failed_critique_loop_saves_critique_issues(tmp_repo, monkeypatch):
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
     # REVISE×3 탈출 → plan_retry HOLD → hold 종료, critique_issues 저장돼야 함
     verdicts = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE", "HOLD"])
-    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(verdicts, "HOLD")
         return (0, f"detail\nVERDICT: {v}")
     with patch.object(_aut, "_run_pipeline_step", side_effect=_mock), \
@@ -74,7 +74,7 @@ def test_critique_auto_retry_succeeds_on_second_attempt(tmp_repo, monkeypatch):
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
     # FULL 순서: plan, task, critique(REVISE×3 탈출), plan_retry, critique_retry(PROCEED), review(APPROVE)
     verdicts = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE", "PROCEED", "PROCEED", "APPROVE"])
-    def _mock_step(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock_step(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(verdicts, "PROCEED")
         return (0, f"output\nVERDICT: {v}")
     import subprocess as _sp
@@ -98,7 +98,7 @@ def test_critique_auto_retry_fails_then_hold(tmp_repo, monkeypatch):
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
     # plan, task, critique(REVISE×3 탈출), plan_retry, critique_retry(REVISE×3 탈출) → hold
     verdicts = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE", "PROCEED", "REVISE", "REVISE", "REVISE"])
-    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(verdicts, "REVISE")
         return (0, f"output\nVERDICT: {v}")
     with patch.object(_aut, "_run_pipeline_step", side_effect=_mock), \
@@ -124,7 +124,7 @@ def test_resume_without_critique_issues_no_keyerror(tmp_repo, monkeypatch):
            "pr_url": None, "finished_at": "2026-01-01T000100Z"}
     (tmp_repo / "result.json").write_text(json.dumps(old))
     verdicts = iter(["PROCEED", "PROCEED", "APPROVE"])
-    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(verdicts, "PROCEED")
         return (0, f"output\nVERDICT: {v}")
     with patch.object(_aut, "_run_pipeline_step", side_effect=_mock), \
@@ -146,7 +146,7 @@ def test_plan_retry_hold_verdict_exits_hold(tmp_repo, monkeypatch):
     # plan_retry 후 추가 _run_pipeline_step 호출이 없어야 함
     step_calls: list[str] = []
     verdicts = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE", "HOLD"])
-    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         step_calls.append(step)
         v = next(verdicts, "HOLD")
         return (0, f"output\nVERDICT: {v}")
@@ -175,7 +175,7 @@ def test_task_prompt_contains_critique_quality_hint(tmp_repo, monkeypatch):
     captured_prompts: dict[str, str] = {}
     verdicts = iter(["PROCEED", "PROCEED", "PROCEED", "APPROVE"])
 
-    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         captured_prompts[step] = prompt
         v = next(verdicts, "PROCEED")
         return (0, f"output\nVERDICT: {v}")
@@ -208,7 +208,7 @@ def test_critique_revise_triggers_task_retry_then_proceeds(tmp_repo, monkeypatch
     verdicts = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE",
                      "PROCEED", "PROCEED", "APPROVE"])
 
-    def _mock_step(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock_step(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(verdicts, "PROCEED")
         return (0, f"output\nVERDICT: {v}")
 
@@ -249,7 +249,7 @@ def test_task_retry_still_revise_falls_back_to_plan_retry_then_hold(tmp_repo, mo
         "REVISE", "REVISE", "REVISE",  # critique 3차 탈출 → hold
     ])
 
-    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(verdicts, "REVISE")
         return (0, f"output\nVERDICT: {v}")
 
@@ -275,7 +275,7 @@ def test_task_retry_block_verdict_exits_hold(tmp_repo, monkeypatch):
     # plan(PROCEED), task(PROCEED), critique(REVISE×3 탈출), task_retry(BLOCK)
     verdicts = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE", "BLOCK"])
 
-    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(verdicts, "BLOCK")
         return (0, f"output\nVERDICT: {v}")
 
@@ -303,7 +303,7 @@ def test_task_retry_rc_nonzero_exits_hold_with_code_2(tmp_repo, monkeypatch):
     verdicts_task_retry_fails = iter(["PROCEED", "PROCEED",
                                       "REVISE", "REVISE", "REVISE"])
 
-    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(verdicts_task_retry_fails, "PROCEED")
         if step == "task_retry":
             return (1, "fatal error")
@@ -339,7 +339,7 @@ def test_critique_none_verdict_streak_triggers_task_retry(tmp_repo, monkeypatch)
         "review":     iter(["APPROVE"]),
     }
 
-    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(step_verdicts.get(step, iter(["PROCEED"])), "PROCEED")
         body = "output" if v is None else f"output\nVERDICT: {v}"
         return (0, body)
@@ -380,7 +380,7 @@ def test_critique_block_verdict_immediate_task_retry(tmp_repo, monkeypatch):
         "review":     iter(["APPROVE"]),
     }
 
-    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(step_verdicts.get(step, iter(["PROCEED"])), "PROCEED")
         return (0, f"output\nVERDICT: {v}")
 
@@ -421,7 +421,7 @@ def test_critique_first_none_does_not_trigger_streak(tmp_repo, monkeypatch):
         "review":   iter(["APPROVE"]),
     }
 
-    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(step_verdicts.get(step, iter(["PROCEED"])), "PROCEED")
         body = "output" if v is None else f"output\nVERDICT: {v}"
         return (0, body)
@@ -473,7 +473,7 @@ def test_task_prompts_have_no_contract_done_instruction(tmp_repo, monkeypatch):
     captured: dict[str, str] = {}
     verdicts = iter(["PROCEED", "PROCEED", "PROCEED", "APPROVE"])
 
-    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         captured[step] = prompt
         v = next(verdicts, "PROCEED")
         return (0, f"output\nVERDICT: {v}")
@@ -520,7 +520,7 @@ def test_preflight_initializes_target_guard_when_different(tmp_repo, monkeypatch
         return _sp.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     verdicts = iter(["PROCEED", "PROCEED", "PROCEED", "APPROVE"])
-    def _mock_step(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock_step(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(verdicts, "PROCEED")
         return (0, f"output\nVERDICT: {v}")
 
@@ -567,7 +567,7 @@ def test_preflight_does_not_double_init_when_same_guard(tmp_repo, monkeypatch):
         return _sp.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     verdicts = iter(["PROCEED", "PROCEED", "PROCEED", "APPROVE"])
-    def _mock_step(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock_step(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(verdicts, "PROCEED")
         return (0, f"output\nVERDICT: {v}")
 
@@ -610,7 +610,7 @@ def test_plan_prompt_has_no_omc_task_reference(tmp_repo, monkeypatch):
     captured: dict[str, str] = {}
     verdicts = iter(["PROCEED", "PROCEED", "PROCEED", "APPROVE"])
 
-    def _mock(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         captured[step] = prompt
         v = next(verdicts, "PROCEED")
         return (0, f"output\nVERDICT: {v}")
@@ -652,7 +652,7 @@ def test_task_prompts_have_automation_mode_header(tmp_repo, monkeypatch):
     verdicts_full = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE",
                           "PROCEED", "PROCEED", "APPROVE"])
 
-    def _mock_full(root, step, prompt, executor, timeout, dry_run=False):
+    def _mock_full(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         captured_full[step] = prompt
         v = next(verdicts_full, "PROCEED")
         return (0, f"output\nVERDICT: {v}")

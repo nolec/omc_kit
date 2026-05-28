@@ -34,11 +34,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import tempfile
 import subprocess
 import sys
 import re
 import textwrap
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -926,14 +928,32 @@ def _run_pipeline_step(
             "--execution-mode", "headless",
             "--timeout-sec", str(timeout_sec),
         ]
-        proc = subprocess.run(
-            cmd, cwd=str(root), capture_output=True, text=True,
-            timeout=timeout_sec + 30,
+        proc = subprocess.Popen(
+            cmd, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
         )
-        output = (proc.stdout or "") + (proc.stderr or "")
+        timed_out = False
+
+        def _kill_proc_group() -> None:
+            nonlocal timed_out
+            timed_out = True
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+        timer = threading.Timer(timeout_sec, _kill_proc_group)
+        try:
+            timer.start()
+            stdout, stderr = proc.communicate()
+        finally:
+            timer.cancel()
+
+        if timed_out:
+            return 124, f"[ERROR] 타임아웃 ({timeout_sec}s) — 프로세스 그룹 종료"
+
+        output = (stdout or "") + (stderr or "")
         return int(proc.returncode), output.strip()
-    except subprocess.TimeoutExpired:
-        return 1, "[ERROR] 타임아웃"
     except Exception as exc:
         return 1, f"[ERROR] {exc}"
     finally:
@@ -1004,6 +1024,7 @@ def cmd_pipeline(
         "steps": {},
         "pr_url": None,
         "finished_at": None,
+        "last_completed_step": None,
     }
 
     # ── resume 처리 ──────────────────────────────────────────────────────
@@ -1258,6 +1279,7 @@ def cmd_pipeline(
                 save("failed_ambiguous_response")
                 return 1
         result["steps"]["task"] = {"status": "completed" if task_rc == 0 else "failed", "output_preview": task_out[:300]}
+    result["last_completed_step"] = "task"
     _save_pipeline_result(root, result)
 
     if task_rc != 0:
@@ -1270,6 +1292,14 @@ def cmd_pipeline(
     # ── CRITIQUE/REVIEW 루프 ────────────────────────────────────────────
     critique_auto_retry_count = 0  # critique 루프 탈출 후 plan 자동 재진입 횟수
     task_auto_retry_count = 0       # critique 루프 탈출 후 task 재실행 횟수
+
+    # resume 시 task_retry/plan_retry 완료 여부로 루프 카운터 복원
+    if _resume_data:
+        if _step_already_done(_resume_data, "task_retry"):
+            task_auto_retry_count = 1
+        if _step_already_done(_resume_data, "plan_retry"):
+            critique_auto_retry_count = 1
+            task_auto_retry_count = 0  # plan_retry 후엔 task retry 기회 복원
 
     for loop_step in ("critique", "review"):
         verdict_ok = ("PROCEED", "APPROVE")
@@ -1409,12 +1439,12 @@ def cmd_pipeline(
                         "status": "completed" if task_retry_rc == 0 else "failed",
                         "output_preview": task_retry_out[:300],
                     }
+                    result["last_completed_step"] = "task_retry"
                     _save_pipeline_result(root, result)
                     if task_retry_rc != 0:
                         print("[PIPELINE] ❌ TASK 재실행 실패 — HOLD")
                         save("hold")
                         return 2
-                    # BLOCK verdict 이면 즉시 탈출
                     if _grep_verdict(task_retry_out) == "BLOCK":
                         print("[PIPELINE] ❌ TASK 재실행 VERDICT: BLOCK — HOLD")
                         result["steps"]["task_retry"]["verdict"] = "BLOCK"
@@ -1452,6 +1482,7 @@ def cmd_pipeline(
                         "status": "completed" if plan_rc == 0 else "failed",
                         "output_preview": plan_out[:300],
                     }
+                    result["last_completed_step"] = "plan_retry"
                     _save_pipeline_result(root, result)
                     if plan_rc != 0:
                         print("[PIPELINE] ❌ PLAN 재실행 실패 — HOLD")
@@ -1468,6 +1499,7 @@ def cmd_pipeline(
                     retry_count = 0
                     prev_verdict = _UNSET_VERDICT  # 재진입 후 첫 None 오분류 방지
                     same_verdict_streak = 0
+                    task_auto_retry_count = 0  # plan_retry 후 task retry 기회 복원
                     needs_ctx_refresh = True  # plan_retry 후 새 diff 반영
                     continue
 
