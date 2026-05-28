@@ -944,6 +944,30 @@ def _run_pipeline_step(
                 pass
 
 
+
+def _ensure_staged(root: Path, dry_run: bool, label: str = "TASK") -> None:
+    """수정된 파일이 staged 안 됐으면 git add -A를 자동 적용한다.
+
+    Codex가 git add를 누락하면 critique가 staged diff 없음으로 HOLD를 반복하는
+    문제를 방지한다.
+    """
+    if dry_run:
+        return
+    unstaged = subprocess.run(
+        ["git", "diff", "--name-only"],
+        capture_output=True, text=True, cwd=str(root),
+    ).stdout.strip()
+    staged = subprocess.run(
+        ["git", "diff", "--staged", "--name-only"],
+        capture_output=True, text=True, cwd=str(root),
+    ).stdout.strip()
+    if unstaged and not staged:
+        subprocess.run(["git", "add", "-A"], cwd=str(root))
+        print(f"[PIPELINE] ⚠️  {label} 후 미staged 변경 감지 — git add -A 자동 적용")
+    elif unstaged and staged:
+        subprocess.run(["git", "add", "-A"], cwd=str(root))
+        print(f"[PIPELINE] ℹ️  {label} 후 unstaged 추가 변경 감지 — git add -A 적용")
+
 def cmd_pipeline(
     root: Path,
     instruction: str,
@@ -1241,6 +1265,8 @@ def cmd_pipeline(
         save("failed")
         return 1
 
+    _ensure_staged(root, dry_run, "TASK")
+
     # ── CRITIQUE/REVIEW 루프 ────────────────────────────────────────────
     critique_auto_retry_count = 0  # critique 루프 탈출 후 plan 자동 재진입 횟수
     task_auto_retry_count = 0       # critique 루프 탈출 후 task 재실행 횟수
@@ -1400,6 +1426,7 @@ def cmd_pipeline(
                     prev_verdict = _UNSET_VERDICT  # 재진입 후 첫 None 오분류 방지
                     same_verdict_streak = 0
                     prev_critique_issues = ""  # 재진입 시 지적 내용 초기화
+                    _ensure_staged(root, dry_run, "TASK_RETRY")
                     needs_ctx_refresh = True  # task_retry 후 새 diff 반영
                     continue
 
