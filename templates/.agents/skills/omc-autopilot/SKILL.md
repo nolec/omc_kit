@@ -46,6 +46,7 @@ nohup python3 scripts/omc_autopilot.py pipeline \
   --instruction "[지시문]" \
   --branch "[브랜치]" \
   --mode [auto|lite|full] \
+  --auto \
   > .omc/pipeline.log 2>&1 &
 ```
 

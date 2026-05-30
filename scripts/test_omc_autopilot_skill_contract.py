@@ -42,6 +42,7 @@ REQUIRED_SEQUENCE = [
     "--instruction",
     "--branch",
     "--mode",
+    "--auto",
     "--dry-run",
     "--force",
     "--resume",
@@ -65,6 +66,7 @@ CLI_OPTIONS = [
     "--mode",
     "--allow-dirty",
     "--dry-run",
+    "--auto",
     "--force",
     "--resume",
 ]
@@ -82,7 +84,7 @@ AUTOPILOT 실행 전 확정:
 - python3 scripts/omc.py state status --target .
 
 명령 출력:
-nohup python3 scripts/omc_autopilot.py pipeline --instruction "스킬 정리" --branch "feat/skill-cleanup" --mode full > .omc/pipeline.log 2>&1 &
+nohup python3 scripts/omc_autopilot.py pipeline --instruction "스킬 정리" --branch "feat/skill-cleanup" --mode full --auto > .omc/pipeline.log 2>&1 &
 """
 
 INVALID_AUTOPILOT_SAMPLE = """
@@ -112,7 +114,7 @@ def _validate_autopilot_output(sample: str) -> list[str]:
         "confirmation": r"지시문:.*브랜치:.*사용자 승인:\s*(미승인|승인)",
         "readonly": r"읽기 전용 확인:.*git branch --show-current.*git status --porcelain",
         "dirty": r"dirty:\s*(clean|dirty|N/A)",
-        "command": r"명령 출력:.*omc_autopilot.py pipeline.*--instruction.*--branch",
+        "command": r"명령 출력:.*nohup.*omc_autopilot.py pipeline.*--instruction.*--branch.*--mode.*--auto.*\.omc/pipeline\.log",
     }
     return [
         name
@@ -159,7 +161,11 @@ def test_omc_autopilot_skill_preserves_required_behavior_markers():
 
 def test_documented_pipeline_options_exist_in_real_cli():
     script_text = AUTOPILOT_SCRIPT.read_text(encoding="utf-8")
-    missing = [option for option in CLI_OPTIONS if option not in script_text]
+    missing = [
+        option
+        for option in CLI_OPTIONS
+        if f'p_pipeline.add_argument("{option}"' not in script_text
+    ]
     assert not missing, f"documented pipeline options missing in CLI: {missing}"
 
 
