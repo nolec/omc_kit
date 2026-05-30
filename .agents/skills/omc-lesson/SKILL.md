@@ -3,115 +3,74 @@ skill_name: omc-lesson
 description: "교훈을 .omc/lessons/에 기록해 BM25 자동 주입에 활용. 트리거: 교훈 기록, 배운 거 저장, 다음에 주의할 것, 교훈 남기자, 실수 기록. 파일 하나 = 교훈 하나."
 ---
 
-# OMC Compound Engineering 교훈 캡처
+# OMC Lesson
 
-> **이 스킬을 쓰면 안 되는 상황**:
-> - 단순 메모 → `.omc/notepad.md` 에 직접 기록
+Compound Engineering 교훈 캡처 스킬입니다. 단순 메모는 `.omc/notepad.md`에 남깁니다.
 
----
-
-## Step 0: 중복 확인 (먼저 실행)
-
-> **AI는 아래 커맨드를 직접 실행하고 유사 교훈이 있는지 확인한다. 건너뛰지 않는다.**
+## Phase 0. 중복 검색
 
 ```bash
-python3 scripts/omc_lesson.py search "기록하려는 교훈 키워드" --top 3 2>/dev/null
+python3 scripts/omc_lesson.py search "키워드" --top 3
 ```
 
-수집 결과 연결:
-- `search` 결과 → 중복 여부 판단 → 신규 추가 vs 기존 업데이트 결정
+- 유사 교훈 없음 → 신규 기록 후보
+- 유사 교훈 있음 → 기존 교훈 확인 후 수동 편집 또는 신규 기록 여부를 사용자에게 확인
+- `omc_lesson.py`에는 update 명령 없음
 
-- 유사 교훈이 있으면 → 새 파일 생성 대신 **기존 교훈 업데이트** 여부를 사용자에게 확인한다.
-- 없으면 → 아래 교훈 추가 단계로 진행한다.
+## Phase 1. 기록 가능 여부
 
----
+- 이번 task 중에는 실제 `.omc/lessons/` 파일 생성·수정 금지
+- 실제 기록은 사용자가 구체적 교훈 기록을 요청했을 때만 수행
+- 제목/증상/원인/규칙을 먼저 확인합니다
+- 태그가 없으면 `general` 또는 `N/A — 이유`
+- verify는 재발 방지를 확인한 명령이나 방법
+- 규칙은 다음에 할 행동 지침 형태로 작성
+- 제목/증상/원인/규칙 중 하나라도 불명확하면 기록 금지
 
-## 교훈 추가
+## Phase 2. 기록 방식
 
-> **`add -i` 는 인터랙티브 입력이 필요하다. 아래 중 하나를 선택한다.**
-
-### 방법 A — 사용자가 직접 실행 (권장)
-
-아래 커맨드를 **사용자가** 터미널에서 직접 실행한다. AI는 대신 실행할 수 없다.
+사용자 직접 입력:
 
 ```bash
 python3 scripts/omc_lesson.py add -i
 ```
 
-### 방법 B — AI가 양식을 채워서 비인터랙티브 실행
-
-AI가 아래 내용을 채운 후 커맨드를 실행한다.
+비인터랙티브 입력:
 
 ```bash
 python3 scripts/omc_lesson.py add \
   --title "제목" \
-  --tags "태그1,태그2" \
-  --symptom "증상 설명" \
-  --cause "원인 설명" \
-  --rule "행동 지침"
+  --symptom "증상" \
+  --cause "원인" \
+  --rule "행동 지침" \
+  --verify "검증" \
+  --tags "general"
 ```
 
-> 항목을 모르면 `N/A — [이유]` 형식으로 기재한다. 빈칸으로 두지 않는다.
-
-### 작성 양식 (방법 A 사용 시 참고)
-
-```
-제목  : _______________________________________________
-          (예: "git add 전 diff 확인 누락")
-
-태그  : _______________________________________________
-          (예: git, pre-commit, tdd — 쉼표 구분, 소문자)
-
-증상  : (언제, 어떤 상황에서 문제가 발생했는가)
-          (예: "staged 파일 확인 없이 커밋 → 불필요한 파일 포함")
-
-원인  : (왜 그런 일이 생겼는가)
-          (예: "git diff --cached 실행을 생략했음")
-
-규칙  : (다음에 이렇게 하면 된다 — 행동 지침 형태로)
-          (예: "git commit 전 항상 git diff --cached 로 staged 내용 확인한다")
-```
-
----
-
-## 교훈 추가 완료 확인
-
-> **추가 후 AI는 아래 커맨드로 기록 여부를 확인한다.**
+## Phase 3. 확인
 
 ```bash
-python3 scripts/omc_lesson.py list 2>/dev/null | head -5
+python3 scripts/omc_lesson.py list
+python3 scripts/omc_lesson.py search "키워드" --top 3
+python3 scripts/omc_lesson.py show <lesson-id>
 ```
 
-- 방금 추가한 제목이 목록에 보이면 완료.
-- 보이지 않으면 → 방법 B로 재시도.
+방금 제목이 안 보이면 search 또는 show로 재확인하고 실패를 보고합니다.
 
----
+## 출력
 
-## 교훈 조회
-
-```bash
-# 목록 전체 보기
-python3 scripts/omc_lesson.py list 2>/dev/null
-
-# 키워드로 검색 (BM25 유사도)
-python3 scripts/omc_lesson.py search "키워드" 2>/dev/null
-python3 scripts/omc_lesson.py search "키워드" --top 3 2>/dev/null
+```text
+중복 검색:
+판단: 교훈 없음 / 신규 기록 / 기존 교훈 후보 발견
+필수 필드: 제목/증상/원인/규칙 명확 여부
+기록 방식: add -i / add --title ...
+확인:
+다음 액션: $omc-retro / 세션 계속
 ```
-
----
-
-☐ 교훈 추가 완료
 
 ## 규칙
-- 한 파일 = 한 교훈 (여러 교훈을 한 파일에 묶지 않음)
-- 유사 교훈이 이미 있으면 새 파일 대신 기존 것을 업데이트한다
-- 다음 세션 시작 시 BM25 유사도 기반으로 관련 교훈이 자동 주입됩니다
-- `규칙` 항목을 행동 지침 형태로 작성해야 BM25 자동 주입 효과가 높습니다
 
-
-## 이후 액션
-
-| 결과 | 다음 단계 |
-|---|---|
-| 교훈 추가 완료 | `$omc-retro` 또는 세션 계속 |
-| 유사 교훈 발견 | 기존 교훈 업데이트 후 중단 |
+- 한 파일 = 한 교훈
+- BM25 자동 주입 효과를 위해 규칙은 행동 지침으로 작성
+- 기존 교훈 후보 발견 시 바로 새 파일을 만들지 않음
+- 완료 후 다음 액션은 `$omc-retro` 또는 세션 계속
