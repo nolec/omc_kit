@@ -33,6 +33,10 @@ REQUIRED_SEQUENCE = [
     "git status --porcelain",
     "git log --oneline",
     "python3 scripts/omc.py state status --target .",
+    "필수 체크",
+    "지시문·브랜치 확정",
+    "명시 승인",
+    "명령만 출력",
     "실행 전 확정",
     "dirty",
     "--allow-dirty",
@@ -50,6 +54,7 @@ REQUIRED_SEQUENCE = [
 ]
 
 REQUIRED_BEHAVIOR_MARKERS = [
+    "필수 체크",
     "LITE",
     "FULL",
     "plan→critique→task→review",

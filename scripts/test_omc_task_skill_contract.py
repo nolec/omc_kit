@@ -23,6 +23,10 @@ OPTIONAL_TASK_SKILL_PATHS = [
 
 REQUIRED_SEQUENCE = [
     "python3 scripts/omc_guard.py require --for \"task\" --target .",
+    "필수 체크",
+    "CONTRACT 등록",
+    "RED 등록",
+    "TDD 게이트",
     "PHASE 1",
     "CONTRACT",
     "PHASE 2",

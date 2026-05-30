@@ -29,6 +29,10 @@ REQUIRED_SEQUENCE = [
     "$omc-ship",
     "python3 scripts/omc_guard.py require --target . --for \"ship\"",
     "python3 scripts/omc_tdd_check.py --staged",
+    "필수 체크",
+    "ship gate",
+    "승인 상태",
+    "쓰기 명령 차단",
     "git status -sb",
     "git log",
     "git diff --stat",
@@ -54,6 +58,7 @@ REQUIRED_SEQUENCE = [
 ]
 
 REQUIRED_BEHAVIOR_MARKERS = [
+    "필수 체크",
     "승인 상태",
     "미승인",
     "승인",

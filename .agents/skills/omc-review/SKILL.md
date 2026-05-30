@@ -19,6 +19,12 @@ find . -newer .git/index -not -path './.git/*' \( -name '*.ts' -o -name '*.tsx' 
 python3 scripts/omc.py state status --target . 2>/dev/null
 ```
 
+## 필수 체크
+
+- 범위 확정: `git diff HEAD` + untracked/최근 파일 포함 여부 명시
+- 파일:라인 근거: 근거 없는 이슈 금지
+- 검증 커맨드: 최종 판정 전 실행 목록 기록
+
 리뷰 범위는 위 출력으로 확정합니다.
 - `git diff HEAD`가 있으면 staged/unstaged 변경 전체를 봅니다.
 - untracked 파일과 ignored 최근 파일도 범위에 포함할지 판단합니다.

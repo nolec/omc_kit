@@ -13,6 +13,12 @@ non-omc 스킬이며 `omc_skill_check` 대상이 아님.
 - `python3 scripts/omc_guard.py require --target . --for "ship"`
 - `python3 scripts/omc_tdd_check.py --staged`
 
+## 필수 체크
+
+- ship gate: OMC 가드/TDD gate 통과
+- 승인 상태: `미승인`이면 생성 중단
+- 쓰기 명령 차단: 승인 전 `git push`, `gh pr create`, `gh label create` 실행 금지
+
 ## Phase 1. 읽기 전용 확인
 
 ```bash

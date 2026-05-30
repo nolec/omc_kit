@@ -15,6 +15,12 @@ python3 scripts/omc_guard.py require --for "task" --target .
 
 실패하면 세션 확인 또는 confirm부터 처리하고 중단합니다.
 
+## 필수 체크
+
+- CONTRACT 등록: `python3 scripts/omc_pipeline_guard.py contract-done` 완료
+- RED 등록: FAIL 출력 첨부 + `red-done` 완료
+- TDD 게이트: `python3 scripts/omc_tdd_check.py --staged` exit 0
+
 ## PHASE 1 ▸ CONTRACT
 
 - 목표:
