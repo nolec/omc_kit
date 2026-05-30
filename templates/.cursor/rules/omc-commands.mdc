@@ -56,6 +56,10 @@ python3 scripts/omc_lesson.py search "키워드"  # 검색
 요구사항이 모호할 때 소크라테스식 질문으로 탐색 | 역할: `analysis`
 Phase 4 전 코드 작성 금지 — 탐색 완료 후 `/plan`으로 이어가기
 
+## /benchmark [기능]
+세계 1등 제품과 비교해 갭·차별화·다음 액션 도출 | 역할: `analysis`
+비교 대상은 사용자가 직접 확정. 근거 수준 낮음 다수는 실제 제품 검증, 차별화 가설은 `/office-hours`, 근거 충분 + TOP 1 확정은 `/plan`
+
 ## /office-hours [요청]
 코딩 전 제품 사고 강제 — 6개 강제 질문 필수 답변 | 역할: `analysis`
 Q1 사용자 / Q2 고통 / Q3 성공 기준 / Q4 MVP / Q5 제외 / Q6 10점짜리

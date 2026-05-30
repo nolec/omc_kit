@@ -139,6 +139,7 @@ PHASE 5 ▸ REFACTOR + TDD GATE  🔵
 | `/status` | — | 현재 OMC 세션 상태 요약 |
 | `/ship [대상]` | — | OMC 가드 + 타입/린트/테스트/빌드 확인 후 배포 |
 | `/brainstorm [주제]` | — | 요구사항이 아직 모호할 때 — 소크라테스식 탐색 |
+| `/benchmark [기능]` | — | 세계 1등 제품과 비교해 갭·차별화·다음 액션 도출 |
 | `/office-hours [요청]` | — | 기능 방향이 맞는지 의심될 때 — 6개 강제 질문 |
 | `/ceo-review [모드]` | — | 기능 범위 재검토 — CEO 관점 10가지 체크 |
 | `/critique [계획/코드]` | — | 계획·코드에 대한 냉정한 Pre-mortem 비판 리뷰 |
@@ -374,4 +375,3 @@ python3 scripts/omc_autopilot.py status
 > 2. 어떤 요구사항을 놓쳤나?
 > 3. 다음에 추가할 규칙은?
 > 교훈이 있으면 `python3 scripts/omc_lesson.py add -i` 로 기록합니다 (30초).
-

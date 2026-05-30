@@ -18,6 +18,7 @@ $omc-status
 $omc-ship
 $omc-critique
 $omc-retro
+$omc-benchmark
 ```
 
 **암묵적 트리거 (자연어)**: 아래 중 하나라도 해당하면 CONTRACT 양식을 즉시 출력하고 사용자 컨펌을 받습니다.
@@ -94,6 +95,18 @@ python3 scripts/omc_lesson.py add -i    # 교훈 추가
 python3 scripts/omc.py state status --target .
 python3 scripts/omc_pipeline_guard.py status
 ```
+
+### `$omc-benchmark [기능]`
+
+세계 1등 제품과 비교해 갭 분석 + 차별화 포인트를 도출합니다.
+비교 대상은 사용자가 직접 확정해야 하며, 없으면 후보 3개 이하만 선택지로 제안합니다.
+
+출력:
+- 검증 상태
+- 갭 분석 최소 3개
+- 차별화 포인트 1개
+- 우선순위 TOP 1
+- 다음 액션: 실제 제품 검증 / `$omc-office-hours` / `$omc-plan`
 
 ### `$omc-ship`
 

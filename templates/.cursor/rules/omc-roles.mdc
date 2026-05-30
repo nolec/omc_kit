@@ -31,6 +31,7 @@ python3 scripts/omc_role_suggest.py "[사용자 요청 텍스트]"
 | 교훈, lesson, 기록, 배운 거 | `search` |
 | 상태, status, 어디까지, 현재 작업 | — |
 | 브레인스토밍, brainstorm, 아이디어 | `analysis` |
+| 벤치마크, benchmark, 경쟁사, 세계 1등 | `analysis` |
 | 오피스아워, office-hours, 방향 맞아 | `analysis` |
 | CEO 리뷰, ceo-review, 범위 검토 | `analysis` |
 | 회고, retro, 이번 주 리뷰 | `analysis` |
