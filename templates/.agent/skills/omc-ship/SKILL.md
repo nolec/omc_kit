@@ -3,27 +3,55 @@ skill_name: omc-ship
 description: "배포·릴리즈 준비 체크. 트리거: 배포해줘, 릴리즈, 푸시 준비, 배포 준비, 출시하자. TDD 게이트·린트·타입 체크 실행. 테스트 누락·실패 시 배포 차단."
 ---
 
-# OMC 배포 준비
+# OMC Ship
 
-## 순서
+배포 게이트입니다. `$omc-review` 미완료 또는 치명/중대 이슈가 있으면 배포 차단합니다.
+
+## Phase 0. 게이트
 
 ```bash
 python3 scripts/omc_guard.py require --target . --for "ship"
 python3 scripts/omc_tdd_check.py --run-tests
-npx nx affected --target=test
-git status -sb && git log --oneline -5
+git status -sb
+git diff HEAD
+git ls-files --others --exclude-standard
 ```
 
-## 배포 전 체크리스트
+프로젝트별 명령은 `package.json`, `README`, `ETHOS.md`에서 확인합니다. 명령은 예시입니다.
 
-- [ ] OMC 가드 통과
-- [ ] TDD 체크 통과 (`omc_tdd_check.py --run-tests` 반환값 0)
-- [ ] 타입/린트 에러 0개
-- [ ] 테스트 전부 통과
-- [ ] `.env` / 비밀값 커밋 없음
+## 필수 체크
 
-## 배포 후 — Compound Engineering
+- 테스트: Nx면 `npx nx affected --target=test`, Nx 미사용이면 프로젝트 테스트 명령
+- 타입: 예 `npx tsc --noEmit`
+- 린트: Nx면 `npx nx affected --target=lint`, Nx 미사용이면 프로젝트 린트 명령
+- 비밀값: `SECRET`, `KEY`, `TOKEN`, `PASSWORD`, `.env`가 diff/untracked에 없는지 확인
 
-```bash
-python3 scripts/omc_lesson.py add -i
+실패 시:
+- 기존 테스트 회귀 또는 테스트 실패 → `$omc-investigate`
+- 신규 테스트 누락 또는 TDD 위반 → `$omc-task`
+
+## 실행 차단
+
+모든 게이트 통과 전 `git push`, `deploy`, 배포 스크립트 실행 금지. 사용자 명시 승인 전에도 금지.
+
+```text
+OMC 가드:
+TDD 게이트:
+테스트:
+타입:
+린트:
+git status -sb:
+git diff HEAD:
+untracked:
+비밀값:
+사용자 명시 승인:
+결론: SHIP READY / BLOCKED
 ```
+
+## 배포 예시
+
+- PR 기반: `git push origin HEAD` 후 `$pr-create`
+- Nx: `npx nx run <app>:deploy`
+- 직접 배포: 프로젝트 문서의 deploy 명령
+
+실제 배포 후에만 헬스체크, 교훈 기록, `$omc-retro`를 진행합니다.
