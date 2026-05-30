@@ -189,6 +189,11 @@ def test_ship_skill_preserves_required_behavior_markers():
     assert not missing, f"missing behavior markers: {missing}"
 
 
+def test_ship_skill_has_single_required_check_section():
+    text = _read(REQUIRED_SHIP_SKILL_PATHS[0])
+    assert text.count("## 필수 체크") == 1, "omc-ship must keep a single 필수 체크 section"
+
+
 def test_valid_ship_output_fixture_has_required_structure():
     assert _validate_ship_output(VALID_SHIP_SAMPLE) == []
 

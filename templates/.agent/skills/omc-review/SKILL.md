@@ -29,6 +29,7 @@ python3 scripts/omc.py state status --target . 2>/dev/null
 - `git diff HEAD`가 있으면 staged/unstaged 변경 전체를 봅니다.
 - untracked 파일과 ignored 최근 파일도 범위에 포함할지 판단합니다.
 - diff에 없는 untracked/ignored 대상은 파일을 직접 읽고 리뷰합니다.
+- `.omc/runs`, `.omc/lessons`, `.omc/pipeline_run_result.json`은 실행 산출물로 기본 제외합니다.
 - diff 200줄 이상이면 파일 단위로 나눠 리뷰합니다.
 - 요청 범위 밖은 리뷰하지 않습니다.
 

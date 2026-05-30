@@ -19,6 +19,7 @@ python3 scripts/omc.py state status --target .
 ```
 
 - tracked diff, untracked, ignored/recent 파일을 모두 보고 모드를 고릅니다.
+- `.omc/runs`, `.omc/lessons`, `.omc/pipeline_run_result.json`은 실행 산출물로 기본 제외합니다.
 - 계획/전략/문서/스킬 평가면 PLAN 모드입니다.
 - 실제 코드 변경, 신규 파일, diff가 있으면 CODE 모드입니다.
 - 둘 다 있으면 사용자가 범위를 고르게 합니다.

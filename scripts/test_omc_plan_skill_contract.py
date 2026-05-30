@@ -34,6 +34,7 @@ REQUIRED_SEQUENCE = [
     "사용자 컨펌",
     "입력",
     "출력",
+    "성공 지표",
     "실패",
     "영향받는 파일",
     "RED",
@@ -53,6 +54,7 @@ DoD: 실패 테스트가 먼저 실패하고 수정 후 통과한다.
 사용자 컨펌: 완료
 입력: email/password
 출력: auth result
+성공 지표: REVISE/BLOCK 비율 감소
 실패 정책: 외부 API 실패는 명시적 에러로 반환
 영향받는 파일: src/auth.ts
 태스크 1: API 에러 매핑
@@ -103,6 +105,7 @@ def _validate_plan_output(sample: str) -> list[str]:
         "confirmed": r"사용자 컨펌:\s*완료",
         "input": r"입력:\s*\S",
         "output": r"출력:\s*\S",
+        "success_metrics": r"성공 지표:\s*\S",
         "failure_policy": r"실패 정책:\s*\S",
         "affected_files": r"영향받는 파일:\s*\S",
         "red": r"RED\s*:\s*\S",
