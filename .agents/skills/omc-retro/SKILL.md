@@ -3,84 +3,64 @@ skill_name: omc-retro
 description: "세션 히스토리 분석 후 주간 회고 실행. 트리거: 회고, 이번 주 리뷰, 돌아보기, 주간 정리, 회고해줘. 완료·실패 세션 분석 후 교훈 캡처."
 ---
 
-# OMC 주간 회고
+# OMC Retro
 
-> **이 스킬을 쓰면 안 되는 상황**:
-> - 작업 직후 즉시 실행 → 주간 단위로 모아서 사용
-> - 특정 버그 원인 분석 → `$omc-investigate` 사용
+읽기 전용 회고 스킬입니다. 사용자 명시 승인 전 `.omc/notepad.md`와 `.omc/lessons/`를 직접 수정하지 않음.
 
----
+## Phase 0. 기간
 
-## Step 0: 데이터 수집
+- 기간 미지정 → 최근 7일
+- "이번 주" → Asia/Seoul 기준 현재 주간
+- 출력에는 실제 날짜 범위를 씁니다.
 
-> **AI는 아래 커맨드를 직접 실행하고 결과를 확인한 후 회고 포맷을 채운다. 건너뛰지 않는다.**
-> 기간이 명시된 경우(예: "2주 회고") 해당 기간을 사용한다. 기간 미지정 시 기본값 7일.
+## Phase 1. 수집
 
 ```bash
-python3 scripts/omc.py state status --target . 2>/dev/null
-cat .omc/notepad.md 2>/dev/null
-python3 scripts/omc_lesson.py list 2>/dev/null
-git log --oneline --since="7 days ago" 2>/dev/null
+python3 scripts/omc.py state status --target .
+cat .omc/notepad.md
+python3 scripts/omc_lesson.py list
+git log --oneline --since="7 days ago"
 ```
 
-수집 결과 연결:
-- `git log` 결과 → **항목 1** (완료 작업) 에 반영
-- `omc_lesson.py list` 결과 → **항목 2** (반복 패턴) 에 반영
-- `omc.py state status` 결과 → **항목 3** (미완료 작업) 에 반영
+실패한 명령은 `N/A — 이유`, 데이터가 없으면 `없음`으로 씁니다.
 
----
+## Phase 2. 출처/충돌
 
-## 회고 포맷 (모두 채울 것)
+- git log 기준: 완료된 작업 후보
+- omc state 기준: 세션 상태와 미완료 작업
+- notepad 기준: handoff, current_request, 이월 후보
+- lesson list 기준: 반복 패턴 후보
+- git log 최신 작업과 state/notepad current_request가 다르면 세션 불일치 또는 stale로 표시하고 `$omc-status`를 제안
 
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## Phase 3. RETRO 출력
+
+```text
 RETRO — [날짜 범위]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. 이번 주 완료된 작업  [참조: git log]
-   - [작업명]: [결과 요약]
-   - 총 completed 세션 수: ___
+출처/충돌:
+- git log 기준:
+- omc state 기준:
+- notepad 기준:
+- lesson list 기준:
+- 세션 불일치/stale:
 
-2. 반복되는 문제 패턴  [참조: omc_lesson.py list]
-   - 같은 실수가 몇 번 나왔는가?
-   - 어떤 스킬/단계에서 막혔는가?
-   - 반복 패턴이 없으면 "없음"으로 명시하고 넘어간다.
-   → _______________
+완료된 작업:
 
-3. 완료되지 못한 작업  [참조: omc.py state status]
-   - [작업명]: 왜 완료 못 했는가?
-   - 다음 주로 이월하는가? Y/N
-   → _______________
+반복되는 문제 패턴:
 
-4. 다음 주 우선순위 (최대 3개)
-   1. _______________
-   2. _______________
-   3. _______________
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+완료되지 못한 작업:
+
+다음 우선순위 최대 3개:
+
+교훈 필요 여부: 교훈 없음 / $omc-lesson 필요 / 기존 교훈 업데이트 후보
 ```
 
-☐ 회고 완료
+## 판단 기준
 
----
-
-## Compound Engineering 교훈 캡처 (MANDATORY)
-
-회고에서 발견한 반복 패턴이 있으면 반드시 기록한다.
-
-```bash
-python3 scripts/omc_lesson.py add -i
-```
-
-교훈이 없어도 "없음"을 명시하고 완료한다.
-
----
-
-> 데이터가 없는 항목은 '없음'으로 명시한다. 빈칸으로 두지 않는다.
-
-## 이후 액션
-
-| 상황 | 다음 단계 |
-|---|---|
-| 반복 패턴 발견 | 교훈 기록 + 관련 스킬 개선 검토 |
-| 이월 작업 있음 | `.omc/notepad.md` 업데이트 |
-| 다음 주 우선순위 확정 | → `$omc-plan` 으로 첫 번째 태스크 진입 |
+- 교훈 필요: 같은 실패/차단/재시도 2회 이상, 같은 스킬에서 반복 수정, 테스트/가드 실패 반복, 사용자가 같은 질문을 반복
+- 우선순위: 미완료/차단 먼저, 반복 패턴 개선, 가치 큰 다음 스킬, 리스크 큰 자동화는 뒤
+- 이월 작업이 있으면 notepad 업데이트 필요만 표시
+- 반복 패턴이 있으면 `$omc-lesson`을 제안
+- 사용자 명시 승인 전 `.omc/notepad.md`와 `.omc/lessons/`는 직접 수정하지 않음
+- 최종 우선순위도 미완료/차단 먼저, 반복 패턴 개선, 가치 큰 다음 스킬, 리스크 큰 자동화는 뒤 순서로 보고합니다
+- 데이터가 없으면 없음으로 명시합니다
