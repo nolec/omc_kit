@@ -3,71 +3,67 @@ skill_name: omc-status
 description: "현재 OMC 세션 상태·작업 컨텍스트 출력. 트리거: 지금 상태, 뭐하고 있었어, 현재 작업, 어디까지 했어, 상태 보여줘. confirmed 태스크·pending 항목·다음 액션 요약."
 ---
 
-# OMC 현재 상태 확인
+# OMC Status
 
-> **이 스킬을 쓰면 안 되는 상황**:
-> - 파이프라인 차단 여부 확인 → `python3 scripts/omc_pipeline_guard.py status`
-> - 교훈 목록 확인 → `$omc-lesson`
+조회 전용 상태판입니다. 세션, git, 변경 분류를 보고 다음 1액션만 제안합니다.
 
----
-
-## 데이터 수집
-
-> **AI는 아래 커맨드를 직접 실행하고 결과를 확인한 후 출력 포맷을 채운다. 건너뛰지 않는다.**
+## Phase 0. 수집
 
 ```bash
-python3 scripts/omc.py state status --target . 2>/dev/null
-cat .omc/notepad.md 2>/dev/null
-git log --oneline -5 2>/dev/null
-git branch --show-current 2>/dev/null
+python3 scripts/omc.py state status --target .
+cat .omc/notepad.md
+git status -sb
+git diff --stat HEAD
+git ls-files --others --exclude-standard
+git log --oneline -5
 ```
 
-수집 결과 연결:
-- `omc.py state status` → **항목 1** (확정 작업) + **항목 2** (pending) + **항목 3** (세션 흐름)
-- `.omc/notepad.md` → **항목 2** (pending 보완)
-- `git log --oneline -5` → **항목 3** (최근 흐름 보완)
-- `git branch --show-current` → **항목 1** (작업 브랜치 컨텍스트)
+실패한 명령은 `N/A — 이유`로 표시합니다. 이 스킬은 세션이나 git 상태를 바꾸지 않습니다.
 
-데이터가 없거나 커맨드 결과가 비어있으면 해당 항목에 "없음"으로 명시한다. 빈칸으로 두지 않는다.
+## Phase 1. 세션 판정
 
----
+- 현재 사용자 요청과 `latest request`, `confirmed_request`, `pending_request`를 비교합니다.
+- 다르면 `세션 불일치` 또는 stale 컨텍스트로 표시하고 `$omc-plan` 재진입을 제안합니다.
+- pending이 있으면 완료/재개 대상을 분리하고, 없으면 `없음`이라고 씁니다.
 
-## 출력 포맷
+## Phase 2. 변경 분류
 
+- 소스/스킬 변경: `.agents`, `templates`, `scripts`, `src`, `lib` 등 작업 대상 파일
+- .omc 실행 아티팩트: `.omc/pipeline_run_result.json`, `.omc/runs`, `.omc/lessons`, `.omc/allow_log.jsonl`
+- untracked: 새 파일 후보와 커밋 대상 아님 후보를 분리
+
+`.omc 실행 아티팩트`만 dirty면 커밋 대상 아님으로 표시합니다.
+
+## Phase 3. 출력
+
+```text
+OMC 세션:
+- latest/confirmed/pending:
+- 세션 불일치 또는 stale:
+
+Git 상태:
+- branch/ahead/behind:
+- staged/unstaged/untracked:
+
+변경 분류:
+- 소스/스킬 변경:
+- .omc 실행 아티팩트:
+- untracked:
+
+차단/주의:
+- 미확정 세션:
+- 커밋 대상 아님:
+- 테스트/리뷰/ship 차단:
+
+다음 액션:
+- $omc-plan / $omc-task / $omc-review / $omc-ship / $omc-retro
+- 남은 스킬 후보:
 ```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OMC STATUS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. 현재 확정된 작업
-   (confirmed 세션의 목표·DoD 요약 + 브랜치)
-   → _______________
 
-2. 미처리 pending
-   (아직 완료되지 않은 세션 또는 notepad 항목)
-   없으면 "없음" 으로 명시
-   → _______________
+## 판단 기준
 
-3. 최근 5개 세션 흐름
-   (완료/실패/진행 중 상태와 간단한 설명)
-   없으면 "없음" 으로 명시
-   → _______________
-
-4. 다음 1액션 제안
-   판단 기준:
-   - pending 항목 있음 → 해당 작업 재개 제안
-   - 미확정 세션 있음 → confirm 먼저 제안
-   - 모두 완료·클린 상태 → $omc-retro 또는 다음 우선순위 제안
-   → _______________
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-
-☐ 출력 완료
-
-## 이후 액션
-
-| 결과 | 다음 단계 |
-|---|---|
-| pending 작업 있음 | 해당 작업 `$omc-task` 재개 |
-| 미확정 세션 있음 | `omc.py state confirm` 실행 |
-| 클린 상태 | `$omc-retro` 또는 새 작업 시작 |
+- 세션 불일치 또는 stale → `$omc-plan`
+- 계획 확정 후 구현 대기 → `$omc-task`
+- 변경 완료 후 검토 대기 → `$omc-review`
+- 리뷰 통과 후 출시 준비 → `$omc-ship`
+- 클린하고 남은 작업 없음 → `$omc-retro` 또는 남은 스킬 후보 제안
