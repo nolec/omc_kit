@@ -58,3 +58,8 @@ python3 scripts/omc.py state status --target .
 - 원인 확정 + 수정 필요 → `$omc-task`
 - 수정 후 품질 확인 → `$omc-review`
 - 아키텍처/범위 문제 → `$omc-ceo-review`
+
+## LLM 공통 규칙
+
+- 모든 LLM 공통 출력 형식: 현상, 가설, 검증, 근본 원인, FIX PLAN 순서 고정
+- 입력 부족 시 중단: 재현 조건 또는 검증 결과가 비면 수정 단계로 넘기지 않습니다.

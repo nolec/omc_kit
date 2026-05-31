@@ -50,6 +50,8 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "$omc-office-hours",
     "$omc-plan",
     "자동 진입 금지",
+    "모든 LLM 공통 출력 형식",
+    "입력 부족 시 중단",
 ]
 
 VALID_BRAINSTORM_SAMPLE = """

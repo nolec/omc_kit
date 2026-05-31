@@ -50,6 +50,8 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "AI가 임의로 PROCEED",
     "사용자가",
     "자동 진입 금지",
+    "모든 LLM 공통 출력 형식",
+    "입력 부족 시 중단",
 ]
 
 VALID_OFFICE_HOURS_SAMPLE = """

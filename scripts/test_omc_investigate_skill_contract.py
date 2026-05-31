@@ -59,6 +59,8 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "$omc-review",
     "$omc-ceo-review",
     "근본 원인 확정 전 구현 금지",
+    "모든 LLM 공통 출력 형식",
+    "입력 부족 시 중단",
 ]
 
 VALID_INVESTIGATE_SAMPLE = """
