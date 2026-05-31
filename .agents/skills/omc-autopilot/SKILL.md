@@ -84,6 +84,7 @@ python3 scripts/omc_autopilot.py pipeline \
 
 ```bash
 python3 scripts/omc_autopilot.py pipeline-status
+python3 scripts/omc_autopilot.py benchmark-report --format json
 cat .omc/pipeline.log
 cat .omc/pipeline_run_result.json
 ```
@@ -92,6 +93,7 @@ cat .omc/pipeline_run_result.json
 결과:
 - status: completed / failed / N/A — 이유
 - mode: LITE / FULL / auto
+- benchmark-report: json / N/A — 이유
 - PR:
 - 다음 액션:
 ```

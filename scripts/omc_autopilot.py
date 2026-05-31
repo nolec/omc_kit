@@ -43,7 +43,7 @@ import textwrap
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -648,6 +648,128 @@ def _cmd_pipeline_status_once(root: Path) -> int:
             print(f"  {step_name:<{col_w}} {icon} {s:<10} {_build_step_detail(ss)}")
 
     print()
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# 커맨드: benchmark-report
+# ---------------------------------------------------------------------------
+
+def _parse_pipeline_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _build_benchmark_report(data: dict) -> dict:
+    """pipeline_run_result.json을 비교 가능한 최소 벤치마크 지표로 변환한다."""
+    steps = data.get("steps") or {}
+    if not isinstance(steps, dict):
+        steps = {}
+
+    started = _parse_pipeline_timestamp(data.get("started_at"))
+    finished = _parse_pipeline_timestamp(data.get("finished_at"))
+    missing_timestamps = [
+        name
+        for name, parsed in (("started_at", started), ("finished_at", finished))
+        if parsed is None
+    ]
+    duration_sec = (
+        int((finished - started).total_seconds())
+        if started is not None and finished is not None
+        else None
+    )
+
+    total_steps = len(steps)
+    completed_steps = sum(1 for step in steps.values() if step.get("status") == "completed")
+    failed_steps = sum(
+        1
+        for step in steps.values()
+        if str(step.get("status", "")).startswith("failed")
+        or step.get("status") in {"blocked", "retry_exhausted", "timeout"}
+    )
+    retry_step_count = sum(1 for name in steps if "retry" in name)
+    retry_attempt_count = sum(
+        max(0, int(step.get("attempt", 1) or 1) - 1)
+        for step in steps.values()
+        if str(step.get("attempt", "")).isdigit()
+    )
+    retry_count = retry_step_count + retry_attempt_count
+
+    final_verdict = None
+    for step in reversed(list(steps.values())):
+        if step.get("verdict"):
+            final_verdict = step.get("verdict")
+            break
+
+    failure_category = None
+    if data.get("status") != "completed":
+        for name, step in steps.items():
+            step_status = step.get("status")
+            if step_status != "completed":
+                failure_category = f"{name}:{step_status or 'unknown'}"
+                break
+        if failure_category is None:
+            failure_category = str(data.get("status") or "unknown")
+
+    return {
+        "status": data.get("status"),
+        "pipeline_success": data.get("status") == "completed",
+        "mode": data.get("mode"),
+        "executor": data.get("executor"),
+        "branch": data.get("branch"),
+        "started_at": data.get("started_at"),
+        "finished_at": data.get("finished_at"),
+        "duration_sec": duration_sec,
+        "is_complete": data.get("status") == "completed" and not missing_timestamps,
+        "missing_timestamps": missing_timestamps,
+        "total_steps": total_steps,
+        "completed_steps": completed_steps,
+        "failed_steps": failed_steps,
+        "retry_count": retry_count,
+        "success_rate": (completed_steps / total_steps) if total_steps else 0,
+        "final_verdict": final_verdict,
+        "failure_category": failure_category,
+        "cost_estimate": None,
+        "token_usage": None,
+        "executor_cost_source": None,
+    }
+
+
+def cmd_benchmark_report(
+    root: Path,
+    *,
+    result_file: Path | None = None,
+    output_format: str = "json",
+) -> int:
+    if output_format != "json":
+        print("[BENCHMARK] 지원하지 않는 format입니다. v1은 json만 지원합니다.", file=sys.stderr)
+        return 1
+
+    path = result_file or _get_result_path(root)
+    if not path.is_absolute():
+        path = root / path
+    if not path.exists():
+        print(f"[BENCHMARK] 결과 파일 없음: {path}", file=sys.stderr)
+        return 1
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"[BENCHMARK] 결과 파일 JSON 파싱 실패: {path} — {exc}", file=sys.stderr)
+        return 1
+
+    report = _build_benchmark_report(data)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -1642,6 +1764,10 @@ def main() -> int:
     p_pipeline_status.add_argument("--watch", action="store_true", help="N초 간격으로 화면을 갱신하며 실시간 모니터링")
     p_pipeline_status.add_argument("--interval", type=int, default=2, help="--watch 갱신 주기(초, 기본 2, 최소 1)")
 
+    p_benchmark_report = sub.add_parser("benchmark-report", help="pipeline 결과를 벤치마크 리포트 JSON으로 출력")
+    p_benchmark_report.add_argument("--result-file", type=Path, default=None, help="읽을 pipeline result JSON 경로")
+    p_benchmark_report.add_argument("--format", choices=["json"], default="json", help="출력 형식 (v1: json)")
+
     args = ap.parse_args()
     root = omc_utils.project_root(args.target)
 
@@ -1654,6 +1780,8 @@ def main() -> int:
         return cmd_status(root, args.task_id)
     if args.cmd == "pipeline-status":
         return cmd_pipeline_status(root, watch=args.watch, interval=args.interval)
+    if args.cmd == "benchmark-report":
+        return cmd_benchmark_report(root, result_file=args.result_file, output_format=args.format)
     if args.cmd == "pipeline":
         # pre-flight 검증
         args.instruction = args.instruction.strip()

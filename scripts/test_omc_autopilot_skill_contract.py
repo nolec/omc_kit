@@ -51,6 +51,7 @@ REQUIRED_SEQUENCE = [
     "--force",
     "--resume",
     "python3 scripts/omc_autopilot.py pipeline-status",
+    "python3 scripts/omc_autopilot.py benchmark-report",
 ]
 
 REQUIRED_BEHAVIOR_MARKERS = [
@@ -61,6 +62,7 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "PR",
     ".omc/pipeline.log",
     ".omc/pipeline_run_result.json",
+    "benchmark-report",
     "N/A",
     "이유",
 ]

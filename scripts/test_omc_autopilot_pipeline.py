@@ -379,6 +379,127 @@ def test_result_path_falls_back_to_default(tmp_path: Path, monkeypatch):
     result = mod._get_result_path(tmp_path)
     assert result == tmp_path / ".omc" / "pipeline_run_result.json"
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# T1b: benchmark-report 리포트 생성
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_build_benchmark_report_completed_pipeline():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    report = mod._build_benchmark_report({
+        "status": "completed",
+        "mode": "full",
+        "executor": "codex",
+        "branch": "feat/x",
+        "started_at": "2026-05-31T00:00:00Z",
+        "finished_at": "2026-05-31T00:02:03Z",
+        "steps": {
+            "preflight": {"status": "completed"},
+            "task": {"status": "completed", "verdict": "PROCEED"},
+            "review": {"status": "completed", "verdict": "APPROVE", "attempt": 2},
+        },
+    })
+
+    assert report["pipeline_success"] is True
+    assert report["duration_sec"] == 123
+    assert report["is_complete"] is True
+    assert report["missing_timestamps"] == []
+    assert report["total_steps"] == 3
+    assert report["completed_steps"] == 3
+    assert report["failed_steps"] == 0
+    assert report["retry_count"] == 1
+    assert report["success_rate"] == 1.0
+    assert report["final_verdict"] == "APPROVE"
+    assert report["failure_category"] is None
+    assert report["cost_estimate"] is None
+    assert report["token_usage"] is None
+    assert report["executor_cost_source"] is None
+
+
+def test_build_benchmark_report_failed_pipeline_with_retry_step():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    report = mod._build_benchmark_report({
+        "status": "failed",
+        "mode": "lite",
+        "executor": "codex",
+        "branch": "fix/x",
+        "started_at": "bad timestamp",
+        "finished_at": None,
+        "steps": {
+            "preflight": {"status": "completed"},
+            "task": {"status": "completed", "verdict": "PROCEED"},
+            "task_retry": {"status": "failed", "verdict": "BLOCK", "attempt": 3},
+        },
+    })
+
+    assert report["pipeline_success"] is False
+    assert report["duration_sec"] is None
+    assert report["is_complete"] is False
+    assert set(report["missing_timestamps"]) == {"started_at", "finished_at"}
+    assert report["completed_steps"] == 2
+    assert report["failed_steps"] == 1
+    assert report["retry_count"] == 3
+    assert report["success_rate"] == pytest.approx(2 / 3)
+    assert report["final_verdict"] == "BLOCK"
+    assert report["failure_category"] == "task_retry:failed"
+
+
+def test_build_benchmark_report_handles_mixed_timezone_timestamps():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    report = mod._build_benchmark_report({
+        "status": "completed",
+        "started_at": "2026-05-31T00:00:00",
+        "finished_at": "2026-05-31T00:00:05Z",
+        "steps": {},
+    })
+
+    assert report["duration_sec"] == 5
+
+
+def test_benchmark_report_cli_outputs_json_from_result_file(tmp_path: Path):
+    result_file = tmp_path / "result.json"
+    result_file.write_text(json.dumps({
+        "status": "completed",
+        "mode": "full",
+        "executor": "codex",
+        "branch": "feat/x",
+        "started_at": "2026-05-31T00:00:00Z",
+        "finished_at": "2026-05-31T00:00:10Z",
+        "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+    }), encoding="utf-8")
+
+    r = _run([
+        "--target", str(tmp_path),
+        "benchmark-report",
+        "--result-file", str(result_file),
+        "--format", "json",
+    ])
+
+    assert r.returncode == 0, f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    payload = json.loads(r.stdout)
+    assert payload["pipeline_success"] is True
+    assert payload["duration_sec"] == 10
+
+
+def test_benchmark_report_cli_missing_result_file_exits_nonzero(tmp_path: Path):
+    r = _run([
+        "--target", str(tmp_path),
+        "benchmark-report",
+        "--result-file", str(tmp_path / "missing.json"),
+    ])
+
+    assert r.returncode != 0
+    assert "결과 파일 없음" in (r.stdout + r.stderr)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # T2: critique 재시도 프롬프트 컨텍스트 주입 + 동일 verdict 탈출
 # ─────────────────────────────────────────────────────────────────────────────
