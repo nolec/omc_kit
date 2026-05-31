@@ -1,0 +1,93 @@
+:root {
+  --bg: #f4f7fb;
+  --panel: #ffffff;
+  --text: #122033;
+  --muted: #5f6f84;
+  --line: #d7e0eb;
+  --ok: #0b7a52;
+  --warn: #b06b00;
+  --fail: #b22222;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Noto Sans KR", sans-serif;
+  color: var(--text);
+  background: linear-gradient(180deg, #edf3f9 0%, #f8fbff 100%);
+}
+
+main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+h1,
+h2 {
+  margin: 0 0 8px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  padding: 8px;
+  font-size: 14px;
+}
+
+.status-completed {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.status-running,
+.status-hold {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+.status-failed,
+.status-invalid {
+  color: var(--fail);
+  font-weight: 700;
+}
+
+code,
+pre {
+  font-family: "IBM Plex Mono", "JetBrains Mono", monospace;
+}
+
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}

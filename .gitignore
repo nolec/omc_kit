@@ -35,6 +35,13 @@ build/
 
 # cost log는 로컬 전용
 .omc/cost_log.jsonl
+.omc/runs/
+.omc/pipeline_run_result.json
+.omc/allow_log.jsonl
+
+# dashboard build artifacts
+dashboard/.next/
+dashboard/node_modules/
 
 # ── install.py 배포 대상 live 파일 (SSOT: templates/) ────────────────────
 # omc_kit 자체는 templates/가 진실의 원천.

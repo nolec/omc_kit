@@ -1,0 +1,17 @@
+{
+  "name": "omc-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "node --test \"lib/*.test.mjs\" \"app/**/*.test.js\""
+  },
+  "dependencies": {
+    "next": "15.3.3",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  }
+}
