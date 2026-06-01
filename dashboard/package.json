@@ -7,7 +7,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --test \"lib/*.test.mjs\" \"app/**/*.test.js\""
+    "test": "node --test \"lib/*.test.mjs\" \"app/**/*.test.js\"",
+    "test:api": "../scripts/run_dashboard_api_tests.sh"
   },
   "dependencies": {
     "next": "15.3.3",

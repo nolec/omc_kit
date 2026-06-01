@@ -49,7 +49,7 @@ python3 scripts/omc.py hook session_start --target .
 | `/office-hours [요청]` | 6개 강제 질문 양식 작성: 대상 사용자/고통/성공기준/MVP/비범위/10점 버전 |
 | `/ceo-review [모드]` | 10가지 체크리스트로 기능 범위 재검토. 모드: EXPAND/SELECTIVE/HOLD(기본)/REDUCE |
 | `/retro` | 최근 세션 히스토리 분석 + 회고 포맷 출력 + 교훈 캡처 |
-| `/autopilot` | plan→task→review→PR 자동 실행: `python3 scripts/omc_autopilot.py pipeline --instruction "..." --dry-run` |
+| `/autopilot` | autopilot 태스크 파일 생성/실행 안내: `python3 scripts/omc_autopilot.py new --id <id>` |
 
 ---
 
@@ -76,7 +76,7 @@ python3 scripts/omc.py state compact   # 메모리 압축
 
 **AI는 아래 상황에서 반드시 멈추고 사용자의 다음 명령을 기다린다.**
 
-스킬이 완료되면 — 판정·결과를 출력한 뒤 — 다음 스킬로 자동 진입하지 않는다.
+스킬이 완료되면 판정·결과를 출력한 뒤 다음 스킬로 자동 진입하지 않는다.
 사용자가 "진행하자", "계속해", "응" 같은 짧은 승인을 해도
 **명시적으로 다음 스킬 이름이 언급되지 않으면 자동 진입 금지.**
 
