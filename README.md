@@ -83,6 +83,12 @@ python3 scripts/omc_doctor.py
 | `scripts/omc_sync_ssot.py` | SSOT 동기화 확인 |
 | `scripts/omc_lesson.py` | 교훈 저장/검색 |
 
+## 최근 변경 (2026-06-01)
+
+- Dashboard API 응답에 스키마 버전/호환 메타를 추가했습니다.
+- autopilot 파이프라인 상태/복구 및 스테이징 안전성을 강화했습니다.
+- `dashboard/package.json`에 `test:api` 실행 진입점을 추가했습니다.
+
 ## 디렉토리 구조
 
 ```
