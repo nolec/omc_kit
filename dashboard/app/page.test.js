@@ -15,4 +15,5 @@ test("home page renders current status and latest run detail sections", async ()
   assert.match(source, /Latest Run Detail/);
   assert.match(source, /readCurrentRun/);
   assert.match(source, /listRecentRuns/);
+  assert.doesNotMatch(source, /Root:/);
 });

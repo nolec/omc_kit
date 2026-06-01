@@ -16,7 +16,6 @@ export default async function Home() {
     <main>
       <section className="panel">
         <h1>OMC Autopilot Dashboard</h1>
-        <div className="muted">Root: {root}</div>
       </section>
 
       <section className="grid">
