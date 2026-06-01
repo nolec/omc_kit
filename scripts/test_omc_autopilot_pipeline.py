@@ -283,6 +283,31 @@ def test_pipeline_status_shows_error_message(tmp_path: Path):
     )
 
 
+def test_pipeline_status_shows_hold_icon_for_stale_recovery(tmp_path: Path):
+    """stale 복구로 hold 상태가 되면 unknown 아이콘이 아니어야 한다."""
+    omc_dir = tmp_path / ".omc"
+    omc_dir.mkdir()
+    result_data = {
+        "status": "hold",
+        "mode": "full",
+        "branch": "feat/hold-status",
+        "executor": "codex",
+        "started_at": "2026-05-26T020000Z",
+        "finished_at": "2026-05-26T020500Z",
+        "steps": {
+            "stale_recovery": {"status": "auto_hold", "reason": "pipeline pid not running: 4242"},
+        },
+    }
+    (omc_dir / "pipeline_run_result.json").write_text(
+        json.dumps(result_data), encoding="utf-8"
+    )
+    r = _run(["--target", str(tmp_path), "pipeline-status"])
+    assert r.returncode == 0
+    combined = r.stdout + r.stderr
+    assert "hold" in combined.lower(), f"hold 상태 텍스트 미출력: {combined[:400]}"
+    assert "❓" not in combined, f"hold 상태가 unknown 아이콘으로 출력됨: {combined[:400]}"
+
+
 # ── pipeline-status --watch 테스트 ──────────────────────────────────────────
 
 def test_pipeline_status_watch_flag_exists():
@@ -293,6 +318,41 @@ def test_pipeline_status_watch_flag_exists():
     assert "watch" in combined.lower(), (
         f"--watch 옵션 미등록: {combined[:300]}"
     )
+
+
+def test_pipeline_status_recover_flag_exists():
+    """pipeline-status --help에 --recover 옵션이 등록돼 있어야 한다."""
+    r = _run(["pipeline-status", "--help"])
+    assert r.returncode == 0, f"pipeline-status --help 실패: {r.stderr}"
+    combined = r.stdout + r.stderr
+    assert "recover" in combined.lower(), (
+        f"--recover 옵션 미등록: {combined[:300]}"
+    )
+
+
+def test_pipeline_status_recover_changes_stale_running_to_hold(tmp_path: Path):
+    """--recover 시 stale running 상태를 hold로 확정해야 한다."""
+    omc_dir = tmp_path / ".omc"
+    omc_dir.mkdir()
+    result_path = omc_dir / "pipeline_run_result.json"
+    result_data = {
+        "status": "running",
+        "mode": "full",
+        "branch": "feat/recover",
+        "executor": "codex",
+        "pid": 999999999,
+        "started_at": "2026-06-01T000000Z",
+        "finished_at": None,
+        "steps": {"task": {"status": "completed"}},
+    }
+    result_path.write_text(json.dumps(result_data), encoding="utf-8")
+
+    r = _run(["--target", str(tmp_path), "pipeline-status", "--recover"])
+    assert r.returncode == 0, f"pipeline-status --recover 실패: {r.stderr}"
+
+    updated = json.loads(result_path.read_text(encoding="utf-8"))
+    assert updated["status"] == "hold"
+    assert updated.get("finished_at") is not None
 
 
 def test_pipeline_status_interval_zero_exits_nonzero(tmp_path: Path):
@@ -706,6 +766,122 @@ def test_checkout_new_branch_fails_after_max_retry():
             assert "failed_branch" in str(e)
 
 
+def test_pipeline_branch_failure_sets_top_level_failed_branch(tmp_path: Path, monkeypatch):
+    """브랜치 준비 실패 시 top-level status는 hold가 아니라 failed_branch여야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / ".omc" / "pipeline_run_result.json"))
+    monkeypatch.setattr(mod, "_checkout_new_branch", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("failed_branch:test")))
+
+    import subprocess as sp
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and cmd[:3] == ["git", "status", "--porcelain"]:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="충분히 긴 파이프라인 지시문입니다 branch failure 상태 검증을 위해 작성합니다.",
+        branch="feat/fail-branch",
+        executor_pref="codex",
+        mode_arg="lite",
+        auto=False,
+        max_time=120,
+        dry_run=False,
+        allow_dirty=True,
+        resume=False,
+    )
+    assert rc == 1
+    result_path = tmp_path / ".omc" / "pipeline_run_result.json"
+    data = json.loads(result_path.read_text(encoding="utf-8"))
+    assert data["status"] == "failed_branch"
+    assert data["steps"]["branch"]["status"] == "failed_branch"
+
+
+def test_pipeline_does_not_crash_when_resumed_with_existing_block_critique(tmp_path: Path, monkeypatch):
+    """resume 결과에 critique verdict=BLOCK이 남아있어도 UnboundLocalError 없이 진행해야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / ".omc" / "pipeline_run_result.json"))
+
+    # 최소 git 상태 통과
+    import subprocess as sp
+
+    def mock_run(cmd, **kwargs):
+        if isinstance(cmd, list) and cmd[:3] == ["git", "status", "--porcelain"]:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(sp, "run", mock_run)
+
+    # resume 파일: critique가 이미 BLOCK으로 기록된 상태
+    result_path = tmp_path / ".omc" / "pipeline_run_result.json"
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text(
+        json.dumps(
+            {
+                "status": "hold",
+                "mode": "full",
+                "branch": "feat/x",
+                "instruction": "x" * 60,
+                "executor": "codex",
+                "started_at": "2026-06-01T000000Z",
+                "steps": {
+                    "plan": {"status": "completed"},
+                    "task": {"status": "completed"},
+                    "critique": {
+                        "status": "failed_critique_loop",
+                        "verdict": "BLOCK",
+                        "streak": 3,
+                        "critique_issues": "CRITICAL: something",
+                        "last_output": "VERDICT: BLOCK",
+                    },
+                },
+                "finished_at": "2026-06-01T000100Z",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # 빠르게 streak 트리거
+    monkeypatch.setattr(mod, "_PIPELINE_MAX_SAME_VERDICT", 0)
+    monkeypatch.setattr(mod, "_PIPELINE_MAX_RETRIES", 0)
+
+    calls = {"n": 0}
+
+    def fake_step(_root, step_name, _prompt, _executor, _timeout, **_opts):
+        calls["n"] += 1
+        if step_name == "critique":
+            return 0, "CRITICAL:\n- x\n\nVERDICT: REVISE"
+        if step_name == "task_retry":
+            return 0, "ok\nVERDICT: PROCEED"
+        if step_name == "review":
+            return 0, "VERDICT: APPROVE"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", fake_step)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 60,
+        branch="feat/x",
+        executor_pref="codex",
+        mode_arg="full",
+        auto=True,
+        max_time=60,
+        dry_run=False,
+        allow_dirty=True,
+        resume=True,
+    )
+    assert rc in (0, 1, 2)
+    assert calls["n"] >= 1
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # T5: run 이력 분리 저장
 # ─────────────────────────────────────────────────────────────────────────────
@@ -876,6 +1052,53 @@ def test_retry_exhausted_triggers_task_retry(tmp_path: Path, monkeypatch):
     assert "task_retry" in call_log, (
         f"retry_exhausted 후 task_retry가 호출되지 않음. 호출 순서: {call_log}"
     )
+
+
+def test_retry_exhausted_records_non_empty_critique_issues(tmp_path: Path, monkeypatch):
+    """retry_exhausted 저장 시 critique_issues는 항상 비어있지 않아야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    critique_n = {"n": 0}
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        if step_name in ("plan", "task"):
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            critique_n["n"] += 1
+            return 0, "VERDICT: REVISE" if critique_n["n"] % 2 == 1 else "VERDICT: HOLD"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setattr(mod, "_TASK_AUTO_RETRY_MAX", 0)
+    monkeypatch.setattr(mod, "_CRITIQUE_AUTO_RETRY_MAX", 0)
+    monkeypatch.setattr(mod, "_PIPELINE_MAX_SAME_VERDICT", 99)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/t7-issues",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+    assert rc == 1
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    critique = result["steps"]["critique"]
+    assert critique["status"] == "retry_exhausted"
+    assert bool((critique.get("critique_issues") or "").strip())
 
 
 def test_critique_retry_prompt_includes_issues(tmp_path: Path, monkeypatch):

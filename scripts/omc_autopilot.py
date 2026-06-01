@@ -39,6 +39,7 @@ import tempfile
 import subprocess
 import sys
 import re
+import shlex
 import textwrap
 import threading
 import time
@@ -53,6 +54,144 @@ _TASKS_DIR = ".omc/tasks"
 _AUTOPILOT_STATE_DIR = ".omc/state/autopilot"
 _DEFAULT_TIMEOUT_SEC = 120
 _DEFAULT_MAX_RETRIES = 1
+_DEFAULT_STATUS_LIMIT = 20
+_POLICY_WARNED_KEYS: set[str] = set()
+_COMPATIBILITY_WARNED_COMMANDS: set[str] = set()
+
+
+def _load_allowed_git_subcommands(root: Path) -> set[str]:
+    """Return read-only git subcommands allowed for expect checks.
+
+    Policy can only narrow this set. It cannot expand beyond built-in safe commands.
+    """
+    default = {"status", "diff", "log", "rev-parse", "show", "branch", "remote"}
+    policy_env = os.environ.get("OMC_POLICY_PATH")
+    policy_path = Path(policy_env) if policy_env else (root / ".omc" / "policy.json")
+    try:
+        data = json.loads(policy_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return default
+    except Exception as exc:
+        warn_key = f"{policy_path}:{exc.__class__.__name__}:{exc}"
+        if warn_key not in _POLICY_WARNED_KEYS:
+            print(f"[AUTOPILOT] policy parse failed: {policy_path} ({exc})")
+            _POLICY_WARNED_KEYS.add(warn_key)
+        return default
+    values = (
+        data.get("autopilot", {}).get("allowed_git_subcommands")
+        if isinstance(data, dict)
+        else None
+    )
+    if not isinstance(values, list):
+        return default
+    normalized = {str(v).strip() for v in values if str(v).strip()}
+    if not normalized:
+        return default
+    return default.intersection(normalized)
+
+
+def _load_allowed_commands(root: Path) -> tuple[set[str], bool]:
+    """Load allowlisted expect commands from policy.
+
+    Returns:
+      (commands, from_policy)
+      - commands: effective allowlist
+      - from_policy: True when policy explicitly set allowed_commands
+    """
+    default = {"pytest", "npm", "npx", "pnpm", "yarn", "uv", "git", "make", "echo", "true", "false"}
+    policy_env = os.environ.get("OMC_POLICY_PATH")
+    policy_path = Path(policy_env) if policy_env else (root / ".omc" / "policy.json")
+    try:
+      data = json.loads(policy_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+      return default, False
+    except Exception as exc:
+      warn_key = f"{policy_path}:{exc.__class__.__name__}:{exc}"
+      if warn_key not in _POLICY_WARNED_KEYS:
+          print(f"[AUTOPILOT] policy parse failed: {policy_path} ({exc})")
+          _POLICY_WARNED_KEYS.add(warn_key)
+      return default, False
+
+    values = data.get("autopilot", {}).get("allowed_commands") if isinstance(data, dict) else None
+    if not isinstance(values, list):
+      return default, False
+    normalized = {str(v).strip() for v in values if str(v).strip()}
+    if not normalized:
+      return default, True
+    return default.union(normalized), True
+
+
+def _resolve_expect_argv(cmd: str, allowed_commands: set[str]) -> tuple[list[str] | None, str | None]:
+    """Parse expect command and return validated argv.
+
+    Supports direct safe commands only.
+    """
+    if _contains_disallowed_shell_operator(cmd):
+        return None, "허용되지 않은 셸 연산자가 포함되어 실행이 차단되었습니다."
+    try:
+        argv = shlex.split(cmd)
+    except ValueError as exc:
+        return None, f"[ERROR] 명령 파싱 실패: {exc}"
+    if not argv:
+        return None, "[ERROR] 빈 커맨드"
+
+    if argv[0] not in allowed_commands:
+        return None, f"허용되지 않은 커맨드: {argv[0]}"
+    return argv, None
+
+
+def _warn_expect_compatibility(cmd: str, policy_defined: bool) -> None:
+    """Warn once for blocked legacy commands when policy extension is not configured."""
+    if policy_defined:
+        return
+    try:
+        argv = shlex.split(cmd)
+    except ValueError:
+        return
+    if not argv:
+        return
+    compat_commands = {"python", "python3", "bash", "sh", "node"}
+    name = argv[0]
+    if name not in compat_commands or name in _COMPATIBILITY_WARNED_COMMANDS:
+        return
+    print(f"[AUTOPILOT] compatibility warning: '{name}' is blocked by default. "
+          "Set .omc/policy.json autopilot.allowed_commands to opt in.")
+    _COMPATIBILITY_WARNED_COMMANDS.add(name)
+
+
+def _contains_disallowed_shell_operator(cmd: str) -> bool:
+    """Return True when shell operators appear as executable tokens.
+
+    Policy:
+    - Block operator tokens (`;`, `&&`, `||`, `|`, `>`, `<`, `` ` ``) that
+      could alter command flow or piping.
+    - Allow literal characters inside quoted arguments such as:
+      `pytest -k "^foo$"` or `python3 -c 'print("a|b")'`.
+    """
+    lexer = shlex.shlex(cmd, posix=True, punctuation_chars=";&|><`")
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return True
+    disallowed_tokens = {";", "&&", "||", "|", ">", ">>", "<", "<<", "`"}
+    return any(token in disallowed_tokens for token in tokens)
+
+
+def _read_env_int(name: str, default: int, minimum: int = 1) -> int:
+    """Read integer environment variable with deterministic fallback."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        print(f"[AUTOPILOT] 잘못된 {name}='{raw}', 기본값 {default} 사용")
+        return default
+    if value < minimum:
+        print(f"[AUTOPILOT] {name}는 {minimum} 이상이어야 합니다. 기본값 {default} 사용")
+        return default
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -80,35 +219,63 @@ def _load_state(root: Path, task_id: str) -> dict:
 
 
 def _save_state(root: Path, task_id: str, state: dict) -> None:
-    _state_path(root, task_id).write_text(
-        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    target = _state_path(root, task_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".tmp",
+        prefix=f"{task_id}.",
+        dir=str(target.parent),
+        delete=False,
+        encoding="utf-8",
+    ) as tf:
+        tf.write(json.dumps(state, ensure_ascii=False, indent=2))
+        tf.flush()
+        os.fsync(tf.fileno())
+        temp_path = tf.name
+    os.replace(temp_path, target)
 
 
 def _detect_executor(preferred: str) -> str:
     import shutil
     if preferred and preferred != "auto":
-        return preferred
+        normalized = preferred.strip().lower()
+        if normalized == "cursor":
+            normalized = "codex"
+        if normalized not in {"codex", "gemini", "claude"}:
+            raise RuntimeError(f"executor not supported: {preferred}")
+        if not shutil.which(normalized):
+            raise RuntimeError(f"executor not found: {normalized}")
+        return normalized
     env_choice = os.environ.get("OMC_EXECUTOR", "").strip().lower()
     if env_choice in {"codex", "gemini", "claude"}:
+        if not shutil.which(env_choice):
+            raise RuntimeError(f"executor not found: {env_choice}")
         return env_choice
     for exe in ("codex", "gemini", "claude"):
         if shutil.which(exe):
             return exe
-    return "codex"
+    raise RuntimeError("executor not found: install one of codex/gemini/claude or set OMC_EXECUTOR")
 
 
 def _resolve_order(steps: list[dict]) -> list[dict]:
     """의존성(depends_on)을 고려한 토폴로지 정렬."""
     id_map = {s["id"]: s for s in steps}
     visited: set[str] = set()
+    visiting: set[str] = set()
     order: list[dict] = []
 
     def visit(step_id: str) -> None:
+        if step_id not in id_map:
+            raise ValueError(f"unknown dependency: {step_id}")
         if step_id in visited:
             return
+        if step_id in visiting:
+            raise ValueError(f"cycle detected at step: {step_id}")
+        visiting.add(step_id)
         for dep in id_map.get(step_id, {}).get("depends_on", []):
             visit(dep)
+        visiting.remove(step_id)
         visited.add(step_id)
         order.append(id_map[step_id])
 
@@ -153,6 +320,9 @@ def _run_expect_checks(
             "output": "" if ok else f"파일 없음: {target}",
         })
 
+    allowed_commands, policy_commands_defined = _load_allowed_commands(root)
+    allowed_git_subcommands = _load_allowed_git_subcommands(root)
+
     # 셸 커맨드 체크
     for check in expect.get("checks", []):
         cmd = check.get("cmd", "").strip()
@@ -166,10 +336,29 @@ def _run_expect_checks(
             results.append({"label": label, "ok": True, "output": "[DRY-RUN]"})
             continue
 
+        argv, parse_error = _resolve_expect_argv(cmd, allowed_commands)
+        if parse_error:
+            _warn_expect_compatibility(cmd, policy_commands_defined)
+            results.append({"label": label, "ok": False, "output": parse_error})
+            continue
+        assert argv is not None
+        if argv[0] == "git":
+            if len(argv) < 2 or argv[1] not in allowed_git_subcommands:
+                results.append({"label": label, "ok": False, "output": "허용되지 않은 git 서브커맨드"})
+                continue
+            if argv[1] == "remote":
+                # read-only remote 조회만 허용: git remote, git remote -v, git remote --verbose
+                if len(argv) == 2:
+                    pass
+                elif len(argv) == 3 and argv[2] in {"-v", "--verbose"}:
+                    pass
+                else:
+                    results.append({"label": label, "ok": False, "output": "허용되지 않은 git remote 인자"})
+                    continue
+
         try:
             proc = subprocess.run(
-                cmd,
-                shell=True,
+                argv,
                 cwd=str(root),
                 capture_output=True,
                 text=True,
@@ -200,14 +389,16 @@ def _build_retry_prompt(
     - prev_verdict: critique/review 루프의 직전 VERDICT 값
     - prev_issues: 직전 critique가 지적한 이슈 텍스트 (재시도 시 맥락 제공)
     """
-    if not failures and not prev_verdict and not prev_issues:
+    # 내부 sentinel/object가 문자열화되어 사용자 프롬프트로 유출되는 것을 방지한다.
+    safe_prev_verdict = prev_verdict.strip() if isinstance(prev_verdict, str) else ""
+    if not failures and not safe_prev_verdict and not prev_issues:
         return original_prompt
 
     lines: list[str] = []
 
-    if prev_verdict:
+    if safe_prev_verdict:
         lines += [
-            f"[재시도 {attempt}회차] 직전 VERDICT: {prev_verdict}.",
+            f"[재시도 {attempt}회차] 직전 VERDICT: {safe_prev_verdict}.",
             "이 판정을 극복하기 위해 다른 관점으로 재검토하세요.",
             "",
         ]
@@ -246,8 +437,12 @@ def _run_step(
     executor: str,
     timeout_sec: int,
     prompt_override: str | None = None,
+    isolated: bool = False,
 ) -> tuple[int, str]:
     """omc_exec.py를 통해 스텝 프롬프트를 실행합니다.
+
+    Args:
+        isolated: True이면 fresh context로 실행합니다. 기본값은 False입니다.
 
     Returns:
         (returncode, output_text)
@@ -309,7 +504,14 @@ def _run_step(
 # 커맨드: run
 # ---------------------------------------------------------------------------
 
-def cmd_run(root: Path, task_file: Path, *, dry_run: bool = False) -> int:
+def cmd_run(
+    root: Path,
+    task_file: Path,
+    *,
+    dry_run: bool = False,
+    resume_failed: bool = False,
+) -> int:
+    """Run an autopilot task file and persist step-by-step execution state."""
     if not task_file.exists():
         print(f"[AUTOPILOT] 태스크 파일 없음: {task_file}")
         return 1
@@ -330,8 +532,16 @@ def cmd_run(root: Path, task_file: Path, *, dry_run: bool = False) -> int:
         print(f"[AUTOPILOT] 스텝이 없습니다: {task_file}")
         return 1
 
-    executor = _detect_executor(executor_pref)
-    steps = _resolve_order(steps_raw)
+    try:
+        executor = _detect_executor(executor_pref)
+    except RuntimeError as exc:
+        print(f"[AUTOPILOT] {exc}")
+        return 1
+    try:
+        steps = _resolve_order(steps_raw)
+    except ValueError as exc:
+        print(f"[AUTOPILOT] 태스크 의존성 오류: {exc}")
+        return 1
 
     print(f"\n[AUTOPILOT] ▶ 태스크 시작: {title}")
     print(f"           executor={executor}  스텝={len(steps)}개  max_retries={max_retries}")
@@ -359,11 +569,15 @@ def cmd_run(root: Path, task_file: Path, *, dry_run: bool = False) -> int:
             print(f"  [SKIP] {sid}: {step_title} (이미 완료)")
             continue
 
-        # 이미 실패한 스텝은 dry-run에서도 재실행하지 않고 실패 유지
+        # 실패 스텝 재실행 정책:
+        # - 기본값(False): 이전 실패 상태를 유지(기존 동작)
+        # - resume_failed=True: 이전 실패 스텝 재실행
         if state["steps"].get(sid, {}).get("status") == "failed":
-            print(f"  [SKIP] {sid}: {step_title} (이전 실패 — 재실행 없음)")
-            failed_count += 1
-            continue
+            if not resume_failed:
+                print(f"  [SKIP] {sid}: {step_title} (이전 실패 — 재실행 없음)")
+                failed_count += 1
+                continue
+            print(f"  [RETRY] {sid}: {step_title} (이전 실패 스텝 재실행)")
 
         # depends_on 검사 — 의존 스텝이 completed가 아니면 블록
         blocked = False
@@ -423,7 +637,13 @@ def cmd_run(root: Path, task_file: Path, *, dry_run: bool = False) -> int:
                     print(f"  재시도 (attempt {attempt}) — 이전 실패 컨텍스트 주입됨")
                 else:
                     print(f"  실행 중 (attempt {attempt}/{max_retries + 1})...")
-                rc, output = _run_step(root, step_with_prompt, executor=executor, timeout_sec=timeout_sec)
+                rc, output = _run_step(
+                    root,
+                    step_with_prompt,
+                    executor=executor,
+                    timeout_sec=timeout_sec,
+                    isolated=bool(step.get("isolated", False)),
+                )
 
             step_state["last_output"] = output[:2000]
 
@@ -560,14 +780,29 @@ _STEP_ICON = {
     "running": "⏳",
     "skipped": "⏭ ",
     "blocked": "🔒",
+    "auto_hold": "⏸",
 }
 
-_PIPELINE_STATUS_ICON = {
-    "completed": "✅", "failed": "❌", "running": "⏳", "aborted": "🛑",
+_STATUS_ICON_MAP = {
+    "completed": "✅",
+    "failed": "❌",
+    "running": "⏳",
+    "aborted": "🛑",
+    "canceled": "🚫",
+    "cancelled": "🚫",
+    "timeout": "⌛",
+    "pending": "⏸",
+    "paused": "⏸",
+    "hold": "⏸",
+    "held": "⏸",
+    "blocked": "🔒",
+    "auto_hold": "⏸",
 }
+# Backward-compat alias for older tests/callers.
+_PIPELINE_STATUS_ICON = _STATUS_ICON_MAP
 
 
-def cmd_pipeline_status(root: Path, watch: bool = False, interval: int = 2) -> int:
+def cmd_pipeline_status(root: Path, watch: bool = False, interval: int = 2, recover: bool = False) -> int:
     """pipeline_run_result.json 기반 파이프라인 진행 상황 출력.
 
     Args:
@@ -585,15 +820,15 @@ def cmd_pipeline_status(root: Path, watch: bool = False, interval: int = 2) -> i
                 if _clear:
                     print(_clear, end="")
                 # 반환값 1(JSON 파싱 일시 오류)은 silent skip — 다음 tick에 재시도
-                _cmd_pipeline_status_once(root)
+                _cmd_pipeline_status_once(root, recover=recover)
                 time.sleep(interval)
         except KeyboardInterrupt:
             print("\n[PIPELINE STATUS] 모니터링 종료")
             return 0
-    return _cmd_pipeline_status_once(root)
+    return _cmd_pipeline_status_once(root, recover=recover)
 
 
-def _cmd_pipeline_status_once(root: Path) -> int:
+def _cmd_pipeline_status_once(root: Path, recover: bool = False) -> int:
     """pipeline_run_result.json 기반 파이프라인 진행 상황 출력."""
     result_path = root / _PIPELINE_RESULT_PATH
 
@@ -607,6 +842,35 @@ def _cmd_pipeline_status_once(root: Path) -> int:
         print(f"[PIPELINE STATUS] 결과 파일 손상됨: {result_path} — {e}", file=sys.stderr)
         return 1
 
+    if data.get("status") == "running":
+        pid = data.get("pid")
+        stale_reason = None
+        pid_state_unknown = False
+        if isinstance(pid, int):
+            pid_running = _is_pid_running(pid)
+            if pid_running is False:
+                stale_reason = f"pipeline pid not running: {pid}"
+            elif pid_running is None:
+                pid_state_unknown = True
+        else:
+            stale_reason = "legacy running record without pid"
+        if pid_state_unknown:
+            print(f"[PIPELINE STATUS] stale 복구 보류: pid 상태 확인 불가(pid={pid})", file=sys.stderr)
+        elif stale_reason:
+            if recover:
+                data["status"] = "hold"
+                data["finished_at"] = _now()
+                steps = data.get("steps")
+                if isinstance(steps, dict):
+                    steps["stale_recovery"] = {
+                        "status": "auto_hold",
+                        "reason": stale_reason,
+                    }
+                _save_pipeline_result(root, data)
+            else:
+                # 상태 조회는 read-only 유지: 자동 상태 변조 금지
+                print(f"[PIPELINE STATUS] stale 감지(수동 복구 필요): {stale_reason}", file=sys.stderr)
+
     try:
         from rich.console import Console
         from rich.table import Table
@@ -615,7 +879,7 @@ def _cmd_pipeline_status_once(root: Path) -> int:
         _use_rich = False
 
     status = data.get("status", "?")
-    status_icon = _PIPELINE_STATUS_ICON.get(status, "❓")
+    status_icon = _STATUS_ICON_MAP.get(status, "❓")
     print(
         f"\n{status_icon} OMC Pipeline Status  [{status}]  mode={data.get('mode', '?')}\n"
         f"   branch={data.get('branch', '?')}  executor={data.get('executor', '?')}\n"
@@ -656,6 +920,7 @@ def _cmd_pipeline_status_once(root: Path) -> int:
 # ---------------------------------------------------------------------------
 
 def _parse_pipeline_timestamp(value: object) -> datetime | None:
+    """Parse ISO-like timestamp to UTC datetime, returning None on invalid input."""
     if not isinstance(value, str) or not value.strip():
         return None
     raw = value.strip()
@@ -678,11 +943,18 @@ def _build_benchmark_report(data: dict) -> dict:
 
     started = _parse_pipeline_timestamp(data.get("started_at"))
     finished = _parse_pipeline_timestamp(data.get("finished_at"))
-    missing_timestamps = [
-        name
-        for name, parsed in (("started_at", started), ("finished_at", finished))
-        if parsed is None
-    ]
+    missing_timestamps = [name for name, parsed in (("started_at", started), ("finished_at", finished)) if parsed is None]
+    quality_failures: list[str] = []
+    raw_started = data.get("started_at")
+    raw_finished = data.get("finished_at")
+    if raw_started and started is None:
+        quality_failures.append("invalid_started_at")
+    elif started is None:
+        quality_failures.append("missing_started_at")
+    if raw_finished and finished is None:
+        quality_failures.append("invalid_finished_at")
+    elif finished is None:
+        quality_failures.append("missing_finished_at")
     duration_sec = (
         int((finished - started).total_seconds())
         if started is not None and finished is not None
@@ -691,11 +963,12 @@ def _build_benchmark_report(data: dict) -> dict:
 
     total_steps = len(steps)
     completed_steps = sum(1 for step in steps.values() if step.get("status") == "completed")
+    failed_statuses = {"blocked", "retry_exhausted", "timeout", "canceled", "paused", "failed", "aborted"}
     failed_steps = sum(
         1
         for step in steps.values()
         if str(step.get("status", "")).startswith("failed")
-        or step.get("status") in {"blocked", "retry_exhausted", "timeout"}
+        or step.get("status") in failed_statuses
     )
     retry_step_count = sum(1 for name in steps if "retry" in name)
     retry_attempt_count = sum(
@@ -732,6 +1005,8 @@ def _build_benchmark_report(data: dict) -> dict:
         "duration_sec": duration_sec,
         "is_complete": data.get("status") == "completed" and not missing_timestamps,
         "missing_timestamps": missing_timestamps,
+        "data_quality_status": quality_failures[0] if quality_failures else "ok",
+        "data_quality_failures": quality_failures,
         "total_steps": total_steps,
         "completed_steps": completed_steps,
         "failed_steps": failed_steps,
@@ -751,6 +1026,7 @@ def cmd_benchmark_report(
     result_file: Path | None = None,
     output_format: str = "json",
 ) -> int:
+    """Print normalized benchmark report from pipeline result JSON."""
     if output_format != "json":
         print("[BENCHMARK] 지원하지 않는 format입니다. v1은 json만 지원합니다.", file=sys.stderr)
         return 1
@@ -777,37 +1053,42 @@ def cmd_benchmark_report(
 # ---------------------------------------------------------------------------
 
 def cmd_status(root: Path, task_id: str | None = None) -> int:
+    """Print autopilot task history.
+
+    Defaults:
+    - OMC_AUTOPILOT_STATUS_LIMIT: 20 (show most recent N records)
+    """
     state_dir = root / _AUTOPILOT_STATE_DIR
     if not state_dir.exists():
         print("[AUTOPILOT] 실행 기록 없음")
         return 0
 
     files = sorted(state_dir.glob("*.json"), reverse=True)
-    if not files:
-        print("[AUTOPILOT] 실행 기록 없음")
-        return 0
-
     if task_id:
+        # task_id 조회는 recent limit보다 먼저 적용해 특정 실행 이력 누락을 방지한다.
         files = [f for f in files if f.stem == task_id]
         if not files:
             print(f"[AUTOPILOT] '{task_id}' 기록 없음")
             return 1
+    else:
+        limit = _read_env_int("OMC_AUTOPILOT_STATUS_LIMIT", _DEFAULT_STATUS_LIMIT, minimum=1)
+        files = files[:limit]
+    if not files:
+        print("[AUTOPILOT] 실행 기록 없음")
+        return 0
 
     for f in files:
         try:
             s = json.loads(f.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            print(f"[AUTOPILOT] JSON 파싱 실패: {f.name} — {exc}")
             continue
-        status_icon = {
-            "completed": "✅", "failed": "❌", "running": "⏳", "pending": "⏸"
-        }.get(s.get("status", ""), "❓")
+        status_icon = _STATUS_ICON_MAP.get(str(s.get("status", "")).lower(), "❓")
         print(f"\n{status_icon} [{s.get('status', '?')}] {s.get('title', f.stem)}")
         print(f"   id={s.get('task_id', f.stem)}  executor={s.get('executor', '?')}")
         print(f"   시작: {s.get('started_at', '-')}  완료: {s.get('finished_at', '-')}")
         for sid, ss in s.get("steps", {}).items():
-            icon = {
-                "completed": "✅", "failed": "❌", "blocked": "🔒", "running": "⏳"
-            }.get(ss.get("status", ""), "❓")
+            icon = _STATUS_ICON_MAP.get(str(ss.get("status", "")).lower(), "❓")
             print(f"   {icon} {sid}: {ss.get('status', '?')} (시도 {ss.get('attempt', '-')})")
     return 0
 
@@ -818,16 +1099,47 @@ def cmd_status(root: Path, task_id: str | None = None) -> int:
 # ---------------------------------------------------------------------------
 
 _PIPELINE_RESULT_PATH = ".omc/pipeline_run_result.json"
+_PIPELINE_TERMINAL_STATUSES = {
+    "completed",
+    "failed",
+    "failed_branch",
+    "failed_ambiguous_response",
+    "failed_critique_loop",
+    "retry_exhausted",
+    "timeout",
+    "aborted",
+    "plan_hold",
+    "hold",
+}
 
 
 def _checkout_new_branch(root: Path, name: str, max_retry: int = 3) -> str:
-    """브랜치 생성을 시도하고 충돌 시 suffix(-v2, -v3 ...)로 재시도한다.
+    """브랜치를 보장한다: 존재하면 checkout, 없으면 생성한다.
+
+    생성 충돌 시 suffix(-v2, -v3 ...)로 재시도한다.
 
     Returns:
-        실제 생성된 브랜치 이름
+        실제 checkout/생성된 브랜치 이름
     Raises:
         RuntimeError: max_retry 초과 시
     """
+    existing = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{name}"],
+        capture_output=True,
+        text=True,
+        cwd=str(root),
+    )
+    if existing.returncode == 0:
+        switch = subprocess.run(
+            ["git", "checkout", name],
+            capture_output=True,
+            text=True,
+            cwd=str(root),
+        )
+        if switch.returncode == 0:
+            return name
+        raise RuntimeError(f"failed_branch_switch:{name}: {switch.stderr.strip()}")
+
     for attempt in range(1, max_retry + 1):
         candidate = name if attempt == 1 else f"{name}-v{attempt}"
         br = subprocess.run(
@@ -836,6 +1148,9 @@ def _checkout_new_branch(root: Path, name: str, max_retry: int = 3) -> str:
         )
         if br.returncode == 0:
             return candidate
+        err = (br.stderr or "").strip()
+        if "Operation not permitted" in err or "cannot lock ref" in err:
+            raise RuntimeError(f"failed_branch_permission:{candidate}: {err}")
     raise RuntimeError(f"failed_branch:{name} (tried {max_retry} times)")
 
 
@@ -845,6 +1160,29 @@ def _get_result_path(root: Path) -> Path:
     if env_val:
         return Path(env_val)
     return root / _PIPELINE_RESULT_PATH
+
+
+def _is_pid_running(pid: int | None) -> bool | None:
+    """Return pid liveness status.
+
+    Returns:
+        True: alive or permission denied (EPERM)
+        False: not running (ESRCH)
+        None: unknown state due to other OS errors
+    """
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # EPERM은 시그널 권한이 없을 뿐 프로세스는 존재한다.
+        return True
+    except OSError as e:
+        print(f"[PIPELINE STATUS] pid 상태 확인 불가(pid={pid}): {e}", file=sys.stderr)
+        return None
+    return True
 
 
 def _load_resume_state(root: Path) -> dict | None:
@@ -1088,27 +1426,38 @@ def _run_pipeline_step(
 
 
 def _ensure_staged(root: Path, dry_run: bool, label: str = "TASK") -> None:
-    """수정된 파일이 staged 안 됐으면 git add -A를 자동 적용한다.
-
-    Codex가 git add를 누락하면 critique가 staged diff 없음으로 HOLD를 반복하는
-    문제를 방지한다.
-    """
+    """미staged 파일을 안전 범위에서만 자동 스테이징한다."""
     if dry_run:
         return
     unstaged = subprocess.run(
         ["git", "diff", "--name-only"],
         capture_output=True, text=True, cwd=str(root),
     ).stdout.strip()
+    if not unstaged:
+        return
     staged = subprocess.run(
         ["git", "diff", "--staged", "--name-only"],
         capture_output=True, text=True, cwd=str(root),
     ).stdout.strip()
-    if unstaged and not staged:
-        subprocess.run(["git", "add", "-A"], cwd=str(root))
-        print(f"[PIPELINE] ⚠️  {label} 후 미staged 변경 감지 — git add -A 자동 적용")
-    elif unstaged and staged:
-        subprocess.run(["git", "add", "-A"], cwd=str(root))
-        print(f"[PIPELINE] ℹ️  {label} 후 unstaged 추가 변경 감지 — git add -A 적용")
+    unstaged_files = [line.strip() for line in unstaged.splitlines() if line.strip()]
+    deny_prefixes = (".omc/", ".cursor/", ".git/", ".claude/", ".gemini/")
+    allow_prefixes = ("scripts/", "dashboard/", "src/", "tests/")
+    extra_allow = os.environ.get("OMC_PIPELINE_STAGE_ALLOW_PREFIXES", "").strip()
+    if extra_allow:
+        dynamic = tuple(p.strip() for p in extra_allow.split(",") if p.strip())
+        allow_prefixes = (*allow_prefixes, *dynamic)
+    safe_files = [
+        path for path in unstaged_files
+        if path.startswith(allow_prefixes) and not path.startswith(deny_prefixes)
+    ]
+    blocked_files = [path for path in unstaged_files if path not in safe_files]
+
+    if safe_files:
+        subprocess.run(["git", "add", "--", *safe_files], cwd=str(root))
+        level = "⚠️" if not staged else "ℹ️"
+        print(f"[PIPELINE] {level} {label} 후 안전 파일만 자동 스테이징: {len(safe_files)}개")
+    if blocked_files:
+        print(f"[PIPELINE] ⚠️  {label} 후 자동 스테이징 제외 파일 감지({len(blocked_files)}개) — 수동 검토 필요")
 
 def cmd_pipeline(
     root: Path,
@@ -1142,6 +1491,7 @@ def cmd_pipeline(
         "branch": branch,
         "instruction": instruction[:200],
         "executor": executor,
+        "pid": os.getpid(),
         "started_at": started_at,
         "steps": {},
         "pr_url": None,
@@ -1167,7 +1517,10 @@ def cmd_pipeline(
 
     def save(status: str) -> None:
         result["status"] = status
-        result["finished_at"] = _now()
+        if status in _PIPELINE_TERMINAL_STATUSES:
+            result["finished_at"] = _now()
+        else:
+            result["finished_at"] = None
         _save_pipeline_result(root, result)
 
     print(f"\n[PIPELINE] ▶ 시작: {instruction[:60]}")
@@ -1209,7 +1562,8 @@ def cmd_pipeline(
                 print(f"[PIPELINE] ⚠️  브랜치 충돌 — {actual_branch} 으로 생성")
                 branch = actual_branch
                 result["branch"] = branch
-            print(f"[PIPELINE] ✅ 브랜치 생성: {branch}")
+            result["steps"]["branch"] = {"status": "completed", "name": branch}
+            print(f"[PIPELINE] ✅ 브랜치 준비: {branch}")
         except RuntimeError as e:
             print(f"[PIPELINE] ❌ 브랜치 생성 실패: {e}")
             result["steps"]["branch"] = {"status": "failed_branch", "error": str(e)}
@@ -1526,6 +1880,14 @@ def cmd_pipeline(
                         "critique_issues": critique_issues,
                     }
                     _save_pipeline_result(root, result)
+                else:
+                    critique_issues = (
+                        result["steps"].get(loop_step, {}).get("critique_issues")
+                        or prev_critique_issues
+                        or ""
+                    )
+                if not isinstance(critique_issues, str):
+                    critique_issues = str(critique_issues)
 
                 # ── critique 루프 탈출 시 복구 에스컬레이션 ─────────────────
                 # 1순위: task_retry (critique_issues 반영) → critique 재진입
@@ -1631,10 +1993,14 @@ def cmd_pipeline(
             retry_count += 1
             if retry_count > _PIPELINE_MAX_RETRIES:
                 print(f"[PIPELINE] ❌ {loop_step.upper()} retry 소진 ({_PIPELINE_MAX_RETRIES}회)")
+                critique_issues = prev_critique_issues or _extract_critique_issues(out)
+                if not critique_issues:
+                    critique_issues = f"{loop_step} retry exhausted without parseable critique issues"
                 result["steps"][loop_step] = {
                     "status": "retry_exhausted",
                     "verdict": verdict,
                     "last_output": out[:300],
+                    "critique_issues": critique_issues[:2000],
                 }
                 _save_pipeline_result(root, result)
 
@@ -1645,10 +2011,7 @@ def cmd_pipeline(
                         f"[PIPELINE] 🔄 TASK 재실행 ({task_auto_retry_count}/{_TASK_AUTO_RETRY_MAX})"
                         " — retry_exhausted 복구"
                     )
-                    issues_section = (
-                        f"\n\n[critique 지적 사항]\n{prev_critique_issues}\n"
-                        if prev_critique_issues else ""
-                    )
+                    issues_section = f"\n\n[critique 지적 사항]\n{critique_issues}\n"
                     task_retry_prompt = (
                         "[자동화 모드] 사용자 확인 없이 즉시 실행하세요.\n\n"
                         f"{instruction}\n\n"
@@ -1728,6 +2091,7 @@ def cmd_pipeline(
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    """CLI entrypoint for omc_autopilot.py."""
     ap = argparse.ArgumentParser(description="OMC 멀티 LLM 자율 루프 (옵트인)")
     ap.add_argument("--target", type=Path, default=Path.cwd())
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1735,6 +2099,12 @@ def main() -> int:
     p_run = sub.add_parser("run", help="태스크 파일 실행")
     p_run.add_argument("--task", type=Path, required=True, help="태스크 JSON 파일 경로")
     p_run.add_argument("--dry-run", action="store_true", help="실제 LLM 호출 없이 계획만 출력")
+    p_run.add_argument(
+        "--resume-failed",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="이전 failed 스텝을 재실행할지 여부 (기본: 미재실행)",
+    )
 
     p_new = sub.add_parser("new", help="예시 태스크 파일 생성")
     p_new.add_argument("--id", dest="task_id", required=True, help="태스크 ID (파일명)")
@@ -1763,6 +2133,7 @@ def main() -> int:
     p_pipeline_status = sub.add_parser("pipeline-status", help="pipeline 실행 결과 상태 조회")
     p_pipeline_status.add_argument("--watch", action="store_true", help="N초 간격으로 화면을 갱신하며 실시간 모니터링")
     p_pipeline_status.add_argument("--interval", type=int, default=2, help="--watch 갱신 주기(초, 기본 2, 최소 1)")
+    p_pipeline_status.add_argument("--recover", action="store_true", help="stale running 상태를 hold로 수동 복구")
 
     p_benchmark_report = sub.add_parser("benchmark-report", help="pipeline 결과를 벤치마크 리포트 JSON으로 출력")
     p_benchmark_report.add_argument("--result-file", type=Path, default=None, help="읽을 pipeline result JSON 경로")
@@ -1773,13 +2144,18 @@ def main() -> int:
 
     if args.cmd == "run":
         task_file = args.task if args.task.is_absolute() else (root / args.task)
-        return cmd_run(root, task_file, dry_run=args.dry_run)
+        return cmd_run(
+            root,
+            task_file,
+            dry_run=args.dry_run,
+            resume_failed=args.resume_failed,
+        )
     if args.cmd == "new":
         return cmd_new(root, args.task_id, args.title)
     if args.cmd == "status":
         return cmd_status(root, args.task_id)
     if args.cmd == "pipeline-status":
-        return cmd_pipeline_status(root, watch=args.watch, interval=args.interval)
+        return cmd_pipeline_status(root, watch=args.watch, interval=args.interval, recover=args.recover)
     if args.cmd == "benchmark-report":
         return cmd_benchmark_report(root, result_file=args.result_file, output_format=args.format)
     if args.cmd == "pipeline":
