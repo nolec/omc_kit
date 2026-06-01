@@ -1242,14 +1242,18 @@ def _detect_pipeline_mode(branch: str, instruction: str, mode_arg: str) -> str:
 def _save_pipeline_result(root: Path, data: dict) -> None:
     out = _get_result_path(root)
     out.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    run_id = data.get("__run_id")
+    if not isinstance(run_id, str) or not run_id.strip():
+        run_id = datetime.now().strftime("%Y%m%dT%H%M%S") + "-" + str(uuid.uuid4())[:8]
+        data["__run_id"] = run_id
+    serialized = {k: v for k, v in data.items() if not str(k).startswith("__")}
+    payload = json.dumps(serialized, ensure_ascii=False, indent=2)
     # 원자적 쓰기 (tmpfile → replace)
     tmp = out.parent / (out.name + ".tmp")
     tmp.write_text(payload, encoding="utf-8")
     tmp.replace(out)
     # run 이력 분리 저장 (.omc/runs/{run_id}/result.json)
     try:
-        run_id = datetime.now().strftime("%Y%m%dT%H%M%S") + "-" + str(uuid.uuid4())[:8]
         run_path = root / ".omc" / "runs" / run_id / "result.json"
         run_path.parent.mkdir(parents=True, exist_ok=True)
         run_tmp = run_path.parent / "result.json.tmp"

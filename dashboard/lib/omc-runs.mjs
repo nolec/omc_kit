@@ -67,7 +67,25 @@ function isValidStartedAt(startedAt) {
   if (!startedAt) {
     return true;
   }
-  return Number.isFinite(Date.parse(startedAt));
+  return Number.isFinite(Date.parse(normalizeTimestamp(startedAt)));
+}
+
+/**
+ * Normalize timestamp for compatibility with historical autopilot output.
+ * Accepts compact UTC format: YYYY-MM-DDTHHMMSSZ
+ * @param {string | null | undefined} value
+ * @returns {string | null | undefined}
+ */
+function normalizeTimestamp(value) {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const compactUtc = /^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})Z$/;
+  const matched = compactUtc.exec(value);
+  if (!matched) {
+    return value;
+  }
+  return `${matched[1]}T${matched[2]}:${matched[3]}:${matched[4]}Z`;
 }
 
 /**
@@ -85,6 +103,18 @@ function normalizeStatus(rawStatus) {
   return KNOWN_RUN_STATUSES.has(normalized) ? normalized : "unknown";
 }
 
+function resolveStaleRunningMinutes(optionValue) {
+  if (Number.isFinite(optionValue)) {
+    return Number(optionValue);
+  }
+  const envRaw = process.env.OMC_DASHBOARD_STALE_RUNNING_MINUTES;
+  const envValue = Number(envRaw);
+  if (Number.isFinite(envValue) && envValue > 0) {
+    return envValue;
+  }
+  return 10;
+}
+
 /**
  * @param {string | null | undefined} startedAt
  * @param {number | null | undefined} sinceDays
@@ -99,10 +129,11 @@ function isWithinRecentWindow(startedAt, sinceDays, now, summaryStatus = null) {
   if (summaryStatus === "invalid_started_at") {
     return true;
   }
-  if (!startedAt || !Number.isFinite(Date.parse(startedAt))) {
+  const normalized = normalizeTimestamp(startedAt);
+  if (!normalized || !Number.isFinite(Date.parse(normalized))) {
     return false;
   }
-  const startedAtMs = Date.parse(startedAt);
+  const startedAtMs = Date.parse(normalized);
   const thresholdMs = now.getTime() - sinceDays * 24 * 60 * 60 * 1000;
   return startedAtMs >= thresholdMs;
 }
@@ -113,6 +144,7 @@ function isWithinRecentWindow(startedAt, sinceDays, now, summaryStatus = null) {
  * Invalid started_at is treated as explicit data-quality failure.
  * @param {string} runId
  * @param {any} payload
+ * @param {{ now?: string | Date, staleRunningMinutes?: number, lastActivityAt?: string | number | Date | null }} [options]
  * @returns {{
  *   run_id: string,
  *   status: string,
@@ -125,10 +157,13 @@ function isWithinRecentWindow(startedAt, sinceDays, now, summaryStatus = null) {
  *   failed_step: Record<string, any> | null,
  * }}
  */
-export function summarizeRun(runId, payload) {
+export function summarizeRun(runId, payload, options = {}) {
   const steps = payload?.steps && typeof payload.steps === "object" ? payload.steps : {};
   const startedAt = payload?.started_at ?? null;
   const status = normalizeStatus(payload?.status);
+  const now = options?.now ? new Date(options.now) : new Date();
+  const staleRunningMinutes = resolveStaleRunningMinutes(options?.staleRunningMinutes);
+  const explicitActivityAt = options?.lastActivityAt ?? null;
 
   if (!isValidStartedAt(startedAt)) {
     return {
@@ -154,6 +189,43 @@ export function summarizeRun(runId, payload) {
   }
 
   let failedStep = null;
+  let summaryStatus = status;
+
+  if (
+    status === "running" &&
+    !payload?.finished_at &&
+    startedAt &&
+    Number.isFinite(Date.parse(normalizeTimestamp(startedAt))) &&
+    Number.isFinite(now.getTime())
+  ) {
+    const startedAtMs = Date.parse(normalizeTimestamp(startedAt));
+    const activityCandidates = [
+      payload?.updated_at,
+      payload?.last_event_at,
+      payload?.last_output_at,
+      explicitActivityAt,
+      startedAt,
+    ]
+      .map((value) => normalizeTimestamp(value))
+      .filter((value) => value && Number.isFinite(Date.parse(value)))
+      .map((value) => Date.parse(value));
+    const lastActivityMs = activityCandidates.length > 0 ? Math.max(...activityCandidates) : startedAtMs;
+    const staleThresholdMs = staleRunningMinutes * 60 * 1000;
+    if (now.getTime() - lastActivityMs >= staleThresholdMs) {
+      summaryStatus = "held";
+      failedStep = {
+        name: "stale_recovery",
+        status: "auto_hold",
+        verdict: null,
+        reason: "stale_running",
+        error_message: null,
+        output_preview: null,
+        last_output: null,
+        critique_issues: null,
+      };
+    }
+  }
+
   for (const [name, step] of Object.entries(steps)) {
     const stepStatus = step?.status;
     if (stepStatus && stepStatus !== "completed") {
@@ -173,7 +245,7 @@ export function summarizeRun(runId, payload) {
 
   return {
     run_id: runId,
-    status,
+    status: summaryStatus,
     mode: payload?.mode ?? null,
     branch: payload?.branch ?? null,
     executor: payload?.executor ?? null,
@@ -193,7 +265,8 @@ export async function readCurrentRun(root) {
   const filePath = resultPath(root);
   try {
     const payload = await readJson(filePath);
-    return summarizeRun("current", payload);
+    const fileStat = await fs.stat(filePath);
+    return summarizeRun("current", payload, { lastActivityAt: fileStat.mtimeMs });
   } catch (error) {
     if (error?.code === "ENOENT") {
       return null;
@@ -302,7 +375,10 @@ export async function listRecentRuns(root, maxRuns = 50, options = {}) {
       const filePath = path.join(dir, runId, "result.json");
       try {
         const payload = await readJson(filePath);
-        const summary = summarizeRun(runId, payload);
+        const summary = summarizeRun(runId, payload, {
+          now,
+          lastActivityAt: candidate.mtimeMs,
+        });
         if (
           isWithinRecentWindow(summary.started_at, sinceDays, now, summary.status) &&
           !seenRunIds.has(runId)

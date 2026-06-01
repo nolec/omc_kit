@@ -904,6 +904,21 @@ def test_pipeline_saves_run_history_to_runs_dir(tmp_path: Path):
     data = __import__("json").loads(result_json.read_text(encoding="utf-8"))
     assert "status" in data
 
+
+def test_pipeline_uses_single_run_history_record_per_execution(tmp_path: Path):
+    """한 번의 pipeline 실행에서 runs 이력은 run_id 1개만 사용해야 한다."""
+    _run(
+        ["--target", str(tmp_path),
+         "pipeline",
+         "--instruction", "single run_id 저장 검증용 충분한 길이의 지시문",
+         "--branch", "feat/t5-single-run",
+         "--dry-run"],
+    )
+    runs_dir = tmp_path / ".omc" / "runs"
+    assert runs_dir.exists(), ".omc/runs 디렉토리 미생성"
+    subdirs = [p for p in runs_dir.iterdir() if p.is_dir()]
+    assert len(subdirs) == 1, f"한 실행에서 run_id가 여러 개 생성됨: {len(subdirs)}"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # T6: critique/review 격리 컨텍스트 — isolated=True 검증
 # ─────────────────────────────────────────────────────────────────────────────

@@ -65,6 +65,16 @@ test("summarizeRun classifies invalid started_at as data-quality failure", async
   assert.equal(summary.failed_step?.reason, "invalid_started_at");
 });
 
+test("summarizeRun accepts compact UTC started_at emitted by autopilot", async () => {
+  const summary = summarizeRun("run-compact", {
+    status: "completed",
+    started_at: "2026-06-01T085646Z",
+    steps: {},
+  });
+  assert.equal(summary.status, "completed");
+  assert.equal(summary.failed_step, null);
+});
+
 test("summarizeRun preserves operational statuses including cancelled timeout and held", async () => {
   const cancelled = summarizeRun("run-cancelled", { status: "cancelled", steps: {} });
   const canceledAlias = summarizeRun("run-canceled", { status: "canceled", steps: {} });
@@ -75,6 +85,65 @@ test("summarizeRun preserves operational statuses including cancelled timeout an
   assert.equal(canceledAlias.status, "cancelled");
   assert.equal(timeout.status, "timeout");
   assert.equal(held.status, "held");
+});
+
+test("summarizeRun converts stale running record to held", async () => {
+  const summary = summarizeRun(
+    "run-stale",
+    {
+      status: "running",
+      started_at: "2026-05-31T09:00:00Z",
+      finished_at: null,
+      steps: {},
+    },
+    { now: "2026-05-31T12:00:00Z", staleRunningMinutes: 10 },
+  );
+  assert.equal(summary.status, "held");
+  assert.equal(summary.failed_step?.reason, "stale_running");
+});
+
+test("summarizeRun keeps running when last activity is recent even if started_at is old", async () => {
+  const summary = summarizeRun(
+    "run-active",
+    {
+      status: "running",
+      started_at: "2026-05-31T09:00:00Z",
+      finished_at: null,
+      steps: {},
+    },
+    {
+      now: "2026-05-31T12:00:00Z",
+      staleRunningMinutes: 10,
+      lastActivityAt: "2026-05-31T11:56:00Z",
+    },
+  );
+  assert.equal(summary.status, "running");
+  assert.equal(summary.failed_step, null);
+});
+
+test("summarizeRun honors stale running minutes from env when option is omitted", async () => {
+  const previous = process.env.OMC_DASHBOARD_STALE_RUNNING_MINUTES;
+  try {
+    process.env.OMC_DASHBOARD_STALE_RUNNING_MINUTES = "240";
+    const summary = summarizeRun(
+      "run-env-threshold",
+      {
+        status: "running",
+        started_at: "2026-05-31T09:00:00Z",
+        finished_at: null,
+        steps: {},
+      },
+      { now: "2026-05-31T12:00:00Z" },
+    );
+    assert.equal(summary.status, "running");
+    assert.equal(summary.failed_step, null);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.OMC_DASHBOARD_STALE_RUNNING_MINUTES;
+    } else {
+      process.env.OMC_DASHBOARD_STALE_RUNNING_MINUTES = previous;
+    }
+  }
 });
 
 test("listRecentRuns supports sinceDays filter to avoid full historical scan", async () => {
@@ -319,6 +388,25 @@ test("listRecentRuns with sinceDays null scans beyond scanLimit when results are
   const runs = await listRecentRuns(root, 5, { sinceDays: null, scanLimit: 10 });
   assert.equal(runs.length, 5);
   assert.ok(runs.every((run) => run.status !== "invalid_started_at"));
+});
+
+test("listRecentRuns includes compact UTC started_at within sinceDays window", async () => {
+  const root = await mktempDir();
+  const runsDir = path.join(root, ".omc", "runs");
+  await fs.mkdir(runsDir, { recursive: true });
+
+  const runId = "20260531T120000-compact";
+  const runPath = path.join(runsDir, runId);
+  await fs.mkdir(runPath, { recursive: true });
+  await fs.writeFile(
+    path.join(runPath, "result.json"),
+    JSON.stringify({ status: "completed", started_at: "2026-05-31T113000Z", steps: {} }),
+    "utf8",
+  );
+
+  const runs = await listRecentRuns(root, 10, { sinceDays: 7, now: "2026-05-31T12:00:00Z" });
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].run_id, runId);
 });
 
 test("listRecentRuns bounds stat fan-out by scanLimit when sinceDays is enabled", async (t) => {

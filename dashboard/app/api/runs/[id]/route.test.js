@@ -36,7 +36,7 @@ test("run detail route returns detail for existing run without exposing root pat
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("X-OMC-API-Version"), "2026-06-01");
     const payload = await response.json();
-    assert.deepEqual(Object.keys(payload).sort(), ["breaking_changes", "detail", "schema_version"]);
+    assert.deepEqual(Object.keys(payload).sort(), ["breaking_changes", "deprecation", "detail", "schema_version"]);
     assert.deepEqual(Object.keys(payload.detail).sort(), ["raw", "run_id", "summary"]);
     assert.equal(typeof payload.detail.raw, "object");
     assert.equal(typeof payload.detail.summary, "object");
