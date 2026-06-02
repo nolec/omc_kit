@@ -246,6 +246,47 @@ test("buildOperationsConsoleSummary treats approval_required current run as acti
   assert.equal(summary.session_health.reason, "approval_required");
 });
 
+test("buildOperationsConsoleSummary preserves approval queue semantics for plan confirmation artifact", async () => {
+  const currentRun = summarizeRun("20260602T163447-codex-ops-approval-gate-2", {
+    status: "aborted",
+    branch: "codex-ops-approval-gate-2",
+    started_at: "2026-06-02T16:34:47Z",
+    finished_at: "2026-06-02T16:35:29Z",
+    approval_required: true,
+    manual_gate_reason: "plan_confirmation",
+    last_heartbeat_at: "2026-06-02T16:35:29Z",
+    steps: {
+      plan: {
+        status: "completed",
+        started_at: "2026-06-02T16:34:48Z",
+        finished_at: "2026-06-02T16:35:09Z",
+        duration_sec: 21,
+      },
+    },
+  });
+
+  const summary = buildOperationsConsoleSummary(currentRun, [], {
+    now: "2026-06-02T16:35:29Z",
+    currentUpdatedAt: "2026-06-02T16:35:29Z",
+    staleMinutes: 10,
+  });
+
+  assert.equal(summary.action_required_count, 1);
+  assert.equal(summary.approval_required_count, 1);
+  assert.equal(summary.recovery_required_count, 0);
+  assert.equal(summary.next_action.action, "review_approval_required_run");
+  assert.equal(summary.next_action.reason, "approval_required");
+  assert.equal(summary.approval_queue.length, 1);
+  assert.equal(summary.approval_queue[0].manual_gate_reason, "plan_confirmation");
+  assert.equal(summary.duration_summary.total_runs_with_duration, 1);
+  assert.equal(summary.duration_summary.total_duration_sec, 21);
+  assert.deepEqual(summary.duration_summary.longest_step, {
+    run_id: "20260602T163447-codex-ops-approval-gate-2",
+    name: "plan",
+    duration_sec: 21,
+  });
+});
+
 test("listRecentRuns returns at most maxRuns sorted by run_id desc", async () => {
   const root = await mktempDir();
   const runsDir = path.join(root, ".omc", "runs");

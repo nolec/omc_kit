@@ -4,10 +4,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -48,6 +50,8 @@ def _codex_headless_command(project_root: Path, prompt_text: str, output_path: P
         "codex",
         "exec",
         "--ephemeral",
+        "-s",
+        "workspace-write",
         "-C",
         str(project_root),
         "-o",
@@ -122,6 +126,63 @@ def _read_text_if_exists(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
+def _resolve_codex_home() -> Path:
+    raw = os.environ.get("CODEX_HOME", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".codex"
+
+
+def _copy_codex_runtime_file(source_home: Path, runtime_home: Path, name: str) -> None:
+    src = source_home / name
+    if not src.exists():
+        return
+    dst = runtime_home / name
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
+def _copy_codex_config_for_headless(source_home: Path, runtime_home: Path) -> None:
+    src = source_home / "config.toml"
+    if not src.exists():
+        return
+
+    text = src.read_text(encoding="utf-8")
+    try:
+        parsed = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        (runtime_home / "config.toml").write_text(text, encoding="utf-8")
+        return
+
+    current_model = parsed.get("model")
+    migrations = parsed.get("notice", {}).get("model_migrations", {})
+    if isinstance(current_model, str) and isinstance(migrations, dict):
+        migrated_model = migrations.get(current_model)
+        if isinstance(migrated_model, str) and migrated_model.strip():
+            text = re.sub(
+                r'(?m)^model\s*=\s*"[^"]*"\s*$',
+                f'model = "{migrated_model}"',
+                text,
+                count=1,
+            )
+
+    (runtime_home / "config.toml").write_text(text, encoding="utf-8")
+
+
+def _prepare_codex_headless_runtime() -> tuple[tempfile.TemporaryDirectory[str], dict[str, str]]:
+    source_home = _resolve_codex_home()
+    runtime = tempfile.TemporaryDirectory(prefix="omc-codex-home-")
+    runtime_home = Path(runtime.name)
+
+    for name in ("auth.json", "version.json", "installation_id"):
+        _copy_codex_runtime_file(source_home, runtime_home, name)
+    _copy_codex_config_for_headless(source_home, runtime_home)
+
+    env = os.environ.copy()
+    env["CODEX_HOME"] = str(runtime_home)
+    return runtime, env
+
+
 def _extract_gemini_headless_text(stdout: str) -> str:
     text = stdout.strip()
     if not text:
@@ -141,7 +202,9 @@ def _extract_gemini_headless_text(stdout: str) -> str:
 def _run_codex_headless(project_root: Path, prompt_text: str, *, timeout_sec: int) -> int:
     with tempfile.NamedTemporaryFile(prefix="omc-codex-last.", suffix=".txt", delete=False) as fp:
         output_path = Path(fp.name)
+    runtime = None
     try:
+        runtime, env = _prepare_codex_headless_runtime()
         cmd = _codex_headless_command(project_root, prompt_text, output_path)
         try:
             proc = subprocess.run(
@@ -150,6 +213,7 @@ def _run_codex_headless(project_root: Path, prompt_text: str, *, timeout_sec: in
                 capture_output=True,
                 text=True,
                 timeout=timeout_sec,
+                env=env,
             )
         except subprocess.TimeoutExpired:
             print(f"[!] Codex headless execution timed out after {timeout_sec}s", file=sys.stderr)
@@ -165,6 +229,8 @@ def _run_codex_headless(project_root: Path, prompt_text: str, *, timeout_sec: in
             print(f"[!] Codex headless execution exited with code {proc.returncode}")
         return int(proc.returncode)
     finally:
+        if runtime is not None:
+            runtime.cleanup()
         output_path.unlink(missing_ok=True)
 
 
