@@ -38,6 +38,8 @@ build/
 .omc/runs/
 .omc/pipeline_run_result.json
 .omc/allow_log.jsonl
+.omc/state/
+.omc/tasks/
 
 # dashboard build artifacts
 dashboard/.next/
