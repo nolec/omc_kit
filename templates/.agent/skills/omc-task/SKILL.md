@@ -21,6 +21,17 @@ python3 scripts/omc_guard.py require --for "task" --target .
 - RED 등록: FAIL 출력 첨부 + `red-done` 완료
 - TDD 게이트: `python3 scripts/omc_tdd_check.py --staged` exit 0
 
+사용자에게 보여줄 단계
+- CONTRACT
+- RED
+- TDD GATE
+- Handoff
+
+시스템이 암묵적으로 처리
+- 자명한 재안내
+- 중복 설명
+- 단계 사이 반복 코칭
+
 ## PHASE 1 ▸ CONTRACT
 
 - 목표:
@@ -37,7 +48,7 @@ python3 scripts/omc_guard.py require --for "task" --target .
 - 실패·에러 정책:
 - 영향받는 파일:
 
-UI·문서처럼 계약이 없으면 `해당 없음 — 이유`로 채웁니다.
+계약이 약한 작업도 빈칸 없이 적습니다.
 
 ## PHASE 3 ▸ RED
 
@@ -58,14 +69,14 @@ FAIL 출력과 `red-done` 등록 없이 구현 파일을 만들지 않습니다.
 - 테스트 PASS:
 - 기존 회귀 없음:
 
-테스트를 통과하는 최소 구현만 먼저 합니다.
+최소 구현만 먼저 합니다.
 
 ## PHASE 5 ▸ REFACTOR
 
 - 정리 항목:
 - 리팩터링 후 PASS:
 
-GREEN 상태를 유지한 채 이름, 중복, 책임만 정리합니다.
+이름, 중복, 책임만 정리합니다.
 
 ## PHASE 6 ▸ TDD GATE
 
@@ -73,7 +84,7 @@ GREEN 상태를 유지한 채 이름, 중복, 책임만 정리합니다.
 python3 scripts/omc_tdd_check.py --staged
 ```
 
-반환값 0이 아니면 수정 후 다시 확인합니다.
+실패하면 수정 후 다시 확인합니다.
 
 ## PHASE 7 ▸ COMPOUND ENGINEERING
 
@@ -83,8 +94,8 @@ python3 scripts/omc_tdd_check.py --staged
 python3 scripts/omc_lesson.py add -i
 ```
 
-인터랙티브가 막히면 비인터랙티브 추가 또는 `교훈 없음`을 명시합니다.
+막히면 `교훈 없음`을 명시합니다.
 
 ## Handoff
 
-모든 단계가 끝나면 `$omc-review`로 넘깁니다. 치명/중대 이슈가 없을 때만 ship으로 갑니다.
+모든 단계가 끝나면 `$omc-review`로 넘깁니다.

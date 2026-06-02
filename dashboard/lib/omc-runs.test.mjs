@@ -5,6 +5,10 @@ import os from "node:os";
 import fs from "node:fs/promises";
 
 import {
+  KNOWN_OPERATION_REASON_MAP,
+  OPERATIONS_CONSOLE_V1_DATA_AVAILABILITY,
+  buildOperationsConsoleSummary,
+  classifyOperationalReason,
   listRecentRuns,
   readCurrentRun,
   readRunDetail,
@@ -19,6 +23,183 @@ test("readCurrentRun returns null when pipeline file missing", async () => {
   const root = await mktempDir();
   const current = await readCurrentRun(root);
   assert.equal(current, null);
+});
+
+test("readCurrentRun exposes last activity time for freshness calculations", async () => {
+  const root = await mktempDir();
+  const omcDir = path.join(root, ".omc");
+  await fs.mkdir(omcDir, { recursive: true });
+  await fs.writeFile(
+    path.join(omcDir, "pipeline_run_result.json"),
+    JSON.stringify({
+      status: "running",
+      started_at: "2026-05-31T11:50:00Z",
+      steps: {},
+    }),
+    "utf8",
+  );
+
+  const current = await readCurrentRun(root);
+  assert.equal(current?.status, "running");
+  assert.ok(current?.last_activity_at);
+  assert.equal(Number.isFinite(Date.parse(String(current?.last_activity_at))), true);
+});
+
+test("operations console v1 data availability declares available and unavailable sources", async () => {
+  assert.deepEqual(OPERATIONS_CONSOLE_V1_DATA_AVAILABILITY.available, [
+    "current_run",
+    "recent_runs",
+    "run_status_counts",
+    "known_reason_buckets",
+    "next_action_rule",
+  ]);
+  assert.deepEqual(OPERATIONS_CONSOLE_V1_DATA_AVAILABILITY.unavailable, [
+    "queue_depth",
+    "worker_health",
+    "parallel_agent_count",
+    "per_step_duration",
+  ]);
+});
+
+test("classifyOperationalReason maps known reasons and passes through unknown ones", async () => {
+  assert.equal(KNOWN_OPERATION_REASON_MAP.stale_running.label, "실행 중 멈춤");
+  assert.deepEqual(classifyOperationalReason("retry_exhausted"), {
+    key: "retry_exhausted",
+    label: "재시도 소진",
+  });
+  assert.deepEqual(classifyOperationalReason("custom_reason"), {
+    key: "custom_reason",
+    label: "custom_reason",
+  });
+});
+
+test("buildOperationsConsoleSummary returns action required counts and freshness status", async () => {
+  const currentRun = {
+    run_id: "current",
+    status: "running",
+    started_at: "2026-05-31T11:50:00Z",
+    failed_step: null,
+  };
+  const recentRuns = [
+    currentRun,
+    {
+      run_id: "held-1",
+      status: "held",
+      started_at: "2026-05-31T11:00:00Z",
+      failed_step: { reason: "stale_running" },
+    },
+    {
+      run_id: "failed-1",
+      status: "failed",
+      started_at: "2026-05-31T10:00:00Z",
+      failed_step: { reason: "retry_exhausted" },
+    },
+    {
+      run_id: "done-1",
+      status: "completed",
+      started_at: "2026-05-31T09:00:00Z",
+      failed_step: null,
+    },
+  ];
+
+  const summary = buildOperationsConsoleSummary(currentRun, recentRuns, {
+    now: "2026-05-31T12:00:00Z",
+    currentUpdatedAt: "2026-05-31T11:57:00Z",
+    staleMinutes: 10,
+  });
+
+  assert.equal(summary.action_required_count, 2);
+  assert.equal(summary.approval_required_count, 1);
+  assert.equal(summary.recovery_required_count, 2);
+  assert.equal(summary.held_count, 1);
+  assert.equal(summary.failed_count, 1);
+  assert.equal(summary.stale_run_count, 1);
+  assert.equal(summary.idle_run_count, 0);
+  assert.equal(summary.freshness_status, "fresh");
+  assert.equal(summary.next_action.action, "review_held_run");
+  assert.equal(summary.reason_buckets.stale_running, 1);
+  assert.equal(summary.reason_buckets.retry_exhausted, 1);
+  assert.deepEqual(summary.reason_breakdown, [
+    { key: "retry_exhausted", label: "재시도 소진", count: 1 },
+    { key: "stale_running", label: "실행 중 멈춤", count: 1 },
+  ]);
+});
+
+test("buildOperationsConsoleSummary counts currentRun even when it is not part of recentRuns", async () => {
+  const currentRun = {
+    run_id: "current-held",
+    status: "held",
+    started_at: "2026-05-31T11:50:00Z",
+    failed_step: { reason: "stale_running" },
+  };
+  const recentRuns = [
+    {
+      run_id: "done-1",
+      status: "completed",
+      started_at: "2026-05-31T09:00:00Z",
+      failed_step: null,
+    },
+  ];
+
+  const summary = buildOperationsConsoleSummary(currentRun, recentRuns, {
+    now: "2026-05-31T12:00:00Z",
+    currentUpdatedAt: "2026-05-31T11:57:00Z",
+    staleMinutes: 10,
+  });
+
+  assert.equal(summary.action_required_count, 1);
+  assert.equal(summary.approval_required_count, 1);
+  assert.equal(summary.recovery_required_count, 1);
+  assert.equal(summary.held_count, 1);
+  assert.equal(summary.stale_run_count, 1);
+  assert.equal(summary.next_action.action, "review_held_run");
+});
+
+test("buildOperationsConsoleSummary does not double count duplicated currentRun by run_id", async () => {
+  const currentRun = {
+    run_id: "dup-run",
+    status: "failed",
+    started_at: "2026-05-31T11:50:00Z",
+    failed_step: { reason: "retry_exhausted" },
+  };
+  const recentRuns = [
+    currentRun,
+    {
+      run_id: "done-1",
+      status: "completed",
+      started_at: "2026-05-31T09:00:00Z",
+      failed_step: null,
+    },
+  ];
+
+  const summary = buildOperationsConsoleSummary(currentRun, recentRuns, {
+    now: "2026-05-31T12:00:00Z",
+  });
+
+  assert.equal(summary.action_required_count, 1);
+  assert.equal(summary.failed_count, 1);
+  assert.equal(summary.approval_required_count, 0);
+  assert.equal(summary.recovery_required_count, 1);
+  assert.equal(summary.stale_run_count, 0);
+  assert.equal(summary.reason_buckets.retry_exhausted, 1);
+});
+
+test("buildOperationsConsoleSummary reports idle current run when it is not running", async () => {
+  const currentRun = {
+    run_id: "current-done",
+    status: "completed",
+    started_at: "2026-05-31T11:50:00Z",
+    failed_step: null,
+  };
+
+  const summary = buildOperationsConsoleSummary(currentRun, [], {
+    now: "2026-05-31T12:00:00Z",
+  });
+
+  assert.equal(summary.idle_run_count, 1);
+  assert.equal(summary.freshness_status, "idle");
+  assert.equal(summary.approval_required_count, 0);
+  assert.equal(summary.recovery_required_count, 0);
 });
 
 test("listRecentRuns returns at most maxRuns sorted by run_id desc", async () => {

@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 80
+MAX_NON_EMPTY_LINES = 70
 
 REQUIRED_TASK_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-task" / "SKILL.md",
@@ -43,6 +43,11 @@ REQUIRED_SEQUENCE = [
     "PHASE 7",
     "COMPOUND ENGINEERING",
     "$omc-review",
+]
+
+REQUIRED_FOCUS_MARKERS = [
+    "사용자에게 보여줄 단계",
+    "시스템이 암묵적으로 처리",
 ]
 
 
@@ -126,3 +131,10 @@ def test_task_skill_preserves_required_execution_order():
             cursor = next_pos
 
     assert not missing_or_reordered, f"missing or reordered markers: {missing_or_reordered}"
+
+
+def test_task_skill_explains_visible_vs_implicit_steps():
+    """The shortened skill should distinguish user-visible gates from implicit work."""
+    text = _read(REQUIRED_TASK_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
+    assert not missing, f"missing focus markers: {missing}"

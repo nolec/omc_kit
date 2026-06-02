@@ -12,6 +12,29 @@ const KNOWN_RUN_STATUSES = new Set([
   "invalid",
 ]);
 
+export const OPERATIONS_CONSOLE_V1_DATA_AVAILABILITY = {
+  available: [
+    "current_run",
+    "recent_runs",
+    "run_status_counts",
+    "known_reason_buckets",
+    "next_action_rule",
+  ],
+  unavailable: [
+    "queue_depth",
+    "worker_health",
+    "parallel_agent_count",
+    "per_step_duration",
+  ],
+};
+
+export const KNOWN_OPERATION_REASON_MAP = {
+  stale_running: { label: "실행 중 멈춤" },
+  invalid_started_at: { label: "시작 시간 오류" },
+  retry_exhausted: { label: "재시도 소진" },
+  failed_critique_loop: { label: "critique 루프 실패" },
+};
+
 function resultPath(root) {
   return path.join(root, ".omc", "pipeline_run_result.json");
 }
@@ -115,6 +138,146 @@ function resolveStaleRunningMinutes(optionValue) {
   return 10;
 }
 
+function normalizeReason(reason) {
+  if (typeof reason !== "string" || !reason.trim()) {
+    return "unknown";
+  }
+  return reason.trim().toLowerCase();
+}
+
+function parseTimestampMs(value) {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  const normalized = normalizeTimestamp(value);
+  const parsed = Date.parse(String(normalized));
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+export function classifyOperationalReason(reason) {
+  const key = normalizeReason(reason);
+  const known = KNOWN_OPERATION_REASON_MAP[key];
+  return {
+    key,
+    label: known?.label ?? key,
+  };
+}
+
+function resolveFreshnessStatus(currentRun, currentUpdatedAt, now, staleMinutes) {
+  if (!currentRun) {
+    return "unavailable";
+  }
+  if (currentRun.status !== "running") {
+    return "idle";
+  }
+  const updatedAtMs = parseTimestampMs(currentUpdatedAt);
+  if (!Number.isFinite(updatedAtMs) || !Number.isFinite(now.getTime())) {
+    return "unknown";
+  }
+  return now.getTime() - updatedAtMs >= staleMinutes * 60 * 1000 ? "stale" : "fresh";
+}
+
+/**
+ * Build read-only operations console summary from existing run data only.
+ * Missing operational sources remain explicitly unavailable rather than inferred.
+ * @param {ReturnType<typeof summarizeRun> | null} currentRun
+ * @param {Array<ReturnType<typeof summarizeRun>>} recentRuns
+ * @param {{ now?: string | Date, currentUpdatedAt?: string | number | Date | null, staleMinutes?: number }} [options]
+ * @returns {{
+ *   data_availability: typeof OPERATIONS_CONSOLE_V1_DATA_AVAILABILITY,
+ *   current_run: ReturnType<typeof summarizeRun> | null,
+ *   recent_runs: Array<ReturnType<typeof summarizeRun>>,
+ *   action_required_count: number,
+ *   approval_required_count: number,
+ *   recovery_required_count: number,
+ *   held_count: number,
+ *   failed_count: number,
+ *   stale_run_count: number,
+ *   idle_run_count: number,
+ *   freshness_status: string,
+ *   reason_buckets: Record<string, number>,
+ *   reason_breakdown: Array<{ key: string, label: string, count: number }>,
+ *   next_action: { action: string, reason: string },
+ * }}
+ */
+export function buildOperationsConsoleSummary(currentRun, recentRuns, options = {}) {
+  const runs = Array.isArray(recentRuns) ? recentRuns : [];
+  const now = options?.now ? new Date(options.now) : new Date();
+  const staleMinutes = Number.isFinite(options?.staleMinutes) ? Number(options.staleMinutes) : 10;
+  const freshnessStatus = resolveFreshnessStatus(currentRun, options?.currentUpdatedAt ?? null, now, staleMinutes);
+  const operationalRuns = [];
+  const seenRunIds = new Set();
+  const appendRun = (run) => {
+    if (!run) {
+      return;
+    }
+    const runId = typeof run?.run_id === "string" ? run.run_id : null;
+    if (runId && seenRunIds.has(runId)) {
+      return;
+    }
+    if (runId) {
+      seenRunIds.add(runId);
+    }
+    operationalRuns.push(run);
+  };
+
+  appendRun(currentRun);
+  for (const run of runs) {
+    appendRun(run);
+  }
+
+  const heldRuns = operationalRuns.filter((run) => run?.status === "held");
+  const failedRuns = operationalRuns.filter((run) => run?.status === "failed");
+  const actionRequiredRuns = operationalRuns.filter((run) => run?.status === "held" || run?.status === "failed");
+  const reasonBuckets = {};
+
+  for (const run of actionRequiredRuns) {
+    const reason = classifyOperationalReason(run?.failed_step?.reason);
+    reasonBuckets[reason.key] = (reasonBuckets[reason.key] ?? 0) + 1;
+  }
+
+  const reasonBreakdown = Object.entries(reasonBuckets)
+    .map(([key, count]) => ({
+      key,
+      label: classifyOperationalReason(key).label,
+      count,
+    }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const staleRunCount = reasonBuckets.stale_running ?? (freshnessStatus === "stale" ? 1 : 0);
+  const approvalRequiredCount = heldRuns.length;
+  const recoveryRequiredCount = failedRuns.length + staleRunCount;
+  const idleRunCount = currentRun && freshnessStatus === "idle" ? 1 : 0;
+
+  let nextAction = { action: "none", reason: "no_action_required" };
+  if (heldRuns.length > 0) {
+    nextAction = { action: "review_held_run", reason: normalizeReason(heldRuns[0]?.failed_step?.reason) };
+  } else if (failedRuns.length > 0) {
+    nextAction = { action: "inspect_failed_run", reason: normalizeReason(failedRuns[0]?.failed_step?.reason) };
+  } else if (freshnessStatus === "stale") {
+    nextAction = { action: "check_session_freshness", reason: "stale_current_run" };
+  }
+
+  return {
+    data_availability: OPERATIONS_CONSOLE_V1_DATA_AVAILABILITY,
+    current_run: currentRun,
+    recent_runs: runs,
+    action_required_count: actionRequiredRuns.length,
+    approval_required_count: approvalRequiredCount,
+    recovery_required_count: recoveryRequiredCount,
+    held_count: heldRuns.length,
+    failed_count: failedRuns.length,
+    stale_run_count: staleRunCount,
+    idle_run_count: idleRunCount,
+    freshness_status: freshnessStatus,
+    reason_buckets: reasonBuckets,
+    reason_breakdown: reasonBreakdown,
+    next_action: nextAction,
+  };
+}
+
 /**
  * @param {string | null | undefined} startedAt
  * @param {number | null | undefined} sinceDays
@@ -153,6 +316,7 @@ function isWithinRecentWindow(startedAt, sinceDays, now, summaryStatus = null) {
  *   executor: string | null,
  *   started_at: string | null,
  *   finished_at: string | null,
+ *   last_activity_at: string | null,
  *   last_completed_step: string | null,
  *   failed_step: Record<string, any> | null,
  * }}
@@ -164,6 +328,8 @@ export function summarizeRun(runId, payload, options = {}) {
   const now = options?.now ? new Date(options.now) : new Date();
   const staleRunningMinutes = resolveStaleRunningMinutes(options?.staleRunningMinutes);
   const explicitActivityAt = options?.lastActivityAt ?? null;
+  const explicitActivityAtMs = parseTimestampMs(explicitActivityAt);
+  const explicitActivityAtIso = Number.isFinite(explicitActivityAtMs) ? new Date(explicitActivityAtMs).toISOString() : null;
 
   if (!isValidStartedAt(startedAt)) {
     return {
@@ -174,6 +340,7 @@ export function summarizeRun(runId, payload, options = {}) {
       executor: payload?.executor ?? null,
       started_at: startedAt,
       finished_at: payload?.finished_at ?? null,
+      last_activity_at: explicitActivityAtIso ?? normalizeTimestamp(payload?.updated_at) ?? normalizeTimestamp(payload?.last_event_at) ?? normalizeTimestamp(payload?.last_output_at) ?? null,
       last_completed_step: payload?.last_completed_step ?? null,
       failed_step: {
         name: "data_quality",
@@ -206,9 +373,8 @@ export function summarizeRun(runId, payload, options = {}) {
       explicitActivityAt,
       startedAt,
     ]
-      .map((value) => normalizeTimestamp(value))
-      .filter((value) => value && Number.isFinite(Date.parse(value)))
-      .map((value) => Date.parse(value));
+      .map((value) => parseTimestampMs(value))
+      .filter((value) => Number.isFinite(value));
     const lastActivityMs = activityCandidates.length > 0 ? Math.max(...activityCandidates) : startedAtMs;
     const staleThresholdMs = staleRunningMinutes * 60 * 1000;
     if (now.getTime() - lastActivityMs >= staleThresholdMs) {
@@ -251,6 +417,13 @@ export function summarizeRun(runId, payload, options = {}) {
     executor: payload?.executor ?? null,
     started_at: startedAt,
     finished_at: payload?.finished_at ?? null,
+    last_activity_at:
+      explicitActivityAtIso ??
+      normalizeTimestamp(payload?.updated_at) ??
+      normalizeTimestamp(payload?.last_event_at) ??
+      normalizeTimestamp(payload?.last_output_at) ??
+      normalizeTimestamp(startedAt) ??
+      null,
     last_completed_step: payload?.last_completed_step ?? null,
     failed_step: failedStep,
   };

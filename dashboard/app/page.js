@@ -1,5 +1,5 @@
 import { resolveDashboardRoot } from "../lib/omc-root.mjs";
-import { listRecentRuns, readCurrentRun, readRunDetail } from "../lib/omc-runs.mjs";
+import { buildOperationsConsoleSummary, listRecentRuns, readCurrentRun, readRunDetail } from "../lib/omc-runs.mjs";
 
 function statusClass(status) {
   return `status-${String(status || "unknown").toLowerCase()}`;
@@ -58,12 +58,62 @@ function renderReasonOrError(step) {
   return step?.status === "completed" ? "-" : "해당 없음";
 }
 
+function freshnessLabel(value) {
+  const map = {
+    fresh: "최신",
+    stale: "오래됨",
+    idle: "유휴",
+    unavailable: "없음",
+    unknown: "판단 불가",
+  };
+  return map[value] ?? value ?? "해당 없음";
+}
+
+function freshnessHelpText(value) {
+  const map = {
+    fresh: "현재 실행의 최신 활동 시각이 최근 범위 안에 있습니다.",
+    stale: "현재 실행의 최신 활동이 오래되어 확인이 필요합니다.",
+    idle: "현재 실행이 진행 중 상태가 아니어서 최신성 판단이 중요하지 않습니다.",
+    unavailable: "현재 실행 데이터가 없습니다.",
+    unknown: "현재 실행은 있지만 최신 활동 시각이 없습니다.",
+  };
+  return map[value] ?? "최신성 정보를 해석할 수 없습니다.";
+}
+
+function nextActionLabel(action) {
+  const map = {
+    review_held_run: "보류 실행 확인",
+    inspect_failed_run: "실패 실행 점검",
+    check_session_freshness: "세션 최신성 확인",
+    none: "즉시 조치 없음",
+  };
+  return map[action] ?? action ?? "해당 없음";
+}
+
+function availabilityLabel(value) {
+  const map = {
+    current_run: "현재 실행 상태",
+    recent_runs: "최근 실행 목록",
+    run_status_counts: "실행 상태 집계",
+    known_reason_buckets: "알려진 원인 분류",
+    next_action_rule: "고정 규칙 다음 액션",
+    queue_depth: "큐 적체 수",
+    worker_health: "워커 상태",
+    parallel_agent_count: "병렬 에이전트 수",
+    per_step_duration: "단계별 소요 시간",
+  };
+  return map[value] ?? value;
+}
+
 export default async function Home() {
   const root = resolveDashboardRoot();
   const current = await readCurrentRun(root);
   const runs = await listRecentRuns(root, 50);
   const selected = runs[0]?.run_id ? await readRunDetail(root, runs[0].run_id) : null;
   const steps = selected?.raw?.steps && typeof selected.raw.steps === "object" ? selected.raw.steps : {};
+  const operationsSummary = buildOperationsConsoleSummary(current, runs, {
+    currentUpdatedAt: current?.last_activity_at ?? null,
+  });
 
   return (
     <main>
@@ -83,6 +133,73 @@ export default async function Home() {
           <h2>실행 건수</h2>
           <div>{runs.length}</div>
           <div className="muted">최근 run id 기준 50건 표시</div>
+        </div>
+      </section>
+
+      <section className="grid">
+        <div className="panel">
+          <h2>운영 콘솔 요약</h2>
+          <div>액션 필요 실행: {operationsSummary.action_required_count}</div>
+          <div>보류: {operationsSummary.held_count}</div>
+          <div>실패: {operationsSummary.failed_count}</div>
+          <div className="muted">복구 필요 신호는 승인 필요 항목과 일부 겹칠 수 있습니다.</div>
+          <div className="muted">세션 상태: {freshnessLabel(operationsSummary.freshness_status)}</div>
+          <div className="muted">{freshnessHelpText(operationsSummary.freshness_status)}</div>
+        </div>
+        <div className="panel">
+          <h2>다음 액션</h2>
+          <div>{nextActionLabel(operationsSummary.next_action.action)}</div>
+          <div className="muted">사유: {operationsSummary.next_action.reason ?? "해당 없음"}</div>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>데이터 가용성</h2>
+        <div className="muted">현재 콘솔이 볼 수 있는 데이터</div>
+        <ul>
+          {operationsSummary.data_availability.available.map((item) => (
+            <li key={item}>{availabilityLabel(item)}</li>
+          ))}
+        </ul>
+        <div className="muted">아직 수집하지 않는 데이터</div>
+        <ul>
+          {operationsSummary.data_availability.unavailable.map((item) => (
+            <li key={item}>{availabilityLabel(item)}</li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="grid">
+        <div className="panel">
+          <h2>원인 분류</h2>
+          {operationsSummary.reason_breakdown.length === 0 ? (
+            <div className="muted">액션이 필요한 원인이 없습니다.</div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>분류</th>
+                  <th>건수</th>
+                </tr>
+              </thead>
+              <tbody>
+                {operationsSummary.reason_breakdown.map((item) => (
+                  <tr key={item.key}>
+                    <td>{item.label}</td>
+                    <td>{item.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="panel">
+          <h2>액션 필요 실행</h2>
+          {operationsSummary.action_required_count === 0 ? (
+            <div className="muted">즉시 조치가 필요한 실행이 없습니다.</div>
+          ) : (
+            <div className="muted">보류 또는 실패 상태의 실행을 우선 확인하세요.</div>
+          )}
         </div>
       </section>
 
