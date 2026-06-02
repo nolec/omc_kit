@@ -246,31 +246,33 @@ test("buildOperationsConsoleSummary treats approval_required current run as acti
   assert.equal(summary.session_health.reason, "approval_required");
 });
 
-test("buildOperationsConsoleSummary preserves approval queue semantics for plan confirmation artifact", async () => {
+test("buildOperationsConsoleSummary preserves approval queue semantics for resumed plan confirmation artifact", async () => {
   const currentRun = summarizeRun("20260602T163447-codex-ops-approval-gate-2", {
     status: "aborted",
     branch: "codex-ops-approval-gate-2",
-    started_at: "2026-06-02T16:34:47Z",
-    finished_at: "2026-06-02T16:35:29Z",
+    started_at: "2026-06-02T18:55:51Z",
+    finished_at: "2026-06-02T18:55:51Z",
     approval_required: true,
     manual_gate_reason: "plan_confirmation",
-    last_heartbeat_at: "2026-06-02T16:35:29Z",
+    resume_count: 2,
+    last_heartbeat_at: "2026-06-02T18:55:51Z",
     steps: {
       plan: {
         status: "completed",
-        started_at: "2026-06-02T16:34:48Z",
-        finished_at: "2026-06-02T16:35:09Z",
+        started_at: "2026-06-02T18:55:51Z",
+        finished_at: "2026-06-02T18:55:51Z",
         duration_sec: 21,
       },
     },
   });
 
   const summary = buildOperationsConsoleSummary(currentRun, [], {
-    now: "2026-06-02T16:35:29Z",
-    currentUpdatedAt: "2026-06-02T16:35:29Z",
+    now: "2026-06-02T18:55:51Z",
+    currentUpdatedAt: "2026-06-02T18:55:51Z",
     staleMinutes: 10,
   });
 
+  assert.equal(currentRun.resume_count, 2);
   assert.equal(summary.action_required_count, 1);
   assert.equal(summary.approval_required_count, 1);
   assert.equal(summary.recovery_required_count, 0);
