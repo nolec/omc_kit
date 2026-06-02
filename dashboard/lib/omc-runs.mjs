@@ -19,12 +19,12 @@ export const OPERATIONS_CONSOLE_V1_DATA_AVAILABILITY = {
     "run_status_counts",
     "known_reason_buckets",
     "next_action_rule",
+    "per_step_duration",
   ],
   unavailable: [
     "queue_depth",
     "worker_health",
     "parallel_agent_count",
-    "per_step_duration",
   ],
 };
 
@@ -180,6 +180,31 @@ function resolveFreshnessStatus(currentRun, currentUpdatedAt, now, staleMinutes)
   return now.getTime() - updatedAtMs >= staleMinutes * 60 * 1000 ? "stale" : "fresh";
 }
 
+function buildStepDurationSummary(steps) {
+  const entries = Object.entries(steps ?? {});
+  let totalDurationSec = 0;
+  let totalStepsWithDuration = 0;
+  let longestStep = null;
+
+  for (const [name, step] of entries) {
+    const durationSec = Number(step?.duration_sec);
+    if (!Number.isFinite(durationSec) || durationSec < 0) {
+      continue;
+    }
+    totalDurationSec += durationSec;
+    totalStepsWithDuration += 1;
+    if (!longestStep || durationSec > longestStep.duration_sec) {
+      longestStep = { name, duration_sec: durationSec };
+    }
+  }
+
+  return {
+    total_duration_sec: totalDurationSec,
+    total_steps_with_duration: totalStepsWithDuration,
+    longest_step: longestStep,
+  };
+}
+
 /**
  * Build read-only operations console summary from existing run data only.
  * Missing operational sources remain explicitly unavailable rather than inferred.
@@ -197,6 +222,14 @@ function resolveFreshnessStatus(currentRun, currentUpdatedAt, now, staleMinutes)
  *   failed_count: number,
  *   stale_run_count: number,
  *   idle_run_count: number,
+ *   approval_queue: Array<ReturnType<typeof summarizeRun>>,
+ *   recovery_queue: Array<ReturnType<typeof summarizeRun>>,
+ *   duration_summary: {
+ *     total_runs_with_duration: number,
+ *     total_duration_sec: number,
+ *     longest_step: { run_id: string, name: string, duration_sec: number } | null,
+ *   },
+ *   session_health: { status: string, reason: string },
  *   freshness_status: string,
  *   reason_buckets: Record<string, number>,
  *   reason_breakdown: Array<{ key: string, label: string, count: number }>,
@@ -231,10 +264,15 @@ export function buildOperationsConsoleSummary(currentRun, recentRuns, options = 
 
   const heldRuns = operationalRuns.filter((run) => run?.status === "held");
   const failedRuns = operationalRuns.filter((run) => run?.status === "failed");
-  const actionRequiredRuns = operationalRuns.filter((run) => run?.status === "held" || run?.status === "failed");
+  const actionRequiredRuns = operationalRuns.filter(
+    (run) => run?.status === "held" || run?.status === "failed" || run?.approval_required === true,
+  );
   const reasonBuckets = {};
 
   for (const run of actionRequiredRuns) {
+    if (!run?.failed_step?.reason) {
+      continue;
+    }
     const reason = classifyOperationalReason(run?.failed_step?.reason);
     reasonBuckets[reason.key] = (reasonBuckets[reason.key] ?? 0) + 1;
   }
@@ -246,13 +284,61 @@ export function buildOperationsConsoleSummary(currentRun, recentRuns, options = 
       count,
     }))
     .sort((a, b) => a.key.localeCompare(b.key));
-  const staleRunCount = reasonBuckets.stale_running ?? (freshnessStatus === "stale" ? 1 : 0);
-  const approvalRequiredCount = heldRuns.length;
-  const recoveryRequiredCount = failedRuns.length + staleRunCount;
+  const approvalQueue = operationalRuns.filter((run) => run?.status === "held" || run?.approval_required === true);
+  const recoveryQueue = operationalRuns.filter((run) => {
+    if (run?.status === "failed") {
+      return true;
+    }
+    if (normalizeReason(run?.failed_step?.reason) === "stale_running") {
+      return true;
+    }
+    return run?.run_id === currentRun?.run_id && freshnessStatus === "stale";
+  });
+  const staleRunCount = recoveryQueue.filter((run) => normalizeReason(run?.failed_step?.reason) === "stale_running").length
+    || (freshnessStatus === "stale" ? 1 : 0);
+  const approvalRequiredCount = approvalQueue.length;
+  const recoveryRequiredCount = recoveryQueue.length;
   const idleRunCount = currentRun && freshnessStatus === "idle" ? 1 : 0;
+  const runsWithDuration = operationalRuns.filter((run) => run?.step_duration_summary?.total_steps_with_duration > 0);
+  let longestDurationStep = null;
+  for (const run of runsWithDuration) {
+    const longestStep = run?.step_duration_summary?.longest_step;
+    if (!longestStep) {
+      continue;
+    }
+    if (!longestDurationStep || longestStep.duration_sec > longestDurationStep.duration_sec) {
+      longestDurationStep = {
+        run_id: run.run_id,
+        name: longestStep.name,
+        duration_sec: longestStep.duration_sec,
+      };
+    }
+  }
+  const durationSummary = {
+    total_runs_with_duration: runsWithDuration.length,
+    total_duration_sec: runsWithDuration.reduce(
+      (sum, run) => sum + Number(run?.step_duration_summary?.total_duration_sec ?? 0),
+      0,
+    ),
+    longest_step: longestDurationStep,
+  };
+  let sessionHealth = { status: "healthy", reason: "running_or_idle" };
+  if (!currentRun) {
+    sessionHealth = { status: "unknown", reason: "no_current_run" };
+  } else if (currentRun.approval_required) {
+    sessionHealth = { status: "attention", reason: "approval_required" };
+  } else if (freshnessStatus === "stale") {
+    sessionHealth = { status: "attention", reason: "stale_current_run" };
+  } else if (freshnessStatus === "unknown" || freshnessStatus === "unavailable") {
+    sessionHealth = { status: "unknown", reason: freshnessStatus };
+  } else if (actionRequiredRuns.length > 0) {
+    sessionHealth = { status: "attention", reason: "action_required_runs" };
+  }
 
   let nextAction = { action: "none", reason: "no_action_required" };
-  if (heldRuns.length > 0) {
+  if (currentRun?.approval_required) {
+    nextAction = { action: "review_approval_required_run", reason: "approval_required" };
+  } else if (heldRuns.length > 0) {
     nextAction = { action: "review_held_run", reason: normalizeReason(heldRuns[0]?.failed_step?.reason) };
   } else if (failedRuns.length > 0) {
     nextAction = { action: "inspect_failed_run", reason: normalizeReason(failedRuns[0]?.failed_step?.reason) };
@@ -271,6 +357,10 @@ export function buildOperationsConsoleSummary(currentRun, recentRuns, options = 
     failed_count: failedRuns.length,
     stale_run_count: staleRunCount,
     idle_run_count: idleRunCount,
+    approval_queue: approvalQueue,
+    recovery_queue: recoveryQueue,
+    duration_summary: durationSummary,
+    session_health: sessionHealth,
     freshness_status: freshnessStatus,
     reason_buckets: reasonBuckets,
     reason_breakdown: reasonBreakdown,
@@ -317,6 +407,16 @@ function isWithinRecentWindow(startedAt, sinceDays, now, summaryStatus = null) {
  *   started_at: string | null,
  *   finished_at: string | null,
  *   last_activity_at: string | null,
+ *   last_heartbeat_at: string | null,
+ *   approval_required: boolean,
+ *   manual_gate_reason: string | null,
+ *   retry_count: number,
+ *   resume_count: number,
+ *   step_duration_summary: {
+ *     total_duration_sec: number,
+ *     total_steps_with_duration: number,
+ *     longest_step: { name: string, duration_sec: number } | null,
+ *   },
  *   last_completed_step: string | null,
  *   failed_step: Record<string, any> | null,
  * }}
@@ -330,6 +430,7 @@ export function summarizeRun(runId, payload, options = {}) {
   const explicitActivityAt = options?.lastActivityAt ?? null;
   const explicitActivityAtMs = parseTimestampMs(explicitActivityAt);
   const explicitActivityAtIso = Number.isFinite(explicitActivityAtMs) ? new Date(explicitActivityAtMs).toISOString() : null;
+  const stepDurationSummary = buildStepDurationSummary(steps);
 
   if (!isValidStartedAt(startedAt)) {
     return {
@@ -340,6 +441,12 @@ export function summarizeRun(runId, payload, options = {}) {
       executor: payload?.executor ?? null,
       started_at: startedAt,
       finished_at: payload?.finished_at ?? null,
+      last_heartbeat_at: normalizeTimestamp(payload?.last_heartbeat_at) ?? null,
+      approval_required: payload?.approval_required === true,
+      manual_gate_reason: typeof payload?.manual_gate_reason === "string" ? payload.manual_gate_reason : null,
+      retry_count: Number.isFinite(Number(payload?.retry_count)) ? Number(payload.retry_count) : 0,
+      resume_count: Number.isFinite(Number(payload?.resume_count)) ? Number(payload.resume_count) : 0,
+      step_duration_summary: stepDurationSummary,
       last_activity_at: explicitActivityAtIso ?? normalizeTimestamp(payload?.updated_at) ?? normalizeTimestamp(payload?.last_event_at) ?? normalizeTimestamp(payload?.last_output_at) ?? null,
       last_completed_step: payload?.last_completed_step ?? null,
       failed_step: {
@@ -417,6 +524,12 @@ export function summarizeRun(runId, payload, options = {}) {
     executor: payload?.executor ?? null,
     started_at: startedAt,
     finished_at: payload?.finished_at ?? null,
+    last_heartbeat_at: normalizeTimestamp(payload?.last_heartbeat_at) ?? null,
+    approval_required: payload?.approval_required === true,
+    manual_gate_reason: typeof payload?.manual_gate_reason === "string" ? payload.manual_gate_reason : null,
+    retry_count: Number.isFinite(Number(payload?.retry_count)) ? Number(payload.retry_count) : 0,
+    resume_count: Number.isFinite(Number(payload?.resume_count)) ? Number(payload.resume_count) : 0,
+    step_duration_summary: stepDurationSummary,
     last_activity_at:
       explicitActivityAtIso ??
       normalizeTimestamp(payload?.updated_at) ??

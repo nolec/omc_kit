@@ -12,6 +12,10 @@ test("home page renders current status and latest run detail sections", async ()
   const source = await readFile(sourcePath, "utf8");
   assert.match(source, /현재 상태/);
   assert.match(source, /운영 콘솔 요약/);
+  assert.match(source, /운영 큐/);
+  assert.match(source, /복구 요약/);
+  assert.match(source, /단계 시간 요약/);
+  assert.match(source, /세션 건강도/);
   assert.match(source, /복구 필요 신호는 승인 필요 항목과 일부 겹칠 수 있습니다/);
   assert.match(source, /데이터 가용성/);
   assert.match(source, /현재 콘솔이 볼 수 있는 데이터/);

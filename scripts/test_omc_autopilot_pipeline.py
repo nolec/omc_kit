@@ -61,6 +61,47 @@ def test_pipeline_dry_run_creates_result_file(tmp_path: Path):
     assert "steps" in data
 
 
+def test_pipeline_dry_run_records_operational_metadata_fields(tmp_path: Path):
+    """dry-run 결과 파일에 운영 콘솔용 메타데이터가 저장돼야 한다."""
+    _run(
+        ["--target", str(tmp_path),
+         "pipeline",
+         "--instruction", "운영 메타데이터 확인용 지시문",
+         "--branch", "feat/test-operational-metadata",
+         "--mode", "full",
+         "--dry-run"],
+    )
+    result_file = tmp_path / ".omc" / "pipeline_run_result.json"
+    data = json.loads(result_file.read_text(encoding="utf-8"))
+
+    assert isinstance(data.get("last_heartbeat_at"), str)
+    assert data.get("retry_count") == 0
+    assert data.get("resume_count") == 0
+    assert data.get("approval_required") is False
+
+
+def test_pipeline_dry_run_records_step_timing_metadata(tmp_path: Path):
+    """dry-run 결과 파일의 각 step에 timing 메타데이터가 저장돼야 한다."""
+    _run(
+        ["--target", str(tmp_path),
+         "pipeline",
+         "--instruction", "스텝 타이밍 메타데이터 확인용 지시문",
+         "--branch", "feat/test-step-timing",
+         "--mode", "full",
+         "--dry-run"],
+    )
+    result_file = tmp_path / ".omc" / "pipeline_run_result.json"
+    data = json.loads(result_file.read_text(encoding="utf-8"))
+
+    for step_name in ("preflight", "plan", "task", "critique", "review", "pr"):
+        step = data["steps"].get(step_name)
+        assert step is not None, f"{step_name} step 누락"
+        assert isinstance(step.get("started_at"), str), f"{step_name} started_at 누락"
+        assert isinstance(step.get("finished_at"), str), f"{step_name} finished_at 누락"
+        assert isinstance(step.get("duration_sec"), (int, float)), f"{step_name} duration_sec 누락"
+        assert step["duration_sec"] >= 0, f"{step_name} duration_sec 음수"
+
+
 def test_pipeline_requires_instruction():
     """--instruction 없으면 exit 비0이어야 한다."""
     result = _run(["pipeline", "--dry-run"])

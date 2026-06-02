@@ -90,6 +90,28 @@ function nextActionLabel(action) {
   return map[action] ?? action ?? "해당 없음";
 }
 
+function sessionHealthLabel(value) {
+  const map = {
+    healthy: "정상",
+    attention: "주의 필요",
+    unknown: "판단 불가",
+  };
+  return map[value] ?? value ?? "해당 없음";
+}
+
+function sessionHealthReasonLabel(value) {
+  const map = {
+    running_or_idle: "현재 실행은 있으나 즉시 개입 신호가 없습니다.",
+    approval_required: "사용자 승인 또는 수동 확인이 필요한 실행이 있습니다.",
+    stale_current_run: "현재 실행의 최신 활동이 오래되어 확인이 필요합니다.",
+    action_required_runs: "보류 또는 실패 실행이 남아 있습니다.",
+    no_current_run: "현재 실행 데이터가 없습니다.",
+    unknown: "세션 건강도를 계산할 입력이 부족합니다.",
+    unavailable: "세션 건강도 데이터가 없습니다.",
+  };
+  return map[value] ?? value ?? "세션 건강도 사유가 없습니다.";
+}
+
 function availabilityLabel(value) {
   const map = {
     current_run: "현재 실행 상태",
@@ -140,6 +162,8 @@ export default async function Home() {
         <div className="panel">
           <h2>운영 콘솔 요약</h2>
           <div>액션 필요 실행: {operationsSummary.action_required_count}</div>
+          <div>승인 필요: {operationsSummary.approval_required_count}</div>
+          <div>복구 필요: {operationsSummary.recovery_required_count}</div>
           <div>보류: {operationsSummary.held_count}</div>
           <div>실패: {operationsSummary.failed_count}</div>
           <div className="muted">복구 필요 신호는 승인 필요 항목과 일부 겹칠 수 있습니다.</div>
@@ -150,6 +174,43 @@ export default async function Home() {
           <h2>다음 액션</h2>
           <div>{nextActionLabel(operationsSummary.next_action.action)}</div>
           <div className="muted">사유: {operationsSummary.next_action.reason ?? "해당 없음"}</div>
+        </div>
+      </section>
+
+      <section className="grid">
+        <div className="panel">
+          <h2>운영 큐</h2>
+          <div>승인 큐: {operationsSummary.approval_queue.length}</div>
+          <div>복구 큐: {operationsSummary.recovery_queue.length}</div>
+          <div className="muted">
+            승인 큐는 manual gate 또는 보류 상태 실행을 포함합니다.
+          </div>
+        </div>
+        <div className="panel">
+          <h2>복구 요약</h2>
+          <div>실행 중 멈춤: {operationsSummary.stale_run_count}</div>
+          <div>실패 실행: {operationsSummary.failed_count}</div>
+          <div className="muted">
+            retry 소진, stale running, failed run을 우선적으로 확인하세요.
+          </div>
+        </div>
+      </section>
+
+      <section className="grid">
+        <div className="panel">
+          <h2>단계 시간 요약</h2>
+          <div>기록된 실행: {operationsSummary.duration_summary.total_runs_with_duration}</div>
+          <div>누적 단계 시간: {operationsSummary.duration_summary.total_duration_sec}초</div>
+          <div className="muted">
+            최장 단계: {operationsSummary.duration_summary.longest_step
+              ? `${operationsSummary.duration_summary.longest_step.run_id} / ${operationsSummary.duration_summary.longest_step.name} / ${operationsSummary.duration_summary.longest_step.duration_sec}초`
+              : "해당 없음"}
+          </div>
+        </div>
+        <div className="panel">
+          <h2>세션 건강도</h2>
+          <div>{sessionHealthLabel(operationsSummary.session_health.status)}</div>
+          <div className="muted">{sessionHealthReasonLabel(operationsSummary.session_health.reason)}</div>
         </div>
       </section>
 

@@ -1206,6 +1206,52 @@ def _step_already_done(resume_data: dict | None, step: str) -> bool:
         return False
     steps = resume_data.get("steps", {})
     return steps.get(step, {}).get("status") == "completed"
+
+
+def _compute_step_duration_sec(started_at: object, finished_at: object) -> int | None:
+    started = _parse_pipeline_timestamp(started_at)
+    finished = _parse_pipeline_timestamp(finished_at)
+    if started is None or finished is None:
+        return None
+    return max(0, int((finished - started).total_seconds()))
+
+
+def _mark_pipeline_heartbeat(result: dict) -> None:
+    result["last_heartbeat_at"] = _now()
+
+
+def _sync_pipeline_retry_count(result: dict) -> None:
+    steps = result.get("steps") or {}
+    if not isinstance(steps, dict):
+        result["retry_count"] = 0
+        return
+    retry_step_count = sum(1 for name in steps if "retry" in str(name))
+    retry_attempt_count = 0
+    for step in steps.values():
+        if not isinstance(step, dict):
+            continue
+        attempt = step.get("attempt")
+        if isinstance(attempt, int) and attempt > 1:
+            retry_attempt_count += attempt - 1
+    result["retry_count"] = retry_step_count + retry_attempt_count
+
+
+def _step_payload(
+    status: str,
+    started_at: str | None,
+    finished_at: str | None = None,
+    **extra: object,
+) -> dict:
+    payload = {"status": status}
+    if started_at is not None:
+        payload["started_at"] = started_at
+    if finished_at is not None:
+        payload["finished_at"] = finished_at
+        duration_sec = _compute_step_duration_sec(started_at, finished_at)
+        if duration_sec is not None:
+            payload["duration_sec"] = duration_sec
+    payload.update(extra)
+    return payload
 _PIPELINE_MAX_RETRIES = 3
 _PIPELINE_MAX_SAME_VERDICT = 2  # 동일 verdict 연속 허용 횟수
 _VERDICT_PATTERN = r"VERDICT:\s*(PROCEED|APPROVE|BLOCK|REVISE|HOLD)"
@@ -1501,6 +1547,11 @@ def cmd_pipeline(
         "pr_url": None,
         "finished_at": None,
         "last_completed_step": None,
+        "last_heartbeat_at": started_at,
+        "retry_count": 0,
+        "resume_count": 0,
+        "approval_required": False,
+        "manual_gate_reason": None,
     }
 
     # ── resume 처리 ──────────────────────────────────────────────────────
@@ -1517,10 +1568,17 @@ def cmd_pipeline(
             return 0
         # 이전 steps를 현재 result에 복원
         result["steps"] = _resume_data.get("steps", {})
+        result["retry_count"] = int(_resume_data.get("retry_count") or 0)
+        result["resume_count"] = int(_resume_data.get("resume_count") or 0) + 1
+        result["approval_required"] = bool(_resume_data.get("approval_required", False))
+        result["manual_gate_reason"] = _resume_data.get("manual_gate_reason")
+        result["last_heartbeat_at"] = _resume_data.get("last_heartbeat_at") or started_at
         print(f"[PIPELINE] 🔄 resume: 이전 실행 결과 로드 완료")
 
     def save(status: str) -> None:
         result["status"] = status
+        _mark_pipeline_heartbeat(result)
+        _sync_pipeline_retry_count(result)
         if status in _PIPELINE_TERMINAL_STATUSES:
             result["finished_at"] = _now()
         else:
@@ -1566,15 +1624,32 @@ def cmd_pipeline(
                 print(f"[PIPELINE] ⚠️  브랜치 충돌 — {actual_branch} 으로 생성")
                 branch = actual_branch
                 result["branch"] = branch
-            result["steps"]["branch"] = {"status": "completed", "name": branch}
+            _branch_finished_at = _now()
+            result["steps"]["branch"] = _step_payload(
+                "completed",
+                _branch_finished_at,
+                _branch_finished_at,
+                name=branch,
+            )
             print(f"[PIPELINE] ✅ 브랜치 준비: {branch}")
         except RuntimeError as e:
             print(f"[PIPELINE] ❌ 브랜치 생성 실패: {e}")
-            result["steps"]["branch"] = {"status": "failed_branch", "error": str(e)}
+            _branch_failed_at = _now()
+            result["steps"]["branch"] = _step_payload(
+                "failed_branch",
+                _branch_failed_at,
+                _branch_failed_at,
+                error=str(e),
+            )
             save("failed_branch")
             return 1
 
-    result["steps"]["preflight"] = {"status": "completed"}
+    _preflight_finished_at = _now()
+    result["steps"]["preflight"] = _step_payload(
+        "completed",
+        started_at,
+        _preflight_finished_at,
+    )
     _save_pipeline_result(root, result)
 
     # ── pipeline_guard: contract-done + session-start ────────────────────
@@ -1621,13 +1696,17 @@ def cmd_pipeline(
             print("[PIPELINE] ⏭ TASK 건너뜀 (이미 완료)")
         else:
             print("\n[PIPELINE] ▶ TASK 스텝 (LITE)...")
+            task_started_at = _now()
             task_rc, task_out = _run_pipeline_step(
                 root, "task", task_prompt_lite, executor, STEP_TIMEOUT * 2, dry_run=dry_run
             )
-            result["steps"]["task"] = {
-                "status": "completed" if task_rc == 0 else "failed",
-                "output_preview": task_out[:300],
-            }
+            task_finished_at = _now()
+            result["steps"]["task"] = _step_payload(
+                "completed" if task_rc == 0 else "failed",
+                task_started_at,
+                task_finished_at,
+                output_preview=task_out[:300],
+            )
             if task_rc != 0:
                 save("failed")
                 return 1
@@ -1642,15 +1721,20 @@ def cmd_pipeline(
             print("[PIPELINE] ⏭ REVIEW 건너뜀 (이미 완료)")
         else:
             print("\n[PIPELINE] ▶ REVIEW 스텝 (LITE, retry 없음)...")
+            review_started_at = _now()
             review_rc, review_out = _run_pipeline_step(
                 root, "review", review_prompt_lite, executor, STEP_TIMEOUT, dry_run=dry_run
             )
+            review_finished_at = _now()
         review_verdict = _grep_verdict(review_out)
         print(f"  VERDICT: {review_verdict or '미감지'}")
-        result["steps"]["review"] = {
-            "status": "completed" if review_verdict == "APPROVE" else "failed",
-            "verdict": review_verdict,
-        }
+        if not _step_already_done(_resume_data, "review"):
+            result["steps"]["review"] = _step_payload(
+                "completed" if review_verdict == "APPROVE" else "failed",
+                review_started_at,
+                review_finished_at,
+                verdict=review_verdict,
+            )
         if review_verdict != "APPROVE":
             save("failed")
             return 1
@@ -1703,8 +1787,15 @@ def cmd_pipeline(
         rc = 0
         out = "[RESUME] plan skipped"
     else:
+        plan_started_at = _now()
         rc, out = _run_pipeline_step(root, "plan", plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run)
-        result["steps"]["plan"] = {"status": "completed" if rc == 0 else "failed", "output_preview": out[:300]}
+        plan_finished_at = _now()
+        result["steps"]["plan"] = _step_payload(
+            "completed" if rc == 0 else "failed",
+            plan_started_at,
+            plan_finished_at,
+            output_preview=out[:300],
+        )
     _save_pipeline_result(root, result)
 
     if rc != 0:
@@ -1723,12 +1814,18 @@ def cmd_pipeline(
     # 사람 게이트 (--auto 없으면)
     if not auto and not dry_run:
         print("\n[PIPELINE] ⏸  PLAN 완료 — 확인 후 계속하려면 Enter, 중단하려면 Ctrl-C:")
+        result["approval_required"] = True
+        result["manual_gate_reason"] = "plan_confirmation"
+        save("running")
         try:
             input()
         except (EOFError, KeyboardInterrupt):
             print("[PIPELINE] 중단됨")
             save("aborted")
             return 1
+        result["approval_required"] = False
+        result["manual_gate_reason"] = None
+        save("running")
 
     # ── TASK 스텝 ────────────────────────────────────────────────────────
     task_prompt = (
@@ -1747,6 +1844,7 @@ def cmd_pipeline(
         task_rc = 0
         task_out = "[RESUME] task skipped"
     else:
+        task_started_at = _now()
         task_rc, task_out = _run_pipeline_step(root, "task", task_prompt, executor, STEP_TIMEOUT * 2, dry_run=dry_run)
         # AMBIGUOUS_RESPONSE: verdict None 이면 1회 재시도
         if task_rc == 0 and _grep_verdict(task_out) is None:
@@ -1755,10 +1853,22 @@ def cmd_pipeline(
             task_rc, task_out = _run_pipeline_step(root, "task", retry_prompt, executor, STEP_TIMEOUT * 2, dry_run=dry_run)
             if _grep_verdict(task_out) is None:
                 print("[PIPELINE] ❌ TASK AMBIGUOUS_RESPONSE 2회 연속 — 중단")
-                result["steps"]["task"] = {"status": "failed", "output_preview": task_out[:300]}
+                task_failed_at = _now()
+                result["steps"]["task"] = _step_payload(
+                    "failed",
+                    task_started_at,
+                    task_failed_at,
+                    output_preview=task_out[:300],
+                )
                 save("failed_ambiguous_response")
                 return 1
-        result["steps"]["task"] = {"status": "completed" if task_rc == 0 else "failed", "output_preview": task_out[:300]}
+        task_finished_at = _now()
+        result["steps"]["task"] = _step_payload(
+            "completed" if task_rc == 0 else "failed",
+            task_started_at,
+            task_finished_at,
+            output_preview=task_out[:300],
+        )
     result["last_completed_step"] = "task"
     _save_pipeline_result(root, result)
 
@@ -1827,10 +1937,12 @@ def cmd_pipeline(
             )
 
             print(f"\n[PIPELINE] ▶ {loop_step.upper()} 스텝 (시도 {retry_count + 1}/{_PIPELINE_MAX_RETRIES + 1})...")
+            loop_started_at = _now()
             rc, out = _run_pipeline_step(
                 root, loop_step, loop_prompt, executor, STEP_TIMEOUT,
                 dry_run=dry_run, isolated=True,
             )
+            loop_finished_at = _now()
 
             verdict = _grep_verdict(out)
             print(f"  VERDICT: {verdict or '미감지'}")
@@ -1842,20 +1954,29 @@ def cmd_pipeline(
                     prev_critique_issues = _issues
 
             if rc == 0 and verdict in verdict_ok:
-                result["steps"][loop_step] = {"status": "completed", "verdict": verdict}
+                result["steps"][loop_step] = _step_payload(
+                    "completed",
+                    loop_started_at,
+                    loop_finished_at,
+                    verdict=verdict,
+                    attempt=retry_count + 1,
+                )
                 break
 
             # T2: BLOCK 즉시 탈출 — 재시도 없이 바로 에스컬레이션
             if rc == 0 and verdict == "BLOCK":
                 print(f"[PIPELINE] ❌ {loop_step.upper()} VERDICT: BLOCK — 즉시 탈출")
                 critique_issues = _extract_critique_issues(out)
-                result["steps"][loop_step] = {
-                    "status": "failed_critique_loop",
-                    "verdict": "BLOCK",
-                    "streak": 1,
-                    "last_output": out[:2000],
-                    "critique_issues": critique_issues,
-                }
+                result["steps"][loop_step] = _step_payload(
+                    "failed_critique_loop",
+                    loop_started_at,
+                    loop_finished_at,
+                    verdict="BLOCK",
+                    streak=1,
+                    last_output=out[:2000],
+                    critique_issues=critique_issues,
+                    attempt=retry_count + 1,
+                )
                 _save_pipeline_result(root, result)
                 same_verdict_streak = _PIPELINE_MAX_SAME_VERDICT  # 에스컬레이션 트리거
                 # 아래 에스컬레이션 블록으로 fall-through
@@ -1876,13 +1997,16 @@ def cmd_pipeline(
                 if result["steps"].get(loop_step, {}).get("verdict") != "BLOCK":
                     print(f"[PIPELINE] ❌ {loop_step.upper()} 동일 verdict({verdict}) {same_verdict_streak + 1}회 연속 — 탈출")
                     critique_issues = _extract_critique_issues(out)
-                    result["steps"][loop_step] = {
-                        "status": "failed_critique_loop",
-                        "verdict": verdict,
-                        "streak": same_verdict_streak + 1,
-                        "last_output": out[:2000],
-                        "critique_issues": critique_issues,
-                    }
+                    result["steps"][loop_step] = _step_payload(
+                        "failed_critique_loop",
+                        loop_started_at,
+                        loop_finished_at,
+                        verdict=verdict,
+                        streak=same_verdict_streak + 1,
+                        last_output=out[:2000],
+                        critique_issues=critique_issues,
+                        attempt=retry_count + 1,
+                    )
                     _save_pipeline_result(root, result)
                 else:
                     critique_issues = (
@@ -1920,13 +2044,17 @@ def cmd_pipeline(
                         + _CRITIQUE_QUALITY_HINT
                     )
                     print("\n[PIPELINE] ▶ TASK 재실행 (critique 이슈 반영)...")
+                    task_retry_started_at = _now()
                     task_retry_rc, task_retry_out = _run_pipeline_step(
                         root, "task_retry", task_retry_prompt, executor, STEP_TIMEOUT * 2, dry_run=dry_run
                     )
-                    result["steps"]["task_retry"] = {
-                        "status": "completed" if task_retry_rc == 0 else "failed",
-                        "output_preview": task_retry_out[:300],
-                    }
+                    task_retry_finished_at = _now()
+                    result["steps"]["task_retry"] = _step_payload(
+                        "completed" if task_retry_rc == 0 else "failed",
+                        task_retry_started_at,
+                        task_retry_finished_at,
+                        output_preview=task_retry_out[:300],
+                    )
                     result["last_completed_step"] = "task_retry"
                     _save_pipeline_result(root, result)
                     if task_retry_rc != 0:
@@ -1963,13 +2091,17 @@ def cmd_pipeline(
                         "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: HOLD`를 출력하세요."
                     )
                     print("\n[PIPELINE] ▶ PLAN 재실행 (critique 이슈 반영)...")
+                    plan_retry_started_at = _now()
                     plan_rc, plan_out = _run_pipeline_step(
                         root, "plan_retry", retry_plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run
                     )
-                    result["steps"]["plan_retry"] = {
-                        "status": "completed" if plan_rc == 0 else "failed",
-                        "output_preview": plan_out[:300],
-                    }
+                    plan_retry_finished_at = _now()
+                    result["steps"]["plan_retry"] = _step_payload(
+                        "completed" if plan_rc == 0 else "failed",
+                        plan_retry_started_at,
+                        plan_retry_finished_at,
+                        output_preview=plan_out[:300],
+                    )
                     result["last_completed_step"] = "plan_retry"
                     _save_pipeline_result(root, result)
                     if plan_rc != 0:
@@ -2000,12 +2132,15 @@ def cmd_pipeline(
                 critique_issues = prev_critique_issues or _extract_critique_issues(out)
                 if not critique_issues:
                     critique_issues = f"{loop_step} retry exhausted without parseable critique issues"
-                result["steps"][loop_step] = {
-                    "status": "retry_exhausted",
-                    "verdict": verdict,
-                    "last_output": out[:300],
-                    "critique_issues": critique_issues[:2000],
-                }
+                result["steps"][loop_step] = _step_payload(
+                    "retry_exhausted",
+                    loop_started_at,
+                    loop_finished_at,
+                    verdict=verdict,
+                    last_output=out[:300],
+                    critique_issues=critique_issues[:2000],
+                    attempt=retry_count,
+                )
                 _save_pipeline_result(root, result)
 
                 # retry_exhausted → task_retry 복구 시도 (critique 스텝에서만)
@@ -2029,13 +2164,17 @@ def cmd_pipeline(
                         + _CRITIQUE_QUALITY_HINT
                     )
                     print("\n[PIPELINE] ▶ TASK 재실행 (retry_exhausted 복구)...")
+                    task_retry_started_at = _now()
                     task_retry_rc, task_retry_out = _run_pipeline_step(
                         root, "task_retry", task_retry_prompt, executor, STEP_TIMEOUT * 2, dry_run=dry_run
                     )
-                    result["steps"]["task_retry"] = {
-                        "status": "completed" if task_retry_rc == 0 else "failed",
-                        "output_preview": task_retry_out[:300],
-                    }
+                    task_retry_finished_at = _now()
+                    result["steps"]["task_retry"] = _step_payload(
+                        "completed" if task_retry_rc == 0 else "failed",
+                        task_retry_started_at,
+                        task_retry_finished_at,
+                        output_preview=task_retry_out[:300],
+                    )
                     _save_pipeline_result(root, result)
                     if task_retry_rc == 0 and _grep_verdict(task_retry_out) not in ("BLOCK", None):
                         # critique 루프 재진입
@@ -2058,6 +2197,7 @@ def cmd_pipeline(
     # ── PR 생성 ──────────────────────────────────────────────────────────
     pr_url = None
     if not dry_run:
+        pr_started_at = _now()
         git_push = subprocess.run(
             ["git", "push", "-u", "origin", branch],
             capture_output=True, text=True, cwd=str(root),
@@ -2077,15 +2217,27 @@ def cmd_pipeline(
                 print(f"[PIPELINE] ⚠️  PR 생성 실패: {pr_proc.stderr.strip()[:150]}")
         else:
             print(f"[PIPELINE] ❌ git push 실패: {git_push.stderr.strip()[:150]}")
-            result["steps"]["pr"] = {"status": "failed", "reason": "push_failed"}
+            pr_finished_at = _now()
+            result["steps"]["pr"] = _step_payload(
+                "failed",
+                pr_started_at,
+                pr_finished_at,
+                reason="push_failed",
+            )
             save("failed")
             return 1
     else:
+        pr_started_at = _now()
         pr_url = "[DRY-RUN] PR URL"
         print(f"[PIPELINE] [DRY-RUN] PR 생성 시뮬레이션")
 
     result["pr_url"] = pr_url
-    result["steps"]["pr"] = {"status": "completed" if pr_url else "failed"}
+    pr_finished_at = _now()
+    result["steps"]["pr"] = _step_payload(
+        "completed" if pr_url else "failed",
+        pr_started_at,
+        pr_finished_at,
+    )
     save("completed")
     print(f"\n[PIPELINE] ✅ 완료  결과: {_PIPELINE_RESULT_PATH}")
     return 0

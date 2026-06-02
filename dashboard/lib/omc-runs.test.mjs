@@ -52,12 +52,12 @@ test("operations console v1 data availability declares available and unavailable
     "run_status_counts",
     "known_reason_buckets",
     "next_action_rule",
+    "per_step_duration",
   ]);
   assert.deepEqual(OPERATIONS_CONSOLE_V1_DATA_AVAILABILITY.unavailable, [
     "queue_depth",
     "worker_health",
     "parallel_agent_count",
-    "per_step_duration",
   ]);
 });
 
@@ -78,6 +78,12 @@ test("buildOperationsConsoleSummary returns action required counts and freshness
     run_id: "current",
     status: "running",
     started_at: "2026-05-31T11:50:00Z",
+    approval_required: true,
+    step_duration_summary: {
+      total_duration_sec: 21,
+      total_steps_with_duration: 2,
+      longest_step: { name: "task", duration_sec: 13 },
+    },
     failed_step: null,
   };
   const recentRuns = [
@@ -108,17 +114,29 @@ test("buildOperationsConsoleSummary returns action required counts and freshness
     staleMinutes: 10,
   });
 
-  assert.equal(summary.action_required_count, 2);
-  assert.equal(summary.approval_required_count, 1);
+  assert.equal(summary.action_required_count, 3);
+  assert.equal(summary.approval_required_count, 2);
   assert.equal(summary.recovery_required_count, 2);
   assert.equal(summary.held_count, 1);
   assert.equal(summary.failed_count, 1);
   assert.equal(summary.stale_run_count, 1);
   assert.equal(summary.idle_run_count, 0);
   assert.equal(summary.freshness_status, "fresh");
-  assert.equal(summary.next_action.action, "review_held_run");
+  assert.equal(summary.session_health.status, "attention");
+  assert.equal(summary.session_health.reason, "approval_required");
+  assert.equal(summary.next_action.action, "review_approval_required_run");
+  assert.equal(summary.next_action.reason, "approval_required");
   assert.equal(summary.reason_buckets.stale_running, 1);
   assert.equal(summary.reason_buckets.retry_exhausted, 1);
+  assert.equal(summary.approval_queue.length, 2);
+  assert.equal(summary.recovery_queue.length, 2);
+  assert.equal(summary.duration_summary.total_runs_with_duration, 1);
+  assert.equal(summary.duration_summary.total_duration_sec, 21);
+  assert.deepEqual(summary.duration_summary.longest_step, {
+    run_id: "current",
+    name: "task",
+    duration_sec: 13,
+  });
   assert.deepEqual(summary.reason_breakdown, [
     { key: "retry_exhausted", label: "재시도 소진", count: 1 },
     { key: "stale_running", label: "실행 중 멈춤", count: 1 },
@@ -202,6 +220,32 @@ test("buildOperationsConsoleSummary reports idle current run when it is not runn
   assert.equal(summary.recovery_required_count, 0);
 });
 
+test("buildOperationsConsoleSummary treats approval_required current run as action required even without held or failed runs", async () => {
+  const currentRun = {
+    run_id: "current-awaiting-approval",
+    status: "running",
+    started_at: "2026-05-31T11:50:00Z",
+    approval_required: true,
+    failed_step: null,
+  };
+
+  const summary = buildOperationsConsoleSummary(currentRun, [], {
+    now: "2026-05-31T12:00:00Z",
+    currentUpdatedAt: "2026-05-31T11:57:00Z",
+    staleMinutes: 10,
+  });
+
+  assert.equal(summary.action_required_count, 1);
+  assert.equal(summary.approval_required_count, 1);
+  assert.equal(summary.recovery_required_count, 0);
+  assert.equal(summary.held_count, 0);
+  assert.equal(summary.failed_count, 0);
+  assert.equal(summary.next_action.action, "review_approval_required_run");
+  assert.equal(summary.next_action.reason, "approval_required");
+  assert.equal(summary.session_health.status, "attention");
+  assert.equal(summary.session_health.reason, "approval_required");
+});
+
 test("listRecentRuns returns at most maxRuns sorted by run_id desc", async () => {
   const root = await mktempDir();
   const runsDir = path.join(root, ".omc", "runs");
@@ -250,10 +294,28 @@ test("summarizeRun accepts compact UTC started_at emitted by autopilot", async (
   const summary = summarizeRun("run-compact", {
     status: "completed",
     started_at: "2026-06-01T085646Z",
-    steps: {},
+    approval_required: true,
+    retry_count: 2,
+    resume_count: 1,
+    last_heartbeat_at: "2026-06-01T08:57:00Z",
+    manual_gate_reason: "plan_confirmation",
+    steps: {
+      plan: { status: "completed", started_at: "2026-06-01T08:56:46Z", finished_at: "2026-06-01T08:56:49Z", duration_sec: 3 },
+      task: { status: "completed", started_at: "2026-06-01T08:56:49Z", finished_at: "2026-06-01T08:56:59Z", duration_sec: 10 },
+    },
   });
   assert.equal(summary.status, "completed");
   assert.equal(summary.failed_step, null);
+  assert.equal(summary.approval_required, true);
+  assert.equal(summary.retry_count, 2);
+  assert.equal(summary.resume_count, 1);
+  assert.equal(summary.last_heartbeat_at, "2026-06-01T08:57:00Z");
+  assert.equal(summary.manual_gate_reason, "plan_confirmation");
+  assert.deepEqual(summary.step_duration_summary, {
+    total_duration_sec: 13,
+    total_steps_with_duration: 2,
+    longest_step: { name: "task", duration_sec: 10 },
+  });
 });
 
 test("summarizeRun preserves operational statuses including cancelled timeout and held", async () => {
