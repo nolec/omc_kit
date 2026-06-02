@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 90
+MAX_NON_EMPTY_LINES = 44
 
 REQUIRED_STATUS_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-status" / "SKILL.md",
@@ -57,6 +57,11 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "이유",
     "커밋 대상 아님",
     "남은 스킬 후보",
+]
+
+REQUIRED_FOCUS_MARKERS = [
+    "사용자에게 보여줄 것",
+    "시스템이 암묵적으로 처리",
 ]
 
 MUTATING_COMMAND_PATTERNS = [
@@ -180,6 +185,12 @@ def test_status_skill_preserves_required_behavior_markers():
     text = _read(REQUIRED_STATUS_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_BEHAVIOR_MARKERS if marker not in text]
     assert not missing, f"missing behavior markers: {missing}"
+
+
+def test_status_skill_explains_visible_vs_implicit_work():
+    text = _read(REQUIRED_STATUS_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
+    assert not missing, f"missing focus markers: {missing}"
 
 
 def test_status_skill_does_not_suggest_mutating_commands():
