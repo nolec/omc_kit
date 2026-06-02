@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 90
+MAX_NON_EMPTY_LINES = 58
 
 REQUIRED_REVIEW_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-review" / "SKILL.md",
@@ -53,6 +53,11 @@ REQUIRED_SEQUENCE = [
     "REVISE",
     "APPROVE WITH NOTES",
     "APPROVE",
+]
+
+REQUIRED_FOCUS_MARKERS = [
+    "리뷰어가 사용자에게 바로 보여줄 것",
+    "시스템이 암묵적으로 처리",
 ]
 
 
@@ -132,3 +137,9 @@ def test_review_skill_preserves_required_execution_order():
             cursor = next_pos
 
     assert not missing_or_reordered, f"missing or reordered markers: {missing_or_reordered}"
+
+
+def test_review_skill_explains_visible_vs_implicit_work():
+    text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
+    assert not missing, f"missing focus markers: {missing}"
