@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 95
+MAX_NON_EMPTY_LINES = 64
 
 REQUIRED_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-autopilot" / "SKILL.md",
@@ -65,6 +65,11 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "benchmark-report",
     "N/A",
     "이유",
+]
+
+REQUIRED_FOCUS_MARKERS = [
+    "사용자에게 보여줄 것",
+    "시스템이 암묵적으로 처리",
 ]
 
 CLI_OPTIONS = [
@@ -164,6 +169,12 @@ def test_omc_autopilot_skill_preserves_required_behavior_markers():
     text = _read(REQUIRED_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_BEHAVIOR_MARKERS if marker not in text]
     assert not missing, f"missing behavior markers: {missing}"
+
+
+def test_omc_autopilot_skill_explains_visible_vs_implicit_work():
+    text = _read(REQUIRED_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
+    assert not missing, f"missing focus markers: {missing}"
 
 
 def test_documented_pipeline_options_exist_in_real_cli():
