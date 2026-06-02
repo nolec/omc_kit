@@ -5,7 +5,8 @@ description: "코딩 전 제품 사고 강제. 6개 질문 필수 답변. 트리
 
 # OMC Office Hours
 
-코딩 전 제품 게이트입니다. 방향이 모호하면 `$omc-brainstorm`, 범위·우선순위가 흔들리면 `$omc-ceo-review`로 돌립니다.
+코딩 전 제품 게이트입니다. 사용자에게 보여줄 것: Q1~Q6 / 판정 / 다음 액션
+시스템이 암묵적으로 처리: 6개 답변 완료 전 코딩 금지, 사용자 판단 전 PROCEED 금지. 방향이 모호하면 `$omc-brainstorm`, 범위·우선순위가 흔들리면 `$omc-ceo-review`로 돌립니다.
 
 ## Phase 0. 컨텍스트 확인
 
