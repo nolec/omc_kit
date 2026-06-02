@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 90
+MAX_NON_EMPTY_LINES = 52
 
 REQUIRED_LESSON_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-lesson" / "SKILL.md",
@@ -64,6 +64,11 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "general",
     "제목/증상/원인/규칙",
     "불명확하면",
+]
+
+REQUIRED_FOCUS_MARKERS = [
+    "사용자에게 보여줄 것",
+    "시스템이 암묵적으로 처리",
 ]
 
 VALID_LESSON_SAMPLE = """
@@ -161,6 +166,12 @@ def test_lesson_skill_preserves_required_behavior_markers():
     text = _read(REQUIRED_LESSON_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_BEHAVIOR_MARKERS if marker not in text]
     assert not missing, f"missing behavior markers: {missing}"
+
+
+def test_lesson_skill_explains_visible_vs_implicit_work():
+    text = _read(REQUIRED_LESSON_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
+    assert not missing, f"missing focus markers: {missing}"
 
 
 def test_lesson_skill_does_not_document_unsupported_update_command():
