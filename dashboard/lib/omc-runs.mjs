@@ -6,6 +6,7 @@ const KNOWN_RUN_STATUSES = new Set([
   "running",
   "completed",
   "failed",
+  "retry_exhausted",
   "cancelled",
   "timeout",
   "held",
@@ -263,9 +264,15 @@ export function buildOperationsConsoleSummary(currentRun, recentRuns, options = 
   }
 
   const heldRuns = operationalRuns.filter((run) => run?.status === "held");
-  const failedRuns = operationalRuns.filter((run) => run?.status === "failed");
+  const failedRuns = operationalRuns.filter(
+    (run) => run?.status === "failed" || run?.status === "retry_exhausted",
+  );
   const actionRequiredRuns = operationalRuns.filter(
-    (run) => run?.status === "held" || run?.status === "failed" || run?.approval_required === true,
+    (run) =>
+      run?.status === "held" ||
+      run?.status === "failed" ||
+      run?.status === "retry_exhausted" ||
+      run?.approval_required === true,
   );
   const reasonBuckets = {};
 
@@ -286,7 +293,7 @@ export function buildOperationsConsoleSummary(currentRun, recentRuns, options = 
     .sort((a, b) => a.key.localeCompare(b.key));
   const approvalQueue = operationalRuns.filter((run) => run?.status === "held" || run?.approval_required === true);
   const recoveryQueue = operationalRuns.filter((run) => {
-    if (run?.status === "failed") {
+    if (run?.status === "failed" || run?.status === "retry_exhausted") {
       return true;
     }
     if (normalizeReason(run?.failed_step?.reason) === "stale_running") {

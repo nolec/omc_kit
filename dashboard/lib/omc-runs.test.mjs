@@ -287,6 +287,48 @@ test("buildOperationsConsoleSummary preserves approval queue semantics for plan 
   });
 });
 
+test("buildOperationsConsoleSummary treats real retry_exhausted artifact as recovery required", async () => {
+  const currentRun = summarizeRun("20260601T110029-e4a5f1c5", {
+    status: "retry_exhausted",
+    mode: "full",
+    branch: "feat/dashboard-ops-v2",
+    started_at: "2026-06-01T01:46:35Z",
+    finished_at: "2026-06-01T02:00:29Z",
+    retry_count: 3,
+    steps: {
+      plan: { status: "completed" },
+      task: { status: "completed" },
+      critique: {
+        status: "retry_exhausted",
+        verdict: "REVISE",
+        reason: "retry_exhausted",
+      },
+      task_retry: { status: "completed" },
+      plan_retry: { status: "completed" },
+      stale_recovery: {
+        status: "auto_hold",
+        reason: "pipeline pid not running: 76476",
+      },
+    },
+    last_completed_step: "task_retry",
+  });
+
+  const summary = buildOperationsConsoleSummary(currentRun, [], {
+    now: "2026-06-01T02:00:29Z",
+    currentUpdatedAt: "2026-06-01T02:00:29Z",
+    staleMinutes: 10,
+  });
+
+  assert.equal(summary.action_required_count, 1);
+  assert.equal(summary.approval_required_count, 0);
+  assert.equal(summary.recovery_required_count, 1);
+  assert.equal(summary.failed_count, 1);
+  assert.equal(summary.reason_buckets.retry_exhausted, 1);
+  assert.equal(summary.recovery_queue.length, 1);
+  assert.equal(summary.next_action.action, "inspect_failed_run");
+  assert.equal(summary.next_action.reason, "retry_exhausted");
+});
+
 test("listRecentRuns returns at most maxRuns sorted by run_id desc", async () => {
   const root = await mktempDir();
   const runsDir = path.join(root, ".omc", "runs");
