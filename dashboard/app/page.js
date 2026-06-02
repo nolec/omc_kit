@@ -161,6 +161,7 @@ export default async function Home() {
       <section className="grid">
         <div className="panel">
           <h2>운영 콘솔 요약</h2>
+          <div className="muted">단일 executor 기준으로 동작하는 read-only 운영 콘솔입니다.</div>
           <div>액션 필요 실행: {operationsSummary.action_required_count}</div>
           <div>승인 필요: {operationsSummary.approval_required_count}</div>
           <div>복구 필요: {operationsSummary.recovery_required_count}</div>
@@ -216,6 +217,7 @@ export default async function Home() {
 
       <section className="panel">
         <h2>데이터 가용성</h2>
+        <div className="muted">queue 적체와 worker 상태는 아직 수집하지 않습니다.</div>
         <div className="muted">현재 콘솔이 볼 수 있는 데이터</div>
         <ul>
           {operationsSummary.data_availability.available.map((item) => (
