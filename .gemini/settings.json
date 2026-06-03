@@ -2,7 +2,7 @@
   "hooks": {
     "BeforeTool": [
       {
-        "matcher": "write_file|replace|edit|overwrite_file|str_replace",
+        "matcher": "write_file|replace",
         "hooks": [
           {
             "type": "command",

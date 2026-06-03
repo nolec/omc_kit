@@ -104,6 +104,28 @@ class TestGeminiBeforeTool(unittest.TestCase):
         code = _run(_gemini_payload("write_file"), _FAKE_GUARD_BLOCK, {"OMC_BLOCK_EXIT": "1"})
         self.assertEqual(code, 1, f"OMC_BLOCK_EXIT=1이면 exit 1이어야 함, 실제: {code}")
 
+    def test_overwrite_file_not_matched_by_gemini_matcher(self):
+        """overwrite_file은 Gemini 공식 tool이 아니다 — 가드 허용 시 exit 0.
+
+        .gemini/settings.json의 matcher를 write_file|replace 로 간소화하면
+        overwrite_file에는 BeforeTool 훅 자체가 발동하지 않는다.
+        스크립트 case 문에는 있지만 Gemini에서 오는 payload가 없으므로 exit 0.
+        """
+        code = _run(_gemini_payload("overwrite_file"), _FAKE_GUARD_ALLOW)
+        self.assertEqual(code, 0, f"overwrite_file 가드 허용 시 exit 0, 실제: {code}")
+
+    def test_unknown_gemini_tool_is_allowed(self):
+        """matcher에 없는 Gemini tool(glob, list_directory 등)은 exit 0."""
+        for tool in ("glob", "list_directory", "read_many_files", "run_shell_command"):
+            with self.subTest(tool=tool):
+                payload = {
+                    "hook_event_name": "BeforeTool",
+                    "tool_name": tool,
+                    "tool_input": {},
+                }
+                code = _run(payload, _FAKE_GUARD_BLOCK)
+                self.assertEqual(code, 0, f"{tool}은 허용돼야 함, 실제: {code}")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

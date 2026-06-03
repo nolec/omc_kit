@@ -1,20 +1,23 @@
 #!/bin/sh
-# omc-pipeline-check.sh — 공용 파이프라인 가드 (Claude Code / Codex PreToolUse)
+# omc-pipeline-check.sh — 공용 파이프라인 가드
 #
-# Claude Code: PreToolUse 훅에서 호출
+# 지원 LLM: Claude Code (PreToolUse), Codex (PreToolUse), Gemini CLI (BeforeTool)
+#
+# 차단 exit code:
 #   exit 0  → 허용
-#   exit 2  → 차단 (Claude Code 기본)
+#   exit 2  → 차단 기본 (Claude Code / Gemini CLI 표준)
+#   exit 1  → 차단 Codex 호환 (OMC_BLOCK_EXIT=1 환경변수로 지정)
 #
-# Codex: OMC_BLOCK_EXIT=1 설정 시 exit 1 로 차단 (Codex 호환)
-#   export OMC_BLOCK_EXIT=1  (.codex/hooks.json env 설정 또는 래퍼에서 지정)
-#
-# stdin: 도구 호출 JSON
+# stdin: 도구 호출 JSON (LLM별 tool 이름)
 # {
-#   "tool_name": "Write" | "Edit" | "MultiEdit" | "create_file",
+#   "tool_name": "Write"|"create_file"          (Claude Code — 신규 파일)
+#              | "Edit"|"MultiEdit"              (Claude Code — 수정)
+#              | "write_file"                    (Gemini CLI  — 신규/덮어쓰기)
+#              | "replace"                       (Gemini CLI  — 수정)
 #   "tool_input": { "file_path": "...", ... }
 # }
-# Write/create_file → 모든 경로 세션 검사
-# Edit/MultiEdit    → 민감 경로(scripts/, .agent-hooks/ 등)만 세션 검사
+# write / write_file / create_file → 모든 경로 세션 검사
+# edit / replace                   → 민감 경로(scripts/, .agent-hooks/ 등)만 검사
 
 PYTHON_BIN="python3"
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
