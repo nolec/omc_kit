@@ -375,3 +375,29 @@ python3 scripts/omc_autopilot.py status
 > 2. 어떤 요구사항을 놓쳤나?
 > 3. 다음에 추가할 규칙은?
 > 교훈이 있으면 `python3 scripts/omc_lesson.py add -i` 로 기록합니다 (30초).
+
+---
+
+## ⛔ 스킬 완료 후 자동 진행 금지 (MANDATORY — 모든 LLM 공통)
+
+**AI는 아래 상황에서 반드시 멈추고 사용자의 다음 명령을 기다린다.**
+
+스킬이 완료되면 판정·결과를 출력한 뒤 다음 스킬로 자동 진입하지 않는다.
+사용자가 "진행하자", "계속해", "응" 같은 짧은 승인을 해도
+**명시적으로 다음 스킬 이름이 언급되지 않으면 자동 진입 금지.**
+
+| 완료된 스킬 | 금지 동작 |
+|---|---|
+| omc-office-hours | PROCEED 판정 후 자동으로 omc-plan 실행 금지 |
+| omc-plan | Phase 완료 후 자동으로 omc-task 실행 금지 |
+| omc-critique | 판정 후 자동으로 omc-plan/omc-task 실행 금지 |
+| omc-benchmark | 분석 후 자동으로 omc-office-hours/omc-plan 실행 금지 |
+| omc-brainstorm | 결론 후 자동으로 omc-plan 실행 금지 |
+| omc-task | 완료 후 자동으로 omc-review/omc-ship 실행 금지 |
+
+**올바른 동작:**
+> "PROCEED 판정입니다. 다음으로 `/omc-plan` 진행할까요?"
+> → 여기서 멈추고 사용자 응답을 기다린다.
+
+**금지 동작:**
+> "PROCEED 판정입니다. 바로 플랜을 작성하겠습니다. [plan 내용 시작]..."

@@ -52,3 +52,13 @@ OMC_EXECUTOR=claude python3 scripts/omc.py hook session_start --target .
 권장 순서 (코어만): `/plan` → `/task` → `/review` → `/ship`
 
 세부 규칙 전체: **AGENTS.md** 참조
+
+---
+
+## ⛔ 스킬 완료 후 자동 진행 금지 (MANDATORY)
+
+스킬이 완료되면 판정·결과를 출력한 뒤 다음 스킬로 자동 진입하지 않는다.
+사용자가 "진행하자", "계속해", "응" 같은 짧은 승인을 해도
+**명시적으로 다음 스킬 이름이 언급되지 않으면 자동 진입 금지.**
+
+상세 규칙 및 금지 동작 목록: **AGENTS.md** `## ⛔ 스킬 완료 후 자동 진행 금지` 참조
