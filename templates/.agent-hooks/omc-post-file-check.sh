@@ -29,7 +29,7 @@ print(inp.get("file_path") or inp.get("target_file") or inp.get("path") or "(unk
 
 # policy + 세션 상태 확인
 _OMC_PY="$(mktemp /tmp/omc_post_XXXXXX.py)"
-_OMC_OUT="$(mktemp -t omc_post_out_XXXXXX)"
+_OMC_OUT="$(mktemp /tmp/omc_post_out_XXXXXX)"
 
 cat > "${_OMC_PY}" << 'OMCPYEOF'
 import json, sys

@@ -31,4 +31,4 @@ jobs:
 
       - name: OMC TDD Gate (omc_tdd_check)
         run: |
-          python3 scripts/omc_tdd_check.py --report-only
+          python3 scripts/omc_tdd_check.py --run-tests

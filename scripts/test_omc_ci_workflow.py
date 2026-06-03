@@ -49,9 +49,11 @@ class TestOmcCiWorkflow(unittest.TestCase):
         self.assertIn("test_omc_post_file_check", c, "post-file-check 테스트 --ignore 없음")
 
     def test_has_omc_tdd_check_step(self):
-        """omc_tdd_check.py --run-tests step 포함."""
+        """omc_tdd_check.py --run-tests step 포함 (--report-only는 exit 0 → CI 무효)."""
         c = _content()
         self.assertIn("omc_tdd_check", c, "omc_tdd_check.py step 없음")
+        self.assertIn("--run-tests", c, "--report-only는 항상 exit 0 — --run-tests여야 CI에서 차단됨")
+        self.assertNotIn("--report-only", c, "--report-only 사용 금지 (CI 게이트 무효화)")
 
     def test_checkout_action_present(self):
         """actions/checkout step 포함."""
