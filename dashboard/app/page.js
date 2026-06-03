@@ -82,12 +82,20 @@ function freshnessHelpText(value) {
 
 function nextActionLabel(action) {
   const map = {
+    review_approval_required_run: "승인 대기 실행 확인",
     review_held_run: "보류 실행 확인",
     inspect_failed_run: "실패 실행 점검",
     check_session_freshness: "세션 최신성 확인",
     none: "즉시 조치 없음",
   };
   return map[action] ?? action ?? "해당 없음";
+}
+
+function manualGateReasonLabel(value) {
+  const map = {
+    plan_confirmation: "계획 확인 필요",
+  };
+  return map[value] ?? value ?? "해당 없음";
 }
 
 function sessionHealthLabel(value) {
@@ -193,6 +201,15 @@ export default async function Home() {
           <div>실패 실행: {operationsSummary.failed_count}</div>
           <div className="muted">
             retry 소진, stale running, failed run을 우선적으로 확인하세요.
+          </div>
+        </div>
+        <div className="panel">
+          <h2>승인 대기 상세</h2>
+          <div>수동 게이트 사유: {manualGateReasonLabel(current?.manual_gate_reason)}</div>
+          <div>누적 재시도: {current?.retry_count ?? 0}</div>
+          <div>재개 횟수: {current?.resume_count ?? 0}</div>
+          <div className="muted">
+            현재 실행이 승인 대기 상태가 아니면 참고용 운영 신호만 표시합니다.
           </div>
         </div>
       </section>

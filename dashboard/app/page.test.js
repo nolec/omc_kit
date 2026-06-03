@@ -13,6 +13,10 @@ test("home page renders current status and latest run detail sections", async ()
   assert.match(source, /현재 상태/);
   assert.match(source, /운영 콘솔 요약/);
   assert.match(source, /운영 큐/);
+  assert.match(source, /승인 대기 상세/);
+  assert.match(source, /수동 게이트 사유/);
+  assert.match(source, /누적 재시도/);
+  assert.match(source, /재개 횟수/);
   assert.match(source, /복구 요약/);
   assert.match(source, /단계 시간 요약/);
   assert.match(source, /세션 건강도/);
