@@ -56,11 +56,13 @@ _is_sensitive_path() {
 }
 
 # 도구 종류별 처리
+# Claude Code: Write, create_file, Edit, MultiEdit
+# Gemini CLI:  write_file, replace, overwrite_file, edit
 case "${TOOL_NAME}" in
-  Write|create_file)
-    # 신규 파일 생성: 경로 무관 항상 세션 검사
+  Write|create_file|write_file|overwrite_file)
+    # 신규/덮어쓰기 파일 생성: 경로 무관 항상 세션 검사
     ;;
-  Edit|MultiEdit)
+  Edit|MultiEdit|replace|edit|str_replace)
     # 기존 파일 수정: 민감 경로일 때만 세션 검사
     EARLY_PATH="$(
       printf '%s' "${INPUT_JSON}" | "${PYTHON_BIN}" -c '
