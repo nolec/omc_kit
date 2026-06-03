@@ -861,16 +861,20 @@ def _install_shared_lessons(kit: Path, tgt: Path) -> None:
         return
 
     lessons_dir = tgt / ".omc" / "lessons"
+    candidates = sorted(shared_dir.glob("*.md"))
+    if not candidates:
+        return
+
     lessons_dir.mkdir(parents=True, exist_ok=True)
 
     copied = 0
     skipped = 0
-    for src in sorted(shared_dir.glob("*.md")):
+    for src in candidates:
         dst = lessons_dir / src.name
         if dst.exists():
             skipped += 1
             continue
-        _copy(src, dst, force=False)
+        _copy(src, dst, force=True)
         copied += 1
 
     if copied or skipped:
