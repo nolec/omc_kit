@@ -191,6 +191,7 @@ export default async function Home() {
           <h2>운영 큐</h2>
           <div>승인 큐: {operationsSummary.approval_queue.length}</div>
           <div>복구 큐: {operationsSummary.recovery_queue.length}</div>
+          <div>승인 사유 요약: {manualGateReasonLabel(operationsSummary.approval_queue[0]?.manual_gate_reason)}</div>
           <div className="muted">
             승인 큐는 manual gate 또는 보류 상태 실행을 포함합니다.
           </div>
