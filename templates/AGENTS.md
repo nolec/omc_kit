@@ -19,8 +19,8 @@ OMC_EXECUTOR=codex python3 scripts/omc.py state init --target . && \
 OMC_EXECUTOR=codex python3 scripts/omc.py hook session_start --target .
 ```
 
-> Cursor는 `.cursor/hooks.json`, Claude Code는 `.claude/settings.json`, Gemini CLI는 `.gemini/settings.json`의 `SessionStart` 훅이 이를 자동 처리합니다.
-> Codex 등 훅 미지원 환경에서는 AI가 직접 위 명령을 실행합니다.
+> Cursor는 `.cursor/hooks.json`, Claude Code는 `.claude/settings.json`, Gemini CLI는 `.gemini/settings.json`, Codex는 `.codex/hooks.json`의 `SessionStart` 훅이 이를 자동 처리합니다.
+> 훅이 실행되지 않는 환경에서는 AI가 직접 위 명령을 실행합니다.
 
 ## AI 도구 우회 절대 금지 (CRITICAL)
 
@@ -121,7 +121,8 @@ PHASE 5 ▸ REFACTOR + TDD GATE  🔵
 |---|---|---|---|
 | Cursor | `beforeToolCall` → `omc_pipeline_guard.py` | pre-commit hook | `omc_tdd_check.py` |
 | Claude Code | `PreToolUse` → `omc-pipeline-check.sh` | pre-commit hook | `omc_tdd_check.py` |
-| Gemini/Codex | 프롬프트 양식 (물리 차단: pre-commit) | pre-commit hook | `omc_tdd_check.py` |
+| Codex | `PreToolUse` → `omc-pipeline-check.sh` (미검증) | pre-commit hook | `omc_tdd_check.py` |
+| Gemini | 프롬프트 양식 (물리 차단: pre-commit) | pre-commit hook | `omc_tdd_check.py` |
 
 자연어 요청 대신 아래 커맨드를 직접 사용할 수 있습니다.
 
