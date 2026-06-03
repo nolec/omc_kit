@@ -320,11 +320,15 @@ export default async function Home() {
         ) : (
           <>
             <div className="muted">Run ID: {selected.run_id}</div>
+            <div className="muted">단계 타임라인</div>
             <table>
               <thead>
                 <tr>
                   <th>단계</th>
                   <th>상태</th>
+                  <th>시작 시간</th>
+                  <th>종료 시간</th>
+                  <th>소요 시간</th>
                   <th>판정</th>
                   <th>사유 / 오류</th>
                 </tr>
@@ -334,6 +338,9 @@ export default async function Home() {
                   <tr key={stepName}>
                     <td>{stepName}</td>
                     <td className={statusClass(step?.status)}>{statusLabel(step?.status)}</td>
+                    <td>{formatKst(step?.started_at)}</td>
+                    <td>{formatKst(step?.finished_at)}</td>
+                    <td>{step?.duration_sec ?? "N/A"}</td>
                     <td>{renderVerdict(step?.verdict)}</td>
                     <td>{renderReasonOrError(step)}</td>
                   </tr>

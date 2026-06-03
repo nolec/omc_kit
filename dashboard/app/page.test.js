@@ -31,6 +31,10 @@ test("home page renders current status and latest run detail sections", async ()
   assert.match(source, /다음 액션/);
   assert.match(source, /최근 실행 이력/);
   assert.match(source, /최신 실행 상세/);
+  assert.match(source, /단계 타임라인/);
+  assert.match(source, /시작 시간/);
+  assert.match(source, /종료 시간/);
+  assert.match(source, /소요 시간/);
   assert.match(source, /현재 실행은 있지만 최신 활동 시각이 없습니다/);
   assert.match(source, /현재 실행 데이터가 없습니다/);
   assert.match(source, /Asia\/Seoul/);
