@@ -220,6 +220,8 @@ def _collect_codebase_index(root: Path) -> str:
     root = Path(root)
 
     # 1. git ls-files 시도
+    git_ok = False
+    all_files: list[str] = []
     try:
         out = subprocess.check_output(
             ["git", "ls-files"],
@@ -228,15 +230,19 @@ def _collect_codebase_index(root: Path) -> str:
             text=True,
         )
         all_files = [p.strip() for p in out.splitlines() if p.strip()]
+        git_ok = True
     except Exception:
-        all_files = []
+        pass
 
-    # 2. fallback: 소스 디렉토리 glob
-    if not all_files:
+    # 2. fallback: 소스 디렉토리 glob (git 자체가 실패한 경우만)
+    if not git_ok:
         for d in _FALLBACK_SRC_DIRS:
             src_dir = root / d
             if src_dir.is_dir():
                 for p in src_dir.rglob("*"):
+                    parts_check = p.parts
+                    if any(part in _EXCLUDE_DIRS for part in parts_check):
+                        continue
                     if p.is_file():
                         try:
                             rel = str(p.relative_to(root))
@@ -274,10 +280,9 @@ def _collect_codebase_index(root: Path) -> str:
     ctx_dir.mkdir(parents=True, exist_ok=True)
     index_file = ctx_dir / "file_index.txt"
 
-    from datetime import datetime as _dt
     lines = [
         f"파일 수: {len(filtered)}{'+ (300개 상한)' if truncated else ''}",
-        f"수집 시각: {_dt.now().strftime('%Y-%m-%dT%H:%M:%S')}",
+        f"수집 시각: {datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}",
         "",
     ] + filtered
     if truncated:

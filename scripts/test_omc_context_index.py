@@ -21,6 +21,10 @@ def _make_project(tmp: str, files: dict[str, str]) -> Path:
     return root
 
 
+def _read_index(root: Path) -> str:
+    return (root / ".omc" / "context" / "file_index.txt").read_text(encoding="utf-8")
+
+
 class TestCollectCodebaseIndex(unittest.TestCase):
     def test_output_file_created(self):
         """수집 후 .omc/context/file_index.txt 가 생성된다."""
@@ -30,9 +34,6 @@ class TestCollectCodebaseIndex(unittest.TestCase):
             index_file = root / ".omc" / "context" / "file_index.txt"
             self.assertTrue(index_file.exists(), "file_index.txt 미생성")
 
-    def _read_index(self, root: Path) -> str:
-        return (root / ".omc" / "context" / "file_index.txt").read_text(encoding="utf-8")
-
     def test_fallback_includes_src_files(self):
         """git 없는 환경에서 src/ 파일이 fallback으로 file_index.txt 에 수집된다."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -41,7 +42,7 @@ class TestCollectCodebaseIndex(unittest.TestCase):
                 "src/b.ts": "export const b = 2;",
             })
             _ctx._collect_codebase_index(root)
-            content = self._read_index(root)
+            content = _read_index(root)
             self.assertIn("src/a.ts", content)
             self.assertIn("src/b.ts", content)
 
@@ -53,7 +54,7 @@ class TestCollectCodebaseIndex(unittest.TestCase):
                 "node_modules/lib/index.js": "module.exports = {};",
             })
             _ctx._collect_codebase_index(root)
-            content = self._read_index(root)
+            content = _read_index(root)
             self.assertNotIn("node_modules", content)
 
     def test_over_limit_truncated(self):
@@ -62,7 +63,7 @@ class TestCollectCodebaseIndex(unittest.TestCase):
             files = {f"src/f{i}.ts": f"export const v{i} = {i};" for i in range(350)}
             root = _make_project(tmp, files)
             _ctx._collect_codebase_index(root)
-            content = self._read_index(root)
+            content = _read_index(root)
             self.assertIn("이하 생략", content)
 
     def test_large_file_skipped(self):
@@ -74,7 +75,7 @@ class TestCollectCodebaseIndex(unittest.TestCase):
                 "src/big.ts": big_content,
             })
             _ctx._collect_codebase_index(root)
-            content = self._read_index(root)
+            content = _read_index(root)
             self.assertIn("src/small.ts", content)
             self.assertNotIn("src/big.ts", content)
 
