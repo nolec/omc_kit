@@ -201,5 +201,56 @@ class TestSharedLessons(unittest.TestCase):
             self.assertFalse((tgt / ".omc" / "lessons").exists())
 
 
+class TestInstallGeminiSettings(unittest.TestCase):
+    def _settings_path(self, tmp: str) -> Path:
+        p = Path(tmp) / ".gemini" / "settings.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    def test_creates_with_beforetool_when_no_existing(self):
+        """기존 파일 없을 때 BeforeTool 포함 settings.json 생성."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._settings_path(tmp)
+            _install._install_gemini_settings(path, force=False)
+            import json
+            data = json.loads(path.read_text())
+            self.assertIn("BeforeTool", data["hooks"])
+            matcher = data["hooks"]["BeforeTool"][0]["matcher"]
+            self.assertEqual(matcher, "write_file|replace")
+
+    def test_adds_beforetool_to_existing_without_it(self):
+        """기존 파일에 BeforeTool 없을 때 추가 (non-force)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            import json
+            path = self._settings_path(tmp)
+            path.write_text(json.dumps({"hooks": {"SessionStart": []}}), encoding="utf-8")
+            _install._install_gemini_settings(path, force=False)
+            data = json.loads(path.read_text())
+            self.assertIn("BeforeTool", data["hooks"])
+            self.assertIn("SessionStart", data["hooks"])  # 기존 키 보존
+
+    def test_skips_beforetool_if_already_present(self):
+        """기존 파일에 BeforeTool 있으면 덮어쓰지 않는다 (non-force)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            import json
+            path = self._settings_path(tmp)
+            custom = {"hooks": {"BeforeTool": [{"matcher": "custom_matcher"}]}}
+            path.write_text(json.dumps(custom), encoding="utf-8")
+            _install._install_gemini_settings(path, force=False)
+            data = json.loads(path.read_text())
+            self.assertEqual(data["hooks"]["BeforeTool"][0]["matcher"], "custom_matcher")
+
+    def test_force_overwrites_with_beforetool(self):
+        """force=True 시 전체 덮어쓰기 — BeforeTool 포함."""
+        with tempfile.TemporaryDirectory() as tmp:
+            import json
+            path = self._settings_path(tmp)
+            path.write_text(json.dumps({"hooks": {"BeforeTool": [{"matcher": "old"}]}}),
+                            encoding="utf-8")
+            _install._install_gemini_settings(path, force=True)
+            data = json.loads(path.read_text())
+            self.assertEqual(data["hooks"]["BeforeTool"][0]["matcher"], "write_file|replace")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
