@@ -15,6 +15,8 @@ test("home page renders current status and latest run detail sections", async ()
   assert.match(source, /운영 큐/);
   assert.match(source, /승인 사유 요약/);
   assert.match(source, /계획 확인 필요/);
+  assert.match(source, /복구 사유 요약/);
+  assert.match(source, /재시도 소진/);
   assert.match(source, /승인 대기 상세/);
   assert.match(source, /수동 게이트 사유/);
   assert.match(source, /누적 재시도/);

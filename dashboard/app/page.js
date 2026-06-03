@@ -98,6 +98,16 @@ function manualGateReasonLabel(value) {
   return map[value] ?? value ?? "해당 없음";
 }
 
+function recoveryReasonLabel(value) {
+  const map = {
+    stale_running: "실행 중 멈춤",
+    invalid_started_at: "시작 시간 오류",
+    retry_exhausted: "재시도 소진",
+    failed_critique_loop: "critique 루프 실패",
+  };
+  return map[value] ?? value ?? "해당 없음";
+}
+
 function sessionHealthLabel(value) {
   const map = {
     healthy: "정상",
@@ -200,6 +210,7 @@ export default async function Home() {
           <h2>복구 요약</h2>
           <div>실행 중 멈춤: {operationsSummary.stale_run_count}</div>
           <div>실패 실행: {operationsSummary.failed_count}</div>
+          <div>복구 사유 요약: {recoveryReasonLabel(operationsSummary.recovery_queue[0]?.failed_step?.reason)}</div>
           <div className="muted">
             retry 소진, stale running, failed run을 우선적으로 확인하세요.
           </div>
