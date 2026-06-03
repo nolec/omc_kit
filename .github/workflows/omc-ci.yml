@@ -1,0 +1,34 @@
+name: OMC CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    name: OMC TDD Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 셸 의존 테스트(test_omc_pipeline_check_exit, test_omc_post_file_check)는
+      # macOS mktemp --suffix 이슈 + 호스트 환경 의존성으로 ubuntu-latest에서 제외
+      - name: Run unit tests (shell-independent)
+        run: |
+          python3 -m pytest scripts/ -q \
+            --ignore=scripts/test_omc_pipeline_check_exit.py \
+            --ignore=scripts/test_omc_post_file_check.py \
+            --ignore=scripts/test_omc_pipeline_check_gemini.py
+
+      - name: OMC TDD Gate (omc_tdd_check)
+        run: |
+          python3 scripts/omc_tdd_check.py --report-only
