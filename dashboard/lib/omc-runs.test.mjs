@@ -331,6 +331,50 @@ test("buildOperationsConsoleSummary treats real retry_exhausted artifact as reco
   assert.equal(summary.next_action.reason, "retry_exhausted");
 });
 
+test("buildOperationsConsoleSummary treats stale recovery artifact as held recovery work", async () => {
+  const currentRun = summarizeRun(
+    "20260601T012851-05883d47",
+    {
+      status: "hold",
+      mode: "full",
+      branch: "feat/dashboard-ops-v2",
+      started_at: "2026-06-01T01:28:51Z",
+      steps: {
+        branch: { status: "completed" },
+        preflight: { status: "completed" },
+        plan: { status: "completed" },
+        task: { status: "completed" },
+        stale_recovery: {
+          status: "auto_hold",
+          reason: "pipeline pid not running: 76476",
+        },
+      },
+      last_completed_step: "task",
+    },
+    {
+      now: "2026-06-01T01:35:00Z",
+      lastActivityAt: "2026-06-01T01:35:00Z",
+      staleRunningMinutes: 10,
+    },
+  );
+
+  const summary = buildOperationsConsoleSummary(currentRun, [], {
+    now: "2026-06-01T01:35:00Z",
+    currentUpdatedAt: "2026-06-01T01:35:00Z",
+    staleMinutes: 10,
+  });
+
+  assert.equal(summary.action_required_count, 1);
+  assert.equal(summary.approval_required_count, 1);
+  assert.equal(summary.recovery_required_count, 1);
+  assert.equal(summary.held_count, 1);
+  assert.equal(summary.stale_run_count, 1);
+  assert.equal(summary.session_health.status, "attention");
+  assert.equal(summary.next_action.action, "review_held_run");
+  assert.equal(summary.next_action.reason, "stale_running");
+  assert.equal(summary.reason_buckets.stale_running, 1);
+});
+
 test("listRecentRuns returns at most maxRuns sorted by run_id desc", async () => {
   const root = await mktempDir();
   const runsDir = path.join(root, ".omc", "runs");
