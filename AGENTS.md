@@ -121,7 +121,7 @@ PHASE 5 ▸ REFACTOR + TDD GATE  🔵
 |---|---|---|---|
 | Cursor | `beforeToolCall` → `omc_pipeline_guard.py` | pre-commit hook | `omc_tdd_check.py` |
 | Claude Code | `PreToolUse` → `omc-pipeline-check.sh` | pre-commit hook | `omc_tdd_check.py` |
-| Codex | `PreToolUse` (matcher: Bash\|apply_patch\|Write) → exit 2 / 파일편집 **1차 미발화 2026-06-04, 재검증 필요** | pre-commit hook | `omc_tdd_check.py` |
+| Codex | `PreToolUse` matcher 설정됨 / **파일 편집 훅 미발화 확인(2026-06-04×2)** → 방어: pre-commit + 프롬프트 | pre-commit hook | `omc_tdd_check.py` |
 | Gemini | `BeforeTool` → `omc-pipeline-check.sh` (exit 2) | pre-commit hook | `omc_tdd_check.py` |
 
 자연어 요청 대신 아래 커맨드를 직접 사용할 수 있습니다.
