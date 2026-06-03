@@ -704,6 +704,7 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
     print(f"Installed OMC kit into: {tgt}")
 
     _setup_ethos_section5(tgt)
+    _install_shared_lessons(kit, tgt)
 
     return 0
 
@@ -848,6 +849,35 @@ def _setup_ethos_section5(tgt: "Path") -> None:
     ethos_path.write_text(new_content, encoding="utf-8")
     print(f"[ETHOS] 섹션 5 저장 완료 → {ethos_path.relative_to(tgt)}")
 
+
+
+def _install_shared_lessons(kit: Path, tgt: Path) -> None:
+    """templates/shared_lessons/ 에 있는 교훈 파일을 .omc/lessons/ 에 복사한다.
+
+    이미 존재하는 파일은 덮어쓰지 않아 프로젝트 고유 교훈을 보호한다.
+    """
+    shared_dir = kit / "templates" / "shared_lessons"
+    if not shared_dir.is_dir():
+        return
+
+    lessons_dir = tgt / ".omc" / "lessons"
+    lessons_dir.mkdir(parents=True, exist_ok=True)
+
+    copied = 0
+    skipped = 0
+    for src in sorted(shared_dir.glob("*.md")):
+        dst = lessons_dir / src.name
+        if dst.exists():
+            skipped += 1
+            continue
+        _copy(src, dst, force=False)
+        copied += 1
+
+    if copied or skipped:
+        print(
+            f"[shared_lessons] {copied}개 복사, {skipped}개 건너뜀"
+            f" → {lessons_dir.relative_to(tgt)}"
+        )
 
 
 if __name__ == "__main__":

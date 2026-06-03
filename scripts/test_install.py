@@ -151,5 +151,55 @@ class TestCheckForceRegression(unittest.TestCase):
             self.assertTrue(result)
 
 
+class TestSharedLessons(unittest.TestCase):
+    def test_shared_lessons_copied_to_target(self):
+        """install 실행 시 templates/shared_lessons/ 가 .omc/lessons/ 에 복사된다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = Path(tmp) / "kit"
+            shared = kit / "templates" / "shared_lessons"
+            shared.mkdir(parents=True)
+            (shared / "lesson-a.md").write_text("# lesson a", encoding="utf-8")
+            (shared / "lesson-b.md").write_text("# lesson b", encoding="utf-8")
+
+            tgt = Path(tmp) / "tgt"
+            tgt.mkdir()
+
+            _install._install_shared_lessons(kit, tgt)
+
+            lessons_dir = tgt / ".omc" / "lessons"
+            self.assertTrue((lessons_dir / "lesson-a.md").exists())
+            self.assertTrue((lessons_dir / "lesson-b.md").exists())
+
+    def test_shared_lessons_skips_existing(self):
+        """이미 존재하는 교훈 파일은 덮어쓰지 않는다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = Path(tmp) / "kit"
+            shared = kit / "templates" / "shared_lessons"
+            shared.mkdir(parents=True)
+            (shared / "lesson-a.md").write_text("template version", encoding="utf-8")
+
+            tgt = Path(tmp) / "tgt"
+            lessons_dir = tgt / ".omc" / "lessons"
+            lessons_dir.mkdir(parents=True)
+            (lessons_dir / "lesson-a.md").write_text("custom version", encoding="utf-8")
+
+            _install._install_shared_lessons(kit, tgt)
+
+            self.assertEqual(
+                (lessons_dir / "lesson-a.md").read_text(encoding="utf-8"),
+                "custom version",
+            )
+
+    def test_shared_lessons_no_dir_is_noop(self):
+        """templates/shared_lessons/ 가 없으면 조용히 통과한다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = Path(tmp) / "kit"
+            (kit / "templates").mkdir(parents=True)
+            tgt = Path(tmp) / "tgt"
+            tgt.mkdir()
+            _install._install_shared_lessons(kit, tgt)
+            self.assertFalse((tgt / ".omc" / "lessons").exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
