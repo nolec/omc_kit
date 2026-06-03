@@ -88,3 +88,11 @@ VERDICT: HOLD / REVISE / PROCEED / BLOCK / APPROVE
 
 - HOLD/REVISE면 `$omc-plan`으로 재설계합니다.
 - 코드 품질 확인은 `$omc-review`로 넘깁니다.
+
+
+---
+
+## ⛔ 자동 진입 금지
+
+이 스킬이 완료된 후 자동으로 다음 스킬을 실행하지 않는다.
+사용자가 명시적으로 다음 스킬을 요청할 때까지 멈추고 기다린다.

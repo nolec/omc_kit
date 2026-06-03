@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 68
+MAX_NON_EMPTY_LINES = 75
 
 REQUIRED_CRITIQUE_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-critique" / "SKILL.md",

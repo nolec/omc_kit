@@ -53,3 +53,11 @@ python3 scripts/omc.py state confirm --target .
 ```
 
 confirm 후에만 `$omc-task`로 넘깁니다.
+
+
+---
+
+## ⛔ 자동 진입 금지
+
+이 스킬이 완료된 후 자동으로 다음 스킬을 실행하지 않는다.
+사용자가 명시적으로 다음 스킬을 요청할 때까지 멈추고 기다린다.
