@@ -48,6 +48,17 @@
             "description": "omc_* 파일 수정 후 hub 자동 동기화"
           }
         ]
+      },
+      {
+        "matcher": "apply_patch|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".agent-hooks/omc-post-file-check.sh",
+            "name": "omc-post-file-check",
+            "description": "파일 수정 후 세션 미확인이면 CONTRACT 유도 경고 (소프트 가드)"
+          }
+        ]
       }
     ]
   }

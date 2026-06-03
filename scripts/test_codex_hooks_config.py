@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Codex .codex/hooks.json PreToolUse 설정 정합성 — stdlib only"""
+"""Codex .codex/hooks.json 설정 정합성 — stdlib only"""
 from __future__ import annotations
 
 import json
@@ -26,6 +26,10 @@ def _pretooluse_matcher(hooks: dict) -> str:
     for entry in hooks.get("hooks", {}).get("PreToolUse", []):
         return entry.get("matcher", "")
     return ""
+
+
+def _posttooluse_entries(hooks: dict) -> list[dict]:
+    return hooks.get("hooks", {}).get("PostToolUse", [])
 
 
 class TestCodexHooksConfig(unittest.TestCase):
@@ -55,6 +59,32 @@ class TestCodexHooksConfig(unittest.TestCase):
         tpl_cmd = _pretooluse_command(_load(TEMPLATE_HOOKS))
         self.assertEqual(live_cmd, tpl_cmd)
         self.assertNotIn("OMC_BLOCK_EXIT", tpl_cmd)
+
+    def test_posttooluse_soft_guard_exists(self):
+        """PostToolUse에 omc-post-file-check.sh 소프트 가드 등록 확인."""
+        entries = _posttooluse_entries(_load(LIVE_HOOKS))
+        commands = [
+            h.get("command", "")
+            for entry in entries
+            for h in entry.get("hooks", [])
+        ]
+        self.assertTrue(
+            any("omc-post-file-check.sh" in cmd for cmd in commands),
+            f"PostToolUse 소프트 가드 없음. 등록된 commands: {commands}",
+        )
+
+    def test_posttooluse_soft_guard_in_template(self):
+        """templates/.codex/hooks.json에도 소프트 가드 포함."""
+        entries = _posttooluse_entries(_load(TEMPLATE_HOOKS))
+        commands = [
+            h.get("command", "")
+            for entry in entries
+            for h in entry.get("hooks", [])
+        ]
+        self.assertTrue(
+            any("omc-post-file-check.sh" in cmd for cmd in commands),
+            "templates SSOT에 소프트 가드 없음",
+        )
 
 
 if __name__ == "__main__":
