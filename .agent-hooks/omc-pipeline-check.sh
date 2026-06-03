@@ -1,9 +1,12 @@
 #!/bin/sh
-# omc-pipeline-check.sh — 공용 파이프라인 가드 (Claude Code PreToolUse)
+# omc-pipeline-check.sh — 공용 파이프라인 가드 (Claude Code / Codex PreToolUse)
 #
 # Claude Code: PreToolUse 훅에서 호출
 #   exit 0  → 허용
-#   exit 2  → 차단 (Claude Code 전용 차단 코드)
+#   exit 2  → 차단 (Claude Code 기본)
+#
+# Codex: OMC_BLOCK_EXIT=1 설정 시 exit 1 로 차단 (Codex 호환)
+#   export OMC_BLOCK_EXIT=1  (.codex/hooks.json env 설정 또는 래퍼에서 지정)
 #
 # stdin: 도구 호출 JSON
 # {
@@ -124,7 +127,8 @@ rm -f "${_OMC_PY}"
 if [ "${OMC_SYNC_EXIT}" -ne 0 ]; then
   cat "${_OMC_OUT}"
   rm -f "${_OMC_OUT}"
-  exit 2
+  _BLOCK_EXIT="${OMC_BLOCK_EXIT:-2}"
+  exit "${_BLOCK_EXIT}"
 fi
 rm -f "${_OMC_OUT}"
 
@@ -164,7 +168,7 @@ fi
 # 차단 출력
 echo "${GUARD_OUTPUT}"
 
-# Claude Code 차단: exit 2
-# Cursor는 permission:deny JSON을 stdout에 써야 하지만,
-# 이 스크립트는 Claude Code용이므로 exit 2 사용
-exit 2
+# 차단 exit code: OMC_BLOCK_EXIT 환경변수로 LLM별 호환 코드 지정 가능
+# Claude Code 기본: exit 2 / Codex 호환: OMC_BLOCK_EXIT=1
+_BLOCK_EXIT="${OMC_BLOCK_EXIT:-2}"
+exit "${_BLOCK_EXIT}"

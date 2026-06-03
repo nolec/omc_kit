@@ -17,9 +17,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".agent-hooks/omc-pipeline-check.sh",
+            "command": "OMC_BLOCK_EXIT=1 .agent-hooks/omc-pipeline-check.sh",
             "name": "omc-pipeline-check",
-            "description": "파이프라인 가드 — CONTRACT 미등록 파일 수정 차단 (exit 2)"
+            "description": "파이프라인 가드 — CONTRACT 미등록 파일 수정 차단 (exit 1, Codex 호환)"
           }
         ]
       }
