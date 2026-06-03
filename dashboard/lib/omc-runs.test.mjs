@@ -246,6 +246,135 @@ test("buildOperationsConsoleSummary treats approval_required current run as acti
   assert.equal(summary.session_health.reason, "approval_required");
 });
 
+test("buildOperationsConsoleSummary preserves approval queue semantics for resumed plan confirmation artifact", async () => {
+  const currentRun = summarizeRun("20260602T163447-codex-ops-approval-gate-2", {
+    status: "aborted",
+    branch: "codex-ops-approval-gate-2",
+    started_at: "2026-06-02T18:55:51Z",
+    finished_at: "2026-06-02T18:55:51Z",
+    approval_required: true,
+    manual_gate_reason: "plan_confirmation",
+    resume_count: 2,
+    last_heartbeat_at: "2026-06-02T18:55:51Z",
+    steps: {
+      plan: {
+        status: "completed",
+        started_at: "2026-06-02T18:55:51Z",
+        finished_at: "2026-06-02T18:55:51Z",
+        duration_sec: 21,
+      },
+    },
+  });
+
+  const summary = buildOperationsConsoleSummary(currentRun, [], {
+    now: "2026-06-02T18:55:51Z",
+    currentUpdatedAt: "2026-06-02T18:55:51Z",
+    staleMinutes: 10,
+  });
+
+  assert.equal(currentRun.resume_count, 2);
+  assert.equal(summary.action_required_count, 1);
+  assert.equal(summary.approval_required_count, 1);
+  assert.equal(summary.recovery_required_count, 0);
+  assert.equal(summary.next_action.action, "review_approval_required_run");
+  assert.equal(summary.next_action.reason, "approval_required");
+  assert.equal(summary.approval_queue.length, 1);
+  assert.equal(summary.approval_queue[0].manual_gate_reason, "plan_confirmation");
+  assert.equal(summary.duration_summary.total_runs_with_duration, 1);
+  assert.equal(summary.duration_summary.total_duration_sec, 21);
+  assert.deepEqual(summary.duration_summary.longest_step, {
+    run_id: "20260602T163447-codex-ops-approval-gate-2",
+    name: "plan",
+    duration_sec: 21,
+  });
+});
+
+test("buildOperationsConsoleSummary treats real retry_exhausted artifact as recovery required", async () => {
+  const currentRun = summarizeRun("20260601T110029-e4a5f1c5", {
+    status: "retry_exhausted",
+    mode: "full",
+    branch: "feat/dashboard-ops-v2",
+    started_at: "2026-06-01T01:46:35Z",
+    finished_at: "2026-06-01T02:00:29Z",
+    retry_count: 3,
+    steps: {
+      plan: { status: "completed" },
+      task: { status: "completed" },
+      critique: {
+        status: "retry_exhausted",
+        verdict: "REVISE",
+        reason: "retry_exhausted",
+      },
+      task_retry: { status: "completed" },
+      plan_retry: { status: "completed" },
+      stale_recovery: {
+        status: "auto_hold",
+        reason: "pipeline pid not running: 76476",
+      },
+    },
+    last_completed_step: "task_retry",
+  });
+
+  const summary = buildOperationsConsoleSummary(currentRun, [], {
+    now: "2026-06-01T02:00:29Z",
+    currentUpdatedAt: "2026-06-01T02:00:29Z",
+    staleMinutes: 10,
+  });
+
+  assert.equal(summary.action_required_count, 1);
+  assert.equal(summary.approval_required_count, 0);
+  assert.equal(summary.recovery_required_count, 1);
+  assert.equal(summary.failed_count, 1);
+  assert.equal(summary.reason_buckets.retry_exhausted, 1);
+  assert.equal(summary.recovery_queue.length, 1);
+  assert.equal(summary.next_action.action, "inspect_failed_run");
+  assert.equal(summary.next_action.reason, "retry_exhausted");
+});
+
+test("buildOperationsConsoleSummary treats stale recovery artifact as held recovery work", async () => {
+  const currentRun = summarizeRun(
+    "20260601T012851-05883d47",
+    {
+      status: "hold",
+      mode: "full",
+      branch: "feat/dashboard-ops-v2",
+      started_at: "2026-06-01T01:28:51Z",
+      steps: {
+        branch: { status: "completed" },
+        preflight: { status: "completed" },
+        plan: { status: "completed" },
+        task: { status: "completed" },
+        stale_recovery: {
+          status: "auto_hold",
+          reason: "pipeline pid not running: 76476",
+        },
+      },
+      last_completed_step: "task",
+    },
+    {
+      now: "2026-06-01T01:35:00Z",
+      lastActivityAt: "2026-06-01T01:35:00Z",
+      staleRunningMinutes: 10,
+    },
+  );
+
+  const summary = buildOperationsConsoleSummary(currentRun, [], {
+    now: "2026-06-01T01:35:00Z",
+    currentUpdatedAt: "2026-06-01T01:35:00Z",
+    staleMinutes: 10,
+  });
+
+  assert.equal(summary.action_required_count, 1);
+  assert.equal(summary.approval_required_count, 1);
+  assert.equal(summary.recovery_required_count, 1);
+  assert.equal(summary.held_count, 1);
+  assert.equal(summary.stale_run_count, 1);
+  assert.equal(summary.session_health.status, "attention");
+  assert.equal(summary.next_action.action, "review_held_run");
+  assert.equal(summary.next_action.reason, "stale_running");
+  assert.equal(summary.reason_buckets.stale_running, 1);
+});
+
 test("listRecentRuns returns at most maxRuns sorted by run_id desc", async () => {
   const root = await mktempDir();
   const runsDir = path.join(root, ".omc", "runs");

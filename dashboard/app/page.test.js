@@ -20,6 +20,8 @@ test("home page renders current status and latest run detail sections", async ()
   assert.match(source, /데이터 가용성/);
   assert.match(source, /현재 콘솔이 볼 수 있는 데이터/);
   assert.match(source, /아직 수집하지 않는 데이터/);
+  assert.match(source, /단일 executor 기준으로 동작하는 read-only 운영 콘솔/);
+  assert.match(source, /queue 적체와 worker 상태는 아직 수집하지 않습니다/);
   assert.match(source, /액션 필요 실행/);
   assert.match(source, /원인 분류/);
   assert.match(source, /다음 액션/);

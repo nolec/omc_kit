@@ -10,7 +10,7 @@ import re
 import subprocess
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -44,6 +44,55 @@ def _find_constitution(project_root: Path) -> str | None:
 
 def _slug_now() -> str:
     return _now().strftime("%Y%m%dT%H%M%S")
+
+
+_STALE_ACTIVE_SESSION_AFTER = timedelta(hours=12)
+
+
+def _parse_state_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _effective_session_lifecycle(
+    session: dict[str, object] | None,
+    *,
+    active_run: dict[str, object] | None = None,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    lifecycle = dict((session or {}).get("lifecycle", {}))
+    if not lifecycle:
+        return {"status": "unknown", "updated_at": None, "reason": None, "superseded_by": None}
+    if str(lifecycle.get("status")) != "active":
+        return lifecycle
+    if active_run is not None and str(active_run.get("status")) == "running":
+        return lifecycle
+
+    confirmation = dict((session or {}).get("confirmation", {}))
+    if str(confirmation.get("status")) != "confirmed":
+        return lifecycle
+
+    updated_at = _parse_state_timestamp(lifecycle.get("updated_at"))
+    current_now = now or _now()
+    if updated_at is None:
+        return lifecycle
+    if current_now.astimezone(timezone.utc) - updated_at >= _STALE_ACTIVE_SESSION_AFTER:
+        return {
+            **lifecycle,
+            "status": "stale_active",
+            "reason": "Confirmed active session has no active run and stale lifecycle timestamp.",
+        }
+    return lifecycle
 
 
 
@@ -641,8 +690,6 @@ def _render_notepad(project_root: Path, memory: dict) -> str:
     if latest_confirmed is None:
         latest_confirmed = _load_session_entry(project_root, str(latest_meta.get("latest_confirmed_session_id")))
     latest_pending = _latest_pending_session(sessions)
-    if latest_pending is None:
-        latest_pending = _load_session_entry(project_root, str(latest_meta.get("latest_session_id")))
     # active run은 latest meta를 SSOT로 사용한다.
     # 과거 비정상 종료로 남은 stale running 엔트리를 summary가 active로 오인하지 않도록 방지.
     active_run = _load_run_entry(project_root, str(latest_meta.get("active_run_id")))
@@ -663,17 +710,18 @@ def _render_notepad(project_root: Path, memory: dict) -> str:
     if git.get("last_commit"):
         lines.append(f"- last_commit: {_excerpt(str(git['last_commit']), 80)}")
 
+    effective_latest_lifecycle = _effective_session_lifecycle(latest_session, active_run=active_run)
+
     if latest_session:
         lines.append(f"- current_mode: `{latest_session.get('mode', '')}`")
         role_ids = ", ".join([str(r) for r in (latest_session.get("role_ids") or [])])
         lines.append(f"- current_roles: `{role_ids}`")
         lines.append(f"- current_request: {_excerpt(str(latest_session.get('request', '')))}")
         conf = latest_session.get("confirmation", {})
-        lifecycle = latest_session.get("lifecycle", {})
         lines.append(f"- current_confirmation: `{conf.get('status', 'pending')}`")
-        lines.append(f"- current_session_status: `{lifecycle.get('status', 'unknown')}`")
-        if lifecycle.get("reason"):
-            lines.append(f"- current_session_reason: {_excerpt(str(lifecycle.get('reason', '')), 140)}")
+        lines.append(f"- current_session_status: `{effective_latest_lifecycle.get('status', 'unknown')}`")
+        if effective_latest_lifecycle.get("reason"):
+            lines.append(f"- current_session_reason: {_excerpt(str(effective_latest_lifecycle.get('reason', '')), 140)}")
     if latest_confirmed:
         confirmed_roles = ", ".join([str(r) for r in (latest_confirmed.get("role_ids") or [])])
         lines.append(f"- confirmed_roles: `{confirmed_roles}`")
@@ -785,11 +833,11 @@ def _render_summary(project_root: Path, memory: dict) -> str:
             f"{latest_confirmed_run.get('status', '')} | {_excerpt(_run_outcome_line(latest_confirmed_run), 100)}"
         )
 
-    if latest_session and latest_session.get("lifecycle", {}).get("status") in {"blocked", "waiting_input", "superseded"}:
-        lifecycle = latest_session.get("lifecycle", {})
-        lines.append(f"- session_status: `{lifecycle.get('status', 'unknown')}`")
-        if lifecycle.get("reason"):
-            lines.append(f"- session_status_reason: {_excerpt(str(lifecycle.get('reason', '')), 180)}")
+    effective_latest_lifecycle = _effective_session_lifecycle(latest_session, active_run=active_run)
+    if latest_session and effective_latest_lifecycle.get("status") in {"blocked", "waiting_input", "superseded", "stale_active"}:
+        lines.append(f"- session_status: `{effective_latest_lifecycle.get('status', 'unknown')}`")
+        if effective_latest_lifecycle.get("reason"):
+            lines.append(f"- session_status_reason: {_excerpt(str(effective_latest_lifecycle.get('reason', '')), 180)}")
 
     if active_run:
         lines.append(f"- active_run: `{active_run.get('command_name', '')}`")
@@ -1306,13 +1354,19 @@ def status(project_root: Path) -> str:
     latest = _load_session_entry(project_root, str(latest_meta.get("latest_session_id")))
     if latest is None:
         latest = entries[-1] if entries else None
+    active_run = _load_run_entry(project_root, str(latest_meta.get("active_run_id")))
+    if active_run is not None and str(active_run.get("status")) != "running":
+        active_run = None
+    effective_latest_lifecycle = _effective_session_lifecycle(latest, active_run=active_run)
     lines = [f"OMC state: {project_root}"]
     lines.append(f"- memory entries: {len(entries)}")
     lines.append(f"- sessions: {len(sessions)}")
     lines.append(f"- runs: {len(runs)}")
     lines.append(f"- notes: {len(notes)}")
     if latest:
-        lines.append(f"- latest: {_entry_summary(latest)}")
+        latest_for_display = dict(latest)
+        latest_for_display["lifecycle"] = effective_latest_lifecycle
+        lines.append(f"- latest: {_entry_summary(latest_for_display)}")
     policy = _read_json(_policy_path(project_root), {"enforce_confirm": True})
     lines.append(f"- latest_session_id: {latest_meta.get('latest_session_id')}")
     lines.append(f"- latest_confirmed_session_id: {latest_meta.get('latest_confirmed_session_id')}")

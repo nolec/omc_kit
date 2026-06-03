@@ -6,6 +6,7 @@ const KNOWN_RUN_STATUSES = new Set([
   "running",
   "completed",
   "failed",
+  "retry_exhausted",
   "cancelled",
   "timeout",
   "held",
@@ -123,6 +124,9 @@ function normalizeStatus(rawStatus) {
   if (normalized === "canceled") {
     return "cancelled";
   }
+  if (normalized === "hold") {
+    return "held";
+  }
   return KNOWN_RUN_STATUSES.has(normalized) ? normalized : "unknown";
 }
 
@@ -164,6 +168,10 @@ export function classifyOperationalReason(reason) {
     key,
     label: known?.label ?? key,
   };
+}
+
+function isStaleRecoveryRun(run) {
+  return run?.failed_step?.name === "stale_recovery";
 }
 
 function resolveFreshnessStatus(currentRun, currentUpdatedAt, now, staleMinutes) {
@@ -263,13 +271,23 @@ export function buildOperationsConsoleSummary(currentRun, recentRuns, options = 
   }
 
   const heldRuns = operationalRuns.filter((run) => run?.status === "held");
-  const failedRuns = operationalRuns.filter((run) => run?.status === "failed");
+  const failedRuns = operationalRuns.filter(
+    (run) => run?.status === "failed" || run?.status === "retry_exhausted",
+  );
   const actionRequiredRuns = operationalRuns.filter(
-    (run) => run?.status === "held" || run?.status === "failed" || run?.approval_required === true,
+    (run) =>
+      run?.status === "held" ||
+      run?.status === "failed" ||
+      run?.status === "retry_exhausted" ||
+      run?.approval_required === true,
   );
   const reasonBuckets = {};
 
   for (const run of actionRequiredRuns) {
+    if (isStaleRecoveryRun(run)) {
+      reasonBuckets.stale_running = (reasonBuckets.stale_running ?? 0) + 1;
+      continue;
+    }
     if (!run?.failed_step?.reason) {
       continue;
     }
@@ -286,7 +304,10 @@ export function buildOperationsConsoleSummary(currentRun, recentRuns, options = 
     .sort((a, b) => a.key.localeCompare(b.key));
   const approvalQueue = operationalRuns.filter((run) => run?.status === "held" || run?.approval_required === true);
   const recoveryQueue = operationalRuns.filter((run) => {
-    if (run?.status === "failed") {
+    if (run?.status === "failed" || run?.status === "retry_exhausted") {
+      return true;
+    }
+    if (isStaleRecoveryRun(run)) {
       return true;
     }
     if (normalizeReason(run?.failed_step?.reason) === "stale_running") {
@@ -294,7 +315,9 @@ export function buildOperationsConsoleSummary(currentRun, recentRuns, options = 
     }
     return run?.run_id === currentRun?.run_id && freshnessStatus === "stale";
   });
-  const staleRunCount = recoveryQueue.filter((run) => normalizeReason(run?.failed_step?.reason) === "stale_running").length
+  const staleRunCount = recoveryQueue.filter(
+    (run) => normalizeReason(run?.failed_step?.reason) === "stale_running" || isStaleRecoveryRun(run),
+  ).length
     || (freshnessStatus === "stale" ? 1 : 0);
   const approvalRequiredCount = approvalQueue.length;
   const recoveryRequiredCount = recoveryQueue.length;
@@ -339,7 +362,10 @@ export function buildOperationsConsoleSummary(currentRun, recentRuns, options = 
   if (currentRun?.approval_required) {
     nextAction = { action: "review_approval_required_run", reason: "approval_required" };
   } else if (heldRuns.length > 0) {
-    nextAction = { action: "review_held_run", reason: normalizeReason(heldRuns[0]?.failed_step?.reason) };
+    nextAction = {
+      action: "review_held_run",
+      reason: isStaleRecoveryRun(heldRuns[0]) ? "stale_running" : normalizeReason(heldRuns[0]?.failed_step?.reason),
+    };
   } else if (failedRuns.length > 0) {
     nextAction = { action: "inspect_failed_run", reason: normalizeReason(failedRuns[0]?.failed_step?.reason) };
   } else if (freshnessStatus === "stale") {
