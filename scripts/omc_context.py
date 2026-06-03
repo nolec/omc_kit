@@ -195,6 +195,99 @@ def _print_lessons_to_console(root: Path, git_info: dict | None = None, n: int =
             rule_preview = rule[:80] + ("…" if len(rule) > 80 else "")
             print(f"            규칙: {rule_preview}")
 
+_INDEX_LIMIT = 300
+_MAX_FILE_BYTES = 500 * 1024
+_EXCLUDE_DIRS = {
+    "node_modules", ".git", "dist", ".next", ".nuxt", "build",
+    "coverage", "__pycache__", ".turbo", ".cache", "out", ".omc",
+}
+_SOURCE_EXTS = {
+    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".py", ".go", ".java", ".rb", ".rs", ".swift", ".kt",
+}
+_FALLBACK_SRC_DIRS = ["src", "app", "lib", "packages", "scripts"]
+
+
+def _collect_codebase_index(root: Path) -> str:
+    """코드베이스 파일 트리를 수집해 .omc/context/file_index.txt 에 저장하고 요약 문자열을 반환한다.
+
+    1. git ls-files 로 파일 목록 수집 (gitignore 자동 적용)
+    2. git 없으면 _FALLBACK_SRC_DIRS glob fallback
+    3. _EXCLUDE_DIRS, 500KB 초과 파일 제외
+    4. 300개 상한 초과 시 상위 300개 + 생략 표시
+    5. 소스 파일 없으면 빈 문자열 반환
+    """
+    root = Path(root)
+
+    # 1. git ls-files 시도
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files"],
+            cwd=str(root),
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        all_files = [p.strip() for p in out.splitlines() if p.strip()]
+    except Exception:
+        all_files = []
+
+    # 2. fallback: 소스 디렉토리 glob
+    if not all_files:
+        for d in _FALLBACK_SRC_DIRS:
+            src_dir = root / d
+            if src_dir.is_dir():
+                for p in src_dir.rglob("*"):
+                    if p.is_file():
+                        try:
+                            rel = str(p.relative_to(root))
+                            all_files.append(rel)
+                        except ValueError:
+                            pass
+
+    # 3. 필터: 제외 디렉토리 + 확장자 + 파일 크기
+    filtered: list[str] = []
+    for rel in sorted(all_files):
+        parts = Path(rel).parts
+        if any(part in _EXCLUDE_DIRS for part in parts):
+            continue
+        if Path(rel).suffix not in _SOURCE_EXTS:
+            continue
+        abs_path = root / rel
+        try:
+            if abs_path.stat().st_size > _MAX_FILE_BYTES:
+                continue
+        except OSError:
+            continue
+        filtered.append(rel)
+
+    if not filtered:
+        return ""
+
+    # 4. 상한 처리
+    truncated = False
+    if len(filtered) > _INDEX_LIMIT:
+        filtered = filtered[:_INDEX_LIMIT]
+        truncated = True
+
+    # 5. 파일 저장
+    ctx_dir = root / ".omc" / "context"
+    ctx_dir.mkdir(parents=True, exist_ok=True)
+    index_file = ctx_dir / "file_index.txt"
+
+    from datetime import datetime as _dt
+    lines = [
+        f"파일 수: {len(filtered)}{'+ (300개 상한)' if truncated else ''}",
+        f"수집 시각: {_dt.now().strftime('%Y-%m-%dT%H:%M:%S')}",
+        "",
+    ] + filtered
+    if truncated:
+        lines.append("... (이하 생략 — 300개 상한 초과)")
+
+    index_file.write_text("\n".join(lines), encoding="utf-8")
+    summary = f"{len(filtered)}개 파일{'(+생략)' if truncated else ''}"
+    return summary
+
+
 def build_context(root) -> tuple[str, dict]:
     """컨텍스트 마크다운 문자열과 git_info dict를 반환한다.
 
@@ -207,6 +300,7 @@ def build_context(root) -> tuple[str, dict]:
     note = _collect_notepad(root)
     lessons = _collect_lessons(root, git_info=g)
     wip = _collect_wip(root)
+    index_summary = _collect_codebase_index(Path(root))
 
     parts = [
         f"# OMC 세션 컨텍스트 — {now}", "",
@@ -234,6 +328,8 @@ def build_context(root) -> tuple[str, dict]:
         parts += [lessons, ""]
     if wip:
         parts += [wip, ""]
+    if index_summary:
+        parts += [f"## [코드베이스] {index_summary}", "(전체 목록: .omc/context/file_index.txt)", ""]
     parts += [
         "## OMC Notepad (이전 세션 메모)", note, "",
         "---",

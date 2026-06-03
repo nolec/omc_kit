@@ -23,6 +23,7 @@ build/
 .omc/state/latest.json
 .omc/state/.lock
 .omc/context.md
+.omc/context/
 .omc/pipeline_session.json
 .omc/notepad.md
 .omc/summary.md
