@@ -183,6 +183,8 @@ def _check_force_regression(kit: Path, tgt: Path) -> bool:
     """--force 실행 전 kit < live 버전 회귀 위험을 감지해 사용자에게 경고.
 
     핵심 omc 스크립트를 샘플링해 kit이 더 오래됐으면 경고 후 확인을 요청.
+    또한 templates/ ↔ live 규칙 파일 차이를 표시해 SSOT 불일치로 인한
+    라이브 전용 수정사항 소실을 사전에 알린다.
     True = 계속 진행, False = 사용자가 중단 선택.
     """
     import difflib
@@ -210,31 +212,85 @@ def _check_force_regression(kit: Path, tgt: Path) -> bool:
         if diff > 10:
             regressions.append(f"  {name}: live +{diff}줄 (kit이 더 오래된 버전)")
 
-    if not regressions:
+    # templates/ ↔ live 규칙 파일 SSOT 불일치 검사
+    # install.py가 덮어쓸 파일 중 live에서만 수정된 내용을 사전 표시
+    ssot_warnings: list[str] = []
+    templates = _templates_root(kit)
+    _RULE_DIRS = [
+        (templates / ".cursor" / "rules", tgt / ".cursor" / "rules"),
+        (templates / ".agent" / "rules", tgt / ".agent" / "rules"),
+    ]
+    for tmpl_dir, live_dir in _RULE_DIRS:
+        if not tmpl_dir.is_dir() or not live_dir.is_dir():
+            continue
+        for tmpl_file in sorted(tmpl_dir.rglob("*")):
+            if not tmpl_file.is_file():
+                continue
+            rel = tmpl_file.relative_to(tmpl_dir)
+            live_file = live_dir / rel
+            if not live_file.exists():
+                continue
+            tmpl_text = tmpl_file.read_text(encoding="utf-8")
+            live_text = live_file.read_text(encoding="utf-8")
+            if tmpl_text == live_text:
+                continue
+            live_lines_count = len(live_text.splitlines())
+            tmpl_lines_count = len(tmpl_text.splitlines())
+            diff_lines = live_lines_count - tmpl_lines_count
+            sign = f"+{diff_lines}" if diff_lines >= 0 else str(diff_lines)
+            ssot_warnings.append(
+                f"  {live_file.relative_to(tgt)}: live {sign}줄 (덮어쓰면 소실)"
+            )
+
+    has_warnings = bool(regressions or ssot_warnings)
+    if not has_warnings:
         return True
 
     if not sys.stdin.isatty():
-        print("[WARN] --force 버전 회귀 감지 (non-interactive 자동 진행):")
-        for r in regressions:
-            print(r)
+        if regressions:
+            print("[WARN] --force 버전 회귀 감지 (non-interactive 자동 진행):")
+            for r in regressions:
+                print(r)
+        if ssot_warnings:
+            print("[WARN] --force SSOT 불일치 감지 — 아래 파일의 live 수정사항이 덮어써집니다:")
+            for w in ssot_warnings:
+                print(w)
+            print("[WARN] live → templates 동기화 후 재실행을 권장합니다.")
         print("[WARN] TTY 환경에서 재실행하면 상세 안내와 확인을 받을 수 있습니다.")
         return True
 
     print()
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print(" ⚠️  --force 버전 회귀 경고")
+    print(" ⚠️  --force 경고")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    print(" kit의 스크립트가 live 프로젝트보다 오래된 것 같습니다.")
-    print(" --force 실행 시 live의 최신 수정사항이 덮어써집니다.")
-    print()
-    for r in regressions:
-        print(r)
-    print()
-    print(" 권장 조치:")
-    print("   1. hub에서 최신 pull: cd /path/to/omc_kit && git pull")
-    print("   2. 또는 live → hub 먼저 동기화: python3 scripts/omc_hub_push.py")
-    print("   3. 그 후 install --force 재실행")
-    print()
+
+    if regressions:
+        print(" [버전 회귀] kit의 스크립트가 live 프로젝트보다 오래된 것 같습니다.")
+        for r in regressions:
+            print(r)
+        print()
+
+    if ssot_warnings:
+        print(" [SSOT 불일치] 아래 파일은 live에서만 수정돼 있습니다.")
+        print(" --force 실행 시 templates 버전으로 덮어써져 live 수정사항이 소실됩니다.")
+        print()
+        for w in ssot_warnings:
+            print(w)
+        print()
+        print(" 권장 조치 (SSOT):")
+        print("   1. live 파일을 templates/ 에 먼저 복사하세요")
+        print("      예: cp .cursor/rules/omc-always.md omc_kit/templates/.cursor/rules/omc-always.md")
+        print("   2. 또는: python3 scripts/omc_sync_ssot.py")
+        print("   3. 그 후 install --force 재실행")
+        print()
+
+    if regressions:
+        print(" 권장 조치 (버전 회귀):")
+        print("   1. hub에서 최신 pull: cd /path/to/omc_kit && git pull")
+        print("   2. 또는 live → hub 먼저 동기화: python3 scripts/omc_hub_push.py")
+        print("   3. 그 후 install --force 재실행")
+        print()
+
     try:
         ans = input(" 그래도 계속 진행할까요? [y/N]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
