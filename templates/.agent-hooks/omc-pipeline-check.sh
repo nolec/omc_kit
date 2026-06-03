@@ -61,8 +61,9 @@ _is_sensitive_path() {
 # 도구 종류별 처리
 # Claude Code: Write, create_file, Edit, MultiEdit
 # Gemini CLI:  write_file, replace, overwrite_file, edit
+# Codex CLI:   apply_patch, Write (파일 편집)
 case "${TOOL_NAME}" in
-  Write|create_file|write_file|overwrite_file)
+  Write|create_file|write_file|overwrite_file|apply_patch)
     # 신규/덮어쓰기 파일 생성: 경로 무관 항상 세션 검사
     ;;
   Edit|MultiEdit|replace|edit|str_replace)

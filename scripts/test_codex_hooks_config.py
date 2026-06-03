@@ -42,10 +42,12 @@ class TestCodexHooksConfig(unittest.TestCase):
                 desc = h.get("description", "")
                 self.assertNotIn("exit 1", desc.lower())
 
-    def test_live_hooks_has_bash_matcher(self):
-        """PreToolUse는 matcher로 범위 제한 (1차: Bash)."""
+    def test_live_hooks_has_codex_matchers(self):
+        """PreToolUse matcher: Bash + 파일 편집(apply_patch, Write)."""
         matcher = _pretooluse_matcher(_load(LIVE_HOOKS))
         self.assertIn("Bash", matcher)
+        self.assertIn("apply_patch", matcher)
+        self.assertIn("Write", matcher)
 
     def test_template_matches_live_policy(self):
         """templates SSOT가 live와 동일 정책."""
