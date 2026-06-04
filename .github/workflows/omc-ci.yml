@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: OMC TDD Gate
+    name: OMC TDD Gate (ubuntu)
     runs-on: ubuntu-latest
 
     steps:
@@ -32,3 +32,26 @@ jobs:
       - name: OMC TDD Gate (omc_tdd_check)
         run: |
           python3 scripts/omc_tdd_check.py --run-tests
+
+  test-shell:
+    name: OMC Shell Hook Tests (macOS)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ubuntu에서 제외한 셸 의존 테스트 3개를 macOS에서 실행
+      # (mktemp /tmp/ 형식 사용 — macOS/Linux 공통 호환)
+      - name: Run shell-dependent tests
+        run: |
+          python3 -m pytest \
+            scripts/test_omc_pipeline_check_exit.py \
+            scripts/test_omc_post_file_check.py \
+            scripts/test_omc_pipeline_check_gemini.py \
+            -v

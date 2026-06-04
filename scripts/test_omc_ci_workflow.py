@@ -69,5 +69,18 @@ class TestOmcCiWorkflow(unittest.TestCase):
         )
 
 
+    def test_has_macos_job(self):
+        """macos-latest job 포함 — 셸 의존 테스트 실행용."""
+        c = _content()
+        self.assertIn("macos-latest", c, "macos-latest job 없음")
+
+    def test_macos_job_runs_shell_tests(self):
+        """macos-latest job에 셸 의존 테스트 3개 포함."""
+        c = _content()
+        self.assertIn("test_omc_pipeline_check_exit.py", c, "macOS job에 exit 테스트 없음")
+        self.assertIn("test_omc_post_file_check.py", c, "macOS job에 post-file-check 테스트 없음")
+        self.assertIn("test_omc_pipeline_check_gemini.py", c, "macOS job에 gemini 테스트 없음")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
