@@ -23,6 +23,7 @@ OPTIONAL_INVESTIGATE_SKILL_PATHS = [
 ]
 
 REQUIRED_SEQUENCE = [
+    "python3 scripts/omc.py state sync-session --target . --mode autopilot --title \"omc-investigate\" --request \"<현재 작업 한 줄 요약>\" --roles analysis",
     "git diff --stat HEAD",
     "git log --oneline -5",
     "git ls-files --others --exclude-standard",

@@ -10,6 +10,7 @@ description: "코드 변경사항·diff·PR 리뷰. 트리거: 리뷰해줘, 코
 ## Step 0. 리뷰 범위 수집
 
 ```bash
+python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-review" --request "<현재 작업 한 줄 요약>" --roles code_review
 git status -sb
 git diff HEAD
 git ls-files --others --exclude-standard 2>/dev/null | head -20
@@ -23,8 +24,7 @@ python3 scripts/omc.py state status --target . 2>/dev/null
 - 파일:라인 근거: 근거 없는 이슈 금지
 - 검증 커맨드: 최종 판정 전 실행 목록 기록
 
-리뷰어가 사용자에게 바로 보여줄 것
-- 파일:라인 근거 이슈 / 검증 커맨드 / 판정 / VERDICT
+리뷰어가 사용자에게 바로 보여줄 것: 파일:라인 근거 이슈 / 검증 커맨드 / 판정 / VERDICT
 
 시스템이 암묵적으로 처리
 - 자명한 요약 / 대용량 diff 분할 / 범위 밖 제외

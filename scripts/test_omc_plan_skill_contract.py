@@ -23,6 +23,7 @@ OPTIONAL_PLAN_SKILL_PATHS = [
 ]
 
 REQUIRED_SEQUENCE = [
+    "python3 scripts/omc.py state sync-session --target . --mode autopilot --title \"omc-plan\" --request \"<현재 작업 한 줄 요약>\" --roles analysis",
     "python3 scripts/omc.py state status --target .",
     "AGENTS.md Tier 1",
     "CONTRACT",

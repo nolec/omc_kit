@@ -10,6 +10,7 @@ description: "7단계 TDD 파이프라인으로 구현 실행. 트리거: 구현
 ## 0. Guard
 
 ```bash
+python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-task" --request "<현재 작업 한 줄 요약>" --roles senior_coding
 python3 scripts/omc_guard.py require --for "task" --target .
 ```
 

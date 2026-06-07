@@ -22,6 +22,7 @@ OPTIONAL_REVIEW_SKILL_PATHS = [
 ]
 
 REQUIRED_SEQUENCE = [
+    "python3 scripts/omc.py state sync-session --target . --mode autopilot --title \"omc-review\" --request \"<현재 작업 한 줄 요약>\" --roles code_review",
     "git status -sb",
     "git diff HEAD",
     "git ls-files --others --exclude-standard",

@@ -10,6 +10,7 @@ description: "구현 전 계획·설계·TDD 태스크 분해. 트리거: 계획
 ## Phase 0. 상태 확인
 
 ```bash
+python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-plan" --request "<현재 작업 한 줄 요약>" --roles analysis
 python3 scripts/omc.py state status --target .
 ```
 

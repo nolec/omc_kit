@@ -22,6 +22,7 @@ OPTIONAL_TASK_SKILL_PATHS = [
 ]
 
 REQUIRED_SEQUENCE = [
+    "python3 scripts/omc.py state sync-session --target . --mode autopilot --title \"omc-task\" --request \"<현재 작업 한 줄 요약>\" --roles senior_coding",
     "python3 scripts/omc_guard.py require --for \"task\" --target .",
     "필수 체크",
     "CONTRACT 등록",

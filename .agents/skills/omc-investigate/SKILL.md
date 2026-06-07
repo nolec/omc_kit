@@ -5,12 +5,12 @@ description: "버그 디버그·에러 추적·근본 원인 파악. 트리거: 
 
 # OMC Investigate
 
-수정 전 근본 원인을 확인합니다. 사용자에게 보여줄 것: 현상 / 가설 / 검증 / 근본 원인 / FIX PLAN
-시스템이 암묵적으로 처리: 증상 패치 금지, 추측 금지, 데이터·로그·코드 근거 부족 시 중단, 기각 시 PHASE 2 복귀
+수정 전 근본 원인을 확인합니다. 사용자에게 보여줄 것: 현상 / 가설 / 검증 / 근본 원인 / FIX PLAN / 시스템이 암묵적으로 처리: 증상 패치 금지, 추측 금지, 데이터·로그·코드 근거 부족 시 중단, 기각 시 PHASE 2 복귀
 
 ## Phase 0. 컨텍스트
 
 ```bash
+python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-investigate" --request "<현재 작업 한 줄 요약>" --roles analysis
 git diff --stat HEAD 2>/dev/null | head -20
 git log --oneline -5 2>/dev/null
 git ls-files --others --exclude-standard 2>/dev/null | head -20

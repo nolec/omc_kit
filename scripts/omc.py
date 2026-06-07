@@ -211,7 +211,23 @@ def main() -> int:
     state_record.add_argument("--request", required=True, help="Request text.")
     state_record.add_argument("--roles", required=True, help="Comma-separated role ids.")
     state_record.add_argument("--prompt-path", type=str, default=None, help="Prompt output path.")
+    state_record.add_argument("--confirm", action="store_true", help="Record the session as already confirmed/active.")
+    state_record.add_argument(
+        "--confirmation-source",
+        type=str,
+        default=None,
+        help="Optional confirmation source label when --confirm is used.",
+    )
     state_record.add_argument("--keep", type=int, default=80, help="Maximum stored entries.")
+
+    state_sync = state_sub.add_parser("sync-session", help="Record a skill-driven session as confirmed/active.")
+    state_sync.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+    state_sync.add_argument("--mode", required=True, help="OMC mode name.")
+    state_sync.add_argument("--title", required=True, help="Mode title.")
+    state_sync.add_argument("--request", required=True, help="Request text.")
+    state_sync.add_argument("--roles", required=True, help="Comma-separated role ids.")
+    state_sync.add_argument("--prompt-path", type=str, default=None, help="Prompt output path.")
+    state_sync.add_argument("--keep", type=int, default=80, help="Maximum stored entries.")
 
     state_note = state_sub.add_parser("note", help="Append a persistent note.")
     state_note.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -392,6 +408,8 @@ def main() -> int:
                     "--roles",
                     args.roles,
                     *(["--prompt-path", args.prompt_path] if args.prompt_path is not None else []),
+                    *(["--confirm"] if args.confirm else []),
+                    *(["--confirmation-source", args.confirmation_source] if args.confirmation_source else []),
                     "--keep",
                     str(args.keep),
                 ],
@@ -407,6 +425,26 @@ def main() -> int:
                     args.kind,
                     "--text",
                     args.text,
+                    "--keep",
+                    str(args.keep),
+                ],
+            )
+        if args.state_command == "sync-session":
+            return _run_script(
+                state_script,
+                [
+                    "sync-session",
+                    "--target",
+                    str(args.target),
+                    "--mode",
+                    args.mode,
+                    "--title",
+                    args.title,
+                    "--request",
+                    args.request,
+                    "--roles",
+                    args.roles,
+                    *(["--prompt-path", args.prompt_path] if args.prompt_path is not None else []),
                     "--keep",
                     str(args.keep),
                 ],
