@@ -72,3 +72,9 @@ run
 .cursor/rules/
 .gemini/
 docs/multi_assistant_quickstart.md
+
+# ── omc_kit 내부 복사본 (SSOT: scripts/ + templates/) ────────────────────
+# omc_kit/scripts/omc_*.py 는 scripts/ 의 SSOT 복사본 — 중복 추적 불필요
+omc_kit/scripts/omc_*.py
+# omc_kit/templates/ 는 templates/ 의 복사본
+omc_kit/templates/
