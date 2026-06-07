@@ -11,7 +11,8 @@ from pathlib import Path
 
 def _resolve_install_script(start_dir: Path) -> Path:
     for base in [start_dir, *start_dir.parents]:
-        for rel in ("omc_kit/scripts/install.py", "scripts/install.py"):
+        # Dev-repo smoke should prefer the root installer; nested omc_kit/ is fallback for packaged layouts.
+        for rel in ("scripts/install.py", "omc_kit/scripts/install.py"):
             candidate = base / rel
             if candidate.exists():
                 return candidate.resolve()
@@ -72,9 +73,6 @@ def main() -> int:
             "scripts/omc_domain.py",
             "scripts/omc_doctor.py",
             "scripts/omc_chat.py",
-            "scripts/test_omc_headless_smoke.py",
-            "scripts/test_omc_chat_headless_smoke.py",
-            "scripts/test_omc_setup_smoke.py",
             "docs/verification_checklist.md",
         ]:
             _assert_exists(project_root / rel)
@@ -104,6 +102,8 @@ def main() -> int:
         _assert_exists(project_root / ".omc" / "notepad.md")
 
         if args.executor:
+            _assert_exists(project_root / "scripts" / "test_omc_headless_smoke.py")
+            _assert_exists(project_root / "scripts" / "test_omc_chat_headless_smoke.py")
             env = os.environ.copy()
             env["OMC_EXEC_TIMEOUT_SEC"] = str(args.chat_exec_timeout_sec)
             headless = _run(

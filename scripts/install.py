@@ -23,6 +23,23 @@ def _write(dst: Path, content: str, *, force: bool) -> None:
     dst.write_text(content.rstrip() + "\n", encoding="utf-8")
 
 
+_SCRIPTS_EXTRA = {
+    "install.py",        # 인스톨러 자체 — 타겟에서 재실행 가능하도록
+    "omc.py",            # OMC 진입점
+    "compose_prompt.py", # 프롬프트 조합 유틸
+}
+
+
+def _deployed_script_names(kit_root: Path) -> set[str]:
+    scripts_src = kit_root / "scripts"
+    names: set[str] = set()
+    if scripts_src.exists():
+        for src in sorted(scripts_src.glob("*.py")):
+            if src.name.startswith("omc_") or src.name in _SCRIPTS_EXTRA:
+                names.add(src.name)
+    return names
+
+
 def _ensure_executable(path: Path) -> None:
     if not path.exists():
         return
@@ -353,16 +370,9 @@ def main() -> int:
     # scripts: 화이트리스트 방식 — 명시된 파일만 배포 (기본값: 제외)
     # omc_*.py 전체 자동 포함 + 비-omc_ 명시 목록
     # 새 파일 추가 시 이 목록에 없으면 자동 제외됨 (안전한 기본값)
-    _SCRIPTS_EXTRA = {
-        "install.py",        # 인스톨러 자체 — 타겟에서 재실행 가능하도록
-        "omc.py",            # OMC 진입점
-        "compose_prompt.py", # 프롬프트 조합 유틸
-    }
     scripts_src = kit / "scripts"
-    if scripts_src.exists():
-        for src in sorted(scripts_src.glob("*.py")):
-            if src.name.startswith("omc_") or src.name in _SCRIPTS_EXTRA:
-                to_copy.append((src, tgt / "scripts" / src.name))
+    for name in sorted(_deployed_script_names(kit)):
+        to_copy.append((scripts_src / name, tgt / "scripts" / name))
 
     for s, d in to_copy:
         _copy(s, d, force=force)

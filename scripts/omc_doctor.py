@@ -79,17 +79,53 @@ def _run_status(project_root: Path) -> tuple[bool, str]:
     return True, proc.stdout.strip()
 
 
+_FALLBACK_DEPLOYED_SCRIPTS = {
+    "install.py",
+    "omc.py",
+    "compose_prompt.py",
+    "omc_chat.py",
+    "omc_exec.py",
+    "omc_guard.py",
+    "omc_state.py",
+    "omc_hooks.py",
+    "omc_role_suggest.py",
+    "omc_tdd_check.py",
+    "omc_pipeline_guard.py",
+    "omc_context.py",
+    "omc_lesson.py",
+    "omc_cost.py",
+    "omc_run.py",
+    "omc_domain.py",
+    "omc_utils.py",
+    "omc_peer_review.py",
+    "omc_autopilot.py",
+}
+
+
+def _load_deployed_script_names(root: Path) -> set[str]:
+    import importlib.util
+
+    install_path = root / "scripts" / "install.py"
+    if not install_path.exists():
+        return set(_FALLBACK_DEPLOYED_SCRIPTS)
+    try:
+        spec = importlib.util.spec_from_file_location("omc_install_contract", install_path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec is not None and spec.loader is not None
+        spec.loader.exec_module(module)
+        helper = getattr(module, "_deployed_script_names", None)
+        if helper is None:
+            return set(_FALLBACK_DEPLOYED_SCRIPTS)
+        return set(helper(root))
+    except Exception:
+        return set(_FALLBACK_DEPLOYED_SCRIPTS)
+
+
 def _build_checks(root: Path) -> list[Check]:
     checks: list[Check] = []
 
-    # ── 핵심 스크립트 ───────────────────────────────────────────────────────
-    scripts = [
-        "omc.py", "omc_chat.py", "omc_exec.py", "omc_guard.py",
-        "omc_state.py", "omc_hooks.py", "omc_role_suggest.py", "omc_tdd_check.py",
-        "omc_pipeline_guard.py", "omc_context.py", "omc_lesson.py", "omc_cost.py",
-        "omc_run.py", "omc_domain.py", "auto_prompt.py", "omc_utils.py",
-        "omc_peer_review.py", "omc_autopilot.py",
-    ]
+    # ── 배포 스크립트 계약 (install.py와 공유) ───────────────────────────────
+    scripts = sorted(_load_deployed_script_names(root))
     for s in scripts:
         p = root / "scripts" / s
         checks.append(Check(
