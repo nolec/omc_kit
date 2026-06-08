@@ -211,6 +211,30 @@ class TestBlockExitCode(unittest.TestCase):
             self.assertEqual(pipeline.get("session_id"), "sess-abc123",
                              "contract_done 후 session_id가 저장되어야 한다")
 
+    def test_contract_done_clears_stale_session_id_when_latest_missing(self):
+        """latest.json 없을 때 기존 stale session_id가 초기화(빈 문자열)되어야 한다."""
+        import json, tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path as P
+            root = P(tmp)
+            (root / ".omc" / "state").mkdir(parents=True)
+            # pipeline_session에 stale session_id 미리 주입
+            import sys
+            sys.path.insert(0, str(P(__file__).parent))
+            import omc_pipeline_guard as _g
+            state = _g._load_state(root)
+            state["session_id"] = "stale-old-session"
+            _g._save_state(root, state)
+
+            # latest.json 없는 상태에서 contract-done 실행
+            _g.cmd_contract_done(root)
+
+            fresh = _g._load_state(root)
+            self.assertEqual(fresh.get("session_id", ""), "",
+                             "latest.json 없으면 stale session_id가 남으면 안 된다")
+            self.assertTrue(fresh.get("contract_confirmed"),
+                            "contract_confirmed는 True여야 한다")
+
     def test_session_id_mismatch_blocks_edit(self):
         """pipeline_session의 session_id가 latest와 다르면 차단(exit 2)이어야 한다."""
         import json, os, subprocess, tempfile
