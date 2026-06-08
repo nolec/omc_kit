@@ -189,7 +189,7 @@ python3 scripts/omc_pipeline_guard.py status
 
 ## 시나리오 11. GitHub Actions CI
 
-`.github/workflows/omc-ci.yml`이 자동 실행합니다.
+이 시나리오는 `.github/workflows/omc-ci.yml`이 설치된 레포에서만 적용됩니다.
 
 ```yaml
 # push / PR 마다 자동 실행

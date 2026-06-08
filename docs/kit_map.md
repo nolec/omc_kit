@@ -97,6 +97,7 @@ project_prompts/    ← 현재 프로젝트 도메인 role/profile (선택)
 
 ## CI/CD
 
-`.github/workflows/omc-ci.yml` — 모든 push/PR에서 자동 실행:
+`.github/workflows/omc-ci.yml`이 설치된 레포에서는 아래 검사를 자동화할 수 있습니다.
+
 - **ubuntu**: 셸 독립 단위 테스트 + `omc_tdd_check.py --run-tests` (TDD 게이트)
 - **macOS**: 셸 의존 훅 테스트 (`omc-pipeline-check.sh`, `omc-post-file-check.sh` 등)
