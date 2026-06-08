@@ -119,23 +119,34 @@ except Exception:
 status = (latest.get("latest_confirmation") or {}).get("status", "")
 request = latest.get("latest_confirmed_request", "(알 수 없음)")
 
-# pipeline_session.json 에서 contract_confirmed 읽기
+# pipeline_session.json 에서 contract_confirmed + session_id 읽기
 pipeline_path = Path(".omc/pipeline_session.json")
 contract_confirmed = False
+pipeline_session_id = ""
 if pipeline_path.exists():
     try:
         pipeline = json.loads(pipeline_path.read_text(encoding="utf-8"))
         contract_confirmed = pipeline.get("contract_confirmed", False)
+        pipeline_session_id = pipeline.get("session_id", "")
     except Exception:
         pass
+
+# latest 에서 현재 confirmed session_id 읽기
+latest_session_id = latest.get("latest_confirmed_session_id", "")
 
 # pending = AI가 현재 작업 중 → 통과
 if status == "pending":
     sys.exit(0)
 
-# confirmed + contract_confirmed = 현재 파이프라인 작업 진행 중 → 통과
+# confirmed + contract_confirmed + session_id 일치 = 현재 파이프라인 작업 진행 중 → 통과
+# session_id 가 비어있는 경우(기존 install, 이전 버전 호환)는 일치로 간주
 if status == "confirmed" and contract_confirmed:
-    sys.exit(0)
+    if not pipeline_session_id or not latest_session_id or pipeline_session_id == latest_session_id:
+        sys.exit(0)
+    # session_id 불일치 = 이전 세션의 pipeline_session 잔재 → 차단
+    msg = f"[OMC BLOCK] 세션 불일치 — pipeline_session={pipeline_session_id[:8]} latest={latest_session_id[:8]}. contract-done 재실행 필요"
+    print(msg)
+    sys.exit(1)
 
 # confirmed + contract_confirmed 없음 = 세션 완료 후 새 작업 선언 전 → 차단
 if status == "confirmed":

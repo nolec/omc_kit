@@ -185,6 +185,120 @@ class TestBlockExitCode(unittest.TestCase):
                 f"status='' → exit 0이어야 함. stdout={result.stdout!r}"
             )
 
+
+    def test_contract_done_stores_session_id(self):
+        """contract-done 실행 후 pipeline_session.json에 session_id가 저장된다."""
+        import json, tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path as P
+            root = P(tmp)
+            (root / ".omc" / "state").mkdir(parents=True)
+            # latest.json에 session_id 설정
+            latest = {
+                "latest_confirmation": {"status": "confirmed"},
+                "latest_confirmed_session_id": "sess-abc123",
+                "latest_session_id": "sess-abc123",
+            }
+            (root / ".omc" / "state" / "latest.json").write_text(
+                json.dumps(latest), encoding="utf-8"
+            )
+            # omc_pipeline_guard를 직접 import해서 테스트
+            import sys
+            sys.path.insert(0, str(P(__file__).parent))
+            import importlib
+            import omc_pipeline_guard as _g
+            _g.cmd_contract_done(root)
+            pipeline = json.loads((root / ".omc" / "pipeline_session.json").read_text())
+            self.assertEqual(pipeline.get("session_id"), "sess-abc123",
+                             "contract_done 후 session_id가 저장되어야 한다")
+
+    def test_session_id_mismatch_blocks_edit(self):
+        """pipeline_session의 session_id가 latest와 다르면 차단(exit 2)이어야 한다."""
+        import json, os, subprocess, tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path as P
+            root = P(tmp)
+            (root / ".omc" / "state").mkdir(parents=True)
+            (root / ".omc" / "policy.json").write_text(
+                json.dumps({"enforce_confirm": True}), encoding="utf-8"
+            )
+            # latest: session-B
+            latest = {
+                "latest_confirmation": {"status": "confirmed"},
+                "latest_confirmed_session_id": "sess-B",
+                "latest_confirmed_request": "task B",
+            }
+            (root / ".omc" / "state" / "latest.json").write_text(
+                json.dumps(latest), encoding="utf-8"
+            )
+            # pipeline_session: session-A (불일치)
+            (root / ".omc" / "pipeline_session.json").write_text(
+                json.dumps({
+                    "contract_confirmed": True,
+                    "session_id": "sess-A",
+                    "red_done_tests": [],
+                    "allowed_impl_files": [],
+                }), encoding="utf-8"
+            )
+            (root / "scripts").mkdir()
+            (root / "scripts" / "omc_pipeline_guard.py").write_text(
+                _FAKE_GUARD_ALLOW, encoding="utf-8"
+            )
+            payload = {"tool_name": "Edit",
+                       "tool_input": {"file_path": "scripts/omc_state.py"}}
+            env = {**os.environ, "OMC_BLOCK_EXIT": "2"}
+            result = subprocess.run(
+                ["sh", SCRIPT], input=json.dumps(payload),
+                capture_output=True, text=True, env=env, cwd=str(root),
+            )
+            self.assertEqual(
+                result.returncode, 2,
+                f"session_id 불일치 → exit 2. stdout={result.stdout!r}"
+            )
+
+    def test_session_id_match_allows_edit(self):
+        """pipeline_session의 session_id가 latest와 일치하면 허용(exit 0)이어야 한다."""
+        import json, os, subprocess, tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path as P
+            root = P(tmp)
+            (root / ".omc" / "state").mkdir(parents=True)
+            (root / ".omc" / "policy.json").write_text(
+                json.dumps({"enforce_confirm": True}), encoding="utf-8"
+            )
+            latest = {
+                "latest_confirmation": {"status": "confirmed"},
+                "latest_confirmed_session_id": "sess-A",
+                "latest_confirmed_request": "task A",
+            }
+            (root / ".omc" / "state" / "latest.json").write_text(
+                json.dumps(latest), encoding="utf-8"
+            )
+            # pipeline_session: 동일 session-A
+            (root / ".omc" / "pipeline_session.json").write_text(
+                json.dumps({
+                    "contract_confirmed": True,
+                    "session_id": "sess-A",
+                    "red_done_tests": [],
+                    "allowed_impl_files": [],
+                }), encoding="utf-8"
+            )
+            (root / "scripts").mkdir()
+            (root / "scripts" / "omc_pipeline_guard.py").write_text(
+                _FAKE_GUARD_ALLOW, encoding="utf-8"
+            )
+            payload = {"tool_name": "Edit",
+                       "tool_input": {"file_path": "scripts/omc_state.py"}}
+            env = {**os.environ, "OMC_BLOCK_EXIT": "2"}
+            result = subprocess.run(
+                ["sh", SCRIPT], input=json.dumps(payload),
+                capture_output=True, text=True, env=env, cwd=str(root),
+            )
+            self.assertEqual(
+                result.returncode, 0,
+                f"session_id 일치 → exit 0. stdout={result.stdout!r}"
+            )
+
     def test_empty_payload_always_exits_0(self):
         """tool_name 없는 빈 payload는 항상 exit 0이다."""
         code = _run_check({}, _FAKE_GUARD_BLOCK)

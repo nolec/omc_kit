@@ -153,10 +153,13 @@ def write_lessons_inject(root: Path, top_n: int = 3) -> None:
     교훈이 0개이면 파일을 생성하지 않습니다.
     """
     lessons_dir = root / ".omc" / "lessons"
+    out_path = (root / ".cursor" / "rules" / "omc-lessons-inject.mdc")
     if not lessons_dir.exists():
+        out_path.unlink(missing_ok=True)
         return
     files = sorted(lessons_dir.glob("*.md"), reverse=True)
     if not files:
+        out_path.unlink(missing_ok=True)
         return
 
     # BM25 또는 최신순 top_n 수집
