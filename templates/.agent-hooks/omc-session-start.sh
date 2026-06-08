@@ -49,15 +49,29 @@ SUMMARY_FILE="${ROOT}/.omc/summary.md"
 if [[ -f "${SUMMARY_FILE}" ]]; then
   if [[ "${EXECUTOR}" == "gemini" ]]; then
     # Gemini는 stdout이 반드시 순수 JSON이어야 함
-    "${PYTHON_BIN}" - "${SUMMARY_FILE}" <<'PYEOF'
+    LESSONS_FILE="${ROOT}/.cursor/rules/omc-lessons-inject.mdc"
+    "${PYTHON_BIN}" - "${SUMMARY_FILE}" "${LESSONS_FILE}" <<'PYEOF'
 import json, sys
-content = open(sys.argv[1], encoding="utf-8").read()
-print(json.dumps({"additionalContext": content}))
+from pathlib import Path
+summary = open(sys.argv[1], encoding="utf-8").read()
+lessons_path = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+lessons = ("
+
+<!-- OMC 자동 주입 교훈 -->
+" + lessons_path.read_text(encoding="utf-8")) if lessons_path and lessons_path.exists() else ""
+print(json.dumps({"additionalContext": summary + lessons}))
 PYEOF
   else
     # Claude Code / Codex: 평문 stdout → 컨텍스트로 자동 주입
     echo "<!-- OMC Session Context -->"
     cat "${SUMMARY_FILE}"
+    # BM25 교훈 주입 (.cursor/rules/omc-lessons-inject.mdc 존재 시)
+    LESSONS_FILE="${ROOT}/.cursor/rules/omc-lessons-inject.mdc"
+    if [ -f "${LESSONS_FILE}" ]; then
+      echo ""
+      echo "<!-- OMC 자동 주입 교훈 -->"
+      cat "${LESSONS_FILE}"
+    fi
   fi
 fi
 
