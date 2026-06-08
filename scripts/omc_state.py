@@ -996,6 +996,7 @@ def record_session(
             "latest_confirmed_session_id": session_id if confirmed else prev_latest.get("latest_confirmed_session_id"),
             "latest_confirmed_roles": list(role_ids) if confirmed else prev_latest.get("latest_confirmed_roles", []),
             "latest_confirmed_request": request.strip() if confirmed else prev_latest.get("latest_confirmed_request"),
+            "latest_skill": title if confirmed else prev_latest.get("latest_skill"),
             "latest_confirmation": {
                 "status": "confirmed" if confirmed else "pending",
                 "confirmed_at": entry["confirmation"]["confirmed_at"],

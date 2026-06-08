@@ -184,6 +184,39 @@ def test_claude_hook_allows_on_pending(tmp_path: Path) -> None:
         f"stdout={result.stdout!r}\nstderr={result.stderr!r}"
     )
 
+def test_prompt_inject_ambiguous_message_triggers_clarification(tmp_path: Path) -> None:
+    """모호 메시지('응') + confirmed + latest_skill 있음 → [OMC] 확인 질문 주입."""
+    import json
+    _make_omc_state(tmp_path, status="confirmed")
+    latest_path = tmp_path / ".omc" / "state" / "latest.json"
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    latest["latest_skill"] = "omc-review"
+    latest_path.write_text(json.dumps(latest, ensure_ascii=False), encoding="utf-8")
+
+    hook = ROOT / ".agent-hooks" / "omc-prompt-inject.sh"
+    result = _run_hook(hook, prompt="응", cwd=tmp_path)
+    combined = result.stdout + result.stderr
+    assert "[OMC]" in combined and ("진행" in combined or "무엇" in combined or "omc-review" in combined), (
+        f"모호 메시지에 확인 질문이 나와야 함\nstdout={result.stdout!r}\nstderr={result.stderr!r}"
+    )
+
+
+def test_prompt_inject_explicit_skill_name_skips_clarification(tmp_path: Path) -> None:
+    """명시적 스킬명('omc-task 진행해줘') → 모호 메시지 확인 질문 없음."""
+    import json
+    _make_omc_state(tmp_path, status="confirmed")
+    latest_path = tmp_path / ".omc" / "state" / "latest.json"
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    latest["latest_skill"] = "omc-review"
+    latest_path.write_text(json.dumps(latest, ensure_ascii=False), encoding="utf-8")
+
+    hook = ROOT / ".agent-hooks" / "omc-prompt-inject.sh"
+    result = _run_hook(hook, prompt="omc-task 진행해줘", cwd=tmp_path)
+    combined = result.stdout + result.stderr
+    assert "무엇을 진행할까요" not in combined and "모호한 진행" not in combined, (
+        f"명시적 스킬명이 있는데 모호 메시지 경고가 나와서는 안 됨\nstdout={result.stdout!r}"
+    )
+
 
 def test_doctor_has_hook_block_check() -> None:
     """omc_doctor.py에 훅 차단 로직 검사 항목이 존재해야 함."""

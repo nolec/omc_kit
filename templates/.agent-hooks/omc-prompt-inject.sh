@@ -30,6 +30,50 @@ if [[ -z "${PROMPT}" ]]; then
   exit 0
 fi
 
+
+# ── 모호 메시지 감지 (30자 early-exit 이전) ──────────────────────────────
+# "응" "ㅇ" "진행하자" 같은 메시지에 확인 질문 주입
+# 판정: (15자 미만 + 부분 일치) OR (완전 일치) AND 명시적 스킬명 없으면 모호
+_AMBIGUOUS=0
+_EXPLICIT=0
+
+# 명시적 스킬명 포함 여부 먼저 확인
+if printf '%s' "${PROMPT}" | grep -qiE "omc-|/plan|/task|/review|/ship|/investigate|/critique|/brainstorm|스킬|skill"; then
+  _EXPLICIT=1
+fi
+
+if [ "${_EXPLICIT}" -eq 0 ]; then
+  # 완전 일치 패턴
+  if printf '%s' "${PROMPT}" | grep -qE "^(진행|계속|ㅇ|응|고고|go|next|ok|ㅇㅇ|yes|계속해|그래|그렇게 진행|진행하자|계속하자)$"; then
+    _AMBIGUOUS=1
+  fi
+  # 15자 미만 + 부분 일치
+  if [ "${#PROMPT}" -lt 15 ] && printf '%s' "${PROMPT}" | grep -qiE "(진행|계속|ㅇ|응|go|next|ok)"; then
+    _AMBIGUOUS=1
+  fi
+fi
+
+if [ "${_AMBIGUOUS}" -eq 1 ]; then
+  # latest_skill 읽기
+  _SKILL=$("${PYTHON_BIN}" -c '
+import json
+from pathlib import Path
+try:
+    d = json.loads(Path(".omc/state/latest.json").read_text(encoding="utf-8"))
+    print(d.get("latest_skill", ""))
+except Exception:
+    print("")
+' 2>/dev/null || echo "")
+
+  echo ""
+  echo "[OMC] 모호한 진행 요청입니다 — 무엇을 진행할까요?"
+  if [ -n "${_SKILL}" ]; then
+    echo "  직전 스킬: ${_SKILL}"
+  fi
+  echo "  예: \"omc-task 진행해줘\" 또는 \"/plan [설명]\""
+  exit 0
+fi
+
 # 짧은 프롬프트(응, 고마워, 확인 등 30자 미만) 스킵 — 불필요한 BM25 토큰 절약
 if [[ ${#PROMPT} -lt 30 ]]; then
   exit 0

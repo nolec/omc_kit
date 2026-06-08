@@ -88,6 +88,36 @@ def test_notepad_omits_pending_lines_when_no_pending_session(tmp_path: Path):
     assert "pending_session_status" not in notepad, notepad
 
 
+
+def test_sync_session_stores_latest_skill_in_latest_json(tmp_path: Path):
+    target = tmp_path / "repo"
+    target.mkdir()
+
+    init = _run("state", "init", "--target", str(target))
+    assert init.returncode == 0, init.stderr
+
+    record = _run(
+        "state",
+        "sync-session",
+        "--target",
+        str(target),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-review",
+        "--request",
+        "latest_skill 저장 확인",
+        "--roles",
+        "code_review",
+    )
+    assert record.returncode == 0, record.stderr
+
+    latest = _read_json(target / ".omc" / "state" / "latest.json")
+    assert latest.get("latest_skill") == "omc-review", (
+        f"latest_skill 필드 없거나 불일치: {latest}"
+    )
+
+
 def test_core_omc_skills_document_use_sync_session_step():
     skill_files = [
         ROOT / ".agents" / "skills" / "omc-plan" / "SKILL.md",
