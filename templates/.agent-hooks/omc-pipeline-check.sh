@@ -141,6 +141,9 @@ if status == "confirmed" and contract_confirmed:
 if status == "confirmed":
     msg = f"[OMC BLOCK] 활성 세션 없음 — 마지막 작업: {request}"
     sys.exit(1)
+
+# 그 외(빈 문자열, "none", 첫 설치 등) → 세션 미설정 상태로 간주, 통과
+sys.exit(0)
 OMCPYEOF
 "${PYTHON_BIN}" "${_OMC_PY}" > "${_OMC_OUT}" 2>/dev/null
 OMC_SYNC_EXIT=$?
