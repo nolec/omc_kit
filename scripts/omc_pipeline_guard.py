@@ -97,6 +97,7 @@ def _empty_state() -> dict:
         "blocked_count": 0,
         "contract_confirmed": False, # CONTRACT 양식 작성 및 사용자 컨펌 완료 여부
         "contract_hash": "",         # CONTRACT 내용 SHA-256 해시 (우발적 위조 방지)
+        "session_id": "",            # contract_confirmed가 속한 latest 세션 ID
     }
 
 
