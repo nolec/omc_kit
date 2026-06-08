@@ -97,6 +97,23 @@ class TestPromptInjectThreeState(unittest.TestCase):
         self.assertNotIn("[OMC] 모호한 진행 요청", result.stdout,
                          "pending 상태에서는 주입하면 안 된다")
 
+    def test_missing_latest_session_id_is_ask(self):
+        """latest_confirmed_session_id가 비어있으면 contract_confirmed여도 ask 상태여야 한다."""
+        result = _run(
+            prompt="진행하자",
+            latest={
+                "latest_confirmation": {"status": "confirmed"},
+                "latest_confirmed_session_id": "",  # 비어있음
+                "latest_skill": "omc-task",
+            },
+            pipeline={
+                "contract_confirmed": True,
+                "session_id": "sess-A",
+            },
+        )
+        self.assertIn("[OMC] 모호한 진행 요청", result.stdout,
+                      "latest_confirmed_session_id 없으면 active가 아니라 ask여야 한다")
+
 
 if __name__ == "__main__":
     unittest.main()

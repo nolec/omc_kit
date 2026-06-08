@@ -139,11 +139,12 @@ if status == "pending":
     sys.exit(0)
 
 # confirmed + contract_confirmed + session_id 일치 = 현재 파이프라인 작업 진행 중 → 통과
-# session_id 가 비어있는 경우(기존 install, 이전 버전 호환)는 일치로 간주
+# latest_session_id가 없으면 세션 연계를 확인할 수 없으므로 차단
+# pipeline_session_id가 비어있는 경우(구버전 호환)는 latest_session_id 있으면 통과
 if status == "confirmed" and contract_confirmed:
-    if not pipeline_session_id or not latest_session_id or pipeline_session_id == latest_session_id:
+    if latest_session_id and (not pipeline_session_id or pipeline_session_id == latest_session_id):
         sys.exit(0)
-    # session_id 불일치 = 이전 세션의 pipeline_session 잔재 → 차단
+    # latest_session_id 없음 또는 session_id 불일치 = 세션 연계 불명확/이전 잔재 → 차단
     msg = f"[OMC BLOCK] 세션 불일치 — pipeline_session={pipeline_session_id[:8]} latest={latest_session_id[:8]}. contract-done 재실행 필요"
     print(msg)
     sys.exit(1)

@@ -90,8 +90,9 @@ if pipeline_path.exists():
 latest_session_id = latest.get("latest_confirmed_session_id", "")
 
 if contract_confirmed:
-    # session_id가 없거나 일치하면 active(진행 중)
-    if not pipeline_session_id or not latest_session_id or pipeline_session_id == latest_session_id:
+    # latest_session_id가 있을 때만 active 판정
+    # pipeline_session_id가 비어있는 경우는 구버전 호환으로 active 허용
+    if latest_session_id and (not pipeline_session_id or pipeline_session_id == latest_session_id):
         print("active"); sys.exit(0)
 
 print("ask")
