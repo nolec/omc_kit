@@ -338,7 +338,7 @@ def cmd_contract_done(root: Path, content: str = "") -> int:
     state["contract_confirmed"] = True
     hash_source = content if content else f"confirmed_at:{time.time()}"
     state["contract_hash"] = _make_contract_hash(hash_source)
-    state["session_id"] = ""  # 먼저 초기화 — 읽기 실패 시 stale id 잔류 방지
+    state["session_id"] = ""
 
     # latest.json에서 session_id 읽어 pipeline_session에 기록
     latest_path = root / ".omc" / "state" / "latest.json"
@@ -506,7 +506,7 @@ def cmd_session_start(root: Path) -> int:
     state = _load_state(root)
     state["contract_confirmed"] = False
     state["contract_hash"] = ""
-    state["session_id"] = ""  # 새 세션 시작 시 이전 session_id 클리어
+    state["session_id"] = ""
     _save_state(root, state)
     print("[PIPELINE] 🔄 새 세션 시작 — CONTRACT 플래그 초기화")
     return 0

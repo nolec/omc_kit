@@ -139,8 +139,8 @@ if status == "pending":
     sys.exit(0)
 
 # confirmed + contract_confirmed + session_id 일치 = 현재 파이프라인 작업 진행 중 → 통과
-# latest_session_id가 없으면 세션 연계를 확인할 수 없으므로 차단
-# pipeline_session_id가 비어있는 경우(구버전 호환)는 latest_session_id 있으면 통과
+# session_id 가 비어있는 경우(기존 install, 이전 버전 호환)는 일치로 간주
+# 단, latest_session_id 자체가 없으면 현재 세션 연계를 확인할 수 없으므로 통과시키지 않음
 if status == "confirmed" and contract_confirmed:
     if latest_session_id and (not pipeline_session_id or pipeline_session_id == latest_session_id):
         sys.exit(0)
