@@ -38,6 +38,12 @@ omc_kit/
     .gemini/commands/ Gemini CLI 커맨드 참조 (omc-commands.md)
     .codex/commands/  Codex CLI 커맨드 참조 (/project: 네임스페이스)
     .cursor/rules/    Cursor 규칙 (omc-always.md)
+    .agent-hooks/     공용 훅 스크립트 (Claude/Codex/Gemini 공통)
+      omc-pipeline-check.sh   파일 수정 전 세션/TDD 파이프라인 차단
+      omc-prompt-inject.sh    UserPromptSubmit — BM25 교훈 주입 + 모호 메시지 감지
+      omc-post-file-check.sh  PostToolUse — 세션 미확인 파일 수정 경고 (소프트 가드)
+      omc-session-start.sh    세션 시작 훅
+      omc-session-end.sh      세션 종료 훅
     .agents/skills/   Codex + Antigravity Agent Skills (SSOT — plural)
     .agent/           Antigravity IDE 전용
       workflows/        명시적 슬래시 커맨드 (/plan, /task 등)
@@ -88,3 +94,9 @@ project_prompts/    ← 현재 프로젝트 도메인 role/profile (선택)
 
 프로젝트 추가할 때:
 - `python omc_kit/scripts/omc.py setup --target /path/to/new-project`
+
+## CI/CD
+
+`.github/workflows/omc-ci.yml` — 모든 push/PR에서 자동 실행:
+- **ubuntu**: 셸 독립 단위 테스트 + `omc_tdd_check.py --run-tests` (TDD 게이트)
+- **macOS**: 셸 의존 훅 테스트 (`omc-pipeline-check.sh`, `omc-post-file-check.sh` 등)

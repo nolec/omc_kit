@@ -169,6 +169,48 @@ python3 scripts/omc_pipeline_guard.py status
 
 ---
 
+## 시나리오 10. 모호 메시지 감지 (자동)
+
+`UserPromptSubmit` 훅이 자동으로 처리합니다. 별도 실행 불필요.
+
+동작 조건:
+- 세션 상태가 `confirmed` (이전 작업 완료 후 새 작업 선언 전)
+- 입력이 "응", "ㅇ", "진행하자", "계속해" 등 15자 미만 모호 패턴
+- 명시적 스킬명(`omc-task`, `/plan` 등) 없을 때
+
+출력 예시:
+```
+[OMC] 모호한 진행 요청입니다 — 무엇을 진행할까요?
+  직전 스킬: omc-review
+  예: "omc-task 진행해줘" 또는 "/plan [설명]"
+```
+
+---
+
+## 시나리오 11. GitHub Actions CI
+
+`.github/workflows/omc-ci.yml`이 자동 실행합니다.
+
+```yaml
+# push / PR 마다 자동 실행
+# ubuntu: 단위 테스트 + omc_tdd_check.py --run-tests
+# macOS:  omc-pipeline-check.sh 등 셸 훅 테스트
+```
+
+로컬에서 CI와 동일한 검사를 실행하려면:
+```bash
+# TDD 게이트 (staged 파일 기준)
+python3 scripts/omc_tdd_check.py --staged
+
+# 전체 테스트 (CI ubuntu 기준)
+python3 -m pytest scripts/ -q \
+  --ignore=scripts/test_omc_pipeline_check_exit.py \
+  --ignore=scripts/test_omc_post_file_check.py \
+  --ignore=scripts/test_omc_pipeline_check_gemini.py
+```
+
+---
+
 ## 비용 추적
 
 ```bash
