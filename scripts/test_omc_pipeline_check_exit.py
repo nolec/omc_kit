@@ -205,7 +205,6 @@ class TestBlockExitCode(unittest.TestCase):
             # omc_pipeline_guard를 직접 import해서 테스트
             import sys
             sys.path.insert(0, str(P(__file__).parent))
-            import importlib
             import omc_pipeline_guard as _g
             _g.cmd_contract_done(root)
             pipeline = json.loads((root / ".omc" / "pipeline_session.json").read_text())
