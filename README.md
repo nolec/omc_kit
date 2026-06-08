@@ -12,6 +12,8 @@ AI 보조 개발 환경을 위한 TDD 파이프라인 + 멀티 LLM 운영 킷입
 - **모델별 사고 패턴**: 각 LLM에 최적화된 추론 지침 자동 주입
 - **변경 범위 경고**: 큰 변경 전 자동 scope 분석 (차단 아님, 신호만)
 - **세션 관리**: 작업 선언 → 파일 수정 → 완료 흐름으로 문맥 유지
+- **모호 메시지 감지**: "응", "진행하자" 등 모호한 입력 시 다음 스킬 확인 질문 자동 주입 (`UserPromptSubmit` 훅)
+- **GitHub Actions CI**: 모든 push/PR에서 TDD 게이트 + 훅 테스트 자동 실행 (ubuntu + macOS 매트릭스)
 
 ## 설치
 
@@ -77,17 +79,19 @@ python3 scripts/omc_doctor.py
 | 스크립트 | 용도 |
 |---|---|
 | `scripts/omc.py` | 세션 관리 진입점 |
+| `scripts/omc_state.py` | 세션 상태 R/W + `latest_skill` 저장 |
 | `scripts/omc_pipeline_guard.py` | TDD 파이프라인 게이트 |
 | `scripts/omc_tdd_check.py` | 테스트 커버리지 검사 |
 | `scripts/omc_doctor.py` | 설치 상태 진단 |
 | `scripts/omc_sync_ssot.py` | SSOT 동기화 확인 |
 | `scripts/omc_lesson.py` | 교훈 저장/검색 |
 
-## 최근 변경 (2026-06-01)
+## 최근 변경 (2026-06-08)
 
-- Dashboard API 응답에 스키마 버전/호환 메타를 추가했습니다.
-- autopilot 파이프라인 상태/복구 및 스테이징 안전성을 강화했습니다.
-- `dashboard/package.json`에 `test:api` 실행 진입점을 추가했습니다.
+- **모호 메시지 감지** — `UserPromptSubmit` 훅(`omc-prompt-inject.sh`)이 "응", "진행하자" 등의 모호한 입력을 감지해 확인 질문을 자동 주입합니다. 직전 스킬명도 함께 표시해 맥락을 제공합니다.
+- **`latest_skill` 저장** — `sync-session` 시 스킬 타이틀을 `latest.json`에 보관해 훅이 꺼낼 수 있게 했습니다.
+- **Codex PostToolUse 소프트 가드** — 세션 미확인 상태에서 파일 수정 시 경고를 주입합니다 (차단 아님).
+- **GitHub Actions CI** — ubuntu(단위 테스트) + macOS(훅 통합 테스트) 매트릭스로 모든 push/PR을 검증합니다.
 
 ## 디렉토리 구조
 
