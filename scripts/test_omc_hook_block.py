@@ -218,6 +218,24 @@ def test_prompt_inject_explicit_skill_name_skips_clarification(tmp_path: Path) -
     )
 
 
+
+def test_prompt_inject_ambiguous_no_injection_on_pending(tmp_path: Path) -> None:
+    """모호 메시지('응') + pending 상태 → 확인 질문 주입 없음."""
+    import json
+    _make_omc_state(tmp_path, status="pending")
+    latest_path = tmp_path / ".omc" / "state" / "latest.json"
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    latest["latest_skill"] = "omc-review"
+    latest_path.write_text(json.dumps(latest, ensure_ascii=False), encoding="utf-8")
+
+    hook = ROOT / ".agent-hooks" / "omc-prompt-inject.sh"
+    result = _run_hook(hook, prompt="응", cwd=tmp_path)
+    combined = result.stdout + result.stderr
+    assert "모호한 진행" not in combined and "[OMC]" not in combined, (
+        f"pending 상태에서 모호 감지 주입이 나와서는 안 됨\nstdout={result.stdout!r}\nstderr={result.stderr!r}"
+    )
+
+
 def test_doctor_has_hook_block_check() -> None:
     """omc_doctor.py에 훅 차단 로직 검사 항목이 존재해야 함."""
     doctor_path = ROOT / "scripts" / "omc_doctor.py"

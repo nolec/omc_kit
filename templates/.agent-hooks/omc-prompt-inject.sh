@@ -54,8 +54,19 @@ if [ "${_EXPLICIT}" -eq 0 ]; then
 fi
 
 if [ "${_AMBIGUOUS}" -eq 1 ]; then
-  # latest_skill 읽기
-  _SKILL=$("${PYTHON_BIN}" -c '
+  # confirmed 상태일 때만 확인 질문 주입 (pending = 작업 진행 중 → 주입 안 함)
+  _CONFIRM_STATUS=$("${PYTHON_BIN}" -c '
+import json
+from pathlib import Path
+try:
+    d = json.loads(Path(".omc/state/latest.json").read_text(encoding="utf-8"))
+    print((d.get("latest_confirmation") or {}).get("status", ""))
+except Exception:
+    print("")
+' 2>/dev/null || echo "")
+
+  if [ "${_CONFIRM_STATUS}" = "confirmed" ]; then
+    _SKILL=$("${PYTHON_BIN}" -c '
 import json
 from pathlib import Path
 try:
@@ -65,13 +76,14 @@ except Exception:
     print("")
 ' 2>/dev/null || echo "")
 
-  echo ""
-  echo "[OMC] 모호한 진행 요청입니다 — 무엇을 진행할까요?"
-  if [ -n "${_SKILL}" ]; then
-    echo "  직전 스킬: ${_SKILL}"
+    echo ""
+    echo "[OMC] 모호한 진행 요청입니다 — 무엇을 진행할까요?"
+    if [ -n "${_SKILL}" ]; then
+      echo "  직전 스킬: ${_SKILL}"
+    fi
+    echo "  예: \"omc-task 진행해줘\" 또는 \"/plan [설명]\""
+    exit 0
   fi
-  echo "  예: \"omc-task 진행해줘\" 또는 \"/plan [설명]\""
-  exit 0
 fi
 
 # 짧은 프롬프트(응, 고마워, 확인 등 30자 미만) 스킵 — 불필요한 BM25 토큰 절약
