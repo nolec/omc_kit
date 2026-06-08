@@ -77,6 +77,81 @@ class TestBlockExitCode(unittest.TestCase):
                 code = _run_check(self._write_payload(), _FAKE_GUARD_ALLOW, env_extra)
                 self.assertEqual(code, 0)
 
+
+    def test_confirmed_session_allows_edit(self):
+        """confirmed + contract_confirmed=True 일 때 파일 수정 exit 0이어야 한다."""
+        import json, os, subprocess, tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path as P
+            root = P(tmp)
+            (root / ".omc" / "state").mkdir(parents=True)
+            (root / ".omc" / "policy.json").write_text(
+                json.dumps({"enforce_confirm": True}), encoding="utf-8"
+            )
+            latest = {
+                "latest_confirmation": {"status": "confirmed"},
+                "latest_confirmed_request": "test task",
+            }
+            (root / ".omc" / "state" / "latest.json").write_text(
+                json.dumps(latest), encoding="utf-8"
+            )
+            # pipeline_session.json — contract_confirmed=True
+            (root / ".omc" / "pipeline_session.json").write_text(
+                json.dumps({"contract_confirmed": True, "red_done_tests": [], "allowed_impl_files": []}),
+                encoding="utf-8"
+            )
+            scripts_dir = root / "scripts"
+            scripts_dir.mkdir()
+            (scripts_dir / "omc_pipeline_guard.py").write_text(
+                _FAKE_GUARD_ALLOW, encoding="utf-8"
+            )
+            payload = {"tool_name": "Edit",
+                       "tool_input": {"file_path": "scripts/omc_state.py"}}
+            env = {**os.environ, "OMC_BLOCK_EXIT": "2"}
+            result = subprocess.run(
+                ["sh", SCRIPT], input=json.dumps(payload),
+                capture_output=True, text=True, env=env, cwd=str(root),
+            )
+            self.assertEqual(
+                result.returncode, 0,
+                f"confirmed+contract_confirmed=True → exit 0. stdout={result.stdout!r}"
+            )
+
+    def test_confirmed_no_contract_blocks_edit(self):
+        """confirmed 상태이지만 contract_confirmed 없으면 차단(exit 2)이어야 한다."""
+        import json, os, subprocess, tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            from pathlib import Path as P
+            root = P(tmp)
+            (root / ".omc" / "state").mkdir(parents=True)
+            (root / ".omc" / "policy.json").write_text(
+                json.dumps({"enforce_confirm": True}), encoding="utf-8"
+            )
+            latest = {
+                "latest_confirmation": {"status": "confirmed"},
+                "latest_confirmed_request": "test task",
+            }
+            (root / ".omc" / "state" / "latest.json").write_text(
+                json.dumps(latest), encoding="utf-8"
+            )
+            # pipeline_session.json 없음 → contract_confirmed=False
+            scripts_dir = root / "scripts"
+            scripts_dir.mkdir()
+            (scripts_dir / "omc_pipeline_guard.py").write_text(
+                _FAKE_GUARD_ALLOW, encoding="utf-8"
+            )
+            payload = {"tool_name": "Edit",
+                       "tool_input": {"file_path": "scripts/omc_state.py"}}
+            env = {**os.environ, "OMC_BLOCK_EXIT": "2"}
+            result = subprocess.run(
+                ["sh", SCRIPT], input=json.dumps(payload),
+                capture_output=True, text=True, env=env, cwd=str(root),
+            )
+            self.assertEqual(
+                result.returncode, 2,
+                f"confirmed+no_contract → exit 2. stdout={result.stdout!r}"
+            )
+
     def test_empty_payload_always_exits_0(self):
         """tool_name 없는 빈 payload는 항상 exit 0이다."""
         code = _run_check({}, _FAKE_GUARD_BLOCK)

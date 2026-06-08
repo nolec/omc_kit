@@ -97,5 +97,51 @@ class TestBuildContextIncludesIndex(unittest.TestCase):
             self.assertIn("[코드베이스]", ctx_text)
 
 
+
+class TestWriteLessonsInject(unittest.TestCase):
+    """write_lessons_inject() 단위 테스트"""
+
+    def test_creates_mdc_when_lessons_exist(self):
+        """교훈이 1개 이상이면 .cursor/rules/omc-lessons-inject.mdc를 생성한다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "proj"
+            lessons_dir = root / ".omc" / "lessons"
+            lessons_dir.mkdir(parents=True)
+            (lessons_dir / "2026-01-01-test-lesson.md").write_text(
+                "# 테스트 교훈\n내용입니다.", encoding="utf-8"
+            )
+            _ctx.write_lessons_inject(root, top_n=3)
+            mdc = root / ".cursor" / "rules" / "omc-lessons-inject.mdc"
+            self.assertTrue(mdc.exists(), ".mdc 파일이 생성되어야 한다")
+            text = mdc.read_text(encoding="utf-8")
+            self.assertIn("테스트 교훈", text)
+
+    def test_skips_when_no_lessons(self):
+        """교훈이 0개이면 .mdc 파일을 생성하지 않는다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "proj"
+            (root / ".omc" / "lessons").mkdir(parents=True)
+            _ctx.write_lessons_inject(root, top_n=3)
+            mdc = root / ".cursor" / "rules" / "omc-lessons-inject.mdc"
+            self.assertFalse(mdc.exists(), "교훈 없으면 파일 생성 금지")
+
+    def test_limits_to_top_n(self):
+        """top_n 개수를 초과하는 교훈은 포함하지 않는다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "proj"
+            lessons_dir = root / ".omc" / "lessons"
+            lessons_dir.mkdir(parents=True)
+            for i in range(5):
+                (lessons_dir / f"2026-01-0{i+1}-lesson-{i}.md").write_text(
+                    f"# 교훈{i}\n내용{i}", encoding="utf-8"
+                )
+            _ctx.write_lessons_inject(root, top_n=2)
+            mdc = root / ".cursor" / "rules" / "omc-lessons-inject.mdc"
+            text = mdc.read_text(encoding="utf-8")
+            # top_n=2이므로 최대 2개 교훈 제목만 포함
+            lesson_headers = [l for l in text.split("\n") if l.startswith("## ")]
+            self.assertLessEqual(len(lesson_headers), 2)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

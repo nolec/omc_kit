@@ -84,9 +84,27 @@ MINOR:
 VERDICT: HOLD / REVISE / PROCEED / BLOCK / APPROVE
 ```
 
+## 변경 비용 체크포인트
+
+**REVISE / HOLD 판정 후 — `$omc-task` 진입 전 반드시 아래를 확인합니다.**
+
+```text
+변경 비용 추정:
+  영향 파일 수  : ___개
+  예상 변경 LOC : ___줄
+  실질 효과     : HIGH / MED / LOW
+```
+
+- **실질 효과 LOW + MINOR 지적만** → 건너뛰기 권장. 적용 시 득보다 비용이 클 수 있음.
+- **실질 효과 MED/HIGH** → 진행. `$omc-plan`으로 범위 확정 후 `$omc-task`.
+
+> ⛔ REVISE/HOLD 판정 직후 자동으로 `$omc-task`를 실행하지 않습니다.
+> 변경 비용 체크포인트를 출력하고, 사용자가 "진행"을 명시할 때까지 멈춥니다.
+
 ## 이후 액션
 
-- HOLD/REVISE면 `$omc-plan`으로 재설계합니다.
+- HOLD/REVISE이고 변경 비용 MED/HIGH → `$omc-plan`으로 재설계합니다.
+- HOLD/REVISE이고 변경 비용 LOW + MINOR만 → 사용자가 건너뛰기 여부를 결정합니다.
 - 코드 품질 확인은 `$omc-review`로 넘깁니다.
 
 

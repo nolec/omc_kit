@@ -119,9 +119,25 @@ except Exception:
 status = (latest.get("latest_confirmation") or {}).get("status", "")
 request = latest.get("latest_confirmed_request", "(알 수 없음)")
 
+# pipeline_session.json 에서 contract_confirmed 읽기
+pipeline_path = Path(".omc/pipeline_session.json")
+contract_confirmed = False
+if pipeline_path.exists():
+    try:
+        pipeline = json.loads(pipeline_path.read_text(encoding="utf-8"))
+        contract_confirmed = pipeline.get("contract_confirmed", False)
+    except Exception:
+        pass
+
+# pending = AI가 현재 작업 중 → 통과
 if status == "pending":
     sys.exit(0)
 
+# confirmed + contract_confirmed = 현재 파이프라인 작업 진행 중 → 통과
+if status == "confirmed" and contract_confirmed:
+    sys.exit(0)
+
+# confirmed + contract_confirmed 없음 = 세션 완료 후 새 작업 선언 전 → 차단
 if status == "confirmed":
     msg = f"[OMC BLOCK] 활성 세션 없음 — 마지막 작업: {request}"
     sys.exit(1)

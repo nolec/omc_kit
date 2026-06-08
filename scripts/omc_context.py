@@ -144,6 +144,62 @@ def _collect_lessons(root, git_info: dict | None = None, n: int = 5) -> str:
         parts.append(f"규칙: {rule}")
     return "\n".join(parts)
 
+
+def write_lessons_inject(root: Path, top_n: int = 3) -> None:
+    """BM25 top_n 교훈을 .cursor/rules/omc-lessons-inject.mdc 에 기록합니다.
+
+    Cursor는 .cursor/rules/ 파일을 자동으로 컨텍스트에 포함하므로
+    이 파일을 통해 교훈이 실질적으로 주입됩니다.
+    교훈이 0개이면 파일을 생성하지 않습니다.
+    """
+    lessons_dir = root / ".omc" / "lessons"
+    if not lessons_dir.exists():
+        return
+    files = sorted(lessons_dir.glob("*.md"), reverse=True)
+    if not files:
+        return
+
+    # BM25 또는 최신순 top_n 수집
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import omc_lesson as _lesson_mod
+        git_info = _collect_git_info(root)
+        context_query = " ".join(filter(None, [
+            git_info.get("branch", ""),
+            git_info.get("commits", ""),
+        ]))
+        if context_query.strip():
+            relevant = _lesson_mod.search_relevant(root, context_query, top_n=top_n)
+        else:
+            relevant = []
+    except Exception:
+        relevant = []
+
+    parts = ["# OMC 자동 주입 교훈 (BM25 top-{})".format(top_n), ""]
+    parts.append("> 이 파일은 세션 시작 시 자동 생성됩니다. 직접 수정하지 마세요.")
+    parts.append("")
+
+    if relevant:
+        for title, rule in relevant:
+            parts.append(f"## {title}")
+            parts.append(f"- {rule}")
+            parts.append("")
+    else:
+        # BM25 히트 없으면 최신순 top_n
+        for f in files[:top_n]:
+            lines = f.read_text(encoding="utf-8").splitlines()
+            title = next((l.lstrip("# ").strip() for l in lines if l.startswith("# ")), f.stem)
+            rule_idx = next((i for i, l in enumerate(lines) if l.startswith("## 적용된 규칙")), None)
+            rule = lines[rule_idx + 1].strip() if rule_idx is not None and rule_idx + 1 < len(lines) else "(없음)"
+            parts.append(f"## {title}")
+            parts.append(f"- {rule}")
+            parts.append("")
+
+    rules_dir = root / ".cursor" / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    out_path = rules_dir / "omc-lessons-inject.mdc"
+    out_path.write_text("\n".join(parts), encoding="utf-8")
+
 def _print_lessons_to_console(root: Path, git_info: dict | None = None, n: int = 3) -> None:
     """세션 시작 시 관련 교훈을 터미널에 직접 출력합니다.
 
@@ -371,6 +427,7 @@ def main():
 
     # ── 관련 교훈 콘솔 출력 ──────────────────────────────────────────────────────
     _print_lessons_to_console(root, git_info=g)
+    write_lessons_inject(root, top_n=3)
 
     # ── 새 세션 시작: contract_confirmed 초기화 ───────────────────────────────
     try:
