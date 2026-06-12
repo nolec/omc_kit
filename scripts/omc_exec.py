@@ -196,19 +196,19 @@ def _claude_headless_command(prompt_text: str, *, model_profile: str = "mini_def
 
 
 # Gemini CLI에서 실제로 제공되는 도구 이름 목록 (gemini-cli-core tool-names.js 기준)
-_GEMINI_KNOWN_TOOLS = (
+_GEMINI_KNOWN_TOOLS: frozenset[str] = frozenset({
     "glob", "grep_search", "list_directory", "read_file", "read_many_files",
     "replace", "run_shell_command", "write_file", "write_todos",
     "google_web_search", "web_fetch", "save_memory",
     "ask_user", "activate_skill", "enter_plan_mode", "exit_plan_mode",
     "get_internal_docs",
-)
+})
 
 
 def _adapt_prompt_for_executor(prompt_text: str, *, executor: str) -> str:
     if executor != "gemini":
         return prompt_text
-    tool_list = ", ".join(_GEMINI_KNOWN_TOOLS)
+    tool_list = ", ".join(sorted(_GEMINI_KNOWN_TOOLS))
     adapter = (
         "# Gemini Executor Adapter\n\n"
         "- 현재 실행기는 Gemini CLI다.\n"

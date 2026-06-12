@@ -461,7 +461,7 @@ def _parse_gemini_cli_stats(stdout: str) -> dict | None:
                 "cache_read_tokens": 0,
                 "cache_write_tokens": 0,
             }
-    except Exception:
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
         pass
     return None
 
@@ -1203,10 +1203,8 @@ def cmd_runs(
         branch = e.get("branch", "-")
         executor = e.get("executor", "-")
         started = e.get("started_at", "-")
-        verdict = None
-        for step in (e.get("steps") or {}).values():
-            if isinstance(step, dict) and step.get("verdict"):
-                verdict = step["verdict"]
+        steps = e.get("steps") or {}
+        verdict = (steps.get("review") or {}).get("verdict")
         verdict_str = f"  verdict={verdict}" if verdict else ""
         print(f"{icon} [{status}] {branch}  executor={executor}  started={started}{verdict_str}")
         print(f"   run_id={e['_run_id']}")
