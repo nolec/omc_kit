@@ -22,6 +22,17 @@ _CODEX_MODEL_MAP = {
     "mini_high": {"model": "gpt-5.4-mini", "reasoning_effort": "high"},
     "full_default": {"model": "gpt-5.4", "reasoning_effort": None},
 }
+_GEMINI_MODEL_MAP = {
+    "mini_default": "gemini-2.5-flash",
+    "mini_high": "gemini-2.5-flash",
+    "full_default": "gemini-3-flash-preview",
+}
+_CLAUDE_MODEL_MAP = {
+    # Claude는 sonnet alias로 통일 — reasoning_effort 미지원
+    "mini_default": "sonnet",
+    "mini_high": "sonnet",
+    "full_default": "sonnet",
+}
 
 
 def _normalize_text(value: str | None) -> str:
@@ -170,16 +181,18 @@ def _gemini_command(prompt_text: str) -> list[str]:
     return ["gemini", "--prompt-interactive", prompt_text]
 
 
-def _gemini_headless_command(prompt_text: str) -> list[str]:
-    return ["gemini", "-p", prompt_text, "--output-format", "json"]
+def _gemini_headless_command(prompt_text: str, *, model_profile: str = "mini_default") -> list[str]:
+    model = _GEMINI_MODEL_MAP.get(model_profile, _GEMINI_MODEL_MAP["mini_default"])
+    return ["gemini", "-p", prompt_text, "--output-format", "json", "-m", model]
 
 
 def _claude_interactive_command(prompt_text: str) -> list[str]:
     return ["claude", prompt_text]
 
 
-def _claude_headless_command(prompt_text: str) -> list[str]:
-    return ["claude", "-p", prompt_text]
+def _claude_headless_command(prompt_text: str, *, model_profile: str = "mini_default") -> list[str]:
+    model = _CLAUDE_MODEL_MAP.get(model_profile, _CLAUDE_MODEL_MAP["mini_default"])
+    return ["claude", "-p", prompt_text, "--model", model]
 
 
 def _adapt_prompt_for_executor(prompt_text: str, *, executor: str) -> str:
@@ -368,10 +381,10 @@ def _run_codex_headless(
         output_path.unlink(missing_ok=True)
 
 
-def _run_gemini_headless(project_root: Path, prompt_text: str, *, timeout_sec: int) -> int:
+def _run_gemini_headless(project_root: Path, prompt_text: str, *, timeout_sec: int, model_profile: str = "mini_default") -> int:
     try:
         proc = subprocess.run(
-            _gemini_headless_command(prompt_text),
+            _gemini_headless_command(prompt_text, model_profile=model_profile),
             cwd=str(project_root),
             check=False,
             capture_output=True,
@@ -389,10 +402,10 @@ def _run_gemini_headless(project_root: Path, prompt_text: str, *, timeout_sec: i
     return int(proc.returncode)
 
 
-def _run_claude_headless(project_root: Path, prompt_text: str, *, timeout_sec: int) -> int:
+def _run_claude_headless(project_root: Path, prompt_text: str, *, timeout_sec: int, model_profile: str = "mini_default") -> int:
     try:
         proc = subprocess.run(
-            _claude_headless_command(prompt_text),
+            _claude_headless_command(prompt_text, model_profile=model_profile),
             cwd=str(project_root),
             check=False,
             capture_output=True,
@@ -501,7 +514,7 @@ def main() -> int:
             print(f"gemini CLI not found. Prompt preserved at: {prompt_path}")
             return 127
         if args.execution_mode == "headless":
-            return _run_gemini_headless(project_root, prompt_text, timeout_sec=args.timeout_sec)
+            return _run_gemini_headless(project_root, prompt_text, timeout_sec=args.timeout_sec, model_profile=model_profile)
         proc = subprocess.run(_gemini_command(prompt_text), cwd=str(project_root), check=False)
         return int(proc.returncode)
 
@@ -510,7 +523,7 @@ def main() -> int:
         return 127
 
     if args.execution_mode == "headless":
-        return _run_claude_headless(project_root, prompt_text, timeout_sec=args.timeout_sec)
+        return _run_claude_headless(project_root, prompt_text, timeout_sec=args.timeout_sec, model_profile=model_profile)
 
     proc = subprocess.run(_claude_interactive_command(prompt_text), cwd=str(project_root), check=False)
     return int(proc.returncode)
