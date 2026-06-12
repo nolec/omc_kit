@@ -195,17 +195,26 @@ def _claude_headless_command(prompt_text: str, *, model_profile: str = "mini_def
     return ["claude", "-p", prompt_text, "--model", model]
 
 
+# Gemini CLI에서 실제로 제공되는 도구 이름 목록 (gemini-cli-core tool-names.js 기준)
+_GEMINI_KNOWN_TOOLS = (
+    "glob", "grep_search", "list_directory", "read_file", "read_many_files",
+    "replace", "run_shell_command", "write_file", "write_todos",
+    "google_web_search", "web_fetch", "save_memory",
+    "ask_user", "activate_skill", "enter_plan_mode", "exit_plan_mode",
+    "get_internal_docs",
+)
+
+
 def _adapt_prompt_for_executor(prompt_text: str, *, executor: str) -> str:
     if executor != "gemini":
         return prompt_text
+    tool_list = ", ".join(_GEMINI_KNOWN_TOOLS)
     adapter = (
         "# Gemini Executor Adapter\n\n"
-        "- 현재 실행기는 Gemini CLI interactive mode다.\n"
-        "- 현재 세션에서 실제로 제공되는 도구만 사용한다.\n"
-        "- `run_shell_command`, `replace`, `invoke_agent`, `grep_search`, `read_file`, `glob` 같은 특정 도구 이름이 본문에 보이더라도, "
-        "현재 환경에 없으면 그대로 호출하거나 언급하지 않는다.\n"
-        "- 도구 이름을 추측하거나 가짜 tool call/error를 출력하지 않는다.\n"
-        "- Codex 전용 도구/런타임 전제는 무시하고, 현재 Gemini CLI가 제공하는 파일 읽기/검색/편집/명령 실행 능력 안에서 직접 작업한다.\n"
+        "- 현재 실행기는 Gemini CLI다.\n"
+        f"- 사용 가능한 도구: {tool_list}\n"
+        "- 위 목록에 없는 도구는 호출하지 않는다. 도구 이름을 추측하거나 가짜 tool call/error를 출력하지 않는다.\n"
+        "- Codex 전용 도구/런타임 전제는 무시하고, 위 도구 목록 안에서 직접 작업한다.\n"
         "- 로컬 OMC 역할 컨펌은 이미 끝났으므로 역할 재컨펌을 다시 요구하지 않는다.\n"
         "- 작업을 시작할 때는 짧은 계획 후 바로 실행으로 들어간다.\n"
         "- 과도한 장문 thinking을 피한다. 먼저 3-5줄 핵심 결론을 제시하고, 필요한 경우에만 상세 분석을 이어간다.\n"
