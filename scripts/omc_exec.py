@@ -16,6 +16,88 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_utils
 
 _DEFAULT_HEADLESS_TIMEOUT_SEC = 120
+_MODEL_PROFILES = {"mini_default", "mini_high", "full_default"}
+
+
+def _normalize_text(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def _has_broader_context_signal(request_text: str) -> bool:
+    text = _normalize_text(request_text)
+    keywords = (
+        "plan",
+        "review",
+        "investigate",
+        "refactor",
+        "architecture",
+        "impact",
+        "side effect",
+        "broader context",
+        "영향",
+        "리팩터",
+        "아키텍처",
+        "계획",
+        "리뷰",
+        "디버그",
+    )
+    return any(keyword in text for keyword in keywords)
+
+
+def _is_sensitive_path(path: str) -> bool:
+    normalized = _normalize_text(path)
+    sensitive_markers = (
+        "scripts/",
+        "/scripts/",
+        "src/api/",
+        "/api/",
+        "src/state/",
+        "/state/",
+        "store",
+        "types.ts",
+        "schema",
+    )
+    return any(marker in normalized for marker in sensitive_markers)
+
+
+def select_model_profile(
+    *,
+    task_kind: str,
+    request_text: str,
+    touched_files: list[str],
+    retry_count: int,
+    review_severity: str | None,
+) -> str:
+    override = _normalize_text(os.environ.get("OMC_MODEL_PROFILE"))
+    if override in _MODEL_PROFILES:
+        return override
+
+    kind = _normalize_text(task_kind)
+    severity = _normalize_text(review_severity)
+    touched_count = len(touched_files)
+    has_sensitive_path = any(_is_sensitive_path(path) for path in touched_files)
+    broader_signal = _has_broader_context_signal(request_text)
+
+    if kind == "ship":
+        return "full_default"
+
+    if (
+        severity in {"major", "critical", "high"}
+        or retry_count >= 2
+        or touched_count >= 8
+        or (kind in {"review", "investigate"} and has_sensitive_path and touched_count >= 3)
+    ):
+        return "full_default"
+
+    if (
+        kind in {"plan", "review", "investigate"}
+        or touched_count >= 4
+        or has_sensitive_path
+        or broader_signal
+    ):
+        return "mini_high"
+
+    return "mini_default"
 
 
 
