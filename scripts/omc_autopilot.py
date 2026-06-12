@@ -1185,14 +1185,13 @@ def cmd_runs(
         except (json.JSONDecodeError, OSError):
             continue
         data["_run_id"] = d.name
+        if branch_filter and branch_filter not in (data.get("branch") or ""):
+            continue
+        if status_filter and status_filter != (data.get("status") or ""):
+            continue
         entries.append(data)
-
-    if branch_filter:
-        entries = [e for e in entries if branch_filter in (e.get("branch") or "")]
-    if status_filter:
-        entries = [e for e in entries if status_filter == (e.get("status") or "")]
-
-    entries = entries[:limit]
+        if len(entries) >= limit:
+            break
 
     if not entries:
         print("[RUNS] 조건에 맞는 실행 기록 없음")

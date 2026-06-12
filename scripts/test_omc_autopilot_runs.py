@@ -86,3 +86,24 @@ def test_cmd_runs_limit_respected(tmp_path: Path, capsys) -> None:
     # 최대 2개만 표시되어야 함
     shown = [line for line in out.splitlines() if "feat/" in line]
     assert len(shown) <= 2
+
+
+def test_cmd_runs_reads_only_limit_files(tmp_path: Path, capsys, monkeypatch) -> None:
+    """limit=2일 때 result.json을 정확히 2번만 읽어야 한다 (early exit 검증)."""
+    for i in range(5):
+        _make_run(tmp_path, f"run-{i:02d}", branch=f"feat/{i}", status="completed")
+
+    read_count = 0
+    original_read_text = Path.read_text
+
+    def counting_read_text(self, *args, **kwargs):
+        nonlocal read_count
+        if self.name == "result.json":
+            read_count += 1
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+    omc_autopilot.cmd_runs(tmp_path, limit=2)
+
+    assert read_count == 2, f"limit=2인데 result.json을 {read_count}번 읽음 (early exit 미작동)"
