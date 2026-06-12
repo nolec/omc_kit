@@ -49,6 +49,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_utils
+import omc_cost
 
 _TASKS_DIR = ".omc/tasks"
 _AUTOPILOT_STATE_DIR = ".omc/state/autopilot"
@@ -430,6 +431,41 @@ def _build_retry_prompt(
 # 스텝 실행
 # ---------------------------------------------------------------------------
 
+def _extract_cost_info(executor: str, stdout: str) -> dict | None:
+    try:
+        usage = omc_cost._parse_llm_usage(executor, stdout)
+        if usage is None:
+            # Gemini CLI -p --output-format json 형식: stats.models.*.tokens
+            usage = _parse_gemini_cli_stats(stdout)
+        if usage is None:
+            return None
+        cost = omc_cost._estimate_cost_usd(usage)
+        return {"token_usage": usage, "cost_estimate": cost}
+    except Exception:
+        return None
+
+
+def _parse_gemini_cli_stats(stdout: str) -> dict | None:
+    try:
+        data = json.loads(stdout)
+        models = (data.get("stats") or {}).get("models") or {}
+        total_input = total_output = 0
+        for model_stats in models.values():
+            tokens = model_stats.get("tokens") or {}
+            total_input += tokens.get("prompt", 0) or tokens.get("input", 0)
+            total_output += tokens.get("candidates", 0)
+        if total_input or total_output:
+            return {
+                "input_tokens": total_input,
+                "output_tokens": total_output,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+    except Exception:
+        pass
+    return None
+
+
 def _run_step(
     root: Path,
     step: dict,
@@ -438,7 +474,7 @@ def _run_step(
     timeout_sec: int,
     prompt_override: str | None = None,
     isolated: bool = False,
-) -> tuple[int, str]:
+) -> tuple[int, str, dict | None]:
     """omc_exec.py를 통해 스텝 프롬프트를 실행합니다.
 
     Args:
@@ -496,11 +532,12 @@ def _run_step(
             timeout=timeout_sec + 30,
         )
         output = (proc.stdout or "") + (proc.stderr or "")
-        return int(proc.returncode), output.strip()
+        cost_info = _extract_cost_info(executor, proc.stdout or "")
+        return int(proc.returncode), output.strip(), cost_info
     except subprocess.TimeoutExpired:
-        return 1, "[ERROR] 타임아웃 초과"
+        return 1, "[ERROR] 타임아웃 초과", None
     except Exception as exc:
-        return 1, f"[ERROR] 실행 예외: {exc}"
+        return 1, f"[ERROR] 실행 예외: {exc}", None
     finally:
         if prompt_file:
             try:
@@ -646,13 +683,16 @@ def cmd_run(
                     print(f"  재시도 (attempt {attempt}) — 이전 실패 컨텍스트 주입됨")
                 else:
                     print(f"  실행 중 (attempt {attempt}/{max_retries + 1})...")
-                rc, output = _run_step(
+                rc, output, cost_info = _run_step(
                     root,
                     step_with_prompt,
                     executor=executor,
                     timeout_sec=timeout_sec,
                     isolated=bool(step.get("isolated", False)),
                 )
+                if cost_info is not None:
+                    step_state["token_usage"] = cost_info["token_usage"]
+                    step_state["cost_estimate"] = cost_info["cost_estimate"]
 
             step_state["last_output"] = output[:2000]
 
@@ -1026,6 +1066,17 @@ def _build_benchmark_report(data: dict) -> dict:
         "cost_estimate": None,
         "token_usage": None,
         "executor_cost_source": None,
+        "total_cost_usd": sum(
+            s.get("cost_estimate") or 0
+            for s in steps.values()
+            if isinstance(s.get("cost_estimate"), (int, float))
+        ) or None,
+        "total_tokens": sum(
+            (s.get("token_usage") or {}).get("input_tokens", 0)
+            + (s.get("token_usage") or {}).get("output_tokens", 0)
+            for s in steps.values()
+            if s.get("token_usage")
+        ) or None,
     }
 
 

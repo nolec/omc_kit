@@ -15,7 +15,7 @@ def test_run_step_uses_mini_high_for_plan(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
 
-    rc, _out = omc_autopilot._run_step(
+    rc, _out, _cost = omc_autopilot._run_step(
         tmp_path,
         {"id": "plan", "prompt": "아키텍처 계획"},
         executor="codex",
@@ -37,7 +37,7 @@ def test_run_step_uses_mini_default_for_task(monkeypatch, tmp_path: Path) -> Non
 
     monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
 
-    rc, _out = omc_autopilot._run_step(
+    rc, _out, _cost = omc_autopilot._run_step(
         tmp_path,
         {"id": "task", "prompt": "버튼 구현"},
         executor="codex",
