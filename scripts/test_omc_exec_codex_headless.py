@@ -17,6 +17,34 @@ def test_codex_headless_command_uses_workspace_write_sandbox(tmp_path: Path) -> 
     assert "-o" in cmd
 
 
+def test_codex_headless_command_full_auto_with_reasoning_effort_preserves_order(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("OMC_CODEX_FULL_AUTO", "1")
+    cmd = omc_exec._codex_headless_command(
+        tmp_path,
+        "my prompt",
+        tmp_path / "out.txt",
+        model_profile="mini_high",
+    )
+    assert cmd[2] == "--full-auto", f"--full-auto가 index 2여야 함, 실제: {cmd[2]!r}"
+    ri = cmd.index("--reasoning-effort")
+    assert cmd[ri + 1] == "high", f"--reasoning-effort 값이 'high'여야 함, 실제: {cmd[ri+1]!r}"
+    assert cmd[-1] == "my prompt", f"prompt_text가 마지막이어야 함, 실제: {cmd[-1]!r}"
+
+
+def test_codex_headless_command_reasoning_effort_precedes_prompt(tmp_path: Path) -> None:
+    cmd = omc_exec._codex_headless_command(
+        tmp_path,
+        "my prompt",
+        tmp_path / "out.txt",
+        model_profile="mini_high",
+    )
+    ri = cmd.index("--reasoning-effort")
+    assert cmd[ri + 1] == "high", f"--reasoning-effort 값이 'high'여야 함, 실제: {cmd[ri+1]!r}"
+    assert cmd[-1] == "my prompt", f"prompt_text가 마지막이어야 함, 실제: {cmd[-1]!r}"
+
+
 def test_codex_headless_command_prompt_text_is_always_last_element(tmp_path: Path) -> None:
     for profile in ("mini_default", "mini_high", "full_default"):
         cmd = omc_exec._codex_headless_command(

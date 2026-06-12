@@ -156,14 +156,13 @@ def _codex_headless_command(
         str(output_path),
         "--model",
         str(profile["model"]),
-        prompt_text,
     ]
     reasoning_effort = profile.get("reasoning_effort")
     if isinstance(reasoning_effort, str) and reasoning_effort.strip():
-        cmd.insert(-1, reasoning_effort)
-        cmd.insert(-1, "--reasoning-effort")
+        cmd += ["--reasoning-effort", reasoning_effort]
     if os.environ.get("OMC_CODEX_FULL_AUTO", "").strip() in {"1", "true", "TRUE", "yes"}:
         cmd.insert(2, "--full-auto")
+    cmd.append(prompt_text)
     return cmd
 
 
