@@ -450,6 +450,12 @@ def main() -> int:
         default=None,
         help="Optional explicit model profile override.",
     )
+    ap.add_argument(
+        "--task-kind",
+        choices=["task", "plan", "review", "investigate", "ship"],
+        default="task",
+        help="Task kind hint for model profile routing (default: task).",
+    )
     args = ap.parse_args()
 
     project_root = omc_utils.project_root(args.target)
@@ -468,7 +474,7 @@ def main() -> int:
         executor=executor,
     )
     model_profile = args.model_profile or select_model_profile(
-        task_kind="task",
+        task_kind=args.task_kind,
         request_text=prompt_text,
         touched_files=[],
         retry_count=0,

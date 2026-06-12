@@ -1,6 +1,76 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import omc_exec
+
+
+def test_main_uses_task_kind_cli_arg_for_profile_routing(monkeypatch, tmp_path: Path) -> None:
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("아키텍처 설계", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(omc_exec, "_detect_executor", lambda _preferred: "codex")
+    monkeypatch.setattr(omc_exec, "_is_tty_available", lambda: False)
+    monkeypatch.setattr(omc_exec, "_check_codex_auth", lambda: True)
+    monkeypatch.setattr(omc_exec.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    def fake_run_codex_headless(project_root, prompt_text, *, timeout_sec, model_profile="mini_default"):
+        captured["model_profile"] = model_profile
+        return 0
+
+    monkeypatch.setattr(omc_exec, "_run_codex_headless", fake_run_codex_headless)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "omc_exec.py",
+            "--target", str(tmp_path),
+            "--prompt-file", str(prompt_file),
+            "--executor", "codex",
+            "--execution-mode", "headless",
+            "--task-kind", "plan",
+        ],
+    )
+
+    rc = omc_exec.main()
+    assert rc == 0
+    assert captured["model_profile"] == "mini_high"
+
+
+def test_main_defaults_task_kind_to_task_when_omitted(monkeypatch, tmp_path: Path) -> None:
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("작은 수정", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(omc_exec, "_detect_executor", lambda _preferred: "codex")
+    monkeypatch.setattr(omc_exec, "_is_tty_available", lambda: False)
+    monkeypatch.setattr(omc_exec, "_check_codex_auth", lambda: True)
+    monkeypatch.setattr(omc_exec.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    def fake_run_codex_headless(project_root, prompt_text, *, timeout_sec, model_profile="mini_default"):
+        captured["model_profile"] = model_profile
+        return 0
+
+    monkeypatch.setattr(omc_exec, "_run_codex_headless", fake_run_codex_headless)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "omc_exec.py",
+            "--target", str(tmp_path),
+            "--prompt-file", str(prompt_file),
+            "--executor", "codex",
+            "--execution-mode", "headless",
+        ],
+    )
+
+    rc = omc_exec.main()
+    assert rc == 0
+    assert captured["model_profile"] == "mini_default"
 
 
 def test_select_model_profile_defaults_task_to_mini_default() -> None:
