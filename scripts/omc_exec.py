@@ -17,6 +17,11 @@ import omc_utils
 
 _DEFAULT_HEADLESS_TIMEOUT_SEC = 120
 _MODEL_PROFILES = {"mini_default", "mini_high", "full_default"}
+_CODEX_MODEL_MAP = {
+    "mini_default": {"model": "gpt-5.4-mini", "reasoning_effort": None},
+    "mini_high": {"model": "gpt-5.4-mini", "reasoning_effort": "high"},
+    "full_default": {"model": "gpt-5.4", "reasoning_effort": None},
+}
 
 
 def _normalize_text(value: str | None) -> str:
@@ -100,6 +105,10 @@ def select_model_profile(
     return "mini_default"
 
 
+def _resolve_codex_profile_settings(model_profile: str) -> dict[str, str | None]:
+    return _CODEX_MODEL_MAP.get(model_profile, _CODEX_MODEL_MAP["mini_default"])
+
+
 
 def _is_tty_available() -> bool:
     term = os.environ.get("TERM", "").strip().lower()
@@ -127,7 +136,14 @@ def _codex_interactive_command(project_root: Path, prompt_text: str) -> list[str
     return ["codex", "-C", str(project_root), prompt_text]
 
 
-def _codex_headless_command(project_root: Path, prompt_text: str, output_path: Path) -> list[str]:
+def _codex_headless_command(
+    project_root: Path,
+    prompt_text: str,
+    output_path: Path,
+    *,
+    model_profile: str = "mini_default",
+) -> list[str]:
+    profile = _resolve_codex_profile_settings(model_profile)
     cmd = [
         "codex",
         "exec",
@@ -138,8 +154,14 @@ def _codex_headless_command(project_root: Path, prompt_text: str, output_path: P
         str(project_root),
         "-o",
         str(output_path),
+        "--model",
+        str(profile["model"]),
         prompt_text,
     ]
+    reasoning_effort = profile.get("reasoning_effort")
+    if isinstance(reasoning_effort, str) and reasoning_effort.strip():
+        cmd.insert(-1, reasoning_effort)
+        cmd.insert(-1, "--reasoning-effort")
     if os.environ.get("OMC_CODEX_FULL_AUTO", "").strip() in {"1", "true", "TRUE", "yes"}:
         cmd.insert(2, "--full-auto")
     return cmd
@@ -224,7 +246,12 @@ def _copy_codex_runtime_file(source_home: Path, runtime_home: Path, name: str) -
     shutil.copy2(src, dst)
 
 
-def _copy_codex_config_for_headless(source_home: Path, runtime_home: Path) -> None:
+def _copy_codex_config_for_headless(
+    source_home: Path,
+    runtime_home: Path,
+    *,
+    model_profile: str = "mini_default",
+) -> None:
     src = source_home / "config.toml"
     if not src.exists():
         return
@@ -248,17 +275,32 @@ def _copy_codex_config_for_headless(source_home: Path, runtime_home: Path) -> No
                 count=1,
             )
 
+    target_model = _resolve_codex_profile_settings(model_profile).get("model")
+    if isinstance(target_model, str) and target_model.strip():
+        if re.search(r'(?m)^model\s*=\s*"[^"]*"\s*$', text):
+            text = re.sub(
+                r'(?m)^model\s*=\s*"[^"]*"\s*$',
+                f'model = "{target_model}"',
+                text,
+                count=1,
+            )
+        else:
+            text = f'model = "{target_model}"\n{text}'
+
     (runtime_home / "config.toml").write_text(text, encoding="utf-8")
 
 
-def _prepare_codex_headless_runtime() -> tuple[tempfile.TemporaryDirectory[str], dict[str, str]]:
+def _prepare_codex_headless_runtime(
+    *,
+    model_profile: str = "mini_default",
+) -> tuple[tempfile.TemporaryDirectory[str], dict[str, str]]:
     source_home = _resolve_codex_home()
     runtime = tempfile.TemporaryDirectory(prefix="omc-codex-home-")
     runtime_home = Path(runtime.name)
 
     for name in ("auth.json", "version.json", "installation_id"):
         _copy_codex_runtime_file(source_home, runtime_home, name)
-    _copy_codex_config_for_headless(source_home, runtime_home)
+    _copy_codex_config_for_headless(source_home, runtime_home, model_profile=model_profile)
 
     env = os.environ.copy()
     env["CODEX_HOME"] = str(runtime_home)
@@ -281,13 +323,24 @@ def _extract_gemini_headless_text(stdout: str) -> str:
     return text
 
 
-def _run_codex_headless(project_root: Path, prompt_text: str, *, timeout_sec: int) -> int:
+def _run_codex_headless(
+    project_root: Path,
+    prompt_text: str,
+    *,
+    timeout_sec: int,
+    model_profile: str = "mini_default",
+) -> int:
     with tempfile.NamedTemporaryFile(prefix="omc-codex-last.", suffix=".txt", delete=False) as fp:
         output_path = Path(fp.name)
     runtime = None
     try:
-        runtime, env = _prepare_codex_headless_runtime()
-        cmd = _codex_headless_command(project_root, prompt_text, output_path)
+        runtime, env = _prepare_codex_headless_runtime(model_profile=model_profile)
+        cmd = _codex_headless_command(
+            project_root,
+            prompt_text,
+            output_path,
+            model_profile=model_profile,
+        )
         try:
             proc = subprocess.run(
                 cmd,
@@ -379,6 +432,12 @@ def main() -> int:
         action="store_true",
         help="이전 세션 컨텍스트 없이 새 격리 컨텍스트로 실행 (critique/review 에이전트 격리용).",
     )
+    ap.add_argument(
+        "--model-profile",
+        choices=sorted(_MODEL_PROFILES),
+        default=None,
+        help="Optional explicit model profile override.",
+    )
     args = ap.parse_args()
 
     project_root = omc_utils.project_root(args.target)
@@ -395,6 +454,13 @@ def main() -> int:
     prompt_text = _adapt_prompt_for_executor(
         prompt_path.read_text(encoding="utf-8"),
         executor=executor,
+    )
+    model_profile = args.model_profile or select_model_profile(
+        task_kind="task",
+        request_text=prompt_text,
+        touched_files=[],
+        retry_count=0,
+        review_severity=None,
     )
 
     if executor == "codex":
@@ -413,7 +479,12 @@ def main() -> int:
                 return 1
 
         if args.execution_mode == "headless":
-            return _run_codex_headless(project_root, prompt_text, timeout_sec=args.timeout_sec)
+            return _run_codex_headless(
+                project_root,
+                prompt_text,
+                timeout_sec=args.timeout_sec,
+                model_profile=model_profile,
+            )
 
         # 2. Transition to Interactive CLI (TUI)
         # We use subprocess.run without capturing to hand over the terminal (TTY)

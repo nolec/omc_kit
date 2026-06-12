@@ -455,6 +455,14 @@ def _run_step(
     if not prompt:
         return 1, "[ERROR] 스텝에 prompt가 없습니다."
 
+    step_id = str(step.get("id", "")).strip().lower()
+    if step_id in {"plan", "review", "critique", "investigate", "plan_retry"}:
+        model_profile = "mini_high"
+    elif "retry" in step_id:
+        model_profile = "full_default"
+    else:
+        model_profile = "mini_default"
+
     prompt_file = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -473,6 +481,7 @@ def _run_step(
             "--target", str(root),
             "--prompt-file", str(prompt_file),
             "--executor", executor,
+            "--model-profile", model_profile,
             "--execution-mode", "headless",
             "--timeout-sec", str(timeout_sec),
         ]
