@@ -1155,6 +1155,66 @@ def cmd_status(root: Path, task_id: str | None = None) -> int:
 
 
 # ---------------------------------------------------------------------------
+# 커맨드: runs
+# ---------------------------------------------------------------------------
+
+_RUNS_DIR = ".omc/runs"
+
+
+def cmd_runs(
+    root: Path,
+    *,
+    limit: int = 20,
+    branch_filter: str | None = None,
+    status_filter: str | None = None,
+) -> int:
+    """Print pipeline run history from .omc/runs/."""
+    runs_dir = root / _RUNS_DIR
+    if not runs_dir.exists():
+        print("[RUNS] 실행 기록 없음")
+        return 0
+
+    run_dirs = sorted(runs_dir.iterdir(), reverse=True)
+    entries: list[dict] = []
+    for d in run_dirs:
+        result_path = d / "result.json"
+        if not result_path.exists():
+            continue
+        try:
+            data = json.loads(result_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        data["_run_id"] = d.name
+        entries.append(data)
+
+    if branch_filter:
+        entries = [e for e in entries if branch_filter in (e.get("branch") or "")]
+    if status_filter:
+        entries = [e for e in entries if status_filter == (e.get("status") or "")]
+
+    entries = entries[:limit]
+
+    if not entries:
+        print("[RUNS] 조건에 맞는 실행 기록 없음")
+        return 0
+
+    for e in entries:
+        status = e.get("status", "?")
+        icon = _STATUS_ICON_MAP.get(status.lower(), "❓")
+        branch = e.get("branch", "-")
+        executor = e.get("executor", "-")
+        started = e.get("started_at", "-")
+        verdict = None
+        for step in (e.get("steps") or {}).values():
+            if isinstance(step, dict) and step.get("verdict"):
+                verdict = step["verdict"]
+        verdict_str = f"  verdict={verdict}" if verdict else ""
+        print(f"{icon} [{status}] {branch}  executor={executor}  started={started}{verdict_str}")
+        print(f"   run_id={e['_run_id']}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # 커맨드: pipeline
 # ---------------------------------------------------------------------------
 
@@ -2355,6 +2415,11 @@ def main() -> int:
     p_benchmark_report.add_argument("--result-file", type=Path, default=None, help="읽을 pipeline result JSON 경로")
     p_benchmark_report.add_argument("--format", choices=["json"], default="json", help="출력 형식 (v1: json)")
 
+    p_runs = sub.add_parser("runs", help="pipeline 실행 이력 조회 (.omc/runs/)")
+    p_runs.add_argument("--limit", type=int, default=20, help="표시할 최대 개수 (기본: 20)")
+    p_runs.add_argument("--branch", dest="branch_filter", default=None, help="브랜치 이름 필터")
+    p_runs.add_argument("--status", dest="status_filter", default=None, help="상태 필터 (completed/failed 등)")
+
     args = ap.parse_args()
     root = omc_utils.project_root(args.target)
 
@@ -2374,6 +2439,8 @@ def main() -> int:
         return cmd_pipeline_status(root, watch=args.watch, interval=args.interval, recover=args.recover)
     if args.cmd == "benchmark-report":
         return cmd_benchmark_report(root, result_file=args.result_file, output_format=args.format)
+    if args.cmd == "runs":
+        return cmd_runs(root, limit=args.limit, branch_filter=args.branch_filter, status_filter=args.status_filter)
     if args.cmd == "pipeline":
         # pre-flight 검증
         args.instruction = args.instruction.strip()
