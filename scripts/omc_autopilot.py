@@ -441,7 +441,8 @@ def _extract_cost_info(executor: str, stdout: str) -> dict | None:
             return None
         cost = omc_cost._estimate_cost_usd(usage)
         return {"token_usage": usage, "cost_estimate": cost}
-    except Exception:
+    except Exception as exc:
+        print(f"[COST] 파싱 실패 (무시됨): {exc}", file=sys.stderr)
         return None
 
 
@@ -452,8 +453,8 @@ def _parse_gemini_cli_stats(stdout: str) -> dict | None:
         total_input = total_output = 0
         for model_stats in models.values():
             tokens = model_stats.get("tokens") or {}
-            total_input += tokens.get("prompt", 0) or tokens.get("input", 0)
-            total_output += tokens.get("candidates", 0)
+            total_input += int(tokens.get("prompt") or tokens.get("input") or 0)
+            total_output += int(tokens.get("candidates") or 0)
         if total_input or total_output:
             return {
                 "input_tokens": total_input,
@@ -1066,17 +1067,21 @@ def _build_benchmark_report(data: dict) -> dict:
         "cost_estimate": None,
         "token_usage": None,
         "executor_cost_source": None,
-        "total_cost_usd": sum(
-            s.get("cost_estimate") or 0
-            for s in steps.values()
-            if isinstance(s.get("cost_estimate"), (int, float))
-        ) or None,
-        "total_tokens": sum(
-            (s.get("token_usage") or {}).get("input_tokens", 0)
-            + (s.get("token_usage") or {}).get("output_tokens", 0)
-            for s in steps.values()
-            if s.get("token_usage")
-        ) or None,
+        "total_cost_usd": (
+            sum(s.get("cost_estimate") or 0 for s in steps.values() if isinstance(s.get("cost_estimate"), (int, float)))
+            if any(isinstance(s.get("cost_estimate"), (int, float)) for s in steps.values())
+            else None
+        ),
+        "total_tokens": (
+            sum(
+                (s.get("token_usage") or {}).get("input_tokens", 0)
+                + (s.get("token_usage") or {}).get("output_tokens", 0)
+                for s in steps.values()
+                if s.get("token_usage")
+            )
+            if any(s.get("token_usage") for s in steps.values())
+            else None
+        ),
     }
 
 
@@ -1206,7 +1211,11 @@ def cmd_runs(
         steps = e.get("steps") or {}
         verdict = (steps.get("review") or {}).get("verdict")
         verdict_str = f"  verdict={verdict}" if verdict else ""
-        print(f"{icon} [{status}] {branch}  executor={executor}  started={started}{verdict_str}")
+        cost = e.get("total_cost_usd")
+        tokens = e.get("total_tokens")
+        cost_str = f"  cost=${cost:.4f}" if isinstance(cost, (int, float)) else ""
+        tokens_str = f"  tokens={tokens}" if tokens is not None else ""
+        print(f"{icon} [{status}] {branch}  executor={executor}  started={started}{verdict_str}{cost_str}{tokens_str}")
         print(f"   run_id={e['_run_id']}")
     return 0
 

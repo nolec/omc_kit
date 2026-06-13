@@ -465,6 +465,13 @@ def main() -> int:
         default="task",
         help="Task kind hint for model profile routing (default: task).",
     )
+    ap.add_argument(
+        "--touched-files",
+        nargs="*",
+        default=[],
+        metavar="FILE",
+        help="Files touched by this task — used for model profile escalation.",
+    )
     args = ap.parse_args()
 
     project_root = omc_utils.project_root(args.target)
@@ -485,7 +492,7 @@ def main() -> int:
     model_profile = args.model_profile or select_model_profile(
         task_kind=args.task_kind,
         request_text=prompt_text,
-        touched_files=[],
+        touched_files=args.touched_files,
         retry_count=0,
         review_severity=None,
     )

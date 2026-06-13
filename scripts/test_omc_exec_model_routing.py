@@ -178,3 +178,42 @@ def test_select_model_profile_escalates_to_full_after_multiple_retries() -> None
         )
         == "full_default"
     )
+
+
+def test_main_passes_touched_files_to_model_profile_routing(monkeypatch, tmp_path: Path) -> None:
+    """--touched-files 인자가 select_model_profile의 touched_files로 실제 전달되어야 한다."""
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("수정", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(omc_exec, "_detect_executor", lambda _preferred: "codex")
+    monkeypatch.setattr(omc_exec, "_is_tty_available", lambda: False)
+    monkeypatch.setattr(omc_exec, "_check_codex_auth", lambda: True)
+    monkeypatch.setattr(omc_exec.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    def fake_run_codex_headless(project_root, prompt_text, *, timeout_sec, model_profile="mini_default"):
+        captured["model_profile"] = model_profile
+        return 0
+
+    monkeypatch.setattr(omc_exec, "_run_codex_headless", fake_run_codex_headless)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "omc_exec.py",
+            "--target", str(tmp_path),
+            "--prompt-file", str(prompt_file),
+            "--executor", "codex",
+            "--execution-mode", "headless",
+            "--task-kind", "review",
+            "--touched-files", "scripts/api/client.ts", "scripts/state/store.ts",
+            "scripts/api/types.ts", "scripts/api/a.ts", "scripts/api/b.ts",
+            "scripts/api/c.ts", "scripts/api/d.ts", "scripts/api/e.ts",
+        ],
+    )
+
+    rc = omc_exec.main()
+    assert rc == 0
+    # review + 8개 sensitive path → full_default 에스컬레이션
+    assert captured["model_profile"] == "full_default"
