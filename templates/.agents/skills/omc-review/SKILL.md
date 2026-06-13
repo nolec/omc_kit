@@ -20,21 +20,19 @@ python3 scripts/omc.py state status --target . 2>/dev/null
 
 ## 필수 체크
 
-- 범위 확정: `git diff HEAD` + untracked/최근 파일 포함 여부 명시
-- 파일:라인 근거: 근거 없는 이슈 금지
-- 검증 커맨드: 최종 판정 전 실행 목록 기록
+- 범위 확정 / 파일:라인 근거 / 검증 커맨드는 항상 기록
 
 리뷰어가 사용자에게 바로 보여줄 것: 파일:라인 근거 이슈 / 검증 커맨드 / 판정 / VERDICT
 
 시스템이 암묵적으로 처리
 - 자명한 요약 / 대용량 diff 분할 / 범위 밖 제외
 
+안전 필수 항목: 파일:라인 / VERDICT / [치명] [중대] [경미] [제안]
+
 리뷰 범위
 - `git diff HEAD`가 있으면 staged/unstaged 변경 전체를 봅니다.
-- diff에 없는 untracked/ignored 대상은 파일을 직접 읽고 리뷰합니다.
-- `.omc/runs`, `.omc/lessons`, `.omc/pipeline_run_result.json`은 기본 제외합니다.
-- diff 200줄 이상이면 파일 단위로 나눕니다.
-- 요청 범위 밖은 리뷰하지 않습니다.
+- diff에 없는 untracked/ignored 대상은 파일을 직접 읽고, `.omc/runs` `.omc/lessons` `pipeline_run_result`는 제외합니다.
+- diff 200줄 이상이면 파일 단위로 나누고, 요청 범위 밖은 리뷰하지 않습니다.
 
 ## Step 1. REVIEW CHECKLIST
 
