@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 45
+MAX_NON_EMPTY_LINES = 60
 
 REQUIRED_PLAN_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-plan" / "SKILL.md",
@@ -38,6 +38,10 @@ REQUIRED_SEQUENCE = [
     "성공 지표",
     "실패",
     "영향받는 파일",
+    "plan full",
+    "plan lite",
+    "lite",
+    "full 재계획",
     "RED",
     "GREEN",
     "VERIFY",
@@ -49,6 +53,17 @@ REQUIRED_SEQUENCE = [
 REQUIRED_FOCUS_MARKERS = [
     "사용자에게 보여줄 단계",
     "시스템이 암묵적으로 처리",
+]
+
+REQUIRED_RISK_CONCEPTS = [
+    ("새 파일", "신규 파일"),
+    ("API", "시그니처"),
+    ("3개 이상", "세 개 이상"),
+    ("검증 명령", "VERIFY"),
+    ("범위", "불명확"),
+    ("애매", "full"),
+    ("2개 이하", "1~2"),
+    ("분리", "범위"),
 ]
 
 VALID_PLAN_SAMPLE = """
@@ -67,6 +82,50 @@ DoD: 실패 테스트가 먼저 실패하고 수정 후 통과한다.
   RED    : scripts/test_auth.py::test_error_mapping
   GREEN  : src/auth.ts 최소 수정
   VERIFY : python3 -m pytest scripts/test_auth.py
+"""
+
+VALID_LITE_PLAN_SAMPLE = """
+목표: 문구 한 줄 수정이 테스트와 함께 반영된다.
+범위 (포함): 스킬 문구와 단일 계약 테스트 갱신
+범위 (제외): 새 파일 생성, 다른 스킬 수정
+DoD: lite 계획으로 1개 태스크만 제시되고 검증까지 통과한다.
+제약: 기존 API/signature는 바꾸지 않는다.
+사용자 컨펌: 완료
+입력: 기존 omc-plan 스킬 텍스트
+출력: 더 짧은 lite 계획
+성공 지표: 작은 작업에서 plan 출력이 더 짧다.
+실패 정책: 조건이 애매하면 full 재계획으로 승격한다.
+영향받는 파일: .agents/skills/omc-plan/SKILL.md
+태스크 1: lite 문구 정리
+  RED    : scripts/test_omc_plan_skill_contract.py -k lite
+  GREEN  : .agents/skills/omc-plan/SKILL.md 최소 수정
+  VERIFY : python3 -m pytest -q scripts/test_omc_plan_skill_contract.py -k lite
+"""
+
+INVALID_LITE_PLAN_SAMPLE = """
+목표: 작은 수정
+범위 (포함): 스킬
+범위 (제외): 없음
+DoD: 된다
+제약: 없음
+사용자 컨펌: 완료
+입력: 기존 파일
+출력: 수정
+성공 지표: 짧다
+실패 정책: 실패하면 수정
+영향받는 파일: skill.md
+태스크 1: 구현
+  RED    : test
+  GREEN  : skill
+  VERIFY : pytest
+태스크 2: 추가 구현
+  RED    : test2
+  GREEN  : skill2
+  VERIFY : pytest2
+태스크 3: 과한 구현
+  RED    : test3
+  GREEN  : skill3
+  VERIFY : pytest3
 """
 
 INVALID_PLAN_SAMPLE = """
@@ -123,6 +182,14 @@ def _validate_plan_output(sample: str) -> list[str]:
         for name, pattern in required_patterns.items()
         if not re.search(pattern, sample)
     ]
+
+
+def _extract_task_count(sample: str) -> int:
+    return len(re.findall(r"^태스크\s+\d+:", sample, flags=re.MULTILINE))
+
+
+def _missing_concepts(text: str, concepts: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
+    return [concept for concept in concepts if not any(token in text for token in concept)]
 
 
 def test_plan_skill_paths_are_identical():
@@ -187,10 +254,25 @@ def test_plan_skill_explains_visible_vs_implicit_steps():
     assert not missing, f"missing focus markers: {missing}"
 
 
+def test_plan_skill_declares_lite_full_risk_concepts():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    missing = _missing_concepts(text, REQUIRED_RISK_CONCEPTS)
+    assert not missing, f"missing lite/full risk concepts: {missing}"
+
+
 def test_valid_plan_output_fixture_has_required_structure():
     assert _validate_plan_output(VALID_PLAN_SAMPLE) == []
+
+
+def test_valid_lite_plan_output_fixture_limits_task_count():
+    assert _validate_plan_output(VALID_LITE_PLAN_SAMPLE) == []
+    assert _extract_task_count(VALID_LITE_PLAN_SAMPLE) <= 2
 
 
 def test_invalid_plan_output_fixture_exposes_missing_structure():
     missing = _validate_plan_output(INVALID_PLAN_SAMPLE)
     assert {"excluded_scope", "confirmed", "verify"}.issubset(set(missing))
+
+
+def test_invalid_lite_plan_fixture_rejects_more_than_two_tasks():
+    assert _extract_task_count(INVALID_LITE_PLAN_SAMPLE) > 2
