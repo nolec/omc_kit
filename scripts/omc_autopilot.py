@@ -1220,6 +1220,126 @@ def cmd_runs(
     return 0
 
 
+def _get_current_step_name(steps: object) -> str:
+    if not isinstance(steps, dict) or not steps:
+        return "-"
+    for step_name, step_data in steps.items():
+        if isinstance(step_data, dict) and step_data.get("status") == "running":
+            return str(step_name)
+    completed = [
+        str(step_name)
+        for step_name, step_data in steps.items()
+        if isinstance(step_data, dict) and step_data.get("status") == "completed"
+    ]
+    if completed:
+        return completed[-1]
+    return str(next(iter(steps)))
+
+
+def _infer_stale_reason(data: dict) -> str | None:
+    stale_reason = data.get("stale_reason")
+    if isinstance(stale_reason, str) and stale_reason.strip():
+        return stale_reason.strip()
+    if data.get("status") != "running":
+        return None
+    pid = data.get("pid")
+    if isinstance(pid, int):
+        pid_running = _is_pid_running(pid)
+        if pid_running is False:
+            return f"pipeline pid not running: {pid}"
+        return None
+    return None
+
+
+def _recommend_next_action(status: str, *, stale: bool, failure_reason: str, current_step: str) -> str:
+    if stale:
+        return "recover stale pipeline"
+    if status == "completed":
+        return "review final output"
+    if status in {"hold", "auto_hold", "blocked"}:
+        if "critique" in failure_reason:
+            return "inspect critique findings"
+        return "inspect blocked step"
+    if status in {"failed", "retry_exhausted", "timeout", "aborted"}:
+        if current_step.startswith("review"):
+            return "inspect review failures"
+        if current_step.startswith("task"):
+            return "fix task failure and retry"
+        return "inspect failed step"
+    if status == "running":
+        return "wait for next update"
+    return "inspect run details"
+
+
+def _summarize_run_record(run_id: str, data: dict) -> dict[str, object]:
+    status = str(data.get("status") or "unknown")
+    steps = data.get("steps") or {}
+    current_step = _get_current_step_name(steps)
+    stale_reason = _infer_stale_reason(data)
+    stale = stale_reason is not None
+    failure_reason = str(data.get("failure_category") or stale_reason or "-")
+    return {
+        "run_id": run_id,
+        "branch": str(data.get("branch") or "-"),
+        "executor": str(data.get("executor") or "-"),
+        "status": status,
+        "current_step": current_step,
+        "stale": stale,
+        "failure_reason": failure_reason,
+        "next_action": _recommend_next_action(
+            status,
+            stale=stale,
+            failure_reason=failure_reason,
+            current_step=current_step,
+        ),
+    }
+
+
+def cmd_overview(root: Path, *, limit: int = 10) -> int:
+    """Print a one-screen read-only overview for current and recent autopilot runs."""
+    summaries: list[dict[str, object]] = []
+
+    current_path = root / _PIPELINE_RESULT_PATH
+    if current_path.exists():
+        try:
+            current_data = json.loads(current_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            current_data = None
+        if isinstance(current_data, dict):
+            summaries.append(_summarize_run_record("current", current_data))
+
+    runs_dir = root / _RUNS_DIR
+    if runs_dir.exists():
+        run_dirs = sorted(runs_dir.iterdir(), reverse=True)
+        for d in run_dirs:
+            if len(summaries) >= limit:
+                break
+            result_path = d / "result.json"
+            if not result_path.exists():
+                continue
+            try:
+                data = json.loads(result_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            summaries.append(_summarize_run_record(d.name, data))
+
+    if not summaries:
+        print("[OVERVIEW] 실행 기록 없음")
+        return 0
+
+    print("OMC Autopilot Overview")
+    print("run_id | branch | status | step | stale | failure_reason | next_action")
+    print("-" * 78)
+    for summary in summaries[:limit]:
+        stale_text = "yes" if summary["stale"] else "no"
+        print(
+            f"{summary['run_id']} | {summary['branch']} | {summary['status']} | "
+            f"{summary['current_step']} | {stale_text} | "
+            f"{summary['failure_reason']} | next_action={summary['next_action']}"
+        )
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # 커맨드: pipeline
 # ---------------------------------------------------------------------------
@@ -2426,6 +2546,9 @@ def main() -> int:
     p_runs.add_argument("--branch", dest="branch_filter", default=None, help="브랜치 이름 필터")
     p_runs.add_argument("--status", dest="status_filter", default=None, help="상태 필터 (completed/failed 등)")
 
+    p_overview = sub.add_parser("overview", help="read-only autopilot 관제 요약")
+    p_overview.add_argument("--limit", type=int, default=10, help="표시할 최대 run 개수 (기본: 10)")
+
     args = ap.parse_args()
     root = omc_utils.project_root(args.target)
 
@@ -2447,6 +2570,8 @@ def main() -> int:
         return cmd_benchmark_report(root, result_file=args.result_file, output_format=args.format)
     if args.cmd == "runs":
         return cmd_runs(root, limit=args.limit, branch_filter=args.branch_filter, status_filter=args.status_filter)
+    if args.cmd == "overview":
+        return cmd_overview(root, limit=args.limit)
     if args.cmd == "pipeline":
         # pre-flight 검증
         args.instruction = args.instruction.strip()

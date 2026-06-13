@@ -64,6 +64,9 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-login.json --dry-ru
 
 # 실행 기록
 python3 scripts/omc_autopilot.py status
+
+# 관제 요약
+python3 scripts/omc_autopilot.py overview
 ```
 
 ---

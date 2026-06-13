@@ -48,6 +48,7 @@ python3 scripts/omc.py state compact      # 메모리 압축
 python3 scripts/omc_lesson.py search "키워드"  # 교훈 BM25 검색
 python3 scripts/omc_autopilot.py new --id feat-x --title "기능 X"
 python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
+python3 scripts/omc_autopilot.py overview   # 최근/현재 run 관제 요약
 ```
 
 ## 자동 가드 & CI
