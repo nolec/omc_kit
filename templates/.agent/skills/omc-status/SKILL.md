@@ -24,6 +24,7 @@ git log --oneline -5
 
 사용자에게 보여줄 것: 세션 요약 / git 요약 / 변경 카테고리 / 차단·주의 / 다음 액션 / 남은 스킬 후보
 시스템이 암묵적으로 처리: 현재 사용자 요청 vs latest request / confirmed_request / pending_request 비교, read-only 유지
+조회 전용 안전 항목: read-only / 커밋 대상 아님 / 다음 액션 1개 추천
 - 세션 불일치 / stale / 소스/스킬 변경 / .omc 실행 아티팩트 / untracked 판단 후 출력합니다.
 
 ## Phase 2. 변경 카테고리
