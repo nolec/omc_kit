@@ -64,6 +64,13 @@ REQUIRED_FOCUS_MARKERS = [
     "시스템이 암묵적으로 처리",
 ]
 
+REQUIRED_SAFETY_MARKERS = [
+    "조회 전용 안전 항목",
+    "read-only",
+    "커밋 대상 아님",
+    "다음 액션",
+]
+
 MUTATING_COMMAND_PATTERNS = [
     r"python3 scripts/omc\.py state confirm",
     r"python3 scripts/omc\.py state init",
@@ -191,6 +198,12 @@ def test_status_skill_explains_visible_vs_implicit_work():
     text = _read(REQUIRED_STATUS_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
     assert not missing, f"missing focus markers: {missing}"
+
+
+def test_status_skill_declares_read_only_safety_markers():
+    text = _read(REQUIRED_STATUS_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_SAFETY_MARKERS if marker not in text]
+    assert not missing, f"missing status safety markers: {missing}"
 
 
 def test_status_skill_does_not_suggest_mutating_commands():
