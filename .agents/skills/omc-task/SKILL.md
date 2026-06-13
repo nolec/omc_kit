@@ -22,16 +22,13 @@ python3 scripts/omc_guard.py require --for "task" --target .
 - RED 등록: FAIL 출력 첨부 + `red-done` 완료
 - TDD 게이트: `python3 scripts/omc_tdd_check.py --staged` exit 0
 
-사용자에게 보여줄 단계
-- CONTRACT
-- RED
-- TDD GATE
-- Handoff
+사용자에게 보여줄 단계: CONTRACT / RED / TDD GATE / Handoff
+시스템이 암묵적으로 처리: 자명한 재안내 / 중복 설명 / 단계 사이 반복 코칭
 
-시스템이 암묵적으로 처리
-- 자명한 재안내
-- 중복 설명
-- 단계 사이 반복 코칭
+안전 필수 항목
+- CONTRACT / RED / TDD GATE / Handoff는 압축해도 유지
+- 작은 후속 수정도 Guard, CONTRACT, RED 등록 순서는 유지
+- 범위 분리: 현재 dirty 변경과 이번 구현 범위를 섞지 않음
 
 ## PHASE 1 ▸ CONTRACT
 
@@ -50,6 +47,7 @@ python3 scripts/omc_guard.py require --for "task" --target .
 - 영향받는 파일:
 
 계약이 약한 작업도 빈칸 없이 적습니다.
+작은 후속 수정은 설명을 줄여도 영향 파일과 실패 정책은 생략하지 않습니다.
 
 ## PHASE 3 ▸ RED
 

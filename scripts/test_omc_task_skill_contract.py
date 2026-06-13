@@ -51,6 +51,16 @@ REQUIRED_FOCUS_MARKERS = [
     "시스템이 암묵적으로 처리",
 ]
 
+REQUIRED_SAFETY_MARKERS = [
+    "안전 필수 항목",
+    "CONTRACT",
+    "RED",
+    "TDD GATE",
+    "Handoff",
+    "작은 후속 수정",
+    "범위 분리",
+]
+
 
 def _read(path: Path) -> str:
     assert path.exists(), f"missing task skill path: {path.relative_to(ROOT)}"
@@ -139,3 +149,10 @@ def test_task_skill_explains_visible_vs_implicit_steps():
     text = _read(REQUIRED_TASK_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
     assert not missing, f"missing focus markers: {missing}"
+
+
+def test_task_skill_declares_non_negotiable_safety_markers():
+    """Compression must still keep visible safety gates and range-separation rules."""
+    text = _read(REQUIRED_TASK_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_SAFETY_MARKERS if marker not in text]
+    assert not missing, f"missing safety markers: {missing}"
