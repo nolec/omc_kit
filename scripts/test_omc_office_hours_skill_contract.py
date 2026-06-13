@@ -46,6 +46,8 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "$omc-brainstorm",
     "$omc-ceo-review",
     "$omc-plan",
+    "lite",
+    "full",
     "6개 답변 완료 전",
     "AI가 임의로 PROCEED",
     "사용자가",
@@ -197,3 +199,49 @@ def test_invalid_office_hours_output_fixture_exposes_weak_product_gate():
     assert {"specific_user", "measurable_success", "mvp", "excluded_scope"}.issubset(
         set(failures)
     )
+
+
+def test_office_hours_skill_declares_risk_based_full_triggers():
+    text = _read(REQUIRED_OFFICE_HOURS_SKILL_PATHS[0])
+    required = [
+        "권한",
+        "돈",
+        "운영",
+        "정책",
+        "범위 불명확",
+        "full",
+    ]
+    missing = [marker for marker in required if marker not in text]
+    assert not missing, f"missing full trigger markers: {missing}"
+
+
+def test_office_hours_skill_keeps_q3_q4_q5_in_lite_mode():
+    text = _read(REQUIRED_OFFICE_HOURS_SKILL_PATHS[0])
+    required = [
+        "lite",
+        "Q3",
+        "Q4",
+        "Q5",
+    ]
+    missing = [marker for marker in required if marker not in text]
+    assert not missing, f"missing lite safety markers: {missing}"
+
+
+def test_office_hours_skill_only_allows_q6_to_be_omitted_in_lite_mode():
+    text = _read(REQUIRED_OFFICE_HOURS_SKILL_PATHS[0])
+    assert "Q6" in text and "생략" in text, "lite mode must explain Q6 omission"
+
+
+def test_office_hours_skill_declares_lite_to_full_escalation_rule():
+    text = _read(REQUIRED_OFFICE_HOURS_SKILL_PATHS[0])
+    required = [
+        "lite",
+        "full 재질문",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "Q5",
+    ]
+    missing = [marker for marker in required if marker not in text]
+    assert not missing, f"missing lite->full escalation markers: {missing}"
