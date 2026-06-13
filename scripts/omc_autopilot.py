@@ -1283,9 +1283,12 @@ def _summarize_run_record(run_id: str, data: dict) -> dict[str, object]:
         "branch": str(data.get("branch") or "-"),
         "executor": str(data.get("executor") or "-"),
         "status": status,
+        "is_current": run_id == "current",
         "current_step": current_step,
         "stale": stale,
         "failure_reason": failure_reason,
+        "started_at": data.get("started_at"),
+        "finished_at": data.get("finished_at"),
         "next_action": _recommend_next_action(
             status,
             stale=stale,
@@ -1293,6 +1296,42 @@ def _summarize_run_record(run_id: str, data: dict) -> dict[str, object]:
             current_step=current_step,
         ),
     }
+
+
+def _overview_status_priority(summary: dict[str, object]) -> int:
+    status = str(summary.get("status") or "unknown")
+    stale = bool(summary.get("stale"))
+    if stale and status == "running":
+        return 0
+    if status in {"hold", "auto_hold", "blocked"}:
+        return 1
+    if status in {"failed", "retry_exhausted", "timeout", "aborted"}:
+        return 2
+    if status == "running":
+        return 3
+    if status == "completed":
+        return 4
+    return 5
+
+
+def _overview_timestamp_key(summary: dict[str, object]) -> float:
+    for field in ("finished_at", "started_at"):
+        parsed = _parse_pipeline_timestamp(summary.get(field))
+        if parsed is not None:
+            return -parsed.timestamp()
+    return 0.0
+
+
+def _sort_overview_summaries(summaries: list[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(
+        summaries,
+        key=lambda summary: (
+            _overview_status_priority(summary),
+            0 if bool(summary.get("is_current")) else 1,
+            _overview_timestamp_key(summary),
+            str(summary.get("run_id") or ""),
+        ),
+    )
 
 
 def cmd_overview(root: Path, *, limit: int = 10) -> int:
@@ -1326,6 +1365,8 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
     if not summaries:
         print("[OVERVIEW] 실행 기록 없음")
         return 0
+
+    summaries = _sort_overview_summaries(summaries)
 
     print("OMC Autopilot Overview")
     print("run_id | branch | status | step | stale | failure_reason | next_action")
