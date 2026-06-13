@@ -674,6 +674,8 @@ def _render_notepad(project_root: Path, memory: dict) -> str:
         lines.append(f"- current_session_status: `{lifecycle.get('status', 'unknown')}`")
         if lifecycle.get("reason"):
             lines.append(f"- current_session_reason: {_excerpt(str(lifecycle.get('reason', '')), 140)}")
+            if lifecycle.get("status") == "active":
+                lines.append("- current_session_note: `정리 필요`")
     if latest_confirmed:
         confirmed_roles = ", ".join([str(r) for r in (latest_confirmed.get("role_ids") or [])])
         lines.append(f"- confirmed_roles: `{confirmed_roles}`")
@@ -1314,6 +1316,11 @@ def status(project_root: Path) -> str:
     lines.append(f"- notes: {len(notes)}")
     if latest:
         lines.append(f"- latest: {_entry_summary(latest)}")
+        latest_lifecycle = dict(latest.get("lifecycle", {}))
+        if latest_lifecycle.get("reason"):
+            lines.append(f"- latest_session_reason: {_excerpt(str(latest_lifecycle.get('reason', '')), 140)}")
+            if latest_lifecycle.get("status") == "active":
+                lines.append("- latest_session_note: 정리 필요")
     policy = _read_json(_policy_path(project_root), {"enforce_confirm": True})
     lines.append(f"- latest_session_id: {latest_meta.get('latest_session_id')}")
     lines.append(f"- latest_confirmed_session_id: {latest_meta.get('latest_confirmed_session_id')}")
