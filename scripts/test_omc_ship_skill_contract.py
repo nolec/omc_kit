@@ -173,6 +173,11 @@ def test_ship_skill_stays_short_enough_to_scan():
     )
 
 
+def test_ship_skill_avoids_duplicate_approval_wording():
+    text = _read(REQUIRED_SHIP_SKILL_PATHS[0])
+    assert text.count("사용자 명시 승인") <= 2, "duplicate approval wording should be trimmed"
+
+
 def test_ship_skill_preserves_required_execution_order():
     text = _read(REQUIRED_SHIP_SKILL_PATHS[0])
     cursor = -1
