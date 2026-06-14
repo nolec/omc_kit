@@ -70,7 +70,7 @@ MINOR:
 VERDICT: HOLD / REVISE / PROCEED / BLOCK / APPROVE
 ```
 
-## 변경 비용 체크포인트
+## 비용 체크포인트
 
 REVISE / HOLD 판정 후 `$omc-task` 진입 전 반드시 아래를 확인합니다.
 
@@ -83,9 +83,11 @@ REVISE / HOLD 판정 후 `$omc-task` 진입 전 반드시 아래를 확인합니
 
 - 실질 효과 LOW + MINOR 지적만 → 건너뛰기 권장
 - 실질 효과 MED/HIGH → `$omc-plan`으로 범위 확정 후 `$omc-task`
+- 같은 REVISE/HOLD 사유가 반복될 때만 이 체크포인트를 다시 엽니다.
+- 반복 근거가 없으면 여기서 중단하고 현 상태를 유지합니다.
 
 > ⛔ REVISE/HOLD 판정 직후 `$omc-task`를 바로 실행하지 않습니다.
-> 변경 비용 체크포인트를 출력하고, 사용자가 "진행"을 명시할 때까지 멈춥니다.
+> 이 체크포인트를 출력하고, 사용자가 "진행"을 명시할 때까지 멈춥니다.
 
 ## 이후 액션
 

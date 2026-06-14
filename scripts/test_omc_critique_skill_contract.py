@@ -57,6 +57,8 @@ REQUIRED_MARKERS = [
     "대안",
     "권고 조치",
     "변경 비용 추정",
+    "같은 REVISE/HOLD 사유가 반복될 때만",
+    "반복 근거가 없으면 여기서 중단",
 ]
 
 REQUIRED_FOCUS_MARKERS = [
@@ -182,6 +184,11 @@ def test_critique_skill_stays_short_enough_to_scan():
 def test_critique_skill_avoids_duplicate_auto_progress_warnings():
     text = _read(REQUIRED_CRITIQUE_SKILL_PATHS[0])
     assert text.count("자동으로") <= 1, "duplicate auto-progress wording should be trimmed"
+
+
+def test_critique_skill_limits_duplicate_change_cost_wording():
+    text = _read(REQUIRED_CRITIQUE_SKILL_PATHS[0])
+    assert text.count("변경 비용") <= 4, "change-cost wording should stay compact"
 
 
 def test_critique_skill_preserves_required_execution_order():
