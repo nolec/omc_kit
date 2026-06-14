@@ -154,6 +154,11 @@ def test_retro_skill_stays_short_enough_to_scan():
     )
 
 
+def test_retro_skill_avoids_duplicate_stale_wording():
+    text = _read(REQUIRED_RETRO_SKILL_PATHS[0])
+    assert text.count("세션 불일치") <= 1, "duplicate stale wording should be trimmed"
+
+
 def test_retro_skill_preserves_required_execution_order():
     text = _read(REQUIRED_RETRO_SKILL_PATHS[0])
     cursor = -1

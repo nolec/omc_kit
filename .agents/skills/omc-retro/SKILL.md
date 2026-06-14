@@ -39,7 +39,7 @@ RETRO — [날짜 범위]
 - omc state 기준:
 - notepad 기준:
 - lesson list 기준:
-- 세션 불일치/stale:
+- stale:
 
 완료된 작업:
 
