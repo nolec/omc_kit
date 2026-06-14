@@ -29,6 +29,20 @@ _SCRIPTS_EXTRA = {
     "compose_prompt.py", # 프롬프트 조합 유틸
 }
 
+# Shared OMC hook contract markers used across install/doctor/tests:
+# - session bootstrap
+# - pre-mutate guard
+# - post-mutate soft guard
+# - install/doctor verification
+HOOK_CONTRACT_MARKERS = (
+    "session bootstrap",
+    "pre-mutate guard",
+    "post-mutate soft guard",
+    "install/doctor verification",
+)
+
+HOOK_CONTRACT_SUMMARY = " / ".join(HOOK_CONTRACT_MARKERS)
+
 
 def _deployed_script_names(kit_root: Path) -> set[str]:
     scripts_src = kit_root / "scripts"
@@ -56,7 +70,10 @@ def _ensure_executable(path: Path) -> None:
 
 
 def _install_claude_settings(settings_path: Path, *, force: bool) -> None:
-    """Create or merge .claude/settings.json with OMC SessionStart/End + PreToolUse + UserPromptSubmit hooks."""
+    """Create or merge .claude/settings.json with OMC SessionStart/End + PreToolUse + UserPromptSubmit hooks.
+
+    Shared hook contract: HOOK_CONTRACT_SUMMARY
+    """
     import json
 
     omc_hooks = {
@@ -192,6 +209,12 @@ def _install_gemini_settings(settings_path: Path, *, force: bool) -> None:
         settings_path.write_text(
             json.dumps(omc_hooks, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
+
+
+_install_claude_settings.__doc__ = (_install_claude_settings.__doc__ or "").replace(
+    "HOOK_CONTRACT_SUMMARY",
+    HOOK_CONTRACT_SUMMARY,
+)
 
 
 def _kit_root() -> Path:

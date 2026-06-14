@@ -109,3 +109,21 @@ def test_doctor_check_warns_when_agent_hook_missing(tmp_path):
     )
     assert agent_hook_check is not None, "agent-hooks/omc-pipeline-check 관련 검사 항목이 없음"
     assert not agent_hook_check.ok, ".agent-hooks 없는데 OK 판정됨"
+
+
+def test_doctor_has_codex_posttooluse_soft_guard_check(tmp_path):
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    (codex_dir / "hooks.json").write_text(
+        '{"hooks":{"SessionStart":[],"UserPromptSubmit":[],"PostToolUse":[{"hooks":[{"command":"omc-post-file-check.sh"}]}]}}',
+        encoding="utf-8",
+    )
+
+    doctor = _load_doctor()
+    checks = doctor.run_checks(tmp_path)
+    codex_soft_guard_check = next(
+        (c for c in checks if ".codex/hooks.json" in c.label and "PostToolUse" in c.label),
+        None,
+    )
+    assert codex_soft_guard_check is not None, "Codex PostToolUse 소프트 가드 검사 항목이 없음"
+    assert codex_soft_guard_check.ok, "Codex PostToolUse 소프트 가드가 있는데도 OK 판정이 아님"

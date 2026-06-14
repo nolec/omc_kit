@@ -326,6 +326,25 @@ def _build_checks(root: Path) -> list[Check]:
         fix_cmd="python3 scripts/install.py --target . --force",
     ))
 
+    codex_posttooluse_ok = False
+    if codex_hooks.exists():
+        try:
+            data = json.loads(codex_hooks.read_text(encoding="utf-8"))
+            commands = [
+                h.get("command", "")
+                for entry in data.get("hooks", {}).get("PostToolUse", [])
+                for h in entry.get("hooks", [])
+            ]
+            codex_posttooluse_ok = any("omc-post-file-check.sh" in cmd for cmd in commands)
+        except Exception:
+            pass
+    checks.append(Check(
+        ".codex/hooks.json (PostToolUse soft guard)",
+        codex_posttooluse_ok,
+        detail="" if codex_posttooluse_ok else "Codex PostToolUse 소프트 가드가 비활성 상태입니다",
+        fix_cmd="python3 scripts/install.py --target . --force",
+    ))
+
     # ── Cursor rules ─────────────────────────────────────────────────────────
     omc_rule = root / ".cursor" / "rules" / "omc-role-suggest.mdc"
     checks.append(Check(

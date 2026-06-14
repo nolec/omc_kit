@@ -252,5 +252,30 @@ class TestInstallGeminiSettings(unittest.TestCase):
             self.assertEqual(data["hooks"]["BeforeTool"][0]["matcher"], "write_file|replace")
 
 
+class TestHookContractMarkers(unittest.TestCase):
+    def test_install_source_declares_shared_hook_contract_markers(self):
+        text = (Path(__file__).parent / "install.py").read_text(encoding="utf-8")
+        for marker in (
+            "session bootstrap",
+            "pre-mutate guard",
+            "post-mutate soft guard",
+            "install/doctor verification",
+        ):
+            self.assertIn(marker, text, f"install.py에 공통 훅 계약 marker 누락: {marker}")
+
+    def test_install_doc_uses_runtime_hook_contract_summary(self):
+        doc = _install._install_claude_settings.__doc__ or ""
+        self.assertIn(
+            _install.HOOK_CONTRACT_SUMMARY,
+            doc,
+            "HOOK_CONTRACT_SUMMARY 실제 값이 install docstring에 반영되지 않았습니다",
+        )
+        self.assertNotIn(
+            "HOOK_CONTRACT_SUMMARY",
+            doc,
+            "상수 이름만 남아 있고 실제 값으로 치환되지 않았습니다",
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
