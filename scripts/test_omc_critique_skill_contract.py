@@ -55,6 +55,8 @@ REQUIRED_MARKERS = [
     "APPROVE",
     "근거",
     "대안",
+    "권고 조치",
+    "변경 비용 추정",
 ]
 
 REQUIRED_FOCUS_MARKERS = [
@@ -138,12 +140,11 @@ def _validate_critique_output(sample: str) -> list[str]:
 
 
 def test_critique_skill_paths_are_identical():
-    texts = _collect_critique_skill_texts(
-        root=ROOT,
-        required_paths=REQUIRED_CRITIQUE_SKILL_PATHS,
-        optional_paths=OPTIONAL_CRITIQUE_SKILL_PATHS,
-    )
-    canonical = texts[".agents/skills/omc-critique/SKILL.md"]
+    canonical = _read(REQUIRED_CRITIQUE_SKILL_PATHS[0])
+    texts = {
+        path.relative_to(ROOT).as_posix(): _read(path)
+        for path in REQUIRED_CRITIQUE_SKILL_PATHS
+    }
     mismatched = [name for name, text in texts.items() if text != canonical]
     assert not mismatched, f"omc-critique skill copies differ: {mismatched}"
 
@@ -176,6 +177,11 @@ def test_critique_skill_stays_short_enough_to_scan():
     assert len(non_empty_lines) <= MAX_NON_EMPTY_LINES, (
         f"omc-critique has {len(non_empty_lines)} non-empty lines"
     )
+
+
+def test_critique_skill_avoids_duplicate_auto_progress_warnings():
+    text = _read(REQUIRED_CRITIQUE_SKILL_PATHS[0])
+    assert text.count("자동으로") <= 1, "duplicate auto-progress wording should be trimmed"
 
 
 def test_critique_skill_preserves_required_execution_order():
