@@ -6,6 +6,16 @@ import stat
 import sys
 from pathlib import Path
 
+from omc_hook_contract import (
+    CLAUDE_HOOK_CONTRACT,
+    GEMINI_HOOK_CONTRACT,
+    HOOK_CONTRACT_MARKERS,
+    HOOK_CONTRACT_SUMMARY,
+    claude_contract_issues,
+    codex_contract_issues,
+    gemini_contract_issues,
+)
+
 
 def _copy(src: Path, dst: Path, *, force: bool) -> None:
     if not src.exists():
@@ -28,21 +38,6 @@ _SCRIPTS_EXTRA = {
     "omc.py",            # OMC 진입점
     "compose_prompt.py", # 프롬프트 조합 유틸
 }
-
-# Shared OMC hook contract markers used across install/doctor/tests:
-# - session bootstrap
-# - pre-mutate guard
-# - post-mutate soft guard
-# - install/doctor verification
-HOOK_CONTRACT_MARKERS = (
-    "session bootstrap",
-    "pre-mutate guard",
-    "post-mutate soft guard",
-    "install/doctor verification",
-)
-
-HOOK_CONTRACT_SUMMARY = " / ".join(HOOK_CONTRACT_MARKERS)
-
 
 def _deployed_script_names(kit_root: Path) -> set[str]:
     scripts_src = kit_root / "scripts"
@@ -80,20 +75,20 @@ def _install_claude_settings(settings_path: Path, *, force: bool) -> None:
         "hooks": {
             "PreToolUse": [
                 {
-                    "matcher": "Write|Edit|MultiEdit",
+                    "matcher": CLAUDE_HOOK_CONTRACT["pre_mutate_guard"]["matcher"],
                     "hooks": [
-                        {"type": "command", "command": ".agent-hooks/omc-pipeline-check.sh"}
+                        {"type": "command", "command": CLAUDE_HOOK_CONTRACT["pre_mutate_guard"]["command"]}
                     ],
                 }
             ],
             "SessionStart": [
-                {"hooks": [{"type": "command", "command": ".agent-hooks/omc-session-start.sh claude"}]}
+                {"hooks": [{"type": "command", "command": CLAUDE_HOOK_CONTRACT["session_context"]["commands"][0]}]}
             ],
             "SessionEnd": [
                 {"hooks": [{"type": "command", "command": ".agent-hooks/omc-session-end.sh claude"}]}
             ],
             "UserPromptSubmit": [
-                {"hooks": [{"type": "command", "command": ".agent-hooks/omc-prompt-inject.sh", "timeout": 10}]}
+                {"hooks": [{"type": "command", "command": CLAUDE_HOOK_CONTRACT["session_context"]["commands"][1], "timeout": 10}]}
             ],
         }
     }
@@ -133,13 +128,13 @@ def _install_gemini_settings(settings_path: Path, *, force: bool) -> None:
         "hooks": {
             "BeforeTool": [
                 {
-                    "matcher": "write_file|replace",
+                    "matcher": GEMINI_HOOK_CONTRACT["pre_mutate_guard"]["matcher"],
                     "hooks": [
                         {
                             "type": "command",
                             "name": "omc-pipeline-check",
                             "description": "파이프라인 가드 — CONTRACT 미등록 파일 수정 차단 (exit 2)",
-                            "command": ".agent-hooks/omc-pipeline-check.sh",
+                            "command": GEMINI_HOOK_CONTRACT["pre_mutate_guard"]["command"],
                             "timeout": 10000,
                         }
                     ],
@@ -152,7 +147,7 @@ def _install_gemini_settings(settings_path: Path, *, force: bool) -> None:
                             "type": "command",
                             "name": "omc-session-start",
                             "description": "OMC 세션 컨텍스트 자동 주입 (JSON)",
-                            "command": ".agent-hooks/omc-session-start.sh gemini",
+                            "command": GEMINI_HOOK_CONTRACT["session_context"]["commands"][0],
                         }
                     ]
                 }
@@ -176,7 +171,7 @@ def _install_gemini_settings(settings_path: Path, *, force: bool) -> None:
                             "type": "command",
                             "name": "omc-before-agent",
                             "description": "사용자 메시지 기반 BM25 교훈 자동 주입 (JSON)",
-                            "command": ".agent-hooks/omc-before-agent.sh",
+                            "command": GEMINI_HOOK_CONTRACT["session_context"]["commands"][1],
                             "timeout": 10000,
                         }
                     ]
@@ -215,6 +210,39 @@ _install_claude_settings.__doc__ = (_install_claude_settings.__doc__ or "").repl
     "HOOK_CONTRACT_SUMMARY",
     HOOK_CONTRACT_SUMMARY,
 )
+
+
+def _assert_codex_hook_contract(hooks_path: Path) -> None:
+    import json
+
+    data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    issues = codex_contract_issues(data)
+    if not issues:
+        return
+    detail = ", ".join(issues)
+    raise ValueError(f"Codex hook contract invalid: missing {detail}")
+
+
+def _assert_claude_hook_contract(hooks_path: Path) -> None:
+    import json
+
+    data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    issues = claude_contract_issues(data)
+    if not issues:
+        return
+    detail = ", ".join(issues)
+    raise ValueError(f"Claude hook contract invalid: missing {detail}")
+
+
+def _assert_gemini_hook_contract(hooks_path: Path) -> None:
+    import json
+
+    data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    issues = gemini_contract_issues(data)
+    if not issues:
+        return
+    detail = ", ".join(issues)
+    raise ValueError(f"Gemini hook contract invalid: missing {detail}")
 
 
 def _kit_root() -> Path:
@@ -548,6 +576,9 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
             _copy(src, dst, force=force)
 
     # ── Claude Code SessionStart/End hooks (.claude/settings.json) ──────────
+    claude_template = templates / ".claude" / "settings.json"
+    if claude_template.exists():
+        _assert_claude_hook_contract(claude_template)
     claude_settings = tgt / ".claude" / "settings.json"
     _install_claude_settings(claude_settings, force=force)
 
@@ -572,12 +603,16 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
             _copy(src, dst, force=force)
 
     # ── Gemini CLI SessionStart/End/BeforeAgent hooks (.gemini/settings.json) ─
+    gemini_template = templates / ".gemini" / "settings.json"
+    if gemini_template.exists():
+        _assert_gemini_hook_contract(gemini_template)
     gemini_settings = tgt / ".gemini" / "settings.json"
     _install_gemini_settings(gemini_settings, force=force)
 
     # ── Codex CLI hooks (.codex/hooks.json) ──────────────────────────────────
     codex_hooks_src = templates / ".codex" / "hooks.json"
     if codex_hooks_src.exists():
+        _assert_codex_hook_contract(codex_hooks_src)
         _copy(codex_hooks_src, tgt / ".codex" / "hooks.json", force=force)
 
     # ── Cursor project hooks (optional, when template files exist) ───────────

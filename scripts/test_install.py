@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 import install as _install
+import omc_hook_contract as _hook_contract
 
 
 class TestCopy(unittest.TestCase):
@@ -253,15 +254,43 @@ class TestInstallGeminiSettings(unittest.TestCase):
 
 
 class TestHookContractMarkers(unittest.TestCase):
+    def test_codex_hook_contract_exposes_canonical_specs(self):
+        self.assertEqual(
+            _hook_contract.CODEX_HOOK_CONTRACT["session_context"]["label"],
+            ".codex/hooks.json (SessionStart + UserPromptSubmit hook)",
+        )
+        self.assertIn(
+            "SessionStart",
+            _hook_contract.CODEX_HOOK_CONTRACT["session_context"]["required_hooks"],
+        )
+        self.assertEqual(
+            _hook_contract.CODEX_HOOK_CONTRACT["post_mutate_soft_guard"]["command"],
+            ".agent-hooks/omc-post-file-check.sh",
+        )
+
+    def test_claude_and_gemini_hook_contract_expose_canonical_specs(self):
+        self.assertEqual(
+            _hook_contract.CLAUDE_HOOK_CONTRACT["session_context"]["label"],
+            ".claude/settings.json (SessionStart + UserPromptSubmit hook)",
+        )
+        self.assertEqual(
+            _hook_contract.GEMINI_HOOK_CONTRACT["pre_mutate_guard"]["label"],
+            ".gemini/settings.json (BeforeTool hook)",
+        )
+
     def test_install_source_declares_shared_hook_contract_markers(self):
-        text = (Path(__file__).parent / "install.py").read_text(encoding="utf-8")
+        text = (Path(__file__).parent / "omc_hook_contract.py").read_text(encoding="utf-8")
         for marker in (
             "session bootstrap",
             "pre-mutate guard",
             "post-mutate soft guard",
             "install/doctor verification",
         ):
-            self.assertIn(marker, text, f"install.py에 공통 훅 계약 marker 누락: {marker}")
+            self.assertIn(marker, text, f"omc_hook_contract.py에 공통 훅 계약 marker 누락: {marker}")
+
+    def test_install_imports_shared_hook_contract(self):
+        text = (Path(__file__).parent / "install.py").read_text(encoding="utf-8")
+        self.assertIn("from omc_hook_contract import", text)
 
     def test_install_doc_uses_runtime_hook_contract_summary(self):
         doc = _install._install_claude_settings.__doc__ or ""
@@ -275,6 +304,73 @@ class TestHookContractMarkers(unittest.TestCase):
             doc,
             "상수 이름만 남아 있고 실제 값으로 치환되지 않았습니다",
         )
+
+    def test_install_validates_codex_template_against_shared_contract(self):
+        _install._assert_codex_hook_contract(
+            Path(__file__).parent.parent / "templates" / ".codex" / "hooks.json"
+        )
+
+    def test_install_validates_claude_template_against_shared_contract(self):
+        _install._assert_claude_hook_contract(
+            Path(__file__).parent.parent / "templates" / ".claude" / "settings.json"
+        )
+
+    def test_install_validates_gemini_template_against_shared_contract(self):
+        _install._assert_gemini_hook_contract(
+            Path(__file__).parent.parent / "templates" / ".gemini" / "settings.json"
+        )
+
+    def test_install_main_calls_claude_and_gemini_validators_before_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kit = root / "kit"
+            target = root / "target"
+            target.mkdir()
+
+            (kit / "templates" / ".claude").mkdir(parents=True)
+            (kit / "templates" / ".gemini").mkdir(parents=True)
+            (kit / "templates" / ".codex").mkdir(parents=True)
+            (kit / "templates" / ".claude" / "settings.json").write_text('{"hooks":{}}', encoding="utf-8")
+            (kit / "templates" / ".gemini" / "settings.json").write_text('{"hooks":{}}', encoding="utf-8")
+            (kit / "templates" / ".codex" / "hooks.json").write_text('{"hooks":{}}', encoding="utf-8")
+
+            called: list[tuple[str, str]] = []
+
+            def _record(label: str):
+                def _inner(path: Path) -> None:
+                    called.append((label, path.name))
+                return _inner
+
+            with patch.object(_install, "_kit_root", return_value=kit), \
+                 patch.object(_install, "_assert_claude_hook_contract", side_effect=_record("claude")), \
+                 patch.object(_install, "_assert_gemini_hook_contract", side_effect=_record("gemini")), \
+                 patch.object(_install, "_assert_codex_hook_contract", side_effect=_record("codex")), \
+                 patch.object(_install, "_copy"), \
+                 patch.object(_install, "_install_claude_settings"), \
+                 patch.object(_install, "_install_gemini_settings"), \
+                 patch.object(_install, "_ensure_executable"), \
+                 patch.object(_install, "_setup_ethos_section5"), \
+                 patch.object(_install, "_install_shared_lessons"), \
+                 patch("sys.argv", ["install.py", "--target", str(target)]):
+                _install.main()
+
+            self.assertIn(("claude", "settings.json"), called)
+            self.assertIn(("gemini", "settings.json"), called)
+            self.assertIn(("codex", "hooks.json"), called)
+
+    def test_install_rejects_codex_template_missing_soft_guard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            hooks_path = Path(tmp) / "hooks.json"
+            hooks_path.write_text(
+                (
+                    '{"hooks":{"SessionStart":[{"hooks":[{"command":".agent-hooks/omc-session-start.sh codex"}]}],'
+                    '"UserPromptSubmit":[{"hooks":[{"command":".agent-hooks/omc-prompt-inject.sh"}]}],'
+                    '"PostToolUse":[]}}'
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "post-mutate soft guard"):
+                _install._assert_codex_hook_contract(hooks_path)
 
 
 if __name__ == "__main__":

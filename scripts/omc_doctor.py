@@ -16,6 +16,18 @@ import stat
 import subprocess
 from pathlib import Path
 
+from omc_hook_contract import (
+    CLAUDE_HOOK_CONTRACT,
+    CODEX_HOOK_CONTRACT,
+    GEMINI_HOOK_CONTRACT,
+    claude_has_pre_mutate_guard,
+    claude_has_session_context_hooks,
+    codex_has_posttooluse_soft_guard,
+    codex_has_session_context_hooks,
+    gemini_has_pre_mutate_guard,
+    gemini_has_session_context_hooks,
+)
+
 
 # ---------------------------------------------------------------------------
 # 출력 헬퍼
@@ -300,12 +312,56 @@ def _build_checks(root: Path) -> list[Check]:
     if claude_settings.exists():
         try:
             data = json.loads(claude_settings.read_text(encoding="utf-8"))
-            claude_ok = "hooks" in data and "SessionStart" in data["hooks"]
+            claude_ok = claude_has_session_context_hooks(data)
         except Exception:
             pass
     checks.append(Check(
-        ".claude/settings.json (SessionStart hook)",
+        CLAUDE_HOOK_CONTRACT["session_context"]["label"],
         claude_ok,
+        fix_cmd="python3 scripts/install.py --target . --force",
+    ))
+
+    claude_premutate_ok = False
+    if claude_settings.exists():
+        try:
+            data = json.loads(claude_settings.read_text(encoding="utf-8"))
+            claude_premutate_ok = claude_has_pre_mutate_guard(data)
+        except Exception:
+            pass
+    checks.append(Check(
+        CLAUDE_HOOK_CONTRACT["pre_mutate_guard"]["label"],
+        claude_premutate_ok,
+        detail="" if claude_premutate_ok else "Claude Code PreToolUse 가드가 비활성 상태입니다",
+        fix_cmd="python3 scripts/install.py --target . --force",
+    ))
+
+    # ── Gemini CLI 훅 ────────────────────────────────────────────────────────
+    gemini_settings = root / ".gemini" / "settings.json"
+    gemini_session_ok = False
+    if gemini_settings.exists():
+        try:
+            data = json.loads(gemini_settings.read_text(encoding="utf-8"))
+            gemini_session_ok = gemini_has_session_context_hooks(data)
+        except Exception:
+            pass
+    checks.append(Check(
+        GEMINI_HOOK_CONTRACT["session_context"]["label"],
+        gemini_session_ok,
+        detail="" if gemini_session_ok else "Gemini 세션/BM25 컨텍스트 주입이 비활성 상태입니다",
+        fix_cmd="python3 scripts/install.py --target . --force",
+    ))
+
+    gemini_premutate_ok = False
+    if gemini_settings.exists():
+        try:
+            data = json.loads(gemini_settings.read_text(encoding="utf-8"))
+            gemini_premutate_ok = gemini_has_pre_mutate_guard(data)
+        except Exception:
+            pass
+    checks.append(Check(
+        GEMINI_HOOK_CONTRACT["pre_mutate_guard"]["label"],
+        gemini_premutate_ok,
+        detail="" if gemini_premutate_ok else "Gemini BeforeTool 가드가 비활성 상태입니다",
         fix_cmd="python3 scripts/install.py --target . --force",
     ))
 
@@ -315,12 +371,11 @@ def _build_checks(root: Path) -> list[Check]:
     if codex_hooks.exists():
         try:
             data = json.loads(codex_hooks.read_text(encoding="utf-8"))
-            hooks = data.get("hooks", {})
-            codex_hooks_ok = "SessionStart" in hooks and "UserPromptSubmit" in hooks
+            codex_hooks_ok = codex_has_session_context_hooks(data)
         except Exception:
             pass
     checks.append(Check(
-        ".codex/hooks.json (SessionStart + UserPromptSubmit hook)",
+        CODEX_HOOK_CONTRACT["session_context"]["label"],
         codex_hooks_ok,
         detail="" if codex_hooks_ok else "Codex BM25 컨텍스트 주입이 비활성 상태입니다",
         fix_cmd="python3 scripts/install.py --target . --force",
@@ -330,16 +385,11 @@ def _build_checks(root: Path) -> list[Check]:
     if codex_hooks.exists():
         try:
             data = json.loads(codex_hooks.read_text(encoding="utf-8"))
-            commands = [
-                h.get("command", "")
-                for entry in data.get("hooks", {}).get("PostToolUse", [])
-                for h in entry.get("hooks", [])
-            ]
-            codex_posttooluse_ok = any("omc-post-file-check.sh" in cmd for cmd in commands)
+            codex_posttooluse_ok = codex_has_posttooluse_soft_guard(data)
         except Exception:
             pass
     checks.append(Check(
-        ".codex/hooks.json (PostToolUse soft guard)",
+        CODEX_HOOK_CONTRACT["post_mutate_soft_guard"]["label"],
         codex_posttooluse_ok,
         detail="" if codex_posttooluse_ok else "Codex PostToolUse 소프트 가드가 비활성 상태입니다",
         fix_cmd="python3 scripts/install.py --target . --force",

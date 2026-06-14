@@ -88,6 +88,32 @@ class TestGetModifiedImplFiles:
         assert len(result) == 0, "types.ts는 예외 패턴으로 제외돼야 함"
 
 
+class TestFindTestFile:
+    def test_accepts_test_prefix_python_file_for_omc_script(self, tmp_path: Path):
+        """scripts/omc_doctor.py는 scripts/test_omc_doctor_hook_block.py로 매칭돼야 함."""
+        (tmp_path / "scripts").mkdir()
+        impl_file = tmp_path / "scripts" / "omc_doctor.py"
+        impl_file.write_text("def run_checks():\n    pass\n")
+        test_file = tmp_path / "scripts" / "test_omc_doctor_hook_block.py"
+        test_file.write_text("def test_smoke():\n    assert True\n")
+
+        result = tdd._find_test_file(Path("scripts/omc_doctor.py"), tmp_path)
+
+        assert result == Path("scripts/test_omc_doctor_hook_block.py")
+
+    def test_rejects_similar_but_unrelated_python_test_name(self, tmp_path: Path):
+        """test_omc_doctoring.py 같은 유사 이름은 omc_doctor.py 테스트로 잡히면 안 됨."""
+        (tmp_path / "scripts").mkdir()
+        impl_file = tmp_path / "scripts" / "omc_doctor.py"
+        impl_file.write_text("def run_checks():\n    pass\n")
+        unrelated_test = tmp_path / "scripts" / "test_omc_doctoring.py"
+        unrelated_test.write_text("def test_smoke():\n    assert True\n")
+
+        result = tdd._find_test_file(Path("scripts/omc_doctor.py"), tmp_path)
+
+        assert result is None
+
+
 # ---------------------------------------------------------------------------
 # 2. check() 함수 — 수정 파일 경고 출력
 # ---------------------------------------------------------------------------

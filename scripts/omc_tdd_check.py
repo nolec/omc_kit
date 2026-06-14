@@ -193,6 +193,17 @@ def _find_test_file(impl: Path, root: Path) -> Path | None:
     for c in candidates:
         if (root / c).exists():
             return c
+
+    python_globs = [
+        (root / parent).glob(f"test_{stem}_*.py"),
+        (root / parent.parent / "tests").glob(f"test_{stem}_*.py"),
+    ]
+    for matches in python_globs:
+        for match in sorted(matches):
+            try:
+                return match.relative_to(root)
+            except ValueError:
+                continue
     return None
 
 

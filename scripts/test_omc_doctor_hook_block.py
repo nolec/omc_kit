@@ -11,12 +11,15 @@ test_omc_doctor_hook_block.py — omc_doctor.py hook_block 검사 항목 테스�
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCTOR_PATH = ROOT / "scripts" / "omc_doctor.py"
+sys.path.insert(0, str(ROOT / "scripts"))
+import omc_hook_contract as _hook_contract
 
 
 def _load_doctor():
@@ -115,15 +118,75 @@ def test_doctor_has_codex_posttooluse_soft_guard_check(tmp_path):
     codex_dir = tmp_path / ".codex"
     codex_dir.mkdir()
     (codex_dir / "hooks.json").write_text(
-        '{"hooks":{"SessionStart":[],"UserPromptSubmit":[],"PostToolUse":[{"hooks":[{"command":"omc-post-file-check.sh"}]}]}}',
+        '{"hooks":{"SessionStart":[],"UserPromptSubmit":[],"PostToolUse":[{"matcher":"apply_patch|Write","hooks":[{"command":"omc-post-file-check.sh"}]}]}}',
         encoding="utf-8",
     )
 
     doctor = _load_doctor()
     checks = doctor.run_checks(tmp_path)
     codex_soft_guard_check = next(
-        (c for c in checks if ".codex/hooks.json" in c.label and "PostToolUse" in c.label),
+        (c for c in checks if c.label == _hook_contract.CODEX_HOOK_CONTRACT["post_mutate_soft_guard"]["label"]),
         None,
     )
     assert codex_soft_guard_check is not None, "Codex PostToolUse 소프트 가드 검사 항목이 없음"
     assert codex_soft_guard_check.ok, "Codex PostToolUse 소프트 가드가 있는데도 OK 판정이 아님"
+
+
+def test_doctor_has_codex_session_context_check_label_from_contract(tmp_path):
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    (codex_dir / "hooks.json").write_text(
+        (
+            '{"hooks":{"SessionStart":[{"hooks":[{"command":".agent-hooks/omc-session-start.sh codex"}]}],'
+            '"UserPromptSubmit":[{"hooks":[{"command":".agent-hooks/omc-prompt-inject.sh"}]}],'
+            '"PostToolUse":[{"matcher":"apply_patch|Write","hooks":[{"command":".agent-hooks/omc-post-file-check.sh"}]}]}}'
+        ),
+        encoding="utf-8",
+    )
+
+    doctor = _load_doctor()
+    checks = doctor.run_checks(tmp_path)
+    session_context_check = next(
+        (c for c in checks if c.label == _hook_contract.CODEX_HOOK_CONTRACT["session_context"]["label"]),
+        None,
+    )
+    assert session_context_check is not None, "Codex session context 검사 항목이 공통 contract label을 쓰지 않음"
+    assert session_context_check.ok, "Codex session context hook가 있는데도 OK 판정이 아님"
+
+
+def test_doctor_has_claude_session_context_check_label_from_contract(tmp_path):
+    claude_dir = tmp_path / ".claude"
+    claude_dir.mkdir()
+    (claude_dir / "settings.json").write_text(
+        (
+            '{"hooks":{"PreToolUse":[{"matcher":"Write|Edit|MultiEdit","hooks":[{"command":".agent-hooks/omc-pipeline-check.sh"}]}],'
+            '"SessionStart":[{"hooks":[{"command":".agent-hooks/omc-session-start.sh claude"}]}],'
+            '"UserPromptSubmit":[{"hooks":[{"command":".agent-hooks/omc-prompt-inject.sh","timeout":10}]}]}}'
+        ),
+        encoding="utf-8",
+    )
+
+    doctor = _load_doctor()
+    checks = doctor.run_checks(tmp_path)
+    check = next((c for c in checks if c.label == _hook_contract.CLAUDE_HOOK_CONTRACT["session_context"]["label"]), None)
+    assert check is not None, "Claude session context 검사 항목이 공통 contract label을 쓰지 않음"
+    assert check.ok, "Claude session context hook가 있는데도 OK 판정이 아님"
+
+
+def test_doctor_has_gemini_premutate_guard_check_label_from_contract(tmp_path):
+    gemini_dir = tmp_path / ".gemini"
+    gemini_dir.mkdir()
+    (gemini_dir / "settings.json").write_text(
+        (
+            '{"hooks":{"BeforeTool":[{"matcher":"write_file|replace","hooks":[{"command":".agent-hooks/omc-pipeline-check.sh"}]}],'
+            '"SessionStart":[{"hooks":[{"command":".agent-hooks/omc-session-start.sh gemini"}]}],'
+            '"BeforeAgent":[{"hooks":[{"command":".agent-hooks/omc-before-agent.sh","timeout":10000}]}]}}'
+        ),
+        encoding="utf-8",
+    )
+
+    doctor = _load_doctor()
+    checks = doctor.run_checks(tmp_path)
+    check = next((c for c in checks if c.label == _hook_contract.GEMINI_HOOK_CONTRACT["pre_mutate_guard"]["label"]), None)
+    assert check is not None, "Gemini BeforeTool 검사 항목이 공통 contract label을 쓰지 않음"
+    assert check.ok, "Gemini BeforeTool hook가 있는데도 OK 판정이 아님"
