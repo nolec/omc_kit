@@ -147,6 +147,13 @@ def _validate_benchmark_output(sample: str) -> list[str]:
     ]
 
 
+def _stale_guidance_line(text: str) -> str:
+    for line in text.splitlines():
+        if "stale" in line:
+            return line
+    raise AssertionError("missing stale guidance line")
+
+
 def test_benchmark_skill_paths_are_identical():
     texts = _collect_benchmark_skill_texts(
         root=ROOT,
@@ -164,6 +171,13 @@ def test_benchmark_skill_stays_short_enough_to_scan():
     assert len(non_empty_lines) <= MAX_NON_EMPTY_LINES, (
         f"omc-benchmark has {len(non_empty_lines)} non-empty lines"
     )
+
+
+def test_benchmark_skill_keeps_stale_guidance_compact():
+    stale_line = _stale_guidance_line(_read(REQUIRED_BENCHMARK_SKILL_PATHS[0]))
+    for marker in ("OMC 세션", "stale", "사용자 요청", "N/A — 이유"):
+        assert marker in stale_line, f"missing stale marker: {marker}"
+    assert len(stale_line) <= 58, "stale guidance should stay compact"
 
 
 def test_benchmark_skill_preserves_required_execution_order():
