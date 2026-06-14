@@ -157,6 +157,55 @@ def test_notepad_marks_active_session_as_cleanup_needed_when_reason_exists(tmp_p
     assert "정리 필요" in notepad, notepad
 
 
+def test_status_matches_latest_after_sequential_sync_session_role_change(tmp_path: Path):
+    target = tmp_path / "repo"
+    target.mkdir()
+
+    init = _run("state", "init", "--target", str(target))
+    assert init.returncode == 0, init.stderr
+
+    first = _run(
+        "state",
+        "sync-session",
+        "--target",
+        str(target),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-plan",
+        "--request",
+        "first analysis session",
+        "--roles",
+        "analysis",
+    )
+    assert first.returncode == 0, first.stderr
+
+    second = _run(
+        "state",
+        "sync-session",
+        "--target",
+        str(target),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-task",
+        "--request",
+        "second coding session",
+        "--roles",
+        "senior_coding",
+    )
+    assert second.returncode == 0, second.stderr
+
+    latest = _read_json(target / ".omc" / "state" / "latest.json")
+    assert latest.get("latest_roles") == ["senior_coding"], latest
+    assert latest.get("latest_confirmed_roles") == ["senior_coding"], latest
+
+    status = _run("state", "status", "--target", str(target))
+    assert status.returncode == 0, status.stderr
+    assert "senior_coding" in status.stdout, status.stdout
+    assert "second coding session" in status.stdout, status.stdout
+
+
 def test_core_omc_skills_document_use_sync_session_step():
     skill_files = [
         ROOT / ".agents" / "skills" / "omc-plan" / "SKILL.md",
