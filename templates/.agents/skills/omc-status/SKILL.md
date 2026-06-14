@@ -36,7 +36,7 @@ git log --oneline -5
 ## Phase 3. 출력
 
 ```text
-OMC 세션: latest/confirmed/pending, 세션 불일치 또는 stale
+OMC 세션: latest/confirmed/pending, stale
 Git 상태: branch/ahead/behind, staged/unstaged/untracked
 변경 분류: 소스/스킬 변경, .omc 실행 아티팩트, untracked
 차단/주의: 미확정 세션, 커밋 대상 아님, 테스트/리뷰/ship 차단
