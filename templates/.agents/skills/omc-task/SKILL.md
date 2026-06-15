@@ -99,6 +99,11 @@ python3 scripts/omc_lesson.py add -i
 
 모든 단계가 끝나면 `$omc-review`로 넘깁니다.
 
+## 다음 추천
+
+- 구현 완료 + 게이트 통과 → `$omc-review`
+- 실패 원인 불명 → `$omc-investigate`
+- 자동으로 진행하지는 않습니다.
 
 ---
 

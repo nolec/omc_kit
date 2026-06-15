@@ -54,6 +54,8 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "자동 진입 금지",
     "모든 LLM 공통 출력 형식",
     "입력 부족 시 중단",
+    "흐린 질문만 다시 답",
+    "full 재질문",
 ]
 
 REQUIRED_FOCUS_MARKERS = [

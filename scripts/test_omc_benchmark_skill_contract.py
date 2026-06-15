@@ -50,6 +50,7 @@ REQUIRED_SEQUENCE = [
     "낮음 다수",
     "실제 제품 검증",
     "$omc-office-hours",
+    "사용자 채택 의사",
     "$omc-plan",
     "자동 구현 진입 금지",
 ]
@@ -62,6 +63,8 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "선택지",
     "차별화 가설",
     "근거 충분",
+    "TOP 1 확정",
+    "사용자 채택 의사",
 ]
 
 REQUIRED_FOCUS_MARKERS = [

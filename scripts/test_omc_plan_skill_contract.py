@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 60
+MAX_NON_EMPTY_LINES = 63
 
 REQUIRED_PLAN_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-plan" / "SKILL.md",
@@ -48,6 +48,8 @@ REQUIRED_SEQUENCE = [
     "사용자 컨펌 완료 전",
     "python3 scripts/omc.py state confirm --target .",
     "$omc-task",
+    "다음 추천",
+    "자동으로 진행하지는 않습니다.",
 ]
 
 REQUIRED_FOCUS_MARKERS = [
@@ -246,6 +248,21 @@ def test_plan_skill_preserves_required_execution_order():
             cursor = next_pos
 
     assert not missing_or_reordered, f"missing or reordered markers: {missing_or_reordered}"
+
+
+def test_plan_skill_recommendations_are_state_based_and_guarded():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    required_markers = [
+        "다음 추천",
+        "범위 고정 + 컨펌 완료",
+        "$omc-task",
+        "범위 불명확",
+        "$omc-critique",
+        "$omc-office-hours",
+        "자동으로 진행하지는 않습니다.",
+    ]
+    missing = [marker for marker in required_markers if marker not in text]
+    assert not missing, f"missing plan recommendation markers: {missing}"
 
 
 def test_plan_skill_explains_visible_vs_implicit_steps():

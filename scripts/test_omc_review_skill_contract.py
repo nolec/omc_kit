@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 58
+MAX_NON_EMPTY_LINES = 60
 
 REQUIRED_REVIEW_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-review" / "SKILL.md",
@@ -54,6 +54,8 @@ REQUIRED_SEQUENCE = [
     "REVISE",
     "APPROVE WITH NOTES",
     "APPROVE",
+    "다음 추천",
+    "자동으로 진행하지는 않습니다.",
 ]
 
 REQUIRED_FOCUS_MARKERS = [
@@ -160,3 +162,20 @@ def test_review_skill_declares_non_negotiable_review_contract():
     text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_SAFETY_MARKERS if marker not in text]
     assert not missing, f"missing review safety markers: {missing}"
+
+
+def test_review_skill_recommendations_match_verdict_buckets():
+    text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
+    required_markers = [
+        "다음 추천",
+        "REVISE/BLOCK",
+        "$omc-task",
+        "APPROVE/APPROVE WITH NOTES",
+        "배포 준비",
+        "$omc-ship",
+        "그 외",
+        "종료/후속 작업 선택",
+        "자동으로 진행하지는 않습니다.",
+    ]
+    missing = [marker for marker in required_markers if marker not in text]
+    assert not missing, f"missing review recommendation markers: {missing}"

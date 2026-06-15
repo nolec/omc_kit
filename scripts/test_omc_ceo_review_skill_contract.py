@@ -59,6 +59,16 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "입력 부족 시 중단",
 ]
 
+REQUIRED_RECOMMENDATION_MARKERS = [
+    "APPROVED",
+    "$omc-plan",
+    "REDUCE",
+    "다시 실행",
+    "REJECT",
+    ".omc/notepad.md",
+    "자동으로 진행하지는 않습니다.",
+]
+
 REQUIRED_FOCUS_MARKERS = [
     "사용자에게 보여줄 것",
     "시스템이 암묵적으로 처리",
@@ -201,6 +211,12 @@ def test_ceo_review_skill_explains_visible_vs_implicit_work():
     text = _read(REQUIRED_CEO_REVIEW_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
     assert not missing, f"missing focus markers: {missing}"
+
+
+def test_ceo_review_skill_preserves_next_step_recommendation_rules():
+    text = _read(REQUIRED_CEO_REVIEW_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_RECOMMENDATION_MARKERS if marker not in text]
+    assert not missing, f"missing recommendation markers: {missing}"
 
 
 def test_valid_ceo_review_output_fixture_has_required_structure():

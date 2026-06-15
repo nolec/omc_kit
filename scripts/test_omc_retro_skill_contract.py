@@ -66,6 +66,8 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "N/A",
     "이유",
     "$omc-status",
+    "$omc-plan",
+    "$omc-task",
 ]
 
 REQUIRED_FOCUS_MARKERS = [

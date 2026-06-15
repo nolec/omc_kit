@@ -44,6 +44,8 @@ REQUIRED_SEQUENCE = [
     "PHASE 7",
     "COMPOUND ENGINEERING",
     "$omc-review",
+    "다음 추천",
+    "자동으로 진행하지는 않습니다.",
 ]
 
 REQUIRED_FOCUS_MARKERS = [
@@ -156,3 +158,17 @@ def test_task_skill_declares_non_negotiable_safety_markers():
     text = _read(REQUIRED_TASK_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_SAFETY_MARKERS if marker not in text]
     assert not missing, f"missing safety markers: {missing}"
+
+
+def test_task_skill_recommendations_cover_success_and_unknown_failures():
+    text = _read(REQUIRED_TASK_SKILL_PATHS[0])
+    required_markers = [
+        "다음 추천",
+        "구현 완료 + 게이트 통과",
+        "$omc-review",
+        "실패 원인 불명",
+        "$omc-investigate",
+        "자동으로 진행하지는 않습니다.",
+    ]
+    missing = [marker for marker in required_markers if marker not in text]
+    assert not missing, f"missing task recommendation markers: {missing}"

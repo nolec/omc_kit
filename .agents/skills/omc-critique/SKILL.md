@@ -95,6 +95,13 @@ REVISE / HOLD 판정 후 `$omc-task` 진입 전 반드시 아래를 확인합니
 - HOLD/REVISE이고 변경 비용 LOW + MINOR만 → 사용자가 건너뛰기 여부를 결정합니다.
 - 코드 품질 확인은 `$omc-review`로 넘깁니다.
 
+## 다음 추천
+
+- HOLD/REVISE → `$omc-plan`
+- PROCEED + PLAN 모드 → 사용자 선택 대기 (`$omc-task`)
+- PROCEED + CODE 모드 → 사용자 선택 대기 (`$omc-review`)
+- 자동으로 진행하지는 않습니다.
+
 ## ⛔ 자동 진입 금지
 
 이 스킬이 완료된 후 다음 스킬을 즉시 실행하지 않는다.

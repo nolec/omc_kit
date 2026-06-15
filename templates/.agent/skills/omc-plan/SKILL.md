@@ -71,6 +71,11 @@ python3 scripts/omc.py state confirm --target .
 
 confirm 후에만 `$omc-task`로 넘깁니다.
 
+## 다음 추천
+
+- 범위 고정 + 컨펌 완료 → `$omc-task`
+- 범위 불명확 또는 흔들림 → `$omc-critique` / `$omc-office-hours`
+- 자동으로 진행하지는 않습니다.
 
 ---
 

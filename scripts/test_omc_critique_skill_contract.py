@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 75
+MAX_NON_EMPTY_LINES = 79
 
 REQUIRED_CRITIQUE_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-critique" / "SKILL.md",
@@ -35,6 +35,8 @@ REQUIRED_SEQUENCE = [
     "Verdict",
     "$omc-plan",
     "$omc-review",
+    "다음 추천",
+    "자동으로 진행하지는 않습니다.",
 ]
 
 REQUIRED_MARKERS = [
@@ -59,6 +61,7 @@ REQUIRED_MARKERS = [
     "변경 비용 추정",
     "같은 REVISE/HOLD 사유가 반복될 때만",
     "반복 근거가 없으면 여기서 중단",
+    "사용자 선택 대기",
 ]
 
 REQUIRED_FOCUS_MARKERS = [
@@ -216,6 +219,24 @@ def test_critique_skill_explains_visible_vs_implicit_work():
     text = _read(REQUIRED_CRITIQUE_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
     assert not missing, f"missing focus markers: {missing}"
+
+
+def test_critique_skill_recommendations_stay_conservative():
+    text = _read(REQUIRED_CRITIQUE_SKILL_PATHS[0])
+    required_markers = [
+        "다음 추천",
+        "HOLD/REVISE",
+        "$omc-plan",
+        "PROCEED",
+        "PLAN 모드",
+        "CODE 모드",
+        "사용자 선택 대기",
+        "$omc-task",
+        "$omc-review",
+        "자동으로 진행하지는 않습니다.",
+    ]
+    missing = [marker for marker in required_markers if marker not in text]
+    assert not missing, f"missing critique recommendation markers: {missing}"
 
 
 def test_valid_critique_output_fixture_has_required_structure():

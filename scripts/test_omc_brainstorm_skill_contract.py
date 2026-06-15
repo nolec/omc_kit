@@ -49,6 +49,7 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "보류",
     "$omc-office-hours",
     "$omc-plan",
+    "사용자 확인 완료",
     "자동 진입 금지",
     "모든 LLM 공통 출력 형식",
     "입력 부족 시 중단",

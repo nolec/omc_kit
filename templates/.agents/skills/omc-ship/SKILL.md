@@ -52,3 +52,10 @@ untracked:
 ## 배포 예시
 - PR 기반: `git push origin HEAD` 후 `$pr-create` / Nx: `npx nx run <app>:deploy` / 직접 배포: 프로젝트 문서의 deploy 명령
 실제 배포 후에만 헬스체크, 교훈 기록, `$omc-retro`를 진행합니다.
+
+## 다음 추천
+- SHIP READY → 사용자 선택 대기
+- 실제 배포 후 → `$omc-retro`
+- BLOCKED + 테스트/회귀 실패 → `$omc-investigate`
+- BLOCKED + 신규 테스트 누락/TDD 위반 → `$omc-task`
+- 자동으로 진행하지는 않습니다.

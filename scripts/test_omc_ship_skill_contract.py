@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 42
+MAX_NON_EMPTY_LINES = 49
 
 REQUIRED_SHIP_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-ship" / "SKILL.md",
@@ -49,6 +49,8 @@ REQUIRED_SEQUENCE = [
     "git push",
     "deploy",
     "실제 배포 후",
+    "다음 추천",
+    "자동으로 진행하지는 않습니다.",
 ]
 
 REQUIRED_BEHAVIOR_MARKERS = [
@@ -61,6 +63,8 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "$pr-create",
     "$omc-retro",
     "교훈",
+    "SHIP READY",
+    "BLOCKED",
 ]
 
 REQUIRED_FOCUS_MARKERS = [
@@ -203,6 +207,23 @@ def test_ship_skill_explains_visible_vs_implicit_work():
     text = _read(REQUIRED_SHIP_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
     assert not missing, f"missing focus markers: {missing}"
+
+
+def test_ship_skill_recommendations_match_blocked_and_post_deploy_states():
+    text = _read(REQUIRED_SHIP_SKILL_PATHS[0])
+    required_markers = [
+        "다음 추천",
+        "SHIP READY",
+        "사용자 선택 대기",
+        "실제 배포 후",
+        "$omc-retro",
+        "BLOCKED",
+        "$omc-investigate",
+        "$omc-task",
+        "자동으로 진행하지는 않습니다.",
+    ]
+    missing = [marker for marker in required_markers if marker not in text]
+    assert not missing, f"missing ship recommendation markers: {missing}"
 
 
 def test_ship_skill_has_single_required_check_section():
