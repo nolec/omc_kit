@@ -373,5 +373,53 @@ class TestHookContractMarkers(unittest.TestCase):
                 _install._assert_codex_hook_contract(hooks_path)
 
 
+class TestClaudeOverlayInstall(unittest.TestCase):
+    def test_install_copies_claude_overlay_into_dot_claude(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kit = root / "kit"
+            target = root / "target"
+            target.mkdir()
+
+            templates = kit / "templates"
+            templates.mkdir(parents=True)
+            (templates / "CLAUDE.md").write_text("## OMC Overlay For Claude\n", encoding="utf-8")
+            (templates / "AGENTS.md").write_text("## OMC — Orchestrated Multi-agent Craft\n", encoding="utf-8")
+            (templates / "ETHOS.md").write_text("## Engineering Ethos\n___\n", encoding="utf-8")
+            (templates / ".claude").mkdir(parents=True)
+            (templates / ".claude" / "settings.json").write_text('{"hooks":{}}', encoding="utf-8")
+
+            copied: list[tuple[Path, Path, bool]] = []
+
+            def _record_copy(src: Path, dst: Path, *, force: bool) -> None:
+                copied.append((src, dst, force))
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                if src.exists():
+                    dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+
+            with patch.object(_install, "_kit_root", return_value=kit), \
+                 patch.object(_install, "_assert_claude_hook_contract"), \
+                 patch.object(_install, "_install_claude_settings"), \
+                 patch.object(_install, "_install_gemini_settings"), \
+                 patch.object(_install, "_install_shared_lessons"), \
+                 patch.object(_install, "_ensure_executable"), \
+                 patch.object(_install, "_setup_ethos_section5"), \
+                 patch.object(_install, "_check_force_regression", return_value=True), \
+                 patch.object(_install, "_deployed_script_names", return_value=[]), \
+                 patch.object(_install, "_copy", side_effect=_record_copy), \
+                 patch("sys.argv", ["install.py", "--target", str(target)]):
+                _install.main()
+
+            self.assertFalse((target / "CLAUDE.md").exists())
+            self.assertEqual(
+                (target / ".claude" / "CLAUDE.md").read_text(encoding="utf-8"),
+                "## OMC Overlay For Claude\n",
+            )
+            self.assertNotIn(
+                (templates / "CLAUDE.md", target / "CLAUDE.md", False),
+                copied,
+            )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

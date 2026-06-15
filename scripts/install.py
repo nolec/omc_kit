@@ -520,7 +520,6 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
     # 마커가 있는 파일은 중복 추가 방지. 없는 파일은 전체 복사.
     _MERGE_MARKERS = {
         "AGENTS.md": "## OMC — Orchestrated Multi-agent Craft",
-        "CLAUDE.md": "## OMC Overlay For Claude",
         "GEMINI.md": "## OMC Overlay For Gemini",
         "ETHOS.md":  "## Engineering Ethos",
         "CODEX.md":  "## OMC Overlay For Codex",
@@ -552,6 +551,8 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
     for tpl_file in sorted(templates.glob("*.md")):
         if tpl_file.name in _handled:
             continue
+        if tpl_file.name == "CLAUDE.md":
+            continue
         _copy(tpl_file, tgt / tpl_file.name, force=force)
 
     # ── Shared agent-hooks (.agent-hooks/) ──────────────────────────────────
@@ -581,6 +582,13 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
         _assert_claude_hook_contract(claude_template)
     claude_settings = tgt / ".claude" / "settings.json"
     _install_claude_settings(claude_settings, force=force)
+
+    # ── Claude Code personal overlay (.claude/CLAUDE.md) ─────────────────────
+    # 개인 전용 — gitignore 영역. 공유 CLAUDE.md 대신 여기에 OMC 오버레이 설치.
+    claude_md_src = templates / "CLAUDE.md"
+    claude_md_dst = tgt / ".claude" / "CLAUDE.md"
+    if claude_md_src.exists():
+        _copy(claude_md_src, claude_md_dst, force=force)
 
     # ── Gemini CLI commands (.gemini/commands/) ──────────────────────────────
     gemini_cmds_src = templates / ".gemini" / "commands"
