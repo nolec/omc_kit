@@ -1,3 +1,5 @@
+<!-- OMC:BEGIN -->
+<!-- OMC:AGENTS:V1 -->
 ## Engineering Ethos (필독 — 모든 판단에 적용)
 
 **모든 추천·구현·리뷰는 `ETHOS.md`의 원칙을 따릅니다.**
@@ -410,3 +412,4 @@ python3 scripts/omc_autopilot.py status
 
 **금지 동작:**
 > "PROCEED 판정입니다. 바로 플랜을 작성하겠습니다. [plan 내용 시작]..."
+<!-- OMC:END -->

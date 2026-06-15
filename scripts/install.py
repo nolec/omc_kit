@@ -16,6 +16,13 @@ from omc_hook_contract import (
     gemini_contract_issues,
 )
 
+AGENTS_OMC_BEGIN = "<!-- OMC:BEGIN -->"
+AGENTS_OMC_END = "<!-- OMC:END -->"
+AGENTS_OMC_VERSION = "<!-- OMC:AGENTS:V1 -->"
+AGENTS_OMC_MARKER = "## OMC — Orchestrated Multi-agent Craft"
+AGENTS_ETHOS_MARKER = "## Engineering Ethos"
+AGENTS_LEGACY_END_MARKER = '> "PROCEED 판정입니다. 바로 플랜을 작성하겠습니다. [plan 내용 시작]..."'
+
 
 def _copy(src: Path, dst: Path, *, force: bool) -> None:
     if not src.exists():
@@ -42,6 +49,60 @@ def _write(dst: Path, content: str, *, force: bool) -> None:
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(content.rstrip() + "\n", encoding="utf-8")
+
+
+def _extract_agents_omc_block(template_text: str) -> str:
+    if AGENTS_OMC_BEGIN in template_text and AGENTS_OMC_END in template_text:
+        start = template_text.index(AGENTS_OMC_BEGIN)
+        end = template_text.index(AGENTS_OMC_END) + len(AGENTS_OMC_END)
+        return template_text[start:end].rstrip() + "\n"
+    return template_text.rstrip() + "\n"
+
+
+def _merge_agents_template(dst: Path, omc_block: str) -> None:
+    omc_block = omc_block.rstrip() + "\n"
+    if not dst.exists():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(omc_block, encoding="utf-8")
+        return
+
+    current = dst.read_text(encoding="utf-8")
+    block_lines = [line for line in omc_block.splitlines() if line.strip()]
+    block_start = block_lines[0] if block_lines else AGENTS_OMC_BEGIN
+    block_end = block_lines[-1] if block_lines else AGENTS_OMC_END
+
+    if block_start in current and block_end in current and current.index(block_start) <= current.index(block_end):
+        start = current.index(block_start)
+        end = current.index(block_end) + len(block_end)
+        while end < len(current) and current[end] == "\n":
+            end += 1
+        merged = current[:start] + omc_block + current[end:]
+    else:
+        legacy_start = None
+        if AGENTS_ETHOS_MARKER in current and AGENTS_OMC_MARKER in current:
+            ethos_idx = current.index(AGENTS_ETHOS_MARKER)
+            omc_idx = current.index(AGENTS_OMC_MARKER)
+            if ethos_idx <= omc_idx:
+                legacy_start = ethos_idx
+        if legacy_start is None and AGENTS_OMC_MARKER in current:
+            legacy_start = current.index(AGENTS_OMC_MARKER)
+
+        if legacy_start is not None:
+            prefix = current[:legacy_start].rstrip()
+            suffix = ""
+            legacy_end = current.find(AGENTS_LEGACY_END_MARKER, legacy_start)
+            if legacy_end != -1:
+                legacy_end += len(AGENTS_LEGACY_END_MARKER)
+                while legacy_end < len(current) and current[legacy_end] == "\n":
+                    legacy_end += 1
+                suffix = current[legacy_end:].lstrip("\n")
+            merged = (prefix + "\n\n" if prefix else "") + omc_block
+            if suffix:
+                merged += "\n" + suffix
+        else:
+            merged = current.rstrip() + "\n\n" + omc_block
+
+    dst.write_text(merged.rstrip() + "\n", encoding="utf-8")
 
 
 _SCRIPTS_EXTRA = {
@@ -530,11 +591,17 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
     # 타겟에 파일이 이미 있으면 OMC 섹션만 추가, 없으면 전체 복사.
     # 마커가 있는 파일은 중복 추가 방지. 없는 파일은 전체 복사.
     _MERGE_MARKERS = {
-        "AGENTS.md": "## OMC — Orchestrated Multi-agent Craft",
         "ETHOS.md":  "## Engineering Ethos",
         "CODEX.md":  "## OMC Overlay For Codex",
     }
     _handled: set[str] = set()
+
+    agents_tpl = templates / "AGENTS.md"
+    if agents_tpl.exists():
+        _handled.add("AGENTS.md")
+        agents_dst = tgt / "AGENTS.md"
+        agents_block = _extract_agents_omc_block(agents_tpl.read_text(encoding="utf-8"))
+        _merge_agents_template(agents_dst, agents_block)
 
     # 마커 기반 병합 대상 (기존 파일에 섹션 추가)
     for tgt_name, marker in _MERGE_MARKERS.items():

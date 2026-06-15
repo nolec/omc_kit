@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 import install as _install
+import omc_doctor as _doctor
 import omc_hook_contract as _hook_contract
 
 
@@ -78,6 +79,129 @@ class TestLegacyOverlayCleanup(unittest.TestCase):
             path.write_text("# Team CLAUDE Notes\n", encoding="utf-8")
             _install._remove_legacy_overlay(path, "## OMC Overlay For Claude")
             self.assertEqual(path.read_text(encoding="utf-8"), "# Team CLAUDE Notes\n")
+
+
+class TestAgentsMerge(unittest.TestCase):
+    def test_force_preserves_custom_agents_and_appends_omc_block_when_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            target.mkdir()
+            agents = target / "AGENTS.md"
+            agents.write_text("# Project Rules\n\nKeep me.\n", encoding="utf-8")
+
+            _install._merge_agents_template(
+                agents,
+                "# OMC BEGIN\n## OMC — Orchestrated Multi-agent Craft\nomc\n# OMC END\n",
+            )
+
+            text = agents.read_text(encoding="utf-8")
+            self.assertIn("# Project Rules", text)
+            self.assertIn("Keep me.", text)
+            self.assertIn("## OMC — Orchestrated Multi-agent Craft", text)
+
+    def test_force_replaces_existing_omc_block_without_touching_custom_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            target.mkdir()
+            agents = target / "AGENTS.md"
+            agents.write_text(
+                "# Project Rules\n\n"
+                "# OMC BEGIN\n"
+                "## OMC — Orchestrated Multi-agent Craft\n"
+                "old omc\n"
+                "# OMC END\n\n"
+                "Tail note.\n",
+                encoding="utf-8",
+            )
+
+            _install._merge_agents_template(
+                agents,
+                "# OMC BEGIN\n## OMC — Orchestrated Multi-agent Craft\nnew omc\n# OMC END\n",
+            )
+
+            text = agents.read_text(encoding="utf-8")
+            self.assertIn("# Project Rules", text)
+            self.assertIn("Tail note.", text)
+            self.assertIn("new omc", text)
+            self.assertNotIn("old omc", text)
+            self.assertEqual(text.count("# OMC BEGIN"), 1)
+
+    def test_force_is_idempotent_when_same_omc_block_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            target.mkdir()
+            agents = target / "AGENTS.md"
+            block = "# OMC BEGIN\n## OMC — Orchestrated Multi-agent Craft\nsame omc\n# OMC END\n"
+            agents.write_text("# Project Rules\n\n" + block, encoding="utf-8")
+
+            _install._merge_agents_template(agents, block)
+            _install._merge_agents_template(agents, block)
+
+            text = agents.read_text(encoding="utf-8")
+            self.assertEqual(text.count("# OMC BEGIN"), 1)
+            self.assertEqual(text.count("same omc"), 1)
+
+    def test_force_preserves_legacy_tail_when_replacing_legacy_omc_block(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            target.mkdir()
+            agents = target / "AGENTS.md"
+            agents.write_text(
+                "Project intro\n\n"
+                "## Engineering Ethos\n"
+                "legacy ethos\n\n"
+                "## OMC — Orchestrated Multi-agent Craft\n"
+                'legacy omc\n\n'
+                '> "PROCEED 판정입니다. 바로 플랜을 작성하겠습니다. [plan 내용 시작]..."\n\n'
+                "Project tail rule.\n",
+                encoding="utf-8",
+            )
+
+            _install._merge_agents_template(
+                agents,
+                "<!-- OMC:BEGIN -->\n## OMC — Orchestrated Multi-agent Craft\nnew omc\n<!-- OMC:END -->\n",
+            )
+
+            text = agents.read_text(encoding="utf-8")
+            self.assertIn("Project intro", text)
+            self.assertIn("Project tail rule.", text)
+            self.assertIn("new omc", text)
+            self.assertNotIn("legacy omc", text)
+
+    def test_extract_agents_omc_block_uses_managed_markers(self):
+        template = (
+            "Project intro\n"
+            "<!-- OMC:BEGIN -->\n"
+            "<!-- OMC:AGENTS:V1 -->\n"
+            "## OMC — Orchestrated Multi-agent Craft\n"
+            "managed\n"
+            "<!-- OMC:END -->\n"
+            "tail\n"
+        )
+        block = _install._extract_agents_omc_block(template)
+        self.assertEqual(
+            block,
+            "<!-- OMC:BEGIN -->\n<!-- OMC:AGENTS:V1 -->\n## OMC — Orchestrated Multi-agent Craft\nmanaged\n<!-- OMC:END -->\n",
+        )
+
+
+class TestDoctorAgentsBlock(unittest.TestCase):
+    def test_doctor_requires_latest_agents_block_not_just_markers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "AGENTS.md").write_text(
+                "<!-- OMC:BEGIN -->\nold block\n<!-- OMC:END -->\n",
+                encoding="utf-8",
+            )
+            (root / ".claude").mkdir(parents=True)
+            (root / ".gemini").mkdir(parents=True)
+            (root / ".claude" / "CLAUDE.md").write_text("OMC Overlay\n", encoding="utf-8")
+            (root / ".gemini" / "GEMINI.md").write_text("OMC Overlay\n", encoding="utf-8")
+
+            checks = _doctor._build_checks(root)
+            labels = {check.label: check.ok for check in checks}
+
+            self.assertFalse(labels["AGENTS.md (최신 OMC 블록 포함)"])
 
 
 class TestCheckForceRegression(unittest.TestCase):

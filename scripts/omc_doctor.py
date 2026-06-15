@@ -28,6 +28,10 @@ from omc_hook_contract import (
     gemini_has_session_context_hooks,
 )
 
+AGENTS_OMC_BEGIN = "<!-- OMC:BEGIN -->"
+AGENTS_OMC_END = "<!-- OMC:END -->"
+AGENTS_OMC_VERSION = "<!-- OMC:AGENTS:V1 -->"
+
 
 # ---------------------------------------------------------------------------
 # 출력 헬퍼
@@ -474,12 +478,18 @@ def _build_checks(root: Path) -> list[Check]:
 
     # ── Shared + personal overlays ───────────────────────────────────────────
     for rel_path, marker, label in [
-        ("AGENTS.md", "Orchestrated Multi-agent Craft", "AGENTS.md (OMC 섹션 포함)"),
+        ("AGENTS.md", AGENTS_OMC_BEGIN, "AGENTS.md (최신 OMC 블록 포함)"),
         (".claude/CLAUDE.md", "OMC Overlay", ".claude/CLAUDE.md (OMC 오버레이)"),
         (".gemini/GEMINI.md", "OMC Overlay", ".gemini/GEMINI.md (OMC 오버레이)"),
     ]:
         p = root / rel_path
-        has_marker = p.exists() and marker in p.read_text(encoding="utf-8") if p.exists() else False
+        if p.exists():
+            text = p.read_text(encoding="utf-8")
+            has_marker = marker in text
+            if rel_path == "AGENTS.md":
+                has_marker = has_marker and AGENTS_OMC_END in text and AGENTS_OMC_VERSION in text
+        else:
+            has_marker = False
         checks.append(Check(
             label,
             has_marker,
