@@ -36,6 +36,7 @@ REQUIRED_SEQUENCE = [
     "$omc-plan",
     "$omc-review",
     "다음 추천",
+    "주추천 1개",
     "자동으로 진행하지는 않습니다.",
 ]
 

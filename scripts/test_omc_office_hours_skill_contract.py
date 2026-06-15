@@ -50,6 +50,7 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "full",
     "6개 답변 완료 전",
     "AI가 임의로 PROCEED",
+    "주추천 1개",
     "사용자가",
     "자동 진입 금지",
     "모든 LLM 공통 출력 형식",

@@ -69,6 +69,15 @@ REQUIRED_FOCUS_MARKERS = [
     "시스템이 암묵적으로 처리",
 ]
 
+REQUIRED_RECOMMENDATION_MARKERS = [
+    "## 다음 추천",
+    "주추천 1개",
+    "$omc-task",
+    "$omc-review",
+    "$omc-ceo-review",
+    "자동으로 진행하지는 않습니다.",
+]
+
 VALID_INVESTIGATE_SAMPLE = """
 현상: 로그인 API가 500을 반환한다.
 재현 조건: staging에서 expired token 요청 시 100% 재현
@@ -195,6 +204,12 @@ def test_investigate_skill_explains_visible_vs_implicit_work():
     text = _read(REQUIRED_INVESTIGATE_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
     assert not missing, f"missing focus markers: {missing}"
+
+
+def test_investigate_skill_preserves_next_step_recommendation_rules():
+    text = _read(REQUIRED_INVESTIGATE_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_RECOMMENDATION_MARKERS if marker not in text]
+    assert not missing, f"missing investigate recommendation markers: {missing}"
 
 
 def test_valid_investigate_output_fixture_has_required_structure():

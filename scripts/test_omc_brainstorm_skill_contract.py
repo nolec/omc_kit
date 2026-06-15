@@ -45,6 +45,7 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "현상 한 문장",
     "원인 가설 1개",
     "해결 옵션 2개",
+    "주추천 1개",
     "구현 안 함",
     "보류",
     "$omc-office-hours",

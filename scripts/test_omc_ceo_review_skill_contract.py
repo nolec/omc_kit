@@ -61,6 +61,7 @@ REQUIRED_BEHAVIOR_MARKERS = [
 
 REQUIRED_RECOMMENDATION_MARKERS = [
     "APPROVED",
+    "주추천 1개",
     "$omc-plan",
     "REDUCE",
     "다시 실행",

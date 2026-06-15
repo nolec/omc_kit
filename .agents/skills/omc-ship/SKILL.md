@@ -54,6 +54,7 @@ untracked:
 실제 배포 후에만 헬스체크, 교훈 기록, `$omc-retro`를 진행합니다.
 
 ## 다음 추천
+- 주추천 1개만 제시: 현재 결론에 맞는 1개를 먼저 말합니다.
 - SHIP READY → 사용자 선택 대기
 - 실제 배포 후 → `$omc-retro`
 - BLOCKED + 테스트/회귀 실패 → `$omc-investigate`

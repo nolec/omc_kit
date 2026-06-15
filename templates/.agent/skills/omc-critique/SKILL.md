@@ -97,7 +97,7 @@ REVISE / HOLD 판정 후 `$omc-task` 진입 전 반드시 아래를 확인합니
 
 ## 다음 추천
 
-- HOLD/REVISE → `$omc-plan`
+- 주추천 1개: HOLD/REVISE면 `$omc-plan`
 - PROCEED + PLAN 모드 → 사용자 선택 대기 (`$omc-task`)
 - PROCEED + CODE 모드 → 사용자 선택 대기 (`$omc-review`)
 - 자동으로 진행하지는 않습니다.

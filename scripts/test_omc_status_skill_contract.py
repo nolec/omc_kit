@@ -71,6 +71,17 @@ REQUIRED_SAFETY_MARKERS = [
     "다음 액션",
 ]
 
+REQUIRED_RECOMMENDATION_MARKERS = [
+    "## 다음 추천",
+    "주추천 1개",
+    "$omc-plan",
+    "$omc-task",
+    "$omc-review",
+    "$omc-ship",
+    "$omc-retro",
+    "자동으로 진행하지는 않습니다.",
+]
+
 MUTATING_COMMAND_PATTERNS = [
     r"python3 scripts/omc\.py state confirm",
     r"python3 scripts/omc\.py state init",
@@ -209,6 +220,12 @@ def test_status_skill_declares_read_only_safety_markers():
     text = _read(REQUIRED_STATUS_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_SAFETY_MARKERS if marker not in text]
     assert not missing, f"missing status safety markers: {missing}"
+
+
+def test_status_skill_preserves_next_step_recommendation_rules():
+    text = _read(REQUIRED_STATUS_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_RECOMMENDATION_MARKERS if marker not in text]
+    assert not missing, f"missing status recommendation markers: {missing}"
 
 
 def test_status_skill_does_not_suggest_mutating_commands():

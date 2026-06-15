@@ -51,3 +51,8 @@ Git 상태: branch/ahead/behind, staged/unstaged/untracked
 - 변경 완료 후 검토 대기 → `$omc-review`
 - 리뷰 통과 후 출시 준비 → `$omc-ship`
 - 클린하고 남은 작업 없음 → `$omc-retro` 또는 남은 스킬 후보 제안
+
+## 다음 추천
+
+- 주추천 1개만 제시: 판단 기준에 따라 1개만 선택합니다 (`$omc-plan` / `$omc-task` / `$omc-review` / `$omc-ship` / `$omc-retro`)
+- 자동으로 진행하지는 않습니다.

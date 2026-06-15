@@ -38,6 +38,7 @@ AI가 임의로 PROCEED를 결정하지 않습니다. 사용자가 판단해야 
 
 ## 이후 액션
 
+- 주추천 1개만 제시: 현재 판정에 맞는 1개를 먼저 말합니다.
 - PROCEED면 `$omc-plan`
 - RETHINK면 흐린 질문만 다시 답하거나 `full 재질문`
 - HOLD면 `$omc-ceo-review`
