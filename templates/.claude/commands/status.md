@@ -15,3 +15,8 @@ cat .omc/notepad.md
 2. **미처리 pending**: `latest_pending_request` 있으면 표시
 3. **최근 5개 세션**: 어떤 작업들을 했는지 흐름 파악
 4. **다음 1액션 제안**: notepad의 handoff 포인트 기준
+
+## 다음 추천
+
+- 주추천 1개만 제시: 현재 상태에 맞춰 `/plan` / `/task` / `/review` / `/ship` / `/retro` 중 1개만 선택
+- 자동으로 진행하지는 않습니다.

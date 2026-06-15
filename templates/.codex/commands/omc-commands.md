@@ -63,6 +63,10 @@ python3 scripts/omc_pipeline_guard.py red-done <테스트파일>
 - 각 이슈에 파일/라인/근거 첨부
 - 수정 제안 + 검증 커맨드 포함
 
+다음 추천:
+- 주추천 1개만 제시: REVISE/BLOCK면 `$omc-task`, APPROVE/APPROVE WITH NOTES + 배포 준비면 `$omc-ship`, 그 외는 종료/후속 작업 선택
+- 자동으로 진행하지는 않습니다.
+
 ```bash
 git status -sb && git diff
 ```

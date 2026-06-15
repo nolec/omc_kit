@@ -164,6 +164,10 @@ git status -sb && git diff
 - 각 이슈에 파일/라인/근거 첨부
 - 수정 제안 + 검증 커맨드
 
+**다음 추천**:
+- 주추천 1개만 제시: REVISE/BLOCK면 `/task`, APPROVE/APPROVE WITH NOTES + 배포 준비면 `/ship`, 그 외는 종료/후속 작업 선택
+- 자동으로 진행하지는 않습니다.
+
 ---
 
 ## /investigate — 원인 추적 (4단계)
@@ -416,3 +420,13 @@ python3 scripts/omc_autopilot.py pipeline \
 - PLAN 모드: 강제 질문 10개 (가정·누락·리스크·범위·Red Team)
 - CODE 모드: 강제 질문 8개 (정합성·부작용·설계·TDD·누락)
 - 칭찬 금지 / 근거 필수 / 판정: HOLD / REVISE / PROCEED WITH CAUTION
+
+**⛔ REVISE/HOLD 판정 후 — `/task` 진입 전 변경 비용 체크포인트 필수:**
+```
+변경 비용 추정:
+  영향 파일 수  : ___개
+  예상 변경 LOC : ___줄
+  실질 효과     : HIGH / MED / LOW
+```
+- 실질 효과 LOW + MINOR만 → 건너뛰기 권장 (자동 `/task` 진입 금지)
+- 실질 효과 MED/HIGH → `/plan` 범위 확정 후 `/task`

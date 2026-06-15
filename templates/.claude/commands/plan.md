@@ -83,4 +83,11 @@ python3 scripts/omc_autopilot.py pipeline \
 
 ---
 
+## 다음 추천
+
+- 주추천 1개만 제시: 범위와 DoD가 확정되면 `/task`
+- 자동으로 진행하지는 않습니다.
+
+---
+
 계획할 작업: $ARGUMENTS

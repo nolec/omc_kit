@@ -26,3 +26,8 @@ python3 scripts/omc.py state status --target .
 - 다음 액션: 실제 제품 검증 / `/office-hours` / `/plan`
 
 근거 수준이 낮으면 `직접 검증 필요`를 붙이고 자동 구현으로 넘어가지 않습니다.
+
+## 다음 추천
+
+- 주추천 1개만 제시: 근거가 약하면 실제 제품 검증, 방향 검증이 필요하면 `/office-hours`, 범위가 선명하면 `/plan`
+- 자동으로 진행하지는 않습니다.

@@ -126,4 +126,11 @@ PHASE 7 ▸ REVIEW + COMPOUND ENGINEERING
 
 ---
 
+## 다음 추천
+
+- 주추천 1개만 제시: 구현 완료 + 게이트 통과면 `/review`
+- 자동으로 진행하지는 않습니다.
+
+---
+
 작업 내용: $ARGUMENTS

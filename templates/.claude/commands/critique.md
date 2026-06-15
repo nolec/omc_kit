@@ -148,13 +148,10 @@ MINOR (개선 권장):
 > ⛔ REVISE/HOLD 판정 직후 자동으로 `/task`를 실행하지 않습니다.
 > 변경 비용 체크포인트를 출력하고, 사용자가 "진행"을 명시할 때까지 멈춥니다.
 
-## 이후 액션
+## 다음 추천
 
-- CRITICAL/WARNING → `/plan`으로 재설계 또는 `/investigate`로 근본 원인 추적
-- HOLD/REVISE이고 변경 비용 MED/HIGH → `/plan`으로 재설계합니다.
-- HOLD/REVISE이고 변경 비용 LOW + MINOR만 → 사용자가 건너뛰기 여부를 결정합니다.
-- MINOR만 있음 → 수정 후 `/review`로 최종 확인
-- HOLD → 재검토 후 다시 `/critique` 실행
+- 주추천 1개만 제시: HOLD/REVISE면 `/plan`, 원인 불명 버그면 `/investigate`, MINOR 수정 후 확인이면 `/review`
+- 자동으로 진행하지는 않습니다.
 
 ---
 

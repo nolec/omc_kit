@@ -43,4 +43,11 @@ git diff
 
 ---
 
+## 다음 추천
+
+- 주추천 1개만 제시: REVISE/BLOCK면 `/task`, APPROVE/APPROVE WITH NOTES + 배포 준비면 `/ship`, 그 외는 종료/후속 작업 선택
+- 자동으로 진행하지는 않습니다.
+
+---
+
 $ARGUMENTS가 있으면 해당 파일/범위만 리뷰합니다.

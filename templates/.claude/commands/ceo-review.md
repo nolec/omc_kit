@@ -67,9 +67,10 @@ CEO REVIEW — 10가지 체크
 
 ---
 
-## 이 커맨드 후 → `/plan`으로 이어가기
+## 다음 추천
 
-CEO Review가 APPROVED로 끝나면 `/plan`으로 TDD 태스크 분해를 합니다.
+- 주추천 1개만 제시: APPROVED면 `/plan`, HOLD/REDUCE면 범위 재검토 후 `/office-hours`
+- 자동으로 진행하지는 않습니다.
 
 ---
 
