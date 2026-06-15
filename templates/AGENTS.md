@@ -10,7 +10,7 @@
 
 ## OMC — Orchestrated Multi-agent Craft
 
-이 레포에는 공통 멀티비서 킷이 `omc_kit/`에 포함되어 있습니다.
+이 저장소에는 OMC 구성요소가 직접 설치되어 있습니다.
 
 ## 세션 시작 시 자동 실행 (MANDATORY)
 
