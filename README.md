@@ -100,14 +100,14 @@ omc_kit/
 ├── scripts/          OMC 스크립트 전체 (프로젝트에 배포됨)
 ├── templates/
 │   ├── AGENTS.md     공통 에이전트 규칙 (SSOT)
-│   ├── CLAUDE.md     Claude 전용 사고 패턴
-│   ├── GEMINI.md     Gemini 전용 사고 패턴
+│   ├── CLAUDE.md     Claude 전용 오버레이 템플릿
+│   ├── GEMINI.md     Gemini 전용 오버레이 템플릿
 │   ├── CODEX.md      Codex/o-series 전용 패턴
 │   ├── ETHOS.md      프로젝트 엔지니어링 원칙 (섹션 5는 직접 채움)
 │   ├── CONVENTIONS.md 코딩 컨벤션 (직접 채움)
 │   ├── .cursor/      Cursor rules + hooks
-│   ├── .claude/      Claude Code 설정
-│   ├── .gemini/      Gemini CLI 설정
+│   ├── .claude/      Claude Code 설정 + 개인 CLAUDE 오버레이
+│   ├── .gemini/      Gemini CLI 설정 + 개인 GEMINI 오버레이
 │   └── .agent-hooks/ 공통 hooks
 └── docs/             문서
 ```

@@ -28,16 +28,23 @@ def _iso_now() -> str:
 
 
 def _find_constitution(project_root: Path) -> str | None:
-    """프로젝트의 근간이 되는 규칙 문서(GEMINI.md 등)를 찾아 내용을 반환합니다."""
-    for name in ["GEMINI.md", "CONTRACT.md", "AGENTS.md"]:
-        path = project_root / name
+    """프로젝트의 근간이 되는 규칙 문서를 우선순위대로 찾아 내용을 반환합니다."""
+    candidates = [
+        project_root / ".gemini" / "GEMINI.md",
+        project_root / ".claude" / "CLAUDE.md",
+        project_root / "GEMINI.md",
+        project_root / "CLAUDE.md",
+        project_root / "CONTRACT.md",
+        project_root / "AGENTS.md",
+    ]
+    for path in candidates:
         if path.exists():
             content = path.read_text(encoding="utf-8").strip()
             # 너무 길면 상단 100줄만 가져오거나 요약하는 등의 처리가 필요할 수 있으나,
             # 일단 전체를 가져오되 요약본에서는 가독성을 위해 적절히 처리합니다.
             lines = content.splitlines()
             if len(lines) > 50:
-                return "\n".join(lines[:50]) + "\n\n...(truncated for brevity, see " + name + ")"
+                return "\n".join(lines[:50]) + "\n\n...(truncated for brevity, see " + path.name + ")"
             return content
     return None
 

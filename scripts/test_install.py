@@ -64,6 +64,22 @@ class TestWrite(unittest.TestCase):
             self.assertEqual(dst.read_text(encoding="utf-8"), "old\n")
 
 
+class TestLegacyOverlayCleanup(unittest.TestCase):
+    def test_remove_legacy_overlay_deletes_matching_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "CLAUDE.md"
+            path.write_text("## OMC Overlay For Claude\n", encoding="utf-8")
+            _install._remove_legacy_overlay(path, "## OMC Overlay For Claude")
+            self.assertFalse(path.exists())
+
+    def test_remove_legacy_overlay_keeps_custom_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "CLAUDE.md"
+            path.write_text("# Team CLAUDE Notes\n", encoding="utf-8")
+            _install._remove_legacy_overlay(path, "## OMC Overlay For Claude")
+            self.assertEqual(path.read_text(encoding="utf-8"), "# Team CLAUDE Notes\n")
+
+
 class TestCheckForceRegression(unittest.TestCase):
     def _make_kit(self, tmp: str, rules: dict[str, str], scripts: dict[str, str]) -> Path:
         kit = Path(tmp) / "kit"
@@ -419,6 +435,114 @@ class TestClaudeOverlayInstall(unittest.TestCase):
                 (templates / "CLAUDE.md", target / "CLAUDE.md", False),
                 copied,
             )
+
+
+class TestPersonalOverlayInstall(unittest.TestCase):
+    def test_install_copies_claude_and_gemini_overlays_into_personal_dirs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kit = root / "kit"
+            target = root / "target"
+            target.mkdir()
+
+            templates = kit / "templates"
+            templates.mkdir(parents=True)
+            (templates / "CLAUDE.md").write_text("## OMC Overlay For Claude\n", encoding="utf-8")
+            (templates / "GEMINI.md").write_text("## OMC Overlay For Gemini\n", encoding="utf-8")
+            (templates / "AGENTS.md").write_text("## OMC — Orchestrated Multi-agent Craft\n", encoding="utf-8")
+            (templates / "ETHOS.md").write_text("## Engineering Ethos\n___\n", encoding="utf-8")
+            (templates / ".claude").mkdir(parents=True)
+            (templates / ".gemini").mkdir(parents=True)
+            (kit / "prompts").mkdir(parents=True)
+            (kit / "prompts" / "README.md").write_text("prompts\n", encoding="utf-8")
+            (templates / ".claude" / "settings.json").write_text('{"hooks":{}}', encoding="utf-8")
+            (templates / ".gemini" / "settings.json").write_text('{"hooks":{}}', encoding="utf-8")
+
+            copied: list[tuple[Path, Path, bool]] = []
+
+            def _record_copy(src: Path, dst: Path, *, force: bool) -> None:
+                copied.append((src, dst, force))
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                if src.exists():
+                    dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+
+            with patch.object(_install, "_kit_root", return_value=kit), \
+                 patch.object(_install, "_assert_claude_hook_contract"), \
+                 patch.object(_install, "_assert_gemini_hook_contract"), \
+                 patch.object(_install, "_install_claude_settings"), \
+                 patch.object(_install, "_install_gemini_settings"), \
+                 patch.object(_install, "_install_shared_lessons"), \
+                 patch.object(_install, "_ensure_executable"), \
+                 patch.object(_install, "_setup_ethos_section5"), \
+                 patch.object(_install, "_check_force_regression", return_value=True), \
+                 patch.object(_install, "_deployed_script_names", return_value=[]), \
+                 patch.object(_install, "_copy", side_effect=_record_copy), \
+                 patch("sys.argv", ["install.py", "--target", str(target)]):
+                _install.main()
+
+            self.assertFalse((target / "CLAUDE.md").exists())
+            self.assertFalse((target / "GEMINI.md").exists())
+            self.assertEqual(
+                (target / ".claude" / "CLAUDE.md").read_text(encoding="utf-8"),
+                "## OMC Overlay For Claude\n",
+            )
+            self.assertEqual(
+                (target / ".gemini" / "GEMINI.md").read_text(encoding="utf-8"),
+                "## OMC Overlay For Gemini\n",
+            )
+            self.assertNotIn(
+                (templates / "CLAUDE.md", target / "CLAUDE.md", False),
+                copied,
+            )
+            self.assertNotIn(
+                (templates / "GEMINI.md", target / "GEMINI.md", False),
+                copied,
+            )
+
+    def test_install_removes_legacy_root_overlays_when_markers_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kit = root / "kit"
+            target = root / "target"
+            target.mkdir()
+
+            (target / "CLAUDE.md").write_text("## OMC Overlay For Claude\n", encoding="utf-8")
+            (target / "GEMINI.md").write_text("## OMC Overlay For Gemini\n", encoding="utf-8")
+
+            templates = kit / "templates"
+            templates.mkdir(parents=True)
+            (templates / "CLAUDE.md").write_text("## OMC Overlay For Claude\n", encoding="utf-8")
+            (templates / "GEMINI.md").write_text("## OMC Overlay For Gemini\n", encoding="utf-8")
+            (templates / "AGENTS.md").write_text("## OMC — Orchestrated Multi-agent Craft\n", encoding="utf-8")
+            (templates / "ETHOS.md").write_text("## Engineering Ethos\n___\n", encoding="utf-8")
+            (templates / ".claude").mkdir(parents=True)
+            (templates / ".gemini").mkdir(parents=True)
+            (templates / ".claude" / "settings.json").write_text('{"hooks":{}}', encoding="utf-8")
+            (templates / ".gemini" / "settings.json").write_text('{"hooks":{}}', encoding="utf-8")
+
+            def _record_copy(src: Path, dst: Path, *, force: bool) -> None:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                if src.exists():
+                    dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+
+            with patch.object(_install, "_kit_root", return_value=kit), \
+                 patch.object(_install, "_assert_claude_hook_contract"), \
+                 patch.object(_install, "_assert_gemini_hook_contract"), \
+                 patch.object(_install, "_install_claude_settings"), \
+                 patch.object(_install, "_install_gemini_settings"), \
+                 patch.object(_install, "_install_shared_lessons"), \
+                 patch.object(_install, "_ensure_executable"), \
+                 patch.object(_install, "_setup_ethos_section5"), \
+                 patch.object(_install, "_check_force_regression", return_value=True), \
+                 patch.object(_install, "_deployed_script_names", return_value=[]), \
+                 patch.object(_install, "_copy", side_effect=_record_copy), \
+                 patch("sys.argv", ["install.py", "--target", str(target)]):
+                _install.main()
+
+            self.assertFalse((target / "CLAUDE.md").exists())
+            self.assertFalse((target / "GEMINI.md").exists())
+            self.assertTrue((target / ".claude" / "CLAUDE.md").exists())
+            self.assertTrue((target / ".gemini" / "GEMINI.md").exists())
 
 
 if __name__ == "__main__":

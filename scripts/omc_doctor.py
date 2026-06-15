@@ -472,16 +472,16 @@ def _build_checks(root: Path) -> list[Check]:
         fix_cmd="python3 scripts/install.py --target . --force",
     ))
 
-    # ── AGENTS.md / CLAUDE.md ────────────────────────────────────────────────
-    for fname, marker in [
-        ("AGENTS.md", "Orchestrated Multi-agent Craft"),
-        ("CLAUDE.md", "OMC Overlay"),
-        ("GEMINI.md", "OMC Overlay"),
+    # ── Shared + personal overlays ───────────────────────────────────────────
+    for rel_path, marker, label in [
+        ("AGENTS.md", "Orchestrated Multi-agent Craft", "AGENTS.md (OMC 섹션 포함)"),
+        (".claude/CLAUDE.md", "OMC Overlay", ".claude/CLAUDE.md (OMC 오버레이)"),
+        (".gemini/GEMINI.md", "OMC Overlay", ".gemini/GEMINI.md (OMC 오버레이)"),
     ]:
-        p = root / fname
+        p = root / rel_path
         has_marker = p.exists() and marker in p.read_text(encoding="utf-8") if p.exists() else False
         checks.append(Check(
-            f"{fname} (OMC 섹션 포함)",
+            label,
             has_marker,
             fix_cmd=f"python3 scripts/install.py --target . --force",
         ))

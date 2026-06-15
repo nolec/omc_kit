@@ -26,6 +26,17 @@ def _copy(src: Path, dst: Path, *, force: bool) -> None:
     dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
 
+def _remove_legacy_overlay(dst: Path, marker: str) -> None:
+    if not dst.exists():
+        return
+    try:
+        content = dst.read_text(encoding="utf-8")
+    except OSError:
+        return
+    if marker in content:
+        dst.unlink()
+
+
 def _write(dst: Path, content: str, *, force: bool) -> None:
     if dst.exists() and not force:
         return
@@ -520,7 +531,6 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
     # 마커가 있는 파일은 중복 추가 방지. 없는 파일은 전체 복사.
     _MERGE_MARKERS = {
         "AGENTS.md": "## OMC — Orchestrated Multi-agent Craft",
-        "GEMINI.md": "## OMC Overlay For Gemini",
         "ETHOS.md":  "## Engineering Ethos",
         "CODEX.md":  "## OMC Overlay For Codex",
     }
@@ -551,7 +561,7 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
     for tpl_file in sorted(templates.glob("*.md")):
         if tpl_file.name in _handled:
             continue
-        if tpl_file.name == "CLAUDE.md":
+        if tpl_file.name in {"CLAUDE.md", "GEMINI.md"}:
             continue
         _copy(tpl_file, tgt / tpl_file.name, force=force)
 
@@ -589,6 +599,7 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
     claude_md_dst = tgt / ".claude" / "CLAUDE.md"
     if claude_md_src.exists():
         _copy(claude_md_src, claude_md_dst, force=force)
+    _remove_legacy_overlay(tgt / "CLAUDE.md", "## OMC Overlay For Claude")
 
     # ── Gemini CLI commands (.gemini/commands/) ──────────────────────────────
     gemini_cmds_src = templates / ".gemini" / "commands"
@@ -616,6 +627,14 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
         _assert_gemini_hook_contract(gemini_template)
     gemini_settings = tgt / ".gemini" / "settings.json"
     _install_gemini_settings(gemini_settings, force=force)
+
+    # ── Gemini CLI personal overlay (.gemini/GEMINI.md) ─────────────────────
+    # 개인 전용 — 공유 GEMINI.md 대신 여기에 OMC 오버레이 설치.
+    gemini_md_src = templates / "GEMINI.md"
+    gemini_md_dst = tgt / ".gemini" / "GEMINI.md"
+    if gemini_md_src.exists():
+        _copy(gemini_md_src, gemini_md_dst, force=force)
+    _remove_legacy_overlay(tgt / "GEMINI.md", "## OMC Overlay For Gemini")
 
     # ── Codex CLI hooks (.codex/hooks.json) ──────────────────────────────────
     codex_hooks_src = templates / ".codex" / "hooks.json"

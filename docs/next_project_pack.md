@@ -47,13 +47,13 @@ python scripts/test_omc_setup_smoke.py --executor gemini
 | 파일 | 포함 기준 |
 |---|---|
 | `AGENTS.md` | 사실상 필수 — OMC 규칙의 기준점 |
-| `CLAUDE.md` | Claude Code / Codex 사용 시 권장 |
-| `GEMINI.md` | Gemini CLI 사용 시 권장 |
+| `.claude/CLAUDE.md` | Claude Code / Codex 사용 시 권장 |
+| `.gemini/GEMINI.md` | Gemini CLI 사용 시 권장 |
 
 권장 조합:
-- 실행기 단일(Claude/Codex): `AGENTS.md` + `CLAUDE.md`
-- 실행기 단일(Gemini): `AGENTS.md` + `GEMINI.md`
-- 실행기 혼용(모든 LLM): `AGENTS.md` + `CLAUDE.md` + `GEMINI.md`
+- 실행기 단일(Claude/Codex): `AGENTS.md` + `.claude/CLAUDE.md`
+- 실행기 단일(Gemini): `AGENTS.md` + `.gemini/GEMINI.md`
+- 실행기 혼용(모든 LLM): `AGENTS.md` + `.claude/CLAUDE.md` + `.gemini/GEMINI.md`
 
 ## 버리지 말아야 할 것
 

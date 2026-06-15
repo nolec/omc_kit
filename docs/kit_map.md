@@ -17,8 +17,8 @@
 
 선택:
 - `AGENTS.md` (강권 — 세션 시작 훅이 자동 생성하지만 커스터마이즈 가능)
-- `CLAUDE.md` (Claude Code 오버레이)
-- `GEMINI.md` (Gemini CLI 오버레이)
+- `.claude/CLAUDE.md` (Claude Code 개인 오버레이)
+- `.gemini/GEMINI.md` (Gemini CLI 개인 오버레이)
 - `project_prompts/` (도메인 role/profile 오버레이)
 
 가져가지 않아도 되는 것:
@@ -32,8 +32,8 @@ omc_kit/
   scripts/          ← SSOT (18개 스크립트)
   templates/        ← SSOT 템플릿 (install.py가 배포)
     AGENTS.md         공통 에이전트 규칙 (모든 LLM)
-    CLAUDE.md         Claude Code 오버레이
-    GEMINI.md         Gemini CLI 오버레이
+    CLAUDE.md         Claude Code 오버레이 템플릿
+    GEMINI.md         Gemini CLI 오버레이 템플릿
     .claude/commands/ Claude Code 슬래시 커맨드 (개별 md 파일)
     .gemini/commands/ Gemini CLI 커맨드 참조 (omc-commands.md)
     .codex/commands/  Codex CLI 커맨드 참조 (/project: 네임스페이스)
@@ -53,8 +53,8 @@ omc_kit/
   prompts/          ← 역할/모드 프롬프트
 
 AGENTS.md           ← 공통 에이전트 규칙 (모든 LLM)
-CLAUDE.md           ← Claude Code 오버레이 (선택)
-GEMINI.md           ← Gemini CLI 오버레이 (선택)
+.claude/CLAUDE.md   ← Claude Code 개인 오버레이 (선택)
+.gemini/GEMINI.md   ← Gemini CLI 개인 오버레이 (선택)
 project_prompts/    ← 현재 프로젝트 도메인 role/profile (선택)
 .omc/               ← 런타임 상태 (세션, 교훈, 비용, autopilot 기록)
 ```
