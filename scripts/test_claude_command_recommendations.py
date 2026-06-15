@@ -52,9 +52,13 @@ def test_template_claude_commands_include_recommendation_contract() -> None:
 
 
 def test_claude_review_recommendation_matches_skill_intent() -> None:
-    text = _slice_between(_read(CLAUDE_REVIEW), "## 다음 추천")
+    full_text = _read(CLAUDE_REVIEW)
+    review_section = _slice_between(full_text, "# /review", "$ARGUMENTS가 있으면 해당 파일/범위만 리뷰합니다.")
+    text = _slice_between(full_text, "## 다음 추천")
+    assert "판정" in review_section or "VERDICT" in review_section
     assert "APPROVE/APPROVE WITH NOTES + 배포 준비" in text
     assert "그 외" in text
+    assert "판정만으로 리뷰를 끝내지 않습니다." in text
 
 
 def test_gemini_review_documents_single_primary_recommendation() -> None:
