@@ -349,6 +349,78 @@ PASS / FAIL: PASS
 실제 추천: 사용자 선택 대기
 PASS / FAIL: PASS
 메모: brainstorm에 확인 전 보류 분기 추가
+
+시나리오 13:
+입력 스킬: omc-retro
+사용자 마지막 의도: git log와 state/notepad가 어긋나 stale
+기대 추천: $omc-status
+기대 이유: 회고보다 세션 정합성 복구가 먼저
+실제 추천: $omc-status
+PASS / FAIL: PASS
+메모: retro에 stale 우선 분기 추가
+
+시나리오 14:
+입력 스킬: omc-retro
+사용자 마지막 의도: 반복 패턴은 있으나 stale/이월 작업 없음
+기대 추천: $omc-lesson
+기대 이유: 회고 후 바로 교훈 축적이 현재 병목
+실제 추천: $omc-lesson
+PASS / FAIL: PASS
+메모: retro에 반복 패턴 우선 분기 추가
+
+시나리오 15:
+입력 스킬: omc-lesson
+사용자 마지막 의도: 교훈 기록 완료 후 회고 정리가 다음 병목
+기대 추천: $omc-retro
+기대 이유: 기록된 교훈을 세션 회고로 연결하는 게 다음 단계
+실제 추천: $omc-retro
+PASS / FAIL: PASS
+메모: lesson에 회고 연결 분기 추가
+
+시나리오 16:
+입력 스킬: omc-lesson
+사용자 마지막 의도: 기록 결과만 확인하고 아직 후속 미선택
+기대 추천: 사용자 선택 대기
+기대 이유: 기록 직후 자동 retro 진입은 과추천
+실제 추천: 사용자 선택 대기
+PASS / FAIL: PASS
+메모: lesson에 확인 단계 보류 분기 추가
+
+시나리오 17:
+입력 스킬: pr-create
+사용자 마지막 의도: PR 준비 완료지만 아직 승인 전
+기대 추천: 사용자 선택 대기
+기대 이유: push/PR 생성은 외부 효과라 승인 전 자동 진행 금지
+실제 추천: 사용자 선택 대기
+PASS / FAIL: PASS
+메모: pr-create에 승인 전 보류 분기 추가
+
+시나리오 18:
+입력 스킬: pr-create
+사용자 마지막 의도: ship gate 재확인 또는 상태 정합성 점검 필요
+기대 추천: $omc-ship 또는 $omc-status
+기대 이유: PR 생성보다 선행 게이트/상태 확인이 먼저
+실제 추천: $omc-ship 또는 $omc-status
+PASS / FAIL: PASS
+메모: pr-create에 선행 게이트 분기 추가
+
+시나리오 19:
+입력 스킬: omc-autopilot
+사용자 마지막 의도: 승인 전이며 명령 출력만 확인 중
+기대 추천: 사용자 선택 대기
+기대 이유: autopilot은 준비 단계 스킬이라 자동 실행/후속 진입 금지
+실제 추천: 사용자 선택 대기
+PASS / FAIL: PASS
+메모: autopilot에 준비 단계 보류 분기 추가
+
+시나리오 20:
+입력 스킬: omc-autopilot
+사용자 마지막 의도: 실행 후 실패 또는 재확인 필요
+기대 추천: pipeline-status 또는 benchmark-report 확인
+기대 이유: 다른 스킬 진입보다 먼저 실행 결과를 확인해야 함
+실제 추천: pipeline-status 또는 benchmark-report 확인
+PASS / FAIL: PASS
+메모: autopilot에 결과 확인 분기 추가
 ```
 
 검증 커버리지 표:
@@ -366,15 +438,14 @@ PASS / FAIL: PASS
 | `omc-investigate` | 있음 | 검증 완료 | 근거 부족 상태에서 task/review 과추천 방지 확인 |
 | `omc-benchmark` | 있음 | 검증 완료 | 비교 대상/채택 의사 부족 시 선택 대기 확인 |
 | `omc-brainstorm` | 있음 | 검증 완료 | 사용자 확인 전 plan 과추천 방지 확인 |
-| `omc-retro` | 없음 | 미검증 | 회고 후 lesson/plan/task 과추천 여부 정의 필요 |
-| `omc-lesson` | 없음 | 미검증 | 기록 완료 후 종료/후속 추천 정책 정의 필요 |
-| `omc-autopilot` | 없음 | 미검증 | 자동 실행 특성상 별도 추천 정책 필요성 판단 필요 |
-| `pr-create` | 없음 | 미검증 | PR 생성 후 ship/status 등 후속 추천 정책 정의 필요 |
+| `omc-retro` | 있음 | 검증 완료 | stale / 반복 패턴 / 이월 작업 추천 우선순위 확인 |
+| `omc-lesson` | 있음 | 검증 완료 | 기록 완료 후 retro 연결 / 결과 확인 단계 선택 대기 확인 |
+| `omc-autopilot` | 있음 | 검증 완료 | 준비 단계 선택 대기 / 실패 시 결과 확인 분기 확인 |
+| `pr-create` | 있음 | 검증 완료 | 승인 전 선택 대기 / 선행 게이트는 ship/status 확인 |
 
 다음 우선순위:
 
-1. `omc-retro`, `omc-lesson`
-2. `pr-create`, `omc-autopilot`
+1. 없음
 
 ## 최소 합격선
 

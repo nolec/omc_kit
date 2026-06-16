@@ -67,6 +67,14 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "이유",
 ]
 
+REQUIRED_RECOMMENDATION_MARKERS = [
+    "준비 단계",
+    "다음 추천",
+    "주추천 1개",
+    "사용자 선택 대기",
+    "pipeline-status",
+]
+
 REQUIRED_FOCUS_MARKERS = [
     "사용자에게 보여줄 것",
     "시스템이 암묵적으로 처리",
@@ -192,6 +200,12 @@ def test_omc_autopilot_skill_does_not_execute_pipeline_itself():
     forbidden = [r"실행한다", r"직접 실행", r"자동으로 시작"]
     found = [pattern for pattern in forbidden if re.search(pattern, text)]
     assert not found, f"skill should output commands, not run pipeline: {found}"
+
+
+def test_omc_autopilot_skill_has_recommendation_markers():
+    text = _read(REQUIRED_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_RECOMMENDATION_MARKERS if marker not in text]
+    assert not missing, f"missing omc-autopilot recommendation markers: {missing}"
 
 
 def test_valid_autopilot_output_fixture_has_required_structure():

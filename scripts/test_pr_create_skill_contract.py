@@ -68,6 +68,14 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "예시",
 ]
 
+REQUIRED_RECOMMENDATION_MARKERS = [
+    "다음 추천",
+    "주추천 1개",
+    "사용자 선택 대기",
+    "$omc-ship",
+    "$omc-status",
+]
+
 VALID_PR_SAMPLE = """
 사전 확인(읽기 전용 확인):
 - ship gate: python3 scripts/omc_guard.py require --target . --for "ship"
@@ -182,6 +190,12 @@ def test_pr_create_skill_does_not_auto_execute_side_effects():
     forbidden = [r"즉시 실행", r"자동 실행", r"바로 gh pr create"]
     found = [pattern for pattern in forbidden if re.search(pattern, text)]
     assert not found, f"pr-create should not auto-run side effects: {found}"
+
+
+def test_pr_create_skill_has_recommendation_markers():
+    text = _read(REQUIRED_PR_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_RECOMMENDATION_MARKERS if marker not in text]
+    assert not missing, f"missing pr-create recommendation markers: {missing}"
 
 
 def test_valid_pr_output_fixture_has_required_structure():
