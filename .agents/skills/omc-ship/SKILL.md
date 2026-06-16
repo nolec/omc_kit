@@ -56,6 +56,7 @@ untracked:
 ## 다음 추천
 - 주추천 1개만 제시: 현재 결론에 맞는 1개를 먼저 말합니다.
 - SHIP READY → 사용자 선택 대기
+- SHIP READY라도 push/deploy/PR 생성은 사용자가 명시했을 때만 안내
 - 실제 배포 후 → `$omc-retro`
 - BLOCKED + 테스트/회귀 실패 → `$omc-investigate`
 - BLOCKED + 신규 테스트 누락/TDD 위반 → `$omc-task`

@@ -97,9 +97,13 @@ REVISE / HOLD 판정 후 `$omc-task` 진입 전 반드시 아래를 확인합니
 
 ## 다음 추천
 
-- 주추천 1개: HOLD/REVISE면 `$omc-plan`
-- PROCEED + PLAN 모드 → 사용자 선택 대기 (`$omc-task`)
-- PROCEED + CODE 모드 → 사용자 선택 대기 (`$omc-review`)
+- 주추천 1개만 제시: 아래 조건 중 현재 실패 병목에 맞는 1개만 고릅니다.
+- HOLD/REVISE + 변경 비용 MED/HIGH → `$omc-plan`
+- HOLD/REVISE + 변경 비용 LOW + 사용자도 우선순위 낮다고 판단 → 사용자 선택 대기
+- PROCEED + PLAN 모드 + 구현 승인까지 완료됨 → `$omc-task`
+- PROCEED + PLAN 모드 + 아직 구현보다 판단/선택이 남음 → 사용자 선택 대기
+- PROCEED + CODE 모드 + 품질 확인이 다음 병목임 → `$omc-review`
+- PROCEED + CODE 모드 + 아직 수정 여부를 사용자가 결정해야 함 → 사용자 선택 대기
 - 자동으로 진행하지는 않습니다.
 
 ## ⛔ 자동 진입 금지
