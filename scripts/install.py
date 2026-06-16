@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import stat
 import sys
-import shutil
 from pathlib import Path
 
 from omc_hook_contract import (
@@ -23,7 +23,7 @@ AGENTS_OMC_VERSION = "<!-- OMC:AGENTS:V1 -->"
 AGENTS_OMC_MARKER = "## OMC — Orchestrated Multi-agent Craft"
 AGENTS_ETHOS_MARKER = "## Engineering Ethos"
 AGENTS_LEGACY_END_MARKER = '> "PROCEED 판정입니다. 바로 플랜을 작성하겠습니다. [plan 내용 시작]..."'
-IGNORED_TEMPLATE_FILENAMES = {".DS_Store", "Thumbs.db"}
+INSTALL_SOURCE_METADATA = Path(".omc") / "install-source.json"
 
 
 def _copy(src: Path, dst: Path, *, force: bool) -> None:
@@ -323,18 +323,73 @@ def _kit_root(script_path: Path | None = None) -> Path:
     # omc_kit/scripts/install.py -> kit root is parent of scripts/
     here = (script_path or Path(__file__)).resolve()
     candidate = here.parents[1]
-    if (candidate / "templates").is_dir():
-        return candidate
     return candidate
 
 def _templates_root(kit_root: Path) -> Path:
-    direct = kit_root / "templates"
-    if direct.is_dir():
-        return direct
-    nested = kit_root / "omc_kit" / "templates"
-    if nested.is_dir():
-        return nested
     return kit_root / "templates"
+
+
+def _looks_like_source_kit(path: Path) -> bool:
+    return (
+        _templates_root(path).is_dir()
+        and (path / "scripts" / "install.py").exists()
+        and (path / "prompts" / "team.json").exists()
+    )
+
+
+def _install_source_metadata_path(target: Path) -> Path:
+    return target / INSTALL_SOURCE_METADATA
+
+
+def _write_install_source_metadata(target: Path, source_kit: Path) -> None:
+    metadata_path = _install_source_metadata_path(target)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "source_kind": "external",
+        "source_path": str(source_kit.resolve()),
+        "installer_version": "v1",
+    }
+    metadata_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _read_install_source_metadata(target: Path) -> dict[str, str] | None:
+    metadata_path = _install_source_metadata_path(target)
+    if not metadata_path.exists():
+        return None
+    try:
+        data = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"OMC install source metadata is unreadable: {metadata_path}") from exc
+    if not isinstance(data, dict):
+        raise SystemExit(f"OMC install source metadata is invalid: {metadata_path}")
+    return {str(k): str(v) for k, v in data.items()}
+
+
+def _resolve_source_kit(current_kit: Path, target: Path) -> Path:
+    if _looks_like_source_kit(current_kit):
+        return current_kit.resolve()
+
+    metadata = _read_install_source_metadata(target)
+    if metadata:
+        raw_source = metadata.get("source_path", "").strip()
+        if not raw_source:
+            raise SystemExit("OMC install source metadata is missing source_path")
+        source_kit = Path(raw_source).expanduser()
+        if not _looks_like_source_kit(source_kit):
+            raise SystemExit(f"OMC install source path is missing or invalid: {source_kit}")
+        return source_kit.resolve()
+
+    legacy_embedded = target / "omc_kit" / "templates"
+    if legacy_embedded.is_dir():
+        raise SystemExit(
+            "OMC setup blocked: legacy embedded omc_kit detected. "
+            "Rerun setup from the source kit to refresh install-source metadata."
+        )
+
+    raise SystemExit(
+        "OMC install source metadata is missing. "
+        "Rerun setup from the source kit so this project can track its install source."
+    )
 
 
 
@@ -437,8 +492,8 @@ def _check_force_regression(kit: Path, tgt: Path) -> bool:
             print(w)
         print()
         print(" 권장 조치 (SSOT):")
-        print("   1. live 파일을 templates/ 에 먼저 복사하세요")
-        print("      예: cp .cursor/rules/omc-always.md omc_kit/templates/.cursor/rules/omc-always.md")
+        print("   1. live 파일을 source kit의 templates/ 에 먼저 복사하세요")
+        print("      예: cp .cursor/rules/omc-always.md templates/.cursor/rules/omc-always.md")
         print("   2. 또는: python3 scripts/omc_sync_ssot.py")
         print("   3. 그 후 install --force 재실행")
         print()
@@ -464,28 +519,29 @@ def main() -> int:
     args = ap.parse_args()
 
     kit = _kit_root()
-    templates = _templates_root(kit)
     tgt = args.target.resolve()
     force = bool(args.force)
+    source_kit = _resolve_source_kit(kit, tgt)
+    templates = _templates_root(source_kit)
 
-    if force and not _check_force_regression(kit, tgt):
+    if force and not _check_force_regression(source_kit, tgt):
         print("[install] 중단됨")
         return 1
 
     to_copy = [
         # ── prompts ──────────────────────────────────────────────────────────
-        (kit / "prompts" / "README.md", tgt / "prompts" / "README.md"),
-        (kit / "prompts" / "team.json", tgt / "prompts" / "team.json"),
-        (kit / "prompts" / "ROLE_ORCHESTRATOR.md", tgt / "prompts" / "ROLE_ORCHESTRATOR.md"),
-        (kit / "prompts" / "MODE_AUTOPILOT.md", tgt / "prompts" / "MODE_AUTOPILOT.md"),
-        (kit / "prompts" / "MODE_TEAM.md", tgt / "prompts" / "MODE_TEAM.md"),
-        (kit / "prompts" / "MODE_ULTRAWORK.md", tgt / "prompts" / "MODE_ULTRAWORK.md"),
-        (kit / "prompts" / "MODE_RALPH.md", tgt / "prompts" / "MODE_RALPH.md"),
-        (kit / "prompts" / "MODE_DEEP_INTERVIEW.md", tgt / "prompts" / "MODE_DEEP_INTERVIEW.md"),
-        (kit / "prompts" / "ROLE_SEARCH_ASSISTANT.md", tgt / "prompts" / "ROLE_SEARCH_ASSISTANT.md"),
-        (kit / "prompts" / "ROLE_ANALYSIS_ASSISTANT.md", tgt / "prompts" / "ROLE_ANALYSIS_ASSISTANT.md"),
-        (kit / "prompts" / "ROLE_CODE_REVIEW_ASSISTANT.md", tgt / "prompts" / "ROLE_CODE_REVIEW_ASSISTANT.md"),
-        (kit / "prompts" / "ROLE_SENIOR_CODING_ASSISTANT.md", tgt / "prompts" / "ROLE_SENIOR_CODING_ASSISTANT.md"),
+        (source_kit / "prompts" / "README.md", tgt / "prompts" / "README.md"),
+        (source_kit / "prompts" / "team.json", tgt / "prompts" / "team.json"),
+        (source_kit / "prompts" / "ROLE_ORCHESTRATOR.md", tgt / "prompts" / "ROLE_ORCHESTRATOR.md"),
+        (source_kit / "prompts" / "MODE_AUTOPILOT.md", tgt / "prompts" / "MODE_AUTOPILOT.md"),
+        (source_kit / "prompts" / "MODE_TEAM.md", tgt / "prompts" / "MODE_TEAM.md"),
+        (source_kit / "prompts" / "MODE_ULTRAWORK.md", tgt / "prompts" / "MODE_ULTRAWORK.md"),
+        (source_kit / "prompts" / "MODE_RALPH.md", tgt / "prompts" / "MODE_RALPH.md"),
+        (source_kit / "prompts" / "MODE_DEEP_INTERVIEW.md", tgt / "prompts" / "MODE_DEEP_INTERVIEW.md"),
+        (source_kit / "prompts" / "ROLE_SEARCH_ASSISTANT.md", tgt / "prompts" / "ROLE_SEARCH_ASSISTANT.md"),
+        (source_kit / "prompts" / "ROLE_ANALYSIS_ASSISTANT.md", tgt / "prompts" / "ROLE_ANALYSIS_ASSISTANT.md"),
+        (source_kit / "prompts" / "ROLE_CODE_REVIEW_ASSISTANT.md", tgt / "prompts" / "ROLE_CODE_REVIEW_ASSISTANT.md"),
+        (source_kit / "prompts" / "ROLE_SENIOR_CODING_ASSISTANT.md", tgt / "prompts" / "ROLE_SENIOR_CODING_ASSISTANT.md"),
         # ── scripts (타겟에 배포되는 공용 스크립트) ───────────────────────────
         # kit-only (배포 안 됨): auto_prompt.py, autopilot.py, safe_trash.py,
         #   export_repo.py, test_*.py, conftest.py
@@ -496,37 +552,21 @@ def main() -> int:
     # scripts: 화이트리스트 방식 — 명시된 파일만 배포 (기본값: 제외)
     # omc_*.py 전체 자동 포함 + 비-omc_ 명시 목록
     # 새 파일 추가 시 이 목록에 없으면 자동 제외됨 (안전한 기본값)
-    scripts_src = kit / "scripts"
-    for name in sorted(_deployed_script_names(kit)):
+    scripts_src = source_kit / "scripts"
+    for name in sorted(_deployed_script_names(source_kit)):
         to_copy.append((scripts_src / name, tgt / "scripts" / name))
 
     for s, d in to_copy:
         _copy(s, d, force=force)
 
-    _copy(kit / "docs" / "omc_workflow.md", tgt / "docs" / "omc_workflow.md", force=force)
-    _copy(kit / "docs" / "quickstart_kr.md", tgt / "docs" / "quickstart_kr.md", force=force)
-    _copy(kit / "docs" / "kit_map.md", tgt / "docs" / "kit_map.md", force=force)
-    _copy(kit / "docs" / "next_project_pack.md", tgt / "docs" / "next_project_pack.md", force=force)
-    _copy(kit / "docs" / "agent_behavior.md", tgt / "docs" / "agent_behavior.md", force=force)
-    _copy(kit / "docs" / "verification_checklist.md", tgt / "docs" / "verification_checklist.md", force=force)
+    _copy(source_kit / "docs" / "omc_workflow.md", tgt / "docs" / "omc_workflow.md", force=force)
+    _copy(source_kit / "docs" / "quickstart_kr.md", tgt / "docs" / "quickstart_kr.md", force=force)
+    _copy(source_kit / "docs" / "kit_map.md", tgt / "docs" / "kit_map.md", force=force)
+    _copy(source_kit / "docs" / "next_project_pack.md", tgt / "docs" / "next_project_pack.md", force=force)
+    _copy(source_kit / "docs" / "agent_behavior.md", tgt / "docs" / "agent_behavior.md", force=force)
+    _copy(source_kit / "docs" / "verification_checklist.md", tgt / "docs" / "verification_checklist.md", force=force)
 
-    # Re-setup support: installed project can later rerun scripts/omc.py setup by
-    # resolving templates from ./omc_kit/templates even though scripts/docs/prompts
-    # continue to live at the project root.
-    if templates.exists():
-        for src in templates.rglob("*"):
-            if not src.is_file():
-                continue
-            if src.name in IGNORED_TEMPLATE_FILENAMES:
-                continue
-            rel = src.relative_to(templates)
-            dst = tgt / "omc_kit" / "templates" / rel
-            if src.resolve() == dst.resolve():
-                continue
-            if dst.exists() and not force:
-                continue
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+    _write_install_source_metadata(tgt, source_kit)
 
     run_template = templates / "run"
     if run_template.exists():
@@ -904,7 +944,7 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
     print(f"Installed OMC kit into: {tgt}")
 
     _setup_ethos_section5(tgt)
-    _install_shared_lessons(kit, tgt)
+    _install_shared_lessons(source_kit, tgt)
 
     return 0
 

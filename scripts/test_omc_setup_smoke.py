@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -96,6 +97,16 @@ def main() -> int:
             "docs/verification_checklist.md",
         ]:
             _assert_exists(project_root / rel)
+
+        install_source = project_root / ".omc" / "install-source.json"
+        _assert_exists(install_source)
+        metadata = json.loads(install_source.read_text(encoding="utf-8"))
+        if metadata.get("source_kind") != "external":
+            raise SystemExit("install source metadata missing external source_kind")
+        if metadata.get("source_path") != str(repo_root.resolve()):
+            raise SystemExit("install source metadata recorded an unexpected source_path")
+        if (project_root / "omc_kit").exists():
+            raise SystemExit("install unexpectedly created embedded omc_kit directory")
 
         agents = project_root / "AGENTS.md"
         _seed_custom_agents(agents)

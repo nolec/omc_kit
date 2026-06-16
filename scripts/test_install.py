@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -246,21 +247,23 @@ class TestDoctorAgentsBlock(unittest.TestCase):
 
 
 class TestTemplateRootResolution(unittest.TestCase):
-    def test_templates_root_falls_back_to_nested_omc_kit_templates(self):
+    def test_templates_root_prefers_direct_templates_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "project"
-            nested = root / "omc_kit" / "templates"
-            nested.mkdir(parents=True)
+            direct = root / "templates"
+            direct.mkdir(parents=True)
 
-            self.assertEqual(_install._templates_root(root), nested)
+            self.assertEqual(_install._templates_root(root), direct)
 
-    def test_nested_template_copy_skips_known_junk_files(self):
+    def test_install_writes_source_metadata_and_skips_embedded_kit_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             kit = root / "kit"
             target = root / "target"
             target.mkdir()
 
+            (kit / "scripts").mkdir(parents=True)
+            (kit / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
             templates = kit / "templates"
             templates.mkdir(parents=True)
             (templates / ".DS_Store").write_text("junk", encoding="utf-8")
@@ -310,7 +313,80 @@ class TestTemplateRootResolution(unittest.TestCase):
                  patch("sys.argv", ["install.py", "--target", str(target)]):
                 _install.main()
 
+            self.assertFalse((target / "omc_kit").exists())
+            metadata = json.loads((target / ".omc" / "install-source.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["source_path"], str(kit.resolve()))
+            self.assertEqual(metadata["source_kind"], "external")
             self.assertFalse((target / "omc_kit" / "templates" / ".DS_Store").exists())
+
+
+class TestInstallSourceResolution(unittest.TestCase):
+    def test_resolve_source_kit_rejects_non_omc_local_structure_even_with_install_script(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            current = root / "project"
+            (current / "templates").mkdir(parents=True)
+            (current / "scripts").mkdir(parents=True)
+            (current / "scripts" / "install.py").write_text("# unrelated install\n", encoding="utf-8")
+            source = root / "source-kit"
+            (source / "templates").mkdir(parents=True)
+            (source / "scripts").mkdir(parents=True)
+            (source / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
+            (source / "prompts").mkdir(parents=True)
+            (source / "prompts" / "team.json").write_text("{}", encoding="utf-8")
+            _install._write_install_source_metadata(current, source)
+
+            self.assertEqual(_install._resolve_source_kit(current, current), source.resolve())
+
+    def test_resolve_source_kit_ignores_unrelated_local_templates_when_metadata_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            current = root / "project"
+            (current / "templates").mkdir(parents=True)
+            source = root / "source-kit"
+            (source / "templates").mkdir(parents=True)
+            (source / "scripts").mkdir(parents=True)
+            (source / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
+            (source / "prompts").mkdir(parents=True)
+            (source / "prompts" / "team.json").write_text("{}", encoding="utf-8")
+            _install._write_install_source_metadata(current, source)
+
+            self.assertEqual(_install._resolve_source_kit(current, current), source.resolve())
+
+    def test_resolve_source_kit_prefers_metadata_path_when_templates_missing_locally(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            current = root / "project"
+            current.mkdir()
+            source = root / "source-kit"
+            (source / "templates").mkdir(parents=True)
+            (source / "scripts").mkdir(parents=True)
+            (source / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
+            (source / "prompts").mkdir(parents=True)
+            (source / "prompts" / "team.json").write_text("{}", encoding="utf-8")
+            _install._write_install_source_metadata(current, source)
+
+            self.assertEqual(_install._resolve_source_kit(current, current), source.resolve())
+
+    def test_resolve_source_kit_errors_when_metadata_path_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            current = root / "project"
+            current.mkdir()
+            missing = root / "missing-kit"
+            _install._write_install_source_metadata(current, missing)
+
+            with self.assertRaisesRegex(SystemExit, "install source path is missing"):
+                _install._resolve_source_kit(current, current)
+
+    def test_resolve_source_kit_errors_when_only_legacy_embedded_kit_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            current = root / "project"
+            (current / "omc_kit" / "templates").mkdir(parents=True)
+
+            with self.assertRaisesRegex(SystemExit, "legacy embedded omc_kit"):
+                _install._resolve_source_kit(current, current)
 
 
 class TestCheckForceRegression(unittest.TestCase):
@@ -576,6 +652,10 @@ class TestHookContractMarkers(unittest.TestCase):
             target = root / "target"
             target.mkdir()
 
+            (kit / "scripts").mkdir(parents=True)
+            (kit / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
+            (kit / "prompts").mkdir(parents=True)
+            (kit / "prompts" / "team.json").write_text("{}", encoding="utf-8")
             (kit / "templates" / ".claude").mkdir(parents=True)
             (kit / "templates" / ".gemini").mkdir(parents=True)
             (kit / "templates" / ".codex").mkdir(parents=True)
@@ -630,6 +710,10 @@ class TestClaudeOverlayInstall(unittest.TestCase):
             target = root / "target"
             target.mkdir()
 
+            (kit / "scripts").mkdir(parents=True)
+            (kit / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
+            (kit / "prompts").mkdir(parents=True)
+            (kit / "prompts" / "team.json").write_text("{}", encoding="utf-8")
             templates = kit / "templates"
             templates.mkdir(parents=True)
             (templates / "CLAUDE.md").write_text("## OMC Overlay For Claude\n", encoding="utf-8")
@@ -678,6 +762,8 @@ class TestPersonalOverlayInstall(unittest.TestCase):
             target = root / "target"
             target.mkdir()
 
+            (kit / "scripts").mkdir(parents=True)
+            (kit / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
             templates = kit / "templates"
             templates.mkdir(parents=True)
             (templates / "CLAUDE.md").write_text("## OMC Overlay For Claude\n", encoding="utf-8")
@@ -688,6 +774,7 @@ class TestPersonalOverlayInstall(unittest.TestCase):
             (templates / ".gemini").mkdir(parents=True)
             (kit / "prompts").mkdir(parents=True)
             (kit / "prompts" / "README.md").write_text("prompts\n", encoding="utf-8")
+            (kit / "prompts" / "team.json").write_text("{}", encoding="utf-8")
             (templates / ".claude" / "settings.json").write_text('{"hooks":{}}', encoding="utf-8")
             (templates / ".gemini" / "settings.json").write_text('{"hooks":{}}', encoding="utf-8")
 
@@ -742,6 +829,10 @@ class TestPersonalOverlayInstall(unittest.TestCase):
             (target / "CLAUDE.md").write_text("## OMC Overlay For Claude\n", encoding="utf-8")
             (target / "GEMINI.md").write_text("## OMC Overlay For Gemini\n", encoding="utf-8")
 
+            (kit / "scripts").mkdir(parents=True)
+            (kit / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
+            (kit / "prompts").mkdir(parents=True)
+            (kit / "prompts" / "team.json").write_text("{}", encoding="utf-8")
             templates = kit / "templates"
             templates.mkdir(parents=True)
             (templates / "CLAUDE.md").write_text("## OMC Overlay For Claude\n", encoding="utf-8")
