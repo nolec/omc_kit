@@ -46,6 +46,7 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "원인 가설 1개",
     "해결 옵션 2개",
     "주추천 1개",
+    "사용자 선택 대기",
     "구현 안 함",
     "보류",
     "$omc-office-hours",

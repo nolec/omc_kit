@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import stat
 import sys
+import shutil
 from pathlib import Path
 
 from omc_hook_contract import (
@@ -22,6 +23,7 @@ AGENTS_OMC_VERSION = "<!-- OMC:AGENTS:V1 -->"
 AGENTS_OMC_MARKER = "## OMC — Orchestrated Multi-agent Craft"
 AGENTS_ETHOS_MARKER = "## Engineering Ethos"
 AGENTS_LEGACY_END_MARKER = '> "PROCEED 판정입니다. 바로 플랜을 작성하겠습니다. [plan 내용 시작]..."'
+IGNORED_TEMPLATE_FILENAMES = {".DS_Store", "Thumbs.db"}
 
 
 def _copy(src: Path, dst: Path, *, force: bool) -> None:
@@ -317,20 +319,21 @@ def _assert_gemini_hook_contract(hooks_path: Path) -> None:
     raise ValueError(f"Gemini hook contract invalid: missing {detail}")
 
 
-def _kit_root() -> Path:
+def _kit_root(script_path: Path | None = None) -> Path:
     # omc_kit/scripts/install.py -> kit root is parent of scripts/
-    here = Path(__file__).resolve()
+    here = (script_path or Path(__file__)).resolve()
     candidate = here.parents[1]
     if (candidate / "templates").is_dir():
         return candidate
-    # Fallback: install.py was copied to project scripts/ — look for kit as sibling dir
-    for parent in here.parents:
-        nested = parent / "omc_kit"
-        if (nested / "templates").is_dir():
-            return nested
     return candidate
 
 def _templates_root(kit_root: Path) -> Path:
+    direct = kit_root / "templates"
+    if direct.is_dir():
+        return direct
+    nested = kit_root / "omc_kit" / "templates"
+    if nested.is_dir():
+        return nested
     return kit_root / "templates"
 
 
@@ -506,6 +509,25 @@ def main() -> int:
     _copy(kit / "docs" / "next_project_pack.md", tgt / "docs" / "next_project_pack.md", force=force)
     _copy(kit / "docs" / "agent_behavior.md", tgt / "docs" / "agent_behavior.md", force=force)
     _copy(kit / "docs" / "verification_checklist.md", tgt / "docs" / "verification_checklist.md", force=force)
+
+    # Re-setup support: installed project can later rerun scripts/omc.py setup by
+    # resolving templates from ./omc_kit/templates even though scripts/docs/prompts
+    # continue to live at the project root.
+    if templates.exists():
+        for src in templates.rglob("*"):
+            if not src.is_file():
+                continue
+            if src.name in IGNORED_TEMPLATE_FILENAMES:
+                continue
+            rel = src.relative_to(templates)
+            dst = tgt / "omc_kit" / "templates" / rel
+            if src.resolve() == dst.resolve():
+                continue
+            if dst.exists() and not force:
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
     run_template = templates / "run"
     if run_template.exists():
         dst = tgt / "run"

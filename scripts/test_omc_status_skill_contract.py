@@ -79,6 +79,7 @@ REQUIRED_RECOMMENDATION_MARKERS = [
     "$omc-review",
     "$omc-ship",
     "$omc-retro",
+    "사용자 선택 대기",
     "자동으로 진행하지는 않습니다.",
 ]
 

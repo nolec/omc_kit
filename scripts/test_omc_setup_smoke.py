@@ -47,6 +47,26 @@ def _assert_exists(path: Path) -> None:
         raise SystemExit(f"missing expected path: {path}")
 
 
+def _seed_custom_agents(path: Path) -> None:
+    path.write_text(
+        "# AGENTS.md\n\n"
+        "프로젝트 소개 문구.\n\n"
+        "## FE 팀원용 빠른 시작\n\n"
+        "1. 먼저 읽기: AGENTS.md\n"
+        "2. 바로 멈출 변경: auth, payment\n\n"
+        "<!-- OMC:BEGIN -->\n"
+        "<!-- OMC:AGENTS:V1 -->\n"
+        "## OMC — Orchestrated Multi-agent Craft\n"
+        "old managed block\n"
+        "<!-- OMC:END -->\n\n"
+        "## Git and Pull Request Rules\n\n"
+        "- base는 develop\n\n"
+        "## 13. 완료 전 체크리스트\n\n"
+        "- 요청한 동작만 변경했습니다.\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Install the OMC kit into a temp project and run common OMC smoke checks.")
     ap.add_argument("--executor", choices=["codex", "gemini"], default=None, help="Also run installed headless/chat smoke with this executor.")
@@ -77,8 +97,22 @@ def main() -> int:
         ]:
             _assert_exists(project_root / rel)
 
-        setup = _run([sys.executable, "scripts/omc.py", "setup", "--target", str(project_root)], cwd=project_root)
+        agents = project_root / "AGENTS.md"
+        _seed_custom_agents(agents)
+
+        setup = _run(
+            [sys.executable, "scripts/omc.py", "setup", "--target", str(project_root), "--force"],
+            cwd=project_root,
+        )
         _require_ok(setup, label="setup")
+
+        agents_text = agents.read_text(encoding="utf-8")
+        if "## FE 팀원용 빠른 시작" not in agents_text:
+            raise SystemExit("setup force lost custom AGENTS quick-start section")
+        if agents_text.count("<!-- OMC:BEGIN -->") != 1 or agents_text.count("<!-- OMC:END -->") != 1:
+            raise SystemExit("setup force did not preserve a single managed OMC block")
+        if "old managed block" in agents_text:
+            raise SystemExit("setup force did not refresh the managed OMC block")
 
         omc_help = _run([str(project_root / "run"), "omc-help"], cwd=project_root)
         _require_ok(omc_help, label="run omc-help")

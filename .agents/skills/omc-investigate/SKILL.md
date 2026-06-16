@@ -50,6 +50,7 @@ python3 scripts/omc.py state status --target .
 ## 다음 추천
 
 - 주추천 1개만 제시: 현재 근거에 가장 가까운 후속 1개를 먼저 말합니다.
+- 재현 조건/검증 결과/근본 원인이 아직 비면 → 사용자 선택 대기
 - 원인 확정 + 수정 필요 → `$omc-task`
 - 수정 후 품질 확인 → `$omc-review`
 - 아키텍처/범위 문제 → `$omc-ceo-review`

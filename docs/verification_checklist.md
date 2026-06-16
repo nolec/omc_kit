@@ -299,6 +299,83 @@ PASS / FAIL: PASS
 - 이번 검증은 문구 대조 기반 수동 검증이며, 실제 대화 E2E 검증은 별도로 반복 권장
 ```
 
+추가 실행 기록:
+
+```text
+실행 일시:
+2026-06-16
+
+시나리오 8:
+입력 스킬: omc-critique
+사용자 마지막 의도: HOLD/REVISE 판정, 변경 비용 HIGH
+기대 추천: $omc-plan
+기대 이유: 구현 전 재설계가 현재 병목
+실제 추천: $omc-plan
+PASS / FAIL: PASS
+메모: critique는 비용 체크포인트 후 task 직행을 막음
+
+시나리오 9:
+입력 스킬: omc-status
+사용자 마지막 의도: 상태만 확인, 다음 단계 미선택
+기대 추천: 사용자 선택 대기
+기대 이유: 조회 전용 스킬이 파이프라인을 과추천하면 안 됨
+실제 추천: 사용자 선택 대기
+PASS / FAIL: PASS
+메모: status에 선택 대기 분기 추가
+
+시나리오 10:
+입력 스킬: omc-investigate
+사용자 마지막 의도: 재현 조건/검증 결과 부족, 원인 미확정
+기대 추천: 사용자 선택 대기
+기대 이유: 근거 부족 상태에서 task/review로 넘기면 증상 패치 위험
+실제 추천: 사용자 선택 대기
+PASS / FAIL: PASS
+메모: investigate에 근거 부족 보류 분기 추가
+
+시나리오 11:
+입력 스킬: omc-benchmark
+사용자 마지막 의도: 비교 대상 또는 채택 의사 미확정
+기대 추천: 사용자 선택 대기
+기대 이유: 전략 분석 후 바로 office-hours/plan으로 과추천하면 안 됨
+실제 추천: 사용자 선택 대기
+PASS / FAIL: PASS
+메모: benchmark에 근거/채택 의사 부족 보류 분기 추가
+
+시나리오 12:
+입력 스킬: omc-brainstorm
+사용자 마지막 의도: 옵션은 나왔지만 사용자 확인 전
+기대 추천: 사용자 선택 대기
+기대 이유: 확인 전 plan 진입은 성급함
+실제 추천: 사용자 선택 대기
+PASS / FAIL: PASS
+메모: brainstorm에 확인 전 보류 분기 추가
+```
+
+검증 커버리지 표:
+
+| 스킬 | 다음 추천 규칙 | 수동 검증 상태 | 메모 |
+|---|---|---|---|
+| `omc-plan` | 있음 | 검증 완료 | `$omc-task` / `$omc-critique` / 선택 대기 시나리오 반영 |
+| `omc-critique` | 있음 | 검증 완료 | HOLD/REVISE + 비용 HIGH → `$omc-plan` 확인 |
+| `omc-office-hours` | 있음 | 검증 완료 | PROCEED 후 자동 plan 방지 확인 |
+| `omc-ceo-review` | 있음 | 검증 완료 | APPROVED 후 선택 대기 확인 |
+| `omc-task` | 있음 | 검증 완료 | 결과 확인 단계에서 자동 review 방지 확인 |
+| `omc-review` | 있음 | 검증 완료 | 승인 후 자동 ship 방지 확인 |
+| `omc-ship` | 있음 | 검증 완료 | SHIP READY 후 자동 push/deploy 방지 확인 |
+| `omc-status` | 있음 | 검증 완료 | 상태 확인만 원하는 경우 선택 대기 확인 |
+| `omc-investigate` | 있음 | 검증 완료 | 근거 부족 상태에서 task/review 과추천 방지 확인 |
+| `omc-benchmark` | 있음 | 검증 완료 | 비교 대상/채택 의사 부족 시 선택 대기 확인 |
+| `omc-brainstorm` | 있음 | 검증 완료 | 사용자 확인 전 plan 과추천 방지 확인 |
+| `omc-retro` | 없음 | 미검증 | 회고 후 lesson/plan/task 과추천 여부 정의 필요 |
+| `omc-lesson` | 없음 | 미검증 | 기록 완료 후 종료/후속 추천 정책 정의 필요 |
+| `omc-autopilot` | 없음 | 미검증 | 자동 실행 특성상 별도 추천 정책 필요성 판단 필요 |
+| `pr-create` | 없음 | 미검증 | PR 생성 후 ship/status 등 후속 추천 정책 정의 필요 |
+
+다음 우선순위:
+
+1. `omc-retro`, `omc-lesson`
+2. `pr-create`, `omc-autopilot`
+
 ## 최소 합격선
 
 아래가 되면 "기본 운영 루프는 검증됨"으로 봐도 됩니다.

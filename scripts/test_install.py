@@ -168,6 +168,47 @@ class TestAgentsMerge(unittest.TestCase):
             self.assertIn("new omc", text)
             self.assertNotIn("legacy omc", text)
 
+    def test_force_preserves_realistic_custom_agents_sections_with_managed_block_refresh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            target.mkdir()
+            agents = target / "AGENTS.md"
+            agents.write_text(
+                "# AGENTS.md\n\n"
+                "프로젝트 소개 문구.\n\n"
+                "## FE 팀원용 빠른 시작\n\n"
+                "1. 먼저 읽기: AGENTS.md\n"
+                "2. 바로 멈출 변경: auth, payment\n\n"
+                "<!-- OMC:BEGIN -->\n"
+                "<!-- OMC:AGENTS:V1 -->\n"
+                "## OMC — Orchestrated Multi-agent Craft\n"
+                "old managed block\n"
+                "<!-- OMC:END -->\n\n"
+                "## Git and Pull Request Rules\n\n"
+                "- base는 develop\n\n"
+                "## 13. 완료 전 체크리스트\n\n"
+                "- 요청한 동작만 변경했습니다.\n",
+                encoding="utf-8",
+            )
+
+            _install._merge_agents_template(
+                agents,
+                "<!-- OMC:BEGIN -->\n"
+                "<!-- OMC:AGENTS:V1 -->\n"
+                "## OMC — Orchestrated Multi-agent Craft\n"
+                "new managed block\n"
+                "<!-- OMC:END -->\n",
+            )
+
+            text = agents.read_text(encoding="utf-8")
+            self.assertIn("## FE 팀원용 빠른 시작", text)
+            self.assertIn("## Git and Pull Request Rules", text)
+            self.assertIn("## 13. 완료 전 체크리스트", text)
+            self.assertIn("new managed block", text)
+            self.assertNotIn("old managed block", text)
+            self.assertEqual(text.count("<!-- OMC:BEGIN -->"), 1)
+            self.assertEqual(text.count("<!-- OMC:END -->"), 1)
+
     def test_extract_agents_omc_block_uses_managed_markers(self):
         template = (
             "Project intro\n"
@@ -202,6 +243,74 @@ class TestDoctorAgentsBlock(unittest.TestCase):
             labels = {check.label: check.ok for check in checks}
 
             self.assertFalse(labels["AGENTS.md (최신 OMC 블록 포함)"])
+
+
+class TestTemplateRootResolution(unittest.TestCase):
+    def test_templates_root_falls_back_to_nested_omc_kit_templates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            nested = root / "omc_kit" / "templates"
+            nested.mkdir(parents=True)
+
+            self.assertEqual(_install._templates_root(root), nested)
+
+    def test_nested_template_copy_skips_known_junk_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kit = root / "kit"
+            target = root / "target"
+            target.mkdir()
+
+            templates = kit / "templates"
+            templates.mkdir(parents=True)
+            (templates / ".DS_Store").write_text("junk", encoding="utf-8")
+            (templates / "AGENTS.md").write_text("## OMC — Orchestrated Multi-agent Craft\n", encoding="utf-8")
+            (templates / "ETHOS.md").write_text("## Engineering Ethos\n___\n", encoding="utf-8")
+            (kit / "prompts").mkdir(parents=True)
+            (kit / "prompts" / "README.md").write_text("prompts\n", encoding="utf-8")
+            for name in [
+                "team.json",
+                "ROLE_ORCHESTRATOR.md",
+                "MODE_AUTOPILOT.md",
+                "MODE_TEAM.md",
+                "MODE_ULTRAWORK.md",
+                "MODE_RALPH.md",
+                "MODE_DEEP_INTERVIEW.md",
+                "ROLE_SEARCH_ASSISTANT.md",
+                "ROLE_ANALYSIS_ASSISTANT.md",
+                "ROLE_CODE_REVIEW_ASSISTANT.md",
+                "ROLE_SENIOR_CODING_ASSISTANT.md",
+            ]:
+                (kit / "prompts" / name).write_text("x\n", encoding="utf-8")
+            (kit / "docs").mkdir(parents=True)
+            for name in [
+                "omc_workflow.md",
+                "quickstart_kr.md",
+                "kit_map.md",
+                "next_project_pack.md",
+                "agent_behavior.md",
+                "verification_checklist.md",
+            ]:
+                (kit / "docs" / name).write_text("doc\n", encoding="utf-8")
+            (templates / ".claude").mkdir(parents=True)
+            (templates / ".gemini").mkdir(parents=True)
+            (templates / ".claude" / "settings.json").write_text('{"hooks":{}}', encoding="utf-8")
+            (templates / ".gemini" / "settings.json").write_text('{"hooks":{}}', encoding="utf-8")
+
+            with patch.object(_install, "_kit_root", return_value=kit), \
+                 patch.object(_install, "_assert_claude_hook_contract"), \
+                 patch.object(_install, "_assert_gemini_hook_contract"), \
+                 patch.object(_install, "_install_claude_settings"), \
+                 patch.object(_install, "_install_gemini_settings"), \
+                 patch.object(_install, "_install_shared_lessons"), \
+                 patch.object(_install, "_ensure_executable"), \
+                 patch.object(_install, "_setup_ethos_section5"), \
+                 patch.object(_install, "_check_force_regression", return_value=True), \
+                 patch.object(_install, "_deployed_script_names", return_value=[]), \
+                 patch("sys.argv", ["install.py", "--target", str(target)]):
+                _install.main()
+
+            self.assertFalse((target / "omc_kit" / "templates" / ".DS_Store").exists())
 
 
 class TestCheckForceRegression(unittest.TestCase):

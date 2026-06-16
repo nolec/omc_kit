@@ -75,6 +75,7 @@ REQUIRED_RECOMMENDATION_MARKERS = [
     "$omc-task",
     "$omc-review",
     "$omc-ceo-review",
+    "사용자 선택 대기",
     "자동으로 진행하지는 않습니다.",
 ]
 
