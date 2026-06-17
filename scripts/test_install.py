@@ -255,6 +255,12 @@ class TestTemplateRootResolution(unittest.TestCase):
 
             self.assertEqual(_install._templates_root(root), direct)
 
+
+class TestRepositoryGitignore(unittest.TestCase):
+    def test_gitignore_excludes_install_source_metadata(self):
+        gitignore = (Path(__file__).resolve().parents[1] / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn(".omc/install-source.json", gitignore)
+
     def test_install_writes_source_metadata_and_skips_embedded_kit_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

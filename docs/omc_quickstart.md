@@ -48,24 +48,6 @@ python3 scripts/omc.py state compact      # 메모리 압축
 python3 scripts/omc_lesson.py search "키워드"  # 교훈 BM25 검색
 python3 scripts/omc_autopilot.py new --id feat-x --title "기능 X"
 python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
-python3 scripts/omc_autopilot.py overview   # 최근/현재 run 관제 요약 (문제 run 우선 표시)
-```
-
-## 자동 가드 & CI
-
-| 기능 | 설명 |
-|---|---|
-| **모호 메시지 감지** | "응", "진행하자" 등 모호한 입력 시 확인 질문 자동 주입 |
-| **TDD 파이프라인 게이트** | 테스트 없는 신규 파일 커밋 차단 (pre-commit 훅) |
-| **GitHub Actions CI** | 모든 push/PR에서 TDD 게이트 + 훅 테스트 자동 실행 |
-| **Codex 소프트 가드** | PostToolUse — 세션 미확인 파일 수정 시 경고 주입 |
-
-```bash
-# 모호 메시지 감지 동작 확인 (confirmed 상태 + "응" 입력 → 확인 질문)
-# UserPromptSubmit 훅이 자동 처리 — 별도 실행 불필요
-
-# TDD 게이트 수동 실행
-python3 scripts/omc_tdd_check.py --staged
 ```
 
 ## 파일 지도
