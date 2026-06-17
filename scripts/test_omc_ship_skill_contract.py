@@ -28,7 +28,7 @@ REQUIRED_SEQUENCE = [
     "필수 체크",
     "게이트 통과",
     "비밀값 검사",
-    "python3 scripts/omc_guard.py require --target . --for \"ship\"",
+    "python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title \"omc-ship\" --request \"<현재 작업 한 줄 요약>\" --roles directive --for \"ship\"",
     "python3 scripts/omc_tdd_check.py --run-tests",
     "git status -sb",
     "git diff HEAD",
@@ -59,6 +59,8 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "명령은 예시",
     "Nx 미사용",
     "필수 체크",
+    "현재 ship 대상 범위",
+    "범위 밖 dirty 변경",
     "$omc-investigate",
     "$omc-task",
     "$pr-create",
@@ -79,6 +81,8 @@ TDD 게이트: PASS
 테스트: PASS
 타입: PASS
 린트: PASS
+현재 ship 대상 범위: templates/.claude/commands/plan.md, scripts/test_llm_autopilot_commands.py
+범위 밖 dirty 변경: docs/omc_quickstart.md
 git status -sb: clean
 git diff HEAD: SECRET/KEY/TOKEN/PASSWORD 없음
 untracked: 없음

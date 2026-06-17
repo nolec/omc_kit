@@ -187,6 +187,28 @@ def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Block execution unless the latest OMC session is confirmed.")
     sub = ap.add_subparsers(dest="command", required=True)
 
+    sync_require = sub.add_parser(
+        "sync-require",
+        help="Atomically sync a confirmed skill session and immediately run the guard.",
+    )
+    sync_require.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+    sync_require.add_argument("--mode", required=True, help="OMC mode name.")
+    sync_require.add_argument("--title", required=True, help="Mode title.")
+    sync_require.add_argument("--request", required=True, help="Request text.")
+    sync_require.add_argument("--roles", required=True, help="Comma-separated role ids.")
+    sync_require.add_argument(
+        "--for",
+        dest="command_name",
+        required=True,
+        help="Human-readable command name to guard after syncing.",
+    )
+    sync_require.add_argument(
+        "--scope",
+        choices=["auto", "read", "mutate"],
+        default="auto",
+        help="Guard level. auto treats known read-only commands as read and everything else as mutate.",
+    )
+
     require = sub.add_parser("require", help="Require a confirmed latest OMC session.")
     require.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     require.add_argument("--for", dest="command_name", required=True, help="Human-readable command name.")
@@ -205,6 +227,17 @@ def _parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = _parser().parse_args()
     project_root = omc_utils.project_root(args.target)
+    if args.command == "sync-require":
+        omc_state.record_session(
+            project_root,
+            mode=args.mode,
+            title=args.title,
+            request=args.request,
+            role_ids=[x.strip() for x in args.roles.split(",") if x.strip()],
+            confirmed=True,
+            confirmation_source="guard.sync_require",
+        )
+        return require_confirmation(project_root, command_name=args.command_name, scope=args.scope)
     if args.command == "require":
         return require_confirmation(project_root, command_name=args.command_name, scope=args.scope)
     latest = _latest(project_root)

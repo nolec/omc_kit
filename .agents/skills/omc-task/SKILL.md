@@ -10,8 +10,7 @@ description: "7단계 TDD 파이프라인으로 구현 실행. 트리거: 구현
 ## 0. Guard
 
 ```bash
-python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-task" --request "<현재 작업 한 줄 요약>" --roles senior_coding
-python3 scripts/omc_guard.py require --for "task" --target .
+python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title "omc-task" --request "<현재 작업 한 줄 요약>" --roles senior_coding --for "task"
 ```
 
 실패하면 세션 확인 또는 confirm부터 처리하고 중단합니다.
@@ -101,8 +100,7 @@ python3 scripts/omc_lesson.py add -i
 
 ## 다음 추천
 
-- 주추천 1개만 제시: 구현 후 현재 병목에 맞는 1개만 제시합니다.
-- 구현 완료 + 게이트 통과 + 변경 품질 확인이 다음 병목일 때만 `$omc-review`
+- 주추천 1개만 제시: 구현 완료 + 게이트 통과면 `$omc-review`
 - 구현 완료 + 사용자가 일단 결과만 확인하려는 상태면 사용자 선택 대기
 - 실패 원인 불명 → `$omc-investigate`
 - 자동으로 진행하지는 않습니다.

@@ -22,8 +22,7 @@ OPTIONAL_TASK_SKILL_PATHS = [
 ]
 
 REQUIRED_SEQUENCE = [
-    "python3 scripts/omc.py state sync-session --target . --mode autopilot --title \"omc-task\" --request \"<현재 작업 한 줄 요약>\" --roles senior_coding",
-    "python3 scripts/omc_guard.py require --for \"task\" --target .",
+    "python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title \"omc-task\" --request \"<현재 작업 한 줄 요약>\" --roles senior_coding --for \"task\"",
     "필수 체크",
     "CONTRACT 등록",
     "RED 등록",
@@ -167,6 +166,7 @@ def test_task_skill_recommendations_cover_success_and_unknown_failures():
         "다음 추천",
         "구현 완료 + 게이트 통과",
         "$omc-review",
+        "사용자 선택 대기",
         "실패 원인 불명",
         "$omc-investigate",
         "자동으로 진행하지는 않습니다.",
