@@ -232,3 +232,27 @@ class TestStagedModeModified:
 
         captured = capsys.readouterr()
         assert "Button.tsx" in captured.out, "staged 모드에서도 수정 파일 경고가 출력돼야 함"
+
+
+# ---------------------------------------------------------------------------
+# 5. --run-tests Python fallback은 구현 파일이 아니라 대응 테스트 파일을 실행
+# ---------------------------------------------------------------------------
+
+class TestRunTestsPythonFallback:
+    def test_python_runner_uses_related_test_files_instead_of_impl_files(self, tmp_path: Path):
+        """pytest fallback은 구현 파일 경로가 아니라 대응 테스트 파일 경로를 실행해야 함."""
+        (tmp_path / "src" / "core").mkdir(parents=True)
+        (tmp_path / "tests" / "core").mkdir(parents=True)
+        (tmp_path / "src" / "core" / "foo.py").write_text("def foo(): return 1")
+        (tmp_path / "tests" / "core" / "test_foo.py").write_text("def test_foo(): assert True")
+        (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
+
+        with patch.object(tdd.subprocess, "run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            passed, runner_cmd = tdd._run_tests_for_files([Path("src/core/foo.py")], tmp_path, "origin/main")
+
+        assert passed is True
+        called_cmd = mock_run.call_args.args[0]
+        assert called_cmd[:3] == ["pytest", "--tb=short", "-q"]
+        assert str(tmp_path / "tests" / "core" / "test_foo.py") in called_cmd
+        assert str(tmp_path / "src" / "core" / "foo.py") not in called_cmd

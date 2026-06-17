@@ -172,6 +172,29 @@ def _find_test_file(impl: Path, root: Path) -> Path | None:
     stem = impl.stem
     parent = impl.parent
 
+    rel_parts = impl.parts
+    tests_root = Path("tests")
+    if rel_parts and rel_parts[0] == "src":
+        src_relative = Path(*rel_parts[1:]) if len(rel_parts) > 1 else Path(stem)
+        nested_tests_dir = tests_root / src_relative.parent
+        nested_candidates = [
+            nested_tests_dir / f"test_{stem}.py",
+            nested_tests_dir / f"{stem}_test.py",
+        ]
+        for c in nested_candidates:
+            if (root / c).exists():
+                return c
+
+        if len(rel_parts) >= 2:
+            domain_tests_dir = tests_root / rel_parts[1]
+            domain_candidates = [
+                domain_tests_dir / f"test_{stem}.py",
+                domain_tests_dir / f"{stem}_test.py",
+            ]
+            for c in domain_candidates:
+                if (root / c).exists():
+                    return c
+
     candidates = [
         # 같은 폴더
         parent / f"{stem}.spec.ts",
@@ -235,7 +258,19 @@ def _run_tests_for_files(impl_files: list[Path], root: Path, base: str) -> tuple
     if not runner:
         return True, "(테스트 러너 미감지 — 건너뜀)"
 
-    file_args = [str(root / f) for f in impl_files]
+    file_args: list[str] = []
+    if runner[:1] == ["pytest"]:
+        related_tests: list[Path] = []
+        seen: set[Path] = set()
+        for impl in impl_files:
+            test_file = _find_test_file(impl, root)
+            if test_file and test_file not in seen:
+                seen.add(test_file)
+                related_tests.append(test_file)
+        file_args = [str(root / f) for f in related_tests] if related_tests else [str(root / f) for f in impl_files]
+    else:
+        file_args = [str(root / f) for f in impl_files]
+
     cmd = runner + file_args
     result = subprocess.run(cmd, cwd=str(root), capture_output=False, text=True)
     return result.returncode == 0, " ".join(runner)
