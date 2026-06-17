@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OMC = ROOT / "scripts" / "omc.py"
+GUARD = ROOT / "scripts" / "omc_guard.py"
 
 
 def _run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -20,6 +21,16 @@ def _run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str
 
 def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _run_guard(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(GUARD), *args],
+        cwd=str(cwd or ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def test_state_sync_session_marks_latest_session_confirmed(tmp_path: Path):
@@ -51,6 +62,7 @@ def test_state_sync_session_marks_latest_session_confirmed(tmp_path: Path):
     assert session_id, latest
     assert latest.get("latest_confirmed_session_id") == session_id, latest
     assert latest.get("latest_confirmed_request") == request, latest
+    assert latest.get("latest_skill") == "omc-plan", latest
     assert latest.get("latest_confirmation", {}).get("status") == "confirmed", latest
 
     session = _read_json(target / ".omc" / "state" / "sessions" / session_id / "session.json")
@@ -86,7 +98,6 @@ def test_notepad_omits_pending_lines_when_no_pending_session(tmp_path: Path):
     assert "pending_roles" not in notepad, notepad
     assert "pending_request" not in notepad, notepad
     assert "pending_session_status" not in notepad, notepad
-
 
 
 def test_sync_session_stores_latest_skill_in_latest_json(tmp_path: Path):
@@ -207,16 +218,71 @@ def test_status_matches_latest_after_sequential_sync_session_role_change(tmp_pat
 
 
 def test_core_omc_skills_document_use_session_sync_step():
-    expected_markers = {
-        ROOT / ".agents" / "skills" / "omc-plan" / "SKILL.md": "python3 scripts/omc.py state sync-session --target . --mode autopilot",
-        ROOT / ".agents" / "skills" / "omc-task" / "SKILL.md": "python3 scripts/omc_guard.py sync-require --target . --mode autopilot",
-        ROOT / ".agents" / "skills" / "omc-review" / "SKILL.md": "python3 scripts/omc.py state sync-session --target . --mode autopilot",
-        ROOT / ".agents" / "skills" / "omc-investigate" / "SKILL.md": "python3 scripts/omc.py state sync-session --target . --mode autopilot",
-    }
+    expected_markers = {}
+    for skills_root in (ROOT / ".agent" / "skills", ROOT / ".agents" / "skills"):
+        expected_markers.update(
+            {
+                skills_root / "omc-plan" / "SKILL.md": "python3 scripts/omc.py state sync-session --target . --mode autopilot",
+                skills_root / "omc-task" / "SKILL.md": "python3 scripts/omc_guard.py sync-require --target . --mode autopilot",
+                skills_root / "omc-review" / "SKILL.md": "python3 scripts/omc.py state sync-session --target . --mode autopilot",
+                skills_root / "omc-investigate" / "SKILL.md": "python3 scripts/omc.py state sync-session --target . --mode autopilot",
+            }
+        )
 
     for path, needle in expected_markers.items():
         text = path.read_text(encoding="utf-8")
         assert needle in text, f"{path.name} missing session sync step"
+
+
+def test_core_omc_skill_mirrors_stay_in_sync():
+    skill_names = [
+        "omc-ceo-review",
+        "omc-office-hours",
+        "omc-plan",
+        "omc-review",
+        "omc-ship",
+        "omc-status",
+        "omc-task",
+    ]
+
+    for skill_name in skill_names:
+        agent_text = (ROOT / ".agent" / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+        agents_text = (ROOT / ".agents" / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+        assert agent_text == agents_text, f"{skill_name} mirror files diverged"
+
+
+def test_omc_guard_sync_require_records_confirmed_session(tmp_path: Path):
+    target = tmp_path / "repo"
+    target.mkdir()
+
+    init = _run("state", "init", "--target", str(target))
+    assert init.returncode == 0, init.stderr
+
+    guarded = _run_guard(
+        "sync-require",
+        "--target",
+        str(target),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-task",
+        "--request",
+        "sync require request",
+        "--roles",
+        "senior_coding",
+        "--for",
+        "task",
+    )
+    assert guarded.returncode == 0, guarded.stderr
+
+    latest = _read_json(target / ".omc" / "state" / "latest.json")
+    session_id = latest.get("latest_session_id")
+    assert latest.get("latest_confirmed_session_id") == session_id, latest
+
+    session = _read_json(target / ".omc" / "state" / "sessions" / session_id / "session.json")
+    assert session.get("confirmation", {}).get("status") == "confirmed", session
+    assert session.get("confirmation", {}).get("source") == "guard.sync_require", session
+    assert session.get("lifecycle", {}).get("status") == "active", session
 
 
 def test_guard_sync_require_replaces_previous_confirmed_role_for_mutating_gate(tmp_path: Path):
@@ -242,28 +308,20 @@ def test_guard_sync_require_replaces_previous_confirmed_role_for_mutating_gate(t
     )
     assert review.returncode == 0, review.stderr
 
-    guard = subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "scripts" / "omc_guard.py"),
-            "sync-require",
-            "--target",
-            str(target),
-            "--mode",
-            "autopilot",
-            "--title",
-            "omc-ship",
-            "--request",
-            "ship session",
-            "--roles",
-            "directive",
-            "--for",
-            "ship",
-        ],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        check=False,
+    guard = _run_guard(
+        "sync-require",
+        "--target",
+        str(target),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-ship",
+        "--request",
+        "ship session",
+        "--roles",
+        "directive",
+        "--for",
+        "ship",
     )
     assert guard.returncode == 0, guard.stdout + guard.stderr
     assert "roles=directive" in guard.stdout, guard.stdout
@@ -271,6 +329,50 @@ def test_guard_sync_require_replaces_previous_confirmed_role_for_mutating_gate(t
     latest = _read_json(target / ".omc" / "state" / "latest.json")
     assert latest.get("latest_roles") == ["directive"], latest
     assert latest.get("latest_confirmed_roles") == ["directive"], latest
+
+
+def test_pending_sync_session_keeps_previous_latest_skill(tmp_path: Path):
+    target = tmp_path / "repo"
+    target.mkdir()
+
+    init = _run("state", "init", "--target", str(target))
+    assert init.returncode == 0, init.stderr
+
+    first = _run(
+        "state",
+        "sync-session",
+        "--target",
+        str(target),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-review",
+        "--request",
+        "confirmed request",
+        "--roles",
+        "code_review",
+    )
+    assert first.returncode == 0, first.stderr
+
+    second = _run(
+        "state",
+        "record",
+        "--target",
+        str(target),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-task",
+        "--request",
+        "pending request",
+        "--roles",
+        "senior_coding",
+    )
+    assert second.returncode == 0, second.stderr
+
+    latest = _read_json(target / ".omc" / "state" / "latest.json")
+    assert latest.get("latest_confirmation", {}).get("status") == "pending", latest
+    assert latest.get("latest_skill") == "omc-review", latest
 
 
 def test_status_separates_staged_scope_from_out_of_scope_dirty_changes(tmp_path: Path):
