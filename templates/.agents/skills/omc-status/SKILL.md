@@ -25,11 +25,11 @@ git log --oneline -5
 사용자에게 보여줄 것: 세션 요약 / git 요약 / 변경 카테고리 / 차단·주의 / 다음 액션 / 남은 스킬 후보
 시스템이 암묵적으로 처리: 현재 사용자 요청 vs latest request / confirmed_request / pending_request 비교, read-only 유지
 조회 전용 안전 항목: read-only / 커밋 대상 아님 / 다음 액션 1개 추천
-- 세션 불일치 / stale / 소스/스킬 변경 / .omc 실행 아티팩트 / untracked 판단 후 출력합니다.
+- 세션 불일치 / stale / 소스/스킬 변경 / .omc 실행 아티팩트 / untracked를 판단하고, 현재 커밋 범위와 범위 밖 dirty 변경을 분리하며 필요 시 ship 차단 힌트도 보여줍니다.
 
 ## Phase 2. 변경 카테고리
 
-- 소스/스킬 변경: `.agents`, `templates`, `scripts`, `src`, `lib` 등 작업 대상 파일
+- 소스/스킬 변경: 현재 커밋 범위와 범위 밖 dirty 변경으로 분리해 요약
 - .omc 실행 아티팩트: `.omc/pipeline_run_result.json`, `.omc/runs`, `.omc/lessons`, `.omc/allow_log.jsonl`
 - untracked: 새 파일 후보와 커밋 대상 아님 후보를 분리
 
@@ -38,8 +38,8 @@ git log --oneline -5
 ```text
 OMC 세션: latest/confirmed/pending, stale
 Git 상태: branch/ahead/behind, staged/unstaged/untracked
-변경 분류: 소스/스킬 변경, .omc 실행 아티팩트, untracked
-차단/주의: 미확정 세션, 커밋 대상 아님, 테스트/리뷰/ship 차단
+변경 분류: 현재 커밋 범위, 범위 밖 dirty 변경, .omc 실행 아티팩트, untracked
+차단/주의: 미확정 세션, 범위 밖 dirty 변경, 커밋 대상 아님, 테스트/리뷰/ship 차단, ship 차단 힌트
 다음 액션: $omc-plan / $omc-task / $omc-review / $omc-ship / $omc-retro
 남은 스킬 후보:
 ```

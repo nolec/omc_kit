@@ -296,6 +296,58 @@ def _git_info(project_root: Path) -> dict[str, object]:
     }
 
 
+def _git_scope_snapshot(project_root: Path) -> dict[str, list[str]]:
+    proc = subprocess.run(
+        ["git", "-C", str(project_root), "status", "--porcelain"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return {"staged": [], "unstaged": [], "omc_artifacts": [], "untracked": []}
+
+    staged: list[str] = []
+    unstaged: list[str] = []
+    omc_artifacts: list[str] = []
+    untracked: list[str] = []
+
+    for raw_line in proc.stdout.splitlines():
+        if not raw_line:
+            continue
+        status_code = raw_line[:2]
+        path_part = raw_line[3:] if len(raw_line) > 3 else ""
+        path = path_part.split(" -> ")[-1].strip()
+        if not path:
+            continue
+        if path.startswith(".omc/"):
+            omc_artifacts.append(path)
+            continue
+        if status_code == "??":
+            untracked.append(path)
+            continue
+        if status_code[0] != " ":
+            staged.append(path)
+        if len(status_code) > 1 and status_code[1] != " ":
+            unstaged.append(path)
+
+    return {
+        "staged": sorted(dict.fromkeys(staged)),
+        "unstaged": sorted(dict.fromkeys(unstaged)),
+        "omc_artifacts": sorted(dict.fromkeys(omc_artifacts)),
+        "untracked": sorted(dict.fromkeys(untracked)),
+    }
+
+
+def _format_scope_bucket(paths: list[str], *, empty: str = "없음", limit: int = 4) -> str:
+    if not paths:
+        return empty
+    sample = paths[:limit]
+    text = ", ".join(sample)
+    if len(paths) > limit:
+        text += f" 외 {len(paths) - limit}개"
+    return f"{len(paths)}개 ({text})"
+
+
 def _excerpt(text: str, limit: int = 120) -> str:
     compact = " ".join(text.split())
     if len(compact) <= limit:
@@ -1316,6 +1368,7 @@ def status(project_root: Path) -> str:
     latest = _load_session_entry(project_root, str(latest_meta.get("latest_session_id")))
     if latest is None:
         latest = entries[-1] if entries else None
+    git_scope = _git_scope_snapshot(project_root)
     lines = [f"OMC state: {project_root}"]
     lines.append(f"- memory entries: {len(entries)}")
     lines.append(f"- sessions: {len(sessions)}")
@@ -1336,6 +1389,13 @@ def status(project_root: Path) -> str:
     lines.append(f"- active_run_id: {latest_meta.get('active_run_id')}")
     lines.append(f"- latest_run_id: {latest_meta.get('latest_run_id')}")
     lines.append(f"- enforce_confirm: {policy.get('enforce_confirm', True)}")
+    lines.append(f"- 현재 커밋 범위: {_format_scope_bucket(git_scope['staged'])}")
+    lines.append(f"- 범위 밖 dirty 변경: {_format_scope_bucket(git_scope['unstaged'])}")
+    lines.append(f"- .omc 실행 아티팩트: {_format_scope_bucket(git_scope['omc_artifacts'])}")
+    lines.append(f"- untracked: {_format_scope_bucket(git_scope['untracked'])}")
+    if not git_scope["staged"] and git_scope["unstaged"]:
+        lines.append("- ship 차단 힌트: 현재 커밋 범위가 없어 ship 불가 — 범위 밖 dirty 변경만 존재")
+        lines.append("- 다음 조치 힌트: ship 전에 먼저 현재 커밋 범위를 만들어야 함")
     lines.append(f"- summary: {_summary_path(project_root)}")
     lines.append(f"- notepad: {_notepad_path(project_root)}")
     lines.append(f"- project-memory: {_memory_path(project_root)}")

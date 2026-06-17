@@ -55,6 +55,9 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "pending_request",
     "N/A",
     "이유",
+    "현재 커밋 범위",
+    "범위 밖 dirty 변경",
+    "ship 차단 힌트",
     "커밋 대상 아님",
     "남은 스킬 후보",
 ]
@@ -96,8 +99,9 @@ MUTATING_COMMAND_PATTERNS = [
 VALID_STATUS_SAMPLE = """
 OMC 세션: latest request와 현재 사용자 요청 불일치 — stale 세션 불일치
 Git 상태: main...origin/main [ahead 8]
-변경 분류: 소스/스킬 변경 없음, .omc 실행 아티팩트만 있음, untracked 있음
-차단/주의: .omc 실행 아티팩트는 커밋 대상 아님
+변경 분류: 소스/스킬 변경 중 현재 커밋 범위 3개, 범위 밖 dirty 변경 2개, .omc 실행 아티팩트만 있음, untracked 있음
+차단/주의: 범위 밖 dirty 변경은 이번 커밋 대상 아님
+ship 차단 힌트: 현재 커밋 범위가 없어 ship 불가 — 범위 밖 dirty 변경만 존재
 다음 액션: $omc-plan으로 현재 요청 재정렬
 """
 

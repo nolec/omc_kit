@@ -206,15 +206,157 @@ def test_status_matches_latest_after_sequential_sync_session_role_change(tmp_pat
     assert "second coding session" in status.stdout, status.stdout
 
 
-def test_core_omc_skills_document_use_sync_session_step():
-    skill_files = [
-        ROOT / ".agents" / "skills" / "omc-plan" / "SKILL.md",
-        ROOT / ".agents" / "skills" / "omc-task" / "SKILL.md",
-        ROOT / ".agents" / "skills" / "omc-review" / "SKILL.md",
-        ROOT / ".agents" / "skills" / "omc-investigate" / "SKILL.md",
-    ]
-    needle = "python3 scripts/omc.py state sync-session --target . --mode autopilot"
+def test_core_omc_skills_document_use_session_sync_step():
+    expected_markers = {
+        ROOT / ".agents" / "skills" / "omc-plan" / "SKILL.md": "python3 scripts/omc.py state sync-session --target . --mode autopilot",
+        ROOT / ".agents" / "skills" / "omc-task" / "SKILL.md": "python3 scripts/omc_guard.py sync-require --target . --mode autopilot",
+        ROOT / ".agents" / "skills" / "omc-review" / "SKILL.md": "python3 scripts/omc.py state sync-session --target . --mode autopilot",
+        ROOT / ".agents" / "skills" / "omc-investigate" / "SKILL.md": "python3 scripts/omc.py state sync-session --target . --mode autopilot",
+    }
 
-    for path in skill_files:
+    for path, needle in expected_markers.items():
         text = path.read_text(encoding="utf-8")
-        assert needle in text, f"{path.name} missing OMC session sync step"
+        assert needle in text, f"{path.name} missing session sync step"
+
+
+def test_guard_sync_require_replaces_previous_confirmed_role_for_mutating_gate(tmp_path: Path):
+    target = tmp_path / "repo"
+    target.mkdir()
+
+    init = _run("state", "init", "--target", str(target))
+    assert init.returncode == 0, init.stderr
+
+    review = _run(
+        "state",
+        "sync-session",
+        "--target",
+        str(target),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-review",
+        "--request",
+        "review session",
+        "--roles",
+        "code_review",
+    )
+    assert review.returncode == 0, review.stderr
+
+    guard = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_guard.py"),
+            "sync-require",
+            "--target",
+            str(target),
+            "--mode",
+            "autopilot",
+            "--title",
+            "omc-ship",
+            "--request",
+            "ship session",
+            "--roles",
+            "directive",
+            "--for",
+            "ship",
+        ],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert guard.returncode == 0, guard.stdout + guard.stderr
+    assert "roles=directive" in guard.stdout, guard.stdout
+
+    latest = _read_json(target / ".omc" / "state" / "latest.json")
+    assert latest.get("latest_roles") == ["directive"], latest
+    assert latest.get("latest_confirmed_roles") == ["directive"], latest
+
+
+def test_status_separates_staged_scope_from_out_of_scope_dirty_changes(tmp_path: Path):
+    target = tmp_path / "repo"
+    target.mkdir()
+
+    subprocess.run(["git", "init"], cwd=target, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.name", "OMC Test"], cwd=target, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "omc@example.com"], cwd=target, check=True, capture_output=True, text=True)
+
+    tracked_a = target / "a.py"
+    tracked_b = target / "b.py"
+    tracked_a.write_text("print('a1')\n", encoding="utf-8")
+    tracked_b.write_text("print('b1')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "a.py", "b.py"], cwd=target, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=target, check=True, capture_output=True, text=True)
+
+    init = _run("state", "init", "--target", str(target))
+    assert init.returncode == 0, init.stderr
+
+    sync = _run(
+        "state",
+        "sync-session",
+        "--target",
+        str(target),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-task",
+        "--request",
+        "scope separation",
+        "--roles",
+        "senior_coding",
+    )
+    assert sync.returncode == 0, sync.stderr
+
+    tracked_a.write_text("print('a2')\n", encoding="utf-8")
+    tracked_b.write_text("print('b2')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "a.py"], cwd=target, check=True, capture_output=True, text=True)
+
+    status = _run("state", "status", "--target", str(target))
+    assert status.returncode == 0, status.stderr
+    assert "현재 커밋 범위" in status.stdout, status.stdout
+    assert "a.py" in status.stdout, status.stdout
+    assert "범위 밖 dirty 변경" in status.stdout, status.stdout
+    assert "b.py" in status.stdout, status.stdout
+
+
+def test_status_calls_out_ship_blocker_when_commit_scope_is_empty(tmp_path: Path):
+    target = tmp_path / "repo"
+    target.mkdir()
+
+    subprocess.run(["git", "init"], cwd=target, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.name", "OMC Test"], cwd=target, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "omc@example.com"], cwd=target, check=True, capture_output=True, text=True)
+
+    tracked = target / "only_unstaged.py"
+    tracked.write_text("print('v1')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "only_unstaged.py"], cwd=target, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=target, check=True, capture_output=True, text=True)
+
+    init = _run("state", "init", "--target", str(target))
+    assert init.returncode == 0, init.stderr
+
+    sync = _run(
+        "state",
+        "sync-session",
+        "--target",
+        str(target),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-ship",
+        "--request",
+        "ship blocker hint",
+        "--roles",
+        "directive",
+    )
+    assert sync.returncode == 0, sync.stderr
+
+    tracked.write_text("print('v2')\n", encoding="utf-8")
+
+    status = _run("state", "status", "--target", str(target))
+    assert status.returncode == 0, status.stderr
+    assert "현재 커밋 범위: 없음" in status.stdout, status.stdout
+    assert "ship 차단 힌트" in status.stdout, status.stdout
+    assert "현재 커밋 범위가 없어 ship 불가" in status.stdout, status.stdout
+    assert "다음 조치 힌트" in status.stdout, status.stdout
+    assert "먼저 현재 커밋 범위를 만들어야 함" in status.stdout, status.stdout
