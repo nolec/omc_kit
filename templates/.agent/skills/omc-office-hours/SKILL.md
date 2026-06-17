@@ -39,7 +39,8 @@ AI가 임의로 PROCEED를 결정하지 않습니다. 사용자가 판단해야 
 ## 이후 액션
 
 - 주추천 1개만 제시: 현재 판정에 맞는 1개를 먼저 말합니다.
-- PROCEED면 `$omc-plan`
+- PROCEED + 범위 구체화가 다음 병목일 때만 `$omc-plan`
+- PROCEED + 사용자가 아직 구현/설계를 결정하지 않았으면 사용자 선택 대기
 - RETHINK면 흐린 질문만 다시 답하거나 `full 재질문`
 - HOLD면 `$omc-ceo-review`
 - 출력 후 자동 진입 금지

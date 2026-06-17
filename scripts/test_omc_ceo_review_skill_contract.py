@@ -63,6 +63,7 @@ REQUIRED_RECOMMENDATION_MARKERS = [
     "APPROVED",
     "주추천 1개",
     "$omc-plan",
+    "사용자 선택 대기",
     "REDUCE",
     "다시 실행",
     "REJECT",

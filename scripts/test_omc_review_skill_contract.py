@@ -174,6 +174,7 @@ def test_review_skill_recommendations_match_verdict_buckets():
         "APPROVE/APPROVE WITH NOTES",
         "배포 준비",
         "$omc-ship",
+        "사용자 선택 대기",
         "그 외",
         "종료/후속 작업 선택",
         "자동으로 진행하지는 않습니다.",

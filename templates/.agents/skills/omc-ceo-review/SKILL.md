@@ -39,7 +39,8 @@ git log --oneline -5 2>/dev/null
 근거 없는 결론 금지. 사용자 판단이 있어야 합니다.
 
 - 주추천 1개만 제시: 현재 결론에 맞는 1개를 먼저 말합니다.
-- APPROVED: `$omc-plan`으로 설계합니다.
+- APPROVED + 바로 범위 구체화가 필요할 때만 `$omc-plan`
+- APPROVED + 사용자가 우선순위 판단만 끝낸 상태면 사용자 선택 대기
 - REDUCE: 범위 축소 후 이 스킬을 다시 실행합니다.
 - REJECT: 보류 사유를 `.omc/notepad.md`에 기록하도록 안내합니다.
 

@@ -83,5 +83,5 @@ VERDICT: BLOCK / REVISE / APPROVE WITH NOTES / APPROVE
 
 - 주추천 1개: REVISE/BLOCK면 `$omc-task`
 - APPROVE/APPROVE WITH NOTES + 배포 준비 → `$omc-ship`
-- 그 외 → 종료/후속 작업 선택
+- APPROVE/APPROVE WITH NOTES + 사용자가 결과 확인 단계면 사용자 선택 대기 / 그 외 → 종료/후속 작업 선택
 - 자동으로 진행하지는 않습니다.

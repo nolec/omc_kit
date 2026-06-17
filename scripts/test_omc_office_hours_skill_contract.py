@@ -46,6 +46,7 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "$omc-brainstorm",
     "$omc-ceo-review",
     "$omc-plan",
+    "사용자 선택 대기",
     "lite",
     "full",
     "6개 답변 완료 전",

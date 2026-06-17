@@ -260,6 +260,7 @@ def test_plan_skill_recommendations_are_state_based_and_guarded():
         "범위 불명확",
         "$omc-critique",
         "$omc-office-hours",
+        "사용자 선택 대기",
         "자동으로 진행하지는 않습니다.",
     ]
     missing = [marker for marker in required_markers if marker not in text]
