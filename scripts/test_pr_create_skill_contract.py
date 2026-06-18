@@ -19,10 +19,13 @@ REQUIRED_PR_SKILL_PATHS = [
 ]
 OPTIONAL_PR_SKILL_PATHS = [
     ROOT / ".agent" / "skills" / "pr-create" / "SKILL.md",
+]
+FORBIDDEN_PR_SKILL_PATHS = [
     ROOT / "templates" / ".agent" / "skills" / "pr-create" / "SKILL.md",
 ]
 
 REQUIRED_SEQUENCE = [
+    "공용 보조 git 스킬",
     "non-omc",
     "omc_skill_check",
     "대상이 아님",
@@ -154,6 +157,11 @@ def test_pr_create_skill_paths_are_identical():
     canonical = texts[".agents/skills/pr-create/SKILL.md"]
     mismatched = [name for name, text in texts.items() if text != canonical]
     assert not mismatched, f"pr-create skill copies differ: {mismatched}"
+
+
+def test_pr_create_skill_keeps_templates_agents_as_single_source_of_truth():
+    found = [path.relative_to(ROOT).as_posix() for path in FORBIDDEN_PR_SKILL_PATHS if path.exists()]
+    assert not found, f"unexpected extra pr-create template copies: {found}"
 
 
 def test_pr_create_skill_stays_short_enough_to_scan():

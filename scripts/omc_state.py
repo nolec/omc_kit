@@ -348,6 +348,18 @@ def _format_scope_bucket(paths: list[str], *, empty: str = "없음", limit: int 
     return f"{len(paths)}개 ({text})"
 
 
+def _format_recent_runs_bucket(runs: list[dict[str, object]], *, limit: int = 3) -> str:
+    if not runs:
+        return "없음"
+    items: list[str] = []
+    for entry in runs[:limit]:
+        items.append(f"{entry.get('command_name', '')}({entry.get('status', '')})")
+    text = ", ".join(items)
+    if len(runs) > limit:
+        text += f" 외 {len(runs) - limit}개"
+    return text
+
+
 def _excerpt(text: str, limit: int = 120) -> str:
     compact = " ".join(text.split())
     if len(compact) <= limit:
@@ -1365,6 +1377,13 @@ def status(project_root: Path) -> str:
     notes = [entry for entry in entries if entry.get("kind") == "note"]
     latest_pending = _latest_pending_session(sessions)
     latest_meta = _read_json(_latest_path(project_root), {"latest_session_id": None, "latest_confirmed_session_id": None})
+    active_run = _load_run_entry(project_root, str(latest_meta.get("active_run_id")))
+    if active_run is not None and str(active_run.get("status")) != "running":
+        active_run = None
+    latest_run = _load_run_entry(project_root, str(latest_meta.get("latest_run_id")))
+    recent_finished_runs = [
+        entry for entry in reversed(runs) if str(entry.get("status")) in {"completed", "failed", "aborted"}
+    ]
     latest = _load_session_entry(project_root, str(latest_meta.get("latest_session_id")))
     if latest is None:
         latest = entries[-1] if entries else None
@@ -1388,6 +1407,12 @@ def status(project_root: Path) -> str:
     lines.append(f"- latest_pending_request: {_excerpt(str(latest_pending.get('request', '')), 120) if latest_pending else 'None'}")
     lines.append(f"- active_run_id: {latest_meta.get('active_run_id')}")
     lines.append(f"- latest_run_id: {latest_meta.get('latest_run_id')}")
+    if active_run:
+        lines.append(f"- active_run: `{active_run.get('command_name', '')}` ({active_run.get('status', '')})")
+    elif latest_run:
+        lines.append(f"- latest_run: `{latest_run.get('command_name', '')}` ({latest_run.get('status', '')})")
+    if recent_finished_runs:
+        lines.append(f"- recent_runs: {_format_recent_runs_bucket(recent_finished_runs)}")
     lines.append(f"- enforce_confirm: {policy.get('enforce_confirm', True)}")
     lines.append(f"- 현재 커밋 범위: {_format_scope_bucket(git_scope['staged'])}")
     lines.append(f"- 범위 밖 dirty 변경: {_format_scope_bucket(git_scope['unstaged'])}")

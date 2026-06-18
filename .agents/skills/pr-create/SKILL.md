@@ -5,7 +5,7 @@ description: "GitHub PR 생성 — 프로젝트 표준 템플릿·라벨·Assign
 
 # PR Create
 
-non-omc 스킬이며 `omc_skill_check` 대상이 아님.
+공용 보조 git 스킬입니다. non-omc 스킬이며 `omc_skill_check` 대상이 아님.
 
 ## Phase 0. Ship Gate
 
