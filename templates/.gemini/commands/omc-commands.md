@@ -267,6 +267,26 @@ python3 scripts/omc_pipeline_guard.py status
 
 ---
 
+## /reentry — 프로젝트 복귀 맵
+
+**말하는 방법**: "이 프로젝트 뭐였지" / "오랜만에 왔어 빠르게 파악해줘" / "어디부터 봐야 해"
+
+**실행**:
+1. README / ETHOS.md / AGENTS.md로 프로젝트 목적·원칙 복원
+2. `git status -sb` / `git log --oneline -5` / `python3 scripts/omc.py state status --target .` 로 현재 상태 보강
+3. 아래만 짧게 출력
+   - 프로젝트 한 줄 요약
+   - 핵심 구조
+   - 실행/검증 진입점
+   - 주의할 SSOT/금지 경로
+   - 최근 작업 흔적
+   - 다음 읽을 파일 3개
+   - 추천 다음 스킬 1개
+
+**금지**: tree dump / README 재요약 / 구현 태스크 분해
+
+---
+
 ## /retro — 주간 회고
 
 **말하는 방법**: "이번 주 회고해줘" / "지난 세션들 분석해줘"

@@ -19,6 +19,7 @@ $omc-ship
 $omc-critique
 $omc-retro
 $omc-benchmark
+$omc-reentry
 ```
 
 **암묵적 트리거 (자연어)**: 아래 중 하나라도 해당하면 CONTRACT 양식을 즉시 출력하고 사용자 컨펌을 받습니다.
@@ -99,6 +100,17 @@ python3 scripts/omc_lesson.py add -i    # 교훈 추가
 python3 scripts/omc.py state status --target .
 python3 scripts/omc_pipeline_guard.py status
 ```
+
+### `$omc-reentry [설명]`
+
+오랜만에 돌아온 프로젝트를 빠르게 복원:
+1. README / ETHOS.md / AGENTS.md로 목적과 원칙 파악
+2. `git status -sb` / `git log --oneline -5` / `python3 scripts/omc.py state status --target .` 로 현재 상태 보강
+3. 프로젝트 한 줄 요약 / 핵심 구조 / 진입점 / SSOT / 최근 흔적 / 다음 읽을 파일 3개 / 추천 다음 스킬 1개 출력
+
+주의:
+- `omc-status`는 현재 세션 상태, `$omc-reentry`는 프로젝트 복귀 맥락 복원
+- tree dump / README 재요약 / 구현 태스크 분해 금지
 
 ### `$omc-benchmark [기능]`
 

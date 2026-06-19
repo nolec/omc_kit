@@ -30,6 +30,7 @@ python3 scripts/omc_role_suggest.py "[사용자 요청 텍스트]"
 | 조사, investigate, 원인, 디버그 | `analysis` |
 | 교훈, lesson, 기록, 배운 거 | `search` |
 | 상태, status, 어디까지, 현재 작업 | — |
+| 복귀, reentry, 오랜만에, 구조 파악, 어디부터 봐야 | `analysis` |
 | 브레인스토밍, brainstorm, 아이디어 | `analysis` |
 | 벤치마크, benchmark, 경쟁사, 세계 1등 | `analysis` |
 | 오피스아워, office-hours, 방향 맞아 | `analysis` |
