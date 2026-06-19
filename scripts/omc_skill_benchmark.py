@@ -131,13 +131,52 @@ def build_report(cases: list[dict[str, object]]) -> dict[str, object]:
     return {"cases": scored_cases, "summary": summary}
 
 
+def _require_string_field(case: dict[str, object], index: int, field: str) -> str:
+    value = case.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"case[{index}].{field} is required")
+    return value
+
+
+def _optional_string_list(case: dict[str, object], index: int, field: str) -> list[str]:
+    value = case.get(field, [])
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError(f"case[{index}].{field} must be a list of strings")
+    return value
+
+
+def _normalize_case(case: object, index: int) -> dict[str, object]:
+    if not isinstance(case, dict):
+        raise ValueError(f"case[{index}] must be an object")
+
+    normalized: dict[str, object] = {
+        "response": _require_string_field(case, index, "response"),
+        "expected_next_actions": _optional_string_list(case, index, "expected_next_actions"),
+        "required_markers": _optional_string_list(case, index, "required_markers"),
+    }
+
+    for field in ("skill", "request"):
+        value = case.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"case[{index}].{field} must be a string")
+        normalized[field] = value
+
+    return normalized
+
+
 def _load_cases(path: Path) -> list[dict[str, object]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(data, list):
-        return data
-    if isinstance(data, dict) and isinstance(data.get("cases"), list):
-        return data["cases"]
-    raise ValueError("input JSON must be a list or an object with a 'cases' list")
+        cases = data
+    elif isinstance(data, dict) and isinstance(data.get("cases"), list):
+        cases = data["cases"]
+    else:
+        raise ValueError("input JSON must be a list or an object with a 'cases' list")
+    return [_normalize_case(case, index) for index, case in enumerate(cases)]
 
 
 def _parser() -> argparse.ArgumentParser:

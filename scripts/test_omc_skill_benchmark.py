@@ -124,3 +124,56 @@ def test_score_cli_outputs_json(tmp_path: Path):
     assert payload["summary"]["case_count"] == 1
     assert payload["cases"][0]["skill"] == "omc-ship"
     assert payload["cases"][0]["metrics"]["expected_next_action_hit"] is True
+
+
+def test_load_cases_normalizes_optional_fields_and_missing_text_fields(tmp_path: Path):
+    mod = _load_module()
+
+    input_file = tmp_path / "cases.json"
+    input_file.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "response": "다음 액션: $omc-plan\n",
+                        "expected_next_actions": None,
+                        "required_markers": None,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    cases = mod._load_cases(input_file)
+
+    assert cases == [
+        {
+            "response": "다음 액션: $omc-plan\n",
+            "expected_next_actions": [],
+            "required_markers": [],
+        }
+    ]
+
+
+def test_load_cases_rejects_invalid_case_shapes(tmp_path: Path):
+    mod = _load_module()
+
+    invalid_cases = [
+        [{"skill": "omc-plan"}],
+        [{"response": "", "expected_next_actions": [], "required_markers": []}],
+        [{"response": "ok", "expected_next_actions": "bad", "required_markers": []}],
+        [{"response": "ok", "expected_next_actions": [], "required_markers": [1]}],
+    ]
+
+    for index, payload in enumerate(invalid_cases):
+        input_file = tmp_path / f"invalid-{index}.json"
+        input_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            mod._load_cases(input_file)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid payload should fail: {payload}")
