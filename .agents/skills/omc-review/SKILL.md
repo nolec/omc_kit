@@ -20,7 +20,7 @@ python3 scripts/omc.py state status --target . 2>/dev/null
 
 ## 필수 체크
 
-- 범위 확정 / 파일:라인 근거 / 검증 커맨드는 항상 기록
+- 범위 확정 / 파일:라인 근거 / 검증 커맨드는 항상 기록, 출력이 길어져도 마지막 `검증 커맨드 / 판정 / VERDICT / 다음 추천`은 생략하지 않습니다.
 
 리뷰어가 사용자에게 바로 보여줄 것: 파일:라인 근거 이슈 / 검증 커맨드 / 판정 / VERDICT
 
@@ -77,7 +77,7 @@ VERDICT: BLOCK / REVISE / APPROVE WITH NOTES / APPROVE
 ## 규칙
 
 - 범위 준수, 파일:라인 근거, 수정 방향은 필수입니다.
-- `BLOCK`/`REVISE`면 수정 후 다시 `$omc-review`를 실행합니다.
+- `BLOCK`/`REVISE`면 수정 방향 포함 후 수정하고 다시 `$omc-review`를 실행합니다. (`REVISE/BLOCK면 수정 방향 포함`)
 
 ## 다음 추천
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "omc_skill_benchmark.py"
+FIXTURE_PATH = ROOT / "scripts" / "fixtures" / "omc_skill_benchmark_cases.json"
 
 
 def _load_module():
@@ -74,6 +75,26 @@ def test_build_report_aggregates_case_scores():
     assert report["summary"]["expected_next_action_hit_rate"] == 0.5
     assert report["summary"]["avg_missing_markers_count"] == 0
     assert report["summary"]["avg_output_chars"] > 0
+
+
+def test_build_report_keeps_summary_schema_for_empty_cases():
+    mod = _load_module()
+
+    report = mod.build_report([])
+
+    assert report == {
+        "cases": [],
+        "summary": {
+            "case_count": 0,
+            "avg_output_chars": 0,
+            "next_action_single_rate": 0,
+            "expected_next_action_hit_rate": 0,
+            "avg_question_count": 0,
+            "avg_missing_markers_count": 0,
+            "avg_score_percent": 0,
+            "source_type_counts": {},
+        },
+    }
 
 
 def test_next_action_parsing_ignores_skill_mentions_outside_next_action_line():
@@ -166,6 +187,9 @@ def test_load_cases_rejects_invalid_case_shapes(tmp_path: Path):
         [{"response": "", "expected_next_actions": [], "required_markers": []}],
         [{"response": "ok", "expected_next_actions": "bad", "required_markers": []}],
         [{"response": "ok", "expected_next_actions": [], "required_markers": [1]}],
+        [{"response": "ok", "expected_next_actions": [], "required_markers": [], "source_type": "unknown"}],
+        [{"response": "ok", "expected_next_actions": [], "required_markers": [], "source_type": "observed_output"}],
+        [{"response": "ok", "expected_next_actions": [], "required_markers": [], "source_type": "observed_output", "evidence": 1}],
     ]
 
     for index, payload in enumerate(invalid_cases):
@@ -177,3 +201,62 @@ def test_load_cases_rejects_invalid_case_shapes(tmp_path: Path):
             pass
         else:
             raise AssertionError(f"invalid payload should fail: {payload}")
+
+
+def test_fixture_cases_include_reentry_scenario():
+    payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+
+    reentry_cases = [case for case in cases if case.get("skill") == "omc-reentry"]
+    assert len(reentry_cases) == 3, "fixture must include exactly three omc-reentry cases"
+    observed_cases = [case for case in cases if case.get("source_type") == "observed_output"]
+    assert observed_cases, "fixture must include at least one observed_output case"
+
+    case_map = {case["request"]: case for case in reentry_cases}
+    good_case = case_map["이 프로젝트 뭐였지"]
+    multi_action_case = case_map["복귀 요약 후 다음에 뭘 해야 할지 추천해줘"]
+    missing_marker_case = case_map["구조만 빠르게 알려줘"]
+
+    assert good_case["expected_next_actions"] == ["$omc-plan"]
+    assert good_case["source_type"] == "synthetic"
+    assert "프로젝트 한 줄 요약" in good_case["required_markers"]
+    assert "다음 읽을 파일 3개" in good_case["required_markers"]
+    assert multi_action_case["expected_next_actions"] == ["$omc-plan"]
+    assert "추천 다음 스킬" in multi_action_case["required_markers"]
+    assert "다음 읽을 파일 3개" in missing_marker_case["required_markers"]
+
+    observed_case = observed_cases[0]
+    assert observed_case["skill"] == "omc-plan"
+    assert observed_case["expected_next_actions"] == ["$omc-task"]
+    assert observed_case.get("evidence"), "observed_output case must explain evidence source"
+
+
+def test_score_cli_outputs_summary_for_fixture_cases():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "score", "--input", str(FIXTURE_PATH), "--format", "json"],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["summary"]["case_count"] == 4
+    assert payload["summary"]["next_action_single_rate"] == 3 / 4
+    assert payload["summary"]["expected_next_action_hit_rate"] == 2 / 4
+    assert payload["summary"]["avg_missing_markers_count"] == 1 / 4
+    assert payload["summary"]["source_type_counts"] == {
+        "observed_output": 1,
+        "synthetic": 3,
+    }
+    reentry_cases = [case for case in payload["cases"] if case["skill"] == "omc-reentry"]
+    assert len(reentry_cases) == 3, "score output must include all omc-reentry fixture cases"
+
+    case_map = {case["request"]: case for case in reentry_cases}
+    assert case_map["이 프로젝트 뭐였지"]["score"]["verdict"] == "good"
+    assert case_map["복귀 요약 후 다음에 뭘 해야 할지 추천해줘"]["metrics"]["next_action_single"] is False
+    assert case_map["구조만 빠르게 알려줘"]["metrics"]["missing_markers_count"] == 1
+    observed_case = next(case for case in payload["cases"] if case.get("source_type") == "observed_output")
+    assert observed_case["skill"] == "omc-plan"
+    assert observed_case["metrics"]["expected_next_action_hit"] is True

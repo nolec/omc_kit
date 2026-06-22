@@ -1,0 +1,59 @@
+{
+  "cases": [
+    {
+      "skill": "omc-reentry",
+      "request": "이 프로젝트 뭐였지",
+      "source_type": "synthetic",
+      "response": "프로젝트 한 줄 요약: OMC 운영 킷\n핵심 구조: scripts/, templates/, .omc/\n실행/검증 진입점: python3 scripts/omc.py state status --target .\n주의할 SSOT/금지 경로: templates/.agents/skills/\n최근 작업 흔적: 마지막 커밋 반영됨\n다음 읽을 파일 3개:\n1. README.md\n2. scripts/install.py\n3. templates/AGENTS.md\n추천 다음 스킬: $omc-plan\n다음 액션: $omc-plan\n",
+      "expected_next_actions": ["$omc-plan"],
+      "required_markers": [
+        "프로젝트 한 줄 요약",
+        "핵심 구조",
+        "다음 읽을 파일 3개",
+        "추천 다음 스킬",
+        "다음 액션"
+      ]
+    },
+    {
+      "skill": "omc-reentry",
+      "request": "복귀 요약 후 다음에 뭘 해야 할지 추천해줘",
+      "source_type": "synthetic",
+      "response": "프로젝트 한 줄 요약: OMC 운영 킷\n핵심 구조: scripts/, templates/, .omc/\n실행/검증 진입점: python3 scripts/omc.py state status --target .\n주의할 SSOT/금지 경로: templates/.agents/skills/\n최근 작업 흔적: reentry 추가 이후 benchmark 보강 중\n다음 읽을 파일 3개:\n1. README.md\n2. scripts/omc_skill_benchmark.py\n3. scripts/test_omc_skill_benchmark.py\n추천 다음 스킬: $omc-plan 또는 $omc-review\n다음 액션: $omc-plan 또는 $omc-review\n",
+      "expected_next_actions": ["$omc-plan"],
+      "required_markers": [
+        "프로젝트 한 줄 요약",
+        "핵심 구조",
+        "다음 읽을 파일 3개",
+        "추천 다음 스킬",
+        "다음 액션"
+      ]
+    },
+    {
+      "skill": "omc-reentry",
+      "request": "구조만 빠르게 알려줘",
+      "source_type": "synthetic",
+      "response": "프로젝트 한 줄 요약: OMC 운영 킷\n핵심 구조: scripts/, templates/, .omc/\n실행/검증 진입점: python3 scripts/omc.py state status --target .\n주의할 SSOT/금지 경로: templates/.agents/skills/\n최근 작업 흔적: 마지막 커밋 반영됨\n추천 다음 스킬: $omc-task\n다음 액션: $omc-task\n",
+      "expected_next_actions": ["$omc-plan"],
+      "required_markers": [
+        "프로젝트 한 줄 요약",
+        "핵심 구조",
+        "다음 읽을 파일 3개",
+        "추천 다음 스킬",
+        "다음 액션"
+      ]
+    },
+    {
+      "skill": "omc-plan",
+      "request": "react-query devtools 프로덕션 제외 설계 검토",
+      "source_type": "observed_output",
+      "evidence": "2026-06-17 Claude Code plan 실행 스크린샷 기반 관찰 샘플",
+      "response": "롤백:\n- static import 복원 1분 이내 가능\n\n구현 방식:\n```tsx\nconst ReactQueryDevtools =\n  process.env.NODE_ENV === 'development'\n    ? dynamic(() =>\n        import('@tanstack/react-query-devtools').then((m) => ({\n          default: m.ReactQueryDevtools,\n        })), { ssr: false })\n    : () => null;\n```\n설계 검토 완료\nPHASE 3 ▸ TDD 태스크 분해\nTDD 예외 적용: 이 변경은 `_app.tsx` import 방식 변경입니다.\n검증은 빌드 산출물 대체:\n다음 액션: $omc-task\n",
+      "expected_next_actions": ["$omc-task"],
+      "required_markers": [
+        "구현 방식",
+        "PHASE 3",
+        "다음 액션"
+      ]
+    }
+  ]
+}

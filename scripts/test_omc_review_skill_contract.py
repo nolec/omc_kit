@@ -74,6 +74,20 @@ REQUIRED_SAFETY_MARKERS = [
     "[제안]",
 ]
 
+REQUIRED_COMPLETION_MARKERS = [
+    "출력이 길어져도",
+    "검증 커맨드",
+    "판정",
+    "VERDICT",
+    "다음 추천",
+    "생략하지 않습니다.",
+]
+
+REQUIRED_REVISE_MARKERS = [
+    "REVISE/BLOCK",
+    "REVISE/BLOCK면 수정 방향 포함",
+]
+
 
 def _read(path: Path) -> str:
     assert path.exists(), f"missing review skill path: {path.relative_to(ROOT)}"
@@ -163,6 +177,18 @@ def test_review_skill_declares_non_negotiable_review_contract():
     text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_SAFETY_MARKERS if marker not in text]
     assert not missing, f"missing review safety markers: {missing}"
+
+
+def test_review_skill_forces_completion_section_even_for_long_output():
+    text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_COMPLETION_MARKERS if marker not in text]
+    assert not missing, f"missing completion markers: {missing}"
+
+
+def test_review_skill_requires_fix_direction_for_revise_and_block():
+    text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_REVISE_MARKERS if marker not in text]
+    assert not missing, f"missing revise markers: {missing}"
 
 
 def test_review_skill_recommendations_match_verdict_buckets():

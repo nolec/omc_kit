@@ -83,12 +83,17 @@ def evaluate_case(case: dict[str, object]) -> dict[str, object]:
         "missing_markers": missing_markers,
     }
 
-    return {
+    scored = {
         "skill": str(case.get("skill", "")),
         "request": str(case.get("request", "")),
         "metrics": metrics,
         "score": _score_case(metrics),
     }
+    for field in ("source_type", "evidence"):
+        value = case.get(field)
+        if isinstance(value, str) and value:
+            scored[field] = value
+    return scored
 
 
 def build_report(cases: list[dict[str, object]]) -> dict[str, object]:
@@ -105,6 +110,7 @@ def build_report(cases: list[dict[str, object]]) -> dict[str, object]:
                 "avg_question_count": 0,
                 "avg_missing_markers_count": 0,
                 "avg_score_percent": 0,
+                "source_type_counts": {},
             },
         }
 
@@ -127,8 +133,19 @@ def build_report(cases: list[dict[str, object]]) -> dict[str, object]:
             sum(item["metrics"]["missing_markers_count"] for item in scored_cases) / case_count
         ),
         "avg_score_percent": sum(item["score"]["percent"] for item in scored_cases) / case_count,
+        "source_type_counts": _count_source_types(scored_cases),
     }
     return {"cases": scored_cases, "summary": summary}
+
+
+def _count_source_types(cases: list[dict[str, object]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for case in cases:
+        source_type = case.get("source_type")
+        if not isinstance(source_type, str) or not source_type:
+            continue
+        counts[source_type] = counts.get(source_type, 0) + 1
+    return counts
 
 
 def _require_string_field(case: dict[str, object], index: int, field: str) -> str:
@@ -157,13 +174,19 @@ def _normalize_case(case: object, index: int) -> dict[str, object]:
         "required_markers": _optional_string_list(case, index, "required_markers"),
     }
 
-    for field in ("skill", "request"):
+    for field in ("skill", "request", "source_type", "evidence"):
         value = case.get(field)
         if value is None:
             continue
         if not isinstance(value, str):
             raise ValueError(f"case[{index}].{field} must be a string")
         normalized[field] = value
+
+    source_type = normalized.get("source_type")
+    if source_type is not None and source_type not in {"synthetic", "observed_output"}:
+        raise ValueError(f"case[{index}].source_type must be synthetic or observed_output")
+    if source_type == "observed_output" and not str(normalized.get("evidence", "")).strip():
+        raise ValueError(f"case[{index}].evidence is required for observed_output")
 
     return normalized
 

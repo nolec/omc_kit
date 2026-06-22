@@ -69,6 +69,12 @@ REQUIRED_RISK_CONCEPTS = [
     ("분리", "범위"),
 ]
 
+REQUIRED_HIGH_RISK_RECOMMENDATION_MARKERS = [
+    "고위험",
+    "$omc-critique",
+    "고위험이면 먼저",
+]
+
 VALID_PLAN_SAMPLE = """
 목표: 로그인 실패 원인을 재현 가능한 테스트로 고정한다.
 범위 (포함): API 에러 매핑과 실패 메시지 테스트
@@ -265,6 +271,12 @@ def test_plan_skill_recommendations_are_state_based_and_guarded():
     ]
     missing = [marker for marker in required_markers if marker not in text]
     assert not missing, f"missing plan recommendation markers: {missing}"
+
+
+def test_plan_skill_recommends_critique_for_high_risk_even_when_scope_is_clear():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_HIGH_RISK_RECOMMENDATION_MARKERS if marker not in text]
+    assert not missing, f"missing high-risk recommendation markers: {missing}"
 
 
 def test_plan_skill_explains_visible_vs_implicit_steps():

@@ -231,7 +231,7 @@ def test_critique_skill_recommendations_stay_conservative():
         "PROCEED",
         "PLAN 모드",
         "CODE 모드",
-        "사용자 선택 대기",
+        "범위 고정",
         "$omc-task",
         "$omc-review",
         "자동으로 진행하지는 않습니다.",

@@ -73,8 +73,8 @@ confirm 후에만 `$omc-task`로 넘깁니다.
 
 ## 다음 추천
 
-- 주추천 1개만 제시: 범위 고정 + 컨펌 완료면 `$omc-task`
-- 범위 불명확 또는 흔들림 → `$omc-critique` / `$omc-office-hours`
+- 주추천 1개만 제시: 새 파일/API 변경/3개 이상 파일 같은 고위험이면 먼저 `$omc-critique`
+- 그 외에만 범위 고정 + 컨펌 완료면 `$omc-task`, 범위 불명확 또는 흔들림이면 `$omc-critique` / `$omc-office-hours`
 - 사용자가 설계만 확인 중이거나 다음 단계를 아직 고르지 않음 → 사용자 선택 대기
 - 자동으로 진행하지는 않습니다.
 
