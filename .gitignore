@@ -66,7 +66,10 @@ run
 .agent-hooks/omc-prompt-inject.sh
 .agent-hooks/omc-session-end.sh
 .agent-hooks/omc-session-start.sh
-.claude/
+/.claude/*
+!/.claude/commands/
+/.claude/commands/*
+!/.claude/commands/qa.md
 .codex/
 .cursor/hooks.json
 .cursor/hooks/omc-require-confirm.sh

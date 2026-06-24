@@ -37,6 +37,7 @@ OMC_EXECUTOR=claude python3 scripts/omc.py hook session_start --target .
 | `/investigate [이슈]` | 4단계 방법론으로 버그 근본 원인 추적 |
 | `/lesson [키워드]` | 교훈 추가/검색 (BM25 기반) |
 | `/status` | OMC 상태 확인 |
+| `/qa [변경]` | 구현 후 수동 QA 체크리스트 생성 |
 | `/ship [대상]` | TDD 게이트 → 배포 |
 
 ### 선택 (필요할 때만)

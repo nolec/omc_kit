@@ -12,6 +12,7 @@ Codex CLI에서 OMC 기능을 사용하는 방법입니다.
 $omc-plan 로그인 기능 구현
 $omc-task 버튼 컴포넌트 추가
 $omc-review
+$omc-qa 주문 쿠폰 적용 변경
 $omc-investigate 빌드 오류
 $omc-lesson 타입 오류
 $omc-status
@@ -71,6 +72,17 @@ python3 scripts/omc_pipeline_guard.py red-done <테스트파일>
 ```bash
 git status -sb && git diff
 ```
+
+### `$omc-qa [변경]`
+
+구현 후 수동 QA 체크리스트 생성:
+- 변경 기능 / 영향 화면 / 사용자 유형 / 확인 환경 기준
+- 정상 흐름 / 예외 흐름 / 회귀 포인트 / 우선순위 QA 5개 출력
+- 코드 리뷰나 배포 게이트를 대신하지 않음
+
+다음 추천:
+- 주추천 1개만 제시: 구현 후 검수면 `$omc-review`, 배포 직전 최종 점검이면 `$omc-ship`, 구현 전이거나 입력 부족이면 `$omc-plan`
+- 자동으로 진행하지는 않습니다.
 
 ### `$omc-investigate [이슈]`
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -260,6 +261,43 @@ class TestRepositoryGitignore(unittest.TestCase):
     def test_gitignore_excludes_install_source_metadata(self):
         gitignore = (Path(__file__).resolve().parents[1] / ".gitignore").read_text(encoding="utf-8")
         self.assertIn(".omc/install-source.json", gitignore)
+
+    def test_gitignore_keeps_claude_command_docs_trackable(self):
+        gitignore = (Path(__file__).resolve().parents[1] / ".gitignore").read_text(encoding="utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".gitignore").write_text(gitignore, encoding="utf-8")
+            (root / ".claude" / "commands").mkdir(parents=True)
+            (root / "templates" / ".claude" / "commands").mkdir(parents=True)
+            (root / ".claude" / "CLAUDE.md").write_text("overlay\n", encoding="utf-8")
+            (root / ".claude" / "commands" / "qa.md").write_text("# /qa\n", encoding="utf-8")
+            (root / "templates" / ".claude" / "commands" / "qa.md").write_text("# /qa\n", encoding="utf-8")
+
+            subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True, text=True)
+
+            ignored_overlay = subprocess.run(
+                ["git", "check-ignore", ".claude/CLAUDE.md"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+            )
+            tracked_live_command = subprocess.run(
+                ["git", "check-ignore", ".claude/commands/qa.md"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+            )
+            tracked_template_command = subprocess.run(
+                ["git", "check-ignore", "templates/.claude/commands/qa.md"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(ignored_overlay.returncode, 0, ignored_overlay.stderr)
+            self.assertNotEqual(tracked_live_command.returncode, 0, tracked_live_command.stdout)
+            self.assertNotEqual(tracked_template_command.returncode, 0, tracked_template_command.stdout)
 
     def test_install_writes_source_metadata_and_skips_embedded_kit_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
