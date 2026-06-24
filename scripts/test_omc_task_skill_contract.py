@@ -164,6 +164,7 @@ def test_task_skill_recommendations_cover_success_and_unknown_failures():
     text = _read(REQUIRED_TASK_SKILL_PATHS[0])
     required_markers = [
         "다음 추천",
+        "우선순위",
         "구현 완료 + 게이트 통과",
         "$omc-review",
         "사용자 선택 대기",

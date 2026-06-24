@@ -146,6 +146,14 @@ DoD: 잘 된다
   GREEN  : 코드
 """
 
+VALID_HIGH_RISK_PLAN_RECOMMENDATION_SAMPLE = """
+다음 추천:
+- 주추천 1개만 제시, 우선순위: 새 파일/API 변경/3개 이상 파일 같은 고위험이면 먼저 `$omc-critique`
+- 그 외에만 범위 고정 + 컨펌 완료면 `$omc-task`, 범위 불명확 또는 흔들림이면 `$omc-critique` / `$omc-office-hours`
+- 사용자가 설계만 확인 중이거나 다음 단계를 아직 고르지 않음 → 사용자 선택 대기
+- 자동으로 진행하지는 않습니다.
+"""
+
 
 def _read(path: Path) -> str:
     assert path.exists(), f"missing plan skill path: {path.relative_to(ROOT)}"
@@ -199,6 +207,25 @@ def _extract_task_count(sample: str) -> int:
 
 def _missing_concepts(text: str, concepts: list[tuple[str, ...]]) -> list[tuple[str, ...]]:
     return [concept for concept in concepts if not any(token in text for token in concept)]
+
+
+def _extract_primary_recommendation(sample: str) -> str:
+    in_section = False
+    for raw_line in sample.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("다음 추천"):
+            in_section = True
+            continue
+        if not in_section or not line.startswith("-"):
+            continue
+        if "사용자 선택 대기" in line:
+            return "사용자 선택 대기"
+        match = re.search(r"(\$omc-[a-z-]+)", line)
+        if match:
+            return match.group(1)
+    raise AssertionError("primary recommendation not found")
 
 
 def test_plan_skill_paths_are_identical():
@@ -261,6 +288,7 @@ def test_plan_skill_recommendations_are_state_based_and_guarded():
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     required_markers = [
         "다음 추천",
+        "우선순위",
         "범위 고정 + 컨펌 완료",
         "$omc-task",
         "범위 불명확",
@@ -277,6 +305,10 @@ def test_plan_skill_recommends_critique_for_high_risk_even_when_scope_is_clear()
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_HIGH_RISK_RECOMMENDATION_MARKERS if marker not in text]
     assert not missing, f"missing high-risk recommendation markers: {missing}"
+
+
+def test_plan_recommendation_fixture_prefers_critique_for_high_risk():
+    assert _extract_primary_recommendation(VALID_HIGH_RISK_PLAN_RECOMMENDATION_SAMPLE) == "$omc-critique"
 
 
 def test_plan_skill_explains_visible_vs_implicit_steps():

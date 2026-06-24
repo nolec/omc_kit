@@ -97,6 +97,17 @@ OMC 가드: PASS
 결론: SHIP READY
 """
 
+VALID_READY_SHIP_RECOMMENDATION_SAMPLE = """
+결론: SHIP READY
+다음 추천:
+- 주추천 1개만 제시, 우선순위: 현재 결론에 맞는 1개를 먼저 말합니다.
+- SHIP READY → 사용자 선택 대기
+- 실제 배포 후 → `$omc-retro`
+- BLOCKED + 테스트/회귀 실패 → `$omc-investigate`
+- BLOCKED + 신규 테스트 누락/TDD 위반 → `$omc-task`
+- 자동으로 진행하지는 않습니다.
+"""
+
 
 def _read(path: Path) -> str:
     assert path.exists(), f"missing ship skill path: {path.relative_to(ROOT)}"
@@ -118,6 +129,25 @@ def _collect_ship_skill_texts(
         }
     )
     return texts
+
+
+def _extract_primary_recommendation(sample: str) -> str:
+    in_section = False
+    for raw_line in sample.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("다음 추천"):
+            in_section = True
+            continue
+        if not in_section or not line.startswith("-"):
+            continue
+        if "사용자 선택 대기" in line:
+            return "사용자 선택 대기"
+        match = re.search(r"(\$omc-[a-z-]+)", line)
+        if match:
+            return match.group(1)
+    raise AssertionError("primary recommendation not found")
 
 
 def _validate_ship_output(sample: str) -> list[str]:
@@ -218,6 +248,7 @@ def test_ship_skill_recommendations_match_blocked_and_post_deploy_states():
     text = _read(REQUIRED_SHIP_SKILL_PATHS[0])
     required_markers = [
         "다음 추천",
+        "우선순위",
         "SHIP READY",
         "사용자 선택 대기",
         "실제 배포 후",
@@ -229,6 +260,10 @@ def test_ship_skill_recommendations_match_blocked_and_post_deploy_states():
     ]
     missing = [marker for marker in required_markers if marker not in text]
     assert not missing, f"missing ship recommendation markers: {missing}"
+
+
+def test_ship_recommendation_fixture_holds_on_ready_state():
+    assert _extract_primary_recommendation(VALID_READY_SHIP_RECOMMENDATION_SAMPLE) == "사용자 선택 대기"
 
 
 def test_ship_skill_has_single_required_check_section():

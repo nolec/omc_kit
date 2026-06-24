@@ -226,6 +226,7 @@ def test_critique_skill_recommendations_stay_conservative():
     text = _read(REQUIRED_CRITIQUE_SKILL_PATHS[0])
     required_markers = [
         "다음 추천",
+        "우선순위",
         "HOLD/REVISE",
         "$omc-plan",
         "PROCEED",
