@@ -218,6 +218,9 @@ def _compare_case(case: dict[str, object]) -> dict[str, object]:
         value = case.get(field)
         if isinstance(value, str) and value:
             compared[field] = value
+    comparison_scope = case.get("comparison_scope")
+    if isinstance(comparison_scope, str) and comparison_scope:
+        compared["comparison_scope"] = comparison_scope
     baseline_response_sample = case.get("baseline_response_sample")
     if isinstance(baseline_response_sample, str) and baseline_response_sample:
         compared["baseline"]["response_sample"] = baseline_response_sample
@@ -231,6 +234,8 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
     baseline_output_chars = float(summary["baseline_output_chars_avg"])
     output_delta = float(summary["candidate_output_chars_delta"])
     output_growth_rate = (output_delta / baseline_output_chars) if baseline_output_chars else 0
+    observed_output_count = int(summary.get("observed_output_count", 0))
+    observed_same_surface_count = int(summary.get("observed_same_surface_count", 0))
 
     checks = {
         "mode_accuracy_up": float(summary["mode_accuracy_delta"]) >= 0.15,
@@ -246,12 +251,18 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
     else:
         verdict = "hold"
 
+    observed_evidence_guard = "ok"
+    if observed_output_count > 0 and observed_same_surface_count == 0 and verdict == "adopt":
+        verdict = "revise"
+        observed_evidence_guard = "insufficient_same_surface"
+
     return {
         "verdict": verdict,
         "passed_checks": passed,
         "total_checks": len(checks),
         "checks": checks,
         "output_growth_rate": output_growth_rate,
+        "observed_evidence_guard": observed_evidence_guard,
     }
 
 
@@ -274,6 +285,9 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
             "candidate_task_start_delay_avg": 0,
             "candidate_task_start_delay_delta": 0,
             "source_type_counts": {},
+            "comparison_scope_counts": {},
+            "observed_output_count": 0,
+            "observed_same_surface_count": 0,
         }
         return {"cases": [], "summary": summary, "decision": _decision_from_summary(summary)}
 
@@ -289,6 +303,11 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
     candidate_task_start_delay_avg = _average(
         [item["candidate"]["task_start_delay"] for item in compared_cases]
     )
+    observed_output_cases = [
+        item for item in compared_cases if item.get("source_type") == "observed_output"
+    ]
+    comparison_scope_counts = _count_comparison_scopes(observed_output_cases)
+    observed_same_surface_count = comparison_scope_counts.get("same_surface", 0)
 
     summary = {
         "case_count": case_count,
@@ -307,6 +326,9 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
             candidate_task_start_delay_avg - baseline_task_start_delay_avg
         ),
         "source_type_counts": _count_source_types(compared_cases),
+        "comparison_scope_counts": comparison_scope_counts,
+        "observed_output_count": len(observed_output_cases),
+        "observed_same_surface_count": observed_same_surface_count,
     }
     return {"cases": compared_cases, "summary": summary, "decision": _decision_from_summary(summary)}
 
@@ -318,6 +340,16 @@ def _count_source_types(cases: list[dict[str, object]]) -> dict[str, int]:
         if not isinstance(source_type, str) or not source_type:
             continue
         counts[source_type] = counts.get(source_type, 0) + 1
+    return counts
+
+
+def _count_comparison_scopes(cases: list[dict[str, object]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for case in cases:
+        scope = case.get("comparison_scope")
+        if not isinstance(scope, str) or not scope:
+            continue
+        counts[scope] = counts.get(scope, 0) + 1
     return counts
 
 
@@ -443,6 +475,12 @@ def _normalize_response_mode_case(case: object, index: int) -> dict[str, object]
     baseline_response_sample = _optional_string_field(case, index, "baseline_response_sample")
     candidate_response_sample = _optional_string_field(case, index, "candidate_response_sample")
     if source_type == "observed_output":
+        comparison_scope = _optional_string_field(case, index, "comparison_scope")
+        if comparison_scope not in {"same_surface", "cross_surface"}:
+            raise ValueError(
+                f"case[{index}].comparison_scope must be same_surface or cross_surface for observed_output"
+            )
+        normalized["comparison_scope"] = comparison_scope
         if not str(baseline_response_sample or "").strip():
             raise ValueError(f"case[{index}].baseline_response_sample is required for observed_output")
         if not str(candidate_response_sample or "").strip():

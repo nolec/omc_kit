@@ -256,6 +256,7 @@
       "baseline_task_start_delay": 1,
       "candidate_task_start_delay": 0,
       "source_type": "observed_output",
+      "comparison_scope": "cross_surface",
       "evidence": "baseline: 2026-06-17 Claude Code plan 실행 스크린샷, candidate: 2026-06-25 Codex 동일 이슈 검토 응답 발췌",
       "baseline_response_sample": "PHASE 3 ▸ TDD 태스크 분해\nTDD 예외 적용...\n준비되었습니다. /task 로 진행하시겠습니까?",
       "candidate_response_sample": "완전히 맞지는 않습니다. plan 단계라면 설계 검토와 다음 단계 제안까지만 하고 바로 task로 넘기면 안 됩니다."

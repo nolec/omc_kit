@@ -360,6 +360,7 @@ def test_load_response_mode_cases_preserves_source_metadata_and_samples(tmp_path
                 "baseline_task_start_delay": 2,
                 "candidate_task_start_delay": 1,
                 "source_type": "observed_output",
+                "comparison_scope": "same_surface",
                 "evidence": "2026-06-25 실제 세션 출력 샘플 정리",
                 "baseline_response_sample": "변경 요약만 제공하고 리뷰 구조는 생략함",
                 "candidate_response_sample": "리뷰 범위, 이슈, 판정까지 구조화해 제공함",
@@ -372,6 +373,7 @@ def test_load_response_mode_cases_preserves_source_metadata_and_samples(tmp_path
     cases = mod._load_response_mode_cases(input_file)
 
     assert cases[0]["source_type"] == "observed_output"
+    assert cases[0]["comparison_scope"] == "same_surface"
     assert cases[0]["evidence"] == "2026-06-25 실제 세션 출력 샘플 정리"
     assert cases[0]["baseline_response_sample"] == "변경 요약만 제공하고 리뷰 구조는 생략함"
     assert cases[0]["candidate_response_sample"] == "리뷰 범위, 이슈, 판정까지 구조화해 제공함"
@@ -400,6 +402,7 @@ def test_load_response_mode_cases_rejects_observed_output_without_response_sampl
                 "baseline_task_start_delay": 2,
                 "candidate_task_start_delay": 1,
                 "source_type": "observed_output",
+                "comparison_scope": "same_surface",
                 "evidence": "2026-06-25 실제 세션 출력 샘플 정리",
             }
         ]
@@ -447,6 +450,7 @@ def test_response_mode_fixture_covers_three_policy_modes_and_mixed_intent_exampl
             observed_request_cases.append(case)
         if case["source_type"] == "observed_output":
             observed_output_cases.append(case)
+            assert case["comparison_scope"] in {"same_surface", "cross_surface"}
             assert isinstance(case.get("baseline_response_sample"), str) and case["baseline_response_sample"].strip()
             assert isinstance(case.get("candidate_response_sample"), str) and case["candidate_response_sample"].strip()
 
@@ -459,6 +463,90 @@ def test_response_mode_fixture_covers_three_policy_modes_and_mixed_intent_exampl
     assert "OMC orchestration layer 1단계와 response_mode benchmark 변경 리뷰" in requests
     assert "OMC orchestration 다음 개선 계획 수립" in requests
     assert "복귀용 프로젝트 reentry 스킬 재설계 정보원 우선순위와 출력 계약 고정" in requests
+
+
+def test_load_response_mode_cases_rejects_observed_output_without_comparison_scope(tmp_path: Path):
+    mod = _load_module()
+
+    payload = {
+        "cases": [
+            {
+                "request": "실제 리뷰 요청",
+                "expected_mode": "review-first",
+                "baseline_policy": "baseline",
+                "candidate_policy": "candidate",
+                "baseline_trace": ["assistant: 요약만 제공", "user: 아니 리뷰해줘"],
+                "candidate_trace": ["assistant: 리뷰 시작"],
+                "baseline_output_chars": 280,
+                "candidate_output_chars": 310,
+                "baseline_task_start_delay": 2,
+                "candidate_task_start_delay": 1,
+                "source_type": "observed_output",
+                "evidence": "2026-06-25 실제 세션 출력 샘플 정리",
+                "baseline_response_sample": "변경 요약만 제공하고 리뷰 구조는 생략함",
+                "candidate_response_sample": "리뷰 범위, 이슈, 판정까지 구조화해 제공함"
+            }
+        ]
+    }
+    input_file = tmp_path / "response-mode-missing-scope.json"
+    input_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    try:
+        mod._load_response_mode_cases(input_file)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("observed_output response mode case should require comparison_scope")
+
+
+def test_compare_response_modes_caps_verdict_when_only_cross_surface_observed_output_exists():
+    mod = _load_module()
+
+    cases = [
+        {
+            "request": "이거 클로드코드로 실행한건데 이거 제대로 진행된 거 맞아? plan",
+            "expected_mode": "answer-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": [
+                "assistant: 구현 방식 제시",
+                "assistant: PHASE 3 ▸ TDD 태스크 분해",
+                "assistant: 준비되었습니다. /task 로 진행하시겠습니까?"
+            ],
+            "candidate_trace": [
+                "assistant: plan 단계에서는 과진행이라고 먼저 판단",
+                "assistant: 왜 맞지 않는지 설명하고 다음 스킬 없이 멈춤"
+            ],
+            "baseline_output_chars": 438,
+            "candidate_output_chars": 214,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 0,
+            "source_type": "observed_output",
+            "comparison_scope": "cross_surface",
+            "evidence": "baseline: Claude Code, candidate: Codex",
+            "baseline_response_sample": "PHASE 3 ▸ TDD 태스크 분해",
+            "candidate_response_sample": "plan 단계에서는 과진행이라고 먼저 판단",
+        },
+        {
+            "request": "로그인 버튼 컴포넌트 구현해줘",
+            "expected_mode": "execute-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 답변만 제공", "user: 아니 구현해줘"],
+            "candidate_trace": ["assistant: 구현 단계로 바로 진입"],
+            "baseline_output_chars": 320,
+            "candidate_output_chars": 348,
+            "baseline_task_start_delay": 2,
+            "candidate_task_start_delay": 1,
+            "source_type": "synthetic",
+        },
+    ]
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["summary"]["comparison_scope_counts"] == {"cross_surface": 1}
+    assert report["decision"]["observed_evidence_guard"] == "insufficient_same_surface"
+    assert report["decision"]["verdict"] == "revise"
 
 
 def test_compare_response_modes_adopts_when_three_of_four_checks_pass():
