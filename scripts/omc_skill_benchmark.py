@@ -10,10 +10,49 @@ from pathlib import Path
 
 NEXT_ACTION_LINE = re.compile(r"다음 액션:\s*(.+)")
 SKILL_ACTION = re.compile(r"\$omc-[a-z-]+")
+RESPONSE_MODES = {"answer-first", "execute-first", "review-first"}
+POLICIES = {"baseline", "candidate"}
 
 
 def _count_question_marks(text: str) -> int:
     return text.count("?")
+
+
+def _average(values: list[int | float]) -> float:
+    return sum(values) / len(values) if values else 0
+
+
+def _contains_user_reroute(trace: list[str]) -> bool:
+    reroute_markers = ("user: 아니", "user: 다시", "user: 말한 건", "user: 정정", "user: 리뷰해줘", "user: 구현해줘")
+    lowered = [item.lower() for item in trace]
+    return any(any(marker in item for marker in reroute_markers) for item in lowered)
+
+
+def _infer_response_mode(request: str, policy: str) -> str:
+    text = request.lower()
+    review_keywords = ("리뷰", "review", "diff", "pr", "치명 이슈", "코드 봐줘")
+    execute_keywords = (
+        "구현",
+        "수정",
+        "고치",
+        "추가",
+        "커밋",
+        "빌드",
+        "테스트",
+        "개발",
+        "만들어",
+    )
+
+    if policy == "candidate":
+        if any(keyword in text for keyword in review_keywords):
+            return "review-first"
+        if any(keyword in text for keyword in execute_keywords):
+            return "execute-first"
+        return "answer-first"
+
+    if any(keyword in text for keyword in review_keywords):
+        return "review-first"
+    return "answer-first"
 
 
 def _extract_next_action_line(text: str) -> str:
@@ -138,6 +177,140 @@ def build_report(cases: list[dict[str, object]]) -> dict[str, object]:
     return {"cases": scored_cases, "summary": summary}
 
 
+def _compare_case(case: dict[str, object]) -> dict[str, object]:
+    expected_mode = str(case["expected_mode"])
+    baseline_mode = _infer_response_mode(str(case["request"]), str(case["baseline_policy"]))
+    candidate_mode = _infer_response_mode(str(case["request"]), str(case["candidate_policy"]))
+    baseline_output_chars = int(case["baseline_output_chars"])
+    candidate_output_chars = int(case["candidate_output_chars"])
+    baseline_task_start_delay = int(case["baseline_task_start_delay"])
+    candidate_task_start_delay = int(case["candidate_task_start_delay"])
+    baseline_reroute = _contains_user_reroute([str(item) for item in case["baseline_trace"]])
+    candidate_reroute = _contains_user_reroute([str(item) for item in case["candidate_trace"]])
+
+    compared = {
+        "request": str(case["request"]),
+        "expected_mode": expected_mode,
+        "baseline": {
+            "mode": baseline_mode,
+            "correct": baseline_mode == expected_mode,
+            "reroute": baseline_reroute,
+            "output_chars": baseline_output_chars,
+            "task_start_delay": baseline_task_start_delay,
+        },
+        "candidate": {
+            "mode": candidate_mode,
+            "correct": candidate_mode == expected_mode,
+            "reroute": candidate_reroute,
+            "output_chars": candidate_output_chars,
+            "task_start_delay": candidate_task_start_delay,
+        },
+        "delta": {
+            "output_chars": candidate_output_chars - baseline_output_chars,
+            "task_start_delay": candidate_task_start_delay - baseline_task_start_delay,
+            "reroute_improved": baseline_reroute and not candidate_reroute,
+            "mode_correctness_improved": (
+                baseline_mode != expected_mode and candidate_mode == expected_mode
+            ),
+        },
+    }
+    for field in ("source_type", "evidence"):
+        value = case.get(field)
+        if isinstance(value, str) and value:
+            compared[field] = value
+    baseline_response_sample = case.get("baseline_response_sample")
+    if isinstance(baseline_response_sample, str) and baseline_response_sample:
+        compared["baseline"]["response_sample"] = baseline_response_sample
+    candidate_response_sample = case.get("candidate_response_sample")
+    if isinstance(candidate_response_sample, str) and candidate_response_sample:
+        compared["candidate"]["response_sample"] = candidate_response_sample
+    return compared
+
+
+def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
+    baseline_output_chars = float(summary["baseline_output_chars_avg"])
+    output_delta = float(summary["candidate_output_chars_delta"])
+    output_growth_rate = (output_delta / baseline_output_chars) if baseline_output_chars else 0
+
+    checks = {
+        "mode_accuracy_up": float(summary["mode_accuracy_delta"]) >= 0.15,
+        "reroute_rate_down": float(summary["reroute_rate_delta"]) <= -0.30,
+        "task_start_delay_not_worse": float(summary["candidate_task_start_delay_delta"]) <= 0,
+        "output_growth_within_budget": output_growth_rate <= 0.10,
+    }
+    passed = sum(1 for ok in checks.values() if ok)
+    if passed >= 3:
+        verdict = "adopt"
+    elif passed >= 2:
+        verdict = "revise"
+    else:
+        verdict = "hold"
+
+    return {
+        "verdict": verdict,
+        "passed_checks": passed,
+        "total_checks": len(checks),
+        "checks": checks,
+        "output_growth_rate": output_growth_rate,
+    }
+
+
+def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
+    compared_cases = [_compare_case(case) for case in cases]
+    case_count = len(compared_cases)
+    if case_count == 0:
+        summary = {
+            "case_count": 0,
+            "baseline_mode_accuracy": 0,
+            "candidate_mode_accuracy": 0,
+            "mode_accuracy_delta": 0,
+            "baseline_reroute_rate": 0,
+            "candidate_reroute_rate": 0,
+            "reroute_rate_delta": 0,
+            "baseline_output_chars_avg": 0,
+            "candidate_output_chars_avg": 0,
+            "candidate_output_chars_delta": 0,
+            "baseline_task_start_delay_avg": 0,
+            "candidate_task_start_delay_avg": 0,
+            "candidate_task_start_delay_delta": 0,
+            "source_type_counts": {},
+        }
+        return {"cases": [], "summary": summary, "decision": _decision_from_summary(summary)}
+
+    baseline_mode_accuracy = _average([1 if item["baseline"]["correct"] else 0 for item in compared_cases])
+    candidate_mode_accuracy = _average([1 if item["candidate"]["correct"] else 0 for item in compared_cases])
+    baseline_reroute_rate = _average([1 if item["baseline"]["reroute"] else 0 for item in compared_cases])
+    candidate_reroute_rate = _average([1 if item["candidate"]["reroute"] else 0 for item in compared_cases])
+    baseline_output_chars_avg = _average([item["baseline"]["output_chars"] for item in compared_cases])
+    candidate_output_chars_avg = _average([item["candidate"]["output_chars"] for item in compared_cases])
+    baseline_task_start_delay_avg = _average(
+        [item["baseline"]["task_start_delay"] for item in compared_cases]
+    )
+    candidate_task_start_delay_avg = _average(
+        [item["candidate"]["task_start_delay"] for item in compared_cases]
+    )
+
+    summary = {
+        "case_count": case_count,
+        "baseline_mode_accuracy": baseline_mode_accuracy,
+        "candidate_mode_accuracy": candidate_mode_accuracy,
+        "mode_accuracy_delta": candidate_mode_accuracy - baseline_mode_accuracy,
+        "baseline_reroute_rate": baseline_reroute_rate,
+        "candidate_reroute_rate": candidate_reroute_rate,
+        "reroute_rate_delta": candidate_reroute_rate - baseline_reroute_rate,
+        "baseline_output_chars_avg": baseline_output_chars_avg,
+        "candidate_output_chars_avg": candidate_output_chars_avg,
+        "candidate_output_chars_delta": candidate_output_chars_avg - baseline_output_chars_avg,
+        "baseline_task_start_delay_avg": baseline_task_start_delay_avg,
+        "candidate_task_start_delay_avg": candidate_task_start_delay_avg,
+        "candidate_task_start_delay_delta": (
+            candidate_task_start_delay_avg - baseline_task_start_delay_avg
+        ),
+        "source_type_counts": _count_source_types(compared_cases),
+    }
+    return {"cases": compared_cases, "summary": summary, "decision": _decision_from_summary(summary)}
+
+
 def _count_source_types(cases: list[dict[str, object]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for case in cases:
@@ -161,6 +334,15 @@ def _optional_string_list(case: dict[str, object], index: int, field: str) -> li
         return []
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise ValueError(f"case[{index}].{field} must be a list of strings")
+    return value
+
+
+def _optional_string_field(case: dict[str, object], index: int, field: str) -> str | None:
+    value = case.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"case[{index}].{field} must be a string")
     return value
 
 
@@ -202,6 +384,87 @@ def _load_cases(path: Path) -> list[dict[str, object]]:
     return [_normalize_case(case, index) for index, case in enumerate(cases)]
 
 
+def _require_bool_field(case: dict[str, object], index: int, field: str) -> bool:
+    value = case.get(field)
+    if not isinstance(value, bool):
+        raise ValueError(f"case[{index}].{field} must be a boolean")
+    return value
+
+
+def _require_int_field(case: dict[str, object], index: int, field: str) -> int:
+    value = case.get(field)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"case[{index}].{field} must be an integer")
+    return value
+
+
+def _require_mode_field(case: dict[str, object], index: int, field: str) -> str:
+    value = _require_string_field(case, index, field)
+    if value not in RESPONSE_MODES:
+        raise ValueError(f"case[{index}].{field} must be one of {sorted(RESPONSE_MODES)}")
+    return value
+
+
+def _require_policy_field(case: dict[str, object], index: int, field: str) -> str:
+    value = _require_string_field(case, index, field)
+    if value not in POLICIES:
+        raise ValueError(f"case[{index}].{field} must be one of {sorted(POLICIES)}")
+    return value
+
+
+def _normalize_response_mode_case(case: object, index: int) -> dict[str, object]:
+    if not isinstance(case, dict):
+        raise ValueError(f"case[{index}] must be an object")
+    normalized = {
+        "request": _require_string_field(case, index, "request"),
+        "expected_mode": _require_mode_field(case, index, "expected_mode"),
+        "baseline_policy": _require_policy_field(case, index, "baseline_policy"),
+        "candidate_policy": _require_policy_field(case, index, "candidate_policy"),
+        "baseline_trace": _optional_string_list(case, index, "baseline_trace"),
+        "candidate_trace": _optional_string_list(case, index, "candidate_trace"),
+        "baseline_output_chars": _require_int_field(case, index, "baseline_output_chars"),
+        "candidate_output_chars": _require_int_field(case, index, "candidate_output_chars"),
+        "baseline_task_start_delay": _require_int_field(case, index, "baseline_task_start_delay"),
+        "candidate_task_start_delay": _require_int_field(case, index, "candidate_task_start_delay"),
+    }
+    source_type = _optional_string_field(case, index, "source_type") or "synthetic"
+    if source_type not in {"synthetic", "observed_request", "observed_output"}:
+        raise ValueError(
+            f"case[{index}].source_type must be synthetic, observed_request, or observed_output"
+        )
+    normalized["source_type"] = source_type
+
+    evidence = _optional_string_field(case, index, "evidence")
+    if source_type in {"observed_request", "observed_output"} and not str(evidence or "").strip():
+        raise ValueError(f"case[{index}].evidence is required for {source_type}")
+    if evidence:
+        normalized["evidence"] = evidence
+
+    baseline_response_sample = _optional_string_field(case, index, "baseline_response_sample")
+    candidate_response_sample = _optional_string_field(case, index, "candidate_response_sample")
+    if source_type == "observed_output":
+        if not str(baseline_response_sample or "").strip():
+            raise ValueError(f"case[{index}].baseline_response_sample is required for observed_output")
+        if not str(candidate_response_sample or "").strip():
+            raise ValueError(f"case[{index}].candidate_response_sample is required for observed_output")
+    if baseline_response_sample:
+        normalized["baseline_response_sample"] = baseline_response_sample
+    if candidate_response_sample:
+        normalized["candidate_response_sample"] = candidate_response_sample
+    return normalized
+
+
+def _load_response_mode_cases(path: Path) -> list[dict[str, object]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, list):
+        cases = data
+    elif isinstance(data, dict) and isinstance(data.get("cases"), list):
+        cases = data["cases"]
+    else:
+        raise ValueError("input JSON must be a list or an object with a 'cases' list")
+    return [_normalize_response_mode_case(case, index) for index, case in enumerate(cases)]
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Score OMC skill outputs with compact benchmark metrics.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -209,6 +472,12 @@ def _parser() -> argparse.ArgumentParser:
     score = sub.add_parser("score", help="Read cases JSON and output score report.")
     score.add_argument("--input", type=Path, required=True, help="Input JSON path")
     score.add_argument("--format", choices=["json"], default="json", help="Output format")
+
+    response_mode = sub.add_parser(
+        "compare-response-modes",
+        help="Compare baseline and candidate response-mode policy outputs.",
+    )
+    response_mode.add_argument("--input", type=Path, required=True, help="Input JSON path")
     return parser
 
 
@@ -217,6 +486,12 @@ def main() -> int:
     if args.command == "score":
         cases = _load_cases(args.input)
         report = build_report(cases)
+        json.dump(report, sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+        return 0
+    if args.command == "compare-response-modes":
+        cases = _load_response_mode_cases(args.input)
+        report = compare_response_modes(cases)
         json.dump(report, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
         return 0

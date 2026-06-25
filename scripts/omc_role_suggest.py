@@ -88,6 +88,10 @@ class RoleSuggestion(NamedTuple):
     matched_keywords: list[str]
 
 
+def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
+    return any(keyword in text for keyword in keywords)
+
+
 def _load_team_roles(target: Path) -> list[dict]:
     """team.json 또는 team.local.json에서 역할 로드. 없으면 내장 기본값 사용."""
     paths_to_try = [
@@ -171,11 +175,117 @@ def suggest(text: str, top: int = 3, target: Path | None = None) -> list[RoleSug
     return _score(text, roles)[:top]
 
 
+def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str, str]:
+    normalized = _normalize(text)
+    suggestions = suggest(text, top=3, target=target)
+    primary_role = suggestions[0].role_id if suggestions else "senior_coding"
+
+    plan_keywords = ("계획", "plan", "설계", "분해", "어떻게 구현", "태스크")
+    review_keywords = ("리뷰", "review", "diff", "pr", "코드 봐줘", "검토")
+    investigate_keywords = ("버그", "debug", "에러", "error", "원인", "왜 실패")
+    ship_keywords = ("배포", "ship", "release", "푸시 준비", "deploy")
+    brainstorm_keywords = ("브레인스토밍", "아이디어", "막막", "요구사항 정리")
+    benchmark_keywords = ("벤치마크", "benchmark", "비교")
+    critique_keywords = ("비판", "critique", "약점", "냉정하게")
+    status_keywords = ("상태", "뭐하고 있었", "어디까지", "status")
+    lesson_keywords = ("교훈", "lesson", "배운")
+    retro_keywords = ("회고", "retro")
+    qa_keywords = ("qa", "검수", "체크리스트")
+    reentry_keywords = ("오랜만", "복귀", "뭐였지", "reentry", "구조 파악")
+    task_keywords = ("구현", "개발", "만들어", "추가", "수정", "커밋", "빌드", "테스트 추가")
+
+    if _contains_any(normalized, critique_keywords):
+        return {
+            "response_mode": "review-first",
+            "recommended_skill": "$omc-critique",
+            "primary_role": "code_review",
+        }
+    if _contains_any(normalized, review_keywords):
+        return {
+            "response_mode": "review-first",
+            "recommended_skill": "$omc-review",
+            "primary_role": "code_review",
+        }
+    if _contains_any(normalized, ship_keywords):
+        return {
+            "response_mode": "execute-first",
+            "recommended_skill": "$omc-ship",
+            "primary_role": "directive",
+        }
+    if _contains_any(normalized, plan_keywords):
+        return {
+            "response_mode": "answer-first",
+            "recommended_skill": "$omc-plan",
+            "primary_role": "analysis",
+        }
+    if _contains_any(normalized, investigate_keywords):
+        return {
+            "response_mode": "answer-first",
+            "recommended_skill": "$omc-investigate",
+            "primary_role": "analysis",
+        }
+    if _contains_any(normalized, brainstorm_keywords):
+        return {
+            "response_mode": "answer-first",
+            "recommended_skill": "$omc-brainstorm",
+            "primary_role": "analysis",
+        }
+    if _contains_any(normalized, benchmark_keywords):
+        return {
+            "response_mode": "answer-first",
+            "recommended_skill": "$omc-benchmark",
+            "primary_role": "analysis",
+        }
+    if _contains_any(normalized, status_keywords):
+        return {
+            "response_mode": "answer-first",
+            "recommended_skill": "$omc-status",
+            "primary_role": "analysis",
+        }
+    if _contains_any(normalized, lesson_keywords):
+        return {
+            "response_mode": "answer-first",
+            "recommended_skill": "$omc-lesson",
+            "primary_role": "analysis",
+        }
+    if _contains_any(normalized, retro_keywords):
+        return {
+            "response_mode": "answer-first",
+            "recommended_skill": "$omc-retro",
+            "primary_role": "analysis",
+        }
+    if _contains_any(normalized, qa_keywords):
+        return {
+            "response_mode": "answer-first",
+            "recommended_skill": "$omc-qa",
+            "primary_role": "analysis",
+        }
+    if _contains_any(normalized, reentry_keywords):
+        return {
+            "response_mode": "answer-first",
+            "recommended_skill": "$omc-reentry",
+            "primary_role": "analysis",
+        }
+    if _contains_any(normalized, task_keywords):
+        return {
+            "response_mode": "execute-first",
+            "recommended_skill": "$omc-task",
+            "primary_role": "senior_coding",
+        }
+
+    return {
+        "response_mode": "answer-first",
+        "recommended_skill": "$omc-plan",
+        "primary_role": primary_role,
+    }
+
+
 # ---------------------------------------------------------------------------
 # 출력 포맷터
 # ---------------------------------------------------------------------------
 
 def _fmt_plain(suggestions: list[RoleSuggestion], text: str) -> str:
+    orchestration = suggest_orchestration(text)
     lines = [f'📌 요청 분석: "{text[:60]}{"..." if len(text) > 60 else ""}"', ""]
     lines.append("🤖 추천 역할:")
     for i, s in enumerate(suggestions, 1):
@@ -184,6 +294,10 @@ def _fmt_plain(suggestions: list[RoleSuggestion], text: str) -> str:
         lines.append(f"     → {s.description}")
     lines += [
         "",
+        f"🧭 추천 모드: {orchestration['response_mode']}",
+        f"🧩 추천 시작 스킬: {orchestration['recommended_skill']}",
+        f"🎯 주역할: {orchestration['primary_role']}",
+        "",
         "─" * 48,
         "확인하려면: 확인 (또는 +role_id, -role_id 로 조정)",
         "역할 변경:  senior_coding,analysis  (쉼표로 직접 지정)",
@@ -191,10 +305,18 @@ def _fmt_plain(suggestions: list[RoleSuggestion], text: str) -> str:
     return "\n".join(lines)
 
 
-def _fmt_json(suggestions: list[RoleSuggestion]) -> str:
+def _fmt_json(suggestions: list[RoleSuggestion], text: str) -> str:
+    orchestration = suggest_orchestration(text)
     return json.dumps(
-        [{"role_id": s.role_id, "title": s.title, "score": s.score, "matched": s.matched_keywords}
-         for s in suggestions],
+        {
+            "suggestions": [
+                {"role_id": s.role_id, "title": s.title, "score": s.score, "matched": s.matched_keywords}
+                for s in suggestions
+            ],
+            "response_mode": orchestration["response_mode"],
+            "recommended_skill": orchestration["recommended_skill"],
+            "primary_role": orchestration["primary_role"],
+        },
         ensure_ascii=False,
         indent=2,
     )
@@ -237,7 +359,7 @@ def main() -> int:
     results = suggest(text, top=args.top, target=args.target)
 
     if args.format == "json":
-        print(_fmt_json(results))
+        print(_fmt_json(results, text))
     elif args.format == "ids":
         print(_fmt_ids(results))
     else:
