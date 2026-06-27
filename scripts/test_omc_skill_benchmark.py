@@ -270,6 +270,7 @@ def test_compare_response_modes_summarizes_candidate_gain():
         {
             "request": "로그인 버튼 컴포넌트 구현해줘",
             "expected_mode": "execute-first",
+            "expected_next_action": "$omc-task",
             "baseline_policy": "baseline",
             "candidate_policy": "candidate",
             "baseline_trace": ["assistant: 답변만 제공", "user: 아니 구현해줘"],
@@ -278,10 +279,13 @@ def test_compare_response_modes_summarizes_candidate_gain():
             "candidate_output_chars": 350,
             "baseline_task_start_delay": 2,
             "candidate_task_start_delay": 1,
+            "baseline_next_action": "사용자 선택 대기",
+            "candidate_next_action": "$omc-task",
         },
         {
             "request": "이 변경 diff 리뷰해줘",
             "expected_mode": "review-first",
+            "expected_next_action": "$omc-ship",
             "baseline_policy": "baseline",
             "candidate_policy": "candidate",
             "baseline_trace": ["assistant: 리뷰 시작"],
@@ -290,6 +294,8 @@ def test_compare_response_modes_summarizes_candidate_gain():
             "candidate_output_chars": 295,
             "baseline_task_start_delay": 1,
             "candidate_task_start_delay": 1,
+            "baseline_next_action": "$omc-task",
+            "candidate_next_action": "$omc-ship",
         },
     ]
 
@@ -301,11 +307,68 @@ def test_compare_response_modes_summarizes_candidate_gain():
     assert report["summary"]["mode_accuracy_delta"] == 0.5
     assert report["summary"]["baseline_reroute_rate"] == 0.5
     assert report["summary"]["candidate_reroute_rate"] == 0.0
+    assert report["summary"]["baseline_wrong_first_skill_rate"] == 0.5
+    assert report["summary"]["candidate_wrong_first_skill_rate"] == 0.0
+    assert report["summary"]["wrong_first_skill_rate_delta"] == -0.5
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
     assert report["summary"]["candidate_output_chars_delta"] == 45 / 2
     assert report["summary"]["candidate_task_start_delay_delta"] == -0.5
     assert report["decision"]["verdict"] == "adopt"
     assert report["cases"][0]["baseline"]["mode"] == "answer-first"
     assert report["cases"][0]["candidate"]["mode"] == "execute-first"
+
+
+def test_compare_response_modes_caps_decision_when_wrong_next_step_stays_high():
+    mod = _load_module()
+
+    cases = [
+        {
+            "request": "계획해줘",
+            "expected_mode": "answer-first",
+            "expected_next_action": "사용자 선택 대기",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 계획 정리"],
+            "candidate_trace": ["assistant: 계획 정리"],
+            "baseline_output_chars": 260,
+            "candidate_output_chars": 265,
+            "baseline_task_start_delay": 0,
+            "candidate_task_start_delay": 0,
+            "baseline_next_action": "$omc-task",
+            "candidate_next_action": "$omc-task",
+        }
+    ]
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 1.0
+    assert report["decision"]["checks"]["next_step_accuracy_not_worse"] is False
+    assert report["decision"]["verdict"] in {"revise", "hold"}
+
+
+def test_decision_from_summary_blocks_adopt_when_next_step_check_fails():
+    mod = _load_module()
+
+    summary = {
+        "mode_accuracy_delta": 0.2,
+        "reroute_rate_delta": -0.4,
+        "candidate_task_start_delay_delta": 0,
+        "baseline_output_chars_avg": 300,
+        "candidate_output_chars_delta": 15,
+        "observed_output_count": 0,
+        "observed_same_surface_count": 0,
+        "next_action_case_count": 1,
+        "candidate_wrong_next_step_rate": 1.0,
+        "wrong_next_step_rate_delta": 0,
+    }
+
+    decision = mod._decision_from_summary(summary)
+
+    assert decision["checks"]["next_step_accuracy_not_worse"] is False
+    assert decision["passed_checks"] == 4
+    assert decision["verdict"] == "revise"
 
 
 def test_compare_response_modes_cli_outputs_decision_json(tmp_path: Path):
@@ -359,6 +422,9 @@ def test_load_response_mode_cases_preserves_source_metadata_and_samples(tmp_path
                 "candidate_output_chars": 310,
                 "baseline_task_start_delay": 2,
                 "candidate_task_start_delay": 1,
+                "expected_next_action": "$omc-ship",
+                "baseline_next_action": "$omc-task",
+                "candidate_next_action": "$omc-ship",
                 "source_type": "observed_output",
                 "comparison_scope": "same_surface",
                 "evidence": "2026-06-25 실제 세션 출력 샘플 정리",
@@ -375,14 +441,44 @@ def test_load_response_mode_cases_preserves_source_metadata_and_samples(tmp_path
     assert cases[0]["source_type"] == "observed_output"
     assert cases[0]["comparison_scope"] == "same_surface"
     assert cases[0]["evidence"] == "2026-06-25 실제 세션 출력 샘플 정리"
+    assert cases[0]["expected_next_action"] == "$omc-ship"
+    assert cases[0]["baseline_next_action"] == "$omc-task"
+    assert cases[0]["candidate_next_action"] == "$omc-ship"
     assert cases[0]["baseline_response_sample"] == "변경 요약만 제공하고 리뷰 구조는 생략함"
     assert cases[0]["candidate_response_sample"] == "리뷰 범위, 이슈, 판정까지 구조화해 제공함"
 
     report = mod.compare_response_modes(cases)
     assert report["summary"]["source_type_counts"] == {"observed_output": 1}
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
     assert report["cases"][0]["source_type"] == "observed_output"
     assert report["cases"][0]["baseline"]["response_sample"] == "변경 요약만 제공하고 리뷰 구조는 생략함"
     assert report["cases"][0]["candidate"]["response_sample"] == "리뷰 범위, 이슈, 판정까지 구조화해 제공함"
+
+
+def test_compare_response_modes_reports_incomplete_next_action_cases():
+    mod = _load_module()
+
+    cases = [
+        {
+            "request": "리뷰해줘",
+            "expected_mode": "review-first",
+            "expected_next_action": "$omc-ship",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 리뷰 시작"],
+            "candidate_trace": ["assistant: 리뷰 시작"],
+            "baseline_output_chars": 280,
+            "candidate_output_chars": 285,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 1,
+            "baseline_next_action": "$omc-task",
+        }
+    ]
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["summary"]["next_action_case_count"] == 0
+    assert report["summary"]["next_action_incomplete_case_count"] == 1
 
 
 def test_load_response_mode_cases_rejects_observed_output_without_response_samples(tmp_path: Path):
@@ -431,6 +527,7 @@ def test_response_mode_fixture_covers_three_policy_modes_and_mixed_intent_exampl
     requests = {case["request"] for case in cases}
     observed_request_cases = []
     observed_output_cases = []
+    cases_with_next_action = []
     for case in cases:
         mode = case["expected_mode"]
         mode_counts[mode] = mode_counts.get(mode, 0) + 1
@@ -453,10 +550,16 @@ def test_response_mode_fixture_covers_three_policy_modes_and_mixed_intent_exampl
             assert case["comparison_scope"] in {"same_surface", "cross_surface"}
             assert isinstance(case.get("baseline_response_sample"), str) and case["baseline_response_sample"].strip()
             assert isinstance(case.get("candidate_response_sample"), str) and case["candidate_response_sample"].strip()
+        if "expected_next_action" in case:
+            cases_with_next_action.append(case)
+            assert isinstance(case["expected_next_action"], str) and case["expected_next_action"].strip()
+            assert isinstance(case.get("baseline_next_action"), str) and case["baseline_next_action"].strip()
+            assert isinstance(case.get("candidate_next_action"), str) and case["candidate_next_action"].strip()
 
     assert all(count >= 3 for count in mode_counts.values())
     assert len(observed_request_cases) >= 3
     assert len(observed_output_cases) >= 1
+    assert len(cases_with_next_action) >= 4
     assert "이 버그 원인 먼저 보고 바로 고칠 수 있으면 수정해줘" in requests
     assert "이 변경 위험한지 먼저 리뷰해주고, 괜찮으면 그다음 커밋까지 해줘" in requests
     assert "이 기능 해야 할지 판단하고 진행 순서만 정리해줘" in requests

@@ -198,6 +198,7 @@
     {
       "request": "OMC orchestration layer 1단계와 response_mode benchmark 변경 리뷰",
       "expected_mode": "review-first",
+      "expected_next_action": "$omc-ship",
       "baseline_policy": "baseline",
       "candidate_policy": "candidate",
       "baseline_trace": ["assistant: 변경 요약만 제공", "user: 아니 리뷰해줘"],
@@ -206,12 +207,15 @@
       "candidate_output_chars": 324,
       "baseline_task_start_delay": 2,
       "candidate_task_start_delay": 1,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "$omc-ship",
       "source_type": "observed_request",
       "evidence": "2026-06-25 실제 세션 요청문 추출: response_mode benchmark 변경 리뷰"
     },
     {
       "request": "OMC orchestration 다음 개선 계획 수립",
       "expected_mode": "answer-first",
+      "expected_next_action": "사용자 선택 대기",
       "baseline_policy": "baseline",
       "candidate_policy": "candidate",
       "baseline_trace": ["assistant: 구현 전제로 답함", "user: 아니 계획 먼저"],
@@ -220,12 +224,15 @@
       "candidate_output_chars": 297,
       "baseline_task_start_delay": 1,
       "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "사용자 선택 대기",
       "source_type": "observed_request",
       "evidence": "2026-06-25 실제 세션 요청문 추출: orchestration 개선 계획 수립"
     },
     {
       "request": "복귀용 프로젝트 reentry 스킬 재설계 정보원 우선순위와 출력 계약 고정",
       "expected_mode": "answer-first",
+      "expected_next_action": "사용자 선택 대기",
       "baseline_policy": "baseline",
       "candidate_policy": "candidate",
       "baseline_trace": ["assistant: 구현 단계로 바로 진입", "user: 아니 설계부터"],
@@ -234,12 +241,15 @@
       "candidate_output_chars": 312,
       "baseline_task_start_delay": 1,
       "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "사용자 선택 대기",
       "source_type": "observed_request",
       "evidence": "2026-06-25 실제 세션 요청문 추출: reentry 재설계 계약 고정"
     },
     {
       "request": "이거 클로드코드로 실행한건데 이거 제대로 진행된 거 맞아? plan",
       "expected_mode": "answer-first",
+      "expected_next_action": "사용자 선택 대기",
       "baseline_policy": "baseline",
       "candidate_policy": "candidate",
       "baseline_trace": [
@@ -255,6 +265,8 @@
       "candidate_output_chars": 214,
       "baseline_task_start_delay": 1,
       "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "사용자 선택 대기",
       "source_type": "observed_output",
       "comparison_scope": "cross_surface",
       "evidence": "baseline: 2026-06-17 Claude Code plan 실행 스크린샷, candidate: 2026-06-25 Codex 동일 이슈 검토 응답 발췌",

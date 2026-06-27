@@ -179,6 +179,7 @@ def build_report(cases: list[dict[str, object]]) -> dict[str, object]:
 
 def _compare_case(case: dict[str, object]) -> dict[str, object]:
     expected_mode = str(case["expected_mode"])
+    expected_next_action = case.get("expected_next_action")
     baseline_mode = _infer_response_mode(str(case["request"]), str(case["baseline_policy"]))
     candidate_mode = _infer_response_mode(str(case["request"]), str(case["candidate_policy"]))
     baseline_output_chars = int(case["baseline_output_chars"])
@@ -187,6 +188,8 @@ def _compare_case(case: dict[str, object]) -> dict[str, object]:
     candidate_task_start_delay = int(case["candidate_task_start_delay"])
     baseline_reroute = _contains_user_reroute([str(item) for item in case["baseline_trace"]])
     candidate_reroute = _contains_user_reroute([str(item) for item in case["candidate_trace"]])
+    baseline_next_action = case.get("baseline_next_action")
+    candidate_next_action = case.get("candidate_next_action")
 
     compared = {
         "request": str(case["request"]),
@@ -214,6 +217,14 @@ def _compare_case(case: dict[str, object]) -> dict[str, object]:
             ),
         },
     }
+    if isinstance(expected_next_action, str) and expected_next_action:
+        compared["expected_next_action"] = expected_next_action
+        if isinstance(baseline_next_action, str) and baseline_next_action:
+            compared["baseline"]["next_action"] = baseline_next_action
+            compared["baseline"]["next_action_correct"] = baseline_next_action == expected_next_action
+        if isinstance(candidate_next_action, str) and candidate_next_action:
+            compared["candidate"]["next_action"] = candidate_next_action
+            compared["candidate"]["next_action_correct"] = candidate_next_action == expected_next_action
     for field in ("source_type", "evidence"):
         value = case.get(field)
         if isinstance(value, str) and value:
@@ -243,6 +254,11 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         "task_start_delay_not_worse": float(summary["candidate_task_start_delay_delta"]) <= 0,
         "output_growth_within_budget": output_growth_rate <= 0.10,
     }
+    if int(summary.get("next_action_case_count", 0)) > 0:
+        checks["next_step_accuracy_not_worse"] = (
+            float(summary.get("candidate_wrong_next_step_rate", 0)) == 0
+            and float(summary.get("wrong_next_step_rate_delta", 0)) <= 0
+        )
     passed = sum(1 for ok in checks.values() if ok)
     if passed >= 3:
         verdict = "adopt"
@@ -255,6 +271,8 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
     if observed_output_count > 0 and observed_same_surface_count == 0 and verdict == "adopt":
         verdict = "revise"
         observed_evidence_guard = "insufficient_same_surface"
+    if checks.get("next_step_accuracy_not_worse") is False and verdict == "adopt":
+        verdict = "revise"
 
     return {
         "verdict": verdict,
@@ -275,6 +293,14 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
             "baseline_mode_accuracy": 0,
             "candidate_mode_accuracy": 0,
             "mode_accuracy_delta": 0,
+            "baseline_wrong_first_skill_rate": 0,
+            "candidate_wrong_first_skill_rate": 0,
+            "wrong_first_skill_rate_delta": 0,
+            "next_action_case_count": 0,
+            "next_action_incomplete_case_count": 0,
+            "baseline_wrong_next_step_rate": 0,
+            "candidate_wrong_next_step_rate": 0,
+            "wrong_next_step_rate_delta": 0,
             "baseline_reroute_rate": 0,
             "candidate_reroute_rate": 0,
             "reroute_rate_delta": 0,
@@ -293,6 +319,30 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
 
     baseline_mode_accuracy = _average([1 if item["baseline"]["correct"] else 0 for item in compared_cases])
     candidate_mode_accuracy = _average([1 if item["candidate"]["correct"] else 0 for item in compared_cases])
+    baseline_wrong_first_skill_rate = _average([0 if item["baseline"]["correct"] else 1 for item in compared_cases])
+    candidate_wrong_first_skill_rate = _average([0 if item["candidate"]["correct"] else 1 for item in compared_cases])
+    next_action_cases = [
+        item
+        for item in compared_cases
+        if item.get("expected_next_action")
+        and "next_action_correct" in item["baseline"]
+        and "next_action_correct" in item["candidate"]
+    ]
+    next_action_incomplete_case_count = sum(
+        1
+        for item in compared_cases
+        if item.get("expected_next_action")
+        and (
+            "next_action_correct" not in item["baseline"]
+            or "next_action_correct" not in item["candidate"]
+        )
+    )
+    baseline_wrong_next_step_rate = _average(
+        [0 if item["baseline"]["next_action_correct"] else 1 for item in next_action_cases]
+    )
+    candidate_wrong_next_step_rate = _average(
+        [0 if item["candidate"]["next_action_correct"] else 1 for item in next_action_cases]
+    )
     baseline_reroute_rate = _average([1 if item["baseline"]["reroute"] else 0 for item in compared_cases])
     candidate_reroute_rate = _average([1 if item["candidate"]["reroute"] else 0 for item in compared_cases])
     baseline_output_chars_avg = _average([item["baseline"]["output_chars"] for item in compared_cases])
@@ -314,6 +364,18 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
         "baseline_mode_accuracy": baseline_mode_accuracy,
         "candidate_mode_accuracy": candidate_mode_accuracy,
         "mode_accuracy_delta": candidate_mode_accuracy - baseline_mode_accuracy,
+        "baseline_wrong_first_skill_rate": baseline_wrong_first_skill_rate,
+        "candidate_wrong_first_skill_rate": candidate_wrong_first_skill_rate,
+        "wrong_first_skill_rate_delta": (
+            candidate_wrong_first_skill_rate - baseline_wrong_first_skill_rate
+        ),
+        "next_action_case_count": len(next_action_cases),
+        "next_action_incomplete_case_count": next_action_incomplete_case_count,
+        "baseline_wrong_next_step_rate": baseline_wrong_next_step_rate,
+        "candidate_wrong_next_step_rate": candidate_wrong_next_step_rate,
+        "wrong_next_step_rate_delta": (
+            candidate_wrong_next_step_rate - baseline_wrong_next_step_rate
+        ),
         "baseline_reroute_rate": baseline_reroute_rate,
         "candidate_reroute_rate": candidate_reroute_rate,
         "reroute_rate_delta": candidate_reroute_rate - baseline_reroute_rate,
@@ -474,6 +536,9 @@ def _normalize_response_mode_case(case: object, index: int) -> dict[str, object]
 
     baseline_response_sample = _optional_string_field(case, index, "baseline_response_sample")
     candidate_response_sample = _optional_string_field(case, index, "candidate_response_sample")
+    expected_next_action = _optional_string_field(case, index, "expected_next_action")
+    baseline_next_action = _optional_string_field(case, index, "baseline_next_action")
+    candidate_next_action = _optional_string_field(case, index, "candidate_next_action")
     if source_type == "observed_output":
         comparison_scope = _optional_string_field(case, index, "comparison_scope")
         if comparison_scope not in {"same_surface", "cross_surface"}:
@@ -489,6 +554,12 @@ def _normalize_response_mode_case(case: object, index: int) -> dict[str, object]
         normalized["baseline_response_sample"] = baseline_response_sample
     if candidate_response_sample:
         normalized["candidate_response_sample"] = candidate_response_sample
+    if expected_next_action:
+        normalized["expected_next_action"] = expected_next_action
+    if baseline_next_action:
+        normalized["baseline_next_action"] = baseline_next_action
+    if candidate_next_action:
+        normalized["candidate_next_action"] = candidate_next_action
     return normalized
 
 
