@@ -247,6 +247,62 @@
       "evidence": "2026-06-25 실제 세션 요청문 추출: reentry 재설계 계약 고정"
     },
     {
+      "request": "현재 어떤점이 개선된거야",
+      "expected_mode": "answer-first",
+      "expected_next_action": "사용자 선택 대기",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": ["assistant: 다음 개선 작업부터 제안", "user: 아니 개선점부터 설명해줘"],
+      "candidate_trace": ["assistant: 개선점 1,2,3으로 요약 설명"],
+      "baseline_output_chars": 252,
+      "candidate_output_chars": 286,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "사용자 선택 대기",
+      "source_type": "observed_request",
+      "evidence": "2026-06-27 실제 세션 요청문 추출: 개선된 점 설명 요청"
+    },
+    {
+      "request": "fugu 문서 2개 먼저 커밋 태스크 2부터 $omc-task",
+      "expected_mode": "execute-first",
+      "expected_next_action": "$omc-review",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": ["assistant: 다시 계획을 길게 설명", "user: 아니 바로 진행해줘"],
+      "candidate_trace": ["assistant: 문서 2개 커밋 후 태스크 2 CONTRACT로 진입"],
+      "baseline_output_chars": 274,
+      "candidate_output_chars": 301,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "사용자 선택 대기",
+      "candidate_next_action": "$omc-review",
+      "source_type": "observed_request",
+      "evidence": "2026-06-27 실제 세션 요청문 추출: fugu 문서 커밋 후 태스크 2 진행"
+    },
+    {
+      "request": "우리 스킬들이 개선됐냐고 물어본거야",
+      "expected_mode": "answer-first",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: 작업 결과 요약은 했지만 스킬 품질 관점으로는 답을 좁히지 못함"
+      ],
+      "candidate_trace": [
+        "assistant: 사용자 질문을 스킬 개선 여부로 다시 정렬",
+        "assistant: 개선된 점과 남은 한계를 구분해 설명"
+      ],
+      "baseline_output_chars": 244,
+      "candidate_output_chars": 278,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "source_type": "observed_output",
+      "comparison_scope": "same_surface",
+      "evidence": "2026-06-27 동일 세션 내 스킬 개선 여부 질문에 대한 응답 비교",
+      "baseline_response_sample": "작업 결과 중심으로 설명해 질문 초점을 완전히 맞추지 못함",
+      "candidate_response_sample": "스킬이 이전보다 개선됐는지에 초점을 맞춰 사용자 체감/운영/한계를 구분해 설명"
+    },
+    {
       "request": "이거 클로드코드로 실행한건데 이거 제대로 진행된 거 맞아? plan",
       "expected_mode": "answer-first",
       "expected_next_action": "사용자 선택 대기",
