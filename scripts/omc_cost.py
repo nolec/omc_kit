@@ -31,6 +31,7 @@ _PRICING: dict[str, dict[str, float]] = {
     "claude-opus-4":   {"input": 15.0, "output": 75.0, "cache_read": 1.50, "cache_write": 18.75},
     "claude-haiku":    {"input": 0.25, "output": 1.25, "cache_read": 0.03, "cache_write": 0.30},
     "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+    "gemini-2.5-flash": {"input": 0.30, "output": 2.50},
     "gemini-2.5-pro":   {"input": 1.25, "output": 10.0},
     "gpt-4o":          {"input": 2.50, "output": 10.0},
     "gpt-4o-mini":     {"input": 0.15, "output": 0.60},
@@ -38,6 +39,30 @@ _PRICING: dict[str, dict[str, float]] = {
     "o4-mini":         {"input": 1.10, "output": 4.40},
 }
 _DEFAULT_PRICING = {"input": 3.0, "output": 15.0}  # claude-sonnet-4 기본
+
+
+def _normalize_pricing_model(model: str = "") -> str:
+    normalized = model.lower().strip()
+    alias_map = {
+        "sonnet": "claude-sonnet-4",
+        "opus": "claude-opus-4",
+        "haiku": "claude-haiku",
+    }
+    return alias_map.get(normalized, normalized)
+
+
+def _has_explicit_pricing(model: str = "") -> bool:
+    normalized = _normalize_pricing_model(model)
+    if not normalized:
+        return False
+    return any(key in normalized or normalized in key for key in _PRICING)
+
+
+def _supports_cost_estimation(executor: str = "", model: str = "") -> bool:
+    normalized_executor = executor.lower().split("-")[0].strip()
+    if normalized_executor == "codex":
+        return False
+    return _has_explicit_pricing(model)
 
 
 def _cost_log(root):
@@ -103,6 +128,19 @@ def _parse_claude_usage(json_output: str) -> dict | None:
     return None
 
 
+def _parse_claude_actual_cost_usd(json_output: str) -> float | None:
+    try:
+        data = json.loads(json_output)
+        cost = data.get("total_cost_usd")
+        if cost is None:
+            cost = (data.get("result") or {}).get("total_cost_usd")
+        if cost is None:
+            return None
+        return round(float(cost), 6)
+    except Exception:
+        return None
+
+
 def _parse_gemini_usage(json_output: str) -> dict | None:
     """Gemini CLI --json 응답 파싱.
 
@@ -142,10 +180,9 @@ def _parse_openai_usage(json_output: str) -> dict | None:
     또는 responses API:
       {"usage": {"input_tokens": N, "output_tokens": M, "input_tokens_details": {...}}}
     """
-    try:
-        data = json.loads(json_output)
-        usage = data.get("usage") or {}
-        # responses API (new format)
+    def _usage_to_tokens(usage: dict | None) -> dict | None:
+        if not isinstance(usage, dict):
+            return None
         input_t = usage.get("input_tokens") or usage.get("prompt_tokens", 0)
         output_t = usage.get("output_tokens") or usage.get("completion_tokens", 0)
         cached = (usage.get("input_tokens_details") or {}).get("cached_tokens", 0)
@@ -156,8 +193,40 @@ def _parse_openai_usage(json_output: str) -> dict | None:
                 "cache_read_tokens": cached,
                 "cache_write_tokens": 0,
             }
-    except Exception:
+        return None
+
+    try:
+        data = json.loads(json_output)
+        if isinstance(data, dict):
+            tokens = _usage_to_tokens(data.get("usage"))
+            if tokens:
+                return tokens
+            response = data.get("response")
+            if isinstance(response, dict):
+                tokens = _usage_to_tokens(response.get("usage"))
+                if tokens:
+                    return tokens
+    except json.JSONDecodeError:
         pass
+    except Exception:
+        return None
+
+    # Codex --json 은 JSONL 이벤트 스트림을 출력할 수 있다.
+    for line in reversed([line.strip() for line in json_output.splitlines() if line.strip()]):
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(item, dict):
+            continue
+        tokens = _usage_to_tokens(item.get("usage"))
+        if tokens:
+            return tokens
+        response = item.get("response")
+        if isinstance(response, dict):
+            tokens = _usage_to_tokens(response.get("usage"))
+            if tokens:
+                return tokens
     return None
 
 
@@ -180,13 +249,19 @@ def _parse_llm_usage(executor: str, json_output: str) -> dict | None:
     return None
 
 
+def _resolve_pricing(model: str = "") -> dict[str, float]:
+    normalized = _normalize_pricing_model(model)
+    for key, pricing in _PRICING.items():
+        if key in normalized:
+            return pricing
+        if normalized in key:
+            return pricing
+    return _DEFAULT_PRICING
+
+
 def _estimate_cost_usd(usage: dict, model: str = "") -> float:
     """usage dict + model명으로 USD 추정."""
-    pricing = _DEFAULT_PRICING
-    for key, p in _PRICING.items():
-        if key in model.lower():
-            pricing = p
-            break
+    pricing = _resolve_pricing(model)
     return round(
         usage.get("input_tokens", 0) * pricing.get("input", 3.0) / 1_000_000
         + usage.get("output_tokens", 0) * pricing.get("output", 15.0) / 1_000_000
@@ -216,7 +291,21 @@ def record(root, *, executor, session_id=None, task_title=None,
         usage = _parse_llm_usage(executor, llm_json)
         if usage:
             entry["tokens"] = usage
-            entry["estimated_usd"] = _estimate_cost_usd(usage, model)
+            entry["input_tokens"] = usage.get("input_tokens", 0)
+            entry["output_tokens"] = usage.get("output_tokens", 0)
+            entry["cache_read_tokens"] = usage.get("cache_read_tokens", 0)
+            entry["cache_write_tokens"] = usage.get("cache_write_tokens", 0)
+            actual_cost_usd = None
+            if executor.lower().split("-")[0] == "claude":
+                actual_cost_usd = _parse_claude_actual_cost_usd(llm_json)
+            estimated_usd = None
+            if _supports_cost_estimation(executor, model):
+                estimated_usd = _estimate_cost_usd(usage, model)
+                entry["estimated_usd"] = estimated_usd
+            if actual_cost_usd is not None:
+                entry["cost_usd"] = actual_cost_usd
+            elif estimated_usd is not None:
+                entry["cost_usd"] = estimated_usd
 
     log_path = _cost_log(root)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -247,19 +336,38 @@ def report(root, last_n=20):
     total_files = sum(e["git"]["files_changed"] for e in entries)
     total_ins   = sum(e["git"]["insertions"] for e in entries)
     total_del   = sum(e["git"]["deletions"] for e in entries)
-    total_usd   = sum(e.get("estimated_usd", 0.0) for e in entries)
+    total_usd = sum(
+        e.get("cost_usd", e.get("estimated_usd", 0.0))
+        for e in entries
+        if isinstance(e.get("cost_usd", e.get("estimated_usd")), (int, float))
+    )
+    unknown_cost_count = sum(
+        1
+        for e in entries
+        if e.get("tokens") and not isinstance(e.get("cost_usd", e.get("estimated_usd")), (int, float))
+    )
 
     # LLM별 집계
     by_executor: dict[str, dict] = {}
     for e in entries:
         ex = e.get("executor", "unknown")
         if ex not in by_executor:
-            by_executor[ex] = {"sessions": 0, "input_tokens": 0, "output_tokens": 0, "usd": 0.0}
+            by_executor[ex] = {
+                "sessions": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "usd": 0.0,
+                "unknown_cost_rows": 0,
+            }
         by_executor[ex]["sessions"] += 1
         t = e.get("tokens", {})
         by_executor[ex]["input_tokens"] += t.get("input_tokens", 0)
         by_executor[ex]["output_tokens"] += t.get("output_tokens", 0)
-        by_executor[ex]["usd"] += e.get("estimated_usd", 0.0)
+        cost_value = e.get("cost_usd", e.get("estimated_usd"))
+        if isinstance(cost_value, (int, float)):
+            by_executor[ex]["usd"] += cost_value
+        elif t:
+            by_executor[ex]["unknown_cost_rows"] += 1
 
     print(f"\n{'═'*65}")
     print(f" OMC Cost Report  ({len(entries)}개 세션)")
@@ -269,6 +377,8 @@ def report(root, last_n=20):
     print(f" 총 삭제 줄    : -{total_del:,}")
     if total_usd > 0:
         print(f" 총 추정 비용  : ${total_usd:.4f} USD")
+    if unknown_cost_count > 0:
+        print(f" 비용 미확정   : {unknown_cost_count}개 세션")
 
     if any(v["input_tokens"] > 0 for v in by_executor.values()):
         print(f"\n{'─'*65}")
@@ -276,7 +386,13 @@ def report(root, last_n=20):
         print(f"{'─'*65}")
         for ex, v in sorted(by_executor.items()):
             if v["input_tokens"] > 0:
-                print(f" {ex:<12}  {v['sessions']:>4}  {v['input_tokens']:>8,}  {v['output_tokens']:>8,}  ${v['usd']:>9.4f}")
+                if v["unknown_cost_rows"] > 0 and v["usd"] == 0:
+                    usd_str = "N/A"
+                elif v["unknown_cost_rows"] > 0:
+                    usd_str = f"${v['usd']:.4f}+N/A"
+                else:
+                    usd_str = f"${v['usd']:.4f}"
+                print(f" {ex:<12}  {v['sessions']:>4}  {v['input_tokens']:>8,}  {v['output_tokens']:>8,}  {usd_str:>10}")
 
     print(f"\n{'─'*65}")
     print(f" 최근 {len(recent)}개 세션:")
@@ -292,8 +408,11 @@ def report(root, last_n=20):
         tokens_str = ""
         if "tokens" in e:
             t = e["tokens"]
-            usd = e.get("estimated_usd", 0)
-            tokens_str = f"  [{t['input_tokens']:,}in/{t['output_tokens']:,}out ${usd:.4f}]"
+            usd = e.get("cost_usd", e.get("estimated_usd"))
+            if isinstance(usd, (int, float)):
+                tokens_str = f"  [{t['input_tokens']:,}in/{t['output_tokens']:,}out ${usd:.4f}]"
+            else:
+                tokens_str = f"  [{t['input_tokens']:,}in/{t['output_tokens']:,}out cost=N/A]"
         print(f" {ts}  [{size:2s}] {executor:<10}  +{g['insertions']:4d}/-{g['deletions']:4d}  {task}{tokens_str}")
 
     print(f"{'═'*65}\n")

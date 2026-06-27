@@ -17,8 +17,16 @@ def test_main_uses_task_kind_cli_arg_for_profile_routing(monkeypatch, tmp_path: 
     monkeypatch.setattr(omc_exec, "_check_codex_auth", lambda: True)
     monkeypatch.setattr(omc_exec.shutil, "which", lambda _name: "/usr/bin/codex")
 
-    def fake_run_codex_headless(project_root, prompt_text, *, timeout_sec, model_profile="mini_default"):
+    def fake_run_codex_headless(
+        project_root,
+        prompt_text,
+        *,
+        timeout_sec,
+        model_profile="mini_default",
+        task_kind="task",
+    ):
         captured["model_profile"] = model_profile
+        captured["task_kind"] = task_kind
         return 0
 
     monkeypatch.setattr(omc_exec, "_run_codex_headless", fake_run_codex_headless)
@@ -38,6 +46,7 @@ def test_main_uses_task_kind_cli_arg_for_profile_routing(monkeypatch, tmp_path: 
     rc = omc_exec.main()
     assert rc == 0
     assert captured["model_profile"] == "mini_high"
+    assert captured["task_kind"] == "plan"
 
 
 def test_main_defaults_task_kind_to_task_when_omitted(monkeypatch, tmp_path: Path) -> None:
@@ -51,8 +60,16 @@ def test_main_defaults_task_kind_to_task_when_omitted(monkeypatch, tmp_path: Pat
     monkeypatch.setattr(omc_exec, "_check_codex_auth", lambda: True)
     monkeypatch.setattr(omc_exec.shutil, "which", lambda _name: "/usr/bin/codex")
 
-    def fake_run_codex_headless(project_root, prompt_text, *, timeout_sec, model_profile="mini_default"):
+    def fake_run_codex_headless(
+        project_root,
+        prompt_text,
+        *,
+        timeout_sec,
+        model_profile="mini_default",
+        task_kind="task",
+    ):
         captured["model_profile"] = model_profile
+        captured["task_kind"] = task_kind
         return 0
 
     monkeypatch.setattr(omc_exec, "_run_codex_headless", fake_run_codex_headless)
@@ -71,6 +88,7 @@ def test_main_defaults_task_kind_to_task_when_omitted(monkeypatch, tmp_path: Pat
     rc = omc_exec.main()
     assert rc == 0
     assert captured["model_profile"] == "mini_default"
+    assert captured["task_kind"] == "task"
 
 
 def test_select_model_profile_defaults_task_to_mini_default() -> None:
@@ -192,8 +210,16 @@ def test_main_passes_touched_files_to_model_profile_routing(monkeypatch, tmp_pat
     monkeypatch.setattr(omc_exec, "_check_codex_auth", lambda: True)
     monkeypatch.setattr(omc_exec.shutil, "which", lambda _name: "/usr/bin/codex")
 
-    def fake_run_codex_headless(project_root, prompt_text, *, timeout_sec, model_profile="mini_default"):
+    def fake_run_codex_headless(
+        project_root,
+        prompt_text,
+        *,
+        timeout_sec,
+        model_profile="mini_default",
+        task_kind="task",
+    ):
         captured["model_profile"] = model_profile
+        captured["task_kind"] = task_kind
         return 0
 
     monkeypatch.setattr(omc_exec, "_run_codex_headless", fake_run_codex_headless)
@@ -217,3 +243,4 @@ def test_main_passes_touched_files_to_model_profile_routing(monkeypatch, tmp_pat
     assert rc == 0
     # review + 8개 sensitive path → full_default 에스컬레이션
     assert captured["model_profile"] == "full_default"
+    assert captured["task_kind"] == "review"

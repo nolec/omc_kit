@@ -50,6 +50,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_utils
 import omc_cost
+import omc_exec
 
 _TASKS_DIR = ".omc/tasks"
 _AUTOPILOT_STATE_DIR = ".omc/state/autopilot"
@@ -431,7 +432,20 @@ def _build_retry_prompt(
 # 스텝 실행
 # ---------------------------------------------------------------------------
 
-def _extract_cost_info(executor: str, stdout: str) -> dict | None:
+def _resolve_cost_model(executor: str, model_profile: str) -> str:
+    normalized_executor = executor.strip().lower()
+    normalized_profile = model_profile.strip().lower()
+    if normalized_executor == "codex":
+        settings = omc_exec._resolve_codex_profile_settings(normalized_profile)
+        return str(settings.get("model") or "")
+    if normalized_executor == "gemini":
+        return omc_exec._GEMINI_MODEL_MAP.get(normalized_profile, "")
+    if normalized_executor == "claude":
+        return omc_exec._CLAUDE_MODEL_MAP.get(normalized_profile, "")
+    return ""
+
+
+def _extract_cost_info(executor: str, stdout: str, *, model_profile: str = "mini_default") -> dict | None:
     try:
         usage = omc_cost._parse_llm_usage(executor, stdout)
         if usage is None:
@@ -439,7 +453,10 @@ def _extract_cost_info(executor: str, stdout: str) -> dict | None:
             usage = _parse_gemini_cli_stats(stdout)
         if usage is None:
             return None
-        cost = omc_cost._estimate_cost_usd(usage)
+        cost_model = _resolve_cost_model(executor, model_profile)
+        cost = None
+        if omc_cost._supports_cost_estimation(executor, cost_model):
+            cost = omc_cost._estimate_cost_usd(usage, cost_model)
         return {"token_usage": usage, "cost_estimate": cost}
     except Exception as exc:
         print(f"[COST] 파싱 실패 (무시됨): {exc}", file=sys.stderr)
@@ -493,6 +510,7 @@ def _run_step(
         return 1, "[ERROR] 스텝에 prompt가 없습니다."
 
     step_id = str(step.get("id", "")).strip().lower()
+    task_kind = step_id or "task"
     if step_id in {"plan", "review", "critique", "investigate", "plan_retry"}:
         model_profile = "mini_high"
     elif "retry" in step_id:
@@ -511,6 +529,14 @@ def _run_step(
         ) as tf:
             tf.write(prompt)
             prompt_file = tf.name
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".json",
+            prefix="omc_run_step_raw_",
+            delete=False,
+            encoding="utf-8",
+        ) as raw_tf:
+            raw_output_file = raw_tf.name
 
         cmd = [
             sys.executable,
@@ -521,19 +547,32 @@ def _run_step(
             "--model-profile", model_profile,
             "--execution-mode", "headless",
             "--timeout-sec", str(timeout_sec),
+            "--task-kind", task_kind,
         ]
         if isolated:
             cmd.append("--fresh-context")
 
+        env = os.environ.copy()
+        env["OMC_RAW_OUTPUT_FILE"] = raw_output_file
         proc = subprocess.run(
             cmd,
             cwd=str(root),
             capture_output=True,
             text=True,
             timeout=timeout_sec + 30,
+            env=env,
         )
         output = (proc.stdout or "") + (proc.stderr or "")
-        cost_info = _extract_cost_info(executor, proc.stdout or "")
+        raw_output = ""
+        try:
+            raw_output = Path(raw_output_file).read_text(encoding="utf-8")
+        except OSError:
+            raw_output = ""
+        cost_info = _extract_cost_info(
+            executor,
+            raw_output or (proc.stdout or ""),
+            model_profile=model_profile,
+        )
         return int(proc.returncode), output.strip(), cost_info
     except subprocess.TimeoutExpired:
         return 1, "[ERROR] 타임아웃 초과", None
@@ -543,6 +582,11 @@ def _run_step(
         if prompt_file:
             try:
                 Path(prompt_file).unlink()
+            except OSError:
+                pass
+        if "raw_output_file" in locals() and raw_output_file:
+            try:
+                Path(raw_output_file).unlink()
             except OSError:
                 pass
 

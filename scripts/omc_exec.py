@@ -13,6 +13,7 @@ import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import omc_cost
 import omc_utils
 
 _DEFAULT_HEADLESS_TIMEOUT_SEC = 120
@@ -33,6 +34,7 @@ _CLAUDE_MODEL_MAP = {
     "mini_high": "sonnet",
     "full_default": "sonnet",
 }
+_CODEX_REASONING_EFFORT_SUPPORTED: bool | None = None
 
 
 def _normalize_text(value: str | None) -> str:
@@ -153,12 +155,14 @@ def _codex_headless_command(
     output_path: Path,
     *,
     model_profile: str = "mini_default",
+    allow_reasoning_effort: bool = True,
 ) -> list[str]:
     profile = _resolve_codex_profile_settings(model_profile)
     cmd = [
         "codex",
         "exec",
         "--ephemeral",
+        "--json",
         "-s",
         "workspace-write",
         "-C",
@@ -169,7 +173,7 @@ def _codex_headless_command(
         str(profile["model"]),
     ]
     reasoning_effort = profile.get("reasoning_effort")
-    if isinstance(reasoning_effort, str) and reasoning_effort.strip():
+    if allow_reasoning_effort and isinstance(reasoning_effort, str) and reasoning_effort.strip():
         cmd += ["--reasoning-effort", reasoning_effort]
     if os.environ.get("OMC_CODEX_FULL_AUTO", "").strip() in {"1", "true", "TRUE", "yes"}:
         cmd.insert(2, "--full-auto")
@@ -192,7 +196,7 @@ def _claude_interactive_command(prompt_text: str) -> list[str]:
 
 def _claude_headless_command(prompt_text: str, *, model_profile: str = "mini_default") -> list[str]:
     model = _CLAUDE_MODEL_MAP.get(model_profile, _CLAUDE_MODEL_MAP["mini_default"])
-    return ["claude", "-p", prompt_text, "--model", model]
+    return ["claude", "-p", prompt_text, "--output-format", "json", "--model", model]
 
 
 # Gemini CLI에서 실제로 제공되는 도구 이름 목록 (gemini-cli-core tool-names.js 기준)
@@ -245,10 +249,72 @@ def _check_codex_auth() -> bool:
         return True
 
 
+def _codex_supports_reasoning_effort() -> bool:
+    global _CODEX_REASONING_EFFORT_SUPPORTED
+    if _CODEX_REASONING_EFFORT_SUPPORTED is not None:
+        return _CODEX_REASONING_EFFORT_SUPPORTED
+    try:
+        proc = subprocess.run(
+            ["codex", "exec", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        help_text = (proc.stdout or "") + (proc.stderr or "")
+        _CODEX_REASONING_EFFORT_SUPPORTED = "--reasoning-effort" in help_text
+    except Exception:
+        _CODEX_REASONING_EFFORT_SUPPORTED = False
+    return _CODEX_REASONING_EFFORT_SUPPORTED
+
+
 def _read_text_if_exists(path: Path) -> str:
     if not path.exists():
         return ""
     return path.read_text(encoding="utf-8").strip()
+
+
+def _write_raw_output_if_requested(raw_text: str) -> None:
+    raw_output_file = os.environ.get("OMC_RAW_OUTPUT_FILE", "").strip()
+    if not raw_output_file:
+        return
+    try:
+        Path(raw_output_file).write_text(raw_text, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _resolve_executor_model(executor: str, model_profile: str) -> str:
+    normalized_executor = _normalize_text(executor)
+    normalized_profile = _normalize_text(model_profile) or "mini_default"
+    if normalized_executor == "codex":
+        settings = _resolve_codex_profile_settings(normalized_profile)
+        return str(settings.get("model") or "")
+    if normalized_executor == "gemini":
+        return _GEMINI_MODEL_MAP.get(normalized_profile, _GEMINI_MODEL_MAP["mini_default"])
+    if normalized_executor == "claude":
+        return _CLAUDE_MODEL_MAP.get(normalized_profile, _CLAUDE_MODEL_MAP["mini_default"])
+    return ""
+
+
+def _record_headless_cost(
+    project_root: Path,
+    *,
+    executor: str,
+    raw_output: str,
+    model_profile: str,
+    task_kind: str,
+) -> None:
+    task_label = f"{task_kind or 'task'}: headless"
+    try:
+        omc_cost.record(
+            project_root,
+            executor=executor,
+            task_title=task_label,
+            llm_json=raw_output,
+            model=_resolve_executor_model(executor, model_profile),
+        )
+    except Exception as exc:
+        print(f"[WARN] cost record failed: {exc}", file=sys.stderr)
 
 
 def _resolve_codex_home() -> Path:
@@ -350,6 +416,7 @@ def _run_codex_headless(
     *,
     timeout_sec: int,
     model_profile: str = "mini_default",
+    task_kind: str = "task",
 ) -> int:
     with tempfile.NamedTemporaryFile(prefix="omc-codex-last.", suffix=".txt", delete=False) as fp:
         output_path = Path(fp.name)
@@ -361,6 +428,7 @@ def _run_codex_headless(
             prompt_text,
             output_path,
             model_profile=model_profile,
+            allow_reasoning_effort=_codex_supports_reasoning_effort(),
         )
         try:
             proc = subprocess.run(
@@ -372,8 +440,24 @@ def _run_codex_headless(
                 env=env,
             )
         except subprocess.TimeoutExpired:
+            _record_headless_cost(
+                project_root,
+                executor="codex",
+                raw_output="",
+                model_profile=model_profile,
+                task_kind=task_kind,
+            )
             print(f"[!] Codex headless execution timed out after {timeout_sec}s", file=sys.stderr)
             return 124
+        raw_output = proc.stdout or ""
+        _write_raw_output_if_requested(raw_output)
+        _record_headless_cost(
+            project_root,
+            executor="codex",
+            raw_output=raw_output,
+            model_profile=model_profile,
+            task_kind=task_kind,
+        )
         output_text = _read_text_if_exists(output_path)
         if output_text:
             print(output_text)
@@ -390,7 +474,14 @@ def _run_codex_headless(
         output_path.unlink(missing_ok=True)
 
 
-def _run_gemini_headless(project_root: Path, prompt_text: str, *, timeout_sec: int, model_profile: str = "mini_default") -> int:
+def _run_gemini_headless(
+    project_root: Path,
+    prompt_text: str,
+    *,
+    timeout_sec: int,
+    model_profile: str = "mini_default",
+    task_kind: str = "task",
+) -> int:
     try:
         proc = subprocess.run(
             _gemini_headless_command(prompt_text, model_profile=model_profile),
@@ -401,8 +492,24 @@ def _run_gemini_headless(project_root: Path, prompt_text: str, *, timeout_sec: i
             timeout=timeout_sec,
         )
     except subprocess.TimeoutExpired:
+        _record_headless_cost(
+            project_root,
+            executor="gemini",
+            raw_output="",
+            model_profile=model_profile,
+            task_kind=task_kind,
+        )
         print(f"[!] Gemini headless execution timed out after {timeout_sec}s", file=sys.stderr)
         return 124
+    raw_output = proc.stdout or ""
+    _write_raw_output_if_requested(raw_output)
+    _record_headless_cost(
+        project_root,
+        executor="gemini",
+        raw_output=raw_output,
+        model_profile=model_profile,
+        task_kind=task_kind,
+    )
     text = _extract_gemini_headless_text(proc.stdout)
     if text:
         print(text)
@@ -411,7 +518,14 @@ def _run_gemini_headless(project_root: Path, prompt_text: str, *, timeout_sec: i
     return int(proc.returncode)
 
 
-def _run_claude_headless(project_root: Path, prompt_text: str, *, timeout_sec: int, model_profile: str = "mini_default") -> int:
+def _run_claude_headless(
+    project_root: Path,
+    prompt_text: str,
+    *,
+    timeout_sec: int,
+    model_profile: str = "mini_default",
+    task_kind: str = "task",
+) -> int:
     try:
         proc = subprocess.run(
             _claude_headless_command(prompt_text, model_profile=model_profile),
@@ -422,8 +536,24 @@ def _run_claude_headless(project_root: Path, prompt_text: str, *, timeout_sec: i
             timeout=timeout_sec,
         )
     except subprocess.TimeoutExpired:
+        _record_headless_cost(
+            project_root,
+            executor="claude",
+            raw_output="",
+            model_profile=model_profile,
+            task_kind=task_kind,
+        )
         print(f"[!] Claude headless execution timed out after {timeout_sec}s", file=sys.stderr)
         return 124
+    raw_output = proc.stdout or ""
+    _write_raw_output_if_requested(raw_output)
+    _record_headless_cost(
+        project_root,
+        executor="claude",
+        raw_output=raw_output,
+        model_profile=model_profile,
+        task_kind=task_kind,
+    )
     if proc.stdout.strip():
         print(proc.stdout.strip())
     if proc.returncode != 0 and proc.stderr.strip():
@@ -518,6 +648,7 @@ def main() -> int:
                 prompt_text,
                 timeout_sec=args.timeout_sec,
                 model_profile=model_profile,
+                task_kind=args.task_kind,
             )
 
         # 2. Transition to Interactive CLI (TUI)
@@ -536,7 +667,13 @@ def main() -> int:
             print(f"gemini CLI not found. Prompt preserved at: {prompt_path}")
             return 127
         if args.execution_mode == "headless":
-            return _run_gemini_headless(project_root, prompt_text, timeout_sec=args.timeout_sec, model_profile=model_profile)
+            return _run_gemini_headless(
+                project_root,
+                prompt_text,
+                timeout_sec=args.timeout_sec,
+                model_profile=model_profile,
+                task_kind=args.task_kind,
+            )
         proc = subprocess.run(_gemini_command(prompt_text), cwd=str(project_root), check=False)
         return int(proc.returncode)
 
@@ -545,7 +682,13 @@ def main() -> int:
         return 127
 
     if args.execution_mode == "headless":
-        return _run_claude_headless(project_root, prompt_text, timeout_sec=args.timeout_sec, model_profile=model_profile)
+        return _run_claude_headless(
+            project_root,
+            prompt_text,
+            timeout_sec=args.timeout_sec,
+            model_profile=model_profile,
+            task_kind=args.task_kind,
+        )
 
     proc = subprocess.run(_claude_interactive_command(prompt_text), cwd=str(project_root), check=False)
     return int(proc.returncode)
