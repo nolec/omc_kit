@@ -92,6 +92,10 @@ def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
     return any(keyword in text for keyword in keywords)
 
 
+def _contains_all(text: str, keywords: tuple[str, ...]) -> bool:
+    return all(keyword in text for keyword in keywords)
+
+
 def _load_team_roles(target: Path) -> list[dict]:
     """team.json 또는 team.local.json에서 역할 로드. 없으면 내장 기본값 사용."""
     paths_to_try = [
@@ -193,6 +197,12 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
     qa_keywords = ("qa", "검수", "체크리스트")
     reentry_keywords = ("오랜만", "복귀", "뭐였지", "reentry", "구조 파악")
     task_keywords = ("구현", "개발", "만들어", "추가", "수정", "커밋", "빌드", "테스트 추가")
+    explicit_fix_intent = (
+        _contains_all(normalized, ("버그", "수정"))
+        or _contains_all(normalized, ("bug", "fix"))
+        or ("에러" in normalized and "수정" in normalized)
+    )
+    root_cause_intent = _contains_any(normalized, ("원인", "왜 실패", "재현", "추적", "debug", "디버"))
 
     if _contains_any(normalized, critique_keywords):
         return {
@@ -217,6 +227,12 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
             "response_mode": "answer-first",
             "recommended_skill": "$omc-plan",
             "primary_role": "analysis",
+        }
+    if explicit_fix_intent and not root_cause_intent:
+        return {
+            "response_mode": "execute-first",
+            "recommended_skill": "$omc-task",
+            "primary_role": "senior_coding",
         }
     if _contains_any(normalized, investigate_keywords):
         return {
