@@ -18,6 +18,7 @@ import omc_utils
 
 _DEFAULT_HEADLESS_TIMEOUT_SEC = 120
 _MODEL_PROFILES = {"mini_default", "mini_high", "full_default"}
+_ROUTING_POLICIES = {"cost_saver", "balanced", "quality_first"}
 _CODEX_MODEL_MAP = {
     "mini_default": {"model": "gpt-5.4-mini", "reasoning_effort": None},
     "mini_high": {"model": "gpt-5.4-mini", "reasoning_effort": "high"},
@@ -39,6 +40,13 @@ _CODEX_REASONING_EFFORT_SUPPORTED: bool | None = None
 
 def _normalize_text(value: str | None) -> str:
     return (value or "").strip().lower()
+
+
+def _resolve_routing_policy() -> str:
+    policy = _normalize_text(os.environ.get("OMC_ROUTING_POLICY"))
+    if policy in _ROUTING_POLICIES:
+        return policy
+    return "balanced"
 
 
 def _has_broader_context_signal(request_text: str) -> bool:
@@ -90,6 +98,7 @@ def select_model_profile(
     if override in _MODEL_PROFILES:
         return override
 
+    policy = _resolve_routing_policy()
     kind = _normalize_text(task_kind)
     severity = _normalize_text(review_severity)
     touched_count = len(touched_files)
@@ -99,11 +108,17 @@ def select_model_profile(
     if kind == "ship":
         return "full_default"
 
+    full_on_sensitive_review = kind in {"review", "investigate"} and has_sensitive_path and touched_count >= 3
+    if policy == "cost_saver" and severity not in {"major", "critical", "high"}:
+        full_on_sensitive_review = False
+    if policy == "quality_first" and kind == "review" and (has_sensitive_path or broader_signal):
+        full_on_sensitive_review = True
+
     if (
         severity in {"major", "critical", "high"}
         or retry_count >= 2
         or touched_count >= 8
-        or (kind in {"review", "investigate"} and has_sensitive_path and touched_count >= 3)
+        or full_on_sensitive_review
     ):
         return "full_default"
 

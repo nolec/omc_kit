@@ -172,6 +172,51 @@ def test_select_model_profile_honors_env_override(monkeypatch) -> None:
     )
 
 
+def test_select_model_profile_balanced_keeps_current_borderline_review_behavior(monkeypatch) -> None:
+    monkeypatch.setenv("OMC_ROUTING_POLICY", "balanced")
+
+    assert (
+        omc_exec.select_model_profile(
+            task_kind="review",
+            request_text="변경 영향 검토",
+            touched_files=["src/state/store.ts", "src/features/a.ts", "src/features/b.ts"],
+            retry_count=0,
+            review_severity=None,
+        )
+        == "full_default"
+    )
+
+
+def test_select_model_profile_cost_saver_avoids_full_for_borderline_review(monkeypatch) -> None:
+    monkeypatch.setenv("OMC_ROUTING_POLICY", "cost_saver")
+
+    assert (
+        omc_exec.select_model_profile(
+            task_kind="review",
+            request_text="변경 영향 검토",
+            touched_files=["src/state/store.ts", "src/features/a.ts", "src/features/b.ts"],
+            retry_count=0,
+            review_severity=None,
+        )
+        == "mini_high"
+    )
+
+
+def test_select_model_profile_quality_first_escalates_borderline_review_to_full(monkeypatch) -> None:
+    monkeypatch.setenv("OMC_ROUTING_POLICY", "quality_first")
+
+    assert (
+        omc_exec.select_model_profile(
+            task_kind="review",
+            request_text="변경 영향 검토",
+            touched_files=["src/state/store.ts", "src/features/a.ts", "src/features/b.ts"],
+            retry_count=0,
+            review_severity=None,
+        )
+        == "full_default"
+    )
+
+
 def test_select_model_profile_uses_full_default_for_ship() -> None:
     assert (
         omc_exec.select_model_profile(
