@@ -17,7 +17,7 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "추가로 `.omc/runs/` 기준 `reroute_rate`, `retry_to_success_rate`, `cost_per_successful_task` multi-run KPI summary와 current-path 중복 제거까지 반영됐다." in text
     assert "현재 상태는 `V3-2 주요 failure path 일반화 완료 + V4 multi-run KPI summary 1차 완료`에 가깝다." in text
     assert "Operator Experience | 진행중" in text
-    assert "다만 `omc-plan` 출력 contract에 `decision / risk / next_action` 의미를 plan 문맥으로 고정하는 1차 보강은 반영됐다." in text
+    assert "다만 `omc-plan`, `omc-review` 출력 contract에 `decision / risk / next_action` 의미를 각 스킬 문맥으로 고정하는 1차 보강은 반영됐다." in text
     assert "실제 profile 선택에 반영된다" in text
     assert "완료" in text
     assert "진행중" in text
@@ -38,5 +38,7 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "failure path 일반화에서 최소 orchestration failure shape와 single-run telemetry가 안정된 뒤 multi-run KPI summary를 붙였다." in text
     assert "최근 반영된 1차 변화:" in text
     assert "`omc-plan` 출력 contract에 `decision / risk / next_action` 의미를 plan 문맥으로 고정" in text
+    assert "`omc-review` 출력 contract에 `decision / risk / next_action` 의미를 review 문맥으로 고정" in text
     assert "남은 2차 변화:" in text
-    assert "`omc-review`, `omc-task`에도 같은 수준의 의미 고정 적용" in text
+    assert "`omc-task`에도 같은 수준의 의미 고정 적용" in text
+    assert "`omc-plan`, `omc-review` 1차 계약 보강은 끝났다." in text
