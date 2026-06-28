@@ -568,6 +568,7 @@ def test_response_mode_fixture_covers_three_policy_modes_and_mixed_intent_exampl
     assert "복귀용 프로젝트 reentry 스킬 재설계 정보원 우선순위와 출력 계약 고정" in requests
     assert "현재 어떤점이 개선된거야" in requests
     assert "fugu 문서 2개 먼저 커밋 태스크 2부터 $omc-task" in requests
+    assert "다음 1순위 작업을 더 잘게 쪼개서" in requests
 
 
 def test_load_response_mode_cases_rejects_observed_output_without_comparison_scope(tmp_path: Path):
@@ -716,3 +717,21 @@ def test_compare_response_modes_derives_reroute_from_trace():
 
     assert report["cases"][0]["baseline"]["reroute"] is True
     assert report["cases"][0]["candidate"]["reroute"] is False
+
+
+def test_response_mode_fixture_observed_request_case_affects_next_action_accuracy():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    target_case = next(case for case in cases if case["request"] == "다음 1순위 작업을 더 잘게 쪼개서")
+
+    report = mod.compare_response_modes([target_case])
+
+    assert report["summary"]["next_action_case_count"] == 1
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert report["cases"][0]["expected_next_action"] == "$omc-critique"
+    assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][0]["candidate"]["next_action"] == "$omc-critique"

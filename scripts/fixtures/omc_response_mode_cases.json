@@ -264,6 +264,23 @@
       "evidence": "2026-06-27 실제 세션 요청문 추출: 개선된 점 설명 요청"
     },
     {
+      "request": "다음 1순위 작업을 더 잘게 쪼개서",
+      "expected_mode": "answer-first",
+      "expected_next_action": "$omc-critique",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": ["assistant: 바로 구현 단계로 전제", "user: 아니 더 잘게 계획해줘"],
+      "candidate_trace": ["assistant: 작은 작업으로 재분해", "assistant: 고위험이라 critique를 다음 단계로 제안"],
+      "baseline_output_chars": 268,
+      "candidate_output_chars": 302,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "$omc-critique",
+      "source_type": "observed_request",
+      "evidence": "2026-06-28 실제 세션 요청문 추출: Operator Experience 1순위 재계획 후 critique 재진입"
+    },
+    {
       "request": "fugu 문서 2개 먼저 커밋 태스크 2부터 $omc-task",
       "expected_mode": "execute-first",
       "expected_next_action": "$omc-review",

@@ -123,6 +123,82 @@ def test_orchestration_hint_routes_bug_fix_with_test_addition_to_task() -> None:
     assert hint["primary_role"] == "senior_coding"
 
 
+def test_orchestration_hint_routes_work_breakdown_request_to_plan() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("다음 1순위 작업을 더 잘게 쪼개서")
+
+    assert hint["response_mode"] == "answer-first"
+    assert hint["recommended_skill"] == "$omc-plan"
+    assert hint["primary_role"] == "analysis"
+    assert hint["task_kind_hint"] == "plan"
+
+
+def test_orchestration_hint_routes_progress_summary_request_to_status() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("지금까지 뭐 했는지 정리해줘")
+
+    assert hint["response_mode"] == "answer-first"
+    assert hint["recommended_skill"] == "$omc-status"
+    assert hint["primary_role"] == "analysis"
+
+
+def test_orchestration_hint_prioritizes_plan_over_progress_summary_when_both_present() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("지금까지 뭐 했는지 정리하고 다음 작업 계획해줘")
+
+    assert hint["response_mode"] == "answer-first"
+    assert hint["recommended_skill"] == "$omc-plan"
+    assert hint["primary_role"] == "analysis"
+    assert hint["task_kind_hint"] == "plan"
+
+
+def test_orchestration_hint_prioritizes_review_over_progress_summary_when_both_present() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("지금까지 뭐 했는지 정리하고 현재 변경도 리뷰해줘")
+
+    assert hint["response_mode"] == "review-first"
+    assert hint["recommended_skill"] == "$omc-review"
+    assert hint["primary_role"] == "code_review"
+    assert hint["task_kind_hint"] == "review"
+
+
+def test_orchestration_hint_prioritizes_task_over_progress_summary_when_both_present() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("지금까지 뭐 했는지 정리하고 버그 수정해줘")
+
+    assert hint["response_mode"] == "execute-first"
+    assert hint["recommended_skill"] == "$omc-task"
+    assert hint["primary_role"] == "senior_coding"
+    assert hint["task_kind_hint"] == "task"
+
+
+def test_orchestration_hint_prioritizes_ship_over_progress_summary_when_both_present() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("현재 어떤점이 개선됐는지 말해주고 커밋해서 배포해줘")
+
+    assert hint["response_mode"] == "execute-first"
+    assert hint["recommended_skill"] == "$omc-ship"
+    assert hint["primary_role"] == "directive"
+    assert hint["task_kind_hint"] == "ship"
+
+
+def test_orchestration_hint_prioritizes_investigate_over_progress_summary_when_both_present() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("지금까지 뭐 했는지 정리하고 이 버그 원인 먼저 찾아줘")
+
+    assert hint["response_mode"] == "answer-first"
+    assert hint["recommended_skill"] == "$omc-investigate"
+    assert hint["primary_role"] == "analysis"
+    assert hint["task_kind_hint"] == "investigate"
+
+
 def test_json_output_includes_orchestration_fields():
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--text", "리뷰해줘", "--format", "json"],

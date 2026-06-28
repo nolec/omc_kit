@@ -221,6 +221,17 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
     qa_keywords = ("qa", "검수", "체크리스트")
     reentry_keywords = ("오랜만", "복귀", "뭐였지", "reentry", "구조 파악")
     task_keywords = ("구현", "개발", "만들어", "추가", "수정", "커밋", "빌드", "테스트 추가")
+    work_breakdown_intent = (
+        ("작업" in normalized or "태스크" in normalized)
+        and _contains_any(normalized, ("쪼개", "잘게", "우선순위", "진행 순서", "정리"))
+    )
+    progress_summary_intent = _contains_any(
+        normalized,
+        ("지금까지 뭐 했", "뭐 했는지 정리", "현재 어떤점이 개선", "어떤점이 개선", "개선된거야"),
+    )
+    explicit_planning_intent = _contains_any(normalized, plan_keywords)
+    explicit_review_intent = _contains_any(normalized, review_keywords)
+    explicit_critique_intent = _contains_any(normalized, critique_keywords)
     explicit_fix_intent = (
         _contains_all(normalized, ("버그", "수정"))
         or _contains_all(normalized, ("bug", "fix"))
@@ -228,14 +239,14 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
     )
     root_cause_intent = _contains_any(normalized, ("원인", "왜 실패", "재현", "추적", "debug", "디버"))
 
-    if _contains_any(normalized, critique_keywords):
+    if explicit_critique_intent:
         return _build_orchestration(
             response_mode="review-first",
             recommended_skill="$omc-critique",
             primary_role="code_review",
             task_kind_hint="review",
         )
-    if _contains_any(normalized, review_keywords):
+    if explicit_review_intent:
         return _build_orchestration(
             response_mode="review-first",
             recommended_skill="$omc-review",
@@ -248,13 +259,6 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
             recommended_skill="$omc-ship",
             primary_role="directive",
             task_kind_hint="ship",
-        )
-    if _contains_any(normalized, plan_keywords):
-        return _build_orchestration(
-            response_mode="answer-first",
-            recommended_skill="$omc-plan",
-            primary_role="analysis",
-            task_kind_hint="plan",
         )
     if explicit_fix_intent and not root_cause_intent:
         return _build_orchestration(
@@ -269,6 +273,34 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
             recommended_skill="$omc-investigate",
             primary_role="analysis",
             task_kind_hint="investigate",
+        )
+    if progress_summary_intent and not (
+        explicit_planning_intent
+        or explicit_review_intent
+        or explicit_critique_intent
+        or work_breakdown_intent
+        or explicit_fix_intent
+        or root_cause_intent
+    ):
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-status",
+            primary_role="analysis",
+            task_kind_hint="task",
+        )
+    if work_breakdown_intent:
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-plan",
+            primary_role="analysis",
+            task_kind_hint="plan",
+        )
+    if explicit_planning_intent:
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-plan",
+            primary_role="analysis",
+            task_kind_hint="plan",
         )
     if _contains_any(normalized, brainstorm_keywords):
         return _build_orchestration(

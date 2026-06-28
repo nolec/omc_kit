@@ -499,7 +499,13 @@ def test_build_benchmark_report_completed_pipeline():
         "finished_at": "2026-05-31T00:02:03Z",
         "steps": {
             "preflight": {"status": "completed"},
-            "task": {"status": "completed", "verdict": "PROCEED"},
+            "task": {
+                "status": "completed",
+                "verdict": "PROCEED",
+                "decision": "same",
+                "token_usage": {"input_tokens": 100, "output_tokens": 20},
+                "cost_estimate": 0.001,
+            },
             "review": {"status": "completed", "verdict": "APPROVE", "attempt": 2},
         },
     })
@@ -518,6 +524,10 @@ def test_build_benchmark_report_completed_pipeline():
     assert report["cost_estimate"] is None
     assert report["token_usage"] is None
     assert report["executor_cost_source"] is None
+    assert report["had_reroute"] is False
+    assert report["recovered_after_retry"] is False
+    assert report["total_cost_usd"] == pytest.approx(0.001)
+    assert report["total_tokens"] == 120
 
 
 def test_build_benchmark_report_failed_pipeline_with_retry_step():
@@ -534,7 +544,12 @@ def test_build_benchmark_report_failed_pipeline_with_retry_step():
         "finished_at": None,
         "steps": {
             "preflight": {"status": "completed"},
-            "task": {"status": "completed", "verdict": "PROCEED"},
+            "task": {
+                "status": "completed",
+                "verdict": "PROCEED",
+                "decision": "reroute",
+                "reroute_target": "task_retry",
+            },
             "task_retry": {"status": "failed", "verdict": "BLOCK", "attempt": 3},
         },
     })
@@ -552,6 +567,33 @@ def test_build_benchmark_report_failed_pipeline_with_retry_step():
     assert report["pipeline_success"] is False
     assert report["quality_success"] is False
     assert report["failure_class_breakdown"] == {"execution_failure": 1}
+    assert report["had_reroute"] is True
+    assert report["recovered_after_retry"] is False
+    assert report["total_cost_usd"] is None
+    assert report["total_tokens"] is None
+
+
+def test_build_benchmark_report_completed_pipeline_after_retry_marks_recovered():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    report = mod._build_benchmark_report({
+        "status": "completed",
+        "mode": "full",
+        "executor": "codex",
+        "branch": "feat/recovered",
+        "started_at": "2026-05-31T00:00:00Z",
+        "finished_at": "2026-05-31T00:01:00Z",
+        "steps": {
+            "task": {"status": "completed", "verdict": "PROCEED", "decision": "reroute", "reroute_target": "task_retry"},
+            "task_retry": {"status": "completed", "verdict": "PROCEED", "attempt": 2},
+            "review": {"status": "completed", "verdict": "APPROVE"},
+        },
+    })
+
+    assert report["had_reroute"] is True
+    assert report["recovered_after_retry"] is True
 
 
 def test_step_payload_keeps_failure_class_metadata():
@@ -569,6 +611,51 @@ def test_step_payload_keeps_failure_class_metadata():
 
     assert payload["failure_class"] == "contract_failure"
     assert payload["reason_codes"] == ["verdict_missing", "output_mismatch"]
+
+
+def test_build_failure_metadata_marks_bad_entry_skill_as_orchestration_failure():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    payload = mod._build_failure_metadata(
+        step_name="plan",
+        status="failed",
+        reason_codes=["bad_entry_skill"],
+    )
+
+    assert payload["failure_class"] == "orchestration_failure"
+    assert payload["reason_codes"] == ["bad_entry_skill"]
+
+
+def test_build_failure_metadata_marks_reroute_loop_as_orchestration_failure():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    payload = mod._build_failure_metadata(
+        step_name="critique",
+        status="failed",
+        reason_codes=["reroute_loop"],
+    )
+
+    assert payload["failure_class"] == "orchestration_failure"
+    assert payload["reason_codes"] == ["reroute_loop"]
+
+
+def test_build_failure_metadata_marks_metadata_missing_as_orchestration_failure():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    payload = mod._build_failure_metadata(
+        step_name="task",
+        status="failed",
+        reason_codes=["metadata_missing"],
+    )
+
+    assert payload["failure_class"] == "orchestration_failure"
+    assert payload["reason_codes"] == ["metadata_missing"]
 
 
 def test_build_benchmark_report_handles_mixed_timezone_timestamps():
@@ -871,6 +958,9 @@ def test_pipeline_timeout_persists_failure_metadata(tmp_path: Path, monkeypatch)
     assert critique_step["started_at"] == "2026-06-28T00:00:00Z"
     assert critique_step["failure_class"] == "execution_failure"
     assert critique_step["reason_codes"] == ["timeout"]
+    assert critique_step["decision"] == "same"
+    assert critique_step["decision_reason"] == "execution failure stays on current path before threshold"
+    assert critique_step["reroute_target"] is None
 
 
 def test_decide_escalation_action_default_execution_retry_two_reroutes_task():
@@ -921,6 +1011,57 @@ def test_decide_escalation_action_contract_failure_holds_even_when_aggressive():
     assert decision["reroute_target"] is None
 
 
+def test_decide_escalation_action_orchestration_failure_bad_entry_skill_reroutes_plan():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    decision = mod._decide_escalation_action(
+        failure_class="orchestration_failure",
+        reason_codes=["bad_entry_skill"],
+        retry_count=0,
+        escalation_policy="default",
+    )
+
+    assert decision["decision"] == "reroute"
+    assert decision["decision_reason"] == "orchestration failure reroutes to planning"
+    assert decision["reroute_target"] == "plan_retry"
+
+
+def test_decide_escalation_action_orchestration_failure_metadata_missing_reroutes_plan():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    decision = mod._decide_escalation_action(
+        failure_class="orchestration_failure",
+        reason_codes=["metadata_missing"],
+        retry_count=0,
+        escalation_policy="default",
+    )
+
+    assert decision["decision"] == "reroute"
+    assert decision["decision_reason"] == "orchestration failure reroutes to planning"
+    assert decision["reroute_target"] == "plan_retry"
+
+
+def test_decide_escalation_action_orchestration_failure_reroute_loop_holds():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    decision = mod._decide_escalation_action(
+        failure_class="orchestration_failure",
+        reason_codes=["reroute_loop"],
+        retry_count=0,
+        escalation_policy="default",
+    )
+
+    assert decision["decision"] == "hold"
+    assert decision["decision_reason"] == "orchestration reroute loop requires explicit hold"
+    assert decision["reroute_target"] is None
+
+
 def test_step_payload_keeps_escalation_decision_metadata():
     import importlib
     import omc_autopilot as mod
@@ -938,6 +1079,25 @@ def test_step_payload_keeps_escalation_decision_metadata():
     assert payload["decision"] == "reroute"
     assert payload["decision_reason"] == "execution failure reached retry threshold"
     assert payload["reroute_target"] == "task_retry"
+
+
+def test_step_payload_keeps_decision_metadata_on_completed_retry_steps():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    payload = mod._step_payload(
+        "completed",
+        "2026-06-28T00:00:00Z",
+        "2026-06-28T00:00:05Z",
+        decision="same",
+        decision_reason="completed retry stays on current path",
+        reroute_target=None,
+    )
+
+    assert payload["decision"] == "same"
+    assert payload["decision_reason"] == "completed retry stays on current path"
+    assert payload["reroute_target"] is None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # T3: AMBIGUOUS_RESPONSE — task verdict None 처리
@@ -1027,6 +1187,9 @@ def test_task_ambiguous_response_fails_after_two_nones(tmp_path: Path, monkeypat
     assert data["status"] == "failed_ambiguous_response", (
         f"expected failed_ambiguous_response, got {data['status']}"
     )
+    assert data["steps"]["task"]["decision"] == "same"
+    assert data["steps"]["task"]["decision_reason"] == "execution failure stays on current path before threshold"
+    assert data["steps"]["task"]["reroute_target"] is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1108,6 +1271,54 @@ def test_pipeline_branch_failure_sets_top_level_failed_branch(tmp_path: Path, mo
     data = json.loads(result_path.read_text(encoding="utf-8"))
     assert data["status"] == "failed_branch"
     assert data["steps"]["branch"]["status"] == "failed_branch"
+    assert data["steps"]["branch"]["decision"] == "same"
+    assert data["steps"]["branch"]["decision_reason"] == "execution failure stays on current path before threshold"
+    assert data["steps"]["branch"]["reroute_target"] is None
+
+
+def test_pipeline_task_failure_persists_decision_metadata(tmp_path: Path, monkeypatch):
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task":
+            return 1, "task failed"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/task-fail-metadata",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 1
+    data = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    task_step = data["steps"]["task"]
+    assert task_step["status"] == "failed"
+    assert task_step["failure_class"] == "execution_failure"
+    assert task_step["reason_codes"] == ["step_failed", "nonzero_exit"]
+    assert task_step["decision"] == "same"
+    assert task_step["decision_reason"] == "execution failure stays on current path before threshold"
+    assert task_step["reroute_target"] is None
 
 
 def test_pipeline_does_not_crash_when_resumed_with_existing_block_critique(tmp_path: Path, monkeypatch):
@@ -1227,6 +1438,157 @@ def test_pipeline_uses_single_run_history_record_per_execution(tmp_path: Path):
     assert runs_dir.exists(), ".omc/runs 디렉토리 미생성"
     subdirs = [p for p in runs_dir.iterdir() if p.is_dir()]
     assert len(subdirs) == 1, f"한 실행에서 run_id가 여러 개 생성됨: {len(subdirs)}"
+
+
+def test_cmd_overview_prints_multi_run_kpi_summary(tmp_path: Path, capsys):
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    runs_dir = tmp_path / ".omc" / "runs"
+    runs_dir.mkdir(parents=True)
+
+    (runs_dir / "20260601T000001-a").mkdir()
+    (runs_dir / "20260601T000001-a" / "result.json").write_text(json.dumps({
+        "status": "completed",
+        "branch": "feat/a",
+        "executor": "codex",
+        "started_at": "2026-06-01T00:00:00Z",
+        "finished_at": "2026-06-01T00:01:00Z",
+        "steps": {
+            "task": {"status": "completed", "decision": "reroute", "reroute_target": "task_retry"},
+            "task_retry": {"status": "completed", "attempt": 2},
+            "review": {"status": "completed", "verdict": "APPROVE", "cost_estimate": 0.01},
+        },
+    }), encoding="utf-8")
+
+    (runs_dir / "20260601T000002-b").mkdir()
+    (runs_dir / "20260601T000002-b" / "result.json").write_text(json.dumps({
+        "status": "completed",
+        "branch": "feat/b",
+        "executor": "codex",
+        "started_at": "2026-06-01T00:02:00Z",
+        "finished_at": "2026-06-01T00:03:00Z",
+        "steps": {
+            "task": {"status": "completed"},
+            "review": {"status": "completed", "verdict": "APPROVE", "cost_estimate": 0.03},
+        },
+    }), encoding="utf-8")
+
+    (runs_dir / "20260601T000003-c").mkdir()
+    (runs_dir / "20260601T000003-c" / "result.json").write_text(json.dumps({
+        "status": "failed",
+        "branch": "feat/c",
+        "executor": "codex",
+        "started_at": "2026-06-01T00:04:00Z",
+        "finished_at": "2026-06-01T00:05:00Z",
+        "steps": {
+            "task": {"status": "completed", "decision": "reroute", "reroute_target": "task_retry"},
+            "task_retry": {"status": "failed", "attempt": 2},
+        },
+    }), encoding="utf-8")
+
+    rc = mod.cmd_overview(tmp_path, limit=10)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "KPI Summary" in out
+    assert "total_runs=3" in out
+    assert "reroute_rate=66.7%" in out
+    assert "retry_to_success_rate=50.0%" in out
+    assert "cost_per_successful_task=$0.0200" in out
+
+
+def test_cmd_overview_prints_na_for_missing_retry_and_cost_data(tmp_path: Path, capsys):
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    runs_dir = tmp_path / ".omc" / "runs"
+    runs_dir.mkdir(parents=True)
+
+    (runs_dir / "20260601T000010-x").mkdir()
+    (runs_dir / "20260601T000010-x" / "result.json").write_text(json.dumps({
+        "status": "completed",
+        "branch": "feat/x",
+        "executor": "codex",
+        "started_at": "2026-06-01T00:10:00Z",
+        "finished_at": "2026-06-01T00:11:00Z",
+        "steps": {
+            "task": {"status": "completed"},
+            "review": {"status": "completed", "verdict": "APPROVE"},
+        },
+    }), encoding="utf-8")
+
+    rc = mod.cmd_overview(tmp_path, limit=10)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "total_runs=1" in out
+    assert "reroute_rate=0.0%" in out
+    assert "retry_to_success_rate=n/a" in out
+    assert "cost_per_successful_task=n/a" in out
+
+
+def test_cmd_overview_counts_current_result_in_kpi_summary(tmp_path: Path, capsys):
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    omc_dir = tmp_path / ".omc"
+    omc_dir.mkdir(parents=True)
+    (omc_dir / "pipeline_run_result.json").write_text(json.dumps({
+        "status": "completed",
+        "branch": "feat/current-only",
+        "executor": "codex",
+        "started_at": "2026-06-01T01:00:00Z",
+        "finished_at": "2026-06-01T01:01:00Z",
+        "steps": {
+            "task": {"status": "completed", "decision": "reroute", "reroute_target": "task_retry"},
+            "task_retry": {"status": "completed", "attempt": 2},
+            "review": {"status": "completed", "verdict": "APPROVE", "cost_estimate": 0.05},
+        },
+    }), encoding="utf-8")
+
+    rc = mod.cmd_overview(tmp_path, limit=10)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "total_runs=1" in out
+    assert "reroute_rate=100.0%" in out
+    assert "retry_to_success_rate=100.0%" in out
+    assert "cost_per_successful_task=$0.0500" in out
+
+
+def test_cmd_overview_deduplicates_current_result_from_runs_kpi_summary(tmp_path: Path, capsys):
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    payload = {
+        "status": "completed",
+        "branch": "feat/duplicate",
+        "executor": "codex",
+        "started_at": "2026-06-01T02:00:00Z",
+        "finished_at": "2026-06-01T02:01:00Z",
+        "steps": {
+            "task": {"status": "completed"},
+            "review": {"status": "completed", "verdict": "APPROVE", "cost_estimate": 0.02},
+        },
+    }
+
+    omc_dir = tmp_path / ".omc"
+    runs_dir = omc_dir / "runs" / "20260601T020000-a"
+    runs_dir.mkdir(parents=True)
+    (omc_dir / "pipeline_run_result.json").write_text(json.dumps(payload), encoding="utf-8")
+    (runs_dir / "result.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    rc = mod.cmd_overview(tmp_path, limit=10)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "total_runs=1" in out
+    assert "cost_per_successful_task=$0.0200" in out
 
 # ─────────────────────────────────────────────────────────────────────────────
 # T6: critique/review 격리 컨텍스트 — isolated=True 검증
@@ -1547,6 +1909,115 @@ def test_retry_exhausted_quality_failure_uses_plan_retry_before_task_retry(tmp_p
     assert rc == 0
     assert "plan_retry" in call_log, f"plan_retry가 호출되지 않음: {call_log}"
     assert "task_retry" not in call_log, f"task_retry가 잘못 호출됨: {call_log}"
+
+
+def test_task_retry_completed_persists_decision_metadata(tmp_path: Path, monkeypatch):
+    """task_retry 성공 경로도 공통 decision payload shape를 남겨야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    critique_call = {"n": 0}
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        if step_name in ("plan", "task"):
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            critique_call["n"] += 1
+            if critique_call["n"] <= 4:
+                return 1, "critique command failed"
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task_retry":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "review":
+            return 0, "VERDICT: APPROVE"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/t7-task-retry-shape",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 0
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    task_retry = result["steps"]["task_retry"]
+    assert task_retry["status"] == "completed"
+    assert task_retry["decision"] == "same"
+    assert task_retry["decision_reason"] == "completed retry stays on current path"
+    assert task_retry["reroute_target"] is None
+
+
+def test_plan_retry_completed_persists_decision_metadata(tmp_path: Path, monkeypatch):
+    """plan_retry 성공 경로도 공통 decision payload shape를 남겨야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    critique_calls = {"n": 0}
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        if step_name in ("plan", "task"):
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            critique_calls["n"] += 1
+            if critique_calls["n"] <= 4:
+                return 0, "VERDICT: REVISE"
+            return 0, "VERDICT: PROCEED"
+        if step_name == "plan_retry":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "review":
+            return 0, "VERDICT: APPROVE"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setattr(mod, "_TASK_AUTO_RETRY_MAX", 0)
+    monkeypatch.setattr(mod, "_CRITIQUE_AUTO_RETRY_MAX", 1)
+    monkeypatch.setattr(mod, "_PIPELINE_MAX_SAME_VERDICT", 99)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/t7-plan-retry-shape",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 0
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    plan_retry = result["steps"]["plan_retry"]
+    assert plan_retry["status"] == "completed"
+    assert plan_retry["decision"] == "same"
+    assert plan_retry["decision_reason"] == "completed retry stays on current path"
+    assert plan_retry["reroute_target"] is None
 
 
 def test_critique_retry_prompt_includes_issues(tmp_path: Path, monkeypatch):

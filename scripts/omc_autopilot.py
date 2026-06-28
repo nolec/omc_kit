@@ -1121,6 +1121,13 @@ def _build_benchmark_report(data: dict) -> dict:
         if str(step.get("attempt", "")).isdigit()
     )
     retry_count = retry_step_count + retry_attempt_count
+    had_reroute = any(
+        str(step.get("decision") or "").strip().lower() == "reroute"
+        or bool(str(step.get("reroute_target") or "").strip())
+        for step in steps.values()
+        if isinstance(step, dict)
+    )
+    recovered_after_retry = retry_step_count > 0 and data.get("status") == "completed"
 
     final_verdict = None
     for step in reversed(list(steps.values())):
@@ -1167,6 +1174,8 @@ def _build_benchmark_report(data: dict) -> dict:
         "completed_steps": completed_steps,
         "failed_steps": failed_steps,
         "retry_count": retry_count,
+        "had_reroute": had_reroute,
+        "recovered_after_retry": recovered_after_retry,
         "success_rate": (completed_steps / total_steps) if total_steps else 0,
         "final_verdict": final_verdict,
         "failure_category": failure_category,
@@ -1441,9 +1450,50 @@ def _sort_overview_summaries(summaries: list[dict[str, object]]) -> list[dict[st
     )
 
 
+def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
+    reports = [_build_benchmark_report(record) for record in run_records if isinstance(record, dict)]
+    total_runs = len(reports)
+    reroute_runs = sum(1 for report in reports if report.get("had_reroute") is True)
+    recovered_runs = sum(1 for report in reports if report.get("recovered_after_retry") is True)
+    successful_costs = [
+        float(report["total_cost_usd"])
+        for report in reports
+        if report.get("pipeline_success") is True
+        and isinstance(report.get("total_cost_usd"), (int, float))
+    ]
+    return {
+        "total_runs": total_runs,
+        "reroute_rate": (reroute_runs / total_runs) if total_runs else None,
+        "retry_to_success_rate": (recovered_runs / reroute_runs) if reroute_runs else None,
+        "cost_per_successful_task": (
+            sum(successful_costs) / len(successful_costs)
+            if successful_costs
+            else None
+        ),
+    }
+
+
+def _format_overview_ratio(value: object) -> str:
+    if not isinstance(value, (int, float)):
+        return "n/a"
+    return f"{value * 100:.1f}%"
+
+
+def _format_overview_cost(value: object) -> str:
+    if not isinstance(value, (int, float)):
+        return "n/a"
+    return f"${value:.4f}"
+
+
+def _overview_run_fingerprint(data: dict) -> str:
+    return json.dumps(data, sort_keys=True, ensure_ascii=False)
+
+
 def cmd_overview(root: Path, *, limit: int = 10) -> int:
     """Print a one-screen read-only overview for current and recent autopilot runs."""
     summaries: list[dict[str, object]] = []
+    run_records: list[dict] = []
+    seen_fingerprints: set[str] = set()
 
     current_path = root / _PIPELINE_RESULT_PATH
     if current_path.exists():
@@ -1452,6 +1502,8 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
         except (json.JSONDecodeError, OSError):
             current_data = None
         if isinstance(current_data, dict):
+            seen_fingerprints.add(_overview_run_fingerprint(current_data))
+            run_records.append(current_data)
             summaries.append(_summarize_run_record("current", current_data))
 
     runs_dir = root / _RUNS_DIR
@@ -1467,6 +1519,10 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
                 data = json.loads(result_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 continue
+            fingerprint = _overview_run_fingerprint(data)
+            if fingerprint not in seen_fingerprints:
+                seen_fingerprints.add(fingerprint)
+                run_records.append(data)
             summaries.append(_summarize_run_record(d.name, data))
 
     if not summaries:
@@ -1474,8 +1530,16 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
         return 0
 
     summaries = _sort_overview_summaries(summaries)
+    kpi_summary = _build_overview_kpi_summary(run_records)
 
     print("OMC Autopilot Overview")
+    print(
+        "KPI Summary "
+        f"total_runs={kpi_summary['total_runs']}  "
+        f"reroute_rate={_format_overview_ratio(kpi_summary['reroute_rate'])}  "
+        f"retry_to_success_rate={_format_overview_ratio(kpi_summary['retry_to_success_rate'])}  "
+        f"cost_per_successful_task={_format_overview_cost(kpi_summary['cost_per_successful_task'])}"
+    )
     print("run_id | branch | status | step | stale | failure_reason | next_action")
     print("-" * 78)
     for summary in summaries[:limit]:
@@ -1641,8 +1705,15 @@ def _build_failure_metadata(
     name = step_name.strip().lower()
     normalized_status = str(status or "").strip().lower()
     normalized_verdict = str(verdict or "").strip().upper()
+    normalized_reason_codes = [
+        str(code).strip().lower()
+        for code in (reason_codes or [])
+        if str(code).strip()
+    ]
 
-    if normalized_verdict in {"BLOCK", "REVISE"} and ("review" in name or "critique" in name):
+    if any(code in {"bad_entry_skill", "reroute_loop", "metadata_missing"} for code in normalized_reason_codes):
+        failure_class = "orchestration_failure"
+    elif normalized_verdict in {"BLOCK", "REVISE"} and ("review" in name or "critique" in name):
         failure_class = "quality_failure"
     elif normalized_verdict == "HOLD" or normalized_status == "blocked":
         failure_class = "contract_failure"
@@ -1734,6 +1805,25 @@ def _decide_escalation_action(
             "reroute_target": None,
         }
 
+    if normalized_failure_class == "orchestration_failure":
+        if "reroute_loop" in normalized_reason_codes:
+            return {
+                "decision": "hold",
+                "decision_reason": "orchestration reroute loop requires explicit hold",
+                "reroute_target": None,
+            }
+        if any(code in {"bad_entry_skill", "metadata_missing"} for code in normalized_reason_codes):
+            return {
+                "decision": "reroute",
+                "decision_reason": "orchestration failure reroutes to planning",
+                "reroute_target": "plan_retry",
+            }
+        return {
+            "decision": "hold",
+            "decision_reason": "orchestration failure defaults to explicit hold",
+            "reroute_target": None,
+        }
+
     if normalized_failure_class == "quality_failure":
         if normalized_policy == "conservative":
             return {
@@ -1778,6 +1868,47 @@ def _persist_escalation_decision(step_payload: dict, decision: dict[str, object]
     step_payload["decision_reason"] = decision.get("decision_reason")
     step_payload["reroute_target"] = decision.get("reroute_target")
     return step_payload
+
+
+def _completed_retry_decision() -> dict[str, object]:
+    return {
+        "decision": "same",
+        "decision_reason": "completed retry stays on current path",
+        "reroute_target": None,
+    }
+
+
+def _failed_step_payload(
+    *,
+    step_name: str,
+    status: str,
+    started_at: str | None,
+    finished_at: str | None,
+    verdict: str | None = None,
+    reason_codes: list[str] | None = None,
+    rc: int | None = None,
+    **extra: object,
+) -> dict[str, object]:
+    payload = _step_payload(
+        status,
+        started_at,
+        finished_at,
+        **extra,
+        **_build_failure_metadata(
+            step_name=step_name,
+            status=status,
+            verdict=verdict,
+            reason_codes=reason_codes,
+            rc=rc,
+        ),
+    )
+    decision = _decide_escalation_action(
+        failure_class=str(payload.get("failure_class") or ""),
+        reason_codes=list(payload.get("reason_codes") or []),
+        retry_count=0,
+        escalation_policy=str(_pipeline_step_metadata(step_name).get("escalation_policy") or "default"),
+    )
+    return _persist_escalation_decision(payload, decision)
 
 
 def _pipeline_step_metadata(step_name: str) -> dict[str, object]:
@@ -2183,10 +2314,12 @@ def cmd_pipeline(
         except RuntimeError as e:
             print(f"[PIPELINE] ❌ 브랜치 생성 실패: {e}")
             _branch_failed_at = _now()
-            result["steps"]["branch"] = _step_payload(
-                "failed_branch",
-                _branch_failed_at,
-                _branch_failed_at,
+            result["steps"]["branch"] = _failed_step_payload(
+                step_name="branch",
+                status="failed_branch",
+                started_at=_branch_failed_at,
+                finished_at=_branch_failed_at,
+                reason_codes=["branch_setup_failed"],
                 error=str(e),
             )
             save("failed_branch")
@@ -2249,11 +2382,22 @@ def cmd_pipeline(
                 root, "task", task_prompt_lite, executor, STEP_TIMEOUT * 2, dry_run=dry_run
             )
             task_finished_at = _now()
-            result["steps"]["task"] = _step_payload(
-                "completed" if task_rc == 0 else "failed",
-                task_started_at,
-                task_finished_at,
-                output_preview=task_out[:300],
+            result["steps"]["task"] = (
+                _step_payload(
+                    "completed",
+                    task_started_at,
+                    task_finished_at,
+                    output_preview=task_out[:300],
+                )
+                if task_rc == 0
+                else _failed_step_payload(
+                    step_name="task",
+                    status="failed",
+                    started_at=task_started_at,
+                    finished_at=task_finished_at,
+                    rc=task_rc,
+                    output_preview=task_out[:300],
+                )
             )
             if task_rc != 0:
                 save("failed")
@@ -2277,11 +2421,21 @@ def cmd_pipeline(
         review_verdict = _grep_verdict(review_out)
         print(f"  VERDICT: {review_verdict or '미감지'}")
         if not _step_already_done(_resume_data, "review"):
-            result["steps"]["review"] = _step_payload(
-                "completed" if review_verdict == "APPROVE" else "failed",
-                review_started_at,
-                review_finished_at,
-                verdict=review_verdict,
+            result["steps"]["review"] = (
+                _step_payload(
+                    "completed",
+                    review_started_at,
+                    review_finished_at,
+                    verdict=review_verdict,
+                )
+                if review_verdict == "APPROVE"
+                else _failed_step_payload(
+                    step_name="review",
+                    status="failed",
+                    started_at=review_started_at,
+                    finished_at=review_finished_at,
+                    verdict=review_verdict,
+                )
             )
         if review_verdict != "APPROVE":
             save("failed")
@@ -2338,11 +2492,22 @@ def cmd_pipeline(
         plan_started_at = _now()
         rc, out = _run_pipeline_step(root, "plan", plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run)
         plan_finished_at = _now()
-        result["steps"]["plan"] = _step_payload(
-            "completed" if rc == 0 else "failed",
-            plan_started_at,
-            plan_finished_at,
-            output_preview=out[:300],
+        result["steps"]["plan"] = (
+            _step_payload(
+                "completed",
+                plan_started_at,
+                plan_finished_at,
+                output_preview=out[:300],
+            )
+            if rc == 0
+            else _failed_step_payload(
+                step_name="plan",
+                status="failed",
+                started_at=plan_started_at,
+                finished_at=plan_finished_at,
+                rc=rc,
+                output_preview=out[:300],
+            )
         )
     _save_pipeline_result(root, result)
 
@@ -2402,20 +2567,33 @@ def cmd_pipeline(
             if _grep_verdict(task_out) is None:
                 print("[PIPELINE] ❌ TASK AMBIGUOUS_RESPONSE 2회 연속 — 중단")
                 task_failed_at = _now()
-                result["steps"]["task"] = _step_payload(
-                    "failed",
-                    task_started_at,
-                    task_failed_at,
+                result["steps"]["task"] = _failed_step_payload(
+                    step_name="task",
+                    status="failed",
+                    started_at=task_started_at,
+                    finished_at=task_failed_at,
+                    reason_codes=["ambiguous_response"],
                     output_preview=task_out[:300],
                 )
                 save("failed_ambiguous_response")
                 return 1
         task_finished_at = _now()
-        result["steps"]["task"] = _step_payload(
-            "completed" if task_rc == 0 else "failed",
-            task_started_at,
-            task_finished_at,
-            output_preview=task_out[:300],
+        result["steps"]["task"] = (
+            _step_payload(
+                "completed",
+                task_started_at,
+                task_finished_at,
+                output_preview=task_out[:300],
+            )
+            if task_rc == 0
+            else _failed_step_payload(
+                step_name="task",
+                status="failed",
+                started_at=task_started_at,
+                finished_at=task_finished_at,
+                rc=task_rc,
+                output_preview=task_out[:300],
+            )
         )
     result["last_completed_step"] = "task"
     _save_pipeline_result(root, result)
@@ -2469,7 +2647,7 @@ def cmd_pipeline(
             loop_started_at = _now()
             if time.time() > deadline:
                 print(f"[PIPELINE] ❌ 최대 실행 시간 초과 ({max_time}s)")
-                result["steps"][loop_step] = _step_payload(
+                timeout_payload = _step_payload(
                     "timeout",
                     loop_started_at,
                     _now(),
@@ -2479,6 +2657,14 @@ def cmd_pipeline(
                         reason_codes=["timeout"],
                     ),
                 )
+                step_metadata = _pipeline_step_metadata(loop_step)
+                timeout_decision = _decide_escalation_action(
+                    failure_class=str(timeout_payload.get("failure_class") or ""),
+                    reason_codes=list(timeout_payload.get("reason_codes") or []),
+                    retry_count=retry_count,
+                    escalation_policy=str(step_metadata.get("escalation_policy") or "default"),
+                )
+                result["steps"][loop_step] = _persist_escalation_decision(timeout_payload, timeout_decision)
                 save("timeout")
                 return 1
 
@@ -2642,19 +2828,27 @@ def cmd_pipeline(
                         root, "task_retry", task_retry_prompt, executor, STEP_TIMEOUT * 2, dry_run=dry_run
                     )
                     task_retry_finished_at = _now()
-                    result["steps"]["task_retry"] = _step_payload(
-                        "completed" if task_retry_rc == 0 else "failed",
-                        task_retry_started_at,
-                        task_retry_finished_at,
-                        output_preview=task_retry_out[:300],
-                        **(
-                            _build_failure_metadata(
-                                step_name="task_retry",
-                                status="failed",
-                                rc=task_retry_rc,
-                            )
-                            if task_retry_rc != 0
-                            else {}
+                    result["steps"]["task_retry"] = _persist_escalation_decision(
+                        _step_payload(
+                            "completed" if task_retry_rc == 0 else "failed",
+                            task_retry_started_at,
+                            task_retry_finished_at,
+                            output_preview=task_retry_out[:300],
+                            **(
+                                _build_failure_metadata(
+                                    step_name="task_retry",
+                                    status="failed",
+                                    rc=task_retry_rc,
+                                )
+                                if task_retry_rc != 0
+                                else {}
+                            ),
+                        ),
+                        _completed_retry_decision() if task_retry_rc == 0 else _decide_escalation_action(
+                            failure_class="execution_failure",
+                            reason_codes=["nonzero_exit"],
+                            retry_count=task_auto_retry_count,
+                            escalation_policy="default",
                         ),
                     )
                     result["last_completed_step"] = "task_retry"
@@ -2708,19 +2902,27 @@ def cmd_pipeline(
                         root, "plan_retry", retry_plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run
                     )
                     plan_retry_finished_at = _now()
-                    result["steps"]["plan_retry"] = _step_payload(
-                        "completed" if plan_rc == 0 else "failed",
-                        plan_retry_started_at,
-                        plan_retry_finished_at,
-                        output_preview=plan_out[:300],
-                        **(
-                            _build_failure_metadata(
-                                step_name="plan_retry",
-                                status="failed",
-                                rc=plan_rc,
-                            )
-                            if plan_rc != 0
-                            else {}
+                    result["steps"]["plan_retry"] = _persist_escalation_decision(
+                        _step_payload(
+                            "completed" if plan_rc == 0 else "failed",
+                            plan_retry_started_at,
+                            plan_retry_finished_at,
+                            output_preview=plan_out[:300],
+                            **(
+                                _build_failure_metadata(
+                                    step_name="plan_retry",
+                                    status="failed",
+                                    rc=plan_rc,
+                                )
+                                if plan_rc != 0
+                                else {}
+                            ),
+                        ),
+                        _completed_retry_decision() if plan_rc == 0 else _decide_escalation_action(
+                            failure_class="quality_failure",
+                            reason_codes=["nonzero_exit"],
+                            retry_count=critique_auto_retry_count,
+                            escalation_policy="default",
                         ),
                     )
                     result["last_completed_step"] = "plan_retry"
@@ -2820,19 +3022,27 @@ def cmd_pipeline(
                         root, "task_retry", task_retry_prompt, executor, STEP_TIMEOUT * 2, dry_run=dry_run
                     )
                     task_retry_finished_at = _now()
-                    result["steps"]["task_retry"] = _step_payload(
-                        "completed" if task_retry_rc == 0 else "failed",
-                        task_retry_started_at,
-                        task_retry_finished_at,
-                        output_preview=task_retry_out[:300],
-                        **(
-                            _build_failure_metadata(
-                                step_name="task_retry",
-                                status="failed",
-                                rc=task_retry_rc,
-                            )
-                            if task_retry_rc != 0
-                            else {}
+                    result["steps"]["task_retry"] = _persist_escalation_decision(
+                        _step_payload(
+                            "completed" if task_retry_rc == 0 else "failed",
+                            task_retry_started_at,
+                            task_retry_finished_at,
+                            output_preview=task_retry_out[:300],
+                            **(
+                                _build_failure_metadata(
+                                    step_name="task_retry",
+                                    status="failed",
+                                    rc=task_retry_rc,
+                                )
+                                if task_retry_rc != 0
+                                else {}
+                            ),
+                        ),
+                        _completed_retry_decision() if task_retry_rc == 0 else _decide_escalation_action(
+                            failure_class="execution_failure",
+                            reason_codes=["nonzero_exit"],
+                            retry_count=task_auto_retry_count,
+                            escalation_policy="default",
                         ),
                     )
                     _save_pipeline_result(root, result)
@@ -2869,19 +3079,27 @@ def cmd_pipeline(
                         root, "plan_retry", retry_plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run
                     )
                     plan_retry_finished_at = _now()
-                    result["steps"]["plan_retry"] = _step_payload(
-                        "completed" if plan_rc == 0 else "failed",
-                        plan_retry_started_at,
-                        plan_retry_finished_at,
-                        output_preview=plan_out[:300],
-                        **(
-                            _build_failure_metadata(
-                                step_name="plan_retry",
-                                status="failed",
-                                rc=plan_rc,
-                            )
-                            if plan_rc != 0
-                            else {}
+                    result["steps"]["plan_retry"] = _persist_escalation_decision(
+                        _step_payload(
+                            "completed" if plan_rc == 0 else "failed",
+                            plan_retry_started_at,
+                            plan_retry_finished_at,
+                            output_preview=plan_out[:300],
+                            **(
+                                _build_failure_metadata(
+                                    step_name="plan_retry",
+                                    status="failed",
+                                    rc=plan_rc,
+                                )
+                                if plan_rc != 0
+                                else {}
+                            ),
+                        ),
+                        _completed_retry_decision() if plan_rc == 0 else _decide_escalation_action(
+                            failure_class="quality_failure",
+                            reason_codes=["nonzero_exit"],
+                            retry_count=critique_auto_retry_count,
+                            escalation_policy="default",
                         ),
                     )
                     _save_pipeline_result(root, result)
