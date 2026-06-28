@@ -58,6 +58,15 @@ REQUIRED_FOCUS_MARKERS = [
     "시스템이 암묵적으로 처리",
 ]
 
+REQUIRED_DECISION_OUTPUT_MARKERS = [
+    "decision",
+    "risk",
+    "next_action",
+    "진행 가능 여부",
+    "변경 위험도",
+    "다음 스킬 1개",
+]
+
 REQUIRED_RISK_CONCEPTS = [
     ("새 파일", "신규 파일"),
     ("API", "시그니처"),
@@ -152,6 +161,12 @@ VALID_HIGH_RISK_PLAN_RECOMMENDATION_SAMPLE = """
 - 그 외에만 범위 고정 + 컨펌 완료면 `$omc-task`, 범위 불명확 또는 흔들림이면 `$omc-critique` / `$omc-office-hours`
 - 사용자가 설계만 확인 중이거나 다음 단계를 아직 고르지 않음 → 사용자 선택 대기
 - 자동으로 진행하지는 않습니다.
+"""
+
+VALID_PLAN_DECISION_OUTPUT_SAMPLE = """
+decision: PROCEED / HOLD (진행 가능 여부)
+risk: LOW / MED / HIGH (변경 위험도)
+next_action: $omc-task / $omc-critique / 사용자 선택 대기 (다음 스킬 1개)
 """
 
 
@@ -317,6 +332,12 @@ def test_plan_skill_explains_visible_vs_implicit_steps():
     assert not missing, f"missing focus markers: {missing}"
 
 
+def test_plan_skill_declares_decision_risk_next_action_contract():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_DECISION_OUTPUT_MARKERS if marker not in text]
+    assert not missing, f"missing decision output markers: {missing}"
+
+
 def test_plan_skill_declares_lite_full_risk_concepts():
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     missing = _missing_concepts(text, REQUIRED_RISK_CONCEPTS)
@@ -330,6 +351,11 @@ def test_valid_plan_output_fixture_has_required_structure():
 def test_valid_lite_plan_output_fixture_limits_task_count():
     assert _validate_plan_output(VALID_LITE_PLAN_SAMPLE) == []
     assert _extract_task_count(VALID_LITE_PLAN_SAMPLE) <= 2
+
+
+def test_valid_plan_decision_output_fixture_declares_plan_specific_meaning():
+    for marker in REQUIRED_DECISION_OUTPUT_MARKERS:
+        assert marker in VALID_PLAN_DECISION_OUTPUT_SAMPLE
 
 
 def test_invalid_plan_output_fixture_exposes_missing_structure():
