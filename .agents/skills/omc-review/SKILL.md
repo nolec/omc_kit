@@ -24,8 +24,7 @@ python3 scripts/omc.py state status --target . 2>/dev/null
 
 리뷰어가 사용자에게 바로 보여줄 것: 파일:라인 근거 이슈 / 검증 커맨드 / 판정 / VERDICT
 
-시스템이 암묵적으로 처리
-- 자명한 요약 / 대용량 diff 분할 / 범위 밖 제외
+시스템이 암묵적으로 처리: 자명한 요약 / 대용량 diff 분할 / 범위 밖 제외
 
 안전 필수 항목: 파일:라인 / VERDICT / [치명] [중대] [경미] [제안]
 
@@ -65,6 +64,7 @@ C7. 유지보수: 6개월 뒤 이해하기 어려운 부분은?
 
 판정: BLOCK / REVISE / APPROVE WITH NOTES / APPROVE
 VERDICT: BLOCK / REVISE / APPROVE WITH NOTES / APPROVE
+decision: REVISE / APPROVE (판정 결과) | risk: HIGH / MED / LOW (리스크 요약) | next_action: $omc-task / $omc-ship / 사용자 선택 대기 (다음 스킬 1개)
 ```
 
 ## 판정 기준

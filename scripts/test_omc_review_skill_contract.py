@@ -65,6 +65,15 @@ REQUIRED_FOCUS_MARKERS = [
     "시스템이 암묵적으로 처리",
 ]
 
+REQUIRED_DECISION_OUTPUT_MARKERS = [
+    "decision",
+    "risk",
+    "next_action",
+    "판정 결과",
+    "리스크 요약",
+    "다음 스킬 1개",
+]
+
 REQUIRED_SAFETY_MARKERS = [
     "안전 필수 항목",
     "파일:라인",
@@ -97,6 +106,12 @@ VERDICT: REVISE
 - APPROVE/APPROVE WITH NOTES + 배포 준비 → `$omc-ship`
 - APPROVE/APPROVE WITH NOTES + 사용자가 결과 확인 단계면 사용자 선택 대기 / 그 외 → 종료/후속 작업 선택
 - 자동으로 진행하지는 않습니다.
+"""
+
+VALID_REVIEW_DECISION_OUTPUT_SAMPLE = """
+decision: REVISE / APPROVE (판정 결과)
+risk: HIGH / MED / LOW (리스크 요약)
+next_action: $omc-task / $omc-ship / 사용자 선택 대기 (다음 스킬 1개)
 """
 
 
@@ -203,6 +218,12 @@ def test_review_skill_explains_visible_vs_implicit_work():
     assert not missing, f"missing focus markers: {missing}"
 
 
+def test_review_skill_declares_decision_risk_next_action_contract():
+    text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_DECISION_OUTPUT_MARKERS if marker not in text]
+    assert not missing, f"missing review decision markers: {missing}"
+
+
 def test_review_skill_declares_non_negotiable_review_contract():
     text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_SAFETY_MARKERS if marker not in text]
@@ -242,3 +263,8 @@ def test_review_skill_recommendations_match_verdict_buckets():
 
 def test_review_recommendation_fixture_routes_revise_to_task():
     assert _extract_primary_recommendation(VALID_REVISE_REVIEW_RECOMMENDATION_SAMPLE) == "$omc-task"
+
+
+def test_valid_review_decision_output_fixture_declares_review_specific_meaning():
+    for marker in REQUIRED_DECISION_OUTPUT_MARKERS:
+        assert marker in VALID_REVIEW_DECISION_OUTPUT_SAMPLE
