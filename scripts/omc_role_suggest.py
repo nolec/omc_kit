@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -127,8 +128,31 @@ def _load_team_roles(target: Path) -> list[dict]:
     return list(_BUILTIN_ROLES)
 
 
-def _normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip().lower()
+def _normalize(text: str | None) -> str:
+    return re.sub(r"\s+", " ", text or "").strip().lower()
+
+
+def _resolve_routing_policy() -> str:
+    policy = _normalize(os.environ.get("OMC_ROUTING_POLICY"))
+    if policy in {"balanced", "cost_saver", "quality_first"}:
+        return policy
+    return "balanced"
+
+
+def _build_orchestration(
+    *,
+    response_mode: str,
+    recommended_skill: str,
+    primary_role: str,
+    task_kind_hint: str,
+) -> dict[str, str]:
+    return {
+        "response_mode": response_mode,
+        "recommended_skill": recommended_skill,
+        "primary_role": primary_role,
+        "task_kind_hint": task_kind_hint,
+        "routing_policy": _resolve_routing_policy(),
+    }
 
 
 def _score(text: str, roles: list[dict]) -> list[RoleSuggestion]:
@@ -205,95 +229,111 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
     root_cause_intent = _contains_any(normalized, ("원인", "왜 실패", "재현", "추적", "debug", "디버"))
 
     if _contains_any(normalized, critique_keywords):
-        return {
-            "response_mode": "review-first",
-            "recommended_skill": "$omc-critique",
-            "primary_role": "code_review",
-        }
+        return _build_orchestration(
+            response_mode="review-first",
+            recommended_skill="$omc-critique",
+            primary_role="code_review",
+            task_kind_hint="review",
+        )
     if _contains_any(normalized, review_keywords):
-        return {
-            "response_mode": "review-first",
-            "recommended_skill": "$omc-review",
-            "primary_role": "code_review",
-        }
+        return _build_orchestration(
+            response_mode="review-first",
+            recommended_skill="$omc-review",
+            primary_role="code_review",
+            task_kind_hint="review",
+        )
     if _contains_any(normalized, ship_keywords):
-        return {
-            "response_mode": "execute-first",
-            "recommended_skill": "$omc-ship",
-            "primary_role": "directive",
-        }
+        return _build_orchestration(
+            response_mode="execute-first",
+            recommended_skill="$omc-ship",
+            primary_role="directive",
+            task_kind_hint="ship",
+        )
     if _contains_any(normalized, plan_keywords):
-        return {
-            "response_mode": "answer-first",
-            "recommended_skill": "$omc-plan",
-            "primary_role": "analysis",
-        }
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-plan",
+            primary_role="analysis",
+            task_kind_hint="plan",
+        )
     if explicit_fix_intent and not root_cause_intent:
-        return {
-            "response_mode": "execute-first",
-            "recommended_skill": "$omc-task",
-            "primary_role": "senior_coding",
-        }
+        return _build_orchestration(
+            response_mode="execute-first",
+            recommended_skill="$omc-task",
+            primary_role="senior_coding",
+            task_kind_hint="task",
+        )
     if _contains_any(normalized, investigate_keywords):
-        return {
-            "response_mode": "answer-first",
-            "recommended_skill": "$omc-investigate",
-            "primary_role": "analysis",
-        }
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-investigate",
+            primary_role="analysis",
+            task_kind_hint="investigate",
+        )
     if _contains_any(normalized, brainstorm_keywords):
-        return {
-            "response_mode": "answer-first",
-            "recommended_skill": "$omc-brainstorm",
-            "primary_role": "analysis",
-        }
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-brainstorm",
+            primary_role="analysis",
+            task_kind_hint="plan",
+        )
     if _contains_any(normalized, benchmark_keywords):
-        return {
-            "response_mode": "answer-first",
-            "recommended_skill": "$omc-benchmark",
-            "primary_role": "analysis",
-        }
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-benchmark",
+            primary_role="analysis",
+            task_kind_hint="plan",
+        )
     if _contains_any(normalized, status_keywords):
-        return {
-            "response_mode": "answer-first",
-            "recommended_skill": "$omc-status",
-            "primary_role": "analysis",
-        }
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-status",
+            primary_role="analysis",
+            task_kind_hint="task",
+        )
     if _contains_any(normalized, lesson_keywords):
-        return {
-            "response_mode": "answer-first",
-            "recommended_skill": "$omc-lesson",
-            "primary_role": "analysis",
-        }
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-lesson",
+            primary_role="analysis",
+            task_kind_hint="task",
+        )
     if _contains_any(normalized, retro_keywords):
-        return {
-            "response_mode": "answer-first",
-            "recommended_skill": "$omc-retro",
-            "primary_role": "analysis",
-        }
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-retro",
+            primary_role="analysis",
+            task_kind_hint="review",
+        )
     if _contains_any(normalized, qa_keywords):
-        return {
-            "response_mode": "answer-first",
-            "recommended_skill": "$omc-qa",
-            "primary_role": "analysis",
-        }
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-qa",
+            primary_role="analysis",
+            task_kind_hint="review",
+        )
     if _contains_any(normalized, reentry_keywords):
-        return {
-            "response_mode": "answer-first",
-            "recommended_skill": "$omc-reentry",
-            "primary_role": "analysis",
-        }
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-reentry",
+            primary_role="analysis",
+            task_kind_hint="plan",
+        )
     if _contains_any(normalized, task_keywords):
-        return {
-            "response_mode": "execute-first",
-            "recommended_skill": "$omc-task",
-            "primary_role": "senior_coding",
-        }
+        return _build_orchestration(
+            response_mode="execute-first",
+            recommended_skill="$omc-task",
+            primary_role="senior_coding",
+            task_kind_hint="task",
+        )
 
-    return {
-        "response_mode": "answer-first",
-        "recommended_skill": "$omc-plan",
-        "primary_role": primary_role,
-    }
+    fallback_task_kind = "task" if primary_role == "senior_coding" else "plan"
+    return _build_orchestration(
+        response_mode="answer-first",
+        recommended_skill="$omc-plan",
+        primary_role=primary_role,
+        task_kind_hint=fallback_task_kind,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +353,8 @@ def _fmt_plain(suggestions: list[RoleSuggestion], text: str) -> str:
         f"🧭 추천 모드: {orchestration['response_mode']}",
         f"🧩 추천 시작 스킬: {orchestration['recommended_skill']}",
         f"🎯 주역할: {orchestration['primary_role']}",
+        f"🧠 task kind 힌트: {orchestration['task_kind_hint']}",
+        f"⚖️ 라우팅 정책: {orchestration['routing_policy']}",
         "",
         "─" * 48,
         "확인하려면: 확인 (또는 +role_id, -role_id 로 조정)",
@@ -332,6 +374,8 @@ def _fmt_json(suggestions: list[RoleSuggestion], text: str) -> str:
             "response_mode": orchestration["response_mode"],
             "recommended_skill": orchestration["recommended_skill"],
             "primary_role": orchestration["primary_role"],
+            "task_kind_hint": orchestration["task_kind_hint"],
+            "routing_policy": orchestration["routing_policy"],
         },
         ensure_ascii=False,
         indent=2,

@@ -93,6 +93,10 @@ def select_model_profile(
     touched_files: list[str],
     retry_count: int,
     review_severity: str | None,
+    complexity: str | None = None,
+    risk: str | None = None,
+    sensitive_paths: list[str] | None = None,
+    preferred_profile: str | None = None,
 ) -> str:
     override = _normalize_text(os.environ.get("OMC_MODEL_PROFILE"))
     if override in _MODEL_PROFILES:
@@ -101,8 +105,12 @@ def select_model_profile(
     policy = _resolve_routing_policy()
     kind = _normalize_text(task_kind)
     severity = _normalize_text(review_severity)
-    touched_count = len(touched_files)
-    has_sensitive_path = any(_is_sensitive_path(path) for path in touched_files)
+    normalized_complexity = _normalize_text(complexity) or "medium"
+    normalized_risk = _normalize_text(risk) or "medium"
+    metadata_sensitive_paths = [str(path) for path in (sensitive_paths or [])]
+    effective_touched_files = [*touched_files, *metadata_sensitive_paths]
+    touched_count = len(effective_touched_files)
+    has_sensitive_path = any(_is_sensitive_path(path) for path in effective_touched_files)
     broader_signal = _has_broader_context_signal(request_text)
 
     if kind == "ship":
@@ -116,14 +124,20 @@ def select_model_profile(
 
     if (
         severity in {"major", "critical", "high"}
+        or normalized_risk == "high"
         or retry_count >= 2
         or touched_count >= 8
         or full_on_sensitive_review
     ):
         return "full_default"
 
+    preferred = _normalize_text(preferred_profile)
+    if preferred in _MODEL_PROFILES:
+        return preferred
+
     if (
         kind in {"plan", "review", "investigate"}
+        or normalized_complexity == "high"
         or touched_count >= 4
         or has_sensitive_path
         or broader_signal
@@ -131,6 +145,37 @@ def select_model_profile(
         return "mini_high"
 
     return "mini_default"
+
+
+def resolve_task_routing(
+    *,
+    task_kind: str,
+    request_text: str,
+    retry_count: int = 0,
+    touched_files: list[str] | None = None,
+    review_severity: str | None = None,
+    complexity: str | None = None,
+    risk: str | None = None,
+    sensitive_paths: list[str] | None = None,
+    preferred_profile: str | None = None,
+) -> dict[str, str]:
+    normalized_kind = _normalize_text(task_kind) or "task"
+    normalized_files = list(touched_files or [])
+    return {
+        "task_kind": normalized_kind,
+        "routing_policy": _resolve_routing_policy(),
+        "model_profile": select_model_profile(
+            task_kind=normalized_kind,
+            request_text=request_text,
+            touched_files=normalized_files,
+            retry_count=retry_count,
+            review_severity=review_severity,
+            complexity=complexity,
+            risk=risk,
+            sensitive_paths=sensitive_paths,
+            preferred_profile=preferred_profile,
+        ),
+    }
 
 
 def _resolve_codex_profile_settings(model_profile: str) -> dict[str, str | None]:
@@ -634,13 +679,14 @@ def main() -> int:
         prompt_path.read_text(encoding="utf-8"),
         executor=executor,
     )
-    model_profile = args.model_profile or select_model_profile(
+    resolved_routing = resolve_task_routing(
         task_kind=args.task_kind,
         request_text=prompt_text,
         touched_files=args.touched_files,
         retry_count=0,
         review_severity=None,
     )
+    model_profile = args.model_profile or resolved_routing["model_profile"]
 
     if executor == "codex":
         if not shutil.which("codex"):

@@ -172,6 +172,68 @@ def test_select_model_profile_honors_env_override(monkeypatch) -> None:
     )
 
 
+def test_select_model_profile_prefers_explicit_profile_hint() -> None:
+    assert (
+        omc_exec.select_model_profile(
+            task_kind="task",
+            request_text="작은 수정",
+            touched_files=[],
+            retry_count=0,
+            review_severity=None,
+            preferred_profile="full_default",
+        )
+        == "full_default"
+    )
+
+
+def test_select_model_profile_does_not_allow_preferred_profile_to_downgrade_ship() -> None:
+    assert (
+        omc_exec.select_model_profile(
+            task_kind="ship",
+            request_text="배포",
+            touched_files=[],
+            retry_count=0,
+            review_severity=None,
+            preferred_profile="mini_default",
+        )
+        == "full_default"
+    )
+
+
+def test_select_model_profile_does_not_allow_preferred_profile_to_downgrade_high_risk() -> None:
+    assert (
+        omc_exec.select_model_profile(
+            task_kind="task",
+            request_text="구현",
+            touched_files=["src/components/Button.tsx"],
+            retry_count=0,
+            review_severity=None,
+            complexity="low",
+            risk="high",
+            sensitive_paths=[],
+            preferred_profile="mini_default",
+        )
+        == "full_default"
+    )
+
+
+def test_select_model_profile_uses_metadata_risk_and_complexity_to_escalate() -> None:
+    assert (
+        omc_exec.select_model_profile(
+            task_kind="task",
+            request_text="구현",
+            touched_files=["src/components/Button.tsx"],
+            retry_count=0,
+            review_severity=None,
+            complexity="high",
+            risk="high",
+            sensitive_paths=[],
+            preferred_profile=None,
+        )
+        == "full_default"
+    )
+
+
 def test_select_model_profile_balanced_keeps_current_borderline_review_behavior(monkeypatch) -> None:
     monkeypatch.setenv("OMC_ROUTING_POLICY", "balanced")
 

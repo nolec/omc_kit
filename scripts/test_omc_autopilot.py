@@ -85,6 +85,48 @@ class TestResolveOrder:
 
 
 @pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
+class TestNormalizeStepMetadata:
+    def test_defaults_metadata_when_fields_missing(self):
+        normalized = omc_autopilot._normalize_step_metadata({"id": "s1", "prompt": "작업"})
+        assert normalized["task_kind"] == "task"
+        assert normalized["complexity"] == "medium"
+        assert normalized["risk"] == "medium"
+        assert normalized["sensitive_paths"] == []
+        assert normalized["preferred_profile"] is None
+        assert normalized["escalation_policy"] == "default"
+
+    def test_invalid_metadata_falls_back_to_safe_defaults(self):
+        normalized = omc_autopilot._normalize_step_metadata(
+            {
+                "id": "s1",
+                "task_kind": "weird-kind",
+                "complexity": "extreme",
+                "risk": "unknown",
+                "preferred_profile": "gpt-9",
+                "escalation_policy": "panic",
+            }
+        )
+        assert normalized["task_kind"] == "task"
+        assert normalized["complexity"] == "medium"
+        assert normalized["risk"] == "medium"
+        assert normalized["preferred_profile"] is None
+        assert normalized["escalation_policy"] == "default"
+
+    def test_sensitive_paths_non_list_becomes_empty_list(self):
+        normalized = omc_autopilot._normalize_step_metadata(
+            {"id": "review", "sensitive_paths": "scripts/"}
+        )
+        assert normalized["task_kind"] == "review"
+        assert normalized["sensitive_paths"] == []
+
+    def test_sensitive_paths_filters_non_string_entries(self):
+        normalized = omc_autopilot._normalize_step_metadata(
+            {"id": "review", "sensitive_paths": ["scripts/", 1, None, "src/api/"]}
+        )
+        assert normalized["sensitive_paths"] == ["scripts/", "src/api/"]
+
+
+@pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
 class TestCmdNew:
     def test_creates_task_file(self, tmp_path):
         code = omc_autopilot.cmd_new(tmp_path, "feat-x", "X 기능")

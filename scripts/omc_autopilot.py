@@ -60,6 +60,12 @@ _DEFAULT_STATUS_LIMIT = 20
 _POLICY_WARNED_KEYS: set[str] = set()
 _COMPATIBILITY_WARNED_COMMANDS: set[str] = set()
 
+_KNOWN_TASK_KINDS = {"task", "plan", "review", "investigate", "ship"}
+_KNOWN_COMPLEXITY = {"low", "medium", "high"}
+_KNOWN_RISK = {"low", "medium", "high"}
+_KNOWN_PROFILES = {"mini_default", "mini_high", "full_default"}
+_KNOWN_ESCALATION_POLICIES = {"default", "conservative", "aggressive"}
+
 
 def _load_allowed_git_subcommands(root: Path) -> set[str]:
     """Return read-only git subcommands allowed for expect checks.
@@ -178,6 +184,43 @@ def _contains_disallowed_shell_operator(cmd: str) -> bool:
         return True
     disallowed_tokens = {";", "&&", "||", "|", ">", ">>", "<", "<<", "`"}
     return any(token in disallowed_tokens for token in tokens)
+
+
+def _normalize_step_metadata(step: dict) -> dict[str, object]:
+    step_id = str(step.get("id", "")).strip().lower()
+    explicit_task_kind = str(step.get("task_kind", "")).strip().lower()
+    inferred_task_kind = step_id if step_id in _KNOWN_TASK_KINDS else "task"
+    task_kind = explicit_task_kind if explicit_task_kind in _KNOWN_TASK_KINDS else inferred_task_kind
+
+    complexity = str(step.get("complexity", "")).strip().lower()
+    if complexity not in _KNOWN_COMPLEXITY:
+        complexity = "medium"
+
+    risk = str(step.get("risk", "")).strip().lower()
+    if risk not in _KNOWN_RISK:
+        risk = "medium"
+
+    raw_sensitive_paths = step.get("sensitive_paths")
+    if isinstance(raw_sensitive_paths, list):
+        sensitive_paths = [str(item).strip() for item in raw_sensitive_paths if isinstance(item, str) and str(item).strip()]
+    else:
+        sensitive_paths = []
+
+    preferred_profile_raw = str(step.get("preferred_profile", "")).strip().lower()
+    preferred_profile = preferred_profile_raw if preferred_profile_raw in _KNOWN_PROFILES else None
+
+    escalation_policy = str(step.get("escalation_policy", "")).strip().lower()
+    if escalation_policy not in _KNOWN_ESCALATION_POLICIES:
+        escalation_policy = "default"
+
+    return {
+        "task_kind": task_kind,
+        "complexity": complexity,
+        "risk": risk,
+        "sensitive_paths": sensitive_paths,
+        "preferred_profile": preferred_profile,
+        "escalation_policy": escalation_policy,
+    }
 
 
 def _read_env_int(name: str, default: int, minimum: int = 1) -> int:
@@ -503,20 +546,27 @@ def _run_step(
     """
     exec_script = Path(__file__).resolve().parent / "omc_exec.py"
     if not exec_script.exists():
-        return 1, f"[ERROR] omc_exec.py 없음: {exec_script}"
+        return 1, f"[ERROR] omc_exec.py 없음: {exec_script}", None
 
     prompt = (prompt_override or step.get("prompt", "")).strip()
     if not prompt:
-        return 1, "[ERROR] 스텝에 prompt가 없습니다."
+        return 1, "[ERROR] 스텝에 prompt가 없습니다.", None
 
     step_id = str(step.get("id", "")).strip().lower()
-    task_kind = step_id or "task"
-    if step_id in {"plan", "review", "critique", "investigate", "plan_retry"}:
-        model_profile = "mini_high"
-    elif "retry" in step_id:
-        model_profile = "full_default"
-    else:
-        model_profile = "mini_default"
+    metadata = _normalize_step_metadata(step)
+    task_kind = str(metadata["task_kind"])
+    retry_count = 2 if "retry" in step_id else 0
+    routing = omc_exec.resolve_task_routing(
+        task_kind=task_kind,
+        request_text=prompt,
+        retry_count=retry_count,
+        complexity=str(metadata["complexity"]),
+        risk=str(metadata["risk"]),
+        sensitive_paths=list(metadata["sensitive_paths"]),
+        preferred_profile=str(metadata["preferred_profile"]) if metadata["preferred_profile"] is not None else None,
+    )
+    task_kind = routing["task_kind"]
+    model_profile = routing["model_profile"]
 
     prompt_file = None
     try:
@@ -1079,18 +1129,30 @@ def _build_benchmark_report(data: dict) -> dict:
             break
 
     failure_category = None
+    failure_class_breakdown: dict[str, int] = {}
     if data.get("status") != "completed":
         for name, step in steps.items():
             step_status = step.get("status")
-            if step_status != "completed":
+            step_is_failure = _step_counts_as_failure(step if isinstance(step, dict) else {})
+            if step_is_failure and failure_category is None:
                 failure_category = f"{name}:{step_status or 'unknown'}"
-                break
+            if step_is_failure:
+                inferred_failure_class = _infer_failure_class(
+                    step_name=str(name),
+                    step=step if isinstance(step, dict) else {},
+                    run_status=str(data.get("status") or ""),
+                )
+                if inferred_failure_class:
+                    failure_class_breakdown[inferred_failure_class] = (
+                        failure_class_breakdown.get(inferred_failure_class, 0) + 1
+                    )
         if failure_category is None:
             failure_category = str(data.get("status") or "unknown")
 
     return {
         "status": data.get("status"),
         "pipeline_success": data.get("status") == "completed",
+        "quality_success": final_verdict in {"APPROVE", "APPROVE WITH NOTES"},
         "mode": data.get("mode"),
         "executor": data.get("executor"),
         "branch": data.get("branch"),
@@ -1108,6 +1170,7 @@ def _build_benchmark_report(data: dict) -> dict:
         "success_rate": (completed_steps / total_steps) if total_steps else 0,
         "final_verdict": final_verdict,
         "failure_category": failure_category,
+        "failure_class_breakdown": failure_class_breakdown,
         "cost_estimate": None,
         "token_usage": None,
         "executor_cost_source": None,
@@ -1565,6 +1628,160 @@ def _sync_pipeline_retry_count(result: dict) -> None:
         if isinstance(attempt, int) and attempt > 1:
             retry_attempt_count += attempt - 1
     result["retry_count"] = retry_step_count + retry_attempt_count
+
+
+def _build_failure_metadata(
+    *,
+    step_name: str,
+    status: str | None,
+    verdict: str | None = None,
+    reason_codes: list[str] | None = None,
+    rc: int | None = None,
+) -> dict[str, object]:
+    name = step_name.strip().lower()
+    normalized_status = str(status or "").strip().lower()
+    normalized_verdict = str(verdict or "").strip().upper()
+
+    if normalized_verdict in {"BLOCK", "REVISE"} and ("review" in name or "critique" in name):
+        failure_class = "quality_failure"
+    elif normalized_verdict == "HOLD" or normalized_status == "blocked":
+        failure_class = "contract_failure"
+    else:
+        failure_class = "execution_failure"
+
+    inferred_reason_codes: list[str] = []
+    if normalized_verdict == "BLOCK":
+        inferred_reason_codes.append("verdict_block")
+    elif normalized_verdict == "REVISE":
+        inferred_reason_codes.append("verdict_revise")
+    elif normalized_verdict == "HOLD":
+        inferred_reason_codes.append("verdict_hold")
+
+    if normalized_status == "failed_critique_loop":
+        inferred_reason_codes.append("same_verdict_streak")
+    elif normalized_status == "retry_exhausted":
+        inferred_reason_codes.append("retry_exhausted")
+    elif normalized_status == "failed":
+        inferred_reason_codes.append("step_failed")
+
+    if rc is not None and rc != 0:
+        inferred_reason_codes.append("nonzero_exit")
+
+    final_reason_codes = reason_codes if reason_codes is not None else inferred_reason_codes
+    deduped_reason_codes: list[str] = []
+    for code in final_reason_codes:
+        normalized_code = str(code).strip()
+        if normalized_code and normalized_code not in deduped_reason_codes:
+            deduped_reason_codes.append(normalized_code)
+
+    return {
+        "failure_class": failure_class,
+        "reason_codes": deduped_reason_codes,
+    }
+
+
+def _infer_failure_class(*, step_name: str, step: dict, run_status: str | None) -> str | None:
+    explicit = str(step.get("failure_class") or "").strip()
+    if explicit:
+        return explicit
+
+    status = str(step.get("status") or "").strip().lower()
+    verdict = str(step.get("verdict") or "").strip().upper()
+    if status:
+        return str(
+            _build_failure_metadata(
+                step_name=step_name,
+                status=status,
+                verdict=verdict,
+            )["failure_class"]
+        )
+
+    if run_status and str(run_status).strip().lower() != "completed":
+        return "execution_failure"
+    return None
+
+
+def _step_counts_as_failure(step: dict) -> bool:
+    status = str(step.get("status") or "").strip().lower()
+    verdict = str(step.get("verdict") or "").strip().upper()
+    if status != "completed":
+        return True
+    return verdict in {"BLOCK", "HOLD", "REVISE"}
+
+
+def _decide_escalation_action(
+    *,
+    failure_class: str | None,
+    reason_codes: list[str] | None,
+    retry_count: int,
+    escalation_policy: str | None,
+) -> dict[str, object]:
+    normalized_policy = str(escalation_policy or "").strip().lower()
+    if normalized_policy not in _KNOWN_ESCALATION_POLICIES:
+        normalized_policy = "default"
+
+    normalized_failure_class = str(failure_class or "").strip().lower()
+    normalized_reason_codes = [
+        str(code).strip().lower()
+        for code in (reason_codes or [])
+        if str(code).strip()
+    ]
+
+    if normalized_failure_class == "contract_failure":
+        return {
+            "decision": "hold",
+            "decision_reason": "contract failure requires explicit hold",
+            "reroute_target": None,
+        }
+
+    if normalized_failure_class == "quality_failure":
+        if normalized_policy == "conservative":
+            return {
+                "decision": "hold",
+                "decision_reason": "conservative policy holds on quality failure",
+                "reroute_target": None,
+            }
+        return {
+            "decision": "reroute",
+            "decision_reason": "quality failure reroutes to planning",
+            "reroute_target": "plan_retry",
+        }
+
+    if normalized_failure_class == "execution_failure":
+        if normalized_policy == "aggressive":
+            return {
+                "decision": "reroute",
+                "decision_reason": "aggressive policy reroutes execution failure immediately",
+                "reroute_target": "task_retry",
+            }
+        if retry_count >= 2 or "retry_exhausted" in normalized_reason_codes:
+            return {
+                "decision": "reroute",
+                "decision_reason": "execution failure reached reroute threshold",
+                "reroute_target": "task_retry",
+            }
+        return {
+            "decision": "same",
+            "decision_reason": "execution failure stays on current path before threshold",
+            "reroute_target": None,
+        }
+
+    return {
+        "decision": "hold",
+        "decision_reason": "unknown failure defaults to hold",
+        "reroute_target": None,
+    }
+
+
+def _persist_escalation_decision(step_payload: dict, decision: dict[str, object]) -> dict[str, object]:
+    step_payload["decision"] = decision.get("decision")
+    step_payload["decision_reason"] = decision.get("decision_reason")
+    step_payload["reroute_target"] = decision.get("reroute_target")
+    return step_payload
+
+
+def _pipeline_step_metadata(step_name: str) -> dict[str, object]:
+    return _normalize_step_metadata({"id": step_name})
 
 
 def _step_payload(
@@ -2249,9 +2466,19 @@ def cmd_pipeline(
 
         prev_critique_issues: str = ""  # 직전 critique 지적 내용 — 다음 retry에 전달
         while retry_count <= _PIPELINE_MAX_RETRIES:
+            loop_started_at = _now()
             if time.time() > deadline:
                 print(f"[PIPELINE] ❌ 최대 실행 시간 초과 ({max_time}s)")
-                result["steps"][loop_step] = {"status": "timeout"}
+                result["steps"][loop_step] = _step_payload(
+                    "timeout",
+                    loop_started_at,
+                    _now(),
+                    **_build_failure_metadata(
+                        step_name=loop_step,
+                        status="timeout",
+                        reason_codes=["timeout"],
+                    ),
+                )
                 save("timeout")
                 return 1
 
@@ -2268,7 +2495,6 @@ def cmd_pipeline(
             )
 
             print(f"\n[PIPELINE] ▶ {loop_step.upper()} 스텝 (시도 {retry_count + 1}/{_PIPELINE_MAX_RETRIES + 1})...")
-            loop_started_at = _now()
             rc, out = _run_pipeline_step(
                 root, loop_step, loop_prompt, executor, STEP_TIMEOUT,
                 dry_run=dry_run, isolated=True,
@@ -2298,7 +2524,7 @@ def cmd_pipeline(
             if rc == 0 and verdict == "BLOCK":
                 print(f"[PIPELINE] ❌ {loop_step.upper()} VERDICT: BLOCK — 즉시 탈출")
                 critique_issues = _extract_critique_issues(out)
-                result["steps"][loop_step] = _step_payload(
+                step_payload = _step_payload(
                     "failed_critique_loop",
                     loop_started_at,
                     loop_finished_at,
@@ -2307,7 +2533,20 @@ def cmd_pipeline(
                     last_output=out[:2000],
                     critique_issues=critique_issues,
                     attempt=retry_count + 1,
+                    **_build_failure_metadata(
+                        step_name=loop_step,
+                        status="failed_critique_loop",
+                        verdict="BLOCK",
+                    ),
                 )
+                step_metadata = _pipeline_step_metadata(loop_step)
+                decision = _decide_escalation_action(
+                    failure_class=str(step_payload.get("failure_class") or ""),
+                    reason_codes=list(step_payload.get("reason_codes") or []),
+                    retry_count=retry_count,
+                    escalation_policy=str(step_metadata.get("escalation_policy") or "default"),
+                )
+                result["steps"][loop_step] = _persist_escalation_decision(step_payload, decision)
                 _save_pipeline_result(root, result)
                 same_verdict_streak = _PIPELINE_MAX_SAME_VERDICT  # 에스컬레이션 트리거
                 # 아래 에스컬레이션 블록으로 fall-through
@@ -2328,7 +2567,7 @@ def cmd_pipeline(
                 if result["steps"].get(loop_step, {}).get("verdict") != "BLOCK":
                     print(f"[PIPELINE] ❌ {loop_step.upper()} 동일 verdict({verdict}) {same_verdict_streak + 1}회 연속 — 탈출")
                     critique_issues = _extract_critique_issues(out)
-                    result["steps"][loop_step] = _step_payload(
+                    step_payload = _step_payload(
                         "failed_critique_loop",
                         loop_started_at,
                         loop_finished_at,
@@ -2337,7 +2576,20 @@ def cmd_pipeline(
                         last_output=out[:2000],
                         critique_issues=critique_issues,
                         attempt=retry_count + 1,
+                        **_build_failure_metadata(
+                            step_name=loop_step,
+                            status="failed_critique_loop",
+                            verdict=verdict,
+                        ),
                     )
+                    step_metadata = _pipeline_step_metadata(loop_step)
+                    decision = _decide_escalation_action(
+                        failure_class=str(step_payload.get("failure_class") or ""),
+                        reason_codes=list(step_payload.get("reason_codes") or []),
+                        retry_count=retry_count,
+                        escalation_policy=str(step_metadata.get("escalation_policy") or "default"),
+                    )
+                    result["steps"][loop_step] = _persist_escalation_decision(step_payload, decision)
                     _save_pipeline_result(root, result)
                 else:
                     critique_issues = (
@@ -2348,11 +2600,21 @@ def cmd_pipeline(
                 if not isinstance(critique_issues, str):
                     critique_issues = str(critique_issues)
 
+                persisted_step = result["steps"].get(loop_step, {})
+                decision_name = str(persisted_step.get("decision") or "").strip().lower()
+                reroute_target = str(persisted_step.get("reroute_target") or "").strip()
+                if loop_step == "critique" and decision_name == "hold":
+                    save("hold")
+                    return 2
+
                 # ── critique 루프 탈출 시 복구 에스컬레이션 ─────────────────
                 # 1순위: task_retry (critique_issues 반영) → critique 재진입
                 # 2순위: plan_retry → critique 재진입
                 # 소진 시: hold
-                if loop_step == "critique" and task_auto_retry_count < _TASK_AUTO_RETRY_MAX:
+                if loop_step == "critique" and (
+                    (decision_name == "reroute" and reroute_target == "task_retry")
+                    or (decision_name not in {"hold", "reroute"} and task_auto_retry_count < _TASK_AUTO_RETRY_MAX)
+                ):
                     task_auto_retry_count += 1
                     print(
                         f"[PIPELINE] 🔄 TASK 재실행 ({task_auto_retry_count}/{_TASK_AUTO_RETRY_MAX})"
@@ -2385,6 +2647,15 @@ def cmd_pipeline(
                         task_retry_started_at,
                         task_retry_finished_at,
                         output_preview=task_retry_out[:300],
+                        **(
+                            _build_failure_metadata(
+                                step_name="task_retry",
+                                status="failed",
+                                rc=task_retry_rc,
+                            )
+                            if task_retry_rc != 0
+                            else {}
+                        ),
                     )
                     result["last_completed_step"] = "task_retry"
                     _save_pipeline_result(root, result)
@@ -2395,6 +2666,13 @@ def cmd_pipeline(
                     if _grep_verdict(task_retry_out) == "BLOCK":
                         print("[PIPELINE] ❌ TASK 재실행 VERDICT: BLOCK — HOLD")
                         result["steps"]["task_retry"]["verdict"] = "BLOCK"
+                        result["steps"]["task_retry"].update(
+                            _build_failure_metadata(
+                                step_name="task_retry",
+                                status=result["steps"]["task_retry"].get("status"),
+                                verdict="BLOCK",
+                            )
+                        )
                         _save_pipeline_result(root, result)
                         save("hold")
                         return 2
@@ -2408,7 +2686,10 @@ def cmd_pipeline(
                     continue
 
                 # 2순위: plan 자동 재진입 (최대 1회)
-                if loop_step == "critique" and critique_auto_retry_count < _CRITIQUE_AUTO_RETRY_MAX:
+                if loop_step == "critique" and (
+                    (decision_name == "reroute" and reroute_target == "plan_retry")
+                    or (decision_name not in {"hold", "reroute"} and critique_auto_retry_count < _CRITIQUE_AUTO_RETRY_MAX)
+                ):
                     critique_auto_retry_count += 1
                     print(f"[PIPELINE] 🔄 CRITIQUE 자동 재진입 ({critique_auto_retry_count}/{_CRITIQUE_AUTO_RETRY_MAX}) — plan 재실행")
                     issues_section = (
@@ -2432,6 +2713,15 @@ def cmd_pipeline(
                         plan_retry_started_at,
                         plan_retry_finished_at,
                         output_preview=plan_out[:300],
+                        **(
+                            _build_failure_metadata(
+                                step_name="plan_retry",
+                                status="failed",
+                                rc=plan_rc,
+                            )
+                            if plan_rc != 0
+                            else {}
+                        ),
                     )
                     result["last_completed_step"] = "plan_retry"
                     _save_pipeline_result(root, result)
@@ -2443,6 +2733,13 @@ def cmd_pipeline(
                     if _grep_verdict(plan_out) == "HOLD":
                         print("[PIPELINE] ❌ PLAN 재실행 VERDICT: HOLD — 재설계 필요")
                         result["steps"]["plan_retry"]["verdict"] = "HOLD"
+                        result["steps"]["plan_retry"].update(
+                            _build_failure_metadata(
+                                step_name="plan_retry",
+                                status=result["steps"]["plan_retry"].get("status"),
+                                verdict="HOLD",
+                            )
+                        )
                         _save_pipeline_result(root, result)
                         save("hold")
                         return 2
@@ -2463,7 +2760,7 @@ def cmd_pipeline(
                 critique_issues = prev_critique_issues or _extract_critique_issues(out)
                 if not critique_issues:
                     critique_issues = f"{loop_step} retry exhausted without parseable critique issues"
-                result["steps"][loop_step] = _step_payload(
+                step_payload = _step_payload(
                     "retry_exhausted",
                     loop_started_at,
                     loop_finished_at,
@@ -2471,11 +2768,34 @@ def cmd_pipeline(
                     last_output=out[:300],
                     critique_issues=critique_issues[:2000],
                     attempt=retry_count,
+                    **_build_failure_metadata(
+                        step_name=loop_step,
+                        status="retry_exhausted",
+                        verdict=verdict,
+                    ),
                 )
+                step_metadata = _pipeline_step_metadata(loop_step)
+                decision = _decide_escalation_action(
+                    failure_class=str(step_payload.get("failure_class") or ""),
+                    reason_codes=list(step_payload.get("reason_codes") or []),
+                    retry_count=retry_count,
+                    escalation_policy=str(step_metadata.get("escalation_policy") or "default"),
+                )
+                result["steps"][loop_step] = _persist_escalation_decision(step_payload, decision)
                 _save_pipeline_result(root, result)
 
+                persisted_step = result["steps"].get(loop_step, {})
+                decision_name = str(persisted_step.get("decision") or "").strip().lower()
+                reroute_target = str(persisted_step.get("reroute_target") or "").strip()
+                if loop_step == "critique" and decision_name == "hold":
+                    save("hold")
+                    return 2
+
                 # retry_exhausted → task_retry 복구 시도 (critique 스텝에서만)
-                if loop_step == "critique" and task_auto_retry_count < _TASK_AUTO_RETRY_MAX:
+                if loop_step == "critique" and (
+                    (decision_name == "reroute" and reroute_target == "task_retry")
+                    or (decision_name not in {"hold", "reroute"} and task_auto_retry_count < _TASK_AUTO_RETRY_MAX)
+                ):
                     task_auto_retry_count += 1
                     print(
                         f"[PIPELINE] 🔄 TASK 재실행 ({task_auto_retry_count}/{_TASK_AUTO_RETRY_MAX})"
@@ -2505,6 +2825,15 @@ def cmd_pipeline(
                         task_retry_started_at,
                         task_retry_finished_at,
                         output_preview=task_retry_out[:300],
+                        **(
+                            _build_failure_metadata(
+                                step_name="task_retry",
+                                status="failed",
+                                rc=task_retry_rc,
+                            )
+                            if task_retry_rc != 0
+                            else {}
+                        ),
                     )
                     _save_pipeline_result(root, result)
                     if task_retry_rc == 0 and _grep_verdict(task_retry_out) not in ("BLOCK", None):
@@ -2517,6 +2846,68 @@ def cmd_pipeline(
                         continue
                     # task_retry 실패/BLOCK → retry_exhausted 유지
                     print("[PIPELINE] ❌ TASK 재실행 실패 또는 BLOCK — retry_exhausted")
+
+                if loop_step == "critique" and (
+                    (decision_name == "reroute" and reroute_target == "plan_retry")
+                    or (decision_name not in {"hold", "reroute"} and critique_auto_retry_count < _CRITIQUE_AUTO_RETRY_MAX)
+                ):
+                    critique_auto_retry_count += 1
+                    print(f"[PIPELINE] 🔄 CRITIQUE 자동 재진입 ({critique_auto_retry_count}/{_CRITIQUE_AUTO_RETRY_MAX}) — plan 재실행")
+                    issues_section = (
+                        f"\n\n[이전 critique 지적 사항]\n{critique_issues}\n"
+                        if critique_issues else ""
+                    )
+                    retry_plan_prompt = (
+                        f"이전 critique에서 다음 문제가 지적됐습니다. 이를 반영해 구현 계획을 수정하세요.{issues_section}"
+                        f"\n지시문: {instruction[:200]}\n\n"
+                        "목표/범위/DoD/제약/실패조건을 각각 한 줄로 명시하세요.\n"
+                        "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: HOLD`를 출력하세요."
+                    )
+                    print("\n[PIPELINE] ▶ PLAN 재실행 (critique 이슈 반영)...")
+                    plan_retry_started_at = _now()
+                    plan_rc, plan_out = _run_pipeline_step(
+                        root, "plan_retry", retry_plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run
+                    )
+                    plan_retry_finished_at = _now()
+                    result["steps"]["plan_retry"] = _step_payload(
+                        "completed" if plan_rc == 0 else "failed",
+                        plan_retry_started_at,
+                        plan_retry_finished_at,
+                        output_preview=plan_out[:300],
+                        **(
+                            _build_failure_metadata(
+                                step_name="plan_retry",
+                                status="failed",
+                                rc=plan_rc,
+                            )
+                            if plan_rc != 0
+                            else {}
+                        ),
+                    )
+                    _save_pipeline_result(root, result)
+                    if plan_rc != 0:
+                        print("[PIPELINE] ❌ PLAN 재실행 실패 — HOLD")
+                        save("hold")
+                        return 2
+                    if _grep_verdict(plan_out) == "HOLD":
+                        print("[PIPELINE] ❌ PLAN 재실행 VERDICT: HOLD — 재설계 필요")
+                        result["steps"]["plan_retry"]["verdict"] = "HOLD"
+                        result["steps"]["plan_retry"].update(
+                            _build_failure_metadata(
+                                step_name="plan_retry",
+                                status=result["steps"]["plan_retry"].get("status"),
+                                verdict="HOLD",
+                            )
+                        )
+                        _save_pipeline_result(root, result)
+                        save("hold")
+                        return 2
+                    retry_count = 0
+                    prev_verdict = _UNSET_VERDICT
+                    same_verdict_streak = 0
+                    task_auto_retry_count = 0
+                    needs_ctx_refresh = True
+                    continue
 
                 save("retry_exhausted")
                 return 1

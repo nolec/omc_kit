@@ -549,6 +549,26 @@ def test_build_benchmark_report_failed_pipeline_with_retry_step():
     assert report["success_rate"] == pytest.approx(2 / 3)
     assert report["final_verdict"] == "BLOCK"
     assert report["failure_category"] == "task_retry:failed"
+    assert report["pipeline_success"] is False
+    assert report["quality_success"] is False
+    assert report["failure_class_breakdown"] == {"execution_failure": 1}
+
+
+def test_step_payload_keeps_failure_class_metadata():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    payload = mod._step_payload(
+        "failed",
+        "2026-06-28T00:00:00Z",
+        "2026-06-28T00:00:05Z",
+        failure_class="contract_failure",
+        reason_codes=["verdict_missing", "output_mismatch"],
+    )
+
+    assert payload["failure_class"] == "contract_failure"
+    assert payload["reason_codes"] == ["verdict_missing", "output_mismatch"]
 
 
 def test_build_benchmark_report_handles_mixed_timezone_timestamps():
@@ -634,10 +654,10 @@ def test_critique_same_verdict_repeated_exits_failed_critique_loop(tmp_path: Pat
     import omc_autopilot as mod
     importlib.reload(mod)
 
-    call_count = {"n": 0}
+    call_log: list[str] = []
 
     def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
-        call_count["n"] += 1
+        call_log.append(step_name)
         if step_name == "plan":
             return 0, "VERDICT: PROCEED"
         if step_name == "critique":
@@ -667,9 +687,257 @@ def test_critique_same_verdict_repeated_exits_failed_critique_loop(tmp_path: Pat
     result_path = tmp_path / "result.json"
     assert result_path.exists(), "result.json 미생성"
     data = __import__("json").loads(result_path.read_text(encoding="utf-8"))
-    assert data["status"] in ("failed_critique_loop", "hold"), (
-        f"expected failed_critique_loop or hold, got {data['status']}"
+    assert rc == 2
+    assert data["status"] == "hold", f"expected hold, got {data['status']}"
+    critique_step = data["steps"]["critique"]
+    assert critique_step["failure_class"] == "contract_failure"
+    assert critique_step["reason_codes"] == ["verdict_hold", "same_verdict_streak"]
+    assert critique_step["decision"] == "hold"
+    assert critique_step["decision_reason"] == "contract failure requires explicit hold"
+    assert critique_step["reroute_target"] is None
+    assert "task_retry" not in call_log
+    assert "plan_retry" not in call_log
+
+
+def test_failed_critique_loop_quality_failure_uses_plan_retry_before_task_retry(tmp_path: Path, monkeypatch):
+    """동일 REVISE 반복 시 persisted reroute_target=plan_retry를 실제 분기에서 소비해야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    call_log: list[str] = []
+    critique_calls = {"n": 0}
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        call_log.append(step_name)
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            critique_calls["n"] += 1
+            if critique_calls["n"] <= 3:
+                return 0, "VERDICT: REVISE"
+            return 0, "VERDICT: PROCEED"
+        if step_name == "plan_retry":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "review":
+            return 0, "VERDICT: APPROVE"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/t2-plan-retry",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
     )
+
+    assert rc == 0
+    assert "plan_retry" in call_log, f"plan_retry가 호출되지 않음: {call_log}"
+    assert "task_retry" not in call_log, f"plan_retry보다 task_retry가 먼저 실행됨: {call_log}"
+
+
+def test_build_benchmark_report_treats_failed_critique_loop_as_quality_failure():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    report = mod._build_benchmark_report({
+        "status": "failed_critique_loop",
+        "steps": {
+            "critique": {
+                "status": "failed_critique_loop",
+                "verdict": "BLOCK",
+            },
+        },
+    })
+
+    assert report["pipeline_success"] is False
+    assert report["quality_success"] is False
+    assert report["failure_class_breakdown"] == {"quality_failure": 1}
+
+
+def test_build_benchmark_report_counts_all_failure_classes():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    report = mod._build_benchmark_report({
+        "status": "failed",
+        "steps": {
+            "critique": {
+                "status": "failed_critique_loop",
+                "verdict": "BLOCK",
+                "failure_class": "quality_failure",
+            },
+            "task_retry": {
+                "status": "failed",
+                "failure_class": "execution_failure",
+            },
+            "plan_retry": {
+                "status": "blocked",
+                "failure_class": "contract_failure",
+            },
+        },
+    })
+
+    assert report["failure_category"] == "critique:failed_critique_loop"
+    assert report["failure_class_breakdown"] == {
+        "quality_failure": 1,
+        "execution_failure": 1,
+        "contract_failure": 1,
+    }
+
+
+def test_build_benchmark_report_counts_completed_steps_with_block_verdict_as_failure():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    report = mod._build_benchmark_report({
+        "status": "hold",
+        "steps": {
+            "task_retry": {
+                "status": "completed",
+                "verdict": "BLOCK",
+                "failure_class": "execution_failure",
+            },
+            "plan_retry": {
+                "status": "completed",
+                "verdict": "HOLD",
+                "failure_class": "contract_failure",
+            },
+        },
+    })
+
+    assert report["failure_category"] == "task_retry:completed"
+    assert report["failure_class_breakdown"] == {
+        "execution_failure": 1,
+        "contract_failure": 1,
+    }
+
+
+def test_pipeline_timeout_persists_failure_metadata(tmp_path: Path, monkeypatch):
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+
+    timestamps = iter([
+        "2026-06-28T00:00:00Z",
+        "2026-06-28T00:00:00Z",
+        "2026-06-28T00:00:00Z",
+        "2026-06-28T00:00:00Z",
+    ])
+    monkeypatch.setattr(mod, "_now", lambda: next(timestamps, "2026-06-28T00:00:00Z"))
+
+    time_values = iter([0.0, 999999.0])
+    monkeypatch.setattr(mod.time, "time", lambda: next(time_values, 999999.0))
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/timeout-metadata",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 1
+    data = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    critique_step = data["steps"]["critique"]
+    assert critique_step["status"] == "timeout"
+    assert critique_step["started_at"] == "2026-06-28T00:00:00Z"
+    assert critique_step["failure_class"] == "execution_failure"
+    assert critique_step["reason_codes"] == ["timeout"]
+
+
+def test_decide_escalation_action_default_execution_retry_two_reroutes_task():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    decision = mod._decide_escalation_action(
+        failure_class="execution_failure",
+        reason_codes=["retry_exhausted"],
+        retry_count=2,
+        escalation_policy="default",
+    )
+
+    assert decision["decision"] == "reroute"
+    assert decision["reroute_target"] == "task_retry"
+
+
+def test_decide_escalation_action_quality_failure_reroutes_plan():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    decision = mod._decide_escalation_action(
+        failure_class="quality_failure",
+        reason_codes=["verdict_block"],
+        retry_count=1,
+        escalation_policy="default",
+    )
+
+    assert decision["decision"] == "reroute"
+    assert decision["reroute_target"] == "plan_retry"
+
+
+def test_decide_escalation_action_contract_failure_holds_even_when_aggressive():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    decision = mod._decide_escalation_action(
+        failure_class="contract_failure",
+        reason_codes=["verdict_hold"],
+        retry_count=1,
+        escalation_policy="aggressive",
+    )
+
+    assert decision["decision"] == "hold"
+    assert decision["reroute_target"] is None
+
+
+def test_step_payload_keeps_escalation_decision_metadata():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    payload = mod._step_payload(
+        "failed",
+        "2026-06-28T00:00:00Z",
+        "2026-06-28T00:00:05Z",
+        decision="reroute",
+        decision_reason="execution failure reached retry threshold",
+        reroute_target="task_retry",
+    )
+
+    assert payload["decision"] == "reroute"
+    assert payload["decision_reason"] == "execution failure reached retry threshold"
+    assert payload["reroute_target"] == "task_retry"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # T3: AMBIGUOUS_RESPONSE — task verdict None 처리
@@ -1062,7 +1330,7 @@ def test_critique_prompt_excludes_instruction(tmp_path: Path, monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_retry_exhausted_triggers_task_retry(tmp_path: Path, monkeypatch):
-    """critique retry 소진(retry_exhausted) 시 task_retry가 호출돼야 한다."""
+    """execution_failure 기반 critique retry 소진(retry_exhausted) 시 task_retry가 호출돼야 한다."""
     import importlib
     import omc_autopilot as mod
     importlib.reload(mod)
@@ -1079,8 +1347,9 @@ def test_retry_exhausted_triggers_task_retry(tmp_path: Path, monkeypatch):
             return 0, "VERDICT: PROCEED"
         if step_name == "critique":
             critique_call["n"] += 1
-            # 1,3회차: REVISE / 2,4회차: HOLD → streak 없이 retry 소진
-            return 0, "VERDICT: REVISE" if critique_call["n"] % 2 == 1 else "VERDICT: HOLD"
+            if critique_call["n"] <= 4:
+                return 1, "critique command failed"
+            return 0, "VERDICT: PROCEED"
         if step_name == "task_retry":
             return 0, "VERDICT: PROCEED"
         return 0, "VERDICT: PROCEED"
@@ -1111,7 +1380,7 @@ def test_retry_exhausted_triggers_task_retry(tmp_path: Path, monkeypatch):
 
 
 def test_retry_exhausted_records_non_empty_critique_issues(tmp_path: Path, monkeypatch):
-    """retry_exhausted 저장 시 critique_issues는 항상 비어있지 않아야 한다."""
+    """retry_exhausted가 hold로 소비되더라도 critique_issues는 항상 비어있지 않아야 한다."""
     import importlib
     import omc_autopilot as mod
     importlib.reload(mod)
@@ -1150,11 +1419,134 @@ def test_retry_exhausted_records_non_empty_critique_issues(tmp_path: Path, monke
         dry_run=True,
         allow_dirty=True,
     )
-    assert rc == 1
+    assert rc == 2
     result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "hold"
     critique = result["steps"]["critique"]
     assert critique["status"] == "retry_exhausted"
     assert bool((critique.get("critique_issues") or "").strip())
+    assert critique["decision"] == "hold"
+    assert critique["decision_reason"] == "contract failure requires explicit hold"
+    assert critique["reroute_target"] is None
+
+
+def test_retry_exhausted_uses_step_escalation_policy(tmp_path: Path, monkeypatch):
+    """retry_exhausted decision이 hold로 소비되더라도 escalation_policy는 유지돼야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        if step_name in ("plan", "task"):
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            return 0, "VERDICT: REVISE"
+        return 0, "VERDICT: APPROVE"
+
+    def mock_normalize_step_metadata(step):
+        step_id = str(step.get("id", "")).strip().lower()
+        metadata = {
+            "task_kind": "task",
+            "complexity": "medium",
+            "risk": "medium",
+            "sensitive_paths": [],
+            "preferred_profile": None,
+            "escalation_policy": "default",
+        }
+        if step_id == "critique":
+            metadata["escalation_policy"] = "conservative"
+        return metadata
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setattr(mod, "_normalize_step_metadata", mock_normalize_step_metadata)
+    monkeypatch.setattr(mod, "_pipeline_step_metadata", lambda step_name: mock_normalize_step_metadata({"id": step_name}))
+    monkeypatch.setattr(mod, "_TASK_AUTO_RETRY_MAX", 0)
+    monkeypatch.setattr(mod, "_CRITIQUE_AUTO_RETRY_MAX", 0)
+    monkeypatch.setattr(mod, "_PIPELINE_MAX_SAME_VERDICT", 99)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/t7-policy",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 2
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "hold"
+    critique = result["steps"]["critique"]
+    assert critique["status"] == "retry_exhausted"
+    assert critique["failure_class"] == "quality_failure"
+    assert critique["decision"] == "hold"
+    assert critique["decision_reason"] == "conservative policy holds on quality failure"
+    assert critique["reroute_target"] is None
+
+
+def test_retry_exhausted_quality_failure_uses_plan_retry_before_task_retry(tmp_path: Path, monkeypatch):
+    """retry_exhausted + quality_failure(default)는 persisted reroute_target=plan_retry를 소비해야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    call_log: list[str] = []
+    critique_calls = {"n": 0}
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        call_log.append(step_name)
+        if step_name in ("plan", "task"):
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            critique_calls["n"] += 1
+            if critique_calls["n"] <= 4:
+                return 0, "VERDICT: REVISE"
+            return 0, "VERDICT: PROCEED"
+        if step_name == "plan_retry":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "review":
+            return 0, "VERDICT: APPROVE"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setattr(mod, "_TASK_AUTO_RETRY_MAX", 0)
+    monkeypatch.setattr(mod, "_CRITIQUE_AUTO_RETRY_MAX", 1)
+    monkeypatch.setattr(mod, "_PIPELINE_MAX_SAME_VERDICT", 99)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/t7-plan-retry",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 0
+    assert "plan_retry" in call_log, f"plan_retry가 호출되지 않음: {call_log}"
+    assert "task_retry" not in call_log, f"task_retry가 잘못 호출됨: {call_log}"
 
 
 def test_critique_retry_prompt_includes_issues(tmp_path: Path, monkeypatch):
@@ -1211,7 +1603,7 @@ def test_critique_retry_prompt_includes_issues(tmp_path: Path, monkeypatch):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_critique_prompt_refreshed_after_task_retry(tmp_path: Path, monkeypatch):
-    """task_retry 후 critique 루프 재진입 시 _get_critique_context가 재호출돼야 한다."""
+    """execution_failure 기반 task_retry 후 critique 루프 재진입 시 _get_critique_context가 재호출돼야 한다."""
     import importlib
     import omc_autopilot as mod
     importlib.reload(mod)
@@ -1229,16 +1621,19 @@ def test_critique_prompt_refreshed_after_task_retry(tmp_path: Path, monkeypatch)
     critique_prompts = []
     task_retry_count = {"n": 0}
 
+    critique_call_count = {"n": 0}
+
     def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
         if step_name == "plan":
             return 0, "VERDICT: PROCEED"
         if step_name == "task":
             return 0, "VERDICT: PROCEED"
         if step_name == "critique":
+            critique_call_count["n"] += 1
             critique_prompts.append(prompt)
-            # 첫 3번은 REVISE streak → task_retry 유도
-            if len(critique_prompts) <= 3:
-                return 0, "VERDICT: REVISE"
+            # 첫 4번은 execution_failure 누적 → task_retry 유도
+            if critique_call_count["n"] <= 4:
+                return 1, "critique command failed"
             # 재진입 후 PROCEED
             return 0, "VERDICT: PROCEED"
         if step_name == "task_retry":
@@ -1273,7 +1668,7 @@ def test_critique_prompt_refreshed_after_task_retry(tmp_path: Path, monkeypatch)
         f"critique 루프 재진입 후 _get_critique_context가 재호출되지 않음: {ctx_call_count['n']}회 호출"
     )
     # 재진입 후 critique 프롬프트에 새 ctx가 반영돼야 함
-    if len(critique_prompts) > 3:
+    if len(critique_prompts) > 4:
         assert CTX_V2 in critique_prompts[-1], (
             f"재진입 후 critique 프롬프트에 새 diff가 없음:\n{critique_prompts[-1][:200]}"
         )

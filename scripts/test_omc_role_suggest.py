@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import omc_exec
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "omc_role_suggest.py"
@@ -57,6 +59,7 @@ def test_orchestration_hint_routes_plan_request():
     assert hint["response_mode"] == "answer-first"
     assert hint["recommended_skill"] == "$omc-plan"
     assert hint["primary_role"] == "analysis"
+    assert hint["task_kind_hint"] == "plan"
 
 
 def test_orchestration_hint_routes_implementation_request():
@@ -67,6 +70,7 @@ def test_orchestration_hint_routes_implementation_request():
     assert hint["response_mode"] == "execute-first"
     assert hint["recommended_skill"] == "$omc-task"
     assert hint["primary_role"] == "senior_coding"
+    assert hint["task_kind_hint"] == "task"
 
 
 def test_orchestration_hint_routes_impact_and_plan_request_to_plan() -> None:
@@ -134,3 +138,32 @@ def test_json_output_includes_orchestration_fields():
     assert payload["response_mode"] == "review-first"
     assert payload["recommended_skill"] == "$omc-review"
     assert payload["primary_role"] == "code_review"
+    assert payload["task_kind_hint"] == "review"
+    assert payload["routing_policy"] == "balanced"
+
+
+def test_plain_output_prints_footer_once_for_multiple_suggestions() -> None:
+    mod = _load_module()
+
+    output = mod._fmt_plain(mod.suggest("버그 수정하고 테스트 추가해줘", top=3), "버그 수정하고 테스트 추가해줘")
+
+    assert output.count("🧭 추천 모드:") == 1
+    assert output.count("🧩 추천 시작 스킬:") == 1
+    assert output.count("🎯 주역할:") == 1
+
+
+def test_review_hint_stays_consistent_with_quality_first_routing(monkeypatch) -> None:
+    mod = _load_module()
+    monkeypatch.setenv("OMC_ROUTING_POLICY", "quality_first")
+
+    hint = mod.suggest_orchestration("이 변경 영향 리뷰해줘")
+    routing = omc_exec.resolve_task_routing(
+        task_kind=hint["task_kind_hint"],
+        request_text="변경 영향 검토",
+        retry_count=0,
+    )
+
+    assert hint["recommended_skill"] == "$omc-review"
+    assert hint["task_kind_hint"] == "review"
+    assert hint["routing_policy"] == "quality_first"
+    assert routing["model_profile"] == "full_default"

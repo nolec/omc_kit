@@ -178,6 +178,118 @@ def test_run_step_passes_task_kind_to_omc_exec(monkeypatch, tmp_path: Path) -> N
     assert cmd[cmd.index("--task-kind") + 1] == "review"
 
 
+def test_run_step_prefers_explicit_task_kind_over_step_id(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        env = kwargs.get("env") or {}
+        raw_output_file = env.get("OMC_RAW_OUTPUT_FILE")
+        assert raw_output_file
+        Path(raw_output_file).write_text(
+            json.dumps({"usage": {"input_tokens": 1, "output_tokens": 1}}),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
+
+    step = {"id": "s1", "task_kind": "plan", "prompt": "구조 설계"}
+    rc, _output, _cost_info = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
+
+    assert rc == 0
+    cmd = captured["cmd"]
+    assert "--task-kind" in cmd
+    assert cmd[cmd.index("--task-kind") + 1] == "plan"
+
+
+def test_run_step_falls_back_to_task_for_unknown_step_id(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        env = kwargs.get("env") or {}
+        raw_output_file = env.get("OMC_RAW_OUTPUT_FILE")
+        assert raw_output_file
+        Path(raw_output_file).write_text(
+            json.dumps({"usage": {"input_tokens": 1, "output_tokens": 1}}),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
+
+    step = {"id": "s1", "prompt": "작은 구현"}
+    rc, _output, _cost_info = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
+
+    assert rc == 0
+    cmd = captured["cmd"]
+    assert "--task-kind" in cmd
+    assert cmd[cmd.index("--task-kind") + 1] == "task"
+
+
+def test_run_step_uses_quality_first_policy_for_review_profile(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        env = kwargs.get("env") or {}
+        raw_output_file = env.get("OMC_RAW_OUTPUT_FILE")
+        assert raw_output_file
+        Path(raw_output_file).write_text(
+            json.dumps({"usage": {"input_tokens": 1, "output_tokens": 1}}),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
+    monkeypatch.setenv("OMC_ROUTING_POLICY", "quality_first")
+
+    step = {"id": "review", "task_kind": "review", "prompt": "변경 영향 검토"}
+    rc, _output, _cost_info = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
+
+    assert rc == 0
+    cmd = captured["cmd"]
+    assert "--model-profile" in cmd
+    assert cmd[cmd.index("--model-profile") + 1] == "full_default"
+
+
+def test_run_step_accepts_metadata_fields_without_breaking_execution(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        env = kwargs.get("env") or {}
+        raw_output_file = env.get("OMC_RAW_OUTPUT_FILE")
+        assert raw_output_file
+        Path(raw_output_file).write_text(
+            json.dumps({"usage": {"input_tokens": 1, "output_tokens": 1}}),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
+
+    step = {
+        "id": "s1",
+        "task_kind": "task",
+        "complexity": "low",
+        "risk": "low",
+        "sensitive_paths": [],
+        "preferred_profile": "full_default",
+        "escalation_policy": "default",
+        "prompt": "구조 설계",
+    }
+    rc, _output, _cost_info = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
+
+    assert rc == 0
+    cmd = captured["cmd"]
+    assert "--task-kind" in cmd
+    assert cmd[cmd.index("--task-kind") + 1] == "task"
+    assert "--model-profile" in cmd
+    assert cmd[cmd.index("--model-profile") + 1] == "full_default"
+
+
 # ── 태스크 3: cmd_run 호출부가 token_usage/cost_estimate를 step state에 저장 ─
 
 def test_cmd_run_stores_cost_in_step_state(monkeypatch, tmp_path: Path) -> None:
