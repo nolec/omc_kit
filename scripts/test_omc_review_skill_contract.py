@@ -11,7 +11,7 @@ import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 60
+MAX_NON_EMPTY_LINES = 57
 
 REQUIRED_REVIEW_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-review" / "SKILL.md",
