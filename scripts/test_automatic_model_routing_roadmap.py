@@ -49,12 +49,14 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "`omc-critique`, `omc-status` 출력 contract에 조건부 `reroute 이유 / delay 이유 / 재개 조건` 설명 규칙 반영" in text
     assert "`role_suggest`가 `변경 상태 검토`와 `plan 검증` 요청을 각각 `review`, `critique`로 더 정확히 라우팅" in text
     assert "`omc-status`가 `현재 병목 > 기본 파이프라인` 우선순위를 직접 따르도록 추천 규칙을 보강" in text
+    assert "`omc-plan`, `omc-review`도 같은 우선순위를 다음 추천 규칙에 직접 반영해 plan/review/status 3축을 맞췄다." in text
     assert "공통 결정표" in text
     assert "ship_intent_explicit" in text
     assert "남은 2차 변화:" in text
     assert "`omc-plan`, `omc-review`, `omc-task` 1차 계약 보강은 끝났다." in text
     assert "`2-1 next_action 공통화`도 끝났다." in text
     assert "`2-2 reroute / delay UX`도 1차 완료됐다." in text
-    assert "다음 남은 조각은 같은 원칙을 `omc-plan`, `omc-review` 추천 규칙에도 더 직접 반영하는 것이다." in text
+    assert "next-action 품질 보강 3차의 plan/review/status 병목 우선 추천은 반영 완료다." in text
+    assert "다음 남은 조각은 fixture/benchmark에도 이 우선순위를 더 직접 반영해 실제 기대 추천과의 오차를 줄이는 것이다." in text
     assert "decision engine 일반화 2차" in text
     assert "next-action 품질 보강 3차" in text

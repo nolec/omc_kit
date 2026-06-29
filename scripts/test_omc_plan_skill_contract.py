@@ -417,6 +417,17 @@ def test_plan_recommendation_fixture_keeps_single_next_action_per_state():
         assert len(actions) == 1, f"line must resolve to one action: {line}"
 
 
+def test_plan_skill_prioritizes_current_bottleneck_over_default_pipeline():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    for marker in [
+        "현재 병목 > 기본 파이프라인",
+        "고위험이면 먼저 `$omc-critique`",
+        "outcome=ready + user_selection_needed=no + 범위 고정 + 컨펌 완료면 `$omc-task`",
+        "사용자가 설계만 확인 중이거나 다음 단계를 아직 고르지 않음 → 사용자 선택 대기",
+    ]:
+        assert marker in text
+
+
 def test_invalid_plan_output_fixture_exposes_missing_structure():
     missing = _validate_plan_output(INVALID_PLAN_SAMPLE)
     assert {"excluded_scope", "confirmed", "verify"}.issubset(set(missing))

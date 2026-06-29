@@ -328,3 +328,14 @@ def test_review_recommendation_fixture_keeps_single_next_action_per_state():
     for line in lines:
         actions = re.findall(r"(\$omc-[a-z-]+|사용자 선택 대기)", line)
         assert len(actions) == 1, f"line must resolve to one action: {line}"
+
+
+def test_review_skill_prioritizes_current_bottleneck_over_default_pipeline():
+    text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
+    for marker in [
+        "현재 병목 > 기본 파이프라인",
+        "REVISE/BLOCK면 `$omc-task`",
+        "배포 준비 명시 + ship_intent_explicit=yes면 `$omc-ship`",
+        "배포 준비 미명시 또는 user_selection_needed=yes면 사용자 선택 대기",
+    ]:
+        assert marker in text

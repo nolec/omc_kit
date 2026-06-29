@@ -61,16 +61,11 @@ plan lite
 
 ## Phase 4. 세션 기록
 
-사용자 컨펌 완료 전에는 아래 명령을 실행하지 않습니다.
-
-```bash
-python3 scripts/omc.py state confirm --target .
-```
-
-confirm 후에만 `$omc-task`로 넘깁니다.
+사용자 컨펌 완료 전에는 `python3 scripts/omc.py state confirm --target .` 를 실행하지 않으며, confirm 후에만 `$omc-task`로 넘깁니다.
 
 ## 다음 추천
 
+- 우선순위는 항상 `현재 병목 > 기본 파이프라인`
 - 주추천 1개만 제시, 우선순위: 새 파일/API 변경/3개 이상 파일 같은 고위험이면 먼저 `$omc-critique`
 - outcome=ready + user_selection_needed=no + 범위 고정 + 컨펌 완료면 `$omc-task`
 - outcome=unresolved + risk=high 또는 범위 불명확이면 `$omc-critique`
