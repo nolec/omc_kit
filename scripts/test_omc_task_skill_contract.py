@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 75
+MAX_NON_EMPTY_LINES = 54
 
 REQUIRED_TASK_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-task" / "SKILL.md",
