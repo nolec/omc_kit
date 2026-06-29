@@ -1119,6 +1119,61 @@ def test_decide_escalation_action_orchestration_failure_reroute_loop_holds():
     assert decision["reroute_target"] is None
 
 
+def test_failure_step_decision_uses_step_metadata_policy(monkeypatch):
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    monkeypatch.setattr(
+        mod,
+        "_pipeline_step_metadata",
+        lambda step_name: {"escalation_policy": "conservative"} if step_name == "review" else {"escalation_policy": "default"},
+    )
+
+    decision = mod._failure_step_decision(
+        step_name="review",
+        step_payload={
+            "failure_class": "quality_failure",
+            "reason_codes": ["verdict_block"],
+        },
+        retry_count=0,
+    )
+
+    assert decision == {
+        "decision": "hold",
+        "decision_reason": "conservative policy holds on quality failure",
+        "reroute_target": None,
+    }
+
+
+def test_retry_step_payload_failed_uses_failure_metadata_and_step_policy(monkeypatch):
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    monkeypatch.setattr(
+        mod,
+        "_pipeline_step_metadata",
+        lambda step_name: {"escalation_policy": "conservative"} if step_name == "plan_retry" else {"escalation_policy": "default"},
+    )
+
+    payload = mod._retry_step_payload(
+        step_name="plan_retry",
+        rc=1,
+        started_at="2026-06-28T00:00:00Z",
+        finished_at="2026-06-28T00:00:05Z",
+        output_preview="boom",
+        retry_count=1,
+    )
+
+    assert payload["status"] == "failed"
+    assert payload["failure_class"] == "execution_failure"
+    assert payload["reason_codes"] == ["step_failed", "nonzero_exit"]
+    assert payload["decision"] == "same"
+    assert payload["decision_reason"] == "execution failure stays on current path before threshold"
+    assert payload["reroute_target"] is None
+
+
 def test_step_payload_keeps_escalation_decision_metadata():
     import importlib
     import omc_autopilot as mod
