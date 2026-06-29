@@ -1711,7 +1711,16 @@ def _build_failure_metadata(
         if str(code).strip()
     ]
 
-    if any(code in {"bad_entry_skill", "reroute_loop", "metadata_missing"} for code in normalized_reason_codes):
+    if any(
+        code in {
+            "bad_entry_skill",
+            "reroute_loop",
+            "metadata_missing",
+            "ambiguous_response",
+            "branch_setup_failed",
+        }
+        for code in normalized_reason_codes
+    ):
         failure_class = "orchestration_failure"
     elif normalized_verdict in {"BLOCK", "REVISE"} and ("review" in name or "critique" in name):
         failure_class = "quality_failure"

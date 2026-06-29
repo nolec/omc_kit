@@ -658,6 +658,36 @@ def test_build_failure_metadata_marks_metadata_missing_as_orchestration_failure(
     assert payload["reason_codes"] == ["metadata_missing"]
 
 
+def test_build_failure_metadata_marks_ambiguous_response_as_orchestration_failure():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    payload = mod._build_failure_metadata(
+        step_name="task",
+        status="failed",
+        reason_codes=["ambiguous_response"],
+    )
+
+    assert payload["failure_class"] == "orchestration_failure"
+    assert payload["reason_codes"] == ["ambiguous_response"]
+
+
+def test_build_failure_metadata_marks_branch_setup_failed_as_orchestration_failure():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    payload = mod._build_failure_metadata(
+        step_name="branch",
+        status="failed_branch",
+        reason_codes=["branch_setup_failed"],
+    )
+
+    assert payload["failure_class"] == "orchestration_failure"
+    assert payload["reason_codes"] == ["branch_setup_failed"]
+
+
 def test_build_benchmark_report_handles_mixed_timezone_timestamps():
     import importlib
     import omc_autopilot as mod
@@ -1299,8 +1329,8 @@ def test_task_ambiguous_response_fails_after_two_nones(tmp_path: Path, monkeypat
     assert data["status"] == "failed_ambiguous_response", (
         f"expected failed_ambiguous_response, got {data['status']}"
     )
-    assert data["steps"]["task"]["decision"] == "same"
-    assert data["steps"]["task"]["decision_reason"] == "execution failure stays on current path before threshold"
+    assert data["steps"]["task"]["decision"] == "hold"
+    assert data["steps"]["task"]["decision_reason"] == "orchestration failure defaults to explicit hold"
     assert data["steps"]["task"]["reroute_target"] is None
 
 
@@ -1383,8 +1413,8 @@ def test_pipeline_branch_failure_sets_top_level_failed_branch(tmp_path: Path, mo
     data = json.loads(result_path.read_text(encoding="utf-8"))
     assert data["status"] == "failed_branch"
     assert data["steps"]["branch"]["status"] == "failed_branch"
-    assert data["steps"]["branch"]["decision"] == "same"
-    assert data["steps"]["branch"]["decision_reason"] == "execution failure stays on current path before threshold"
+    assert data["steps"]["branch"]["decision"] == "hold"
+    assert data["steps"]["branch"]["decision_reason"] == "orchestration failure defaults to explicit hold"
     assert data["steps"]["branch"]["reroute_target"] is None
 
 
