@@ -26,8 +26,7 @@ git log --oneline -5
 
 ## Phase 2. 변경 카테고리
 
-- 소스/스킬 변경: 현재 커밋 범위와 범위 밖 dirty 변경으로 분리해 요약
-- .omc 실행 아티팩트: `.omc/pipeline_run_result.json`, `.omc/runs`, `.omc/lessons`, `.omc/allow_log.jsonl` / untracked: 새 파일 후보와 커밋 대상 아님 후보 분리
+- 소스/스킬 변경: 현재 커밋 범위와 범위 밖 dirty 변경으로 분리해 요약 / `.omc 실행 아티팩트`: `.omc/pipeline_run_result.json`, `.omc/runs`, `.omc/lessons`, `.omc/allow_log.jsonl` / `untracked`: 새 파일 후보와 커밋 대상 아님 후보 분리
 
 ## Phase 3. 출력
 
@@ -53,5 +52,4 @@ Git 상태: branch/ahead/behind, staged/unstaged/untracked
 
 ## 다음 추천
 
-- 주추천 1개만 제시: 판단 기준에 따라 1개만 선택합니다 (`$omc-plan` / `$omc-task` / `$omc-review` / `$omc-ship` / `$omc-retro` / 사용자 선택 대기)
-- 자동으로 진행하지는 않습니다.
+- 주추천 1개만 제시: 판단 기준에 따라 1개만 선택 (`$omc-plan` / `$omc-task` / `$omc-review` / `$omc-ship` / `$omc-retro` / 사용자 선택 대기), 자동으로 진행하지는 않습니다.
