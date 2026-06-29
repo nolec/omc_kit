@@ -82,3 +82,38 @@
 - 계속 압축할 가치 높음: `omc-critique`
 - 추가 압축 중단 권장: `omc-review`
 - 다음 후보는 `pr-create`, `omc-task`, `omc-autopilot`처럼 절대 길이가 큰 스킬이 더 낫습니다.
+
+## 최근 커밋 요약
+
+### Commit `b3e675b` `Further compact omc-task skill`
+
+| Skill | Before | After | Line Delta | Char Delta | Notes |
+|---|---:|---:|---:|---:|---|
+| `omc-task` | 59 | 51 | -8 | -3 | 2차 압축에서도 실제 길이 감소 확인 |
+
+- 해석: `omc-task`는 이미 한 번 줄인 뒤에도 단계 헤더와 반복 문구를 더 평탄화할 여지가 있었고, 줄 수 기준으로는 의미 있는 추가 개선이 나왔다.
+- 판단: `토큰 절감 + 구조 압축`이 함께 있었던 좋은 2차 압축 케이스.
+
+### Commit `3f90a32` `Compact orchestration and planning skills`
+
+| Skill | Before | After | Line Delta | Char Delta | Notes |
+|---|---:|---:|---:|---:|---|
+| `omc-autopilot` | 55 | 47 | -8 | -47 | 실제 텍스트 총량도 줄어든 우수 케이스 |
+| `omc-critique` | 64 | 57 | -7 | -1 | 구조 압축 중심, 토큰 절감은 약함 |
+| `omc-plan` | 46 | 40 | -6 | -3 | 구조 압축 중심, 텍스트 총량 변화는 작음 |
+| `pr-create` | 66 | 55 | -11 | -6 | 절차형 설명 평탄화, 토큰 효과는 제한적 |
+
+- 해석:
+  - `omc-autopilot`은 `lines + chars`가 함께 줄어든 좋은 압축이었다.
+  - `omc-critique`, `omc-plan`, `pr-create`는 `chars` 감소폭이 작아 실제 토큰 절감보다는 스캔 속도와 가독성 개선 쪽 가치가 컸다.
+- 판단:
+  - 앞으로는 `줄 수 감소`만으로 계속 압축하지 말고, `chars도 함께 줄어드는지`를 같이 보며 ROI를 판단하는 편이 낫다.
+
+## 후속 기준 제안
+
+- 계속 압축 진행:
+  - `line 감소`와 `char 감소`가 함께 보이는 스킬
+  - 반복 호출 빈도가 높아 고정 프롬프트 오버헤드가 큰 스킬
+- 압축 중단 또는 보류:
+  - `line 감소`는 있지만 `char 감소`가 거의 없는 스킬
+  - 계약이 이미 빽빽해서 더 줄이면 안전장치 훼손 위험이 큰 스킬
