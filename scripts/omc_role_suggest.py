@@ -232,6 +232,14 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
     explicit_planning_intent = _contains_any(normalized, plan_keywords)
     explicit_review_intent = _contains_any(normalized, review_keywords)
     explicit_critique_intent = _contains_any(normalized, critique_keywords)
+    review_validation_intent = (
+        _contains_any(normalized, ("git changes", "변경 상태", "git diff", "현재 변경"))
+        and _contains_any(normalized, ("괜찮", "체크", "맞아", "정말", "확인"))
+    )
+    plan_validation_intent = (
+        _contains_any(normalized, ("계획", "plan"))
+        and _contains_any(normalized, ("맞아", "맞는지", "제대로", "괜찮", "검증", "확인"))
+    )
     explicit_fix_intent = (
         _contains_all(normalized, ("버그", "수정"))
         or _contains_all(normalized, ("bug", "fix"))
@@ -239,14 +247,14 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
     )
     root_cause_intent = _contains_any(normalized, ("원인", "왜 실패", "재현", "추적", "debug", "디버"))
 
-    if explicit_critique_intent:
+    if explicit_critique_intent or plan_validation_intent:
         return _build_orchestration(
             response_mode="review-first",
             recommended_skill="$omc-critique",
             primary_role="code_review",
             task_kind_hint="review",
         )
-    if explicit_review_intent:
+    if explicit_review_intent or review_validation_intent:
         return _build_orchestration(
             response_mode="review-first",
             recommended_skill="$omc-review",

@@ -74,6 +74,14 @@ REQUIRED_DECISION_OUTPUT_MARKERS = [
     "다음 스킬 1개",
 ]
 
+REQUIRED_DECISION_TABLE_MARKERS = [
+    "공통 결정표",
+    "stage",
+    "outcome",
+    "user_selection_needed",
+    "ship_intent_explicit",
+]
+
 REQUIRED_SAFETY_MARKERS = [
     "안전 필수 항목",
     "파일:라인",
@@ -103,8 +111,8 @@ VALID_REVISE_REVIEW_RECOMMENDATION_SAMPLE = """
 VERDICT: REVISE
 다음 추천:
 - 주추천 1개, 우선순위: REVISE/BLOCK면 `$omc-task`
-- APPROVE/APPROVE WITH NOTES + 배포 준비 → `$omc-ship`
-- APPROVE/APPROVE WITH NOTES + 사용자가 결과 확인 단계면 사용자 선택 대기 / 그 외 → 종료/후속 작업 선택
+- APPROVE/APPROVE WITH NOTES + 배포 준비 명시 + ship_intent_explicit=yes면 `$omc-ship`
+- APPROVE/APPROVE WITH NOTES + 배포 준비 미명시 또는 user_selection_needed=yes면 사용자 선택 대기
 - 자동으로 진행하지는 않습니다.
 """
 
@@ -112,6 +120,14 @@ VALID_REVIEW_DECISION_OUTPUT_SAMPLE = """
 decision: REVISE / APPROVE (판정 결과)
 risk: HIGH / MED / LOW (리스크 요약)
 next_action: $omc-task / $omc-ship / 사용자 선택 대기 (다음 스킬 1개)
+"""
+
+VALID_REVIEW_DECISION_TABLE_SAMPLE = """
+공통 결정표:
+- stage: review
+- outcome: revise / done
+- user_selection_needed: yes / no
+- ship_intent_explicit: yes / no
 """
 
 
@@ -224,6 +240,12 @@ def test_review_skill_declares_decision_risk_next_action_contract():
     assert not missing, f"missing review decision markers: {missing}"
 
 
+def test_review_skill_declares_common_decision_table_axes():
+    text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_DECISION_TABLE_MARKERS if marker not in text]
+    assert not missing, f"missing review decision table markers: {missing}"
+
+
 def test_review_skill_declares_non_negotiable_review_contract():
     text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_SAFETY_MARKERS if marker not in text]
@@ -250,15 +272,35 @@ def test_review_skill_recommendations_match_verdict_buckets():
         "REVISE/BLOCK",
         "$omc-task",
         "APPROVE/APPROVE WITH NOTES",
-        "배포 준비",
+        "배포 준비 명시",
         "$omc-ship",
         "사용자 선택 대기",
-        "그 외",
-        "종료/후속 작업 선택",
+        "배포 준비 미명시",
         "자동으로 진행하지는 않습니다.",
     ]
     missing = [marker for marker in required_markers if marker not in text]
     assert not missing, f"missing review recommendation markers: {missing}"
+
+
+def test_review_skill_next_recommendation_lines_each_resolve_to_one_action():
+    text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
+    lines = []
+    in_section = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("## 다음 추천"):
+            in_section = True
+            continue
+        if in_section and line.startswith("## "):
+            break
+        if in_section and (
+            "REVISE/BLOCK" in line or "APPROVE/APPROVE WITH NOTES" in line
+        ):
+            lines.append(line)
+    assert lines, "expected review recommendation lines"
+    for line in lines:
+        actions = re.findall(r"(\$omc-[a-z-]+|사용자 선택 대기)", line)
+        assert len(actions) == 1, f"line must resolve to one action: {line}"
 
 
 def test_review_recommendation_fixture_routes_revise_to_task():
@@ -268,3 +310,21 @@ def test_review_recommendation_fixture_routes_revise_to_task():
 def test_valid_review_decision_output_fixture_declares_review_specific_meaning():
     for marker in REQUIRED_DECISION_OUTPUT_MARKERS:
         assert marker in VALID_REVIEW_DECISION_OUTPUT_SAMPLE
+
+
+def test_valid_review_decision_table_fixture_declares_common_axes():
+    for marker in REQUIRED_DECISION_TABLE_MARKERS:
+        assert marker in VALID_REVIEW_DECISION_TABLE_SAMPLE
+
+
+def test_review_recommendation_fixture_keeps_single_next_action_per_state():
+    sample = """
+다음 추천:
+- REVISE/BLOCK면 `$omc-task`
+- APPROVE/APPROVE WITH NOTES + 배포 준비 명시 + ship_intent_explicit=yes면 `$omc-ship`
+- APPROVE/APPROVE WITH NOTES + 배포 준비 미명시 또는 user_selection_needed=yes면 사용자 선택 대기
+"""
+    lines = [line.strip() for line in sample.splitlines() if line.strip().startswith("-")]
+    for line in lines:
+        actions = re.findall(r"(\$omc-[a-z-]+|사용자 선택 대기)", line)
+        assert len(actions) == 1, f"line must resolve to one action: {line}"

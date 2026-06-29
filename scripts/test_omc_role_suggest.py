@@ -144,6 +144,39 @@ def test_orchestration_hint_routes_progress_summary_request_to_status() -> None:
     assert hint["primary_role"] == "analysis"
 
 
+def test_orchestration_hint_prioritizes_review_over_status_wording() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("지금 상태 확인하고 현재 변경 리뷰해줘")
+
+    assert hint["response_mode"] == "review-first"
+    assert hint["recommended_skill"] == "$omc-review"
+    assert hint["primary_role"] == "code_review"
+    assert hint["task_kind_hint"] == "review"
+
+
+def test_orchestration_hint_prioritizes_critique_over_status_wording() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("지금 상태 보고 이 계획 맞는지 비판해줘")
+
+    assert hint["response_mode"] == "review-first"
+    assert hint["recommended_skill"] == "$omc-critique"
+    assert hint["primary_role"] == "code_review"
+    assert hint["task_kind_hint"] == "review"
+
+
+def test_orchestration_hint_prioritizes_task_over_status_wording() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("지금 상태 확인하고 이 버그 수정해줘")
+
+    assert hint["response_mode"] == "execute-first"
+    assert hint["recommended_skill"] == "$omc-task"
+    assert hint["primary_role"] == "senior_coding"
+    assert hint["task_kind_hint"] == "task"
+
+
 def test_orchestration_hint_prioritizes_plan_over_progress_summary_when_both_present() -> None:
     mod = _load_module()
 
@@ -162,6 +195,28 @@ def test_orchestration_hint_prioritizes_review_over_progress_summary_when_both_p
 
     assert hint["response_mode"] == "review-first"
     assert hint["recommended_skill"] == "$omc-review"
+    assert hint["primary_role"] == "code_review"
+    assert hint["task_kind_hint"] == "review"
+
+
+def test_orchestration_hint_routes_git_change_sanity_check_to_review() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("현재 git changes 변경 상태 보고 정말 괜찮은 변경인지 체크해줘")
+
+    assert hint["response_mode"] == "review-first"
+    assert hint["recommended_skill"] == "$omc-review"
+    assert hint["primary_role"] == "code_review"
+    assert hint["task_kind_hint"] == "review"
+
+
+def test_orchestration_hint_routes_plan_validation_wording_to_critique() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("이 plan 제대로 진행된 거 맞아?")
+
+    assert hint["response_mode"] == "review-first"
+    assert hint["recommended_skill"] == "$omc-critique"
     assert hint["primary_role"] == "code_review"
     assert hint["task_kind_hint"] == "review"
 

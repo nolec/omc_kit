@@ -53,6 +53,22 @@ REQUIRED_FOCUS_MARKERS = [
     "시스템이 암묵적으로 처리",
 ]
 
+REQUIRED_DECISION_OUTPUT_MARKERS = [
+    "decision",
+    "risk",
+    "next_action",
+    "구현 상태",
+    "변경 위험도",
+    "다음 스킬 1개",
+]
+
+REQUIRED_DECISION_TABLE_MARKERS = [
+    "공통 결정표",
+    "stage",
+    "outcome",
+    "user_selection_needed",
+]
+
 REQUIRED_SAFETY_MARKERS = [
     "안전 필수 항목",
     "CONTRACT",
@@ -151,6 +167,18 @@ def test_task_skill_explains_visible_vs_implicit_steps():
     text = _read(REQUIRED_TASK_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
     assert not missing, f"missing focus markers: {missing}"
+
+
+def test_task_skill_declares_decision_risk_next_action_contract():
+    text = _read(REQUIRED_TASK_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_DECISION_OUTPUT_MARKERS if marker not in text]
+    assert not missing, f"missing decision output markers: {missing}"
+
+
+def test_task_skill_declares_common_decision_table_axes():
+    text = _read(REQUIRED_TASK_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_DECISION_TABLE_MARKERS if marker not in text]
+    assert not missing, f"missing task decision table markers: {missing}"
 
 
 def test_task_skill_declares_non_negotiable_safety_markers():

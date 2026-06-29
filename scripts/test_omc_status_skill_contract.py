@@ -59,6 +59,10 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "범위 밖 dirty 변경",
     "ship 차단 힌트",
     "커밋 대상 아님",
+    "이벤트가 있을 때만",
+    "reroute 이유",
+    "delay 이유",
+    "재개 조건",
     "남은 스킬 후보",
 ]
 
@@ -102,7 +106,18 @@ Git 상태: main...origin/main [ahead 8]
 변경 분류: 소스/스킬 변경 중 현재 커밋 범위 3개, 범위 밖 dirty 변경 2개, .omc 실행 아티팩트만 있음, untracked 있음
 차단/주의: 범위 밖 dirty 변경은 이번 커밋 대상 아님
 ship 차단 힌트: 현재 커밋 범위가 없어 ship 불가 — 범위 밖 dirty 변경만 존재
+reroute 이유: stale 세션이라 지금 task/review로 가면 요청 문맥이 엇갈린다
+delay 이유: 범위 밖 dirty 변경이 있어 지금 ship 판단을 내리면 잘못된 결론이 난다
+재개 조건: 현재 요청 재정렬 후 커밋 범위를 다시 확정한다
 다음 액션: $omc-plan으로 현재 요청 재정렬
+"""
+
+VALID_STATUS_SAMPLE_WITHOUT_REROUTE = """
+OMC 세션: latest request와 현재 사용자 요청 일치
+Git 상태: main...origin/main [ahead 8]
+변경 분류: 소스/스킬 변경 중 현재 커밋 범위 3개, 범위 밖 dirty 변경 없음, .omc 실행 아티팩트만 있음, untracked 없음
+차단/주의: 커밋 대상 아님 없음
+다음 액션: $omc-review로 현재 변경 검토
 """
 
 INVALID_STATUS_SAMPLE = """
@@ -135,17 +150,24 @@ def _collect_status_skill_texts(
 
 def _validate_status_output(sample: str) -> list[str]:
     required_patterns = {
-        "session": r"OMC 세션:.*(세션 불일치|stale)",
+        "session": r"OMC 세션:\s*\S",
         "git": r"Git 상태:\s*\S",
         "classification": r"변경 분류:.*소스/스킬 변경.*\.omc 실행 아티팩트.*untracked",
         "warning": r"차단/주의:.*커밋 대상 아님",
         "next_action": r"다음 액션:.*\$omc-(plan|task|review|ship|retro)",
     }
-    return [
+    failures = [
         name
         for name, pattern in required_patterns.items()
         if not re.search(pattern, sample, re.S)
     ]
+    reroute_present = bool(re.search(r"reroute 이유:\s*\S", sample))
+    delay_present = bool(re.search(r"delay 이유:\s*\S", sample))
+    resume_present = bool(re.search(r"재개 조건:\s*\S", sample))
+    conditional_count = sum((reroute_present, delay_present, resume_present))
+    if conditional_count not in (0, 3):
+        failures.append("conditional_reroute_bundle")
+    return failures
 
 
 def test_status_skill_paths_are_identical():
@@ -243,6 +265,10 @@ def test_status_skill_does_not_suggest_mutating_commands():
 
 def test_valid_status_output_fixture_has_required_structure():
     assert _validate_status_output(VALID_STATUS_SAMPLE) == []
+
+
+def test_valid_status_output_fixture_allows_no_reroute_block():
+    assert _validate_status_output(VALID_STATUS_SAMPLE_WITHOUT_REROUTE) == []
 
 
 def test_invalid_status_output_fixture_exposes_weak_status_report():

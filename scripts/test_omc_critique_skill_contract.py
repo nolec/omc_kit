@@ -62,6 +62,10 @@ REQUIRED_MARKERS = [
     "변경 비용 추정",
     "같은 REVISE/HOLD 사유가 반복될 때만",
     "반복 근거가 없으면 여기서 중단",
+    "이벤트가 있을 때만",
+    "reroute 이유",
+    "delay 이유",
+    "재개 조건",
     "사용자 선택 대기",
 ]
 
@@ -83,7 +87,27 @@ MINOR:
 - 근거: 성공 지표가 없으면 완료 판단이 임의적이다.
   대안: 테스트 fixture로 verdict와 행동 원칙을 고정한다.
 
+reroute 이유: 지금 task로 가면 잘못된 전제 위에서 구현이 시작된다.
+delay 이유: 범위와 비용을 먼저 고정하지 않으면 같은 HOLD 사유가 반복된다.
+재개 조건: 범위를 재설계하고 변경 비용을 다시 확인한다.
+
 VERDICT: HOLD
+"""
+
+VALID_CRITIQUE_SAMPLE_WITHOUT_REROUTE = """
+CRITICAL:
+- 근거: 없음.
+  대안: 없음.
+
+WARNING:
+- 근거: 없음.
+  대안: 없음.
+
+MINOR:
+- 근거: 성공 지표가 없으면 완료 판단이 임의적이다.
+  대안: 테스트 fixture로 verdict와 행동 원칙을 고정한다.
+
+VERDICT: PROCEED
 """
 
 INVALID_CRITIQUE_SAMPLE = """
@@ -142,6 +166,13 @@ def _validate_critique_output(sample: str) -> list[str]:
         for name, pattern in required_patterns.items()
         if not re.search(pattern, sample)
     )
+
+    reroute_present = bool(re.search(r"reroute 이유:\s*\S", sample))
+    delay_present = bool(re.search(r"delay 이유:\s*\S", sample))
+    resume_present = bool(re.search(r"재개 조건:\s*\S", sample))
+    conditional_count = sum((reroute_present, delay_present, resume_present))
+    if conditional_count not in (0, 3):
+        failures.append("conditional_reroute_bundle")
     return failures
 
 
@@ -243,6 +274,10 @@ def test_critique_skill_recommendations_stay_conservative():
 
 def test_valid_critique_output_fixture_has_required_structure():
     assert _validate_critique_output(VALID_CRITIQUE_SAMPLE) == []
+
+
+def test_valid_critique_output_fixture_allows_no_reroute_block():
+    assert _validate_critique_output(VALID_CRITIQUE_SAMPLE_WITHOUT_REROUTE) == []
 
 
 def test_invalid_critique_output_fixture_exposes_weak_critique():

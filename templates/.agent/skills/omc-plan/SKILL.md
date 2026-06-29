@@ -29,12 +29,11 @@ AGENTS.md Tier 1 작업은 이 Phase 1 요구사항을 CONTRACT 입력으로 삼
 
 ## Phase 2. 최소 설계
 
-- 입력:
-- 출력:
-- 성공 지표:
-- 실패 정책:
-- 영향받는 파일:
-- decision / risk / next_action: 진행 가능 여부 / 변경 위험도 / 다음 스킬 1개
+ - 입력 / 출력:
+ - 성공 지표 / 실패 정책:
+ - 영향받는 파일:
+ - decision / risk / next_action: 진행 가능 여부 / 변경 위험도 / 다음 스킬 1개
+ - 공통 결정표: stage=plan / outcome=unresolved|ready / user_selection_needed=yes|no
 
 출력 모드:
 - `plan full`: CONTRACT + 최소 설계 + 다중 TDD 태스크
@@ -73,7 +72,9 @@ confirm 후에만 `$omc-task`로 넘깁니다.
 ## 다음 추천
 
 - 주추천 1개만 제시, 우선순위: 새 파일/API 변경/3개 이상 파일 같은 고위험이면 먼저 `$omc-critique`
-- 그 외에만 범위 고정 + 컨펌 완료면 `$omc-task`, 범위 불명확 또는 흔들림이면 `$omc-critique` / `$omc-office-hours`
+- outcome=ready + user_selection_needed=no + 범위 고정 + 컨펌 완료면 `$omc-task`
+- outcome=unresolved + risk=high 또는 범위 불명확이면 `$omc-critique`
+- outcome=unresolved + risk=low + user_selection_needed=yes면 `$omc-office-hours`
 - 사용자가 설계만 확인 중이거나 다음 단계를 아직 고르지 않음 → 사용자 선택 대기
 - 자동으로 진행하지는 않습니다.
 

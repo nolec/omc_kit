@@ -18,20 +18,16 @@ git ls-files --others --exclude-standard
 git log --oneline -5
 ```
 
-실패한 명령은 `N/A — 이유`로 표시합니다.
-
 ## Phase 1. 세션 판정
 
 사용자에게 보여줄 것: 세션 요약 / git 요약 / 변경 카테고리 / 차단·주의 / 다음 액션 / 남은 스킬 후보
 시스템이 암묵적으로 처리: 현재 사용자 요청 vs latest request / confirmed_request / pending_request 비교, read-only 유지
-조회 전용 안전 항목: read-only / 커밋 대상 아님 / 다음 액션 1개 추천
-- 세션 불일치 / stale / 소스/스킬 변경 / .omc 실행 아티팩트 / untracked를 판단하고, 현재 커밋 범위와 범위 밖 dirty 변경을 분리하며 필요 시 ship 차단 힌트도 보여줍니다.
+조회 전용 안전 항목: read-only / 커밋 대상 아님 / 다음 액션 1개 추천 / 세션 불일치 / stale / 소스/스킬 변경 / .omc 실행 아티팩트 / untracked 판단 + 현재 커밋 범위 vs 범위 밖 dirty 변경 분리 + ship 차단 힌트 / 실패한 명령은 `N/A — 이유`
 
 ## Phase 2. 변경 카테고리
 
 - 소스/스킬 변경: 현재 커밋 범위와 범위 밖 dirty 변경으로 분리해 요약
-- .omc 실행 아티팩트: `.omc/pipeline_run_result.json`, `.omc/runs`, `.omc/lessons`, `.omc/allow_log.jsonl`
-- untracked: 새 파일 후보와 커밋 대상 아님 후보를 분리
+- .omc 실행 아티팩트: `.omc/pipeline_run_result.json`, `.omc/runs`, `.omc/lessons`, `.omc/allow_log.jsonl` / untracked: 새 파일 후보와 커밋 대상 아님 후보 분리
 
 ## Phase 3. 출력
 
@@ -40,13 +36,14 @@ OMC 세션: latest/confirmed/pending, stale
 Git 상태: branch/ahead/behind, staged/unstaged/untracked
 변경 분류: 현재 커밋 범위, 범위 밖 dirty 변경, .omc 실행 아티팩트, untracked
 차단/주의: 미확정 세션, 범위 밖 dirty 변경, 커밋 대상 아님, 테스트/리뷰/ship 차단, ship 차단 힌트
+이벤트가 있을 때만 reroute 이유 / delay 이유 / 재개 조건: ...
 다음 액션: $omc-plan / $omc-task / $omc-review / $omc-ship / $omc-retro
 남은 스킬 후보:
 ```
 
 ## 판단 기준
 
-- 세션 불일치 또는 stale → `$omc-plan`
+- 요청 stale 또는 문맥 엇갈림 → `$omc-plan`
 - 계획 확정 후 구현 대기 → `$omc-task`
 - 변경 완료 후 검토 대기 → `$omc-review`
 - 리뷰 통과 후 출시 준비 → `$omc-ship`

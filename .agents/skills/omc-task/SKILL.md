@@ -21,8 +21,7 @@ python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title "o
 - RED 등록: FAIL 출력 첨부 + `red-done` 완료
 - TDD 게이트: `python3 scripts/omc_tdd_check.py --staged` exit 0
 
-사용자에게 보여줄 단계: CONTRACT / RED / TDD GATE / Handoff
-시스템이 암묵적으로 처리: 자명한 재안내 / 중복 설명 / 단계 사이 반복 코칭
+사용자에게 보여줄 단계: CONTRACT / RED / TDD GATE / Handoff | 시스템이 암묵적으로 처리: 자명한 재안내 / 중복 설명 / 단계 사이 반복 코칭
 
 안전 필수 항목
 - CONTRACT / RED / TDD GATE / Handoff는 압축해도 유지
@@ -44,6 +43,8 @@ python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title "o
 - 입력/출력 계약:
 - 실패·에러 정책:
 - 영향받는 파일:
+- decision / risk / next_action: 구현 상태 / 변경 위험도 / 다음 스킬 1개
+- 공통 결정표: stage=task / outcome=unresolved|done / user_selection_needed=yes|no
 
 계약이 약한 작업도 빈칸 없이 적습니다.
 작은 후속 수정은 설명을 줄여도 영향 파일과 실패 정책은 생략하지 않습니다.

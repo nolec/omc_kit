@@ -67,6 +67,13 @@ REQUIRED_DECISION_OUTPUT_MARKERS = [
     "다음 스킬 1개",
 ]
 
+REQUIRED_DECISION_TABLE_MARKERS = [
+    "공통 결정표",
+    "stage",
+    "outcome",
+    "user_selection_needed",
+]
+
 REQUIRED_RISK_CONCEPTS = [
     ("새 파일", "신규 파일"),
     ("API", "시그니처"),
@@ -158,7 +165,9 @@ DoD: 잘 된다
 VALID_HIGH_RISK_PLAN_RECOMMENDATION_SAMPLE = """
 다음 추천:
 - 주추천 1개만 제시, 우선순위: 새 파일/API 변경/3개 이상 파일 같은 고위험이면 먼저 `$omc-critique`
-- 그 외에만 범위 고정 + 컨펌 완료면 `$omc-task`, 범위 불명확 또는 흔들림이면 `$omc-critique` / `$omc-office-hours`
+- outcome=ready + user_selection_needed=no + 범위 고정 + 컨펌 완료면 `$omc-task`
+- outcome=unresolved + risk=high면 `$omc-critique`
+- outcome=unresolved + risk=low + user_selection_needed=yes면 사용자 선택 대기
 - 사용자가 설계만 확인 중이거나 다음 단계를 아직 고르지 않음 → 사용자 선택 대기
 - 자동으로 진행하지는 않습니다.
 """
@@ -167,6 +176,13 @@ VALID_PLAN_DECISION_OUTPUT_SAMPLE = """
 decision: PROCEED / HOLD (진행 가능 여부)
 risk: LOW / MED / HIGH (변경 위험도)
 next_action: $omc-task / $omc-critique / 사용자 선택 대기 (다음 스킬 1개)
+"""
+
+VALID_PLAN_DECISION_TABLE_SAMPLE = """
+공통 결정표:
+- stage: plan
+- outcome: unresolved / ready
+- user_selection_needed: yes / no
 """
 
 
@@ -316,6 +332,25 @@ def test_plan_skill_recommendations_are_state_based_and_guarded():
     assert not missing, f"missing plan recommendation markers: {missing}"
 
 
+def test_plan_skill_next_recommendation_lines_each_resolve_to_one_action():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    lines = []
+    in_section = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("## 다음 추천"):
+            in_section = True
+            continue
+        if in_section and line.startswith("## "):
+            break
+        if in_section and line.startswith("- outcome="):
+            lines.append(line)
+    assert lines, "expected outcome-based recommendation lines"
+    for line in lines:
+        actions = re.findall(r"(\$omc-[a-z-]+|사용자 선택 대기)", line)
+        assert len(actions) == 1, f"line must resolve to one action: {line}"
+
+
 def test_plan_skill_recommends_critique_for_high_risk_even_when_scope_is_clear():
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_HIGH_RISK_RECOMMENDATION_MARKERS if marker not in text]
@@ -338,6 +373,12 @@ def test_plan_skill_declares_decision_risk_next_action_contract():
     assert not missing, f"missing decision output markers: {missing}"
 
 
+def test_plan_skill_declares_common_decision_table_axes():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_DECISION_TABLE_MARKERS if marker not in text]
+    assert not missing, f"missing decision table markers: {missing}"
+
+
 def test_plan_skill_declares_lite_full_risk_concepts():
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     missing = _missing_concepts(text, REQUIRED_RISK_CONCEPTS)
@@ -356,6 +397,24 @@ def test_valid_lite_plan_output_fixture_limits_task_count():
 def test_valid_plan_decision_output_fixture_declares_plan_specific_meaning():
     for marker in REQUIRED_DECISION_OUTPUT_MARKERS:
         assert marker in VALID_PLAN_DECISION_OUTPUT_SAMPLE
+
+
+def test_valid_plan_decision_table_fixture_declares_common_axes():
+    for marker in REQUIRED_DECISION_TABLE_MARKERS:
+        assert marker in VALID_PLAN_DECISION_TABLE_SAMPLE
+
+
+def test_plan_recommendation_fixture_keeps_single_next_action_per_state():
+    sample = """
+다음 추천:
+- outcome=ready + user_selection_needed=no + 범위 고정 + 컨펌 완료면 `$omc-task`
+- outcome=unresolved + risk=high면 `$omc-critique`
+- outcome=unresolved + risk=low + user_selection_needed=yes면 사용자 선택 대기
+"""
+    lines = [line.strip() for line in sample.splitlines() if line.strip().startswith("-")]
+    for line in lines:
+        actions = re.findall(r"(\$omc-[a-z-]+|사용자 선택 대기)", line)
+        assert len(actions) == 1, f"line must resolve to one action: {line}"
 
 
 def test_invalid_plan_output_fixture_exposes_missing_structure():
