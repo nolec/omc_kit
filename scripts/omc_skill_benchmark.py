@@ -8,7 +8,22 @@ import sys
 from pathlib import Path
 
 
-NEXT_ACTION_LINE = re.compile(r"다음 액션:\s*(.+)")
+NEXT_ACTION_LABELS = (
+    "다음 액션",
+    "추천 다음 스킬",
+    "다음 스킬",
+    "다음 단계",
+    "next action",
+    "next step",
+    "recommended next skill",
+)
+NEXT_ACTION_SEPARATORS = ("=>", ":", "=", "-", "—", "→")
+NEXT_ACTION_LINE = re.compile(
+    rf"^(?P<label>{'|'.join(map(re.escape, NEXT_ACTION_LABELS))})"
+    rf"\s*(?P<separator>{'|'.join(map(re.escape, NEXT_ACTION_SEPARATORS))})\s*"
+    rf"(?P<payload>.+)$",
+    re.IGNORECASE,
+)
 SKILL_ACTION = re.compile(r"\$omc-[a-z-]+")
 RESPONSE_MODES = {"answer-first", "execute-first", "review-first"}
 POLICIES = {"baseline", "candidate"}
@@ -59,10 +74,21 @@ def _infer_response_mode(request: str, policy: str) -> str:
 
 def _extract_next_action_line(text: str) -> str:
     for line in text.splitlines():
-        match = NEXT_ACTION_LINE.search(line)
+        match = NEXT_ACTION_LINE.search(line.strip())
         if match:
-            return match.group(1).strip()
+            return match.group("payload").strip()
     return ""
+
+
+def _split_next_action_spec(line: str) -> tuple[str, str, str]:
+    match = NEXT_ACTION_LINE.search(line.strip())
+    if not match:
+        return "", "", ""
+    return (
+        match.group("label").lower().strip(),
+        match.group("separator").strip(),
+        match.group("payload").strip(),
+    )
 
 
 def _extract_next_action_candidates(text: str) -> list[str]:

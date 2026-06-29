@@ -161,6 +161,121 @@ def test_next_action_parsing_ignores_skill_mentions_outside_next_action_line():
     assert scored["metrics"]["expected_next_action_hit"] is True
 
 
+def test_next_action_parsing_accepts_common_recommendation_labels():
+    mod = _load_module()
+
+    case = {
+        "skill": "omc-plan",
+        "request": "계획해줘",
+        "response": (
+            "설명: 계획 흐름 정리\n"
+            "추천 다음 스킬: $omc-task\n"
+        ),
+        "expected_next_actions": ["$omc-task"],
+        "required_markers": ["설명", "추천 다음 스킬"],
+    }
+
+    scored = mod.evaluate_case(case)
+
+    assert scored["metrics"]["next_action_count"] == 1
+    assert scored["metrics"]["next_action_single"] is True
+    assert scored["metrics"]["expected_next_action_hit"] is True
+
+
+def test_next_action_parsing_accepts_non_colon_recommendation_labels():
+    mod = _load_module()
+
+    case = {
+        "skill": "omc-status",
+        "request": "상태 알려줘",
+        "response": (
+            "현재 상태 요약\n"
+            "다음 단계 - $omc-reentry\n"
+        ),
+        "expected_next_actions": ["$omc-reentry"],
+        "required_markers": ["현재 상태 요약", "다음 단계"],
+    }
+
+    scored = mod.evaluate_case(case)
+
+    assert scored["metrics"]["next_action_count"] == 1
+    assert scored["metrics"]["next_action_single"] is True
+    assert scored["metrics"]["expected_next_action_hit"] is True
+
+
+def test_next_action_parsing_accepts_english_recommendation_labels():
+    mod = _load_module()
+
+    case = {
+        "skill": "omc-review",
+        "request": "리뷰해줘",
+        "response": (
+            "요약: 변경 검토\n"
+            "Next action: $omc-ship\n"
+        ),
+        "expected_next_actions": ["$omc-ship"],
+        "required_markers": ["요약", "Next action"],
+    }
+
+    scored = mod.evaluate_case(case)
+
+    assert scored["metrics"]["next_action_count"] == 1
+    assert scored["metrics"]["next_action_single"] is True
+    assert scored["metrics"]["expected_next_action_hit"] is True
+
+
+def test_next_action_parsing_accepts_label_and_separator_variants():
+    mod = _load_module()
+
+    case = {
+        "skill": "omc-status",
+        "request": "상태 알려줘",
+        "response": (
+            "현재 상태 요약\n"
+            "Next step → $omc-reentry\n"
+        ),
+        "expected_next_actions": ["$omc-reentry"],
+        "required_markers": ["현재 상태 요약", "Next step"],
+    }
+
+    scored = mod.evaluate_case(case)
+
+    assert scored["metrics"]["next_action_count"] == 1
+    assert scored["metrics"]["next_action_single"] is True
+    assert scored["metrics"]["expected_next_action_hit"] is True
+
+
+def test_next_action_parsing_accepts_arrow_separator_variant():
+    mod = _load_module()
+
+    case = {
+        "skill": "omc-status",
+        "request": "상태 알려줘",
+        "response": (
+            "현재 상태 요약\n"
+            "Recommended next skill => $omc-reentry\n"
+        ),
+        "expected_next_actions": ["$omc-reentry"],
+        "required_markers": ["현재 상태 요약", "Recommended next skill"],
+    }
+
+    scored = mod.evaluate_case(case)
+
+    assert scored["metrics"]["next_action_count"] == 1
+    assert scored["metrics"]["next_action_single"] is True
+    assert scored["metrics"]["expected_next_action_hit"] is True
+
+
+def test_split_next_action_spec_separates_label_and_payload():
+    mod = _load_module()
+
+    label, separator, payload = mod._split_next_action_spec("Recommended next skill => $omc-ship")
+
+    assert label == "recommended next skill"
+    assert separator == "=>"
+    assert payload == "$omc-ship"
+
+
 def test_score_cli_outputs_json(tmp_path: Path):
     cases = [
         {
@@ -688,6 +803,9 @@ def test_response_mode_fixture_covers_three_policy_modes_and_mixed_intent_exampl
     assert "이 기능 해야 할지 판단하고 진행 순서만 정리해줘" in requests
     assert "OMC orchestration layer 1단계와 response_mode benchmark 변경 리뷰" in requests
     assert "OMC orchestration 다음 개선 계획 수립" in requests
+    assert "현재 로드맵 최신화하고 다음 작업 체크" in requests
+    assert "현재 어떤 작업 진행됐는지 상태만 빠르게 알려줘" in requests
+    assert "오랜만에 해당 프로젝트에 돌아와서 어떤 프로젝트인지 파악하고 분석하는 느낌인데" in requests
     assert "복귀용 프로젝트 reentry 스킬 재설계 정보원 우선순위와 출력 계약 고정" in requests
     assert "현재 어떤점이 개선된거야" in requests
     assert "현재 git changes 변경 상태 리뷰 보고 정말 괜찮은 변경인지 체크하려고 하는데 무슨 스킬 써야해" in requests
@@ -859,6 +977,34 @@ def test_response_mode_fixture_observed_request_case_affects_next_action_accurac
     assert report["cases"][0]["expected_next_action"] == "$omc-critique"
     assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
     assert report["cases"][0]["candidate"]["next_action"] == "$omc-critique"
+
+
+def test_response_mode_fixture_covers_plan_status_and_reentry_next_actions():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    case_map = {case["request"]: case for case in cases}
+
+    plan_case = case_map["현재 로드맵 최신화하고 다음 작업 체크"]
+    status_case = case_map["현재 어떤 작업 진행됐는지 상태만 빠르게 알려줘"]
+    reentry_case = case_map["오랜만에 해당 프로젝트에 돌아와서 어떤 프로젝트인지 파악하고 분석하는 느낌인데"]
+
+    report = mod.compare_response_modes([plan_case, status_case, reentry_case])
+
+    assert report["summary"]["next_action_case_count"] == 3
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert report["cases"][0]["expected_next_action"] == "$omc-plan"
+    assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][0]["candidate"]["next_action"] == "$omc-plan"
+    assert report["cases"][1]["expected_next_action"] == "$omc-status"
+    assert report["cases"][1]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][1]["candidate"]["next_action"] == "$omc-status"
+    assert report["cases"][2]["expected_next_action"] == "$omc-reentry"
+    assert report["cases"][2]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][2]["candidate"]["next_action"] == "$omc-reentry"
 
 
 def test_response_mode_fixture_observed_review_request_prefers_review_next_action():
