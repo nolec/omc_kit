@@ -54,6 +54,53 @@
         "PHASE 3",
         "다음 액션"
       ]
+    },
+    {
+      "skill": "omc-task",
+      "request": "대시보드 운영형 고도화 작업 계속 진행 (현재 staged 변경 포함, 테스트/리뷰/PR 준비까지)",
+      "source_type": "observed_output",
+      "evidence": "2026-05-31 Codex run preview (.omc/runs/20260531T173437-e5c43921/result.json)",
+      "response": "구현 완료했습니다. 요청하신 TDD 순서(RED→GREEN→게이트)로 실행했고 최종 게이트 통과했습니다.\n\n변경 파일:\n- [autopilot_dashboard.py](/Users/noseunglae/Downloads/dev/omc_kit/scripts/autopilot_dashboard.py)\n- [test_autopilot_dashboard.py](/Users/noseunglae/Downloads/dev/omc_kit/scripts/test_autopilot_dashboard.py)\n\n실행 결과:\n1. RED\n- `pytest ",
+      "expected_next_actions": [],
+      "required_markers": [
+        "RED",
+        "TDD GATE",
+        "Handoff",
+        "다음 액션"
+      ]
+    },
+    {
+      "skill": "omc-task",
+      "request": "로그인 버튼 컴포넌트 구현해줘",
+      "source_type": "synthetic",
+      "comparison_id": "omc-task-compression-login-button",
+      "variant": "baseline",
+      "response": "CONTRACT\n- 목표: 로그인 버튼 컴포넌트 구현\n- 범위: 버튼 렌더링, 클릭 콜백\n- DoD: 버튼 표시 및 클릭 테스트 통과\n- 제약: 기존 스타일 시스템 유지\n- 사용자 컨펌: 완료\n\nDESIGN\n- 입력/출력 계약: label/onClick props\n- 실패·에러 정책: 필수 props 누락 시 테스트에서 실패 확인\n- 영향받는 파일: LoginButton.tsx, LoginButton.test.tsx\n- decision / risk / next_action: 구현 진행 / 낮음 / $omc-review\n- 공통 결정표: stage=task / outcome=done / user_selection_needed=no\n\nRED\n- 테스트 파일: src/LoginButton.test.tsx\n- 테스트 케이스: 렌더링 / 클릭 콜백 호출\n- 실제 FAIL 출력: expect(received).toBeInTheDocument()\n\nTDD GATE\n- python3 scripts/omc_tdd_check.py --staged 통과\n\nHandoff\n- 구현 완료 후 리뷰로 넘김\n다음 액션: $omc-review\n",
+      "expected_next_actions": ["$omc-review"],
+      "required_markers": [
+        "CONTRACT",
+        "RED",
+        "TDD GATE",
+        "Handoff",
+        "다음 액션"
+      ]
+    },
+    {
+      "skill": "omc-task",
+      "request": "로그인 버튼 컴포넌트 구현해줘",
+      "source_type": "current_contract_sample",
+      "comparison_id": "omc-task-compression-login-button",
+      "variant": "candidate",
+      "evidence": "current omc-task skill snapshot after compression",
+      "response": "CONTRACT / DoD / 제약 확인 완료\nDESIGN: label/onClick props, 영향 파일 LoginButton.tsx / LoginButton.test.tsx, risk 낮음\nRED: 렌더링·클릭 테스트 FAIL 확보\nTDD GATE: python3 scripts/omc_tdd_check.py --staged 통과\nHandoff: 리뷰로 넘김\n다음 액션: $omc-review\n",
+      "expected_next_actions": ["$omc-review"],
+      "required_markers": [
+        "CONTRACT",
+        "RED",
+        "TDD GATE",
+        "Handoff",
+        "다음 액션"
+      ]
     }
   ]
 }

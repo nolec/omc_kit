@@ -12,6 +12,8 @@ NEXT_ACTION_LINE = re.compile(r"다음 액션:\s*(.+)")
 SKILL_ACTION = re.compile(r"\$omc-[a-z-]+")
 RESPONSE_MODES = {"answer-first", "execute-first", "review-first"}
 POLICIES = {"baseline", "candidate"}
+CASE_VARIANTS = {"baseline", "candidate"}
+CASE_SOURCE_TYPES = {"synthetic", "observed_output", "current_contract_sample"}
 
 
 def _count_question_marks(text: str) -> int:
@@ -128,7 +130,7 @@ def evaluate_case(case: dict[str, object]) -> dict[str, object]:
         "metrics": metrics,
         "score": _score_case(metrics),
     }
-    for field in ("source_type", "evidence"):
+    for field in ("source_type", "evidence", "comparison_id", "variant"):
         value = case.get(field)
         if isinstance(value, str) and value:
             scored[field] = value
@@ -174,7 +176,12 @@ def build_report(cases: list[dict[str, object]]) -> dict[str, object]:
         "avg_score_percent": sum(item["score"]["percent"] for item in scored_cases) / case_count,
         "source_type_counts": _count_source_types(scored_cases),
     }
-    return {"cases": scored_cases, "summary": summary}
+    report = {"cases": scored_cases, "summary": summary}
+    comparisons = _build_case_comparisons(scored_cases)
+    if comparisons:
+        report["comparisons"] = comparisons
+        report["comparison_summary"] = _build_comparison_summary(comparisons)
+    return report
 
 
 def _compare_case(case: dict[str, object]) -> dict[str, object]:
@@ -405,6 +412,107 @@ def _count_source_types(cases: list[dict[str, object]]) -> dict[str, int]:
     return counts
 
 
+def _build_case_comparisons(scored_cases: list[dict[str, object]]) -> list[dict[str, object]]:
+    grouped: dict[str, dict[str, dict[str, object]]] = {}
+    for case in scored_cases:
+        comparison_id = case.get("comparison_id")
+        variant = case.get("variant")
+        if not isinstance(comparison_id, str) or not comparison_id:
+            continue
+        if not isinstance(variant, str) or variant not in CASE_VARIANTS:
+            continue
+        grouped.setdefault(comparison_id, {})[variant] = case
+
+    comparisons: list[dict[str, object]] = []
+    for comparison_id, variants in grouped.items():
+        baseline = variants.get("baseline")
+        candidate = variants.get("candidate")
+        if baseline is None or candidate is None:
+            continue
+
+        baseline_output_chars = int(baseline["metrics"]["output_chars"])
+        candidate_output_chars = int(candidate["metrics"]["output_chars"])
+        baseline_score_percent = int(baseline["score"]["percent"])
+        candidate_score_percent = int(candidate["score"]["percent"])
+        baseline_expected_hit = baseline["metrics"]["expected_next_action_hit"]
+        candidate_expected_hit = candidate["metrics"]["expected_next_action_hit"]
+        baseline_missing_markers_count = int(baseline["metrics"]["missing_markers_count"])
+        candidate_missing_markers_count = int(candidate["metrics"]["missing_markers_count"])
+        baseline_source_type = str(baseline.get("source_type") or "synthetic")
+        candidate_source_type = str(candidate.get("source_type") or "synthetic")
+
+        output_chars_delta = candidate_output_chars - baseline_output_chars
+        output_reduction_rate = (
+            (baseline_output_chars - candidate_output_chars) / baseline_output_chars
+            if baseline_output_chars
+            else 0
+        )
+        if baseline_source_type == "observed_output" and candidate_source_type == "observed_output":
+            evidence_level = "observed_pair"
+        elif "observed_output" in {baseline_source_type, candidate_source_type}:
+            evidence_level = "mixed_pair"
+        else:
+            evidence_level = "synthetic_pair"
+
+        comparison: dict[str, object] = {
+            "comparison_id": comparison_id,
+            "skill": str(candidate.get("skill") or baseline.get("skill") or ""),
+            "request": str(candidate.get("request") or baseline.get("request") or ""),
+            "baseline_source_type": baseline_source_type,
+            "candidate_source_type": candidate_source_type,
+            "evidence_level": evidence_level,
+            "baseline_output_chars": baseline_output_chars,
+            "candidate_output_chars": candidate_output_chars,
+            "output_chars_delta": output_chars_delta,
+            "output_reduction_rate": output_reduction_rate,
+            "baseline_score_percent": baseline_score_percent,
+            "candidate_score_percent": candidate_score_percent,
+            "score_percent_delta": candidate_score_percent - baseline_score_percent,
+            "baseline_missing_markers_count": baseline_missing_markers_count,
+            "candidate_missing_markers_count": candidate_missing_markers_count,
+            "missing_markers_improved": (
+                candidate_missing_markers_count <= baseline_missing_markers_count
+            ),
+        }
+
+        if baseline_expected_hit is not None and candidate_expected_hit is not None:
+            comparison["baseline_expected_next_action_hit"] = baseline_expected_hit
+            comparison["candidate_expected_next_action_hit"] = candidate_expected_hit
+            comparison["next_action_preserved"] = (
+                bool(baseline_expected_hit) and bool(candidate_expected_hit)
+            )
+
+        comparisons.append(comparison)
+
+    return comparisons
+
+
+def _build_comparison_summary(comparisons: list[dict[str, object]]) -> dict[str, object]:
+    pair_count = len(comparisons)
+    next_action_checks = [
+        bool(item["next_action_preserved"])
+        for item in comparisons
+        if "next_action_preserved" in item
+    ]
+    return {
+        "pair_count": pair_count,
+        "avg_output_chars_delta": _average([float(item["output_chars_delta"]) for item in comparisons]),
+        "avg_output_reduction_rate": _average(
+            [float(item["output_reduction_rate"]) for item in comparisons]
+        ),
+        "avg_score_percent_delta": _average(
+            [float(item["score_percent_delta"]) for item in comparisons]
+        ),
+        "missing_markers_preserved_rate": _average(
+            [1 if bool(item["missing_markers_improved"]) else 0 for item in comparisons]
+        ),
+        "next_action_preserved_rate": (
+            _average([1 if ok else 0 for ok in next_action_checks]) if next_action_checks else 0
+        ),
+        "evidence_level_counts": _count_comparison_evidence_levels(comparisons),
+    }
+
+
 def _count_comparison_scopes(cases: list[dict[str, object]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for case in cases:
@@ -412,6 +520,16 @@ def _count_comparison_scopes(cases: list[dict[str, object]]) -> dict[str, int]:
         if not isinstance(scope, str) or not scope:
             continue
         counts[scope] = counts.get(scope, 0) + 1
+    return counts
+
+
+def _count_comparison_evidence_levels(comparisons: list[dict[str, object]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in comparisons:
+        level = item.get("evidence_level")
+        if not isinstance(level, str) or not level:
+            continue
+        counts[level] = counts.get(level, 0) + 1
     return counts
 
 
@@ -450,7 +568,7 @@ def _normalize_case(case: object, index: int) -> dict[str, object]:
         "required_markers": _optional_string_list(case, index, "required_markers"),
     }
 
-    for field in ("skill", "request", "source_type", "evidence"):
+    for field in ("skill", "request", "source_type", "evidence", "comparison_id", "variant"):
         value = case.get(field)
         if value is None:
             continue
@@ -459,10 +577,20 @@ def _normalize_case(case: object, index: int) -> dict[str, object]:
         normalized[field] = value
 
     source_type = normalized.get("source_type")
-    if source_type is not None and source_type not in {"synthetic", "observed_output"}:
-        raise ValueError(f"case[{index}].source_type must be synthetic or observed_output")
-    if source_type == "observed_output" and not str(normalized.get("evidence", "")).strip():
-        raise ValueError(f"case[{index}].evidence is required for observed_output")
+    if source_type is not None and source_type not in CASE_SOURCE_TYPES:
+        raise ValueError(
+            f"case[{index}].source_type must be one of {sorted(CASE_SOURCE_TYPES)}"
+        )
+    if source_type in {"observed_output", "current_contract_sample"} and not str(
+        normalized.get("evidence", "")
+    ).strip():
+        raise ValueError(f"case[{index}].evidence is required for {source_type}")
+    comparison_id = normalized.get("comparison_id")
+    variant = normalized.get("variant")
+    if (comparison_id is None) != (variant is None):
+        raise ValueError(f"case[{index}] comparison_id and variant must be provided together")
+    if variant is not None and variant not in CASE_VARIANTS:
+        raise ValueError(f"case[{index}].variant must be one of {sorted(CASE_VARIANTS)}")
 
     return normalized
 

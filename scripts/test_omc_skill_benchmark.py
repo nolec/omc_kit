@@ -98,6 +98,47 @@ def test_build_report_keeps_summary_schema_for_empty_cases():
     }
 
 
+def test_build_report_adds_pairwise_comparison_summary_when_cases_share_comparison_id():
+    mod = _load_module()
+
+    cases = [
+        {
+            "skill": "omc-task",
+            "request": "로그인 버튼 컴포넌트 구현해줘",
+            "comparison_id": "task-compression",
+            "variant": "baseline",
+            "source_type": "synthetic",
+            "response": "CONTRACT\nRED\nTDD GATE\nHandoff\n다음 액션: $omc-review\n설명 한 줄 추가\n",
+            "expected_next_actions": ["$omc-review"],
+            "required_markers": ["CONTRACT", "RED", "TDD GATE", "Handoff", "다음 액션"],
+        },
+        {
+            "skill": "omc-task",
+            "request": "로그인 버튼 컴포넌트 구현해줘",
+            "comparison_id": "task-compression",
+            "variant": "candidate",
+            "source_type": "current_contract_sample",
+            "evidence": "current skill snapshot",
+            "response": "CONTRACT / RED / TDD GATE / Handoff\n다음 액션: $omc-review\n",
+            "expected_next_actions": ["$omc-review"],
+            "required_markers": ["CONTRACT", "RED", "TDD GATE", "Handoff", "다음 액션"],
+        },
+    ]
+
+    report = mod.build_report(cases)
+
+    assert report["comparison_summary"]["pair_count"] == 1
+    assert report["comparison_summary"]["avg_output_chars_delta"] < 0
+    assert report["comparison_summary"]["avg_output_reduction_rate"] > 0
+    assert report["comparison_summary"]["next_action_preserved_rate"] == 1.0
+    assert report["comparison_summary"]["evidence_level_counts"] == {"synthetic_pair": 1}
+    assert report["comparisons"][0]["comparison_id"] == "task-compression"
+    assert report["comparisons"][0]["baseline_source_type"] == "synthetic"
+    assert report["comparisons"][0]["candidate_source_type"] == "current_contract_sample"
+    assert report["comparisons"][0]["evidence_level"] == "synthetic_pair"
+    assert report["comparisons"][0]["candidate_output_chars"] < report["comparisons"][0]["baseline_output_chars"]
+
+
 def test_next_action_parsing_ignores_skill_mentions_outside_next_action_line():
     mod = _load_module()
 
@@ -190,7 +231,10 @@ def test_load_cases_rejects_invalid_case_shapes(tmp_path: Path):
         [{"response": "ok", "expected_next_actions": [], "required_markers": [1]}],
         [{"response": "ok", "expected_next_actions": [], "required_markers": [], "source_type": "unknown"}],
         [{"response": "ok", "expected_next_actions": [], "required_markers": [], "source_type": "observed_output"}],
-        [{"response": "ok", "expected_next_actions": [], "required_markers": [], "source_type": "observed_output", "evidence": 1}],
+        [{"response": "ok", "expected_next_actions": [], "required_markers": [], "source_type": "current_contract_sample"}],
+        [{"response": "ok", "expected_next_actions": [], "required_markers": [], "comparison_id": "pair-only"}],
+        [{"response": "ok", "expected_next_actions": [], "required_markers": [], "variant": "baseline"}],
+        [{"response": "ok", "expected_next_actions": [], "required_markers": [], "comparison_id": "pair", "variant": "wrong"}],
     ]
 
     for index, payload in enumerate(invalid_cases):
@@ -209,9 +253,17 @@ def test_fixture_cases_include_reentry_scenario():
     cases = payload["cases"] if isinstance(payload, dict) else payload
 
     reentry_cases = [case for case in cases if case.get("skill") == "omc-reentry"]
+    task_cases = [case for case in cases if case.get("skill") == "omc-task"]
+    task_comparison_cases = [case for case in task_cases if case.get("comparison_id")]
+    task_observed_cases = [case for case in task_cases if case.get("source_type") == "observed_output"]
     assert len(reentry_cases) == 3, "fixture must include exactly three omc-reentry cases"
+    assert len(task_cases) == 3, "fixture must include two comparison cases and one observed omc-task case"
+    assert len(task_comparison_cases) == 2
+    assert len(task_observed_cases) == 1
     observed_cases = [case for case in cases if case.get("source_type") == "observed_output"]
-    assert observed_cases, "fixture must include at least one observed_output case"
+    assert len(observed_cases) >= 2, "fixture must include at least two observed_output cases"
+    contract_sample_cases = [case for case in cases if case.get("source_type") == "current_contract_sample"]
+    assert len(contract_sample_cases) == 1
 
     case_map = {case["request"]: case for case in reentry_cases}
     good_case = case_map["이 프로젝트 뭐였지"]
@@ -225,6 +277,18 @@ def test_fixture_cases_include_reentry_scenario():
     assert multi_action_case["expected_next_actions"] == ["$omc-plan"]
     assert "추천 다음 스킬" in multi_action_case["required_markers"]
     assert "다음 읽을 파일 3개" in missing_marker_case["required_markers"]
+
+    task_case_map = {case["variant"]: case for case in task_comparison_cases}
+    assert set(task_case_map) == {"baseline", "candidate"}
+    assert task_case_map["baseline"]["comparison_id"] == "omc-task-compression-login-button"
+    assert task_case_map["candidate"]["comparison_id"] == "omc-task-compression-login-button"
+    assert task_case_map["baseline"]["source_type"] == "synthetic"
+    assert task_case_map["candidate"]["source_type"] == "current_contract_sample"
+    assert len(task_case_map["candidate"]["response"]) < len(task_case_map["baseline"]["response"])
+
+    observed_task_requests = {case["request"] for case in task_observed_cases}
+    assert "대시보드 운영형 고도화 작업 계속 진행 (현재 staged 변경 포함, 테스트/리뷰/PR 준비까지)" in observed_task_requests
+    assert all(case.get("evidence") for case in task_observed_cases)
 
     observed_case = observed_cases[0]
     assert observed_case["skill"] == "omc-plan"
@@ -243,14 +307,19 @@ def test_score_cli_outputs_summary_for_fixture_cases():
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["summary"]["case_count"] == 4
-    assert payload["summary"]["next_action_single_rate"] == 3 / 4
-    assert payload["summary"]["expected_next_action_hit_rate"] == 2 / 4
-    assert payload["summary"]["avg_missing_markers_count"] == 1 / 4
+    assert payload["summary"]["case_count"] == 7
+    assert payload["summary"]["next_action_single_rate"] == 5 / 7
+    assert payload["summary"]["expected_next_action_hit_rate"] == 4 / 6
+    assert payload["summary"]["avg_missing_markers_count"] == 4 / 7
     assert payload["summary"]["source_type_counts"] == {
-        "observed_output": 1,
-        "synthetic": 3,
+        "current_contract_sample": 1,
+        "observed_output": 2,
+        "synthetic": 4,
     }
+    assert payload["comparison_summary"]["pair_count"] == 1
+    assert payload["comparison_summary"]["avg_output_chars_delta"] < 0
+    assert payload["comparison_summary"]["avg_output_reduction_rate"] > 0
+    assert payload["comparison_summary"]["evidence_level_counts"] == {"synthetic_pair": 1}
     reentry_cases = [case for case in payload["cases"] if case["skill"] == "omc-reentry"]
     assert len(reentry_cases) == 3, "score output must include all omc-reentry fixture cases"
 
@@ -261,6 +330,20 @@ def test_score_cli_outputs_summary_for_fixture_cases():
     observed_case = next(case for case in payload["cases"] if case.get("source_type") == "observed_output")
     assert observed_case["skill"] == "omc-plan"
     assert observed_case["metrics"]["expected_next_action_hit"] is True
+    observed_task_case = next(
+        case
+        for case in payload["cases"]
+        if case["skill"] == "omc-task" and case.get("source_type") == "observed_output"
+    )
+    assert observed_task_case["metrics"]["missing_markers_count"] == 3
+    assert observed_task_case["score"]["verdict"] == "weak"
+    task_comparison = payload["comparisons"][0]
+    assert task_comparison["skill"] == "omc-task"
+    assert task_comparison["request"] == "로그인 버튼 컴포넌트 구현해줘"
+    assert task_comparison["candidate_output_chars"] < task_comparison["baseline_output_chars"]
+    assert task_comparison["next_action_preserved"] is True
+    assert task_comparison["baseline_source_type"] == "synthetic"
+    assert task_comparison["candidate_source_type"] == "current_contract_sample"
 
 
 def test_compare_response_modes_summarizes_candidate_gain():
