@@ -1924,7 +1924,7 @@ def _failure_step_decision(
     )
 
 
-def _critique_recovery_target(
+def _recovery_target_from_decision(
     *,
     loop_step: str,
     decision_name: str,
@@ -1932,8 +1932,6 @@ def _critique_recovery_target(
     task_auto_retry_count: int,
     critique_auto_retry_count: int,
 ) -> str | None:
-    if loop_step != "critique":
-        return None
     if decision_name == "hold":
         return None
     if decision_name == "reroute" and reroute_target in {"task_retry", "plan_retry"}:
@@ -3043,7 +3041,7 @@ def cmd_pipeline(
                     save("hold")
                     return 2
 
-                recovery_target = _critique_recovery_target(
+                recovery_target = _recovery_target_from_decision(
                     loop_step=loop_step,
                     decision_name=decision_name,
                     reroute_target=reroute_target,
@@ -3176,8 +3174,8 @@ def cmd_pipeline(
                     save("hold")
                     return 2
 
-                # retry_exhausted → critique 복구 경로는 헬퍼에서 단일 결정
-                recovery_target = _critique_recovery_target(
+                # retry_exhausted → 복구 경로는 헬퍼에서 단일 결정
+                recovery_target = _recovery_target_from_decision(
                     loop_step=loop_step,
                     decision_name=decision_name,
                     reroute_target=reroute_target,

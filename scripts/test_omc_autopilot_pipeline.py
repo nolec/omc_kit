@@ -886,6 +886,63 @@ def test_failed_critique_loop_quality_failure_uses_plan_retry_before_task_retry(
     assert "task_retry" not in call_log, f"plan_retry보다 task_retry가 먼저 실행됨: {call_log}"
 
 
+def test_failed_review_loop_quality_failure_uses_plan_retry_before_task_retry(tmp_path: Path, monkeypatch):
+    """review 동일 REVISE 반복도 critique와 같은 recovery 엔진을 타야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    call_log: list[str] = []
+    critique_calls = {"n": 0}
+    review_calls = {"n": 0}
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        call_log.append(step_name)
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            critique_calls["n"] += 1
+            return 0, "VERDICT: PROCEED"
+        if step_name == "review":
+            review_calls["n"] += 1
+            if review_calls["n"] <= 3:
+                return 0, "VERDICT: REVISE"
+            return 0, "VERDICT: APPROVE"
+        if step_name == "plan_retry":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task_retry":
+            return 0, "VERDICT: PROCEED"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/t2-review-plan-retry",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 0
+    assert "plan_retry" in call_log, f"review plan_retry가 호출되지 않음: {call_log}"
+    assert "task_retry" not in call_log, f"review quality failure에서 task_retry가 먼저 실행됨: {call_log}"
+
+
 def test_build_benchmark_report_treats_failed_critique_loop_as_quality_failure():
     import importlib
     import omc_autopilot as mod
@@ -1102,13 +1159,13 @@ def test_decision_policy_entry_exposes_block_without_reason_code_orchestration_r
     }
 
 
-def test_critique_recovery_target_prefers_explicit_reroute_then_auto_retry():
+def test_recovery_target_from_decision_prefers_explicit_reroute_then_auto_retry():
     import importlib
     import omc_autopilot as mod
     importlib.reload(mod)
 
     assert (
-        mod._critique_recovery_target(
+        mod._recovery_target_from_decision(
             loop_step="critique",
             decision_name="reroute",
             reroute_target="task_retry",
@@ -1118,7 +1175,7 @@ def test_critique_recovery_target_prefers_explicit_reroute_then_auto_retry():
         == "task_retry"
     )
     assert (
-        mod._critique_recovery_target(
+        mod._recovery_target_from_decision(
             loop_step="critique",
             decision_name="reroute",
             reroute_target="plan_retry",
@@ -1128,7 +1185,7 @@ def test_critique_recovery_target_prefers_explicit_reroute_then_auto_retry():
         == "plan_retry"
     )
     assert (
-        mod._critique_recovery_target(
+        mod._recovery_target_from_decision(
             loop_step="critique",
             decision_name="same",
             reroute_target=None,
@@ -1138,7 +1195,7 @@ def test_critique_recovery_target_prefers_explicit_reroute_then_auto_retry():
         == "task_retry"
     )
     assert (
-        mod._critique_recovery_target(
+        mod._recovery_target_from_decision(
             loop_step="critique",
             decision_name="same",
             reroute_target=None,
@@ -1148,7 +1205,7 @@ def test_critique_recovery_target_prefers_explicit_reroute_then_auto_retry():
         == "plan_retry"
     )
     assert (
-        mod._critique_recovery_target(
+        mod._recovery_target_from_decision(
             loop_step="critique",
             decision_name="hold",
             reroute_target=None,
@@ -1156,6 +1213,26 @@ def test_critique_recovery_target_prefers_explicit_reroute_then_auto_retry():
             critique_auto_retry_count=0,
         )
         is None
+    )
+    assert (
+        mod._recovery_target_from_decision(
+            loop_step="review",
+            decision_name="reroute",
+            reroute_target="plan_retry",
+            task_auto_retry_count=0,
+            critique_auto_retry_count=0,
+        )
+        == "plan_retry"
+    )
+    assert (
+        mod._recovery_target_from_decision(
+            loop_step="review",
+            decision_name="same",
+            reroute_target=None,
+            task_auto_retry_count=0,
+            critique_auto_retry_count=0,
+        )
+        == "task_retry"
     )
 
 
