@@ -255,6 +255,18 @@ def test_status_skill_preserves_next_step_recommendation_rules():
     assert not missing, f"missing status recommendation markers: {missing}"
 
 
+def test_status_skill_prioritizes_current_bottleneck_over_default_pipeline():
+    text = _read(REQUIRED_STATUS_SKILL_PATHS[0])
+    for marker in [
+        "현재 병목 > 기본 파이프라인",
+        "요청 stale 또는 문맥 엇갈림 → `$omc-plan`",
+        "사용자가 상태만 확인 중이거나 다음 단계를 아직 고르지 않음 → 사용자 선택 대기",
+        "현재 커밋 범위 변경이 있고 품질 확인이 병목이면 → `$omc-review`",
+        "리뷰 통과 + 배포 의도 명시 + ship 차단 없음 → `$omc-ship`",
+    ]:
+        assert marker in text
+
+
 def test_status_skill_does_not_suggest_mutating_commands():
     text = _read(REQUIRED_STATUS_SKILL_PATHS[0])
     forbidden = [
