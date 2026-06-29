@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 52
+MAX_NON_EMPTY_LINES = 49
 
 REQUIRED_LESSON_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-lesson" / "SKILL.md",
