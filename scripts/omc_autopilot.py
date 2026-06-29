@@ -1716,6 +1716,7 @@ def _build_failure_metadata(
             "bad_entry_skill",
             "reroute_loop",
             "metadata_missing",
+            "block_without_reason_code",
             "ambiguous_response",
             "branch_setup_failed",
         }
@@ -1830,6 +1831,12 @@ def _decision_policy_entry(
         }
 
     if normalized_failure_class == "orchestration_failure":
+        if "block_without_reason_code" in normalized_reason_codes:
+            return {
+                "decision": "reroute",
+                "decision_reason": "missing task block reason reroutes to planning",
+                "reroute_target": "plan_retry",
+            }
         if "reroute_loop" in normalized_reason_codes:
             return {
                 "decision": "hold",
@@ -1909,12 +1916,33 @@ def _failure_step_decision(
     retry_count: int,
 ) -> dict[str, object]:
     step_metadata = _pipeline_step_metadata(step_name)
-    return _decide_escalation_action(
+    return _decision_policy_entry(
         failure_class=str(step_payload.get("failure_class") or ""),
         reason_codes=list(step_payload.get("reason_codes") or []),
         retry_count=retry_count,
         escalation_policy=str(step_metadata.get("escalation_policy") or "default"),
     )
+
+
+def _critique_recovery_target(
+    *,
+    loop_step: str,
+    decision_name: str,
+    reroute_target: str,
+    task_auto_retry_count: int,
+    critique_auto_retry_count: int,
+) -> str | None:
+    if loop_step != "critique":
+        return None
+    if decision_name == "hold":
+        return None
+    if decision_name == "reroute" and reroute_target in {"task_retry", "plan_retry"}:
+        return reroute_target
+    if task_auto_retry_count < _TASK_AUTO_RETRY_MAX:
+        return "task_retry"
+    if critique_auto_retry_count < _CRITIQUE_AUTO_RETRY_MAX:
+        return "plan_retry"
+    return None
 
 
 def _retry_step_payload(
@@ -1951,6 +1979,26 @@ def _retry_step_payload(
         )
     )
     return _persist_escalation_decision(payload, decision)
+
+
+def _task_retry_block_failure_payload(
+    *,
+    started_at: str | None,
+    finished_at: str | None,
+    output_preview: str,
+    retry_count: int,
+    reason_codes: list[str],
+) -> dict[str, object]:
+    return _failed_step_payload(
+        step_name="task_retry",
+        status="failed",
+        started_at=started_at,
+        finished_at=finished_at,
+        verdict="BLOCK",
+        reason_codes=reason_codes,
+        output_preview=output_preview,
+        retry_count=retry_count,
+    )
 
 
 def _failed_step_payload(
@@ -2072,6 +2120,7 @@ def _grep_verdict(output: str) -> str | None:
 _UNSET_VERDICT = object()  # prev_verdict 초기 sentinel — None 과 구분
 _CRITIQUE_AUTO_RETRY_MAX = 1  # critique 루프 탈출 후 plan 자동 재진입 최대 횟수
 _TASK_AUTO_RETRY_MAX = 2      # critique 루프 탈출 후 task 자동 재실행 최대 횟수
+_PLAN_RETRY_REASON_CODE_PATTERN = re.compile(r"^REASON_CODE\s*:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 
 # critique가 REVISE 판정을 반복하는 핵심 기준 — task 프롬프트에 사전 주입
 _CRITIQUE_QUALITY_HINT = (
@@ -2105,6 +2154,39 @@ def _extract_critique_issues(output: str) -> str:
         return output
     start = max(0, verdict_idx - 30)
     return "\n".join(lines[start:verdict_idx])
+
+
+_ORCHESTRATION_REASON_CODE_KEYWORDS = ("bad_entry_skill", "metadata_missing", "reroute_loop")
+
+
+def _extract_orchestration_reason_codes(output: str) -> list[str]:
+    """출력 문자열에서 구조화된 orchestration failure reason code를 추출한다."""
+    if not output:
+        return []
+    codes: list[str] = []
+    for match in _PLAN_RETRY_REASON_CODE_PATTERN.finditer(output):
+        raw_codes = match.group(1)
+        for raw_code in re.split(r"[,\s]+", raw_codes):
+            code = raw_code.strip().lower()
+            if code in _ORCHESTRATION_REASON_CODE_KEYWORDS and code not in codes:
+                codes.append(code)
+    return codes
+
+
+def _ensure_block_without_reason_code(
+    *,
+    step_name: str,
+    verdict: str | None,
+    reason_codes: list[str],
+) -> list[str]:
+    """task/task_retry가 이유 없는 BLOCK을 내면 공통 fallback reason code를 채운다."""
+    if (
+        str(step_name).strip().lower() in {"task", "task_retry"}
+        and str(verdict or "").strip().upper() == "BLOCK"
+        and not reason_codes
+    ):
+        return ["block_without_reason_code"]
+    return reason_codes
 
 
 
@@ -2618,6 +2700,7 @@ def cmd_pipeline(
         "1. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
         "2. 구현 후 테스트 GREEN 확인\n"
         "3. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
+        "만약 `VERDICT: BLOCK`이면 마지막에 `REASON_CODE: bad_entry_skill|metadata_missing|reroute_loop` 중 하나를 출력하세요.\n"
         "반드시 마지막 줄에 `VERDICT: PROCEED` (성공) 또는 `VERDICT: BLOCK` (실패)를 출력하세요."
         + _CRITIQUE_QUALITY_HINT
     )
@@ -2648,23 +2731,40 @@ def cmd_pipeline(
                 save("failed_ambiguous_response")
                 return 1
         task_finished_at = _now()
-        result["steps"]["task"] = (
-            _step_payload(
-                "completed",
-                task_started_at,
-                task_finished_at,
-                output_preview=task_out[:300],
-            )
-            if task_rc == 0
-            else _failed_step_payload(
+        task_verdict = _grep_verdict(task_out)
+        task_orchestration_reason_codes = _ensure_block_without_reason_code(
+            step_name="task",
+            verdict=task_verdict,
+            reason_codes=_extract_orchestration_reason_codes(task_out),
+        )
+        if task_rc == 0 and task_verdict == "BLOCK" and task_orchestration_reason_codes:
+            result["steps"]["task"] = _failed_step_payload(
                 step_name="task",
                 status="failed",
                 started_at=task_started_at,
                 finished_at=task_finished_at,
-                rc=task_rc,
+                verdict="BLOCK",
+                reason_codes=task_orchestration_reason_codes,
                 output_preview=task_out[:300],
             )
-        )
+        else:
+            result["steps"]["task"] = (
+                _step_payload(
+                    "completed",
+                    task_started_at,
+                    task_finished_at,
+                    output_preview=task_out[:300],
+                )
+                if task_rc == 0
+                else _failed_step_payload(
+                    step_name="task",
+                    status="failed",
+                    started_at=task_started_at,
+                    finished_at=task_finished_at,
+                    rc=task_rc,
+                    output_preview=task_out[:300],
+                )
+            )
     result["last_completed_step"] = "task"
     _save_pipeline_result(root, result)
 
@@ -2678,6 +2778,89 @@ def cmd_pipeline(
     # ── CRITIQUE/REVIEW 루프 ────────────────────────────────────────────
     critique_auto_retry_count = 0  # critique 루프 탈출 후 plan 자동 재진입 횟수
     task_auto_retry_count = 0       # critique 루프 탈출 후 task 재실행 횟수
+    task_stage_plan_retry_count = 0
+
+    def _run_plan_retry_recovery(
+        *,
+        critique_issues: str,
+        reason_label: str,
+        counter_key: str,
+    ) -> bool:
+        """plan_retry 복구 실행을 공통화한다."""
+        nonlocal critique_auto_retry_count, task_auto_retry_count, needs_ctx_refresh, task_stage_plan_retry_count
+        if counter_key == "critique":
+            critique_auto_retry_count += 1
+            current_retry_count = critique_auto_retry_count
+            retry_limit = _CRITIQUE_AUTO_RETRY_MAX
+        else:
+            task_stage_plan_retry_count += 1
+            current_retry_count = task_stage_plan_retry_count
+            retry_limit = 1
+        print(f"[PIPELINE] 🔄 PLAN 재실행 ({current_retry_count}/{retry_limit}) — {reason_label}")
+        issues_section = (
+            f"\n\n[이전 critique 지적 사항]\n{critique_issues}\n"
+            if critique_issues else ""
+        )
+        retry_plan_prompt = (
+            f"{reason_label}에 의해 plan 재실행이 필요합니다.{issues_section}"
+            f"\n지시문: {instruction[:200]}\n\n"
+            "목표/범위/DoD/제약/실패조건을 각각 한 줄로 명시하세요.\n"
+            "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: HOLD`를 출력하세요."
+        )
+        print("\n[PIPELINE] ▶ PLAN 재실행...")
+        plan_retry_started_at = _now()
+        plan_rc, plan_out = _run_pipeline_step(
+            root, "plan_retry", retry_plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run
+        )
+        plan_retry_finished_at = _now()
+        result["steps"]["plan_retry"] = _retry_step_payload(
+            step_name="plan_retry",
+            rc=plan_rc,
+            started_at=plan_retry_started_at,
+            finished_at=plan_retry_finished_at,
+            output_preview=plan_out[:300],
+            retry_count=current_retry_count,
+        )
+        result["last_completed_step"] = "plan_retry"
+        _save_pipeline_result(root, result)
+        if plan_rc != 0:
+            print("[PIPELINE] ❌ PLAN 재실행 실패 — HOLD")
+            save("hold")
+            return False
+        if _grep_verdict(plan_out) == "HOLD":
+            print("[PIPELINE] ❌ PLAN 재실행 VERDICT: HOLD — 재설계 필요")
+            result["steps"]["plan_retry"]["verdict"] = "HOLD"
+            result["steps"]["plan_retry"].update(
+                _build_failure_metadata(
+                    step_name="plan_retry",
+                    status=result["steps"]["plan_retry"].get("status"),
+                    verdict="HOLD",
+                )
+            )
+            _save_pipeline_result(root, result)
+            save("hold")
+            return False
+        task_auto_retry_count = 0  # plan_retry 후 task retry 기회 복원
+        needs_ctx_refresh = True  # plan_retry 후 새 diff 반영
+        return True
+
+    task_step = result["steps"].get("task", {})
+    if (
+        task_step.get("decision") == "reroute"
+        and str(task_step.get("reroute_target") or "").strip() == "plan_retry"
+    ):
+        if _step_already_done(_resume_data, "plan_retry"):
+            print("[PIPELINE] ⏭ TASK-stage PLAN 재실행 건너뜀 (resume: 이미 완료)")
+        else:
+            if not _run_plan_retry_recovery(
+                critique_issues=str(task_step.get("critique_issues") or ""),
+                reason_label="TASK orchestration failure",
+                counter_key="task_stage",
+            ):
+                return 2
+    elif task_step.get("decision") == "hold":
+        save("hold")
+        return 2
 
     # resume 시 task_retry/plan_retry 완료 여부로 루프 카운터 복원
     if _resume_data:
@@ -2727,12 +2910,13 @@ def cmd_pipeline(
                         reason_codes=["timeout"],
                     ),
                 )
-                step_metadata = _pipeline_step_metadata(loop_step)
-                timeout_decision = _decide_escalation_action(
+                timeout_decision = _decision_policy_entry(
                     failure_class=str(timeout_payload.get("failure_class") or ""),
                     reason_codes=list(timeout_payload.get("reason_codes") or []),
                     retry_count=retry_count,
-                    escalation_policy=str(step_metadata.get("escalation_policy") or "default"),
+                    escalation_policy=str(
+                        _pipeline_step_metadata(loop_step).get("escalation_policy") or "default"
+                    ),
                 )
                 result["steps"][loop_step] = _persist_escalation_decision(timeout_payload, timeout_decision)
                 save("timeout")
@@ -2859,14 +3043,19 @@ def cmd_pipeline(
                     save("hold")
                     return 2
 
+                recovery_target = _critique_recovery_target(
+                    loop_step=loop_step,
+                    decision_name=decision_name,
+                    reroute_target=reroute_target,
+                    task_auto_retry_count=task_auto_retry_count,
+                    critique_auto_retry_count=critique_auto_retry_count,
+                )
+
                 # ── critique 루프 탈출 시 복구 에스컬레이션 ─────────────────
                 # 1순위: task_retry (critique_issues 반영) → critique 재진입
                 # 2순위: plan_retry → critique 재진입
                 # 소진 시: hold
-                if loop_step == "critique" and (
-                    (decision_name == "reroute" and reroute_target == "task_retry")
-                    or (decision_name not in {"hold", "reroute"} and task_auto_retry_count < _TASK_AUTO_RETRY_MAX)
-                ):
+                if recovery_target == "task_retry":
                     task_auto_retry_count += 1
                     print(
                         f"[PIPELINE] 🔄 TASK 재실행 ({task_auto_retry_count}/{_TASK_AUTO_RETRY_MAX})"
@@ -2908,15 +3097,20 @@ def cmd_pipeline(
                         print("[PIPELINE] ❌ TASK 재실행 실패 — HOLD")
                         save("hold")
                         return 2
-                    if _grep_verdict(task_retry_out) == "BLOCK":
+                    task_retry_verdict = _grep_verdict(task_retry_out)
+                    task_retry_orchestration_reason_codes = _ensure_block_without_reason_code(
+                        step_name="task_retry",
+                        verdict=task_retry_verdict,
+                        reason_codes=_extract_orchestration_reason_codes(task_retry_out),
+                    )
+                    if task_retry_verdict == "BLOCK":
                         print("[PIPELINE] ❌ TASK 재실행 VERDICT: BLOCK — HOLD")
-                        result["steps"]["task_retry"]["verdict"] = "BLOCK"
-                        result["steps"]["task_retry"].update(
-                            _build_failure_metadata(
-                                step_name="task_retry",
-                                status=result["steps"]["task_retry"].get("status"),
-                                verdict="BLOCK",
-                            )
+                        result["steps"]["task_retry"] = _task_retry_block_failure_payload(
+                            started_at=task_retry_started_at,
+                            finished_at=task_retry_finished_at,
+                            output_preview=task_retry_out[:300],
+                            retry_count=task_auto_retry_count,
+                            reason_codes=task_retry_orchestration_reason_codes,
                         )
                         _save_pipeline_result(root, result)
                         save("hold")
@@ -2931,62 +3125,17 @@ def cmd_pipeline(
                     continue
 
                 # 2순위: plan 자동 재진입 (최대 1회)
-                if loop_step == "critique" and (
-                    (decision_name == "reroute" and reroute_target == "plan_retry")
-                    or (decision_name not in {"hold", "reroute"} and critique_auto_retry_count < _CRITIQUE_AUTO_RETRY_MAX)
-                ):
-                    critique_auto_retry_count += 1
-                    print(f"[PIPELINE] 🔄 CRITIQUE 자동 재진입 ({critique_auto_retry_count}/{_CRITIQUE_AUTO_RETRY_MAX}) — plan 재실행")
-                    issues_section = (
-                        f"\n\n[이전 critique 지적 사항]\n{critique_issues}\n"
-                        if critique_issues else ""
-                    )
-                    retry_plan_prompt = (
-                        f"이전 critique에서 다음 문제가 지적됐습니다. 이를 반영해 구현 계획을 수정하세요.{issues_section}"
-                        f"\n지시문: {instruction[:200]}\n\n"
-                        "목표/범위/DoD/제약/실패조건을 각각 한 줄로 명시하세요.\n"
-                        "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: HOLD`를 출력하세요."
-                    )
-                    print("\n[PIPELINE] ▶ PLAN 재실행 (critique 이슈 반영)...")
-                    plan_retry_started_at = _now()
-                    plan_rc, plan_out = _run_pipeline_step(
-                        root, "plan_retry", retry_plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run
-                    )
-                    plan_retry_finished_at = _now()
-                    result["steps"]["plan_retry"] = _retry_step_payload(
-                        step_name="plan_retry",
-                        rc=plan_rc,
-                        started_at=plan_retry_started_at,
-                        finished_at=plan_retry_finished_at,
-                        output_preview=plan_out[:300],
-                        retry_count=critique_auto_retry_count,
-                    )
-                    result["last_completed_step"] = "plan_retry"
-                    _save_pipeline_result(root, result)
-                    if plan_rc != 0:
-                        print("[PIPELINE] ❌ PLAN 재실행 실패 — HOLD")
-                        save("hold")
-                        return 2
-                    # plan_retry VERDICT=HOLD 이면 critique 재진입 없이 즉시 탈출
-                    if _grep_verdict(plan_out) == "HOLD":
-                        print("[PIPELINE] ❌ PLAN 재실행 VERDICT: HOLD — 재설계 필요")
-                        result["steps"]["plan_retry"]["verdict"] = "HOLD"
-                        result["steps"]["plan_retry"].update(
-                            _build_failure_metadata(
-                                step_name="plan_retry",
-                                status=result["steps"]["plan_retry"].get("status"),
-                                verdict="HOLD",
-                            )
-                        )
-                        _save_pipeline_result(root, result)
-                        save("hold")
+                if recovery_target == "plan_retry":
+                    if not _run_plan_retry_recovery(
+                        critique_issues=critique_issues,
+                        reason_label="이전 critique",
+                        counter_key="critique",
+                    ):
                         return 2
                     # critique 루프 재진입: 카운터·스트릭 초기화
                     retry_count = 0
                     prev_verdict = _UNSET_VERDICT  # 재진입 후 첫 None 오분류 방지
                     same_verdict_streak = 0
-                    task_auto_retry_count = 0  # plan_retry 후 task retry 기회 복원
-                    needs_ctx_refresh = True  # plan_retry 후 새 diff 반영
                     continue
 
                 save("hold")
@@ -3027,11 +3176,15 @@ def cmd_pipeline(
                     save("hold")
                     return 2
 
-                # retry_exhausted → task_retry 복구 시도 (critique 스텝에서만)
-                if loop_step == "critique" and (
-                    (decision_name == "reroute" and reroute_target == "task_retry")
-                    or (decision_name not in {"hold", "reroute"} and task_auto_retry_count < _TASK_AUTO_RETRY_MAX)
-                ):
+                # retry_exhausted → critique 복구 경로는 헬퍼에서 단일 결정
+                recovery_target = _critique_recovery_target(
+                    loop_step=loop_step,
+                    decision_name=decision_name,
+                    reroute_target=reroute_target,
+                    task_auto_retry_count=task_auto_retry_count,
+                    critique_auto_retry_count=critique_auto_retry_count,
+                )
+                if recovery_target == "task_retry":
                     task_auto_retry_count += 1
                     print(
                         f"[PIPELINE] 🔄 TASK 재실행 ({task_auto_retry_count}/{_TASK_AUTO_RETRY_MAX})"
@@ -3065,7 +3218,13 @@ def cmd_pipeline(
                         retry_count=task_auto_retry_count,
                     )
                     _save_pipeline_result(root, result)
-                    if task_retry_rc == 0 and _grep_verdict(task_retry_out) not in ("BLOCK", None):
+                    task_retry_verdict = _grep_verdict(task_retry_out)
+                    task_retry_orchestration_reason_codes = _ensure_block_without_reason_code(
+                        step_name="task_retry",
+                        verdict=task_retry_verdict,
+                        reason_codes=_extract_orchestration_reason_codes(task_retry_out),
+                    )
+                    if task_retry_rc == 0 and task_retry_verdict not in ("BLOCK", None):
                         # critique 루프 재진입
                         retry_count = 0
                         prev_verdict = _UNSET_VERDICT
@@ -3073,13 +3232,19 @@ def cmd_pipeline(
                         prev_critique_issues = ""
                         needs_ctx_refresh = True  # task_retry 후 새 diff 반영
                         continue
+                    if task_retry_verdict == "BLOCK":
+                        result["steps"]["task_retry"] = _task_retry_block_failure_payload(
+                            started_at=task_retry_started_at,
+                            finished_at=task_retry_finished_at,
+                            output_preview=task_retry_out[:300],
+                            retry_count=task_auto_retry_count,
+                            reason_codes=task_retry_orchestration_reason_codes,
+                        )
+                        _save_pipeline_result(root, result)
                     # task_retry 실패/BLOCK → retry_exhausted 유지
                     print("[PIPELINE] ❌ TASK 재실행 실패 또는 BLOCK — retry_exhausted")
 
-                if loop_step == "critique" and (
-                    (decision_name == "reroute" and reroute_target == "plan_retry")
-                    or (decision_name not in {"hold", "reroute"} and critique_auto_retry_count < _CRITIQUE_AUTO_RETRY_MAX)
-                ):
+                if recovery_target == "plan_retry":
                     critique_auto_retry_count += 1
                     print(f"[PIPELINE] 🔄 CRITIQUE 자동 재진입 ({critique_auto_retry_count}/{_CRITIQUE_AUTO_RETRY_MAX}) — plan 재실행")
                     issues_section = (

@@ -291,6 +291,122 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _classify_expensive_flow(case: dict[str, object]) -> str:
+    expected_next_action = case.get("expected_next_action")
+    baseline_next_action = case.get("baseline_next_action")
+    baseline_trace = [str(item) for item in case.get("baseline_trace", [])]
+    expected_mode = str(case["expected_mode"])
+    baseline_output_chars = int(case["baseline_output_chars"])
+    candidate_output_chars = int(case["candidate_output_chars"])
+    baseline_task_start_delay = int(case["baseline_task_start_delay"])
+    candidate_task_start_delay = int(case["candidate_task_start_delay"])
+
+    if (
+        isinstance(expected_next_action, str)
+        and expected_next_action
+        and isinstance(baseline_next_action, str)
+        and baseline_next_action
+        and baseline_next_action != expected_next_action
+    ):
+        return "wrong_next_step"
+    if expected_mode in {"execute-first", "review-first"} and (
+        baseline_task_start_delay > candidate_task_start_delay
+    ):
+        return "over_stage_entry"
+    if _contains_user_reroute(baseline_trace):
+        return "reroute_loop"
+    if baseline_output_chars > candidate_output_chars:
+        return "output_bloat"
+    return "general_overhead"
+
+
+def _score_expensive_flow(case: dict[str, object], flow_kind: str) -> int:
+    baseline_output_chars = int(case["baseline_output_chars"])
+    candidate_output_chars = int(case["candidate_output_chars"])
+    baseline_task_start_delay = int(case["baseline_task_start_delay"])
+    candidate_task_start_delay = int(case["candidate_task_start_delay"])
+    baseline_trace = [str(item) for item in case.get("baseline_trace", [])]
+    expected_next_action = case.get("expected_next_action")
+    baseline_next_action = case.get("baseline_next_action")
+
+    score = max(baseline_output_chars - candidate_output_chars, 0)
+    score += max(baseline_task_start_delay - candidate_task_start_delay, 0) * 120
+    if _contains_user_reroute(baseline_trace):
+        score += 180
+    if (
+        isinstance(expected_next_action, str)
+        and expected_next_action
+        and isinstance(baseline_next_action, str)
+        and baseline_next_action
+        and baseline_next_action != expected_next_action
+    ):
+        score += 220
+    if flow_kind == "over_stage_entry":
+        score += 80
+    return score
+
+
+def build_expensive_flow_report(
+    cases: list[dict[str, object]], top_n: int = 5
+) -> dict[str, object]:
+    flows: list[dict[str, object]] = []
+    flow_kind_counts: dict[str, int] = {}
+    observed_case_count = 0
+
+    for case in cases:
+        flow_kind = _classify_expensive_flow(case)
+        waste_score = _score_expensive_flow(case, flow_kind)
+        source_type = str(case.get("source_type", "")) if case.get("source_type") else ""
+        if source_type.startswith("observed_"):
+            observed_case_count += 1
+        flow_kind_counts[flow_kind] = flow_kind_counts.get(flow_kind, 0) + 1
+
+        flow = {
+            "request": str(case["request"]),
+            "expected_mode": str(case["expected_mode"]),
+            "flow_kind": flow_kind,
+            "waste_score": waste_score,
+            "baseline_output_chars": int(case["baseline_output_chars"]),
+            "candidate_output_chars": int(case["candidate_output_chars"]),
+            "output_chars_saved": (
+                int(case["baseline_output_chars"]) - int(case["candidate_output_chars"])
+            ),
+            "baseline_task_start_delay": int(case["baseline_task_start_delay"]),
+            "candidate_task_start_delay": int(case["candidate_task_start_delay"]),
+            "task_start_saved": (
+                int(case["baseline_task_start_delay"])
+                - int(case["candidate_task_start_delay"])
+            ),
+            "baseline_reroute": _contains_user_reroute(
+                [str(item) for item in case.get("baseline_trace", [])]
+            ),
+        }
+        for field in (
+            "expected_next_action",
+            "baseline_next_action",
+            "candidate_next_action",
+            "source_type",
+            "evidence",
+            "comparison_scope",
+        ):
+            value = case.get(field)
+            if isinstance(value, str) and value:
+                flow[field] = value
+        flows.append(flow)
+
+    ranked_flows = sorted(flows, key=lambda item: (-int(item["waste_score"]), item["request"]))
+    top_flows = ranked_flows[:top_n]
+    return {
+        "flows": top_flows,
+        "summary": {
+            "case_count": len(cases),
+            "top_flow_count": len(top_flows),
+            "observed_case_count": observed_case_count,
+            "flow_kind_counts": flow_kind_counts,
+        },
+    }
+
+
 def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
     compared_cases = [_compare_case(case) for case in cases]
     case_count = len(compared_cases)
@@ -715,6 +831,15 @@ def _parser() -> argparse.ArgumentParser:
         help="Compare baseline and candidate response-mode policy outputs.",
     )
     response_mode.add_argument("--input", type=Path, required=True, help="Input JSON path")
+
+    expensive_flows = sub.add_parser(
+        "top-expensive-flows",
+        help="Rank the most expensive response-mode flows.",
+    )
+    expensive_flows.add_argument("--input", type=Path, required=True, help="Input JSON path")
+    expensive_flows.add_argument(
+        "--top-n", type=int, default=5, help="Number of expensive flows to return"
+    )
     return parser
 
 
@@ -729,6 +854,12 @@ def main() -> int:
     if args.command == "compare-response-modes":
         cases = _load_response_mode_cases(args.input)
         report = compare_response_modes(cases)
+        json.dump(report, sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+        return 0
+    if args.command == "top-expensive-flows":
+        cases = _load_response_mode_cases(args.input)
+        report = build_expensive_flow_report(cases, top_n=args.top_n)
         json.dump(report, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
         return 0

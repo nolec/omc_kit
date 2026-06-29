@@ -68,6 +68,7 @@
     {
       "request": "현재 git changes 괜찮은지 코드 봐줘",
       "expected_mode": "review-first",
+      "expected_next_action": "$omc-review",
       "baseline_policy": "baseline",
       "candidate_policy": "candidate",
       "baseline_trace": ["assistant: 리뷰 시작"],
@@ -76,7 +77,10 @@
       "candidate_output_chars": 302,
       "baseline_task_start_delay": 1,
       "candidate_task_start_delay": 1,
-      "source_type": "synthetic"
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "$omc-review",
+      "source_type": "observed_request",
+      "evidence": "2026-06-30 실제 세션 요청문 추출: git changes 리뷰 스킬 문의"
     },
     {
       "request": "리스크 중심으로 냉정하게 리뷰해줘",
@@ -262,6 +266,23 @@
       "candidate_next_action": "사용자 선택 대기",
       "source_type": "observed_request",
       "evidence": "2026-06-27 실제 세션 요청문 추출: 개선된 점 설명 요청"
+    },
+    {
+      "request": "현재 git changes 변경 상태 리뷰 보고 정말 괜찮은 변경인지 체크하려고 하는데 무슨 스킬 써야해",
+      "expected_mode": "review-first",
+      "expected_next_action": "$omc-review",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": ["assistant: 변경 정리 후 진행 안내", "user: 아니 리뷰할 스킬 알려줘"],
+      "candidate_trace": ["assistant: 리뷰 스킬로 바로 안내"],
+      "baseline_output_chars": 304,
+      "candidate_output_chars": 286,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "$omc-review",
+      "source_type": "observed_request",
+      "evidence": "2026-06-29 실제 세션 요청문 추출: git changes 리뷰 스킬 문의"
     },
     {
       "request": "다음 1순위 작업을 더 잘게 쪼개서",

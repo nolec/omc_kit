@@ -489,6 +489,46 @@ def test_compare_response_modes_cli_outputs_decision_json(tmp_path: Path):
     assert payload["decision"]["verdict"] in {"adopt", "revise", "hold"}
 
 
+def test_top_expensive_flows_cli_outputs_json(tmp_path: Path):
+    cases = {
+        "cases": [
+            {
+                "request": "다음 1순위 작업을 더 잘게 쪼개서",
+                "expected_mode": "answer-first",
+                "expected_next_action": "$omc-critique",
+                "baseline_policy": "baseline",
+                "candidate_policy": "candidate",
+                "baseline_trace": ["assistant: 바로 구현 전제", "user: 아니 더 잘게 계획해줘"],
+                "candidate_trace": ["assistant: 재분해", "assistant: critique 추천"],
+                "baseline_output_chars": 268,
+                "candidate_output_chars": 302,
+                "baseline_task_start_delay": 1,
+                "candidate_task_start_delay": 0,
+                "baseline_next_action": "$omc-task",
+                "candidate_next_action": "$omc-critique",
+                "source_type": "observed_request",
+                "evidence": "real request",
+            }
+        ]
+    }
+    input_file = tmp_path / "expensive-flows.json"
+    input_file.write_text(json.dumps(cases, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "top-expensive-flows", "--input", str(input_file)],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["summary"]["case_count"] == 1
+    assert payload["summary"]["top_flow_count"] == 1
+    assert payload["flows"][0]["flow_kind"] == "wrong_next_step"
+
+
 def test_load_response_mode_cases_preserves_source_metadata_and_samples(tmp_path: Path):
     mod = _load_module()
 
@@ -650,6 +690,7 @@ def test_response_mode_fixture_covers_three_policy_modes_and_mixed_intent_exampl
     assert "OMC orchestration 다음 개선 계획 수립" in requests
     assert "복귀용 프로젝트 reentry 스킬 재설계 정보원 우선순위와 출력 계약 고정" in requests
     assert "현재 어떤점이 개선된거야" in requests
+    assert "현재 git changes 변경 상태 리뷰 보고 정말 괜찮은 변경인지 체크하려고 하는데 무슨 스킬 써야해" in requests
     assert "fugu 문서 2개 먼저 커밋 태스크 2부터 $omc-task" in requests
     assert "다음 1순위 작업을 더 잘게 쪼개서" in requests
 
@@ -818,3 +859,170 @@ def test_response_mode_fixture_observed_request_case_affects_next_action_accurac
     assert report["cases"][0]["expected_next_action"] == "$omc-critique"
     assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
     assert report["cases"][0]["candidate"]["next_action"] == "$omc-critique"
+
+
+def test_response_mode_fixture_observed_review_request_prefers_review_next_action():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    target_case = next(
+        case
+        for case in cases
+        if case["request"] == "현재 git changes 변경 상태 리뷰 보고 정말 괜찮은 변경인지 체크하려고 하는데 무슨 스킬 써야해"
+    )
+
+    report = mod.compare_response_modes([target_case])
+
+    assert report["summary"]["next_action_case_count"] == 1
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert report["cases"][0]["expected_next_action"] == "$omc-review"
+    assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][0]["candidate"]["next_action"] == "$omc-review"
+
+
+def test_response_mode_fixture_review_request_infers_review_first_mode():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    target_case = next(
+        case
+        for case in cases
+        if case["request"] == "현재 git changes 변경 상태 리뷰 보고 정말 괜찮은 변경인지 체크하려고 하는데 무슨 스킬 써야해"
+    )
+
+    report = mod.compare_response_modes([target_case])
+
+    assert report["cases"][0]["baseline"]["mode"] == "review-first"
+    assert report["cases"][0]["candidate"]["mode"] == "review-first"
+    assert report["summary"]["next_action_case_count"] == 1
+    assert report["cases"][0]["source_type"] == "observed_request"
+    assert report["cases"][0]["expected_next_action"] == "$omc-review"
+    assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][0]["candidate"]["next_action"] == "$omc-review"
+
+
+def test_build_expensive_flow_report_ranks_top5_flows_with_categories():
+    mod = _load_module()
+
+    cases = [
+        {
+            "request": "다음 1순위 작업을 더 잘게 쪼개서",
+            "expected_mode": "answer-first",
+            "expected_next_action": "$omc-critique",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 바로 구현 전제", "user: 아니 더 잘게 계획해줘"],
+            "candidate_trace": ["assistant: 재분해", "assistant: critique 추천"],
+            "baseline_output_chars": 268,
+            "candidate_output_chars": 302,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 0,
+            "baseline_next_action": "$omc-task",
+            "candidate_next_action": "$omc-critique",
+            "source_type": "observed_request",
+            "evidence": "real request",
+        },
+        {
+            "request": "지금까지 뭐 했는지 정리해줘",
+            "expected_mode": "answer-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 실행 전제로 답함", "user: 아니 정리해줘"],
+            "candidate_trace": ["assistant: 요약 제공"],
+            "baseline_output_chars": 280,
+            "candidate_output_chars": 294,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 0,
+            "source_type": "synthetic",
+        },
+        {
+            "request": "이거 클로드코드로 실행한건데 이거 제대로 진행된 거 맞아? plan",
+            "expected_mode": "answer-first",
+            "expected_next_action": "사용자 선택 대기",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: PHASE 3 제시"],
+            "candidate_trace": ["assistant: 과진행 판단 후 멈춤"],
+            "baseline_output_chars": 438,
+            "candidate_output_chars": 214,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 0,
+            "baseline_next_action": "$omc-task",
+            "candidate_next_action": "사용자 선택 대기",
+            "source_type": "observed_output",
+            "comparison_scope": "cross_surface",
+            "evidence": "sample",
+            "baseline_response_sample": "PHASE 3",
+            "candidate_response_sample": "멈춤",
+        },
+        {
+            "request": "로그인 버튼 컴포넌트 구현해줘",
+            "expected_mode": "execute-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 답변만 제공", "user: 아니 구현해줘"],
+            "candidate_trace": ["assistant: 구현 단계로 바로 진입"],
+            "baseline_output_chars": 320,
+            "candidate_output_chars": 348,
+            "baseline_task_start_delay": 2,
+            "candidate_task_start_delay": 1,
+            "source_type": "synthetic",
+        },
+        {
+            "request": "리스크 중심으로 냉정하게 리뷰해줘",
+            "expected_mode": "review-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 일반 설명", "user: 아니 냉정하게 리뷰해줘"],
+            "candidate_trace": ["assistant: 리뷰 시작"],
+            "baseline_output_chars": 295,
+            "candidate_output_chars": 321,
+            "baseline_task_start_delay": 2,
+            "candidate_task_start_delay": 1,
+            "source_type": "synthetic",
+        },
+        {
+            "request": "현재 git changes 괜찮은지 코드 봐줘",
+            "expected_mode": "review-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 리뷰 시작"],
+            "candidate_trace": ["assistant: 리뷰 시작"],
+            "baseline_output_chars": 288,
+            "candidate_output_chars": 302,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 1,
+            "source_type": "synthetic",
+        },
+    ]
+
+    report = mod.build_expensive_flow_report(cases)
+
+    assert report["summary"]["case_count"] == 6
+    assert report["summary"]["top_flow_count"] == 5
+    assert report["summary"]["flow_kind_counts"]["wrong_next_step"] >= 1
+    assert report["summary"]["flow_kind_counts"]["reroute_loop"] >= 1
+    assert report["summary"]["flow_kind_counts"]["over_stage_entry"] >= 1
+    assert report["flows"][0]["waste_score"] >= report["flows"][-1]["waste_score"]
+    requests = {item["request"] for item in report["flows"]}
+    assert "다음 1순위 작업을 더 잘게 쪼개서" in requests
+    assert "이거 클로드코드로 실행한건데 이거 제대로 진행된 거 맞아? plan" in requests
+
+
+def test_response_mode_fixture_exposes_top5_expensive_flows():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+
+    report = mod.build_expensive_flow_report(cases)
+
+    assert report["summary"]["case_count"] >= 21
+    assert report["summary"]["top_flow_count"] == 5
+    assert report["summary"]["observed_case_count"] >= 5
+    assert any(item["source_type"] == "observed_request" for item in report["flows"])
+    assert any(item["flow_kind"] == "wrong_next_step" for item in report["flows"])

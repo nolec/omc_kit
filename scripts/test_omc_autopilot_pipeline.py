@@ -688,6 +688,22 @@ def test_build_failure_metadata_marks_branch_setup_failed_as_orchestration_failu
     assert payload["reason_codes"] == ["branch_setup_failed"]
 
 
+def test_build_failure_metadata_marks_block_without_reason_code_as_orchestration_failure():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    payload = mod._build_failure_metadata(
+        step_name="task",
+        status="failed",
+        verdict="BLOCK",
+        reason_codes=["block_without_reason_code"],
+    )
+
+    assert payload["failure_class"] == "orchestration_failure"
+    assert payload["reason_codes"] == ["block_without_reason_code"]
+
+
 def test_build_benchmark_report_handles_mixed_timezone_timestamps():
     import importlib
     import omc_autopilot as mod
@@ -782,6 +798,7 @@ def test_critique_same_verdict_repeated_exits_failed_critique_loop(tmp_path: Pat
         return 0, "VERDICT: PROCEED"
 
     monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setattr(mod, "_PIPELINE_MAX_SAME_VERDICT", 0)
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
 
     # git 관련 subprocess 를 mock
@@ -1066,6 +1083,82 @@ def test_decision_policy_entry_exposes_bad_entry_skill_orchestration_rule():
     }
 
 
+def test_decision_policy_entry_exposes_block_without_reason_code_orchestration_rule():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    policy = mod._decision_policy_entry(
+        failure_class="orchestration_failure",
+        escalation_policy="default",
+        retry_count=0,
+        reason_codes=["block_without_reason_code"],
+    )
+
+    assert policy == {
+        "decision": "reroute",
+        "decision_reason": "missing task block reason reroutes to planning",
+        "reroute_target": "plan_retry",
+    }
+
+
+def test_critique_recovery_target_prefers_explicit_reroute_then_auto_retry():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    assert (
+        mod._critique_recovery_target(
+            loop_step="critique",
+            decision_name="reroute",
+            reroute_target="task_retry",
+            task_auto_retry_count=0,
+            critique_auto_retry_count=0,
+        )
+        == "task_retry"
+    )
+    assert (
+        mod._critique_recovery_target(
+            loop_step="critique",
+            decision_name="reroute",
+            reroute_target="plan_retry",
+            task_auto_retry_count=0,
+            critique_auto_retry_count=0,
+        )
+        == "plan_retry"
+    )
+    assert (
+        mod._critique_recovery_target(
+            loop_step="critique",
+            decision_name="same",
+            reroute_target=None,
+            task_auto_retry_count=0,
+            critique_auto_retry_count=0,
+        )
+        == "task_retry"
+    )
+    assert (
+        mod._critique_recovery_target(
+            loop_step="critique",
+            decision_name="same",
+            reroute_target=None,
+            task_auto_retry_count=2,
+            critique_auto_retry_count=0,
+        )
+        == "plan_retry"
+    )
+    assert (
+        mod._critique_recovery_target(
+            loop_step="critique",
+            decision_name="hold",
+            reroute_target=None,
+            task_auto_retry_count=0,
+            critique_auto_retry_count=0,
+        )
+        is None
+    )
+
+
 def test_decide_escalation_action_quality_failure_reroutes_plan():
     import importlib
     import omc_autopilot as mod
@@ -1332,6 +1425,345 @@ def test_task_ambiguous_response_fails_after_two_nones(tmp_path: Path, monkeypat
     assert data["steps"]["task"]["decision"] == "hold"
     assert data["steps"]["task"]["decision_reason"] == "orchestration failure defaults to explicit hold"
     assert data["steps"]["task"]["reroute_target"] is None
+
+
+def test_task_orchestration_failure_bad_entry_skill_reroutes_to_plan_retry(tmp_path: Path, monkeypatch):
+    """task 실패가 orchestration_failure(bad_entry_skill)면 plan_retry로 재진입해야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    call_log: list[str] = []
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        call_log.append(step_name)
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task":
+            return 0, "REASON_CODE: bad_entry_skill\nVERDICT: BLOCK"
+        if step_name == "plan_retry":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "review":
+            return 0, "VERDICT: APPROVE"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/task-orchestration-reroute",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 0
+    assert "plan_retry" in call_log, f"bad_entry_skill orchestration failure가 plan_retry로 재진입하지 않음: {call_log}"
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert result["steps"]["task"]["failure_class"] == "orchestration_failure"
+    assert result["steps"]["task"]["reason_codes"] == ["bad_entry_skill"]
+
+
+def test_task_block_without_reason_code_does_not_silently_complete(tmp_path: Path, monkeypatch):
+    """task가 VERDICT: BLOCK만 주고 reason_code가 없으면 completed로 조용히 통과하면 안 된다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    call_log: list[str] = []
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        call_log.append(step_name)
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task":
+            return 0, "VERDICT: BLOCK"
+        if step_name == "plan_retry":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "review":
+            return 0, "VERDICT: APPROVE"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/task-block-no-reason",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 0
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert result["steps"]["task"]["status"] == "failed"
+    assert result["steps"]["task"]["failure_class"] == "orchestration_failure"
+    assert result["steps"]["task"]["reason_codes"] == ["block_without_reason_code"]
+    assert "plan_retry" in call_log
+
+
+def test_task_retry_block_without_reason_code_uses_common_fallback():
+    """task_retry 무사유 BLOCK도 task와 같은 fallback reason code를 가져야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    fallback = mod._ensure_block_without_reason_code(
+        step_name="task_retry",
+        verdict="BLOCK",
+        reason_codes=[],
+    )
+
+    assert fallback == ["block_without_reason_code"]
+
+    metadata = mod._build_failure_metadata(
+        step_name="task_retry",
+        status="failed",
+        verdict="BLOCK",
+        reason_codes=fallback,
+    )
+    assert metadata["failure_class"] == "orchestration_failure"
+    assert metadata["reason_codes"] == ["block_without_reason_code"]
+
+
+def test_task_retry_block_without_reason_code_marks_step_failed():
+    """task_retry 무사유 BLOCK은 failed payload로 기록돼야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    payload = mod._task_retry_block_failure_payload(
+        started_at="2026-06-30T00:00:00Z",
+        finished_at="2026-06-30T00:00:10Z",
+        output_preview="VERDICT: BLOCK",
+        retry_count=1,
+        reason_codes=["block_without_reason_code"],
+    )
+
+    assert payload["status"] == "failed"
+    assert payload["failure_class"] == "orchestration_failure"
+    assert payload["reason_codes"] == ["block_without_reason_code"]
+    assert payload["decision"] == "reroute"
+    assert payload["reroute_target"] == "plan_retry"
+
+
+def test_task_retry_block_without_reason_code_is_failed_in_pipeline(tmp_path: Path, monkeypatch):
+    """cmd_pipeline 경로에서도 task_retry 무사유 BLOCK이 failed로 저장돼야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    call_log: list[str] = []
+    critique_calls = {"n": 0}
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        call_log.append(step_name)
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            critique_calls["n"] += 1
+            if critique_calls["n"] <= 4:
+                return 1, "critique command failed"
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task_retry":
+            return 0, "VERDICT: BLOCK"
+        if step_name == "review":
+            return 0, "VERDICT: APPROVE"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/task-retry-block-status",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 1
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "retry_exhausted"
+    assert result["steps"]["task_retry"]["status"] == "failed"
+    assert result["steps"]["task_retry"]["failure_class"] == "orchestration_failure"
+    assert result["steps"]["task_retry"]["reason_codes"] == ["block_without_reason_code"]
+    assert "task_retry" in call_log
+
+
+def test_task_stage_plan_retry_does_not_consume_critique_plan_retry_budget(tmp_path: Path, monkeypatch):
+    """task-stage plan_retry는 critique plan_retry 예산을 잠식하지 않아야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    call_log: list[str] = []
+    critique_calls = {"n": 0}
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        call_log.append(step_name)
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task":
+            return 0, "REASON_CODE: bad_entry_skill\nVERDICT: BLOCK"
+        if step_name == "plan_retry":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            critique_calls["n"] += 1
+            if critique_calls["n"] == 1:
+                return 0, "VERDICT: REVISE"
+            return 0, "VERDICT: PROCEED"
+        if step_name == "review":
+            return 0, "VERDICT: APPROVE"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setattr(mod, "_PIPELINE_MAX_SAME_VERDICT", 0)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/task-orchestration-budget",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 0
+    assert call_log.count("plan_retry") == 2, f"critique plan_retry 예산이 task-stage plan_retry에 잠식됨: {call_log}"
+
+
+def test_resume_skips_already_completed_task_stage_plan_retry(tmp_path: Path, monkeypatch):
+    """--resume 시 task_stage plan_retry가 이미 완료됐으면 다시 실행되면 안 된다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    call_log: list[str] = []
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        call_log.append(step_name)
+        if step_name == "plan":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task":
+            return 0, "REASON_CODE: bad_entry_skill\nVERDICT: BLOCK"
+        if step_name == "plan_retry":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "review":
+            return 0, "VERDICT: APPROVE"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    result_path = tmp_path / "result.json"
+    result_data = {
+        "status": "failed",
+        "mode": "full",
+        "branch": "feat/task-plan-retry-resume",
+        "instruction": "x" * 200,
+        "executor": "codex",
+        "started_at": "2026-06-30T00:00:00Z",
+        "resume_count": 1,
+        "steps": {
+            "preflight": {"status": "completed"},
+            "plan": {"status": "completed", "output_preview": "VERDICT: PROCEED"},
+            "task": {
+                "status": "failed",
+                "decision": "reroute",
+                "reroute_target": "plan_retry",
+                "failure_class": "orchestration_failure",
+                "reason_codes": ["bad_entry_skill"],
+                "critique_issues": "task plan retry required",
+                "output_preview": "VERDICT: BLOCK",
+            },
+            "plan_retry": {
+                "status": "completed",
+                "decision": "same",
+                "reroute_target": None,
+                "output_preview": "VERDICT: PROCEED",
+            },
+        },
+    }
+    result_path.write_text(json.dumps(result_data), encoding="utf-8")
+
+    call_log.clear()
+    second_rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/task-plan-retry-resume",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+        resume=True,
+    )
+
+    assert second_rc == 0
+    assert call_log.count("plan_retry") == 0, f"resume에서 이미 완료된 plan_retry가 다시 실행됨: {call_log}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
