@@ -1787,6 +1787,21 @@ def _decide_escalation_action(
     retry_count: int,
     escalation_policy: str | None,
 ) -> dict[str, object]:
+    return _decision_policy_entry(
+        failure_class=failure_class,
+        reason_codes=reason_codes,
+        retry_count=retry_count,
+        escalation_policy=escalation_policy,
+    )
+
+
+def _decision_policy_entry(
+    *,
+    failure_class: str | None,
+    reason_codes: list[str] | None,
+    retry_count: int,
+    escalation_policy: str | None,
+) -> dict[str, object]:
     normalized_policy = str(escalation_policy or "").strip().lower()
     if normalized_policy not in _KNOWN_ESCALATION_POLICIES:
         normalized_policy = "default"

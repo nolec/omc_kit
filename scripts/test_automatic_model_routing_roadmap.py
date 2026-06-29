@@ -16,6 +16,7 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "`task_retry` / `plan_retry` 성공 경로, `timeout` 경로, `failed` 계열 주요 경로의 decision payload shape 일반화와 `orchestration_failure` 1차 decision policy 연결이 반영됐다." in text
     assert "추가로 `.omc/runs/` 기준 `reroute_rate`, `retry_to_success_rate`, `cost_per_successful_task` multi-run KPI summary와 current-path 중복 제거까지 반영됐다." in text
     assert "현재 상태는 `V3-2 주요 failure path 일반화 완료 + V4 multi-run KPI summary 1차 완료`에 가깝다." in text
+    assert "`decision_policy_entry` helper 추출로 failure-class별 decision 규칙을 공통 엔진으로 옮길 준비를 마쳤다." in text
     assert "Operator Experience | 진행중" in text
     assert "`2-2 reroute / delay UX`와 `role_suggest` 시작 스킬 오판 패턴 보강까지 반영됐다." in text
     assert "실제 profile 선택에 반영된다" in text
@@ -32,7 +33,7 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "`quality_failure` + default policy" in text
     assert "`orchestration_failure`" in text
     assert "`benchmark-report`에 `had_reroute`, `recovered_after_retry`, `total_cost_usd`, `total_tokens` 같은 single-run telemetry가 반영됐다." in text
-    assert "이번에 `orchestration_failure` 1차 decision policy는 들어갔다." in text
+    assert "이번에 `decision_policy_entry` helper까지 추출해 공통 엔진의 시작점을 만들었다." in text
     assert "decision engine 일반화 2차" in text
     assert "autopilot 작업 단위 정리" in text
     assert "failure path 일반화에서 최소 orchestration failure shape와 single-run telemetry가 안정된 뒤 multi-run KPI summary를 붙였다." in text

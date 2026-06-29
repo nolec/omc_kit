@@ -979,6 +979,63 @@ def test_decide_escalation_action_default_execution_retry_two_reroutes_task():
     assert decision["reroute_target"] == "task_retry"
 
 
+def test_decision_policy_entry_exposes_default_execution_rule():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    policy = mod._decision_policy_entry(
+        failure_class="execution_failure",
+        escalation_policy="default",
+        retry_count=0,
+        reason_codes=[],
+    )
+
+    assert policy == {
+        "decision": "same",
+        "decision_reason": "execution failure stays on current path before threshold",
+        "reroute_target": None,
+    }
+
+
+def test_decision_policy_entry_exposes_default_quality_rule():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    policy = mod._decision_policy_entry(
+        failure_class="quality_failure",
+        escalation_policy="default",
+        retry_count=0,
+        reason_codes=["verdict_block"],
+    )
+
+    assert policy == {
+        "decision": "reroute",
+        "decision_reason": "quality failure reroutes to planning",
+        "reroute_target": "plan_retry",
+    }
+
+
+def test_decision_policy_entry_exposes_bad_entry_skill_orchestration_rule():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    policy = mod._decision_policy_entry(
+        failure_class="orchestration_failure",
+        escalation_policy="default",
+        retry_count=0,
+        reason_codes=["bad_entry_skill"],
+    )
+
+    assert policy == {
+        "decision": "reroute",
+        "decision_reason": "orchestration failure reroutes to planning",
+        "reroute_target": "plan_retry",
+    }
+
+
 def test_decide_escalation_action_quality_failure_reroutes_plan():
     import importlib
     import omc_autopilot as mod
