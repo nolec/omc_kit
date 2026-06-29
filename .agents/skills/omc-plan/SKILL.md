@@ -16,24 +16,18 @@ python3 scripts/omc.py state status --target .
 
 AGENTS.md Tier 1 작업은 이 Phase 1 요구사항을 CONTRACT 입력으로 삼습니다.
 
-## Phase 1. 요구사항 CONTRACT
-
-- 목표 / 범위 (포함) / 범위 (제외) / DoD / 제약 / 사용자 컨펌:
+## Phase 1. 요구사항 CONTRACT — 목표 / 범위 (포함) / 범위 (제외) / DoD / 제약 / 사용자 컨펌:
 
 사용자에게 보여줄 단계: CONTRACT / 최소 설계 / TDD 태스크 / `$omc-task` handoff | 시스템이 암묵적으로 처리: 자명한 재안내 / 선택 스킬 추천 / 반복 코칭
 
-## Phase 2. 최소 설계
-
-- 입력 / 출력 / 성공 지표 / 실패 정책 / 영향받는 파일:
+## Phase 2. 최소 설계 — 입력 / 출력 / 성공 지표 / 실패 정책 / 영향받는 파일:
 - decision / risk / next_action: 진행 가능 여부 / 변경 위험도 / 다음 스킬 1개
 - 공통 결정표: stage=plan / outcome=unresolved|ready / user_selection_needed=yes|no
 
 출력 모드:
 - `plan full`: CONTRACT + 최소 설계 + 다중 TDD 태스크 | `plan lite`: CONTRACT + 최소 설계 + 태스크 2개 이하
-- lite 조건: 기존 파일 중심 / 검증 명령 1개 / 범위를 한 문장으로 설명 가능
-- full 조건: 새 파일 또는 신규 파일 생성 / API 또는 시그니처 변경 / 3개 이상 파일 / 검증 명령 축약 불가 / 범위 불명확
-- 애매하면 full, lite가 쓰였지만 설명이 약하면 `full 재계획`
-- 현재 dirty 변경과 이번 계획 범위는 분리해서 다룹니다.
+- lite 조건: 기존 파일 중심 / 검증 명령 1개 / 범위를 한 문장으로 설명 가능 | full 조건: 새 파일 또는 신규 파일 생성 / API 또는 시그니처 변경 / 3개 이상 파일 / 검증 명령 축약 불가 / 범위 불명확
+- 애매하면 full, lite가 쓰였지만 설명이 약하면 `full 재계획` | 현재 dirty 변경과 이번 계획 범위는 분리해서 다룹니다.
 
 ## Phase 3. TDD 태스크 분해
 
@@ -45,9 +39,7 @@ plan lite
 태스크 1: [핵심 변경] / RED: [실패 테스트 파일 + 케이스] / GREEN: [최소 구현 파일] / VERIFY: [검증 커맨드]
 ```
 
-## Phase 4. 세션 기록
-
-사용자 컨펌 완료 전에는 `python3 scripts/omc.py state confirm --target .` 를 실행하지 않으며, confirm 후에만 `$omc-task`로 넘깁니다.
+## Phase 4. 세션 기록 — 사용자 컨펌 완료 전에는 `python3 scripts/omc.py state confirm --target .` 를 실행하지 않으며, confirm 후에만 `$omc-task`로 넘깁니다.
 
 ## 다음 추천
 
@@ -62,6 +54,4 @@ plan lite
 ---
 
 ## ⛔ 자동 진입 금지
-
-이 스킬이 완료된 후 자동으로 다음 스킬을 실행하지 않는다.
-사용자가 명시적으로 다음 스킬을 요청할 때까지 멈추고 기다린다.
+이 스킬이 완료된 후 자동으로 다음 스킬을 실행하지 않고, 사용자가 명시적으로 다음 스킬을 요청할 때까지 멈추고 기다린다.
