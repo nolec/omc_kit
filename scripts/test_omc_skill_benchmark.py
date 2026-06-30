@@ -756,7 +756,7 @@ def test_response_mode_fixture_covers_three_policy_modes_and_mixed_intent_exampl
     payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
     cases = payload["cases"] if isinstance(payload, dict) else payload
 
-    assert len(cases) >= 21, "response mode fixture should include at least 21 cases"
+    assert len(cases) >= 28, "response mode fixture should include at least 28 cases"
 
     expected_modes = {case["expected_mode"] for case in cases}
     assert expected_modes == {"answer-first", "execute-first", "review-first"}
@@ -795,9 +795,9 @@ def test_response_mode_fixture_covers_three_policy_modes_and_mixed_intent_exampl
             assert isinstance(case.get("candidate_next_action"), str) and case["candidate_next_action"].strip()
 
     assert all(count >= 3 for count in mode_counts.values())
-    assert len(observed_request_cases) >= 5
+    assert len(observed_request_cases) >= 12
     assert len(observed_output_cases) >= 2
-    assert len(cases_with_next_action) >= 5
+    assert len(cases_with_next_action) >= 13
     assert "이 버그 원인 먼저 보고 바로 고칠 수 있으면 수정해줘" in requests
     assert "이 변경 위험한지 먼저 리뷰해주고, 괜찮으면 그다음 커밋까지 해줘" in requests
     assert "이 기능 해야 할지 판단하고 진행 순서만 정리해줘" in requests
