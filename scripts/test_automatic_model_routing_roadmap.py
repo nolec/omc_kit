@@ -50,6 +50,9 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "multi-run 실행 샘플 20회 이상" in text
     assert "비교 가능한 정책 후보 2개 이상" in text
     assert "`reroute rate`, `retry-to-success rate`, `cost per successful task` 3개 KPI가 모두 표에 노출" in text
+    assert "### 최소 KPI 기준" in text
+    assert "baseline은 직전 정책 또는 고정 기준값 대비로 정의된다" in text
+    assert "timebox로만 허용한다" in text
     assert "failure path 일반화에서 최소 orchestration failure shape와 single-run telemetry가 안정된 뒤 multi-run KPI summary를 붙였다." in text
     assert "최근 반영된 1차 변화:" in text
     assert "`omc-plan` 출력 contract에 `decision / risk / next_action` 의미를 plan 문맥으로 고정" in text
