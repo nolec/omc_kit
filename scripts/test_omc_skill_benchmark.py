@@ -1007,6 +1007,26 @@ def test_response_mode_fixture_covers_plan_status_and_reentry_next_actions():
     assert report["cases"][2]["candidate"]["next_action"] == "$omc-reentry"
 
 
+def test_response_mode_fixture_covers_roadmap_sync_next_action():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    target_case = next(
+        case for case in cases if case["request"] == "로드맵과 현재 진행된 부분 싱크부터 맞추자"
+    )
+
+    report = mod.compare_response_modes([target_case])
+
+    assert report["summary"]["next_action_case_count"] == 1
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert report["cases"][0]["expected_next_action"] == "$omc-plan"
+    assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][0]["candidate"]["next_action"] == "$omc-plan"
+
+
 def test_response_mode_fixture_observed_review_request_prefers_review_next_action():
     mod = _load_module()
 
