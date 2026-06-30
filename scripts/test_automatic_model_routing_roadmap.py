@@ -58,7 +58,7 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "Operator Experience 4차" in text
     assert "Learned orchestrator 진입 조건 정리" in text
     assert "readiness/baseline 상태 문구는 이미 report와 overview에 실리므로" in text
-    assert "invalid observed_output이 조용히 사라지지 않도록 rejection summary는 들어갔으니" in text
+    assert "invalid observed_output이 조용히 사라지지 않도록 rejection summary는 들어갔고, 1차로 collected observed summary에서도 rejection reason 병목을 함께 읽게 만들었다." in text
     assert "observed_request / observed_output 기준 multi-run 실행 샘플 20회 이상" in text
     assert "neutral observed seed는 수집량으로만 보이고 readiness 입력에서는 제외된다" in text
     assert "observed_output은 `comparison_scope`, response sample을 보존하되 `mode_accuracy` / `task_start_delay` decision metric을 공짜로 밀어 올리지 않는다" in text
@@ -70,6 +70,7 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "timebox로만 허용한다" in text
     assert "failure path 일반화에서 최소 orchestration failure shape와 single-run telemetry가 안정된 뒤 multi-run KPI summary를 붙였다." in text
     assert "same-surface observed evidence를 더 누적한다." in text
+    assert "collected observed summary에도 `observed_data_bottleneck_summary`를 넣어 샘플 부족과 rejected observed_output reason을 함께 읽게 만들었다." in text
     assert "최근 반영된 1차 변화:" in text
     assert "`omc-plan` 출력 contract에 `decision / risk / next_action` 의미를 plan 문맥으로 고정" in text
     assert "`omc-review` 출력 contract에 `decision / risk / next_action` 의미를 review 문맥으로 고정" in text

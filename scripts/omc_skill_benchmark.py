@@ -1247,6 +1247,7 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
                 "policy_pair_counts": {},
                 "rejected_observed_output_case_count": 0,
                 "rejected_observed_output_reasons": {},
+                "observed_data_bottleneck_summary": "observed data bottleneck: need more observed samples",
             },
         }
 
@@ -1276,6 +1277,26 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
     comparison_scope_counts = _count_comparison_scopes(cases)
     readiness_observed_sample_count = _count_observed_samples(cases)
     readiness_same_surface_case_count = _count_readiness_same_surface_observed_samples(cases)
+    observed_data_bottleneck_summary = "observed data bottleneck: need more observed samples"
+    if readiness_observed_sample_count >= KPI_MIN_SAMPLE_COUNT:
+        if readiness_same_surface_case_count < 1:
+            observed_data_bottleneck_summary = (
+                "observed data bottleneck: need more same-surface evidence"
+            )
+        else:
+            observed_data_bottleneck_summary = "observed data bottleneck: baseline comparison input is ready"
+    rejected_observed_output_case_count = sum(rejected_observed_output_reasons.values())
+    if rejected_observed_output_case_count > 0:
+        reason_parts: list[str] = []
+        for key in sorted(rejected_observed_output_reasons):
+            count = rejected_observed_output_reasons.get(key)
+            if isinstance(count, int):
+                reason_parts.append(f"{key}:{count}")
+        if reason_parts:
+            observed_data_bottleneck_summary += (
+                f"; rejected observed_output={rejected_observed_output_case_count} "
+                f"({','.join(reason_parts)})"
+            )
     return {
         "cases": cases,
         "summary": {
@@ -1291,8 +1312,9 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             "readiness_same_surface_case_count": readiness_same_surface_case_count,
             "distinct_policy_pair_count": len(_count_policy_pairs(cases)),
             "policy_pair_counts": _count_policy_pairs(cases),
-            "rejected_observed_output_case_count": sum(rejected_observed_output_reasons.values()),
+            "rejected_observed_output_case_count": rejected_observed_output_case_count,
             "rejected_observed_output_reasons": rejected_observed_output_reasons,
+            "observed_data_bottleneck_summary": observed_data_bottleneck_summary,
         },
     }
 

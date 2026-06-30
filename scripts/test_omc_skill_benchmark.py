@@ -958,6 +958,9 @@ def test_collect_observed_response_mode_cases_summarizes_readiness_observed_coun
     assert payload["summary"]["neutral_seed_case_count"] == 1
     assert payload["summary"]["readiness_observed_sample_count"] == 2
     assert payload["summary"]["readiness_same_surface_case_count"] == 1
+    assert payload["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: need more observed samples"
+    )
 
 
 def test_collect_observed_response_mode_cases_reports_rejected_observed_output_metadata(tmp_path: Path):
@@ -992,6 +995,10 @@ def test_collect_observed_response_mode_cases_reports_rejected_observed_output_m
     assert payload["summary"]["rejected_observed_output_reasons"] == {
         "missing_candidate_response_sample": 1
     }
+    assert payload["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: need more observed samples; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
 
 
 def test_compare_response_modes_reports_incomplete_next_action_cases():
