@@ -450,7 +450,7 @@ PASS / FAIL: PASS
 | 과다 단계 진입 | `plan` 확인 요청인데 바로 `task`/구현 전개 | `scripts/test_omc_skill_benchmark.py`의 response mode 비교, `docs/orchestration_usage.md` 정지 규칙 | role suggestion 단계에서 plan 확인 요청을 더 안정적으로 `사용자 선택 대기` 또는 `$omc-critique`로 분기하는 규칙 강화 필요 | `scripts/omc_role_suggest.py`, `scripts/test_omc_role_suggest.py`, `scripts/test_omc_skill_benchmark.py` |
 | 과다 출력 | 답은 맞지만 PHASE/TDD 본문이 과도하게 길어져 확인 비용이 커짐 | `scripts/test_omc_skill_benchmark.py`의 output char delta, `docs/omc_skill_compaction_report.md` 압축 리포트 | 스킬별 response budget과 압축 종료 기준이 실제 추천 품질과 함께 묶여 보이지 않음 | `scripts/omc_skill_benchmark.py`, `scripts/test_omc_skill_benchmark.py`, `docs/omc_skill_compaction_report.md` |
 | 재진입 루프 | 사용자가 “아니”, “다시”, “정리해줘”로 경로를 되돌림 | baseline trace의 reroute 감지, `docs/orchestration_usage.md` fallback 규칙 | reroute가 난 케이스를 상위 낭비 흐름으로 고정 리포트하는 문서/테스트가 부족했음 | `scripts/omc_skill_benchmark.py`, `scripts/test_omc_skill_benchmark.py`, `docs/verification_checklist.md` |
-| 잘못된 다음 스킬 추천 | 실제로는 `critique`/대기여야 하는데 `task` 추천 | 다음 스킬 추천 수동 시나리오, fixture의 `expected_next_action` 검증 | observed request 기반으로 어떤 유형에서 잘못 추천되는지 한눈에 보는 커버 맵이 부족 | `scripts/fixtures/omc_response_mode_cases.json`, `scripts/omc_role_suggest.py`, `scripts/test_omc_role_suggest.py` |
+| 잘못된 다음 스킬 추천 | 실제로는 `critique`/대기여야 하는데 `task` 추천 | 다음 스킬 추천 수동 시나리오, fixture의 `expected_next_action` 검증, `top-expensive-flows`의 next-action gap 표시 | observed request 기반으로 어떤 유형에서 잘못 추천되는지 한눈에 보는 커버 맵이 부족 | `scripts/fixtures/omc_response_mode_cases.json`, `scripts/omc_role_suggest.py`, `scripts/test_omc_role_suggest.py` |
 
 다음 우선순위:
 

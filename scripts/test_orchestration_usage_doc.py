@@ -52,3 +52,16 @@ def test_orchestration_usage_doc_uses_single_gemini_input_style() -> None:
 
     assert "command entry" not in text
     assert "| Gemini CLI | `/plan`, `/task`, `/review` |" in text
+
+
+def test_orchestration_usage_doc_separates_big_plan_from_small_autopilot_units() -> None:
+    text = DOC.read_text(encoding="utf-8")
+
+    required_markers = [
+        "autopilot 작업 단위 기준",
+        "spec이 고정된 한 태스크씩만",
+        "task file 기준",
+        "autopilot은 실행 보조용이지",
+    ]
+    missing = [marker for marker in required_markers if marker not in text]
+    assert not missing, f"missing autopilot scope markers: {missing}"

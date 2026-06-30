@@ -1192,3 +1192,40 @@ def test_response_mode_fixture_exposes_top5_expensive_flows():
     assert report["summary"]["observed_case_count"] >= 5
     assert any(item["source_type"] == "observed_request" for item in report["flows"])
     assert any(item["flow_kind"] == "wrong_next_step" for item in report["flows"])
+    wrong_next_step_flow = next(item for item in report["flows"] if item["flow_kind"] == "wrong_next_step")
+    assert "expected_next_action" in wrong_next_step_flow
+    assert "baseline_next_action_correct" in wrong_next_step_flow
+    assert "candidate_next_action_correct" in wrong_next_step_flow
+
+
+def test_build_expensive_flow_report_marks_missing_next_actions_as_gap():
+    mod = _load_module()
+
+    cases = [
+        {
+            "request": "현재 git changes 변경 상태 리뷰 보고 정말 괜찮은 변경인지 체크하려고 하는데 무슨 스킬 써야해",
+            "expected_mode": "review-first",
+            "expected_next_action": "$omc-review",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 리뷰 시작"],
+            "candidate_trace": ["assistant: 리뷰 시작"],
+            "baseline_output_chars": 288,
+            "candidate_output_chars": 302,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 1,
+            "baseline_next_action": "$omc-review",
+            "source_type": "observed_request",
+            "evidence": "real request",
+        }
+    ]
+
+    report = mod.build_expensive_flow_report(cases)
+
+    flow = report["flows"][0]
+    assert flow["flow_kind"] == "general_overhead"
+    assert flow["expected_next_action"] == "$omc-review"
+    assert flow["baseline_next_action"] == "$omc-review"
+    assert "candidate_next_action" not in flow
+    assert flow["next_action_incomplete"] is True
+    assert flow["next_action_gap"] is True

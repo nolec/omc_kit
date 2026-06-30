@@ -39,7 +39,7 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "decision engine 잔여 예외 감사는 완료됐고, 추가 코드 gap은 발견되지 않았다." in text
     assert "decision engine 일반화 2차" not in text
     assert "next-action 품질 보강 3차" in text
-    assert "autopilot 작업 단위 정리" in text
+    assert "policy 비교 자동화 + telemetry report 정리" in text
     assert "failure path 일반화에서 최소 orchestration failure shape와 single-run telemetry가 안정된 뒤 multi-run KPI summary를 붙였다." in text
     assert "최근 반영된 1차 변화:" in text
     assert "`omc-plan` 출력 contract에 `decision / risk / next_action` 의미를 plan 문맥으로 고정" in text
@@ -59,5 +59,6 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "`2-1 next_action 공통화`도 끝났다." in text
     assert "`2-2 reroute / delay UX`도 1차 완료됐다." in text
     assert "next-action 품질 보강 3차의 plan/review/status 병목 우선 추천은 반영 완료다." in text
-    assert "다음 남은 조각은 fixture/benchmark에도 이 우선순위를 더 직접 반영해 실제 기대 추천과의 오차를 줄이는 것이다." in text
+    assert "policy 비교 자동화 + telemetry report 정리" in text
+    assert "benchmark/report 출력이 비교 가능한 형태로 정리되도록 다듬는다." in text
     assert "next-action 품질 보강 3차" in text

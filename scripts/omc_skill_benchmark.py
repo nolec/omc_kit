@@ -383,6 +383,7 @@ def build_expensive_flow_report(
         flow_kind = _classify_expensive_flow(case)
         waste_score = _score_expensive_flow(case, flow_kind)
         source_type = str(case.get("source_type", "")) if case.get("source_type") else ""
+        expected_next_action = case.get("expected_next_action")
         if source_type.startswith("observed_"):
             observed_case_count += 1
         flow_kind_counts[flow_kind] = flow_kind_counts.get(flow_kind, 0) + 1
@@ -407,10 +408,28 @@ def build_expensive_flow_report(
                 [str(item) for item in case.get("baseline_trace", [])]
             ),
         }
+        if isinstance(expected_next_action, str) and expected_next_action:
+            baseline_next_action = case.get("baseline_next_action")
+            candidate_next_action = case.get("candidate_next_action")
+            flow["expected_next_action"] = expected_next_action
+            next_action_incomplete = False
+            if isinstance(baseline_next_action, str) and baseline_next_action:
+                flow["baseline_next_action"] = baseline_next_action
+                flow["baseline_next_action_correct"] = baseline_next_action == expected_next_action
+            else:
+                next_action_incomplete = True
+            if isinstance(candidate_next_action, str) and candidate_next_action:
+                flow["candidate_next_action"] = candidate_next_action
+                flow["candidate_next_action_correct"] = candidate_next_action == expected_next_action
+            else:
+                next_action_incomplete = True
+            flow["next_action_incomplete"] = next_action_incomplete
+            flow["next_action_gap"] = (
+                next_action_incomplete
+                or flow.get("baseline_next_action_correct") is False
+                or flow.get("candidate_next_action_correct") is False
+            )
         for field in (
-            "expected_next_action",
-            "baseline_next_action",
-            "candidate_next_action",
             "source_type",
             "evidence",
             "comparison_scope",
