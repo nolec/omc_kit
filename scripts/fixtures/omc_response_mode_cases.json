@@ -409,6 +409,75 @@
       "candidate_response_sample": "스킬이 이전보다 개선됐는지에 초점을 맞춰 사용자 체감/운영/한계를 구분해 설명"
     },
     {
+      "request": "우리 omc 관련 벤치마킹해야지",
+      "expected_mode": "answer-first",
+      "expected_next_action": "$omc-benchmark",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: plan으로 먼저 정리하라고 안내",
+        "user: benchmark 기준이 필요하다고 다시 요청"
+      ],
+      "candidate_trace": [
+        "assistant: 벤치마크 비교 대상과 갭을 바로 잡음",
+        "assistant: 다음 액션을 $omc-benchmark로 제안"
+      ],
+      "baseline_output_chars": 256,
+      "candidate_output_chars": 282,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-plan",
+      "candidate_next_action": "$omc-benchmark",
+      "source_type": "observed_request",
+      "evidence": "2026-06-30 실제 세션 요청문 추출: omc 벤치마킹 요청"
+    },
+    {
+      "request": "현재 omc 상태랑 okx-maker-grid-bot-wind 에서 사용중인 omc 상태랑 비교해보자",
+      "expected_mode": "answer-first",
+      "expected_next_action": "$omc-benchmark",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: 상태 확인부터 하자고 응답",
+        "user: 비교도 같이 보고 싶다고 재요청"
+      ],
+      "candidate_trace": [
+        "assistant: 두 프로젝트의 오케스트레이션 상태를 비교",
+        "assistant: 벤치마크 절차로 이어가도록 안내"
+      ],
+      "baseline_output_chars": 301,
+      "candidate_output_chars": 322,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-status",
+      "candidate_next_action": "$omc-benchmark",
+      "source_type": "observed_request",
+      "evidence": "2026-06-30 실제 세션 요청문 추출: omc 상태 비교 요청"
+    },
+    {
+      "request": "현재 우리 omc 시스템 어느정도야",
+      "expected_mode": "answer-first",
+      "expected_next_action": "$omc-status",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: 작업 목록 요약",
+        "user: 현재 상태를 빠르게 알려달라고 재요청"
+      ],
+      "candidate_trace": [
+        "assistant: 현재 OMC 상태를 한 화면으로 정리",
+        "assistant: 다음 단계로 $omc-status를 제안"
+      ],
+      "baseline_output_chars": 244,
+      "candidate_output_chars": 260,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "$omc-status",
+      "source_type": "observed_request",
+      "evidence": "2026-06-30 실제 세션 요청문 추출: 현재 OMC 상태 질문"
+    },
+    {
       "request": "이거 클로드코드로 실행한건데 이거 제대로 진행된 거 맞아? plan",
       "expected_mode": "answer-first",
       "expected_next_action": "사용자 선택 대기",

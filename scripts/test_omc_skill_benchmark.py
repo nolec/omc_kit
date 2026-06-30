@@ -795,9 +795,9 @@ def test_response_mode_fixture_covers_three_policy_modes_and_mixed_intent_exampl
             assert isinstance(case.get("candidate_next_action"), str) and case["candidate_next_action"].strip()
 
     assert all(count >= 3 for count in mode_counts.values())
-    assert len(observed_request_cases) >= 12
+    assert len(observed_request_cases) >= 15
     assert len(observed_output_cases) >= 2
-    assert len(cases_with_next_action) >= 13
+    assert len(cases_with_next_action) >= 16
     assert "이 버그 원인 먼저 보고 바로 고칠 수 있으면 수정해줘" in requests
     assert "이 변경 위험한지 먼저 리뷰해주고, 괜찮으면 그다음 커밋까지 해줘" in requests
     assert "이 기능 해야 할지 판단하고 진행 순서만 정리해줘" in requests
@@ -1025,6 +1025,34 @@ def test_response_mode_fixture_covers_roadmap_sync_next_action():
     assert report["cases"][0]["expected_next_action"] == "$omc-plan"
     assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
     assert report["cases"][0]["candidate"]["next_action"] == "$omc-plan"
+
+
+def test_response_mode_fixture_covers_benchmark_status_and_comparison_requests():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    case_map = {case["request"]: case for case in cases}
+
+    benchmark_case = case_map["우리 omc 관련 벤치마킹해야지"]
+    compare_case = case_map["현재 omc 상태랑 okx-maker-grid-bot-wind 에서 사용중인 omc 상태랑 비교해보자"]
+    status_case = case_map["현재 우리 omc 시스템 어느정도야"]
+
+    report = mod.compare_response_modes([benchmark_case, compare_case, status_case])
+
+    assert report["summary"]["next_action_case_count"] == 3
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert report["cases"][0]["expected_next_action"] == "$omc-benchmark"
+    assert report["cases"][0]["baseline"]["next_action"] == "$omc-plan"
+    assert report["cases"][0]["candidate"]["next_action"] == "$omc-benchmark"
+    assert report["cases"][1]["expected_next_action"] == "$omc-benchmark"
+    assert report["cases"][1]["baseline"]["next_action"] == "$omc-status"
+    assert report["cases"][1]["candidate"]["next_action"] == "$omc-benchmark"
+    assert report["cases"][2]["expected_next_action"] == "$omc-status"
+    assert report["cases"][2]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][2]["candidate"]["next_action"] == "$omc-status"
 
 
 def test_response_mode_fixture_observed_review_request_prefers_review_next_action():
