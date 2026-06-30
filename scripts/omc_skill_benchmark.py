@@ -75,6 +75,18 @@ def _count_observed_samples(cases: list[dict[str, object]]) -> int:
     return count
 
 
+def _count_readiness_same_surface_observed_samples(cases: list[dict[str, object]]) -> int:
+    count = 0
+    for case in cases:
+        if bool(case.get("neutral_seed")):
+            continue
+        if str(case.get("source_type") or "").strip() != "observed_output":
+            continue
+        if str(case.get("comparison_scope") or "").strip() == "same_surface":
+            count += 1
+    return count
+
+
 def _distinct_policies(cases: list[dict[str, object]]) -> list[str]:
     policies: set[str] = set()
     for case in cases:
@@ -380,11 +392,58 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
     if checks.get("next_step_accuracy_not_worse") is False and verdict == "adopt":
         verdict = "revise"
 
+    readiness_sample_count = int(summary.get("readiness_observed_sample_count", 0))
+    readiness_same_surface_count = int(summary.get("readiness_same_surface_case_count", 0))
+    distinct_policy_pair_count = int(summary.get("distinct_policy_pair_count", 0))
+    baseline_comparison_ready = bool(summary.get("baseline_comparison_ready", False))
     kpi_readiness = "ready"
-    if not bool(summary.get("sample_requirement_met", False)):
+    readiness_status_line = (
+        "not ready: "
+        f"samples {readiness_sample_count}/{KPI_MIN_SAMPLE_COUNT}, "
+        f"same-surface {readiness_same_surface_count}/1, "
+        f"policy pairs {distinct_policy_pair_count}/2"
+    )
+    next_kpi_blocker = "none"
+    if readiness_sample_count < KPI_MIN_SAMPLE_COUNT:
         kpi_readiness = "incomplete"
-    elif not bool(summary.get("policy_requirement_met", False)):
+        next_kpi_blocker = "insufficient_observed_samples"
+    elif readiness_same_surface_count < 1:
         kpi_readiness = "incomplete"
+        next_kpi_blocker = "insufficient_same_surface_evidence"
+    elif distinct_policy_pair_count < 2:
+        kpi_readiness = "incomplete"
+        next_kpi_blocker = "insufficient_policy_pairs"
+    else:
+        readiness_status_line = "ready: baseline comparison wording can be enabled"
+
+    if not baseline_comparison_ready:
+        kpi_readiness = "incomplete"
+
+    baseline_comparison_status = "ready" if baseline_comparison_ready and kpi_readiness == "ready" else "deferred"
+    if baseline_comparison_status == "ready":
+        mode_delta = float(summary.get("mode_accuracy_delta", 0))
+        reroute_delta = float(summary.get("reroute_rate_delta", 0))
+        delay_delta = float(summary.get("candidate_task_start_delay_delta", 0))
+
+        mode_direction = "improves" if mode_delta >= 0 else "worsens"
+        reroute_direction = "improves" if reroute_delta <= 0 else "worsens"
+        delay_direction = "improves" if delay_delta <= 0 else "worsens"
+        baseline_comparison_line = (
+            "baseline comparison ready: "
+            f"candidate {mode_direction} mode accuracy by {abs(mode_delta) * 100:.1f}pp, "
+            f"{reroute_direction} reroute rate by {abs(reroute_delta) * 100:.1f}pp, "
+            f"and {delay_direction} task start delay by {abs(delay_delta):.1f}"
+        )
+    else:
+        deferred_reason_map = {
+            "insufficient_observed_samples": "need more observed samples",
+            "insufficient_same_surface_evidence": "need more same-surface evidence",
+            "insufficient_policy_pairs": "need more policy pair coverage",
+        }
+        baseline_comparison_line = (
+            "baseline comparison deferred: "
+            + deferred_reason_map.get(next_kpi_blocker, "readiness requirements are not met")
+        )
 
     return {
         "verdict": verdict,
@@ -394,6 +453,10 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         "output_growth_rate": output_growth_rate,
         "observed_evidence_guard": observed_evidence_guard,
         "kpi_readiness": kpi_readiness,
+        "readiness_status_line": readiness_status_line,
+        "next_kpi_blocker": next_kpi_blocker,
+        "baseline_comparison_status": baseline_comparison_status,
+        "baseline_comparison_line": baseline_comparison_line,
     }
 
 
@@ -540,6 +603,7 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
     primary_policy_pair = _primary_policy_pair(policy_pair_counts)
     sample_case_count = len(cases)
     observed_sample_case_count = _count_observed_samples(cases)
+    readiness_observed_sample_count = observed_sample_case_count
     distinct_policy_pair_count = len(policy_pair_counts)
     sample_requirement_met = observed_sample_case_count >= KPI_MIN_SAMPLE_COUNT
     policy_requirement_met = distinct_policy_pair_count >= 2
@@ -548,6 +612,8 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
             "case_count": 0,
             "sample_case_count": sample_case_count,
             "observed_sample_case_count": observed_sample_case_count,
+            "readiness_observed_sample_count": readiness_observed_sample_count,
+            "readiness_sample_gap": max(KPI_MIN_SAMPLE_COUNT - readiness_observed_sample_count, 0),
             "sample_requirement_met": sample_requirement_met,
             "distinct_policy_count": len(distinct_policies),
             "distinct_policies": distinct_policies,
@@ -579,6 +645,9 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
             "comparison_scope_counts": {},
             "observed_output_count": 0,
             "observed_same_surface_count": 0,
+            "readiness_same_surface_case_count": 0,
+            "readiness_same_surface_gap": 1,
+            "baseline_comparison_ready": False,
         }
         return {"cases": [], "summary": summary, "decision": _decision_from_summary(summary)}
 
@@ -629,11 +698,21 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
     ]
     comparison_scope_counts = _count_comparison_scopes(observed_output_cases)
     observed_same_surface_count = comparison_scope_counts.get("same_surface", 0)
+    readiness_same_surface_case_count = observed_same_surface_count
+    readiness_sample_gap = max(KPI_MIN_SAMPLE_COUNT - readiness_observed_sample_count, 0)
+    readiness_same_surface_gap = max(1 - readiness_same_surface_case_count, 0)
+    baseline_comparison_ready = (
+        readiness_sample_gap == 0
+        and readiness_same_surface_gap == 0
+        and distinct_policy_pair_count >= 2
+    )
 
     summary = {
         "case_count": case_count,
         "sample_case_count": sample_case_count,
         "observed_sample_case_count": observed_sample_case_count,
+        "readiness_observed_sample_count": readiness_observed_sample_count,
+        "readiness_sample_gap": readiness_sample_gap,
         "sample_requirement_met": sample_requirement_met,
         "distinct_policy_count": len(distinct_policies),
         "distinct_policies": distinct_policies,
@@ -671,6 +750,9 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
         "comparison_scope_counts": comparison_scope_counts,
         "observed_output_count": len(observed_output_cases),
         "observed_same_surface_count": observed_same_surface_count,
+        "readiness_same_surface_case_count": readiness_same_surface_case_count,
+        "readiness_same_surface_gap": readiness_same_surface_gap,
+        "baseline_comparison_ready": baseline_comparison_ready,
     }
     return {"cases": compared_cases, "summary": summary, "decision": _decision_from_summary(summary)}
 
@@ -1080,6 +1162,8 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
                 "observed_output_case_count": 0,
                 "same_surface_case_count": 0,
                 "cross_surface_case_count": 0,
+                "readiness_observed_sample_count": 0,
+                "readiness_same_surface_case_count": 0,
                 "distinct_policy_pair_count": 0,
                 "policy_pair_counts": {},
             },
@@ -1103,17 +1187,21 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             cases.append(case)
 
     comparison_scope_counts = _count_comparison_scopes(cases)
+    readiness_observed_sample_count = _count_observed_samples(cases)
+    readiness_same_surface_case_count = _count_readiness_same_surface_observed_samples(cases)
     return {
         "cases": cases,
         "summary": {
             "case_count": len(cases),
-            "observed_sample_case_count": _count_observed_samples(cases),
+            "observed_sample_case_count": readiness_observed_sample_count,
             "neutral_seed_case_count": sum(1 for case in cases if bool(case.get("neutral_seed"))),
             "observed_output_case_count": sum(
                 1 for case in cases if str(case.get("source_type") or "").strip() == "observed_output"
             ),
             "same_surface_case_count": comparison_scope_counts.get("same_surface", 0),
             "cross_surface_case_count": comparison_scope_counts.get("cross_surface", 0),
+            "readiness_observed_sample_count": readiness_observed_sample_count,
+            "readiness_same_surface_case_count": readiness_same_surface_case_count,
             "distinct_policy_pair_count": len(_count_policy_pairs(cases)),
             "policy_pair_counts": _count_policy_pairs(cases),
         },

@@ -884,6 +884,82 @@ def test_collect_observed_response_mode_cases_builds_observed_output_cases_from_
     assert case["candidate_response_sample"] == "판정과 다음 액션을 분리해 멈춤"
 
 
+def test_collect_observed_response_mode_cases_summarizes_readiness_observed_counts(tmp_path: Path):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+
+    same_surface = runs_root / "20260630T151515-same1111"
+    same_surface.mkdir(parents=True, exist_ok=True)
+    (same_surface / "result.json").write_text(
+        json.dumps(
+            {
+                "task_id": "observed-collect",
+                "instruction": "plan 출력이 멈춰야 하는지 확인해줘",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "baseline->candidate",
+                "comparison_scope": "same_surface",
+                "baseline_response_sample": "바로 task로 진행",
+                "candidate_response_sample": "판정 후 멈춤",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    cross_surface = runs_root / "20260630T161616-cross2222"
+    cross_surface.mkdir(parents=True, exist_ok=True)
+    (cross_surface / "result.json").write_text(
+        json.dumps(
+            {
+                "task_id": "observed-collect",
+                "instruction": "status 응답 품질 비교",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "candidate->baseline",
+                "comparison_scope": "cross_surface",
+                "baseline_response_sample": "긴 상태 설명",
+                "candidate_response_sample": "핵심만 정리",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    neutral_seed = runs_root / "20260630T171717-seed3333"
+    neutral_seed.mkdir(parents=True, exist_ok=True)
+    (neutral_seed / "result.json").write_text(
+        json.dumps(
+            {
+                "task_id": "observed-collect",
+                "instruction": "현재 로드맵 최신화하고 다음 작업 체크",
+                "benchmark_source_type": "observed_request",
+                "policy_pair": "baseline->candidate",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    payload = mod.collect_observed_response_mode_cases(runs_root)
+
+    assert payload["summary"]["case_count"] == 3
+    assert payload["summary"]["observed_sample_case_count"] == 2
+    assert payload["summary"]["same_surface_case_count"] == 1
+    assert payload["summary"]["cross_surface_case_count"] == 1
+    assert payload["summary"]["neutral_seed_case_count"] == 1
+    assert payload["summary"]["readiness_observed_sample_count"] == 2
+    assert payload["summary"]["readiness_same_surface_case_count"] == 1
+
+
 def test_compare_response_modes_reports_incomplete_next_action_cases():
     mod = _load_module()
 
@@ -1227,6 +1303,37 @@ def test_compare_response_modes_reports_kpi_readiness_and_policy_pairs():
     assert report["decision"]["kpi_readiness"] == "incomplete"
 
 
+def test_compare_response_modes_reports_readiness_status_line_and_blocker():
+    mod = _load_module()
+
+    case = {
+        "request": "리뷰해줘",
+        "expected_mode": "review-first",
+        "baseline_policy": "baseline",
+        "candidate_policy": "candidate",
+        "baseline_trace": ["assistant: 설명만 제공", "user: 아니 리뷰해줘"],
+        "candidate_trace": ["assistant: 리뷰 시작"],
+        "baseline_output_chars": 300,
+        "candidate_output_chars": 220,
+        "baseline_task_start_delay": 2,
+        "candidate_task_start_delay": 1,
+        "source_type": "observed_output",
+        "comparison_scope": "cross_surface",
+        "baseline_response_sample": "요약만 제공",
+        "candidate_response_sample": "리뷰 구조로 응답",
+    }
+
+    report = mod.compare_response_modes([case])
+
+    assert report["summary"]["readiness_sample_gap"] == 19
+    assert report["summary"]["readiness_same_surface_gap"] == 1
+    assert report["summary"]["baseline_comparison_ready"] is False
+    assert report["decision"]["readiness_status_line"] == "not ready: samples 1/20, same-surface 0/1, policy pairs 1/2"
+    assert report["decision"]["next_kpi_blocker"] == "insufficient_observed_samples"
+    assert report["decision"]["baseline_comparison_status"] == "deferred"
+    assert report["decision"]["baseline_comparison_line"] == "baseline comparison deferred: need more observed samples"
+
+
 def test_compare_response_modes_marks_kpi_ready_at_twenty_samples():
     mod = _load_module()
 
@@ -1255,7 +1362,7 @@ def test_compare_response_modes_marks_kpi_ready_at_twenty_samples():
     assert report["decision"]["kpi_readiness"] == "incomplete"
 
 
-def test_compare_response_modes_marks_kpi_ready_with_twenty_observed_cases_and_two_pairs():
+def test_compare_response_modes_defers_baseline_comparison_when_only_observed_requests_exist():
     mod = _load_module()
 
     cases = []
@@ -1300,7 +1407,47 @@ def test_compare_response_modes_marks_kpi_ready_with_twenty_observed_cases_and_t
     assert report["summary"]["sample_requirement_met"] is True
     assert report["summary"]["distinct_policy_pair_count"] == 2
     assert report["summary"]["policy_requirement_met"] is True
-    assert report["decision"]["kpi_readiness"] == "ready"
+    assert report["summary"]["baseline_comparison_ready"] is False
+    assert report["decision"]["kpi_readiness"] == "incomplete"
+    assert report["decision"]["readiness_status_line"] == "not ready: samples 20/20, same-surface 0/1, policy pairs 2/2"
+    assert report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
+    assert report["decision"]["baseline_comparison_status"] == "deferred"
+    assert report["decision"]["baseline_comparison_line"] == "baseline comparison deferred: need more same-surface evidence"
+
+
+def test_compare_response_modes_marks_kpi_incomplete_when_same_surface_evidence_is_missing():
+    mod = _load_module()
+
+    cases = []
+    for index in range(20):
+        cases.append(
+            {
+                "request": f"리뷰해줘 {index}",
+                "expected_mode": "review-first",
+                "baseline_policy": "baseline" if index < 10 else "candidate",
+                "candidate_policy": "candidate" if index < 10 else "baseline",
+                "baseline_trace": ["assistant: 설명만 제공", "user: 아니 리뷰해줘"],
+                "candidate_trace": ["assistant: 리뷰 시작"],
+                "baseline_output_chars": 300,
+                "candidate_output_chars": 220,
+                "baseline_task_start_delay": 2,
+                "candidate_task_start_delay": 1,
+                "source_type": "observed_output",
+                "comparison_scope": "cross_surface",
+                "baseline_response_sample": "요약만 제공",
+                "candidate_response_sample": "리뷰 구조로 응답",
+            }
+        )
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["summary"]["sample_requirement_met"] is True
+    assert report["summary"]["policy_requirement_met"] is True
+    assert report["summary"]["readiness_same_surface_case_count"] == 0
+    assert report["summary"]["readiness_same_surface_gap"] == 1
+    assert report["decision"]["kpi_readiness"] == "incomplete"
+    assert report["decision"]["readiness_status_line"] == "not ready: samples 20/20, same-surface 0/1, policy pairs 2/2"
+    assert report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
 
 
 def test_response_mode_fixture_observed_request_case_affects_next_action_accuracy():
