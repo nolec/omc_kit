@@ -961,6 +961,113 @@ def test_compare_response_modes_derives_reroute_from_trace():
     assert report["cases"][0]["candidate"]["reroute"] is False
 
 
+def test_compare_response_modes_reports_kpi_readiness_and_policy_pairs():
+    mod = _load_module()
+
+    cases = [
+        {
+            "request": "리뷰해줘",
+            "expected_mode": "review-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 설명만 제공", "user: 아니 리뷰해줘"],
+            "candidate_trace": ["assistant: 리뷰 시작"],
+            "baseline_output_chars": 300,
+            "candidate_output_chars": 315,
+            "baseline_task_start_delay": 2,
+            "candidate_task_start_delay": 1,
+        }
+    ]
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["summary"]["sample_case_count"] == 1
+    assert report["summary"]["observed_sample_case_count"] == 0
+    assert report["summary"]["sample_requirement_met"] is False
+    assert report["summary"]["distinct_policy_count"] == 2
+    assert report["summary"]["distinct_policy_pair_count"] == 1
+    assert report["summary"]["policy_requirement_met"] is False
+    assert report["summary"]["policy_pair_counts"] == {"baseline->candidate": 1}
+    assert report["summary"]["primary_policy_pair"] == "baseline->candidate"
+    assert report["decision"]["kpi_readiness"] == "incomplete"
+
+
+def test_compare_response_modes_marks_kpi_ready_at_twenty_samples():
+    mod = _load_module()
+
+    cases = [
+        {
+            "request": f"리뷰해줘 {index}",
+            "expected_mode": "review-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 설명만 제공", "user: 아니 리뷰해줘"],
+            "candidate_trace": ["assistant: 리뷰 시작"],
+            "baseline_output_chars": 300,
+            "candidate_output_chars": 315,
+            "baseline_task_start_delay": 2,
+            "candidate_task_start_delay": 1,
+        }
+        for index in range(20)
+    ]
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["summary"]["sample_case_count"] == 20
+    assert report["summary"]["observed_sample_case_count"] == 0
+    assert report["summary"]["sample_requirement_met"] is False
+    assert report["summary"]["primary_policy_pair"] == "baseline->candidate"
+    assert report["decision"]["kpi_readiness"] == "incomplete"
+
+
+def test_compare_response_modes_marks_kpi_ready_with_twenty_observed_cases_and_two_pairs():
+    mod = _load_module()
+
+    cases = []
+    for index in range(10):
+        cases.append(
+            {
+                "request": f"리뷰해줘 observed {index}",
+                "expected_mode": "review-first",
+                "baseline_policy": "baseline",
+                "candidate_policy": "candidate",
+                "baseline_trace": ["assistant: 설명만 제공", "user: 아니 리뷰해줘"],
+                "candidate_trace": ["assistant: 리뷰 시작"],
+                "baseline_output_chars": 300,
+                "candidate_output_chars": 315,
+                "baseline_task_start_delay": 2,
+                "candidate_task_start_delay": 1,
+                "source_type": "observed_request",
+                "evidence": f"session-{index}",
+            }
+        )
+        cases.append(
+            {
+                "request": f"구현해줘 observed {index}",
+                "expected_mode": "execute-first",
+                "baseline_policy": "candidate",
+                "candidate_policy": "baseline",
+                "baseline_trace": ["assistant: 설명만 제공", "user: 아니 구현해줘"],
+                "candidate_trace": ["assistant: 구현 시작"],
+                "baseline_output_chars": 280,
+                "candidate_output_chars": 260,
+                "baseline_task_start_delay": 2,
+                "candidate_task_start_delay": 1,
+                "source_type": "observed_request",
+                "evidence": f"session-exec-{index}",
+            }
+        )
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["summary"]["sample_case_count"] == 20
+    assert report["summary"]["observed_sample_case_count"] == 20
+    assert report["summary"]["sample_requirement_met"] is True
+    assert report["summary"]["distinct_policy_pair_count"] == 2
+    assert report["summary"]["policy_requirement_met"] is True
+    assert report["decision"]["kpi_readiness"] == "ready"
+
+
 def test_response_mode_fixture_observed_request_case_affects_next_action_accuracy():
     mod = _load_module()
 

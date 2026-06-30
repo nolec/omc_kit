@@ -12,6 +12,9 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "V2. Step-level Routing | 완료" in text
     assert "V3. Failure-driven Escalation | 완료" in text
     assert "V4. Telemetry-driven Tuning | 진행중" in text
+    assert "V3 승격 규칙 연결도 완료되어" in text
+    assert "선택 근거 기록 고도화" in text
+    assert "V4 KPI 2차의 baseline/timebox 기준도 고정됐다" in text
     assert "`retry_exhausted`와 `failed_critique_loop` 경로의 `escalation_policy` decision persistence 연결 및 critique 경로 runtime consumption이 완료됐다." in text
     assert "`task_retry` / `plan_retry` 성공 경로, `timeout` 경로, `failed` 계열 주요 경로의 decision payload shape 일반화와 `orchestration_failure` decision policy 연결이 반영됐다." in text
     assert "추가로 `.omc/runs/` 기준 `reroute_rate`, `retry_to_success_rate`, `cost_per_successful_task` multi-run KPI summary와 current-path 중복 제거까지 반영됐다." in text
@@ -44,11 +47,12 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "next-action 품질 보강 3차 - 완료" in text
     assert "telemetry report 정리 2차 - 완료" in text
     assert "## 다음 순환 목표" in text
+    assert "현재 기준으로는 V3 완료, V4 KPI 1차, Operator Experience 3차, V4 KPI 2차 baseline/timebox 기준까지 정리됐다." in text
     assert "V4 multi-run KPI summary 2차" in text
     assert "Operator Experience 4차" in text
     assert "Learned orchestrator 진입 조건 정리" in text
-    assert "multi-run 실행 샘플 20회 이상" in text
-    assert "비교 가능한 정책 후보 2개 이상" in text
+    assert "observed_request / observed_output 기준 multi-run 실행 샘플 20회 이상" in text
+    assert "distinct policy pair 2개 이상" in text
     assert "`reroute rate`, `retry-to-success rate`, `cost per successful task` 3개 KPI가 모두 표에 노출" in text
     assert "### 최소 KPI 기준" in text
     assert "baseline은 직전 정책 또는 고정 기준값 대비로 정의된다" in text
@@ -75,3 +79,4 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "telemetry report 정리 2차 - 완료" in text
     assert "정책 비교 리포트는 1차 자동화가 들어갔고, benchmark/report 출력도 비교 가능한 형태로 정리됐다." in text
     assert "next-action 품질 보강 3차 - 완료" in text
+    assert "`escalation_policy`를 V3 승격 엔진과 연결" not in text

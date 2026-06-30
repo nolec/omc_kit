@@ -29,6 +29,7 @@ RESPONSE_MODES = {"answer-first", "execute-first", "review-first"}
 POLICIES = {"baseline", "candidate"}
 CASE_VARIANTS = {"baseline", "candidate"}
 CASE_SOURCE_TYPES = {"synthetic", "observed_output", "current_contract_sample"}
+KPI_MIN_SAMPLE_COUNT = 20
 
 
 def _count_question_marks(text: str) -> int:
@@ -37,6 +38,43 @@ def _count_question_marks(text: str) -> int:
 
 def _average(values: list[int | float]) -> float:
     return sum(values) / len(values) if values else 0
+
+
+def _count_policy_pairs(cases: list[dict[str, object]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for case in cases:
+        baseline_policy = str(case.get("baseline_policy") or "").strip()
+        candidate_policy = str(case.get("candidate_policy") or "").strip()
+        if not baseline_policy or not candidate_policy:
+            continue
+        pair = f"{baseline_policy}->{candidate_policy}"
+        counts[pair] = counts.get(pair, 0) + 1
+    return counts
+
+
+def _count_observed_samples(cases: list[dict[str, object]]) -> int:
+    count = 0
+    for case in cases:
+        source_type = str(case.get("source_type") or "").strip()
+        if source_type in {"observed_request", "observed_output"}:
+            count += 1
+    return count
+
+
+def _distinct_policies(cases: list[dict[str, object]]) -> list[str]:
+    policies: set[str] = set()
+    for case in cases:
+        for field in ("baseline_policy", "candidate_policy"):
+            value = str(case.get(field) or "").strip()
+            if value:
+                policies.add(value)
+    return sorted(policies)
+
+
+def _primary_policy_pair(policy_pair_counts: dict[str, int]) -> str:
+    if not policy_pair_counts:
+        return ""
+    return sorted(policy_pair_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
 
 
 def _contains_user_reroute(trace: list[str]) -> bool:
@@ -307,6 +345,12 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
     if checks.get("next_step_accuracy_not_worse") is False and verdict == "adopt":
         verdict = "revise"
 
+    kpi_readiness = "ready"
+    if not bool(summary.get("sample_requirement_met", False)):
+        kpi_readiness = "incomplete"
+    elif not bool(summary.get("policy_requirement_met", False)):
+        kpi_readiness = "incomplete"
+
     return {
         "verdict": verdict,
         "passed_checks": passed,
@@ -314,6 +358,7 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         "checks": checks,
         "output_growth_rate": output_growth_rate,
         "observed_evidence_guard": observed_evidence_guard,
+        "kpi_readiness": kpi_readiness,
     }
 
 
@@ -455,9 +500,26 @@ def build_expensive_flow_report(
 def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
     compared_cases = [_compare_case(case) for case in cases]
     case_count = len(compared_cases)
+    distinct_policies = _distinct_policies(cases)
+    policy_pair_counts = _count_policy_pairs(cases)
+    primary_policy_pair = _primary_policy_pair(policy_pair_counts)
+    sample_case_count = len(cases)
+    observed_sample_case_count = _count_observed_samples(cases)
+    distinct_policy_pair_count = len(policy_pair_counts)
+    sample_requirement_met = observed_sample_case_count >= KPI_MIN_SAMPLE_COUNT
+    policy_requirement_met = distinct_policy_pair_count >= 2
     if case_count == 0:
         summary = {
             "case_count": 0,
+            "sample_case_count": sample_case_count,
+            "observed_sample_case_count": observed_sample_case_count,
+            "sample_requirement_met": sample_requirement_met,
+            "distinct_policy_count": len(distinct_policies),
+            "distinct_policies": distinct_policies,
+            "distinct_policy_pair_count": distinct_policy_pair_count,
+            "policy_requirement_met": policy_requirement_met,
+            "policy_pair_counts": policy_pair_counts,
+            "primary_policy_pair": primary_policy_pair,
             "baseline_mode_accuracy": 0,
             "candidate_mode_accuracy": 0,
             "mode_accuracy_delta": 0,
@@ -529,6 +591,15 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
 
     summary = {
         "case_count": case_count,
+        "sample_case_count": sample_case_count,
+        "observed_sample_case_count": observed_sample_case_count,
+        "sample_requirement_met": sample_requirement_met,
+        "distinct_policy_count": len(distinct_policies),
+        "distinct_policies": distinct_policies,
+        "distinct_policy_pair_count": distinct_policy_pair_count,
+        "policy_requirement_met": policy_requirement_met,
+        "policy_pair_counts": policy_pair_counts,
+        "primary_policy_pair": primary_policy_pair,
         "baseline_mode_accuracy": baseline_mode_accuracy,
         "candidate_mode_accuracy": candidate_mode_accuracy,
         "mode_accuracy_delta": candidate_mode_accuracy - baseline_mode_accuracy,
