@@ -960,6 +960,40 @@ def test_collect_observed_response_mode_cases_summarizes_readiness_observed_coun
     assert payload["summary"]["readiness_same_surface_case_count"] == 1
 
 
+def test_collect_observed_response_mode_cases_reports_rejected_observed_output_metadata(tmp_path: Path):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    invalid_output = runs_root / "20260630T181818-bad4444"
+    invalid_output.mkdir(parents=True, exist_ok=True)
+    (invalid_output / "result.json").write_text(
+        json.dumps(
+            {
+                "task_id": "observed-collect",
+                "instruction": "status 응답 품질 비교",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "baseline->candidate",
+                "comparison_scope": "same_surface",
+                "baseline_response_sample": "긴 상태 설명",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    payload = mod.collect_observed_response_mode_cases(runs_root)
+
+    assert payload["summary"]["case_count"] == 0
+    assert payload["summary"]["observed_output_case_count"] == 0
+    assert payload["summary"]["rejected_observed_output_case_count"] == 1
+    assert payload["summary"]["rejected_observed_output_reasons"] == {
+        "missing_candidate_response_sample": 1
+    }
+
+
 def test_compare_response_modes_reports_incomplete_next_action_cases():
     mod = _load_module()
 

@@ -1151,6 +1151,27 @@ def _build_observed_output_case_from_run_record(
     }
 
 
+def _validate_observed_output_run_record(record: dict[str, object]) -> str | None:
+    source_type = str(record.get("benchmark_source_type") or "").strip()
+    if source_type != "observed_output":
+        return None
+    request = str(record.get("instruction") or "").strip()
+    if not request:
+        return "missing_instruction"
+    if _parse_policy_pair(record.get("policy_pair")) is None:
+        return "invalid_policy_pair"
+    comparison_scope = str(record.get("comparison_scope") or "").strip()
+    if comparison_scope not in {"same_surface", "cross_surface"}:
+        return "invalid_comparison_scope"
+    baseline_response_sample = str(record.get("baseline_response_sample") or "").strip()
+    if not baseline_response_sample:
+        return "missing_baseline_response_sample"
+    candidate_response_sample = str(record.get("candidate_response_sample") or "").strip()
+    if not candidate_response_sample:
+        return "missing_candidate_response_sample"
+    return None
+
+
 def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
     if not runs_dir.exists():
         return {
@@ -1166,10 +1187,13 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
                 "readiness_same_surface_case_count": 0,
                 "distinct_policy_pair_count": 0,
                 "policy_pair_counts": {},
+                "rejected_observed_output_case_count": 0,
+                "rejected_observed_output_reasons": {},
             },
         }
 
     cases: list[dict[str, object]] = []
+    rejected_observed_output_reasons: dict[str, int] = {}
     for run_dir in sorted(runs_dir.iterdir()):
         result_path = run_dir / "result.json"
         if not result_path.exists():
@@ -1182,7 +1206,12 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             continue
         case = _build_observed_request_case_from_run_record(record, run_id=run_dir.name)
         if case is None:
+            rejection_reason = _validate_observed_output_run_record(record)
             case = _build_observed_output_case_from_run_record(record, run_id=run_dir.name)
+            if case is None and rejection_reason:
+                rejected_observed_output_reasons[rejection_reason] = (
+                    rejected_observed_output_reasons.get(rejection_reason, 0) + 1
+                )
         if case is not None:
             cases.append(case)
 
@@ -1204,6 +1233,8 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             "readiness_same_surface_case_count": readiness_same_surface_case_count,
             "distinct_policy_pair_count": len(_count_policy_pairs(cases)),
             "policy_pair_counts": _count_policy_pairs(cases),
+            "rejected_observed_output_case_count": sum(rejected_observed_output_reasons.values()),
+            "rejected_observed_output_reasons": rejected_observed_output_reasons,
         },
     }
 
