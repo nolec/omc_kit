@@ -1181,6 +1181,10 @@ def _build_benchmark_report(data: dict) -> dict:
         "final_verdict": final_verdict,
         "failure_category": failure_category,
         "failure_class_breakdown": failure_class_breakdown,
+        "baseline_comparison_status": data.get("baseline_comparison_status"),
+        "next_kpi_blocker": data.get("next_kpi_blocker"),
+        "readiness_status_line": data.get("readiness_status_line"),
+        "baseline_comparison_line": data.get("baseline_comparison_line"),
         "cost_estimate": None,
         "token_usage": None,
         "executor_cost_source": None,
@@ -1457,6 +1461,7 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     reroute_runs = sum(1 for report in reports if report.get("had_reroute") is True)
     recovered_runs = sum(1 for report in reports if report.get("recovered_after_retry") is True)
     observed_sample_count = 0
+    readiness_same_surface_count = 0
     distinct_policy_pairs: set[str] = set()
     for record in run_records:
         if not isinstance(record, dict):
@@ -1464,6 +1469,11 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         source_type = str(record.get("benchmark_source_type") or "").strip()
         if source_type in {"observed_request", "observed_output"}:
             observed_sample_count += 1
+        if (
+            source_type == "observed_output"
+            and str(record.get("comparison_scope") or "").strip() == "same_surface"
+        ):
+            readiness_same_surface_count += 1
         policy_pair = str(record.get("policy_pair") or "").strip()
         if policy_pair:
             distinct_policy_pairs.add(policy_pair)
@@ -1483,6 +1493,7 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
             else None
         ),
         "observed_sample_count": observed_sample_count,
+        "readiness_same_surface_count": readiness_same_surface_count,
         "distinct_policy_pair_count": len(distinct_policy_pairs),
     }
 
@@ -1554,6 +1565,7 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
         f"retry_to_success_rate={_format_overview_ratio(kpi_summary['retry_to_success_rate'])}  "
         f"cost_per_successful_task={_format_overview_cost(kpi_summary['cost_per_successful_task'])}  "
         f"observed_samples={kpi_summary['observed_sample_count']}  "
+        f"readiness_same_surface={kpi_summary['readiness_same_surface_count']}  "
         f"distinct_policy_pairs={kpi_summary['distinct_policy_pair_count']}"
     )
     print("run_id | branch | status | step | stale | failure_reason | next_action")

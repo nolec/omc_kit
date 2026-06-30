@@ -497,6 +497,10 @@ def test_build_benchmark_report_completed_pipeline():
         "branch": "feat/x",
         "started_at": "2026-05-31T00:00:00Z",
         "finished_at": "2026-05-31T00:02:03Z",
+        "baseline_comparison_status": "deferred",
+        "next_kpi_blocker": "insufficient_same_surface_evidence",
+        "readiness_status_line": "not ready: samples 20/20, same-surface 0/1, policy pairs 2/2",
+        "baseline_comparison_line": "baseline comparison deferred: need more same-surface evidence",
         "steps": {
             "preflight": {"status": "completed"},
             "task": {
@@ -528,6 +532,10 @@ def test_build_benchmark_report_completed_pipeline():
     assert report["recovered_after_retry"] is False
     assert report["total_cost_usd"] == pytest.approx(0.001)
     assert report["total_tokens"] == 120
+    assert report["baseline_comparison_status"] == "deferred"
+    assert report["next_kpi_blocker"] == "insufficient_same_surface_evidence"
+    assert report["readiness_status_line"] == "not ready: samples 20/20, same-surface 0/1, policy pairs 2/2"
+    assert report["baseline_comparison_line"] == "baseline comparison deferred: need more same-surface evidence"
 
 
 def test_build_benchmark_report_failed_pipeline_with_retry_step():
@@ -2209,6 +2217,55 @@ def test_cmd_overview_counts_current_result_in_kpi_summary(tmp_path: Path, capsy
     assert "reroute_rate=100.0%" in out
     assert "retry_to_success_rate=100.0%" in out
     assert "cost_per_successful_task=$0.0500" in out
+
+
+def test_cmd_overview_prints_readiness_coverage_summary(tmp_path: Path, capsys):
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    omc_dir = tmp_path / ".omc"
+    runs_dir = omc_dir / "runs"
+    runs_dir.mkdir(parents=True)
+
+    (runs_dir / "20260601T030000-a").mkdir()
+    (runs_dir / "20260601T030000-a" / "result.json").write_text(json.dumps({
+        "status": "completed",
+        "branch": "feat/readiness-a",
+        "executor": "codex",
+        "started_at": "2026-06-01T03:00:00Z",
+        "finished_at": "2026-06-01T03:01:00Z",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "baseline->candidate",
+        "comparison_scope": "same_surface",
+        "steps": {
+            "task": {"status": "completed"},
+            "review": {"status": "completed", "verdict": "APPROVE"},
+        },
+    }), encoding="utf-8")
+
+    (runs_dir / "20260601T030100-b").mkdir()
+    (runs_dir / "20260601T030100-b" / "result.json").write_text(json.dumps({
+        "status": "completed",
+        "branch": "feat/readiness-b",
+        "executor": "codex",
+        "started_at": "2026-06-01T03:01:00Z",
+        "finished_at": "2026-06-01T03:02:00Z",
+        "benchmark_source_type": "observed_request",
+        "policy_pair": "candidate->baseline",
+        "steps": {
+            "task": {"status": "completed"},
+            "review": {"status": "completed", "verdict": "APPROVE"},
+        },
+    }), encoding="utf-8")
+
+    rc = mod.cmd_overview(tmp_path, limit=10)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "observed_samples=2" in out
+    assert "distinct_policy_pairs=2" in out
+    assert "readiness_same_surface=1" in out
 
 
 def test_cmd_overview_deduplicates_current_result_from_runs_kpi_summary(tmp_path: Path, capsys):
