@@ -18,6 +18,8 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "`retry_exhausted`와 `failed_critique_loop` 경로의 `escalation_policy` decision persistence 연결 및 critique 경로 runtime consumption이 완료됐다." in text
     assert "`task_retry` / `plan_retry` 성공 경로, `timeout` 경로, `failed` 계열 주요 경로의 decision payload shape 일반화와 `orchestration_failure` decision policy 연결이 반영됐다." in text
     assert "추가로 `.omc/runs/` 기준 `reroute_rate`, `retry_to_success_rate`, `cost_per_successful_task` multi-run KPI summary와 current-path 중복 제거까지 반영됐다." in text
+    assert "overview KPI에 `readiness_same_surface`가 노출되고" in text
+    assert "`readiness_status_line`, `baseline_comparison_status`, `next_kpi_blocker`, `baseline_comparison_line`까지 실려 baseline 비교 가능 여부를 바로 읽을 수 있게 됐다." in text
     assert "현재 상태는 `V3 완료 + V4 multi-run KPI summary 1차 완료`에 가깝다." in text
     assert "`decision_policy_entry` helper 추출로 failure-class별 decision 규칙을 공통 엔진으로 옮길 준비를 마쳤다." in text
     assert "critique/review failure step runtime 소비가 `_failure_step_decision` helper를 통해 공통 decision 엔진을 직접 사용하도록 정리됐다." in text
@@ -49,10 +51,11 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "next-action 품질 보강 3차 - 완료" in text
     assert "telemetry report 정리 2차 - 완료" in text
     assert "## 다음 순환 목표" in text
-    assert "현재 기준으로는 V3 완료, V4 KPI 1차, Operator Experience 3차, V4 KPI 2차 baseline/timebox 기준까지 정리됐다." in text
+    assert "현재 기준으로는 V3 완료, V4 KPI 1차, Operator Experience 3차, V4 KPI 2차 baseline/timebox 기준, readiness coverage report 2차까지 정리됐다." in text
     assert "V4 multi-run KPI summary 2차" in text
     assert "Operator Experience 4차" in text
     assert "Learned orchestrator 진입 조건 정리" in text
+    assert "readiness/baseline 상태 문구는 이미 report에 실리므로" in text
     assert "observed_request / observed_output 기준 multi-run 실행 샘플 20회 이상" in text
     assert "neutral observed seed는 수집량으로만 보이고 readiness 입력에서는 제외된다" in text
     assert "observed_output은 `comparison_scope`, response sample을 보존하되 `mode_accuracy` / `task_start_delay` decision metric을 공짜로 밀어 올리지 않는다" in text
