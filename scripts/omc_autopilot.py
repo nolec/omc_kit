@@ -1477,6 +1477,21 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         policy_pair = str(record.get("policy_pair") or "").strip()
         if policy_pair:
             distinct_policy_pairs.add(policy_pair)
+    next_kpi_blocker = "none"
+    readiness_status_line = (
+        "not ready: "
+        f"samples {observed_sample_count}/20, "
+        f"same-surface {readiness_same_surface_count}/1, "
+        f"policy pairs {len(distinct_policy_pairs)}/2"
+    )
+    if observed_sample_count < 20:
+        next_kpi_blocker = "insufficient_observed_samples"
+    elif readiness_same_surface_count < 1:
+        next_kpi_blocker = "insufficient_same_surface_evidence"
+    elif len(distinct_policy_pairs) < 2:
+        next_kpi_blocker = "insufficient_policy_pairs"
+    else:
+        readiness_status_line = "ready: baseline comparison wording can be enabled"
     successful_costs = [
         float(report["total_cost_usd"])
         for report in reports
@@ -1495,6 +1510,8 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         "observed_sample_count": observed_sample_count,
         "readiness_same_surface_count": readiness_same_surface_count,
         "distinct_policy_pair_count": len(distinct_policy_pairs),
+        "readiness_status_line": readiness_status_line,
+        "next_kpi_blocker": next_kpi_blocker,
     }
 
 
@@ -1566,7 +1583,9 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
         f"cost_per_successful_task={_format_overview_cost(kpi_summary['cost_per_successful_task'])}  "
         f"observed_samples={kpi_summary['observed_sample_count']}  "
         f"readiness_same_surface={kpi_summary['readiness_same_surface_count']}  "
-        f"distinct_policy_pairs={kpi_summary['distinct_policy_pair_count']}"
+        f"distinct_policy_pairs={kpi_summary['distinct_policy_pair_count']}  "
+        f"readiness_status={kpi_summary['readiness_status_line']}  "
+        f"next_kpi_blocker={kpi_summary['next_kpi_blocker']}"
     )
     print("run_id | branch | status | step | stale | failure_reason | next_action")
     print("-" * 78)

@@ -2298,6 +2298,39 @@ def test_cmd_overview_deduplicates_current_result_from_runs_kpi_summary(tmp_path
     assert "total_runs=1" in out
     assert "cost_per_successful_task=$0.0200" in out
 
+
+def test_cmd_overview_prints_readiness_blocker_summary(tmp_path: Path, capsys):
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    omc_dir = tmp_path / ".omc"
+    runs_dir = omc_dir / "runs"
+    runs_dir.mkdir(parents=True)
+
+    (runs_dir / "20260601T030000-a").mkdir()
+    (runs_dir / "20260601T030000-a" / "result.json").write_text(json.dumps({
+        "status": "completed",
+        "branch": "feat/readiness-a",
+        "executor": "codex",
+        "started_at": "2026-06-01T03:00:00Z",
+        "finished_at": "2026-06-01T03:01:00Z",
+        "benchmark_source_type": "observed_output",
+        "comparison_scope": "cross_surface",
+        "policy_pair": "baseline->candidate",
+        "steps": {
+            "task": {"status": "completed"},
+            "review": {"status": "completed", "verdict": "APPROVE"},
+        },
+    }), encoding="utf-8")
+
+    rc = mod.cmd_overview(tmp_path, limit=10)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "readiness_status=not ready: samples 1/20, same-surface 0/1, policy pairs 1/2" in out
+    assert "next_kpi_blocker=insufficient_observed_samples" in out
+
 # ─────────────────────────────────────────────────────────────────────────────
 # T6: critique/review 격리 컨텍스트 — isolated=True 검증
 # ─────────────────────────────────────────────────────────────────────────────
