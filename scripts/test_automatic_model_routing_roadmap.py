@@ -27,7 +27,7 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "진행중" in text
     assert "미착수" in text
     assert "이번 분기 핵심 목표는 아래 3개" in text
-    assert "원래 분기 목표선은 V3-1 완료까지였지만, 현재 구현은 V3-2 일부까지 선행 진입한 상태다." in text
+    assert "현재 구현은 이미 그 선을 넘었고, 이제는 V4 데이터 축적과 Operator Experience 정교화가 다음 우선순위다." in text
     assert "## 바로 다음 작업 계획" in text
     assert "next-action 품질 보강 3차 - 완료" in text
     assert "`next-action 품질 보강 3차`는 완료됐고, 이제 다음 우선순위는 아래와 같다." in text
@@ -43,6 +43,13 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "decision engine 일반화 2차" not in text
     assert "next-action 품질 보강 3차 - 완료" in text
     assert "telemetry report 정리 2차 - 완료" in text
+    assert "## 다음 순환 목표" in text
+    assert "V4 multi-run KPI summary 2차" in text
+    assert "Operator Experience 4차" in text
+    assert "Learned orchestrator 진입 조건 정리" in text
+    assert "multi-run 실행 샘플 20회 이상" in text
+    assert "비교 가능한 정책 후보 2개 이상" in text
+    assert "`reroute rate`, `retry-to-success rate`, `cost per successful task` 3개 KPI가 모두 표에 노출" in text
     assert "failure path 일반화에서 최소 orchestration failure shape와 single-run telemetry가 안정된 뒤 multi-run KPI summary를 붙였다." in text
     assert "최근 반영된 1차 변화:" in text
     assert "`omc-plan` 출력 contract에 `decision / risk / next_action` 의미를 plan 문맥으로 고정" in text
