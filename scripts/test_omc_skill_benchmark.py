@@ -1001,6 +1001,201 @@ def test_collect_observed_response_mode_cases_reports_rejected_observed_output_m
     )
 
 
+def test_collect_observed_response_mode_cases_marks_bottleneck_ready_when_thresholds_are_met(
+    tmp_path: Path,
+):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        run_dir = runs_root / f"20260701T010{index:02d}-run{index:04d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "instruction": f"실제 observed review request {index}",
+                    "benchmark_source_type": "observed_output",
+                    "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                    "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                    "baseline_response_sample": "기존 응답 샘플",
+                    "candidate_response_sample": "개선 응답 샘플",
+                    "status": "completed",
+                    "last_completed_step": "review",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    payload = mod.collect_observed_response_mode_cases(runs_root)
+
+    assert payload["summary"]["observed_sample_case_count"] == 20
+    assert payload["summary"]["readiness_same_surface_case_count"] == 1
+    assert payload["summary"]["distinct_policy_pair_count"] == 2
+    assert payload["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: baseline comparison input is ready"
+    )
+
+
+def test_collected_observed_ready_summary_matches_comparison_ready_summary(tmp_path: Path):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        run_dir = runs_root / f"20260701T020{index:02d}-bridge{index:04d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "instruction": f"실제 observed bridge request {index}",
+                    "benchmark_source_type": "observed_output",
+                    "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                    "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                    "baseline_response_sample": "기존 응답 샘플",
+                    "candidate_response_sample": "개선 응답 샘플",
+                    "status": "completed",
+                    "last_completed_step": "review",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    report = mod.compare_response_modes(collected["cases"])
+
+    assert collected["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: baseline comparison input is ready"
+    )
+    assert report["decision"]["baseline_comparison_status"] == "ready"
+    assert report["decision"]["policy_comparison_summary"] == (
+        "policy comparison ready: baseline comparison wording can be enabled"
+    )
+
+
+def test_collected_observed_pending_summary_matches_comparison_pending_summary(tmp_path: Path):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        run_dir = runs_root / f"20260701T030{index:02d}-bridge{index:04d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "instruction": f"실제 observed pending request {index}",
+                    "benchmark_source_type": "observed_output",
+                    "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                    "comparison_scope": "cross_surface",
+                    "baseline_response_sample": "기존 응답 샘플",
+                    "candidate_response_sample": "개선 응답 샘플",
+                    "status": "completed",
+                    "last_completed_step": "review",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    report = mod.compare_response_modes(collected["cases"])
+
+    assert collected["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: need more same-surface evidence"
+    )
+    assert report["decision"]["baseline_comparison_status"] == "deferred"
+    assert report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
+    assert report["decision"]["policy_comparison_bottleneck_summary"] == (
+        "policy comparison bottleneck: need more same-surface evidence"
+    )
+
+
+def test_collect_observed_response_mode_cases_reports_fixture_taxonomy_counts(tmp_path: Path):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        run_dir = runs_root / f"20260701T040{index:02d}-taxonomy{index:04d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        comparison_scope = "same_surface" if index < 2 else "cross_surface"
+        (run_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "instruction": f"taxonomy request {index}",
+                    "benchmark_source_type": "observed_output",
+                    "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                    "comparison_scope": comparison_scope,
+                    "baseline_response_sample": "기존 응답 샘플",
+                    "candidate_response_sample": "개선 응답 샘플",
+                    "status": "completed",
+                    "last_completed_step": "review",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    payload = mod.collect_observed_response_mode_cases(runs_root)
+
+    assert payload["summary"]["fixture_taxonomy_counts"] == {
+        "ready_expected": 1,
+        "pending_expected": 0,
+        "ambiguous": 1,
+    }
+
+
+def test_compare_response_mode_threshold_candidates_reports_false_ready_and_pending_counts():
+    mod = _load_module()
+
+    cases = []
+    for index in range(20):
+        cases.append(
+            {
+                "request": f"리뷰해줘 observed {index}",
+                "expected_mode": "review-first",
+                "baseline_policy": "baseline" if index < 10 else "candidate",
+                "candidate_policy": "candidate" if index < 10 else "baseline",
+                "baseline_trace": ["assistant: 설명만 제공", "user: 아니 리뷰해줘"],
+                "candidate_trace": ["assistant: 리뷰 시작"],
+                "baseline_output_chars": 300,
+                "candidate_output_chars": 280,
+                "baseline_task_start_delay": 2,
+                "candidate_task_start_delay": 1,
+                "source_type": "observed_output",
+                "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                "baseline_response_sample": "기존 응답 샘플",
+                "candidate_response_sample": "개선 응답 샘플",
+            }
+        )
+
+    report = mod.compare_response_mode_threshold_candidates(
+        cases,
+        thresholds=[
+            {"label": "current", "min_samples": 20, "min_same_surface": 1, "min_policy_pairs": 2},
+            {"label": "stricter_same_surface", "min_samples": 20, "min_same_surface": 2, "min_policy_pairs": 2},
+            {"label": "looser_samples", "min_samples": 10, "min_same_surface": 1, "min_policy_pairs": 2},
+        ],
+        fixture_taxonomy={"ready_expected": 1, "pending_expected": 0, "ambiguous": 0},
+    )
+
+    assert report["candidates"][0]["label"] == "current"
+    assert report["candidates"][0]["baseline_comparison_ready"] is True
+    assert report["candidates"][0]["false_ready_count"] == 0
+    assert report["candidates"][0]["false_pending_count"] == 0
+    assert report["candidates"][1]["baseline_comparison_ready"] is False
+    assert report["candidates"][1]["false_pending_count"] == 1
+    assert report["candidates"][2]["baseline_comparison_ready"] is True
+    assert report["candidates"][2]["false_ready_count"] == 0
+
+
 def test_compare_response_modes_reports_incomplete_next_action_cases():
     mod = _load_module()
 

@@ -30,6 +30,8 @@ POLICIES = {"baseline", "candidate"}
 CASE_VARIANTS = {"baseline", "candidate"}
 CASE_SOURCE_TYPES = {"synthetic", "observed_output", "current_contract_sample"}
 KPI_MIN_SAMPLE_COUNT = 20
+KPI_MIN_SAME_SURFACE_COUNT = 1
+KPI_MIN_POLICY_PAIR_COUNT = 2
 
 
 def _count_question_marks(text: str) -> int:
@@ -85,6 +87,87 @@ def _count_readiness_same_surface_observed_samples(cases: list[dict[str, object]
         if str(case.get("comparison_scope") or "").strip() == "same_surface":
             count += 1
     return count
+
+
+def _summarize_readiness_thresholds(
+    cases: list[dict[str, object]],
+    *,
+    min_samples: int = KPI_MIN_SAMPLE_COUNT,
+    min_same_surface: int = KPI_MIN_SAME_SURFACE_COUNT,
+    min_policy_pairs: int = KPI_MIN_POLICY_PAIR_COUNT,
+) -> dict[str, object]:
+    observed_sample_count = _count_observed_samples(cases)
+    same_surface_count = _count_readiness_same_surface_observed_samples(cases)
+    distinct_policy_pair_count = len(_count_policy_pairs(cases))
+    sample_gap = max(min_samples - observed_sample_count, 0)
+    same_surface_gap = max(min_same_surface - same_surface_count, 0)
+    policy_pair_gap = max(min_policy_pairs - distinct_policy_pair_count, 0)
+    return {
+        "observed_sample_count": observed_sample_count,
+        "same_surface_count": same_surface_count,
+        "distinct_policy_pair_count": distinct_policy_pair_count,
+        "sample_gap": sample_gap,
+        "same_surface_gap": same_surface_gap,
+        "policy_pair_gap": policy_pair_gap,
+        "baseline_comparison_ready": sample_gap == 0 and same_surface_gap == 0 and policy_pair_gap == 0,
+    }
+
+
+def _fixture_taxonomy_counts_from_readiness(cases: list[dict[str, object]]) -> dict[str, int]:
+    current = _summarize_readiness_thresholds(cases)
+    stricter_same_surface = _summarize_readiness_thresholds(
+        cases,
+        min_same_surface=KPI_MIN_SAME_SURFACE_COUNT + 1,
+    )
+    current_ready = bool(current["baseline_comparison_ready"])
+    stricter_ready = bool(stricter_same_surface["baseline_comparison_ready"])
+    return {
+        "ready_expected": 1 if current_ready else 0,
+        "pending_expected": 1 if (current_ready and not stricter_ready) or not current_ready else 0,
+        "ambiguous": 1 if current_ready and stricter_ready else 0,
+    }
+
+
+def compare_response_mode_threshold_candidates(
+    cases: list[dict[str, object]],
+    *,
+    thresholds: list[dict[str, object]],
+    fixture_taxonomy: dict[str, int] | None = None,
+) -> dict[str, object]:
+    taxonomy = fixture_taxonomy or _fixture_taxonomy_counts_from_readiness(cases)
+    expected_ready = int(taxonomy.get("ready_expected", 0)) > 0
+    expected_pending = int(taxonomy.get("pending_expected", 0)) > 0
+    ambiguous = int(taxonomy.get("ambiguous", 0)) > 0
+
+    candidates: list[dict[str, object]] = []
+    for threshold in thresholds:
+        summary = _summarize_readiness_thresholds(
+            cases,
+            min_samples=int(threshold.get("min_samples", KPI_MIN_SAMPLE_COUNT)),
+            min_same_surface=int(threshold.get("min_same_surface", KPI_MIN_SAME_SURFACE_COUNT)),
+            min_policy_pairs=int(threshold.get("min_policy_pairs", KPI_MIN_POLICY_PAIR_COUNT)),
+        )
+        actual_ready = bool(summary["baseline_comparison_ready"])
+        false_ready_count = 0
+        false_pending_count = 0
+        if not ambiguous:
+            if actual_ready and expected_pending and not expected_ready:
+                false_ready_count = 1
+            if not actual_ready and expected_ready and not expected_pending:
+                false_pending_count = 1
+        candidates.append(
+            {
+                "label": str(threshold.get("label") or "").strip() or "candidate",
+                "min_samples": int(threshold.get("min_samples", KPI_MIN_SAMPLE_COUNT)),
+                "min_same_surface": int(threshold.get("min_same_surface", KPI_MIN_SAME_SURFACE_COUNT)),
+                "min_policy_pairs": int(threshold.get("min_policy_pairs", KPI_MIN_POLICY_PAIR_COUNT)),
+                **summary,
+                "false_ready_count": false_ready_count,
+                "false_pending_count": false_pending_count,
+            }
+        )
+
+    return {"fixture_taxonomy": taxonomy, "candidates": candidates}
 
 
 def _distinct_policies(cases: list[dict[str, object]]) -> list[str]:
@@ -633,11 +716,12 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
     policy_pair_counts = _count_policy_pairs(cases)
     primary_policy_pair = _primary_policy_pair(policy_pair_counts)
     sample_case_count = len(cases)
-    observed_sample_case_count = _count_observed_samples(cases)
+    readiness = _summarize_readiness_thresholds(cases)
+    observed_sample_case_count = int(readiness["observed_sample_count"])
     readiness_observed_sample_count = observed_sample_case_count
     distinct_policy_pair_count = len(policy_pair_counts)
-    sample_requirement_met = observed_sample_case_count >= KPI_MIN_SAMPLE_COUNT
-    policy_requirement_met = distinct_policy_pair_count >= 2
+    sample_requirement_met = int(readiness["sample_gap"]) == 0
+    policy_requirement_met = int(readiness["policy_pair_gap"]) == 0
     if case_count == 0:
         summary = {
             "case_count": 0,
@@ -677,7 +761,7 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
             "observed_output_count": 0,
             "observed_same_surface_count": 0,
             "readiness_same_surface_case_count": 0,
-            "readiness_same_surface_gap": 1,
+            "readiness_same_surface_gap": KPI_MIN_SAME_SURFACE_COUNT,
             "baseline_comparison_ready": False,
         }
         return {"cases": [], "summary": summary, "decision": _decision_from_summary(summary)}
@@ -730,13 +814,9 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
     comparison_scope_counts = _count_comparison_scopes(observed_output_cases)
     observed_same_surface_count = comparison_scope_counts.get("same_surface", 0)
     readiness_same_surface_case_count = observed_same_surface_count
-    readiness_sample_gap = max(KPI_MIN_SAMPLE_COUNT - readiness_observed_sample_count, 0)
-    readiness_same_surface_gap = max(1 - readiness_same_surface_case_count, 0)
-    baseline_comparison_ready = (
-        readiness_sample_gap == 0
-        and readiness_same_surface_gap == 0
-        and distinct_policy_pair_count >= 2
-    )
+    readiness_sample_gap = int(readiness["sample_gap"])
+    readiness_same_surface_gap = int(readiness["same_surface_gap"])
+    baseline_comparison_ready = bool(readiness["baseline_comparison_ready"])
     rejected_observed_output_case_count = max(
         int(case.get("dataset_rejected_observed_output_case_count", 0)) for case in cases
     )
@@ -1275,11 +1355,12 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             cases.append(case)
 
     comparison_scope_counts = _count_comparison_scopes(cases)
-    readiness_observed_sample_count = _count_observed_samples(cases)
-    readiness_same_surface_case_count = _count_readiness_same_surface_observed_samples(cases)
+    readiness = _summarize_readiness_thresholds(cases)
+    readiness_observed_sample_count = int(readiness["observed_sample_count"])
+    readiness_same_surface_case_count = int(readiness["same_surface_count"])
     observed_data_bottleneck_summary = "observed data bottleneck: need more observed samples"
     if readiness_observed_sample_count >= KPI_MIN_SAMPLE_COUNT:
-        if readiness_same_surface_case_count < 1:
+        if readiness_same_surface_case_count < KPI_MIN_SAME_SURFACE_COUNT:
             observed_data_bottleneck_summary = (
                 "observed data bottleneck: need more same-surface evidence"
             )
@@ -1312,6 +1393,7 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             "readiness_same_surface_case_count": readiness_same_surface_case_count,
             "distinct_policy_pair_count": len(_count_policy_pairs(cases)),
             "policy_pair_counts": _count_policy_pairs(cases),
+            "fixture_taxonomy_counts": _fixture_taxonomy_counts_from_readiness(cases),
             "rejected_observed_output_case_count": rejected_observed_output_case_count,
             "rejected_observed_output_reasons": rejected_observed_output_reasons,
             "observed_data_bottleneck_summary": observed_data_bottleneck_summary,
