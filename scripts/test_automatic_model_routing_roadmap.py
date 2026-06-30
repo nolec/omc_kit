@@ -29,7 +29,8 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "이번 분기 핵심 목표는 아래 3개" in text
     assert "원래 분기 목표선은 V3-1 완료까지였지만, 현재 구현은 V3-2 일부까지 선행 진입한 상태다." in text
     assert "## 바로 다음 작업 계획" in text
-    assert "next-action 품질 보강 3차" in text
+    assert "next-action 품질 보강 3차 - 완료" in text
+    assert "`next-action 품질 보강 3차`는 완료됐고, 이제 다음 우선순위는 아래와 같다." in text
     assert "response-mode fixture는 28 cases까지 늘었고 observed_request / expected_next_action 케이스도 더 촘촘히 고정됐다." in text
     assert "## Decision Engine Spec" in text
     assert "`failure_class / escalation_policy / retry_count / reason_codes` 조합으로 결정한다." in text
@@ -39,7 +40,7 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "`benchmark-report`에 `had_reroute`, `recovered_after_retry`, `total_cost_usd`, `total_tokens` 같은 single-run telemetry가 반영됐다." in text
     assert "decision engine 잔여 예외 감사는 완료됐고, 추가 코드 gap은 발견되지 않았다." in text
     assert "decision engine 일반화 2차" not in text
-    assert "next-action 품질 보강 3차" in text
+    assert "next-action 품질 보강 3차 - 완료" in text
     assert "telemetry report 정리 2차" in text
     assert "failure path 일반화에서 최소 orchestration failure shape와 single-run telemetry가 안정된 뒤 multi-run KPI summary를 붙였다." in text
     assert "최근 반영된 1차 변화:" in text
@@ -62,4 +63,4 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "next-action 품질 보강 3차의 plan/review/status 병목 우선 추천은 반영 완료다." in text
     assert "telemetry report 정리 2차" in text
     assert "정책 비교 리포트는 1차 자동화가 들어갔고, 이제 benchmark/report 출력이 비교 가능한 형태로 더 읽기 쉽게 정리되도록 다듬는다." in text
-    assert "next-action 품질 보강 3차" in text
+    assert "next-action 품질 보강 3차 - 완료" in text
