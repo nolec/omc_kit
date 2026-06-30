@@ -444,6 +444,13 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
             "baseline comparison deferred: "
             + deferred_reason_map.get(next_kpi_blocker, "readiness requirements are not met")
         )
+    if baseline_comparison_status == "ready":
+        policy_comparison_summary = "policy comparison ready: baseline comparison wording can be enabled"
+    else:
+        policy_comparison_summary = (
+            "policy comparison pending: "
+            + deferred_reason_map.get(next_kpi_blocker, "readiness requirements are not met")
+        )
 
     return {
         "verdict": verdict,
@@ -457,6 +464,7 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         "next_kpi_blocker": next_kpi_blocker,
         "baseline_comparison_status": baseline_comparison_status,
         "baseline_comparison_line": baseline_comparison_line,
+        "policy_comparison_summary": policy_comparison_summary,
     }
 
 

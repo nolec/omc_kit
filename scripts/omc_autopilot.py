@@ -1463,12 +1463,19 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     observed_sample_count = 0
     readiness_same_surface_count = 0
     distinct_policy_pairs: set[str] = set()
+    rejected_observed_output_reasons: dict[str, int] = {}
     for record in run_records:
         if not isinstance(record, dict):
             continue
         source_type = str(record.get("benchmark_source_type") or "").strip()
         if source_type in {"observed_request", "observed_output"}:
             observed_sample_count += 1
+        if source_type == "observed_output":
+            rejection_reason = _overview_observed_output_rejection_reason(record)
+            if rejection_reason:
+                rejected_observed_output_reasons[rejection_reason] = (
+                    rejected_observed_output_reasons.get(rejection_reason, 0) + 1
+                )
         if (
             source_type == "observed_output"
             and str(record.get("comparison_scope") or "").strip() == "same_surface"
@@ -1512,6 +1519,8 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         "distinct_policy_pair_count": len(distinct_policy_pairs),
         "readiness_status_line": readiness_status_line,
         "next_kpi_blocker": next_kpi_blocker,
+        "rejected_observed_output_case_count": sum(rejected_observed_output_reasons.values()),
+        "rejected_observed_output_reasons": rejected_observed_output_reasons,
     }
 
 
@@ -1525,6 +1534,33 @@ def _format_overview_cost(value: object) -> str:
     if not isinstance(value, (int, float)):
         return "n/a"
     return f"${value:.4f}"
+
+
+def _format_rejected_reason_counts(value: object) -> str:
+    if not isinstance(value, dict) or not value:
+        return "none"
+    parts: list[str] = []
+    for key in sorted(value):
+        count = value.get(key)
+        if isinstance(count, int):
+            parts.append(f"{key}:{count}")
+    return ",".join(parts) if parts else "none"
+
+
+def _overview_observed_output_rejection_reason(record: dict) -> str | None:
+    source_type = str(record.get("benchmark_source_type") or "").strip()
+    if source_type != "observed_output":
+        return None
+    comparison_scope = str(record.get("comparison_scope") or "").strip()
+    if comparison_scope not in {"same_surface", "cross_surface"}:
+        return "invalid_comparison_scope"
+    baseline_response_sample = str(record.get("baseline_response_sample") or "").strip()
+    if not baseline_response_sample:
+        return "missing_baseline_response_sample"
+    candidate_response_sample = str(record.get("candidate_response_sample") or "").strip()
+    if not candidate_response_sample:
+        return "missing_candidate_response_sample"
+    return None
 
 
 def _overview_run_fingerprint(data: dict) -> str:
@@ -1585,7 +1621,9 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
         f"readiness_same_surface={kpi_summary['readiness_same_surface_count']}  "
         f"distinct_policy_pairs={kpi_summary['distinct_policy_pair_count']}  "
         f"readiness_status={kpi_summary['readiness_status_line']}  "
-        f"next_kpi_blocker={kpi_summary['next_kpi_blocker']}"
+        f"next_kpi_blocker={kpi_summary['next_kpi_blocker']}  "
+        f"rejected_observed_output={kpi_summary['rejected_observed_output_case_count']}  "
+        f"rejected_reasons={_format_rejected_reason_counts(kpi_summary['rejected_observed_output_reasons'])}"
     )
     print("run_id | branch | status | step | stale | failure_reason | next_action")
     print("-" * 78)

@@ -2331,6 +2331,40 @@ def test_cmd_overview_prints_readiness_blocker_summary(tmp_path: Path, capsys):
     assert "readiness_status=not ready: samples 1/20, same-surface 0/1, policy pairs 1/2" in out
     assert "next_kpi_blocker=insufficient_observed_samples" in out
 
+
+def test_cmd_overview_prints_rejected_observed_output_summary(tmp_path: Path, capsys):
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    omc_dir = tmp_path / ".omc"
+    runs_dir = omc_dir / "runs"
+    runs_dir.mkdir(parents=True)
+
+    (runs_dir / "20260601T040000-b").mkdir()
+    (runs_dir / "20260601T040000-b" / "result.json").write_text(json.dumps({
+        "status": "completed",
+        "branch": "feat/readiness-bad",
+        "executor": "codex",
+        "started_at": "2026-06-01T04:00:00Z",
+        "finished_at": "2026-06-01T04:01:00Z",
+        "benchmark_source_type": "observed_output",
+        "comparison_scope": "same_surface",
+        "policy_pair": "baseline->candidate",
+        "baseline_response_sample": "긴 상태 설명",
+        "steps": {
+            "task": {"status": "completed"},
+            "review": {"status": "completed", "verdict": "APPROVE"},
+        },
+    }), encoding="utf-8")
+
+    rc = mod.cmd_overview(tmp_path, limit=10)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "rejected_observed_output=1" in out
+    assert "rejected_reasons=missing_candidate_response_sample:1" in out
+
 # ─────────────────────────────────────────────────────────────────────────────
 # T6: critique/review 격리 컨텍스트 — isolated=True 검증
 # ─────────────────────────────────────────────────────────────────────────────

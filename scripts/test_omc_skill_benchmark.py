@@ -1366,6 +1366,9 @@ def test_compare_response_modes_reports_readiness_status_line_and_blocker():
     assert report["decision"]["next_kpi_blocker"] == "insufficient_observed_samples"
     assert report["decision"]["baseline_comparison_status"] == "deferred"
     assert report["decision"]["baseline_comparison_line"] == "baseline comparison deferred: need more observed samples"
+    assert report["decision"]["policy_comparison_summary"] == (
+        "policy comparison pending: need more observed samples"
+    )
 
 
 def test_compare_response_modes_marks_kpi_ready_at_twenty_samples():
@@ -1482,6 +1485,38 @@ def test_compare_response_modes_marks_kpi_incomplete_when_same_surface_evidence_
     assert report["decision"]["kpi_readiness"] == "incomplete"
     assert report["decision"]["readiness_status_line"] == "not ready: samples 20/20, same-surface 0/1, policy pairs 2/2"
     assert report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
+
+
+def test_compare_response_modes_reports_policy_comparison_summary_when_ready():
+    mod = _load_module()
+
+    cases = []
+    for index in range(20):
+        cases.append(
+            {
+                "request": f"리뷰해줘 same-surface {index}",
+                "expected_mode": "review-first",
+                "baseline_policy": "baseline" if index < 10 else "candidate",
+                "candidate_policy": "candidate" if index < 10 else "baseline",
+                "baseline_trace": ["assistant: 설명만 제공", "user: 아니 리뷰해줘"],
+                "candidate_trace": ["assistant: 리뷰 시작"],
+                "baseline_output_chars": 300,
+                "candidate_output_chars": 220,
+                "baseline_task_start_delay": 2,
+                "candidate_task_start_delay": 1,
+                "source_type": "observed_output",
+                "comparison_scope": "same_surface",
+                "baseline_response_sample": "요약만 제공",
+                "candidate_response_sample": "리뷰 구조로 응답",
+            }
+        )
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["decision"]["baseline_comparison_status"] == "ready"
+    assert report["decision"]["policy_comparison_summary"] == (
+        "policy comparison ready: baseline comparison wording can be enabled"
+    )
 
 
 def test_response_mode_fixture_observed_request_case_affects_next_action_accuracy():
