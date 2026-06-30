@@ -135,9 +135,12 @@ def compare_response_mode_threshold_candidates(
     fixture_taxonomy: dict[str, int] | None = None,
 ) -> dict[str, object]:
     taxonomy = fixture_taxonomy or _fixture_taxonomy_counts_from_readiness(cases)
-    expected_ready = int(taxonomy.get("ready_expected", 0)) > 0
-    expected_pending = int(taxonomy.get("pending_expected", 0)) > 0
-    ambiguous = int(taxonomy.get("ambiguous", 0)) > 0
+    expected_ready_count = int(taxonomy.get("ready_expected", 0))
+    expected_pending_count = int(taxonomy.get("pending_expected", 0))
+    ambiguous_count = int(taxonomy.get("ambiguous", 0))
+    expected_ready = expected_ready_count > 0
+    expected_pending = expected_pending_count > 0
+    ambiguous = ambiguous_count > 0
 
     candidates: list[dict[str, object]] = []
     for threshold in thresholds:
@@ -152,9 +155,9 @@ def compare_response_mode_threshold_candidates(
         false_pending_count = 0
         if not ambiguous:
             if actual_ready and expected_pending and not expected_ready:
-                false_ready_count = 1
+                false_ready_count = expected_pending_count
             if not actual_ready and expected_ready and not expected_pending:
-                false_pending_count = 1
+                false_pending_count = expected_ready_count
         candidates.append(
             {
                 "label": str(threshold.get("label") or "").strip() or "candidate",

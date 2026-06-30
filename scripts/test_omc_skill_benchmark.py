@@ -1196,6 +1196,45 @@ def test_compare_response_mode_threshold_candidates_reports_false_ready_and_pend
     assert report["candidates"][2]["false_ready_count"] == 0
 
 
+def test_compare_response_mode_threshold_candidates_preserves_taxonomy_counts():
+    mod = _load_module()
+
+    cases = []
+    for index in range(10):
+        cases.append(
+            {
+                "request": f"리뷰해줘 observed {index}",
+                "expected_mode": "review-first",
+                "baseline_policy": "baseline" if index < 5 else "candidate",
+                "candidate_policy": "candidate" if index < 5 else "baseline",
+                "baseline_trace": ["assistant: 설명만 제공", "user: 아니 리뷰해줘"],
+                "candidate_trace": ["assistant: 리뷰 시작"],
+                "baseline_output_chars": 300,
+                "candidate_output_chars": 280,
+                "baseline_task_start_delay": 2,
+                "candidate_task_start_delay": 1,
+                "source_type": "observed_output",
+                "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                "baseline_response_sample": "기존 응답 샘플",
+                "candidate_response_sample": "개선 응답 샘플",
+            }
+        )
+
+    report = mod.compare_response_mode_threshold_candidates(
+        cases,
+        thresholds=[
+            {"label": "current", "min_samples": 20, "min_same_surface": 1, "min_policy_pairs": 2},
+            {"label": "looser_samples", "min_samples": 10, "min_same_surface": 1, "min_policy_pairs": 2},
+        ],
+        fixture_taxonomy={"ready_expected": 0, "pending_expected": 3, "ambiguous": 0},
+    )
+
+    assert report["candidates"][0]["baseline_comparison_ready"] is False
+    assert report["candidates"][0]["false_pending_count"] == 0
+    assert report["candidates"][1]["baseline_comparison_ready"] is True
+    assert report["candidates"][1]["false_ready_count"] == 3
+
+
 def test_compare_response_modes_reports_incomplete_next_action_cases():
     mod = _load_module()
 
