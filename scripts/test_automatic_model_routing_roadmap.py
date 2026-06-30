@@ -36,8 +36,9 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "`quality_failure` + default policy" in text
     assert "`orchestration_failure`" in text
     assert "`benchmark-report`에 `had_reroute`, `recovered_after_retry`, `total_cost_usd`, `total_tokens` 같은 single-run telemetry가 반영됐다." in text
-    assert "이번에 `decision_policy_entry` helper까지 추출해 공통 엔진의 시작점을 만들었다." in text
-    assert "decision engine 일반화 2차" in text
+    assert "이번에 `decision_policy_entry` helper와 `_recovery_target_from_decision`으로 공통 엔진의 핵심 경로는 이미 수렴했다." in text
+    assert "decision engine 잔여 예외 감사" in text
+    assert "decision engine 일반화 2차" not in text
     assert "autopilot 작업 단위 정리" in text
     assert "failure path 일반화에서 최소 orchestration failure shape와 single-run telemetry가 안정된 뒤 multi-run KPI summary를 붙였다." in text
     assert "최근 반영된 1차 변화:" in text
@@ -59,5 +60,4 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "`2-2 reroute / delay UX`도 1차 완료됐다." in text
     assert "next-action 품질 보강 3차의 plan/review/status 병목 우선 추천은 반영 완료다." in text
     assert "다음 남은 조각은 fixture/benchmark에도 이 우선순위를 더 직접 반영해 실제 기대 추천과의 오차를 줄이는 것이다." in text
-    assert "decision engine 일반화 2차" in text
     assert "next-action 품질 보강 3차" in text
