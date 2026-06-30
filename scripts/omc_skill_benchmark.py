@@ -365,6 +365,8 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
     output_growth_rate = (output_delta / baseline_output_chars) if baseline_output_chars else 0
     observed_output_count = int(summary.get("observed_output_count", 0))
     observed_same_surface_count = int(summary.get("observed_same_surface_count", 0))
+    rejected_observed_output_case_count = int(summary.get("rejected_observed_output_case_count", 0))
+    rejected_observed_output_reasons = summary.get("rejected_observed_output_reasons", {})
 
     checks = {
         "mode_accuracy_up": float(summary["mode_accuracy_delta"]) >= 0.15,
@@ -396,6 +398,12 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
     readiness_same_surface_count = int(summary.get("readiness_same_surface_case_count", 0))
     distinct_policy_pair_count = int(summary.get("distinct_policy_pair_count", 0))
     baseline_comparison_ready = bool(summary.get("baseline_comparison_ready", False))
+    deferred_reason_map = {
+        "insufficient_observed_samples": "need more observed samples",
+        "insufficient_same_surface_evidence": "need more same-surface evidence",
+        "insufficient_policy_pairs": "need more policy pair coverage",
+        "none": "baseline comparison wording can be enabled",
+    }
     kpi_readiness = "ready"
     readiness_status_line = (
         "not ready: "
@@ -435,11 +443,6 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
             f"and {delay_direction} task start delay by {abs(delay_delta):.1f}"
         )
     else:
-        deferred_reason_map = {
-            "insufficient_observed_samples": "need more observed samples",
-            "insufficient_same_surface_evidence": "need more same-surface evidence",
-            "insufficient_policy_pairs": "need more policy pair coverage",
-        }
         baseline_comparison_line = (
             "baseline comparison deferred: "
             + deferred_reason_map.get(next_kpi_blocker, "readiness requirements are not met")
@@ -451,6 +454,25 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
             "policy comparison pending: "
             + deferred_reason_map.get(next_kpi_blocker, "readiness requirements are not met")
         )
+    bottleneck_summary = (
+        "policy comparison bottleneck: "
+        + deferred_reason_map.get(next_kpi_blocker, "readiness requirements are not met")
+    )
+    if (
+        rejected_observed_output_case_count > 0
+        and isinstance(rejected_observed_output_reasons, dict)
+        and rejected_observed_output_reasons
+    ):
+        reason_parts: list[str] = []
+        for key in sorted(rejected_observed_output_reasons):
+            count = rejected_observed_output_reasons.get(key)
+            if isinstance(count, int):
+                reason_parts.append(f"{key}:{count}")
+        if reason_parts:
+            bottleneck_summary += (
+                f"; rejected observed_output={rejected_observed_output_case_count} "
+                f"({','.join(reason_parts)})"
+            )
 
     return {
         "verdict": verdict,
@@ -465,6 +487,7 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         "baseline_comparison_status": baseline_comparison_status,
         "baseline_comparison_line": baseline_comparison_line,
         "policy_comparison_summary": policy_comparison_summary,
+        "policy_comparison_bottleneck_summary": bottleneck_summary,
     }
 
 
@@ -714,6 +737,20 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
         and readiness_same_surface_gap == 0
         and distinct_policy_pair_count >= 2
     )
+    rejected_observed_output_case_count = max(
+        int(case.get("dataset_rejected_observed_output_case_count", 0)) for case in cases
+    )
+    rejected_observed_output_reasons: dict[str, int] = {}
+    for case in cases:
+        raw_reasons = case.get("dataset_rejected_observed_output_reasons")
+        if not isinstance(raw_reasons, dict):
+            continue
+        for key, count in raw_reasons.items():
+            if isinstance(key, str) and isinstance(count, int):
+                rejected_observed_output_reasons[key] = max(
+                    rejected_observed_output_reasons.get(key, 0),
+                    count,
+                )
 
     summary = {
         "case_count": case_count,
@@ -761,6 +798,8 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
         "readiness_same_surface_case_count": readiness_same_surface_case_count,
         "readiness_same_surface_gap": readiness_same_surface_gap,
         "baseline_comparison_ready": baseline_comparison_ready,
+        "rejected_observed_output_case_count": rejected_observed_output_case_count,
+        "rejected_observed_output_reasons": rejected_observed_output_reasons,
     }
     return {"cases": compared_cases, "summary": summary, "decision": _decision_from_summary(summary)}
 
@@ -1051,6 +1090,17 @@ def _normalize_response_mode_case(case: object, index: int) -> dict[str, object]
         normalized["baseline_next_action"] = baseline_next_action
     if candidate_next_action:
         normalized["candidate_next_action"] = candidate_next_action
+    rejected_case_count = case.get("dataset_rejected_observed_output_case_count")
+    if isinstance(rejected_case_count, int) and rejected_case_count >= 0:
+        normalized["dataset_rejected_observed_output_case_count"] = rejected_case_count
+    rejected_reasons = case.get("dataset_rejected_observed_output_reasons")
+    if isinstance(rejected_reasons, dict):
+        normalized_rejected_reasons: dict[str, int] = {}
+        for key, count in rejected_reasons.items():
+            if isinstance(key, str) and isinstance(count, int):
+                normalized_rejected_reasons[key] = count
+        if normalized_rejected_reasons:
+            normalized["dataset_rejected_observed_output_reasons"] = normalized_rejected_reasons
     return normalized
 
 

@@ -1485,6 +1485,45 @@ def test_compare_response_modes_marks_kpi_incomplete_when_same_surface_evidence_
     assert report["decision"]["kpi_readiness"] == "incomplete"
     assert report["decision"]["readiness_status_line"] == "not ready: samples 20/20, same-surface 0/1, policy pairs 2/2"
     assert report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
+    assert report["decision"]["policy_comparison_bottleneck_summary"] == (
+        "policy comparison bottleneck: need more same-surface evidence"
+    )
+
+
+def test_compare_response_modes_reports_rejection_reason_in_bottleneck_summary():
+    mod = _load_module()
+
+    cases = []
+    for index in range(20):
+        cases.append(
+            {
+                "request": f"리뷰해줘 {index}",
+                "expected_mode": "review-first",
+                "baseline_policy": "baseline" if index < 10 else "candidate",
+                "candidate_policy": "candidate" if index < 10 else "baseline",
+                "baseline_trace": ["assistant: 설명만 제공", "user: 아니 리뷰해줘"],
+                "candidate_trace": ["assistant: 리뷰 시작"],
+                "baseline_output_chars": 300,
+                "candidate_output_chars": 220,
+                "baseline_task_start_delay": 2,
+                "candidate_task_start_delay": 1,
+                "source_type": "observed_output",
+                "comparison_scope": "cross_surface",
+                "baseline_response_sample": "요약만 제공",
+                "candidate_response_sample": "리뷰 구조로 응답",
+                "dataset_rejected_observed_output_case_count": 2,
+                "dataset_rejected_observed_output_reasons": {
+                    "missing_candidate_response_sample": 2,
+                },
+            }
+        )
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["decision"]["policy_comparison_bottleneck_summary"] == (
+        "policy comparison bottleneck: need more same-surface evidence; rejected observed_output=2 "
+        "(missing_candidate_response_sample:2)"
+    )
 
 
 def test_compare_response_modes_reports_policy_comparison_summary_when_ready():
