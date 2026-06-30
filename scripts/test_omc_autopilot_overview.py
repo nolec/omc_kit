@@ -5,6 +5,8 @@ from pathlib import Path
 
 import omc_autopilot
 
+OBSERVED_TASK_PATH = Path(".omc/tasks/observed-collect.json")
+
 
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -241,3 +243,186 @@ def test_cmd_overview_handles_no_runs(tmp_path: Path, capsys) -> None:
 
     assert rc == 0
     assert "실행 기록 없음" in out
+
+
+def test_cmd_overview_prints_observed_progress_summary(tmp_path: Path, capsys) -> None:
+    observed_task = {
+        "id": "observed-collect",
+        "benchmark_source_type": "observed_request",
+        "policy_pair": "baseline->candidate",
+    }
+    _write_json(tmp_path / ".omc" / "tasks" / "observed-collect.json", observed_task)
+    reverse_task = {
+        "id": "observed-collect-reverse",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "candidate->baseline",
+        "comparison_scope": "cross_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    _write_json(tmp_path / ".omc" / "tasks" / "observed-collect-reverse.json", reverse_task)
+
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "__run_id": "run-observed-a",
+            "task_id": "observed-collect",
+            "status": "completed",
+            "branch": "feat/observed-a",
+            "executor": "codex",
+            "started_at": "2026-06-13T09:00:00+09:00",
+            "finished_at": "2026-06-13T09:05:00+09:00",
+            "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+        },
+    )
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "__run_id": "run-observed-b",
+            "task_id": "observed-collect-reverse",
+            "status": "completed",
+            "branch": "feat/observed-b",
+            "executor": "codex",
+            "started_at": "2026-06-13T10:00:00+09:00",
+            "finished_at": "2026-06-13T10:05:00+09:00",
+            "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+        },
+    )
+
+    rc = omc_autopilot.cmd_overview(tmp_path, limit=5)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "observed_samples=2" in out
+    assert "distinct_policy_pairs=2" in out
+
+
+def test_observed_collect_task_exists_with_real_expect_checks() -> None:
+    payload = json.loads((Path.cwd() / OBSERVED_TASK_PATH).read_text(encoding="utf-8"))
+
+    assert payload["id"] == "observed-collect"
+    assert payload["executor"] == "auto"
+    assert payload["steps"], "observed collect task should define steps"
+    first_step = payload["steps"][0]
+    expect = first_step.get("expect") or {}
+    checks = expect.get("checks") or []
+    assert checks, "observed collect task should have expect checks"
+    assert all("echo 'expect 검증 예시" not in check.get("cmd", "") for check in checks)
+
+
+def test_save_pipeline_result_copies_complete_observed_output_schema_from_task_meta(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / ".omc" / "tasks" / "observed-output.json",
+        {
+            "id": "observed-output",
+            "benchmark_source_type": "observed_output",
+            "policy_pair": "baseline->candidate",
+            "comparison_scope": "same_surface",
+            "baseline_response_sample": "baseline sample",
+            "candidate_response_sample": "candidate sample",
+        },
+    )
+
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "__run_id": "run-observed-output-complete",
+            "task_id": "observed-output",
+            "status": "completed",
+            "branch": "feat/observed-output-complete",
+            "executor": "codex",
+            "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+        },
+    )
+
+    saved = json.loads(
+        (tmp_path / ".omc" / "runs" / "run-observed-output-complete" / "result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert saved["benchmark_source_type"] == "observed_output"
+    assert saved["policy_pair"] == "baseline->candidate"
+    assert saved["comparison_scope"] == "same_surface"
+    assert saved["baseline_response_sample"] == "baseline sample"
+    assert saved["candidate_response_sample"] == "candidate sample"
+
+
+def test_save_pipeline_result_skips_incomplete_observed_output_schema_from_task_meta(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / ".omc" / "tasks" / "observed-output-incomplete.json",
+        {
+            "id": "observed-output-incomplete",
+            "benchmark_source_type": "observed_output",
+            "policy_pair": "baseline->candidate",
+            "comparison_scope": "same_surface",
+            "baseline_response_sample": "baseline sample",
+        },
+    )
+
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "__run_id": "run-observed-output-incomplete",
+            "task_id": "observed-output-incomplete",
+            "status": "completed",
+            "branch": "feat/observed-output-incomplete",
+            "executor": "codex",
+            "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+        },
+    )
+
+    saved = json.loads(
+        (tmp_path / ".omc" / "runs" / "run-observed-output-incomplete" / "result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "benchmark_source_type" not in saved
+    assert "policy_pair" not in saved
+    assert "comparison_scope" not in saved
+    assert "baseline_response_sample" not in saved
+    assert "candidate_response_sample" not in saved
+
+
+def test_save_pipeline_result_backfills_missing_observed_output_samples_even_when_source_type_exists(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / ".omc" / "tasks" / "observed-output-backfill.json",
+        {
+            "id": "observed-output-backfill",
+            "benchmark_source_type": "observed_output",
+            "policy_pair": "baseline->candidate",
+            "comparison_scope": "cross_surface",
+            "baseline_response_sample": "baseline sample from task meta",
+            "candidate_response_sample": "candidate sample from task meta",
+        },
+    )
+
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "__run_id": "run-observed-output-backfill",
+            "task_id": "observed-output-backfill",
+            "status": "completed",
+            "branch": "feat/observed-output-backfill",
+            "executor": "codex",
+            "benchmark_source_type": "observed_output",
+            "policy_pair": "baseline->candidate",
+            "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+        },
+    )
+
+    saved = json.loads(
+        (tmp_path / ".omc" / "runs" / "run-observed-output-backfill" / "result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert saved["benchmark_source_type"] == "observed_output"
+    assert saved["policy_pair"] == "baseline->candidate"
+    assert saved["comparison_scope"] == "cross_surface"
+    assert saved["baseline_response_sample"] == "baseline sample from task meta"
+    assert saved["candidate_response_sample"] == "candidate sample from task meta"

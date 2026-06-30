@@ -691,6 +691,7 @@ def cmd_run(
 
     state = _load_state(root, task_id)
     state["task_id"] = task_id
+    state["task_file"] = str(task_file.relative_to(root)) if task_file.is_relative_to(root) else str(task_file)
     state["title"] = title
     state["executor"] = executor
     state["started_at"] = state.get("started_at") or _now()
@@ -1455,6 +1456,17 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     total_runs = len(reports)
     reroute_runs = sum(1 for report in reports if report.get("had_reroute") is True)
     recovered_runs = sum(1 for report in reports if report.get("recovered_after_retry") is True)
+    observed_sample_count = 0
+    distinct_policy_pairs: set[str] = set()
+    for record in run_records:
+        if not isinstance(record, dict):
+            continue
+        source_type = str(record.get("benchmark_source_type") or "").strip()
+        if source_type in {"observed_request", "observed_output"}:
+            observed_sample_count += 1
+        policy_pair = str(record.get("policy_pair") or "").strip()
+        if policy_pair:
+            distinct_policy_pairs.add(policy_pair)
     successful_costs = [
         float(report["total_cost_usd"])
         for report in reports
@@ -1470,6 +1482,8 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
             if successful_costs
             else None
         ),
+        "observed_sample_count": observed_sample_count,
+        "distinct_policy_pair_count": len(distinct_policy_pairs),
     }
 
 
@@ -1538,7 +1552,9 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
         f"total_runs={kpi_summary['total_runs']}  "
         f"reroute_rate={_format_overview_ratio(kpi_summary['reroute_rate'])}  "
         f"retry_to_success_rate={_format_overview_ratio(kpi_summary['retry_to_success_rate'])}  "
-        f"cost_per_successful_task={_format_overview_cost(kpi_summary['cost_per_successful_task'])}"
+        f"cost_per_successful_task={_format_overview_cost(kpi_summary['cost_per_successful_task'])}  "
+        f"observed_samples={kpi_summary['observed_sample_count']}  "
+        f"distinct_policy_pairs={kpi_summary['distinct_policy_pair_count']}"
     )
     print("run_id | branch | status | step | stale | failure_reason | next_action")
     print("-" * 78)
@@ -2087,6 +2103,37 @@ def _save_pipeline_result(root: Path, data: dict) -> None:
     if not isinstance(run_id, str) or not run_id.strip():
         run_id = datetime.now().strftime("%Y%m%dT%H%M%S") + "-" + str(uuid.uuid4())[:8]
         data["__run_id"] = run_id
+    task_id = str(data.get("task_id") or "").strip()
+    has_source_type = str(data.get("benchmark_source_type") or "").strip()
+    has_policy_pair = str(data.get("policy_pair") or "").strip()
+    task_meta: dict[str, object] = {}
+    source_type = has_source_type
+    observed_output_needs_schema = source_type == "observed_output" and any(
+        not str(data.get(key) or "").strip()
+        for key in (
+            "comparison_scope",
+            "baseline_response_sample",
+            "candidate_response_sample",
+        )
+    )
+    if task_id and (not has_source_type or not has_policy_pair or observed_output_needs_schema):
+        task_meta_path = root / ".omc" / "tasks" / f"{task_id}.json"
+        try:
+            task_meta = json.loads(task_meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            task_meta = {}
+        if isinstance(task_meta, dict):
+            if not has_source_type:
+                benchmark_source_type = str(task_meta.get("benchmark_source_type") or "").strip()
+                if benchmark_source_type:
+                    data["benchmark_source_type"] = benchmark_source_type
+            if not has_policy_pair:
+                policy_pair = str(task_meta.get("policy_pair") or "").strip()
+                if policy_pair:
+                    data["policy_pair"] = policy_pair
+    source_type = str(data.get("benchmark_source_type") or "").strip()
+    if source_type == "observed_output":
+        _populate_observed_output_schema(data, task_meta if isinstance(task_meta, dict) else {})
     serialized = {k: v for k, v in data.items() if not str(k).startswith("__")}
     payload = json.dumps(serialized, ensure_ascii=False, indent=2)
     # 원자적 쓰기 (tmpfile → replace)
@@ -2102,6 +2149,29 @@ def _save_pipeline_result(root: Path, data: dict) -> None:
         run_tmp.replace(run_path)
     except Exception as e:
         print(f"[PIPELINE] ⚠️  runs 이력 저장 실패 (무시): {e}")
+
+
+def _populate_observed_output_schema(data: dict, task_meta: dict[str, object]) -> None:
+    required_keys = (
+        "comparison_scope",
+        "baseline_response_sample",
+        "candidate_response_sample",
+    )
+    missing_from_data = [
+        key for key in required_keys if not str(data.get(key) or "").strip()
+    ]
+    if missing_from_data:
+        for key in missing_from_data:
+            value = str(task_meta.get(key) or "").strip()
+            if value:
+                data[key] = value
+
+    if all(str(data.get(key) or "").strip() for key in required_keys):
+        return
+
+    # observed_output benchmark payload is only valid when the full schema exists.
+    for key in ("benchmark_source_type", "policy_pair", *required_keys):
+        data.pop(key, None)
 
 
 

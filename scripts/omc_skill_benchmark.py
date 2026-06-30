@@ -40,6 +40,18 @@ def _average(values: list[int | float]) -> float:
     return sum(values) / len(values) if values else 0
 
 
+def _case_participates_in_decision_metric(case: dict[str, object], metric: str) -> bool:
+    if str(case.get("source_type") or "").strip() == "observed_output" and metric in {
+        "mode_accuracy",
+        "task_start_delay",
+    }:
+        return False
+    excluded = case.get("decision_metric_exclusions")
+    if not isinstance(excluded, list):
+        return True
+    return metric not in excluded
+
+
 def _count_policy_pairs(cases: list[dict[str, object]]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for case in cases:
@@ -56,6 +68,8 @@ def _count_observed_samples(cases: list[dict[str, object]]) -> int:
     count = 0
     for case in cases:
         source_type = str(case.get("source_type") or "").strip()
+        if bool(case.get("neutral_seed")):
+            continue
         if source_type in {"observed_request", "observed_output"}:
             count += 1
     return count
@@ -107,6 +121,27 @@ def _infer_response_mode(request: str, policy: str) -> str:
 
     if any(keyword in text for keyword in review_keywords):
         return "review-first"
+    return "answer-first"
+
+
+def _infer_expected_response_mode(request: str) -> str:
+    text = request.lower()
+    review_keywords = ("리뷰", "review", "diff", "pr", "치명 이슈", "코드 봐줘")
+    execute_keywords = (
+        "구현",
+        "수정",
+        "고치",
+        "추가",
+        "커밋",
+        "빌드",
+        "테스트",
+        "개발",
+        "만들어",
+    )
+    if any(keyword in text for keyword in review_keywords):
+        return "review-first"
+    if any(keyword in text for keyword in execute_keywords):
+        return "execute-first"
     return "answer-first"
 
 
@@ -547,10 +582,13 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
         }
         return {"cases": [], "summary": summary, "decision": _decision_from_summary(summary)}
 
-    baseline_mode_accuracy = _average([1 if item["baseline"]["correct"] else 0 for item in compared_cases])
-    candidate_mode_accuracy = _average([1 if item["candidate"]["correct"] else 0 for item in compared_cases])
-    baseline_wrong_first_skill_rate = _average([0 if item["baseline"]["correct"] else 1 for item in compared_cases])
-    candidate_wrong_first_skill_rate = _average([0 if item["candidate"]["correct"] else 1 for item in compared_cases])
+    mode_cases = [
+        item for item in compared_cases if _case_participates_in_decision_metric(item, "mode_accuracy")
+    ]
+    baseline_mode_accuracy = _average([1 if item["baseline"]["correct"] else 0 for item in mode_cases])
+    candidate_mode_accuracy = _average([1 if item["candidate"]["correct"] else 0 for item in mode_cases])
+    baseline_wrong_first_skill_rate = _average([0 if item["baseline"]["correct"] else 1 for item in mode_cases])
+    candidate_wrong_first_skill_rate = _average([0 if item["candidate"]["correct"] else 1 for item in mode_cases])
     next_action_cases = [
         item
         for item in compared_cases
@@ -577,11 +615,14 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
     candidate_reroute_rate = _average([1 if item["candidate"]["reroute"] else 0 for item in compared_cases])
     baseline_output_chars_avg = _average([item["baseline"]["output_chars"] for item in compared_cases])
     candidate_output_chars_avg = _average([item["candidate"]["output_chars"] for item in compared_cases])
+    task_delay_cases = [
+        item for item in compared_cases if _case_participates_in_decision_metric(item, "task_start_delay")
+    ]
     baseline_task_start_delay_avg = _average(
-        [item["baseline"]["task_start_delay"] for item in compared_cases]
+        [item["baseline"]["task_start_delay"] for item in task_delay_cases]
     )
     candidate_task_start_delay_avg = _average(
-        [item["candidate"]["task_start_delay"] for item in compared_cases]
+        [item["candidate"]["task_start_delay"] for item in task_delay_cases]
     )
     observed_output_cases = [
         item for item in compared_cases if item.get("source_type") == "observed_output"
@@ -934,6 +975,151 @@ def _load_response_mode_cases(path: Path) -> list[dict[str, object]]:
     return [_normalize_response_mode_case(case, index) for index, case in enumerate(cases)]
 
 
+def _parse_policy_pair(value: object) -> tuple[str, str] | None:
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw or "->" not in raw:
+        return None
+    baseline_policy, candidate_policy = (part.strip() for part in raw.split("->", 1))
+    if baseline_policy not in POLICIES or candidate_policy not in POLICIES:
+        return None
+    return baseline_policy, candidate_policy
+
+
+def _build_observed_request_case_from_run_record(
+    record: dict[str, object], *, run_id: str
+) -> dict[str, object] | None:
+    source_type = str(record.get("benchmark_source_type") or "").strip()
+    if source_type != "observed_request":
+        return None
+
+    request = str(record.get("instruction") or "").strip()
+    policy_pair = _parse_policy_pair(record.get("policy_pair"))
+    if not request or policy_pair is None:
+        return None
+
+    baseline_policy, candidate_policy = policy_pair
+    task_id = str(record.get("task_id") or "").strip() or "unknown"
+    status = str(record.get("status") or "").strip() or "unknown"
+    last_completed_step = str(record.get("last_completed_step") or "").strip() or "unknown"
+    trace_line = f"run_status={status} last_step={last_completed_step}"
+
+    return {
+        "request": request,
+        "expected_mode": _infer_expected_response_mode(request),
+        "baseline_policy": baseline_policy,
+        "candidate_policy": candidate_policy,
+        "baseline_trace": [trace_line],
+        "candidate_trace": [trace_line],
+        "baseline_output_chars": len(request),
+        "candidate_output_chars": len(request),
+        "baseline_task_start_delay": 0,
+        "candidate_task_start_delay": 0,
+        "source_type": source_type,
+        "neutral_seed": True,
+        "evidence": f"run={run_id} task={task_id} source={source_type}",
+    }
+
+
+def _build_observed_output_case_from_run_record(
+    record: dict[str, object], *, run_id: str
+) -> dict[str, object] | None:
+    source_type = str(record.get("benchmark_source_type") or "").strip()
+    if source_type != "observed_output":
+        return None
+
+    request = str(record.get("instruction") or "").strip()
+    policy_pair = _parse_policy_pair(record.get("policy_pair"))
+    comparison_scope = str(record.get("comparison_scope") or "").strip()
+    baseline_response_sample = str(record.get("baseline_response_sample") or "").strip()
+    candidate_response_sample = str(record.get("candidate_response_sample") or "").strip()
+    if (
+        not request
+        or policy_pair is None
+        or comparison_scope not in {"same_surface", "cross_surface"}
+        or not baseline_response_sample
+        or not candidate_response_sample
+    ):
+        return None
+
+    baseline_policy, candidate_policy = policy_pair
+    task_id = str(record.get("task_id") or "").strip() or "unknown"
+    status = str(record.get("status") or "").strip() or "unknown"
+    last_completed_step = str(record.get("last_completed_step") or "").strip() or "unknown"
+    trace_line = f"run_status={status} last_step={last_completed_step}"
+
+    return {
+        "request": request,
+        "expected_mode": _infer_expected_response_mode(request),
+        "baseline_policy": baseline_policy,
+        "candidate_policy": candidate_policy,
+        "baseline_trace": [trace_line],
+        "candidate_trace": [trace_line],
+        "baseline_output_chars": len(baseline_response_sample),
+        "candidate_output_chars": len(candidate_response_sample),
+        "baseline_task_start_delay": 0,
+        "candidate_task_start_delay": 0,
+        "source_type": source_type,
+        "comparison_scope": comparison_scope,
+        "decision_metric_exclusions": ["mode_accuracy", "task_start_delay"],
+        "baseline_response_sample": baseline_response_sample,
+        "candidate_response_sample": candidate_response_sample,
+        "evidence": f"run={run_id} task={task_id} source={source_type}",
+    }
+
+
+def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
+    if not runs_dir.exists():
+        return {
+            "cases": [],
+            "summary": {
+                "case_count": 0,
+                "observed_sample_case_count": 0,
+                "neutral_seed_case_count": 0,
+                "observed_output_case_count": 0,
+                "same_surface_case_count": 0,
+                "cross_surface_case_count": 0,
+                "distinct_policy_pair_count": 0,
+                "policy_pair_counts": {},
+            },
+        }
+
+    cases: list[dict[str, object]] = []
+    for run_dir in sorted(runs_dir.iterdir()):
+        result_path = run_dir / "result.json"
+        if not result_path.exists():
+            continue
+        try:
+            record = json.loads(result_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        case = _build_observed_request_case_from_run_record(record, run_id=run_dir.name)
+        if case is None:
+            case = _build_observed_output_case_from_run_record(record, run_id=run_dir.name)
+        if case is not None:
+            cases.append(case)
+
+    comparison_scope_counts = _count_comparison_scopes(cases)
+    return {
+        "cases": cases,
+        "summary": {
+            "case_count": len(cases),
+            "observed_sample_case_count": _count_observed_samples(cases),
+            "neutral_seed_case_count": sum(1 for case in cases if bool(case.get("neutral_seed"))),
+            "observed_output_case_count": sum(
+                1 for case in cases if str(case.get("source_type") or "").strip() == "observed_output"
+            ),
+            "same_surface_case_count": comparison_scope_counts.get("same_surface", 0),
+            "cross_surface_case_count": comparison_scope_counts.get("cross_surface", 0),
+            "distinct_policy_pair_count": len(_count_policy_pairs(cases)),
+            "policy_pair_counts": _count_policy_pairs(cases),
+        },
+    }
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Score OMC skill outputs with compact benchmark metrics.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -947,6 +1133,14 @@ def _parser() -> argparse.ArgumentParser:
         help="Compare baseline and candidate response-mode policy outputs.",
     )
     response_mode.add_argument("--input", type=Path, required=True, help="Input JSON path")
+
+    collect_observed = sub.add_parser(
+        "collect-observed-response-modes",
+        help="Collect neutral observed_request seed cases from .omc/runs result history.",
+    )
+    collect_observed.add_argument(
+        "--runs-dir", type=Path, required=True, help="Runs directory path (for example .omc/runs)"
+    )
 
     expensive_flows = sub.add_parser(
         "top-expensive-flows",
@@ -970,6 +1164,11 @@ def main() -> int:
     if args.command == "compare-response-modes":
         cases = _load_response_mode_cases(args.input)
         report = compare_response_modes(cases)
+        json.dump(report, sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+        return 0
+    if args.command == "collect-observed-response-modes":
+        report = collect_observed_response_mode_cases(args.runs_dir)
         json.dump(report, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
         return 0

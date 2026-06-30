@@ -693,6 +693,197 @@ def test_load_response_mode_cases_preserves_source_metadata_and_samples(tmp_path
     assert report["cases"][0]["candidate"]["response_sample"] == "리뷰 범위, 이슈, 판정까지 구조화해 제공함"
 
 
+def test_collect_observed_response_mode_cases_builds_neutral_seed_cases_from_runs(tmp_path: Path):
+    mod = _load_module()
+
+    runs_dir = tmp_path / ".omc" / "runs"
+    (runs_dir / "20260630T101010-abcd1234").mkdir(parents=True, exist_ok=True)
+    (runs_dir / "20260630T111111-bcde2345").mkdir(parents=True, exist_ok=True)
+    (runs_dir / "20260630T121212-cdef3456").mkdir(parents=True, exist_ok=True)
+
+    (runs_dir / "20260630T101010-abcd1234" / "result.json").write_text(
+        json.dumps(
+            {
+                "task_id": "observed-collect",
+                "instruction": "현재 로드맵 최신화하고 다음 작업 체크",
+                "benchmark_source_type": "observed_request",
+                "policy_pair": "baseline->candidate",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (runs_dir / "20260630T111111-bcde2345" / "result.json").write_text(
+        json.dumps(
+            {
+                "task_id": "observed-collect",
+                "instruction": "이 변경 위험한지 먼저 리뷰해주고, 괜찮으면 그다음 커밋까지 해줘",
+                "benchmark_source_type": "observed_request",
+                "policy_pair": "candidate->baseline",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (runs_dir / "20260630T121212-cdef3456" / "result.json").write_text(
+        json.dumps(
+            {
+                "task_id": "ignore-me",
+                "instruction": "메타데이터 없는 실행",
+                "status": "completed",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    payload = mod.collect_observed_response_mode_cases(runs_dir)
+
+    assert payload["summary"]["case_count"] == 2
+    assert payload["summary"]["observed_sample_case_count"] == 0
+    assert payload["summary"]["neutral_seed_case_count"] == 2
+    assert payload["summary"]["policy_pair_counts"] == {
+        "baseline->candidate": 1,
+        "candidate->baseline": 1,
+    }
+    assert payload["summary"]["distinct_policy_pair_count"] == 2
+
+    first = payload["cases"][0]
+    second = payload["cases"][1]
+
+    assert first["request"] == "현재 로드맵 최신화하고 다음 작업 체크"
+    assert first["expected_mode"] == "answer-first"
+    assert first["baseline_policy"] == "baseline"
+    assert first["candidate_policy"] == "candidate"
+    assert first["source_type"] == "observed_request"
+    assert "run=20260630T101010-abcd1234" in first["evidence"]
+    assert "task=observed-collect" in first["evidence"]
+    assert first["baseline_output_chars"] == first["candidate_output_chars"]
+    assert first["baseline_task_start_delay"] == first["candidate_task_start_delay"] == 0
+
+    assert second["expected_mode"] == "review-first"
+    assert second["baseline_policy"] == "candidate"
+    assert second["candidate_policy"] == "baseline"
+    assert second["source_type"] == "observed_request"
+
+
+def test_collect_observed_response_modes_cli_outputs_seed_case_json(tmp_path: Path):
+    runs_dir = tmp_path / ".omc" / "runs" / "20260630T131313-feed6789"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    (runs_dir / "result.json").write_text(
+        json.dumps(
+            {
+                "task_id": "observed-collect",
+                "instruction": "버그 원인 먼저 보고 바로 고칠 수 있으면 수정해줘",
+                "benchmark_source_type": "observed_request",
+                "policy_pair": "baseline->candidate",
+                "status": "completed",
+                "last_completed_step": "task",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "collect-observed-response-modes",
+            "--runs-dir",
+            str(tmp_path / ".omc" / "runs"),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["summary"]["case_count"] == 1
+    assert payload["cases"][0]["expected_mode"] == "execute-first"
+    assert payload["cases"][0]["source_type"] == "observed_request"
+
+
+def test_neutral_observed_seed_cases_do_not_count_toward_kpi_readiness(tmp_path: Path):
+    mod = _load_module()
+
+    runs_dir = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        run_dir = runs_dir / f"20260630T13{index:02d}00-seed{index:02d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "instruction": f"현재 로드맵 최신화하고 다음 작업 체크 {index}",
+                    "benchmark_source_type": "observed_request",
+                    "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                    "status": "completed",
+                    "last_completed_step": "review",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    collected = mod.collect_observed_response_mode_cases(runs_dir)
+    report = mod.compare_response_modes(collected["cases"])
+
+    assert report["summary"]["sample_case_count"] == 20
+    assert report["summary"]["observed_sample_case_count"] == 0
+    assert report["summary"]["sample_requirement_met"] is False
+    assert report["summary"]["distinct_policy_pair_count"] == 2
+    assert report["summary"]["policy_requirement_met"] is True
+    assert report["decision"]["kpi_readiness"] == "incomplete"
+
+
+def test_collect_observed_response_mode_cases_builds_observed_output_cases_from_runs(tmp_path: Path):
+    mod = _load_module()
+
+    runs_dir = tmp_path / ".omc" / "runs" / "20260630T141414-out12345"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    (runs_dir / "result.json").write_text(
+        json.dumps(
+            {
+                "task_id": "observed-collect",
+                "instruction": "이거 클로드코드로 실행한건데 이거 제대로 진행된 거 맞아? plan",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "baseline->candidate",
+                "comparison_scope": "same_surface",
+                "baseline_response_sample": "구현 방식부터 길게 제시하고 다음 스킬 추천이 없음",
+                "candidate_response_sample": "판정과 다음 액션을 분리해 멈춤",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    payload = mod.collect_observed_response_mode_cases(tmp_path / ".omc" / "runs")
+
+    assert payload["summary"]["case_count"] == 1
+    assert payload["summary"]["observed_output_case_count"] == 1
+    assert payload["summary"]["same_surface_case_count"] == 1
+    case = payload["cases"][0]
+    assert case["source_type"] == "observed_output"
+    assert case["comparison_scope"] == "same_surface"
+    assert case["baseline_response_sample"] == "구현 방식부터 길게 제시하고 다음 스킬 추천이 없음"
+    assert case["candidate_response_sample"] == "판정과 다음 액션을 분리해 멈춤"
+
+
 def test_compare_response_modes_reports_incomplete_next_action_cases():
     mod = _load_module()
 
@@ -895,6 +1086,50 @@ def test_compare_response_modes_caps_verdict_when_only_cross_surface_observed_ou
     assert report["summary"]["comparison_scope_counts"] == {"cross_surface": 1}
     assert report["decision"]["observed_evidence_guard"] == "insufficient_same_surface"
     assert report["decision"]["verdict"] == "revise"
+
+
+def test_observed_output_cases_do_not_affect_mode_or_task_delay_checks():
+    mod = _load_module()
+
+    cases = [
+        {
+            "request": "이거 클로드코드로 실행한건데 이거 제대로 진행된 거 맞아? plan",
+            "expected_mode": "answer-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 구현 방식 제시"],
+            "candidate_trace": ["assistant: 판정과 다음 액션을 분리해 멈춤"],
+            "baseline_output_chars": 438,
+            "candidate_output_chars": 214,
+            "baseline_task_start_delay": 0,
+            "candidate_task_start_delay": 0,
+            "source_type": "observed_output",
+            "comparison_scope": "same_surface",
+            "evidence": "real observed output",
+            "baseline_response_sample": "구현 방식부터 길게 제시하고 다음 스킬 추천이 없음",
+            "candidate_response_sample": "판정과 다음 액션을 분리해 멈춤",
+        },
+        {
+            "request": "로그인 버튼 컴포넌트 구현해줘",
+            "expected_mode": "execute-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 구현 시작"],
+            "candidate_trace": ["assistant: 답변만 제공"],
+            "baseline_output_chars": 100,
+            "candidate_output_chars": 100,
+            "baseline_task_start_delay": 2,
+            "candidate_task_start_delay": 3,
+            "source_type": "synthetic",
+        },
+    ]
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["summary"]["mode_accuracy_delta"] == 1.0
+    assert report["summary"]["candidate_task_start_delay_delta"] == 1
+    assert report["decision"]["checks"]["mode_accuracy_up"] is True
+    assert report["decision"]["checks"]["task_start_delay_not_worse"] is False
 
 
 def test_compare_response_modes_adopts_when_three_of_four_checks_pass():

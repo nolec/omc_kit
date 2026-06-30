@@ -41,6 +41,8 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "`quality_failure` + default policy" in text
     assert "`orchestration_failure`" in text
     assert "`benchmark-report`에 `had_reroute`, `recovered_after_retry`, `total_cost_usd`, `total_tokens` 같은 single-run telemetry가 반영됐다." in text
+    assert "neutral observed seed를 readiness 입력에서 제외하고, observed_output run도 별도 case로 수집하되 `mode_accuracy`/`task_start_delay` decision metric은 왜곡하지 않도록 exclusion 규칙을 넣었다." in text
+    assert "observed_output producer도 partial metadata를 그대로 저장하지 않도록 schema/backfill 규칙을 고정해, 실제 샘플이 benchmark 입력으로 들어가기 전 shape을 먼저 안정화했다." in text
     assert "decision engine 잔여 예외 감사는 완료됐고, 추가 코드 gap은 발견되지 않았다." in text
     assert "V3 완료 + V4 multi-run KPI summary 1차 완료" in text
     assert "decision engine 일반화 2차" not in text
@@ -52,12 +54,16 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "Operator Experience 4차" in text
     assert "Learned orchestrator 진입 조건 정리" in text
     assert "observed_request / observed_output 기준 multi-run 실행 샘플 20회 이상" in text
+    assert "neutral observed seed는 수집량으로만 보이고 readiness 입력에서는 제외된다" in text
+    assert "observed_output은 `comparison_scope`, response sample을 보존하되 `mode_accuracy` / `task_start_delay` decision metric을 공짜로 밀어 올리지 않는다" in text
+    assert "observed_output producer는 partial metadata를 허용하지 않고, task metadata backfill 후에도 필수 schema가 비면 benchmark payload를 남기지 않는다" in text
     assert "distinct policy pair 2개 이상" in text
     assert "`reroute rate`, `retry-to-success rate`, `cost per successful task` 3개 KPI가 모두 표에 노출" in text
     assert "### 최소 KPI 기준" in text
     assert "baseline은 직전 정책 또는 고정 기준값 대비로 정의된다" in text
     assert "timebox로만 허용한다" in text
     assert "failure path 일반화에서 최소 orchestration failure shape와 single-run telemetry가 안정된 뒤 multi-run KPI summary를 붙였다." in text
+    assert "same-surface observed evidence를 더 누적한다." in text
     assert "최근 반영된 1차 변화:" in text
     assert "`omc-plan` 출력 contract에 `decision / risk / next_action` 의미를 plan 문맥으로 고정" in text
     assert "`omc-review` 출력 contract에 `decision / risk / next_action` 의미를 review 문맥으로 고정" in text

@@ -1,0 +1,46 @@
+{
+  "id": "observed-collect",
+  "title": "Observed Run Collection",
+  "executor": "auto",
+  "benchmark_source_type": "observed_request",
+  "policy_pair": "baseline->candidate",
+  "max_retries": 1,
+  "steps": [
+    {
+      "id": "collect_observed_request",
+      "title": "Observed Request Collection",
+      "prompt": "Use a real operator-style request from the current project context and execute the smallest safe pipeline step that can produce a benchmarkable observed_request run. Keep the output concise and preserve enough structure to classify next action and routing behavior.",
+      "depends_on": [],
+      "timeout_sec": 120,
+      "expect": {
+        "files": [],
+        "checks": [
+          {
+            "cmd": "python3 scripts/omc_autopilot.py overview --limit 5",
+            "label": "overview observed progress",
+            "timeout_sec": 30
+          }
+        ]
+      }
+    },
+    {
+      "id": "collect_observed_output",
+      "title": "Observed Output Collection",
+      "prompt": "Capture an observed_output-quality response sample from a real workflow branch. Preserve response structure and next action markers so the result can be reused for response-mode benchmark comparison.",
+      "depends_on": [
+        "collect_observed_request"
+      ],
+      "timeout_sec": 120,
+      "expect": {
+        "files": [],
+        "checks": [
+          {
+            "cmd": "python3 scripts/omc_autopilot.py benchmark-report",
+            "label": "benchmark report available",
+            "timeout_sec": 30
+          }
+        ]
+      }
+    }
+  ]
+}
