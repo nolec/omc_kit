@@ -1230,6 +1230,80 @@ def test_ready_mixed_fixture_ignores_observed_request_for_readiness_counts(tmp_p
     )
 
 
+def test_accumulated_observed_dataset_fixture_keeps_collected_and_report_ready_in_sync(
+    tmp_path: Path,
+):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        run_dir = runs_root / f"20260701T023{index:02d}-accum{index:04d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "instruction": f"실제 observed accumulated request {index}",
+                    "benchmark_source_type": "observed_output",
+                    "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                    "comparison_scope": "same_surface" if index < 2 else "cross_surface",
+                    "baseline_response_sample": "기존 응답 샘플",
+                    "candidate_response_sample": "개선 응답 샘플",
+                    "status": "completed",
+                    "last_completed_step": "review",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    _write_observed_run(
+        runs_root,
+        "20260701T02390-neutral0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "실제 observed accumulated neutral request",
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "candidate->baseline",
+            "status": "completed",
+            "last_completed_step": "plan",
+        },
+    )
+    _write_observed_run(
+        runs_root,
+        "20260701T02399-invalid0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "실제 observed accumulated invalid request",
+            "benchmark_source_type": "observed_output",
+            "policy_pair": "baseline->candidate",
+            "comparison_scope": "same_surface",
+            "baseline_response_sample": "기존 응답 샘플",
+            "status": "completed",
+            "last_completed_step": "review",
+        },
+    )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    report = mod.compare_response_modes(collected["cases"])
+
+    assert collected["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: baseline comparison input is ready; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert report["decision"]["baseline_comparison_status"] == "ready"
+    assert report["decision"]["readiness_status_line"] == (
+        "ready: baseline comparison wording can be enabled"
+    )
+    assert report["decision"]["policy_comparison_summary"] == (
+        "policy comparison ready: baseline comparison wording can be enabled; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert report["summary"]["readiness_distinct_policy_pair_count"] == 2
+    assert report["summary"]["observed_sample_case_count"] == 20
+
+
 def test_collected_observed_summary_exposes_multi_run_kpi_triplet(tmp_path: Path):
     mod = _load_module()
 
