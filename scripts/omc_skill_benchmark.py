@@ -627,9 +627,13 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
             if isinstance(count, int):
                 reason_parts.append(f"{key}:{count}")
         if reason_parts:
-            bottleneck_summary += (
+            rejected_suffix = (
                 f"; rejected observed_output={rejected_observed_output_case_count} "
                 f"({','.join(reason_parts)})"
+            )
+            policy_comparison_summary += rejected_suffix
+            bottleneck_summary += (
+                rejected_suffix
             )
 
     return {
@@ -1527,6 +1531,9 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
                 f"; rejected observed_output={rejected_observed_output_case_count} "
                 f"({','.join(reason_parts)})"
             )
+    for case in cases:
+        case["dataset_rejected_observed_output_case_count"] = rejected_observed_output_case_count
+        case["dataset_rejected_observed_output_reasons"] = dict(rejected_observed_output_reasons)
     return {
         "cases": cases,
         "summary": {
