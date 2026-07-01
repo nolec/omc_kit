@@ -944,6 +944,7 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
     print(f"Installed OMC kit into: {tgt}")
 
     _setup_ethos_section5(tgt)
+    _install_shared_tasks(source_kit, tgt)
     _install_shared_lessons(source_kit, tgt)
 
     return 0
@@ -1121,6 +1122,39 @@ def _install_shared_lessons(kit: Path, tgt: Path) -> None:
         print(
             f"[shared_lessons] {copied}개 복사, {skipped}개 건너뜀"
             f" → {lessons_dir.relative_to(tgt)}"
+        )
+
+
+def _install_shared_tasks(kit: Path, tgt: Path) -> None:
+    """templates/shared_tasks/ 에 있는 태스크 파일을 .omc/tasks/ 에 복사한다.
+
+    이미 존재하는 파일은 덮어쓰지 않아 프로젝트 고유 태스크를 보호한다.
+    """
+    shared_dir = kit / "templates" / "shared_tasks"
+    if not shared_dir.is_dir():
+        return
+
+    tasks_dir = tgt / ".omc" / "tasks"
+    candidates = sorted(shared_dir.glob("*.json"))
+    if not candidates:
+        return
+
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+
+    copied = 0
+    skipped = 0
+    for src in candidates:
+        dst = tasks_dir / src.name
+        if dst.exists():
+            skipped += 1
+            continue
+        _copy(src, dst, force=True)
+        copied += 1
+
+    if copied or skipped:
+        print(
+            f"[shared_tasks] {copied}개 복사, {skipped}개 건너뜀"
+            f" → {tasks_dir.relative_to(tgt)}"
         )
 
 

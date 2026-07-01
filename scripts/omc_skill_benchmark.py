@@ -1358,6 +1358,7 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             cases.append(case)
 
     comparison_scope_counts = _count_comparison_scopes(cases)
+    policy_pair_counts = _count_policy_pairs(cases)
     readiness = _summarize_readiness_thresholds(cases)
     readiness_observed_sample_count = int(readiness["observed_sample_count"])
     readiness_same_surface_case_count = int(readiness["same_surface_count"])
@@ -1366,6 +1367,10 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
         if readiness_same_surface_case_count < KPI_MIN_SAME_SURFACE_COUNT:
             observed_data_bottleneck_summary = (
                 "observed data bottleneck: need more same-surface evidence"
+            )
+        elif len(policy_pair_counts) < KPI_MIN_POLICY_PAIR_COUNT:
+            observed_data_bottleneck_summary = (
+                "observed data bottleneck: need more policy pair coverage"
             )
         else:
             observed_data_bottleneck_summary = "observed data bottleneck: baseline comparison input is ready"
@@ -1394,8 +1399,8 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             "cross_surface_case_count": comparison_scope_counts.get("cross_surface", 0),
             "readiness_observed_sample_count": readiness_observed_sample_count,
             "readiness_same_surface_case_count": readiness_same_surface_case_count,
-            "distinct_policy_pair_count": len(_count_policy_pairs(cases)),
-            "policy_pair_counts": _count_policy_pairs(cases),
+            "distinct_policy_pair_count": len(policy_pair_counts),
+            "policy_pair_counts": policy_pair_counts,
             "fixture_taxonomy_counts": _fixture_taxonomy_counts_from_readiness(cases),
             "rejected_observed_output_case_count": rejected_observed_output_case_count,
             "rejected_observed_output_reasons": rejected_observed_output_reasons,

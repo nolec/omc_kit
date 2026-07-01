@@ -281,6 +281,22 @@ def _save_state(root: Path, task_id: str, state: dict) -> None:
     os.replace(temp_path, target)
 
 
+def _staged_files(root: Path) -> list[str]:
+    try:
+        cp = subprocess.run(
+            ["git", "diff", "--staged", "--name-only"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return []
+    if cp.returncode != 0:
+        return []
+    return [line.strip() for line in cp.stdout.splitlines() if line.strip()]
+
+
 def _detect_executor(preferred: str) -> str:
     import shutil
     if preferred and preferred != "auto":
@@ -665,6 +681,7 @@ def cmd_run(
 
     task_id = task.get("id") or task_file.stem
     title = task.get("title", task_id)
+    require_clean_scope = bool(task.get("require_clean_scope", False))
     executor_pref = task.get("executor", "auto")
     max_retries = int(task.get("max_retries", _DEFAULT_MAX_RETRIES))
     steps_raw = task.get("steps", [])
@@ -672,6 +689,16 @@ def cmd_run(
     if not steps_raw:
         print(f"[AUTOPILOT] 스텝이 없습니다: {task_file}")
         return 1
+
+    if require_clean_scope:
+        staged_files = _staged_files(root)
+        if staged_files:
+            preview = ", ".join(staged_files[:3])
+            if len(staged_files) > 3:
+                preview += f" 외 {len(staged_files) - 3}개"
+            print("[AUTOPILOT] clean scope required: 현재 staged 변경이 있어 observed 수집을 시작할 수 없습니다.")
+            print(f"             staged: {preview}")
+            return 1
 
     try:
         executor = _detect_executor(executor_pref)

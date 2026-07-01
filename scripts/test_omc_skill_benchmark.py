@@ -1116,6 +1116,45 @@ def test_collected_observed_pending_summary_matches_comparison_pending_summary(t
     )
 
 
+def test_collected_observed_pending_summary_matches_policy_pair_pending_summary(tmp_path: Path):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        run_dir = runs_root / f"20260701T031{index:02d}-bridge{index:04d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "instruction": f"실제 observed pair pending request {index}",
+                    "benchmark_source_type": "observed_output",
+                    "policy_pair": "baseline->candidate",
+                    "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                    "baseline_response_sample": "기존 응답 샘플",
+                    "candidate_response_sample": "개선 응답 샘플",
+                    "status": "completed",
+                    "last_completed_step": "review",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    report = mod.compare_response_modes(collected["cases"])
+
+    assert collected["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: need more policy pair coverage"
+    )
+    assert report["decision"]["baseline_comparison_status"] == "deferred"
+    assert report["decision"]["next_kpi_blocker"] == "insufficient_policy_pairs"
+    assert report["decision"]["policy_comparison_bottleneck_summary"] == (
+        "policy comparison bottleneck: need more policy pair coverage"
+    )
+
+
 def test_collect_observed_response_mode_cases_reports_fixture_taxonomy_counts(tmp_path: Path):
     mod = _load_module()
 
@@ -1146,6 +1185,74 @@ def test_collect_observed_response_mode_cases_reports_fixture_taxonomy_counts(tm
     payload = mod.collect_observed_response_mode_cases(runs_root)
 
     assert payload["summary"]["fixture_taxonomy_counts"] == {
+        "ready_expected": 1,
+        "pending_expected": 0,
+        "ambiguous": 1,
+    }
+
+
+def test_same_surface_transition_keeps_summary_report_and_taxonomy_aligned(tmp_path: Path) -> None:
+    mod = _load_module()
+
+    def _collect_cases(*, same_surface_count: int, run_prefix: str) -> tuple[dict[str, object], list[dict[str, object]]]:
+        runs_root = tmp_path / ".omc" / "runs" / run_prefix
+        for index in range(20):
+            run_dir = runs_root / f"20260701T05{index:02d}-transition{index:04d}"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "result.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": "observed-collect",
+                        "instruction": f"same-surface transition request {index}",
+                        "benchmark_source_type": "observed_output",
+                        "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                        "comparison_scope": "same_surface" if index < same_surface_count else "cross_surface",
+                        "baseline_response_sample": "기존 응답 샘플",
+                        "candidate_response_sample": "개선 응답 샘플",
+                        "status": "completed",
+                        "last_completed_step": "review",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        collected = mod.collect_observed_response_mode_cases(runs_root)
+        return collected, collected["cases"]
+
+    zero_collected, zero_cases = _collect_cases(same_surface_count=0, run_prefix="zero")
+    zero_report = mod.compare_response_modes(zero_cases)
+    one_collected, one_cases = _collect_cases(same_surface_count=1, run_prefix="one")
+    one_report = mod.compare_response_modes(one_cases)
+    one_taxonomy = mod._fixture_taxonomy_counts_from_readiness(one_cases)
+    two_collected, two_cases = _collect_cases(same_surface_count=2, run_prefix="two")
+    two_report = mod.compare_response_modes(two_cases)
+    two_taxonomy = mod._fixture_taxonomy_counts_from_readiness(two_cases)
+
+    assert zero_collected["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: need more same-surface evidence"
+    )
+    assert zero_report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
+    assert zero_report["decision"]["baseline_comparison_status"] == "deferred"
+
+    assert one_collected["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: baseline comparison input is ready"
+    )
+    assert one_report["decision"]["baseline_comparison_status"] == "ready"
+    assert one_report["decision"]["policy_comparison_summary"] == (
+        "policy comparison ready: baseline comparison wording can be enabled"
+    )
+    assert one_taxonomy == {
+        "ready_expected": 1,
+        "pending_expected": 1,
+        "ambiguous": 0,
+    }
+
+    assert two_collected["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: baseline comparison input is ready"
+    )
+    assert two_report["decision"]["baseline_comparison_status"] == "ready"
+    assert two_taxonomy == {
         "ready_expected": 1,
         "pending_expected": 0,
         "ambiguous": 1,

@@ -752,6 +752,57 @@ class TestCmdRunWithExpect:
         code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=True)
         assert code == 0
 
+    def test_cmd_run_blocks_when_task_requires_clean_scope_and_staged_changes_exist(
+        self, tmp_path, monkeypatch
+    ):
+        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "config", "user.name", "OMC Test"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "omc@example.com"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        tracked = tmp_path / "tracked.py"
+        tracked.write_text("print('dirty')\n", encoding="utf-8")
+        subprocess.run(["git", "add", "tracked.py"], cwd=tmp_path, check=True, capture_output=True, text=True)
+
+        tasks_dir = tmp_path / ".omc" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task_file = tasks_dir / "observed-collect.json"
+        task_file.write_text(
+            json.dumps(
+                {
+                    "id": "observed-collect",
+                    "title": "Observed Run Collection",
+                    "executor": "auto",
+                    "require_clean_scope": True,
+                    "max_retries": 0,
+                    "steps": [
+                        {
+                            "id": "s1",
+                            "prompt": "collect observed request",
+                            "depends_on": [],
+                            "timeout_sec": 10,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(omc_autopilot, "_detect_executor", lambda _pref: "codex")
+
+        code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=True)
+        assert code == 1
+
 
 @pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
 def test_detect_executor_fail_fast_when_no_executor(monkeypatch):

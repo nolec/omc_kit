@@ -486,6 +486,114 @@ def test_status_includes_latest_run_and_recent_runs_context(tmp_path: Path):
     assert "make test-a(completed)" in status.stdout, status.stdout
 
 
+def test_status_counts_autopilot_run_history_from_omc_runs(tmp_path: Path):
+    target = tmp_path / "repo"
+    target.mkdir()
+
+    init = _run("state", "init", "--target", str(target))
+    assert init.returncode == 0, init.stderr
+
+    runs_dir = target / ".omc" / "runs" / "20260701T000000-observed"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    (runs_dir / "result.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "benchmark_source_type": "observed_output",
+                "comparison_scope": "same_surface",
+                "policy_pair": "baseline->candidate",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    status = _run("state", "status", "--target", str(target))
+    assert status.returncode == 0, status.stderr
+    assert "- runs: 1" in status.stdout, status.stdout
+    assert "- pipeline_history_runs(.omc/runs): 1" in status.stdout, status.stdout
+
+
+def test_status_counts_state_runs_and_autopilot_run_history_together(tmp_path: Path):
+    target = tmp_path / "repo"
+    target.mkdir()
+
+    init = _run("state", "init", "--target", str(target))
+    assert init.returncode == 0, init.stderr
+
+    sync = _run(
+        "state",
+        "sync-session",
+        "--target",
+        str(target),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-task",
+        "--request",
+        "mixed run count visibility",
+        "--roles",
+        "senior_coding",
+    )
+    assert sync.returncode == 0, sync.stderr
+
+    first = _run("state", "run-start", "--target", str(target), "--command-name", "make test-a")
+    assert first.returncode == 0, first.stderr
+    first_run_id = first.stdout.strip()
+    finished_first = _run(
+        "state",
+        "run-finish",
+        "--target",
+        str(target),
+        "--run-id",
+        first_run_id,
+        "--status",
+        "completed",
+        "--message",
+        "first run complete",
+    )
+    assert finished_first.returncode == 0, finished_first.stderr
+
+    second = _run("state", "run-start", "--target", str(target), "--command-name", "make test-b")
+    assert second.returncode == 0, second.stderr
+    second_run_id = second.stdout.strip()
+    finished_second = _run(
+        "state",
+        "run-finish",
+        "--target",
+        str(target),
+        "--run-id",
+        second_run_id,
+        "--status",
+        "failed",
+        "--message",
+        "second run failed",
+    )
+    assert finished_second.returncode == 0, finished_second.stderr
+
+    runs_dir = target / ".omc" / "runs" / "20260701T000000-observed"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    (runs_dir / "result.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "benchmark_source_type": "observed_output",
+                "comparison_scope": "same_surface",
+                "policy_pair": "baseline->candidate",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    status = _run("state", "status", "--target", str(target))
+    assert status.returncode == 0, status.stderr
+    assert "- runs: 3" in status.stdout, status.stdout
+    assert "- pipeline_history_runs(.omc/runs): 1" in status.stdout, status.stdout
+
+
 def test_status_calls_out_ship_blocker_when_commit_scope_is_empty(tmp_path: Path):
     target = tmp_path / "repo"
     target.mkdir()

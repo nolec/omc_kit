@@ -571,6 +571,67 @@ class TestSharedLessons(unittest.TestCase):
             self.assertFalse((tgt / ".omc" / "lessons").exists())
 
 
+class TestSharedTasks(unittest.TestCase):
+    def test_shared_tasks_copied_to_target(self):
+        """install 실행 시 templates/shared_tasks/ 가 .omc/tasks/ 에 복사된다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = Path(tmp) / "kit"
+            shared = kit / "templates" / "shared_tasks"
+            shared.mkdir(parents=True)
+            (shared / "observed-collect.json").write_text(
+                '{"id":"observed-collect","require_clean_scope":true}\n',
+                encoding="utf-8",
+            )
+
+            tgt = Path(tmp) / "tgt"
+            tgt.mkdir()
+
+            _install._install_shared_tasks(kit, tgt)
+
+            tasks_dir = tgt / ".omc" / "tasks"
+            self.assertTrue((tasks_dir / "observed-collect.json").exists())
+            self.assertEqual(
+                json.loads((tasks_dir / "observed-collect.json").read_text(encoding="utf-8"))["require_clean_scope"],
+                True,
+            )
+
+    def test_shared_tasks_skips_existing(self):
+        """이미 존재하는 태스크 파일은 덮어쓰지 않는다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = Path(tmp) / "kit"
+            shared = kit / "templates" / "shared_tasks"
+            shared.mkdir(parents=True)
+            (shared / "observed-collect.json").write_text(
+                '{"id":"observed-collect","require_clean_scope":true}\n',
+                encoding="utf-8",
+            )
+
+            tgt = Path(tmp) / "tgt"
+            tasks_dir = tgt / ".omc" / "tasks"
+            tasks_dir.mkdir(parents=True)
+            (tasks_dir / "observed-collect.json").write_text(
+                '{"id":"observed-collect","require_clean_scope":false}\n',
+                encoding="utf-8",
+            )
+
+            _install._install_shared_tasks(kit, tgt)
+
+            self.assertEqual(
+                json.loads((tasks_dir / "observed-collect.json").read_text(encoding="utf-8"))["require_clean_scope"],
+                False,
+            )
+
+    def test_observed_collect_template_matches_runtime_task(self):
+        """설치 템플릿과 로컬 runtime task가 drift 없이 동일해야 한다."""
+        runtime_task = Path(__file__).parent.parent / ".omc" / "tasks" / "observed-collect.json"
+        template_task = Path(__file__).parent.parent / "templates" / "shared_tasks" / "observed-collect.json"
+
+        self.assertEqual(
+            json.loads(template_task.read_text(encoding="utf-8")),
+            json.loads(runtime_task.read_text(encoding="utf-8")),
+        )
+
+
 class TestInstallGeminiSettings(unittest.TestCase):
     def _settings_path(self, tmp: str) -> Path:
         p = Path(tmp) / ".gemini" / "settings.json"
@@ -714,6 +775,9 @@ class TestHookContractMarkers(unittest.TestCase):
                     called.append((label, path.name))
                 return _inner
 
+            shared_tasks_mock = patch.object(_install, "_install_shared_tasks")
+            shared_lessons_mock = patch.object(_install, "_install_shared_lessons")
+
             with patch.object(_install, "_kit_root", return_value=kit), \
                  patch.object(_install, "_assert_claude_hook_contract", side_effect=_record("claude")), \
                  patch.object(_install, "_assert_gemini_hook_contract", side_effect=_record("gemini")), \
@@ -723,13 +787,24 @@ class TestHookContractMarkers(unittest.TestCase):
                  patch.object(_install, "_install_gemini_settings"), \
                  patch.object(_install, "_ensure_executable"), \
                  patch.object(_install, "_setup_ethos_section5"), \
-                 patch.object(_install, "_install_shared_lessons"), \
+                 shared_tasks_mock as shared_tasks, \
+                 shared_lessons_mock as shared_lessons, \
                  patch("sys.argv", ["install.py", "--target", str(target)]):
                 _install.main()
 
             self.assertIn(("claude", "settings.json"), called)
             self.assertIn(("gemini", "settings.json"), called)
             self.assertIn(("codex", "hooks.json"), called)
+            shared_tasks.assert_called_once()
+            shared_lessons.assert_called_once()
+            self.assertEqual(
+                tuple(path.resolve() for path in shared_tasks.call_args.args),
+                (kit.resolve(), target.resolve()),
+            )
+            self.assertEqual(
+                tuple(path.resolve() for path in shared_lessons.call_args.args),
+                (kit.resolve(), target.resolve()),
+            )
 
     def test_install_rejects_codex_template_missing_soft_guard(self):
         with tempfile.TemporaryDirectory() as tmp:

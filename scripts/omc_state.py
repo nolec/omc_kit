@@ -494,6 +494,23 @@ def _recent_runs(
     return list(reversed(runs))[:limit]
 
 
+def _pipeline_history_run_count(project_root: Path) -> int:
+    runs_dir = project_root / ".omc" / "runs"
+    if not runs_dir.exists():
+        return 0
+    count = 0
+    for run_dir in runs_dir.iterdir():
+        if not run_dir.is_dir():
+            continue
+        if (run_dir / "result.json").exists():
+            count += 1
+    return count
+
+
+def _display_run_count(project_root: Path, state_runs: list[dict[str, object]]) -> int:
+    return len(state_runs) + _pipeline_history_run_count(project_root)
+
+
 def _failed_run_summary(entry: dict[str, object], *, request_kind: str) -> tuple[str, str]:
     result = entry.get("result")
     result_dict = result if isinstance(result, dict) else {}
@@ -1388,10 +1405,14 @@ def status(project_root: Path) -> str:
     if latest is None:
         latest = entries[-1] if entries else None
     git_scope = _git_scope_snapshot(project_root)
+    pipeline_history_run_count = _pipeline_history_run_count(project_root)
+    display_run_count = _display_run_count(project_root, runs)
     lines = [f"OMC state: {project_root}"]
     lines.append(f"- memory entries: {len(entries)}")
     lines.append(f"- sessions: {len(sessions)}")
-    lines.append(f"- runs: {len(runs)}")
+    lines.append(f"- runs: {display_run_count}")
+    if pipeline_history_run_count:
+        lines.append(f"- pipeline_history_runs(.omc/runs): {pipeline_history_run_count}")
     lines.append(f"- notes: {len(notes)}")
     if latest:
         lines.append(f"- latest: {_entry_summary(latest)}")

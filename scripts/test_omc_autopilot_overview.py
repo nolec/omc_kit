@@ -302,6 +302,7 @@ def test_observed_collect_task_exists_with_real_expect_checks() -> None:
 
     assert payload["id"] == "observed-collect"
     assert payload["executor"] == "auto"
+    assert payload.get("require_clean_scope") is True
     assert payload["steps"], "observed collect task should define steps"
     first_step = payload["steps"][0]
     expect = first_step.get("expect") or {}
