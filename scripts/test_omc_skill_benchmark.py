@@ -608,6 +608,36 @@ def test_decision_from_summary_does_not_report_ready_when_baseline_flag_is_false
     )
 
 
+def test_decision_from_summary_keeps_rejection_count_without_reason_map():
+    mod = _load_module()
+
+    summary = {
+        "mode_accuracy_delta": 0.0,
+        "reroute_rate_delta": 0.0,
+        "candidate_task_start_delay_delta": 0,
+        "baseline_output_chars_avg": 300,
+        "candidate_output_chars_delta": 0,
+        "observed_output_count": 20,
+        "observed_same_surface_count": 0,
+        "readiness_observed_sample_count": 20,
+        "readiness_same_surface_case_count": 0,
+        "readiness_distinct_policy_pair_count": 2,
+        "baseline_comparison_ready": False,
+        "rejected_observed_output_case_count": 2,
+        "rejected_observed_output_reasons": {},
+        "next_action_case_count": 0,
+        "candidate_wrong_next_step_rate": 0,
+        "wrong_next_step_rate_delta": 0,
+    }
+
+    decision = mod._decision_from_summary(summary)
+
+    assert decision["next_kpi_blocker"] == "insufficient_same_surface_evidence"
+    assert decision["policy_comparison_bottleneck_summary"] == (
+        "policy comparison bottleneck: need more same-surface evidence; rejected observed_output=2"
+    )
+
+
 def test_compare_response_modes_cli_outputs_decision_json(tmp_path: Path):
     cases = {
         "cases": [

@@ -619,25 +619,18 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         "policy comparison bottleneck: "
         + deferred_reason_map.get(next_kpi_blocker, "readiness requirements are not met")
     )
-    if (
-        rejected_observed_output_case_count > 0
-        and isinstance(rejected_observed_output_reasons, dict)
-        and rejected_observed_output_reasons
-    ):
-        reason_parts: list[str] = []
-        for key in sorted(rejected_observed_output_reasons):
-            count = rejected_observed_output_reasons.get(key)
-            if isinstance(count, int):
-                reason_parts.append(f"{key}:{count}")
-        if reason_parts:
-            rejected_suffix = (
-                f"; rejected observed_output={rejected_observed_output_case_count} "
-                f"({','.join(reason_parts)})"
-            )
-            policy_comparison_summary += rejected_suffix
-            bottleneck_summary += (
-                rejected_suffix
-            )
+    if rejected_observed_output_case_count > 0:
+        rejected_suffix = f"; rejected observed_output={rejected_observed_output_case_count}"
+        if isinstance(rejected_observed_output_reasons, dict) and rejected_observed_output_reasons:
+            reason_parts: list[str] = []
+            for key in sorted(rejected_observed_output_reasons):
+                count = rejected_observed_output_reasons.get(key)
+                if isinstance(count, int):
+                    reason_parts.append(f"{key}:{count}")
+            if reason_parts:
+                rejected_suffix += f" ({','.join(reason_parts)})"
+        policy_comparison_summary += rejected_suffix
+        bottleneck_summary += rejected_suffix
 
     return {
         "verdict": verdict,
