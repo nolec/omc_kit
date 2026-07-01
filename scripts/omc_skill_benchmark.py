@@ -66,6 +66,20 @@ def _count_policy_pairs(cases: list[dict[str, object]]) -> dict[str, int]:
     return counts
 
 
+def _count_readiness_policy_pairs(cases: list[dict[str, object]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for case in cases:
+        if bool(case.get("neutral_seed")):
+            continue
+        baseline_policy = str(case.get("baseline_policy") or "").strip()
+        candidate_policy = str(case.get("candidate_policy") or "").strip()
+        if not baseline_policy or not candidate_policy:
+            continue
+        pair = f"{baseline_policy}->{candidate_policy}"
+        counts[pair] = counts.get(pair, 0) + 1
+    return counts
+
+
 def _count_observed_samples(cases: list[dict[str, object]]) -> int:
     count = 0
     for case in cases:
@@ -151,7 +165,7 @@ def _summarize_readiness_thresholds(
 ) -> dict[str, object]:
     observed_sample_count = _count_observed_samples(cases)
     same_surface_count = _count_readiness_same_surface_observed_samples(cases)
-    distinct_policy_pair_count = len(_count_policy_pairs(cases))
+    distinct_policy_pair_count = len(_count_readiness_policy_pairs(cases))
     sample_gap = max(min_samples - observed_sample_count, 0)
     same_surface_gap = max(min_same_surface - same_surface_count, 0)
     policy_pair_gap = max(min_policy_pairs - distinct_policy_pair_count, 0)
@@ -535,7 +549,12 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
 
     readiness_sample_count = int(summary.get("readiness_observed_sample_count", 0))
     readiness_same_surface_count = int(summary.get("readiness_same_surface_case_count", 0))
-    distinct_policy_pair_count = int(summary.get("distinct_policy_pair_count", 0))
+    distinct_policy_pair_count = int(
+        summary.get(
+            "readiness_distinct_policy_pair_count",
+            summary.get("distinct_policy_pair_count", 0),
+        )
+    )
     baseline_comparison_ready = bool(summary.get("baseline_comparison_ready", False))
     deferred_reason_map = {
         "insufficient_observed_samples": "need more observed samples",
@@ -800,12 +819,14 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
     )
     distinct_policies = _distinct_policies(cases)
     policy_pair_counts = _count_policy_pairs(cases)
+    readiness_policy_pair_counts = _count_readiness_policy_pairs(cases)
     primary_policy_pair = _primary_policy_pair(policy_pair_counts)
     sample_case_count = len(cases)
     readiness = _summarize_readiness_thresholds(cases)
     observed_sample_case_count = int(readiness["observed_sample_count"])
     readiness_observed_sample_count = observed_sample_case_count
     distinct_policy_pair_count = len(policy_pair_counts)
+    readiness_distinct_policy_pair_count = len(readiness_policy_pair_counts)
     sample_requirement_met = int(readiness["sample_gap"]) == 0
     policy_requirement_met = int(readiness["policy_pair_gap"]) == 0
     if case_count == 0:
@@ -936,9 +957,11 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
         "distinct_policy_count": len(distinct_policies),
         "distinct_policies": distinct_policies,
         "distinct_policy_pair_count": distinct_policy_pair_count,
+        "readiness_distinct_policy_pair_count": readiness_distinct_policy_pair_count,
         "policy_requirement_met": policy_requirement_met,
         "policy_pair_counts": policy_pair_counts,
-        "primary_policy_pair": primary_policy_pair,
+        "readiness_policy_pair_counts": readiness_policy_pair_counts,
+        "primary_policy_pair": _primary_policy_pair(policy_pair_counts),
         "baseline_mode_accuracy": baseline_mode_accuracy,
         "candidate_mode_accuracy": candidate_mode_accuracy,
         "mode_accuracy_delta": candidate_mode_accuracy - baseline_mode_accuracy,
@@ -1476,6 +1499,7 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
 
     comparison_scope_counts = _count_comparison_scopes(cases)
     policy_pair_counts = _count_policy_pairs(cases)
+    readiness_policy_pair_counts = _count_readiness_policy_pairs(cases)
     readiness = _summarize_readiness_thresholds(cases)
     readiness_observed_sample_count = int(readiness["observed_sample_count"])
     readiness_same_surface_case_count = int(readiness["same_surface_count"])
@@ -1485,7 +1509,7 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             observed_data_bottleneck_summary = (
                 "observed data bottleneck: need more same-surface evidence"
             )
-        elif len(policy_pair_counts) < KPI_MIN_POLICY_PAIR_COUNT:
+        elif len(readiness_policy_pair_counts) < KPI_MIN_POLICY_PAIR_COUNT:
             observed_data_bottleneck_summary = (
                 "observed data bottleneck: need more policy pair coverage"
             )
@@ -1521,7 +1545,9 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             "readiness_observed_sample_count": readiness_observed_sample_count,
             "readiness_same_surface_case_count": readiness_same_surface_case_count,
             "distinct_policy_pair_count": len(policy_pair_counts),
+            "readiness_distinct_policy_pair_count": len(readiness_policy_pair_counts),
             "policy_pair_counts": policy_pair_counts,
+            "readiness_policy_pair_counts": readiness_policy_pair_counts,
             "fixture_taxonomy_counts": _fixture_taxonomy_counts_from_readiness(cases),
             "rejected_observed_output_case_count": rejected_observed_output_case_count,
             "rejected_observed_output_reasons": rejected_observed_output_reasons,

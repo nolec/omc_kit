@@ -21,6 +21,15 @@ def _load_module():
     return module
 
 
+def _write_observed_run(runs_root: Path, run_id: str, payload: dict[str, object]) -> None:
+    run_dir = runs_root / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "result.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 def test_evaluate_case_scores_core_metrics():
     mod = _load_module()
 
@@ -844,7 +853,8 @@ def test_neutral_observed_seed_cases_do_not_count_toward_kpi_readiness(tmp_path:
     assert report["summary"]["observed_sample_case_count"] == 0
     assert report["summary"]["sample_requirement_met"] is False
     assert report["summary"]["distinct_policy_pair_count"] == 2
-    assert report["summary"]["policy_requirement_met"] is True
+    assert report["summary"]["readiness_distinct_policy_pair_count"] == 0
+    assert report["summary"]["policy_requirement_met"] is False
     assert report["decision"]["kpi_readiness"] == "incomplete"
 
 
@@ -1172,6 +1182,52 @@ def test_collected_observed_multi_run_kpis_are_carried_into_comparison_summary(t
     assert report["summary"]["reroute_rate"] == 0.3
     assert report["summary"]["retry_to_success_rate"] == 0.5
     assert report["summary"]["cost_per_successful_task"] == 0.02
+
+
+def test_neutral_observed_request_policy_pair_does_not_unlock_readiness(tmp_path: Path):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        _write_observed_run(
+            runs_root,
+            f"20260701T027{index:02d}-ready{index:04d}",
+            {
+                "task_id": "observed-collect",
+                "instruction": f"실제 observed readiness request {index}",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "baseline->candidate",
+                "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                "baseline_response_sample": "기존 응답 샘플",
+                "candidate_response_sample": "개선 응답 샘플",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+        )
+
+    _write_observed_run(
+        runs_root,
+        "20260701T02800-neutral0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "실제 observed neutral seed request",
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "candidate->baseline",
+            "status": "completed",
+            "last_completed_step": "plan",
+        },
+    )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    report = mod.compare_response_modes(collected["cases"])
+
+    assert collected["summary"]["distinct_policy_pair_count"] == 2
+    assert collected["summary"]["readiness_distinct_policy_pair_count"] == 1
+    assert collected["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: need more policy pair coverage"
+    )
+    assert report["decision"]["baseline_comparison_status"] == "deferred"
+    assert report["decision"]["next_kpi_blocker"] == "insufficient_policy_pairs"
 
 
 def test_collected_observed_pending_summary_matches_comparison_pending_summary(tmp_path: Path):
