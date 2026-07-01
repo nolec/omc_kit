@@ -1077,6 +1077,103 @@ def test_collected_observed_ready_summary_matches_comparison_ready_summary(tmp_p
     )
 
 
+def test_collected_observed_summary_exposes_multi_run_kpi_triplet(tmp_path: Path):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        run_dir = runs_root / f"20260701T025{index:02d}-kpi{index:04d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        run_status = "completed" if index < 15 and not (5 <= index < 8) else "failed"
+        steps = {
+            "review": {
+                "status": "completed" if run_status == "completed" else "failed",
+                "cost_estimate": 0.01,
+            }
+        }
+        if index < 8:
+            steps["task_retry"] = {
+                "status": "completed" if index < 5 else "failed",
+                "reroute_target": "task_retry",
+            }
+        (run_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "instruction": f"실제 observed kpi request {index}",
+                    "benchmark_source_type": "observed_output",
+                    "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                    "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                    "baseline_response_sample": "기존 응답 샘플",
+                    "candidate_response_sample": "개선 응답 샘플",
+                    "status": run_status,
+                    "last_completed_step": "review",
+                    "steps": steps,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    summary = collected["summary"]
+
+    assert summary["total_run_count"] == 20
+    assert summary["reroute_rate"] == 0.4
+    assert summary["retry_to_success_rate"] == 0.625
+    assert summary["cost_per_successful_task"] == 0.01
+
+
+def test_collected_observed_multi_run_kpis_are_carried_into_comparison_summary(tmp_path: Path):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        run_dir = runs_root / f"20260701T026{index:02d}-carry{index:04d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        run_status = "completed" if index < 12 and not (3 <= index < 6) else "failed"
+        steps = {
+            "review": {
+                "status": "completed" if run_status == "completed" else "failed",
+                "cost_estimate": 0.02,
+            }
+        }
+        if index < 6:
+            steps["plan_retry"] = {
+                "status": "completed" if index < 3 else "failed",
+                "decision": "reroute",
+                "reroute_target": "plan_retry",
+            }
+        (run_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "instruction": f"실제 observed kpi carry request {index}",
+                    "benchmark_source_type": "observed_output",
+                    "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                    "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                    "baseline_response_sample": "기존 응답 샘플",
+                    "candidate_response_sample": "개선 응답 샘플",
+                    "status": run_status,
+                    "last_completed_step": "review",
+                    "steps": steps,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    report = mod.compare_response_modes(collected["cases"])
+
+    assert report["summary"]["total_run_count"] == 20
+    assert report["summary"]["reroute_rate"] == 0.3
+    assert report["summary"]["retry_to_success_rate"] == 0.5
+    assert report["summary"]["cost_per_successful_task"] == 0.02
+
+
 def test_collected_observed_pending_summary_matches_comparison_pending_summary(tmp_path: Path):
     mod = _load_module()
 

@@ -89,6 +89,59 @@ def _count_readiness_same_surface_observed_samples(cases: list[dict[str, object]
     return count
 
 
+def _summarize_multi_run_kpis(run_records: list[dict[str, object]]) -> dict[str, object]:
+    total_run_count = len(run_records)
+    reroute_run_count = 0
+    recovered_retry_run_count = 0
+    successful_costs: list[float] = []
+
+    for record in run_records:
+        steps = record.get("steps")
+        if not isinstance(steps, dict):
+            steps = {}
+
+        had_reroute = any(
+            isinstance(step, dict)
+            and (
+                str(step.get("decision") or "").strip().lower() == "reroute"
+                or bool(str(step.get("reroute_target") or "").strip())
+            )
+            for step in steps.values()
+        )
+        retry_step_count = sum(1 for name in steps if "retry" in str(name))
+        if had_reroute:
+            reroute_run_count += 1
+        if retry_step_count > 0 and str(record.get("status") or "").strip() == "completed":
+            recovered_retry_run_count += 1
+
+        if str(record.get("status") or "").strip() == "completed":
+            total_cost_usd = sum(
+                float(step.get("cost_estimate"))
+                for step in steps.values()
+                if isinstance(step, dict) and isinstance(step.get("cost_estimate"), (int, float))
+            )
+            if total_cost_usd > 0:
+                successful_costs.append(total_cost_usd)
+
+    reroute_rate = (reroute_run_count / total_run_count) if total_run_count else None
+    retry_to_success_rate = (
+        recovered_retry_run_count / reroute_run_count if reroute_run_count else None
+    )
+    cost_per_successful_task = (
+        sum(successful_costs) / len(successful_costs) if successful_costs else None
+    )
+    return {
+        "total_run_count": total_run_count,
+        "reroute_rate": reroute_rate,
+        "retry_to_success_rate": retry_to_success_rate,
+        "cost_per_successful_task": (
+            round(cost_per_successful_task, 10)
+            if isinstance(cost_per_successful_task, (int, float))
+            else None
+        ),
+    }
+
+
 def _summarize_readiness_thresholds(
     cases: list[dict[str, object]],
     *,
@@ -715,6 +768,36 @@ def build_expensive_flow_report(
 def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
     compared_cases = [_compare_case(case) for case in cases]
     case_count = len(compared_cases)
+    dataset_run_counts = [
+        int(case.get("dataset_total_run_count", 0))
+        for case in cases
+        if isinstance(case.get("dataset_total_run_count"), int)
+    ]
+    dataset_total_run_count = max(dataset_run_counts) if dataset_run_counts else 0
+    dataset_reroute_rate = next(
+        (
+            float(case["dataset_reroute_rate"])
+            for case in cases
+            if isinstance(case.get("dataset_reroute_rate"), (int, float))
+        ),
+        None,
+    )
+    dataset_retry_to_success_rate = next(
+        (
+            float(case["dataset_retry_to_success_rate"])
+            for case in cases
+            if isinstance(case.get("dataset_retry_to_success_rate"), (int, float))
+        ),
+        None,
+    )
+    dataset_cost_per_successful_task = next(
+        (
+            float(case["dataset_cost_per_successful_task"])
+            for case in cases
+            if isinstance(case.get("dataset_cost_per_successful_task"), (int, float))
+        ),
+        None,
+    )
     distinct_policies = _distinct_policies(cases)
     policy_pair_counts = _count_policy_pairs(cases)
     primary_policy_pair = _primary_policy_pair(policy_pair_counts)
@@ -727,6 +810,10 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
     policy_requirement_met = int(readiness["policy_pair_gap"]) == 0
     if case_count == 0:
         summary = {
+            "total_run_count": dataset_total_run_count,
+            "reroute_rate": dataset_reroute_rate,
+            "retry_to_success_rate": dataset_retry_to_success_rate,
+            "cost_per_successful_task": dataset_cost_per_successful_task,
             "case_count": 0,
             "sample_case_count": sample_case_count,
             "observed_sample_case_count": observed_sample_case_count,
@@ -836,6 +923,10 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
                 )
 
     summary = {
+        "total_run_count": dataset_total_run_count,
+        "reroute_rate": dataset_reroute_rate,
+        "retry_to_success_rate": dataset_retry_to_success_rate,
+        "cost_per_successful_task": dataset_cost_per_successful_task,
         "case_count": case_count,
         "sample_case_count": sample_case_count,
         "observed_sample_case_count": observed_sample_case_count,
@@ -1184,6 +1275,17 @@ def _normalize_response_mode_case(case: object, index: int) -> dict[str, object]
                 normalized_rejected_reasons[key] = count
         if normalized_rejected_reasons:
             normalized["dataset_rejected_observed_output_reasons"] = normalized_rejected_reasons
+    total_run_count = case.get("dataset_total_run_count")
+    if isinstance(total_run_count, int) and total_run_count >= 0:
+        normalized["dataset_total_run_count"] = total_run_count
+    for field in (
+        "dataset_reroute_rate",
+        "dataset_retry_to_success_rate",
+        "dataset_cost_per_successful_task",
+    ):
+        value = case.get(field)
+        if isinstance(value, (int, float)):
+            normalized[field] = float(value)
     return normalized
 
 
@@ -1318,6 +1420,10 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
         return {
             "cases": [],
             "summary": {
+                "total_run_count": 0,
+                "reroute_rate": None,
+                "retry_to_success_rate": None,
+                "cost_per_successful_task": None,
                 "case_count": 0,
                 "observed_sample_case_count": 0,
                 "neutral_seed_case_count": 0,
@@ -1335,6 +1441,7 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
         }
 
     cases: list[dict[str, object]] = []
+    run_records: list[dict[str, object]] = []
     rejected_observed_output_reasons: dict[str, int] = {}
     for run_dir in sorted(runs_dir.iterdir()):
         result_path = run_dir / "result.json"
@@ -1346,6 +1453,7 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             continue
         if not isinstance(record, dict):
             continue
+        run_records.append(record)
         case = _build_observed_request_case_from_run_record(record, run_id=run_dir.name)
         if case is None:
             rejection_reason = _validate_observed_output_run_record(record)
@@ -1356,6 +1464,15 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
                 )
         if case is not None:
             cases.append(case)
+
+    multi_run_kpis = _summarize_multi_run_kpis(run_records)
+    for case in cases:
+        case["dataset_total_run_count"] = multi_run_kpis["total_run_count"]
+        case["dataset_reroute_rate"] = multi_run_kpis["reroute_rate"]
+        if multi_run_kpis["retry_to_success_rate"] is not None:
+            case["dataset_retry_to_success_rate"] = multi_run_kpis["retry_to_success_rate"]
+        if multi_run_kpis["cost_per_successful_task"] is not None:
+            case["dataset_cost_per_successful_task"] = multi_run_kpis["cost_per_successful_task"]
 
     comparison_scope_counts = _count_comparison_scopes(cases)
     policy_pair_counts = _count_policy_pairs(cases)
@@ -1389,6 +1506,10 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
     return {
         "cases": cases,
         "summary": {
+            "total_run_count": multi_run_kpis["total_run_count"],
+            "reroute_rate": multi_run_kpis["reroute_rate"],
+            "retry_to_success_rate": multi_run_kpis["retry_to_success_rate"],
+            "cost_per_successful_task": multi_run_kpis["cost_per_successful_task"],
             "case_count": len(cases),
             "observed_sample_case_count": readiness_observed_sample_count,
             "neutral_seed_case_count": sum(1 for case in cases if bool(case.get("neutral_seed"))),
