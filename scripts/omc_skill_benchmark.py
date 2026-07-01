@@ -560,6 +560,7 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         "insufficient_observed_samples": "need more observed samples",
         "insufficient_same_surface_evidence": "need more same-surface evidence",
         "insufficient_policy_pairs": "need more policy pair coverage",
+        "baseline_comparison_not_ready": "baseline comparison input is not ready",
         "none": "baseline comparison wording can be enabled",
     }
     kpi_readiness = "ready"
@@ -582,8 +583,10 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
     else:
         readiness_status_line = "ready: baseline comparison wording can be enabled"
 
-    if not baseline_comparison_ready:
+    if not baseline_comparison_ready and next_kpi_blocker == "none":
         kpi_readiness = "incomplete"
+        next_kpi_blocker = "baseline_comparison_not_ready"
+        readiness_status_line = "not ready: baseline comparison input is not ready"
 
     baseline_comparison_status = "ready" if baseline_comparison_ready and kpi_readiness == "ready" else "deferred"
     if baseline_comparison_status == "ready":

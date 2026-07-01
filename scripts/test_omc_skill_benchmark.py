@@ -578,6 +578,36 @@ def test_decision_from_summary_blocks_adopt_when_next_step_check_fails():
     assert decision["verdict"] == "revise"
 
 
+def test_decision_from_summary_does_not_report_ready_when_baseline_flag_is_false():
+    mod = _load_module()
+
+    summary = {
+        "mode_accuracy_delta": 0.1,
+        "reroute_rate_delta": -0.1,
+        "candidate_task_start_delay_delta": 0,
+        "baseline_output_chars_avg": 300,
+        "candidate_output_chars_delta": -20,
+        "observed_output_count": 20,
+        "observed_same_surface_count": 2,
+        "readiness_observed_sample_count": 20,
+        "readiness_same_surface_case_count": 2,
+        "readiness_distinct_policy_pair_count": 2,
+        "baseline_comparison_ready": False,
+        "next_action_case_count": 0,
+        "candidate_wrong_next_step_rate": 0,
+        "wrong_next_step_rate_delta": 0,
+    }
+
+    decision = mod._decision_from_summary(summary)
+
+    assert decision["baseline_comparison_status"] == "deferred"
+    assert decision["next_kpi_blocker"] == "baseline_comparison_not_ready"
+    assert decision["readiness_status_line"] == "not ready: baseline comparison input is not ready"
+    assert decision["policy_comparison_summary"] == (
+        "policy comparison pending: baseline comparison input is not ready"
+    )
+
+
 def test_compare_response_modes_cli_outputs_decision_json(tmp_path: Path):
     cases = {
         "cases": [
