@@ -1103,7 +1103,7 @@ def test_collected_observed_ready_summary_preserves_rejection_context_in_policy_
                     "instruction": f"실제 observed ready request {index}",
                     "benchmark_source_type": "observed_output",
                     "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
-                    "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                    "comparison_scope": "same_surface" if index < 2 else "cross_surface",
                     "baseline_response_sample": "기존 응답 샘플",
                     "candidate_response_sample": "개선 응답 샘플",
                     "status": "completed",
@@ -1138,10 +1138,26 @@ def test_collected_observed_ready_summary_preserves_rejection_context_in_policy_
         "(missing_candidate_response_sample:1)"
     )
     assert report["decision"]["baseline_comparison_status"] == "ready"
+    assert report["decision"]["readiness_status_line"] == (
+        "ready: baseline comparison wording can be enabled"
+    )
+    assert report["decision"]["baseline_comparison_line"] == (
+        "baseline comparison ready: candidate improves mode accuracy by 0.0pp, "
+        "improves reroute rate by 0.0pp, and improves task start delay by 0.0"
+    )
     assert report["decision"]["policy_comparison_summary"] == (
         "policy comparison ready: baseline comparison wording can be enabled; rejected observed_output=1 "
         "(missing_candidate_response_sample:1)"
     )
+    assert report["decision"]["policy_comparison_bottleneck_summary"] == (
+        "policy comparison bottleneck: baseline comparison wording can be enabled; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert collected["summary"]["fixture_taxonomy_counts"] == {
+        "ready_expected": 1,
+        "pending_expected": 0,
+        "ambiguous": 1,
+    }
 
 
 def test_collected_observed_summary_exposes_multi_run_kpi_triplet(tmp_path: Path):
