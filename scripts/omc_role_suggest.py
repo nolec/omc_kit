@@ -240,6 +240,11 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
         _contains_any(normalized, ("계획", "plan"))
         and _contains_any(normalized, ("맞아", "맞는지", "제대로", "괜찮", "검증", "확인"))
     )
+    plan_gate_explanation_intent = (
+        _contains_any(normalized, ("계획", "plan"))
+        and "왜" in normalized
+        and _contains_any(normalized, ("선언", "작업을 선언"))
+    )
     explicit_fix_intent = (
         _contains_all(normalized, ("버그", "수정"))
         or _contains_all(normalized, ("bug", "fix"))
@@ -247,7 +252,7 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
     )
     root_cause_intent = _contains_any(normalized, ("원인", "왜 실패", "재현", "추적", "debug", "디버"))
 
-    if explicit_critique_intent or plan_validation_intent:
+    if explicit_critique_intent or plan_validation_intent or plan_gate_explanation_intent:
         return _build_orchestration(
             response_mode="review-first",
             recommended_skill="$omc-critique",

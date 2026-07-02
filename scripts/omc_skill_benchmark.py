@@ -779,6 +779,12 @@ def build_expensive_flow_report(
                 [str(item) for item in case.get("baseline_trace", [])]
             ),
         }
+        if flow["baseline_reroute"]:
+            flow["reroute_reason"] = "user_correction_after_baseline"
+            flow["reroute_signal"] = "user_requested_path_change"
+        if flow_kind == "output_bloat":
+            flow["output_bloat_reason"] = "baseline_output_exceeds_candidate"
+            flow["compression_signal"] = "char_reduction_confirmed"
         if isinstance(expected_next_action, str) and expected_next_action:
             baseline_next_action = case.get("baseline_next_action")
             candidate_next_action = case.get("candidate_next_action")

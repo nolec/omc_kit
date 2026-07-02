@@ -1688,6 +1688,141 @@ def test_policy_pair_threshold_transition_ignores_invalid_noise_after_same_surfa
     }
 
 
+def test_observed_run_accumulation_progression_keeps_deferred_and_ready_states_stable(
+    tmp_path: Path,
+):
+    mod = _load_module()
+
+    def _collect_stage(
+        *,
+        valid_sample_count: int,
+        valid_same_surface_count: int,
+        include_second_policy_pair: bool,
+        run_prefix: str,
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        runs_root = tmp_path / ".omc" / "runs" / run_prefix
+        for index in range(valid_sample_count):
+            run_dir = runs_root / f"20260701T026{index:02d}-progress{index:04d}"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "result.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": "observed-collect",
+                        "instruction": f"실제 observed progression request {index}",
+                        "benchmark_source_type": "observed_output",
+                        "policy_pair": (
+                            "candidate->baseline"
+                            if include_second_policy_pair and index == 1
+                            else "baseline->candidate"
+                        ),
+                        "comparison_scope": (
+                            "same_surface" if index < valid_same_surface_count else "cross_surface"
+                        ),
+                        "baseline_response_sample": "기존 응답 샘플",
+                        "candidate_response_sample": "개선 응답 샘플",
+                        "status": "completed",
+                        "last_completed_step": "review",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+        _write_observed_run(
+            runs_root,
+            "20260701T02690-neutral0001",
+            {
+                "task_id": "observed-collect",
+                "instruction": "실제 observed progression neutral request",
+                "benchmark_source_type": "observed_request",
+                "policy_pair": "candidate->baseline",
+                "status": "completed",
+                "last_completed_step": "plan",
+            },
+        )
+        _write_observed_run(
+            runs_root,
+            "20260701T02699-invalid0001",
+            {
+                "task_id": "observed-collect",
+                "instruction": "실제 observed progression invalid request",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "candidate->baseline",
+                "comparison_scope": "same_surface",
+                "baseline_response_sample": "기존 응답 샘플",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+        )
+
+        collected = mod.collect_observed_response_mode_cases(runs_root)
+        report = mod.compare_response_modes(collected["cases"])
+        return collected, report
+
+    sample_collected, sample_report = _collect_stage(
+        valid_sample_count=1,
+        valid_same_surface_count=0,
+        include_second_policy_pair=False,
+        run_prefix="progress-sample",
+    )
+    same_surface_collected, same_surface_report = _collect_stage(
+        valid_sample_count=20,
+        valid_same_surface_count=0,
+        include_second_policy_pair=True,
+        run_prefix="progress-same-surface",
+    )
+    policy_pair_collected, policy_pair_report = _collect_stage(
+        valid_sample_count=20,
+        valid_same_surface_count=1,
+        include_second_policy_pair=False,
+        run_prefix="progress-policy-pair",
+    )
+    ready_collected, ready_report = _collect_stage(
+        valid_sample_count=20,
+        valid_same_surface_count=1,
+        include_second_policy_pair=True,
+        run_prefix="progress-ready",
+    )
+
+    assert sample_collected["summary"]["readiness_sample_gap"] == 19
+    assert sample_collected["summary"]["baseline_comparison_ready"] is False
+    assert sample_collected["summary"]["readiness_blocker_line"] == "pending: need more observed samples"
+    assert sample_report["decision"]["baseline_comparison_status"] == "deferred"
+    assert sample_report["decision"]["next_kpi_blocker"] == "insufficient_observed_samples"
+
+    assert same_surface_collected["summary"]["readiness_sample_gap"] == 0
+    assert same_surface_collected["summary"]["readiness_same_surface_gap"] == 1
+    assert same_surface_collected["summary"]["baseline_comparison_ready"] is False
+    assert same_surface_collected["summary"]["readiness_blocker_line"] == (
+        "pending: need more same-surface evidence"
+    )
+    assert same_surface_report["decision"]["baseline_comparison_status"] == "deferred"
+    assert same_surface_report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
+
+    assert policy_pair_collected["summary"]["readiness_same_surface_gap"] == 0
+    assert policy_pair_collected["summary"]["readiness_distinct_policy_pair_count"] == 1
+    assert policy_pair_collected["summary"]["baseline_comparison_ready"] is False
+    assert policy_pair_collected["summary"]["readiness_blocker_line"] == (
+        "pending: need more policy pair coverage"
+    )
+    assert policy_pair_report["decision"]["baseline_comparison_status"] == "deferred"
+    assert policy_pair_report["decision"]["next_kpi_blocker"] == "insufficient_policy_pairs"
+
+    assert ready_collected["summary"]["readiness_sample_gap"] == 0
+    assert ready_collected["summary"]["readiness_same_surface_gap"] == 0
+    assert ready_collected["summary"]["readiness_distinct_policy_pair_count"] == 2
+    assert ready_collected["summary"]["baseline_comparison_ready"] is True
+    assert ready_collected["summary"]["readiness_blocker_line"] == (
+        "ready: baseline comparison wording can be enabled"
+    )
+    assert ready_report["decision"]["baseline_comparison_status"] == "ready"
+    assert ready_report["decision"]["policy_comparison_summary"] == (
+        "policy comparison ready: baseline comparison wording can be enabled; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+
+
 def test_collected_observed_summary_exposes_multi_run_kpi_triplet(tmp_path: Path):
     mod = _load_module()
 
@@ -2155,6 +2290,163 @@ def test_compare_response_mode_threshold_candidates_preserves_taxonomy_counts():
     assert report["candidates"][0]["false_pending_count"] == 0
     assert report["candidates"][1]["baseline_comparison_ready"] is True
     assert report["candidates"][1]["false_ready_count"] == 3
+
+
+def test_observed_progression_policy_pair_pending_fixture_flags_loose_threshold_as_false_ready(
+    tmp_path: Path,
+):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        run_dir = runs_root / f"20260701T027{index:02d}-candidate{index:04d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "instruction": f"observed candidate progression request {index}",
+                    "benchmark_source_type": "observed_output",
+                    "policy_pair": "baseline->candidate",
+                    "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                    "baseline_response_sample": "기존 응답 샘플",
+                    "candidate_response_sample": "개선 응답 샘플",
+                    "status": "completed",
+                    "last_completed_step": "review",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    _write_observed_run(
+        runs_root,
+        "20260701T02790-neutral0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "observed candidate progression neutral request",
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "candidate->baseline",
+            "status": "completed",
+            "last_completed_step": "plan",
+        },
+    )
+    _write_observed_run(
+        runs_root,
+        "20260701T02799-invalid0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "observed candidate progression invalid request",
+            "benchmark_source_type": "observed_output",
+            "policy_pair": "candidate->baseline",
+            "comparison_scope": "same_surface",
+            "baseline_response_sample": "기존 응답 샘플",
+            "status": "completed",
+            "last_completed_step": "review",
+        },
+    )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    report = mod.compare_response_mode_threshold_candidates(
+        collected["cases"],
+        thresholds=[
+            {"label": "current", "min_samples": 20, "min_same_surface": 1, "min_policy_pairs": 2},
+            {"label": "loose_policy_pairs", "min_samples": 20, "min_same_surface": 1, "min_policy_pairs": 1},
+        ],
+        fixture_taxonomy={"ready_expected": 0, "pending_expected": 1, "ambiguous": 0},
+    )
+
+    assert collected["summary"]["readiness_same_surface_gap"] == 0
+    assert collected["summary"]["readiness_distinct_policy_pair_count"] == 1
+    assert report["candidates"][0]["label"] == "current"
+    assert report["candidates"][0]["baseline_comparison_ready"] is False
+    assert report["candidates"][0]["false_ready_count"] == 0
+    assert report["candidates"][1]["label"] == "loose_policy_pairs"
+    assert report["candidates"][1]["baseline_comparison_ready"] is True
+    assert report["candidates"][1]["false_ready_count"] == 1
+
+
+def test_observed_progression_report_surface_aligns_with_threshold_candidate_summary(
+    tmp_path: Path,
+):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        run_dir = runs_root / f"20260701T028{index:02d}-surface{index:04d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "instruction": f"observed report surface request {index}",
+                    "benchmark_source_type": "observed_output",
+                    "policy_pair": "baseline->candidate",
+                    "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                    "baseline_response_sample": "기존 응답 샘플",
+                    "candidate_response_sample": "개선 응답 샘플",
+                    "status": "completed",
+                    "last_completed_step": "review",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    _write_observed_run(
+        runs_root,
+        "20260701T02890-neutral0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "observed report surface neutral request",
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "candidate->baseline",
+            "status": "completed",
+            "last_completed_step": "plan",
+        },
+    )
+    _write_observed_run(
+        runs_root,
+        "20260701T02899-invalid0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "observed report surface invalid request",
+            "benchmark_source_type": "observed_output",
+            "policy_pair": "candidate->baseline",
+            "comparison_scope": "same_surface",
+            "baseline_response_sample": "기존 응답 샘플",
+            "status": "completed",
+            "last_completed_step": "review",
+        },
+    )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    compared = mod.compare_response_modes(collected["cases"])
+    candidates = mod.compare_response_mode_threshold_candidates(
+        collected["cases"],
+        thresholds=[
+            {"label": "current", "min_samples": 20, "min_same_surface": 1, "min_policy_pairs": 2},
+            {"label": "loose_policy_pairs", "min_samples": 20, "min_same_surface": 1, "min_policy_pairs": 1},
+        ],
+        fixture_taxonomy={"ready_expected": 0, "pending_expected": 1, "ambiguous": 0},
+    )
+
+    assert compared["summary"]["readiness_blocker_line"] == "pending: need more policy pair coverage"
+    assert compared["decision"]["baseline_comparison_status"] == "deferred"
+    assert compared["decision"]["baseline_comparison_line"] == (
+        "baseline comparison deferred: need more policy pair coverage"
+    )
+    assert compared["decision"]["policy_comparison_summary"] == (
+        "policy comparison pending: need more policy pair coverage; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert candidates["candidates"][0]["label"] == "current"
+    assert candidates["candidates"][0]["baseline_comparison_ready"] is False
+    assert candidates["candidates"][1]["label"] == "loose_policy_pairs"
+    assert candidates["candidates"][1]["baseline_comparison_ready"] is True
+    assert candidates["candidates"][1]["false_ready_count"] == 1
 
 
 def test_compare_response_modes_reports_incomplete_next_action_cases():
@@ -2928,6 +3220,48 @@ def test_response_mode_fixture_distinguishes_status_request_from_explanation_req
     assert report["cases"][1]["candidate"]["next_action"] == "사용자 선택 대기"
 
 
+def test_response_mode_fixture_distinguishes_plan_gate_explanation_from_task_progression():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    target_case = next(
+        case
+        for case in cases
+        if case["request"] == "plan으로 계획 세우고 task 했는데 왜 작업을 선언하라는거지"
+    )
+
+    report = mod.compare_response_modes([target_case])
+
+    assert report["summary"]["next_action_case_count"] == 1
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert report["cases"][0]["source_type"] == "observed_request"
+    assert report["cases"][0]["expected_next_action"] == "사용자 선택 대기"
+    assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][0]["candidate"]["next_action"] == "사용자 선택 대기"
+
+
+def test_response_mode_fixture_distinguishes_option_recommendation_from_immediate_task_progression():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    target_case = next(case for case in cases if case["request"] == "2,3 중에 뭘 추천해")
+
+    report = mod.compare_response_modes([target_case])
+
+    assert report["summary"]["next_action_case_count"] == 1
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert report["cases"][0]["source_type"] == "observed_request"
+    assert report["cases"][0]["expected_next_action"] == "사용자 선택 대기"
+    assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][0]["candidate"]["next_action"] == "사용자 선택 대기"
+
+
 def test_build_expensive_flow_report_ranks_top5_flows_with_categories():
     mod = _load_module()
 
@@ -3053,6 +3387,71 @@ def test_response_mode_fixture_exposes_top5_expensive_flows():
     assert "expected_next_action" in wrong_next_step_flow
     assert "baseline_next_action_correct" in wrong_next_step_flow
     assert "candidate_next_action_correct" in wrong_next_step_flow
+
+
+def test_build_expensive_flow_report_exposes_reroute_loop_reason_fields():
+    mod = _load_module()
+
+    cases = [
+        {
+            "request": "이거 plan 검토만 하려던 건데 왜 바로 task로 가",
+            "expected_mode": "answer-first",
+            "expected_next_action": "사용자 선택 대기",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": [
+                "assistant: task로 바로 진행하자고 응답",
+                "user: 아니 plan 검토만 하려던 거야",
+            ],
+            "candidate_trace": [
+                "assistant: 설명 요청으로 판단",
+                "assistant: 사용자 선택 대기로 멈춤",
+            ],
+            "baseline_output_chars": 320,
+            "candidate_output_chars": 260,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 0,
+            "baseline_next_action": "$omc-task",
+            "candidate_next_action": "사용자 선택 대기",
+            "source_type": "observed_request",
+            "evidence": "real reroute request",
+        }
+    ]
+
+    report = mod.build_expensive_flow_report(cases)
+
+    reroute_flow = next(item for item in report["flows"] if item["baseline_reroute"] is True)
+    assert reroute_flow["baseline_reroute"] is True
+    assert reroute_flow["reroute_reason"] == "user_correction_after_baseline"
+    assert reroute_flow["reroute_signal"] == "user_requested_path_change"
+
+
+def test_build_expensive_flow_report_exposes_output_bloat_reason_fields():
+    mod = _load_module()
+
+    cases = [
+        {
+            "request": "task, critique는 안고쳐도 된다고?",
+            "expected_mode": "answer-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 장문 설명"],
+            "candidate_trace": ["assistant: 압축된 설명"],
+            "baseline_output_chars": 610,
+            "candidate_output_chars": 320,
+            "baseline_task_start_delay": 0,
+            "candidate_task_start_delay": 0,
+            "source_type": "observed_request",
+            "evidence": "real compression follow-up",
+        }
+    ]
+
+    report = mod.build_expensive_flow_report(cases)
+
+    output_bloat_flow = next(item for item in report["flows"] if item["flow_kind"] == "output_bloat")
+    assert output_bloat_flow["output_chars_saved"] == 290
+    assert output_bloat_flow["output_bloat_reason"] == "baseline_output_exceeds_candidate"
+    assert output_bloat_flow["compression_signal"] == "char_reduction_confirmed"
 
 
 def test_build_expensive_flow_report_marks_missing_next_actions_as_gap():

@@ -221,6 +221,17 @@ def test_orchestration_hint_routes_plan_validation_wording_to_critique() -> None
     assert hint["task_kind_hint"] == "review"
 
 
+def test_orchestration_hint_routes_plan_gate_explanation_request_to_critique() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("plan으로 계획 세우고 task 했는데 왜 작업을 선언하라는거지")
+
+    assert hint["response_mode"] == "review-first"
+    assert hint["recommended_skill"] == "$omc-critique"
+    assert hint["primary_role"] == "code_review"
+    assert hint["task_kind_hint"] == "review"
+
+
 def test_orchestration_hint_prioritizes_task_over_progress_summary_when_both_present() -> None:
     mod = _load_module()
 

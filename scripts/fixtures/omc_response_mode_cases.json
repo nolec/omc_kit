@@ -336,6 +336,29 @@
       "evidence": "2026-06-27 실제 세션 요청문 추출: 개선된 점 설명 요청"
     },
     {
+      "request": "plan으로 계획 세우고 task 했는데 왜 작업을 선언하라는거지",
+      "expected_mode": "answer-first",
+      "expected_next_action": "사용자 선택 대기",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: 바로 다음 구현 단계로 이어가려 함",
+        "user: 아니 왜 다시 선언해야 하는지 설명을 원함"
+      ],
+      "candidate_trace": [
+        "assistant: plan 이후 task 진입과 OMC 세션 선언 차이를 설명",
+        "assistant: 다음 스킬 자동 추천 없이 사용자 선택 대기로 멈춤"
+      ],
+      "baseline_output_chars": 286,
+      "candidate_output_chars": 298,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "사용자 선택 대기",
+      "source_type": "observed_request",
+      "evidence": "2026-07-02 실제 세션 요청문 추출: plan 이후 task 선언 경고 이유 설명 요청"
+    },
+    {
       "request": "현재 git changes 변경 상태 리뷰 보고 정말 괜찮은 변경인지 체크하려고 하는데 무슨 스킬 써야해",
       "expected_mode": "review-first",
       "expected_next_action": "$omc-review",
@@ -368,6 +391,29 @@
       "candidate_next_action": "$omc-critique",
       "source_type": "observed_request",
       "evidence": "2026-06-28 실제 세션 요청문 추출: Operator Experience 1순위 재계획 후 critique 재진입"
+    },
+    {
+      "request": "2,3 중에 뭘 추천해",
+      "expected_mode": "answer-first",
+      "expected_next_action": "사용자 선택 대기",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: 추천만 요청했는데 바로 다음 작업으로 몰아감",
+        "user: 아니 어떤 선택지가 더 맞는지 먼저 알고 싶음"
+      ],
+      "candidate_trace": [
+        "assistant: 2번과 3번의 차이와 추천 이유를 설명",
+        "assistant: 다음 스킬 자동 추천 없이 사용자 선택 대기로 멈춤"
+      ],
+      "baseline_output_chars": 254,
+      "candidate_output_chars": 276,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "사용자 선택 대기",
+      "source_type": "observed_request",
+      "evidence": "2026-07-02 실제 세션 요청문 추출: 2,3 중 어느 쪽을 추천하는지 질문"
     },
     {
       "request": "fugu 문서 2개 먼저 커밋 태스크 2부터 $omc-task",
