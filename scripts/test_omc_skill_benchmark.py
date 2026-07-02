@@ -1407,6 +1407,287 @@ def test_accumulated_observed_dataset_fixture_keeps_collected_and_report_ready_i
     assert report["summary"]["observed_sample_case_count"] == 20
 
 
+def test_pending_mixed_observed_dataset_keeps_collected_and_report_deferred_in_sync(
+    tmp_path: Path,
+):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        run_dir = runs_root / f"20260701T024{index:02d}-pending{index:04d}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "result.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "instruction": f"실제 observed pending request {index}",
+                    "benchmark_source_type": "observed_output",
+                    "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                    "comparison_scope": "cross_surface",
+                    "baseline_response_sample": "기존 응답 샘플",
+                    "candidate_response_sample": "개선 응답 샘플",
+                    "status": "completed",
+                    "last_completed_step": "review",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+    _write_observed_run(
+        runs_root,
+        "20260701T02490-neutral0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "실제 observed pending neutral request",
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "candidate->baseline",
+            "status": "completed",
+            "last_completed_step": "plan",
+        },
+    )
+    _write_observed_run(
+        runs_root,
+        "20260701T02499-invalid0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "실제 observed pending invalid request",
+            "benchmark_source_type": "observed_output",
+            "policy_pair": "baseline->candidate",
+            "comparison_scope": "same_surface",
+            "baseline_response_sample": "기존 응답 샘플",
+            "status": "completed",
+            "last_completed_step": "review",
+        },
+    )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    report = mod.compare_response_modes(collected["cases"])
+
+    assert collected["summary"]["readiness_observed_sample_count"] == 20
+    assert collected["summary"]["readiness_distinct_policy_pair_count"] == 2
+    assert collected["summary"]["readiness_sample_gap"] == 0
+    assert collected["summary"]["readiness_same_surface_gap"] == 1
+    assert collected["summary"]["baseline_comparison_ready"] is False
+    assert collected["summary"]["readiness_blocker_line"] == (
+        "pending: need more same-surface evidence"
+    )
+    assert collected["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: need more same-surface evidence; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert report["decision"]["baseline_comparison_status"] == "deferred"
+    assert report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
+    assert report["decision"]["policy_comparison_summary"] == (
+        "policy comparison pending: need more same-surface evidence; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+
+
+def test_same_surface_threshold_transition_ignores_invalid_same_surface_noise(
+    tmp_path: Path,
+):
+    mod = _load_module()
+
+    def _collect_cases(
+        *,
+        valid_same_surface_count: int,
+        run_prefix: str,
+    ) -> tuple[dict[str, object], dict[str, object], dict[str, int]]:
+        runs_root = tmp_path / ".omc" / "runs" / run_prefix
+        for index in range(20):
+            run_dir = runs_root / f"20260701T024{index:02d}-threshold{index:04d}"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "result.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": "observed-collect",
+                        "instruction": f"실제 observed threshold request {index}",
+                        "benchmark_source_type": "observed_output",
+                        "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                        "comparison_scope": (
+                            "same_surface" if index < valid_same_surface_count else "cross_surface"
+                        ),
+                        "baseline_response_sample": "기존 응답 샘플",
+                        "candidate_response_sample": "개선 응답 샘플",
+                        "status": "completed",
+                        "last_completed_step": "review",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+        _write_observed_run(
+            runs_root,
+            f"20260701T0249{valid_same_surface_count}-invalid0001",
+            {
+                "task_id": "observed-collect",
+                "instruction": "실제 observed threshold invalid request",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "baseline->candidate",
+                "comparison_scope": "same_surface",
+                "baseline_response_sample": "기존 응답 샘플",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+        )
+
+        collected = mod.collect_observed_response_mode_cases(runs_root)
+        report = mod.compare_response_modes(collected["cases"])
+        taxonomy = mod._fixture_taxonomy_counts_from_readiness(collected["cases"])
+        return collected, report, taxonomy
+
+    zero_collected, zero_report, zero_taxonomy = _collect_cases(
+        valid_same_surface_count=0,
+        run_prefix="threshold-zero",
+    )
+    one_collected, one_report, one_taxonomy = _collect_cases(
+        valid_same_surface_count=1,
+        run_prefix="threshold-one",
+    )
+
+    assert zero_collected["summary"]["readiness_same_surface_gap"] == 1
+    assert zero_collected["summary"]["baseline_comparison_ready"] is False
+    assert zero_collected["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: need more same-surface evidence; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert zero_report["decision"]["baseline_comparison_status"] == "deferred"
+    assert zero_report["decision"]["policy_comparison_summary"] == (
+        "policy comparison pending: need more same-surface evidence; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert zero_taxonomy == {
+        "ready_expected": 0,
+        "pending_expected": 1,
+        "ambiguous": 0,
+    }
+
+    assert one_collected["summary"]["readiness_same_surface_gap"] == 0
+    assert one_collected["summary"]["baseline_comparison_ready"] is True
+    assert one_collected["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: baseline comparison input is ready; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert one_report["decision"]["baseline_comparison_status"] == "ready"
+    assert one_report["decision"]["policy_comparison_summary"] == (
+        "policy comparison ready: baseline comparison wording can be enabled; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert one_taxonomy == {
+        "ready_expected": 1,
+        "pending_expected": 1,
+        "ambiguous": 0,
+    }
+
+
+def test_policy_pair_threshold_transition_ignores_invalid_noise_after_same_surface_is_ready(
+    tmp_path: Path,
+):
+    mod = _load_module()
+
+    def _collect_cases(
+        *,
+        valid_candidate_policy_pair: bool,
+        run_prefix: str,
+    ) -> tuple[dict[str, object], dict[str, object], dict[str, int]]:
+        runs_root = tmp_path / ".omc" / "runs" / run_prefix
+        for index in range(20):
+            run_dir = runs_root / f"20260701T025{index:02d}-pair{index:04d}"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "result.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": "observed-collect",
+                        "instruction": f"실제 observed policy threshold request {index}",
+                        "benchmark_source_type": "observed_output",
+                        "policy_pair": (
+                            "candidate->baseline"
+                            if valid_candidate_policy_pair and index == 1
+                            else "baseline->candidate"
+                        ),
+                        "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                        "baseline_response_sample": "기존 응답 샘플",
+                        "candidate_response_sample": "개선 응답 샘플",
+                        "status": "completed",
+                        "last_completed_step": "review",
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+        _write_observed_run(
+            runs_root,
+            f"20260701T0259{'1' if valid_candidate_policy_pair else '0'}-invalid0001",
+            {
+                "task_id": "observed-collect",
+                "instruction": "실제 observed policy threshold invalid request",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "candidate->baseline",
+                "comparison_scope": "same_surface",
+                "baseline_response_sample": "기존 응답 샘플",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+        )
+
+        collected = mod.collect_observed_response_mode_cases(runs_root)
+        report = mod.compare_response_modes(collected["cases"])
+        taxonomy = mod._fixture_taxonomy_counts_from_readiness(collected["cases"])
+        return collected, report, taxonomy
+
+    pending_collected, pending_report, pending_taxonomy = _collect_cases(
+        valid_candidate_policy_pair=False,
+        run_prefix="policy-pair-pending",
+    )
+    ready_collected, ready_report, ready_taxonomy = _collect_cases(
+        valid_candidate_policy_pair=True,
+        run_prefix="policy-pair-ready",
+    )
+
+    assert pending_collected["summary"]["readiness_same_surface_gap"] == 0
+    assert pending_collected["summary"]["readiness_distinct_policy_pair_count"] == 1
+    assert pending_collected["summary"]["baseline_comparison_ready"] is False
+    assert pending_collected["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: need more policy pair coverage; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert pending_report["decision"]["baseline_comparison_status"] == "deferred"
+    assert pending_report["decision"]["next_kpi_blocker"] == "insufficient_policy_pairs"
+    assert pending_report["decision"]["policy_comparison_summary"] == (
+        "policy comparison pending: need more policy pair coverage; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert pending_taxonomy == {
+        "ready_expected": 0,
+        "pending_expected": 1,
+        "ambiguous": 0,
+    }
+
+    assert ready_collected["summary"]["readiness_same_surface_gap"] == 0
+    assert ready_collected["summary"]["readiness_distinct_policy_pair_count"] == 2
+    assert ready_collected["summary"]["baseline_comparison_ready"] is True
+    assert ready_collected["summary"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: baseline comparison input is ready; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert ready_report["decision"]["baseline_comparison_status"] == "ready"
+    assert ready_report["decision"]["policy_comparison_summary"] == (
+        "policy comparison ready: baseline comparison wording can be enabled; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert ready_taxonomy == {
+        "ready_expected": 1,
+        "pending_expected": 1,
+        "ambiguous": 0,
+    }
+
+
 def test_collected_observed_summary_exposes_multi_run_kpi_triplet(tmp_path: Path):
     mod = _load_module()
 
