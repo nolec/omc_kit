@@ -1311,6 +1311,9 @@ def test_ready_mixed_fixture_ignores_observed_request_for_readiness_counts(tmp_p
     assert collected["summary"]["readiness_observed_sample_count"] == 20
     assert collected["summary"]["distinct_policy_pair_count"] == 2
     assert collected["summary"]["readiness_distinct_policy_pair_count"] == 2
+    assert collected["summary"]["readiness_sample_gap"] == 0
+    assert collected["summary"]["readiness_same_surface_gap"] == 0
+    assert collected["summary"]["baseline_comparison_ready"] is True
     assert collected["summary"]["readiness_blocker_line"] == (
         "ready: baseline comparison wording can be enabled"
     )
@@ -1382,6 +1385,12 @@ def test_accumulated_observed_dataset_fixture_keeps_collected_and_report_ready_i
     collected = mod.collect_observed_response_mode_cases(runs_root)
     report = mod.compare_response_modes(collected["cases"])
 
+    assert collected["summary"]["readiness_sample_gap"] == 0
+    assert collected["summary"]["readiness_same_surface_gap"] == 0
+    assert collected["summary"]["baseline_comparison_ready"] is True
+    assert collected["summary"]["readiness_blocker_line"] == (
+        "ready: baseline comparison wording can be enabled"
+    )
     assert collected["summary"]["observed_data_bottleneck_summary"] == (
         "observed data bottleneck: baseline comparison input is ready; rejected observed_output=1 "
         "(missing_candidate_response_sample:1)"
