@@ -484,6 +484,28 @@
       "baseline_policy": "baseline",
       "candidate_policy": "candidate",
       "baseline_trace": [
+        "assistant: plan 결과 검토 요청인데도 다음 구현 단계로 이어질 가능성이 있었음"
+      ],
+      "candidate_trace": [
+        "assistant: 이미 나온 plan 결과를 먼저 검토",
+        "assistant: 다음 스킬 자동 추천 없이 사용자 선택 대기로 멈춤"
+      ],
+      "baseline_output_chars": 318,
+      "candidate_output_chars": 224,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "사용자 선택 대기",
+      "source_type": "observed_request",
+      "evidence": "2026-06-17 실제 세션 요청문 추출: Claude Code plan 결과가 맞는지 검토 요청"
+    },
+    {
+      "request": "이거 클로드코드로 실행한건데 이거 제대로 진행된 거 맞아? plan",
+      "expected_mode": "answer-first",
+      "expected_next_action": "사용자 선택 대기",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
         "assistant: 구현 방식 제시",
         "assistant: PHASE 3 ▸ TDD 태스크 분해",
         "assistant: 준비되었습니다. /task 로 진행하시겠습니까?"

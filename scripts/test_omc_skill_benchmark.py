@@ -2482,6 +2482,50 @@ def test_response_mode_fixture_covers_roadmap_sync_next_action():
     assert report["cases"][0]["candidate"]["next_action"] == "$omc-plan"
 
 
+def test_response_mode_fixture_distinguishes_plan_wording_from_plan_review_intent():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    roadmap_plan_case = next(
+        case for case in cases if case["request"] == "현재 로드맵 최신화하고 다음 작업 체크"
+    )
+    plan_review_case = next(
+        case
+        for case in cases
+        if case["request"] == "이거 클로드코드로 실행한건데 이거 제대로 진행된 거 맞아? plan"
+        and case["source_type"] == "observed_request"
+    )
+
+    report = mod.compare_response_modes([roadmap_plan_case, plan_review_case])
+
+    assert report["summary"]["next_action_case_count"] == 2
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert plan_review_case["source_type"] == "observed_request"
+    assert report["cases"][0]["expected_next_action"] == "$omc-plan"
+    assert report["cases"][0]["candidate"]["next_action"] == "$omc-plan"
+    assert report["cases"][1]["expected_next_action"] == "사용자 선택 대기"
+    assert report["cases"][1]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][1]["candidate"]["next_action"] == "사용자 선택 대기"
+
+
+def test_response_mode_fixture_contains_observed_request_for_plan_review_intent():
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+
+    matched_cases = [
+        case
+        for case in cases
+        if case["source_type"] == "observed_request"
+        and "plan" in case["request"]
+        and case.get("expected_next_action") == "사용자 선택 대기"
+    ]
+
+    assert matched_cases, "fixture should include observed_request evidence for plan wording review intent"
+
+
 def test_response_mode_fixture_covers_benchmark_status_and_comparison_requests():
     mod = _load_module()
 
@@ -2552,6 +2596,28 @@ def test_response_mode_fixture_review_request_infers_review_first_mode():
     assert report["cases"][0]["expected_next_action"] == "$omc-review"
     assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
     assert report["cases"][0]["candidate"]["next_action"] == "$omc-review"
+
+
+def test_response_mode_fixture_distinguishes_status_request_from_explanation_request():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    case_map = {case["request"]: case for case in cases}
+
+    status_case = case_map["현재 어떤 작업 진행됐는지 상태만 빠르게 알려줘"]
+    explanation_case = case_map["현재 어떤점이 개선된거야"]
+
+    report = mod.compare_response_modes([status_case, explanation_case])
+
+    assert report["summary"]["next_action_case_count"] == 2
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert report["cases"][0]["expected_next_action"] == "$omc-status"
+    assert report["cases"][0]["candidate"]["next_action"] == "$omc-status"
+    assert report["cases"][1]["expected_next_action"] == "사용자 선택 대기"
+    assert report["cases"][1]["candidate"]["next_action"] == "사용자 선택 대기"
 
 
 def test_build_expensive_flow_report_ranks_top5_flows_with_categories():
