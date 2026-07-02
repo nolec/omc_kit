@@ -603,6 +603,7 @@ def test_decision_from_summary_does_not_report_ready_when_baseline_flag_is_false
     assert decision["baseline_comparison_status"] == "deferred"
     assert decision["next_kpi_blocker"] == "baseline_comparison_not_ready"
     assert decision["readiness_status_line"] == "not ready: baseline comparison input is not ready"
+    assert decision["readiness_blocker_line"] == "pending: baseline comparison input is not ready"
     assert decision["policy_comparison_summary"] == (
         "policy comparison pending: baseline comparison input is not ready"
     )
@@ -1533,6 +1534,7 @@ def test_neutral_observed_request_policy_pair_does_not_unlock_readiness(tmp_path
     assert collected["summary"]["observed_data_bottleneck_summary"] == (
         "observed data bottleneck: need more policy pair coverage"
     )
+    assert report["summary"]["readiness_blocker_line"] == "pending: need more policy pair coverage"
     assert report["decision"]["baseline_comparison_status"] == "deferred"
     assert report["decision"]["next_kpi_blocker"] == "insufficient_policy_pairs"
 
@@ -1658,6 +1660,7 @@ def test_collected_observed_pending_summary_matches_policy_pair_pending_summary(
     assert collected["summary"]["observed_data_bottleneck_summary"] == (
         "observed data bottleneck: need more policy pair coverage"
     )
+    assert report["summary"]["readiness_blocker_line"] == "pending: need more policy pair coverage"
     assert report["decision"]["baseline_comparison_status"] == "deferred"
     assert report["decision"]["next_kpi_blocker"] == "insufficient_policy_pairs"
     assert report["decision"]["policy_comparison_bottleneck_summary"] == (
@@ -2220,6 +2223,7 @@ def test_compare_response_modes_reports_readiness_status_line_and_blocker():
     assert report["summary"]["readiness_sample_gap"] == 19
     assert report["summary"]["readiness_same_surface_gap"] == 1
     assert report["summary"]["baseline_comparison_ready"] is False
+    assert report["summary"]["readiness_blocker_line"] == "pending: need more observed samples"
     assert report["decision"]["readiness_status_line"] == "not ready: samples 1/20, same-surface 0/1, policy pairs 1/2"
     assert report["decision"]["next_kpi_blocker"] == "insufficient_observed_samples"
     assert report["decision"]["baseline_comparison_status"] == "deferred"
@@ -2303,6 +2307,7 @@ def test_compare_response_modes_defers_baseline_comparison_when_only_observed_re
     assert report["summary"]["distinct_policy_pair_count"] == 2
     assert report["summary"]["policy_requirement_met"] is True
     assert report["summary"]["baseline_comparison_ready"] is False
+    assert report["summary"]["readiness_blocker_line"] == "pending: need more same-surface evidence"
     assert report["decision"]["kpi_readiness"] == "incomplete"
     assert report["decision"]["readiness_status_line"] == "not ready: samples 20/20, same-surface 0/1, policy pairs 2/2"
     assert report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
@@ -2340,6 +2345,7 @@ def test_compare_response_modes_marks_kpi_incomplete_when_same_surface_evidence_
     assert report["summary"]["policy_requirement_met"] is True
     assert report["summary"]["readiness_same_surface_case_count"] == 0
     assert report["summary"]["readiness_same_surface_gap"] == 1
+    assert report["summary"]["readiness_blocker_line"] == "pending: need more same-surface evidence"
     assert report["decision"]["kpi_readiness"] == "incomplete"
     assert report["decision"]["readiness_status_line"] == "not ready: samples 20/20, same-surface 0/1, policy pairs 2/2"
     assert report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"

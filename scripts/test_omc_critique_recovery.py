@@ -52,7 +52,7 @@ def tmp_repo(tmp_path):
 
 def test_failed_critique_loop_saves_critique_issues(tmp_repo, monkeypatch):
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
-    # REVISE×3 탈출 → plan_retry HOLD → hold 종료, critique_issues 저장돼야 함
+    # REVISE×3 탈출 → plan_retry HOLD → hold 종료여도 critique_issues 저장돼야 함
     verdicts = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE", "HOLD"])
     def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(verdicts, "HOLD")
@@ -198,13 +198,13 @@ def test_task_prompt_contains_critique_quality_hint(tmp_repo, monkeypatch):
 
 
 # ─────────────────────────────────────────────
-# T2 (A): critique REVISE × 3 탈출 시 task_retry 먼저 실행
+# T2 (A): critique REVISE × 3 탈출 시 plan_retry 경로를 소비
 # ─────────────────────────────────────────────
 
-def test_critique_revise_triggers_task_retry_then_proceeds(tmp_repo, monkeypatch):
-    """critique REVISE×3 탈출 → task_retry → critique PROCEED → completed."""
+def test_critique_revise_triggers_plan_retry_then_proceeds(tmp_repo, monkeypatch):
+    """critique REVISE×3 탈출 → plan_retry → critique PROCEED → completed."""
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
-    # plan, task, critique(REVISE×3 탈출), task_retry, critique_retry(PROCEED), review(APPROVE)
+    # plan, task, critique(REVISE×3 탈출), plan_retry, critique_retry(PROCEED), review(APPROVE)
     verdicts = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE",
                      "PROCEED", "PROCEED", "APPROVE"])
 
@@ -227,7 +227,7 @@ def test_critique_revise_triggers_task_retry_then_proceeds(tmp_repo, monkeypatch
     data = json.loads((tmp_repo / "result.json").read_text())
     assert rc == 0, f"rc={rc}"
     assert data["status"] == "completed", f"status={data['status']}"
-    assert "task_retry" in data.get("steps", {}), "task_retry 스텝이 result.json 에 없음"
+    assert "plan_retry" in data.get("steps", {}), "plan_retry 스텝이 result.json 에 없음"
 
 
 # ─────────────────────────────────────────────
@@ -294,20 +294,21 @@ def test_task_retry_block_verdict_exits_hold(tmp_repo, monkeypatch):
 
 
 # ─────────────────────────────────────────────
-# REVIEW-FIX R2: task_retry rc≠0 → hold exit 2 (not exit 1)
+# REVIEW-FIX R2: None-streak 기반 task_retry rc≠0 → hold exit 2 (not exit 1)
 # ─────────────────────────────────────────────
 
 def test_task_retry_rc_nonzero_exits_hold_with_code_2(tmp_repo, monkeypatch):
     """task_retry 가 rc≠0(프로세스 실패)이면 status=hold, exit code=2."""
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
-    verdicts_task_retry_fails = iter(["PROCEED", "PROCEED",
-                                      "REVISE", "REVISE", "REVISE"])
+    critique_verdicts = iter([None, None, None])
 
     def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
-        v = next(verdicts_task_retry_fails, "PROCEED")
         if step == "task_retry":
             return (1, "fatal error")
-        return (0, f"output\nVERDICT: {v}")
+        if step == "critique":
+            v = next(critique_verdicts, None)
+            return (0, "output" if v is None else f"output\nVERDICT: {v}")
+        return (0, "output\nVERDICT: PROCEED")
 
     with patch.object(_aut, "_run_pipeline_step", side_effect=_mock), \
          patch.object(_aut, "_checkout_new_branch", return_value="feat/test"), \
@@ -364,19 +365,19 @@ def test_critique_none_verdict_streak_triggers_task_retry(tmp_repo, monkeypatch)
 
 
 # ─────────────────────────────────────────────
-# T2: critique verdict=BLOCK 1회 → 즉시 task_retry → completed
+# T2: critique verdict=BLOCK 1회 → 즉시 plan_retry → completed
 # ─────────────────────────────────────────────
 
-def test_critique_block_verdict_immediate_task_retry(tmp_repo, monkeypatch):
-    """critique BLOCK 1회 → streak 기다리지 않고 즉시 task_retry → completed."""
+def test_critique_block_verdict_immediate_plan_retry(tmp_repo, monkeypatch):
+    """critique BLOCK 1회 → streak 기다리지 않고 즉시 plan_retry → completed."""
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
     # plan(PROCEED), task(PROCEED), critique(BLOCK 1회 즉시 탈출),
-    # task_retry(PROCEED), critique_retry(PROCEED), review(APPROVE)
+    # plan_retry(PROCEED), critique_retry(PROCEED), review(APPROVE)
     step_verdicts = {
         "plan":       iter(["PROCEED"]),
         "task":       iter(["PROCEED"]),
         "critique":   iter(["BLOCK", "PROCEED"]),  # BLOCK 1회 → 즉시 탈출, retry 후 PROCEED
-        "task_retry": iter(["PROCEED"]),
+        "plan_retry": iter(["PROCEED"]),
         "review":     iter(["APPROVE"]),
     }
 
@@ -400,7 +401,7 @@ def test_critique_block_verdict_immediate_task_retry(tmp_repo, monkeypatch):
     data = json.loads((tmp_repo / "result.json").read_text())
     assert rc == 0, f"rc={rc}"
     assert data["status"] == "completed", f"status={data['status']}"
-    assert "task_retry" in data.get("steps", {}), "task_retry 가 result.json 에 없음"
+    assert "plan_retry" in data.get("steps", {}), "plan_retry 가 result.json 에 없음"
 
 # ─────────────────────────────────────────────
 # REVIEW-FIX R3: critique 첫 번째 None만으로 streak이 발동하지 않아야 한다
@@ -648,14 +649,15 @@ def test_task_prompts_have_automation_mode_header(tmp_repo, monkeypatch):
     # ── full 모드: task_prompt / task_retry_prompt 검증 ──
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
     captured_full: dict[str, str] = {}
-    # critique REVISE 2회 → task_retry 트리거
-    verdicts_full = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE",
-                          "PROCEED", "PROCEED", "APPROVE"])
+    # critique verdict 없음 3회 → task_retry 트리거
+    critique_verdicts_full = iter([None, None, None, "PROCEED"])
 
     def _mock_full(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         captured_full[step] = prompt
-        v = next(verdicts_full, "PROCEED")
-        return (0, f"output\nVERDICT: {v}")
+        if step == "critique":
+            v = next(critique_verdicts_full, "PROCEED")
+            return (0, "output" if v is None else f"output\nVERDICT: {v}")
+        return (0, "output\nVERDICT: PROCEED")
 
     import subprocess as _sp
     def _mock_sp(cmd, **kw):

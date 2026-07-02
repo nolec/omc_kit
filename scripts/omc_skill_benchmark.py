@@ -34,6 +34,43 @@ KPI_MIN_SAME_SURFACE_COUNT = 1
 KPI_MIN_POLICY_PAIR_COUNT = 2
 
 
+def _readiness_deferred_reason_map() -> dict[str, str]:
+    return {
+        "insufficient_observed_samples": "need more observed samples",
+        "insufficient_same_surface_evidence": "need more same-surface evidence",
+        "insufficient_policy_pairs": "need more policy pair coverage",
+        "baseline_comparison_not_ready": "baseline comparison input is not ready",
+        "none": "baseline comparison wording can be enabled",
+    }
+
+
+def _resolve_readiness_blocker(
+    *,
+    sample_gap: int,
+    same_surface_gap: int,
+    policy_pair_count: int,
+    baseline_comparison_ready: bool,
+) -> tuple[str, str]:
+    if sample_gap > 0:
+        blocker = "insufficient_observed_samples"
+    elif same_surface_gap > 0:
+        blocker = "insufficient_same_surface_evidence"
+    elif policy_pair_count < KPI_MIN_POLICY_PAIR_COUNT:
+        blocker = "insufficient_policy_pairs"
+    elif not baseline_comparison_ready:
+        blocker = "baseline_comparison_not_ready"
+    else:
+        blocker = "none"
+
+    deferred_reason_map = _readiness_deferred_reason_map()
+    blocker_line = (
+        "ready: baseline comparison wording can be enabled"
+        if blocker == "none"
+        else "pending: " + deferred_reason_map.get(blocker, "readiness requirements are not met")
+    )
+    return blocker, blocker_line
+
+
 def _count_question_marks(text: str) -> int:
     return text.count("?")
 
@@ -556,13 +593,7 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         )
     )
     baseline_comparison_ready = bool(summary.get("baseline_comparison_ready", False))
-    deferred_reason_map = {
-        "insufficient_observed_samples": "need more observed samples",
-        "insufficient_same_surface_evidence": "need more same-surface evidence",
-        "insufficient_policy_pairs": "need more policy pair coverage",
-        "baseline_comparison_not_ready": "baseline comparison input is not ready",
-        "none": "baseline comparison wording can be enabled",
-    }
+    deferred_reason_map = _readiness_deferred_reason_map()
     kpi_readiness = "ready"
     readiness_status_line = (
         "not ready: "
@@ -587,6 +618,13 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         kpi_readiness = "incomplete"
         next_kpi_blocker = "baseline_comparison_not_ready"
         readiness_status_line = "not ready: baseline comparison input is not ready"
+
+    _, readiness_blocker_line = _resolve_readiness_blocker(
+        sample_gap=max(KPI_MIN_SAMPLE_COUNT - readiness_sample_count, 0),
+        same_surface_gap=max(KPI_MIN_SAME_SURFACE_COUNT - readiness_same_surface_count, 0),
+        policy_pair_count=distinct_policy_pair_count,
+        baseline_comparison_ready=baseline_comparison_ready,
+    )
 
     baseline_comparison_status = "ready" if baseline_comparison_ready and kpi_readiness == "ready" else "deferred"
     if baseline_comparison_status == "ready":
@@ -641,6 +679,7 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         "observed_evidence_guard": observed_evidence_guard,
         "kpi_readiness": kpi_readiness,
         "readiness_status_line": readiness_status_line,
+        "readiness_blocker_line": readiness_blocker_line,
         "next_kpi_blocker": next_kpi_blocker,
         "baseline_comparison_status": baseline_comparison_status,
         "baseline_comparison_line": baseline_comparison_line,
@@ -943,6 +982,13 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
                     count,
                 )
 
+    summary_blocker, readiness_blocker_line = _resolve_readiness_blocker(
+        sample_gap=readiness_sample_gap,
+        same_surface_gap=readiness_same_surface_gap,
+        policy_pair_count=readiness_distinct_policy_pair_count,
+        baseline_comparison_ready=baseline_comparison_ready,
+    )
+
     summary = {
         "total_run_count": dataset_total_run_count,
         "reroute_rate": dataset_reroute_rate,
@@ -995,6 +1041,7 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
         "readiness_same_surface_case_count": readiness_same_surface_case_count,
         "readiness_same_surface_gap": readiness_same_surface_gap,
         "baseline_comparison_ready": baseline_comparison_ready,
+        "readiness_blocker_line": readiness_blocker_line,
         "rejected_observed_output_case_count": rejected_observed_output_case_count,
         "rejected_observed_output_reasons": rejected_observed_output_reasons,
     }

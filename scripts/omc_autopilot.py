@@ -2960,6 +2960,10 @@ def cmd_pipeline(
             task_stage_plan_retry_count += 1
             current_retry_count = task_stage_plan_retry_count
             retry_limit = 1
+        if current_retry_count > retry_limit:
+            print(f"[PIPELINE] ❌ PLAN 재실행 한도 초과 ({current_retry_count}/{retry_limit}) — HOLD")
+            save("hold")
+            return False
         print(f"[PIPELINE] 🔄 PLAN 재실행 ({current_retry_count}/{retry_limit}) — {reason_label}")
         issues_section = (
             f"\n\n[이전 critique 지적 사항]\n{critique_issues}\n"
