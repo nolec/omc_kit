@@ -1311,6 +1311,9 @@ def test_ready_mixed_fixture_ignores_observed_request_for_readiness_counts(tmp_p
     assert collected["summary"]["readiness_observed_sample_count"] == 20
     assert collected["summary"]["distinct_policy_pair_count"] == 2
     assert collected["summary"]["readiness_distinct_policy_pair_count"] == 2
+    assert collected["summary"]["readiness_blocker_line"] == (
+        "ready: baseline comparison wording can be enabled"
+    )
     assert collected["summary"]["observed_data_bottleneck_summary"] == (
         "observed data bottleneck: baseline comparison input is ready; rejected observed_output=1 "
         "(missing_candidate_response_sample:1)"
@@ -1745,11 +1748,17 @@ def test_same_surface_transition_keeps_summary_report_and_taxonomy_aligned(tmp_p
     assert zero_collected["summary"]["observed_data_bottleneck_summary"] == (
         "observed data bottleneck: need more same-surface evidence"
     )
+    assert zero_collected["summary"]["readiness_blocker_line"] == (
+        "pending: need more same-surface evidence"
+    )
     assert zero_report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
     assert zero_report["decision"]["baseline_comparison_status"] == "deferred"
 
     assert one_collected["summary"]["observed_data_bottleneck_summary"] == (
         "observed data bottleneck: baseline comparison input is ready"
+    )
+    assert one_collected["summary"]["readiness_blocker_line"] == (
+        "ready: baseline comparison wording can be enabled"
     )
     assert one_report["decision"]["baseline_comparison_status"] == "ready"
     assert one_report["decision"]["policy_comparison_summary"] == (
@@ -1763,6 +1772,9 @@ def test_same_surface_transition_keeps_summary_report_and_taxonomy_aligned(tmp_p
 
     assert two_collected["summary"]["observed_data_bottleneck_summary"] == (
         "observed data bottleneck: baseline comparison input is ready"
+    )
+    assert two_collected["summary"]["readiness_blocker_line"] == (
+        "ready: baseline comparison wording can be enabled"
     )
     assert two_report["decision"]["baseline_comparison_status"] == "ready"
     assert two_taxonomy == {

@@ -1550,6 +1550,22 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
     readiness = _summarize_readiness_thresholds(cases)
     readiness_observed_sample_count = int(readiness["observed_sample_count"])
     readiness_same_surface_case_count = int(readiness["same_surface_count"])
+    readiness_sample_gap = max(KPI_MIN_SAMPLE_COUNT - readiness_observed_sample_count, 0)
+    readiness_same_surface_gap = max(
+        KPI_MIN_SAME_SURFACE_COUNT - readiness_same_surface_case_count,
+        0,
+    )
+    baseline_comparison_ready = (
+        readiness_sample_gap == 0
+        and readiness_same_surface_gap == 0
+        and len(readiness_policy_pair_counts) >= KPI_MIN_POLICY_PAIR_COUNT
+    )
+    _, readiness_blocker_line = _resolve_readiness_blocker(
+        sample_gap=readiness_sample_gap,
+        same_surface_gap=readiness_same_surface_gap,
+        policy_pair_count=len(readiness_policy_pair_counts),
+        baseline_comparison_ready=baseline_comparison_ready,
+    )
     observed_data_bottleneck_summary = "observed data bottleneck: need more observed samples"
     if readiness_observed_sample_count >= KPI_MIN_SAMPLE_COUNT:
         if readiness_same_surface_case_count < KPI_MIN_SAME_SURFACE_COUNT:
@@ -1594,8 +1610,12 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             "cross_surface_case_count": comparison_scope_counts.get("cross_surface", 0),
             "readiness_observed_sample_count": readiness_observed_sample_count,
             "readiness_same_surface_case_count": readiness_same_surface_case_count,
+            "readiness_sample_gap": readiness_sample_gap,
+            "readiness_same_surface_gap": readiness_same_surface_gap,
             "distinct_policy_pair_count": len(policy_pair_counts),
             "readiness_distinct_policy_pair_count": len(readiness_policy_pair_counts),
+            "baseline_comparison_ready": baseline_comparison_ready,
+            "readiness_blocker_line": readiness_blocker_line,
             "policy_pair_counts": policy_pair_counts,
             "readiness_policy_pair_counts": readiness_policy_pair_counts,
             "fixture_taxonomy_counts": _fixture_taxonomy_counts_from_readiness(cases),
