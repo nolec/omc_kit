@@ -35,6 +35,8 @@ def test_verification_checklist_includes_v4_observed_validation_checklist() -> N
         "next_kpi_blocker",
         "next_priority_recommendation",
         "accepted / excluded / rejected",
+        "운영 검증 실행 준비",
+        "운영 완료 판정",
         "ready / deferred 판정이 실제 observed dataset 누적에서도 안정적인지",
     ]
     missing = [marker for marker in required_markers if marker not in text]

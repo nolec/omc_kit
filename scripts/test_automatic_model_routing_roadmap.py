@@ -59,6 +59,7 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "V4 multi-run KPI summary 2차" in text
     assert "V4-A 구현 마감" in text
     assert "V4-B 운영 완료 판정" in text
+    assert "V4-B 운영 검증 실행 준비" in text
     assert "Operator Experience 4차" in text
     assert "Learned orchestrator 진입 조건 정리" in text
     assert "readiness/baseline 상태 문구는 이미 report와 overview에 실리므로" in text

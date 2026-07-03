@@ -775,6 +775,75 @@ def test_cmd_overview_surfaces_accepted_excluded_rejected_observed_counts(
     assert "rejected_observed=1" in out
 
 
+def test_cmd_overview_surfaces_operational_validation_readiness_for_v4b_preparation(
+    tmp_path: Path, capsys
+) -> None:
+    observed_task = {
+        "id": "observed-prep-ready-forward",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "baseline->candidate",
+        "comparison_scope": "same_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    reverse_task = {
+        "id": "observed-prep-ready-reverse",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "candidate->baseline",
+        "comparison_scope": "same_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    _write_json(
+        tmp_path / ".omc" / "tasks" / "observed-prep-ready-forward.json",
+        observed_task,
+    )
+    _write_json(
+        tmp_path / ".omc" / "tasks" / "observed-prep-ready-reverse.json",
+        reverse_task,
+    )
+
+    for index in range(10):
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-observed-prep-forward-{index}",
+                "task_id": "observed-prep-ready-forward",
+                "status": "completed",
+                "branch": f"feat/observed-prep-forward-{index}",
+                "executor": "codex",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+            },
+        )
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-observed-prep-reverse-{index}",
+                "task_id": "observed-prep-ready-reverse",
+                "status": "completed",
+                "branch": f"feat/observed-prep-reverse-{index}",
+                "executor": "codex",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+            },
+        )
+
+    rc = omc_autopilot.cmd_overview(tmp_path, limit=5)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "operational_validation_readiness=start-ready" in out
+    assert "operational_validation_reason=ready to start V4-B operational validation" in out
+
+
+def test_observed_collect_task_describes_v4b_preparation_gate() -> None:
+    payload = json.loads((Path.cwd() / OBSERVED_TASK_PATH).read_text(encoding="utf-8"))
+
+    assert payload["id"] == "observed-collect"
+    assert payload.get("operational_validation_stage") == "v4b_preparation"
+    assert payload.get("operational_validation_goal") == "prepare_v4b_operational_validation"
+    assert payload.get("completion_requires_real_runs") is True
+
+
 def test_observed_collect_task_exists_with_real_expect_checks() -> None:
     payload = json.loads((Path.cwd() / OBSERVED_TASK_PATH).read_text(encoding="utf-8"))
 

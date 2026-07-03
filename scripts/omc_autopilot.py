@@ -1584,6 +1584,14 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         observed_reason_signals_present=bool(observed_reason_signal_kinds),
         baseline_comparison_status=baseline_comparison_status,
     )
+    operational_validation_readiness, operational_validation_reason = (
+        _overview_operational_validation_readiness(
+            blocker=next_kpi_blocker,
+            observed_sample_count=observed_sample_count,
+            same_surface_count=readiness_same_surface_count,
+            distinct_policy_pair_count=len(distinct_policy_pairs),
+        )
+    )
     next_collection_focus = _overview_next_collection_focus(next_kpi_blocker)
     successful_costs = [
         float(report["total_cost_usd"])
@@ -1613,6 +1621,8 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         "reason_signal_summary_line": reason_signal_summary_line,
         "next_priority_recommendation": next_priority_recommendation,
         "next_priority_reason": next_priority_reason,
+        "operational_validation_readiness": operational_validation_readiness,
+        "operational_validation_reason": operational_validation_reason,
         "next_kpi_blocker": next_kpi_blocker,
         "next_collection_focus": next_collection_focus,
         "rejected_observed_output_case_count": sum(rejected_observed_output_reasons.values()),
@@ -1661,6 +1671,23 @@ def _overview_resolve_next_priority(
             "reason signals observed in ready dataset",
         )
     return "maintain_policy_comparison_confidence", "readiness requirements are currently satisfied"
+
+
+def _overview_operational_validation_readiness(
+    *,
+    blocker: str,
+    observed_sample_count: int,
+    same_surface_count: int,
+    distinct_policy_pair_count: int,
+) -> tuple[str, str]:
+    if (
+        blocker == "none"
+        and observed_sample_count >= 20
+        and same_surface_count >= 1
+        and distinct_policy_pair_count >= 2
+    ):
+        return "start-ready", "ready to start V4-B operational validation"
+    return "not-ready", "need more observed evidence before starting V4-B operational validation"
 
 
 def _format_overview_ratio(value: object) -> str:
@@ -1790,6 +1817,11 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
         "Next Priority "
         f"next_priority={kpi_summary['next_priority_recommendation']}  "
         f"reason={kpi_summary['next_priority_reason']}"
+    )
+    print(
+        "Operational Validation "
+        f"operational_validation_readiness={kpi_summary['operational_validation_readiness']}  "
+        f"operational_validation_reason={kpi_summary['operational_validation_reason']}"
     )
     print("run_id | branch | status | step | stale | failure_reason | next_action")
     print("-" * 78)

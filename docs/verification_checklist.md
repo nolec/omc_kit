@@ -427,6 +427,16 @@ PASS / FAIL: PASS
 
 이 섹션은 구현 회귀 테스트가 아니라, 실제 accumulated observed dataset이 현재 정책을 지탱하는지 점검하기 위한 운영형 체크리스트입니다.
 
+이 문서는 `운영 검증 실행 준비`와 `운영 완료 판정`을 구분합니다.
+- 운영 검증 실행 준비: 관측 수집과 검증을 시작할 수 있는 gate를 갖춘 상태
+- 운영 완료 판정: 실제 누적 observed dataset으로 V4 기준을 충족했다고 확인한 상태
+
+### 빠른 판정
+
+- 아직 `V4 완료` 아님: 실제 observed multi-run 20회 이상 누적 전
+- `V4-B 운영 검증 실행 준비` 완료: gate/summary/task/template가 준비된 상태
+- `V4-B 운영 완료 판정` 완료: 실제 누적 observed dataset으로 완료 기준을 모두 충족한 상태
+
 ### 1. 수집 기준
 
 - observed_request / observed_output 기준 multi-run 실행 샘플 20회 이상
