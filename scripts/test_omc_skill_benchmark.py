@@ -2051,6 +2051,70 @@ def test_ready_collected_summary_prefers_operator_validation_when_reason_signals
     )
 
 
+def test_accumulated_observed_ready_reason_signal_keeps_summary_and_decision_aligned(
+    tmp_path: Path,
+):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        _write_observed_run(
+            runs_root,
+            f"20260701T028{index:02d}-accum{index:04d}",
+            {
+                "task_id": "observed-collect",
+                "instruction": f"실제 accumulated observed ready request {index}",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                "baseline_response_sample": "기존 응답 샘플",
+                "candidate_response_sample": "개선 응답 샘플",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+        )
+
+    _write_observed_run(
+        runs_root,
+        "20260701T02900-accum-signal0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "실제 accumulated observed operator bottleneck request",
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "baseline->candidate",
+            "status": "completed",
+            "last_completed_step": "plan",
+            "baseline_trace": ["assistant: task로 바로 진행", "user: 아니 plan만 봐달라"],
+            "candidate_trace": ["assistant: plan 검토로 판단", "assistant: 사용자 선택 대기"],
+            "baseline_output_chars": 320,
+            "candidate_output_chars": 240,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 0,
+        },
+    )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    report = mod.compare_response_modes(collected["cases"])
+
+    assert collected["summary"]["observed_reason_signals_present"] is True
+    assert collected["summary"]["next_priority_recommendation"] == (
+        "validate_operator_bottlenecks_from_observed_runs"
+    )
+    assert collected["summary"]["next_priority_reason"] == (
+        "reason signals observed in ready dataset"
+    )
+    assert report["decision"]["baseline_comparison_status"] == "ready"
+    assert report["decision"]["policy_comparison_summary"] == (
+        "policy comparison ready: baseline comparison wording can be enabled; reason signals observed"
+    )
+    assert report["decision"]["next_priority_recommendation"] == (
+        "validate_operator_bottlenecks_from_observed_runs"
+    )
+    assert report["decision"]["next_priority_reason"] == (
+        "reason signals observed in ready dataset"
+    )
+
+
 def test_collected_cases_preserve_rejection_bottleneck_for_policy_pair_shortage(tmp_path: Path):
     mod = _load_module()
 
