@@ -71,6 +71,28 @@ def _resolve_readiness_blocker(
     return blocker, blocker_line
 
 
+def _resolve_next_priority(
+    *,
+    blocker: str,
+    observed_reason_signals_present: bool,
+    baseline_comparison_status: str,
+) -> tuple[str, str]:
+    if blocker == "insufficient_observed_samples":
+        return "collect_more_observed_runs", "need more observed samples"
+    if blocker == "insufficient_same_surface_evidence":
+        return "add_same_surface_observed_evidence", "need more same-surface evidence"
+    if blocker == "insufficient_policy_pairs":
+        return "expand_policy_pair_coverage", "need more policy pair coverage"
+    if blocker == "baseline_comparison_not_ready":
+        return "stabilize_baseline_comparison_inputs", "baseline comparison input is not ready"
+    if baseline_comparison_status == "ready" and observed_reason_signals_present:
+        return (
+            "validate_operator_bottlenecks_from_observed_runs",
+            "reason signals observed in ready dataset",
+        )
+    return "maintain_policy_comparison_confidence", "readiness requirements are currently satisfied"
+
+
 def _count_question_marks(text: str) -> int:
     return text.count("?")
 
@@ -673,6 +695,12 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
     if observed_reason_signals_present:
         policy_comparison_summary += "; reason signals observed"
 
+    next_priority_recommendation, next_priority_reason = _resolve_next_priority(
+        blocker=next_kpi_blocker,
+        observed_reason_signals_present=observed_reason_signals_present,
+        baseline_comparison_status=baseline_comparison_status,
+    )
+
     return {
         "verdict": verdict,
         "passed_checks": passed,
@@ -688,6 +716,8 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         "baseline_comparison_line": baseline_comparison_line,
         "policy_comparison_summary": policy_comparison_summary,
         "policy_comparison_bottleneck_summary": bottleneck_summary,
+        "next_priority_recommendation": next_priority_recommendation,
+        "next_priority_reason": next_priority_reason,
     }
 
 

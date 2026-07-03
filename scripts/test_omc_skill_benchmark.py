@@ -2825,6 +2825,8 @@ def test_compare_response_modes_reports_readiness_status_line_and_blocker():
     assert report["decision"]["policy_comparison_summary"] == (
         "policy comparison pending: need more observed samples"
     )
+    assert report["decision"]["next_priority_recommendation"] == "collect_more_observed_runs"
+    assert report["decision"]["next_priority_reason"] == "need more observed samples"
 
 
 def test_compare_response_modes_marks_kpi_ready_at_twenty_samples():
@@ -3059,6 +3061,152 @@ def test_compare_response_modes_policy_comparison_summary_mentions_reason_signal
     assert report["decision"]["policy_comparison_summary"] == (
         "policy comparison pending: need more observed samples; reason signals observed"
     )
+    assert report["decision"]["next_priority_recommendation"] == "collect_more_observed_runs"
+    assert report["decision"]["next_priority_reason"] == "need more observed samples"
+
+
+def test_compare_response_modes_recommends_same_surface_validation_when_only_same_surface_is_missing():
+    mod = _load_module()
+
+    cases = []
+    for index in range(20):
+        cases.append(
+            {
+                "request": f"리뷰해줘 cross-surface {index}",
+                "expected_mode": "review-first",
+                "baseline_policy": "baseline" if index < 10 else "candidate",
+                "candidate_policy": "candidate" if index < 10 else "baseline",
+                "baseline_trace": ["assistant: 설명만 제공", "user: 아니 리뷰해줘"],
+                "candidate_trace": ["assistant: 리뷰 시작"],
+                "baseline_output_chars": 300,
+                "candidate_output_chars": 220,
+                "baseline_task_start_delay": 2,
+                "candidate_task_start_delay": 1,
+                "source_type": "observed_output",
+                "comparison_scope": "cross_surface",
+                "baseline_response_sample": "요약만 제공",
+                "candidate_response_sample": "리뷰 구조로 응답",
+            }
+        )
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
+    assert report["decision"]["next_priority_recommendation"] == "add_same_surface_observed_evidence"
+    assert report["decision"]["next_priority_reason"] == "need more same-surface evidence"
+
+
+def test_compare_response_modes_recommends_operator_bottleneck_validation_when_ready_with_reason_signals():
+    mod = _load_module()
+
+    cases = []
+    for index in range(20):
+        cases.append(
+            {
+                "request": f"리뷰해줘 same-surface {index}",
+                "expected_mode": "review-first",
+                "baseline_policy": "baseline" if index < 10 else "candidate",
+                "candidate_policy": "candidate" if index < 10 else "baseline",
+                "baseline_trace": ["assistant: 설명만 제공", "user: 아니 리뷰해줘"],
+                "candidate_trace": ["assistant: 리뷰 시작"],
+                "baseline_output_chars": 300,
+                "candidate_output_chars": 220,
+                "baseline_task_start_delay": 2,
+                "candidate_task_start_delay": 1,
+                "source_type": "observed_output",
+                "comparison_scope": "same_surface",
+                "baseline_response_sample": "요약만 제공",
+                "candidate_response_sample": "리뷰 구조로 응답",
+            }
+        )
+    cases.append(
+        {
+            "request": "이거 plan 검토만 하려던 건데 왜 바로 task로 가",
+            "expected_mode": "answer-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": [
+                "assistant: task로 바로 진행하자고 응답",
+                "user: 아니 plan 검토만 하려던 거야",
+            ],
+            "candidate_trace": [
+                "assistant: 설명 요청으로 판단",
+                "assistant: 사용자 선택 대기로 멈춤",
+            ],
+            "baseline_output_chars": 320,
+            "candidate_output_chars": 260,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 0,
+            "source_type": "observed_request",
+        }
+    )
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["decision"]["baseline_comparison_status"] == "ready"
+    assert report["decision"]["next_priority_recommendation"] == "validate_operator_bottlenecks_from_observed_runs"
+    assert report["decision"]["next_priority_reason"] == "reason signals observed in ready dataset"
+
+
+def test_compare_response_modes_recommends_policy_pair_expansion_when_policy_pairs_are_missing():
+    mod = _load_module()
+
+    cases = []
+    for index in range(20):
+        cases.append(
+            {
+                "request": f"리뷰해줘 same-surface single-pair {index}",
+                "expected_mode": "review-first",
+                "baseline_policy": "baseline",
+                "candidate_policy": "candidate",
+                "baseline_trace": ["assistant: 설명만 제공", "user: 아니 리뷰해줘"],
+                "candidate_trace": ["assistant: 리뷰 시작"],
+                "baseline_output_chars": 300,
+                "candidate_output_chars": 220,
+                "baseline_task_start_delay": 2,
+                "candidate_task_start_delay": 1,
+                "source_type": "observed_output",
+                "comparison_scope": "same_surface",
+                "baseline_response_sample": "요약만 제공",
+                "candidate_response_sample": "리뷰 구조로 응답",
+            }
+        )
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["decision"]["next_kpi_blocker"] == "insufficient_policy_pairs"
+    assert report["decision"]["next_priority_recommendation"] == "expand_policy_pair_coverage"
+    assert report["decision"]["next_priority_reason"] == "need more policy pair coverage"
+
+
+def test_compare_response_modes_recommends_input_stabilization_when_baseline_flag_drifts_after_thresholds():
+    mod = _load_module()
+
+    summary = {
+        "mode_accuracy_delta": 0.2,
+        "reroute_rate_delta": -0.4,
+        "candidate_task_start_delay_delta": 0,
+        "candidate_output_chars_avg": 220,
+        "baseline_output_chars_avg": 300,
+        "candidate_output_chars_delta": -80,
+        "next_action_case_count": 0,
+        "observed_output_count": 20,
+        "observed_same_surface_count": 1,
+        "readiness_observed_sample_count": 20,
+        "readiness_same_surface_case_count": 1,
+        "readiness_distinct_policy_pair_count": 2,
+        "baseline_comparison_ready": False,
+        "distinct_policy_pair_count": 2,
+        "rejected_observed_output_case_count": 0,
+        "rejected_observed_output_reasons": {},
+        "observed_reason_signals_present": False,
+    }
+
+    decision = mod._decision_from_summary(summary)
+
+    assert decision["next_kpi_blocker"] == "baseline_comparison_not_ready"
+    assert decision["next_priority_recommendation"] == "stabilize_baseline_comparison_inputs"
+    assert decision["next_priority_reason"] == "baseline comparison input is not ready"
 
 
 def test_response_mode_fixture_observed_request_case_affects_next_action_accuracy():
