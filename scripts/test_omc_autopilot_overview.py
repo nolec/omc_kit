@@ -835,6 +835,40 @@ def test_cmd_overview_surfaces_operational_validation_readiness_for_v4b_preparat
     assert "operational_validation_reason=ready to start V4-B operational validation" in out
 
 
+def test_cmd_overview_does_not_treat_dry_run_only_observed_collect_as_real_validation_progress(
+    tmp_path: Path, capsys
+) -> None:
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "__run_id": "run-observed-collect-dry-run",
+            "task_id": "observed-collect",
+            "status": "completed",
+            "branch": "feat/observed-collect-dry-run",
+            "executor": "codex",
+            "simulated": True,
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "baseline->candidate",
+            "steps": {
+                "collect_observed_request": {
+                    "status": "completed",
+                    "attempt": 1,
+                    "simulated": True,
+                    "last_output": "[DRY-RUN] 시뮬레이션 성공",
+                }
+            },
+        },
+    )
+
+    rc = omc_autopilot.cmd_overview(tmp_path, limit=5)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "observed_samples=0" in out
+    assert "operational_validation_readiness=not-ready" in out
+    assert "need more observed evidence before starting V4-B operational validation" in out
+
+
 def test_observed_collect_task_describes_v4b_preparation_gate() -> None:
     payload = json.loads((Path.cwd() / OBSERVED_TASK_PATH).read_text(encoding="utf-8"))
 

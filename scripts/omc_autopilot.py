@@ -281,6 +281,46 @@ def _save_state(root: Path, task_id: str, state: dict) -> None:
     os.replace(temp_path, target)
 
 
+def _step_state_is_simulated(step_state: object) -> bool:
+    if not isinstance(step_state, dict):
+        return False
+    if step_state.get("simulated") is True:
+        return True
+    last_output = str(step_state.get("last_output") or "")
+    return "[DRY-RUN]" in last_output
+
+
+def _state_is_simulated(state: object) -> bool:
+    if not isinstance(state, dict):
+        return False
+    if state.get("simulated") is True:
+        return True
+    steps = state.get("steps")
+    if isinstance(steps, dict) and steps:
+        return all(_step_state_is_simulated(step_state) for step_state in steps.values())
+    return False
+
+
+def _format_status_label(status: object, *, simulated: bool) -> str:
+    label = str(status or "?")
+    if simulated and label == "completed":
+        return "completed (dry-run)"
+    return label
+
+
+def _run_record_is_simulated(record: object) -> bool:
+    if not isinstance(record, dict):
+        return False
+    if record.get("simulated") is True or record.get("dry_run") is True:
+        return True
+    steps = record.get("steps")
+    if isinstance(steps, dict) and steps:
+        for step_state in steps.values():
+            if _step_state_is_simulated(step_state):
+                return True
+    return False
+
+
 def _staged_files(root: Path) -> list[str]:
     try:
         cp = subprocess.run(
@@ -723,6 +763,9 @@ def cmd_run(
     state["executor"] = executor
     state["started_at"] = state.get("started_at") or _now()
     state["status"] = "running"
+    state["simulated"] = bool(dry_run)
+    if "completion_requires_real_runs" in task:
+        state["completion_requires_real_runs"] = bool(task.get("completion_requires_real_runs"))
     if "steps" not in state:
         state["steps"] = {}
 
@@ -782,6 +825,8 @@ def cmd_run(
             "started_at": _now(),
             "attempt": 0,
         }
+        if dry_run:
+            step_state["simulated"] = True
 
         success = False
         last_failures: list[dict] = []  # 이전 attempt의 expect 실패 목록
@@ -1296,13 +1341,19 @@ def cmd_status(root: Path, task_id: str | None = None) -> int:
         except json.JSONDecodeError as exc:
             print(f"[AUTOPILOT] JSON 파싱 실패: {f.name} — {exc}")
             continue
+        simulated = _state_is_simulated(s)
+        status_label = _format_status_label(s.get("status", "?"), simulated=simulated)
         status_icon = _STATUS_ICON_MAP.get(str(s.get("status", "")).lower(), "❓")
-        print(f"\n{status_icon} [{s.get('status', '?')}] {s.get('title', f.stem)}")
+        print(f"\n{status_icon} [{status_label}] {s.get('title', f.stem)}")
         print(f"   id={s.get('task_id', f.stem)}  executor={s.get('executor', '?')}")
         print(f"   시작: {s.get('started_at', '-')}  완료: {s.get('finished_at', '-')}")
         for sid, ss in s.get("steps", {}).items():
             icon = _STATUS_ICON_MAP.get(str(ss.get("status", "")).lower(), "❓")
-            print(f"   {icon} {sid}: {ss.get('status', '?')} (시도 {ss.get('attempt', '-')})")
+            step_label = _format_status_label(
+                ss.get("status", "?"),
+                simulated=_step_state_is_simulated(ss),
+            )
+            print(f"   {icon} {sid}: {step_label} (시도 {ss.get('attempt', '-')})")
     return 0
 
 
@@ -1499,6 +1550,7 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     for record in run_records:
         if not isinstance(record, dict):
             continue
+        simulated_record = _run_record_is_simulated(record)
         if str(record.get("next_kpi_blocker") or "").strip() == "baseline_comparison_not_ready":
             baseline_comparison_not_ready_seen = True
         explicit_rejected_reasons = record.get("dataset_rejected_observed_output_reasons")
@@ -1518,10 +1570,12 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         if rejection_reason:
             rejected_case_count += 1
         is_observed_record = source_type in {"observed_request", "observed_output"}
-        if is_observed_record:
+        if is_observed_record and not simulated_record:
             observed_sample_count += 1
         if rejected_case_count > 0:
             rejected_observed_count += rejected_case_count
+        elif simulated_record and is_observed_record:
+            pass
         elif excluded_from_readiness and is_observed_record:
             excluded_observed_count += 1
         elif is_observed_record:
@@ -1534,13 +1588,19 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
             observed_reason_signal_kinds.update(_overview_observed_reason_signal_kinds(record))
         if (
             source_type == "observed_output"
+            and not simulated_record
             and not excluded_from_readiness
             and rejected_case_count == 0
             and str(record.get("comparison_scope") or "").strip() == "same_surface"
         ):
             readiness_same_surface_count += 1
         policy_pair = str(record.get("policy_pair") or "").strip()
-        if policy_pair and not excluded_from_readiness and rejected_case_count == 0:
+        if (
+            policy_pair
+            and not simulated_record
+            and not excluded_from_readiness
+            and rejected_case_count == 0
+        ):
             distinct_policy_pairs.add(policy_pair)
     next_kpi_blocker = "none"
     readiness_status_line = (

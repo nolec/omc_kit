@@ -177,6 +177,34 @@ class TestCmdRunDryRun:
         assert state["steps"]["s1"]["status"] == "completed"
         assert state["steps"]["s2"]["status"] == "completed"
 
+    def test_dry_run_state_marks_simulation_metadata(self, tmp_path):
+        tasks_dir = tmp_path / ".omc" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task = {
+            "id": "observed-collect",
+            "title": "Observed Run Collection",
+            "executor": "auto",
+            "completion_requires_real_runs": True,
+            "max_retries": 0,
+            "steps": [
+                {"id": "s1", "prompt": "실행", "depends_on": [], "timeout_sec": 10},
+            ],
+        }
+        task_file = tasks_dir / "observed-collect.json"
+        task_file.write_text(json.dumps(task), encoding="utf-8")
+
+        code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=True)
+
+        assert code == 0
+        state = json.loads(
+            (tmp_path / ".omc" / "state" / "autopilot" / "observed-collect.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert state.get("simulated") is True
+        assert state.get("completion_requires_real_runs") is True
+        assert state["steps"]["s1"].get("simulated") is True
+
     def test_blocked_step_on_failed_dep(self, tmp_path):
         tasks_dir = tmp_path / ".omc" / "tasks"
         tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -344,6 +372,38 @@ class TestCmdStatus:
         captured = capsys.readouterr()
         assert "내 태스크" in captured.out
         assert "completed" in captured.out
+
+    def test_marks_legacy_dry_run_completed_as_simulated(self, tmp_path, capsys):
+        state_dir = tmp_path / ".omc" / "state" / "autopilot"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "observed-collect.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "title": "Observed Run Collection",
+                    "status": "completed",
+                    "executor": "codex",
+                    "started_at": "2026-07-03T19:48:02Z",
+                    "finished_at": "2026-07-03T19:48:44Z",
+                    "completion_requires_real_runs": True,
+                    "steps": {
+                        "collect_observed_request": {
+                            "status": "completed",
+                            "attempt": 1,
+                            "last_output": "[DRY-RUN] 시뮬레이션 성공",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        code = omc_autopilot.cmd_status(tmp_path)
+        captured = capsys.readouterr()
+
+        assert code == 0
+        assert "Observed Run Collection" in captured.out
+        assert "completed (dry-run)" in captured.out
 
 
 @pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
