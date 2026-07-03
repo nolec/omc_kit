@@ -704,6 +704,77 @@ def test_cmd_overview_prints_next_priority_surface_for_deferred_case(
     assert "next_priority=collect_more_observed_runs  reason=need more observed samples" in out
 
 
+def test_cmd_overview_surfaces_accepted_excluded_rejected_observed_counts(
+    tmp_path: Path, capsys
+) -> None:
+    accepted_task = {
+        "id": "observed-accepted",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "baseline->candidate",
+        "comparison_scope": "same_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    excluded_task = {
+        "id": "observed-excluded-neutral",
+        "benchmark_source_type": "observed_request",
+        "policy_pair": "baseline->candidate",
+    }
+    rejected_task = {
+        "id": "observed-rejected",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "candidate->baseline",
+        "comparison_scope": "same_surface",
+        "baseline_response_sample": "baseline output sample",
+    }
+    _write_json(tmp_path / ".omc" / "tasks" / "observed-accepted.json", accepted_task)
+    _write_json(tmp_path / ".omc" / "tasks" / "observed-excluded-neutral.json", excluded_task)
+    _write_json(tmp_path / ".omc" / "tasks" / "observed-rejected.json", rejected_task)
+
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "__run_id": "run-observed-accepted",
+            "task_id": "observed-accepted",
+            "status": "completed",
+            "branch": "feat/observed-accepted",
+            "executor": "codex",
+            "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+        },
+    )
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "__run_id": "run-observed-excluded",
+            "task_id": "observed-excluded-neutral",
+            "status": "completed",
+            "branch": "feat/observed-excluded",
+            "executor": "codex",
+            "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+            "dataset_excluded_from_readiness": True,
+        },
+    )
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "__run_id": "run-observed-rejected",
+            "task_id": "observed-rejected",
+            "status": "completed",
+            "branch": "feat/observed-rejected",
+            "executor": "codex",
+            "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+        },
+    )
+
+    rc = omc_autopilot.cmd_overview(tmp_path, limit=5)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "accepted_observed=1" in out
+    assert "excluded_observed=1" in out
+    assert "rejected_observed=1" in out
+
+
 def test_observed_collect_task_exists_with_real_expect_checks() -> None:
     payload = json.loads((Path.cwd() / OBSERVED_TASK_PATH).read_text(encoding="utf-8"))
 

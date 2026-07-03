@@ -1488,6 +1488,9 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     reroute_runs = sum(1 for report in reports if report.get("had_reroute") is True)
     recovered_runs = sum(1 for report in reports if report.get("recovered_after_retry") is True)
     observed_sample_count = 0
+    accepted_observed_count = 0
+    excluded_observed_count = 0
+    rejected_observed_count = 0
     readiness_same_surface_count = 0
     distinct_policy_pairs: set[str] = set()
     rejected_observed_output_reasons: dict[str, int] = {}
@@ -1508,10 +1511,22 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
                     rejected_observed_output_reasons.get(reason, 0) + raw_count
                 )
         source_type = str(record.get("benchmark_source_type") or "").strip()
-        if source_type in {"observed_request", "observed_output"}:
+        excluded_from_readiness = bool(record.get("dataset_excluded_from_readiness") is True)
+        explicit_rejected_case_count = record.get("dataset_rejected_observed_output_case_count")
+        rejected_case_count = explicit_rejected_case_count if isinstance(explicit_rejected_case_count, int) else 0
+        rejection_reason = _overview_observed_output_rejection_reason(record)
+        if rejection_reason:
+            rejected_case_count += 1
+        is_observed_record = source_type in {"observed_request", "observed_output"}
+        if is_observed_record:
             observed_sample_count += 1
+        if rejected_case_count > 0:
+            rejected_observed_count += rejected_case_count
+        elif excluded_from_readiness and is_observed_record:
+            excluded_observed_count += 1
+        elif is_observed_record:
+            accepted_observed_count += 1
         if source_type == "observed_output":
-            rejection_reason = _overview_observed_output_rejection_reason(record)
             if rejection_reason:
                 rejected_observed_output_reasons[rejection_reason] = rejected_observed_output_reasons.get(
                     rejection_reason, 0
@@ -1519,11 +1534,13 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
             observed_reason_signal_kinds.update(_overview_observed_reason_signal_kinds(record))
         if (
             source_type == "observed_output"
+            and not excluded_from_readiness
+            and rejected_case_count == 0
             and str(record.get("comparison_scope") or "").strip() == "same_surface"
         ):
             readiness_same_surface_count += 1
         policy_pair = str(record.get("policy_pair") or "").strip()
-        if policy_pair:
+        if policy_pair and not excluded_from_readiness and rejected_case_count == 0:
             distinct_policy_pairs.add(policy_pair)
     next_kpi_blocker = "none"
     readiness_status_line = (
@@ -1584,6 +1601,9 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
             else None
         ),
         "observed_sample_count": observed_sample_count,
+        "accepted_observed_count": accepted_observed_count,
+        "excluded_observed_count": excluded_observed_count,
+        "rejected_observed_count": rejected_observed_count,
         "readiness_same_surface_count": readiness_same_surface_count,
         "distinct_policy_pair_count": len(distinct_policy_pairs),
         "readiness_status_line": readiness_status_line,
@@ -1748,6 +1768,9 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
         f"retry_to_success_rate={_format_overview_ratio(kpi_summary['retry_to_success_rate'])}  "
         f"cost_per_successful_task={_format_overview_cost(kpi_summary['cost_per_successful_task'])}  "
         f"observed_samples={kpi_summary['observed_sample_count']}  "
+        f"accepted_observed={kpi_summary['accepted_observed_count']}  "
+        f"excluded_observed={kpi_summary['excluded_observed_count']}  "
+        f"rejected_observed={kpi_summary['rejected_observed_count']}  "
         f"readiness_same_surface={kpi_summary['readiness_same_surface_count']}  "
         f"distinct_policy_pairs={kpi_summary['distinct_policy_pair_count']}  "
         f"readiness_status={kpi_summary['readiness_status_line']}  "

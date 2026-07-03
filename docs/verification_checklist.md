@@ -435,6 +435,13 @@ PASS / FAIL: PASS
 - distinct policy pair 2개 이상
 - invalid observed_output은 버려지더라도 rejection count / reason map으로 남아야 함
 
+분류 기준:
+
+- `accepted / excluded / rejected`
+- accepted: readiness 입력에 사용되는 관측치
+- excluded: 수집량에는 보이지만 readiness 입력에서는 제외되는 관측치
+- rejected: schema/validation 실패로 readiness 입력에서 거부되지만 rejection count / reason map에는 남는 관측치
+
 ### 2. 3면 일치 기준
 
 같은 observed dataset 기준으로 아래 3면이 같은 결론으로 수렴해야 합니다.

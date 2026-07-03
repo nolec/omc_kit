@@ -55,8 +55,10 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "next-action 품질 보강 3차 - 완료" in text
     assert "telemetry report 정리 2차 - 완료" in text
     assert "## 다음 순환 목표" in text
-    assert "현재 기준으로는 V3 완료, V4 KPI 1차, Operator Experience 3차, V4 KPI 2차 baseline/timebox 기준, readiness coverage report 2차, observed sample contract 1차까지 정리됐다." in text
+    assert "현재 기준으로는 V3 완료, V4 KPI 1차, Operator Experience 3차, V4 KPI 2차 baseline/timebox 기준, readiness coverage report 2차, observed sample contract 1차, `V4-A 구현 마감`까지 정리됐다." in text
     assert "V4 multi-run KPI summary 2차" in text
+    assert "V4-A 구현 마감" in text
+    assert "V4-B 운영 완료 판정" in text
     assert "Operator Experience 4차" in text
     assert "Learned orchestrator 진입 조건 정리" in text
     assert "readiness/baseline 상태 문구는 이미 report와 overview에 실리므로" in text
