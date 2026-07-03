@@ -93,6 +93,21 @@ def _resolve_next_priority(
     return "maintain_policy_comparison_confidence", "readiness requirements are currently satisfied"
 
 
+def _has_observed_reason_signal(case: dict[str, object]) -> bool:
+    if str(case.get("source_type") or "").strip() != "observed_request":
+        return False
+    baseline = case.get("baseline")
+    candidate = case.get("candidate")
+    if isinstance(baseline, dict) and isinstance(candidate, dict):
+        return bool(baseline.get("reroute")) or int(baseline.get("output_chars", 0)) > int(
+            candidate.get("output_chars", 0)
+        )
+    baseline_trace = [str(item) for item in case.get("baseline_trace", [])]
+    baseline_output_chars = int(case.get("baseline_output_chars", 0))
+    candidate_output_chars = int(case.get("candidate_output_chars", 0))
+    return _contains_user_reroute(baseline_trace) or baseline_output_chars > candidate_output_chars
+
+
 def _count_question_marks(text: str) -> int:
     return text.count("?")
 
@@ -1036,14 +1051,7 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
         baseline_comparison_ready=baseline_comparison_ready,
     )
 
-    observed_reason_signals_present = any(
-        item.get("source_type") == "observed_request"
-        and (
-            bool(item["baseline"]["reroute"])
-            or int(item["baseline"]["output_chars"]) > int(item["candidate"]["output_chars"])
-        )
-        for item in compared_cases
-    )
+    observed_reason_signals_present = any(_has_observed_reason_signal(item) for item in compared_cases)
 
     summary = {
         "total_run_count": dataset_total_run_count,
@@ -1650,11 +1658,7 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
         baseline_comparison_ready=baseline_comparison_ready,
     )
     baseline_comparison_status = "ready" if baseline_comparison_ready else "deferred"
-    observed_reason_signals_present = any(
-        str(case.get("source_type") or "").strip() == "observed_request"
-        and not bool(case.get("neutral_seed"))
-        for case in cases
-    )
+    observed_reason_signals_present = any(_has_observed_reason_signal(case) for case in cases)
     observed_data_bottleneck_summary = "observed data bottleneck: need more observed samples"
     if readiness_observed_sample_count >= KPI_MIN_SAMPLE_COUNT:
         if readiness_same_surface_case_count < KPI_MIN_SAME_SURFACE_COUNT:

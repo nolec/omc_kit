@@ -2115,6 +2115,124 @@ def test_accumulated_observed_ready_reason_signal_keeps_summary_and_decision_ali
     )
 
 
+def test_observed_request_without_reason_signal_does_not_flip_ready_next_priority(
+    tmp_path: Path,
+):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        _write_observed_run(
+            runs_root,
+            f"20260701T0291{index:02d}-no-signal{index:04d}",
+            {
+                "task_id": "observed-collect",
+                "instruction": f"실제 observed ready request without signal {index}",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                "baseline_response_sample": "기존 응답 샘플",
+                "candidate_response_sample": "개선 응답 샘플",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+        )
+
+    _write_observed_run(
+        runs_root,
+        "20260701T02999-no-signal0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "실제 observed request지만 reroute/과출력 신호는 없는 케이스",
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "baseline->candidate",
+            "status": "completed",
+            "last_completed_step": "plan",
+            "baseline_trace": ["assistant: plan 검토를 제안", "user: 확인"],
+            "candidate_trace": ["assistant: plan 검토를 제안", "assistant: 사용자 선택 대기"],
+            "baseline_output_chars": 240,
+            "candidate_output_chars": 240,
+            "baseline_task_start_delay": 0,
+            "candidate_task_start_delay": 0,
+        },
+    )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    report = mod.compare_response_modes(collected["cases"])
+
+    assert collected["summary"]["observed_reason_signals_present"] is False
+    assert collected["summary"]["next_priority_recommendation"] == (
+        "maintain_policy_comparison_confidence"
+    )
+    assert collected["summary"]["next_priority_reason"] == (
+        "readiness requirements are currently satisfied"
+    )
+    assert report["decision"]["baseline_comparison_status"] == "ready"
+    assert report["decision"]["next_priority_recommendation"] == (
+        "maintain_policy_comparison_confidence"
+    )
+    assert report["decision"]["next_priority_reason"] == (
+        "readiness requirements are currently satisfied"
+    )
+
+
+def test_reason_signal_does_not_override_baseline_not_ready_priority(
+    tmp_path: Path,
+):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        _write_observed_run(
+            runs_root,
+            f"20260701T0292{index:02d}-baseline-gap{index:04d}",
+            {
+                "task_id": "observed-collect",
+                "instruction": f"실제 observed baseline gap request {index}",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                "baseline_response_sample": "기존 응답 샘플",
+                "candidate_response_sample": "개선 응답 샘플",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+        )
+
+    _write_observed_run(
+        runs_root,
+        "20260701T02929-baseline-drift0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "실제 observed request인데 baseline comparison은 아직 not ready",
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "baseline->candidate",
+            "status": "completed",
+            "last_completed_step": "plan",
+            "baseline_trace": ["assistant: task로 바로 진행", "user: 아니 plan만 봐달라"],
+            "candidate_trace": ["assistant: plan 검토로 판단", "assistant: 사용자 선택 대기"],
+            "baseline_output_chars": 320,
+            "candidate_output_chars": 240,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 0,
+        },
+    )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    report = mod.compare_response_modes(collected["cases"])
+    report["summary"]["baseline_comparison_ready"] = False
+    decision = mod._decision_from_summary(report["summary"])
+
+    assert collected["summary"]["observed_reason_signals_present"] is True
+    assert decision["baseline_comparison_status"] == "deferred"
+    assert decision["next_priority_recommendation"] == (
+        "stabilize_baseline_comparison_inputs"
+    )
+    assert decision["next_priority_reason"] == (
+        "baseline comparison input is not ready"
+    )
+
+
 def test_collected_cases_preserve_rejection_bottleneck_for_policy_pair_shortage(tmp_path: Path):
     mod = _load_module()
 
