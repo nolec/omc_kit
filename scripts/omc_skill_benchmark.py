@@ -1674,7 +1674,18 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
         policy_pair_count=len(readiness_policy_pair_counts),
         baseline_comparison_ready=baseline_comparison_ready,
     )
+    deferred_reason_map = _readiness_deferred_reason_map()
     baseline_comparison_status = "ready" if baseline_comparison_ready else "deferred"
+    if baseline_comparison_status == "ready":
+        baseline_comparison_line = "baseline comparison ready: baseline comparison wording can be enabled"
+    else:
+        baseline_comparison_line = (
+            "baseline comparison deferred: "
+            + deferred_reason_map.get(
+                readiness_blocker,
+                "readiness requirements are not met",
+            )
+        )
     observed_reason_signals_present = any(_has_observed_reason_signal(case) for case in cases)
     observed_data_bottleneck_summary = "observed data bottleneck: need more observed samples"
     if readiness_observed_sample_count >= KPI_MIN_SAMPLE_COUNT:
@@ -1730,6 +1741,7 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             "readiness_distinct_policy_pair_count": len(readiness_policy_pair_counts),
             "baseline_comparison_ready": baseline_comparison_ready,
             "baseline_comparison_status": baseline_comparison_status,
+            "baseline_comparison_line": baseline_comparison_line,
             "readiness_blocker_line": readiness_blocker_line,
             "next_kpi_blocker": readiness_blocker,
             "observed_reason_signals_present": observed_reason_signals_present,

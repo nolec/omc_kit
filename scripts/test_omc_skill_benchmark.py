@@ -2545,6 +2545,87 @@ def test_valid_same_surface_evidence_stays_ready_even_with_additional_invalid_sa
     )
 
 
+def test_invalid_same_surface_noise_does_not_hide_same_surface_gap(tmp_path: Path) -> None:
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        _write_observed_run(
+            runs_root,
+            f"20260701T0393{index:02d}-cross-surface-only{index:04d}",
+            {
+                "task_id": "observed-collect",
+                "instruction": f"cross surface only request {index}",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                "comparison_scope": "cross_surface",
+                "baseline_response_sample": "기존 응답 샘플",
+                "candidate_response_sample": "개선 응답 샘플",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+        )
+
+    _write_observed_run(
+        runs_root,
+        "20260701T039399-invalid-same-surface-noise0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "invalid same-surface only noise request",
+            "benchmark_source_type": "observed_output",
+            "policy_pair": "candidate->baseline",
+            "comparison_scope": "same_surface",
+            "baseline_response_sample": "기존 응답 샘플",
+            "status": "completed",
+            "last_completed_step": "review",
+        },
+    )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    report = mod.compare_response_modes(collected["cases"])
+
+    assert collected["summary"]["same_surface_case_count"] == 0
+    assert collected["summary"]["readiness_same_surface_case_count"] == 0
+    assert collected["summary"]["readiness_same_surface_gap"] == 1
+    assert collected["summary"]["baseline_comparison_status"] == "deferred"
+    assert collected["summary"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
+    assert collected["summary"]["next_priority_recommendation"] == "add_same_surface_observed_evidence"
+    assert collected["summary"]["rejected_observed_output_case_count"] == 1
+    assert report["decision"]["baseline_comparison_status"] == "deferred"
+    assert report["decision"]["next_priority_recommendation"] == "add_same_surface_observed_evidence"
+
+
+def test_collected_summary_exposes_baseline_comparison_line_for_same_surface_gap(
+    tmp_path: Path,
+) -> None:
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        _write_observed_run(
+            runs_root,
+            f"20260701T0493{index:02d}-collected-gap{index:04d}",
+            {
+                "task_id": "observed-collect",
+                "instruction": f"collected baseline line request {index}",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                "comparison_scope": "cross_surface",
+                "baseline_response_sample": "기존 응답 샘플",
+                "candidate_response_sample": "개선 응답 샘플",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+        )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+
+    assert collected["summary"]["baseline_comparison_status"] == "deferred"
+    assert collected["summary"]["baseline_comparison_line"] == (
+        "baseline comparison deferred: need more same-surface evidence"
+    )
+
+
 def test_collect_observed_response_mode_cases_preserves_explicit_multi_reason_rejection_metadata(
     tmp_path: Path,
 ):
