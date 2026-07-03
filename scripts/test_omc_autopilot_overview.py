@@ -297,6 +297,132 @@ def test_cmd_overview_prints_observed_progress_summary(tmp_path: Path, capsys) -
     assert "distinct_policy_pairs=2" in out
 
 
+def test_cmd_overview_prints_readiness_status_and_blocker_for_observed_progress(
+    tmp_path: Path, capsys
+) -> None:
+    observed_task = {
+        "id": "observed-collect",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "baseline->candidate",
+        "comparison_scope": "cross_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    _write_json(tmp_path / ".omc" / "tasks" / "observed-collect.json", observed_task)
+
+    for index in range(19):
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-observed-{index}",
+                "task_id": "observed-collect",
+                "status": "completed",
+                "branch": f"feat/observed-{index}",
+                "executor": "codex",
+                "started_at": "2026-06-13T09:00:00+09:00",
+                "finished_at": "2026-06-13T09:05:00+09:00",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+            },
+        )
+
+    rc = omc_autopilot.cmd_overview(tmp_path, limit=5)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "observed_samples=19" in out
+    assert "readiness_status=not ready: samples 19/20, same-surface 0/1, policy pairs 1/2" in out
+    assert "baseline_comparison_status=deferred" in out
+    assert "next_kpi_blocker=insufficient_observed_samples" in out
+    assert "next_collection_focus=collect_more_observed_runs" in out
+
+
+def test_cmd_overview_ignores_invalid_observed_output_noise_in_readiness_counts(
+    tmp_path: Path, capsys
+) -> None:
+    valid_forward = {
+        "id": "observed-valid-forward",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "baseline->candidate",
+        "comparison_scope": "cross_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    valid_reverse = {
+        "id": "observed-valid-reverse",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "candidate->baseline",
+        "comparison_scope": "cross_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    invalid_same_surface = {
+        "id": "observed-invalid-same-surface",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "baseline->candidate",
+        "comparison_scope": "same_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "",
+    }
+    _write_json(tmp_path / ".omc" / "tasks" / "observed-valid-forward.json", valid_forward)
+    _write_json(tmp_path / ".omc" / "tasks" / "observed-valid-reverse.json", valid_reverse)
+    _write_json(tmp_path / ".omc" / "tasks" / "observed-invalid-same-surface.json", invalid_same_surface)
+
+    for index in range(10):
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-valid-forward-{index}",
+                "task_id": "observed-valid-forward",
+                "status": "completed",
+                "branch": f"feat/valid-forward-{index}",
+                "executor": "codex",
+                "started_at": "2026-06-13T09:00:00+09:00",
+                "finished_at": "2026-06-13T09:05:00+09:00",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+            },
+        )
+    for index in range(9):
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-valid-reverse-{index}",
+                "task_id": "observed-valid-reverse",
+                "status": "completed",
+                "branch": f"feat/valid-reverse-{index}",
+                "executor": "codex",
+                "started_at": "2026-06-13T10:00:00+09:00",
+                "finished_at": "2026-06-13T10:05:00+09:00",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+            },
+        )
+
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "__run_id": "run-invalid-same-surface",
+            "task_id": "observed-invalid-same-surface",
+            "status": "completed",
+            "branch": "feat/invalid-same-surface",
+            "executor": "codex",
+            "started_at": "2026-06-13T11:00:00+09:00",
+            "finished_at": "2026-06-13T11:05:00+09:00",
+            "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+        },
+    )
+
+    rc = omc_autopilot.cmd_overview(tmp_path, limit=5)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "observed_samples=19" in out
+    assert "readiness_status=not ready: samples 19/20, same-surface 0/1, policy pairs 2/2" in out
+    assert "baseline_comparison_status=deferred" in out
+    assert "next_kpi_blocker=insufficient_observed_samples" in out
+    assert "next_collection_focus=collect_more_observed_runs" in out
+    assert "rejected_observed_output=1" in out
+    assert "rejected_reasons=missing_candidate_response_sample:1" in out
+
+
 def test_observed_collect_task_exists_with_real_expect_checks() -> None:
     payload = json.loads((Path.cwd() / OBSERVED_TASK_PATH).read_text(encoding="utf-8"))
 
@@ -386,6 +512,47 @@ def test_save_pipeline_result_skips_incomplete_observed_output_schema_from_task_
     assert "comparison_scope" not in saved
     assert "baseline_response_sample" not in saved
     assert "candidate_response_sample" not in saved
+    assert saved["dataset_rejected_observed_output_case_count"] == 1
+    assert saved["dataset_rejected_observed_output_reasons"] == {
+        "missing_candidate_response_sample": 1
+    }
+
+
+def test_save_pipeline_result_counts_incomplete_observed_output_as_one_rejected_case(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / ".omc" / "tasks" / "observed-output-missing-all.json",
+        {
+            "id": "observed-output-missing-all",
+            "benchmark_source_type": "observed_output",
+            "policy_pair": "baseline->candidate",
+        },
+    )
+
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "__run_id": "run-observed-output-missing-all",
+            "task_id": "observed-output-missing-all",
+            "status": "completed",
+            "branch": "feat/observed-output-missing-all",
+            "executor": "codex",
+            "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+        },
+    )
+
+    saved = json.loads(
+        (tmp_path / ".omc" / "runs" / "run-observed-output-missing-all" / "result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert saved["dataset_rejected_observed_output_case_count"] == 1
+    assert saved["dataset_rejected_observed_output_reasons"] == {
+        "missing_comparison_scope": 1,
+        "missing_baseline_response_sample": 1,
+        "missing_candidate_response_sample": 1,
+    }
 
 
 def test_save_pipeline_result_backfills_missing_observed_output_samples_even_when_source_type_exists(

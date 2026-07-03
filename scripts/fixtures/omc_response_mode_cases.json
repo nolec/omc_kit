@@ -268,6 +268,29 @@
       "evidence": "2026-06-30 실제 세션 요청문 추출: 로드맵과 현재 진행분 싱크 정렬"
     },
     {
+      "request": "현재 로드맵 최신화하고 어디까지 진행된건지 체크해",
+      "expected_mode": "answer-first",
+      "expected_next_action": "$omc-plan",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: 현재 작업 계속 진행을 전제",
+        "user: 아니 로드맵 최신화와 진행 상태 체크를 먼저 원함"
+      ],
+      "candidate_trace": [
+        "assistant: 로드맵과 현재 진행분을 먼저 동기화",
+        "assistant: 다음 계획은 $omc-plan 으로 정렬"
+      ],
+      "baseline_output_chars": 302,
+      "candidate_output_chars": 290,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "$omc-plan",
+      "source_type": "observed_request",
+      "evidence": "2026-07-03 실제 세션 요청문 추출: 로드맵 최신화와 현재 진행분 동시 체크 요청"
+    },
+    {
       "request": "현재 어떤 작업 진행됐는지 상태만 빠르게 알려줘",
       "expected_mode": "answer-first",
       "expected_next_action": "$omc-status",

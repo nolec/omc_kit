@@ -1603,6 +1603,7 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
 
     cases: list[dict[str, object]] = []
     run_records: list[dict[str, object]] = []
+    rejected_observed_output_case_count = 0
     rejected_observed_output_reasons: dict[str, int] = {}
     for run_dir in sorted(runs_dir.iterdir()):
         result_path = run_dir / "result.json"
@@ -1619,10 +1620,26 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
         if case is None:
             rejection_reason = _validate_observed_output_run_record(record)
             case = _build_observed_output_case_from_run_record(record, run_id=run_dir.name)
-            if case is None and rejection_reason:
-                rejected_observed_output_reasons[rejection_reason] = (
-                    rejected_observed_output_reasons.get(rejection_reason, 0) + 1
-                )
+            if case is None:
+                explicit_rejected_reasons = record.get("dataset_rejected_observed_output_reasons")
+                if isinstance(explicit_rejected_reasons, dict) and explicit_rejected_reasons:
+                    explicit_case_count = record.get("dataset_rejected_observed_output_case_count")
+                    if isinstance(explicit_case_count, int) and explicit_case_count > 0:
+                        rejected_observed_output_case_count += explicit_case_count
+                    else:
+                        rejected_observed_output_case_count += 1
+                    for key, raw_count in explicit_rejected_reasons.items():
+                        reason = str(key).strip()
+                        if not reason or not isinstance(raw_count, int):
+                            continue
+                        rejected_observed_output_reasons[reason] = (
+                            rejected_observed_output_reasons.get(reason, 0) + raw_count
+                        )
+                elif rejection_reason:
+                    rejected_observed_output_case_count += 1
+                    rejected_observed_output_reasons[rejection_reason] = (
+                        rejected_observed_output_reasons.get(rejection_reason, 0) + 1
+                    )
         if case is not None:
             cases.append(case)
 
@@ -1671,7 +1688,6 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             )
         else:
             observed_data_bottleneck_summary = "observed data bottleneck: baseline comparison input is ready"
-    rejected_observed_output_case_count = sum(rejected_observed_output_reasons.values())
     if rejected_observed_output_case_count > 0:
         reason_parts: list[str] = []
         for key in sorted(rejected_observed_output_reasons):

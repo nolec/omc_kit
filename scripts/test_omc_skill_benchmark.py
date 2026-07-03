@@ -2545,6 +2545,63 @@ def test_valid_same_surface_evidence_stays_ready_even_with_additional_invalid_sa
     )
 
 
+def test_collect_observed_response_mode_cases_preserves_explicit_multi_reason_rejection_metadata(
+    tmp_path: Path,
+):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    for index in range(20):
+        _write_observed_run(
+            runs_root,
+            f"20260701T031{index:02d}-explicit-ready{index:04d}",
+            {
+                "task_id": "observed-collect",
+                "instruction": f"explicit rejection ready request {index}",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "baseline->candidate" if index < 10 else "candidate->baseline",
+                "comparison_scope": "same_surface" if index == 0 else "cross_surface",
+                "baseline_response_sample": "기존 응답 샘플",
+                "candidate_response_sample": "개선 응답 샘플",
+                "status": "completed",
+                "last_completed_step": "review",
+            },
+        )
+
+    _write_observed_run(
+        runs_root,
+        "20260701T03199-explicit-invalid0001",
+        {
+            "task_id": "observed-collect",
+            "instruction": "explicit rejection invalid observed output",
+            "dataset_rejected_observed_output_case_count": 1,
+            "dataset_rejected_observed_output_reasons": {
+                "missing_comparison_scope": 1,
+                "missing_baseline_response_sample": 1,
+                "missing_candidate_response_sample": 1,
+            },
+            "status": "completed",
+            "last_completed_step": "review",
+        },
+    )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+    report = mod.compare_response_modes(collected["cases"])
+
+    assert collected["summary"]["rejected_observed_output_case_count"] == 1
+    assert collected["summary"]["rejected_observed_output_reasons"] == {
+        "missing_comparison_scope": 1,
+        "missing_baseline_response_sample": 1,
+        "missing_candidate_response_sample": 1,
+    }
+    assert report["summary"]["rejected_observed_output_case_count"] == 1
+    assert report["summary"]["rejected_observed_output_reasons"] == {
+        "missing_comparison_scope": 1,
+        "missing_baseline_response_sample": 1,
+        "missing_candidate_response_sample": 1,
+    }
+
+
 def test_collected_summary_surfaces_pending_blocker_and_status_for_operational_observed_checks(
     tmp_path: Path,
 ):
@@ -3694,6 +3751,27 @@ def test_response_mode_fixture_covers_roadmap_sync_next_action():
     assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
     assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
     assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert report["cases"][0]["expected_next_action"] == "$omc-plan"
+    assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][0]["candidate"]["next_action"] == "$omc-plan"
+
+
+def test_response_mode_fixture_prefers_plan_for_roadmap_sync_plus_progress_check():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    target_case = next(
+        case for case in cases if case["request"] == "현재 로드맵 최신화하고 어디까지 진행된건지 체크해"
+    )
+
+    report = mod.compare_response_modes([target_case])
+
+    assert report["summary"]["next_action_case_count"] == 1
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert report["cases"][0]["source_type"] == "observed_request"
     assert report["cases"][0]["expected_next_action"] == "$omc-plan"
     assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
     assert report["cases"][0]["candidate"]["next_action"] == "$omc-plan"

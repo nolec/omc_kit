@@ -1494,15 +1494,24 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     for record in run_records:
         if not isinstance(record, dict):
             continue
+        explicit_rejected_reasons = record.get("dataset_rejected_observed_output_reasons")
+        if isinstance(explicit_rejected_reasons, dict):
+            for key, raw_count in explicit_rejected_reasons.items():
+                reason = str(key).strip()
+                if not reason or not isinstance(raw_count, int):
+                    continue
+                rejected_observed_output_reasons[reason] = (
+                    rejected_observed_output_reasons.get(reason, 0) + raw_count
+                )
         source_type = str(record.get("benchmark_source_type") or "").strip()
         if source_type in {"observed_request", "observed_output"}:
             observed_sample_count += 1
         if source_type == "observed_output":
             rejection_reason = _overview_observed_output_rejection_reason(record)
             if rejection_reason:
-                rejected_observed_output_reasons[rejection_reason] = (
-                    rejected_observed_output_reasons.get(rejection_reason, 0) + 1
-                )
+                rejected_observed_output_reasons[rejection_reason] = rejected_observed_output_reasons.get(
+                    rejection_reason, 0
+                ) + 1
         if (
             source_type == "observed_output"
             and str(record.get("comparison_scope") or "").strip() == "same_surface"
@@ -1526,6 +1535,8 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         next_kpi_blocker = "insufficient_policy_pairs"
     else:
         readiness_status_line = "ready: baseline comparison wording can be enabled"
+    baseline_comparison_status = "ready" if next_kpi_blocker == "none" else "deferred"
+    next_collection_focus = _overview_next_collection_focus(next_kpi_blocker)
     successful_costs = [
         float(report["total_cost_usd"])
         for report in reports
@@ -1545,10 +1556,22 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         "readiness_same_surface_count": readiness_same_surface_count,
         "distinct_policy_pair_count": len(distinct_policy_pairs),
         "readiness_status_line": readiness_status_line,
+        "baseline_comparison_status": baseline_comparison_status,
         "next_kpi_blocker": next_kpi_blocker,
+        "next_collection_focus": next_collection_focus,
         "rejected_observed_output_case_count": sum(rejected_observed_output_reasons.values()),
         "rejected_observed_output_reasons": rejected_observed_output_reasons,
     }
+
+
+def _overview_next_collection_focus(next_kpi_blocker: str) -> str:
+    if next_kpi_blocker == "insufficient_observed_samples":
+        return "collect_more_observed_runs"
+    if next_kpi_blocker == "insufficient_same_surface_evidence":
+        return "add_same_surface_observed_evidence"
+    if next_kpi_blocker == "insufficient_policy_pairs":
+        return "expand_policy_pair_coverage"
+    return "maintain_policy_comparison_confidence"
 
 
 def _format_overview_ratio(value: object) -> str:
@@ -1615,8 +1638,6 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
     if runs_dir.exists():
         run_dirs = sorted(runs_dir.iterdir(), reverse=True)
         for d in run_dirs:
-            if len(summaries) >= limit:
-                break
             result_path = d / "result.json"
             if not result_path.exists():
                 continue
@@ -1628,7 +1649,8 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
             if fingerprint not in seen_fingerprints:
                 seen_fingerprints.add(fingerprint)
                 run_records.append(data)
-            summaries.append(_summarize_run_record(d.name, data))
+            if len(summaries) < limit:
+                summaries.append(_summarize_run_record(d.name, data))
 
     if not summaries:
         print("[OVERVIEW] 실행 기록 없음")
@@ -1648,7 +1670,9 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
         f"readiness_same_surface={kpi_summary['readiness_same_surface_count']}  "
         f"distinct_policy_pairs={kpi_summary['distinct_policy_pair_count']}  "
         f"readiness_status={kpi_summary['readiness_status_line']}  "
+        f"baseline_comparison_status={kpi_summary['baseline_comparison_status']}  "
         f"next_kpi_blocker={kpi_summary['next_kpi_blocker']}  "
+        f"next_collection_focus={kpi_summary['next_collection_focus']}  "
         f"rejected_observed_output={kpi_summary['rejected_observed_output_case_count']}  "
         f"rejected_reasons={_format_rejected_reason_counts(kpi_summary['rejected_observed_output_reasons'])}"
     )
@@ -2264,6 +2288,15 @@ def _populate_observed_output_schema(data: dict, task_meta: dict[str, object]) -
 
     if all(str(data.get(key) or "").strip() for key in required_keys):
         return
+
+    rejected_reasons: dict[str, int] = {}
+    for key in required_keys:
+        if str(data.get(key) or "").strip():
+            continue
+        rejected_reasons[f"missing_{key}"] = 1
+    if rejected_reasons:
+        data["dataset_rejected_observed_output_case_count"] = 1
+        data["dataset_rejected_observed_output_reasons"] = rejected_reasons
 
     # observed_output benchmark payload is only valid when the full schema exists.
     for key in ("benchmark_source_type", "policy_pair", *required_keys):
