@@ -593,6 +593,7 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         )
     )
     baseline_comparison_ready = bool(summary.get("baseline_comparison_ready", False))
+    observed_reason_signals_present = bool(summary.get("observed_reason_signals_present", False))
     deferred_reason_map = _readiness_deferred_reason_map()
     kpi_readiness = "ready"
     readiness_status_line = (
@@ -669,6 +670,8 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
                 rejected_suffix += f" ({','.join(reason_parts)})"
         policy_comparison_summary += rejected_suffix
         bottleneck_summary += rejected_suffix
+    if observed_reason_signals_present:
+        policy_comparison_summary += "; reason signals observed"
 
     return {
         "verdict": verdict,
@@ -749,6 +752,7 @@ def build_expensive_flow_report(
     flows: list[dict[str, object]] = []
     flow_kind_counts: dict[str, int] = {}
     observed_case_count = 0
+    observed_reason_signal_counts: dict[str, int] = {}
 
     for case in cases:
         flow_kind = _classify_expensive_flow(case)
@@ -814,6 +818,12 @@ def build_expensive_flow_report(
             value = case.get(field)
             if isinstance(value, str) and value:
                 flow[field] = value
+        if source_type.startswith("observed_"):
+            for signal_key in ("reroute_reason", "output_bloat_reason", "compression_signal"):
+                if signal_key in flow:
+                    observed_reason_signal_counts[signal_key] = (
+                        observed_reason_signal_counts.get(signal_key, 0) + 1
+                    )
         flows.append(flow)
 
     ranked_flows = sorted(flows, key=lambda item: (-int(item["waste_score"]), item["request"]))
@@ -825,6 +835,7 @@ def build_expensive_flow_report(
             "top_flow_count": len(top_flows),
             "observed_case_count": observed_case_count,
             "flow_kind_counts": flow_kind_counts,
+            "observed_reason_signal_counts": observed_reason_signal_counts,
         },
     }
 
@@ -995,6 +1006,15 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
         baseline_comparison_ready=baseline_comparison_ready,
     )
 
+    observed_reason_signals_present = any(
+        item.get("source_type") == "observed_request"
+        and (
+            bool(item["baseline"]["reroute"])
+            or int(item["baseline"]["output_chars"]) > int(item["candidate"]["output_chars"])
+        )
+        for item in compared_cases
+    )
+
     summary = {
         "total_run_count": dataset_total_run_count,
         "reroute_rate": dataset_reroute_rate,
@@ -1050,6 +1070,7 @@ def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
         "readiness_blocker_line": readiness_blocker_line,
         "rejected_observed_output_case_count": rejected_observed_output_case_count,
         "rejected_observed_output_reasons": rejected_observed_output_reasons,
+        "observed_reason_signals_present": observed_reason_signals_present,
     }
     return {"cases": compared_cases, "summary": summary, "decision": _decision_from_summary(summary)}
 

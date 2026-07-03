@@ -3016,6 +3016,51 @@ def test_compare_response_modes_reports_policy_comparison_summary_when_ready():
     )
 
 
+def test_compare_response_modes_policy_comparison_summary_mentions_reason_signal_presence():
+    mod = _load_module()
+
+    cases = [
+        {
+            "request": "이거 plan 검토만 하려던 건데 왜 바로 task로 가",
+            "expected_mode": "answer-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": [
+                "assistant: task로 바로 진행하자고 응답",
+                "user: 아니 plan 검토만 하려던 거야",
+            ],
+            "candidate_trace": [
+                "assistant: 설명 요청으로 판단",
+                "assistant: 사용자 선택 대기로 멈춤",
+            ],
+            "baseline_output_chars": 320,
+            "candidate_output_chars": 260,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 0,
+            "source_type": "observed_request",
+        },
+        {
+            "request": "task, critique는 안고쳐도 된다고?",
+            "expected_mode": "answer-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 장문 설명"],
+            "candidate_trace": ["assistant: 압축된 설명"],
+            "baseline_output_chars": 610,
+            "candidate_output_chars": 320,
+            "baseline_task_start_delay": 0,
+            "candidate_task_start_delay": 0,
+            "source_type": "observed_request",
+        },
+    ]
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["decision"]["policy_comparison_summary"] == (
+        "policy comparison pending: need more observed samples; reason signals observed"
+    )
+
+
 def test_response_mode_fixture_observed_request_case_affects_next_action_accuracy():
     mod = _load_module()
 
@@ -3452,6 +3497,55 @@ def test_build_expensive_flow_report_exposes_output_bloat_reason_fields():
     assert output_bloat_flow["output_chars_saved"] == 290
     assert output_bloat_flow["output_bloat_reason"] == "baseline_output_exceeds_candidate"
     assert output_bloat_flow["compression_signal"] == "char_reduction_confirmed"
+
+
+def test_build_expensive_flow_report_summarizes_observed_reason_signals():
+    mod = _load_module()
+
+    cases = [
+        {
+            "request": "이거 plan 검토만 하려던 건데 왜 바로 task로 가",
+            "expected_mode": "answer-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": [
+                "assistant: task로 바로 진행하자고 응답",
+                "user: 아니 plan 검토만 하려던 거야",
+            ],
+            "candidate_trace": [
+                "assistant: 설명 요청으로 판단",
+                "assistant: 사용자 선택 대기로 멈춤",
+            ],
+            "baseline_output_chars": 320,
+            "candidate_output_chars": 260,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 0,
+            "source_type": "observed_request",
+            "evidence": "real reroute request",
+        },
+        {
+            "request": "task, critique는 안고쳐도 된다고?",
+            "expected_mode": "answer-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 장문 설명"],
+            "candidate_trace": ["assistant: 압축된 설명"],
+            "baseline_output_chars": 610,
+            "candidate_output_chars": 320,
+            "baseline_task_start_delay": 0,
+            "candidate_task_start_delay": 0,
+            "source_type": "observed_request",
+            "evidence": "real compression follow-up",
+        },
+    ]
+
+    report = mod.build_expensive_flow_report(cases)
+
+    assert report["summary"]["observed_reason_signal_counts"] == {
+        "reroute_reason": 1,
+        "output_bloat_reason": 1,
+        "compression_signal": 1,
+    }
 
 
 def test_build_expensive_flow_report_marks_missing_next_actions_as_gap():
