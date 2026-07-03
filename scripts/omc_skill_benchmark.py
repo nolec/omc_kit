@@ -1617,11 +1617,17 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
         and readiness_same_surface_gap == 0
         and len(readiness_policy_pair_counts) >= KPI_MIN_POLICY_PAIR_COUNT
     )
-    _, readiness_blocker_line = _resolve_readiness_blocker(
+    readiness_blocker, readiness_blocker_line = _resolve_readiness_blocker(
         sample_gap=readiness_sample_gap,
         same_surface_gap=readiness_same_surface_gap,
         policy_pair_count=len(readiness_policy_pair_counts),
         baseline_comparison_ready=baseline_comparison_ready,
+    )
+    baseline_comparison_status = "ready" if baseline_comparison_ready else "deferred"
+    observed_reason_signals_present = any(
+        str(case.get("source_type") or "").strip() == "observed_request"
+        and not bool(case.get("neutral_seed"))
+        for case in cases
     )
     observed_data_bottleneck_summary = "observed data bottleneck: need more observed samples"
     if readiness_observed_sample_count >= KPI_MIN_SAMPLE_COUNT:
@@ -1647,6 +1653,11 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
                 f"; rejected observed_output={rejected_observed_output_case_count} "
                 f"({','.join(reason_parts)})"
             )
+    next_priority_recommendation, next_priority_reason = _resolve_next_priority(
+        blocker=readiness_blocker,
+        observed_reason_signals_present=observed_reason_signals_present,
+        baseline_comparison_status=baseline_comparison_status,
+    )
     for case in cases:
         case["dataset_rejected_observed_output_case_count"] = rejected_observed_output_case_count
         case["dataset_rejected_observed_output_reasons"] = dict(rejected_observed_output_reasons)
@@ -1679,6 +1690,8 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             "rejected_observed_output_case_count": rejected_observed_output_case_count,
             "rejected_observed_output_reasons": rejected_observed_output_reasons,
             "observed_data_bottleneck_summary": observed_data_bottleneck_summary,
+            "next_priority_recommendation": next_priority_recommendation,
+            "next_priority_reason": next_priority_reason,
         },
     }
 

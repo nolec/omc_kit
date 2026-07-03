@@ -1657,12 +1657,16 @@ def test_policy_pair_threshold_transition_ignores_invalid_noise_after_same_surfa
         "observed data bottleneck: need more policy pair coverage; rejected observed_output=1 "
         "(missing_candidate_response_sample:1)"
     )
+    assert pending_collected["summary"]["next_priority_recommendation"] == "expand_policy_pair_coverage"
+    assert pending_collected["summary"]["next_priority_reason"] == "need more policy pair coverage"
     assert pending_report["decision"]["baseline_comparison_status"] == "deferred"
     assert pending_report["decision"]["next_kpi_blocker"] == "insufficient_policy_pairs"
     assert pending_report["decision"]["policy_comparison_summary"] == (
         "policy comparison pending: need more policy pair coverage; rejected observed_output=1 "
         "(missing_candidate_response_sample:1)"
     )
+    assert pending_report["decision"]["next_priority_recommendation"] == "expand_policy_pair_coverage"
+    assert pending_report["decision"]["next_priority_reason"] == "need more policy pair coverage"
     assert pending_taxonomy == {
         "ready_expected": 0,
         "pending_expected": 1,
@@ -1676,11 +1680,15 @@ def test_policy_pair_threshold_transition_ignores_invalid_noise_after_same_surfa
         "observed data bottleneck: baseline comparison input is ready; rejected observed_output=1 "
         "(missing_candidate_response_sample:1)"
     )
+    assert ready_collected["summary"]["next_priority_recommendation"] == "maintain_policy_comparison_confidence"
+    assert ready_collected["summary"]["next_priority_reason"] == "readiness requirements are currently satisfied"
     assert ready_report["decision"]["baseline_comparison_status"] == "ready"
     assert ready_report["decision"]["policy_comparison_summary"] == (
         "policy comparison ready: baseline comparison wording can be enabled; rejected observed_output=1 "
         "(missing_candidate_response_sample:1)"
     )
+    assert ready_report["decision"]["next_priority_recommendation"] == "maintain_policy_comparison_confidence"
+    assert ready_report["decision"]["next_priority_reason"] == "readiness requirements are currently satisfied"
     assert ready_taxonomy == {
         "ready_expected": 1,
         "pending_expected": 1,
@@ -1788,8 +1796,12 @@ def test_observed_run_accumulation_progression_keeps_deferred_and_ready_states_s
     assert sample_collected["summary"]["readiness_sample_gap"] == 19
     assert sample_collected["summary"]["baseline_comparison_ready"] is False
     assert sample_collected["summary"]["readiness_blocker_line"] == "pending: need more observed samples"
+    assert sample_collected["summary"]["next_priority_recommendation"] == "collect_more_observed_runs"
+    assert sample_collected["summary"]["next_priority_reason"] == "need more observed samples"
     assert sample_report["decision"]["baseline_comparison_status"] == "deferred"
     assert sample_report["decision"]["next_kpi_blocker"] == "insufficient_observed_samples"
+    assert sample_report["decision"]["next_priority_recommendation"] == "collect_more_observed_runs"
+    assert sample_report["decision"]["next_priority_reason"] == "need more observed samples"
 
     assert same_surface_collected["summary"]["readiness_sample_gap"] == 0
     assert same_surface_collected["summary"]["readiness_same_surface_gap"] == 1
@@ -1797,8 +1809,12 @@ def test_observed_run_accumulation_progression_keeps_deferred_and_ready_states_s
     assert same_surface_collected["summary"]["readiness_blocker_line"] == (
         "pending: need more same-surface evidence"
     )
+    assert same_surface_collected["summary"]["next_priority_recommendation"] == "add_same_surface_observed_evidence"
+    assert same_surface_collected["summary"]["next_priority_reason"] == "need more same-surface evidence"
     assert same_surface_report["decision"]["baseline_comparison_status"] == "deferred"
     assert same_surface_report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
+    assert same_surface_report["decision"]["next_priority_recommendation"] == "add_same_surface_observed_evidence"
+    assert same_surface_report["decision"]["next_priority_reason"] == "need more same-surface evidence"
 
     assert policy_pair_collected["summary"]["readiness_same_surface_gap"] == 0
     assert policy_pair_collected["summary"]["readiness_distinct_policy_pair_count"] == 1
@@ -1806,8 +1822,12 @@ def test_observed_run_accumulation_progression_keeps_deferred_and_ready_states_s
     assert policy_pair_collected["summary"]["readiness_blocker_line"] == (
         "pending: need more policy pair coverage"
     )
+    assert policy_pair_collected["summary"]["next_priority_recommendation"] == "expand_policy_pair_coverage"
+    assert policy_pair_collected["summary"]["next_priority_reason"] == "need more policy pair coverage"
     assert policy_pair_report["decision"]["baseline_comparison_status"] == "deferred"
     assert policy_pair_report["decision"]["next_kpi_blocker"] == "insufficient_policy_pairs"
+    assert policy_pair_report["decision"]["next_priority_recommendation"] == "expand_policy_pair_coverage"
+    assert policy_pair_report["decision"]["next_priority_reason"] == "need more policy pair coverage"
 
     assert ready_collected["summary"]["readiness_sample_gap"] == 0
     assert ready_collected["summary"]["readiness_same_surface_gap"] == 0
@@ -1816,11 +1836,15 @@ def test_observed_run_accumulation_progression_keeps_deferred_and_ready_states_s
     assert ready_collected["summary"]["readiness_blocker_line"] == (
         "ready: baseline comparison wording can be enabled"
     )
+    assert ready_collected["summary"]["next_priority_recommendation"] == "maintain_policy_comparison_confidence"
+    assert ready_collected["summary"]["next_priority_reason"] == "readiness requirements are currently satisfied"
     assert ready_report["decision"]["baseline_comparison_status"] == "ready"
     assert ready_report["decision"]["policy_comparison_summary"] == (
         "policy comparison ready: baseline comparison wording can be enabled; rejected observed_output=1 "
         "(missing_candidate_response_sample:1)"
     )
+    assert ready_report["decision"]["next_priority_recommendation"] == "maintain_policy_comparison_confidence"
+    assert ready_report["decision"]["next_priority_reason"] == "readiness requirements are currently satisfied"
 
 
 def test_collected_observed_summary_exposes_multi_run_kpi_triplet(tmp_path: Path):
@@ -1962,6 +1986,8 @@ def test_neutral_observed_request_policy_pair_does_not_unlock_readiness(tmp_path
     assert collected["summary"]["observed_data_bottleneck_summary"] == (
         "observed data bottleneck: need more policy pair coverage"
     )
+    assert collected["summary"]["next_priority_recommendation"] == "expand_policy_pair_coverage"
+    assert collected["summary"]["next_priority_reason"] == "need more policy pair coverage"
     assert report["summary"]["readiness_blocker_line"] == "pending: need more policy pair coverage"
     assert report["decision"]["baseline_comparison_status"] == "deferred"
     assert report["decision"]["next_kpi_blocker"] == "insufficient_policy_pairs"
@@ -2176,6 +2202,8 @@ def test_same_surface_transition_keeps_summary_report_and_taxonomy_aligned(tmp_p
     assert zero_collected["summary"]["readiness_blocker_line"] == (
         "pending: need more same-surface evidence"
     )
+    assert zero_collected["summary"]["next_priority_recommendation"] == "add_same_surface_observed_evidence"
+    assert zero_collected["summary"]["next_priority_reason"] == "need more same-surface evidence"
     assert zero_report["decision"]["next_kpi_blocker"] == "insufficient_same_surface_evidence"
     assert zero_report["decision"]["baseline_comparison_status"] == "deferred"
 
@@ -2185,6 +2213,8 @@ def test_same_surface_transition_keeps_summary_report_and_taxonomy_aligned(tmp_p
     assert one_collected["summary"]["readiness_blocker_line"] == (
         "ready: baseline comparison wording can be enabled"
     )
+    assert one_collected["summary"]["next_priority_recommendation"] == "maintain_policy_comparison_confidence"
+    assert one_collected["summary"]["next_priority_reason"] == "readiness requirements are currently satisfied"
     assert one_report["decision"]["baseline_comparison_status"] == "ready"
     assert one_report["decision"]["policy_comparison_summary"] == (
         "policy comparison ready: baseline comparison wording can be enabled"
