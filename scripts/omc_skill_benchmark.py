@@ -1456,20 +1456,46 @@ def _build_observed_request_case_from_run_record(
     status = str(record.get("status") or "").strip() or "unknown"
     last_completed_step = str(record.get("last_completed_step") or "").strip() or "unknown"
     trace_line = f"run_status={status} last_step={last_completed_step}"
+    baseline_trace = _optional_string_list(record, 0, "baseline_trace")
+    candidate_trace = _optional_string_list(record, 0, "candidate_trace")
+    baseline_output_chars = record.get("baseline_output_chars")
+    candidate_output_chars = record.get("candidate_output_chars")
+    baseline_task_start_delay = record.get("baseline_task_start_delay")
+    candidate_task_start_delay = record.get("candidate_task_start_delay")
+
+    has_rich_metadata = all(
+        [
+            isinstance(baseline_output_chars, int) and not isinstance(baseline_output_chars, bool),
+            isinstance(candidate_output_chars, int) and not isinstance(candidate_output_chars, bool),
+            isinstance(baseline_task_start_delay, int)
+            and not isinstance(baseline_task_start_delay, bool),
+            isinstance(candidate_task_start_delay, int)
+            and not isinstance(candidate_task_start_delay, bool),
+        ]
+    )
+    if not baseline_trace:
+        baseline_trace = [trace_line]
+    if not candidate_trace:
+        candidate_trace = [trace_line]
+    if not has_rich_metadata:
+        baseline_output_chars = len(request)
+        candidate_output_chars = len(request)
+        baseline_task_start_delay = 0
+        candidate_task_start_delay = 0
 
     return {
         "request": request,
         "expected_mode": _infer_expected_response_mode(request),
         "baseline_policy": baseline_policy,
         "candidate_policy": candidate_policy,
-        "baseline_trace": [trace_line],
-        "candidate_trace": [trace_line],
-        "baseline_output_chars": len(request),
-        "candidate_output_chars": len(request),
-        "baseline_task_start_delay": 0,
-        "candidate_task_start_delay": 0,
+        "baseline_trace": baseline_trace,
+        "candidate_trace": candidate_trace,
+        "baseline_output_chars": baseline_output_chars,
+        "candidate_output_chars": candidate_output_chars,
+        "baseline_task_start_delay": baseline_task_start_delay,
+        "candidate_task_start_delay": candidate_task_start_delay,
         "source_type": source_type,
-        "neutral_seed": True,
+        "neutral_seed": not has_rich_metadata,
         "evidence": f"run={run_id} task={task_id} source={source_type}",
     }
 
@@ -1684,6 +1710,7 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             "readiness_distinct_policy_pair_count": len(readiness_policy_pair_counts),
             "baseline_comparison_ready": baseline_comparison_ready,
             "readiness_blocker_line": readiness_blocker_line,
+            "observed_reason_signals_present": observed_reason_signals_present,
             "policy_pair_counts": policy_pair_counts,
             "readiness_policy_pair_counts": readiness_policy_pair_counts,
             "fixture_taxonomy_counts": _fixture_taxonomy_counts_from_readiness(cases),
