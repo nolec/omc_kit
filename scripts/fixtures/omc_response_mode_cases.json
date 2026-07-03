@@ -439,6 +439,30 @@
       "evidence": "2026-07-02 실제 세션 요청문 추출: 2,3 중 어느 쪽을 추천하는지 질문"
     },
     {
+      "request": "로드맵 완료율을 퍼센트 느낌으로\n지금 종료해도 되는 범위 / 더 해야 하는 범위\n다음 우선순위 3개만 딱 잘라서",
+      "expected_mode": "answer-first",
+      "expected_next_action": "사용자 선택 대기",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: 정리 요청인데도 바로 다음 구현 작업으로 연결하려 함",
+        "user: 아니 현재 상태 판단과 우선순위 정리만 원함"
+      ],
+      "candidate_trace": [
+        "assistant: 완료율을 퍼센트 느낌으로 요약",
+        "assistant: 종료 가능 범위와 남은 범위를 구분",
+        "assistant: 다음 우선순위 3개만 정리하고 사용자 선택 대기로 멈춤"
+      ],
+      "baseline_output_chars": 318,
+      "candidate_output_chars": 356,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "사용자 선택 대기",
+      "source_type": "observed_request",
+      "evidence": "2026-07-04 실제 세션 요청문 추출: 로드맵 완료율과 종료선, 다음 우선순위 정리 요청"
+    },
+    {
       "request": "fugu 문서 2개 먼저 커밋 태스크 2부터 $omc-task",
       "expected_mode": "execute-first",
       "expected_next_action": "$omc-review",

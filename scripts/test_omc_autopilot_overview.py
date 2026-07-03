@@ -423,6 +423,76 @@ def test_cmd_overview_ignores_invalid_observed_output_noise_in_readiness_counts(
     assert "rejected_reasons=missing_candidate_response_sample:1" in out
 
 
+def test_cmd_overview_preserves_baseline_not_ready_blocker_from_saved_runs(
+    tmp_path: Path, capsys
+) -> None:
+    observed_task = {
+        "id": "observed-ready-but-drifted",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "baseline->candidate",
+        "comparison_scope": "same_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    reverse_task = {
+        "id": "observed-ready-but-drifted-reverse",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "candidate->baseline",
+        "comparison_scope": "same_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    _write_json(tmp_path / ".omc" / "tasks" / "observed-ready-but-drifted.json", observed_task)
+    _write_json(
+        tmp_path / ".omc" / "tasks" / "observed-ready-but-drifted-reverse.json",
+        reverse_task,
+    )
+
+    for index in range(10):
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-drifted-forward-{index}",
+                "task_id": "observed-ready-but-drifted",
+                "status": "completed",
+                "branch": f"feat/drifted-forward-{index}",
+                "executor": "codex",
+                "started_at": "2026-06-13T09:00:00+09:00",
+                "finished_at": "2026-06-13T09:05:00+09:00",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+                "baseline_comparison_status": "deferred",
+                "next_kpi_blocker": "baseline_comparison_not_ready",
+                "readiness_status_line": "not ready: baseline comparison input is not ready",
+            },
+        )
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-drifted-reverse-{index}",
+                "task_id": "observed-ready-but-drifted-reverse",
+                "status": "completed",
+                "branch": f"feat/drifted-reverse-{index}",
+                "executor": "codex",
+                "started_at": "2026-06-13T10:00:00+09:00",
+                "finished_at": "2026-06-13T10:05:00+09:00",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+                "baseline_comparison_status": "deferred",
+                "next_kpi_blocker": "baseline_comparison_not_ready",
+                "readiness_status_line": "not ready: baseline comparison input is not ready",
+            },
+        )
+
+    rc = omc_autopilot.cmd_overview(tmp_path, limit=5)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "observed_samples=20" in out
+    assert "readiness_status=not ready: baseline comparison input is not ready" in out
+    assert "baseline_comparison_status=deferred" in out
+    assert "next_kpi_blocker=baseline_comparison_not_ready" in out
+    assert "next_collection_focus=stabilize_baseline_comparison_inputs" in out
+
+
 def test_observed_collect_task_exists_with_real_expect_checks() -> None:
     payload = json.loads((Path.cwd() / OBSERVED_TASK_PATH).read_text(encoding="utf-8"))
 

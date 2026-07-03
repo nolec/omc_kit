@@ -1491,9 +1491,12 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     readiness_same_surface_count = 0
     distinct_policy_pairs: set[str] = set()
     rejected_observed_output_reasons: dict[str, int] = {}
+    baseline_comparison_not_ready_seen = False
     for record in run_records:
         if not isinstance(record, dict):
             continue
+        if str(record.get("next_kpi_blocker") or "").strip() == "baseline_comparison_not_ready":
+            baseline_comparison_not_ready_seen = True
         explicit_rejected_reasons = record.get("dataset_rejected_observed_output_reasons")
         if isinstance(explicit_rejected_reasons, dict):
             for key, raw_count in explicit_rejected_reasons.items():
@@ -1533,6 +1536,9 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         next_kpi_blocker = "insufficient_same_surface_evidence"
     elif len(distinct_policy_pairs) < 2:
         next_kpi_blocker = "insufficient_policy_pairs"
+    elif baseline_comparison_not_ready_seen:
+        next_kpi_blocker = "baseline_comparison_not_ready"
+        readiness_status_line = "not ready: baseline comparison input is not ready"
     else:
         readiness_status_line = "ready: baseline comparison wording can be enabled"
     baseline_comparison_status = "ready" if next_kpi_blocker == "none" else "deferred"
@@ -1571,6 +1577,8 @@ def _overview_next_collection_focus(next_kpi_blocker: str) -> str:
         return "add_same_surface_observed_evidence"
     if next_kpi_blocker == "insufficient_policy_pairs":
         return "expand_policy_pair_coverage"
+    if next_kpi_blocker == "baseline_comparison_not_ready":
+        return "stabilize_baseline_comparison_inputs"
     return "maintain_policy_comparison_confidence"
 
 

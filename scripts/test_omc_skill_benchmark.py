@@ -3690,6 +3690,37 @@ def test_compare_response_modes_recommends_input_stabilization_when_baseline_fla
     assert decision["next_priority_reason"] == "baseline comparison input is not ready"
 
 
+def test_collected_summary_recommends_input_stabilization_when_baseline_ready_flag_drifts():
+    mod = _load_module()
+
+    summary = {
+        "readiness_observed_sample_count": 20,
+        "readiness_same_surface_case_count": 1,
+        "readiness_distinct_policy_pair_count": 2,
+        "baseline_comparison_ready": False,
+        "observed_reason_signals_present": True,
+        "rejected_observed_output_case_count": 0,
+        "rejected_observed_output_reasons": {},
+    }
+
+    blocker, blocker_line = mod._resolve_readiness_blocker(
+        sample_gap=0,
+        same_surface_gap=0,
+        policy_pair_count=2,
+        baseline_comparison_ready=False,
+    )
+    next_priority_recommendation, next_priority_reason = mod._resolve_next_priority(
+        blocker=blocker,
+        observed_reason_signals_present=True,
+        baseline_comparison_status="deferred",
+    )
+
+    assert blocker == "baseline_comparison_not_ready"
+    assert blocker_line == "pending: baseline comparison input is not ready"
+    assert next_priority_recommendation == "stabilize_baseline_comparison_inputs"
+    assert next_priority_reason == "baseline comparison input is not ready"
+
+
 def test_response_mode_fixture_observed_request_case_affects_next_action_accuracy():
     mod = _load_module()
 
@@ -3944,6 +3975,30 @@ def test_response_mode_fixture_distinguishes_option_recommendation_from_immediat
     payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
     cases = payload["cases"] if isinstance(payload, dict) else payload
     target_case = next(case for case in cases if case["request"] == "2,3 중에 뭘 추천해")
+
+    report = mod.compare_response_modes([target_case])
+
+    assert report["summary"]["next_action_case_count"] == 1
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert report["cases"][0]["source_type"] == "observed_request"
+    assert report["cases"][0]["expected_next_action"] == "사용자 선택 대기"
+    assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][0]["candidate"]["next_action"] == "사용자 선택 대기"
+
+
+def test_response_mode_fixture_distinguishes_roadmap_assessment_bundle_from_task_progression():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    target_case = next(
+        case
+        for case in cases
+        if case["request"]
+        == "로드맵 완료율을 퍼센트 느낌으로\n지금 종료해도 되는 범위 / 더 해야 하는 범위\n다음 우선순위 3개만 딱 잘라서"
+    )
 
     report = mod.compare_response_modes([target_case])
 
