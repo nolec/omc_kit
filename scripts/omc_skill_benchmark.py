@@ -1687,6 +1687,11 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             )
         )
     observed_reason_signals_present = any(_has_observed_reason_signal(case) for case in cases)
+    reason_signal_summary_line = (
+        "reason signals present: operator validation evidence observed"
+        if observed_reason_signals_present
+        else "reason signals present: none"
+    )
     observed_data_bottleneck_summary = "observed data bottleneck: need more observed samples"
     if readiness_observed_sample_count >= KPI_MIN_SAMPLE_COUNT:
         if readiness_same_surface_case_count < KPI_MIN_SAME_SURFACE_COUNT:
@@ -1768,6 +1773,7 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             "readiness_blocker_line": readiness_blocker_line,
             "next_kpi_blocker": readiness_blocker,
             "observed_reason_signals_present": observed_reason_signals_present,
+            "reason_signal_summary_line": reason_signal_summary_line,
             "policy_pair_counts": policy_pair_counts,
             "readiness_policy_pair_counts": readiness_policy_pair_counts,
             "fixture_taxonomy_counts": _fixture_taxonomy_counts_from_readiness(cases),

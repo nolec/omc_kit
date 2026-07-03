@@ -2109,6 +2109,9 @@ def test_accumulated_observed_ready_reason_signal_keeps_summary_and_decision_ali
     report = mod.compare_response_modes(collected["cases"])
 
     assert collected["summary"]["observed_reason_signals_present"] is True
+    assert collected["summary"]["reason_signal_summary_line"] == (
+        "reason signals present: operator validation evidence observed"
+    )
     assert collected["summary"]["next_priority_recommendation"] == (
         "validate_operator_bottlenecks_from_observed_runs"
     )
@@ -2173,6 +2176,7 @@ def test_observed_request_without_reason_signal_does_not_flip_ready_next_priorit
     report = mod.compare_response_modes(collected["cases"])
 
     assert collected["summary"]["observed_reason_signals_present"] is False
+    assert collected["summary"]["reason_signal_summary_line"] == "reason signals present: none"
     assert collected["summary"]["next_priority_recommendation"] == (
         "maintain_policy_comparison_confidence"
     )
