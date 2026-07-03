@@ -493,6 +493,217 @@ def test_cmd_overview_preserves_baseline_not_ready_blocker_from_saved_runs(
     assert "next_collection_focus=stabilize_baseline_comparison_inputs" in out
 
 
+def test_cmd_overview_prints_collected_summary_surface_lines(tmp_path: Path, capsys) -> None:
+    observed_task = {
+        "id": "observed-ready-surface",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "baseline->candidate",
+        "comparison_scope": "same_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    reverse_task = {
+        "id": "observed-ready-surface-reverse",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "candidate->baseline",
+        "comparison_scope": "same_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    _write_json(tmp_path / ".omc" / "tasks" / "observed-ready-surface.json", observed_task)
+    _write_json(
+        tmp_path / ".omc" / "tasks" / "observed-ready-surface-reverse.json",
+        reverse_task,
+    )
+
+    for index in range(10):
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-ready-forward-{index}",
+                "task_id": "observed-ready-surface",
+                "status": "completed",
+                "branch": f"feat/ready-forward-{index}",
+                "executor": "codex",
+                "started_at": "2026-06-13T09:00:00+09:00",
+                "finished_at": "2026-06-13T09:05:00+09:00",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+            },
+        )
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-ready-reverse-{index}",
+                "task_id": "observed-ready-surface-reverse",
+                "status": "completed",
+                "branch": f"feat/ready-reverse-{index}",
+                "executor": "codex",
+                "started_at": "2026-06-13T10:00:00+09:00",
+                "finished_at": "2026-06-13T10:05:00+09:00",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+                "benchmark_source_type": "observed_output",
+                "response_mode": "reroute",
+                "rerouted_from_response_mode": "cost_saver",
+            },
+        )
+
+    rc = omc_autopilot.cmd_overview(tmp_path, limit=5)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert (
+        "baseline_line=ready: baseline comparison sample is available from observed runs"
+        in out
+    )
+    assert (
+        "policy_summary=policy comparison ready: baseline comparison wording can be enabled; "
+        "reason signals observed" in out
+    )
+    assert "reason_signal=observed reason signals: reroute" in out
+
+
+def test_cmd_overview_prints_deferred_collected_summary_with_blocker_reason(
+    tmp_path: Path, capsys
+) -> None:
+    observed_task = {
+        "id": "observed-deferred-surface",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "baseline->candidate",
+        "comparison_scope": "cross_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    _write_json(tmp_path / ".omc" / "tasks" / "observed-deferred-surface.json", observed_task)
+
+    for index in range(3):
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-deferred-{index}",
+                "task_id": "observed-deferred-surface",
+                "status": "completed",
+                "branch": f"feat/deferred-{index}",
+                "executor": "codex",
+                "started_at": "2026-06-13T09:00:00+09:00",
+                "finished_at": "2026-06-13T09:05:00+09:00",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+            },
+        )
+
+    rc = omc_autopilot.cmd_overview(tmp_path, limit=5)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "baseline_line=deferred: need more observed samples" in out
+    assert "policy_summary=policy comparison pending: need more observed samples" in out
+    assert "baseline_line=deferred: baseline comparison input is not ready" not in out
+    assert "policy_summary=policy comparison pending: collect more observed runs" not in out
+
+
+def test_cmd_overview_prints_next_priority_surface_for_ready_reason_signal_case(
+    tmp_path: Path, capsys
+) -> None:
+    observed_task = {
+        "id": "observed-next-priority-ready",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "baseline->candidate",
+        "comparison_scope": "same_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    reverse_task = {
+        "id": "observed-next-priority-ready-reverse",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "candidate->baseline",
+        "comparison_scope": "same_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    _write_json(tmp_path / ".omc" / "tasks" / "observed-next-priority-ready.json", observed_task)
+    _write_json(
+        tmp_path / ".omc" / "tasks" / "observed-next-priority-ready-reverse.json",
+        reverse_task,
+    )
+
+    for index in range(10):
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-next-priority-ready-forward-{index}",
+                "task_id": "observed-next-priority-ready",
+                "status": "completed",
+                "branch": f"feat/next-priority-ready-forward-{index}",
+                "executor": "codex",
+                "started_at": "2026-06-13T09:00:00+09:00",
+                "finished_at": "2026-06-13T09:05:00+09:00",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+            },
+        )
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-next-priority-ready-reverse-{index}",
+                "task_id": "observed-next-priority-ready-reverse",
+                "status": "completed",
+                "branch": f"feat/next-priority-ready-reverse-{index}",
+                "executor": "codex",
+                "started_at": "2026-06-13T10:00:00+09:00",
+                "finished_at": "2026-06-13T10:05:00+09:00",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+                "benchmark_source_type": "observed_output",
+                "response_mode": "reroute",
+                "rerouted_from_response_mode": "cost_saver",
+            },
+        )
+
+    rc = omc_autopilot.cmd_overview(tmp_path, limit=5)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert (
+        "next_priority=validate_operator_bottlenecks_from_observed_runs  "
+        "reason=reason signals observed in ready dataset" in out
+    )
+
+
+def test_cmd_overview_prints_next_priority_surface_for_deferred_case(
+    tmp_path: Path, capsys
+) -> None:
+    observed_task = {
+        "id": "observed-next-priority-deferred",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "baseline->candidate",
+        "comparison_scope": "cross_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    _write_json(
+        tmp_path / ".omc" / "tasks" / "observed-next-priority-deferred.json",
+        observed_task,
+    )
+
+    for index in range(3):
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-next-priority-deferred-{index}",
+                "task_id": "observed-next-priority-deferred",
+                "status": "completed",
+                "branch": f"feat/next-priority-deferred-{index}",
+                "executor": "codex",
+                "started_at": "2026-06-13T09:00:00+09:00",
+                "finished_at": "2026-06-13T09:05:00+09:00",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+            },
+        )
+
+    rc = omc_autopilot.cmd_overview(tmp_path, limit=5)
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "next_priority=collect_more_observed_runs  reason=need more observed samples" in out
+
+
 def test_observed_collect_task_exists_with_real_expect_checks() -> None:
     payload = json.loads((Path.cwd() / OBSERVED_TASK_PATH).read_text(encoding="utf-8"))
 

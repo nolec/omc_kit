@@ -1491,6 +1491,7 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     readiness_same_surface_count = 0
     distinct_policy_pairs: set[str] = set()
     rejected_observed_output_reasons: dict[str, int] = {}
+    observed_reason_signal_kinds: set[str] = set()
     baseline_comparison_not_ready_seen = False
     for record in run_records:
         if not isinstance(record, dict):
@@ -1515,6 +1516,7 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
                 rejected_observed_output_reasons[rejection_reason] = rejected_observed_output_reasons.get(
                     rejection_reason, 0
                 ) + 1
+            observed_reason_signal_kinds.update(_overview_observed_reason_signal_kinds(record))
         if (
             source_type == "observed_output"
             and str(record.get("comparison_scope") or "").strip() == "same_surface"
@@ -1542,6 +1544,29 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     else:
         readiness_status_line = "ready: baseline comparison wording can be enabled"
     baseline_comparison_status = "ready" if next_kpi_blocker == "none" else "deferred"
+    deferred_reason_map = _overview_readiness_deferred_reason_map()
+    if baseline_comparison_status == "ready":
+        baseline_comparison_line = "ready: baseline comparison sample is available from observed runs"
+        policy_comparison_summary = "policy comparison ready: baseline comparison wording can be enabled"
+    else:
+        deferred_reason = deferred_reason_map.get(
+            next_kpi_blocker,
+            "readiness requirements are not met",
+        )
+        baseline_comparison_line = f"deferred: {deferred_reason}"
+        policy_comparison_summary = f"policy comparison pending: {deferred_reason}"
+    if observed_reason_signal_kinds:
+        policy_comparison_summary += "; reason signals observed"
+        reason_signal_summary_line = "observed reason signals: " + ",".join(
+            sorted(observed_reason_signal_kinds)
+        )
+    else:
+        reason_signal_summary_line = "observed reason signals: none"
+    next_priority_recommendation, next_priority_reason = _overview_resolve_next_priority(
+        blocker=next_kpi_blocker,
+        observed_reason_signals_present=bool(observed_reason_signal_kinds),
+        baseline_comparison_status=baseline_comparison_status,
+    )
     next_collection_focus = _overview_next_collection_focus(next_kpi_blocker)
     successful_costs = [
         float(report["total_cost_usd"])
@@ -1563,10 +1588,24 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         "distinct_policy_pair_count": len(distinct_policy_pairs),
         "readiness_status_line": readiness_status_line,
         "baseline_comparison_status": baseline_comparison_status,
+        "baseline_comparison_line": baseline_comparison_line,
+        "policy_comparison_summary": policy_comparison_summary,
+        "reason_signal_summary_line": reason_signal_summary_line,
+        "next_priority_recommendation": next_priority_recommendation,
+        "next_priority_reason": next_priority_reason,
         "next_kpi_blocker": next_kpi_blocker,
         "next_collection_focus": next_collection_focus,
         "rejected_observed_output_case_count": sum(rejected_observed_output_reasons.values()),
         "rejected_observed_output_reasons": rejected_observed_output_reasons,
+    }
+
+
+def _overview_readiness_deferred_reason_map() -> dict[str, str]:
+    return {
+        "insufficient_observed_samples": "need more observed samples",
+        "insufficient_same_surface_evidence": "need more same-surface evidence",
+        "insufficient_policy_pairs": "need more policy pair coverage",
+        "baseline_comparison_not_ready": "baseline comparison input is not ready",
     }
 
 
@@ -1580,6 +1619,28 @@ def _overview_next_collection_focus(next_kpi_blocker: str) -> str:
     if next_kpi_blocker == "baseline_comparison_not_ready":
         return "stabilize_baseline_comparison_inputs"
     return "maintain_policy_comparison_confidence"
+
+
+def _overview_resolve_next_priority(
+    *,
+    blocker: str,
+    observed_reason_signals_present: bool,
+    baseline_comparison_status: str,
+) -> tuple[str, str]:
+    if blocker == "insufficient_observed_samples":
+        return "collect_more_observed_runs", "need more observed samples"
+    if blocker == "insufficient_same_surface_evidence":
+        return "add_same_surface_observed_evidence", "need more same-surface evidence"
+    if blocker == "insufficient_policy_pairs":
+        return "expand_policy_pair_coverage", "need more policy pair coverage"
+    if blocker == "baseline_comparison_not_ready":
+        return "stabilize_baseline_comparison_inputs", "baseline comparison input is not ready"
+    if baseline_comparison_status == "ready" and observed_reason_signals_present:
+        return (
+            "validate_operator_bottlenecks_from_observed_runs",
+            "reason signals observed in ready dataset",
+        )
+    return "maintain_policy_comparison_confidence", "readiness requirements are currently satisfied"
 
 
 def _format_overview_ratio(value: object) -> str:
@@ -1619,6 +1680,18 @@ def _overview_observed_output_rejection_reason(record: dict) -> str | None:
     if not candidate_response_sample:
         return "missing_candidate_response_sample"
     return None
+
+
+def _overview_observed_reason_signal_kinds(record: dict) -> set[str]:
+    source_type = str(record.get("benchmark_source_type") or "").strip()
+    if source_type != "observed_output":
+        return set()
+    signal_kinds: set[str] = set()
+    if str(record.get("response_mode") or "").strip() == "reroute":
+        signal_kinds.add("reroute")
+    if str(record.get("rerouted_from_response_mode") or "").strip():
+        signal_kinds.add("reroute")
+    return signal_kinds
 
 
 def _overview_run_fingerprint(data: dict) -> str:
@@ -1683,6 +1756,17 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
         f"next_collection_focus={kpi_summary['next_collection_focus']}  "
         f"rejected_observed_output={kpi_summary['rejected_observed_output_case_count']}  "
         f"rejected_reasons={_format_rejected_reason_counts(kpi_summary['rejected_observed_output_reasons'])}"
+    )
+    print(
+        "Collected Summary "
+        f"baseline_line={kpi_summary['baseline_comparison_line']}  "
+        f"policy_summary={kpi_summary['policy_comparison_summary']}  "
+        f"reason_signal={kpi_summary['reason_signal_summary_line']}"
+    )
+    print(
+        "Next Priority "
+        f"next_priority={kpi_summary['next_priority_recommendation']}  "
+        f"reason={kpi_summary['next_priority_reason']}"
     )
     print("run_id | branch | status | step | stale | failure_reason | next_action")
     print("-" * 78)

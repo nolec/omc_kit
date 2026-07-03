@@ -21,6 +21,8 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "overview KPI에 `readiness_same_surface`가 노출되고" in text
     assert "`readiness_status_line`, `baseline_comparison_status`, `next_kpi_blocker`, `baseline_comparison_line`까지 실려 baseline 비교 가능 여부를 바로 읽을 수 있게 됐다." in text
     assert "autopilot overview에도 `readiness_status` / `next_kpi_blocker`를 노출해 샘플 부족 이유를 콘솔에서 바로 읽게 했고" in text
+    assert "autopilot overview에도 collected summary surface(`baseline_line`, `policy_summary`, `reason_signal`)를 직접 노출해" in text
+    assert "overview에도 `next_priority_recommendation`, `next_priority_reason`가 직접 surfaced되도록 연결해" in text
     assert "rejection count와 reason map이 summary에 남도록 보강했다." in text
     assert "현재 상태는 `V3 완료 + V4 multi-run KPI summary 1차 완료`에 가깝다." in text
     assert "`decision_policy_entry` helper 추출로 failure-class별 decision 규칙을 공통 엔진으로 옮길 준비를 마쳤다." in text
