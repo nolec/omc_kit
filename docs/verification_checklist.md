@@ -423,6 +423,47 @@ PASS / FAIL: PASS
 메모: autopilot에 결과 확인 분기 추가
 ```
 
+## V4 운영 observed 검증 체크리스트
+
+이 섹션은 구현 회귀 테스트가 아니라, 실제 accumulated observed dataset이 현재 정책을 지탱하는지 점검하기 위한 운영형 체크리스트입니다.
+
+### 1. 수집 기준
+
+- observed_request / observed_output 기준 multi-run 실행 샘플 20회 이상
+- neutral observed seed는 수집량에는 포함 가능하지만 readiness 입력에서는 제외 유지
+- same-surface observed evidence 최소 1개 이상
+- distinct policy pair 2개 이상
+- invalid observed_output은 버려지더라도 rejection count / reason map으로 남아야 함
+
+### 2. 3면 일치 기준
+
+같은 observed dataset 기준으로 아래 3면이 같은 결론으로 수렴해야 합니다.
+
+- overview / collected summary / decision
+
+최소 확인 항목:
+
+- baseline_comparison_status
+- next_kpi_blocker
+- next_priority_recommendation
+
+운영 검증의 핵심 질문:
+
+- ready / deferred 판정이 실제 observed dataset 누적에서도 안정적인지
+- sample 부족, same-surface 부족, policy pair 부족이 서로 다른 blocker로 계속 구분되는지
+- ready 이후 reason signal이 있을 때 operator 병목 검증 추천으로 자연스럽게 이어지는지
+
+### 3. 완료 기준
+
+아래가 모두 만족되면 V4 운영 observed 검증 1차를 통과로 봅니다.
+
+- observed_request / observed_output 기준 multi-run 실행 샘플 20회 이상
+- same-surface observed evidence와 distinct policy pair 2개 이상 충족
+- threshold taxonomy(`ready / pending / ambiguous`)와 candidate 비교가 같은 observed fixture 기준으로 재현 가능
+- `reroute rate`, `retry-to-success rate`, `cost per successful task` 3개 KPI가 overview/report 계열 surface에서 반복 실행에도 같은 형식으로 보임
+- overview / collected summary / decision 3면의 `baseline_comparison_status`, `next_kpi_blocker`, `next_priority_recommendation`이 어긋나지 않음
+- baseline/timebox 예외 허용은 운영 검증 목적에서 timebox로만 사용
+
 검증 커버리지 표:
 
 | 스킬 | 다음 추천 규칙 | 수동 검증 상태 | 메모 |
