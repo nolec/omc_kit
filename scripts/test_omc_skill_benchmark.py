@@ -1657,6 +1657,14 @@ def test_policy_pair_threshold_transition_ignores_invalid_noise_after_same_surfa
         "observed data bottleneck: need more policy pair coverage; rejected observed_output=1 "
         "(missing_candidate_response_sample:1)"
     )
+    assert pending_collected["summary"]["policy_comparison_summary"] == (
+        "policy comparison pending: need more policy pair coverage; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert pending_collected["summary"]["policy_comparison_bottleneck_summary"] == (
+        "policy comparison bottleneck: need more policy pair coverage; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
     assert pending_collected["summary"]["next_priority_recommendation"] == "expand_policy_pair_coverage"
     assert pending_collected["summary"]["next_priority_reason"] == "need more policy pair coverage"
     assert pending_report["decision"]["baseline_comparison_status"] == "deferred"
@@ -1678,6 +1686,10 @@ def test_policy_pair_threshold_transition_ignores_invalid_noise_after_same_surfa
     assert ready_collected["summary"]["baseline_comparison_ready"] is True
     assert ready_collected["summary"]["observed_data_bottleneck_summary"] == (
         "observed data bottleneck: baseline comparison input is ready; rejected observed_output=1 "
+        "(missing_candidate_response_sample:1)"
+    )
+    assert ready_collected["summary"]["policy_comparison_summary"] == (
+        "policy comparison ready: baseline comparison wording can be enabled; rejected observed_output=1 "
         "(missing_candidate_response_sample:1)"
     )
     assert ready_collected["summary"]["next_priority_recommendation"] == "maintain_policy_comparison_confidence"

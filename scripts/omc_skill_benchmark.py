@@ -1715,6 +1715,29 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
         observed_reason_signals_present=observed_reason_signals_present,
         baseline_comparison_status=baseline_comparison_status,
     )
+    policy_comparison_summary = (
+        "policy comparison ready: baseline comparison wording can be enabled"
+        if baseline_comparison_status == "ready"
+        else "policy comparison pending: "
+        + deferred_reason_map.get(readiness_blocker, "readiness requirements are not met")
+    )
+    policy_comparison_bottleneck_summary = (
+        "policy comparison bottleneck: "
+        + deferred_reason_map.get(readiness_blocker, "readiness requirements are not met")
+    )
+    if rejected_observed_output_case_count > 0:
+        reason_parts: list[str] = []
+        for key in sorted(rejected_observed_output_reasons):
+            count = rejected_observed_output_reasons.get(key)
+            if isinstance(count, int):
+                reason_parts.append(f"{key}:{count}")
+        rejected_suffix = f"; rejected observed_output={rejected_observed_output_case_count}"
+        if reason_parts:
+            rejected_suffix += f" ({','.join(reason_parts)})"
+        policy_comparison_summary += rejected_suffix
+        policy_comparison_bottleneck_summary += rejected_suffix
+    if observed_reason_signals_present:
+        policy_comparison_summary += "; reason signals observed"
     for case in cases:
         case["dataset_rejected_observed_output_case_count"] = rejected_observed_output_case_count
         case["dataset_rejected_observed_output_reasons"] = dict(rejected_observed_output_reasons)
@@ -1751,6 +1774,8 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             "rejected_observed_output_case_count": rejected_observed_output_case_count,
             "rejected_observed_output_reasons": rejected_observed_output_reasons,
             "observed_data_bottleneck_summary": observed_data_bottleneck_summary,
+            "policy_comparison_summary": policy_comparison_summary,
+            "policy_comparison_bottleneck_summary": policy_comparison_bottleneck_summary,
             "next_priority_recommendation": next_priority_recommendation,
             "next_priority_reason": next_priority_reason,
         },
