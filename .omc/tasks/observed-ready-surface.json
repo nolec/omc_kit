@@ -1,0 +1,34 @@
+{
+  "id": "observed-ready-surface",
+  "title": "Observed Ready Surface",
+  "executor": "auto",
+  "require_clean_scope": true,
+  "operational_validation_stage": "v4b_preparation",
+  "operational_validation_goal": "prepare_v4b_operational_validation",
+  "completion_requires_real_runs": true,
+  "benchmark_source_type": "observed_output",
+  "policy_pair": "baseline->candidate",
+  "comparison_scope": "same_surface",
+  "baseline_response_sample": "plan 단계에서는 설계 검토와 다음 스킬 추천까지만 제공하고 멈춰야 합니다.",
+  "candidate_response_sample": "PROCEED 판정입니다. 다음으로 /task 진행할까요?",
+  "max_retries": 1,
+  "steps": [
+    {
+      "id": "collect_observed_output_same_surface",
+      "title": "Observed Output Collection Same Surface",
+      "prompt": "Capture an observed_output-quality response sample from a real workflow branch that preserves same-surface comparison context. Preserve response structure and next action markers so the result can be reused for readiness threshold comparison.",
+      "depends_on": [],
+      "timeout_sec": 300,
+      "expect": {
+        "files": [],
+        "checks": [
+          {
+            "cmd": "python3 scripts/omc_autopilot.py benchmark-report",
+            "label": "benchmark report available",
+            "timeout_sec": 30
+          }
+        ]
+      }
+    }
+  ]
+}

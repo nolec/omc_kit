@@ -1,0 +1,34 @@
+{
+  "id": "observed-collect-reverse",
+  "title": "Observed Run Collection Reverse",
+  "executor": "auto",
+  "require_clean_scope": true,
+  "operational_validation_stage": "v4b_preparation",
+  "operational_validation_goal": "prepare_v4b_operational_validation",
+  "completion_requires_real_runs": true,
+  "benchmark_source_type": "observed_output",
+  "policy_pair": "candidate->baseline",
+  "comparison_scope": "cross_surface",
+  "baseline_response_sample": "완전히 맞지는 않습니다. plan 단계라면 설계 검토와 다음 단계 제안까지만 하고 바로 task로 넘기면 안 됩니다.",
+  "candidate_response_sample": "준비되었습니다. /task 로 진행하시겠습니까?",
+  "max_retries": 1,
+  "steps": [
+    {
+      "id": "collect_observed_output_reverse",
+      "title": "Observed Output Collection Reverse",
+      "prompt": "Capture an observed_output-quality response sample from a real workflow branch, but store it as the reverse policy comparison case. Preserve response structure and next action markers so the result can be reused for response-mode benchmark comparison.",
+      "depends_on": [],
+      "timeout_sec": 300,
+      "expect": {
+        "files": [],
+        "checks": [
+          {
+            "cmd": "python3 scripts/omc_autopilot.py benchmark-report",
+            "label": "benchmark report available",
+            "timeout_sec": 30
+          }
+        ]
+      }
+    }
+  ]
+}
