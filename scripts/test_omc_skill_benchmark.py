@@ -4381,3 +4381,94 @@ def test_build_expensive_flow_report_marks_missing_next_actions_as_gap():
     assert "candidate_next_action" not in flow
     assert flow["next_action_incomplete"] is True
     assert flow["next_action_gap"] is True
+
+
+def test_build_expensive_flow_report_diversifies_top_flows_and_surfaces_operator_priority():
+    mod = _load_module()
+
+    cases = [
+        {
+            "request": "wrong next step dominant",
+            "expected_mode": "answer-first",
+            "expected_next_action": "$omc-plan",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: task로 바로 진행"],
+            "candidate_trace": ["assistant: plan으로 정렬"],
+            "baseline_output_chars": 420,
+            "candidate_output_chars": 260,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 0,
+            "baseline_next_action": "$omc-task",
+            "candidate_next_action": "$omc-plan",
+            "source_type": "observed_request",
+            "evidence": "real wrong next step",
+        },
+        {
+            "request": "reroute loop visible",
+            "expected_mode": "answer-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: task로 바로 진행", "user: 아니 plan 검토만 하려던 거야"],
+            "candidate_trace": ["assistant: 사용자 선택 대기"],
+            "baseline_output_chars": 350,
+            "candidate_output_chars": 250,
+            "baseline_task_start_delay": 1,
+            "candidate_task_start_delay": 0,
+            "source_type": "observed_request",
+            "evidence": "real reroute",
+        },
+        {
+            "request": "output bloat visible",
+            "expected_mode": "answer-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 장문 설명"],
+            "candidate_trace": ["assistant: 압축 설명"],
+            "baseline_output_chars": 610,
+            "candidate_output_chars": 280,
+            "baseline_task_start_delay": 0,
+            "candidate_task_start_delay": 0,
+            "source_type": "observed_request",
+            "evidence": "real compression",
+        },
+        {
+            "request": "over stage entry visible",
+            "expected_mode": "review-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 설명만 제공"],
+            "candidate_trace": ["assistant: 리뷰 시작"],
+            "baseline_output_chars": 280,
+            "candidate_output_chars": 260,
+            "baseline_task_start_delay": 3,
+            "candidate_task_start_delay": 1,
+            "source_type": "synthetic",
+        },
+        {
+            "request": "general overhead only",
+            "expected_mode": "answer-first",
+            "baseline_policy": "baseline",
+            "candidate_policy": "candidate",
+            "baseline_trace": ["assistant: 요약"],
+            "candidate_trace": ["assistant: 요약"],
+            "baseline_output_chars": 220,
+            "candidate_output_chars": 210,
+            "baseline_task_start_delay": 0,
+            "candidate_task_start_delay": 0,
+            "source_type": "synthetic",
+        },
+    ]
+
+    report = mod.build_expensive_flow_report(cases)
+
+    flow_kinds = {item["flow_kind"] for item in report["flows"]}
+    assert "wrong_next_step" in flow_kinds
+    assert "reroute_loop" in flow_kinds
+    assert "output_bloat" in flow_kinds
+    assert "over_stage_entry" in flow_kinds
+    assert report["summary"]["dominant_flow_kind"] in flow_kinds
+    assert report["summary"]["operator_next_priority"] == "tighten_next_action_routing"
+    assert report["summary"]["operator_next_priority_reason"] == (
+        "wrong next step remains the dominant expensive flow"
+    )

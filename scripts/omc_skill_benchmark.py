@@ -32,6 +32,13 @@ CASE_SOURCE_TYPES = {"synthetic", "observed_output", "current_contract_sample"}
 KPI_MIN_SAMPLE_COUNT = 20
 KPI_MIN_SAME_SURFACE_COUNT = 1
 KPI_MIN_POLICY_PAIR_COUNT = 2
+FLOW_KIND_PRIORITY = {
+    "wrong_next_step": 4,
+    "reroute_loop": 3,
+    "over_stage_entry": 2,
+    "output_bloat": 1,
+    "general_overhead": 0,
+}
 
 
 def _readiness_deferred_reason_map() -> dict[str, str]:
@@ -796,6 +803,7 @@ def build_expensive_flow_report(
 ) -> dict[str, object]:
     flows: list[dict[str, object]] = []
     flow_kind_counts: dict[str, int] = {}
+    flow_kind_waste_totals: dict[str, int] = {}
     observed_case_count = 0
     observed_reason_signal_counts: dict[str, int] = {}
 
@@ -807,6 +815,7 @@ def build_expensive_flow_report(
         if source_type.startswith("observed_"):
             observed_case_count += 1
         flow_kind_counts[flow_kind] = flow_kind_counts.get(flow_kind, 0) + 1
+        flow_kind_waste_totals[flow_kind] = flow_kind_waste_totals.get(flow_kind, 0) + waste_score
 
         flow = {
             "request": str(case["request"]),
@@ -872,7 +881,20 @@ def build_expensive_flow_report(
         flows.append(flow)
 
     ranked_flows = sorted(flows, key=lambda item: (-int(item["waste_score"]), item["request"]))
-    top_flows = ranked_flows[:top_n]
+    top_flows = _select_diverse_top_flows(ranked_flows, top_n=top_n)
+    dominant_flow_kind = max(
+        flow_kind_counts.items(),
+        key=lambda item: (
+            item[1],
+            FLOW_KIND_PRIORITY.get(item[0], -1),
+            flow_kind_waste_totals.get(item[0], 0),
+            item[0],
+        ),
+    )[0] if flow_kind_counts else "general_overhead"
+    operator_next_priority, operator_next_priority_reason = _resolve_operator_next_priority(
+        flow_kind_counts=flow_kind_counts,
+        observed_reason_signal_counts=observed_reason_signal_counts,
+    )
     return {
         "flows": top_flows,
         "summary": {
@@ -881,8 +903,81 @@ def build_expensive_flow_report(
             "observed_case_count": observed_case_count,
             "flow_kind_counts": flow_kind_counts,
             "observed_reason_signal_counts": observed_reason_signal_counts,
+            "dominant_flow_kind": dominant_flow_kind,
+            "operator_next_priority": operator_next_priority,
+            "operator_next_priority_reason": operator_next_priority_reason,
         },
     }
+
+
+def _select_diverse_top_flows(
+    ranked_flows: list[dict[str, object]],
+    *,
+    top_n: int,
+) -> list[dict[str, object]]:
+    if top_n <= 0:
+        return []
+
+    selected: list[dict[str, object]] = []
+    used_requests: set[str] = set()
+    covered_kinds: set[str] = set()
+
+    for flow in ranked_flows:
+        flow_kind = str(flow.get("flow_kind") or "")
+        request = str(flow.get("request") or "")
+        if flow_kind in covered_kinds or request in used_requests:
+            continue
+        selected.append(flow)
+        covered_kinds.add(flow_kind)
+        used_requests.add(request)
+        if len(selected) >= top_n:
+            return selected
+
+    for flow in ranked_flows:
+        request = str(flow.get("request") or "")
+        if request in used_requests:
+            continue
+        selected.append(flow)
+        used_requests.add(request)
+        if len(selected) >= top_n:
+            break
+    return selected
+
+
+def _resolve_operator_next_priority(
+    *,
+    flow_kind_counts: dict[str, int],
+    observed_reason_signal_counts: dict[str, int],
+) -> tuple[str, str]:
+    wrong_next_step_count = int(flow_kind_counts.get("wrong_next_step", 0))
+    over_stage_entry_count = int(flow_kind_counts.get("over_stage_entry", 0))
+    reroute_loop_count = int(flow_kind_counts.get("reroute_loop", 0))
+    output_bloat_count = int(flow_kind_counts.get("output_bloat", 0))
+
+    if wrong_next_step_count > 0:
+        return (
+            "tighten_next_action_routing",
+            "wrong next step remains the dominant expensive flow",
+        )
+    if reroute_loop_count > 0 or int(observed_reason_signal_counts.get("reroute_reason", 0)) > 0:
+        return (
+            "reduce_reroute_loops",
+            "reroute signals are still present in observed operator flows",
+        )
+    if over_stage_entry_count > 0:
+        return (
+            "reduce_over_stage_entry",
+            "requests still enter execution/review later than necessary",
+        )
+    if output_bloat_count > 0 or int(observed_reason_signal_counts.get("output_bloat_reason", 0)) > 0:
+        return (
+            "compress_operator_outputs",
+            "output bloat is still visible in operator-facing responses",
+        )
+    return (
+        "maintain_operator_experience_quality",
+        "no dominant expensive operator flow stands out right now",
+    )
 
 
 def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:

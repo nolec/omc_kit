@@ -229,6 +229,26 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
         normalized,
         ("지금까지 뭐 했", "뭐 했는지 정리", "현재 어떤점이 개선", "어떤점이 개선", "개선된거야"),
     )
+    operator_experience_intent = (
+        _contains_any(
+            normalized,
+            (
+                "next-action",
+                "next action",
+                "추천 품질",
+                "reroute",
+                "output bloat",
+                "과다 단계 진입",
+                "흐름을 더 똑똑",
+                "사용감 개선",
+                "operator experience",
+            ),
+        )
+        and _contains_any(
+            normalized,
+            ("정리", "보강", "개선", "마무리", "좁히", "점검", "품질"),
+        )
+    )
     explicit_planning_intent = _contains_any(normalized, plan_keywords)
     explicit_review_intent = _contains_any(normalized, review_keywords)
     explicit_critique_intent = _contains_any(normalized, critique_keywords)
@@ -258,6 +278,13 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
             recommended_skill="$omc-critique",
             primary_role="code_review",
             task_kind_hint="review",
+        )
+    if operator_experience_intent:
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-plan",
+            primary_role="analysis",
+            task_kind_hint="plan",
         )
     if explicit_review_intent or review_validation_intent:
         return _build_orchestration(
@@ -291,6 +318,7 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
         explicit_planning_intent
         or explicit_review_intent
         or explicit_critique_intent
+        or operator_experience_intent
         or work_breakdown_intent
         or explicit_fix_intent
         or root_cause_intent

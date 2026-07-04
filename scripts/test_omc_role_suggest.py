@@ -265,6 +265,19 @@ def test_orchestration_hint_prioritizes_investigate_over_progress_summary_when_b
     assert hint["task_kind_hint"] == "investigate"
 
 
+def test_orchestration_hint_routes_operator_experience_finish_request_to_plan() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration(
+        "plan/task/review 흐름을 더 똑똑하게 하고 next-action 품질, reroute, output bloat, 과다 단계 진입 같은 사용감 개선 마무리하자"
+    )
+
+    assert hint["response_mode"] == "answer-first"
+    assert hint["recommended_skill"] == "$omc-plan"
+    assert hint["primary_role"] == "analysis"
+    assert hint["task_kind_hint"] == "plan"
+
+
 def test_json_output_includes_orchestration_fields():
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--text", "리뷰해줘", "--format", "json"],
