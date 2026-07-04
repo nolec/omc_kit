@@ -43,6 +43,22 @@ _HEADLESS_NETWORK_FAILURE_MARKERS = (
     "backend-api/codex/responses",
     "reconnecting...",
 )
+_ROUTING_REASON_SUMMARIES = {
+    "env_override": "OMC_MODEL_PROFILE override applied",
+    "ship_requires_full": "ship work always uses full model",
+    "review_severity_high": "high review severity forces full model",
+    "high_risk": "high risk changes force full model",
+    "retry_escalation": "repeated retries escalate to full model",
+    "large_change_surface": "large change surface forces full model",
+    "sensitive_review_surface": "sensitive review surface prefers full model",
+    "preferred_profile": "preferred profile requested for this step",
+    "plan_or_review_work": "plan/review/investigate work prefers broader context",
+    "high_complexity": "high complexity work prefers broader context",
+    "medium_change_surface": "medium change surface prefers broader context",
+    "sensitive_path": "sensitive paths prefer broader context",
+    "broader_context_signal": "request text signals broader context needs",
+    "default_lightweight": "default lightweight task stays on mini default",
+}
 
 
 def _normalize_text(value: str | None) -> str:
@@ -105,9 +121,34 @@ def select_model_profile(
     sensitive_paths: list[str] | None = None,
     preferred_profile: str | None = None,
 ) -> str:
+    return _resolve_model_routing_decision(
+        task_kind=task_kind,
+        request_text=request_text,
+        touched_files=touched_files,
+        retry_count=retry_count,
+        review_severity=review_severity,
+        complexity=complexity,
+        risk=risk,
+        sensitive_paths=sensitive_paths,
+        preferred_profile=preferred_profile,
+    )["model_profile"]
+
+
+def _resolve_model_routing_decision(
+    *,
+    task_kind: str,
+    request_text: str,
+    touched_files: list[str],
+    retry_count: int,
+    review_severity: str | None,
+    complexity: str | None = None,
+    risk: str | None = None,
+    sensitive_paths: list[str] | None = None,
+    preferred_profile: str | None = None,
+) -> dict[str, object]:
     override = _normalize_text(os.environ.get("OMC_MODEL_PROFILE"))
     if override in _MODEL_PROFILES:
-        return override
+        return _build_routing_decision("env_override", override)
 
     policy = _resolve_routing_policy()
     kind = _normalize_text(task_kind)
@@ -121,7 +162,7 @@ def select_model_profile(
     broader_signal = _has_broader_context_signal(request_text)
 
     if kind == "ship":
-        return "full_default"
+        return _build_routing_decision("ship_requires_full", "full_default")
 
     full_on_sensitive_review = kind in {"review", "investigate"} and has_sensitive_path and touched_count >= 3
     if policy == "cost_saver" and severity not in {"major", "critical", "high"}:
@@ -136,11 +177,19 @@ def select_model_profile(
         or touched_count >= 8
         or full_on_sensitive_review
     ):
-        return "full_default"
+        if severity in {"major", "critical", "high"}:
+            return _build_routing_decision("review_severity_high", "full_default")
+        if normalized_risk == "high":
+            return _build_routing_decision("high_risk", "full_default")
+        if retry_count >= 2:
+            return _build_routing_decision("retry_escalation", "full_default")
+        if touched_count >= 8:
+            return _build_routing_decision("large_change_surface", "full_default")
+        return _build_routing_decision("sensitive_review_surface", "full_default")
 
     preferred = _normalize_text(preferred_profile)
     if preferred in _MODEL_PROFILES:
-        return preferred
+        return _build_routing_decision("preferred_profile", preferred)
 
     if (
         kind in {"plan", "review", "investigate"}
@@ -149,9 +198,26 @@ def select_model_profile(
         or has_sensitive_path
         or broader_signal
     ):
-        return "mini_high"
+        if kind in {"plan", "review", "investigate"}:
+            return _build_routing_decision("plan_or_review_work", "mini_high")
+        if normalized_complexity == "high":
+            return _build_routing_decision("high_complexity", "mini_high")
+        if touched_count >= 4:
+            return _build_routing_decision("medium_change_surface", "mini_high")
+        if has_sensitive_path:
+            return _build_routing_decision("sensitive_path", "mini_high")
+        return _build_routing_decision("broader_context_signal", "mini_high")
 
-    return "mini_default"
+    return _build_routing_decision("default_lightweight", "mini_default")
+
+
+def _build_routing_decision(reason_code: str, model_profile: str) -> dict[str, object]:
+    reason_summary = _ROUTING_REASON_SUMMARIES.get(reason_code, reason_code.replace("_", " "))
+    return {
+        "model_profile": model_profile,
+        "routing_reason_codes": [reason_code],
+        "routing_reason_summary": reason_summary,
+    }
 
 
 def resolve_task_routing(
@@ -165,23 +231,26 @@ def resolve_task_routing(
     risk: str | None = None,
     sensitive_paths: list[str] | None = None,
     preferred_profile: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, object]:
     normalized_kind = _normalize_text(task_kind) or "task"
     normalized_files = list(touched_files or [])
+    routing_decision = _resolve_model_routing_decision(
+        task_kind=normalized_kind,
+        request_text=request_text,
+        touched_files=normalized_files,
+        retry_count=retry_count,
+        review_severity=review_severity,
+        complexity=complexity,
+        risk=risk,
+        sensitive_paths=sensitive_paths,
+        preferred_profile=preferred_profile,
+    )
     return {
         "task_kind": normalized_kind,
         "routing_policy": _resolve_routing_policy(),
-        "model_profile": select_model_profile(
-            task_kind=normalized_kind,
-            request_text=request_text,
-            touched_files=normalized_files,
-            retry_count=retry_count,
-            review_severity=review_severity,
-            complexity=complexity,
-            risk=risk,
-            sensitive_paths=sensitive_paths,
-            preferred_profile=preferred_profile,
-        ),
+        "model_profile": str(routing_decision["model_profile"]),
+        "routing_reason_codes": list(routing_decision["routing_reason_codes"]),
+        "routing_reason_summary": str(routing_decision["routing_reason_summary"]),
     }
 
 

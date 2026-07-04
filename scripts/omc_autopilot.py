@@ -591,14 +591,14 @@ def _run_step(
     timeout_sec: int,
     prompt_override: str | None = None,
     isolated: bool = False,
-) -> tuple[int, str, dict | None]:
+) -> tuple[int, str, dict | None, dict | None]:
     """omc_exec.py를 통해 스텝 프롬프트를 실행합니다.
 
     Args:
         isolated: True이면 fresh context로 실행합니다. 기본값은 False입니다.
 
     Returns:
-        (returncode, output_text)
+        (returncode, output_text, cost_info, step_runtime)
     """
     exec_script = Path(__file__).resolve().parent / "omc_exec.py"
     if not exec_script.exists():
@@ -623,6 +623,9 @@ def _run_step(
     )
     task_kind = routing["task_kind"]
     model_profile = routing["model_profile"]
+    routing_policy = routing["routing_policy"]
+    routing_reason_codes = list(routing.get("routing_reason_codes") or [])
+    routing_reason_summary = str(routing.get("routing_reason_summary") or "").strip()
 
     prompt_file = None
     try:
@@ -679,11 +682,18 @@ def _run_step(
             raw_output or (proc.stdout or ""),
             model_profile=model_profile,
         )
-        return int(proc.returncode), output.strip(), cost_info
+        step_runtime = {
+            "task_kind": task_kind,
+            "model_profile": model_profile,
+            "routing_policy": routing_policy,
+            "routing_reason_codes": routing_reason_codes,
+            "routing_reason_summary": routing_reason_summary,
+        }
+        return int(proc.returncode), output.strip(), cost_info, step_runtime
     except subprocess.TimeoutExpired:
-        return 1, "[ERROR] 타임아웃 초과", None
+        return 1, "[ERROR] 타임아웃 초과", None, None
     except Exception as exc:
-        return 1, f"[ERROR] 실행 예외: {exc}", None
+        return 1, f"[ERROR] 실행 예외: {exc}", None, None
     finally:
         if prompt_file:
             try:
@@ -854,7 +864,7 @@ def cmd_run(
                     print(f"  재시도 (attempt {attempt}) — 이전 실패 컨텍스트 주입됨")
                 else:
                     print(f"  실행 중 (attempt {attempt}/{max_retries + 1})...")
-                rc, output, cost_info = _run_step(
+                rc, output, cost_info, step_runtime = _run_step(
                     root,
                     step_with_prompt,
                     executor=executor,
@@ -864,6 +874,8 @@ def cmd_run(
                 if cost_info is not None:
                     step_state["token_usage"] = cost_info["token_usage"]
                     step_state["cost_estimate"] = cost_info["cost_estimate"]
+                if step_runtime is not None:
+                    step_state.update(step_runtime)
 
             step_state["last_output"] = output[:2000]
 
@@ -1477,6 +1489,7 @@ def _summarize_run_record(run_id: str, data: dict) -> dict[str, object]:
     status = str(data.get("status") or "unknown")
     steps = data.get("steps") or {}
     current_step = _get_current_step_name(steps)
+    current_step_state = steps.get(current_step) if isinstance(steps, dict) else None
     stale_reason = _infer_stale_reason(data)
     stale = stale_reason is not None
     failure_reason = str(data.get("failure_category") or stale_reason or "-")
@@ -1487,6 +1500,16 @@ def _summarize_run_record(run_id: str, data: dict) -> dict[str, object]:
         "status": status,
         "is_current": run_id == "current",
         "current_step": current_step,
+        "current_step_model_profile": (
+            str(current_step_state.get("model_profile") or "-")
+            if isinstance(current_step_state, dict)
+            else "-"
+        ),
+        "current_step_routing_reason": (
+            str(current_step_state.get("routing_reason_summary") or "-")
+            if isinstance(current_step_state, dict)
+            else "-"
+        ),
         "stale": stale,
         "failure_reason": failure_reason,
         "started_at": data.get("started_at"),
@@ -1894,6 +1917,8 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
             f"{summary['run_id']} | {summary['branch']} | {summary['status']} | "
             f"{summary['current_step']} | {stale_text} | "
             f"{summary['failure_reason']} | next_action={summary['next_action']}"
+            f" | routing={summary['current_step_model_profile']} "
+            f"({summary['current_step_routing_reason']})"
         )
     return 0
 

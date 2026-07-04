@@ -387,6 +387,59 @@ class TestCmdRunDryRun:
         assert state["steps"]["s1"].get("simulated") is not True
         assert state["steps"]["s1"].get("last_output") == "ok"
 
+    def test_real_run_persists_routing_reason_metadata(self, tmp_path):
+        tasks_dir = tmp_path / ".omc" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task = {
+            "id": "routing-metadata",
+            "title": "Routing Metadata",
+            "executor": "auto",
+            "max_retries": 0,
+            "steps": [
+                {
+                    "id": "plan",
+                    "prompt": "계획",
+                    "depends_on": [],
+                    "timeout_sec": 10,
+                },
+            ],
+        }
+        task_file = tasks_dir / "routing-metadata.json"
+        task_file.write_text(json.dumps(task), encoding="utf-8")
+
+        fake_routing = {
+            "task_kind": "plan",
+            "routing_policy": "balanced",
+            "model_profile": "mini_high",
+            "routing_reason_codes": ["plan_or_review_work"],
+            "routing_reason_summary": "plan/review/investigate work prefers broader context",
+        }
+
+        with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
+            omc_autopilot.omc_exec,
+            "resolve_task_routing",
+            return_value=fake_routing,
+        ), patch.object(
+            omc_autopilot.subprocess,
+            "run",
+            return_value=SimpleNamespace(returncode=0, stdout="ok", stderr=""),
+        ):
+            code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
+
+        assert code == 0
+        state = json.loads(
+            (tmp_path / ".omc" / "state" / "autopilot" / "routing-metadata.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert state["steps"]["plan"]["model_profile"] == "mini_high"
+        assert state["steps"]["plan"]["routing_policy"] == "balanced"
+        assert state["steps"]["plan"]["routing_reason_codes"] == ["plan_or_review_work"]
+        assert (
+            state["steps"]["plan"]["routing_reason_summary"]
+            == "plan/review/investigate work prefers broader context"
+        )
+
     def test_blocked_step_on_failed_dep(self, tmp_path):
         tasks_dir = tmp_path / ".omc" / "tasks"
         tasks_dir.mkdir(parents=True, exist_ok=True)

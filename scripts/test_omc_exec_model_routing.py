@@ -279,6 +279,38 @@ def test_select_model_profile_quality_first_escalates_borderline_review_to_full(
     )
 
 
+def test_resolve_task_routing_includes_reason_summary_for_plan_work() -> None:
+    routing = omc_exec.resolve_task_routing(
+        task_kind="plan",
+        request_text="아키텍처 계획 잡아줘",
+        retry_count=0,
+        touched_files=[],
+        review_severity=None,
+    )
+
+    assert routing["model_profile"] == "mini_high"
+    assert routing["routing_reason_summary"] == "plan/review/investigate work prefers broader context"
+    assert routing["routing_reason_codes"] == ["plan_or_review_work"]
+
+
+def test_resolve_task_routing_includes_high_risk_reason_summary() -> None:
+    routing = omc_exec.resolve_task_routing(
+        task_kind="task",
+        request_text="구현",
+        retry_count=0,
+        touched_files=["src/components/Button.tsx"],
+        review_severity=None,
+        complexity="low",
+        risk="high",
+        sensitive_paths=[],
+        preferred_profile="mini_default",
+    )
+
+    assert routing["model_profile"] == "full_default"
+    assert routing["routing_reason_summary"] == "high risk changes force full model"
+    assert routing["routing_reason_codes"] == ["high_risk"]
+
+
 def test_select_model_profile_uses_full_default_for_ship() -> None:
     assert (
         omc_exec.select_model_profile(

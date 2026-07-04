@@ -106,7 +106,14 @@ def test_cmd_overview_prints_one_screen_summary(tmp_path: Path, capsys) -> None:
         "run-completed",
         branch="feat/completed",
         status="completed",
-        steps={"review": {"status": "completed", "verdict": "APPROVE"}},
+        steps={
+            "review": {
+                "status": "completed",
+                "verdict": "APPROVE",
+                "model_profile": "full_default",
+                "routing_reason_summary": "high risk changes force full model",
+            }
+        },
     )
     _make_run(
         tmp_path,
@@ -136,6 +143,7 @@ def test_cmd_overview_prints_one_screen_summary(tmp_path: Path, capsys) -> None:
     assert "feat/completed" in out
     assert "feat/failed" in out
     assert "next_action" in out
+    assert "| routing=full_default (high risk changes force full model)" in out
 
 
 def test_cmd_overview_orders_problem_runs_first(tmp_path: Path, capsys) -> None:
