@@ -776,10 +776,13 @@ def cmd_run(
         step_title = step.get("title", sid)
         timeout_sec = int(step.get("timeout_sec", _DEFAULT_TIMEOUT_SEC))
 
-        # 이미 완료된 스텝은 건너뜀
-        if state["steps"].get(sid, {}).get("status") == "completed":
-            print(f"  [SKIP] {sid}: {step_title} (이미 완료)")
-            continue
+        # dry-run으로만 완료된 step은 실제 실행에서 다시 돈다.
+        existing_step_state = state["steps"].get(sid, {})
+        if existing_step_state.get("status") == "completed":
+            if dry_run or not _step_state_is_simulated(existing_step_state):
+                print(f"  [SKIP] {sid}: {step_title} (이미 완료)")
+                continue
+            print(f"  [REPLAY] {sid}: {step_title} (dry-run 완료 상태라 실제 실행)")
 
         # 실패 스텝 재실행 정책:
         # - 기본값(False): 이전 실패 상태를 유지(기존 동작)

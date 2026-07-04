@@ -36,6 +36,13 @@ _CLAUDE_MODEL_MAP = {
     "full_default": "sonnet",
 }
 _CODEX_REASONING_EFFORT_SUPPORTED: bool | None = None
+_HEADLESS_NETWORK_FAILURE_MARKERS = (
+    "failed to lookup address information",
+    "stream disconnected before completion",
+    "error sending request for url",
+    "backend-api/codex/responses",
+    "reconnecting...",
+)
 
 
 def _normalize_text(value: str | None) -> str:
@@ -356,6 +363,23 @@ def _resolve_executor_model(executor: str, model_profile: str) -> str:
     return ""
 
 
+def _is_headless_network_failure(raw_text: str) -> bool:
+    text = _normalize_text(raw_text)
+    if not text:
+        return False
+    return any(marker in text for marker in _HEADLESS_NETWORK_FAILURE_MARKERS)
+
+
+def _resolve_headless_network_fallback_executor(primary: str) -> str | None:
+    normalized_primary = _normalize_text(primary)
+    for candidate in ("gemini", "claude"):
+        if candidate == normalized_primary:
+            continue
+        if shutil.which(candidate):
+            return candidate
+    return None
+
+
 def _record_headless_cost(
     project_root: Path,
     *,
@@ -518,14 +542,38 @@ def _run_codex_headless(
             model_profile=model_profile,
             task_kind=task_kind,
         )
-        output_text = _read_text_if_exists(output_path)
-        if output_text:
-            print(output_text)
-        elif proc.stdout.strip():
-            print(proc.stdout.strip())
-        if proc.returncode != 0 and proc.stderr.strip():
-            print(proc.stderr.strip(), file=sys.stderr)
+        combined_output = "\n".join(part for part in [proc.stdout, proc.stderr] if part)
+        fallback_executor = None
+        if proc.returncode != 0 and _is_headless_network_failure(combined_output):
+            fallback_executor = _resolve_headless_network_fallback_executor("codex")
+
+        if fallback_executor is None:
+            output_text = _read_text_if_exists(output_path)
+            if output_text:
+                print(output_text)
+            elif proc.stdout.strip():
+                print(proc.stdout.strip())
+            if proc.returncode != 0 and proc.stderr.strip():
+                print(proc.stderr.strip(), file=sys.stderr)
         if proc.returncode != 0:
+            if fallback_executor == "gemini":
+                print("[!] Codex headless network failure detected. Falling back to Gemini.", file=sys.stderr)
+                return _run_gemini_headless(
+                    project_root,
+                    prompt_text,
+                    timeout_sec=timeout_sec,
+                    model_profile=model_profile,
+                    task_kind=task_kind,
+                )
+            if fallback_executor == "claude":
+                print("[!] Codex headless network failure detected. Falling back to Claude.", file=sys.stderr)
+                return _run_claude_headless(
+                    project_root,
+                    prompt_text,
+                    timeout_sec=timeout_sec,
+                    model_profile=model_profile,
+                    task_kind=task_kind,
+                )
             print(f"[!] Codex headless execution exited with code {proc.returncode}")
         return int(proc.returncode)
     finally:

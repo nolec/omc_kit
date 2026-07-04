@@ -31,11 +31,140 @@ try:
 except ImportError:
     _MODULE_PRESENT = False
 
+try:
+    import omc_exec  # noqa: F401
+    _EXEC_MODULE_PRESENT = True
+except ImportError:
+    _EXEC_MODULE_PRESENT = False
+
 
 @pytest.mark.skipif(_MODULE_PRESENT, reason="모듈 없음 — RED 단계 확인용")
 def test_module_missing():
     """omc_autopilot.py 가 없으면 이 테스트가 실패해야 합니다."""
     assert False, "omc_autopilot.py 가 없습니다 — 구현 후 재실행 필요"
+
+
+@pytest.mark.skipif(not _EXEC_MODULE_PRESENT, reason="omc_exec.py 없음")
+def test_detects_codex_network_transport_failure():
+    raw = (
+        '{"type":"error","message":"Reconnecting... 2/5 '
+        '(stream disconnected before completion: failed to lookup address information: '
+        'nodename nor servname provided, or not known)"}'
+    )
+    assert omc_exec._is_headless_network_failure(raw) is True
+
+
+@pytest.mark.skipif(not _EXEC_MODULE_PRESENT, reason="omc_exec.py 없음")
+def test_run_codex_headless_falls_back_to_gemini_on_network_failure(tmp_path, monkeypatch):
+    class _Runtime:
+        def cleanup(self):
+            return None
+
+    monkeypatch.setattr(
+        omc_exec,
+        "_prepare_codex_headless_runtime",
+        lambda model_profile="mini_default": (_Runtime(), {}),
+    )
+    monkeypatch.setattr(
+        omc_exec,
+        "_codex_headless_command",
+        lambda *args, **kwargs: ["codex", "exec"],
+    )
+    monkeypatch.setattr(omc_exec, "_codex_supports_reasoning_effort", lambda: True)
+    monkeypatch.setattr(omc_exec, "_write_raw_output_if_requested", lambda raw_text: None)
+    monkeypatch.setattr(
+        omc_exec,
+        "_record_headless_cost",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(omc_exec, "_read_text_if_exists", lambda path: "")
+    monkeypatch.setattr(omc_exec.shutil, "which", lambda exe: "/usr/bin/fake" if exe in {"gemini", "codex"} else None)
+    monkeypatch.setattr(
+        omc_exec.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1,
+            stdout='{"type":"error","message":"failed to lookup address information"}',
+            stderr="",
+        ),
+    )
+    fallback_calls: list[str] = []
+    monkeypatch.setattr(
+        omc_exec,
+        "_run_gemini_headless",
+        lambda *args, **kwargs: fallback_calls.append("gemini") or 0,
+    )
+
+    rc = omc_exec._run_codex_headless(
+        tmp_path,
+        "prompt",
+        timeout_sec=5,
+        model_profile="mini_default",
+        task_kind="task",
+    )
+
+    assert rc == 0
+    assert fallback_calls == ["gemini"]
+
+
+@pytest.mark.skipif(not _EXEC_MODULE_PRESENT, reason="omc_exec.py 없음")
+def test_run_codex_headless_does_not_print_codex_failure_output_when_fallback_succeeds(
+    tmp_path, monkeypatch, capsys
+):
+    class _Runtime:
+        def cleanup(self):
+            return None
+
+    monkeypatch.setattr(
+        omc_exec,
+        "_prepare_codex_headless_runtime",
+        lambda model_profile="mini_default": (_Runtime(), {}),
+    )
+    monkeypatch.setattr(
+        omc_exec,
+        "_codex_headless_command",
+        lambda *args, **kwargs: ["codex", "exec"],
+    )
+    monkeypatch.setattr(omc_exec, "_codex_supports_reasoning_effort", lambda: True)
+    monkeypatch.setattr(omc_exec, "_write_raw_output_if_requested", lambda raw_text: None)
+    monkeypatch.setattr(
+        omc_exec,
+        "_record_headless_cost",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(omc_exec, "_read_text_if_exists", lambda path: "")
+    monkeypatch.setattr(
+        omc_exec.shutil,
+        "which",
+        lambda exe: "/usr/bin/fake" if exe in {"gemini", "codex"} else None,
+    )
+    monkeypatch.setattr(
+        omc_exec.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1,
+            stdout='{"type":"error","message":"failed to lookup address information"}',
+            stderr="",
+        ),
+    )
+    monkeypatch.setattr(
+        omc_exec,
+        "_run_gemini_headless",
+        lambda *args, **kwargs: print("gemini-success") or 0,
+    )
+
+    rc = omc_exec._run_codex_headless(
+        tmp_path,
+        "prompt",
+        timeout_sec=5,
+        model_profile="mini_default",
+        task_kind="task",
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "gemini-success" in captured.out
+    assert "failed to lookup address information" not in captured.out
 
 
 # --------------------------------------------------------------------------
@@ -204,6 +333,59 @@ class TestCmdRunDryRun:
         assert state.get("simulated") is True
         assert state.get("completion_requires_real_runs") is True
         assert state["steps"]["s1"].get("simulated") is True
+
+    def test_real_run_reexecutes_step_completed_only_by_dry_run_state(self, tmp_path):
+        tasks_dir = tmp_path / ".omc" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task = {
+            "id": "observed-collect",
+            "title": "Observed Run Collection",
+            "executor": "auto",
+            "completion_requires_real_runs": True,
+            "max_retries": 0,
+            "steps": [
+                {"id": "s1", "prompt": "실행", "depends_on": [], "timeout_sec": 10},
+            ],
+        }
+        task_file = tasks_dir / "observed-collect.json"
+        task_file.write_text(json.dumps(task), encoding="utf-8")
+
+        state_dir = tmp_path / ".omc" / "state" / "autopilot"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "observed-collect.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "observed-collect",
+                    "title": "Observed Run Collection",
+                    "status": "completed",
+                    "executor": "codex",
+                    "simulated": True,
+                    "completion_requires_real_runs": True,
+                    "steps": {
+                        "s1": {
+                            "status": "completed",
+                            "attempt": 1,
+                            "simulated": True,
+                            "last_output": "[DRY-RUN] 시뮬레이션 성공",
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
+            omc_autopilot.subprocess,
+            "run",
+            return_value=SimpleNamespace(returncode=0, stdout="ok", stderr=""),
+        ):
+            code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
+
+        assert code == 0
+        state = json.loads((state_dir / "observed-collect.json").read_text(encoding="utf-8"))
+        assert state.get("simulated") is False
+        assert state["steps"]["s1"].get("simulated") is not True
+        assert state["steps"]["s1"].get("last_output") == "ok"
 
     def test_blocked_step_on_failed_dep(self, tmp_path):
         tasks_dir = tmp_path / ".omc" / "tasks"
