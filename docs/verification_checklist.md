@@ -433,9 +433,9 @@ PASS / FAIL: PASS
 
 ### 빠른 판정
 
-- 아직 `V4 완료` 아님: 실제 observed multi-run 20회 이상 누적 전
 - `V4-B 운영 검증 실행 준비` 완료: gate/summary/task/template가 준비된 상태
-- `V4-B 운영 완료 판정` 완료: 실제 누적 observed dataset으로 완료 기준을 모두 충족한 상태
+- `V4-B 운영 완료 판정` 1차 완료: 실제 누적 observed dataset으로 완료 기준을 모두 충족한 상태
+- 현재 확인값: `observed_samples=21`, `readiness_same_surface=8`, `distinct_policy_pairs=2`, `baseline_comparison_status=ready`, `v4b-operational-validation=completed`
 
 ### 1. 수집 기준
 
