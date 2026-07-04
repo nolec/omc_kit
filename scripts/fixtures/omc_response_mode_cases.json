@@ -618,6 +618,47 @@
       "evidence": "baseline: 2026-06-17 Claude Code plan 실행 스크린샷, candidate: 2026-06-25 Codex 동일 이슈 검토 응답 발췌",
       "baseline_response_sample": "PHASE 3 ▸ TDD 태스크 분해\nTDD 예외 적용...\n준비되었습니다. /task 로 진행하시겠습니까?",
       "candidate_response_sample": "완전히 맞지는 않습니다. plan 단계라면 설계 검토와 다음 단계 제안까지만 하고 바로 task로 넘기면 안 됩니다."
+    },
+    {
+      "request": "plan/task/review 흐름을 더 똑똑하게 next-action 품질과 reroute/output bloat/과다 단계 진입 사용감 개선 마무리하자",
+      "expected_mode": "answer-first",
+      "expected_next_action": "$omc-plan",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: review/task 흐름으로 바로 받아들임",
+        "user: 아니 흐름 정리와 마무리 계획이 먼저라고 재설명"
+      ],
+      "candidate_trace": [
+        "assistant: Operator Experience 정리 요청으로 해석",
+        "assistant: 구현보다 plan 재정렬이 먼저라고 판단"
+      ],
+      "baseline_output_chars": 298,
+      "candidate_output_chars": 284,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "$omc-plan",
+      "source_type": "observed_request",
+      "evidence": "2026-07-05 실제 세션 요청문 추출: Operator Experience 후속 마무리 요청"
+    },
+    {
+      "request": "omc-review 최소 압축안만 먼저 제안",
+      "expected_mode": "answer-first",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: 압축 배경과 비교 설명을 길게 전개"
+      ],
+      "candidate_trace": [
+        "assistant: 최소 압축안만 짧게 제안"
+      ],
+      "baseline_output_chars": 612,
+      "candidate_output_chars": 276,
+      "baseline_task_start_delay": 0,
+      "candidate_task_start_delay": 0,
+      "source_type": "observed_request",
+      "evidence": "2026-07-04 실제 세션 요청문 추출: review 스킬 최소 압축안만 먼저 요청"
     }
   ]
 }

@@ -4472,3 +4472,33 @@ def test_build_expensive_flow_report_diversifies_top_flows_and_surfaces_operator
     assert report["summary"]["operator_next_priority_reason"] == (
         "wrong next step remains the dominant expensive flow"
     )
+
+
+def test_response_mode_fixture_covers_operator_experience_finish_request():
+    mod = _load_module()
+
+    report = mod.compare_response_modes(
+        mod._load_response_mode_cases(RESPONSE_MODE_FIXTURE_PATH)
+    )
+
+    case = next(
+        item
+        for item in report["cases"]
+        if item["request"]
+        == "plan/task/review 흐름을 더 똑똑하게 next-action 품질과 reroute/output bloat/과다 단계 진입 사용감 개선 마무리하자"
+    )
+
+    assert case["expected_next_action"] == "$omc-plan"
+    assert case["baseline"]["next_action"] == "$omc-task"
+    assert case["candidate"]["next_action"] == "$omc-plan"
+
+
+def test_response_mode_fixture_surfaces_observed_output_bloat_signal_in_full_flow_report():
+    mod = _load_module()
+
+    cases = mod._load_response_mode_cases(RESPONSE_MODE_FIXTURE_PATH)
+    report = mod.build_expensive_flow_report(cases)
+
+    assert report["summary"]["flow_kind_counts"].get("output_bloat", 0) >= 1
+    assert report["summary"]["observed_reason_signal_counts"].get("output_bloat_reason", 0) >= 1
+    assert report["summary"]["observed_reason_signal_counts"].get("compression_signal", 0) >= 1
