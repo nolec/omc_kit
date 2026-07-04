@@ -4515,3 +4515,21 @@ def test_response_mode_fixture_reports_output_bloat_as_secondary_validation_sign
     assert report["summary"]["output_bloat_status_line"] == (
         "output_bloat observed but not dominant; keep focus on wrong_next_step"
     )
+
+
+def test_response_mode_fixture_covers_redeclaration_confusion_as_wrong_next_step():
+    mod = _load_module()
+
+    report = mod.compare_response_modes(
+        mod._load_response_mode_cases(RESPONSE_MODE_FIXTURE_PATH)
+    )
+
+    case = next(
+        item
+        for item in report["cases"]
+        if item["request"] == "plan으로 계획 세우고 task 했는데 왜 작업을 선언하라는거지"
+    )
+
+    assert case["expected_next_action"] == "사용자 선택 대기"
+    assert case["baseline"]["next_action"] == "$omc-task"
+    assert case["candidate"]["next_action"] == "사용자 선택 대기"
