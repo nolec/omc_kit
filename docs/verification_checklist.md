@@ -437,6 +437,11 @@ PASS / FAIL: PASS
 - `V4-B 운영 완료 판정` 1차 완료: 실제 누적 observed dataset으로 완료 기준을 모두 충족한 상태
 - 현재 확인값: `observed_samples=21`, `readiness_same_surface=8`, `distinct_policy_pairs=2`, `baseline_comparison_status=ready`, `v4b-operational-validation=completed`
 
+### 현재 결론
+
+- V4 운영 observed 검증 1차는 완료로 본다.
+- 남은 일은 완료 기준을 새로 구현하는 작업이 아니라, 현재 기준이 운영 데이터에서도 안정적으로 유지되는지 drift를 감시하는 일이다.
+
 ### 1. 수집 기준
 
 - observed_request / observed_output 기준 multi-run 실행 샘플 20회 이상
