@@ -3,5 +3,10 @@
   "enforce_confirm": true,
   "auto_compact_threshold_count": 50,
   "auto_compact_keep_entries": 25,
+  "autopilot": {
+    "allowed_commands": [
+      "python3"
+    ]
+  },
   "notes": "Mutating commands should be blocked until the latest OMC session is confirmed."
 }

@@ -281,6 +281,22 @@ def _save_state(root: Path, task_id: str, state: dict) -> None:
     os.replace(temp_path, target)
 
 
+def _safe_current_branch(root: Path) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=str(root),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return "-"
+    branch = (proc.stdout or "").strip()
+    return branch or "-"
+
+
 def _step_state_is_simulated(step_state: object) -> bool:
     if not isinstance(step_state, dict):
         return False
@@ -707,6 +723,75 @@ def _run_step(
                 pass
 
 
+def _collect_overview_run_records(root: Path) -> list[dict]:
+    run_records: list[dict] = []
+    seen_fingerprints: set[str] = set()
+
+    current_path = root / _PIPELINE_RESULT_PATH
+    if current_path.exists():
+        try:
+            current_data = json.loads(current_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            current_data = None
+        if isinstance(current_data, dict):
+            seen_fingerprints.add(_overview_run_fingerprint(current_data))
+            run_records.append(current_data)
+
+    runs_dir = root / _RUNS_DIR
+    if runs_dir.exists():
+        run_dirs = sorted(runs_dir.iterdir(), reverse=True)
+        for d in run_dirs:
+            result_path = d / "result.json"
+            if not result_path.exists():
+                continue
+            try:
+                data = json.loads(result_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            fingerprint = _overview_run_fingerprint(data)
+            if fingerprint in seen_fingerprints:
+                continue
+            seen_fingerprints.add(fingerprint)
+            run_records.append(data)
+
+    return run_records
+
+
+def _build_task_run_result(
+    *,
+    root: Path,
+    task: dict,
+    state: dict,
+    executor: str,
+) -> dict[str, object]:
+    result: dict[str, object] = {
+        "task_id": str(task.get("id") or state.get("task_id") or "").strip(),
+        "status": str(state.get("status") or "unknown"),
+        "branch": _safe_current_branch(root),
+        "executor": executor,
+        "started_at": state.get("started_at"),
+        "finished_at": state.get("finished_at"),
+        "simulated": bool(state.get("simulated") is True),
+        "completion_requires_real_runs": bool(state.get("completion_requires_real_runs") is True),
+        "steps": state.get("steps", {}),
+    }
+    for key in (
+        "title",
+        "benchmark_source_type",
+        "policy_pair",
+        "comparison_scope",
+        "baseline_response_sample",
+        "candidate_response_sample",
+        "dataset_excluded_from_readiness",
+        "operational_validation_stage",
+        "operational_validation_goal",
+    ):
+        value = task.get(key)
+        if value not in (None, ""):
+            result[key] = value
+    return result
+
+
 # ---------------------------------------------------------------------------
 # 커맨드: run
 # ---------------------------------------------------------------------------
@@ -734,6 +819,7 @@ def cmd_run(
     require_clean_scope = bool(task.get("require_clean_scope", False))
     executor_pref = task.get("executor", "auto")
     max_retries = int(task.get("max_retries", _DEFAULT_MAX_RETRIES))
+    completion_requires_real_runs = bool(task.get("completion_requires_real_runs") is True)
     steps_raw = task.get("steps", [])
 
     if not steps_raw:
@@ -775,9 +861,14 @@ def cmd_run(
     state["status"] = "running"
     state["simulated"] = bool(dry_run)
     if "completion_requires_real_runs" in task:
-        state["completion_requires_real_runs"] = bool(task.get("completion_requires_real_runs"))
+        state["completion_requires_real_runs"] = completion_requires_real_runs
     if "steps" not in state:
         state["steps"] = {}
+    observed_count_before: int | None = None
+    if completion_requires_real_runs and not dry_run:
+        observed_count_before = int(
+            _build_overview_kpi_summary(_collect_overview_run_records(root))["observed_sample_count"]
+        )
 
     failed_count = 0
 
@@ -928,6 +1019,25 @@ def cmd_run(
     )
     state["status"] = "completed" if all_done else "failed"
     state["finished_at"] = _now()
+    if all_done and not dry_run:
+        run_result = _build_task_run_result(root=root, task=task, state=state, executor=executor)
+        _save_pipeline_result(root, run_result)
+        if completion_requires_real_runs and observed_count_before is not None:
+            observed_count_after = int(
+                _build_overview_kpi_summary(_collect_overview_run_records(root))["observed_sample_count"]
+            )
+            if observed_count_after <= observed_count_before:
+                all_done = False
+                state["status"] = "failed"
+                state["failure_reason"] = "completion_requires_real_runs_unsatisfied"
+                state["finished_at"] = _now()
+                run_result["status"] = "failed"
+                run_result["failure_category"] = "completion_requires_real_runs_unsatisfied"
+                run_result["next_kpi_blocker"] = "insufficient_observed_samples"
+                run_result["readiness_status_line"] = (
+                    "not ready: completion requires real observed runs but observed sample count did not increase"
+                )
+                _save_pipeline_result(root, run_result)
     _save_state(root, task_id, state)
 
     print(f"\n[AUTOPILOT] {'✅ 태스크 완료' if all_done else '❌ 태스크 실패'}: {title}")

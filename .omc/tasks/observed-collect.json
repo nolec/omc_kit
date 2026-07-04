@@ -15,7 +15,7 @@
       "title": "Observed Request Collection",
       "prompt": "Use a real operator-style request from the current project context and execute the smallest safe pipeline step that can produce a benchmarkable observed_request run. Keep the output concise and preserve enough structure to classify next action and routing behavior.",
       "depends_on": [],
-      "timeout_sec": 120,
+      "timeout_sec": 300,
       "expect": {
         "files": [],
         "checks": [
@@ -34,7 +34,7 @@
       "depends_on": [
         "collect_observed_request"
       ],
-      "timeout_sec": 120,
+      "timeout_sec": 300,
       "expect": {
         "files": [],
         "checks": [

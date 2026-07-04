@@ -578,6 +578,84 @@ class TestCmdRunRealExecution:
 
         assert code == 0
 
+    def test_completion_requires_real_runs_fails_when_observed_dataset_does_not_increase(self, tmp_path):
+        tasks_dir = tmp_path / ".omc" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task = {
+            "id": "observed-required",
+            "title": "Observed Required",
+            "executor": "auto",
+            "completion_requires_real_runs": True,
+            "max_retries": 0,
+            "steps": [
+                {"id": "s1", "prompt": "실행", "depends_on": [], "timeout_sec": 10},
+            ],
+        }
+        task_file = tasks_dir / "observed-required.json"
+        task_file.write_text(json.dumps(task), encoding="utf-8")
+
+        with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
+            omc_autopilot,
+            "_run_step",
+            return_value=(0, "ok", None, None),
+        ):
+            code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
+
+        assert code == 1
+        state = json.loads(
+            (tmp_path / ".omc" / "state" / "autopilot" / "observed-required.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert state["status"] == "failed"
+        assert state["failure_reason"] == "completion_requires_real_runs_unsatisfied"
+
+        saved = json.loads(
+            (tmp_path / ".omc" / "pipeline_run_result.json").read_text(encoding="utf-8")
+        )
+        assert saved["status"] == "failed"
+        assert saved["failure_category"] == "completion_requires_real_runs_unsatisfied"
+
+    def test_completion_requires_real_runs_succeeds_when_task_saves_observed_run_metadata(self, tmp_path):
+        tasks_dir = tmp_path / ".omc" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task = {
+            "id": "observed-request-task",
+            "title": "Observed Request Task",
+            "executor": "auto",
+            "completion_requires_real_runs": True,
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "baseline->candidate",
+            "max_retries": 0,
+            "steps": [
+                {"id": "s1", "prompt": "실행", "depends_on": [], "timeout_sec": 10},
+            ],
+        }
+        task_file = tasks_dir / "observed-request-task.json"
+        task_file.write_text(json.dumps(task), encoding="utf-8")
+
+        with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
+            omc_autopilot,
+            "_run_step",
+            return_value=(0, "ok", None, None),
+        ):
+            code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
+
+        assert code == 0
+        state = json.loads(
+            (tmp_path / ".omc" / "state" / "autopilot" / "observed-request-task.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert state["status"] == "completed"
+
+        saved = json.loads(
+            (tmp_path / ".omc" / "pipeline_run_result.json").read_text(encoding="utf-8")
+        )
+        assert saved["status"] == "completed"
+        assert saved["benchmark_source_type"] == "observed_request"
+        assert saved["policy_pair"] == "baseline->candidate"
+
 
 @pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
 class TestCmdStatus:
