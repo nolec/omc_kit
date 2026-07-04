@@ -1,0 +1,47 @@
+{
+  "id": "v4b-operational-validation",
+  "title": "V4-B Operational Validation",
+  "executor": "auto",
+  "require_clean_scope": true,
+  "operational_validation_stage": "v4b_execution",
+  "operational_validation_goal": "validate_v4b_operational_readiness",
+  "max_retries": 0,
+  "steps": [
+    {
+      "id": "confirm_overview_ready",
+      "title": "Confirm Overview Ready State",
+      "prompt": "Verify the current observed dataset and summarize whether overview is in a true start-ready state for V4-B operational validation. Report observed sample count, same-surface count, policy pair count, and the current next priority in 3-5 lines.",
+      "depends_on": [],
+      "timeout_sec": 120,
+      "expect": {
+        "files": [],
+        "checks": [
+          {
+            "cmd": "python3 scripts/omc_autopilot.py overview --limit 10",
+            "label": "overview ready state",
+            "timeout_sec": 30
+          }
+        ]
+      }
+    },
+    {
+      "id": "confirm_surface_alignment",
+      "title": "Confirm Surface Alignment",
+      "prompt": "Using the current observed dataset, verify whether overview / collected summary / decision surfaces still align on baseline_comparison_status, next_kpi_blocker, and next_priority_recommendation. Return only the alignment verdict and any mismatch.",
+      "depends_on": [
+        "confirm_overview_ready"
+      ],
+      "timeout_sec": 120,
+      "expect": {
+        "files": [],
+        "checks": [
+          {
+            "cmd": "python3 scripts/omc_autopilot.py benchmark-report",
+            "label": "benchmark report available",
+            "timeout_sec": 30
+          }
+        ]
+      }
+    }
+  ]
+}
