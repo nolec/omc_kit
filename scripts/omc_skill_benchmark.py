@@ -895,6 +895,16 @@ def build_expensive_flow_report(
         flow_kind_counts=flow_kind_counts,
         observed_reason_signal_counts=observed_reason_signal_counts,
     )
+    (
+        operator_validation_status,
+        output_bloat_followup_needed,
+        output_bloat_status_line,
+    ) = _resolve_output_bloat_validation_status(
+        flow_kind_counts=flow_kind_counts,
+        observed_reason_signal_counts=observed_reason_signal_counts,
+        dominant_flow_kind=dominant_flow_kind,
+        operator_next_priority=operator_next_priority,
+    )
     return {
         "flows": top_flows,
         "summary": {
@@ -906,6 +916,9 @@ def build_expensive_flow_report(
             "dominant_flow_kind": dominant_flow_kind,
             "operator_next_priority": operator_next_priority,
             "operator_next_priority_reason": operator_next_priority_reason,
+            "operator_validation_status": operator_validation_status,
+            "output_bloat_followup_needed": output_bloat_followup_needed,
+            "output_bloat_status_line": output_bloat_status_line,
         },
     }
 
@@ -977,6 +990,35 @@ def _resolve_operator_next_priority(
     return (
         "maintain_operator_experience_quality",
         "no dominant expensive operator flow stands out right now",
+    )
+
+
+def _resolve_output_bloat_validation_status(
+    *,
+    flow_kind_counts: dict[str, int],
+    observed_reason_signal_counts: dict[str, int],
+    dominant_flow_kind: str,
+    operator_next_priority: str,
+) -> tuple[str, bool, str]:
+    output_bloat_count = int(flow_kind_counts.get("output_bloat", 0))
+    observed_output_bloat = int(observed_reason_signal_counts.get("output_bloat_reason", 0))
+
+    if output_bloat_count <= 0 and observed_output_bloat <= 0:
+        return (
+            "not_observed",
+            False,
+            "output_bloat is not currently observed in operator validation data",
+        )
+    if dominant_flow_kind == "output_bloat" or operator_next_priority == "compress_operator_outputs":
+        return (
+            "needs_followup",
+            True,
+            "output_bloat is a primary operator bottleneck and needs follow-up",
+        )
+    return (
+        "ready_to_close",
+        False,
+        "output_bloat observed but not dominant; keep focus on wrong_next_step",
     )
 
 

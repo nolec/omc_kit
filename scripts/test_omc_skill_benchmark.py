@@ -4502,3 +4502,16 @@ def test_response_mode_fixture_surfaces_observed_output_bloat_signal_in_full_flo
     assert report["summary"]["flow_kind_counts"].get("output_bloat", 0) >= 1
     assert report["summary"]["observed_reason_signal_counts"].get("output_bloat_reason", 0) >= 1
     assert report["summary"]["observed_reason_signal_counts"].get("compression_signal", 0) >= 1
+
+
+def test_response_mode_fixture_reports_output_bloat_as_secondary_validation_signal():
+    mod = _load_module()
+
+    cases = mod._load_response_mode_cases(RESPONSE_MODE_FIXTURE_PATH)
+    report = mod.build_expensive_flow_report(cases)
+
+    assert report["summary"]["operator_validation_status"] == "ready_to_close"
+    assert report["summary"]["output_bloat_followup_needed"] is False
+    assert report["summary"]["output_bloat_status_line"] == (
+        "output_bloat observed but not dominant; keep focus on wrong_next_step"
+    )
