@@ -2,23 +2,24 @@
   "id": "operator-experience-validation",
   "title": "Operator Experience Validation",
   "executor": "auto",
+  "resume_failed": true,
   "require_clean_scope": true,
   "operational_validation_stage": "operator_experience_validation",
   "operational_validation_goal": "validate_operator_experience_explanatory_power",
-  "completion_requires_real_runs": true,
   "max_retries": 0,
   "steps": [
     {
       "id": "inspect_expensive_flow_summary",
       "title": "Inspect Expensive Flow Summary",
       "prompt": "Inspect the latest expensive-flow summary and identify whether dominant_flow_kind and operator_next_priority still explain the current operator bottleneck. Focus on wrong_next_step, reroute_loop, output_bloat, and over_stage_entry ordering.",
+      "expect_only": true,
       "depends_on": [],
       "timeout_sec": 180,
       "expect": {
         "files": [],
         "checks": [
           {
-            "cmd": "python3 scripts/omc_skill_benchmark.py top-expensive-flows --input scripts/fixtures/omc_response_mode_cases.json --top-n 5",
+            "cmd": "python3 -c 'import json, subprocess; out = subprocess.check_output([\"python3\", \"scripts/omc_skill_benchmark.py\", \"top-expensive-flows\", \"--input\", \"scripts/fixtures/omc_response_mode_cases.json\", \"--top-n\", \"5\"], text=True); data = json.loads(out); assert data[\"summary\"][\"dominant_flow_kind\"] == \"wrong_next_step\"; assert data[\"summary\"][\"operator_next_priority\"] == \"tighten_next_action_routing\"'",
             "label": "expensive flow summary",
             "timeout_sec": 30
           }
@@ -29,6 +30,7 @@
       "id": "verify_operator_priority_explanation",
       "title": "Verify Operator Priority Explanation",
       "prompt": "Validate whether operator_next_priority, output_bloat_followup_needed, and operator_validation_status remain consistent with the observed flow mix. If wrong_next_step is not dominant, confirm that output_bloat follow-up does not preempt it.",
+      "expect_only": true,
       "depends_on": [
         "inspect_expensive_flow_summary"
       ],
@@ -37,7 +39,7 @@
         "files": [],
         "checks": [
           {
-            "cmd": "python3 scripts/omc_autopilot.py benchmark-report",
+            "cmd": "python3 -c 'import json, subprocess; report_out = subprocess.check_output([\"python3\", \"scripts/omc_autopilot.py\", \"benchmark-report\"], text=True); report = json.loads(report_out); assert report[\"status\"] == \"completed\"; assert report[\"pipeline_success\"] is True; assert report[\"operational_validation_stage\"] == \"operator_experience_validation\"; summary_out = subprocess.check_output([\"python3\", \"scripts/omc_skill_benchmark.py\", \"top-expensive-flows\", \"--input\", \"scripts/fixtures/omc_response_mode_cases.json\", \"--top-n\", \"5\"], text=True); data = json.loads(summary_out); summary = data[\"summary\"]; assert summary[\"operator_validation_status\"] == \"ready_to_close\"; assert summary[\"output_bloat_followup_needed\"] is False; assert summary[\"output_bloat_status_line\"] == \"output_bloat observed but not dominant; keep focus on wrong_next_step\"'",
             "label": "operator experience report",
             "timeout_sec": 30
           }

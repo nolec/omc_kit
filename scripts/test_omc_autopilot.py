@@ -535,6 +535,39 @@ class TestCmdRunDryRun:
         code = omc_autopilot.cmd_run(tmp_path, p, dry_run=True, resume_failed=False)
         assert code == 1
 
+    def test_failed_step_is_retried_when_task_opt_in_resume_failed(self, tmp_path):
+        tasks_dir = tmp_path / ".omc" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task = {
+            "id": "task-opt-in-resume-failed",
+            "title": "태스크 opt-in 실패 재실행 테스트",
+            "executor": "auto",
+            "resume_failed": True,
+            "max_retries": 0,
+            "steps": [
+                {"id": "s1", "prompt": "재실행", "depends_on": [], "timeout_sec": 10},
+            ],
+        }
+        state_dir = tmp_path / ".omc" / "state" / "autopilot"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "task-opt-in-resume-failed.json").write_text(
+            json.dumps(
+                {
+                    "task_id": "task-opt-in-resume-failed",
+                    "status": "failed",
+                    "steps": {"s1": {"status": "failed"}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        p = tasks_dir / "task-opt-in-resume-failed.json"
+        p.write_text(json.dumps(task), encoding="utf-8")
+
+        code = omc_autopilot.cmd_run(tmp_path, p, dry_run=True, resume_failed=False)
+        assert code == 0
+        state = json.loads((state_dir / "task-opt-in-resume-failed.json").read_text(encoding="utf-8"))
+        assert state["steps"]["s1"]["status"] == "completed"
+
     def test_dry_run_dependency_error_is_messageized_and_returns_one(self, tmp_path, capsys):
         tasks_dir = tmp_path / ".omc" / "tasks"
         tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -581,6 +614,48 @@ class TestCmdRunRealExecution:
             code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
 
         assert code == 0
+
+    def test_non_dry_run_expect_only_step_skips_executor_and_runs_checks(self, tmp_path):
+        tasks_dir = tmp_path / ".omc" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task = {
+            "id": "expect-only-task",
+            "title": "Expect Only Task",
+            "executor": "auto",
+            "max_retries": 0,
+            "steps": [
+                {
+                    "id": "s1",
+                    "prompt": "검증만",
+                    "expect_only": True,
+                    "depends_on": [],
+                    "timeout_sec": 10,
+                    "expect": {"checks": [{"cmd": "echo ok", "label": "dummy"}]},
+                },
+            ],
+        }
+        task_file = tasks_dir / "expect-only-task.json"
+        task_file.write_text(json.dumps(task), encoding="utf-8")
+
+        with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
+            omc_autopilot,
+            "_run_step",
+            side_effect=AssertionError("executor should not be called for expect_only step"),
+        ), patch.object(
+            omc_autopilot,
+            "_run_expect_checks",
+            return_value=[{"label": "dummy", "ok": True}],
+        ):
+            code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
+
+        assert code == 0
+        saved = json.loads(
+            (tmp_path / ".omc" / "state" / "autopilot" / "expect-only-task.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert saved["status"] == "completed"
+        assert saved["steps"]["s1"]["status"] == "completed"
 
     def test_real_run_persists_running_state_before_step_execution(self, tmp_path):
         tasks_dir = tmp_path / ".omc" / "tasks"
@@ -1040,6 +1115,22 @@ def test_build_benchmark_report_explicitly_marks_invalid_started_at():
     )
     assert report["data_quality_status"] == "invalid_started_at"
     assert report["duration_sec"] is None
+
+
+@pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
+def test_build_benchmark_report_preserves_operational_validation_metadata():
+    report = omc_autopilot._build_benchmark_report(
+        {
+            "status": "completed",
+            "started_at": "2026-07-05T18:14:23Z",
+            "finished_at": "2026-07-05T18:41:06Z",
+            "operational_validation_stage": "operator_experience_validation",
+            "operational_validation_goal": "validate_operator_experience_explanatory_power",
+            "steps": {},
+        }
+    )
+    assert report["operational_validation_stage"] == "operator_experience_validation"
+    assert report["operational_validation_goal"] == "validate_operator_experience_explanatory_power"
 
 
 @pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")

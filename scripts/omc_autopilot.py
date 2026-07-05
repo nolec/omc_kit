@@ -820,6 +820,7 @@ def cmd_run(
     executor_pref = task.get("executor", "auto")
     max_retries = int(task.get("max_retries", _DEFAULT_MAX_RETRIES))
     completion_requires_real_runs = bool(task.get("completion_requires_real_runs") is True)
+    effective_resume_failed = resume_failed or bool(task.get("resume_failed") is True)
     steps_raw = task.get("steps", [])
 
     if not steps_raw:
@@ -889,9 +890,9 @@ def cmd_run(
 
         # 실패 스텝 재실행 정책:
         # - 기본값(False): 이전 실패 상태를 유지(기존 동작)
-        # - resume_failed=True: 이전 실패 스텝 재실행
+        # - resume_failed=True 또는 task.resume_failed=True: 이전 실패 스텝 재실행
         if state["steps"].get(sid, {}).get("status") == "failed":
-            if not resume_failed:
+            if not effective_resume_failed:
                 print(f"  [SKIP] {sid}: {step_title} (이전 실패 — 재실행 없음)")
                 failed_count += 1
                 continue
@@ -955,6 +956,9 @@ def cmd_run(
             if dry_run:
                 print(f"  [DRY-RUN] 스텝 실행 시뮬레이션 (attempt {attempt})")
                 rc, output = 0, "[DRY-RUN] 시뮬레이션 성공"
+            elif bool(step.get("expect_only") is True):
+                print(f"  실행 생략 (attempt {attempt}/{max_retries + 1}) — expect_only")
+                rc, output, cost_info, step_runtime = 0, "[EXPECT-ONLY] executor skipped", None, None
             else:
                 if last_failures:
                     print(f"  재시도 (attempt {attempt}) — 이전 실패 컨텍스트 주입됨")
@@ -1366,6 +1370,8 @@ def _build_benchmark_report(data: dict) -> dict:
         "mode": data.get("mode"),
         "executor": data.get("executor"),
         "branch": data.get("branch"),
+        "operational_validation_stage": data.get("operational_validation_stage"),
+        "operational_validation_goal": data.get("operational_validation_goal"),
         "started_at": data.get("started_at"),
         "finished_at": data.get("finished_at"),
         "duration_sec": duration_sec,
