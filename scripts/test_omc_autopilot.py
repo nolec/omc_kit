@@ -314,6 +314,8 @@ class TestCmdRunDryRun:
             "title": "Observed Run Collection",
             "executor": "auto",
             "completion_requires_real_runs": True,
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "baseline->candidate",
             "max_retries": 0,
             "steps": [
                 {"id": "s1", "prompt": "실행", "depends_on": [], "timeout_sec": 10},
@@ -342,6 +344,8 @@ class TestCmdRunDryRun:
             "title": "Observed Run Collection",
             "executor": "auto",
             "completion_requires_real_runs": True,
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "baseline->candidate",
             "max_retries": 0,
             "steps": [
                 {"id": "s1", "prompt": "실행", "depends_on": [], "timeout_sec": 10},
@@ -577,6 +581,44 @@ class TestCmdRunRealExecution:
             code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
 
         assert code == 0
+
+    def test_real_run_persists_running_state_before_step_execution(self, tmp_path):
+        tasks_dir = tmp_path / ".omc" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task = {
+            "id": "running-state-task",
+            "title": "Running State Task",
+            "executor": "auto",
+            "max_retries": 0,
+            "steps": [
+                {"id": "s1", "prompt": "실행", "depends_on": [], "timeout_sec": 10},
+            ],
+        }
+        task_file = tasks_dir / "running-state-task.json"
+        task_file.write_text(json.dumps(task), encoding="utf-8")
+
+        def _fake_run_step(root, step, **kwargs):
+            state_path = tmp_path / ".omc" / "state" / "autopilot" / "running-state-task.json"
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+            assert saved["status"] == "running"
+            assert saved["steps"]["s1"]["status"] == "running"
+            return 0, "ok", None, None
+
+        with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
+            omc_autopilot,
+            "_run_step",
+            side_effect=_fake_run_step,
+        ):
+            code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
+
+        assert code == 0
+        saved = json.loads(
+            (
+                tmp_path / ".omc" / "state" / "autopilot" / "running-state-task.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert saved["status"] == "completed"
+        assert saved["steps"]["s1"]["status"] == "completed"
 
     def test_completion_requires_real_runs_fails_when_observed_dataset_does_not_increase(self, tmp_path):
         tasks_dir = tmp_path / ".omc" / "tasks"

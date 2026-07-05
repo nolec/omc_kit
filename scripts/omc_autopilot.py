@@ -864,6 +864,8 @@ def cmd_run(
         state["completion_requires_real_runs"] = completion_requires_real_runs
     if "steps" not in state:
         state["steps"] = {}
+    # Persist the task-level running state before any step blocks on external execution.
+    _save_state(root, task_id, state)
     observed_count_before: int | None = None
     if completion_requires_real_runs and not dry_run:
         observed_count_before = int(
@@ -931,6 +933,9 @@ def cmd_run(
         }
         if dry_run:
             step_state["simulated"] = True
+        # Persist the step-level running state before handing control to the executor.
+        state["steps"][sid] = dict(step_state)
+        _save_state(root, task_id, state)
 
         success = False
         last_failures: list[dict] = []  # 이전 attempt의 expect 실패 목록
