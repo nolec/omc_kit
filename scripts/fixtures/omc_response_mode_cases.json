@@ -428,6 +428,29 @@
       "evidence": "2026-07-05 실제 세션 요청문 추출: plan full 이후 critique 필요 여부 질문"
     },
     {
+      "request": "방금 거는 task 해도 되나",
+      "expected_mode": "answer-first",
+      "expected_next_action": "사용자 선택 대기",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: task로 바로 이어지는 흐름을 전제",
+        "user: 아니 지금은 진행 가능 여부 설명을 먼저 원함"
+      ],
+      "candidate_trace": [
+        "assistant: 지금 바로 task로 가도 되는 조건과 아닌 조건을 설명",
+        "assistant: 다음 스킬 자동 추천 없이 사용자 선택 대기로 멈춤"
+      ],
+      "baseline_output_chars": 270,
+      "candidate_output_chars": 284,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "사용자 선택 대기",
+      "source_type": "observed_request",
+      "evidence": "2026-07-06 실제 세션 요청문 추출: task 즉시 진행 가능 여부 질문"
+    },
+    {
       "request": "현재 git changes 변경 상태 리뷰 보고 정말 괜찮은 변경인지 체크하려고 하는데 무슨 스킬 써야해",
       "expected_mode": "review-first",
       "expected_next_action": "$omc-review",
