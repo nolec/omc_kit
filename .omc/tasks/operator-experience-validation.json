@@ -18,7 +18,7 @@
         "files": [],
         "checks": [
           {
-            "cmd": "python3 scripts/omc_skill_benchmark.py top-expensive-flows --limit 5",
+            "cmd": "python3 scripts/omc_skill_benchmark.py top-expensive-flows --input scripts/fixtures/omc_response_mode_cases.json --top-n 5",
             "label": "expensive flow summary",
             "timeout_sec": 30
           }
