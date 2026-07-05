@@ -3825,12 +3825,17 @@ def test_next_priority_input_builder_keeps_core_readiness_fields():
         blocker="insufficient_observed_samples",
         observed_reason_signals_present=False,
         baseline_comparison_status="deferred",
+        extension={"readiness_sample_gap": 19, "source_surface": "collected_summary"},
     )
 
-    assert decision_input == {
+    assert decision_input["core"] == {
         "blocker": "insufficient_observed_samples",
         "observed_reason_signals_present": False,
         "baseline_comparison_status": "deferred",
+    }
+    assert decision_input["extension"] == {
+        "readiness_sample_gap": 19,
+        "source_surface": "collected_summary",
     }
 
 
@@ -3841,6 +3846,7 @@ def test_next_priority_input_drives_sample_gap_and_ready_operator_cases():
         blocker="insufficient_observed_samples",
         observed_reason_signals_present=False,
         baseline_comparison_status="deferred",
+        extension={"source_surface": "collected_summary"},
     )
     sample_gap_recommendation, sample_gap_reason = mod._resolve_next_priority_from_input(sample_gap_input)
 
@@ -3848,6 +3854,7 @@ def test_next_priority_input_drives_sample_gap_and_ready_operator_cases():
         blocker="none",
         observed_reason_signals_present=True,
         baseline_comparison_status="ready",
+        extension={"source_surface": "report_decision"},
     )
     ready_operator_recommendation, ready_operator_reason = mod._resolve_next_priority_from_input(
         ready_operator_input
@@ -3866,12 +3873,31 @@ def test_next_priority_input_keeps_wrong_next_step_priority_ahead_of_output_bloa
         blocker="none",
         observed_reason_signals_present=True,
         baseline_comparison_status="ready",
+        extension={"dominant_flow_kind": "wrong_next_step"},
     )
     recommendation, reason = mod._resolve_next_priority_from_input(wrong_next_step_input)
 
     assert recommendation != "compress_operator_outputs"
     assert recommendation == "validate_operator_bottlenecks_from_observed_runs"
     assert reason == "reason signals observed in ready dataset"
+
+
+def test_next_priority_input_core_is_stable_without_extension_fields():
+    mod = _load_module()
+
+    decision_input = mod._build_next_priority_input(
+        blocker="insufficient_policy_pairs",
+        observed_reason_signals_present=False,
+        baseline_comparison_status="deferred",
+        extension={"readiness_policy_pair_count": 1, "source_surface": "report_decision"},
+    )
+
+    assert set(decision_input["core"].keys()) == {
+        "blocker",
+        "observed_reason_signals_present",
+        "baseline_comparison_status",
+    }
+    assert "readiness_policy_pair_count" not in decision_input["core"]
 
 
 def test_response_mode_fixture_observed_request_case_affects_next_action_accuracy():
