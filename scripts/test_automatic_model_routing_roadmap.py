@@ -98,4 +98,8 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "telemetry report 정리 2차 - 완료" in text
     assert "정책 비교 리포트는 1차 자동화가 들어갔고, benchmark/report 출력도 비교 가능한 형태로 정리됐다." in text
     assert "next-action 품질 보강 3차 - 완료" in text
+    assert "### 운영 유지 체크포인트" in text
+    assert "dry-run completion은 운영 완료 샘플에 포함하지 않는다" in text
+    assert "`operational_validation_readiness=start-ready`가 overview / collected summary / decision surface에서 같이 보여야 한다" in text
+    assert "`next_priority_recommendation`과 `next_priority_reason`은 ready 이후에도 operator follow-up 문맥을 잃지 않아야 한다" in text
     assert "`escalation_policy`를 V3 승격 엔진과 연결" not in text
