@@ -289,6 +289,8 @@ def test_resolve_task_routing_includes_reason_summary_for_plan_work() -> None:
     )
 
     assert routing["model_profile"] == "mini_high"
+    assert routing["recommended_policy_profile"] == "balanced"
+    assert routing["policy_confidence"] == "high"
     assert routing["routing_reason_summary"] == "plan/review/investigate work prefers broader context"
     assert routing["routing_reason_codes"] == ["plan_or_review_work"]
 
@@ -307,8 +309,56 @@ def test_resolve_task_routing_includes_high_risk_reason_summary() -> None:
     )
 
     assert routing["model_profile"] == "full_default"
+    assert routing["recommended_policy_profile"] == "quality_first"
+    assert routing["policy_confidence"] == "high"
     assert routing["routing_reason_summary"] == "high risk changes force full model"
     assert routing["routing_reason_codes"] == ["high_risk"]
+
+
+def test_resolve_task_routing_uses_cost_saver_only_for_explicit_lightweight_cases() -> None:
+    routing = omc_exec.resolve_task_routing(
+        task_kind="task",
+        request_text="문구 한 줄 수정",
+        retry_count=0,
+        touched_files=["src/constants/messages.ts"],
+        review_severity=None,
+        complexity="low",
+        risk="low",
+        sensitive_paths=[],
+        preferred_profile=None,
+    )
+
+    assert routing["model_profile"] == "mini_default"
+    assert routing["recommended_policy_profile"] == "cost_saver"
+    assert routing["policy_confidence"] == "high"
+
+
+def test_resolve_task_routing_keeps_policy_profile_aligned_with_default_model_profile() -> None:
+    routing = omc_exec.resolve_task_routing(
+        task_kind="task",
+        request_text="작은 수정",
+        retry_count=0,
+        touched_files=[],
+        review_severity=None,
+    )
+
+    assert routing["model_profile"] == "mini_default"
+    assert routing["recommended_policy_profile"] == "cost_saver"
+
+
+def test_resolve_policy_summary_accepts_benchmark_input_contract() -> None:
+    summary = omc_exec.resolve_policy_summary(
+        task_kind="benchmark",
+        policy_input={
+            "policy_comparison_summary": "policy comparison pending: need more policy pair coverage; reason signals observed",
+            "policy_comparison_bottleneck_summary": "policy comparison bottleneck: need more policy pair coverage",
+            "next_priority_reason": "need more policy pair coverage",
+        },
+    )
+
+    assert summary["recommended_policy_profile"] == "cost_saver"
+    assert summary["policy_reason_summary"] == "explicit lightweight case allows cost saver"
+    assert summary["policy_confidence"] == "high"
 
 
 def test_select_model_profile_uses_full_default_for_ship() -> None:

@@ -60,6 +60,16 @@ _ROUTING_REASON_SUMMARIES = {
     "default_lightweight": "default lightweight task stays on mini default",
 }
 
+_POLICY_REASON_SUMMARIES = {
+    "balanced_default": "balanced is the safe default",
+    "explicit_lightweight": "explicit lightweight case allows cost saver",
+    "ship_intent": "ship intent requires quality first",
+    "high_risk": "high risk work requires quality first",
+    "high_review_severity": "high review severity requires quality first",
+    "retry_escalation": "repeated retries require quality first",
+    "high_ambiguity_and_cost": "high ambiguity with high failure cost requires quality first",
+}
+
 
 def _normalize_text(value: str | None) -> str:
     return (value or "").strip().lower()
@@ -220,6 +230,127 @@ def _build_routing_decision(reason_code: str, model_profile: str) -> dict[str, o
     }
 
 
+def _resolve_policy_decision(
+    *,
+    task_kind: str,
+    request_text: str,
+    touched_files: list[str],
+    retry_count: int,
+    review_severity: str | None,
+    complexity: str | None = None,
+    risk: str | None = None,
+    sensitive_paths: list[str] | None = None,
+    ambiguity_level: str | None = None,
+    failure_cost: str | None = None,
+) -> dict[str, object]:
+    kind = _normalize_text(task_kind)
+    severity = _normalize_text(review_severity)
+    normalized_complexity = _normalize_text(complexity) or "medium"
+    normalized_risk = _normalize_text(risk) or "medium"
+    normalized_ambiguity = _normalize_text(ambiguity_level) or "low"
+    normalized_failure_cost = _normalize_text(failure_cost) or "medium"
+    effective_touched_files = [*touched_files, *[str(path) for path in (sensitive_paths or [])]]
+    touched_count = len(effective_touched_files)
+    has_sensitive_path = any(_is_sensitive_path(path) for path in effective_touched_files)
+    broader_signal = _has_broader_context_signal(request_text)
+    ship_intent = kind == "ship"
+
+    if ship_intent:
+        return _build_policy_decision("quality_first", "ship_intent", "high")
+    if normalized_risk == "high":
+        return _build_policy_decision("quality_first", "high_risk", "high")
+    if severity in {"major", "critical", "high"}:
+        return _build_policy_decision("quality_first", "high_review_severity", "high")
+    if retry_count >= 2:
+        return _build_policy_decision("quality_first", "retry_escalation", "high")
+    if normalized_ambiguity == "high" and normalized_failure_cost == "high":
+        return _build_policy_decision("quality_first", "high_ambiguity_and_cost", "medium")
+
+    if kind in {"plan", "review", "investigate"}:
+        return _build_policy_decision("balanced", "balanced_default", "high")
+    if normalized_complexity == "high":
+        return _build_policy_decision("balanced", "balanced_default", "high")
+    if touched_count >= 4:
+        return _build_policy_decision("balanced", "balanced_default", "high")
+    if has_sensitive_path:
+        return _build_policy_decision("balanced", "balanced_default", "high")
+    if broader_signal:
+        return _build_policy_decision("balanced", "balanced_default", "high")
+
+    is_explicit_lightweight = (
+        kind == "task"
+        and normalized_complexity == "low"
+        and normalized_risk == "low"
+        and severity == ""
+        and retry_count == 0
+        and touched_count < 4
+        and not has_sensitive_path
+        and not broader_signal
+        and not ship_intent
+    )
+    if is_explicit_lightweight:
+        return _build_policy_decision("cost_saver", "explicit_lightweight", "high")
+
+    return _build_policy_decision("cost_saver", "explicit_lightweight", "high")
+
+
+def _build_policy_decision(
+    profile: str,
+    reason_code: str,
+    confidence: str,
+) -> dict[str, object]:
+    return {
+        "recommended_policy_profile": profile,
+        "policy_reason_codes": [reason_code],
+        "policy_reason_summary": _POLICY_REASON_SUMMARIES.get(reason_code, reason_code.replace("_", " ")),
+        "policy_confidence": confidence,
+        "policy_override_allowed": confidence != "high",
+    }
+
+
+def build_policy_summary_input(
+    *,
+    policy_comparison_summary: str,
+    policy_comparison_bottleneck_summary: str,
+    next_priority_reason: str,
+) -> dict[str, str]:
+    return {
+        "policy_comparison_summary": policy_comparison_summary,
+        "policy_comparison_bottleneck_summary": policy_comparison_bottleneck_summary,
+        "next_priority_reason": next_priority_reason,
+    }
+
+
+def resolve_policy_summary(
+    *,
+    task_kind: str,
+    policy_input: dict[str, str],
+) -> dict[str, str]:
+    decision = _resolve_policy_decision(
+        task_kind=task_kind,
+        request_text="\n".join(
+            [
+                str(policy_input.get("policy_comparison_summary", "")),
+                str(policy_input.get("policy_comparison_bottleneck_summary", "")),
+                str(policy_input.get("next_priority_reason", "")),
+            ]
+        ),
+        touched_files=[],
+        retry_count=0,
+        review_severity=None,
+        complexity="medium",
+        risk="medium",
+        sensitive_paths=[],
+        ambiguity_level="medium",
+        failure_cost="medium",
+    )
+    return {
+        "recommended_policy_profile": str(decision["recommended_policy_profile"]),
+        "policy_reason_summary": str(decision["policy_reason_summary"]),
+        "policy_confidence": str(decision["policy_confidence"]),
+    }
+
+
 def resolve_task_routing(
     *,
     task_kind: str,
@@ -245,12 +376,27 @@ def resolve_task_routing(
         sensitive_paths=sensitive_paths,
         preferred_profile=preferred_profile,
     )
+    policy_decision = _resolve_policy_decision(
+        task_kind=normalized_kind,
+        request_text=request_text,
+        touched_files=normalized_files,
+        retry_count=retry_count,
+        review_severity=review_severity,
+        complexity=complexity,
+        risk=risk,
+        sensitive_paths=sensitive_paths,
+    )
     return {
         "task_kind": normalized_kind,
         "routing_policy": _resolve_routing_policy(),
         "model_profile": str(routing_decision["model_profile"]),
         "routing_reason_codes": list(routing_decision["routing_reason_codes"]),
         "routing_reason_summary": str(routing_decision["routing_reason_summary"]),
+        "recommended_policy_profile": str(policy_decision["recommended_policy_profile"]),
+        "policy_reason_codes": list(policy_decision["policy_reason_codes"]),
+        "policy_reason_summary": str(policy_decision["policy_reason_summary"]),
+        "policy_confidence": str(policy_decision["policy_confidence"]),
+        "policy_override_allowed": bool(policy_decision["policy_override_allowed"]),
     }
 
 

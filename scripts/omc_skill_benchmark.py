@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import sys
@@ -39,6 +40,47 @@ FLOW_KIND_PRIORITY = {
     "output_bloat": 1,
     "general_overhead": 0,
 }
+
+_OMC_EXEC_MODULE = None
+
+
+def _load_omc_exec_module():
+    global _OMC_EXEC_MODULE
+    if _OMC_EXEC_MODULE is not None:
+        return _OMC_EXEC_MODULE
+
+    script = Path(__file__).resolve().with_name("omc_exec.py")
+    spec = importlib.util.spec_from_file_location("omc_exec", str(script))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load omc_exec module from {script}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _OMC_EXEC_MODULE = module
+    return module
+
+
+def _resolve_benchmark_policy_summary(
+    *,
+    policy_comparison_summary: str,
+    policy_comparison_bottleneck_summary: str,
+    next_priority_reason: str,
+) -> dict[str, str]:
+    exec_module = _load_omc_exec_module()
+    policy_input = exec_module.build_policy_summary_input(
+        policy_comparison_summary=policy_comparison_summary,
+        policy_comparison_bottleneck_summary=policy_comparison_bottleneck_summary,
+        next_priority_reason=next_priority_reason,
+    )
+    decision = exec_module.resolve_policy_summary(
+        task_kind="benchmark",
+        policy_input=policy_input,
+    )
+    return {
+        "recommended_policy_profile": str(decision["recommended_policy_profile"]),
+        "policy_reason_summary": str(decision["policy_reason_summary"]),
+        "policy_confidence": str(decision["policy_confidence"]),
+    }
 
 
 def _readiness_deferred_reason_map() -> dict[str, str]:
@@ -757,6 +799,11 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
     next_priority_recommendation, next_priority_reason = _resolve_next_priority_from_input(
         next_priority_input
     )
+    policy_summary = _resolve_benchmark_policy_summary(
+        policy_comparison_summary=policy_comparison_summary,
+        policy_comparison_bottleneck_summary=bottleneck_summary,
+        next_priority_reason=next_priority_reason,
+    )
 
     return {
         "verdict": verdict,
@@ -773,8 +820,14 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         "baseline_comparison_line": baseline_comparison_line,
         "policy_comparison_summary": policy_comparison_summary,
         "policy_comparison_bottleneck_summary": bottleneck_summary,
+        "recommended_policy_profile": policy_summary["recommended_policy_profile"],
+        "policy_reason_summary": policy_summary["policy_reason_summary"],
+        "policy_confidence": policy_summary["policy_confidence"],
         "next_priority_recommendation": next_priority_recommendation,
         "next_priority_reason": next_priority_reason,
+        "next_priority_input_source_surface": str(
+            next_priority_input.get("extension", {}).get("source_surface") or ""
+        ),
     }
 
 
@@ -1963,6 +2016,9 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             "policy_comparison_bottleneck_summary": policy_comparison_bottleneck_summary,
             "next_priority_recommendation": next_priority_recommendation,
             "next_priority_reason": next_priority_reason,
+            "next_priority_input_source_surface": str(
+                next_priority_input.get("extension", {}).get("source_surface") or ""
+            ),
         },
     }
 

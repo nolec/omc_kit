@@ -21,6 +21,15 @@ def _load_module():
     return module
 
 
+def _load_exec_module():
+    script = ROOT / "scripts" / "omc_exec.py"
+    spec = importlib.util.spec_from_file_location("omc_exec", str(script))
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def _write_observed_run(runs_root: Path, run_id: str, payload: dict[str, object]) -> None:
     run_dir = runs_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -3898,6 +3907,77 @@ def test_next_priority_input_core_is_stable_without_extension_fields():
         "baseline_comparison_status",
     }
     assert "readiness_policy_pair_count" not in decision_input["core"]
+
+
+def test_collected_summary_surfaces_next_priority_input_source_surface(tmp_path: Path):
+    mod = _load_module()
+
+    runs_root = tmp_path / ".omc" / "runs"
+    run_dir = runs_root / "20260705T000000-test"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "result.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "steps": {
+                    "baseline": {
+                        "executor": "codex",
+                        "status": "completed",
+                        "response_mode": "answer-first",
+                        "final_output": "다음 액션: $omc-task",
+                    },
+                    "candidate": {
+                        "executor": "codex",
+                        "status": "completed",
+                        "response_mode": "review-first",
+                        "final_output": "다음 액션: $omc-review",
+                    },
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    collected = mod.collect_observed_response_mode_cases(runs_root)
+
+    assert collected["summary"]["next_priority_input_source_surface"] == "collected_summary"
+
+
+def test_report_decision_surfaces_next_priority_input_source_surface():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+
+    report = mod.compare_response_modes(cases)
+
+    assert report["decision"]["next_priority_input_source_surface"] == "report_decision"
+
+
+def test_report_decision_surfaces_policy_profile_summary_fields():
+    mod = _load_module()
+    exec_mod = _load_exec_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+
+    report = mod.compare_response_modes(cases)
+    policy_input = exec_mod.build_policy_summary_input(
+        policy_comparison_summary=str(report["decision"]["policy_comparison_summary"]),
+        policy_comparison_bottleneck_summary=str(
+            report["decision"]["policy_comparison_bottleneck_summary"]
+        ),
+        next_priority_reason=str(report["decision"]["next_priority_reason"]),
+    )
+    expected = exec_mod.resolve_policy_summary(
+        task_kind="benchmark",
+        policy_input=policy_input,
+    )
+
+    assert report["decision"]["recommended_policy_profile"] == expected["recommended_policy_profile"]
+    assert report["decision"]["policy_reason_summary"] == expected["policy_reason_summary"]
+    assert report["decision"]["policy_confidence"] == expected["policy_confidence"]
 
 
 def test_response_mode_fixture_observed_request_case_affects_next_action_accuracy():
