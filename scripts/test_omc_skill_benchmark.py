@@ -3818,6 +3818,62 @@ def test_collected_summary_recommends_input_stabilization_when_baseline_ready_fl
     assert next_priority_reason == "baseline comparison input is not ready"
 
 
+def test_next_priority_input_builder_keeps_core_readiness_fields():
+    mod = _load_module()
+
+    decision_input = mod._build_next_priority_input(
+        blocker="insufficient_observed_samples",
+        observed_reason_signals_present=False,
+        baseline_comparison_status="deferred",
+    )
+
+    assert decision_input == {
+        "blocker": "insufficient_observed_samples",
+        "observed_reason_signals_present": False,
+        "baseline_comparison_status": "deferred",
+    }
+
+
+def test_next_priority_input_drives_sample_gap_and_ready_operator_cases():
+    mod = _load_module()
+
+    sample_gap_input = mod._build_next_priority_input(
+        blocker="insufficient_observed_samples",
+        observed_reason_signals_present=False,
+        baseline_comparison_status="deferred",
+    )
+    sample_gap_recommendation, sample_gap_reason = mod._resolve_next_priority_from_input(sample_gap_input)
+
+    ready_operator_input = mod._build_next_priority_input(
+        blocker="none",
+        observed_reason_signals_present=True,
+        baseline_comparison_status="ready",
+    )
+    ready_operator_recommendation, ready_operator_reason = mod._resolve_next_priority_from_input(
+        ready_operator_input
+    )
+
+    assert sample_gap_recommendation == "collect_more_observed_runs"
+    assert sample_gap_reason == "need more observed samples"
+    assert ready_operator_recommendation == "validate_operator_bottlenecks_from_observed_runs"
+    assert ready_operator_reason == "reason signals observed in ready dataset"
+
+
+def test_next_priority_input_keeps_wrong_next_step_priority_ahead_of_output_bloat_followup():
+    mod = _load_module()
+
+    wrong_next_step_input = mod._build_next_priority_input(
+        blocker="none",
+        observed_reason_signals_present=True,
+        baseline_comparison_status="ready",
+    )
+    recommendation, reason = mod._resolve_next_priority_from_input(wrong_next_step_input)
+
+    assert recommendation != "compress_operator_outputs"
+    assert recommendation == "validate_operator_bottlenecks_from_observed_runs"
+    assert reason == "reason signals observed in ready dataset"
+
+
 def test_response_mode_fixture_observed_request_case_affects_next_action_accuracy():
     mod = _load_module()
 

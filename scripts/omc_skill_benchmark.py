@@ -100,6 +100,27 @@ def _resolve_next_priority(
     return "maintain_policy_comparison_confidence", "readiness requirements are currently satisfied"
 
 
+def _build_next_priority_input(
+    *,
+    blocker: str,
+    observed_reason_signals_present: bool,
+    baseline_comparison_status: str,
+) -> dict[str, object]:
+    return {
+        "blocker": blocker,
+        "observed_reason_signals_present": observed_reason_signals_present,
+        "baseline_comparison_status": baseline_comparison_status,
+    }
+
+
+def _resolve_next_priority_from_input(decision_input: dict[str, object]) -> tuple[str, str]:
+    return _resolve_next_priority(
+        blocker=str(decision_input.get("blocker") or ""),
+        observed_reason_signals_present=bool(decision_input.get("observed_reason_signals_present")),
+        baseline_comparison_status=str(decision_input.get("baseline_comparison_status") or ""),
+    )
+
+
 def _has_observed_reason_signal(case: dict[str, object]) -> bool:
     if str(case.get("source_type") or "").strip() != "observed_request":
         return False
@@ -717,10 +738,13 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
     if observed_reason_signals_present:
         policy_comparison_summary += "; reason signals observed"
 
-    next_priority_recommendation, next_priority_reason = _resolve_next_priority(
+    next_priority_input = _build_next_priority_input(
         blocker=next_kpi_blocker,
         observed_reason_signals_present=observed_reason_signals_present,
         baseline_comparison_status=baseline_comparison_status,
+    )
+    next_priority_recommendation, next_priority_reason = _resolve_next_priority_from_input(
+        next_priority_input
     )
 
     return {
@@ -1852,10 +1876,13 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
                 f"; rejected observed_output={rejected_observed_output_case_count} "
                 f"({','.join(reason_parts)})"
             )
-    next_priority_recommendation, next_priority_reason = _resolve_next_priority(
+    next_priority_input = _build_next_priority_input(
         blocker=readiness_blocker,
         observed_reason_signals_present=observed_reason_signals_present,
         baseline_comparison_status=baseline_comparison_status,
+    )
+    next_priority_recommendation, next_priority_reason = _resolve_next_priority_from_input(
+        next_priority_input
     )
     policy_comparison_summary = (
         "policy comparison ready: baseline comparison wording can be enabled"
