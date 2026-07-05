@@ -103,4 +103,17 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "`operational_validation_readiness=start-ready`가 overview / collected summary / decision surface에서 같이 보여야 한다" in text
     assert "`next_priority_recommendation`과 `next_priority_reason`은 ready 이후에도 operator follow-up 문맥을 잃지 않아야 한다" in text
     assert "`wrong_next_step`이 주 병목이 아니면 `next_priority_recommendation`은 `compress_operator_outputs`로 바로 바뀌지 않는다" in text
+    assert "## V5 후보 트랙 구체화" in text
+    assert "### 1. Next-step Decision Engine 일반화" in text
+    assert "### 2. Cost-Quality Policy Layer" in text
+    assert "### 3. Executor Recommendation Surface" in text
+    assert "## Fugu식 기능 MVP 설계" in text
+    assert "### MVP 1. Decision Engine Core" in text
+    assert "### MVP 2. Policy Profile 3종" in text
+    assert "### MVP 3. Executor Recommendation Surface" in text
+    assert "## 토큰 대비 효과 점수표" in text
+    assert "| Decision Engine 일반화 | 5 | 3 | 4 | 2 | 가장 먼저 |" in text
+    assert "1. `Decision Engine 일반화`" in text
+    assert "2. `Cost-Quality Policy Layer`" in text
+    assert "3. `Executor Recommendation Surface`" in text
     assert "`escalation_policy`를 V3 승격 엔진과 연결" not in text
