@@ -382,6 +382,29 @@
       "evidence": "2026-07-02 실제 세션 요청문 추출: plan 이후 task 선언 경고 이유 설명 요청"
     },
     {
+      "request": "추천이 task야 critique야",
+      "expected_mode": "answer-first",
+      "expected_next_action": "사용자 선택 대기",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: 바로 task 진입 전제로 설명",
+        "user: 아니 추천 기준 비교 설명을 원함"
+      ],
+      "candidate_trace": [
+        "assistant: task와 critique 추천 조건 차이를 비교 설명",
+        "assistant: 다음 스킬 자동 추천 없이 사용자 선택 대기로 멈춤"
+      ],
+      "baseline_output_chars": 274,
+      "candidate_output_chars": 288,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "사용자 선택 대기",
+      "source_type": "observed_request",
+      "evidence": "2026-07-05 실제 세션 요청문 추출: 추천 스킬 판정 기준 설명 요청"
+    },
+    {
       "request": "현재 git changes 변경 상태 리뷰 보고 정말 괜찮은 변경인지 체크하려고 하는데 무슨 스킬 써야해",
       "expected_mode": "review-first",
       "expected_next_action": "$omc-review",
