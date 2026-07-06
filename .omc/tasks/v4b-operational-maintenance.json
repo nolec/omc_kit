@@ -2,9 +2,12 @@
   "id": "v4b-operational-maintenance",
   "title": "V4-B Operational Maintenance",
   "executor": "auto",
+  "resume_failed": true,
   "require_clean_scope": true,
   "operational_validation_stage": "v4b_maintenance",
   "operational_validation_goal": "maintain_v4b_operational_confidence",
+  "benchmark_source_type": "observed_request",
+  "policy_pair": "baseline->candidate",
   "completion_requires_real_runs": true,
   "max_retries": 0,
   "steps": [
@@ -12,6 +15,7 @@
       "id": "collect_fresh_observed_runs",
       "title": "Collect Fresh Observed Runs",
       "prompt": "Gather fresh observed_request and observed_output runs from the current project context. Focus on preserving reroute rate, retry-to-success rate, and cost per successful task evidence without inflating readiness with neutral seeds.",
+      "expect_only": true,
       "depends_on": [],
       "timeout_sec": 300,
       "expect": {
@@ -29,6 +33,7 @@
       "id": "verify_ready_surfaces_hold",
       "title": "Verify Ready Surfaces Hold",
       "prompt": "Verify that overview, collected summary, and decision surfaces still agree on readiness, baseline comparison status, blocker, and next priority after fresh observed runs are added. Report only the stable fields and any drift.",
+      "expect_only": true,
       "depends_on": [
         "collect_fresh_observed_runs"
       ],
