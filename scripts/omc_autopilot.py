@@ -281,6 +281,52 @@ def _save_state(root: Path, task_id: str, state: dict) -> None:
     os.replace(temp_path, target)
 
 
+def _recover_running_task_state_for_restart(state: dict) -> dict:
+    """Convert only stale running task state into a fresh rerun baseline.
+
+    A previous autopilot invocation may exit before it writes pipeline result or
+    terminal status, leaving only the task state file in `running`. When a user
+    explicitly reruns the same task, keep an audit trace but reset task-level
+    timestamps so the new invocation is not reported as the old stale run.
+    """
+    if str(state.get("status") or "").lower() != "running":
+        return state
+
+    pid = state.get("pid")
+    pid_state = _is_pid_running(pid if isinstance(pid, int) else None)
+    if pid_state is True:
+        raise RuntimeError(f"task already running with live pid: {pid}")
+    if pid_state is None:
+        raise RuntimeError(f"task running state exists but pid liveness is unknown: {pid}")
+    stale_reason = (
+        f"dead pid before re-run: {pid}"
+        if isinstance(pid, int) and pid > 0
+        else "missing pid before re-run"
+    )
+
+    recovered_at = _now()
+    steps = state.get("steps")
+    if not isinstance(steps, dict):
+        steps = {}
+
+    for step_state in steps.values():
+        if isinstance(step_state, dict) and str(step_state.get("status") or "").lower() == "running":
+            step_state["status"] = "hold"
+            step_state["stale_reason"] = stale_reason
+
+    steps["stale_recovery"] = {
+        "status": "auto_hold",
+        "reason": stale_reason,
+        "recovered_at": recovered_at,
+    }
+    state["steps"] = steps
+    state["previous_status"] = "running"
+    state["stale_reason"] = stale_reason
+    state["started_at"] = recovered_at
+    state["finished_at"] = None
+    return state
+
+
 def _safe_current_branch(root: Path) -> str:
     try:
         proc = subprocess.run(
@@ -848,16 +894,22 @@ def cmd_run(
         print(f"[AUTOPILOT] 태스크 의존성 오류: {exc}")
         return 1
 
+    try:
+        state = _recover_running_task_state_for_restart(_load_state(root, task_id))
+    except RuntimeError as exc:
+        print(f"[AUTOPILOT] {exc}")
+        return 1
+
     print(f"\n[AUTOPILOT] ▶ 태스크 시작: {title}")
     print(f"           executor={executor}  스텝={len(steps)}개  max_retries={max_retries}")
     if dry_run:
         print("           [DRY-RUN] 실제 실행 없이 계획만 출력합니다.\n")
 
-    state = _load_state(root, task_id)
     state["task_id"] = task_id
     state["task_file"] = str(task_file.relative_to(root)) if task_file.is_relative_to(root) else str(task_file)
     state["title"] = title
     state["executor"] = executor
+    state["pid"] = os.getpid()
     state["started_at"] = state.get("started_at") or _now()
     state["status"] = "running"
     state["simulated"] = bool(dry_run)
@@ -932,6 +984,11 @@ def cmd_run(
             "started_at": _now(),
             "attempt": 0,
         }
+        previous_step_state = state["steps"].get(sid, {})
+        if isinstance(previous_step_state, dict):
+            previous_stale_reason = previous_step_state.get("stale_reason")
+            if isinstance(previous_stale_reason, str) and previous_stale_reason.strip():
+                step_state["stale_reason"] = previous_stale_reason
         if dry_run:
             step_state["simulated"] = True
         # Persist the step-level running state before handing control to the executor.

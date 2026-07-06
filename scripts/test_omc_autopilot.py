@@ -695,6 +695,173 @@ class TestCmdRunRealExecution:
         assert saved["status"] == "completed"
         assert saved["steps"]["s1"]["status"] == "completed"
 
+    def test_real_run_recovers_legacy_running_state_before_reexecution(self, tmp_path):
+        tasks_dir = tmp_path / ".omc" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task = {
+            "id": "legacy-running-task",
+            "title": "Legacy Running Task",
+            "executor": "auto",
+            "max_retries": 0,
+            "steps": [
+                {"id": "s1", "prompt": "실행", "depends_on": [], "timeout_sec": 10},
+            ],
+        }
+        task_file = tasks_dir / "legacy-running-task.json"
+        task_file.write_text(json.dumps(task), encoding="utf-8")
+
+        state_dir = tmp_path / ".omc" / "state" / "autopilot"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        state_path = state_dir / "legacy-running-task.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "task_id": "legacy-running-task",
+                    "status": "running",
+                    "started_at": "2026-07-05T23:59:54Z",
+                    "steps": {
+                        "s1": {
+                            "status": "running",
+                            "started_at": "2026-07-05T23:59:54Z",
+                            "attempt": 0,
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def _fake_run_step(root, step, **kwargs):
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+            assert saved["status"] == "running"
+            assert saved["started_at"] != "2026-07-05T23:59:54Z"
+            assert saved["steps"]["stale_recovery"]["status"] == "auto_hold"
+            assert saved["steps"]["stale_recovery"]["reason"] == "missing pid before re-run"
+            assert saved["steps"]["s1"]["status"] == "running"
+            assert saved["steps"]["s1"]["stale_reason"] == "missing pid before re-run"
+            return 0, "ok", None, None
+
+        with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
+            omc_autopilot,
+            "_run_step",
+            side_effect=_fake_run_step,
+        ):
+            code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
+
+        assert code == 0
+        saved = json.loads(state_path.read_text(encoding="utf-8"))
+        assert saved["status"] == "completed"
+        assert saved["steps"]["stale_recovery"]["status"] == "auto_hold"
+        assert saved["steps"]["stale_recovery"]["reason"] == "missing pid before re-run"
+        assert saved["steps"]["s1"]["status"] == "completed"
+
+    def test_real_run_recovers_dead_pid_running_state_with_distinct_reason(self, tmp_path):
+        tasks_dir = tmp_path / ".omc" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task = {
+            "id": "dead-pid-task",
+            "title": "Dead Pid Task",
+            "executor": "auto",
+            "max_retries": 0,
+            "steps": [
+                {"id": "s1", "prompt": "실행", "depends_on": [], "timeout_sec": 10},
+            ],
+        }
+        task_file = tasks_dir / "dead-pid-task.json"
+        task_file.write_text(json.dumps(task), encoding="utf-8")
+
+        state_dir = tmp_path / ".omc" / "state" / "autopilot"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        state_path = state_dir / "dead-pid-task.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "task_id": "dead-pid-task",
+                    "status": "running",
+                    "pid": 424242,
+                    "started_at": "2026-07-05T23:59:54Z",
+                    "steps": {
+                        "s1": {
+                            "status": "running",
+                            "started_at": "2026-07-05T23:59:54Z",
+                            "attempt": 0,
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def _fake_run_step(root, step, **kwargs):
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+            assert saved["steps"]["stale_recovery"]["reason"] == "dead pid before re-run: 424242"
+            assert saved["steps"]["s1"]["stale_reason"] == "dead pid before re-run: 424242"
+            return 0, "ok", None, None
+
+        with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
+            omc_autopilot,
+            "_is_pid_running",
+            return_value=False,
+        ), patch.object(
+            omc_autopilot,
+            "_run_step",
+            side_effect=_fake_run_step,
+        ):
+            code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
+
+        assert code == 0
+        saved = json.loads(state_path.read_text(encoding="utf-8"))
+        assert saved["status"] == "completed"
+        assert saved["steps"]["stale_recovery"]["reason"] == "dead pid before re-run: 424242"
+
+    def test_real_run_blocks_when_existing_running_state_pid_is_alive(self, tmp_path):
+        tasks_dir = tmp_path / ".omc" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task = {
+            "id": "live-running-task",
+            "title": "Live Running Task",
+            "executor": "auto",
+            "max_retries": 0,
+            "steps": [
+                {"id": "s1", "prompt": "실행", "depends_on": [], "timeout_sec": 10},
+            ],
+        }
+        task_file = tasks_dir / "live-running-task.json"
+        task_file.write_text(json.dumps(task), encoding="utf-8")
+
+        state_dir = tmp_path / ".omc" / "state" / "autopilot"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        state_path = state_dir / "live-running-task.json"
+        original = {
+            "task_id": "live-running-task",
+            "status": "running",
+            "pid": 424242,
+            "started_at": "2026-07-05T23:59:54Z",
+            "steps": {
+                "s1": {
+                    "status": "running",
+                    "started_at": "2026-07-05T23:59:54Z",
+                    "attempt": 0,
+                }
+            },
+        }
+        state_path.write_text(json.dumps(original), encoding="utf-8")
+
+        with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
+            omc_autopilot,
+            "_is_pid_running",
+            return_value=True,
+        ), patch.object(
+            omc_autopilot,
+            "_run_step",
+            side_effect=AssertionError("executor should not run while existing pid is alive"),
+        ):
+            code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
+
+        assert code == 1
+        saved = json.loads(state_path.read_text(encoding="utf-8"))
+        assert saved == original
+
     def test_completion_requires_real_runs_fails_when_observed_dataset_does_not_increase(self, tmp_path):
         tasks_dir = tmp_path / ".omc" / "tasks"
         tasks_dir.mkdir(parents=True, exist_ok=True)
