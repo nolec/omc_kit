@@ -876,11 +876,15 @@ def test_collect_observed_response_mode_cases_builds_neutral_seed_cases_from_run
     assert "task=observed-collect" in first["evidence"]
     assert first["baseline_output_chars"] == first["candidate_output_chars"]
     assert first["baseline_task_start_delay"] == first["candidate_task_start_delay"] == 0
+    assert "expected_next_action" not in first
+    assert "baseline_next_action" not in first
+    assert "candidate_next_action" not in first
 
     assert second["expected_mode"] == "review-first"
     assert second["baseline_policy"] == "candidate"
     assert second["candidate_policy"] == "baseline"
     assert second["source_type"] == "observed_request"
+    assert "expected_next_action" not in second
 
 
 def test_collect_observed_response_modes_cli_outputs_seed_case_json(tmp_path: Path):

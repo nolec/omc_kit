@@ -15,6 +15,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_utils  # noqa: E402
+from omc_decision_input import (  # noqa: E402
+    build_status_followup_input,
+    resolve_status_followup_from_input,
+)
 
 _LOCK_REGISTRY: dict[str, dict[str, object]] = {}
 
@@ -527,15 +531,12 @@ def _failed_run_summary(entry: dict[str, object], *, request_kind: str) -> tuple
     else:
         reason = _excerpt(str(entry.get("progress_message", "failed")), 120)
 
-    next_steps = {
-        "debug": "실패 지점 로그와 재현 경로를 먼저 다시 확인",
-        "review": "검토 범위와 실패한 체크 포인트를 먼저 다시 고정",
-        "design": "가정한 계약과 실제 구현/입력 조건 차이를 먼저 점검",
-        "domain": "비용 가정, 검증 구간, 실행 금지 조건부터 다시 점검",
-        "research": "입력 범위와 필요한 근거 형식을 먼저 다시 고정",
-        "build": "실패 지점과 완료 조건 차이를 먼저 다시 확인",
-    }
-    return reason, next_steps.get(request_kind, next_steps["build"])
+    decision_input = build_status_followup_input(
+        request_kind=request_kind,
+        returncode=returncode if isinstance(returncode, int) else None,
+    )
+    _, next_step = resolve_status_followup_from_input(decision_input)
+    return reason, next_step
 
 
 def _run_outcome_line(entry: dict[str, object]) -> str:

@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+import importlib.util
 from pathlib import Path
 
 
@@ -21,6 +22,24 @@ def _run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str
 
 def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_state_module():
+    module_path = ROOT / "scripts" / "omc_state.py"
+    spec = importlib.util.spec_from_file_location("omc_state_test_module", module_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_decision_input_module():
+    module_path = ROOT / "scripts" / "omc_decision_input.py"
+    spec = importlib.util.spec_from_file_location("omc_decision_input_test_module", module_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run_guard(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -635,3 +654,23 @@ def test_status_calls_out_ship_blocker_when_commit_scope_is_empty(tmp_path: Path
     assert "현재 커밋 범위가 없어 ship 불가" in status.stdout, status.stdout
     assert "다음 조치 힌트" in status.stdout, status.stdout
     assert "먼저 현재 커밋 범위를 만들어야 함" in status.stdout, status.stdout
+
+
+def test_failed_run_summary_uses_shared_status_followup_input():
+    mod = _load_state_module()
+    decision_input_mod = _load_decision_input_module()
+
+    decision_input = decision_input_mod.build_status_followup_input(
+        request_kind="review",
+        returncode=1,
+    )
+    expected = decision_input_mod.resolve_status_followup_from_input(decision_input)
+    reason, next_step = mod._failed_run_summary(
+        {
+            "progress_message": "failed",
+            "result": {"returncode": 1},
+        },
+        request_kind="review",
+    )
+
+    assert (reason, next_step) == expected

@@ -61,3 +61,29 @@ def test_resolve_next_priority_returns_sample_gap_and_ready_operator_cases():
         "validate_operator_bottlenecks_from_observed_runs",
         "reason signals observed in ready dataset",
     )
+
+
+def test_plan_followup_input_prefers_plan_for_roadmap_sync_and_progress_check():
+    decision_input = mod.build_plan_followup_input(
+        request_text="현재 로드맵 최신화하고 어디까지 진행된건지 체크해"
+    )
+
+    assert decision_input["core"]["roadmap_sync_intent_present"] is True
+    assert decision_input["core"]["progress_check_intent_present"] is True
+    assert mod.resolve_plan_followup_from_input(decision_input) == (
+        "$omc-plan",
+        "roadmap sync should align before the next implementation step",
+    )
+
+
+def test_plan_followup_input_keeps_plan_review_question_in_user_selection_wait():
+    decision_input = mod.build_plan_followup_input(
+        request_text="이거 클로드코드로 실행한건데 이거 제대로 진행된 거 맞아? plan"
+    )
+
+    assert decision_input["core"]["contains_plan_wording"] is True
+    assert decision_input["core"]["contains_question"] is True
+    assert mod.resolve_plan_followup_from_input(decision_input) == (
+        "사용자 선택 대기",
+        "plan wording or explanation intent should pause for user selection",
+    )
