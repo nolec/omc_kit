@@ -9,7 +9,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from omc_decision_input import build_next_priority_input, build_next_priority_surface_input
+from omc_decision_input import (
+    build_next_priority_input,
+    build_next_priority_surface_input,
+    resolve_next_priority,
+    resolve_next_priority_from_input,
+)
 
 
 NEXT_ACTION_LABELS = (
@@ -129,20 +134,11 @@ def _resolve_next_priority(
     observed_reason_signals_present: bool,
     baseline_comparison_status: str,
 ) -> tuple[str, str]:
-    if blocker == "insufficient_observed_samples":
-        return "collect_more_observed_runs", "need more observed samples"
-    if blocker == "insufficient_same_surface_evidence":
-        return "add_same_surface_observed_evidence", "need more same-surface evidence"
-    if blocker == "insufficient_policy_pairs":
-        return "expand_policy_pair_coverage", "need more policy pair coverage"
-    if blocker == "baseline_comparison_not_ready":
-        return "stabilize_baseline_comparison_inputs", "baseline comparison input is not ready"
-    if baseline_comparison_status == "ready" and observed_reason_signals_present:
-        return (
-            "validate_operator_bottlenecks_from_observed_runs",
-            "reason signals observed in ready dataset",
-        )
-    return "maintain_policy_comparison_confidence", "readiness requirements are currently satisfied"
+    return resolve_next_priority(
+        blocker=blocker,
+        observed_reason_signals_present=observed_reason_signals_present,
+        baseline_comparison_status=baseline_comparison_status,
+    )
 
 
 def _build_next_priority_surface_input(
@@ -178,14 +174,7 @@ def _build_next_priority_input(
 
 
 def _resolve_next_priority_from_input(decision_input: dict[str, object]) -> tuple[str, str]:
-    core = decision_input.get("core")
-    if not isinstance(core, dict):
-        core = decision_input
-    return _resolve_next_priority(
-        blocker=str(core.get("blocker") or ""),
-        observed_reason_signals_present=bool(core.get("observed_reason_signals_present")),
-        baseline_comparison_status=str(core.get("baseline_comparison_status") or ""),
-    )
+    return resolve_next_priority_from_input(decision_input)
 
 
 def _build_operator_priority_input(

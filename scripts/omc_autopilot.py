@@ -51,7 +51,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_utils
 import omc_cost
 import omc_exec
-from omc_decision_input import build_next_priority_surface_input
+from omc_decision_input import (
+    build_next_priority_surface_input,
+    resolve_next_priority,
+    resolve_next_priority_from_input,
+)
 
 _TASKS_DIR = ".omc/tasks"
 _AUTOPILOT_STATE_DIR = ".omc/state/autopilot"
@@ -1852,12 +1856,8 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     next_priority_core = next_priority_input.get("core")
     if not isinstance(next_priority_core, dict):
         next_priority_core = {}
-    next_priority_recommendation, next_priority_reason = _overview_resolve_next_priority(
-        blocker=str(next_priority_core.get("blocker") or ""),
-        observed_reason_signals_present=bool(
-            next_priority_core.get("observed_reason_signals_present")
-        ),
-        baseline_comparison_status=str(next_priority_core.get("baseline_comparison_status") or ""),
+    next_priority_recommendation, next_priority_reason = _resolve_next_priority_from_overview_input(
+        next_priority_input
     )
     operational_validation_readiness, operational_validation_reason = (
         _overview_operational_validation_readiness(
@@ -1936,20 +1936,17 @@ def _overview_resolve_next_priority(
     observed_reason_signals_present: bool,
     baseline_comparison_status: str,
 ) -> tuple[str, str]:
-    if blocker == "insufficient_observed_samples":
-        return "collect_more_observed_runs", "need more observed samples"
-    if blocker == "insufficient_same_surface_evidence":
-        return "add_same_surface_observed_evidence", "need more same-surface evidence"
-    if blocker == "insufficient_policy_pairs":
-        return "expand_policy_pair_coverage", "need more policy pair coverage"
-    if blocker == "baseline_comparison_not_ready":
-        return "stabilize_baseline_comparison_inputs", "baseline comparison input is not ready"
-    if baseline_comparison_status == "ready" and observed_reason_signals_present:
-        return (
-            "validate_operator_bottlenecks_from_observed_runs",
-            "reason signals observed in ready dataset",
-        )
-    return "maintain_policy_comparison_confidence", "readiness requirements are currently satisfied"
+    return resolve_next_priority(
+        blocker=blocker,
+        observed_reason_signals_present=observed_reason_signals_present,
+        baseline_comparison_status=baseline_comparison_status,
+    )
+
+
+def _resolve_next_priority_from_overview_input(
+    decision_input: dict[str, object]
+) -> tuple[str, str]:
+    return resolve_next_priority_from_input(decision_input)
 
 
 def _build_overview_next_priority_input(

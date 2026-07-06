@@ -42,3 +42,22 @@ def test_build_next_priority_surface_input_adds_source_surface_to_extension():
         "source_surface": "overview_summary",
         "policy_comparison_summary": "ready",
     }
+
+
+def test_resolve_next_priority_returns_sample_gap_and_ready_operator_cases():
+    sample_gap = mod.resolve_next_priority(
+        blocker="insufficient_observed_samples",
+        observed_reason_signals_present=False,
+        baseline_comparison_status="deferred",
+    )
+    ready_operator = mod.resolve_next_priority(
+        blocker="none",
+        observed_reason_signals_present=True,
+        baseline_comparison_status="ready",
+    )
+
+    assert sample_gap == ("collect_more_observed_runs", "need more observed samples")
+    assert ready_operator == (
+        "validate_operator_bottlenecks_from_observed_runs",
+        "reason signals observed in ready dataset",
+    )

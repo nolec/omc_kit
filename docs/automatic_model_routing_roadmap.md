@@ -543,11 +543,13 @@ Fugu식 오케스트레이션에서 실제로 가져올 가치가 높은 다음 
 - 최근 반영:
   - readiness 쪽에 먼저 들어가 있던 input-builder 패턴을 operator priority 경로에도 적용해, `wrong_next_step / reroute / output_bloat / over_stage_entry` 판단 입력이 `core + extension` shape로 한 번 감싸지도록 1차 정렬했다.
   - 이어서 `next_priority`도 `report_decision / collected_summary` 양쪽에서 같은 surface adapter builder를 타도록 이관해, `source_surface + extension` 조립 규칙을 한 곳으로 모았다.
+  - 추가로 `resolve_next_priority / resolve_next_priority_from_input`를 공통 모듈로 올려 `benchmark / autopilot`이 같은 priority rule을 공유하도록 2차 공통화를 마쳤다.
+  - overview도 이제 `shared input -> shared resolver` 경로를 직접 타도록 보강했고, 해당 경로는 전용 회귀 테스트로 잠가 local unpacking drift를 막았다.
 - 구현 순서:
-  1. decision input schema 고정
-  2. priority rule 공통화
-  3. skill adapter 이관
-  4. fixture 확대
+  1. decision input schema 고정 - 완료
+  2. priority rule 공통화 - 완료
+  3. skill adapter 이관 - 다음 구현 우선순위
+  4. fixture 확대 - adapter 이관 후 진행
 
 ### 2. Cost-Quality Policy Layer
 

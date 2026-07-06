@@ -762,6 +762,39 @@ def test_cmd_overview_surfaces_next_priority_input_source_surface_and_core_shape
     }
 
 
+def test_overview_next_priority_matches_shared_resolver_contract() -> None:
+    import omc_decision_input as decision_input_mod
+
+    expected = decision_input_mod.resolve_next_priority(
+        blocker="insufficient_policy_pairs",
+        observed_reason_signals_present=False,
+        baseline_comparison_status="deferred",
+    )
+
+    actual = omc_autopilot._overview_resolve_next_priority(
+        blocker="insufficient_policy_pairs",
+        observed_reason_signals_present=False,
+        baseline_comparison_status="deferred",
+    )
+
+    assert actual == expected
+
+
+def test_overview_next_priority_uses_shared_input_path() -> None:
+    import omc_decision_input as decision_input_mod
+
+    decision_input = omc_autopilot._build_overview_next_priority_input(
+        blocker="insufficient_same_surface_evidence",
+        observed_reason_signals_present=False,
+        baseline_comparison_status="deferred",
+    )
+
+    actual = omc_autopilot._resolve_next_priority_from_overview_input(decision_input)
+    expected = decision_input_mod.resolve_next_priority_from_input(decision_input)
+
+    assert actual == expected
+
+
 def test_cmd_overview_surfaces_accepted_excluded_rejected_observed_counts(
     tmp_path: Path, capsys
 ) -> None:
