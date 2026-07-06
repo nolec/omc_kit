@@ -4855,6 +4855,112 @@ def test_operator_priority_input_drives_same_priority_as_direct_rule():
     assert reason == "wrong next step remains the dominant expensive flow"
 
 
+def test_operator_priority_input_matches_shared_decision_input_contract():
+    mod = _load_module()
+
+    import omc_decision_input as decision_input_mod
+
+    decision_input = decision_input_mod.build_operator_priority_input(
+        flow_kind_counts={
+            "wrong_next_step": 0,
+            "reroute_loop": 1,
+            "over_stage_entry": 0,
+            "output_bloat": 0,
+        },
+        observed_reason_signal_counts={
+            "reroute_reason": 1,
+            "output_bloat_reason": 0,
+            "compression_signal": 0,
+        },
+        extension={"source_surface": "expensive_flow_summary"},
+    )
+
+    expected = decision_input_mod.resolve_operator_priority_from_input(decision_input)
+    actual = mod._resolve_operator_next_priority_from_input(decision_input)
+
+    assert actual == expected
+
+
+def test_output_bloat_validation_matches_shared_decision_input_contract():
+    mod = _load_module()
+
+    import omc_decision_input as decision_input_mod
+
+    decision_input = decision_input_mod.build_output_bloat_validation_input(
+        flow_kind_counts={
+            "wrong_next_step": 2,
+            "reroute_loop": 0,
+            "over_stage_entry": 0,
+            "output_bloat": 1,
+        },
+        observed_reason_signal_counts={
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+        dominant_flow_kind="wrong_next_step",
+        operator_next_priority="tighten_next_action_routing",
+    )
+
+    expected = decision_input_mod.resolve_output_bloat_validation_from_input(decision_input)
+    actual = mod._resolve_output_bloat_validation_status(
+        flow_kind_counts={
+            "wrong_next_step": 2,
+            "reroute_loop": 0,
+            "over_stage_entry": 0,
+            "output_bloat": 1,
+        },
+        observed_reason_signal_counts={
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+        dominant_flow_kind="wrong_next_step",
+        operator_next_priority="tighten_next_action_routing",
+    )
+
+    assert actual == expected
+
+
+def test_operator_explanation_matches_shared_decision_input_contract():
+    mod = _load_module()
+
+    import omc_decision_input as decision_input_mod
+
+    decision_input = decision_input_mod.build_operator_explanation_input(
+        dominant_flow_kind="output_bloat",
+        flow_kind_counts={
+            "wrong_next_step": 0,
+            "reroute_loop": 0,
+            "over_stage_entry": 0,
+            "output_bloat": 2,
+        },
+        observed_reason_signal_counts={
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+        operator_validation_status="needs_followup",
+        operator_next_priority="compress_operator_outputs",
+    )
+
+    expected = decision_input_mod.resolve_operator_explanation_from_input(decision_input)
+    actual = mod._build_operator_explanation_lines(
+        dominant_flow_kind="output_bloat",
+        flow_kind_counts={
+            "wrong_next_step": 0,
+            "reroute_loop": 0,
+            "over_stage_entry": 0,
+            "output_bloat": 2,
+        },
+        observed_reason_signal_counts={
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+        operator_validation_status="needs_followup",
+        operator_next_priority="compress_operator_outputs",
+    )
+
+    assert actual == expected
+
+
 def test_response_mode_fixture_covers_operator_experience_finish_request():
     mod = _load_module()
 

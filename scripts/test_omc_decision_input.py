@@ -87,3 +87,135 @@ def test_plan_followup_input_keeps_plan_review_question_in_user_selection_wait()
         "사용자 선택 대기",
         "plan wording or explanation intent should pause for user selection",
     )
+
+
+def test_run_overview_followup_prefers_recover_for_stale_running_pipeline():
+    decision_input = mod.build_run_overview_followup_input(
+        status="running",
+        stale=True,
+        failure_reason="pipeline pid not running: 99999",
+        current_step="task",
+    )
+
+    assert decision_input["core"] == {
+        "status": "running",
+        "stale": True,
+        "failure_reason": "pipeline pid not running: 99999",
+        "current_step": "task",
+    }
+    assert mod.resolve_run_overview_followup_from_input(decision_input) == (
+        "recover stale pipeline",
+        "stale running pipeline should be recovered before further inspection",
+    )
+
+
+def test_run_overview_followup_prefers_task_retry_for_task_failure():
+    decision_input = mod.build_run_overview_followup_input(
+        status="failed",
+        stale=False,
+        failure_reason="task:failed",
+        current_step="task",
+    )
+
+    assert mod.resolve_run_overview_followup_from_input(decision_input) == (
+        "fix task failure and retry",
+        "task-stage failure should return to task retry guidance",
+    )
+
+
+def test_operator_priority_input_keeps_core_shape_stable():
+    decision_input = mod.build_operator_priority_input(
+        flow_kind_counts={
+            "wrong_next_step": 2,
+            "reroute_loop": 1,
+            "over_stage_entry": 0,
+            "output_bloat": 1,
+        },
+        observed_reason_signal_counts={
+            "reroute_reason": 1,
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+        extension={"source_surface": "expensive_flow_summary"},
+    )
+
+    assert decision_input["core"] == {
+        "flow_kind_counts": {
+            "wrong_next_step": 2,
+            "reroute_loop": 1,
+            "over_stage_entry": 0,
+            "output_bloat": 1,
+        },
+        "observed_reason_signal_counts": {
+            "reroute_reason": 1,
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+    }
+    assert decision_input["extension"] == {"source_surface": "expensive_flow_summary"}
+
+
+def test_operator_priority_input_prefers_wrong_next_step_ahead_of_output_bloat():
+    decision_input = mod.build_operator_priority_input(
+        flow_kind_counts={
+            "wrong_next_step": 1,
+            "reroute_loop": 0,
+            "over_stage_entry": 0,
+            "output_bloat": 1,
+        },
+        observed_reason_signal_counts={
+            "reroute_reason": 0,
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+    )
+
+    assert mod.resolve_operator_priority_from_input(decision_input) == (
+        "tighten_next_action_routing",
+        "wrong next step remains the dominant expensive flow",
+    )
+
+
+def test_output_bloat_validation_input_prefers_ready_to_close_when_not_dominant():
+    decision_input = mod.build_output_bloat_validation_input(
+        flow_kind_counts={
+            "wrong_next_step": 2,
+            "reroute_loop": 0,
+            "over_stage_entry": 0,
+            "output_bloat": 1,
+        },
+        observed_reason_signal_counts={
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+        dominant_flow_kind="wrong_next_step",
+        operator_next_priority="tighten_next_action_routing",
+    )
+
+    assert mod.resolve_output_bloat_validation_from_input(decision_input) == (
+        "ready_to_close",
+        False,
+        "output_bloat observed but not dominant; keep focus on wrong_next_step",
+    )
+
+
+def test_operator_explanation_input_prefers_over_stage_resume_condition():
+    decision_input = mod.build_operator_explanation_input(
+        dominant_flow_kind="over_stage_entry",
+        flow_kind_counts={
+            "wrong_next_step": 0,
+            "reroute_loop": 0,
+            "over_stage_entry": 2,
+            "output_bloat": 0,
+        },
+        observed_reason_signal_counts={},
+        operator_validation_status="needs_followup",
+        operator_next_priority="reduce_over_stage_entry",
+    )
+
+    explanation = mod.resolve_operator_explanation_from_input(decision_input)
+
+    assert explanation["current_bottleneck"] == "over_stage_entry"
+    assert explanation["resume_condition_line"] == (
+        "resume condition: reduce over_stage_entry before closing follow-ups"
+    )

@@ -545,11 +545,12 @@ Fugu식 오케스트레이션에서 실제로 가져올 가치가 높은 다음 
   - 이어서 `next_priority`도 `report_decision / collected_summary` 양쪽에서 같은 surface adapter builder를 타도록 이관해, `source_surface + extension` 조립 규칙을 한 곳으로 모았다.
   - 추가로 `resolve_next_priority / resolve_next_priority_from_input`를 공통 모듈로 올려 `benchmark / autopilot`이 같은 priority rule을 공유하도록 2차 공통화를 마쳤다.
   - overview도 이제 `shared input -> shared resolver` 경로를 직접 타도록 보강했고, 해당 경로는 전용 회귀 테스트로 잠가 local unpacking drift를 막았다.
+  - 최근에는 `operator priority`에 이어 `output_bloat validation`과 `operator explanation`도 shared decision input contract로 이관해, benchmark 쪽이 thin wrapper만 남기고 같은 resolver를 직접 타도록 정리했다.
 - 구현 순서:
   1. decision input schema 고정 - 완료
   2. priority rule 공통화 - 완료
-  3. skill adapter 이관 - 다음 구현 우선순위
-  4. fixture 확대 - adapter 이관 후 진행
+  3. skill adapter 이관 - 진행중 (operator priority / output_bloat validation / operator explanation 1차 완료)
+  4. fixture 확대 - 다음 우선순위
 
 ### 2. Cost-Quality Policy Layer
 
