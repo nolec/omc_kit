@@ -51,6 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_utils
 import omc_cost
 import omc_exec
+from omc_decision_input import build_next_priority_surface_input
 
 _TASKS_DIR = ".omc/tasks"
 _AUTOPILOT_STATE_DIR = ".omc/state/autopilot"
@@ -1843,10 +1844,20 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         )
     else:
         reason_signal_summary_line = "observed reason signals: none"
-    next_priority_recommendation, next_priority_reason = _overview_resolve_next_priority(
+    next_priority_input = _build_overview_next_priority_input(
         blocker=next_kpi_blocker,
         observed_reason_signals_present=bool(observed_reason_signal_kinds),
         baseline_comparison_status=baseline_comparison_status,
+    )
+    next_priority_core = next_priority_input.get("core")
+    if not isinstance(next_priority_core, dict):
+        next_priority_core = {}
+    next_priority_recommendation, next_priority_reason = _overview_resolve_next_priority(
+        blocker=str(next_priority_core.get("blocker") or ""),
+        observed_reason_signals_present=bool(
+            next_priority_core.get("observed_reason_signals_present")
+        ),
+        baseline_comparison_status=str(next_priority_core.get("baseline_comparison_status") or ""),
     )
     operational_validation_readiness, operational_validation_reason = (
         _overview_operational_validation_readiness(
@@ -1883,6 +1894,10 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         "baseline_comparison_line": baseline_comparison_line,
         "policy_comparison_summary": policy_comparison_summary,
         "reason_signal_summary_line": reason_signal_summary_line,
+        "next_priority_input_source_surface": str(
+            next_priority_input.get("extension", {}).get("source_surface") or ""
+        ),
+        "next_priority_input_core": dict(next_priority_core),
         "next_priority_recommendation": next_priority_recommendation,
         "next_priority_reason": next_priority_reason,
         "operational_validation_readiness": operational_validation_readiness,
@@ -1935,6 +1950,20 @@ def _overview_resolve_next_priority(
             "reason signals observed in ready dataset",
         )
     return "maintain_policy_comparison_confidence", "readiness requirements are currently satisfied"
+
+
+def _build_overview_next_priority_input(
+    *,
+    blocker: str,
+    observed_reason_signals_present: bool,
+    baseline_comparison_status: str,
+) -> dict[str, object]:
+    return build_next_priority_surface_input(
+        blocker=blocker,
+        observed_reason_signals_present=observed_reason_signals_present,
+        baseline_comparison_status=baseline_comparison_status,
+        source_surface="overview_summary",
+    )
 
 
 def _overview_operational_validation_readiness(

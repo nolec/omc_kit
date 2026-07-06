@@ -712,6 +712,56 @@ def test_cmd_overview_prints_next_priority_surface_for_deferred_case(
     assert "next_priority=collect_more_observed_runs  reason=need more observed samples" in out
 
 
+def test_cmd_overview_surfaces_next_priority_input_source_surface_and_core_shape(
+    tmp_path: Path, capsys
+) -> None:
+    observed_task = {
+        "id": "observed-next-priority-shape",
+        "benchmark_source_type": "observed_output",
+        "policy_pair": "baseline->candidate",
+        "comparison_scope": "cross_surface",
+        "baseline_response_sample": "baseline output sample",
+        "candidate_response_sample": "candidate output sample",
+    }
+    _write_json(
+        tmp_path / ".omc" / "tasks" / "observed-next-priority-shape.json",
+        observed_task,
+    )
+
+    for index in range(3):
+        omc_autopilot._save_pipeline_result(
+            tmp_path,
+            {
+                "__run_id": f"run-next-priority-shape-{index}",
+                "task_id": "observed-next-priority-shape",
+                "status": "completed",
+                "branch": f"feat/next-priority-shape-{index}",
+                "executor": "codex",
+                "started_at": "2026-06-13T09:00:00+09:00",
+                "finished_at": "2026-06-13T09:05:00+09:00",
+                "steps": {"review": {"status": "completed", "verdict": "APPROVE"}},
+            },
+        )
+
+    kpi_summary = omc_autopilot._build_overview_kpi_summary(
+        [
+            json.loads(
+                (tmp_path / ".omc" / "runs" / f"run-next-priority-shape-{index}" / "result.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            for index in range(3)
+        ]
+    )
+
+    assert kpi_summary["next_priority_input_source_surface"] == "overview_summary"
+    assert kpi_summary["next_priority_input_core"] == {
+        "blocker": "insufficient_observed_samples",
+        "observed_reason_signals_present": False,
+        "baseline_comparison_status": "deferred",
+    }
+
+
 def test_cmd_overview_surfaces_accepted_excluded_rejected_observed_counts(
     tmp_path: Path, capsys
 ) -> None:

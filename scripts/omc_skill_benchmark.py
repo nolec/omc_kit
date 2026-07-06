@@ -8,6 +8,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from omc_decision_input import build_next_priority_input, build_next_priority_surface_input
+
 
 NEXT_ACTION_LABELS = (
     "다음 액션",
@@ -142,23 +145,6 @@ def _resolve_next_priority(
     return "maintain_policy_comparison_confidence", "readiness requirements are currently satisfied"
 
 
-def _build_next_priority_input(
-    *,
-    blocker: str,
-    observed_reason_signals_present: bool,
-    baseline_comparison_status: str,
-    extension: dict[str, object] | None = None,
-) -> dict[str, object]:
-    return {
-        "core": {
-            "blocker": blocker,
-            "observed_reason_signals_present": observed_reason_signals_present,
-            "baseline_comparison_status": baseline_comparison_status,
-        },
-        "extension": dict(extension or {}),
-    }
-
-
 def _build_next_priority_surface_input(
     *,
     blocker: str,
@@ -167,14 +153,27 @@ def _build_next_priority_surface_input(
     source_surface: str,
     extension: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    merged_extension = {"source_surface": source_surface}
-    if extension:
-        merged_extension.update(dict(extension))
-    return _build_next_priority_input(
+    return build_next_priority_surface_input(
         blocker=blocker,
         observed_reason_signals_present=observed_reason_signals_present,
         baseline_comparison_status=baseline_comparison_status,
-        extension=merged_extension,
+        source_surface=source_surface,
+        extension=extension,
+    )
+
+
+def _build_next_priority_input(
+    *,
+    blocker: str,
+    observed_reason_signals_present: bool,
+    baseline_comparison_status: str,
+    extension: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return build_next_priority_input(
+        blocker=blocker,
+        observed_reason_signals_present=observed_reason_signals_present,
+        baseline_comparison_status=baseline_comparison_status,
+        extension=extension,
     )
 
 
