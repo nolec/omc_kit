@@ -5114,3 +5114,21 @@ def test_response_mode_fixture_covers_redeclaration_confusion_as_wrong_next_step
     assert case["expected_next_action"] == "사용자 선택 대기"
     assert case["baseline"]["next_action"] == "$omc-task"
     assert case["candidate"]["next_action"] == "사용자 선택 대기"
+
+
+def test_response_mode_fixture_covers_completion_status_request():
+    mod = _load_module()
+
+    report = mod.compare_response_modes(
+        mod._load_response_mode_cases(RESPONSE_MODE_FIXTURE_PATH)
+    )
+
+    case = next(
+        item
+        for item in report["cases"]
+        if item["request"] == "현재 완성도"
+    )
+
+    assert case["expected_next_action"] == "$omc-status"
+    assert case["baseline"]["next_action"] == "$omc-task"
+    assert case["candidate"]["next_action"] == "$omc-status"

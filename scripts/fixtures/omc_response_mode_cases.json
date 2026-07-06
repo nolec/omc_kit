@@ -758,6 +758,29 @@
       "evidence": "2026-07-05 실제 세션 요청문 추출: Operator Experience 후속 마무리 요청"
     },
     {
+      "request": "현재 완성도",
+      "expected_mode": "answer-first",
+      "expected_next_action": "$omc-status",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: 바로 다음 구현 또는 task 흐름으로 이어감",
+        "user: 현재 상태를 먼저 물은 건데 진행 제안이 먼저 나옴"
+      ],
+      "candidate_trace": [
+        "assistant: 현재 로드맵 기준 상태/완성도를 먼저 요약",
+        "assistant: 필요하면 다음 우선순위를 별도로 제안"
+      ],
+      "baseline_output_chars": 264,
+      "candidate_output_chars": 238,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "$omc-status",
+      "source_type": "observed_request",
+      "evidence": "2026-07-07 실제 세션 요청문 추출: 현재 완성도/상태 확인 요청"
+    },
+    {
       "request": "omc-review 최소 압축안만 먼저 제안",
       "expected_mode": "answer-first",
       "baseline_policy": "baseline",
