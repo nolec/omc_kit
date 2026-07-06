@@ -309,28 +309,27 @@ def test_resolve_task_routing_includes_high_risk_reason_summary() -> None:
     )
 
     assert routing["model_profile"] == "full_default"
-    assert routing["recommended_policy_profile"] == "quality_first"
+    assert routing["recommended_policy_profile"] == "balanced"
     assert routing["policy_confidence"] == "high"
     assert routing["routing_reason_summary"] == "high risk changes force full model"
     assert routing["routing_reason_codes"] == ["high_risk"]
 
 
 def test_resolve_task_routing_uses_cost_saver_only_for_explicit_lightweight_cases() -> None:
-    routing = omc_exec.resolve_task_routing(
+    decision = omc_exec._resolve_policy_decision(
         task_kind="task",
         request_text="문구 한 줄 수정",
-        retry_count=0,
         touched_files=["src/constants/messages.ts"],
+        retry_count=0,
         review_severity=None,
-        complexity="low",
-        risk="low",
-        sensitive_paths=[],
-        preferred_profile=None,
+        ambiguity_level="low",
+        failure_cost="low",
+        operator_goal="speed",
     )
 
-    assert routing["model_profile"] == "mini_default"
-    assert routing["recommended_policy_profile"] == "cost_saver"
-    assert routing["policy_confidence"] == "high"
+    assert decision["recommended_policy_profile"] == "cost_saver"
+    assert decision["policy_confidence"] == "high"
+    assert decision["user_selection_needed"] is False
 
 
 def test_resolve_task_routing_keeps_policy_profile_aligned_with_default_model_profile() -> None:
@@ -343,7 +342,7 @@ def test_resolve_task_routing_keeps_policy_profile_aligned_with_default_model_pr
     )
 
     assert routing["model_profile"] == "mini_default"
-    assert routing["recommended_policy_profile"] == "cost_saver"
+    assert routing["recommended_policy_profile"] == "balanced"
 
 
 def test_resolve_policy_summary_accepts_benchmark_input_contract() -> None:
@@ -356,9 +355,44 @@ def test_resolve_policy_summary_accepts_benchmark_input_contract() -> None:
         },
     )
 
-    assert summary["recommended_policy_profile"] == "cost_saver"
-    assert summary["policy_reason_summary"] == "explicit lightweight case allows cost saver"
+    assert summary["recommended_policy_profile"] == "balanced"
+    assert summary["policy_reason_summary"] == "balanced is the safe default"
     assert summary["policy_confidence"] == "high"
+    assert summary["user_selection_needed"] == "no"
+
+
+def test_policy_decision_low_confidence_falls_back_to_balanced_and_requires_selection() -> None:
+    decision = omc_exec._resolve_policy_decision(
+        task_kind="task",
+        request_text="빠르게 끝내고 싶지만 영향이 클 수도 있음",
+        touched_files=["src/state/store.ts"],
+        retry_count=0,
+        review_severity=None,
+        ambiguity_level="high",
+        failure_cost="high",
+        operator_goal="speed",
+    )
+
+    assert decision["recommended_policy_profile"] == "balanced"
+    assert decision["policy_confidence"] == "low"
+    assert decision["user_selection_needed"] is True
+
+
+def test_policy_decision_quality_goal_with_high_failure_cost_prefers_quality_first() -> None:
+    decision = omc_exec._resolve_policy_decision(
+        task_kind="task",
+        request_text="정확도를 우선해서 설계 영향까지 고려",
+        touched_files=["src/features/a.ts"],
+        retry_count=0,
+        review_severity=None,
+        ambiguity_level="medium",
+        failure_cost="high",
+        operator_goal="quality",
+    )
+
+    assert decision["recommended_policy_profile"] == "quality_first"
+    assert decision["policy_confidence"] == "high"
+    assert decision["user_selection_needed"] is False
 
 
 def test_select_model_profile_uses_full_default_for_ship() -> None:

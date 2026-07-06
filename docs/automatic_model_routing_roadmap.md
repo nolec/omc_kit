@@ -564,17 +564,29 @@ Fugu식 오케스트레이션에서 실제로 가져올 가치가 높은 다음 
   4. summary surface 노출
 
 policy decision input SSOT:
-- `task_kind`, `complexity`, `risk`, `review_severity`, `retry_count`,
-- `touched_files_count`, `sensitive_path_present`, `broader_context_signal`,
-- `ship_intent`, `ambiguity_level`, `failure_cost`
+- `failure_cost`
+- `ambiguity`
+- `operator_goal`
 
-- `cost_saver`를 기본 정책으로 둔다.
-- `balanced`는 broader-context 또는 중간 위험 신호가 있을 때 승격한다.
+입력 축은 3개로 시작한다.
+`failure_cost / ambiguity / operator_goal`만 Cost-Quality Policy Layer의 SSOT로 쓰고,
+`task_kind / risk / review_severity / retry_count / sensitive_path` 같은 신호는
+Decision Engine 또는 runtime routing에서 파생 입력으로만 사용한다.
+
+- `cost_saver`: low failure cost + low ambiguity + speed goal
+- `balanced`: 기본값 및 low-confidence fallback
+- `quality_first`: high failure cost 또는 quality goal 우선
+- `confidence=low`이면 `balanced + user_selection_needed=yes`로 고정한다.
 
 Layer boundary:
 - Cost-Quality Policy Layer: 정책 프로필 추천과 설명만 담당
 - Executor Recommendation Surface: 실행기/모델 매핑만 담당
 - Reroute Layer: 실패 후 fallback / retry / delay만 담당
+
+최근 반영:
+- policy helper 1차는 위 3축 기준으로 축소 정렬됐다.
+- 기본 반환은 `balanced`로 보수화했고, `cost_saver`는 `low failure cost + low ambiguity + speed goal`의 명시적 lightweight 조건에서만 선택되게 제한했다.
+- low-confidence 경계는 `balanced + user_selection_needed=yes` output contract로 고정했다.
 
 ### 3. Executor Recommendation Surface
 

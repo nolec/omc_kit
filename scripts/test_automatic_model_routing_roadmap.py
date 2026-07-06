@@ -107,11 +107,11 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "### 1. Next-step Decision Engine 일반화" in text
     assert "### 2. Cost-Quality Policy Layer" in text
     assert "policy decision input SSOT:" in text
-    assert "`task_kind`, `complexity`, `risk`, `review_severity`, `retry_count`," in text
-    assert "`touched_files_count`, `sensitive_path_present`, `broader_context_signal`," in text
-    assert "`ship_intent`, `ambiguity_level`, `failure_cost`" in text
-    assert "`cost_saver`를 기본 정책으로 둔다." in text
-    assert "`balanced`는 broader-context 또는 중간 위험 신호가 있을 때 승격한다." in text
+    assert "- `failure_cost`" in text
+    assert "- `ambiguity`" in text
+    assert "- `operator_goal`" in text
+    assert "입력 축은 3개로 시작한다." in text
+    assert "`confidence=low`이면 `balanced + user_selection_needed=yes`로 고정한다." in text
     assert "Layer boundary:" in text
     assert "- Cost-Quality Policy Layer: 정책 프로필 추천과 설명만 담당" in text
     assert "- Executor Recommendation Surface: 실행기/모델 매핑만 담당" in text
