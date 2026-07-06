@@ -74,6 +74,15 @@ REQUIRED_DECISION_TABLE_MARKERS = [
     "user_selection_needed",
 ]
 
+REQUIRED_POLICY_SURFACE_MARKERS = [
+    "policy_profile",
+    "policy_reason_summary",
+    "policy_confidence",
+    "cost-quality 기본 추천",
+    "confidence=low",
+    "balanced + user_selection_needed=yes",
+]
+
 REQUIRED_RISK_CONCEPTS = [
     ("새 파일", "신규 파일"),
     ("API", "시그니처"),
@@ -183,6 +192,16 @@ VALID_PLAN_DECISION_TABLE_SAMPLE = """
 - stage: plan
 - outcome: unresolved / ready
 - user_selection_needed: yes / no
+"""
+
+VALID_PLAN_POLICY_SURFACE_SAMPLE = """
+decision: PROCEED / HOLD (진행 가능 여부)
+risk: LOW / MED / HIGH (변경 위험도)
+next_action: $omc-task / $omc-critique / 사용자 선택 대기 (다음 스킬 1개)
+policy_profile: balanced / cost_saver / quality_first (cost-quality 기본 추천)
+policy_reason_summary: balanced is the safe default
+policy_confidence: low / medium / high
+공통 결정표: stage=plan / outcome=ready / user_selection_needed=yes|no | confidence=low → balanced + user_selection_needed=yes
 """
 
 
@@ -379,6 +398,12 @@ def test_plan_skill_declares_common_decision_table_axes():
     assert not missing, f"missing decision table markers: {missing}"
 
 
+def test_plan_skill_surfaces_cost_quality_policy_summary():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_POLICY_SURFACE_MARKERS if marker not in text]
+    assert not missing, f"missing policy surface markers: {missing}"
+
+
 def test_plan_skill_declares_lite_full_risk_concepts():
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     missing = _missing_concepts(text, REQUIRED_RISK_CONCEPTS)
@@ -402,6 +427,11 @@ def test_valid_plan_decision_output_fixture_declares_plan_specific_meaning():
 def test_valid_plan_decision_table_fixture_declares_common_axes():
     for marker in REQUIRED_DECISION_TABLE_MARKERS:
         assert marker in VALID_PLAN_DECISION_TABLE_SAMPLE
+
+
+def test_valid_plan_policy_surface_fixture_declares_cost_quality_policy():
+    for marker in REQUIRED_POLICY_SURFACE_MARKERS:
+        assert marker in VALID_PLAN_POLICY_SURFACE_SAMPLE
 
 
 def test_plan_recommendation_fixture_keeps_single_next_action_per_state():

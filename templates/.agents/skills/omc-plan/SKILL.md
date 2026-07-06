@@ -21,13 +21,13 @@ AGENTS.md Tier 1 작업은 이 Phase 1 요구사항을 CONTRACT 입력으로 삼
 사용자에게 보여줄 단계: CONTRACT / 최소 설계 / TDD 태스크 / `$omc-task` handoff | 시스템이 암묵적으로 처리: 자명한 재안내 / 선택 스킬 추천 / 반복 코칭
 
 ## Phase 2. 최소 설계 — 입력 / 출력 / 성공 지표 / 실패 정책 / 영향받는 파일:
-- decision / risk / next_action: 진행 가능 여부 / 변경 위험도 / 다음 스킬 1개
-- 공통 결정표: stage=plan / outcome=unresolved|ready / user_selection_needed=yes|no
+- decision / risk / next_action / policy_profile: 진행 가능 여부 / 변경 위험도 / 다음 스킬 1개 / cost-quality 기본 추천
+- policy_reason_summary / policy_confidence: 추천 이유 요약 / 확신도(low면 선택 필요)
+- 공통 결정표: stage=plan / outcome=unresolved|ready / user_selection_needed=yes|no | confidence=low → balanced + user_selection_needed=yes
 
 출력 모드:
 - `plan full`: CONTRACT + 최소 설계 + 다중 TDD 태스크 | `plan lite`: CONTRACT + 최소 설계 + 태스크 2개 이하
-- lite 조건: 기존 파일 중심 / 검증 명령 1개 / 범위를 한 문장으로 설명 가능 | full 조건: 새 파일 또는 신규 파일 생성 / API 또는 시그니처 변경 / 3개 이상 파일 / 검증 명령 축약 불가 / 범위 불명확
-- 애매하면 full, lite가 쓰였지만 설명이 약하면 `full 재계획` | 현재 dirty 변경과 이번 계획 범위는 분리해서 다룹니다.
+- lite 조건: 기존 파일 중심 / 검증 명령 1개 / 범위를 한 문장으로 설명 가능 | full 조건: 새 파일 또는 신규 파일 생성 / API 또는 시그니처 변경 / 3개 이상 파일 / 검증 명령 축약 불가 / 범위 불명확 | 애매하면 full, lite가 쓰였지만 설명이 약하면 `full 재계획` | 현재 dirty 변경과 이번 계획 범위는 분리해서 다룹니다.
 
 ## Phase 3. TDD 태스크 분해
 
