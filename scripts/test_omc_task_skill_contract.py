@@ -6,6 +6,7 @@ execution gates that keep OMC from becoming a loose prompt template.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -202,3 +203,37 @@ def test_task_skill_recommendations_cover_success_and_unknown_failures():
     ]
     missing = [marker for marker in required_markers if marker not in text]
     assert not missing, f"missing task recommendation markers: {missing}"
+
+
+def test_task_skill_next_recommendation_lines_each_resolve_to_one_action():
+    text = _read(REQUIRED_TASK_SKILL_PATHS[0])
+    lines = []
+    in_section = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("## 다음 추천"):
+            in_section = True
+            continue
+        if in_section and line.startswith("## "):
+            break
+        if in_section and (
+            "구현 완료 + 게이트 통과" in line
+            or "구현 완료 + 사용자가 일단 결과만 확인하려는 상태" in line
+            or "실패 원인 불명" in line
+        ):
+            lines.append(line)
+    assert lines, "expected task recommendation lines"
+    for line in lines:
+        actions = re.findall(r"(\$omc-[a-z-]+|사용자 선택 대기)", line)
+        assert len(actions) == 1, f"line must resolve to one action: {line}"
+
+
+def test_task_skill_prioritizes_current_bottleneck_over_default_pipeline():
+    text = _read(REQUIRED_TASK_SKILL_PATHS[0])
+    for marker in [
+        "현재 병목 > 기본 파이프라인",
+        "구현 완료 + 게이트 통과면 `$omc-review`",
+        "구현 완료 + 사용자가 일단 결과만 확인하려는 상태면 사용자 선택 대기",
+        "실패 원인 불명 → `$omc-investigate`",
+    ]:
+        assert marker in text

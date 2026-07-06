@@ -4382,6 +4382,29 @@ def test_response_mode_fixture_distinguishes_review_need_question_from_task_prog
     assert report["cases"][0]["candidate"]["next_action"] == "사용자 선택 대기"
 
 
+def test_response_mode_fixture_distinguishes_breakdown_request_from_task_progression():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    target_case = next(
+        case
+        for case in cases
+        if case["request"] == "우선순위 1번을 세부 작업 3~5개로 쪼개서\n딱 실행 가능한 수준으로 정리해줘"
+    )
+
+    report = mod.compare_response_modes([target_case])
+
+    assert report["summary"]["next_action_case_count"] == 1
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert report["cases"][0]["source_type"] == "observed_request"
+    assert report["cases"][0]["expected_next_action"] == "사용자 선택 대기"
+    assert report["cases"][0]["baseline"]["next_action"] == "$omc-task"
+    assert report["cases"][0]["candidate"]["next_action"] == "사용자 선택 대기"
+
+
 def test_response_mode_fixture_distinguishes_roadmap_assessment_bundle_from_task_progression():
     mod = _load_module()
 
@@ -4868,6 +4891,100 @@ def test_response_mode_fixture_reports_output_bloat_as_secondary_validation_sign
     assert report["summary"]["output_bloat_followup_needed"] is False
     assert report["summary"]["output_bloat_status_line"] == (
         "output_bloat observed but not dominant; keep focus on wrong_next_step"
+    )
+
+
+def test_build_expensive_flow_report_surfaces_reroute_delay_explanation_fields():
+    mod = _load_module()
+
+    cases = mod._load_response_mode_cases(RESPONSE_MODE_FIXTURE_PATH)
+    report = mod.build_expensive_flow_report(cases)
+
+    assert report["summary"]["current_bottleneck"] == "wrong_next_step"
+    assert report["summary"]["reroute_reason_line"] == (
+        "reroute reason: user requested path change after baseline misroute"
+    )
+    assert report["summary"]["delay_reason_line"] == (
+        "delay reason: execution/review entry was delayed by baseline over-stage flow"
+    )
+    assert report["summary"]["resume_condition_line"] == (
+        "resume condition: keep wrong_next_step at 0 before closing reroute/output_bloat follow-ups"
+    )
+    assert report["summary"]["output_bloat_reason_line"] == (
+        "output_bloat reason: baseline output still needs compression follow-up, but it is not the current top bottleneck"
+    )
+    assert report["summary"]["output_bloat_priority_line"] == (
+        "output_bloat priority: keep focus on wrong_next_step before taking output_bloat follow-up"
+    )
+
+
+def test_operator_explanation_lines_respect_observed_reroute_signal_without_reroute_loop_count():
+    mod = _load_module()
+
+    lines = mod._build_operator_explanation_lines(
+        dominant_flow_kind="wrong_next_step",
+        flow_kind_counts={
+            "wrong_next_step": 1,
+            "reroute_loop": 0,
+            "over_stage_entry": 0,
+            "output_bloat": 0,
+        },
+        observed_reason_signal_counts={"reroute_reason": 1},
+        operator_validation_status="ready_to_close",
+        operator_next_priority="reduce_reroute_loops",
+    )
+
+    assert lines["reroute_reason_line"] == (
+        "reroute reason: user requested path change after baseline misroute"
+    )
+
+
+def test_operator_explanation_lines_do_not_force_wrong_next_step_resume_for_other_bottlenecks():
+    mod = _load_module()
+
+    lines = mod._build_operator_explanation_lines(
+        dominant_flow_kind="over_stage_entry",
+        flow_kind_counts={
+            "wrong_next_step": 0,
+            "reroute_loop": 0,
+            "over_stage_entry": 2,
+            "output_bloat": 0,
+        },
+        observed_reason_signal_counts={},
+        operator_validation_status="needs_followup",
+        operator_next_priority="reduce_over_stage_entry",
+    )
+
+    assert lines["current_bottleneck"] == "over_stage_entry"
+    assert lines["resume_condition_line"] == (
+        "resume condition: reduce over_stage_entry before closing follow-ups"
+    )
+
+
+def test_operator_explanation_lines_surface_output_bloat_as_primary_bottleneck():
+    mod = _load_module()
+
+    lines = mod._build_operator_explanation_lines(
+        dominant_flow_kind="output_bloat",
+        flow_kind_counts={
+            "wrong_next_step": 0,
+            "reroute_loop": 0,
+            "over_stage_entry": 0,
+            "output_bloat": 2,
+        },
+        observed_reason_signal_counts={
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+        operator_validation_status="needs_followup",
+        operator_next_priority="compress_operator_outputs",
+    )
+
+    assert lines["output_bloat_reason_line"] == (
+        "output_bloat reason: baseline output still needs compression follow-up and is now the current top bottleneck"
+    )
+    assert lines["output_bloat_priority_line"] == (
+        "output_bloat priority: treat output_bloat compression as the current follow-up target"
     )
 
 

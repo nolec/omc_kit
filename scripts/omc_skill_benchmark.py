@@ -1043,6 +1043,13 @@ def build_expensive_flow_report(
         dominant_flow_kind=dominant_flow_kind,
         operator_next_priority=operator_next_priority,
     )
+    explanation_lines = _build_operator_explanation_lines(
+        dominant_flow_kind=dominant_flow_kind,
+        flow_kind_counts=flow_kind_counts,
+        observed_reason_signal_counts=observed_reason_signal_counts,
+        operator_validation_status=operator_validation_status,
+        operator_next_priority=operator_next_priority,
+    )
     return {
         "flows": top_flows,
         "summary": {
@@ -1057,6 +1064,7 @@ def build_expensive_flow_report(
             "operator_validation_status": operator_validation_status,
             "output_bloat_followup_needed": output_bloat_followup_needed,
             "output_bloat_status_line": output_bloat_status_line,
+            **explanation_lines,
         },
     }
 
@@ -1158,6 +1166,83 @@ def _resolve_output_bloat_validation_status(
         False,
         "output_bloat observed but not dominant; keep focus on wrong_next_step",
     )
+
+
+def _build_operator_explanation_lines(
+    *,
+    dominant_flow_kind: str,
+    flow_kind_counts: dict[str, int],
+    observed_reason_signal_counts: dict[str, int],
+    operator_validation_status: str,
+    operator_next_priority: str,
+) -> dict[str, str]:
+    if int(flow_kind_counts.get("reroute_loop", 0)) > 0 or int(
+        observed_reason_signal_counts.get("reroute_reason", 0)
+    ) > 0:
+        reroute_reason_line = "reroute reason: user requested path change after baseline misroute"
+    else:
+        reroute_reason_line = "reroute reason: no reroute signal is currently dominant"
+
+    if int(flow_kind_counts.get("over_stage_entry", 0)) > 0:
+        delay_reason_line = "delay reason: execution/review entry was delayed by baseline over-stage flow"
+    else:
+        delay_reason_line = "delay reason: no over-stage delay signal is currently dominant"
+
+    output_bloat_observed = int(flow_kind_counts.get("output_bloat", 0)) > 0 or int(
+        observed_reason_signal_counts.get("output_bloat_reason", 0)
+    ) > 0
+    output_bloat_is_primary = dominant_flow_kind == "output_bloat" or (
+        operator_next_priority == "compress_operator_outputs"
+    )
+    if output_bloat_observed and output_bloat_is_primary:
+        output_bloat_reason_line = (
+            "output_bloat reason: baseline output still needs compression follow-up and is now the current top bottleneck"
+        )
+        output_bloat_priority_line = (
+            "output_bloat priority: treat output_bloat compression as the current follow-up target"
+        )
+    elif output_bloat_observed:
+        output_bloat_reason_line = (
+            "output_bloat reason: baseline output still needs compression follow-up, but it is not the current top bottleneck"
+        )
+        output_bloat_priority_line = (
+            "output_bloat priority: keep focus on wrong_next_step before taking output_bloat follow-up"
+        )
+    else:
+        output_bloat_reason_line = (
+            "output_bloat reason: no output_bloat follow-up is currently required"
+        )
+        output_bloat_priority_line = (
+            "output_bloat priority: no output_bloat action is currently prioritized"
+        )
+
+    if operator_next_priority == "tighten_next_action_routing":
+        resume_condition_line = (
+            "resume condition: keep wrong_next_step at 0 before closing reroute/output_bloat follow-ups"
+        )
+    elif operator_next_priority == "reduce_reroute_loops":
+        resume_condition_line = "resume condition: reduce reroute_loop before closing follow-ups"
+    elif operator_next_priority == "reduce_over_stage_entry":
+        resume_condition_line = "resume condition: reduce over_stage_entry before closing follow-ups"
+    elif operator_next_priority == "compress_operator_outputs":
+        resume_condition_line = "resume condition: reduce output_bloat before closing follow-ups"
+    elif operator_validation_status == "ready_to_close":
+        resume_condition_line = (
+            "resume condition: keep the current bottleneck stable before closing follow-ups"
+        )
+    else:
+        resume_condition_line = (
+            "resume condition: reduce the current dominant bottleneck before closing follow-ups"
+        )
+
+    return {
+        "current_bottleneck": dominant_flow_kind or "general_overhead",
+        "reroute_reason_line": reroute_reason_line,
+        "delay_reason_line": delay_reason_line,
+        "output_bloat_reason_line": output_bloat_reason_line,
+        "output_bloat_priority_line": output_bloat_priority_line,
+        "resume_condition_line": resume_condition_line,
+    }
 
 
 def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:

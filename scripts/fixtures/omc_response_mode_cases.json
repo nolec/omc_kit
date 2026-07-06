@@ -474,6 +474,29 @@
       "evidence": "2026-07-06 실제 세션 요청문 추출: review 필요 여부 질문"
     },
     {
+      "request": "우선순위 1번을 세부 작업 3~5개로 쪼개서\n딱 실행 가능한 수준으로 정리해줘",
+      "expected_mode": "answer-first",
+      "expected_next_action": "사용자 선택 대기",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: 바로 task 또는 구현 단계로 이어지려 함",
+        "user: 아니 지금은 실행 가능한 세부 분해 정리를 원함"
+      ],
+      "candidate_trace": [
+        "assistant: 우선순위 1번을 3~5개 실행 단위로 분해해 정리",
+        "assistant: 다음 스킬 자동 추천 없이 사용자 선택 대기로 멈춤"
+      ],
+      "baseline_output_chars": 286,
+      "candidate_output_chars": 304,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "사용자 선택 대기",
+      "source_type": "observed_request",
+      "evidence": "2026-07-06 실제 세션 요청문 추출: Operator Experience 우선순위 1번 실행 단위 분해 요청"
+    },
+    {
       "request": "현재 git changes 변경 상태 리뷰 보고 정말 괜찮은 변경인지 체크하려고 하는데 무슨 스킬 써야해",
       "expected_mode": "review-first",
       "expected_next_action": "$omc-review",
