@@ -4728,6 +4728,63 @@ def test_build_expensive_flow_report_diversifies_top_flows_and_surfaces_operator
     )
 
 
+def test_operator_priority_input_builder_keeps_core_flow_fields():
+    mod = _load_module()
+
+    decision_input = mod._build_operator_priority_input(
+        flow_kind_counts={
+            "wrong_next_step": 2,
+            "reroute_loop": 1,
+            "over_stage_entry": 0,
+            "output_bloat": 1,
+        },
+        observed_reason_signal_counts={
+            "reroute_reason": 1,
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+        extension={"source_surface": "expensive_flow_summary"},
+    )
+
+    assert decision_input["core"] == {
+        "flow_kind_counts": {
+            "wrong_next_step": 2,
+            "reroute_loop": 1,
+            "over_stage_entry": 0,
+            "output_bloat": 1,
+        },
+        "observed_reason_signal_counts": {
+            "reroute_reason": 1,
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+    }
+    assert decision_input["extension"] == {"source_surface": "expensive_flow_summary"}
+
+
+def test_operator_priority_input_drives_same_priority_as_direct_rule():
+    mod = _load_module()
+
+    wrong_next_step_input = mod._build_operator_priority_input(
+        flow_kind_counts={
+            "wrong_next_step": 1,
+            "reroute_loop": 0,
+            "over_stage_entry": 0,
+            "output_bloat": 1,
+        },
+        observed_reason_signal_counts={
+            "reroute_reason": 0,
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+        extension={"source_surface": "expensive_flow_summary"},
+    )
+    recommendation, reason = mod._resolve_operator_next_priority_from_input(wrong_next_step_input)
+
+    assert recommendation == "tighten_next_action_routing"
+    assert reason == "wrong next step remains the dominant expensive flow"
+
+
 def test_response_mode_fixture_covers_operator_experience_finish_request():
     mod = _load_module()
 

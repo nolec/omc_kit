@@ -539,6 +539,8 @@ Fugu식 오케스트레이션에서 실제로 가져올 가치가 높은 다음 
   - 공통 decision input schema
   - 스킬별 adapter
   - regression fixture set
+- 최근 반영:
+  - readiness 쪽에 먼저 들어가 있던 input-builder 패턴을 operator priority 경로에도 적용해, `wrong_next_step / reroute / output_bloat / over_stage_entry` 판단 입력이 `core + extension` shape로 한 번 감싸지도록 1차 정렬했다.
 - 구현 순서:
   1. decision input schema 고정
   2. priority rule 공통화

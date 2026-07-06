@@ -170,6 +170,35 @@ def _resolve_next_priority_from_input(decision_input: dict[str, object]) -> tupl
     )
 
 
+def _build_operator_priority_input(
+    *,
+    flow_kind_counts: dict[str, int],
+    observed_reason_signal_counts: dict[str, int],
+    extension: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "core": {
+            "flow_kind_counts": dict(flow_kind_counts),
+            "observed_reason_signal_counts": dict(observed_reason_signal_counts),
+        },
+        "extension": dict(extension or {}),
+    }
+
+
+def _resolve_operator_next_priority_from_input(decision_input: dict[str, object]) -> tuple[str, str]:
+    core = decision_input.get("core")
+    if not isinstance(core, dict):
+        core = decision_input
+    flow_kind_counts = core.get("flow_kind_counts")
+    observed_reason_signal_counts = core.get("observed_reason_signal_counts")
+    return _resolve_operator_next_priority(
+        flow_kind_counts=flow_kind_counts if isinstance(flow_kind_counts, dict) else {},
+        observed_reason_signal_counts=(
+            observed_reason_signal_counts if isinstance(observed_reason_signal_counts, dict) else {}
+        ),
+    )
+
+
 def _has_observed_reason_signal(case: dict[str, object]) -> bool:
     if str(case.get("source_type") or "").strip() != "observed_request":
         return False
@@ -979,9 +1008,13 @@ def build_expensive_flow_report(
             item[0],
         ),
     )[0] if flow_kind_counts else "general_overhead"
-    operator_next_priority, operator_next_priority_reason = _resolve_operator_next_priority(
+    operator_priority_input = _build_operator_priority_input(
         flow_kind_counts=flow_kind_counts,
         observed_reason_signal_counts=observed_reason_signal_counts,
+        extension={"source_surface": "expensive_flow_summary"},
+    )
+    operator_next_priority, operator_next_priority_reason = _resolve_operator_next_priority_from_input(
+        operator_priority_input
     )
     (
         operator_validation_status,
