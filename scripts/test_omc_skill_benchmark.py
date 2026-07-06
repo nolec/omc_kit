@@ -3955,6 +3955,49 @@ def test_report_decision_surfaces_next_priority_input_source_surface():
     assert report["decision"]["next_priority_input_source_surface"] == "report_decision"
 
 
+def test_next_priority_surface_adapter_builds_collected_summary_payload():
+    mod = _load_module()
+
+    decision_input = mod._build_next_priority_surface_input(
+        blocker="insufficient_policy_pairs",
+        observed_reason_signals_present=False,
+        baseline_comparison_status="deferred",
+        source_surface="collected_summary",
+        extension={"observed_data_bottleneck_summary": "observed data bottleneck: need more policy pair coverage"},
+    )
+
+    assert decision_input["core"] == {
+        "blocker": "insufficient_policy_pairs",
+        "observed_reason_signals_present": False,
+        "baseline_comparison_status": "deferred",
+    }
+    assert decision_input["extension"]["source_surface"] == "collected_summary"
+    assert decision_input["extension"]["observed_data_bottleneck_summary"] == (
+        "observed data bottleneck: need more policy pair coverage"
+    )
+
+
+def test_next_priority_surface_adapter_builds_report_decision_payload():
+    mod = _load_module()
+
+    decision_input = mod._build_next_priority_surface_input(
+        blocker="none",
+        observed_reason_signals_present=True,
+        baseline_comparison_status="ready",
+        source_surface="report_decision",
+        extension={"policy_comparison_summary": "policy comparison ready: baseline comparison wording can be enabled"},
+    )
+
+    recommendation, reason = mod._resolve_next_priority_from_input(decision_input)
+
+    assert decision_input["extension"]["source_surface"] == "report_decision"
+    assert decision_input["extension"]["policy_comparison_summary"] == (
+        "policy comparison ready: baseline comparison wording can be enabled"
+    )
+    assert recommendation == "validate_operator_bottlenecks_from_observed_runs"
+    assert reason == "reason signals observed in ready dataset"
+
+
 def test_report_decision_surfaces_policy_profile_summary_fields():
     mod = _load_module()
     exec_mod = _load_exec_module()

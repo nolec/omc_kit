@@ -159,6 +159,25 @@ def _build_next_priority_input(
     }
 
 
+def _build_next_priority_surface_input(
+    *,
+    blocker: str,
+    observed_reason_signals_present: bool,
+    baseline_comparison_status: str,
+    source_surface: str,
+    extension: dict[str, object] | None = None,
+) -> dict[str, object]:
+    merged_extension = {"source_surface": source_surface}
+    if extension:
+        merged_extension.update(dict(extension))
+    return _build_next_priority_input(
+        blocker=blocker,
+        observed_reason_signals_present=observed_reason_signals_present,
+        baseline_comparison_status=baseline_comparison_status,
+        extension=merged_extension,
+    )
+
+
 def _resolve_next_priority_from_input(decision_input: dict[str, object]) -> tuple[str, str]:
     core = decision_input.get("core")
     if not isinstance(core, dict):
@@ -816,14 +835,12 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
     if observed_reason_signals_present:
         policy_comparison_summary += "; reason signals observed"
 
-    next_priority_input = _build_next_priority_input(
+    next_priority_input = _build_next_priority_surface_input(
         blocker=next_kpi_blocker,
         observed_reason_signals_present=observed_reason_signals_present,
         baseline_comparison_status=baseline_comparison_status,
-        extension={
-            "source_surface": "report_decision",
-            "policy_comparison_summary": policy_comparison_summary,
-        },
+        source_surface="report_decision",
+        extension={"policy_comparison_summary": policy_comparison_summary},
     )
     next_priority_recommendation, next_priority_reason = _resolve_next_priority_from_input(
         next_priority_input
@@ -1973,14 +1990,12 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
                 f"; rejected observed_output={rejected_observed_output_case_count} "
                 f"({','.join(reason_parts)})"
             )
-    next_priority_input = _build_next_priority_input(
+    next_priority_input = _build_next_priority_surface_input(
         blocker=readiness_blocker,
         observed_reason_signals_present=observed_reason_signals_present,
         baseline_comparison_status=baseline_comparison_status,
-        extension={
-            "source_surface": "collected_summary",
-            "observed_data_bottleneck_summary": observed_data_bottleneck_summary,
-        },
+        source_surface="collected_summary",
+        extension={"observed_data_bottleneck_summary": observed_data_bottleneck_summary},
     )
     next_priority_recommendation, next_priority_reason = _resolve_next_priority_from_input(
         next_priority_input
