@@ -40,3 +40,20 @@ def test_fugu_benchmark_doc_mentions_rule_based_gap_and_next_focus() -> None:
     ]
     missing = [marker for marker in required_markers if marker not in text]
     assert not missing, f"missing fugu benchmark concepts: {missing}"
+
+
+def test_fugu_benchmark_doc_includes_evidence_and_confidence_mapping() -> None:
+    text = DOC.read_text(encoding="utf-8")
+
+    required_markers = [
+        "## 반영 검증 기준",
+        "로드맵 항목",
+        "실제 반영 증거",
+        "Fugu 비교 축",
+        "신뢰도",
+        "문서만 있으면 `부분 반영`",
+        "테스트/benchmark/autopilot 상태까지 있으면 `반영 확인`",
+        "비교 판단은 `현재 상태 참조`와 `반영 검증 완료`를 구분한다.",
+    ]
+    missing = [marker for marker in required_markers if marker not in text]
+    assert not missing, f"missing fugu benchmark evidence mapping: {missing}"

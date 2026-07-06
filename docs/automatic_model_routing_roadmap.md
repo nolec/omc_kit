@@ -612,6 +612,19 @@ Layer boundary:
 
 ## Fugu식 기능 MVP 설계
 
+## 로드맵 검증 매트릭스
+
+지금 단계에서는 "많이 수정했다"와 "실제로 반영됐다"를 같은 말로 쓰지 않는다.
+로드맵 완료 항목은 아래 기준으로 다시 확인한다.
+
+| 로드맵 완료 항목 | 실제 반영 증거 | Fugu 비교에 쓰는 축 | 판정 규칙 |
+|---|---|---|---|
+| V4. Telemetry-driven Tuning | roadmap 문구 + 관련 테스트 + overview/summary/autopilot completed 상태 | feedback loop / policy tuning | 문서만 반영이면 `부분 반영`, 테스트/실행 증거까지 있으면 `반영 확인` |
+| Operator Experience | roadmap 문구 + response-mode fixture + expensive-flow summary + validation task 상태 | next-action quality / operator control | 문서+fixture만 있으면 `반영 확인`, 운영 판정까지 닫히면 `체감 개선 확인` |
+| Fugu식 MVP 설계 | benchmark 문서 + roadmap MVP 섹션 + 후속 설계 태스크 | single-entry runtime orchestration | 설계만 있으면 `문서만 반영`, 구현/검증이 붙어야 `반영 확인` |
+
+Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분한다.
+
 완전 자동 전환보다 먼저 넣을 최소 제품 단위는 아래 3개다.
 
 ### MVP 1. Decision Engine Core

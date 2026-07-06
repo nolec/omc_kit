@@ -127,3 +127,21 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "2. `Cost-Quality Policy Layer`" in text
     assert "3. `Executor Recommendation Surface`" in text
     assert "`escalation_policy`를 V3 승격 엔진과 연결" not in text
+
+
+def test_roadmap_includes_evidence_based_validation_matrix_for_fugu_alignment() -> None:
+    text = Path("docs/automatic_model_routing_roadmap.md").read_text(encoding="utf-8")
+
+    required_markers = [
+        "## 로드맵 검증 매트릭스",
+        "로드맵 완료 항목",
+        "실제 반영 증거",
+        "Fugu 비교에 쓰는 축",
+        "판정 규칙",
+        "`문서만 반영`",
+        "`반영 확인`",
+        "`체감 개선 확인`",
+        "Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분한다.",
+    ]
+    missing = [marker for marker in required_markers if marker not in text]
+    assert not missing, f"missing roadmap validation matrix markers: {missing}"
