@@ -804,6 +804,29 @@
       "evidence": "2026-07-07 실제 세션 요청문 추출: 현재 남은 작업/상태 확인 요청"
     },
     {
+      "request": "어디까지 완료된거야",
+      "expected_mode": "answer-first",
+      "expected_next_action": "$omc-status",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: 구현 다음 단계나 task 진입을 먼저 제안",
+        "user: 완료 상태 확인보다 진행 제안이 앞섬"
+      ],
+      "candidate_trace": [
+        "assistant: 현재 완료 범위와 남은 범위를 먼저 요약",
+        "assistant: 필요 시 다음 우선순위를 분리해서 제안"
+      ],
+      "baseline_output_chars": 276,
+      "candidate_output_chars": 244,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "$omc-status",
+      "source_type": "observed_request",
+      "evidence": "2026-07-07 실제 세션 요청문 추출: 현재 완료 범위/진행률 확인 요청"
+    },
+    {
       "request": "omc-review 최소 압축안만 먼저 제안",
       "expected_mode": "answer-first",
       "baseline_policy": "baseline",
