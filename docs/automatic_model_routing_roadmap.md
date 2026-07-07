@@ -547,6 +547,7 @@ Fugu식 오케스트레이션에서 실제로 가져올 가치가 높은 다음 
   - overview도 이제 `shared input -> shared resolver` 경로를 직접 타도록 보강했고, 해당 경로는 전용 회귀 테스트로 잠가 local unpacking drift를 막았다.
   - 최근에는 `operator priority`에 이어 `output_bloat validation`과 `operator explanation`도 shared decision input contract로 이관해, benchmark 쪽이 thin wrapper만 남기고 같은 resolver를 직접 타도록 정리했다.
   - 이어서 `overview_summary`의 `next_priority` adapter도 `source_surface=overview_summary`까지 포함한 공통 input shape로 잠가, surface별 adapter drift를 fixture 수준에서 바로 감지할 수 있게 맞췄다.
+  - 추가로 `operator explanation`도 ready flow 기준 shared resolver와 benchmark adapter가 같은 설명 라인을 유지하는 parity fixture를 넣어, explanation surface drift까지 같은 방식으로 잠갔다.
 - 구현 순서:
   1. decision input schema 고정 - 완료
   2. priority rule 공통화 - 완료
