@@ -5179,6 +5179,50 @@ def test_operator_explanation_input_marks_expensive_flow_source_surface():
     assert decision_input["extension"] == {"source_surface": "expensive_flow_summary"}
 
 
+def test_operator_explanation_surface_keeps_same_lines_for_same_ready_input():
+    mod = _load_module()
+
+    import omc_decision_input as decision_input_mod
+
+    decision_input = decision_input_mod.build_operator_explanation_input(
+        dominant_flow_kind="wrong_next_step",
+        flow_kind_counts={
+            "wrong_next_step": 1,
+            "reroute_loop": 0,
+            "over_stage_entry": 0,
+            "output_bloat": 1,
+        },
+        observed_reason_signal_counts={
+            "reroute_reason": 1,
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+        operator_validation_status="ready_to_close",
+        operator_next_priority="tighten_next_action_routing",
+        extension={"source_surface": "expensive_flow_summary"},
+    )
+
+    expected = decision_input_mod.resolve_operator_explanation_from_input(decision_input)
+    actual = mod._build_operator_explanation_lines(
+        dominant_flow_kind="wrong_next_step",
+        flow_kind_counts={
+            "wrong_next_step": 1,
+            "reroute_loop": 0,
+            "over_stage_entry": 0,
+            "output_bloat": 1,
+        },
+        observed_reason_signal_counts={
+            "reroute_reason": 1,
+            "output_bloat_reason": 1,
+            "compression_signal": 1,
+        },
+        operator_validation_status="ready_to_close",
+        operator_next_priority="tighten_next_action_routing",
+    )
+
+    assert actual == expected
+
+
 def test_operator_explanation_lines_surface_output_bloat_as_primary_bottleneck():
     mod = _load_module()
 
