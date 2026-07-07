@@ -597,7 +597,7 @@ Layer boundary:
 - 기본 반환은 `balanced`로 보수화했고, `cost_saver`는 `low failure cost + low ambiguity + speed goal`의 명시적 lightweight 조건에서만 선택되게 제한했다.
 - low-confidence 경계는 `balanced + user_selection_needed=yes` output contract로 고정했다.
 - `omc-plan` surface 1차도 연결되어 `policy_profile / policy_reason_summary / policy_confidence`와 low-confidence fallback 규칙을 plan 계약에서 직접 읽을 수 있게 맞췄다.
-- benchmark/report surface에도 `recommended_policy_profile / policy_reason_summary / policy_confidence`가 직접 노출되고, 관련 회귀 테스트로 summary 계약이 고정됐다.
+- benchmark/report surface에도 `recommended_policy_profile / policy_reason_summary / policy_confidence / user_selection_needed`가 직접 노출되고, 관련 회귀 테스트로 summary 계약이 고정됐다.
 
 ### 3. Executor Recommendation Surface
 
