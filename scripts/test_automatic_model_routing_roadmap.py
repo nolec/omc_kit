@@ -110,8 +110,11 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "- `failure_cost`" in text
     assert "- `ambiguity`" in text
     assert "- `operator_goal`" in text
+    assert "3. skill adapter 이관 - 사실상 완료 (operator priority / output_bloat validation / operator explanation / overview next_priority parity 고정)" in text
+    assert "4. fixture 확대 - 대표 반례 마감 단계 (새 observed failure가 다시 잡힐 때만 추가 확장)" in text
     assert "입력 축은 3개로 시작한다." in text
     assert "`confidence=low`이면 `balanced + user_selection_needed=yes`로 고정한다." in text
+    assert "- benchmark/report surface에도 `recommended_policy_profile / policy_reason_summary / policy_confidence`가 직접 노출되고, 관련 회귀 테스트로 summary 계약이 고정됐다." in text
     assert "Layer boundary:" in text
     assert "- Cost-Quality Policy Layer: 정책 프로필 추천과 설명만 담당" in text
     assert "- Executor Recommendation Surface: 실행기/모델 매핑만 담당" in text
