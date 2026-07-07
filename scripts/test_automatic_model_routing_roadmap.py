@@ -40,7 +40,7 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "## 바로 다음 작업 계획" in text
     assert "next-action 품질 보강 3차 - 완료" in text
     assert "`next-action 품질 보강 3차`는 완료됐고, 이제 다음 우선순위는 아래와 같다." in text
-    assert "response-mode fixture는 28 cases까지 늘었고 observed_request / expected_next_action 케이스도 더 촘촘히 고정됐다." in text
+    assert "response-mode fixture는 29 cases까지 늘었고 observed_request / expected_next_action 케이스도 더 촘촘히 고정됐다." in text
     assert "## Decision Engine Spec" in text
     assert "`failure_class / escalation_policy / retry_count / reason_codes` 조합으로 결정한다." in text
     assert "`execution_failure` + default policy + threshold 미만" in text
