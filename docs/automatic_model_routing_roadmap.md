@@ -613,6 +613,34 @@ Layer boundary:
   2. 승인 기반 reroute
   3. 제한적 auto-switch
 
+## Learned Orchestrator 진입 게이트
+
+V5는 "바로 구현해볼 만한 다음 기능"이 아니라, 아래 gate를 통과했을 때만 여는 연구/제품화 단계로 본다.
+
+### 진입 조건
+
+- V4 운영 observed 유지 검증이 계속 `ready`를 유지한다
+- Operator Experience가 `ready_to_close` 상태를 유지하고, 새 observed 케이스 1건 추가에도 주 우선순위가 흔들리지 않는다
+- `Decision Engine 일반화`, `Cost-Quality Policy Layer`, `Executor Recommendation Surface`의 추천-only surface가 먼저 정리된다
+- 사람 승인 없는 자동 executor 전환 없이도 policy/executor 추천 품질을 설명 가능하게 유지한다
+
+### 보류 조건
+
+- observed run은 충분하지만 policy drift 설명이 아직 약하다
+- wrong_next_step가 여전히 주 병목인데 learned layer로 덮으려 한다
+- executor recommendation이 추천-only 단계도 닫히지 않았다
+- 운영 검증보다 구현 욕심이 앞서서 fallback/guard 설명력이 약해진다
+
+### 시작 전 금지선
+
+- learned orchestrator를 runtime closed-loop auto-switch로 바로 연결하지 않는다
+- benchmark/fixture 없이 learned policy를 넣지 않는다
+- 기존 decision engine 설명 가능성을 희생하면서 black-box 점수를 올리지 않는다
+
+한 줄 기준:
+
+- `추천 엔진 3축이 먼저, learned layer는 맨 마지막`
+
 ## Fugu식 기능 MVP 설계
 
 ## 로드맵 검증 매트릭스

@@ -117,6 +117,11 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "- Executor Recommendation Surface: 실행기/모델 매핑만 담당" in text
     assert "- Reroute Layer: 실패 후 fallback / retry / delay만 담당" in text
     assert "### 3. Executor Recommendation Surface" in text
+    assert "## Learned Orchestrator 진입 게이트" in text
+    assert "### 진입 조건" in text
+    assert "### 보류 조건" in text
+    assert "### 시작 전 금지선" in text
+    assert "`추천 엔진 3축이 먼저, learned layer는 맨 마지막`" in text
     assert "## Fugu식 기능 MVP 설계" in text
     assert "### MVP 1. Decision Engine Core" in text
     assert "### MVP 2. Policy Profile 3종" in text
