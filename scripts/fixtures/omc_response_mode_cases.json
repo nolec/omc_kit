@@ -548,6 +548,75 @@
       "evidence": "2026-06-28 실제 세션 요청문 추출: Operator Experience 1순위 재계획 후 critique 재진입"
     },
     {
+      "request": "우리 방금 추천은 plan 이었는데 critique 하니까 치명이 나왔어",
+      "expected_mode": "answer-first",
+      "expected_next_action": "$omc-critique",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: plan 다음 task 기본 순서만 다시 설명",
+        "user: 아니 critique에서 치명 이슈가 나왔다는 맥락을 다시 강조"
+      ],
+      "candidate_trace": [
+        "assistant: 현재 병목이 plan 자체가 아니라 critique로 드러난 구멍이라고 정리",
+        "assistant: 다음 단계는 critique 기준으로 보강해야 한다고 안내"
+      ],
+      "baseline_output_chars": 286,
+      "candidate_output_chars": 318,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "$omc-critique",
+      "source_type": "observed_request",
+      "evidence": "2026-07-05 실제 세션 요청문 추출: plan 추천 이후 critique에서 치명 이슈가 드러난 상황 재질문"
+    },
+    {
+      "request": "plan 을 했을 때 추천은 task 가 나온 상태고 내가 혹시 몰라서 critique 했더니 구멍을 발견한거잖아",
+      "expected_mode": "answer-first",
+      "expected_next_action": "$omc-critique",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: task 추천이 기본 흐름이었다고만 설명",
+        "user: 아니 critique에서 실제 구멍이 발견된 맥락을 다시 제시"
+      ],
+      "candidate_trace": [
+        "assistant: 기본 파이프라인보다 현재 발견된 리스크를 우선해야 한다고 설명",
+        "assistant: 다음 한 수를 critique 보강으로 좁힘"
+      ],
+      "baseline_output_chars": 294,
+      "candidate_output_chars": 326,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "$omc-critique",
+      "source_type": "observed_request",
+      "evidence": "2026-07-05 실제 세션 요청문 추출: task 추천이 잘못이었는지 critique 발견 구멍을 근거로 재질문"
+    },
+    {
+      "request": "critique 활용해서 진행하자",
+      "expected_mode": "answer-first",
+      "expected_next_action": "$omc-critique",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": [
+        "assistant: 이전 plan이나 task를 계속 이어가려 함",
+        "user: 아니 critique를 활용하자는 의도를 다시 확인"
+      ],
+      "candidate_trace": [
+        "assistant: critique를 현재 병목 해결용으로 인식",
+        "assistant: 다음 단계로 critique 진입을 명시"
+      ],
+      "baseline_output_chars": 248,
+      "candidate_output_chars": 256,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "$omc-critique",
+      "source_type": "observed_request",
+      "evidence": "2026-07-01 실제 세션 요청문 추출: critique 활용을 명시적으로 지시"
+    },
+    {
       "request": "2,3 중에 뭘 추천해",
       "expected_mode": "answer-first",
       "expected_next_action": "사용자 선택 대기",

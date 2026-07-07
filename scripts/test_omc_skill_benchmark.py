@@ -4322,6 +4322,29 @@ def test_response_mode_fixture_distinguishes_recommendation_question_from_task_p
     assert report["cases"][0]["candidate"]["next_action"] == "사용자 선택 대기"
 
 
+def test_response_mode_fixture_preserves_critique_reroute_for_discovered_plan_gap():
+    mod = _load_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+    targets = [
+        "우리 방금 추천은 plan 이었는데 critique 하니까 치명이 나왔어",
+        "plan 을 했을 때 추천은 task 가 나온 상태고 내가 혹시 몰라서 critique 했더니 구멍을 발견한거잖아",
+        "critique 활용해서 진행하자",
+    ]
+
+    selected = [case for case in cases if case["request"] in targets]
+    report = mod.compare_response_modes(selected)
+
+    assert report["summary"]["next_action_case_count"] == 3
+    assert report["summary"]["baseline_wrong_next_step_rate"] == 1.0
+    assert report["summary"]["candidate_wrong_next_step_rate"] == 0.0
+    assert report["summary"]["wrong_next_step_rate_delta"] == -1.0
+    assert all(case["expected_next_action"] == "$omc-critique" for case in report["cases"])
+    assert all(case["baseline"]["next_action"] == "$omc-task" for case in report["cases"])
+    assert all(case["candidate"]["next_action"] == "$omc-critique" for case in report["cases"])
+
+
 def test_response_mode_fixture_distinguishes_option_recommendation_from_immediate_task_progression():
     mod = _load_module()
 
