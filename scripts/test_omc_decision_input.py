@@ -199,6 +199,18 @@ def test_output_bloat_validation_input_prefers_ready_to_close_when_not_dominant(
     )
 
 
+def test_output_bloat_validation_input_keeps_source_surface_extension():
+    decision_input = mod.build_output_bloat_validation_input(
+        flow_kind_counts={"wrong_next_step": 1, "output_bloat": 1},
+        observed_reason_signal_counts={"output_bloat_reason": 1},
+        dominant_flow_kind="wrong_next_step",
+        operator_next_priority="tighten_next_action_routing",
+        extension={"source_surface": "expensive_flow_summary"},
+    )
+
+    assert decision_input["extension"] == {"source_surface": "expensive_flow_summary"}
+
+
 def test_operator_explanation_input_prefers_over_stage_resume_condition():
     decision_input = mod.build_operator_explanation_input(
         dominant_flow_kind="over_stage_entry",
@@ -219,3 +231,16 @@ def test_operator_explanation_input_prefers_over_stage_resume_condition():
     assert explanation["resume_condition_line"] == (
         "resume condition: reduce over_stage_entry before closing follow-ups"
     )
+
+
+def test_operator_explanation_input_keeps_source_surface_extension():
+    decision_input = mod.build_operator_explanation_input(
+        dominant_flow_kind="wrong_next_step",
+        flow_kind_counts={"wrong_next_step": 1, "output_bloat": 1},
+        observed_reason_signal_counts={"output_bloat_reason": 1},
+        operator_validation_status="ready_to_close",
+        operator_next_priority="tighten_next_action_routing",
+        extension={"source_surface": "expensive_flow_summary"},
+    )
+
+    assert decision_input["extension"] == {"source_surface": "expensive_flow_summary"}

@@ -4974,6 +4974,19 @@ def test_output_bloat_validation_matches_shared_decision_input_contract():
     assert actual == expected
 
 
+def test_output_bloat_validation_input_marks_expensive_flow_source_surface():
+    mod = _load_module()
+
+    decision_input = mod._build_output_bloat_validation_surface_input(
+        flow_kind_counts={"wrong_next_step": 1, "output_bloat": 1},
+        observed_reason_signal_counts={"output_bloat_reason": 1},
+        dominant_flow_kind="wrong_next_step",
+        operator_next_priority="tighten_next_action_routing",
+    )
+
+    assert decision_input["extension"] == {"source_surface": "expensive_flow_summary"}
+
+
 def test_operator_explanation_matches_shared_decision_input_contract():
     mod = _load_module()
 
@@ -5123,6 +5136,20 @@ def test_operator_explanation_lines_do_not_force_wrong_next_step_resume_for_othe
     assert lines["resume_condition_line"] == (
         "resume condition: reduce over_stage_entry before closing follow-ups"
     )
+
+
+def test_operator_explanation_input_marks_expensive_flow_source_surface():
+    mod = _load_module()
+
+    decision_input = mod._build_operator_explanation_surface_input(
+        dominant_flow_kind="wrong_next_step",
+        flow_kind_counts={"wrong_next_step": 1, "output_bloat": 1},
+        observed_reason_signal_counts={"output_bloat_reason": 1},
+        operator_validation_status="ready_to_close",
+        operator_next_priority="tighten_next_action_routing",
+    )
+
+    assert decision_input["extension"] == {"source_surface": "expensive_flow_summary"}
 
 
 def test_operator_explanation_lines_surface_output_bloat_as_primary_bottleneck():

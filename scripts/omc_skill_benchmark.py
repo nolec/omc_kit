@@ -1098,13 +1098,29 @@ def _resolve_output_bloat_validation_status(
     dominant_flow_kind: str,
     operator_next_priority: str,
 ) -> tuple[str, bool, str]:
-    decision_input = build_output_bloat_validation_input(
+    decision_input = _build_output_bloat_validation_surface_input(
         flow_kind_counts=flow_kind_counts,
         observed_reason_signal_counts=observed_reason_signal_counts,
         dominant_flow_kind=dominant_flow_kind,
         operator_next_priority=operator_next_priority,
     )
     return resolve_output_bloat_validation_from_input(decision_input)
+
+
+def _build_output_bloat_validation_surface_input(
+    *,
+    flow_kind_counts: dict[str, int],
+    observed_reason_signal_counts: dict[str, int],
+    dominant_flow_kind: str,
+    operator_next_priority: str,
+) -> dict[str, object]:
+    return build_output_bloat_validation_input(
+        flow_kind_counts=flow_kind_counts,
+        observed_reason_signal_counts=observed_reason_signal_counts,
+        dominant_flow_kind=dominant_flow_kind,
+        operator_next_priority=operator_next_priority,
+        extension={"source_surface": "expensive_flow_summary"},
+    )
 
 
 def _build_operator_explanation_lines(
@@ -1115,7 +1131,7 @@ def _build_operator_explanation_lines(
     operator_validation_status: str,
     operator_next_priority: str,
 ) -> dict[str, str]:
-    decision_input = build_operator_explanation_input(
+    decision_input = _build_operator_explanation_surface_input(
         dominant_flow_kind=dominant_flow_kind,
         flow_kind_counts=flow_kind_counts,
         observed_reason_signal_counts=observed_reason_signal_counts,
@@ -1123,6 +1139,24 @@ def _build_operator_explanation_lines(
         operator_next_priority=operator_next_priority,
     )
     return resolve_operator_explanation_from_input(decision_input)
+
+
+def _build_operator_explanation_surface_input(
+    *,
+    dominant_flow_kind: str,
+    flow_kind_counts: dict[str, int],
+    observed_reason_signal_counts: dict[str, int],
+    operator_validation_status: str,
+    operator_next_priority: str,
+) -> dict[str, object]:
+    return build_operator_explanation_input(
+        dominant_flow_kind=dominant_flow_kind,
+        flow_kind_counts=flow_kind_counts,
+        observed_reason_signal_counts=observed_reason_signal_counts,
+        operator_validation_status=operator_validation_status,
+        operator_next_priority=operator_next_priority,
+        extension={"source_surface": "expensive_flow_summary"},
+    )
 
 
 def compare_response_modes(cases: list[dict[str, object]]) -> dict[str, object]:
