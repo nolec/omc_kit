@@ -4002,6 +4002,33 @@ def test_next_priority_surface_adapter_builds_report_decision_payload():
     assert reason == "reason signals observed in ready dataset"
 
 
+def test_next_priority_surface_adapters_keep_same_recommendation_for_same_ready_input():
+    mod = _load_module()
+
+    collected_input = mod._build_next_priority_surface_input(
+        blocker="none",
+        observed_reason_signals_present=True,
+        baseline_comparison_status="ready",
+        source_surface="collected_summary",
+        extension={"policy_comparison_summary": "ready"},
+    )
+    report_input = mod._build_next_priority_surface_input(
+        blocker="none",
+        observed_reason_signals_present=True,
+        baseline_comparison_status="ready",
+        source_surface="report_decision",
+        extension={"policy_comparison_summary": "ready"},
+    )
+
+    collected_actual = mod._resolve_next_priority_from_input(collected_input)
+    report_actual = mod._resolve_next_priority_from_input(report_input)
+
+    assert collected_actual == report_actual == (
+        "validate_operator_bottlenecks_from_observed_runs",
+        "reason signals observed in ready dataset",
+    )
+
+
 def test_report_decision_surfaces_policy_profile_summary_fields():
     mod = _load_module()
     exec_mod = _load_exec_module()

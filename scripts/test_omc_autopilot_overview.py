@@ -811,6 +811,39 @@ def test_overview_next_priority_uses_shared_input_path() -> None:
     assert actual == expected
 
 
+def test_overview_next_priority_matches_other_surfaces_for_same_ready_input() -> None:
+    import omc_decision_input as decision_input_mod
+
+    overview_input = omc_autopilot._build_overview_next_priority_input(
+        blocker="none",
+        observed_reason_signals_present=True,
+        baseline_comparison_status="ready",
+    )
+    collected_input = decision_input_mod.build_next_priority_surface_input(
+        blocker="none",
+        observed_reason_signals_present=True,
+        baseline_comparison_status="ready",
+        source_surface="collected_summary",
+        extension={"policy_comparison_summary": "ready"},
+    )
+    report_input = decision_input_mod.build_next_priority_surface_input(
+        blocker="none",
+        observed_reason_signals_present=True,
+        baseline_comparison_status="ready",
+        source_surface="report_decision",
+        extension={"policy_comparison_summary": "ready"},
+    )
+
+    overview_actual = omc_autopilot._resolve_next_priority_from_overview_input(overview_input)
+    collected_actual = decision_input_mod.resolve_next_priority_from_input(collected_input)
+    report_actual = decision_input_mod.resolve_next_priority_from_input(report_input)
+
+    assert overview_actual == collected_actual == report_actual == (
+        "validate_operator_bottlenecks_from_observed_runs",
+        "reason signals observed in ready dataset",
+    )
+
+
 def test_cmd_overview_surfaces_accepted_excluded_rejected_observed_counts(
     tmp_path: Path, capsys
 ) -> None:
