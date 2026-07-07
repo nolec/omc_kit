@@ -395,6 +395,38 @@ def test_policy_decision_quality_goal_with_high_failure_cost_prefers_quality_fir
     assert decision["user_selection_needed"] is False
 
 
+def test_resolve_task_routing_recommends_codex_for_balanced_task_work() -> None:
+    routing = omc_exec.resolve_task_routing(
+        task_kind="task",
+        request_text="작은 수정",
+        retry_count=0,
+        touched_files=[],
+        review_severity=None,
+    )
+
+    assert routing["recommended_executor"] == "codex"
+    assert routing["executor_reason_summary"] == "balanced task work stays on codex by default"
+    assert routing["executor_fallback"] == "gemini"
+
+
+def test_resolve_task_routing_recommends_claude_for_quality_first_plan_work() -> None:
+    routing = omc_exec.resolve_task_routing(
+        task_kind="plan",
+        request_text="복잡한 설계 영향도까지 같이 검토",
+        retry_count=0,
+        touched_files=["src/features/a.ts"],
+        review_severity=None,
+        ambiguity_level="medium",
+        failure_cost="high",
+        operator_goal="quality",
+    )
+
+    assert routing["recommended_policy_profile"] == "quality_first"
+    assert routing["recommended_executor"] == "claude"
+    assert routing["executor_reason_summary"] == "quality-first planning work prefers claude for broader reasoning"
+    assert routing["executor_fallback"] == "codex"
+
+
 def test_select_model_profile_uses_full_default_for_ship() -> None:
     assert (
         omc_exec.select_model_profile(

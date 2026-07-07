@@ -70,6 +70,12 @@ _POLICY_REASON_SUMMARIES = {
     "high_ambiguity_and_cost": "high ambiguity with high failure cost requires quality first",
 }
 
+_EXECUTOR_REASON_SUMMARIES = {
+    "balanced_codex_default": "balanced task work stays on codex by default",
+    "quality_first_claude": "quality-first planning work prefers claude for broader reasoning",
+    "cost_saver_gemini": "cost-saver work prefers gemini for lower-cost execution",
+}
+
 
 def _normalize_text(value: str | None) -> str:
     return (value or "").strip().lower()
@@ -286,6 +292,36 @@ def _build_policy_decision(
     }
 
 
+def _resolve_executor_recommendation(
+    *,
+    task_kind: str,
+    policy_profile: str,
+) -> dict[str, str]:
+    normalized_kind = _normalize_text(task_kind) or "task"
+    normalized_policy = _normalize_text(policy_profile) or "balanced"
+
+    if normalized_policy == "quality_first" and normalized_kind in {"plan", "review", "investigate"}:
+        return _build_executor_recommendation("claude", "quality_first_claude", "codex")
+    if normalized_policy == "cost_saver":
+        return _build_executor_recommendation("gemini", "cost_saver_gemini", "codex")
+    return _build_executor_recommendation("codex", "balanced_codex_default", "gemini")
+
+
+def _build_executor_recommendation(
+    recommended_executor: str,
+    reason_code: str,
+    fallback_executor: str,
+) -> dict[str, str]:
+    return {
+        "recommended_executor": recommended_executor,
+        "executor_reason_code": reason_code,
+        "executor_reason_summary": _EXECUTOR_REASON_SUMMARIES.get(
+            reason_code, reason_code.replace("_", " ")
+        ),
+        "executor_fallback": fallback_executor,
+    }
+
+
 def build_policy_summary_input(
     *,
     policy_comparison_summary: str,
@@ -341,6 +377,9 @@ def resolve_task_routing(
     risk: str | None = None,
     sensitive_paths: list[str] | None = None,
     preferred_profile: str | None = None,
+    ambiguity_level: str | None = None,
+    failure_cost: str | None = None,
+    operator_goal: str | None = None,
 ) -> dict[str, object]:
     normalized_kind = _normalize_text(task_kind) or "task"
     normalized_files = list(touched_files or [])
@@ -364,6 +403,13 @@ def resolve_task_routing(
         complexity=complexity,
         risk=risk,
         sensitive_paths=sensitive_paths,
+        ambiguity_level=ambiguity_level,
+        failure_cost=failure_cost,
+        operator_goal=operator_goal,
+    )
+    executor_decision = _resolve_executor_recommendation(
+        task_kind=normalized_kind,
+        policy_profile=str(policy_decision["recommended_policy_profile"]),
     )
     return {
         "task_kind": normalized_kind,
@@ -377,6 +423,10 @@ def resolve_task_routing(
         "policy_confidence": str(policy_decision["policy_confidence"]),
         "policy_override_allowed": bool(policy_decision["policy_override_allowed"]),
         "user_selection_needed": bool(policy_decision["user_selection_needed"]),
+        "recommended_executor": str(executor_decision["recommended_executor"]),
+        "executor_reason_code": str(executor_decision["executor_reason_code"]),
+        "executor_reason_summary": str(executor_decision["executor_reason_summary"]),
+        "executor_fallback": str(executor_decision["executor_fallback"]),
     }
 
 
