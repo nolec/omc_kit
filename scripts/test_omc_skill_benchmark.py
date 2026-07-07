@@ -4027,6 +4027,30 @@ def test_report_decision_surfaces_policy_profile_summary_fields():
     assert report["decision"]["policy_confidence"] == expected["policy_confidence"]
 
 
+def test_report_decision_surfaces_executor_recommendation_fields():
+    mod = _load_module()
+    exec_mod = _load_exec_module()
+
+    payload = json.loads(RESPONSE_MODE_FIXTURE_PATH.read_text(encoding="utf-8"))
+    cases = payload["cases"] if isinstance(payload, dict) else payload
+
+    report = mod.compare_response_modes(cases)
+    expected = exec_mod.resolve_policy_summary(
+        task_kind="benchmark",
+        policy_input=exec_mod.build_policy_summary_input(
+            policy_comparison_summary=str(report["decision"]["policy_comparison_summary"]),
+            policy_comparison_bottleneck_summary=str(
+                report["decision"]["policy_comparison_bottleneck_summary"]
+            ),
+            next_priority_reason=str(report["decision"]["next_priority_reason"]),
+        ),
+    )
+
+    assert report["decision"]["recommended_executor"] == expected["recommended_executor"]
+    assert report["decision"]["executor_reason_summary"] == expected["executor_reason_summary"]
+    assert report["decision"]["executor_fallback"] == expected["executor_fallback"]
+
+
 def test_response_mode_fixture_observed_request_case_affects_next_action_accuracy():
     mod = _load_module()
 

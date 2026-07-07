@@ -94,6 +94,9 @@ def _resolve_benchmark_policy_summary(
         "recommended_policy_profile": str(decision["recommended_policy_profile"]),
         "policy_reason_summary": str(decision["policy_reason_summary"]),
         "policy_confidence": str(decision["policy_confidence"]),
+        "recommended_executor": str(decision["recommended_executor"]),
+        "executor_reason_summary": str(decision["executor_reason_summary"]),
+        "executor_fallback": str(decision["executor_fallback"]),
     }
 
 
@@ -851,6 +854,9 @@ def _decision_from_summary(summary: dict[str, object]) -> dict[str, object]:
         "recommended_policy_profile": policy_summary["recommended_policy_profile"],
         "policy_reason_summary": policy_summary["policy_reason_summary"],
         "policy_confidence": policy_summary["policy_confidence"],
+        "recommended_executor": policy_summary["recommended_executor"],
+        "executor_reason_summary": policy_summary["executor_reason_summary"],
+        "executor_fallback": policy_summary["executor_fallback"],
         "next_priority_recommendation": next_priority_recommendation,
         "next_priority_reason": next_priority_reason,
         "next_priority_input_source_surface": str(

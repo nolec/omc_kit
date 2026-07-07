@@ -358,11 +358,19 @@ def resolve_policy_summary(
         ambiguity_level="medium",
         failure_cost="medium",
     )
+    executor_decision = _resolve_executor_recommendation(
+        task_kind=task_kind,
+        policy_profile=str(decision["recommended_policy_profile"]),
+    )
     return {
         "recommended_policy_profile": str(decision["recommended_policy_profile"]),
         "policy_reason_summary": str(decision["policy_reason_summary"]),
         "policy_confidence": str(decision["policy_confidence"]),
         "user_selection_needed": "yes" if decision["user_selection_needed"] else "no",
+        "recommended_executor": str(executor_decision["recommended_executor"]),
+        "executor_reason_code": str(executor_decision["executor_reason_code"]),
+        "executor_reason_summary": str(executor_decision["executor_reason_summary"]),
+        "executor_fallback": str(executor_decision["executor_fallback"]),
     }
 
 

@@ -427,6 +427,22 @@ def test_resolve_task_routing_recommends_claude_for_quality_first_plan_work() ->
     assert routing["executor_fallback"] == "codex"
 
 
+def test_resolve_policy_summary_surfaces_executor_recommendation() -> None:
+    summary = omc_exec.resolve_policy_summary(
+        task_kind="benchmark",
+        policy_input=omc_exec.build_policy_summary_input(
+            policy_comparison_summary="policy comparison ready: baseline comparison wording can be enabled",
+            policy_comparison_bottleneck_summary="policy comparison bottleneck: readiness requirements are not met",
+            next_priority_reason="operator should validate broader quality tradeoffs before rollout",
+        ),
+    )
+
+    assert summary["recommended_policy_profile"] == "balanced"
+    assert summary["recommended_executor"] == "codex"
+    assert summary["executor_reason_summary"] == "balanced task work stays on codex by default"
+    assert summary["executor_fallback"] == "gemini"
+
+
 def test_select_model_profile_uses_full_default_for_ship() -> None:
     assert (
         omc_exec.select_model_profile(
