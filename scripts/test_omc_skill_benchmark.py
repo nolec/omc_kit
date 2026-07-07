@@ -5168,3 +5168,21 @@ def test_response_mode_fixture_covers_completion_progress_status_request():
     assert case["expected_next_action"] == "$omc-status"
     assert case["baseline"]["next_action"] == "$omc-task"
     assert case["candidate"]["next_action"] == "$omc-status"
+
+
+def test_response_mode_fixture_covers_roadmap_remaining_work_request():
+    mod = _load_module()
+
+    report = mod.compare_response_modes(
+        mod._load_response_mode_cases(RESPONSE_MODE_FIXTURE_PATH)
+    )
+
+    case = next(
+        item
+        for item in report["cases"]
+        if item["request"] == "로드맵 기준 어떤 작업들이 남은거야"
+    )
+
+    assert case["expected_next_action"] == "$omc-plan"
+    assert case["baseline"]["next_action"] == "$omc-task"
+    assert case["candidate"]["next_action"] == "$omc-plan"

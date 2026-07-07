@@ -251,6 +251,23 @@
       "evidence": "2026-06-30 실제 세션 요청문 추출: 로드맵 최신화 후 다음 계획 정렬"
     },
     {
+      "request": "로드맵 기준 어떤 작업들이 남은거야",
+      "expected_mode": "answer-first",
+      "expected_next_action": "$omc-plan",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": ["assistant: 바로 구현/진행 전제로 응답", "user: 아니 남은 작업 정리부터"],
+      "candidate_trace": ["assistant: 로드맵 잔여 작업을 먼저 요약", "assistant: 다음 계획은 $omc-plan 으로 정렬"],
+      "baseline_output_chars": 289,
+      "candidate_output_chars": 281,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-task",
+      "candidate_next_action": "$omc-plan",
+      "source_type": "observed_request",
+      "evidence": "2026-07-07 실제 세션 요청문 추출: 로드맵 기준 잔여 작업 확인 후 다음 계획 요청"
+    },
+    {
       "request": "로드맵과 현재 진행된 부분 싱크부터 맞추자",
       "expected_mode": "answer-first",
       "expected_next_action": "$omc-plan",
