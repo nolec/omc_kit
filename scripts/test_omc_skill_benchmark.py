@@ -4052,6 +4052,7 @@ def test_report_decision_surfaces_policy_profile_summary_fields():
     assert report["decision"]["recommended_policy_profile"] == expected["recommended_policy_profile"]
     assert report["decision"]["policy_reason_summary"] == expected["policy_reason_summary"]
     assert report["decision"]["policy_confidence"] == expected["policy_confidence"]
+    assert report["decision"]["user_selection_needed"] == expected["user_selection_needed"]
 
 
 def test_report_decision_surfaces_executor_recommendation_fields():
