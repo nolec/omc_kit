@@ -53,8 +53,10 @@ import omc_cost
 import omc_exec
 from omc_decision_input import (
     build_next_priority_surface_input,
+    build_run_overview_followup_input,
     resolve_next_priority,
     resolve_next_priority_from_input,
+    resolve_run_overview_followup_from_input,
 )
 
 _TASKS_DIR = ".omc/tasks"
@@ -1649,23 +1651,18 @@ def _infer_stale_reason(data: dict) -> str | None:
 
 
 def _recommend_next_action(status: str, *, stale: bool, failure_reason: str, current_step: str) -> str:
-    if stale:
-        return "recover stale pipeline"
-    if status == "completed":
-        return "review final output"
-    if status in {"hold", "auto_hold", "blocked"}:
-        if "critique" in failure_reason:
-            return "inspect critique findings"
-        return "inspect blocked step"
-    if status in {"failed", "retry_exhausted", "timeout", "aborted"}:
-        if current_step.startswith("review"):
-            return "inspect review failures"
-        if current_step.startswith("task"):
-            return "fix task failure and retry"
-        return "inspect failed step"
-    if status == "running":
-        return "wait for next update"
-    return "inspect run details"
+    decision_input = build_run_overview_followup_input(
+        status=status,
+        stale=stale,
+        failure_reason=failure_reason,
+        current_step=current_step,
+    )
+    next_action, _ = _resolve_run_overview_followup_from_input(decision_input)
+    return next_action
+
+
+def _resolve_run_overview_followup_from_input(decision_input: dict[str, object]) -> tuple[str, str]:
+    return resolve_run_overview_followup_from_input(decision_input)
 
 
 def _summarize_run_record(run_id: str, data: dict) -> dict[str, object]:

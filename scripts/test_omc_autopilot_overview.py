@@ -100,6 +100,22 @@ def test_summarize_run_recommends_task_failure_action() -> None:
     assert summary["next_action"] == "fix task failure and retry"
 
 
+def test_autopilot_run_overview_followup_matches_shared_resolver_contract() -> None:
+    import omc_decision_input as decision_input_mod
+
+    decision_input = decision_input_mod.build_run_overview_followup_input(
+        status="hold",
+        stale=False,
+        failure_reason="critique:hold",
+        current_step="critique",
+    )
+
+    expected = decision_input_mod.resolve_run_overview_followup_from_input(decision_input)
+    actual = omc_autopilot._resolve_run_overview_followup_from_input(decision_input)
+
+    assert actual == expected
+
+
 def test_cmd_overview_prints_one_screen_summary(tmp_path: Path, capsys) -> None:
     _make_run(
         tmp_path,
