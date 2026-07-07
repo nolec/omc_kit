@@ -118,6 +118,52 @@ CRITICAL:
 VERDICT: PROCEED
 """
 
+VALID_CRITIQUE_HOLD_RECOMMENDATION_SAMPLE = """
+CRITICAL:
+- 근거: 범위와 전제가 흔들려 지금 구현으로 들어가면 잘못된 방향으로 커진다.
+  대안: 범위와 성공 기준을 다시 확정한다.
+
+WARNING:
+- 근거: 변경 비용이 높아 바로 task로 가면 되돌림 비용이 커진다.
+  대안: plan으로 재설계 후 task 진입 여부를 다시 판단한다.
+
+MINOR:
+- 근거: 없음.
+  대안: 없음.
+
+변경 비용 추정: 영향 파일 수 4개 / 예상 변경 LOC 120줄 / 실질 효과 HIGH
+
+권고 조치:
+1. 범위를 다시 고정한다.
+2. plan에서 변경 경계를 다시 나눈다.
+3. task 진입 여부를 다시 확인한다.
+
+VERDICT: HOLD
+다음 추천: $omc-plan
+"""
+
+VALID_CRITIQUE_PROCEED_CODE_SAMPLE = """
+CRITICAL:
+- 근거: 없음.
+  대안: 없음.
+
+WARNING:
+- 근거: 없음.
+  대안: 없음.
+
+MINOR:
+- 근거: 테스트 근거는 충분하지만 코드 품질 확인은 아직 남아 있다.
+  대안: review에서 diff 기준으로 최종 리스크를 확인한다.
+
+권고 조치:
+1. 현재 구현 diff를 review 범위로 고정한다.
+2. 치명/중대 이슈 유무를 확인한다.
+3. ship 여부는 그 다음에 판단한다.
+
+VERDICT: PROCEED
+다음 추천: 사용자 선택 대기 ($omc-review)
+"""
+
 
 def _read(path: Path) -> str:
     assert path.exists(), f"missing critique skill path: {path.relative_to(ROOT)}"
@@ -285,3 +331,16 @@ def test_invalid_critique_output_fixture_exposes_weak_critique():
     assert {"praise", "warning", "minor", "evidence", "alternative"}.issubset(
         set(failures)
     )
+
+
+def test_hold_critique_fixture_keeps_change_cost_and_plan_recommendation():
+    assert _validate_critique_output(VALID_CRITIQUE_HOLD_RECOMMENDATION_SAMPLE) == []
+    assert "변경 비용 추정:" in VALID_CRITIQUE_HOLD_RECOMMENDATION_SAMPLE
+    assert "VERDICT: HOLD" in VALID_CRITIQUE_HOLD_RECOMMENDATION_SAMPLE
+    assert "다음 추천: $omc-plan" in VALID_CRITIQUE_HOLD_RECOMMENDATION_SAMPLE
+
+
+def test_proceed_code_critique_fixture_waits_before_review_handoff():
+    assert _validate_critique_output(VALID_CRITIQUE_PROCEED_CODE_SAMPLE) == []
+    assert "VERDICT: PROCEED" in VALID_CRITIQUE_PROCEED_CODE_SAMPLE
+    assert "다음 추천: 사용자 선택 대기 ($omc-review)" in VALID_CRITIQUE_PROCEED_CODE_SAMPLE
