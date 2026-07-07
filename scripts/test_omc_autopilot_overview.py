@@ -844,6 +844,16 @@ def test_overview_next_priority_matches_other_surfaces_for_same_ready_input() ->
     )
 
 
+def test_overview_next_priority_input_marks_overview_source_surface() -> None:
+    decision_input = omc_autopilot._build_overview_next_priority_input(
+        blocker="none",
+        observed_reason_signals_present=True,
+        baseline_comparison_status="ready",
+    )
+
+    assert decision_input["extension"]["source_surface"] == "overview_summary"
+
+
 def test_cmd_overview_surfaces_accepted_excluded_rejected_observed_counts(
     tmp_path: Path, capsys
 ) -> None:

@@ -122,6 +122,9 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "### 보류 조건" in text
     assert "### 시작 전 금지선" in text
     assert "`추천 엔진 3축이 먼저, learned layer는 맨 마지막`" in text
+    assert "`Decision Engine 일반화`, `Cost-Quality Policy Layer`, `Executor Recommendation Surface`의 추천-only surface가 먼저 정리된다" in text
+    assert "사람 승인 없는 자동 executor 전환 없이도 policy/executor 추천 품질을 설명 가능하게 유지한다" in text
+    assert "learned orchestrator를 runtime closed-loop auto-switch로 바로 연결하지 않는다" in text
     assert "## Fugu식 기능 MVP 설계" in text
     assert "### MVP 1. Decision Engine Core" in text
     assert "### MVP 2. Policy Profile 3종" in text

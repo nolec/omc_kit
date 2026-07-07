@@ -546,6 +546,7 @@ Fugu식 오케스트레이션에서 실제로 가져올 가치가 높은 다음 
   - 추가로 `resolve_next_priority / resolve_next_priority_from_input`를 공통 모듈로 올려 `benchmark / autopilot`이 같은 priority rule을 공유하도록 2차 공통화를 마쳤다.
   - overview도 이제 `shared input -> shared resolver` 경로를 직접 타도록 보강했고, 해당 경로는 전용 회귀 테스트로 잠가 local unpacking drift를 막았다.
   - 최근에는 `operator priority`에 이어 `output_bloat validation`과 `operator explanation`도 shared decision input contract로 이관해, benchmark 쪽이 thin wrapper만 남기고 같은 resolver를 직접 타도록 정리했다.
+  - 이어서 `overview_summary`의 `next_priority` adapter도 `source_surface=overview_summary`까지 포함한 공통 input shape로 잠가, surface별 adapter drift를 fixture 수준에서 바로 감지할 수 있게 맞췄다.
 - 구현 순서:
   1. decision input schema 고정 - 완료
   2. priority rule 공통화 - 완료
