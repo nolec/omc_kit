@@ -1091,42 +1091,6 @@ def _select_diverse_top_flows(
     return selected
 
 
-def _resolve_operator_next_priority(
-    *,
-    flow_kind_counts: dict[str, int],
-    observed_reason_signal_counts: dict[str, int],
-) -> tuple[str, str]:
-    wrong_next_step_count = int(flow_kind_counts.get("wrong_next_step", 0))
-    over_stage_entry_count = int(flow_kind_counts.get("over_stage_entry", 0))
-    reroute_loop_count = int(flow_kind_counts.get("reroute_loop", 0))
-    output_bloat_count = int(flow_kind_counts.get("output_bloat", 0))
-
-    if wrong_next_step_count > 0:
-        return (
-            "tighten_next_action_routing",
-            "wrong next step remains the dominant expensive flow",
-        )
-    if reroute_loop_count > 0 or int(observed_reason_signal_counts.get("reroute_reason", 0)) > 0:
-        return (
-            "reduce_reroute_loops",
-            "reroute signals are still present in observed operator flows",
-        )
-    if over_stage_entry_count > 0:
-        return (
-            "reduce_over_stage_entry",
-            "requests still enter execution/review later than necessary",
-        )
-    if output_bloat_count > 0 or int(observed_reason_signal_counts.get("output_bloat_reason", 0)) > 0:
-        return (
-            "compress_operator_outputs",
-            "output bloat is still visible in operator-facing responses",
-        )
-    return (
-        "maintain_operator_experience_quality",
-        "no dominant expensive operator flow stands out right now",
-    )
-
-
 def _resolve_output_bloat_validation_status(
     *,
     flow_kind_counts: dict[str, int],

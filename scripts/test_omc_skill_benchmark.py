@@ -4928,6 +4928,13 @@ def test_operator_priority_input_matches_shared_decision_input_contract():
     assert actual == expected
 
 
+def test_benchmark_module_does_not_keep_local_operator_priority_rule() -> None:
+    benchmark_path = ROOT / "scripts" / "omc_skill_benchmark.py"
+    source = benchmark_path.read_text(encoding="utf-8")
+
+    assert "def _resolve_operator_next_priority(" not in source
+
+
 def test_output_bloat_validation_matches_shared_decision_input_contract():
     mod = _load_module()
 
