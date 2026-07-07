@@ -114,16 +114,53 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "4. fixture 확대 - 대표 반례 마감 단계 (새 observed failure가 다시 잡힐 때만 추가 확장)" in text
     assert "입력 축은 3개로 시작한다." in text
     assert "`confidence=low`이면 `balanced + user_selection_needed=yes`로 고정한다." in text
+    assert "설계상 남은 갭:" in text
+    assert "- ambiguity/failure_cost/operator_goal 조합별 confidence threshold 표를 아직 문서에 고정하지 않았다." in text
+    assert "- observed 비교 리포트에서 policy 추천 적중/과보수/과공격을 어떻게 판정할지 acceptance line이 아직 부족하다." in text
+    assert "- Executor Recommendation Surface로 넘기는 handoff contract를 summary field 기준으로 더 명시해야 한다." in text
+    assert "후속 구현 순서:" in text
+    assert "1. confidence threshold 표 문서화" in text
+    assert "2. policy comparison acceptance line 추가" in text
+    assert "3. summary surface handoff contract 고정" in text
     assert "- benchmark/report surface에도 `recommended_policy_profile / policy_reason_summary / policy_confidence / user_selection_needed`가 직접 노출되고, 관련 회귀 테스트로 summary 계약이 고정됐다." in text
     assert "Layer boundary:" in text
     assert "- Cost-Quality Policy Layer: 정책 프로필 추천과 설명만 담당" in text
     assert "- Executor Recommendation Surface: 실행기/모델 매핑만 담당" in text
     assert "- Reroute Layer: 실패 후 fallback / retry / delay만 담당" in text
     assert "### 3. Executor Recommendation Surface" in text
+    assert "executor recommendation input contract:" in text
+    assert "- `task_kind`" in text
+    assert "- `recommended_policy_profile`" in text
+    assert "- `risk`" in text
+    assert "- `sensitive_paths`" in text
+    assert "- `operator_goal`" in text
+    assert "executor recommendation output contract:" in text
+    assert "- `recommended_executor`" in text
+    assert "- `executor_reason_summary`" in text
+    assert "- `executor_fallback`" in text
+    assert "- `user_selection_needed`" in text
+    assert "executor 설계상 남은 갭:" in text
+    assert "- 추천-only read mode의 acceptance line이 아직 부족하다." in text
+    assert "- executor fallback과 reroute layer의 책임 분리 문구가 더 직접적이어야 한다." in text
+    assert "- Cost-Quality Layer에서 넘어오는 handoff summary field를 executor surface 기준으로 고정해야 한다." in text
+    assert "executor 후속 구현 순서:" in text
+    assert "1. executor input/output contract 문서화" in text
+    assert "2. fallback vs reroute 책임 분리" in text
+    assert "3. acceptance line 및 handoff summary field 고정" in text
     assert "## Learned Orchestrator 진입 게이트" in text
     assert "### 진입 조건" in text
     assert "### 보류 조건" in text
     assert "### 시작 전 금지선" in text
+    assert "### 진입 체크리스트" in text
+    assert "- telemetry 300건 이상" in text
+    assert "- 정책 비교 가능 케이스 100건 이상" in text
+    assert "- retry reason 분류 정확도 85% 이상" in text
+    assert "### 진입 산출물" in text
+    assert "- learned candidate scorecard 1차" in text
+    assert "- rule-based baseline comparison report" in text
+    assert "### 첫 구현 범위" in text
+    assert "- 추천-only shadow mode로 시작한다" in text
+    assert "- 기존 rule-based decision은 primary, learned score는 secondary로 병렬 기록한다" in text
     assert "`추천 엔진 3축이 먼저, learned layer는 맨 마지막`" in text
     assert "`Decision Engine 일반화`, `Cost-Quality Policy Layer`, `Executor Recommendation Surface`의 추천-only surface가 먼저 정리된다" in text
     assert "사람 승인 없는 자동 executor 전환 없이도 policy/executor 추천 품질을 설명 가능하게 유지한다" in text
