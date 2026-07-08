@@ -157,6 +157,15 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "- 추천-only read mode의 acceptance line이 아직 부족하다." in text
     assert "- executor fallback과 reroute layer의 책임 분리 문구가 더 직접적이어야 한다." in text
     assert "- Cost-Quality Layer에서 넘어오는 handoff summary field를 executor surface 기준으로 고정해야 한다." in text
+    assert "executor acceptance line:" in text
+    assert "- pass: `recommended_executor / executor_reason_summary / executor_fallback / user_selection_needed` 4개 필드가 한 surface에서 함께 설명된다." in text
+    assert "- hold: 추천은 나왔지만 `executor_reason_summary` 또는 `user_selection_needed`가 비어 사람이 바로 선택 근거를 읽을 수 없다." in text
+    assert "- fallback: 추천 실행기가 막혀도 `executor_fallback`이 같은 task_kind / policy_profile 문맥에서 바로 제시된다." in text
+    assert "- reroute: fallback으로도 해결되지 않는 실패만 reroute layer로 넘기며, executor surface는 실패 이후 경로 결정을 직접 소유하지 않는다." in text
+    assert "executor handoff acceptance binding:" in text
+    assert "- `recommended_policy_profile`와 `policy_confidence`는 executor 선택 강도의 근거로 읽혀야 한다." in text
+    assert "- `policy_reason_summary`는 `executor_reason_summary`와 서로 모순 없이 이어져야 한다." in text
+    assert "- `user_selection_needed=yes`면 executor surface도 추천-only로 멈추고 자동 전환을 시도하지 않는다." in text
     assert "executor 후속 구현 순서:" in text
     assert "1. executor input/output contract 문서화" in text
     assert "2. fallback vs reroute 책임 분리" in text
