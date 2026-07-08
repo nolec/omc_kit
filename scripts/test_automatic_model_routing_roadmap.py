@@ -13,6 +13,9 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "코드 작업과 설치/정리를 분리한다" in text
     assert "plan -> task -> review 왕복은 위험할 때만 반복한다" in text
     assert "같은 저장소 안에서 한 번에 끝내는 것을 우선한다" in text
+    assert "설치/동기화 작업은" in text
+    assert "setup / gitignore / hook" in text
+    assert "운영성 변경에 한해 예외적으로 묶는다" in text
     assert "V2. Step-level Routing | 완료" in text
     assert "V3. Failure-driven Escalation | 완료" in text
     assert "V4. Telemetry-driven Tuning | 완료" in text
