@@ -162,6 +162,11 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "- hold: 추천은 나왔지만 `executor_reason_summary` 또는 `user_selection_needed`가 비어 사람이 바로 선택 근거를 읽을 수 없다." in text
     assert "- fallback: 추천 실행기가 막혀도 `executor_fallback`이 같은 task_kind / policy_profile 문맥에서 바로 제시된다." in text
     assert "- reroute: fallback으로도 해결되지 않는 실패만 reroute layer로 넘기며, executor surface는 실패 이후 경로 결정을 직접 소유하지 않는다." in text
+    assert "fallback vs reroute 책임 분리:" in text
+    assert "- fallback은 추천 실행기 선택 이후의 대체안 제시에 한정되며, task 재분해나 policy 재선택을 트리거하지 않는다." in text
+    assert "- reroute는 fallback 실패 또는 executor surface 바깥 신호(`retry_exhausted`, `quality_failure`, `orchestration_failure`)가 확인됐을 때만 열린다." in text
+    assert "- executor surface는 `어떤 실행기를 먼저 쓸지`와 `막혔을 때 어떤 실행기로 한 번 더 시도할지`까지만 답한다." in text
+    assert "- reroute layer는 `같은 실행기군 재시도`가 아니라 `plan_retry / critique / delay / hold` 같은 다음 경로 결정을 소유한다." in text
     assert "executor handoff acceptance binding:" in text
     assert "- `recommended_policy_profile`와 `policy_confidence`는 executor 선택 강도의 근거로 읽혀야 한다." in text
     assert "- `policy_reason_summary`는 `executor_reason_summary`와 서로 모순 없이 이어져야 한다." in text
