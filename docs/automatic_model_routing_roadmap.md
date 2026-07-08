@@ -604,6 +604,25 @@ Layer boundary:
 - observed 비교 리포트에서 policy 추천 적중/과보수/과공격을 어떻게 판정할지 acceptance line이 아직 부족하다.
 - Executor Recommendation Surface로 넘기는 handoff contract를 summary field 기준으로 더 명시해야 한다.
 
+confidence threshold 표:
+
+| failure_cost | ambiguity | operator_goal | recommended_policy_profile | confidence |
+|---|---|---|---|---|
+| low | low | speed | cost_saver | high |
+| high | high | quality | quality_first | high |
+| medium | high | balanced | balanced | low |
+
+policy comparison acceptance line:
+- 적중(hit): observed outcome과 policy recommendation이 같은 방향으로 수렴
+- 과보수(over-conservative): balanced/quality_first가 반복되지만 실패 비용 대비 과도한 비용 증가가 확인됨
+- 과공격(over-aggressive): cost_saver가 선택됐지만 retry/review failure로 곧바로 상향 필요가 확인됨
+
+executor handoff summary fields:
+- `recommended_policy_profile`
+- `policy_reason_summary`
+- `policy_confidence`
+- `user_selection_needed`
+
 후속 구현 순서:
 1. confidence threshold 표 문서화
 2. policy comparison acceptance line 추가
