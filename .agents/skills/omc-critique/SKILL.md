@@ -74,6 +74,8 @@ VERDICT: HOLD / REVISE / PROCEED / BLOCK / APPROVE
 ## 다음 추천
 
 - 주추천 1개, 우선순위: HOLD/REVISE면 `$omc-plan`
+- fast 기준: 범위가 매우 좁고 리스크가 낮을 때만 요약형으로 끝낸다.
+- normal 기준: 기본값이며, 실패 가능성/누락/리스크 탐지가 우선이다.
 - PROCEED + PLAN 모드 + 범위 고정 → 사용자 선택 대기 (`$omc-task`)
 - PROCEED + CODE 모드 → 사용자 선택 대기 (`$omc-review`)
 - 자동으로 진행하지는 않습니다.
