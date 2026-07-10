@@ -10,6 +10,15 @@
 - `setup force`, `로드맵 최신화`, `커밋/푸시`, `벤치마크`, `회고`, `전파 작업`은 요청에 명시되었거나 현재 작업을 끝내는 데 필수일 때만 포함합니다.
 - 애매하면 부가 작업을 자동 포함하지 말고 `별도 요청`으로 분리합니다.
 
+## Operator Experience 기준
+
+이 문서는 `docs/automatic_model_routing_roadmap.md`의 Operator Experience 통합안과 같은 기준으로 읽습니다.
+
+- 다음 액션은 1개만 추천한다.
+- confidence가 낮으면 reroute/delay로 보낸다.
+- 출력은 한 화면에서 다음 선택을 판단할 수 있을 만큼만 남긴다.
+- `plan / task`는 fast, `critique / review`는 normal을 기본으로 둔다.
+
 ## 입력 선정 기준
 
 - 권장 입력: 가장 안정적이고, 가장 재현 가능하며, 설치 직후 바로 쓰기 쉬운 입력
