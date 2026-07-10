@@ -819,6 +819,10 @@ def _build_task_run_result(
 ) -> dict[str, object]:
     result: dict[str, object] = {
         "task_id": str(task.get("id") or state.get("task_id") or "").strip(),
+        "instruction": str(
+            task.get("instruction") or task.get("prompt") or task.get("title") or ""
+        ).strip(),
+        "mode": str(task.get("mode") or state.get("mode") or "task").strip(),
         "status": str(state.get("status") or "unknown"),
         "branch": _safe_current_branch(root),
         "executor": executor,

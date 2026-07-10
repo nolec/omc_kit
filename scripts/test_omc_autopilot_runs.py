@@ -6,6 +6,33 @@ from pathlib import Path
 import omc_autopilot
 
 
+def test_build_task_run_result_preserves_instruction_and_mode(tmp_path: Path) -> None:
+    task = {
+        "id": "complex-work",
+        "title": "복잡한 작업 분해",
+        "instruction": "복잡한 작업을 역할별로 분해하고 검증해줘",
+        "mode": "full",
+        "steps": [],
+    }
+    state = {
+        "task_id": "complex-work",
+        "status": "completed",
+        "started_at": "2026-07-10T10:00:00Z",
+        "finished_at": "2026-07-10T10:01:00Z",
+        "steps": {},
+    }
+
+    result = omc_autopilot._build_task_run_result(
+        root=tmp_path,
+        task=task,
+        state=state,
+        executor="codex",
+    )
+
+    assert result["instruction"] == "복잡한 작업을 역할별로 분해하고 검증해줘"
+    assert result["mode"] == "full"
+
+
 def _make_run(tmp_path: Path, run_id: str, *, branch: str, status: str, verdict: str | None = None) -> None:
     run_dir = tmp_path / ".omc" / "runs" / run_id
     run_dir.mkdir(parents=True)
