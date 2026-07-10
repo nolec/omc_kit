@@ -322,6 +322,42 @@ def _build_executor_recommendation(
     }
 
 
+def _resolve_next_skill_surface(
+    *,
+    task_kind: str,
+    complexity: str | None,
+    risk: str | None,
+    ambiguity_level: str | None,
+    failure_cost: str | None,
+    operator_goal: str | None,
+    scope_fixed: bool,
+    policy_decision: dict[str, object],
+) -> dict[str, object]:
+    normalized_kind = _normalize_text(task_kind) or "task"
+    normalized_failure_cost = _normalize_text(failure_cost)
+    normalized_operator_goal = _normalize_text(operator_goal)
+    recommended_next_skill = normalized_kind
+    if normalized_kind == "task" and (
+        _normalize_text(complexity) == "high"
+        or _normalize_text(risk) == "high"
+        or _normalize_text(ambiguity_level) == "high"
+        or (
+            normalized_failure_cost == "high"
+            and normalized_operator_goal == "quality"
+        )
+        or not scope_fixed
+    ):
+        recommended_next_skill = "plan"
+    requires_selection = bool(policy_decision["user_selection_needed"])
+    if _normalize_text(risk) == "high":
+        requires_selection = True
+    return {
+        "recommended_next_skill": recommended_next_skill,
+        "user_selection_needed": requires_selection,
+        "auto_execution_allowed": False,
+    }
+
+
 def build_policy_summary_input(
     *,
     policy_comparison_summary: str,
@@ -339,6 +375,12 @@ def resolve_policy_summary(
     *,
     task_kind: str,
     policy_input: dict[str, str],
+    complexity: str | None = "medium",
+    risk: str | None = "medium",
+    ambiguity_level: str | None = "medium",
+    failure_cost: str | None = "medium",
+    operator_goal: str | None = "balance",
+    scope_fixed: bool = True,
 ) -> dict[str, str]:
     decision = _resolve_policy_decision(
         task_kind=task_kind,
@@ -352,21 +394,34 @@ def resolve_policy_summary(
         touched_files=[],
         retry_count=0,
         review_severity=None,
-        complexity="medium",
-        risk="medium",
+        complexity=complexity,
+        risk=risk,
         sensitive_paths=[],
-        ambiguity_level="medium",
-        failure_cost="medium",
+        ambiguity_level=ambiguity_level,
+        failure_cost=failure_cost,
+        operator_goal=operator_goal,
     )
     executor_decision = _resolve_executor_recommendation(
         task_kind=task_kind,
         policy_profile=str(decision["recommended_policy_profile"]),
     )
+    next_skill_surface = _resolve_next_skill_surface(
+        task_kind=task_kind,
+        complexity=complexity,
+        risk=risk,
+        ambiguity_level=ambiguity_level,
+        failure_cost=failure_cost,
+        operator_goal=operator_goal,
+        scope_fixed=scope_fixed,
+        policy_decision=decision,
+    )
     return {
         "recommended_policy_profile": str(decision["recommended_policy_profile"]),
         "policy_reason_summary": str(decision["policy_reason_summary"]),
         "policy_confidence": str(decision["policy_confidence"]),
-        "user_selection_needed": "yes" if decision["user_selection_needed"] else "no",
+        "user_selection_needed": "yes" if next_skill_surface["user_selection_needed"] else "no",
+        "recommended_next_skill": str(next_skill_surface["recommended_next_skill"]),
+        "auto_execution_allowed": "yes" if next_skill_surface["auto_execution_allowed"] else "no",
         "recommended_executor": str(executor_decision["recommended_executor"]),
         "executor_reason_code": str(executor_decision["executor_reason_code"]),
         "executor_reason_summary": str(executor_decision["executor_reason_summary"]),
@@ -388,6 +443,7 @@ def resolve_task_routing(
     ambiguity_level: str | None = None,
     failure_cost: str | None = None,
     operator_goal: str | None = None,
+    scope_fixed: bool = True,
 ) -> dict[str, object]:
     normalized_kind = _normalize_text(task_kind) or "task"
     normalized_files = list(touched_files or [])
@@ -419,6 +475,16 @@ def resolve_task_routing(
         task_kind=normalized_kind,
         policy_profile=str(policy_decision["recommended_policy_profile"]),
     )
+    next_skill_surface = _resolve_next_skill_surface(
+        task_kind=normalized_kind,
+        complexity=complexity,
+        risk=risk,
+        ambiguity_level=ambiguity_level,
+        failure_cost=failure_cost,
+        operator_goal=operator_goal,
+        scope_fixed=scope_fixed,
+        policy_decision=policy_decision,
+    )
     return {
         "task_kind": normalized_kind,
         "routing_policy": _resolve_routing_policy(),
@@ -430,7 +496,9 @@ def resolve_task_routing(
         "policy_reason_summary": str(policy_decision["policy_reason_summary"]),
         "policy_confidence": str(policy_decision["policy_confidence"]),
         "policy_override_allowed": bool(policy_decision["policy_override_allowed"]),
-        "user_selection_needed": bool(policy_decision["user_selection_needed"]),
+        "user_selection_needed": bool(next_skill_surface["user_selection_needed"]),
+        "recommended_next_skill": str(next_skill_surface["recommended_next_skill"]),
+        "auto_execution_allowed": bool(next_skill_surface["auto_execution_allowed"]),
         "recommended_executor": str(executor_decision["recommended_executor"]),
         "executor_reason_code": str(executor_decision["executor_reason_code"]),
         "executor_reason_summary": str(executor_decision["executor_reason_summary"]),

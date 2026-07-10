@@ -43,6 +43,13 @@ SKILL_ACTION = re.compile(r"\$omc-[a-z-]+")
 RESPONSE_MODES = {"answer-first", "execute-first", "review-first"}
 POLICIES = {"baseline", "candidate"}
 CASE_VARIANTS = {"baseline", "candidate"}
+EXECUTION_NUMERIC_METRICS = (
+    "skill_count",
+    "user_confirmation_count",
+    "input_tokens",
+    "output_tokens",
+    "elapsed_ms",
+)
 CASE_SOURCE_TYPES = {"synthetic", "observed_output", "current_contract_sample"}
 KPI_MIN_SAMPLE_COUNT = 20
 KPI_MIN_SAME_SURFACE_COUNT = 1
@@ -583,6 +590,13 @@ def evaluate_case(case: dict[str, object]) -> dict[str, object]:
         value = case.get(field)
         if isinstance(value, str) and value:
             scored[field] = value
+    for field in EXECUTION_NUMERIC_METRICS:
+        value = case.get(field)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            scored[field] = value
+    model_profile = case.get("model_profile")
+    if isinstance(model_profile, str) and model_profile:
+        scored["model_profile"] = model_profile
     return scored
 
 
@@ -1462,6 +1476,27 @@ def _build_case_comparisons(scored_cases: list[dict[str, object]]) -> list[dict[
             ),
         }
 
+        execution_metrics: dict[str, object] = {}
+        for field in EXECUTION_NUMERIC_METRICS:
+            baseline_value = baseline.get(field)
+            candidate_value = candidate.get(field)
+            if isinstance(baseline_value, (int, float)) and not isinstance(baseline_value, bool) and isinstance(
+                candidate_value, (int, float)
+            ) and not isinstance(candidate_value, bool):
+                execution_metrics[f"{field}_delta"] = candidate_value - baseline_value
+        baseline_profile = baseline.get("model_profile")
+        candidate_profile = candidate.get("model_profile")
+        if isinstance(baseline_profile, str) and isinstance(candidate_profile, str):
+            execution_metrics["baseline_model_profile"] = baseline_profile
+            execution_metrics["candidate_model_profile"] = candidate_profile
+        if "input_tokens_delta" in execution_metrics and "output_tokens_delta" in execution_metrics:
+            execution_metrics["total_tokens_delta"] = (
+                execution_metrics["input_tokens_delta"]
+                + execution_metrics["output_tokens_delta"]
+            )
+        if execution_metrics:
+            comparison["execution_metrics"] = execution_metrics
+
         if baseline_expected_hit is not None and candidate_expected_hit is not None:
             comparison["baseline_expected_next_action_hit"] = baseline_expected_hit
             comparison["candidate_expected_next_action_hit"] = candidate_expected_hit
@@ -1481,7 +1516,7 @@ def _build_comparison_summary(comparisons: list[dict[str, object]]) -> dict[str,
         for item in comparisons
         if "next_action_preserved" in item
     ]
-    return {
+    summary = {
         "pair_count": pair_count,
         "avg_output_chars_delta": _average([float(item["output_chars_delta"]) for item in comparisons]),
         "avg_output_reduction_rate": _average(
@@ -1498,6 +1533,24 @@ def _build_comparison_summary(comparisons: list[dict[str, object]]) -> dict[str,
         ),
         "evidence_level_counts": _count_comparison_evidence_levels(comparisons),
     }
+    execution_fields = (
+        "skill_count_delta",
+        "user_confirmation_count_delta",
+        "input_tokens_delta",
+        "output_tokens_delta",
+        "total_tokens_delta",
+        "elapsed_ms_delta",
+    )
+    for field in execution_fields:
+        values = [
+            float(item["execution_metrics"][field])
+            for item in comparisons
+            if isinstance(item.get("execution_metrics"), dict)
+            and field in item["execution_metrics"]
+        ]
+        if values:
+            summary[f"avg_{field}"] = _average(values)
+    return summary
 
 
 def _count_comparison_scopes(cases: list[dict[str, object]]) -> dict[str, int]:
@@ -1561,6 +1614,16 @@ def _normalize_case(case: object, index: int) -> dict[str, object]:
             continue
         if not isinstance(value, str):
             raise ValueError(f"case[{index}].{field} must be a string")
+        normalized[field] = value
+
+    for field in EXECUTION_NUMERIC_METRICS:
+        value = case.get(field)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"case[{index}].{field} must be a non-negative number")
+        if value < 0:
+            raise ValueError(f"case[{index}].{field} must be a non-negative number")
         normalized[field] = value
 
     source_type = normalized.get("source_type")

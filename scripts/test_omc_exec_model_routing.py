@@ -343,6 +343,46 @@ def test_resolve_task_routing_keeps_policy_profile_aligned_with_default_model_pr
 
     assert routing["model_profile"] == "mini_default"
     assert routing["recommended_policy_profile"] == "balanced"
+    assert routing["recommended_next_skill"] == "task"
+    assert routing["auto_execution_allowed"] is False
+
+
+def test_resolve_task_routing_recommends_minimal_skill_for_fixed_low_risk_task() -> None:
+    routing = omc_exec.resolve_task_routing(
+        task_kind="task",
+        request_text="문구 한 줄 수정",
+        touched_files=[],
+        complexity="low",
+        risk="low",
+        ambiguity_level="low",
+        failure_cost="low",
+        operator_goal="speed",
+        scope_fixed=True,
+    )
+
+    assert routing["recommended_next_skill"] == "task"
+    assert routing["recommended_policy_profile"] == "cost_saver"
+    assert routing["policy_confidence"] == "high"
+    assert routing["user_selection_needed"] is False
+    assert routing["auto_execution_allowed"] is False
+
+
+def test_resolve_task_routing_requires_plan_for_unfixed_complex_task() -> None:
+    routing = omc_exec.resolve_task_routing(
+        task_kind="task",
+        request_text="여러 모듈에 걸친 복잡한 기능 구현",
+        touched_files=["src/a.ts", "src/b.ts", "src/c.ts"],
+        complexity="high",
+        risk="high",
+        ambiguity_level="high",
+        failure_cost="high",
+        operator_goal="quality",
+        scope_fixed=False,
+    )
+
+    assert routing["recommended_next_skill"] == "plan"
+    assert routing["user_selection_needed"] is True
+    assert routing["auto_execution_allowed"] is False
 
 
 def test_resolve_policy_summary_accepts_benchmark_input_contract() -> None:
@@ -359,6 +399,75 @@ def test_resolve_policy_summary_accepts_benchmark_input_contract() -> None:
     assert summary["policy_reason_summary"] == "balanced is the safe default"
     assert summary["policy_confidence"] == "high"
     assert summary["user_selection_needed"] == "no"
+
+
+def test_resolve_policy_summary_exposes_shared_next_skill_and_execution_gate() -> None:
+    summary = omc_exec.resolve_policy_summary(
+        task_kind="task",
+        policy_input={
+            "policy_comparison_summary": "simple fixed task",
+            "policy_comparison_bottleneck_summary": "none",
+            "next_priority_reason": "scope is fixed",
+        },
+        complexity="low",
+        risk="low",
+        ambiguity_level="low",
+        failure_cost="low",
+        operator_goal="speed",
+        scope_fixed=True,
+    )
+
+    assert summary["recommended_next_skill"] == "task"
+    assert summary["user_selection_needed"] == "no"
+    assert summary["auto_execution_allowed"] == "no"
+
+
+def test_quality_goal_and_high_failure_cost_route_task_to_plan() -> None:
+    routing = omc_exec.resolve_task_routing(
+        task_kind="task",
+        request_text="정확도를 우선하는 변경",
+        complexity="medium",
+        risk="medium",
+        ambiguity_level="medium",
+        failure_cost="high",
+        operator_goal="quality",
+        scope_fixed=True,
+    )
+
+    assert routing["recommended_next_skill"] == "plan"
+
+
+def test_policy_summary_and_task_routing_keep_next_skill_contract_in_sync() -> None:
+    routing = omc_exec.resolve_task_routing(
+        task_kind="task",
+        request_text="정확도를 우선하는 변경",
+        complexity="medium",
+        risk="medium",
+        ambiguity_level="medium",
+        failure_cost="high",
+        operator_goal="quality",
+        scope_fixed=True,
+    )
+    summary = omc_exec.resolve_policy_summary(
+        task_kind="task",
+        policy_input={
+            "policy_comparison_summary": "정확도를 우선하는 변경",
+            "policy_comparison_bottleneck_summary": "",
+            "next_priority_reason": "",
+        },
+        complexity="medium",
+        risk="medium",
+        ambiguity_level="medium",
+        failure_cost="high",
+        operator_goal="quality",
+        scope_fixed=True,
+    )
+
+    assert summary["recommended_next_skill"] == routing["recommended_next_skill"]
+    assert summary["user_selection_needed"] == (
+        "yes" if routing["user_selection_needed"] else "no"
+    )
+    assert summary["auto_execution_allowed"] == "no"
 
 
 def test_policy_decision_low_confidence_falls_back_to_balanced_and_requires_selection() -> None:

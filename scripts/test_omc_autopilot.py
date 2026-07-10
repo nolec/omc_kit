@@ -443,6 +443,12 @@ class TestCmdRunDryRun:
             "model_profile": "mini_high",
             "routing_reason_codes": ["plan_or_review_work"],
             "routing_reason_summary": "plan/review/investigate work prefers broader context",
+            "recommended_next_skill": "plan",
+            "recommended_policy_profile": "balanced",
+            "policy_reason_summary": "balanced is the safe default",
+            "policy_confidence": "high",
+            "user_selection_needed": False,
+            "auto_execution_allowed": False,
         }
 
         with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
@@ -471,6 +477,11 @@ class TestCmdRunDryRun:
         assert state["steps"]["plan"]["routing_reason_codes"] == ["plan_or_review_work"]
         assert state["steps"]["plan"]["complexity_class"] == "needs_plan"
         assert state["steps"]["plan"]["complexity_reason"] == "계획 단계가 필요함"
+        assert state["steps"]["plan"]["recommended_next_skill"] == "plan"
+        assert state["steps"]["plan"]["recommended_policy_profile"] == "balanced"
+        assert state["steps"]["plan"]["policy_confidence"] == "high"
+        assert state["steps"]["plan"]["user_selection_needed"] is False
+        assert state["steps"]["plan"]["auto_execution_allowed"] is False
         assert (
             state["steps"]["plan"]["routing_reason_summary"]
             == "plan/review/investigate work prefers broader context"

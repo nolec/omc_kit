@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "omc_skill_benchmark.py"
@@ -155,6 +157,100 @@ def test_build_report_adds_pairwise_comparison_summary_when_cases_share_comparis
     assert report["comparisons"][0]["candidate_source_type"] == "current_contract_sample"
     assert report["comparisons"][0]["evidence_level"] == "synthetic_pair"
     assert report["comparisons"][0]["candidate_output_chars"] < report["comparisons"][0]["baseline_output_chars"]
+
+
+def test_pairwise_report_compares_optional_execution_cost_metrics():
+    mod = _load_module()
+
+    cases = [
+        {
+            "skill": "omc-task",
+            "request": "작은 변경",
+            "comparison_id": "execution-cost",
+            "variant": "baseline",
+            "response": "다음 액션: $omc-review\n",
+            "expected_next_actions": ["$omc-review"],
+            "required_markers": ["다음 액션"],
+            "skill_count": 3,
+            "model_profile": "full_default",
+            "user_confirmation_count": 2,
+            "input_tokens": 1200,
+            "output_tokens": 900,
+            "elapsed_ms": 18000,
+        },
+        {
+            "skill": "omc-task",
+            "request": "작은 변경",
+            "comparison_id": "execution-cost",
+            "variant": "candidate",
+            "response": "다음 액션: $omc-review\n",
+            "expected_next_actions": ["$omc-review"],
+            "required_markers": ["다음 액션"],
+            "skill_count": 1,
+            "model_profile": "mini_default",
+            "user_confirmation_count": 0,
+            "input_tokens": 500,
+            "output_tokens": 300,
+            "elapsed_ms": 7000,
+        },
+    ]
+
+    report = mod.build_report(cases)
+    comparison = report["comparisons"][0]
+
+    assert comparison["execution_metrics"]["skill_count_delta"] == -2
+    assert comparison["execution_metrics"]["input_tokens_delta"] == -700
+    assert comparison["execution_metrics"]["output_tokens_delta"] == -600
+    assert comparison["execution_metrics"]["elapsed_ms_delta"] == -11000
+    assert report["comparison_summary"]["avg_skill_count_delta"] == -2
+    assert report["comparison_summary"]["avg_total_tokens_delta"] == -1300
+
+
+def test_partial_token_metrics_do_not_claim_total_token_delta():
+    mod = _load_module()
+    cases = [
+        {
+            "skill": "omc-task",
+            "request": "부분 메트릭",
+            "comparison_id": "partial-cost",
+            "variant": "baseline",
+            "response": "다음 액션: $omc-review\n",
+            "expected_next_actions": ["$omc-review"],
+            "required_markers": ["다음 액션"],
+            "input_tokens": 100,
+        },
+        {
+            "skill": "omc-task",
+            "request": "부분 메트릭",
+            "comparison_id": "partial-cost",
+            "variant": "candidate",
+            "response": "다음 액션: $omc-review\n",
+            "expected_next_actions": ["$omc-review"],
+            "required_markers": ["다음 액션"],
+            "input_tokens": 50,
+        },
+    ]
+
+    comparison = mod.build_report(cases)["comparisons"][0]
+
+    assert "total_tokens_delta" not in comparison["execution_metrics"]
+    assert "avg_total_tokens_delta" not in mod.build_report(cases)["comparison_summary"]
+
+
+def test_execution_metric_types_and_ranges_are_validated():
+    mod = _load_module()
+
+    with pytest.raises(ValueError, match="input_tokens"):
+        mod._normalize_case(
+            {"response": "ok", "input_tokens": "100"},
+            0,
+        )
+
+    with pytest.raises(ValueError, match="elapsed_ms"):
+        mod._normalize_case(
+            {"response": "ok", "elapsed_ms": -1},
+            0,
+        )
 
 
 def test_next_action_parsing_ignores_skill_mentions_outside_next_action_line():

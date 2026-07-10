@@ -711,6 +711,10 @@ def _run_step(
         risk=str(metadata["risk"]),
         sensitive_paths=list(metadata["sensitive_paths"]),
         preferred_profile=str(metadata["preferred_profile"]) if metadata["preferred_profile"] is not None else None,
+        ambiguity_level=str(step.get("ambiguity_level") or "low"),
+        failure_cost=str(step.get("failure_cost") or "medium"),
+        operator_goal=str(step.get("operator_goal") or "balance"),
+        scope_fixed=bool(step.get("scope_fixed") is not False),
     )
     task_kind = routing["task_kind"]
     model_profile = routing["model_profile"]
@@ -779,6 +783,12 @@ def _run_step(
             "routing_policy": routing_policy,
             "routing_reason_codes": routing_reason_codes,
             "routing_reason_summary": routing_reason_summary,
+            "recommended_next_skill": str(routing.get("recommended_next_skill") or task_kind),
+            "recommended_policy_profile": str(routing.get("recommended_policy_profile") or "balanced"),
+            "policy_reason_summary": str(routing.get("policy_reason_summary") or "").strip(),
+            "policy_confidence": str(routing.get("policy_confidence") or "low"),
+            "user_selection_needed": bool(routing.get("user_selection_needed")),
+            "auto_execution_allowed": bool(routing.get("auto_execution_allowed") is True),
         }
         return int(proc.returncode), output.strip(), cost_info, step_runtime
     except subprocess.TimeoutExpired:
