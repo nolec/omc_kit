@@ -758,6 +758,7 @@ def _run_step(
 
         env = os.environ.copy()
         env["OMC_RAW_OUTPUT_FILE"] = raw_output_file
+        started_monotonic = time.monotonic()
         proc = subprocess.run(
             cmd,
             cwd=str(root),
@@ -789,7 +790,16 @@ def _run_step(
             "policy_confidence": str(routing.get("policy_confidence") or "low"),
             "user_selection_needed": bool(routing.get("user_selection_needed")),
             "auto_execution_allowed": bool(routing.get("auto_execution_allowed") is True),
+            "comparison_id": str(step.get("comparison_id") or "").strip(),
+            "variant": str(step.get("variant") or "").strip(),
+            "elapsed_ms": int((time.monotonic() - started_monotonic) * 1000),
         }
+        skill_path = step.get("skill_path")
+        if isinstance(skill_path, list) and all(isinstance(item, str) and item.strip() for item in skill_path):
+            step_runtime["skill_path"] = [item.strip() for item in skill_path]
+            step_runtime["skill_count"] = len(skill_path)
+        elif isinstance(step.get("skill_count"), (int, float)) and not isinstance(step.get("skill_count"), bool):
+            step_runtime["skill_count"] = int(step["skill_count"])
         return int(proc.returncode), output.strip(), cost_info, step_runtime
     except subprocess.TimeoutExpired:
         return 1, "[ERROR] 타임아웃 초과", None, None
@@ -1438,6 +1448,39 @@ def _build_benchmark_report(data: dict) -> dict:
     )
     recovered_after_retry = retry_step_count > 0 and data.get("status") == "completed"
 
+    comparison_cases: list[dict[str, object]] = []
+    for step in steps.values():
+        if not isinstance(step, dict):
+            continue
+        comparison_id = str(step.get("comparison_id") or "").strip()
+        variant = str(step.get("variant") or "").strip()
+        if not comparison_id or variant not in {"baseline", "candidate"}:
+            continue
+        token_usage = step.get("token_usage") or {}
+        skill_path = step.get("skill_path")
+        raw_skill_count = step.get("skill_count")
+        if isinstance(raw_skill_count, (int, float)) and not isinstance(raw_skill_count, bool):
+            skill_count = int(raw_skill_count)
+        elif isinstance(skill_path, list) and skill_path:
+            skill_count = len(skill_path)
+        else:
+            skill_count = 1
+        case: dict[str, object] = {
+            "comparison_id": comparison_id,
+            "variant": variant,
+            "model_profile": str(step.get("model_profile") or ""),
+            "skill_count": skill_count,
+            "success": step.get("status") == "completed",
+        }
+        for token_key in ("input_tokens", "output_tokens"):
+            token_value = token_usage.get(token_key) if isinstance(token_usage, dict) else None
+            if isinstance(token_value, (int, float)) and not isinstance(token_value, bool):
+                case[token_key] = token_value
+        elapsed_ms = step.get("elapsed_ms")
+        if isinstance(elapsed_ms, (int, float)) and not isinstance(elapsed_ms, bool):
+            case["elapsed_ms"] = elapsed_ms
+        comparison_cases.append(case)
+
     final_verdict = None
     for step in reversed(list(steps.values())):
         if step.get("verdict"):
@@ -1464,6 +1507,41 @@ def _build_benchmark_report(data: dict) -> dict:
                     )
         if failure_category is None:
             failure_category = str(data.get("status") or "unknown")
+
+    comparison_pairs: list[dict[str, object]] = []
+    grouped_comparison_cases: dict[str, dict[str, dict[str, object]]] = {}
+    for case in comparison_cases:
+        grouped_comparison_cases.setdefault(str(case["comparison_id"]), {})[str(case["variant"])] = case
+    for comparison_id, variants in sorted(grouped_comparison_cases.items()):
+        baseline = variants.get("baseline")
+        candidate = variants.get("candidate")
+        if not baseline or not candidate:
+            continue
+        pair: dict[str, object] = {
+            "comparison_id": comparison_id,
+            "baseline_model_profile": baseline.get("model_profile", ""),
+            "candidate_model_profile": candidate.get("model_profile", ""),
+            "skill_count_delta": int(candidate.get("skill_count", 0)) - int(baseline.get("skill_count", 0)),
+            "success_both": bool(baseline.get("success")) and bool(candidate.get("success")),
+        }
+        for field in ("input_tokens", "output_tokens", "elapsed_ms"):
+            if field in baseline and field in candidate:
+                pair[f"{field}_delta"] = candidate[field] - baseline[field]
+        if "input_tokens_delta" in pair and "output_tokens_delta" in pair:
+            pair["total_tokens_delta"] = pair["input_tokens_delta"] + pair["output_tokens_delta"]
+        comparison_pairs.append(pair)
+
+    def _avg_pair_field(field: str) -> float | int:
+        values = [float(pair[field]) for pair in comparison_pairs if field in pair]
+        return sum(values) / len(values) if values else 0
+
+    comparison_pair_summary = {
+        "pair_count": len(grouped_comparison_cases),
+        "complete_pair_count": len(comparison_pairs),
+        "avg_skill_count_delta": _avg_pair_field("skill_count_delta"),
+        "avg_total_tokens_delta": _avg_pair_field("total_tokens_delta"),
+        "avg_elapsed_ms_delta": _avg_pair_field("elapsed_ms_delta"),
+    }
 
     return {
         "status": data.get("status"),
@@ -1513,6 +1591,9 @@ def _build_benchmark_report(data: dict) -> dict:
             if any(s.get("token_usage") for s in steps.values())
             else None
         ),
+        "comparison_cases": comparison_cases,
+        "comparison_pairs": comparison_pairs,
+        "comparison_pair_summary": comparison_pair_summary,
     }
 
 

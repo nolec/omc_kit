@@ -38,6 +38,109 @@ except ImportError:
     _EXEC_MODULE_PRESENT = False
 
 
+def test_observed_cost_pilot_fixture_has_five_real_run_cases():
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[1] / "templates/shared_tasks/observed-cost-pilot.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert fixture["completion_requires_real_runs"] is True
+    assert fixture["benchmark_source_type"] == "observed_request"
+    assert fixture["policy_pair"] == "baseline->candidate"
+    assert len(fixture["steps"]) == 10
+    assert all(step["timeout_sec"] == 180 for step in fixture["steps"])
+    assert all(isinstance(step["skill_path"], list) and step["skill_path"] for step in fixture["steps"])
+    pairs = {}
+    for step in fixture["steps"]:
+        pairs.setdefault(step["comparison_id"], set()).add(step["variant"])
+    assert len(pairs) == 5
+    assert all(variants == {"baseline", "candidate"} for variants in pairs.values())
+
+
+def test_benchmark_report_preserves_step_comparison_cases():
+    report = omc_autopilot._build_benchmark_report(
+        {
+            "status": "completed",
+            "started_at": "2026-07-11T02:00:00+09:00",
+            "finished_at": "2026-07-11T02:00:05+09:00",
+            "steps": {
+                "simple-task-candidate": {
+                    "status": "completed",
+                    "comparison_id": "simple-task",
+                    "variant": "candidate",
+                    "model_profile": "mini_default",
+                    "last_output": "다음 액션: task",
+                    "token_usage": {"input_tokens": 100, "output_tokens": 50},
+                }
+            },
+        }
+    )
+
+    assert report["comparison_cases"] == [
+        {
+            "comparison_id": "simple-task",
+            "variant": "candidate",
+            "model_profile": "mini_default",
+            "skill_count": 1,
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "success": True,
+        }
+    ]
+
+
+def test_benchmark_report_builds_baseline_candidate_pair_delta():
+    report = omc_autopilot._build_benchmark_report(
+        {
+            "status": "completed",
+            "started_at": "2026-07-11T02:00:00+09:00",
+            "finished_at": "2026-07-11T02:00:05+09:00",
+            "steps": {
+                "simple-task-baseline": {
+                    "status": "completed",
+                    "comparison_id": "simple-task",
+                    "variant": "baseline",
+                    "model_profile": "full_default",
+                    "skill_count": 3,
+                    "elapsed_ms": 18000,
+                    "token_usage": {"input_tokens": 1200, "output_tokens": 900},
+                },
+                "simple-task-candidate": {
+                    "status": "completed",
+                    "comparison_id": "simple-task",
+                    "variant": "candidate",
+                    "model_profile": "mini_default",
+                    "skill_count": 1,
+                    "elapsed_ms": 7000,
+                    "token_usage": {"input_tokens": 500, "output_tokens": 300},
+                },
+            },
+        }
+    )
+
+    assert report["comparison_pairs"] == [
+        {
+            "comparison_id": "simple-task",
+            "baseline_model_profile": "full_default",
+            "candidate_model_profile": "mini_default",
+            "skill_count_delta": -2,
+            "input_tokens_delta": -700,
+            "output_tokens_delta": -600,
+            "total_tokens_delta": -1300,
+            "elapsed_ms_delta": -11000,
+            "success_both": True,
+        }
+    ]
+    assert report["comparison_pair_summary"] == {
+        "pair_count": 1,
+        "complete_pair_count": 1,
+        "avg_skill_count_delta": -2,
+        "avg_total_tokens_delta": -1300,
+        "avg_elapsed_ms_delta": -11000,
+    }
+
+
 @pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
 def test_extract_complexity_class_accepts_structured_marker():
     assert omc_autopilot._extract_complexity_class(
@@ -429,6 +532,8 @@ class TestCmdRunDryRun:
                     "id": "plan",
                     "prompt": "계획",
                     "complexity_class_required": True,
+                    "comparison_id": "routing-metadata",
+                    "variant": "candidate",
                     "depends_on": [],
                     "timeout_sec": 10,
                 },
@@ -482,6 +587,8 @@ class TestCmdRunDryRun:
         assert state["steps"]["plan"]["policy_confidence"] == "high"
         assert state["steps"]["plan"]["user_selection_needed"] is False
         assert state["steps"]["plan"]["auto_execution_allowed"] is False
+        assert state["steps"]["plan"]["comparison_id"] == "routing-metadata"
+        assert state["steps"]["plan"]["variant"] == "candidate"
         assert (
             state["steps"]["plan"]["routing_reason_summary"]
             == "plan/review/investigate work prefers broader context"
