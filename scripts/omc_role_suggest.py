@@ -80,6 +80,11 @@ _PATTERN_BONUSES: list[tuple[list[str], str, int]] = [
     (["수정", "작성"], "senior_coding", 1),
 ]
 
+# 로드맵 질문과 실제 실행 요청이 함께 들어오면 실행 요청을 우선합니다.
+_IMPLEMENTATION_REQUEST_KEYWORDS = (
+    "구현", "개발", "만들어", "추가", "수정", "테스트", "커밋", "배포", "빌드"
+)
+
 
 class RoleSuggestion(NamedTuple):
     role_id: str
@@ -229,6 +234,23 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
         normalized,
         ("지금까지 뭐 했", "뭐 했는지 정리", "현재 어떤점이 개선", "어떤점이 개선", "개선된거야"),
     )
+    roadmap_next_work_intent = (
+        _contains_any(
+            normalized,
+            (
+                "로드맵",
+                "다음 작업",
+                "다음 우선순위",
+                "남은 작업",
+                "다음 세션",
+                "다음 계획",
+            ),
+        )
+        or (
+            "로드맵" in normalized
+            and _contains_any(normalized, ("뭐지", "뭐야", "어떤", "어디까지", "남은"))
+        )
+    ) and not _contains_any(normalized, _IMPLEMENTATION_REQUEST_KEYWORDS)
     operator_experience_intent = (
         _contains_any(
             normalized,
@@ -278,6 +300,13 @@ def suggest_orchestration(text: str, *, target: Path | None = None) -> dict[str,
             recommended_skill="$omc-critique",
             primary_role="code_review",
             task_kind_hint="review",
+        )
+    if roadmap_next_work_intent:
+        return _build_orchestration(
+            response_mode="answer-first",
+            recommended_skill="$omc-plan",
+            primary_role="analysis",
+            task_kind_hint="plan",
         )
     if operator_experience_intent:
         return _build_orchestration(

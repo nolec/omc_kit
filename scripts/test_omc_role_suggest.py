@@ -278,6 +278,39 @@ def test_orchestration_hint_routes_operator_experience_finish_request_to_plan() 
     assert hint["task_kind_hint"] == "plan"
 
 
+def test_orchestration_hint_routes_roadmap_next_work_question_to_plan() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("현재 로드맵 기준으로 다음 작업 뭐지")
+
+    assert hint["response_mode"] == "answer-first"
+    assert hint["recommended_skill"] == "$omc-plan"
+    assert hint["primary_role"] == "analysis"
+    assert hint["task_kind_hint"] == "plan"
+
+
+def test_orchestration_hint_routes_remaining_roadmap_work_question_to_plan() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("로드맵 기준 어떤 작업들이 남은거야")
+
+    assert hint["response_mode"] == "answer-first"
+    assert hint["recommended_skill"] == "$omc-plan"
+    assert hint["primary_role"] == "analysis"
+    assert hint["task_kind_hint"] == "plan"
+
+
+def test_orchestration_hint_prioritizes_task_over_roadmap_next_work_question() -> None:
+    mod = _load_module()
+
+    hint = mod.suggest_orchestration("현재 로드맵 기준으로 다음 작업 구현해줘")
+
+    assert hint["response_mode"] == "execute-first"
+    assert hint["recommended_skill"] == "$omc-task"
+    assert hint["primary_role"] == "senior_coding"
+    assert hint["task_kind_hint"] == "task"
+
+
 def test_json_output_includes_orchestration_fields():
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--text", "리뷰해줘", "--format", "json"],
