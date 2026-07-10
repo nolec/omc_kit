@@ -38,6 +38,24 @@ except ImportError:
     _EXEC_MODULE_PRESENT = False
 
 
+@pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
+def test_extract_complexity_class_accepts_structured_marker():
+    assert omc_autopilot._extract_complexity_class(
+        "분류: `needs_delegation`\n근거: 독립 축이 3개"
+    ) == {
+        "complexity_class": "needs_delegation",
+        "complexity_reason": "독립 축이 3개",
+    }
+
+
+@pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
+@pytest.mark.parametrize("output", ["분류 없음", "분류: unknown\n근거: 불명확"])
+def test_extract_complexity_class_falls_back_to_ambiguous(output):
+    result = omc_autopilot._extract_complexity_class(output)
+    assert result["complexity_class"] == "ambiguous"
+    assert result["complexity_reason"]
+
+
 @pytest.mark.skipif(_MODULE_PRESENT, reason="모듈 없음 — RED 단계 확인용")
 def test_module_missing():
     """omc_autopilot.py 가 없으면 이 테스트가 실패해야 합니다."""
@@ -223,6 +241,13 @@ class TestNormalizeStepMetadata:
         assert normalized["sensitive_paths"] == []
         assert normalized["preferred_profile"] is None
         assert normalized["escalation_policy"] == "default"
+        assert normalized["complexity_class_required"] is False
+
+    def test_complexity_class_required_is_explicit(self):
+        normalized = omc_autopilot._normalize_step_metadata(
+            {"id": "analysis", "complexity_class_required": True}
+        )
+        assert normalized["complexity_class_required"] is True
 
     def test_invalid_metadata_falls_back_to_safe_defaults(self):
         normalized = omc_autopilot._normalize_step_metadata(
@@ -403,6 +428,7 @@ class TestCmdRunDryRun:
                 {
                     "id": "plan",
                     "prompt": "계획",
+                    "complexity_class_required": True,
                     "depends_on": [],
                     "timeout_sec": 10,
                 },
@@ -426,7 +452,11 @@ class TestCmdRunDryRun:
         ), patch.object(
             omc_autopilot.subprocess,
             "run",
-            return_value=SimpleNamespace(returncode=0, stdout="ok", stderr=""),
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout="분류: `needs_plan`\n근거: 계획 단계가 필요함",
+                stderr="",
+            ),
         ):
             code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
 
@@ -439,6 +469,8 @@ class TestCmdRunDryRun:
         assert state["steps"]["plan"]["model_profile"] == "mini_high"
         assert state["steps"]["plan"]["routing_policy"] == "balanced"
         assert state["steps"]["plan"]["routing_reason_codes"] == ["plan_or_review_work"]
+        assert state["steps"]["plan"]["complexity_class"] == "needs_plan"
+        assert state["steps"]["plan"]["complexity_reason"] == "계획 단계가 필요함"
         assert (
             state["steps"]["plan"]["routing_reason_summary"]
             == "plan/review/investigate work prefers broader context"
@@ -614,6 +646,13 @@ class TestCmdRunRealExecution:
             code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
 
         assert code == 0
+        state = json.loads(
+            (tmp_path / ".omc" / "state" / "autopilot" / "real-run-task.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert "complexity_class" not in state["steps"]["s1"]
+        assert "complexity_reason" not in state["steps"]["s1"]
 
     def test_non_dry_run_expect_only_step_skips_executor_and_runs_checks(self, tmp_path):
         tasks_dir = tmp_path / ".omc" / "tasks"

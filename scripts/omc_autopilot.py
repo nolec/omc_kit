@@ -69,6 +69,25 @@ _COMPATIBILITY_WARNED_COMMANDS: set[str] = set()
 
 _KNOWN_TASK_KINDS = {"task", "plan", "review", "investigate", "ship"}
 _KNOWN_COMPLEXITY = {"low", "medium", "high"}
+_KNOWN_COMPLEXITY_CLASSES = {"single_task", "needs_plan", "needs_delegation"}
+
+
+def _extract_complexity_class(output: str) -> dict[str, str]:
+    """Extract the strict complexity marker emitted by read-only analysis steps."""
+    text = str(output or "")
+    class_match = re.search(r"^\s*분류\s*:\s*`?([a-z_]+)`?\s*$", text, re.MULTILINE)
+    reason_match = re.search(r"^\s*근거\s*:\s*(.+?)\s*$", text, re.MULTILINE)
+    complexity_class = class_match.group(1) if class_match else ""
+    reason = reason_match.group(1).strip() if reason_match else ""
+    if complexity_class not in _KNOWN_COMPLEXITY_CLASSES or not reason:
+        if complexity_class and complexity_class not in _KNOWN_COMPLEXITY_CLASSES:
+            fallback_reason = f"unsupported complexity class: {complexity_class}"
+        else:
+            fallback_reason = "complexity classification marker missing or incomplete"
+        return {"complexity_class": "ambiguous", "complexity_reason": fallback_reason}
+    return {"complexity_class": complexity_class, "complexity_reason": reason}
+
+
 _KNOWN_RISK = {"low", "medium", "high"}
 _KNOWN_PROFILES = {"mini_default", "mini_high", "full_default"}
 _KNOWN_ESCALATION_POLICIES = {"default", "conservative", "aggressive"}
@@ -220,6 +239,8 @@ def _normalize_step_metadata(step: dict) -> dict[str, object]:
     if escalation_policy not in _KNOWN_ESCALATION_POLICIES:
         escalation_policy = "default"
 
+    complexity_class_required = bool(step.get("complexity_class_required") is True)
+
     return {
         "task_kind": task_kind,
         "complexity": complexity,
@@ -227,6 +248,7 @@ def _normalize_step_metadata(step: dict) -> dict[str, object]:
         "sensitive_paths": sensitive_paths,
         "preferred_profile": preferred_profile,
         "escalation_policy": escalation_policy,
+        "complexity_class_required": complexity_class_required,
     }
 
 
@@ -1046,6 +1068,8 @@ def cmd_run(
                     step_state.update(step_runtime)
 
             step_state["last_output"] = output[:2000]
+            if bool(step.get("complexity_class_required") is True):
+                step_state.update(_extract_complexity_class(output))
 
             # LLM 실행 자체 실패
             if rc != 0:
