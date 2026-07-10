@@ -55,7 +55,6 @@ untracked:
 
 ## 다음 추천
 - 주추천 1개만 제시, 우선순위: 현재 결론에 맞는 1개를 먼저 말합니다.
-- ship은 fast 대상이 아니며, 항상 normal 안전 절차를 유지합니다.
 - SHIP READY → 사용자 선택 대기
 - 실제 배포 후 → `$omc-retro`
 - BLOCKED + 테스트/회귀 실패 → `$omc-investigate`

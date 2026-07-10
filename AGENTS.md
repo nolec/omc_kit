@@ -187,18 +187,6 @@ $omc-reentry 이 프로젝트 뭐였지
 - **Codex**: `.agents/skills/omc-*/` — `$omc-plan` 또는 자연어
 - **Gemini CLI**: `.gemini/commands/` — `/plan` 형식
 
-## 오케스트레이션 사용 원칙
-
-오케스트레이션은 `요청 해석 → 다음 스킬/실행 경로 결정 → 실행/중단 규칙`을 뜻합니다.
-`autopilot`은 그 위에서 여러 단계를 자동으로 잇는 **확장 오케스트레이션**입니다.
-
-- 강제 진입점은 항상 `python3 scripts/omc.py ...` 같은 CLI입니다.
-- 사용자-facing 진입은 플랫폼별로 자연스러운 방식을 우선합니다.
-- Codex, Claude, Gemini는 입력 방식이 달라도 같은 종료 규칙으로 수렴해야 합니다.
-- 스킬 완료 후 자동 진입 금지는 유지합니다.
-
-플랫폼별 `권장 입력 / 허용 입력 / fallback`과 `시작-멈춤-다음 추천` 예시는 `docs/orchestration_usage.md`를 기준으로 봅니다.
-
 ---
 
 ## 스프린트 파이프라인 (Plan → Build → Review → Ship → Reflect)

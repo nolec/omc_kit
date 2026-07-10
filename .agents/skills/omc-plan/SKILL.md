@@ -44,8 +44,6 @@ plan lite
 ## 다음 추천
 
 - 우선순위는 항상 `현재 병목 > 기본 파이프라인`
-- fast 기준: 범위가 이미 좁혀졌고 선택지가 적을 때는 `task`로 바로 넘긴다.
-- normal 기준: 범위가 흔들리거나 risk가 높으면 `critique`로 되돌린다.
 - 주추천 1개만 제시, 새 파일/API 변경/3개 이상 파일 같은 고위험이면 먼저 `$omc-critique`
 - outcome=ready + user_selection_needed=no + 범위 고정 + 컨펌 완료면 `$omc-task`
 - outcome=unresolved + risk=high 또는 범위 불명확이면 `$omc-critique`

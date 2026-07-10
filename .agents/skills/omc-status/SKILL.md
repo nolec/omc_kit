@@ -43,7 +43,6 @@ Git 상태: branch/ahead/behind, staged/unstaged/untracked
 ## 판단 기준
 
 - 우선순위는 항상 `현재 병목 > 기본 파이프라인`
-- status는 기본적으로 fast 요약이 우선이며, stale 또는 문맥 엇갈림이 있을 때만 normal로 자세히 본다.
 - 요청 stale 또는 문맥 엇갈림 → `$omc-plan`
 - 사용자가 상태만 확인 중이거나 다음 단계를 아직 고르지 않음 → 사용자 선택 대기
 - 현재 커밋 범위 변경이 있고 품질 확인이 병목이면 → `$omc-review`

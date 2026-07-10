@@ -46,16 +46,9 @@ python3 scripts/omc.py "만들고 싶은 것"
 python3 scripts/omc.py state status       # 현재 상태
 python3 scripts/omc.py state compact      # 메모리 압축
 python3 scripts/omc_lesson.py search "키워드"  # 교훈 BM25 검색
-python3 scripts/omc_autopilot.py overview # autopilot/overview 상태 확인
 python3 scripts/omc_autopilot.py new --id feat-x --title "기능 X"
 python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
 ```
-
-## 자동 가드 & CI
-
-- 구현 전 세션/가드는 `python3 scripts/omc_guard.py sync-require --target . ...` 로 동기화합니다.
-- 스테이징된 변경은 `python3 scripts/omc_tdd_check.py --staged` 로 TDD 게이트를 확인합니다.
-- 전체 회귀는 CI와 `python3 -m pytest scripts/ -q` 기준으로 맞춥니다.
 
 ## 파일 지도
 
