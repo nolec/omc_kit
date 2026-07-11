@@ -139,6 +139,7 @@ def main() -> int:
         "setup",
         "prompt",
         "autopilot",
+        "orchestrate",
         "team",
         "ulw",
         "ralph",
@@ -193,6 +194,11 @@ def main() -> int:
     run_cmd.add_argument("--label", required=True, help="Human-readable command label for OMC tracking.")
     run_cmd.add_argument("--summary", default=None, help="Short run summary.")
     run_cmd.add_argument("command", nargs=argparse.REMAINDER, help="Command to execute (put after --).")
+
+    orchestrate = sub.add_parser("orchestrate", help="Create a read-only orchestration plan.")
+    orchestrate.add_argument("--request", required=True, help="Natural-language request to classify and decompose.")
+    orchestrate.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+    orchestrate.add_argument("--dry-run", action="store_true", help="Required safety marker; never executes stages.")
 
     peer_review = sub.add_parser("peer-review", help="Run peer-review of the latest uncommitted changes.")
     peer_review.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -556,6 +562,15 @@ def main() -> int:
         if hasattr(args, "target"):
             ap_args += ["--target", str(args.target.resolve())]
         return _run_script(autopilot_script, ap_args)
+
+    if args.command == "orchestrate":
+        orchestrator_script = kit / "scripts" / "omc_orchestrator.py"
+        if not orchestrator_script.exists():
+            raise SystemExit(f"[ERROR] omc_orchestrator.py 없음: {orchestrator_script}")
+        ap_args = ["--request", args.request, "--target", str(args.target.resolve())]
+        if args.dry_run:
+            ap_args.append("--dry-run")
+        return _run_script(orchestrator_script, ap_args)
 
     if request is None:
         raise SystemExit("Provide request text as a positional argument or via --request-file")
