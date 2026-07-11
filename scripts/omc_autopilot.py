@@ -2746,6 +2746,48 @@ _LITE_BRANCH_PREFIXES = ("fix/", "hotfix/", "chore/", "docs/")
 _LITE_INSTRUCTION_MAX_LEN = 50
 
 
+def _build_observed_metrics(data: dict) -> dict[str, object] | None:
+    """실제 observed 실행을 운영 KPI 수집용 최소 schema로 정규화한다."""
+    source_type = str(data.get("benchmark_source_type") or "").strip()
+    if source_type not in {"observed_request", "observed_output"}:
+        return None
+
+    report = _build_benchmark_report(data)
+    steps = data.get("steps") if isinstance(data.get("steps"), dict) else {}
+    model_profiles = [
+        str(step.get("model_profile") or "").strip()
+        for step in steps.values()
+        if isinstance(step, dict) and str(step.get("model_profile") or "").strip()
+    ]
+    skill_paths = [
+        [item.strip() for item in step["skill_path"]]
+        for step in steps.values()
+        if isinstance(step, dict)
+        and isinstance(step.get("skill_path"), list)
+        and all(isinstance(item, str) and item.strip() for item in step["skill_path"])
+    ]
+    elapsed_ms = sum(
+        int(step["elapsed_ms"])
+        for step in steps.values()
+        if isinstance(step, dict)
+        and isinstance(step.get("elapsed_ms"), (int, float))
+        and not isinstance(step.get("elapsed_ms"), bool)
+    )
+    return {
+        "source_type": source_type,
+        "policy_pair": str(data.get("policy_pair") or "").strip(),
+        "pipeline_success": bool(report.get("pipeline_success")),
+        "model_profiles": model_profiles,
+        "skill_paths": skill_paths,
+        "elapsed_ms": elapsed_ms,
+        "total_tokens": report.get("total_tokens"),
+        "retry_count": int(report.get("retry_count") or 0),
+        "had_reroute": bool(report.get("had_reroute")),
+        "recovered_after_retry": bool(report.get("recovered_after_retry")),
+        "comparison_pair_summary": report.get("comparison_pair_summary") or {},
+    }
+
+
 def _detect_pipeline_mode(branch: str, instruction: str, mode_arg: str) -> str:
     """pipeline 모드를 결정한다.
 
@@ -2809,6 +2851,9 @@ def _save_pipeline_result(root: Path, data: dict) -> None:
     source_type = str(data.get("benchmark_source_type") or "").strip()
     if source_type == "observed_output":
         _populate_observed_output_schema(data, task_meta if isinstance(task_meta, dict) else {})
+    observed_metrics = _build_observed_metrics(data)
+    if observed_metrics is not None:
+        data["observed_metrics"] = observed_metrics
     serialized = {k: v for k, v in data.items() if not str(k).startswith("__")}
     payload = json.dumps(serialized, ensure_ascii=False, indent=2)
     # 원자적 쓰기 (tmpfile → replace)

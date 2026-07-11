@@ -141,6 +141,49 @@ def test_benchmark_report_builds_baseline_candidate_pair_delta():
     }
 
 
+def test_save_pipeline_result_persists_normalized_observed_metrics(tmp_path):
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "status": "completed",
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "baseline->candidate",
+            "started_at": "2026-07-11T02:00:00+09:00",
+            "finished_at": "2026-07-11T02:00:05+09:00",
+            "steps": {
+                "task": {
+                    "status": "completed",
+                    "model_profile": "mini_high",
+                    "token_usage": {"input_tokens": 100, "output_tokens": 50},
+                    "elapsed_ms": 5000,
+                    "attempt": 1,
+                }
+            },
+        },
+    )
+
+    saved = json.loads((tmp_path / ".omc" / "pipeline_run_result.json").read_text(encoding="utf-8"))
+    assert saved["observed_metrics"] == {
+        "source_type": "observed_request",
+        "policy_pair": "baseline->candidate",
+        "pipeline_success": True,
+        "model_profiles": ["mini_high"],
+        "skill_paths": [],
+        "elapsed_ms": 5000,
+        "total_tokens": 150,
+        "retry_count": 0,
+        "had_reroute": False,
+        "recovered_after_retry": False,
+        "comparison_pair_summary": {
+            "pair_count": 0,
+            "complete_pair_count": 0,
+            "avg_skill_count_delta": 0,
+            "avg_total_tokens_delta": 0,
+            "avg_elapsed_ms_delta": 0,
+        },
+    }
+
+
 @pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
 def test_extract_complexity_class_accepts_structured_marker():
     assert omc_autopilot._extract_complexity_class(
