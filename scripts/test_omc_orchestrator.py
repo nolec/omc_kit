@@ -669,6 +669,136 @@ def test_non_finite_cost_is_not_known():
         assert normalized["next_action"] == "compare_executor_cost"
 
 
+def test_child_handoff_is_proposed_only_when_scope_and_dependencies_are_valid():
+    parent_scope = {
+        "task_kind": "implementation",
+        "domain": "backend",
+        "sensitive_paths": ["src/api.py", "src/secure.py"],
+        "policy_profile": "balanced",
+    }
+    child = {
+        "child_id": "child-api",
+        "parent_id": "root-task",
+        "task_kind": "implementation",
+        "domain": "backend",
+        "sensitive_paths": ["src/api.py"],
+        "policy_profile": "balanced",
+        "depends_on": ["child-prep"],
+    }
+
+    result = omc_orchestrator.build_delegation_handoff(
+        parent_scope, child, {"child-prep": "completed"}
+    )
+
+    assert result["handoff_status"] == "proposed"
+    assert result["dependency_status"] == "satisfied"
+    assert result["scope_relation"] == "subset"
+    assert result["approval_required"] is True
+    assert result["execution_allowed"] is False
+    assert result["next_action"] == "review_child_handoff"
+
+
+def test_child_handoff_blocks_unfinished_dependency_and_scope_mismatch():
+    parent_scope = {
+        "task_kind": "implementation",
+        "domain": "backend",
+        "sensitive_paths": ["src/api.py"],
+        "policy_profile": "balanced",
+    }
+    child = {
+        "child_id": "child-api",
+        "parent_id": "root-task",
+        "task_kind": "implementation",
+        "domain": "frontend",
+        "sensitive_paths": ["src/ui.tsx"],
+        "policy_profile": "quality_first",
+        "depends_on": ["child-prep"],
+    }
+
+    result = omc_orchestrator.build_delegation_handoff(
+        parent_scope, child, {"child-prep": "pending"}
+    )
+
+    assert result["handoff_status"] == "blocked_dependency"
+    assert result["dependency_status"] == "blocked"
+    assert result["blocked_by"] == ["child-prep"]
+    assert result["scope_relation"] == "mismatch"
+    assert result["next_action"] == "resolve_dependency"
+    assert result["execution_allowed"] is False
+
+
+def test_delegation_graph_rejects_missing_dependency_and_cycle():
+    missing = omc_orchestrator.validate_delegation_graph(
+        [{"child_id": "child-a", "depends_on": ["missing"]}]
+    )
+    cycle = omc_orchestrator.validate_delegation_graph(
+        [
+            {"child_id": "child-a", "depends_on": ["child-b"]},
+            {"child_id": "child-b", "depends_on": ["child-a"]},
+        ]
+    )
+
+    assert "missing_dependency" in missing
+    assert "cycle" in cycle
+    graph = omc_orchestrator.build_delegation_graph(
+        [
+            {"child_id": "child-b", "depends_on": ["child-a"]},
+            {"child_id": "child-a", "depends_on": []},
+        ]
+    )
+    assert graph["errors"] == []
+    assert graph["topological_order"] == ["child-a", "child-b"]
+
+
+def test_delegation_fixture_preserves_handoff_gate_contract():
+    cases = json.loads(
+        (Path(__file__).parent / "fixtures/executor_delegation_cases.json").read_text()
+    )
+
+    for case in cases:
+        result = omc_orchestrator.build_delegation_handoff(
+            case["parent_scope"], case["child"], case["child_statuses"]
+        )
+        assert result["handoff_status"] == case["expected_status"]
+        assert result["next_action"] == case["expected_next_action"]
+        assert result["approval_required"] is True
+        assert result["execution_allowed"] is False
+
+
+def test_delegation_handoff_rejects_malformed_metadata():
+    parent_scope = {
+        "task_kind": "implementation",
+        "domain": "backend",
+        "sensitive_paths": ["src/api.py"],
+        "policy_profile": "balanced",
+    }
+    result = omc_orchestrator.build_delegation_handoff(
+        parent_scope,
+        {
+            "child_id": "child-api",
+            "parent_id": None,
+            "task_kind": "implementation",
+            "domain": "backend",
+            "sensitive_paths": ["src/api.py"],
+            "policy_profile": "balanced",
+            "depends_on": "child-prep",
+        },
+        {},
+    )
+
+    assert result["handoff_status"] == "rejected"
+    assert result["next_action"] == "repair_delegation_contract"
+    assert result["execution_allowed"] is False
+
+
+def test_delegation_graph_rejects_non_list_dependencies():
+    errors = omc_orchestrator.validate_delegation_graph(
+        [{"child_id": "child-a", "depends_on": "child-b"}]
+    )
+
+    assert "invalid_dependencies" in errors
+
+
 def test_capability_evidence_normalization_rejects_partial_or_malformed_records():
     partial = omc_orchestrator.normalize_capability_evidence(
         {"executor": "codex", "source_type": "fixture", "sample_count": 0}

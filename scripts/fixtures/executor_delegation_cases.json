@@ -1,0 +1,65 @@
+[
+  {
+    "id": "proposed-child-handoff",
+    "parent_scope": {
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py", "src/secure.py"],
+      "policy_profile": "balanced"
+    },
+    "child": {
+      "child_id": "child-api",
+      "parent_id": "root-task",
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py"],
+      "policy_profile": "balanced",
+      "depends_on": ["child-prep"]
+    },
+    "child_statuses": {"child-prep": "completed"},
+    "expected_status": "proposed",
+    "expected_next_action": "review_child_handoff"
+  },
+  {
+    "id": "blocked-child-dependency",
+    "parent_scope": {
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py"],
+      "policy_profile": "balanced"
+    },
+    "child": {
+      "child_id": "child-api",
+      "parent_id": "root-task",
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py"],
+      "policy_profile": "balanced",
+      "depends_on": ["child-prep"]
+    },
+    "child_statuses": {"child-prep": "pending"},
+    "expected_status": "blocked_dependency",
+    "expected_next_action": "resolve_dependency"
+  },
+  {
+    "id": "mismatched-child-scope",
+    "parent_scope": {
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py"],
+      "policy_profile": "balanced"
+    },
+    "child": {
+      "child_id": "child-ui",
+      "parent_id": "root-task",
+      "task_kind": "implementation",
+      "domain": "frontend",
+      "sensitive_paths": ["src/ui.tsx"],
+      "policy_profile": "quality_first",
+      "depends_on": []
+    },
+    "child_statuses": {},
+    "expected_status": "scope_mismatch",
+    "expected_next_action": "repair_scope"
+  }
+]

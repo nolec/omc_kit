@@ -76,6 +76,138 @@ def capability_scope_fingerprint_matches(scope: dict[str, object], fingerprint: 
     return isinstance(fingerprint, str) and fingerprint == build_capability_scope_fingerprint(scope)
 
 
+def build_delegation_graph(children: list[dict[str, object]]) -> dict[str, object]:
+    """Validate child dependencies and return a deterministic topological order."""
+    errors: set[str] = set()
+    graph: dict[str, list[str]] = {}
+    ids: list[str] = []
+    for child in children:
+        if not isinstance(child, dict):
+            errors.add("invalid_child")
+            continue
+        raw_child_id = child.get("child_id")
+        child_id = str(raw_child_id or "")
+        if not isinstance(raw_child_id, str) or not child_id.strip():
+            errors.add("invalid_child_id")
+            continue
+        if child_id in graph:
+            errors.add("duplicate_child_id")
+        dependencies = child.get("depends_on", [])
+        if not isinstance(dependencies, list):
+            errors.add("invalid_dependencies")
+            dependencies = []
+        graph[child_id] = [str(dep) for dep in dependencies]
+        ids.append(child_id)
+    id_set = set(ids)
+    for dependencies in graph.values():
+        if any(dependency not in id_set for dependency in dependencies):
+            errors.add("missing_dependency")
+
+    indegree = {child_id: 0 for child_id in graph}
+    dependents: dict[str, list[str]] = {child_id: [] for child_id in graph}
+    for child_id, dependencies in graph.items():
+        for dependency in dependencies:
+            if dependency in indegree:
+                indegree[child_id] += 1
+                dependents[dependency].append(child_id)
+    ready = sorted(child_id for child_id, degree in indegree.items() if degree == 0)
+    order: list[str] = []
+    while ready:
+        child_id = ready.pop(0)
+        order.append(child_id)
+        for dependent in sorted(dependents[child_id]):
+            indegree[dependent] -= 1
+            if indegree[dependent] == 0:
+                ready.append(dependent)
+                ready.sort()
+    if len(order) != len(graph):
+        errors.add("cycle")
+    return {"errors": sorted(errors), "topological_order": order}
+
+
+def validate_delegation_graph(children: list[dict[str, object]]) -> list[str]:
+    return list(build_delegation_graph(children)["errors"])
+
+
+def _delegation_scope_relation(parent_scope: dict[str, object], child: dict[str, object]) -> str:
+    parent_paths = parent_scope.get("sensitive_paths")
+    child_paths = child.get("sensitive_paths")
+    if not isinstance(parent_paths, list) or not isinstance(child_paths, list):
+        return "unknown"
+    same_context = all(
+        child.get(field) == parent_scope.get(field)
+        for field in ("task_kind", "domain", "policy_profile")
+    )
+    return "subset" if same_context and set(child_paths).issubset(set(parent_paths)) else "mismatch"
+
+
+def build_delegation_handoff(
+    parent_scope: dict[str, object],
+    child: dict[str, object],
+    child_statuses: dict[str, str],
+) -> dict[str, object]:
+    """Build an approval-ready child handoff without enabling execution."""
+    raw_child_id = child.get("child_id")
+    child_id = str(raw_child_id or "")
+    raw_parent_id = child.get("parent_id")
+    dependencies = child.get("depends_on", [])
+    metadata_invalid = (
+        not isinstance(raw_child_id, str)
+        or not child_id.strip()
+        or not isinstance(raw_parent_id, str)
+        or not raw_parent_id.strip()
+        or not isinstance(dependencies, list)
+    )
+    if not isinstance(dependencies, list):
+        dependencies = []
+    dependency_ids = [str(dependency) for dependency in dependencies]
+    blocked_by = sorted(
+        dependency
+        for dependency in dependency_ids
+        if child_statuses.get(dependency) not in {"completed"}
+        and child_statuses.get(dependency) is not None
+    )
+    unknown_dependencies = sorted(
+        dependency for dependency in dependency_ids if dependency not in child_statuses
+    )
+    if blocked_by:
+        dependency_status = "blocked"
+    elif unknown_dependencies:
+        dependency_status = "unknown"
+    else:
+        dependency_status = "satisfied"
+    scope_relation = _delegation_scope_relation(parent_scope, child)
+    parent_fingerprint = build_capability_scope_fingerprint(parent_scope)
+    child_fingerprint = build_capability_scope_fingerprint(child)
+
+    if metadata_invalid or unknown_dependencies:
+        handoff_status = "rejected"
+        next_action = "repair_delegation_contract"
+    elif blocked_by:
+        handoff_status = "blocked_dependency"
+        next_action = "resolve_dependency"
+    elif scope_relation != "subset":
+        handoff_status = "scope_mismatch" if scope_relation == "mismatch" else "rejected"
+        next_action = "repair_scope"
+    else:
+        handoff_status = "proposed"
+        next_action = "review_child_handoff"
+    return {
+        "handoff_status": handoff_status,
+        "child_id": child_id,
+        "parent_id": child.get("parent_id"),
+        "depends_on": dependency_ids,
+        "dependency_status": dependency_status,
+        "blocked_by": blocked_by or unknown_dependencies,
+        "parent_scope_fingerprint": parent_fingerprint,
+        "child_scope_fingerprint": child_fingerprint,
+        "scope_relation": scope_relation,
+        "approval_required": True,
+        "execution_allowed": False,
+        "next_action": next_action,
+    }
+
+
 def normalize_capability_evidence(evidence: dict[str, object]) -> dict[str, object]:
     """Normalize capability observations without granting execution permission."""
     source_type = evidence.get("source_type")
