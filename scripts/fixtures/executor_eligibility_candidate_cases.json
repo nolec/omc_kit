@@ -1,0 +1,71 @@
+[
+  {
+    "id": "observed-candidate-quality-missing",
+    "evidence": {
+      "executor": "codex",
+      "task_kind": "implementation",
+      "domain": "backend",
+      "policy_profile": "balanced",
+      "source_type": "observed",
+      "observed_at": "2026-07-13T00:00:00+09:00",
+      "sample_count": 2,
+      "environment_fingerprint": "local-codex-v1",
+      "success_count": 2,
+      "failure_count": 0
+    },
+    "expected": {
+      "candidate_status": "observed_candidate_only",
+      "quality_success": "missing",
+      "final_success": "unknown",
+      "cost_status": "unknown",
+      "next_action": "review_executor_candidate"
+    }
+  },
+  {
+    "id": "observed-candidate-quality-and-cost-known",
+    "evidence": {
+      "executor": "claude",
+      "task_kind": "review",
+      "domain": "frontend",
+      "policy_profile": "mini_high",
+      "source_type": "observed",
+      "observed_at": "2026-07-13T00:00:00+09:00",
+      "sample_count": 1,
+      "environment_fingerprint": "local-claude-v1",
+      "quality_success": "verified",
+      "final_success": "success",
+      "cost_estimate": 0.07
+    },
+    "expected": {
+      "candidate_status": "observed_candidate_only",
+      "quality_success": "verified",
+      "final_success": "success",
+      "cost_status": "known",
+      "next_action": "review_executor_candidate"
+    }
+  },
+  {
+    "id": "insufficient-candidate",
+    "evidence": {
+      "executor": "gemini",
+      "source_type": "observed",
+      "sample_count": 0
+    },
+    "expected": {
+      "candidate_status": "insufficient_data",
+      "next_action": "collect_capability_evidence"
+    }
+  },
+  {
+    "id": "blocked-candidate",
+    "evidence": {
+      "executor": "unknown",
+      "source_type": "observed",
+      "sample_count": 1
+    },
+    "expected": {
+      "candidate_status": "blocked_data_quality",
+      "next_action": "repair_capability_evidence"
+    }
+  }
+]

@@ -477,6 +477,198 @@ def test_capability_evidence_normalization_preserves_observation_metadata():
     assert normalized["execution_allowed"] is False
 
 
+def test_capability_candidate_contract_separates_quality_final_success_and_cost():
+    normalized = omc_orchestrator.normalize_capability_evidence(
+        {
+            "executor": "codex",
+            "task_kind": "implementation",
+            "domain": "backend",
+            "policy_profile": "balanced",
+            "source_type": "observed",
+            "observed_at": "2026-07-13T00:00:00+09:00",
+            "sample_count": 2,
+            "environment_fingerprint": "local-codex-v1",
+            "success_count": 2,
+            "failure_count": 0,
+        }
+    )
+
+    assert normalized["candidate_status"] == "observed_candidate_only"
+    assert normalized["quality_success"] == "missing"
+    assert normalized["final_success"] == "unknown"
+    assert normalized["cost_status"] == "unknown"
+    assert normalized["cost_warning"] is False
+    assert normalized["execution_allowed"] is False
+    assert normalized["approval_required"] is True
+    assert normalized["approval_id"] is None
+    assert normalized["approved_executor"] is None
+    assert normalized["next_action"] == "review_executor_candidate"
+
+
+def test_capability_candidate_contract_uses_verified_quality_and_known_cost_without_execution():
+    normalized = omc_orchestrator.normalize_capability_evidence(
+        {
+            "executor": "claude",
+            "task_kind": "review",
+            "domain": "frontend",
+            "policy_profile": "mini_high",
+            "source_type": "observed",
+            "observed_at": "2026-07-13T00:00:00+09:00",
+            "sample_count": 1,
+            "environment_fingerprint": "local-claude-v1",
+            "quality_success": "verified",
+            "final_success": "success",
+            "cost_estimate": 0.07,
+        }
+    )
+
+    assert normalized["candidate_status"] == "observed_candidate_only"
+    assert normalized["quality_success"] == "verified"
+    assert normalized["final_success"] == "success"
+    assert normalized["cost_status"] == "known"
+    assert normalized["cost_warning"] is False
+    assert normalized["next_action"] == "review_executor_candidate"
+    assert normalized["execution_allowed"] is False
+
+
+def test_capability_candidate_contract_binds_approval_to_canonical_scope():
+    scope = {
+        "task_kind": "implementation",
+        "domain": "backend",
+        "sensitive_paths": ["src/b.py", "src/a.py"],
+        "policy_profile": "balanced",
+    }
+    fingerprint = omc_orchestrator.build_capability_scope_fingerprint(scope)
+    normalized = omc_orchestrator.normalize_capability_evidence(
+        {
+            "executor": "gemini",
+            "task_kind": "implementation",
+            "domain": "backend",
+            "policy_profile": "balanced",
+            "sensitive_paths": ["src/a.py", "src/b.py"],
+            "source_type": "observed",
+            "observed_at": "2026-07-13T00:00:00+09:00",
+            "sample_count": 1,
+            "environment_fingerprint": "local-gemini-v1",
+            "approval_scope": scope,
+        }
+    )
+
+    assert normalized["approved_scope_fingerprint"] == fingerprint
+    assert normalized["approval_id"] is None
+    assert normalized["approved_at"] is None
+    assert normalized["expires_at"] is None
+    assert normalized["execution_allowed"] is False
+    changed_scope = {**scope, "sensitive_paths": ["src/a.py", "src/c.py"]}
+    assert not omc_orchestrator.capability_scope_fingerprint_matches(
+        changed_scope, normalized["approved_scope_fingerprint"]
+    )
+
+
+def test_capability_candidate_contract_maps_data_states_to_single_next_action():
+    insufficient = omc_orchestrator.normalize_capability_evidence(
+        {"executor": "codex", "source_type": "observed", "sample_count": 0}
+    )
+    rejected = omc_orchestrator.normalize_capability_evidence(
+        {"executor": "unknown", "source_type": "observed", "sample_count": 1}
+    )
+
+    assert insufficient["candidate_status"] == "insufficient_data"
+    assert insufficient["next_action"] == "collect_capability_evidence"
+    assert rejected["candidate_status"] == "blocked_data_quality"
+    assert rejected["next_action"] == "repair_capability_evidence"
+
+
+def test_executor_eligibility_candidate_fixture_preserves_observation_only_contract():
+    cases = json.loads(
+        (Path(__file__).parent / "fixtures/executor_eligibility_candidate_cases.json").read_text()
+    )
+
+    for case in cases:
+        result = omc_orchestrator.normalize_capability_evidence(case["evidence"])
+        for field, expected in case["expected"].items():
+            assert result[field] == expected, case["id"]
+        assert result["execution_allowed"] is False
+
+
+def test_observed_run_aggregation_exposes_candidate_only_contract():
+    evidence = omc_orchestrator.build_capability_evidence_from_runs(
+        [
+            {
+                "executor": "codex",
+                "task_kind": "implementation",
+                "domain": "backend",
+                "policy_profile": "balanced",
+                "environment_fingerprint": "local-codex-v1",
+                "finished_at": "2026-07-13T00:00:00+09:00",
+                "status": "completed",
+            }
+        ]
+    )
+
+    assert evidence[0]["candidate_status"] == "observed_candidate_only"
+    assert evidence[0]["quality_success"] == "missing"
+    assert evidence[0]["final_success"] == "unknown"
+    assert evidence[0]["cost_status"] == "unknown"
+    assert evidence[0]["next_action"] == "review_executor_candidate"
+    assert evidence[0]["execution_allowed"] is False
+
+
+def test_in_progress_run_aggregation_exposes_insufficient_candidate_contract():
+    evidence = omc_orchestrator.build_capability_evidence_from_runs(
+        [
+            {
+                "executor": "codex",
+                "task_kind": "implementation",
+                "domain": "backend",
+                "policy_profile": "balanced",
+                "sensitive_paths": ["src/secure.py", "src/api.py"],
+                "environment_fingerprint": "local-codex-v1",
+                "started_at": "2026-07-13T00:00:00+09:00",
+                "status": "in_progress",
+            }
+        ]
+    )
+
+    assert evidence[0]["candidate_status"] == "insufficient_data"
+    assert evidence[0]["quality_success"] == "missing"
+    assert evidence[0]["final_success"] == "unknown"
+    assert evidence[0]["cost_status"] == "unknown"
+    assert evidence[0]["approval_required"] is True
+    assert evidence[0]["next_action"] == "collect_capability_evidence"
+    assert evidence[0]["approved_scope_fingerprint"] == omc_orchestrator.build_capability_scope_fingerprint(
+        {
+            "task_kind": "implementation",
+            "domain": "backend",
+            "sensitive_paths": ["src/secure.py", "src/api.py"],
+            "policy_profile": "balanced",
+        }
+    )
+    assert evidence[0]["execution_allowed"] is False
+
+
+def test_non_finite_cost_is_not_known():
+    for cost_estimate in (float("nan"), float("inf"), float("-inf")):
+        normalized = omc_orchestrator.normalize_capability_evidence(
+            {
+                "executor": "codex",
+                "task_kind": "implementation",
+                "domain": "backend",
+                "policy_profile": "balanced",
+                "source_type": "observed",
+                "observed_at": "2026-07-13T00:00:00+09:00",
+                "sample_count": 1,
+                "environment_fingerprint": "local-codex-v1",
+                "quality_success": "verified",
+                "final_success": "success",
+                "cost_estimate": cost_estimate,
+            }
+        )
+
+        assert normalized["cost_status"] == "unknown"
+        assert normalized["next_action"] == "compare_executor_cost"
+
+
 def test_capability_evidence_normalization_rejects_partial_or_malformed_records():
     partial = omc_orchestrator.normalize_capability_evidence(
         {"executor": "codex", "source_type": "fixture", "sample_count": 0}

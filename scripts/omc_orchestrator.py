@@ -10,6 +10,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import re
 import subprocess
 import sys
@@ -51,6 +52,28 @@ _DECOMPOSITION_DOMAINS = (
 )
 _ALLOWED_EXECUTORS = {"codex", "claude", "gemini"}
 _CAPABILITY_SOURCE_TYPES = {"fixture", "observed"}
+_QUALITY_SUCCESS_STATES = {"verified", "missing", "failed"}
+_FINAL_SUCCESS_STATES = {"success", "failed", "unknown"}
+
+
+def build_capability_scope_fingerprint(scope: dict[str, object]) -> str:
+    """Build a stable approval-scope identifier without authorizing execution."""
+    sensitive_paths = scope.get("sensitive_paths", [])
+    if not isinstance(sensitive_paths, list):
+        sensitive_paths = []
+    canonical_scope = {
+        "task_kind": str(scope.get("task_kind") or "unknown"),
+        "domain": str(scope.get("domain") or "unknown"),
+        "sensitive_paths": sorted({str(path) for path in sensitive_paths}),
+        "policy_profile": str(scope.get("policy_profile") or "balanced"),
+    }
+    payload = json.dumps(canonical_scope, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def capability_scope_fingerprint_matches(scope: dict[str, object], fingerprint: object) -> bool:
+    """Return whether an approval placeholder still matches the requested scope."""
+    return isinstance(fingerprint, str) and fingerprint == build_capability_scope_fingerprint(scope)
 
 
 def normalize_capability_evidence(evidence: dict[str, object]) -> dict[str, object]:
@@ -81,6 +104,33 @@ def normalize_capability_evidence(evidence: dict[str, object]) -> dict[str, obje
     if not isinstance(environment_fingerprint, str) or not environment_fingerprint.strip():
         reason_codes.append("missing_environment_fingerprint")
 
+    quality_success = evidence.get("quality_success", "missing")
+    if quality_success not in _QUALITY_SUCCESS_STATES:
+        reason_codes.append("invalid_quality_success")
+        quality_success = "missing"
+    final_success = evidence.get("final_success", "unknown")
+    if final_success not in _FINAL_SUCCESS_STATES:
+        reason_codes.append("invalid_final_success")
+        final_success = "unknown"
+    cost_estimate = evidence.get("cost_estimate")
+    cost_status = (
+        "known"
+        if isinstance(cost_estimate, (int, float))
+        and not isinstance(cost_estimate, bool)
+        and cost_estimate >= 0
+        and (not isinstance(cost_estimate, float) or math.isfinite(cost_estimate))
+        else "unknown"
+    )
+    approval_scope = evidence.get("approval_scope")
+    if not isinstance(approval_scope, dict):
+        approval_scope = {
+            "task_kind": evidence.get("task_kind"),
+            "domain": evidence.get("domain"),
+            "sensitive_paths": evidence.get("sensitive_paths", []),
+            "policy_profile": evidence.get("policy_profile"),
+        }
+    approved_scope_fingerprint = build_capability_scope_fingerprint(approval_scope)
+
     normalized = dict(evidence)
     normalized.update(
         {
@@ -89,6 +139,16 @@ def normalize_capability_evidence(evidence: dict[str, object]) -> dict[str, obje
             "sample_count": sample_count if isinstance(sample_count, int) else 0,
             "reason_codes": reason_codes,
             "execution_allowed": False,
+            "quality_success": quality_success,
+            "final_success": final_success,
+            "cost_status": cost_status,
+            "cost_warning": False,
+            "approval_required": True,
+            "approval_id": None,
+            "approved_executor": None,
+            "approved_scope_fingerprint": approved_scope_fingerprint,
+            "approved_at": None,
+            "expires_at": None,
         }
     )
 
@@ -106,6 +166,20 @@ def normalize_capability_evidence(evidence: dict[str, object]) -> dict[str, obje
     else:
         status = "observed"
     normalized["evidence_status"] = status
+
+    if status == "rejected":
+        candidate_status = "blocked_data_quality"
+        next_action = "repair_capability_evidence"
+    elif status == "insufficient":
+        candidate_status = "insufficient_data"
+        next_action = "collect_capability_evidence"
+    else:
+        candidate_status = "observed_candidate_only"
+        next_action = "review_executor_candidate"
+        if cost_status == "unknown" and quality_success == "verified":
+            next_action = "compare_executor_cost"
+    normalized["candidate_status"] = candidate_status
+    normalized["next_action"] = next_action
     return normalized
 
 
@@ -165,6 +239,25 @@ def build_capability_evidence_from_runs(
                     "reason_codes": set(),
                     "environment_fingerprint": run.get("environment_fingerprint"),
                     "execution_allowed": False,
+                    "quality_success": "missing",
+                    "final_success": "unknown",
+                    "cost_status": "unknown",
+                    "cost_warning": False,
+                    "candidate_status": "insufficient_data",
+                    "next_action": "collect_capability_evidence",
+                    "approval_required": True,
+                    "approval_id": None,
+                    "approved_executor": None,
+                    "approved_scope_fingerprint": build_capability_scope_fingerprint(
+                        {
+                            "task_kind": task_kind,
+                            "domain": domain,
+                            "sensitive_paths": run.get("sensitive_paths", []),
+                            "policy_profile": policy_profile,
+                        }
+                    ),
+                    "approved_at": None,
+                    "expires_at": None,
                 },
             )
             aggregate["in_progress_count"] = int(aggregate.get("in_progress_count", 0)) + 1
