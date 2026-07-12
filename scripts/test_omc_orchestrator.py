@@ -364,3 +364,18 @@ def test_decomposition_validation_fixture_covers_malformed_contracts():
     for case in fixture["cases"]:
         errors = omc_orchestrator.validate_decomposition_result(case["result"])
         assert set(case["expected_errors"]) <= set(errors)
+
+
+def test_decomposition_domain_boundary_fixture_matches_expected_domains():
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures/decomposition_domain_boundary_cases.json").read_text()
+    )
+
+    for case in fixture["cases"]:
+        plan = omc_orchestrator.build_orchestration_plan(case["request"])
+        result = omc_orchestrator.build_decomposition_result(plan)
+        assert result["classification"] == case["expected_classification"]
+        assert result["decomposition_confidence"] == case["expected_confidence"]
+        assert [child["id"] for child in result["children"]] == case["expected_child_ids"]
+        assert [child["scope"] for child in result["children"]] == case["expected_scopes"]
+        assert result.get("unresolved_questions", []) == case["expected_unresolved_questions"]

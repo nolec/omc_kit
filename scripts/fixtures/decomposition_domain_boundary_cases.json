@@ -1,0 +1,67 @@
+{
+  "cases": [
+    {
+      "id": "multi-domain-baseline",
+      "request": "결제 API를 교체하고 프론트 테스트를 업데이트해줘",
+      "expected_classification": "needs_delegation",
+      "expected_confidence": "high",
+      "expected_child_ids": ["child-backend", "child-frontend", "child-verification", "child-integration-review"],
+      "expected_scopes": [["backend"], ["frontend"], ["verification"], ["backend", "frontend", "verification"]],
+      "expected_unresolved_questions": []
+    },
+    {
+      "id": "backend-only-unclear",
+      "request": "결제 API를 교체해줘",
+      "expected_classification": "needs_delegation",
+      "expected_confidence": "low",
+      "expected_child_ids": [],
+      "expected_scopes": [],
+      "expected_unresolved_questions": ["decomposition_domains_unclear"]
+    },
+    {
+      "id": "backend-marker-without-scope",
+      "request": "결제와 교체를 해줘",
+      "expected_classification": "needs_delegation",
+      "expected_confidence": "low",
+      "expected_child_ids": [],
+      "expected_scopes": [],
+      "expected_unresolved_questions": ["decomposition_domains_unclear"]
+    },
+    {
+      "id": "frontend-single-task",
+      "request": "프론트 화면 문구를 정리해줘",
+      "expected_classification": "single_task",
+      "expected_confidence": "high",
+      "expected_child_ids": [],
+      "expected_scopes": [],
+      "expected_unresolved_questions": []
+    },
+    {
+      "id": "verification-single-task",
+      "request": "테스트를 실행해줘",
+      "expected_classification": "single_task",
+      "expected_confidence": "high",
+      "expected_child_ids": [],
+      "expected_scopes": [],
+      "expected_unresolved_questions": []
+    },
+    {
+      "id": "unrelated-language-single-task",
+      "request": "문서의 표현을 자연스럽게 고쳐줘",
+      "expected_classification": "single_task",
+      "expected_confidence": "high",
+      "expected_child_ids": [],
+      "expected_scopes": [],
+      "expected_unresolved_questions": []
+    },
+    {
+      "id": "contextual-api-marker-single-task",
+      "request": "API 용어 설명 문서의 오타를 고쳐줘",
+      "expected_classification": "single_task",
+      "expected_confidence": "high",
+      "expected_child_ids": [],
+      "expected_scopes": [],
+      "expected_unresolved_questions": []
+    }
+  ]
+}
