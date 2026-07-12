@@ -98,6 +98,9 @@ def test_stage_metadata_comes_from_shared_task_routing(monkeypatch):
     assert all(stage["model_profile"] == "shared_profile" for stage in plan["stages"])
     assert all(stage["recommended_policy_profile"] == "quality_first" for stage in plan["stages"])
     assert all(stage["recommended_executor"] == "claude" for stage in plan["stages"])
+    assert all(stage["capability_evidence_status"] == "unverified" for stage in plan["stages"])
+    assert all(stage["capability_evidence_sample_count"] == 0 for stage in plan["stages"])
+    assert all(stage["execution_allowed"] is False for stage in plan["stages"])
     assert plan["user_selection_needed"] is True
     assert plan["execution_allowed"] is False
 
@@ -407,7 +410,9 @@ def test_executor_recommendation_fixture_is_recommendation_only():
         assert result["recommendation_only"] is True
         assert result["evidence_status"] == "unverified"
         assert result["execution_allowed"] is False
-        assert all(
+        assert all(child["capability_evidence_status"] == "unverified" for child in result["children"])
+        assert all(child["execution_allowed"] is False for child in result["children"])
+    assert all(
             child["recommendation_only"] is True
             and child["evidence_status"] == "unverified"
             and child["recommended_executor"] in {"codex", "claude", "gemini"}
@@ -420,6 +425,7 @@ def test_decomposition_validator_enforces_parent_recommendation_safety_contract(
     plan = omc_orchestrator.build_orchestration_plan(
         "결제 API를 교체하고 프론트 테스트를 업데이트해줘"
     )
+
     result = omc_orchestrator.build_decomposition_result(plan)
 
     missing_parent_fields = dict(result)
@@ -441,3 +447,65 @@ def test_decomposition_validator_enforces_parent_recommendation_safety_contract(
     assert "recommendation_must_be_only" in errors
     assert "invalid_evidence_status" in errors
     assert "invalid_user_selection_needed" in errors
+
+
+def test_capability_evidence_normalization_preserves_observation_metadata():
+    evidence = {
+        "executor": "codex",
+        "task_kind": "implementation",
+        "domain": "backend",
+        "policy_profile": "balanced",
+        "source_type": "observed",
+        "observed_at": "2026-07-12T22:00:00+09:00",
+        "sample_count": 3,
+        "environment_fingerprint": "local-codex-v1",
+        "success_count": 2,
+        "failure_count": 1,
+        "cost_estimate": 0.12,
+        "availability_attempts": 3,
+        "availability_successes": 3,
+    }
+
+    normalized = omc_orchestrator.normalize_capability_evidence(evidence)
+
+    assert normalized["evidence_status"] == "observed"
+    assert normalized["source_type"] == "observed"
+    assert normalized["sample_count"] == 3
+    assert normalized["environment_fingerprint"] == "local-codex-v1"
+    assert normalized["reason_codes"] == []
+    assert normalized["execution_allowed"] is False
+
+
+def test_capability_evidence_normalization_rejects_partial_or_malformed_records():
+    partial = omc_orchestrator.normalize_capability_evidence(
+        {"executor": "codex", "source_type": "fixture", "sample_count": 0}
+    )
+    malformed = omc_orchestrator.normalize_capability_evidence(
+        {
+            "executor": "unknown",
+            "source_type": "observed",
+            "observed_at": "not-a-timestamp",
+            "sample_count": -1,
+        }
+    )
+
+    assert partial["evidence_status"] == "insufficient"
+    assert "missing_observed_at" in partial["reason_codes"]
+    assert partial["execution_allowed"] is False
+    assert malformed["evidence_status"] == "rejected"
+    assert "invalid_executor" in malformed["reason_codes"]
+    assert "invalid_observed_at" in malformed["reason_codes"]
+    assert "invalid_sample_count" in malformed["reason_codes"]
+
+
+def test_capability_evidence_fixture_never_grants_execution():
+    cases = json.loads(
+        (Path(__file__).parent / "fixtures/executor_capability_evidence_cases.json").read_text()
+    )
+
+    assert cases
+    for case in cases:
+        result = omc_orchestrator.normalize_capability_evidence(case["evidence"])
+        assert result["source_type"] == case["expected_source_type"]
+        assert result["evidence_status"] == case["expected_status"]
+        assert result["execution_allowed"] is False

@@ -740,16 +740,24 @@ executor recommendation output contract:
 - `policy_confidence`
 - `recommendation_only=true`
 - `evidence_status=unverified`
+- `capability_evidence_status=unverified|insufficient|observed|rejected`
+- `capability_evidence_source=none|fixture|observed`
+- `capability_evidence_sample_count`
+- `capability_evidence_reason_codes`
+- `execution_allowed=false`
 
 executor 설계상 남은 갭:
-- executor별 실제 성공률·비용·가용성 evidence가 아직 없어 추천 품질은 검증되지 않았다.
+- capability evidence 관측 schema와 malformed/partial/fixture/observed 경계는 구현했지만, 실제 운영 데이터 기반 추천 품질은 아직 검증되지 않았다.
+- `eligible` threshold, 비용 환산 정책, stale evidence 정책은 아직 확정하지 않았다.
 - 승인 기반 reroute와 제한적 auto-switch는 아직 구현하지 않았다.
 - child scope 기반 capability routing은 아직 추천 근거로 사용하지 않는다.
 
 현재 반영:
 - domain child와 integration-review child에 추천-only executor handoff를 연결했다.
 - parent/child 모두 `recommendation_only`, `evidence_status`, policy profile/confidence contract를 검증한다.
-- 추천-only acceptance fixture와 회귀 테스트 `147 passed, 1 skipped`를 확보했다.
+- capability evidence 관측 계층을 추가해 `source_type`, `observed_at`, `sample_count`, `environment_fingerprint`와 상태·reason code를 보존한다.
+- fixture/observed 데이터 모두 `execution_allowed=false`로 고정해 관측과 실행 허가를 분리했다.
+- 추천-only acceptance fixture와 capability evidence 경계 회귀 테스트를 확보했다.
 
 executor acceptance line:
 - pass: `recommended_executor / executor_reason_summary / executor_fallback / user_selection_needed` 4개 필드가 한 surface에서 함께 설명된다.
@@ -770,9 +778,10 @@ executor handoff acceptance binding:
 - `user_selection_needed=yes`면 executor surface도 추천-only로 멈추고 자동 전환을 시도하지 않는다.
 
 executor 후속 구현 순서:
-1. executor별 실제 성공률·비용·가용성 evidence 수집
-2. 승인 기반 child reroute와 dependency 실행 gate 설계
-3. budget/retry/timeout guard 검증 후 제한적 auto-switch 검토
+1. 실제 observed capability evidence 축적 및 freshness/환경 기준 검증
+2. threshold·비용 환산 정책을 별도 확정한 뒤 eligibility 판정 설계
+3. 승인 기반 child reroute와 dependency 실행 gate 설계
+4. budget/retry/timeout guard 검증 후 제한적 auto-switch 검토
 
 ## Learned Orchestrator 진입 게이트
 

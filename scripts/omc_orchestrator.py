@@ -7,6 +7,7 @@ executor; execution remains an explicit follow-up concern for autopilot.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import re
@@ -49,6 +50,61 @@ _DECOMPOSITION_DOMAINS = (
     ("verification", ("테스트", "test", "통합")),
 )
 _ALLOWED_EXECUTORS = {"codex", "claude", "gemini"}
+_CAPABILITY_SOURCE_TYPES = {"fixture", "observed"}
+
+
+def normalize_capability_evidence(evidence: dict[str, object]) -> dict[str, object]:
+    """Normalize capability observations without granting execution permission."""
+    source_type = evidence.get("source_type")
+    executor = evidence.get("executor")
+    sample_count = evidence.get("sample_count")
+    observed_at = evidence.get("observed_at")
+    environment_fingerprint = evidence.get("environment_fingerprint")
+    reason_codes: list[str] = []
+
+    if source_type not in _CAPABILITY_SOURCE_TYPES:
+        reason_codes.append("invalid_source_type")
+        source_type = "observed"
+    if executor not in _ALLOWED_EXECUTORS:
+        reason_codes.append("invalid_executor")
+    if not isinstance(observed_at, str) or not observed_at.strip():
+        reason_codes.append("missing_observed_at")
+    else:
+        try:
+            datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        except ValueError:
+            reason_codes.append("invalid_observed_at")
+    if not isinstance(sample_count, int) or isinstance(sample_count, bool) or sample_count < 0:
+        reason_codes.append("invalid_sample_count")
+    if not isinstance(environment_fingerprint, str) or not environment_fingerprint.strip():
+        reason_codes.append("missing_environment_fingerprint")
+
+    normalized = dict(evidence)
+    normalized.update(
+        {
+            "source_type": source_type,
+            "executor": executor,
+            "sample_count": sample_count if isinstance(sample_count, int) else 0,
+            "reason_codes": reason_codes,
+            "execution_allowed": False,
+        }
+    )
+
+    if any(code.startswith("invalid_") for code in reason_codes):
+        status = "rejected"
+    elif (
+        not observed_at
+        or not isinstance(sample_count, int)
+        or sample_count == 0
+        or "missing_environment_fingerprint" in reason_codes
+    ):
+        status = "insufficient"
+    elif source_type == "fixture":
+        status = "unverified"
+    else:
+        status = "observed"
+    normalized["evidence_status"] = status
+    return normalized
 
 
 def _normalize_request(request: str) -> str:
@@ -132,6 +188,11 @@ def _stage(
         "recommended_executor": routing.get("recommended_executor", "codex"),
         "executor_reason_summary": routing.get("executor_reason_summary", "default executor fallback"),
         "executor_fallback": routing.get("executor_fallback", "codex"),
+        "capability_evidence_status": "unverified",
+        "capability_evidence_source": "none",
+        "capability_evidence_sample_count": 0,
+        "capability_evidence_reason_codes": ["no_capability_evidence"],
+        "execution_allowed": False,
         "user_selection_needed": bool(routing.get("user_selection_needed", True)),
         "recommended_next_skill": routing.get("recommended_next_skill", "omc-plan"),
         "auto_execution_allowed": bool(routing.get("auto_execution_allowed", False)),
@@ -293,6 +354,11 @@ def _child_executor_recommendation(plan: dict[str, object], child: dict[str, obj
         "executor_reason_code": str(routing.get("executor_reason_code") or "default_executor"),
         "executor_reason_summary": str(routing.get("executor_reason_summary") or "executor recommendation is unverified"),
         "executor_fallback": fallback,
+        "capability_evidence_status": "unverified",
+        "capability_evidence_source": "none",
+        "capability_evidence_sample_count": 0,
+        "capability_evidence_reason_codes": ["no_capability_evidence"],
+        "execution_allowed": False,
         "recommendation_only": True,
         "evidence_status": "unverified",
         "recommended_policy_profile": str(routing.get("recommended_policy_profile") or "balanced"),

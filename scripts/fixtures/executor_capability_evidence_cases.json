@@ -1,0 +1,60 @@
+[
+  {
+    "id": "observed-valid",
+    "expected_source_type": "observed",
+    "expected_status": "observed",
+    "evidence": {
+      "executor": "codex",
+      "task_kind": "implementation",
+      "domain": "backend",
+      "policy_profile": "balanced",
+      "source_type": "observed",
+      "observed_at": "2026-07-12T22:00:00+09:00",
+      "sample_count": 3,
+      "environment_fingerprint": "local-codex-v1",
+      "success_count": 2,
+      "failure_count": 1,
+      "cost_estimate": 0.12,
+      "availability_attempts": 3,
+      "availability_successes": 3
+    }
+  },
+  {
+    "id": "fixture-unverified",
+    "expected_source_type": "fixture",
+    "expected_status": "unverified",
+    "evidence": {
+      "executor": "claude",
+      "task_kind": "review",
+      "domain": "verification",
+      "policy_profile": "quality_first",
+      "source_type": "fixture",
+      "observed_at": "2026-07-12T22:00:00+09:00",
+      "sample_count": 3,
+      "environment_fingerprint": "fixture-v1",
+      "success_count": 3,
+      "failure_count": 0
+    }
+  },
+  {
+    "id": "partial-metadata",
+    "expected_source_type": "observed",
+    "expected_status": "insufficient",
+    "evidence": {
+      "executor": "gemini",
+      "source_type": "observed",
+      "sample_count": 0
+    }
+  },
+  {
+    "id": "malformed",
+    "expected_source_type": "observed",
+    "expected_status": "rejected",
+    "evidence": {
+      "executor": "unknown",
+      "source_type": "observed",
+      "observed_at": "bad-date",
+      "sample_count": -1
+    }
+  }
+]
