@@ -160,3 +160,81 @@ def test_delegation_evidence_pilot_prompts_stay_aligned():
         omc_orchestrator._classify_request(step["prompt"])[0]
         for step in evidence["steps"]
     ] == ["needs_plan", "needs_plan", "needs_delegation"]
+
+
+def test_simple_execution_requires_explicit_opt_in_and_builds_existing_task_spec():
+    plan = omc_orchestrator.build_orchestration_plan("README 오타를 고쳐줘")
+
+    assert omc_orchestrator.can_auto_execute_simple(plan, user_opt_in=False) is False
+    assert omc_orchestrator.can_auto_execute_simple(plan, user_opt_in=True) is True
+    task = omc_orchestrator.build_simple_autopilot_task(plan)
+    assert task["executor"] == "auto"
+    assert [step["id"] for step in task["steps"]] == ["task", "review"]
+    assert task["steps"][1]["depends_on"] == ["task"]
+    assert "VERDICT: PROCEED" in task["steps"][0]["prompt"]
+    assert "VERDICT: BLOCK" in task["steps"][0]["prompt"]
+    assert "VERDICT: APPROVE" in task["steps"][1]["prompt"]
+    assert "VERDICT: REVISE" in task["steps"][1]["prompt"]
+
+
+def test_simple_execution_gate_rejects_complex_plan():
+    plan = omc_orchestrator.build_orchestration_plan("결제 API를 교체하고 프론트와 백엔드 테스트까지 업데이트해줘")
+
+    assert omc_orchestrator.can_auto_execute_simple(plan, user_opt_in=True) is False
+    assert omc_orchestrator.build_simple_autopilot_task(plan) is None
+
+
+def test_simple_execution_second_gate_rejects_scope_risks():
+    plan = omc_orchestrator.build_orchestration_plan("README 오타를 고쳐줘")
+
+    assert omc_orchestrator.can_auto_execute_simple(
+        plan, user_opt_in=True, sensitive_paths=["src/payments"]
+    ) is False
+    assert omc_orchestrator.can_auto_execute_simple(plan, user_opt_in=True, new_files=True) is False
+    assert omc_orchestrator.can_auto_execute_simple(plan, user_opt_in=True, api_change=True) is False
+    assert omc_orchestrator.can_auto_execute_simple(plan, user_opt_in=True, deletion=True) is False
+    assert omc_orchestrator.can_auto_execute_simple(plan, user_opt_in=True, dirty_scope_conflict=True) is False
+
+
+def test_execute_simple_uses_existing_autopilot_runner(monkeypatch, tmp_path):
+    plan = omc_orchestrator.build_orchestration_plan("README 오타를 고쳐줘")
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return Result()
+
+    monkeypatch.setattr(omc_orchestrator.subprocess, "run", fake_run)
+    assert omc_orchestrator.run_simple_autopilot(plan, target=tmp_path) == 0
+    autopilot_call = next(call for call in calls if "omc_autopilot.py" in " ".join(call[0]))
+    assert autopilot_call[0][-2:] == ["--task", autopilot_call[0][-1]]
+
+
+def test_cli_scope_signals_block_dirty_or_risky_target(monkeypatch, tmp_path):
+    def fake_git_status(*_args, **_kwargs):
+        return type("Result", (), {"stdout": " M src/app.py\n", "returncode": 0})()
+
+    monkeypatch.setattr(omc_orchestrator.subprocess, "run", fake_git_status)
+    signals = omc_orchestrator.detect_simple_scope_risks(tmp_path, "README 오타를 고쳐줘")
+
+    assert signals["dirty_scope_conflict"] is True
+    assert signals["new_files"] is False
+    assert omc_orchestrator.can_auto_execute_simple(
+        omc_orchestrator.build_orchestration_plan("README 오타를 고쳐줘"),
+        user_opt_in=True,
+        **signals,
+    ) is False
+
+
+def test_cli_scope_signals_block_when_git_status_fails(monkeypatch, tmp_path):
+    result = type("Result", (), {"stdout": "", "returncode": 1})()
+    monkeypatch.setattr(omc_orchestrator.subprocess, "run", lambda *_args, **_kwargs: result)
+
+    signals = omc_orchestrator.detect_simple_scope_risks(tmp_path, "README 오타를 고쳐줘")
+
+    assert signals["git_status_unavailable"] is True
+    assert signals["dirty_scope_conflict"] is True

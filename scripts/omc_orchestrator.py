@@ -7,8 +7,12 @@ executor; execution remains an explicit follow-up concern for autopilot.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 from omc_exec import resolve_task_routing
@@ -168,15 +172,152 @@ def build_orchestration_plan(request: str, *, target: str | Path = ".") -> dict[
     }
 
 
+def can_auto_execute_simple(
+    plan: dict[str, object],
+    *,
+    user_opt_in: bool,
+    sensitive_paths: list[str] | None = None,
+    new_files: bool = False,
+    api_change: bool = False,
+    deletion: bool = False,
+    dirty_scope_conflict: bool = False,
+    git_status_unavailable: bool = False,
+) -> bool:
+    if user_opt_in is not True or plan.get("classification") != "single_task":
+        return False
+    if sensitive_paths or new_files or api_change or deletion or dirty_scope_conflict or git_status_unavailable:
+        return False
+    stages = plan.get("stages")
+    if not isinstance(stages, list) or [stage.get("id") for stage in stages] != ["task", "review"]:
+        return False
+    routing = resolve_task_routing(
+        task_kind="task",
+        request_text=str(plan.get("request") or ""),
+        complexity=str(plan.get("complexity") or ""),
+        risk=str(plan.get("risk") or ""),
+        ambiguity_level="low",
+        failure_cost="low",
+        operator_goal="speed",
+        scope_fixed=True,
+    )
+    return bool(routing.get("simple_auto_execute_allowed") is True)
+
+
+def detect_simple_scope_risks(target: str | Path, request: str) -> dict[str, object]:
+    target_path = Path(target).resolve()
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=str(target_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    raw_lines = (status.stdout or "").splitlines()
+    paths = [line[3:].strip() for line in raw_lines if len(line) >= 4]
+    normalized = _normalize_request(request).lower()
+    sensitive = [
+        path for path in paths
+        if any(token in path.lower() for token in ("secret", "token", "password", ".env", "key"))
+    ]
+    return {
+        "sensitive_paths": sensitive,
+        "new_files": any(line.startswith("??") or line.startswith(" A") for line in raw_lines),
+        "api_change": "api" in normalized,
+        "deletion": any(line.startswith("D") or line.startswith(" D") for line in raw_lines) or "삭제" in normalized,
+        "dirty_scope_conflict": bool(paths) or status.returncode != 0,
+        "git_status_unavailable": status.returncode != 0,
+    }
+
+
+def build_simple_autopilot_task(plan: dict[str, object]) -> dict[str, object] | None:
+    if plan.get("classification") != "single_task":
+        return None
+    stages = plan.get("stages")
+    if not isinstance(stages, list) or [stage.get("id") for stage in stages] != ["task", "review"]:
+        return None
+    fingerprint = hashlib.sha256(str(plan.get("request") or "").encode()).hexdigest()[:12]
+    return {
+        "id": f"simple-auto-{fingerprint}",
+        "title": "Simple OMC auto execution",
+        "executor": "auto",
+        "max_retries": 0,
+        "steps": [
+            {
+                "id": "task",
+                "title": "Execute task",
+                "task_kind": "task",
+                "prompt": (
+                    f"{plan.get('request') or ''}\n\n"
+                    "작업 결과를 확인한 뒤 마지막 줄에 `VERDICT: PROCEED` 또는 "
+                    "`VERDICT: BLOCK` 중 하나를 출력하세요."
+                ),
+                "depends_on": [],
+                "verdict_required": ["PROCEED"],
+            },
+            {
+                "id": "review",
+                "title": "Review task result",
+                "task_kind": "review",
+                "prompt": (
+                    "Review the task result. 마지막 줄에 `VERDICT: APPROVE`, "
+                    "`VERDICT: REVISE`, 또는 `VERDICT: BLOCK` 중 하나를 출력하세요. "
+                    "REVISE/BLOCK이면 자동 실행을 중단합니다."
+                ),
+                "depends_on": ["task"],
+                "verdict_required": ["APPROVE"],
+            },
+        ],
+    }
+
+
+def run_simple_autopilot(plan: dict[str, object], *, target: str | Path) -> int:
+    scope_risks = detect_simple_scope_risks(target, str(plan.get("request") or ""))
+    if not can_auto_execute_simple(plan, user_opt_in=True, **scope_risks):
+        raise ValueError("simple auto-execution gate rejected the request")
+    task = build_simple_autopilot_task(plan)
+    if task is None:
+        raise ValueError("simple autopilot task could not be built")
+    target_path = Path(target).resolve()
+    autopilot = Path(__file__).with_name("omc_autopilot.py")
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as handle:
+        json.dump(task, handle, ensure_ascii=False, indent=2)
+        handle.flush()
+        return subprocess.run(
+            [
+                sys.executable,
+                str(autopilot),
+                "--target",
+                str(target_path),
+                "run",
+                "--task",
+                handle.name,
+            ],
+            cwd=str(target_path),
+            check=False,
+        ).returncode
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create a read-only OMC orchestration plan.")
     parser.add_argument("--request", required=True)
     parser.add_argument("--target", default=".")
-    parser.add_argument("--dry-run", action="store_true", help="Required safety marker; no executor is called.")
+    parser.add_argument("--dry-run", action="store_true", help="Print the plan without execution.")
+    parser.add_argument(
+        "--execute-simple",
+        action="store_true",
+        help="Opt in to existing autopilot only when the simple-task gate passes.",
+    )
     args = parser.parse_args()
-    if not args.dry_run:
-        parser.error("--dry-run is required; this command never executes stages")
-    print(json.dumps(build_orchestration_plan(args.request, target=args.target), ensure_ascii=False, indent=2))
+    if not args.dry_run and not args.execute_simple:
+        parser.error("choose --dry-run or explicit --execute-simple")
+    plan = build_orchestration_plan(args.request, target=args.target)
+    if args.execute_simple:
+        scope_risks = detect_simple_scope_risks(args.target, args.request)
+        if not can_auto_execute_simple(plan, user_opt_in=True, **scope_risks):
+            print(json.dumps({**plan, "blocked_reason": "simple_auto_execution_gate"}, ensure_ascii=False, indent=2))
+            return 2
+        return run_simple_autopilot(plan, target=args.target)
+    print(json.dumps(plan, ensure_ascii=False, indent=2))
     return 0
 
 

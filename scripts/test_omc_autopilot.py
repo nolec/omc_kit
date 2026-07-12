@@ -38,6 +38,12 @@ except ImportError:
     _EXEC_MODULE_PRESENT = False
 
 
+def test_step_verdict_gate_rejects_review_revise_and_accepts_approve():
+    assert omc_autopilot.step_verdict_allowed("VERDICT: APPROVE", ["APPROVE"]) is True
+    assert omc_autopilot.step_verdict_allowed("VERDICT: REVISE", ["APPROVE"]) is False
+    assert omc_autopilot.step_verdict_allowed("VERDICT: BLOCK", ["APPROVE"]) is False
+
+
 def test_observed_cost_pilot_fixture_has_five_real_run_cases():
     fixture = json.loads(
         (Path(__file__).resolve().parents[1] / "templates/shared_tasks/observed-cost-pilot.json").read_text(

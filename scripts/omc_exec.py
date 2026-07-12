@@ -485,6 +485,18 @@ def resolve_task_routing(
         scope_fixed=scope_fixed,
         policy_decision=policy_decision,
     )
+    simple_auto_execute_allowed = (
+        normalized_kind == "task"
+        and str(complexity or "").strip().lower() == "low"
+        and str(risk or "").strip().lower() == "low"
+        and str(ambiguity_level or "").strip().lower() == "low"
+        and str(failure_cost or "").strip().lower() == "low"
+        and str(operator_goal or "").strip().lower() == "speed"
+        and scope_fixed is True
+        and not normalized_files
+        and not sensitive_paths
+        and bool(next_skill_surface["user_selection_needed"]) is False
+    )
     return {
         "task_kind": normalized_kind,
         "routing_policy": _resolve_routing_policy(),
@@ -499,6 +511,7 @@ def resolve_task_routing(
         "user_selection_needed": bool(next_skill_surface["user_selection_needed"]),
         "recommended_next_skill": str(next_skill_surface["recommended_next_skill"]),
         "auto_execution_allowed": bool(next_skill_surface["auto_execution_allowed"]),
+        "simple_auto_execute_allowed": simple_auto_execute_allowed,
         "recommended_executor": str(executor_decision["recommended_executor"]),
         "executor_reason_code": str(executor_decision["executor_reason_code"]),
         "executor_reason_summary": str(executor_decision["executor_reason_summary"]),

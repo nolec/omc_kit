@@ -199,6 +199,7 @@ def main() -> int:
     orchestrate.add_argument("--request", required=True, help="Natural-language request to classify and decompose.")
     orchestrate.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     orchestrate.add_argument("--dry-run", action="store_true", help="Required safety marker; never executes stages.")
+    orchestrate.add_argument("--execute-simple", action="store_true", help="Opt in to gated simple-task autopilot execution.")
 
     peer_review = sub.add_parser("peer-review", help="Run peer-review of the latest uncommitted changes.")
     peer_review.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -570,6 +571,8 @@ def main() -> int:
         ap_args = ["--request", args.request, "--target", str(args.target.resolve())]
         if args.dry_run:
             ap_args.append("--dry-run")
+        if args.execute_simple:
+            ap_args.append("--execute-simple")
         return _run_script(orchestrator_script, ap_args)
 
     if request is None:

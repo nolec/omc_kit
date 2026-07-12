@@ -76,6 +76,27 @@
 - 범위가 흔들리거나 다음 선택이 남아 있으면 autopilot보다 `plan`이나 `review`를 먼저 사용합니다.
 - autopilot은 실행 보조용이지, 로드맵 전체를 대신하는 오케스트레이터가 아닙니다.
 
+### 제한 자동 실행 pilot
+
+planner의 자동 실행은 기본적으로 dry-run입니다. 실제 실행은 사용자가
+`--execute-simple`을 명시적으로 선택한 경우에도 아래 조건을 모두 만족할 때만 허용합니다.
+
+- `single_task`
+- `risk=low`
+- `policy_confidence=high`
+- `user_selection_needed=false`
+- `scope_fixed=true`
+- 신규 파일·API 변경·삭제·민감 경로·dirty scope 충돌 없음
+
+```bash
+python3 scripts/omc.py orchestrate \
+  --request "README 오타를 고쳐줘" \
+  --execute-simple
+```
+
+실행 경로는 기존 `omc_autopilot.py`의 `task -> review`만 사용합니다.
+복잡하거나 불확실한 요청은 실행하지 않고 차단 사유만 출력하며, 자동 ship·commit·push는 수행하지 않습니다.
+
 ## 플랫폼별 사용 모델
 
 | 플랫폼 | 권장 입력 | 허용 입력 | fallback |

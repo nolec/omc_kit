@@ -1099,6 +1099,21 @@ def cmd_run(
                     print("  재시도합니다...")
                 continue
 
+            required_verdicts = step.get("verdict_required") or []
+            if required_verdicts and not step_verdict_allowed(output, list(required_verdicts)):
+                verdict = _grep_verdict(output)
+                step_state["verdict"] = verdict
+                last_failures = [{
+                    "label": "허용되지 않은 verdict",
+                    "output": f"verdict={verdict or '미감지'}, allowed={required_verdicts}",
+                }]
+                print(f"  ❌ verdict 검증 실패: {last_failures[0]['output']}")
+                if attempt <= max_retries:
+                    print("  재시도합니다...")
+                continue
+            if required_verdicts:
+                step_state["verdict"] = _grep_verdict(output)
+
             # expect 검증
             expect_cfg = step.get("expect") or {}
             if expect_cfg and not dry_run:
@@ -2912,6 +2927,12 @@ def _grep_verdict(output: str) -> str | None:
     if m:
         return m.group(1).upper()
     return None
+
+
+def step_verdict_allowed(output: str, allowed_verdicts: list[str]) -> bool:
+    verdict = _grep_verdict(output)
+    allowed = {str(item).strip().upper() for item in allowed_verdicts if str(item).strip()}
+    return verdict in allowed
 
 
 _UNSET_VERDICT = object()  # prev_verdict 초기 sentinel — None 과 구분

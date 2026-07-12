@@ -504,6 +504,38 @@ def test_policy_decision_quality_goal_with_high_failure_cost_prefers_quality_fir
     assert decision["user_selection_needed"] is False
 
 
+def test_resolve_task_routing_exposes_simple_auto_execution_gate() -> None:
+    routing = omc_exec.resolve_task_routing(
+        task_kind="task",
+        request_text="README 오타를 고쳐줘",
+        complexity="low",
+        risk="low",
+        ambiguity_level="low",
+        failure_cost="low",
+        operator_goal="speed",
+        scope_fixed=True,
+    )
+
+    assert routing["auto_execution_allowed"] is False
+    assert routing["simple_auto_execute_allowed"] is True
+
+
+def test_simple_auto_execution_gate_rejects_high_risk_or_uncertain_work() -> None:
+    routing = omc_exec.resolve_task_routing(
+        task_kind="task",
+        request_text="결제 API를 교체해줘",
+        complexity="high",
+        risk="high",
+        ambiguity_level="medium",
+        failure_cost="high",
+        operator_goal="speed",
+        scope_fixed=True,
+        sensitive_paths=["src/payments"],
+    )
+
+    assert routing["simple_auto_execute_allowed"] is False
+
+
 def test_resolve_task_routing_recommends_codex_for_balanced_task_work() -> None:
     routing = omc_exec.resolve_task_routing(
         task_kind="task",
