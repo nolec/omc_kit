@@ -165,6 +165,12 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "executor 설계상 남은 갭:" in text
     assert "- capability evidence 관측 schema와 malformed/partial/fixture/observed 경계는 구현했지만, 실제 운영 데이터 기반 추천 품질은 아직 검증되지 않았다." in text
     assert "- `eligible` threshold, 비용 환산 정책, stale evidence 정책은 아직 확정하지 않았다." in text
+    assert "- 실제 `.omc/runs` record를 `executor + task_kind + domain + policy_profile` 키로 집계하고, stale/environment mismatch/insufficient 상태를 관측 surface에 반영한다." in text
+    assert "- freshness·환경 경계 fixture와 실제 run aggregation 회귀 테스트를 확보했다." in text
+    assert "- `.omc/runs/*/result.json` loader가 persisted run만 읽고 malformed/non-object 결과는 건너뛰도록 고정했다." in text
+    assert "- `running/pending/in_progress` run은 실패 표본에서 제외하고 `in_progress_count`로만 기록하며, fresh/stale sample count를 분리해 최신 관측값이 과거 stale 표본에 오염되지 않게 한다." in text
+    assert "- current environment 표본과 mismatch 표본을 별도 집계해 현재 환경의 fresh evidence가 있으면 과거 환경 표본이 전체 판정을 덮지 않게 한다." in text
+    assert "- malformed/non-object/read-error run은 `rejected_run_count`와 `rejected_run_reasons` summary로 보존하고, observed timestamp는 timezone 포함 ISO-8601만 허용한다." in text
     assert "- 승인 기반 reroute와 제한적 auto-switch는 아직 구현하지 않았다." in text
     assert "- child scope 기반 capability routing은 아직 추천 근거로 사용하지 않는다." in text
     assert "executor acceptance line:" in text

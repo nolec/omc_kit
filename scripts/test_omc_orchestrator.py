@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import omc_orchestrator
+import pytest
 
 
 def test_simple_request_stays_single_task_and_read_only():
@@ -509,3 +510,246 @@ def test_capability_evidence_fixture_never_grants_execution():
         assert result["source_type"] == case["expected_source_type"]
         assert result["evidence_status"] == case["expected_status"]
         assert result["execution_allowed"] is False
+
+
+def test_observed_runs_build_capability_evidence_by_executor_context():
+    runs = [
+        {
+            "executor": "codex",
+            "task_kind": "implementation",
+            "domain": "backend",
+            "policy_profile": "balanced",
+            "environment_fingerprint": "local-codex-v1",
+            "finished_at": "2026-07-12T21:00:00+09:00",
+            "status": "completed",
+        },
+        {
+            "executor": "codex",
+            "task_kind": "implementation",
+            "domain": "backend",
+            "policy_profile": "balanced",
+            "environment_fingerprint": "local-codex-v1",
+            "finished_at": "2026-07-12T21:10:00+09:00",
+            "status": "failed",
+        },
+    ]
+
+    evidence = omc_orchestrator.build_capability_evidence_from_runs(runs)
+
+    assert len(evidence) == 1
+    assert evidence[0]["executor"] == "codex"
+    assert evidence[0]["sample_count"] == 2
+    assert evidence[0]["success_count"] == 1
+    assert evidence[0]["failure_count"] == 1
+    assert evidence[0]["evidence_status"] == "observed"
+    assert evidence[0]["execution_allowed"] is False
+
+
+def test_observed_runs_exclude_in_progress_records_from_failure_counts():
+    runs = [
+        {
+            "executor": "codex",
+            "task_kind": "implementation",
+            "domain": "backend",
+            "policy_profile": "balanced",
+            "environment_fingerprint": "local-codex-v1",
+            "finished_at": "2026-07-12T21:00:00+09:00",
+            "status": "completed",
+        },
+        {
+            "executor": "codex",
+            "task_kind": "implementation",
+            "domain": "backend",
+            "policy_profile": "balanced",
+            "environment_fingerprint": "local-codex-v1",
+            "started_at": "2026-07-12T21:30:00+09:00",
+            "status": "running",
+        },
+    ]
+
+    evidence = omc_orchestrator.build_capability_evidence_from_runs(runs)
+
+    assert evidence[0]["sample_count"] == 1
+    assert evidence[0]["success_count"] == 1
+    assert evidence[0]["failure_count"] == 0
+    assert evidence[0]["in_progress_count"] == 1
+
+
+def test_observed_runs_do_not_let_stale_samples_poison_fresh_aggregate():
+    runs = [
+        {
+            "executor": "codex",
+            "task_kind": "implementation",
+            "domain": "backend",
+            "policy_profile": "balanced",
+            "environment_fingerprint": "local-codex-v1",
+            "finished_at": "2026-07-01T10:00:00+09:00",
+            "status": "completed",
+        },
+        {
+            "executor": "codex",
+            "task_kind": "implementation",
+            "domain": "backend",
+            "policy_profile": "balanced",
+            "environment_fingerprint": "local-codex-v1",
+            "finished_at": "2026-07-12T21:00:00+09:00",
+            "status": "completed",
+        },
+    ]
+
+    evidence = omc_orchestrator.build_capability_evidence_from_runs(
+        runs,
+        now="2026-07-12T22:00:00+09:00",
+        freshness_hours=24,
+    )
+
+    assert evidence[0]["evidence_status"] == "observed"
+    assert evidence[0]["fresh_sample_count"] == 1
+    assert evidence[0]["stale_sample_count"] == 1
+    assert "stale" in evidence[0]["reason_codes"]
+
+
+def test_observed_runs_use_current_environment_samples_for_status():
+    runs = [
+        {
+            "executor": "codex",
+            "task_kind": "implementation",
+            "domain": "backend",
+            "policy_profile": "balanced",
+            "environment_fingerprint": "old-codex-v1",
+            "finished_at": "2026-07-12T21:00:00+09:00",
+            "status": "completed",
+        },
+        {
+            "executor": "codex",
+            "task_kind": "implementation",
+            "domain": "backend",
+            "policy_profile": "balanced",
+            "environment_fingerprint": "local-codex-v2",
+            "finished_at": "2026-07-12T21:30:00+09:00",
+            "status": "completed",
+        },
+    ]
+
+    evidence = omc_orchestrator.build_capability_evidence_from_runs(
+        runs,
+        current_environment_fingerprint="local-codex-v2",
+        now="2026-07-12T22:00:00+09:00",
+        freshness_hours=24,
+    )
+
+    assert evidence[0]["evidence_status"] == "observed"
+    assert evidence[0]["current_environment_sample_count"] == 1
+    assert evidence[0]["mismatched_environment_sample_count"] == 1
+    assert "environment_mismatch" in evidence[0]["reason_codes"]
+
+
+def test_observed_runs_reject_invalid_freshness_hours():
+    with pytest.raises(ValueError, match="freshness_hours"):
+        omc_orchestrator.build_capability_evidence_from_runs([], freshness_hours=-1)
+
+
+def test_observed_evidence_rejects_timezone_naive_timestamp():
+    evidence = omc_orchestrator.normalize_capability_evidence(
+        {
+            "executor": "codex",
+            "source_type": "observed",
+            "observed_at": "2026-07-12T22:00:00",
+            "sample_count": 1,
+            "environment_fingerprint": "local-codex-v1",
+        }
+    )
+
+    assert evidence["evidence_status"] == "rejected"
+    assert "invalid_observed_at_timezone" in evidence["reason_codes"]
+
+
+def test_observed_runs_mark_stale_and_environment_mismatch_without_execution():
+    runs = [
+        {
+            "executor": "claude",
+            "task_kind": "review",
+            "domain": "verification",
+            "policy_profile": "quality_first",
+            "environment_fingerprint": "old-claude-v1",
+            "finished_at": "2026-07-01T10:00:00+09:00",
+            "status": "completed",
+        }
+    ]
+
+    evidence = omc_orchestrator.build_capability_evidence_from_runs(
+        runs,
+        current_environment_fingerprint="local-claude-v2",
+        now="2026-07-12T22:00:00+09:00",
+        freshness_hours=24,
+    )
+
+    assert evidence[0]["evidence_status"] == "environment_mismatch"
+    assert "environment_mismatch" in evidence[0]["reason_codes"]
+    assert "stale" in evidence[0]["reason_codes"]
+    assert evidence[0]["execution_allowed"] is False
+
+
+def test_observed_runs_reject_missing_runtime_metadata():
+    evidence = omc_orchestrator.build_capability_evidence_from_runs(
+        [{"executor": "gemini", "status": "completed"}]
+    )
+
+    assert evidence[0]["evidence_status"] == "insufficient"
+    assert "missing_observed_at" in evidence[0]["reason_codes"]
+    assert "missing_environment_fingerprint" in evidence[0]["reason_codes"]
+    assert evidence[0]["execution_allowed"] is False
+
+
+def test_observed_capability_fixture_covers_freshness_boundaries():
+    cases = json.loads(
+        (Path(__file__).parent / "fixtures/executor_capability_observed_cases.json").read_text()
+    )
+
+    for case in cases:
+        evidence = omc_orchestrator.build_capability_evidence_from_runs(
+            case["runs"], **case.get("options", {})
+        )
+        assert len(evidence) == 1
+        assert evidence[0]["evidence_status"] == case["expected_status"]
+        assert evidence[0]["execution_allowed"] is False
+
+
+def test_capability_evidence_loader_reads_only_run_result_files(tmp_path):
+    run_dir = tmp_path / ".omc" / "runs" / "run-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "result.json").write_text(
+        json.dumps(
+            {
+                "executor": "codex",
+                "task_kind": "implementation",
+                "domain": "backend",
+                "policy_profile": "balanced",
+                "environment_fingerprint": "local-codex-v1",
+                "finished_at": "2026-07-12T21:00:00+09:00",
+                "status": "completed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "not-result.json").write_text("{}", encoding="utf-8")
+
+    evidence = omc_orchestrator.load_capability_evidence_from_runs(tmp_path)
+
+    assert len(evidence) == 1
+    assert evidence[0]["executor"] == "codex"
+    assert evidence[0]["source_type"] == "observed"
+    assert evidence[0]["execution_allowed"] is False
+
+
+def test_capability_evidence_loader_reports_rejected_run_metadata(tmp_path):
+    run_dir = tmp_path / ".omc" / "runs" / "run-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "result.json").write_text("not-json", encoding="utf-8")
+    (run_dir / "other.json").write_text("{}", encoding="utf-8")
+
+    report = omc_orchestrator.load_capability_evidence_report_from_runs(tmp_path)
+
+    assert report["evidence"] == []
+    assert report["rejected_run_count"] == 1
+    assert report["rejected_run_reasons"] == {"invalid_json": 1}

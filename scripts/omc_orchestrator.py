@@ -7,7 +7,7 @@ executor; execution remains an explicit follow-up concern for autopilot.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 import re
@@ -71,7 +71,9 @@ def normalize_capability_evidence(evidence: dict[str, object]) -> dict[str, obje
         reason_codes.append("missing_observed_at")
     else:
         try:
-            datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+            parsed_observed_at = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+            if parsed_observed_at.tzinfo is None or parsed_observed_at.utcoffset() is None:
+                reason_codes.append("invalid_observed_at_timezone")
         except ValueError:
             reason_codes.append("invalid_observed_at")
     if not isinstance(sample_count, int) or isinstance(sample_count, bool) or sample_count < 0:
@@ -105,6 +107,230 @@ def normalize_capability_evidence(evidence: dict[str, object]) -> dict[str, obje
         status = "observed"
     normalized["evidence_status"] = status
     return normalized
+
+
+def _parse_capability_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def build_capability_evidence_from_runs(
+    runs: list[dict[str, object]],
+    *,
+    current_environment_fingerprint: str | None = None,
+    now: str | None = None,
+    freshness_hours: int | None = None,
+) -> list[dict[str, object]]:
+    """Aggregate real run records for observation only; never enable execution."""
+    if freshness_hours is not None and (
+        not isinstance(freshness_hours, int) or isinstance(freshness_hours, bool) or freshness_hours < 0
+    ):
+        raise ValueError("freshness_hours must be a non-negative integer")
+    aggregates: dict[tuple[str, str, str, str], dict[str, object]] = {}
+    now_dt = _parse_capability_timestamp(now) if now else datetime.now(timezone.utc)
+
+    for run in runs:
+        status = str(run.get("status") or "unknown").lower()
+        task_kind = str(run.get("task_kind") or "unknown")
+        domain = str(run.get("domain") or "unknown")
+        policy_profile = str(run.get("policy_profile") or "balanced")
+        key = (str(run.get("executor")), task_kind, domain, policy_profile)
+        if status in {"running", "pending", "in_progress"}:
+            aggregate = aggregates.setdefault(
+                key,
+                {
+                    "executor": run.get("executor"),
+                    "task_kind": task_kind,
+                    "domain": domain,
+                    "policy_profile": policy_profile,
+                    "source_type": "observed",
+                    "observed_at": run.get("started_at"),
+                    "sample_count": 0,
+                    "success_count": 0,
+                    "failure_count": 0,
+                    "availability_attempts": 0,
+                    "availability_successes": 0,
+                    "in_progress_count": 0,
+                    "fresh_sample_count": 0,
+                    "stale_sample_count": 0,
+                    "current_environment_sample_count": 0,
+                    "mismatched_environment_sample_count": 0,
+                    "current_environment_fresh_sample_count": 0,
+                    "current_environment_stale_sample_count": 0,
+                    "reason_codes": set(),
+                    "environment_fingerprint": run.get("environment_fingerprint"),
+                    "execution_allowed": False,
+                },
+            )
+            aggregate["in_progress_count"] = int(aggregate.get("in_progress_count", 0)) + 1
+            aggregate["reason_codes"].add("in_progress")
+            continue
+        observed_at = run.get("finished_at") or run.get("started_at")
+        environment = run.get("environment_fingerprint")
+        evidence = normalize_capability_evidence(
+            {
+                "executor": run.get("executor"),
+                "task_kind": task_kind,
+                "domain": domain,
+                "policy_profile": policy_profile,
+                "source_type": "observed",
+                "observed_at": observed_at,
+                "sample_count": 1,
+                "environment_fingerprint": environment,
+                "success_count": 1 if status in {"completed", "success", "succeeded"} else 0,
+                "failure_count": 0 if status in {"completed", "success", "succeeded"} else 1,
+                "availability_attempts": 1,
+                "availability_successes": 1 if status != "unavailable" else 0,
+            }
+        )
+        reason_codes = set(str(code) for code in evidence.get("reason_codes", []))
+        observed_dt = _parse_capability_timestamp(observed_at)
+        is_stale = False
+        if freshness_hours is not None and observed_dt and now_dt:
+            age_hours = (now_dt - observed_dt).total_seconds() / 3600
+            if age_hours > freshness_hours:
+                reason_codes.add("stale")
+                is_stale = True
+        if (
+            current_environment_fingerprint
+            and environment
+            and environment != current_environment_fingerprint
+        ):
+            reason_codes.add("environment_mismatch")
+        is_current_environment = bool(
+            current_environment_fingerprint
+            and environment == current_environment_fingerprint
+        )
+
+        aggregate = aggregates.setdefault(
+            key,
+            {
+                **evidence,
+                "sample_count": 0,
+                "success_count": 0,
+                "failure_count": 0,
+                "availability_attempts": 0,
+                "availability_successes": 0,
+                "in_progress_count": 0,
+                "fresh_sample_count": 0,
+                "stale_sample_count": 0,
+                "current_environment_sample_count": 0,
+                "mismatched_environment_sample_count": 0,
+                "current_environment_fresh_sample_count": 0,
+                "current_environment_stale_sample_count": 0,
+                "reason_codes": set(),
+            },
+        )
+        for field in ("sample_count", "success_count", "failure_count", "availability_attempts", "availability_successes"):
+            aggregate[field] = int(aggregate.get(field, 0)) + int(evidence.get(field, 0))
+        aggregate["reason_codes"].update(reason_codes)
+        aggregate["fresh_sample_count"] = int(aggregate.get("fresh_sample_count", 0)) + (0 if is_stale else 1)
+        aggregate["stale_sample_count"] = int(aggregate.get("stale_sample_count", 0)) + (1 if is_stale else 0)
+        if current_environment_fingerprint:
+            if is_current_environment:
+                aggregate["current_environment_sample_count"] = int(aggregate.get("current_environment_sample_count", 0)) + 1
+                aggregate["current_environment_fresh_sample_count"] = int(aggregate.get("current_environment_fresh_sample_count", 0)) + (0 if is_stale else 1)
+                aggregate["current_environment_stale_sample_count"] = int(aggregate.get("current_environment_stale_sample_count", 0)) + (1 if is_stale else 0)
+            elif environment:
+                aggregate["mismatched_environment_sample_count"] = int(aggregate.get("mismatched_environment_sample_count", 0)) + 1
+        if observed_dt and (
+            not _parse_capability_timestamp(aggregate.get("observed_at"))
+            or observed_dt > _parse_capability_timestamp(aggregate.get("observed_at"))
+        ):
+            aggregate["observed_at"] = observed_at
+
+    results: list[dict[str, object]] = []
+    for aggregate in aggregates.values():
+        reason_codes = sorted(str(code) for code in aggregate.pop("reason_codes", set()))
+        if int(aggregate.get("sample_count", 0)) == 0 and int(aggregate.get("in_progress_count", 0)) > 0:
+            status = "insufficient"
+        elif (
+            "environment_mismatch" in reason_codes
+            and int(aggregate.get("current_environment_sample_count", 0)) == 0
+        ):
+            status = "environment_mismatch"
+        elif (
+            int(aggregate.get("current_environment_sample_count", 0)) > 0
+            and int(aggregate.get("current_environment_fresh_sample_count", 0)) == 0
+            and "stale" in reason_codes
+        ) or (
+            not current_environment_fingerprint
+            and int(aggregate.get("fresh_sample_count", 0)) == 0
+            and "stale" in reason_codes
+        ):
+            status = "stale"
+        elif any(code.startswith("invalid_") for code in reason_codes):
+            status = "rejected"
+        elif "missing_observed_at" in reason_codes or "missing_environment_fingerprint" in reason_codes:
+            status = "insufficient"
+        else:
+            status = "observed"
+        aggregate["reason_codes"] = reason_codes
+        aggregate["evidence_status"] = status
+        aggregate["execution_allowed"] = False
+        results.append(aggregate)
+    return sorted(results, key=lambda item: tuple(str(item.get(field) or "") for field in ("executor", "task_kind", "domain", "policy_profile")))
+
+
+def load_capability_evidence_from_runs(
+    target: str | Path,
+    *,
+    current_environment_fingerprint: str | None = None,
+    now: str | None = None,
+    freshness_hours: int | None = None,
+) -> list[dict[str, object]]:
+    """Load only persisted run results and return observation-only aggregates."""
+    return load_capability_evidence_report_from_runs(
+        target,
+        current_environment_fingerprint=current_environment_fingerprint,
+        now=now,
+        freshness_hours=freshness_hours,
+    )["evidence"]
+
+
+def load_capability_evidence_report_from_runs(
+    target: str | Path,
+    *,
+    current_environment_fingerprint: str | None = None,
+    now: str | None = None,
+    freshness_hours: int | None = None,
+) -> dict[str, object]:
+    """Load run results and retain rejection metadata for operators."""
+    runs: list[dict[str, object]] = []
+    rejected_run_count = 0
+    rejected_run_reasons: dict[str, int] = {}
+    runs_dir = Path(target) / ".omc" / "runs"
+    for result_path in sorted(runs_dir.glob("*/result.json")):
+        try:
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            rejected_run_count += 1
+            rejected_run_reasons["invalid_json"] = rejected_run_reasons.get("invalid_json", 0) + 1
+            continue
+        except OSError:
+            rejected_run_count += 1
+            rejected_run_reasons["read_error"] = rejected_run_reasons.get("read_error", 0) + 1
+            continue
+        if isinstance(payload, dict):
+            runs.append(payload)
+        else:
+            rejected_run_count += 1
+            rejected_run_reasons["non_object"] = rejected_run_reasons.get("non_object", 0) + 1
+    return {
+        "evidence": build_capability_evidence_from_runs(
+            runs,
+            current_environment_fingerprint=current_environment_fingerprint,
+            now=now,
+            freshness_hours=freshness_hours,
+        ),
+        "rejected_run_count": rejected_run_count,
+        "rejected_run_reasons": rejected_run_reasons,
+    }
 
 
 def _normalize_request(request: str) -> str:

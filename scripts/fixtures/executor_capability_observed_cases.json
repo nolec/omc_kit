@@ -1,0 +1,42 @@
+[
+  {
+    "id": "fresh-observed",
+    "expected_status": "observed",
+    "runs": [
+      {
+        "executor": "codex",
+        "task_kind": "implementation",
+        "domain": "backend",
+        "policy_profile": "balanced",
+        "environment_fingerprint": "local-codex-v1",
+        "finished_at": "2026-07-12T21:00:00+09:00",
+        "status": "completed"
+      }
+    ],
+    "options": {
+      "current_environment_fingerprint": "local-codex-v1",
+      "now": "2026-07-12T22:00:00+09:00",
+      "freshness_hours": 24
+    }
+  },
+  {
+    "id": "stale-observed",
+    "expected_status": "stale",
+    "runs": [
+      {
+        "executor": "claude",
+        "task_kind": "review",
+        "domain": "verification",
+        "policy_profile": "quality_first",
+        "environment_fingerprint": "local-claude-v1",
+        "finished_at": "2026-07-01T10:00:00+09:00",
+        "status": "completed"
+      }
+    ],
+    "options": {
+      "current_environment_fingerprint": "local-claude-v1",
+      "now": "2026-07-12T22:00:00+09:00",
+      "freshness_hours": 24
+    }
+  }
+]
