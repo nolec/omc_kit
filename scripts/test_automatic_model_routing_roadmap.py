@@ -179,9 +179,9 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "- `policy_reason_summary`는 `executor_reason_summary`와 서로 모순 없이 이어져야 한다." in text
     assert "- `user_selection_needed=yes`면 executor surface도 추천-only로 멈추고 자동 전환을 시도하지 않는다." in text
     assert "executor 후속 구현 순서:" in text
-    assert "1. executor input/output contract 문서화" in text
-    assert "2. fallback vs reroute 책임 분리" in text
-    assert "3. acceptance line 및 handoff summary field 고정" in text
+    assert "1. executor별 실제 성공률·비용·가용성 evidence 수집" in text
+    assert "2. 승인 기반 child reroute와 dependency 실행 gate 설계" in text
+    assert "3. budget/retry/timeout guard 검증 후 제한적 auto-switch 검토" in text
     assert "## Learned Orchestrator 진입 게이트" in text
     assert "### 진입 조건" in text
     assert "### 보류 조건" in text

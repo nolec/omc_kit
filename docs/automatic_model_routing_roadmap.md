@@ -770,9 +770,9 @@ executor handoff acceptance binding:
 - `user_selection_needed=yes`면 executor surface도 추천-only로 멈추고 자동 전환을 시도하지 않는다.
 
 executor 후속 구현 순서:
-1. executor input/output contract 문서화
-2. fallback vs reroute 책임 분리
-3. acceptance line 및 handoff summary field 고정
+1. executor별 실제 성공률·비용·가용성 evidence 수집
+2. 승인 기반 child reroute와 dependency 실행 gate 설계
+3. budget/retry/timeout guard 검증 후 제한적 auto-switch 검토
 
 ## Learned Orchestrator 진입 게이트
 
