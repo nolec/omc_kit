@@ -264,6 +264,20 @@ def test_decomposition_result_has_valid_child_task_contract():
     assert result["children"][0]["scope"] == ["backend"]
     assert result["children"][1]["scope"] == ["frontend"]
     assert result["children"][2]["scope"] == ["verification"]
+    assert result["recommendation_only"] is True
+    assert result["evidence_status"] == "unverified"
+    assert result["execution_allowed"] is False
+    assert isinstance(result["user_selection_needed"], bool)
+    for child in result["children"]:
+        assert child["recommended_executor"] in {"codex", "claude", "gemini"}
+        assert child["executor_reason_code"]
+        assert child["executor_reason_summary"]
+        assert child["executor_fallback"] in {"codex", "claude", "gemini"}
+        assert child["executor_fallback"] != child["recommended_executor"]
+        assert child["recommendation_only"] is True
+        assert child["evidence_status"] == "unverified"
+        assert child["recommended_policy_profile"] in {"cost_saver", "balanced", "quality_first"}
+        assert child["policy_confidence"] in {"low", "high"}
 
 
 def test_decomposition_result_rejects_dependency_cycle():
@@ -379,3 +393,51 @@ def test_decomposition_domain_boundary_fixture_matches_expected_domains():
         assert [child["id"] for child in result["children"]] == case["expected_child_ids"]
         assert [child["scope"] for child in result["children"]] == case["expected_scopes"]
         assert result.get("unresolved_questions", []) == case["expected_unresolved_questions"]
+
+
+def test_executor_recommendation_fixture_is_recommendation_only():
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures/executor_recommendation_cases.json").read_text()
+    )
+
+    for case in fixture["cases"]:
+        plan = omc_orchestrator.build_orchestration_plan(case["request"])
+        result = omc_orchestrator.build_decomposition_result(plan)
+        assert [child["id"] for child in result["children"]] == case["expected_child_ids"]
+        assert result["recommendation_only"] is True
+        assert result["evidence_status"] == "unverified"
+        assert result["execution_allowed"] is False
+        assert all(
+            child["recommendation_only"] is True
+            and child["evidence_status"] == "unverified"
+            and child["recommended_executor"] in {"codex", "claude", "gemini"}
+            and child["executor_fallback"] != child["recommended_executor"]
+            for child in result["children"]
+        )
+
+
+def test_decomposition_validator_enforces_parent_recommendation_safety_contract():
+    plan = omc_orchestrator.build_orchestration_plan(
+        "결제 API를 교체하고 프론트 테스트를 업데이트해줘"
+    )
+    result = omc_orchestrator.build_decomposition_result(plan)
+
+    missing_parent_fields = dict(result)
+    missing_parent_fields.pop("recommendation_only")
+    missing_parent_fields.pop("evidence_status")
+    missing_parent_fields.pop("user_selection_needed")
+    errors = omc_orchestrator.validate_decomposition_result(missing_parent_fields)
+
+    assert "missing_recommendation_only" in errors
+    assert "missing_evidence_status" in errors
+    assert "missing_user_selection_needed" in errors
+
+    invalid_parent_fields = dict(result)
+    invalid_parent_fields["recommendation_only"] = False
+    invalid_parent_fields["evidence_status"] = "verified"
+    invalid_parent_fields["user_selection_needed"] = "no"
+    errors = omc_orchestrator.validate_decomposition_result(invalid_parent_fields)
+
+    assert "recommendation_must_be_only" in errors
+    assert "invalid_evidence_status" in errors
+    assert "invalid_user_selection_needed" in errors

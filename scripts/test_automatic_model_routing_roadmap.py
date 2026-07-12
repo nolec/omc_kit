@@ -161,9 +161,9 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "- `executor_fallback`" in text
     assert "- `user_selection_needed`" in text
     assert "executor 설계상 남은 갭:" in text
-    assert "- 추천-only read mode의 acceptance line이 아직 부족하다." in text
-    assert "- executor fallback과 reroute layer의 책임 분리 문구가 더 직접적이어야 한다." in text
-    assert "- Cost-Quality Layer에서 넘어오는 handoff summary field를 executor surface 기준으로 고정해야 한다." in text
+    assert "- executor별 실제 성공률·비용·가용성 evidence가 아직 없어 추천 품질은 검증되지 않았다." in text
+    assert "- 승인 기반 reroute와 제한적 auto-switch는 아직 구현하지 않았다." in text
+    assert "- child scope 기반 capability routing은 아직 추천 근거로 사용하지 않는다." in text
     assert "executor acceptance line:" in text
     assert "- pass: `recommended_executor / executor_reason_summary / executor_fallback / user_selection_needed` 4개 필드가 한 surface에서 함께 설명된다." in text
     assert "- hold: 추천은 나왔지만 `executor_reason_summary` 또는 `user_selection_needed`가 비어 사람이 바로 선택 근거를 읽을 수 없다." in text

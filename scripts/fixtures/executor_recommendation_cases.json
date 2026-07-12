@@ -1,0 +1,19 @@
+{
+  "cases": [
+    {
+      "id": "multi-domain-payment",
+      "request": "결제 API를 교체하고 프론트 테스트를 업데이트해줘",
+      "expected_child_ids": ["child-backend", "child-frontend", "child-verification", "child-integration-review"]
+    },
+    {
+      "id": "multi-domain-auth",
+      "request": "권한 API를 교체하고 프론트와 백엔드 테스트를 수정해줘",
+      "expected_child_ids": ["child-backend", "child-frontend", "child-verification", "child-integration-review"]
+    },
+    {
+      "id": "multi-domain-migration",
+      "request": "마이그레이션으로 기존 데이터를 삭제하고 프론트 테스트를 통합해줘",
+      "expected_child_ids": ["child-backend", "child-frontend", "child-verification", "child-integration-review"]
+    }
+  ]
+}

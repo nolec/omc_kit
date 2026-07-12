@@ -48,6 +48,7 @@ _DECOMPOSITION_DOMAINS = (
     ("frontend", ("프론트", "frontend")),
     ("verification", ("테스트", "test", "통합")),
 )
+_ALLOWED_EXECUTORS = {"codex", "claude", "gemini"}
 
 
 def _normalize_request(request: str) -> str:
@@ -187,6 +188,15 @@ def validate_decomposition_result(result: dict[str, object]) -> list[str]:
         errors.append("invalid_classification")
     if confidence not in {"low", "medium", "high"}:
         errors.append("invalid_confidence")
+    if classification == "needs_delegation":
+        parent_required = {"recommendation_only", "evidence_status", "user_selection_needed"}
+        errors.extend(f"missing_{key}" for key in sorted(parent_required - set(result)))
+        if result.get("recommendation_only") is not True:
+            errors.append("recommendation_must_be_only")
+        if result.get("evidence_status") != "unverified":
+            errors.append("invalid_evidence_status")
+        if not isinstance(result.get("user_selection_needed"), bool):
+            errors.append("invalid_user_selection_needed")
     children = result.get("children")
     if not isinstance(children, list):
         return [*errors, "children_not_list"]
@@ -196,7 +206,11 @@ def validate_decomposition_result(result: dict[str, object]) -> list[str]:
         errors.append("duplicate_child_id")
     child_id_set = set(child_ids)
     graph: list[dict[str, object]] = []
-    child_required = {"id", "goal", "scope", "depends_on", "task_kind", "risk", "expected_output", "handoff_contract"}
+    child_required = {
+        "id", "goal", "scope", "depends_on", "task_kind", "risk", "expected_output", "handoff_contract",
+        "recommended_executor", "executor_reason_code", "executor_reason_summary", "executor_fallback",
+        "recommendation_only", "evidence_status", "recommended_policy_profile", "policy_confidence",
+    }
     for child in children:
         if not isinstance(child, dict):
             errors.append("child_not_object")
@@ -221,6 +235,22 @@ def validate_decomposition_result(result: dict[str, object]) -> list[str]:
             isinstance(field, str) and field.strip() for field in required_fields
         ):
             errors.append("invalid_handoff_contract")
+        if child.get("recommended_executor") not in _ALLOWED_EXECUTORS:
+            errors.append("invalid_recommended_executor")
+        if not isinstance(child.get("executor_reason_code"), str) or not child.get("executor_reason_code", "").strip():
+            errors.append("invalid_executor_reason_code")
+        if not isinstance(child.get("executor_reason_summary"), str) or not child.get("executor_reason_summary", "").strip():
+            errors.append("invalid_executor_reason_summary")
+        if child.get("executor_fallback") not in _ALLOWED_EXECUTORS or child.get("executor_fallback") == child.get("recommended_executor"):
+            errors.append("invalid_executor_fallback")
+        if child.get("recommendation_only") is not True:
+            errors.append("recommendation_must_be_only")
+        if child.get("evidence_status") != "unverified":
+            errors.append("invalid_evidence_status")
+        if child.get("recommended_policy_profile") not in {"cost_saver", "balanced", "quality_first"}:
+            errors.append("invalid_recommended_policy_profile")
+        if child.get("policy_confidence") not in {"low", "high"}:
+            errors.append("invalid_policy_confidence")
         dependencies = child.get("depends_on")
         if not isinstance(dependencies, list):
             errors.append("child_dependencies_not_list")
@@ -243,6 +273,33 @@ def validate_decomposition_result(result: dict[str, object]) -> list[str]:
     return sorted(set(errors))
 
 
+def _child_executor_recommendation(plan: dict[str, object], child: dict[str, object]) -> dict[str, object]:
+    risk = str(child.get("risk") or plan.get("risk") or "low")
+    routing = resolve_task_routing(
+        task_kind=str(child.get("task_kind") or "task"),
+        request_text=str(plan.get("request") or ""),
+        risk=risk,
+        ambiguity_level="medium" if risk == "high" else "low",
+        failure_cost="high" if risk == "high" else "low",
+        operator_goal="balance",
+        scope_fixed=True,
+    )
+    recommended = str(routing.get("recommended_executor") or "codex")
+    fallback = str(routing.get("executor_fallback") or "gemini")
+    if fallback == recommended:
+        fallback = "gemini" if recommended != "gemini" else "codex"
+    return {
+        "recommended_executor": recommended,
+        "executor_reason_code": str(routing.get("executor_reason_code") or "default_executor"),
+        "executor_reason_summary": str(routing.get("executor_reason_summary") or "executor recommendation is unverified"),
+        "executor_fallback": fallback,
+        "recommendation_only": True,
+        "evidence_status": "unverified",
+        "recommended_policy_profile": str(routing.get("recommended_policy_profile") or "balanced"),
+        "policy_confidence": str(routing.get("policy_confidence") or "low"),
+    }
+
+
 def build_decomposition_result(plan: dict[str, object]) -> dict[str, object]:
     stages = plan.get("stages")
     if plan.get("classification") != "needs_delegation" or not isinstance(stages, list):
@@ -254,6 +311,9 @@ def build_decomposition_result(plan: dict[str, object]) -> dict[str, object]:
             "unresolved_questions": [],
             "merge_strategy": "none",
             "execution_allowed": False,
+            "recommendation_only": True,
+            "evidence_status": "unverified",
+            "user_selection_needed": False,
         }
     normalized = _normalize_request(str(plan.get("request") or "")).lower()
     domains = [
@@ -270,6 +330,9 @@ def build_decomposition_result(plan: dict[str, object]) -> dict[str, object]:
             "unresolved_questions": ["decomposition_domains_unclear"],
             "merge_strategy": "sequential_summary",
             "execution_allowed": False,
+            "recommendation_only": True,
+            "evidence_status": "unverified",
+            "user_selection_needed": True,
         }
     children = []
     for domain in domains:
@@ -301,6 +364,8 @@ def build_decomposition_result(plan: dict[str, object]) -> dict[str, object]:
             },
         }
     )
+    for child in children:
+        child.update(_child_executor_recommendation(plan, child))
     return {
         "request": plan.get("request", ""),
         "classification": "needs_delegation",
@@ -309,6 +374,9 @@ def build_decomposition_result(plan: dict[str, object]) -> dict[str, object]:
         "unresolved_questions": [],
         "merge_strategy": "sequential_summary",
         "execution_allowed": False,
+        "recommendation_only": True,
+        "evidence_status": "unverified",
+        "user_selection_needed": any(bool(stage.get("user_selection_needed")) for stage in stages),
     }
 
 

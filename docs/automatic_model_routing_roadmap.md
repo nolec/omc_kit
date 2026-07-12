@@ -732,17 +732,28 @@ executor recommendation input contract:
 
 executor recommendation output contract:
 - `recommended_executor`
+- `executor_reason_code`
 - `executor_reason_summary`
 - `executor_fallback`
 - `user_selection_needed`
+- `recommended_policy_profile`
+- `policy_confidence`
+- `recommendation_only=true`
+- `evidence_status=unverified`
 
 executor 설계상 남은 갭:
-- 추천-only read mode의 acceptance line이 아직 부족하다.
-- executor fallback과 reroute layer의 책임 분리 문구가 더 직접적이어야 한다.
-- Cost-Quality Layer에서 넘어오는 handoff summary field를 executor surface 기준으로 고정해야 한다.
+- executor별 실제 성공률·비용·가용성 evidence가 아직 없어 추천 품질은 검증되지 않았다.
+- 승인 기반 reroute와 제한적 auto-switch는 아직 구현하지 않았다.
+- child scope 기반 capability routing은 아직 추천 근거로 사용하지 않는다.
+
+현재 반영:
+- domain child와 integration-review child에 추천-only executor handoff를 연결했다.
+- parent/child 모두 `recommendation_only`, `evidence_status`, policy profile/confidence contract를 검증한다.
+- 추천-only acceptance fixture와 회귀 테스트 `147 passed, 1 skipped`를 확보했다.
 
 executor acceptance line:
 - pass: `recommended_executor / executor_reason_summary / executor_fallback / user_selection_needed` 4개 필드가 한 surface에서 함께 설명된다.
+- handoff pass: 위 4개 필드와 `recommended_policy_profile / policy_confidence / recommendation_only / evidence_status`가 같은 child contract에서 함께 검증된다.
 - hold: 추천은 나왔지만 `executor_reason_summary` 또는 `user_selection_needed`가 비어 사람이 바로 선택 근거를 읽을 수 없다.
 - fallback: 추천 실행기가 막혀도 `executor_fallback`이 같은 task_kind / policy_profile 문맥에서 바로 제시된다.
 - reroute: fallback으로도 해결되지 않는 실패만 reroute layer로 넘기며, executor surface는 실패 이후 경로 결정을 직접 소유하지 않는다.
