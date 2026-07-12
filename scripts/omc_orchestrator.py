@@ -181,6 +181,12 @@ def validate_decomposition_result(result: dict[str, object]) -> list[str]:
     errors: list[str] = []
     required = {"classification", "children", "execution_allowed", "decomposition_confidence"}
     errors.extend(f"missing_{key}" for key in sorted(required - set(result)))
+    classification = result.get("classification")
+    confidence = result.get("decomposition_confidence")
+    if classification not in {"single_task", "needs_plan", "needs_delegation"}:
+        errors.append("invalid_classification")
+    if confidence not in {"low", "medium", "high"}:
+        errors.append("invalid_confidence")
     children = result.get("children")
     if not isinstance(children, list):
         return [*errors, "children_not_list"]
@@ -196,6 +202,25 @@ def validate_decomposition_result(result: dict[str, object]) -> list[str]:
             errors.append("child_not_object")
             continue
         errors.extend(f"missing_child_{key}" for key in sorted(child_required - set(child)))
+        if not isinstance(child.get("id"), str) or not child.get("id", "").strip():
+            errors.append("invalid_child_id")
+        if not isinstance(child.get("goal"), str) or not child.get("goal", "").strip():
+            errors.append("invalid_child_goal")
+        if not isinstance(child.get("expected_output"), str) or not child.get("expected_output", "").strip():
+            errors.append("invalid_expected_output")
+        scope = child.get("scope")
+        if not isinstance(scope, list) or not all(isinstance(item, str) and item.strip() for item in scope):
+            errors.append("invalid_child_scope")
+        if child.get("task_kind") not in {"task", "review"}:
+            errors.append("invalid_task_kind")
+        if child.get("risk") not in {"low", "medium", "high"}:
+            errors.append("invalid_risk")
+        handoff_contract = child.get("handoff_contract")
+        required_fields = handoff_contract.get("required_fields") if isinstance(handoff_contract, dict) else None
+        if not isinstance(required_fields, list) or not required_fields or not all(
+            isinstance(field, str) and field.strip() for field in required_fields
+        ):
+            errors.append("invalid_handoff_contract")
         dependencies = child.get("depends_on")
         if not isinstance(dependencies, list):
             errors.append("child_dependencies_not_list")
@@ -205,6 +230,14 @@ def validate_decomposition_result(result: dict[str, object]) -> list[str]:
         graph.append({"id": child.get("id"), "depends_on": dependencies})
     if "cycle" in validate_stage_graph(graph):
         errors.append("dependency_cycle")
+    if classification == "needs_delegation":
+        unresolved_questions = result.get("unresolved_questions")
+        if confidence == "low" and children:
+            errors.append("confidence_children_mismatch")
+        if confidence == "low" and not isinstance(unresolved_questions, list):
+            errors.append("confidence_questions_missing")
+        if confidence in {"medium", "high"} and not children:
+            errors.append("confidence_children_mismatch")
     if result.get("execution_allowed") is not False:
         errors.append("execution_must_remain_disabled")
     return sorted(set(errors))

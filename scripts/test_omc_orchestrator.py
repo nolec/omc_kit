@@ -293,3 +293,74 @@ def test_decomposition_fixture_has_ten_evaluable_cases():
         assert len(result["children"]) == case["expected_child_count"]
         assert [child["id"] for child in result["children"]] == case["expected_child_ids"]
         assert omc_orchestrator.validate_decomposition_result(result) == []
+
+
+def test_decomposition_validator_rejects_malformed_child_contract_fields():
+    errors = omc_orchestrator.validate_decomposition_result(
+        {
+            "classification": "needs_delegation",
+            "decomposition_confidence": "medium",
+            "children": [
+                {
+                    "id": "",
+                    "goal": "",
+                    "scope": "backend",
+                    "depends_on": [],
+                    "task_kind": "unknown",
+                    "risk": "critical",
+                    "expected_output": "",
+                    "handoff_contract": {"required_fields": []},
+                }
+            ],
+            "execution_allowed": False,
+        }
+    )
+
+    assert {
+        "invalid_child_id",
+        "invalid_child_goal",
+        "invalid_child_scope",
+        "invalid_task_kind",
+        "invalid_risk",
+        "invalid_expected_output",
+        "invalid_handoff_contract",
+    } <= set(errors)
+
+
+def test_decomposition_validator_preserves_single_task_and_checks_delegation_confidence():
+    single_task = {
+        "classification": "single_task",
+        "decomposition_confidence": "high",
+        "children": [],
+        "execution_allowed": False,
+    }
+    assert omc_orchestrator.validate_decomposition_result(single_task) == []
+
+    low_with_children = {
+        "classification": "needs_delegation",
+        "decomposition_confidence": "low",
+        "children": [{"id": "child-backend"}],
+        "execution_allowed": False,
+    }
+    assert "confidence_children_mismatch" in omc_orchestrator.validate_decomposition_result(
+        low_with_children
+    )
+
+
+def test_decomposition_validator_allows_aggregate_integration_scope():
+    plan = omc_orchestrator.build_orchestration_plan(
+        "결제 API를 교체하고 프론트와 백엔드 테스트까지 업데이트해줘"
+    )
+    result = omc_orchestrator.build_decomposition_result(plan)
+
+    assert omc_orchestrator.validate_decomposition_result(result) == []
+
+
+def test_decomposition_validation_fixture_covers_malformed_contracts():
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures/decomposition_validation_cases.json").read_text()
+    )
+
+    for case in fixture["cases"]:
+        errors = omc_orchestrator.validate_decomposition_result(case["result"])
+        assert set(case["expected_errors"]) <= set(errors)

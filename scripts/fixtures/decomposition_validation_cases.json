@@ -1,0 +1,37 @@
+{
+  "cases": [
+    {
+      "id": "invalid-child-fields",
+      "result": {
+        "classification": "needs_delegation",
+        "decomposition_confidence": "medium",
+        "children": [{"id": "", "goal": "", "scope": "backend", "depends_on": [], "task_kind": "unknown", "risk": "critical", "expected_output": "summary", "handoff_contract": {"required_fields": []}}],
+        "execution_allowed": false
+      },
+      "expected_errors": ["invalid_child_id", "invalid_child_goal", "invalid_child_scope", "invalid_task_kind", "invalid_risk", "invalid_handoff_contract"]
+    },
+    {
+      "id": "low-confidence-with-children",
+      "result": {
+        "classification": "needs_delegation",
+        "decomposition_confidence": "low",
+        "children": [{"id": "child-backend"}],
+        "execution_allowed": false
+      },
+      "expected_errors": ["confidence_children_mismatch"]
+    },
+    {
+      "id": "dependency-cycle",
+      "result": {
+        "classification": "needs_delegation",
+        "decomposition_confidence": "medium",
+        "children": [
+          {"id": "a", "goal": "a", "scope": ["backend"], "depends_on": ["b"], "task_kind": "task", "risk": "low", "expected_output": "a", "handoff_contract": {"required_fields": ["summary"]}},
+          {"id": "b", "goal": "b", "scope": ["frontend"], "depends_on": ["a"], "task_kind": "task", "risk": "low", "expected_output": "b", "handoff_contract": {"required_fields": ["summary"]}}
+        ],
+        "execution_allowed": false
+      },
+      "expected_errors": ["dependency_cycle"]
+    }
+  ]
+}
