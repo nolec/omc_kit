@@ -799,6 +799,28 @@ def test_delegation_graph_rejects_non_list_dependencies():
     assert "invalid_dependencies" in errors
 
 
+def test_operational_delegation_cases_preserve_request_and_handoff_acceptance():
+    cases = json.loads(
+        (Path(__file__).parent / "fixtures/executor_delegation_operational_cases.json").read_text()
+    )
+
+    for case in cases:
+        if "request" in case:
+            plan = omc_orchestrator.build_orchestration_plan(case["request"])
+            assert plan["classification"] == case["expected_classification"]
+            result = omc_orchestrator.build_decomposition_result(plan)
+            assert len(result["children"]) >= case["expected_min_children"]
+            assert result["execution_allowed"] is False
+            assert all(child["recommendation_only"] is True for child in result["children"])
+        else:
+            result = omc_orchestrator.build_delegation_handoff(
+                case["parent_scope"], case["child"], case["child_statuses"]
+            )
+            assert result["handoff_status"] == case["expected_status"]
+            assert result["next_action"] == case["expected_next_action"]
+            assert result["execution_allowed"] is False
+
+
 def test_capability_evidence_normalization_rejects_partial_or_malformed_records():
     partial = omc_orchestrator.normalize_capability_evidence(
         {"executor": "codex", "source_type": "fixture", "sample_count": 0}

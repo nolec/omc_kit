@@ -1,0 +1,50 @@
+[
+  {
+    "id": "complex-payment-request",
+    "request": "결제 API를 교체하고 프론트와 백엔드 테스트까지 업데이트해줘",
+    "expected_classification": "needs_delegation",
+    "expected_min_children": 2
+  },
+  {
+    "id": "blocked-dependency-request",
+    "parent_scope": {
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py"],
+      "policy_profile": "balanced"
+    },
+    "child": {
+      "child_id": "child-api",
+      "parent_id": "root-task",
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py"],
+      "policy_profile": "balanced",
+      "depends_on": ["child-prep"]
+    },
+    "child_statuses": {"child-prep": "pending"},
+    "expected_status": "blocked_dependency",
+    "expected_next_action": "resolve_dependency"
+  },
+  {
+    "id": "scope-mismatch-request",
+    "parent_scope": {
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py"],
+      "policy_profile": "balanced"
+    },
+    "child": {
+      "child_id": "child-ui",
+      "parent_id": "root-task",
+      "task_kind": "implementation",
+      "domain": "frontend",
+      "sensitive_paths": ["src/ui.tsx"],
+      "policy_profile": "quality_first",
+      "depends_on": []
+    },
+    "child_statuses": {},
+    "expected_status": "scope_mismatch",
+    "expected_next_action": "repair_scope"
+  }
+]

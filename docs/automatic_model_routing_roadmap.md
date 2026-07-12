@@ -772,6 +772,7 @@ executor 설계상 남은 갭:
 - candidate 상태별 단일 `next_action`(`collect_capability_evidence`, `repair_capability_evidence`, `review_executor_candidate`, `compare_executor_cost`)과 fixture 회귀 테스트를 고정했다.
 - `running/pending/in_progress` aggregation도 동일한 candidate-only schema와 실제 `sensitive_paths` 기반 scope fingerprint를 반환하도록 맞췄고, `NaN`/무한대 비용은 `known`으로 승격되지 않게 방어했다.
 - delegation handoff 1차로 parent-child scope subset, dependency status, cycle/missing dependency, malformed metadata rejection, `blocked_by`, deterministic topological order를 추천-only contract로 고정했다. 승인 lifecycle과 실제 executor 실행은 여전히 제외하며 `execution_allowed=false`를 유지한다.
+- 실제 복잡 요청(`결제 API + 프론트 + 백엔드 테스트`)과 blocked dependency·scope mismatch 운영 fixture를 추가해, child handoff의 `next_action`과 추천-only 경계를 운영형 입력에서도 확인했다.
 
 executor acceptance line:
 - pass: `recommended_executor / executor_reason_summary / executor_fallback / user_selection_needed` 4개 필드가 한 surface에서 함께 설명된다.
