@@ -43,6 +43,11 @@ _HIGH_RISK_MARKERS = (
     "setup --force",
     "설치",
 )
+_DECOMPOSITION_DOMAINS = (
+    ("backend", ("api", "결제", "백엔드", "권한", "마이그레이션", "개인정보", "배포", "삭제")),
+    ("frontend", ("프론트", "frontend")),
+    ("verification", ("테스트", "test", "통합")),
+)
 
 
 def _normalize_request(request: str) -> str:
@@ -169,6 +174,108 @@ def build_orchestration_plan(request: str, *, target: str | Path = ".") -> dict[
         "graph_errors": graph_errors,
         "execution_allowed": False,
         "user_selection_needed": any(stage["user_selection_needed"] for stage in stages),
+    }
+
+
+def validate_decomposition_result(result: dict[str, object]) -> list[str]:
+    errors: list[str] = []
+    required = {"classification", "children", "execution_allowed", "decomposition_confidence"}
+    errors.extend(f"missing_{key}" for key in sorted(required - set(result)))
+    children = result.get("children")
+    if not isinstance(children, list):
+        return [*errors, "children_not_list"]
+
+    child_ids = [str(child.get("id") or "") for child in children if isinstance(child, dict)]
+    if len(child_ids) != len(set(child_ids)):
+        errors.append("duplicate_child_id")
+    child_id_set = set(child_ids)
+    graph: list[dict[str, object]] = []
+    child_required = {"id", "goal", "scope", "depends_on", "task_kind", "risk", "expected_output", "handoff_contract"}
+    for child in children:
+        if not isinstance(child, dict):
+            errors.append("child_not_object")
+            continue
+        errors.extend(f"missing_child_{key}" for key in sorted(child_required - set(child)))
+        dependencies = child.get("depends_on")
+        if not isinstance(dependencies, list):
+            errors.append("child_dependencies_not_list")
+            dependencies = []
+        if any(str(dep) not in child_id_set for dep in dependencies):
+            errors.append("missing_child_dependency")
+        graph.append({"id": child.get("id"), "depends_on": dependencies})
+    if "cycle" in validate_stage_graph(graph):
+        errors.append("dependency_cycle")
+    if result.get("execution_allowed") is not False:
+        errors.append("execution_must_remain_disabled")
+    return sorted(set(errors))
+
+
+def build_decomposition_result(plan: dict[str, object]) -> dict[str, object]:
+    stages = plan.get("stages")
+    if plan.get("classification") != "needs_delegation" or not isinstance(stages, list):
+        return {
+            "request": plan.get("request", ""),
+            "classification": plan.get("classification", "single_task"),
+            "decomposition_confidence": "high",
+            "children": [],
+            "unresolved_questions": [],
+            "merge_strategy": "none",
+            "execution_allowed": False,
+        }
+    normalized = _normalize_request(str(plan.get("request") or "")).lower()
+    domains = [
+        domain
+        for domain, markers in _DECOMPOSITION_DOMAINS
+        if any(marker in normalized for marker in markers)
+    ]
+    if len(domains) < 2:
+        return {
+            "request": plan.get("request", ""),
+            "classification": "needs_delegation",
+            "decomposition_confidence": "low",
+            "children": [],
+            "unresolved_questions": ["decomposition_domains_unclear"],
+            "merge_strategy": "sequential_summary",
+            "execution_allowed": False,
+        }
+    children = []
+    for domain in domains:
+        children.append(
+            {
+                "id": f"child-{domain}",
+                "goal": f"{domain} scope for requested change",
+                "scope": [domain],
+                "depends_on": [],
+                "task_kind": "task",
+                "risk": str(plan.get("risk") or "low"),
+                "expected_output": f"{domain} result summary and handoff metadata",
+                "handoff_contract": {
+                    "required_fields": ["summary", "changed_files", "open_questions"],
+                },
+            }
+        )
+    children.append(
+        {
+            "id": "child-integration-review",
+            "goal": "integrate child summaries and review cross-scope impact",
+            "scope": domains,
+            "depends_on": [f"child-{domain}" for domain in domains],
+            "task_kind": "review",
+            "risk": str(plan.get("risk") or "low"),
+            "expected_output": "integration review summary and open questions",
+            "handoff_contract": {
+                "required_fields": ["summary", "changed_files", "open_questions"],
+            },
+        }
+    )
+    return {
+        "request": plan.get("request", ""),
+        "classification": "needs_delegation",
+        "decomposition_confidence": "high" if len(domains) >= 3 else "medium",
+        "children": children,
+        "unresolved_questions": [],
+        "merge_strategy": "sequential_summary",
+        "execution_allowed": False,
     }
 
 

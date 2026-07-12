@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {"id": "payment-api", "request": "결제 API를 교체하고 프론트 테스트까지 업데이트해줘", "expected_classification": "needs_delegation", "expected_child_count": 4, "expected_child_ids": ["child-backend", "child-frontend", "child-verification", "child-integration-review"]},
+    {"id": "delete-migration", "request": "마이그레이션으로 기존 데이터를 삭제하고 백엔드 테스트를 통합해줘", "expected_classification": "needs_delegation", "expected_child_count": 3, "expected_child_ids": ["child-backend", "child-verification", "child-integration-review"]},
+    {"id": "auth-frontend", "request": "권한 API를 교체하고 프론트와 백엔드 테스트를 수정해줘", "expected_classification": "needs_delegation", "expected_child_count": 4, "expected_child_ids": ["child-backend", "child-frontend", "child-verification", "child-integration-review"]},
+    {"id": "deploy-integration", "request": "배포 설정을 교체하고 여러 통합 테스트를 추가해줘", "expected_classification": "needs_delegation", "expected_child_count": 3, "expected_child_ids": ["child-backend", "child-verification", "child-integration-review"]},
+    {"id": "privacy-api", "request": "개인정보 API를 마이그레이션하고 프론트 테스트를 업데이트해줘", "expected_classification": "needs_delegation", "expected_child_count": 4, "expected_child_ids": ["child-backend", "child-frontend", "child-verification", "child-integration-review"]},
+    {"id": "payment-delete", "request": "결제 데이터를 삭제하고 API와 백엔드 테스트를 교체해줘", "expected_classification": "needs_delegation", "expected_child_count": 3, "expected_child_ids": ["child-backend", "child-verification", "child-integration-review"]},
+    {"id": "multi-repo-install", "request": "여러 저장소에 설치하고 통합 테스트와 배포를 업데이트해줘", "expected_classification": "needs_delegation", "expected_child_count": 3, "expected_child_ids": ["child-backend", "child-verification", "child-integration-review"]},
+    {"id": "role-autopilot", "request": "autopilot 역할을 나누고 결제 프론트와 백엔드 테스트를 통합해줘", "expected_classification": "needs_delegation", "expected_child_count": 4, "expected_child_ids": ["child-backend", "child-frontend", "child-verification", "child-integration-review"]},
+    {"id": "migration-auth", "request": "권한 마이그레이션을 교체하고 여러 API 테스트를 업데이트해줘", "expected_classification": "needs_delegation", "expected_child_count": 3, "expected_child_ids": ["child-backend", "child-verification", "child-integration-review"]},
+    {"id": "record-delegation", "request": "실행 기록을 분석하고 결제 API와 프론트 테스트를 통합해줘", "expected_classification": "needs_delegation", "expected_child_count": 4, "expected_child_ids": ["child-backend", "child-frontend", "child-verification", "child-integration-review"]}
+  ]
+}

@@ -238,3 +238,58 @@ def test_cli_scope_signals_block_when_git_status_fails(monkeypatch, tmp_path):
 
     assert signals["git_status_unavailable"] is True
     assert signals["dirty_scope_conflict"] is True
+
+
+def test_decomposition_result_has_valid_child_task_contract():
+    plan = omc_orchestrator.build_orchestration_plan(
+        "결제 API를 교체하고 프론트와 백엔드 테스트까지 업데이트해줘"
+    )
+    result = omc_orchestrator.build_decomposition_result(plan)
+
+    assert result["classification"] == "needs_delegation"
+    assert result["execution_allowed"] is False
+    assert result["decomposition_confidence"] == "high"
+    assert omc_orchestrator.validate_decomposition_result(result) == []
+    assert all(
+        {"id", "goal", "scope", "depends_on", "task_kind", "risk", "expected_output", "handoff_contract"}
+        <= set(child)
+        for child in result["children"]
+    )
+    assert [child["id"] for child in result["children"]] == [
+        "child-backend",
+        "child-frontend",
+        "child-verification",
+        "child-integration-review",
+    ]
+    assert result["children"][0]["scope"] == ["backend"]
+    assert result["children"][1]["scope"] == ["frontend"]
+    assert result["children"][2]["scope"] == ["verification"]
+
+
+def test_decomposition_result_rejects_dependency_cycle():
+    errors = omc_orchestrator.validate_decomposition_result(
+        {
+            "classification": "needs_delegation",
+            "children": [
+                {"id": "a", "depends_on": ["b"]},
+                {"id": "b", "depends_on": ["a"]},
+            ],
+        }
+    )
+
+    assert "dependency_cycle" in errors
+
+
+def test_decomposition_fixture_has_ten_evaluable_cases():
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures/complex_decomposition_cases.json").read_text()
+    )
+
+    assert len(fixture["cases"]) == 10
+    for case in fixture["cases"]:
+        plan = omc_orchestrator.build_orchestration_plan(case["request"])
+        result = omc_orchestrator.build_decomposition_result(plan)
+        assert result["classification"] == case["expected_classification"]
+        assert len(result["children"]) == case["expected_child_count"]
+        assert [child["id"] for child in result["children"]] == case["expected_child_ids"]
+        assert omc_orchestrator.validate_decomposition_result(result) == []
