@@ -796,6 +796,94 @@ def test_overview_next_priority_matches_shared_resolver_contract() -> None:
     assert actual == expected
 
 
+def test_overview_marks_cost_quality_validation_pending_without_cost_evidence() -> None:
+    summary = omc_autopilot._build_overview_kpi_summary(
+        [
+            {
+                "status": "completed",
+                "benchmark_source_type": "observed_request",
+                "policy_pair": "baseline->candidate",
+                "steps": {
+                    "review": {"status": "completed", "verdict": "APPROVE"},
+                },
+            }
+        ]
+    )
+
+    assert summary["cost_quality_validation_status"] == "pending"
+    assert summary["cost_quality_validation_blocker"] == "cost_evidence_missing"
+
+
+def test_overview_does_not_ready_cost_quality_for_cross_surface_pair() -> None:
+    summary = omc_autopilot._build_overview_kpi_summary(
+        [
+            {
+                "status": "completed",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "baseline->candidate",
+                "comparison_scope": "cross_surface",
+                "baseline_response_sample": "baseline output",
+                "candidate_response_sample": "candidate output",
+                "steps": {
+                    "baseline": {
+                        "status": "completed",
+                        "comparison_id": "cmp-1",
+                        "variant": "baseline",
+                        "model_profile": "full_default",
+                        "cost_estimate": 0.04,
+                    },
+                    "candidate": {
+                        "status": "completed",
+                        "comparison_id": "cmp-1",
+                        "variant": "candidate",
+                        "model_profile": "mini_default",
+                        "cost_estimate": 0.01,
+                    },
+                    "review": {"status": "completed", "verdict": "APPROVE"},
+                },
+            }
+        ]
+    )
+
+    assert summary["cost_quality_validation_status"] == "pending"
+    assert summary["cost_quality_validation_blocker"] == "paired_evidence_missing"
+
+
+def test_overview_does_not_ready_cost_quality_for_invalid_policy_pair() -> None:
+    summary = omc_autopilot._build_overview_kpi_summary(
+        [
+            {
+                "status": "completed",
+                "benchmark_source_type": "observed_output",
+                "policy_pair": "baseline->unknown",
+                "comparison_scope": "same_surface",
+                "baseline_response_sample": "baseline output",
+                "candidate_response_sample": "candidate output",
+                "steps": {
+                    "baseline": {
+                        "status": "completed",
+                        "comparison_id": "cmp-2",
+                        "variant": "baseline",
+                        "model_profile": "full_default",
+                        "cost_estimate": 0.04,
+                    },
+                    "candidate": {
+                        "status": "completed",
+                        "comparison_id": "cmp-2",
+                        "variant": "candidate",
+                        "model_profile": "mini_default",
+                        "cost_estimate": 0.01,
+                    },
+                    "review": {"status": "completed", "verdict": "APPROVE"},
+                },
+            }
+        ]
+    )
+
+    assert summary["cost_quality_validation_status"] == "pending"
+    assert summary["cost_quality_validation_blocker"] == "paired_evidence_missing"
+
+
 def test_overview_kpi_excludes_simulated_cost_from_successful_task_average() -> None:
     observed = {
         "status": "completed",

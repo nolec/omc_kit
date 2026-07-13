@@ -1920,8 +1920,11 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     distinct_policy_pairs: set[str] = set()
     rejected_observed_output_reasons: dict[str, int] = {}
     observed_reason_signal_kinds: set[str] = set()
+    observed_cost_evidence_count = 0
+    observed_quality_evidence_count = 0
+    observed_paired_comparison_count = 0
     baseline_comparison_not_ready_seen = False
-    for record in run_records:
+    for record, report in zip(run_records, reports):
         if not isinstance(record, dict):
             continue
         simulated_record = _run_record_is_simulated(record)
@@ -1960,6 +1963,26 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
                     rejection_reason, 0
                 ) + 1
             observed_reason_signal_kinds.update(_overview_observed_reason_signal_kinds(record))
+        observed_evidence_eligible = (
+            is_observed_record
+            and not simulated_record
+            and not excluded_from_readiness
+            and rejected_case_count == 0
+        )
+        if observed_evidence_eligible:
+            if isinstance(report.get("total_cost_usd"), (int, float)):
+                observed_cost_evidence_count += 1
+            if report.get("quality_success") is True:
+                observed_quality_evidence_count += 1
+            pair_summary = report.get("comparison_pair_summary")
+            if (
+                str(record.get("comparison_scope") or "").strip() == "same_surface"
+                and str(record.get("policy_pair") or "").strip()
+                in {"baseline->candidate", "candidate->baseline"}
+                and isinstance(pair_summary, dict)
+                and isinstance(pair_summary.get("complete_pair_count"), int)
+            ):
+                observed_paired_comparison_count += int(pair_summary["complete_pair_count"])
         if (
             source_type == "observed_output"
             and not simulated_record
@@ -1995,6 +2018,17 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     else:
         readiness_status_line = "ready: baseline comparison wording can be enabled"
     baseline_comparison_status = "ready" if next_kpi_blocker == "none" else "deferred"
+    cost_quality_validation_status = "ready"
+    cost_quality_validation_blocker = "none"
+    if observed_cost_evidence_count < 1:
+        cost_quality_validation_status = "pending"
+        cost_quality_validation_blocker = "cost_evidence_missing"
+    elif observed_quality_evidence_count < 1:
+        cost_quality_validation_status = "pending"
+        cost_quality_validation_blocker = "quality_evidence_missing"
+    elif observed_paired_comparison_count < 1:
+        cost_quality_validation_status = "pending"
+        cost_quality_validation_blocker = "paired_evidence_missing"
     deferred_reason_map = _overview_readiness_deferred_reason_map()
     if baseline_comparison_status == "ready":
         baseline_comparison_line = "ready: baseline comparison sample is available from observed runs"
@@ -2055,6 +2089,11 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         "rejected_observed_count": rejected_observed_count,
         "readiness_same_surface_count": readiness_same_surface_count,
         "distinct_policy_pair_count": len(distinct_policy_pairs),
+        "observed_cost_evidence_count": observed_cost_evidence_count,
+        "observed_quality_evidence_count": observed_quality_evidence_count,
+        "observed_paired_comparison_count": observed_paired_comparison_count,
+        "cost_quality_validation_status": cost_quality_validation_status,
+        "cost_quality_validation_blocker": cost_quality_validation_blocker,
         "readiness_status_line": readiness_status_line,
         "baseline_comparison_status": baseline_comparison_status,
         "baseline_comparison_line": baseline_comparison_line,
@@ -2278,6 +2317,14 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
         "Operational Validation "
         f"operational_validation_readiness={kpi_summary['operational_validation_readiness']}  "
         f"operational_validation_reason={kpi_summary['operational_validation_reason']}"
+    )
+    print(
+        "Cost Quality Validation "
+        f"status={kpi_summary['cost_quality_validation_status']}  "
+        f"blocker={kpi_summary['cost_quality_validation_blocker']}  "
+        f"cost_evidence={kpi_summary['observed_cost_evidence_count']}  "
+        f"quality_evidence={kpi_summary['observed_quality_evidence_count']}  "
+        f"paired_evidence={kpi_summary['observed_paired_comparison_count']}"
     )
     print("run_id | branch | status | step | stale | failure_reason | next_action")
     print("-" * 78)
