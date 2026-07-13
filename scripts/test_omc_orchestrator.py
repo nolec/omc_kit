@@ -1075,6 +1075,35 @@ def test_build_delegation_observed_record_preserves_blocked_and_scope_edges():
         assert handoff["execution_allowed"] is False
 
 
+def test_build_delegation_observed_record_surfaces_child_decisions():
+    cases = json.loads(
+        (Path(__file__).parent / "fixtures/executor_delegation_operational_cases.json").read_text()
+    )
+
+    for case in cases[1:]:
+        record = omc_orchestrator.build_delegation_observed_record(
+            {**case, "evidence_status": "fixture"}
+        )
+        assert len(record["child_decisions"]) == len(record["handoffs"])
+        decision = record["child_decisions"][0]
+        assert decision["decision"] in {"blocked", "hold", "rejected"}
+        assert decision["decision_id"]
+        assert decision["execution_allowed"] is False
+        assert decision["recommendation_only"] is True
+
+    rejected = omc_orchestrator.build_delegation_observed_record(
+        {
+            "id": "malformed-handoff",
+            "parent_scope": {},
+            "child": None,
+            "child_statuses": {},
+            "evidence_status": "fixture",
+        }
+    )
+    assert rejected["child_decisions"] == []
+    assert rejected["evidence_status"] == "rejected"
+
+
 def test_build_delegation_observed_record_rejects_execution_permission():
     record = omc_orchestrator.build_delegation_observed_record(
         {

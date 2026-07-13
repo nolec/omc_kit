@@ -321,6 +321,7 @@ def build_delegation_observed_record(case: dict[str, object]) -> dict[str, objec
         "execution_allowed": False,
         "children": [],
         "handoffs": [],
+        "child_decisions": [],
     }
 
     if evidence_status not in {"fixture", "observed"}:
@@ -365,6 +366,14 @@ def build_delegation_observed_record(case: dict[str, object]) -> dict[str, objec
         {
             "classification": "needs_delegation",
             "handoffs": [handoff],
+            "child_decisions": [
+                build_child_decision(
+                    handoff,
+                    attempt_count=case.get("attempt_count", 0),
+                    retry_budget=case.get("retry_budget", 0),
+                    failure_class=case.get("failure_class"),
+                )
+            ],
         }
     )
     return record
