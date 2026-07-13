@@ -18,6 +18,7 @@ import tempfile
 from pathlib import Path
 
 from omc_exec import resolve_task_routing
+from omc_executor_shadow import build_noop_shadow_record
 
 
 _COMPLEX_MARKERS = (
@@ -272,6 +273,11 @@ def build_delegation_observed_record(case: dict[str, object]) -> dict[str, objec
         }
     )
     return record
+
+
+def build_delegation_shadow_record(request: dict[str, object]) -> dict[str, object]:
+    """Build a no-op child shadow record without invoking an executor."""
+    return build_noop_shadow_record(request)
 
 
 def normalize_capability_evidence(evidence: dict[str, object]) -> dict[str, object]:

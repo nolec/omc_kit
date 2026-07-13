@@ -917,6 +917,11 @@ def _build_task_run_result(
             result["delegation_observed"] = (
                 omc_orchestrator.build_delegation_observed_record(delegation_case)
             )
+    delegation_shadow = task.get("delegation_shadow")
+    if isinstance(delegation_shadow, dict):
+        result["delegation_shadow"] = (
+            omc_orchestrator.build_delegation_shadow_record(delegation_shadow)
+        )
     return result
 
 

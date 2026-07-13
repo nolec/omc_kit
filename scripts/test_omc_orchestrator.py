@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import omc_orchestrator
+import omc_executor_shadow
 import pytest
 
 
@@ -30,6 +31,113 @@ def test_complex_request_builds_delegation_graph_without_execution():
     assert plan["execution_allowed"] is False
     assert plan["invalid_dependency_rate"] == 0
     assert plan["stages"][2]["model_profile"] == "full_default"
+
+
+def _valid_shadow_request(**overrides):
+    request = {
+        "parent_id": "parent-1",
+        "child_id": "child-1",
+        "executor": "codex",
+        "scope_hash": "scope-abc",
+        "approval": {
+            "approval_id": "approval-1",
+            "session_id": "session-1",
+            "child_id": "child-1",
+            "scope_hash": "scope-abc",
+            "expires_at": "2099-01-01T00:00:00Z",
+        },
+        "policy": {
+            "allowed_executors": ["codex"],
+            "timeout_sec": 30,
+            "budget_usd": 0.25,
+            "retry_limit": 0,
+        },
+        "execution_requested": False,
+    }
+    request.update(overrides)
+    return request
+
+
+def test_noop_shadow_record_is_simulated_and_never_executable():
+    record = omc_executor_shadow.build_noop_shadow_record(_valid_shadow_request())
+
+    assert record["mode"] == "noop_shadow"
+    assert record["status"] == "simulated"
+    assert record["approval_status"] == "validated"
+    assert record["sandbox_status"] == "not_started"
+    assert record["usage_status"] == "unavailable"
+    assert record["execution_allowed"] is False
+    assert record["retry_count"] == 0
+    assert record["cost_recorded"] is False
+
+
+def test_delegation_shadow_adapter_stays_separate_from_observed_record():
+    observed = omc_orchestrator.build_delegation_observed_record(
+        {
+            "id": "delegation-shadow",
+            "request": "결제 API와 프론트 테스트를 함께 변경해줘",
+            "evidence_status": "fixture",
+        }
+    )
+    shadow = omc_orchestrator.build_delegation_shadow_record(
+        _valid_shadow_request()
+    )
+
+    assert observed["recommendation_only"] is True
+    assert shadow["mode"] == "noop_shadow"
+    assert shadow["execution_allowed"] is False
+
+
+@pytest.mark.parametrize(
+    ("override", "status", "reason"),
+    [
+        ({"approval": None}, "blocked", "approval_missing"),
+        (
+            {"scope_hash": "scope-other"},
+            "blocked",
+            "scope_mismatch",
+        ),
+        (
+            {
+                "approval": {
+                    "approval_id": "approval-1",
+                    "session_id": "session-1",
+                    "child_id": "child-1",
+                    "scope_hash": "scope-abc",
+                    "expires_at": "2000-01-01T00:00:00Z",
+                }
+            },
+            "blocked",
+            "approval_expired",
+        ),
+        (
+            {"executor": "gemini"},
+            "rejected",
+            "executor_not_allowed",
+        ),
+        (
+            {
+                "policy": {
+                    "allowed_executors": ["codex"],
+                    "timeout_sec": None,
+                    "budget_usd": 0.25,
+                    "retry_limit": 0,
+                }
+            },
+            "rejected",
+            "guard_metadata_invalid",
+        ),
+        ({"execution_requested": True}, "rejected", "real_execution_disabled"),
+    ],
+)
+def test_noop_shadow_record_rejects_unsafe_requests(override, status, reason):
+    record = omc_executor_shadow.build_noop_shadow_record(
+        _valid_shadow_request(**override)
+    )
+
+    assert record["status"] == status
+    assert record["reason_code"] == reason
+    assert record["execution_allowed"] is False
 
 
 def test_plan_rejects_dependency_cycle():

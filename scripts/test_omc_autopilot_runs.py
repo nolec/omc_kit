@@ -66,6 +66,51 @@ def test_build_task_run_result_stores_delegation_observed_separately(tmp_path: P
     assert "baseline_response_sample" not in result
 
 
+def test_build_task_run_result_stores_noop_shadow_separately(tmp_path: Path) -> None:
+    task = {
+        "id": "delegation-shadow",
+        "title": "delegation shadow",
+        "delegation_shadow": {
+            "parent_id": "parent-1",
+            "child_id": "child-1",
+            "executor": "codex",
+            "scope_hash": "scope-abc",
+            "approval": {
+                "approval_id": "approval-1",
+                "session_id": "session-1",
+                "child_id": "child-1",
+                "scope_hash": "scope-abc",
+                "expires_at": "2099-01-01T00:00:00Z",
+            },
+            "policy": {
+                "allowed_executors": ["codex"],
+                "timeout_sec": 30,
+                "budget_usd": 0.25,
+                "retry_limit": 0,
+            },
+            "execution_requested": False,
+        },
+        "steps": [],
+    }
+    state = {
+        "task_id": "delegation-shadow",
+        "status": "completed",
+        "started_at": "2026-07-13T10:00:00Z",
+        "finished_at": "2026-07-13T10:01:00Z",
+        "steps": {},
+    }
+
+    result = omc_autopilot._build_task_run_result(
+        root=tmp_path,
+        task=task,
+        state=state,
+        executor="codex",
+    )
+
+    assert result["delegation_shadow"]["mode"] == "noop_shadow"
+    assert result["delegation_shadow"]["execution_allowed"] is False
+
+
 def test_build_task_run_result_rejects_malformed_delegation_cases(tmp_path: Path) -> None:
     task = {
         "id": "delegation-observed-malformed",
