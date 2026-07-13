@@ -899,6 +899,119 @@ def test_delegation_handoff_rejects_malformed_metadata():
     assert result["execution_allowed"] is False
 
 
+def test_child_decision_normalizes_valid_handoff_without_execution():
+    handoff = {
+        "handoff_status": "proposed",
+        "child_id": "child-api",
+        "blocked_by": [],
+        "next_action": "review_child_handoff",
+        "execution_allowed": False,
+    }
+
+    result = omc_orchestrator.build_child_decision(
+        handoff, attempt_count=0, retry_budget=1
+    )
+
+    assert result["decision"] == "ready"
+    assert result["next_action"] == "review_child_handoff"
+    assert result["child_id"] == "child-api"
+    assert result["attempt_count"] == 0
+    assert result["retry_budget"] == 1
+    assert result["execution_allowed"] is False
+    assert result["decision_id"]
+
+
+def test_child_decision_preserves_blocked_handoff_reason():
+    result = omc_orchestrator.build_child_decision(
+        {
+            "handoff_status": "blocked_dependency",
+            "child_id": "child-api",
+            "blocked_by": ["child-prep"],
+            "next_action": "resolve_dependency",
+            "execution_allowed": False,
+        },
+        attempt_count=0,
+        retry_budget=1,
+    )
+
+    assert result["decision"] == "blocked"
+    assert result["next_action"] == "resolve_dependency"
+    assert result["blocked_by"] == ["child-prep"]
+    assert result["execution_allowed"] is False
+
+
+def test_child_decision_holds_when_retry_budget_is_exhausted():
+    result = omc_orchestrator.build_child_decision(
+        {
+            "handoff_status": "proposed",
+            "child_id": "child-api",
+            "blocked_by": [],
+            "next_action": "review_child_handoff",
+            "execution_allowed": False,
+        },
+        attempt_count=2,
+        retry_budget=1,
+        failure_class="execution_failure",
+    )
+
+    assert result["decision"] == "hold"
+    assert result["decision_reason"] == "retry_budget_exhausted"
+    assert result["next_action"] == "hold_retry_budget"
+    assert result["execution_allowed"] is False
+
+
+def test_child_decision_rejects_invalid_decision_metadata():
+    result = omc_orchestrator.build_child_decision(
+        {
+            "handoff_status": "proposed",
+            "child_id": "child-api",
+            "blocked_by": [],
+            "next_action": "review_child_handoff",
+            "execution_allowed": False,
+        },
+        attempt_count=True,
+        retry_budget=1,
+    )
+
+    assert result["decision"] == "rejected"
+    assert result["decision_reason"] == "decision_metadata_invalid"
+    assert result["next_action"] == "repair_delegation_contract"
+
+
+def test_child_decision_rejects_untrusted_next_action():
+    result = omc_orchestrator.build_child_decision(
+        {
+            "handoff_status": "proposed",
+            "child_id": "child-api",
+            "blocked_by": [],
+            "next_action": "arbitrary_action",
+            "execution_allowed": False,
+        }
+    )
+
+    assert result["decision"] == "rejected"
+    assert result["decision_reason"] == "decision_metadata_invalid"
+    assert result["next_action"] == "repair_delegation_contract"
+
+
+def test_child_decision_holds_on_retry_budget_without_failure_class():
+    result = omc_orchestrator.build_child_decision(
+        {
+            "handoff_status": "proposed",
+            "child_id": "child-api",
+            "blocked_by": [],
+            "next_action": "review_child_handoff",
+            "execution_allowed": False,
+        },
+        attempt_count=2,
+        retry_budget=1,
+    )
+
+    assert result["decision"] == "hold"
+    assert result["decision_reason"] == "retry_budget_exhausted"
+    assert result["next_action"] == "hold_retry_budget"
+
+
 def test_delegation_graph_rejects_non_list_dependencies():
     errors = omc_orchestrator.validate_delegation_graph(
         [{"child_id": "child-a", "depends_on": "child-b"}]

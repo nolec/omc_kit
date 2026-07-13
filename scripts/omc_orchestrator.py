@@ -209,6 +209,101 @@ def build_delegation_handoff(
     }
 
 
+def build_child_decision(
+    handoff: dict[str, object],
+    *,
+    attempt_count: int = 0,
+    retry_budget: int = 0,
+    failure_class: str | None = None,
+) -> dict[str, object]:
+    """Normalize one handoff into a deterministic, non-executing decision."""
+    child_id = handoff.get("child_id")
+    blocked_by = handoff.get("blocked_by", [])
+    handoff_status = handoff.get("handoff_status")
+    next_action = handoff.get("next_action")
+    allowed_next_actions = {
+        "proposed": "review_child_handoff",
+        "blocked_dependency": "resolve_dependency",
+        "scope_mismatch": "repair_scope",
+        "rejected": "repair_delegation_contract",
+    }
+    metadata_invalid = (
+        not isinstance(child_id, str)
+        or not child_id.strip()
+        or not isinstance(blocked_by, list)
+        or not isinstance(handoff_status, str)
+        or not isinstance(next_action, str)
+        or handoff_status not in allowed_next_actions
+        or next_action != allowed_next_actions.get(handoff_status)
+        or handoff.get("execution_allowed") is not False
+        or not isinstance(attempt_count, int)
+        or isinstance(attempt_count, bool)
+        or attempt_count < 0
+        or not isinstance(retry_budget, int)
+        or isinstance(retry_budget, bool)
+        or retry_budget < 0
+        or (failure_class is not None and not isinstance(failure_class, str))
+    )
+    decision_id_payload = {
+        "child_id": child_id,
+        "handoff_status": handoff_status,
+        "blocked_by": blocked_by,
+        "attempt_count": attempt_count,
+        "retry_budget": retry_budget,
+        "failure_class": failure_class,
+    }
+    decision_id = hashlib.sha256(
+        json.dumps(
+            decision_id_payload,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+
+    result: dict[str, object] = {
+        "decision_id": decision_id,
+        "child_id": child_id if isinstance(child_id, str) else "",
+        "decision": "rejected",
+        "decision_reason": "decision_metadata_invalid",
+        "next_action": "repair_delegation_contract",
+        "blocked_by": blocked_by if isinstance(blocked_by, list) else [],
+        "attempt_count": attempt_count if isinstance(attempt_count, int) and not isinstance(attempt_count, bool) else 0,
+        "retry_budget": retry_budget if isinstance(retry_budget, int) and not isinstance(retry_budget, bool) else 0,
+        "failure_class": failure_class,
+        "recommendation_only": True,
+        "execution_allowed": False,
+    }
+    if metadata_invalid:
+        return result
+
+    decision_map = {
+        "proposed": ("ready", "handoff_ready"),
+        "blocked_dependency": ("blocked", "dependency_blocked"),
+        "scope_mismatch": ("hold", "scope_mismatch"),
+        "rejected": ("rejected", "handoff_rejected"),
+    }
+    decision, decision_reason = decision_map.get(
+        handoff_status, ("rejected", "decision_metadata_invalid")
+    )
+    result.update(
+        {
+            "decision": decision,
+            "decision_reason": decision_reason,
+            "next_action": next_action,
+        }
+    )
+    if attempt_count > retry_budget and decision in {"ready", "blocked"}:
+        result.update(
+            {
+                "decision": "hold",
+                "decision_reason": "retry_budget_exhausted",
+                "next_action": "hold_retry_budget",
+            }
+        )
+    return result
+
+
 def build_delegation_observed_record(case: dict[str, object]) -> dict[str, object]:
     """Build a deterministic, recommendation-only delegation observation.
 
