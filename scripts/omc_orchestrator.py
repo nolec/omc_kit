@@ -208,6 +208,72 @@ def build_delegation_handoff(
     }
 
 
+def build_delegation_observed_record(case: dict[str, object]) -> dict[str, object]:
+    """Build a deterministic, recommendation-only delegation observation.
+
+    This record is intentionally separate from ``observed_output`` benchmark
+    cases: delegation evidence describes routing safety, not policy response
+    quality or baseline/candidate comparison.
+    """
+    evidence_status = str(case.get("evidence_status") or "fixture")
+    case_id = str(case.get("id") or "unknown_case").strip() or "unknown_case"
+    record: dict[str, object] = {
+        "source_type": "delegation_observed",
+        "case_id": case_id,
+        "evidence_status": evidence_status,
+        "recommendation_only": True,
+        "execution_allowed": False,
+        "children": [],
+        "handoffs": [],
+    }
+
+    if evidence_status not in {"fixture", "observed"}:
+        record["evidence_status"] = "rejected"
+        record["rejection_reason"] = "invalid_evidence_status"
+        return record
+
+    if case.get("execution_allowed") is True:
+        record["evidence_status"] = "rejected"
+        record["rejection_reason"] = "execution_permission_forbidden"
+        return record
+
+    if "request" in case:
+        request = str(case.get("request") or "").strip()
+        if not request:
+            record["evidence_status"] = "rejected"
+            record["rejection_reason"] = "missing_request"
+            return record
+        plan = build_orchestration_plan(request)
+        decomposition = build_decomposition_result(plan)
+        record.update(
+            {
+                "request": request,
+                "classification": decomposition["classification"],
+                "decomposition_confidence": decomposition["decomposition_confidence"],
+                "children": decomposition["children"],
+                "user_selection_needed": decomposition["user_selection_needed"],
+            }
+        )
+        return record
+
+    parent_scope = case.get("parent_scope")
+    child = case.get("child")
+    child_statuses = case.get("child_statuses", {})
+    if not isinstance(parent_scope, dict) or not isinstance(child, dict) or not isinstance(child_statuses, dict):
+        record["evidence_status"] = "rejected"
+        record["rejection_reason"] = "invalid_handoff_input"
+        return record
+
+    handoff = build_delegation_handoff(parent_scope, child, child_statuses)
+    record.update(
+        {
+            "classification": "needs_delegation",
+            "handoffs": [handoff],
+        }
+    )
+    return record
+
+
 def normalize_capability_evidence(evidence: dict[str, object]) -> dict[str, object]:
     """Normalize capability observations without granting execution permission."""
     source_type = evidence.get("source_type")

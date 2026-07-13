@@ -572,6 +572,18 @@ class TestSharedLessons(unittest.TestCase):
 
 
 class TestSharedTasks(unittest.TestCase):
+    def test_shared_tasks_migration_contract_is_explicit(self):
+        """migration 옵션의 force 선행 조건과 함수 정책이 문서화되어 있다."""
+        help_result = subprocess.run(
+            [sys.executable, str(Path(__file__).parent / "install.py"), "--help"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertIn("requires --force", help_result.stdout.lower())
+        self.assertIn("migrate", _install._install_shared_tasks.__doc__.lower())
+
     def test_shared_tasks_copied_to_target(self):
         """install 실행 시 templates/shared_tasks/ 가 .omc/tasks/ 에 복사된다."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -620,6 +632,122 @@ class TestSharedTasks(unittest.TestCase):
                 json.loads((tasks_dir / "observed-collect.json").read_text(encoding="utf-8"))["require_clean_scope"],
                 False,
             )
+
+    def test_shared_tasks_force_refreshes_matching_omc_task_only(self):
+        """force는 OMC 관리 task만 갱신하고 사용자 task는 보존한다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = Path(tmp) / "kit"
+            shared = kit / "templates" / "shared_tasks"
+            shared.mkdir(parents=True)
+            (shared / "pilot.json").write_text(
+                '{"id":"pilot","omc_managed":true,"version":2}\n',
+                encoding="utf-8",
+            )
+            (shared / "custom.json").write_text(
+                '{"id":"custom","omc_managed":true,"version":2}\n',
+                encoding="utf-8",
+            )
+            (shared / "collision.json").write_text(
+                '{"id":"collision","omc_managed":true,"version":2}\n',
+                encoding="utf-8",
+            )
+            (shared / "legacy.json").write_text(
+                '{"id":"legacy","omc_managed":true,"executor":"auto","version":2}\n',
+                encoding="utf-8",
+            )
+
+            tgt = Path(tmp) / "tgt"
+            tasks_dir = tgt / ".omc" / "tasks"
+            tasks_dir.mkdir(parents=True)
+            (tasks_dir / "pilot.json").write_text(
+                '{"id":"pilot","omc_managed":true,"version":1}\n',
+                encoding="utf-8",
+            )
+            (tasks_dir / "custom.json").write_text(
+                '{"id":"local-custom","version":1}\n',
+                encoding="utf-8",
+            )
+            (tasks_dir / "collision.json").write_text(
+                '{"id":"collision","custom_field":"keep-me","version":1}\n',
+                encoding="utf-8",
+            )
+            (tasks_dir / "legacy.json").write_text(
+                '{"id":"legacy","executor":"custom","version":1}\n',
+                encoding="utf-8",
+            )
+
+            _install._install_shared_tasks(kit, tgt, force=True)
+
+            self.assertEqual(
+                json.loads((tasks_dir / "pilot.json").read_text(encoding="utf-8"))["version"],
+                2,
+            )
+            self.assertEqual(
+                json.loads((tasks_dir / "custom.json").read_text(encoding="utf-8"))["id"],
+                "local-custom",
+            )
+            self.assertEqual(
+                json.loads((tasks_dir / "collision.json").read_text(encoding="utf-8"))["custom_field"],
+                "keep-me",
+            )
+            self.assertEqual(
+                json.loads((tasks_dir / "legacy.json").read_text(encoding="utf-8"))["executor"],
+                "custom",
+            )
+
+    def test_shared_tasks_force_skips_non_object_json_without_crashing(self):
+        """force는 배열/null task를 보존하고 설치를 중단하지 않는다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = Path(tmp) / "kit"
+            shared = kit / "templates" / "shared_tasks"
+            shared.mkdir(parents=True)
+            (shared / "pilot.json").write_text(
+                '{"id":"pilot","omc_managed":true,"version":2}\n',
+                encoding="utf-8",
+            )
+
+            tgt = Path(tmp) / "tgt"
+            tasks_dir = tgt / ".omc" / "tasks"
+            tasks_dir.mkdir(parents=True)
+            (tasks_dir / "pilot.json").write_text("[]\n", encoding="utf-8")
+
+            _install._install_shared_tasks(kit, tgt, force=True)
+
+            self.assertEqual(
+                json.loads((tasks_dir / "pilot.json").read_text(encoding="utf-8")),
+                [],
+            )
+
+    def test_shared_tasks_migrate_refreshes_markerless_matching_task(self):
+        """명시적 migrate만 legacy markerless OMC task를 갱신한다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            kit = Path(tmp) / "kit"
+            shared = kit / "templates" / "shared_tasks"
+            shared.mkdir(parents=True)
+            (shared / "legacy.json").write_text(
+                '{"id":"legacy","omc_managed":true,"executor":"auto","version":2}\n',
+                encoding="utf-8",
+            )
+
+            tgt = Path(tmp) / "tgt"
+            tasks_dir = tgt / ".omc" / "tasks"
+            tasks_dir.mkdir(parents=True)
+            legacy_path = tasks_dir / "legacy.json"
+            legacy_path.write_text(
+                '{"id":"legacy","executor":"custom","version":1}\n',
+                encoding="utf-8",
+            )
+
+            _install._install_shared_tasks(kit, tgt, force=True)
+            self.assertEqual(
+                json.loads(legacy_path.read_text(encoding="utf-8"))["executor"],
+                "custom",
+            )
+
+            _install._install_shared_tasks(kit, tgt, force=True, migrate=True)
+            migrated = json.loads(legacy_path.read_text(encoding="utf-8"))
+            self.assertEqual(migrated["version"], 2)
+            self.assertTrue(migrated["omc_managed"])
 
     def test_observed_collect_template_matches_runtime_task(self):
         """설치 템플릿과 로컬 runtime task가 drift 없이 동일해야 한다."""
@@ -789,7 +917,17 @@ class TestHookContractMarkers(unittest.TestCase):
                  patch.object(_install, "_setup_ethos_section5"), \
                  shared_tasks_mock as shared_tasks, \
                  shared_lessons_mock as shared_lessons, \
-                 patch("sys.argv", ["install.py", "--target", str(target)]):
+                 patch.object(_install, "_check_force_regression", return_value=True), \
+                 patch(
+                     "sys.argv",
+                     [
+                         "install.py",
+                         "--target",
+                         str(target),
+                         "--force",
+                         "--migrate-shared-tasks",
+                     ],
+                 ):
                 _install.main()
 
             self.assertIn(("claude", "settings.json"), called)
@@ -800,6 +938,10 @@ class TestHookContractMarkers(unittest.TestCase):
             self.assertEqual(
                 tuple(path.resolve() for path in shared_tasks.call_args.args),
                 (kit.resolve(), target.resolve()),
+            )
+            self.assertEqual(
+                shared_tasks.call_args.kwargs,
+                {"force": True, "migrate": True},
             )
             self.assertEqual(
                 tuple(path.resolve() for path in shared_lessons.call_args.args),

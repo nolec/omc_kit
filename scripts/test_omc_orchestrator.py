@@ -157,7 +157,7 @@ def test_low_confidence_and_selection_are_preserved(monkeypatch):
 
 def test_delegation_evidence_pilot_prompts_stay_aligned():
     evidence = json.loads(
-        (Path(__file__).parents[1] / ".omc/tasks/complex-delegation-evidence-pilot.json").read_text()
+        (Path(__file__).parents[1] / "templates/shared_tasks/complex-delegation-evidence-pilot.json").read_text()
     )
 
     assert [
@@ -819,6 +819,93 @@ def test_operational_delegation_cases_preserve_request_and_handoff_acceptance():
             assert result["handoff_status"] == case["expected_status"]
             assert result["next_action"] == case["expected_next_action"]
             assert result["execution_allowed"] is False
+
+
+def test_build_delegation_observed_record_is_deterministic_and_read_only():
+    record = omc_orchestrator.build_delegation_observed_record(
+        {
+            "id": "complex-payment-request",
+            "request": "결제 API를 교체하고 프론트와 백엔드 테스트까지 업데이트해줘",
+            "evidence_status": "fixture",
+        }
+    )
+
+    assert record["source_type"] == "delegation_observed"
+    assert record["case_id"] == "complex-payment-request"
+    assert record["classification"] == "needs_delegation"
+    assert record["evidence_status"] == "fixture"
+    assert record["recommendation_only"] is True
+    assert record["execution_allowed"] is False
+    assert len(record["children"]) >= 2
+
+
+def test_build_delegation_observed_record_preserves_blocked_and_scope_edges():
+    cases = json.loads(
+        (Path(__file__).parent / "fixtures/executor_delegation_operational_cases.json").read_text()
+    )
+
+    for case in cases[1:]:
+        record = omc_orchestrator.build_delegation_observed_record(
+            {**case, "evidence_status": "fixture"}
+        )
+        handoff = record["handoffs"][0]
+        assert handoff["handoff_status"] == case["expected_status"]
+        assert handoff["next_action"] == case["expected_next_action"]
+        assert handoff["execution_allowed"] is False
+
+
+def test_build_delegation_observed_record_rejects_execution_permission():
+    record = omc_orchestrator.build_delegation_observed_record(
+        {
+            "id": "scope-mismatch-request",
+            "parent_scope": {
+                "task_kind": "implementation",
+                "domain": "backend",
+                "sensitive_paths": ["src/api.py"],
+                "policy_profile": "balanced",
+            },
+            "child": {
+                "child_id": "child-api",
+                "parent_id": "root-task",
+                "task_kind": "implementation",
+                "domain": "backend",
+                "sensitive_paths": ["src/api.py"],
+                "policy_profile": "balanced",
+                "depends_on": [],
+            },
+            "child_statuses": {},
+            "execution_allowed": True,
+            "evidence_status": "observed",
+        }
+    )
+
+    assert record["evidence_status"] == "rejected"
+    assert record["rejection_reason"] == "execution_permission_forbidden"
+    assert record["execution_allowed"] is False
+
+
+def test_build_delegation_observed_record_rejects_unknown_evidence_status():
+    record = omc_orchestrator.build_delegation_observed_record(
+        {
+            "request": "결제 API를 교체하고 프론트와 백엔드 테스트까지 업데이트해줘",
+            "evidence_status": "synthetic",
+        }
+    )
+
+    assert record["evidence_status"] == "rejected"
+    assert record["rejection_reason"] == "invalid_evidence_status"
+
+
+def test_build_delegation_observed_record_falls_back_to_unknown_case_id():
+    record = omc_orchestrator.build_delegation_observed_record(
+        {
+            "request": "결제 API를 교체하고 프론트와 백엔드 테스트까지 업데이트해줘",
+            "evidence_status": "fixture",
+        }
+    )
+
+    assert record["case_id"] == "unknown_case"
+
 
 
 def test_capability_evidence_normalization_rejects_partial_or_malformed_records():

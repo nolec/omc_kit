@@ -33,6 +33,71 @@ def test_build_task_run_result_preserves_instruction_and_mode(tmp_path: Path) ->
     assert result["mode"] == "full"
 
 
+def test_build_task_run_result_stores_delegation_observed_separately(tmp_path: Path) -> None:
+    task = {
+        "id": "delegation-observed",
+        "title": "delegation evidence",
+        "delegation_case": {
+            "request": "결제 API를 교체하고 프론트와 백엔드 테스트까지 업데이트해줘",
+            "evidence_status": "observed",
+        },
+        "steps": [],
+    }
+    state = {
+        "task_id": "delegation-observed",
+        "status": "completed",
+        "started_at": "2026-07-13T10:00:00Z",
+        "finished_at": "2026-07-13T10:01:00Z",
+        "steps": {},
+    }
+
+    result = omc_autopilot._build_task_run_result(
+        root=tmp_path,
+        task=task,
+        state=state,
+        executor="codex",
+    )
+
+    observed = result["delegation_observed"]
+    assert observed["source_type"] == "delegation_observed"
+    assert observed["evidence_status"] == "observed"
+    assert observed["execution_allowed"] is False
+    assert "comparison_scope" not in result
+    assert "baseline_response_sample" not in result
+
+
+def test_build_task_run_result_rejects_malformed_delegation_cases(tmp_path: Path) -> None:
+    task = {
+        "id": "delegation-observed-malformed",
+        "title": "delegation evidence",
+        "delegation_cases": [
+            {"request": "결제 API를 교체해줘", "evidence_status": "fixture"},
+            "not-a-case",
+        ],
+        "steps": [],
+    }
+    state = {
+        "task_id": "delegation-observed-malformed",
+        "status": "completed",
+        "started_at": "2026-07-13T10:00:00Z",
+        "finished_at": "2026-07-13T10:01:00Z",
+        "steps": {},
+    }
+
+    result = omc_autopilot._build_task_run_result(
+        root=tmp_path,
+        task=task,
+        state=state,
+        executor="codex",
+    )
+
+    observed = result["delegation_observed"]
+    assert len(observed) == 2
+    assert observed[1]["case_id"] == "unknown_case"
+    assert observed[1]["evidence_status"] == "rejected"
+    assert observed[1]["rejection_reason"] == "invalid_delegation_case"
+
+
 def _make_run(tmp_path: Path, run_id: str, *, branch: str, status: str, verdict: str | None = None) -> None:
     run_dir = tmp_path / ".omc" / "runs" / run_id
     run_dir.mkdir(parents=True)

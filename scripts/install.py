@@ -516,11 +516,17 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Install OMC kit into a target repository.")
     ap.add_argument("--target", type=Path, required=True, help="Target repository root.")
     ap.add_argument("--force", action="store_true", help="Overwrite existing files.")
+    ap.add_argument(
+        "--migrate-shared-tasks",
+        action="store_true",
+        help="Requires --force; migrate matching legacy shared tasks before refreshing them.",
+    )
     args = ap.parse_args()
 
     kit = _kit_root()
     tgt = args.target.resolve()
     force = bool(args.force)
+    migrate_shared_tasks = bool(args.migrate_shared_tasks)
     source_kit = _resolve_source_kit(kit, tgt)
     templates = _templates_root(source_kit)
 
@@ -944,7 +950,12 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
     print(f"Installed OMC kit into: {tgt}")
 
     _setup_ethos_section5(tgt)
-    _install_shared_tasks(source_kit, tgt)
+    _install_shared_tasks(
+        source_kit,
+        tgt,
+        force=force,
+        migrate=migrate_shared_tasks,
+    )
     _install_shared_lessons(source_kit, tgt)
 
     return 0
@@ -1125,10 +1136,18 @@ def _install_shared_lessons(kit: Path, tgt: Path) -> None:
         )
 
 
-def _install_shared_tasks(kit: Path, tgt: Path) -> None:
+def _install_shared_tasks(
+    kit: Path,
+    tgt: Path,
+    *,
+    force: bool = False,
+    migrate: bool = False,
+) -> None:
     """templates/shared_tasks/ 에 있는 태스크 파일을 .omc/tasks/ 에 복사한다.
 
-    이미 존재하는 파일은 덮어쓰지 않아 프로젝트 고유 태스크를 보호한다.
+    기본 설치는 기존 파일을 보존한다. ``--force``에서는 OMC marker가 있는
+    태스크만 갱신하고, ``migrate``가 명시된 경우에만 동일 ID의 legacy
+    markerless 태스크를 OMC 관리 대상으로 승격한다.
     """
     shared_dir = kit / "templates" / "shared_tasks"
     if not shared_dir.is_dir():
@@ -1146,8 +1165,31 @@ def _install_shared_tasks(kit: Path, tgt: Path) -> None:
     for src in candidates:
         dst = tasks_dir / src.name
         if dst.exists():
-            skipped += 1
-            continue
+            if not force:
+                skipped += 1
+                continue
+            try:
+                src_data = json.loads(src.read_text(encoding="utf-8"))
+                dst_data = json.loads(dst.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                skipped += 1
+                continue
+            if not isinstance(src_data, dict) or not isinstance(dst_data, dict):
+                skipped += 1
+                continue
+            managed = (
+                src_data.get("omc_managed") is True
+                and (
+                    dst_data.get("omc_managed") is True
+                    or (
+                        migrate
+                        and dst_data.get("id") == src_data.get("id")
+                    )
+                )
+            )
+            if not managed:
+                skipped += 1
+                continue
         _copy(src, dst, force=True)
         copied += 1
 

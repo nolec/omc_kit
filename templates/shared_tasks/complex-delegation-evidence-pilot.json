@@ -1,0 +1,96 @@
+{
+  "id": "complex-delegation-evidence-pilot",
+  "title": "Complex Delegation Evidence Pilot",
+  "omc_managed": true,
+  "executor": "auto",
+  "require_clean_scope": true,
+  "max_retries": 0,
+  "delegation_cases": [
+    {
+      "id": "complex-payment-request",
+      "request": "결제 API를 교체하고 프론트와 백엔드 테스트까지 업데이트해줘",
+      "evidence_status": "fixture"
+    },
+    {
+      "id": "blocked-dependency-request",
+      "parent_scope": {
+        "task_kind": "implementation",
+        "domain": "backend",
+        "sensitive_paths": ["src/api.py"],
+        "policy_profile": "balanced"
+      },
+      "child": {
+        "child_id": "child-api",
+        "parent_id": "root-task",
+        "task_kind": "implementation",
+        "domain": "backend",
+        "sensitive_paths": ["src/api.py"],
+        "policy_profile": "balanced",
+        "depends_on": ["child-prep"]
+      },
+      "child_statuses": {"child-prep": "pending"},
+      "evidence_status": "fixture"
+    },
+    {
+      "id": "scope-mismatch-request",
+      "parent_scope": {
+        "task_kind": "implementation",
+        "domain": "backend",
+        "sensitive_paths": ["src/api.py"],
+        "policy_profile": "balanced"
+      },
+      "child": {
+        "child_id": "child-ui",
+        "parent_id": "root-task",
+        "task_kind": "implementation",
+        "domain": "frontend",
+        "sensitive_paths": ["src/ui.tsx"],
+        "policy_profile": "quality_first",
+        "depends_on": []
+      },
+      "child_statuses": {},
+      "evidence_status": "fixture"
+    }
+  ],
+  "steps": [
+    {
+      "id": "architecture-map",
+      "title": "OMC architecture read-only analysis",
+      "prompt": "읽기 전용으로 현재 OMC 전체 구조를 분석하라. 파일을 수정하거나 생성하지 말고, 요청을 single_task / needs_plan / needs_delegation 중 하나로 분류하라. 역할이 나뉜다면 어떤 역할들이 독립적인지와 위임 근거를 간결하게 기록하라.",
+      "depends_on": [],
+      "timeout_sec": 300,
+      "expect": {
+        "files": [],
+        "checks": [
+          {"cmd": "git status --short", "label": "clean scope", "timeout_sec": 30}
+        ]
+      }
+    },
+    {
+      "id": "run-record-investigation",
+      "title": "Autopilot run record read-only investigation",
+      "prompt": "읽기 전용으로 autopilot 실행 기록의 instruction/mode/steps 저장 상태와 누락 원인을 분석하라. 파일을 수정하거나 생성하지 말고, 필요한 역할 분해와 위임 여부를 single_task / needs_plan / needs_delegation으로 분류하라.",
+      "depends_on": ["architecture-map"],
+      "timeout_sec": 300,
+      "expect": {
+        "files": [],
+        "checks": [
+          {"cmd": "git status --short", "label": "clean scope", "timeout_sec": 30}
+        ]
+      }
+    },
+    {
+      "id": "multi-repo-sync-impact",
+      "title": "Multi-repository setup impact read-only analysis",
+      "prompt": "읽기 전용으로 여러 사용처에 setup --force를 적용할 때의 영향 범위를 분석하라. 파일을 수정하거나 생성하지 말고, 설치/검증/리뷰 역할을 나눌 필요가 있는지와 needs_delegation 근거를 기록하라.",
+      "depends_on": ["run-record-investigation"],
+      "timeout_sec": 300,
+      "expect": {
+        "files": [],
+        "checks": [
+          {"cmd": "git status --short", "label": "clean scope", "timeout_sec": 30}
+        ]
+      }
+    }
+  ]
+}

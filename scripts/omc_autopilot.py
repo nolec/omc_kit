@@ -51,6 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_utils
 import omc_cost
 import omc_exec
+import omc_orchestrator
 from omc_decision_input import (
     build_next_priority_surface_input,
     build_run_overview_followup_input,
@@ -888,6 +889,34 @@ def _build_task_run_result(
         value = task.get(key)
         if value not in (None, ""):
             result[key] = value
+    delegation_cases = task.get("delegation_cases")
+    if isinstance(delegation_cases, list):
+        observed_cases = []
+        for case in delegation_cases:
+            if isinstance(case, dict):
+                observed_cases.append(
+                    omc_orchestrator.build_delegation_observed_record(case)
+                )
+            else:
+                observed_cases.append(
+                    {
+                        "source_type": "delegation_observed",
+                        "case_id": "unknown_case",
+                        "evidence_status": "rejected",
+                        "rejection_reason": "invalid_delegation_case",
+                        "recommendation_only": True,
+                        "execution_allowed": False,
+                        "children": [],
+                        "handoffs": [],
+                    }
+                )
+        result["delegation_observed"] = observed_cases
+    else:
+        delegation_case = task.get("delegation_case")
+        if isinstance(delegation_case, dict):
+            result["delegation_observed"] = (
+                omc_orchestrator.build_delegation_observed_record(delegation_case)
+            )
     return result
 
 
