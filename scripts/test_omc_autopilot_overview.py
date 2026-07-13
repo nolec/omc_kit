@@ -796,6 +796,38 @@ def test_overview_next_priority_matches_shared_resolver_contract() -> None:
     assert actual == expected
 
 
+def test_overview_kpi_excludes_simulated_cost_from_successful_task_average() -> None:
+    observed = {
+        "status": "completed",
+        "branch": "feat/observed-cost",
+        "executor": "codex",
+        "started_at": "2026-06-13T09:00:00+09:00",
+        "finished_at": "2026-06-13T09:05:00+09:00",
+        "steps": {
+            "task": {"status": "completed"},
+            "review": {"status": "completed", "verdict": "APPROVE", "cost_estimate": 0.02},
+        },
+    }
+    simulated = {
+        **observed,
+        "branch": "feat/simulated-cost",
+        "simulated": True,
+        "steps": {
+            "task": {"status": "completed", "simulated": True},
+            "review": {
+                "status": "completed",
+                "verdict": "APPROVE",
+                "cost_estimate": 0.98,
+                "simulated": True,
+            },
+        },
+    }
+
+    summary = omc_autopilot._build_overview_kpi_summary([observed, simulated])
+
+    assert summary["cost_per_successful_task"] == 0.02
+
+
 def test_overview_next_priority_uses_shared_input_path() -> None:
     import omc_decision_input as decision_input_mod
 

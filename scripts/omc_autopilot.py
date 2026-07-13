@@ -2035,8 +2035,9 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     next_collection_focus = _overview_next_collection_focus(next_kpi_blocker)
     successful_costs = [
         float(report["total_cost_usd"])
-        for report in reports
-        if report.get("pipeline_success") is True
+        for record, report in zip(run_records, reports)
+        if not _run_record_is_simulated(record)
+        and report.get("pipeline_success") is True
         and isinstance(report.get("total_cost_usd"), (int, float))
     ]
     return {
