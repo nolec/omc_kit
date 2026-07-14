@@ -814,6 +814,100 @@ def test_overview_marks_cost_quality_validation_pending_without_cost_evidence() 
     assert summary["cost_quality_validation_blocker"] == "cost_evidence_missing"
 
 
+def test_overview_exposes_token_only_measurement_and_observed_token_totals() -> None:
+    summary = omc_autopilot._build_overview_kpi_summary(
+        [
+            {
+                "status": "completed",
+                "benchmark_source_type": "observed_request",
+                "steps": {
+                    "task": {
+                        "status": "completed",
+                        "token_usage": {"input_tokens": 120, "output_tokens": 30},
+                    },
+                    "review": {"status": "completed", "verdict": "APPROVE"},
+                },
+            }
+        ]
+    )
+
+    assert summary["measurement_basis"] == "token_only"
+    assert summary["observed_token_evidence_count"] == 1
+    assert summary["observed_input_tokens"] == 120
+    assert summary["observed_output_tokens"] == 30
+    assert summary["observed_total_tokens"] == 150
+
+
+def test_overview_does_not_promote_token_only_evidence_to_cost_ready() -> None:
+    summary = omc_autopilot._build_overview_kpi_summary(
+        [
+            {
+                "status": "completed",
+                "benchmark_source_type": "observed_request",
+                "steps": {
+                    "task": {
+                        "status": "completed",
+                        "token_usage": {"input_tokens": 120, "output_tokens": 30},
+                    },
+                    "review": {"status": "completed", "verdict": "APPROVE"},
+                },
+            }
+        ]
+    )
+
+    assert summary["measurement_basis"] == "token_only"
+    assert summary["cost_quality_validation_status"] == "pending"
+    assert summary["cost_quality_validation_blocker"] == "cost_evidence_missing"
+
+
+def test_overview_excludes_partial_token_evidence_from_token_totals() -> None:
+    summary = omc_autopilot._build_overview_kpi_summary(
+        [
+            {
+                "status": "completed",
+                "benchmark_source_type": "observed_request",
+                "steps": {
+                    "task": {
+                        "status": "completed",
+                        "token_usage": {"input_tokens": 120},
+                    },
+                    "review": {"status": "completed", "verdict": "APPROVE"},
+                },
+            }
+        ]
+    )
+
+    assert summary["observed_token_evidence_count"] == 0
+    assert summary["observed_input_tokens"] == 0
+    assert summary["observed_output_tokens"] == 0
+    assert summary["observed_total_tokens"] == 0
+
+
+def test_overview_does_not_pair_partial_tokens_across_steps() -> None:
+    summary = omc_autopilot._build_overview_kpi_summary(
+        [
+            {
+                "status": "completed",
+                "benchmark_source_type": "observed_request",
+                "steps": {
+                    "task": {
+                        "status": "completed",
+                        "token_usage": {"input_tokens": 120},
+                    },
+                    "review": {
+                        "status": "completed",
+                        "verdict": "APPROVE",
+                        "token_usage": {"output_tokens": 30},
+                    },
+                },
+            }
+        ]
+    )
+
+    assert summary["observed_token_evidence_count"] == 0
+    assert summary["observed_total_tokens"] == 0
+
+
 def test_overview_does_not_ready_cost_quality_for_cross_surface_pair() -> None:
     summary = omc_autopilot._build_overview_kpi_summary(
         [

@@ -1592,6 +1592,33 @@ def _build_benchmark_report(data: dict) -> dict:
         "avg_elapsed_ms_delta": _avg_pair_field("elapsed_ms_delta"),
     }
 
+    complete_token_pairs = []
+    for step in steps.values():
+        usage = step.get("token_usage") if isinstance(step, dict) else None
+        if not isinstance(usage, dict):
+            continue
+        input_value = usage.get("input_tokens")
+        output_value = usage.get("output_tokens")
+        if (
+            isinstance(input_value, (int, float))
+            and not isinstance(input_value, bool)
+            and isinstance(output_value, (int, float))
+            and not isinstance(output_value, bool)
+        ):
+            complete_token_pairs.append((input_value, output_value))
+
+    input_tokens = (
+        int(sum(input_value for input_value, _ in complete_token_pairs))
+        if complete_token_pairs
+        else None
+    )
+    output_tokens = (
+        int(sum(output_value for _, output_value in complete_token_pairs))
+        if complete_token_pairs
+        else None
+    )
+    token_evidence_present = bool(complete_token_pairs)
+
     return {
         "status": data.get("status"),
         "pipeline_success": data.get("status") == "completed",
@@ -1630,14 +1657,11 @@ def _build_benchmark_report(data: dict) -> dict:
             if any(isinstance(s.get("cost_estimate"), (int, float)) for s in steps.values())
             else None
         ),
+        "input_tokens": input_tokens if token_evidence_present else None,
+        "output_tokens": output_tokens if token_evidence_present else None,
         "total_tokens": (
-            sum(
-                (s.get("token_usage") or {}).get("input_tokens", 0)
-                + (s.get("token_usage") or {}).get("output_tokens", 0)
-                for s in steps.values()
-                if s.get("token_usage")
-            )
-            if any(s.get("token_usage") for s in steps.values())
+            (input_tokens or 0) + (output_tokens or 0)
+            if token_evidence_present
             else None
         ),
         "comparison_cases": comparison_cases,
@@ -1923,6 +1947,9 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     observed_cost_evidence_count = 0
     observed_quality_evidence_count = 0
     observed_paired_comparison_count = 0
+    observed_token_evidence_count = 0
+    observed_input_tokens = 0
+    observed_output_tokens = 0
     baseline_comparison_not_ready_seen = False
     for record, report in zip(run_records, reports):
         if not isinstance(record, dict):
@@ -1970,6 +1997,10 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
             and rejected_case_count == 0
         )
         if observed_evidence_eligible:
+            if isinstance(report.get("total_tokens"), (int, float)):
+                observed_token_evidence_count += 1
+                observed_input_tokens += int(report.get("input_tokens") or 0)
+                observed_output_tokens += int(report.get("output_tokens") or 0)
             if isinstance(report.get("total_cost_usd"), (int, float)):
                 observed_cost_evidence_count += 1
             if report.get("quality_success") is True:
@@ -2092,6 +2123,11 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         "observed_cost_evidence_count": observed_cost_evidence_count,
         "observed_quality_evidence_count": observed_quality_evidence_count,
         "observed_paired_comparison_count": observed_paired_comparison_count,
+        "measurement_basis": "token_only",
+        "observed_token_evidence_count": observed_token_evidence_count,
+        "observed_input_tokens": observed_input_tokens,
+        "observed_output_tokens": observed_output_tokens,
+        "observed_total_tokens": observed_input_tokens + observed_output_tokens,
         "cost_quality_validation_status": cost_quality_validation_status,
         "cost_quality_validation_blocker": cost_quality_validation_blocker,
         "readiness_status_line": readiness_status_line,
@@ -2320,6 +2356,10 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
     )
     print(
         "Cost Quality Validation "
+        f"basis={kpi_summary['measurement_basis']}  "
+        f"input_tokens={kpi_summary['observed_input_tokens']}  "
+        f"output_tokens={kpi_summary['observed_output_tokens']}  "
+        f"total_tokens={kpi_summary['observed_total_tokens']}  "
         f"status={kpi_summary['cost_quality_validation_status']}  "
         f"blocker={kpi_summary['cost_quality_validation_blocker']}  "
         f"cost_evidence={kpi_summary['observed_cost_evidence_count']}  "

@@ -11,9 +11,9 @@ import omc_autopilot
 import omc_cost
 
 
-# ── 태스크 1: _run_step이 3-tuple (rc, output, cost_info) 반환 ──────────────
+# ── 태스크 1: _run_step이 4-tuple (rc, output, cost_info, runtime) 반환 ─────
 
-def test_run_step_returns_three_tuple(monkeypatch, tmp_path: Path) -> None:
+def test_run_step_returns_four_tuple(monkeypatch, tmp_path: Path) -> None:
     gemini_stats = json.dumps({
         "response": "2",
         "stats": {
@@ -38,8 +38,8 @@ def test_run_step_returns_three_tuple(monkeypatch, tmp_path: Path) -> None:
 
     step = {"id": "task", "prompt": "1+1은?"}
     result = omc_autopilot._run_step(tmp_path, step, executor="gemini", timeout_sec=30)
-    assert len(result) == 3
-    rc, output, cost_info = result
+    assert len(result) == 4
+    rc, output, cost_info, _step_runtime = result
     assert rc == 0
     assert cost_info is not None
     assert cost_info["token_usage"] is not None
@@ -58,8 +58,8 @@ def test_run_step_cost_info_none_on_unparseable_output(monkeypatch, tmp_path: Pa
 
     step = {"id": "task", "prompt": "작업"}
     result = omc_autopilot._run_step(tmp_path, step, executor="gemini", timeout_sec=30)
-    assert len(result) == 3
-    _, _, cost_info = result
+    assert len(result) == 4
+    _, _, cost_info, _step_runtime = result
     assert cost_info is None
 
 
@@ -74,8 +74,8 @@ def test_run_step_cost_info_none_on_empty_output(monkeypatch, tmp_path: Path) ->
 
     step = {"id": "task", "prompt": "작업"}
     result = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
-    assert len(result) == 3
-    _, _, cost_info = result
+    assert len(result) == 4
+    _, _, cost_info, _step_runtime = result
     assert cost_info is None
 
 
@@ -100,7 +100,7 @@ def test_run_step_uses_raw_output_sidecar_for_token_parsing(monkeypatch, tmp_pat
     monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
 
     step = {"id": "review", "prompt": "리뷰"}
-    rc, _output, cost_info = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
+    rc, _output, cost_info, _step_runtime = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
 
     assert rc == 0
     assert cost_info is not None
@@ -141,7 +141,7 @@ def test_run_step_uses_codex_jsonl_sidecar_for_token_parsing(monkeypatch, tmp_pa
     monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
 
     step = {"id": "review", "prompt": "리뷰"}
-    rc, _output, cost_info = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
+    rc, _output, cost_info, _step_runtime = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
 
     assert rc == 0
     assert cost_info is not None
@@ -170,7 +170,7 @@ def test_run_step_passes_task_kind_to_omc_exec(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
 
     step = {"id": "review", "prompt": "리뷰"}
-    rc, _output, _cost_info = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
+    rc, _output, _cost_info, _step_runtime = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
 
     assert rc == 0
     cmd = captured["cmd"]
@@ -195,7 +195,7 @@ def test_run_step_prefers_explicit_task_kind_over_step_id(monkeypatch, tmp_path:
     monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
 
     step = {"id": "s1", "task_kind": "plan", "prompt": "구조 설계"}
-    rc, _output, _cost_info = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
+    rc, _output, _cost_info, _step_runtime = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
 
     assert rc == 0
     cmd = captured["cmd"]
@@ -220,7 +220,7 @@ def test_run_step_falls_back_to_task_for_unknown_step_id(monkeypatch, tmp_path: 
     monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
 
     step = {"id": "s1", "prompt": "작은 구현"}
-    rc, _output, _cost_info = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
+    rc, _output, _cost_info, _step_runtime = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
 
     assert rc == 0
     cmd = captured["cmd"]
@@ -246,7 +246,7 @@ def test_run_step_uses_quality_first_policy_for_review_profile(monkeypatch, tmp_
     monkeypatch.setenv("OMC_ROUTING_POLICY", "quality_first")
 
     step = {"id": "review", "task_kind": "review", "prompt": "변경 영향 검토"}
-    rc, _output, _cost_info = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
+    rc, _output, _cost_info, _step_runtime = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
 
     assert rc == 0
     cmd = captured["cmd"]
@@ -280,7 +280,7 @@ def test_run_step_accepts_metadata_fields_without_breaking_execution(monkeypatch
         "escalation_policy": "default",
         "prompt": "구조 설계",
     }
-    rc, _output, _cost_info = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
+    rc, _output, _cost_info, _step_runtime = omc_autopilot._run_step(tmp_path, step, executor="codex", timeout_sec=30)
 
     assert rc == 0
     cmd = captured["cmd"]
@@ -310,7 +310,7 @@ def test_cmd_run_stores_cost_in_step_state(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         omc_autopilot,
         "_run_step",
-        lambda *a, **kw: (0, "완료", fake_cost_info),
+        lambda *a, **kw: (0, "완료", fake_cost_info, None),
     )
 
     rc = omc_autopilot.cmd_run(tmp_path, task_file)
