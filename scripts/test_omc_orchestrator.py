@@ -88,6 +88,39 @@ def test_delegation_shadow_adapter_stays_separate_from_observed_record():
     assert shadow["execution_allowed"] is False
 
 
+def test_delegation_shadow_adapter_applies_single_child_pilot_gate():
+    request = _valid_shadow_request(
+        pilot_mode="single_child",
+        child_count=1,
+        child_status="ready",
+        depends_on=[],
+        dependency_statuses={},
+        sensitive_paths=[],
+        plan_fingerprint="plan-abc",
+        idempotency_key="run-child-1",
+        seen_idempotency_keys=[],
+        budget={
+            "max_attempts": 1,
+            "max_total_elapsed_sec": 120,
+            "max_output_chars": 12000,
+        },
+    )
+    request["approval"].update(
+        {
+            "plan_fingerprint": "plan-abc",
+            "idempotency_key": "run-child-1",
+            "operator_confirmed": True,
+            "approval_status": "approved",
+        }
+    )
+
+    shadow = omc_orchestrator.build_delegation_shadow_record(request)
+
+    assert shadow["gate_status"] == "allowed"
+    assert shadow["shadow_recorded"] is True
+    assert shadow["execution_allowed"] is False
+
+
 @pytest.mark.parametrize(
     ("override", "status", "reason"),
     [

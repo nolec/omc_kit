@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from omc_executor_shadow import build_noop_shadow_record
+import pytest
 
 
 def _request(**overrides):
@@ -28,6 +29,35 @@ def _request(**overrides):
     return request
 
 
+def _single_child_pilot_request(**overrides):
+    request = _request(
+        pilot_mode="single_child",
+        child_count=1,
+        child_status="ready",
+        dependency_statuses={"dependency-1": "completed"},
+        depends_on=["dependency-1"],
+        sensitive_paths=[],
+        plan_fingerprint="plan-abc",
+        idempotency_key="run-child-1",
+        seen_idempotency_keys=[],
+        budget={
+            "max_attempts": 1,
+            "max_total_elapsed_sec": 120,
+            "max_output_chars": 12000,
+        },
+    )
+    request["approval"].update(
+        {
+            "plan_fingerprint": "plan-abc",
+            "idempotency_key": "run-child-1",
+            "operator_confirmed": True,
+            "approval_status": "approved",
+        }
+    )
+    request.update(overrides)
+    return request
+
+
 def test_shadow_adapter_returns_non_executing_record():
     record = build_noop_shadow_record(_request())
 
@@ -36,6 +66,71 @@ def test_shadow_adapter_returns_non_executing_record():
     assert record["execution_allowed"] is False
     assert record["sandbox_status"] == "not_started"
     assert record["usage_status"] == "unavailable"
+
+
+def test_single_child_pilot_gate_allows_only_noop_shadow():
+    record = build_noop_shadow_record(_single_child_pilot_request())
+
+    assert record["mode"] == "noop_shadow"
+    assert record["status"] == "simulated"
+    assert record["gate_status"] == "allowed"
+    assert record["shadow_recorded"] is True
+    assert record["execution_allowed"] is False
+    assert record["fallback_action"] == "parent_review"
+    assert record["idempotency_key"] == "run-child-1"
+
+
+@pytest.mark.parametrize(
+    ("override", "status", "reason"),
+    [
+        ({"child_count": 2}, "blocked", "single_child_required"),
+        ({"child_status": "blocked"}, "hold", "child_not_ready"),
+        ({"sensitive_paths": [".env"]}, "blocked", "sensitive_scope"),
+        ({"dependency_statuses": {"dependency-1": "running"}}, "hold", "dependency_not_ready"),
+        ({"plan_fingerprint": "plan-other"}, "blocked", "plan_scope_mismatch"),
+        ({"seen_idempotency_keys": ["run-child-1"]}, "blocked", "duplicate_idempotency_key"),
+        (
+            {"budget": {"max_attempts": 2, "max_total_elapsed_sec": 120, "max_output_chars": 12000}},
+            "blocked",
+            "budget_invalid",
+        ),
+    ],
+)
+def test_single_child_pilot_gate_blocks_unsafe_requests(override, status, reason):
+    record = build_noop_shadow_record(_single_child_pilot_request(**override))
+
+    assert record["status"] == status
+    assert record["reason_code"] == reason
+    assert record["execution_allowed"] is False
+
+
+def test_single_child_pilot_gate_requires_bound_operator_approval():
+    request = _single_child_pilot_request()
+    request["approval"]["operator_confirmed"] = False
+
+    record = build_noop_shadow_record(request)
+
+    assert record["status"] == "blocked"
+    assert record["reason_code"] == "operator_confirmation_missing"
+
+
+@pytest.mark.parametrize(
+    ("missing_field", "reason"),
+    [
+        ("sensitive_paths", "scope_metadata_missing"),
+        ("depends_on", "dependency_metadata_missing"),
+        ("dependency_statuses", "dependency_metadata_missing"),
+    ],
+)
+def test_single_child_pilot_rejects_missing_safety_metadata(missing_field, reason):
+    request = _single_child_pilot_request()
+    request.pop(missing_field)
+
+    record = build_noop_shadow_record(request)
+
+    assert record["status"] == "blocked"
+    assert record["reason_code"] == reason
+    assert record["execution_allowed"] is False
 
 
 def test_shadow_adapter_blocks_missing_approval():

@@ -43,11 +43,98 @@ def _rejected(
     return record
 
 
+def _single_child_pilot_rejection(
+    request: dict[str, Any],
+    approval: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return a gate rejection for the bounded single-child pilot, if any."""
+    child_count = request.get("child_count")
+    if not isinstance(child_count, int) or isinstance(child_count, bool) or child_count != 1:
+        return _rejected(request, status="blocked", reason_code="single_child_required")
+
+    if request.get("child_status") != "ready":
+        return _rejected(request, status="hold", reason_code="child_not_ready")
+
+    if "sensitive_paths" not in request:
+        return _rejected(request, status="blocked", reason_code="scope_metadata_missing")
+    sensitive_paths = request["sensitive_paths"]
+    if not isinstance(sensitive_paths, list):
+        return _rejected(request, status="blocked", reason_code="scope_metadata_missing")
+    if sensitive_paths:
+        return _rejected(request, status="blocked", reason_code="sensitive_scope")
+
+    if "depends_on" not in request or "dependency_statuses" not in request:
+        return _rejected(
+            request,
+            status="blocked",
+            reason_code="dependency_metadata_missing",
+        )
+    depends_on = request["depends_on"]
+    dependency_statuses = request["dependency_statuses"]
+    if not isinstance(depends_on, list) or not isinstance(dependency_statuses, dict):
+        return _rejected(
+            request,
+            status="blocked",
+            reason_code="dependency_metadata_missing",
+        )
+    if any(dependency_statuses.get(dependency) != "completed" for dependency in depends_on):
+        return _rejected(request, status="hold", reason_code="dependency_not_ready")
+
+    plan_fingerprint = request.get("plan_fingerprint")
+    idempotency_key = request.get("idempotency_key")
+    if not isinstance(plan_fingerprint, str) or not plan_fingerprint.strip():
+        return _rejected(request, status="blocked", reason_code="plan_scope_missing")
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+        return _rejected(request, status="blocked", reason_code="idempotency_key_missing")
+
+    seen_idempotency_keys = request.get("seen_idempotency_keys", [])
+    if not isinstance(seen_idempotency_keys, list):
+        return _rejected(request, status="blocked", reason_code="idempotency_key_invalid")
+    if idempotency_key in seen_idempotency_keys:
+        return _rejected(request, status="blocked", reason_code="duplicate_idempotency_key")
+
+    budget = request.get("budget")
+    if not isinstance(budget, dict):
+        return _rejected(request, status="blocked", reason_code="budget_invalid")
+    max_attempts = budget.get("max_attempts")
+    max_elapsed = budget.get("max_total_elapsed_sec")
+    max_output_chars = budget.get("max_output_chars")
+    if (
+        max_attempts != 1
+        or not isinstance(max_elapsed, (int, float))
+        or isinstance(max_elapsed, bool)
+        or not _is_finite_number(max_elapsed)
+        or max_elapsed <= 0
+        or max_elapsed > 120
+        or not isinstance(max_output_chars, int)
+        or isinstance(max_output_chars, bool)
+        or max_output_chars <= 0
+    ):
+        return _rejected(request, status="blocked", reason_code="budget_invalid")
+
+    if approval.get("operator_confirmed") is not True or approval.get("approval_status") != "approved":
+        return _rejected(
+            request,
+            status="blocked",
+            reason_code="operator_confirmation_missing",
+        )
+    if approval.get("plan_fingerprint") != plan_fingerprint:
+        return _rejected(request, status="blocked", reason_code="plan_scope_mismatch")
+    if approval.get("idempotency_key") != idempotency_key:
+        return _rejected(
+            request,
+            status="blocked",
+            reason_code="approval_binding_mismatch",
+        )
+    return None
+
+
 def build_noop_shadow_record(request: dict[str, Any]) -> dict[str, Any]:
     """Validate one child request and return a non-executing shadow record."""
     record = _base_record(request)
     approval = request.get("approval")
     policy = request.get("policy")
+    single_child_pilot = request.get("pilot_mode") == "single_child"
 
     if any(
         not isinstance(request.get(key), str) or not request.get(key).strip()
@@ -63,6 +150,11 @@ def build_noop_shadow_record(request: dict[str, Any]) -> dict[str, Any]:
             status="rejected",
             reason_code="guard_metadata_missing",
         )
+
+    if single_child_pilot:
+        pilot_rejection = _single_child_pilot_rejection(request, approval)
+        if pilot_rejection is not None:
+            return pilot_rejection
 
     required_approval = {
         "approval_id",
@@ -162,4 +254,15 @@ def build_noop_shadow_record(request: dict[str, Any]) -> dict[str, Any]:
             "retry_limit": retry_limit,
         }
     )
+    if single_child_pilot:
+        record.update(
+            {
+                "gate_status": "allowed",
+                "shadow_recorded": True,
+                "fallback_action": "parent_review",
+                "plan_fingerprint": request["plan_fingerprint"],
+                "idempotency_key": request["idempotency_key"],
+                "budget": request["budget"],
+            }
+        )
     return record
