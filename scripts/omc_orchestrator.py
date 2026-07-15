@@ -51,6 +51,23 @@ _DECOMPOSITION_DOMAINS = (
     ("frontend", ("프론트", "frontend")),
     ("verification", ("테스트", "test", "통합")),
 )
+_DOMAIN_PRECEDENCE = {
+    "backend": 10,
+    "frontend": 20,
+    "verification": 30,
+    "integration_review": 40,
+}
+_RETRYABLE_FAILURES = {"timeout", "transient_executor", "rate_limited"}
+_TERMINAL_FAILURES = {
+    "scope_mismatch",
+    "sensitive_scope",
+    "approval_invalid",
+    "dependency_failed",
+    "retry_exhausted",
+    "malformed_contract",
+}
+_EXECUTION_ORDER_STATUSES = {"ready", "blocked"}
+_RECOVERY_ACTIONS = {"retry_same_child", "parent_review", "repair_scope", "hold_dependents"}
 _ALLOWED_EXECUTORS = {"codex", "claude", "gemini"}
 _CAPABILITY_SOURCE_TYPES = {"fixture", "observed"}
 _QUALITY_SUCCESS_STATES = {"verified", "missing", "failed"}
@@ -128,6 +145,228 @@ def build_delegation_graph(children: list[dict[str, object]]) -> dict[str, objec
 
 def validate_delegation_graph(children: list[dict[str, object]]) -> list[str]:
     return list(build_delegation_graph(children)["errors"])
+
+
+def _is_valid_execution_order(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    status = value.get("order_status")
+    order_index = value.get("order_index")
+    blocked_by = value.get("blocked_by")
+    if status not in _EXECUTION_ORDER_STATUSES or not isinstance(blocked_by, list):
+        return False
+    if status == "ready":
+        return (
+            isinstance(order_index, int)
+            and not isinstance(order_index, bool)
+            and order_index >= 0
+            and blocked_by == []
+        )
+    return order_index is None
+
+
+def _is_valid_recovery_action(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    action = value.get("action")
+    reason_code = value.get("reason_code")
+    return (
+        action in _RECOVERY_ACTIONS
+        and isinstance(reason_code, str)
+        and bool(reason_code.strip())
+        and value.get("execution_allowed") is False
+        and value.get("recommendation_only") is True
+    )
+
+
+def build_delegation_execution_order(children: list[dict[str, object]]) -> dict[str, object]:
+    """Return a deterministic, non-executing domain order recommendation."""
+    errors: set[str] = set()
+    metadata: dict[str, dict[str, object]] = {}
+    graph: dict[str, list[str]] = {}
+    dependents: dict[str, list[str]] = {}
+
+    if not isinstance(children, list):
+        return {
+            "order_status": "blocked",
+            "errors": ["invalid_children"],
+            "ordered_children": [],
+            "execution_allowed": False,
+        }
+
+    for child in children:
+        if not isinstance(child, dict):
+            errors.add("invalid_child")
+            continue
+        child_id = child.get("child_id")
+        domain = child.get("domain")
+        if not isinstance(child_id, str) or not child_id.strip():
+            errors.add("invalid_child_id")
+            continue
+        if child_id in metadata:
+            errors.add("duplicate_child_id")
+            continue
+        if not isinstance(domain, str) or domain not in _DOMAIN_PRECEDENCE:
+            errors.add("invalid_domain" if not isinstance(domain, str) else "unknown_domain")
+        dependencies = child.get("depends_on")
+        if not isinstance(dependencies, list):
+            errors.add("invalid_dependencies")
+            dependencies = []
+        dependency_ids = [str(dependency) for dependency in dependencies]
+        metadata[child_id] = {"domain": domain, "depends_on": dependency_ids}
+        graph[child_id] = dependency_ids
+        dependents[child_id] = []
+
+    known_ids = set(graph)
+    for child_id, dependencies in graph.items():
+        for dependency in dependencies:
+            if dependency not in known_ids:
+                errors.add("missing_dependency")
+            else:
+                dependents[dependency].append(child_id)
+
+    if errors:
+        return {
+            "order_status": "blocked",
+            "errors": sorted(errors),
+            "ordered_children": [
+                {
+                    "child_id": child_id,
+                    "domain": data["domain"],
+                    "order_status": "blocked",
+                    "order_index": None,
+                    "blocked_by": sorted(
+                        dependency
+                        for dependency in data["depends_on"]
+                        if dependency not in known_ids or dependency in graph
+                    ),
+                }
+                for child_id, data in metadata.items()
+            ],
+            "execution_allowed": False,
+        }
+
+    indegree = {child_id: len(dependencies) for child_id, dependencies in graph.items()}
+
+    def sort_key(child_id: str) -> tuple[int, str]:
+        return (_DOMAIN_PRECEDENCE[str(metadata[child_id]["domain"])], child_id)
+
+    ready = sorted(
+        (child_id for child_id, degree in indegree.items() if degree == 0),
+        key=sort_key,
+    )
+    order: list[str] = []
+    while ready:
+        child_id = ready.pop(0)
+        order.append(child_id)
+        for dependent in sorted(dependents[child_id], key=sort_key):
+            indegree[dependent] -= 1
+            if indegree[dependent] == 0:
+                ready.append(dependent)
+                ready.sort(key=sort_key)
+
+    if len(order) != len(graph):
+        return {
+            "order_status": "blocked",
+            "errors": ["cycle"],
+            "ordered_children": [
+                {
+                    "child_id": child_id,
+                    "domain": data["domain"],
+                    "order_status": "blocked",
+                    "order_index": None,
+                    "blocked_by": data["depends_on"],
+                }
+                for child_id, data in metadata.items()
+            ],
+            "execution_allowed": False,
+        }
+
+    return {
+        "order_status": "ready",
+        "errors": [],
+        "ordered_children": [
+            {
+                "child_id": child_id,
+                "domain": metadata[child_id]["domain"],
+                "order_status": "ready",
+                "order_index": index,
+                "blocked_by": [],
+            }
+            for index, child_id in enumerate(order)
+        ],
+        "execution_allowed": False,
+    }
+
+
+def build_child_recovery_decision(
+    *,
+    child_id: str,
+    failure_class: str,
+    attempt_count: int,
+    max_attempts: int,
+    retry_budget: int,
+    idempotency_key: str,
+    scope_bound: bool,
+) -> dict[str, object]:
+    """Recommend one bounded recovery action without mutating execution state."""
+    result: dict[str, object] = {
+        "child_id": child_id if isinstance(child_id, str) else "",
+        "action": "parent_review",
+        "reason_code": "recovery_metadata_invalid",
+        "target_child": child_id if isinstance(child_id, str) else "",
+        "attempt_before": attempt_count if isinstance(attempt_count, int) and not isinstance(attempt_count, bool) else 0,
+        "attempt_after": attempt_count if isinstance(attempt_count, int) and not isinstance(attempt_count, bool) else 0,
+        "retry_budget_remaining": retry_budget if isinstance(retry_budget, int) and not isinstance(retry_budget, bool) else 0,
+        "idempotency_key": idempotency_key if isinstance(idempotency_key, str) else "",
+        "recommendation_only": True,
+        "execution_allowed": False,
+    }
+    if (
+        not isinstance(child_id, str)
+        or not child_id.strip()
+        or not isinstance(failure_class, str)
+        or not failure_class.strip()
+        or not isinstance(attempt_count, int)
+        or isinstance(attempt_count, bool)
+        or attempt_count < 0
+        or not isinstance(max_attempts, int)
+        or isinstance(max_attempts, bool)
+        or max_attempts <= 0
+        or not isinstance(retry_budget, int)
+        or isinstance(retry_budget, bool)
+        or retry_budget < 0
+        or not isinstance(idempotency_key, str)
+        or not idempotency_key.strip()
+        or scope_bound is not True
+    ):
+        return result
+
+    if failure_class in _RETRYABLE_FAILURES:
+        if attempt_count < max_attempts and retry_budget > 0:
+            result.update(
+                {
+                    "action": "retry_same_child",
+                    "reason_code": "retryable_failure",
+                    "attempt_after": attempt_count + 1,
+                    "retry_budget_remaining": retry_budget - 1,
+                }
+            )
+        else:
+            result.update(
+                {"reason_code": "retry_exhausted", "retry_budget_remaining": 0}
+            )
+        return result
+
+    if failure_class == "dependency_failed":
+        result.update({"action": "hold_dependents", "reason_code": failure_class})
+    elif failure_class in {"scope_mismatch", "sensitive_scope"}:
+        result.update({"action": "repair_scope", "reason_code": failure_class})
+    elif failure_class in _TERMINAL_FAILURES:
+        result["reason_code"] = failure_class
+    else:
+        result["reason_code"] = "unknown_failure_class"
+    return result
 
 
 def _delegation_scope_relation(parent_scope: dict[str, object], child: dict[str, object]) -> str:
@@ -215,6 +454,8 @@ def build_child_decision(
     attempt_count: int = 0,
     retry_budget: int = 0,
     failure_class: str | None = None,
+    execution_order: dict[str, object] | None = None,
+    recovery_action: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Normalize one handoff into a deterministic, non-executing decision."""
     child_id = handoff.get("child_id")
@@ -243,6 +484,8 @@ def build_child_decision(
         or isinstance(retry_budget, bool)
         or retry_budget < 0
         or (failure_class is not None and not isinstance(failure_class, str))
+        or (execution_order is not None and not _is_valid_execution_order(execution_order))
+        or (recovery_action is not None and not _is_valid_recovery_action(recovery_action))
     )
     decision_id_payload = {
         "child_id": child_id,
@@ -251,6 +494,8 @@ def build_child_decision(
         "attempt_count": attempt_count,
         "retry_budget": retry_budget,
         "failure_class": failure_class,
+        "execution_order": execution_order,
+        "recovery_action": recovery_action,
     }
     decision_id = hashlib.sha256(
         json.dumps(
@@ -273,6 +518,8 @@ def build_child_decision(
         "failure_class": failure_class,
         "recommendation_only": True,
         "execution_allowed": False,
+        "execution_order": execution_order,
+        "recovery_action": recovery_action,
     }
     if metadata_invalid:
         return result
@@ -362,6 +609,16 @@ def build_delegation_observed_record(case: dict[str, object]) -> dict[str, objec
         return record
 
     handoff = build_delegation_handoff(parent_scope, child, child_statuses)
+    execution_order = case.get("execution_order")
+    recovery_action = case.get("recovery_action")
+    if "execution_order" in case and not _is_valid_execution_order(execution_order):
+        record["evidence_status"] = "rejected"
+        record["rejection_reason"] = "invalid_execution_order"
+        return record
+    if "recovery_action" in case and not _is_valid_recovery_action(recovery_action):
+        record["evidence_status"] = "rejected"
+        record["rejection_reason"] = "invalid_recovery_action"
+        return record
     record.update(
         {
             "classification": "needs_delegation",
@@ -372,6 +629,8 @@ def build_delegation_observed_record(case: dict[str, object]) -> dict[str, objec
                     attempt_count=case.get("attempt_count", 0),
                     retry_budget=case.get("retry_budget", 0),
                     failure_class=case.get("failure_class"),
+                    execution_order=execution_order,
+                    recovery_action=recovery_action,
                 )
             ],
         }

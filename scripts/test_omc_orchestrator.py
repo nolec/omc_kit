@@ -1045,6 +1045,266 @@ def test_child_decision_holds_on_retry_budget_without_failure_class():
     assert result["next_action"] == "hold_retry_budget"
 
 
+def test_delegation_execution_order_prefers_dependencies_then_domain():
+    result = omc_orchestrator.build_delegation_execution_order(
+        [
+            {"child_id": "backend", "domain": "backend", "depends_on": ["frontend"]},
+            {"child_id": "frontend", "domain": "frontend", "depends_on": []},
+            {"child_id": "backend-b", "domain": "backend", "depends_on": []},
+            {"child_id": "backend-a", "domain": "backend", "depends_on": []},
+        ]
+    )
+
+    assert result["order_status"] == "ready"
+    assert result["errors"] == []
+    assert [item["child_id"] for item in result["ordered_children"]] == [
+        "backend-a",
+        "backend-b",
+        "frontend",
+        "backend",
+    ]
+    assert all(item["order_status"] == "ready" for item in result["ordered_children"])
+    assert result["execution_allowed"] is False
+
+
+@pytest.mark.parametrize(
+    "children",
+    [
+        [{"child_id": "child-a", "domain": "unknown", "depends_on": []}],
+        [
+            {"child_id": "child-a", "domain": "backend", "depends_on": ["child-b"]},
+            {"child_id": "child-b", "domain": "frontend", "depends_on": ["child-a"]},
+        ],
+    ],
+)
+def test_delegation_execution_order_blocks_unknown_domain_and_cycle(children):
+    result = omc_orchestrator.build_delegation_execution_order(children)
+
+    assert result["order_status"] == "blocked"
+    assert result["errors"]
+    assert all(item["order_status"] == "blocked" for item in result["ordered_children"])
+    assert result["execution_allowed"] is False
+
+
+def test_delegation_execution_order_blocks_unhashable_domain():
+    result = omc_orchestrator.build_delegation_execution_order(
+        [{"child_id": "child-a", "domain": ["backend"], "depends_on": []}]
+    )
+
+    assert result["order_status"] == "blocked"
+    assert "invalid_domain" in result["errors"]
+    assert result["execution_allowed"] is False
+
+
+@pytest.mark.parametrize(
+    ("failure_class", "attempt_count", "max_attempts", "retry_budget", "expected_action", "expected_reason"),
+    [
+        ("timeout", 0, 1, 1, "retry_same_child", "retryable_failure"),
+        ("timeout", 1, 1, 1, "parent_review", "retry_exhausted"),
+        ("scope_mismatch", 0, 1, 1, "repair_scope", "scope_mismatch"),
+        ("dependency_failed", 0, 1, 1, "hold_dependents", "dependency_failed"),
+        ("unknown_failure", 0, 1, 1, "parent_review", "unknown_failure_class"),
+    ],
+)
+def test_child_recovery_decision_is_bounded_and_non_executing(
+    failure_class,
+    attempt_count,
+    max_attempts,
+    retry_budget,
+    expected_action,
+    expected_reason,
+):
+    result = omc_orchestrator.build_child_recovery_decision(
+        child_id="child-api",
+        failure_class=failure_class,
+        attempt_count=attempt_count,
+        max_attempts=max_attempts,
+        retry_budget=retry_budget,
+        idempotency_key="run-child-api",
+        scope_bound=True,
+    )
+
+    assert result["action"] == expected_action
+    assert result["reason_code"] == expected_reason
+    assert result["execution_allowed"] is False
+    if expected_action == "retry_same_child":
+        assert result["attempt_after"] == 1
+        assert result["retry_budget_remaining"] == 0
+
+
+def test_child_recovery_decision_rejects_unbound_idempotency():
+    result = omc_orchestrator.build_child_recovery_decision(
+        child_id="child-api",
+        failure_class="timeout",
+        attempt_count=0,
+        max_attempts=1,
+        retry_budget=1,
+        idempotency_key="",
+        scope_bound=False,
+    )
+
+    assert result["action"] == "parent_review"
+    assert result["reason_code"] == "recovery_metadata_invalid"
+    assert result["execution_allowed"] is False
+
+
+def test_child_decision_exposes_order_and_recovery_surface():
+    order = {"order_index": 2, "order_status": "ready", "blocked_by": []}
+    recovery = {
+        "action": "retry_same_child",
+        "reason_code": "retryable_failure",
+        "recommendation_only": True,
+        "execution_allowed": False,
+    }
+    result = omc_orchestrator.build_child_decision(
+        {
+            "handoff_status": "proposed",
+            "child_id": "child-api",
+            "blocked_by": [],
+            "next_action": "review_child_handoff",
+            "execution_allowed": False,
+        },
+        execution_order=order,
+        recovery_action=recovery,
+    )
+
+    assert result["execution_order"] == order
+    assert result["recovery_action"] == recovery
+    assert result["execution_allowed"] is False
+
+
+@pytest.mark.parametrize(
+    ("execution_order", "recovery_action"),
+    [
+        ({"order_status": "ready"}, None),
+        (
+            None,
+            {
+                "action": "parent_review",
+                "reason_code": "unknown_failure_class",
+                "execution_allowed": False,
+            },
+        ),
+    ],
+)
+def test_child_decision_rejects_incomplete_recommendation_surfaces(
+    execution_order, recovery_action
+):
+    result = omc_orchestrator.build_child_decision(
+        {
+            "handoff_status": "proposed",
+            "child_id": "child-api",
+            "blocked_by": [],
+            "next_action": "review_child_handoff",
+            "execution_allowed": False,
+        },
+        execution_order=execution_order,
+        recovery_action=recovery_action,
+    )
+
+    assert result["decision"] == "rejected"
+    assert result["decision_reason"] == "decision_metadata_invalid"
+    assert result["execution_allowed"] is False
+
+
+def test_child_decision_rejects_ready_order_with_blocked_dependencies():
+    result = omc_orchestrator.build_child_decision(
+        {
+            "handoff_status": "proposed",
+            "child_id": "child-api",
+            "blocked_by": [],
+            "next_action": "review_child_handoff",
+            "execution_allowed": False,
+        },
+        execution_order={
+            "order_status": "ready",
+            "order_index": 0,
+            "blocked_by": ["child-db"],
+        },
+    )
+
+    assert result["decision"] == "rejected"
+    assert result["decision_reason"] == "decision_metadata_invalid"
+
+
+def test_delegation_observed_exposes_order_and_recovery_surface():
+    result = omc_orchestrator.build_delegation_observed_record(
+        {
+            "id": "surface-case",
+            "evidence_status": "fixture",
+            "parent_scope": {
+                "task_kind": "implementation",
+                "domain": "backend",
+                "sensitive_paths": ["src/api.py"],
+                "policy_profile": "balanced",
+            },
+            "child": {
+                "child_id": "child-api",
+                "parent_id": "parent-1",
+                "task_kind": "implementation",
+                "domain": "backend",
+                "sensitive_paths": ["src/api.py"],
+                "policy_profile": "balanced",
+                "depends_on": [],
+            },
+            "child_statuses": {},
+            "execution_order": {
+                "order_index": 1,
+                "order_status": "ready",
+                "blocked_by": [],
+            },
+            "recovery_action": {
+                "action": "parent_review",
+                "reason_code": "unknown_failure_class",
+                "recommendation_only": True,
+                "execution_allowed": False,
+            },
+        }
+    )
+
+    decision = result["child_decisions"][0]
+    assert decision["execution_order"]["order_index"] == 1
+    assert decision["recovery_action"]["action"] == "parent_review"
+    assert decision["execution_allowed"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("execution_order", {"order_status": "ready"}),
+        ("recovery_action", {"action": "parent_review"}),
+    ],
+)
+def test_delegation_observed_rejects_malformed_recommendation_surface(field, value):
+    case = {
+        "id": "malformed-surface-case",
+        "evidence_status": "fixture",
+        "parent_scope": {
+            "task_kind": "implementation",
+            "domain": "backend",
+            "sensitive_paths": ["src/api.py"],
+            "policy_profile": "balanced",
+        },
+        "child": {
+            "child_id": "child-api",
+            "parent_id": "parent-1",
+            "task_kind": "implementation",
+            "domain": "backend",
+            "sensitive_paths": ["src/api.py"],
+            "policy_profile": "balanced",
+            "depends_on": [],
+        },
+        "child_statuses": {},
+        field: value,
+    }
+
+    result = omc_orchestrator.build_delegation_observed_record(case)
+
+    assert result["evidence_status"] == "rejected"
+    assert result["rejection_reason"] == f"invalid_{field}"
+    assert result["child_decisions"] == []
+
+
 def test_delegation_graph_rejects_non_list_dependencies():
     errors = omc_orchestrator.validate_delegation_graph(
         [{"child_id": "child-a", "depends_on": "child-b"}]
