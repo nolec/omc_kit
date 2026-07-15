@@ -2238,6 +2238,8 @@ def test_cmd_overview_prints_readiness_coverage_summary(tmp_path: Path, capsys):
         "benchmark_source_type": "observed_output",
         "policy_pair": "baseline->candidate",
         "comparison_scope": "same_surface",
+        "baseline_response_sample": "baseline output",
+        "candidate_response_sample": "candidate output",
         "steps": {
             "task": {"status": "completed"},
             "review": {"status": "completed", "verdict": "APPROVE"},
@@ -2318,6 +2320,8 @@ def test_cmd_overview_prints_readiness_blocker_summary(tmp_path: Path, capsys):
         "benchmark_source_type": "observed_output",
         "comparison_scope": "cross_surface",
         "policy_pair": "baseline->candidate",
+        "baseline_response_sample": "baseline output",
+        "candidate_response_sample": "candidate output",
         "steps": {
             "task": {"status": "completed"},
             "review": {"status": "completed", "verdict": "APPROVE"},

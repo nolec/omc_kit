@@ -5,7 +5,7 @@ description: "구현 전 계획·설계·TDD 태스크 분해. 트리거: 계획
 
 # OMC 설계·계획
 
-이 스킬의 목적은 구현 착수 전 범위와 DoD를 확정하고, 작은 작업은 lite로 압축하되 위험 작업은 full로 유지하는 것입니다.
+이 스킬의 목적은 구현 착수 전 범위와 DoD를 확정하고, 작은 작업은 lite로 압축하되 위험 작업은 full로 유지하는 것입니다. 판단 속도는 `docs/orchestration_usage.md`와 같게 읽습니다: 범위가 좁혀졌으면 fast, 범위가 흔들리면 normal.
 
 ## Phase 0. 상태 확인
 

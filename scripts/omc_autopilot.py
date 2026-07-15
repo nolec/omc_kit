@@ -722,6 +722,40 @@ def _run_step(
     routing_policy = routing["routing_policy"]
     routing_reason_codes = list(routing.get("routing_reason_codes") or [])
     routing_reason_summary = str(routing.get("routing_reason_summary") or "").strip()
+    started_monotonic = time.monotonic()
+
+    def build_step_runtime(*, finished_at: str | None = None, failed_at: str | None = None) -> dict:
+        step_runtime = {
+            "executor": executor,
+            "task_kind": task_kind,
+            "domain": str(step.get("domain") or "unknown").strip() or "unknown",
+            "model_profile": model_profile,
+            "routing_policy": routing_policy,
+            "policy_profile": str(routing.get("recommended_policy_profile") or "balanced"),
+            "routing_reason_codes": routing_reason_codes,
+            "routing_reason_summary": routing_reason_summary,
+            "recommended_next_skill": str(routing.get("recommended_next_skill") or task_kind),
+            "recommended_policy_profile": str(routing.get("recommended_policy_profile") or "balanced"),
+            "policy_reason_summary": str(routing.get("policy_reason_summary") or "").strip(),
+            "policy_confidence": str(routing.get("policy_confidence") or "low"),
+            "user_selection_needed": bool(routing.get("user_selection_needed")),
+            "auto_execution_allowed": bool(routing.get("auto_execution_allowed") is True),
+            "comparison_id": str(step.get("comparison_id") or "").strip(),
+            "variant": str(step.get("variant") or "").strip(),
+            "environment_fingerprint": os.environ.get("OMC_ENVIRONMENT_FINGERPRINT", "").strip(),
+            "elapsed_ms": int((time.monotonic() - started_monotonic) * 1000),
+        }
+        if finished_at:
+            step_runtime["finished_at"] = finished_at
+        if failed_at:
+            step_runtime["failed_at"] = failed_at
+        skill_path = step.get("skill_path")
+        if isinstance(skill_path, list) and all(isinstance(item, str) and item.strip() for item in skill_path):
+            step_runtime["skill_path"] = [item.strip() for item in skill_path]
+            step_runtime["skill_count"] = len(skill_path)
+        elif isinstance(step.get("skill_count"), (int, float)) and not isinstance(step.get("skill_count"), bool):
+            step_runtime["skill_count"] = int(step["skill_count"])
+        return step_runtime
 
     prompt_file = None
     try:
@@ -759,7 +793,6 @@ def _run_step(
 
         env = os.environ.copy()
         env["OMC_RAW_OUTPUT_FILE"] = raw_output_file
-        started_monotonic = time.monotonic()
         proc = subprocess.run(
             cmd,
             cwd=str(root),
@@ -779,33 +812,13 @@ def _run_step(
             raw_output or (proc.stdout or ""),
             model_profile=model_profile,
         )
-        step_runtime = {
-            "task_kind": task_kind,
-            "model_profile": model_profile,
-            "routing_policy": routing_policy,
-            "routing_reason_codes": routing_reason_codes,
-            "routing_reason_summary": routing_reason_summary,
-            "recommended_next_skill": str(routing.get("recommended_next_skill") or task_kind),
-            "recommended_policy_profile": str(routing.get("recommended_policy_profile") or "balanced"),
-            "policy_reason_summary": str(routing.get("policy_reason_summary") or "").strip(),
-            "policy_confidence": str(routing.get("policy_confidence") or "low"),
-            "user_selection_needed": bool(routing.get("user_selection_needed")),
-            "auto_execution_allowed": bool(routing.get("auto_execution_allowed") is True),
-            "comparison_id": str(step.get("comparison_id") or "").strip(),
-            "variant": str(step.get("variant") or "").strip(),
-            "elapsed_ms": int((time.monotonic() - started_monotonic) * 1000),
-        }
-        skill_path = step.get("skill_path")
-        if isinstance(skill_path, list) and all(isinstance(item, str) and item.strip() for item in skill_path):
-            step_runtime["skill_path"] = [item.strip() for item in skill_path]
-            step_runtime["skill_count"] = len(skill_path)
-        elif isinstance(step.get("skill_count"), (int, float)) and not isinstance(step.get("skill_count"), bool):
-            step_runtime["skill_count"] = int(step["skill_count"])
+        finished_at = _now()
+        step_runtime = build_step_runtime(finished_at=finished_at)
         return int(proc.returncode), output.strip(), cost_info, step_runtime
     except subprocess.TimeoutExpired:
-        return 1, "[ERROR] 타임아웃 초과", None, None
+        return 1, "[ERROR] 타임아웃 초과", None, build_step_runtime(failed_at=_now())
     except Exception as exc:
-        return 1, f"[ERROR] 실행 예외: {exc}", None, None
+        return 1, f"[ERROR] 실행 예외: {exc}", None, build_step_runtime(failed_at=_now())
     finally:
         if prompt_file:
             try:
@@ -2875,6 +2888,44 @@ def _step_payload(
             payload["duration_sec"] = duration_sec
     payload.update(extra)
     return payload
+
+
+def _build_capability_observations(data: dict) -> list[dict[str, object]]:
+    """Build step-scoped capability observations without inferring environment data."""
+    steps = data.get("steps") if isinstance(data.get("steps"), dict) else {}
+    observations: list[dict[str, object]] = []
+    environment_fingerprint = os.environ.get("OMC_ENVIRONMENT_FINGERPRINT", "").strip()
+    root_executor = str(data.get("executor") or "").strip()
+
+    for step_id, step in sorted(steps.items(), key=lambda item: str(item[0])):
+        if not isinstance(step, dict) or step.get("simulated") is True:
+            continue
+        status = str(step.get("status") or "unknown").strip().lower()
+        executor = str(step.get("executor") or root_executor).strip()
+        task_kind = str(step.get("task_kind") or "unknown").strip() or "unknown"
+        observed_at = str(
+            step.get("finished_at") or step.get("completed_at") or step.get("failed_at") or ""
+        ).strip()
+        if not executor or task_kind == "unknown" or status not in {"completed", "failed"}:
+            continue
+        observation: dict[str, object] = {
+            "step_id": str(step_id),
+            "executor": executor,
+            "task_kind": task_kind,
+            "domain": str(step.get("domain") or "unknown").strip() or "unknown",
+            "policy_profile": str(step.get("policy_profile") or "balanced").strip() or "balanced",
+            "observed_at": observed_at,
+            "status": status,
+        }
+        step_environment = str(step.get("environment_fingerprint") or environment_fingerprint).strip()
+        if step_environment:
+            observation["environment_fingerprint"] = step_environment
+        else:
+            observation["reason_codes"] = ["missing_environment_fingerprint"]
+        observations.append(observation)
+    return observations
+
+
 _PIPELINE_MAX_RETRIES = 3
 _PIPELINE_MAX_SAME_VERDICT = 2  # 동일 verdict 연속 허용 횟수
 _VERDICT_PATTERN = r"VERDICT:\s*(PROCEED|APPROVE|BLOCK|REVISE|HOLD)"
@@ -2988,6 +3039,9 @@ def _save_pipeline_result(root: Path, data: dict) -> None:
     source_type = str(data.get("benchmark_source_type") or "").strip()
     if source_type == "observed_output":
         _populate_observed_output_schema(data, task_meta if isinstance(task_meta, dict) else {})
+    capability_observations = _build_capability_observations(data)
+    if capability_observations:
+        data["capability_observations"] = capability_observations
     observed_metrics = _build_observed_metrics(data)
     if observed_metrics is not None:
         data["observed_metrics"] = observed_metrics

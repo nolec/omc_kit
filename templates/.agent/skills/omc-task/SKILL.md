@@ -5,7 +5,7 @@ description: "7단계 TDD 파이프라인으로 구현 실행. 트리거: 구현
 
 # OMC TDD 파이프라인
 
-구현은 아래 순서로만 진행합니다. 계획이 없으면 `$omc-plan`, 원인 불명 버그면 `$omc-investigate`로 돌립니다.
+구현은 아래 순서로만 진행합니다. 계획이 없으면 `$omc-plan`, 원인 불명 버그면 `$omc-investigate`로 돌립니다. 속도 기준은 `docs/orchestration_usage.md`와 같습니다: DoD가 고정되면 fast, 새 파일/API/다중 파일이면 normal.
 
 ## 0. Guard
 

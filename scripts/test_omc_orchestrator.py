@@ -1423,6 +1423,50 @@ def test_capability_evidence_loader_reads_only_run_result_files(tmp_path):
     assert evidence[0]["execution_allowed"] is False
 
 
+def test_capability_evidence_loader_flattens_step_observations(tmp_path):
+    run_dir = tmp_path / ".omc" / "runs" / "run-multi-step"
+    run_dir.mkdir(parents=True)
+    (run_dir / "result.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "capability_observations": [
+                    {
+                        "step_id": "plan",
+                        "executor": "codex",
+                        "task_kind": "planning",
+                        "domain": "orchestration",
+                        "policy_profile": "balanced",
+                        "environment_fingerprint": "local-codex-v1",
+                        "observed_at": "2026-07-15T01:00:01+09:00",
+                        "status": "completed",
+                    },
+                    {
+                        "step_id": "review",
+                        "executor": "claude",
+                        "task_kind": "review",
+                        "domain": "verification",
+                        "policy_profile": "quality_first",
+                        "environment_fingerprint": "local-claude-v1",
+                        "observed_at": "2026-07-15T01:00:05+09:00",
+                        "status": "completed",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    evidence = omc_orchestrator.load_capability_evidence_from_runs(tmp_path)
+
+    assert {(item["executor"], item["task_kind"]) for item in evidence} == {
+        ("codex", "planning"),
+        ("claude", "review"),
+    }
+    assert all(item["evidence_status"] == "observed" for item in evidence)
+    assert all(item["execution_allowed"] is False for item in evidence)
+
+
 def test_capability_evidence_loader_reports_rejected_run_metadata(tmp_path):
     run_dir = tmp_path / ".omc" / "runs" / "run-1"
     run_dir.mkdir(parents=True)

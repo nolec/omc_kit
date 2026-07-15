@@ -571,7 +571,7 @@ def build_capability_evidence_from_runs(
             aggregate["in_progress_count"] = int(aggregate.get("in_progress_count", 0)) + 1
             aggregate["reason_codes"].add("in_progress")
             continue
-        observed_at = run.get("finished_at") or run.get("started_at")
+        observed_at = run.get("observed_at") or run.get("finished_at") or run.get("started_at")
         environment = run.get("environment_fingerprint")
         evidence = normalize_capability_evidence(
             {
@@ -718,7 +718,18 @@ def load_capability_evidence_report_from_runs(
             rejected_run_reasons["read_error"] = rejected_run_reasons.get("read_error", 0) + 1
             continue
         if isinstance(payload, dict):
-            runs.append(payload)
+            observations = payload.get("capability_observations")
+            if isinstance(observations, list):
+                for observation in observations:
+                    if isinstance(observation, dict):
+                        runs.append(
+                            {
+                                **observation,
+                                "status": observation.get("status") or payload.get("status"),
+                            }
+                        )
+            else:
+                runs.append(payload)
         else:
             rejected_run_count += 1
             rejected_run_reasons["non_object"] = rejected_run_reasons.get("non_object", 0) + 1

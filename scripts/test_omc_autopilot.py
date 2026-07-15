@@ -190,6 +190,177 @@ def test_save_pipeline_result_persists_normalized_observed_metrics(tmp_path):
     }
 
 
+def test_save_pipeline_result_persists_step_capability_observations(tmp_path, monkeypatch):
+    monkeypatch.setenv("OMC_ENVIRONMENT_FINGERPRINT", "local-codex-v1")
+
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "status": "completed",
+            "finished_at": "2026-07-15T01:00:05+09:00",
+            "steps": {
+                "plan": {
+                    "status": "completed",
+                    "executor": "codex",
+                    "task_kind": "planning",
+                    "domain": "orchestration",
+                    "policy_profile": "balanced",
+                    "finished_at": "2026-07-15T01:00:01+09:00",
+                },
+                "review": {
+                    "status": "completed",
+                    "executor": "claude",
+                    "task_kind": "review",
+                    "domain": "verification",
+                    "policy_profile": "quality_first",
+                    "finished_at": "2026-07-15T01:00:05+09:00",
+                },
+            },
+        },
+    )
+
+    saved = json.loads((tmp_path / ".omc" / "pipeline_run_result.json").read_text(encoding="utf-8"))
+    assert saved["capability_observations"] == [
+        {
+            "step_id": "plan",
+            "executor": "codex",
+            "task_kind": "planning",
+            "domain": "orchestration",
+            "policy_profile": "balanced",
+            "environment_fingerprint": "local-codex-v1",
+            "observed_at": "2026-07-15T01:00:01+09:00",
+            "status": "completed",
+        },
+        {
+            "step_id": "review",
+            "executor": "claude",
+            "task_kind": "review",
+            "domain": "verification",
+            "policy_profile": "quality_first",
+            "environment_fingerprint": "local-codex-v1",
+            "observed_at": "2026-07-15T01:00:05+09:00",
+            "status": "completed",
+        },
+    ]
+
+
+def test_save_pipeline_result_does_not_guess_missing_environment_fingerprint(tmp_path, monkeypatch):
+    monkeypatch.delenv("OMC_ENVIRONMENT_FINGERPRINT", raising=False)
+
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "status": "completed",
+            "finished_at": "2026-07-15T01:00:05+09:00",
+            "steps": {
+                "task": {
+                    "status": "completed",
+                    "executor": "codex",
+                    "task_kind": "implementation",
+                    "domain": "backend",
+                    "policy_profile": "balanced",
+                    "finished_at": "2026-07-15T01:00:05+09:00",
+                }
+            },
+        },
+    )
+
+    saved = json.loads((tmp_path / ".omc" / "pipeline_run_result.json").read_text(encoding="utf-8"))
+    observation = saved["capability_observations"][0]
+    assert "environment_fingerprint" not in observation
+    assert observation["reason_codes"] == ["missing_environment_fingerprint"]
+
+
+def test_save_pipeline_result_excludes_non_executor_steps_from_capability_observations(tmp_path, monkeypatch):
+    monkeypatch.setenv("OMC_ENVIRONMENT_FINGERPRINT", "local-codex-v1")
+
+    omc_autopilot._save_pipeline_result(
+        tmp_path,
+        {
+            "status": "completed",
+            "executor": "codex",
+            "steps": {
+                "preflight": {"status": "completed", "completed_at": "2026-07-15T01:00:00+09:00"},
+                "task": {
+                    "status": "completed",
+                    "task_kind": "implementation",
+                    "domain": "backend",
+                    "policy_profile": "balanced",
+                    "finished_at": "2026-07-15T01:00:05+09:00",
+                },
+            },
+        },
+    )
+
+    saved = json.loads((tmp_path / ".omc" / "pipeline_run_result.json").read_text(encoding="utf-8"))
+    assert [item["step_id"] for item in saved["capability_observations"]] == ["task"]
+
+
+def test_capability_observation_prefers_finished_at_over_state_timestamp():
+    observations = omc_autopilot._build_capability_observations(
+        {
+            "executor": "codex",
+            "steps": {
+                "task": {
+                    "status": "completed",
+                    "task_kind": "implementation",
+                    "domain": "backend",
+                    "policy_profile": "balanced",
+                    "finished_at": "2026-07-15T01:00:05+09:00",
+                    "completed_at": "2026-07-15T01:00:06+09:00",
+                }
+            },
+        }
+    )
+
+    assert observations[0]["observed_at"] == "2026-07-15T01:00:05+09:00"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        subprocess.TimeoutExpired(cmd="omc_exec", timeout=1),
+        RuntimeError("executor crashed"),
+    ],
+)
+def test_run_step_preserves_failed_runtime_for_capability_observation(
+    tmp_path, monkeypatch, failure
+):
+    monkeypatch.setenv("OMC_ENVIRONMENT_FINGERPRINT", "local-codex-v1")
+
+    def fake_run(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
+
+    rc, output, cost_info, runtime = omc_autopilot._run_step(
+        tmp_path,
+        {
+            "id": "task",
+            "prompt": "구현 작업",
+            "task_kind": "task",
+            "domain": "backend",
+            "policy_profile": "balanced",
+        },
+        executor="codex",
+        timeout_sec=1,
+    )
+
+    assert rc == 1
+    assert output.startswith("[ERROR]")
+    assert cost_info is None
+    assert runtime["executor"] == "codex"
+    assert runtime["task_kind"] == "task"
+    assert runtime["failed_at"]
+    assert runtime["environment_fingerprint"] == "local-codex-v1"
+
+    observations = omc_autopilot._build_capability_observations(
+        {"steps": {"task": {"status": "failed", **runtime}}}
+    )
+    assert observations[0]["status"] == "failed"
+    assert observations[0]["observed_at"] == runtime["failed_at"]
+
+
 @pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
 def test_extract_complexity_class_accepts_structured_marker():
     assert omc_autopilot._extract_complexity_class(
