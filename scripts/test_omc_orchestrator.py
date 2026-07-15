@@ -1379,7 +1379,10 @@ def test_build_delegation_observed_record_surfaces_child_decisions():
         )
         assert len(record["child_decisions"]) == len(record["handoffs"])
         decision = record["child_decisions"][0]
-        assert decision["decision"] in {"blocked", "hold", "rejected"}
+        if "expected_recovery_action" in case:
+            assert decision["decision"] == case["expected_decision"]
+        else:
+            assert decision["decision"] in {"blocked", "hold", "rejected"}
         assert decision["decision_id"]
         assert decision["execution_allowed"] is False
         assert decision["recommendation_only"] is True
@@ -1395,6 +1398,41 @@ def test_build_delegation_observed_record_surfaces_child_decisions():
     )
     assert rejected["child_decisions"] == []
     assert rejected["evidence_status"] == "rejected"
+
+
+def test_operational_fixture_covers_recovery_quality_signals():
+    cases = json.loads(
+        (Path(__file__).parent / "fixtures/executor_delegation_operational_cases.json").read_text()
+    )
+    quality_cases = [case for case in cases if "expected_recovery_action" in case]
+
+    assert {case["expected_recovery_action"] for case in quality_cases} == {
+        "retry_same_child",
+        "hold_dependents",
+        "parent_review",
+    }
+    assert len(quality_cases) == 3
+
+    observed_decisions = []
+    observed_recoveries = []
+    for case in quality_cases:
+        record = omc_orchestrator.build_delegation_observed_record(
+            {**case, "evidence_status": "fixture"}
+        )
+        assert record["evidence_status"] == "fixture"
+        assert record["execution_allowed"] is False
+        decision = record["child_decisions"][0]
+        assert decision["execution_allowed"] is False
+        assert decision["recommendation_only"] is True
+        observed_decisions.append(decision["decision"])
+        observed_recoveries.append(decision["recovery_action"]["action"])
+
+    assert observed_decisions == [case["expected_decision"] for case in quality_cases]
+    assert set(observed_recoveries) == {
+        "retry_same_child",
+        "hold_dependents",
+        "parent_review",
+    }
 
 
 def test_build_delegation_observed_record_rejects_execution_permission():

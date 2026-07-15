@@ -46,5 +46,114 @@
     "child_statuses": {},
     "expected_status": "scope_mismatch",
     "expected_next_action": "repair_scope"
+  },
+  {
+    "id": "timeout-retry-observation",
+    "parent_scope": {
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py"],
+      "policy_profile": "balanced"
+    },
+    "child": {
+      "child_id": "child-api-timeout",
+      "parent_id": "root-task",
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py"],
+      "policy_profile": "balanced",
+      "depends_on": []
+    },
+    "child_statuses": {},
+    "attempt_count": 0,
+    "retry_budget": 1,
+    "failure_class": "timeout",
+    "execution_order": {
+      "order_index": 0,
+      "order_status": "ready",
+      "blocked_by": []
+    },
+    "recovery_action": {
+      "action": "retry_same_child",
+      "reason_code": "retryable_failure",
+      "recommendation_only": true,
+      "execution_allowed": false
+    },
+    "expected_status": "proposed",
+    "expected_next_action": "review_child_handoff",
+    "expected_decision": "ready",
+    "expected_recovery_action": "retry_same_child"
+  },
+  {
+    "id": "dependency-hold-observation",
+    "parent_scope": {
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py"],
+      "policy_profile": "balanced"
+    },
+    "child": {
+      "child_id": "child-api-dependent",
+      "parent_id": "root-task",
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py"],
+      "policy_profile": "balanced",
+      "depends_on": ["child-prep"]
+    },
+    "child_statuses": {"child-prep": "failed"},
+    "failure_class": "dependency_failed",
+    "execution_order": {
+      "order_index": null,
+      "order_status": "blocked",
+      "blocked_by": ["child-prep"]
+    },
+    "recovery_action": {
+      "action": "hold_dependents",
+      "reason_code": "dependency_failed",
+      "recommendation_only": true,
+      "execution_allowed": false
+    },
+    "expected_status": "blocked_dependency",
+    "expected_next_action": "resolve_dependency",
+    "expected_decision": "blocked",
+    "expected_recovery_action": "hold_dependents"
+  },
+  {
+    "id": "retry-exhausted-observation",
+    "parent_scope": {
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py"],
+      "policy_profile": "balanced"
+    },
+    "child": {
+      "child_id": "child-api-exhausted",
+      "parent_id": "root-task",
+      "task_kind": "implementation",
+      "domain": "backend",
+      "sensitive_paths": ["src/api.py"],
+      "policy_profile": "balanced",
+      "depends_on": []
+    },
+    "child_statuses": {},
+    "attempt_count": 1,
+    "retry_budget": 0,
+    "failure_class": "timeout",
+    "execution_order": {
+      "order_index": 0,
+      "order_status": "ready",
+      "blocked_by": []
+    },
+    "recovery_action": {
+      "action": "parent_review",
+      "reason_code": "retry_exhausted",
+      "recommendation_only": true,
+      "execution_allowed": false
+    },
+    "expected_status": "proposed",
+    "expected_next_action": "review_child_handoff",
+    "expected_decision": "hold",
+    "expected_recovery_action": "parent_review"
   }
 ]
