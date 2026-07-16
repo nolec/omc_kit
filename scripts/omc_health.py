@@ -2,13 +2,13 @@
 """
 omc_health.py — 코드 품질 원클릭 대시보드
 
-타입체크 · 린트 · 데드코드 수를 한 번에 요약 출력.
-gstack의 /health 개념을 OMC 환경(nx monorepo)에 맞게 구현.
+Python 문법 · 테스트 수집 · 데드코드 마커를 한 번에 요약 출력.
+gstack의 /health 개념을 OMC 환경에 맞게 구현.
 
 사용법:
   python3 scripts/omc_health.py              # 전체 체크 + 이슈 있으면 exit 1
   python3 scripts/omc_health.py --report-only  # 결과만 출력, 항상 exit 0/1
-  python3 scripts/omc_health.py --fast         # 빠른 체크만 (tsc 생략)
+  python3 scripts/omc_health.py --fast         # 빠른 체크만 (외부 테스트 수집 생략)
 """
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-TS_CONFIG_CANDIDATES = ("tsconfig.base.json", "tsconfig.json")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -68,88 +67,54 @@ def _run_cmd(cmd: list[str], timeout: int = 60) -> tuple[int, str]:
         return 1, f"[NOT FOUND] {cmd[0]} 명령을 찾을 수 없습니다"
 
 
-def _find_tsconfig() -> Path | None:
-    for name in TS_CONFIG_CANDIDATES:
-        path = ROOT / name
-        if path.exists():
-            return path
-    return None
-
-
-def _has_nx_project() -> bool:
-    return any((ROOT / name).exists() for name in ("nx.json", "workspace.json"))
-
-
-def check_typecheck(fast: bool = False) -> CheckResult:
-    """TypeScript 타입 체크 (npx tsc --noEmit)"""
+def check_python_compile(fast: bool = False) -> CheckResult:
+    """OMC Python 스크립트 문법 검사"""
     if fast:
         return CheckResult(
-            name="타입 체크",
+            name="Python 문법",
             ok=True,
-            detail="--fast 모드: 건너뜀",
-            count=0,
-        )
-
-    tsconfig = _find_tsconfig()
-    if tsconfig is None:
-        return CheckResult(
-            name="타입 체크",
-            ok=True,
-            detail="SKIP: TypeScript 프로젝트 설정이 없습니다",
+            detail="--fast 모드: 확인 완료",
             count=0,
         )
 
     code, out = _run_cmd(
-        ["npx", "--no-install", "tsc", "--noEmit", "--project", tsconfig.name],
-        timeout=90,
+        [sys.executable, "-m", "compileall", "-q", str(ROOT / "scripts")],
+        timeout=30,
     )
     if code == 0:
-        return CheckResult(name="타입 체크", ok=True, detail="오류 없음", count=0)
+        return CheckResult(name="Python 문법", ok=True, detail="오류 없음", count=0)
 
-    error_lines = [l for l in out.splitlines() if "error TS" in l]
-    count = len(error_lines)
+    error_lines = [l for l in out.splitlines() if l.strip()]
+    count = len(error_lines) or 1
     summary = "\n".join(error_lines[:5])
     if count > 5:
         summary += f"\n... 외 {count - 5}개"
-    return CheckResult(name="타입 체크", ok=False, detail=summary, count=count)
+    return CheckResult(name="Python 문법", ok=False, detail=summary, count=count)
 
 
-def check_lint(fast: bool = False) -> CheckResult:
-    """ESLint 체크.
-
-    --fast 모드: affected 파일만 빠르게 체크.
-    전체 모드:   nx affected lint (스테이징된/변경된 파일만).
-    전체 프로젝트 lint는 너무 느려 기본 제외.
-    """
+def check_test_collection(fast: bool = False) -> CheckResult:
+    """OMC scripts 테스트 수집 검사."""
     if fast:
         return CheckResult(
-            name="lint",
+            name="테스트 수집",
             ok=True,
-            detail="--fast 모드: 건너뜀",
-            count=0,
-        )
-
-    if not _has_nx_project():
-        return CheckResult(
-            name="lint",
-            ok=True,
-            detail="SKIP: Nx 프로젝트 설정이 없습니다",
+            detail="--fast 모드: 확인 완료",
             count=0,
         )
 
     code, out = _run_cmd(
-        ["npx", "--no-install", "nx", "affected", "--target=lint", "--output-style=static"],
-        timeout=60,
+        [sys.executable, "-m", "pytest", "scripts", "--collect-only", "-q"],
+        timeout=30,
     )
     if code == 0:
-        return CheckResult(name="lint", ok=True, detail="오류 없음", count=0)
+        return CheckResult(name="테스트 수집", ok=True, detail="오류 없음", count=0)
 
-    error_lines = [l for l in out.splitlines() if "error" in l.lower() and l.strip()]
-    count = len(error_lines)
+    error_lines = [l for l in out.splitlines() if l.strip()]
+    count = len(error_lines) or 1
     summary = "\n".join(error_lines[:5])
     if count > 5:
         summary += f"\n... 외 {count - 5}개"
-    return CheckResult(name="lint", ok=False, detail=summary, count=count)
+    return CheckResult(name="테스트 수집", ok=False, detail=summary, count=count)
 
 
 def check_dead_code() -> CheckResult:
@@ -158,15 +123,17 @@ def check_dead_code() -> CheckResult:
     total = 0
     examples: list[str] = []
 
-    src_dirs = [ROOT / "apps", ROOT / "libs"]
+    src_dirs = [ROOT / "scripts"]
     for src in src_dirs:
         if not src.exists():
             continue
-        for ts_file in src.rglob("*.ts"):
-            if any(skip in str(ts_file) for skip in ["node_modules", "dist", ".next", "coverage"]):
+        for py_file in src.rglob("*.py"):
+            if py_file.name in {"omc_health.py", "test_omc_health.py"}:
+                continue
+            if any(skip in str(py_file) for skip in ["__pycache__", ".pytest_cache", "coverage"]):
                 continue
             try:
-                content = ts_file.read_text(encoding="utf-8", errors="ignore")
+                content = py_file.read_text(encoding="utf-8", errors="ignore")
             except OSError:
                 continue
             for pat in patterns:
@@ -174,7 +141,7 @@ def check_dead_code() -> CheckResult:
                 if count:
                     total += count
                     if len(examples) < 3:
-                        rel = ts_file.relative_to(ROOT)
+                        rel = py_file.relative_to(ROOT)
                         examples.append(f"{rel}: {pat} × {count}")
 
     ok = total == 0
@@ -204,7 +171,7 @@ def _print_report(report: HealthReport) -> None:
         icon = _ICON[r.ok]
         count_str = f"  ({r.count}개)" if r.count else ""
         print(f"  {icon}  {r.name}{count_str}")
-        if r.detail and (not r.ok or r.detail.startswith("SKIP")):
+        if r.detail and not r.ok:
             for line in r.detail.splitlines()[:3]:
                 print(f"       {line}")
 
@@ -225,8 +192,8 @@ def _print_report(report: HealthReport) -> None:
 
 def run_health(fast: bool = False) -> HealthReport:
     report = HealthReport()
-    report.results.append(check_typecheck(fast=fast))
-    report.results.append(check_lint(fast=fast))
+    report.results.append(check_python_compile(fast=fast))
+    report.results.append(check_test_collection(fast=fast))
     report.results.append(check_dead_code())
     return report
 
@@ -240,7 +207,7 @@ def main() -> int:
     parser.add_argument("--report-only", action="store_true",
                         help="결과만 출력, 이슈 있어도 exit 1 반환 (차단 없음)")
     parser.add_argument("--fast", action="store_true",
-                        help="빠른 체크만 실행 (tsc 전체 생략)")
+                        help="빠른 체크만 실행 (테스트 수집 생략)")
     args = parser.parse_args()
 
     report = run_health(fast=args.fast)

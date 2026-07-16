@@ -43,19 +43,19 @@ class TestOmcHealthExists:
 
 
 class TestOmcHealthOutput:
-    def test_output_has_typecheck_section(self):
-        """출력에 타입체크 섹션이 있어야 한다"""
+    def test_output_has_python_section(self):
+        """출력에 Python 검사 섹션이 있어야 한다"""
         result = _run("--report-only")
         combined = result.stdout + result.stderr
-        assert "타입" in combined or "type" in combined.lower(), \
-            f"타입체크 섹션 없음. 출력:\n{combined[:300]}"
+        assert "Python" in combined or "파이썬" in combined, \
+            f"Python 검사 섹션 없음. 출력:\n{combined[:300]}"
 
-    def test_output_has_lint_section(self):
-        """출력에 린트 섹션이 있어야 한다"""
+    def test_output_has_test_collection_section(self):
+        """출력에 테스트 수집 섹션이 있어야 한다"""
         result = _run("--report-only")
         combined = result.stdout + result.stderr
-        assert "lint" in combined.lower() or "린트" in combined, \
-            f"린트 섹션 없음. 출력:\n{combined[:300]}"
+        assert "테스트" in combined, \
+            f"테스트 검사 섹션 없음. 출력:\n{combined[:300]}"
 
     def test_output_has_summary(self):
         """출력 마지막에 요약(HEALTH 또는 점수)이 있어야 한다"""
@@ -73,7 +73,7 @@ class TestOmcHealthFlags:
         assert result.returncode <= 1
 
     def test_fast_flag_skips_slow_checks(self):
-        """--fast 플래그: 빠른 체크만 실행 (tsc 전체 생략 가능)"""
+        """--fast 플래그: 빠른 체크만 실행"""
         result = _run("--fast", "--report-only")
         assert result.returncode <= 1
 
@@ -82,19 +82,28 @@ def test_health_suite_is_marked_slow():
     assert pytestmark.name == "slow"
 
 
-def test_typecheck_skips_when_typescript_project_is_missing(tmp_path, monkeypatch):
+def test_python_compile_check_uses_scripts_root():
+    result = omc_health.check_python_compile()
+
+    assert result.name == "Python 문법"
+
+
+def test_test_collection_check_has_omc_scripts_scope():
+    result = omc_health.check_test_collection()
+
+    assert result.name == "테스트 수집"
+
+
+def test_dead_code_check_scans_python_scripts_only(tmp_path, monkeypatch):
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "example.py").write_text("# TODO: review\n", encoding="utf-8")
+    apps = tmp_path / "apps"
+    apps.mkdir()
+    (apps / "ignored.ts").write_text("// TODO: ignore\n", encoding="utf-8")
     monkeypatch.setattr(omc_health, "ROOT", tmp_path)
 
-    result = omc_health.check_typecheck()
+    result = omc_health.check_dead_code()
 
-    assert result.ok is True
-    assert "SKIP" in result.detail
-
-
-def test_lint_skips_when_nx_project_is_missing(tmp_path, monkeypatch):
-    monkeypatch.setattr(omc_health, "ROOT", tmp_path)
-
-    result = omc_health.check_lint()
-
-    assert result.ok is True
-    assert "SKIP" in result.detail
+    assert result.count == 1
+    assert "example.py" in result.detail
