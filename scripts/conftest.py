@@ -14,6 +14,10 @@ from pathlib import Path
 import pytest
 
 
+def pytest_configure(config):
+    config.addinivalue_line("markers", "slow: tests that run external health checks")
+
+
 @pytest.fixture()
 def isolated_result_path(tmp_path: Path, monkeypatch):
     """OmC_PIPELINE_RESULT_PATH를 tmp_path 기반으로 격리한다 (opt-in)."""

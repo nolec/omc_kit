@@ -214,6 +214,18 @@ python3 -m pytest \
 python3 -m pytest scripts -q
 ```
 
+빠른 회귀 테스트 (느린 health 실행 제외):
+
+```bash
+python3 -m pytest scripts -q -m "not slow"
+```
+
+느린 health 테스트만 별도 실행:
+
+```bash
+python3 -m pytest scripts/test_omc_health.py -q -m slow
+```
+
 커밋 전 staged TDD gate:
 
 ```bash

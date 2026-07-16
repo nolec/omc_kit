@@ -6,8 +6,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parent.parent
 HEALTH_SCRIPT = ROOT / "scripts" / "omc_health.py"
+pytestmark = pytest.mark.slow
 
 
 def _run(*args, **kwargs):
@@ -70,3 +73,7 @@ class TestOmcHealthFlags:
         """--fast 플래그: 빠른 체크만 실행 (tsc 전체 생략 가능)"""
         result = _run("--fast", "--report-only")
         assert result.returncode <= 1
+
+
+def test_health_suite_is_marked_slow():
+    assert pytestmark.name == "slow"

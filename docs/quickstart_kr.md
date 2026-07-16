@@ -210,6 +210,12 @@ python3 -m pytest scripts/ -q \
   --ignore=scripts/test_omc_pipeline_check_exit.py \
   --ignore=scripts/test_omc_post_file_check.py \
   --ignore=scripts/test_omc_pipeline_check_gemini.py
+
+# 빠른 회귀 테스트 (외부 health 실행 제외)
+python3 -m pytest scripts/ -q -m "not slow"
+
+# 느린 health 테스트 별도 실행
+python3 -m pytest scripts/test_omc_health.py -q -m slow
 ```
 
 ---
