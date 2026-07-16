@@ -12,6 +12,9 @@ ROOT = Path(__file__).parent.parent
 HEALTH_SCRIPT = ROOT / "scripts" / "omc_health.py"
 pytestmark = pytest.mark.slow
 
+sys.path.insert(0, str(ROOT / "scripts"))
+import omc_health  # noqa: E402
+
 
 def _run(*args, **kwargs):
     return subprocess.run(
@@ -77,3 +80,21 @@ class TestOmcHealthFlags:
 
 def test_health_suite_is_marked_slow():
     assert pytestmark.name == "slow"
+
+
+def test_typecheck_skips_when_typescript_project_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(omc_health, "ROOT", tmp_path)
+
+    result = omc_health.check_typecheck()
+
+    assert result.ok is True
+    assert "SKIP" in result.detail
+
+
+def test_lint_skips_when_nx_project_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(omc_health, "ROOT", tmp_path)
+
+    result = omc_health.check_lint()
+
+    assert result.ok is True
+    assert "SKIP" in result.detail

@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
+TS_CONFIG_CANDIDATES = ("tsconfig.base.json", "tsconfig.json")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -67,6 +68,18 @@ def _run_cmd(cmd: list[str], timeout: int = 60) -> tuple[int, str]:
         return 1, f"[NOT FOUND] {cmd[0]} 명령을 찾을 수 없습니다"
 
 
+def _find_tsconfig() -> Path | None:
+    for name in TS_CONFIG_CANDIDATES:
+        path = ROOT / name
+        if path.exists():
+            return path
+    return None
+
+
+def _has_nx_project() -> bool:
+    return any((ROOT / name).exists() for name in ("nx.json", "workspace.json"))
+
+
 def check_typecheck(fast: bool = False) -> CheckResult:
     """TypeScript 타입 체크 (npx tsc --noEmit)"""
     if fast:
@@ -77,8 +90,17 @@ def check_typecheck(fast: bool = False) -> CheckResult:
             count=0,
         )
 
+    tsconfig = _find_tsconfig()
+    if tsconfig is None:
+        return CheckResult(
+            name="타입 체크",
+            ok=True,
+            detail="SKIP: TypeScript 프로젝트 설정이 없습니다",
+            count=0,
+        )
+
     code, out = _run_cmd(
-        ["npx", "tsc", "--noEmit", "--project", "tsconfig.base.json"],
+        ["npx", "--no-install", "tsc", "--noEmit", "--project", tsconfig.name],
         timeout=90,
     )
     if code == 0:
@@ -107,8 +129,16 @@ def check_lint(fast: bool = False) -> CheckResult:
             count=0,
         )
 
+    if not _has_nx_project():
+        return CheckResult(
+            name="lint",
+            ok=True,
+            detail="SKIP: Nx 프로젝트 설정이 없습니다",
+            count=0,
+        )
+
     code, out = _run_cmd(
-        ["npx", "nx", "affected", "--target=lint", "--output-style=static"],
+        ["npx", "--no-install", "nx", "affected", "--target=lint", "--output-style=static"],
         timeout=60,
     )
     if code == 0:
@@ -174,7 +204,7 @@ def _print_report(report: HealthReport) -> None:
         icon = _ICON[r.ok]
         count_str = f"  ({r.count}개)" if r.count else ""
         print(f"  {icon}  {r.name}{count_str}")
-        if r.detail and not r.ok:
+        if r.detail and (not r.ok or r.detail.startswith("SKIP")):
             for line in r.detail.splitlines()[:3]:
                 print(f"       {line}")
 
