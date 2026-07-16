@@ -122,9 +122,9 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "입력 축은 3개로 시작한다." in text
     assert "`confidence=low`이면 `balanced + user_selection_needed=yes`로 고정한다." in text
     assert "설계상 남은 갭:" in text
-    assert "- ambiguity/failure_cost/operator_goal 조합별 confidence threshold 표를 아직 문서에 고정하지 않았다." in text
-    assert "- observed 비교 리포트에서 policy 추천 적중/과보수/과공격을 어떻게 판정할지 acceptance line이 아직 부족하다." in text
-    assert "- Executor Recommendation Surface로 넘기는 handoff contract를 summary field 기준으로 더 명시해야 한다." in text
+    assert "- policy comparison 결과를 실제 observed benchmark/report summary에 직접 연결해 운영 데이터에서 반복 집계하는 작업이 남아 있다." in text
+    assert "- 실제 USD 비용 evidence가 없는 동안에는 token-only/pending 정책을 유지하며, 임의 비용 환산은 하지 않는다." in text
+    assert "- Executor Recommendation Surface의 capability evidence가 충분해질 때까지 승인 기반 reroute와 auto-switch는 보류한다." in text
     assert "confidence threshold 표:" in text
     assert "| failure_cost | ambiguity | operator_goal | recommended_policy_profile | confidence |" in text
     assert "| low | low | speed | cost_saver | high |" in text
@@ -140,9 +140,8 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "- `policy_confidence`" in text
     assert "- `user_selection_needed`" in text
     assert "후속 구현 순서:" in text
-    assert "1. confidence threshold 표 문서화" in text
-    assert "2. policy comparison acceptance line 추가" in text
-    assert "3. summary surface handoff contract 고정" in text
+    assert "policy comparison acceptance helper가 observed outcome·retry·quality failure·cost evidence를 받아 `hit / over_conservative / over_aggressive / pending`으로 보수적으로 분류한다." in text
+    assert "Executor Recommendation Surface handoff는 policy 필드와 executor 이유/fallback을 한 계약으로 묶고" in text
     assert "- benchmark/report surface에도 `recommended_policy_profile / policy_reason_summary / policy_confidence / user_selection_needed`가 직접 노출되고, 관련 회귀 테스트로 summary 계약이 고정됐다." in text
     assert "Layer boundary:" in text
     assert "- Cost-Quality Policy Layer: 정책 프로필 추천과 설명만 담당" in text

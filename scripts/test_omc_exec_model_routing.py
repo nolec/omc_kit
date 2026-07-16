@@ -422,6 +422,113 @@ def test_resolve_policy_summary_exposes_shared_next_skill_and_execution_gate() -
     assert summary["auto_execution_allowed"] == "no"
 
 
+def test_policy_comparison_classifies_hit_and_cost_quality_mismatches() -> None:
+    assert omc_exec.classify_policy_comparison(
+        recommended_policy_profile="cost_saver",
+        outcome="success",
+        retry_count=0,
+        quality_failure=False,
+        cost_delta="lower",
+    )["status"] == "hit"
+    assert omc_exec.classify_policy_comparison(
+        recommended_policy_profile="quality_first",
+        outcome="success",
+        retry_count=0,
+        quality_failure=False,
+        cost_delta="higher",
+    )["status"] == "over_conservative"
+    assert omc_exec.classify_policy_comparison(
+        recommended_policy_profile="cost_saver",
+        outcome="success",
+        retry_count=1,
+        quality_failure=True,
+        cost_delta="lower",
+    )["status"] == "over_aggressive"
+
+
+def test_policy_comparison_returns_pending_without_observed_outcome() -> None:
+    result = omc_exec.classify_policy_comparison(
+        recommended_policy_profile="balanced",
+        outcome=None,
+        retry_count=0,
+        quality_failure=False,
+        cost_delta=None,
+    )
+    assert result == {
+        "status": "pending",
+        "reason": "observed outcome is missing",
+    }
+
+
+def test_policy_comparison_does_not_call_failure_or_missing_cost_evidence_a_hit() -> None:
+    failure = omc_exec.classify_policy_comparison(
+        recommended_policy_profile="balanced",
+        outcome="failure",
+        retry_count=0,
+        quality_failure=False,
+        cost_delta="lower",
+    )
+    missing_cost = omc_exec.classify_policy_comparison(
+        recommended_policy_profile="quality_first",
+        outcome="success",
+        retry_count=0,
+        quality_failure=False,
+        cost_delta=None,
+    )
+    assert failure["status"] == "pending"
+    assert missing_cost["status"] == "pending"
+
+
+def test_executor_handoff_contract_requires_policy_fields_and_stays_recommendation_only() -> None:
+    handoff = omc_exec.build_executor_handoff_contract(
+        policy_summary={
+            "recommended_policy_profile": "balanced",
+            "policy_reason_summary": "balanced is the safe default",
+            "policy_confidence": "low",
+            "user_selection_needed": "yes",
+        },
+        executor_summary={
+            "recommended_executor": "codex",
+            "executor_reason_summary": "balanced task work stays on codex by default",
+            "executor_fallback": "gemini",
+        },
+    )
+    assert handoff["recommended_policy_profile"] == "balanced"
+    assert handoff["policy_confidence"] == "low"
+    assert handoff["user_selection_needed"] is True
+    assert handoff["recommendation_only"] is True
+    assert handoff["execution_allowed"] is False
+    assert omc_exec.validate_executor_handoff_contract(handoff) == []
+
+
+def test_executor_handoff_contract_rejects_missing_policy_reason() -> None:
+    handoff = {
+        "recommended_policy_profile": "balanced",
+        "policy_reason_summary": "",
+        "policy_confidence": "high",
+        "user_selection_needed": False,
+        "recommended_executor": "codex",
+        "executor_reason_summary": "default",
+        "executor_fallback": "gemini",
+        "recommendation_only": True,
+        "execution_allowed": False,
+    }
+    assert "missing_policy_reason_summary" in omc_exec.validate_executor_handoff_contract(handoff)
+
+
+def test_policy_summary_returns_a_validated_handoff_contract() -> None:
+    summary = omc_exec.resolve_policy_summary(
+        task_kind="task",
+        policy_input={
+            "policy_comparison_summary": "simple fixed task",
+            "policy_comparison_bottleneck_summary": "none",
+            "next_priority_reason": "scope is fixed",
+        },
+    )
+    assert summary["executor_handoff_contract"]
+    assert summary["executor_handoff_errors"] == []
+
+
 def test_quality_goal_and_high_failure_cost_route_task_to_plan() -> None:
     routing = omc_exec.resolve_task_routing(
         task_kind="task",

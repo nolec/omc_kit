@@ -298,6 +298,81 @@ def _build_policy_decision(
     }
 
 
+def classify_policy_comparison(
+    *,
+    recommended_policy_profile: str,
+    outcome: str | None,
+    retry_count: int,
+    quality_failure: bool,
+    cost_delta: str | None,
+) -> dict[str, str]:
+    """Classify an observed policy result without inventing cost evidence."""
+    if not _normalize_text(outcome):
+        return {"status": "pending", "reason": "observed outcome is missing"}
+
+    profile = _normalize_text(recommended_policy_profile)
+    if _normalize_text(outcome) != "success":
+        return {"status": "pending", "reason": "observed outcome is not successful"}
+    if profile == "quality_first" and not _normalize_text(cost_delta):
+        return {"status": "pending", "reason": "cost evidence is missing"}
+    if profile == "cost_saver" and (quality_failure or retry_count > 0):
+        return {"status": "over_aggressive", "reason": "cost saver required recovery"}
+    if profile == "quality_first" and _normalize_text(cost_delta) == "higher" and not quality_failure:
+        return {"status": "over_conservative", "reason": "quality-first increased cost without quality failure"}
+    return {"status": "hit", "reason": "observed outcome matches the selected policy direction"}
+
+
+def build_executor_handoff_contract(
+    *,
+    policy_summary: dict[str, object],
+    executor_summary: dict[str, object],
+) -> dict[str, object]:
+    """Create the recommendation-only boundary between policy and executor routing."""
+    confidence = str(policy_summary.get("policy_confidence") or "low")
+    selection_needed = str(policy_summary.get("user_selection_needed") or "no") == "yes"
+    return {
+        "recommended_policy_profile": str(policy_summary.get("recommended_policy_profile") or "balanced"),
+        "policy_reason_summary": str(policy_summary.get("policy_reason_summary") or "").strip(),
+        "policy_confidence": confidence,
+        "user_selection_needed": selection_needed,
+        "recommended_executor": str(executor_summary.get("recommended_executor") or "codex"),
+        "executor_reason_summary": str(executor_summary.get("executor_reason_summary") or "").strip(),
+        "executor_fallback": str(executor_summary.get("executor_fallback") or "").strip(),
+        "recommendation_only": True,
+        "execution_allowed": False,
+    }
+
+
+def validate_executor_handoff_contract(contract: dict[str, object]) -> list[str]:
+    required = (
+        "recommended_policy_profile",
+        "policy_reason_summary",
+        "policy_confidence",
+        "user_selection_needed",
+        "recommended_executor",
+        "executor_reason_summary",
+        "executor_fallback",
+    )
+    errors = [
+        f"missing_{key}"
+        for key in required
+        if key not in contract
+        or contract.get(key) is None
+        or (isinstance(contract.get(key), str) and not str(contract.get(key)).strip())
+    ]
+    if contract.get("recommended_policy_profile") not in _ROUTING_POLICIES:
+        errors.append("invalid_recommended_policy_profile")
+    if contract.get("policy_confidence") not in {"low", "medium", "high"}:
+        errors.append("invalid_policy_confidence")
+    if not isinstance(contract.get("user_selection_needed"), bool):
+        errors.append("invalid_user_selection_needed")
+    if contract.get("recommendation_only") is not True:
+        errors.append("recommendation_must_be_only")
+    if contract.get("execution_allowed") is not False:
+        errors.append("execution_must_be_disabled")
+    return errors
+
+
 def _resolve_executor_recommendation(
     *,
     task_kind: str,
@@ -387,7 +462,7 @@ def resolve_policy_summary(
     failure_cost: str | None = "medium",
     operator_goal: str | None = "balance",
     scope_fixed: bool = True,
-) -> dict[str, str]:
+) -> dict[str, object]:
     decision = _resolve_policy_decision(
         task_kind=task_kind,
         request_text="\n".join(
@@ -421,6 +496,16 @@ def resolve_policy_summary(
         scope_fixed=scope_fixed,
         policy_decision=decision,
     )
+    handoff = build_executor_handoff_contract(
+        policy_summary={
+            "recommended_policy_profile": decision["recommended_policy_profile"],
+            "policy_reason_summary": decision["policy_reason_summary"],
+            "policy_confidence": decision["policy_confidence"],
+            "user_selection_needed": "yes" if next_skill_surface["user_selection_needed"] else "no",
+        },
+        executor_summary=executor_decision,
+    )
+    handoff_errors = validate_executor_handoff_contract(handoff)
     return {
         "recommended_policy_profile": str(decision["recommended_policy_profile"]),
         "policy_reason_summary": str(decision["policy_reason_summary"]),
@@ -432,6 +517,8 @@ def resolve_policy_summary(
         "executor_reason_code": str(executor_decision["executor_reason_code"]),
         "executor_reason_summary": str(executor_decision["executor_reason_summary"]),
         "executor_fallback": str(executor_decision["executor_fallback"]),
+        "executor_handoff_contract": handoff,
+        "executor_handoff_errors": handoff_errors,
     }
 
 
