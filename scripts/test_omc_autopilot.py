@@ -361,6 +361,218 @@ def test_run_step_preserves_failed_runtime_for_capability_observation(
     assert observations[0]["observed_at"] == runtime["failed_at"]
 
 
+def test_run_step_timeout_preserves_partial_output_metadata(tmp_path, monkeypatch):
+    def fake_run(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=["omc_exec"],
+            timeout=1,
+            output=b"partial response",
+            stderr=b"provider warning",
+        )
+
+    monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
+
+    rc, output, cost_info, runtime = omc_autopilot._run_step(
+        tmp_path,
+        {"id": "timeout-step", "prompt": "관측 실행"},
+        executor="codex",
+        timeout_sec=1,
+    )
+
+    assert rc == 1
+    assert cost_info is None
+    assert runtime["failure_category"] == "timeout"
+    assert runtime["timeout_sec"] == 1
+    assert "partial response" in runtime["partial_output"]
+    assert "provider warning" in runtime["partial_output"]
+    assert "partial response" in output
+
+
+def test_run_step_classifies_dns_unavailable_as_network_failure(tmp_path, monkeypatch):
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=["omc_exec"],
+            returncode=75,
+            stdout="",
+            stderr="[!] Codex headless DNS unavailable; skipping provider fallback.",
+        )
+
+    monkeypatch.setattr(omc_autopilot.subprocess, "run", fake_run)
+
+    rc, output, cost_info, runtime = omc_autopilot._run_step(
+        tmp_path,
+        {"id": "dns-step", "prompt": "관측 실행"},
+        executor="codex",
+        timeout_sec=1,
+    )
+
+    assert rc == 75
+    assert cost_info is None
+    assert "DNS unavailable" in output
+    assert runtime["failure_category"] == "network_unavailable"
+    assert runtime["provider_exit_status"] == 75
+
+
+def test_timeout_retry_policy_can_be_disabled_per_step():
+    assert omc_autopilot._retry_allowed(
+        {"retry_on_timeout": False},
+        {"failure_category": "timeout"},
+        attempt=1,
+        max_retries=1,
+    ) is False
+    assert omc_autopilot._retry_allowed(
+        {},
+        {"failure_category": "timeout"},
+        attempt=1,
+        max_retries=1,
+    ) is True
+    assert omc_autopilot._retry_allowed(
+        {"retry_on_timeout": False},
+        {"failure_category": "executor_error"},
+        attempt=1,
+        max_retries=1,
+    ) is True
+
+
+def test_network_unavailable_is_never_retried():
+    assert omc_autopilot._retry_allowed(
+        {},
+        {"failure_category": "network_unavailable"},
+        attempt=1,
+        max_retries=1,
+    ) is False
+
+
+def test_observed_reverse_task_has_bounded_contract():
+    payload = json.loads(
+        (Path(__file__).resolve().parents[1] / ".omc/tasks/observed-collect-reverse.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    step = payload["steps"][0]
+
+    assert payload["max_retries"] == 0
+    assert payload["source_run_selector"] == "latest_completed_observed_run"
+    assert step["output_path"]
+    assert step["expected_observed_delta"] == 1
+    assert step["artifact_max_output_chars"] == 2000
+    assert step["retry_on_timeout"] is False
+
+
+def test_bounded_observed_contract_is_enforced_by_helpers():
+    task = {
+        "expected_observed_delta": 1,
+        "steps": [{"expected_observed_delta": 2}],
+    }
+
+    assert omc_autopilot._expected_observed_delta(task) == 2
+    assert omc_autopilot._validate_step_output(
+        {"max_output_chars": 10}, "01234567890"
+    )["label"] == "output_limit"
+    assert omc_autopilot._validate_step_output(
+        {"max_output_chars": 10}, "short"
+    ) is None
+
+
+def test_source_selector_resolves_one_latest_completed_observed_run(tmp_path):
+    older = tmp_path / ".omc/runs/older"
+    newer = tmp_path / ".omc/runs/newer"
+    delegation = tmp_path / ".omc/runs/delegation"
+    simulated = tmp_path / ".omc/runs/simulated"
+    excluded = tmp_path / ".omc/runs/excluded"
+    nested_only = tmp_path / ".omc/runs/nested-only"
+    older.mkdir(parents=True)
+    newer.mkdir(parents=True)
+    delegation.mkdir(parents=True)
+    simulated.mkdir(parents=True)
+    excluded.mkdir(parents=True)
+    nested_only.mkdir(parents=True)
+    (older / "result.json").write_text(
+        json.dumps({
+            "status": "completed",
+            "finished_at": "2026-07-15T01:00:00Z",
+            "benchmark_source_type": "observed_output",
+        }),
+        encoding="utf-8",
+    )
+    (newer / "result.json").write_text(
+        json.dumps({"status": "completed", "finished_at": "2026-07-15T02:00:00Z"}),
+        encoding="utf-8",
+    )
+    (delegation / "result.json").write_text(
+        json.dumps({
+            "status": "completed",
+            "finished_at": "2026-07-15T03:00:00Z",
+            "benchmark_source_type": "delegation_observed",
+        }),
+        encoding="utf-8",
+    )
+    (simulated / "result.json").write_text(
+        json.dumps({
+            "status": "completed",
+            "finished_at": "2026-07-15T04:00:00Z",
+            "benchmark_source_type": "observed_output",
+            "simulated": True,
+        }),
+        encoding="utf-8",
+    )
+    (excluded / "result.json").write_text(
+        json.dumps({
+            "status": "completed",
+            "finished_at": "2026-07-15T05:00:00Z",
+            "benchmark_source_type": "observed_output",
+            "dataset_excluded_from_readiness": True,
+        }),
+        encoding="utf-8",
+    )
+    (nested_only / "result.json").write_text(
+        json.dumps({
+            "status": "completed",
+            "finished_at": "2026-07-15T06:00:00Z",
+            "observed_metrics": {"source_type": "observed_output"},
+        }),
+        encoding="utf-8",
+    )
+
+    assert omc_autopilot._resolve_observed_source_id(
+        tmp_path, "latest_completed_observed_run"
+    ) == "older"
+
+
+def test_artifact_limit_checks_file_not_llm_response(tmp_path):
+    artifact = tmp_path / ".omc/observed/sample.json"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("12345", encoding="utf-8")
+
+    assert omc_autopilot._validate_step_artifact(
+        tmp_path,
+        {"output_path": ".omc/observed/sample.json", "artifact_max_output_chars": 4},
+    )["label"] == "artifact_output_limit"
+    assert omc_autopilot._validate_step_artifact(
+        tmp_path,
+        {
+            "output_path": ".omc/observed/sample.json",
+            "artifact_max_output_chars": 10,
+            "artifact_required_keys": [],
+        },
+    ) is None
+
+
+def test_artifact_contract_rejects_invalid_json_or_missing_keys(tmp_path):
+    artifact = tmp_path / ".omc/observed/sample.json"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text('{"baseline_response_sample": "ok"}', encoding="utf-8")
+
+    result = omc_autopilot._validate_step_artifact(
+        tmp_path,
+        {
+            "output_path": ".omc/observed/sample.json",
+            "artifact_required_keys": ["baseline_response_sample", "candidate_response_sample"],
+        },
+    )
+    assert result["label"] == "artifact_required_keys"
+
+
 @pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
 def test_extract_complexity_class_accepts_structured_marker():
     assert omc_autopilot._extract_complexity_class(
@@ -412,6 +624,7 @@ def test_run_codex_headless_falls_back_to_gemini_on_network_failure(tmp_path, mo
         lambda *args, **kwargs: ["codex", "exec"],
     )
     monkeypatch.setattr(omc_exec, "_codex_supports_reasoning_effort", lambda: True)
+    monkeypatch.setattr(omc_exec, "_codex_headless_preflight", lambda: (True, "ready"))
     monkeypatch.setattr(omc_exec, "_write_raw_output_if_requested", lambda raw_text: None)
     monkeypatch.setattr(
         omc_exec,
@@ -467,6 +680,7 @@ def test_run_codex_headless_does_not_print_codex_failure_output_when_fallback_su
         lambda *args, **kwargs: ["codex", "exec"],
     )
     monkeypatch.setattr(omc_exec, "_codex_supports_reasoning_effort", lambda: True)
+    monkeypatch.setattr(omc_exec, "_codex_headless_preflight", lambda: (True, "ready"))
     monkeypatch.setattr(omc_exec, "_write_raw_output_if_requested", lambda raw_text: None)
     monkeypatch.setattr(
         omc_exec,

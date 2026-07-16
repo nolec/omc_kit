@@ -19,7 +19,7 @@ def test_codex_headless_command_uses_workspace_write_sandbox(tmp_path: Path) -> 
     assert "-o" in cmd
 
 
-def test_codex_headless_command_full_auto_with_reasoning_effort_preserves_order(
+def test_codex_headless_command_uses_supported_noninteractive_policy(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("OMC_CODEX_FULL_AUTO", "1")
@@ -29,10 +29,59 @@ def test_codex_headless_command_full_auto_with_reasoning_effort_preserves_order(
         tmp_path / "out.txt",
         model_profile="mini_high",
     )
-    assert cmd[2] == "--full-auto", f"--full-auto가 index 2여야 함, 실제: {cmd[2]!r}"
+    assert "--full-auto" not in cmd
+    assert "-c" in cmd
+    assert 'approval_policy="never"' in cmd
     ri = cmd.index("--reasoning-effort")
     assert cmd[ri + 1] == "high", f"--reasoning-effort 값이 'high'여야 함, 실제: {cmd[ri+1]!r}"
     assert cmd[-1] == "my prompt", f"prompt_text가 마지막이어야 함, 실제: {cmd[-1]!r}"
+
+
+def test_codex_headless_preflight_accepts_supported_noninteractive_policy(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="help", stderr="")
+
+    monkeypatch.setattr(omc_exec.subprocess, "run", fake_run)
+
+    ok, reason = omc_exec._codex_headless_preflight()
+
+    assert ok is True
+    assert reason == "ready"
+    assert calls[0][0:2] == ["codex", "exec"]
+    assert "--strict-config" in calls[0]
+    assert 'approval_policy="never"' in calls[0]
+
+
+def test_codex_headless_preflight_rejects_unsupported_policy(monkeypatch):
+    def fake_run(cmd, **_kwargs):
+        return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="unknown config key")
+
+    monkeypatch.setattr(omc_exec.subprocess, "run", fake_run)
+
+    ok, reason = omc_exec._codex_headless_preflight()
+
+    assert ok is False
+    assert reason == "approval_policy_unsupported"
+
+
+def test_run_codex_headless_fails_fast_when_preflight_fails(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        omc_exec,
+        "_codex_headless_preflight",
+        lambda: (False, "approval_policy_unsupported"),
+    )
+    monkeypatch.setattr(
+        omc_exec.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("executor 호출 금지")),
+    )
+
+    rc = omc_exec._run_codex_headless(tmp_path, "prompt", timeout_sec=5)
+
+    assert rc == 78
 
 
 def test_codex_headless_command_reasoning_effort_precedes_prompt(tmp_path: Path) -> None:
@@ -156,6 +205,7 @@ def test_run_codex_headless_uses_temp_codex_home_env(monkeypatch, tmp_path: Path
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(omc_exec.subprocess, "run", fake_run)
+    monkeypatch.setattr(omc_exec, "_codex_headless_preflight", lambda: (True, "ready"))
     monkeypatch.setattr(omc_exec, "_codex_supports_reasoning_effort", lambda: False)
 
     rc = omc_exec._run_codex_headless(tmp_path, "prompt", timeout_sec=5)
@@ -195,6 +245,7 @@ def test_run_codex_headless_records_cost_log_row(monkeypatch, tmp_path: Path) ->
         return {}
 
     monkeypatch.setattr(omc_exec.subprocess, "run", fake_run)
+    monkeypatch.setattr(omc_exec, "_codex_headless_preflight", lambda: (True, "ready"))
     monkeypatch.setattr(omc_exec, "_codex_supports_reasoning_effort", lambda: False)
     monkeypatch.setattr(omc_cost, "record", fake_record)
 
@@ -227,6 +278,7 @@ def test_run_codex_headless_records_timeout_row(monkeypatch, tmp_path: Path) -> 
         return {}
 
     monkeypatch.setattr(omc_exec.subprocess, "run", fake_run)
+    monkeypatch.setattr(omc_exec, "_codex_headless_preflight", lambda: (True, "ready"))
     monkeypatch.setattr(omc_exec, "_codex_supports_reasoning_effort", lambda: False)
     monkeypatch.setattr(omc_cost, "record", fake_record)
 
@@ -237,6 +289,116 @@ def test_run_codex_headless_records_timeout_row(monkeypatch, tmp_path: Path) -> 
     assert recorded["executor"] == "codex"
     assert recorded["llm_json"] == ""
     assert recorded["model"] == "gpt-5.4-mini"
+
+
+def test_run_codex_headless_network_timeout_falls_back(monkeypatch, tmp_path: Path) -> None:
+    class _Runtime:
+        def cleanup(self):
+            return None
+
+    fallback_calls: list[str] = []
+
+    monkeypatch.setattr(
+        omc_exec,
+        "_prepare_codex_headless_runtime",
+        lambda model_profile="mini_default": (_Runtime(), {}),
+    )
+    monkeypatch.setattr(omc_exec, "_codex_headless_preflight", lambda: (True, "ready"))
+    monkeypatch.setattr(omc_exec, "_codex_supports_reasoning_effort", lambda: False)
+    monkeypatch.setattr(omc_exec, "_record_headless_cost", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        omc_exec.shutil,
+        "which",
+        lambda executable: "/usr/bin/fake" if executable in {"codex", "gemini"} else None,
+    )
+
+    def fake_run(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=["codex"],
+            timeout=5,
+            output=b"stream disconnected before completion",
+        )
+
+    monkeypatch.setattr(omc_exec.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        omc_exec,
+        "_run_gemini_headless",
+        lambda *args, **kwargs: fallback_calls.append("gemini") or 0,
+    )
+
+    rc = omc_exec._run_codex_headless(tmp_path, "prompt", timeout_sec=5)
+
+    assert rc == 0
+    assert fallback_calls == ["gemini"]
+
+
+def test_run_codex_headless_dns_timeout_does_not_fallback(monkeypatch, tmp_path: Path) -> None:
+    class _Runtime:
+        def cleanup(self):
+            return None
+
+    fallback_calls: list[str] = []
+
+    monkeypatch.setattr(
+        omc_exec,
+        "_prepare_codex_headless_runtime",
+        lambda model_profile="mini_default": (_Runtime(), {}),
+    )
+    monkeypatch.setattr(omc_exec, "_codex_headless_preflight", lambda: (True, "ready"))
+    monkeypatch.setattr(omc_exec, "_codex_supports_reasoning_effort", lambda: False)
+    monkeypatch.setattr(omc_exec, "_record_headless_cost", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        omc_exec.shutil,
+        "which",
+        lambda executable: "/usr/bin/fake" if executable in {"codex", "gemini"} else None,
+    )
+    monkeypatch.setattr(
+        omc_exec.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(
+                cmd=["codex"],
+                timeout=5,
+                output=b"failed to lookup address information",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        omc_exec,
+        "_run_gemini_headless",
+        lambda *args, **kwargs: fallback_calls.append("gemini") or 0,
+    )
+
+    rc = omc_exec._run_codex_headless(tmp_path, "prompt", timeout_sec=5)
+
+    assert rc == 75
+    assert fallback_calls == []
+
+
+def test_run_codex_headless_generic_timeout_keeps_timeout_code(monkeypatch, tmp_path: Path) -> None:
+    class _Runtime:
+        def cleanup(self):
+            return None
+
+    monkeypatch.setattr(
+        omc_exec,
+        "_prepare_codex_headless_runtime",
+        lambda model_profile="mini_default": (_Runtime(), {}),
+    )
+    monkeypatch.setattr(omc_exec, "_codex_headless_preflight", lambda: (True, "ready"))
+    monkeypatch.setattr(omc_exec, "_codex_supports_reasoning_effort", lambda: False)
+    monkeypatch.setattr(omc_exec, "_record_headless_cost", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        omc_exec.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(cmd=["codex"], timeout=5, output=b"model still working")
+        ),
+    )
+
+    rc = omc_exec._run_codex_headless(tmp_path, "prompt", timeout_sec=5)
+
+    assert rc == 124
 
 
 def test_record_headless_cost_warns_on_record_failure(capsys, monkeypatch, tmp_path: Path) -> None:

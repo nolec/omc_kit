@@ -36,12 +36,18 @@ _CLAUDE_MODEL_MAP = {
     "full_default": "sonnet",
 }
 _CODEX_REASONING_EFFORT_SUPPORTED: bool | None = None
+HEADLESS_NETWORK_UNAVAILABLE_EXIT_CODE = 75
 _HEADLESS_NETWORK_FAILURE_MARKERS = (
     "failed to lookup address information",
     "stream disconnected before completion",
     "error sending request for url",
     "backend-api/codex/responses",
     "reconnecting...",
+)
+_HEADLESS_DNS_FAILURE_MARKERS = (
+    "failed to lookup address information",
+    "nodename nor servname provided",
+    "name or service not known",
 )
 _ROUTING_REASON_SUMMARIES = {
     "env_override": "OMC_MODEL_PROFILE override applied",
@@ -564,6 +570,8 @@ def _codex_headless_command(
         "exec",
         "--ephemeral",
         "--json",
+        "-c",
+        'approval_policy="never"',
         "-s",
         "workspace-write",
         "-C",
@@ -576,8 +584,6 @@ def _codex_headless_command(
     reasoning_effort = profile.get("reasoning_effort")
     if allow_reasoning_effort and isinstance(reasoning_effort, str) and reasoning_effort.strip():
         cmd += ["--reasoning-effort", reasoning_effort]
-    if os.environ.get("OMC_CODEX_FULL_AUTO", "").strip() in {"1", "true", "TRUE", "yes"}:
-        cmd.insert(2, "--full-auto")
     cmd.append(prompt_text)
     return cmd
 
@@ -668,6 +674,37 @@ def _codex_supports_reasoning_effort() -> bool:
     return _CODEX_REASONING_EFFORT_SUPPORTED
 
 
+def _codex_headless_preflight(*, timeout_sec: int = 10) -> tuple[bool, str]:
+    """Verify the supported non-interactive Codex policy before a model call."""
+    if shutil.which("codex") is None:
+        return False, "binary_missing"
+    command = [
+        "codex",
+        "exec",
+        "--strict-config",
+        "-c",
+        'approval_policy="never"',
+        "--help",
+    ]
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "preflight_timeout"
+    except OSError:
+        return False, "binary_unavailable"
+    if proc.returncode == 0:
+        return True, "ready"
+    output = "\n".join(part for part in (proc.stdout, proc.stderr) if part).lower()
+    if "config" in output or "approval_policy" in output:
+        return False, "approval_policy_unsupported"
+    return False, "codex_preflight_failed"
+
+
 def _read_text_if_exists(path: Path) -> str:
     if not path.exists():
         return ""
@@ -697,11 +734,24 @@ def _resolve_executor_model(executor: str, model_profile: str) -> str:
     return ""
 
 
+def _decode_headless_output(value: object) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value or "")
+
+
 def _is_headless_network_failure(raw_text: str) -> bool:
     text = _normalize_text(raw_text)
     if not text:
         return False
     return any(marker in text for marker in _HEADLESS_NETWORK_FAILURE_MARKERS)
+
+
+def _is_headless_dns_failure(raw_text: str) -> bool:
+    text = _normalize_text(raw_text)
+    if not text:
+        return False
+    return any(marker in text for marker in _HEADLESS_DNS_FAILURE_MARKERS)
 
 
 def _resolve_headless_network_fallback_executor(primary: str) -> str | None:
@@ -836,6 +886,13 @@ def _run_codex_headless(
     model_profile: str = "mini_default",
     task_kind: str = "task",
 ) -> int:
+    preflight_ok, preflight_reason = _codex_headless_preflight()
+    if not preflight_ok:
+        print(
+            f"[!] Codex headless preflight failed: {preflight_reason}",
+            file=sys.stderr,
+        )
+        return 78
     with tempfile.NamedTemporaryFile(prefix="omc-codex-last.", suffix=".txt", delete=False) as fp:
         output_path = Path(fp.name)
     runtime = None
@@ -857,7 +914,7 @@ def _run_codex_headless(
                 timeout=timeout_sec,
                 env=env,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             _record_headless_cost(
                 project_root,
                 executor="codex",
@@ -865,6 +922,37 @@ def _run_codex_headless(
                 model_profile=model_profile,
                 task_kind=task_kind,
             )
+            partial_output = ""
+            if isinstance(getattr(exc, "stdout", None), (bytes, str)):
+                partial_output = _decode_headless_output(exc.stdout)
+            if isinstance(getattr(exc, "stderr", None), (bytes, str)):
+                partial_output = "\n".join(
+                    part for part in (partial_output, _decode_headless_output(exc.stderr)) if part
+                )
+            if _is_headless_dns_failure(partial_output):
+                print("[!] Codex headless DNS unavailable; skipping provider fallback.", file=sys.stderr)
+                return HEADLESS_NETWORK_UNAVAILABLE_EXIT_CODE
+            if _is_headless_network_failure(partial_output):
+                fallback_executor = _resolve_headless_network_fallback_executor("codex")
+                if fallback_executor == "gemini":
+                    print("[!] Codex headless network timeout detected. Falling back to Gemini.", file=sys.stderr)
+                    return _run_gemini_headless(
+                        project_root,
+                        prompt_text,
+                        timeout_sec=timeout_sec,
+                        model_profile=model_profile,
+                        task_kind=task_kind,
+                    )
+                if fallback_executor == "claude":
+                    print("[!] Codex headless network timeout detected. Falling back to Claude.", file=sys.stderr)
+                    return _run_claude_headless(
+                        project_root,
+                        prompt_text,
+                        timeout_sec=timeout_sec,
+                        model_profile=model_profile,
+                        task_kind=task_kind,
+                    )
+                print("[!] Codex headless network unavailable during timeout.", file=sys.stderr)
             print(f"[!] Codex headless execution timed out after {timeout_sec}s", file=sys.stderr)
             return 124
         raw_output = proc.stdout or ""

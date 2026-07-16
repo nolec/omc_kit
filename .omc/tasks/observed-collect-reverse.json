@@ -6,21 +6,27 @@
   "operational_validation_stage": "v4b_preparation",
   "operational_validation_goal": "prepare_v4b_operational_validation",
   "completion_requires_real_runs": true,
+  "source_run_selector": "latest_completed_observed_run",
   "benchmark_source_type": "observed_output",
   "policy_pair": "candidate->baseline",
   "comparison_scope": "cross_surface",
   "baseline_response_sample": "완전히 맞지는 않습니다. plan 단계라면 설계 검토와 다음 단계 제안까지만 하고 바로 task로 넘기면 안 됩니다.",
   "candidate_response_sample": "준비되었습니다. /task 로 진행하시겠습니까?",
-  "max_retries": 1,
+  "max_retries": 0,
   "steps": [
     {
       "id": "collect_observed_output_reverse",
       "title": "Observed Output Collection Reverse",
-      "prompt": "Capture an observed_output-quality response sample from a real workflow branch, but store it as the reverse policy comparison case. Preserve response structure and next action markers so the result can be reused for response-mode benchmark comparison.",
+      "prompt": "Read exactly one run selected by source_run_selector=latest_completed_observed_run. Write one concise reverse policy comparison JSON artifact to output_path. Do not start another workflow, modify source files, or search other runs. Preserve response structure and next action markers; keep the artifact within artifact_max_output_chars.",
       "depends_on": [],
       "timeout_sec": 300,
+      "retry_on_timeout": false,
+      "output_path": ".omc/observed/reverse-20260715.json",
+      "expected_observed_delta": 1,
+      "artifact_max_output_chars": 2000,
+      "artifact_required_keys": ["baseline_response_sample", "candidate_response_sample"],
       "expect": {
-        "files": [],
+        "files": [".omc/observed/reverse-20260715.json"],
         "checks": [
           {
             "cmd": "python3 scripts/omc_autopilot.py benchmark-report",

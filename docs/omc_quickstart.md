@@ -6,10 +6,13 @@
 # 1. 상태 확인
 python3 scripts/omc_doctor.py --target .
 
-# 2. 첫 작업 요청
+# 2. 운영 요약 확인
+python3 scripts/omc_autopilot.py overview
+
+# 3. 첫 작업 요청
 python3 scripts/omc.py "만들고 싶은 것"
 
-# 3. 스프린트 순서 (권장)
+# 4. 스프린트 순서 (권장)
 # /brainstorm → /office-hours → /plan → /task → /review → /ship → /retro
 ```
 
@@ -48,6 +51,14 @@ python3 scripts/omc.py state compact      # 메모리 압축
 python3 scripts/omc_lesson.py search "키워드"  # 교훈 BM25 검색
 python3 scripts/omc_autopilot.py new --id feat-x --title "기능 X"
 python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
+```
+
+## 자동 가드 & CI
+
+커밋 전 staged 변경의 TDD 게이트를 확인합니다.
+
+```bash
+python3 scripts/omc_tdd_check.py --staged
 ```
 
 ## 파일 지도

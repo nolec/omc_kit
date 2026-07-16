@@ -23,6 +23,8 @@ V5 delegation contract hardening(2026-07-15): domain order의 malformed 입력, 
 
 V4 운영 검증 보강(2026-07-13): `cost_per_successful_task` 집계에서 simulated/dry-run 성공 비용을 제외하고 실제 observed run 비용만 반영하도록 수정했으며, 해당 오염 반례를 overview 회귀 테스트로 고정했다. overview 테스트 33건과 TDD gate를 통과했다. 기존 pipeline readiness 출력 불일치 2건은 이번 변경 범위 밖의 잔여 리스크로 남긴다.
 
+V4 실행 안정성 보강(2026-07-16): Codex headless 실행에 지원되는 비대화형 `approval_policy="never"` 사전검증을 추가하고, 지원되지 않는 설정은 모델 호출 전에 fail-fast하도록 정리했다. DNS 장애는 provider fallback 대상과 구분해 `network_unavailable`로 기록하며 autopilot이 같은 장애를 재시도하지 않도록 연결했다. partial timeout output과 provider 종료 상태도 runtime에 보존한다. 관련 회귀 테스트와 quickstart 문서 계약 보강까지 staged 상태이며, 직접 관련 테스트 `138 passed, 1 skipped`, health 제외 전체 회귀 `1112 passed, 1 skipped`를 확인했다. health 테스트는 외부 실행 경로 때문에 개별 테스트가 약 60초 걸리므로 운영 검증에서 별도 느린 테스트군으로 관리한다.
+
 ## 제품 목표 상태
 
 최종 목표는 아래 다섯 가지를 만족하는 것이다.
@@ -339,6 +341,8 @@ V4 운영 검증 보강(2026-07-13): `cost_per_successful_task` 집계에서 sim
 - next-skill 추천 규칙에 “현재 병목 > 기본 파이프라인” 원칙 고정
 - `plan/task/review` 출력 contract에 `decision`, `risk`, `next_action` 필수화
 - `reroute`와 `delay`를 오케스트레이션 이벤트로 기록
+
+2026-07-16 기준 다음 작업은 위 구현을 다시 확장하는 것이 아니라, ship 후 실제 네트워크 환경에서 DNS/timeout 분류가 의도대로 관측되는지 확인하고 health 느린 테스트군을 별도 실행하는 운영 검증이다.
 
 최근 반영된 1차 변화:
 

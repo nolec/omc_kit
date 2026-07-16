@@ -73,6 +73,108 @@ _KNOWN_COMPLEXITY = {"low", "medium", "high"}
 _KNOWN_COMPLEXITY_CLASSES = {"single_task", "needs_plan", "needs_delegation"}
 
 
+def _retry_allowed(step: dict, runtime: dict | None, *, attempt: int, max_retries: int) -> bool:
+    if attempt > max_retries:
+        return False
+    failure_category = (runtime or {}).get("failure_category")
+    if failure_category == "network_unavailable":
+        return False
+    if step.get("retry_on_timeout") is False and failure_category == "timeout":
+        return False
+    return True
+
+
+def _decode_process_output(value: object) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value or "")
+
+
+def _expected_observed_delta(task: dict) -> int:
+    values = []
+    task_value = task.get("expected_observed_delta")
+    if isinstance(task_value, int) and not isinstance(task_value, bool):
+        values.append(task_value)
+    for step in task.get("steps", []):
+        value = step.get("expected_observed_delta")
+        if isinstance(value, int) and not isinstance(value, bool):
+            values.append(value)
+    return max(values or [0])
+
+
+def _validate_step_output(step: dict, output: str) -> dict | None:
+    limit = step.get("max_output_chars")
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        return None
+    if len(output) <= limit:
+        return None
+    return {
+        "label": "output_limit",
+        "ok": False,
+        "output": f"output length {len(output)} exceeds max_output_chars={limit}",
+    }
+
+
+def _resolve_observed_source_id(root: Path, selector: str) -> str | None:
+    if selector != "latest_completed_observed_run":
+        return None
+    candidates = []
+    for result_path in (root / ".omc" / "runs").glob("*/result.json"):
+        try:
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if payload.get("status") != "completed":
+            continue
+        if _run_record_is_simulated(payload) or payload.get("dataset_excluded_from_readiness") is True:
+            continue
+        source_type = str(payload.get("benchmark_source_type") or "")
+        if source_type not in {"observed_request", "observed_output"}:
+            continue
+        candidates.append(
+            (
+                str(payload.get("finished_at") or ""),
+                result_path.parent.name,
+            )
+        )
+    if not candidates:
+        return None
+    return max(candidates)[1]
+
+
+def _validate_step_artifact(root: Path, step: dict) -> dict | None:
+    output_path = str(step.get("output_path") or "").strip()
+    if not output_path:
+        return None
+    root_resolved = root.resolve()
+    target = (root / output_path).resolve()
+    if root_resolved not in target.parents:
+        return {"label": "artifact_path", "ok": False, "output": "output_path가 프로젝트 밖을 가리킵니다"}
+    if not target.exists():
+        return {"label": "artifact_missing", "ok": False, "output": f"artifact 없음: {output_path}"}
+    limit = step.get("artifact_max_output_chars")
+    if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0:
+        try:
+            length = len(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError) as exc:
+            return {"label": "artifact_read", "ok": False, "output": f"artifact 읽기 실패: {exc}"}
+        if length > limit:
+            return {
+                "label": "artifact_output_limit",
+                "ok": False,
+                "output": f"artifact length {length} exceeds artifact_max_output_chars={limit}",
+            }
+    required_keys = step.get("artifact_required_keys") or []
+    if required_keys:
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return {"label": "artifact_json", "ok": False, "output": f"artifact JSON 읽기 실패: {exc}"}
+        if not isinstance(payload, dict) or any(key not in payload for key in required_keys):
+            return {"label": "artifact_required_keys", "ok": False, "output": "artifact 필수 키 누락"}
+    return None
+
+
 def _extract_complexity_class(output: str) -> dict[str, str]:
     """Extract the strict complexity marker emitted by read-only analysis steps."""
     text = str(output or "")
@@ -744,6 +846,7 @@ def _run_step(
             "variant": str(step.get("variant") or "").strip(),
             "environment_fingerprint": os.environ.get("OMC_ENVIRONMENT_FINGERPRINT", "").strip(),
             "elapsed_ms": int((time.monotonic() - started_monotonic) * 1000),
+            "timeout_sec": timeout_sec,
         }
         if finished_at:
             step_runtime["finished_at"] = finished_at
@@ -814,9 +917,36 @@ def _run_step(
         )
         finished_at = _now()
         step_runtime = build_step_runtime(finished_at=finished_at)
+        if (
+            int(proc.returncode) == omc_exec.HEADLESS_NETWORK_UNAVAILABLE_EXIT_CODE
+            or "dns unavailable" in output.lower()
+        ):
+            step_runtime.update(
+                {
+                    "failure_category": "network_unavailable",
+                    "provider_exit_status": int(proc.returncode),
+                }
+            )
         return int(proc.returncode), output.strip(), cost_info, step_runtime
-    except subprocess.TimeoutExpired:
-        return 1, "[ERROR] 타임아웃 초과", None, build_step_runtime(failed_at=_now())
+    except subprocess.TimeoutExpired as exc:
+        partial_output = "\n".join(
+            part.strip()
+            for part in (_decode_process_output(exc.stdout), _decode_process_output(exc.stderr))
+            if part.strip()
+        )[:2000]
+        output = "[ERROR] 타임아웃 초과"
+        if partial_output:
+            output = f"{output}\n{partial_output}"
+        step_runtime = build_step_runtime(failed_at=_now())
+        step_runtime.update(
+            {
+                "failure_category": "timeout",
+                "provider_exit_status": "timeout",
+                "partial_output": partial_output,
+                "cost_metadata_status": "unavailable_due_timeout",
+            }
+        )
+        return 1, output, None, step_runtime
     except Exception as exc:
         return 1, f"[ERROR] 실행 예외: {exc}", None, build_step_runtime(failed_at=_now())
     finally:
@@ -994,6 +1124,14 @@ def cmd_run(
         print(f"[AUTOPILOT] 태스크 의존성 오류: {exc}")
         return 1
 
+    source_run_id = None
+    source_selector = str(task.get("source_run_selector") or "").strip()
+    if source_selector:
+        source_run_id = _resolve_observed_source_id(root, source_selector)
+        if not source_run_id:
+            print(f"[AUTOPILOT] source selector 결과 없음: {source_selector}")
+            return 1
+
     try:
         state = _recover_running_task_state_for_restart(_load_state(root, task_id))
     except RuntimeError as exc:
@@ -1017,6 +1155,9 @@ def cmd_run(
         state["completion_requires_real_runs"] = completion_requires_real_runs
     if "steps" not in state:
         state["steps"] = {}
+    if source_run_id:
+        state["source_run_id"] = source_run_id
+        state["source_run_selector"] = source_selector
     # Persist the task-level running state before any step blocks on external execution.
     _save_state(root, task_id, state)
     observed_count_before: int | None = None
@@ -1107,6 +1248,8 @@ def cmd_run(
                 _build_retry_prompt(original_prompt, attempt - 1, last_failures)
                 if last_failures else original_prompt
             )
+            if source_run_id:
+                active_prompt = f"{active_prompt}\nResolved source_run_id: {source_run_id}"
             # step 복사본에 수정된 프롬프트를 넣어 _run_step에 전달
             step_with_prompt = {**step, "prompt": active_prompt}
 
@@ -1142,8 +1285,35 @@ def cmd_run(
             if rc != 0:
                 last_failures = [{"label": "LLM 실행 실패", "output": output[:300]}]
                 print(f"  ❌ LLM 실행 실패 (attempt {attempt}): {output[:150]}")
-                if attempt <= max_retries:
+                if _retry_allowed(step, step_runtime, attempt=attempt, max_retries=max_retries):
                     print("  재시도합니다...")
+                else:
+                    print("  재시도하지 않습니다 (timeout 정책 또는 retry 한도)")
+                    break
+                continue
+
+            artifact_failure = _validate_step_artifact(root, step)
+            if artifact_failure:
+                step_state["artifact_validation"] = artifact_failure
+                last_failures = [artifact_failure]
+                print(f"  ❌ artifact 검증 실패 (attempt {attempt}): {artifact_failure['output']}")
+                if _retry_allowed(step, step_runtime, attempt=attempt, max_retries=max_retries):
+                    print("  재시도합니다...")
+                else:
+                    print("  재시도하지 않습니다 (artifact 정책 또는 retry 한도)")
+                    break
+                continue
+
+            output_failure = _validate_step_output(step, output)
+            if output_failure:
+                step_state["output_limit"] = output_failure
+                last_failures = [output_failure]
+                print(f"  ❌ 출력 제한 초과 (attempt {attempt}): {output_failure['output']}")
+                if _retry_allowed(step, step_runtime, attempt=attempt, max_retries=max_retries):
+                    print("  재시도합니다...")
+                else:
+                    print("  재시도하지 않습니다 (timeout 정책 또는 retry 한도)")
+                    break
                 continue
 
             required_verdicts = step.get("verdict_required") or []
@@ -1209,13 +1379,25 @@ def cmd_run(
             observed_count_after = int(
                 _build_overview_kpi_summary(_collect_overview_run_records(root))["observed_sample_count"]
             )
-            if observed_count_after <= observed_count_before:
+            expected_delta = _expected_observed_delta(task)
+            observed_delta = observed_count_after - observed_count_before
+            if observed_delta < max(expected_delta, 1):
                 all_done = False
                 state["status"] = "failed"
-                state["failure_reason"] = "completion_requires_real_runs_unsatisfied"
+                state["observed_count_before"] = observed_count_before
+                state["observed_count_after"] = observed_count_after
+                state["expected_observed_delta"] = expected_delta
+                state["failure_reason"] = (
+                    "expected_observed_delta_unsatisfied"
+                    if expected_delta
+                    else "completion_requires_real_runs_unsatisfied"
+                )
                 state["finished_at"] = _now()
                 run_result["status"] = "failed"
-                run_result["failure_category"] = "completion_requires_real_runs_unsatisfied"
+                run_result["failure_category"] = state["failure_reason"]
+                run_result["observed_count_before"] = observed_count_before
+                run_result["observed_count_after"] = observed_count_after
+                run_result["expected_observed_delta"] = expected_delta
                 run_result["next_kpi_blocker"] = "insufficient_observed_samples"
                 run_result["readiness_status_line"] = (
                     "not ready: completion requires real observed runs but observed sample count did not increase"
