@@ -1862,6 +1862,11 @@ def _build_benchmark_report(data: dict) -> dict:
         "comparison_cases": comparison_cases,
         "comparison_pairs": comparison_pairs,
         "comparison_pair_summary": comparison_pair_summary,
+        "policy_comparison": (
+            data.get("observed_metrics", {}).get("policy_comparison")
+            if isinstance(data.get("observed_metrics"), dict)
+            else None
+        ),
     }
 
 
@@ -2146,6 +2151,8 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
     observed_input_tokens = 0
     observed_output_tokens = 0
     baseline_comparison_not_ready_seen = False
+    policy_comparison_status_counts: dict[str, int] = {}
+    policy_comparison_reason_counts: dict[str, int] = {}
     for record, report in zip(run_records, reports):
         if not isinstance(record, dict):
             continue
@@ -2191,6 +2198,14 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
             and not excluded_from_readiness
             and rejected_case_count == 0
         )
+        policy_comparison = report.get("policy_comparison")
+        if observed_evidence_eligible and isinstance(policy_comparison, dict):
+            status = str(policy_comparison.get("status") or "").strip()
+            reason = str(policy_comparison.get("reason") or "").strip()
+            if status:
+                policy_comparison_status_counts[status] = policy_comparison_status_counts.get(status, 0) + 1
+            if reason:
+                policy_comparison_reason_counts[reason] = policy_comparison_reason_counts.get(reason, 0) + 1
         if observed_evidence_eligible:
             if isinstance(report.get("total_tokens"), (int, float)):
                 observed_token_evidence_count += 1
@@ -2325,6 +2340,9 @@ def _build_overview_kpi_summary(run_records: list[dict]) -> dict[str, object]:
         "observed_total_tokens": observed_input_tokens + observed_output_tokens,
         "cost_quality_validation_status": cost_quality_validation_status,
         "cost_quality_validation_blocker": cost_quality_validation_blocker,
+        "policy_comparison_observed_count": sum(policy_comparison_status_counts.values()),
+        "policy_comparison_status_counts": policy_comparison_status_counts,
+        "policy_comparison_reason_counts": policy_comparison_reason_counts,
         "readiness_status_line": readiness_status_line,
         "baseline_comparison_status": baseline_comparison_status,
         "baseline_comparison_line": baseline_comparison_line,
@@ -3143,6 +3161,50 @@ def _build_observed_metrics(data: dict) -> dict[str, object] | None:
         and isinstance(step.get("elapsed_ms"), (int, float))
         and not isinstance(step.get("elapsed_ms"), bool)
     )
+    policy_profile = str(
+        data.get("policy_profile") or data.get("recommended_policy_profile") or ""
+    ).strip()
+    outcome = data.get("outcome") if isinstance(data.get("outcome"), str) else None
+    quality_failure = data.get("quality_failure") if isinstance(data.get("quality_failure"), bool) else None
+    cost_delta = data.get("cost_delta") if isinstance(data.get("cost_delta"), str) else None
+    exclusion_reason = ""
+    if bool(data.get("dry_run")):
+        exclusion_reason = "dry-run observed result"
+    elif bool(data.get("neutral_seed")):
+        exclusion_reason = "neutral seed is not an eligible observed sample"
+    eligible = not exclusion_reason
+    policy_comparison_input = {
+        "policy_profile": policy_profile,
+        "outcome": outcome,
+        "retry_count": int(report.get("retry_count") or 0),
+        "quality_failure": quality_failure,
+        "cost_delta": cost_delta,
+        "eligible": eligible,
+        "exclusion_reason": exclusion_reason,
+    }
+    if not eligible:
+        policy_comparison = {
+            "status": "excluded",
+            "reason": exclusion_reason,
+        }
+    elif not policy_profile:
+        policy_comparison = {
+            "status": "pending",
+            "reason": "policy profile is missing",
+        }
+    elif quality_failure is None:
+        policy_comparison = {
+            "status": "pending",
+            "reason": "quality evidence is missing",
+        }
+    else:
+        policy_comparison = omc_exec.classify_policy_comparison(
+            recommended_policy_profile=policy_profile,
+            outcome=outcome,
+            retry_count=policy_comparison_input["retry_count"],
+            quality_failure=quality_failure,
+            cost_delta=cost_delta,
+        )
     return {
         "source_type": source_type,
         "policy_pair": str(data.get("policy_pair") or "").strip(),
@@ -3155,6 +3217,8 @@ def _build_observed_metrics(data: dict) -> dict[str, object] | None:
         "had_reroute": bool(report.get("had_reroute")),
         "recovered_after_retry": bool(report.get("recovered_after_retry")),
         "comparison_pair_summary": report.get("comparison_pair_summary") or {},
+        "policy_comparison_input": policy_comparison_input,
+        "policy_comparison": policy_comparison,
     }
 
 

@@ -31,6 +31,10 @@ Health 저장소 정합성 보강(2026-07-16): `omc_kit`에 맞춰 health를 Pyt
 
 Cost-Quality Policy Layer 1차 구현(2026-07-16): 정책 비교 acceptance를 `hit / over_conservative / over_aggressive / pending`으로 분류하고, 실패 outcome과 비용 근거 부족을 `hit`로 오판하지 않도록 보수적으로 처리했다. Policy → Executor handoff 계약에 정책 프로필·이유·확신도·사용자 선택 여부·executor fallback을 고정하고, recommendation-only와 `execution_allowed=false`를 validator로 검증한다. 관련 routing/orchestrator 회귀 `134 passed`, staged TDD gate 통과.
 
+Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_profile / outcome / quality_failure / cost_delta / eligible / exclusion_reason` 입력으로 정규화하고, 정책 프로필·품질 증거·비용 증거가 없으면 `pending`으로 보수적으로 차단한다. `policy_comparison` 결과를 benchmark report, autopilot overview, collected summary에서 동일하게 집계하며 status/reason counter와 빈 summary 기본 schema를 맞췄다. 관련 회귀 `388 passed, 1 skipped`, TDD gate 통과.
+
+현재 이 작업의 구현 범위는 완료됐다. 남은 것은 실제 운영 observed 데이터에서 정책별 `hit / pending / over_aggressive / over_conservative` 비율과 비용·품질 상관관계를 축적해 threshold와 정책 선택의 타당성을 검증하는 일이다. 비용 증거가 없는 데이터는 계속 `pending`으로 유지하며, 자동 executor 전환·무인 reroute는 이 검증이 끝날 때까지 열지 않는다.
+
 ## 제품 목표 상태
 
 최종 목표는 아래 다섯 가지를 만족하는 것이다.

@@ -1936,6 +1936,9 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
                 "policy_pair_counts": {},
                 "rejected_observed_output_case_count": 0,
                 "rejected_observed_output_reasons": {},
+                "policy_comparison_observed_count": 0,
+                "policy_comparison_status_counts": {},
+                "policy_comparison_reason_counts": {},
                 "observed_data_bottleneck_summary": "observed data bottleneck: need more observed samples",
             },
         }
@@ -1944,6 +1947,8 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
     run_records: list[dict[str, object]] = []
     rejected_observed_output_case_count = 0
     rejected_observed_output_reasons: dict[str, int] = {}
+    policy_comparison_status_counts: dict[str, int] = {}
+    policy_comparison_reason_counts: dict[str, int] = {}
     for run_dir in sorted(runs_dir.iterdir()):
         result_path = run_dir / "result.json"
         if not result_path.exists():
@@ -2054,6 +2059,22 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
                 f"; rejected observed_output={rejected_observed_output_case_count} "
                 f"({','.join(reason_parts)})"
             )
+    for record in run_records:
+        observed_metrics = record.get("observed_metrics") if isinstance(record, dict) else None
+        if not isinstance(observed_metrics, dict):
+            continue
+        comparison_input = observed_metrics.get("policy_comparison_input")
+        comparison = observed_metrics.get("policy_comparison")
+        if not isinstance(comparison_input, dict) or comparison_input.get("eligible") is not True:
+            continue
+        if not isinstance(comparison, dict):
+            continue
+        status = str(comparison.get("status") or "").strip()
+        reason = str(comparison.get("reason") or "").strip()
+        if status:
+            policy_comparison_status_counts[status] = policy_comparison_status_counts.get(status, 0) + 1
+        if reason:
+            policy_comparison_reason_counts[reason] = policy_comparison_reason_counts.get(reason, 0) + 1
     next_priority_input = _build_next_priority_surface_input(
         blocker=readiness_blocker,
         observed_reason_signals_present=observed_reason_signals_present,
@@ -2126,6 +2147,9 @@ def collect_observed_response_mode_cases(runs_dir: Path) -> dict[str, object]:
             "observed_data_bottleneck_summary": observed_data_bottleneck_summary,
             "policy_comparison_summary": policy_comparison_summary,
             "policy_comparison_bottleneck_summary": policy_comparison_bottleneck_summary,
+            "policy_comparison_observed_count": sum(policy_comparison_status_counts.values()),
+            "policy_comparison_status_counts": policy_comparison_status_counts,
+            "policy_comparison_reason_counts": policy_comparison_reason_counts,
             "next_priority_recommendation": next_priority_recommendation,
             "next_priority_reason": next_priority_reason,
             "next_priority_input_source_surface": str(

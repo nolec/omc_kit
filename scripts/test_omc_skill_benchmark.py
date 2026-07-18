@@ -954,6 +954,8 @@ def test_collect_observed_response_mode_cases_builds_neutral_seed_cases_from_run
     assert payload["summary"]["case_count"] == 2
     assert payload["summary"]["observed_sample_case_count"] == 0
     assert payload["summary"]["neutral_seed_case_count"] == 2
+
+
     assert payload["summary"]["policy_pair_counts"] == {
         "baseline->candidate": 1,
         "candidate->baseline": 1,
@@ -981,6 +983,16 @@ def test_collect_observed_response_mode_cases_builds_neutral_seed_cases_from_run
     assert second["candidate_policy"] == "baseline"
     assert second["source_type"] == "observed_request"
     assert "expected_next_action" not in second
+
+
+def test_empty_collected_summary_keeps_policy_comparison_schema(tmp_path: Path):
+    mod = _load_module()
+
+    summary = mod.collect_observed_response_mode_cases(tmp_path / ".omc" / "runs")["summary"]
+
+    assert summary["policy_comparison_observed_count"] == 0
+    assert summary["policy_comparison_status_counts"] == {}
+    assert summary["policy_comparison_reason_counts"] == {}
 
 
 def test_collect_observed_response_modes_cli_outputs_seed_case_json(tmp_path: Path):

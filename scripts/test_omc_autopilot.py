@@ -187,7 +187,91 @@ def test_save_pipeline_result_persists_normalized_observed_metrics(tmp_path):
             "avg_total_tokens_delta": 0,
             "avg_elapsed_ms_delta": 0,
         },
+        "policy_comparison_input": {
+            "policy_profile": "",
+            "outcome": None,
+            "retry_count": 0,
+            "quality_failure": None,
+            "cost_delta": None,
+            "eligible": True,
+            "exclusion_reason": "",
+        },
+        "policy_comparison": {
+            "status": "pending",
+            "reason": "policy profile is missing",
+        },
     }
+
+
+def test_observed_metrics_normalizes_policy_comparison_input():
+    metrics = omc_autopilot._build_observed_metrics(
+        {
+            "status": "completed",
+            "benchmark_source_type": "observed_request",
+            "policy_pair": "baseline->candidate",
+            "policy_profile": "quality_first",
+            "outcome": "success",
+            "quality_failure": False,
+            "cost_delta": "higher",
+            "started_at": "2026-07-11T02:00:00+09:00",
+            "finished_at": "2026-07-11T02:00:05+09:00",
+            "steps": {},
+        }
+    )
+
+    assert metrics["policy_comparison_input"] == {
+        "policy_profile": "quality_first",
+        "outcome": "success",
+        "retry_count": 0,
+        "quality_failure": False,
+        "cost_delta": "higher",
+        "eligible": True,
+        "exclusion_reason": "",
+    }
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        ({"policy_profile": "", "quality_failure": False}, "policy profile is missing"),
+        ({"policy_profile": "quality_first"}, "quality evidence is missing"),
+    ],
+)
+def test_observed_metrics_does_not_classify_missing_policy_evidence_as_hit(overrides, reason):
+    data = {
+        "status": "completed",
+        "benchmark_source_type": "observed_request",
+        "outcome": "success",
+        "cost_delta": "higher",
+        "steps": {},
+    }
+    data.update(overrides)
+
+    metrics = omc_autopilot._build_observed_metrics(data)
+
+    assert metrics["policy_comparison"] == {"status": "pending", "reason": reason}
+
+
+def test_overview_aggregates_normalized_policy_comparison_status_and_reason():
+    summary = omc_autopilot._build_overview_kpi_summary(
+        [
+            {
+                "status": "completed",
+                "benchmark_source_type": "observed_request",
+                "observed_metrics": {
+                    "policy_comparison": {
+                        "status": "pending",
+                        "reason": "cost evidence is missing",
+                    }
+                },
+                "steps": {},
+            }
+        ]
+    )
+
+    assert summary["policy_comparison_observed_count"] == 1
+    assert summary["policy_comparison_status_counts"] == {"pending": 1}
+    assert summary["policy_comparison_reason_counts"] == {"cost evidence is missing": 1}
 
 
 def test_save_pipeline_result_persists_step_capability_observations(tmp_path, monkeypatch):
