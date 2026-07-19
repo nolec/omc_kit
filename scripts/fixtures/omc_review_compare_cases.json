@@ -1,0 +1,151 @@
+[
+  {
+    "case_id": "null-guard-1",
+    "diff_id": "synthetic-null-guard",
+    "source_type": "synthetic",
+    "diff": "--- a/src/service.py\n+++ b/src/service.py\n@@\n- value = payload.get('name')\n+ value = payload.get('name').strip()",
+    "expected_findings": [
+      {"id": "null-check", "severity": "중대", "file": "src/service.py", "line": "12"}
+    ],
+    "providers": {
+      "codex": {
+        "status": "completed",
+        "findings": [
+          {"id": "null-check", "severity": "중대", "file": "src/service.py", "line": "12"},
+          {"id": "unused-import", "severity": "경미", "file": "src/service.py", "line": "4"}
+        ]
+      },
+      "omc-review": {
+        "status": "completed",
+        "findings": [
+          {"id": "null-check", "severity": "중대", "file": "src/service.py", "line": "12"}
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "auth-redirect-1",
+    "diff_id": "synthetic-auth-redirect",
+    "source_type": "synthetic",
+    "diff": "--- a/src/auth.ts\n+++ b/src/auth.ts\n@@\n- return redirect(next)\n+ return redirect(request.query.next)",
+    "expected_findings": [
+      {"id": "open-redirect", "severity": "치명", "file": "src/auth.ts", "line": "28"}
+    ],
+    "providers": {
+      "codex": {
+        "status": "completed",
+        "findings": [
+          {"id": "open-redirect", "severity": "치명", "file": "src/auth.ts", "line": "28"}
+        ]
+      },
+      "omc-review": {
+        "status": "completed",
+        "findings": [
+          {"id": "missing-csrf", "severity": "중대", "file": "src/auth.ts", "line": "31"}
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "pagination-boundary-1",
+    "diff_id": "synthetic-pagination-boundary",
+    "source_type": "synthetic",
+    "diff": "--- a/src/pagination.ts\n+++ b/src/pagination.ts\n@@\n- const page = Math.max(1, inputPage)\n+ const page = inputPage",
+    "expected_findings": [
+      {"id": "page-zero", "severity": "중대", "file": "src/pagination.ts", "line": "19"}
+    ],
+    "providers": {
+      "codex": {
+        "status": "completed",
+        "findings": []
+      },
+      "omc-review": {
+        "status": "completed",
+        "findings": [
+          {"id": "page-zero", "severity": "중대", "file": "src/pagination.ts", "line": "19"},
+          {"id": "unstable-sort", "severity": "경미", "file": "src/pagination.ts", "line": "22"}
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "exception-swallow-1",
+    "diff_id": "synthetic-exception-swallow",
+    "source_type": "synthetic",
+    "diff": "--- a/src/worker.py\n+++ b/src/worker.py\n@@\n- handle_error(error)\n+ pass",
+    "expected_findings": [{"id": "swallowed-exception", "severity": "중대", "file": "src/worker.py", "line": "17"}],
+    "providers": {"codex": {"status": "not_run", "findings": []}, "omc-review": {"status": "not_run", "findings": []}}
+  },
+  {
+    "case_id": "permission-check-1",
+    "diff_id": "synthetic-permission-check",
+    "source_type": "synthetic",
+    "diff": "--- a/src/orders.ts\n+++ b/src/orders.ts\n@@\n- if order.owner_id != user.id:\n+ return order",
+    "expected_findings": [{"id": "missing-owner-check", "severity": "치명", "file": "src/orders.ts", "line": "44"}],
+    "providers": {"codex": {"status": "not_run", "findings": []}, "omc-review": {"status": "not_run", "findings": []}}
+  },
+  {
+    "case_id": "sql-boundary-1",
+    "diff_id": "synthetic-sql-boundary",
+    "source_type": "synthetic",
+    "diff": "--- a/src/search.py\n+++ b/src/search.py\n@@\n- query = build_query(term)\n+ query = \"SELECT * FROM items WHERE name = '\" + term",
+    "expected_findings": [{"id": "raw-query-input", "severity": "치명", "file": "src/search.py", "line": "9"}],
+    "providers": {"codex": {"status": "not_run", "findings": []}, "omc-review": {"status": "not_run", "findings": []}}
+  },
+  {
+    "case_id": "command-input-1",
+    "diff_id": "synthetic-command-input",
+    "source_type": "synthetic",
+    "diff": "--- a/src/export.py\n+++ b/src/export.py\n@@\n- run_export(args)\n+ os.system(command)",
+    "expected_findings": [{"id": "shell-input", "severity": "치명", "file": "src/export.py", "line": "26"}],
+    "providers": {"codex": {"status": "not_run", "findings": []}, "omc-review": {"status": "not_run", "findings": []}}
+  },
+  {
+    "case_id": "data-overwrite-1",
+    "diff_id": "synthetic-data-overwrite",
+    "source_type": "synthetic",
+    "diff": "--- a/src/store.py\n+++ b/src/store.py\n@@\n- save_versioned(record)\n+ overwrite(record)",
+    "expected_findings": [{"id": "overwrite-without-version", "severity": "중대", "file": "src/store.py", "line": "33"}],
+    "providers": {"codex": {"status": "not_run", "findings": []}, "omc-review": {"status": "not_run", "findings": []}}
+  },
+  {
+    "case_id": "race-update-1",
+    "diff_id": "synthetic-race-update",
+    "source_type": "synthetic",
+    "diff": "--- a/src/counter.ts\n+++ b/src/counter.ts\n@@\n- await updateAtomically(value)\n+ state.value = value",
+    "expected_findings": [{"id": "lost-update", "severity": "중대", "file": "src/counter.ts", "line": "15"}],
+    "providers": {"codex": {"status": "not_run", "findings": []}, "omc-review": {"status": "not_run", "findings": []}}
+  },
+  {
+    "case_id": "test-gap-1",
+    "diff_id": "synthetic-test-gap",
+    "source_type": "synthetic",
+    "diff": "--- a/tests/service.test.ts\n+++ b/tests/service.test.ts\n@@\n- expect(result).toBe(oldValue)\n+ expect(result).toBe(value)",
+    "expected_findings": [{"id": "missing-regression-test", "severity": "경미", "file": "tests/service.test.ts", "line": "1"}],
+    "providers": {"codex": {"status": "not_run", "findings": []}, "omc-review": {"status": "not_run", "findings": []}}
+  },
+  {
+    "case_id": "cache-invalidation-1",
+    "diff_id": "synthetic-cache-invalidation",
+    "source_type": "synthetic",
+    "diff": "--- a/src/cache.ts\n+++ b/src/cache.ts\n@@\n- invalidate(key)\n+ updateStore(key, value)",
+    "expected_findings": [{"id": "stale-cache", "severity": "중대", "file": "src/cache.ts", "line": "21"}],
+    "providers": {"codex": {"status": "not_run", "findings": []}, "omc-review": {"status": "not_run", "findings": []}}
+  },
+  {
+    "case_id": "timeout-retry-1",
+    "diff_id": "synthetic-timeout-retry",
+    "source_type": "synthetic",
+    "diff": "--- a/src/client.ts\n+++ b/src/client.ts\n@@\n- retryCount += 1\n+ request()",
+    "expected_findings": [{"id": "unbounded-retry", "severity": "중대", "file": "src/client.ts", "line": "37"}],
+    "providers": {"codex": {"status": "not_run", "findings": []}, "omc-review": {"status": "not_run", "findings": []}}
+  },
+  {
+    "case_id": "response-leak-1",
+    "diff_id": "synthetic-response-leak",
+    "source_type": "synthetic",
+    "diff": "--- a/src/http.ts\n+++ b/src/http.ts\n@@\n- return safeError()\n+ return error.stack",
+    "expected_findings": [{"id": "internal-error-leak", "severity": "중대", "file": "src/http.ts", "line": "52"}],
+    "providers": {"codex": {"status": "not_run", "findings": []}, "omc-review": {"status": "not_run", "findings": []}}
+  }
+]

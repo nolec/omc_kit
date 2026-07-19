@@ -240,6 +240,12 @@ def test_review_skill_declares_decision_risk_next_action_contract():
     assert not missing, f"missing review decision markers: {missing}"
 
 
+def test_review_skill_is_provider_neutral_and_does_not_require_external_findings():
+    text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
+    assert "외부 리뷰 findings" not in text
+    assert "omc_review_findings.py" not in text
+
+
 def test_review_skill_declares_common_decision_table_axes():
     text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_DECISION_TABLE_MARKERS if marker not in text]

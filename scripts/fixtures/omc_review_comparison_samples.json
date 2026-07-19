@@ -1,0 +1,177 @@
+[
+  {
+    "sample_id": "codex-omc-null-guard-1",
+    "case_id": "null-guard-1",
+    "diff_id": "probe-null-guard",
+    "source_type": "comparison_sample",
+    "source_kind": "observed_session_diff",
+    "evidence_ref": "session-20260719-review-1",
+    "selection_reason": "actual Codex review probe",
+    "recorded_at": "2026-07-19T23:00:00+09:00",
+    "diff": "--- a/src/service.py\n+++ b/src/service.py\n@@\n-return payload.get(\"name\")\n+return payload.get(\"name\").strip()\n",
+    "results": {
+      "codex": {
+        "case_id": "null-guard-1",
+        "diff_id": "probe-null-guard",
+        "prompt_id": "review-v1",
+        "execution_mode": "cli_completed",
+        "status": "completed",
+        "runner": "codex review",
+        "model": "gpt-5.6-luna",
+        "findings": [{"id": "null-guard", "severity": "중대", "file": "src/service.py", "line": "2"}],
+        "metrics": {}
+      },
+      "omc-review": {
+        "case_id": "null-guard-1",
+        "diff_id": "probe-null-guard",
+        "prompt_id": "review-v1",
+        "execution_mode": "manual_rule_application",
+        "status": "completed",
+        "runner": "omc-review skill",
+        "model": null,
+        "findings": [{"id": "null-guard", "severity": "중대", "file": "src/service.py", "line": "2"}],
+        "metrics": {}
+      }
+    }
+  },
+  {
+    "sample_id": "codex-omc-access-scope-2",
+    "case_id": "access-scope-2",
+    "diff_id": "pilot-access-scope",
+    "source_type": "comparison_sample",
+    "source_kind": "anonymous_pilot_fixture",
+    "evidence_ref": "codex-session-pilot-2",
+    "selection_reason": "anonymous permission-scope review fixture",
+    "recorded_at": "2026-07-20T01:23:22+09:00",
+    "diff": "--- a/src/access.py\n+++ b/src/access.py\n@@\n-    return user.get(\"role\") == \"admin\"\n+    return user.get(\"role\") in {\"admin\", \"staff\"}\n",
+    "results": {
+      "codex": {
+        "case_id": "access-scope-2",
+        "diff_id": "pilot-access-scope",
+        "prompt_id": "review-v1",
+        "execution_mode": "cli_completed",
+        "status": "completed",
+        "runner": "codex review",
+        "model": "gpt-5.6-luna",
+        "findings": [],
+        "metrics": {}
+      },
+      "omc-review": {
+        "case_id": "access-scope-2",
+        "diff_id": "pilot-access-scope",
+        "prompt_id": "review-v1",
+        "execution_mode": "manual_rule_application",
+        "status": "completed",
+        "runner": "omc-review skill",
+        "model": null,
+        "findings": [{"id": "authorization-scope", "severity": "중대", "file": "src/access.py", "line": "2"}],
+        "metrics": {}
+      }
+    }
+  },
+  {
+    "sample_id": "codex-omc-api-contract-3",
+    "case_id": "api-contract-3",
+    "diff_id": "pilot-api-contract",
+    "source_type": "comparison_sample",
+    "source_kind": "anonymous_pilot_fixture",
+    "evidence_ref": "codex-session-pilot-3",
+    "selection_reason": "anonymous response-contract review fixture",
+    "recorded_at": "2026-07-20T01:23:39+09:00",
+    "diff": "--- a/src/client.py\n+++ b/src/client.py\n@@\n-    return {\"id\": response[\"id\"], \"name\": response[\"name\"]}\n+    return {\"id\": response[\"id\"], \"display_name\": response[\"name\"]}\n",
+    "results": {
+      "codex": {
+        "case_id": "api-contract-3",
+        "diff_id": "pilot-api-contract",
+        "prompt_id": "review-v1",
+        "execution_mode": "cli_completed",
+        "status": "completed",
+        "runner": "codex review",
+        "model": "gpt-5.6-luna",
+        "findings": [],
+        "metrics": {}
+      },
+      "omc-review": {
+        "case_id": "api-contract-3",
+        "diff_id": "pilot-api-contract",
+        "prompt_id": "review-v1",
+        "execution_mode": "manual_rule_application",
+        "status": "completed",
+        "runner": "omc-review skill",
+        "model": null,
+        "findings": [{"id": "api-contract", "severity": "중대", "file": "src/client.py", "line": "2"}],
+        "metrics": {}
+      }
+    }
+  },
+  {
+    "sample_id": "codex-omc-timeout-config-4",
+    "case_id": "timeout-config-4",
+    "diff_id": "pilot-timeout-config",
+    "source_type": "comparison_sample",
+    "source_kind": "anonymous_pilot_fixture",
+    "evidence_ref": "codex-session-pilot-4",
+    "selection_reason": "anonymous multi-file configuration review fixture",
+    "recorded_at": "2026-07-20T01:23:58+09:00",
+    "diff": "--- a/src/config.py\n+++ b/src/config.py\n@@\n-TIMEOUT_SECONDS = 30\n+TIMEOUT_SECONDS = 10\n--- a/src/client.py\n+++ b/src/client.py\n@@\n-def fetch(url, timeout=TIMEOUT_SECONDS):\n+def fetch(url, timeout=30):\n",
+    "results": {
+      "codex": {
+        "case_id": "timeout-config-4",
+        "diff_id": "pilot-timeout-config",
+        "prompt_id": "review-v1",
+        "execution_mode": "cli_completed",
+        "status": "completed",
+        "runner": "codex review",
+        "model": "gpt-5.6-luna",
+        "findings": [{"id": "timeout-config", "severity": "P1", "file": "src/client.py", "line": "3"}],
+        "metrics": {}
+      },
+      "omc-review": {
+        "case_id": "timeout-config-4",
+        "diff_id": "pilot-timeout-config",
+        "prompt_id": "review-v1",
+        "execution_mode": "manual_rule_application",
+        "status": "completed",
+        "runner": "omc-review skill",
+        "model": null,
+        "findings": [{"id": "timeout-config", "severity": "중대", "file": "src/client.py", "line": "3"}],
+        "metrics": {}
+      }
+    }
+  },
+  {
+    "sample_id": "codex-omc-cache-key-5",
+    "case_id": "cache-key-5",
+    "diff_id": "pilot-cache-key",
+    "source_type": "comparison_sample",
+    "source_kind": "anonymous_pilot_fixture",
+    "evidence_ref": "codex-session-pilot-5",
+    "selection_reason": "anonymous cache invalidation review fixture",
+    "recorded_at": "2026-07-20T01:24:10+09:00",
+    "diff": "--- a/src/cache.py\n+++ b/src/cache.py\n@@\n-def key(user_id, locale):\n-    return f\"{user_id}:{locale}\"\n+def key(user_id, locale):\n+    return str(user_id)\n",
+    "results": {
+      "codex": {
+        "case_id": "cache-key-5",
+        "diff_id": "pilot-cache-key",
+        "prompt_id": "review-v1",
+        "execution_mode": "cli_completed",
+        "status": "completed",
+        "runner": "codex review",
+        "model": "gpt-5.6-luna",
+        "findings": [{"id": "cache-key-collision", "severity": "P1", "file": "src/cache.py", "line": "2"}],
+        "metrics": {}
+      },
+      "omc-review": {
+        "case_id": "cache-key-5",
+        "diff_id": "pilot-cache-key",
+        "prompt_id": "review-v1",
+        "execution_mode": "manual_rule_application",
+        "status": "completed",
+        "runner": "omc-review skill",
+        "model": null,
+        "findings": [{"id": "cache-key-collision", "severity": "중대", "file": "src/cache.py", "line": "2"}],
+        "metrics": {}
+      }
+    }
+  }
+]
