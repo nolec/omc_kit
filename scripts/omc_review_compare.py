@@ -12,10 +12,10 @@ from typing import Any
 PROVIDER_STATUSES = {"completed", "not_run", "failed"}
 SOURCE_TYPES = {"synthetic", "observed_output", "current_contract_sample"}
 COMPARISON_SOURCE_TYPE = "comparison_sample"
-COMPARISON_EXECUTION_MODES = {"cli_completed", "manual_rule_application"}
+COMPARISON_EXECUTION_MODES = {"cli_completed", "cli_failed", "manual_rule_application"}
 COMPARISON_PROVIDER_MODES = {
-    "codex": "cli_completed",
-    "omc-review": "manual_rule_application",
+    "codex": {"cli_completed", "cli_failed"},
+    "omc-review": {"manual_rule_application", "cli_completed", "cli_failed"},
 }
 SEVERITY_MAP = {
     "P0": "치명",
@@ -29,7 +29,7 @@ SEVERITY_MAP = {
 }
 PROVIDER_METRICS = ("duration_ms", "input_tokens", "output_tokens", "cost_usd")
 PROVIDER_METRIC_SET = set(PROVIDER_METRICS)
-ADJUDICATION_STATUSES = {"pending_adjudication", "confirmed", "rejected"}
+ADJUDICATION_STATUSES = {"pending", "pending_adjudication", "confirmed", "rejected"}
 SENSITIVE_VALUE_PATTERNS = (
     re.compile(r"\bghp_[A-Za-z0-9_]+\b"),
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]+\b"),
@@ -235,11 +235,15 @@ def normalize_comparison_sample(sample: dict[str, Any]) -> dict[str, Any]:
         if execution_mode not in COMPARISON_EXECUTION_MODES:
             raise ValueError(f"unsupported or missing execution_mode: {provider}")
         expected_mode = COMPARISON_PROVIDER_MODES.get(provider)
-        if expected_mode and execution_mode != expected_mode:
+        if expected_mode and execution_mode not in expected_mode:
             raise ValueError(f"comparison execution mode mismatch: {provider}")
         status = str(result.get("status") or "").strip()
         if status not in PROVIDER_STATUSES:
             raise ValueError(f"unsupported comparison status: {status}")
+        if (status == "completed" and execution_mode == "cli_failed") or (
+            status == "failed" and execution_mode != "cli_failed"
+        ):
+            raise ValueError(f"status and execution_mode mismatch: {provider}")
         result_case_id = str(result.get("case_id") or "").strip()
         result_diff_id = str(result.get("diff_id") or "").strip()
         prompt_id = str(result.get("prompt_id") or "").strip()
@@ -293,6 +297,192 @@ def normalize_comparison_sample(sample: dict[str, Any]) -> dict[str, Any]:
         "recorded_at": recorded_at,
         "diff": diff,
         "results": normalized_results,
+    }
+
+
+def _validate_replacement_timestamp(value: Any, label: str) -> str:
+    timestamp = str(value or "").strip()
+    if not timestamp:
+        raise ValueError(f"{label} requires value")
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError as exc:
+        raise ValueError(f"{label} requires ISO-8601") from exc
+    if "T" not in timestamp or parsed.tzinfo is None:
+        raise ValueError(f"{label} requires ISO-8601")
+    return timestamp
+
+
+def _validate_replacement_manifest(manifest: Any, case_id: str) -> dict[str, Any]:
+    if not isinstance(manifest, dict):
+        raise ValueError("replacement case requires manifest")
+    string_fields = (
+        "batch_id",
+        "case_id",
+        "diff_hash",
+        "model_identity",
+        "system_context_hash",
+        "project_rules_hash",
+        "prompt_hash",
+    )
+    normalized: dict[str, Any] = {}
+    for field in string_fields:
+        value = str(manifest.get(field) or "").strip()
+        if not value:
+            raise ValueError(f"replacement manifest requires {field}")
+        _validate_anonymized_value(value, f"replacement manifest {field}")
+        normalized[field] = value
+    if normalized["case_id"] != case_id:
+        raise ValueError("replacement manifest case_id mismatch")
+    for field in ("execution_order", "repeat_index"):
+        value = manifest.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"replacement manifest requires positive integer: {field}")
+        normalized[field] = value
+    for field in ("input_tokens", "injected_context_tokens", "output_tokens"):
+        if field not in manifest:
+            continue
+        value = manifest[field]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"replacement manifest requires non-negative integer: {field}")
+        normalized[field] = value
+    return normalized
+
+
+def normalize_replacement_case(case: dict[str, Any]) -> dict[str, Any]:
+    """Normalize independent evidence required before provider replacement claims."""
+    if not isinstance(case, dict):
+        raise ValueError("replacement case must be an object")
+    case_id = str(case.get("case_id") or "").strip()
+    diff_id = str(case.get("diff_id") or "").strip()
+    if not case_id or not diff_id:
+        raise ValueError("replacement case requires case_id and diff_id")
+    _validate_anonymized_value(case_id, "replacement case_id")
+    _validate_anonymized_value(diff_id, "replacement diff_id")
+
+    gold_findings = case.get("gold_findings")
+    if not isinstance(gold_findings, list):
+        raise ValueError("replacement case requires gold_findings")
+    finding_ids: set[str] = set()
+    normalized_gold: list[dict[str, Any]] = []
+    for finding in gold_findings:
+        if not isinstance(finding, dict):
+            raise ValueError("replacement gold finding must be an object")
+        finding_id = str(finding.get("id") or "").strip()
+        if not finding_id or finding_id in finding_ids:
+            raise ValueError("replacement gold finding requires unique id")
+        finding_ids.add(finding_id)
+        normalized_finding = dict(finding)
+        for field in ("id", "category", "severity", "file", "line", "confidence"):
+            if field in normalized_finding and normalized_finding[field] is not None:
+                value = str(normalized_finding[field]).strip()
+                if field != "line":
+                    _validate_anonymized_value(value, f"replacement gold finding {field}")
+                normalized_finding[field] = value
+        if not isinstance(normalized_finding.get("expected"), bool):
+            raise ValueError("replacement gold finding expected must be boolean")
+        if normalized_finding.get("confidence") not in {"confirmed", "probable"}:
+            raise ValueError("replacement gold finding confidence is invalid")
+        normalized_gold.append(normalized_finding)
+
+    adjudication = case.get("adjudication")
+    if not isinstance(adjudication, dict):
+        raise ValueError("replacement case requires adjudication")
+    adjudication_status = str(adjudication.get("status") or "").strip()
+    if adjudication_status not in ADJUDICATION_STATUSES:
+        raise ValueError(f"unsupported adjudication status: {adjudication_status}")
+    if adjudication_status == "pending_adjudication":
+        adjudication_status = "pending"
+    reviewer = str(adjudication.get("reviewer") or "").strip()
+    reason = str(adjudication.get("decision_reason") or "").strip()
+    if not reviewer or not reason:
+        raise ValueError("adjudication requires reviewer and decision_reason")
+    _validate_anonymized_value(reviewer, "adjudication reviewer")
+    _validate_anonymized_value(reason, "adjudication decision_reason")
+    independence = adjudication.get("independence")
+    if not isinstance(independence, dict):
+        raise ValueError("adjudication requires independence")
+    if independence.get("provider_outputs_visible") is not False:
+        raise ValueError("provider outputs must be hidden")
+    reviewer_count = independence.get("reviewer_count")
+    if isinstance(reviewer_count, bool) or not isinstance(reviewer_count, int) or reviewer_count < 2:
+        raise ValueError("independence requires at least two reviewers")
+    agreement = str(independence.get("agreement") or "").strip()
+    if agreement not in {"agreed", "disputed"}:
+        raise ValueError("independence agreement is invalid")
+    tie_breaker_completed = independence.get("tie_breaker_completed")
+    if not isinstance(tie_breaker_completed, bool):
+        raise ValueError("independence tie-breaker status must be boolean")
+    if agreement == "disputed" and tie_breaker_completed is not True:
+        raise ValueError("disputed adjudication requires tie-breaker")
+    normalized_adjudication = {
+        "status": adjudication_status,
+        "reviewer": reviewer,
+        "decision_reason": reason,
+        "recorded_at": _validate_replacement_timestamp(adjudication.get("recorded_at"), "adjudication recorded_at"),
+        "independence": {
+            "provider_outputs_visible": False,
+            "reviewer_count": reviewer_count,
+            "agreement": agreement,
+            "tie_breaker_completed": tie_breaker_completed,
+        },
+    }
+    return {
+        "case_id": case_id,
+        "diff_id": diff_id,
+        "gold_findings": normalized_gold,
+        "adjudication": normalized_adjudication,
+        "manifest": _validate_replacement_manifest(case.get("manifest"), case_id),
+    }
+
+
+def build_replacement_gate(
+    cases: list[dict[str, Any]], min_cases: int = 30, min_repeats: int = 2
+) -> dict[str, Any]:
+    """Gate replacement claims; matching outputs alone can never make it ready."""
+    reasons: list[str] = []
+    normalized: list[dict[str, Any]] = []
+    for index, case in enumerate(cases):
+        try:
+            normalized.append(normalize_replacement_case(case))
+        except ValueError as exc:
+            reasons.append(f"case {index + 1}: {exc}")
+    if len(normalized) < min_cases:
+        reasons.append(f"requires at least {min_cases} independently evidenced cases")
+    confirmed = [
+        case for case in normalized if case["adjudication"]["status"] == "confirmed"
+    ]
+    if len(confirmed) != len(normalized):
+        reasons.append("pending adjudication")
+    repeats: dict[str, set[int]] = {}
+    seen_pairs: set[tuple[str, int]] = set()
+    duplicate_pairs: set[tuple[str, int]] = set()
+    for case in confirmed:
+        manifest = case["manifest"]
+        pair = (case["case_id"], manifest["repeat_index"])
+        if pair in seen_pairs:
+            duplicate_pairs.add(pair)
+        seen_pairs.add(pair)
+        repeats.setdefault(case["case_id"], set()).add(manifest["repeat_index"])
+    if duplicate_pairs:
+        reasons.append("duplicate case/repeat pair")
+    if any(len(indices) < min_repeats for indices in repeats.values()) or not repeats:
+        reasons.append("repeat coverage")
+    if normalized:
+        reasons.append("final replacement gate requires independent evidence")
+    verdict = (
+        "insufficient_evidence"
+        if len(normalized) < min_cases
+        or len(confirmed) != len(normalized)
+        or duplicate_pairs
+        else "replacement_not_ready"
+    )
+    return {
+        "verdict": verdict,
+        "case_count": len(normalized),
+        "minimum_case_count": min_cases,
+        "minimum_repeats": min_repeats,
+        "reasons": reasons,
     }
 
 

@@ -27,11 +27,129 @@ from omc_review_compare import (
     build_finding_comparison,
     build_fixture_candidates,
     promote_fixture_candidate,
+    normalize_replacement_case,
+    build_replacement_gate,
 )
 
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_compare_cases.json"
 COMPARISON_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_comparison_samples.json"
+
+
+def _replacement_case() -> dict[str, object]:
+    return {
+        "case_id": "replacement-01",
+        "diff_id": "anon-diff-01",
+        "gold_findings": [
+            {
+                "id": "null-guard",
+                "category": "runtime-safety",
+                "severity": "중대",
+                "file": "src/service.py",
+                "line": "12",
+                "expected": True,
+                "confidence": "confirmed",
+            }
+        ],
+        "adjudication": {
+            "status": "confirmed",
+            "reviewer": "human-1",
+            "decision_reason": "Independent reproduction confirmed the null path.",
+            "recorded_at": "2026-07-20T10:00:00+09:00",
+            "independence": {
+                "provider_outputs_visible": False,
+                "reviewer_count": 2,
+                "agreement": "agreed",
+                "tie_breaker_completed": False,
+            },
+        },
+        "manifest": {
+            "batch_id": "batch-01",
+            "case_id": "replacement-01",
+            "diff_hash": "anon-diff-hash-01",
+            "model_identity": "same_model_prompt_comparison",
+            "system_context_hash": "anon-system-hash-01",
+            "project_rules_hash": "anon-rules-hash-01",
+            "prompt_hash": "anon-prompt-hash-01",
+            "execution_order": 1,
+            "repeat_index": 1,
+            "input_tokens": 100,
+            "injected_context_tokens": 20,
+            "output_tokens": 80,
+        },
+    }
+
+
+def test_normalize_replacement_case_requires_adjudicated_gold_and_manifest():
+    normalized = normalize_replacement_case(_replacement_case())
+
+    assert normalized["gold_findings"][0]["confidence"] == "confirmed"
+    assert normalized["adjudication"]["status"] == "confirmed"
+    assert normalized["adjudication"]["independence"]["reviewer_count"] == 2
+    assert normalized["manifest"]["case_id"] == normalized["case_id"]
+
+
+def test_normalize_replacement_case_supports_gold_absence_for_false_positive_scoring():
+    case = _replacement_case()
+    case["gold_findings"][0]["expected"] = False
+
+    normalized = normalize_replacement_case(case)
+
+    assert normalized["gold_findings"][0]["expected"] is False
+
+
+def test_normalize_replacement_case_accepts_public_pending_adjudication_name():
+    case = _replacement_case()
+    case["adjudication"]["status"] = "pending"
+
+    normalized = normalize_replacement_case(case)
+
+    assert normalized["adjudication"]["status"] == "pending"
+
+
+def test_normalize_replacement_case_rejects_visible_provider_outputs():
+    case = _replacement_case()
+    case["adjudication"]["independence"]["provider_outputs_visible"] = True
+
+    with pytest.raises(ValueError, match="provider outputs must be hidden"):
+        normalize_replacement_case(case)
+
+
+def test_normalize_replacement_case_requires_tie_breaker_for_disagreement():
+    case = _replacement_case()
+    case["adjudication"]["independence"]["agreement"] = "disputed"
+
+    with pytest.raises(ValueError, match="tie-breaker"):
+        normalize_replacement_case(case)
+
+
+def test_replacement_gate_blocks_pending_adjudication_and_missing_repeats():
+    case = _replacement_case()
+    case["adjudication"]["status"] = "pending_adjudication"
+
+    report = build_replacement_gate([case], min_cases=1, min_repeats=2)
+
+    assert report["verdict"] == "insufficient_evidence"
+    assert "pending adjudication" in report["reasons"]
+    assert "repeat coverage" in report["reasons"]
+
+
+def test_replacement_gate_does_not_call_single_confirmed_case_ready():
+    report = build_replacement_gate([_replacement_case()], min_cases=1, min_repeats=1)
+
+    assert report["verdict"] == "replacement_not_ready"
+    assert "final replacement gate requires independent evidence" in report["reasons"]
+
+
+def test_replacement_gate_rejects_duplicate_case_repeat_pairs():
+    first = _replacement_case()
+    second = deepcopy(first)
+    second["manifest"]["execution_order"] = 2
+
+    report = build_replacement_gate([first, second], min_cases=1, min_repeats=1)
+
+    assert report["verdict"] == "insufficient_evidence"
+    assert "duplicate case/repeat pair" in report["reasons"]
 
 
 def _case() -> dict[str, object]:
@@ -765,6 +883,38 @@ def test_comparison_sample_requires_provider_specific_execution_modes():
     sample["results"]["codex"]["execution_mode"] = "manual_rule_application"
 
     with pytest.raises(ValueError, match="execution mode mismatch"):
+        normalize_comparison_sample(sample)
+
+
+def test_comparison_sample_accepts_actual_omc_cli_execution_mode():
+    sample = deepcopy(_comparison_sample())
+    sample["results"]["omc-review"]["execution_mode"] = "cli_completed"
+
+    normalized = normalize_comparison_sample(sample)
+
+    assert normalized["results"]["omc-review"]["execution_mode"] == "cli_completed"
+
+
+def test_comparison_sample_accepts_failed_cli_execution_mode():
+    sample = deepcopy(_comparison_sample())
+    sample["results"]["omc-review"]["execution_mode"] = "cli_failed"
+    sample["results"]["omc-review"]["status"] = "failed"
+
+    normalized = normalize_comparison_sample(sample)
+
+    assert normalized["results"]["omc-review"]["execution_mode"] == "cli_failed"
+
+
+@pytest.mark.parametrize(
+    ("status", "execution_mode"),
+    [("completed", "cli_failed"), ("failed", "cli_completed"), ("failed", "manual_rule_application")],
+)
+def test_comparison_sample_rejects_status_execution_mode_mismatch(status, execution_mode):
+    sample = deepcopy(_comparison_sample())
+    sample["results"]["omc-review"]["status"] = status
+    sample["results"]["omc-review"]["execution_mode"] = execution_mode
+
+    with pytest.raises(ValueError, match="status and execution_mode mismatch"):
         normalize_comparison_sample(sample)
 
 
