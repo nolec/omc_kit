@@ -18,6 +18,7 @@ from omc_review_compare import (
     load_cases,
     normalize_case,
     normalize_comparison_sample,
+    build_comparison_sample_from_envelopes,
     build_comparison_report,
     build_consistency_verdict,
     build_pilot_report,
@@ -811,6 +812,78 @@ def test_comparison_sample_requires_matching_result_identity_and_fixed_prompt_id
     sample["results"]["codex"]["diff_id"] = "other-diff"
     with pytest.raises(ValueError, match="input identity mismatch"):
         normalize_comparison_sample(sample)
+
+
+def test_comparison_sample_preserves_execution_metadata_when_present():
+    sample = _comparison_sample()
+    metadata = {"snapshot_used": True, "workspace_mutated": False}
+    sample["results"]["codex"]["execution_metadata"] = metadata
+    sample["results"]["omc-review"]["execution_metadata"] = metadata
+
+    normalized = normalize_comparison_sample(sample)
+
+    assert normalized["results"]["codex"]["execution_metadata"] == metadata
+    assert normalized["results"]["omc-review"]["execution_metadata"] == metadata
+
+
+def test_raw_review_envelopes_build_comparison_sample_with_execution_metadata():
+    base = _comparison_sample()
+    codex = {"provider": "codex", **base["results"]["codex"]}
+    omc_review = {"provider": "omc-review", **base["results"]["omc-review"]}
+    metadata = {"snapshot_used": True, "workspace_mutated": False}
+    codex["execution_metadata"] = metadata
+    omc_review["execution_metadata"] = metadata
+
+    normalized = build_comparison_sample_from_envelopes(
+        sample_id=base["sample_id"],
+        source_kind=base["source_kind"],
+        evidence_ref=base["evidence_ref"],
+        selection_reason=base["selection_reason"],
+        recorded_at=base["recorded_at"],
+        diff=base["diff"],
+        codex=codex,
+        omc_review=omc_review,
+    )
+
+    assert normalized["source_type"] == "comparison_sample"
+    assert normalized["case_id"] == base["case_id"]
+    assert normalized["results"]["codex"]["execution_metadata"] == metadata
+
+
+def test_raw_review_envelopes_require_matching_identity_and_metadata():
+    base = _comparison_sample()
+    codex = {"provider": "codex", **base["results"]["codex"]}
+    omc_review = {"provider": "omc-review", **base["results"]["omc-review"]}
+    metadata = {"snapshot_used": True, "workspace_mutated": False}
+    codex["execution_metadata"] = metadata
+    omc_review["execution_metadata"] = metadata
+
+    omc_review["case_id"] = "other-case"
+    with pytest.raises(ValueError, match="input identity mismatch"):
+        build_comparison_sample_from_envelopes(
+            sample_id=base["sample_id"],
+            source_kind=base["source_kind"],
+            evidence_ref=base["evidence_ref"],
+            selection_reason=base["selection_reason"],
+            recorded_at=base["recorded_at"],
+            diff=base["diff"],
+            codex=codex,
+            omc_review=omc_review,
+        )
+
+    omc_review["case_id"] = base["case_id"]
+    del omc_review["execution_metadata"]
+    with pytest.raises(ValueError, match="execution_metadata"):
+        build_comparison_sample_from_envelopes(
+            sample_id=base["sample_id"],
+            source_kind=base["source_kind"],
+            evidence_ref=base["evidence_ref"],
+            selection_reason=base["selection_reason"],
+            recorded_at=base["recorded_at"],
+            diff=base["diff"],
+            codex=codex,
+            omc_review=omc_review,
+        )
 
 
 def test_comparison_report_counts_evidence_match_not_id_only():

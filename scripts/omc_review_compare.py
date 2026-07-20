@@ -29,6 +29,7 @@ SEVERITY_MAP = {
 }
 PROVIDER_METRICS = ("duration_ms", "input_tokens", "output_tokens", "cost_usd")
 PROVIDER_METRIC_SET = set(PROVIDER_METRICS)
+EXECUTION_METADATA_FIELDS = {"snapshot_used", "workspace_mutated"}
 ADJUDICATION_STATUSES = {"pending", "pending_adjudication", "confirmed", "rejected"}
 SENSITIVE_VALUE_PATTERNS = (
     re.compile(r"\bghp_[A-Za-z0-9_]+\b"),
@@ -188,6 +189,65 @@ def normalize_case(case: dict[str, Any]) -> dict[str, Any]:
     return normalized_case
 
 
+def _normalize_execution_metadata(value: Any, provider: str, *, required: bool = False) -> dict[str, bool] | None:
+    if value is None:
+        if required:
+            raise ValueError(f"execution_metadata requires value: {provider}")
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"execution_metadata must be an object: {provider}")
+    unknown_fields = set(value) - EXECUTION_METADATA_FIELDS
+    if unknown_fields:
+        raise ValueError(f"unsupported execution metadata: {sorted(unknown_fields)[0]}")
+    normalized: dict[str, bool] = {}
+    for field in sorted(EXECUTION_METADATA_FIELDS):
+        if not isinstance(value.get(field), bool):
+            raise ValueError(f"execution_metadata.{field} requires boolean: {provider}")
+        normalized[field] = value[field]
+    return normalized
+
+
+def build_comparison_sample_from_envelopes(
+    *,
+    sample_id: str,
+    source_kind: str,
+    evidence_ref: str,
+    selection_reason: str,
+    recorded_at: str,
+    diff: str,
+    codex: dict[str, Any],
+    omc_review: dict[str, Any],
+) -> dict[str, Any]:
+    """Convert provider execution envelopes into the comparison contract."""
+    envelopes = {"codex": codex, "omc-review": omc_review}
+    if any(not isinstance(envelope, dict) for envelope in envelopes.values()):
+        raise ValueError("review execution envelope must be an object")
+    case_ids = {str(envelope.get("case_id") or "").strip() for envelope in envelopes.values()}
+    diff_ids = {str(envelope.get("diff_id") or "").strip() for envelope in envelopes.values()}
+    if len(case_ids) != 1 or not next(iter(case_ids), ""):
+        raise ValueError("comparison input identity mismatch: case_id")
+    if len(diff_ids) != 1 or not next(iter(diff_ids), ""):
+        raise ValueError("comparison input identity mismatch: diff_id")
+    for provider, envelope in envelopes.items():
+        if str(envelope.get("provider") or "").strip() != provider:
+            raise ValueError(f"review execution envelope provider mismatch: {provider}")
+        _normalize_execution_metadata(envelope.get("execution_metadata"), provider, required=True)
+
+    sample = {
+        "sample_id": sample_id,
+        "case_id": next(iter(case_ids)),
+        "diff_id": next(iter(diff_ids)),
+        "source_type": COMPARISON_SOURCE_TYPE,
+        "source_kind": source_kind,
+        "evidence_ref": evidence_ref,
+        "selection_reason": selection_reason,
+        "recorded_at": recorded_at,
+        "diff": diff,
+        "results": {provider: dict(envelope) for provider, envelope in envelopes.items()},
+    }
+    return normalize_comparison_sample(sample)
+
+
 def normalize_comparison_sample(sample: dict[str, Any]) -> dict[str, Any]:
     """Normalize a provenance-aware sample without making it an operational case."""
     if not isinstance(sample, dict):
@@ -282,6 +342,9 @@ def normalize_comparison_sample(sample: dict[str, Any]) -> dict[str, Any]:
             "findings": findings,
             "metrics": metrics,
         }
+        execution_metadata = _normalize_execution_metadata(result.get("execution_metadata"), provider)
+        if execution_metadata is not None:
+            normalized_results[provider]["execution_metadata"] = execution_metadata
         for output_field in ("verdict", "next_action"):
             output_value = str(result.get(output_field) or "").strip()
             if output_value:
