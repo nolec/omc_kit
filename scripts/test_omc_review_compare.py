@@ -35,6 +35,8 @@ from omc_review_compare import (
 
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_compare_cases.json"
+ADVERSARIAL_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_adversarial_cases.json"
+SYNTHETIC_RUNTIME_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_synthetic_runtime_cases.json"
 COMPARISON_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_comparison_samples.json"
 
 
@@ -89,6 +91,50 @@ def test_normalize_replacement_case_requires_adjudicated_gold_and_manifest():
     assert normalized["adjudication"]["status"] == "confirmed"
     assert normalized["adjudication"]["independence"]["reviewer_count"] == 2
     assert normalized["manifest"]["case_id"] == normalized["case_id"]
+
+
+def test_adversarial_review_fixture_covers_false_positive_false_negative_and_evidence_drift():
+    cases = load_cases(ADVERSARIAL_FIXTURE_PATH)
+
+    assert len(cases) == 4
+    report = build_report(cases)
+
+    assert report["case_count"] == 4
+    assert report["providers"]["codex"]["false_positive_count"] == 2
+    assert report["providers"]["codex"]["miss_count"] == 3
+    assert report["providers"]["omc-review"]["false_positive_count"] == 0
+    assert report["providers"]["omc-review"]["hit_count"] == 4
+    assert report["providers"]["codex"]["evidence_match_count"] == 0
+    assert report["providers"]["omc-review"]["evidence_match_count"] == 4
+
+
+def test_adversarial_review_fixture_does_not_claim_superiority_without_observed_cases():
+    cases = load_cases(ADVERSARIAL_FIXTURE_PATH)
+
+    verdict = build_verdict(cases, min_cases=1)
+
+    assert verdict["verdict"] == "insufficient_evidence"
+    assert verdict["reason"] == "observed_output cases required"
+
+
+def test_synthetic_runtime_fixture_contains_four_completed_provider_pairs():
+    cases = load_cases(SYNTHETIC_RUNTIME_FIXTURE_PATH)
+
+    assert len(cases) == 4
+    assert {case["source_type"] for case in cases} == {"synthetic"}
+    for case in cases:
+        assert set(case["providers"]) == {"codex", "omc-review"}
+        assert {result["status"] for result in case["providers"].values()} == {"completed"}
+
+    report = build_report(cases)
+    assert report["providers"]["codex"]["hit_count"] == 4
+    assert report["providers"]["omc-review"]["hit_count"] == 4
+    assert report["providers"]["codex"]["evidence_match_count"] == 4
+    assert report["providers"]["omc-review"]["evidence_match_count"] == 4
+
+    verdict = build_verdict(cases, min_cases=1)
+    assert verdict["verdict"] == "insufficient_evidence"
+    assert verdict["reason"] == "observed_output cases required"
 
 
 def test_normalize_replacement_case_supports_gold_absence_for_false_positive_scoring():

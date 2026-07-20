@@ -1,0 +1,94 @@
+[
+  {
+    "case_id": "synthetic-permission-bypass",
+    "diff_id": "synthetic-permission-bypass-v1",
+    "source_type": "synthetic",
+    "diff": "--- a/src/permissions.py\n+++ b/src/permissions.py\n@@\n-    return user_id == owner_id\n+    return True",
+    "expected_findings": [
+      {"id": "preserve-ownership-check", "severity": "치명", "file": "src/permissions.py", "line": "2"}
+    ],
+    "providers": {
+      "codex": {
+        "status": "completed",
+        "findings": [
+          {"id": "preserve-ownership-check", "severity": "치명", "file": "src/permissions.py", "line": "2"}
+        ]
+      },
+      "omc-review": {
+        "status": "completed",
+        "findings": [
+          {"id": "preserve-ownership-check", "severity": "치명", "file": "src/permissions.py", "line": "2"}
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "synthetic-null-normalization",
+    "diff_id": "synthetic-null-normalization-v1",
+    "source_type": "synthetic",
+    "diff": "--- a/src/format.py\n+++ b/src/format.py\n@@\n-    return value\n+    return value.strip()",
+    "expected_findings": [
+      {"id": "preserve-null-values", "severity": "중대", "file": "src/format.py", "line": "2"}
+    ],
+    "providers": {
+      "codex": {
+        "status": "completed",
+        "findings": [
+          {"id": "preserve-null-values", "severity": "중대", "file": "src/format.py", "line": "2"}
+        ]
+      },
+      "omc-review": {
+        "status": "completed",
+        "findings": [
+          {"id": "preserve-null-values", "severity": "중대", "file": "src/format.py", "line": "2"}
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "synthetic-retry-result-loss",
+    "diff_id": "synthetic-retry-result-loss-v1",
+    "source_type": "synthetic",
+    "diff": "--- a/src/retry.py\n+++ b/src/retry.py\n@@\n-        return request()\n+        request()",
+    "expected_findings": [
+      {"id": "preserve-retry-result", "severity": "중대", "file": "src/retry.py", "line": "3"}
+    ],
+    "providers": {
+      "codex": {
+        "status": "completed",
+        "findings": [
+          {"id": "preserve-retry-result", "severity": "중대", "file": "src/retry.py", "line": "3"}
+        ]
+      },
+      "omc-review": {
+        "status": "completed",
+        "findings": [
+          {"id": "preserve-retry-result", "severity": "중대", "file": "src/retry.py", "line": "3"}
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "synthetic-api-field-drift",
+    "diff_id": "synthetic-api-field-drift-v1",
+    "source_type": "synthetic",
+    "diff": "--- a/src/client.py\n+++ b/src/client.py\n@@\n-    return response['name']\n+    return response['display_name']",
+    "expected_findings": [
+      {"id": "preserve-api-field", "severity": "중대", "file": "src/client.py", "line": "2"}
+    ],
+    "providers": {
+      "codex": {
+        "status": "completed",
+        "findings": [
+          {"id": "preserve-api-field", "severity": "중대", "file": "src/client.py", "line": "2"}
+        ]
+      },
+      "omc-review": {
+        "status": "completed",
+        "findings": [
+          {"id": "preserve-api-field", "severity": "중대", "file": "src/client.py", "line": "2"}
+        ]
+      }
+    }
+  }
+]

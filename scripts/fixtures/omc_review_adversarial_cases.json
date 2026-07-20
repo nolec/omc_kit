@@ -1,0 +1,89 @@
+[
+  {
+    "case_id": "adversarial-false-positive-1",
+    "diff_id": "adversarial-fp-1",
+    "source_type": "synthetic",
+    "diff": "--- a/src/format.py\n+++ b/src/format.py\n@@\n- return value\n+ return value.strip()",
+    "expected_findings": [
+      {"id": "preserve-null", "severity": "중대", "file": "src/format.py", "line": "1"}
+    ],
+    "providers": {
+      "codex": {
+        "status": "completed",
+        "findings": [
+          {"id": "unrelated-style", "severity": "제안", "file": "src/format.py", "line": "1"}
+        ]
+      },
+      "omc-review": {
+        "status": "completed",
+        "findings": [
+          {"id": "preserve-null", "severity": "중대", "file": "src/format.py", "line": "1"}
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "adversarial-false-negative-1",
+    "diff_id": "adversarial-fn-1",
+    "source_type": "synthetic",
+    "diff": "--- a/src/permissions.py\n+++ b/src/permissions.py\n@@\n- return user.id == owner_id\n+ return True",
+    "expected_findings": [
+      {"id": "owner-check", "severity": "치명", "file": "src/permissions.py", "line": "1"}
+    ],
+    "providers": {
+      "codex": {"status": "completed", "findings": []},
+      "omc-review": {
+        "status": "completed",
+        "findings": [
+          {"id": "owner-check", "severity": "치명", "file": "src/permissions.py", "line": "1"}
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "adversarial-evidence-drift-1",
+    "diff_id": "adversarial-evidence-1",
+    "source_type": "synthetic",
+    "diff": "--- a/src/client.py\n+++ b/src/client.py\n@@\n- return response['name']\n+ return response['display_name']",
+    "expected_findings": [
+      {"id": "api-contract", "severity": "중대", "file": "src/client.py", "line": "1"}
+    ],
+    "providers": {
+      "codex": {
+        "status": "completed",
+        "findings": [
+          {"id": "api-contract", "severity": "중대", "file": "src/client.py", "line": "2"}
+        ]
+      },
+      "omc-review": {
+        "status": "completed",
+        "findings": [
+          {"id": "api-contract", "severity": "중대", "file": "src/client.py", "line": "1"}
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "adversarial-mixed-miss-1",
+    "diff_id": "adversarial-mixed-1",
+    "source_type": "synthetic",
+    "diff": "--- a/src/retry.py\n+++ b/src/retry.py\n@@\n- retries += 1\n+ request()",
+    "expected_findings": [
+      {"id": "bounded-retry", "severity": "중대", "file": "src/retry.py", "line": "1"}
+    ],
+    "providers": {
+      "codex": {
+        "status": "completed",
+        "findings": [
+          {"id": "unbounded-retry", "severity": "중대", "file": "src/retry.py", "line": "1"}
+        ]
+      },
+      "omc-review": {
+        "status": "completed",
+        "findings": [
+          {"id": "bounded-retry", "severity": "중대", "file": "src/retry.py", "line": "1"}
+        ]
+      }
+    }
+  }
+]
