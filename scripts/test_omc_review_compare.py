@@ -32,11 +32,14 @@ from omc_review_compare import (
     normalize_replacement_case,
     build_replacement_gate,
 )
+from generate_omc_review_synthetic_report import render_report
 
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_compare_cases.json"
 ADVERSARIAL_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_adversarial_cases.json"
 SYNTHETIC_RUNTIME_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_synthetic_runtime_cases.json"
+SYNTHETIC_OUTPUTS_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_synthetic_runtime_outputs.json"
+SYNTHETIC_REPORT_PATH = Path(__file__).resolve().parents[1] / "docs" / "omc_review_synthetic_comparison.md"
 COMPARISON_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_comparison_samples.json"
 
 
@@ -135,6 +138,44 @@ def test_synthetic_runtime_fixture_contains_four_completed_provider_pairs():
     verdict = build_verdict(cases, min_cases=1)
     assert verdict["verdict"] == "insufficient_evidence"
     assert verdict["reason"] == "observed_output cases required"
+
+
+def test_synthetic_runtime_outputs_keep_provider_provenance_and_report_metrics():
+    payload = json.loads(SYNTHETIC_OUTPUTS_PATH.read_text(encoding="utf-8"))
+
+    assert payload["source_type"] == "synthetic"
+    assert payload["comparison_scope"] == "same_diff"
+    assert len(payload["cases"]) == 8
+    assert len({case["case_id"] for case in payload["cases"]}) == 4
+    assert {case["provider"] for case in payload["cases"]} == {"codex", "omc-review"}
+    assert {case["provenance"] for case in payload["cases"]} == {"cli_completed", "manual_rule_application"}
+    assert all(case["raw_output"].strip() for case in payload["cases"])
+    assert all(case.get("raw_output_complete") is True for case in payload["cases"])
+    assert all(case.get("recorded_by") for case in payload["cases"] if case["provider"] == "omc-review")
+    assert all(case.get("review_basis") == "omc-review-checklist" for case in payload["cases"] if case["provider"] == "omc-review")
+
+    cases = load_cases(SYNTHETIC_RUNTIME_FIXTURE_PATH)
+    report = build_report(cases)
+    assert report["providers"]["codex"]["hit_count"] == 4
+    assert report["providers"]["omc-review"]["hit_count"] == 4
+
+
+def test_synthetic_comparison_report_declares_and_matches_fixture_metrics():
+    report_text = SYNTHETIC_REPORT_PATH.read_text(encoding="utf-8")
+    assert "Metrics source: `omc_review_synthetic_runtime_cases.json`" in report_text
+    assert "| Codex | 4 | 4 | 0 | 0 | 4 |" in report_text
+    assert "| OMC review | 4 | 4 | 0 | 0 | 4 |" in report_text
+
+
+def test_synthetic_report_renderer_derives_rows_from_fixture():
+    cases = load_cases(SYNTHETIC_RUNTIME_FIXTURE_PATH)
+    rendered = render_report(cases)
+
+    assert "| Codex | 4 | 4 | 0 | 0 | 4 |" in rendered
+    assert "| OMC review | 4 | 4 | 0 | 0 | 4 |" in rendered
+    assert "Metrics source: `omc_review_synthetic_runtime_cases.json`" in rendered
+    assert "all four controlled cases" not in rendered
+    assert "all 4 controlled cases" in rendered
 
 
 def test_normalize_replacement_case_supports_gold_absence_for_false_positive_scoring():

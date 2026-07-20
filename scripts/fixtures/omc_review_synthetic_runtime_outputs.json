@@ -1,0 +1,94 @@
+{
+  "source_type": "synthetic",
+  "comparison_scope": "same_diff",
+  "cases": [
+    {
+      "case_id": "synthetic-permission-bypass",
+      "diff_id": "synthetic-permission-bypass-v1",
+      "provider": "codex",
+      "provenance": "cli_completed",
+      "raw_output_complete": true,
+      "redaction_applied": true,
+      "recorded_by": "codex-session",
+      "review_basis": null,
+      "raw_output": "The change removes the ownership authorization check and grants edit access universally, creating a critical permission bypass.\n\nReview comment:\n\n- [P1] Preserve ownership checks when granting edit access — src/permissions.py:2-2\n  This makes `can_edit` return `True` for every caller, so any user—including non-owners—can edit protected resources. Restore the comparison to prevent an authorization bypass."
+    },
+    {
+      "case_id": "synthetic-permission-bypass",
+      "diff_id": "synthetic-permission-bypass-v1",
+      "provider": "omc-review",
+      "provenance": "manual_rule_application",
+      "raw_output_complete": true,
+      "redaction_applied": false,
+      "recorded_by": "omc-session",
+      "review_basis": "omc-review-checklist",
+      "raw_output": "[치명] src/permissions.py:2 — 모든 사용자가 편집 권한을 갖게 되어 권한 우회가 발생합니다."
+    },
+    {
+      "case_id": "synthetic-null-normalization",
+      "diff_id": "synthetic-null-normalization-v1",
+      "provider": "codex",
+      "provenance": "cli_completed",
+      "raw_output_complete": true,
+      "redaction_applied": true,
+      "recorded_by": "codex-session",
+      "review_basis": null,
+      "raw_output": "The change introduces an exception for null inputs, creating a regression in a normalization helper that previously accepted and returned such values.\n\nReview comment:\n\n- [P1] Preserve null values during normalization — src/format.py:2-2\n  When `value` is `None`, this call raises `AttributeError` instead of returning the null value as the previous implementation did. Any optional or missing field passed to `normalize` will therefore fail rather than remain null; guard the strip operation for null inputs."
+    },
+    {
+      "case_id": "synthetic-null-normalization",
+      "diff_id": "synthetic-null-normalization-v1",
+      "provider": "omc-review",
+      "provenance": "manual_rule_application",
+      "raw_output_complete": true,
+      "redaction_applied": false,
+      "recorded_by": "omc-session",
+      "review_basis": "omc-review-checklist",
+      "raw_output": "[중대] src/format.py:2 — None 입력에서 AttributeError가 발생하므로 null 보존 처리가 필요합니다."
+    },
+    {
+      "case_id": "synthetic-retry-result-loss",
+      "diff_id": "synthetic-retry-result-loss-v1",
+      "provider": "codex",
+      "provenance": "cli_completed",
+      "raw_output_complete": true,
+      "redaction_applied": true,
+      "recorded_by": "codex-session",
+      "review_basis": null,
+      "raw_output": "The change makes the retry helper discard successful responses and always return `None`, while also issuing unnecessary repeated requests.\n\nReview comment:\n\n- [P1] Return the successful request result — src/retry.py:3-3\n  This discards every response and causes `request_with_retry` to always return `None`; callers that depend on the request result will break. It also invokes the request on every loop iteration even after success, so restore the return or only retry on failure."
+    },
+    {
+      "case_id": "synthetic-retry-result-loss",
+      "diff_id": "synthetic-retry-result-loss-v1",
+      "provider": "omc-review",
+      "provenance": "manual_rule_application",
+      "raw_output_complete": true,
+      "redaction_applied": false,
+      "recorded_by": "omc-session",
+      "review_basis": "omc-review-checklist",
+      "raw_output": "[중대] src/retry.py:3 — 성공 응답을 버리고 모든 retry를 실행한 뒤 None을 반환합니다."
+    },
+    {
+      "case_id": "synthetic-api-field-drift",
+      "diff_id": "synthetic-api-field-drift-v1",
+      "provider": "codex",
+      "provenance": "cli_completed",
+      "raw_output_complete": true,
+      "redaction_applied": true,
+      "recorded_by": "codex-session",
+      "review_basis": null,
+      "raw_output": "The patch changes the expected response field without any corresponding API or caller updates, causing existing responses to fail with `KeyError`.\n\nReview comment:\n\n- [P1] Preserve the API response field name — src/client.py:2-2\n  When `display_name` receives the existing API response shape containing `name`, this change raises `KeyError` because `display_name` is not present. Keep reading `name` unless the API contract and all callers are updated together."
+    },
+    {
+      "case_id": "synthetic-api-field-drift",
+      "diff_id": "synthetic-api-field-drift-v1",
+      "provider": "omc-review",
+      "provenance": "manual_rule_application",
+      "raw_output_complete": true,
+      "redaction_applied": false,
+      "recorded_by": "omc-session",
+      "review_basis": "omc-review-checklist",
+      "raw_output": "[중대] src/client.py:2 — 기존 응답의 name 필드가 없어져 KeyError가 발생합니다."
+    }
+  ]
+}
