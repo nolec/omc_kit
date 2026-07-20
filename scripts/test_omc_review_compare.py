@@ -19,6 +19,7 @@ from omc_review_compare import (
     normalize_case,
     normalize_comparison_sample,
     build_comparison_sample_from_envelopes,
+    build_comparison_sample_id,
     build_comparison_report,
     build_consistency_verdict,
     build_pilot_report,
@@ -835,7 +836,6 @@ def test_raw_review_envelopes_build_comparison_sample_with_execution_metadata():
     omc_review["execution_metadata"] = metadata
 
     normalized = build_comparison_sample_from_envelopes(
-        sample_id=base["sample_id"],
         source_kind=base["source_kind"],
         evidence_ref=base["evidence_ref"],
         selection_reason=base["selection_reason"],
@@ -861,7 +861,6 @@ def test_raw_review_envelopes_require_matching_identity_and_metadata():
     omc_review["case_id"] = "other-case"
     with pytest.raises(ValueError, match="input identity mismatch"):
         build_comparison_sample_from_envelopes(
-            sample_id=base["sample_id"],
             source_kind=base["source_kind"],
             evidence_ref=base["evidence_ref"],
             selection_reason=base["selection_reason"],
@@ -875,7 +874,6 @@ def test_raw_review_envelopes_require_matching_identity_and_metadata():
     del omc_review["execution_metadata"]
     with pytest.raises(ValueError, match="execution_metadata"):
         build_comparison_sample_from_envelopes(
-            sample_id=base["sample_id"],
             source_kind=base["source_kind"],
             evidence_ref=base["evidence_ref"],
             selection_reason=base["selection_reason"],
@@ -885,6 +883,48 @@ def test_raw_review_envelopes_require_matching_identity_and_metadata():
             omc_review=omc_review,
         )
 
+
+def test_comparison_sample_id_is_deterministic_and_order_independent():
+    first = build_comparison_sample_id(
+        "null-guard-1", "probe-null-guard", ["codex-v1", "omc-v1"], "2026-07-20T12:00:00+09:00"
+    )
+    second = build_comparison_sample_id(
+        "null-guard-1", "probe-null-guard", ["omc-v1", "codex-v1"], "2026-07-20T12:00:00+09:00"
+    )
+
+    assert first == second
+
+
+def test_comparison_sample_rejects_non_deterministic_sample_id_override():
+    base = _comparison_sample()
+    codex = {"provider": "codex", **base["results"]["codex"]}
+    omc_review = {"provider": "omc-review", **base["results"]["omc-review"]}
+    metadata = {"snapshot_used": True, "workspace_mutated": False}
+    codex["execution_metadata"] = metadata
+    omc_review["execution_metadata"] = metadata
+
+    with pytest.raises(ValueError, match="sample_id must match deterministic"):
+        build_comparison_sample_from_envelopes(
+            sample_id="manual-id",
+            source_kind=base["source_kind"],
+            evidence_ref=base["evidence_ref"],
+            selection_reason=base["selection_reason"],
+            recorded_at=base["recorded_at"],
+            diff=base["diff"],
+            codex=codex,
+            omc_review=omc_review,
+        )
+
+
+def test_comparison_sample_accepts_explicit_not_run_mode():
+    sample = _comparison_sample()
+    for result in sample["results"].values():
+        result["status"] = "not_run"
+        result["execution_mode"] = "not_run"
+
+    normalized = normalize_comparison_sample(sample)
+
+    assert normalized["results"]["codex"]["execution_mode"] == "not_run"
 
 def test_comparison_report_counts_evidence_match_not_id_only():
     sample = _comparison_sample()

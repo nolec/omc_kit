@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import math
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -12,10 +13,10 @@ from typing import Any
 PROVIDER_STATUSES = {"completed", "not_run", "failed"}
 SOURCE_TYPES = {"synthetic", "observed_output", "current_contract_sample"}
 COMPARISON_SOURCE_TYPE = "comparison_sample"
-COMPARISON_EXECUTION_MODES = {"cli_completed", "cli_failed", "manual_rule_application"}
+COMPARISON_EXECUTION_MODES = {"cli_completed", "cli_failed", "manual_rule_application", "not_run"}
 COMPARISON_PROVIDER_MODES = {
-    "codex": {"cli_completed", "cli_failed"},
-    "omc-review": {"manual_rule_application", "cli_completed", "cli_failed"},
+    "codex": {"cli_completed", "cli_failed", "not_run"},
+    "omc-review": {"manual_rule_application", "cli_completed", "cli_failed", "not_run"},
 }
 SEVERITY_MAP = {
     "P0": "치명",
@@ -207,9 +208,15 @@ def _normalize_execution_metadata(value: Any, provider: str, *, required: bool =
     return normalized
 
 
+def build_comparison_sample_id(case_id: str, diff_id: str, prompt_ids: list[str], recorded_at: str) -> str:
+    """Return a stable anonymized id for the same comparison inputs."""
+    payload = "\0".join([case_id, diff_id, *sorted(prompt_ids), recorded_at])
+    return f"comparison-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}"
+
+
 def build_comparison_sample_from_envelopes(
     *,
-    sample_id: str,
+    sample_id: str | None = None,
     source_kind: str,
     evidence_ref: str,
     selection_reason: str,
@@ -233,8 +240,16 @@ def build_comparison_sample_from_envelopes(
             raise ValueError(f"review execution envelope provider mismatch: {provider}")
         _normalize_execution_metadata(envelope.get("execution_metadata"), provider, required=True)
 
+    prompt_ids = [str(envelope.get("prompt_id") or "").strip() for envelope in envelopes.values()]
+    if any(not prompt_id for prompt_id in prompt_ids):
+        raise ValueError("comparison prompt_id requires value")
+    deterministic_sample_id = build_comparison_sample_id(
+        next(iter(case_ids)), next(iter(diff_ids)), prompt_ids, recorded_at
+    )
+    if sample_id is not None and sample_id != deterministic_sample_id:
+        raise ValueError("sample_id must match deterministic value")
     sample = {
-        "sample_id": sample_id,
+        "sample_id": deterministic_sample_id,
         "case_id": next(iter(case_ids)),
         "diff_id": next(iter(diff_ids)),
         "source_type": COMPARISON_SOURCE_TYPE,
@@ -302,6 +317,8 @@ def normalize_comparison_sample(sample: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"unsupported comparison status: {status}")
         if (status == "completed" and execution_mode == "cli_failed") or (
             status == "failed" and execution_mode != "cli_failed"
+        ) or (status == "not_run" and execution_mode != "not_run") or (
+            status != "not_run" and execution_mode == "not_run"
         ):
             raise ValueError(f"status and execution_mode mismatch: {provider}")
         result_case_id = str(result.get("case_id") or "").strip()
@@ -349,6 +366,9 @@ def normalize_comparison_sample(sample: dict[str, Any]) -> dict[str, Any]:
             output_value = str(result.get(output_field) or "").strip()
             if output_value:
                 normalized_results[provider][output_field] = output_value
+        error_type = str(result.get("error_type") or "").strip()
+        if error_type:
+            normalized_results[provider]["error_type"] = error_type
     return {
         "sample_id": sample_id,
         "case_id": case_id,

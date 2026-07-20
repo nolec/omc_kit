@@ -137,6 +137,34 @@ python3 scripts/omc_autopilot.py status
 
 태스크 파일의 핵심 필드는 `steps`, `depends_on`, `timeout_sec`, `expect.files`, `expect.checks`, `max_retries`입니다. 실패 시 검증 출력이 다음 retry 문맥에 전달됩니다.
 
+### Review 비교 결과 수집
+
+Codex와 `omc-review` 실행 결과를 비교 샘플로 기록할 때는 `run_review_in_snapshot()`에
+`envelope_context`를 명시적으로 전달합니다. context에는 `provider`, `case_id`, `diff_id`,
+`prompt_id`, `status`, `execution_mode`가 필요하며, snapshot 사용 여부와 workspace mutation은
+실행 metadata로 자동 기록됩니다. 이 경로는 결과 identity를 추론하지 않고, 실패 시에도
+`status=failed` evidence를 보존합니다.
+
+`envelope_context`를 생략한 legacy 호출은 `{result, execution_metadata}`를 반환하므로 기존
+호출과의 하위 호환에는 사용할 수 있지만, 신규 comparison 수집에는 사용하지 않습니다.
+
+```python
+from omc_review_orchestration import run_review_in_snapshot
+
+envelope = run_review_in_snapshot(
+    ".",
+    review_callback,
+    envelope_context={
+        "provider": "codex",
+        "case_id": "case-1",
+        "diff_id": "diff-1",
+        "prompt_id": "review-v1",
+        "status": "completed",
+        "execution_mode": "cli_completed",
+    },
+)
+```
+
 ## LLM별 진입점
 
 | 실행기 | 기본 진입점 | 설정 위치 |

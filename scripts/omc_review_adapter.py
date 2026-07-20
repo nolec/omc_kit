@@ -15,6 +15,10 @@ IGNORED_DIR_NAMES = frozenset(
     {".git", ".omc", "node_modules", ".venv", "dist", "build", "coverage", "__pycache__", ".next"}
 )
 DEFAULT_MAX_BYTES = 100 * 1024 * 1024
+ENVELOPE_PROVIDERS = {"codex", "omc-review"}
+ENVELOPE_STATUSES = {"completed", "failed", "not_run"}
+ENVELOPE_EXECUTION_MODES = {"cli_completed", "cli_failed", "manual_rule_application", "not_run"}
+ENVELOPE_METADATA_FIELDS = {"snapshot_used", "workspace_mutated"}
 
 
 @dataclass
@@ -23,6 +27,70 @@ class Snapshot:
     initial_hash: str
     final_hash: str | None = None
     mutated: bool = False
+
+
+def build_review_execution_envelope(
+    *,
+    provider: str,
+    case_id: str,
+    diff_id: str,
+    prompt_id: str,
+    status: str,
+    execution_mode: str,
+    result: dict[str, object],
+    execution_metadata: dict[str, object],
+    runner: str = "",
+    model: str | None = None,
+) -> dict[str, object]:
+    """Attach explicit execution context to a review callback result."""
+    if provider not in ENVELOPE_PROVIDERS:
+        raise ValueError("unsupported provider")
+    for value, label in ((case_id, "case_id"), (diff_id, "diff_id"), (prompt_id, "prompt_id")):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{label} requires value")
+    if status not in ENVELOPE_STATUSES:
+        raise ValueError("unsupported status")
+    if execution_mode not in ENVELOPE_EXECUTION_MODES:
+        raise ValueError("unsupported execution_mode")
+    if status == "failed" and execution_mode != "cli_failed":
+        raise ValueError("failed status requires cli_failed execution_mode")
+    if status == "completed" and execution_mode == "cli_failed":
+        raise ValueError("completed status cannot use cli_failed execution_mode")
+    if status == "not_run" and execution_mode != "not_run":
+        raise ValueError("not_run status requires not_run execution_mode")
+    if status != "not_run" and execution_mode == "not_run":
+        raise ValueError("not_run execution_mode requires not_run status")
+    if not isinstance(result, dict):
+        raise ValueError("review result must be an object")
+    if not isinstance(execution_metadata, dict):
+        raise ValueError("execution_metadata must be an object")
+    if set(execution_metadata) != ENVELOPE_METADATA_FIELDS:
+        raise ValueError("execution_metadata requires snapshot_used and workspace_mutated")
+    if any(not isinstance(value, bool) for value in execution_metadata.values()):
+        raise ValueError("execution_metadata values must be boolean")
+    findings = result.get("findings", [])
+    metrics = result.get("metrics", {})
+    if not isinstance(findings, list) or not isinstance(metrics, dict):
+        raise ValueError("review result findings and metrics must be collections")
+    envelope: dict[str, object] = {
+        "provider": provider,
+        "case_id": case_id.strip(),
+        "diff_id": diff_id.strip(),
+        "prompt_id": prompt_id.strip(),
+        "status": status,
+        "execution_mode": execution_mode,
+        "runner": runner,
+        "model": model,
+        "findings": findings,
+        "metrics": metrics,
+        "execution_metadata": dict(execution_metadata),
+    }
+    for field in ("verdict", "next_action"):
+        if result.get(field):
+            envelope[field] = result[field]
+    if result.get("error_type"):
+        envelope["error_type"] = result["error_type"]
+    return envelope
 
 
 def _assert_no_symlinks(root: Path, ignored_dirs: Iterable[str] | None = None) -> None:

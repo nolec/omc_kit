@@ -7,7 +7,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from omc_review_adapter import isolated_snapshot
+from omc_review_adapter import isolated_snapshot, build_review_execution_envelope
 
 
 def test_isolated_snapshot_copies_source_and_cleans_up(tmp_path: Path):
@@ -81,6 +81,42 @@ def test_isolated_snapshot_cleans_up_after_consumer_error(tmp_path: Path):
 
     assert snapshot_path is not None
     assert not snapshot_path.exists()
+
+
+def test_build_review_execution_envelope_requires_explicit_context_and_preserves_metadata():
+    metadata = {"snapshot_used": True, "workspace_mutated": False}
+
+    envelope = build_review_execution_envelope(
+        provider="codex",
+        case_id="null-guard-1",
+        diff_id="probe-null-guard",
+        prompt_id="review-v1",
+        status="completed",
+        execution_mode="cli_completed",
+        runner="codex review",
+        model="gpt-5.6-luna",
+        result={"findings": [{"id": "null-guard"}], "metrics": {}},
+        execution_metadata=metadata,
+    )
+
+    assert envelope["provider"] == "codex"
+    assert envelope["case_id"] == "null-guard-1"
+    assert envelope["execution_metadata"] == metadata
+    assert envelope["findings"] == [{"id": "null-guard"}]
+
+
+def test_build_review_execution_envelope_does_not_infer_missing_identity():
+    with pytest.raises(ValueError, match="case_id"):
+        build_review_execution_envelope(
+            provider="codex",
+            case_id="",
+            diff_id="probe-null-guard",
+            prompt_id="review-v1",
+            status="completed",
+            execution_mode="cli_completed",
+            result={"findings": [], "metrics": {}},
+            execution_metadata={"snapshot_used": True, "workspace_mutated": False},
+        )
 
 
 def test_isolated_snapshot_rejects_missing_source(tmp_path: Path):
