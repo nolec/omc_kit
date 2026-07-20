@@ -5,6 +5,7 @@ import json
 import re
 import math
 import hashlib
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,43 @@ SENSITIVE_VALUE_PATTERNS = (
     re.compile(r"\bBearer\s+\S+", re.IGNORECASE),
     re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b"),
 )
+
+
+def resolve_observed_candidate_path(
+    manifest: dict[str, Any],
+    candidate: dict[str, Any],
+    input_root: str | Path | None = None,
+) -> Path:
+    """Resolve a candidate diff under an explicit or environment-provided root."""
+    root_value = input_root or os.environ.get("OMC_REVIEW_OBSERVED_INPUT_ROOT") or manifest.get("input_root")
+    if not root_value:
+        raise ValueError("observed candidate manifest requires input_root")
+    diff_path = Path(str(candidate.get("diff_path") or ""))
+    if not diff_path.name or diff_path.is_absolute() or ".." in diff_path.parts:
+        raise ValueError("observed candidate diff_path must be a relative safe path")
+    relative_parts = diff_path.parts
+    if len(relative_parts) > 1:
+        relative_parts = relative_parts[1:]
+    return Path(root_value).joinpath(*relative_parts)
+
+
+def verify_observed_candidate_hashes(
+    manifest: dict[str, Any],
+    input_root: str | Path | None = None,
+) -> list[str]:
+    """Return case ids whose observed diff is missing or differs from its manifest hash."""
+    failures: list[str] = []
+    for candidate in manifest.get("candidates", []):
+        case_id = str(candidate.get("case_id") or "<unknown>")
+        path = resolve_observed_candidate_path(manifest, candidate, input_root)
+        expected = str(candidate.get("diff_sha256") or "")
+        if not path.is_file() or not expected:
+            failures.append(case_id)
+            continue
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual != expected:
+            failures.append(case_id)
+    return failures
 
 
 def _validate_anonymized_value(value: str, label: str) -> None:

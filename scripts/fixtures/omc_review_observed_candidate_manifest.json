@@ -1,0 +1,74 @@
+{
+  "source_type": "observed_output",
+  "status": "ready_for_provider_runs",
+  "input_root": "/private/tmp/omc-review-observed-candidates",
+  "anonymization_policy": "secrets and path scan passed on 2026-07-20",
+  "candidates": [
+    {
+      "case_id": "observed-health-repository-aware",
+      "source_commit": "40b598cc28cbebd4bfe395ecd283576531de1d83",
+      "source_title": "fix: align health checks with omc repository",
+      "diff_path": "omc-review-observed-candidates/health-repository-aware.diff",
+      "diff_sha256": "cf082860b5f406d8339726aa2bc7dd8b1c367d6e9c9302505fc1805597caf748",
+      "anonymized": true,
+      "anonymization_status": "passed",
+      "gold_status": "pending",
+      "provider_status": {"codex": "not_run", "omc-review": "not_run"}
+    },
+    {
+      "case_id": "observed-health-repository-context",
+      "source_commit": "3d23c959b05532a9fb25eeca89b90ab3b41e1323",
+      "source_title": "fix: make health checks repository aware",
+      "diff_path": "omc-review-observed-candidates/health-repository-context.diff",
+      "diff_sha256": "2b23a982f5fecc39dc2991693c9064b1602a07d091e43d868775b51e92a2e55c",
+      "anonymized": true,
+      "anonymization_status": "passed",
+      "gold_status": "pending",
+      "provider_status": {"codex": "not_run", "omc-review": "not_run"}
+    },
+    {
+      "case_id": "observed-policy-handoff",
+      "source_commit": "73b777a60217248d7156109d9f3b8ec1861e9a81",
+      "source_title": "feat: harden policy comparison handoff",
+      "diff_path": "omc-review-observed-candidates/policy-handoff.diff",
+      "diff_sha256": "a7ab683100f29e040ffdc71e6e777935fd197b0044cbd4f7e46beff2eaa667ad",
+      "anonymized": true,
+      "anonymization_status": "passed",
+      "gold_status": "pending",
+      "provider_status": {"codex": "not_run", "omc-review": "not_run"}
+    },
+    {
+      "case_id": "observed-delegation-contract",
+      "source_commit": "d9efd7c654c2671776a03b1bc406be7822a2efd6",
+      "source_title": "fix: harden delegation recommendation contracts",
+      "diff_path": "omc-review-observed-candidates/delegation-contract.diff",
+      "diff_sha256": "62966fe10c6309f2c4dcf21264bb71d90518ffb266b492710621650667325ff0",
+      "anonymized": true,
+      "anonymization_status": "passed",
+      "gold_status": "pending",
+      "provider_status": {"codex": "not_run", "omc-review": "not_run"}
+    },
+    {
+      "case_id": "observed-failed-capability",
+      "source_commit": "7fa430e8950d577bccd64bb0fce9501f29e6ebd4",
+      "source_title": "fix: preserve failed capability observations",
+      "diff_path": "omc-review-observed-candidates/failed-capability.diff",
+      "diff_sha256": "c09af1c12d2f0f514e47a5ba010f93566c3ed2ab30e3081520cbe16e9ecae42e",
+      "anonymized": true,
+      "anonymization_status": "passed",
+      "gold_status": "pending",
+      "provider_status": {"codex": "not_run", "omc-review": "not_run"}
+    },
+    {
+      "case_id": "observed-executor-shadow",
+      "source_commit": "b6118204d3450669d55c970d828bfbf70bf7a138",
+      "source_title": "feat: harden executor shadow validation",
+      "diff_path": "omc-review-observed-candidates/executor-shadow.diff",
+      "diff_sha256": "f63e9a7f13a0c2abb7f3b65051183a2d7ed2d84ae0885d0bfa275a403228dacf",
+      "anonymized": true,
+      "anonymization_status": "passed",
+      "gold_status": "pending",
+      "provider_status": {"codex": "not_run", "omc-review": "not_run"}
+    }
+  ]
+}

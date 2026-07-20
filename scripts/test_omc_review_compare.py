@@ -31,6 +31,8 @@ from omc_review_compare import (
     promote_fixture_candidate,
     normalize_replacement_case,
     build_replacement_gate,
+    resolve_observed_candidate_path,
+    verify_observed_candidate_hashes,
 )
 from generate_omc_review_synthetic_report import render_report
 
@@ -40,6 +42,7 @@ ADVERSARIAL_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_r
 SYNTHETIC_RUNTIME_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_synthetic_runtime_cases.json"
 SYNTHETIC_OUTPUTS_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_synthetic_runtime_outputs.json"
 SYNTHETIC_REPORT_PATH = Path(__file__).resolve().parents[1] / "docs" / "omc_review_synthetic_comparison.md"
+OBSERVED_CANDIDATE_MANIFEST_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_observed_candidate_manifest.json"
 COMPARISON_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_comparison_samples.json"
 
 
@@ -176,6 +179,68 @@ def test_synthetic_report_renderer_derives_rows_from_fixture():
     assert "Metrics source: `omc_review_synthetic_runtime_cases.json`" in rendered
     assert "all four controlled cases" not in rendered
     assert "all 4 controlled cases" in rendered
+
+
+def test_observed_candidate_manifest_contains_six_anonymized_pending_inputs():
+    payload = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+
+    assert payload["source_type"] == "observed_output"
+    assert payload["status"] == "ready_for_provider_runs"
+    assert payload["input_root"] == "/private/tmp/omc-review-observed-candidates"
+    assert len(payload["candidates"]) == 6
+    assert len({candidate["case_id"] for candidate in payload["candidates"]}) == 6
+    assert all(candidate["anonymized"] is True for candidate in payload["candidates"])
+    assert all(candidate["anonymization_status"] == "passed" for candidate in payload["candidates"])
+    assert all(candidate["gold_status"] == "pending" for candidate in payload["candidates"])
+    assert all(candidate["provider_status"] == {"codex": "not_run", "omc-review": "not_run"} for candidate in payload["candidates"])
+
+
+def test_observed_candidate_paths_resolve_from_configured_runtime_root():
+    payload = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    candidate = payload["candidates"][0]
+
+    resolved = resolve_observed_candidate_path(payload, candidate, "/private/tmp/omc-review-observed-candidates")
+
+    assert resolved.name == "health-repository-aware.diff"
+    assert resolved.parent == Path("/private/tmp/omc-review-observed-candidates")
+
+
+def test_observed_candidate_paths_preserve_nested_relative_structure():
+    payload = {"input_root": "/private/tmp/omc-review-observed-candidates"}
+    candidate = {"diff_path": "omc-review-observed-candidates/nested/health.diff"}
+
+    resolved = resolve_observed_candidate_path(payload, candidate)
+
+    assert resolved == Path("/private/tmp/omc-review-observed-candidates/nested/health.diff")
+
+
+def test_observed_candidate_path_prefers_environment_root(monkeypatch):
+    payload = {"input_root": "/wrong/root"}
+    candidate = {"diff_path": "omc-review-observed-candidates/health.diff"}
+    monkeypatch.setenv("OMC_REVIEW_OBSERVED_INPUT_ROOT", "/private/tmp/override-root")
+
+    resolved = resolve_observed_candidate_path(payload, candidate)
+
+    assert resolved.parent == Path("/private/tmp/override-root")
+
+
+def test_observed_candidate_hashes_match_recorded_manifest():
+    payload = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+
+    assert verify_observed_candidate_hashes(
+        payload,
+        "/private/tmp/omc-review-observed-candidates",
+    ) == []
+
+
+def test_observed_candidate_hash_verification_reports_manifest_mismatch():
+    payload = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    payload["candidates"][0]["diff_sha256"] = "0" * 64
+
+    assert verify_observed_candidate_hashes(
+        payload,
+        "/private/tmp/omc-review-observed-candidates",
+    ) == ["observed-health-repository-aware"]
 
 
 def test_normalize_replacement_case_supports_gold_absence_for_false_positive_scoring():
