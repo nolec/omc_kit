@@ -1,0 +1,46 @@
+{
+  "status": "pending_adjudication",
+  "source_type": "observed_output",
+  "decision_policy": {
+    "primary_severity": ["P0", "P1"],
+    "secondary_severity": ["P2", "P3"],
+    "evidence_fields": ["file", "line", "reason"]
+  },
+  "cases": [
+    {
+      "case_id": "observed-health-repository-aware",
+      "source_commit": "40b598cc28cbebd4bfe395ecd283576531de1d83",
+      "diff_sha256": "cf082860b5f406d8339726aa2bc7dd8b1c367d6e9c9302505fc1805597caf748",
+      "adjudication_status": "pending",
+      "gold_findings": []
+    },
+    {
+      "case_id": "observed-health-repository-context",
+      "source_commit": "3d23c959b05532a9fb25eeca89b90ab3b41e1323",
+      "diff_sha256": "2b23a982f5fecc39dc2991693c9064b1602a07d091e43d868775b51e92a2e55c",
+      "adjudication_status": "pending",
+      "gold_findings": []
+    },
+    {
+      "case_id": "observed-policy-handoff",
+      "source_commit": "73b777a60217248d7156109d9f3b8ec1861e9a81",
+      "diff_sha256": "a7ab683100f29e040ffdc71e6e777935fd197b0044cbd4f7e46beff2eaa667ad",
+      "adjudication_status": "pending",
+      "gold_findings": []
+    },
+    {
+      "case_id": "observed-delegation-contract",
+      "source_commit": "d9efd7c654c2671776a03b1bc406be7822a2efd6",
+      "diff_sha256": "62966fe10c6309f2c4dcf21264bb71d90518ffb266b492710621650667325ff0",
+      "adjudication_status": "pending",
+      "gold_findings": []
+    },
+    {
+      "case_id": "observed-market-reasoning-shadow",
+      "source_commit": "0c57d4564d67db70086b0f4b67187bad72a4712e",
+      "diff_sha256": "bc41b0cfd8f42f7422adc670dd699cb76f2426c859db57350d16a391d500644e",
+      "adjudication_status": "pending",
+      "gold_findings": []
+    }
+  ]
+}

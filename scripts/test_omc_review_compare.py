@@ -33,6 +33,7 @@ from omc_review_compare import (
     build_replacement_gate,
     resolve_observed_candidate_path,
     verify_observed_candidate_hashes,
+    validate_gold_label_manifest_alignment,
 )
 from generate_omc_review_synthetic_report import render_report
 
@@ -44,6 +45,8 @@ SYNTHETIC_OUTPUTS_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_rev
 SYNTHETIC_REPORT_PATH = Path(__file__).resolve().parents[1] / "docs" / "omc_review_synthetic_comparison.md"
 OBSERVED_CANDIDATE_MANIFEST_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_observed_candidate_manifest.json"
 COMPARISON_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_comparison_samples.json"
+GOLD_LABEL_WORKSHEET_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_observed_gold_labels.json"
+OBSERVED_PROVIDER_RESULTS_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_observed_provider_results.json"
 
 
 def _replacement_case() -> dict[str, object]:
@@ -88,6 +91,91 @@ def _replacement_case() -> dict[str, object]:
             "output_tokens": 80,
         },
     }
+
+
+def test_observed_gold_label_worksheet_keeps_five_cases_pending_without_inventing_findings():
+    payload = json.loads(GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+
+    assert payload["status"] == "pending_adjudication"
+    assert len(payload["cases"]) == 5
+    assert {case["case_id"] for case in payload["cases"]} == {
+        "observed-health-repository-aware",
+        "observed-health-repository-context",
+        "observed-policy-handoff",
+        "observed-delegation-contract",
+        "observed-market-reasoning-shadow",
+    }
+    for case in payload["cases"]:
+        assert case["gold_findings"] == []
+        assert case["adjudication_status"] == "pending"
+        assert case["diff_sha256"]
+
+
+def test_observed_gold_label_worksheet_matches_observed_candidate_manifest():
+    worksheet = json.loads(GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+
+    assert validate_gold_label_manifest_alignment(worksheet, manifest) == []
+
+
+def test_observed_gold_label_manifest_alignment_reports_hash_mismatch():
+    worksheet = json.loads(GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    worksheet["cases"][0]["diff_sha256"] = "0" * 64
+
+    assert validate_gold_label_manifest_alignment(worksheet, manifest) == [
+        "observed-health-repository-aware"
+    ]
+
+
+def test_observed_gold_label_manifest_alignment_reports_source_commit_mismatch():
+    worksheet = json.loads(GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    worksheet["cases"][0]["source_commit"] = "0" * 40
+
+    assert validate_gold_label_manifest_alignment(worksheet, manifest) == [
+        "observed-health-repository-aware"
+    ]
+
+
+def test_observed_gold_label_manifest_alignment_reports_duplicate_manifest_case_id():
+    worksheet = json.loads(GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    manifest["candidates"].append(dict(manifest["candidates"][0]))
+
+    assert validate_gold_label_manifest_alignment(worksheet, manifest) == [
+        "duplicate-manifest-case-id:observed-health-repository-aware"
+    ]
+
+
+def test_observed_gold_label_manifest_alignment_reports_malformed_manifest_candidates():
+    worksheet = json.loads(GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    manifest["candidates"] = None
+
+    assert validate_gold_label_manifest_alignment(worksheet, manifest) == [
+        "invalid_manifest_candidates"
+    ]
+
+
+def test_observed_gold_label_manifest_alignment_reports_malformed_manifest_candidate():
+    worksheet = json.loads(GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    manifest["candidates"].append("not-a-candidate-object")
+
+    assert validate_gold_label_manifest_alignment(worksheet, manifest) == [
+        "invalid_manifest_candidate:7"
+    ]
+
+
+def test_observed_gold_label_manifest_alignment_reports_malformed_worksheet_cases():
+    worksheet = json.loads(GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    worksheet["cases"] = None
+
+    assert validate_gold_label_manifest_alignment(worksheet, manifest) == [
+        "invalid_gold_cases"
+    ]
 
 
 def test_normalize_replacement_case_requires_adjudicated_gold_and_manifest():
@@ -181,18 +269,32 @@ def test_synthetic_report_renderer_derives_rows_from_fixture():
     assert "all 4 controlled cases" in rendered
 
 
-def test_observed_candidate_manifest_contains_six_anonymized_pending_inputs():
+def test_observed_candidate_manifest_contains_seven_anonymized_pending_inputs():
     payload = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
 
     assert payload["source_type"] == "observed_output"
     assert payload["status"] == "ready_for_provider_runs"
     assert payload["input_root"] == "/private/tmp/omc-review-observed-candidates"
-    assert len(payload["candidates"]) == 6
-    assert len({candidate["case_id"] for candidate in payload["candidates"]}) == 6
+    assert len(payload["candidates"]) == 7
+    assert len({candidate["case_id"] for candidate in payload["candidates"]}) == 7
     assert all(candidate["anonymized"] is True for candidate in payload["candidates"])
     assert all(candidate["anonymization_status"] == "passed" for candidate in payload["candidates"])
     assert all(candidate["gold_status"] == "pending" for candidate in payload["candidates"])
     assert all(candidate["provider_status"] == {"codex": "not_run", "omc-review": "not_run"} for candidate in payload["candidates"])
+
+
+def test_observed_market_reasoning_provider_results_are_persisted_without_gold_claim():
+    payload = json.loads(OBSERVED_PROVIDER_RESULTS_PATH.read_text(encoding="utf-8"))
+
+    assert payload["case_id"] == "observed-market-reasoning-shadow"
+    assert payload["gold_status"] == "pending"
+    assert payload["comparison"]["sample_count"] == 1
+    assert payload["comparison"]["codex_only_count"] == 0
+    assert payload["comparison"]["omc_only_count"] == 0
+    assert payload["providers"]["codex"]["status"] == "completed"
+    assert payload["providers"]["omc-review"]["status"] == "completed"
+    assert payload["providers"]["codex"]["findings"] == []
+    assert payload["providers"]["omc-review"]["findings"] == []
 
 
 def test_observed_candidate_paths_resolve_from_configured_runtime_root():

@@ -1,0 +1,46 @@
+{
+  "case_id": "observed-market-reasoning-shadow",
+  "diff_id": "market-reasoning-engine-shadow",
+  "recorded_at": "2026-07-21T17:30:00+09:00",
+  "gold_status": "pending",
+  "providers": {
+    "codex": {
+      "status": "completed",
+      "execution_mode": "cli_completed",
+      "runner": "codex review",
+      "model": "gpt-5.6-luna",
+      "verdict": "APPROVE",
+      "findings": [],
+      "execution_metadata": {
+        "snapshot_used": true,
+        "workspace_mutated": false
+      },
+      "verdict_note": "Inferred from Codex output stating no actionable issues; raw output remains outside the repository."
+    },
+    "omc-review": {
+      "status": "completed",
+      "execution_mode": "manual_rule_application",
+      "runner": "omc-review-manual-contract",
+      "model": null,
+      "verdict": "APPROVE WITH NOTES",
+      "findings": [],
+      "execution_metadata": {
+        "snapshot_used": true,
+        "workspace_mutated": false
+      },
+      "notes_excluded_from_finding_metrics": [
+        "문서의 LIVE/DRY_RUN 상태와 실제 운영 실행을 분리한 점은 적절합니다. 실제 실행 결과가 채워진 뒤 동일한 체크리스트를 다시 검토하세요."
+      ]
+    }
+  },
+  "comparison": {
+    "sample_count": 1,
+    "operational_case_count": 0,
+    "id_match_count": 0,
+    "finding_match_count": 0,
+    "evidence_match_count": 0,
+    "codex_only_count": 0,
+    "omc_only_count": 0,
+    "interpretation": "single_case_consistency_only; not a superiority decision"
+  }
+}

@@ -69,6 +69,17 @@
       "anonymization_status": "passed",
       "gold_status": "pending",
       "provider_status": {"codex": "not_run", "omc-review": "not_run"}
+    },
+    {
+      "case_id": "observed-market-reasoning-shadow",
+      "source_commit": "0c57d4564d67db70086b0f4b67187bad72a4712e",
+      "source_title": "docs: align research workspace and pilot runbook",
+      "diff_path": "omc-review-observed-candidates/market-reasoning-engine-shadow.diff",
+      "diff_sha256": "bc41b0cfd8f42f7422adc670dd699cb76f2426c859db57350d16a391d500644e",
+      "anonymized": true,
+      "anonymization_status": "passed",
+      "gold_status": "pending",
+      "provider_status": {"codex": "not_run", "omc-review": "not_run"}
     }
   ]
 }

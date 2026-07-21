@@ -79,6 +79,48 @@ def verify_observed_candidate_hashes(
     return failures
 
 
+def validate_gold_label_manifest_alignment(
+    worksheet: dict[str, Any], manifest: dict[str, Any]
+) -> list[str]:
+    """Return gold worksheet cases whose observed identity does not match."""
+    if not isinstance(worksheet, dict) or not isinstance(manifest, dict):
+        return ["invalid_manifest_input"]
+    candidates = manifest.get("candidates", [])
+    cases = worksheet.get("cases", [])
+    if not isinstance(candidates, list):
+        return ["invalid_manifest_candidates"]
+    if not isinstance(cases, list):
+        return ["invalid_gold_cases"]
+    manifest_by_case: dict[str, dict[str, Any]] = {}
+    failures: list[str] = []
+    for candidate_index, candidate in enumerate(candidates):
+        if not isinstance(candidate, dict):
+            failures.append(f"invalid_manifest_candidate:{candidate_index}")
+            continue
+        case_id = str(candidate.get("case_id") or "").strip()
+        if case_id in manifest_by_case:
+            failures.append(f"duplicate-manifest-case-id:{case_id or '<missing>'}")
+            continue
+        manifest_by_case[case_id] = candidate
+    for case in cases:
+        if not isinstance(case, dict):
+            failures.append("invalid_gold_case")
+            continue
+        case_id = str(case.get("case_id") or "").strip()
+        candidate = manifest_by_case.get(case_id)
+        if candidate is None:
+            failures.append(case_id or "missing_case_id")
+            continue
+        if str(case.get("diff_sha256") or "").strip() != str(candidate.get("diff_sha256") or "").strip():
+            failures.append(case_id)
+            continue
+        worksheet_commit = str(case.get("source_commit") or "").strip()
+        manifest_commit = str(candidate.get("source_commit") or "").strip()
+        if worksheet_commit and worksheet_commit != manifest_commit:
+            failures.append(case_id)
+    return failures
+
+
 def _validate_anonymized_value(value: str, label: str) -> None:
     normalized = value.replace("\\", "/")
     if normalized.startswith("/") or ":/" in normalized or ".." in normalized.split("/"):
