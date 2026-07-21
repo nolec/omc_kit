@@ -47,6 +47,7 @@ OBSERVED_CANDIDATE_MANIFEST_PATH = Path(__file__).resolve().parent / "fixtures" 
 COMPARISON_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_comparison_samples.json"
 GOLD_LABEL_WORKSHEET_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_observed_gold_labels.json"
 OBSERVED_PROVIDER_RESULTS_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_observed_provider_results.json"
+OBSERVED_PROVIDER_BATCH_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_observed_provider_results_batch.json"
 
 
 def _replacement_case() -> dict[str, object]:
@@ -295,6 +296,65 @@ def test_observed_market_reasoning_provider_results_are_persisted_without_gold_c
     assert payload["providers"]["omc-review"]["status"] == "completed"
     assert payload["providers"]["codex"]["findings"] == []
     assert payload["providers"]["omc-review"]["findings"] == []
+
+
+def test_observed_provider_batch_persists_four_additional_cases_without_gold_claim():
+    payload = json.loads(OBSERVED_PROVIDER_BATCH_PATH.read_text(encoding="utf-8"))
+
+    assert payload["status"] == "completed_provider_runs_pending_adjudication"
+    assert payload["raw_evidence_policy"] == {
+        "retention": "external_ephemeral",
+        "reproducibility": "local_only",
+    }
+    assert len(payload["cases"]) == 4
+    assert {case["case_id"] for case in payload["cases"]} == {
+        "observed-health-repository-aware",
+        "observed-health-repository-context",
+        "observed-policy-handoff",
+        "observed-delegation-contract",
+    }
+    for case in payload["cases"]:
+        assert case["gold_status"] == "pending"
+        assert case["providers"]["codex"]["status"] == "completed"
+        assert case["providers"]["omc-review"]["status"] == "completed"
+        for evidence in case["raw_evidence_refs"].values():
+            assert evidence["path"].startswith("/private/tmp/")
+            assert len(evidence["sha256"]) == 64
+
+
+def test_observed_provider_batch_matches_candidate_manifest_identity():
+    batch = json.loads(OBSERVED_PROVIDER_BATCH_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    worksheet = {
+        "cases": [
+            {
+                "case_id": case["case_id"],
+                "diff_sha256": case["diff_sha256"],
+            }
+            for case in batch["cases"]
+        ]
+    }
+
+    assert validate_gold_label_manifest_alignment(worksheet, manifest) == []
+
+
+def test_observed_provider_batch_rejects_diff_identity_drift():
+    batch = json.loads(OBSERVED_PROVIDER_BATCH_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    worksheet = {
+        "cases": [
+            {
+                "case_id": case["case_id"],
+                "diff_sha256": case["diff_sha256"],
+            }
+            for case in batch["cases"]
+        ]
+    }
+    worksheet["cases"][0]["diff_sha256"] = "0" * 64
+
+    assert validate_gold_label_manifest_alignment(worksheet, manifest) == [
+        "observed-health-repository-aware"
+    ]
 
 
 def test_observed_candidate_paths_resolve_from_configured_runtime_root():

@@ -1,0 +1,167 @@
+{
+  "status": "completed_provider_runs_pending_adjudication",
+  "recorded_at": "2026-07-21T18:45:00+09:00",
+  "source_type": "observed_output",
+  "raw_evidence_policy": {
+    "retention": "external_ephemeral",
+    "reproducibility": "local_only"
+  },
+  "cases": [
+    {
+      "case_id": "observed-health-repository-aware",
+      "diff_sha256": "cf082860b5f406d8339726aa2bc7dd8b1c367d6e9c9302505fc1805597caf748",
+      "gold_status": "pending",
+      "providers": {
+        "codex": {
+          "status": "completed",
+          "execution_mode": "cli_completed",
+          "runner": "codex review",
+          "findings": []
+        },
+        "omc-review": {
+          "status": "completed",
+          "execution_mode": "manual_rule_application",
+          "runner": "omc-review-manual-contract",
+          "findings": []
+        }
+      },
+      "raw_evidence_refs": {
+        "codex": {
+          "path": "/private/tmp/omc-review-pilot/codex/observed-health-repository-aware.txt",
+          "sha256": "53ea6e1318be4813a51206026b593e50a256ce864bcc89ef3a9c5eb453e5b23b"
+        },
+        "omc-review": {
+          "path": "/private/tmp/omc-review-pilot/omc/observed-health-repository-aware.txt",
+          "sha256": "a7e8d6e23af2f867b889e265da7de0731cee0bfd4c2706b002180f6bca34395c"
+        }
+      }
+    },
+    {
+      "case_id": "observed-health-repository-context",
+      "diff_sha256": "2b23a982f5fecc39dc2991693c9064b1602a07d091e43d868775b51e92a2e55c",
+      "gold_status": "pending",
+      "providers": {
+        "codex": {
+          "status": "completed",
+          "execution_mode": "cli_completed",
+          "runner": "codex review",
+          "findings": []
+        },
+        "omc-review": {
+          "status": "completed",
+          "execution_mode": "manual_rule_application",
+          "runner": "omc-review-manual-contract",
+          "findings": [
+            {
+              "id": "false-green-health-check",
+              "severity": "P1",
+              "file": "scripts/omc_health.py",
+              "line": "93-100",
+              "reason": "repository-specific health checks can report success without meaningful validation"
+            }
+          ]
+        }
+      },
+      "raw_evidence_refs": {
+        "codex": {
+          "path": "/private/tmp/omc-review-pilot/codex/observed-health-repository-context.txt",
+          "sha256": "d31ba16a1e84cb5460386ae401420abad3864a8d2b2ae0607bfce5eaf70b458f"
+        },
+        "omc-review": {
+          "path": "/private/tmp/omc-review-pilot/omc/observed-health-repository-context.txt",
+          "sha256": "4c93a4fb16a180990bd885426c9cbd86852e24b13cde8d2c0faf69a618b5c8a9"
+        }
+      }
+    },
+    {
+      "case_id": "observed-policy-handoff",
+      "diff_sha256": "a7ab683100f29e040ffdc71e6e777935fd197b0044cbd4f7e46beff2eaa667ad",
+      "gold_status": "pending",
+      "providers": {
+        "codex": {
+          "status": "completed",
+          "execution_mode": "cli_completed",
+          "runner": "codex review",
+          "findings": [
+            {
+              "id": "boolean-selection-flag",
+              "severity": "P2",
+              "file": "scripts/omc_exec.py",
+              "line": "331",
+              "reason": "boolean user-selection flags can be misread as not required"
+            }
+          ]
+        },
+        "omc-review": {
+          "status": "completed",
+          "execution_mode": "manual_rule_application",
+          "runner": "omc-review-manual-contract",
+          "findings": [
+            {
+              "id": "missing-cost-evidence-policy-hit",
+              "severity": "P1",
+              "file": "scripts/omc_exec.py",
+              "line": "316-317",
+              "reason": "missing cost evidence can be classified as a policy hit"
+            }
+          ]
+        }
+      },
+      "raw_evidence_refs": {
+        "codex": {
+          "path": "/private/tmp/omc-review-pilot/codex/observed-policy-handoff.txt",
+          "sha256": "850478df3acd72fbe617dbeccd6019806a10a423903f454ee4d34ad2bfcc0a33"
+        },
+        "omc-review": {
+          "path": "/private/tmp/omc-review-pilot/omc/observed-policy-handoff.txt",
+          "sha256": "7d8183f66485906083fdd65c8f78ac454db4baebf7d029d6ce2bc454d6b3c68a"
+        }
+      }
+    },
+    {
+      "case_id": "observed-delegation-contract",
+      "diff_sha256": "62966fe10c6309f2c4dcf21264bb71d90518ffb266b492710621650667325ff0",
+      "gold_status": "pending",
+      "providers": {
+        "codex": {
+          "status": "completed",
+          "execution_mode": "cli_completed",
+          "runner": "codex review",
+          "findings": [
+            {
+              "id": "request-branch-bypass",
+              "severity": "P2",
+              "file": "scripts/omc_orchestrator.py",
+              "line": "612-618",
+              "reason": "request-mode records can bypass recommendation metadata validation"
+            }
+          ]
+        },
+        "omc-review": {
+          "status": "completed",
+          "execution_mode": "manual_rule_application",
+          "runner": "omc-review-manual-contract",
+          "findings": [
+            {
+              "id": "retry-budget-accounting",
+              "severity": "P2",
+              "file": "scripts/omc_orchestrator.py",
+              "line": "355-357",
+              "reason": "attempt exhaustion can incorrectly zero an independent retry budget"
+            }
+          ]
+        }
+      },
+      "raw_evidence_refs": {
+        "codex": {
+          "path": "/private/tmp/omc-review-pilot/codex/observed-delegation-contract.txt",
+          "sha256": "5776dba30560f504ddcb7abc4f0a283acde980dac3ff69689543bd23b182fc53"
+        },
+        "omc-review": {
+          "path": "/private/tmp/omc-review-pilot/omc/observed-delegation-contract.txt",
+          "sha256": "1ac8238aca6c10d1ed259e80ec09e16a3e9cf141b8ef267f33d79927b22a9af7"
+        }
+      }
+    }
+  ]
+}
