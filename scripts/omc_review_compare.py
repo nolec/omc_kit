@@ -93,6 +93,12 @@ def validate_gold_label_manifest_alignment(
         return ["invalid_gold_cases"]
     manifest_by_case: dict[str, dict[str, Any]] = {}
     failures: list[str] = []
+    if any(
+        isinstance(case, dict)
+        and ("adjudication_status" in case or "gold_findings" in case)
+        for case in cases
+    ):
+        failures.extend(validate_gold_adjudication_cases(worksheet))
     for candidate_index, candidate in enumerate(candidates):
         if not isinstance(candidate, dict):
             failures.append(f"invalid_manifest_candidate:{candidate_index}")
@@ -119,6 +125,52 @@ def validate_gold_label_manifest_alignment(
         if worksheet_commit and worksheet_commit != manifest_commit:
             failures.append(case_id)
     return failures
+
+
+def validate_gold_adjudication_cases(worksheet: dict[str, Any]) -> list[str]:
+    """Validate gold case status and evidence shape without assigning findings."""
+    if not isinstance(worksheet, dict) or not isinstance(worksheet.get("cases"), list):
+        return ["invalid_gold_cases"]
+    failures: list[str] = []
+    valid_statuses = {"pending", "confirmed", "not_applicable"}
+    seen_case_ids: set[str] = set()
+    for case in worksheet["cases"]:
+        if not isinstance(case, dict):
+            failures.append("invalid_gold_case")
+            continue
+        case_id = str(case.get("case_id") or "").strip() or "missing_case_id"
+        status = str(case.get("adjudication_status") or "").strip()
+        findings = case.get("gold_findings")
+        if case_id in seen_case_ids:
+            failures.append(f"duplicate-gold-case-id:{case_id}")
+            continue
+        seen_case_ids.add(case_id)
+        if status not in valid_statuses:
+            failures.append(f"{case_id}:invalid-status")
+        if not isinstance(findings, list):
+            failures.append(f"{case_id}:gold-findings-not-list")
+            continue
+        if status in {"pending", "not_applicable"} and findings:
+            failures.append(f"{case_id}:findings-not-allowed-for-{status}")
+        if status == "not_applicable" and not str(case.get("adjudication_reason") or "").strip():
+            failures.append(f"{case_id}:missing-adjudication-reason")
+        for index, finding in enumerate(findings):
+            if not isinstance(finding, dict):
+                failures.append(f"{case_id}:gold-finding-{index}:not-object")
+                continue
+            for field in ("severity", "file", "line", "reason"):
+                if not str(finding.get(field) or "").strip():
+                    failures.append(f"{case_id}:gold-finding-{index}:missing-{field}")
+    return failures
+
+
+def load_gold_adjudication_cases(path: str | Path) -> dict[str, Any]:
+    """Load a gold worksheet only after validating its adjudication contract."""
+    worksheet = json.loads(Path(path).read_text(encoding="utf-8"))
+    failures = validate_gold_adjudication_cases(worksheet)
+    if failures:
+        raise ValueError("invalid gold adjudication worksheet: " + ", ".join(failures))
+    return worksheet
 
 
 def _validate_anonymized_value(value: str, label: str) -> None:

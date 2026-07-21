@@ -25,6 +25,7 @@ from omc_review_compare import (
     build_pilot_report,
     map_review_severity,
     load_comparison_samples,
+    load_gold_adjudication_cases,
     summarize_provider,
     build_finding_comparison,
     build_fixture_candidates,
@@ -34,6 +35,7 @@ from omc_review_compare import (
     resolve_observed_candidate_path,
     verify_observed_candidate_hashes,
     validate_gold_label_manifest_alignment,
+    validate_gold_adjudication_cases,
 )
 from generate_omc_review_synthetic_report import render_report
 
@@ -177,6 +179,118 @@ def test_observed_gold_label_manifest_alignment_reports_malformed_worksheet_case
     assert validate_gold_label_manifest_alignment(worksheet, manifest) == [
         "invalid_gold_cases"
     ]
+
+
+def test_gold_label_manifest_alignment_enforces_adjudication_contract():
+    worksheet = json.loads(GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    worksheet["cases"][0]["gold_findings"] = [
+        {"severity": "P1", "file": "a.py", "line": "1", "reason": "unresolved"}
+    ]
+
+    assert validate_gold_label_manifest_alignment(worksheet, manifest) == [
+        "observed-health-repository-aware:findings-not-allowed-for-pending"
+    ]
+
+
+def test_gold_adjudication_accepts_pending_and_confirmed_case_shapes():
+    worksheet = {
+        "cases": [
+            {
+                "case_id": "pending-case",
+                "adjudication_status": "pending",
+                "gold_findings": [],
+            },
+            {
+                "case_id": "confirmed-case",
+                "adjudication_status": "confirmed",
+                "gold_findings": [
+                    {"severity": "P1", "file": "src/service.py", "line": "4", "reason": "bug"}
+                ],
+            },
+        ]
+    }
+
+    assert validate_gold_adjudication_cases(worksheet) == []
+
+
+def test_gold_adjudication_rejects_confirmed_finding_without_evidence():
+    worksheet = {
+        "cases": [
+            {
+                "case_id": "confirmed-case",
+                "adjudication_status": "confirmed",
+                "gold_findings": [{"severity": "P1", "file": "src/service.py"}],
+            }
+        ]
+    }
+
+    assert validate_gold_adjudication_cases(worksheet) == [
+        "confirmed-case:gold-finding-0:missing-line",
+        "confirmed-case:gold-finding-0:missing-reason",
+    ]
+
+
+def test_gold_adjudication_rejects_duplicate_case_ids():
+    worksheet = {
+        "cases": [
+            {"case_id": "duplicate-case", "adjudication_status": "pending", "gold_findings": []},
+            {"case_id": "duplicate-case", "adjudication_status": "pending", "gold_findings": []},
+        ]
+    }
+
+    assert validate_gold_adjudication_cases(worksheet) == [
+        "duplicate-gold-case-id:duplicate-case"
+    ]
+
+
+def test_gold_adjudication_rejects_findings_on_unresolved_statuses():
+    worksheet = {
+        "cases": [
+            {
+                "case_id": "pending-case",
+                "adjudication_status": "pending",
+                "gold_findings": [{"severity": "P1", "file": "a.py", "line": "1", "reason": "x"}],
+            },
+            {
+                "case_id": "na-case",
+                "adjudication_status": "not_applicable",
+                "adjudication_reason": "not a reviewable diff",
+                "gold_findings": [{"severity": "P2", "file": "a.py", "line": "1", "reason": "x"}],
+            },
+        ]
+    }
+
+    assert validate_gold_adjudication_cases(worksheet) == [
+        "pending-case:findings-not-allowed-for-pending",
+        "na-case:findings-not-allowed-for-not_applicable",
+    ]
+
+
+def test_gold_adjudication_loader_enforces_validation(tmp_path):
+    path = tmp_path / "gold.json"
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "case_id": "duplicate-case",
+                        "adjudication_status": "pending",
+                        "gold_findings": [],
+                    },
+                    {
+                        "case_id": "duplicate-case",
+                        "adjudication_status": "pending",
+                        "gold_findings": [],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate-gold-case-id:duplicate-case"):
+        load_gold_adjudication_cases(path)
 
 
 def test_normalize_replacement_case_requires_adjudicated_gold_and_manifest():
