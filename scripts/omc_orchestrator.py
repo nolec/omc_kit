@@ -581,6 +581,17 @@ def build_delegation_observed_record(case: dict[str, object]) -> dict[str, objec
         record["rejection_reason"] = "execution_permission_forbidden"
         return record
 
+    execution_order = case.get("execution_order")
+    recovery_action = case.get("recovery_action")
+    if "execution_order" in case and not _is_valid_execution_order(execution_order):
+        record["evidence_status"] = "rejected"
+        record["rejection_reason"] = "invalid_execution_order"
+        return record
+    if "recovery_action" in case and not _is_valid_recovery_action(recovery_action):
+        record["evidence_status"] = "rejected"
+        record["rejection_reason"] = "invalid_recovery_action"
+        return record
+
     if "request" in case:
         request = str(case.get("request") or "").strip()
         if not request:
@@ -609,16 +620,6 @@ def build_delegation_observed_record(case: dict[str, object]) -> dict[str, objec
         return record
 
     handoff = build_delegation_handoff(parent_scope, child, child_statuses)
-    execution_order = case.get("execution_order")
-    recovery_action = case.get("recovery_action")
-    if "execution_order" in case and not _is_valid_execution_order(execution_order):
-        record["evidence_status"] = "rejected"
-        record["rejection_reason"] = "invalid_execution_order"
-        return record
-    if "recovery_action" in case and not _is_valid_recovery_action(recovery_action):
-        record["evidence_status"] = "rejected"
-        record["rejection_reason"] = "invalid_recovery_action"
-        return record
     record.update(
         {
             "classification": "needs_delegation",

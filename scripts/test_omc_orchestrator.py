@@ -1477,6 +1477,20 @@ def test_build_delegation_observed_record_rejects_unknown_evidence_status():
     assert record["rejection_reason"] == "invalid_evidence_status"
 
 
+def test_build_delegation_observed_record_rejects_invalid_recommendation_for_request():
+    record = omc_orchestrator.build_delegation_observed_record(
+        {
+            "id": "malformed-request-recommendation",
+            "request": "결제 API를 교체해줘",
+            "execution_order": {"order_status": "ready", "order_index": -1, "blocked_by": []},
+            "evidence_status": "fixture",
+        }
+    )
+
+    assert record["evidence_status"] == "rejected"
+    assert record["rejection_reason"] == "invalid_execution_order"
+
+
 def test_build_delegation_observed_record_falls_back_to_unknown_case_id():
     record = omc_orchestrator.build_delegation_observed_record(
         {
