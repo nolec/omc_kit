@@ -35,6 +35,7 @@ python3 scripts/omc.py state status --target . 2>/dev/null
 C1. 정확성/정합성: null, 빈 배열, 타임존, 인덱스, 정렬 오류는? / C2. 조용한 실패: 예외 무시, 빈 catch, undefined 반환은? / C3. 안전성: 에러 처리와 복구 경로가 명시적인가?
 C4. API/계약: 입력·출력 변경이 consumer와 호환되는가? / C5. 테스트/검증: 새 로직에 대응하는 테스트가 있는가? / C6. 성능: O(N²), 메모리 폭증, 불필요한 리렌더링은?
 C7. 유지보수: 6개월 뒤 이해하기 어려운 부분은?
+C8. 외부 계약 경계: optional/null/빈 값의 fallback·guard가 있는가? API 필드 존재·타입과 순서 보장이 확인됐는가? 누락·unknown 값이 조용히 잘못된 성공으로 이어지지 않는가?
 
 모르면 `N/A — 이유`로 적습니다.
 

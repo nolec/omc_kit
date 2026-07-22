@@ -1,5 +1,5 @@
 {
-  "status": "pending_adjudication",
+  "status": "completed_adjudication",
   "source_type": "observed_output",
   "decision_policy": {
     "primary_severity": ["P0", "P1"],
@@ -11,36 +11,61 @@
       "case_id": "observed-health-repository-aware",
       "source_commit": "40b598cc28cbebd4bfe395ecd283576531de1d83",
       "diff_sha256": "cf082860b5f406d8339726aa2bc7dd8b1c367d6e9c9302505fc1805597caf748",
-      "adjudication_status": "pending",
-      "gold_findings": []
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b", "provider_outputs_visible": false, "reviewer_count": 2, "agreement": "agreed", "tie_breaker_completed": false},
+      "gold_findings": [],
+      "adjudication_reason": "Repository-specific health scope change is explicit and the replacement checks match the Python-only repository scope."
     },
     {
       "case_id": "observed-health-repository-context",
       "source_commit": "3d23c959b05532a9fb25eeca89b90ab3b41e1323",
       "diff_sha256": "2b23a982f5fecc39dc2991693c9064b1602a07d091e43d868775b51e92a2e55c",
-      "adjudication_status": "pending",
-      "gold_findings": []
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b", "provider_outputs_visible": false, "reviewer_count": 2, "agreement": "agreed", "tie_breaker_completed": false},
+      "gold_findings": [],
+      "adjudication_reason": "TypeScript/Nx checks are guarded by repository configuration and package execution is no-install; no defect was established from the diff."
     },
     {
       "case_id": "observed-policy-handoff",
       "source_commit": "73b777a60217248d7156109d9f3b8ec1861e9a81",
       "diff_sha256": "a7ab683100f29e040ffdc71e6e777935fd197b0044cbd4f7e46beff2eaa667ad",
-      "adjudication_status": "pending",
-      "gold_findings": []
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b", "provider_outputs_visible": false, "reviewer_count": 2, "agreement": "agreed", "tie_breaker_completed": false},
+      "gold_findings": [
+        {
+          "id": "missing-cost-evidence-policy-hit",
+          "severity": "P1",
+          "file": "scripts/omc_exec.py",
+          "line": "301-321",
+          "reason": "classify_policy_comparison can return hit for a successful balanced policy result when cost_delta is missing, despite the policy contract requiring missing cost evidence to remain pending; this can falsely mark policy validation as successful."
+        },
+        {
+          "id": "boolean-selection-flag",
+          "severity": "P2",
+          "file": "scripts/omc_exec.py",
+          "line": "332-337",
+          "reason": "build_executor_handoff_contract only recognizes the string yes for user_selection_needed, while the contract validator and surrounding policy API use booleans; a boolean True is silently converted to False on the handoff surface."
+        }
+      ],
+      "adjudication_reason": "Both findings were reproduced from the blind diff with minimal direct calls."
     },
     {
       "case_id": "observed-delegation-contract",
       "source_commit": "d9efd7c654c2671776a03b1bc406be7822a2efd6",
       "diff_sha256": "62966fe10c6309f2c4dcf21264bb71d90518ffb266b492710621650667325ff0",
-      "adjudication_status": "pending",
-      "gold_findings": []
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b", "provider_outputs_visible": false, "reviewer_count": 2, "agreement": "agreed", "tie_breaker_completed": false},
+      "gold_findings": [],
+      "adjudication_reason": "The diff adds deterministic ordering and bounded recommendation-only recovery guards; no concrete incorrect behavior was established from the diff."
     },
     {
       "case_id": "observed-market-reasoning-shadow",
       "source_commit": "0c57d4564d67db70086b0f4b67187bad72a4712e",
       "diff_sha256": "bc41b0cfd8f42f7422adc670dd699cb76f2426c859db57350d16a391d500644e",
-      "adjudication_status": "pending",
-      "gold_findings": []
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b", "provider_outputs_visible": false, "reviewer_count": 2, "agreement": "agreed", "tie_breaker_completed": false},
+      "gold_findings": [],
+      "adjudication_reason": "Documentation and lesson injection changes only; no code behavior defect was found."
     }
   ]
 }

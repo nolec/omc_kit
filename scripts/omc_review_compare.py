@@ -29,6 +29,12 @@ SEVERITY_MAP = {
     "경미": "경미",
     "제안": "제안",
 }
+REVIEW_BOUNDARY_CATEGORIES = {
+    "optional_field_missing",
+    "api_field_missing",
+    "api_field_order_changed",
+    "fallback_value_absent",
+}
 PROVIDER_METRICS = ("duration_ms", "input_tokens", "output_tokens", "cost_usd")
 PROVIDER_METRIC_SET = set(PROVIDER_METRICS)
 EXECUTION_METADATA_FIELDS = {"snapshot_used", "workspace_mutated"}
@@ -154,6 +160,16 @@ def validate_gold_adjudication_cases(worksheet: dict[str, Any]) -> list[str]:
             failures.append(f"{case_id}:findings-not-allowed-for-{status}")
         if status == "not_applicable" and not str(case.get("adjudication_reason") or "").strip():
             failures.append(f"{case_id}:missing-adjudication-reason")
+        adjudication = case.get("adjudication")
+        if adjudication is not None:
+            if not isinstance(adjudication, dict):
+                failures.append(f"{case_id}:adjudication:not-object")
+            else:
+                if adjudication.get("status") not in {None, status}:
+                    failures.append(f"{case_id}:adjudication:status-mismatch")
+                independence = adjudication.get("independence", adjudication)
+                for field in validate_independent_adjudication(independence):
+                    failures.append(f"{case_id}:adjudication:{field}")
         for index, finding in enumerate(findings):
             if not isinstance(finding, dict):
                 failures.append(f"{case_id}:gold-finding-{index}:not-object")
@@ -161,6 +177,38 @@ def validate_gold_adjudication_cases(worksheet: dict[str, Any]) -> list[str]:
             for field in ("severity", "file", "line", "reason"):
                 if not str(finding.get(field) or "").strip():
                     failures.append(f"{case_id}:gold-finding-{index}:missing-{field}")
+    return failures
+
+
+def validate_independent_adjudication(adjudication: dict[str, Any]) -> list[str]:
+    """Validate reviewer independence metadata without judging the finding itself."""
+    if not isinstance(adjudication, dict):
+        raise ValueError("adjudication must be an object")
+    failures: list[str] = []
+    if adjudication.get("status") not in {"pending", "confirmed"}:
+        failures.append("status")
+    if not str(adjudication.get("reviewer") or "").strip():
+        failures.append("reviewer")
+    reviewer_count = adjudication.get("reviewer_count")
+    if isinstance(reviewer_count, bool) or not isinstance(reviewer_count, int) or reviewer_count < 2:
+        failures.append("reviewer_count")
+    else:
+        reviewers = {
+            reviewer.strip()
+            for reviewer in str(adjudication.get("reviewer") or "").split(",")
+            if reviewer.strip()
+        }
+        if len(reviewers) != reviewer_count:
+            failures.append("reviewer_count")
+    if adjudication.get("provider_outputs_visible") is not False:
+        failures.append("provider_outputs_visible")
+    agreement = adjudication.get("agreement")
+    if agreement not in {"agreed", "disputed"}:
+        failures.append("agreement")
+    if not isinstance(adjudication.get("tie_breaker_completed"), bool):
+        failures.append("tie_breaker_completed")
+    elif agreement == "disputed" and adjudication["tie_breaker_completed"] is not True:
+        failures.append("tie_breaker_completed")
     return failures
 
 
@@ -190,6 +238,58 @@ def _validate_anonymized_diff(diff: str) -> None:
             _validate_anonymized_value(path, "diff path")
     if any(pattern.search(diff) for pattern in SENSITIVE_VALUE_PATTERNS):
         raise ValueError("sensitive value for diff")
+
+
+def validate_review_boundary_cases(payload: dict[str, Any]) -> list[str]:
+    """Validate synthetic cases targeting external-contract review blind spots."""
+    if not isinstance(payload, dict):
+        return ["invalid_payload"]
+    failures: list[str] = []
+    if payload.get("source_type") != "review_boundary_fixture":
+        failures.append("invalid-source-type")
+    cases = payload.get("cases")
+    if not isinstance(cases, list):
+        return failures + ["cases-not-list"]
+    seen: set[str] = set()
+    for index, case in enumerate(cases):
+        if not isinstance(case, dict):
+            failures.append(f"case-{index}:not-object")
+            continue
+        case_id = str(case.get("case_id") or "").strip()
+        label = case_id or f"case-{index}"
+        if not case_id:
+            failures.append(f"{label}:missing-case-id")
+        elif case_id in seen:
+            failures.append(f"duplicate-case-id:{case_id}")
+        seen.add(case_id)
+        if case.get("category") not in REVIEW_BOUNDARY_CATEGORIES:
+            failures.append(f"{label}:invalid-category")
+        try:
+            _validate_anonymized_diff(case.get("diff", ""))
+        except ValueError as error:
+            failures.append(f"{label}:{error}")
+        findings = case.get("expected_findings")
+        if not isinstance(findings, list):
+            failures.append(f"{label}:expected-findings-not-list")
+            continue
+        for finding_index, finding in enumerate(findings):
+            finding_label = f"{label}:expected_finding"
+            if not isinstance(finding, dict):
+                failures.append(f"{finding_label}:{finding_index}:not-object")
+                continue
+            for field in ("severity", "file", "line", "reason"):
+                if not str(finding.get(field) or "").strip():
+                    failures.append(f"{finding_label}:missing-{field}")
+            severity = str(finding.get("severity") or "").strip()
+            if severity and severity not in SEVERITY_MAP:
+                failures.append(f"{finding_label}:invalid-severity")
+            file_name = str(finding.get("file") or "").strip()
+            if file_name:
+                try:
+                    _validate_anonymized_value(file_name, "finding file")
+                except ValueError as error:
+                    failures.append(f"{finding_label}:{error}")
+    return failures
 
 
 def _finding_ids(findings: list[dict[str, Any]]) -> set[str]:

@@ -96,10 +96,10 @@ def _replacement_case() -> dict[str, object]:
     }
 
 
-def test_observed_gold_label_worksheet_keeps_five_cases_pending_without_inventing_findings():
+def test_observed_gold_label_worksheet_contains_five_adjudicated_cases():
     payload = json.loads(GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
 
-    assert payload["status"] == "pending_adjudication"
+    assert payload["status"] == "completed_adjudication"
     assert len(payload["cases"]) == 5
     assert {case["case_id"] for case in payload["cases"]} == {
         "observed-health-repository-aware",
@@ -108,10 +108,9 @@ def test_observed_gold_label_worksheet_keeps_five_cases_pending_without_inventin
         "observed-delegation-contract",
         "observed-market-reasoning-shadow",
     }
-    for case in payload["cases"]:
-        assert case["gold_findings"] == []
-        assert case["adjudication_status"] == "pending"
-        assert case["diff_sha256"]
+    assert all(case["adjudication_status"] == "confirmed" for case in payload["cases"])
+    assert sum(len(case["gold_findings"]) for case in payload["cases"]) == 2
+    assert all(case["diff_sha256"] for case in payload["cases"])
 
 
 def test_observed_gold_label_worksheet_matches_observed_candidate_manifest():
@@ -184,12 +183,14 @@ def test_observed_gold_label_manifest_alignment_reports_malformed_worksheet_case
 def test_gold_label_manifest_alignment_enforces_adjudication_contract():
     worksheet = json.loads(GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
     manifest = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+    worksheet["cases"][0]["adjudication_status"] = "pending"
     worksheet["cases"][0]["gold_findings"] = [
         {"severity": "P1", "file": "a.py", "line": "1", "reason": "unresolved"}
     ]
 
     assert validate_gold_label_manifest_alignment(worksheet, manifest) == [
-        "observed-health-repository-aware:findings-not-allowed-for-pending"
+        "observed-health-repository-aware:findings-not-allowed-for-pending",
+        "observed-health-repository-aware:adjudication:status-mismatch",
     ]
 
 

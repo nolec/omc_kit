@@ -1,0 +1,57 @@
+{
+  "source_type": "review_boundary_fixture",
+  "cases": [
+    {
+      "case_id": "optional_field_missing",
+      "category": "optional_field_missing",
+      "diff": "@@ -8,1 +8,1 @@\n-<Tooltip label={item.rejectionReason ?? \"-\"}>\n+<Tooltip label={item.rejectionReason}>",
+      "expected_findings": [
+        {
+          "severity": "P2",
+          "file": "src/PortfolioTable.tsx",
+          "line": "10",
+          "reason": "Optional rejectionReason is passed directly to a user-facing label without a fallback."
+        }
+      ]
+    },
+    {
+      "case_id": "api_field_missing",
+      "category": "api_field_missing",
+      "diff": "@@ -3,1 +3,1 @@\n+const id = response.conversionTypeId.trim();",
+      "expected_findings": [
+        {
+          "severity": "P1",
+          "file": "src/api/mapResponse.ts",
+          "line": "4",
+          "reason": "The consumer assumes an API field exists and is a string without checking the contract."
+        }
+      ]
+    },
+    {
+      "case_id": "api_field_order_changed",
+      "category": "api_field_order_changed",
+      "diff": "@@ -5,1 +5,1 @@\n+const slot = enumerate(items).find(([index]) => index === conversionTypeId);",
+      "expected_findings": [
+        {
+          "severity": "P1",
+          "file": "src/api/mapConversion.ts",
+          "line": "6",
+          "reason": "Positional enumeration can silently map the wrong value when API ordering changes."
+        }
+      ]
+    },
+    {
+      "case_id": "fallback_value_absent",
+      "category": "fallback_value_absent",
+      "diff": "@@ -12,1 +12,1 @@\n+return formatStatus(status);",
+      "expected_findings": [
+        {
+          "severity": "P2",
+          "file": "src/status/formatStatus.ts",
+          "line": "13",
+          "reason": "Unknown or absent status has no explicit safe display fallback."
+        }
+      ]
+    }
+  ]
+}
