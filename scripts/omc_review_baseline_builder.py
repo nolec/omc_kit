@@ -142,6 +142,56 @@ def _redact_patch(diff: str, redactions: dict[str, str]) -> str:
     return "".join(lines)
 
 
+def _hunk_preimages_by_path(diff: str) -> dict[str, list[str]]:
+    """Return complete pre-change hunks grouped by their parent file path."""
+    blocks: dict[str, list[str]] = {}
+    lines: list[str] = []
+    path: str | None = None
+    in_hunk = False
+
+    def append_hunk() -> None:
+        nonlocal lines
+        if in_hunk and path is not None:
+            blocks.setdefault(path, []).append("".join(lines))
+        lines = []
+
+    for line in diff.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            append_hunk()
+            paths = _diff_git_paths(line)
+            path = paths[0] if paths is not None else None
+            in_hunk = False
+        elif line.startswith("@@"):
+            append_hunk()
+            in_hunk = True
+        elif in_hunk and line[:1] in {" ", "-"}:
+            lines.append(line[1:])
+    append_hunk()
+    return blocks
+
+
+def _align_parent_context(raw: str, source_diff: str, anonymized_diff: str, path: str) -> str:
+    """Rewrite only this file's ordered hunk context for direct patch application."""
+    source_blocks = _hunk_preimages_by_path(source_diff).get(path, [])
+    anonymized_blocks = _hunk_preimages_by_path(anonymized_diff).get(path, [])
+    # Synthetic callers may provide a diff for an empty source commit; redaction
+    # rules still align that baseline without an authoritative source hunk.
+    if not source_blocks:
+        return raw
+    if len(source_blocks) != len(anonymized_blocks):
+        raise ValueError(f"anonymized diff hunk structure changed for {path}")
+
+    cursor = 0
+    for source_block, anonymized_block in zip(source_blocks, anonymized_blocks):
+        if source_block and source_block != anonymized_block:
+            start = raw.find(source_block, cursor)
+            if start < 0:
+                raise ValueError(f"anonymized diff context does not match parent file: {path}")
+            raw = f"{raw[:start]}{anonymized_block}{raw[start + len(source_block):]}"
+            cursor = start + len(anonymized_block)
+    return raw
+
+
 def build_baseline_workspace(
     *, source_repo: str | Path, source_commit: str, diff: str, output: str | Path,
     redactions: dict[str, str] | None = None,
@@ -153,6 +203,7 @@ def build_baseline_workspace(
     if target.exists():
         raise ValueError("output workspace already exists")
     parent = _run("git", "rev-parse", f"{source_commit}^", cwd=source).strip()
+    source_diff = _run("git", "show", "--format=", "--binary", source_commit, cwd=source)
     paths = _paths(diff)
     if not paths:
         raise ValueError("diff has no baseline paths")
@@ -165,7 +216,9 @@ def build_baseline_workspace(
             continue
         destination = target / _redact_path(path, rules)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(_redact(raw, rules), encoding="utf-8")
+        destination.write_text(
+            _redact(_align_parent_context(raw, source_diff, diff, path), rules), encoding="utf-8"
+        )
     _run("git", "init", "-q", cwd=target)
     _run("git", "config", "user.email", "omc-review@example.invalid", cwd=target)
     _run("git", "config", "user.name", "OMC Review", cwd=target)

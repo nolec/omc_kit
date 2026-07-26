@@ -68,6 +68,39 @@ def test_build_baseline_workspace_redacts_patch_with_the_same_rules(tmp_path: Pa
     assert "<redacted-github-token>" in content
 
 
+def test_build_baseline_workspace_aligns_anonymized_context_per_file(tmp_path: Path):
+    source = tmp_path / "source"
+    source.mkdir()
+    _git(source, "init", "-q")
+    _git(source, "config", "user.email", "test@example.invalid")
+    _git(source, "config", "user.name", "Test")
+    (source / "app.ts").write_text("import { api } from '@private/package';\nexport { api };\n", encoding="utf-8")
+    (source / "other.ts").write_text("import { api } from '@private/package';\nexport { api };\n", encoding="utf-8")
+    _git(source, "add", ".")
+    _git(source, "commit", "-qm", "base")
+    (source / "app.ts").write_text("import { api, auth } from '@private/package';\nexport { api, auth };\n", encoding="utf-8")
+    (source / "other.ts").write_text("import { api, auth } from '@private/package';\nexport { api, auth };\n", encoding="utf-8")
+    _git(source, "add", ".")
+    _git(source, "commit", "-qm", "change")
+    anonymized_diff = (
+        _git(source, "show", "--format=", "--binary", "HEAD")
+        .replace("diff --git a/app.ts b/app.ts", "diff --git a/app.ts b/app.ts")
+        .replace("@private/package", "@public/package", 2)
+        + "\n"
+    )
+    output = tmp_path / "workspace"
+
+    build_baseline_workspace(
+        source_repo=source,
+        source_commit="HEAD",
+        diff=anonymized_diff,
+        output=output,
+    )
+
+    assert "@public/package" in (output / "app.ts").read_text(encoding="utf-8")
+    assert "@private/package" in (output / "other.ts").read_text(encoding="utf-8")
+
+
 def test_build_baseline_workspace_applies_new_file_only_patch(tmp_path: Path):
     source = tmp_path / "source"
     source.mkdir()
