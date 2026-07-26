@@ -237,3 +237,21 @@ def test_roadmap_includes_evidence_based_validation_matrix_for_fugu_alignment() 
     ]
     missing = [marker for marker in required_markers if marker not in text]
     assert not missing, f"missing roadmap validation matrix markers: {missing}"
+
+
+def test_roadmap_links_review_quality_validation_to_its_experiment_contract() -> None:
+    roadmap = Path("docs/automatic_model_routing_roadmap.md").read_text(encoding="utf-8")
+    comparison = Path("docs/omc_review_synthetic_comparison.md").read_text(encoding="utf-8")
+
+    assert "Review Quality Validation" in roadmap
+    assert "실사용 anonymized diff 10건" in roadmap
+    assert "blind gold-label" in roadmap
+    assert "마일스톤 완료 때만" in roadmap
+    assert "historical pilot" in comparison
+    assert "provenance 오염" in comparison
+    assert "실사용 anonymized diff 10건" in comparison
+    assert "## 대체 주장 보류 조건" in comparison
+    assert "blind gold-label" in comparison
+    assert "이 게이트 전에는" in comparison
+    assert "경로를 `src/...`로 정규화한 Codex CLI 원문" in comparison
+    assert "reviewer basis metadata를 붙인 수동 기록" in comparison

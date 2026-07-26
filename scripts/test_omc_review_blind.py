@@ -15,6 +15,8 @@ def _manifest(case_id, filename, digest="digest"):
                 "diff_path": filename,
                 "diff_sha256": digest,
                 "source_commit": "abc123",
+                "anonymized": True,
+                "anonymization_status": "passed",
                 "provider_status": {"codex": "completed", "omc-review": "completed"},
             }
         ],
@@ -66,4 +68,15 @@ def test_build_blind_pack_rejects_provider_result_fields_in_generated_metadata(t
     manifest["candidates"][0]["findings"] = []
 
     with pytest.raises(ValueError, match="provider result"):
+        build_blind_pack(manifest, tmp_path, ["case-1"])
+
+
+def test_build_blind_pack_rejects_candidate_pending_anonymization_review(tmp_path):
+    diff = "changed\n"
+    path = tmp_path / "case.diff"
+    path.write_text(diff, encoding="utf-8")
+    manifest = _manifest("case-1", "case.diff", hashlib.sha256(diff.encode()).hexdigest())
+    manifest["candidates"][0]["anonymization_status"] = "pending_review"
+
+    with pytest.raises(ValueError, match="anonymization approval"):
         build_blind_pack(manifest, tmp_path, ["case-1"])

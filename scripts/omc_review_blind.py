@@ -38,6 +38,8 @@ def _validate_candidate_metadata(candidate: dict[str, Any]) -> None:
     missing = sorted(required.difference(candidate))
     if missing:
         raise ValueError(f"candidate missing required fields: {', '.join(missing)}")
+    if candidate.get("anonymized") is not True or candidate.get("anonymization_status") != "passed":
+        raise ValueError("candidate requires anonymization approval before blind-pack generation")
 
 
 def build_blind_pack(

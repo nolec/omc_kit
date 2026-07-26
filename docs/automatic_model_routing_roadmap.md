@@ -63,6 +63,19 @@ Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_pr
 
 </details>
 
+### Review Quality Validation
+
+`omc-review`가 Codex native review와 비교해 실제 변경의 결함을 더 안정적으로 찾는지 검증하는 별도 품질 트랙이다. 이 트랙은 모델 우열을 문서로 선언하는 작업이 아니라, 같은 diff와 독립 실행 결과를 보존해 교체 가능 여부를 판정하는 작업이다.
+
+| 상태 | 현재 근거 | 다음 마일스톤 | 종료 기준 |
+|---|---|---|---|
+| 진행중 | synthetic fixture와 isolated same-diff 수집 계약을 보강 중이며, 기존 수동 기록 결과는 historical pilot으로만 취급한다. | 실사용 anonymized diff 10건을 같은 조건에서 독립 실행하고 blind gold-label을 축적한다. | 10건 모두 provenance, 독립 출력, adjudicated gold-label을 갖춘 뒤 핵심 이슈 탐지율·evidence 정확도·오탐을 비교한다. |
+
+- synthetic 또는 historical pilot 결과만으로 OMC review의 대체 가능성을 주장하지 않는다.
+- provenance 오염, 경로 불일치, 수동 기록 결과는 최종 비교 모수에서 제외한다.
+- 전역 로드맵은 `수집 게이트 준비`, `10건 실행 완료`, `blind gold-label 완료`, `실사용 비교 결론` 마일스톤 완료 때만 갱신한다. 개별 fixture 수정과 재실행 기록은 상세 실험 문서에서 관리한다.
+- 상세 계약과 현재 제한은 [OMC Review Synthetic Comparison](omc_review_synthetic_comparison.md)을 따른다.
+
 ### 상태판 압축 뷰
 
 - 완료: V1 Skill-based Routing, V2 Step-level Routing, V3 Failure-driven Escalation, V4 Telemetry-driven Tuning

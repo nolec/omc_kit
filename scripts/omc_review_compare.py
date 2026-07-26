@@ -235,6 +235,8 @@ def _validate_anonymized_diff(diff: str) -> None:
     for line in diff.splitlines():
         if line.startswith(("--- ", "+++ ")):
             path = line[4:].strip()
+            if path == "/dev/null":
+                continue
             _validate_anonymized_value(path, "diff path")
     if any(pattern.search(diff) for pattern in SENSITIVE_VALUE_PATTERNS):
         raise ValueError("sensitive value for diff")
