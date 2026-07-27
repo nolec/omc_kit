@@ -5,10 +5,15 @@ import json
 import math
 import os
 import re
+import hashlib
+import shutil
 import subprocess
+import tempfile
 import time
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 _VERDICT_RE = re.compile(r"\bVERDICT\s*:\s*(APPROVE(?: WITH NOTES)?|REVISE|BLOCK|HOLD|PROCEED)\b", re.IGNORECASE)
@@ -52,6 +57,56 @@ def _as_text(value: str | bytes | None) -> str:
     return value or ""
 
 
+@dataclass
+class _ReviewWorkspace:
+    path: Path
+    initial_hash: str
+    workspace_mutated: bool = False
+
+
+def _workspace_hash(root: Path) -> str:
+    """Hash reviewable files while ignoring Git's mutable bookkeeping."""
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        if ".git" in relative.parts or not path.is_file():
+            continue
+        digest.update(str(relative).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(path.stat().st_mode & 0o7777).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _assert_snapshot_safe_source(source: Path) -> None:
+    """Reject source layouts that can reconnect a snapshot to private files."""
+    git_marker = source / ".git"
+    if git_marker.exists() and not git_marker.is_dir():
+        raise ValueError("review workspace requires an independent .git directory")
+    for path in source.rglob("*"):
+        if path.is_symlink():
+            raise ValueError("review workspace cannot contain symlinks")
+
+
+@contextmanager
+def _isolated_review_workspace(source: str | Path) -> Iterator[_ReviewWorkspace]:
+    """Run write-enabled providers in a disposable Git-preserving copy."""
+    source_path = Path(source)
+    if not source_path.is_dir():
+        raise ValueError("review workdir is required")
+    _assert_snapshot_safe_source(source_path)
+    with tempfile.TemporaryDirectory(prefix="omc-review-provider-") as temp_dir:
+        snapshot_path = Path(temp_dir) / "workspace"
+        shutil.copytree(source_path, snapshot_path, symlinks=False)
+        workspace = _ReviewWorkspace(snapshot_path, _workspace_hash(snapshot_path))
+        try:
+            yield workspace
+        finally:
+            workspace.workspace_mutated = _workspace_hash(snapshot_path) != workspace.initial_hash
+
+
 def _codex_verdict(stdout: str) -> str | None:
     """Map Codex review-agent's terminal formats onto the shared verdict contract."""
     explicit = _VERDICT_RE.search(stdout)
@@ -62,6 +117,59 @@ def _codex_verdict(stdout: str) -> str | None:
     if _CODEX_APPROVAL_RE.search(stdout):
         return "APPROVE"
     return None
+
+
+def _json_event_message(event: dict[str, Any]) -> str | None:
+    """Return the final review message from a Codex JSONL event when present."""
+    item = event.get("item")
+    if not isinstance(item, dict) or item.get("type") != "agent_message":
+        return None
+    text = item.get("text")
+    return text if isinstance(text, str) and text.strip() else None
+
+
+def _extract_codex_review_output(event_stream: str) -> tuple[str, bool]:
+    """Extract the last agent message while retaining plain-text CLI compatibility."""
+    saw_json_event = False
+    final_message: str | None = None
+    for raw_line in event_stream.splitlines():
+        try:
+            event = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        saw_json_event = True
+        message = _json_event_message(event)
+        if message is not None:
+            final_message = message
+    if saw_json_event:
+        return final_message or "", True
+    return event_stream, False
+
+
+def _with_execution_artifacts(
+    result: dict[str, Any],
+    *,
+    event_stream: str,
+    event_stream_captured: bool,
+    final_message_captured: bool,
+    exit_code: int | None,
+    snapshot_used: bool = False,
+    workspace_mutated: bool = False,
+) -> dict[str, Any]:
+    """Persist capture provenance separately from the provider-neutral review output."""
+    result["event_stream"] = _redact_output(event_stream) if event_stream_captured else ""
+    result["execution_artifacts"] = {
+        "event_stream_captured": event_stream_captured,
+        "final_message_captured": final_message_captured,
+        "exit_code": exit_code,
+    }
+    if snapshot_used:
+        result["execution_artifacts"].update(
+            {"snapshot_used": True, "workspace_mutated": workspace_mutated}
+        )
+    return result
 
 
 def _validate_batch_id(batch_id: str | None) -> None:
@@ -217,32 +325,61 @@ def run_codex_review(
         raise ValueError("timeout_sec requires a positive integer")
     started = time.monotonic()
     try:
-        process = subprocess.run(
-            ["/Applications/ChatGPT.app/Contents/Resources/codex", "review", "--uncommitted"],
-            cwd=str(workdir), text=True, capture_output=True, timeout=timeout_sec,
-            env={**os.environ, "TMPDIR": "/private/tmp"}, check=False,
-        )
-        stdout = _as_text(process.stdout)
-        stderr = _as_text(process.stderr)
-        codex_verdict = _codex_verdict(stdout)
-        status = "completed" if process.returncode == 0 and codex_verdict else "failed"
-        result = normalize_review_result(
-            provider="codex", case_id=case_id, diff_id=diff_id, status=status,
-            stdout=stdout, stderr=stderr, duration_ms=int((time.monotonic() - started) * 1000),
-            runner="codex review", verdict_override=codex_verdict,
-        )
-    except subprocess.TimeoutExpired as error:
-        result = normalize_review_result(
-            provider="codex", case_id=case_id, diff_id=diff_id, status="failed",
-            stdout=_as_text(error.stdout), stderr=_as_text(error.stderr) or "timeout",
-            duration_ms=int((time.monotonic() - started) * 1000), runner="codex review",
+        with _isolated_review_workspace(workdir) as workspace:
+            try:
+                process = subprocess.run(
+                    [
+                        "/Applications/ChatGPT.app/Contents/Resources/codex",
+                        "exec",
+                        "review",
+                        "--uncommitted",
+                        "--ephemeral",
+                        "--json",
+                        "-c",
+                        'sandbox_mode="workspace-write"',
+                    ],
+                    cwd=str(workspace.path), text=True, capture_output=True, timeout=timeout_sec,
+                    env={**os.environ, "TMPDIR": "/private/tmp"}, check=False,
+                )
+                event_stream = _as_text(process.stdout)
+                stdout, event_stream_captured = _extract_codex_review_output(event_stream)
+                codex_verdict = _codex_verdict(stdout)
+                status = "completed" if process.returncode == 0 and codex_verdict else "failed"
+                result = normalize_review_result(
+                    provider="codex", case_id=case_id, diff_id=diff_id, status=status,
+                    stdout=stdout, stderr=_as_text(process.stderr),
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    runner="codex exec review", verdict_override=codex_verdict,
+                )
+                exit_code = process.returncode
+            except subprocess.TimeoutExpired as error:
+                event_stream = _as_text(error.stdout)
+                stdout, event_stream_captured = _extract_codex_review_output(event_stream)
+                result = normalize_review_result(
+                    provider="codex", case_id=case_id, diff_id=diff_id, status="failed",
+                    stdout=stdout, stderr=_as_text(error.stderr) or "timeout",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    runner="codex exec review",
+                )
+                codex_verdict = None
+                exit_code = None
+        result = _with_execution_artifacts(
+            result,
+            event_stream=event_stream,
+            event_stream_captured=event_stream_captured,
+            final_message_captured=(
+                bool(stdout.strip()) if event_stream_captured else bool(codex_verdict)
+            ),
+            exit_code=exit_code,
+            snapshot_used=True,
+            workspace_mutated=workspace.workspace_mutated,
         )
     except OSError as error:
-        result = normalize_review_result(
+        result = _with_execution_artifacts(normalize_review_result(
             provider="codex", case_id=case_id, diff_id=diff_id, status="failed",
             stdout="", stderr=str(error),
             duration_ms=int((time.monotonic() - started) * 1000), runner="codex review",
-        )
+        ), event_stream="", event_stream_captured=False, final_message_captured=False, exit_code=None)
 
     if result_path is not None:
         destination = Path(result_path)

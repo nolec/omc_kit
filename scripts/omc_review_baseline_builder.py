@@ -239,4 +239,7 @@ def build_baseline_workspace(
         _run("git", "mv", "--", _redact_path(old_path, rules), str(destination.relative_to(target)), cwd=target)
         if new_mode in {"100644", "100755"}:
             destination.chmod(int(new_mode[-3:], 8))
+    # New files created by git apply are otherwise untracked and absent from
+    # `git diff`, which would make same-diff review inputs incomplete.
+    _run("git", "add", "--intent-to-add", ".", cwd=target)
     return {"workspace": str(target), "parent_commit": parent, "changed_paths": [_redact_path(path, rules) for path in paths]}

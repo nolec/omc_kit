@@ -62,6 +62,169 @@ def test_run_codex_review_accepts_completed_codex_no_findings_output(monkeypatch
     assert result["verdict"] == "APPROVE"
 
 
+def test_run_codex_review_extracts_final_message_from_json_events(monkeypatch, tmp_path):
+    class Result:
+        returncode = 0
+        stdout = (
+            '{"type":"thread.started","thread_id":"thread-1"}\n'
+            '{"type":"item.completed","item":{"type":"agent_message",'
+            '"text":"- [P2] Persist failed runs — src/runner.py:10"}}\n'
+            '{"type":"turn.completed","usage":{"input_tokens":12}}\n'
+        )
+        stderr = "provider trace"
+
+    captured: dict[str, object] = {}
+
+    def run(*args, **kwargs):
+        captured["command"] = args[0]
+        return Result()
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", run)
+
+    result = run_codex_review(tmp_path, case_id="case-1", diff_id="diff-1", timeout_sec=1)
+
+    assert captured["command"] == [
+        "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "exec",
+        "review",
+        "--uncommitted",
+        "--ephemeral",
+        "--json",
+        "-c",
+        'sandbox_mode="workspace-write"',
+    ]
+    assert result["status"] == "completed"
+    assert result["verdict"] == "REVISE"
+    assert result["stdout"] == "- [P2] Persist failed runs — src/runner.py:10"
+    assert result["event_stream"] == Result.stdout
+    assert result["execution_artifacts"] == {
+        "event_stream_captured": True,
+        "final_message_captured": True,
+        "exit_code": 0,
+        "snapshot_used": True,
+        "workspace_mutated": False,
+    }
+
+
+def test_run_codex_review_executes_in_private_snapshot(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "changed.py").write_text("value = 1\n", encoding="utf-8")
+    observed: dict[str, Path] = {}
+
+    class Result:
+        returncode = 0
+        stdout = (
+            '{"type":"item.completed","item":{"type":"agent_message",'
+            '"text":"No actionable regressions were identified."}}\n'
+        )
+        stderr = ""
+
+    def run(*args, **kwargs):
+        snapshot = Path(kwargs["cwd"])
+        observed["snapshot"] = snapshot
+        (snapshot / "provider-cache.txt").write_text("generated", encoding="utf-8")
+        return Result()
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", run)
+
+    result = run_codex_review(source, case_id="case-1", diff_id="diff-1", timeout_sec=1)
+
+    assert observed["snapshot"] != source
+    assert not (source / "provider-cache.txt").exists()
+    assert result["execution_artifacts"]["snapshot_used"] is True
+    assert result["execution_artifacts"]["workspace_mutated"] is True
+
+
+def test_run_codex_review_detects_mode_only_snapshot_mutation(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    tracked_file = source / "runner.sh"
+    tracked_file.write_text("#!/bin/sh\necho safe\n", encoding="utf-8")
+    tracked_file.chmod(0o644)
+
+    class Result:
+        returncode = 0
+        stdout = (
+            '{"type":"item.completed","item":{"type":"agent_message",'
+            '"text":"No actionable regressions were identified."}}\n'
+        )
+        stderr = ""
+
+    def run(*args, **kwargs):
+        (Path(kwargs["cwd"]) / "runner.sh").chmod(0o755)
+        return Result()
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", run)
+
+    result = run_codex_review(source, case_id="case-1", diff_id="diff-1", timeout_sec=1)
+
+    assert tracked_file.stat().st_mode & 0o777 == 0o644
+    assert result["execution_artifacts"]["workspace_mutated"] is True
+
+
+def test_run_codex_review_rejects_git_worktree_pointer_before_provider_run(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / ".git").write_text("gitdir: /private/original/.git/worktrees/review\n", encoding="utf-8")
+    called = False
+
+    def run(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("provider must not run")
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", run)
+
+    with pytest.raises(ValueError, match="independent .git directory"):
+        run_codex_review(source, case_id="case-1", diff_id="diff-1", timeout_sec=1)
+
+    assert called is False
+
+
+def test_run_codex_review_rejects_symlink_before_provider_run(monkeypatch, tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    target = tmp_path / "private.txt"
+    target.write_text("private", encoding="utf-8")
+    (source / "linked.txt").symlink_to(target)
+    called = False
+
+    def run(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("provider must not run")
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", run)
+
+    with pytest.raises(ValueError, match="cannot contain symlinks"):
+        run_codex_review(source, case_id="case-1", diff_id="diff-1", timeout_sec=1)
+
+    assert called is False
+
+
+def test_run_codex_review_records_missing_final_json_message_as_failed(monkeypatch, tmp_path):
+    class Result:
+        returncode = 1
+        stdout = '{"type":"thread.started","thread_id":"thread-1"}\n'
+        stderr = "review tool failed before final message"
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", lambda *args, **kwargs: Result())
+
+    result = run_codex_review(tmp_path, case_id="case-1", diff_id="diff-1", timeout_sec=1)
+
+    assert result["status"] == "failed"
+    assert result["stdout"] == ""
+    assert result["event_stream"] == Result.stdout
+    assert result["execution_artifacts"] == {
+        "event_stream_captured": True,
+        "final_message_captured": False,
+        "exit_code": 1,
+        "snapshot_used": True,
+        "workspace_mutated": False,
+    }
+
+
 def test_run_codex_review_keeps_positive_summary_without_explicit_approval_unknown(monkeypatch, tmp_path):
     class Result:
         returncode = 0
@@ -101,6 +264,37 @@ def test_run_codex_review_saves_timeout_output_as_failed_result(monkeypatch, tmp
     assert result["verdict"] == "unknown"
     assert "secret-token" not in result["stdout"]
     assert saved == result
+
+
+def test_run_codex_review_preserves_partial_json_events_on_timeout(monkeypatch, tmp_path):
+    event_stream = (
+        '{"type":"thread.started","thread_id":"thread-1"}\n'
+        '{"type":"item.completed","item":{"type":"agent_message",'
+        '"text":"- [P2] Persist failed runs — src/runner.py:10"}}\n'
+    )
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=args[0],
+            timeout=kwargs["timeout"],
+            output=event_stream,
+            stderr="still running",
+        )
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", timeout)
+
+    result = run_codex_review(tmp_path, case_id="case-1", diff_id="diff-1", timeout_sec=1)
+
+    assert result["status"] == "failed"
+    assert result["stdout"] == "- [P2] Persist failed runs — src/runner.py:10"
+    assert result["event_stream"] == event_stream
+    assert result["execution_artifacts"] == {
+        "event_stream_captured": True,
+        "final_message_captured": True,
+        "exit_code": None,
+        "snapshot_used": True,
+        "workspace_mutated": False,
+    }
 
 
 def test_run_codex_review_saves_launch_failure_without_partial_findings(monkeypatch, tmp_path):

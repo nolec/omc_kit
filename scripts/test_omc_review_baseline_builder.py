@@ -130,6 +130,7 @@ def test_build_baseline_workspace_applies_new_file_only_patch(tmp_path: Path):
 
     assert result["changed_paths"] == ["new.txt"]
     assert (output / "new.txt").read_text(encoding="utf-8") == "created\n"
+    assert "diff --git a/new.txt b/new.txt" in _git(output, "diff", "--binary")
 
 
 def test_build_baseline_workspace_applies_rename_only_patch(tmp_path: Path):
