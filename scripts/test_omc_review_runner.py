@@ -62,6 +62,44 @@ def test_run_codex_review_accepts_completed_codex_no_findings_output(monkeypatch
     assert result["verdict"] == "APPROVE"
 
 
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "No blocking issues were identified.",
+        "The current changes do not introduce a clearly actionable defect based on the available code and repository context.",
+    ],
+)
+def test_run_codex_review_accepts_explicit_no_issue_variants(monkeypatch, tmp_path, stdout):
+    class Result:
+        returncode = 0
+        stderr = ""
+
+    Result.stdout = stdout
+    monkeypatch.setattr("omc_review_runner.subprocess.run", lambda *args, **kwargs: Result())
+
+    result = run_codex_review(tmp_path, case_id="case-1", diff_id="diff-1", timeout_sec=1)
+
+    assert result["status"] == "completed"
+    assert result["verdict"] == "APPROVE"
+
+
+def test_run_codex_review_keeps_uncertain_no_issue_phrase_unknown(monkeypatch, tmp_path):
+    class Result:
+        returncode = 0
+        stdout = (
+            "I cannot establish that the current changes do not introduce "
+            "a clearly actionable defect."
+        )
+        stderr = ""
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", lambda *args, **kwargs: Result())
+
+    result = run_codex_review(tmp_path, case_id="case-1", diff_id="diff-1", timeout_sec=1)
+
+    assert result["status"] == "failed"
+    assert result["verdict"] == "unknown"
+
+
 def test_run_codex_review_extracts_final_message_from_json_events(monkeypatch, tmp_path):
     class Result:
         returncode = 0

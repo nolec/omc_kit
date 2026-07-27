@@ -19,6 +19,9 @@ from typing import Any, Iterator
 _VERDICT_RE = re.compile(r"\bVERDICT\s*:\s*(APPROVE(?: WITH NOTES)?|REVISE|BLOCK|HOLD|PROCEED)\b", re.IGNORECASE)
 _CODEX_APPROVAL_RE = re.compile(
     r"(?:no actionable (?:regressions|findings) (?:were )?(?:identified|found)\.?|"
+    r"no blocking issues were identified\.?|"
+    r"the current changes do not introduce a clearly actionable defect"
+    r"(?: based on the available code and repository context)?\.?|"
     r"no evident regressions)",
     re.IGNORECASE,
 )
@@ -114,7 +117,7 @@ def _codex_verdict(stdout: str) -> str | None:
         return explicit.group(1).upper()
     if _CODEX_FINDING_RE.search(stdout):
         return "REVISE"
-    if _CODEX_APPROVAL_RE.search(stdout):
+    if _CODEX_APPROVAL_RE.fullmatch(stdout.strip()):
         return "APPROVE"
     return None
 
