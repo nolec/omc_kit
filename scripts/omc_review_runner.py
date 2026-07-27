@@ -17,14 +17,6 @@ from typing import Any, Iterator
 
 
 _VERDICT_RE = re.compile(r"\bVERDICT\s*:\s*(APPROVE(?: WITH NOTES)?|REVISE|BLOCK|HOLD|PROCEED)\b", re.IGNORECASE)
-_CODEX_APPROVAL_RE = re.compile(
-    r"(?:no actionable (?:regressions|findings) (?:were )?(?:identified|found)\.?|"
-    r"no blocking issues were identified\.?|"
-    r"the current changes do not introduce a clearly actionable defect"
-    r"(?: based on the available code and repository context)?\.?|"
-    r"no evident regressions)",
-    re.IGNORECASE,
-)
 _CODEX_FINDING_RE = re.compile(r"^\s*-\s*\[P[0-3]\]", re.MULTILINE)
 _NEXT_ACTION_RE = re.compile(r"^\s*next_action\s*:\s*(.*?)\s*$", re.IGNORECASE | re.MULTILINE)
 _FINDING_RE = re.compile(
@@ -37,10 +29,17 @@ _SEVERITY_HEADER_RE = re.compile(r"^\s*\[([^\]]+)\]\s*[—-]\s*(.+?)\s*$")
 _LOCATION_RE = re.compile(r"\[([^:\]]+):(\d+)\]\s*(.+)$")
 _SEVERITIES = {"치명", "중대", "경미", "제안", "P0", "P1", "P2", "P3"}
 _ALLOWED_VERDICTS = {"APPROVE", "APPROVE WITH NOTES", "REVISE", "BLOCK", "HOLD", "PROCEED"}
+_CODEX_CONTRACT_VERDICTS = {"APPROVE", "REVISE", "BLOCK"}
 _SENSITIVE_RE = re.compile(
     r"\b(?:ghp|github_pat)_[A-Za-z0-9_]+\b|\bAKIA[0-9A-Z]{8,}\b|\bBearer\s+\S+|"
     r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b|/(?:Users|home)/[^\s'\"]+",
     re.IGNORECASE,
+)
+_CODEX_REVIEW_OUTPUT_SCHEMA_PATH = Path(__file__).with_name("omc_codex_review_output_schema.json")
+_CODEX_REVIEW_SCHEMA_PROMPT = (
+    "Review only the current uncommitted diff. Return the required structured review result. "
+    "Do not modify files. Treat missing file, line, evidence, or verdict information as a failure "
+    "rather than inventing it."
 )
 
 
@@ -110,16 +109,46 @@ def _isolated_review_workspace(source: str | Path) -> Iterator[_ReviewWorkspace]
             workspace.workspace_mutated = _workspace_hash(snapshot_path) != workspace.initial_hash
 
 
-def _codex_verdict(stdout: str) -> str | None:
-    """Map Codex review-agent's terminal formats onto the shared verdict contract."""
-    explicit = _VERDICT_RE.search(stdout)
-    if explicit:
-        return explicit.group(1).upper()
-    if _CODEX_FINDING_RE.search(stdout):
-        return "REVISE"
-    if _CODEX_APPROVAL_RE.fullmatch(stdout.strip()):
-        return "APPROVE"
-    return None
+def _codex_contract_output(stdout: str) -> tuple[str, str] | None:
+    """Validate Codex's schema output and render it into the shared text contract."""
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict) or set(payload) != {"verdict", "evidence", "findings"}:
+        return None
+    verdict = payload.get("verdict")
+    evidence = payload.get("evidence")
+    findings = payload.get("findings")
+    if not isinstance(verdict, str) or not isinstance(evidence, str) or not isinstance(findings, list):
+        return None
+    verdict = verdict.upper()
+    if verdict not in _CODEX_CONTRACT_VERDICTS:
+        return None
+    if not evidence.strip() or (verdict == "APPROVE") != (not findings):
+        return None
+    lines: list[str] = []
+    for finding in findings:
+        if not isinstance(finding, dict) or set(finding) != {"severity", "summary", "file", "line"}:
+            return None
+        severity = finding.get("severity")
+        summary = finding.get("summary")
+        file_path = finding.get("file")
+        line = finding.get("line")
+        if (
+            severity not in {"P0", "P1", "P2", "P3"}
+            or not isinstance(summary, str)
+            or not summary.strip()
+            or not isinstance(file_path, str)
+            or not file_path.strip()
+            or isinstance(line, bool)
+            or not isinstance(line, int)
+            or line < 1
+        ):
+            return None
+        lines.append(f"- [{severity}] {summary.strip()} — {file_path.strip()}:{line}")
+    lines.extend((f"VERDICT: {verdict}", f"EVIDENCE: {evidence.strip()}"))
+    return verdict, "\n".join(lines)
 
 
 def _json_event_message(event: dict[str, Any]) -> str | None:
@@ -133,6 +162,12 @@ def _json_event_message(event: dict[str, Any]) -> str | None:
 
 def _extract_codex_review_output(event_stream: str) -> tuple[str, bool]:
     """Extract the last agent message while retaining plain-text CLI compatibility."""
+    try:
+        direct_output = json.loads(event_stream)
+    except json.JSONDecodeError:
+        direct_output = None
+    if isinstance(direct_output, dict) and set(direct_output) == {"verdict", "evidence", "findings"}:
+        return event_stream, False
     saw_json_event = False
     final_message: str | None = None
     for raw_line in event_stream.splitlines():
@@ -334,26 +369,38 @@ def run_codex_review(
                     [
                         "/Applications/ChatGPT.app/Contents/Resources/codex",
                         "exec",
-                        "review",
-                        "--uncommitted",
                         "--ephemeral",
                         "--json",
-                        "-c",
-                        'sandbox_mode="workspace-write"',
+                        "--sandbox",
+                        "workspace-write",
+                        "--output-schema",
+                        str(_CODEX_REVIEW_OUTPUT_SCHEMA_PATH),
+                        "-",
                     ],
-                    cwd=str(workspace.path), text=True, capture_output=True, timeout=timeout_sec,
+                    cwd=str(workspace.path), input=_CODEX_REVIEW_SCHEMA_PROMPT, text=True,
+                    capture_output=True, timeout=timeout_sec,
                     env={**os.environ, "TMPDIR": "/private/tmp"}, check=False,
                 )
                 event_stream = _as_text(process.stdout)
                 stdout, event_stream_captured = _extract_codex_review_output(event_stream)
-                codex_verdict = _codex_verdict(stdout)
+                contract_output = _codex_contract_output(stdout)
+                codex_verdict = contract_output[0] if contract_output else None
+                normalized_stdout = contract_output[1] if contract_output else stdout
                 status = "completed" if process.returncode == 0 and codex_verdict else "failed"
+                stderr = _as_text(process.stderr)
+                schema_contract_failed = process.returncode == 0 and contract_output is None
+                if schema_contract_failed:
+                    stderr = (
+                        f"{stderr}\n" if stderr else ""
+                    ) + "codex output did not satisfy the requested schema contract"
                 result = normalize_review_result(
                     provider="codex", case_id=case_id, diff_id=diff_id, status=status,
-                    stdout=stdout, stderr=_as_text(process.stderr),
+                    stdout=normalized_stdout, stderr=stderr,
                     duration_ms=int((time.monotonic() - started) * 1000),
                     runner="codex exec review", verdict_override=codex_verdict,
                 )
+                if schema_contract_failed:
+                    result["execution_mode"] = "schema_contract_failed"
                 exit_code = process.returncode
             except subprocess.TimeoutExpired as error:
                 event_stream = _as_text(error.stdout)

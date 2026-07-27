@@ -9,7 +9,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from omc_review_runner import normalize_review_result, run_codex_review
+from omc_review_runner import (
+    _CODEX_REVIEW_OUTPUT_SCHEMA_PATH,
+    normalize_review_result,
+    run_codex_review,
+)
+
+
+def _contract_output(verdict: str, evidence: str, findings: list[dict[str, object]] | None = None) -> str:
+    return json.dumps({"verdict": verdict, "evidence": evidence, "findings": findings or []})
 
 
 def test_run_codex_review_marks_missing_verdict_as_failed(monkeypatch, tmp_path):
@@ -24,9 +32,11 @@ def test_run_codex_review_marks_missing_verdict_as_failed(monkeypatch, tmp_path)
 
     assert result["status"] == "failed"
     assert result["verdict"] == "unknown"
+    assert result["execution_mode"] == "schema_contract_failed"
+    assert "output did not satisfy the requested schema" in result["stderr"]
 
 
-def test_run_codex_review_accepts_completed_codex_findings_without_omc_verdict(monkeypatch, tmp_path):
+def test_run_codex_review_rejects_findings_without_contract_verdict(monkeypatch, tmp_path):
     class Result:
         returncode = 0
         stdout = "Full review comments:\n\n- [P2] Persist failed runs — src/runner.py:10-12\n"
@@ -36,19 +46,11 @@ def test_run_codex_review_accepts_completed_codex_findings_without_omc_verdict(m
 
     result = run_codex_review(tmp_path, case_id="case-1", diff_id="diff-1", timeout_sec=1)
 
-    assert result["status"] == "completed"
-    assert result["verdict"] == "REVISE"
-    assert result["findings"] == [
-        {
-            "severity": "P2",
-            "file": "src/runner.py",
-            "line": "10",
-            "message": "Persist failed runs",
-        }
-    ]
+    assert result["status"] == "failed"
+    assert result["verdict"] == "unknown"
 
 
-def test_run_codex_review_accepts_completed_codex_no_findings_output(monkeypatch, tmp_path):
+def test_run_codex_review_rejects_approval_without_contract_verdict(monkeypatch, tmp_path):
     class Result:
         returncode = 0
         stdout = "No actionable regressions were identified."
@@ -58,8 +60,8 @@ def test_run_codex_review_accepts_completed_codex_no_findings_output(monkeypatch
 
     result = run_codex_review(tmp_path, case_id="case-1", diff_id="diff-1", timeout_sec=1)
 
-    assert result["status"] == "completed"
-    assert result["verdict"] == "APPROVE"
+    assert result["status"] == "failed"
+    assert result["verdict"] == "unknown"
 
 
 @pytest.mark.parametrize(
@@ -69,7 +71,7 @@ def test_run_codex_review_accepts_completed_codex_no_findings_output(monkeypatch
         "The current changes do not introduce a clearly actionable defect based on the available code and repository context.",
     ],
 )
-def test_run_codex_review_accepts_explicit_no_issue_variants(monkeypatch, tmp_path, stdout):
+def test_run_codex_review_rejects_legacy_no_issue_variants(monkeypatch, tmp_path, stdout):
     class Result:
         returncode = 0
         stderr = ""
@@ -79,8 +81,8 @@ def test_run_codex_review_accepts_explicit_no_issue_variants(monkeypatch, tmp_pa
 
     result = run_codex_review(tmp_path, case_id="case-1", diff_id="diff-1", timeout_sec=1)
 
-    assert result["status"] == "completed"
-    assert result["verdict"] == "APPROVE"
+    assert result["status"] == "failed"
+    assert result["verdict"] == "unknown"
 
 
 def test_run_codex_review_keeps_uncertain_no_issue_phrase_unknown(monkeypatch, tmp_path):
@@ -105,8 +107,20 @@ def test_run_codex_review_extracts_final_message_from_json_events(monkeypatch, t
         returncode = 0
         stdout = (
             '{"type":"thread.started","thread_id":"thread-1"}\n'
-            '{"type":"item.completed","item":{"type":"agent_message",'
-            '"text":"- [P2] Persist failed runs — src/runner.py:10"}}\n'
+            + json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": _contract_output(
+                            "REVISE",
+                            "A changed authorization path regresses.",
+                            [{"severity": "P2", "summary": "Persist failed runs", "file": "src/runner.py", "line": 10}],
+                        ),
+                    },
+                }
+            )
+            + "\n"
             '{"type":"turn.completed","usage":{"input_tokens":12}}\n'
         )
         stderr = "provider trace"
@@ -115,6 +129,7 @@ def test_run_codex_review_extracts_final_message_from_json_events(monkeypatch, t
 
     def run(*args, **kwargs):
         captured["command"] = args[0]
+        captured["input"] = kwargs.get("input")
         return Result()
 
     monkeypatch.setattr("omc_review_runner.subprocess.run", run)
@@ -124,16 +139,22 @@ def test_run_codex_review_extracts_final_message_from_json_events(monkeypatch, t
     assert captured["command"] == [
         "/Applications/ChatGPT.app/Contents/Resources/codex",
         "exec",
-        "review",
-        "--uncommitted",
         "--ephemeral",
         "--json",
-        "-c",
-        'sandbox_mode="workspace-write"',
+        "--sandbox",
+        "workspace-write",
+        "--output-schema",
+        str(_CODEX_REVIEW_OUTPUT_SCHEMA_PATH),
+        "-",
     ]
+    assert "Review only the current uncommitted diff" in captured["input"]
     assert result["status"] == "completed"
     assert result["verdict"] == "REVISE"
-    assert result["stdout"] == "- [P2] Persist failed runs — src/runner.py:10"
+    assert result["stdout"] == (
+        "- [P2] Persist failed runs — src/runner.py:10\n"
+        "VERDICT: REVISE\n"
+        "EVIDENCE: A changed authorization path regresses."
+    )
     assert result["event_stream"] == Result.stdout
     assert result["execution_artifacts"] == {
         "event_stream_captured": True,
@@ -142,6 +163,52 @@ def test_run_codex_review_extracts_final_message_from_json_events(monkeypatch, t
         "snapshot_used": True,
         "workspace_mutated": False,
     }
+
+
+def test_run_codex_review_rejects_approval_verdict_without_evidence(monkeypatch, tmp_path):
+    class Result:
+        returncode = 0
+        stdout = _contract_output("APPROVE", "")
+        stderr = ""
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", lambda *args, **kwargs: Result())
+
+    result = run_codex_review(tmp_path, case_id="case-1", diff_id="diff-1", timeout_sec=1)
+
+    assert result["status"] == "failed"
+    assert result["verdict"] == "unknown"
+
+
+def test_run_codex_review_accepts_contract_approval_with_evidence(monkeypatch, tmp_path):
+    class Result:
+        returncode = 0
+        stdout = _contract_output("APPROVE", "No actionable issue remains.")
+        stderr = ""
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", lambda *args, **kwargs: Result())
+
+    result = run_codex_review(tmp_path, case_id="case-1", diff_id="diff-1", timeout_sec=1)
+
+    assert result["status"] == "completed"
+    assert result["verdict"] == "APPROVE"
+
+
+def test_run_codex_review_rejects_approval_with_findings(monkeypatch, tmp_path):
+    class Result:
+        returncode = 0
+        stdout = _contract_output(
+            "APPROVE",
+            "No issue remains.",
+            [{"severity": "P1", "summary": "Broken authorization", "file": "src/auth.py", "line": 10}],
+        )
+        stderr = ""
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", lambda *args, **kwargs: Result())
+
+    result = run_codex_review(tmp_path, case_id="case-1", diff_id="diff-1", timeout_sec=1)
+
+    assert result["status"] == "failed"
+    assert result["verdict"] == "unknown"
 
 
 def test_run_codex_review_executes_in_private_snapshot(monkeypatch, tmp_path):
@@ -153,8 +220,16 @@ def test_run_codex_review_executes_in_private_snapshot(monkeypatch, tmp_path):
     class Result:
         returncode = 0
         stdout = (
-            '{"type":"item.completed","item":{"type":"agent_message",'
-            '"text":"No actionable regressions were identified."}}\n'
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": _contract_output("APPROVE", "No actionable issue remains."),
+                    },
+                }
+            )
+            + "\n"
         )
         stderr = ""
 
@@ -184,8 +259,16 @@ def test_run_codex_review_detects_mode_only_snapshot_mutation(monkeypatch, tmp_p
     class Result:
         returncode = 0
         stdout = (
-            '{"type":"item.completed","item":{"type":"agent_message",'
-            '"text":"No actionable regressions were identified."}}\n'
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": _contract_output("APPROVE", "No actionable issue remains."),
+                    },
+                }
+            )
+            + "\n"
         )
         stderr = ""
 

@@ -1461,6 +1461,16 @@ def test_comparison_sample_accepts_failed_cli_execution_mode():
     assert normalized["results"]["omc-review"]["execution_mode"] == "cli_failed"
 
 
+def test_comparison_sample_accepts_codex_schema_contract_failure():
+    sample = deepcopy(_comparison_sample())
+    sample["results"]["codex"]["execution_mode"] = "schema_contract_failed"
+    sample["results"]["codex"]["status"] = "failed"
+
+    normalized = normalize_comparison_sample(sample)
+
+    assert normalized["results"]["codex"]["execution_mode"] == "schema_contract_failed"
+
+
 @pytest.mark.parametrize(
     ("status", "execution_mode"),
     [("completed", "cli_failed"), ("failed", "cli_completed"), ("failed", "manual_rule_application")],

@@ -14,9 +14,15 @@ from typing import Any
 PROVIDER_STATUSES = {"completed", "not_run", "failed"}
 SOURCE_TYPES = {"synthetic", "observed_output", "current_contract_sample"}
 COMPARISON_SOURCE_TYPE = "comparison_sample"
-COMPARISON_EXECUTION_MODES = {"cli_completed", "cli_failed", "manual_rule_application", "not_run"}
+COMPARISON_EXECUTION_MODES = {
+    "cli_completed",
+    "cli_failed",
+    "schema_contract_failed",
+    "manual_rule_application",
+    "not_run",
+}
 COMPARISON_PROVIDER_MODES = {
-    "codex": {"cli_completed", "cli_failed", "not_run"},
+    "codex": {"cli_completed", "cli_failed", "schema_contract_failed", "not_run"},
     "omc-review": {"manual_rule_application", "cli_completed", "cli_failed", "not_run"},
 }
 SEVERITY_MAP = {
@@ -557,8 +563,9 @@ def normalize_comparison_sample(sample: dict[str, Any]) -> dict[str, Any]:
         status = str(result.get("status") or "").strip()
         if status not in PROVIDER_STATUSES:
             raise ValueError(f"unsupported comparison status: {status}")
-        if (status == "completed" and execution_mode == "cli_failed") or (
-            status == "failed" and execution_mode != "cli_failed"
+        failed_execution_modes = {"cli_failed", "schema_contract_failed"}
+        if (status == "completed" and execution_mode in failed_execution_modes) or (
+            status == "failed" and execution_mode not in failed_execution_modes
         ) or (status == "not_run" and execution_mode != "not_run") or (
             status != "not_run" and execution_mode == "not_run"
         ):
