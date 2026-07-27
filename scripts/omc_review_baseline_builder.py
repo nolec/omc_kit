@@ -7,6 +7,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from omc_review_compare import canonical_review_diff_sha256
+
 
 _SENSITIVE_PATTERNS = (
     (re.compile(r"\b(?:ghp|github_pat)_[A-Za-z0-9_]+\b", re.I), "<redacted-github-token>"),
@@ -242,4 +244,10 @@ def build_baseline_workspace(
     # New files created by git apply are otherwise untracked and absent from
     # `git diff`, which would make same-diff review inputs incomplete.
     _run("git", "add", "--intent-to-add", ".", cwd=target)
-    return {"workspace": str(target), "parent_commit": parent, "changed_paths": [_redact_path(path, rules) for path in paths]}
+    review_diff = _run("git", "diff", "--binary", cwd=target)
+    return {
+        "workspace": str(target),
+        "parent_commit": parent,
+        "changed_paths": [_redact_path(path, rules) for path in paths],
+        "review_diff_sha256": canonical_review_diff_sha256(review_diff),
+    }

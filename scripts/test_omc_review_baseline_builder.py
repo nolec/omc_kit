@@ -3,6 +3,7 @@ import stat
 from pathlib import Path
 
 from omc_review_baseline_builder import _redact, build_baseline_workspace
+from omc_review_compare import canonical_review_diff_sha256
 
 
 def test_redact_removes_provider_sensitive_values():
@@ -38,6 +39,9 @@ def test_build_baseline_workspace_applies_anonymized_patch(tmp_path: Path):
     )
 
     assert result["workspace"] == str(output)
+    assert result["review_diff_sha256"] == canonical_review_diff_sha256(
+        subprocess.check_output(["git", "-C", str(output), "diff", "--binary"])
+    )
     assert _git(output, "diff", "--", "app.txt")
     assert "changed value" in (output / "app.txt").read_text(encoding="utf-8")
 

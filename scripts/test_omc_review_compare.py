@@ -32,6 +32,7 @@ from omc_review_compare import (
     promote_fixture_candidate,
     normalize_replacement_case,
     build_replacement_gate,
+    canonical_review_diff_sha256,
     resolve_observed_candidate_path,
     verify_observed_candidate_hashes,
     validate_gold_label_manifest_alignment,
@@ -94,6 +95,19 @@ def _replacement_case() -> dict[str, object]:
             "output_tokens": 80,
         },
     }
+
+
+def test_canonical_review_diff_sha256_ignores_git_object_hashes_but_keeps_hunks():
+    first = (
+        "diff --git a/service.py b/service.py\n"
+        "index 1234567..89abcde 100644\n"
+        "--- a/service.py\n+++ b/service.py\n@@ -1 +1 @@\n-old\n+new\n"
+    )
+    same_hunk = first.replace("1234567..89abcde", "abcdef0..1234567")
+    changed_hunk = same_hunk.replace("+new", "+different")
+
+    assert canonical_review_diff_sha256(first) == canonical_review_diff_sha256(same_hunk)
+    assert canonical_review_diff_sha256(first) != canonical_review_diff_sha256(changed_hunk)
 
 
 def test_observed_gold_label_worksheet_contains_five_adjudicated_cases():

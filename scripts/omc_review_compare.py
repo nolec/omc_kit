@@ -46,6 +46,14 @@ SENSITIVE_VALUE_PATTERNS = (
     re.compile(r"\bBearer\s+\S+", re.IGNORECASE),
     re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b"),
 )
+_GIT_INDEX_OBJECTS_RE = re.compile(rb"^index [0-9a-f]+\.\.[0-9a-f]+", re.MULTILINE)
+
+
+def canonical_review_diff_sha256(diff: str | bytes) -> str:
+    """Hash review semantics without Git object ids that change after redaction."""
+    raw = diff.encode("utf-8") if isinstance(diff, str) else diff
+    canonical = _GIT_INDEX_OBJECTS_RE.sub(b"index <objects>", raw)
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def resolve_observed_candidate_path(
