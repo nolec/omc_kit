@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sys
 import json
+import os
+import subprocess
 from copy import deepcopy
 from pathlib import Path
 
@@ -37,6 +39,9 @@ from omc_review_compare import (
     verify_observed_candidate_hashes,
     validate_gold_label_manifest_alignment,
     validate_gold_adjudication_cases,
+    validate_false_positive_adjudication,
+    build_v5_remeasurement_gate,
+    attach_v5_remeasurement_gate,
 )
 from generate_omc_review_synthetic_report import render_report
 
@@ -49,8 +54,34 @@ SYNTHETIC_REPORT_PATH = Path(__file__).resolve().parents[1] / "docs" / "omc_revi
 OBSERVED_CANDIDATE_MANIFEST_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_observed_candidate_manifest.json"
 COMPARISON_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_comparison_samples.json"
 GOLD_LABEL_WORKSHEET_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_observed_gold_labels.json"
+V5_GOLD_LABEL_WORKSHEET_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_v5_observed_gold_labels.json"
+V5_OBSERVED_CANDIDATE_MANIFEST_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_v5_observed_candidate_manifest.json"
+V5_COMPARISON_REPORT_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_v5_comparison_report.json"
+V5_RAW_EVIDENCE_MANIFEST_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_v5_raw_evidence_manifest.json"
+V5_PROVENANCE_RECHECK_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_v5_provenance_recheck.json"
+V5_FALSE_POSITIVE_ADJUDICATION_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_v5_false_positive_adjudication.json"
+V5_FALSE_POSITIVE_FINAL_ADJUDICATION_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_v5_false_positive_final_adjudication.json"
+V5_COMPARISON_DOC_PATH = Path(__file__).resolve().parents[1] / "docs" / "omc_review_synthetic_comparison.md"
+V5_ROADMAP_PATH = Path(__file__).resolve().parents[1] / "docs" / "automatic_model_routing_roadmap.md"
+OMC_REVIEW_SKILL_PATH = Path(__file__).resolve().parents[1] / ".agents" / "skills" / "omc-review" / "SKILL.md"
 OBSERVED_PROVIDER_RESULTS_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_observed_provider_results.json"
 OBSERVED_PROVIDER_BATCH_PATH = Path(__file__).resolve().parent / "fixtures" / "omc_review_observed_provider_results_batch.json"
+
+
+def _optional_observed_candidate_root() -> Path:
+    """Return externally retained observed inputs, or skip their opt-in hash check."""
+    root = Path(
+        os.environ.get(
+            "OMC_REVIEW_OBSERVED_INPUT_ROOT",
+            "/private/tmp/omc-review-observed-candidates",
+        )
+    )
+    if not root.is_dir():
+        pytest.skip(
+            "observed candidate inputs are external; set "
+            "OMC_REVIEW_OBSERVED_INPUT_ROOT to verify their hashes"
+        )
+    return root
 
 
 def _replacement_case() -> dict[str, object]:
@@ -132,6 +163,538 @@ def test_observed_gold_label_worksheet_matches_observed_candidate_manifest():
     manifest = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
 
     assert validate_gold_label_manifest_alignment(worksheet, manifest) == []
+
+
+def test_v5_observed_gold_labels_cover_ten_cases_and_match_manifest():
+    worksheet = json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads(V5_OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
+
+    assert worksheet["status"] == "signed_off"
+    assert worksheet["provenance_status"] == "verified"
+    assert worksheet["signoff_allowed"] is True
+    assert len(worksheet["cases"]) == 10
+    assert all(case["adjudication_status"] == "confirmed" for case in worksheet["cases"])
+    assert sum(len(case["gold_findings"]) for case in worksheet["cases"]) == 8
+    assert validate_gold_adjudication_cases(worksheet) == []
+    assert validate_gold_label_manifest_alignment(worksheet, manifest) == []
+
+
+def test_v5_comparison_report_is_provenance_gated_and_does_not_claim_replacement():
+    report = json.loads(V5_COMPARISON_REPORT_PATH.read_text(encoding="utf-8"))
+    codex = report["providers"]["codex"]
+    omc = report["providers"]["omc-review"]
+
+    assert report["status"] == "historical_gold_signed_off_unreproducible"
+    assert report["sample_count"] == 10
+    assert report["comparison_eligible_case_count"] == 10
+    assert report["provenance"]["same_diff"] is True
+    assert report["provenance"]["isolated_workspaces"] is True
+    assert report["provenance"]["provider_outputs_visible_to_adjudicators"] is False
+    assert report["provenance"]["provider_output_retention"] == "external_ephemeral_unavailable"
+    assert report["provenance"]["comparison_reproducible"] is False
+    assert report["decision"]["omc_superior_in_this_pilot"] is False
+    assert report["decision"]["replacement_decision"] == "not_ready_unreproducible"
+    assert "unavailable" in report["decision"]["reason"]
+    assert report["providers"]["codex"]["all_finding_hits"] == 3
+    assert report["providers"]["omc-review"]["all_finding_hits"] == 6
+
+
+def test_v5_core_metrics_match_gold_labels_and_documented_rates():
+    gold = json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    report = json.loads(V5_COMPARISON_REPORT_PATH.read_text(encoding="utf-8"))
+    comparison_doc = V5_COMPARISON_DOC_PATH.read_text(encoding="utf-8")
+    roadmap = V5_ROADMAP_PATH.read_text(encoding="utf-8")
+    gold_signoff = (V5_COMPARISON_DOC_PATH.parent / "omc_review_v5_gold_signoff.md").read_text(
+        encoding="utf-8"
+    )
+    core_count = sum(
+        finding["severity"] in {"P0", "P1"}
+        for case in gold["cases"]
+        for finding in case["gold_findings"]
+    )
+
+    assert core_count == 4
+    assert report["core_finding_definition"] == "P0/P1 gold findings"
+    assert report["core_finding_count"] == core_count
+    assert {
+        provider["core_finding_total"]
+        for provider in report["providers"].values()
+    } == {core_count}
+    assert "| P0/P1 탐지율 | 2/4 (50.0%) | 3/4 (75.0%) |" in comparison_doc
+    assert "Codex `3/8 hit, 3 FP`, OMC `6/8 hit, 6 FP`는 참고 수치" in roadmap
+    assert "not_ready_unreproducible" in gold_signoff
+    assert "not_ready_false_positive" not in gold_signoff
+    assert "명확히 `불가`" not in gold_signoff
+
+
+def test_v5_raw_evidence_manifest_tracks_provider_outputs_and_pending_signoff():
+    manifest = json.loads(V5_RAW_EVIDENCE_MANIFEST_PATH.read_text(encoding="utf-8"))
+
+    assert manifest["status"] == "historical_external_evidence_unavailable"
+    assert manifest["reproduction_status"] == "unavailable_without_external_artifacts"
+    assert manifest["case_count"] == 10
+    assert {entry["provider"] for entry in manifest["files"]} >= {
+        "codex",
+        "omc-review",
+        "adjudicator",
+    }
+    assert all(len(entry["sha256"]) == 64 for entry in manifest["files"])
+    assert manifest["provenance_recheck"] == {
+        "path": "scripts/fixtures/omc_review_v5_provenance_recheck.json",
+        "status": "verified",
+        "comparison_eligible_case_count": 10,
+        "mismatch_count": 0,
+    }
+    assert manifest["signoff"] == {
+        "status": "signed_off",
+        "required_action": "reduce_false_positives_before_replacement_claim",
+        "reviewer": "user",
+        "recorded_at": "2026-07-28T13:00:00+09:00",
+        "replacement_claim_allowed": False,
+    }
+    assert manifest["provider_rerun"]["case_count"] == 10
+    assert manifest["provider_rerun"]["codex_batch"]["sha256"]
+    assert manifest["provider_rerun"]["omc_batch"]["sha256"]
+
+
+def test_v5_provenance_recheck_blocks_the_comparison_batch():
+    recheck = json.loads(V5_PROVENANCE_RECHECK_PATH.read_text(encoding="utf-8"))
+
+    assert recheck["status"] == "verified"
+    assert recheck["comparison_eligible_case_count"] == 10
+    assert recheck["rerun_required"] is False
+    assert len(recheck["cases"]) == 10
+    assert sum(case["status"] == "mismatch" for case in recheck["cases"]) == 0
+    assert sum(case["status"] == "matched" for case in recheck["cases"]) == 10
+    assert all(case["expected_diff_sha256"] == case["actual_diff_sha256"] for case in recheck["cases"])
+
+
+def test_v5_reassessment_is_not_eligible_after_provenance_failure():
+    report = json.loads(V5_COMPARISON_REPORT_PATH.read_text(encoding="utf-8"))
+    assert report["reassessment"]["status"] == "historical_unreproducible"
+    assert report["reassessment"]["formal_gold_fixture_unchanged"] is False
+    assert report["reassessment"]["required_action"] == "rerun_native_review_agent_with_durable_provider_outputs"
+
+
+def test_v5_false_positive_adjudication_requires_item_level_suppression_gate():
+    payload = json.loads(V5_FALSE_POSITIVE_ADJUDICATION_PATH.read_text(encoding="utf-8"))
+    gold = json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    candidate_ids = {case["case_id"] for case in payload["cases"]}
+    expected_diff_hashes = {
+        case["case_id"]: case["diff_sha256"]
+        for case in gold["cases"]
+        if case["case_id"] in candidate_ids
+    }
+
+    assert payload["status"] == "pending_adjudication"
+    assert len(payload["cases"]) == 6
+    allowed_statuses = {
+        "valid_finding",
+        "confirmed_false_positive",
+        "insufficient_evidence",
+    }
+    for case in payload["cases"]:
+        assert case["adjudication_status"] == "pending"
+        assert case["proposed_status"] in allowed_statuses
+        assert case["evidence_status"]
+        assert case["reason"]
+        assert case["reviewer"]
+        assert case["suppression_allowed"] is False
+    assert validate_false_positive_adjudication(
+        payload,
+        base_dir=Path(__file__).resolve().parents[1],
+        expected_diff_hashes=expected_diff_hashes,
+    ) == []
+
+
+def test_v5_false_positive_adjudication_rejects_early_suppression_and_duplicates():
+    payload = json.loads(V5_FALSE_POSITIVE_ADJUDICATION_PATH.read_text(encoding="utf-8"))
+    payload["cases"][0]["suppression_allowed"] = True
+    payload["cases"][1]["finding_id"] = payload["cases"][0]["finding_id"]
+
+    errors = validate_false_positive_adjudication(payload)
+
+    assert "suppression_not_allowed_before_confirmation" in errors
+    assert "duplicate_case_finding_id" in errors
+
+
+def test_v5_false_positive_adjudication_allows_only_confirmed_reviewed_suppression():
+    payload = json.loads(V5_FALSE_POSITIVE_ADJUDICATION_PATH.read_text(encoding="utf-8"))
+    gold = json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    candidate_ids = {case["case_id"] for case in payload["cases"]}
+    expected_diff_hashes = {
+        case["case_id"]: case["diff_sha256"]
+        for case in gold["cases"]
+        if case["case_id"] in candidate_ids
+    }
+    case = payload["cases"][0]
+    case.update(
+        {
+            "gold_status": "confirmed_false_positive",
+            "evidence_class": "non_behavioral",
+            "adjudication_status": "confirmed",
+            "suppression_reviewed": True,
+            "suppression_allowed": True,
+        }
+    )
+
+    assert validate_false_positive_adjudication(
+        payload,
+        base_dir=Path(__file__).resolve().parents[1],
+        expected_diff_hashes=expected_diff_hashes,
+    ) == []
+
+
+def test_v5_false_positive_adjudication_requires_signoff_reason_and_reviewer():
+    payload = json.loads(V5_FALSE_POSITIVE_ADJUDICATION_PATH.read_text(encoding="utf-8"))
+    case = payload["cases"][0]
+    case.update(
+        {
+            "gold_status": "confirmed_false_positive",
+            "adjudication_status": "confirmed",
+            "suppression_reviewed": True,
+            "suppression_allowed": True,
+            "reason": "",
+            "reviewer": "",
+        }
+    )
+
+    errors = validate_false_positive_adjudication(payload)
+
+    assert "observed-failed-capability-v5:missing_reason" in errors
+    assert "observed-failed-capability-v5:missing_reviewer" in errors
+
+
+def test_v5_false_positive_adjudication_rejects_unexpected_source_diff_hash():
+    payload = json.loads(V5_FALSE_POSITIVE_ADJUDICATION_PATH.read_text(encoding="utf-8"))
+    expected_diff_hashes = {
+        case["case_id"]: "0" * 64
+        for case in json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))["cases"]
+        if case["case_id"] in {item["case_id"] for item in payload["cases"]}
+    }
+
+    errors = validate_false_positive_adjudication(
+        payload, expected_diff_hashes=expected_diff_hashes
+    )
+
+    assert "observed-failed-capability-v5:source_diff_hash_mismatch" in errors
+
+
+def test_v5_false_positive_adjudication_requires_provenance_inputs():
+    payload = json.loads(V5_FALSE_POSITIVE_ADJUDICATION_PATH.read_text(encoding="utf-8"))
+    expected_diff_hashes = {
+        case["case_id"]: case["diff_sha256"]
+        for case in json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))["cases"]
+        if case["case_id"] in {item["case_id"] for item in payload["cases"]}
+    }
+
+    assert "expected_diff_hashes_required" in validate_false_positive_adjudication(payload)
+    assert "base_dir_required" in validate_false_positive_adjudication(
+        payload, expected_diff_hashes=expected_diff_hashes
+    )
+
+
+def test_v5_false_positive_adjudication_accepts_confirmed_final_payload():
+    payload = json.loads(V5_FALSE_POSITIVE_ADJUDICATION_PATH.read_text(encoding="utf-8"))
+    payload["status"] = "confirmed_adjudication"
+    for case in payload["cases"]:
+        case["adjudication_status"] = "confirmed"
+        case["suppression_reviewed"] = True
+        case["gold_status"] = case["proposed_status"]
+    payload["final_signoff"] = {
+        "reviewer": "user",
+        "decision": "false_positive_classification_confirmed",
+        "recorded_at": "2026-07-28T15:00:00+09:00",
+    }
+    gold = json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    expected_diff_hashes = {
+        case["case_id"]: case["diff_sha256"]
+        for case in gold["cases"]
+        if case["case_id"] in {item["case_id"] for item in payload["cases"]}
+    }
+
+    assert validate_false_positive_adjudication(
+        payload,
+        base_dir=Path(__file__).resolve().parents[1],
+        expected_diff_hashes=expected_diff_hashes,
+    ) == []
+
+
+def test_v5_false_positive_adjudication_rejects_incomplete_confirmed_final_payload():
+    payload = json.loads(V5_FALSE_POSITIVE_ADJUDICATION_PATH.read_text(encoding="utf-8"))
+    payload["status"] = "confirmed_adjudication"
+
+    errors = validate_false_positive_adjudication(
+        payload,
+        base_dir=Path(__file__).resolve().parents[1],
+        expected_diff_hashes={
+            case["case_id"]: case["diff_sha256"]
+            for case in json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))["cases"]
+            if case["case_id"] in {item["case_id"] for item in payload["cases"]}
+        },
+    )
+
+    assert "confirmed_status_requires_all_cases_confirmed" in errors
+
+
+def test_v5_false_positive_adjudication_requires_final_gold_status_and_signoff():
+    payload = json.loads(V5_FALSE_POSITIVE_ADJUDICATION_PATH.read_text(encoding="utf-8"))
+    payload["status"] = "confirmed_adjudication"
+    for case in payload["cases"]:
+        case["adjudication_status"] = "confirmed"
+        case["suppression_reviewed"] = True
+
+    errors = validate_false_positive_adjudication(
+        payload,
+        base_dir=Path(__file__).resolve().parents[1],
+        expected_diff_hashes={
+            case["case_id"]: case["diff_sha256"]
+            for case in json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))["cases"]
+        },
+    )
+
+    assert "final_signoff_required" in errors
+    assert "observed-failed-capability-v5:gold_status_required" in errors
+
+
+def test_v5_false_positive_adjudication_rejects_extra_expected_diff_hashes():
+    payload = json.loads(V5_FALSE_POSITIVE_ADJUDICATION_PATH.read_text(encoding="utf-8"))
+    expected_diff_hashes = {
+        case["case_id"]: case["diff_sha256"]
+        for case in json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))["cases"]
+    }
+    expected_diff_hashes["unexpected-case"] = "0" * 64
+
+    errors = validate_false_positive_adjudication(
+        payload,
+        base_dir=Path(__file__).resolve().parents[1],
+        expected_diff_hashes=expected_diff_hashes,
+    )
+
+    assert "expected_diff_hashes_case_set_mismatch" in errors
+
+
+def test_v5_false_positive_adjudication_requires_evidence_for_every_confirmed_case():
+    payload = json.loads(V5_FALSE_POSITIVE_ADJUDICATION_PATH.read_text(encoding="utf-8"))
+    payload["status"] = "confirmed_adjudication"
+    for case in payload["cases"]:
+        case["adjudication_status"] = "confirmed"
+        case["suppression_reviewed"] = True
+        case["gold_status"] = case["proposed_status"]
+    payload["final_signoff"] = {
+        "reviewer": "user",
+        "decision": "false_positive_classification_confirmed",
+        "recorded_at": "2026-07-28T15:00:00+09:00",
+    }
+    payload["cases"][0].pop("evidence_status")
+    payload["cases"][0].pop("reason")
+    payload["cases"][0].pop("reviewer")
+    gold = json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    candidate_ids = {case["case_id"] for case in payload["cases"]}
+    expected_diff_hashes = {
+        case["case_id"]: case["diff_sha256"]
+        for case in gold["cases"]
+        if case["case_id"] in candidate_ids
+    }
+
+    errors = validate_false_positive_adjudication(
+        payload,
+        base_dir=Path(__file__).resolve().parents[1],
+        expected_diff_hashes=expected_diff_hashes,
+    )
+
+    assert "observed-failed-capability-v5:evidence_status_required" in errors
+    assert "observed-failed-capability-v5:reason_required" in errors
+    assert "observed-failed-capability-v5:reviewer_required" in errors
+
+
+def test_v5_false_positive_adjudication_allows_direct_non_behavioral_false_positive_suppression():
+    payload = json.loads(V5_FALSE_POSITIVE_ADJUDICATION_PATH.read_text(encoding="utf-8"))
+    gold = json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    candidate_ids = {item["case_id"] for item in payload["cases"]}
+    expected_diff_hashes = {
+        item["case_id"]: item["diff_sha256"]
+        for item in gold["cases"]
+        if item["case_id"] in candidate_ids
+    }
+    case = next(
+        item
+        for item in payload["cases"]
+        if item["case_id"] == "observed-marketing-conversion-v5"
+    )
+    case.update(
+        {
+            "gold_status": "confirmed_false_positive",
+            "adjudication_status": "confirmed",
+            "suppression_reviewed": True,
+            "suppression_allowed": True,
+            "reviewer": "user",
+        }
+    )
+
+    assert validate_false_positive_adjudication(
+        payload,
+        base_dir=Path(__file__).resolve().parents[1],
+        expected_diff_hashes=expected_diff_hashes,
+    ) == []
+
+
+def test_v5_false_positive_adjudication_rejects_ineligible_suppression_evidence():
+    payload = json.loads(V5_FALSE_POSITIVE_ADJUDICATION_PATH.read_text(encoding="utf-8"))
+    gold = json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    candidate_ids = {item["case_id"] for item in payload["cases"]}
+    expected_diff_hashes = {
+        item["case_id"]: item["diff_sha256"]
+        for item in gold["cases"]
+        if item["case_id"] in candidate_ids
+    }
+    case = payload["cases"][0]
+    case.update(
+        {
+            "gold_status": "confirmed_false_positive",
+            "evidence_status": "needs_repository_resolution",
+            "adjudication_status": "confirmed",
+            "suppression_reviewed": True,
+            "suppression_allowed": True,
+            "reviewer": "user",
+        }
+    )
+
+    errors = validate_false_positive_adjudication(
+        payload,
+        base_dir=Path(__file__).resolve().parents[1],
+        expected_diff_hashes=expected_diff_hashes,
+    )
+
+    assert "observed-failed-capability-v5:confirmed_suppression_requires_eligible_evidence" in errors
+
+
+def test_v5_false_positive_final_adjudication_is_signed_off_and_valid():
+    payload = json.loads(
+        V5_FALSE_POSITIVE_FINAL_ADJUDICATION_PATH.read_text(encoding="utf-8")
+    )
+    gold = json.loads(V5_GOLD_LABEL_WORKSHEET_PATH.read_text(encoding="utf-8"))
+    candidate_ids = {case["case_id"] for case in payload["cases"]}
+    expected_diff_hashes = {
+        case["case_id"]: case["diff_sha256"]
+        for case in gold["cases"]
+        if case["case_id"] in candidate_ids
+    }
+
+    assert payload["status"] == "confirmed_adjudication"
+    assert payload["final_signoff"]["reviewer"] == "user"
+    assert all(case["adjudication_status"] == "confirmed" for case in payload["cases"])
+    marketing = next(
+        case
+        for case in payload["cases"]
+        if case["case_id"] == "observed-marketing-conversion-v5"
+    )
+    assert marketing["gold_status"] == "confirmed_false_positive"
+    assert marketing["suppression_allowed"] is True
+    assert sum(case["suppression_allowed"] for case in payload["cases"]) == 1
+    assert validate_false_positive_adjudication(
+        payload,
+        base_dir=Path(__file__).resolve().parents[1],
+        expected_diff_hashes=expected_diff_hashes,
+    ) == []
+
+
+def test_v5_false_positive_adjudication_requires_evidence_class_actions():
+    payload = json.loads(
+        V5_FALSE_POSITIVE_FINAL_ADJUDICATION_PATH.read_text(encoding="utf-8")
+    )
+    classes = {
+        (case["case_id"], case["finding_id"]): case["evidence_class"]
+        for case in payload["cases"]
+    }
+
+    assert classes[("observed-marketing-conversion-v5", "provider-fp-b7663a9b00b0")] == "non_behavioral"
+    assert classes[("observed-storefront-header-v5", "provider-fp-564eda95dcdd")] == "context_needed"
+    assert classes[("observed-health-aware-v5", "provider-fp-1b3bb6cfb4eb")] == "test_quality_only"
+
+
+def test_v5_remeasurement_gate_requires_core_hit_floor_and_false_positive_ceiling():
+    report = json.loads(V5_COMPARISON_REPORT_PATH.read_text(encoding="utf-8"))
+
+    blocked = build_v5_remeasurement_gate(report)
+    assert report["remeasurement_gate"] == blocked
+    assert blocked["status"] == "not_ready_unreproducible"
+    assert blocked["comparison_reproducible"] is False
+    assert blocked["core_hit_floor_met"] is True
+    assert blocked["false_positive_ceiling_met"] is False
+
+    improved = deepcopy(report)
+    improved["providers"]["omc-review"]["false_positive_count"] = 3
+    assert build_v5_remeasurement_gate(improved)["status"] == "not_ready_unreproducible"
+
+    reproducible = deepcopy(improved)
+    reproducible["provenance"]["comparison_reproducible"] = True
+    assert build_v5_remeasurement_gate(reproducible)["status"] == "ready_for_replacement_review"
+
+    regressed = deepcopy(improved)
+    regressed["provenance"]["comparison_reproducible"] = True
+    regressed["providers"]["omc-review"]["core_finding_hits"] = 2
+    assert build_v5_remeasurement_gate(regressed)["status"] == "not_ready_core_detection"
+
+
+def test_v5_remeasurement_gate_is_written_by_the_report_generation_command(tmp_path):
+    report_path = tmp_path / "v5-report.json"
+    report = json.loads(V5_COMPARISON_REPORT_PATH.read_text(encoding="utf-8"))
+    report["providers"]["omc-review"]["false_positive_count"] = 3
+    report["provenance"]["comparison_reproducible"] = True
+    report["remeasurement_gate"] = {"status": "stale"}
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parent / "omc_review_compare.py"),
+            "--write-v5-remeasurement-gate",
+            str(report_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    written = json.loads(report_path.read_text(encoding="utf-8"))
+    assert written == attach_v5_remeasurement_gate(report)
+    assert written["remeasurement_gate"]["status"] == "ready_for_replacement_review"
+
+
+def test_v5_remeasurement_gate_command_rejects_invalid_reports_without_writing(tmp_path):
+    report_path = tmp_path / "invalid-v5-report.json"
+    original = {"core_finding_count": 4, "providers": {}}
+    original_text = json.dumps(original)
+    report_path.write_text(original_text, encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve().parent / "omc_review_compare.py"),
+            "--write-v5-remeasurement-gate",
+            str(report_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "invalid_remeasurement_report" in result.stderr
+    assert report_path.read_text(encoding="utf-8") == original_text
+
+
+def test_omc_review_skill_separates_non_behavioral_and_context_needed_findings():
+    skill = OMC_REVIEW_SKILL_PATH.read_text(encoding="utf-8")
+
+    assert "non_behavioral" in skill
+    assert "context_needed" in skill
+    assert "test_quality_only" in skill
+    assert "P1/P2 finding으로 출력하지 않는다" in skill
+    assert "evidence_class: behavioral_direct" in skill
+    assert "[확인 필요]" in skill
 
 
 def test_observed_gold_label_manifest_alignment_reports_hash_mismatch():
@@ -520,7 +1083,7 @@ def test_observed_candidate_hashes_match_recorded_manifest():
 
     assert verify_observed_candidate_hashes(
         payload,
-        "/private/tmp/omc-review-observed-candidates",
+        _optional_observed_candidate_root(),
     ) == []
 
 
@@ -530,7 +1093,7 @@ def test_observed_candidate_hash_verification_reports_manifest_mismatch():
 
     assert verify_observed_candidate_hashes(
         payload,
-        "/private/tmp/omc-review-observed-candidates",
+        _optional_observed_candidate_root(),
     ) == ["observed-health-repository-aware"]
 
 
@@ -697,6 +1260,17 @@ def test_summarize_provider_separates_id_hits_from_evidence_matches():
 
     assert summary["hit_count"] == 1
     assert summary["evidence_match_count"] == 0
+
+
+def test_summarize_provider_counts_overlapping_multi_line_reference_as_evidence_match():
+    case = _case()
+    case["providers"]["codex"]["findings"][0]["line"] = "17,33"
+    case["expected_findings"][0]["line"] = "33-42"
+
+    summary = summarize_provider(case, "codex")
+
+    assert summary["hit_count"] == 1
+    assert summary["evidence_match_count"] == 1
 
 
 def test_incomplete_expected_finding_is_not_an_evidence_match():
@@ -943,6 +1517,22 @@ def test_build_finding_comparison_matches_same_file_nearby_line_with_different_i
     assert comparison["shared"][0]["match_type"] == "evidence_proximity"
     assert comparison["unmatched"] == []
     assert comparison["shared"][0]["evidence_match"] is False
+
+
+def test_build_finding_comparison_matches_any_overlapping_multi_line_reference():
+    case = _case()
+    case["providers"]["omc-review"] = {
+        "status": "completed",
+        "findings": [
+            {"id": "different-id", "severity": "중대", "file": "src/service.py", "line": "17,33"}
+        ],
+    }
+    case["providers"]["codex"]["findings"][0]["line"] = "33-42"
+
+    comparison = build_finding_comparison(case)
+
+    assert comparison["shared"][0]["match_type"] == "evidence"
+    assert comparison["shared"][0]["evidence_match"] is True
 
 
 def test_build_finding_comparison_marks_same_id_evidence_mismatch():

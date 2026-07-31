@@ -1,6 +1,7 @@
 """Provider-neutral comparison contract for anonymized review fixtures."""
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import math
@@ -194,6 +195,214 @@ def validate_gold_adjudication_cases(worksheet: dict[str, Any]) -> list[str]:
     return failures
 
 
+def validate_false_positive_adjudication(
+    payload: dict[str, Any],
+    *,
+    base_dir: Path | None = None,
+    expected_diff_hashes: dict[str, str] | None = None,
+) -> list[str]:
+    """Validate item-level suppression gates without deciding gold labels."""
+    if not isinstance(payload, dict) or payload.get("status") not in {
+        "pending_adjudication",
+        "confirmed_adjudication",
+    }:
+        return ["invalid_false_positive_status"]
+    cases = payload.get("cases")
+    if not isinstance(cases, list) or len(cases) != 6:
+        return ["invalid_false_positive_case_count"]
+
+    failures: list[str] = []
+    if expected_diff_hashes is None:
+        failures.append("expected_diff_hashes_required")
+    if base_dir is None:
+        failures.append("base_dir_required")
+    source_report = str(payload.get("source_report") or "").strip()
+    source_report_sha256 = str(payload.get("source_report_sha256") or "").strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", source_report_sha256):
+        failures.append("invalid_source_report_sha256")
+    elif base_dir is not None:
+        report_path = base_dir / source_report
+        if not report_path.is_file():
+            failures.append("missing_source_report")
+        elif hashlib.sha256(report_path.read_bytes()).hexdigest() != source_report_sha256:
+            failures.append("source_report_hash_mismatch")
+
+    allowed_statuses = {
+        "valid_finding",
+        "confirmed_false_positive",
+        "insufficient_evidence",
+    }
+    suppression_evidence_statuses = {
+        "not_directly_supported",
+        "direct_but_non_behavioral",
+    }
+    allowed_evidence_classes = {
+        "behavioral_direct",
+        "non_behavioral",
+        "context_needed",
+        "test_quality_only",
+        "unresolved",
+    }
+    seen: set[tuple[str, str]] = set()
+    case_ids = {
+        str(case.get("case_id") or "").strip()
+        for case in cases
+        if isinstance(case, dict)
+    }
+    if expected_diff_hashes is not None and set(expected_diff_hashes) != case_ids:
+        failures.append("expected_diff_hashes_case_set_mismatch")
+    if payload["status"] == "confirmed_adjudication":
+        final_signoff = payload.get("final_signoff")
+        if not isinstance(final_signoff, dict):
+            failures.append("final_signoff_required")
+        else:
+            if not str(final_signoff.get("reviewer") or "").strip():
+                failures.append("final_signoff_reviewer_required")
+            if final_signoff.get("decision") != "false_positive_classification_confirmed":
+                failures.append("final_signoff_decision_invalid")
+            if not str(final_signoff.get("recorded_at") or "").strip():
+                failures.append("final_signoff_recorded_at_required")
+    if payload["status"] == "confirmed_adjudication" and any(
+        not isinstance(case, dict) or case.get("adjudication_status") != "confirmed"
+        for case in cases
+    ):
+        failures.append("confirmed_status_requires_all_cases_confirmed")
+    for case in cases:
+        if not isinstance(case, dict):
+            failures.append("invalid_false_positive_case")
+            continue
+        case_id = str(case.get("case_id") or "").strip()
+        finding_id = str(case.get("finding_id") or "").strip()
+        key = (case_id, finding_id)
+        if not case_id or not finding_id:
+            failures.append("missing_case_finding_id")
+        elif key in seen:
+            failures.append("duplicate_case_finding_id")
+        seen.add(key)
+
+        source_diff_sha256 = str(case.get("source_diff_sha256") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", source_diff_sha256):
+            failures.append(f"{case_id}:invalid_source_diff_sha256")
+        if expected_diff_hashes is not None:
+            expected_diff_sha256 = expected_diff_hashes.get(case_id)
+            if expected_diff_sha256 is None:
+                failures.append(f"{case_id}:missing_expected_source_diff_hash")
+            elif source_diff_sha256 != expected_diff_sha256:
+                failures.append(f"{case_id}:source_diff_hash_mismatch")
+        if str(case.get("proposed_status") or "") not in allowed_statuses:
+            failures.append(f"{case_id}:invalid_proposed_status")
+        if payload["status"] == "confirmed_adjudication" and str(
+            case.get("gold_status") or ""
+        ) not in allowed_statuses:
+            failures.append(f"{case_id}:gold_status_required")
+        if payload["status"] == "confirmed_adjudication":
+            if not str(case.get("evidence_status") or "").strip():
+                failures.append(f"{case_id}:evidence_status_required")
+            if not str(case.get("reason") or "").strip():
+                failures.append(f"{case_id}:reason_required")
+            if not str(case.get("reviewer") or "").strip():
+                failures.append(f"{case_id}:reviewer_required")
+        evidence_class = str(case.get("evidence_class") or "")
+        if evidence_class not in allowed_evidence_classes:
+            failures.append(f"{case_id}:invalid_evidence_class")
+        adjudication_status = str(case.get("adjudication_status") or "")
+        if adjudication_status not in {"pending", "confirmed"}:
+            failures.append(f"{case_id}:invalid_adjudication_status")
+
+        suppression_allowed = case.get("suppression_allowed")
+        if not isinstance(suppression_allowed, bool):
+            failures.append(f"{case_id}:suppression_allowed_not_boolean")
+        if adjudication_status != "confirmed" and suppression_allowed is not False:
+            failures.append("suppression_not_allowed_before_confirmation")
+        if adjudication_status != "confirmed" and case.get("suppression_reviewed") is True:
+            failures.append(f"{case_id}:suppression_reviewed_before_confirmation")
+        if adjudication_status == "confirmed" and suppression_allowed:
+            if case.get("gold_status") != "confirmed_false_positive":
+                failures.append(f"{case_id}:confirmed_suppression_requires_false_positive_gold")
+            if case.get("evidence_status") not in suppression_evidence_statuses:
+                failures.append(f"{case_id}:confirmed_suppression_requires_eligible_evidence")
+            if evidence_class != "non_behavioral":
+                failures.append(f"{case_id}:confirmed_suppression_requires_non_behavioral_class")
+            if case.get("suppression_reviewed") is not True:
+                failures.append(f"{case_id}:confirmed_suppression_requires_review")
+            if not str(case.get("reason") or "").strip():
+                failures.append(f"{case_id}:missing_reason")
+            if not str(case.get("reviewer") or "").strip():
+                failures.append(f"{case_id}:missing_reviewer")
+    return failures
+
+
+def build_v5_remeasurement_gate(
+    report: dict[str, Any],
+    *,
+    core_hit_floor: int = 3,
+    false_positive_ceiling: int = 3,
+) -> dict[str, Any]:
+    """Gate V5 replacement review on reproducibility, detection, and false positives."""
+    providers = report.get("providers") if isinstance(report, dict) else None
+    omc = providers.get("omc-review") if isinstance(providers, dict) else None
+    if not isinstance(omc, dict):
+        return {"status": "invalid_remeasurement_report"}
+    core_total = report.get("core_finding_count")
+    core_hits = omc.get("core_finding_hits")
+    false_positive_count = omc.get("false_positive_count")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int)
+        for value in (core_total, core_hits, false_positive_count)
+    ):
+        return {"status": "invalid_remeasurement_report"}
+    if core_total != 4:
+        return {"status": "invalid_remeasurement_core_total"}
+
+    provenance = report.get("provenance")
+    comparison_reproducible = (
+        isinstance(provenance, dict)
+        and provenance.get("comparison_reproducible") is True
+    )
+    core_hit_floor_met = core_hits >= core_hit_floor
+    false_positive_ceiling_met = false_positive_count <= false_positive_ceiling
+    if not comparison_reproducible:
+        status = "not_ready_unreproducible"
+    elif not core_hit_floor_met:
+        status = "not_ready_core_detection"
+    elif not false_positive_ceiling_met:
+        status = "not_ready_false_positive"
+    else:
+        status = "ready_for_replacement_review"
+    return {
+        "status": status,
+        "comparison_reproducible": comparison_reproducible,
+        "core_hit_floor": core_hit_floor,
+        "core_finding_total": core_total,
+        "core_finding_hits": core_hits,
+        "core_hit_floor_met": core_hit_floor_met,
+        "false_positive_ceiling": false_positive_ceiling,
+        "false_positive_count": false_positive_count,
+        "false_positive_ceiling_met": false_positive_ceiling_met,
+    }
+
+
+def attach_v5_remeasurement_gate(report: dict[str, Any]) -> dict[str, Any]:
+    """Return a V5 report with its replacement gate derived from current metrics."""
+    if not isinstance(report, dict):
+        raise ValueError("V5 remeasurement report must be an object")
+    updated = dict(report)
+    updated["remeasurement_gate"] = build_v5_remeasurement_gate(updated)
+    return updated
+
+
+def write_v5_remeasurement_gate(path: str | Path) -> dict[str, Any]:
+    """Refresh the derived V5 replacement gate in a comparison report file."""
+    report_path = Path(path)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    updated = attach_v5_remeasurement_gate(report)
+    gate_status = str(updated["remeasurement_gate"].get("status") or "")
+    if gate_status.startswith("invalid_"):
+        raise ValueError(gate_status)
+    report_path.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return updated
+
+
 def validate_independent_adjudication(adjudication: dict[str, Any]) -> list[str]:
     """Validate reviewer independence metadata without judging the finding itself."""
     if not isinstance(adjudication, dict):
@@ -333,10 +542,9 @@ def _evidence_match_count(expected: list[dict[str, Any]], actual: list[dict[str,
         1
         for finding in expected
         if all(str(finding.get(field) or "").strip() for field in ("severity", "file", "line"))
-        and all(
-            str(finding.get(field) or "").strip()
-            == str(actual_by_id.get(str(finding.get("id") or "").strip(), {}).get(field) or "").strip()
-            for field in ("severity", "file", "line")
+        and _finding_evidence_matches(
+            finding,
+            actual_by_id.get(str(finding.get("id") or "").strip(), {}),
         )
     )
 
@@ -841,8 +1049,10 @@ def build_comparison_report(samples: list[dict[str, Any]]) -> dict[str, Any]:
         evidence_matched += sum(
             1
             for finding in codex
-            if _finding_evidence_key(finding)
-            == _finding_evidence_key(omc_by_id.get(str(finding.get("id") or "").strip(), {}))
+            if _finding_evidence_matches(
+                finding,
+                omc_by_id.get(str(finding.get("id") or "").strip(), {}),
+            )
         )
     return {
         "sample_count": len(normalized),
@@ -998,8 +1208,35 @@ def summarize_provider(case: dict[str, Any], provider: str) -> dict[str, Any]:
     }
 
 
-def _finding_evidence_key(finding: dict[str, Any]) -> tuple[str, str, str]:
-    return tuple(str(finding.get(field) or "").strip() for field in ("severity", "file", "line"))
+def _line_reference_ranges(value: Any) -> list[tuple[int, int]]:
+    """Expand a compact line list into comparable inclusive ranges."""
+    ranges: list[tuple[int, int]] = []
+    for part in str(value or "").split(","):
+        match = re.fullmatch(r"\s*(\d+)(?:-(\d+))?\s*", part)
+        if not match:
+            return []
+        start = int(match.group(1))
+        end = int(match.group(2) or start)
+        if start > end:
+            return []
+        ranges.append((start, end))
+    return ranges
+
+
+def _line_references_overlap(left: Any, right: Any) -> bool:
+    return any(
+        left_start <= right_end and right_start <= left_end
+        for left_start, left_end in _line_reference_ranges(left)
+        for right_start, right_end in _line_reference_ranges(right)
+    )
+
+
+def _finding_evidence_matches(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return (
+        str(left.get("severity") or "").strip() == str(right.get("severity") or "").strip()
+        and str(left.get("file") or "").strip() == str(right.get("file") or "").strip()
+        and _line_references_overlap(left.get("line"), right.get("line"))
+    )
 
 
 def _line_distance(left: dict[str, Any], right: dict[str, Any]) -> int | None:
@@ -1033,7 +1270,7 @@ def build_finding_comparison(
         if match_index is not None:
             used_omc.add(match_index)
             omc_finding = omc_findings[match_index]
-            evidence_match = _finding_evidence_key(codex_finding) == _finding_evidence_key(omc_finding)
+            evidence_match = _finding_evidence_matches(codex_finding, omc_finding)
             shared.append(
                 {
                     "codex": codex_finding,
@@ -1050,7 +1287,7 @@ def build_finding_comparison(
             (
                 index
                 for index, finding in enumerate(omc_findings)
-                if index not in used_omc and _finding_evidence_key(finding) == _finding_evidence_key(codex_finding)
+                if index not in used_omc and _finding_evidence_matches(finding, codex_finding)
             ),
             None,
         )
@@ -1329,3 +1566,25 @@ def format_metrics_table(report: dict[str, Any]) -> str:
             f"{metrics['output_tokens']:g} | {metrics['cost_usd']:g}"
         )
     return "\n".join(rows)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="OMC review comparison utilities")
+    parser.add_argument(
+        "--write-v5-remeasurement-gate",
+        metavar="REPORT",
+        help="refresh the derived remeasurement_gate in a V5 comparison report",
+    )
+    args = parser.parse_args()
+    if not args.write_v5_remeasurement_gate:
+        parser.error("--write-v5-remeasurement-gate is required")
+    try:
+        report = write_v5_remeasurement_gate(args.write_v5_remeasurement_gate)
+    except ValueError as error:
+        parser.error(str(error))
+    print(json.dumps(report["remeasurement_gate"], ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

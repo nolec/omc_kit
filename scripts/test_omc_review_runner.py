@@ -13,6 +13,7 @@ from omc_review_runner import (
     _CODEX_REVIEW_OUTPUT_SCHEMA_PATH,
     normalize_review_result,
     run_codex_review,
+    run_native_codex_review,
 )
 
 
@@ -440,6 +441,145 @@ def test_run_codex_review_saves_launch_failure_without_partial_findings(monkeypa
     assert json.loads(result_path.read_text(encoding="utf-8")) == result
 
 
+def test_run_native_codex_review_retains_raw_output_and_marks_adapter_verdict(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    class Result:
+        returncode = 0
+        stdout = "- [P1] Authorization is bypassed — src/auth.py:8\n"
+        stderr = ""
+
+    def run(*args, **kwargs):
+        captured["command"] = args[0]
+        captured["input"] = kwargs.get("input")
+        return Result()
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", run)
+    artifact = tmp_path / "durable" / "case-1.json"
+
+    result = run_native_codex_review(
+        tmp_path,
+        case_id="case-1",
+        diff_id="diff-1",
+        timeout_sec=1,
+        artifact_path=artifact,
+        source_commit="abc123",
+    )
+
+    saved = json.loads(artifact.read_text(encoding="utf-8"))
+    assert captured["command"] == [
+        "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "review",
+        "--uncommitted",
+    ]
+    assert captured["input"] is None
+    assert result["status"] == "completed"
+    assert result["runner"] == "codex native review"
+    assert result["verdict"] == "REVISE"
+    assert result["execution_artifacts"]["verdict_source"] == "adapter_from_native_output"
+    assert result["execution_artifacts"]["durable_output_retained"] is True
+    assert saved["source_commit"] == "abc123"
+    assert saved["stdout"] == Result.stdout
+    assert saved["command"] == captured["command"]
+    assert saved["clean_baseline"] is False
+
+
+def test_run_native_codex_review_clean_baseline_excludes_project_instructions(monkeypatch, tmp_path):
+    (tmp_path / "AGENTS.md").write_text("project instructions", encoding="utf-8")
+    (tmp_path / ".agents").mkdir()
+    (tmp_path / ".agents" / "SKILL.md").write_text("omc", encoding="utf-8")
+    captured: dict[str, Path] = {}
+
+    class Result:
+        returncode = 0
+        stdout = "No definite correctness regression was identified.\n"
+        stderr = ""
+
+    def run(*args, **kwargs):
+        captured["cwd"] = Path(kwargs["cwd"])
+        return Result()
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", run)
+    artifact = tmp_path / "durable" / "case-1.json"
+
+    result = run_native_codex_review(
+        tmp_path,
+        case_id="case-1",
+        diff_id="diff-1",
+        timeout_sec=1,
+        artifact_path=artifact,
+        clean_baseline=True,
+    )
+
+    assert not (captured["cwd"] / "AGENTS.md").exists()
+    assert not (captured["cwd"] / ".agents").exists()
+    assert result["execution_artifacts"]["clean_baseline"] is True
+    assert json.loads(artifact.read_text(encoding="utf-8"))["clean_baseline"] is True
+
+
+def test_run_native_codex_review_redacts_sensitive_artifact_transcript(monkeypatch, tmp_path):
+    class Result:
+        returncode = 0
+        stdout = "No actionable issues found.\n"
+        stderr = "loaded file:///Users/example/private-plugin\n"
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", lambda *args, **kwargs: Result())
+    artifact = tmp_path / "durable" / "case-1.json"
+
+    result = run_native_codex_review(
+        tmp_path,
+        case_id="case-1",
+        diff_id="diff-1",
+        timeout_sec=1,
+        artifact_path=artifact,
+    )
+
+    saved = json.loads(artifact.read_text(encoding="utf-8"))
+    assert result["status"] == "completed"
+    assert saved["redacted"] is True
+    assert "/Users/example" not in saved["stderr"]
+    assert saved["captured_stderr_sha256"] != saved["retained_stderr_sha256"]
+
+
+def test_run_native_codex_review_accepts_native_no_finding_summary(monkeypatch, tmp_path):
+    class Result:
+        returncode = 0
+        stdout = "No definite correctness regression was identified.\n"
+        stderr = ""
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", lambda *args, **kwargs: Result())
+
+    result = run_native_codex_review(
+        tmp_path,
+        case_id="case-1",
+        diff_id="diff-1",
+        timeout_sec=1,
+    )
+
+    assert result["status"] == "completed"
+    assert result["verdict"] == "APPROVE"
+    assert result["findings"] == []
+
+
+def test_run_native_codex_review_rejects_unparseable_review_comment(monkeypatch, tmp_path):
+    class Result:
+        returncode = 0
+        stdout = "Review comment:\n\n- [P1 malformed finding]\n"
+        stderr = ""
+
+    monkeypatch.setattr("omc_review_runner.subprocess.run", lambda *args, **kwargs: Result())
+
+    result = run_native_codex_review(
+        tmp_path,
+        case_id="case-1",
+        diff_id="diff-1",
+        timeout_sec=1,
+    )
+
+    assert result["status"] == "failed"
+    assert result["verdict"] == "unknown"
+
+
 def test_normalize_failed_result_omits_partial_review_fields():
     result = normalize_review_result(
         provider="codex",
@@ -482,7 +622,8 @@ def test_normalize_review_result_extracts_verdict_next_action_and_findings():
         status="completed",
         stdout=(
             "[중대] — null 처리 누락\n"
-            "  - [src/service.py:12] 입력이 null이면 예외가 발생합니다.\n"
+            "  - [src/service.py:12] evidence_class: behavioral_direct | "
+            "evidence: null 입력이 예외 경로로 전달됩니다.\n"
             "VERDICT: REVISE\n"
             "next_action: $omc-task\n"
         ),
@@ -498,10 +639,186 @@ def test_normalize_review_result_extracts_verdict_next_action_and_findings():
             "severity": "중대",
             "file": "src/service.py",
             "line": "12",
-            "message": "입력이 null이면 예외가 발생합니다.",
+            "message": (
+                "evidence_class: behavioral_direct | "
+                "evidence: null 입력이 예외 경로로 전달됩니다."
+            ),
+            "evidence_class": "behavioral_direct",
+            "evidence": "null 입력이 예외 경로로 전달됩니다.",
         }
     ]
     assert result["metrics"]["duration_ms"] == 120
+
+
+def test_normalize_omc_review_rejects_strong_finding_without_direct_evidence_class():
+    with pytest.raises(ValueError, match="cannot be recorded as finding"):
+        normalize_review_result(
+            provider="omc-review",
+            case_id="case-1",
+            diff_id="diff-1",
+            status="completed",
+            stdout=(
+                "[중대] — alias가 깨질 수 있습니다\n"
+                "  - [src/service.py:12] evidence_class: context_needed | "
+                "evidence: tsconfig alias 확인 필요\n"
+                "VERDICT: REVISE\n"
+            ),
+            stderr="",
+            duration_ms=10,
+        )
+
+
+def test_normalize_omc_review_rejects_strong_finding_without_evidence_detail():
+    with pytest.raises(ValueError, match="evidence:"):
+        normalize_review_result(
+            provider="omc-review",
+            case_id="case-1",
+            diff_id="diff-1",
+            status="completed",
+            stdout=(
+                "[P1] — 실행 경로가 누락됩니다 — src/service.py:12\n"
+                "evidence_class: behavioral_direct\n"
+                "VERDICT: REVISE\n"
+            ),
+            stderr="",
+            duration_ms=10,
+        )
+
+
+@pytest.mark.parametrize("evidence_class", ["context_needed", "unresolved", "non_behavioral"])
+def test_normalize_omc_review_rejects_non_finding_evidence_classes_at_any_severity(
+    evidence_class: str,
+):
+    with pytest.raises(ValueError, match="cannot be recorded as finding"):
+        normalize_review_result(
+            provider="omc-review",
+            case_id="case-1",
+            diff_id="diff-1",
+            status="completed",
+            stdout=(
+                "[P3] — 확인이 필요한 가설 — src/service.py:12\n"
+                f"evidence_class: {evidence_class}\n"
+                "VERDICT: APPROVE WITH NOTES\n"
+            ),
+            stderr="",
+            duration_ms=10,
+        )
+
+
+def test_normalize_omc_review_keeps_confirmation_section_out_of_previous_finding():
+    result = normalize_review_result(
+        provider="omc-review",
+        case_id="case-1",
+        diff_id="diff-1",
+        status="completed",
+        stdout=(
+            "[제안] — 테스트 강도 보강\n"
+            "  - [tests/service_test.py:12] evidence_class: test_quality_only | 테스트 보강 제안\n"
+            "[확인 필요] — 현재 diff만으로 finding 확정 불가\n"
+            "  - [src/service.py:7] evidence_class: context_needed | 호출 경로 확인 필요\n"
+            "VERDICT: APPROVE WITH NOTES\n"
+        ),
+        stderr="",
+        duration_ms=10,
+    )
+
+    assert result["findings"] == []
+    assert result["suggestions"] == [
+        {
+            "severity": "제안",
+            "file": "tests/service_test.py",
+            "line": "12",
+            "message": "evidence_class: test_quality_only | 테스트 보강 제안",
+            "evidence_class": "test_quality_only",
+        }
+    ]
+
+
+def test_normalize_omc_review_rejects_backticked_evidence_class():
+    """Reject non-canonical evidence tokens so reports have one stable grammar."""
+    with pytest.raises(ValueError, match="requires evidence_class"):
+        normalize_review_result(
+            provider="omc-review",
+            case_id="case-1",
+            diff_id="diff-1",
+            status="completed",
+            stdout=(
+                "[제안]\n"
+                "- [scripts/service.py:12] evidence_class: `test_quality_only` | "
+                "회귀 테스트를 추가하세요.\n"
+                "VERDICT: APPROVE WITH NOTES\n"
+            ),
+            stderr="",
+            duration_ms=10,
+        )
+
+
+def test_omc_review_skill_has_a_read_only_evaluation_exception():
+    skill = (
+        Path(__file__).resolve().parents[1]
+        / ".agents"
+        / "skills"
+        / "omc-review"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "blind/read-only" in skill
+    assert "state/session 명령과 변경 가능한 검증은 실행하지 않는다" in skill
+
+
+def test_omc_review_skill_has_diff_local_p1_detection_patterns():
+    root = Path(__file__).resolve().parents[1]
+    installed_skill = (root / ".agents" / "skills" / "omc-review" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    template_skill = (root / "templates" / ".agents" / "skills" / "omc-review" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    for skill in (installed_skill, template_skill):
+        assert "동적 값 이중 읽기" in skill
+        assert "식별자→순서 매핑" in skill
+        assert "측정값 없는 정책 성공" in skill
+        assert "필수 메타데이터 조건부 검증" in skill
+        assert "외부 계약 확인만을 이유로 `context_needed`로 내리지 않는다" in skill
+
+
+def test_normalize_omc_review_preserves_finding_line_ranges():
+    result = normalize_review_result(
+        provider="omc-review",
+        case_id="case-1",
+        diff_id="diff-1",
+        status="completed",
+        stdout=(
+            "[경미]\n"
+            "- [scripts/service.py:80-83] evidence_class: behavioral_direct | "
+            "evidence: 변경된 호출이 저장소를 변경합니다.\n"
+            "VERDICT: APPROVE WITH NOTES\n"
+        ),
+        stderr="",
+        duration_ms=10,
+    )
+
+    assert result["findings"][0]["line"] == "80-83"
+
+
+def test_normalize_omc_review_preserves_multi_line_location():
+    result = normalize_review_result(
+        provider="omc-review",
+        case_id="case-1",
+        diff_id="diff-1",
+        status="completed",
+        stdout=(
+            "[중대]\n"
+            "- [scripts/service.py:17,33] evidence_class: behavioral_direct | "
+            "evidence: 두 소비처가 서로 다른 값을 사용합니다.\n"
+            "VERDICT: REVISE\n"
+        ),
+        stderr="",
+        duration_ms=10,
+    )
+
+    assert result["findings"][0]["line"] == "17,33"
 
 
 def test_normalize_review_result_rejects_unparseable_completed_output():

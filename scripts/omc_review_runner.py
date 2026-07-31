@@ -12,6 +12,7 @@ import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -26,8 +27,28 @@ _CODEX_FINDING_LINE_RE = re.compile(
     r"^\s*-\s*\[(P[0-3])\]\s+(.+?)\s+[—-]\s+(.+?):(\d+)(?:-\d+)?\s*$"
 )
 _SEVERITY_HEADER_RE = re.compile(r"^\s*\[([^\]]+)\]\s*[—-]\s*(.+?)\s*$")
-_LOCATION_RE = re.compile(r"\[([^:\]]+):(\d+)\]\s*(.+)$")
+_SECTION_HEADER_RE = re.compile(r"^\s*\[([^\]]+)\]\s*$")
+_NON_FINDING_SECTION_RE = re.compile(r"^\s*\[확인 필요\](?:\s*[—-].*)?\s*$")
+_LOCATION_BULLET_RE = re.compile(
+    r"^\s*-\s*\[([^:\]]+):(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*)\]\s*(.+?)\s*$"
+)
+_LOCATION_RE = re.compile(r"\[([^:\]]+):(\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*)\]\s*(.+)$")
 _SEVERITIES = {"치명", "중대", "경미", "제안", "P0", "P1", "P2", "P3"}
+_EVIDENCE_CLASSES = {
+    "behavioral_direct",
+    "non_behavioral",
+    "context_needed",
+    "test_quality_only",
+    "unresolved",
+}
+_FINDING_EVIDENCE_CLASSES = {"behavioral_direct"}
+_STRONG_OMC_SEVERITIES = {"치명", "중대", "경미", "P0", "P1", "P2"}
+_EVIDENCE_CLASS_RE = re.compile(
+    r"\bevidence_class\s*:\s*"
+    r"(behavioral_direct|non_behavioral|context_needed|test_quality_only|unresolved)\b",
+    re.IGNORECASE,
+)
+_EVIDENCE_DETAIL_RE = re.compile(r"\bevidence\s*:\s*(\S.*?)\s*$", re.IGNORECASE)
 _ALLOWED_VERDICTS = {"APPROVE", "APPROVE WITH NOTES", "REVISE", "BLOCK", "HOLD", "PROCEED"}
 _CODEX_CONTRACT_VERDICTS = {"APPROVE", "REVISE", "BLOCK"}
 _SENSITIVE_RE = re.compile(
@@ -36,6 +57,19 @@ _SENSITIVE_RE = re.compile(
     re.IGNORECASE,
 )
 _CODEX_REVIEW_OUTPUT_SCHEMA_PATH = Path(__file__).with_name("omc_codex_review_output_schema.json")
+_CODEX_BINARY = "/Applications/ChatGPT.app/Contents/Resources/codex"
+_PROJECT_INSTRUCTION_PATHS = {
+    ".agent",
+    ".agents",
+    ".claude",
+    ".codex",
+    ".cursor",
+    ".gemini",
+    ".omc",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+}
 _CODEX_REVIEW_SCHEMA_PROMPT = (
     "Review only the current uncommitted diff. Return the required structured review result. "
     "Do not modify files. Treat missing file, line, evidence, or verdict information as a failure "
@@ -93,7 +127,9 @@ def _assert_snapshot_safe_source(source: Path) -> None:
 
 
 @contextmanager
-def _isolated_review_workspace(source: str | Path) -> Iterator[_ReviewWorkspace]:
+def _isolated_review_workspace(
+    source: str | Path, *, exclude_project_instructions: bool = False
+) -> Iterator[_ReviewWorkspace]:
     """Run write-enabled providers in a disposable Git-preserving copy."""
     source_path = Path(source)
     if not source_path.is_dir():
@@ -101,7 +137,8 @@ def _isolated_review_workspace(source: str | Path) -> Iterator[_ReviewWorkspace]
     _assert_snapshot_safe_source(source_path)
     with tempfile.TemporaryDirectory(prefix="omc-review-provider-") as temp_dir:
         snapshot_path = Path(temp_dir) / "workspace"
-        shutil.copytree(source_path, snapshot_path, symlinks=False)
+        ignore = shutil.ignore_patterns(*_PROJECT_INSTRUCTION_PATHS) if exclude_project_instructions else None
+        shutil.copytree(source_path, snapshot_path, symlinks=False, ignore=ignore)
         workspace = _ReviewWorkspace(snapshot_path, _workspace_hash(snapshot_path))
         try:
             yield workspace
@@ -210,6 +247,77 @@ def _with_execution_artifacts(
     return result
 
 
+def _native_review_verdict(stdout: str) -> str | None:
+    """Map native review text to a comparison verdict without altering its raw output."""
+    if _parse_findings(stdout):
+        return "REVISE"
+    # A review comment without a parseable priority is incomplete evidence,
+    # not an approval. Preserve it for adjudication instead of hiding a
+    # malformed finding behind an APPROVE verdict.
+    if re.search(r"(?:review comment:|^- \[P[0-3])", stdout, re.MULTILINE | re.IGNORECASE):
+        return None
+    # Native `codex review` reports only actionable findings. Its no-issue
+    # summary wording is intentionally not a stable API, so a successful,
+    # non-empty response without a parseable finding is the only safe
+    # provider-level approval interpretation. The preserved transcript remains
+    # the source of truth for any later adjudication.
+    if stdout.strip():
+        return "APPROVE"
+    return None
+
+
+def _write_native_review_artifact(
+    artifact_path: str | Path,
+    *,
+    case_id: str,
+    diff_id: str,
+    source_commit: str | None,
+    command: list[str],
+    stdout: str,
+    stderr: str,
+    exit_code: int | None,
+    verdict: str | None,
+    duration_ms: int,
+    clean_baseline: bool,
+) -> dict[str, str]:
+    """Persist the captured native transcript with sensitive values redacted in place."""
+    path = Path(artifact_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    retained_stdout = _redact_output(stdout)
+    retained_stderr = _redact_output(stderr)
+    payload = {
+        "artifact_version": 2,
+        "provider": "codex",
+        "runner": "codex native review",
+        "case_id": case_id,
+        "diff_sha256": diff_id,
+        "source_commit": source_commit,
+        "command": command,
+        "cwd": "isolated_snapshot",
+        "recorded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "exit_code": exit_code,
+        "adapter_verdict": verdict,
+        "duration_ms": duration_ms,
+        "clean_baseline": clean_baseline,
+        "redacted": retained_stdout != stdout or retained_stderr != stderr,
+        "captured_stdout_sha256": hashlib.sha256(stdout.encode("utf-8")).hexdigest(),
+        "captured_stderr_sha256": hashlib.sha256(stderr.encode("utf-8")).hexdigest(),
+        "stdout": retained_stdout,
+        "stderr": retained_stderr,
+        "retained_stdout_sha256": hashlib.sha256(retained_stdout.encode("utf-8")).hexdigest(),
+        "retained_stderr_sha256": hashlib.sha256(retained_stderr.encode("utf-8")).hexdigest(),
+    }
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+    return {
+        "path": path.name,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "captured_stdout_sha256": payload["captured_stdout_sha256"],
+        "retained_stdout_sha256": payload["retained_stdout_sha256"],
+    }
+
+
 def _validate_batch_id(batch_id: str | None) -> None:
     if not batch_id:
         return
@@ -220,21 +328,36 @@ def _validate_batch_id(batch_id: str | None) -> None:
         raise ValueError("sensitive value for batch_id")
 
 
+def _attach_evidence_metadata(finding: dict[str, str], text: str) -> None:
+    """Capture OMC's evidence classification from compact Markdown output."""
+    evidence_class = _EVIDENCE_CLASS_RE.search(text)
+    if evidence_class:
+        finding["evidence_class"] = evidence_class.group(1).lower()
+    evidence_detail = _EVIDENCE_DETAIL_RE.search(text)
+    if evidence_detail:
+        finding["evidence"] = evidence_detail.group(1).strip()
+
+
 def _parse_findings(stdout: str) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
     pending: dict[str, str] | None = None
+    active_severity: str | None = None
     for raw_line in stdout.splitlines():
+        if _NON_FINDING_SECTION_RE.match(raw_line):
+            pending = None
+            active_severity = None
+            continue
         codex_match = _CODEX_FINDING_LINE_RE.match(raw_line)
         if codex_match:
-            findings.append(
-                {
-                    "severity": codex_match.group(1),
-                    "message": codex_match.group(2).strip(),
-                    "file": codex_match.group(3).strip(),
-                    "line": codex_match.group(4),
-                }
-            )
-            pending = None
+            pending = {
+                "severity": codex_match.group(1),
+                "message": codex_match.group(2).strip(),
+                "file": codex_match.group(3).strip(),
+                "line": codex_match.group(4),
+            }
+            _attach_evidence_metadata(pending, raw_line)
+            findings.append(pending)
+            active_severity = None
             continue
         match = _FINDING_RE.match(raw_line)
         if match and match.group(1).strip() in _SEVERITIES:
@@ -248,23 +371,64 @@ def _parse_findings(stdout: str) -> list[dict[str, str]]:
                     "line": location.group(2),
                     "message": location.group(3).strip(),
                 }
+                _attach_evidence_metadata(pending, body)
                 findings.append(pending)
             else:
                 pending = {"severity": severity, "message": body}
+                _attach_evidence_metadata(pending, body)
                 findings.append(pending)
+            active_severity = None
             continue
         header = _SEVERITY_HEADER_RE.match(raw_line)
         if header and header.group(1).strip() in _SEVERITIES:
             pending = {"severity": header.group(1).strip(), "message": header.group(2).strip()}
+            _attach_evidence_metadata(pending, raw_line)
+            findings.append(pending)
+            active_severity = None
+            continue
+        section = _SECTION_HEADER_RE.match(raw_line)
+        if section and section.group(1).strip() in _SEVERITIES:
+            pending = None
+            active_severity = section.group(1).strip()
+            continue
+        location_bullet = _LOCATION_BULLET_RE.match(raw_line)
+        if location_bullet and active_severity is not None:
+            pending = {
+                "severity": active_severity,
+                "file": location_bullet.group(1).strip(),
+                "line": location_bullet.group(2),
+                "message": location_bullet.group(3).strip(),
+            }
+            _attach_evidence_metadata(pending, raw_line)
             findings.append(pending)
             continue
-        if pending is not None and not pending.get("file"):
-            location = _LOCATION_RE.search(raw_line)
-            if location:
-                pending["file"] = location.group(1).strip()
-                pending["line"] = location.group(2)
-                pending["message"] = location.group(3).strip()
+        if pending is not None:
+            _attach_evidence_metadata(pending, raw_line)
+            if not pending.get("file"):
+                location = _LOCATION_RE.search(raw_line)
+                if location:
+                    pending["file"] = location.group(1).strip()
+                    pending["line"] = location.group(2)
+                    pending["message"] = location.group(3).strip()
     return findings
+
+
+def _validate_omc_evidence_contract(findings: list[dict[str, str]]) -> None:
+    """Prevent context-only hypotheses from being recorded as strong OMC findings."""
+    for finding in findings:
+        evidence_class = finding.get("evidence_class")
+        if evidence_class not in _EVIDENCE_CLASSES:
+            raise ValueError("omc-review finding requires evidence_class")
+        if evidence_class not in _FINDING_EVIDENCE_CLASSES:
+            raise ValueError(
+                f"{evidence_class} evidence cannot be recorded as finding"
+            )
+        if finding.get("severity") not in _STRONG_OMC_SEVERITIES:
+            continue
+        if evidence_class != "behavioral_direct":
+            raise ValueError("strong omc-review finding requires behavioral_direct evidence_class")
+        if not finding.get("evidence"):
+            raise ValueError("strong omc-review finding requires evidence: detail")
 
 
 def normalize_review_result(
@@ -328,6 +492,17 @@ def normalize_review_result(
         prompt_parts.append(batch_id)
     prompt_parts.append(case_id)
     is_completed = status == "completed"
+    parsed_findings = _parse_findings(stdout) if is_completed else []
+    # Test-strength advice is useful to retain, but it is not an actionable
+    # defect and must not inflate review false-positive metrics.
+    suggestions = [
+        finding for finding in parsed_findings
+        if finding.get("evidence_class") == "test_quality_only"
+    ]
+    findings = [finding for finding in parsed_findings if finding not in suggestions]
+    if is_completed and provider == "omc-review":
+        _validate_omc_evidence_contract(findings)
+
     result: dict[str, Any] = {
         "case_id": case_id,
         "diff_id": diff_id,
@@ -342,7 +517,8 @@ def normalize_review_result(
             if is_completed and _NEXT_ACTION_RE.search(stdout)
             else None
         ),
-        "findings": [_redact_finding(finding) for finding in _parse_findings(stdout)] if is_completed else [],
+        "findings": [_redact_finding(finding) for finding in findings],
+        "suggestions": [_redact_finding(finding) for finding in suggestions],
         "metrics": metrics,
         "stdout": _redact_output(stdout),
         "stderr": _redact_output(stderr),
@@ -435,4 +611,129 @@ def run_codex_review(
         destination = Path(result_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return result
+
+
+def run_native_codex_review(
+    workdir: str | Path,
+    *,
+    case_id: str,
+    diff_id: str,
+    timeout_sec: int,
+    artifact_path: str | Path | None = None,
+    source_commit: str | None = None,
+    clean_baseline: bool = False,
+) -> dict[str, Any]:
+    """Run the native ``codex review`` command in a disposable same-diff snapshot.
+
+    Native review does not promise a machine-readable verdict. The raw output is
+    retained separately, while the normalized verdict is explicitly marked as an
+    adapter interpretation for comparison only.
+    """
+    if isinstance(timeout_sec, bool) or not isinstance(timeout_sec, int) or timeout_sec <= 0:
+        raise ValueError("timeout_sec requires a positive integer")
+    command = [os.environ.get("OMC_CODEX_BINARY", _CODEX_BINARY), "review", "--uncommitted"]
+    started = time.monotonic()
+    try:
+        with _isolated_review_workspace(
+            workdir, exclude_project_instructions=clean_baseline
+        ) as workspace:
+            try:
+                process = subprocess.run(
+                    command,
+                    cwd=str(workspace.path),
+                    text=True,
+                    capture_output=True,
+                    timeout=timeout_sec,
+                    env={**os.environ, "TMPDIR": "/private/tmp"},
+                    check=False,
+                )
+                raw_stdout = _as_text(process.stdout)
+                raw_stderr = _as_text(process.stderr)
+                verdict = _native_review_verdict(raw_stdout)
+                status = "completed" if process.returncode == 0 and verdict else "failed"
+                normalized_stdout = (
+                    f"{raw_stdout.rstrip()}\nVERDICT: {verdict}" if verdict else raw_stdout
+                )
+                result = normalize_review_result(
+                    provider="codex",
+                    case_id=case_id,
+                    diff_id=diff_id,
+                    status=status,
+                    stdout=normalized_stdout,
+                    stderr=raw_stderr,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    runner="codex native review",
+                    verdict_override=verdict,
+                )
+                exit_code = process.returncode
+            except subprocess.TimeoutExpired as error:
+                raw_stdout = _as_text(error.stdout)
+                raw_stderr = _as_text(error.stderr) or "timeout"
+                result = normalize_review_result(
+                    provider="codex",
+                    case_id=case_id,
+                    diff_id=diff_id,
+                    status="failed",
+                    stdout=raw_stdout,
+                    stderr=raw_stderr,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    runner="codex native review",
+                )
+                exit_code = None
+        result = _with_execution_artifacts(
+            result,
+            event_stream=raw_stdout,
+            event_stream_captured=True,
+            final_message_captured=bool(raw_stdout.strip()),
+            exit_code=exit_code,
+            snapshot_used=True,
+            workspace_mutated=workspace.workspace_mutated,
+        )
+        result["execution_artifacts"]["native_review"] = True
+        result["execution_artifacts"]["clean_baseline"] = clean_baseline
+        result["execution_artifacts"]["verdict_source"] = "adapter_from_native_output"
+        result["execution_artifacts"]["durable_output_retained"] = False
+        if artifact_path is not None:
+            artifact = _write_native_review_artifact(
+                artifact_path,
+                case_id=case_id,
+                diff_id=diff_id,
+                source_commit=source_commit,
+                command=command,
+                stdout=raw_stdout,
+                stderr=raw_stderr,
+                exit_code=exit_code,
+                verdict=verdict,
+                duration_ms=int(result["metrics"]["duration_ms"]),
+                clean_baseline=clean_baseline,
+            )
+            result["execution_artifacts"].update(
+                {"durable_output_retained": True, "durable_artifact": artifact}
+            )
+    except (OSError, ValueError) as error:
+        result = _with_execution_artifacts(
+            normalize_review_result(
+                provider="codex",
+                case_id=case_id,
+                diff_id=diff_id,
+                status="failed",
+                stdout="",
+                stderr=str(error),
+                duration_ms=int((time.monotonic() - started) * 1000),
+                runner="codex native review",
+            ),
+            event_stream="",
+            event_stream_captured=False,
+            final_message_captured=False,
+            exit_code=None,
+        )
+        result["execution_artifacts"].update(
+            {
+                "native_review": True,
+                "clean_baseline": clean_baseline,
+                "verdict_source": "unavailable",
+                "durable_output_retained": False,
+            }
+        )
     return result
