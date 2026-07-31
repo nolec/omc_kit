@@ -1,0 +1,21 @@
+{
+  "source_type": "observed_output",
+  "status": "approved_for_provider_execution",
+  "provenance_status": "verified_canonical_same_diff",
+  "workspace_root": "/private/tmp/omc-review-v5-isolated-workspaces-v4",
+  "workspace_hash_semantics": "canonical_review_diff_sha256(git diff --binary HEAD)",
+  "input_root": "external-observed-review-v5",
+  "anonymization_policy": "secrets and path scan passed before provider execution",
+  "candidates": [
+    {"case_id": "observed-failed-capability-v5", "source_commit": "7fa430e8", "diff_path": "observed-failed-capability-v5.diff", "diff_sha256": "77269e4ad7d4ffd03b99ee2d8f953f76630c321c09f1dad1acae927b6f5b0005", "anonymized": true, "anonymization_status": "passed"},
+    {"case_id": "observed-executor-shadow-v5", "source_commit": "b6118204", "diff_path": "observed-executor-shadow-v5.diff", "diff_sha256": "11dc25018043af4146a82060b510c68c5b80fd808f9a08a59cc379441bfd2d6b", "anonymized": true, "anonymization_status": "passed"},
+    {"case_id": "observed-storefront-header-v5", "source_commit": "53555a6492", "diff_path": "observed-storefront-header-v5.diff", "diff_sha256": "08413821fcd07771c7f7af374bdc189ba93484f4adb3243951b21ae47e39df19", "anonymized": true, "anonymization_status": "passed"},
+    {"case_id": "observed-partner-rejection-v5", "source_commit": "41043cb", "diff_path": "observed-partner-rejection-v5.diff", "diff_sha256": "86374fd2d9bb69cadbcf14f6d9a9a4e741c051fe7e4c960209a776a53796cc61", "anonymized": true, "anonymization_status": "passed"},
+    {"case_id": "observed-marketing-conversion-v5", "source_commit": "b539e221", "diff_path": "observed-marketing-conversion-v5.diff", "diff_sha256": "5c596aa5c81e079de4eb719596c3869b9d3e9f1ebd4c3daa3e8746880b1a436b", "anonymized": true, "anonymization_status": "passed"},
+    {"case_id": "observed-health-aware-v5", "source_commit": "40b598c", "diff_path": "observed-health-aware-v5.diff", "diff_sha256": "769be059331d5a2f9ba663204aa126c25a270f70e8ea8d6680ccd453a19d14b2", "anonymized": true, "anonymization_status": "passed"},
+    {"case_id": "observed-health-context-v5", "source_commit": "3d23c95", "diff_path": "observed-health-context-v5.diff", "diff_sha256": "3bdeb4509aeda93c15f09b4e0a517de1803022c5fe3178041663ba15e699afa0", "anonymized": true, "anonymization_status": "passed"},
+    {"case_id": "observed-policy-handoff-v5", "source_commit": "73b777a", "diff_path": "observed-policy-handoff-v5.diff", "diff_sha256": "94d48d3602fcaf720ad9e544fc9155dd21cedc394e91c3d66f5e1cfd0963c646", "anonymized": true, "anonymization_status": "passed"},
+    {"case_id": "observed-request-delegation-v5", "source_commit": "8de4796", "diff_path": "observed-request-delegation-v5.diff", "diff_sha256": "dd28b910f2bb5508a9a90c31f47ef24154306f579e1ca6441bbf0edc3774c900", "anonymized": true, "anonymization_status": "passed"},
+    {"case_id": "observed-review-boundary-v5", "source_commit": "c763c57", "diff_path": "observed-review-boundary-v5.diff", "diff_sha256": "48119553c2f228354f35f8130e06f4989538829477d456fabacf597313a57590", "anonymized": true, "anonymization_status": "passed"}
+  ]
+}

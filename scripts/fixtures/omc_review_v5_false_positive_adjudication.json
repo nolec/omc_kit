@@ -1,0 +1,113 @@
+{
+  "status": "pending_adjudication",
+  "source_report": "scripts/fixtures/omc_review_v5_comparison_report.json",
+  "source_report_sha256": "f2815a9c84241f9cf262cbeb1063848138981f318584950480467f15dc591dea",
+  "policy": {
+    "suppression_requires": [
+      "adjudication_status=confirmed",
+      "gold_status=confirmed_false_positive",
+      "evidence_status=not_directly_supported|direct_but_non_behavioral",
+      "suppression_reviewed=true"
+    ],
+    "unresolved_status": "insufficient_evidence",
+    "unresolved_action": "record_as_context_needed_or_test_quality_only",
+    "evidence_class_actions": {
+      "non_behavioral": "exclude_from_finding",
+      "context_needed": "record_as_question",
+      "test_quality_only": "record_as_suggestion",
+      "unresolved": "record_required_verification"
+    }
+  },
+  "cases": [
+    {
+      "case_id": "observed-failed-capability-v5",
+      "finding_id": "provider-fp-58de0a8188f6",
+      "source_diff_sha256": "77269e4ad7d4ffd03b99ee2d8f953f76630c321c09f1dad1acae927b6f5b0005",
+      "severity": "P1",
+      "file": "scripts/omc_autopilot.py",
+      "line": "1205",
+      "proposed_status": "insufficient_evidence",
+      "evidence_status": "not_directly_supported",
+      "evidence_class": "context_needed",
+      "reason": "The diff does not establish that failed executions skip result persistence; the claim requires execution-path evidence beyond the shown hunk.",
+      "adjudication_status": "pending",
+      "reviewer": "pending_user_signoff",
+      "suppression_allowed": false
+    },
+    {
+      "case_id": "observed-failed-capability-v5",
+      "finding_id": "provider-fp-faa2fac0a730",
+      "source_diff_sha256": "77269e4ad7d4ffd03b99ee2d8f953f76630c321c09f1dad1acae927b6f5b0005",
+      "severity": "P2",
+      "file": "scripts/omc_orchestrator.py",
+      "line": "722",
+      "proposed_status": "insufficient_evidence",
+      "evidence_status": "not_directly_supported",
+      "evidence_class": "context_needed",
+      "reason": "The diff alone does not prove that malformed or empty observations erase a run or that rejection metadata is required by the changed contract.",
+      "adjudication_status": "pending",
+      "reviewer": "pending_user_signoff",
+      "suppression_allowed": false
+    },
+    {
+      "case_id": "observed-executor-shadow-v5",
+      "finding_id": "provider-fp-4aa71cd5aa2e",
+      "source_diff_sha256": "11dc25018043af4146a82060b510c68c5b80fd808f9a08a59cc379441bfd2d6b",
+      "severity": "P1",
+      "file": "scripts/omc_executor_shadow.py",
+      "line": "74",
+      "proposed_status": "insufficient_evidence",
+      "evidence_status": "not_directly_supported",
+      "evidence_class": "context_needed",
+      "reason": "The value-shape concern is plausible, but the current comparison evidence does not show that a non-string approval can pass the relevant downstream gate.",
+      "adjudication_status": "pending",
+      "reviewer": "pending_user_signoff",
+      "suppression_allowed": false
+    },
+    {
+      "case_id": "observed-storefront-header-v5",
+      "finding_id": "provider-fp-564eda95dcdd",
+      "source_diff_sha256": "08413821fcd07771c7f7af374bdc189ba93484f4adb3243951b21ae47e39df19",
+      "severity": "P1",
+      "file": "libs/theme-universe/hooks/src/lib/__tests__/restockQuery.test.ts",
+      "line": "5",
+      "proposed_status": "insufficient_evidence",
+      "evidence_status": "needs_repository_resolution",
+      "evidence_class": "context_needed",
+      "reason": "The import-path concern depends on repository alias resolution and should not be promoted without a reproducible compile or test failure.",
+      "adjudication_status": "pending",
+      "reviewer": "pending_user_signoff",
+      "suppression_allowed": false
+    },
+    {
+      "case_id": "observed-marketing-conversion-v5",
+      "finding_id": "provider-fp-b7663a9b00b0",
+      "source_diff_sha256": "5c596aa5c81e079de4eb719596c3869b9d3e9f1ebd4c3daa3e8746880b1a436b",
+      "severity": "P3",
+      "file": "scripts/sync_weekly_kpi.py",
+      "line": "185",
+      "proposed_status": "confirmed_false_positive",
+      "evidence_status": "direct_but_non_behavioral",
+      "evidence_class": "non_behavioral",
+      "reason": "Trailing whitespace is a formatting issue, not a behavioral regression, and is outside the review comparison's actionable defect gate.",
+      "adjudication_status": "pending",
+      "reviewer": "pending_user_signoff",
+      "suppression_allowed": false
+    },
+    {
+      "case_id": "observed-health-aware-v5",
+      "finding_id": "provider-fp-1b3bb6cfb4eb",
+      "source_diff_sha256": "769be059331d5a2f9ba663204aa126c25a270f70e8ea8d6680ccd453a19d14b2",
+      "severity": "P2",
+      "file": "scripts/test_omc_health.py",
+      "line": "85",
+      "proposed_status": "insufficient_evidence",
+      "evidence_status": "test_quality_concern",
+      "evidence_class": "test_quality_only",
+      "reason": "The test-strength concern may be valid, but it is not automatically a product regression and requires an explicit review-scope decision.",
+      "adjudication_status": "pending",
+      "reviewer": "pending_user_signoff",
+      "suppression_allowed": false
+    }
+  ]
+}

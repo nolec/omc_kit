@@ -1,0 +1,88 @@
+{
+  "report_id": "omc-review-v5-observed-same-diff",
+  "status": "historical_gold_signed_off_unreproducible",
+  "recorded_at": "2026-07-28T13:00:00+09:00",
+  "sample_count": 10,
+  "comparison_eligible_case_count": 10,
+  "gold_finding_count": 8,
+  "core_finding_count": 4,
+  "core_finding_definition": "P0/P1 gold findings",
+  "provenance": {
+    "same_diff": true,
+    "isolated_workspaces": true,
+    "provenance_recheck": "scripts/fixtures/omc_review_v5_provenance_recheck.json",
+    "provenance_recheck_status": "verified",
+    "provider_outputs_visible_to_adjudicators": false,
+    "adjudication": "two_independent_blind_runs_plus_three_case_tie_breaker",
+    "candidate_manifest": "scripts/fixtures/omc_review_v5_observed_candidate_manifest.json",
+    "gold_labels": "scripts/fixtures/omc_review_v5_observed_gold_labels.json",
+    "raw_provider_outputs": "external_ephemeral:/private/tmp/omc-review-v5-codex-rerun.json + /private/tmp/omc-review-v5-omc-rerun.json",
+    "raw_evidence_manifest": "scripts/fixtures/omc_review_v5_raw_evidence_manifest.json",
+    "provider_output_retention": "external_ephemeral_unavailable",
+    "comparison_reproducible": false,
+    "comparison_interpretation": "historical Codex exec structured-review comparison only; not native Codex review-agent replacement evidence"
+  },
+  "providers": {
+    "codex": {
+      "all_finding_detection_rate": 0.375,
+      "all_finding_hits": 3,
+      "all_finding_total": 8,
+      "core_finding_detection_rate": 0.5,
+      "core_finding_hits": 2,
+      "core_finding_total": 4,
+      "miss_count": 5,
+      "false_positive_count": 3,
+      "evidence_in_gold_range_rate": 0.125,
+      "evidence_in_gold_range_hits": 1,
+      "evidence_in_gold_range_total": 8,
+      "exact_start_rate": null,
+      "exact_start_hits": null,
+      "exact_start_total": null,
+      "input_tokens": 2023434,
+      "output_tokens": 14044
+    },
+    "omc-review": {
+      "all_finding_detection_rate": 0.75,
+      "all_finding_hits": 6,
+      "all_finding_total": 8,
+      "core_finding_detection_rate": 0.75,
+      "core_finding_hits": 3,
+      "core_finding_total": 4,
+      "miss_count": 2,
+      "false_positive_count": 6,
+      "evidence_in_gold_range_rate": 0.25,
+      "evidence_in_gold_range_hits": 2,
+      "evidence_in_gold_range_total": 8,
+      "exact_start_rate": null,
+      "exact_start_hits": null,
+      "exact_start_total": null,
+      "input_tokens": 2087770,
+      "output_tokens": 16325
+    }
+  },
+  "decision": {
+    "omc_superior_in_this_pilot": false,
+    "core_detection_superior_in_this_pilot": true,
+    "false_positive_not_higher": false,
+    "replacement_decision": "not_ready_unreproducible",
+    "scope": "historical_v5_pilot_only",
+    "reason": "V5 gold labels are signed off, but raw provider outputs were external ephemeral files and are unavailable. The batch cannot support a replacement decision until native review-agent results are rerun and retained durably."
+  },
+  "remeasurement_gate": {
+    "status": "not_ready_unreproducible",
+    "comparison_reproducible": false,
+    "core_hit_floor": 3,
+    "core_finding_total": 4,
+    "core_finding_hits": 3,
+    "core_hit_floor_met": true,
+    "false_positive_ceiling": 3,
+    "false_positive_count": 6,
+    "false_positive_ceiling_met": false
+  },
+  "reassessment": {
+    "status": "historical_unreproducible",
+    "formal_gold_fixture_unchanged": false,
+    "required_action": "rerun_native_review_agent_with_durable_provider_outputs",
+    "recommended_adjustments": []
+  }
+}

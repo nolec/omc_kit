@@ -1,0 +1,85 @@
+{
+  "manifest_id": "omc-review-v5-raw-evidence",
+  "status": "historical_external_evidence_unavailable",
+  "recorded_at": "2026-07-28T06:20:00+09:00",
+  "retention": "external_ephemeral_with_sha256",
+  "reproduction_status": "unavailable_without_external_artifacts",
+  "interpretation": "Historical Codex exec structured-review evidence. Hashes remain, but raw provider outputs were external ephemeral files and are not retained in this repository.",
+  "case_count": 10,
+  "provenance_recheck": {
+    "path": "scripts/fixtures/omc_review_v5_provenance_recheck.json",
+    "status": "verified",
+    "comparison_eligible_case_count": 10,
+    "mismatch_count": 0
+  },
+  "provider_rerun": {
+    "status": "completed_pending_adjudication",
+    "same_diff_workspace": "/private/tmp/omc-review-v5-isolated-workspaces-v4",
+    "case_count": 10,
+    "codex_batch": {
+      "path": "/private/tmp/omc-review-v5-codex-rerun.json",
+      "bytes": 559300,
+      "sha256": "9c9d9e0a810e3e67801707be521d3f008a8f8152d3bd91f7ecc92721ac2ae749"
+    },
+    "omc_batch": {
+      "path": "/private/tmp/omc-review-v5-omc-rerun.json",
+      "bytes": 170464,
+      "sha256": "338cf60f054c262b5e54c54e29addcb341721d2d5d53be7d461d31790d3fdda6"
+    },
+    "comparison_cases": {
+      "path": "/private/tmp/omc-review-v5-comparison-cases.json",
+      "bytes": 170050,
+      "sha256": "221b05bf25ba6c1a8d7354a708c20403b5cfc4ebc7350cecca817140d052e962"
+    },
+    "token_totals": {
+      "codex_input": 2023434,
+      "codex_output": 14044,
+      "omc_input": 2087770,
+      "omc_output": 16325
+    }
+  },
+  "files": [
+    {
+      "provider": "codex",
+      "kind": "provider_batch",
+      "path": "/private/tmp/omc-review-v5-provider-batch-generic.json",
+      "bytes": 909985,
+      "sha256": "d41f169a71d7c0d35bcaec906918ce5b2c8a3e3398fc855b05ecc8c556edd1f6"
+    },
+    {
+      "provider": "omc-review",
+      "kind": "provider_batch",
+      "path": "/private/tmp/omc-review-v5-omc-provider-batch.json",
+      "bytes": 17852,
+      "sha256": "235d6e24d4cc99855e86325891ddae871e2311c8295d03c6c8c322d6de8010f2"
+    },
+    {
+      "provider": "adjudicator",
+      "kind": "adjudication_summary",
+      "path": "/private/tmp/omc-review-v5-adjudication-summary.json",
+      "bytes": 11391,
+      "sha256": "01ef9ca8d0dc5a27123220885c6de77da87f23a83d065d7832439935d7b7b080"
+    },
+    {
+      "provider": "adjudicator",
+      "kind": "tie_breaker",
+      "path": "/private/tmp/omc-review-v5-tie-breaker.json",
+      "bytes": 2079,
+      "sha256": "fe25e6dc4f640e4d5208d0fe1445863ae67a75233a91f4c96e4010dfa9a69203"
+    },
+    {
+      "provider": "metrics",
+      "kind": "final_gold_metrics",
+      "path": "/private/tmp/omc-review-v5-final-gold-metrics.json",
+      "bytes": 10635,
+      "sha256": "0786f5cd6e96d59e4afbee11f31962f22c11346db1af8a9da7c6eaf454f0359b"
+    }
+  ],
+  "signoff": {
+    "status": "signed_off",
+    "required_action": "reduce_false_positives_before_replacement_claim",
+    "reviewer": "user",
+    "recorded_at": "2026-07-28T13:00:00+09:00",
+    "replacement_claim_allowed": false
+  }
+}

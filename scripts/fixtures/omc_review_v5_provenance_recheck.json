@@ -1,0 +1,23 @@
+{
+  "recheck_id": "omc-review-v5-provenance-recheck",
+  "status": "verified",
+  "recorded_at": "2026-07-28T04:35:00+09:00",
+  "workspace_root": "/private/tmp/omc-review-v5-isolated-workspaces-v4",
+  "hash_algorithm": "sha256",
+  "hash_semantics": "canonical_review_diff_sha256(git diff --binary HEAD)",
+  "comparison_eligible_case_count": 10,
+  "rerun_required": false,
+  "reason": "All 10 source commit diffs and rebuilt isolated workspaces match under the canonical hash contract. Provider outputs must still be rerun before quality metrics are recalculated.",
+  "cases": [
+    {"case_id": "observed-failed-capability-v5", "expected_diff_sha256": "07fa313facadf902b854de2dc05f72aa622c31ef6fe85fb8e81e97260ac9187c", "actual_diff_sha256": "07fa313facadf902b854de2dc05f72aa622c31ef6fe85fb8e81e97260ac9187c", "status": "matched"},
+    {"case_id": "observed-executor-shadow-v5", "expected_diff_sha256": "dc4726f108d9b19155163e4d6fb19af38ad05aba52f755949c1b79de78188d3d", "actual_diff_sha256": "dc4726f108d9b19155163e4d6fb19af38ad05aba52f755949c1b79de78188d3d", "status": "matched"},
+    {"case_id": "observed-storefront-header-v5", "expected_diff_sha256": "24495943fd90223a2ea0289f056fabd9c52b57e1986aca9f9b91df81b21f96de", "actual_diff_sha256": "24495943fd90223a2ea0289f056fabd9c52b57e1986aca9f9b91df81b21f96de", "status": "matched"},
+    {"case_id": "observed-partner-rejection-v5", "expected_diff_sha256": "7aa7b304e296627f949e368e8e142464688a186cf29c0f10d8026645057ee351", "actual_diff_sha256": "7aa7b304e296627f949e368e8e142464688a186cf29c0f10d8026645057ee351", "status": "matched"},
+    {"case_id": "observed-marketing-conversion-v5", "expected_diff_sha256": "5b8f739787c402f31f85cbea16a78d71282cc5b194950c02608c07e362b38b10", "actual_diff_sha256": "5b8f739787c402f31f85cbea16a78d71282cc5b194950c02608c07e362b38b10", "status": "matched"},
+    {"case_id": "observed-health-aware-v5", "expected_diff_sha256": "fa60e6e346c6a6890dfd2b82afc1faab813fa29f4b4440774f3008215bb0ecba", "actual_diff_sha256": "fa60e6e346c6a6890dfd2b82afc1faab813fa29f4b4440774f3008215bb0ecba", "status": "matched"},
+    {"case_id": "observed-health-context-v5", "expected_diff_sha256": "f47fbdcd71a0e3058d657081bce1977a37053674953723ff533664327315a152", "actual_diff_sha256": "f47fbdcd71a0e3058d657081bce1977a37053674953723ff533664327315a152", "status": "matched"},
+    {"case_id": "observed-policy-handoff-v5", "expected_diff_sha256": "c034994d1dfc3635486cb694243bb75edab0d406afeaa966702ae404000b16f1", "actual_diff_sha256": "c034994d1dfc3635486cb694243bb75edab0d406afeaa966702ae404000b16f1", "status": "matched"},
+    {"case_id": "observed-request-delegation-v5", "expected_diff_sha256": "d9174110ec6a5ab1fc9405f5e5308def82081156bf6bea48d209e1f9cc8b0d0d", "actual_diff_sha256": "d9174110ec6a5ab1fc9405f5e5308def82081156bf6bea48d209e1f9cc8b0d0d", "status": "matched"},
+    {"case_id": "observed-review-boundary-v5", "expected_diff_sha256": "360151d205cdcfb11afe99135872598561e1de7f6554b9ba25970e4be5f6e7ca", "actual_diff_sha256": "360151d205cdcfb11afe99135872598561e1de7f6554b9ba25970e4be5f6e7ca", "status": "matched"}
+  ]
+}

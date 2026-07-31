@@ -1,0 +1,15 @@
+{
+  "case_id": "observed-storefront-header-v5",
+  "status": "completed",
+  "diff_sha256": "08413821fcd07771c7f7af374bdc189ba93484f4adb3243951b21ae47e39df19",
+  "model": "codex",
+  "skill_sha256": "a795a544a6be73202222a947257ca8ab9d1ada003e0775e70466d1b2ad21a17c",
+  "prompt_sha256": "8d9759b9586aecd5e0207bc526d2a86df15b0b13c8ba0a6d7c99f116f8b750eb",
+  "recorded_at": "2026-07-30T06:17:07.197318Z",
+  "duration_ms": 41816,
+  "stdout": "[중대]\n\n- [libs/theme-universe/api/src/lib/restock/rest/useRestockQuery.ts:33,42] evidence_class: behavioral_direct | evidence: query key는 렌더 시점의 토큰을 읽지만 실제 요청은 실행 시점에 토큰을 다시 읽으므로, 인증 상태가 바뀌면 이전 사용자 키에 현재 사용자 응답이 저장될 수 있습니다. 토큰을 한 번 캡처해 key와 요청에 동일하게 사용하도록 수정해야 합니다.\n\n검증 커맨드:\n- `git diff --check` — 통과\n- 프로젝트 테스트 설정 미발견 — 테스트 실행 불가\n\n판정: REVISE  \nVERDICT: REVISE  \ndecision: REVISE | risk: HIGH (인증 사용자 간 React Query 캐시 오염 가능성) | next_action: $omc-task  \n공통 결정표: stage=review / outcome=revise / user_selection_needed=no / ship_intent_explicit=no",
+  "stderr": "2026-07-30T06:16:25.529849Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:16:25.529870Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:16:25.530529Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:16:25.531838Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:16:26.365085Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:16:26.365101Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:16:26.365313Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:16:26.366415Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:16:35.538378Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+  "exit_code": 0,
+  "runner": "external_omc_review_bundle",
+  "clean_baseline": true
+}

@@ -1,0 +1,15 @@
+{
+  "case_id": "observed-executor-shadow-v5",
+  "status": "completed",
+  "diff_sha256": "11dc25018043af4146a82060b510c68c5b80fd808f9a08a59cc379441bfd2d6b",
+  "model": "codex",
+  "skill_sha256": "a795a544a6be73202222a947257ca8ab9d1ada003e0775e70466d1b2ad21a17c",
+  "prompt_sha256": "8d9759b9586aecd5e0207bc526d2a86df15b0b13c8ba0a6d7c99f116f8b750eb",
+  "recorded_at": "2026-07-30T06:11:53.094715Z",
+  "duration_ms": 42717,
+  "stdout": "[중대]\n- [scripts/omc_autopilot.py:920-924] evidence_class: behavioral_direct | evidence: `delegation_shadow`가 dict가 아니면 validator를 호출하지 않고 결과에서 조용히 누락된다. malformed shadow 요청도 rejection record로 남긴다는 변경 의도와 달리 관찰 가능한 기록이 생성되지 않는다. 비-dict 입력도 `delegation_shadow` rejection record로 정규화하도록 수정 필요.\n\n[경미]\n- [scripts/omc_executor_shadow.py:67-84] evidence_class: behavioral_direct | evidence: approval 메타데이터는 `approval.get(key)`의 truthiness만 검사하므로 숫자·list·dict 같은 비문자열 값이 검증을 통과하고 `status=\"simulated\"` 결과에 기록될 수 있다. approval 식별자 및 scope/session 필드의 타입과 공백을 명시적으로 검증해야 한다.\n\n검증 커맨드:\n\n- `pytest -q scripts/test_omc_executor_shadow.py scripts/test_omc_orchestrator.py scripts/test_omc_autopilot_runs.py` — 실행 불가: 환경에 사용 가능한 임시 디렉터리가 없어 pytest 초기화 실패.\n- `git diff --check` — 통과.\n\n판정: REVISE  \nVERDICT: REVISE  \ndecision: REVISE (중대 이슈 존재) | risk: MED (malformed 입력이 누락되거나 simulated 성공으로 기록될 수 있음) | next_action: $omc-task (수정 후 재검토)  \n공통 결정표: stage=review / outcome=revise / user_selection_needed=no / ship_intent_explicit=no",
+  "stderr": "2026-07-30T06:11:10.548161Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:11:10.548183Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:11:10.549249Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:11:10.550377Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:11:11.491731Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:11:11.491747Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:11:11.492115Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:11:11.493314Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:11:20.558736Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+  "exit_code": 0,
+  "runner": "external_omc_review_bundle",
+  "clean_baseline": true
+}

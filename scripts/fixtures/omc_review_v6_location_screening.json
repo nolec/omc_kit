@@ -1,0 +1,195 @@
+{
+  "status": "screening_only_pending_blind_adjudication",
+  "recorded_at": "2026-07-30T06:45:53.507548Z",
+  "scope": "same_diff_clean_codex_baseline_vs_current_omc",
+  "case_count": 10,
+  "warning": "Location overlap is a candidate signal only. It is not a semantic hit, false-positive, evidence-accuracy, or provider-replacement verdict.",
+  "providers": {
+    "codex": {
+      "completed_case_count": 10,
+      "gold_finding_count": 8,
+      "gold_location_candidate_count": 2,
+      "gold_location_candidate_rate": 0.25,
+      "provider_finding_count": 4,
+      "unmatched_finding_count": 2,
+      "structural_evidence_complete_count": 4,
+      "relative_file_paths": true
+    },
+    "omc-review": {
+      "completed_case_count": 10,
+      "gold_finding_count": 8,
+      "gold_location_candidate_count": 2,
+      "gold_location_candidate_rate": 0.25,
+      "provider_finding_count": 9,
+      "unmatched_finding_count": 7,
+      "structural_evidence_complete_count": 9,
+      "relative_file_paths": true
+    }
+  },
+  "cases": [
+    {
+      "case_id": "observed-executor-shadow-v5",
+      "codex": {
+        "case_id": "observed-executor-shadow-v5",
+        "gold_finding_count": 1,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 1
+      },
+      "omc-review": {
+        "case_id": "observed-executor-shadow-v5",
+        "gold_finding_count": 1,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 2
+      }
+    },
+    {
+      "case_id": "observed-failed-capability-v5",
+      "codex": {
+        "case_id": "observed-failed-capability-v5",
+        "gold_finding_count": 0,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 0
+      },
+      "omc-review": {
+        "case_id": "observed-failed-capability-v5",
+        "gold_finding_count": 0,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 1
+      }
+    },
+    {
+      "case_id": "observed-health-aware-v5",
+      "codex": {
+        "case_id": "observed-health-aware-v5",
+        "gold_finding_count": 1,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 0
+      },
+      "omc-review": {
+        "case_id": "observed-health-aware-v5",
+        "gold_finding_count": 1,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 1
+      }
+    },
+    {
+      "case_id": "observed-health-context-v5",
+      "codex": {
+        "case_id": "observed-health-context-v5",
+        "gold_finding_count": 0,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 1
+      },
+      "omc-review": {
+        "case_id": "observed-health-context-v5",
+        "gold_finding_count": 0,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 0
+      }
+    },
+    {
+      "case_id": "observed-marketing-conversion-v5",
+      "codex": {
+        "case_id": "observed-marketing-conversion-v5",
+        "gold_finding_count": 1,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 0
+      },
+      "omc-review": {
+        "case_id": "observed-marketing-conversion-v5",
+        "gold_finding_count": 1,
+        "location_candidate_count": 1,
+        "unmatched_finding_count": 1
+      }
+    },
+    {
+      "case_id": "observed-partner-rejection-v5",
+      "codex": {
+        "case_id": "observed-partner-rejection-v5",
+        "gold_finding_count": 1,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 0
+      },
+      "omc-review": {
+        "case_id": "observed-partner-rejection-v5",
+        "gold_finding_count": 1,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 0
+      }
+    },
+    {
+      "case_id": "observed-policy-handoff-v5",
+      "codex": {
+        "case_id": "observed-policy-handoff-v5",
+        "gold_finding_count": 2,
+        "location_candidate_count": 1,
+        "unmatched_finding_count": 0
+      },
+      "omc-review": {
+        "case_id": "observed-policy-handoff-v5",
+        "gold_finding_count": 2,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 1
+      }
+    },
+    {
+      "case_id": "observed-request-delegation-v5",
+      "codex": {
+        "case_id": "observed-request-delegation-v5",
+        "gold_finding_count": 0,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 0
+      },
+      "omc-review": {
+        "case_id": "observed-request-delegation-v5",
+        "gold_finding_count": 0,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 1
+      }
+    },
+    {
+      "case_id": "observed-review-boundary-v5",
+      "codex": {
+        "case_id": "observed-review-boundary-v5",
+        "gold_finding_count": 1,
+        "location_candidate_count": 1,
+        "unmatched_finding_count": 0
+      },
+      "omc-review": {
+        "case_id": "observed-review-boundary-v5",
+        "gold_finding_count": 1,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 0
+      }
+    },
+    {
+      "case_id": "observed-storefront-header-v5",
+      "codex": {
+        "case_id": "observed-storefront-header-v5",
+        "gold_finding_count": 1,
+        "location_candidate_count": 0,
+        "unmatched_finding_count": 0
+      },
+      "omc-review": {
+        "case_id": "observed-storefront-header-v5",
+        "gold_finding_count": 1,
+        "location_candidate_count": 1,
+        "unmatched_finding_count": 0
+      }
+    }
+  ],
+  "input_provenance": {
+    "gold": {
+      "path": "scripts/fixtures/omc_review_v5_observed_gold_labels.json",
+      "sha256": "7e5951c8d07e112dc5f4df71f6a3f86a86459b79a9820591cccb33b2d964dc6b"
+    },
+    "codex": {
+      "path": "scripts/fixtures/omc_review_v6_clean_native_codex_batch.json",
+      "sha256": "1fd3c5364ea633d01ae597703ef1ef49e9cb91a6d34a17839eebdbee318eb3ec"
+    },
+    "omc-review": {
+      "path": "scripts/fixtures/omc_review_v6_current_omc_results.json",
+      "sha256": "d0b909afc6aa699eeb103959d0e4011a5a0a7bffb13af8059b854026eb0fcdde"
+    }
+  }
+}

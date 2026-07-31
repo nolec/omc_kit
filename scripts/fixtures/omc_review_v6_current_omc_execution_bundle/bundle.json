@@ -1,0 +1,58 @@
+{
+  "status": "ready_for_external_execution",
+  "created_at": "2026-07-30T06:09:00.448877Z",
+  "batch_id": "omc-review-836b93d6aadf6d71",
+  "execution_batch": "execution-batch.json",
+  "cases": [
+    {
+      "case_id": "observed-failed-capability-v5",
+      "status": "pending",
+      "artifact": "artifacts/observed-failed-capability-v5.json"
+    },
+    {
+      "case_id": "observed-executor-shadow-v5",
+      "status": "pending",
+      "artifact": "artifacts/observed-executor-shadow-v5.json"
+    },
+    {
+      "case_id": "observed-storefront-header-v5",
+      "status": "pending",
+      "artifact": "artifacts/observed-storefront-header-v5.json"
+    },
+    {
+      "case_id": "observed-partner-rejection-v5",
+      "status": "pending",
+      "artifact": "artifacts/observed-partner-rejection-v5.json"
+    },
+    {
+      "case_id": "observed-marketing-conversion-v5",
+      "status": "pending",
+      "artifact": "artifacts/observed-marketing-conversion-v5.json"
+    },
+    {
+      "case_id": "observed-health-aware-v5",
+      "status": "pending",
+      "artifact": "artifacts/observed-health-aware-v5.json"
+    },
+    {
+      "case_id": "observed-health-context-v5",
+      "status": "pending",
+      "artifact": "artifacts/observed-health-context-v5.json"
+    },
+    {
+      "case_id": "observed-policy-handoff-v5",
+      "status": "pending",
+      "artifact": "artifacts/observed-policy-handoff-v5.json"
+    },
+    {
+      "case_id": "observed-request-delegation-v5",
+      "status": "pending",
+      "artifact": "artifacts/observed-request-delegation-v5.json"
+    },
+    {
+      "case_id": "observed-review-boundary-v5",
+      "status": "pending",
+      "artifact": "artifacts/observed-review-boundary-v5.json"
+    }
+  ]
+}

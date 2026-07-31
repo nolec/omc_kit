@@ -1,0 +1,78 @@
+{
+  "status": "ready_for_omc_execution",
+  "recorded_at": "2026-07-30T05:57:46.378267Z",
+  "source_type": "observed_output",
+  "provider": "omc-review",
+  "batch_id": "omc-review-836b93d6aadf6d71",
+  "model": "codex",
+  "skill": {
+    "path": "/Users/noseunglae/Downloads/dev/omc_kit/.agents/skills/omc-review/SKILL.md",
+    "sha256": "a795a544a6be73202222a947257ca8ab9d1ada003e0775e70466d1b2ad21a17c"
+  },
+  "prompt": {
+    "sha256": "8d9759b9586aecd5e0207bc526d2a86df15b0b13c8ba0a6d7c99f116f8b750eb",
+    "text": "Review the current uncommitted diff only. Follow the attached OMC review skill exactly. Return findings with severity, file:line, evidence, and evidence_class. Do not modify files."
+  },
+  "cases": [
+    {
+      "case_id": "observed-failed-capability-v5",
+      "diff_sha256": "77269e4ad7d4ffd03b99ee2d8f953f76630c321c09f1dad1acae927b6f5b0005",
+      "workspace_diff_sha256": "07fa313facadf902b854de2dc05f72aa622c31ef6fe85fb8e81e97260ac9187c",
+      "workspace": "/private/tmp/omc-review-v5-remeasurement/workspaces/observed-failed-capability-v5"
+    },
+    {
+      "case_id": "observed-executor-shadow-v5",
+      "diff_sha256": "11dc25018043af4146a82060b510c68c5b80fd808f9a08a59cc379441bfd2d6b",
+      "workspace_diff_sha256": "dc4726f108d9b19155163e4d6fb19af38ad05aba52f755949c1b79de78188d3d",
+      "workspace": "/private/tmp/omc-review-v5-remeasurement/workspaces/observed-executor-shadow-v5"
+    },
+    {
+      "case_id": "observed-storefront-header-v5",
+      "diff_sha256": "08413821fcd07771c7f7af374bdc189ba93484f4adb3243951b21ae47e39df19",
+      "workspace_diff_sha256": "24495943fd90223a2ea0289f056fabd9c52b57e1986aca9f9b91df81b21f96de",
+      "workspace": "/private/tmp/omc-review-v5-remeasurement/workspaces/observed-storefront-header-v5"
+    },
+    {
+      "case_id": "observed-partner-rejection-v5",
+      "diff_sha256": "86374fd2d9bb69cadbcf14f6d9a9a4e741c051fe7e4c960209a776a53796cc61",
+      "workspace_diff_sha256": "7aa7b304e296627f949e368e8e142464688a186cf29c0f10d8026645057ee351",
+      "workspace": "/private/tmp/omc-review-v5-remeasurement/workspaces/observed-partner-rejection-v5"
+    },
+    {
+      "case_id": "observed-marketing-conversion-v5",
+      "diff_sha256": "5c596aa5c81e079de4eb719596c3869b9d3e9f1ebd4c3daa3e8746880b1a436b",
+      "workspace_diff_sha256": "5b8f739787c402f31f85cbea16a78d71282cc5b194950c02608c07e362b38b10",
+      "workspace": "/private/tmp/omc-review-v5-remeasurement/workspaces/observed-marketing-conversion-v5"
+    },
+    {
+      "case_id": "observed-health-aware-v5",
+      "diff_sha256": "769be059331d5a2f9ba663204aa126c25a270f70e8ea8d6680ccd453a19d14b2",
+      "workspace_diff_sha256": "fa60e6e346c6a6890dfd2b82afc1faab813fa29f4b4440774f3008215bb0ecba",
+      "workspace": "/private/tmp/omc-review-v5-remeasurement/workspaces/observed-health-aware-v5"
+    },
+    {
+      "case_id": "observed-health-context-v5",
+      "diff_sha256": "3bdeb4509aeda93c15f09b4e0a517de1803022c5fe3178041663ba15e699afa0",
+      "workspace_diff_sha256": "f47fbdcd71a0e3058d657081bce1977a37053674953723ff533664327315a152",
+      "workspace": "/private/tmp/omc-review-v5-remeasurement/workspaces/observed-health-context-v5"
+    },
+    {
+      "case_id": "observed-policy-handoff-v5",
+      "diff_sha256": "94d48d3602fcaf720ad9e544fc9155dd21cedc394e91c3d66f5e1cfd0963c646",
+      "workspace_diff_sha256": "c034994d1dfc3635486cb694243bb75edab0d406afeaa966702ae404000b16f1",
+      "workspace": "/private/tmp/omc-review-v5-remeasurement/workspaces/observed-policy-handoff-v5"
+    },
+    {
+      "case_id": "observed-request-delegation-v5",
+      "diff_sha256": "dd28b910f2bb5508a9a90c31f47ef24154306f579e1ca6441bbf0edc3774c900",
+      "workspace_diff_sha256": "d9174110ec6a5ab1fc9405f5e5308def82081156bf6bea48d209e1f9cc8b0d0d",
+      "workspace": "/private/tmp/omc-review-v5-remeasurement/workspaces/observed-request-delegation-v5"
+    },
+    {
+      "case_id": "observed-review-boundary-v5",
+      "diff_sha256": "48119553c2f228354f35f8130e06f4989538829477d456fabacf597313a57590",
+      "workspace_diff_sha256": "360151d205cdcfb11afe99135872598561e1de7f6554b9ba25970e4be5f6e7ca",
+      "workspace": "/private/tmp/omc-review-v5-remeasurement/workspaces/observed-review-boundary-v5"
+    }
+  ]
+}

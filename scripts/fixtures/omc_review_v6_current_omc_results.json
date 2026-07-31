@@ -1,0 +1,333 @@
+{
+  "status": "completed_omc_runs_pending_adjudication",
+  "recorded_at": "2026-07-30T06:24:10.485551Z",
+  "source_type": "observed_output",
+  "batch_id": "omc-review-836b93d6aadf6d71",
+  "cases": [
+    {
+      "case_id": "observed-failed-capability-v5",
+      "diff_sha256": "77269e4ad7d4ffd03b99ee2d8f953f76630c321c09f1dad1acae927b6f5b0005",
+      "providers": {
+        "omc-review": {
+          "case_id": "observed-failed-capability-v5",
+          "diff_id": "77269e4ad7d4ffd03b99ee2d8f953f76630c321c09f1dad1acae927b6f5b0005",
+          "prompt_id": "omc-review:omc-review-836b93d6aadf6d71:observed-failed-capability-v5",
+          "execution_mode": "cli_completed",
+          "status": "completed",
+          "runner": "manual_omc_review",
+          "model": "codex",
+          "verdict": "REVISE",
+          "next_action": null,
+          "findings": [
+            {
+              "severity": "중대",
+              "file": "scripts/omc_autopilot.py",
+              "line": "700,1124",
+              "message": "evidence_class: behavioral_direct | evidence: `_run_step()`의 프롬프트 누락 분기는 여전히 3개 값을 반환하지만 호출부는 이제 항상 4개 값을 언패킹하므로, prompt가 비어 있으면 `ValueError: not enough values to unpack`로 파이프라인이 중단됩니다. 모든 반환 경로를 4-tuple로 맞추고 해당 오류 경로를 회귀 테스트로 추가해야 합니다.",
+              "evidence_class": "behavioral_direct",
+              "evidence": "`_run_step()`의 프롬프트 누락 분기는 여전히 3개 값을 반환하지만 호출부는 이제 항상 4개 값을 언패킹하므로, prompt가 비어 있으면 `ValueError: not enough values to unpack`로 파이프라인이 중단됩니다. 모든 반환 경로를 4-tuple로 맞추고 해당 오류 경로를 회귀 테스트로 추가해야 합니다."
+            }
+          ],
+          "metrics": {
+            "duration_ms": 35893
+          },
+          "stdout": "범위: `git diff HEAD` 기준 20개 변경 파일 전체. `.omc` 및 untracked 파일은 없음.\n\n[중대]\n\n- [scripts/omc_autopilot.py:700,1124] evidence_class: behavioral_direct | evidence: `_run_step()`의 프롬프트 누락 분기는 여전히 3개 값을 반환하지만 호출부는 이제 항상 4개 값을 언패킹하므로, prompt가 비어 있으면 `ValueError: not enough values to unpack`로 파이프라인이 중단됩니다. 모든 반환 경로를 4-tuple로 맞추고 해당 오류 경로를 회귀 테스트로 추가해야 합니다.\n\n[확인 필요]\n\n- [.agent/skills/omc-review/SKILL.md 전체 외 삭제된 skill 파일들] evidence_class: context_needed | 삭제가 의도된 배포 구조 변경인지 확인 필요. 현재 diff만으로 런타임에서 해당 skill들이 더 이상 제공되지 않는 것이 의도인지 확정할 수 없습니다.\n\n검증 커맨드:\n\n- `git status -sb`\n- `git diff HEAD`\n- `python3 -m pytest -q scripts/test_omc_autopilot.py scripts/test_omc_orchestrator.py scripts/test_omc_autopilot_model_profile.py scripts/test_omc_autopilot_pipeline.py` — 실행 불가: 사용 가능한 임시 디렉터리가 없어 pytest 초기화 실패\n\n판정: REVISE  \nVERDICT: REVISE  \ndecision: REVISE | risk: MED (prompt 누락 입력에서 실행 중단) | next_action: $omc-task  \n공통 결정표: stage=review / outcome=revise / user_selection_needed=no / ship_intent_explicit=no",
+          "stderr": "2026-07-30T06:10:06.933132Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:10:06.933153Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:10:06.934070Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:10:06.935431Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:10:07.546787Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:10:07.546805Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:10:07.547028Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:10:07.547929Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:10:16.943796Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+          "raw_output_sha256": "d557e454d6c0fa6b83f3dedda8307fbcf7deadbd6caf66049915691cb556debf",
+          "recorded_at": "2026-07-30T06:10:42.641113Z"
+        }
+      }
+    },
+    {
+      "case_id": "observed-executor-shadow-v5",
+      "diff_sha256": "11dc25018043af4146a82060b510c68c5b80fd808f9a08a59cc379441bfd2d6b",
+      "providers": {
+        "omc-review": {
+          "case_id": "observed-executor-shadow-v5",
+          "diff_id": "11dc25018043af4146a82060b510c68c5b80fd808f9a08a59cc379441bfd2d6b",
+          "prompt_id": "omc-review:omc-review-836b93d6aadf6d71:observed-executor-shadow-v5",
+          "execution_mode": "cli_completed",
+          "status": "completed",
+          "runner": "manual_omc_review",
+          "model": "codex",
+          "verdict": "REVISE",
+          "next_action": null,
+          "findings": [
+            {
+              "severity": "중대",
+              "file": "scripts/omc_autopilot.py",
+              "line": "920-924",
+              "message": "evidence_class: behavioral_direct | evidence: `delegation_shadow`가 dict가 아니면 validator를 호출하지 않고 결과에서 조용히 누락된다. malformed shadow 요청도 rejection record로 남긴다는 변경 의도와 달리 관찰 가능한 기록이 생성되지 않는다. 비-dict 입력도 `delegation_shadow` rejection record로 정규화하도록 수정 필요.",
+              "evidence_class": "behavioral_direct",
+              "evidence": "`delegation_shadow`가 dict가 아니면 validator를 호출하지 않고 결과에서 조용히 누락된다. malformed shadow 요청도 rejection record로 남긴다는 변경 의도와 달리 관찰 가능한 기록이 생성되지 않는다. 비-dict 입력도 `delegation_shadow` rejection record로 정규화하도록 수정 필요."
+            },
+            {
+              "severity": "경미",
+              "file": "scripts/omc_executor_shadow.py",
+              "line": "67-84",
+              "message": "evidence_class: behavioral_direct | evidence: approval 메타데이터는 `approval.get(key)`의 truthiness만 검사하므로 숫자·list·dict 같은 비문자열 값이 검증을 통과하고 `status=\"simulated\"` 결과에 기록될 수 있다. approval 식별자 및 scope/session 필드의 타입과 공백을 명시적으로 검증해야 한다.",
+              "evidence_class": "behavioral_direct",
+              "evidence": "approval 메타데이터는 `approval.get(key)`의 truthiness만 검사하므로 숫자·list·dict 같은 비문자열 값이 검증을 통과하고 `status=\"simulated\"` 결과에 기록될 수 있다. approval 식별자 및 scope/session 필드의 타입과 공백을 명시적으로 검증해야 한다."
+            }
+          ],
+          "metrics": {
+            "duration_ms": 42717
+          },
+          "stdout": "[중대]\n- [scripts/omc_autopilot.py:920-924] evidence_class: behavioral_direct | evidence: `delegation_shadow`가 dict가 아니면 validator를 호출하지 않고 결과에서 조용히 누락된다. malformed shadow 요청도 rejection record로 남긴다는 변경 의도와 달리 관찰 가능한 기록이 생성되지 않는다. 비-dict 입력도 `delegation_shadow` rejection record로 정규화하도록 수정 필요.\n\n[경미]\n- [scripts/omc_executor_shadow.py:67-84] evidence_class: behavioral_direct | evidence: approval 메타데이터는 `approval.get(key)`의 truthiness만 검사하므로 숫자·list·dict 같은 비문자열 값이 검증을 통과하고 `status=\"simulated\"` 결과에 기록될 수 있다. approval 식별자 및 scope/session 필드의 타입과 공백을 명시적으로 검증해야 한다.\n\n검증 커맨드:\n\n- `pytest -q scripts/test_omc_executor_shadow.py scripts/test_omc_orchestrator.py scripts/test_omc_autopilot_runs.py` — 실행 불가: 환경에 사용 가능한 임시 디렉터리가 없어 pytest 초기화 실패.\n- `git diff --check` — 통과.\n\n판정: REVISE  \nVERDICT: REVISE  \ndecision: REVISE (중대 이슈 존재) | risk: MED (malformed 입력이 누락되거나 simulated 성공으로 기록될 수 있음) | next_action: $omc-task (수정 후 재검토)  \n공통 결정표: stage=review / outcome=revise / user_selection_needed=no / ship_intent_explicit=no",
+          "stderr": "2026-07-30T06:11:10.548161Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:11:10.548183Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:11:10.549249Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:11:10.550377Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:11:11.491731Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:11:11.491747Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:11:11.492115Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:11:11.493314Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:11:20.558736Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+          "raw_output_sha256": "4b46720e7e9387ce0efcf19935d2b54205614296401c52be5ee14597096b3bac",
+          "recorded_at": "2026-07-30T06:11:53.094715Z"
+        }
+      }
+    },
+    {
+      "case_id": "observed-storefront-header-v5",
+      "diff_sha256": "08413821fcd07771c7f7af374bdc189ba93484f4adb3243951b21ae47e39df19",
+      "providers": {
+        "omc-review": {
+          "case_id": "observed-storefront-header-v5",
+          "diff_id": "08413821fcd07771c7f7af374bdc189ba93484f4adb3243951b21ae47e39df19",
+          "prompt_id": "omc-review:omc-review-836b93d6aadf6d71:observed-storefront-header-v5",
+          "execution_mode": "cli_completed",
+          "status": "completed",
+          "runner": "manual_omc_review",
+          "model": "codex",
+          "verdict": "REVISE",
+          "next_action": null,
+          "findings": [
+            {
+              "severity": "중대",
+              "file": "libs/theme-universe/api/src/lib/restock/rest/useRestockQuery.ts",
+              "line": "33,42",
+              "message": "evidence_class: behavioral_direct | evidence: query key는 렌더 시점의 토큰을 읽지만 실제 요청은 실행 시점에 토큰을 다시 읽으므로, 인증 상태가 바뀌면 이전 사용자 키에 현재 사용자 응답이 저장될 수 있습니다. 토큰을 한 번 캡처해 key와 요청에 동일하게 사용하도록 수정해야 합니다.",
+              "evidence_class": "behavioral_direct",
+              "evidence": "query key는 렌더 시점의 토큰을 읽지만 실제 요청은 실행 시점에 토큰을 다시 읽으므로, 인증 상태가 바뀌면 이전 사용자 키에 현재 사용자 응답이 저장될 수 있습니다. 토큰을 한 번 캡처해 key와 요청에 동일하게 사용하도록 수정해야 합니다."
+            }
+          ],
+          "metrics": {
+            "duration_ms": 41816
+          },
+          "stdout": "[중대]\n\n- [libs/theme-universe/api/src/lib/restock/rest/useRestockQuery.ts:33,42] evidence_class: behavioral_direct | evidence: query key는 렌더 시점의 토큰을 읽지만 실제 요청은 실행 시점에 토큰을 다시 읽으므로, 인증 상태가 바뀌면 이전 사용자 키에 현재 사용자 응답이 저장될 수 있습니다. 토큰을 한 번 캡처해 key와 요청에 동일하게 사용하도록 수정해야 합니다.\n\n검증 커맨드:\n- `git diff --check` — 통과\n- 프로젝트 테스트 설정 미발견 — 테스트 실행 불가\n\n판정: REVISE  \nVERDICT: REVISE  \ndecision: REVISE | risk: HIGH (인증 사용자 간 React Query 캐시 오염 가능성) | next_action: $omc-task  \n공통 결정표: stage=review / outcome=revise / user_selection_needed=no / ship_intent_explicit=no",
+          "stderr": "2026-07-30T06:16:25.529849Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:16:25.529870Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:16:25.530529Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:16:25.531838Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:16:26.365085Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:16:26.365101Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:16:26.365313Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:16:26.366415Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:16:35.538378Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+          "raw_output_sha256": "dd97ae0e6ea0aa5a7fc14a21339624a466d55bb33523e0d5bdbca7bd0c6a8d65",
+          "recorded_at": "2026-07-30T06:17:07.197318Z"
+        }
+      }
+    },
+    {
+      "case_id": "observed-partner-rejection-v5",
+      "diff_sha256": "86374fd2d9bb69cadbcf14f6d9a9a4e741c051fe7e4c960209a776a53796cc61",
+      "providers": {
+        "omc-review": {
+          "case_id": "observed-partner-rejection-v5",
+          "diff_id": "86374fd2d9bb69cadbcf14f6d9a9a4e741c051fe7e4c960209a776a53796cc61",
+          "prompt_id": "omc-review:omc-review-836b93d6aadf6d71:observed-partner-rejection-v5",
+          "execution_mode": "cli_completed",
+          "status": "completed",
+          "runner": "manual_omc_review",
+          "model": "codex",
+          "verdict": "APPROVE WITH NOTES",
+          "next_action": null,
+          "findings": [],
+          "metrics": {
+            "duration_ms": 42492
+          },
+          "stdout": "범위: `git diff HEAD`의 단일 변경 파일만 검토했습니다. 변경 범위 외 파일은 리뷰하지 않았습니다.\n\n[확인 필요]\n\n- [src/app/portfolio/_components/Table/PortfolioTable.tsx:593] evidence_class: context_needed | `rejectionReason`의 타입이 `Tooltip.label`이 요구하는 값과 호환되는지, 거절 데이터에서 항상 존재하는지 현재 diff만으로 확인할 수 없습니다. `PortfolioItem` 정의와 API 응답 계약 확인이 필요합니다.\n\n검증 커맨드:\n\n- `git diff --check` — 통과\n- 테스트/타입 검증 — 프로젝트 설정 및 의존성 파일이 없어 실행 불가\n\n판정: APPROVE WITH NOTES  \nVERDICT: APPROVE WITH NOTES  \ndecision: APPROVE | risk: LOW (타입·빈 값 계약 확인 필요) | next_action: 사용자 선택 대기  \n공통 결정표: stage=review / outcome=done / user_selection_needed=yes / ship_intent_explicit=no",
+          "stderr": "2026-07-30T06:13:38.338823Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:13:38.338843Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:13:38.339689Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:13:38.341491Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:13:38.719494Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:13:38.719507Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:13:38.719802Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:13:38.720868Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:13:48.349433Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+          "raw_output_sha256": "e7d8cefeaaa3ff96a5838e40dfdfdca5c023417901bc46b7e703a932db766ac3",
+          "recorded_at": "2026-07-30T06:14:20.648854Z"
+        }
+      }
+    },
+    {
+      "case_id": "observed-marketing-conversion-v5",
+      "diff_sha256": "5c596aa5c81e079de4eb719596c3869b9d3e9f1ebd4c3daa3e8746880b1a436b",
+      "providers": {
+        "omc-review": {
+          "case_id": "observed-marketing-conversion-v5",
+          "diff_id": "5c596aa5c81e079de4eb719596c3869b9d3e9f1ebd4c3daa3e8746880b1a436b",
+          "prompt_id": "omc-review:omc-review-836b93d6aadf6d71:observed-marketing-conversion-v5",
+          "execution_mode": "cli_completed",
+          "status": "completed",
+          "runner": "manual_omc_review",
+          "model": "codex",
+          "verdict": "REVISE",
+          "next_action": null,
+          "findings": [
+            {
+              "severity": "중대",
+              "message": "evidence_class: behavioral_direct | evidence: `conversionTypeId` 기반 매핑을 `enumerate(types)` 기반으로 대체해, API 응답 순서가 실제 `convCntN` 슬롯 순서와 다르거나 항목이 삽입·누락되면 구매/가입 통계 요청 필드가 다른 전환 유형을 가리키게 됩니다. 기존 식별자 기반 매핑을 유지하거나 API 계약으로 순서 보장을 검증해야 합니다.",
+              "evidence_class": "behavioral_direct",
+              "evidence": "`conversionTypeId` 기반 매핑을 `enumerate(types)` 기반으로 대체해, API 응답 순서가 실제 `convCntN` 슬롯 순서와 다르거나 항목이 삽입·누락되면 구매/가입 통계 요청 필드가 다른 전환 유형을 가리키게 됩니다. 기존 식별자 기반 매핑을 유지하거나 API 계약으로 순서 보장을 검증해야 합니다.",
+              "file": "scripts/sync_weekly_kpi.py",
+              "line": "181-189"
+            },
+            {
+              "severity": "제안",
+              "file": "scripts/sync_weekly_kpi.py",
+              "line": "181-189",
+              "message": "evidence_class: test_quality_only | 전환 유형 순서 변경·누락·6개 초과 응답을 검증하는 테스트를 추가하세요.",
+              "evidence_class": "test_quality_only"
+            }
+          ],
+          "metrics": {
+            "duration_ms": 44829
+          },
+          "stdout": "[중대] — 전환 유형 매핑이 식별자 대신 배열 순서에 의존합니다.\n\n- [scripts/sync_weekly_kpi.py:181-189] evidence_class: behavioral_direct | evidence: `conversionTypeId` 기반 매핑을 `enumerate(types)` 기반으로 대체해, API 응답 순서가 실제 `convCntN` 슬롯 순서와 다르거나 항목이 삽입·누락되면 구매/가입 통계 요청 필드가 다른 전환 유형을 가리키게 됩니다. 기존 식별자 기반 매핑을 유지하거나 API 계약으로 순서 보장을 검증해야 합니다.\n\n[제안]\n\n- [scripts/sync_weekly_kpi.py:181-189] evidence_class: test_quality_only | 전환 유형 순서 변경·누락·6개 초과 응답을 검증하는 테스트를 추가하세요.\n\n검증 커맨드:\n- `python3 -c 'import ast, pathlib; ast.parse(pathlib.Path(\"scripts/sync_weekly_kpi.py\").read_text())'` 통과\n- `git diff --check` 실패: `scripts/sync_weekly_kpi.py:185` trailing whitespace\n- `python3 -m py_compile scripts/sync_weekly_kpi.py`는 sandbox의 `__pycache__` 쓰기 제한으로 실행 불가\n\n판정: REVISE  \nVERDICT: REVISE  \ndecision: REVISE | risk: HIGH | next_action: $omc-task\n\n공통 결정표: stage=review / outcome=revise / user_selection_needed=no / ship_intent_explicit=no",
+          "stderr": "2026-07-30T06:12:53.263352Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:53.263371Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:53.263971Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:53.265204Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:53.601250Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:53.601263Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:53.601529Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:53.602628Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:13:03.270295Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+          "raw_output_sha256": "e5c9ce364421747ea3b94df12b42e18e3fde255f205207a55c0abc739ad7c191",
+          "recorded_at": "2026-07-30T06:13:37.934895Z"
+        }
+      }
+    },
+    {
+      "case_id": "observed-health-aware-v5",
+      "diff_sha256": "769be059331d5a2f9ba663204aa126c25a270f70e8ea8d6680ccd453a19d14b2",
+      "providers": {
+        "omc-review": {
+          "case_id": "observed-health-aware-v5",
+          "diff_id": "769be059331d5a2f9ba663204aa126c25a270f70e8ea8d6680ccd453a19d14b2",
+          "prompt_id": "omc-review:omc-review-836b93d6aadf6d71:observed-health-aware-v5",
+          "execution_mode": "cli_completed",
+          "status": "completed",
+          "runner": "manual_omc_review",
+          "model": "codex",
+          "verdict": "APPROVE WITH NOTES",
+          "next_action": null,
+          "findings": [
+            {
+              "severity": "제안",
+              "file": "scripts/test_omc_health.py",
+              "line": "85-94",
+              "message": "evidence_class: test_quality_only | `check_python_compile`와 `check_test_collection` 테스트가 결과의 `ok`, 세부 내용, 실제 실행 범위를 검증하지 않고 이름만 확인하므로 회귀를 놓칠 수 있습니다. 성공/실패 및 명령 범위를 mock 기반으로 추가 검증하는 것을 권장합니다.",
+              "evidence_class": "test_quality_only"
+            }
+          ],
+          "metrics": {
+            "duration_ms": 34326
+          },
+          "stdout": "범위: 현재 uncommitted diff 3개 파일 전체. 변경 동작과 직접 연결되는 치명/중대/경미 이슈는 확인되지 않았습니다.\n\n[제안]\n\n- [scripts/test_omc_health.py:85-94] evidence_class: test_quality_only | `check_python_compile`와 `check_test_collection` 테스트가 결과의 `ok`, 세부 내용, 실제 실행 범위를 검증하지 않고 이름만 확인하므로 회귀를 놓칠 수 있습니다. 성공/실패 및 명령 범위를 mock 기반으로 추가 검증하는 것을 권장합니다.\n\n검증 커맨드:\n\n- `git diff --check` — 통과\n- Python `ast.parse` 기반 `scripts/*.py` 문법 확인 — 통과\n- 실행 테스트는 파일 변경 방지를 위해 수행하지 않음\n\n판정: APPROVE WITH NOTES  \nVERDICT: APPROVE WITH NOTES  \ndecision: APPROVE | risk: LOW (직접 확인된 동작 회귀 없음) | next_action: 사용자 선택 대기  \n공통 결정표: stage=review / outcome=done / user_selection_needed=yes / ship_intent_explicit=no",
+          "stderr": "2026-07-30T06:11:53.464891Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:11:53.464915Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:11:53.465772Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:11:53.466968Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:11:53.862780Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:11:53.862797Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:11:53.863050Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:11:53.864260Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:03.475534Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+          "raw_output_sha256": "b708fd8d40b4adc87759e3ad79dfb2572ac4412a0413fb6a37e2ec6e6c6b90ac",
+          "recorded_at": "2026-07-30T06:12:27.626905Z"
+        }
+      }
+    },
+    {
+      "case_id": "observed-health-context-v5",
+      "diff_sha256": "3bdeb4509aeda93c15f09b4e0a517de1803022c5fe3178041663ba15e699afa0",
+      "providers": {
+        "omc-review": {
+          "case_id": "observed-health-context-v5",
+          "diff_id": "3bdeb4509aeda93c15f09b4e0a517de1803022c5fe3178041663ba15e699afa0",
+          "prompt_id": "omc-review:omc-review-836b93d6aadf6d71:observed-health-context-v5",
+          "execution_mode": "cli_completed",
+          "status": "completed",
+          "runner": "manual_omc_review",
+          "model": "codex",
+          "verdict": "APPROVE WITH NOTES",
+          "next_action": null,
+          "findings": [],
+          "metrics": {
+            "duration_ms": 24780
+          },
+          "stdout": "리뷰 범위: `git diff HEAD` 기준 변경 3개 파일 전체. 파일 수정 없음.\n\n[치명] 없음\n\n[중대] 없음\n\n[경미] 없음\n\n[제안] 없음\n\n[확인 필요]\n\n- [scripts/test_omc_health.py:83-98] evidence_class: unresolved | pytest가 임시 디렉터리를 생성하지 못해 실행되지 않았습니다. 환경의 `/tmp` 또는 지정된 temp 경로를 확인한 뒤 재실행이 필요합니다.\n\n검증 커맨드:\n\n- `git diff --check` — 통과\n- `pytest -q scripts/test_omc_health.py` — 환경 오류로 실행 불가: `No usable temporary directory found`\n\n판정: APPROVE WITH NOTES  \nVERDICT: APPROVE WITH NOTES  \ndecision: APPROVE | risk: LOW (diff상 직접적인 동작 회귀 없음; 테스트 실행 환경만 확인 필요) | next_action: 사용자 선택 대기  \n공통 결정표: stage=review / outcome=done / user_selection_needed=yes / ship_intent_explicit=no",
+          "stderr": "2026-07-30T06:12:28.661938Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:28.661967Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:28.662707Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:28.665228Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:29.161354Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:29.161369Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:29.161858Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:29.168230Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:38.675118Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+          "raw_output_sha256": "912662bb4c40a03518218391ad9d97a2b2f9c03edc9a12aa4ef15f140ba65562",
+          "recorded_at": "2026-07-30T06:12:52.920321Z"
+        }
+      }
+    },
+    {
+      "case_id": "observed-policy-handoff-v5",
+      "diff_sha256": "94d48d3602fcaf720ad9e544fc9155dd21cedc394e91c3d66f5e1cfd0963c646",
+      "providers": {
+        "omc-review": {
+          "case_id": "observed-policy-handoff-v5",
+          "diff_id": "94d48d3602fcaf720ad9e544fc9155dd21cedc394e91c3d66f5e1cfd0963c646",
+          "prompt_id": "omc-review:omc-review-836b93d6aadf6d71:observed-policy-handoff-v5",
+          "execution_mode": "cli_completed",
+          "status": "completed",
+          "runner": "manual_omc_review",
+          "model": "codex",
+          "verdict": "APPROVE WITH NOTES",
+          "next_action": null,
+          "findings": [
+            {
+              "severity": "제안",
+              "file": "scripts/test_omc_exec_model_routing.py",
+              "line": "422-534",
+              "message": "evidence_class: test_quality_only | `classify_policy_comparison()`의 `balanced` 프로필에 대한 retry/quality failure 조합 회귀 테스트를 추가하면 정책 분류 경계가 더 명확해집니다.",
+              "evidence_class": "test_quality_only"
+            }
+          ],
+          "metrics": {
+            "duration_ms": 44720
+          },
+          "stdout": "범위: `git diff HEAD` 기준 4개 변경 파일 전체. 파일 수정 없음.\n\n[제안]\n\n- [scripts/test_omc_exec_model_routing.py:422-534] evidence_class: test_quality_only | `classify_policy_comparison()`의 `balanced` 프로필에 대한 retry/quality failure 조합 회귀 테스트를 추가하면 정책 분류 경계가 더 명확해집니다.\n\n[확인 필요]\n\n- 테스트 실행은 임시 디렉터리 생성 권한 부족으로 시작 단계에서 중단되었습니다.\n\n검증 커맨드:\n- `git diff HEAD --find-renames --find-copies`\n- `git diff --check` — 통과\n- `python3 -m pytest -q scripts/test_omc_exec_model_routing.py scripts/test_automatic_model_routing_roadmap.py` — 환경 오류로 실행 불가\n\n판정: APPROVE WITH NOTES  \nVERDICT: APPROVE WITH NOTES  \ndecision: APPROVE | risk: LOW (직접 확인된 회귀 없음) | next_action: 사용자 선택 대기  \n공통 결정표: stage=review / outcome=done / user_selection_needed=no / ship_intent_explicit=no",
+          "stderr": "2026-07-30T06:14:21.100725Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:14:21.100746Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:14:21.101655Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:14:21.103376Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:14:21.875524Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:14:21.875538Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:14:21.875817Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:14:21.877325Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:14:31.114283Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+          "raw_output_sha256": "7731cab2766f5787daf8aa090a7ab13b324f1d4e3fd43e5cc59c3d59439e94fa",
+          "recorded_at": "2026-07-30T06:15:05.643004Z"
+        }
+      }
+    },
+    {
+      "case_id": "observed-request-delegation-v5",
+      "diff_sha256": "dd28b910f2bb5508a9a90c31f47ef24154306f579e1ca6441bbf0edc3774c900",
+      "providers": {
+        "omc-review": {
+          "case_id": "observed-request-delegation-v5",
+          "diff_id": "dd28b910f2bb5508a9a90c31f47ef24154306f579e1ca6441bbf0edc3774c900",
+          "prompt_id": "omc-review:omc-review-836b93d6aadf6d71:observed-request-delegation-v5",
+          "execution_mode": "cli_completed",
+          "status": "completed",
+          "runner": "manual_omc_review",
+          "model": "codex",
+          "verdict": "APPROVE WITH NOTES",
+          "next_action": null,
+          "findings": [
+            {
+              "severity": "제안",
+              "file": "scripts/test_omc_orchestrator.py",
+              "line": "1480",
+              "message": "evidence_class: test_quality_only | 요청 경로의 `execution_order` 검증은 추가됐지만, 동일 경로의 잘못된 `recovery_action` 검증 회귀 테스트도 추가하면 변경된 두 분기를 모두 고정할 수 있습니다.",
+              "evidence_class": "test_quality_only"
+            }
+          ],
+          "metrics": {
+            "duration_ms": 51731
+          },
+          "stdout": "리뷰 범위: `git diff HEAD`의 2개 변경 파일만 검토했습니다. 파일 수정 없음.\n\n이슈 없음.\n\n[제안]\n- [scripts/test_omc_orchestrator.py:1480] evidence_class: test_quality_only | 요청 경로의 `execution_order` 검증은 추가됐지만, 동일 경로의 잘못된 `recovery_action` 검증 회귀 테스트도 추가하면 변경된 두 분기를 모두 고정할 수 있습니다.\n\n검증 커맨드:\n- `git diff HEAD` — 변경 범위 확인\n- `python3 -m pytest -q scripts/test_omc_orchestrator.py` — 실행 불가: 사용 가능한 임시 디렉터리 없음\n- `PYTHONPATH=scripts python3 -m unittest -q scripts.test_omc_orchestrator` — 실행 불가: `omc_exec` 모듈 로드 실패\n\n판정: APPROVE WITH NOTES  \nVERDICT: APPROVE WITH NOTES  \ndecision: APPROVE | risk: LOW (변경 동작은 직접적으로 검증 순서를 보강하며, 테스트 실행 환경 제약이 있음) | next_action: 사용자 선택 대기  \n공통 결정표: stage=review / outcome=done / user_selection_needed=yes / ship_intent_explicit=no",
+          "stderr": "2026-07-30T06:15:06.453967Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:15:06.454016Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:15:06.454896Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:15:06.456969Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:15:07.461471Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:15:07.461494Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:15:07.467674Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:15:07.483182Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:15:16.466777Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+          "raw_output_sha256": "1743207c446793655a6709e1eaf93a2f5d55475c5da37cdf3a5eb845b72f3c6f",
+          "recorded_at": "2026-07-30T06:15:57.601292Z"
+        }
+      }
+    },
+    {
+      "case_id": "observed-review-boundary-v5",
+      "diff_sha256": "48119553c2f228354f35f8130e06f4989538829477d456fabacf597313a57590",
+      "providers": {
+        "omc-review": {
+          "case_id": "observed-review-boundary-v5",
+          "diff_id": "48119553c2f228354f35f8130e06f4989538829477d456fabacf597313a57590",
+          "prompt_id": "omc-review:omc-review-836b93d6aadf6d71:observed-review-boundary-v5",
+          "execution_mode": "cli_completed",
+          "status": "completed",
+          "runner": "manual_omc_review",
+          "model": "codex",
+          "verdict": "APPROVE WITH NOTES",
+          "next_action": null,
+          "findings": [],
+          "metrics": {
+            "duration_ms": 27389
+          },
+          "stdout": "[확인 필요]\n\n- [.agents/skills/omc-review/SKILL.md:1-81] evidence_class: context_needed | `templates/.agent/...` 및 `templates/.agents/...`의 skill 파일도 함께 삭제되어 해당 경로를 참조하는 배포·생성 경로가 있다면 skill 제공이 중단될 수 있습니다. 참조 경로와 삭제 의도를 확인하세요.\n\n검증 커맨드:\n\n- `git status -sb`\n- `git diff HEAD`\n- `python3 -m pytest -q scripts/test_omc_review_compare.py scripts/test_omc_review_adjudication_contract.py scripts/test_omc_review_boundary_cases.py` — 실행 불가: 사용 가능한 임시 디렉터리가 없어 pytest 초기화 실패\n\n판정: APPROVE WITH NOTES  \nVERDICT: APPROVE WITH NOTES  \ndecision: APPROVE | risk: LOW (코드상 직접 확인 가능한 결함 없음; 삭제 경로 확인 필요) | next_action: 사용자 선택 대기  \n공통 결정표: stage=review / outcome=done / user_selection_needed=yes / ship_intent_explicit=no",
+          "stderr": "2026-07-30T06:15:57.975153Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:15:57.975172Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:15:57.975664Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:15:57.976534Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:15:58.345046Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:15:58.345062Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:15:58.345324Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:15:58.346926Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:16:07.983318Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+          "raw_output_sha256": "47ca8c29210e7d0f95c4ad558fc3b23e1d2b442508c6d4054cbb9fa27dccedae",
+          "recorded_at": "2026-07-30T06:16:25.200868Z"
+        }
+      }
+    }
+  ]
+}

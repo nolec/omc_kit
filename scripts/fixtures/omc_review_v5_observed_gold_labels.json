@@ -1,0 +1,115 @@
+{
+  "status": "signed_off",
+  "provenance_status": "verified",
+  "signoff_allowed": true,
+  "final_signoff": {
+    "reviewer": "user",
+    "decision": "existing_gold_label_draft_approved",
+    "recorded_at": "2026-07-28T13:00:00+09:00"
+  },
+  "provenance_recheck": "scripts/fixtures/omc_review_v5_provenance_recheck.json",
+  "source_type": "observed_output",
+  "decision_policy": {
+    "primary_severity": ["P0", "P1"],
+    "secondary_severity": ["P2", "P3"],
+    "evidence_fields": ["file", "line", "reason"]
+  },
+  "cases": [
+    {
+      "case_id": "observed-failed-capability-v5",
+      "source_commit": "7fa430e8",
+      "diff_sha256": "77269e4ad7d4ffd03b99ee2d8f953f76630c321c09f1dad1acae927b6f5b0005",
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b,blind-tie-breaker", "provider_outputs_visible": false, "reviewer_count": 3, "agreement": "agreed", "tie_breaker_completed": true},
+      "gold_findings": [],
+      "adjudication_reason": "The shown diff does not directly evidence the alleged unchanged early-return branches or caller unpacking failure."
+    },
+    {
+      "case_id": "observed-executor-shadow-v5",
+      "source_commit": "b6118204",
+      "diff_sha256": "11dc25018043af4146a82060b510c68c5b80fd808f9a08a59cc379441bfd2d6b",
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b", "provider_outputs_visible": false, "reviewer_count": 2, "agreement": "agreed", "tie_breaker_completed": false},
+      "gold_findings": [{"id": "retry-limit-unbounded", "severity": "P2", "file": "scripts/omc_executor_shadow.py", "line": "124", "reason": "retry_limit has no upper bound, so arbitrarily oversized nonnegative integers are emitted in a simulated policy record despite the stated rejection of oversized numeric guard values."}],
+      "adjudication_reason": "Both independent adjudicators agreed that the missing upper bound is directly evidenced."
+    },
+    {
+      "case_id": "observed-storefront-header-v5",
+      "source_commit": "53555a6492",
+      "diff_sha256": "08413821fcd07771c7f7af374bdc189ba93484f4adb3243951b21ae47e39df19",
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b", "provider_outputs_visible": false, "reviewer_count": 2, "agreement": "agreed", "tie_breaker_completed": false},
+      "gold_findings": [{"id": "restock-token-cache-key-race", "severity": "P1", "file": "libs/theme-universe/api/src/lib/restock/rest/useRestockQuery.ts", "line": "33-42", "reason": "websiteAuth.getToken() is read independently for the query key and request; authentication changes between those reads can associate one user's response with another user's cache key."}],
+      "adjudication_reason": "Both independent adjudicators agreed that the two token reads create a cache partition race."
+    },
+    {
+      "case_id": "observed-partner-rejection-v5",
+      "source_commit": "41043cb",
+      "diff_sha256": "86374fd2d9bb69cadbcf14f6d9a9a4e741c051fe7e4c960209a776a53796cc61",
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b", "provider_outputs_visible": false, "reviewer_count": 2, "agreement": "agreed", "tie_breaker_completed": false},
+      "gold_findings": [{"id": "rejection-tooltip-missing-fallback", "severity": "P2", "file": "src/app/portfolio/_components/Table/PortfolioTable.tsx", "line": "593", "reason": "The tooltip label now directly uses rejectionReason without a fallback, allowing missing or empty rejection reasons to produce an unusable blank tooltip."}],
+      "adjudication_reason": "Both independent adjudicators agreed that the missing rejection reason fallback is directly evidenced."
+    },
+    {
+      "case_id": "observed-marketing-conversion-v5",
+      "source_commit": "b539e221",
+      "diff_sha256": "5c596aa5c81e079de4eb719596c3869b9d3e9f1ebd4c3daa3e8746880b1a436b",
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b", "provider_outputs_visible": false, "reviewer_count": 2, "agreement": "agreed", "tie_breaker_completed": false},
+      "gold_findings": [{"id": "conversion-type-positional-mapping", "severity": "P1", "file": "scripts/sync_weekly_kpi.py", "line": "183", "reason": "The diff replaces conversionTypeId-based mapping with one-based enumerate() positions, making purchase/signup KPI fields incorrect when the API order differs or entries are omitted."}],
+      "adjudication_reason": "Both independent adjudicators agreed that positional conversion mapping is unsafe."
+    },
+    {
+      "case_id": "observed-health-aware-v5",
+      "source_commit": "40b598c",
+      "diff_sha256": "769be059331d5a2f9ba663204aa126c25a270f70e8ea8d6680ccd453a19d14b2",
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b,blind-tie-breaker", "provider_outputs_visible": false, "reviewer_count": 3, "agreement": "agreed", "tie_breaker_completed": true},
+      "gold_findings": [
+        {"id": "compileall-writes-bytecode", "severity": "P2", "file": "scripts/omc_health.py", "line": "81", "reason": "compileall is invoked without suppressing bytecode generation, so a health check can create scripts/__pycache__ artifacts and dirty the working tree."}
+      ],
+      "adjudication_reason": "Reassessment rejected the fast-branch finding because --fast is documented and tested as skipping slow checks; the compileall side effect remains confirmed.",
+      "reassessment": {"status": "applied", "rejected_finding_id": "fast-skips-python-compilation", "reason": "--fast intentionally skips slow checks under the current health contract."}
+    },
+    {
+      "case_id": "observed-health-context-v5",
+      "source_commit": "3d23c95",
+      "diff_sha256": "3bdeb4509aeda93c15f09b4e0a517de1803022c5fe3178041663ba15e699afa0",
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b", "provider_outputs_visible": false, "reviewer_count": 2, "agreement": "agreed", "tie_breaker_completed": false},
+      "gold_findings": [],
+      "adjudication_reason": "Both independent adjudicators found no directly evidenced defect in the repository-context change."
+    },
+    {
+      "case_id": "observed-policy-handoff-v5",
+      "source_commit": "73b777a",
+      "diff_sha256": "94d48d3602fcaf720ad9e544fc9155dd21cedc394e91c3d66f5e1cfd0963c646",
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b", "provider_outputs_visible": false, "reviewer_count": 2, "agreement": "agreed", "tie_breaker_completed": false},
+      "gold_findings": [
+        {"id": "missing-cost-evidence-policy-hit", "severity": "P1", "file": "scripts/omc_exec.py", "line": "301-321", "reason": "classify_policy_comparison can return hit for balanced or cost_saver when cost_delta is missing, falsely treating an unmeasured cost outcome as validated."},
+        {"id": "boolean-selection-flag", "severity": "P2", "file": "scripts/omc_exec.py", "line": "332-337", "reason": "build_executor_handoff_contract compares user_selection_needed to the string yes, so a boolean True input is converted to False despite the handoff contract using booleans."}
+      ],
+      "adjudication_reason": "Both independent adjudicators agreed on the missing cost evidence and boolean handoff defects."
+    },
+    {
+      "case_id": "observed-request-delegation-v5",
+      "source_commit": "8de4796",
+      "diff_sha256": "dd28b910f2bb5508a9a90c31f47ef24154306f579e1ca6441bbf0edc3774c900",
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b", "provider_outputs_visible": false, "reviewer_count": 2, "agreement": "agreed", "tie_breaker_completed": false},
+      "gold_findings": [],
+      "adjudication_reason": "Both independent adjudicators found no directly evidenced defect in the delegation contract change."
+    },
+    {
+      "case_id": "observed-review-boundary-v5",
+      "source_commit": "c763c57",
+      "diff_sha256": "48119553c2f228354f35f8130e06f4989538829477d456fabacf597313a57590",
+      "adjudication_status": "confirmed",
+      "adjudication": {"status": "confirmed", "reviewer": "blind-adjudicator-a,blind-adjudicator-b,blind-tie-breaker", "provider_outputs_visible": false, "reviewer_count": 3, "agreement": "agreed", "tie_breaker_completed": true},
+      "gold_findings": [{"id": "confirmed-adjudication-metadata-optional", "severity": "P1", "file": "scripts/omc_review_compare.py", "line": "163-174", "reason": "Reviewer-independence metadata is validated only when adjudication is present, allowing a confirmed case to omit adjudication and bypass the required validation."}],
+      "adjudication_reason": "The tie-breaker confirmed the conditional validation bypass and rejected the alternative nested-contract concern."
+    }
+  ]
+}

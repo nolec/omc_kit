@@ -1,0 +1,15 @@
+{
+  "case_id": "observed-marketing-conversion-v5",
+  "status": "completed",
+  "diff_sha256": "5c596aa5c81e079de4eb719596c3869b9d3e9f1ebd4c3daa3e8746880b1a436b",
+  "model": "codex",
+  "skill_sha256": "a795a544a6be73202222a947257ca8ab9d1ada003e0775e70466d1b2ad21a17c",
+  "prompt_sha256": "8d9759b9586aecd5e0207bc526d2a86df15b0b13c8ba0a6d7c99f116f8b750eb",
+  "recorded_at": "2026-07-30T06:13:37.934895Z",
+  "duration_ms": 44829,
+  "stdout": "[중대] — 전환 유형 매핑이 식별자 대신 배열 순서에 의존합니다.\n\n- [scripts/sync_weekly_kpi.py:181-189] evidence_class: behavioral_direct | evidence: `conversionTypeId` 기반 매핑을 `enumerate(types)` 기반으로 대체해, API 응답 순서가 실제 `convCntN` 슬롯 순서와 다르거나 항목이 삽입·누락되면 구매/가입 통계 요청 필드가 다른 전환 유형을 가리키게 됩니다. 기존 식별자 기반 매핑을 유지하거나 API 계약으로 순서 보장을 검증해야 합니다.\n\n[제안]\n\n- [scripts/sync_weekly_kpi.py:181-189] evidence_class: test_quality_only | 전환 유형 순서 변경·누락·6개 초과 응답을 검증하는 테스트를 추가하세요.\n\n검증 커맨드:\n- `python3 -c 'import ast, pathlib; ast.parse(pathlib.Path(\"scripts/sync_weekly_kpi.py\").read_text())'` 통과\n- `git diff --check` 실패: `scripts/sync_weekly_kpi.py:185` trailing whitespace\n- `python3 -m py_compile scripts/sync_weekly_kpi.py`는 sandbox의 `__pycache__` 쓰기 제한으로 실행 불가\n\n판정: REVISE  \nVERDICT: REVISE  \ndecision: REVISE | risk: HIGH | next_action: $omc-task\n\n공통 결정표: stage=review / outcome=revise / user_selection_needed=no / ship_intent_explicit=no",
+  "stderr": "2026-07-30T06:12:53.263352Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:53.263371Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:53.263971Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:53.265204Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:53.601250Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:53.601263Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:53.601529Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:53.602628Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:13:03.270295Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+  "exit_code": 0,
+  "runner": "external_omc_review_bundle",
+  "clean_baseline": true
+}

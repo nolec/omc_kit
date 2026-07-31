@@ -1,0 +1,15 @@
+{
+  "case_id": "observed-request-delegation-v5",
+  "status": "completed",
+  "diff_sha256": "dd28b910f2bb5508a9a90c31f47ef24154306f579e1ca6441bbf0edc3774c900",
+  "model": "codex",
+  "skill_sha256": "a795a544a6be73202222a947257ca8ab9d1ada003e0775e70466d1b2ad21a17c",
+  "prompt_sha256": "8d9759b9586aecd5e0207bc526d2a86df15b0b13c8ba0a6d7c99f116f8b750eb",
+  "recorded_at": "2026-07-30T06:15:57.601292Z",
+  "duration_ms": 51731,
+  "stdout": "리뷰 범위: `git diff HEAD`의 2개 변경 파일만 검토했습니다. 파일 수정 없음.\n\n이슈 없음.\n\n[제안]\n- [scripts/test_omc_orchestrator.py:1480] evidence_class: test_quality_only | 요청 경로의 `execution_order` 검증은 추가됐지만, 동일 경로의 잘못된 `recovery_action` 검증 회귀 테스트도 추가하면 변경된 두 분기를 모두 고정할 수 있습니다.\n\n검증 커맨드:\n- `git diff HEAD` — 변경 범위 확인\n- `python3 -m pytest -q scripts/test_omc_orchestrator.py` — 실행 불가: 사용 가능한 임시 디렉터리 없음\n- `PYTHONPATH=scripts python3 -m unittest -q scripts.test_omc_orchestrator` — 실행 불가: `omc_exec` 모듈 로드 실패\n\n판정: APPROVE WITH NOTES  \nVERDICT: APPROVE WITH NOTES  \ndecision: APPROVE | risk: LOW (변경 동작은 직접적으로 검증 순서를 보강하며, 테스트 실행 환경 제약이 있음) | next_action: 사용자 선택 대기  \n공통 결정표: stage=review / outcome=done / user_selection_needed=yes / ship_intent_explicit=no",
+  "stderr": "2026-07-30T06:15:06.453967Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:15:06.454016Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:15:06.454896Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:15:06.456969Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:15:07.461471Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:15:07.461494Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:15:07.467674Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:15:07.483182Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:15:16.466777Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+  "exit_code": 0,
+  "runner": "external_omc_review_bundle",
+  "clean_baseline": true
+}

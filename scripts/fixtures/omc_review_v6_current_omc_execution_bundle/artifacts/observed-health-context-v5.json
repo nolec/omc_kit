@@ -1,0 +1,15 @@
+{
+  "case_id": "observed-health-context-v5",
+  "status": "completed",
+  "diff_sha256": "3bdeb4509aeda93c15f09b4e0a517de1803022c5fe3178041663ba15e699afa0",
+  "model": "codex",
+  "skill_sha256": "a795a544a6be73202222a947257ca8ab9d1ada003e0775e70466d1b2ad21a17c",
+  "prompt_sha256": "8d9759b9586aecd5e0207bc526d2a86df15b0b13c8ba0a6d7c99f116f8b750eb",
+  "recorded_at": "2026-07-30T06:12:52.920321Z",
+  "duration_ms": 24780,
+  "stdout": "리뷰 범위: `git diff HEAD` 기준 변경 3개 파일 전체. 파일 수정 없음.\n\n[치명] 없음\n\n[중대] 없음\n\n[경미] 없음\n\n[제안] 없음\n\n[확인 필요]\n\n- [scripts/test_omc_health.py:83-98] evidence_class: unresolved | pytest가 임시 디렉터리를 생성하지 못해 실행되지 않았습니다. 환경의 `/tmp` 또는 지정된 temp 경로를 확인한 뒤 재실행이 필요합니다.\n\n검증 커맨드:\n\n- `git diff --check` — 통과\n- `pytest -q scripts/test_omc_health.py` — 환경 오류로 실행 불가: `No usable temporary directory found`\n\n판정: APPROVE WITH NOTES  \nVERDICT: APPROVE WITH NOTES  \ndecision: APPROVE | risk: LOW (diff상 직접적인 동작 회귀 없음; 테스트 실행 환경만 확인 필요) | next_action: 사용자 선택 대기  \n공통 결정표: stage=review / outcome=done / user_selection_needed=yes / ship_intent_explicit=no",
+  "stderr": "2026-07-30T06:12:28.661938Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:28.661967Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:28.662707Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:28.665228Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:29.161354Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:29.161369Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:12:29.161858Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:29.168230Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:12:38.675118Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+  "exit_code": 0,
+  "runner": "external_omc_review_bundle",
+  "clean_baseline": true
+}

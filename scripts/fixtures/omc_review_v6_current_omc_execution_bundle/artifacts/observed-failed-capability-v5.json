@@ -1,0 +1,15 @@
+{
+  "case_id": "observed-failed-capability-v5",
+  "status": "completed",
+  "diff_sha256": "77269e4ad7d4ffd03b99ee2d8f953f76630c321c09f1dad1acae927b6f5b0005",
+  "model": "codex",
+  "skill_sha256": "a795a544a6be73202222a947257ca8ab9d1ada003e0775e70466d1b2ad21a17c",
+  "prompt_sha256": "8d9759b9586aecd5e0207bc526d2a86df15b0b13c8ba0a6d7c99f116f8b750eb",
+  "recorded_at": "2026-07-30T06:10:42.641113Z",
+  "duration_ms": 35893,
+  "stdout": "범위: `git diff HEAD` 기준 20개 변경 파일 전체. `.omc` 및 untracked 파일은 없음.\n\n[중대]\n\n- [scripts/omc_autopilot.py:700,1124] evidence_class: behavioral_direct | evidence: `_run_step()`의 프롬프트 누락 분기는 여전히 3개 값을 반환하지만 호출부는 이제 항상 4개 값을 언패킹하므로, prompt가 비어 있으면 `ValueError: not enough values to unpack`로 파이프라인이 중단됩니다. 모든 반환 경로를 4-tuple로 맞추고 해당 오류 경로를 회귀 테스트로 추가해야 합니다.\n\n[확인 필요]\n\n- [.agent/skills/omc-review/SKILL.md 전체 외 삭제된 skill 파일들] evidence_class: context_needed | 삭제가 의도된 배포 구조 변경인지 확인 필요. 현재 diff만으로 런타임에서 해당 skill들이 더 이상 제공되지 않는 것이 의도인지 확정할 수 없습니다.\n\n검증 커맨드:\n\n- `git status -sb`\n- `git diff HEAD`\n- `python3 -m pytest -q scripts/test_omc_autopilot.py scripts/test_omc_orchestrator.py scripts/test_omc_autopilot_model_profile.py scripts/test_omc_autopilot_pipeline.py` — 실행 불가: 사용 가능한 임시 디렉터리가 없어 pytest 초기화 실패\n\n판정: REVISE  \nVERDICT: REVISE  \ndecision: REVISE | risk: MED (prompt 누락 입력에서 실행 중단) | next_action: $omc-task  \n공통 결정표: stage=review / outcome=revise / user_selection_needed=no / ship_intent_explicit=no",
+  "stderr": "2026-07-30T06:10:06.933132Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:10:06.933153Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:10:06.934070Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:10:06.935431Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:10:07.546787Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:10:07.546805Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-07-30T06:10:07.547028Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:10:07.547929Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file://<redacted>\n2026-07-30T06:10:16.943796Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+  "exit_code": 0,
+  "runner": "external_omc_review_bundle",
+  "clean_baseline": true
+}
