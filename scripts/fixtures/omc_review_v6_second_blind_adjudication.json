@@ -1,0 +1,110 @@
+{
+  "status": "completed",
+  "packet_sha256": "44483eec0728e4eb0ca13aa3c820335c8850667e4aeb1e378c16e907a7b1e015",
+  "provider_outputs_visible": false,
+  "cases": [
+    {
+      "case_id": "observed-executor-shadow-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": [
+            {
+              "finding_index": 0,
+              "classification": "false_positive",
+              "gold_finding_id": null,
+              "evidence_accuracy": null
+            },
+            {
+              "finding_index": 1,
+              "classification": "false_positive",
+              "gold_finding_id": null,
+              "evidence_accuracy": null
+            }
+          ]
+        },
+        {
+          "alias": "review-set-b",
+          "findings": [
+            {
+              "finding_index": 0,
+              "classification": "false_positive",
+              "gold_finding_id": null,
+              "evidence_accuracy": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "observed-failed-capability-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": [
+            {
+              "finding_index": 0,
+              "classification": "false_positive",
+              "gold_finding_id": null,
+              "evidence_accuracy": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "observed-health-context-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-b",
+          "findings": [
+            {
+              "finding_index": 0,
+              "classification": "false_positive",
+              "gold_finding_id": null,
+              "evidence_accuracy": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "observed-review-boundary-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-b",
+          "findings": [
+            {
+              "finding_index": 0,
+              "classification": "false_positive",
+              "gold_finding_id": null,
+              "evidence_accuracy": null
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "adjudicator_provenance": {
+    "receipt_version": 3,
+    "executor": "codex",
+    "model": "gpt-5.6-luna",
+    "execution_id": "omc-runner-e7c835adbb3e4e0fa4d07c8ce9e5311e",
+    "execution_scope": "runner_attested_fresh_session",
+    "provider_session_id": "019fb73f-1ca1-75f1-89b7-2008ffd96608",
+    "recorded_at": "2026-07-31T08:16:47.860683Z",
+    "input_packet_sha256": "44483eec0728e4eb0ca13aa3c820335c8850667e4aeb1e378c16e907a7b1e015",
+    "provider_mapping_visible": false,
+    "resume_used": false,
+    "command_fingerprint": "b87f13ebf4e1e6e702b67723a75b47484e79205c3eadaa592ac789f1773cac40",
+    "event_stream_sha256": "f8fadd32e836211821a348eb64fb6b1b512f20244411c7336e03276105fd29bf",
+    "executor_binary_path": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "executor_binary_sha256": "68474c6192406b8a0278243c8283b87a84798a69fb498f30c3715861f8082542",
+    "tool_free_execution_verified": true,
+    "exit_code": 0,
+    "schema_verified": true,
+    "semantic_completeness_verified": true,
+    "raw_output_sha256": "a7c3563a4d290b91b3c7d49c34145c818132719684c9f48e98c4012ef6893359",
+    "trusted_receipt_hmac_sha256": "f0a895af2967c0c6e23e4ab8041c0fc72ed103b09868c543791d59cbb9e0ea2f"
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "status": "pending_second_blind_semantic_adjudication",
+  "recorded_at": "2026-07-31T08:16:16.811219Z",
+  "source_packet_sha256": "f8d110cad205d887a61824e75f0d140f29280e339df602588b9ff721ab382fb6",
+  "receipt_key_sha256": "96f8df9f826286697fab8db7c692b1a9af31282f1a364cba213c253f0629ae69",
+  "case_count": 4,
+  "candidate_count": 6,
+  "instructions": "Independently classify every finding against the gold findings by semantic meaning. Do not infer providers or prior adjudication results.",
+  "cases": [
+    {
+      "case_id": "observed-executor-shadow-v5",
+      "diff_sha256": "11dc25018043af4146a82060b510c68c5b80fd808f9a08a59cc379441bfd2d6b",
+      "gold_findings": [
+        {
+          "id": "retry-limit-unbounded",
+          "severity": "P2",
+          "file": "scripts/omc_executor_shadow.py",
+          "line": "124",
+          "reason": "retry_limit has no upper bound, so arbitrarily oversized nonnegative integers are emitted in a simulated policy record despite the stated rejection of oversized numeric guard values."
+        }
+      ],
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": [
+            {
+              "finding_index": 0,
+              "severity": "중대",
+              "file": "scripts/omc_autopilot.py",
+              "line": "920-924",
+              "message": "evidence_class: behavioral_direct | evidence: `delegation_shadow`가 dict가 아니면 validator를 호출하지 않고 결과에서 조용히 누락된다. malformed shadow 요청도 rejection record로 남긴다는 변경 의도와 달리 관찰 가능한 기록이 생성되지 않는다. 비-dict 입력도 `delegation_shadow` rejection record로 정규화하도록 수정 필요.",
+              "evidence_class": "behavioral_direct",
+              "evidence": "`delegation_shadow`가 dict가 아니면 validator를 호출하지 않고 결과에서 조용히 누락된다. malformed shadow 요청도 rejection record로 남긴다는 변경 의도와 달리 관찰 가능한 기록이 생성되지 않는다. 비-dict 입력도 `delegation_shadow` rejection record로 정규화하도록 수정 필요."
+            },
+            {
+              "finding_index": 1,
+              "severity": "경미",
+              "file": "scripts/omc_executor_shadow.py",
+              "line": "67-84",
+              "message": "evidence_class: behavioral_direct | evidence: approval 메타데이터는 `approval.get(key)`의 truthiness만 검사하므로 숫자·list·dict 같은 비문자열 값이 검증을 통과하고 `status=\"simulated\"` 결과에 기록될 수 있다. approval 식별자 및 scope/session 필드의 타입과 공백을 명시적으로 검증해야 한다.",
+              "evidence_class": "behavioral_direct",
+              "evidence": "approval 메타데이터는 `approval.get(key)`의 truthiness만 검사하므로 숫자·list·dict 같은 비문자열 값이 검증을 통과하고 `status=\"simulated\"` 결과에 기록될 수 있다. approval 식별자 및 scope/session 필드의 타입과 공백을 명시적으로 검증해야 한다."
+            }
+          ]
+        },
+        {
+          "alias": "review-set-b",
+          "findings": [
+            {
+              "finding_index": 0,
+              "severity": "P1",
+              "file": "scripts/omc_executor_shadow.py",
+              "line": "21",
+              "message": "Include recommendation_only in shadow records"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "observed-failed-capability-v5",
+      "diff_sha256": "77269e4ad7d4ffd03b99ee2d8f953f76630c321c09f1dad1acae927b6f5b0005",
+      "gold_findings": [],
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": [
+            {
+              "finding_index": 0,
+              "severity": "중대",
+              "file": "scripts/omc_autopilot.py",
+              "line": "700,1124",
+              "message": "evidence_class: behavioral_direct | evidence: `_run_step()`의 프롬프트 누락 분기는 여전히 3개 값을 반환하지만 호출부는 이제 항상 4개 값을 언패킹하므로, prompt가 비어 있으면 `ValueError: not enough values to unpack`로 파이프라인이 중단됩니다. 모든 반환 경로를 4-tuple로 맞추고 해당 오류 경로를 회귀 테스트로 추가해야 합니다.",
+              "evidence_class": "behavioral_direct",
+              "evidence": "`_run_step()`의 프롬프트 누락 분기는 여전히 3개 값을 반환하지만 호출부는 이제 항상 4개 값을 언패킹하므로, prompt가 비어 있으면 `ValueError: not enough values to unpack`로 파이프라인이 중단됩니다. 모든 반환 경로를 4-tuple로 맞추고 해당 오류 경로를 회귀 테스트로 추가해야 합니다."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "observed-health-context-v5",
+      "diff_sha256": "3bdeb4509aeda93c15f09b4e0a517de1803022c5fe3178041663ba15e699afa0",
+      "gold_findings": [],
+      "review_sets": [
+        {
+          "alias": "review-set-b",
+          "findings": [
+            {
+              "finding_index": 0,
+              "severity": "P2",
+              "file": "scripts/omc_health.py",
+              "line": "131",
+              "message": "Detect Nx projects without nx.json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "observed-review-boundary-v5",
+      "diff_sha256": "48119553c2f228354f35f8130e06f4989538829477d456fabacf597313a57590",
+      "gold_findings": [
+        {
+          "id": "confirmed-adjudication-metadata-optional",
+          "severity": "P1",
+          "file": "scripts/omc_review_compare.py",
+          "line": "163-174",
+          "reason": "Reviewer-independence metadata is validated only when adjudication is present, allowing a confirmed case to omit adjudication and bypass the required validation."
+        }
+      ],
+      "review_sets": [
+        {
+          "alias": "review-set-b",
+          "findings": [
+            {
+              "finding_index": 0,
+              "severity": "P2",
+              "file": "scripts/omc_review_compare.py",
+              "line": "171",
+              "message": "Handle malformed nested adjudication metadata without raising"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "packet_sha256": "44483eec0728e4eb0ca13aa3c820335c8850667e4aeb1e378c16e907a7b1e015"
+}

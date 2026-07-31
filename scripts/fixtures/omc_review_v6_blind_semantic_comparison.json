@@ -1,0 +1,101 @@
+{
+  "status": "completed_blind_semantic_comparison",
+  "recorded_at": "2026-07-31T08:17:38.318596Z",
+  "case_count": 10,
+  "packet_sha256": "f8d110cad205d887a61824e75f0d140f29280e339df602588b9ff721ab382fb6",
+  "provider_outputs_visible_to_adjudicator": false,
+  "providers": {
+    "omc-review": {
+      "hit_count": 2,
+      "miss_count": 6,
+      "false_positive_count": 3,
+      "unresolved_candidate_count": 0,
+      "key_hit_count": 2,
+      "key_miss_count": 2,
+      "evidence_accurate_count": 2,
+      "evidence_hit_count": 2,
+      "semantic_hit_rate": 0.25,
+      "key_detection_rate": 0.5,
+      "evidence_accuracy": 1.0
+    },
+    "codex": {
+      "hit_count": 1,
+      "miss_count": 7,
+      "false_positive_count": 3,
+      "unresolved_candidate_count": 0,
+      "key_hit_count": 1,
+      "key_miss_count": 3,
+      "evidence_accurate_count": 1,
+      "evidence_hit_count": 1,
+      "semantic_hit_rate": 0.125,
+      "key_detection_rate": 0.25,
+      "evidence_accuracy": 1.0
+    }
+  },
+  "second_blind_consensus": {
+    "status": "completed_second_blind_consensus",
+    "first_packet_sha256": "f8d110cad205d887a61824e75f0d140f29280e339df602588b9ff721ab382fb6",
+    "second_packet_sha256": "44483eec0728e4eb0ca13aa3c820335c8850667e4aeb1e378c16e907a7b1e015",
+    "candidate_count": 6,
+    "confirmed_false_positive_count": 6,
+    "unresolved_candidate_count": 0,
+    "execution_independence": {
+      "scope": "runner_attested_fresh_session",
+      "verified": true,
+      "adjudicator_session_independence_verified": true
+    },
+    "candidates": [
+      {
+        "case_id": "observed-executor-shadow-v5",
+        "alias": "review-set-a",
+        "finding_index": 0,
+        "status": "confirmed_false_positive",
+        "gold_finding_id": null
+      },
+      {
+        "case_id": "observed-executor-shadow-v5",
+        "alias": "review-set-a",
+        "finding_index": 1,
+        "status": "confirmed_false_positive",
+        "gold_finding_id": null
+      },
+      {
+        "case_id": "observed-executor-shadow-v5",
+        "alias": "review-set-b",
+        "finding_index": 0,
+        "status": "confirmed_false_positive",
+        "gold_finding_id": null
+      },
+      {
+        "case_id": "observed-failed-capability-v5",
+        "alias": "review-set-a",
+        "finding_index": 0,
+        "status": "confirmed_false_positive",
+        "gold_finding_id": null
+      },
+      {
+        "case_id": "observed-health-context-v5",
+        "alias": "review-set-b",
+        "finding_index": 0,
+        "status": "confirmed_false_positive",
+        "gold_finding_id": null
+      },
+      {
+        "case_id": "observed-review-boundary-v5",
+        "alias": "review-set-b",
+        "finding_index": 0,
+        "status": "confirmed_false_positive",
+        "gold_finding_id": null
+      }
+    ]
+  },
+  "replacement_gate": {
+    "key_detection_at_least_codex": true,
+    "minimum_omc_key_hit_count": true,
+    "evidence_accuracy_at_least_codex": true,
+    "false_positives_not_higher": true,
+    "adjudicator_session_independence_verified": true
+  },
+  "replacement_verdict": "omc-replaceable",
+  "decision_rule": "OMC is replaceable only when it finds at least two key issues, key detection and evidence accuracy are at least Codex, false positives are not higher, and independent adjudicator sessions are verified."
+}

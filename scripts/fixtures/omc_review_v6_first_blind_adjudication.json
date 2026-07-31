@@ -1,0 +1,221 @@
+{
+  "status": "completed",
+  "packet_sha256": "f8d110cad205d887a61824e75f0d140f29280e339df602588b9ff721ab382fb6",
+  "provider_outputs_visible": false,
+  "cases": [
+    {
+      "case_id": "observed-executor-shadow-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": [
+            {
+              "finding_index": 0,
+              "classification": "false_positive",
+              "gold_finding_id": null,
+              "evidence_accuracy": null
+            },
+            {
+              "finding_index": 1,
+              "classification": "false_positive",
+              "gold_finding_id": null,
+              "evidence_accuracy": null
+            }
+          ]
+        },
+        {
+          "alias": "review-set-b",
+          "findings": [
+            {
+              "finding_index": 0,
+              "classification": "false_positive",
+              "gold_finding_id": null,
+              "evidence_accuracy": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "observed-failed-capability-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": [
+            {
+              "finding_index": 0,
+              "classification": "false_positive",
+              "gold_finding_id": null,
+              "evidence_accuracy": null
+            }
+          ]
+        },
+        {
+          "alias": "review-set-b",
+          "findings": []
+        }
+      ]
+    },
+    {
+      "case_id": "observed-health-aware-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": []
+        },
+        {
+          "alias": "review-set-b",
+          "findings": []
+        }
+      ]
+    },
+    {
+      "case_id": "observed-health-context-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": []
+        },
+        {
+          "alias": "review-set-b",
+          "findings": [
+            {
+              "finding_index": 0,
+              "classification": "false_positive",
+              "gold_finding_id": null,
+              "evidence_accuracy": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "observed-marketing-conversion-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": [
+            {
+              "finding_index": 0,
+              "classification": "hit",
+              "gold_finding_id": "conversion-type-positional-mapping",
+              "evidence_accuracy": "accurate"
+            }
+          ]
+        },
+        {
+          "alias": "review-set-b",
+          "findings": []
+        }
+      ]
+    },
+    {
+      "case_id": "observed-partner-rejection-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": []
+        },
+        {
+          "alias": "review-set-b",
+          "findings": []
+        }
+      ]
+    },
+    {
+      "case_id": "observed-policy-handoff-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": []
+        },
+        {
+          "alias": "review-set-b",
+          "findings": [
+            {
+              "finding_index": 0,
+              "classification": "hit",
+              "gold_finding_id": "missing-cost-evidence-policy-hit",
+              "evidence_accuracy": "accurate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "observed-request-delegation-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": []
+        },
+        {
+          "alias": "review-set-b",
+          "findings": []
+        }
+      ]
+    },
+    {
+      "case_id": "observed-review-boundary-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": []
+        },
+        {
+          "alias": "review-set-b",
+          "findings": [
+            {
+              "finding_index": 0,
+              "classification": "false_positive",
+              "gold_finding_id": null,
+              "evidence_accuracy": null
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "observed-storefront-header-v5",
+      "review_sets": [
+        {
+          "alias": "review-set-a",
+          "findings": [
+            {
+              "finding_index": 0,
+              "classification": "hit",
+              "gold_finding_id": "restock-token-cache-key-race",
+              "evidence_accuracy": "accurate"
+            }
+          ]
+        },
+        {
+          "alias": "review-set-b",
+          "findings": []
+        }
+      ]
+    }
+  ],
+  "adjudicator_provenance": {
+    "receipt_version": 3,
+    "executor": "codex",
+    "model": "gpt-5.6-luna",
+    "execution_id": "omc-runner-68dc0fdd7d164795a54c3be2c105b7fd",
+    "execution_scope": "runner_attested_fresh_session",
+    "provider_session_id": "019fb73e-13db-7e51-9ccf-8c02a3fd7af2",
+    "recorded_at": "2026-07-31T08:15:47.695201Z",
+    "input_packet_sha256": "f8d110cad205d887a61824e75f0d140f29280e339df602588b9ff721ab382fb6",
+    "provider_mapping_visible": false,
+    "resume_used": false,
+    "command_fingerprint": "6699773afc5779409325e4a6a114efbf40b34598409b5ad4b553a7ed468e60ac",
+    "event_stream_sha256": "6e13480b5f6a7399623e25a998e4e19d8de5e78798be7be67c7ea312b817cbb8",
+    "executor_binary_path": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "executor_binary_sha256": "68474c6192406b8a0278243c8283b87a84798a69fb498f30c3715861f8082542",
+    "tool_free_execution_verified": true,
+    "exit_code": 0,
+    "schema_verified": true,
+    "semantic_completeness_verified": true,
+    "raw_output_sha256": "8d441c60e5d24a1a3e4d8f0ac986f4101baaae06e74ed5d9c20f860ccf94d77b",
+    "trusted_receipt_hmac_sha256": "0b02551fe6e2a255de1ced5281361ff6ef53f6f05994904f5cc39876fe8c7747"
+  }
+}

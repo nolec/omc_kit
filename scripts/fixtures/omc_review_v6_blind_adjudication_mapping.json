@@ -1,0 +1,8 @@
+{
+  "packet_sha256": "f8d110cad205d887a61824e75f0d140f29280e339df602588b9ff721ab382fb6",
+  "alias_to_provider": {
+    "review-set-a": "omc-review",
+    "review-set-b": "codex"
+  },
+  "warning": "Do not share this mapping with the blind adjudicator."
+}

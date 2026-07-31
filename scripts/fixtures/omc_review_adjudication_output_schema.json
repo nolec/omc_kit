@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "packet_sha256",
+    "provider_outputs_visible",
+    "cases"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "const": "completed"
+    },
+    "packet_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "provider_outputs_visible": {
+      "type": "boolean",
+      "const": false
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "case_id",
+          "review_sets"
+        ],
+        "properties": {
+          "case_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "review_sets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "alias",
+                "findings"
+              ],
+              "properties": {
+                "alias": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "findings": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "finding_index",
+                      "classification",
+                      "gold_finding_id",
+                      "evidence_accuracy"
+                    ],
+                    "properties": {
+                      "finding_index": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "classification": {
+                        "type": "string",
+                        "enum": [
+                          "hit",
+                          "false_positive"
+                        ]
+                      },
+                      "gold_finding_id": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "evidence_accuracy": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "enum": [
+                          "accurate",
+                          "inaccurate",
+                          null
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

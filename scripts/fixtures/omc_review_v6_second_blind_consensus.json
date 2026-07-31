@@ -1,0 +1,57 @@
+{
+  "status": "completed_second_blind_consensus",
+  "first_packet_sha256": "f8d110cad205d887a61824e75f0d140f29280e339df602588b9ff721ab382fb6",
+  "second_packet_sha256": "44483eec0728e4eb0ca13aa3c820335c8850667e4aeb1e378c16e907a7b1e015",
+  "candidate_count": 6,
+  "confirmed_false_positive_count": 6,
+  "unresolved_candidate_count": 0,
+  "execution_independence": {
+    "scope": "runner_attested_fresh_session",
+    "verified": true,
+    "adjudicator_session_independence_verified": true
+  },
+  "candidates": [
+    {
+      "case_id": "observed-executor-shadow-v5",
+      "alias": "review-set-a",
+      "finding_index": 0,
+      "status": "confirmed_false_positive",
+      "gold_finding_id": null
+    },
+    {
+      "case_id": "observed-executor-shadow-v5",
+      "alias": "review-set-a",
+      "finding_index": 1,
+      "status": "confirmed_false_positive",
+      "gold_finding_id": null
+    },
+    {
+      "case_id": "observed-executor-shadow-v5",
+      "alias": "review-set-b",
+      "finding_index": 0,
+      "status": "confirmed_false_positive",
+      "gold_finding_id": null
+    },
+    {
+      "case_id": "observed-failed-capability-v5",
+      "alias": "review-set-a",
+      "finding_index": 0,
+      "status": "confirmed_false_positive",
+      "gold_finding_id": null
+    },
+    {
+      "case_id": "observed-health-context-v5",
+      "alias": "review-set-b",
+      "finding_index": 0,
+      "status": "confirmed_false_positive",
+      "gold_finding_id": null
+    },
+    {
+      "case_id": "observed-review-boundary-v5",
+      "alias": "review-set-b",
+      "finding_index": 0,
+      "status": "confirmed_false_positive",
+      "gold_finding_id": null
+    }
+  ]
+}
