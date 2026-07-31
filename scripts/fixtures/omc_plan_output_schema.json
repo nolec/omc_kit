@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OMC Plan Benchmark Normalized Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "requirements_covered",
+    "scope_items",
+    "dependency_edges",
+    "tasks",
+    "assumptions",
+    "decisions_required"
+  ],
+  "properties": {
+    "requirements_covered": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "scope_items": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "dependency_edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "before",
+          "after"
+        ],
+        "properties": {
+          "before": {
+            "type": "string",
+            "minLength": 1
+          },
+          "after": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "target",
+          "action",
+          "verify",
+          "supports"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "verify": {
+            "type": "string"
+          },
+          "supports": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          }
+        }
+      }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "decisions_required": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    }
+  }
+}

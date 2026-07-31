@@ -1,0 +1,460 @@
+{
+  "schema_version": 1,
+  "status": "draft",
+  "corpus_sha256": "b016b410fce27987cc2f06e0ad8d16a669863a1a9365548c5634cf3505a73409",
+  "cases": [
+    {
+      "case_id": "plan-dev-auth-header",
+      "required_items": [
+        {
+          "id": "REQ-token-present",
+          "description": "토큰이 있을 때만 인증 헤더를 추가한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-anonymous-preserved",
+          "description": "익명 요청의 기존 동작을 보존한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-header-tests",
+          "description": "토큰 유무 경계 테스트를 계획한다.",
+          "weight": 1,
+          "critical": false
+        }
+      ],
+      "excluded_scope": [
+        "인증 방식 전체 교체"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-token-present",
+          "after": "REQ-anonymous-preserved"
+        }
+      ],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-dev-pagination-state",
+      "required_items": [
+        {
+          "id": "REQ-filter-reset",
+          "description": "필터 변경 시 페이지를 1로 초기화한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-url-sync",
+          "description": "URL 상태 동기화를 유지한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-history",
+          "description": "뒤로가기 회귀를 검증한다.",
+          "weight": 1,
+          "critical": false
+        }
+      ],
+      "excluded_scope": [
+        "페이지네이션 UI 재설계"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-filter-reset",
+          "after": "REQ-url-sync"
+        }
+      ],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-dev-cache-invalidation",
+      "required_items": [
+        {
+          "id": "REQ-deduplicate",
+          "description": "중복 무효화 로직을 공통화한다.",
+          "weight": 1,
+          "critical": false
+        },
+        {
+          "id": "REQ-api-stable",
+          "description": "공개 API를 유지한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-key-stable",
+          "description": "기존 캐시 키 형식을 유지한다.",
+          "weight": 2,
+          "critical": true
+        }
+      ],
+      "excluded_scope": [
+        "캐시 저장소 교체"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-deduplicate",
+          "after": "REQ-api-stable"
+        }
+      ],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-dev-provider-fallback",
+      "required_items": [
+        {
+          "id": "REQ-retryable-fallback",
+          "description": "재시도 가능한 오류만 fallback한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-auth-stop",
+          "description": "인증 오류는 즉시 중단한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-error-tests",
+          "description": "오류 분류별 테스트를 계획한다.",
+          "weight": 1,
+          "critical": false
+        }
+      ],
+      "excluded_scope": [
+        "provider SDK 교체"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-retryable-fallback",
+          "after": "REQ-auth-stop"
+        }
+      ],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-holdout-concurrent-retry",
+      "required_items": [
+        {
+          "id": "REQ-dedupe-retry",
+          "description": "동일 작업의 중복 재시도를 막는다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-parallel-preserved",
+          "description": "서로 다른 작업의 병렬 처리를 유지한다.",
+          "weight": 2,
+          "critical": true
+        }
+      ],
+      "excluded_scope": [
+        "모든 요청 직렬화"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-dedupe-retry",
+          "after": "REQ-parallel-preserved"
+        }
+      ],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-holdout-idempotent-migration",
+      "required_items": [
+        {
+          "id": "REQ-resumable",
+          "description": "중단 지점부터 안전하게 재실행한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-idempotent",
+          "description": "반복 실행 결과가 동일하다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-rollback",
+          "description": "롤백 검증을 포함한다.",
+          "weight": 1,
+          "critical": false
+        }
+      ],
+      "excluded_scope": [
+        "원본 데이터 즉시 삭제"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-resumable",
+          "after": "REQ-idempotent"
+        },
+        {
+          "before": "REQ-idempotent",
+          "after": "REQ-rollback"
+        }
+      ],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-holdout-config-precedence",
+      "required_items": [
+        {
+          "id": "REQ-precedence",
+          "description": "CLI, 환경변수, 파일 순 우선순위를 적용한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-defaults",
+          "description": "기존 기본값을 유지한다.",
+          "weight": 2,
+          "critical": true
+        }
+      ],
+      "excluded_scope": [
+        "설정 포맷 교체"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-precedence",
+          "after": "REQ-defaults"
+        }
+      ],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-holdout-stale-response",
+      "required_items": [
+        {
+          "id": "REQ-latest-wins",
+          "description": "최신 검색 요청 결과만 반영한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-loading-state",
+          "description": "취소·경합 시 로딩 상태를 정상 종료한다.",
+          "weight": 1,
+          "critical": false
+        }
+      ],
+      "excluded_scope": [
+        "검색 API 교체"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-latest-wins",
+          "after": "REQ-loading-state"
+        }
+      ],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-holdout-path-boundary",
+      "required_items": [
+        {
+          "id": "REQ-root-boundary",
+          "description": "해석된 경로가 작업 루트 내부인지 확인한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-relative-allowed",
+          "description": "정상 상대경로는 허용한다.",
+          "weight": 1,
+          "critical": false
+        },
+        {
+          "id": "REQ-symlink",
+          "description": "심볼릭 링크 우회 경계를 검증한다.",
+          "weight": 2,
+          "critical": true
+        }
+      ],
+      "excluded_scope": [
+        "모든 파일 접근 금지"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-root-boundary",
+          "after": "REQ-relative-allowed"
+        }
+      ],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-holdout-partial-batch",
+      "required_items": [
+        {
+          "id": "REQ-preserve-success",
+          "description": "성공 항목 결과를 보존한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-retry-failed",
+          "description": "실패 항목만 재처리한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-result-report",
+          "description": "부분 성공 결과를 보고한다.",
+          "weight": 1,
+          "critical": false
+        }
+      ],
+      "excluded_scope": [
+        "한 항목 실패 시 전체 롤백"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-preserve-success",
+          "after": "REQ-retry-failed"
+        }
+      ],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-holdout-dependent-jobs",
+      "required_items": [
+        {
+          "id": "REQ-dependency-gate",
+          "description": "의존 작업 성공 후에만 후속 작업을 실행한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-independent-continue",
+          "description": "독립 작업은 계속 실행한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-cycle",
+          "description": "순환 의존성을 거부한다.",
+          "weight": 1,
+          "critical": false
+        }
+      ],
+      "excluded_scope": [
+        "모든 작업 즉시 중단"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-dependency-gate",
+          "after": "REQ-independent-continue"
+        },
+        {
+          "before": "REQ-independent-continue",
+          "after": "REQ-cycle"
+        }
+      ],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-holdout-trace-context",
+      "required_items": [
+        {
+          "id": "REQ-context-propagation",
+          "description": "비동기 경계에서 trace context를 전달한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-redaction",
+          "description": "민감 정보를 로그에서 제거한다.",
+          "weight": 2,
+          "critical": true
+        }
+      ],
+      "excluded_scope": [
+        "로그 전체 비활성화"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-context-propagation",
+          "after": "REQ-redaction"
+        }
+      ],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-holdout-schema-version",
+      "required_items": [
+        {
+          "id": "REQ-old-version",
+          "description": "구버전 입력을 계속 읽는다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-new-validation",
+          "description": "새 버전 schema를 검증한다.",
+          "weight": 1,
+          "critical": false
+        },
+        {
+          "id": "REQ-unknown-reject",
+          "description": "알 수 없는 버전을 거부한다.",
+          "weight": 2,
+          "critical": true
+        }
+      ],
+      "excluded_scope": [
+        "구버전 지원 즉시 제거"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-old-version",
+          "after": "REQ-new-validation"
+        }
+      ],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-holdout-feature-rollback",
+      "required_items": [
+        {
+          "id": "REQ-flag-gate",
+          "description": "신규 동작을 기능 플래그로 보호한다.",
+          "weight": 2,
+          "critical": true
+        },
+        {
+          "id": "REQ-gradual-rollout",
+          "description": "점진 배포 절차를 포함한다.",
+          "weight": 1,
+          "critical": false
+        },
+        {
+          "id": "REQ-immediate-rollback",
+          "description": "플래그 전환만으로 즉시 롤백한다.",
+          "weight": 2,
+          "critical": true
+        }
+      ],
+      "excluded_scope": [
+        "기존 동작 즉시 삭제"
+      ],
+      "dependency_edges": [
+        {
+          "before": "REQ-flag-gate",
+          "after": "REQ-gradual-rollout"
+        },
+        {
+          "before": "REQ-gradual-rollout",
+          "after": "REQ-immediate-rollback"
+        }
+      ],
+      "allowed_assumptions": []
+    }
+  ],
+  "gold_sha256": "b0972e909acf904a55960cb75d0bfc44c021266d1b5eb5949f32852042a811bd",
+  "signoff": null,
+  "producer": "omc-plan-fixture-builder"
+}

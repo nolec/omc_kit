@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "status": "frozen",
+  "cases": [
+    {
+      "case_id": "plan-dev-auth-header",
+      "split": "development",
+      "task_type": "bugfix",
+      "request": "인증 토큰이 있을 때만 요청 헤더에 추가하고 기존 익명 요청 동작은 유지하는 수정 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "668ac206feb90d3cd35ebd258be2c3310a2fcd1125959905a496d9cb7a89afa6"
+    },
+    {
+      "case_id": "plan-dev-pagination-state",
+      "split": "development",
+      "task_type": "feature",
+      "request": "목록 필터 변경 시 페이지를 1로 초기화하되 URL 동기화와 뒤로가기를 보존하는 구현 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "489e2833901df769f5ee50a4fe57ea390276fb1f300c64ad58dc4af6e7193710"
+    },
+    {
+      "case_id": "plan-dev-cache-invalidation",
+      "split": "development",
+      "task_type": "refactor",
+      "request": "중복된 캐시 무효화 로직을 공통화하되 공개 API와 기존 캐시 키 형식을 바꾸지 않는 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "14d313f24c3360e9b5a603ed100bd50ded71073cbe87911f66d2189ba8a128d8"
+    },
+    {
+      "case_id": "plan-dev-provider-fallback",
+      "split": "development",
+      "task_type": "failure_policy",
+      "request": "주 provider가 재시도 가능한 오류로 실패할 때만 fallback하고 인증 오류는 즉시 중단하는 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "0503587f0d8a838be18458bfd7c9ba34e5d951f6b68884407dc11e8d2e08a999"
+    },
+    {
+      "case_id": "plan-holdout-concurrent-retry",
+      "split": "holdout",
+      "task_type": "bugfix",
+      "request": "동시 요청이 같은 작업을 중복 재시도하지 않도록 하되 정상 병렬 처리는 유지하는 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "882a3ac55527eaff409c1454aaa0cf11a37a7891de19c6fa6d8e6c3107f6bfa4"
+    },
+    {
+      "case_id": "plan-holdout-idempotent-migration",
+      "split": "holdout",
+      "task_type": "migration",
+      "request": "중단 후 재실행 가능한 데이터 마이그레이션과 롤백 검증 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "6240538fb0ed1b3df8a31f2c2cd78233b32eec9d0e9d420bc25ba2534d25600e"
+    },
+    {
+      "case_id": "plan-holdout-config-precedence",
+      "split": "holdout",
+      "task_type": "cli",
+      "request": "CLI 인자, 환경변수, 설정 파일 순으로 우선순위를 적용하고 기존 기본값을 유지하는 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "0de96d3a5d3f47b208461f9d2599fc0ebdeaa3e4d82806d9e7a38d0f421fbd6d"
+    },
+    {
+      "case_id": "plan-holdout-stale-response",
+      "split": "holdout",
+      "task_type": "frontend_race",
+      "request": "검색어가 빠르게 바뀔 때 이전 응답이 최신 결과를 덮어쓰지 않도록 하는 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "54249fbc3702922495207ac29aa5f90c1f3f46b92611f5c574f395d1a66d0727"
+    },
+    {
+      "case_id": "plan-holdout-path-boundary",
+      "split": "holdout",
+      "task_type": "security",
+      "request": "사용자 입력 경로가 작업 루트 밖을 읽지 못하게 하면서 정상 상대경로는 허용하는 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "49f35b8786604d1ed0f90b16b6fc21387ff7109baa3c84851d346a4287f60a38"
+    },
+    {
+      "case_id": "plan-holdout-partial-batch",
+      "split": "holdout",
+      "task_type": "batch",
+      "request": "배치 일부 실패 시 성공 항목은 보존하고 실패 항목만 재처리 가능한 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "d6e40498b6d3eddb4eec2712d8756e0b418f88207c2f6378bf2ca46db8f3cb94"
+    },
+    {
+      "case_id": "plan-holdout-dependent-jobs",
+      "split": "holdout",
+      "task_type": "orchestration",
+      "request": "의존 작업이 성공한 경우에만 후속 작업을 실행하고 독립 작업은 계속 진행하는 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "86d323d772f91d73daad6046531ccaf8af5a2fb87453bab5ebff59693aed8054"
+    },
+    {
+      "case_id": "plan-holdout-trace-context",
+      "split": "holdout",
+      "task_type": "observability",
+      "request": "비동기 경계를 지나도 trace context를 유지하되 민감 정보는 로그에 남기지 않는 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "4d4e383bd80d1e7ff96bcd966a866b421462571d010aeefeed80a43f3db1bb7f"
+    },
+    {
+      "case_id": "plan-holdout-schema-version",
+      "split": "holdout",
+      "task_type": "parser",
+      "request": "구버전 입력을 계속 읽으면서 새 schema version을 검증하고 알 수 없는 버전은 거부하는 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "c3f78e88411be0f4cfa99a36f531a90204b8bc8dd5da5fd86af7fd4448e1808d"
+    },
+    {
+      "case_id": "plan-holdout-feature-rollback",
+      "split": "holdout",
+      "task_type": "release",
+      "request": "기능 플래그로 신규 동작을 점진 배포하고 즉시 롤백 가능한 검증 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "7b5d7002c5b979c347cd6f360b66d89597ff55b45e087b02a0a80f307e35f6bc"
+    }
+  ],
+  "corpus_sha256": "b016b410fce27987cc2f06e0ad8d16a669863a1a9365548c5634cf3505a73409"
+}
