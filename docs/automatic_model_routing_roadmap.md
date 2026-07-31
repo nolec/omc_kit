@@ -17,6 +17,8 @@ OMC를 `스킬 기반 규칙 라우팅`에서 `완전 자동 모델 전환 제�
 
 최신 동기화 기준(2026-07-28): executor capability 관측은 `observed_candidate_only` 계약까지, 복잡 작업 위임 관측은 `delegation_observed`와 실행 전 검증용 `noop_shadow` 계약, 기존 handoff를 정규화하는 `child decision` 계약 1차까지 구현·리뷰 완료했다. Codex exec structured review와 OMC review의 observed same-diff 10건 역사적 비교와 사용자 gold-label sign-off도 보존돼 있다. 다만 provider 원문은 외부 임시 경로에만 있었고 현재 재검증할 수 없어 Codex native review-agent 대체 판정에는 사용할 수 없다. 다음 비교 작업은 durable raw output을 남긴 native review-agent 재실행이다. 두 계층 모두 추천 근거와 승인 scope를 설명하는 관측 계층이며, `eligible` 판정·실행 위임·자동 전환은 아직 구현하지 않는다.
 
+Plan 품질 비교 파일럿 준비 완료(2026-08-01): development 4건에서 OMC Plan과 기준 Plan을 같은 모델·reasoning 설정으로 8회 실행하고, provider identity를 숨긴 2개 독립 adjudication session으로 평가하는 실행 하네스를 구현·리뷰했다. counterbalanced order, retry 0, read-only·ephemeral 실행, 외부 Ed25519 key, draft-safe claim gate, token usage 보존, 경로 탈출 차단, fixture 사전 검증, fake Codex CLI 통합 테스트까지 반영됐다. 이는 비교 입력 수집 준비 완료이며 실제 8+2 provider 실행과 gold-label 확정은 아직 남아 있다.
+
 V5 단일 child pilot 보강(2026-07-15): `noop_shadow` gate가 operator approval, plan/scope fingerprint, child/dependency readiness, sensitive scope, 단일 시도·시간·출력 예산, idempotency를 검증하도록 구현·리뷰 완료했다. 누락된 안전 메타데이터도 명시적으로 차단하며, orchestrator 위임 surface를 통한 통합 회귀까지 확인했다. 실제 executor 호출과 자동 재분배는 여전히 열지 않는다.
 
 V5 delegation contract hardening(2026-07-15): domain order의 malformed 입력, 불완전한 `execution_order`/`recovery_action`, 모순된 ready order와 누락된 `recommendation_only`를 명시적으로 거부하도록 보강했다. 관련 회귀 테스트와 TDD gate를 통과했으며, 실제 executor 호출·자동 retry·자동 재분배는 계속 비활성 상태다.
@@ -63,13 +65,25 @@ Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_pr
 
 </details>
 
+### Plan Quality Validation
+
+`omc-plan`이 기준 Plan보다 요구사항 보존, 범위 통제, 의존성 표현, 실행 가능성에서 실제로 나은지 동일 조건으로 검증하는 품질 트랙이다.
+
+| 상태 | 현재 근거 | 다음 마일스톤 | 종료 기준 |
+|---|---|---|---|
+| 진행중 | development 4건 고정 protocol, OMC/기준 provider 8회 실행 하네스, 2-session blind adjudication, draft-safe report, token usage와 provenance 보존, 경로·fixture·CLI 경계 회귀 테스트를 구현했다. 관련 Plan 테스트 `48 passed`, staged TDD gate 통과. | 외부 artifact root에서 실제 8+2 batch를 실행하고 raw output·manifest·sealed provider batch·pilot report를 영구 보존 | 독립 gold-label 승인 후 OMC/기준 Plan의 품질·비용 결과를 확정하고, 결과에 따라 holdout 확대 여부를 사람이 결정 |
+
+- 현재 판정은 `수집 준비 완료`이며 Plan 우월 또는 대체 가능 판정이 아니다.
+- 실제 실행 전에는 draft gold와 superiority/cost claim 차단을 유지한다.
+- 다음 구현이 아니라 실제 development 4건 수집과 독립 판정이 현재 병목이다.
+
 ### Review Quality Validation
 
 `omc-review`가 Codex native review-agent와 비교해 실제 변경의 결함을 더 안정적으로 찾는지 검증하는 별도 품질 트랙이다. 이 트랙은 모델 우열을 문서로 선언하는 작업이 아니라, 같은 diff와 독립 실행 결과를 영구 보존해 교체 가능 여부를 판정하는 작업이다.
 
 | 상태 | 현재 근거 | 다음 마일스톤 | 종료 기준 |
 |---|---|---|---|
-| 진행중 | V5 historical batch는 same-diff 10/10과 gold-label sign-off를 기록했지만, Codex exec structured review 원문이 외부 임시 경로에만 있었고 현재 보존돼 있지 않다. 따라서 Codex `3/8 hit, 3 FP`, OMC `6/8 hit, 6 FP`는 참고 수치일 뿐 대체 판정 근거가 아니다. | durable raw output을 남긴 native review-agent 동일 10건 재실행 후 blind gold-label·false-positive 재측정 | OMC가 Codex보다 핵심 탐지율·evidence 정확도가 높고 false-positive가 같거나 낮아야 `Codex 대체 가능` |
+| 진행중 | 실사용 anonymized diff 10건의 V5 historical same-diff batch와 gold-label sign-off를 기록했지만, Codex exec structured review 원문이 외부 임시 경로에만 있었고 현재 보존돼 있지 않다. 따라서 Codex `3/8 hit, 3 FP`, OMC `6/8 hit, 6 FP`는 참고 수치일 뿐 대체 판정 근거가 아니다. | durable raw output을 남긴 native review-agent 동일 10건 재실행 후 blind gold-label·false-positive 재측정 | OMC가 Codex보다 핵심 탐지율·evidence 정확도가 높고 false-positive가 같거나 낮아야 `Codex 대체 가능` |
 
 - synthetic 또는 historical pilot 결과만으로 OMC review의 대체 가능성을 주장하지 않는다.
 - provenance 오염, 경로 불일치, 수동 기록 결과는 최종 비교 모수에서 제외한다.
@@ -79,7 +93,7 @@ Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_pr
 ### 상태판 압축 뷰
 
 - 완료: V1 Skill-based Routing, V2 Step-level Routing, V3 Failure-driven Escalation, V4 Telemetry-driven Tuning
-- 진행중: Operator Experience
+- 진행중: Operator Experience, Plan Quality Validation, Review Quality Validation
 - 백로그: V5 Learned Orchestrator
 - 미착수: 실제 executor 위임·자동 모델 전환·자동 ship
 
