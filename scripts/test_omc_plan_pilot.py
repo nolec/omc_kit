@@ -24,6 +24,25 @@ from omc_plan_pilot import (
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+@pytest.mark.parametrize(
+    "schema_name",
+    ["omc_plan_output_schema.json", "omc_plan_adjudication_output_schema.json"],
+)
+def test_codex_output_schemas_avoid_unsupported_unique_items(schema_name):
+    schema = json.loads((FIXTURES / schema_name).read_text(encoding="utf-8"))
+
+    def contains_unique_items(value):
+        if isinstance(value, dict):
+            return "uniqueItems" in value or any(
+                contains_unique_items(item) for item in value.values()
+            )
+        if isinstance(value, list):
+            return any(contains_unique_items(item) for item in value)
+        return False
+
+    assert not contains_unique_items(schema)
+
+
 def _protocol():
     return load_protocol(FIXTURES / "omc_plan_pilot_protocol.json")
 
@@ -367,6 +386,109 @@ def test_codex_adjudicator_rejects_mismatched_session_id(tmp_path, monkeypatch):
         )
 
 
+def test_adjudicator_prompt_requires_exact_dynamic_labels():
+    case = _cases()[0]
+    gold = next(
+        item for item in _gold_document()["cases"] if item["case_id"] == case["case_id"]
+    )
+    plan = _plan(case["case_id"])
+    session = {
+        "session_id": "session-1",
+        "items": [{
+            "blind_id": "blind-1",
+            "case_id": case["case_id"],
+            "plan": plan,
+            "raw_output": json.dumps(plan),
+            "gold_case": gold,
+        }],
+    }
+
+    prompt = omc_plan_pilot.build_adjudication_prompt(session)
+
+    assert "Copy labels exactly" in prompt
+    assert "dependency_hits may contain only exact gold_case.dependency_edges" in prompt
+    assert "unexpected_dependency_edges may contain only exact plan.dependency_edges" in prompt
+    assert "Never reverse dependency edges" in prompt
+    assert "Never reuse labels from another item" in prompt
+    assert "implementation-detail edges are not unexpected by default" in prompt
+    assert "dependency hit requires an explicit ordered task path" in prompt
+    assert "unsupported_assumptions may contain only exact plan.assumptions strings" in prompt
+
+
+def test_normalize_adjudication_result_rejects_invented_unexpected_edge():
+    case = _cases()[0]
+    gold = next(
+        item for item in _gold_document()["cases"] if item["case_id"] == case["case_id"]
+    )
+    plan = _plan(case["case_id"])
+    session = {
+        "session_id": "session-1",
+        "items": [{
+            "blind_id": "blind-1",
+            "case_id": case["case_id"],
+            "plan": plan,
+            "raw_output": json.dumps(plan),
+            "gold_case": gold,
+        }],
+    }
+    result = {
+        "session_id": "session-1",
+        "adjudication_execution_id": "execution-1",
+        "items": [{
+            "blind_id": "blind-1",
+            "case_id": case["case_id"],
+            "requirement_hits": [],
+            "scope_violations": [],
+            "dependency_hits": [],
+            "unexpected_dependency_edges": [{"before": "invented", "after": "edge"}],
+            "task_requirement_links": [],
+            "unsupported_assumptions": [],
+        }],
+    }
+
+    with pytest.raises(ValueError, match="unknown semantic label"):
+        omc_plan_pilot.normalize_adjudication_result(result, session)
+
+
+def test_normalize_rejects_cross_item_task_requirement_id():
+    case = _cases()[0]
+    gold = next(
+        item for item in _gold_document()["cases"] if item["case_id"] == case["case_id"]
+    )
+    plan = _plan(case["case_id"])
+    task_id = plan["tasks"][0]["id"]
+    session = {
+        "session_id": "session-1",
+        "items": [{
+            "blind_id": "blind-1",
+            "case_id": case["case_id"],
+            "plan": plan,
+            "raw_output": json.dumps(plan),
+            "gold_case": gold,
+        }],
+    }
+    result = {
+        "session_id": "session-1",
+        "adjudication_execution_id": "execution-1",
+        "items": [{
+            "blind_id": "blind-1",
+            "case_id": case["case_id"],
+            "requirement_hits": [],
+            "scope_violations": [],
+            "dependency_hits": [],
+            "unexpected_dependency_edges": [],
+            "task_requirement_links": [{
+                "task_id": task_id,
+                "requirement_ids": ["REQ-FROM-ANOTHER-ITEM"],
+            }],
+            "unsupported_assumptions": [],
+        }],
+    }
+
+    with pytest.raises(ValueError, match="unknown semantic label"):
+        omc_plan_pilot.normalize_adjudication_result(result, session)
+
+
 def test_blind_sessions_split_pairs_without_provider_names():
     executions = []
     for case in _cases():
@@ -598,6 +720,344 @@ def test_full_pilot_runs_eight_plans_and_two_fresh_adjudications(tmp_path):
     assert all(call[2] == 0 for call in provider_calls)
     assert report["evaluation_status"] == "draft_not_for_comparison"
     assert (artifact_root / "batch-full" / "pilot-report.json").exists()
+
+
+def test_normalize_adjudication_result_rejects_unknown_semantic_credit():
+    case = _cases()[0]
+    gold = next(
+        item for item in _gold_document()["cases"] if item["case_id"] == case["case_id"]
+    )
+    plan = _plan(case["case_id"])
+    session = {
+        "session_id": "session-1",
+        "items": [{
+            "blind_id": "blind-1",
+            "case_id": case["case_id"],
+            "plan": plan,
+            "raw_output": json.dumps(plan),
+            "gold_case": gold,
+        }],
+    }
+    expected_edge = gold["dependency_edges"][0]
+    result = {
+        "session_id": "session-1",
+        "adjudication_execution_id": "execution-1",
+        "items": [{
+            "blind_id": "blind-1",
+            "case_id": case["case_id"],
+            "requirement_hits": [gold["required_items"][0]["id"], "UNKNOWN"],
+            "scope_violations": [*gold["excluded_scope"], "UNKNOWN"],
+            "dependency_hits": [expected_edge, {"before": "x", "after": "y"}],
+            "unexpected_dependency_edges": [expected_edge, {"before": "x", "after": "y"}],
+            "task_requirement_links": [
+                {"task_id": "task-1", "requirement_ids": [gold["required_items"][0]["id"], "UNKNOWN"]},
+                {"task_id": "unknown-task", "requirement_ids": [gold["required_items"][0]["id"]]},
+            ],
+            "unsupported_assumptions": ["UNKNOWN"],
+        }],
+    }
+
+    with pytest.raises(ValueError, match="unknown semantic label"):
+        omc_plan_pilot.normalize_adjudication_result(result, session)
+
+
+def test_normalize_adjudication_result_rejects_duplicate_blind_ids():
+    case = _cases()[0]
+    gold = next(
+        item for item in _gold_document()["cases"] if item["case_id"] == case["case_id"]
+    )
+    plan = _plan(case["case_id"])
+    session = {
+        "session_id": "session-1",
+        "items": [{
+            "blind_id": "blind-1",
+            "case_id": case["case_id"],
+            "plan": plan,
+            "raw_output": json.dumps(plan),
+            "gold_case": gold,
+        }],
+    }
+    item = {
+        "blind_id": "blind-1",
+        "case_id": case["case_id"],
+        "requirement_hits": [],
+        "scope_violations": [],
+        "dependency_hits": [],
+        "unexpected_dependency_edges": [],
+        "task_requirement_links": [],
+        "unsupported_assumptions": [],
+    }
+    result = {
+        "session_id": "session-1",
+        "adjudication_execution_id": "execution-1",
+        "items": [item, dict(item)],
+    }
+
+    with pytest.raises(ValueError, match="blind adjudication ids must be unique"):
+        omc_plan_pilot.normalize_adjudication_result(result, session)
+
+
+def test_run_provider_pairs_rejects_duplicate_plan_values_before_adjudication(tmp_path):
+    def provider_executor(*, provider_id, case, prompt, execution):
+        plan = _plan(case["case_id"])
+        plan["requirements_covered"] *= 2
+        raw_output = json.dumps(plan)
+        return {"plan": plan, "raw_output": raw_output, "events_jsonl": ""}
+
+    with pytest.raises(PairExecutionError, match="invalid plan contract"):
+        omc_plan_pilot.run_provider_pairs(
+            _cases(),
+            _protocol(),
+            executor=provider_executor,
+            artifact_root=tmp_path / "artifacts",
+            batch_id="duplicate-plan",
+            model="gpt-test",
+            reasoning_effort="low",
+        )
+
+    assert not (tmp_path / "artifacts" / "duplicate-plan" / "provider-batch.json").exists()
+
+
+def test_full_pilot_can_resume_complete_provider_batch_without_repeating_calls(tmp_path):
+    cryptography = pytest.importorskip("cryptography.hazmat.primitives.asymmetric.ed25519")
+    serialization = pytest.importorskip("cryptography.hazmat.primitives.serialization")
+    private_key = cryptography.Ed25519PrivateKey.generate()
+    raw_private = private_key.private_bytes(
+        serialization.Encoding.Raw,
+        serialization.PrivateFormat.Raw,
+        serialization.NoEncryption(),
+    )
+    trusted_public_key = base64.b64encode(private_key.public_key().public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw,
+    )).decode("ascii")
+    key_path = tmp_path / "adjudicator.key"
+    key_path.write_text(base64.b64encode(raw_private).decode("ascii"))
+    artifact_root = tmp_path / "runtime" / "artifacts"
+    batch_id = "batch-resume"
+
+    def initial_provider(*, provider_id, case, prompt, execution):
+        plan = _plan(case["case_id"])
+        return {"plan": plan, "raw_output": json.dumps(plan), "events_jsonl": ""}
+
+    omc_plan_pilot.run_provider_pairs(
+        _cases(),
+        _protocol(),
+        executor=initial_provider,
+        artifact_root=artifact_root,
+        batch_id=batch_id,
+        model="gpt-test",
+        reasoning_effort="low",
+    )
+
+    def forbidden_provider(**kwargs):
+        raise AssertionError("resume must not repeat provider calls")
+
+    def adjudicator_executor(*, session, model, reasoning_effort):
+        assert not (artifact_root / batch_id / "private-provider-mapping.json").exists()
+        return {
+            "session_id": session["session_id"],
+            "adjudication_execution_id": f"fresh-{session['session_id']}",
+            "items": [{
+                "blind_id": item["blind_id"],
+                "case_id": item["case_id"],
+                "requirement_hits": [],
+                "scope_violations": [],
+                "dependency_hits": [],
+                "unexpected_dependency_edges": [],
+                "task_requirement_links": [],
+                "unsupported_assumptions": [],
+            } for item in session["items"]],
+        }
+
+    report = run_full_pilot(
+        _public_document(),
+        _gold_document(),
+        _protocol(),
+        provider_executor=forbidden_provider,
+        adjudicator_executor=adjudicator_executor,
+        artifact_root=artifact_root,
+        batch_id=batch_id,
+        model="gpt-test",
+        reasoning_effort="low",
+        private_key_path=key_path,
+        trusted_public_key=trusted_public_key,
+        repo_root=Path(__file__).parents[1],
+        resume_provider_batch=True,
+    )
+
+    root = artifact_root / batch_id
+    assert report["evaluation_status"] == "draft_not_for_comparison"
+    assert (root / "adjudication-session-1-result.json").exists()
+    normalized = json.loads(
+        (root / "adjudication-session-1-normalized.json").read_text(encoding="utf-8")
+    )
+    assert all(not item["dependency_hits"] for item in normalized["items"])
+
+    with pytest.raises(ValueError, match="adjudication artifacts already exist"):
+        run_full_pilot(
+            _public_document(),
+            _gold_document(),
+            _protocol(),
+            provider_executor=forbidden_provider,
+            adjudicator_executor=adjudicator_executor,
+            artifact_root=artifact_root,
+            batch_id=batch_id,
+            model="gpt-test",
+            reasoning_effort="low",
+            private_key_path=key_path,
+            trusted_public_key=trusted_public_key,
+            repo_root=Path(__file__).parents[1],
+            resume_provider_batch=True,
+        )
+
+
+def test_resume_rejects_tampered_provider_output(tmp_path):
+    artifact_root = tmp_path / "artifacts"
+    batch_id = "batch-tampered"
+
+    def provider_executor(*, provider_id, case, prompt, execution):
+        plan = _plan(case["case_id"])
+        return {"plan": plan, "raw_output": json.dumps(plan), "events_jsonl": ""}
+
+    omc_plan_pilot.run_provider_pairs(
+        _cases(),
+        _protocol(),
+        executor=provider_executor,
+        artifact_root=artifact_root,
+        batch_id=batch_id,
+        model="gpt-test",
+        reasoning_effort="low",
+    )
+    provider_batch_path = artifact_root / batch_id / "provider-batch.json"
+    provider_batch = json.loads(provider_batch_path.read_text(encoding="utf-8"))
+    provider_batch["providers"][0]["executions"][0]["raw_output"] += "tampered"
+    provider_batch_path.write_text(json.dumps(provider_batch), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="provider output integrity mismatch"):
+        omc_plan_pilot.load_completed_provider_batch(
+            artifact_root,
+            batch_id,
+            expected_cases=_cases(),
+            protocol=_protocol(),
+            model="gpt-test",
+            reasoning_effort="low",
+        )
+
+
+def test_resume_rejects_duplicate_plan_values_with_matching_output_hash(tmp_path):
+    artifact_root = tmp_path / "artifacts"
+    batch_id = "batch-duplicate-plan"
+
+    def provider_executor(*, provider_id, case, prompt, execution):
+        plan = _plan(case["case_id"])
+        return {"plan": plan, "raw_output": json.dumps(plan), "events_jsonl": ""}
+
+    omc_plan_pilot.run_provider_pairs(
+        _cases(),
+        _protocol(),
+        executor=provider_executor,
+        artifact_root=artifact_root,
+        batch_id=batch_id,
+        model="gpt-test",
+        reasoning_effort="low",
+    )
+    root = artifact_root / batch_id
+    provider_batch_path = root / "provider-batch.json"
+    provider_batch = json.loads(provider_batch_path.read_text(encoding="utf-8"))
+    execution = provider_batch["providers"][0]["executions"][0]
+    execution["plan"]["requirements_covered"] *= 2
+    execution["raw_output"] = json.dumps(execution["plan"])
+    provider_batch_path.write_text(json.dumps(provider_batch), encoding="utf-8")
+
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    metadata = next(
+        item
+        for item in manifest["executions"]
+        if item["plan_execution_id"] == execution["plan_execution_id"]
+    )
+    metadata["raw_output_sha256"] = omc_plan_pilot.canonical_digest(
+        execution["raw_output"]
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="provider plan contract mismatch"):
+        omc_plan_pilot.load_completed_provider_batch(
+            artifact_root,
+            batch_id,
+            expected_cases=_cases(),
+            protocol=_protocol(),
+            model="gpt-test",
+            reasoning_effort="low",
+        )
+
+
+def test_resume_rejects_usage_claim_without_observed_execution_usage(tmp_path):
+    artifact_root = tmp_path / "artifacts"
+    batch_id = "batch-usage-tampered"
+
+    def provider_executor(*, provider_id, case, prompt, execution):
+        plan = _plan(case["case_id"])
+        return {"plan": plan, "raw_output": json.dumps(plan), "events_jsonl": ""}
+
+    omc_plan_pilot.run_provider_pairs(
+        _cases(),
+        _protocol(),
+        executor=provider_executor,
+        artifact_root=artifact_root,
+        batch_id=batch_id,
+        model="gpt-test",
+        reasoning_effort="low",
+    )
+    manifest_path = artifact_root / batch_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["token_measurement_status"] = "observed"
+    manifest["cost_claim_allowed"] = True
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="provider usage integrity mismatch"):
+        omc_plan_pilot.load_completed_provider_batch(
+            artifact_root,
+            batch_id,
+            expected_cases=_cases(),
+            protocol=_protocol(),
+            model="gpt-test",
+            reasoning_effort="low",
+        )
+
+
+def test_resume_rejects_tampered_provider_producer(tmp_path):
+    artifact_root = tmp_path / "artifacts"
+    batch_id = "batch-producer-tampered"
+
+    def provider_executor(*, provider_id, case, prompt, execution):
+        plan = _plan(case["case_id"])
+        return {"plan": plan, "raw_output": json.dumps(plan), "events_jsonl": ""}
+
+    omc_plan_pilot.run_provider_pairs(
+        _cases(),
+        _protocol(),
+        executor=provider_executor,
+        artifact_root=artifact_root,
+        batch_id=batch_id,
+        model="gpt-test",
+        reasoning_effort="low",
+    )
+    provider_batch_path = artifact_root / batch_id / "provider-batch.json"
+    provider_batch = json.loads(provider_batch_path.read_text(encoding="utf-8"))
+    provider_batch["providers"][0]["plan_producer"] = "tampered-producer"
+    provider_batch_path.write_text(json.dumps(provider_batch), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="provider provenance mismatch"):
+        omc_plan_pilot.load_completed_provider_batch(
+            artifact_root,
+            batch_id,
+            expected_cases=_cases(),
+            protocol=_protocol(),
+            model="gpt-test",
+            reasoning_effort="low",
+        )
 
 
 def test_full_pilot_validates_fixtures_before_provider_execution(tmp_path, monkeypatch):

@@ -17,16 +17,14 @@
       "items": {
         "type": "string",
         "minLength": 1
-      },
-      "uniqueItems": true
+      }
     },
     "scope_items": {
       "type": "array",
       "items": {
         "type": "string",
         "minLength": 1
-      },
-      "uniqueItems": true
+      }
     },
     "dependency_edges": {
       "type": "array",
@@ -80,8 +78,7 @@
             "items": {
               "type": "string",
               "minLength": 1
-            },
-            "uniqueItems": true
+            }
           }
         }
       }
@@ -91,16 +88,14 @@
       "items": {
         "type": "string",
         "minLength": 1
-      },
-      "uniqueItems": true
+      }
     },
     "decisions_required": {
       "type": "array",
       "items": {
         "type": "string",
         "minLength": 1
-      },
-      "uniqueItems": true
+      }
     }
   }
 }

@@ -25,8 +25,8 @@
         "properties": {
           "blind_id": {"type": "string", "minLength": 1},
           "case_id": {"type": "string", "minLength": 1},
-          "requirement_hits": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-          "scope_violations": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "requirement_hits": {"type": "array", "items": {"type": "string"}},
+          "scope_violations": {"type": "array", "items": {"type": "string"}},
           "dependency_hits": {
             "type": "array",
             "items": {
@@ -53,11 +53,11 @@
               "required": ["task_id", "requirement_ids"],
               "properties": {
                 "task_id": {"type": "string"},
-                "requirement_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+                "requirement_ids": {"type": "array", "items": {"type": "string"}}
               }
             }
           },
-          "unsupported_assumptions": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+          "unsupported_assumptions": {"type": "array", "items": {"type": "string"}}
         }
       }
     }

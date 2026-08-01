@@ -220,6 +220,39 @@ def validate_private_key_location(
     return private_key
 
 
+def _validate_provider_plan_uniqueness(plan: dict[str, Any]) -> None:
+    """Enforce uniqueness constraints unsupported by Codex output schemas."""
+    for field in (
+        "requirements_covered",
+        "scope_items",
+        "assumptions",
+        "decisions_required",
+    ):
+        values = plan.get(field)
+        if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+            raise ValueError(f"invalid plan field: {field}")
+        if len(values) != len(set(values)):
+            raise ValueError(f"duplicate plan value: {field}")
+
+    tasks = plan.get("tasks")
+    if not isinstance(tasks, list):
+        raise ValueError("invalid plan field: tasks")
+    task_ids = []
+    for task in tasks:
+        if not isinstance(task, dict) or not isinstance(task.get("id"), str):
+            raise ValueError("invalid plan task")
+        task_ids.append(task["id"])
+        supports = task.get("supports")
+        if (
+            not isinstance(supports, list)
+            or any(not isinstance(value, str) for value in supports)
+            or len(supports) != len(set(supports))
+        ):
+            raise ValueError("duplicate plan value: task supports")
+    if len(task_ids) != len(set(task_ids)):
+        raise ValueError("duplicate plan value: task id")
+
+
 def run_provider_pairs(
     cases: list[dict[str, Any]],
     protocol: dict[str, Any],
@@ -289,6 +322,15 @@ def run_provider_pairs(
                     f"pair produced invalid output for {case['case_id']}; "
                     "rerun the pair with a new batch_id"
                 )
+            try:
+                for _, result, _ in pair_results:
+                    _validate_provider_plan_uniqueness(result["plan"])
+            except ValueError as exc:
+                shutil.rmtree(pair_dir, ignore_errors=True)
+                raise PairExecutionError(
+                    f"pair produced invalid plan contract for {case['case_id']}; "
+                    "rerun the pair with a new batch_id"
+                ) from exc
             for provider_id, result, prompt in pair_results:
                 plan = result.get("plan")
                 raw_output = result.get("raw_output")
@@ -347,6 +389,155 @@ def run_provider_pairs(
     return {"provider_batch": provider_batch, "manifest": manifest}
 
 
+def load_completed_provider_batch(
+    artifact_root: str | Path,
+    batch_id: str,
+    *,
+    expected_cases: list[dict[str, Any]],
+    protocol: dict[str, Any],
+    model: str,
+    reasoning_effort: str,
+) -> dict[str, Any]:
+    """Load and verify one provider stage without repeating paid calls."""
+    root = Path(artifact_root).resolve() / _safe_path_component(batch_id, "batch_id")
+    provider_batch = json.loads(
+        (root / "provider-batch.json").read_text(encoding="utf-8")
+    )
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("batch_id") != batch_id:
+        raise ValueError("resume manifest batch_id mismatch")
+    if manifest.get("model") != model or manifest.get("reasoning_effort") != reasoning_effort:
+        raise ValueError("resume model settings mismatch")
+    if manifest.get("retry_limit") != 0:
+        raise ValueError("resume manifest must preserve retry_limit 0")
+    if manifest.get("benchmark_scope") != protocol.get("benchmark_scope"):
+        raise ValueError("resume benchmark scope mismatch")
+
+    if (
+        not isinstance(provider_batch, dict)
+        or set(provider_batch) != {"schema_version", "split", "providers"}
+        or provider_batch.get("schema_version") != 1
+        or provider_batch.get("split") != "development"
+    ):
+        raise ValueError("resume provider batch contract mismatch")
+    providers = provider_batch.get("providers")
+    if not isinstance(providers, list) or len(providers) != len(_PROVIDER_IDS):
+        raise ValueError("resume provider batch is incomplete")
+    provider_ids: set[str] = set()
+    for provider in providers:
+        if (
+            not isinstance(provider, dict)
+            or set(provider) != {"provider_id", "plan_producer", "executions"}
+            or provider.get("provider_id") not in _PROVIDER_IDS
+        ):
+            raise ValueError("resume provider batch is incomplete")
+        provider_id = provider["provider_id"]
+        if provider_id in provider_ids:
+            raise ValueError("resume provider batch is incomplete")
+        provider_ids.add(provider_id)
+        if provider.get("plan_producer") != protocol["providers"][provider_id]["plan_producer"]:
+            raise ValueError("provider provenance mismatch")
+    expected_case_ids = {case["case_id"] for case in expected_cases}
+    cases_by_id = {case["case_id"]: case for case in expected_cases}
+    provider_executions = [
+        (provider["provider_id"], execution)
+        for provider in providers
+        for execution in provider.get("executions", [])
+    ]
+    identities = [
+        (provider_id, execution.get("case_id"))
+        for provider_id, execution in provider_executions
+    ]
+    expected_identities = {
+        (provider_id, case_id)
+        for provider_id in _PROVIDER_IDS
+        for case_id in expected_case_ids
+    }
+    manifest_executions = manifest.get("executions")
+    if (
+        set(identities) != expected_identities
+        or len(identities) != len(expected_identities)
+        or not isinstance(manifest_executions, list)
+        or len(manifest_executions) != len(expected_identities)
+    ):
+        raise ValueError("resume provider executions are incomplete")
+
+    manifest_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
+    for metadata in manifest_executions:
+        if not isinstance(metadata, dict):
+            raise ValueError("resume provider manifest is invalid")
+        identity = (metadata.get("provider_id"), metadata.get("case_id"))
+        if identity in manifest_by_identity:
+            raise ValueError("resume provider manifest contains duplicate executions")
+        manifest_by_identity[identity] = metadata
+    if set(manifest_by_identity) != expected_identities:
+        raise ValueError("resume provider manifest is incomplete")
+
+    usage_complete = True
+    for metadata in manifest_executions:
+        usage = metadata.get("usage")
+        if not isinstance(usage, dict):
+            raise ValueError("provider usage integrity mismatch")
+        if usage.get("status") == "observed":
+            input_tokens = usage.get("input_tokens")
+            output_tokens = usage.get("output_tokens")
+            total_tokens = usage.get("total_tokens")
+            if (
+                not all(type(value) is int and value >= 0 for value in (
+                    input_tokens,
+                    output_tokens,
+                    total_tokens,
+                ))
+                or total_tokens != input_tokens + output_tokens
+            ):
+                raise ValueError("provider usage integrity mismatch")
+        elif usage == {"status": "unavailable"}:
+            usage_complete = False
+        else:
+            raise ValueError("provider usage integrity mismatch")
+    expected_usage_status = "observed" if usage_complete else "unavailable"
+    if (
+        manifest.get("token_measurement_status") != expected_usage_status
+        or manifest.get("cost_claim_allowed") is not usage_complete
+    ):
+        raise ValueError("provider usage integrity mismatch")
+
+    for provider_id, execution in provider_executions:
+        case_id = execution["case_id"]
+        metadata = manifest_by_identity[(provider_id, case_id)]
+        raw_output = execution.get("raw_output")
+        prompt = build_provider_prompt(protocol, cases_by_id[case_id], provider_id)
+        if (
+            not isinstance(raw_output, str)
+            or canonical_digest(raw_output) != metadata.get("raw_output_sha256")
+            or execution.get("plan_execution_id")
+            != metadata.get("plan_execution_id")
+            or metadata.get("model") != model
+            or metadata.get("reasoning_effort") != reasoning_effort
+            or any(
+                metadata.get(key) != prompt[key]
+                for key in (
+                    "common_prompt_sha256",
+                    "treatment_sha256",
+                    "request_sha256",
+                    "final_prompt_sha256",
+                )
+            )
+        ):
+            raise ValueError("provider output integrity mismatch")
+        try:
+            parsed_output = json.loads(raw_output)
+        except json.JSONDecodeError as exc:
+            raise ValueError("provider output integrity mismatch") from exc
+        if parsed_output != execution.get("plan"):
+            raise ValueError("provider output integrity mismatch")
+        try:
+            _validate_provider_plan_uniqueness(parsed_output)
+        except ValueError as exc:
+            raise ValueError("provider plan contract mismatch") from exc
+    return {"provider_batch": provider_batch, "manifest": manifest}
+
+
 def build_blind_adjudication_sessions(
     executions: list[dict[str, Any]],
     *,
@@ -397,6 +588,112 @@ def build_blind_adjudication_sessions(
                 "session_id": session["session_id"],
             }
     return sessions, mapping
+
+
+def normalize_adjudication_result(
+    result: dict[str, Any],
+    session: dict[str, Any],
+) -> dict[str, Any]:
+    """Canonicalize duplicate labels and reject unknown semantic claims."""
+    session_items = {item["blind_id"]: item for item in session["items"]}
+    output_items = result.get("items")
+    if not isinstance(output_items, list):
+        raise ValueError("adjudication items must be a list")
+    output_blind_ids = [
+        item.get("blind_id") for item in output_items if isinstance(item, dict)
+    ]
+    if len(output_blind_ids) != len(output_items) or len(output_blind_ids) != len(set(output_blind_ids)):
+        raise ValueError("blind adjudication ids must be unique")
+    if set(output_blind_ids) != set(session_items):
+        raise ValueError("adjudication output does not cover the blind session")
+
+    normalized_items = []
+    for item in output_items:
+        source = session_items[item["blind_id"]]
+        if item.get("case_id") != source["case_id"]:
+            raise ValueError("adjudication case_id mismatch")
+        gold = source["gold_case"]
+        plan = source["plan"]
+        requirement_ids = {entry["id"] for entry in gold["required_items"]}
+        excluded_scope = set(gold["excluded_scope"])
+        expected_edges = {
+            (edge["before"], edge["after"]) for edge in gold["dependency_edges"]
+        }
+        plan_edges = {
+            (edge["before"], edge["after"]) for edge in plan["dependency_edges"]
+        }
+        task_ids = {task["id"] for task in plan["tasks"]}
+        assumptions = set(plan["assumptions"])
+
+        def unique_strings(values: Any, allowed: set[str]) -> list[str]:
+            if not isinstance(values, list) or any(
+                not isinstance(value, str) or value not in allowed for value in values
+            ):
+                raise ValueError("unknown semantic label")
+            return list(dict.fromkeys(values))
+
+        def unique_edges(
+            values: Any,
+            *,
+            allowed: set[tuple[str, str]] | None = None,
+            forbidden: set[tuple[str, str]] | None = None,
+        ) -> list[dict[str, str]]:
+            if not isinstance(values, list):
+                raise ValueError("unknown semantic label")
+            forbidden_edges = forbidden or set()
+            seen: set[tuple[str, str]] = set()
+            edges = []
+            for edge in values:
+                if (
+                    not isinstance(edge, dict)
+                    or set(edge) != {"before", "after"}
+                    or not all(isinstance(edge[key], str) for key in ("before", "after"))
+                ):
+                    raise ValueError("unknown semantic label")
+                identity = (edge["before"], edge["after"])
+                if (allowed is not None and identity not in allowed) or identity in forbidden_edges:
+                    raise ValueError("unknown semantic label")
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                edges.append({"before": identity[0], "after": identity[1]})
+            return edges
+
+        links: dict[str, list[str]] = {}
+        raw_links = item["task_requirement_links"]
+        if not isinstance(raw_links, list):
+            raise ValueError("unknown semantic label")
+        for link in raw_links:
+            if not isinstance(link, dict) or set(link) != {"task_id", "requirement_ids"}:
+                raise ValueError("unknown semantic label")
+            task_id = link["task_id"]
+            if task_id not in task_ids:
+                raise ValueError("unknown semantic label")
+            current = links.setdefault(task_id, [])
+            for requirement_id in unique_strings(
+                link["requirement_ids"], requirement_ids
+            ):
+                if requirement_id not in current:
+                    current.append(requirement_id)
+
+        dependency_hits = unique_edges(item["dependency_hits"], allowed=expected_edges)
+        normalized_items.append({
+            **item,
+            "requirement_hits": unique_strings(item["requirement_hits"], requirement_ids),
+            "scope_violations": unique_strings(item["scope_violations"], excluded_scope),
+            "dependency_hits": dependency_hits,
+            "unexpected_dependency_edges": unique_edges(
+                item["unexpected_dependency_edges"], allowed=plan_edges
+            ),
+            "task_requirement_links": [
+                {"task_id": task_id, "requirement_ids": requirement_ids_for_task}
+                for task_id, requirement_ids_for_task in links.items()
+            ],
+            "unsupported_assumptions": unique_strings(
+                item["unsupported_assumptions"], assumptions
+            ),
+        })
+    return {**result, "items": normalized_items}
 
 
 def _encoded_public_key(private_key: Any) -> str:
@@ -544,6 +841,7 @@ def run_full_pilot(
     trusted_public_key: str,
     repo_root: str | Path,
     adjudicator: str = "independent-codex-adjudicator",
+    resume_provider_batch: bool = False,
 ) -> dict[str, Any]:
     """Run the 8+2 call development pilot and write one draft-safe report."""
     artifact_root = Path(artifact_root).resolve()
@@ -567,15 +865,25 @@ def run_full_pilot(
     ]
     if len(development_cases) != 4:
         raise ValueError("pilot requires exactly four development cases")
-    collected = run_provider_pairs(
-        development_cases,
-        protocol,
-        executor=provider_executor,
-        artifact_root=artifact_root,
-        batch_id=batch_id,
-        model=model,
-        reasoning_effort=reasoning_effort,
-    )
+    if resume_provider_batch:
+        collected = load_completed_provider_batch(
+            artifact_root,
+            batch_id,
+            expected_cases=development_cases,
+            protocol=protocol,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )
+    else:
+        collected = run_provider_pairs(
+            development_cases,
+            protocol,
+            executor=provider_executor,
+            artifact_root=artifact_root,
+            batch_id=batch_id,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )
     executions = [
         {"provider_id": provider["provider_id"], **execution}
         for provider in collected["provider_batch"]["providers"]
@@ -587,14 +895,38 @@ def run_full_pilot(
         batch_id=batch_id,
         gold_document=gold_document,
     )
-    adjudication_results = [
-        adjudicator_executor(
+    root = artifact_root / batch_id
+    adjudication_artifacts = [
+        *root.glob("adjudication-session-*"),
+        *(root / name for name in (
+            "private-provider-mapping.json",
+            "sealed-provider-batch.json",
+            "pilot-report.json",
+        ) if (root / name).exists()),
+    ]
+    if adjudication_artifacts:
+        raise ValueError("adjudication artifacts already exist")
+    adjudication_results = []
+    for index, session in enumerate(sessions, start=1):
+        (root / f"adjudication-session-{index}-blind.json").write_text(
+            json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        raw_result = adjudicator_executor(
             session=deepcopy(session),
             model=model,
             reasoning_effort=reasoning_effort,
         )
-        for session in sessions
-    ]
+        (root / f"adjudication-session-{index}-result.json").write_text(
+            json.dumps(raw_result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        normalized_result = normalize_adjudication_result(raw_result, session)
+        (root / f"adjudication-session-{index}-normalized.json").write_text(
+            json.dumps(normalized_result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        adjudication_results.append(normalized_result)
+    (root / "private-provider-mapping.json").write_text(
+        json.dumps(mapping, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     sealed_batch = seal_blind_adjudications(
         collected["provider_batch"],
         adjudication_results,
@@ -610,18 +942,6 @@ def run_full_pilot(
         sealed_batch,
         collected["manifest"],
         trusted_adjudicator_public_key=trusted_public_key,
-    )
-    root = artifact_root / batch_id
-    for index, session in enumerate(sessions, start=1):
-        (root / f"adjudication-session-{index}-blind.json").write_text(
-            json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-    for index, result in enumerate(adjudication_results, start=1):
-        (root / f"adjudication-session-{index}-result.json").write_text(
-            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-    (root / "private-provider-mapping.json").write_text(
-        json.dumps(mapping, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     (root / "sealed-provider-batch.json").write_text(
         json.dumps(sealed_batch, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -683,6 +1003,37 @@ def codex_executor(
     }
 
 
+def build_adjudication_prompt(session: dict[str, Any]) -> str:
+    """Build the dynamic-label contract used by blind adjudicators."""
+    instructions = (
+        "You are an independent semantic adjudicator for implementation plans. "
+        "Provider identities are intentionally hidden. For every item, compare the plan "
+        "only with gold_case and return conservative semantic labels. A requirement hit "
+        "requires explicit plan support; do not infer unstated behavior. Preserve blind_id, "
+        "case_id, and session_id exactly. Copy labels exactly; never paraphrase, translate, "
+        "change punctuation, or invent labels. requirement_hits may contain only exact "
+        "gold_case.required_items[].id values. scope_violations may contain only exact "
+        "gold_case.excluded_scope strings. dependency_hits may contain only exact "
+        "gold_case.dependency_edges objects. unexpected_dependency_edges may contain only "
+        "exact plan.dependency_edges objects. Never reverse dependency edges; when a plan "
+        "edge is unexpected, copy its original before and after values without changing "
+        "their direction. A dependency hit requires an explicit ordered task path whose "
+        "task_requirement_links implement the gold before requirement before the gold after "
+        "requirement. Ordinary implementation-detail edges are not unexpected by default; "
+        "mark a plan edge unexpected only when it contradicts a gold dependency order. "
+        "task_requirement_links.task_id may contain "
+        "only exact plan.tasks[].id values and requirement_ids may contain only exact "
+        "gold_case.required_items[].id values. unsupported_assumptions may contain only "
+        "exact plan.assumptions strings. Never reuse labels from another item; evaluate "
+        "each item with only its own plan and gold_case. Use an empty array when no allowed "
+        "value applies. "
+        "Return only schema-valid JSON."
+    )
+    return instructions + "\n\n" + json.dumps(
+        session, ensure_ascii=False, sort_keys=True
+    )
+
+
 def codex_adjudicator_executor(
     *,
     session: dict[str, Any],
@@ -694,14 +1045,7 @@ def codex_adjudicator_executor(
 ) -> dict[str, Any]:
     """Run one fresh blind adjudication session in an isolated workspace."""
     output_path = Path(workspace) / f"adjudication-{uuid.uuid4().hex}.json"
-    prompt = (
-        "You are an independent semantic adjudicator for implementation plans. "
-        "Provider identities are intentionally hidden. For every item, compare the plan "
-        "only with gold_case and return conservative semantic labels. A requirement hit "
-        "requires explicit plan support; do not infer unstated behavior. Preserve blind_id, "
-        "case_id, and session_id exactly. Return only schema-valid JSON.\n\n"
-        + json.dumps(session, ensure_ascii=False, sort_keys=True)
-    )
+    prompt = build_adjudication_prompt(session)
     command = [
         codex_binary,
         "exec",
@@ -754,6 +1098,11 @@ def main() -> int:
     parser.add_argument("--trusted-adjudicator-public-key", required=True)
     parser.add_argument("--adjudicator-private-key-file", required=True)
     parser.add_argument(
+        "--resume-provider-batch",
+        action="store_true",
+        help="Reuse a complete provider batch and rerun only blind adjudication.",
+    )
+    parser.add_argument(
         "--repo-root",
         default=str(Path(__file__).resolve().parents[1]),
     )
@@ -805,6 +1154,7 @@ def main() -> int:
         private_key_path=args.adjudicator_private_key_file,
         trusted_public_key=args.trusted_adjudicator_public_key,
         repo_root=args.repo_root,
+        resume_provider_batch=args.resume_provider_batch,
     )
     print(Path(args.artifact_root).resolve() / args.batch_id / "pilot-report.json")
     return 0
