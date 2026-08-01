@@ -152,6 +152,7 @@ def test_provider_prompts_differ_only_by_frozen_treatment_block():
 
 def test_protocol_rejects_retry_and_non_development_scope(tmp_path):
     protocol = _protocol()
+    assert protocol["adjudication"]["contract_version"] == 2
     protocol["execution"]["retry_limit"] = 1
     path = tmp_path / "protocol.json"
     path.write_text(json.dumps(protocol), encoding="utf-8")
@@ -163,6 +164,12 @@ def test_protocol_rejects_retry_and_non_development_scope(tmp_path):
     protocol["split"] = "holdout"
     path.write_text(json.dumps(protocol), encoding="utf-8")
     with pytest.raises(ValueError, match="development"):
+        load_protocol(path)
+
+    protocol["split"] = "development"
+    protocol["adjudication"]["contract_version"] = 1
+    path.write_text(json.dumps(protocol), encoding="utf-8")
+    with pytest.raises(ValueError, match="contract_version must be 2"):
         load_protocol(path)
 
 
@@ -370,10 +377,8 @@ def test_codex_adjudicator_rejects_mismatched_session_id(tmp_path, monkeypatch):
     fake_codex = tmp_path / "fake-codex"
     _write_fake_codex(fake_codex)
     monkeypatch.setenv("FAKE_CODEX_SESSION_ID", "wrong-session")
-    session = {
-        "session_id": "expected-session",
-        "items": [{"blind_id": "blind-1", "case_id": "case-1"}],
-    }
+    session = _indexed_adjudication_session()
+    session["session_id"] = "expected-session"
 
     with pytest.raises(ValueError, match="session_id"):
         codex_adjudicator_executor(
@@ -386,107 +391,170 @@ def test_codex_adjudicator_rejects_mismatched_session_id(tmp_path, monkeypatch):
         )
 
 
-def test_adjudicator_prompt_requires_exact_dynamic_labels():
-    case = _cases()[0]
-    gold = next(
-        item for item in _gold_document()["cases"] if item["case_id"] == case["case_id"]
-    )
-    plan = _plan(case["case_id"])
-    session = {
+def _indexed_adjudication_session():
+    plan = {
+        "requirements_covered": ["Implement A, B, and C"],
+        "scope_items": [],
+        "dependency_edges": [
+            {"before": "prepare A", "after": "bridge C"},
+            {"before": "bridge C", "after": "finish B"},
+            {"before": "finish B", "after": "prepare A"},
+            {"before": "install dependency", "after": "run formatter"},
+        ],
+        "tasks": [
+            {"id": "task-a", "target": "a.py", "action": "A", "verify": "test A", "supports": ["A"]},
+            {"id": "task-b", "target": "b.py", "action": "B", "verify": "test B", "supports": ["B"]},
+            {"id": "task-c", "target": "c.py", "action": "C", "verify": "test C", "supports": ["C"]},
+        ],
+        "assumptions": ["ASSUME-1"],
+        "decisions_required": [],
+    }
+    gold = {
+        "case_id": "case-1",
+        "required_items": [
+            {"id": "REQ-A", "weight": 1, "critical": True},
+            {"id": "REQ-B", "weight": 1, "critical": True},
+            {"id": "REQ-C", "weight": 1, "critical": False},
+        ],
+        "excluded_scope": ["SCOPE-X"],
+        "dependency_edges": [{"before": "REQ-A", "after": "REQ-B"}],
+        "allowed_assumptions": [],
+    }
+    return {
+        "schema_version": 2,
         "session_id": "session-1",
         "items": [{
             "blind_id": "blind-1",
-            "case_id": case["case_id"],
+            "case_id": "case-1",
             "plan": plan,
             "raw_output": json.dumps(plan),
             "gold_case": gold,
         }],
     }
 
-    prompt = omc_plan_pilot.build_adjudication_prompt(session)
 
-    assert "Copy labels exactly" in prompt
-    assert "dependency_hits may contain only exact gold_case.dependency_edges" in prompt
-    assert "unexpected_dependency_edges may contain only exact plan.dependency_edges" in prompt
-    assert "Never reverse dependency edges" in prompt
-    assert "Never reuse labels from another item" in prompt
-    assert "implementation-detail edges are not unexpected by default" in prompt
-    assert "dependency hit requires an explicit ordered task path" in prompt
-    assert "unsupported_assumptions may contain only exact plan.assumptions strings" in prompt
+def test_adjudication_catalog_is_stable_and_item_local():
+    session = _indexed_adjudication_session()
+
+    first = omc_plan_pilot.build_adjudication_catalog(session)
+    second = omc_plan_pilot.build_adjudication_catalog(session)
+
+    assert first == second
+    assert first["schema_version"] == 2
+    assert first["items"][0]["item_index"] == 0
+    assert first["items"][0]["catalogs"]["requirements"] == [
+        "REQ-A", "REQ-B", "REQ-C"
+    ]
+    assert first["items"][0]["catalogs"]["tasks"] == [
+        "task-a", "task-b", "task-c"
+    ]
 
 
-def test_normalize_adjudication_result_rejects_invented_unexpected_edge():
-    case = _cases()[0]
-    gold = next(
-        item for item in _gold_document()["cases"] if item["case_id"] == case["case_id"]
+def test_adjudicator_prompt_requires_item_local_indexes():
+    prompt = omc_plan_pilot.build_adjudication_prompt(
+        _indexed_adjudication_session()
     )
-    plan = _plan(case["case_id"])
-    session = {
-        "session_id": "session-1",
-        "items": [{
-            "blind_id": "blind-1",
-            "case_id": case["case_id"],
-            "plan": plan,
-            "raw_output": json.dumps(plan),
-            "gold_case": gold,
-        }],
-    }
+
+    assert "item-local indexes" in prompt
+    assert "edge_requirement_links" in prompt
+    assert "Do not return dependency_hits" in prompt
+    assert "Do not return unexpected_dependency_edges" in prompt
+    assert '"item_index": 0' in prompt
+
+
+def test_normalize_indexed_adjudication_derives_dependency_labels():
+    session = _indexed_adjudication_session()
     result = {
         "session_id": "session-1",
         "adjudication_execution_id": "execution-1",
         "items": [{
+            "item_index": 0,
+            "requirement_hit_indexes": [0, 1, 2],
+            "scope_violation_indexes": [],
+            "task_requirement_links": [
+                {"task_index": 0, "requirement_indexes": [0]},
+                {"task_index": 1, "requirement_indexes": [1]},
+                {"task_index": 2, "requirement_indexes": [2]},
+            ],
+            "edge_requirement_links": [
+                {"edge_index": 0, "before_requirement_indexes": [0], "after_requirement_indexes": [2]},
+                {"edge_index": 1, "before_requirement_indexes": [2], "after_requirement_indexes": [1]},
+                {"edge_index": 2, "before_requirement_indexes": [1], "after_requirement_indexes": [0]},
+                {"edge_index": 3, "before_requirement_indexes": [], "after_requirement_indexes": []},
+            ],
+            "unsupported_assumption_indexes": [0],
+        }],
+    }
+
+    normalized = omc_plan_pilot.normalize_adjudication_result(result, session)
+    item = normalized["items"][0]
+
+    assert item["blind_id"] == "blind-1"
+    assert item["requirement_hits"] == ["REQ-A", "REQ-B", "REQ-C"]
+    assert item["dependency_hits"] == [{"before": "REQ-A", "after": "REQ-B"}]
+    assert item["unexpected_dependency_edges"] == [
+        {"before": "finish B", "after": "prepare A"}
+    ]
+    assert item["unsupported_assumptions"] == ["ASSUME-1"]
+
+
+def test_normalize_rejects_out_of_range_item_local_index():
+    session = _indexed_adjudication_session()
+    result = {
+        "session_id": "session-1",
+        "adjudication_execution_id": "execution-1",
+        "items": [{
+            "item_index": 0,
+            "requirement_hit_indexes": [99],
+            "scope_violation_indexes": [],
+            "task_requirement_links": [],
+            "edge_requirement_links": [],
+            "unsupported_assumption_indexes": [],
+        }],
+    }
+
+    with pytest.raises(ValueError, match="item-local index"):
+        omc_plan_pilot.normalize_adjudication_result(result, session)
+
+
+def test_v2_normalization_rejects_legacy_dynamic_labels():
+    session = _indexed_adjudication_session()
+    legacy_result = {
+        "session_id": session["session_id"],
+        "adjudication_execution_id": "execution-1",
+        "items": [{
             "blind_id": "blind-1",
-            "case_id": case["case_id"],
+            "case_id": "case-1",
             "requirement_hits": [],
             "scope_violations": [],
             "dependency_hits": [],
-            "unexpected_dependency_edges": [{"before": "invented", "after": "edge"}],
+            "unexpected_dependency_edges": [],
             "task_requirement_links": [],
             "unsupported_assumptions": [],
         }],
     }
 
-    with pytest.raises(ValueError, match="unknown semantic label"):
-        omc_plan_pilot.normalize_adjudication_result(result, session)
+    with pytest.raises(ValueError, match="indexed output"):
+        omc_plan_pilot.normalize_adjudication_result(legacy_result, session)
 
 
-def test_normalize_rejects_cross_item_task_requirement_id():
-    case = _cases()[0]
-    gold = next(
-        item for item in _gold_document()["cases"] if item["case_id"] == case["case_id"]
-    )
-    plan = _plan(case["case_id"])
-    task_id = plan["tasks"][0]["id"]
-    session = {
-        "session_id": "session-1",
-        "items": [{
-            "blind_id": "blind-1",
-            "case_id": case["case_id"],
-            "plan": plan,
-            "raw_output": json.dumps(plan),
-            "gold_case": gold,
-        }],
-    }
+def test_v2_adjudication_requires_executor_provenance():
+    session = _indexed_adjudication_session()
     result = {
-        "session_id": "session-1",
+        "session_id": session["session_id"],
         "adjudication_execution_id": "execution-1",
         "items": [{
-            "blind_id": "blind-1",
-            "case_id": case["case_id"],
-            "requirement_hits": [],
-            "scope_violations": [],
-            "dependency_hits": [],
-            "unexpected_dependency_edges": [],
-            "task_requirement_links": [{
-                "task_id": task_id,
-                "requirement_ids": ["REQ-FROM-ANOTHER-ITEM"],
-            }],
-            "unsupported_assumptions": [],
+            "item_index": 0,
+            "requirement_hit_indexes": [],
+            "scope_violation_indexes": [],
+            "task_requirement_links": [],
+            "edge_requirement_links": [],
+            "unsupported_assumption_indexes": [],
         }],
     }
 
-    with pytest.raises(ValueError, match="unknown semantic label"):
-        omc_plan_pilot.normalize_adjudication_result(result, session)
+    with pytest.raises(ValueError, match="executor provenance is required"):
+        omc_plan_pilot.validate_adjudication_result_contract(result, session)
 
 
 def test_blind_sessions_split_pairs_without_provider_names():
@@ -611,10 +679,13 @@ def test_pilot_report_blocks_superiority_and_cost_claims_for_draft_gold(tmp_path
         for provider in collected["provider_batch"]["providers"]
         for execution in provider["executions"]
     ]
-    sessions, mapping = build_blind_adjudication_sessions(
-        executions, session_count=2, batch_id="batch-5"
-    )
     gold = _gold_document()
+    sessions, mapping = build_blind_adjudication_sessions(
+        executions,
+        session_count=2,
+        batch_id="batch-5",
+        gold_document=gold,
+    )
     gold_by_id = {case["case_id"]: case for case in gold["cases"]}
     results = []
     for session in sessions:
@@ -634,6 +705,9 @@ def test_pilot_report_blocks_superiority_and_cost_claims_for_draft_gold(tmp_path
             "session_id": session["session_id"],
             "adjudication_execution_id": f"fresh-{session['session_id']}",
             "items": items,
+            "_adjudication_provenance": (
+                omc_plan_pilot.build_adjudication_provenance(session)
+            ),
         })
     sealed = seal_blind_adjudications(
         collected["provider_batch"], results, mapping, gold,
@@ -641,6 +715,29 @@ def test_pilot_report_blocks_superiority_and_cost_claims_for_draft_gold(tmp_path
         trusted_public_key=trusted_public_key,
         adjudicator="independent-codex-adjudicator",
     )
+
+    collected["manifest"]["adjudication_contract"] = {
+        "mode": "two_fresh_disjoint_sessions",
+        "sessions": [
+            {
+                "session_id": session["session_id"],
+                **omc_plan_pilot.build_adjudication_provenance(session),
+            }
+            for session in sessions
+        ],
+    }
+    mismatched_manifest = json.loads(json.dumps(collected["manifest"]))
+    mismatched_manifest["adjudication_contract"]["sessions"][0][
+        "index_catalog_sha256"
+    ] = "f" * 64
+    with pytest.raises(ValueError, match="manifest contract"):
+        build_pilot_report(
+            _public_document(),
+            gold,
+            sealed,
+            mismatched_manifest,
+            trusted_adjudicator_public_key=trusted_public_key,
+        )
 
     report = build_pilot_report(
         _public_document(),
@@ -655,7 +752,7 @@ def test_pilot_report_blocks_superiority_and_cost_claims_for_draft_gold(tmp_path
     assert report["superiority_claim_status"] == "blocked_draft_gold"
     assert report["token_measurement_status"] == "unavailable"
     assert report["cost_claim_status"] == "blocked_usage_unavailable"
-    assert report["adjudication_mode"] == "two_session_blind_pilot"
+    assert report["adjudication_mode"] == "two_fresh_disjoint_sessions"
 
 
 def test_full_pilot_runs_eight_plans_and_two_fresh_adjudications(tmp_path):
@@ -688,15 +785,16 @@ def test_full_pilot_runs_eight_plans_and_two_fresh_adjudications(tmp_path):
             "session_id": session["session_id"],
             "adjudication_execution_id": f"fresh-{len(adjudicator_calls)}",
             "items": [{
-                "blind_id": item["blind_id"],
-                "case_id": item["case_id"],
-                "requirement_hits": [],
-                "scope_violations": [],
-                "dependency_hits": [],
-                "unexpected_dependency_edges": [],
+                "item_index": item_index,
+                "requirement_hit_indexes": [],
+                "scope_violation_indexes": [],
                 "task_requirement_links": [],
-                "unsupported_assumptions": [],
-            } for item in session["items"]],
+                "edge_requirement_links": [],
+                "unsupported_assumption_indexes": [],
+            } for item_index, _ in enumerate(session["items"])],
+            "_adjudication_provenance": (
+                omc_plan_pilot.build_adjudication_provenance(session)
+            ),
         }
 
     report = run_full_pilot(
@@ -720,6 +818,16 @@ def test_full_pilot_runs_eight_plans_and_two_fresh_adjudications(tmp_path):
     assert all(call[2] == 0 for call in provider_calls)
     assert report["evaluation_status"] == "draft_not_for_comparison"
     assert (artifact_root / "batch-full" / "pilot-report.json").exists()
+    manifest = json.loads(
+        (artifact_root / "batch-full" / "manifest.json").read_text(encoding="utf-8")
+    )
+    contract = manifest["adjudication_contract"]
+    assert contract["mode"] == "two_fresh_disjoint_sessions"
+    assert len(contract["sessions"]) == 2
+    assert all(
+        session["adjudication_contract_version"] == 2
+        for session in contract["sessions"]
+    )
 
 
 def test_normalize_adjudication_result_rejects_unknown_semantic_credit():
@@ -859,15 +967,16 @@ def test_full_pilot_can_resume_complete_provider_batch_without_repeating_calls(t
             "session_id": session["session_id"],
             "adjudication_execution_id": f"fresh-{session['session_id']}",
             "items": [{
-                "blind_id": item["blind_id"],
-                "case_id": item["case_id"],
-                "requirement_hits": [],
-                "scope_violations": [],
-                "dependency_hits": [],
-                "unexpected_dependency_edges": [],
+                "item_index": item_index,
+                "requirement_hit_indexes": [],
+                "scope_violation_indexes": [],
                 "task_requirement_links": [],
-                "unsupported_assumptions": [],
-            } for item in session["items"]],
+                "edge_requirement_links": [],
+                "unsupported_assumption_indexes": [],
+            } for item_index, _ in enumerate(session["items"])],
+            "_adjudication_provenance": (
+                omc_plan_pilot.build_adjudication_provenance(session)
+            ),
         }
 
     report = run_full_pilot(

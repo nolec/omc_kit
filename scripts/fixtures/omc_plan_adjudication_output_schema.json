@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "OMC Plan Pilot Blind Adjudication Batch",
+  "title": "OMC Plan Pilot Indexed Blind Adjudication Batch",
   "type": "object",
   "additionalProperties": false,
   "required": ["session_id", "items"],
@@ -13,51 +13,65 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "blind_id",
-          "case_id",
-          "requirement_hits",
-          "scope_violations",
-          "dependency_hits",
-          "unexpected_dependency_edges",
+          "item_index",
+          "requirement_hit_indexes",
+          "scope_violation_indexes",
           "task_requirement_links",
-          "unsupported_assumptions"
+          "edge_requirement_links",
+          "unsupported_assumption_indexes"
         ],
         "properties": {
-          "blind_id": {"type": "string", "minLength": 1},
-          "case_id": {"type": "string", "minLength": 1},
-          "requirement_hits": {"type": "array", "items": {"type": "string"}},
-          "scope_violations": {"type": "array", "items": {"type": "string"}},
-          "dependency_hits": {
+          "item_index": {"type": "integer", "minimum": 0},
+          "requirement_hit_indexes": {
             "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["before", "after"],
-              "properties": {"before": {"type": "string"}, "after": {"type": "string"}}
-            }
+            "items": {"type": "integer", "minimum": 0}
           },
-          "unexpected_dependency_edges": {
+          "scope_violation_indexes": {
             "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["before", "after"],
-              "properties": {"before": {"type": "string"}, "after": {"type": "string"}}
-            }
+            "items": {"type": "integer", "minimum": 0}
           },
           "task_requirement_links": {
             "type": "array",
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["task_id", "requirement_ids"],
+              "required": ["task_index", "requirement_indexes"],
               "properties": {
-                "task_id": {"type": "string"},
-                "requirement_ids": {"type": "array", "items": {"type": "string"}}
+                "task_index": {"type": "integer", "minimum": 0},
+                "requirement_indexes": {
+                  "type": "array",
+                  "items": {"type": "integer", "minimum": 0}
+                }
               }
             }
           },
-          "unsupported_assumptions": {"type": "array", "items": {"type": "string"}}
+          "edge_requirement_links": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "edge_index",
+                "before_requirement_indexes",
+                "after_requirement_indexes"
+              ],
+              "properties": {
+                "edge_index": {"type": "integer", "minimum": 0},
+                "before_requirement_indexes": {
+                  "type": "array",
+                  "items": {"type": "integer", "minimum": 0}
+                },
+                "after_requirement_indexes": {
+                  "type": "array",
+                  "items": {"type": "integer", "minimum": 0}
+                }
+              }
+            }
+          },
+          "unsupported_assumption_indexes": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 0}
+          }
         }
       }
     }

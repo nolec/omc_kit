@@ -23,6 +23,7 @@
     "counterbalance_provider_order": true
   },
   "adjudication": {
+    "contract_version": 2,
     "session_count": 2,
     "pairs_per_session": 2,
     "blind_provider_identity": true,

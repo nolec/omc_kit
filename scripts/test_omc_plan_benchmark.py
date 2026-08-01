@@ -33,6 +33,12 @@ _PLAN_PRODUCER = "test-plan-producer"
 _PLAN_EXECUTION_ID = "test-plan-execution"
 _ADJUDICATION_PRIVATE_KEY = Ed25519PrivateKey.from_private_bytes(b"\x01" * 32)
 _GOLD_SIGNER_PRIVATE_KEY = Ed25519PrivateKey.from_private_bytes(b"\x02" * 32)
+_ADJUDICATION_PROVENANCE = {
+    "adjudication_contract_version": 2,
+    "adjudication_prompt_sha256": "a" * 64,
+    "adjudication_output_schema_sha256": "b" * 64,
+    "index_catalog_sha256": "c" * 64,
+}
 
 
 def _public_key(private_key):
@@ -133,7 +139,36 @@ def _sealed_semantic_labels(gold, plan, *, raw_output="", **kwargs):
         plan_execution_id=_PLAN_EXECUTION_ID,
         private_key=_ADJUDICATION_PRIVATE_KEY,
         raw_output=raw_output,
+        adjudication_provenance=_ADJUDICATION_PROVENANCE,
     )
+
+
+def test_semantic_receipt_binds_adjudication_contract_provenance():
+    gold = _bundle()["gold"]["cases"][0]
+    plan = {
+        "requirements_covered": [],
+        "scope_items": [],
+        "dependency_edges": [],
+        "tasks": [],
+        "assumptions": [],
+        "decisions_required": [],
+    }
+
+    sealed = _sealed_semantic_labels(gold, plan)
+
+    for field, value in _ADJUDICATION_PROVENANCE.items():
+        assert sealed["receipt"][field] == value
+
+    sealed["receipt"]["index_catalog_sha256"] = "d" * 64
+    with pytest.raises(ValueError, match="signature mismatch"):
+        score_plan(
+            plan,
+            gold,
+            sealed,
+            trusted_adjudicator_public_keys={_ADJUDICATION_PUBLIC_KEY},
+            expected_plan_producer=_PLAN_PRODUCER,
+            expected_plan_execution_id=_PLAN_EXECUTION_ID,
+        )
 
 
 def test_fixture_bundle_requires_four_development_and_ten_holdout_cases():

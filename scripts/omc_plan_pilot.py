@@ -118,6 +118,7 @@ def load_protocol(path: str | Path) -> dict[str, Any]:
         raise ValueError("project instructions must be disabled for prompt parity")
     adjudication = protocol["adjudication"]
     if set(adjudication) != {
+        "contract_version",
         "session_count",
         "pairs_per_session",
         "blind_provider_identity",
@@ -125,6 +126,8 @@ def load_protocol(path: str | Path) -> dict[str, Any]:
         "private_key_generation_allowed",
     }:
         raise ValueError("adjudication contract fields are invalid")
+    if adjudication.get("contract_version") != 2:
+        raise ValueError("adjudication contract_version must be 2")
     if adjudication.get("session_count") != 2 or adjudication.get("pairs_per_session") != 2:
         raise ValueError("adjudication must use two sessions with two pairs each")
     if adjudication.get("blind_provider_identity") is not True:
@@ -554,7 +557,7 @@ def build_blind_adjudication_sessions(
     if any(len(pair) != 2 for pair in by_case.values()):
         raise ValueError("blind adjudication requires complete provider pairs")
     sessions = [
-        {"schema_version": 1, "session_id": f"{batch_id}:adjudication:{index + 1}", "items": []}
+        {"schema_version": 2, "session_id": f"{batch_id}:adjudication:{index + 1}", "items": []}
         for index in range(session_count)
     ]
     mapping: dict[str, dict[str, str]] = {}
@@ -590,13 +593,190 @@ def build_blind_adjudication_sessions(
     return sessions, mapping
 
 
+def build_adjudication_catalog(session: dict[str, Any]) -> dict[str, Any]:
+    """Build stable item-local catalogs so adjudicators never copy dynamic labels."""
+    items = []
+    for item_index, item in enumerate(session["items"]):
+        gold = item["gold_case"]
+        plan = item["plan"]
+        items.append({
+            "item_index": item_index,
+            "blind_id": item["blind_id"],
+            "case_id": item["case_id"],
+            "plan": plan,
+            "gold_dependency_edges": gold["dependency_edges"],
+            "catalogs": {
+                "requirements": [entry["id"] for entry in gold["required_items"]],
+                "excluded_scope": list(gold["excluded_scope"]),
+                "tasks": [task["id"] for task in plan["tasks"]],
+                "plan_edges": list(plan["dependency_edges"]),
+                "assumptions": list(plan["assumptions"]),
+            },
+        })
+    return {
+        "schema_version": 2,
+        "session_id": session["session_id"],
+        "items": items,
+    }
+
+
+def _normalize_indexed_adjudication_result(
+    result: dict[str, Any],
+    session: dict[str, Any],
+) -> dict[str, Any]:
+    catalog = build_adjudication_catalog(session)
+    output_items = result.get("items")
+    if not isinstance(output_items, list):
+        raise ValueError("adjudication items must be a list")
+    indexes = [item.get("item_index") for item in output_items if isinstance(item, dict)]
+    if (
+        len(indexes) != len(output_items)
+        or any(not isinstance(index, int) or isinstance(index, bool) for index in indexes)
+        or len(indexes) != len(set(indexes))
+        or set(indexes) != set(range(len(catalog["items"])))
+    ):
+        raise ValueError("adjudication item-local indexes must cover the session once")
+
+    def values_at(values: Any, source: list[Any]) -> list[Any]:
+        if not isinstance(values, list):
+            raise ValueError("invalid item-local index list")
+        result_values = []
+        for index in values:
+            if (
+                not isinstance(index, int)
+                or isinstance(index, bool)
+                or index < 0
+                or index >= len(source)
+            ):
+                raise ValueError("invalid item-local index")
+            if source[index] not in result_values:
+                result_values.append(deepcopy(source[index]))
+        return result_values
+
+    normalized_items = []
+    expected_output_fields = {
+        "item_index",
+        "requirement_hit_indexes",
+        "scope_violation_indexes",
+        "task_requirement_links",
+        "edge_requirement_links",
+        "unsupported_assumption_indexes",
+    }
+    for output in sorted(output_items, key=lambda value: value["item_index"]):
+        if set(output) != expected_output_fields:
+            raise ValueError("indexed output fields do not match the v2 contract")
+        item_index = output["item_index"]
+        source = session["items"][item_index]
+        local = catalog["items"][item_index]["catalogs"]
+        requirements = local["requirements"]
+
+        task_links = []
+        for link in output.get("task_requirement_links", []):
+            if not isinstance(link, dict) or set(link) != {
+                "task_index", "requirement_indexes"
+            }:
+                raise ValueError("invalid item-local task mapping")
+            task_id = values_at([link["task_index"]], local["tasks"])[0]
+            task_links.append({
+                "task_id": task_id,
+                "requirement_ids": values_at(
+                    link["requirement_indexes"], requirements
+                ),
+            })
+
+        adjacency = {requirement: set() for requirement in requirements}
+        mapped_plan_edges: list[tuple[dict[str, str], list[str], list[str]]] = []
+        seen_edge_indexes: set[int] = set()
+        for link in output.get("edge_requirement_links", []):
+            if not isinstance(link, dict) or set(link) != {
+                "edge_index",
+                "before_requirement_indexes",
+                "after_requirement_indexes",
+            }:
+                raise ValueError("invalid item-local edge mapping")
+            edge_index = link["edge_index"]
+            if edge_index in seen_edge_indexes:
+                raise ValueError("duplicate item-local edge index")
+            seen_edge_indexes.add(edge_index)
+            edge = values_at([edge_index], local["plan_edges"])[0]
+            before_requirements = values_at(
+                link["before_requirement_indexes"], requirements
+            )
+            after_requirements = values_at(
+                link["after_requirement_indexes"], requirements
+            )
+            for before in before_requirements:
+                adjacency[before].update(after_requirements)
+            mapped_plan_edges.append((edge, before_requirements, after_requirements))
+
+        def has_path(before: str, after: str) -> bool:
+            pending = list(adjacency.get(before, ()))
+            visited = set()
+            while pending:
+                current = pending.pop()
+                if current == after:
+                    return True
+                if current not in visited:
+                    visited.add(current)
+                    pending.extend(adjacency.get(current, ()))
+            return False
+
+        gold_edges = source["gold_case"]["dependency_edges"]
+        dependency_hits = [
+            deepcopy(edge)
+            for edge in gold_edges
+            if has_path(edge["before"], edge["after"])
+        ]
+        unexpected_edges = []
+        for plan_edge, before_requirements, after_requirements in mapped_plan_edges:
+            if any(
+                gold_edge["after"] in before_requirements
+                and gold_edge["before"] in after_requirements
+                for gold_edge in gold_edges
+            ):
+                unexpected_edges.append(deepcopy(plan_edge))
+
+        normalized_items.append({
+            "blind_id": source["blind_id"],
+            "case_id": source["case_id"],
+            "requirement_hits": values_at(
+                output.get("requirement_hit_indexes", []), requirements
+            ),
+            "scope_violations": values_at(
+                output.get("scope_violation_indexes", []), local["excluded_scope"]
+            ),
+            "dependency_hits": dependency_hits,
+            "unexpected_dependency_edges": unexpected_edges,
+            "task_requirement_links": task_links,
+            "unsupported_assumptions": values_at(
+                output.get("unsupported_assumption_indexes", []), local["assumptions"]
+            ),
+        })
+    return {**result, "items": normalized_items}
+
+
 def normalize_adjudication_result(
     result: dict[str, Any],
     session: dict[str, Any],
 ) -> dict[str, Any]:
     """Canonicalize duplicate labels and reject unknown semantic claims."""
-    session_items = {item["blind_id"]: item for item in session["items"]}
     output_items = result.get("items")
+    if session.get("schema_version") == 2:
+        if not (
+            isinstance(output_items, list)
+            and output_items
+            and all(
+                isinstance(item, dict) and "item_index" in item
+                for item in output_items
+            )
+        ):
+            raise ValueError("v2 adjudication requires indexed output")
+        return _normalize_indexed_adjudication_result(result, session)
+    if isinstance(output_items, list) and output_items and all(
+        isinstance(item, dict) and "item_index" in item for item in output_items
+    ):
+        return _normalize_indexed_adjudication_result(result, session)
+    session_items = {item["blind_id"]: item for item in session["items"]}
     if not isinstance(output_items, list):
         raise ValueError("adjudication items must be a list")
     output_blind_ids = [
@@ -724,7 +904,7 @@ def seal_blind_adjudications(
     session_ids = {result.get("session_id") for result in adjudication_results}
     if len(session_ids) != 2 or None in session_ids:
         raise ValueError("adjudicator sessions must be fresh and distinct")
-    output_by_blind_id: dict[str, tuple[dict[str, Any], str]] = {}
+    output_by_blind_id: dict[str, tuple[dict[str, Any], str, dict[str, Any] | None]] = {}
     for result in adjudication_results:
         execution_id = result.get("adjudication_execution_id")
         if not isinstance(execution_id, str) or not execution_id.strip():
@@ -739,7 +919,11 @@ def seal_blind_adjudications(
             mapping = private_mapping.get(blind_id)
             if mapping is None or mapping["session_id"] != result["session_id"]:
                 raise ValueError("blind adjudication session mapping mismatch")
-            output_by_blind_id[blind_id] = (item, execution_id)
+            output_by_blind_id[blind_id] = (
+                item,
+                execution_id,
+                result.get("_adjudication_provenance"),
+            )
     if set(output_by_blind_id) != set(private_mapping):
         raise ValueError("blind adjudication must cover every provider output")
 
@@ -761,7 +945,7 @@ def seal_blind_adjudications(
         "unsupported_assumptions",
     }
     for blind_id, mapping in private_mapping.items():
-        item, adjudication_execution_id = output_by_blind_id[blind_id]
+        item, adjudication_execution_id, adjudication_provenance = output_by_blind_id[blind_id]
         if item.get("case_id") != mapping["case_id"]:
             raise ValueError("blind adjudication case mismatch")
         if not semantic_fields.issubset(item):
@@ -783,6 +967,7 @@ def seal_blind_adjudications(
             plan_execution_id=execution["plan_execution_id"],
             private_key=private_key,
             raw_output=execution["raw_output"],
+            adjudication_provenance=adjudication_provenance,
         )
     return sealed_batch
 
@@ -796,6 +981,7 @@ def build_pilot_report(
     trusted_adjudicator_public_key: str,
 ) -> dict[str, Any]:
     """Score the pilot while keeping unsupported superiority/cost claims blocked."""
+    _validate_pilot_receipt_provenance(sealed_provider_batch, manifest)
     scored = score_plan_batch(
         public_document,
         gold_document,
@@ -811,7 +997,7 @@ def build_pilot_report(
         "benchmark_scope": manifest.get(
             "benchmark_scope", "prompt_decomposition_only"
         ),
-        "adjudication_mode": "two_session_blind_pilot",
+        "adjudication_mode": "two_fresh_disjoint_sessions",
         "token_measurement_status": usage_status,
         "superiority_claim_status": (
             "blocked_pilot_scope"
@@ -824,6 +1010,56 @@ def build_pilot_report(
             else "blocked_usage_unavailable"
         ),
     }
+
+
+def _validate_pilot_receipt_provenance(
+    sealed_provider_batch: dict[str, Any],
+    manifest: dict[str, Any],
+) -> None:
+    contract = manifest.get("adjudication_contract")
+    if not isinstance(contract, dict) or contract.get("mode") != "two_fresh_disjoint_sessions":
+        raise ValueError("pilot manifest contract is missing or invalid")
+    sessions = contract.get("sessions")
+    if not isinstance(sessions, list) or len(sessions) != 2:
+        raise ValueError("pilot manifest contract requires two sessions")
+    provenance_fields = {
+        "adjudication_contract_version",
+        "adjudication_prompt_sha256",
+        "adjudication_output_schema_sha256",
+        "index_catalog_sha256",
+    }
+    expected: dict[str, int] = {}
+    for session in sessions:
+        if not isinstance(session, dict) or set(session) != provenance_fields | {"session_id"}:
+            raise ValueError("pilot manifest contract session fields are invalid")
+        provenance = {field: session[field] for field in provenance_fields}
+        if provenance["adjudication_contract_version"] != 2:
+            raise ValueError("pilot manifest contract must use version 2")
+        digest = canonical_digest(provenance)
+        if digest in expected:
+            raise ValueError("pilot manifest contract sessions must be disjoint")
+        expected[digest] = 0
+
+    receipt_count = 0
+    for provider in sealed_provider_batch.get("providers", []):
+        for execution in provider.get("executions", []):
+            receipt_count += 1
+            envelope = execution.get("semantic_adjudication")
+            receipt = envelope.get("receipt") if isinstance(envelope, dict) else None
+            if not isinstance(receipt, dict):
+                raise ValueError("pilot receipt is missing")
+            provenance = {field: receipt.get(field) for field in provenance_fields}
+            if provenance["adjudication_contract_version"] != 2:
+                raise ValueError("pilot receipt must use adjudication contract version 2")
+            digest = canonical_digest(provenance)
+            if digest not in expected:
+                raise ValueError("pilot receipt does not match the manifest contract")
+            expected[digest] += 1
+    if receipt_count == 0 or receipt_count % len(expected) != 0:
+        raise ValueError("pilot receipt count is incompatible with the manifest contract")
+    expected_per_session = receipt_count // len(expected)
+    if any(count != expected_per_session for count in expected.values()):
+        raise ValueError("pilot receipts are not balanced across manifest sessions")
 
 
 def run_full_pilot(
@@ -907,6 +1143,7 @@ def run_full_pilot(
     if adjudication_artifacts:
         raise ValueError("adjudication artifacts already exist")
     adjudication_results = []
+    adjudication_contract_sessions = []
     for index, session in enumerate(sessions, start=1):
         (root / f"adjudication-session-{index}-blind.json").write_text(
             json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -916,6 +1153,13 @@ def run_full_pilot(
             model=model,
             reasoning_effort=reasoning_effort,
         )
+        expected_provenance = validate_adjudication_result_contract(
+            raw_result, session
+        )
+        adjudication_contract_sessions.append({
+            "session_id": session["session_id"],
+            **expected_provenance,
+        })
         (root / f"adjudication-session-{index}-result.json").write_text(
             json.dumps(raw_result, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -924,6 +1168,14 @@ def run_full_pilot(
             json.dumps(normalized_result, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         adjudication_results.append(normalized_result)
+    collected["manifest"]["adjudication_contract"] = {
+        "mode": "two_fresh_disjoint_sessions",
+        "sessions": adjudication_contract_sessions,
+    }
+    (root / "manifest.json").write_text(
+        json.dumps(collected["manifest"], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     (root / "private-provider-mapping.json").write_text(
         json.dumps(mapping, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -1004,34 +1256,59 @@ def codex_executor(
 
 
 def build_adjudication_prompt(session: dict[str, Any]) -> str:
-    """Build the dynamic-label contract used by blind adjudicators."""
+    """Build an index-only semantic mapping contract for blind adjudicators."""
     instructions = (
         "You are an independent semantic adjudicator for implementation plans. "
-        "Provider identities are intentionally hidden. For every item, compare the plan "
-        "only with gold_case and return conservative semantic labels. A requirement hit "
-        "requires explicit plan support; do not infer unstated behavior. Preserve blind_id, "
-        "case_id, and session_id exactly. Copy labels exactly; never paraphrase, translate, "
-        "change punctuation, or invent labels. requirement_hits may contain only exact "
-        "gold_case.required_items[].id values. scope_violations may contain only exact "
-        "gold_case.excluded_scope strings. dependency_hits may contain only exact "
-        "gold_case.dependency_edges objects. unexpected_dependency_edges may contain only "
-        "exact plan.dependency_edges objects. Never reverse dependency edges; when a plan "
-        "edge is unexpected, copy its original before and after values without changing "
-        "their direction. A dependency hit requires an explicit ordered task path whose "
-        "task_requirement_links implement the gold before requirement before the gold after "
-        "requirement. Ordinary implementation-detail edges are not unexpected by default; "
-        "mark a plan edge unexpected only when it contradicts a gold dependency order. "
-        "task_requirement_links.task_id may contain "
-        "only exact plan.tasks[].id values and requirement_ids may contain only exact "
-        "gold_case.required_items[].id values. unsupported_assumptions may contain only "
-        "exact plan.assumptions strings. Never reuse labels from another item; evaluate "
-        "each item with only its own plan and gold_case. Use an empty array when no allowed "
-        "value applies. "
+        "Provider identities are hidden. Return semantic mappings using item-local indexes "
+        "only. Preserve session_id and item_index. requirement_hit_indexes, "
+        "scope_violation_indexes, task_requirement_links, edge_requirement_links, and "
+        "unsupported_assumption_indexes must reference only the catalogs in that same item. "
+        "Map each plan edge endpoint to zero or more requirement indexes; use empty arrays "
+        "for implementation-detail endpoints. Do not return dependency_hits. Do not return "
+        "unexpected_dependency_edges. The runner derives both deterministically. "
+        "Do not infer unstated behavior or reuse indexes from another item. "
         "Return only schema-valid JSON."
     )
     return instructions + "\n\n" + json.dumps(
-        session, ensure_ascii=False, sort_keys=True
+        build_adjudication_catalog(session), ensure_ascii=False, sort_keys=True
     )
+
+
+def build_adjudication_provenance(session: dict[str, Any]) -> dict[str, Any]:
+    """Compute the signed adjudication contract hashes in the trusted runner."""
+    output_schema = (
+        Path(__file__).parent
+        / "fixtures"
+        / "omc_plan_adjudication_output_schema.json"
+    )
+    return {
+        "adjudication_contract_version": 2,
+        "adjudication_prompt_sha256": canonical_digest(
+            build_adjudication_prompt(session)
+        ),
+        "adjudication_output_schema_sha256": canonical_digest(
+            json.loads(output_schema.read_text(encoding="utf-8"))
+        ),
+        "index_catalog_sha256": canonical_digest(
+            build_adjudication_catalog(session)
+        ),
+    }
+
+
+def validate_adjudication_result_contract(
+    result: dict[str, Any],
+    session: dict[str, Any],
+) -> dict[str, Any]:
+    """Require executor evidence that exactly matches the trusted v2 contract."""
+    if result.get("session_id") != session["session_id"]:
+        raise ValueError("adjudication session_id does not match the requested session")
+    supplied = result.get("_adjudication_provenance")
+    if supplied is None:
+        raise ValueError("adjudication executor provenance is required")
+    expected = build_adjudication_provenance(session)
+    if supplied != expected:
+        raise ValueError("adjudication provenance does not match the runner contract")
+    return expected
 
 
 def codex_adjudicator_executor(
@@ -1082,6 +1359,15 @@ def codex_adjudicator_executor(
     result["adjudication_execution_id"] = (
         f"{session['session_id']}:fresh:{uuid.uuid4().hex}"
     )
+    expected_provenance = build_adjudication_provenance(session)
+    supplied_schema_hash = canonical_digest(
+        json.loads(Path(output_schema).read_text(encoding="utf-8"))
+    )
+    if supplied_schema_hash != expected_provenance["adjudication_output_schema_sha256"]:
+        raise ValueError("adjudication output schema differs from the runner contract")
+    if canonical_digest(prompt) != expected_provenance["adjudication_prompt_sha256"]:
+        raise ValueError("adjudication prompt differs from the runner contract")
+    result["_adjudication_provenance"] = expected_provenance
     return result
 
 

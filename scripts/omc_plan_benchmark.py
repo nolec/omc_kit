@@ -63,6 +63,10 @@ _SEMANTIC_RECEIPT_FIELDS = {
     "raw_output_sha256",
     "gold_case_sha256",
     "labels_sha256",
+    "adjudication_contract_version",
+    "adjudication_prompt_sha256",
+    "adjudication_output_schema_sha256",
+    "index_catalog_sha256",
     "adjudicator_public_key",
     "signature",
 }
@@ -590,6 +594,7 @@ def seal_semantic_adjudication(
     plan_execution_id: str,
     private_key: Any,
     raw_output: str = "",
+    adjudication_provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Seal labels produced by an independent adjudication execution."""
     _, _, Ed25519PrivateKey, _ = _load_crypto()
@@ -609,6 +614,34 @@ def seal_semantic_adjudication(
         raise ValueError("semantic adjudication requires an independent execution")
     if not isinstance(raw_output, str):
         raise ValueError("semantic adjudication raw output must be a string")
+    if adjudication_provenance is None:
+        adjudication_provenance = {
+            "adjudication_contract_version": 1,
+            "adjudication_prompt_sha256": canonical_digest("legacy-prompt"),
+            "adjudication_output_schema_sha256": canonical_digest("legacy-schema"),
+            "index_catalog_sha256": canonical_digest("legacy-catalog"),
+        }
+    adjudication_provenance = _require_object(
+        adjudication_provenance, "adjudication provenance"
+    )
+    provenance_fields = {
+        "adjudication_contract_version",
+        "adjudication_prompt_sha256",
+        "adjudication_output_schema_sha256",
+        "index_catalog_sha256",
+    }
+    if set(adjudication_provenance) != provenance_fields:
+        raise ValueError("adjudication provenance fields are invalid")
+    if (
+        not isinstance(adjudication_provenance["adjudication_contract_version"], int)
+        or adjudication_provenance["adjudication_contract_version"] < 1
+        or any(
+            not isinstance(adjudication_provenance[field], str)
+            or _SHA256_PATTERN.fullmatch(adjudication_provenance[field]) is None
+            for field in provenance_fields - {"adjudication_contract_version"}
+        )
+    ):
+        raise ValueError("adjudication provenance is invalid")
     labels = deepcopy(_require_object(labels, "semantic adjudication labels"))
     receipt = {
         "adjudicator": adjudicator.strip(),
@@ -619,6 +652,7 @@ def seal_semantic_adjudication(
         "raw_output_sha256": canonical_digest(raw_output),
         "gold_case_sha256": canonical_digest(gold),
         "labels_sha256": canonical_digest(labels),
+        **adjudication_provenance,
         "adjudicator_public_key": _encode_public_key(private_key.public_key()),
     }
     receipt["signature"] = base64.b64encode(
@@ -663,9 +697,17 @@ def _open_semantic_adjudication(
             "raw_output_sha256",
             "gold_case_sha256",
             "labels_sha256",
+            "adjudication_prompt_sha256",
+            "adjudication_output_schema_sha256",
+            "index_catalog_sha256",
         )
     ):
         raise ValueError("semantic adjudication receipt hashes are invalid")
+    if (
+        not isinstance(receipt["adjudication_contract_version"], int)
+        or receipt["adjudication_contract_version"] < 1
+    ):
+        raise ValueError("semantic adjudication contract version is invalid")
     adjudicator_public_key = receipt["adjudicator_public_key"]
     public_key = _decode_public_key(
         adjudicator_public_key,
