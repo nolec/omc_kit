@@ -313,6 +313,35 @@ def test_checked_in_fixture_documents_are_frozen_and_valid():
     assert "gold" not in public_document
 
 
+def test_checked_in_strict_pilot_summary_is_verified_and_scope_limited():
+    fixture_dir = Path(__file__).parent / "fixtures"
+    summary = json.loads(
+        (fixture_dir / "omc_plan_pilot_strict_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert summary["schema_version"] == 1
+    assert summary["gold_sha256"] == (
+        "6424e513445fac3fdc4ced6150821a375a2b238ccc439278dd6e2ed9975db58d"
+    )
+    assert summary["gold_status"] == "signed_off"
+    assert summary["evaluation_status"] == "verified_signed_off"
+    assert summary["superiority_claim_status"] == "blocked_pilot_scope"
+    assert summary["provider_execution_count"] == 8
+    assert len(summary["adjudication_sessions"]) == 2
+    assert len(set(summary["adjudication_execution_ids"])) == 2
+    assert summary["providers"]["baseline-plan"]["total_tokens"] == 48162
+    assert summary["providers"]["omc-plan"]["total_tokens"] == 50700
+    assert summary["conclusion"] == "quality_tie_omc_higher_cost"
+    assert set(summary["artifact_sha256"]) == {
+        "manifest.json",
+        "pilot-report.json",
+        "provider-batch.json",
+        "sealed-provider-batch.json",
+    }
+
+
 def test_development_gold_labels_only_encode_request_entailed_criteria():
     fixture_dir = Path(__file__).parent / "fixtures"
     gold_document = json.loads(

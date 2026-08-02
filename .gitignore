@@ -43,6 +43,7 @@ build/
 .omc/native-review-*.json
 .omc/state/
 .omc/tasks/
+.omc/private-artifacts/
 
 # dashboard build artifacts
 dashboard/.next/

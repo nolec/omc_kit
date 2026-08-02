@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "batch_id": "20260802-v2",
+  "benchmark_scope": "prompt_decomposition_only",
+  "model": "gpt-5.4-mini",
+  "reasoning_effort": "medium",
+  "gold_status": "signed_off",
+  "evaluation_status": "verified_signed_off",
+  "gold_sha256": "6424e513445fac3fdc4ced6150821a375a2b238ccc439278dd6e2ed9975db58d",
+  "superiority_claim_status": "blocked_pilot_scope",
+  "cost_claim_status": "allowed_observed_usage",
+  "token_measurement_status": "observed",
+  "adjudication_mode": "two_fresh_disjoint_sessions",
+  "provider_execution_count": 8,
+  "adjudication_sessions": [
+    "20260802-v2:adjudication:1",
+    "20260802-v2:adjudication:2"
+  ],
+  "adjudication_execution_ids": [
+    "20260802-v2:adjudication:1:fresh:4afa9850f4824251afe097d30607fa0e",
+    "20260802-v2:adjudication:2:fresh:c0ad1a02902543059a3ea0e8f6d7071c"
+  ],
+  "providers": {
+    "baseline-plan": {
+      "weighted_coverage_mean": 1.0,
+      "critical_omission_count": 0,
+      "executable_step_rate_mean": 1.0,
+      "bloat_ratio_mean": 0.0,
+      "output_size_chars_total": 7601,
+      "input_tokens": 44030,
+      "output_tokens": 4132,
+      "total_tokens": 48162
+    },
+    "omc-plan": {
+      "weighted_coverage_mean": 1.0,
+      "critical_omission_count": 0,
+      "executable_step_rate_mean": 1.0,
+      "bloat_ratio_mean": 0.0,
+      "output_size_chars_total": 8533,
+      "input_tokens": 44031,
+      "output_tokens": 6669,
+      "total_tokens": 50700
+    }
+  },
+  "artifact_sha256": {
+    "manifest.json": "fb3c2146c9a8cf0e90ecc7ffe32eccbbfd5a8f2e319c8bcdb6728ad4ce845bde",
+    "pilot-report.json": "197e68b20573b73e6b93aac4e635a58c41f1e6a23794df9538f77690af40ae2c",
+    "provider-batch.json": "32713eabc9006f06b2c8cc06ee6046280390c516c61603517ddd3114dc33da06",
+    "sealed-provider-batch.json": "7307dd670e82d0fb73b313ff6e38e6cd77e80bd49b316ed33731494cf7359d2d"
+  },
+  "conclusion": "quality_tie_omc_higher_cost",
+  "limitations": [
+    "development split only",
+    "four cases",
+    "superiority claim remains blocked",
+    "raw outputs and private mapping retained outside Git"
+  ]
+}
