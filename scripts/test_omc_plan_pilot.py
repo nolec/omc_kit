@@ -1,5 +1,6 @@
 import base64
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -188,6 +189,20 @@ def test_provider_prompts_differ_only_by_frozen_treatment_block():
     ) == omc["final_prompt"].replace(
         protocol["providers"]["omc-plan"]["treatment"], "<TREATMENT>"
     )
+
+
+def test_omc_plan_treatment_requires_compact_non_repeating_output():
+    treatment = _protocol()["providers"]["omc-plan"]["treatment"]
+    required = [
+        "short stable requirement IDs",
+        "use only those IDs in supports",
+        "merge tasks only when they share the same target and verification objective",
+        "without crossing dependency boundaries",
+        "do not invent repository commands",
+        "only blocking assumptions and decisions",
+    ]
+    missing = [marker for marker in required if marker not in treatment]
+    assert not missing, f"compact output policy missing: {missing}"
 
 
 def test_protocol_rejects_retry_and_non_development_scope(tmp_path):
@@ -488,6 +503,13 @@ def test_adjudication_catalog_is_stable_and_item_local():
     assert first["items"][0]["catalogs"]["tasks"] == [
         "task-a", "task-b", "task-c"
     ]
+    assert first["items"][0]["catalog_sizes"] == {
+        "requirements": 3,
+        "excluded_scope": 1,
+        "tasks": 3,
+        "plan_edges": 4,
+        "assumptions": 1,
+    }
 
 
 def test_adjudicator_prompt_requires_item_local_indexes():
@@ -500,6 +522,100 @@ def test_adjudicator_prompt_requires_item_local_indexes():
     assert "Do not return dependency_hits" in prompt
     assert "Do not return unexpected_dependency_edges" in prompt
     assert '"item_index": 0' in prompt
+
+
+def test_adjudicator_prompt_separates_plan_requirements_from_gold_indexes():
+    session = _indexed_adjudication_session()
+    session["items"][0]["plan"]["requirements_covered"] = [
+        "R1", "R2", "R3", "R4"
+    ]
+    session["items"][0]["gold_case"]["required_items"] = session["items"][0][
+        "gold_case"
+    ]["required_items"][:2]
+
+    prompt = omc_plan_pilot.build_adjudication_prompt(session)
+
+    assert "0 <= index < the matching catalog_sizes value" in prompt
+    assert "requirement indexes address only catalogs.requirements" in prompt
+    assert "Never index plan.requirements_covered or task supports" in prompt
+    assert '"requirements": 2' in prompt
+
+
+def test_adjudication_output_schema_enforces_item_local_bounds():
+    schema = omc_plan_pilot.build_adjudication_output_schema(
+        _indexed_adjudication_session()
+    )
+    items_schema = schema["properties"]["items"]
+    variant = items_schema["items"]["anyOf"][0]
+    properties = variant["properties"]
+
+    assert items_schema["minItems"] == 1
+    assert items_schema["maxItems"] == 1
+    assert properties["item_index"] == {"type": "integer", "enum": [0]}
+    assert properties["requirement_hit_indexes"]["items"]["maximum"] == 2
+    assert properties["task_requirement_links"]["items"]["properties"][
+        "task_index"
+    ]["maximum"] == 2
+    assert properties["edge_requirement_links"]["items"]["properties"][
+        "edge_index"
+    ]["maximum"] == 3
+
+
+def test_adjudication_output_schema_keeps_multi_item_bounds_independent():
+    session = _indexed_adjudication_session()
+    second = deepcopy(session["items"][0])
+    second["blind_id"] = "blind-2"
+    second["case_id"] = "case-2"
+    second["gold_case"]["case_id"] = "case-2"
+    second["gold_case"]["required_items"] = second["gold_case"][
+        "required_items"
+    ][:2]
+    second["plan"]["tasks"] = second["plan"]["tasks"][:2]
+    second["plan"]["dependency_edges"] = second["plan"][
+        "dependency_edges"
+    ][:1]
+    session["items"].append(second)
+
+    schema = omc_plan_pilot.build_adjudication_output_schema(session)
+    items_schema = schema["properties"]["items"]
+    first_variant, second_variant = items_schema["items"]["anyOf"]
+
+    assert items_schema["minItems"] == 2
+    assert items_schema["maxItems"] == 2
+    assert first_variant["properties"]["item_index"]["enum"] == [0]
+    assert second_variant["properties"]["item_index"]["enum"] == [1]
+    assert first_variant["properties"]["requirement_hit_indexes"]["items"][
+        "maximum"
+    ] == 2
+    assert second_variant["properties"]["requirement_hit_indexes"]["items"][
+        "maximum"
+    ] == 1
+    assert first_variant["properties"]["task_requirement_links"]["items"][
+        "properties"
+    ]["task_index"]["maximum"] == 2
+    assert second_variant["properties"]["task_requirement_links"]["items"][
+        "properties"
+    ]["task_index"]["maximum"] == 1
+    assert first_variant["properties"]["edge_requirement_links"]["items"][
+        "properties"
+    ]["edge_index"]["maximum"] == 3
+    assert second_variant["properties"]["edge_requirement_links"]["items"][
+        "properties"
+    ]["edge_index"]["maximum"] == 0
+
+
+def test_adjudication_output_schema_forbids_indexes_for_empty_catalogs():
+    session = _indexed_adjudication_session()
+    session["items"][0]["gold_case"]["excluded_scope"] = []
+    session["items"][0]["plan"]["assumptions"] = []
+
+    schema = omc_plan_pilot.build_adjudication_output_schema(session)
+    properties = schema["properties"]["items"]["items"]["anyOf"][0][
+        "properties"
+    ]
+
+    assert properties["scope_violation_indexes"]["maxItems"] == 0
+    assert properties["unsupported_assumption_indexes"]["maxItems"] == 0
 
 
 def test_normalize_indexed_adjudication_derives_dependency_labels():

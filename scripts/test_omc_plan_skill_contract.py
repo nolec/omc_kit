@@ -58,6 +58,14 @@ REQUIRED_FOCUS_MARKERS = [
     "시스템이 암묵적으로 처리",
 ]
 
+REQUIRED_OUTPUT_EFFICIENCY_MARKERS = [
+    "짧은 ID",
+    "supports에는 ID만",
+    "같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합",
+    "확인하지 않은 예시 명령 금지",
+    "구현을 막는 항목만",
+]
+
 REQUIRED_DECISION_OUTPUT_MARKERS = [
     "decision",
     "risk",
@@ -384,6 +392,12 @@ def test_plan_skill_explains_visible_vs_implicit_steps():
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
     assert not missing, f"missing focus markers: {missing}"
+
+
+def test_plan_skill_declares_output_efficiency_contract():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_OUTPUT_EFFICIENCY_MARKERS if marker not in text]
+    assert not missing, f"missing output efficiency markers: {missing}"
 
 
 def test_plan_skill_declares_decision_risk_next_action_contract():

@@ -599,25 +599,90 @@ def build_adjudication_catalog(session: dict[str, Any]) -> dict[str, Any]:
     for item_index, item in enumerate(session["items"]):
         gold = item["gold_case"]
         plan = item["plan"]
+        catalogs = {
+            "requirements": [entry["id"] for entry in gold["required_items"]],
+            "excluded_scope": list(gold["excluded_scope"]),
+            "tasks": [task["id"] for task in plan["tasks"]],
+            "plan_edges": list(plan["dependency_edges"]),
+            "assumptions": list(plan["assumptions"]),
+        }
         items.append({
             "item_index": item_index,
             "blind_id": item["blind_id"],
             "case_id": item["case_id"],
             "plan": plan,
             "gold_dependency_edges": gold["dependency_edges"],
-            "catalogs": {
-                "requirements": [entry["id"] for entry in gold["required_items"]],
-                "excluded_scope": list(gold["excluded_scope"]),
-                "tasks": [task["id"] for task in plan["tasks"]],
-                "plan_edges": list(plan["dependency_edges"]),
-                "assumptions": list(plan["assumptions"]),
-            },
+            "catalogs": catalogs,
+            "catalog_sizes": {name: len(values) for name, values in catalogs.items()},
         })
     return {
         "schema_version": 2,
         "session_id": session["session_id"],
         "items": items,
     }
+
+
+def build_adjudication_output_schema(
+    session: dict[str, Any],
+    *,
+    base_schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Bind the indexed output schema to each item's actual catalog bounds."""
+    if base_schema is None:
+        schema_path = (
+            Path(__file__).parent
+            / "fixtures"
+            / "omc_plan_adjudication_output_schema.json"
+        )
+        base_schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema = deepcopy(base_schema)
+    items_schema = schema["properties"]["items"]
+    item_template = items_schema["items"]
+    variants = []
+
+    def bind_array(array_schema: dict[str, Any], size: int) -> None:
+        if size == 0:
+            array_schema["maxItems"] = 0
+        else:
+            array_schema["items"]["maximum"] = size - 1
+
+    for item in build_adjudication_catalog(session)["items"]:
+        sizes = item["catalog_sizes"]
+        variant = deepcopy(item_template)
+        properties = variant["properties"]
+        properties["item_index"] = {"type": "integer", "enum": [item["item_index"]]}
+        bind_array(properties["requirement_hit_indexes"], sizes["requirements"])
+        bind_array(properties["scope_violation_indexes"], sizes["excluded_scope"])
+        bind_array(
+            properties["unsupported_assumption_indexes"], sizes["assumptions"]
+        )
+
+        task_links = properties["task_requirement_links"]
+        if sizes["tasks"] == 0:
+            task_links["maxItems"] = 0
+        else:
+            task_properties = task_links["items"]["properties"]
+            task_properties["task_index"]["maximum"] = sizes["tasks"] - 1
+            bind_array(task_properties["requirement_indexes"], sizes["requirements"])
+
+        edge_links = properties["edge_requirement_links"]
+        if sizes["plan_edges"] == 0:
+            edge_links["maxItems"] = 0
+        else:
+            edge_properties = edge_links["items"]["properties"]
+            edge_properties["edge_index"]["maximum"] = sizes["plan_edges"] - 1
+            bind_array(
+                edge_properties["before_requirement_indexes"], sizes["requirements"]
+            )
+            bind_array(
+                edge_properties["after_requirement_indexes"], sizes["requirements"]
+            )
+        variants.append(variant)
+
+    items_schema["minItems"] = len(variants)
+    items_schema["maxItems"] = len(variants)
+    items_schema["items"] = {"anyOf": variants}
+    return schema
 
 
 def _normalize_indexed_adjudication_result(
@@ -1269,6 +1334,9 @@ def build_adjudication_prompt(session: dict[str, Any]) -> str:
         "only. Preserve session_id and item_index. requirement_hit_indexes, "
         "scope_violation_indexes, task_requirement_links, edge_requirement_links, and "
         "unsupported_assumption_indexes must reference only the catalogs in that same item. "
+        "For every item-local index, require 0 <= index < the matching catalog_sizes value. "
+        "All requirement indexes address only catalogs.requirements. "
+        "Never index plan.requirements_covered or task supports. "
         "Map each plan edge endpoint to zero or more requirement indexes; use empty arrays "
         "for implementation-detail endpoints. Do not return dependency_hits. Do not return "
         "unexpected_dependency_edges. The runner derives both deterministically. "
@@ -1282,18 +1350,13 @@ def build_adjudication_prompt(session: dict[str, Any]) -> str:
 
 def build_adjudication_provenance(session: dict[str, Any]) -> dict[str, Any]:
     """Compute the signed adjudication contract hashes in the trusted runner."""
-    output_schema = (
-        Path(__file__).parent
-        / "fixtures"
-        / "omc_plan_adjudication_output_schema.json"
-    )
     return {
         "adjudication_contract_version": 2,
         "adjudication_prompt_sha256": canonical_digest(
             build_adjudication_prompt(session)
         ),
         "adjudication_output_schema_sha256": canonical_digest(
-            json.loads(output_schema.read_text(encoding="utf-8"))
+            build_adjudication_output_schema(session)
         ),
         "index_catalog_sha256": canonical_digest(
             build_adjudication_catalog(session)
@@ -1328,6 +1391,14 @@ def codex_adjudicator_executor(
 ) -> dict[str, Any]:
     """Run one fresh blind adjudication session in an isolated workspace."""
     output_path = Path(workspace) / f"adjudication-{uuid.uuid4().hex}.json"
+    base_schema = json.loads(Path(output_schema).read_text(encoding="utf-8"))
+    bound_schema = build_adjudication_output_schema(
+        session, base_schema=base_schema
+    )
+    bound_schema_path = Path(workspace) / f"adjudication-schema-{uuid.uuid4().hex}.json"
+    bound_schema_path.write_text(
+        json.dumps(bound_schema, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     prompt = build_adjudication_prompt(session)
     command = [
         codex_binary,
@@ -1343,7 +1414,7 @@ def codex_adjudicator_executor(
         "--config",
         f'model_reasoning_effort="{reasoning_effort}"',
         "--output-schema",
-        str(output_schema),
+        str(bound_schema_path),
         "--output-last-message",
         str(output_path),
         "--json",
@@ -1366,9 +1437,7 @@ def codex_adjudicator_executor(
         f"{session['session_id']}:fresh:{uuid.uuid4().hex}"
     )
     expected_provenance = build_adjudication_provenance(session)
-    supplied_schema_hash = canonical_digest(
-        json.loads(Path(output_schema).read_text(encoding="utf-8"))
-    )
+    supplied_schema_hash = canonical_digest(bound_schema)
     if supplied_schema_hash != expected_provenance["adjudication_output_schema_sha256"]:
         raise ValueError("adjudication output schema differs from the runner contract")
     if canonical_digest(prompt) != expected_provenance["adjudication_prompt_sha256"]:

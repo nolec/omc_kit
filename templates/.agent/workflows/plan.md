@@ -31,6 +31,7 @@ python3 scripts/omc.py state status --target .
 
 각 태스크를 **RED → GREEN → REFACTOR** 사이클로 명시합니다.
 **테스트 단계가 없는 태스크는 완료로 인정하지 않습니다.**
+- 출력 절약: 요구사항은 짧은 ID로 고정하고 `supports에는 ID만` 재사용 / 같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합 / 확인하지 않은 예시 명령 금지 / assumptions·decisions는 구현을 막는 항목만
 
 포맷:
 ```

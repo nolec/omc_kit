@@ -42,6 +42,8 @@ AGENTS.md Tier 1 작업은 아래 Phase 1 요구사항을 CONTRACT 입력으로 
 
 ## Phase 3. TDD 태스크 분해
 
+- 출력 절약: 요구사항은 짧은 ID로 고정하고 `supports에는 ID만` 재사용 / 같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합 / 확인하지 않은 예시 명령 금지 / assumptions·decisions는 구현을 막는 항목만
+
 ```text
 plan full
 태스크 1: [기능]

@@ -34,6 +34,13 @@ CLAUDE_PLAN_REQUIRED_MARKERS = [
     "주추천 1개",
     "자동으로 진행하지는 않습니다.",
 ]
+PLAN_OUTPUT_EFFICIENCY_MARKERS = [
+    "짧은 ID",
+    "supports에는 ID만",
+    "같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합",
+    "확인하지 않은 예시 명령 금지",
+    "구현을 막는 항목만",
+]
 
 
 def _read(path: Path) -> str:
@@ -101,6 +108,19 @@ def test_deployed_claude_plan_matches_template():
     template = _read(TEMPLATES / ".claude" / "commands" / "plan.md")
     deployed = _read(ROOT / ".claude" / "commands" / "plan.md")
     assert deployed == template, "deployed .claude/commands/plan.md가 template와 다름"
+
+
+def test_plan_adapters_declare_output_efficiency_contract():
+    paths = [
+        TEMPLATES / ".claude" / "commands" / "plan.md",
+        TEMPLATES / ".gemini" / "commands" / "omc-commands.md",
+        TEMPLATES / ".cursor" / "rules" / "omc-commands.mdc",
+        TEMPLATES / ".agent" / "workflows" / "plan.md",
+    ]
+    for path in paths:
+        text = _read(path)
+        missing = [marker for marker in PLAN_OUTPUT_EFFICIENCY_MARKERS if marker not in text]
+        assert not missing, f"{path} output efficiency markers missing: {missing}"
 
 
 # ── T5: pipeline-status 문서화 확인 ─────────────────────────────────────────

@@ -10,7 +10,7 @@
     },
     "omc-plan": {
       "plan_producer": "codex-omc-plan",
-      "treatment": "Apply this self-contained OMC planning policy: define included and excluded scope; preserve explicit constraints; identify assumptions and decisions still required; decompose implementation into ordered tasks with concrete targets, actions, requirement links, and verification commands; represent dependencies explicitly; prefer the smallest complete design; do not start implementation or recommend unrelated follow-up work."
+      "treatment": "Apply this self-contained OMC planning policy: define included and excluded scope; preserve explicit constraints; assign short stable requirement IDs and use only those IDs in supports; identify only blocking assumptions and decisions; decompose implementation into ordered tasks with concrete targets, actions, requirement links, and verification criteria; merge tasks only when they share the same target and verification objective without crossing dependency boundaries; do not invent repository commands; represent dependencies explicitly; prefer the smallest complete design; do not start implementation or recommend unrelated follow-up work."
     }
   },
   "execution": {
