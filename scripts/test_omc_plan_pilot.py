@@ -60,10 +60,17 @@ def _public_document():
     )
 
 
-def _gold_document():
+def _signed_gold_document():
     return json.loads(
         (FIXTURES / "omc_plan_gold_labels.json").read_text(encoding="utf-8")
     )
+
+
+def _gold_document():
+    gold = _signed_gold_document()
+    gold["status"] = "draft"
+    gold["signoff"] = None
+    return gold
 
 
 def _plan(case_id):

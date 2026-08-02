@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "status": "draft",
+  "status": "signed_off",
   "corpus_sha256": "b016b410fce27987cc2f06e0ad8d16a669863a1a9365548c5634cf3505a73409",
   "cases": [
     {
@@ -415,6 +415,18 @@
     }
   ],
   "gold_sha256": "6424e513445fac3fdc4ced6150821a375a2b238ccc439278dd6e2ed9975db58d",
-  "signoff": null,
+  "signoff": {
+    "signer": "noseunglae",
+    "signer_public_key": "Qnzswqd+TTJMYWDvOd+zG1K14DoXuzSRlFq7R2z8NTw=",
+    "approved_at": "2026-08-02T09:10:00Z",
+    "evidence": {
+      "reviewer": "noseunglae",
+      "decision": "approved",
+      "corpus_sha256": "b016b410fce27987cc2f06e0ad8d16a669863a1a9365548c5634cf3505a73409",
+      "gold_sha256": "6424e513445fac3fdc4ced6150821a375a2b238ccc439278dd6e2ed9975db58d"
+    },
+    "evidence_sha256": "65f7efff1add1a0dcbfd0de0a3f89f89532c0d948ae0b447011922c4f6d88387",
+    "signature": "3TeA/7tfQZ70kamvJyQ1lK85Xb2uhMw0T2w6oQdv5FZgZpJlSDaWaz2jY2AOdSLsDUYF3LjYy/YFPixZoOcODw=="
+  },
   "producer": "omc-plan-fixture-builder"
 }

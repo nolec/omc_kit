@@ -298,12 +298,18 @@ def test_checked_in_fixture_documents_are_frozen_and_valid():
         (fixture_dir / "omc_plan_gold_labels.json").read_text(encoding="utf-8")
     )
 
-    assert gold_document["status"] == "draft"
+    trusted_signer_public_key = (
+        fixture_dir / "omc_plan_gold_signer_public_key.txt"
+    ).read_text(encoding="utf-8").strip()
+
+    assert gold_document["status"] == "signed_off"
     validate_fixture_documents(
         public_document,
         gold_document,
-        require_signed_off=False,
+        require_signed_off=True,
+        trusted_signer_public_keys={trusted_signer_public_key},
     )
+    assert gold_document["signoff"]["signer_public_key"] == trusted_signer_public_key
     assert "gold" not in public_document
 
 
