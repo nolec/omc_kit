@@ -45,6 +45,14 @@ def _protocol():
             "maximum_total_token_increase_ratio": 0.05,
             "minimum_quality_gain_for_token_increase": 0.05,
         },
+        "superiority": {
+            "primary_metric": "weighted_requirement_recall",
+            "minimum_primary_gain": 0.05,
+            "confidence_level": 0.95,
+            "bootstrap_iterations": 10000,
+            "bootstrap_seed": 20260803,
+            "required_confirmation_batches": 2,
+        },
     }
 
 
@@ -177,6 +185,11 @@ def test_protocol_rejects_unfrozen_thresholds():
     protocol = _protocol()
     protocol["acceptance"]["maximum_output_token_ratio"] = 1.20
     with pytest.raises(ValueError, match="frozen"):
+        runtime.validate_runtime_protocol(protocol)
+
+    protocol = _protocol()
+    protocol["superiority"]["minimum_primary_gain"] = 0.04
+    with pytest.raises(ValueError, match="superiority"):
         runtime.validate_runtime_protocol(protocol)
 
 
@@ -456,6 +469,200 @@ def test_replacement_rejects_non_finite_or_out_of_range_metrics():
     assert result["reason_code"] == "provider_metrics_invalid"
 
 
+def test_superiority_batch_requires_primary_gain_and_positive_confidence_bound():
+    protocol = _protocol()
+    metrics = _metrics()
+    metrics["paired_primary_deltas"] = [0.05] * 10
+    result = runtime.decide_superiority_batch(
+        metrics, protocol["acceptance"], protocol["superiority"]
+    )
+    assert result["decision"] == "SUPERIOR_CANDIDATE"
+    assert result["primary_gain"] == pytest.approx(0.05)
+    assert result["confidence_lower_bound"] > 0
+
+    tied = _metrics()
+    tied["omc-plan"]["weighted_requirement_recall"] = 0.90
+    tied["omc-plan"]["executable_task_rate"] = 0.85
+    tied["omc-plan"]["total_tokens"] = 10000
+    tied["paired_primary_deltas"] = [0.0] * 10
+    result = runtime.decide_superiority_batch(
+        tied, protocol["acceptance"], protocol["superiority"]
+    )
+    assert result["decision"] == "REPLACEABLE"
+
+    unstable = _metrics()
+    unstable["paired_primary_deltas"] = [0.20, -0.10] * 5
+    result = runtime.decide_superiority_batch(
+        unstable, protocol["acceptance"], protocol["superiority"]
+    )
+    assert result["decision"] == "REPLACEABLE"
+    assert result["confidence_lower_bound"] <= 0
+
+    inconsistent = _metrics()
+    inconsistent["paired_primary_deltas"] = [0.10] * 10
+    result = runtime.decide_superiority_batch(
+        inconsistent, protocol["acceptance"], protocol["superiority"]
+    )
+    assert result["decision"] == "INVALID_RUN"
+    assert result["reason_code"] == "paired_primary_metrics_mismatch"
+
+
+def test_superiority_requires_two_independent_candidate_batches():
+    private_key, public_key = _signer()
+
+    def signed_report(
+        batch_id,
+        artifact_hash,
+        decision="SUPERIOR_CANDIDATE",
+        *,
+        execution_hash=None,
+        model="gpt-test",
+        reasoning_effort="low",
+    ):
+        report = {
+            "schema_version": 1,
+            "batch_id": batch_id,
+            "metrics": {},
+            "decision": {"decision": decision, "batch_id": batch_id},
+            "sealed_provider_batch_sha256": artifact_hash,
+            "provider_execution_evidence_sha256": execution_hash or artifact_hash,
+            "execution_config": {
+                "model": model,
+                "reasoning_effort": reasoning_effort,
+            },
+            "provenance": {
+                "protocol_sha256": "1" * 64,
+                "corpus_sha256": "2" * 64,
+                "gold_sha256": "3" * 64,
+                "skill_sha256": "4" * 64,
+            },
+        }
+        report["final_report_attestation"] = runtime.build_final_report_attestation(
+            report, private_key=private_key, signer_public_key=public_key
+        )
+        return report
+
+    candidate = signed_report("candidate-01", "a" * 64)
+    confirmation = signed_report("confirmation-01", "b" * 64)
+    result = runtime.decide_confirmed_superiority(
+        [candidate, confirmation],
+        required_batches=2,
+        trusted_signer_public_key=public_key,
+    )
+    assert result["decision"] == "BENCHMARK_SUPERIOR"
+
+    replaceable = signed_report("confirmation-01", "b" * 64, "REPLACEABLE")
+    result = runtime.decide_confirmed_superiority(
+        [candidate, replaceable],
+        required_batches=2,
+        trusted_signer_public_key=public_key,
+    )
+    assert result["decision"] == "REPLACEABLE"
+
+    copied_artifact = signed_report("confirmation-01", "a" * 64)
+    with pytest.raises(ValueError, match="artifact"):
+        runtime.decide_confirmed_superiority(
+            [candidate, copied_artifact],
+            required_batches=2,
+            trusted_signer_public_key=public_key,
+        )
+
+    reused_execution = signed_report(
+        "confirmation-01", "b" * 64, execution_hash="a" * 64
+    )
+    with pytest.raises(ValueError, match="provider execution evidence"):
+        runtime.decide_confirmed_superiority(
+            [candidate, reused_execution],
+            required_batches=2,
+            trusted_signer_public_key=public_key,
+        )
+
+    mismatched_model = signed_report(
+        "confirmation-01", "b" * 64, model="gpt-other"
+    )
+    with pytest.raises(ValueError, match="execution config"):
+        runtime.decide_confirmed_superiority(
+            [candidate, mismatched_model],
+            required_batches=2,
+            trusted_signer_public_key=public_key,
+        )
+
+    mismatched_protocol = signed_report("confirmation-01", "b" * 64)
+    mismatched_protocol["provenance"]["protocol_sha256"] = "9" * 64
+    mismatched_protocol["final_report_attestation"] = runtime.build_final_report_attestation(
+        mismatched_protocol, private_key=private_key, signer_public_key=public_key
+    )
+    with pytest.raises(ValueError, match="frozen inputs"):
+        runtime.decide_confirmed_superiority(
+            [candidate, mismatched_protocol],
+            required_batches=2,
+            trusted_signer_public_key=public_key,
+        )
+
+    tampered = signed_report("confirmation-01", "b" * 64)
+    tampered["decision"]["decision"] = "REPLACEABLE"
+    with pytest.raises(ValueError, match="signature"):
+        runtime.decide_confirmed_superiority(
+            [candidate, tampered],
+            required_batches=2,
+            trusted_signer_public_key=public_key,
+        )
+
+
+def test_main_confirms_superiority_from_two_signed_reports(
+    tmp_path, monkeypatch, capsys
+):
+    private_key, public_key = _signer()
+
+    def write_report(batch_id, marker):
+        report = {
+            "schema_version": 1,
+            "batch_id": batch_id,
+            "metrics": {},
+            "decision": {
+                "decision": "SUPERIOR_CANDIDATE",
+                "batch_id": batch_id,
+            },
+            "sealed_provider_batch_sha256": marker * 64,
+            "provider_execution_evidence_sha256": marker * 64,
+            "execution_config": {
+                "model": "gpt-test",
+                "reasoning_effort": "low",
+            },
+            "provenance": {
+                "protocol_sha256": "1" * 64,
+                "corpus_sha256": "2" * 64,
+                "gold_sha256": "3" * 64,
+                "skill_sha256": "4" * 64,
+            },
+        }
+        report["final_report_attestation"] = runtime.build_final_report_attestation(
+            report, private_key=private_key, signer_public_key=public_key
+        )
+        path = tmp_path / f"{batch_id}.json"
+        path.write_text(json.dumps(report), encoding="utf-8")
+        return path
+
+    candidate = write_report("candidate-01", "a")
+    confirmation = write_report("confirmation-01", "b")
+    output = tmp_path / "confirmed.json"
+    monkeypatch.setattr(sys, "argv", [
+        "omc_plan_runtime_pilot.py",
+        "confirm-superiority",
+        str(candidate),
+        str(confirmation),
+        "--trusted-adjudicator-public-key",
+        public_key,
+        "--output",
+        str(output),
+    ])
+
+    assert runtime.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["decision"] == "BENCHMARK_SUPERIOR"
+    assert json.loads(output.read_text(encoding="utf-8")) == result
+
+
 def test_runtime_metrics_are_derived_from_scores_and_observed_usage():
     scores = {
         provider_id: [{
@@ -486,6 +693,7 @@ def test_runtime_metrics_are_derived_from_scores_and_observed_usage():
     assert metrics["token_measurement_status"] == "observed"
     assert metrics["omc-plan"]["task_evidence_accuracy"] == 0.9
     assert metrics["omc-plan"]["total_tokens"] == 15
+    assert metrics["paired_primary_deltas"] == [0.0]
 
 
 def test_runtime_metrics_reject_usage_total_mismatch():
@@ -770,6 +978,8 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
         "corpus_sha256": runtime.canonical_digest(cases),
         "gold_sha256": gold["gold_sha256"],
         "skill_sha256": skill_sha256,
+        "model": "gpt-test",
+        "reasoning_effort": "low",
         "activation_probe": {"status": "pass", "skill_sha256": skill_sha256},
         "activation_probe_sha256": "",
         "executions": executions,
@@ -801,6 +1011,17 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
     )
     assert report["decision"]["decision"] == "REPLACEABLE"
     assert report["metrics"]["omc-plan"]["task_evidence_accuracy"] == 1.0
+    assert report["provenance"]["protocol_sha256"] == provider_batch["protocol_sha256"]
+    assert report["execution_config"] == {
+        "model": "gpt-test",
+        "reasoning_effort": "low",
+    }
+    assert report["provider_execution_evidence_sha256"] == (
+        provider_batch["runtime_attestation"]["provider_execution_evidence_sha256"]
+    )
+    runtime.verify_final_report_attestation(
+        report, trusted_public_key=adjudicator_public_key
+    )
     assert (tmp_path / "finalized/runtime-final-report.json").is_file()
 
 

@@ -23,6 +23,7 @@ RUNTIME_PROTOCOL_FIELDS = {
     "activation",
     "variability",
     "acceptance",
+    "superiority",
 }
 ACCEPTANCE_FIELDS = {
     "case_count",
@@ -37,6 +38,14 @@ FROZEN_ACCEPTANCE = {
     "maximum_output_token_ratio": 1.25,
     "maximum_total_token_increase_ratio": 0.05,
     "minimum_quality_gain_for_token_increase": 0.05,
+}
+FROZEN_SUPERIORITY = {
+    "primary_metric": "weighted_requirement_recall",
+    "minimum_primary_gain": 0.05,
+    "confidence_level": 0.95,
+    "bootstrap_iterations": 10000,
+    "bootstrap_seed": 20260803,
+    "required_confirmation_batches": 2,
 }
 
 
@@ -60,6 +69,103 @@ def _unsigned_provider_batch(provider_batch: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _unsigned_final_report(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in report.items()
+        if key != "final_report_attestation"
+    }
+
+
+def provider_execution_evidence_digest(provider_batch: dict[str, Any]) -> str:
+    """Hash scored provider executions without batch or adjudication metadata."""
+    executions = provider_batch.get("executions")
+    if not isinstance(executions, list):
+        raise ValueError("provider execution evidence is invalid")
+    evidence = []
+    for execution in executions:
+        if not isinstance(execution, dict):
+            raise ValueError("provider execution evidence is invalid")
+        raw_output = execution.get("raw_output")
+        if not isinstance(raw_output, str):
+            raise ValueError("provider execution evidence is invalid")
+        raw_output_sha256 = execution.get("runtime_raw_output_sha256")
+        if not _is_sha256(raw_output_sha256):
+            raw_output_sha256 = _sha256_text(raw_output)
+        evidence.append({
+            "provider_id": execution.get("provider_id"),
+            "case_id": execution.get("case_id"),
+            "raw_output_sha256": raw_output_sha256,
+            "events_jsonl_sha256": _sha256_text(execution.get("events_jsonl", "")),
+            "activation": execution.get("activation"),
+            "usage": execution.get("usage"),
+            "command_sha256": execution.get("command_sha256"),
+            "prompt_sha256": execution.get("prompt_sha256"),
+        })
+    evidence.sort(key=lambda item: (str(item["case_id"]), str(item["provider_id"])))
+    return canonical_digest({"schema_version": 1, "executions": evidence})
+
+
+def runtime_execution_config(provider_batch: dict[str, Any]) -> dict[str, str]:
+    """Return the provider settings that must remain fixed across confirmation runs."""
+    config = {
+        "model": provider_batch.get("model"),
+        "reasoning_effort": provider_batch.get("reasoning_effort"),
+    }
+    if any(not isinstance(value, str) or not value for value in config.values()):
+        raise ValueError("runtime execution config is invalid")
+    return config
+
+
+def _final_report_attestation_payload(attestation: dict[str, Any]) -> bytes:
+    unsigned = {key: value for key, value in attestation.items() if key != "signature"}
+    return json.dumps(
+        unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def build_final_report_attestation(
+    report: dict[str, Any], *, private_key: Any, signer_public_key: str
+) -> dict[str, Any]:
+    """Sign a finalized report so confirmation can reject copied decisions."""
+    attestation = {
+        "schema_version": 1,
+        "signer_public_key": signer_public_key,
+        "report_sha256": canonical_digest(_unsigned_final_report(report)),
+    }
+    attestation["signature"] = base64.b64encode(
+        private_key.sign(_final_report_attestation_payload(attestation))
+    ).decode("ascii")
+    return attestation
+
+
+def verify_final_report_attestation(
+    report: dict[str, Any], *, trusted_public_key: str
+) -> None:
+    """Verify the persisted report before using it for superiority certification."""
+    attestation = report.get("final_report_attestation")
+    if (
+        not isinstance(attestation, dict)
+        or set(attestation)
+        != {"schema_version", "signer_public_key", "report_sha256", "signature"}
+        or attestation.get("schema_version") != 1
+        or attestation.get("signer_public_key") != trusted_public_key
+        or attestation.get("report_sha256")
+        != canonical_digest(_unsigned_final_report(report))
+    ):
+        raise ValueError("final report signature metadata mismatch")
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        public_key = Ed25519PublicKey.from_public_bytes(
+            base64.b64decode(trusted_public_key, validate=True)
+        )
+        signature = base64.b64decode(attestation["signature"], validate=True)
+        public_key.verify(signature, _final_report_attestation_payload(attestation))
+    except Exception as exc:
+        raise ValueError("final report signature mismatch") from exc
+
+
 def build_runtime_attestation(
     provider_batch: dict[str, Any],
     blind_sessions: list[dict[str, Any]],
@@ -74,6 +180,9 @@ def build_runtime_attestation(
         "signer_public_key": signer_public_key,
         "provider_batch_sha256": canonical_digest(
             _unsigned_provider_batch(provider_batch)
+        ),
+        "provider_execution_evidence_sha256": provider_execution_evidence_digest(
+            provider_batch
         ),
         "blind_sessions_sha256": canonical_digest(blind_sessions),
         "private_mapping_sha256": canonical_digest(private_mapping),
@@ -97,6 +206,7 @@ def verify_runtime_attestation(
         "schema_version",
         "signer_public_key",
         "provider_batch_sha256",
+        "provider_execution_evidence_sha256",
         "blind_sessions_sha256",
         "private_mapping_sha256",
         "signature",
@@ -108,6 +218,8 @@ def verify_runtime_attestation(
         or attestation.get("signer_public_key") != trusted_public_key
         or attestation.get("provider_batch_sha256")
         != canonical_digest(_unsigned_provider_batch(provider_batch))
+        or attestation.get("provider_execution_evidence_sha256")
+        != provider_execution_evidence_digest(provider_batch)
         or attestation.get("blind_sessions_sha256") != canonical_digest(blind_sessions)
         or attestation.get("private_mapping_sha256") != canonical_digest(private_mapping)
     ):
@@ -250,6 +362,10 @@ def validate_runtime_protocol(protocol: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"acceptance threshold is invalid: {field}")
     if not 0 <= acceptance["minimum_executable_task_rate"] <= 1:
         raise ValueError("acceptance executable task threshold is invalid")
+
+    superiority = protocol["superiority"]
+    if not isinstance(superiority, dict) or superiority != FROZEN_SUPERIORITY:
+        raise ValueError("superiority thresholds must match the frozen contract")
     return protocol
 
 
@@ -1060,6 +1176,7 @@ def build_runtime_metrics(
         "provenance_complete_count": expected_case_count,
         "token_measurement_status": "observed",
     }
+    score_by_case: dict[str, dict[str, dict[str, Any]]] = {}
     for provider_id in PROVIDERS:
         scores = scores_by_provider.get(provider_id, [])
         if len(scores) != expected_case_count:
@@ -1076,6 +1193,13 @@ def build_runtime_metrics(
         usage_observed = all(usage.get("status") == "observed" for usage in usages)
         if not usage_observed:
             metrics["token_measurement_status"] = "unavailable"
+        provider_scores_by_case = {
+            execution["case_id"]: score
+            for execution, score in zip(provider_executions, scores, strict=True)
+        }
+        if len(provider_scores_by_case) != expected_case_count:
+            raise ValueError(f"runtime scores must map to unique cases: {provider_id}")
+        score_by_case[provider_id] = provider_scores_by_case
         metrics[provider_id] = {
             "weighted_requirement_recall": sum(
                 score["weighted_coverage"] for score in scores
@@ -1101,6 +1225,15 @@ def build_runtime_metrics(
                 if isinstance(usage, dict)
             ),
         }
+    baseline_cases = score_by_case["baseline-plan"]
+    omc_cases = score_by_case["omc-plan"]
+    if set(baseline_cases) != set(omc_cases):
+        raise ValueError("runtime paired case identities do not match")
+    metrics["paired_primary_deltas"] = [
+        omc_cases[case_id]["weighted_coverage"]
+        - baseline_cases[case_id]["weighted_coverage"]
+        for case_id in sorted(baseline_cases)
+    ]
     return metrics
 
 
@@ -1234,14 +1367,34 @@ def finalize_runtime_batch(
     metrics = build_runtime_metrics(
         scores_by_provider, executions, expected_case_count=expected_count
     )
-    decision = decide_replacement(metrics, protocol["acceptance"])
+    decision = decide_superiority_batch(
+        metrics,
+        protocol["acceptance"],
+        protocol["superiority"],
+        batch_id=provider_batch.get("batch_id"),
+    )
     report = {
         "schema_version": 1,
         "batch_id": provider_batch.get("batch_id"),
         "metrics": metrics,
         "decision": decision,
         "sealed_provider_batch_sha256": canonical_digest(sealed_batch),
+        "provider_execution_evidence_sha256": provider_batch[
+            "runtime_attestation"
+        ]["provider_execution_evidence_sha256"],
+        "execution_config": runtime_execution_config(provider_batch),
+        "provenance": {
+            "protocol_sha256": provider_batch.get("protocol_sha256"),
+            "corpus_sha256": provider_batch.get("corpus_sha256"),
+            "gold_sha256": provider_batch.get("gold_sha256"),
+            "skill_sha256": provider_batch.get("skill_sha256"),
+        },
     }
+    report["final_report_attestation"] = build_final_report_attestation(
+        report,
+        private_key=adjudicator_private_key,
+        signer_public_key=trusted_adjudicator_public_key,
+    )
     root = Path(artifact_root)
     root.mkdir(parents=True, exist_ok=True)
     (root / "sealed-provider-batch.json").write_text(
@@ -1317,7 +1470,26 @@ def main() -> int:
         "--repo-root", default=str(Path(__file__).resolve().parents[1])
     )
 
+    confirm_parser = subparsers.add_parser("confirm-superiority")
+    confirm_parser.add_argument("reports", nargs=2)
+    confirm_parser.add_argument(
+        "--trusted-adjudicator-public-key", required=True
+    )
+    confirm_parser.add_argument("--output")
+
     args = parser.parse_args()
+    if args.command == "confirm-superiority":
+        result = decide_confirmed_superiority(
+            [_load_json(path) for path in args.reports],
+            required_batches=FROZEN_SUPERIORITY["required_confirmation_batches"],
+            trusted_signer_public_key=args.trusted_adjudicator_public_key,
+        )
+        payload = json.dumps(result, ensure_ascii=False, indent=2)
+        if args.output:
+            Path(args.output).write_text(payload, encoding="utf-8")
+        print(payload)
+        return 0
+
     protocol = load_runtime_protocol(args.protocol)
     if args.command == "validate-corpus":
         cases = _load_json(args.cases)
@@ -1510,6 +1682,197 @@ def decide_replacement(
         "reason_code": "quality_or_cost_gate_failed" if failed else "all_gates_passed",
         "failed_gates": sorted(set(failed)),
     }
+
+
+def decide_superiority_batch(
+    metrics: dict[str, Any],
+    acceptance: dict[str, Any],
+    superiority: dict[str, Any],
+    *,
+    batch_id: str | None = None,
+) -> dict[str, Any]:
+    """Classify one frozen batch without promoting it to final superiority."""
+    if superiority != FROZEN_SUPERIORITY:
+        raise ValueError("superiority thresholds must match the frozen contract")
+    replacement = decide_replacement(metrics, acceptance)
+    if replacement["decision"] != "REPLACEABLE":
+        return {**replacement, "batch_id": batch_id}
+
+    deltas = metrics.get("paired_primary_deltas")
+    expected_count = acceptance["case_count"]
+    if (
+        not isinstance(deltas, list)
+        or len(deltas) != expected_count
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not -1 <= value <= 1
+            for value in deltas
+        )
+    ):
+        return {
+            "decision": "INVALID_RUN",
+            "reason_code": "paired_primary_metrics_invalid",
+            "failed_gates": ["paired_primary_metrics"],
+            "batch_id": batch_id,
+        }
+
+    primary_gain = sum(deltas) / len(deltas)
+    aggregate_gain = (
+        metrics["omc-plan"][superiority["primary_metric"]]
+        - metrics["baseline-plan"][superiority["primary_metric"]]
+    )
+    if not math.isclose(primary_gain, aggregate_gain, rel_tol=1e-9, abs_tol=1e-12):
+        return {
+            "decision": "INVALID_RUN",
+            "reason_code": "paired_primary_metrics_mismatch",
+            "failed_gates": ["paired_primary_metrics"],
+            "batch_id": batch_id,
+        }
+    lower_bound = _deterministic_bootstrap_lower_bound(
+        deltas,
+        confidence_level=superiority["confidence_level"],
+        iterations=superiority["bootstrap_iterations"],
+        seed=superiority["bootstrap_seed"],
+    )
+    is_candidate = (
+        primary_gain + 1e-12 >= superiority["minimum_primary_gain"]
+        and lower_bound > 0
+    )
+    return {
+        "decision": "SUPERIOR_CANDIDATE" if is_candidate else "REPLACEABLE",
+        "reason_code": (
+            "primary_superiority_candidate"
+            if is_candidate
+            else "noninferior_without_primary_superiority"
+        ),
+        "failed_gates": [] if is_candidate else ["primary_superiority"],
+        "batch_id": batch_id,
+        "primary_metric": superiority["primary_metric"],
+        "primary_gain": primary_gain,
+        "confidence_lower_bound": lower_bound,
+    }
+
+
+def decide_confirmed_superiority(
+    batch_reports: list[dict[str, Any]],
+    *,
+    required_batches: int,
+    trusted_signer_public_key: str,
+) -> dict[str, Any]:
+    """Require distinct candidate and confirmation batches for certification."""
+    if required_batches != FROZEN_SUPERIORITY["required_confirmation_batches"]:
+        raise ValueError("required superiority batch count is not frozen")
+    if len(batch_reports) != required_batches:
+        raise ValueError("superiority requires every confirmation batch")
+    for report in batch_reports:
+        verify_final_report_attestation(
+            report, trusted_public_key=trusted_signer_public_key
+        )
+
+    batch_ids = [report.get("batch_id") for report in batch_reports]
+    if any(not isinstance(batch_id, str) or not batch_id for batch_id in batch_ids):
+        raise ValueError("superiority batches require independent identities")
+    if len(set(batch_ids)) != required_batches:
+        raise ValueError("superiority batches must be independent")
+
+    artifact_hashes = [
+        report.get("sealed_provider_batch_sha256") for report in batch_reports
+    ]
+    if any(not _is_sha256(value) for value in artifact_hashes):
+        raise ValueError("superiority artifact hashes are invalid")
+    if len(set(artifact_hashes)) != required_batches:
+        raise ValueError("superiority artifact hashes must be independent")
+
+    execution_hashes = [
+        report.get("provider_execution_evidence_sha256") for report in batch_reports
+    ]
+    if any(not _is_sha256(value) for value in execution_hashes):
+        raise ValueError("superiority provider execution evidence is invalid")
+    if len(set(execution_hashes)) != required_batches:
+        raise ValueError("superiority provider execution evidence must be independent")
+
+    execution_configs = [report.get("execution_config") for report in batch_reports]
+    expected_config_fields = {"model", "reasoning_effort"}
+    if any(
+        not isinstance(config, dict)
+        or set(config) != expected_config_fields
+        or any(
+            not isinstance(config[field], str) or not config[field]
+            for field in expected_config_fields
+        )
+        for config in execution_configs
+    ):
+        raise ValueError("superiority execution config is invalid")
+    if any(config != execution_configs[0] for config in execution_configs[1:]):
+        raise ValueError("superiority execution config does not match")
+
+    provenance_fields = {
+        "protocol_sha256",
+        "corpus_sha256",
+        "gold_sha256",
+        "skill_sha256",
+    }
+    provenances = [report.get("provenance") for report in batch_reports]
+    if any(
+        not isinstance(provenance, dict)
+        or set(provenance) != provenance_fields
+        or any(not _is_sha256(provenance[field]) for field in provenance_fields)
+        for provenance in provenances
+    ):
+        raise ValueError("superiority frozen inputs are invalid")
+    if any(provenance != provenances[0] for provenance in provenances[1:]):
+        raise ValueError("superiority frozen inputs do not match")
+
+    decision_payloads = [report.get("decision") for report in batch_reports]
+    if any(
+        not isinstance(decision, dict)
+        or decision.get("batch_id") != batch_id
+        for decision, batch_id in zip(decision_payloads, batch_ids, strict=True)
+    ):
+        raise ValueError("superiority batch decision provenance is invalid")
+
+    decisions = [decision.get("decision") for decision in decision_payloads]
+    if any(decision == "INVALID_RUN" for decision in decisions):
+        final = "INVALID_RUN"
+        reason = "invalid_confirmation_batch"
+    elif any(decision == "NOT_PROVEN" for decision in decisions):
+        final = "NOT_PROVEN"
+        reason = "quality_or_cost_gate_failed"
+    elif all(decision == "SUPERIOR_CANDIDATE" for decision in decisions):
+        final = "BENCHMARK_SUPERIOR"
+        reason = "superiority_reproduced"
+    elif all(decision in {"SUPERIOR_CANDIDATE", "REPLACEABLE"} for decision in decisions):
+        final = "REPLACEABLE"
+        reason = "superiority_not_reproduced"
+    else:
+        raise ValueError("superiority batch decision is invalid")
+    return {
+        "decision": final,
+        "reason_code": reason,
+        "batch_ids": batch_ids,
+        "sealed_provider_batch_sha256": artifact_hashes,
+        "provider_execution_evidence_sha256": execution_hashes,
+        "execution_config": execution_configs[0],
+    }
+
+
+def _deterministic_bootstrap_lower_bound(
+    values: list[float], *, confidence_level: float, iterations: int, seed: int
+) -> float:
+    """Return a reproducible one-sided bootstrap lower confidence bound."""
+    means = []
+    size = len(values)
+    for iteration in range(iterations):
+        sample = []
+        for draw in range(size):
+            digest = hashlib.sha256(f"{seed}:{iteration}:{draw}".encode()).digest()
+            sample.append(values[int.from_bytes(digest[:8], "big") % size])
+        means.append(sum(sample) / size)
+    means.sort()
+    lower_index = max(0, math.floor((1 - confidence_level) * iterations) - 1)
+    return means[lower_index]
 
 
 def _valid_provider_metrics(metrics: dict[str, Any]) -> bool:

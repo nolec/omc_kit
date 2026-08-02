@@ -31,5 +31,13 @@
     "maximum_output_token_ratio": 1.25,
     "maximum_total_token_increase_ratio": 0.05,
     "minimum_quality_gain_for_token_increase": 0.05
+  },
+  "superiority": {
+    "primary_metric": "weighted_requirement_recall",
+    "minimum_primary_gain": 0.05,
+    "confidence_level": 0.95,
+    "bootstrap_iterations": 10000,
+    "bootstrap_seed": 20260803,
+    "required_confirmation_batches": 2
   }
 }
