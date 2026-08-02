@@ -15,9 +15,9 @@ OMC를 `스킬 기반 규칙 라우팅`에서 `완전 자동 모델 전환 제�
 
 즉, 지금은 `rule-based orchestration v1`이다.
 
-최신 동기화 기준(2026-07-28): executor capability 관측은 `observed_candidate_only` 계약까지, 복잡 작업 위임 관측은 `delegation_observed`와 실행 전 검증용 `noop_shadow` 계약, 기존 handoff를 정규화하는 `child decision` 계약 1차까지 구현·리뷰 완료했다. Codex exec structured review와 OMC review의 observed same-diff 10건 역사적 비교와 사용자 gold-label sign-off도 보존돼 있다. 다만 provider 원문은 외부 임시 경로에만 있었고 현재 재검증할 수 없어 Codex native review-agent 대체 판정에는 사용할 수 없다. 다음 비교 작업은 durable raw output을 남긴 native review-agent 재실행이다. 두 계층 모두 추천 근거와 승인 scope를 설명하는 관측 계층이며, `eligible` 판정·실행 위임·자동 전환은 아직 구현하지 않는다.
+최신 동기화 기준(2026-08-02): executor capability 관측은 `observed_candidate_only` 계약까지, 복잡 작업 위임 관측은 `delegation_observed`와 실행 전 검증용 `noop_shadow` 계약, 기존 handoff를 정규화하는 `child decision` 계약 1차까지 구현·리뷰 완료했다. Plan Quality development pilot도 strict gold sign-off와 독립 2-session adjudication까지 완료해 품질 동률·OMC 비용 증가 결론을 확정했다. Review Quality는 Codex exec structured review와 OMC review의 observed same-diff 10건 역사적 비교와 사용자 gold-label sign-off를 보존했지만, provider 원문을 현재 재검증할 수 없어 Codex native review-agent 대체 판정에는 사용하지 않는다. 다음 비교 작업은 durable raw output을 남긴 native review-agent 재실행이다. 두 관측 계층 모두 추천 근거와 승인 scope를 설명할 뿐, `eligible` 판정·실행 위임·자동 전환은 아직 구현하지 않는다.
 
-Plan 품질 development pilot 완료(2026-08-02): development 4건에서 OMC Plan과 기준 Plan을 같은 `gpt-5.4-mini`·medium reasoning 설정으로 실제 8회 실행했고, exact-hash strict gold를 독립 키로 승인한 뒤 fresh disjoint 2-session adjudication을 완주했다. signed gold와 pilot report는 서명·hash·provenance 검증을 통과했다. 양쪽 모두 요구사항 coverage `1.0`, critical omission `0`, executable step rate `1.0`으로 품질은 동률이었다. OMC는 총 `50,700` tokens로 기준 `48,162`보다 약 `5.27%`, 출력 문자는 `8,533`으로 기준 `7,601`보다 약 `12.26%` 많았다. 따라서 개발 pilot 범위에서는 우월성 주장을 차단하고, 다음 판단은 OMC Plan 출력·비용 최적화 후 holdout 확대 여부를 사람이 결정한다.
+Plan 품질 development pilot 완료(2026-08-02): development 4건에서 OMC Plan과 기준 Plan을 같은 `gpt-5.4-mini`·medium reasoning 설정으로 실제 8회 실행했고, exact-hash strict gold를 독립 키로 승인한 뒤 fresh disjoint 2-session adjudication을 완주했다. signed gold와 pilot report는 서명·hash·provenance 검증을 통과했고, 관련 회귀 `70 passed`와 최종 OMC review `APPROVE WITH NOTES`를 확인했다. 양쪽 모두 요구사항 coverage `1.0`, critical omission `0`, executable step rate `1.0`으로 품질은 동률이었다. OMC는 총 `50,700` tokens로 기준 `48,162`보다 약 `5.27%`, 출력 문자는 `8,533`으로 기준 `7,601`보다 약 `12.26%` 많았다. 따라서 개발 pilot 범위에서는 우월성 주장을 차단하고, 다음 판단은 OMC Plan 출력·비용 최적화 후 holdout 확대 여부를 사람이 결정한다.
 
 V5 단일 child pilot 보강(2026-07-15): `noop_shadow` gate가 operator approval, plan/scope fingerprint, child/dependency readiness, sensitive scope, 단일 시도·시간·출력 예산, idempotency를 검증하도록 구현·리뷰 완료했다. 누락된 안전 메타데이터도 명시적으로 차단하며, orchestrator 위임 surface를 통한 통합 회귀까지 확인했다. 실제 executor 호출과 자동 재분배는 여전히 열지 않는다.
 
@@ -71,7 +71,7 @@ Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_pr
 
 | 상태 | 현재 근거 | 다음 마일스톤 | 종료 기준 |
 |---|---|---|---|
-| 진행중 | development 4건의 OMC/기준 provider 8회 실행, exact-hash strict gold 승인, fresh disjoint 2-session adjudication을 완료했다. signed gold와 sealed batch·pilot report의 신뢰 체인을 검증했고, 공개 summary fixture로 핵심 hash와 지표를 고정했다. 품질 지표는 동률이지만 OMC가 총 tokens 약 `5.27%`, 출력 문자 약 `12.26%` 더 사용했다. | OMC Plan의 출력·비용 증가 원인을 좁혀 최소 최적화한 뒤 같은 development batch로 회귀 확인 | 비용 증가 없이 품질 동률 이상을 유지한 뒤 holdout 확대 여부를 사람이 결정 |
+| 진행중 | development 4건의 OMC/기준 provider 8회 실행, exact-hash strict gold 승인, fresh disjoint 2-session adjudication을 완료했다. signed gold와 sealed batch·pilot report의 신뢰 체인을 검증했고, 공개 summary fixture로 핵심 hash와 지표를 고정했다. 관련 회귀 `70 passed`, 최종 리뷰 `APPROVE WITH NOTES`이며, 품질 지표는 동률이지만 OMC가 총 tokens 약 `5.27%`, 출력 문자 약 `12.26%` 더 사용했다. | OMC Plan의 출력·비용 증가 원인을 좁혀 최소 최적화한 뒤 같은 development batch로 회귀 확인 | 비용 증가 없이 품질 동률 이상을 유지한 뒤 holdout 확대 여부를 사람이 결정 |
 
 - 현재 판정은 `development pilot 검증 완료 / 품질 동률 / OMC 비용 증가`이며 Plan 우월 또는 대체 가능 판정이 아니다.
 - strict gold와 signed adjudication은 검증됐지만 development 4건뿐이므로 `superiority_claim_status=blocked_pilot_scope`를 유지한다.
