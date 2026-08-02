@@ -831,9 +831,13 @@ def test_full_pilot_runs_eight_plans_and_two_fresh_adjudications(tmp_path):
 
 
 def test_normalize_adjudication_result_rejects_unknown_semantic_credit():
-    case = _cases()[0]
     gold = next(
-        item for item in _gold_document()["cases"] if item["case_id"] == case["case_id"]
+        item for item in _gold_document()["cases"] if item["dependency_edges"]
+    )
+    case = next(
+        item
+        for item in _public_document()["cases"]
+        if item["case_id"] == gold["case_id"]
     )
     plan = _plan(case["case_id"])
     session = {

@@ -918,8 +918,13 @@ def score_plan(
     dependency_denominator = len(expected_edges) + len(unexpected_edges)
     dependency_accuracy = (
         len(dependency_hits) / dependency_denominator
-        if dependency_denominator
-        else 1.0
+        if expected_edges and dependency_denominator
+        else None
+    )
+    scope_violations = (
+        sorted(semantic["scope_violations"])
+        if gold["excluded_scope"]
+        else None
     )
 
     task_links = semantic["task_requirement_links"]
@@ -932,7 +937,7 @@ def score_plan(
         "case_id": gold["case_id"],
         "weighted_coverage": covered_weight / total_weight if total_weight else 1.0,
         "critical_omissions": critical_omissions,
-        "scope_violations": sorted(semantic["scope_violations"]),
+        "scope_violations": scope_violations,
         "dependency_accuracy": dependency_accuracy,
         "unexpected_dependency_edges": [
             {"before": before, "after": after}
@@ -1041,10 +1046,17 @@ def score_plan_batch(
                 raw_output=execution["raw_output"],
             ))
 
-        count = len(case_scores)
+        def metric_mean(field: str) -> float | None:
+            measured = [
+                score[field] for score in case_scores if score[field] is not None
+            ]
+            return sum(measured) / len(measured) if measured else None
 
-        def metric_mean(field: str) -> float:
-            return sum(score[field] for score in case_scores) / count
+        scope_measurements = [
+            score["scope_violations"]
+            for score in case_scores
+            if score["scope_violations"] is not None
+        ]
 
         provider_reports.append({
             "provider_id": provider_id,
@@ -1054,8 +1066,10 @@ def score_plan_batch(
                 "critical_omission_count": sum(
                     len(score["critical_omissions"]) for score in case_scores
                 ),
-                "scope_violation_count": sum(
-                    len(score["scope_violations"]) for score in case_scores
+                "scope_violation_count": (
+                    sum(len(violations) for violations in scope_measurements)
+                    if scope_measurements
+                    else None
                 ),
                 "dependency_accuracy_mean": metric_mean("dependency_accuracy"),
                 "executable_step_rate_mean": metric_mean("executable_step_rate"),

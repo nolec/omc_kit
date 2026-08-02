@@ -17,23 +17,10 @@
           "description": "익명 요청의 기존 동작을 보존한다.",
           "weight": 2,
           "critical": true
-        },
-        {
-          "id": "REQ-header-tests",
-          "description": "토큰 유무 경계 테스트를 계획한다.",
-          "weight": 1,
-          "critical": false
         }
       ],
-      "excluded_scope": [
-        "인증 방식 전체 교체"
-      ],
-      "dependency_edges": [
-        {
-          "before": "REQ-token-present",
-          "after": "REQ-anonymous-preserved"
-        }
-      ],
+      "excluded_scope": [],
+      "dependency_edges": [],
       "allowed_assumptions": []
     },
     {
@@ -53,20 +40,13 @@
         },
         {
           "id": "REQ-history",
-          "description": "뒤로가기 회귀를 검증한다.",
-          "weight": 1,
-          "critical": false
+          "description": "뒤로가기 동작을 보존한다.",
+          "weight": 2,
+          "critical": true
         }
       ],
-      "excluded_scope": [
-        "페이지네이션 UI 재설계"
-      ],
-      "dependency_edges": [
-        {
-          "before": "REQ-filter-reset",
-          "after": "REQ-url-sync"
-        }
-      ],
+      "excluded_scope": [],
+      "dependency_edges": [],
       "allowed_assumptions": []
     },
     {
@@ -91,15 +71,8 @@
           "critical": true
         }
       ],
-      "excluded_scope": [
-        "캐시 저장소 교체"
-      ],
-      "dependency_edges": [
-        {
-          "before": "REQ-deduplicate",
-          "after": "REQ-api-stable"
-        }
-      ],
+      "excluded_scope": [],
+      "dependency_edges": [],
       "allowed_assumptions": []
     },
     {
@@ -116,23 +89,10 @@
           "description": "인증 오류는 즉시 중단한다.",
           "weight": 2,
           "critical": true
-        },
-        {
-          "id": "REQ-error-tests",
-          "description": "오류 분류별 테스트를 계획한다.",
-          "weight": 1,
-          "critical": false
         }
       ],
-      "excluded_scope": [
-        "provider SDK 교체"
-      ],
-      "dependency_edges": [
-        {
-          "before": "REQ-retryable-fallback",
-          "after": "REQ-auth-stop"
-        }
-      ],
+      "excluded_scope": [],
+      "dependency_edges": [],
       "allowed_assumptions": []
     },
     {
@@ -454,7 +414,7 @@
       "allowed_assumptions": []
     }
   ],
-  "gold_sha256": "b0972e909acf904a55960cb75d0bfc44c021266d1b5eb5949f32852042a811bd",
+  "gold_sha256": "6424e513445fac3fdc4ced6150821a375a2b238ccc439278dd6e2ed9975db58d",
   "signoff": null,
   "producer": "omc-plan-fixture-builder"
 }

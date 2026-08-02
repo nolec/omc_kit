@@ -307,6 +307,54 @@ def test_checked_in_fixture_documents_are_frozen_and_valid():
     assert "gold" not in public_document
 
 
+def test_development_gold_labels_only_encode_request_entailed_criteria():
+    fixture_dir = Path(__file__).parent / "fixtures"
+    gold_document = json.loads(
+        (fixture_dir / "omc_plan_gold_labels.json").read_text(encoding="utf-8")
+    )
+    gold_by_id = {case["case_id"]: case for case in gold_document["cases"]}
+
+    expected = {
+        "plan-dev-auth-header": {
+            "required_ids": {"REQ-token-present", "REQ-anonymous-preserved"},
+            "excluded_scope": [],
+        },
+        "plan-dev-pagination-state": {
+            "required_ids": {"REQ-filter-reset", "REQ-url-sync", "REQ-history"},
+            "excluded_scope": [],
+        },
+        "plan-dev-cache-invalidation": {
+            "required_ids": {"REQ-deduplicate", "REQ-api-stable", "REQ-key-stable"},
+            "excluded_scope": [],
+        },
+        "plan-dev-provider-fallback": {
+            "required_ids": {"REQ-retryable-fallback", "REQ-auth-stop"},
+            "excluded_scope": [],
+        },
+    }
+
+    for case_id, criteria in expected.items():
+        gold_case = gold_by_id[case_id]
+        assert {item["id"] for item in gold_case["required_items"]} == criteria[
+            "required_ids"
+        ]
+        assert gold_case["excluded_scope"] == criteria["excluded_scope"]
+        assert gold_case["dependency_edges"] == []
+        assert gold_case["allowed_assumptions"] == []
+
+    history = next(
+        item
+        for item in gold_by_id["plan-dev-pagination-state"]["required_items"]
+        if item["id"] == "REQ-history"
+    )
+    assert history == {
+        "id": "REQ-history",
+        "description": "뒤로가기 동작을 보존한다.",
+        "weight": 2,
+        "critical": True,
+    }
+
+
 def test_cli_help_does_not_require_optional_crypto_runtime():
     script = Path(__file__).parent / "omc_plan_benchmark.py"
 
@@ -513,7 +561,8 @@ def test_score_plan_marks_missing_critical_requirement():
 
     assert result["weighted_coverage"] == 0.0
     assert result["critical_omissions"] == ["REQ-1"]
-    assert result["dependency_accuracy"] == 1.0
+    assert result["scope_violations"] is None
+    assert result["dependency_accuracy"] is None
     assert result["executable_step_rate"] == 1.0
 
 
@@ -918,6 +967,8 @@ def test_score_plan_batch_reports_provider_metrics_for_complete_split():
     assert provider["provider_id"] == "omc-plan"
     assert provider["summary"]["weighted_coverage_mean"] == 1.0
     assert provider["summary"]["critical_omission_count"] == 0
+    assert provider["summary"]["scope_violation_count"] == 0
+    assert provider["summary"]["dependency_accuracy_mean"] is None
     assert provider["summary"]["executable_step_rate_mean"] == 1.0
     assert len(provider["case_scores"]) == 4
 
