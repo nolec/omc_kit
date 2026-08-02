@@ -281,6 +281,75 @@ def test_baseline_must_return_activation_sentinel():
         )
 
 
+def test_activation_probe_materializes_omc_workspace_after_baseline(
+    tmp_path, monkeypatch
+):
+    skill_path = tmp_path / "omc-plan" / "SKILL.md"
+    skill_path.parent.mkdir()
+    skill_path.write_text("# OMC Plan\n", encoding="utf-8")
+    artifact_root = tmp_path / "probe"
+    calls = []
+
+    def fake_execute_provider(**kwargs):
+        calls.append(kwargs["provider_id"])
+        omc_workspace = artifact_root / "omc-workspace"
+        if kwargs["provider_id"] == "baseline-plan":
+            assert not omc_workspace.exists()
+        else:
+            assert omc_workspace.is_dir()
+        return {
+            "provider_id": kwargs["provider_id"],
+            "activation": {"status": "observed"},
+        }
+
+    monkeypatch.setattr(runtime, "execute_provider", fake_execute_provider)
+
+    report = runtime.run_activation_probe(
+        protocol=_protocol(),
+        skill_path=skill_path,
+        codex_binary="codex",
+        model="gpt-test",
+        reasoning_effort="low",
+        output_schema=Path(runtime.__file__).parent
+        / "fixtures/omc_plan_output_schema.json",
+        artifact_root=artifact_root,
+    )
+
+    assert calls == ["baseline-plan", "omc-plan"]
+    assert report["status"] == "pass"
+
+
+def test_activation_probe_stops_before_omc_workspace_when_baseline_fails(
+    tmp_path, monkeypatch
+):
+    skill_path = tmp_path / "omc-plan" / "SKILL.md"
+    skill_path.parent.mkdir()
+    skill_path.write_text("# OMC Plan\n", encoding="utf-8")
+    artifact_root = tmp_path / "probe"
+    calls = []
+
+    def fake_execute_provider(**kwargs):
+        calls.append(kwargs["provider_id"])
+        raise RuntimeError("baseline failed")
+
+    monkeypatch.setattr(runtime, "execute_provider", fake_execute_provider)
+
+    with pytest.raises(RuntimeError, match="baseline failed"):
+        runtime.run_activation_probe(
+            protocol=_protocol(),
+            skill_path=skill_path,
+            codex_binary="codex",
+            model="gpt-test",
+            reasoning_effort="low",
+            output_schema=Path(runtime.__file__).parent
+            / "fixtures/omc_plan_output_schema.json",
+            artifact_root=artifact_root,
+        )
+
+    assert calls == ["baseline-plan"]
+    assert not (artifact_root / "omc-workspace").exists()
+
+
 def test_workspace_parity_allows_only_the_skill_file_delta():
     baseline = {"src/service.py": "hash-a", "tests/test_service.py": "hash-b"}
     omc = {

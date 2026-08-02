@@ -863,25 +863,14 @@ def run_activation_probe(
     if baseline_root.exists() or omc_root.exists():
         raise ValueError("probe artifact root must not contain prior workspaces")
     baseline_manifest = materialize_case_workspace(baseline_root, probe_case)
-    omc_manifest = materialize_case_workspace(
-        omc_root, probe_case, skill_text=instrumented_skill
-    )
-    validate_workspace_parity(
-        baseline_manifest,
-        omc_manifest,
-        allowed_delta=protocol["execution"]["allowed_workspace_delta"],
-    )
     outputs = root / "outputs"
     outputs.mkdir()
     activation_schema = build_activation_output_schema(
         output_schema, root / "activation-output-schema.json"
     )
-    executions: dict[str, Any] = {}
-    for provider_id, workspace in (
-        ("baseline-plan", baseline_root),
-        ("omc-plan", omc_root),
-    ):
-        executions[provider_id] = execute_provider(
+
+    def execute(provider_id: str, workspace: Path) -> dict[str, Any]:
+        return execute_provider(
             provider_id=provider_id,
             request=probe_case["request"],
             workspace=workspace,
@@ -897,6 +886,17 @@ def run_activation_probe(
             timeout_sec=protocol["execution"]["timeout_sec"],
             failure_receipt_path=outputs / f"{provider_id}.failure.json",
         )
+
+    executions = {"baseline-plan": execute("baseline-plan", baseline_root)}
+    omc_manifest = materialize_case_workspace(
+        omc_root, probe_case, skill_text=instrumented_skill
+    )
+    validate_workspace_parity(
+        baseline_manifest,
+        omc_manifest,
+        allowed_delta=protocol["execution"]["allowed_workspace_delta"],
+    )
+    executions["omc-plan"] = execute("omc-plan", omc_root)
     report = {
         "status": "pass",
         "scope": "non_scored_activation_probe",
