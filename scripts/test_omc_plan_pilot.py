@@ -83,6 +83,39 @@ def _plan(case_id):
     }
 
 
+def test_build_pilot_report_forwards_strict_gold_trust(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(
+        omc_plan_pilot,
+        "_validate_pilot_receipt_provenance",
+        lambda sealed, manifest: None,
+    )
+
+    def fake_score(*args, **kwargs):
+        captured.update(kwargs)
+        return {
+            "gold_status": "signed_off",
+            "evaluation_status": "verified_signed_off",
+        }
+
+    monkeypatch.setattr(omc_plan_pilot, "score_plan_batch", fake_score)
+
+    report = build_pilot_report(
+        {},
+        {"status": "signed_off"},
+        {},
+        {"token_measurement_status": "observed"},
+        trusted_adjudicator_public_key="adjudicator-key",
+        trusted_gold_signer_public_keys={"gold-signer-key"},
+        require_signed_gold=True,
+    )
+
+    assert captured["trusted_gold_signer_public_keys"] == {"gold-signer-key"}
+    assert captured["allow_draft_gold"] is False
+    assert report["evaluation_status"] == "verified_signed_off"
+
+
 def _write_fake_codex(path):
     path.write_text(
         r"""#!/usr/bin/env python3

@@ -979,6 +979,8 @@ def build_pilot_report(
     manifest: dict[str, Any],
     *,
     trusted_adjudicator_public_key: str,
+    trusted_gold_signer_public_keys: set[str] | None = None,
+    require_signed_gold: bool = False,
 ) -> dict[str, Any]:
     """Score the pilot while keeping unsupported superiority/cost claims blocked."""
     _validate_pilot_receipt_provenance(sealed_provider_batch, manifest)
@@ -986,9 +988,9 @@ def build_pilot_report(
         public_document,
         gold_document,
         sealed_provider_batch,
-        trusted_gold_signer_public_keys=set(),
+        trusted_gold_signer_public_keys=trusted_gold_signer_public_keys or set(),
         trusted_adjudicator_public_keys={trusted_adjudicator_public_key},
-        allow_draft_gold=True,
+        allow_draft_gold=not require_signed_gold,
     )
     gold_status = scored["gold_status"]
     usage_status = manifest.get("token_measurement_status", "unavailable")
@@ -1078,6 +1080,8 @@ def run_full_pilot(
     repo_root: str | Path,
     adjudicator: str = "independent-codex-adjudicator",
     resume_provider_batch: bool = False,
+    trusted_gold_signer_public_keys: set[str] | None = None,
+    require_signed_gold: bool = False,
 ) -> dict[str, Any]:
     """Run the 8+2 call development pilot and write one draft-safe report."""
     artifact_root = Path(artifact_root).resolve()
@@ -1087,8 +1091,8 @@ def run_full_pilot(
     validate_fixture_documents(
         public_document,
         gold_document,
-        require_signed_off=False,
-        trusted_signer_public_keys=set(),
+        require_signed_off=require_signed_gold,
+        trusted_signer_public_keys=trusted_gold_signer_public_keys or set(),
     )
     private_key = validate_private_key_location(
         private_key_path,
@@ -1194,6 +1198,8 @@ def run_full_pilot(
         sealed_batch,
         collected["manifest"],
         trusted_adjudicator_public_key=trusted_public_key,
+        trusted_gold_signer_public_keys=trusted_gold_signer_public_keys,
+        require_signed_gold=require_signed_gold,
     )
     (root / "sealed-provider-batch.json").write_text(
         json.dumps(sealed_batch, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1382,6 +1388,12 @@ def main() -> int:
     parser.add_argument("--reasoning-effort", default="low")
     parser.add_argument("--codex-binary", default="codex")
     parser.add_argument("--trusted-adjudicator-public-key", required=True)
+    parser.add_argument(
+        "--trusted-gold-signer-public-key",
+        action="append",
+        default=[],
+    )
+    parser.add_argument("--require-signed-gold", action="store_true")
     parser.add_argument("--adjudicator-private-key-file", required=True)
     parser.add_argument(
         "--resume-provider-batch",
@@ -1441,6 +1453,8 @@ def main() -> int:
         trusted_public_key=args.trusted_adjudicator_public_key,
         repo_root=args.repo_root,
         resume_provider_batch=args.resume_provider_batch,
+        trusted_gold_signer_public_keys=set(args.trusted_gold_signer_public_key),
+        require_signed_gold=args.require_signed_gold,
     )
     print(Path(args.artifact_root).resolve() / args.batch_id / "pilot-report.json")
     return 0
