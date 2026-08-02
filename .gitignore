@@ -40,6 +40,7 @@ build/
 .omc/runs/
 .omc/pipeline_run_result.json
 .omc/allow_log.jsonl
+.omc/native-review-*.json
 .omc/state/
 .omc/tasks/
 
