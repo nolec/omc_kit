@@ -911,7 +911,27 @@ def test_pilot_report_blocks_superiority_and_cost_claims_for_draft_gold(tmp_path
     assert report["adjudication_mode"] == "two_fresh_disjoint_sessions"
 
 
-def test_full_pilot_runs_eight_plans_and_two_fresh_adjudications(tmp_path):
+@pytest.mark.parametrize(
+    ("reasoning_options", "expected_provider_effort", "expected_adjudicator_effort"),
+    [
+        pytest.param({}, "medium", "medium", id="legacy-single-option"),
+        pytest.param(
+            {
+                "provider_reasoning_effort": "low",
+                "adjudicator_reasoning_effort": "medium",
+            },
+            "low",
+            "medium",
+            id="split-options",
+        ),
+    ],
+)
+def test_full_pilot_runs_eight_plans_and_two_fresh_adjudications(
+    tmp_path,
+    reasoning_options,
+    expected_provider_effort,
+    expected_adjudicator_effort,
+):
     cryptography = pytest.importorskip("cryptography.hazmat.primitives.asymmetric.ed25519")
     serialization = pytest.importorskip("cryptography.hazmat.primitives.serialization")
     private_key = cryptography.Ed25519PrivateKey.generate()
@@ -931,7 +951,14 @@ def test_full_pilot_runs_eight_plans_and_two_fresh_adjudications(tmp_path):
     adjudicator_calls = []
 
     def provider_executor(*, provider_id, case, prompt, execution):
-        provider_calls.append((provider_id, case["case_id"], execution["retry_limit"]))
+        provider_calls.append(
+            (
+                provider_id,
+                case["case_id"],
+                execution["retry_limit"],
+                execution["reasoning_effort"],
+            )
+        )
         plan = _plan(case["case_id"])
         return {"plan": plan, "raw_output": json.dumps(plan), "events_jsonl": ""}
 
@@ -962,22 +989,28 @@ def test_full_pilot_runs_eight_plans_and_two_fresh_adjudications(tmp_path):
         artifact_root=artifact_root,
         batch_id="batch-full",
         model="gpt-test",
-        reasoning_effort="low",
+        reasoning_effort="medium",
         private_key_path=key_path,
         trusted_public_key=trusted_public_key,
         repo_root=Path(__file__).parents[1],
+        **reasoning_options,
     )
 
     assert len(provider_calls) == 8
     assert len(adjudicator_calls) == 2
     assert len({call[0] for call in adjudicator_calls}) == 2
     assert all(call[2] == 0 for call in provider_calls)
+    assert all(call[3] == expected_provider_effort for call in provider_calls)
+    assert all(call[2] == expected_adjudicator_effort for call in adjudicator_calls)
     assert report["evaluation_status"] == "draft_not_for_comparison"
     assert (artifact_root / "batch-full" / "pilot-report.json").exists()
     manifest = json.loads(
         (artifact_root / "batch-full" / "manifest.json").read_text(encoding="utf-8")
     )
     contract = manifest["adjudication_contract"]
+    assert manifest["reasoning_effort"] == expected_provider_effort
+    assert manifest["provider_reasoning_effort"] == expected_provider_effort
+    assert manifest["adjudicator_reasoning_effort"] == expected_adjudicator_effort
     assert contract["mode"] == "two_fresh_disjoint_sessions"
     assert len(contract["sessions"]) == 2
     assert all(
@@ -1149,6 +1182,8 @@ def test_full_pilot_can_resume_complete_provider_batch_without_repeating_calls(t
         batch_id=batch_id,
         model="gpt-test",
         reasoning_effort="low",
+        provider_reasoning_effort="low",
+        adjudicator_reasoning_effort="medium",
         private_key_path=key_path,
         trusted_public_key=trusted_public_key,
         repo_root=Path(__file__).parents[1],
@@ -1157,6 +1192,9 @@ def test_full_pilot_can_resume_complete_provider_batch_without_repeating_calls(t
 
     root = artifact_root / batch_id
     assert report["evaluation_status"] == "draft_not_for_comparison"
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["provider_reasoning_effort"] == "low"
+    assert manifest["adjudicator_reasoning_effort"] == "medium"
     assert (root / "adjudication-session-1-result.json").exists()
     normalized = json.loads(
         (root / "adjudication-session-1-normalized.json").read_text(encoding="utf-8")
@@ -1204,6 +1242,39 @@ def test_resume_rejects_tampered_provider_output(tmp_path):
     provider_batch_path.write_text(json.dumps(provider_batch), encoding="utf-8")
 
     with pytest.raises(ValueError, match="provider output integrity mismatch"):
+        omc_plan_pilot.load_completed_provider_batch(
+            artifact_root,
+            batch_id,
+            expected_cases=_cases(),
+            protocol=_protocol(),
+            model="gpt-test",
+            reasoning_effort="low",
+        )
+
+
+def test_resume_rejects_split_provider_reasoning_mismatch(tmp_path):
+    artifact_root = tmp_path / "artifacts"
+    batch_id = "batch-reasoning-tampered"
+
+    def provider_executor(*, provider_id, case, prompt, execution):
+        plan = _plan(case["case_id"])
+        return {"plan": plan, "raw_output": json.dumps(plan), "events_jsonl": ""}
+
+    omc_plan_pilot.run_provider_pairs(
+        _cases(),
+        _protocol(),
+        executor=provider_executor,
+        artifact_root=artifact_root,
+        batch_id=batch_id,
+        model="gpt-test",
+        reasoning_effort="low",
+    )
+    manifest_path = artifact_root / batch_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["provider_reasoning_effort"] = "high"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="resume model settings mismatch"):
         omc_plan_pilot.load_completed_provider_batch(
             artifact_root,
             batch_id,

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "batch_id": "20260802-v4",
+  "benchmark_scope": "prompt_decomposition_only",
+  "case_count": 4,
+  "model": "gpt-5.4-mini",
+  "provider_reasoning_effort": "low",
+  "adjudicator_reasoning_effort": "medium",
+  "gold_status": "signed_off",
+  "evaluation_status": "verified_signed_off",
+  "gold_sha256": "6424e513445fac3fdc4ced6150821a375a2b238ccc439278dd6e2ed9975db58d",
+  "quality_gate": {
+    "weighted_coverage_mean": 1.0,
+    "critical_omission_count": 0,
+    "executable_step_rate_mean": 1.0
+  },
+  "omc_plan_tokens": {
+    "medium": 50409,
+    "low": 47244
+  },
+  "token_reduction_percent": 6.28,
+  "output_size_chars": {
+    "medium": 6579,
+    "low": 12869
+  },
+  "routing_candidate_status": "candidate_only_holdout_required",
+  "runtime_default_changed": false,
+  "artifact_sha256": {
+    "manifest.json": "815f2c7da69f3288d1a3556f2182eeb8e743fd1c1d33f3382f34ecbeeac39788",
+    "pilot-report.json": "5a796da082295fb62cc3a02d3c265c17e20e34b415f3b431391d3d000eb97a23",
+    "provider-batch.json": "f5ad103e07f7c2cc88f8d2127706d16bb831892429d77b94f55d7c1819e6ff96",
+    "sealed-provider-batch.json": "b2283717cf6bbe90fa4a1a872440c9b5d80739d41a23490ac395d142e120fdaf"
+  },
+  "conclusion": "quality_noninferior_token_target_met_output_size_regressed",
+  "limitations": [
+    "development split only",
+    "four cases",
+    "single low-effort run",
+    "visible output size increased despite lower observed token usage",
+    "runtime routing remains unchanged pending holdout confirmation"
+  ]
+}

@@ -409,7 +409,14 @@ def load_completed_provider_batch(
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("batch_id") != batch_id:
         raise ValueError("resume manifest batch_id mismatch")
-    if manifest.get("model") != model or manifest.get("reasoning_effort") != reasoning_effort:
+    manifest_provider_effort = manifest.get(
+        "provider_reasoning_effort", manifest.get("reasoning_effort")
+    )
+    if (
+        manifest.get("model") != model
+        or manifest.get("reasoning_effort") != reasoning_effort
+        or manifest_provider_effort != reasoning_effort
+    ):
         raise ValueError("resume model settings mismatch")
     if manifest.get("retry_limit") != 0:
         raise ValueError("resume manifest must preserve retry_limit 0")
@@ -1147,10 +1154,14 @@ def run_full_pilot(
     resume_provider_batch: bool = False,
     trusted_gold_signer_public_keys: set[str] | None = None,
     require_signed_gold: bool = False,
+    provider_reasoning_effort: str | None = None,
+    adjudicator_reasoning_effort: str | None = None,
 ) -> dict[str, Any]:
     """Run the 8+2 call development pilot and write one draft-safe report."""
     artifact_root = Path(artifact_root).resolve()
     repo_root = Path(repo_root).resolve()
+    provider_effort = provider_reasoning_effort or reasoning_effort
+    adjudicator_effort = adjudicator_reasoning_effort or reasoning_effort
     if _is_relative_to(artifact_root, repo_root):
         raise ValueError("artifact root must be outside the repository")
     validate_fixture_documents(
@@ -1177,7 +1188,7 @@ def run_full_pilot(
             expected_cases=development_cases,
             protocol=protocol,
             model=model,
-            reasoning_effort=reasoning_effort,
+            reasoning_effort=provider_effort,
         )
     else:
         collected = run_provider_pairs(
@@ -1187,7 +1198,7 @@ def run_full_pilot(
             artifact_root=artifact_root,
             batch_id=batch_id,
             model=model,
-            reasoning_effort=reasoning_effort,
+            reasoning_effort=provider_effort,
         )
     executions = [
         {"provider_id": provider["provider_id"], **execution}
@@ -1211,6 +1222,8 @@ def run_full_pilot(
     ]
     if adjudication_artifacts:
         raise ValueError("adjudication artifacts already exist")
+    collected["manifest"]["provider_reasoning_effort"] = provider_effort
+    collected["manifest"]["adjudicator_reasoning_effort"] = adjudicator_effort
     adjudication_results = []
     adjudication_contract_sessions = []
     for index, session in enumerate(sessions, start=1):
@@ -1220,7 +1233,7 @@ def run_full_pilot(
         raw_result = adjudicator_executor(
             session=deepcopy(session),
             model=model,
-            reasoning_effort=reasoning_effort,
+            reasoning_effort=adjudicator_effort,
         )
         expected_provenance = validate_adjudication_result_contract(
             raw_result, session
@@ -1455,6 +1468,8 @@ def main() -> int:
     parser.add_argument("--batch-id", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--reasoning-effort", default="low")
+    parser.add_argument("--provider-reasoning-effort")
+    parser.add_argument("--adjudicator-reasoning-effort")
     parser.add_argument("--codex-binary", default="codex")
     parser.add_argument("--trusted-adjudicator-public-key", required=True)
     parser.add_argument(
@@ -1518,6 +1533,8 @@ def main() -> int:
         batch_id=args.batch_id,
         model=args.model,
         reasoning_effort=args.reasoning_effort,
+        provider_reasoning_effort=args.provider_reasoning_effort,
+        adjudicator_reasoning_effort=args.adjudicator_reasoning_effort,
         private_key_path=args.adjudicator_private_key_file,
         trusted_public_key=args.trusted_adjudicator_public_key,
         repo_root=args.repo_root,

@@ -342,6 +342,30 @@ def test_checked_in_strict_pilot_summary_is_verified_and_scope_limited():
     }
 
 
+def test_checked_in_reasoning_experiment_only_marks_low_as_candidate():
+    fixture_dir = Path(__file__).parent / "fixtures"
+    summary = json.loads(
+        (fixture_dir / "omc_plan_reasoning_experiment_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert summary["schema_version"] == 1
+    assert summary["case_count"] == 4
+    assert summary["provider_reasoning_effort"] == "low"
+    assert summary["adjudicator_reasoning_effort"] == "medium"
+    assert summary["quality_gate"] == {
+        "weighted_coverage_mean": 1.0,
+        "critical_omission_count": 0,
+        "executable_step_rate_mean": 1.0,
+    }
+    assert summary["omc_plan_tokens"] == {"medium": 50409, "low": 47244}
+    assert summary["token_reduction_percent"] == 6.28
+    assert summary["output_size_chars"] == {"medium": 6579, "low": 12869}
+    assert summary["routing_candidate_status"] == "candidate_only_holdout_required"
+    assert summary["runtime_default_changed"] is False
+
+
 def test_development_gold_labels_only_encode_request_entailed_criteria():
     fixture_dir = Path(__file__).parent / "fixtures"
     gold_document = json.loads(
