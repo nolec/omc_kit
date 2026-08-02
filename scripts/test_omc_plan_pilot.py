@@ -55,6 +55,11 @@ def _cases():
     return [case for case in document["cases"] if case["split"] == "development"]
 
 
+def _holdout_cases():
+    document = _public_document()
+    return [case for case in document["cases"] if case["split"] == "holdout"]
+
+
 def _public_document():
     return json.loads(
         (FIXTURES / "omc_plan_benchmark_cases.json").read_text(encoding="utf-8")
@@ -98,6 +103,11 @@ def test_build_pilot_report_forwards_strict_gold_trust(monkeypatch):
         omc_plan_pilot,
         "_validate_pilot_receipt_provenance",
         lambda sealed, manifest: None,
+    )
+    monkeypatch.setattr(
+        omc_plan_pilot,
+        "_validate_provider_usage_attestation",
+        lambda sealed, manifest, trusted_public_key: None,
     )
 
     def fake_score(*args, **kwargs):
@@ -205,9 +215,109 @@ def test_omc_plan_treatment_requires_compact_non_repeating_output():
     assert not missing, f"compact output policy missing: {missing}"
 
 
-def test_protocol_rejects_retry_and_non_development_scope(tmp_path):
+def test_compact_output_contract_is_shared_by_protocol_and_actual_skill():
+    treatment = _protocol()["providers"]["omc-plan"]["treatment"]
+    skill = (FIXTURES.parents[1] / ".agents/skills/omc-plan/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Do not repeat rationale" in treatment
+    assert "Use one concise sentence per item" in treatment
+    assert "반복 설명 금지" in skill
+    assert "항목별 한 문장" in skill
+
+
+def test_select_benchmark_cases_supports_frozen_development_and_holdout_counts():
+    assert len(omc_plan_pilot.select_benchmark_cases(_public_document(), "development")) == 4
+    assert len(omc_plan_pilot.select_benchmark_cases(_public_document(), "holdout")) == 10
+
+    with pytest.raises(ValueError, match="unsupported benchmark split"):
+        omc_plan_pilot.select_benchmark_cases(_public_document(), "unknown")
+
+
+def test_holdout_uses_five_balanced_adjudication_sessions():
+    executions = []
+    for case in _holdout_cases():
+        for provider_id in ("baseline-plan", "omc-plan"):
+            executions.append({
+                "provider_id": provider_id,
+                "case_id": case["case_id"],
+                "plan_execution_id": f"{provider_id}-{case['case_id']}",
+                "plan": _plan(case["case_id"]),
+                "raw_output": json.dumps(_plan(case["case_id"])),
+            })
+
+    session_count = omc_plan_pilot.required_adjudication_session_count(
+        case_count=10,
+        pairs_per_session=2,
+    )
+    sessions, mapping = build_blind_adjudication_sessions(
+        executions,
+        session_count=session_count,
+        batch_id="holdout-batch",
+    )
+
+    assert session_count == 5
+    assert len(sessions) == 5
+    assert all(len(session["items"]) == 4 for session in sessions)
+    assert len(mapping) == 20
+
+
+def test_actual_skill_protocol_uses_skill_document_as_omc_treatment(tmp_path):
+    skill_path = tmp_path / "SKILL.md"
+    skill_path.write_text("# OMC Plan\n\nUse compact RED GREEN VERIFY tasks.", encoding="utf-8")
+
+    protocol = omc_plan_pilot.build_actual_skill_protocol(_protocol(), skill_path)
+    prompt = build_provider_prompt(protocol, _cases()[0], "omc-plan")
+
+    assert protocol["providers"]["baseline-plan"] == _protocol()["providers"]["baseline-plan"]
+    assert protocol["providers"]["omc-plan"]["plan_producer"] == "codex-omc-plan-skill-document"
+    assert "Use compact RED GREEN VERIFY tasks." in prompt["final_prompt"]
+    assert protocol["actual_skill_sha256"] == omc_plan_pilot.canonical_digest(
+        skill_path.read_text(encoding="utf-8")
+    )
+
+
+def test_provider_pairs_preserve_holdout_split_and_output_measurements(tmp_path):
+    def executor(*, provider_id, case, prompt, execution):
+        plan = _plan(case["case_id"])
+        raw_output = json.dumps(plan)
+        return {
+            "plan": plan,
+            "raw_output": raw_output,
+            "events_jsonl": json.dumps({
+                "type": "turn.completed",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }),
+        }
+
+    collected = run_provider_pairs(
+        _holdout_cases(),
+        _protocol(),
+        executor=executor,
+        artifact_root=tmp_path / "artifacts",
+        batch_id="holdout-measurements",
+        model="gpt-test",
+        reasoning_effort="low",
+        split="holdout",
+    )
+
+    assert collected["provider_batch"]["split"] == "holdout"
+    assert collected["manifest"]["split"] == "holdout"
+    measurements = omc_plan_pilot.build_provider_measurements(
+        collected["provider_batch"], collected["manifest"]
+    )
+    assert measurements["baseline-plan"]["case_count"] == 10
+    assert measurements["baseline-plan"]["total_tokens"] == 150
+    assert measurements["baseline-plan"]["visible_output_chars"] > 0
+
+
+def test_protocol_rejects_retry_and_split_binding(tmp_path):
     protocol = _protocol()
+    assert "split" not in protocol
     assert protocol["adjudication"]["contract_version"] == 2
+    assert "session_count" not in protocol["adjudication"]
+    assert protocol["adjudication"]["pairs_per_session"] == 2
     protocol["execution"]["retry_limit"] = 1
     path = tmp_path / "protocol.json"
     path.write_text(json.dumps(protocol), encoding="utf-8")
@@ -218,10 +328,10 @@ def test_protocol_rejects_retry_and_non_development_scope(tmp_path):
     protocol["execution"]["retry_limit"] = 0
     protocol["split"] = "holdout"
     path.write_text(json.dumps(protocol), encoding="utf-8")
-    with pytest.raises(ValueError, match="development"):
+    with pytest.raises(ValueError, match="fields are invalid"):
         load_protocol(path)
 
-    protocol["split"] = "development"
+    del protocol["split"]
     protocol["adjudication"]["contract_version"] = 1
     path.write_text(json.dumps(protocol), encoding="utf-8")
     with pytest.raises(ValueError, match="contract_version must be 2"):
@@ -873,7 +983,8 @@ def test_pilot_report_blocks_superiority_and_cost_claims_for_draft_gold(tmp_path
     )
 
     collected["manifest"]["adjudication_contract"] = {
-        "mode": "two_fresh_disjoint_sessions",
+        "mode": "fresh_disjoint_sessions",
+        "pairs_per_session": 2,
         "sessions": [
             {
                 "session_id": session["session_id"],
@@ -882,6 +993,14 @@ def test_pilot_report_blocks_superiority_and_cost_claims_for_draft_gold(tmp_path
             for session in sessions
         ],
     }
+    collected["manifest"]["provider_usage_attestation"] = (
+        omc_plan_pilot.build_provider_usage_attestation(
+            collected["provider_batch"],
+            collected["manifest"],
+            private_key=private_key,
+            trusted_public_key=trusted_public_key,
+        )
+    )
     mismatched_manifest = json.loads(json.dumps(collected["manifest"]))
     mismatched_manifest["adjudication_contract"]["sessions"][0][
         "index_catalog_sha256"
@@ -892,6 +1011,75 @@ def test_pilot_report_blocks_superiority_and_cost_claims_for_draft_gold(tmp_path
             gold,
             sealed,
             mismatched_manifest,
+            trusted_adjudicator_public_key=trusted_public_key,
+        )
+
+    mismatched_split_manifest = json.loads(json.dumps(collected["manifest"]))
+    mismatched_split_manifest["split"] = "holdout"
+    with pytest.raises(ValueError, match="split mismatch"):
+        build_pilot_report(
+            _public_document(),
+            gold,
+            sealed,
+            mismatched_split_manifest,
+            trusted_adjudicator_public_key=trusted_public_key,
+        )
+
+    mismatched_batching_manifest = json.loads(json.dumps(collected["manifest"]))
+    mismatched_batching_manifest["adjudication_contract"]["pairs_per_session"] = 3
+    with pytest.raises(ValueError, match="pairs_per_session"):
+        build_pilot_report(
+            _public_document(),
+            gold,
+            sealed,
+            mismatched_batching_manifest,
+            trusted_adjudicator_public_key=trusted_public_key,
+        )
+
+    mismatched_session_manifest = json.loads(json.dumps(collected["manifest"]))
+    mismatched_session_manifest["adjudication_contract"]["sessions"].append(
+        json.loads(
+            json.dumps(
+                mismatched_session_manifest["adjudication_contract"]["sessions"][0]
+            )
+        )
+    )
+    with pytest.raises(ValueError, match="session count mismatch"):
+        build_pilot_report(
+            _public_document(),
+            gold,
+            sealed,
+            mismatched_session_manifest,
+            trusted_adjudicator_public_key=trusted_public_key,
+        )
+
+    mismatched_usage_manifest = json.loads(json.dumps(collected["manifest"]))
+    for execution in mismatched_usage_manifest["executions"]:
+        execution["usage"] = {
+            "status": "observed",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "total_tokens": 2,
+        }
+    mismatched_usage_manifest["token_measurement_status"] = "observed"
+    mismatched_usage_manifest["cost_claim_allowed"] = True
+    with pytest.raises(ValueError, match="provider usage attestation"):
+        build_pilot_report(
+            _public_document(),
+            gold,
+            sealed,
+            mismatched_usage_manifest,
+            trusted_adjudicator_public_key=trusted_public_key,
+        )
+
+    mismatched_signature_manifest = json.loads(json.dumps(collected["manifest"]))
+    mismatched_signature_manifest["provider_usage_attestation"]["signature"] = "!"
+    with pytest.raises(ValueError, match="signature mismatch"):
+        build_pilot_report(
+            _public_document(),
+            gold,
+            sealed,
+            mismatched_signature_manifest,
             trusted_adjudicator_public_key=trusted_public_key,
         )
 
@@ -908,7 +1096,7 @@ def test_pilot_report_blocks_superiority_and_cost_claims_for_draft_gold(tmp_path
     assert report["superiority_claim_status"] == "blocked_draft_gold"
     assert report["token_measurement_status"] == "unavailable"
     assert report["cost_claim_status"] == "blocked_usage_unavailable"
-    assert report["adjudication_mode"] == "two_fresh_disjoint_sessions"
+    assert report["adjudication_mode"] == "fresh_disjoint_sessions"
 
 
 @pytest.mark.parametrize(
@@ -926,11 +1114,23 @@ def test_pilot_report_blocks_superiority_and_cost_claims_for_draft_gold(tmp_path
         ),
     ],
 )
-def test_full_pilot_runs_eight_plans_and_two_fresh_adjudications(
+@pytest.mark.parametrize(
+    ("split", "expected_case_count", "expected_session_count"),
+    [
+        pytest.param("development", 4, 2, id="development"),
+        pytest.param("holdout", 10, 5, id="holdout"),
+    ],
+)
+@pytest.mark.parametrize("use_actual_skill", [False, True])
+def test_full_pilot_runs_split_aware_provider_and_adjudication_counts(
     tmp_path,
     reasoning_options,
     expected_provider_effort,
     expected_adjudicator_effort,
+    split,
+    expected_case_count,
+    expected_session_count,
+    use_actual_skill,
 ):
     cryptography = pytest.importorskip("cryptography.hazmat.primitives.asymmetric.ed25519")
     serialization = pytest.importorskip("cryptography.hazmat.primitives.serialization")
@@ -947,6 +1147,9 @@ def test_full_pilot_runs_eight_plans_and_two_fresh_adjudications(
     key_path = tmp_path / "adjudicator.key"
     key_path.write_text(base64.b64encode(raw_private).decode("ascii"))
     artifact_root = tmp_path / "runtime" / "artifacts"
+    skill_path = tmp_path / "SKILL.md"
+    if use_actual_skill:
+        skill_path.write_text("# OMC Plan\n\nUse compact tasks.", encoding="utf-8")
     provider_calls = []
     adjudicator_calls = []
 
@@ -993,12 +1196,14 @@ def test_full_pilot_runs_eight_plans_and_two_fresh_adjudications(
         private_key_path=key_path,
         trusted_public_key=trusted_public_key,
         repo_root=Path(__file__).parents[1],
+        split=split,
+        omc_skill_path=skill_path if use_actual_skill else None,
         **reasoning_options,
     )
 
-    assert len(provider_calls) == 8
-    assert len(adjudicator_calls) == 2
-    assert len({call[0] for call in adjudicator_calls}) == 2
+    assert len(provider_calls) == expected_case_count * 2
+    assert len(adjudicator_calls) == expected_session_count
+    assert len({call[0] for call in adjudicator_calls}) == expected_session_count
     assert all(call[2] == 0 for call in provider_calls)
     assert all(call[3] == expected_provider_effort for call in provider_calls)
     assert all(call[2] == expected_adjudicator_effort for call in adjudicator_calls)
@@ -1011,8 +1216,29 @@ def test_full_pilot_runs_eight_plans_and_two_fresh_adjudications(
     assert manifest["reasoning_effort"] == expected_provider_effort
     assert manifest["provider_reasoning_effort"] == expected_provider_effort
     assert manifest["adjudicator_reasoning_effort"] == expected_adjudicator_effort
-    assert contract["mode"] == "two_fresh_disjoint_sessions"
-    assert len(contract["sessions"]) == 2
+    assert manifest["split"] == split
+    assert manifest["provider_usage_attestation"]["signer_public_key"] == (
+        trusted_public_key
+    )
+    if use_actual_skill:
+        assert manifest["actual_skill_sha256"] == omc_plan_pilot.canonical_digest(
+            skill_path.read_text(encoding="utf-8")
+        )
+        provider_batch = json.loads(
+            (artifact_root / "batch-full" / "provider-batch.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        omc_provider = next(
+            provider
+            for provider in provider_batch["providers"]
+            if provider["provider_id"] == "omc-plan"
+        )
+        assert omc_provider["plan_producer"] == "codex-omc-plan-skill-document"
+    else:
+        assert "actual_skill_sha256" not in manifest
+    assert contract["mode"] == "fresh_disjoint_sessions"
+    assert len(contract["sessions"]) == expected_session_count
     assert all(
         session["adjudication_contract_version"] == 2
         for session in contract["sessions"]
@@ -1187,6 +1413,7 @@ def test_full_pilot_can_resume_complete_provider_batch_without_repeating_calls(t
         private_key_path=key_path,
         trusted_public_key=trusted_public_key,
         repo_root=Path(__file__).parents[1],
+        split="development",
         resume_provider_batch=True,
     )
 
@@ -1215,6 +1442,7 @@ def test_full_pilot_can_resume_complete_provider_batch_without_repeating_calls(t
             private_key_path=key_path,
             trusted_public_key=trusted_public_key,
             repo_root=Path(__file__).parents[1],
+            split="development",
             resume_provider_batch=True,
         )
 
@@ -1429,6 +1657,7 @@ def test_full_pilot_validates_fixtures_before_provider_execution(tmp_path, monke
             private_key_path=tmp_path / "unused.key",
             trusted_public_key="unused",
             repo_root=Path(__file__).parents[1],
+            split="development",
         )
 
     assert provider_calls == []

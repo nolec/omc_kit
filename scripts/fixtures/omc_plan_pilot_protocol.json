@@ -1,7 +1,6 @@
 {
   "schema_version": 1,
   "benchmark_scope": "prompt_decomposition_only",
-  "split": "development",
   "common_prompt_template": "You are producing one implementation plan for a frozen planning benchmark.\n\nTreatment instructions:\n{{TREATMENT}}\n\nUser request:\n{{REQUEST}}\n\nReturn only JSON that conforms to the supplied output schema. Do not inspect files, run commands, invoke skills, or add prose outside the JSON response.",
   "providers": {
     "baseline-plan": {
@@ -10,7 +9,7 @@
     },
     "omc-plan": {
       "plan_producer": "codex-omc-plan",
-      "treatment": "Apply this self-contained OMC planning policy: define included and excluded scope; preserve explicit constraints; assign short stable requirement IDs and use only those IDs in supports; identify only blocking assumptions and decisions; decompose implementation into ordered tasks with concrete targets, actions, requirement links, and verification criteria; merge tasks only when they share the same target and verification objective without crossing dependency boundaries; do not invent repository commands; represent dependencies explicitly; prefer the smallest complete design; do not start implementation or recommend unrelated follow-up work."
+      "treatment": "Apply this self-contained OMC planning policy: define included and excluded scope; preserve explicit constraints; assign short stable requirement IDs and use only those IDs in supports; identify only blocking assumptions and decisions; decompose implementation into ordered tasks with concrete targets, actions, requirement links, and verification criteria; merge tasks only when they share the same target and verification objective without crossing dependency boundaries; do not invent repository commands; represent dependencies explicitly; prefer the smallest complete design. Do not repeat rationale or restate the request. Use one concise sentence per item. Do not start implementation or recommend unrelated follow-up work."
     }
   },
   "execution": {
@@ -24,7 +23,6 @@
   },
   "adjudication": {
     "contract_version": 2,
-    "session_count": 2,
     "pairs_per_session": 2,
     "blind_provider_identity": true,
     "trusted_public_key_required_before_execution": true,

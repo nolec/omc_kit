@@ -7,6 +7,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import shutil
 import subprocess
 import tempfile
@@ -27,7 +28,6 @@ _PROVIDER_IDS = ("baseline-plan", "omc-plan")
 _PROTOCOL_FIELDS = {
     "schema_version",
     "benchmark_scope",
-    "split",
     "common_prompt_template",
     "providers",
     "execution",
@@ -75,8 +75,6 @@ def load_protocol(path: str | Path) -> dict[str, Any]:
         raise ValueError("pilot protocol schema_version must be 1")
     if protocol["benchmark_scope"] != "prompt_decomposition_only":
         raise ValueError("pilot benchmark_scope must be prompt_decomposition_only")
-    if protocol["split"] != "development":
-        raise ValueError("pilot protocol is limited to the development split")
     template = protocol["common_prompt_template"]
     if not isinstance(template, str) or template.count("{{TREATMENT}}") != 1:
         raise ValueError("common prompt requires one treatment placeholder")
@@ -119,7 +117,6 @@ def load_protocol(path: str | Path) -> dict[str, Any]:
     adjudication = protocol["adjudication"]
     if set(adjudication) != {
         "contract_version",
-        "session_count",
         "pairs_per_session",
         "blind_provider_identity",
         "trusted_public_key_required_before_execution",
@@ -128,8 +125,8 @@ def load_protocol(path: str | Path) -> dict[str, Any]:
         raise ValueError("adjudication contract fields are invalid")
     if adjudication.get("contract_version") != 2:
         raise ValueError("adjudication contract_version must be 2")
-    if adjudication.get("session_count") != 2 or adjudication.get("pairs_per_session") != 2:
-        raise ValueError("adjudication must use two sessions with two pairs each")
+    if adjudication.get("pairs_per_session") != 2:
+        raise ValueError("adjudication must use two pairs per session")
     if adjudication.get("blind_provider_identity") is not True:
         raise ValueError("adjudication must blind provider identity")
     if adjudication.get("trusted_public_key_required_before_execution") is not True:
@@ -144,6 +141,47 @@ def load_protocol(path: str | Path) -> dict[str, Any]:
     if measurement.get("unavailable_status") != "unavailable":
         raise ValueError("measurement unavailable status is invalid")
     return protocol
+
+
+def select_benchmark_cases(
+    public_document: dict[str, Any], split: str
+) -> list[dict[str, Any]]:
+    """Select one frozen split and reject incomplete benchmark corpora."""
+    expected_counts = {"development": 4, "holdout": 10}
+    if split not in expected_counts:
+        raise ValueError(f"unsupported benchmark split: {split}")
+    cases = [case for case in public_document["cases"] if case.get("split") == split]
+    if len(cases) != expected_counts[split]:
+        raise ValueError(
+            f"benchmark split {split} requires exactly {expected_counts[split]} cases"
+        )
+    return cases
+
+
+def required_adjudication_session_count(
+    *, case_count: int, pairs_per_session: int
+) -> int:
+    """Return the smallest session count that preserves the pair capacity contract."""
+    if case_count <= 0 or pairs_per_session <= 0:
+        raise ValueError("case_count and pairs_per_session must be positive")
+    return math.ceil(case_count / pairs_per_session)
+
+
+def build_actual_skill_protocol(
+    protocol: dict[str, Any], skill_path: str | Path
+) -> dict[str, Any]:
+    """Create an isolated protocol variant backed by the actual skill document."""
+    path = Path(skill_path)
+    treatment = path.read_text(encoding="utf-8")
+    if not treatment.strip():
+        raise ValueError("actual skill document must not be empty")
+    actual = deepcopy(protocol)
+    actual["providers"]["omc-plan"] = {
+        "plan_producer": "codex-omc-plan-skill-document",
+        "treatment": treatment,
+    }
+    actual["actual_skill_sha256"] = canonical_digest(treatment)
+    return actual
 
 
 def build_provider_prompt(
@@ -265,6 +303,7 @@ def run_provider_pairs(
     batch_id: str,
     model: str = "test-model",
     reasoning_effort: str = "low",
+    split: str | None = None,
 ) -> dict[str, Any]:
     """Execute baseline/OMC pairs atomically with no automatic retry."""
     artifact_root = Path(artifact_root).resolve()
@@ -275,6 +314,10 @@ def run_provider_pairs(
     case_ids = [_safe_path_component(case.get("case_id"), "case_id") for case in cases]
     if len(case_ids) != len(set(case_ids)):
         raise ValueError("case_id values must be unique")
+    case_splits = {case.get("split") for case in cases}
+    selected_split = split or (next(iter(case_splits)) if len(case_splits) == 1 else None)
+    if selected_split not in {"development", "holdout"} or case_splits != {selected_split}:
+        raise ValueError("provider cases must belong to one supported split")
     root.mkdir(parents=True)
     providers = {
         provider_id: {
@@ -369,13 +412,14 @@ def run_provider_pairs(
     )
     provider_batch = {
         "schema_version": 1,
-        "split": "development",
+        "split": selected_split,
         "providers": [providers[provider_id] for provider_id in _PROVIDER_IDS],
     }
     manifest = {
         "schema_version": 1,
         "batch_id": batch_id,
         "benchmark_scope": protocol["benchmark_scope"],
+        "split": selected_split,
         "model": model,
         "reasoning_effort": reasoning_effort,
         "retry_limit": 0,
@@ -392,6 +436,184 @@ def run_provider_pairs(
     return {"provider_batch": provider_batch, "manifest": manifest}
 
 
+def build_provider_measurements(
+    provider_batch: dict[str, Any], manifest: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Aggregate observable provider cost and output-size measurements."""
+    usage_by_execution = {
+        item["plan_execution_id"]: item.get("usage", {"status": "unavailable"})
+        for item in manifest.get("executions", [])
+    }
+    measurements: dict[str, dict[str, Any]] = {}
+    for provider in provider_batch.get("providers", []):
+        executions = provider.get("executions", [])
+        usages = [
+            usage_by_execution.get(execution["plan_execution_id"], {"status": "unavailable"})
+            for execution in executions
+        ]
+        usage_observed = all(usage.get("status") == "observed" for usage in usages)
+        measurements[provider["provider_id"]] = {
+            "case_count": len(executions),
+            "visible_output_chars": sum(
+                len(execution.get("raw_output", "")) for execution in executions
+            ),
+            "task_count": sum(
+                len(execution.get("plan", {}).get("tasks", [])) for execution in executions
+            ),
+            "token_measurement_status": "observed" if usage_observed else "unavailable",
+            "total_tokens": (
+                sum(usage["total_tokens"] for usage in usages)
+                if usage_observed
+                else None
+            ),
+        }
+    return measurements
+
+
+def _validated_provider_usage_records(
+    provider_batch: dict[str, Any], manifest: dict[str, Any]
+) -> tuple[list[dict[str, Any]], bool]:
+    """Return canonical usage records after validating provider/manifest identity."""
+    provider_executions: dict[Any, dict[str, Any]] = {}
+    for provider in provider_batch.get("providers", []):
+        for execution in provider.get("executions", []):
+            execution_id = execution.get("plan_execution_id")
+            if execution_id in provider_executions:
+                raise ValueError("provider usage execution identity mismatch")
+            provider_executions[execution_id] = {
+                "provider_id": provider.get("provider_id"),
+                "case_id": execution.get("case_id"),
+            }
+    manifest_executions = manifest.get("executions")
+    if (
+        not provider_executions
+        or None in provider_executions
+        or not isinstance(manifest_executions, list)
+        or len(provider_executions) != len(manifest_executions)
+    ):
+        raise ValueError("provider usage execution identity mismatch")
+
+    records = []
+    seen_execution_ids: set[str] = set()
+    usage_complete = True
+    for metadata in manifest_executions:
+        if not isinstance(metadata, dict):
+            raise ValueError("provider usage execution identity mismatch")
+        execution_id = metadata.get("plan_execution_id")
+        expected = provider_executions.get(execution_id)
+        if (
+            not isinstance(execution_id, str)
+            or execution_id in seen_execution_ids
+            or expected is None
+            or metadata.get("provider_id") != expected["provider_id"]
+            or metadata.get("case_id") != expected["case_id"]
+        ):
+            raise ValueError("provider usage execution identity mismatch")
+        seen_execution_ids.add(execution_id)
+        usage = metadata.get("usage")
+        if usage == {"status": "unavailable"}:
+            usage_complete = False
+        elif isinstance(usage, dict) and set(usage) == {
+            "status",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+        } and usage.get("status") == "observed":
+            input_tokens = usage.get("input_tokens")
+            output_tokens = usage.get("output_tokens")
+            total_tokens = usage.get("total_tokens")
+            if (
+                not all(
+                    type(value) is int and value >= 0
+                    for value in (input_tokens, output_tokens, total_tokens)
+                )
+                or total_tokens != input_tokens + output_tokens
+            ):
+                raise ValueError("provider usage integrity mismatch")
+        else:
+            raise ValueError("provider usage integrity mismatch")
+        records.append({
+            "plan_execution_id": execution_id,
+            "provider_id": expected["provider_id"],
+            "case_id": expected["case_id"],
+            "usage": usage,
+        })
+
+    expected_status = "observed" if usage_complete else "unavailable"
+    if (
+        manifest.get("token_measurement_status") != expected_status
+        or manifest.get("cost_claim_allowed") is not usage_complete
+    ):
+        raise ValueError("provider usage integrity mismatch")
+    return sorted(records, key=lambda item: item["plan_execution_id"]), usage_complete
+
+
+def _provider_usage_attestation_payload(attestation: dict[str, Any]) -> bytes:
+    unsigned = {key: value for key, value in attestation.items() if key != "signature"}
+    return json.dumps(
+        unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def build_provider_usage_attestation(
+    provider_batch: dict[str, Any],
+    manifest: dict[str, Any],
+    *,
+    private_key: Any,
+    trusted_public_key: str,
+) -> dict[str, Any]:
+    """Sign the provider usage records used by cost reporting."""
+    if _encoded_public_key(private_key) != trusted_public_key:
+        raise ValueError("provider usage signer does not match the trusted public key")
+    records, _ = _validated_provider_usage_records(provider_batch, manifest)
+    attestation = {
+        "schema_version": 1,
+        "usage_records_sha256": canonical_digest(records),
+        "signer_public_key": trusted_public_key,
+    }
+    attestation["signature"] = base64.b64encode(
+        private_key.sign(_provider_usage_attestation_payload(attestation))
+    ).decode("ascii")
+    return attestation
+
+
+def _validate_provider_usage_attestation(
+    provider_batch: dict[str, Any],
+    manifest: dict[str, Any],
+    *,
+    trusted_public_key: str,
+) -> None:
+    records, usage_complete = _validated_provider_usage_records(provider_batch, manifest)
+    attestation = manifest.get("provider_usage_attestation")
+    if attestation is None and not usage_complete:
+        return
+    expected_fields = {
+        "schema_version",
+        "usage_records_sha256",
+        "signer_public_key",
+        "signature",
+    }
+    if not isinstance(attestation, dict) or set(attestation) != expected_fields:
+        raise ValueError("provider usage attestation is missing or invalid")
+    if (
+        attestation.get("schema_version") != 1
+        or attestation.get("signer_public_key") != trusted_public_key
+        or attestation.get("usage_records_sha256") != canonical_digest(records)
+    ):
+        raise ValueError("provider usage attestation mismatch")
+    try:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        public_key = Ed25519PublicKey.from_public_bytes(
+            base64.b64decode(trusted_public_key, validate=True)
+        )
+        signature = base64.b64decode(attestation["signature"], validate=True)
+        public_key.verify(signature, _provider_usage_attestation_payload(attestation))
+    except (InvalidSignature, TypeError, ValueError) as exc:
+        raise ValueError("provider usage attestation signature mismatch") from exc
+
+
 def load_completed_provider_batch(
     artifact_root: str | Path,
     batch_id: str,
@@ -400,6 +622,7 @@ def load_completed_provider_batch(
     protocol: dict[str, Any],
     model: str,
     reasoning_effort: str,
+    split: str | None = None,
 ) -> dict[str, Any]:
     """Load and verify one provider stage without repeating paid calls."""
     root = Path(artifact_root).resolve() / _safe_path_component(batch_id, "batch_id")
@@ -407,6 +630,12 @@ def load_completed_provider_batch(
         (root / "provider-batch.json").read_text(encoding="utf-8")
     )
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    expected_splits = {case.get("split") for case in expected_cases}
+    expected_split = split or (
+        next(iter(expected_splits)) if len(expected_splits) == 1 else None
+    )
+    if expected_split not in {"development", "holdout"}:
+        raise ValueError("resume benchmark split is invalid")
     if manifest.get("batch_id") != batch_id:
         raise ValueError("resume manifest batch_id mismatch")
     manifest_provider_effort = manifest.get(
@@ -422,12 +651,14 @@ def load_completed_provider_batch(
         raise ValueError("resume manifest must preserve retry_limit 0")
     if manifest.get("benchmark_scope") != protocol.get("benchmark_scope"):
         raise ValueError("resume benchmark scope mismatch")
+    if manifest.get("split") != expected_split:
+        raise ValueError("resume benchmark split mismatch")
 
     if (
         not isinstance(provider_batch, dict)
         or set(provider_batch) != {"schema_version", "split", "providers"}
         or provider_batch.get("schema_version") != 1
-        or provider_batch.get("split") != "development"
+        or provider_batch.get("split") != expected_split
     ):
         raise ValueError("resume provider batch contract mismatch")
     providers = provider_batch.get("providers")
@@ -483,34 +714,7 @@ def load_completed_provider_batch(
     if set(manifest_by_identity) != expected_identities:
         raise ValueError("resume provider manifest is incomplete")
 
-    usage_complete = True
-    for metadata in manifest_executions:
-        usage = metadata.get("usage")
-        if not isinstance(usage, dict):
-            raise ValueError("provider usage integrity mismatch")
-        if usage.get("status") == "observed":
-            input_tokens = usage.get("input_tokens")
-            output_tokens = usage.get("output_tokens")
-            total_tokens = usage.get("total_tokens")
-            if (
-                not all(type(value) is int and value >= 0 for value in (
-                    input_tokens,
-                    output_tokens,
-                    total_tokens,
-                ))
-                or total_tokens != input_tokens + output_tokens
-            ):
-                raise ValueError("provider usage integrity mismatch")
-        elif usage == {"status": "unavailable"}:
-            usage_complete = False
-        else:
-            raise ValueError("provider usage integrity mismatch")
-    expected_usage_status = "observed" if usage_complete else "unavailable"
-    if (
-        manifest.get("token_measurement_status") != expected_usage_status
-        or manifest.get("cost_claim_allowed") is not usage_complete
-    ):
-        raise ValueError("provider usage integrity mismatch")
+    _validated_provider_usage_records(provider_batch, manifest)
 
     for provider_id, execution in provider_executions:
         case_id = execution["case_id"]
@@ -555,9 +759,9 @@ def build_blind_adjudication_sessions(
     batch_id: str,
     gold_document: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, str]]]:
-    """Split four complete pairs over fresh blind adjudicator sessions."""
-    if session_count != 2:
-        raise ValueError("pilot adjudication requires exactly two sessions")
+    """Distribute complete pairs over fresh blind adjudicator sessions."""
+    if session_count < 2:
+        raise ValueError("pilot adjudication requires at least two sessions")
     by_case: dict[str, list[dict[str, Any]]] = {}
     for execution in executions:
         by_case.setdefault(execution["case_id"], []).append(execution)
@@ -971,10 +1175,10 @@ def seal_blind_adjudications(
     """Restore private provider identities and seal every blind semantic label."""
     if _encoded_public_key(private_key) != trusted_public_key:
         raise ValueError("adjudicator key does not match the pinned trusted public key")
-    if len(adjudication_results) != 2:
-        raise ValueError("pilot requires results from exactly two adjudicator sessions")
+    if len(adjudication_results) < 2:
+        raise ValueError("pilot requires results from at least two adjudicator sessions")
     session_ids = {result.get("session_id") for result in adjudication_results}
-    if len(session_ids) != 2 or None in session_ids:
+    if len(session_ids) != len(adjudication_results) or None in session_ids:
         raise ValueError("adjudicator sessions must be fresh and distinct")
     output_by_blind_id: dict[str, tuple[dict[str, Any], str, dict[str, Any] | None]] = {}
     for result in adjudication_results:
@@ -1056,6 +1260,11 @@ def build_pilot_report(
 ) -> dict[str, Any]:
     """Score the pilot while keeping unsupported superiority/cost claims blocked."""
     _validate_pilot_receipt_provenance(sealed_provider_batch, manifest)
+    _validate_provider_usage_attestation(
+        sealed_provider_batch,
+        manifest,
+        trusted_public_key=trusted_adjudicator_public_key,
+    )
     scored = score_plan_batch(
         public_document,
         gold_document,
@@ -1071,7 +1280,13 @@ def build_pilot_report(
         "benchmark_scope": manifest.get(
             "benchmark_scope", "prompt_decomposition_only"
         ),
-        "adjudication_mode": "two_fresh_disjoint_sessions",
+        "adjudication_mode": "fresh_disjoint_sessions",
+        "adjudication_session_count": len(
+            manifest.get("adjudication_contract", {}).get("sessions", [])
+        ),
+        "provider_measurements": build_provider_measurements(
+            sealed_provider_batch, manifest
+        ),
         "token_measurement_status": usage_status,
         "superiority_claim_status": (
             "blocked_pilot_scope"
@@ -1091,11 +1306,39 @@ def _validate_pilot_receipt_provenance(
     manifest: dict[str, Any],
 ) -> None:
     contract = manifest.get("adjudication_contract")
-    if not isinstance(contract, dict) or contract.get("mode") != "two_fresh_disjoint_sessions":
+    supported_modes = {
+        "two_fresh_disjoint_sessions",
+        "fresh_disjoint_sessions",
+    }
+    if not isinstance(contract, dict) or contract.get("mode") not in supported_modes:
         raise ValueError("pilot manifest contract is missing or invalid")
+    manifest_split = manifest.get("split")
+    if (
+        manifest_split not in {"development", "holdout"}
+        or sealed_provider_batch.get("split") != manifest_split
+    ):
+        raise ValueError("pilot manifest and provider batch split mismatch")
+    pairs_per_session = contract.get("pairs_per_session")
+    if contract["mode"] == "two_fresh_disjoint_sessions" and pairs_per_session is None:
+        pairs_per_session = 2
+    if pairs_per_session != 2:
+        raise ValueError("pilot manifest contract pairs_per_session must be 2")
     sessions = contract.get("sessions")
-    if not isinstance(sessions, list) or len(sessions) != 2:
-        raise ValueError("pilot manifest contract requires two sessions")
+    if not isinstance(sessions, list) or len(sessions) < 2:
+        raise ValueError("pilot manifest contract requires at least two sessions")
+    case_ids = {
+        execution.get("case_id")
+        for provider in sealed_provider_batch.get("providers", [])
+        for execution in provider.get("executions", [])
+    }
+    if None in case_ids:
+        raise ValueError("pilot provider batch case ids are invalid")
+    expected_session_count = required_adjudication_session_count(
+        case_count=len(case_ids),
+        pairs_per_session=pairs_per_session,
+    )
+    if len(sessions) != expected_session_count:
+        raise ValueError("pilot manifest contract session count mismatch")
     provenance_fields = {
         "adjudication_contract_version",
         "adjudication_prompt_sha256",
@@ -1156,12 +1399,20 @@ def run_full_pilot(
     require_signed_gold: bool = False,
     provider_reasoning_effort: str | None = None,
     adjudicator_reasoning_effort: str | None = None,
+    split: str,
+    omc_skill_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Run the 8+2 call development pilot and write one draft-safe report."""
+    """Run one split-aware blind pilot and write one draft-safe report."""
     artifact_root = Path(artifact_root).resolve()
     repo_root = Path(repo_root).resolve()
     provider_effort = provider_reasoning_effort or reasoning_effort
     adjudicator_effort = adjudicator_reasoning_effort or reasoning_effort
+    selected_split = split
+    execution_protocol = (
+        build_actual_skill_protocol(protocol, omc_skill_path)
+        if omc_skill_path is not None
+        else protocol
+    )
     if _is_relative_to(artifact_root, repo_root):
         raise ValueError("artifact root must be outside the repository")
     validate_fixture_documents(
@@ -1176,38 +1427,40 @@ def run_full_pilot(
         artifact_root=artifact_root,
         trusted_public_key=trusted_public_key,
     )
-    development_cases = [
-        case for case in public_document["cases"] if case.get("split") == "development"
-    ]
-    if len(development_cases) != 4:
-        raise ValueError("pilot requires exactly four development cases")
+    selected_cases = select_benchmark_cases(public_document, selected_split)
     if resume_provider_batch:
         collected = load_completed_provider_batch(
             artifact_root,
             batch_id,
-            expected_cases=development_cases,
-            protocol=protocol,
+            expected_cases=selected_cases,
+            protocol=execution_protocol,
             model=model,
             reasoning_effort=provider_effort,
+            split=selected_split,
         )
     else:
         collected = run_provider_pairs(
-            development_cases,
-            protocol,
+            selected_cases,
+            execution_protocol,
             executor=provider_executor,
             artifact_root=artifact_root,
             batch_id=batch_id,
             model=model,
             reasoning_effort=provider_effort,
+            split=selected_split,
         )
     executions = [
         {"provider_id": provider["provider_id"], **execution}
         for provider in collected["provider_batch"]["providers"]
         for execution in provider["executions"]
     ]
+    session_count = required_adjudication_session_count(
+        case_count=len(selected_cases),
+        pairs_per_session=protocol["adjudication"]["pairs_per_session"],
+    )
     sessions, mapping = build_blind_adjudication_sessions(
         executions,
-        session_count=protocol["adjudication"]["session_count"],
+        session_count=session_count,
         batch_id=batch_id,
         gold_document=gold_document,
     )
@@ -1224,6 +1477,18 @@ def run_full_pilot(
         raise ValueError("adjudication artifacts already exist")
     collected["manifest"]["provider_reasoning_effort"] = provider_effort
     collected["manifest"]["adjudicator_reasoning_effort"] = adjudicator_effort
+    if "actual_skill_sha256" in execution_protocol:
+        collected["manifest"]["actual_skill_sha256"] = execution_protocol[
+            "actual_skill_sha256"
+        ]
+    collected["manifest"]["provider_usage_attestation"] = (
+        build_provider_usage_attestation(
+            collected["provider_batch"],
+            collected["manifest"],
+            private_key=private_key,
+            trusted_public_key=trusted_public_key,
+        )
+    )
     adjudication_results = []
     adjudication_contract_sessions = []
     for index, session in enumerate(sessions, start=1):
@@ -1251,7 +1516,8 @@ def run_full_pilot(
         )
         adjudication_results.append(normalized_result)
     collected["manifest"]["adjudication_contract"] = {
-        "mode": "two_fresh_disjoint_sessions",
+        "mode": "fresh_disjoint_sessions",
+        "pairs_per_session": protocol["adjudication"]["pairs_per_session"],
         "sessions": adjudication_contract_sessions,
     }
     (root / "manifest.json").write_text(
@@ -1470,6 +1736,13 @@ def main() -> int:
     parser.add_argument("--reasoning-effort", default="low")
     parser.add_argument("--provider-reasoning-effort")
     parser.add_argument("--adjudicator-reasoning-effort")
+    parser.add_argument(
+        "--split", choices=("development", "holdout"), required=True
+    )
+    parser.add_argument(
+        "--omc-skill-file",
+        help="Use the supplied OMC Plan skill document as the OMC treatment.",
+    )
     parser.add_argument("--codex-binary", default="codex")
     parser.add_argument("--trusted-adjudicator-public-key", required=True)
     parser.add_argument(
@@ -1535,6 +1808,8 @@ def main() -> int:
         reasoning_effort=args.reasoning_effort,
         provider_reasoning_effort=args.provider_reasoning_effort,
         adjudicator_reasoning_effort=args.adjudicator_reasoning_effort,
+        split=args.split,
+        omc_skill_path=args.omc_skill_file,
         private_key_path=args.adjudicator_private_key_file,
         trusted_public_key=args.trusted_adjudicator_public_key,
         repo_root=args.repo_root,

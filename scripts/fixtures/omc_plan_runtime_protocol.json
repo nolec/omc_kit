@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "benchmark_scope": "repository_grounded_skill_runtime",
+  "providers": [
+    "baseline-plan",
+    "omc-plan"
+  ],
+  "execution": {
+    "sandbox": "read-only",
+    "ignore_user_config": true,
+    "ephemeral": true,
+    "require_same_model_config": true,
+    "allowed_workspace_delta": ".agents/skills/omc-plan/SKILL.md",
+    "timeout_sec": 180
+  },
+  "activation": {
+    "required_for_omc": true,
+    "forbidden_for_baseline": true,
+    "proof_method": "output_nonce",
+    "output_field": "runtime_activation_receipt",
+    "baseline_sentinel": "unavailable"
+  },
+  "variability": {
+    "development_case_count": 4,
+    "runs_per_provider": 2,
+    "max_metric_delta": 0.1
+  },
+  "acceptance": {
+    "case_count": 10,
+    "minimum_executable_task_rate": 0.8,
+    "maximum_output_token_ratio": 1.25,
+    "maximum_total_token_increase_ratio": 0.05,
+    "minimum_quality_gain_for_token_increase": 0.05
+  }
+}
