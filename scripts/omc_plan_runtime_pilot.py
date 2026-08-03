@@ -47,6 +47,10 @@ FROZEN_SUPERIORITY = {
     "bootstrap_seed": 20260803,
     "required_confirmation_batches": 2,
 }
+EVALUATION_SCOPES = {
+    "confirmatory",
+    "diagnostic_posthoc_gold_amendment",
+}
 
 
 def canonical_digest(value: Any) -> str:
@@ -1054,6 +1058,8 @@ def validate_runtime_provenance(
     gold_document: dict[str, Any],
 ) -> None:
     """Bind signed provider outputs to the exact frozen evaluation inputs."""
+    if provider_batch.get("evaluation_scope") not in EVALUATION_SCOPES:
+        raise ValueError("runtime evaluation scope is invalid")
     skill_sha256 = provider_batch.get("skill_sha256")
     activation_probe = provider_batch.get("activation_probe")
     if (
@@ -1187,6 +1193,7 @@ def run_runtime_batch(
     provider_batch = {
         "schema_version": 1,
         "batch_id": batch_id,
+        "evaluation_scope": "confirmatory",
         "protocol_sha256": canonical_digest(protocol),
         "corpus_sha256": canonical_digest(cases),
         "gold_sha256": gold_document["gold_sha256"],
@@ -1233,9 +1240,13 @@ def build_runtime_metrics(
     executions: list[dict[str, Any]],
     *,
     expected_case_count: int,
+    evaluation_scope: str,
 ) -> dict[str, Any]:
     """Derive replacement metrics only from signed scores and observed usage."""
+    if evaluation_scope not in EVALUATION_SCOPES:
+        raise ValueError("runtime evaluation scope is invalid")
     metrics: dict[str, Any] = {
+        "evaluation_scope": evaluation_scope,
         "valid_case_count": expected_case_count,
         "provenance_complete_count": expected_case_count,
         "token_measurement_status": "observed",
@@ -1429,7 +1440,10 @@ def finalize_runtime_batch(
             for execution in provider["executions"]
         ]
     metrics = build_runtime_metrics(
-        scores_by_provider, executions, expected_case_count=expected_count
+        scores_by_provider,
+        executions,
+        expected_case_count=expected_count,
+        evaluation_scope=provider_batch["evaluation_scope"],
     )
     decision = decide_superiority_batch(
         metrics,
@@ -1685,6 +1699,13 @@ def decide_replacement(
     metrics: dict[str, Any], acceptance: dict[str, Any]
 ) -> dict[str, Any]:
     """Apply a frozen non-inferiority and cost gate without subjective overrides."""
+    evaluation_scope = metrics.get("evaluation_scope")
+    if evaluation_scope not in EVALUATION_SCOPES:
+        return {
+            "decision": "INVALID_RUN",
+            "reason_code": "evaluation_scope_invalid",
+            "failed_gates": ["evaluation_scope"],
+        }
     expected_count = acceptance["case_count"]
     if (
         metrics.get("valid_case_count") != expected_count
@@ -1708,6 +1729,12 @@ def decide_replacement(
             "decision": "INVALID_RUN",
             "reason_code": "provider_metrics_invalid",
             "failed_gates": ["provider_metrics"],
+        }
+    if evaluation_scope == "diagnostic_posthoc_gold_amendment":
+        return {
+            "decision": "DIAGNOSTIC_ONLY",
+            "reason_code": "posthoc_gold_amendment",
+            "failed_gates": ["replacement_claim_eligibility"],
         }
 
     failed: list[str] = []

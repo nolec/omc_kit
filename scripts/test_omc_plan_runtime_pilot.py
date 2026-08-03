@@ -153,6 +153,7 @@ def _adjudications(sessions):
 
 def _metrics():
     return {
+        "evaluation_scope": "confirmatory",
         "valid_case_count": 10,
         "provenance_complete_count": 10,
         "token_measurement_status": "observed",
@@ -636,6 +637,28 @@ def test_replacement_requires_all_quality_cost_and_provenance_gates():
     assert "unsupported_assumptions" in result["failed_gates"]
 
 
+def test_replacement_rejects_missing_or_posthoc_evaluation_scope():
+    missing_scope = _metrics()
+    del missing_scope["evaluation_scope"]
+    result = runtime.decide_replacement(
+        missing_scope, _protocol()["acceptance"]
+    )
+    assert result == {
+        "decision": "INVALID_RUN",
+        "reason_code": "evaluation_scope_invalid",
+        "failed_gates": ["evaluation_scope"],
+    }
+
+    diagnostic = _metrics()
+    diagnostic["evaluation_scope"] = "diagnostic_posthoc_gold_amendment"
+    result = runtime.decide_replacement(diagnostic, _protocol()["acceptance"])
+    assert result == {
+        "decision": "DIAGNOSTIC_ONLY",
+        "reason_code": "posthoc_gold_amendment",
+        "failed_gates": ["replacement_claim_eligibility"],
+    }
+
+
 def test_replacement_rejects_unjustified_token_increase_and_invalid_run():
     metrics = _metrics()
     metrics["omc-plan"]["weighted_requirement_recall"] = 0.90
@@ -878,8 +901,12 @@ def test_runtime_metrics_are_derived_from_scores_and_observed_usage():
         for provider_id in runtime.PROVIDERS
     ]
     metrics = runtime.build_runtime_metrics(
-        scores, executions, expected_case_count=1
+        scores,
+        executions,
+        expected_case_count=1,
+        evaluation_scope="confirmatory",
     )
+    assert metrics["evaluation_scope"] == "confirmatory"
     assert metrics["token_measurement_status"] == "observed"
     assert metrics["omc-plan"]["task_evidence_accuracy"] == 0.9
     assert metrics["omc-plan"]["total_tokens"] == 15
@@ -911,7 +938,12 @@ def test_runtime_metrics_reject_usage_total_mismatch():
         for provider_id in runtime.PROVIDERS
     ]
     with pytest.raises(ValueError, match="usage integrity mismatch"):
-        runtime.build_runtime_metrics(scores, executions, expected_case_count=1)
+        runtime.build_runtime_metrics(
+            scores,
+            executions,
+            expected_case_count=1,
+            evaluation_scope="confirmatory",
+        )
 
 
 def test_assess_cli_can_call_functions_declared_after_main(tmp_path):
@@ -1049,6 +1081,7 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
     )
     assert len(calls) == 20
     assert result["activation_probe"]["status"] == "pass"
+    assert result["provider_batch"]["evaluation_scope"] == "confirmatory"
     assert len(result["provider_batch"]["executions"]) == 20
     assert len(result["blind_sessions"]) == 5
     assert (tmp_path / "batch/provider-batch.json").is_file()
@@ -1164,6 +1197,7 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
     provider_batch = {
         "schema_version": 1,
         "batch_id": "runtime-finalize",
+        "evaluation_scope": "confirmatory",
         "protocol_sha256": runtime.canonical_digest(_protocol()),
         "corpus_sha256": runtime.canonical_digest(cases),
         "gold_sha256": gold["gold_sha256"],
@@ -1200,6 +1234,7 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
         trusted_runtime_signer_public_key=runtime_signer_public_key,
     )
     assert report["decision"]["decision"] == "REPLACEABLE"
+    assert report["metrics"]["evaluation_scope"] == "confirmatory"
     assert report["metrics"]["omc-plan"]["task_evidence_accuracy"] == 1.0
     assert report["provenance"]["protocol_sha256"] == provider_batch["protocol_sha256"]
     assert report["execution_config"] == {
@@ -1286,6 +1321,7 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
                 },
             })
     provider_batch = {
+        "evaluation_scope": "confirmatory",
         "protocol_sha256": runtime.canonical_digest(protocol),
         "corpus_sha256": runtime.canonical_digest(cases),
         "gold_sha256": gold["gold_sha256"],
@@ -1299,6 +1335,16 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
         cases=cases,
         gold_document=gold,
     )
+
+    missing_scope = deepcopy(provider_batch)
+    del missing_scope["evaluation_scope"]
+    with pytest.raises(ValueError, match="runtime evaluation scope is invalid"):
+        runtime.validate_runtime_provenance(
+            missing_scope,
+            protocol=protocol,
+            cases=cases,
+            gold_document=gold,
+        )
 
     provider_batch["corpus_sha256"] = "b" * 64
     with pytest.raises(ValueError, match="runtime input provenance mismatch"):
