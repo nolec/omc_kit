@@ -23,6 +23,7 @@ RUNTIME_PROTOCOL_FIELDS = {
     "execution",
     "activation",
     "variability",
+    "confirmatory",
     "acceptance",
     "superiority",
 }
@@ -51,6 +52,16 @@ FROZEN_SUPERIORITY = {
 EVALUATION_SCOPES = {
     "confirmatory",
     "diagnostic_posthoc_gold_amendment",
+}
+CONFIRMATORY_CLAIM_SCOPE = "single_confirmatory_corpus"
+FROZEN_CONFIRMATORY_BUDGET = {
+    "observed_total_token_stop_threshold": 1_200_000,
+    "maximum_external_calls": 30,
+}
+FROZEN_CONFIRMATORY_PROTOCOL = {
+    "manifest_required": True,
+    "claim_scope": CONFIRMATORY_CLAIM_SCOPE,
+    **FROZEN_CONFIRMATORY_BUDGET,
 }
 
 
@@ -271,6 +282,354 @@ def gold_signoff_payload(gold_document: dict[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+def confirmatory_manifest_signoff_payload(manifest: dict[str, Any]) -> bytes:
+    """Return the immutable confirmatory selection claim for signing."""
+    signoff = manifest.get("signoff")
+    if not isinstance(signoff, dict):
+        raise ValueError("confirmatory manifest signoff is required")
+    payload = {
+        key: value for key, value in manifest.items() if key != "signoff"
+    }
+    payload["signoff"] = {
+        "signer": signoff.get("signer"),
+        "signer_public_key": signoff.get("signer_public_key"),
+    }
+    return json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def _case_fingerprint(case: dict[str, Any]) -> dict[str, str]:
+    return {
+        "case_id": case.get("case_id"),
+        "source_sha256": case.get("provenance", {}).get("source_sha256"),
+        "context_sha256": case.get("context_sha256"),
+    }
+
+
+def confirmatory_external_payload_digest(
+    cases: list[dict[str, Any]],
+    gold_document: dict[str, Any],
+    skill_sha256: str,
+) -> str:
+    if not _is_sha256(skill_sha256):
+        raise ValueError("confirmatory skill hash is invalid")
+    return canonical_digest({
+        "schema_version": 1,
+        "cases": cases,
+        "gold": gold_document,
+        "skill_sha256": skill_sha256,
+    })
+
+
+def _validate_fingerprint(value: Any, *, label: str) -> dict[str, str]:
+    expected = {"case_id", "source_sha256", "context_sha256"}
+    if (
+        not isinstance(value, dict)
+        or set(value) != expected
+        or not isinstance(value.get("case_id"), str)
+        or not value["case_id"].strip()
+        or not _is_sha256(value.get("source_sha256"))
+        or not _is_sha256(value.get("context_sha256"))
+    ):
+        raise ValueError(f"confirmatory {label} fingerprint is invalid")
+    return value
+
+
+def validate_confirmatory_manifest(
+    manifest: dict[str, Any],
+    *,
+    cases: list[dict[str, Any]],
+    gold_document: dict[str, Any],
+    trusted_prior_fingerprints: list[dict[str, str]],
+    trusted_signer_public_keys: set[str],
+) -> None:
+    """Prove sampling, disjointness, and gold independence before execution."""
+    expected_fields = {
+        "schema_version",
+        "status",
+        "producer",
+        "corpus_sha256",
+        "gold_sha256",
+        "sampling",
+        "prior_registry_sha256",
+        "prior_fingerprints",
+        "selected_fingerprints",
+        "gold_independence",
+        "budget",
+        "transmission",
+        "claim_scope",
+        "signoff",
+    }
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest) != expected_fields
+        or manifest.get("schema_version") != 1
+        or manifest.get("status") != "signed_off"
+        or not isinstance(manifest.get("producer"), str)
+        or not manifest["producer"].strip()
+    ):
+        raise ValueError("confirmatory manifest fields are invalid")
+    if (
+        manifest.get("corpus_sha256") != canonical_digest(cases)
+        or manifest.get("gold_sha256") != gold_document.get("gold_sha256")
+    ):
+        raise ValueError("confirmatory manifest input hash mismatch")
+
+    sampling = manifest.get("sampling")
+    expected_sampling = {
+        "source_window",
+        "eligibility_rule",
+        "ordering_rule",
+        "sampling_frame_sha256",
+    }
+    if (
+        not isinstance(sampling, dict)
+        or set(sampling) != expected_sampling
+        or any(
+            not isinstance(sampling[field], str) or not sampling[field].strip()
+            for field in expected_sampling - {"sampling_frame_sha256"}
+        )
+        or not _is_sha256(sampling.get("sampling_frame_sha256"))
+    ):
+        raise ValueError("confirmatory sampling contract is invalid")
+
+    prior = manifest.get("prior_fingerprints")
+    selected = manifest.get("selected_fingerprints")
+    if not isinstance(prior, list) or not prior:
+        raise ValueError("confirmatory prior fingerprints are required")
+    if not isinstance(selected, list) or len(selected) != len(cases):
+        raise ValueError("confirmatory selected fingerprints are incomplete")
+    prior = [
+        _validate_fingerprint(item, label="prior") for item in prior
+    ]
+    if not isinstance(trusted_prior_fingerprints, list) or not trusted_prior_fingerprints:
+        raise ValueError("confirmatory trusted prior registry is required")
+    trusted_prior = [
+        _validate_fingerprint(item, label="trusted prior")
+        for item in trusted_prior_fingerprints
+    ]
+    if (
+        manifest.get("prior_registry_sha256") != canonical_digest(trusted_prior)
+        or prior != trusted_prior
+    ):
+        raise ValueError("confirmatory prior registry mismatch")
+    selected = [
+        _validate_fingerprint(item, label="selected") for item in selected
+    ]
+    expected_selected = [_case_fingerprint(case) for case in cases]
+    if selected != expected_selected:
+        raise ValueError("confirmatory selected fingerprints do not match corpus")
+    for field, message in (
+        ("case_id", "case id overlap"),
+        ("source_sha256", "source fingerprint overlap"),
+        ("context_sha256", "context fingerprint overlap"),
+    ):
+        prior_values = {item[field] for item in prior}
+        selected_values = [item[field] for item in selected]
+        if field != "context_sha256" and len(selected_values) != len(set(selected_values)):
+            raise ValueError(f"confirmatory selected {field} values must be unique")
+        if prior_values.intersection(selected_values):
+            raise ValueError(f"confirmatory {message}")
+
+    independence = manifest.get("gold_independence")
+    if not isinstance(independence, dict) or set(independence) != {
+        "author_session_id",
+        "reviewer_session_id",
+        "provider_outputs_available",
+    }:
+        raise ValueError("confirmatory gold independence fields are invalid")
+    author = independence.get("author_session_id")
+    reviewer = independence.get("reviewer_session_id")
+    if (
+        not isinstance(author, str)
+        or not author.strip()
+        or not isinstance(reviewer, str)
+        or not reviewer.strip()
+        or author == reviewer
+    ):
+        raise ValueError("confirmatory gold sessions must be independent")
+    if independence.get("provider_outputs_available") is not False:
+        raise ValueError("confirmatory provider outputs must be unavailable")
+    if manifest.get("budget") != FROZEN_CONFIRMATORY_BUDGET:
+        raise ValueError("confirmatory execution budget must match the frozen contract")
+    transmission = manifest.get("transmission")
+    if (
+        not isinstance(transmission, dict)
+        or set(transmission) != {"payload_sha256", "approved"}
+        or not _is_sha256(transmission.get("payload_sha256"))
+        or transmission.get("approved") is not True
+    ):
+        raise ValueError("confirmatory external transmission is not approved")
+    if manifest.get("claim_scope") != CONFIRMATORY_CLAIM_SCOPE:
+        raise ValueError("confirmatory claim scope is invalid")
+
+    signoff = manifest.get("signoff")
+    if not isinstance(signoff, dict) or set(signoff) != {
+        "signer",
+        "signer_public_key",
+        "signature",
+    }:
+        raise ValueError("confirmatory manifest signature fields are invalid")
+    signer = signoff.get("signer")
+    public_key_text = signoff.get("signer_public_key")
+    if (
+        not isinstance(signer, str)
+        or not signer.strip()
+        or signer.strip() == manifest["producer"].strip()
+    ):
+        raise ValueError("confirmatory manifest requires an independent signer")
+    if public_key_text not in trusted_signer_public_keys:
+        raise ValueError("confirmatory manifest signer is not trusted")
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        public_key = Ed25519PublicKey.from_public_bytes(
+            base64.b64decode(public_key_text, validate=True)
+        )
+        signature = base64.b64decode(signoff["signature"], validate=True)
+        public_key.verify(signature, confirmatory_manifest_signoff_payload(manifest))
+    except Exception as exc:
+        raise ValueError("confirmatory manifest signature mismatch") from exc
+
+
+def new_execution_budget_state(budget: dict[str, int]) -> dict[str, int]:
+    if (
+        not isinstance(budget, dict)
+        or set(budget) != set(FROZEN_CONFIRMATORY_BUDGET)
+        or any(type(value) is not int or value <= 0 for value in budget.values())
+    ):
+        raise ValueError("confirmatory execution budget is invalid")
+    return {
+        **budget,
+        "used_total_tokens": 0,
+        "used_external_calls": 0,
+    }
+
+
+def assert_execution_budget_available(
+    state: dict[str, int], *, required_external_calls: int = 1
+) -> None:
+    """Enforce the provider-call cap before execution.
+
+    Codex CLI does not expose a per-request token cap, so token usage is an
+    observed fail-stop budget handled by ``consume_execution_budget``.
+    """
+    if type(required_external_calls) is not int or required_external_calls <= 0:
+        raise ValueError("confirmatory required external calls are invalid")
+    remaining_calls = (
+        state["maximum_external_calls"] - state["used_external_calls"]
+    )
+    if remaining_calls < required_external_calls:
+        raise RuntimeError("confirmatory external call budget exhausted")
+
+
+def validate_execution_budget_state(
+    state: dict[str, int], *, expected_budget: dict[str, int]
+) -> None:
+    expected_fields = {
+        *FROZEN_CONFIRMATORY_BUDGET,
+        "used_total_tokens",
+        "used_external_calls",
+    }
+    if (
+        not isinstance(state, dict)
+        or set(state) != expected_fields
+        or {key: state.get(key) for key in FROZEN_CONFIRMATORY_BUDGET}
+        != expected_budget
+        or any(type(value) is not int or value < 0 for value in state.values())
+        or state["observed_total_token_stop_threshold"] <= 0
+        or state["maximum_external_calls"] <= 0
+        or state["used_total_tokens"] > state["observed_total_token_stop_threshold"]
+        or state["used_external_calls"] > state["maximum_external_calls"]
+    ):
+        raise ValueError("confirmatory execution budget state is invalid")
+
+
+def consume_execution_budget(
+    state: dict[str, int],
+    execution: dict[str, Any],
+    *,
+    failure_receipt_path: str | Path | None = None,
+    execution_id: str | None = None,
+) -> None:
+    """Record observed usage and stop the batch before any later execution."""
+    if failure_receipt_path is not None and (
+        not isinstance(execution_id, str) or not execution_id.strip()
+    ):
+        raise ValueError("confirmatory budget failure execution id is required")
+    usage = _validated_runtime_usage(execution.get("usage"))
+    if usage.get("status") != "observed":
+        raise RuntimeError("confirmatory execution usage is unavailable")
+    attempt_count = execution.get("activation", {}).get("attempt_count", 1)
+    if type(attempt_count) is not int or attempt_count <= 0:
+        raise RuntimeError("confirmatory execution attempt count is invalid")
+    total_tokens = usage.get("total_tokens")
+    if type(total_tokens) is not int or total_tokens < 0:
+        raise RuntimeError("confirmatory execution token usage is invalid")
+    next_calls = state["used_external_calls"] + attempt_count
+    next_tokens = state["used_total_tokens"] + total_tokens
+    state["used_external_calls"] = next_calls
+    state["used_total_tokens"] = next_tokens
+    reason_code = None
+    message = None
+    if next_calls > state["maximum_external_calls"]:
+        reason_code = "external_call_budget_exceeded"
+        message = "confirmatory external call budget exceeded"
+    elif next_tokens > state["observed_total_token_stop_threshold"]:
+        reason_code = "observed_token_stop_threshold_exceeded"
+        message = "confirmatory observed total token stop threshold exceeded"
+    if reason_code is None:
+        return
+    if failure_receipt_path is not None:
+        receipt_path = Path(failure_receipt_path)
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        receipt_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "status": "failed",
+                    "reason_code": reason_code,
+                    "execution_id": execution_id,
+                    "execution_budget_state": state,
+                    "usage": usage,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    raise RuntimeError(message)
+
+
+def validate_execution_budget_evidence(
+    reported_state: dict[str, int],
+    *,
+    activation_probe: dict[str, Any],
+    executions: list[dict[str, Any]],
+    expected_budget: dict[str, int],
+) -> None:
+    validate_execution_budget_state(
+        reported_state, expected_budget=expected_budget
+    )
+    probe_executions = activation_probe.get("executions")
+    if (
+        not isinstance(probe_executions, dict)
+        or set(probe_executions) != set(PROVIDERS)
+    ):
+        raise ValueError("confirmatory activation budget evidence is invalid")
+    observed_state = new_execution_budget_state(expected_budget)
+    try:
+        for execution in probe_executions.values():
+            consume_execution_budget(observed_state, execution)
+        for execution in executions:
+            consume_execution_budget(observed_state, execution)
+    except (RuntimeError, ValueError) as exc:
+        raise ValueError("confirmatory execution budget evidence is invalid") from exc
+    if reported_state != observed_state:
+        raise ValueError("confirmatory execution budget evidence mismatch")
+
+
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -358,6 +717,9 @@ def validate_runtime_protocol(protocol: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("variability sample contract is invalid")
     if not 0 <= variability["max_metric_delta"] <= 1:
         raise ValueError("variability max_metric_delta is invalid")
+
+    if protocol["confirmatory"] != FROZEN_CONFIRMATORY_PROTOCOL:
+        raise ValueError("confirmatory contract must match the frozen protocol")
 
     acceptance = protocol["acceptance"]
     if not isinstance(acceptance, dict) or set(acceptance) != ACCEPTANCE_FIELDS:
@@ -986,6 +1348,18 @@ def _load_json(path: str | Path) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def _load_prior_registry(path: str | Path) -> list[dict[str, str]]:
+    registry = _load_json(path)
+    if (
+        not isinstance(registry, dict)
+        or set(registry) != {"schema_version", "fingerprints"}
+        or registry.get("schema_version") != 1
+        or not isinstance(registry.get("fingerprints"), list)
+    ):
+        raise ValueError("confirmatory trusted prior registry file is invalid")
+    return registry["fingerprints"]
+
+
 def build_runtime_blind_batch(
     executions: list[dict[str, Any]],
     *,
@@ -1055,7 +1429,9 @@ def build_diagnostic_rejudge_batch(
     if original_scope not in {None, "confirmatory"}:
         raise ValueError("diagnostic rejudge requires an original confirmatory batch")
     original_for_validation = deepcopy(original_provider_batch)
-    original_for_validation["evaluation_scope"] = "confirmatory"
+    original_for_validation["evaluation_scope"] = (
+        "diagnostic_posthoc_gold_amendment"
+    )
     validate_runtime_provenance(
         original_for_validation,
         protocol=protocol,
@@ -1175,10 +1551,19 @@ def validate_runtime_provenance(
     protocol: dict[str, Any],
     cases: list[dict[str, Any]],
     gold_document: dict[str, Any],
+    confirmatory_manifest: dict[str, Any] | None = None,
 ) -> None:
     """Bind signed provider outputs to the exact frozen evaluation inputs."""
     if provider_batch.get("evaluation_scope") not in EVALUATION_SCOPES:
         raise ValueError("runtime evaluation scope is invalid")
+    if provider_batch.get("evaluation_scope") == "confirmatory":
+        if (
+            not isinstance(confirmatory_manifest, dict)
+            or provider_batch.get("confirmatory_manifest_sha256")
+            != canonical_digest(confirmatory_manifest)
+            or provider_batch.get("claim_scope") != CONFIRMATORY_CLAIM_SCOPE
+        ):
+            raise ValueError("runtime confirmatory provenance mismatch")
     skill_sha256 = provider_batch.get("skill_sha256")
     activation_probe = provider_batch.get("activation_probe")
     if (
@@ -1211,6 +1596,9 @@ def run_runtime_batch(
     cases: list[dict[str, Any]],
     gold_document: dict[str, Any],
     trusted_signer_public_keys: set[str],
+    confirmatory_manifest: dict[str, Any],
+    trusted_prior_fingerprints: list[dict[str, str]],
+    trusted_confirmatory_signer_public_keys: set[str],
     skill_path: str | Path,
     codex_binary: str,
     model: str,
@@ -1231,6 +1619,13 @@ def run_runtime_batch(
         expected_count=protocol["acceptance"]["case_count"],
         trusted_signer_public_keys=trusted_signer_public_keys,
     )
+    validate_confirmatory_manifest(
+        confirmatory_manifest,
+        cases=cases,
+        gold_document=gold_document,
+        trusted_prior_fingerprints=trusted_prior_fingerprints,
+        trusted_signer_public_keys=trusted_confirmatory_signer_public_keys,
+    )
     root = _validate_artifact_root(
         artifact_root,
         repo_root=repo_root or Path(__file__).resolve().parents[1],
@@ -1240,6 +1635,15 @@ def run_runtime_batch(
     root.mkdir(parents=True, exist_ok=True)
     skill_text = Path(skill_path).read_text(encoding="utf-8")
     skill_sha256 = _sha256_text(skill_text)
+    if confirmatory_manifest["transmission"]["payload_sha256"] != (
+        confirmatory_external_payload_digest(cases, gold_document, skill_sha256)
+    ):
+        raise ValueError("confirmatory external transmission payload mismatch")
+    budget_state = new_execution_budget_state(confirmatory_manifest["budget"])
+    assert_execution_budget_available(
+        budget_state,
+        required_external_calls=1 + protocol["activation"]["max_attempts"],
+    )
     activation_probe = run_activation_probe(
         protocol=protocol,
         skill_path=skill_path,
@@ -1254,6 +1658,13 @@ def run_runtime_batch(
         or activation_probe.get("skill_sha256") != skill_sha256
     ):
         raise ValueError("activation probe does not match the runtime batch")
+    for provider_id, execution in activation_probe["executions"].items():
+        consume_execution_budget(
+            budget_state,
+            execution,
+            failure_receipt_path=root / "confirmatory-budget-failure.json",
+            execution_id=f"{batch_id}:activation-probe:{provider_id}",
+        )
     receipt = secrets.token_hex(32)
     instrumented_skill = instrument_skill(skill_text, receipt)
     activation_schema = build_activation_output_schema(
@@ -1280,6 +1691,18 @@ def run_runtime_batch(
             workspace = baseline_root if provider_id == "baseline-plan" else omc_root
             output_path = root / "outputs" / case["case_id"] / f"{provider_id}.json"
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            remaining_calls = (
+                budget_state["maximum_external_calls"]
+                - budget_state["used_external_calls"]
+            )
+            max_attempts = (
+                1
+                if provider_id == "baseline-plan"
+                else min(protocol["activation"]["max_attempts"], remaining_calls)
+            )
+            assert_execution_budget_available(
+                budget_state, required_external_calls=max_attempts
+            )
             execution = execute_provider(
                 provider_id=provider_id,
                 request=case["request"],
@@ -1294,7 +1717,7 @@ def run_runtime_batch(
                 expected_activation_receipt=receipt,
                 baseline_sentinel=protocol["activation"]["baseline_sentinel"],
                 timeout_sec=protocol["execution"]["timeout_sec"],
-                max_activation_attempts=protocol["activation"]["max_attempts"],
+                max_activation_attempts=max_attempts,
                 failure_receipt_path=output_path.with_suffix(".failure.json"),
             )
             executions.append({
@@ -1302,6 +1725,12 @@ def run_runtime_batch(
                 "case_id": case["case_id"],
                 "plan_execution_id": f"{batch_id}:{case['case_id']}:{provider_id}",
             })
+            consume_execution_budget(
+                budget_state,
+                execution,
+                failure_receipt_path=root / "confirmatory-budget-failure.json",
+                execution_id=f"{batch_id}:{case['case_id']}:{provider_id}",
+            )
 
     sessions, private_mapping = build_runtime_blind_batch(
         executions,
@@ -1313,6 +1742,8 @@ def run_runtime_batch(
         "schema_version": 1,
         "batch_id": batch_id,
         "evaluation_scope": "confirmatory",
+        "claim_scope": confirmatory_manifest["claim_scope"],
+        "confirmatory_manifest_sha256": canonical_digest(confirmatory_manifest),
         "protocol_sha256": canonical_digest(protocol),
         "corpus_sha256": canonical_digest(cases),
         "gold_sha256": gold_document["gold_sha256"],
@@ -1322,6 +1753,7 @@ def run_runtime_batch(
         "activation_probe": activation_probe,
         "model": model,
         "reasoning_effort": reasoning_effort,
+        "execution_budget": budget_state,
         "executions": executions,
     }
     provider_batch["runtime_attestation"] = build_runtime_attestation(
@@ -1437,6 +1869,9 @@ def finalize_runtime_batch(
     cases: list[dict[str, Any]],
     gold_document: dict[str, Any],
     trusted_signer_public_keys: set[str],
+    confirmatory_manifest: dict[str, Any],
+    trusted_prior_fingerprints: list[dict[str, str]],
+    trusted_confirmatory_signer_public_keys: set[str],
     provider_batch: dict[str, Any],
     blind_sessions: list[dict[str, Any]],
     private_mapping: dict[str, dict[str, str]],
@@ -1463,6 +1898,18 @@ def finalize_runtime_batch(
         expected_count=expected_count,
         trusted_signer_public_keys=trusted_signer_public_keys,
     )
+    validate_confirmatory_manifest(
+        confirmatory_manifest,
+        cases=cases,
+        gold_document=gold_document,
+        trusted_prior_fingerprints=trusted_prior_fingerprints,
+        trusted_signer_public_keys=trusted_confirmatory_signer_public_keys,
+    )
+    skill_sha256 = provider_batch.get("skill_sha256")
+    if confirmatory_manifest["transmission"]["payload_sha256"] != (
+        confirmatory_external_payload_digest(cases, gold_document, skill_sha256)
+    ):
+        raise ValueError("confirmatory external transmission payload mismatch")
     verify_runtime_attestation(
         provider_batch,
         blind_sessions,
@@ -1474,6 +1921,7 @@ def finalize_runtime_batch(
         protocol=protocol,
         cases=cases,
         gold_document=gold_document,
+        confirmatory_manifest=confirmatory_manifest,
     )
     activation_probe = provider_batch.get("activation_probe")
     if (
@@ -1485,6 +1933,12 @@ def finalize_runtime_batch(
         raise ValueError("runtime activation probe mismatch")
     executions = validate_runtime_executions(
         provider_batch.get("executions"), expected_case_count=expected_count
+    )
+    validate_execution_budget_evidence(
+        provider_batch.get("execution_budget"),
+        activation_probe=activation_probe,
+        executions=executions,
+        expected_budget=confirmatory_manifest["budget"],
     )
     execution_identities = [
         (item.get("provider_id"), item.get("case_id"))
@@ -1580,11 +2034,15 @@ def finalize_runtime_batch(
             "runtime_attestation"
         ]["provider_execution_evidence_sha256"],
         "execution_config": runtime_execution_config(provider_batch),
+        "claim_scope": provider_batch.get("claim_scope"),
         "provenance": {
             "protocol_sha256": provider_batch.get("protocol_sha256"),
             "corpus_sha256": provider_batch.get("corpus_sha256"),
             "gold_sha256": provider_batch.get("gold_sha256"),
             "skill_sha256": provider_batch.get("skill_sha256"),
+            "confirmatory_manifest_sha256": provider_batch.get(
+                "confirmatory_manifest_sha256"
+            ),
         },
     }
     report["final_report_attestation"] = build_final_report_attestation(
@@ -1614,6 +2072,11 @@ def main() -> int:
     validate_parser.add_argument(
         "--trusted-gold-signer-public-key", action="append", required=True
     )
+    validate_parser.add_argument("--confirmatory-manifest", required=True)
+    validate_parser.add_argument("--trusted-prior-registry", required=True)
+    validate_parser.add_argument(
+        "--trusted-confirmatory-signer-public-key", action="append", required=True
+    )
 
     assess_parser = subparsers.add_parser("assess")
     assess_parser.add_argument("protocol")
@@ -1634,6 +2097,11 @@ def main() -> int:
     batch_parser.add_argument("cases")
     batch_parser.add_argument("gold")
     batch_parser.add_argument("--trusted-gold-signer-public-key", action="append", required=True)
+    batch_parser.add_argument("--confirmatory-manifest", required=True)
+    batch_parser.add_argument("--trusted-prior-registry", required=True)
+    batch_parser.add_argument(
+        "--trusted-confirmatory-signer-public-key", action="append", required=True
+    )
     batch_parser.add_argument("--skill-file", required=True)
     batch_parser.add_argument("--model", required=True)
     batch_parser.add_argument("--reasoning-effort", default="low")
@@ -1684,6 +2152,11 @@ def main() -> int:
     finalize_parser.add_argument(
         "--trusted-gold-signer-public-key", action="append", required=True
     )
+    finalize_parser.add_argument("--confirmatory-manifest", required=True)
+    finalize_parser.add_argument("--trusted-prior-registry", required=True)
+    finalize_parser.add_argument(
+        "--trusted-confirmatory-signer-public-key", action="append", required=True
+    )
     finalize_parser.add_argument("--trusted-adjudicator-public-key", required=True)
     finalize_parser.add_argument("--trusted-runtime-signer-public-key", required=True)
     finalize_parser.add_argument("--adjudicator-private-key-file", required=True)
@@ -1722,6 +2195,17 @@ def main() -> int:
             gold,
             expected_count=protocol["acceptance"]["case_count"],
             trusted_signer_public_keys=set(args.trusted_gold_signer_public_key),
+        )
+        validate_confirmatory_manifest(
+            _load_json(args.confirmatory_manifest),
+            cases=cases["cases"],
+            gold_document=gold,
+            trusted_prior_fingerprints=_load_prior_registry(
+                args.trusted_prior_registry
+            ),
+            trusted_signer_public_keys=set(
+                args.trusted_confirmatory_signer_public_key
+            ),
         )
         print("runtime corpus valid")
         return 0
@@ -1793,6 +2277,13 @@ def main() -> int:
             cases=cases["cases"],
             gold_document=_load_json(args.gold),
             trusted_signer_public_keys=set(args.trusted_gold_signer_public_key),
+            confirmatory_manifest=_load_json(args.confirmatory_manifest),
+            trusted_prior_fingerprints=_load_prior_registry(
+                args.trusted_prior_registry
+            ),
+            trusted_confirmatory_signer_public_keys=set(
+                args.trusted_confirmatory_signer_public_key
+            ),
             provider_batch=_load_json(args.provider_batch),
             blind_sessions=_load_json(args.blind_sessions),
             private_mapping=_load_json(args.private_mapping),
@@ -1821,6 +2312,13 @@ def main() -> int:
         cases=cases["cases"],
         gold_document=gold,
         trusted_signer_public_keys=set(args.trusted_gold_signer_public_key),
+        confirmatory_manifest=_load_json(args.confirmatory_manifest),
+        trusted_prior_fingerprints=_load_prior_registry(
+            args.trusted_prior_registry
+        ),
+        trusted_confirmatory_signer_public_keys=set(
+            args.trusted_confirmatory_signer_public_key
+        ),
         skill_path=args.skill_file,
         codex_binary=args.codex_binary,
         model=args.model,
@@ -2082,6 +2580,7 @@ def decide_confirmed_superiority(
         "corpus_sha256",
         "gold_sha256",
         "skill_sha256",
+        "confirmatory_manifest_sha256",
     }
     provenances = [report.get("provenance") for report in batch_reports]
     if any(
@@ -2093,6 +2592,11 @@ def decide_confirmed_superiority(
         raise ValueError("superiority frozen inputs are invalid")
     if any(provenance != provenances[0] for provenance in provenances[1:]):
         raise ValueError("superiority frozen inputs do not match")
+    if any(
+        report.get("claim_scope") != CONFIRMATORY_CLAIM_SCOPE
+        for report in batch_reports
+    ):
+        raise ValueError("superiority claim scope is invalid")
 
     decision_payloads = [report.get("decision") for report in batch_reports]
     if any(

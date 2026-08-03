@@ -39,6 +39,12 @@ def _protocol():
             "runs_per_provider": 2,
             "max_metric_delta": 0.10,
         },
+        "confirmatory": {
+            "manifest_required": True,
+            "claim_scope": "single_confirmatory_corpus",
+            "observed_total_token_stop_threshold": 1_200_000,
+            "maximum_external_calls": 30,
+        },
         "acceptance": {
             "case_count": 10,
             "minimum_executable_task_rate": 0.80,
@@ -64,12 +70,12 @@ def _case(index=1):
         "source_type": "observed_anonymized",
         "request": "Add bounded retry handling without changing the public API.",
         "provenance": {
-            "source_sha256": "a" * 64,
+            "source_sha256": runtime._sha256_text(f"source-{index}"),
             "anonymization_reviewed": True,
             "approved": True,
         },
         "context_files": {
-            "src/service.py": "def run():\n    return None\n",
+            "src/service.py": f"CASE_ID = {index}\n\ndef run():\n    return None\n",
             "tests/test_service.py": "def test_run():\n    assert True\n",
         },
     }
@@ -123,6 +129,68 @@ def _signer():
         format=serialization.PublicFormat.Raw,
     )).decode("ascii")
     return private_key, public_key
+
+
+def _signed_confirmatory_manifest(
+    cases, gold, *, prior_cases=None, skill_sha256="a" * 64
+):
+    private_key, public_key = _signer()
+    prior_cases = [_case(99)] if prior_cases is None else prior_cases
+    prior_fingerprints = [
+        {
+            "case_id": case["case_id"],
+            "source_sha256": case["provenance"]["source_sha256"],
+            "context_sha256": case["context_sha256"],
+        }
+        for case in prior_cases
+    ]
+    manifest = {
+        "schema_version": 1,
+        "status": "signed_off",
+        "producer": "fixture-curator",
+        "corpus_sha256": runtime.canonical_digest(cases),
+        "gold_sha256": gold["gold_sha256"],
+        "sampling": {
+            "source_window": "2026-08-01/2026-08-03",
+            "eligibility_rule": "observed requests not used by prior evaluations",
+            "ordering_rule": "source timestamp ascending, then source hash",
+            "sampling_frame_sha256": runtime._sha256_text("sampling-frame"),
+        },
+        "prior_registry_sha256": runtime.canonical_digest(prior_fingerprints),
+        "prior_fingerprints": prior_fingerprints,
+        "selected_fingerprints": [
+            {
+                "case_id": case["case_id"],
+                "source_sha256": case["provenance"]["source_sha256"],
+                "context_sha256": case["context_sha256"],
+            }
+            for case in cases
+        ],
+        "gold_independence": {
+            "author_session_id": "gold-author-session",
+            "reviewer_session_id": "gold-reviewer-session",
+            "provider_outputs_available": False,
+        },
+        "budget": {
+            "observed_total_token_stop_threshold": 1_200_000,
+            "maximum_external_calls": 30,
+        },
+        "transmission": {
+            "payload_sha256": runtime.confirmatory_external_payload_digest(
+                cases, gold, skill_sha256
+            ),
+            "approved": True,
+        },
+        "claim_scope": "single_confirmatory_corpus",
+        "signoff": {
+            "signer": "independent-confirmatory-reviewer",
+            "signer_public_key": public_key,
+        },
+    }
+    manifest["signoff"]["signature"] = base64.b64encode(
+        private_key.sign(runtime.confirmatory_manifest_signoff_payload(manifest))
+    ).decode("ascii")
+    return manifest, public_key
 
 
 def _adjudications(sessions):
@@ -194,6 +262,11 @@ def test_protocol_rejects_unfrozen_thresholds():
     with pytest.raises(ValueError, match="superiority"):
         runtime.validate_runtime_protocol(protocol)
 
+    protocol = _protocol()
+    protocol["confirmatory"]["claim_scope"] = "global_replacement"
+    with pytest.raises(ValueError, match="confirmatory"):
+        runtime.validate_runtime_protocol(protocol)
+
 
 def test_corpus_requires_ten_observed_anonymized_cases_and_approved_gold():
     cases = [_case(index) for index in range(1, 11)]
@@ -248,6 +321,264 @@ def test_corpus_rejects_untrusted_or_unsigned_gold():
     with pytest.raises(ValueError, match="signature"):
         runtime.validate_runtime_corpus(
             cases, gold, expected_count=10, trusted_signer_public_keys=trusted
+        )
+
+
+def test_confirmatory_manifest_binds_sampling_gold_and_disjoint_fingerprints():
+    cases = [_case(index) for index in range(1, 11)]
+    gold, _ = _signed_gold(cases, [_gold(index) for index in range(1, 11)])
+    manifest, trusted = _signed_confirmatory_manifest(cases, gold)
+
+    runtime.validate_confirmatory_manifest(
+        manifest,
+        cases=cases,
+        gold_document=gold,
+        trusted_prior_fingerprints=manifest["prior_fingerprints"],
+        trusted_signer_public_keys={trusted},
+    )
+
+    prior = [_case(99)]
+    manifest, trusted = _signed_confirmatory_manifest(cases, gold, prior_cases=prior)
+    manifest["prior_fingerprints"][0]["source_sha256"] = cases[0]["provenance"]["source_sha256"]
+    manifest["prior_registry_sha256"] = runtime.canonical_digest(
+        manifest["prior_fingerprints"]
+    )
+    signer, trusted = _signer()
+    manifest["signoff"]["signer_public_key"] = trusted
+    manifest["signoff"]["signature"] = base64.b64encode(
+        signer.sign(runtime.confirmatory_manifest_signoff_payload(manifest))
+    ).decode("ascii")
+    with pytest.raises(ValueError, match="source fingerprint overlap"):
+        runtime.validate_confirmatory_manifest(
+            manifest,
+            cases=cases,
+            gold_document=gold,
+            trusted_prior_fingerprints=manifest["prior_fingerprints"],
+            trusted_signer_public_keys={trusted},
+        )
+
+    manifest, trusted = _signed_confirmatory_manifest(cases, gold)
+    trusted_prior = [
+        *manifest["prior_fingerprints"],
+        runtime._case_fingerprint(cases[0]),
+    ]
+    with pytest.raises(ValueError, match="prior registry"):
+        runtime.validate_confirmatory_manifest(
+            manifest,
+            cases=cases,
+            gold_document=gold,
+            trusted_prior_fingerprints=trusted_prior,
+            trusted_signer_public_keys={trusted},
+        )
+
+
+def test_confirmatory_manifest_rejects_gold_role_or_provider_leakage():
+    cases = [_case(index) for index in range(1, 11)]
+    gold, _ = _signed_gold(cases, [_gold(index) for index in range(1, 11)])
+    manifest, trusted = _signed_confirmatory_manifest(cases, gold)
+    manifest["gold_independence"]["reviewer_session_id"] = "gold-author-session"
+    with pytest.raises(ValueError, match="gold sessions must be independent"):
+        runtime.validate_confirmatory_manifest(
+            manifest,
+            cases=cases,
+            gold_document=gold,
+            trusted_prior_fingerprints=manifest["prior_fingerprints"],
+            trusted_signer_public_keys={trusted},
+        )
+
+    manifest, trusted = _signed_confirmatory_manifest(cases, gold)
+    manifest["gold_independence"]["provider_outputs_available"] = True
+    with pytest.raises(ValueError, match="provider outputs must be unavailable"):
+        runtime.validate_confirmatory_manifest(
+            manifest,
+            cases=cases,
+            gold_document=gold,
+            trusted_prior_fingerprints=manifest["prior_fingerprints"],
+            trusted_signer_public_keys={trusted},
+        )
+
+
+def test_confirmatory_budget_stops_before_next_execution():
+    state = runtime.new_execution_budget_state({
+        "observed_total_token_stop_threshold": 100,
+        "maximum_external_calls": 2,
+    })
+    runtime.consume_execution_budget(
+        state,
+        {
+            "activation": {"attempt_count": 1},
+            "usage": {
+                "status": "observed",
+                "input_tokens": 40,
+                "output_tokens": 10,
+                "total_tokens": 50,
+            },
+        },
+    )
+    runtime.assert_execution_budget_available(state)
+    runtime.consume_execution_budget(
+        state,
+        {
+            "activation": {"attempt_count": 1},
+            "usage": {
+                "status": "observed",
+                "input_tokens": 40,
+                "output_tokens": 10,
+                "total_tokens": 50,
+            },
+        },
+    )
+    with pytest.raises(RuntimeError, match="external call budget exhausted"):
+        runtime.assert_execution_budget_available(state)
+
+
+def test_confirmatory_token_budget_is_an_auditable_stop_threshold(tmp_path):
+    assert runtime.FROZEN_CONFIRMATORY_BUDGET == {
+        "observed_total_token_stop_threshold": 1_200_000,
+        "maximum_external_calls": 30,
+    }
+    state = runtime.new_execution_budget_state({
+        "observed_total_token_stop_threshold": 100,
+        "maximum_external_calls": 2,
+    })
+    state["used_total_tokens"] = 99
+    receipt = tmp_path / "budget-failure.json"
+
+    runtime.assert_execution_budget_available(state)
+    with pytest.raises(RuntimeError, match="observed total token stop threshold exceeded"):
+        runtime.consume_execution_budget(
+            state,
+            {
+                "activation": {"attempt_count": 1},
+                "usage": {
+                    "status": "observed",
+                    "input_tokens": 1,
+                    "output_tokens": 1,
+                    "total_tokens": 2,
+                },
+            },
+            failure_receipt_path=receipt,
+            execution_id="confirmatory:case-01:omc-plan",
+        )
+    assert state["used_total_tokens"] == 101
+    assert state["used_external_calls"] == 1
+    assert json.loads(receipt.read_text(encoding="utf-8")) == {
+        "schema_version": 1,
+        "status": "failed",
+        "reason_code": "observed_token_stop_threshold_exceeded",
+        "execution_id": "confirmatory:case-01:omc-plan",
+        "execution_budget_state": state,
+        "usage": {
+            "status": "observed",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "total_tokens": 2,
+        },
+    }
+
+
+def test_confirmatory_budget_rejects_overrun_and_tampered_state():
+    state = runtime.new_execution_budget_state({
+        "observed_total_token_stop_threshold": 100,
+        "maximum_external_calls": 2,
+    })
+    with pytest.raises(RuntimeError, match="observed total token stop threshold exceeded"):
+        runtime.consume_execution_budget(
+            state,
+            {
+                "activation": {"attempt_count": 1},
+                "usage": {
+                    "status": "observed",
+                    "input_tokens": 90,
+                    "output_tokens": 20,
+                    "total_tokens": 110,
+                },
+            },
+        )
+
+    tampered = runtime.new_execution_budget_state({
+        "observed_total_token_stop_threshold": 100,
+        "maximum_external_calls": 2,
+    })
+    tampered["used_external_calls"] = -1
+    with pytest.raises(ValueError, match="execution budget state"):
+        runtime.validate_execution_budget_state(
+            tampered,
+            expected_budget={
+                "observed_total_token_stop_threshold": 100,
+                "maximum_external_calls": 2,
+            },
+        )
+
+
+def test_confirmatory_budget_must_match_execution_evidence():
+    activation_probe = {
+        "executions": {
+            provider_id: {
+                "activation": {"attempt_count": 1},
+                "usage": {
+                    "status": "observed",
+                    "input_tokens": 4,
+                    "output_tokens": 1,
+                    "total_tokens": 5,
+                },
+            }
+            for provider_id in runtime.PROVIDERS
+        }
+    }
+    executions = [
+        {
+            "activation": {"attempt_count": 1},
+            "usage": {
+                "status": "observed",
+                "input_tokens": 8,
+                "output_tokens": 2,
+                "total_tokens": 10,
+            },
+        }
+        for _ in range(20)
+    ]
+    reported = {
+        **runtime.FROZEN_CONFIRMATORY_BUDGET,
+        "used_total_tokens": 0,
+        "used_external_calls": 0,
+    }
+    with pytest.raises(ValueError, match="execution budget evidence mismatch"):
+        runtime.validate_execution_budget_evidence(
+            reported,
+            activation_probe=activation_probe,
+            executions=executions,
+            expected_budget=runtime.FROZEN_CONFIRMATORY_BUDGET,
+        )
+
+
+def test_confirmatory_budget_rejects_inconsistent_activation_usage():
+    activation_probe = {
+        "executions": {
+            provider_id: {
+                "activation": {"attempt_count": 1},
+                "usage": {
+                    "status": "observed",
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "total_tokens": 0,
+                },
+            }
+            for provider_id in runtime.PROVIDERS
+        }
+    }
+    reported = {
+        **runtime.FROZEN_CONFIRMATORY_BUDGET,
+        "used_total_tokens": 0,
+        "used_external_calls": len(runtime.PROVIDERS),
+    }
+
+    with pytest.raises(ValueError, match="budget evidence"):
+        runtime.validate_execution_budget_evidence(
+            reported,
+            activation_probe=activation_probe,
+            executions=[],
+            expected_budget=runtime.FROZEN_CONFIRMATORY_BUDGET,
         )
 
 
@@ -739,15 +1070,17 @@ def test_superiority_requires_two_independent_candidate_batches():
             "decision": {"decision": decision, "batch_id": batch_id},
             "sealed_provider_batch_sha256": artifact_hash,
             "provider_execution_evidence_sha256": execution_hash or artifact_hash,
-            "execution_config": {
-                "model": model,
-                "reasoning_effort": reasoning_effort,
-            },
-            "provenance": {
+                "execution_config": {
+                    "model": model,
+                    "reasoning_effort": reasoning_effort,
+                },
+                "claim_scope": runtime.CONFIRMATORY_CLAIM_SCOPE,
+                "provenance": {
                 "protocol_sha256": "1" * 64,
                 "corpus_sha256": "2" * 64,
                 "gold_sha256": "3" * 64,
-                "skill_sha256": "4" * 64,
+                    "skill_sha256": "4" * 64,
+                    "confirmatory_manifest_sha256": "5" * 64,
             },
         }
         report["final_report_attestation"] = runtime.build_final_report_attestation(
@@ -838,15 +1171,17 @@ def test_main_confirms_superiority_from_two_signed_reports(
             },
             "sealed_provider_batch_sha256": marker * 64,
             "provider_execution_evidence_sha256": marker * 64,
-            "execution_config": {
-                "model": "gpt-test",
-                "reasoning_effort": "low",
-            },
-            "provenance": {
+                "execution_config": {
+                    "model": "gpt-test",
+                    "reasoning_effort": "low",
+                },
+                "claim_scope": runtime.CONFIRMATORY_CLAIM_SCOPE,
+                "provenance": {
                 "protocol_sha256": "1" * 64,
                 "corpus_sha256": "2" * 64,
                 "gold_sha256": "3" * 64,
-                "skill_sha256": "4" * 64,
+                    "skill_sha256": "4" * 64,
+                    "confirmatory_manifest_sha256": "5" * 64,
             },
         }
         report["final_report_attestation"] = runtime.build_final_report_attestation(
@@ -1020,6 +1355,9 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
     skill_path = tmp_path / "SKILL.md"
     skill_path.write_text("# OMC Plan\n", encoding="utf-8")
     skill_hash = runtime._sha256_text(skill_path.read_text(encoding="utf-8"))
+    confirmatory_manifest, confirmatory_signer = _signed_confirmatory_manifest(
+        cases, gold, skill_sha256=skill_hash
+    )
     calls = []
 
     def fake_probe(**kwargs):
@@ -1029,6 +1367,18 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
             "skill_sha256": skill_hash,
             "model": kwargs["model"],
             "reasoning_effort": kwargs["reasoning_effort"],
+            "executions": {
+                provider_id: {
+                    "activation": {"attempt_count": 1},
+                    "usage": {
+                        "status": "observed",
+                        "input_tokens": 1,
+                        "output_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                }
+                for provider_id in runtime.PROVIDERS
+            },
         }
 
     def fake_execute_provider(**kwargs):
@@ -1068,6 +1418,9 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
         cases=cases,
         gold_document=gold,
         trusted_signer_public_keys=trusted,
+        confirmatory_manifest=confirmatory_manifest,
+        trusted_prior_fingerprints=confirmatory_manifest["prior_fingerprints"],
+        trusted_confirmatory_signer_public_keys={confirmatory_signer},
         skill_path=skill_path,
         codex_binary="codex",
         model="gpt-test",
@@ -1095,6 +1448,9 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
         cases=cases,
         gold_document=gold,
         trusted_signer_public_keys=trusted,
+        confirmatory_manifest=confirmatory_manifest,
+        trusted_prior_fingerprints=confirmatory_manifest["prior_fingerprints"],
+        trusted_confirmatory_signer_public_keys={confirmatory_signer},
         provider_batch=result["provider_batch"],
         blind_sessions=json.loads(
             (tmp_path / "batch/blind-sessions.json").read_text(encoding="utf-8")
@@ -1377,18 +1733,45 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
         )
     ).decode("ascii")
     runtime_signer, runtime_signer_public_key = _signer()
+    confirmatory_manifest, confirmatory_signer = _signed_confirmatory_manifest(
+        cases, gold, skill_sha256=skill_sha256
+    )
     provider_batch = {
         "schema_version": 1,
         "batch_id": "runtime-finalize",
         "evaluation_scope": "confirmatory",
+        "claim_scope": runtime.CONFIRMATORY_CLAIM_SCOPE,
+        "confirmatory_manifest_sha256": runtime.canonical_digest(
+            confirmatory_manifest
+        ),
         "protocol_sha256": runtime.canonical_digest(_protocol()),
         "corpus_sha256": runtime.canonical_digest(cases),
         "gold_sha256": gold["gold_sha256"],
         "skill_sha256": skill_sha256,
         "model": "gpt-test",
         "reasoning_effort": "low",
-        "activation_probe": {"status": "pass", "skill_sha256": skill_sha256},
+        "activation_probe": {
+            "status": "pass",
+            "skill_sha256": skill_sha256,
+            "executions": {
+                provider_id: {
+                    "activation": {"attempt_count": 1},
+                    "usage": {
+                        "status": "observed",
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "total_tokens": 0,
+                    },
+                }
+                for provider_id in runtime.PROVIDERS
+            },
+        },
         "activation_probe_sha256": "",
+        "execution_budget": {
+            **runtime.FROZEN_CONFIRMATORY_BUDGET,
+            "used_total_tokens": 300,
+            "used_external_calls": 22,
+        },
         "executions": executions,
     }
     provider_batch["activation_probe_sha256"] = runtime.canonical_digest(
@@ -1406,6 +1789,9 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
         cases=cases,
         gold_document=gold,
         trusted_signer_public_keys=trusted_gold,
+        confirmatory_manifest=confirmatory_manifest,
+        trusted_prior_fingerprints=confirmatory_manifest["prior_fingerprints"],
+        trusted_confirmatory_signer_public_keys={confirmatory_signer},
         provider_batch=provider_batch,
         blind_sessions=sessions,
         private_mapping=mapping,
@@ -1431,6 +1817,39 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
         report, trusted_public_key=adjudicator_public_key
     )
     assert (tmp_path / "finalized/runtime-final-report.json").is_file()
+
+    payload_tampered_manifest = deepcopy(confirmatory_manifest)
+    payload_tampered_manifest["transmission"]["payload_sha256"] = "f" * 64
+    signer, signer_public_key = _signer()
+    payload_tampered_manifest["signoff"]["signer_public_key"] = signer_public_key
+    payload_tampered_manifest["signoff"]["signature"] = base64.b64encode(
+        signer.sign(
+            runtime.confirmatory_manifest_signoff_payload(
+                payload_tampered_manifest
+            )
+        )
+    ).decode("ascii")
+    with pytest.raises(ValueError, match="transmission payload mismatch"):
+        runtime.finalize_runtime_batch(
+            protocol=_protocol(),
+            cases=cases,
+            gold_document=gold,
+            trusted_signer_public_keys=trusted_gold,
+            confirmatory_manifest=payload_tampered_manifest,
+            trusted_prior_fingerprints=payload_tampered_manifest[
+                "prior_fingerprints"
+            ],
+            trusted_confirmatory_signer_public_keys={signer_public_key},
+            provider_batch=provider_batch,
+            blind_sessions=sessions,
+            private_mapping=mapping,
+            adjudication_results=adjudications,
+            adjudicator_private_key=adjudicator_key,
+            trusted_adjudicator_public_key=adjudicator_public_key,
+            adjudicator="independent-test-adjudicator",
+            artifact_root=tmp_path / "payload-tampered",
+            trusted_runtime_signer_public_key=runtime_signer_public_key,
+        )
 
 
 def test_finalize_rejects_tampered_provider_batch():
@@ -1489,6 +1908,9 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
     cases = [_case(index) for index in range(1, 11)]
     gold, _ = _signed_gold(cases, [_gold(index) for index in range(1, 11)])
     skill_sha256 = "a" * 64
+    confirmatory_manifest, _ = _signed_confirmatory_manifest(
+        cases, gold, skill_sha256=skill_sha256
+    )
     executions = []
     for case in cases:
         for provider_id in runtime.PROVIDERS:
@@ -1505,6 +1927,10 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
             })
     provider_batch = {
         "evaluation_scope": "confirmatory",
+        "claim_scope": runtime.CONFIRMATORY_CLAIM_SCOPE,
+        "confirmatory_manifest_sha256": runtime.canonical_digest(
+            confirmatory_manifest
+        ),
         "protocol_sha256": runtime.canonical_digest(protocol),
         "corpus_sha256": runtime.canonical_digest(cases),
         "gold_sha256": gold["gold_sha256"],
@@ -1517,6 +1943,7 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
         protocol=protocol,
         cases=cases,
         gold_document=gold,
+        confirmatory_manifest=confirmatory_manifest,
     )
 
     missing_scope = deepcopy(provider_batch)
@@ -1527,6 +1954,7 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
             protocol=protocol,
             cases=cases,
             gold_document=gold,
+            confirmatory_manifest=confirmatory_manifest,
         )
 
     provider_batch["corpus_sha256"] = "b" * 64
@@ -1536,6 +1964,7 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
             protocol=protocol,
             cases=cases,
             gold_document=gold,
+            confirmatory_manifest=confirmatory_manifest,
         )
 
     provider_batch["corpus_sha256"] = runtime.canonical_digest(cases)
@@ -1546,6 +1975,7 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
             protocol=protocol,
             cases=cases,
             gold_document=gold,
+            confirmatory_manifest=confirmatory_manifest,
         )
 
     provider_batch["gold_sha256"] = gold["gold_sha256"]
@@ -1556,6 +1986,7 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
             protocol=protocol,
             cases=cases,
             gold_document=gold,
+            confirmatory_manifest=confirmatory_manifest,
         )
 
     provider_batch["activation_probe"]["skill_sha256"] = skill_sha256
@@ -1566,4 +1997,5 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
             protocol=protocol,
             cases=cases,
             gold_document=gold,
+            confirmatory_manifest=confirmatory_manifest,
         )

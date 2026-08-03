@@ -26,6 +26,12 @@
     "runs_per_provider": 2,
     "max_metric_delta": 0.1
   },
+  "confirmatory": {
+    "manifest_required": true,
+    "claim_scope": "single_confirmatory_corpus",
+    "observed_total_token_stop_threshold": 1200000,
+    "maximum_external_calls": 30
+  },
   "acceptance": {
     "case_count": 10,
     "minimum_executable_task_rate": 0.8,

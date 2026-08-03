@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from omc_review_runner import (
     _CODEX_REVIEW_OUTPUT_SCHEMA_PATH,
+    _parse_findings,
     normalize_review_result,
     run_codex_review,
     run_native_codex_review,
@@ -19,6 +20,38 @@ from omc_review_runner import (
 
 def _contract_output(verdict: str, evidence: str, findings: list[dict[str, object]] | None = None) -> str:
     return json.dumps({"verdict": verdict, "evidence": evidence, "findings": findings or []})
+
+
+def test_omc_review_skill_empty_result_sections_are_parser_safe():
+    skill = (
+        Path(__file__).resolve().parents[1]
+        / ".agents"
+        / "skills"
+        / "omc-review"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    for severity in ("치명", "중대", "경미", "제안"):
+        assert f"[{severity}]\n" in skill
+        assert f"[{severity}] —" not in skill
+
+    empty_output = "\n".join(
+        [
+            "[치명]",
+            "- 없음",
+            "[중대]",
+            "- 없음",
+            "[경미]",
+            "- 없음",
+            "[제안]",
+            "- 없음",
+            "[확인 필요]",
+            "- 없음",
+            "VERDICT: APPROVE",
+        ]
+    )
+
+    assert _parse_findings(empty_output) == []
 
 
 def test_run_codex_review_marks_missing_verdict_as_failed(monkeypatch, tmp_path):
