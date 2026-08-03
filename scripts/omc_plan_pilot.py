@@ -1779,6 +1779,10 @@ def build_adjudication_prompt(session: dict[str, Any]) -> str:
         "for implementation-detail endpoints. Do not return dependency_hits. Do not return "
         "unexpected_dependency_edges. The runner derives both deterministically. "
         "Do not infer unstated behavior or reuse indexes from another item. "
+        "Apply the same semantic standard to every plan for the same case; equivalent "
+        "claims must receive identical mappings. Do not reward verbosity, task count, "
+        "or repeated claims. A sibling surface remaining unchanged does not satisfy "
+        "preservation of behavior inside the modified target. "
         "Return only schema-valid JSON."
     )
     return instructions + "\n\n" + json.dumps(

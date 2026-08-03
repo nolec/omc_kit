@@ -788,6 +788,17 @@ def test_adjudicator_prompt_separates_plan_requirements_from_gold_indexes():
     assert '"requirements": 2' in prompt
 
 
+def test_adjudicator_prompt_requires_symmetric_semantic_scoring():
+    prompt = omc_plan_pilot.build_adjudication_prompt(
+        _indexed_adjudication_session()
+    )
+
+    assert "same semantic standard" in prompt
+    assert "Do not reward verbosity" in prompt
+    assert "sibling surface" in prompt
+    assert "modified target" in prompt
+
+
 def test_adjudication_output_schema_enforces_item_local_bounds():
     schema = omc_plan_pilot.build_adjudication_output_schema(
         _indexed_adjudication_session()
