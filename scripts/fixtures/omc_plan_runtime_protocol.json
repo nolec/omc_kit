@@ -18,7 +18,8 @@
     "forbidden_for_baseline": true,
     "proof_method": "output_nonce",
     "output_field": "runtime_activation_receipt",
-    "baseline_sentinel": "unavailable"
+    "baseline_sentinel": "unavailable",
+    "max_attempts": 2
   },
   "variability": {
     "development_case_count": 4,

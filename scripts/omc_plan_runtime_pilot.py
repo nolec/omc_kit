@@ -327,6 +327,7 @@ def validate_runtime_protocol(protocol: dict[str, Any]) -> dict[str, Any]:
         "proof_method",
         "output_field",
         "baseline_sentinel",
+        "max_attempts",
     }
     if not isinstance(activation, dict) or set(activation) != expected_activation:
         raise ValueError("activation contract fields are invalid")
@@ -338,6 +339,8 @@ def validate_runtime_protocol(protocol: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("activation output_field must be frozen")
     if activation["baseline_sentinel"] != "unavailable":
         raise ValueError("activation baseline_sentinel must be frozen")
+    if activation["max_attempts"] != 2:
+        raise ValueError("activation max_attempts must match the frozen contract")
 
     variability = protocol["variability"]
     if set(variability) != {
@@ -652,7 +655,13 @@ def build_provider_prompt(provider_id: str, request: str) -> str:
             "Do not modify files.\n\n" + request
         )
     if provider_id == "omc-plan":
-        return receipt_instruction + "$omc-plan\n\n" + request
+        return (
+            receipt_instruction
+            + "Load and apply the project skill named `omc-plan` before planning. "
+            + "Do not produce the plan until that skill is active.\n\n"
+            + "$omc-plan\n\n"
+            + request
+        )
     raise ValueError(f"unsupported provider: {provider_id}")
 
 
@@ -702,8 +711,11 @@ def execute_provider(
     expected_activation_receipt: str,
     baseline_sentinel: str,
     timeout_sec: int,
+    max_activation_attempts: int = 1,
     failure_receipt_path: str | Path | None = None,
 ) -> dict[str, Any]:
+    if type(max_activation_attempts) is not int or not 1 <= max_activation_attempts <= 2:
+        raise ValueError("max_activation_attempts must be 1 or 2")
     command = build_codex_command(
         codex_binary=codex_binary,
         model=model,
@@ -713,68 +725,99 @@ def execute_provider(
         output_path=output_path,
     )
     prompt = build_provider_prompt(provider_id, request)
-    try:
-        completed = subprocess.run(
-            command,
-            input=prompt,
-            text=True,
-            capture_output=True,
-            cwd=workspace,
-            check=False,
-            timeout=timeout_sec,
-        )
-    except subprocess.TimeoutExpired as exc:
-        _write_failure_receipt(
-            failure_receipt_path,
-            provider_id=provider_id,
-            reason_code="provider_timeout",
-            timeout_sec=timeout_sec,
-        )
-        raise RuntimeError(f"Codex runtime execution timed out after {timeout_sec}s") from exc
-    if completed.returncode != 0:
-        _write_failure_receipt(
-            failure_receipt_path,
-            provider_id=provider_id,
-            reason_code="provider_execution_failed",
-            timeout_sec=timeout_sec,
-            returncode=completed.returncode,
-            stderr=completed.stderr,
-        )
-        raise RuntimeError(completed.stderr.strip() or "Codex runtime execution failed")
-    try:
-        raw_output = Path(output_path).read_text(encoding="utf-8")
-        plan = json.loads(raw_output)
-        if not isinstance(plan, dict):
-            raise ValueError("provider output must be a JSON object")
-        activation = require_activation_receipt(
-            plan,
-            provider_id=provider_id,
-            expected_receipt=expected_activation_receipt,
-            baseline_sentinel=baseline_sentinel,
-        )
-        activation["skill_sha256"] = skill_sha256
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        reason_code = (
-            str(exc).split(":", 1)[0]
-            if isinstance(exc, ValueError) and ":" in str(exc)
-            else "provider_output_invalid"
-        )
-        _write_failure_receipt(
-            failure_receipt_path,
-            provider_id=provider_id,
-            reason_code=reason_code,
-            timeout_sec=timeout_sec,
-        )
-        raise RuntimeError(f"provider output invalid: {exc}") from exc
+    attempt_limit = max_activation_attempts if provider_id == "omc-plan" else 1
+    attempt_events: list[str] = []
+    attempt_usages: list[dict[str, Any]] = []
+    for attempt_index in range(1, attempt_limit + 1):
+        try:
+            completed = subprocess.run(
+                command,
+                input=prompt,
+                text=True,
+                capture_output=True,
+                cwd=workspace,
+                check=False,
+                timeout=timeout_sec,
+            )
+        except subprocess.TimeoutExpired as exc:
+            _write_failure_receipt(
+                failure_receipt_path,
+                provider_id=provider_id,
+                reason_code="provider_timeout",
+                timeout_sec=timeout_sec,
+            )
+            raise RuntimeError(
+                f"Codex runtime execution timed out after {timeout_sec}s"
+            ) from exc
+        if completed.returncode != 0:
+            _write_failure_receipt(
+                failure_receipt_path,
+                provider_id=provider_id,
+                reason_code="provider_execution_failed",
+                timeout_sec=timeout_sec,
+                returncode=completed.returncode,
+                stderr=completed.stderr,
+            )
+            raise RuntimeError(
+                completed.stderr.strip() or "Codex runtime execution failed"
+            )
+        attempt_events.append(completed.stdout)
+        attempt_usages.append(extract_usage(completed.stdout))
+        try:
+            raw_output = Path(output_path).read_text(encoding="utf-8")
+            plan = json.loads(raw_output)
+            if not isinstance(plan, dict):
+                raise ValueError("provider output must be a JSON object")
+            activation = require_activation_receipt(
+                plan,
+                provider_id=provider_id,
+                expected_receipt=expected_activation_receipt,
+                baseline_sentinel=baseline_sentinel,
+            )
+            activation["skill_sha256"] = skill_sha256
+            activation["attempt_count"] = attempt_index
+            activation["retry_count"] = attempt_index - 1
+            break
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            activation_miss = (
+                provider_id == "omc-plan"
+                and isinstance(exc, ValueError)
+                and str(exc).startswith("activation_receipt_mismatch:")
+            )
+            if activation_miss and attempt_index < attempt_limit:
+                miss_path = Path(output_path).with_name(
+                    f"{Path(output_path).stem}.activation-miss-{attempt_index:02d}"
+                    f"{Path(output_path).suffix}"
+                )
+                miss_path.write_text(raw_output, encoding="utf-8")
+                continue
+            reason_code = (
+                str(exc).split(":", 1)[0]
+                if isinstance(exc, ValueError) and ":" in str(exc)
+                else "provider_output_invalid"
+            )
+            _write_failure_receipt(
+                failure_receipt_path,
+                provider_id=provider_id,
+                reason_code=reason_code,
+                timeout_sec=timeout_sec,
+                attempt_count=attempt_index if activation_miss else None,
+                usage=(
+                    _aggregate_attempt_usage(attempt_usages)
+                    if activation_miss
+                    else None
+                ),
+            )
+            raise RuntimeError(f"provider output invalid: {exc}") from exc
     del plan["runtime_activation_receipt"]
     normalized_output = json.dumps(plan, ensure_ascii=False, sort_keys=True)
-    usage = extract_usage(completed.stdout)
+    usage = _aggregate_attempt_usage(attempt_usages)
     return {
         "provider_id": provider_id,
         "plan": plan,
         "raw_output": normalized_output,
         "runtime_raw_output_sha256": _sha256_text(raw_output),
-        "events_jsonl": completed.stdout,
+        "events_jsonl": "\n".join(attempt_events),
         "activation": activation,
         "usage": usage,
         "command_sha256": _sha256_text(json.dumps(command, ensure_ascii=False)),
@@ -790,6 +833,8 @@ def _write_failure_receipt(
     timeout_sec: int,
     returncode: int | None = None,
     stderr: str = "",
+    attempt_count: int | None = None,
+    usage: dict[str, Any] | None = None,
 ) -> None:
     if path is None:
         return
@@ -804,6 +849,10 @@ def _write_failure_receipt(
         "returncode": returncode,
         "stderr_sha256": _sha256_text(stderr),
     }
+    if attempt_count is not None:
+        receipt["attempt_count"] = attempt_count
+    if usage is not None:
+        receipt["usage"] = usage
     receipt_path.write_text(
         json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -828,6 +877,19 @@ def extract_usage(events_jsonl: str) -> dict[str, Any]:
                 "total_tokens": input_tokens + output_tokens,
             }
     return {"status": "unavailable"}
+
+
+def _aggregate_attempt_usage(usages: list[dict[str, Any]]) -> dict[str, Any]:
+    if not usages or any(usage.get("status") != "observed" for usage in usages):
+        return {"status": "unavailable"}
+    input_tokens = sum(usage["input_tokens"] for usage in usages)
+    output_tokens = sum(usage["output_tokens"] for usage in usages)
+    return {
+        "status": "observed",
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    }
 
 
 def run_activation_probe(
@@ -884,6 +946,7 @@ def run_activation_probe(
             expected_activation_receipt=receipt,
             baseline_sentinel=protocol["activation"]["baseline_sentinel"],
             timeout_sec=protocol["execution"]["timeout_sec"],
+            max_activation_attempts=protocol["activation"]["max_attempts"],
             failure_receipt_path=outputs / f"{provider_id}.failure.json",
         )
 
@@ -1106,6 +1169,7 @@ def run_runtime_batch(
                 expected_activation_receipt=receipt,
                 baseline_sentinel=protocol["activation"]["baseline_sentinel"],
                 timeout_sec=protocol["execution"]["timeout_sec"],
+                max_activation_attempts=protocol["activation"]["max_attempts"],
                 failure_receipt_path=output_path.with_suffix(".failure.json"),
             )
             executions.append({

@@ -32,6 +32,7 @@ def _protocol():
             "proof_method": "output_nonce",
             "output_field": "runtime_activation_receipt",
             "baseline_sentinel": "unavailable",
+            "max_attempts": 2,
         },
         "variability": {
             "development_case_count": 4,
@@ -252,6 +253,7 @@ def test_corpus_rejects_untrusted_or_unsigned_gold():
 def test_activation_uses_hidden_output_nonce_instead_of_unsupported_events():
     protocol = runtime.validate_runtime_protocol(_protocol())
     assert protocol["activation"]["proof_method"] == "output_nonce"
+    assert protocol["activation"]["max_attempts"] == 2
     assert "accepted_event_types" not in protocol["activation"]
 
     evidence = runtime.require_activation_receipt(
@@ -429,6 +431,125 @@ def test_execute_provider_preserves_activation_and_usage(tmp_path, monkeypatch):
     assert result["activation"]["status"] == "observed"
     assert "runtime_activation_receipt" not in result["plan"]
     assert result["usage"]["total_tokens"] == 15
+
+
+def test_execute_provider_retries_one_activation_miss_and_counts_all_usage(
+    tmp_path, monkeypatch
+):
+    output_path = tmp_path / "output.json"
+    receipts = iter(["unavailable", "secret-nonce"])
+    usages = iter([(10, 5), (20, 7)])
+    calls = 0
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, input_tokens, output_tokens):
+            self.stdout = json.dumps({
+                "type": "turn.completed",
+                "usage": {
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                },
+            })
+
+    def fake_run(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        output_path.write_text(json.dumps({
+            "requirements": [],
+            "runtime_activation_receipt": next(receipts),
+        }), encoding="utf-8")
+        return Completed(*next(usages))
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    result = runtime.execute_provider(
+        provider_id="omc-plan",
+        request="Plan this change",
+        workspace=tmp_path,
+        codex_binary="codex",
+        model="gpt-test",
+        reasoning_effort="low",
+        sandbox="read-only",
+        output_schema="schema.json",
+        output_path=output_path,
+        skill_sha256="c" * 64,
+        expected_activation_receipt="secret-nonce",
+        baseline_sentinel="unavailable",
+        timeout_sec=180,
+        max_activation_attempts=2,
+    )
+
+    assert calls == 2
+    assert result["activation"]["attempt_count"] == 2
+    assert result["activation"]["retry_count"] == 1
+    assert result["usage"] == {
+        "status": "observed",
+        "input_tokens": 30,
+        "output_tokens": 12,
+        "total_tokens": 42,
+    }
+    first_attempt = tmp_path / "output.activation-miss-01.json"
+    assert json.loads(first_attempt.read_text(encoding="utf-8"))[
+        "runtime_activation_receipt"
+    ] == "unavailable"
+
+
+def test_execute_provider_blocks_after_two_activation_misses_with_usage_receipt(
+    tmp_path, monkeypatch
+):
+    output_path = tmp_path / "output.json"
+    failure_path = tmp_path / "failure.json"
+    calls = 0
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+        stdout = json.dumps({
+            "type": "turn.completed",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        })
+
+    def fake_run(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        output_path.write_text(json.dumps({
+            "requirements": [],
+            "runtime_activation_receipt": "unavailable",
+        }), encoding="utf-8")
+        return Completed()
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="activation_receipt_mismatch"):
+        runtime.execute_provider(
+            provider_id="omc-plan",
+            request="Plan this change",
+            workspace=tmp_path,
+            codex_binary="codex",
+            model="gpt-test",
+            reasoning_effort="low",
+            sandbox="read-only",
+            output_schema="schema.json",
+            output_path=output_path,
+            skill_sha256="c" * 64,
+            expected_activation_receipt="secret-nonce",
+            baseline_sentinel="unavailable",
+            timeout_sec=180,
+            max_activation_attempts=2,
+            failure_receipt_path=failure_path,
+        )
+
+    assert calls == 2
+    failure = json.loads(failure_path.read_text(encoding="utf-8"))
+    assert failure["reason_code"] == "activation_receipt_mismatch"
+    assert failure["attempt_count"] == 2
+    assert failure["usage"] == {
+        "status": "observed",
+        "input_tokens": 20,
+        "output_tokens": 10,
+        "total_tokens": 30,
+    }
 
 
 def test_execute_provider_persists_timeout_failure_receipt(tmp_path, monkeypatch):
