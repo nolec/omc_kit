@@ -1110,6 +1110,189 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
     assert report["decision"]["decision"] == "REPLACEABLE"
 
 
+def test_diagnostic_rejudge_preserves_provider_evidence_and_blocks_replacement(tmp_path):
+    cases = [_case(index) for index in range(1, 11)]
+    original_gold, original_trusted = _signed_gold(
+        cases, [_gold(index) for index in range(1, 11)]
+    )
+    amended_items = deepcopy(original_gold["cases"])
+    amended_items[0]["required_items"][0]["description"] = "Amended behavior"
+    amended_gold, amended_trusted = _signed_gold(cases, amended_items)
+    executions = []
+    for index, case in enumerate(cases, start=1):
+        for provider_id in runtime.PROVIDERS:
+            plan = {
+                "requirements_covered": ["REQ-1"],
+                "scope_items": [],
+                "dependency_edges": [],
+                "tasks": [{
+                    "id": "T-1",
+                    "target": "src/service.py",
+                    "action": "Implement the required behavior",
+                    "verify": "Run tests",
+                    "supports": ["REQ-1"],
+                }],
+                "assumptions": [],
+                "decisions_required": [],
+            }
+            executions.append({
+                "case_id": case["case_id"],
+                "provider_id": provider_id,
+                "plan_execution_id": f"original:{index}:{provider_id}",
+                "plan": plan,
+                "raw_output": json.dumps(plan),
+                "events_jsonl": "",
+                "activation": {"status": "observed", "skill_sha256": "b" * 64},
+                "usage": {
+                    "status": "observed",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                },
+                "command_sha256": "c" * 64,
+                "prompt_sha256": runtime._sha256_text(
+                    runtime.build_provider_prompt(provider_id, case["request"])
+                ),
+            })
+    original_sessions, original_mapping = runtime.build_runtime_blind_batch(
+        executions,
+        batch_id="original-batch",
+        session_count=5,
+        gold_document=original_gold,
+    )
+    runtime_signer, runtime_public_key = _signer()
+    activation_probe = {
+        "status": "pass",
+        "skill_sha256": "b" * 64,
+    }
+    original_batch = {
+        "schema_version": 1,
+        "batch_id": "original-batch",
+        "protocol_sha256": runtime.canonical_digest(_protocol()),
+        "corpus_sha256": runtime.canonical_digest(cases),
+        "gold_sha256": original_gold["gold_sha256"],
+        "skill_sha256": "b" * 64,
+        "instrumented_skill_sha256": "d" * 64,
+        "activation_probe_sha256": runtime.canonical_digest(activation_probe),
+        "activation_probe": activation_probe,
+        "model": "gpt-test",
+        "reasoning_effort": "low",
+        "executions": executions,
+    }
+    original_batch["runtime_attestation"] = runtime.build_runtime_attestation(
+        original_batch,
+        original_sessions,
+        original_mapping,
+        private_key=runtime_signer,
+        signer_public_key=runtime_public_key,
+    )
+    original_evidence = runtime.provider_execution_evidence_digest(original_batch)
+
+    result = runtime.build_diagnostic_rejudge_batch(
+        protocol=_protocol(),
+        cases=cases,
+        original_gold_document=original_gold,
+        amended_gold_document=amended_gold,
+        trusted_signer_public_keys=original_trusted | amended_trusted,
+        original_provider_batch=original_batch,
+        original_blind_sessions=original_sessions,
+        original_private_mapping=original_mapping,
+        trusted_original_runtime_signer_public_key=runtime_public_key,
+        runtime_signer_private_key=runtime_signer,
+        runtime_signer_public_key=runtime_public_key,
+        batch_id="diagnostic-rejudge",
+        artifact_root=tmp_path / "diagnostic",
+    )
+
+    diagnostic_batch = result["provider_batch"]
+    assert diagnostic_batch["evaluation_scope"] == "diagnostic_posthoc_gold_amendment"
+    assert diagnostic_batch["gold_sha256"] == amended_gold["gold_sha256"]
+    assert runtime.provider_execution_evidence_digest(diagnostic_batch) == original_evidence
+    assert diagnostic_batch["source_runtime_attestation_sha256"] == runtime.canonical_digest(
+        original_batch["runtime_attestation"]
+    )
+    runtime.verify_runtime_attestation(
+        diagnostic_batch,
+        result["blind_sessions"],
+        result["private_mapping"],
+        trusted_public_key=runtime_public_key,
+    )
+    assert runtime.decide_replacement(
+        {**_metrics(), "evaluation_scope": diagnostic_batch["evaluation_scope"]},
+        _protocol()["acceptance"],
+    )["decision"] == "DIAGNOSTIC_ONLY"
+    assert (tmp_path / "diagnostic/provider-batch.json").is_file()
+
+    occupied_root = tmp_path / "occupied-diagnostic"
+    occupied_root.mkdir()
+    (occupied_root / "runtime-final-report.json").write_text(
+        "stale report", encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="artifact root must be empty"):
+        runtime.build_diagnostic_rejudge_batch(
+            protocol=_protocol(),
+            cases=cases,
+            original_gold_document=original_gold,
+            amended_gold_document=amended_gold,
+            trusted_signer_public_keys=original_trusted | amended_trusted,
+            original_provider_batch=original_batch,
+            original_blind_sessions=original_sessions,
+            original_private_mapping=original_mapping,
+            trusted_original_runtime_signer_public_key=runtime_public_key,
+            runtime_signer_private_key=runtime_signer,
+            runtime_signer_public_key=runtime_public_key,
+            batch_id="diagnostic-rejudge-rerun",
+            artifact_root=occupied_root,
+        )
+
+
+def test_diagnostic_rejudge_rejects_tampered_original_evidence(tmp_path):
+    cases = [_case(index) for index in range(1, 11)]
+    gold, trusted = _signed_gold(cases, [_gold(index) for index in range(1, 11)])
+    signer, public_key = _signer()
+    sessions, mapping = runtime.build_runtime_blind_batch(
+        [], batch_id="original", session_count=5, gold_document=gold
+    )
+    original_batch = {
+        "schema_version": 1,
+        "batch_id": "original",
+        "protocol_sha256": runtime.canonical_digest(_protocol()),
+        "corpus_sha256": runtime.canonical_digest(cases),
+        "gold_sha256": gold["gold_sha256"],
+        "skill_sha256": "b" * 64,
+        "activation_probe": {"status": "pass", "skill_sha256": "b" * 64},
+        "executions": [],
+    }
+    original_batch["activation_probe_sha256"] = runtime.canonical_digest(
+        original_batch["activation_probe"]
+    )
+    original_batch["runtime_attestation"] = runtime.build_runtime_attestation(
+        original_batch,
+        sessions,
+        mapping,
+        private_key=signer,
+        signer_public_key=public_key,
+    )
+    original_batch["executions"] = [{"tampered": True}]
+
+    with pytest.raises(ValueError, match="runtime attestation mismatch"):
+        runtime.build_diagnostic_rejudge_batch(
+            protocol=_protocol(),
+            cases=cases,
+            original_gold_document=gold,
+            amended_gold_document=gold,
+            trusted_signer_public_keys=trusted,
+            original_provider_batch=original_batch,
+            original_blind_sessions=sessions,
+            original_private_mapping=mapping,
+            trusted_original_runtime_signer_public_key=public_key,
+            runtime_signer_private_key=signer,
+            runtime_signer_public_key=public_key,
+            batch_id="diagnostic",
+            artifact_root=tmp_path / "diagnostic",
+        )
+
+
 def test_runtime_batch_rejects_artifact_root_inside_repository(tmp_path):
     repo_root = tmp_path / "repo"
     repo_root.mkdir()

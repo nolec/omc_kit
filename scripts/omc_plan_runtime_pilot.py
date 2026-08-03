@@ -10,6 +10,7 @@ import json
 import math
 import secrets
 import subprocess
+from copy import deepcopy
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -1005,6 +1006,124 @@ def build_runtime_blind_batch(
     )
 
 
+def build_diagnostic_rejudge_batch(
+    *,
+    protocol: dict[str, Any],
+    cases: list[dict[str, Any]],
+    original_gold_document: dict[str, Any],
+    amended_gold_document: dict[str, Any],
+    trusted_signer_public_keys: set[str],
+    original_provider_batch: dict[str, Any],
+    original_blind_sessions: list[dict[str, Any]],
+    original_private_mapping: dict[str, dict[str, str]],
+    trusted_original_runtime_signer_public_key: str,
+    runtime_signer_private_key: Any,
+    runtime_signer_public_key: str,
+    batch_id: str,
+    artifact_root: str | Path,
+    repo_root: str | Path = Path(__file__).resolve().parents[1],
+) -> dict[str, Any]:
+    """Rebind attested provider outputs to amended gold for diagnostics only."""
+    root = _validate_artifact_root(artifact_root, repo_root=repo_root)
+    if root.exists() and any(root.iterdir()):
+        raise ValueError("runtime artifact root must be empty")
+    validate_runtime_protocol(protocol)
+    expected_count = protocol["acceptance"]["case_count"]
+    validate_runtime_corpus(
+        cases,
+        original_gold_document,
+        expected_count=expected_count,
+        trusted_signer_public_keys=trusted_signer_public_keys,
+    )
+    validate_runtime_corpus(
+        cases,
+        amended_gold_document,
+        expected_count=expected_count,
+        trusted_signer_public_keys=trusted_signer_public_keys,
+    )
+    verify_runtime_attestation(
+        original_provider_batch,
+        original_blind_sessions,
+        original_private_mapping,
+        trusted_public_key=trusted_original_runtime_signer_public_key,
+    )
+    if original_gold_document.get("gold_sha256") == amended_gold_document.get(
+        "gold_sha256"
+    ):
+        raise ValueError("diagnostic rejudge requires amended gold")
+    original_scope = original_provider_batch.get("evaluation_scope")
+    if original_scope not in {None, "confirmatory"}:
+        raise ValueError("diagnostic rejudge requires an original confirmatory batch")
+    original_for_validation = deepcopy(original_provider_batch)
+    original_for_validation["evaluation_scope"] = "confirmatory"
+    validate_runtime_provenance(
+        original_for_validation,
+        protocol=protocol,
+        cases=cases,
+        gold_document=original_gold_document,
+    )
+    executions = validate_runtime_executions(
+        original_provider_batch.get("executions"),
+        expected_case_count=expected_count,
+    )
+    original_evidence_sha256 = provider_execution_evidence_digest(
+        original_provider_batch
+    )
+    sessions, private_mapping = build_runtime_blind_batch(
+        executions,
+        batch_id=batch_id,
+        session_count=5,
+        gold_document=amended_gold_document,
+    )
+    provider_batch = deepcopy(_unsigned_provider_batch(original_provider_batch))
+    provider_batch.update({
+        "batch_id": batch_id,
+        "evaluation_scope": "diagnostic_posthoc_gold_amendment",
+        "gold_sha256": amended_gold_document["gold_sha256"],
+        "source_runtime_attestation_sha256": canonical_digest(
+            original_provider_batch["runtime_attestation"]
+        ),
+        "source_provider_execution_evidence_sha256": original_evidence_sha256,
+    })
+    if provider_execution_evidence_digest(provider_batch) != original_evidence_sha256:
+        raise ValueError("diagnostic rejudge changed provider execution evidence")
+    provider_batch["runtime_attestation"] = build_runtime_attestation(
+        provider_batch,
+        sessions,
+        private_mapping,
+        private_key=runtime_signer_private_key,
+        signer_public_key=runtime_signer_public_key,
+    )
+    verify_runtime_attestation(
+        provider_batch,
+        sessions,
+        private_mapping,
+        trusted_public_key=runtime_signer_public_key,
+    )
+
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "provider-batch.json").write_text(
+        json.dumps(provider_batch, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (root / "private-mapping.json").write_text(
+        json.dumps(private_mapping, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (root / "blind-sessions.json").write_text(
+        json.dumps(sessions, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    sessions_root = root / "blind-sessions"
+    sessions_root.mkdir(exist_ok=True)
+    for index, session in enumerate(sessions, start=1):
+        (sessions_root / f"session-{index:02d}.json").write_text(
+            json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    return {
+        "provider_batch": provider_batch,
+        "blind_sessions": sessions,
+        "private_mapping": private_mapping,
+    }
+
+
 def _validated_runtime_usage(usage: Any) -> dict[str, Any]:
     if usage == {"status": "unavailable"}:
         return usage
@@ -1528,6 +1647,32 @@ def main() -> int:
         "--repo-root", default=str(Path(__file__).resolve().parents[1])
     )
 
+    diagnostic_parser = subparsers.add_parser("prepare-diagnostic-rejudge")
+    diagnostic_parser.add_argument("protocol")
+    diagnostic_parser.add_argument("cases")
+    diagnostic_parser.add_argument("original_gold")
+    diagnostic_parser.add_argument("amended_gold")
+    diagnostic_parser.add_argument("original_provider_batch")
+    diagnostic_parser.add_argument("original_blind_sessions")
+    diagnostic_parser.add_argument("original_private_mapping")
+    diagnostic_parser.add_argument(
+        "--trusted-gold-signer-public-key", action="append", required=True
+    )
+    diagnostic_parser.add_argument(
+        "--trusted-original-runtime-signer-public-key", required=True
+    )
+    diagnostic_parser.add_argument(
+        "--runtime-signer-private-key-file", required=True
+    )
+    diagnostic_parser.add_argument(
+        "--trusted-runtime-signer-public-key", required=True
+    )
+    diagnostic_parser.add_argument("--artifact-root", required=True)
+    diagnostic_parser.add_argument("--batch-id", required=True)
+    diagnostic_parser.add_argument(
+        "--repo-root", default=str(Path(__file__).resolve().parents[1])
+    )
+
     finalize_parser = subparsers.add_parser("finalize")
     finalize_parser.add_argument("protocol")
     finalize_parser.add_argument("cases")
@@ -1598,6 +1743,39 @@ def main() -> int:
             artifact_root=args.artifact_root,
         )
         print(Path(args.artifact_root).resolve() / "activation-probe.json")
+        return 0
+    if args.command == "prepare-diagnostic-rejudge":
+        from omc_plan_pilot import validate_private_key_location
+
+        artifact_root = _validate_artifact_root(
+            args.artifact_root, repo_root=args.repo_root
+        )
+        runtime_signer_private_key = validate_private_key_location(
+            args.runtime_signer_private_key_file,
+            repo_root=args.repo_root,
+            artifact_root=artifact_root,
+            trusted_public_key=args.trusted_runtime_signer_public_key,
+        )
+        cases = _load_json(args.cases)
+        build_diagnostic_rejudge_batch(
+            protocol=protocol,
+            cases=cases["cases"],
+            original_gold_document=_load_json(args.original_gold),
+            amended_gold_document=_load_json(args.amended_gold),
+            trusted_signer_public_keys=set(args.trusted_gold_signer_public_key),
+            original_provider_batch=_load_json(args.original_provider_batch),
+            original_blind_sessions=_load_json(args.original_blind_sessions),
+            original_private_mapping=_load_json(args.original_private_mapping),
+            trusted_original_runtime_signer_public_key=(
+                args.trusted_original_runtime_signer_public_key
+            ),
+            runtime_signer_private_key=runtime_signer_private_key,
+            runtime_signer_public_key=args.trusted_runtime_signer_public_key,
+            batch_id=args.batch_id,
+            artifact_root=artifact_root,
+            repo_root=args.repo_root,
+        )
+        print(artifact_root / "provider-batch.json")
         return 0
     if args.command == "finalize":
         from omc_plan_pilot import validate_private_key_location
