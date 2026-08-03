@@ -863,6 +863,7 @@ def score_plan(
     )
     tasks = _require_list(plan.get("tasks"), "tasks")
     task_ids: set[str] = set()
+    executable_task_ids: set[str] = set()
     executable_steps = 0
     for index, task in enumerate(tasks):
         task = _require_object(task, f"tasks[{index}]")
@@ -885,6 +886,7 @@ def score_plan(
                 raise ValueError(f"tasks[{index}].{field} must be a string")
         if all(task[field].strip() for field in execution_fields):
             executable_steps += 1
+            executable_task_ids.add(task_id)
     labels = _open_semantic_adjudication(
         semantic_labels,
         plan=plan,
@@ -932,6 +934,24 @@ def score_plan(
         not task_links.get(task_id)
         for task_id in task_ids
     )
+    preservation_ids = {
+        requirement_id
+        for requirement_id in required_ids
+        if requirement_id.startswith("REQ-preserve-")
+    }
+    executable_links = [
+        requirement_ids
+        for task_id, requirement_ids in task_links.items()
+        if task_id in executable_task_ids
+    ]
+    linked_requirement_ids = (
+        set().union(*executable_links) if executable_links else set()
+    )
+    preservation_task_link_rate = (
+        len(preservation_ids & linked_requirement_ids) / len(preservation_ids)
+        if preservation_ids
+        else None
+    )
 
     return {
         "case_id": gold["case_id"],
@@ -947,6 +967,7 @@ def score_plan(
         "unsupported_assumptions": sorted(semantic["unsupported_assumptions"]),
         "decision_proxy": len(decisions_required),
         "bloat_ratio": bloat_steps / len(tasks) if tasks else 0.0,
+        "preservation_task_link_rate": preservation_task_link_rate,
         "output_size_chars": len(raw_output),
     }
 
@@ -1078,6 +1099,9 @@ def score_plan_batch(
                 ),
                 "decision_proxy_mean": metric_mean("decision_proxy"),
                 "bloat_ratio_mean": metric_mean("bloat_ratio"),
+                "preservation_task_link_rate_mean": metric_mean(
+                    "preservation_task_link_rate"
+                ),
                 "output_size_chars_total": sum(
                     score["output_size_chars"] for score in case_scores
                 ),

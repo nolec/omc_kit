@@ -504,7 +504,102 @@ def test_score_plan_reports_quality_and_efficiency_metrics():
     assert result["unsupported_assumptions"] == ["ASSUME-2"]
     assert result["decision_proxy"] == 1
     assert result["bloat_ratio"] == 0.5
+    assert result["preservation_task_link_rate"] is None
     assert result["output_size_chars"] == len("example output")
+
+
+def test_score_plan_requires_each_preservation_requirement_to_link_to_a_task():
+    gold = {
+        "case_id": "plan-preservation-case",
+        "required_items": [
+            {"id": "REQ-change", "weight": 2, "critical": True},
+            {"id": "REQ-preserve-sibling", "weight": 2, "critical": True},
+        ],
+        "excluded_scope": [],
+        "dependency_edges": [],
+        "allowed_assumptions": [],
+    }
+    plan = {
+        "requirements_covered": ["change", "preserve sibling"],
+        "scope_items": [],
+        "dependency_edges": [],
+        "tasks": [{
+            "id": "task-1",
+            "target": "src/service.py",
+            "action": "change behavior",
+            "verify": "pytest",
+            "supports": ["change"],
+        }],
+        "assumptions": [],
+        "decisions_required": [],
+    }
+    labels = _sealed_semantic_labels(
+        gold,
+        plan,
+        requirement_hits=["REQ-change", "REQ-preserve-sibling"],
+        task_requirement_links=[
+            {"task_id": "task-1", "requirement_ids": ["REQ-change"]},
+        ],
+    )
+
+    result = score_plan(
+        plan,
+        gold,
+        labels,
+        trusted_adjudicator_public_keys={_ADJUDICATION_PUBLIC_KEY},
+        expected_plan_producer=_PLAN_PRODUCER,
+        expected_plan_execution_id=_PLAN_EXECUTION_ID,
+    )
+
+    assert result["weighted_coverage"] == 1.0
+    assert result["preservation_task_link_rate"] == 0.0
+
+
+def test_score_plan_rejects_preservation_links_from_tasks_without_verify():
+    gold = {
+        "case_id": "plan-preservation-case",
+        "required_items": [
+            {"id": "REQ-preserve-sibling", "weight": 2, "critical": True},
+        ],
+        "excluded_scope": [],
+        "dependency_edges": [],
+        "allowed_assumptions": [],
+    }
+    plan = {
+        "requirements_covered": ["preserve sibling"],
+        "scope_items": [],
+        "dependency_edges": [],
+        "tasks": [{
+            "id": "task-1",
+            "target": "src/service.py",
+            "action": "preserve sibling behavior",
+            "verify": "",
+            "supports": ["REQ-preserve-sibling"],
+        }],
+        "assumptions": [],
+        "decisions_required": [],
+    }
+    labels = _sealed_semantic_labels(
+        gold,
+        plan,
+        requirement_hits=["REQ-preserve-sibling"],
+        task_requirement_links=[{
+            "task_id": "task-1",
+            "requirement_ids": ["REQ-preserve-sibling"],
+        }],
+    )
+
+    result = score_plan(
+        plan,
+        gold,
+        labels,
+        trusted_adjudicator_public_keys={_ADJUDICATION_PUBLIC_KEY},
+        expected_plan_producer=_PLAN_PRODUCER,
+        expected_plan_execution_id=_PLAN_EXECUTION_ID,
+    )
+
+    assert result["executable_step_rate"] == 0.0
+    assert result["preservation_task_link_rate"] == 0.0
 
 
 def test_score_plan_rejects_tasks_missing_output_schema_fields():

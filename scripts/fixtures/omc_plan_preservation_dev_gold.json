@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "status": "draft",
+  "producer": "omc-plan-preservation-development",
+  "corpus_sha256": "3820cc15b335f455f3807bf10038701f0817bb35f7d028aa2063363852f569b6",
+  "cases": [
+    {
+      "case_id": "plan-dev-preserve-ui-sibling",
+      "required_items": [
+        {"id": "REQ-hide-rejected-icon", "description": "반려 상태 아이콘을 숨긴다.", "weight": 2, "critical": true},
+        {"id": "REQ-preserve-sibling-actions", "description": "같은 목록의 다른 상태 표시와 행 동작을 변경하지 않는다.", "weight": 2, "critical": true}
+      ],
+      "excluded_scope": [],
+      "dependency_edges": [],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-dev-preserve-error-branches",
+      "required_items": [
+        {"id": "REQ-retry-twice", "description": "재시도 가능한 네트워크 오류를 최대 2회 재시도한다.", "weight": 2, "critical": true},
+        {"id": "REQ-preserve-error-branches", "description": "인증 오류와 재시도 불가능 오류의 기존 처리를 변경하지 않는다.", "weight": 2, "critical": true}
+      ],
+      "excluded_scope": [],
+      "dependency_edges": [],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-dev-preserve-config-defaults",
+      "required_items": [
+        {"id": "REQ-timeout-env", "description": "timeout 환경변수를 설정 파일 값보다 우선 적용한다.", "weight": 2, "critical": true},
+        {"id": "REQ-preserve-config-defaults", "description": "다른 설정 키의 우선순위와 기본값을 변경하지 않는다.", "weight": 2, "critical": true}
+      ],
+      "excluded_scope": [],
+      "dependency_edges": [],
+      "allowed_assumptions": []
+    },
+    {
+      "case_id": "plan-dev-preserve-data-order",
+      "required_items": [
+        {"id": "REQ-filter-cancelled", "description": "취소 항목만 결과에서 제외한다.", "weight": 2, "critical": true},
+        {"id": "REQ-preserve-data-order", "description": "남은 항목의 순서와 다른 유형의 포함 여부를 변경하지 않는다.", "weight": 2, "critical": true}
+      ],
+      "excluded_scope": [],
+      "dependency_edges": [],
+      "allowed_assumptions": []
+    }
+  ],
+  "gold_sha256": "b8f6331c33d0303c80550e96b33c096c145df8aa965570646fde02633e6e8116",
+  "signoff": null
+}

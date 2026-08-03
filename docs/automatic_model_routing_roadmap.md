@@ -21,6 +21,8 @@ Plan 품질 development pilot 완료(2026-08-02): development 4건에서 OMC Pla
 
 Plan runtime 대체·우월성 검증 기반 완료(2026-08-03): 실제 Agent Skill 활성화를 nonce receipt로 증명하고 baseline에서는 이를 금지하는 activation gate, observed anonymized holdout 10건, 동일 모델 설정의 paired execution, 5개 blind adjudication session, usage·품질 acceptance, signed gold·provider batch·runtime attestation 검증을 하나의 runner에 연결했다. 저장소 밖 artifact root 강제, protocol/corpus/gold/skill/prompt hash 교차검증, 빈 task plan 거부와 run-to-finalize 회귀까지 구현했다. 이어 weighted requirement recall `+0.05`, one-sided bootstrap 95% lower bound `> 0`, 고정 seed·10,000회 bootstrap, 독립 confirmation 2회를 우월성 계약으로 고정했다. 최종 보고서 서명, provider 실행 증거 digest, 동일 model/reasoning 검증과 `confirm-superiority` CLI까지 연결했으며 관련 Plan 회귀 `121 passed`와 OMC review `APPROVE`를 확인했다. 실제 Codex runtime holdout 2개 배치와 독립 adjudication 결과는 아직 수집하지 않았으므로 구현 완료를 대체·우월 판정으로 해석하지 않는다.
 
+Plan 인접 동작 보존 진단 보강(2026-08-03): 좁은 변경에서 제공된 근거에 직접 인접한 사용자 관찰 가능 비대상 동작을 surface당 최대 1개의 보존 요구사항으로 고정하고, 실행 가능한 task의 `supports`와 `VERIFY`에 연결하도록 `omc-plan` 계약을 보강했다. 암묵적 보존 요구사항을 포함한 development 진단 4건, `preservation_task_link_rate`, 품질·출력 token·사용자 개입 회귀 gate를 pilot에 추가했으며 development 결과가 대체·우월 주장에 사용되지 않도록 `replacement_claim_eligible=false`를 강제했다. 관련 회귀 `117 passed`를 확인했다. 진단 실행 결과와 실제 holdout 2개 배치는 아직 수집하지 않았으므로 현재 판정은 `구현 완료 / 실행 대기`다.
+
 V5 단일 child pilot 보강(2026-07-15): `noop_shadow` gate가 operator approval, plan/scope fingerprint, child/dependency readiness, sensitive scope, 단일 시도·시간·출력 예산, idempotency를 검증하도록 구현·리뷰 완료했다. 누락된 안전 메타데이터도 명시적으로 차단하며, orchestrator 위임 surface를 통한 통합 회귀까지 확인했다. 실제 executor 호출과 자동 재분배는 여전히 열지 않는다.
 
 V5 delegation contract hardening(2026-07-15): domain order의 malformed 입력, 불완전한 `execution_order`/`recovery_action`, 모순된 ready order와 누락된 `recommendation_only`를 명시적으로 거부하도록 보강했다. 관련 회귀 테스트와 TDD gate를 통과했으며, 실제 executor 호출·자동 retry·자동 재분배는 계속 비활성 상태다.
@@ -73,9 +75,9 @@ Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_pr
 
 | 상태 | 현재 근거 | 다음 마일스톤 | 종료 기준 |
 |---|---|---|---|
-| 진행중 | development 4건의 품질 동률·OMC token 약 `5.27%` 증가를 확정했고, 반복 설명·불필요한 후속 제안을 줄이는 최소 압축안을 skill과 pilot treatment에 반영했다. repository-grounded runtime runner는 skill 활성화 증명, observed holdout 10건, same-model paired execution, 5-session blind adjudication, signed provenance와 usage·품질 acceptance까지 구현·회귀 검증됐다. 고정 우월성 통계 계약과 독립 provider 실행·동일 설정을 검증하는 2회 confirmation CLI도 완료됐다. | 실제 Codex runtime으로 holdout 10건짜리 독립 2개 배치를 실행하고 각각 독립 adjudication을 완료해 품질·token 지표와 우월성 재현 여부를 판정 | OMC가 품질 동률 이상과 token acceptance를 통과하면 `대체 가능`, 두 배치 모두 primary gain·confidence gate를 통과하면 `BENCHMARK_SUPERIOR` |
+| 진행중 | development 4건의 품질 동률·OMC token 약 `5.27%` 증가를 확정했고, 반복 설명·불필요한 후속 제안을 줄이는 최소 압축안을 skill과 pilot treatment에 반영했다. repository-grounded runtime runner는 skill 활성화 증명, observed holdout 10건, same-model paired execution, 5-session blind adjudication, signed provenance와 usage·품질 acceptance까지 구현·회귀 검증됐다. 고정 우월성 통계 계약과 독립 provider 실행·동일 설정을 검증하는 2회 confirmation CLI도 완료됐다. 추가로 인접 동작 보존 요구사항을 실행 가능한 task에 연결하는 skill 계약, development 진단 4건, `preservation_task_link_rate`와 품질·token·개입 회귀 gate를 구현했고 관련 회귀 `117 passed`를 확인했다. | 보존 진단 4건을 실제 실행해 회귀 여부를 먼저 확인한 뒤, 실제 Codex runtime으로 holdout 10건짜리 독립 2개 배치를 실행하고 각각 독립 adjudication을 완료해 품질·token 지표와 우월성 재현 여부를 판정 | OMC가 품질 동률 이상과 token acceptance를 통과하면 `대체 가능`, 두 배치 모두 primary gain·confidence gate를 통과하면 `BENCHMARK_SUPERIOR` |
 
-- 현재 판정은 `development pilot 완료 / runtime·우월성 confirmation 코드 완료 / 실제 holdout 2개 배치 실행 대기`이며 Plan 우월 또는 대체 가능 판정이 아니다.
+- 현재 판정은 `development pilot 완료 / 인접 동작 보존 진단 구현 완료·실행 대기 / runtime·우월성 confirmation 코드 완료 / 실제 holdout 2개 배치 실행 대기`이며 Plan 우월 또는 대체 가능 판정이 아니다.
 - runtime runner는 claim에 영향을 주는 입력과 결과를 서명·hash로 묶지만, 실제 provider 실행 결과를 대신하지 않는다.
 - 다음 병목은 코드 구현이 아니라 실제 Codex runtime 10건짜리 독립 2개 배치와 독립 adjudication으로 품질·token acceptance와 우월성 재현 여부를 확인하는 것이다.
 

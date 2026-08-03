@@ -235,6 +235,143 @@ def test_select_benchmark_cases_supports_frozen_development_and_holdout_counts()
         omc_plan_pilot.select_benchmark_cases(_public_document(), "unknown")
 
 
+def test_development_diagnostic_replaces_only_development_cases():
+    diagnostic_public = json.loads(
+        (FIXTURES / "omc_plan_preservation_dev_cases.json").read_text(encoding="utf-8")
+    )
+    diagnostic_gold = json.loads(
+        (FIXTURES / "omc_plan_preservation_dev_gold.json").read_text(encoding="utf-8")
+    )
+
+    public, gold = omc_plan_pilot.build_development_diagnostic_documents(
+        _public_document(),
+        _signed_gold_document(),
+        diagnostic_public,
+        diagnostic_gold,
+        trusted_signer_public_keys={
+            _signed_gold_document()["signoff"]["signer_public_key"]
+        },
+    )
+
+    assert len([case for case in public["cases"] if case["split"] == "development"]) == 4
+    assert len([case for case in public["cases"] if case["split"] == "holdout"]) == 10
+    assert all(
+        case["case_id"].startswith("plan-dev-preserve-")
+        for case in public["cases"]
+        if case["split"] == "development"
+    )
+    assert [
+        case["case_id"] for case in public["cases"] if case["split"] == "holdout"
+    ] == [case["case_id"] for case in _holdout_cases()]
+    assert gold["status"] == "draft"
+    assert gold["signoff"] is None
+    omc_plan_pilot.validate_fixture_documents(
+        public,
+        gold,
+        require_signed_off=False,
+    )
+
+
+def test_development_diagnostic_validates_signed_base_before_downgrading():
+    diagnostic_public = json.loads(
+        (FIXTURES / "omc_plan_preservation_dev_cases.json").read_text(encoding="utf-8")
+    )
+    diagnostic_gold = json.loads(
+        (FIXTURES / "omc_plan_preservation_dev_gold.json").read_text(encoding="utf-8")
+    )
+    base_gold = _signed_gold_document()
+    base_gold["signoff"]["signature"] = "invalid-signature"
+
+    with pytest.raises(ValueError):
+        omc_plan_pilot.build_development_diagnostic_documents(
+            _public_document(),
+            base_gold,
+            diagnostic_public,
+            diagnostic_gold,
+            trusted_signer_public_keys={
+                _signed_gold_document()["signoff"]["signer_public_key"]
+            },
+        )
+
+
+def test_development_diagnostic_requires_implicit_preservation_gold():
+    diagnostic_public = json.loads(
+        (FIXTURES / "omc_plan_preservation_dev_cases.json").read_text(encoding="utf-8")
+    )
+    diagnostic_gold = json.loads(
+        (FIXTURES / "omc_plan_preservation_dev_gold.json").read_text(encoding="utf-8")
+    )
+
+    assert len(diagnostic_public["cases"]) == 4
+    assert len(diagnostic_gold["cases"]) == 4
+    for public_case, gold_case in zip(
+        diagnostic_public["cases"], diagnostic_gold["cases"], strict=True
+    ):
+        assert "보존" not in public_case["request"]
+        preservation = [
+            item
+            for item in gold_case["required_items"]
+            if item["id"].startswith("REQ-preserve-")
+        ]
+        assert len(preservation) == 1
+        assert preservation[0]["critical"] is True
+
+
+def test_development_diagnostic_gate_blocks_quality_cost_or_intervention_regression():
+    passing = {
+        "providers": [
+            {
+                "provider_id": "baseline-plan",
+                "summary": {
+                    "weighted_coverage_mean": 0.9,
+                    "critical_omission_count": 0,
+                    "decision_proxy_mean": 0.5,
+                    "preservation_task_link_rate_mean": 0.0,
+                },
+            },
+            {
+                "provider_id": "omc-plan",
+                "summary": {
+                    "weighted_coverage_mean": 0.9,
+                    "critical_omission_count": 0,
+                    "decision_proxy_mean": 0.5,
+                    "preservation_task_link_rate_mean": 1.0,
+                },
+            },
+        ],
+        "provider_measurements": {
+            "baseline-plan": {"output_tokens": 100},
+            "omc-plan": {"output_tokens": 105},
+        },
+    }
+
+    result = omc_plan_pilot.assess_development_diagnostic(passing)
+    assert result == {
+        "status": "pass",
+        "replacement_claim_eligible": False,
+        "failed_gates": [],
+        "output_token_ratio": 1.05,
+    }
+
+    failing = deepcopy(passing)
+    failing["providers"][1]["summary"]["critical_omission_count"] = 1
+    failing["providers"][1]["summary"]["weighted_coverage_mean"] = 0.8
+    failing["providers"][1]["summary"]["decision_proxy_mean"] = 0.75
+    failing["providers"][1]["summary"]["preservation_task_link_rate_mean"] = 0.75
+    failing["provider_measurements"]["omc-plan"]["output_tokens"] = 106
+
+    result = omc_plan_pilot.assess_development_diagnostic(failing)
+    assert result["status"] == "fail"
+    assert result["replacement_claim_eligible"] is False
+    assert result["failed_gates"] == [
+        "critical_omissions",
+        "weighted_coverage",
+        "preservation_task_links",
+        "output_tokens",
+        "decision_proxy",
+    ]
+
+
 def test_holdout_uses_five_balanced_adjudication_sessions():
     executions = []
     for case in _holdout_cases():
@@ -1197,6 +1334,7 @@ def test_full_pilot_runs_split_aware_provider_and_adjudication_counts(
         trusted_public_key=trusted_public_key,
         repo_root=Path(__file__).parents[1],
         split=split,
+        development_diagnostic=split == "development",
         omc_skill_path=skill_path if use_actual_skill else None,
         **reasoning_options,
     )
@@ -1208,6 +1346,11 @@ def test_full_pilot_runs_split_aware_provider_and_adjudication_counts(
     assert all(call[3] == expected_provider_effort for call in provider_calls)
     assert all(call[2] == expected_adjudicator_effort for call in adjudicator_calls)
     assert report["evaluation_status"] == "draft_not_for_comparison"
+    if split == "development":
+        assert report["superiority_claim_status"] == "blocked_development_diagnostic"
+        assert report["development_diagnostic"]["replacement_claim_eligible"] is False
+    else:
+        assert "development_diagnostic" not in report
     assert (artifact_root / "batch-full" / "pilot-report.json").exists()
     manifest = json.loads(
         (artifact_root / "batch-full" / "manifest.json").read_text(encoding="utf-8")

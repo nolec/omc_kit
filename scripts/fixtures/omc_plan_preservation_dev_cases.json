@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "status": "development_diagnostic",
+  "cases": [
+    {
+      "case_id": "plan-dev-preserve-ui-sibling",
+      "split": "development",
+      "task_type": "frontend_change",
+      "request": "관리자 목록에는 다른 상태 아이콘과 행 동작이 함께 있다. 반려 상태 아이콘만 숨기도록 구현 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "547165d6735840891bac033380e5b5eff852910a7230ad63b6dec4f80fad3e34"
+    },
+    {
+      "case_id": "plan-dev-preserve-error-branches",
+      "split": "development",
+      "task_type": "bugfix",
+      "request": "네트워크 오류 외에 인증 오류와 재시도 불가능 오류 분기가 있다. 재시도 가능한 네트워크 오류의 재시도 횟수만 2회로 변경하는 구현 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "9d13c0dd4870795b2f5c57fbbad0c4eb0802fb51cc428f65f610a1cfb95cac4c"
+    },
+    {
+      "case_id": "plan-dev-preserve-config-defaults",
+      "split": "development",
+      "task_type": "configuration",
+      "request": "설정에는 timeout 외 다른 키의 우선순위와 기본값이 있다. 새 timeout 환경변수만 설정 파일 값보다 우선 적용하는 구현 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "7fee04b9053f04b7f298dc5dc035bfb54507813fbdc9937a756f23d770777600"
+    },
+    {
+      "case_id": "plan-dev-preserve-data-order",
+      "split": "development",
+      "task_type": "data_processing",
+      "request": "결과 목록에는 여러 유형이 정해진 순서로 포함된다. 취소 항목만 결과 목록에서 제외하는 구현 계획을 작성하라.",
+      "source_type": "synthetic_anonymized",
+      "context_sha256": "d53d2bfb14cfa7f5a7a9ed0a33c8c3996e202e7bae1798f789f7d8715a67740d"
+    }
+  ],
+  "corpus_sha256": "3820cc15b335f455f3807bf10038701f0817bb35f7d028aa2063363852f569b6"
+}

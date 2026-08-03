@@ -66,6 +66,15 @@ REQUIRED_OUTPUT_EFFICIENCY_MARKERS = [
     "구현을 막는 항목만",
 ]
 
+REQUIRED_ADJACENT_PRESERVATION_MARKERS = [
+    "직접 인접",
+    "사용자 관찰 가능",
+    "surface당 1개",
+    "decisions_required",
+    "supports",
+    "VERIFY",
+]
+
 REQUIRED_DECISION_OUTPUT_MARKERS = [
     "decision",
     "risk",
@@ -398,6 +407,14 @@ def test_plan_skill_declares_output_efficiency_contract():
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_OUTPUT_EFFICIENCY_MARKERS if marker not in text]
     assert not missing, f"missing output efficiency markers: {missing}"
+
+
+def test_plan_skill_limits_adjacent_behavior_preservation_requirements():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    missing = [
+        marker for marker in REQUIRED_ADJACENT_PRESERVATION_MARKERS if marker not in text
+    ]
+    assert not missing, f"missing adjacent preservation markers: {missing}"
 
 
 def test_plan_skill_declares_decision_risk_next_action_contract():

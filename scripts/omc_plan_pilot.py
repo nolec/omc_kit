@@ -158,6 +158,106 @@ def select_benchmark_cases(
     return cases
 
 
+def build_development_diagnostic_documents(
+    base_public: dict[str, Any],
+    base_gold: dict[str, Any],
+    diagnostic_public: dict[str, Any],
+    diagnostic_gold: dict[str, Any],
+    *,
+    trusted_signer_public_keys: set[str] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Replace only the mutable development split while preserving holdout cases."""
+    validate_fixture_documents(
+        base_public,
+        base_gold,
+        require_signed_off=base_gold.get("status") == "signed_off",
+        trusted_signer_public_keys=trusted_signer_public_keys or set(),
+    )
+    base_gold_for_merge = deepcopy(base_gold)
+    base_gold_for_merge["status"] = "draft"
+    base_gold_for_merge["signoff"] = None
+    if set(diagnostic_public) != {"schema_version", "status", "cases", "corpus_sha256"}:
+        raise ValueError("development diagnostic public fields are invalid")
+    if set(diagnostic_gold) != {
+        "schema_version",
+        "status",
+        "producer",
+        "corpus_sha256",
+        "cases",
+        "gold_sha256",
+        "signoff",
+    }:
+        raise ValueError("development diagnostic gold fields are invalid")
+    cases = diagnostic_public.get("cases")
+    gold_cases = diagnostic_gold.get("cases")
+    if (
+        diagnostic_public.get("schema_version") != 1
+        or diagnostic_public.get("status") != "development_diagnostic"
+        or diagnostic_gold.get("schema_version") != 1
+        or diagnostic_gold.get("status") != "draft"
+        or diagnostic_gold.get("signoff") is not None
+        or not isinstance(cases, list)
+        or not isinstance(gold_cases, list)
+        or len(cases) != 4
+        or len(gold_cases) != 4
+    ):
+        raise ValueError("development diagnostic contract is invalid")
+    if (
+        diagnostic_public.get("corpus_sha256") != canonical_digest(cases)
+        or diagnostic_gold.get("corpus_sha256") != diagnostic_public["corpus_sha256"]
+        or diagnostic_gold.get("gold_sha256") != canonical_digest(gold_cases)
+    ):
+        raise ValueError("development diagnostic hash mismatch")
+    case_ids = [case.get("case_id") for case in cases]
+    gold_ids = [case.get("case_id") for case in gold_cases]
+    if len(set(case_ids)) != 4 or case_ids != gold_ids:
+        raise ValueError("development diagnostic case ids are invalid")
+    for case, gold_case in zip(cases, gold_cases, strict=True):
+        if (
+            case.get("split") != "development"
+            or case.get("source_type") != "synthetic_anonymized"
+            or case.get("context_sha256") != canonical_digest(case.get("request"))
+        ):
+            raise ValueError("development diagnostic case is invalid")
+        preservation = [
+            item
+            for item in gold_case.get("required_items", [])
+            if str(item.get("id", "")).startswith("REQ-preserve-")
+        ]
+        if len(preservation) != 1 or preservation[0].get("critical") is not True:
+            raise ValueError("development diagnostic preservation gold is invalid")
+
+    holdout_cases = [
+        deepcopy(case) for case in base_public["cases"] if case.get("split") == "holdout"
+    ]
+    holdout_ids = {case["case_id"] for case in holdout_cases}
+    holdout_gold = [
+        deepcopy(case)
+        for case in base_gold_for_merge["cases"]
+        if case.get("case_id") in holdout_ids
+    ]
+    merged_cases = deepcopy(cases) + holdout_cases
+    corpus_sha256 = canonical_digest(merged_cases)
+    merged_gold_cases = deepcopy(gold_cases) + holdout_gold
+    return (
+        {
+            "schema_version": 1,
+            "status": "frozen",
+            "cases": merged_cases,
+            "corpus_sha256": corpus_sha256,
+        },
+        {
+            "schema_version": 1,
+            "status": "draft",
+            "producer": diagnostic_gold["producer"],
+            "corpus_sha256": corpus_sha256,
+            "cases": merged_gold_cases,
+            "gold_sha256": canonical_digest(merged_gold_cases),
+            "signoff": None,
+        },
+    )
+
+
 def required_adjudication_session_count(
     *, case_count: int, pairs_per_session: int
 ) -> int:
@@ -466,8 +566,63 @@ def build_provider_measurements(
                 if usage_observed
                 else None
             ),
+            "input_tokens": (
+                sum(usage["input_tokens"] for usage in usages)
+                if usage_observed
+                else None
+            ),
+            "output_tokens": (
+                sum(usage["output_tokens"] for usage in usages)
+                if usage_observed
+                else None
+            ),
         }
     return measurements
+
+
+def assess_development_diagnostic(report: dict[str, Any]) -> dict[str, Any]:
+    """Gate mutable development evidence without allowing a replacement claim."""
+    providers = {
+        provider["provider_id"]: provider["summary"]
+        for provider in report.get("providers", [])
+    }
+    measurements = report.get("provider_measurements", {})
+    baseline = providers.get("baseline-plan", {})
+    omc = providers.get("omc-plan", {})
+    baseline_output = measurements.get("baseline-plan", {}).get("output_tokens")
+    omc_output = measurements.get("omc-plan", {}).get("output_tokens")
+    output_ratio = (
+        omc_output / baseline_output
+        if isinstance(baseline_output, (int, float))
+        and baseline_output > 0
+        and isinstance(omc_output, (int, float))
+        else None
+    )
+    failed = []
+    if omc.get("critical_omission_count") != 0:
+        failed.append("critical_omissions")
+    if (
+        not isinstance(omc.get("weighted_coverage_mean"), (int, float))
+        or not isinstance(baseline.get("weighted_coverage_mean"), (int, float))
+        or omc["weighted_coverage_mean"] < baseline["weighted_coverage_mean"]
+    ):
+        failed.append("weighted_coverage")
+    if omc.get("preservation_task_link_rate_mean") != 1.0:
+        failed.append("preservation_task_links")
+    if output_ratio is None or output_ratio > 1.05:
+        failed.append("output_tokens")
+    if (
+        not isinstance(omc.get("decision_proxy_mean"), (int, float))
+        or not isinstance(baseline.get("decision_proxy_mean"), (int, float))
+        or omc["decision_proxy_mean"] > baseline["decision_proxy_mean"]
+    ):
+        failed.append("decision_proxy")
+    return {
+        "status": "pass" if not failed else "fail",
+        "replacement_claim_eligible": False,
+        "failed_gates": failed,
+        "output_token_ratio": round(output_ratio, 6) if output_ratio is not None else None,
+    }
 
 
 def _validated_provider_usage_records(
@@ -1401,6 +1556,7 @@ def run_full_pilot(
     adjudicator_reasoning_effort: str | None = None,
     split: str,
     omc_skill_path: str | Path | None = None,
+    development_diagnostic: bool = False,
 ) -> dict[str, Any]:
     """Run one split-aware blind pilot and write one draft-safe report."""
     artifact_root = Path(artifact_root).resolve()
@@ -1545,6 +1701,9 @@ def run_full_pilot(
         trusted_gold_signer_public_keys=trusted_gold_signer_public_keys,
         require_signed_gold=require_signed_gold,
     )
+    if development_diagnostic:
+        report["development_diagnostic"] = assess_development_diagnostic(report)
+        report["superiority_claim_status"] = "blocked_development_diagnostic"
     (root / "sealed-provider-batch.json").write_text(
         json.dumps(sealed_batch, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -1757,6 +1916,8 @@ def main() -> int:
         action="store_true",
         help="Reuse a complete provider batch and rerun only blind adjudication.",
     )
+    parser.add_argument("--development-diagnostic-cases")
+    parser.add_argument("--development-diagnostic-gold")
     parser.add_argument(
         "--repo-root",
         default=str(Path(__file__).resolve().parents[1]),
@@ -1777,6 +1938,25 @@ def main() -> int:
     protocol = load_protocol(args.protocol)
     public_document = json.loads(Path(args.cases).read_text(encoding="utf-8"))
     gold_document = json.loads(Path(args.gold).read_text(encoding="utf-8"))
+    diagnostic_requested = bool(args.development_diagnostic_cases)
+    if diagnostic_requested != bool(args.development_diagnostic_gold):
+        parser.error("development diagnostic cases and gold must be supplied together")
+    if diagnostic_requested:
+        if args.split != "development" or args.require_signed_gold:
+            parser.error("development diagnostic requires unsigned development split")
+        diagnostic_public = json.loads(
+            Path(args.development_diagnostic_cases).read_text(encoding="utf-8")
+        )
+        diagnostic_gold = json.loads(
+            Path(args.development_diagnostic_gold).read_text(encoding="utf-8")
+        )
+        public_document, gold_document = build_development_diagnostic_documents(
+            public_document,
+            gold_document,
+            diagnostic_public,
+            diagnostic_gold,
+            trusted_signer_public_keys=set(args.trusted_gold_signer_public_key),
+        )
 
     def provider_executor(**kwargs: Any) -> dict[str, Any]:
         with tempfile.TemporaryDirectory(prefix="omc-plan-provider-") as workspace:
@@ -1810,6 +1990,7 @@ def main() -> int:
         adjudicator_reasoning_effort=args.adjudicator_reasoning_effort,
         split=args.split,
         omc_skill_path=args.omc_skill_file,
+        development_diagnostic=diagnostic_requested,
         private_key_path=args.adjudicator_private_key_file,
         trusted_public_key=args.trusted_adjudicator_public_key,
         repo_root=args.repo_root,
