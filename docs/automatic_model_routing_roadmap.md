@@ -35,6 +35,8 @@ Plan 신규 disjoint confirmatory 재실행 완료(2026-08-04): 동일 corpus·g
 
 Plan critical omission·output bloat 최소 교정(2026-08-04): 선택된 객체에서 동작이 시작되면 ID·수신자를 상태·payload까지 추적하도록 canonical skill과 설치 template을 보강하고, 제공된 skill/context를 한 명령으로 읽은 뒤 `pwd`·진행 전용 명령 없이 즉시 결과를 작성하도록 runtime prompt·failure gate를 추가했다. 실패 원인 4건 진단에서 output token은 `28,469 → 11,909`로 `58.17%`, total token은 `239,676 → 164,668`로 `31.30%` 감소했다. case 10 blind 재판정은 기존에 누락된 `REQ-selected-recipient`를 포함해 3개 요구사항을 모두 hit했고 unsupported assumption은 없었다. 다만 이전 baseline과의 진단 비교에서는 output ratio 약 `1.26`, total ratio 약 `1.23`으로 acceptance `1.25`·`1.05`를 모두 통과하지 못했으며, fresh paired confirmatory가 아니므로 대체 claim에는 사용하지 않는다.
 
+Plan confirmatory runtime 후속 교정(2026-08-04): 코드 리뷰에서 activation retry의 정상적인 attempt별 context read를 배치 전체 중복으로 오인하는 문제와 `rg "pwd"`처럼 `pwd`가 인자·검색어인 정상 명령까지 차단하는 문제를 발견했다. context 중복 검사를 현재 attempt로 제한하고 shell token상 실제 실행 명령이 `pwd`일 때만 차단하도록 수정했으며, 재현 테스트 2건을 포함한 Plan 회귀 `199 passed`와 OMC review `APPROVE`를 확인했다. 이 교정은 runner 신뢰도 보강이며 대체 claim 자체를 갱신하지 않는다.
+
 V5 단일 child pilot 보강(2026-07-15): `noop_shadow` gate가 operator approval, plan/scope fingerprint, child/dependency readiness, sensitive scope, 단일 시도·시간·출력 예산, idempotency를 검증하도록 구현·리뷰 완료했다. 누락된 안전 메타데이터도 명시적으로 차단하며, orchestrator 위임 surface를 통한 통합 회귀까지 확인했다. 실제 executor 호출과 자동 재분배는 여전히 열지 않는다.
 
 V5 delegation contract hardening(2026-07-15): domain order의 malformed 입력, 불완전한 `execution_order`/`recovery_action`, 모순된 ready order와 누락된 `recommendation_only`를 명시적으로 거부하도록 보강했다. 관련 회귀 테스트와 TDD gate를 통과했으며, 실제 executor 호출·자동 retry·자동 재분배는 계속 비활성 상태다.
@@ -87,11 +89,11 @@ Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_pr
 
 | 상태 | 현재 근거 | 다음 마일스톤 | 종료 기준 |
 |---|---|---|---|
-| 진행중 | 신규 disjoint confirmatory 10건은 품질 동률이었지만 critical omission `1`, OMC output `+144.34%`, total token `+54.02%`로 `NOT_PROVEN`이었다. 최소 교정 후 실패 원인 4건 진단에서 OMC output은 `58.17%`, total token은 `31.30%` 감소했고 case 10의 critical requirement 3개를 모두 hit했다. 그러나 이전 baseline 대비 진단 ratio는 output 약 `1.26`, total 약 `1.23`으로 acceptance를 아직 넘으며 fresh paired claim도 아니다. | 수정 skill hash를 동결하고 신규 disjoint 10건을 fresh paired 조건으로 실행해 critical omission `0`과 token acceptance를 재판정한다. | 신규 confirmatory holdout에서 OMC가 critical omission `0`, 품질 동률 이상, output ratio `≤1.25`, total token 증가율 `≤5%`를 모두 통과하면 `대체 가능`; 두 독립 배치 모두 primary gain·confidence gate를 통과하면 `BENCHMARK_SUPERIOR` |
+| 진행중 | 신규 disjoint confirmatory 10건은 품질 동률이었지만 critical omission `1`, OMC output `+144.34%`, total token `+54.02%`로 `NOT_PROVEN`이었다. 최소 교정 후 실패 원인 4건 진단에서 OMC output은 `58.17%`, total token은 `31.30%` 감소했고 case 10의 critical requirement 3개를 모두 hit했다. 그러나 이전 baseline 대비 진단 ratio는 output 약 `1.26`, total 약 `1.23`으로 acceptance를 아직 넘으며 fresh paired claim도 아니다. | runner·skill·model·schema·prompt hash를 독립 동결하고 UI/state, API/payload, data/indexing, backend/rules, multi-file/legacy를 각 2건씩 포함한 신규 disjoint Batch A를 실행한다. Batch A 통과 시 같은 quota의 독립 Batch B로 재현한다. | Batch A에서 critical omission `0`, 품질 동률 이상, output ratio `≤1.25`, total token 증가율 `≤5%`를 모두 통과하면 `PROVISIONALLY_REPLACEABLE`; 독립 Batch B도 같은 gate를 통과하면 `REPLACEABLE`; 두 배치 모두 primary gain·confidence gate까지 통과하면 `BENCHMARK_SUPERIOR` |
 
 - 현재 판정은 `development pilot 완료 / holdout 1차 10건 실행·재판정 완료 / 사후 gold 교정 claim 차단 완료 / 신규 disjoint confirmatory 10건 완주 / 최종 NOT_PROVEN`이며 Plan 우월 또는 대체 가능 판정이 아니다.
 - runtime runner는 claim에 영향을 주는 입력과 결과를 서명·hash로 묶지만, 실제 provider 실행 결과를 대신하지 않는다.
-- 다음 병목은 최소 교정본을 신규 disjoint fresh paired 10건에서 검증해 critical omission 제거가 일반화되는지, output·total token이 acceptance 안으로 들어오는지 확인하는 것이다. 현재 4건 진단은 교정 방향의 근거일 뿐 대체 판정이 아니다.
+- 다음 병목은 runtime·candidate hash와 semantic quota를 사전 등록한 신규 disjoint fresh paired Batch A 10건에서 critical omission 제거가 일반화되는지, output·total token이 acceptance 안으로 들어오는지 확인하는 것이다. 현재 4건 진단은 교정 방향의 근거일 뿐 대체 판정이 아니다.
 
 ### Review Quality Validation
 
