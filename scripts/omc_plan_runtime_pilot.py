@@ -8,7 +8,6 @@ import base64
 import hashlib
 import json
 import math
-import re
 import secrets
 import shlex
 import subprocess
@@ -1229,6 +1228,38 @@ def contains_redundant_context_round_trip(
     return len(read_execution_ids) > 1
 
 
+def _runs_pwd_command(command: str) -> bool:
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return False
+    if not tokens:
+        return False
+
+    shell_name = PurePosixPath(tokens[0]).name
+    if shell_name in {"sh", "bash", "zsh"}:
+        for index, token in enumerate(tokens[1:], start=1):
+            if token.startswith("-") and "c" in token and index + 1 < len(tokens):
+                return _runs_pwd_command(" ".join(tokens[index + 1 :]))
+        return False
+
+    expecting_command = True
+    for token in tokens:
+        if token and set(token) <= {";", "&", "|"}:
+            expecting_command = True
+            continue
+        if not expecting_command:
+            continue
+        if "=" in token and not token.startswith(("/", ".")):
+            continue
+        if PurePosixPath(token).name == "pwd":
+            return True
+        expecting_command = False
+    return False
+
+
 def contains_unnecessary_plan_round_trip(events_jsonl: str) -> bool:
     """Reject shell turns that add no planning evidence."""
     seen_execution_ids: set[str] = set()
@@ -1251,7 +1282,7 @@ def contains_unnecessary_plan_round_trip(events_jsonl: str) -> bool:
         if not isinstance(command, str):
             continue
         normalized = command.strip().lower()
-        if re.search(r"(?:^|[ ;'\"])(?:/bin/)?(?:zsh|bash)?\s*(?:-lc\s*)?pwd(?:[ ;'\"]|$)", normalized):
+        if _runs_pwd_command(normalized):
             return True
         if "printf " in normalized and not any(
             marker in normalized for marker in ("cat ", "rg ", "sed ", "git ")
@@ -1344,7 +1375,7 @@ def execute_provider(
             )
             raise RuntimeError("redundant_omc_state_round_trip")
         if contains_redundant_context_round_trip(
-            "\n".join(attempt_events),
+            completed.stdout,
             context_paths=context_paths,
         ):
             _write_failure_receipt(

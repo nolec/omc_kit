@@ -1091,6 +1091,28 @@ def test_plan_round_trip_gate_rejects_pwd_and_progress_only_commands():
     assert not runtime.contains_unnecessary_plan_round_trip(context_event)
 
 
+def test_plan_round_trip_gate_allows_pwd_as_a_command_argument():
+    search_event = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "id": "search-1",
+            "type": "command_execution",
+            "command": 'rg "pwd" docs/commands.md',
+        },
+    })
+    compound_pwd_event = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "id": "pwd-1",
+            "type": "command_execution",
+            "command": "/bin/zsh -lc 'cd /tmp && pwd'",
+        },
+    })
+
+    assert not runtime.contains_unnecessary_plan_round_trip(search_event)
+    assert runtime.contains_unnecessary_plan_round_trip(compound_pwd_event)
+
+
 def test_execute_provider_rejects_unnecessary_omc_plan_round_trip(
     tmp_path, monkeypatch
 ):
@@ -1267,6 +1289,65 @@ def test_execute_provider_retries_one_activation_miss_and_counts_all_usage(
         "output_tokens": 12,
         "total_tokens": 42,
     }
+
+
+def test_execute_provider_allows_one_context_read_per_activation_attempt(
+    tmp_path, monkeypatch
+):
+    output_path = tmp_path / "output.json"
+    receipts = iter(["unavailable", "secret-nonce"])
+    calls = 0
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, attempt):
+            self.stdout = "\n".join([
+                json.dumps({
+                    "type": "item.completed",
+                    "item": {
+                        "id": f"read-{attempt}",
+                        "type": "command_execution",
+                        "command": "cat -- context/a.txt",
+                    },
+                }),
+                json.dumps({
+                    "type": "turn.completed",
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                }),
+            ])
+
+    def fake_run(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        output_path.write_text(json.dumps({
+            "requirements": [],
+            "runtime_activation_receipt": next(receipts),
+        }), encoding="utf-8")
+        return Completed(calls)
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    result = runtime.execute_provider(
+        provider_id="omc-plan",
+        request="Plan this change",
+        workspace=tmp_path,
+        codex_binary="codex",
+        model="gpt-test",
+        reasoning_effort="low",
+        sandbox="read-only",
+        output_schema="schema.json",
+        output_path=output_path,
+        skill_sha256="c" * 64,
+        expected_activation_receipt="secret-nonce",
+        baseline_sentinel="unavailable",
+        timeout_sec=180,
+        max_activation_attempts=2,
+        context_paths=("context/a.txt",),
+    )
+
+    assert calls == 2
+    assert result["activation"]["retry_count"] == 1
     first_attempt = tmp_path / "output.activation-miss-01.json"
     assert json.loads(first_attempt.read_text(encoding="utf-8"))[
         "runtime_activation_receipt"
