@@ -815,6 +815,16 @@ def _load_retrieval_development_inputs():
     return corpus, batch_a
 
 
+def _load_retrieval_development_v2_inputs():
+    corpus = json.loads(
+        (FIXTURES / "omc_plan_retrieval_development_v2.json").read_text()
+    )
+    batch_a = json.loads(
+        (FIXTURES / "omc_plan_confirmatory_batch_a_selection.json").read_text()
+    )
+    return corpus, batch_a
+
+
 def _refresh_corpus_digest(corpus):
     corpus["corpus_sha256"] = context_selection.canonical_digest({
         key: value for key, value in corpus.items() if key != "corpus_sha256"
@@ -1013,6 +1023,63 @@ def test_retrieval_development_measurement_cli_writes_reproducible_report(
     assert report["development_gate_passed"] is True
     assert report["critical_path_recall"] == 1.0
     assert report["weighted_path_recall"] == 1.0
+
+
+def test_retrieval_development_v2_is_frozen_and_realistically_bilingual():
+    corpus, batch_a = _load_retrieval_development_v2_inputs()
+
+    summary = context_selection.validate_retrieval_development_corpus(
+        corpus,
+        confirmatory_selection=batch_a,
+    )
+
+    assert summary["case_count"] == 5
+    assert all(
+        not any("가" <= char <= "힣" for char in item["content_utf8"])
+        for case in corpus["cases"]
+        for item in case["context_files"]
+    )
+
+
+def test_retrieval_development_v2_passes_quality_and_privacy_gate():
+    corpus, batch_a = _load_retrieval_development_v2_inputs()
+
+    report = context_selection.measure_retrieval_development_corpus(
+        corpus,
+        confirmatory_selection=batch_a,
+        maximum_selected_files=2,
+    )
+
+    assert report == {
+        "case_count": 5,
+        "candidate_file_count": 25,
+        "eligible_file_count": 24,
+        "sensitive_file_count": 1,
+        "selected_file_count": 10,
+        "critical_path_recall": 1.0,
+        "weighted_path_recall": 1.0,
+        "file_count_reduction": 0.6,
+        "development_gate_passed": True,
+    }
+
+
+def test_baseline_only_shortlist_excludes_sensitive_high_overlap_candidate():
+    corpus, _ = _load_retrieval_development_v2_inputs()
+    retry_case = next(
+        case for case in corpus["cases"] if case["surface"] == "backend_rules"
+    )
+
+    shortlist = context_selection.build_baseline_only_shortlist(
+        retry_case,
+        maximum_selected_files=2,
+    )
+
+    assert shortlist["selected_paths"] == [
+        "src/rules/retry_budget.py",
+        "tests/rules/test_retry_budget.py",
+    ]
+    assert shortlist["sensitive_file_count"] == 1
+    assert "src/rules/retry_budget_credentials.py" not in shortlist["selected_paths"]
 
 
 def test_baseline_workspace_shortlist_builds_unsigned_packet_bound_draft(

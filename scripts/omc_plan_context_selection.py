@@ -46,6 +46,9 @@ FROZEN_SELECTION_SHA256 = (
 FROZEN_RETRIEVAL_DEVELOPMENT_SHA256 = (
     "b67eac41f9b0aaa3f21f7be86ecb9c8cb53330a6e2520035f0993b9e33ff0154"
 )
+FROZEN_RETRIEVAL_DEVELOPMENT_V2_SHA256 = (
+    "0bf7ef1546f4454b4e70f6365914332551340ec495aa50413cf05a4615fcf398"
+)
 DEFAULT_EXECUTION_BUDGET = {
     "max_provider_calls": 10,
     "timeout_seconds": 1_800,
@@ -78,6 +81,40 @@ _RETRIEVAL_FORBIDDEN_PROVENANCE_FIELDS = {
     "selection_sha256",
     "provider_output",
 }
+_REQUEST_TERM_EXPANSIONS = {
+    "편집": ("edit", "editor", "form"),
+    "저장": ("save", "saved", "unsaved", "persist", "store"),
+    "변경": ("change", "changes", "dirty", "update"),
+    "나가기": ("exit", "leave", "navigation", "route"),
+    "이탈": ("exit", "leave", "navigation", "route"),
+    "확인": ("confirm", "guard", "block"),
+    "파일": ("file", "asset"),
+    "전송": ("upload", "transfer"),
+    "업로드": ("upload", "asset"),
+    "서명": ("sign", "signed", "presigned"),
+    "주소": ("url", "uri"),
+    "만료": ("expiry", "expire", "expiration"),
+    "일회성": ("presigned", "temporary"),
+    "요청": ("request", "payload", "input"),
+    "서버": ("server", "api", "client"),
+    "판단": ("decision",),
+    "의사결정": ("decision",),
+    "영속": ("persist", "persistence", "repository", "store"),
+    "식별자": ("id", "identifier", "key"),
+    "조회": ("get", "read", "fetch", "find"),
+    "재시도": ("retry",),
+    "허용": ("allow", "budget", "remaining"),
+    "횟수": ("count", "budget", "remaining"),
+    "소진": ("exhausted", "budget", "remaining"),
+    "사유": ("reason",),
+    "실행": ("run", "execute", "job", "worker"),
+    "기존": ("legacy",),
+    "결제": ("checkout", "payment"),
+    "선택값": ("selection", "selected"),
+    "주문": ("order",),
+    "생성": ("create",),
+    "연결": ("bridge", "map", "adapter"),
+}
 
 
 def canonical_digest(value: Any) -> str:
@@ -98,7 +135,8 @@ def validate_retrieval_development_corpus(
         "schema_version", "status", "cases", "corpus_sha256"
     }:
         raise ValueError("retrieval development corpus fields are invalid")
-    if corpus["schema_version"] != 1 or corpus["status"] != "preregistered":
+    schema_version = corpus["schema_version"]
+    if schema_version not in {1, 2} or corpus["status"] != "preregistered":
         raise ValueError("retrieval development corpus status is invalid")
     if corpus["corpus_sha256"] != canonical_digest(
         _without_digest(corpus, "corpus_sha256")
@@ -222,7 +260,11 @@ def validate_retrieval_development_corpus(
 
     if any(count != 1 for count in surface_counts.values()):
         raise ValueError("retrieval development surface quota mismatch")
-    if corpus["corpus_sha256"] != FROZEN_RETRIEVAL_DEVELOPMENT_SHA256:
+    frozen_digest = {
+        1: FROZEN_RETRIEVAL_DEVELOPMENT_SHA256,
+        2: FROZEN_RETRIEVAL_DEVELOPMENT_V2_SHA256,
+    }[schema_version]
+    if corpus["corpus_sha256"] != frozen_digest:
         raise ValueError("retrieval development frozen corpus mismatch")
     return {
         "case_count": len(cases),
@@ -243,6 +285,19 @@ def _lexical_features(value: str) -> set[str]:
     return features
 
 
+def _request_features(value: str) -> set[str]:
+    features = _lexical_features(value)
+    for source, targets in _REQUEST_TERM_EXPANSIONS.items():
+        if source in value:
+            for target in targets:
+                features.update(_lexical_features(target))
+    return features
+
+
+def _contains_sensitive_text(value: str) -> bool:
+    return any(pattern.search(value) for pattern in _SENSITIVE_TEXT_PATTERNS.values())
+
+
 def build_baseline_only_shortlist(
     case: dict[str, Any], *, maximum_selected_files: int
 ) -> dict[str, Any]:
@@ -259,9 +314,22 @@ def build_baseline_only_shortlist(
         > RETRIEVAL_POLICY["maximum_selected_files_per_case"]
     ):
         raise ValueError("baseline-only shortlist input is invalid")
-    request_features = _lexical_features(case["request"])
+    request_has_korean = bool(re.search(r"[가-힣]", case["request"]))
+    content_has_korean = any(
+        isinstance(item, dict)
+        and isinstance(item.get("content_utf8"), str)
+        and re.search(r"[가-힣]", item["content_utf8"])
+        for item in case["context_files"]
+    )
+    cross_language = request_has_korean and not content_has_korean
+    request_features = (
+        _request_features(case["request"])
+        if cross_language
+        else _lexical_features(case["request"])
+    )
     ranked: list[tuple[int, str]] = []
     seen_paths: set[str] = set()
+    sensitive_file_count = 0
     for item in case["context_files"]:
         if (
             not isinstance(item, dict)
@@ -273,19 +341,34 @@ def build_baseline_only_shortlist(
             raise ValueError("baseline-only shortlist context file is invalid")
         path = item["path"]
         seen_paths.add(path)
+        if _contains_sensitive_text(item["content_utf8"]):
+            sensitive_file_count += 1
+            continue
         path_overlap = request_features & _lexical_features(path)
         content_overlap = request_features & _lexical_features(item["content_utf8"])
-        score = 4 * len(path_overlap) + len(content_overlap)
+        score = (6 if cross_language else 4) * len(path_overlap) + len(
+            content_overlap
+        )
+        if cross_language:
+            if path.startswith("docs/") or PurePosixPath(path).name.lower().startswith(
+                "readme"
+            ):
+                score -= 3
+            if re.search(r"(?:^|[./_-])(?:test|spec)(?:[./_-]|$)", path.lower()):
+                score -= 2
         ranked.append((score, path))
     if not ranked:
         raise ValueError("baseline-only shortlist requires context files")
     ranked.sort(key=lambda item: (-item[0], item[1]))
-    return {
+    result = {
         "case_id": case["case_id"],
         "selected_paths": [
             path for _, path in ranked[:maximum_selected_files]
         ],
     }
+    if sensitive_file_count:
+        result["sensitive_file_count"] = sensitive_file_count
+    return result
 
 
 def measure_retrieval_development_corpus(
@@ -300,6 +383,7 @@ def measure_retrieval_development_corpus(
         confirmatory_selection=confirmatory_selection,
     )
     candidate_count = 0
+    sensitive_file_count = 0
     selected_count = 0
     critical_total = 0
     critical_hits = 0
@@ -312,6 +396,7 @@ def measure_retrieval_development_corpus(
         )
         selected = set(shortlist["selected_paths"])
         candidate_count += len(case["context_files"])
+        sensitive_file_count += shortlist.get("sensitive_file_count", 0)
         selected_count += len(selected)
         for label in case["context_labels"]:
             weight = label["weight"]
@@ -322,7 +407,7 @@ def measure_retrieval_development_corpus(
                 critical_hits += int(label["path"] in selected)
     critical_recall = critical_hits / critical_total
     weighted_recall = weighted_hits / weighted_total
-    return {
+    report = {
         "case_count": len(corpus["cases"]),
         "candidate_file_count": candidate_count,
         "selected_file_count": selected_count,
@@ -337,6 +422,17 @@ def measure_retrieval_development_corpus(
             and selected_count < candidate_count
         ),
     }
+    if corpus["schema_version"] >= 2:
+        report["eligible_file_count"] = candidate_count - sensitive_file_count
+        report["sensitive_file_count"] = sensitive_file_count
+        report = {
+            "case_count": report.pop("case_count"),
+            "candidate_file_count": report.pop("candidate_file_count"),
+            "eligible_file_count": report.pop("eligible_file_count"),
+            "sensitive_file_count": report.pop("sensitive_file_count"),
+            **report,
+        }
+    return report
 
 
 def _without_digest(value: dict[str, Any], field: str) -> dict[str, Any]:

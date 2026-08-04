@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "status": "preregistered",
+  "cases": [
+    {
+      "case_id": "retrieval-v2-ui-unsaved-navigation",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "ui_state",
+      "request": "편집 중인 화면에서 저장되지 않은 변경이 있으면 나가기 전에 확인한다",
+      "context_files": [
+        {"path": "src/editor/UnsavedChangesGuard.tsx", "content_utf8": "export function UnsavedChangesGuard({ dirty }) { return dirty ? 'confirm' : null; }\n"},
+        {"path": "src/editor/UnsavedChangesGuard.test.tsx", "content_utf8": "test('blocks navigation while the form is dirty', () => {});\n"},
+        {"path": "src/editor/SaveButton.tsx", "content_utf8": "export function SaveButton() { return null; }\n"},
+        {"path": "src/dialogs/ConfirmDialog.tsx", "content_utf8": "export function ConfirmDialog() { return null; }\n"},
+        {"path": "src/navigation/RouteHistory.ts", "content_utf8": "export const routeHistory = [];\n"}
+      ],
+      "context_labels": [
+        {"path": "src/editor/UnsavedChangesGuard.tsx", "weight": 2, "critical": true},
+        {"path": "src/editor/UnsavedChangesGuard.test.tsx", "weight": 1, "critical": false}
+      ]
+    },
+    {
+      "case_id": "retrieval-v2-api-presigned-upload",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "api_payload",
+      "request": "파일 전송 전에 서버에서 만료되는 일회성 서명 주소를 받아 payload에 넣는다",
+      "context_files": [
+        {"path": "src/api/createPresignedUpload.ts", "content_utf8": "export async function createPresignedUpload(input) { return client.post('/uploads/sign', input); }\n"},
+        {"path": "src/api/createPresignedUpload.test.ts", "content_utf8": "test('maps signed upload URL and expiry', () => {});\n"},
+        {"path": "src/api/listUploadHistory.ts", "content_utf8": "export async function listUploadHistory() { return []; }\n"},
+        {"path": "src/api/downloadAsset.ts", "content_utf8": "export async function downloadAsset(id) { return id; }\n"},
+        {"path": "src/forms/FileField.tsx", "content_utf8": "export function FileField() { return null; }\n"}
+      ],
+      "context_labels": [
+        {"path": "src/api/createPresignedUpload.ts", "weight": 2, "critical": true},
+        {"path": "src/api/createPresignedUpload.test.ts", "weight": 1, "critical": false}
+      ]
+    },
+    {
+      "case_id": "retrieval-v2-data-decision-persistence",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "data_indexing",
+      "request": "사용자가 내린 판단을 영속화하고 식별자로 다시 조회할 수 있게 한다",
+      "context_files": [
+        {"path": "src/persistence/decision_repository.py", "content_utf8": "class DecisionRepository:\n    def put(self, decision): ...\n    def get(self, decision_id): ...\n"},
+        {"path": "tests/persistence/test_decision_repository.py", "content_utf8": "def test_round_trips_decision_by_id(): pass\n"},
+        {"path": "src/persistence/event_repository.py", "content_utf8": "class EventRepository: pass\n"},
+        {"path": "src/models/decision.py", "content_utf8": "class Decision: pass\n"},
+        {"path": "docs/data-retention.md", "content_utf8": "Retention rules for archived records.\n"}
+      ],
+      "context_labels": [
+        {"path": "src/persistence/decision_repository.py", "weight": 2, "critical": true},
+        {"path": "tests/persistence/test_decision_repository.py", "weight": 1, "critical": false}
+      ]
+    },
+    {
+      "case_id": "retrieval-v2-backend-retry-budget",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "backend_rules",
+      "request": "재시도 허용 횟수를 모두 쓰면 추가 실행을 막고 소진 사유를 반환한다",
+      "context_files": [
+        {"path": "src/rules/retry_budget.py", "content_utf8": "def consume_retry(remaining):\n    return (False, 'budget_exhausted') if remaining <= 0 else (True, None)\n"},
+        {"path": "tests/rules/test_retry_budget.py", "content_utf8": "def test_rejects_retry_after_budget_is_exhausted(): pass\n"},
+        {"path": "src/rules/retry_budget_credentials.py", "content_utf8": "password = \"synthetic-secret-value\"\nsource = \"/Users/example/private/retry-budget\"\n"},
+        {"path": "src/rules/rate_limit.py", "content_utf8": "def allow_request(): return True\n"},
+        {"path": "src/workers/retry_queue.py", "content_utf8": "def enqueue_retry(job): pass\n"}
+      ],
+      "context_labels": [
+        {"path": "src/rules/retry_budget.py", "weight": 2, "critical": true},
+        {"path": "tests/rules/test_retry_budget.py", "weight": 1, "critical": false}
+      ]
+    },
+    {
+      "case_id": "retrieval-v2-legacy-checkout-order-bridge",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "multi_file_legacy",
+      "request": "기존 결제 화면의 선택값을 신규 주문 생성 흐름으로 넘기는 연결부를 고친다",
+      "context_files": [
+        {"path": "legacy/checkout/order_bridge.js", "content_utf8": "export function mapCheckoutSelectionToOrder(selection) { return { items: selection.lines }; }\n"},
+        {"path": "legacy/checkout/order_bridge.test.js", "content_utf8": "test('maps checkout selection into order input', () => {});\n"},
+        {"path": "legacy/checkout/payment_form.js", "content_utf8": "export function PaymentForm() {}\n"},
+        {"path": "src/orders/create_order.js", "content_utf8": "export function createOrder(input) { return input; }\n"},
+        {"path": "legacy/catalog/product_picker.js", "content_utf8": "export function ProductPicker() {}\n"}
+      ],
+      "context_labels": [
+        {"path": "legacy/checkout/order_bridge.js", "weight": 2, "critical": true},
+        {"path": "legacy/checkout/order_bridge.test.js", "weight": 1, "critical": false}
+      ]
+    }
+  ],
+  "corpus_sha256": "0bf7ef1546f4454b4e70f6365914332551340ec495aa50413cf05a4615fcf398"
+}
