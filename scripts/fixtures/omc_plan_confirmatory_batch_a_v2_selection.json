@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "status": "preregistered",
+  "batch_id": "omc-plan-confirmatory-batch-a-20260805",
+  "selection_policy": {
+    "provider_outputs_available_during_selection": false,
+    "prior_registry_sha256": "61fede3660de01cfa8b18d4be384745275dd514694f656423236f3b46083bd5b",
+    "required_surface_counts": {
+      "ui_state": 2,
+      "api_payload": 2,
+      "data_indexing": 2,
+      "backend_rules": 2,
+      "multi_file_legacy": 2
+    },
+    "required_ambiguity_counts": {
+      "low": 3,
+      "medium": 4,
+      "high": 3
+    },
+    "maximum_selected_object_cases": 2
+  },
+  "cases": [
+    {
+      "case_id": "batch-a-v2-plan-01",
+      "repo_alias": "repo-a",
+      "baseline_commit": "6ee1c9d24f41456deece9d423a91dd08ac8b02d1",
+      "followup_commit": "d76f2593a9251d85fedb814db109550e220b93f3",
+      "request": "문의 작성 화면에서 주문을 선택하는 다이얼로그를 추가한다",
+      "context_candidate_paths": [
+        "libs/themes/essential/src/lib/components/QnaOrderSelectDialog/QnaOrderSelectDialog.spec.tsx",
+        "libs/themes/essential/src/lib/components/QnaOrderSelectDialog/QnaOrderSelectDialog.tsx"
+      ],
+      "surface": "ui_state",
+      "ambiguity": "low",
+      "selected_object": true
+    },
+    {
+      "case_id": "batch-a-v2-plan-02",
+      "repo_alias": "repo-b",
+      "baseline_commit": "add3b33683e29083760a6766d36a036abd2bcecf",
+      "followup_commit": "884919c7ddd5397515712db1bae01bc670614c7f",
+      "request": "포트폴리오 목록의 반려 상태에 실제 반려 사유를 표시한다",
+      "context_candidate_paths": [
+        "src/app/portfolio/_components/Table/PortfolioTable.tsx"
+      ],
+      "surface": "ui_state",
+      "ambiguity": "medium",
+      "selected_object": true
+    },
+    {
+      "case_id": "batch-a-v2-plan-03",
+      "repo_alias": "repo-a",
+      "baseline_commit": "fa9c1e5c183e11e9da8f992205c58b49098eb4a9",
+      "followup_commit": "496576704bf7eab1b68f825c5d840fcbb5d29958",
+      "request": "문의 등록과 목록 조회 API의 payload 계약을 반영한다",
+      "context_candidate_paths": [
+        "libs/theme-universe/hooks/src/lib/qna/useQnaForm.spec.ts",
+        "libs/theme-universe/hooks/src/lib/qna/useQnaForm.ts",
+        "libs/theme-universe/types/src/lib/qna.ts"
+      ],
+      "surface": "api_payload",
+      "ambiguity": "low",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-v2-plan-04",
+      "repo_alias": "repo-b",
+      "baseline_commit": "645349b7e7b2b1000c244e44e0fee40c59651ccf",
+      "followup_commit": "a0991da291135ed1f5d877dd747d3bd14b2f6462",
+      "request": "포트폴리오 수정 후 상세 조회 캐시를 정확히 무효화한다",
+      "context_candidate_paths": [
+        "src/constants/queryKey.ts",
+        "src/hooks/api/mutations/useUpdatePortfolio.ts",
+        "src/hooks/api/queries/useGetPortfolioDetail.ts"
+      ],
+      "surface": "api_payload",
+      "ambiguity": "medium",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-v2-plan-05",
+      "repo_alias": "repo-e",
+      "baseline_commit": "9064e4c9cf5d8a59677709dfb85828712ad144b7",
+      "followup_commit": "ac855ba80b0c0d53d2c5de3288fcba10dd74da21",
+      "request": "다음 날 상승 패턴 후보를 스캔하고 결과를 비교 가능하게 만든다",
+      "context_candidate_paths": [
+        "scripts/crypto_next_day_up_pattern.py",
+        "scripts/test_crypto_next_day_up_pattern.py"
+      ],
+      "surface": "data_indexing",
+      "ambiguity": "medium",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-v2-plan-06",
+      "repo_alias": "repo-f",
+      "baseline_commit": "3d474fea3e93ea6b759adbb2cb05360877fa8679",
+      "followup_commit": "a603a784c6cabfd40f4752da5a5b6752982d7187",
+      "request": "리서치 근거에서 누락된 정보와 충돌을 분석해 저장한다",
+      "context_candidate_paths": [
+        "src/market_reasoning/gaps.py",
+        "tests/integration/test_research_gap_persistence.py",
+        "tests/unit/test_research_gap.py"
+      ],
+      "surface": "data_indexing",
+      "ambiguity": "high",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-v2-plan-07",
+      "repo_alias": "repo-e",
+      "baseline_commit": "eddc540ba4cb9095cd4f8bbcdabec8bcacecec7c",
+      "followup_commit": "1a46c9fb72f938693f82d38fbba98b3943a57931",
+      "request": "상승 진입 신호에 비대칭 컨텍스트 규칙을 추가한다",
+      "context_candidate_paths": [
+        "docs/tradingview_divergence_score_indicator.pine",
+        "tests/test_tradingview_divergence_score_indicator.py"
+      ],
+      "surface": "backend_rules",
+      "ambiguity": "low",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-v2-plan-08",
+      "repo_alias": "repo-e",
+      "baseline_commit": "71ca40cc4113528c41f13ffbcc52e3d31cd8af63",
+      "followup_commit": "805d7c552dc4cb65ae38e358fcd6133d3f36f6ef",
+      "request": "fire-short 워크포워드 규칙과 승격 검증 흐름을 정렬한다",
+      "context_candidate_paths": [
+        "scripts/backtest_directional_baseline.py",
+        "tests/crypto/test_backtest_side_filter.py",
+        "tests/crypto/test_backtest_wf_params.py"
+      ],
+      "surface": "backend_rules",
+      "ambiguity": "high",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-v2-plan-09",
+      "repo_alias": "repo-a",
+      "baseline_commit": "2bf90ab1999298423d73a5173f32ec132b5feef0",
+      "followup_commit": "9cfce7bca9784a49fbeda0142e03eda985c7fa18",
+      "request": "Grid 문의 제출 후 완료 화면으로 전환하는 전체 흐름을 연결한다",
+      "context_candidate_paths": [
+        "libs/themes/grid/src/lib/__tests__/QnaForm.spec.tsx",
+        "libs/themes/grid/src/lib/sections/QnaCompleted/QnaCompleted.spec.ts",
+        "libs/themes/grid/src/lib/sections/QnaCompleted/QnaCompleted.tsx",
+        "libs/themes/grid/src/lib/sections/QnaForm/QnaForm.tsx"
+      ],
+      "surface": "multi_file_legacy",
+      "ambiguity": "medium",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-v2-plan-10",
+      "repo_alias": "repo-b",
+      "baseline_commit": "6ea2944d95397ad47edf33c9135f3cfe911c1b9b",
+      "followup_commit": "6d09ed3755a62c7c61e510ba032a2d5820a504ae",
+      "request": "파트너센터 주요 화면과 인증 흐름에 GTM 이벤트 수집을 연결한다",
+      "context_candidate_paths": [
+        "src/app/_components/Home.tsx",
+        "src/app/customer/_components/Customer.tsx",
+        "src/app/portfolio/_components/Portfolio.tsx",
+        "src/components/common/AuthProvider.tsx",
+        "src/utils/gtm/gtmService.spec.ts",
+        "src/utils/gtm/gtmService.ts"
+      ],
+      "surface": "multi_file_legacy",
+      "ambiguity": "high",
+      "selected_object": false
+    }
+  ],
+  "selection_sha256": "71c8c7ae186b0ecce09b3f4a442629c5ac72c18ab4fc7e4ddef53a8588216ea5"
+}

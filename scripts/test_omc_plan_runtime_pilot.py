@@ -562,6 +562,30 @@ def test_batch_a_candidate_selection_is_preregistered_and_disjoint():
         )
 
 
+def test_fresh_batch_a_v2_selection_consumes_the_diagnostic_batch():
+    fixture_root = Path(__file__).parent / "fixtures"
+    old_selection = json.loads(
+        (fixture_root / "omc_plan_confirmatory_batch_a_selection.json").read_text()
+    )
+    fresh_selection = json.loads(
+        (fixture_root / "omc_plan_confirmatory_batch_a_v2_selection.json").read_text()
+    )
+    prior_registry = json.loads(
+        (fixture_root / "omc_plan_confirmatory_prior_commits_v2.json").read_text()
+    )
+
+    runtime.validate_confirmatory_candidate_selection(
+        fresh_selection,
+        trusted_prior_commits=prior_registry["commits"],
+    )
+
+    old_followups = {case["followup_commit"] for case in old_selection["cases"]}
+    fresh_followups = {case["followup_commit"] for case in fresh_selection["cases"]}
+    assert old_followups <= set(prior_registry["commits"])
+    assert fresh_followups.isdisjoint(prior_registry["commits"])
+    assert len(prior_registry["commits"]) == 30
+
+
 def test_confirmatory_manifest_rejects_gold_role_or_provider_leakage():
     cases = [_case(index) for index in range(1, 11)]
     gold, _ = _signed_gold(cases, [_gold(index) for index in range(1, 11)])
