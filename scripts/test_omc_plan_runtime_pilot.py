@@ -145,8 +145,20 @@ def _signed_confirmatory_manifest(
         }
         for case in prior_cases
     ]
+    surfaces = (
+        "ui_state",
+        "api_payload",
+        "data_indexing",
+        "backend_rules",
+        "multi_file_legacy",
+    )
+    ambiguities = (
+        "low", "low", "low",
+        "medium", "medium", "medium", "medium",
+        "high", "high", "high",
+    )
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "signed_off",
         "producer": "fixture-curator",
         "corpus_sha256": runtime.canonical_digest(cases),
@@ -156,6 +168,26 @@ def _signed_confirmatory_manifest(
             "eligibility_rule": "observed requests not used by prior evaluations",
             "ordering_rule": "source timestamp ascending, then source hash",
             "sampling_frame_sha256": runtime._sha256_text("sampling-frame"),
+            "semantic_contract": {
+                "required_surface_counts": {
+                    surface: 2 for surface in surfaces
+                },
+                "required_ambiguity_counts": {
+                    "low": 3,
+                    "medium": 4,
+                    "high": 3,
+                },
+                "maximum_selected_object_cases": 2,
+                "case_labels": [
+                    {
+                        "case_id": case["case_id"],
+                        "surface": surfaces[index % len(surfaces)],
+                        "ambiguity": ambiguities[index],
+                        "selected_object": index < 2,
+                    }
+                    for index, case in enumerate(cases)
+                ],
+            },
         },
         "prior_registry_sha256": runtime.canonical_digest(prior_fingerprints),
         "prior_fingerprints": prior_fingerprints,
@@ -192,6 +224,15 @@ def _signed_confirmatory_manifest(
         private_key.sign(runtime.confirmatory_manifest_signoff_payload(manifest))
     ).decode("ascii")
     return manifest, public_key
+
+
+def _resign_confirmatory_manifest(manifest):
+    private_key, public_key = _signer()
+    manifest["signoff"]["signer_public_key"] = public_key
+    manifest["signoff"]["signature"] = base64.b64encode(
+        private_key.sign(runtime.confirmatory_manifest_signoff_payload(manifest))
+    ).decode("ascii")
+    return public_key
 
 
 def _adjudications(sessions):
@@ -404,6 +445,64 @@ def test_confirmatory_manifest_binds_sampling_gold_and_disjoint_fingerprints():
             cases=cases,
             gold_document=gold,
             trusted_prior_fingerprints=trusted_prior,
+            trusted_signer_public_keys={trusted},
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda contract: contract["case_labels"][0].update(
+                surface="api_payload"
+            ),
+            "surface quota",
+        ),
+        (
+            lambda contract: contract["case_labels"][0].update(
+                ambiguity="medium"
+            ),
+            "ambiguity quota",
+        ),
+        (
+            lambda contract: contract["case_labels"][2].update(
+                selected_object=True
+            ),
+            "selected-object quota",
+        ),
+    ],
+)
+def test_confirmatory_manifest_enforces_semantic_quota(mutation, message):
+    cases = [_case(index) for index in range(1, 11)]
+    gold, _ = _signed_gold(cases, [_gold(index) for index in range(1, 11)])
+    manifest, _ = _signed_confirmatory_manifest(cases, gold)
+    mutation(manifest["sampling"]["semantic_contract"])
+    trusted = _resign_confirmatory_manifest(manifest)
+
+    with pytest.raises(ValueError, match=message):
+        runtime.validate_confirmatory_manifest(
+            manifest,
+            cases=cases,
+            gold_document=gold,
+            trusted_prior_fingerprints=manifest["prior_fingerprints"],
+            trusted_signer_public_keys={trusted},
+        )
+
+
+def test_confirmatory_manifest_rejects_legacy_schema_without_semantic_quota():
+    cases = [_case(index) for index in range(1, 11)]
+    gold, _ = _signed_gold(cases, [_gold(index) for index in range(1, 11)])
+    manifest, _ = _signed_confirmatory_manifest(cases, gold)
+    manifest["schema_version"] = 1
+    manifest["sampling"].pop("semantic_contract")
+    trusted = _resign_confirmatory_manifest(manifest)
+
+    with pytest.raises(ValueError, match="fields are invalid"):
+        runtime.validate_confirmatory_manifest(
+            manifest,
+            cases=cases,
+            gold_document=gold,
+            trusted_prior_fingerprints=manifest["prior_fingerprints"],
             trusted_signer_public_keys={trusted},
         )
 

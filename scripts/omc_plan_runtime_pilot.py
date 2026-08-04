@@ -11,6 +11,7 @@ import math
 import secrets
 import shlex
 import subprocess
+from collections import Counter
 from copy import deepcopy
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -64,6 +65,19 @@ FROZEN_CONFIRMATORY_PROTOCOL = {
     "claim_scope": CONFIRMATORY_CLAIM_SCOPE,
     **FROZEN_CONFIRMATORY_BUDGET,
 }
+FROZEN_CONFIRMATORY_SURFACE_COUNTS = {
+    "ui_state": 2,
+    "api_payload": 2,
+    "data_indexing": 2,
+    "backend_rules": 2,
+    "multi_file_legacy": 2,
+}
+FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS = {
+    "low": 3,
+    "medium": 4,
+    "high": 3,
+}
+FROZEN_CONFIRMATORY_MAX_SELECTED_OBJECT_CASES = 2
 MAX_CONTEXT_FILE_COUNT = 20
 MAX_CONTEXT_FILE_BYTES = 128 * 1024
 MAX_CONTEXT_TOTAL_BYTES = 512 * 1024
@@ -340,6 +354,72 @@ def _validate_fingerprint(value: Any, *, label: str) -> dict[str, str]:
     return value
 
 
+def _validate_confirmatory_semantic_contract(
+    contract: Any,
+    *,
+    cases: list[dict[str, Any]],
+) -> None:
+    expected_fields = {
+        "required_surface_counts",
+        "required_ambiguity_counts",
+        "maximum_selected_object_cases",
+        "case_labels",
+    }
+    if not isinstance(contract, dict) or set(contract) != expected_fields:
+        raise ValueError("confirmatory semantic contract is invalid")
+    if contract["required_surface_counts"] != FROZEN_CONFIRMATORY_SURFACE_COUNTS:
+        raise ValueError("confirmatory surface quota contract is invalid")
+    if contract["required_ambiguity_counts"] != FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS:
+        raise ValueError("confirmatory ambiguity quota contract is invalid")
+    if (
+        contract["maximum_selected_object_cases"]
+        != FROZEN_CONFIRMATORY_MAX_SELECTED_OBJECT_CASES
+    ):
+        raise ValueError("confirmatory selected-object quota contract is invalid")
+
+    labels = contract["case_labels"]
+    if not isinstance(labels, list) or len(labels) != len(cases):
+        raise ValueError("confirmatory semantic case labels are incomplete")
+    expected_case_ids = [case.get("case_id") for case in cases]
+    actual_case_ids: list[str] = []
+    surfaces: list[str] = []
+    ambiguities: list[str] = []
+    selected_object_count = 0
+    for label in labels:
+        if not isinstance(label, dict) or set(label) != {
+            "case_id",
+            "surface",
+            "ambiguity",
+            "selected_object",
+        }:
+            raise ValueError("confirmatory semantic case label is invalid")
+        case_id = label["case_id"]
+        surface = label["surface"]
+        ambiguity = label["ambiguity"]
+        selected_object = label["selected_object"]
+        if not isinstance(case_id, str) or not case_id.strip():
+            raise ValueError("confirmatory semantic case id is invalid")
+        if surface not in FROZEN_CONFIRMATORY_SURFACE_COUNTS:
+            raise ValueError("confirmatory semantic surface is invalid")
+        if ambiguity not in FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS:
+            raise ValueError("confirmatory semantic ambiguity is invalid")
+        if type(selected_object) is not bool:
+            raise ValueError("confirmatory selected-object label is invalid")
+        actual_case_ids.append(case_id)
+        surfaces.append(surface)
+        ambiguities.append(ambiguity)
+        selected_object_count += int(selected_object)
+
+    if actual_case_ids != expected_case_ids:
+        raise ValueError("confirmatory semantic case labels do not match corpus")
+    if dict(Counter(surfaces)) != FROZEN_CONFIRMATORY_SURFACE_COUNTS:
+        raise ValueError("confirmatory surface quota is not satisfied")
+    if dict(Counter(ambiguities)) != FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS:
+        raise ValueError("confirmatory ambiguity quota is not satisfied")
+    if selected_object_count > FROZEN_CONFIRMATORY_MAX_SELECTED_OBJECT_CASES:
+        raise ValueError("confirmatory selected-object quota is exceeded")
+
+
 def validate_confirmatory_manifest(
     manifest: dict[str, Any],
     *,
@@ -368,7 +448,7 @@ def validate_confirmatory_manifest(
     if (
         not isinstance(manifest, dict)
         or set(manifest) != expected_fields
-        or manifest.get("schema_version") != 1
+        or manifest.get("schema_version") != 2
         or manifest.get("status") != "signed_off"
         or not isinstance(manifest.get("producer"), str)
         or not manifest["producer"].strip()
@@ -386,17 +466,23 @@ def validate_confirmatory_manifest(
         "eligibility_rule",
         "ordering_rule",
         "sampling_frame_sha256",
+        "semantic_contract",
     }
     if (
         not isinstance(sampling, dict)
         or set(sampling) != expected_sampling
         or any(
             not isinstance(sampling[field], str) or not sampling[field].strip()
-            for field in expected_sampling - {"sampling_frame_sha256"}
+            for field in expected_sampling
+            - {"sampling_frame_sha256", "semantic_contract"}
         )
         or not _is_sha256(sampling.get("sampling_frame_sha256"))
     ):
         raise ValueError("confirmatory sampling contract is invalid")
+    _validate_confirmatory_semantic_contract(
+        sampling["semantic_contract"],
+        cases=cases,
+    )
 
     prior = manifest.get("prior_fingerprints")
     selected = manifest.get("selected_fingerprints")
