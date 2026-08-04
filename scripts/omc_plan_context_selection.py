@@ -23,6 +23,7 @@ from omc_plan_runtime_pilot import validate_confirmatory_candidate_selection
 
 RETRIEVAL_POLICY = {
     "schema_version": 1,
+    "ranking_algorithm_version": 3,
     "candidate_source": "baseline_tree_only",
     "followup_data_allowed": False,
     "manual_substitution_allowed": False,
@@ -85,6 +86,10 @@ _RETRIEVAL_FORBIDDEN_PROVENANCE_FIELDS = {
     "provider_output",
 }
 _REQUEST_TERM_EXPANSIONS = {
+    "문의": ("inquiry", "question", "qna"),
+    "화면": ("screen", "view", "page"),
+    "다이얼로그": ("dialog", "modal"),
+    "선택": ("select", "selected", "selection", "selector"),
     "편집": ("edit", "editor", "form"),
     "저장": ("save", "saved", "unsaved", "persist", "store"),
     "변경": ("change", "changes", "dirty", "update"),
@@ -115,6 +120,28 @@ _REQUEST_TERM_EXPANSIONS = {
     "결제": ("checkout", "payment"),
     "선택값": ("selection", "selected"),
     "주문": ("order",),
+    "반려": ("reject", "rejected", "rejection"),
+    "포트폴리오": ("portfolio",),
+    "캐시": ("cache", "query"),
+    "무효화": ("invalidate", "invalidation"),
+    "상승": ("bullish", "rise", "up"),
+    "패턴": ("pattern", "scan"),
+    "후보": ("candidate",),
+    "리서치": ("research", "evidence"),
+    "누락": ("missing", "gap", "omission"),
+    "충돌": ("conflict",),
+    "분석": ("analyze", "analysis"),
+    "비대칭": ("asymmetric", "asymmetry"),
+    "컨텍스트": ("context",),
+    "신호": ("signal", "entry"),
+    "워크포워드": ("walk", "forward", "walkforward"),
+    "규칙": ("rule", "policy"),
+    "승격": ("promote", "promotion"),
+    "제출": ("submit", "submission"),
+    "완료": ("complete", "completion", "success"),
+    "이벤트": ("event", "tracking", "analytics", "gtm"),
+    "수집": ("collect", "tracking"),
+    "인증": ("auth", "authentication", "login"),
     "생성": ("create",),
     "연결": ("bridge", "map", "adapter"),
 }
@@ -302,6 +329,18 @@ def _contains_sensitive_text(value: str) -> bool:
     return any(pattern.search(value) for pattern in _SENSITIVE_TEXT_PATTERNS.values())
 
 
+def _is_test_path(path: str) -> bool:
+    return bool(
+        re.search(r"(?:^|[./_-])(?:test|tests|spec)(?:[./_-]|$)", path.lower())
+    )
+
+
+def _implementation_key(path: str) -> str:
+    name = PurePosixPath(path).name.lower()
+    name = re.sub(r"(?:^|[._-])(?:test|spec)(?=[._-]|$)", "", name)
+    return re.sub(r"[^0-9a-z]+", "", name)
+
+
 def build_baseline_only_shortlist(
     case: dict[str, Any], *, maximum_selected_files: int
 ) -> dict[str, Any]:
@@ -319,17 +358,11 @@ def build_baseline_only_shortlist(
     ):
         raise ValueError("baseline-only shortlist input is invalid")
     request_has_korean = bool(re.search(r"[가-힣]", case["request"]))
-    content_has_korean = any(
-        isinstance(item, dict)
-        and isinstance(item.get("content_utf8"), str)
-        and re.search(r"[가-힣]", item["content_utf8"])
-        for item in case["context_files"]
-    )
-    cross_language = request_has_korean and not content_has_korean
-    request_features = (
+    lexical_request_features = _lexical_features(case["request"])
+    bilingual_request_features = (
         _request_features(case["request"])
-        if cross_language
-        else _lexical_features(case["request"])
+        if request_has_korean
+        else lexical_request_features
     )
     ranked: list[tuple[int, str]] = []
     seen_paths: set[str] = set()
@@ -348,27 +381,61 @@ def build_baseline_only_shortlist(
         if _contains_sensitive_text(item["content_utf8"]):
             sensitive_file_count += 1
             continue
-        path_overlap = request_features & _lexical_features(path)
-        content_overlap = request_features & _lexical_features(item["content_utf8"])
-        score = (6 if cross_language else 4) * len(path_overlap) + len(
+        bilingual_path = request_has_korean and not re.search(r"[가-힣]", path)
+        bilingual_content = request_has_korean and not re.search(
+            r"[가-힣]", item["content_utf8"]
+        )
+        path_request_features = (
+            bilingual_request_features
+            if bilingual_path
+            else lexical_request_features
+        )
+        content_request_features = (
+            bilingual_request_features
+            if bilingual_content
+            else lexical_request_features
+        )
+        path_overlap = path_request_features & _lexical_features(path)
+        content_overlap = content_request_features & _lexical_features(
+            item["content_utf8"]
+        )
+        score = (6 if bilingual_path else 4) * len(path_overlap) + len(
             content_overlap
         )
-        if cross_language:
+        if request_has_korean:
             if path.startswith("docs/") or PurePosixPath(path).name.lower().startswith(
                 "readme"
             ):
                 score -= 3
-            if re.search(r"(?:^|[./_-])(?:test|spec)(?:[./_-]|$)", path.lower()):
-                score -= 2
+            if _is_test_path(path):
+                score -= 14
         ranked.append((score, path))
     if not ranked:
         raise ValueError("baseline-only shortlist requires context files")
     ranked.sort(key=lambda item: (-item[0], item[1]))
+    selected_paths = [path for _, path in ranked[:maximum_selected_files]]
+    if maximum_selected_files > 1 and selected_paths and not _is_test_path(
+        selected_paths[0]
+    ):
+        implementation_key = _implementation_key(selected_paths[0])
+        related_test = next(
+            (
+                path
+                for _, path in ranked
+                if _is_test_path(path)
+                and _implementation_key(path) == implementation_key
+            ),
+            None,
+        )
+        if related_test is not None:
+            selected_paths = [
+                selected_paths[0],
+                related_test,
+                *(path for path in selected_paths[1:] if path != related_test),
+            ][:maximum_selected_files]
     result = {
         "case_id": case["case_id"],
-        "selected_paths": [
-            path for _, path in ranked[:maximum_selected_files]
-        ],
+        "selected_paths": selected_paths,
     }
     if sensitive_file_count:
         result["sensitive_file_count"] = sensitive_file_count
@@ -1008,6 +1075,8 @@ def _build_local_transfer_artifacts(
     repo_roots: dict[str, str | Path],
     trusted_prior_commits: list[str],
     trusted_selection_public_keys: set[str],
+    baseline_context_manifest: dict[str, Any] | None = None,
+    trusted_selector_public_keys: set[str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     _validate_packet_against_selection(
         packet,
@@ -1016,6 +1085,31 @@ def _build_local_transfer_artifacts(
         trusted_prior_commits=trusted_prior_commits,
         trusted_selection_public_keys=trusted_selection_public_keys,
     )
+    selected_paths_by_case: dict[str, set[str]] | None = None
+    baseline_context_manifest_sha256: str | None = None
+    if baseline_context_manifest is not None:
+        if not trusted_selector_public_keys:
+            raise ValueError(
+                "baseline context manifest requires trusted selector keys"
+            )
+        validate_baseline_context_manifest(
+            baseline_context_manifest,
+            packet=packet,
+            selection=selection,
+            repo_roots=repo_roots,
+            trusted_prior_commits=trusted_prior_commits,
+            trusted_selector_public_keys=trusted_selector_public_keys,
+            trusted_selection_public_keys=trusted_selection_public_keys,
+        )
+        selected_paths_by_case = {
+            case["case_id"]: {
+                item["path"] for item in case["selected_context"]
+            }
+            for case in baseline_context_manifest["cases"]
+        }
+        baseline_context_manifest_sha256 = baseline_context_manifest[
+            "manifest_sha256"
+        ]
     bundle_cases: list[dict[str, Any]] = []
     manifest_cases: list[dict[str, Any]] = []
     findings: list[dict[str, str]] = []
@@ -1041,6 +1135,11 @@ def _build_local_transfer_artifacts(
         for path, blob_oid, content in _baseline_archive_files(
             case, repo_roots=repo_roots
         ):
+            if (
+                selected_paths_by_case is not None
+                and path not in selected_paths_by_case[case_id]
+            ):
+                continue
             content_sha256 = hashlib.sha256(content).hexdigest()
             source_byte_size += len(content)
             case_source_byte_size += len(content)
@@ -1126,6 +1225,10 @@ def _build_local_transfer_artifacts(
         "selection_sha256": packet["selection_sha256"],
         "cases": bundle_cases,
     }
+    if baseline_context_manifest_sha256 is not None:
+        transfer_bundle["baseline_context_manifest_sha256"] = (
+            baseline_context_manifest_sha256
+        )
     transfer_bundle["bundle_sha256"] = canonical_digest(transfer_bundle)
     transfer_manifest = {
         "schema_version": 1,
@@ -1143,6 +1246,10 @@ def _build_local_transfer_artifacts(
         "omitted_sensitive_count": omitted_sensitive_count,
         "cases": manifest_cases,
     }
+    if baseline_context_manifest_sha256 is not None:
+        transfer_manifest["baseline_context_manifest_sha256"] = (
+            baseline_context_manifest_sha256
+        )
     transfer_manifest["manifest_sha256"] = canonical_digest(transfer_manifest)
     privacy_audit = {
         "schema_version": 1,
@@ -1166,6 +1273,8 @@ def prepare_local_transfer_readiness(
     trusted_prior_commits: list[str],
     trusted_selection_public_keys: set[str],
     execution_budget: dict[str, Any],
+    baseline_context_manifest: dict[str, Any] | None = None,
+    trusted_selector_public_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     """Prepare exact local artifacts; external transfer remains disallowed."""
     transfer_bundle, transfer_manifest, privacy_audit = (
@@ -1175,6 +1284,8 @@ def prepare_local_transfer_readiness(
             repo_roots=repo_roots,
             trusted_prior_commits=trusted_prior_commits,
             trusted_selection_public_keys=trusted_selection_public_keys,
+            baseline_context_manifest=baseline_context_manifest,
+            trusted_selector_public_keys=trusted_selector_public_keys,
         )
     )
     execution_contract = build_execution_contract(execution_budget)
@@ -1190,6 +1301,10 @@ def prepare_local_transfer_readiness(
         "provider_execution_allowed": False,
         "replacement_claim_eligible": False,
     }
+    if baseline_context_manifest is not None:
+        readiness["baseline_context_manifest_sha256"] = (
+            baseline_context_manifest["manifest_sha256"]
+        )
     readiness["readiness_sha256"] = canonical_digest(readiness)
     return readiness
 
@@ -1202,6 +1317,8 @@ def validate_local_transfer_readiness(
     repo_roots: dict[str, str | Path],
     trusted_prior_commits: list[str],
     trusted_selection_public_keys: set[str],
+    baseline_context_manifest: dict[str, Any] | None = None,
+    trusted_selector_public_keys: set[str] | None = None,
 ) -> None:
     if readiness.get("readiness_sha256") != canonical_digest(
         _without_digest(readiness, "readiness_sha256")
@@ -1214,6 +1331,8 @@ def validate_local_transfer_readiness(
         trusted_prior_commits=trusted_prior_commits,
         trusted_selection_public_keys=trusted_selection_public_keys,
         execution_budget=DEFAULT_EXECUTION_BUDGET,
+        baseline_context_manifest=baseline_context_manifest,
+        trusted_selector_public_keys=trusted_selector_public_keys,
     )
     if readiness != expected:
         raise ValueError("local transfer readiness contract mismatch")
@@ -1514,6 +1633,8 @@ def main() -> int:
     readiness.add_argument(
         "--trusted-selection-public-key", action="append", required=True
     )
+    readiness.add_argument("--baseline-context-manifest")
+    readiness.add_argument("--trusted-selector-public-key", action="append")
     readiness.add_argument("--output", required=True)
     development = subparsers.add_parser("measure-development")
     development.add_argument("corpus")
@@ -1553,6 +1674,11 @@ def main() -> int:
         )
     elif args.command == "readiness":
         repo_roots = _load_json(args.repo_map)
+        baseline_context_manifest = (
+            _load_json(args.baseline_context_manifest)
+            if args.baseline_context_manifest
+            else None
+        )
         result = prepare_local_transfer_readiness(
             _load_json(args.packet),
             selection=_load_json(args.selection),
@@ -1560,6 +1686,10 @@ def main() -> int:
             trusted_prior_commits=_load_commit_registry(args.prior_registry),
             trusted_selection_public_keys=set(args.trusted_selection_public_key),
             execution_budget=DEFAULT_EXECUTION_BUDGET,
+            baseline_context_manifest=baseline_context_manifest,
+            trusted_selector_public_keys=set(
+                args.trusted_selector_public_key or []
+            ),
         )
         _write_json_atomic(
             validate_sensitive_output_path(args.output, repo_roots=repo_roots),

@@ -539,6 +539,62 @@ def test_local_transfer_readiness_freezes_exact_payload_without_private_mapping(
     )
 
 
+def test_local_transfer_readiness_uses_signed_baseline_context_manifest(
+    tmp_path, monkeypatch
+):
+    repo_roots, selection, prior_commits, packet = _prepare(
+        tmp_path,
+        monkeypatch,
+        text_files_by_index={0: {"src/unrelated-large.txt": "x" * 260_000}},
+    )
+    selector_key = Ed25519PrivateKey.generate()
+    response = _signed_response(packet, selector_key)
+    trusted_selector_keys = {_public_key(selector_key)}
+    baseline_context_manifest = context_selection.apply_selector_response(
+        packet,
+        response,
+        selection=selection,
+        repo_roots=repo_roots,
+        trusted_prior_commits=prior_commits,
+        trusted_selector_public_keys=trusted_selector_keys,
+        trusted_selection_public_keys=_trusted_selection_keys(packet),
+    )
+
+    readiness = context_selection.prepare_local_transfer_readiness(
+        packet,
+        selection=selection,
+        repo_roots=repo_roots,
+        trusted_prior_commits=prior_commits,
+        trusted_selection_public_keys=_trusted_selection_keys(packet),
+        execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+        baseline_context_manifest=baseline_context_manifest,
+        trusted_selector_public_keys=trusted_selector_keys,
+    )
+
+    assert readiness["baseline_context_manifest_sha256"] == (
+        baseline_context_manifest["manifest_sha256"]
+    )
+    assert readiness["transfer_manifest"]["baseline_context_manifest_sha256"] == (
+        baseline_context_manifest["manifest_sha256"]
+    )
+    first_case_paths = {
+        item["relative_path"]
+        for item in readiness["transfer_bundle"]["cases"][0]["files"]
+    }
+    assert first_case_paths == {"src/service-0.py"}
+    assert "src/unrelated-large.txt" not in json.dumps(readiness)
+    context_selection.validate_local_transfer_readiness(
+        readiness,
+        packet=packet,
+        selection=selection,
+        repo_roots=repo_roots,
+        trusted_prior_commits=prior_commits,
+        trusted_selection_public_keys=_trusted_selection_keys(packet),
+        baseline_context_manifest=baseline_context_manifest,
+        trusted_selector_public_keys=trusted_selector_keys,
+    )
+
+
 @pytest.mark.parametrize(
     "source, expected_code",
     [
@@ -1093,6 +1149,37 @@ def test_baseline_only_shortlist_excludes_sensitive_high_overlap_candidate():
     ]
     assert shortlist["sensitive_file_count"] == 1
     assert "src/rules/retry_budget_credentials.py" not in shortlist["selected_paths"]
+
+
+def test_baseline_only_shortlist_keeps_bilingual_expansion_in_mixed_repository():
+    shortlist = context_selection.build_baseline_only_shortlist(
+        {
+            "case_id": "mixed-language-order-dialog",
+            "request": "문의 작성 화면에서 주문을 선택하는 다이얼로그를 추가한다",
+            "context_files": [
+                {
+                    "path": "docs/개발도구.md",
+                    "content_utf8": "작성 화면에서 도구를 선택하는 방법을 설명한다.",
+                },
+                {
+                    "path": "src/order/OrderSelectionDialog.tsx",
+                    "content_utf8": (
+                        "export function OrderSelectionDialog() { "
+                        "return openOrderSelector(); }"
+                    ),
+                },
+                {
+                    "path": "src/editor/AiBlock.constants.ts",
+                    "content_utf8": "export const labels = {};\n" * 10_000,
+                },
+            ],
+        },
+        maximum_selected_files=1,
+    )
+
+    assert shortlist["selected_paths"] == [
+        "src/order/OrderSelectionDialog.tsx"
+    ]
 
 
 def test_baseline_workspace_shortlist_builds_unsigned_packet_bound_draft(
