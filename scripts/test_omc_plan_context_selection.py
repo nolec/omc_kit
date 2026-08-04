@@ -221,6 +221,19 @@ def test_packet_rejects_a_valid_but_non_frozen_confirmatory_selection(tmp_path):
         )
 
 
+def test_active_frozen_selection_anchor_matches_fresh_batch_a_v2():
+    selection = json.loads(
+        (FIXTURES / "omc_plan_confirmatory_batch_a_v2_selection.json").read_text()
+    )
+
+    assert selection["selection_sha256"] == (
+        context_selection.FROZEN_SELECTION_SHA256
+    )
+    assert context_selection.FROZEN_SELECTION_COMMIT == (
+        "337f00da0a89ca9dd74c84ca092838bbd2fb820b"
+    )
+
+
 def test_packet_requires_the_full_confirmatory_selection_contract(
     tmp_path, monkeypatch
 ):

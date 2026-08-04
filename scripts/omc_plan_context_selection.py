@@ -39,8 +39,11 @@ RETRIEVAL_POLICY = {
         "vendor",
     ],
 }
-FROZEN_SELECTION_COMMIT = "3ecfd9823620254c80a967190ced6150f2b02a2d"
+FROZEN_SELECTION_COMMIT = "337f00da0a89ca9dd74c84ca092838bbd2fb820b"
 FROZEN_SELECTION_SHA256 = (
+    "71c8c7ae186b0ecce09b3f4a442629c5ac72c18ab4fc7e4ddef53a8588216ea5"
+)
+FROZEN_DIAGNOSTIC_SELECTION_SHA256 = (
     "7d9305445938ed6f71361c4a99a63e6e1b6a6bedef5ef3404a33c0167864a65b"
 )
 FROZEN_RETRIEVAL_DEVELOPMENT_SHA256 = (
@@ -150,8 +153,9 @@ def validate_retrieval_development_corpus(
     if (
         not isinstance(confirmatory_cases, list)
         or confirmatory_selection.get("selection_sha256")
-        != FROZEN_SELECTION_SHA256
-        or canonical_digest(confirmatory_cases) != FROZEN_SELECTION_SHA256
+        != FROZEN_DIAGNOSTIC_SELECTION_SHA256
+        or canonical_digest(confirmatory_cases)
+        != FROZEN_DIAGNOSTIC_SELECTION_SHA256
     ):
         raise ValueError("retrieval development requires frozen Batch A selection")
     batch_case_ids = {
