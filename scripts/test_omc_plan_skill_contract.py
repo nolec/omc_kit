@@ -75,6 +75,16 @@ REQUIRED_ADJACENT_PRESERVATION_MARKERS = [
     "VERIFY",
 ]
 
+REQUIRED_EVIDENCE_FIRST_MARKERS = [
+    "근거 추출",
+    "직접 읽고",
+    "코드 symbol",
+    "사용자 관찰 동작",
+    "근거 매핑 완료 전 lite 금지",
+    "포괄 표현 금지",
+    "decisions_required",
+]
+
 REQUIRED_DECISION_OUTPUT_MARKERS = [
     "decision",
     "risk",
@@ -415,6 +425,12 @@ def test_plan_skill_limits_adjacent_behavior_preservation_requirements():
         marker for marker in REQUIRED_ADJACENT_PRESERVATION_MARKERS if marker not in text
     ]
     assert not missing, f"missing adjacent preservation markers: {missing}"
+
+
+def test_plan_skill_requires_evidence_before_lite_task_compression():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_EVIDENCE_FIRST_MARKERS if marker not in text]
+    assert not missing, f"missing evidence-first markers: {missing}"
 
 
 def test_plan_skill_declares_decision_risk_next_action_contract():

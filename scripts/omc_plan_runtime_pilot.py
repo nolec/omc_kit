@@ -63,6 +63,9 @@ FROZEN_CONFIRMATORY_PROTOCOL = {
     "claim_scope": CONFIRMATORY_CLAIM_SCOPE,
     **FROZEN_CONFIRMATORY_BUDGET,
 }
+MAX_CONTEXT_FILE_COUNT = 20
+MAX_CONTEXT_FILE_BYTES = 128 * 1024
+MAX_CONTEXT_TOTAL_BYTES = 512 * 1024
 
 
 def canonical_digest(value: Any) -> str:
@@ -779,10 +782,19 @@ def validate_runtime_corpus(
         context_files = case.get("context_files")
         if not isinstance(context_files, dict) or not context_files:
             raise ValueError("runtime case context files are required")
+        if len(context_files) > MAX_CONTEXT_FILE_COUNT:
+            raise ValueError("runtime context file count exceeds limit")
+        total_context_bytes = 0
         for path, content in context_files.items():
             _safe_context_path(path)
             if not isinstance(content, str):
                 raise ValueError("runtime context file content must be text")
+            content_bytes = len(content.encode("utf-8"))
+            if content_bytes > MAX_CONTEXT_FILE_BYTES:
+                raise ValueError("runtime context file size exceeds limit")
+            total_context_bytes += content_bytes
+        if total_context_bytes > MAX_CONTEXT_TOTAL_BYTES:
+            raise ValueError("runtime context total size exceeds limit")
         if case.get("context_sha256") != canonical_digest(context_files):
             raise ValueError("runtime case context hash mismatch")
     if len(set(case_ids)) != expected_count:
@@ -1010,14 +1022,27 @@ def materialize_case_workspace(
     return workspace_manifest(root_path)
 
 
-def build_provider_prompt(provider_id: str, request: str) -> str:
+def build_provider_prompt(
+    provider_id: str,
+    request: str,
+    *,
+    context_paths: tuple[str, ...] = (),
+) -> str:
     receipt_instruction = (
         "The output schema may request runtime_activation_receipt. Return `unavailable` "
         "unless a loaded project skill explicitly provides a different exact value. "
     )
+    normalized_context_paths = tuple(sorted(_safe_context_path(path) for path in context_paths))
+    context_instruction = (
+        "Use shell to read every exact context path in this JSON list before planning: "
+        f"{json.dumps(normalized_context_paths, ensure_ascii=False)}. "
+        if normalized_context_paths
+        else "No context files were provided. "
+    )
     if provider_id == "baseline-plan":
         return (
             receipt_instruction
+            + context_instruction
             + "Read only the provided context files; do not enumerate unrelated files. "
             "Then produce an implementation plan for the request below. Do not modify files.\n\n"
             + request
@@ -1025,6 +1050,7 @@ def build_provider_prompt(provider_id: str, request: str) -> str:
     if provider_id == "omc-plan":
         return (
             receipt_instruction
+            + context_instruction
             + "Read `.agents/skills/omc-plan/SKILL.md` before planning. "
             + "Read only that skill file and the provided context files; do not enumerate "
             + "unrelated files. Apply the loaded skill, then produce the implementation plan.\n\n"
@@ -1082,6 +1108,7 @@ def execute_provider(
     timeout_sec: int,
     max_activation_attempts: int = 1,
     failure_receipt_path: str | Path | None = None,
+    context_paths: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     if type(max_activation_attempts) is not int or not 1 <= max_activation_attempts <= 2:
         raise ValueError("max_activation_attempts must be 1 or 2")
@@ -1093,7 +1120,7 @@ def execute_provider(
         output_schema=output_schema,
         output_path=output_path,
     )
-    prompt = build_provider_prompt(provider_id, request)
+    prompt = build_provider_prompt(provider_id, request, context_paths=context_paths)
     attempt_limit = max_activation_attempts if provider_id == "omc-plan" else 1
     attempt_events: list[str] = []
     attempt_usages: list[dict[str, Any]] = []
@@ -1586,7 +1613,11 @@ def validate_runtime_provenance(
             provider_id not in PROVIDERS
             or case is None
             or execution.get("prompt_sha256")
-            != _sha256_text(build_provider_prompt(provider_id, case["request"]))
+            != _sha256_text(build_provider_prompt(
+                provider_id,
+                case["request"],
+                context_paths=tuple(case["context_files"]),
+            ))
             or execution.get("activation", {}).get("skill_sha256") != skill_sha256
         ):
             raise ValueError("runtime execution provenance mismatch")
@@ -1721,6 +1752,7 @@ def run_runtime_batch(
                 timeout_sec=protocol["execution"]["timeout_sec"],
                 max_activation_attempts=max_attempts,
                 failure_receipt_path=output_path.with_suffix(".failure.json"),
+                context_paths=tuple(case["context_files"]),
             )
             executions.append({
                 **execution,

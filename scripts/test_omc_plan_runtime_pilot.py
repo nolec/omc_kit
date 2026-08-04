@@ -293,6 +293,41 @@ def test_corpus_rejects_unsafe_context_paths():
         )
 
 
+@pytest.mark.parametrize(
+    ("context_files", "message"),
+    [
+        (
+            {f"src/file-{index}.py": "x" for index in range(21)},
+            "context file count",
+        ),
+        (
+            {"src/service.py": "x" * (128 * 1024 + 1)},
+            "context file size",
+        ),
+        (
+            {
+                "src/first.py": "x" * (128 * 1024),
+                "src/second.py": "x" * (128 * 1024),
+                "src/third.py": "x" * (128 * 1024),
+                "src/fourth.py": "x" * (128 * 1024),
+                "src/fifth.py": "x",
+            },
+            "context total size",
+        ),
+    ],
+)
+def test_corpus_rejects_context_resource_limit_overflow(context_files, message):
+    cases = [_case(index) for index in range(1, 11)]
+    cases[0]["context_files"] = context_files
+    cases[0]["context_sha256"] = runtime.canonical_digest(context_files)
+    gold, trusted = _signed_gold(cases, [_gold(index) for index in range(1, 11)])
+
+    with pytest.raises(ValueError, match=message):
+        runtime.validate_runtime_corpus(
+            cases, gold, expected_count=10, trusted_signer_public_keys=trusted
+        )
+
+
 def test_corpus_rejects_context_or_gold_hash_tampering():
     cases = [_case(index) for index in range(1, 11)]
     gold_items = [_gold(index) for index in range(1, 11)]
@@ -617,19 +652,33 @@ def test_baseline_must_return_activation_sentinel():
 
 
 def test_omc_provider_prompt_requires_exact_skill_read_before_planning():
-    prompt = runtime.build_provider_prompt("omc-plan", "Plan this change")
+    prompt = runtime.build_provider_prompt(
+        "omc-plan",
+        "Plan this change",
+        context_paths=("src/service.py", "tests/test_service.py"),
+    )
 
     skill_instruction = "Read `.agents/skills/omc-plan/SKILL.md`"
     assert skill_instruction in prompt
     assert "Read only that skill file and the provided context files" in prompt
+    assert '"src/service.py"' in prompt
+    assert '"tests/test_service.py"' in prompt
+    assert "every file under `context/`" not in prompt
     assert prompt.index(skill_instruction) < prompt.index("produce the implementation plan")
     assert "$omc-plan" in prompt
 
 
 def test_baseline_provider_prompt_limits_context_without_exposing_skill_path():
-    prompt = runtime.build_provider_prompt("baseline-plan", "Plan this change")
+    prompt = runtime.build_provider_prompt(
+        "baseline-plan",
+        "Plan this change",
+        context_paths=("src/service.py", "tests/test_service.py"),
+    )
 
     assert "Read only the provided context files" in prompt
+    assert '"src/service.py"' in prompt
+    assert '"tests/test_service.py"' in prompt
+    assert "every file under `context/`" not in prompt
     assert ".agents/skills/omc-plan/SKILL.md" not in prompt
     assert "secret-nonce" not in prompt
 
@@ -1425,7 +1474,11 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
             "usage": {"status": "observed", "input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
             "command_sha256": "a" * 64,
             "prompt_sha256": runtime._sha256_text(
-                runtime.build_provider_prompt(kwargs["provider_id"], kwargs["request"])
+                runtime.build_provider_prompt(
+                    kwargs["provider_id"],
+                    kwargs["request"],
+                    context_paths=kwargs["context_paths"],
+                )
             ),
         }
 
@@ -1557,7 +1610,11 @@ def test_diagnostic_rejudge_preserves_provider_evidence_and_blocks_replacement(t
                 },
                 "command_sha256": "c" * 64,
                 "prompt_sha256": runtime._sha256_text(
-                    runtime.build_provider_prompt(provider_id, case["request"])
+                    runtime.build_provider_prompt(
+                        provider_id,
+                        case["request"],
+                        context_paths=tuple(case["context_files"]),
+                    )
                 ),
             })
     original_sessions, original_mapping = runtime.build_runtime_blind_batch(
@@ -1740,7 +1797,11 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
                     "skill_sha256": skill_sha256,
                 },
                 "prompt_sha256": runtime._sha256_text(
-                    runtime.build_provider_prompt(provider_id, case["request"])
+                    runtime.build_provider_prompt(
+                        provider_id,
+                        case["request"],
+                        context_paths=tuple(case["context_files"]),
+                    )
                 ),
                 "usage": {
                     "status": "observed",
@@ -1968,7 +2029,11 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
                 "provider_id": provider_id,
                 "case_id": case["case_id"],
                 "prompt_sha256": runtime._sha256_text(
-                    runtime.build_provider_prompt(provider_id, case["request"])
+                    runtime.build_provider_prompt(
+                        provider_id,
+                        case["request"],
+                        context_paths=tuple(case["context_files"]),
+                    )
                 ),
                 "activation": {
                     "status": "observed",
