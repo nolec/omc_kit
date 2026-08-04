@@ -468,6 +468,68 @@ def test_confirmatory_budget_stops_before_next_execution():
         runtime.assert_execution_budget_available(state)
 
 
+def test_confirmatory_budget_reserves_largest_observed_provider_call(tmp_path):
+    state = runtime.new_execution_budget_state({
+        "observed_total_token_stop_threshold": 100,
+        "maximum_external_calls": 4,
+    })
+    state["used_total_tokens"] = 70
+    receipt = tmp_path / "budget-failure.json"
+
+    reserve = runtime.observed_provider_token_reserve(
+        "omc-plan",
+        activation_probe={
+            "executions": {
+                "omc-plan": {"usage": {
+                    "status": "observed",
+                    "input_tokens": 15,
+                    "output_tokens": 5,
+                    "total_tokens": 20,
+                }},
+                "baseline-plan": {"usage": {
+                    "status": "observed",
+                    "input_tokens": 8,
+                    "output_tokens": 2,
+                    "total_tokens": 10,
+                }},
+            },
+        },
+        executions=[
+            {
+                "provider_id": "omc-plan",
+                "usage": {
+                    "status": "observed",
+                    "input_tokens": 30,
+                    "output_tokens": 10,
+                    "total_tokens": 40,
+                },
+            },
+            {
+                "provider_id": "baseline-plan",
+                "usage": {
+                    "status": "observed",
+                    "input_tokens": 50,
+                    "output_tokens": 10,
+                    "total_tokens": 60,
+                },
+            },
+        ],
+    )
+
+    assert reserve == 40
+    with pytest.raises(RuntimeError, match="projected token reserve exhausted"):
+        runtime.assert_execution_budget_available(
+            state,
+            required_token_reserve=reserve,
+            failure_receipt_path=receipt,
+            execution_id="confirmatory:case-10:omc-plan",
+        )
+    assert state["used_total_tokens"] == 70
+    assert json.loads(receipt.read_text(encoding="utf-8"))["reason_code"] == (
+        "projected_token_stop_threshold_exceeded"
+    )
+
+
 def test_confirmatory_token_budget_is_an_auditable_stop_threshold(tmp_path):
     assert runtime.FROZEN_CONFIRMATORY_BUDGET == {
         "observed_total_token_stop_threshold": 1_200_000,
@@ -664,6 +726,13 @@ def test_omc_provider_prompt_requires_exact_skill_read_before_planning():
     assert '"src/service.py"' in prompt
     assert '"tests/test_service.py"' in prompt
     assert "every file under `context/`" not in prompt
+    assert "one shell command" in prompt
+    assert "Do not read or re-read them in separate commands" in prompt
+    read_command = prompt[prompt.index("`cat -- ") + 1:].split("`", 1)[0]
+    assert ".agents/skills/omc-plan/SKILL.md" in read_command
+    assert "src/service.py" in read_command
+    assert "tests/test_service.py" in read_command
+    assert "Do not run `pwd` or progress-only shell commands" in prompt
     assert prompt.index(skill_instruction) < prompt.index("produce the implementation plan")
     assert "$omc-plan" in prompt
 
@@ -679,6 +748,8 @@ def test_baseline_provider_prompt_limits_context_without_exposing_skill_path():
     assert '"src/service.py"' in prompt
     assert '"tests/test_service.py"' in prompt
     assert "every file under `context/`" not in prompt
+    assert "one shell command" in prompt
+    assert "Do not read or re-read them in separate commands" in prompt
     assert ".agents/skills/omc-plan/SKILL.md" not in prompt
     assert "secret-nonce" not in prompt
 
@@ -949,6 +1020,194 @@ def test_state_round_trip_gate_rejects_status_and_repeated_sync():
         repeated_sync_command,
         context_paths=("scripts/omc.py",),
     )
+
+
+def test_context_round_trip_gate_rejects_multiple_read_commands():
+    one_batched_read = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "id": "read-1",
+            "type": "command_execution",
+            "command": "cat -- context/a.txt context/b.txt",
+        },
+    })
+    repeated_reads = "\n".join([
+        json.dumps({
+            "type": "item.completed",
+            "item": {
+                "id": "read-1",
+                "type": "command_execution",
+                "command": "cat context/a.txt",
+            },
+        }),
+        json.dumps({
+            "type": "item.completed",
+            "item": {
+                "id": "read-2",
+                "type": "command_execution",
+                "command": "cat context/b.txt",
+            },
+        }),
+    ])
+
+    assert not runtime.contains_redundant_context_round_trip(
+        one_batched_read,
+        context_paths=("context/a.txt", "context/b.txt"),
+    )
+    assert runtime.contains_redundant_context_round_trip(
+        repeated_reads,
+        context_paths=("context/a.txt", "context/b.txt"),
+    )
+
+
+def test_plan_round_trip_gate_rejects_pwd_and_progress_only_commands():
+    pwd_event = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "id": "pwd-1",
+            "type": "command_execution",
+            "command": "/bin/zsh -lc pwd",
+        },
+    })
+    progress_event = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "id": "progress-1",
+            "type": "command_execution",
+            "command": "printf '%s\\n' 'planning from provided files'",
+        },
+    })
+    context_event = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "id": "read-1",
+            "type": "command_execution",
+            "command": "cat -- .agents/skills/omc-plan/SKILL.md context/a.txt",
+        },
+    })
+
+    assert runtime.contains_unnecessary_plan_round_trip(pwd_event)
+    assert runtime.contains_unnecessary_plan_round_trip(progress_event)
+    assert not runtime.contains_unnecessary_plan_round_trip(context_event)
+
+
+def test_execute_provider_rejects_unnecessary_omc_plan_round_trip(
+    tmp_path, monkeypatch
+):
+    output_path = tmp_path / "output.json"
+    failure_path = tmp_path / "failure.json"
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+        stdout = "\n".join([
+            json.dumps({
+                "type": "item.completed",
+                "item": {
+                    "id": "pwd-1",
+                    "type": "command_execution",
+                    "command": "/bin/zsh -lc pwd",
+                },
+            }),
+            json.dumps({
+                "type": "turn.completed",
+                "usage": {"input_tokens": 30, "output_tokens": 5},
+            }),
+        ])
+
+    def fake_run(command, **kwargs):
+        output_path.write_text(json.dumps({
+            "requirements": [],
+            "runtime_activation_receipt": "secret-nonce",
+        }), encoding="utf-8")
+        return Completed()
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="unnecessary_plan_round_trip"):
+        runtime.execute_provider(
+            provider_id="omc-plan",
+            request="Plan this change",
+            workspace=tmp_path,
+            codex_binary="codex",
+            model="gpt-test",
+            reasoning_effort="low",
+            sandbox="read-only",
+            output_schema="schema.json",
+            output_path=output_path,
+            skill_sha256="c" * 64,
+            expected_activation_receipt="secret-nonce",
+            baseline_sentinel="unavailable",
+            timeout_sec=180,
+            failure_receipt_path=failure_path,
+        )
+
+    failure = json.loads(failure_path.read_text(encoding="utf-8"))
+    assert failure["reason_code"] == "unnecessary_plan_round_trip"
+    assert failure["usage"]["total_tokens"] == 35
+
+
+def test_execute_provider_rejects_redundant_context_round_trip(
+    tmp_path, monkeypatch
+):
+    output_path = tmp_path / "output.json"
+    failure_path = tmp_path / "failure.json"
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+        stdout = "\n".join([
+            json.dumps({
+                "type": "item.completed",
+                "item": {
+                    "id": "read-1",
+                    "type": "command_execution",
+                    "command": "cat context/a.txt",
+                },
+            }),
+            json.dumps({
+                "type": "item.completed",
+                "item": {
+                    "id": "read-2",
+                    "type": "command_execution",
+                    "command": "cat context/b.txt",
+                },
+            }),
+            json.dumps({
+                "type": "turn.completed",
+                "usage": {"input_tokens": 30, "output_tokens": 5},
+            }),
+        ])
+
+    def fake_run(command, **kwargs):
+        output_path.write_text(json.dumps({
+            "requirements": [],
+            "runtime_activation_receipt": "unavailable",
+        }), encoding="utf-8")
+        return Completed()
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="redundant_context_round_trip"):
+        runtime.execute_provider(
+            provider_id="baseline-plan",
+            request="Plan this change",
+            workspace=tmp_path,
+            codex_binary="codex",
+            model="gpt-test",
+            reasoning_effort="low",
+            sandbox="read-only",
+            output_schema="schema.json",
+            output_path=output_path,
+            skill_sha256="c" * 64,
+            expected_activation_receipt="secret-nonce",
+            baseline_sentinel="unavailable",
+            timeout_sec=180,
+            failure_receipt_path=failure_path,
+            context_paths=("context/a.txt", "context/b.txt"),
+        )
+
+    failure = json.loads(failure_path.read_text(encoding="utf-8"))
+    assert failure["reason_code"] == "redundant_context_round_trip"
+    assert failure["usage"]["total_tokens"] == 35
 
 
 def test_execute_provider_retries_one_activation_miss_and_counts_all_usage(

@@ -8,7 +8,9 @@ import base64
 import hashlib
 import json
 import math
+import re
 import secrets
+import shlex
 import subprocess
 from copy import deepcopy
 from pathlib import Path, PurePosixPath
@@ -510,21 +512,77 @@ def new_execution_budget_state(budget: dict[str, int]) -> dict[str, int]:
     }
 
 
-def assert_execution_budget_available(
-    state: dict[str, int], *, required_external_calls: int = 1
-) -> None:
-    """Enforce the provider-call cap before execution.
+def observed_provider_token_reserve(
+    provider_id: str,
+    *,
+    activation_probe: dict[str, Any],
+    executions: list[dict[str, Any]],
+) -> int:
+    """Reserve the largest observed call for the same provider before another call."""
+    if provider_id not in PROVIDERS:
+        raise ValueError(f"unsupported provider: {provider_id}")
+    candidates: list[dict[str, Any]] = []
+    probe_executions = activation_probe.get("executions", {})
+    if isinstance(probe_executions, dict) and isinstance(
+        probe_executions.get(provider_id), dict
+    ):
+        candidates.append(probe_executions[provider_id])
+    candidates.extend(
+        execution
+        for execution in executions
+        if execution.get("provider_id") == provider_id
+    )
+    totals = [
+        _validated_runtime_usage(candidate.get("usage"))["total_tokens"]
+        for candidate in candidates
+    ]
+    return max(totals, default=0)
 
-    Codex CLI does not expose a per-request token cap, so token usage is an
-    observed fail-stop budget handled by ``consume_execution_budget``.
-    """
+
+def assert_execution_budget_available(
+    state: dict[str, int],
+    *,
+    required_external_calls: int = 1,
+    required_token_reserve: int = 0,
+    failure_receipt_path: str | Path | None = None,
+    execution_id: str | None = None,
+) -> None:
+    """Enforce external-call and observed token reserve caps before execution."""
     if type(required_external_calls) is not int or required_external_calls <= 0:
         raise ValueError("confirmatory required external calls are invalid")
+    if type(required_token_reserve) is not int or required_token_reserve < 0:
+        raise ValueError("confirmatory required token reserve is invalid")
     remaining_calls = (
         state["maximum_external_calls"] - state["used_external_calls"]
     )
     if remaining_calls < required_external_calls:
         raise RuntimeError("confirmatory external call budget exhausted")
+    if (
+        state["used_total_tokens"] + required_token_reserve
+        <= state["observed_total_token_stop_threshold"]
+    ):
+        return
+    if failure_receipt_path is not None:
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError("confirmatory budget failure execution id is required")
+        receipt_path = Path(failure_receipt_path)
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        receipt_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "status": "failed",
+                    "reason_code": "projected_token_stop_threshold_exceeded",
+                    "execution_id": execution_id,
+                    "execution_budget_state": state,
+                    "required_token_reserve": required_token_reserve,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    raise RuntimeError("confirmatory projected token reserve exhausted")
 
 
 def validate_execution_budget_state(
@@ -1033,13 +1091,18 @@ def build_provider_prompt(
         "unless a loaded project skill explicitly provides a different exact value. "
     )
     normalized_context_paths = tuple(sorted(_safe_context_path(path) for path in context_paths))
-    context_instruction = (
-        "Use shell to read every exact context path in this JSON list before planning: "
-        f"{json.dumps(normalized_context_paths, ensure_ascii=False)}. "
-        if normalized_context_paths
-        else "No context files were provided. "
-    )
     if provider_id == "baseline-plan":
+        context_command = "cat -- " + " ".join(
+            shlex.quote(path) for path in normalized_context_paths
+        )
+        context_instruction = (
+            "Use one shell command to read every exact context path before planning: "
+            f"`{context_command}`. Paths: "
+            f"{json.dumps(normalized_context_paths, ensure_ascii=False)}. "
+            "Do not read or re-read them in separate commands. "
+            if normalized_context_paths
+            else "No context files were provided. "
+        )
         return (
             receipt_instruction
             + context_instruction
@@ -1048,12 +1111,20 @@ def build_provider_prompt(
             + request
         )
     if provider_id == "omc-plan":
+        read_paths = (".agents/skills/omc-plan/SKILL.md", *normalized_context_paths)
+        context_command = "cat -- " + " ".join(
+            shlex.quote(path) for path in read_paths
+        )
         return (
             receipt_instruction
-            + context_instruction
-            + "Read `.agents/skills/omc-plan/SKILL.md` before planning. "
+            + "Use one shell command to read the skill and every exact context path before "
+            + f"planning: `{context_command}`. Paths: "
+            + f"{json.dumps(normalized_context_paths, ensure_ascii=False)}. "
+            + "Read `.agents/skills/omc-plan/SKILL.md` in that command before planning. "
             + "Read only that skill file and the provided context files; do not enumerate "
-            + "unrelated files. Apply the loaded skill, then produce the implementation plan.\n\n"
+            + "unrelated files. Do not read or re-read them in separate commands. "
+            + "Do not run `pwd` or progress-only shell commands. Apply the loaded skill, "
+            + "then produce the implementation plan immediately.\n\n"
             + "$omc-plan\n\n"
             + request
         )
@@ -1126,6 +1197,67 @@ def contains_redundant_omc_state_round_trip(
             sync_calls,
         )
     return sum(sync_calls_by_execution.values()) > 1
+
+
+def contains_redundant_context_round_trip(
+    events_jsonl: str,
+    *,
+    context_paths: tuple[str, ...] = (),
+) -> bool:
+    """Reject context reads spread across more than one shell execution."""
+    normalized_paths = tuple(_safe_context_path(path) for path in context_paths)
+    if not normalized_paths:
+        return False
+    read_execution_ids: set[str] = set()
+    for line_index, line in enumerate(events_jsonl.splitlines()):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "command_execution":
+            continue
+        command = item.get("command")
+        if not isinstance(command, str) or not any(
+            path in command for path in normalized_paths
+        ):
+            continue
+        execution_id = item.get("id")
+        read_execution_ids.add(
+            execution_id if isinstance(execution_id, str) else f"line:{line_index}"
+        )
+    return len(read_execution_ids) > 1
+
+
+def contains_unnecessary_plan_round_trip(events_jsonl: str) -> bool:
+    """Reject shell turns that add no planning evidence."""
+    seen_execution_ids: set[str] = set()
+    for line_index, line in enumerate(events_jsonl.splitlines()):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "command_execution":
+            continue
+        execution_id = item.get("id")
+        execution_key = (
+            execution_id if isinstance(execution_id, str) else f"line:{line_index}"
+        )
+        if execution_key in seen_execution_ids:
+            continue
+        seen_execution_ids.add(execution_key)
+        command = item.get("command")
+        if not isinstance(command, str):
+            continue
+        normalized = command.strip().lower()
+        if re.search(r"(?:^|[ ;'\"])(?:/bin/)?(?:zsh|bash)?\s*(?:-lc\s*)?pwd(?:[ ;'\"]|$)", normalized):
+            return True
+        if "printf " in normalized and not any(
+            marker in normalized for marker in ("cat ", "rg ", "sed ", "git ")
+        ):
+            return True
+    return False
 
 
 def execute_provider(
@@ -1211,6 +1343,29 @@ def execute_provider(
                 usage=_aggregate_attempt_usage(attempt_usages),
             )
             raise RuntimeError("redundant_omc_state_round_trip")
+        if contains_redundant_context_round_trip(
+            "\n".join(attempt_events),
+            context_paths=context_paths,
+        ):
+            _write_failure_receipt(
+                failure_receipt_path,
+                provider_id=provider_id,
+                reason_code="redundant_context_round_trip",
+                timeout_sec=timeout_sec,
+                usage=_aggregate_attempt_usage(attempt_usages),
+            )
+            raise RuntimeError("redundant_context_round_trip")
+        if provider_id == "omc-plan" and contains_unnecessary_plan_round_trip(
+            "\n".join(attempt_events)
+        ):
+            _write_failure_receipt(
+                failure_receipt_path,
+                provider_id=provider_id,
+                reason_code="unnecessary_plan_round_trip",
+                timeout_sec=timeout_sec,
+                usage=_aggregate_attempt_usage(attempt_usages),
+            )
+            raise RuntimeError("unnecessary_plan_round_trip")
         try:
             raw_output = Path(output_path).read_text(encoding="utf-8")
             plan = json.loads(raw_output)
@@ -1786,7 +1941,18 @@ def run_runtime_batch(
                 else min(protocol["activation"]["max_attempts"], remaining_calls)
             )
             assert_execution_budget_available(
-                budget_state, required_external_calls=max_attempts
+                budget_state,
+                required_external_calls=max_attempts,
+                required_token_reserve=(
+                    observed_provider_token_reserve(
+                        provider_id,
+                        activation_probe=activation_probe,
+                        executions=executions,
+                    )
+                    * max_attempts
+                ),
+                failure_receipt_path=root / "confirmatory-budget-failure.json",
+                execution_id=f"{batch_id}:{case['case_id']}:{provider_id}",
             )
             execution = execute_provider(
                 provider_id=provider_id,
