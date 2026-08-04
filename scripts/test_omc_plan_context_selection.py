@@ -27,6 +27,7 @@ AMBIGUITIES = (
     "low", "low", "low", "medium", "medium",
     "medium", "medium", "high", "high", "high",
 )
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -801,4 +802,123 @@ def test_local_transfer_readiness_detects_manifest_and_budget_tampering(
             repo_roots=repo_roots,
             trusted_prior_commits=prior_commits,
             trusted_selection_public_keys=_trusted_selection_keys(packet),
+        )
+
+
+def _load_retrieval_development_inputs():
+    corpus = json.loads(
+        (FIXTURES / "omc_plan_retrieval_development.json").read_text()
+    )
+    batch_a = json.loads(
+        (FIXTURES / "omc_plan_confirmatory_batch_a_selection.json").read_text()
+    )
+    return corpus, batch_a
+
+
+def _refresh_corpus_digest(corpus):
+    corpus["corpus_sha256"] = context_selection.canonical_digest({
+        key: value for key, value in corpus.items() if key != "corpus_sha256"
+    })
+
+
+def test_retrieval_development_corpus_is_frozen_and_disjoint_from_batch_a():
+    corpus, batch_a = _load_retrieval_development_inputs()
+
+    summary = context_selection.validate_retrieval_development_corpus(
+        corpus,
+        confirmatory_selection=batch_a,
+    )
+
+    assert summary == {
+        "case_count": 5,
+        "critical_path_count": 5,
+        "surface_counts": {
+            "ui_state": 1,
+            "api_payload": 1,
+            "data_indexing": 1,
+            "backend_rules": 1,
+            "multi_file_legacy": 1,
+        },
+    }
+
+
+def test_retrieval_development_corpus_rejects_batch_a_case_overlap():
+    corpus, batch_a = _load_retrieval_development_inputs()
+    corpus["cases"][0]["case_id"] = batch_a["cases"][0]["case_id"]
+    _refresh_corpus_digest(corpus)
+
+    with pytest.raises(ValueError, match="overlaps Batch A case"):
+        context_selection.validate_retrieval_development_corpus(
+            corpus,
+            confirmatory_selection=batch_a,
+        )
+
+
+def test_retrieval_development_corpus_rejects_batch_a_path_overlap():
+    corpus, batch_a = _load_retrieval_development_inputs()
+    old_path = corpus["cases"][0]["context_files"][0]["path"]
+    batch_a_path = batch_a["cases"][0]["context_candidate_paths"][0]
+    corpus["cases"][0]["context_files"][0]["path"] = batch_a_path
+    corpus["cases"][0]["context_labels"][0]["path"] = batch_a_path
+    assert old_path != batch_a_path
+    _refresh_corpus_digest(corpus)
+
+    with pytest.raises(ValueError, match="overlaps Batch A path"):
+        context_selection.validate_retrieval_development_corpus(
+            corpus,
+            confirmatory_selection=batch_a,
+        )
+
+
+def test_retrieval_development_corpus_rejects_rehashed_content_change():
+    corpus, batch_a = _load_retrieval_development_inputs()
+    corpus["cases"][0]["request"] = "변조된 개발 요청"
+    _refresh_corpus_digest(corpus)
+
+    with pytest.raises(ValueError, match="frozen corpus"):
+        context_selection.validate_retrieval_development_corpus(
+            corpus,
+            confirmatory_selection=batch_a,
+        )
+
+
+def test_retrieval_development_corpus_requires_frozen_batch_a_selection():
+    corpus, _ = _load_retrieval_development_inputs()
+    forged_selection = {
+        "selection_sha256": context_selection.canonical_digest([]),
+        "cases": [],
+    }
+
+    with pytest.raises(ValueError, match="frozen Batch A selection"):
+        context_selection.validate_retrieval_development_corpus(
+            corpus,
+            confirmatory_selection=forged_selection,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation, message",
+    [
+        ("surface", "surface quota"),
+        ("provenance", "forbidden provenance"),
+        ("digest", "corpus hash"),
+    ],
+)
+def test_retrieval_development_corpus_rejects_invalid_contract(
+    mutation, message
+):
+    corpus, batch_a = _load_retrieval_development_inputs()
+    if mutation == "surface":
+        corpus["cases"][0]["surface"] = "api_payload"
+        _refresh_corpus_digest(corpus)
+    elif mutation == "provenance":
+        corpus["cases"][0]["followup_commit"] = "a" * 40
+        _refresh_corpus_digest(corpus)
+    else:
+        corpus["corpus_sha256"] = "0" * 64
+
+    with pytest.raises(ValueError, match=message):
+        context_selection.validate_retrieval_development_corpus(
+            corpus,
+            confirmatory_selection=batch_a,
         )

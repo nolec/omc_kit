@@ -43,6 +43,9 @@ FROZEN_SELECTION_COMMIT = "3ecfd9823620254c80a967190ced6150f2b02a2d"
 FROZEN_SELECTION_SHA256 = (
     "7d9305445938ed6f71361c4a99a63e6e1b6a6bedef5ef3404a33c0167864a65b"
 )
+FROZEN_RETRIEVAL_DEVELOPMENT_SHA256 = (
+    "b67eac41f9b0aaa3f21f7be86ecb9c8cb53330a6e2520035f0993b9e33ff0154"
+)
 DEFAULT_EXECUTION_BUDGET = {
     "max_provider_calls": 10,
     "timeout_seconds": 1_800,
@@ -60,6 +63,21 @@ _SENSITIVE_TEXT_PATTERNS = {
     "aws_access_key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     "local_user_path": re.compile(r"(?:/Users|/home)/[^\s\"']+"),
 }
+_RETRIEVAL_DEVELOPMENT_SURFACES = {
+    "ui_state",
+    "api_payload",
+    "data_indexing",
+    "backend_rules",
+    "multi_file_legacy",
+}
+_RETRIEVAL_FORBIDDEN_PROVENANCE_FIELDS = {
+    "repo_alias",
+    "baseline_commit",
+    "followup_commit",
+    "context_candidate_paths",
+    "selection_sha256",
+    "provider_output",
+}
 
 
 def canonical_digest(value: Any) -> str:
@@ -70,6 +88,147 @@ def canonical_digest(value: Any) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def validate_retrieval_development_corpus(
+    corpus: dict[str, Any], *, confirmatory_selection: dict[str, Any]
+) -> dict[str, Any]:
+    """Validate the frozen synthetic retrieval corpus without holdout leakage."""
+    if not isinstance(corpus, dict) or set(corpus) != {
+        "schema_version", "status", "cases", "corpus_sha256"
+    }:
+        raise ValueError("retrieval development corpus fields are invalid")
+    if corpus["schema_version"] != 1 or corpus["status"] != "preregistered":
+        raise ValueError("retrieval development corpus status is invalid")
+    if corpus["corpus_sha256"] != canonical_digest(
+        _without_digest(corpus, "corpus_sha256")
+    ):
+        raise ValueError("retrieval development corpus hash mismatch")
+    confirmatory_cases = (
+        confirmatory_selection.get("cases")
+        if isinstance(confirmatory_selection, dict)
+        else None
+    )
+    if (
+        not isinstance(confirmatory_cases, list)
+        or confirmatory_selection.get("selection_sha256")
+        != FROZEN_SELECTION_SHA256
+        or canonical_digest(confirmatory_cases) != FROZEN_SELECTION_SHA256
+    ):
+        raise ValueError("retrieval development requires frozen Batch A selection")
+    batch_case_ids = {
+        case.get("case_id") for case in confirmatory_cases if isinstance(case, dict)
+    }
+    batch_paths = {
+        path
+        for case in confirmatory_cases
+        if isinstance(case, dict)
+        for path in case.get("context_candidate_paths", [])
+        if isinstance(path, str)
+    }
+
+    cases = corpus["cases"]
+    if not isinstance(cases, list) or len(cases) != 5:
+        raise ValueError("retrieval development corpus requires five cases")
+    case_ids: set[str] = set()
+    surface_counts = {surface: 0 for surface in _RETRIEVAL_DEVELOPMENT_SURFACES}
+    critical_path_count = 0
+    for case in cases:
+        if not isinstance(case, dict):
+            raise ValueError("retrieval development case is invalid")
+        if _RETRIEVAL_FORBIDDEN_PROVENANCE_FIELDS.intersection(case):
+            raise ValueError("retrieval development case has forbidden provenance")
+        if set(case) != {
+            "case_id",
+            "split",
+            "source_type",
+            "surface",
+            "request",
+            "context_files",
+            "context_labels",
+        }:
+            raise ValueError("retrieval development case fields are invalid")
+        case_id = case["case_id"]
+        if (
+            not isinstance(case_id, str)
+            or not case_id
+            or case_id in case_ids
+        ):
+            raise ValueError("retrieval development case id is invalid")
+        if case_id in batch_case_ids:
+            raise ValueError("retrieval development corpus overlaps Batch A case")
+        case_ids.add(case_id)
+        if (
+            case["split"] != "development"
+            or case["source_type"] != "synthetic_anonymized"
+            or not isinstance(case["request"], str)
+            or not case["request"].strip()
+        ):
+            raise ValueError("retrieval development case metadata is invalid")
+        surface = case["surface"]
+        if surface not in surface_counts:
+            raise ValueError("retrieval development surface is invalid")
+        surface_counts[surface] += 1
+
+        files = case["context_files"]
+        if not isinstance(files, list) or not files:
+            raise ValueError("retrieval development context files are invalid")
+        file_paths: set[str] = set()
+        for item in files:
+            if not isinstance(item, dict) or set(item) != {"path", "content_utf8"}:
+                raise ValueError("retrieval development context file is invalid")
+            path = item["path"]
+            pure_path = PurePosixPath(path) if isinstance(path, str) else None
+            if (
+                pure_path is None
+                or pure_path.is_absolute()
+                or ".." in pure_path.parts
+                or not path
+                or path in file_paths
+                or not isinstance(item["content_utf8"], str)
+            ):
+                raise ValueError("retrieval development context path is invalid")
+            if path in batch_paths:
+                raise ValueError("retrieval development corpus overlaps Batch A path")
+            file_paths.add(path)
+
+        labels = case["context_labels"]
+        if not isinstance(labels, list) or not labels:
+            raise ValueError("retrieval development context labels are invalid")
+        label_paths: set[str] = set()
+        case_critical_count = 0
+        for label in labels:
+            if not isinstance(label, dict) or set(label) != {
+                "path", "weight", "critical"
+            }:
+                raise ValueError("retrieval development context label is invalid")
+            path = label["path"]
+            weight = label["weight"]
+            critical = label["critical"]
+            if (
+                path not in file_paths
+                or path in label_paths
+                or not isinstance(weight, int)
+                or isinstance(weight, bool)
+                or weight <= 0
+                or not isinstance(critical, bool)
+            ):
+                raise ValueError("retrieval development context label is invalid")
+            label_paths.add(path)
+            case_critical_count += int(critical)
+        if case_critical_count != 1:
+            raise ValueError("retrieval development case requires one critical path")
+        critical_path_count += case_critical_count
+
+    if any(count != 1 for count in surface_counts.values()):
+        raise ValueError("retrieval development surface quota mismatch")
+    if corpus["corpus_sha256"] != FROZEN_RETRIEVAL_DEVELOPMENT_SHA256:
+        raise ValueError("retrieval development frozen corpus mismatch")
+    return {
+        "case_count": len(cases),
+        "critical_path_count": critical_path_count,
+        "surface_counts": dict(sorted(surface_counts.items())),
+    }
 
 
 def _without_digest(value: dict[str, Any], field: str) -> dict[str, Any]:

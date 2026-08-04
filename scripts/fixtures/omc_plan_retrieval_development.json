@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "status": "preregistered",
+  "cases": [
+    {
+      "case_id": "retrieval-dev-ui-exit-guard",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "ui_state",
+      "request": "편집 패널에서 저장하지 않고 이탈할 때 확인 흐름을 추가한다",
+      "context_files": [
+        {"path": "src/ui/ExitGuardPanel.tsx", "content_utf8": "// 저장하지 않은 편집 패널 이탈을 확인한다\nexport function ExitGuardPanel() { return null; }\n"},
+        {"path": "src/ui/ExitGuardPanel.test.tsx", "content_utf8": "// 편집 패널 이탈 확인 테스트\ntest('exit guard', () => {});\n"},
+        {"path": "src/ui/StatusBadge.tsx", "content_utf8": "export function StatusBadge() { return null; }\n"}
+      ],
+      "context_labels": [
+        {"path": "src/ui/ExitGuardPanel.tsx", "weight": 2, "critical": true},
+        {"path": "src/ui/ExitGuardPanel.test.tsx", "weight": 1, "critical": false}
+      ]
+    },
+    {
+      "case_id": "retrieval-dev-api-upload",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "api_payload",
+      "request": "이미지 업로드 요청에 서명 URL payload 처리를 추가한다",
+      "context_files": [
+        {"path": "src/api/uploadAsset.ts", "content_utf8": "// 이미지 업로드 서명 URL payload를 만든다\nexport const uploadAsset = () => null;\n"},
+        {"path": "src/api/uploadAsset.test.ts", "content_utf8": "// 업로드 payload 계약 테스트\ntest('upload payload', () => {});\n"},
+        {"path": "src/api/listAssets.ts", "content_utf8": "export const listAssets = () => [];\n"}
+      ],
+      "context_labels": [
+        {"path": "src/api/uploadAsset.ts", "weight": 2, "critical": true},
+        {"path": "src/api/uploadAsset.test.ts", "weight": 1, "critical": false}
+      ]
+    },
+    {
+      "case_id": "retrieval-dev-data-decision-store",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "data_indexing",
+      "request": "의사결정 레코드를 저장하고 조회하는 영속화 흐름을 추가한다",
+      "context_files": [
+        {"path": "src/persistence/decision_store.py", "content_utf8": "# 의사결정 레코드 저장과 조회\nclass DecisionStore: pass\n"},
+        {"path": "tests/test_decision_store.py", "content_utf8": "# 의사결정 영속화 테스트\ndef test_store(): pass\n"},
+        {"path": "src/persistence/event_store.py", "content_utf8": "class EventStore: pass\n"}
+      ],
+      "context_labels": [
+        {"path": "src/persistence/decision_store.py", "weight": 2, "critical": true},
+        {"path": "tests/test_decision_store.py", "weight": 1, "critical": false}
+      ]
+    },
+    {
+      "case_id": "retrieval-dev-backend-retry-budget",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "backend_rules",
+      "request": "재시도 예산을 초과한 작업은 즉시 중단하도록 규칙을 강화한다",
+      "context_files": [
+        {"path": "src/rules/retry_budget.py", "content_utf8": "# 재시도 예산 초과 작업을 중단한다\ndef allow_retry(): return False\n"},
+        {"path": "tests/test_retry_budget.py", "content_utf8": "# 재시도 예산 경계 테스트\ndef test_budget(): pass\n"},
+        {"path": "src/rules/rate_limit.py", "content_utf8": "def allow_request(): return True\n"}
+      ],
+      "context_labels": [
+        {"path": "src/rules/retry_budget.py", "weight": 2, "critical": true},
+        {"path": "tests/test_retry_budget.py", "weight": 1, "critical": false}
+      ]
+    },
+    {
+      "case_id": "retrieval-dev-legacy-checkout-bridge",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "multi_file_legacy",
+      "request": "레거시 결제 화면과 신규 주문 모듈 사이 연결 흐름을 개선한다",
+      "context_files": [
+        {"path": "legacy/checkout/bridge.js", "content_utf8": "// 레거시 결제 화면과 신규 주문 모듈을 연결한다\nexport function bridgeCheckout() {}\n"},
+        {"path": "legacy/checkout/bridge.test.js", "content_utf8": "// 결제 연결 흐름 테스트\ntest('checkout bridge', () => {});\n"},
+        {"path": "legacy/catalog/product.js", "content_utf8": "export function product() {}\n"}
+      ],
+      "context_labels": [
+        {"path": "legacy/checkout/bridge.js", "weight": 2, "critical": true},
+        {"path": "legacy/checkout/bridge.test.js", "weight": 1, "critical": false}
+      ]
+    }
+  ],
+  "corpus_sha256": "b67eac41f9b0aaa3f21f7be86ecb9c8cb53330a6e2520035f0993b9e33ff0154"
+}
