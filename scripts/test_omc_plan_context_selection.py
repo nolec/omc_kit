@@ -39,11 +39,13 @@ def _batch(
     tmp_path: Path,
     *,
     source_by_index: dict[int, str] | None = None,
+    request_by_index: dict[int, str] | None = None,
     symlink_index: int | None = None,
     binary_files_by_index: dict[int, dict[str, bytes]] | None = None,
     text_files_by_index: dict[int, dict[str, str]] | None = None,
 ) -> tuple[dict[str, Path], dict, list[str]]:
     source_by_index = source_by_index or {}
+    request_by_index = request_by_index or {}
     binary_files_by_index = binary_files_by_index or {}
     text_files_by_index = text_files_by_index or {}
     repo_roots: dict[str, Path] = {}
@@ -84,7 +86,9 @@ def _batch(
             "repo_alias": alias,
             "baseline_commit": baseline,
             "followup_commit": followup,
-            "request": f"서비스 {index} 실행 계획을 작성한다",
+            "request": request_by_index.get(
+                index, f"서비스 {index} 실행 계획을 작성한다"
+            ),
             "context_candidate_paths": [f"src/service-{index}.py"],
             "surface": SURFACES[index],
             "ambiguity": AMBIGUITIES[index],
@@ -522,14 +526,14 @@ def test_local_transfer_readiness_freezes_exact_payload_without_private_mapping(
 
 
 @pytest.mark.parametrize(
-    "source, message",
+    "source, expected_code",
     [
-        ('API_KEY = "super-secret-value"\n', "sensitive content"),
-        ('SOURCE = "/Users/private/project/file.py"\n', "sensitive content"),
+        ('API_KEY = "super-secret-value"\n', "credential_assignment"),
+        ('SOURCE = "/Users/private/project/file.py"\n', "local_user_path"),
     ],
 )
-def test_local_transfer_readiness_blocks_sensitive_source(
-    tmp_path, monkeypatch, source, message
+def test_local_transfer_readiness_omits_sensitive_source(
+    tmp_path, monkeypatch, source, expected_code
 ):
     repo_roots, selection, prior_commits, packet = _prepare(
         tmp_path,
@@ -537,7 +541,45 @@ def test_local_transfer_readiness_blocks_sensitive_source(
         source_by_index={0: source},
     )
 
-    with pytest.raises(ValueError, match=message):
+    readiness = context_selection.prepare_local_transfer_readiness(
+        packet,
+        selection=selection,
+        repo_roots=repo_roots,
+        trusted_prior_commits=prior_commits,
+        trusted_selection_public_keys=_trusted_selection_keys(packet),
+        execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+    )
+
+    manifest = readiness["transfer_manifest"]
+    source_entry = next(
+        item
+        for item in manifest["cases"][0]["files"]
+        if item["relative_path"] == "src/service-0.py"
+    )
+    payload_paths = {
+        item["relative_path"]
+        for item in readiness["transfer_bundle"]["cases"][0]["files"]
+    }
+    assert source_entry["transfer_disposition"] == "omitted_sensitive"
+    assert source_entry["privacy_classification"] == "omitted_sensitive"
+    assert source_entry["sensitive_codes"] == [expected_code]
+    assert source_entry["blob_sha256"]
+    assert manifest["omitted_sensitive_count"] == 1
+    assert manifest["omitted_binary_count"] == 0
+    assert manifest["omitted_file_count"] == 1
+    assert "src/service-0.py" not in payload_paths
+    assert source not in json.dumps(readiness, ensure_ascii=False)
+    assert readiness["privacy_audit"]["status"] == "sanitized"
+
+
+def test_local_transfer_readiness_blocks_sensitive_request(tmp_path, monkeypatch):
+    repo_roots, selection, prior_commits, packet = _prepare(
+        tmp_path,
+        monkeypatch,
+        request_by_index={0: 'API_KEY = "super-secret-value"'},
+    )
+
+    with pytest.raises(ValueError, match="request contains sensitive content"):
         context_selection.prepare_local_transfer_readiness(
             packet,
             selection=selection,

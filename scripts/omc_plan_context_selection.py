@@ -590,10 +590,16 @@ def _build_local_transfer_artifacts(
     transfer_byte_size = 0
     transferred_file_count = 0
     omitted_file_count = 0
+    omitted_binary_count = 0
+    omitted_sensitive_count = 0
     for case in packet["cases"]:
         case_id = case["case_id"]
         request = case["request"]
-        findings.extend(_privacy_findings(request, subject=f"{case_id}:request"))
+        request_findings = _privacy_findings(
+            request, subject=f"{case_id}:request"
+        )
+        if request_findings:
+            raise ValueError("transfer request contains sensitive content")
         bundle_files: list[dict[str, Any]] = []
         manifest_files: list[dict[str, Any]] = []
         case_source_byte_size = 0
@@ -608,6 +614,7 @@ def _build_local_transfer_artifacts(
             text, binary_reason = _decode_transfer_text(content)
             if text is None:
                 omitted_file_count += 1
+                omitted_binary_count += 1
                 manifest_files.append({
                     "relative_path": path,
                     "source_blob_oid": blob_oid,
@@ -620,7 +627,27 @@ def _build_local_transfer_artifacts(
                 })
                 continue
             file_findings = _privacy_findings(text, subject=f"{case_id}:{path}")
-            findings.extend(file_findings)
+            if file_findings:
+                findings.extend(file_findings)
+                omitted_file_count += 1
+                omitted_sensitive_count += 1
+                manifest_files.append({
+                    "relative_path": path,
+                    "source_blob_oid": blob_oid,
+                    "blob_sha256": content_sha256,
+                    "byte_size": len(content),
+                    "transfer_disposition": "omitted_sensitive",
+                    "sensitive_codes": sorted({
+                        finding["code"] for finding in file_findings
+                    }),
+                    "privacy_classification": "omitted_sensitive",
+                    "privacy_checks": [
+                        "regular_file",
+                        "utf8",
+                        "sensitive_content_omitted",
+                    ],
+                })
+                continue
             transfer_byte_size += len(content)
             case_transfer_byte_size += len(content)
             transferred_file_count += 1
@@ -679,21 +706,22 @@ def _build_local_transfer_artifacts(
         "transfer_byte_size": transfer_byte_size,
         "transferred_file_count": transferred_file_count,
         "omitted_file_count": omitted_file_count,
+        "omitted_binary_count": omitted_binary_count,
+        "omitted_sensitive_count": omitted_sensitive_count,
         "cases": manifest_cases,
     }
     transfer_manifest["manifest_sha256"] = canonical_digest(transfer_manifest)
     privacy_audit = {
         "schema_version": 1,
-        "status": "blocked" if findings else "pattern_clear",
+        "status": "sanitized" if findings else "pattern_clear",
         "scanner_version": 1,
         "transfer_manifest_sha256": transfer_manifest["manifest_sha256"],
         "finding_count": len(findings),
-        "omitted_binary_count": omitted_file_count,
+        "omitted_binary_count": omitted_binary_count,
+        "omitted_sensitive_count": omitted_sensitive_count,
         "findings": findings,
     }
     privacy_audit["audit_sha256"] = canonical_digest(privacy_audit)
-    if findings:
-        raise ValueError("transfer bundle contains sensitive content")
     return transfer_bundle, transfer_manifest, privacy_audit
 
 
