@@ -1091,6 +1091,43 @@ def build_codex_command(
     ]
 
 
+def contains_redundant_omc_state_round_trip(
+    events_jsonl: str,
+    *,
+    context_paths: tuple[str, ...] = (),
+) -> bool:
+    script_available = "scripts/omc.py" in context_paths
+    sync_calls_by_execution: dict[str, int] = {}
+    sync_marker = "python3 scripts/omc.py state sync-session "
+    for line_index, line in enumerate(events_jsonl.splitlines()):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "command_execution":
+            continue
+        command = item.get("command")
+        if not isinstance(command, str):
+            continue
+        if "python3 scripts/omc.py state status " in command:
+            return True
+        sync_calls = command.count(sync_marker)
+        if sync_calls == 0:
+            continue
+        if not script_available:
+            return True
+        execution_id = item.get("id")
+        execution_key = (
+            execution_id if isinstance(execution_id, str) else f"line:{line_index}"
+        )
+        sync_calls_by_execution[execution_key] = max(
+            sync_calls_by_execution.get(execution_key, 0),
+            sync_calls,
+        )
+    return sum(sync_calls_by_execution.values()) > 1
+
+
 def execute_provider(
     *,
     provider_id: str,
@@ -1159,6 +1196,21 @@ def execute_provider(
             )
         attempt_events.append(completed.stdout)
         attempt_usages.append(extract_usage(completed.stdout))
+        if (
+            provider_id == "omc-plan"
+            and contains_redundant_omc_state_round_trip(
+                "\n".join(attempt_events),
+                context_paths=context_paths,
+            )
+        ):
+            _write_failure_receipt(
+                failure_receipt_path,
+                provider_id=provider_id,
+                reason_code="redundant_omc_state_round_trip",
+                timeout_sec=timeout_sec,
+                usage=_aggregate_attempt_usage(attempt_usages),
+            )
+            raise RuntimeError("redundant_omc_state_round_trip")
         try:
             raw_output = Path(output_path).read_text(encoding="utf-8")
             plan = json.loads(raw_output)

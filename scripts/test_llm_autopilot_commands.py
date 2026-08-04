@@ -11,8 +11,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / "templates"
 CLAUDE_PLAN_REQUIRED_MARKERS = [
+    "주입된 OMC 세션 문맥",
+    "동기화되어 있으면 상태 명령을 실행하지 않습니다",
+    "제공된 정확한 context path",
     "python3 scripts/omc.py state sync-session --target . --mode autopilot --title \"omc-plan\" --request \"<현재 작업 한 줄 요약>\" --roles analysis",
-    "python3 scripts/omc.py state status --target .",
     "CONTRACT",
     "목표",
     "범위 (포함)",
@@ -102,6 +104,7 @@ def test_claude_plan_contains_contract_markers():
     text = _read(TEMPLATES / ".claude" / "commands" / "plan.md")
     missing = [marker for marker in CLAUDE_PLAN_REQUIRED_MARKERS if marker not in text]
     assert not missing, f"Claude plan.md 필수 마커 누락: {missing}"
+    assert "python3 scripts/omc.py state status --target ." not in text
 
 
 def test_deployed_claude_plan_matches_template():

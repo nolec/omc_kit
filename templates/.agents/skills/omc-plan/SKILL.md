@@ -9,9 +9,10 @@ description: "구현 전 계획·설계·TDD 태스크 분해. 트리거: 계획
 
 ## Phase 0. 상태 확인
 
+주입된 OMC 세션 문맥을 먼저 사용합니다. 현재 요청과 동기화되어 있으면 상태 명령을 실행하지 않습니다. `scripts/omc.py`가 제공된 정확한 context path에 없으면 격리 입력으로 보고 탐색·상태 명령을 생략합니다. 문맥이 없거나 오래됐고 해당 경로가 명시적으로 제공된 경우에만 아래 동기화를 한 번 실행합니다.
+
 ```bash
 python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-plan" --request "<현재 작업 한 줄 요약>" --roles analysis
-python3 scripts/omc.py state status --target .
 ```
 
 AGENTS.md Tier 1 작업은 이 Phase 1 요구사항을 CONTRACT 입력으로 삼습니다.

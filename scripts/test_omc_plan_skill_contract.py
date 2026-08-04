@@ -23,8 +23,10 @@ OPTIONAL_PLAN_SKILL_PATHS = [
 ]
 
 REQUIRED_SEQUENCE = [
+    "주입된 OMC 세션 문맥",
+    "동기화되어 있으면 상태 명령을 실행하지 않습니다",
+    "제공된 정확한 context path",
     "python3 scripts/omc.py state sync-session --target . --mode autopilot --title \"omc-plan\" --request \"<현재 작업 한 줄 요약>\" --roles analysis",
-    "python3 scripts/omc.py state status --target .",
     "AGENTS.md Tier 1",
     "CONTRACT",
     "목표",
@@ -359,6 +361,13 @@ def test_plan_skill_preserves_required_execution_order():
             cursor = next_pos
 
     assert not missing_or_reordered, f"missing or reordered markers: {missing_or_reordered}"
+
+
+def test_plan_skill_avoids_redundant_state_round_trip():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    assert "python3 scripts/omc.py state status --target ." not in text
+    assert "동기화되어 있으면 상태 명령을 실행하지 않습니다" in text
+    assert "scripts/omc.py`가 제공된 정확한 context path" in text
 
 
 def test_plan_skill_recommendations_are_state_based_and_guarded():

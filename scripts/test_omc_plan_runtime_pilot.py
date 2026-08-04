@@ -833,6 +833,124 @@ def test_execute_provider_preserves_activation_and_usage(tmp_path, monkeypatch):
     assert result["usage"]["total_tokens"] == 15
 
 
+def test_execute_provider_rejects_redundant_omc_state_round_trip(
+    tmp_path, monkeypatch
+):
+    output_path = tmp_path / "output.json"
+    failure_path = tmp_path / "failure.json"
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+        stdout = "\n".join([
+            json.dumps({
+                "type": "item.completed",
+                "item": {
+                    "type": "command_execution",
+                    "command": (
+                        "/bin/zsh -lc 'python3 scripts/omc.py state sync-session "
+                        "--target .'"
+                    ),
+                },
+            }),
+            json.dumps({
+                "type": "turn.completed",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }),
+        ])
+
+    def fake_run(command, **kwargs):
+        output_path.write_text(json.dumps({
+            "requirements": [],
+            "runtime_activation_receipt": "secret-nonce",
+        }), encoding="utf-8")
+        return Completed()
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="redundant_omc_state_round_trip"):
+        runtime.execute_provider(
+            provider_id="omc-plan",
+            request="Plan this change",
+            workspace=tmp_path,
+            codex_binary="codex",
+            model="gpt-test",
+            reasoning_effort="low",
+            sandbox="read-only",
+            output_schema="schema.json",
+            output_path=output_path,
+            skill_sha256="c" * 64,
+            expected_activation_receipt="secret-nonce",
+            baseline_sentinel="unavailable",
+            timeout_sec=180,
+            failure_receipt_path=failure_path,
+        )
+
+    failure = json.loads(failure_path.read_text(encoding="utf-8"))
+    assert failure["reason_code"] == "redundant_omc_state_round_trip"
+
+
+def test_state_round_trip_gate_allows_one_sync_for_explicit_script_context():
+    event = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "id": "sync-1",
+            "type": "command_execution",
+            "command": "python3 scripts/omc.py state sync-session --target .",
+        },
+    })
+
+    assert not runtime.contains_redundant_omc_state_round_trip(
+        event,
+        context_paths=("scripts/omc.py",),
+    )
+
+
+def test_state_round_trip_gate_rejects_status_and_repeated_sync():
+    status_event = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "id": "status-1",
+            "type": "command_execution",
+            "command": "python3 scripts/omc.py state status --target .",
+        },
+    })
+    repeated_sync_events = "\n".join(
+        json.dumps({
+            "type": "item.completed",
+            "item": {
+                "id": execution_id,
+                "type": "command_execution",
+                "command": "python3 scripts/omc.py state sync-session --target .",
+            },
+        })
+        for execution_id in ("sync-1", "sync-2")
+    )
+    repeated_sync_command = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "id": "sync-combined",
+            "type": "command_execution",
+            "command": (
+                "python3 scripts/omc.py state sync-session --target . && "
+                "python3 scripts/omc.py state sync-session --target ."
+            ),
+        },
+    })
+
+    assert runtime.contains_redundant_omc_state_round_trip(
+        status_event,
+        context_paths=("scripts/omc.py",),
+    )
+    assert runtime.contains_redundant_omc_state_round_trip(
+        repeated_sync_events,
+        context_paths=("scripts/omc.py",),
+    )
+    assert runtime.contains_redundant_omc_state_round_trip(
+        repeated_sync_command,
+        context_paths=("scripts/omc.py",),
+    )
+
+
 def test_execute_provider_retries_one_activation_miss_and_counts_all_usage(
     tmp_path, monkeypatch
 ):
@@ -894,6 +1012,71 @@ def test_execute_provider_retries_one_activation_miss_and_counts_all_usage(
     assert json.loads(first_attempt.read_text(encoding="utf-8"))[
         "runtime_activation_receipt"
     ] == "unavailable"
+
+
+def test_execute_provider_rejects_sync_repeated_across_activation_attempts(
+    tmp_path, monkeypatch
+):
+    output_path = tmp_path / "output.json"
+    failure_path = tmp_path / "failure.json"
+    receipts = iter(["unavailable", "secret-nonce"])
+    calls = 0
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, execution_id):
+            self.stdout = "\n".join([
+                json.dumps({
+                    "type": "item.completed",
+                    "item": {
+                        "id": execution_id,
+                        "type": "command_execution",
+                        "command": (
+                            "python3 scripts/omc.py state sync-session --target ."
+                        ),
+                    },
+                }),
+                json.dumps({
+                    "type": "turn.completed",
+                    "usage": {"input_tokens": 10, "output_tokens": 5},
+                }),
+            ])
+
+    def fake_run(command, **kwargs):
+        nonlocal calls
+        calls += 1
+        output_path.write_text(json.dumps({
+            "requirements": [],
+            "runtime_activation_receipt": next(receipts),
+        }), encoding="utf-8")
+        return Completed(f"sync-{calls}")
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="redundant_omc_state_round_trip"):
+        runtime.execute_provider(
+            provider_id="omc-plan",
+            request="Plan this change",
+            workspace=tmp_path,
+            codex_binary="codex",
+            model="gpt-test",
+            reasoning_effort="low",
+            sandbox="read-only",
+            output_schema="schema.json",
+            output_path=output_path,
+            skill_sha256="c" * 64,
+            expected_activation_receipt="secret-nonce",
+            baseline_sentinel="unavailable",
+            timeout_sec=180,
+            max_activation_attempts=2,
+            failure_receipt_path=failure_path,
+            context_paths=("scripts/omc.py",),
+        )
+
+    assert calls == 2
+    failure = json.loads(failure_path.read_text(encoding="utf-8"))
+    assert failure["reason_code"] == "redundant_omc_state_round_trip"
 
 
 def test_execute_provider_blocks_after_two_activation_misses_with_usage_receipt(
