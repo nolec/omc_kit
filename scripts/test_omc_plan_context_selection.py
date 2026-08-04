@@ -35,7 +35,15 @@ def _git(repo: Path, *args: str) -> str:
     ).strip()
 
 
-def _batch(tmp_path: Path) -> tuple[dict[str, Path], dict, list[str]]:
+def _batch(
+    tmp_path: Path,
+    *,
+    source_by_index: dict[int, str] | None = None,
+    symlink_index: int | None = None,
+    binary_files_by_index: dict[int, dict[str, bytes]] | None = None,
+) -> tuple[dict[str, Path], dict, list[str]]:
+    source_by_index = source_by_index or {}
+    binary_files_by_index = binary_files_by_index or {}
     repo_roots: dict[str, Path] = {}
     cases = []
     for index in range(10):
@@ -47,7 +55,13 @@ def _batch(tmp_path: Path) -> tuple[dict[str, Path], dict, list[str]]:
         _git(repo, "config", "user.name", "Context Test")
         (repo / "src").mkdir()
         source = repo / "src" / f"service-{index}.py"
-        source.write_text("def run():\n    return None\n")
+        source.write_text(
+            source_by_index.get(index, "def run():\n    return None\n")
+        )
+        if index == symlink_index:
+            (repo / "src" / "linked.py").symlink_to(source.name)
+        for filename, content in binary_files_by_index.get(index, {}).items():
+            (repo / "src" / filename).write_bytes(content)
         if index == 0:
             (repo / "vendor").mkdir()
             (repo / "vendor" / "private.txt").write_text("excluded\n")
@@ -126,8 +140,12 @@ def _selection_provenance(
     return provenance
 
 
-def _prepare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    repo_roots, selection, prior_commits = _batch(tmp_path)
+def _prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    **batch_options,
+):
+    repo_roots, selection, prior_commits = _batch(tmp_path, **batch_options)
     monkeypatch.setattr(
         context_selection,
         "FROZEN_SELECTION_SHA256",
@@ -459,5 +477,257 @@ def test_selector_response_rejects_non_baseline_duplicate_and_relaxed_policy(
             repo_roots=repo_roots,
             trusted_prior_commits=prior_commits,
             trusted_selector_public_keys={trusted_key},
+            trusted_selection_public_keys=_trusted_selection_keys(packet),
+        )
+
+
+def test_local_transfer_readiness_freezes_exact_payload_without_private_mapping(
+    tmp_path, monkeypatch
+):
+    repo_roots, selection, prior_commits, packet = _prepare(tmp_path, monkeypatch)
+
+    readiness = context_selection.prepare_local_transfer_readiness(
+        packet,
+        selection=selection,
+        repo_roots=repo_roots,
+        trusted_prior_commits=prior_commits,
+        trusted_selection_public_keys=_trusted_selection_keys(packet),
+        execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+    )
+
+    assert readiness["status"] == "approval_required"
+    assert readiness["execution_contract"]["attestation_type"] == "operator_attested"
+    assert readiness["execution_contract"]["replacement_claim_eligible"] is False
+    assert readiness["provider_execution_allowed"] is False
+    assert len(readiness["transfer_manifest"]["cases"]) == 10
+    serialized = json.dumps(readiness, ensure_ascii=False)
+    assert all(str(repo) not in serialized for repo in repo_roots.values())
+    assert all(case["followup_commit"] not in serialized for case in selection["cases"])
+    assert "repo_alias" not in serialized
+    assert "private_mapping" not in serialized
+    context_selection.validate_local_transfer_readiness(
+        readiness,
+        packet=packet,
+        selection=selection,
+        repo_roots=repo_roots,
+        trusted_prior_commits=prior_commits,
+        trusted_selection_public_keys=_trusted_selection_keys(packet),
+    )
+
+
+@pytest.mark.parametrize(
+    "source, message",
+    [
+        ('API_KEY = "super-secret-value"\n', "sensitive content"),
+        ('SOURCE = "/Users/private/project/file.py"\n', "sensitive content"),
+    ],
+)
+def test_local_transfer_readiness_blocks_sensitive_source(
+    tmp_path, monkeypatch, source, message
+):
+    repo_roots, selection, prior_commits, packet = _prepare(
+        tmp_path,
+        monkeypatch,
+        source_by_index={0: source},
+    )
+
+    with pytest.raises(ValueError, match=message):
+        context_selection.prepare_local_transfer_readiness(
+            packet,
+            selection=selection,
+            repo_roots=repo_roots,
+            trusted_prior_commits=prior_commits,
+            trusted_selection_public_keys=_trusted_selection_keys(packet),
+            execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+        )
+
+
+def test_local_transfer_readiness_rejects_symlinks(tmp_path, monkeypatch):
+    repo_roots, selection, prior_commits, packet = _prepare(
+        tmp_path,
+        monkeypatch,
+        symlink_index=0,
+    )
+
+    with pytest.raises(ValueError, match="regular files"):
+        context_selection.prepare_local_transfer_readiness(
+            packet,
+            selection=selection,
+            repo_roots=repo_roots,
+            trusted_prior_commits=prior_commits,
+            trusted_selection_public_keys=_trusted_selection_keys(packet),
+            execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+        )
+
+
+def test_local_transfer_readiness_records_and_omits_binary_assets(
+    tmp_path, monkeypatch
+):
+    repo_roots, selection, prior_commits, packet = _prepare(
+        tmp_path,
+        monkeypatch,
+        binary_files_by_index={
+            0: {
+                "asset.png": b"\x89PNG\r\n\x1a\n\xff",
+                "favicon.ico": b"\x00\x00\x01\x00\x01\x00",
+                "control.bin": b"\x00\x01\x02\x03",
+            }
+        },
+    )
+
+    readiness = context_selection.prepare_local_transfer_readiness(
+        packet,
+        selection=selection,
+        repo_roots=repo_roots,
+        trusted_prior_commits=prior_commits,
+        trusted_selection_public_keys=_trusted_selection_keys(packet),
+        execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+    )
+
+    manifest_case = readiness["transfer_manifest"]["cases"][0]
+    binaries = {
+        item["relative_path"]: item
+        for item in manifest_case["files"]
+        if item["transfer_disposition"] == "omitted_binary"
+    }
+    payload_paths = {
+        item["relative_path"]
+        for item in readiness["transfer_bundle"]["cases"][0]["files"]
+    }
+    assert set(binaries) == {
+        "src/asset.png",
+        "src/control.bin",
+        "src/favicon.ico",
+    }
+    assert all(
+        item["privacy_classification"] == "not_scanned_binary"
+        and item["blob_sha256"]
+        for item in binaries.values()
+    )
+    assert binaries["src/asset.png"]["binary_reason"] == "invalid_utf8"
+    assert binaries["src/favicon.ico"]["binary_reason"] == "control_character"
+    assert binaries["src/control.bin"]["binary_reason"] == "control_character"
+    assert readiness["transfer_manifest"]["omitted_file_count"] == 3
+    assert not set(binaries).intersection(payload_paths)
+
+
+def test_local_contract_cannot_self_assert_provider_verified_attestation():
+    with pytest.raises(ValueError, match="native provider receipt"):
+        context_selection.build_execution_contract(
+            context_selection.DEFAULT_EXECUTION_BUDGET,
+            attestation_type="provider_verified",
+        )
+
+    invalid_budget = dict(context_selection.DEFAULT_EXECUTION_BUDGET)
+    invalid_budget["max_provider_calls"] = 0
+    with pytest.raises(ValueError, match="execution budget"):
+        context_selection.build_execution_contract(invalid_budget)
+
+
+def test_transfer_budget_blocks_case_above_input_limit():
+    contract = context_selection.build_execution_contract(
+        context_selection.DEFAULT_EXECUTION_BUDGET
+    )
+    manifest = {
+        "case_count": 1,
+        "cases": [{"case_id": "oversized", "estimated_input_tokens": 250_001}],
+    }
+
+    with pytest.raises(ValueError, match="input token budget"):
+        context_selection.validate_transfer_budget(manifest, contract)
+
+
+def test_transfer_budget_uses_serialized_payload_and_prompt_reserve():
+    case_payload = {
+        "case_id": "escaped-payload",
+        "request": "계획을 작성한다",
+        "files": [{
+            "relative_path": "src/generated.txt",
+            "content_utf8": "\n" * 130_000,
+        }],
+    }
+    raw_source_estimate = len(case_payload["files"][0]["content_utf8"]) // 3
+    actual_estimate = context_selection.estimate_case_input_tokens(case_payload)
+    contract = context_selection.build_execution_contract(
+        context_selection.DEFAULT_EXECUTION_BUDGET
+    )
+    manifest = {
+        "case_count": 1,
+        "cases": [{
+            "case_id": case_payload["case_id"],
+            "estimated_input_tokens": actual_estimate,
+        }],
+    }
+
+    assert raw_source_estimate < contract["max_input_tokens"]
+    assert actual_estimate > contract["max_input_tokens"]
+    with pytest.raises(ValueError, match="input token budget"):
+        context_selection.validate_transfer_budget(manifest, contract)
+
+
+def test_sensitive_readiness_output_must_be_outside_all_repositories(tmp_path):
+    source_repo = tmp_path / "source-repo"
+    source_repo.mkdir()
+
+    with pytest.raises(ValueError, match="outside repositories"):
+        context_selection.validate_sensitive_output_path(
+            source_repo / "readiness.json",
+            repo_roots={"source": source_repo},
+        )
+    with pytest.raises(ValueError, match="outside repositories"):
+        context_selection.validate_sensitive_output_path(
+            Path(context_selection.__file__).resolve().parent.parent
+            / "readiness.json",
+            repo_roots={"source": source_repo},
+        )
+
+    outside = tmp_path / "artifacts" / "readiness.json"
+    assert context_selection.validate_sensitive_output_path(
+        outside,
+        repo_roots={"source": source_repo},
+    ) == outside.resolve()
+
+
+def test_local_transfer_readiness_detects_manifest_and_budget_tampering(
+    tmp_path, monkeypatch
+):
+    repo_roots, selection, prior_commits, packet = _prepare(tmp_path, monkeypatch)
+    readiness = context_selection.prepare_local_transfer_readiness(
+        packet,
+        selection=selection,
+        repo_roots=repo_roots,
+        trusted_prior_commits=prior_commits,
+        trusted_selection_public_keys=_trusted_selection_keys(packet),
+        execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+    )
+
+    tampered_manifest = deepcopy(readiness)
+    tampered_manifest["transfer_manifest"]["cases"][0]["files"][0][
+        "blob_sha256"
+    ] = "0" * 64
+    with pytest.raises(ValueError, match="readiness hash|contract mismatch"):
+        context_selection.validate_local_transfer_readiness(
+            tampered_manifest,
+            packet=packet,
+            selection=selection,
+            repo_roots=repo_roots,
+            trusted_prior_commits=prior_commits,
+            trusted_selection_public_keys=_trusted_selection_keys(packet),
+        )
+
+    tampered_budget = deepcopy(readiness)
+    tampered_budget["execution_contract"]["max_provider_calls"] = 2
+    tampered_budget["readiness_sha256"] = context_selection.canonical_digest({
+        key: value
+        for key, value in tampered_budget.items()
+        if key != "readiness_sha256"
+    })
+    with pytest.raises(ValueError, match="contract mismatch"):
+        context_selection.validate_local_transfer_readiness(
+            tampered_budget,
+            packet=packet,
+            selection=selection,
+            repo_roots=repo_roots,
+            trusted_prior_commits=prior_commits,
             trusted_selection_public_keys=_trusted_selection_keys(packet),
         )

@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -42,6 +43,23 @@ FROZEN_SELECTION_COMMIT = "3ecfd9823620254c80a967190ced6150f2b02a2d"
 FROZEN_SELECTION_SHA256 = (
     "7d9305445938ed6f71361c4a99a63e6e1b6a6bedef5ef3404a33c0167864a65b"
 )
+DEFAULT_EXECUTION_BUDGET = {
+    "max_provider_calls": 10,
+    "timeout_seconds": 1_800,
+    "max_input_tokens": 250_000,
+    "max_output_tokens": 40_000,
+    "prompt_token_reserve": 10_000,
+    "stop_on_budget_exceeded": True,
+}
+_SENSITIVE_TEXT_PATTERNS = {
+    "private_key": re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----"),
+    "credential_assignment": re.compile(
+        r"(?i)\b(?:api[_-]?key|access[_-]?token|secret|password)\b"
+        r"\s*[:=]\s*[\"'][^\"']{8,}[\"']"
+    ),
+    "aws_access_key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    "local_user_path": re.compile(r"(?:/Users|/home)/[^\s\"']+"),
+}
 
 
 def canonical_digest(value: Any) -> str:
@@ -400,6 +418,343 @@ def materialize_baseline_workspaces(
     return {case["case_id"]: root / case["case_id"] for case, _ in verified}
 
 
+def build_execution_contract(
+    execution_budget: dict[str, Any],
+    *,
+    attestation_type: str = "operator_attested",
+) -> dict[str, Any]:
+    """Freeze the pre-execution budget without claiming provider provenance."""
+    if execution_budget != DEFAULT_EXECUTION_BUDGET:
+        raise ValueError("execution budget must match the frozen local policy")
+    if attestation_type == "provider_verified":
+        raise ValueError(
+            "provider_verified attestation requires a native provider receipt verifier"
+        )
+    if attestation_type != "operator_attested":
+        raise ValueError("execution attestation type is invalid")
+    contract = {
+        "schema_version": 1,
+        "status": "frozen",
+        **deepcopy(execution_budget),
+        "attestation_type": attestation_type,
+        "replacement_claim_eligible": False,
+    }
+    contract["contract_sha256"] = canonical_digest(contract)
+    return contract
+
+
+def validate_transfer_budget(
+    transfer_manifest: dict[str, Any], execution_contract: dict[str, Any]
+) -> None:
+    if execution_contract.get("contract_sha256") != canonical_digest(
+        _without_digest(execution_contract, "contract_sha256")
+    ):
+        raise ValueError("execution contract hash mismatch")
+    cases = transfer_manifest.get("cases")
+    if (
+        not isinstance(cases, list)
+        or transfer_manifest.get("case_count") != len(cases)
+        or len(cases) > execution_contract["max_provider_calls"]
+    ):
+        raise ValueError("transfer bundle exceeds provider call budget")
+    for case in cases:
+        estimate = case.get("estimated_input_tokens")
+        if (
+            not isinstance(estimate, int)
+            or estimate < 0
+            or estimate > execution_contract["max_input_tokens"]
+        ):
+            raise ValueError("transfer case exceeds input token budget")
+
+
+def estimate_case_input_tokens(case_payload: dict[str, Any]) -> int:
+    """Return a conservative UTF-8 byte upper bound plus prompt reserve."""
+    serialized = json.dumps(
+        case_payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return len(serialized) + DEFAULT_EXECUTION_BUDGET["prompt_token_reserve"]
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def validate_sensitive_output_path(
+    output_path: str | Path, *, repo_roots: dict[str, str | Path]
+) -> Path:
+    destination = Path(output_path).resolve()
+    protected_roots = {
+        Path(__file__).resolve().parent.parent,
+        *(Path(root).resolve() for root in repo_roots.values()),
+    }
+    if any(_path_is_within(destination, root) for root in protected_roots):
+        raise ValueError("sensitive readiness output must be outside repositories")
+    return destination
+
+
+def _privacy_findings(text: str, *, subject: str) -> list[dict[str, str]]:
+    return [
+        {"subject": subject, "code": code}
+        for code, pattern in _SENSITIVE_TEXT_PATTERNS.items()
+        if pattern.search(text)
+    ]
+
+
+def _decode_transfer_text(content: bytes) -> tuple[str | None, str | None]:
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, "invalid_utf8"
+    allowed_controls = {"\t", "\n", "\r", "\f"}
+    if any(
+        (ord(character) < 32 and character not in allowed_controls)
+        or ord(character) == 127
+        for character in text
+    ):
+        return None, "control_character"
+    return text, None
+
+
+def _baseline_archive_files(
+    case: dict[str, Any], *, repo_roots: dict[str, str | Path]
+) -> list[tuple[str, str, bytes]]:
+    tree = _verified_packet_tree(case, repo_roots=repo_roots)
+    expected = {item["path"]: item["blob_oid"] for item in tree}
+    repo = Path(repo_roots[case["repo_alias"]]).resolve()
+    try:
+        archive = subprocess.check_output(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "archive",
+                "--format=tar",
+                case["baseline_commit"],
+            ],
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError as error:
+        detail = error.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(detail or "baseline archive failed") from error
+
+    files: list[tuple[str, str, bytes]] = []
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
+        for member in bundle.getmembers():
+            path = PurePosixPath(member.name)
+            if path.is_absolute() or ".." in path.parts:
+                raise ValueError("baseline archive contains unsafe path")
+            relative = path.as_posix()
+            if relative not in expected:
+                continue
+            if not member.isfile():
+                raise ValueError("transfer bundle accepts regular files only")
+            stream = bundle.extractfile(member)
+            if stream is None:
+                raise ValueError("baseline archive file cannot be read")
+            files.append((relative, expected[relative], stream.read()))
+    if {path for path, _, _ in files} != set(expected):
+        raise ValueError("baseline archive does not match indexed tree")
+    files.sort(key=lambda item: item[0])
+    return files
+
+
+def _build_local_transfer_artifacts(
+    packet: dict[str, Any],
+    *,
+    selection: dict[str, Any],
+    repo_roots: dict[str, str | Path],
+    trusted_prior_commits: list[str],
+    trusted_selection_public_keys: set[str],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    _validate_packet_against_selection(
+        packet,
+        selection=selection,
+        repo_roots=repo_roots,
+        trusted_prior_commits=trusted_prior_commits,
+        trusted_selection_public_keys=trusted_selection_public_keys,
+    )
+    bundle_cases: list[dict[str, Any]] = []
+    manifest_cases: list[dict[str, Any]] = []
+    findings: list[dict[str, str]] = []
+    source_byte_size = 0
+    transfer_byte_size = 0
+    transferred_file_count = 0
+    omitted_file_count = 0
+    for case in packet["cases"]:
+        case_id = case["case_id"]
+        request = case["request"]
+        findings.extend(_privacy_findings(request, subject=f"{case_id}:request"))
+        bundle_files: list[dict[str, Any]] = []
+        manifest_files: list[dict[str, Any]] = []
+        case_source_byte_size = 0
+        case_transfer_byte_size = len(request.encode("utf-8"))
+        transfer_byte_size += case_transfer_byte_size
+        for path, blob_oid, content in _baseline_archive_files(
+            case, repo_roots=repo_roots
+        ):
+            content_sha256 = hashlib.sha256(content).hexdigest()
+            source_byte_size += len(content)
+            case_source_byte_size += len(content)
+            text, binary_reason = _decode_transfer_text(content)
+            if text is None:
+                omitted_file_count += 1
+                manifest_files.append({
+                    "relative_path": path,
+                    "source_blob_oid": blob_oid,
+                    "blob_sha256": content_sha256,
+                    "byte_size": len(content),
+                    "transfer_disposition": "omitted_binary",
+                    "binary_reason": binary_reason,
+                    "privacy_classification": "not_scanned_binary",
+                    "privacy_checks": ["regular_file", binary_reason],
+                })
+                continue
+            file_findings = _privacy_findings(text, subject=f"{case_id}:{path}")
+            findings.extend(file_findings)
+            transfer_byte_size += len(content)
+            case_transfer_byte_size += len(content)
+            transferred_file_count += 1
+            bundle_files.append({
+                "relative_path": path,
+                "content_utf8": text,
+            })
+            manifest_files.append({
+                "relative_path": path,
+                "source_blob_oid": blob_oid,
+                "blob_sha256": content_sha256,
+                "byte_size": len(content),
+                "transfer_disposition": "included_text",
+                "privacy_classification": (
+                    "blocked" if file_findings else "pattern_clear"
+                ),
+                "privacy_checks": [
+                    "regular_file",
+                    "utf8",
+                    "credential_patterns",
+                    "local_user_paths",
+                ],
+            })
+        bundle_case = {
+            "case_id": case_id,
+            "request": request,
+            "files": bundle_files,
+        }
+        bundle_cases.append(bundle_case)
+        manifest_cases.append({
+            "case_id": case_id,
+            "request_sha256": hashlib.sha256(request.encode("utf-8")).hexdigest(),
+            "source_byte_size": case_source_byte_size,
+            "transfer_byte_size": case_transfer_byte_size,
+            "estimated_input_tokens": estimate_case_input_tokens(bundle_case),
+            "files": manifest_files,
+        })
+
+    transfer_bundle = {
+        "schema_version": 1,
+        "status": "local_only",
+        "batch_id": packet["batch_id"],
+        "selection_sha256": packet["selection_sha256"],
+        "cases": bundle_cases,
+    }
+    transfer_bundle["bundle_sha256"] = canonical_digest(transfer_bundle)
+    transfer_manifest = {
+        "schema_version": 1,
+        "status": "frozen",
+        "batch_id": packet["batch_id"],
+        "selection_sha256": packet["selection_sha256"],
+        "packet_sha256": packet["packet_sha256"],
+        "transfer_bundle_sha256": transfer_bundle["bundle_sha256"],
+        "case_count": len(manifest_cases),
+        "source_byte_size": source_byte_size,
+        "transfer_byte_size": transfer_byte_size,
+        "transferred_file_count": transferred_file_count,
+        "omitted_file_count": omitted_file_count,
+        "cases": manifest_cases,
+    }
+    transfer_manifest["manifest_sha256"] = canonical_digest(transfer_manifest)
+    privacy_audit = {
+        "schema_version": 1,
+        "status": "blocked" if findings else "pattern_clear",
+        "scanner_version": 1,
+        "transfer_manifest_sha256": transfer_manifest["manifest_sha256"],
+        "finding_count": len(findings),
+        "omitted_binary_count": omitted_file_count,
+        "findings": findings,
+    }
+    privacy_audit["audit_sha256"] = canonical_digest(privacy_audit)
+    if findings:
+        raise ValueError("transfer bundle contains sensitive content")
+    return transfer_bundle, transfer_manifest, privacy_audit
+
+
+def prepare_local_transfer_readiness(
+    packet: dict[str, Any],
+    *,
+    selection: dict[str, Any],
+    repo_roots: dict[str, str | Path],
+    trusted_prior_commits: list[str],
+    trusted_selection_public_keys: set[str],
+    execution_budget: dict[str, Any],
+) -> dict[str, Any]:
+    """Prepare exact local artifacts; external transfer remains disallowed."""
+    transfer_bundle, transfer_manifest, privacy_audit = (
+        _build_local_transfer_artifacts(
+            packet,
+            selection=selection,
+            repo_roots=repo_roots,
+            trusted_prior_commits=trusted_prior_commits,
+            trusted_selection_public_keys=trusted_selection_public_keys,
+        )
+    )
+    execution_contract = build_execution_contract(execution_budget)
+    validate_transfer_budget(transfer_manifest, execution_contract)
+    readiness = {
+        "schema_version": 1,
+        "status": "approval_required",
+        "transfer_bundle": transfer_bundle,
+        "transfer_manifest": transfer_manifest,
+        "privacy_audit": privacy_audit,
+        "execution_contract": execution_contract,
+        "external_transfer_approved": False,
+        "provider_execution_allowed": False,
+        "replacement_claim_eligible": False,
+    }
+    readiness["readiness_sha256"] = canonical_digest(readiness)
+    return readiness
+
+
+def validate_local_transfer_readiness(
+    readiness: dict[str, Any],
+    *,
+    packet: dict[str, Any],
+    selection: dict[str, Any],
+    repo_roots: dict[str, str | Path],
+    trusted_prior_commits: list[str],
+    trusted_selection_public_keys: set[str],
+) -> None:
+    if readiness.get("readiness_sha256") != canonical_digest(
+        _without_digest(readiness, "readiness_sha256")
+    ):
+        raise ValueError("local transfer readiness hash mismatch")
+    expected = prepare_local_transfer_readiness(
+        packet,
+        selection=selection,
+        repo_roots=repo_roots,
+        trusted_prior_commits=trusted_prior_commits,
+        trusted_selection_public_keys=trusted_selection_public_keys,
+        execution_budget=DEFAULT_EXECUTION_BUDGET,
+    )
+    if readiness != expected:
+        raise ValueError("local transfer readiness contract mismatch")
+
+
 def selector_response_payload(response: dict[str, Any]) -> bytes:
     payload = deepcopy(response)
     signoff = payload.get("signoff")
@@ -687,6 +1042,15 @@ def main() -> int:
         "--trusted-selection-public-key", action="append", required=True
     )
     apply.add_argument("--output", required=True)
+    readiness = subparsers.add_parser("readiness")
+    readiness.add_argument("packet")
+    readiness.add_argument("selection")
+    readiness.add_argument("repo_map")
+    readiness.add_argument("prior_registry")
+    readiness.add_argument(
+        "--trusted-selection-public-key", action="append", required=True
+    )
+    readiness.add_argument("--output", required=True)
     args = parser.parse_args()
     if args.command == "prepare":
         result = prepare_context_selection_packet(
@@ -706,6 +1070,21 @@ def main() -> int:
             trusted_selector_public_keys=set(args.trusted_selector_public_key),
             trusted_selection_public_keys=set(args.trusted_selection_public_key),
         )
+    elif args.command == "readiness":
+        repo_roots = _load_json(args.repo_map)
+        result = prepare_local_transfer_readiness(
+            _load_json(args.packet),
+            selection=_load_json(args.selection),
+            repo_roots=repo_roots,
+            trusted_prior_commits=_load_commit_registry(args.prior_registry),
+            trusted_selection_public_keys=set(args.trusted_selection_public_key),
+            execution_budget=DEFAULT_EXECUTION_BUDGET,
+        )
+        _write_json_atomic(
+            validate_sensitive_output_path(args.output, repo_roots=repo_roots),
+            result,
+        )
+        return 0
     else:
         materialize_baseline_workspaces(
             _load_json(args.packet),
