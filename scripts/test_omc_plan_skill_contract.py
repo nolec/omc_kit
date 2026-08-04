@@ -87,6 +87,19 @@ REQUIRED_EVIDENCE_FIRST_MARKERS = [
     "decisions_required",
 ]
 
+REQUIRED_SELECTED_CONTEXT_MARKERS = [
+    "선택된 객체",
+    "ID·수신자",
+    "상태·payload",
+    "supports·VERIFY",
+]
+
+REQUIRED_EXECUTION_EFFICIENCY_MARKERS = [
+    "근거 파일은 한 번의 명령",
+    "진행 메시지·pwd·재탐색 금지",
+    "즉시 구조화 결과",
+]
+
 REQUIRED_DECISION_OUTPUT_MARKERS = [
     "decision",
     "risk",
@@ -368,6 +381,28 @@ def test_plan_skill_avoids_redundant_state_round_trip():
     assert "python3 scripts/omc.py state status --target ." not in text
     assert "동기화되어 있으면 상태 명령을 실행하지 않습니다" in text
     assert "scripts/omc.py`가 제공된 정확한 context path" in text
+
+
+def test_plan_skill_traces_selected_context_into_state_and_payload():
+    texts = _collect_plan_skill_texts(
+        root=ROOT,
+        required_paths=REQUIRED_PLAN_SKILL_PATHS,
+        optional_paths=OPTIONAL_PLAN_SKILL_PATHS,
+    )
+    for path, text in texts.items():
+        missing = [marker for marker in REQUIRED_SELECTED_CONTEXT_MARKERS if marker not in text]
+        assert not missing, f"{path} missing selected-context markers: {missing}"
+
+
+def test_plan_skill_forbids_non_evidence_execution_round_trips():
+    texts = _collect_plan_skill_texts(
+        root=ROOT,
+        required_paths=REQUIRED_PLAN_SKILL_PATHS,
+        optional_paths=OPTIONAL_PLAN_SKILL_PATHS,
+    )
+    for path, text in texts.items():
+        missing = [marker for marker in REQUIRED_EXECUTION_EFFICIENCY_MARKERS if marker not in text]
+        assert not missing, f"{path} missing execution-efficiency markers: {missing}"
 
 
 def test_plan_skill_recommendations_are_state_based_and_guarded():
