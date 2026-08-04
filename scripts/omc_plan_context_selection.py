@@ -231,6 +231,114 @@ def validate_retrieval_development_corpus(
     }
 
 
+def _lexical_features(value: str) -> set[str]:
+    features: set[str] = set()
+    for token in re.findall(r"[0-9a-zA-Z가-힣]+", value.lower()):
+        features.add(token)
+        for width in (2, 3):
+            features.update(
+                token[index:index + width]
+                for index in range(max(0, len(token) - width + 1))
+            )
+    return features
+
+
+def build_baseline_only_shortlist(
+    case: dict[str, Any], *, maximum_selected_files: int
+) -> dict[str, Any]:
+    """Rank baseline files using only the request, path, and baseline content."""
+    if (
+        not isinstance(case, dict)
+        or not isinstance(case.get("case_id"), str)
+        or not isinstance(case.get("request"), str)
+        or not isinstance(case.get("context_files"), list)
+        or not isinstance(maximum_selected_files, int)
+        or isinstance(maximum_selected_files, bool)
+        or maximum_selected_files <= 0
+        or maximum_selected_files
+        > RETRIEVAL_POLICY["maximum_selected_files_per_case"]
+    ):
+        raise ValueError("baseline-only shortlist input is invalid")
+    request_features = _lexical_features(case["request"])
+    ranked: list[tuple[int, str]] = []
+    seen_paths: set[str] = set()
+    for item in case["context_files"]:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"path", "content_utf8"}
+            or not isinstance(item["path"], str)
+            or not isinstance(item["content_utf8"], str)
+            or item["path"] in seen_paths
+        ):
+            raise ValueError("baseline-only shortlist context file is invalid")
+        path = item["path"]
+        seen_paths.add(path)
+        path_overlap = request_features & _lexical_features(path)
+        content_overlap = request_features & _lexical_features(item["content_utf8"])
+        score = 4 * len(path_overlap) + len(content_overlap)
+        ranked.append((score, path))
+    if not ranked:
+        raise ValueError("baseline-only shortlist requires context files")
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return {
+        "case_id": case["case_id"],
+        "selected_paths": [
+            path for _, path in ranked[:maximum_selected_files]
+        ],
+    }
+
+
+def measure_retrieval_development_corpus(
+    corpus: dict[str, Any],
+    *,
+    confirmatory_selection: dict[str, Any],
+    maximum_selected_files: int,
+) -> dict[str, Any]:
+    """Measure deterministic retrieval quality without using labels for ranking."""
+    validate_retrieval_development_corpus(
+        corpus,
+        confirmatory_selection=confirmatory_selection,
+    )
+    candidate_count = 0
+    selected_count = 0
+    critical_total = 0
+    critical_hits = 0
+    weighted_total = 0
+    weighted_hits = 0
+    for case in corpus["cases"]:
+        shortlist = build_baseline_only_shortlist(
+            case,
+            maximum_selected_files=maximum_selected_files,
+        )
+        selected = set(shortlist["selected_paths"])
+        candidate_count += len(case["context_files"])
+        selected_count += len(selected)
+        for label in case["context_labels"]:
+            weight = label["weight"]
+            weighted_total += weight
+            weighted_hits += weight * int(label["path"] in selected)
+            if label["critical"]:
+                critical_total += 1
+                critical_hits += int(label["path"] in selected)
+    critical_recall = critical_hits / critical_total
+    weighted_recall = weighted_hits / weighted_total
+    return {
+        "case_count": len(corpus["cases"]),
+        "candidate_file_count": candidate_count,
+        "selected_file_count": selected_count,
+        "critical_path_recall": critical_recall,
+        "weighted_path_recall": weighted_recall,
+        "file_count_reduction": (
+            candidate_count - selected_count
+        ) / candidate_count,
+        "development_gate_passed": (
+            critical_recall == 1.0
+            and weighted_recall == 1.0
+            and selected_count < candidate_count
+        ),
+    }
+
+
 def _without_digest(value: dict[str, Any], field: str) -> dict[str, Any]:
     payload = deepcopy(value)
     payload.pop(field, None)
@@ -578,6 +686,72 @@ def materialize_baseline_workspaces(
         shutil.rmtree(staging, ignore_errors=True)
         raise
     return {case["case_id"]: root / case["case_id"] for case, _ in verified}
+
+
+def build_baseline_workspace_shortlists(
+    packet: dict[str, Any],
+    *,
+    workspace_root: str | Path,
+    maximum_selected_files: int,
+    trusted_selection_public_keys: set[str],
+) -> dict[str, Any]:
+    """Build an unsigned shortlist draft from materialized baseline workspaces."""
+    _validate_packet_digest(
+        packet,
+        trusted_selection_public_keys=trusted_selection_public_keys,
+    )
+    root = Path(workspace_root).resolve()
+    if not root.is_dir():
+        raise ValueError("baseline workspace root is invalid")
+    excluded = set(RETRIEVAL_POLICY["excluded_path_parts"])
+    cases: list[dict[str, Any]] = []
+    for case in packet["cases"]:
+        case_id = _safe_case_id(case["case_id"])
+        case_root = root / case_id
+        if not case_root.is_dir():
+            raise ValueError("baseline case workspace is missing")
+        context_files: list[dict[str, str]] = []
+        for path in sorted(case_root.rglob("*")):
+            relative = path.relative_to(case_root)
+            if any(part in excluded for part in relative.parts):
+                continue
+            if path.is_symlink() or not path.is_file():
+                continue
+            if (
+                len(context_files)
+                >= RETRIEVAL_POLICY["maximum_indexed_files_per_case"]
+            ):
+                raise ValueError("baseline workspace exceeds indexed file limit")
+            try:
+                content = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            except OSError as error:
+                raise ValueError("baseline workspace file read failed") from error
+            context_files.append({
+                "path": relative.as_posix(),
+                "content_utf8": content,
+            })
+        cases.append(
+            build_baseline_only_shortlist(
+                {
+                    "case_id": case_id,
+                    "request": case["request"],
+                    "context_files": context_files,
+                },
+                maximum_selected_files=maximum_selected_files,
+            )
+        )
+    draft = {
+        "schema_version": 1,
+        "status": "draft",
+        "packet_sha256": packet["packet_sha256"],
+        "retrieval_policy_sha256": packet["retrieval_policy_sha256"],
+        "maximum_selected_files": maximum_selected_files,
+        "cases": cases,
+    }
+    draft["shortlist_sha256"] = canonical_digest(draft)
+    return draft
 
 
 def build_execution_contract(
@@ -1241,6 +1415,23 @@ def main() -> int:
         "--trusted-selection-public-key", action="append", required=True
     )
     readiness.add_argument("--output", required=True)
+    development = subparsers.add_parser("measure-development")
+    development.add_argument("corpus")
+    development.add_argument("confirmatory_selection")
+    development.add_argument(
+        "--maximum-selected-files", type=int, default=2
+    )
+    development.add_argument("--output", required=True)
+    shortlist = subparsers.add_parser("shortlist-workspaces")
+    shortlist.add_argument("packet")
+    shortlist.add_argument("workspace_root")
+    shortlist.add_argument(
+        "--maximum-selected-files", type=int, default=2
+    )
+    shortlist.add_argument(
+        "--trusted-selection-public-key", action="append", required=True
+    )
+    shortlist.add_argument("--output", required=True)
     args = parser.parse_args()
     if args.command == "prepare":
         result = prepare_context_selection_packet(
@@ -1275,6 +1466,21 @@ def main() -> int:
             result,
         )
         return 0
+    elif args.command == "measure-development":
+        result = measure_retrieval_development_corpus(
+            _load_json(args.corpus),
+            confirmatory_selection=_load_json(args.confirmatory_selection),
+            maximum_selected_files=args.maximum_selected_files,
+        )
+    elif args.command == "shortlist-workspaces":
+        result = build_baseline_workspace_shortlists(
+            _load_json(args.packet),
+            workspace_root=args.workspace_root,
+            maximum_selected_files=args.maximum_selected_files,
+            trusted_selection_public_keys=set(
+                args.trusted_selection_public_key
+            ),
+        )
     else:
         materialize_baseline_workspaces(
             _load_json(args.packet),

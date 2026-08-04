@@ -922,3 +922,162 @@ def test_retrieval_development_corpus_rejects_invalid_contract(
             corpus,
             confirmatory_selection=batch_a,
         )
+
+
+def test_baseline_only_shortlist_is_deterministic_and_ignores_gold_labels():
+    corpus, _ = _load_retrieval_development_inputs()
+    case = corpus["cases"][0]
+
+    first = context_selection.build_baseline_only_shortlist(
+        case,
+        maximum_selected_files=2,
+    )
+    changed_labels = deepcopy(case)
+    changed_labels["context_labels"] = [{
+        "path": "src/ui/StatusBadge.tsx",
+        "weight": 99,
+        "critical": True,
+    }]
+    second = context_selection.build_baseline_only_shortlist(
+        changed_labels,
+        maximum_selected_files=2,
+    )
+
+    assert first == second
+    assert first == {
+        "case_id": "retrieval-dev-ui-exit-guard",
+        "selected_paths": [
+            "src/ui/ExitGuardPanel.tsx",
+            "src/ui/ExitGuardPanel.test.tsx",
+        ],
+    }
+
+
+def test_retrieval_development_measurement_passes_frozen_quality_gate():
+    corpus, batch_a = _load_retrieval_development_inputs()
+
+    report = context_selection.measure_retrieval_development_corpus(
+        corpus,
+        confirmatory_selection=batch_a,
+        maximum_selected_files=2,
+    )
+
+    assert report == {
+        "case_count": 5,
+        "candidate_file_count": 15,
+        "selected_file_count": 10,
+        "critical_path_recall": 1.0,
+        "weighted_path_recall": 1.0,
+        "file_count_reduction": 1 / 3,
+        "development_gate_passed": True,
+    }
+
+
+def test_retrieval_development_measurement_fails_when_shortlist_is_too_small():
+    corpus, batch_a = _load_retrieval_development_inputs()
+
+    report = context_selection.measure_retrieval_development_corpus(
+        corpus,
+        confirmatory_selection=batch_a,
+        maximum_selected_files=1,
+    )
+
+    assert report["critical_path_recall"] == 1.0
+    assert report["weighted_path_recall"] < 1.0
+    assert report["development_gate_passed"] is False
+
+
+def test_retrieval_development_measurement_cli_writes_reproducible_report(
+    tmp_path,
+):
+    output = tmp_path / "retrieval-development-report.json"
+    completed = subprocess.run(
+        [
+            "python3",
+            str(Path(context_selection.__file__)),
+            "measure-development",
+            str(FIXTURES / "omc_plan_retrieval_development.json"),
+            str(FIXTURES / "omc_plan_confirmatory_batch_a_selection.json"),
+            "--maximum-selected-files",
+            "2",
+            "--output",
+            str(output),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(output.read_text())
+    assert report["development_gate_passed"] is True
+    assert report["critical_path_recall"] == 1.0
+    assert report["weighted_path_recall"] == 1.0
+
+
+def test_baseline_workspace_shortlist_builds_unsigned_packet_bound_draft(
+    tmp_path, monkeypatch
+):
+    (tmp_path / "source").mkdir()
+    repo_roots, selection, prior_commits, packet = _prepare(
+        tmp_path / "source",
+        monkeypatch,
+        request_by_index={0: "retry budget 차단 규칙을 강화한다"},
+        text_files_by_index={
+            0: {
+                "src/retry_budget.py": "def stop_when_budget_exceeded(): pass\n",
+                "src/catalog.py": "def list_products(): return []\n",
+            },
+        },
+    )
+    workspace_root = tmp_path / "baseline-workspaces"
+    context_selection.materialize_baseline_workspaces(
+        packet,
+        selection=selection,
+        repo_roots=repo_roots,
+        trusted_prior_commits=prior_commits,
+        output_root=workspace_root,
+        trusted_selection_public_keys=_trusted_selection_keys(packet),
+    )
+
+    draft = context_selection.build_baseline_workspace_shortlists(
+        packet,
+        workspace_root=workspace_root,
+        maximum_selected_files=2,
+        trusted_selection_public_keys=_trusted_selection_keys(packet),
+    )
+
+    assert draft["status"] == "draft"
+    assert draft["packet_sha256"] == packet["packet_sha256"]
+    assert draft["retrieval_policy_sha256"] == packet["retrieval_policy_sha256"]
+    assert draft["cases"][0]["selected_paths"][0] == "src/retry_budget.py"
+    assert "signoff" not in draft
+    assert "followup_commit" not in json.dumps(draft)
+
+
+def test_baseline_workspace_shortlist_rejects_tampered_packet(
+    tmp_path, monkeypatch
+):
+    (tmp_path / "source").mkdir()
+    repo_roots, selection, prior_commits, packet = _prepare(
+        tmp_path / "source",
+        monkeypatch,
+    )
+    workspace_root = tmp_path / "baseline-workspaces"
+    context_selection.materialize_baseline_workspaces(
+        packet,
+        selection=selection,
+        repo_roots=repo_roots,
+        trusted_prior_commits=prior_commits,
+        output_root=workspace_root,
+        trusted_selection_public_keys=_trusted_selection_keys(packet),
+    )
+    packet["cases"][0]["request"] = "tampered"
+
+    with pytest.raises(ValueError, match="packet hash"):
+        context_selection.build_baseline_workspace_shortlists(
+            packet,
+            workspace_root=workspace_root,
+            maximum_selected_files=2,
+            trusted_selection_public_keys=_trusted_selection_keys(packet),
+        )
