@@ -8,6 +8,7 @@ import base64
 import hashlib
 import json
 import math
+import re
 import shutil
 import subprocess
 import tempfile
@@ -937,18 +938,22 @@ def build_blind_adjudication_sessions(
         pair = sorted(by_case[case_id], key=lambda item: item["provider_id"])
         if case_index % 2:
             pair.reverse()
+        provider_aliases = _new_blind_provider_aliases()
         for item_index, execution in enumerate(pair):
             blind_id = f"{batch_id}:blind:{case_index + 1}:{item_index + 1}"
             blind_item = {
                 "blind_id": blind_id,
                 "case_id": case_id,
-                "plan": execution["plan"],
-                "raw_output": execution["raw_output"],
+                "plan": _sanitize_blind_plan(
+                    execution["plan"], provider_aliases=provider_aliases
+                ),
             }
             if gold_document is not None:
                 if case_id not in gold_by_id:
                     raise ValueError(f"missing gold case for blind adjudication: {case_id}")
-                blind_item["gold_case"] = gold_by_id[case_id]
+                blind_item["gold_case"] = _sanitize_blind_plan(
+                    gold_by_id[case_id], provider_aliases=provider_aliases
+                )
             session["items"].append(blind_item)
             mapping[blind_id] = {
                 "provider_id": execution["provider_id"],
@@ -957,6 +962,87 @@ def build_blind_adjudication_sessions(
                 "session_id": session["session_id"],
             }
     return sessions, mapping
+
+
+_ABSOLUTE_CONTEXT_PATH = re.compile(
+    r"(?:(?:/private)?/tmp|/Users)/[^)\]\s`\"']*/(context/[^)\]\s`\"']+)"
+)
+_ABSOLUTE_RUNTIME_PATH = re.compile(
+    r"(?:(?:/private)?/tmp|/Users)/[^)\]\s`\"']+"
+)
+_PROVIDER_LABEL = re.compile(r"\b(?:baseline-plan|omc-plan)\b", re.IGNORECASE)
+
+
+def _new_blind_provider_aliases() -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for provider_id in _PROVIDER_IDS:
+        alias = f"[planning-system-{uuid.uuid4().hex[:12]}]"
+        while alias in aliases.values():
+            alias = f"[planning-system-{uuid.uuid4().hex[:12]}]"
+        aliases[provider_id] = alias
+    return aliases
+
+
+def _sanitize_blind_plan(
+    value: Any,
+    *,
+    provider_aliases: dict[str, str],
+) -> Any:
+    """Remove execution provenance while preserving plan semantics and indexes."""
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_blind_plan(item, provider_aliases=provider_aliases)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _sanitize_blind_plan(item, provider_aliases=provider_aliases)
+            for item in value
+        ]
+    if not isinstance(value, str):
+        return deepcopy(value)
+    sanitized = _ABSOLUTE_CONTEXT_PATH.sub(r"\1", value)
+    sanitized = _ABSOLUTE_RUNTIME_PATH.sub("[runtime-path]", sanitized)
+    return _PROVIDER_LABEL.sub(
+        lambda match: provider_aliases[match.group(0).lower()], sanitized
+    )
+
+
+def restore_blind_session_plan_labels(
+    session: dict[str, Any],
+    *,
+    executions: list[dict[str, Any]],
+    private_mapping: dict[str, dict[str, str]],
+    gold_document: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Restore exact plans and gold after validating the blind result contract."""
+    restored = deepcopy(session)
+    execution_by_identity = {
+        (item.get("provider_id"), item.get("case_id")): item
+        for item in executions
+    }
+    gold_by_id = (
+        {case["case_id"]: case for case in gold_document["cases"]}
+        if gold_document is not None
+        else {}
+    )
+    for item in restored.get("items", []):
+        blind_id = item.get("blind_id")
+        mapping = private_mapping.get(blind_id)
+        if not isinstance(mapping, dict) or mapping.get("case_id") != item.get("case_id"):
+            raise ValueError("blind session mapping mismatch")
+        execution = execution_by_identity.get(
+            (mapping.get("provider_id"), mapping.get("case_id"))
+        )
+        if not isinstance(execution, dict) or not isinstance(execution.get("plan"), dict):
+            raise ValueError("blind session provider plan is missing")
+        item["plan"] = deepcopy(execution["plan"])
+        if "gold_case" in item:
+            gold_case = gold_by_id.get(item.get("case_id"))
+            if not isinstance(gold_case, dict):
+                raise ValueError("blind session gold case is missing")
+            item["gold_case"] = deepcopy(gold_case)
+    return restored
 
 
 def build_adjudication_catalog(session: dict[str, Any]) -> dict[str, Any]:
@@ -1666,7 +1752,15 @@ def run_full_pilot(
         (root / f"adjudication-session-{index}-result.json").write_text(
             json.dumps(raw_result, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        normalized_result = normalize_adjudication_result(raw_result, session)
+        normalization_session = restore_blind_session_plan_labels(
+            session,
+            executions=executions,
+            private_mapping=mapping,
+            gold_document=gold_document,
+        )
+        normalized_result = normalize_adjudication_result(
+            raw_result, normalization_session
+        )
         (root / f"adjudication-session-{index}-normalized.json").write_text(
             json.dumps(normalized_result, ensure_ascii=False, indent=2), encoding="utf-8"
         )

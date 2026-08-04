@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import omc_plan_runtime_pilot as runtime
+from omc_plan_pilot import restore_blind_session_plan_labels
 
 
 def _protocol():
@@ -613,6 +614,24 @@ def test_baseline_must_return_activation_sentinel():
             expected_receipt="secret-nonce",
             baseline_sentinel="unavailable",
         )
+
+
+def test_omc_provider_prompt_requires_exact_skill_read_before_planning():
+    prompt = runtime.build_provider_prompt("omc-plan", "Plan this change")
+
+    skill_instruction = "Read `.agents/skills/omc-plan/SKILL.md`"
+    assert skill_instruction in prompt
+    assert "Read only that skill file and the provided context files" in prompt
+    assert prompt.index(skill_instruction) < prompt.index("produce the implementation plan")
+    assert "$omc-plan" in prompt
+
+
+def test_baseline_provider_prompt_limits_context_without_exposing_skill_path():
+    prompt = runtime.build_provider_prompt("baseline-plan", "Plan this change")
+
+    assert "Read only the provided context files" in prompt
+    assert ".agents/skills/omc-plan/SKILL.md" not in prompt
+    assert "secret-nonce" not in prompt
 
 
 def test_activation_probe_materializes_omc_workspace_after_baseline(
@@ -1464,6 +1483,37 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
         trusted_runtime_signer_public_key=runtime_signer_public_key,
     )
     assert report["decision"]["decision"] == "REPLACEABLE"
+
+
+def test_restore_blind_session_plan_labels_uses_private_mapping():
+    sanitized_session = {
+        "schema_version": 2,
+        "session_id": "session-1",
+        "items": [{
+            "blind_id": "blind-1",
+            "case_id": "case-1",
+            "plan": {"assumptions": ["[provider] assumption"]},
+        }],
+    }
+    executions = [{
+        "provider_id": "omc-plan",
+        "case_id": "case-1",
+        "plan": {"assumptions": ["omc-plan assumption"]},
+    }]
+    mapping = {
+        "blind-1": {"provider_id": "omc-plan", "case_id": "case-1"}
+    }
+
+    restored = restore_blind_session_plan_labels(
+        sanitized_session,
+        executions=executions,
+        private_mapping=mapping,
+    )
+
+    assert restored["items"][0]["plan"] == executions[0]["plan"]
+    assert sanitized_session["items"][0]["plan"]["assumptions"] == [
+        "[provider] assumption"
+    ]
 
 
 def test_diagnostic_rejudge_preserves_provider_evidence_and_blocks_replacement(tmp_path):

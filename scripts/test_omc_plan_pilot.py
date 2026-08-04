@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from omc_plan_pilot import (
     load_protocol,
     run_full_pilot,
     run_provider_pairs,
+    restore_blind_session_plan_labels,
     seal_blind_adjudications,
     validate_private_key_location,
 )
@@ -996,6 +998,205 @@ def test_blind_sessions_split_pairs_without_provider_names():
     assert len(private_mapping) == 8
 
 
+def test_blind_sessions_remove_raw_output_and_runtime_path_provider_leaks():
+    plan = _plan("case-01")
+    plan["scope_items"] = [
+        "[file-01.tsx](/private/tmp/run/workspaces/case-01/omc-plan/context/file-01.tsx) 수정"
+    ]
+    plan["assumptions"] = ["omc-plan API 계약을 유지한다"]
+    executions = [{
+        "provider_id": "omc-plan",
+        "case_id": "case-01",
+        "plan_execution_id": "omc-plan-case-01",
+        "plan": plan,
+        "raw_output": json.dumps(plan),
+    }, {
+        "provider_id": "baseline-plan",
+        "case_id": "case-01",
+        "plan_execution_id": "baseline-plan-case-01",
+        "plan": deepcopy(plan),
+        "raw_output": json.dumps(plan),
+    }]
+
+    sessions, _ = build_blind_adjudication_sessions(
+        executions,
+        session_count=2,
+        batch_id="blind-sanitized",
+    )
+
+    payload = json.dumps(sessions, ensure_ascii=False)
+    assert "raw_output" not in payload
+    assert "/private/" not in payload
+    assert "omc-plan" not in payload
+    assert "baseline-plan" not in payload
+    assert "context/file-01.tsx" in payload
+    aliases = re.findall(r"\[planning-system-[0-9a-f]+\]", payload)
+    assert len(set(aliases)) == 1
+    assert f"{aliases[0]} API 계약을 유지한다" in payload
+
+
+def test_blind_sessions_redact_provider_only_self_identification():
+    omc_plan = _plan("case-01")
+    omc_plan["assumptions"] = ["omc-plan skill activation succeeded"]
+    baseline_plan = _plan("case-01")
+    executions = [{
+        "provider_id": "omc-plan",
+        "case_id": "case-01",
+        "plan_execution_id": "omc-plan-case-01",
+        "plan": omc_plan,
+        "raw_output": json.dumps(omc_plan),
+    }, {
+        "provider_id": "baseline-plan",
+        "case_id": "case-01",
+        "plan_execution_id": "baseline-plan-case-01",
+        "plan": baseline_plan,
+        "raw_output": json.dumps(baseline_plan),
+    }]
+
+    sessions, _ = build_blind_adjudication_sessions(
+        executions,
+        session_count=2,
+        batch_id="blind-provider-only",
+    )
+
+    payload = json.dumps(sessions)
+    assert "omc-plan" not in payload
+    assert "baseline-plan" not in payload
+    assert re.search(
+        r"\[planning-system-[0-9a-f]+\] skill activation succeeded", payload
+    )
+
+
+def test_blind_sessions_alias_provider_label_consistently_in_plan_and_gold():
+    omc_plan = _plan("case-01")
+    omc_plan["scope_items"] = ["omc-plan API 계약 수정"]
+    baseline_plan = _plan("case-01")
+    executions = [{
+        "provider_id": "omc-plan",
+        "case_id": "case-01",
+        "plan_execution_id": "omc-plan-case-01",
+        "plan": omc_plan,
+        "raw_output": json.dumps(omc_plan),
+    }, {
+        "provider_id": "baseline-plan",
+        "case_id": "case-01",
+        "plan_execution_id": "baseline-plan-case-01",
+        "plan": baseline_plan,
+        "raw_output": json.dumps(baseline_plan),
+    }]
+    gold_document = {
+        "cases": [{
+            "case_id": "case-01",
+            "required_items": [{
+                "id": "REQ-1",
+                "description": "omc-plan API 계약",
+            }],
+            "excluded_scope": [],
+            "dependency_edges": [],
+        }]
+    }
+
+    sessions, _ = build_blind_adjudication_sessions(
+        executions,
+        session_count=2,
+        batch_id="blind-gold-domain",
+        gold_document=gold_document,
+    )
+
+    payload = json.dumps(sessions, ensure_ascii=False)
+    assert "omc-plan" not in payload
+    aliases = re.findall(r"\[planning-system-[0-9a-f]+\]", payload)
+    assert len(set(aliases)) == 1
+    assert f"{aliases[0]} API 계약 수정" in payload
+    assert f"{aliases[0]} API 계약" in payload
+
+
+def test_blind_sessions_keep_distinct_provider_relationship_with_opaque_aliases():
+    plan = _plan("case-01")
+    plan["scope_items"] = ["Replace baseline-plan with omc-plan"]
+    executions = [{
+        "provider_id": provider_id,
+        "case_id": "case-01",
+        "plan_execution_id": f"{provider_id}-case-01",
+        "plan": deepcopy(plan),
+        "raw_output": json.dumps(plan),
+    } for provider_id in ("baseline-plan", "omc-plan")]
+    gold_document = {
+        "cases": [{
+            "case_id": "case-01",
+            "required_items": [{
+                "id": "REQ-1",
+                "description": "Replace baseline-plan with omc-plan",
+            }],
+            "excluded_scope": [],
+            "dependency_edges": [],
+        }]
+    }
+
+    sessions, _ = build_blind_adjudication_sessions(
+        executions,
+        session_count=2,
+        batch_id="blind-distinct-aliases",
+        gold_document=gold_document,
+    )
+
+    payload = json.dumps(sessions)
+    aliases = set(re.findall(r"\[planning-system-[0-9a-f]+\]", payload))
+    assert len(aliases) == 2
+    assert "baseline-plan" not in payload
+    assert "omc-plan" not in payload
+    assert all(payload.count(alias) >= 4 for alias in aliases)
+
+
+def test_restore_blind_session_plan_labels_recovers_exact_provider_plan():
+    sanitized_session = {
+        "schema_version": 2,
+        "session_id": "session-1",
+        "items": [{
+            "blind_id": "blind-1",
+            "case_id": "case-1",
+            "plan": {"assumptions": ["[planning-system] assumption"]},
+            "gold_case": {
+                "case_id": "case-1",
+                "required_items": [{
+                    "id": "REQ-1",
+                    "description": "[planning-system] API",
+                }],
+            },
+        }],
+    }
+    executions = [{
+        "provider_id": "omc-plan",
+        "case_id": "case-1",
+        "plan": {"assumptions": ["omc-plan assumption"]},
+    }]
+    mapping = {
+        "blind-1": {"provider_id": "omc-plan", "case_id": "case-1"}
+    }
+    gold_document = {
+        "cases": [{
+            "case_id": "case-1",
+            "required_items": [{
+                "id": "REQ-1",
+                "description": "omc-plan API",
+            }],
+        }]
+    }
+
+    restored = restore_blind_session_plan_labels(
+        sanitized_session,
+        executions=executions,
+        private_mapping=mapping,
+        gold_document=gold_document,
+    )
+
+    assert restored["items"][0]["plan"] == executions[0]["plan"]
+    assert sanitized_session["items"][0]["plan"]["assumptions"] == [
+        "[planning-system] assumption"
+    ]
+    assert restored["items"][0]["gold_case"] == gold_document["cases"][0]
+
+
 def test_sealed_blind_results_bind_every_output_to_two_fresh_sessions(tmp_path):
     cryptography = pytest.importorskip("cryptography.hazmat.primitives.asymmetric.ed25519")
     serialization = pytest.importorskip("cryptography.hazmat.primitives.serialization")
@@ -1311,6 +1512,9 @@ def test_full_pilot_runs_split_aware_provider_and_adjudication_counts(
             )
         )
         plan = _plan(case["case_id"])
+        plan["assumptions"] = [
+            "/private/tmp/omc-plan/workspace is writable"
+        ]
         return {"plan": plan, "raw_output": json.dumps(plan), "events_jsonl": ""}
 
     def adjudicator_executor(*, session, model, reasoning_effort):
@@ -1324,7 +1528,7 @@ def test_full_pilot_runs_split_aware_provider_and_adjudication_counts(
                 "scope_violation_indexes": [],
                 "task_requirement_links": [],
                 "edge_requirement_links": [],
-                "unsupported_assumption_indexes": [],
+                "unsupported_assumption_indexes": [0],
             } for item_index, _ in enumerate(session["items"])],
             "_adjudication_provenance": (
                 omc_plan_pilot.build_adjudication_provenance(session)

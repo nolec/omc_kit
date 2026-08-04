@@ -1018,14 +1018,16 @@ def build_provider_prompt(provider_id: str, request: str) -> str:
     if provider_id == "baseline-plan":
         return (
             receipt_instruction
-            + "Inspect the repository and produce an implementation plan for the request below. "
-            "Do not modify files.\n\n" + request
+            + "Read only the provided context files; do not enumerate unrelated files. "
+            "Then produce an implementation plan for the request below. Do not modify files.\n\n"
+            + request
         )
     if provider_id == "omc-plan":
         return (
             receipt_instruction
-            + "Load and apply the project skill named `omc-plan` before planning. "
-            + "Do not produce the plan until that skill is active.\n\n"
+            + "Read `.agents/skills/omc-plan/SKILL.md` before planning. "
+            + "Read only that skill file and the provided context files; do not enumerate "
+            + "unrelated files. Apply the loaded skill, then produce the implementation plan.\n\n"
             + "$omc-plan\n\n"
             + request
         )
@@ -1886,6 +1888,7 @@ def finalize_runtime_batch(
     from omc_plan_benchmark import score_plan
     from omc_plan_pilot import (
         normalize_adjudication_result,
+        restore_blind_session_plan_labels,
         seal_blind_adjudications,
         validate_adjudication_result_contract,
     )
@@ -1965,7 +1968,15 @@ def finalize_runtime_batch(
         if session is None:
             raise ValueError("runtime adjudication session is unknown")
         validate_adjudication_result_contract(result, session)
-        normalized_results.append(normalize_adjudication_result(result, session))
+        normalization_session = restore_blind_session_plan_labels(
+            session,
+            executions=executions,
+            private_mapping=private_mapping,
+            gold_document=gold_document,
+        )
+        normalized_results.append(
+            normalize_adjudication_result(result, normalization_session)
+        )
 
     scoring_batch = {
         "schema_version": 1,
