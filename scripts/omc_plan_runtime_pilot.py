@@ -420,6 +420,153 @@ def _validate_confirmatory_semantic_contract(
         raise ValueError("confirmatory selected-object quota is exceeded")
 
 
+def _is_git_sha(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 40
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def validate_confirmatory_candidate_selection(
+    selection: dict[str, Any],
+    *,
+    trusted_prior_commits: list[str],
+) -> None:
+    """Validate the frozen candidate set before corpus or gold construction."""
+    expected_fields = {
+        "schema_version",
+        "status",
+        "batch_id",
+        "selection_policy",
+        "cases",
+        "selection_sha256",
+    }
+    if (
+        not isinstance(selection, dict)
+        or set(selection) != expected_fields
+        or selection.get("schema_version") != 1
+        or selection.get("status") != "preregistered"
+        or not isinstance(selection.get("batch_id"), str)
+        or not selection["batch_id"].strip()
+    ):
+        raise ValueError("confirmatory candidate selection fields are invalid")
+
+    if (
+        not isinstance(trusted_prior_commits, list)
+        or not trusted_prior_commits
+        or len(trusted_prior_commits) != len(set(trusted_prior_commits))
+        or any(not _is_git_sha(commit) for commit in trusted_prior_commits)
+    ):
+        raise ValueError("confirmatory trusted prior commits are invalid")
+
+    policy = selection["selection_policy"]
+    expected_policy_fields = {
+        "provider_outputs_available_during_selection",
+        "prior_registry_sha256",
+        "required_surface_counts",
+        "required_ambiguity_counts",
+        "maximum_selected_object_cases",
+    }
+    if not isinstance(policy, dict) or set(policy) != expected_policy_fields:
+        raise ValueError("confirmatory candidate selection policy is invalid")
+    if policy["provider_outputs_available_during_selection"] is not False:
+        raise ValueError("confirmatory provider outputs must be unavailable during selection")
+    if policy["prior_registry_sha256"] != canonical_digest(trusted_prior_commits):
+        raise ValueError("confirmatory prior commit registry mismatch")
+
+    cases = selection["cases"]
+    if not isinstance(cases, list) or len(cases) != sum(
+        FROZEN_CONFIRMATORY_SURFACE_COUNTS.values()
+    ):
+        raise ValueError("confirmatory candidate selection requires exactly 10 cases")
+    if selection["selection_sha256"] != canonical_digest(cases):
+        raise ValueError("confirmatory candidate selection hash mismatch")
+
+    expected_case_fields = {
+        "case_id",
+        "repo_alias",
+        "baseline_commit",
+        "followup_commit",
+        "request",
+        "context_candidate_paths",
+        "surface",
+        "ambiguity",
+        "selected_object",
+    }
+    case_ids: list[str] = []
+    requests: list[str] = []
+    followup_commits: list[str] = []
+    context_path_keys: list[tuple[str, str]] = []
+    semantic_labels: list[dict[str, Any]] = []
+    for case in cases:
+        if not isinstance(case, dict) or set(case) != expected_case_fields:
+            raise ValueError("confirmatory candidate case fields are invalid")
+        case_id = case["case_id"]
+        repo_alias = case["repo_alias"]
+        request = case["request"]
+        baseline_commit = case["baseline_commit"]
+        followup_commit = case["followup_commit"]
+        context_candidate_paths = case["context_candidate_paths"]
+        if (
+            not isinstance(case_id, str)
+            or not case_id.strip()
+            or not isinstance(repo_alias, str)
+            or not repo_alias.strip()
+            or not isinstance(request, str)
+            or not request.strip()
+            or not _is_git_sha(baseline_commit)
+            or not _is_git_sha(followup_commit)
+            or baseline_commit == followup_commit
+        ):
+            raise ValueError("confirmatory candidate case identity is invalid")
+        if not isinstance(context_candidate_paths, list) or not context_candidate_paths:
+            raise ValueError("confirmatory candidate context paths are required")
+        for context_path in context_candidate_paths:
+            if not isinstance(context_path, str) or not context_path.strip():
+                raise ValueError("confirmatory candidate context path is invalid")
+            path = PurePosixPath(context_path)
+            if path.is_absolute() or ".." in path.parts:
+                raise ValueError("confirmatory candidate context path is unsafe")
+            context_path_keys.append((repo_alias, path.as_posix()))
+        case_ids.append(case_id)
+        requests.append(request)
+        followup_commits.append(followup_commit)
+        semantic_labels.append({
+            "case_id": case_id,
+            "surface": case["surface"],
+            "ambiguity": case["ambiguity"],
+            "selected_object": case["selected_object"],
+        })
+
+    for values, message in (
+        (case_ids, "case ids"),
+        (requests, "requests"),
+        (followup_commits, "followup commits"),
+    ):
+        if len(values) != len(set(values)):
+            raise ValueError(f"confirmatory candidate {message} must be unique")
+    if set(followup_commits).intersection(trusted_prior_commits):
+        raise ValueError("confirmatory prior commit overlap")
+    baseline_commits = {case["baseline_commit"] for case in cases}
+    if baseline_commits.intersection(followup_commits):
+        raise ValueError("confirmatory selected cases contain chained commits")
+    if len(context_path_keys) != len(set(context_path_keys)):
+        raise ValueError("confirmatory candidate context path overlap")
+
+    _validate_confirmatory_semantic_contract(
+        {
+            "required_surface_counts": policy["required_surface_counts"],
+            "required_ambiguity_counts": policy["required_ambiguity_counts"],
+            "maximum_selected_object_cases": policy[
+                "maximum_selected_object_cases"
+            ],
+            "case_labels": semantic_labels,
+        },
+        cases=cases,
+    )
+
+
 def validate_confirmatory_manifest(
     manifest: dict[str, Any],
     *,

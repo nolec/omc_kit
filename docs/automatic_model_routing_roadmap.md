@@ -39,6 +39,8 @@ Plan confirmatory runtime 후속 교정(2026-08-04): 코드 리뷰에서 activat
 
 Plan confirmatory semantic quota 강제(2026-08-04): 신규 Batch A가 편향된 사례 10건으로도 형식상 통과하는 것을 막기 위해 confirmatory manifest를 v2로 올렸다. runner는 서명된 case label의 surface 분포(UI/state, API/payload, data/indexing, backend/rules, multi-file/legacy 각 2건), ambiguity 분포(low 3, medium 4, high 3), selected-object 사례 최대 2건을 고정 계약과 대조한다. quota 누락·완화·불일치와 legacy v1 manifest는 실행 전에 차단하며 Plan 전체 회귀 `203 passed`를 확인했다. 다음 단계는 이 v2 계약을 만족하는 신규 disjoint Batch A 후보 선정과 사전 등록이다.
 
+Plan confirmatory Batch A 후보 사전 등록(2026-08-04): 다섯 저장소에서 prior confirmatory 20건과 follow-up commit이 겹치지 않는 신규 10건을 선정했다. surface 5종 각 2건, ambiguity low/medium/high `3/4/3`, selected-object 2건을 고정했고 후보끼리 baseline→follow-up으로 이어지는 연쇄 commit과 동일 저장소의 context 경로 재사용도 차단했다. 중복 경로가 있던 API/payload 후보는 독립 commit으로 교체했으며, 각 후보의 first parent와 context 후보 경로가 실제 Git diff에 존재함을 로컬 교차 검증했다. selection digest는 `7d930544...a65b`, Plan 전체 회귀는 `204 passed`다. 이는 후보 사전 등록 완료를 뜻하며, 익명 corpus·독립 gold·manifest 서명·외부 전송 승인은 아직 남아 있다.
+
 V5 단일 child pilot 보강(2026-07-15): `noop_shadow` gate가 operator approval, plan/scope fingerprint, child/dependency readiness, sensitive scope, 단일 시도·시간·출력 예산, idempotency를 검증하도록 구현·리뷰 완료했다. 누락된 안전 메타데이터도 명시적으로 차단하며, orchestrator 위임 surface를 통한 통합 회귀까지 확인했다. 실제 executor 호출과 자동 재분배는 여전히 열지 않는다.
 
 V5 delegation contract hardening(2026-07-15): domain order의 malformed 입력, 불완전한 `execution_order`/`recovery_action`, 모순된 ready order와 누락된 `recommendation_only`를 명시적으로 거부하도록 보강했다. 관련 회귀 테스트와 TDD gate를 통과했으며, 실제 executor 호출·자동 retry·자동 재분배는 계속 비활성 상태다.

@@ -507,6 +507,61 @@ def test_confirmatory_manifest_rejects_legacy_schema_without_semantic_quota():
         )
 
 
+def test_batch_a_candidate_selection_is_preregistered_and_disjoint():
+    fixture_root = Path(__file__).parent / "fixtures"
+    selection = json.loads(
+        (fixture_root / "omc_plan_confirmatory_batch_a_selection.json").read_text()
+    )
+    prior_registry = json.loads(
+        (fixture_root / "omc_plan_confirmatory_prior_commits.json").read_text()
+    )
+
+    runtime.validate_confirmatory_candidate_selection(
+        selection,
+        trusted_prior_commits=prior_registry["commits"],
+    )
+
+    overlap_selection = deepcopy(selection)
+    overlap_selection["cases"][0]["followup_commit"] = prior_registry["commits"][0]
+    overlap_selection["selection_sha256"] = runtime.canonical_digest(
+        overlap_selection["cases"]
+    )
+    with pytest.raises(ValueError, match="prior commit overlap"):
+        runtime.validate_confirmatory_candidate_selection(
+            overlap_selection,
+            trusted_prior_commits=prior_registry["commits"],
+        )
+
+    chained_selection = deepcopy(selection)
+    chained_selection["cases"][1]["baseline_commit"] = selection["cases"][0][
+        "followup_commit"
+    ]
+    chained_selection["selection_sha256"] = runtime.canonical_digest(
+        chained_selection["cases"]
+    )
+    with pytest.raises(ValueError, match="chained commits"):
+        runtime.validate_confirmatory_candidate_selection(
+            chained_selection,
+            trusted_prior_commits=prior_registry["commits"],
+        )
+
+    duplicate_path_selection = deepcopy(selection)
+    duplicate_path_selection["cases"][1]["repo_alias"] = selection["cases"][0][
+        "repo_alias"
+    ]
+    duplicate_path_selection["cases"][1]["context_candidate_paths"][0] = (
+        "./" + selection["cases"][0]["context_candidate_paths"][0]
+    )
+    duplicate_path_selection["selection_sha256"] = runtime.canonical_digest(
+        duplicate_path_selection["cases"]
+    )
+    with pytest.raises(ValueError, match="context path overlap"):
+        runtime.validate_confirmatory_candidate_selection(
+            duplicate_path_selection,
+            trusted_prior_commits=prior_registry["commits"],
+        )
+
+
 def test_confirmatory_manifest_rejects_gold_role_or_provider_leakage():
     cases = [_case(index) for index in range(1, 11)]
     gold, _ = _signed_gold(cases, [_gold(index) for index in range(1, 11)])

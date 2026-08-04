@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "status": "preregistered",
+  "batch_id": "omc-plan-confirmatory-batch-a-20260804",
+  "selection_policy": {
+    "provider_outputs_available_during_selection": false,
+    "prior_registry_sha256": "db17cf430ad0a2ef8179da524d3b47c152e5ca52b2626d6b1463cc832d28c6e4",
+    "required_surface_counts": {
+      "ui_state": 2,
+      "api_payload": 2,
+      "data_indexing": 2,
+      "backend_rules": 2,
+      "multi_file_legacy": 2
+    },
+    "required_ambiguity_counts": {
+      "low": 3,
+      "medium": 4,
+      "high": 3
+    },
+    "maximum_selected_object_cases": 2
+  },
+  "cases": [
+    {
+      "case_id": "batch-a-plan-01",
+      "repo_alias": "repo-a",
+      "baseline_commit": "42e476a0d702b5dadb26006d9d3a8472cb6d95d5",
+      "followup_commit": "6c913b6a4c258148012f374196809e0a17edcdb4",
+      "request": "스토어 목록에서 기본 스토어를 조회하고 변경한다",
+      "context_candidate_paths": [
+        "libs/store-manager/api/src/lib/repository/StoreRepository.spec.ts",
+        "libs/store-manager/api/src/lib/repository/StoreRepository.ts",
+        "libs/store-manager/components/src/lib/ui/layout/Navbar/applicationMenu/modal/applicationMenuBox/storeList/StoreListComponent.spec.tsx",
+        "libs/store-manager/components/src/lib/ui/layout/Navbar/applicationMenu/modal/applicationMenuBox/storeList/StoreListComponent.tsx",
+        "libs/store-manager/hooks/src/lib/store/api/mutations/useChangeMainStore.spec.ts",
+        "libs/store-manager/hooks/src/lib/store/api/mutations/useChangeMainStore.ts"
+      ],
+      "surface": "ui_state",
+      "ambiguity": "low",
+      "selected_object": true
+    },
+    {
+      "case_id": "batch-a-plan-02",
+      "repo_alias": "repo-b",
+      "baseline_commit": "e1fd3cf11593153b21eed392abd69492990455d1",
+      "followup_commit": "645349b7e7b2b1000c244e44e0fee40c59651ccf",
+      "request": "포트폴리오 사이드패널 이탈 확인 흐름을 추가한다",
+      "context_candidate_paths": [
+        "src/app/portfolio/_components/Portfolio.tsx",
+        "src/app/portfolio/_components/SidePanel/PortfolioCreateSidePanel.tsx",
+        "src/components/common/SidePanel/SidePanel.tsx"
+      ],
+      "surface": "ui_state",
+      "ambiguity": "medium",
+      "selected_object": true
+    },
+    {
+      "case_id": "batch-a-plan-03",
+      "repo_alias": "repo-b",
+      "baseline_commit": "6ee59c7f617a035eedd82af0de386624aa2cc77e",
+      "followup_commit": "5cb02a3a709fec846b82e44d8a736eb0490e2375",
+      "request": "포트폴리오 이미지 업로드와 presigned URL 처리를 추가한다",
+      "context_candidate_paths": [
+        "src/hooks/api/mutations/useGetPresignedUrl.spec.ts",
+        "src/types/api/portfolio.ts",
+        "src/utils/portfolio/getPortfolioImageUrl.spec.ts",
+        "src/utils/portfolio/getPortfolioImageUrl.ts"
+      ],
+      "surface": "api_payload",
+      "ambiguity": "low",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-plan-04",
+      "repo_alias": "repo-a",
+      "baseline_commit": "89e942708d6c23496244b40c58b9cd4b041d5a0b",
+      "followup_commit": "a30d6742c280a54e281b732b9bfb8c0b48b10b38",
+      "request": "옵션별 전시 설정 상품을 복제한 뒤 저장할 수 있게 한다",
+      "context_candidate_paths": [
+        "libs/store-manager/components/src/lib/product/productManager/sidePanel/CopyProductSidePanel/SidePanelBody.tsx",
+        "libs/store-manager/components/src/lib/product/productManager/sidePanel/hooks/useProductData.ts",
+        "libs/store-manager/components/src/lib/product/productManager/sidePanel/hooks/useProductData.utils.ts",
+        "libs/store-manager/components/src/lib/product/productManager/sidePanel/sections/OptionSection/OptionSection.tsx"
+      ],
+      "surface": "api_payload",
+      "ambiguity": "medium",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-plan-05",
+      "repo_alias": "repo-f",
+      "baseline_commit": "58c572324937e9f659b3a6b9c1bb69aaf434fb74",
+      "followup_commit": "cf52d524d8d6629b77a01e36aad4901e83494300",
+      "request": "리서치와 의사결정 도메인 레코드를 영속화한다",
+      "context_candidate_paths": [
+        "src/market_reasoning/domain/__init__.py",
+        "src/market_reasoning/persistence/__init__.py",
+        "tests/integration/test_decision_candidate_persistence.py",
+        "tests/integration/test_decision_conflict_persistence.py",
+        "tests/integration/test_decision_evidence_score_persistence.py",
+        "tests/integration/test_decision_journal_persistence.py",
+        "tests/integration/test_event_proposals_persistence.py",
+        "tests/integration/test_interpretation_proposals_persistence.py",
+        "tests/integration/test_phase9_completion_gate_persistence.py"
+      ],
+      "surface": "data_indexing",
+      "ambiguity": "high",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-plan-06",
+      "repo_alias": "repo-e",
+      "baseline_commit": "26e23072a3f394ad1c2ec75ae736c82a3762d295",
+      "followup_commit": "433b2424e4ef62b867bf97396a61d03055749ac1",
+      "request": "다음 날 상승 패턴 후보 비교 진단을 보강한다",
+      "context_candidate_paths": [
+        "scripts/crypto_next_day_up_pattern.py",
+        "scripts/test_crypto_next_day_up_pattern.py"
+      ],
+      "surface": "data_indexing",
+      "ambiguity": "medium",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-plan-07",
+      "repo_alias": "repo-e",
+      "baseline_commit": "4003dd8942edaca18b9422a1e71eb552958095ef",
+      "followup_commit": "8be52e14b7f538d94ea888b7a37af4e640afd5d4",
+      "request": "고하락 레짐에서 fire short 진입을 차단한다",
+      "context_candidate_paths": [
+        "scripts/backtest_directional_baseline.py",
+        "tests/crypto/test_backtest_side_filter.py"
+      ],
+      "surface": "backend_rules",
+      "ambiguity": "low",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-plan-08",
+      "repo_alias": "repo-e",
+      "baseline_commit": "e7d3136672446225d4c5231deb6e713ca93795d1",
+      "followup_commit": "bef2814a03270a2002d7ba03b9a54ba9a3e1dcc4",
+      "request": "백테스트 승격 안정성 임계값을 강화한다",
+      "context_candidate_paths": [
+        "scripts/test_crypto_backtest_promotion_contract.py",
+        "src/crypto/backtest/promotion_contract.py"
+      ],
+      "surface": "backend_rules",
+      "ambiguity": "medium",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-plan-09",
+      "repo_alias": "repo-a",
+      "baseline_commit": "b188cd848d95c3ee1e448c603eff9649653811bf",
+      "followup_commit": "a7d2fef93f0e8e93bd5b2a1ec25c48df5f64b8ad",
+      "request": "에디터 AI 전용 모달과 AI 런처 진입 경로를 추가한다",
+      "context_candidate_paths": [
+        "libs/editor-lib/src/components/shared/ActionBar/ActionBar.tsx",
+        "libs/editor-lib/src/components/shared/AiModal/AiModal.tsx",
+        "libs/editor-lib/src/hooks/useModalAtom.ts",
+        "libs/editor-lib/src/views/Editor/Editor.tsx",
+        "libs/store-manager/components/src/lib/AiAgentLauncher/AiAgentLauncher.tsx"
+      ],
+      "surface": "multi_file_legacy",
+      "ambiguity": "high",
+      "selected_object": false
+    },
+    {
+      "case_id": "batch-a-plan-10",
+      "repo_alias": "repo-d",
+      "baseline_commit": "627525ea91cc29dfe78bfd770a519b6eb0dab706",
+      "followup_commit": "74c73001203c7ce3c96f479976a07c6ff9dfa3b9",
+      "request": "파트너 포트폴리오 목록과 상세 모달 흐름을 개선한다",
+      "context_candidate_paths": [
+        "src/main/java/com/sixsolution/sixshop2/officialBlog/infra/StrapiMarketplaceAPIClient.java",
+        "src/main/java/com/sixsolution/sixshop2/officialBlog/service/PartnerService.java",
+        "src/main/webapp/WEB-INF/views/0home/official-partner.jsp",
+        "src/main/webapp/resources/js/require/home/partner.js",
+        "src/test/node/partner-tracking.test.js"
+      ],
+      "surface": "multi_file_legacy",
+      "ambiguity": "high",
+      "selected_object": false
+    }
+  ],
+  "selection_sha256": "7d9305445938ed6f71361c4a99a63e6e1b6a6bedef5ef3404a33c0167864a65b"
+}
