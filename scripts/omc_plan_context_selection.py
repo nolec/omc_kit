@@ -228,7 +228,10 @@ def _safe_case_id(value: Any) -> str:
 def _baseline_tree(repo: Path, commit: str) -> list[dict[str, str]]:
     excluded = set(RETRIEVAL_POLICY["excluded_path_parts"])
     entries: list[dict[str, str]] = []
-    for line in _run_git(repo, "ls-tree", "-r", "--full-tree", commit).splitlines():
+    output = _run_git(repo, "ls-tree", "-rz", "--full-tree", commit)
+    for line in output.split("\0"):
+        if not line:
+            continue
         metadata, separator, relative = line.partition("\t")
         if not separator:
             raise ValueError("baseline tree entry is malformed")

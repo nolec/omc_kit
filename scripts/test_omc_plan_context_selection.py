@@ -41,9 +41,11 @@ def _batch(
     source_by_index: dict[int, str] | None = None,
     symlink_index: int | None = None,
     binary_files_by_index: dict[int, dict[str, bytes]] | None = None,
+    text_files_by_index: dict[int, dict[str, str]] | None = None,
 ) -> tuple[dict[str, Path], dict, list[str]]:
     source_by_index = source_by_index or {}
     binary_files_by_index = binary_files_by_index or {}
+    text_files_by_index = text_files_by_index or {}
     repo_roots: dict[str, Path] = {}
     cases = []
     for index in range(10):
@@ -62,6 +64,10 @@ def _batch(
             (repo / "src" / "linked.py").symlink_to(source.name)
         for filename, content in binary_files_by_index.get(index, {}).items():
             (repo / "src" / filename).write_bytes(content)
+        for filename, content in text_files_by_index.get(index, {}).items():
+            destination = repo / filename
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(content)
         if index == 0:
             (repo / "vendor").mkdir()
             (repo / "vendor" / "private.txt").write_text("excluded\n")
@@ -609,6 +615,29 @@ def test_local_transfer_readiness_records_and_omits_binary_assets(
     assert binaries["src/control.bin"]["binary_reason"] == "control_character"
     assert readiness["transfer_manifest"]["omitted_file_count"] == 3
     assert not set(binaries).intersection(payload_paths)
+
+
+def test_local_transfer_readiness_preserves_unicode_paths(tmp_path, monkeypatch):
+    repo_roots, selection, prior_commits, packet = _prepare(
+        tmp_path,
+        monkeypatch,
+        text_files_by_index={0: {"docs/보고서.md": "검증 결과\n"}},
+    )
+
+    readiness = context_selection.prepare_local_transfer_readiness(
+        packet,
+        selection=selection,
+        repo_roots=repo_roots,
+        trusted_prior_commits=prior_commits,
+        trusted_selection_public_keys=_trusted_selection_keys(packet),
+        execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+    )
+
+    paths = {
+        item["relative_path"]
+        for item in readiness["transfer_manifest"]["cases"][0]["files"]
+    }
+    assert "docs/보고서.md" in paths
 
 
 def test_local_contract_cannot_self_assert_provider_verified_attestation():
