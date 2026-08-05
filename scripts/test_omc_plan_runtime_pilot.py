@@ -226,6 +226,128 @@ def _signed_confirmatory_manifest(
     return manifest, public_key
 
 
+def _local_transfer_readiness(cases):
+    bundle_cases = []
+    manifest_cases = []
+    for case in cases:
+        files = [
+            {"relative_path": path, "content_utf8": content}
+            for path, content in case["context_files"].items()
+        ]
+        bundle_cases.append({
+            "case_id": case["case_id"],
+            "request": case["request"],
+            "files": files,
+        })
+        manifest_cases.append({
+            "case_id": case["case_id"],
+            "request_sha256": runtime._sha256_text(case["request"]),
+            "source_byte_size": sum(
+                len(content.encode("utf-8"))
+                for content in case["context_files"].values()
+            ),
+            "transfer_byte_size": sum(
+                len(content.encode("utf-8"))
+                for content in case["context_files"].values()
+            ) + len(case["request"].encode("utf-8")),
+            "estimated_input_tokens": 10,
+            "files": [
+                {
+                    "relative_path": path,
+                    "source_blob_oid": runtime._sha256_text(path)[:40],
+                    "blob_sha256": runtime._sha256_text(content),
+                    "byte_size": len(content.encode("utf-8")),
+                    "transfer_disposition": "included_text",
+                    "privacy_classification": "pattern_clear",
+                    "privacy_checks": ["regular_file", "utf8"],
+                }
+                for path, content in case["context_files"].items()
+            ],
+        })
+    bundle = {
+        "schema_version": 1,
+        "status": "local_only",
+        "batch_id": "fresh-batch-a",
+        "selection_sha256": runtime._sha256_text("selection"),
+        "cases": bundle_cases,
+    }
+    bundle["bundle_sha256"] = runtime.canonical_digest(bundle)
+    manifest = {
+        "schema_version": 1,
+        "status": "frozen",
+        "batch_id": "fresh-batch-a",
+        "selection_sha256": bundle["selection_sha256"],
+        "packet_sha256": runtime._sha256_text("packet"),
+        "transfer_bundle_sha256": bundle["bundle_sha256"],
+        "case_count": len(cases),
+        "source_byte_size": 1,
+        "transfer_byte_size": 1,
+        "transferred_file_count": sum(
+            len(case["context_files"]) for case in cases
+        ),
+        "omitted_file_count": 0,
+        "omitted_binary_count": 0,
+        "omitted_sensitive_count": 0,
+        "cases": manifest_cases,
+    }
+    manifest["manifest_sha256"] = runtime.canonical_digest(manifest)
+    audit = {
+        "schema_version": 1,
+        "status": "pattern_clear",
+        "scanner_version": 1,
+        "transfer_manifest_sha256": manifest["manifest_sha256"],
+        "finding_count": 0,
+        "omitted_binary_count": 0,
+        "omitted_sensitive_count": 0,
+        "findings": [],
+    }
+    audit["audit_sha256"] = runtime.canonical_digest(audit)
+    readiness = {
+        "schema_version": 1,
+        "status": "approval_required",
+        "transfer_bundle": bundle,
+        "transfer_manifest": manifest,
+        "privacy_audit": audit,
+        "execution_contract": {"status": "frozen"},
+        "external_transfer_approved": False,
+        "provider_execution_allowed": False,
+        "replacement_claim_eligible": False,
+        "preregistration_manifest_sha256": runtime._sha256_text("prereg"),
+    }
+    readiness["readiness_sha256"] = runtime.canonical_digest(readiness)
+    return readiness
+
+
+def _confirmatory_selection(cases):
+    surfaces = (
+        "ui_state", "ui_state", "api_payload", "api_payload",
+        "data_indexing", "data_indexing", "backend_rules", "backend_rules",
+        "multi_file_legacy", "multi_file_legacy",
+    )
+    ambiguities = (
+        "low", "low", "low", "medium", "medium",
+        "medium", "medium", "high", "high", "high",
+    )
+    return {
+        "selection_policy": {
+            "required_surface_counts": {
+                surface: 2 for surface in set(surfaces)
+            },
+            "required_ambiguity_counts": {"low": 3, "medium": 4, "high": 3},
+            "maximum_selected_object_cases": 2,
+        },
+        "cases": [
+            {
+                "case_id": case["case_id"],
+                "surface": surfaces[index],
+                "ambiguity": ambiguities[index],
+                "selected_object": index < 2,
+            }
+            for index, case in enumerate(cases)
+        ],
+    }
+
+
 def _resign_confirmatory_manifest(manifest):
     private_key, public_key = _signer()
     manifest["signoff"]["signer_public_key"] = public_key
@@ -450,6 +572,392 @@ def test_confirmatory_manifest_binds_sampling_gold_and_disjoint_fingerprints():
             gold_document=gold,
             trusted_prior_fingerprints=trusted_prior,
             trusted_signer_public_keys={trusted},
+        )
+
+
+def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval():
+    source_cases = [_case(index) for index in range(1, 11)]
+    readiness = _local_transfer_readiness(source_cases)
+    public_corpus = {
+        "schema_version": 1,
+        "status": "frozen",
+        "cases": [
+            {
+                "case_id": case["case_id"],
+                "split": "holdout",
+                "source_type": "observed_anonymized",
+                "task_type": "development",
+                "request": case["request"],
+                "context_sha256": case["context_sha256"],
+            }
+            for case in source_cases
+        ],
+    }
+    public_corpus["corpus_sha256"] = runtime.canonical_digest(
+        public_corpus["cases"]
+    )
+    gold, trusted_gold = _signed_gold(
+        public_corpus["cases"], [_gold(index) for index in range(1, 11)]
+    )
+    signer, signer_public_key = _signer()
+    prior = [runtime._case_fingerprint(_case(99))]
+
+    approval = runtime.prepare_confirmatory_runtime_inputs(
+        readiness=readiness,
+        public_corpus=public_corpus,
+        selection=_confirmatory_selection(source_cases),
+        gold_document=gold,
+        trusted_prior_fingerprints=prior,
+        skill_sha256="a" * 64,
+        producer="fresh-batch-curator",
+        author_session_id="gold-author",
+        reviewer_session_id="gold-reviewer",
+        signer="independent-confirmatory-reviewer",
+        signer_public_key=signer_public_key,
+        trusted_gold_signer_public_keys=trusted_gold,
+    )
+
+    assert approval["status"] == "approval_required"
+    assert approval["provider_execution_allowed"] is False
+    assert approval["confirmatory_manifest"] is None
+    assert len(approval["runtime_corpus"]["cases"]) == 10
+
+    with pytest.raises(ValueError, match="approved payload hash"):
+        runtime.prepare_confirmatory_runtime_inputs(
+            readiness=readiness,
+            public_corpus=public_corpus,
+            selection=_confirmatory_selection(source_cases),
+            gold_document=gold,
+            trusted_prior_fingerprints=prior,
+            skill_sha256="a" * 64,
+            producer="fresh-batch-curator",
+            author_session_id="gold-author",
+            reviewer_session_id="gold-reviewer",
+            signer="independent-confirmatory-reviewer",
+            signer_public_key=signer_public_key,
+            trusted_gold_signer_public_keys=trusted_gold,
+            approved_payload_sha256="b" * 64,
+        )
+
+    prepared = runtime.prepare_confirmatory_runtime_inputs(
+        readiness=readiness,
+        public_corpus=public_corpus,
+        selection=_confirmatory_selection(source_cases),
+        gold_document=gold,
+        trusted_prior_fingerprints=prior,
+        skill_sha256="a" * 64,
+        producer="fresh-batch-curator",
+        author_session_id="gold-author",
+        reviewer_session_id="gold-reviewer",
+        signer="independent-confirmatory-reviewer",
+        signer_public_key=signer_public_key,
+        trusted_gold_signer_public_keys=trusted_gold,
+        approved_payload_sha256=approval["external_payload_sha256"],
+    )
+    assert prepared["status"] == "signature_required"
+    assert prepared["confirmatory_manifest"]["transmission"]["approved"] is True
+
+    signature = base64.b64encode(signer.sign(
+        runtime.confirmatory_manifest_signoff_payload(
+            prepared["confirmatory_manifest"]
+        )
+    )).decode("ascii")
+    receipt = runtime.seal_confirmatory_runtime_inputs(
+        prepared,
+        signature=signature,
+        gold_document=gold,
+        trusted_prior_fingerprints=prior,
+        skill_sha256="a" * 64,
+        trusted_gold_signer_public_keys=trusted_gold,
+        trusted_confirmatory_signer_public_keys={signer_public_key},
+    )
+    assert receipt["status"] == "execution_ready"
+    assert receipt["provider_execution_allowed"] is True
+
+    tampered_payload = deepcopy(prepared)
+    tampered_payload["external_payload_sha256"] = "b" * 64
+    tampered_payload["preparation_sha256"] = runtime.canonical_digest(
+        runtime._without_digest(tampered_payload, "preparation_sha256")
+    )
+    with pytest.raises(ValueError, match="preparation envelope"):
+        runtime.seal_confirmatory_runtime_inputs(
+            tampered_payload,
+            signature=signature,
+            gold_document=gold,
+            trusted_prior_fingerprints=prior,
+            skill_sha256="a" * 64,
+            trusted_gold_signer_public_keys=trusted_gold,
+            trusted_confirmatory_signer_public_keys={signer_public_key},
+        )
+
+    tampered_corpus = deepcopy(prepared)
+    tampered_corpus["runtime_corpus"]["corpus_sha256"] = "b" * 64
+    tampered_corpus["preparation_sha256"] = runtime.canonical_digest(
+        runtime._without_digest(tampered_corpus, "preparation_sha256")
+    )
+    with pytest.raises(ValueError, match="preparation envelope"):
+        runtime.seal_confirmatory_runtime_inputs(
+            tampered_corpus,
+            signature=signature,
+            gold_document=gold,
+            trusted_prior_fingerprints=prior,
+            skill_sha256="a" * 64,
+            trusted_gold_signer_public_keys=trusted_gold,
+            trusted_confirmatory_signer_public_keys={signer_public_key},
+        )
+
+    tampered_source = deepcopy(prepared)
+    tampered_source["runtime_corpus"]["source_corpus_sha256"] = "b" * 64
+    tampered_source["preparation_sha256"] = runtime.canonical_digest(
+        runtime._without_digest(tampered_source, "preparation_sha256")
+    )
+    with pytest.raises(ValueError, match="preparation envelope"):
+        runtime.seal_confirmatory_runtime_inputs(
+            tampered_source,
+            signature=signature,
+            gold_document=gold,
+            trusted_prior_fingerprints=prior,
+            skill_sha256="a" * 64,
+            trusted_gold_signer_public_keys=trusted_gold,
+            trusted_confirmatory_signer_public_keys={signer_public_key},
+        )
+
+    with pytest.raises(ValueError, match="signer is not trusted"):
+        runtime.seal_confirmatory_runtime_inputs(
+            prepared,
+            signature=signature,
+            gold_document=gold,
+            trusted_prior_fingerprints=prior,
+            skill_sha256="a" * 64,
+            trusted_gold_signer_public_keys=trusted_gold,
+            trusted_confirmatory_signer_public_keys={"untrusted"},
+        )
+
+
+def test_confirmatory_prepare_and_seal_cli_round_trip(tmp_path):
+    source_cases = [_case(index) for index in range(1, 11)]
+    readiness = _local_transfer_readiness(source_cases)
+    public_corpus = {
+        "schema_version": 1,
+        "status": "frozen",
+        "cases": [
+            {
+                "case_id": case["case_id"],
+                "split": "holdout",
+                "source_type": "observed_anonymized",
+                "task_type": "development",
+                "request": case["request"],
+                "context_sha256": case["context_sha256"],
+            }
+            for case in source_cases
+        ],
+    }
+    public_corpus["corpus_sha256"] = runtime.canonical_digest(
+        public_corpus["cases"]
+    )
+    gold, trusted_gold = _signed_gold(
+        public_corpus["cases"], [_gold(index) for index in range(1, 11)]
+    )
+    signer, signer_public_key = _signer()
+    prior = [runtime._case_fingerprint(_case(99))]
+
+    inputs = {
+        "readiness": readiness,
+        "public-corpus": public_corpus,
+        "selection": _confirmatory_selection(source_cases),
+        "gold": gold,
+        "prior": {"schema_version": 1, "fingerprints": prior},
+    }
+    paths = {}
+    for name, payload in inputs.items():
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        paths[name] = path
+    skill_path = tmp_path / "SKILL.md"
+    skill_path.write_text("confirmatory plan skill\n", encoding="utf-8")
+    approval_path = tmp_path / "approval.json"
+    prepared_path = tmp_path / "prepared.json"
+    receipt_path = tmp_path / "receipt.json"
+
+    prepare_command = [
+        sys.executable,
+        str(Path(runtime.__file__)),
+        "prepare-confirmatory",
+        str(paths["readiness"]),
+        str(paths["public-corpus"]),
+        str(paths["selection"]),
+        str(paths["gold"]),
+        str(paths["prior"]),
+        "--skill-file",
+        str(skill_path),
+        "--trusted-gold-signer-public-key",
+        next(iter(trusted_gold)),
+        "--producer",
+        "fresh-batch-curator",
+        "--author-session-id",
+        "gold-author",
+        "--reviewer-session-id",
+        "gold-reviewer",
+        "--signer",
+        "independent-confirmatory-reviewer",
+        "--signer-public-key",
+        signer_public_key,
+    ]
+    subprocess.run(
+        [*prepare_command, "--output", str(approval_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    subprocess.run(
+        [
+            *prepare_command,
+            "--approved-payload-sha256",
+            approval["external_payload_sha256"],
+            "--output",
+            str(prepared_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    prepared = json.loads(prepared_path.read_text(encoding="utf-8"))
+    signature_path = tmp_path / "signature.txt"
+    signature_path.write_text(
+        base64.b64encode(
+            signer.sign(
+                runtime.confirmatory_manifest_signoff_payload(
+                    prepared["confirmatory_manifest"]
+                )
+            )
+        ).decode("ascii"),
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(Path(runtime.__file__)),
+            "seal-confirmatory",
+            str(prepared_path),
+            str(paths["gold"]),
+            str(paths["prior"]),
+            "--signature-file",
+            str(signature_path),
+            "--skill-file",
+            str(skill_path),
+            "--trusted-gold-signer-public-key",
+            next(iter(trusted_gold)),
+            "--trusted-confirmatory-signer-public-key",
+            signer_public_key,
+            "--output",
+            str(receipt_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["status"] == "execution_ready"
+    assert receipt["provider_execution_allowed"] is True
+
+
+def test_confirmatory_runtime_bridge_rejects_transfer_or_skill_drift():
+    source_cases = [_case(index) for index in range(1, 11)]
+    readiness = _local_transfer_readiness(source_cases)
+    public_corpus = {
+        "schema_version": 1,
+        "status": "frozen",
+        "cases": [
+            {
+                "case_id": case["case_id"],
+                "split": "holdout",
+                "source_type": "observed_anonymized",
+                "task_type": "development",
+                "request": case["request"],
+                "context_sha256": case["context_sha256"],
+            }
+            for case in source_cases
+        ],
+    }
+    public_corpus["corpus_sha256"] = runtime.canonical_digest(
+        public_corpus["cases"]
+    )
+    gold, trusted_gold = _signed_gold(
+        public_corpus["cases"], [_gold(index) for index in range(1, 11)]
+    )
+    _, signer_public_key = _signer()
+    prior = [runtime._case_fingerprint(_case(99))]
+
+    tampered = deepcopy(readiness)
+    tampered["transfer_bundle"]["cases"][0]["request"] = "tampered"
+    with pytest.raises(ValueError, match="readiness hash"):
+        runtime.prepare_confirmatory_runtime_inputs(
+            readiness=tampered,
+            public_corpus=public_corpus,
+            selection=_confirmatory_selection(source_cases),
+            gold_document=gold,
+            trusted_prior_fingerprints=prior,
+            skill_sha256="a" * 64,
+            producer="fresh-batch-curator",
+            author_session_id="gold-author",
+            reviewer_session_id="gold-reviewer",
+            signer="independent-confirmatory-reviewer",
+            signer_public_key=signer_public_key,
+            trusted_gold_signer_public_keys=trusted_gold,
+        )
+
+    substituted = deepcopy(readiness)
+    substituted_content = "SUBSTITUTED = True\n"
+    substituted["transfer_bundle"]["cases"][0]["files"][0][
+        "content_utf8"
+    ] = substituted_content
+    substituted_metadata = substituted["transfer_manifest"]["cases"][0][
+        "files"
+    ][0]
+    substituted_metadata["blob_sha256"] = runtime._sha256_text(
+        substituted_content
+    )
+    substituted_metadata["byte_size"] = len(substituted_content.encode("utf-8"))
+    substituted["transfer_bundle"]["bundle_sha256"] = runtime.canonical_digest(
+        runtime._without_digest(
+            substituted["transfer_bundle"], "bundle_sha256"
+        )
+    )
+    substituted["transfer_manifest"]["transfer_bundle_sha256"] = substituted[
+        "transfer_bundle"
+    ]["bundle_sha256"]
+    substituted["transfer_manifest"]["manifest_sha256"] = (
+        runtime.canonical_digest(
+            runtime._without_digest(
+                substituted["transfer_manifest"], "manifest_sha256"
+            )
+        )
+    )
+    substituted["privacy_audit"]["transfer_manifest_sha256"] = substituted[
+        "transfer_manifest"
+    ]["manifest_sha256"]
+    substituted["privacy_audit"]["audit_sha256"] = runtime.canonical_digest(
+        runtime._without_digest(substituted["privacy_audit"], "audit_sha256")
+    )
+    substituted["readiness_sha256"] = runtime.canonical_digest(
+        runtime._without_digest(substituted, "readiness_sha256")
+    )
+    with pytest.raises(ValueError, match="context hash"):
+        runtime.prepare_confirmatory_runtime_inputs(
+            readiness=substituted,
+            public_corpus=public_corpus,
+            selection=_confirmatory_selection(source_cases),
+            gold_document=gold,
+            trusted_prior_fingerprints=prior,
+            skill_sha256="a" * 64,
+            producer="fresh-batch-curator",
+            author_session_id="gold-author",
+            reviewer_session_id="gold-reviewer",
+            signer="independent-confirmatory-reviewer",
+            signer_public_key=signer_public_key,
+            trusted_gold_signer_public_keys=trusted_gold,
         )
 
 

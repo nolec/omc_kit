@@ -350,6 +350,324 @@ def confirmatory_external_payload_digest(
     })
 
 
+def _without_digest(value: dict[str, Any], field: str) -> dict[str, Any]:
+    return {key: item for key, item in value.items() if key != field}
+
+
+def _runtime_cases_from_transfer_readiness(
+    readiness: dict[str, Any], public_corpus: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Materialize executable cases while preserving the signed public corpus."""
+    if (
+        not isinstance(readiness, dict)
+        or readiness.get("readiness_sha256")
+        != canonical_digest(_without_digest(readiness, "readiness_sha256"))
+    ):
+        raise ValueError("local transfer readiness hash mismatch")
+    if (
+        readiness.get("status") != "approval_required"
+        or readiness.get("external_transfer_approved") is not False
+        or readiness.get("provider_execution_allowed") is not False
+        or readiness.get("replacement_claim_eligible") is not False
+    ):
+        raise ValueError("local transfer readiness must remain pre-approval")
+
+    bundle = readiness.get("transfer_bundle")
+    manifest = readiness.get("transfer_manifest")
+    audit = readiness.get("privacy_audit")
+    if not all(isinstance(item, dict) for item in (bundle, manifest, audit)):
+        raise ValueError("local transfer readiness artifacts are required")
+    if bundle.get("bundle_sha256") != canonical_digest(
+        _without_digest(bundle, "bundle_sha256")
+    ):
+        raise ValueError("local transfer bundle hash mismatch")
+    if manifest.get("manifest_sha256") != canonical_digest(
+        _without_digest(manifest, "manifest_sha256")
+    ):
+        raise ValueError("local transfer manifest hash mismatch")
+    if audit.get("audit_sha256") != canonical_digest(
+        _without_digest(audit, "audit_sha256")
+    ):
+        raise ValueError("local transfer privacy audit hash mismatch")
+    if (
+        manifest.get("transfer_bundle_sha256") != bundle["bundle_sha256"]
+        or audit.get("transfer_manifest_sha256") != manifest["manifest_sha256"]
+        or audit.get("finding_count") != len(audit.get("findings", []))
+    ):
+        raise ValueError("local transfer artifact chain mismatch")
+
+    public_cases = public_corpus.get("cases")
+    if (
+        not isinstance(public_corpus, dict)
+        or public_corpus.get("schema_version") != 1
+        or public_corpus.get("status") != "frozen"
+        or not isinstance(public_cases, list)
+        or public_corpus.get("corpus_sha256") != canonical_digest(public_cases)
+    ):
+        raise ValueError("signed public corpus contract is invalid")
+    bundle_cases = bundle.get("cases")
+    manifest_cases = manifest.get("cases")
+    if (
+        not isinstance(bundle_cases, list)
+        or not isinstance(manifest_cases, list)
+        or len(bundle_cases) != len(public_cases)
+        or len(manifest_cases) != len(public_cases)
+    ):
+        raise ValueError("local transfer case count mismatch")
+    bundle_by_id = {case.get("case_id"): case for case in bundle_cases}
+    manifest_by_id = {case.get("case_id"): case for case in manifest_cases}
+    if len(bundle_by_id) != len(bundle_cases) or len(manifest_by_id) != len(manifest_cases):
+        raise ValueError("local transfer case ids must be unique")
+
+    runtime_cases: list[dict[str, Any]] = []
+    for public_case in public_cases:
+        case_id = public_case.get("case_id")
+        bundle_case = bundle_by_id.get(case_id)
+        manifest_case = manifest_by_id.get(case_id)
+        if not isinstance(bundle_case, dict) or not isinstance(manifest_case, dict):
+            raise ValueError("public corpus and transfer cases do not match")
+        request = public_case.get("request")
+        if (
+            public_case.get("split") != "holdout"
+            or public_case.get("source_type") != "observed_anonymized"
+            or not _is_sha256(public_case.get("context_sha256"))
+            or request != bundle_case.get("request")
+            or manifest_case.get("request_sha256") != _sha256_text(request)
+        ):
+            raise ValueError("public corpus and transfer case contract mismatch")
+        files = bundle_case.get("files")
+        manifest_files = manifest_case.get("files")
+        if not isinstance(files, list) or not isinstance(manifest_files, list):
+            raise ValueError("local transfer case files are required")
+        included = {
+            item.get("relative_path"): item
+            for item in manifest_files
+            if isinstance(item, dict)
+            and item.get("transfer_disposition") == "included_text"
+        }
+        context_files: dict[str, str] = {}
+        for item in files:
+            if not isinstance(item, dict) or set(item) != {
+                "relative_path", "content_utf8"
+            }:
+                raise ValueError("local transfer bundle file fields are invalid")
+            path = item["relative_path"]
+            content = item["content_utf8"]
+            if path in context_files or path not in included:
+                raise ValueError("local transfer included file mismatch")
+            metadata = included[path]
+            if (
+                not isinstance(content, str)
+                or metadata.get("blob_sha256") != _sha256_text(content)
+                or metadata.get("byte_size") != len(content.encode("utf-8"))
+            ):
+                raise ValueError("local transfer file content hash mismatch")
+            context_files[path] = content
+        if set(context_files) != set(included):
+            raise ValueError("local transfer included file set mismatch")
+        context_sha256 = canonical_digest(context_files)
+        if context_sha256 != public_case["context_sha256"]:
+            raise ValueError("public corpus and runtime context hash mismatch")
+        runtime_cases.append({
+            "case_id": case_id,
+            "split": "holdout",
+            "source_type": "observed_anonymized",
+            "request": request,
+            "provenance": {
+                "source_sha256": public_case["context_sha256"],
+                "anonymization_reviewed": True,
+                "approved": True,
+            },
+            "context_files": context_files,
+            "context_sha256": context_sha256,
+        })
+    return runtime_cases
+
+
+def prepare_confirmatory_runtime_inputs(
+    *,
+    readiness: dict[str, Any],
+    public_corpus: dict[str, Any],
+    selection: dict[str, Any],
+    gold_document: dict[str, Any],
+    trusted_prior_fingerprints: list[dict[str, str]],
+    skill_sha256: str,
+    producer: str,
+    author_session_id: str,
+    reviewer_session_id: str,
+    signer: str,
+    signer_public_key: str,
+    trusted_gold_signer_public_keys: set[str],
+    approved_payload_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Build the exact runtime corpus and require approval before signing."""
+    cases = _runtime_cases_from_transfer_readiness(readiness, public_corpus)
+    _verify_gold_signoff(
+        public_corpus["cases"],
+        gold_document,
+        trusted_signer_public_keys=trusted_gold_signer_public_keys,
+    )
+    if {item["case_id"] for item in gold_document["cases"]} != {
+        item["case_id"] for item in cases
+    }:
+        raise ValueError("runtime bridge gold case ids do not match")
+    if not _is_sha256(skill_sha256):
+        raise ValueError("confirmatory skill hash is invalid")
+    external_payload_sha256 = confirmatory_external_payload_digest(
+        cases, gold_document, skill_sha256
+    )
+    runtime_corpus = {
+        "schema_version": 1,
+        "status": "frozen",
+        "source_corpus_sha256": public_corpus["corpus_sha256"],
+        "cases": cases,
+        "corpus_sha256": canonical_digest(cases),
+    }
+    base = {
+        "schema_version": 1,
+        "status": "approval_required",
+        "external_payload_sha256": external_payload_sha256,
+        "runtime_corpus": runtime_corpus,
+        "confirmatory_manifest": None,
+        "provider_execution_allowed": False,
+    }
+    if approved_payload_sha256 is None:
+        base["preparation_sha256"] = canonical_digest(base)
+        return base
+    if approved_payload_sha256 != external_payload_sha256:
+        raise ValueError("confirmatory approved payload hash mismatch")
+
+    policy = selection.get("selection_policy", {})
+    labels = selection.get("cases")
+    if not isinstance(labels, list):
+        raise ValueError("confirmatory selection cases are required")
+    manifest = {
+        "schema_version": 3,
+        "status": "signed_off",
+        "producer": producer,
+        "source_corpus_sha256": public_corpus["corpus_sha256"],
+        "corpus_sha256": runtime_corpus["corpus_sha256"],
+        "gold_sha256": gold_document["gold_sha256"],
+        "sampling": {
+            "source_window": "preregistered-disjoint-selection",
+            "eligibility_rule": "observed requests not used by prior evaluations",
+            "ordering_rule": "frozen selection order",
+            "sampling_frame_sha256": canonical_digest(labels),
+            "semantic_contract": {
+                "required_surface_counts": policy.get("required_surface_counts"),
+                "required_ambiguity_counts": policy.get("required_ambiguity_counts"),
+                "maximum_selected_object_cases": policy.get(
+                    "maximum_selected_object_cases"
+                ),
+                "case_labels": [
+                    {
+                        "case_id": item.get("case_id"),
+                        "surface": item.get("surface"),
+                        "ambiguity": item.get("ambiguity"),
+                        "selected_object": item.get("selected_object"),
+                    }
+                    for item in labels
+                ],
+            },
+        },
+        "prior_registry_sha256": canonical_digest(trusted_prior_fingerprints),
+        "prior_fingerprints": deepcopy(trusted_prior_fingerprints),
+        "selected_fingerprints": [_case_fingerprint(case) for case in cases],
+        "gold_independence": {
+            "author_session_id": author_session_id,
+            "reviewer_session_id": reviewer_session_id,
+            "provider_outputs_available": False,
+        },
+        "budget": deepcopy(FROZEN_CONFIRMATORY_BUDGET),
+        "transmission": {
+            "payload_sha256": external_payload_sha256,
+            "approved": True,
+        },
+        "claim_scope": CONFIRMATORY_CLAIM_SCOPE,
+        "signoff": {
+            "signer": signer,
+            "signer_public_key": signer_public_key,
+            "signature": "",
+        },
+    }
+    prepared = {
+        **base,
+        "status": "signature_required",
+        "confirmatory_manifest": manifest,
+    }
+    prepared["preparation_sha256"] = canonical_digest(prepared)
+    return prepared
+
+
+def seal_confirmatory_runtime_inputs(
+    preparation: dict[str, Any],
+    *,
+    signature: str,
+    gold_document: dict[str, Any],
+    trusted_prior_fingerprints: list[dict[str, str]],
+    skill_sha256: str,
+    trusted_gold_signer_public_keys: set[str],
+    trusted_confirmatory_signer_public_keys: set[str],
+) -> dict[str, Any]:
+    """Attach the independent signature and emit an execution-ready receipt."""
+    if preparation.get("preparation_sha256") != canonical_digest(
+        _without_digest(preparation, "preparation_sha256")
+    ):
+        raise ValueError("confirmatory preparation hash mismatch")
+    if preparation.get("status") != "signature_required":
+        raise ValueError("confirmatory preparation is not ready for signature")
+    manifest = deepcopy(preparation.get("confirmatory_manifest"))
+    if not isinstance(manifest, dict):
+        raise ValueError("confirmatory manifest is required")
+    runtime_corpus = preparation.get("runtime_corpus")
+    if not isinstance(runtime_corpus, dict):
+        raise ValueError("confirmatory preparation envelope mismatch")
+    cases = runtime_corpus.get("cases")
+    if not isinstance(cases, list):
+        raise ValueError("confirmatory preparation envelope mismatch")
+    computed_corpus_sha256 = canonical_digest(cases)
+    computed_payload_sha256 = confirmatory_external_payload_digest(
+        cases, gold_document, skill_sha256
+    )
+    transmission = manifest.get("transmission")
+    if (
+        runtime_corpus.get("corpus_sha256") != computed_corpus_sha256
+        or runtime_corpus.get("source_corpus_sha256")
+        != manifest.get("source_corpus_sha256")
+        or manifest.get("corpus_sha256") != computed_corpus_sha256
+        or not isinstance(transmission, dict)
+        or transmission.get("payload_sha256") != computed_payload_sha256
+        or preparation.get("external_payload_sha256")
+        != computed_payload_sha256
+    ):
+        raise ValueError("confirmatory preparation envelope mismatch")
+    manifest["signoff"]["signature"] = signature
+    validate_runtime_corpus(
+        cases,
+        gold_document,
+        expected_count=FROZEN_ACCEPTANCE["case_count"],
+        trusted_signer_public_keys=trusted_gold_signer_public_keys,
+        signed_corpus_sha256=manifest["source_corpus_sha256"],
+    )
+    validate_confirmatory_manifest(
+        manifest,
+        cases=cases,
+        gold_document=gold_document,
+        trusted_prior_fingerprints=trusted_prior_fingerprints,
+        trusted_signer_public_keys=trusted_confirmatory_signer_public_keys,
+    )
+    receipt = {
+        "schema_version": 1,
+        "status": "execution_ready",
+        "runtime_corpus": runtime_corpus,
+        "confirmatory_manifest": manifest,
+        "external_payload_sha256": preparation["external_payload_sha256"],
+        "provider_execution_allowed": True,
+    }
+    receipt["receipt_sha256"] = canonical_digest(receipt)
+    return receipt
+
+
 def _validate_fingerprint(value: Any, *, label: str) -> dict[str, str]:
     expected = {"case_id", "source_sha256", "context_sha256"}
     if (
@@ -602,15 +920,23 @@ def validate_confirmatory_manifest(
         "claim_scope",
         "signoff",
     }
+    schema_version = manifest.get("schema_version") if isinstance(manifest, dict) else None
+    if schema_version == 3:
+        expected_fields.add("source_corpus_sha256")
     if (
         not isinstance(manifest, dict)
         or set(manifest) != expected_fields
-        or manifest.get("schema_version") != 2
+        or schema_version not in {2, 3}
         or manifest.get("status") != "signed_off"
         or not isinstance(manifest.get("producer"), str)
         or not manifest["producer"].strip()
     ):
         raise ValueError("confirmatory manifest fields are invalid")
+    if schema_version == 3 and (
+        manifest.get("source_corpus_sha256") != gold_document.get("corpus_sha256")
+        or not _is_sha256(manifest.get("source_corpus_sha256"))
+    ):
+        raise ValueError("confirmatory source corpus hash mismatch")
     if (
         manifest.get("corpus_sha256") != canonical_digest(cases)
         or manifest.get("gold_sha256") != gold_document.get("gold_sha256")
@@ -1056,6 +1382,7 @@ def validate_runtime_corpus(
     *,
     expected_count: int,
     trusted_signer_public_keys: set[str],
+    signed_corpus_sha256: str | None = None,
 ) -> None:
     """Require observed, anonymized, repository-grounded and approved cases."""
     if not isinstance(gold_document, dict) or not isinstance(gold_document.get("cases"), list):
@@ -1110,6 +1437,7 @@ def validate_runtime_corpus(
         cases,
         gold_document,
         trusted_signer_public_keys=trusted_signer_public_keys,
+        signed_corpus_sha256=signed_corpus_sha256,
     )
 
     gold_by_id: dict[str, dict[str, Any]] = {}
@@ -1192,6 +1520,7 @@ def _verify_gold_signoff(
     gold_document: dict[str, Any],
     *,
     trusted_signer_public_keys: set[str],
+    signed_corpus_sha256: str | None = None,
 ) -> None:
     if not isinstance(gold_document, dict):
         raise ValueError("runtime gold document is required")
@@ -1202,7 +1531,8 @@ def _verify_gold_signoff(
     signoff = gold_document.get("signoff")
     if not isinstance(producer, str) or not producer.strip() or not isinstance(gold, list):
         raise ValueError("runtime gold document fields are invalid")
-    if gold_document.get("corpus_sha256") != canonical_digest(cases):
+    expected_corpus_sha256 = signed_corpus_sha256 or canonical_digest(cases)
+    if gold_document.get("corpus_sha256") != expected_corpus_sha256:
         raise ValueError("runtime gold corpus hash mismatch")
     if gold_document.get("gold_sha256") != canonical_digest(gold):
         raise ValueError("runtime gold hash mismatch")
@@ -2221,6 +2551,9 @@ def run_runtime_batch(
         gold_document,
         expected_count=protocol["acceptance"]["case_count"],
         trusted_signer_public_keys=trusted_signer_public_keys,
+        signed_corpus_sha256=confirmatory_manifest.get(
+            "source_corpus_sha256"
+        ),
     )
     validate_confirmatory_manifest(
         confirmatory_manifest,
@@ -2527,6 +2860,9 @@ def finalize_runtime_batch(
         gold_document,
         expected_count=expected_count,
         trusted_signer_public_keys=trusted_signer_public_keys,
+        signed_corpus_sha256=confirmatory_manifest.get(
+            "source_corpus_sha256"
+        ),
     )
     validate_confirmatory_manifest(
         confirmatory_manifest,
@@ -2811,6 +3147,48 @@ def main() -> int:
     )
     confirm_parser.add_argument("--output")
 
+    prepare_confirmatory_parser = subparsers.add_parser(
+        "prepare-confirmatory"
+    )
+    prepare_confirmatory_parser.add_argument("readiness")
+    prepare_confirmatory_parser.add_argument("public_corpus")
+    prepare_confirmatory_parser.add_argument("selection")
+    prepare_confirmatory_parser.add_argument("gold")
+    prepare_confirmatory_parser.add_argument("trusted_prior_registry")
+    prepare_confirmatory_parser.add_argument("--skill-file", required=True)
+    prepare_confirmatory_parser.add_argument(
+        "--trusted-gold-signer-public-key", action="append", required=True
+    )
+    prepare_confirmatory_parser.add_argument("--producer", required=True)
+    prepare_confirmatory_parser.add_argument(
+        "--author-session-id", required=True
+    )
+    prepare_confirmatory_parser.add_argument(
+        "--reviewer-session-id", required=True
+    )
+    prepare_confirmatory_parser.add_argument("--signer", required=True)
+    prepare_confirmatory_parser.add_argument(
+        "--signer-public-key", required=True
+    )
+    prepare_confirmatory_parser.add_argument("--approved-payload-sha256")
+    prepare_confirmatory_parser.add_argument("--output", required=True)
+
+    seal_confirmatory_parser = subparsers.add_parser("seal-confirmatory")
+    seal_confirmatory_parser.add_argument("preparation")
+    seal_confirmatory_parser.add_argument("gold")
+    seal_confirmatory_parser.add_argument("trusted_prior_registry")
+    seal_confirmatory_parser.add_argument("--signature-file", required=True)
+    seal_confirmatory_parser.add_argument("--skill-file", required=True)
+    seal_confirmatory_parser.add_argument(
+        "--trusted-gold-signer-public-key", action="append", required=True
+    )
+    seal_confirmatory_parser.add_argument(
+        "--trusted-confirmatory-signer-public-key",
+        action="append",
+        required=True,
+    )
+    seal_confirmatory_parser.add_argument("--output", required=True)
+
     args = parser.parse_args()
     if args.command == "confirm-superiority":
         result = decide_confirmed_superiority(
@@ -2824,18 +3202,88 @@ def main() -> int:
         print(payload)
         return 0
 
+    if args.command == "prepare-confirmatory":
+        skill_sha256 = _sha256_text(
+            Path(args.skill_file).read_text(encoding="utf-8")
+        )
+        result = prepare_confirmatory_runtime_inputs(
+            readiness=_load_json(args.readiness),
+            public_corpus=_load_json(args.public_corpus),
+            selection=_load_json(args.selection),
+            gold_document=_load_json(args.gold),
+            trusted_prior_fingerprints=_load_prior_registry(
+                args.trusted_prior_registry
+            ),
+            skill_sha256=skill_sha256,
+            producer=args.producer,
+            author_session_id=args.author_session_id,
+            reviewer_session_id=args.reviewer_session_id,
+            signer=args.signer,
+            signer_public_key=args.signer_public_key,
+            trusted_gold_signer_public_keys=set(
+                args.trusted_gold_signer_public_key
+            ),
+            approved_payload_sha256=args.approved_payload_sha256,
+        )
+        Path(args.output).write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(json.dumps({
+            "status": result["status"],
+            "external_payload_sha256": result["external_payload_sha256"],
+            "output": str(Path(args.output).resolve()),
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "seal-confirmatory":
+        skill_sha256 = _sha256_text(
+            Path(args.skill_file).read_text(encoding="utf-8")
+        )
+        result = seal_confirmatory_runtime_inputs(
+            _load_json(args.preparation),
+            signature=Path(args.signature_file).read_text(
+                encoding="utf-8"
+            ).strip(),
+            gold_document=_load_json(args.gold),
+            trusted_prior_fingerprints=_load_prior_registry(
+                args.trusted_prior_registry
+            ),
+            skill_sha256=skill_sha256,
+            trusted_gold_signer_public_keys=set(
+                args.trusted_gold_signer_public_key
+            ),
+            trusted_confirmatory_signer_public_keys=set(
+                args.trusted_confirmatory_signer_public_key
+            ),
+        )
+        Path(args.output).write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(json.dumps({
+            "status": result["status"],
+            "provider_execution_allowed": result[
+                "provider_execution_allowed"
+            ],
+            "output": str(Path(args.output).resolve()),
+        }, ensure_ascii=False, indent=2))
+        return 0
+
     protocol = load_runtime_protocol(args.protocol)
     if args.command == "validate-corpus":
         cases = _load_json(args.cases)
         gold = _load_json(args.gold)
+        confirmatory_manifest = _load_json(args.confirmatory_manifest)
         validate_runtime_corpus(
             cases["cases"],
             gold,
             expected_count=protocol["acceptance"]["case_count"],
             trusted_signer_public_keys=set(args.trusted_gold_signer_public_key),
+            signed_corpus_sha256=confirmatory_manifest.get(
+                "source_corpus_sha256"
+            ),
         )
         validate_confirmatory_manifest(
-            _load_json(args.confirmatory_manifest),
+            confirmatory_manifest,
             cases=cases["cases"],
             gold_document=gold,
             trusted_prior_fingerprints=_load_prior_registry(
