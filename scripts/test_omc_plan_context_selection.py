@@ -234,6 +234,115 @@ def test_active_frozen_selection_anchor_matches_fresh_batch_a_v2():
     )
 
 
+def test_confirmatory_preregistration_binds_all_claim_inputs():
+    manifest = json.loads(
+        (FIXTURES / "omc_plan_confirmatory_preregistration_v4.json").read_text()
+    )
+    selection = json.loads(
+        (FIXTURES / "omc_plan_confirmatory_batch_a_v2_selection.json").read_text()
+    )
+    protocol = json.loads(
+        (FIXTURES / "omc_plan_runtime_protocol.json").read_text()
+    )
+
+    result = context_selection.validate_confirmatory_preregistration_manifest(
+        manifest,
+        selection=selection,
+        skill_path=Path(".agents/skills/omc-plan/SKILL.md"),
+        protocol=protocol,
+        trusted_preregistration_public_keys={
+            manifest["signoff"]["signer_public_key"]
+        },
+    )
+
+    assert result == {
+        "source_commit": "4e1ac03d4bed1fa945989b549af6cd61b9c51a34",
+        "retrieval_policy_sha256": context_selection.canonical_digest(
+            context_selection.RETRIEVAL_POLICY
+        ),
+        "selection_sha256": selection["selection_sha256"],
+        "skill_sha256": manifest["skill_sha256"],
+        "protocol_sha256": manifest["protocol_sha256"],
+        "manifest_sha256": manifest["manifest_sha256"],
+    }
+
+
+@pytest.mark.parametrize(
+    "field,replacement",
+    [
+        ("source_commit", "0" * 40),
+        ("retrieval_policy_sha256", "1" * 64),
+        ("selection_sha256", "2" * 64),
+        ("skill_sha256", "3" * 64),
+        ("protocol_sha256", "4" * 64),
+    ],
+)
+def test_confirmatory_preregistration_rejects_changed_claim_inputs(
+    field, replacement
+):
+    manifest = json.loads(
+        (FIXTURES / "omc_plan_confirmatory_preregistration_v4.json").read_text()
+    )
+    manifest[field] = replacement
+
+    with pytest.raises(ValueError, match="preregistration"):
+        context_selection.validate_confirmatory_preregistration_manifest(
+            manifest,
+            selection=json.loads(
+                (FIXTURES / "omc_plan_confirmatory_batch_a_v2_selection.json").read_text()
+            ),
+            skill_path=Path(".agents/skills/omc-plan/SKILL.md"),
+            protocol=json.loads(
+                (FIXTURES / "omc_plan_runtime_protocol.json").read_text()
+            ),
+            trusted_preregistration_public_keys={
+                manifest["signoff"]["signer_public_key"]
+            },
+        )
+
+
+def test_confirmatory_preregistration_rejects_untrusted_self_signature():
+    manifest = json.loads(
+        (FIXTURES / "omc_plan_confirmatory_preregistration_v4.json").read_text()
+    )
+
+    with pytest.raises(ValueError, match="signer is not trusted"):
+        context_selection.validate_confirmatory_preregistration_manifest(
+            manifest,
+            selection=json.loads(
+                (FIXTURES / "omc_plan_confirmatory_batch_a_v2_selection.json").read_text()
+            ),
+            skill_path=Path(".agents/skills/omc-plan/SKILL.md"),
+            protocol=json.loads(
+                (FIXTURES / "omc_plan_runtime_protocol.json").read_text()
+            ),
+            trusted_preregistration_public_keys=set(),
+        )
+
+
+def test_confirmatory_preregistration_rejects_tampered_selection_content():
+    manifest = json.loads(
+        (FIXTURES / "omc_plan_confirmatory_preregistration_v4.json").read_text()
+    )
+    selection = json.loads(
+        (FIXTURES / "omc_plan_confirmatory_batch_a_v2_selection.json").read_text()
+    )
+    selection["cases"][0]["request"] = "tampered after preregistration"
+
+    with pytest.raises(ValueError, match="selection content hash mismatch"):
+        context_selection.validate_confirmatory_preregistration_manifest(
+            manifest,
+            selection=selection,
+            skill_path=Path(".agents/skills/omc-plan/SKILL.md"),
+            protocol=json.loads(
+                (FIXTURES / "omc_plan_runtime_protocol.json").read_text()
+            ),
+            trusted_preregistration_public_keys={
+                manifest["signoff"]["signer_public_key"]
+            },
+        )
+
+
 def test_packet_requires_the_full_confirmatory_selection_contract(
     tmp_path, monkeypatch
 ):

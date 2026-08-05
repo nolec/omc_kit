@@ -46,6 +46,13 @@ FROZEN_SELECTION_COMMIT = "337f00da0a89ca9dd74c84ca092838bbd2fb820b"
 FROZEN_SELECTION_SHA256 = (
     "71c8c7ae186b0ecce09b3f4a442629c5ac72c18ab4fc7e4ddef53a8588216ea5"
 )
+FROZEN_RANKING_V4_SOURCE_COMMIT = "4e1ac03d4bed1fa945989b549af6cd61b9c51a34"
+FROZEN_PREREGISTRATION_V4_SHA256 = (
+    "798b51963f841c818618aa373542b4dbc84dd61f9ff9834c246d5fa35aac2388"
+)
+FROZEN_PREREGISTRATION_V4_PUBLIC_KEY = (
+    "wMKTe7b3C7WNmJlOw/azackmyf63r69TQ/xwdJhZjww="
+)
 FROZEN_DIAGNOSTIC_SELECTION_SHA256 = (
     "7d9305445938ed6f71361c4a99a63e6e1b6a6bedef5ef3404a33c0167864a65b"
 )
@@ -161,6 +168,108 @@ def canonical_digest(value: Any) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def preregistration_manifest_payload(manifest: dict[str, Any]) -> bytes:
+    payload = deepcopy(manifest)
+    signoff = payload.get("signoff")
+    if not isinstance(signoff, dict):
+        raise ValueError("confirmatory preregistration signoff is required")
+    signoff["signature"] = ""
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _preregistration_manifest_digest(manifest: dict[str, Any]) -> str:
+    payload = deepcopy(manifest)
+    payload.pop("manifest_sha256", None)
+    signoff = payload.get("signoff")
+    if not isinstance(signoff, dict):
+        raise ValueError("confirmatory preregistration signoff is required")
+    signoff["signature"] = ""
+    return canonical_digest(payload)
+
+
+def validate_confirmatory_preregistration_manifest(
+    manifest: dict[str, Any],
+    *,
+    selection: dict[str, Any],
+    skill_path: str | Path,
+    protocol: dict[str, Any],
+    trusted_preregistration_public_keys: set[str],
+) -> dict[str, str]:
+    """Verify the pre-provider freeze of every input that can affect claims."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    required_fields = {
+        "schema_version",
+        "status",
+        "source_commit",
+        "retrieval_policy_sha256",
+        "selection_sha256",
+        "skill_sha256",
+        "protocol_sha256",
+        "signoff",
+        "manifest_sha256",
+    }
+    if not isinstance(manifest, dict) or set(manifest) != required_fields:
+        raise ValueError("confirmatory preregistration fields are invalid")
+    if manifest["schema_version"] != 1 or manifest["status"] != "preregistered":
+        raise ValueError("confirmatory preregistration status is invalid")
+    if (
+        manifest["manifest_sha256"]
+        != _preregistration_manifest_digest(manifest)
+        or manifest["manifest_sha256"] != FROZEN_PREREGISTRATION_V4_SHA256
+    ):
+        raise ValueError("confirmatory preregistration frozen manifest mismatch")
+
+    expected = {
+        "source_commit": FROZEN_RANKING_V4_SOURCE_COMMIT,
+        "retrieval_policy_sha256": canonical_digest(RETRIEVAL_POLICY),
+        "selection_sha256": FROZEN_SELECTION_SHA256,
+        "skill_sha256": hashlib.sha256(Path(skill_path).read_bytes()).hexdigest(),
+        "protocol_sha256": canonical_digest(protocol),
+    }
+    if selection.get("selection_sha256") != canonical_digest(
+        selection.get("cases")
+    ):
+        raise ValueError(
+            "confirmatory preregistration selection content hash mismatch"
+        )
+    if (
+        selection.get("selection_sha256") != FROZEN_SELECTION_SHA256
+        or any(manifest[field] != value for field, value in expected.items())
+    ):
+        raise ValueError("confirmatory preregistration claim input mismatch")
+
+    signoff = manifest["signoff"]
+    if not isinstance(signoff, dict) or set(signoff) != {
+        "signer", "signer_public_key", "signature"
+    }:
+        raise ValueError("confirmatory preregistration signoff fields are invalid")
+    public_key = signoff["signer_public_key"]
+    if (
+        signoff["signer"] != "local-preregistration-v1"
+        or public_key != FROZEN_PREREGISTRATION_V4_PUBLIC_KEY
+        or public_key not in trusted_preregistration_public_keys
+    ):
+        raise ValueError("confirmatory preregistration signer is not trusted")
+    try:
+        key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key))
+        key.verify(
+            base64.b64decode(signoff["signature"]),
+            preregistration_manifest_payload(manifest),
+        )
+    except (InvalidSignature, ValueError) as error:
+        raise ValueError(
+            "confirmatory preregistration signature is invalid"
+        ) from error
+    return {**expected, "manifest_sha256": manifest["manifest_sha256"]}
 
 
 def validate_retrieval_development_corpus(

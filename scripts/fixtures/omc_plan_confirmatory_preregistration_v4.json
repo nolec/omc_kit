@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "status": "preregistered",
+  "source_commit": "4e1ac03d4bed1fa945989b549af6cd61b9c51a34",
+  "retrieval_policy_sha256": "dc5816e209330a021b29a11271f84220a254399531d2aa11acac8dcb55269fb8",
+  "selection_sha256": "71c8c7ae186b0ecce09b3f4a442629c5ac72c18ab4fc7e4ddef53a8588216ea5",
+  "skill_sha256": "1a701f6400031f12bb64e77c0f0b62bdc542932b94898a59071961ffcd16d509",
+  "protocol_sha256": "934aa6ced181e62f4212d56062b6c427076a0b3545011a73ebeba1cc46ec8bc5",
+  "signoff": {
+    "signer": "local-preregistration-v1",
+    "signer_public_key": "wMKTe7b3C7WNmJlOw/azackmyf63r69TQ/xwdJhZjww=",
+    "signature": "GunndJQGp2Gi1IcCOylWF5lS4T5kv+U6p73l/HCr01TRwIfXHzqaSWBlmd48HAr7f9Q+Fc+CSDZ5igJtCjm8Cg=="
+  },
+  "manifest_sha256": "798b51963f841c818618aa373542b4dbc84dd61f9ff9834c246d5fa35aac2388"
+}
