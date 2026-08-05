@@ -324,10 +324,14 @@ def test_corpus_requires_ten_observed_anonymized_cases_and_approved_gold():
         )
 
 
-def test_corpus_rejects_unsafe_context_paths():
+@pytest.mark.parametrize(
+    "unsafe_path",
+    ("../secret", "src//service.py", "src/./service.py", "src/service.py/"),
+)
+def test_corpus_rejects_unsafe_context_paths(unsafe_path):
     cases = [_case(index) for index in range(1, 11)]
     gold, trusted = _signed_gold(cases, [_gold(index) for index in range(1, 11)])
-    cases[0]["context_files"] = {"../secret": "no"}
+    cases[0]["context_files"] = {unsafe_path: "no"}
     with pytest.raises(ValueError, match="context path"):
         runtime.validate_runtime_corpus(
             cases, gold, expected_count=10, trusted_signer_public_keys=trusted
@@ -1737,6 +1741,72 @@ def test_replacement_requires_all_quality_cost_and_provenance_gates():
     assert "unsupported_assumptions" in result["failed_gates"]
 
 
+def test_runtime_corpus_rejects_provider_forbidden_case_fields():
+    cases = [_case(index) for index in range(1, 11)]
+    gold, trusted = _signed_gold(cases, [_gold(index) for index in range(1, 11)])
+
+    for forbidden_field in (
+        "followup_commit",
+        "gold",
+        "expected_files",
+        "private_mapping",
+    ):
+        invalid = deepcopy(cases)
+        invalid[0][forbidden_field] = "must-not-reach-provider"
+        with pytest.raises(ValueError, match="runtime case fields"):
+            runtime.validate_runtime_corpus(
+                invalid,
+                gold,
+                expected_count=10,
+                trusted_signer_public_keys=trusted,
+            )
+
+
+def test_provider_input_envelope_binds_request_context_and_skill():
+    case = _case()
+    baseline = runtime.build_provider_input_envelope(
+        "baseline-plan",
+        case,
+        allowed_workspace_delta=".agents/skills/omc-plan/SKILL.md",
+        instrumented_skill_sha256="a" * 64,
+    )
+    omc = runtime.build_provider_input_envelope(
+        "omc-plan",
+        case,
+        allowed_workspace_delta=".agents/skills/omc-plan/SKILL.md",
+        instrumented_skill_sha256="a" * 64,
+    )
+
+    assert baseline["provider_input_sha256"] != omc["provider_input_sha256"]
+    changed = deepcopy(case)
+    changed["request"] += " Include timeout handling."
+    changed_envelope = runtime.build_provider_input_envelope(
+        "baseline-plan",
+        changed,
+        allowed_workspace_delta=".agents/skills/omc-plan/SKILL.md",
+        instrumented_skill_sha256="a" * 64,
+    )
+    assert baseline["provider_input_sha256"] != changed_envelope["provider_input_sha256"]
+
+
+def test_provider_workspace_manifest_must_match_input_envelope():
+    case = _case()
+    case["context_files"] = {
+        "src/A.py": "first",
+        "src/a.py": "second",
+    }
+    provider_input = runtime.build_provider_input_envelope(
+        "baseline-plan",
+        case,
+        allowed_workspace_delta=".agents/skills/omc-plan/SKILL.md",
+        instrumented_skill_sha256="a" * 64,
+    )
+    actual_manifest = {"src/A.py": runtime._sha256_text("second")}
+
+    with pytest.raises(ValueError, match="workspace_input_mismatch"):
+        runtime.validate_provider_workspace_manifest(actual_manifest, provider_input)
+
+
 def test_single_batch_never_claims_final_replacement():
     result = runtime.decide_replacement(_metrics(), _protocol()["acceptance"])
 
@@ -2226,6 +2296,21 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
     assert (tmp_path / "batch/private-mapping.json").is_file()
     assert (tmp_path / "batch/blind-sessions.json").is_file()
     assert result["provider_batch"]["runtime_attestation"]["signer_public_key"] == runtime_signer_public_key
+    assert all(
+        runtime._is_sha256(execution.get("provider_input_sha256"))
+        for execution in result["provider_batch"]["executions"]
+    )
+
+    tampered_batch = deepcopy(result["provider_batch"])
+    tampered_batch["executions"][0]["provider_input_sha256"] = "f" * 64
+    with pytest.raises(ValueError, match="runtime execution provenance mismatch"):
+        runtime.validate_runtime_provenance(
+            tampered_batch,
+            protocol=_protocol(),
+            cases=cases,
+            gold_document=gold,
+            confirmatory_manifest=confirmatory_manifest,
+        )
 
     adjudicator_key, adjudicator_public_key = _signer()
     report = runtime.finalize_runtime_batch(
@@ -2291,6 +2376,7 @@ def test_diagnostic_rejudge_preserves_provider_evidence_and_blocks_replacement(t
     amended_items[0]["required_items"][0]["description"] = "Amended behavior"
     amended_gold, amended_trusted = _signed_gold(cases, amended_items)
     executions = []
+    instrumented_skill_sha256 = "d" * 64
     for index, case in enumerate(cases, start=1):
         for provider_id in runtime.PROVIDERS:
             plan = {
@@ -2329,6 +2415,14 @@ def test_diagnostic_rejudge_preserves_provider_evidence_and_blocks_replacement(t
                         context_paths=tuple(case["context_files"]),
                     )
                 ),
+                "provider_input_sha256": runtime.build_provider_input_envelope(
+                    provider_id,
+                    case,
+                    allowed_workspace_delta=_protocol()["execution"][
+                        "allowed_workspace_delta"
+                    ],
+                    instrumented_skill_sha256=instrumented_skill_sha256,
+                )["provider_input_sha256"],
             })
     original_sessions, original_mapping = runtime.build_runtime_blind_batch(
         executions,
@@ -2348,7 +2442,7 @@ def test_diagnostic_rejudge_preserves_provider_evidence_and_blocks_replacement(t
         "corpus_sha256": runtime.canonical_digest(cases),
         "gold_sha256": original_gold["gold_sha256"],
         "skill_sha256": "b" * 64,
-        "instrumented_skill_sha256": "d" * 64,
+        "instrumented_skill_sha256": instrumented_skill_sha256,
         "activation_probe_sha256": runtime.canonical_digest(activation_probe),
         "activation_probe": activation_probe,
         "model": "gpt-test",
@@ -2483,6 +2577,7 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
     gold, trusted_gold = _signed_gold(cases, [_gold(index) for index in range(1, 11)])
     executions = []
     skill_sha256 = "a" * 64
+    instrumented_skill_sha256 = "d" * 64
     for case in cases:
         for provider_id in runtime.PROVIDERS:
             plan = {
@@ -2516,6 +2611,14 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
                         context_paths=tuple(case["context_files"]),
                     )
                 ),
+                "provider_input_sha256": runtime.build_provider_input_envelope(
+                    provider_id,
+                    case,
+                    allowed_workspace_delta=_protocol()["execution"][
+                        "allowed_workspace_delta"
+                    ],
+                    instrumented_skill_sha256=instrumented_skill_sha256,
+                )["provider_input_sha256"],
                 "usage": {
                     "status": "observed",
                     "input_tokens": 10,
@@ -2572,6 +2675,7 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
         "corpus_sha256": runtime.canonical_digest(cases),
         "gold_sha256": gold["gold_sha256"],
         "skill_sha256": skill_sha256,
+        "instrumented_skill_sha256": instrumented_skill_sha256,
         "model": "gpt-test",
         "reasoning_effort": "low",
         "activation_probe": {
@@ -2736,6 +2840,7 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
         cases, gold, skill_sha256=skill_sha256
     )
     executions = []
+    instrumented_skill_sha256 = "d" * 64
     for case in cases:
         for provider_id in runtime.PROVIDERS:
             executions.append({
@@ -2748,6 +2853,14 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
                         context_paths=tuple(case["context_files"]),
                     )
                 ),
+                "provider_input_sha256": runtime.build_provider_input_envelope(
+                    provider_id,
+                    case,
+                    allowed_workspace_delta=protocol["execution"][
+                        "allowed_workspace_delta"
+                    ],
+                    instrumented_skill_sha256=instrumented_skill_sha256,
+                )["provider_input_sha256"],
                 "activation": {
                     "status": "observed",
                     "skill_sha256": skill_sha256,
@@ -2763,6 +2876,7 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
         "corpus_sha256": runtime.canonical_digest(cases),
         "gold_sha256": gold["gold_sha256"],
         "skill_sha256": skill_sha256,
+        "instrumented_skill_sha256": instrumented_skill_sha256,
         "activation_probe": {"status": "pass", "skill_sha256": skill_sha256},
         "executions": executions,
     }

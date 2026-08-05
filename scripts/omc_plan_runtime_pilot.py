@@ -81,6 +81,15 @@ FROZEN_CONFIRMATORY_MAX_SELECTED_OBJECT_CASES = 2
 MAX_CONTEXT_FILE_COUNT = 20
 MAX_CONTEXT_FILE_BYTES = 128 * 1024
 MAX_CONTEXT_TOTAL_BYTES = 512 * 1024
+RUNTIME_CASE_FIELDS = {
+    "case_id",
+    "split",
+    "source_type",
+    "request",
+    "provenance",
+    "context_files",
+    "context_sha256",
+}
 
 
 def canonical_digest(value: Any) -> str:
@@ -135,6 +144,7 @@ def provider_execution_evidence_digest(provider_batch: dict[str, Any]) -> str:
             "usage": execution.get("usage"),
             "command_sha256": execution.get("command_sha256"),
             "prompt_sha256": execution.get("prompt_sha256"),
+            "provider_input_sha256": execution.get("provider_input_sha256"),
         })
     evidence.sort(key=lambda item: (str(item["case_id"]), str(item["provider_id"])))
     return canonical_digest({"schema_version": 1, "executions": evidence})
@@ -939,7 +949,11 @@ def _safe_context_path(value: Any) -> str:
     if not isinstance(value, str) or not value.strip() or "\\" in value or "\x00" in value:
         raise ValueError("context path must be a safe relative POSIX path")
     path = PurePosixPath(value)
-    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+    if (
+        path.is_absolute()
+        or path.as_posix() != value
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
         raise ValueError("context path must be a safe relative POSIX path")
     return value
 
@@ -1051,6 +1065,8 @@ def validate_runtime_corpus(
         raise ValueError(f"runtime corpus requires exactly {expected_count} cases")
     case_ids: list[str] = []
     for case in cases:
+        if not isinstance(case, dict) or set(case) != RUNTIME_CASE_FIELDS:
+            raise ValueError("runtime case fields are invalid")
         case_id = case.get("case_id")
         if not isinstance(case_id, str) or not case_id.strip():
             raise ValueError("runtime case_id is required")
@@ -1361,6 +1377,74 @@ def build_provider_prompt(
             + request
         )
     raise ValueError(f"unsupported provider: {provider_id}")
+
+
+def build_provider_input_envelope(
+    provider_id: str,
+    case: dict[str, Any],
+    *,
+    allowed_workspace_delta: str,
+    instrumented_skill_sha256: str,
+) -> dict[str, Any]:
+    """Bind a provider call to its exact request, context, prompt, and skill delta."""
+    if provider_id not in PROVIDERS:
+        raise ValueError(f"unsupported provider: {provider_id}")
+    case_id = case.get("case_id")
+    request = case.get("request")
+    context_files = case.get("context_files")
+    if (
+        not isinstance(case_id, str)
+        or not case_id.strip()
+        or not isinstance(request, str)
+        or not request.strip()
+        or not isinstance(context_files, dict)
+        or not context_files
+        or any(not isinstance(content, str) for content in context_files.values())
+    ):
+        raise ValueError("provider input case is invalid")
+    delta_path = _safe_context_path(allowed_workspace_delta)
+    if not _is_sha256(instrumented_skill_sha256):
+        raise ValueError("provider input skill hash is invalid")
+
+    context_manifest = {
+        _safe_context_path(path): _sha256_text(content)
+        for path, content in context_files.items()
+    }
+    workspace = dict(context_manifest)
+    provider_delta_sha256 = None
+    if provider_id == "omc-plan":
+        workspace[delta_path] = instrumented_skill_sha256
+        provider_delta_sha256 = instrumented_skill_sha256
+    context_paths = tuple(sorted(context_manifest))
+    prompt_sha256 = _sha256_text(
+        build_provider_prompt(provider_id, request, context_paths=context_paths)
+    )
+    payload = {
+        "schema_version": 1,
+        "case_id": case_id,
+        "provider_id": provider_id,
+        "request_sha256": _sha256_text(request),
+        "context_sha256": canonical_digest(context_files),
+        "context_paths": list(context_paths),
+        "workspace_manifest_sha256": canonical_digest(workspace),
+        "allowed_workspace_delta": delta_path,
+        "provider_delta_sha256": provider_delta_sha256,
+        "prompt_sha256": prompt_sha256,
+    }
+    return {**payload, "provider_input_sha256": canonical_digest(payload)}
+
+
+def validate_provider_workspace_manifest(
+    actual_manifest: dict[str, str],
+    provider_input: dict[str, Any],
+) -> None:
+    """Ensure the sealed input describes the workspace the provider will read."""
+    expected_sha256 = provider_input.get("workspace_manifest_sha256")
+    if (
+        not _is_sha256(expected_sha256)
+        or canonical_digest(actual_manifest) != expected_sha256
+    ):
+        raise ValueError("workspace_input_mismatch: materialized provider input differs")
 
 
 def build_codex_command(
@@ -1777,6 +1861,7 @@ def run_activation_probe(
     skill_sha256 = _sha256_text(skill_text)
     receipt = secrets.token_hex(32)
     instrumented_skill = instrument_skill(skill_text, receipt)
+    instrumented_skill_sha256 = _sha256_text(instrumented_skill)
     probe_case = {
         "case_id": "runtime-activation-probe",
         "request": "Plan a bounded retry change without modifying the public API.",
@@ -1831,7 +1916,7 @@ def run_activation_probe(
         "status": "pass",
         "scope": "non_scored_activation_probe",
         "skill_sha256": skill_sha256,
-        "instrumented_skill_sha256": _sha256_text(instrumented_skill),
+        "instrumented_skill_sha256": instrumented_skill_sha256,
         "receipt_sha256": _sha256_text(receipt),
         "workspace_delta": protocol["execution"]["allowed_workspace_delta"],
         "model": model,
@@ -2080,6 +2165,18 @@ def validate_runtime_provenance(
     for execution in provider_batch.get("executions", []):
         provider_id = execution.get("provider_id")
         case = cases_by_id.get(execution.get("case_id"))
+        expected_input = (
+            build_provider_input_envelope(
+                provider_id,
+                case,
+                allowed_workspace_delta=protocol["execution"]["allowed_workspace_delta"],
+                instrumented_skill_sha256=provider_batch.get(
+                    "instrumented_skill_sha256"
+                ),
+            )
+            if provider_id in PROVIDERS and case is not None
+            else None
+        )
         if (
             provider_id not in PROVIDERS
             or case is None
@@ -2089,6 +2186,8 @@ def validate_runtime_provenance(
                 case["request"],
                 context_paths=tuple(case["context_files"]),
             ))
+            or execution.get("provider_input_sha256")
+            != expected_input["provider_input_sha256"]
             or execution.get("activation", {}).get("skill_sha256") != skill_sha256
         ):
             raise ValueError("runtime execution provenance mismatch")
@@ -2171,6 +2270,7 @@ def run_runtime_batch(
         )
     receipt = secrets.token_hex(32)
     instrumented_skill = instrument_skill(skill_text, receipt)
+    instrumented_skill_sha256 = _sha256_text(instrumented_skill)
     activation_schema = build_activation_output_schema(
         output_schema, root / "activation-output-schema.json"
     )
@@ -2193,6 +2293,16 @@ def run_runtime_batch(
             provider_order.reverse()
         for provider_id in provider_order:
             workspace = baseline_root if provider_id == "baseline-plan" else omc_root
+            actual_manifest = (
+                baseline_manifest if provider_id == "baseline-plan" else omc_manifest
+            )
+            provider_input = build_provider_input_envelope(
+                provider_id,
+                case,
+                allowed_workspace_delta=protocol["execution"]["allowed_workspace_delta"],
+                instrumented_skill_sha256=instrumented_skill_sha256,
+            )
+            validate_provider_workspace_manifest(actual_manifest, provider_input)
             output_path = root / "outputs" / case["case_id"] / f"{provider_id}.json"
             output_path.parent.mkdir(parents=True, exist_ok=True)
             remaining_calls = (
@@ -2236,10 +2346,13 @@ def run_runtime_batch(
                 failure_receipt_path=output_path.with_suffix(".failure.json"),
                 context_paths=tuple(case["context_files"]),
             )
+            if execution.get("prompt_sha256") != provider_input["prompt_sha256"]:
+                raise ValueError("runtime provider prompt does not match input envelope")
             executions.append({
                 **execution,
                 "case_id": case["case_id"],
                 "plan_execution_id": f"{batch_id}:{case['case_id']}:{provider_id}",
+                "provider_input_sha256": provider_input["provider_input_sha256"],
             })
             consume_execution_budget(
                 budget_state,
@@ -2264,7 +2377,7 @@ def run_runtime_batch(
         "corpus_sha256": canonical_digest(cases),
         "gold_sha256": gold_document["gold_sha256"],
         "skill_sha256": skill_sha256,
-        "instrumented_skill_sha256": _sha256_text(instrumented_skill),
+        "instrumented_skill_sha256": instrumented_skill_sha256,
         "activation_probe_sha256": canonical_digest(activation_probe),
         "activation_probe": activation_probe,
         "model": model,
