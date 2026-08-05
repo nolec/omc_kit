@@ -105,11 +105,11 @@ Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_pr
 
 | 상태 | 현재 근거 | 다음 마일스톤 | 종료 기준 |
 |---|---|---|---|
-| 진행중 | 신규 disjoint 10건을 commit `337f00d`와 digest `71c8c7ae...6ea5`로 사전 등록하고 signed shortlist transfer·privacy·token 로컬 gate를 연결했다. BM25 ranking v4는 development v3에서 recall `1.0`, 파일 수 `66.7%`, 보수적 입력 token upper bound `4.63%` 절감을 확인했다. ranking v4 source·policy·selection·skill·protocol은 commit `a0f68dc`의 서명 anchor로 동결했고 commit `e756c9b`에서 readiness 필수 게이트로 연결했다. | 독립 selector·gold를 확보해 fresh paired Batch A를 실행한다. 통과 시 같은 quota의 Batch B로 재현한다. | Batch A에서 critical omission `0`, 품질 동률 이상, output ratio `≤1.25`, total token 증가율 `≤5%`를 모두 통과하면 `PROVISIONALLY_REPLACEABLE`; 독립 Batch B도 같은 gate를 통과하면 `REPLACEABLE`; 두 배치 모두 primary gain·confidence gate까지 통과하면 `BENCHMARK_SUPERIOR` |
+| 진행중 | 신규 disjoint 10건을 commit `337f00d`와 digest `71c8c7ae...6ea5`로 사전 등록하고 signed shortlist transfer·privacy·token 로컬 gate를 연결했다. BM25 ranking v4는 development v3에서 recall `1.0`, 파일 수 `66.7%`, 보수적 입력 token upper bound `4.63%` 절감을 확인했다. ranking v4 source·policy·selection·skill·protocol은 commit `a0f68dc`의 서명 anchor로 동결했고 commit `e756c9b`에서 readiness 필수 게이트로 연결했다. Fresh Batch A는 독립 selector와 10건 gold 검토를 마쳤고 reviewed gold hash `a8014e1c...198c`를 유지한다. 서명 도구는 외부 manifest file hash를 필수 trust anchor로 받고 frozen corpus와 산출물 원자 기록을 검증하도록 보강했으며, signing flow 안에서 생성된 legacy key와 sign-off는 `invalidated` 처리했다. | 새 외부 signer key를 signing flow 밖에서 사전 등록하고 승인된 manifest file hash로 gold를 독립 서명한 뒤 fresh paired Batch A를 실행한다. 통과 시 같은 quota의 Batch B로 재현한다. | Batch A에서 critical omission `0`, 품질 동률 이상, output ratio `≤1.25`, total token 증가율 `≤5%`를 모두 통과하면 `PROVISIONALLY_REPLACEABLE`; 독립 Batch B도 같은 gate를 통과하면 `REPLACEABLE`; 두 배치 모두 primary gain·confidence gate까지 통과하면 `BENCHMARK_SUPERIOR` |
 
-- 현재 판정은 `development pilot 완료 / holdout 1차 10건 실행·재판정 완료 / 사후 gold 교정 claim 차단 완료 / 신규 disjoint confirmatory 10건 완주 / 최종 NOT_PROVEN`이며 Plan 우월 또는 대체 가능 판정이 아니다.
+- 현재 판정은 `development pilot 완료 / holdout 1차 10건 실행·재판정 완료 / 사후 gold 교정 claim 차단 완료 / 신규 disjoint confirmatory 10건 완주 / BM25 v4 Fresh Batch A gold 검토 완료·독립 sign-off 대기 / 최종 NOT_PROVEN`이며 Plan 우월 또는 대체 가능 판정이 아니다.
 - runtime runner는 claim에 영향을 주는 입력과 결과를 서명·hash로 묶지만, 실제 provider 실행 결과를 대신하지 않는다.
-- 다음 병목은 동결된 baseline-only packet으로 독립 selector를 실행하고 독립 gold를 확보한 뒤 fresh paired Batch A를 실행하는 것이다. provider 결과가 acceptance gate를 통과하기 전 Plan 대체 판정은 허용하지 않는다.
+- 다음 병목은 새 외부 signer key와 manifest file hash를 사전 승인해 reviewed gold의 독립 sign-off를 완료하는 것이다. 그 전에는 provider 실행을 허용하지 않으며, 이후 fresh paired Batch A provider 결과가 acceptance gate를 통과하기 전에도 Plan 대체 판정은 허용하지 않는다.
 
 ### Review Quality Validation
 
