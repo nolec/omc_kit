@@ -1517,10 +1517,23 @@ def prepare_local_transfer_readiness(
     trusted_prior_commits: list[str],
     trusted_selection_public_keys: set[str],
     execution_budget: dict[str, Any],
+    preregistration_manifest: dict[str, Any],
+    skill_path: str | Path,
+    protocol: dict[str, Any],
+    trusted_preregistration_public_keys: set[str],
     baseline_context_manifest: dict[str, Any] | None = None,
     trusted_selector_public_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     """Prepare exact local artifacts; external transfer remains disallowed."""
+    preregistration = validate_confirmatory_preregistration_manifest(
+        preregistration_manifest,
+        selection=selection,
+        skill_path=skill_path,
+        protocol=protocol,
+        trusted_preregistration_public_keys=(
+            trusted_preregistration_public_keys
+        ),
+    )
     transfer_bundle, transfer_manifest, privacy_audit = (
         _build_local_transfer_artifacts(
             packet,
@@ -1544,6 +1557,7 @@ def prepare_local_transfer_readiness(
         "external_transfer_approved": False,
         "provider_execution_allowed": False,
         "replacement_claim_eligible": False,
+        "preregistration_manifest_sha256": preregistration["manifest_sha256"],
     }
     if baseline_context_manifest is not None:
         readiness["baseline_context_manifest_sha256"] = (
@@ -1561,6 +1575,10 @@ def validate_local_transfer_readiness(
     repo_roots: dict[str, str | Path],
     trusted_prior_commits: list[str],
     trusted_selection_public_keys: set[str],
+    preregistration_manifest: dict[str, Any],
+    skill_path: str | Path,
+    protocol: dict[str, Any],
+    trusted_preregistration_public_keys: set[str],
     baseline_context_manifest: dict[str, Any] | None = None,
     trusted_selector_public_keys: set[str] | None = None,
 ) -> None:
@@ -1575,6 +1593,12 @@ def validate_local_transfer_readiness(
         trusted_prior_commits=trusted_prior_commits,
         trusted_selection_public_keys=trusted_selection_public_keys,
         execution_budget=DEFAULT_EXECUTION_BUDGET,
+        preregistration_manifest=preregistration_manifest,
+        skill_path=skill_path,
+        protocol=protocol,
+        trusted_preregistration_public_keys=(
+            trusted_preregistration_public_keys
+        ),
         baseline_context_manifest=baseline_context_manifest,
         trusted_selector_public_keys=trusted_selector_public_keys,
     )
@@ -1879,6 +1903,12 @@ def main() -> int:
     )
     readiness.add_argument("--baseline-context-manifest")
     readiness.add_argument("--trusted-selector-public-key", action="append")
+    readiness.add_argument("--preregistration-manifest", required=True)
+    readiness.add_argument("--omc-skill-file", required=True)
+    readiness.add_argument("--runtime-protocol", required=True)
+    readiness.add_argument(
+        "--trusted-preregistration-public-key", action="append", required=True
+    )
     readiness.add_argument("--output", required=True)
     development = subparsers.add_parser("measure-development")
     development.add_argument("corpus")
@@ -1930,6 +1960,12 @@ def main() -> int:
             trusted_prior_commits=_load_commit_registry(args.prior_registry),
             trusted_selection_public_keys=set(args.trusted_selection_public_key),
             execution_budget=DEFAULT_EXECUTION_BUDGET,
+            preregistration_manifest=_load_json(args.preregistration_manifest),
+            skill_path=args.omc_skill_file,
+            protocol=_load_json(args.runtime_protocol),
+            trusted_preregistration_public_keys=set(
+                args.trusted_preregistration_public_key
+            ),
             baseline_context_manifest=baseline_context_manifest,
             trusted_selector_public_keys=set(
                 args.trusted_selector_public_key or []

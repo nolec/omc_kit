@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import subprocess
 from copy import deepcopy
@@ -176,6 +177,57 @@ def _prepare(
 
 def _trusted_selection_keys(packet: dict) -> set[str]:
     return {packet["selection_provenance"]["signoff"]["signer_public_key"]}
+
+
+def _readiness_preregistration(
+    selection: dict, monkeypatch: pytest.MonkeyPatch
+) -> dict:
+    private_key = Ed25519PrivateKey.generate()
+    public_key = _public_key(private_key)
+    protocol = json.loads(
+        (FIXTURES / "omc_plan_runtime_protocol.json").read_text()
+    )
+    skill_path = Path(".agents/skills/omc-plan/SKILL.md")
+    manifest = {
+        "schema_version": 1,
+        "status": "preregistered",
+        "source_commit": context_selection.FROZEN_RANKING_V4_SOURCE_COMMIT,
+        "retrieval_policy_sha256": context_selection.canonical_digest(
+            context_selection.RETRIEVAL_POLICY
+        ),
+        "selection_sha256": selection["selection_sha256"],
+        "skill_sha256": hashlib.sha256(skill_path.read_bytes()).hexdigest(),
+        "protocol_sha256": context_selection.canonical_digest(protocol),
+        "signoff": {
+            "signer": "local-preregistration-v1",
+            "signer_public_key": public_key,
+            "signature": "",
+        },
+    }
+    manifest["manifest_sha256"] = (
+        context_selection._preregistration_manifest_digest(manifest)
+    )
+    manifest["signoff"]["signature"] = base64.b64encode(
+        private_key.sign(
+            context_selection.preregistration_manifest_payload(manifest)
+        )
+    ).decode("ascii")
+    monkeypatch.setattr(
+        context_selection,
+        "FROZEN_PREREGISTRATION_V4_SHA256",
+        manifest["manifest_sha256"],
+    )
+    monkeypatch.setattr(
+        context_selection,
+        "FROZEN_PREREGISTRATION_V4_PUBLIC_KEY",
+        public_key,
+    )
+    return {
+        "preregistration_manifest": manifest,
+        "skill_path": skill_path,
+        "protocol": protocol,
+        "trusted_preregistration_public_keys": {public_key},
+    }
 
 
 def _signed_response(packet: dict, private_key: Ed25519PrivateKey) -> dict:
@@ -618,6 +670,7 @@ def test_local_transfer_readiness_freezes_exact_payload_without_private_mapping(
     tmp_path, monkeypatch
 ):
     repo_roots, selection, prior_commits, packet = _prepare(tmp_path, monkeypatch)
+    preregistration = _readiness_preregistration(selection, monkeypatch)
 
     readiness = context_selection.prepare_local_transfer_readiness(
         packet,
@@ -626,12 +679,16 @@ def test_local_transfer_readiness_freezes_exact_payload_without_private_mapping(
         trusted_prior_commits=prior_commits,
         trusted_selection_public_keys=_trusted_selection_keys(packet),
         execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+        **preregistration,
     )
 
     assert readiness["status"] == "approval_required"
     assert readiness["execution_contract"]["attestation_type"] == "operator_attested"
     assert readiness["execution_contract"]["replacement_claim_eligible"] is False
     assert readiness["provider_execution_allowed"] is False
+    assert readiness["preregistration_manifest_sha256"] == (
+        preregistration["preregistration_manifest"]["manifest_sha256"]
+    )
     assert len(readiness["transfer_manifest"]["cases"]) == 10
     serialized = json.dumps(readiness, ensure_ascii=False)
     assert all(str(repo) not in serialized for repo in repo_roots.values())
@@ -645,7 +702,47 @@ def test_local_transfer_readiness_freezes_exact_payload_without_private_mapping(
         repo_roots=repo_roots,
         trusted_prior_commits=prior_commits,
         trusted_selection_public_keys=_trusted_selection_keys(packet),
+        **preregistration,
     )
+
+
+def test_local_transfer_readiness_rejects_runtime_protocol_drift(
+    tmp_path, monkeypatch
+):
+    repo_roots, selection, prior_commits, packet = _prepare(tmp_path, monkeypatch)
+    preregistration = _readiness_preregistration(selection, monkeypatch)
+    preregistration["protocol"] = deepcopy(preregistration["protocol"])
+    preregistration["protocol"]["reasoning_effort"] = "high"
+
+    with pytest.raises(ValueError, match="claim input mismatch"):
+        context_selection.prepare_local_transfer_readiness(
+            packet,
+            selection=selection,
+            repo_roots=repo_roots,
+            trusted_prior_commits=prior_commits,
+            trusted_selection_public_keys=_trusted_selection_keys(packet),
+            execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+            **preregistration,
+        )
+
+
+def test_local_transfer_readiness_rejects_skill_drift(tmp_path, monkeypatch):
+    repo_roots, selection, prior_commits, packet = _prepare(tmp_path, monkeypatch)
+    preregistration = _readiness_preregistration(selection, monkeypatch)
+    changed_skill = tmp_path / "changed-SKILL.md"
+    changed_skill.write_text("# Changed OMC Plan\n", encoding="utf-8")
+    preregistration["skill_path"] = changed_skill
+
+    with pytest.raises(ValueError, match="claim input mismatch"):
+        context_selection.prepare_local_transfer_readiness(
+            packet,
+            selection=selection,
+            repo_roots=repo_roots,
+            trusted_prior_commits=prior_commits,
+            trusted_selection_public_keys=_trusted_selection_keys(packet),
+            execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+            **preregistration,
+        )
 
 
 def test_local_transfer_readiness_uses_signed_baseline_context_manifest(
@@ -656,6 +753,7 @@ def test_local_transfer_readiness_uses_signed_baseline_context_manifest(
         monkeypatch,
         text_files_by_index={0: {"src/unrelated-large.txt": "x" * 260_000}},
     )
+    preregistration = _readiness_preregistration(selection, monkeypatch)
     selector_key = Ed25519PrivateKey.generate()
     response = _signed_response(packet, selector_key)
     trusted_selector_keys = {_public_key(selector_key)}
@@ -678,6 +776,7 @@ def test_local_transfer_readiness_uses_signed_baseline_context_manifest(
         execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
         baseline_context_manifest=baseline_context_manifest,
         trusted_selector_public_keys=trusted_selector_keys,
+        **preregistration,
     )
 
     assert readiness["baseline_context_manifest_sha256"] == (
@@ -701,6 +800,7 @@ def test_local_transfer_readiness_uses_signed_baseline_context_manifest(
         trusted_selection_public_keys=_trusted_selection_keys(packet),
         baseline_context_manifest=baseline_context_manifest,
         trusted_selector_public_keys=trusted_selector_keys,
+        **preregistration,
     )
 
 
@@ -719,6 +819,7 @@ def test_local_transfer_readiness_omits_sensitive_source(
         monkeypatch,
         source_by_index={0: source},
     )
+    preregistration = _readiness_preregistration(selection, monkeypatch)
 
     readiness = context_selection.prepare_local_transfer_readiness(
         packet,
@@ -727,6 +828,7 @@ def test_local_transfer_readiness_omits_sensitive_source(
         trusted_prior_commits=prior_commits,
         trusted_selection_public_keys=_trusted_selection_keys(packet),
         execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+        **preregistration,
     )
 
     manifest = readiness["transfer_manifest"]
@@ -757,6 +859,7 @@ def test_local_transfer_readiness_blocks_sensitive_request(tmp_path, monkeypatch
         monkeypatch,
         request_by_index={0: 'API_KEY = "super-secret-value"'},
     )
+    preregistration = _readiness_preregistration(selection, monkeypatch)
 
     with pytest.raises(ValueError, match="request contains sensitive content"):
         context_selection.prepare_local_transfer_readiness(
@@ -766,6 +869,7 @@ def test_local_transfer_readiness_blocks_sensitive_request(tmp_path, monkeypatch
             trusted_prior_commits=prior_commits,
             trusted_selection_public_keys=_trusted_selection_keys(packet),
             execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+            **preregistration,
         )
 
 
@@ -775,6 +879,7 @@ def test_local_transfer_readiness_rejects_symlinks(tmp_path, monkeypatch):
         monkeypatch,
         symlink_index=0,
     )
+    preregistration = _readiness_preregistration(selection, monkeypatch)
 
     with pytest.raises(ValueError, match="regular files"):
         context_selection.prepare_local_transfer_readiness(
@@ -784,6 +889,7 @@ def test_local_transfer_readiness_rejects_symlinks(tmp_path, monkeypatch):
             trusted_prior_commits=prior_commits,
             trusted_selection_public_keys=_trusted_selection_keys(packet),
             execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+            **preregistration,
         )
 
 
@@ -801,6 +907,7 @@ def test_local_transfer_readiness_records_and_omits_binary_assets(
             }
         },
     )
+    preregistration = _readiness_preregistration(selection, monkeypatch)
 
     readiness = context_selection.prepare_local_transfer_readiness(
         packet,
@@ -809,6 +916,7 @@ def test_local_transfer_readiness_records_and_omits_binary_assets(
         trusted_prior_commits=prior_commits,
         trusted_selection_public_keys=_trusted_selection_keys(packet),
         execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+        **preregistration,
     )
 
     manifest_case = readiness["transfer_manifest"]["cases"][0]
@@ -844,6 +952,7 @@ def test_local_transfer_readiness_preserves_unicode_paths(tmp_path, monkeypatch)
         monkeypatch,
         text_files_by_index={0: {"docs/보고서.md": "검증 결과\n"}},
     )
+    preregistration = _readiness_preregistration(selection, monkeypatch)
 
     readiness = context_selection.prepare_local_transfer_readiness(
         packet,
@@ -852,6 +961,7 @@ def test_local_transfer_readiness_preserves_unicode_paths(tmp_path, monkeypatch)
         trusted_prior_commits=prior_commits,
         trusted_selection_public_keys=_trusted_selection_keys(packet),
         execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+        **preregistration,
     )
 
     paths = {
@@ -942,6 +1052,7 @@ def test_local_transfer_readiness_detects_manifest_and_budget_tampering(
     tmp_path, monkeypatch
 ):
     repo_roots, selection, prior_commits, packet = _prepare(tmp_path, monkeypatch)
+    preregistration = _readiness_preregistration(selection, monkeypatch)
     readiness = context_selection.prepare_local_transfer_readiness(
         packet,
         selection=selection,
@@ -949,6 +1060,7 @@ def test_local_transfer_readiness_detects_manifest_and_budget_tampering(
         trusted_prior_commits=prior_commits,
         trusted_selection_public_keys=_trusted_selection_keys(packet),
         execution_budget=context_selection.DEFAULT_EXECUTION_BUDGET,
+        **preregistration,
     )
 
     tampered_manifest = deepcopy(readiness)
@@ -963,6 +1075,7 @@ def test_local_transfer_readiness_detects_manifest_and_budget_tampering(
             repo_roots=repo_roots,
             trusted_prior_commits=prior_commits,
             trusted_selection_public_keys=_trusted_selection_keys(packet),
+            **preregistration,
         )
 
     tampered_budget = deepcopy(readiness)
@@ -980,6 +1093,7 @@ def test_local_transfer_readiness_detects_manifest_and_budget_tampering(
             repo_roots=repo_roots,
             trusted_prior_commits=prior_commits,
             trusted_selection_public_keys=_trusted_selection_keys(packet),
+            **preregistration,
         )
 
 
