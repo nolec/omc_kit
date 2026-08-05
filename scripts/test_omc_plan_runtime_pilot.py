@@ -1728,13 +1728,23 @@ def test_variability_gate_blocks_large_repeat_delta():
 
 def test_replacement_requires_all_quality_cost_and_provenance_gates():
     result = runtime.decide_replacement(_metrics(), _protocol()["acceptance"])
-    assert result["decision"] == "REPLACEABLE"
+    assert result["decision"] == "PROVISIONALLY_REPLACEABLE"
 
     failed = _metrics()
     failed["omc-plan"]["unsupported_assumption_count"] = 2
     result = runtime.decide_replacement(failed, _protocol()["acceptance"])
     assert result["decision"] == "NOT_PROVEN"
     assert "unsupported_assumptions" in result["failed_gates"]
+
+
+def test_single_batch_never_claims_final_replacement():
+    result = runtime.decide_replacement(_metrics(), _protocol()["acceptance"])
+
+    assert result == {
+        "decision": "PROVISIONALLY_REPLACEABLE",
+        "reason_code": "single_batch_gates_passed",
+        "failed_gates": [],
+    }
 
 
 def test_replacement_rejects_missing_or_posthoc_evaluation_scope():
@@ -1801,14 +1811,14 @@ def test_superiority_batch_requires_primary_gain_and_positive_confidence_bound()
     result = runtime.decide_superiority_batch(
         tied, protocol["acceptance"], protocol["superiority"]
     )
-    assert result["decision"] == "REPLACEABLE"
+    assert result["decision"] == "PROVISIONALLY_REPLACEABLE"
 
     unstable = _metrics()
     unstable["paired_primary_deltas"] = [0.20, -0.10] * 5
     result = runtime.decide_superiority_batch(
         unstable, protocol["acceptance"], protocol["superiority"]
     )
-    assert result["decision"] == "REPLACEABLE"
+    assert result["decision"] == "PROVISIONALLY_REPLACEABLE"
     assert result["confidence_lower_bound"] <= 0
 
     inconsistent = _metrics()
@@ -1866,7 +1876,9 @@ def test_superiority_requires_two_independent_candidate_batches():
     )
     assert result["decision"] == "BENCHMARK_SUPERIOR"
 
-    replaceable = signed_report("confirmation-01", "b" * 64, "REPLACEABLE")
+    replaceable = signed_report(
+        "confirmation-01", "b" * 64, "PROVISIONALLY_REPLACEABLE"
+    )
     result = runtime.decide_confirmed_superiority(
         [candidate, replaceable],
         required_batches=2,
@@ -2066,7 +2078,7 @@ def test_assess_cli_can_call_functions_declared_after_main(tmp_path):
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout)["decision"] == "REPLACEABLE"
+    assert json.loads(completed.stdout)["decision"] == "PROVISIONALLY_REPLACEABLE"
 
 
 def test_blind_batch_contains_ten_complete_pairs_without_provider_ids():
@@ -2236,7 +2248,7 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
         artifact_root=tmp_path / "finalized-run-output",
         trusted_runtime_signer_public_key=runtime_signer_public_key,
     )
-    assert report["decision"]["decision"] == "REPLACEABLE"
+    assert report["decision"]["decision"] == "PROVISIONALLY_REPLACEABLE"
 
 
 def test_restore_blind_session_plan_labels_uses_private_mapping():
@@ -2614,7 +2626,7 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
         artifact_root=tmp_path / "finalized",
         trusted_runtime_signer_public_key=runtime_signer_public_key,
     )
-    assert report["decision"]["decision"] == "REPLACEABLE"
+    assert report["decision"]["decision"] == "PROVISIONALLY_REPLACEABLE"
     assert report["metrics"]["evaluation_scope"] == "confirmatory"
     assert report["metrics"]["omc-plan"]["task_evidence_accuracy"] == 1.0
     assert report["provenance"]["protocol_sha256"] == provider_batch["protocol_sha256"]

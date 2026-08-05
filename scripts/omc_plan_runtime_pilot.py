@@ -2970,8 +2970,10 @@ def decide_replacement(
             failed.append("total_tokens")
 
     return {
-        "decision": "NOT_PROVEN" if failed else "REPLACEABLE",
-        "reason_code": "quality_or_cost_gate_failed" if failed else "all_gates_passed",
+        "decision": "NOT_PROVEN" if failed else "PROVISIONALLY_REPLACEABLE",
+        "reason_code": (
+            "quality_or_cost_gate_failed" if failed else "single_batch_gates_passed"
+        ),
         "failed_gates": sorted(set(failed)),
     }
 
@@ -2987,7 +2989,7 @@ def decide_superiority_batch(
     if superiority != FROZEN_SUPERIORITY:
         raise ValueError("superiority thresholds must match the frozen contract")
     replacement = decide_replacement(metrics, acceptance)
-    if replacement["decision"] != "REPLACEABLE":
+    if replacement["decision"] != "PROVISIONALLY_REPLACEABLE":
         return {**replacement, "batch_id": batch_id}
 
     deltas = metrics.get("paired_primary_deltas")
@@ -3033,7 +3035,9 @@ def decide_superiority_batch(
         and lower_bound > 0
     )
     return {
-        "decision": "SUPERIOR_CANDIDATE" if is_candidate else "REPLACEABLE",
+        "decision": (
+            "SUPERIOR_CANDIDATE" if is_candidate else "PROVISIONALLY_REPLACEABLE"
+        ),
         "reason_code": (
             "primary_superiority_candidate"
             if is_candidate
@@ -3141,7 +3145,10 @@ def decide_confirmed_superiority(
     elif all(decision == "SUPERIOR_CANDIDATE" for decision in decisions):
         final = "BENCHMARK_SUPERIOR"
         reason = "superiority_reproduced"
-    elif all(decision in {"SUPERIOR_CANDIDATE", "REPLACEABLE"} for decision in decisions):
+    elif all(
+        decision in {"SUPERIOR_CANDIDATE", "PROVISIONALLY_REPLACEABLE"}
+        for decision in decisions
+    ):
         final = "REPLACEABLE"
         reason = "superiority_not_reproduced"
     else:
