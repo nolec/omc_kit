@@ -1,0 +1,102 @@
+{
+  "schema_version": 3,
+  "status": "preregistered",
+  "cases": [
+    {
+      "case_id": "retrieval-v3-ui-inquiry-order-dialog",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "ui_state",
+      "request": "문의 작성 화면에서 주문을 선택하는 다이얼로그를 추가한다",
+      "context_files": [
+        {"path": "sandbox/qna/components/OrderSelectionDialog.tsx", "content_utf8": "export function OrderSelectionDialog() { return openInquiryOrderSelector(); }\n"},
+        {"path": "sandbox/qna/components/OrderSelectionDialog.spec.tsx", "content_utf8": "test('selects an order for an inquiry form', () => {});\n"},
+        {"path": "sandbox/store/fulfillment/dialog/CreateShippingDeliveryFeePreview.tsx", "content_utf8": "export function CreateShippingDeliveryFeePreview() { return null; }\n"},
+        {"path": "sandbox/order/returns/CommerceReturnRequestDialog.tsx", "content_utf8": "export function CommerceReturnRequestDialog() { return null; }\n"},
+        {"path": "sandbox/editor/AiBlockSelection.constants.ts", "content_utf8": "export const selectionLabels = {};\n"},
+        {"path": "sandbox/docs/개발도구.md", "content_utf8": "작성 화면에서 도구를 선택하는 방법을 설명한다.\n"}
+      ],
+      "context_labels": [
+        {"path": "sandbox/qna/components/OrderSelectionDialog.tsx", "weight": 2, "critical": true},
+        {"path": "sandbox/qna/components/OrderSelectionDialog.spec.tsx", "weight": 1, "critical": false}
+      ]
+    },
+    {
+      "case_id": "retrieval-v3-api-portfolio-rejection",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "api_payload",
+      "request": "포트폴리오 목록의 반려 상태에 실제 반려 사유를 표시한다",
+      "context_files": [
+        {"path": "sandbox/portfolio/api/useGetPortfolioRejectionReason.ts", "content_utf8": "export function useGetPortfolioRejectionReason(id) { return query(['portfolio', id, 'rejection']); }\n"},
+        {"path": "sandbox/portfolio/api/useGetPortfolioRejectionReason.spec.ts", "content_utf8": "test('returns the rejection reason for a portfolio row', () => {});\n"},
+        {"path": "sandbox/portfolio/api/useCreatePortfolio.ts", "content_utf8": "export function useCreatePortfolio() { return mutation(); }\n"},
+        {"path": "sandbox/portfolio/table/usePortfolioPagination.ts", "content_utf8": "export function usePortfolioPagination() { return []; }\n"},
+        {"path": "sandbox/status/StatusBadge.tsx", "content_utf8": "export function StatusBadge() { return null; }\n"},
+        {"path": "sandbox/portfolio/PortfolioCreateSidePanel.tsx", "content_utf8": "export function PortfolioCreateSidePanel() { return null; }\n"}
+      ],
+      "context_labels": [
+        {"path": "sandbox/portfolio/api/useGetPortfolioRejectionReason.ts", "weight": 2, "critical": true},
+        {"path": "sandbox/portfolio/api/useGetPortfolioRejectionReason.spec.ts", "weight": 1, "critical": false}
+      ]
+    },
+    {
+      "case_id": "retrieval-v3-data-pattern-scan",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "data_indexing",
+      "request": "다음 날 상승 패턴 후보를 스캔하고 결과를 비교 가능하게 만든다",
+      "context_files": [
+        {"path": "sandbox/market/scan_next_day_up_pattern.py", "content_utf8": "def scan_next_day_up_pattern(candidates): return compare_patterns(candidates)\n"},
+        {"path": "sandbox/market/test_scan_next_day_up_pattern.py", "content_utf8": "def test_compares_bullish_pattern_candidates(): pass\n"},
+        {"path": "sandbox/mobile/update/app_update_service.dart", "content_utf8": "class AppUpdateService {}\n"},
+        {"path": "sandbox/market/update_paper_log.py", "content_utf8": "def update_paper_log(): pass\n"},
+        {"path": "sandbox/calendar/update_earnings_calendar.py", "content_utf8": "def update_earnings_calendar(): pass\n"},
+        {"path": "sandbox/notifications/notification_provider_settings.dart", "content_utf8": "class NotificationProviderSettings {}\n"}
+      ],
+      "context_labels": [
+        {"path": "sandbox/market/scan_next_day_up_pattern.py", "weight": 2, "critical": true},
+        {"path": "sandbox/market/test_scan_next_day_up_pattern.py", "weight": 1, "critical": false}
+      ]
+    },
+    {
+      "case_id": "retrieval-v3-backend-research-conflict",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "backend_rules",
+      "request": "리서치 근거에서 누락된 정보와 충돌을 분석해 저장한다",
+      "context_files": [
+        {"path": "sandbox/research/persistence/conflict_repository.py", "content_utf8": "class ResearchConflictRepository:\n    def save_missing_evidence(self, conflict): ...\n"},
+        {"path": "sandbox/research/persistence/test_conflict_repository.py", "content_utf8": "def test_persists_missing_evidence_conflicts(): pass\n"},
+        {"path": "sandbox/orchestrator/autopilot.py", "content_utf8": "def execute_steps(): pass\n"},
+        {"path": "sandbox/research/notebook.py", "content_utf8": "class ResearchNotebook: pass\n"},
+        {"path": "sandbox/decision/evidence_score.py", "content_utf8": "def score_evidence(): return 0\n"},
+        {"path": "sandbox/docs/research-validation.md", "content_utf8": "Research validation runbook.\n"}
+      ],
+      "context_labels": [
+        {"path": "sandbox/research/persistence/conflict_repository.py", "weight": 2, "critical": true},
+        {"path": "sandbox/research/persistence/test_conflict_repository.py", "weight": 1, "critical": false}
+      ]
+    },
+    {
+      "case_id": "retrieval-v3-legacy-qna-completion-flow",
+      "split": "development",
+      "source_type": "synthetic_anonymized",
+      "surface": "multi_file_legacy",
+      "request": "Grid 문의 제출 후 완료 화면으로 전환하는 전체 흐름을 연결한다",
+      "context_files": [
+        {"path": "sandbox/grid/qna/useQnaCompletionFlow.ts", "content_utf8": "export function useQnaCompletionFlow() { return submitInquiryThenShowCompletion(); }\n"},
+        {"path": "sandbox/grid/qna/useQnaCompletionFlow.spec.ts", "content_utf8": "test('shows completion after inquiry submission', () => {});\n"},
+        {"path": "sandbox/subscription/bridge/subscription.tsx", "content_utf8": "export function SubscriptionBridge() { return null; }\n"},
+        {"path": "sandbox/shipping/DeliveryFeePreview.styled.ts", "content_utf8": "export const DeliveryFeePreview = styled.div``;\n"},
+        {"path": "sandbox/grid/fixtures/page.ts", "content_utf8": "export const gridPageFixture = {};\n"},
+        {"path": "sandbox/marketing/CreateAutomatorDialog/useFormValidation.ts", "content_utf8": "export function useFormValidation() { return true; }\n"}
+      ],
+      "context_labels": [
+        {"path": "sandbox/grid/qna/useQnaCompletionFlow.ts", "weight": 2, "critical": true},
+        {"path": "sandbox/grid/qna/useQnaCompletionFlow.spec.ts", "weight": 1, "critical": false}
+      ]
+    }
+  ],
+  "corpus_sha256": "6b02970a944ab0c09b82e0c23e0ac87b2da8924afd9b03cad4af2dc2a4831d89"
+}

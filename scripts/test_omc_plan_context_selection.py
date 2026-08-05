@@ -894,6 +894,16 @@ def _load_retrieval_development_v2_inputs():
     return corpus, batch_a
 
 
+def _load_retrieval_development_v3_inputs():
+    corpus = json.loads(
+        (FIXTURES / "omc_plan_retrieval_development_v3.json").read_text()
+    )
+    batch_a = json.loads(
+        (FIXTURES / "omc_plan_confirmatory_batch_a_selection.json").read_text()
+    )
+    return corpus, batch_a
+
+
 def _refresh_corpus_digest(corpus):
     corpus["corpus_sha256"] = context_selection.canonical_digest({
         key: value for key, value in corpus.items() if key != "corpus_sha256"
@@ -1182,6 +1192,100 @@ def test_baseline_only_shortlist_keeps_bilingual_expansion_in_mixed_repository()
     ]
 
 
+def test_baseline_only_shortlist_keeps_unpaired_test_as_top_candidate():
+    shortlist = context_selection.build_baseline_only_shortlist(
+        {
+            "case_id": "test-only-retry-regression",
+            "request": "retry budget test regression",
+            "context_files": [
+                {
+                    "path": "tests/test_retry_budget.py",
+                    "content_utf8": "def test_retry_budget_regression(): pass\n",
+                },
+                {
+                    "path": "src/catalog.py",
+                    "content_utf8": "def list_catalog(): return []\n",
+                },
+            ],
+        },
+        maximum_selected_files=1,
+    )
+
+    assert shortlist["selected_paths"] == ["tests/test_retry_budget.py"]
+
+
+def test_term_frequencies_compact_repeated_tokens():
+    frequencies, term_count = context_selection._term_frequencies(
+        "retry " * 10_000
+    )
+
+    assert frequencies == {"retry": 10_000}
+    assert term_count == 10_000
+
+
+def test_acronym_pascal_case_terms_remain_searchable():
+    assert context_selection._lexical_terms("GTMEventTracker") == [
+        "gtm",
+        "event",
+        "tracker",
+    ]
+
+    shortlist = context_selection.build_baseline_only_shortlist(
+        {
+            "case_id": "acronym-event-tracking",
+            "request": "GTM event tracking",
+            "context_files": [
+                {
+                    "path": "src/GTMEventTracker.ts",
+                    "content_utf8": "export class GTMEventTracker {}\n",
+                },
+                {
+                    "path": "src/EventList.ts",
+                    "content_utf8": "export const EventList = [];\n",
+                },
+            ],
+        },
+        maximum_selected_files=1,
+    )
+
+    assert shortlist["selected_paths"] == ["src/GTMEventTracker.ts"]
+
+
+def test_concept_coverage_bonus_can_overturn_base_rank(monkeypatch):
+    score_batches = iter(([10.0, 9.0, 7.0], [0.0, 0.0, 0.0]))
+    monkeypatch.setattr(
+        context_selection,
+        "_bm25_scores",
+        lambda *args, **kwargs: next(score_batches),
+    )
+    shortlist = context_selection.build_baseline_only_shortlist(
+        {
+            "case_id": "unpaired-concept-coverage",
+            "request": "alpha beta",
+            "context_files": [
+                {
+                    "path": "src/alpha/A.py",
+                    "content_utf8": "alpha\n",
+                },
+                {
+                    "path": "src/alpha/B.py",
+                    "content_utf8": "alpha\n",
+                },
+                {
+                    "path": "src/beta/C.py",
+                    "content_utf8": "beta\n",
+                },
+            ],
+        },
+        maximum_selected_files=2,
+    )
+
+    assert shortlist["selected_paths"] == [
+        "src/alpha/A.py",
+        "src/beta/C.py",
+    ]
+
+
 def test_baseline_workspace_shortlist_builds_unsigned_packet_bound_draft(
     tmp_path, monkeypatch
 ):
@@ -1248,3 +1352,28 @@ def test_baseline_workspace_shortlist_rejects_tampered_packet(
             maximum_selected_files=2,
             trusted_selection_public_keys=_trusted_selection_keys(packet),
         )
+
+
+def test_retrieval_development_v3_passes_concept_coverage_gate():
+    corpus, batch_a = _load_retrieval_development_v3_inputs()
+
+    report = context_selection.measure_retrieval_development_corpus(
+        corpus,
+        confirmatory_selection=batch_a,
+        maximum_selected_files=2,
+    )
+
+    assert report == {
+        "case_count": 5,
+        "candidate_file_count": 30,
+        "eligible_file_count": 30,
+        "sensitive_file_count": 0,
+        "selected_file_count": 10,
+        "critical_path_recall": 1.0,
+        "weighted_path_recall": 1.0,
+        "file_count_reduction": 2 / 3,
+        "development_gate_passed": True,
+        "candidate_input_token_upper_bound": 54_926,
+        "selected_input_token_upper_bound": 52_385,
+        "input_token_upper_bound_reduction": 2_541 / 54_926,
+    }

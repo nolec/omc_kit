@@ -8,12 +8,14 @@ import base64
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
 import tarfile
 import tempfile
+from collections import Counter
 from copy import deepcopy
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -23,7 +25,7 @@ from omc_plan_runtime_pilot import validate_confirmatory_candidate_selection
 
 RETRIEVAL_POLICY = {
     "schema_version": 1,
-    "ranking_algorithm_version": 3,
+    "ranking_algorithm_version": 4,
     "candidate_source": "baseline_tree_only",
     "followup_data_allowed": False,
     "manual_substitution_allowed": False,
@@ -52,6 +54,9 @@ FROZEN_RETRIEVAL_DEVELOPMENT_SHA256 = (
 )
 FROZEN_RETRIEVAL_DEVELOPMENT_V2_SHA256 = (
     "0bf7ef1546f4454b4e70f6365914332551340ec495aa50413cf05a4615fcf398"
+)
+FROZEN_RETRIEVAL_DEVELOPMENT_V3_SHA256 = (
+    "6b02970a944ab0c09b82e0c23e0ac87b2da8924afd9b03cad4af2dc2a4831d89"
 )
 DEFAULT_EXECUTION_BUDGET = {
     "max_provider_calls": 10,
@@ -125,6 +130,7 @@ _REQUEST_TERM_EXPANSIONS = {
     "캐시": ("cache", "query"),
     "무효화": ("invalidate", "invalidation"),
     "상승": ("bullish", "rise", "up"),
+    "다음 날": ("next", "day"),
     "패턴": ("pattern", "scan"),
     "후보": ("candidate",),
     "리서치": ("research", "evidence"),
@@ -166,7 +172,7 @@ def validate_retrieval_development_corpus(
     }:
         raise ValueError("retrieval development corpus fields are invalid")
     schema_version = corpus["schema_version"]
-    if schema_version not in {1, 2} or corpus["status"] != "preregistered":
+    if schema_version not in {1, 2, 3} or corpus["status"] != "preregistered":
         raise ValueError("retrieval development corpus status is invalid")
     if corpus["corpus_sha256"] != canonical_digest(
         _without_digest(corpus, "corpus_sha256")
@@ -294,6 +300,7 @@ def validate_retrieval_development_corpus(
     frozen_digest = {
         1: FROZEN_RETRIEVAL_DEVELOPMENT_SHA256,
         2: FROZEN_RETRIEVAL_DEVELOPMENT_V2_SHA256,
+        3: FROZEN_RETRIEVAL_DEVELOPMENT_V3_SHA256,
     }[schema_version]
     if corpus["corpus_sha256"] != frozen_digest:
         raise ValueError("retrieval development frozen corpus mismatch")
@@ -304,25 +311,68 @@ def validate_retrieval_development_corpus(
     }
 
 
-def _lexical_features(value: str) -> set[str]:
-    features: set[str] = set()
-    for token in re.findall(r"[0-9a-zA-Z가-힣]+", value.lower()):
-        features.add(token)
-        for width in (2, 3):
-            features.update(
-                token[index:index + width]
-                for index in range(max(0, len(token) - width + 1))
-            )
-    return features
+def _lexical_terms(value: str) -> list[str]:
+    expanded = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", value)
+    expanded = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", expanded)
+    return re.findall(r"[0-9a-z]+|[가-힣]+", expanded.lower())
 
 
-def _request_features(value: str) -> set[str]:
-    features = _lexical_features(value)
+def _term_frequencies(value: str) -> tuple[Counter[str], int]:
+    terms = _lexical_terms(value)
+    return Counter(terms), len(terms)
+
+
+def _request_terms(value: str) -> list[str]:
+    terms = _lexical_terms(value)
     for source, targets in _REQUEST_TERM_EXPANSIONS.items():
         if source in value:
             for target in targets:
-                features.update(_lexical_features(target))
-    return features
+                terms.extend(_lexical_terms(target))
+    return terms
+
+
+def _request_concept_groups(value: str) -> list[set[str]]:
+    groups = [
+        set(term for target in targets for term in _lexical_terms(target))
+        for source, targets in _REQUEST_TERM_EXPANSIONS.items()
+        if source in value
+    ]
+    if not re.search(r"[가-힣]", value):
+        groups.extend({term} for term in _lexical_terms(value))
+    return [group for group in groups if group]
+
+
+def _bm25_scores(
+    query_terms: list[str],
+    documents: list[tuple[Counter[str], int]],
+    *,
+    weight: float,
+) -> list[float]:
+    if not documents:
+        return []
+    document_frequencies = Counter(
+        term for frequencies, _ in documents for term in frequencies
+    )
+    average_length = sum(length for _, length in documents) / len(documents)
+    query_counts = Counter(query_terms)
+    scores: list[float] = []
+    for frequencies, length in documents:
+        length_ratio = length / max(average_length, 1.0)
+        score = 0.0
+        for term, query_count in query_counts.items():
+            frequency = frequencies[term]
+            if not frequency:
+                continue
+            inverse_document_frequency = math.log(
+                1 + (len(documents) - document_frequencies[term] + 0.5)
+                / (document_frequencies[term] + 0.5)
+            )
+            saturation = frequency * 2.2 / (
+                frequency + 1.2 * (0.25 + 0.75 * length_ratio)
+            )
+            score += inverse_document_frequency * saturation * min(query_count, 2)
+        scores.append(score * weight)
+    return scores
 
 
 def _contains_sensitive_text(value: str) -> bool:
@@ -357,14 +407,9 @@ def build_baseline_only_shortlist(
         > RETRIEVAL_POLICY["maximum_selected_files_per_case"]
     ):
         raise ValueError("baseline-only shortlist input is invalid")
-    request_has_korean = bool(re.search(r"[가-힣]", case["request"]))
-    lexical_request_features = _lexical_features(case["request"])
-    bilingual_request_features = (
-        _request_features(case["request"])
-        if request_has_korean
-        else lexical_request_features
-    )
-    ranked: list[tuple[int, str]] = []
+    request_terms = _request_terms(case["request"])
+    concept_groups = _request_concept_groups(case["request"])
+    eligible_files: list[dict[str, Any]] = []
     seen_paths: set[str] = set()
     sensitive_file_count = 0
     for item in case["context_files"]:
@@ -381,58 +426,104 @@ def build_baseline_only_shortlist(
         if _contains_sensitive_text(item["content_utf8"]):
             sensitive_file_count += 1
             continue
-        bilingual_path = request_has_korean and not re.search(r"[가-힣]", path)
-        bilingual_content = request_has_korean and not re.search(
-            r"[가-힣]", item["content_utf8"]
-        )
-        path_request_features = (
-            bilingual_request_features
-            if bilingual_path
-            else lexical_request_features
-        )
-        content_request_features = (
-            bilingual_request_features
-            if bilingual_content
-            else lexical_request_features
-        )
-        path_overlap = path_request_features & _lexical_features(path)
-        content_overlap = content_request_features & _lexical_features(
+        path_frequencies, path_term_count = _term_frequencies(path)
+        content_frequencies, content_term_count = _term_frequencies(
             item["content_utf8"]
         )
-        score = (6 if bilingual_path else 4) * len(path_overlap) + len(
-            content_overlap
-        )
-        if request_has_korean:
-            if path.startswith("docs/") or PurePosixPath(path).name.lower().startswith(
-                "readme"
-            ):
-                score -= 3
-            if _is_test_path(path):
-                score -= 14
-        ranked.append((score, path))
-    if not ranked:
+        eligible_files.append({
+            "path": path,
+            "path_document": (path_frequencies, path_term_count),
+            "content_document": (content_frequencies, content_term_count),
+        })
+    if not eligible_files:
         raise ValueError("baseline-only shortlist requires context files")
-    ranked.sort(key=lambda item: (-item[0], item[1]))
-    selected_paths = [path for _, path in ranked[:maximum_selected_files]]
+
+    path_scores = _bm25_scores(
+        request_terms,
+        [item["path_document"] for item in eligible_files],
+        weight=4.0,
+    )
+    content_scores = _bm25_scores(
+        request_terms,
+        [item["content_document"] for item in eligible_files],
+        weight=1.0,
+    )
+    ranked: list[dict[str, Any]] = []
+    for item, path_score, content_score in zip(
+        eligible_files, path_scores, content_scores
+    ):
+        path = item["path"]
+        score = path_score + content_score
+        if path.startswith("docs/") or PurePosixPath(path).name.lower().startswith(
+            "readme"
+        ):
+            score -= 3.0
+        if _is_test_path(path):
+            score -= 10.0
+        concept_hits = {
+            index
+            for index, group in enumerate(concept_groups)
+            if any(
+                term in item["path_document"][0]
+                or term in item["content_document"][0]
+                for term in group
+            )
+        }
+        ranked.append({
+            "score": score,
+            "path": path,
+            "concept_hits": concept_hits,
+        })
+    ranked.sort(key=lambda item: (-item["score"], item["path"]))
+
+    first_item = ranked[0]
+    if _is_test_path(first_item["path"]):
+        implementation_key = _implementation_key(first_item["path"])
+        first_item = next(
+            (
+                item
+                for item in ranked
+                if not _is_test_path(item["path"])
+                and _implementation_key(item["path"]) == implementation_key
+            ),
+            first_item,
+        )
+    selected_paths = [first_item["path"]]
+    covered_concepts = set(first_item["concept_hits"])
     if maximum_selected_files > 1 and selected_paths and not _is_test_path(
         selected_paths[0]
     ):
         implementation_key = _implementation_key(selected_paths[0])
         related_test = next(
             (
-                path
-                for _, path in ranked
-                if _is_test_path(path)
-                and _implementation_key(path) == implementation_key
+                item
+                for item in ranked
+                if _is_test_path(item["path"])
+                and _implementation_key(item["path"]) == implementation_key
             ),
             None,
         )
         if related_test is not None:
-            selected_paths = [
-                selected_paths[0],
-                related_test,
-                *(path for path in selected_paths[1:] if path != related_test),
-            ][:maximum_selected_files]
+            selected_paths.append(related_test["path"])
+            covered_concepts.update(related_test["concept_hits"])
+    while len(selected_paths) < maximum_selected_files:
+        remaining = [
+            item for item in ranked if item["path"] not in selected_paths
+        ]
+        if not remaining:
+            break
+        next_item = min(
+            remaining,
+            key=lambda item: (
+                -(
+                    item["score"]
+                    + 2.5 * len(item["concept_hits"] - covered_concepts)
+                ),
+                item["path"],
+            ),
+        )
+        selected_paths.append(next_item["path"])
+        covered_concepts.update(next_item["concept_hits"])
     result = {
         "case_id": case["case_id"],
         "selected_paths": selected_paths,
@@ -460,15 +551,45 @@ def measure_retrieval_development_corpus(
     critical_hits = 0
     weighted_total = 0
     weighted_hits = 0
+    candidate_input_token_upper_bound = 0
+    selected_input_token_upper_bound = 0
     for case in corpus["cases"]:
         shortlist = build_baseline_only_shortlist(
             case,
             maximum_selected_files=maximum_selected_files,
         )
         selected = set(shortlist["selected_paths"])
+        eligible_context_files = [
+            item
+            for item in case["context_files"]
+            if not _contains_sensitive_text(item["content_utf8"])
+        ]
         candidate_count += len(case["context_files"])
         sensitive_file_count += shortlist.get("sensitive_file_count", 0)
         selected_count += len(selected)
+        candidate_input_token_upper_bound += estimate_case_input_tokens({
+            "case_id": case["case_id"],
+            "request": case["request"],
+            "files": [
+                {
+                    "relative_path": item["path"],
+                    "content_utf8": item["content_utf8"],
+                }
+                for item in eligible_context_files
+            ],
+        })
+        selected_input_token_upper_bound += estimate_case_input_tokens({
+            "case_id": case["case_id"],
+            "request": case["request"],
+            "files": [
+                {
+                    "relative_path": item["path"],
+                    "content_utf8": item["content_utf8"],
+                }
+                for item in eligible_context_files
+                if item["path"] in selected
+            ],
+        })
         for label in case["context_labels"]:
             weight = label["weight"]
             weighted_total += weight
@@ -503,6 +624,20 @@ def measure_retrieval_development_corpus(
             "sensitive_file_count": report.pop("sensitive_file_count"),
             **report,
         }
+    if corpus["schema_version"] >= 3:
+        token_reduction = (
+            candidate_input_token_upper_bound - selected_input_token_upper_bound
+        ) / candidate_input_token_upper_bound
+        report["candidate_input_token_upper_bound"] = (
+            candidate_input_token_upper_bound
+        )
+        report["selected_input_token_upper_bound"] = (
+            selected_input_token_upper_bound
+        )
+        report["input_token_upper_bound_reduction"] = token_reduction
+        report["development_gate_passed"] = (
+            report["development_gate_passed"] and token_reduction > 0.0
+        )
     return report
 
 
