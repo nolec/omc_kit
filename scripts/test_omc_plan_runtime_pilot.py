@@ -2209,8 +2209,22 @@ def test_omc_provider_prompt_requires_exact_skill_read_before_planning():
     assert "src/service.py" in read_command
     assert "tests/test_service.py" in read_command
     assert "Do not run `pwd` or progress-only shell commands" in prompt
+    assert "first and only permitted shell command" in prompt
+    assert "After it returns, do not call another tool" in prompt
     assert prompt.index(skill_instruction) < prompt.index("produce the implementation plan")
     assert "$omc-plan" in prompt
+
+
+def test_omc_plan_skill_freezes_isolated_runtime_to_one_exact_read():
+    for skill_path in (
+        Path(".agents/skills/omc-plan/SKILL.md"),
+        Path("templates/.agents/skills/omc-plan/SKILL.md"),
+    ):
+        skill = skill_path.read_text(encoding="utf-8")
+
+        assert "격리 benchmark" in skill
+        assert "첫 번째이자 유일한 shell 명령" in skill
+        assert "추가 tool 호출 없이 즉시 구조화 결과" in skill
 
 
 def test_baseline_provider_prompt_limits_context_without_exposing_skill_path():
@@ -2340,6 +2354,14 @@ def test_execute_provider_preserves_activation_and_usage(tmp_path, monkeypatch):
         returncode = 0
         stderr = ""
         stdout = "\n".join([
+            json.dumps({
+                "type": "item.completed",
+                "item": {
+                    "id": "read-1",
+                    "type": "command_execution",
+                    "command": "cat -- .agents/skills/omc-plan/SKILL.md",
+                },
+            }),
             json.dumps({
                 "type": "skill.activated",
                 "skill_name": "omc-plan",
@@ -2565,6 +2587,100 @@ def test_plan_round_trip_gate_rejects_pwd_and_progress_only_commands():
     assert runtime.contains_unnecessary_plan_round_trip(pwd_event)
     assert runtime.contains_unnecessary_plan_round_trip(progress_event)
     assert not runtime.contains_unnecessary_plan_round_trip(context_event)
+    assert runtime.detect_unnecessary_plan_round_trip(pwd_event) == {
+        "kind": "pwd",
+        "command_sha256": runtime._sha256_text("/bin/zsh -lc pwd"),
+    }
+    assert runtime.detect_unnecessary_plan_round_trip(progress_event) == {
+        "kind": "progress_only_printf",
+        "command_sha256": runtime._sha256_text(
+            "printf '%s\\n' 'planning from provided files'"
+        ),
+    }
+
+
+def test_omc_plan_shell_contract_requires_one_exact_read_command():
+    expected = "cat -- .agents/skills/omc-plan/SKILL.md context/a.txt"
+    exact_read = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "id": "read-1",
+            "type": "command_execution",
+            "command": expected,
+        },
+    })
+    unexpected_first = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "id": "list-1",
+            "type": "command_execution",
+            "command": "ls -la",
+        },
+    })
+    additional_command = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "id": "list-2",
+            "type": "command_execution",
+            "command": "git status --short",
+        },
+    })
+
+    assert runtime.detect_omc_plan_shell_contract_violation(exact_read, expected) is None
+    assert runtime.detect_omc_plan_shell_contract_violation("", expected) == {
+        "kind": "missing_exact_read",
+        "command_sha256": runtime._sha256_text(""),
+    }
+    assert runtime.detect_omc_plan_shell_contract_violation(
+        unexpected_first, expected
+    ) == {
+        "kind": "unexpected_first_command",
+        "command_sha256": runtime._sha256_text("ls -la"),
+    }
+    assert runtime.detect_omc_plan_shell_contract_violation(
+        "\n".join((exact_read, additional_command)), expected
+    ) == {
+        "kind": "additional_shell_command",
+        "command_sha256": runtime._sha256_text("git status --short"),
+    }
+
+
+def test_omc_plan_shell_contract_accepts_codex_shell_wrappers_only_for_exact_read():
+    expected = "cat -- .agents/skills/omc-plan/SKILL.md context/a.txt"
+
+    def command_event(command):
+        return json.dumps({
+            "type": "item.completed",
+            "item": {
+                "id": "read-1",
+                "type": "command_execution",
+                "command": command,
+            },
+        })
+
+    for wrapped in (
+        "/bin/zsh -c 'cat -- .agents/skills/omc-plan/SKILL.md context/a.txt'",
+        "/bin/zsh -lc 'cat -- .agents/skills/omc-plan/SKILL.md context/a.txt'",
+    ):
+        assert runtime.detect_omc_plan_shell_contract_violation(
+            command_event(wrapped), expected
+        ) is None
+
+    compound = (
+        "/bin/zsh -lc "
+        "'cat -- .agents/skills/omc-plan/SKILL.md context/a.txt; ls -la'"
+    )
+    trailing = (
+        "/bin/zsh -lc "
+        "'cat -- .agents/skills/omc-plan/SKILL.md context/a.txt' ignored"
+    )
+    for invalid_wrapper in (compound, trailing):
+        assert runtime.detect_omc_plan_shell_contract_violation(
+            command_event(invalid_wrapper), expected
+        ) == {
+            "kind": "unexpected_first_command",
+            "command_sha256": runtime._sha256_text(invalid_wrapper),
+        }
 
 
 def test_plan_round_trip_gate_allows_pwd_as_a_command_argument():
@@ -2642,6 +2758,80 @@ def test_execute_provider_rejects_unnecessary_omc_plan_round_trip(
     failure = json.loads(failure_path.read_text(encoding="utf-8"))
     assert failure["reason_code"] == "unnecessary_plan_round_trip"
     assert failure["usage"]["total_tokens"] == 35
+    assert failure["offending_command_kind"] == "pwd"
+    assert failure["offending_command_sha256"] == runtime._sha256_text(
+        "/bin/zsh -lc pwd"
+    )
+    assert "offending_command" not in failure
+
+
+def test_execute_provider_rejects_shell_command_after_exact_context_read(
+    tmp_path, monkeypatch
+):
+    output_path = tmp_path / "output.json"
+    failure_path = tmp_path / "failure.json"
+    expected_read = "cat -- .agents/skills/omc-plan/SKILL.md context/a.txt"
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+        stdout = "\n".join([
+            json.dumps({
+                "type": "item.completed",
+                "item": {
+                    "id": "read-1",
+                    "type": "command_execution",
+                    "command": expected_read,
+                },
+            }),
+            json.dumps({
+                "type": "item.completed",
+                "item": {
+                    "id": "extra-1",
+                    "type": "command_execution",
+                    "command": "git status --short",
+                },
+            }),
+            json.dumps({
+                "type": "turn.completed",
+                "usage": {"input_tokens": 30, "output_tokens": 5},
+            }),
+        ])
+
+    def fake_run(command, **kwargs):
+        output_path.write_text(json.dumps({
+            "requirements": [],
+            "runtime_activation_receipt": "secret-nonce",
+        }), encoding="utf-8")
+        return Completed()
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="unnecessary_plan_round_trip"):
+        runtime.execute_provider(
+            provider_id="omc-plan",
+            request="Plan this change",
+            workspace=tmp_path,
+            codex_binary="codex",
+            model="gpt-test",
+            reasoning_effort="low",
+            sandbox="read-only",
+            output_schema="schema.json",
+            output_path=output_path,
+            skill_sha256="c" * 64,
+            expected_activation_receipt="secret-nonce",
+            baseline_sentinel="unavailable",
+            timeout_sec=180,
+            failure_receipt_path=failure_path,
+            context_paths=("context/a.txt",),
+        )
+
+    failure = json.loads(failure_path.read_text(encoding="utf-8"))
+    assert failure["reason_code"] == "unnecessary_plan_round_trip"
+    assert failure["offending_command_kind"] == "additional_shell_command"
+    assert failure["offending_command_sha256"] == runtime._sha256_text(
+        "git status --short"
+    )
+    assert "git status --short" not in failure_path.read_text(encoding="utf-8")
 
 
 def test_execute_provider_rejects_redundant_context_round_trip(
@@ -2721,13 +2911,23 @@ def test_execute_provider_retries_one_activation_miss_and_counts_all_usage(
         stderr = ""
 
         def __init__(self, input_tokens, output_tokens):
-            self.stdout = json.dumps({
-                "type": "turn.completed",
-                "usage": {
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                },
-            })
+            self.stdout = "\n".join([
+                json.dumps({
+                    "type": "item.completed",
+                    "item": {
+                        "id": "read-1",
+                        "type": "command_execution",
+                        "command": "cat -- .agents/skills/omc-plan/SKILL.md",
+                    },
+                }),
+                json.dumps({
+                    "type": "turn.completed",
+                    "usage": {
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                    },
+                }),
+            ])
 
     def fake_run(command, **kwargs):
         nonlocal calls
@@ -2785,7 +2985,9 @@ def test_execute_provider_allows_one_context_read_per_activation_attempt(
                     "item": {
                         "id": f"read-{attempt}",
                         "type": "command_execution",
-                        "command": "cat -- context/a.txt",
+                        "command": (
+                            "cat -- .agents/skills/omc-plan/SKILL.md context/a.txt"
+                        ),
                     },
                 }),
                 json.dumps({
@@ -2830,7 +3032,7 @@ def test_execute_provider_allows_one_context_read_per_activation_attempt(
     ] == "unavailable"
 
 
-def test_execute_provider_rejects_sync_repeated_across_activation_attempts(
+def test_execute_provider_rejects_sync_before_exact_context_read(
     tmp_path, monkeypatch
 ):
     output_path = tmp_path / "output.json"
@@ -2870,7 +3072,7 @@ def test_execute_provider_rejects_sync_repeated_across_activation_attempts(
         return Completed(f"sync-{calls}")
 
     monkeypatch.setattr(runtime.subprocess, "run", fake_run)
-    with pytest.raises(RuntimeError, match="redundant_omc_state_round_trip"):
+    with pytest.raises(RuntimeError, match="unnecessary_plan_round_trip"):
         runtime.execute_provider(
             provider_id="omc-plan",
             request="Plan this change",
@@ -2890,9 +3092,10 @@ def test_execute_provider_rejects_sync_repeated_across_activation_attempts(
             context_paths=("scripts/omc.py",),
         )
 
-    assert calls == 2
+    assert calls == 1
     failure = json.loads(failure_path.read_text(encoding="utf-8"))
-    assert failure["reason_code"] == "redundant_omc_state_round_trip"
+    assert failure["reason_code"] == "unnecessary_plan_round_trip"
+    assert failure["offending_command_kind"] == "unexpected_first_command"
 
 
 def test_execute_provider_blocks_after_two_activation_misses_with_usage_receipt(
@@ -2905,10 +3108,20 @@ def test_execute_provider_blocks_after_two_activation_misses_with_usage_receipt(
     class Completed:
         returncode = 0
         stderr = ""
-        stdout = json.dumps({
-            "type": "turn.completed",
-            "usage": {"input_tokens": 10, "output_tokens": 5},
-        })
+        stdout = "\n".join([
+            json.dumps({
+                "type": "item.completed",
+                "item": {
+                    "id": "read-1",
+                    "type": "command_execution",
+                    "command": "cat -- .agents/skills/omc-plan/SKILL.md",
+                },
+            }),
+            json.dumps({
+                "type": "turn.completed",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }),
+        ])
 
     def fake_run(command, **kwargs):
         nonlocal calls

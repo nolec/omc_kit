@@ -2355,6 +2355,14 @@ def materialize_case_workspace(
     return workspace_manifest(root_path)
 
 
+def _omc_plan_context_command(context_paths: tuple[str, ...]) -> str:
+    normalized_context_paths = tuple(
+        sorted(_safe_context_path(path) for path in context_paths)
+    )
+    read_paths = (".agents/skills/omc-plan/SKILL.md", *normalized_context_paths)
+    return "cat -- " + " ".join(shlex.quote(path) for path in read_paths)
+
+
 def build_provider_prompt(
     provider_id: str,
     request: str,
@@ -2386,10 +2394,7 @@ def build_provider_prompt(
             + request
         )
     if provider_id == "omc-plan":
-        read_paths = (".agents/skills/omc-plan/SKILL.md", *normalized_context_paths)
-        context_command = "cat -- " + " ".join(
-            shlex.quote(path) for path in read_paths
-        )
+        context_command = _omc_plan_context_command(context_paths)
         return (
             receipt_instruction
             + "Use one shell command to read the skill and every exact context path before "
@@ -2398,8 +2403,10 @@ def build_provider_prompt(
             + "Read `.agents/skills/omc-plan/SKILL.md` in that command before planning. "
             + "Read only that skill file and the provided context files; do not enumerate "
             + "unrelated files. Do not read or re-read them in separate commands. "
-            + "Do not run `pwd` or progress-only shell commands. Apply the loaded skill, "
-            + "then produce the implementation plan immediately.\n\n"
+            + "This exact `cat` command is the first and only permitted shell command. "
+            + "Do not run `pwd` or progress-only shell commands. After it returns, do not "
+            + "call another tool; apply the loaded skill and produce the implementation "
+            + "plan immediately.\n\n"
             + "$omc-plan\n\n"
             + request
         )
@@ -2604,8 +2611,8 @@ def _runs_pwd_command(command: str) -> bool:
     return False
 
 
-def contains_unnecessary_plan_round_trip(events_jsonl: str) -> bool:
-    """Reject shell turns that add no planning evidence."""
+def detect_unnecessary_plan_round_trip(events_jsonl: str) -> dict[str, str] | None:
+    """Describe the first shell turn that adds no planning evidence."""
     seen_execution_ids: set[str] = set()
     for line_index, line in enumerate(events_jsonl.splitlines()):
         try:
@@ -2625,14 +2632,92 @@ def contains_unnecessary_plan_round_trip(events_jsonl: str) -> bool:
         command = item.get("command")
         if not isinstance(command, str):
             continue
-        normalized = command.strip().lower()
+        stripped = command.strip()
+        normalized = stripped.lower()
         if _runs_pwd_command(normalized):
-            return True
+            return {
+                "kind": "pwd",
+                "command_sha256": _sha256_text(stripped),
+            }
         if "printf " in normalized and not any(
             marker in normalized for marker in ("cat ", "rg ", "sed ", "git ")
         ):
-            return True
-    return False
+            return {
+                "kind": "progress_only_printf",
+                "command_sha256": _sha256_text(stripped),
+            }
+    return None
+
+
+def _shell_command_payload(command: str) -> str:
+    """Unwrap the exact `sh -c` form emitted by Codex command events."""
+    stripped = command.strip()
+    try:
+        tokens = shlex.split(stripped)
+    except ValueError:
+        return stripped
+    if not tokens or PurePosixPath(tokens[0]).name not in {"sh", "bash", "zsh"}:
+        return stripped
+
+    payload_index = None
+    for index, token in enumerate(tokens[1:], start=1):
+        if not token.startswith("-") or token.startswith("--"):
+            return stripped
+        if "c" in token[1:]:
+            payload_index = index + 1
+            break
+    if payload_index is None or len(tokens) != payload_index + 1:
+        return stripped
+    return tokens[payload_index].strip()
+
+
+def detect_omc_plan_shell_contract_violation(
+    events_jsonl: str,
+    expected_command: str,
+) -> dict[str, str] | None:
+    """Require exactly one command execution matching the frozen context read."""
+    commands: list[str] = []
+    seen_execution_ids: set[str] = set()
+    for line_index, line in enumerate(events_jsonl.splitlines()):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "command_execution":
+            continue
+        execution_id = item.get("id")
+        execution_key = (
+            execution_id if isinstance(execution_id, str) else f"line:{line_index}"
+        )
+        if execution_key in seen_execution_ids:
+            continue
+        seen_execution_ids.add(execution_key)
+        command = item.get("command")
+        if isinstance(command, str):
+            commands.append(command.strip())
+
+    if not commands:
+        return {
+            "kind": "missing_exact_read",
+            "command_sha256": _sha256_text(""),
+        }
+    if _shell_command_payload(commands[0]) != expected_command:
+        return {
+            "kind": "unexpected_first_command",
+            "command_sha256": _sha256_text(commands[0]),
+        }
+    if len(commands) > 1:
+        return {
+            "kind": "additional_shell_command",
+            "command_sha256": _sha256_text(commands[1]),
+        }
+    return None
+
+
+def contains_unnecessary_plan_round_trip(events_jsonl: str) -> bool:
+    """Reject shell turns that add no planning evidence."""
+    return detect_unnecessary_plan_round_trip(events_jsonl) is not None
 
 
 def execute_provider(
@@ -2730,15 +2815,25 @@ def execute_provider(
                 usage=_aggregate_attempt_usage(attempt_usages),
             )
             raise RuntimeError("redundant_context_round_trip")
-        if provider_id == "omc-plan" and contains_unnecessary_plan_round_trip(
-            "\n".join(attempt_events)
-        ):
+        round_trip_violation = (
+            detect_unnecessary_plan_round_trip("\n".join(attempt_events))
+            if provider_id == "omc-plan"
+            else None
+        )
+        if provider_id == "omc-plan" and round_trip_violation is None:
+            round_trip_violation = detect_omc_plan_shell_contract_violation(
+                completed.stdout,
+                _omc_plan_context_command(context_paths),
+            )
+        if round_trip_violation is not None:
             _write_failure_receipt(
                 failure_receipt_path,
                 provider_id=provider_id,
                 reason_code="unnecessary_plan_round_trip",
                 timeout_sec=timeout_sec,
                 usage=_aggregate_attempt_usage(attempt_usages),
+                offending_command_kind=round_trip_violation["kind"],
+                offending_command_sha256=round_trip_violation["command_sha256"],
             )
             raise RuntimeError("unnecessary_plan_round_trip")
         try:
@@ -2813,6 +2908,8 @@ def _write_failure_receipt(
     stderr: str = "",
     attempt_count: int | None = None,
     usage: dict[str, Any] | None = None,
+    offending_command_kind: str | None = None,
+    offending_command_sha256: str | None = None,
 ) -> None:
     if path is None:
         return
@@ -2831,6 +2928,10 @@ def _write_failure_receipt(
         receipt["attempt_count"] = attempt_count
     if usage is not None:
         receipt["usage"] = usage
+    if offending_command_kind is not None:
+        receipt["offending_command_kind"] = offending_command_kind
+    if offending_command_sha256 is not None:
+        receipt["offending_command_sha256"] = offending_command_sha256
     receipt_path.write_text(
         json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8"
     )
