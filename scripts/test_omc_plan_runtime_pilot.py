@@ -99,6 +99,14 @@ def _gold(index=1):
     }
 
 
+def _reviewed_gold_output(author_output_sha256):
+    return {
+        "cases": [_gold(index) for index in range(1, 11)],
+        "decision": "approve",
+        "reviewed_author_output_sha256": author_output_sha256,
+    }
+
+
 def _signed_gold(cases, gold_items):
     private_key = Ed25519PrivateKey.generate()
     public_key = base64.b64encode(private_key.public_key().public_bytes(
@@ -1014,6 +1022,631 @@ def test_confirmatory_gold_author_payload_cli(tmp_path):
     assert payload["payload_bundle_sha256"] == runtime.canonical_digest(
         runtime._without_digest(payload, "payload_bundle_sha256")
     )
+
+
+def test_gold_author_evidence_writes_durable_payload_and_redacted_manifest(tmp_path):
+    source_cases = [_case(index) for index in range(1, 11)]
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(source_cases),
+        selection=_confirmatory_selection(source_cases),
+    )
+    artifact_root = tmp_path / "durable" / "gold-evidence"
+
+    manifest = runtime.prepare_gold_author_evidence(
+        payload=payload,
+        artifact_root=artifact_root,
+        repo_root=tmp_path / "repository",
+        source_commit="a" * 40,
+        _system_temp_root=tmp_path / "system-temp",
+    )
+
+    private_payload = artifact_root / "gold-author-payload.private.json"
+    public_manifest = artifact_root / "gold-author-evidence-manifest.json"
+    assert private_payload.is_file()
+    assert public_manifest.is_file()
+    assert manifest == json.loads(public_manifest.read_text(encoding="utf-8"))
+    assert manifest["approval_tuple"] == {
+        "external_payload_sha256": payload["external_payload_sha256"],
+        "payload_bundle_sha256": payload["payload_bundle_sha256"],
+        "source_readiness_sha256": payload["source_readiness_sha256"],
+        "public_corpus_sha256": payload["public_corpus"]["corpus_sha256"],
+        "runtime_corpus_sha256": payload["runtime_corpus"]["corpus_sha256"],
+        "anonymization_policy_sha256": payload["anonymization_policy_sha256"],
+    }
+    assert manifest["privacy_report"]["status"] == "passed"
+    assert manifest["case_count"] == 10
+    assert manifest["context_file_count"] == 20
+    assert "context_files" not in json.dumps(manifest)
+    assert manifest["manifest_sha256"] == runtime.canonical_digest(
+        runtime._without_digest(manifest, "manifest_sha256")
+    )
+
+
+def test_gold_author_evidence_rejects_unsafe_root_payload_drift_and_sensitive_text(
+    tmp_path,
+):
+    source_cases = [_case(index) for index in range(1, 11)]
+    readiness = _local_transfer_readiness(source_cases)
+    selection = _confirmatory_selection(source_cases)
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=readiness,
+        selection=selection,
+    )
+    repo_root = tmp_path / "repository"
+    repo_root.mkdir()
+
+    with pytest.raises(ValueError, match="temporary"):
+        runtime.prepare_gold_author_evidence(
+            payload=payload,
+            artifact_root=tmp_path / "system-temp" / "evidence",
+            repo_root=repo_root,
+            source_commit="a" * 40,
+            _system_temp_root=tmp_path / "system-temp",
+        )
+    with pytest.raises(ValueError, match="outside the repository"):
+        runtime.prepare_gold_author_evidence(
+            payload=payload,
+            artifact_root=repo_root / "evidence",
+            repo_root=repo_root,
+            source_commit="a" * 40,
+            _system_temp_root=tmp_path / "system-temp",
+        )
+
+    drifted = deepcopy(payload)
+    drifted["external_payload_sha256"] = "f" * 64
+    with pytest.raises(ValueError, match="payload hash mismatch"):
+        runtime.prepare_gold_author_evidence(
+            payload=drifted,
+            artifact_root=tmp_path / "durable" / "drifted",
+            repo_root=repo_root,
+            source_commit="a" * 40,
+            _system_temp_root=tmp_path / "system-temp",
+        )
+
+    sensitive_cases = [_case(index) for index in range(1, 11)]
+    sensitive_cases[0]["context_files"]["src/service.py"] += (
+        "API_KEY = 'abcdefgh12345678'\n"
+    )
+    sensitive_cases[0]["context_sha256"] = runtime.canonical_digest(
+        sensitive_cases[0]["context_files"]
+    )
+    sensitive_payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(sensitive_cases),
+        selection=_confirmatory_selection(sensitive_cases),
+    )
+    with pytest.raises(ValueError, match="privacy scan failed"):
+        runtime.prepare_gold_author_evidence(
+            payload=sensitive_payload,
+            artifact_root=tmp_path / "durable" / "sensitive",
+            repo_root=repo_root,
+            source_commit="a" * 40,
+            _system_temp_root=tmp_path / "system-temp",
+        )
+
+    sensitive_path_packet = deepcopy(payload["gold_author_packet"])
+    content = sensitive_path_packet["cases"][0]["context_files"].pop(
+        "context/file-01.py"
+    )
+    sensitive_path_packet["cases"][0]["context_files"][
+        "context/sixshop/file-01.py"
+    ] = content
+    privacy_report, findings = runtime._gold_evidence_privacy_report(
+        sensitive_path_packet
+    )
+    assert privacy_report["status"] == "failed"
+    assert any(item["code"] == "product_identifier" for item in findings)
+
+
+def test_gold_author_evidence_privacy_rejects_unquoted_and_bearer_credentials(
+    tmp_path,
+):
+    source_cases = [_case(index) for index in range(1, 11)]
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(source_cases),
+        selection=_confirmatory_selection(source_cases),
+    )
+    author_packet = deepcopy(payload["gold_author_packet"])
+    paths = list(author_packet["cases"][0]["context_files"])
+    author_packet["cases"][0]["context_files"][paths[0]] += (
+        "\nAPI_KEY=abcdefgh12345678\n"
+    )
+    author_packet["cases"][0]["context_files"][paths[1]] += (
+        "\nAuthorization: Bearer abcdefgh.12345678.signature\n"
+    )
+
+    report, findings = runtime._gold_evidence_privacy_report(author_packet)
+
+    assert report["status"] == "failed"
+    assert {item["code"] for item in findings} >= {
+        "credential_assignment",
+        "bearer_token",
+    }
+
+
+def test_gold_author_evidence_privacy_rejects_prefixed_credential_names(tmp_path):
+    source_cases = [_case(index) for index in range(1, 11)]
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(source_cases),
+        selection=_confirmatory_selection(source_cases),
+    )
+    author_packet = deepcopy(payload["gold_author_packet"])
+    paths = list(author_packet["cases"][0]["context_files"])
+    author_packet["cases"][0]["context_files"][paths[0]] += (
+        "\nGITHUB_TOKEN=ghp_1234567890abcdef\n"
+    )
+    author_packet["cases"][0]["context_files"][paths[1]] += (
+        "\nCLIENT_SECRET=client1234567890\n"
+    )
+
+    report, findings = runtime._gold_evidence_privacy_report(author_packet)
+
+    assert report["status"] == "failed"
+    assert sum(
+        item["code"] == "credential_assignment" for item in findings
+    ) >= 2
+
+
+def test_gold_author_evidence_privacy_rejects_unquoted_alphabetic_credentials(
+    tmp_path,
+):
+    source_cases = [_case(index) for index in range(1, 11)]
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(source_cases),
+        selection=_confirmatory_selection(source_cases),
+    )
+    author_packet = deepcopy(payload["gold_author_packet"])
+    paths = list(author_packet["cases"][0]["context_files"])
+    author_packet["cases"][0]["context_files"][paths[0]] += (
+        "\nCLIENT_SECRET=abcdefghijklmnop\n"
+    )
+    author_packet["cases"][0]["context_files"][paths[1]] += (
+        "\nPASSWORD: huntertwo\n"
+    )
+
+    report, findings = runtime._gold_evidence_privacy_report(author_packet)
+
+    assert report["status"] == "failed"
+    assert sum(
+        item["code"] == "credential_assignment" for item in findings
+    ) >= 2
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "PASSWORD=hunter!two",
+        "CLIENT_SECRET=abc@defgh123",
+        "GITHUB_TOKEN=ghp-abc:def123",
+    ],
+)
+def test_gold_author_evidence_privacy_rejects_unquoted_special_credentials(
+    tmp_path,
+    credential,
+):
+    source_cases = [_case(index) for index in range(1, 11)]
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(source_cases),
+        selection=_confirmatory_selection(source_cases),
+    )
+    author_packet = deepcopy(payload["gold_author_packet"])
+    path = next(iter(author_packet["cases"][0]["context_files"]))
+    author_packet["cases"][0]["context_files"][path] += f"\n{credential}\n"
+
+    report, findings = runtime._gold_evidence_privacy_report(author_packet)
+
+    assert report["status"] == "failed"
+    assert any(item["code"] == "credential_assignment" for item in findings)
+
+
+def test_gold_author_evidence_receipt_rejects_empty_gold_output(tmp_path):
+    source_cases = [_case(index) for index in range(1, 11)]
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(source_cases),
+        selection=_confirmatory_selection(source_cases),
+    )
+    artifact_root = tmp_path / "durable" / "gold-evidence"
+    manifest = runtime.prepare_gold_author_evidence(
+        payload=payload,
+        artifact_root=artifact_root,
+        repo_root=tmp_path / "repository",
+        source_commit="a" * 40,
+        _system_temp_root=tmp_path / "system-temp",
+    )
+
+    with pytest.raises(ValueError, match="author raw output"):
+        runtime.record_gold_evidence_receipt(
+            artifact_root=artifact_root,
+            phase="author",
+            provider="external-codex",
+            session_id="author-session",
+            session_nonce="author-nonce",
+            approved_manifest_sha256=manifest["manifest_sha256"],
+            input_sha256=payload["external_payload_sha256"],
+            raw_output="{}",
+        )
+
+
+def test_gold_author_evidence_receipt_requires_approved_manifest_digest(tmp_path):
+    source_cases = [_case(index) for index in range(1, 11)]
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(source_cases),
+        selection=_confirmatory_selection(source_cases),
+    )
+    artifact_root = tmp_path / "durable" / "gold-evidence"
+    manifest = runtime.prepare_gold_author_evidence(
+        payload=payload,
+        artifact_root=artifact_root,
+        repo_root=tmp_path / "repository",
+        source_commit="a" * 40,
+        _system_temp_root=tmp_path / "system-temp",
+    )
+
+    with pytest.raises(ValueError, match="approved manifest"):
+        runtime.record_gold_evidence_receipt(
+            artifact_root=artifact_root,
+            phase="author",
+            provider="external-codex",
+            session_id="author-session",
+            session_nonce="author-nonce",
+            approved_manifest_sha256="f" * 64,
+            input_sha256=payload["external_payload_sha256"],
+            raw_output=json.dumps(
+                {"cases": [_gold(index) for index in range(1, 11)]}
+            ),
+        )
+
+    runtime.record_gold_evidence_receipt(
+        artifact_root=artifact_root,
+        phase="author",
+        provider="external-codex",
+        session_id="author-session",
+        session_nonce="author-nonce",
+        approved_manifest_sha256=manifest["manifest_sha256"],
+        input_sha256=payload["external_payload_sha256"],
+        raw_output=json.dumps(
+            {"cases": [_gold(index) for index in range(1, 11)]}
+        ),
+    )
+    ledger = json.loads(
+        (artifact_root / "gold-evidence-receipt-ledger.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    ledger["receipts"][0]["approval_manifest_sha256"] = "f" * 64
+    ledger["receipts"][0]["receipt_sha256"] = runtime.canonical_digest(
+        runtime._without_digest(ledger["receipts"][0], "receipt_sha256")
+    )
+    ledger["ledger_sha256"] = runtime.canonical_digest(
+        runtime._without_digest(ledger, "ledger_sha256")
+    )
+
+    with pytest.raises(ValueError, match="approved manifest"):
+        runtime.validate_gold_evidence_receipt_ledger(
+            ledger,
+            manifest=manifest,
+            artifact_root=artifact_root,
+        )
+
+
+def test_gold_author_evidence_rejects_files_outside_artifact_root(tmp_path):
+    source_cases = [_case(index) for index in range(1, 11)]
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(source_cases),
+        selection=_confirmatory_selection(source_cases),
+    )
+    artifact_root = tmp_path / "durable" / "gold-evidence"
+    manifest = runtime.prepare_gold_author_evidence(
+        payload=payload,
+        artifact_root=artifact_root,
+        repo_root=tmp_path / "repository",
+        source_commit="a" * 40,
+        _system_temp_root=tmp_path / "system-temp",
+    )
+    outside_payload = artifact_root.parent / "outside-payload.json"
+    outside_payload.write_text(json.dumps(payload), encoding="utf-8")
+    escaped_manifest = deepcopy(manifest)
+    escaped_manifest["private_payload_file"] = "../outside-payload.json"
+    escaped_manifest["private_payload_file_sha256"] = runtime._file_sha256(
+        outside_payload
+    )
+    escaped_manifest["payload_byte_size"] = outside_payload.stat().st_size
+    escaped_manifest["manifest_sha256"] = runtime.canonical_digest(
+        runtime._without_digest(escaped_manifest, "manifest_sha256")
+    )
+
+    with pytest.raises(ValueError, match="inside the artifact root"):
+        runtime._validate_gold_evidence_manifest(
+            escaped_manifest,
+            artifact_root=artifact_root,
+        )
+
+
+def test_gold_author_evidence_receipt_rejects_raw_output_outside_artifact_root(
+    tmp_path,
+):
+    source_cases = [_case(index) for index in range(1, 11)]
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(source_cases),
+        selection=_confirmatory_selection(source_cases),
+    )
+    artifact_root = tmp_path / "durable" / "gold-evidence"
+    manifest = runtime.prepare_gold_author_evidence(
+        payload=payload,
+        artifact_root=artifact_root,
+        repo_root=tmp_path / "repository",
+        source_commit="a" * 40,
+        _system_temp_root=tmp_path / "system-temp",
+    )
+    runtime.record_gold_evidence_receipt(
+        artifact_root=artifact_root,
+        phase="author",
+        provider="external-codex",
+        session_id="author-session",
+        session_nonce="author-nonce",
+        approved_manifest_sha256=manifest["manifest_sha256"],
+        input_sha256=payload["external_payload_sha256"],
+        raw_output=json.dumps(
+            {"cases": [_gold(index) for index in range(1, 11)]}
+        ),
+    )
+    ledger = json.loads(
+        (artifact_root / "gold-evidence-receipt-ledger.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    author_output = artifact_root / ledger["receipts"][0]["raw_output_file"]
+    outside_output = artifact_root.parent / "outside-author.json"
+    outside_output.write_bytes(author_output.read_bytes())
+    ledger["receipts"][0]["raw_output_file"] = "../outside-author.json"
+    ledger["receipts"][0]["receipt_sha256"] = runtime.canonical_digest(
+        runtime._without_digest(ledger["receipts"][0], "receipt_sha256")
+    )
+    ledger["ledger_sha256"] = runtime.canonical_digest(
+        runtime._without_digest(ledger, "ledger_sha256")
+    )
+
+    with pytest.raises(ValueError, match="inside the artifact root"):
+        runtime.validate_gold_evidence_receipt_ledger(
+            ledger,
+            manifest=manifest,
+            artifact_root=artifact_root,
+        )
+
+
+def test_gold_author_evidence_cleans_staging_directory_on_publish_failure(
+    tmp_path, monkeypatch
+):
+    source_cases = [_case(index) for index in range(1, 11)]
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(source_cases),
+        selection=_confirmatory_selection(source_cases),
+    )
+    artifact_root = tmp_path / "durable" / "gold-evidence"
+    original = runtime._write_json_file
+
+    def fail_manifest(path, value):
+        if path.name == "gold-author-evidence-manifest.json":
+            raise OSError("simulated manifest failure")
+        return original(path, value)
+
+    monkeypatch.setattr(runtime, "_write_json_file", fail_manifest)
+    with pytest.raises(OSError, match="simulated manifest failure"):
+        runtime.prepare_gold_author_evidence(
+            payload=payload,
+            artifact_root=artifact_root,
+            repo_root=tmp_path / "repository",
+            source_commit="a" * 40,
+            _system_temp_root=tmp_path / "system-temp",
+        )
+
+    assert not artifact_root.exists()
+    assert not list(artifact_root.parent.glob(".gold-evidence.staging-*"))
+
+
+def test_gold_author_evidence_receipts_require_independent_chained_sessions(tmp_path):
+    source_cases = [_case(index) for index in range(1, 11)]
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(source_cases),
+        selection=_confirmatory_selection(source_cases),
+    )
+    artifact_root = tmp_path / "durable" / "gold-evidence"
+    manifest = runtime.prepare_gold_author_evidence(
+        payload=payload,
+        artifact_root=artifact_root,
+        repo_root=tmp_path / "repository",
+        source_commit="a" * 40,
+        _system_temp_root=tmp_path / "system-temp",
+    )
+
+    author = runtime.record_gold_evidence_receipt(
+        artifact_root=artifact_root,
+        phase="author",
+        provider="external-codex",
+        session_id="author-session",
+        session_nonce="author-nonce",
+        approved_manifest_sha256=manifest["manifest_sha256"],
+        input_sha256=payload["external_payload_sha256"],
+        raw_output=json.dumps({"cases": [_gold(index) for index in range(1, 11)]}),
+    )
+    with pytest.raises(ValueError, match="reviewer input hash mismatch"):
+        runtime.record_gold_evidence_receipt(
+            artifact_root=artifact_root,
+            phase="reviewer",
+            provider="external-codex",
+            session_id="reviewer-session",
+            session_nonce="reviewer-nonce",
+            approved_manifest_sha256=manifest["manifest_sha256"],
+            input_sha256="f" * 64,
+            raw_output=json.dumps(_reviewed_gold_output("f" * 64)),
+        )
+    with pytest.raises(ValueError, match="independent session"):
+        runtime.record_gold_evidence_receipt(
+            artifact_root=artifact_root,
+            phase="reviewer",
+            provider="external-codex",
+            session_id="author-session",
+            session_nonce="author-nonce",
+            approved_manifest_sha256=manifest["manifest_sha256"],
+            input_sha256=author["raw_output_sha256"],
+            raw_output=json.dumps(
+                _reviewed_gold_output(author["raw_output_sha256"])
+            ),
+        )
+
+    reviewer = runtime.record_gold_evidence_receipt(
+        artifact_root=artifact_root,
+        phase="reviewer",
+        provider="external-codex",
+        session_id="reviewer-session",
+        session_nonce="reviewer-nonce",
+        approved_manifest_sha256=manifest["manifest_sha256"],
+        input_sha256=author["raw_output_sha256"],
+        raw_output=json.dumps(_reviewed_gold_output(author["raw_output_sha256"])),
+    )
+    ledger = json.loads(
+        (artifact_root / "gold-evidence-receipt-ledger.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    runtime.validate_gold_evidence_receipt_ledger(
+        ledger,
+        manifest=manifest,
+        artifact_root=artifact_root,
+    )
+    assert [item["phase"] for item in ledger["receipts"]] == [
+        "author",
+        "reviewer",
+    ]
+    assert reviewer["input_sha256"] == author["raw_output_sha256"]
+
+
+def test_gold_author_evidence_receipt_failure_preserves_previous_ledger(
+    tmp_path, monkeypatch
+):
+    source_cases = [_case(index) for index in range(1, 11)]
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(source_cases),
+        selection=_confirmatory_selection(source_cases),
+    )
+    artifact_root = tmp_path / "durable" / "gold-evidence"
+    manifest = runtime.prepare_gold_author_evidence(
+        payload=payload,
+        artifact_root=artifact_root,
+        repo_root=tmp_path / "repository",
+        source_commit="a" * 40,
+        _system_temp_root=tmp_path / "system-temp",
+    )
+    author = runtime.record_gold_evidence_receipt(
+        artifact_root=artifact_root,
+        phase="author",
+        provider="external-codex",
+        session_id="author-session",
+        session_nonce="author-nonce",
+        approved_manifest_sha256=manifest["manifest_sha256"],
+        input_sha256=payload["external_payload_sha256"],
+        raw_output=json.dumps({"cases": [_gold(index) for index in range(1, 11)]}),
+    )
+    ledger_path = artifact_root / "gold-evidence-receipt-ledger.json"
+    previous_ledger = ledger_path.read_bytes()
+    original = runtime._write_json_file
+
+    def fail_ledger(path, value):
+        if path.name == "gold-evidence-receipt-ledger.json":
+            raise OSError("simulated ledger failure")
+        return original(path, value)
+
+    monkeypatch.setattr(runtime, "_write_json_file", fail_ledger)
+    with pytest.raises(OSError, match="simulated ledger failure"):
+        runtime.record_gold_evidence_receipt(
+            artifact_root=artifact_root,
+            phase="reviewer",
+            provider="external-codex",
+            session_id="reviewer-session",
+            session_nonce="reviewer-nonce",
+            approved_manifest_sha256=manifest["manifest_sha256"],
+            input_sha256=author["raw_output_sha256"],
+            raw_output=json.dumps(
+                _reviewed_gold_output(author["raw_output_sha256"])
+            ),
+        )
+
+    assert ledger_path.read_bytes() == previous_ledger
+    assert not (artifact_root / "reviewer-raw-output.private.json").exists()
+    assert not list(artifact_root.parent.glob(".gold-evidence.staging-*"))
+    assert not list(artifact_root.parent.glob(".gold-evidence.backup-*"))
+
+
+def test_gold_author_evidence_cli_prepares_and_records_receipts(
+    tmp_path, monkeypatch, capsys
+):
+    source_cases = [_case(index) for index in range(1, 11)]
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=_local_transfer_readiness(source_cases),
+        selection=_confirmatory_selection(source_cases),
+    )
+    payload_path = tmp_path / "gold-author-payload.json"
+    payload_path.write_text(json.dumps(payload), encoding="utf-8")
+    artifact_root = tmp_path / "durable" / "gold-evidence"
+    monkeypatch.setattr(
+        runtime.tempfile,
+        "gettempdir",
+        lambda: str(tmp_path / "system-temp"),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(Path(runtime.__file__)),
+            "prepare-gold-evidence",
+            str(payload_path),
+            "--artifact-root",
+            str(artifact_root),
+            "--repo-root",
+            str(tmp_path / "repository"),
+            "--source-commit",
+            "a" * 40,
+        ],
+    )
+
+    assert runtime.main() == 0
+    prepared = json.loads(capsys.readouterr().out)
+    assert prepared["status"] == "approval_required"
+    assert prepared["provider_execution_allowed"] is False
+
+    raw_output_path = tmp_path / "author-output.json"
+    raw_output_path.write_text(
+        json.dumps({"cases": [_gold(index) for index in range(1, 11)]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(Path(runtime.__file__)),
+            "record-gold-receipt",
+            str(artifact_root),
+            "--phase",
+            "author",
+            "--provider",
+            "external-codex",
+            "--session-id",
+            "author-session",
+            "--session-nonce",
+            "author-nonce",
+            "--approved-manifest-sha256",
+            prepared["manifest_sha256"],
+            "--input-sha256",
+            payload["external_payload_sha256"],
+            "--raw-output-file",
+            str(raw_output_path),
+        ],
+    )
+
+    assert runtime.main() == 0
+    recorded = json.loads(capsys.readouterr().out)
+    assert recorded["phase"] == "author"
+    assert recorded["input_sha256"] == payload["external_payload_sha256"]
+    assert "raw_output" not in recorded
 
 
 def test_confirmatory_runtime_bridge_rejects_transfer_or_skill_drift():

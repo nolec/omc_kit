@@ -11,7 +11,9 @@ import math
 import re
 import secrets
 import shlex
+import shutil
 import subprocess
+import tempfile
 from collections import Counter
 from copy import deepcopy
 from pathlib import Path, PurePosixPath
@@ -85,6 +87,21 @@ CONFIRMATORY_ANONYMIZATION_POLICY = {
     "content_strategy": "fixed-sensitive-token-redaction",
     "request_strategy": "fixed-sensitive-token-redaction",
     "source": "baseline-only-transfer-readiness",
+}
+GOLD_EVIDENCE_PRIVACY_PATTERNS = {
+    "private_key": re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----"),
+    "credential_assignment": re.compile(
+        r"(?i)\b(?:[a-z0-9]+[_-])*"
+        r"(?:api[_-]?key|access[_-]?token|token|secret|password|private[_-]?key)\b"
+        r"\s*[:=]\s*(?:[\"'][^\"'\r\n]{8,}[\"']|"
+        r"[^\s\"']{8,}(?=\s|$))"
+    ),
+    "bearer_token": re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{8,}"),
+    "aws_access_key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    "local_user_path": re.compile(r"(?:/Users|/home)/[^\s\"']+"),
+    "url": re.compile(r"https?://[^\s\"'<>]+"),
+    "email": re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}"),
+    "product_identifier": re.compile(r"(?i)sixshop|식스샵"),
 }
 MAX_CONTEXT_FILE_COUNT = 20
 MAX_CONTEXT_FILE_BYTES = 128 * 1024
@@ -563,6 +580,459 @@ def prepare_confirmatory_gold_author_payload(
     }
     result["payload_bundle_sha256"] = canonical_digest(result)
     return result
+
+
+def _write_json_file(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    return path == root or root in path.parents
+
+
+def _resolve_evidence_file(root: Path, relative_path: Any) -> Path:
+    if not isinstance(relative_path, str) or not relative_path.strip():
+        raise ValueError("gold evidence file path is invalid")
+    resolved_root = root.resolve()
+    resolved = (resolved_root / relative_path).resolve()
+    if resolved == resolved_root or not _path_is_within(resolved, resolved_root):
+        raise ValueError("gold evidence file must be inside the artifact root")
+    return resolved
+
+
+def _validate_gold_author_payload(payload: dict[str, Any]) -> None:
+    public_corpus = payload.get("public_corpus")
+    runtime_corpus = payload.get("runtime_corpus")
+    author_packet = payload.get("gold_author_packet")
+    policy = payload.get("anonymization_policy")
+    if (
+        payload.get("status") != "approval_required"
+        or payload.get("provider_execution_allowed") is not False
+        or not isinstance(public_corpus, dict)
+        or not isinstance(runtime_corpus, dict)
+        or not isinstance(author_packet, dict)
+        or not isinstance(policy, dict)
+    ):
+        raise ValueError("gold author payload contract is invalid")
+    public_cases = public_corpus.get("cases")
+    runtime_cases = runtime_corpus.get("cases")
+    author_cases = author_packet.get("cases")
+    if not all(isinstance(value, list) for value in (
+        public_cases,
+        runtime_cases,
+        author_cases,
+    )):
+        raise ValueError("gold author payload cases are invalid")
+    if (
+        len(public_cases) != FROZEN_ACCEPTANCE["case_count"]
+        or len(runtime_cases) != len(public_cases)
+        or len(author_cases) != len(public_cases)
+        or payload.get("external_payload_sha256") != canonical_digest(author_packet)
+        or public_corpus.get("corpus_sha256") != canonical_digest(public_cases)
+        or runtime_corpus.get("corpus_sha256") != canonical_digest(runtime_cases)
+        or runtime_corpus.get("source_corpus_sha256")
+        != public_corpus.get("corpus_sha256")
+        or payload.get("anonymization_policy_sha256") != canonical_digest(policy)
+        or payload.get("payload_bundle_sha256")
+        != canonical_digest(_without_digest(payload, "payload_bundle_sha256"))
+        or not _is_sha256(payload.get("source_readiness_sha256"))
+    ):
+        raise ValueError("gold author payload hash mismatch")
+
+    public_by_id = {case.get("case_id"): case for case in public_cases}
+    runtime_by_id = {case.get("case_id"): case for case in runtime_cases}
+    author_by_id = {case.get("case_id"): case for case in author_cases}
+    if not (
+        len(public_by_id)
+        == len(runtime_by_id)
+        == len(author_by_id)
+        == len(public_cases)
+        and set(public_by_id) == set(runtime_by_id) == set(author_by_id)
+    ):
+        raise ValueError("gold author payload case ids do not match")
+    for case_id, runtime_case in runtime_by_id.items():
+        context_files = runtime_case.get("context_files")
+        if (
+            not isinstance(context_files, dict)
+            or public_by_id[case_id].get("request") != runtime_case.get("request")
+            or author_by_id[case_id].get("request") != runtime_case.get("request")
+            or author_by_id[case_id].get("context_files") != context_files
+            or public_by_id[case_id].get("context_sha256")
+            != canonical_digest(context_files)
+        ):
+            raise ValueError("gold author payload exact corpus mismatch")
+
+
+def _gold_evidence_privacy_report(
+    author_packet: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    findings: list[dict[str, str]] = []
+    case_inventory: list[dict[str, Any]] = []
+    for case in author_packet["cases"]:
+        case_id = case["case_id"]
+        request = case["request"]
+        context_files = case["context_files"]
+        for code, pattern in GOLD_EVIDENCE_PRIVACY_PATTERNS.items():
+            if pattern.search(request):
+                findings.append({"case_id": case_id, "subject": "request", "code": code})
+        files: list[dict[str, Any]] = []
+        for path, content in sorted(context_files.items()):
+            for code, pattern in GOLD_EVIDENCE_PRIVACY_PATTERNS.items():
+                if pattern.search(path):
+                    findings.append({"case_id": case_id, "subject": path, "code": code})
+                if pattern.search(content):
+                    findings.append({"case_id": case_id, "subject": path, "code": code})
+            files.append({
+                "path": path,
+                "byte_size": len(content.encode("utf-8")),
+            })
+        case_inventory.append({
+            "case_id": case_id,
+            "files": files,
+            "byte_size": sum(item["byte_size"] for item in files),
+        })
+    counts = {
+        code: sum(item["code"] == code for item in findings)
+        for code in GOLD_EVIDENCE_PRIVACY_PATTERNS
+    }
+    return ({
+        "schema_version": 1,
+        "status": "passed" if not findings else "failed",
+        "scanner": "gold-evidence-fixed-patterns-v1",
+        "finding_counts": counts,
+        "case_inventory": case_inventory,
+    }, findings)
+
+
+def _validate_durable_evidence_root(
+    artifact_root: str | Path,
+    *,
+    repo_root: str | Path,
+    system_temp_root: str | Path | None,
+) -> Path:
+    root = _validate_artifact_root(artifact_root, repo_root=repo_root)
+    temporary = Path(
+        tempfile.gettempdir() if system_temp_root is None else system_temp_root
+    ).resolve()
+    if _path_is_within(root, temporary):
+        raise ValueError("gold evidence artifact root must not be temporary")
+    if root.exists() and any(root.iterdir()):
+        raise ValueError("gold evidence artifact root must be empty")
+    return root
+
+
+def prepare_gold_author_evidence(
+    *,
+    payload: dict[str, Any],
+    artifact_root: str | Path,
+    repo_root: str | Path,
+    source_commit: str,
+    _system_temp_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Persist the private author payload and publish a redacted approval anchor."""
+    _validate_gold_author_payload(payload)
+    if not _is_git_sha(source_commit):
+        raise ValueError("gold evidence source commit is invalid")
+    root = _validate_durable_evidence_root(
+        artifact_root,
+        repo_root=repo_root,
+        system_temp_root=_system_temp_root,
+    )
+    privacy_report, findings = _gold_evidence_privacy_report(
+        payload["gold_author_packet"]
+    )
+    if findings:
+        raise ValueError("gold evidence privacy scan failed")
+
+    context_file_count = sum(
+        len(case["context_files"])
+        for case in payload["runtime_corpus"]["cases"]
+    )
+    manifest = {
+        "schema_version": 1,
+        "status": "approval_required",
+        "source_commit": source_commit,
+        "approval_tuple": {
+            "external_payload_sha256": payload["external_payload_sha256"],
+            "payload_bundle_sha256": payload["payload_bundle_sha256"],
+            "source_readiness_sha256": payload["source_readiness_sha256"],
+            "public_corpus_sha256": payload["public_corpus"]["corpus_sha256"],
+            "runtime_corpus_sha256": payload["runtime_corpus"]["corpus_sha256"],
+            "anonymization_policy_sha256": payload["anonymization_policy_sha256"],
+        },
+        "private_payload_file": "gold-author-payload.private.json",
+        "private_payload_file_sha256": "",
+        "payload_byte_size": 0,
+        "case_count": len(payload["runtime_corpus"]["cases"]),
+        "context_file_count": context_file_count,
+        "privacy_report": privacy_report,
+        "provider_execution_allowed": False,
+    }
+
+    root.parent.mkdir(parents=True, exist_ok=True)
+    staging = root.parent / f".{root.name}.staging-{secrets.token_hex(8)}"
+    if root.exists():
+        root.rmdir()
+    try:
+        staging.mkdir()
+        private_path = staging / manifest["private_payload_file"]
+        _write_json_file(private_path, payload)
+        manifest["private_payload_file_sha256"] = _file_sha256(private_path)
+        manifest["payload_byte_size"] = private_path.stat().st_size
+        manifest["manifest_sha256"] = canonical_digest(manifest)
+        _write_json_file(
+            staging / "gold-author-evidence-manifest.json",
+            manifest,
+        )
+        staging.replace(root)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return manifest
+
+
+def _validate_gold_evidence_manifest(
+    manifest: dict[str, Any],
+    *,
+    artifact_root: Path,
+) -> dict[str, Any]:
+    if manifest.get("manifest_sha256") != canonical_digest(
+        _without_digest(manifest, "manifest_sha256")
+    ):
+        raise ValueError("gold evidence manifest hash mismatch")
+    private_path = _resolve_evidence_file(
+        artifact_root,
+        manifest.get("private_payload_file"),
+    )
+    if (
+        not private_path.is_file()
+        or manifest.get("private_payload_file_sha256") != _file_sha256(private_path)
+        or manifest.get("payload_byte_size") != private_path.stat().st_size
+        or manifest.get("provider_execution_allowed") is not False
+    ):
+        raise ValueError("gold evidence private payload mismatch")
+    payload = json.loads(private_path.read_text(encoding="utf-8"))
+    _validate_gold_author_payload(payload)
+    expected_tuple = {
+        "external_payload_sha256": payload["external_payload_sha256"],
+        "payload_bundle_sha256": payload["payload_bundle_sha256"],
+        "source_readiness_sha256": payload["source_readiness_sha256"],
+        "public_corpus_sha256": payload["public_corpus"]["corpus_sha256"],
+        "runtime_corpus_sha256": payload["runtime_corpus"]["corpus_sha256"],
+        "anonymization_policy_sha256": payload["anonymization_policy_sha256"],
+    }
+    if manifest.get("approval_tuple") != expected_tuple:
+        raise ValueError("gold evidence approval tuple mismatch")
+    return payload
+
+
+def _validate_gold_evidence_raw_output(
+    raw_output: str,
+    *,
+    phase: str,
+    expected_case_ids: list[str],
+    input_sha256: str,
+) -> dict[str, Any]:
+    try:
+        parsed = json.loads(raw_output)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{phase} raw output must be JSON") from exc
+    expected_fields = {"cases"}
+    if phase == "reviewer":
+        expected_fields |= {"decision", "reviewed_author_output_sha256"}
+    if not isinstance(parsed, dict) or set(parsed) != expected_fields:
+        raise ValueError(f"{phase} raw output fields are invalid")
+    cases = parsed.get("cases")
+    if not isinstance(cases, list) or len(cases) != len(expected_case_ids):
+        raise ValueError(f"{phase} raw output case count is invalid")
+    actual_case_ids = [item.get("case_id") for item in cases if isinstance(item, dict)]
+    if actual_case_ids != expected_case_ids or len(set(actual_case_ids)) != len(cases):
+        raise ValueError(f"{phase} raw output case ids are invalid")
+    for item in cases:
+        _validate_runtime_gold_case(item)
+    if phase == "reviewer" and (
+        parsed.get("decision") not in {"approve", "revise"}
+        or parsed.get("reviewed_author_output_sha256") != input_sha256
+    ):
+        raise ValueError("reviewer raw output decision contract is invalid")
+    return parsed
+
+
+def validate_gold_evidence_receipt_ledger(
+    ledger: dict[str, Any],
+    *,
+    manifest: dict[str, Any],
+    artifact_root: str | Path,
+) -> None:
+    root = Path(artifact_root).resolve()
+    payload = _validate_gold_evidence_manifest(manifest, artifact_root=root)
+    expected_case_ids = [
+        case["case_id"] for case in payload["gold_author_packet"]["cases"]
+    ]
+    if ledger.get("ledger_sha256") != canonical_digest(
+        _without_digest(ledger, "ledger_sha256")
+    ):
+        raise ValueError("gold evidence receipt ledger hash mismatch")
+    if ledger.get("approval_manifest_sha256") != manifest.get("manifest_sha256"):
+        raise ValueError("gold evidence receipt manifest mismatch")
+    receipts = ledger.get("receipts")
+    if not isinstance(receipts, list) or len(receipts) > 2:
+        raise ValueError("gold evidence receipt sequence is invalid")
+    expected_phases = ["author", "reviewer"][:len(receipts)]
+    if [item.get("phase") for item in receipts] != expected_phases:
+        raise ValueError("gold evidence receipt sequence is invalid")
+    previous: dict[str, Any] | None = None
+    for receipt in receipts:
+        if receipt.get("receipt_sha256") != canonical_digest(
+            _without_digest(receipt, "receipt_sha256")
+        ):
+            raise ValueError("gold evidence receipt hash mismatch")
+        if receipt.get("approval_manifest_sha256") != manifest.get(
+            "manifest_sha256"
+        ):
+            raise ValueError("gold evidence receipt approved manifest mismatch")
+        raw_path = _resolve_evidence_file(root, receipt.get("raw_output_file"))
+        if (
+            not raw_path.is_file()
+            or receipt.get("raw_output_sha256") != _file_sha256(raw_path)
+        ):
+            raise ValueError("gold evidence raw output mismatch")
+        if previous is None:
+            expected_input = manifest["approval_tuple"]["external_payload_sha256"]
+        else:
+            expected_input = previous["raw_output_sha256"]
+            if (
+                receipt.get("session_id") == previous.get("session_id")
+                or receipt.get("session_nonce") == previous.get("session_nonce")
+            ):
+                raise ValueError("gold evidence requires an independent session")
+        if receipt.get("input_sha256") != expected_input:
+            raise ValueError(f"{receipt.get('phase')} input hash mismatch")
+        _validate_gold_evidence_raw_output(
+            raw_path.read_text(encoding="utf-8"),
+            phase=receipt["phase"],
+            expected_case_ids=expected_case_ids,
+            input_sha256=receipt["input_sha256"],
+        )
+        previous = receipt
+
+
+def record_gold_evidence_receipt(
+    *,
+    artifact_root: str | Path,
+    phase: str,
+    provider: str,
+    session_id: str,
+    session_nonce: str,
+    approved_manifest_sha256: str,
+    input_sha256: str,
+    raw_output: str,
+) -> dict[str, Any]:
+    """Atomically append an author or reviewer receipt to the private evidence root."""
+    root = Path(artifact_root).resolve()
+    manifest_path = root / "gold-author-evidence-manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError("gold evidence manifest is required")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload = _validate_gold_evidence_manifest(manifest, artifact_root=root)
+    if (
+        phase not in {"author", "reviewer"}
+        or not all(
+            isinstance(value, str) and value.strip()
+            for value in (provider, session_id, session_nonce, raw_output)
+        )
+        or not _is_sha256(approved_manifest_sha256)
+        or not _is_sha256(input_sha256)
+    ):
+        raise ValueError("gold evidence receipt contract is invalid")
+    if approved_manifest_sha256 != manifest.get("manifest_sha256"):
+        raise ValueError("gold evidence approved manifest mismatch")
+    expected_case_ids = [
+        case["case_id"] for case in payload["gold_author_packet"]["cases"]
+    ]
+    _validate_gold_evidence_raw_output(
+        raw_output,
+        phase=phase,
+        expected_case_ids=expected_case_ids,
+        input_sha256=input_sha256,
+    )
+
+    ledger_path = root / "gold-evidence-receipt-ledger.json"
+    if ledger_path.exists():
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        validate_gold_evidence_receipt_ledger(
+            ledger,
+            manifest=manifest,
+            artifact_root=root,
+        )
+    else:
+        ledger = {
+            "schema_version": 1,
+            "approval_manifest_sha256": manifest["manifest_sha256"],
+            "receipts": [],
+        }
+    receipts = ledger["receipts"]
+    if phase != (["author", "reviewer"][len(receipts)] if len(receipts) < 2 else None):
+        raise ValueError("gold evidence receipt sequence is invalid")
+    if phase == "author":
+        expected_input = manifest["approval_tuple"]["external_payload_sha256"]
+    else:
+        author = receipts[0]
+        expected_input = author["raw_output_sha256"]
+        if session_id == author["session_id"] or session_nonce == author["session_nonce"]:
+            raise ValueError("gold evidence requires an independent session")
+    if input_sha256 != expected_input:
+        raise ValueError(f"{phase} input hash mismatch")
+
+    raw_relative = f"{phase}-raw-output.private.json"
+    raw_bytes = raw_output.encode("utf-8")
+    receipt = {
+        "schema_version": 1,
+        "phase": phase,
+        "provider": provider,
+        "session_id": session_id,
+        "session_nonce": session_nonce,
+        "approval_manifest_sha256": approved_manifest_sha256,
+        "input_sha256": input_sha256,
+        "raw_output_file": raw_relative,
+        "raw_output_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+    }
+    receipt["receipt_sha256"] = canonical_digest(receipt)
+
+    staging = root.parent / f".{root.name}.staging-{secrets.token_hex(8)}"
+    backup = root.parent / f".{root.name}.backup-{secrets.token_hex(8)}"
+    try:
+        shutil.copytree(root, staging)
+        (staging / raw_relative).write_bytes(raw_bytes)
+        next_ledger = {
+            "schema_version": 1,
+            "approval_manifest_sha256": manifest["manifest_sha256"],
+            "receipts": [*receipts, receipt],
+        }
+        next_ledger["ledger_sha256"] = canonical_digest(next_ledger)
+        _write_json_file(
+            staging / "gold-evidence-receipt-ledger.json",
+            next_ledger,
+        )
+        root.replace(backup)
+        try:
+            staging.replace(root)
+        except Exception:
+            backup.replace(root)
+            raise
+        shutil.rmtree(backup)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+        if root.exists():
+            shutil.rmtree(backup, ignore_errors=True)
+    return receipt
 
 
 def _runtime_cases_from_transfer_readiness(
@@ -3379,6 +3849,26 @@ def main() -> int:
     gold_author_parser.add_argument("selection")
     gold_author_parser.add_argument("--output", required=True)
 
+    gold_evidence_parser = subparsers.add_parser("prepare-gold-evidence")
+    gold_evidence_parser.add_argument("payload")
+    gold_evidence_parser.add_argument("--artifact-root", required=True)
+    gold_evidence_parser.add_argument("--source-commit", required=True)
+    gold_evidence_parser.add_argument(
+        "--repo-root", default=str(Path(__file__).resolve().parents[1])
+    )
+
+    gold_receipt_parser = subparsers.add_parser("record-gold-receipt")
+    gold_receipt_parser.add_argument("artifact_root")
+    gold_receipt_parser.add_argument(
+        "--phase", choices=("author", "reviewer"), required=True
+    )
+    gold_receipt_parser.add_argument("--provider", required=True)
+    gold_receipt_parser.add_argument("--session-id", required=True)
+    gold_receipt_parser.add_argument("--session-nonce", required=True)
+    gold_receipt_parser.add_argument("--approved-manifest-sha256", required=True)
+    gold_receipt_parser.add_argument("--input-sha256", required=True)
+    gold_receipt_parser.add_argument("--raw-output-file", required=True)
+
     prepare_confirmatory_parser = subparsers.add_parser(
         "prepare-confirmatory"
     )
@@ -3447,6 +3937,35 @@ def main() -> int:
             "external_payload_sha256": result["external_payload_sha256"],
             "output": str(Path(args.output).resolve()),
         }, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "prepare-gold-evidence":
+        result = prepare_gold_author_evidence(
+            payload=_load_json(args.payload),
+            artifact_root=args.artifact_root,
+            repo_root=args.repo_root,
+            source_commit=args.source_commit,
+        )
+        print(json.dumps({
+            "status": result["status"],
+            "provider_execution_allowed": result["provider_execution_allowed"],
+            "manifest_sha256": result["manifest_sha256"],
+            "artifact_root": str(Path(args.artifact_root).resolve()),
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "record-gold-receipt":
+        result = record_gold_evidence_receipt(
+            artifact_root=args.artifact_root,
+            phase=args.phase,
+            provider=args.provider,
+            session_id=args.session_id,
+            session_nonce=args.session_nonce,
+            approved_manifest_sha256=args.approved_manifest_sha256,
+            input_sha256=args.input_sha256,
+            raw_output=Path(args.raw_output_file).read_text(encoding="utf-8"),
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "prepare-confirmatory":
