@@ -1239,12 +1239,13 @@ def prepare_confirmatory_runtime_inputs(
     if not isinstance(labels, list):
         raise ValueError("confirmatory selection cases are required")
     manifest = {
-        "schema_version": 3,
+        "schema_version": 4,
         "status": "signed_off",
         "producer": producer,
         "source_corpus_sha256": public_corpus["corpus_sha256"],
         "corpus_sha256": runtime_corpus["corpus_sha256"],
         "gold_sha256": gold_document["gold_sha256"],
+        "runtime_runner_sha256": _runtime_runner_sha256(),
         "sampling": {
             "source_window": "preregistered-disjoint-selection",
             "eligibility_rule": "observed requests not used by prior evaluations",
@@ -1605,8 +1606,10 @@ def validate_confirmatory_manifest(
         "schema_version",
         "status",
         "producer",
+        "source_corpus_sha256",
         "corpus_sha256",
         "gold_sha256",
+        "runtime_runner_sha256",
         "sampling",
         "prior_registry_sha256",
         "prior_fingerprints",
@@ -1618,22 +1621,22 @@ def validate_confirmatory_manifest(
         "signoff",
     }
     schema_version = manifest.get("schema_version") if isinstance(manifest, dict) else None
-    if schema_version == 3:
-        expected_fields.add("source_corpus_sha256")
     if (
         not isinstance(manifest, dict)
         or set(manifest) != expected_fields
-        or schema_version not in {2, 3}
+        or schema_version != 4
         or manifest.get("status") != "signed_off"
         or not isinstance(manifest.get("producer"), str)
         or not manifest["producer"].strip()
     ):
         raise ValueError("confirmatory manifest fields are invalid")
-    if schema_version == 3 and (
+    if (
         manifest.get("source_corpus_sha256") != gold_document.get("corpus_sha256")
         or not _is_sha256(manifest.get("source_corpus_sha256"))
     ):
         raise ValueError("confirmatory source corpus hash mismatch")
+    if manifest.get("runtime_runner_sha256") != _runtime_runner_sha256():
+        raise ValueError("confirmatory runtime runner hash mismatch")
     if (
         manifest.get("corpus_sha256") != canonical_digest(cases)
         or manifest.get("gold_sha256") != gold_document.get("gold_sha256")
@@ -1958,6 +1961,11 @@ def validate_execution_budget_evidence(
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _runtime_runner_sha256() -> str:
+    """Hash the exact runtime implementation bound by a confirmatory manifest."""
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
 def _is_sha256(value: Any) -> bool:

@@ -166,11 +166,13 @@ def _signed_confirmatory_manifest(
         "high", "high", "high",
     )
     manifest = {
-        "schema_version": 2,
+        "schema_version": 4,
         "status": "signed_off",
         "producer": "fixture-curator",
+        "source_corpus_sha256": gold["corpus_sha256"],
         "corpus_sha256": runtime.canonical_digest(cases),
         "gold_sha256": gold["gold_sha256"],
+        "runtime_runner_sha256": runtime._runtime_runner_sha256(),
         "sampling": {
             "source_window": "2026-08-01/2026-08-03",
             "eligibility_rule": "observed requests not used by prior evaluations",
@@ -583,7 +585,7 @@ def test_confirmatory_manifest_binds_sampling_gold_and_disjoint_fingerprints():
         )
 
 
-def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval():
+def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(monkeypatch):
     source_cases = [_case(index) for index in range(1, 11)]
     readiness = _local_transfer_readiness(source_cases)
     public_corpus = {
@@ -664,6 +666,9 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval():
     )
     assert prepared["status"] == "signature_required"
     assert prepared["confirmatory_manifest"]["transmission"]["approved"] is True
+    assert prepared["confirmatory_manifest"]["runtime_runner_sha256"] == (
+        runtime._runtime_runner_sha256()
+    )
 
     signature = base64.b64encode(signer.sign(
         runtime.confirmatory_manifest_signoff_payload(
@@ -681,7 +686,6 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval():
     )
     assert receipt["status"] == "execution_ready"
     assert receipt["provider_execution_allowed"] is True
-
     tampered_payload = deepcopy(prepared)
     tampered_payload["external_payload_sha256"] = "b" * 64
     tampered_payload["preparation_sha256"] = runtime.canonical_digest(
@@ -739,6 +743,18 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval():
             skill_sha256="a" * 64,
             trusted_gold_signer_public_keys=trusted_gold,
             trusted_confirmatory_signer_public_keys={"untrusted"},
+        )
+
+    monkeypatch.setattr(runtime, "_runtime_runner_sha256", lambda: "f" * 64)
+    with pytest.raises(ValueError, match="runtime runner hash mismatch"):
+        runtime.seal_confirmatory_runtime_inputs(
+            prepared,
+            signature=signature,
+            gold_document=gold,
+            trusted_prior_fingerprints=prior,
+            skill_sha256="a" * 64,
+            trusted_gold_signer_public_keys=trusted_gold,
+            trusted_confirmatory_signer_public_keys={signer_public_key},
         )
 
 
