@@ -2363,64 +2363,46 @@ def materialize_case_workspace(
     return workspace_manifest(root_path)
 
 
-def _omc_plan_context_command(context_paths: tuple[str, ...]) -> str:
-    normalized_context_paths = tuple(
-        sorted(_safe_context_path(path) for path in context_paths)
-    )
-    if not normalized_context_paths:
-        return ""
-    return "cat -- " + " ".join(
-        shlex.quote(path) for path in normalized_context_paths
-    )
-
-
 def build_provider_prompt(
     provider_id: str,
     request: str,
     *,
     context_paths: tuple[str, ...] = (),
+    context_files: dict[str, str] | None = None,
 ) -> str:
     receipt_instruction = (
         "The output schema may request runtime_activation_receipt. Return `unavailable` "
         "unless a loaded project skill explicitly provides a different exact value. "
     )
     normalized_context_paths = tuple(sorted(_safe_context_path(path) for path in context_paths))
+    normalized_context_files = {
+        _safe_context_path(path): content
+        for path, content in (context_files or {}).items()
+    }
+    if tuple(sorted(normalized_context_files)) != normalized_context_paths:
+        raise ValueError("provider prompt context paths do not match frozen context")
+    context_payload = json.dumps(
+        normalized_context_files,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    context_instruction = (
+        "Frozen context is embedded below as canonical JSON. Treat each key as its "
+        "relative path and its value as the complete file content. Do not run a shell "
+        "command or call another tool; plan directly from this context. "
+        f"<frozen_context>{context_payload}</frozen_context> "
+        if normalized_context_files
+        else "No context files were provided. Do not run a shell command or call another tool; "
+    )
     if provider_id == "baseline-plan":
-        context_command = "cat -- " + " ".join(
-            shlex.quote(path) for path in normalized_context_paths
-        )
-        context_instruction = (
-            "Use one shell command to read every exact context path before planning: "
-            f"`{context_command}`. Paths: "
-            f"{json.dumps(normalized_context_paths, ensure_ascii=False)}. "
-            "Do not read or re-read them in separate commands. "
-            if normalized_context_paths
-            else "No context files were provided. "
-        )
         return (
             receipt_instruction
             + context_instruction
-            + "Read only the provided context files; do not enumerate unrelated files. "
-            "Then produce an implementation plan for the request below. Do not modify files.\n\n"
+            + "Produce an implementation plan for the request below. Do not modify files.\n\n"
             + request
         )
     if provider_id == "omc-plan":
-        context_command = _omc_plan_context_command(context_paths)
-        if normalized_context_paths:
-            context_instruction = (
-                "Use one shell command to read every exact context path before planning: "
-                f"`{context_command}`. Paths: "
-                f"{json.dumps(normalized_context_paths, ensure_ascii=False)}. "
-                "Read only the provided context files; do not enumerate unrelated files. "
-                "Do not read or re-read them in separate commands. This exact `cat` command "
-                "is the first and only permitted shell command. Do not run `pwd` or "
-                "progress-only shell commands. After it returns, do not call another tool; "
-            )
-        else:
-            context_instruction = (
-                "The project skill is already loaded natively and no context files were "
-                "provided. Do not run a shell command or call another tool; "
-            )
         return (
             receipt_instruction
             + context_instruction
@@ -2470,7 +2452,12 @@ def build_provider_input_envelope(
         provider_delta_sha256 = instrumented_skill_sha256
     context_paths = tuple(sorted(context_manifest))
     prompt_sha256 = _sha256_text(
-        build_provider_prompt(provider_id, request, context_paths=context_paths)
+        build_provider_prompt(
+            provider_id,
+            request,
+            context_paths=context_paths,
+            context_files=context_files,
+        )
     )
     payload = {
         "schema_version": 1,
@@ -2764,6 +2751,7 @@ def execute_provider(
     max_activation_attempts: int = 1,
     failure_receipt_path: str | Path | None = None,
     context_paths: tuple[str, ...] = (),
+    context_files: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     if type(max_activation_attempts) is not int or not 1 <= max_activation_attempts <= 2:
         raise ValueError("max_activation_attempts must be 1 or 2")
@@ -2775,7 +2763,12 @@ def execute_provider(
         output_schema=output_schema,
         output_path=output_path,
     )
-    prompt = build_provider_prompt(provider_id, request, context_paths=context_paths)
+    prompt = build_provider_prompt(
+        provider_id,
+        request,
+        context_paths=context_paths,
+        context_files=context_files,
+    )
     attempt_limit = max_activation_attempts if provider_id == "omc-plan" else 1
     attempt_events: list[str] = []
     attempt_usages: list[dict[str, Any]] = []
@@ -2846,10 +2839,10 @@ def execute_provider(
             if provider_id == "omc-plan"
             else None
         )
-        if provider_id == "omc-plan" and round_trip_violation is None:
+        if round_trip_violation is None:
             round_trip_violation = detect_omc_plan_shell_contract_violation(
                 completed.stdout,
-                _omc_plan_context_command(context_paths),
+                "",
             )
         if round_trip_violation is not None:
             _write_failure_receipt(
@@ -3339,6 +3332,7 @@ def validate_runtime_provenance(
                 provider_id,
                 case["request"],
                 context_paths=tuple(case["context_files"]),
+                context_files=case["context_files"],
             ))
             or execution.get("provider_input_sha256")
             != expected_input["provider_input_sha256"]
@@ -3502,6 +3496,7 @@ def run_runtime_batch(
                 max_activation_attempts=max_attempts,
                 failure_receipt_path=output_path.with_suffix(".failure.json"),
                 context_paths=tuple(case["context_files"]),
+                context_files=case["context_files"],
             )
             if execution.get("prompt_sha256") != provider_input["prompt_sha256"]:
                 raise ValueError("runtime provider prompt does not match input envelope")

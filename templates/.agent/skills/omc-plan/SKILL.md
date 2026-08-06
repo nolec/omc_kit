@@ -30,7 +30,7 @@ AGENTS.md Tier 1 작업은 이 Phase 1 요구사항을 CONTRACT 입력으로 삼
 - `plan full`: CONTRACT + 최소 설계 + 다중 TDD 태스크 | `plan lite`: CONTRACT + 최소 설계 + 태스크 2개 이하
 - lite 조건: 기존 파일 중심 / 검증 명령 1개 / 범위를 한 문장으로 설명 가능 | full 조건: 새 파일 또는 신규 파일 생성 / API 또는 시그니처 변경 / 3개 이상 파일 / 검증 명령 축약 불가 / 범위 불명확 | 애매하면 full, lite가 쓰였지만 설명이 약하면 `full 재계획` | 현재 dirty 변경과 이번 계획 범위는 분리해서 다룹니다.
 
-## Phase 3. TDD 태스크 분해 — 근거 추출: 제공·언급된 근거 파일은 한 번의 명령으로 직접 읽고 진행 메시지·pwd·재탐색 금지, 즉시 구조화 결과 작성 / 코드 symbol·사용자 관찰 동작·실패 경로를 요구사항 후보에 먼저 연결 / 선택된 객체에서 동작이 시작되면 ID·수신자 전달을 상태·payload까지 추적해 supports·VERIFY에 연결 / 근거 매핑 완료 전 lite 금지 / `입력·상태·연결 지점 보정` 같은 검증 불가능한 포괄 표현 금지, 근거가 없으면 구현 가정 대신 decisions_required / 요구사항은 짧은 ID로 고정하고 `supports에는 ID만` 재사용 / 좁은 변경은 제공된 근거에서 직접 인접한 사용자 관찰 가능 비대상 동작만 surface당 1개 보존 요구사항으로 고정해 supports·VERIFY에 연결하고 근거 부족 시 decisions_required / 같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합 / 확인하지 않은 예시 명령 금지 / assumptions·decisions는 구현을 막는 항목만 / 반복 설명 금지 / 항목별 한 문장 / 불필요한 후속 제안 금지
+## Phase 3. TDD 태스크 분해 — 근거 추출: 격리 benchmark에서는 runner가 주입한 frozen context만 사용하고 shell·추가 tool 호출 없이 즉시 구조화 결과 작성 / 일반 실행에서는 제공·언급된 근거 파일은 한 번의 명령으로 직접 읽고 진행 메시지·pwd·재탐색 금지 / 코드 symbol·사용자 관찰 동작·실패 경로를 요구사항 후보에 먼저 연결 / 선택된 객체에서 동작이 시작되면 ID·수신자 전달을 상태·payload까지 추적해 supports·VERIFY에 연결 / 근거 매핑 완료 전 lite 금지 / `입력·상태·연결 지점 보정` 같은 검증 불가능한 포괄 표현 금지, 근거가 없으면 구현 가정 대신 decisions_required / 요구사항은 짧은 ID로 고정하고 `supports에는 ID만` 재사용 / 좁은 변경은 제공된 근거에서 직접 인접한 사용자 관찰 가능 비대상 동작만 surface당 1개 보존 요구사항으로 고정해 supports·VERIFY에 연결하고 근거 부족 시 decisions_required / 같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합 / 확인하지 않은 예시 명령 금지 / assumptions·decisions는 구현을 막는 항목만 / 반복 설명 금지 / 항목별 한 문장 / 불필요한 후속 제안 금지
 
 ```text
 plan full

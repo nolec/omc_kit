@@ -2205,46 +2205,67 @@ def test_baseline_must_return_activation_sentinel():
         )
 
 
-def test_omc_provider_prompt_requires_exact_context_read_before_planning():
+def test_omc_provider_prompt_embeds_exact_context_before_planning():
+    context_files = {
+        "src/service.py": "def retry():\n    return 3\n",
+        "tests/test_service.py": "def test_retry():\n    assert retry() == 3\n",
+    }
     prompt = runtime.build_provider_prompt(
         "omc-plan",
         "Plan this change",
-        context_paths=("src/service.py", "tests/test_service.py"),
+        context_paths=tuple(context_files),
+        context_files=context_files,
     )
 
-    assert "Read only the provided context files" in prompt
+    assert "Frozen context is embedded below as canonical JSON" in prompt
     assert '"src/service.py"' in prompt
     assert '"tests/test_service.py"' in prompt
-    assert "every file under `context/`" not in prompt
-    assert "one shell command" in prompt
-    assert "Do not read or re-read them in separate commands" in prompt
-    read_command = prompt[prompt.index("`cat -- ") + 1:].split("`", 1)[0]
-    assert ".agents/skills/omc-plan/SKILL.md" not in read_command
-    assert "src/service.py" in read_command
-    assert "tests/test_service.py" in read_command
-    assert "Do not run `pwd` or progress-only shell commands" in prompt
-    assert "first and only permitted shell command" in prompt
-    assert "After it returns, do not call another tool" in prompt
+    assert "def retry()" in prompt
+    assert "Do not run a shell command or call another tool" in prompt
+    assert "cat --" not in prompt
     assert "$omc-plan" in prompt
+
+
+def test_provider_prompt_embeds_frozen_context_without_model_owned_read():
+    context_files = {
+        "context/service.py": "def retry():\n    return 3\n",
+        "context/test_service.py": "def test_retry():\n    assert retry() == 3\n",
+    }
+
+    for provider_id in runtime.PROVIDERS:
+        prompt = runtime.build_provider_prompt(
+            provider_id,
+            "Plan this change",
+            context_paths=tuple(context_files),
+            context_files=context_files,
+        )
+
+        assert "Frozen context is embedded below" in prompt
+        assert '"context/service.py"' in prompt
+        assert "def retry()" in prompt
+        assert "Do not run a shell command or call another tool" in prompt
+        assert "Use one shell command" not in prompt
+
+
+def test_provider_prompt_rejects_context_paths_without_frozen_content():
+    with pytest.raises(ValueError, match="context paths do not match"):
+        runtime.build_provider_prompt(
+            "omc-plan",
+            "Plan this change",
+            context_paths=("context/service.py",),
+        )
 
 
 def test_omc_activation_prompt_uses_native_skill_without_shell_command():
     prompt = runtime.build_provider_prompt("omc-plan", "Return activation receipt")
 
-    assert "project skill is already loaded natively" in prompt
+    assert "apply the loaded skill" in prompt
     assert "Do not run a shell command" in prompt
     assert "cat --" not in prompt
     assert ".agents/skills/omc-plan/SKILL.md" not in prompt
 
 
-def test_omc_context_command_excludes_native_skill_and_is_empty_for_probe():
-    assert runtime._omc_plan_context_command(()) == ""
-    assert runtime._omc_plan_context_command(
-        ("tests/test_service.py", "src/service.py")
-    ) == "cat -- src/service.py tests/test_service.py"
-
-
-def test_omc_plan_skill_freezes_isolated_runtime_to_one_exact_read():
+def test_omc_plan_skill_uses_runner_injected_context_in_isolated_runtime():
     for skill_path in (
         Path(".agents/skills/omc-plan/SKILL.md"),
         Path("templates/.agents/skills/omc-plan/SKILL.md"),
@@ -2252,23 +2273,27 @@ def test_omc_plan_skill_freezes_isolated_runtime_to_one_exact_read():
         skill = skill_path.read_text(encoding="utf-8")
 
         assert "격리 benchmark" in skill
-        assert "첫 번째이자 유일한 shell 명령" in skill
-        assert "추가 tool 호출 없이 즉시 구조화 결과" in skill
+        assert "runner가 주입한 frozen context만 사용" in skill
+        assert "shell·추가 tool 호출 없이 즉시 구조화 결과" in skill
 
 
 def test_baseline_provider_prompt_limits_context_without_exposing_skill_path():
+    context_files = {
+        "src/service.py": "def retry():\n    return 3\n",
+        "tests/test_service.py": "def test_retry():\n    assert retry() == 3\n",
+    }
     prompt = runtime.build_provider_prompt(
         "baseline-plan",
         "Plan this change",
-        context_paths=("src/service.py", "tests/test_service.py"),
+        context_paths=tuple(context_files),
+        context_files=context_files,
     )
 
-    assert "Read only the provided context files" in prompt
+    assert "Frozen context is embedded below as canonical JSON" in prompt
     assert '"src/service.py"' in prompt
     assert '"tests/test_service.py"' in prompt
-    assert "every file under `context/`" not in prompt
-    assert "one shell command" in prompt
-    assert "Do not read or re-read them in separate commands" in prompt
+    assert "Do not run a shell command or call another tool" in prompt
+    assert "cat --" not in prompt
     assert ".agents/skills/omc-plan/SKILL.md" not in prompt
     assert "secret-nonce" not in prompt
 
@@ -2805,7 +2830,7 @@ def test_execute_provider_rejects_unnecessary_omc_plan_round_trip(
     assert "offending_command" not in failure
 
 
-def test_execute_provider_rejects_shell_command_after_exact_context_read(
+def test_execute_provider_rejects_any_shell_command_with_embedded_context(
     tmp_path, monkeypatch
 ):
     output_path = tmp_path / "output.json"
@@ -2822,14 +2847,6 @@ def test_execute_provider_rejects_shell_command_after_exact_context_read(
                     "id": "read-1",
                     "type": "command_execution",
                     "command": expected_read,
-                },
-            }),
-            json.dumps({
-                "type": "item.completed",
-                "item": {
-                    "id": "extra-1",
-                    "type": "command_execution",
-                    "command": "git status --short",
                 },
             }),
             json.dumps({
@@ -2863,15 +2880,16 @@ def test_execute_provider_rejects_shell_command_after_exact_context_read(
             timeout_sec=180,
             failure_receipt_path=failure_path,
             context_paths=("context/a.txt",),
+            context_files={"context/a.txt": "frozen\n"},
         )
 
     failure = json.loads(failure_path.read_text(encoding="utf-8"))
     assert failure["reason_code"] == "unnecessary_plan_round_trip"
-    assert failure["offending_command_kind"] == "additional_shell_command"
+    assert failure["offending_command_kind"] == "unexpected_shell_command"
     assert failure["offending_command_sha256"] == runtime._sha256_text(
-        "git status --short"
+        expected_read
     )
-    assert "git status --short" not in failure_path.read_text(encoding="utf-8")
+    assert expected_read not in failure_path.read_text(encoding="utf-8")
 
 
 def test_execute_provider_rejects_redundant_context_round_trip(
@@ -2931,6 +2949,10 @@ def test_execute_provider_rejects_redundant_context_round_trip(
             timeout_sec=180,
             failure_receipt_path=failure_path,
             context_paths=("context/a.txt", "context/b.txt"),
+            context_files={
+                "context/a.txt": "a\n",
+                "context/b.txt": "b\n",
+            },
         )
 
     failure = json.loads(failure_path.read_text(encoding="utf-8"))
@@ -2999,7 +3021,7 @@ def test_execute_provider_retries_one_activation_miss_and_counts_all_usage(
     }
 
 
-def test_execute_provider_allows_one_context_read_per_activation_attempt(
+def test_execute_provider_reuses_embedded_context_without_tools_on_activation_retry(
     tmp_path, monkeypatch
 ):
     output_path = tmp_path / "output.json"
@@ -3012,14 +3034,6 @@ def test_execute_provider_allows_one_context_read_per_activation_attempt(
 
         def __init__(self, attempt):
             self.stdout = "\n".join([
-                json.dumps({
-                    "type": "item.completed",
-                    "item": {
-                        "id": f"read-{attempt}",
-                        "type": "command_execution",
-                        "command": "cat -- context/a.txt",
-                    },
-                }),
                 json.dumps({
                     "type": "turn.completed",
                     "usage": {"input_tokens": 10, "output_tokens": 5},
@@ -3052,6 +3066,7 @@ def test_execute_provider_allows_one_context_read_per_activation_attempt(
         timeout_sec=180,
         max_activation_attempts=2,
         context_paths=("context/a.txt",),
+        context_files={"context/a.txt": "frozen\n"},
     )
 
     assert calls == 2
@@ -3062,7 +3077,7 @@ def test_execute_provider_allows_one_context_read_per_activation_attempt(
     ] == "unavailable"
 
 
-def test_execute_provider_rejects_sync_before_exact_context_read(
+def test_execute_provider_rejects_sync_with_embedded_context(
     tmp_path, monkeypatch
 ):
     output_path = tmp_path / "output.json"
@@ -3120,12 +3135,13 @@ def test_execute_provider_rejects_sync_before_exact_context_read(
             max_activation_attempts=2,
             failure_receipt_path=failure_path,
             context_paths=("scripts/omc.py",),
+            context_files={"scripts/omc.py": "# frozen\n"},
         )
 
     assert calls == 1
     failure = json.loads(failure_path.read_text(encoding="utf-8"))
     assert failure["reason_code"] == "unnecessary_plan_round_trip"
-    assert failure["offending_command_kind"] == "unexpected_first_command"
+    assert failure["offending_command_kind"] == "unexpected_shell_command"
 
 
 def test_execute_provider_blocks_after_two_activation_misses_with_usage_receipt(
@@ -3790,6 +3806,7 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
                     kwargs["provider_id"],
                     kwargs["request"],
                     context_paths=kwargs["context_paths"],
+                    context_files=kwargs["context_files"],
                 )
             ),
         }
@@ -3942,6 +3959,7 @@ def test_diagnostic_rejudge_preserves_provider_evidence_and_blocks_replacement(t
                         provider_id,
                         case["request"],
                         context_paths=tuple(case["context_files"]),
+                        context_files=case["context_files"],
                     )
                 ),
                 "provider_input_sha256": runtime.build_provider_input_envelope(
@@ -4138,6 +4156,7 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
                         provider_id,
                         case["request"],
                         context_paths=tuple(case["context_files"]),
+                        context_files=case["context_files"],
                     )
                 ),
                 "provider_input_sha256": runtime.build_provider_input_envelope(
@@ -4380,6 +4399,7 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
                         provider_id,
                         case["request"],
                         context_paths=tuple(case["context_files"]),
+                        context_files=case["context_files"],
                     )
                 ),
                 "provider_input_sha256": runtime.build_provider_input_envelope(
