@@ -2189,30 +2189,43 @@ def test_baseline_must_return_activation_sentinel():
         )
 
 
-def test_omc_provider_prompt_requires_exact_skill_read_before_planning():
+def test_omc_provider_prompt_requires_exact_context_read_before_planning():
     prompt = runtime.build_provider_prompt(
         "omc-plan",
         "Plan this change",
         context_paths=("src/service.py", "tests/test_service.py"),
     )
 
-    skill_instruction = "Read `.agents/skills/omc-plan/SKILL.md`"
-    assert skill_instruction in prompt
-    assert "Read only that skill file and the provided context files" in prompt
+    assert "Read only the provided context files" in prompt
     assert '"src/service.py"' in prompt
     assert '"tests/test_service.py"' in prompt
     assert "every file under `context/`" not in prompt
     assert "one shell command" in prompt
     assert "Do not read or re-read them in separate commands" in prompt
     read_command = prompt[prompt.index("`cat -- ") + 1:].split("`", 1)[0]
-    assert ".agents/skills/omc-plan/SKILL.md" in read_command
+    assert ".agents/skills/omc-plan/SKILL.md" not in read_command
     assert "src/service.py" in read_command
     assert "tests/test_service.py" in read_command
     assert "Do not run `pwd` or progress-only shell commands" in prompt
     assert "first and only permitted shell command" in prompt
     assert "After it returns, do not call another tool" in prompt
-    assert prompt.index(skill_instruction) < prompt.index("produce the implementation plan")
     assert "$omc-plan" in prompt
+
+
+def test_omc_activation_prompt_uses_native_skill_without_shell_command():
+    prompt = runtime.build_provider_prompt("omc-plan", "Return activation receipt")
+
+    assert "project skill is already loaded natively" in prompt
+    assert "Do not run a shell command" in prompt
+    assert "cat --" not in prompt
+    assert ".agents/skills/omc-plan/SKILL.md" not in prompt
+
+
+def test_omc_context_command_excludes_native_skill_and_is_empty_for_probe():
+    assert runtime._omc_plan_context_command(()) == ""
+    assert runtime._omc_plan_context_command(
+        ("tests/test_service.py", "src/service.py")
+    ) == "cat -- src/service.py tests/test_service.py"
 
 
 def test_omc_plan_skill_freezes_isolated_runtime_to_one_exact_read():
@@ -2354,14 +2367,6 @@ def test_execute_provider_preserves_activation_and_usage(tmp_path, monkeypatch):
         returncode = 0
         stderr = ""
         stdout = "\n".join([
-            json.dumps({
-                "type": "item.completed",
-                "item": {
-                    "id": "read-1",
-                    "type": "command_execution",
-                    "command": "cat -- .agents/skills/omc-plan/SKILL.md",
-                },
-            }),
             json.dumps({
                 "type": "skill.activated",
                 "skill_name": "omc-plan",
@@ -2580,7 +2585,7 @@ def test_plan_round_trip_gate_rejects_pwd_and_progress_only_commands():
         "item": {
             "id": "read-1",
             "type": "command_execution",
-            "command": "cat -- .agents/skills/omc-plan/SKILL.md context/a.txt",
+            "command": "cat -- context/a.txt",
         },
     })
 
@@ -2600,7 +2605,7 @@ def test_plan_round_trip_gate_rejects_pwd_and_progress_only_commands():
 
 
 def test_omc_plan_shell_contract_requires_one_exact_read_command():
-    expected = "cat -- .agents/skills/omc-plan/SKILL.md context/a.txt"
+    expected = "cat -- context/a.txt"
     exact_read = json.dumps({
         "type": "item.completed",
         "item": {
@@ -2646,7 +2651,7 @@ def test_omc_plan_shell_contract_requires_one_exact_read_command():
 
 
 def test_omc_plan_shell_contract_accepts_codex_shell_wrappers_only_for_exact_read():
-    expected = "cat -- .agents/skills/omc-plan/SKILL.md context/a.txt"
+    expected = "cat -- context/a.txt"
 
     def command_event(command):
         return json.dumps({
@@ -2659,8 +2664,8 @@ def test_omc_plan_shell_contract_accepts_codex_shell_wrappers_only_for_exact_rea
         })
 
     for wrapped in (
-        "/bin/zsh -c 'cat -- .agents/skills/omc-plan/SKILL.md context/a.txt'",
-        "/bin/zsh -lc 'cat -- .agents/skills/omc-plan/SKILL.md context/a.txt'",
+        "/bin/zsh -c 'cat -- context/a.txt'",
+        "/bin/zsh -lc 'cat -- context/a.txt'",
     ):
         assert runtime.detect_omc_plan_shell_contract_violation(
             command_event(wrapped), expected
@@ -2668,11 +2673,11 @@ def test_omc_plan_shell_contract_accepts_codex_shell_wrappers_only_for_exact_rea
 
     compound = (
         "/bin/zsh -lc "
-        "'cat -- .agents/skills/omc-plan/SKILL.md context/a.txt; ls -la'"
+        "'cat -- context/a.txt; ls -la'"
     )
     trailing = (
         "/bin/zsh -lc "
-        "'cat -- .agents/skills/omc-plan/SKILL.md context/a.txt' ignored"
+        "'cat -- context/a.txt' ignored"
     )
     for invalid_wrapper in (compound, trailing):
         assert runtime.detect_omc_plan_shell_contract_violation(
@@ -2681,6 +2686,25 @@ def test_omc_plan_shell_contract_accepts_codex_shell_wrappers_only_for_exact_rea
             "kind": "unexpected_first_command",
             "command_sha256": runtime._sha256_text(invalid_wrapper),
         }
+
+
+def test_omc_activation_shell_contract_allows_zero_commands_only():
+    unexpected_command = json.dumps({
+        "type": "item.completed",
+        "item": {
+            "id": "list-1",
+            "type": "command_execution",
+            "command": "ls -la",
+        },
+    })
+
+    assert runtime.detect_omc_plan_shell_contract_violation("", "") is None
+    assert runtime.detect_omc_plan_shell_contract_violation(
+        unexpected_command, ""
+    ) == {
+        "kind": "unexpected_shell_command",
+        "command_sha256": runtime._sha256_text("ls -la"),
+    }
 
 
 def test_plan_round_trip_gate_allows_pwd_as_a_command_argument():
@@ -2770,7 +2794,7 @@ def test_execute_provider_rejects_shell_command_after_exact_context_read(
 ):
     output_path = tmp_path / "output.json"
     failure_path = tmp_path / "failure.json"
-    expected_read = "cat -- .agents/skills/omc-plan/SKILL.md context/a.txt"
+    expected_read = "cat -- context/a.txt"
 
     class Completed:
         returncode = 0
@@ -2913,14 +2937,6 @@ def test_execute_provider_retries_one_activation_miss_and_counts_all_usage(
         def __init__(self, input_tokens, output_tokens):
             self.stdout = "\n".join([
                 json.dumps({
-                    "type": "item.completed",
-                    "item": {
-                        "id": "read-1",
-                        "type": "command_execution",
-                        "command": "cat -- .agents/skills/omc-plan/SKILL.md",
-                    },
-                }),
-                json.dumps({
                     "type": "turn.completed",
                     "usage": {
                         "input_tokens": input_tokens,
@@ -2985,9 +3001,7 @@ def test_execute_provider_allows_one_context_read_per_activation_attempt(
                     "item": {
                         "id": f"read-{attempt}",
                         "type": "command_execution",
-                        "command": (
-                            "cat -- .agents/skills/omc-plan/SKILL.md context/a.txt"
-                        ),
+                        "command": "cat -- context/a.txt",
                     },
                 }),
                 json.dumps({
@@ -3109,14 +3123,6 @@ def test_execute_provider_blocks_after_two_activation_misses_with_usage_receipt(
         returncode = 0
         stderr = ""
         stdout = "\n".join([
-            json.dumps({
-                "type": "item.completed",
-                "item": {
-                    "id": "read-1",
-                    "type": "command_execution",
-                    "command": "cat -- .agents/skills/omc-plan/SKILL.md",
-                },
-            }),
             json.dumps({
                 "type": "turn.completed",
                 "usage": {"input_tokens": 10, "output_tokens": 5},

@@ -2359,8 +2359,11 @@ def _omc_plan_context_command(context_paths: tuple[str, ...]) -> str:
     normalized_context_paths = tuple(
         sorted(_safe_context_path(path) for path in context_paths)
     )
-    read_paths = (".agents/skills/omc-plan/SKILL.md", *normalized_context_paths)
-    return "cat -- " + " ".join(shlex.quote(path) for path in read_paths)
+    if not normalized_context_paths:
+        return ""
+    return "cat -- " + " ".join(
+        shlex.quote(path) for path in normalized_context_paths
+    )
 
 
 def build_provider_prompt(
@@ -2395,17 +2398,25 @@ def build_provider_prompt(
         )
     if provider_id == "omc-plan":
         context_command = _omc_plan_context_command(context_paths)
+        if normalized_context_paths:
+            context_instruction = (
+                "Use one shell command to read every exact context path before planning: "
+                f"`{context_command}`. Paths: "
+                f"{json.dumps(normalized_context_paths, ensure_ascii=False)}. "
+                "Read only the provided context files; do not enumerate unrelated files. "
+                "Do not read or re-read them in separate commands. This exact `cat` command "
+                "is the first and only permitted shell command. Do not run `pwd` or "
+                "progress-only shell commands. After it returns, do not call another tool; "
+            )
+        else:
+            context_instruction = (
+                "The project skill is already loaded natively and no context files were "
+                "provided. Do not run a shell command or call another tool; "
+            )
         return (
             receipt_instruction
-            + "Use one shell command to read the skill and every exact context path before "
-            + f"planning: `{context_command}`. Paths: "
-            + f"{json.dumps(normalized_context_paths, ensure_ascii=False)}. "
-            + "Read `.agents/skills/omc-plan/SKILL.md` in that command before planning. "
-            + "Read only that skill file and the provided context files; do not enumerate "
-            + "unrelated files. Do not read or re-read them in separate commands. "
-            + "This exact `cat` command is the first and only permitted shell command. "
-            + "Do not run `pwd` or progress-only shell commands. After it returns, do not "
-            + "call another tool; apply the loaded skill and produce the implementation "
+            + context_instruction
+            + "apply the loaded skill and produce the implementation "
             + "plan immediately.\n\n"
             + "$omc-plan\n\n"
             + request
@@ -2697,6 +2708,13 @@ def detect_omc_plan_shell_contract_violation(
         if isinstance(command, str):
             commands.append(command.strip())
 
+    if not expected_command:
+        if not commands:
+            return None
+        return {
+            "kind": "unexpected_shell_command",
+            "command_sha256": _sha256_text(commands[0]),
+        }
     if not commands:
         return {
             "kind": "missing_exact_read",
