@@ -863,6 +863,159 @@ def test_confirmatory_prepare_and_seal_cli_round_trip(tmp_path):
     assert receipt["provider_execution_allowed"] is True
 
 
+def test_confirmatory_gold_author_payload_uses_exact_anonymized_baseline_context():
+    source_cases = [_case(index) for index in range(1, 11)]
+    source_cases[0]["request"] = (
+        "Update Sixshop behavior; contact owner@example.com and see "
+        "https://internal.example.com/spec."
+    )
+    source_cases[0]["context_files"] = {
+        "service.py": "TARGET = 'libs/sixshop/service.py'\n",
+        "libs/sixshop/service.py": (
+            "OWNER = 'owner@example.com'\n"
+            "SPEC = 'https://internal.example.com/spec'\n"
+            "LOCAL = '/Users/example/private/source.py'\n"
+            "PRODUCT = 'Sixshop'\n"
+        ),
+        "tests/test_service.py": "def test_sixshop():\n    assert True\n",
+    }
+    source_cases[0]["context_sha256"] = runtime.canonical_digest(
+        source_cases[0]["context_files"]
+    )
+    readiness = _local_transfer_readiness(source_cases)
+    selection = _confirmatory_selection(source_cases)
+
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=readiness,
+        selection=selection,
+    )
+
+    assert payload["status"] == "approval_required"
+    assert payload["provider_execution_allowed"] is False
+    assert payload["public_corpus"]["corpus_sha256"] == runtime.canonical_digest(
+        payload["public_corpus"]["cases"]
+    )
+    runtime_by_id = {
+        case["case_id"]: case for case in payload["runtime_corpus"]["cases"]
+    }
+    packet_by_id = {
+        case["case_id"]: case
+        for case in payload["gold_author_packet"]["cases"]
+    }
+    public_by_id = {
+        case["case_id"]: case for case in payload["public_corpus"]["cases"]
+    }
+    for case_id, runtime_case in runtime_by_id.items():
+        assert packet_by_id[case_id]["context_files"] == runtime_case["context_files"]
+        assert public_by_id[case_id]["context_sha256"] == runtime.canonical_digest(
+            runtime_case["context_files"]
+        )
+
+    serialized = json.dumps(payload, ensure_ascii=False)
+    for forbidden in (
+        "Sixshop",
+        "sixshop",
+        "owner@example.com",
+        "https://internal.example.com",
+        "/Users/example",
+        "baseline_commit",
+        "followup_commit",
+    ):
+        assert forbidden not in serialized
+    assert sorted(runtime_by_id[source_cases[0]["case_id"]]["context_files"]) == [
+        "context/file-01.py",
+        "context/file-02.py",
+        "context/file-03.py",
+    ]
+    assert "libs/" not in serialized
+
+
+def test_confirmatory_runtime_bridge_accepts_generated_anonymized_public_corpus():
+    source_cases = [_case(index) for index in range(1, 11)]
+    readiness = _local_transfer_readiness(source_cases)
+    selection = _confirmatory_selection(source_cases)
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=readiness,
+        selection=selection,
+    )
+    gold, trusted_gold = _signed_gold(
+        payload["public_corpus"]["cases"],
+        [_gold(index) for index in range(1, 11)],
+    )
+    _, signer_public_key = _signer()
+
+    preparation = runtime.prepare_confirmatory_runtime_inputs(
+        readiness=readiness,
+        public_corpus=payload["public_corpus"],
+        selection=selection,
+        gold_document=gold,
+        trusted_prior_fingerprints=[runtime._case_fingerprint(_case(99))],
+        skill_sha256="a" * 64,
+        producer="fresh-batch-curator",
+        author_session_id="gold-author",
+        reviewer_session_id="gold-reviewer",
+        signer="independent-confirmatory-reviewer",
+        signer_public_key=signer_public_key,
+        trusted_gold_signer_public_keys=trusted_gold,
+    )
+
+    assert preparation["status"] == "approval_required"
+    assert preparation["runtime_corpus"] == payload["runtime_corpus"]
+
+
+def test_confirmatory_runtime_bridge_rejects_anonymization_policy_drift():
+    source_cases = [_case(index) for index in range(1, 11)]
+    readiness = _local_transfer_readiness(source_cases)
+    selection = _confirmatory_selection(source_cases)
+    payload = runtime.prepare_confirmatory_gold_author_payload(
+        readiness=readiness,
+        selection=selection,
+    )
+    payload["public_corpus"]["anonymization_policy_sha256"] = "f" * 64
+
+    with pytest.raises(ValueError, match="anonymization policy mismatch"):
+        runtime._runtime_cases_from_transfer_readiness(
+            readiness,
+            payload["public_corpus"],
+        )
+
+
+def test_confirmatory_gold_author_payload_cli(tmp_path):
+    source_cases = [_case(index) for index in range(1, 11)]
+    readiness_path = tmp_path / "readiness.json"
+    selection_path = tmp_path / "selection.json"
+    output_path = tmp_path / "gold-author-payload.json"
+    readiness_path.write_text(
+        json.dumps(_local_transfer_readiness(source_cases)),
+        encoding="utf-8",
+    )
+    selection_path.write_text(
+        json.dumps(_confirmatory_selection(source_cases)),
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(Path(runtime.__file__)),
+            "prepare-gold-author",
+            str(readiness_path),
+            str(selection_path),
+            "--output",
+            str(output_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "approval_required"
+    assert payload["payload_bundle_sha256"] == runtime.canonical_digest(
+        runtime._without_digest(payload, "payload_bundle_sha256")
+    )
+
+
 def test_confirmatory_runtime_bridge_rejects_transfer_or_skill_drift():
     source_cases = [_case(index) for index in range(1, 11)]
     readiness = _local_transfer_readiness(source_cases)

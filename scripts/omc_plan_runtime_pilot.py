@@ -8,6 +8,7 @@ import base64
 import hashlib
 import json
 import math
+import re
 import secrets
 import shlex
 import subprocess
@@ -78,6 +79,13 @@ FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS = {
     "high": 3,
 }
 FROZEN_CONFIRMATORY_MAX_SELECTED_OBJECT_CASES = 2
+CONFIRMATORY_ANONYMIZATION_POLICY = {
+    "schema_version": 1,
+    "path_strategy": "ordered-generic-label-with-extension",
+    "content_strategy": "fixed-sensitive-token-redaction",
+    "request_strategy": "fixed-sensitive-token-redaction",
+    "source": "baseline-only-transfer-readiness",
+}
 MAX_CONTEXT_FILE_COUNT = 20
 MAX_CONTEXT_FILE_BYTES = 128 * 1024
 MAX_CONTEXT_TOTAL_BYTES = 512 * 1024
@@ -354,6 +362,209 @@ def _without_digest(value: dict[str, Any], field: str) -> dict[str, Any]:
     return {key: item for key, item in value.items() if key != field}
 
 
+def _confirmatory_anonymization_policy_sha256() -> str:
+    return canonical_digest(CONFIRMATORY_ANONYMIZATION_POLICY)
+
+
+def _scrub_confirmatory_text(value: str) -> str:
+    value = re.sub(
+        r"/(?:Users|home)/[^\s\"'<>]+",
+        "<LOCAL_PATH>",
+        value,
+    )
+    value = re.sub(r"https?://[^\s\"'<>]+", "<URL>", value)
+    value = re.sub(
+        r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}",
+        "<EMAIL>",
+        value,
+    )
+    value = re.sub(r"AKIA[0-9A-Z]{16}", "<REDACTED_KEY>", value)
+    return re.sub(r"(?i)sixshop|식스샵", "<PRODUCT>", value)
+
+
+def _anonymized_context_path(path: str, index: int) -> str:
+    suffix = PurePosixPath(path).suffix.lower()
+    if not re.fullmatch(r"\.[a-z0-9]{1,10}", suffix):
+        suffix = ".txt"
+    return f"context/file-{index:02d}{suffix}"
+
+
+def _anonymize_confirmatory_case(case: dict[str, Any]) -> dict[str, Any]:
+    source_context = case["context_files"]
+    ordered_paths = sorted(source_context)
+    aliases = {
+        path: _anonymized_context_path(path, index)
+        for index, path in enumerate(ordered_paths, 1)
+    }
+    anonymized_context: dict[str, str] = {}
+    replacement_paths = sorted(aliases, key=lambda value: (-len(value), value))
+    for path in ordered_paths:
+        content = source_context[path]
+        for source_path in replacement_paths:
+            content = content.replace(source_path, aliases[source_path])
+        anonymized_context[aliases[path]] = _scrub_confirmatory_text(content)
+    return {
+        "case_id": case["case_id"],
+        "split": case["split"],
+        "source_type": "observed_anonymized",
+        "request": _scrub_confirmatory_text(case["request"]),
+        "provenance": {
+            "source_sha256": case["context_sha256"],
+            "anonymization_reviewed": True,
+            "approved": True,
+        },
+        "context_files": anonymized_context,
+        "context_sha256": canonical_digest(anonymized_context),
+    }
+
+
+def _readiness_projection_public_corpus(
+    readiness: dict[str, Any],
+) -> dict[str, Any]:
+    bundle = readiness.get("transfer_bundle")
+    bundle_cases = bundle.get("cases") if isinstance(bundle, dict) else None
+    if not isinstance(bundle_cases, list):
+        raise ValueError("local transfer readiness cases are required")
+    cases = []
+    for item in bundle_cases:
+        if not isinstance(item, dict) or not isinstance(item.get("files"), list):
+            raise ValueError("local transfer readiness cases are invalid")
+        context_files = {}
+        for source in item["files"]:
+            if not isinstance(source, dict):
+                raise ValueError("local transfer readiness files are invalid")
+            path = source.get("relative_path")
+            content = source.get("content_utf8")
+            if (
+                not isinstance(path, str)
+                or not isinstance(content, str)
+                or path in context_files
+            ):
+                raise ValueError("local transfer readiness files are invalid")
+            context_files[path] = content
+        request = item.get("request")
+        if not isinstance(request, str):
+            raise ValueError("local transfer readiness request is invalid")
+        cases.append({
+            "case_id": item.get("case_id"),
+            "split": "holdout",
+            "source_type": "observed_anonymized",
+            "task_type": "development",
+            "request": request,
+            "context_sha256": canonical_digest(context_files),
+        })
+    corpus = {"schema_version": 1, "status": "frozen", "cases": cases}
+    corpus["corpus_sha256"] = canonical_digest(cases)
+    return corpus
+
+
+def prepare_confirmatory_gold_author_payload(
+    *,
+    readiness: dict[str, Any],
+    selection: dict[str, Any],
+) -> dict[str, Any]:
+    """Freeze an anonymized baseline-only corpus for independent gold authoring."""
+    raw_cases = _runtime_cases_from_transfer_readiness(
+        readiness,
+        _readiness_projection_public_corpus(readiness),
+    )
+    labels = selection.get("cases")
+    policy = selection.get("selection_policy")
+    if not isinstance(labels, list) or not isinstance(policy, dict):
+        raise ValueError("confirmatory selection contract is invalid")
+    label_by_id = {item.get("case_id"): item for item in labels if isinstance(item, dict)}
+    if len(label_by_id) != len(raw_cases) or set(label_by_id) != {
+        case["case_id"] for case in raw_cases
+    }:
+        raise ValueError("confirmatory selection and readiness cases do not match")
+
+    runtime_cases = [_anonymize_confirmatory_case(case) for case in raw_cases]
+    semantic_contract = {
+        "required_surface_counts": policy.get("required_surface_counts"),
+        "required_ambiguity_counts": policy.get("required_ambiguity_counts"),
+        "maximum_selected_object_cases": policy.get(
+            "maximum_selected_object_cases"
+        ),
+        "case_labels": [
+            {
+                "case_id": case["case_id"],
+                "surface": label_by_id[case["case_id"]].get("surface"),
+                "ambiguity": label_by_id[case["case_id"]].get("ambiguity"),
+                "selected_object": label_by_id[case["case_id"]].get(
+                    "selected_object"
+                ),
+            }
+            for case in runtime_cases
+        ],
+    }
+    _validate_confirmatory_semantic_contract(
+        semantic_contract,
+        cases=runtime_cases,
+    )
+    policy_sha256 = _confirmatory_anonymization_policy_sha256()
+    public_cases = [
+        {
+            "case_id": case["case_id"],
+            "split": case["split"],
+            "source_type": case["source_type"],
+            "task_type": label_by_id[case["case_id"]].get("surface"),
+            "request": case["request"],
+            "context_sha256": case["context_sha256"],
+        }
+        for case in runtime_cases
+    ]
+    public_corpus = {
+        "schema_version": 1,
+        "status": "frozen",
+        "anonymization_policy_sha256": policy_sha256,
+        "cases": public_cases,
+        "corpus_sha256": canonical_digest(public_cases),
+    }
+    runtime_corpus = {
+        "schema_version": 1,
+        "status": "frozen",
+        "source_corpus_sha256": public_corpus["corpus_sha256"],
+        "cases": runtime_cases,
+        "corpus_sha256": canonical_digest(runtime_cases),
+    }
+    author_cases = [
+        {
+            "case_id": case["case_id"],
+            "request": case["request"],
+            "task_type": label_by_id[case["case_id"]].get("surface"),
+            "ambiguity": label_by_id[case["case_id"]].get("ambiguity"),
+            "context_files": case["context_files"],
+        }
+        for case in runtime_cases
+    ]
+    author_packet = {
+        "schema_version": 1,
+        "purpose": "independent fresh Batch A baseline-only gold authoring",
+        "provider_outputs_available": False,
+        "anonymization_policy_sha256": policy_sha256,
+        "review_rules": [
+            "Derive requirements only from the request and supplied baseline context.",
+            "Do not infer behavior from a follow-up implementation or provider output.",
+            "Return exactly one gold case for every input case in input order.",
+        ],
+        "cases": author_cases,
+    }
+    result = {
+        "schema_version": 1,
+        "status": "approval_required",
+        "source_readiness_sha256": readiness.get("readiness_sha256"),
+        "anonymization_policy": deepcopy(CONFIRMATORY_ANONYMIZATION_POLICY),
+        "anonymization_policy_sha256": policy_sha256,
+        "public_corpus": public_corpus,
+        "runtime_corpus": runtime_corpus,
+        "gold_author_packet": author_packet,
+        "external_payload_sha256": canonical_digest(author_packet),
+        "provider_execution_allowed": False,
+    }
+    result["payload_bundle_sha256"] = canonical_digest(result)
+    return result
+
+
 def _runtime_cases_from_transfer_readiness(
     readiness: dict[str, Any], public_corpus: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -419,6 +630,16 @@ def _runtime_cases_from_transfer_readiness(
     if len(bundle_by_id) != len(bundle_cases) or len(manifest_by_id) != len(manifest_cases):
         raise ValueError("local transfer case ids must be unique")
 
+    anonymization_policy_sha256 = public_corpus.get(
+        "anonymization_policy_sha256"
+    )
+    if (
+        anonymization_policy_sha256 is not None
+        and anonymization_policy_sha256
+        != _confirmatory_anonymization_policy_sha256()
+    ):
+        raise ValueError("confirmatory anonymization policy mismatch")
+
     runtime_cases: list[dict[str, Any]] = []
     for public_case in public_cases:
         case_id = public_case.get("case_id")
@@ -426,12 +647,12 @@ def _runtime_cases_from_transfer_readiness(
         manifest_case = manifest_by_id.get(case_id)
         if not isinstance(bundle_case, dict) or not isinstance(manifest_case, dict):
             raise ValueError("public corpus and transfer cases do not match")
-        request = public_case.get("request")
+        request = bundle_case.get("request")
         if (
             public_case.get("split") != "holdout"
             or public_case.get("source_type") != "observed_anonymized"
             or not _is_sha256(public_case.get("context_sha256"))
-            or request != bundle_case.get("request")
+            or not isinstance(request, str)
             or manifest_case.get("request_sha256") != _sha256_text(request)
         ):
             raise ValueError("public corpus and transfer case contract mismatch")
@@ -465,22 +686,28 @@ def _runtime_cases_from_transfer_readiness(
             context_files[path] = content
         if set(context_files) != set(included):
             raise ValueError("local transfer included file set mismatch")
-        context_sha256 = canonical_digest(context_files)
-        if context_sha256 != public_case["context_sha256"]:
-            raise ValueError("public corpus and runtime context hash mismatch")
-        runtime_cases.append({
+        source_context_sha256 = canonical_digest(context_files)
+        runtime_case = {
             "case_id": case_id,
             "split": "holdout",
             "source_type": "observed_anonymized",
             "request": request,
             "provenance": {
-                "source_sha256": public_case["context_sha256"],
+                "source_sha256": source_context_sha256,
                 "anonymization_reviewed": True,
                 "approved": True,
             },
             "context_files": context_files,
-            "context_sha256": context_sha256,
-        })
+            "context_sha256": source_context_sha256,
+        }
+        if anonymization_policy_sha256 is not None:
+            runtime_case = _anonymize_confirmatory_case(runtime_case)
+        if (
+            runtime_case["request"] != public_case.get("request")
+            or runtime_case["context_sha256"] != public_case["context_sha256"]
+        ):
+            raise ValueError("public corpus and runtime context hash mismatch")
+        runtime_cases.append(runtime_case)
     return runtime_cases
 
 
@@ -3147,6 +3374,11 @@ def main() -> int:
     )
     confirm_parser.add_argument("--output")
 
+    gold_author_parser = subparsers.add_parser("prepare-gold-author")
+    gold_author_parser.add_argument("readiness")
+    gold_author_parser.add_argument("selection")
+    gold_author_parser.add_argument("--output", required=True)
+
     prepare_confirmatory_parser = subparsers.add_parser(
         "prepare-confirmatory"
     )
@@ -3200,6 +3432,21 @@ def main() -> int:
         if args.output:
             Path(args.output).write_text(payload, encoding="utf-8")
         print(payload)
+        return 0
+
+    if args.command == "prepare-gold-author":
+        result = prepare_confirmatory_gold_author_payload(
+            readiness=_load_json(args.readiness),
+            selection=_load_json(args.selection),
+        )
+        Path(args.output).write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(json.dumps({
+            "status": result["status"],
+            "external_payload_sha256": result["external_payload_sha256"],
+            "output": str(Path(args.output).resolve()),
+        }, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "prepare-confirmatory":
