@@ -160,11 +160,14 @@ def provider_execution_evidence_digest(provider_batch: dict[str, Any]) -> str:
         raw_output_sha256 = execution.get("runtime_raw_output_sha256")
         if not _is_sha256(raw_output_sha256):
             raw_output_sha256 = _sha256_text(raw_output)
+        events_jsonl_sha256 = execution.get("events_jsonl_sha256")
+        if not _is_sha256(events_jsonl_sha256):
+            events_jsonl_sha256 = _sha256_text(execution.get("events_jsonl", ""))
         evidence.append({
             "provider_id": execution.get("provider_id"),
             "case_id": execution.get("case_id"),
             "raw_output_sha256": raw_output_sha256,
-            "events_jsonl_sha256": _sha256_text(execution.get("events_jsonl", "")),
+            "events_jsonl_sha256": events_jsonl_sha256,
             "activation": execution.get("activation"),
             "usage": execution.get("usage"),
             "command_sha256": execution.get("command_sha256"),
@@ -2677,6 +2680,200 @@ def _shell_command_payload(command: str) -> str:
     return tokens[payload_index].strip()
 
 
+_READ_ONLY_SHELL_EXECUTABLES = frozenset({
+    "cat",
+    "grep",
+    "head",
+    "ls",
+    "pwd",
+    "rg",
+    "sed",
+    "stat",
+    "tail",
+    "test",
+    "true",
+    "wc",
+})
+_READ_ONLY_GIT_SUBCOMMANDS = frozenset({
+    "diff",
+    "log",
+    "ls-files",
+    "rev-parse",
+    "show",
+    "status",
+})
+
+
+def _command_executions(events_jsonl: str) -> list[str]:
+    commands: list[str] = []
+    seen_executions: set[tuple[str, str]] = set()
+    for line_index, line in enumerate(events_jsonl.splitlines()):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "command_execution":
+            continue
+        command = item.get("command")
+        if not isinstance(command, str) or not command.strip():
+            continue
+        stripped_command = command.strip()
+        execution_id = item.get("id")
+        execution_key = (
+            execution_id if isinstance(execution_id, str) else f"line:{line_index}",
+            stripped_command,
+        )
+        if execution_key in seen_executions:
+            continue
+        seen_executions.add(execution_key)
+        commands.append(stripped_command)
+    return commands
+
+
+def _git_subcommand(tokens: list[str]) -> str | None:
+    index = 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token in {"-C", "-c", "--git-dir", "--work-tree"}:
+            index += 2
+            continue
+        if token.startswith(("--git-dir=", "--work-tree=")):
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return token
+    return None
+
+
+def _rg_can_execute_external_command(tokens: list[str]) -> bool:
+    unsafe_long_options = ("--pre", "--hostname-bin")
+    for token in tokens[1:]:
+        if token in {"--search-zip", *unsafe_long_options}:
+            return True
+        if any(token.startswith(f"{option}=") for option in unsafe_long_options):
+            return True
+        if token.startswith("-") and not token.startswith("--") and "z" in token[1:]:
+            return True
+    return False
+
+
+def _sed_can_write_or_execute(tokens: list[str]) -> bool:
+    scripts: list[str] = []
+    explicit_script = False
+    index = 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token in {"-i", "--in-place", "-f", "--file"} or token.startswith(
+            ("-i", "--in-place=", "-f", "--file=")
+        ):
+            return True
+        if token in {"-e", "--expression"}:
+            index += 1
+            if index >= len(tokens):
+                return True
+            scripts.append(tokens[index])
+            explicit_script = True
+        elif token.startswith("--expression="):
+            scripts.append(token.split("=", 1)[1])
+            explicit_script = True
+        elif token.startswith("-e") and len(token) > 2:
+            scripts.append(token[2:])
+            explicit_script = True
+        elif not token.startswith("-"):
+            if not explicit_script:
+                scripts.append(token)
+            break
+        index += 1
+    return not scripts or any(
+        re.search(r"(?:[wW]|e)(?:[ \t]|$)|/e(?:[ \t;]|$)", script)
+        for script in scripts
+    )
+
+
+def classify_shell_command(command: str) -> dict[str, str]:
+    """Classify a command conservatively without exposing its raw text."""
+    stripped = command.strip()
+    payload = _shell_command_payload(stripped)
+    try:
+        lexer = shlex.shlex(payload, posix=True, punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        tokens = []
+    safe = (
+        bool(tokens)
+        and not any(marker in payload for marker in ("$(", "`", "\n", "\r"))
+        and not any(token and set(token) <= set(";&|<>") for token in tokens)
+    )
+    executable = PurePosixPath(tokens[0]).name if tokens else ""
+    if executable in _READ_ONLY_SHELL_EXECUTABLES:
+        if executable == "rg" and _rg_can_execute_external_command(tokens):
+            safe = False
+        if executable == "sed" and _sed_can_write_or_execute(tokens):
+            safe = False
+    elif executable == "git":
+        safe = safe and _git_subcommand(tokens) in _READ_ONLY_GIT_SUBCOMMANDS
+        if any(
+            token == "-c"
+            or token == "--config-env"
+            or token.startswith("--config-env=")
+            or token == "--exec-path"
+            or token.startswith("--exec-path=")
+            for token in tokens[1:]
+        ):
+            safe = False
+        if any(
+            token in {"--ext-diff", "--textconv", "--show-signature"}
+            or token == "--output"
+            or token.startswith("--output=")
+            for token in tokens[1:]
+        ):
+            safe = False
+    else:
+        safe = False
+    return {
+        "kind": "read_only_shell_command" if safe else "unsafe_shell_command",
+        "command_sha256": _sha256_text(stripped),
+    }
+
+
+def assess_shell_commands(events_jsonl: str) -> list[dict[str, str]]:
+    return [classify_shell_command(command) for command in _command_executions(events_jsonl)]
+
+
+def _write_private_events(path: str | Path | None, events_jsonl: str) -> None:
+    if path is None:
+        return
+    event_path = Path(path)
+    event_path.parent.mkdir(parents=True, exist_ok=True)
+    event_path.write_text(events_jsonl, encoding="utf-8")
+
+
+def _redact_execution_events(execution: dict[str, Any]) -> dict[str, Any]:
+    public_execution = dict(execution)
+    events_jsonl = public_execution.pop("events_jsonl", "")
+    events_jsonl_sha256 = public_execution.get("events_jsonl_sha256")
+    if not _is_sha256(events_jsonl_sha256):
+        events_jsonl_sha256 = _sha256_text(events_jsonl)
+    public_execution["events_jsonl_sha256"] = events_jsonl_sha256
+    return public_execution
+
+
+def _redact_activation_probe_events(probe: dict[str, Any]) -> dict[str, Any]:
+    public_probe = dict(probe)
+    executions = public_probe.get("executions")
+    if isinstance(executions, dict):
+        public_probe["executions"] = {
+            provider_id: _redact_execution_events(execution)
+            for provider_id, execution in executions.items()
+        }
+    return public_probe
+
+
 def detect_omc_plan_shell_contract_violation(
     events_jsonl: str,
     expected_command: str,
@@ -2750,6 +2947,7 @@ def execute_provider(
     timeout_sec: int,
     max_activation_attempts: int = 1,
     failure_receipt_path: str | Path | None = None,
+    private_events_path: str | Path | None = None,
     context_paths: tuple[str, ...] = (),
     context_files: dict[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -2772,6 +2970,7 @@ def execute_provider(
     attempt_limit = max_activation_attempts if provider_id == "omc-plan" else 1
     attempt_events: list[str] = []
     attempt_usages: list[dict[str, Any]] = []
+    attempt_shell_assessments: list[dict[str, str]] = []
     for attempt_index in range(1, attempt_limit + 1):
         try:
             completed = subprocess.run(
@@ -2807,54 +3006,29 @@ def execute_provider(
             )
         attempt_events.append(completed.stdout)
         attempt_usages.append(extract_usage(completed.stdout))
-        if (
-            provider_id == "omc-plan"
-            and contains_redundant_omc_state_round_trip(
-                "\n".join(attempt_events),
-                context_paths=context_paths,
-            )
-        ):
-            _write_failure_receipt(
-                failure_receipt_path,
-                provider_id=provider_id,
-                reason_code="redundant_omc_state_round_trip",
-                timeout_sec=timeout_sec,
-                usage=_aggregate_attempt_usage(attempt_usages),
-            )
-            raise RuntimeError("redundant_omc_state_round_trip")
-        if contains_redundant_context_round_trip(
-            completed.stdout,
-            context_paths=context_paths,
-        ):
-            _write_failure_receipt(
-                failure_receipt_path,
-                provider_id=provider_id,
-                reason_code="redundant_context_round_trip",
-                timeout_sec=timeout_sec,
-                usage=_aggregate_attempt_usage(attempt_usages),
-            )
-            raise RuntimeError("redundant_context_round_trip")
-        round_trip_violation = (
-            detect_unnecessary_plan_round_trip("\n".join(attempt_events))
-            if provider_id == "omc-plan"
-            else None
+        combined_events = "\n".join(attempt_events)
+        _write_private_events(private_events_path, combined_events)
+        shell_assessments = assess_shell_commands(completed.stdout)
+        attempt_shell_assessments.extend(shell_assessments)
+        unsafe_command = next(
+            (
+                assessment
+                for assessment in shell_assessments
+                if assessment["kind"] == "unsafe_shell_command"
+            ),
+            None,
         )
-        if round_trip_violation is None:
-            round_trip_violation = detect_omc_plan_shell_contract_violation(
-                completed.stdout,
-                "",
-            )
-        if round_trip_violation is not None:
+        if unsafe_command is not None:
             _write_failure_receipt(
                 failure_receipt_path,
                 provider_id=provider_id,
-                reason_code="unnecessary_plan_round_trip",
+                reason_code="unsafe_shell_command",
                 timeout_sec=timeout_sec,
                 usage=_aggregate_attempt_usage(attempt_usages),
-                offending_command_kind=round_trip_violation["kind"],
-                offending_command_sha256=round_trip_violation["command_sha256"],
+                offending_command_kind=unsafe_command["kind"],
+                offending_command_sha256=unsafe_command["command_sha256"],
             )
-            raise RuntimeError("unnecessary_plan_round_trip")
+            raise RuntimeError("unsafe_shell_command")
         try:
             raw_output = Path(output_path).read_text(encoding="utf-8")
             plan = json.loads(raw_output)
@@ -2904,12 +3078,19 @@ def execute_provider(
     del plan["runtime_activation_receipt"]
     normalized_output = json.dumps(plan, ensure_ascii=False, sort_keys=True)
     usage = _aggregate_attempt_usage(attempt_usages)
+    events_jsonl = "\n".join(attempt_events)
     return {
         "provider_id": provider_id,
         "plan": plan,
         "raw_output": normalized_output,
         "runtime_raw_output_sha256": _sha256_text(raw_output),
-        "events_jsonl": "\n".join(attempt_events),
+        "events_jsonl": events_jsonl,
+        "events_jsonl_sha256": _sha256_text(events_jsonl),
+        "efficiency_violations": [
+            assessment
+            for assessment in attempt_shell_assessments
+            if assessment["kind"] == "read_only_shell_command"
+        ],
         "activation": activation,
         "usage": usage,
         "command_sha256": _sha256_text(json.dumps(command, ensure_ascii=False)),
@@ -2999,6 +3180,7 @@ def run_activation_probe(
     reasoning_effort: str,
     output_schema: str | Path,
     artifact_root: str | Path,
+    private_event_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run one non-scored pair and stop unless Codex exposes skill activation."""
     validate_runtime_protocol(protocol)
@@ -3047,6 +3229,11 @@ def run_activation_probe(
             timeout_sec=protocol["execution"]["timeout_sec"],
             max_activation_attempts=protocol["activation"]["max_attempts"],
             failure_receipt_path=outputs / f"{provider_id}.failure.json",
+            private_events_path=(
+                Path(private_event_root) / f"{provider_id}.jsonl"
+                if private_event_root is not None
+                else None
+            ),
         )
 
     executions = {"baseline-plan": execute("baseline-plan", baseline_root)}
@@ -3406,6 +3593,7 @@ def run_runtime_batch(
         reasoning_effort=reasoning_effort,
         output_schema=output_schema,
         artifact_root=root / "activation-probe",
+        private_event_root=root / "private-events" / "activation-probe",
     )
     if (
         activation_probe.get("status") != "pass"
@@ -3495,6 +3683,12 @@ def run_runtime_batch(
                 timeout_sec=protocol["execution"]["timeout_sec"],
                 max_activation_attempts=max_attempts,
                 failure_receipt_path=output_path.with_suffix(".failure.json"),
+                private_events_path=(
+                    root
+                    / "private-events"
+                    / case["case_id"]
+                    / f"{provider_id}.jsonl"
+                ),
                 context_paths=tuple(case["context_files"]),
                 context_files=case["context_files"],
             )
@@ -3519,6 +3713,8 @@ def run_runtime_batch(
         session_count=session_count,
         gold_document=gold_document,
     )
+    public_activation_probe = _redact_activation_probe_events(activation_probe)
+    public_executions = [_redact_execution_events(item) for item in executions]
     provider_batch = {
         "schema_version": 1,
         "batch_id": batch_id,
@@ -3530,12 +3726,12 @@ def run_runtime_batch(
         "gold_sha256": gold_document["gold_sha256"],
         "skill_sha256": skill_sha256,
         "instrumented_skill_sha256": instrumented_skill_sha256,
-        "activation_probe_sha256": canonical_digest(activation_probe),
-        "activation_probe": activation_probe,
+        "activation_probe_sha256": canonical_digest(public_activation_probe),
+        "activation_probe": public_activation_probe,
         "model": model,
         "reasoning_effort": reasoning_effort,
         "execution_budget": budget_state,
-        "executions": executions,
+        "executions": public_executions,
     }
     provider_batch["runtime_attestation"] = build_runtime_attestation(
         provider_batch,
