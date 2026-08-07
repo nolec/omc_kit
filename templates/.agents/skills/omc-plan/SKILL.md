@@ -15,21 +15,21 @@ python3 scripts/omc.py state sync-session --target . --mode autopilot --title "o
 AGENTS.md Tier 1 요구사항은 CONTRACT 입력으로 사용한다.
 
 ## Phase 1. CONTRACT
-목표 / 범위 (포함) / 범위 (제외) / DoD / 제약 / 사용자 컨펌을 고정한다. 사용자에게 보여줄 단계: CONTRACT·최소 설계·TDD 태스크·`$omc-task` handoff | 시스템이 암묵적으로 처리: 자명한 재안내·선택 스킬 추천·반복 코칭.
+목표 / 범위 (포함) / 범위 (제외) / DoD / 제약 / 사용자 컨펌을 고정한다. 사용자에게 보여줄 단계: CONTRACT·최소 설계·TDD 태스크·handoff | 시스템이 암묵적으로 처리: 재안내·반복 코칭.
 
 ## Phase 2. 최소 설계
 입력 / 출력 / 성공 지표 / 실패 정책 / 영향받는 파일. `decision / risk / next_action / policy_profile`: 진행 가능 여부 / 변경 위험도 / 다음 스킬 1개 / cost-quality 기본 추천. `policy_reason_summary / policy_confidence`도 출력한다.
 공통 결정표: stage=plan / outcome=unresolved|ready / user_selection_needed=yes|no | confidence=low → balanced + user_selection_needed=yes.
-- `plan full`: CONTRACT + 최소 설계 + 다중 TDD 태스크. 새 파일·신규 파일 생성, API·시그니처 변경, 3개 이상 파일, 검증 명령 축약 불가, 범위 불명확이면 사용한다.
+- `plan full`: CONTRACT + 최소 설계 + 다중 TDD 태스크. 새 파일·신규 파일/API·시그니처 변경/3개 이상 파일/검증 명령 축약 불가/범위 불명확.
 - `plan lite`: CONTRACT + 최소 설계 + 태스크 2개 이하. 기존 파일 중심, 검증 명령 1개, 범위를 한 문장으로 설명 가능할 때만 사용한다. 애매하거나 설명이 약하면 full 재계획한다.
-현재 dirty 변경과 이번 계획 범위는 분리한다.
+dirty 변경과 계획 범위는 분리한다.
 
 ## Phase 3. TDD 태스크 분해·근거 추출
-- 격리 benchmark는 runner가 주입한 frozen context만 사용해 shell·추가 tool 호출 없이 즉시 구조화 결과를 작성한다. 구조화 출력은 CONTRACT·handoff 없이 schema 필드만 반환하고 요구사항·scope·task 중복 금지, 항목별 한 문장, 짧은 ID를 적용한다.
-- 일반 실행은 근거 파일은 한 번의 명령으로 직접 읽고 진행 메시지·pwd·재탐색 금지. 코드 symbol·사용자 관찰 동작·실패 경로를 요구사항 후보에 연결하고 근거 매핑 완료 전 lite 금지.
+- 격리 benchmark는 runner가 주입한 frozen context만 사용, shell·추가 tool 호출 없이 즉시 구조화 결과 작성. 구조화 출력 중 todo_list·planning tool 생성 금지. CONTRACT·handoff 없이 schema 필드만 반환하며 요구사항·scope·task 중복 금지, 항목별 한 문장·짧은 ID를 쓴다.
+- 일반 실행은 근거 파일은 한 번의 명령으로 직접 읽고 진행 메시지·pwd·재탐색 금지. 코드 symbol·사용자 관찰 동작·실패 경로를 매핑하며 근거 매핑 완료 전 lite 금지.
 - 선택된 객체의 동작은 ID·수신자 전달을 상태·payload까지 추적해 supports·VERIFY에 연결한다. 요구사항은 짧은 ID로 고정하고 supports에는 ID만 재사용한다.
-- 직접 인접한 사용자 관찰 가능 비대상 동작은 surface당 1개만 보존 요구사항으로 고정한다. 포괄 표현 금지, 확인하지 않은 예시 명령 금지, 같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합한다.
-- assumptions는 요청·frozen context가 명시적으로 허용한 근거만 기록한다. 비차단 불확실성은 생략하고 구현을 막는 불확실성만 decisions_required로 옮긴다. assumptions·decisions는 구현을 막는 항목만 남기며 반복 설명 금지·불필요한 후속 제안 금지.
+- 직접 인접한 사용자 관찰 가능 비대상 동작은 surface당 1개 보존한다. 포괄 표현 금지·확인하지 않은 예시 명령 금지. 같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합하며 검증 경계가 다르면 요구사항 ID 분리, assumption이 필수 데이터 경로 검증을 대체 금지.
+- assumptions는 요청·frozen context가 명시적으로 허용한 근거만 기록한다. 비차단 불확실성은 생략하고 구현을 막는 불확실성만 decisions_required. assumptions·decisions는 구현을 막는 항목만 남기고 반복 설명 금지·후속 제안 금지.
 ```text
 태스크 N: [기능] / RED: [실패 테스트 파일+케이스] / GREEN: [최소 구현 파일] / VERIFY: [검증 커맨드]
 ```

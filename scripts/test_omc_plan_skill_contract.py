@@ -115,6 +115,9 @@ REQUIRED_EXECUTION_EFFICIENCY_MARKERS = [
     "근거 파일은 한 번의 명령",
     "진행 메시지·pwd·재탐색 금지",
     "즉시 구조화 결과",
+    "todo_list·planning tool 생성 금지",
+    "검증 경계가 다르면 요구사항 ID 분리",
+    "assumption이 필수 데이터 경로 검증을 대체 금지",
 ]
 
 REQUIRED_DECISION_OUTPUT_MARKERS = [

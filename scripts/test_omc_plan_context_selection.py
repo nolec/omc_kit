@@ -214,12 +214,12 @@ def _readiness_preregistration(
     ).decode("ascii")
     monkeypatch.setattr(
         context_selection,
-        "FROZEN_PREREGISTRATION_V4_SHA256",
+        "FROZEN_PREREGISTRATION_V5_SHA256",
         manifest["manifest_sha256"],
     )
     monkeypatch.setattr(
         context_selection,
-        "FROZEN_PREREGISTRATION_V4_PUBLIC_KEY",
+        "FROZEN_PREREGISTRATION_V5_PUBLIC_KEY",
         public_key,
     )
     return {
@@ -288,7 +288,7 @@ def test_active_frozen_selection_anchor_matches_fresh_batch_a_v2():
 
 def test_confirmatory_preregistration_binds_all_claim_inputs():
     manifest = json.loads(
-        (FIXTURES / "omc_plan_confirmatory_preregistration_v4.json").read_text()
+        (FIXTURES / "omc_plan_confirmatory_preregistration_v5.json").read_text()
     )
     selection = json.loads(
         (FIXTURES / "omc_plan_confirmatory_batch_a_v2_selection.json").read_text()
@@ -333,7 +333,7 @@ def test_confirmatory_preregistration_rejects_changed_claim_inputs(
     field, replacement
 ):
     manifest = json.loads(
-        (FIXTURES / "omc_plan_confirmatory_preregistration_v4.json").read_text()
+        (FIXTURES / "omc_plan_confirmatory_preregistration_v5.json").read_text()
     )
     manifest[field] = replacement
 
@@ -355,7 +355,7 @@ def test_confirmatory_preregistration_rejects_changed_claim_inputs(
 
 def test_confirmatory_preregistration_rejects_untrusted_self_signature():
     manifest = json.loads(
-        (FIXTURES / "omc_plan_confirmatory_preregistration_v4.json").read_text()
+        (FIXTURES / "omc_plan_confirmatory_preregistration_v5.json").read_text()
     )
 
     with pytest.raises(ValueError, match="signer is not trusted"):
@@ -374,7 +374,7 @@ def test_confirmatory_preregistration_rejects_untrusted_self_signature():
 
 def test_confirmatory_preregistration_rejects_tampered_selection_content():
     manifest = json.loads(
-        (FIXTURES / "omc_plan_confirmatory_preregistration_v4.json").read_text()
+        (FIXTURES / "omc_plan_confirmatory_preregistration_v5.json").read_text()
     )
     selection = json.loads(
         (FIXTURES / "omc_plan_confirmatory_batch_a_v2_selection.json").read_text()

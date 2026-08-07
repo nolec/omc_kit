@@ -1113,6 +1113,7 @@ def build_adjudication_output_schema(
         if sizes["tasks"] == 0:
             task_links["maxItems"] = 0
         else:
+            task_links["maxItems"] = sizes["tasks"]
             task_properties = task_links["items"]["properties"]
             task_properties["task_index"]["maximum"] = sizes["tasks"] - 1
             bind_array(task_properties["requirement_indexes"], sizes["requirements"])
@@ -1187,19 +1188,23 @@ def _normalize_indexed_adjudication_result(
         local = catalog["items"][item_index]["catalogs"]
         requirements = local["requirements"]
 
-        task_links = []
+        task_links_by_id: dict[str, list[str]] = {}
         for link in output.get("task_requirement_links", []):
             if not isinstance(link, dict) or set(link) != {
                 "task_index", "requirement_indexes"
             }:
                 raise ValueError("invalid item-local task mapping")
             task_id = values_at([link["task_index"]], local["tasks"])[0]
-            task_links.append({
-                "task_id": task_id,
-                "requirement_ids": values_at(
-                    link["requirement_indexes"], requirements
-                ),
-            })
+            current = task_links_by_id.setdefault(task_id, [])
+            for requirement_id in values_at(
+                link["requirement_indexes"], requirements
+            ):
+                if requirement_id not in current:
+                    current.append(requirement_id)
+        task_links = [
+            {"task_id": task_id, "requirement_ids": requirement_ids}
+            for task_id, requirement_ids in task_links_by_id.items()
+        ]
 
         adjacency = {requirement: set() for requirement in requirements}
         mapped_plan_edges: list[tuple[dict[str, str], list[str], list[str]]] = []
@@ -1869,6 +1874,9 @@ def build_adjudication_prompt(session: dict[str, Any]) -> str:
         "For every item-local index, require 0 <= index < the matching catalog_sizes value. "
         "All requirement indexes address only catalogs.requirements. "
         "Never index plan.requirements_covered or task supports. "
+        "Each task_index may appear at most once. When one task supports multiple "
+        "requirements, include every unique requirement index in one "
+        "task_requirement_links object. "
         "Map each plan edge endpoint to zero or more requirement indexes; use empty arrays "
         "for implementation-detail endpoints. Do not return dependency_hits. Do not return "
         "unexpected_dependency_edges. The runner derives both deterministically. "

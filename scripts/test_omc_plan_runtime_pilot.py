@@ -2221,6 +2221,15 @@ def test_baseline_must_return_activation_sentinel():
         )
 
 
+def test_instrumented_skill_prioritizes_activation_receipt_without_duplication():
+    skill = "---\nskill_name: omc-plan\n---\n\n# OMC Plan\n\nPlan rules.\n"
+    instrumented = runtime.instrument_skill(skill, "secret-nonce")
+
+    assert instrumented.startswith("---\nskill_name: omc-plan\n---")
+    assert instrumented.count("secret-nonce") == 1
+    assert instrumented.index("secret-nonce") < instrumented.index("# OMC Plan")
+
+
 def test_omc_provider_prompt_embeds_exact_context_before_planning():
     context_files = {
         "src/service.py": "def retry():\n    return 3\n",
@@ -2277,6 +2286,11 @@ def test_omc_activation_prompt_uses_native_skill_without_shell_command():
 
     assert "apply the loaded skill" in prompt
     assert "Do not run a shell command" in prompt
+    assert "Do not create a todo list or use a planning tool" in prompt
+    assert "Return only the output-schema fields" in prompt
+    assert "descriptive item and task text field as one concise sentence" in prompt
+    assert "Keep supports and other ID-reference arrays as short IDs" in prompt
+    assert "each list item and task field" not in prompt
     assert "cat --" not in prompt
     assert ".agents/skills/omc-plan/SKILL.md" not in prompt
 
@@ -2645,9 +2659,18 @@ def test_plan_round_trip_gate_rejects_pwd_and_progress_only_commands():
             "command": "cat -- context/a.txt",
         },
     })
+    todo_event = json.dumps({
+        "type": "item.started",
+        "item": {
+            "id": "todo-1",
+            "type": "todo_list",
+            "items": [{"text": "Plan the work", "completed": False}],
+        },
+    })
 
     assert runtime.contains_unnecessary_plan_round_trip(pwd_event)
     assert runtime.contains_unnecessary_plan_round_trip(progress_event)
+    assert runtime.contains_unnecessary_plan_round_trip(todo_event)
     assert not runtime.contains_unnecessary_plan_round_trip(context_event)
     assert runtime.detect_unnecessary_plan_round_trip(pwd_event) == {
         "kind": "pwd",
@@ -2658,6 +2681,16 @@ def test_plan_round_trip_gate_rejects_pwd_and_progress_only_commands():
         "command_sha256": runtime._sha256_text(
             "printf '%s\\n' 'planning from provided files'"
         ),
+    }
+    assert runtime.detect_unnecessary_plan_round_trip(todo_event) == {
+        "kind": "todo_list",
+        "command_sha256": runtime._sha256_text("todo-1"),
+    }
+    assert runtime.detect_unnecessary_plan_round_trip(
+        f"{pwd_event}\n{todo_event}"
+    ) == {
+        "kind": "todo_list",
+        "command_sha256": runtime._sha256_text("todo-1"),
     }
 
 
@@ -2915,6 +2948,63 @@ def test_execute_provider_measures_unnecessary_read_only_round_trip(
         "command_sha256": runtime._sha256_text("/bin/zsh -lc pwd"),
     }]
     assert not failure_path.exists()
+
+
+def test_execute_provider_rejects_todo_list_round_trip(tmp_path, monkeypatch):
+    output_path = tmp_path / "output.json"
+    failure_path = tmp_path / "failure.json"
+    private_events_path = tmp_path / "private" / "events.jsonl"
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+        stdout = "\n".join([
+            json.dumps({
+                "type": "item.started",
+                "item": {
+                    "id": "todo-1",
+                    "type": "todo_list",
+                    "items": [{"text": "Plan the work", "completed": False}],
+                },
+            }),
+            json.dumps({
+                "type": "turn.completed",
+                "usage": {"input_tokens": 30, "output_tokens": 5},
+            }),
+        ])
+
+    def fake_run(command, **kwargs):
+        output_path.write_text(json.dumps({
+            "requirements": [],
+            "runtime_activation_receipt": "secret-nonce",
+        }), encoding="utf-8")
+        return Completed()
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="todo_list_round_trip"):
+        runtime.execute_provider(
+            provider_id="omc-plan",
+            request="Plan this change",
+            workspace=tmp_path,
+            codex_binary="codex",
+            model="gpt-test",
+            reasoning_effort="low",
+            sandbox="read-only",
+            output_schema="schema.json",
+            output_path=output_path,
+            skill_sha256="c" * 64,
+            expected_activation_receipt="secret-nonce",
+            baseline_sentinel="unavailable",
+            timeout_sec=180,
+            failure_receipt_path=failure_path,
+            private_events_path=private_events_path,
+        )
+
+    failure = json.loads(failure_path.read_text(encoding="utf-8"))
+    assert failure["reason_code"] == "todo_list_round_trip"
+    assert failure["offending_command_sha256"] == runtime._sha256_text("todo-1")
+    assert "Plan the work" not in failure_path.read_text(encoding="utf-8")
+    assert private_events_path.read_text(encoding="utf-8") == Completed.stdout
 
 
 def test_execute_provider_measures_read_only_shell_with_embedded_context(

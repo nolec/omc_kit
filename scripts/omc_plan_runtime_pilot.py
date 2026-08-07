@@ -2314,12 +2314,24 @@ def build_activation_output_schema(
 
 
 def instrument_skill(skill_text: str, receipt: str) -> str:
-    return (
-        skill_text.rstrip()
-        + "\n\n## Runtime benchmark receipt\n"
-        + "When the output schema requests `runtime_activation_receipt`, return exactly "
-        + f"`{receipt}`. This instruction applies only to the runtime benchmark.\n"
+    receipt_block = (
+        "## Runtime benchmark receipt\n"
+        "When the output schema requests `runtime_activation_receipt`, return exactly "
+        f"`{receipt}`. This instruction applies only to the runtime benchmark."
     )
+    if skill_text.startswith("---\n"):
+        frontmatter_end = skill_text.find("\n---", 4)
+        if frontmatter_end != -1:
+            insert_at = frontmatter_end + len("\n---")
+            return (
+                skill_text[:insert_at].rstrip()
+                + "\n\n"
+                + receipt_block
+                + "\n\n"
+                + skill_text[insert_at:].lstrip("\n").rstrip()
+                + "\n"
+            )
+    return receipt_block + "\n\n" + skill_text.rstrip() + "\n"
 
 
 def workspace_manifest(root: str | Path) -> dict[str, str]:
@@ -2410,8 +2422,11 @@ def build_provider_prompt(
         return (
             receipt_instruction
             + context_instruction
-            + "apply the loaded skill and produce the implementation "
-            + "plan immediately.\n\n"
+            + "Do not create a todo list or use a planning tool. Return only the "
+            + "output-schema fields; write each descriptive item and task text field as one "
+            + "concise sentence without repeating requirement text. Keep supports and other "
+            + "ID-reference arrays as short IDs; apply the loaded skill and "
+            + "produce the implementation plan immediately.\n\n"
             + "$omc-plan\n\n"
             + request
         )
@@ -2622,15 +2637,26 @@ def _runs_pwd_command(command: str) -> bool:
 
 
 def detect_unnecessary_plan_round_trip(events_jsonl: str) -> dict[str, str] | None:
-    """Describe the first shell turn that adds no planning evidence."""
+    """Prefer todo round trips, then describe the first empty shell turn."""
     seen_execution_ids: set[str] = set()
+    shell_violation = None
     for line_index, line in enumerate(events_jsonl.splitlines()):
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
         item = event.get("item")
-        if not isinstance(item, dict) or item.get("type") != "command_execution":
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "todo_list":
+            item_id = item.get("id")
+            return {
+                "kind": "todo_list",
+                "command_sha256": _sha256_text(
+                    item_id if isinstance(item_id, str) else f"line:{line_index}"
+                ),
+            }
+        if item.get("type") != "command_execution":
             continue
         execution_id = item.get("id")
         execution_key = (
@@ -2645,18 +2671,20 @@ def detect_unnecessary_plan_round_trip(events_jsonl: str) -> dict[str, str] | No
         stripped = command.strip()
         normalized = stripped.lower()
         if _runs_pwd_command(normalized):
-            return {
-                "kind": "pwd",
-                "command_sha256": _sha256_text(stripped),
-            }
-        if "printf " in normalized and not any(
+            if shell_violation is None:
+                shell_violation = {
+                    "kind": "pwd",
+                    "command_sha256": _sha256_text(stripped),
+                }
+        elif "printf " in normalized and not any(
             marker in normalized for marker in ("cat ", "rg ", "sed ", "git ")
         ):
-            return {
-                "kind": "progress_only_printf",
-                "command_sha256": _sha256_text(stripped),
-            }
-    return None
+            if shell_violation is None:
+                shell_violation = {
+                    "kind": "progress_only_printf",
+                    "command_sha256": _sha256_text(stripped),
+                }
+    return shell_violation
 
 
 def _shell_command_payload(command: str) -> str:
@@ -3030,6 +3058,18 @@ def execute_provider(
                 offending_command_sha256=unsafe_command["command_sha256"],
             )
             raise RuntimeError("unsafe_shell_command")
+        plan_round_trip = detect_unnecessary_plan_round_trip(completed.stdout)
+        if plan_round_trip is not None and plan_round_trip["kind"] == "todo_list":
+            _write_failure_receipt(
+                failure_receipt_path,
+                provider_id=provider_id,
+                reason_code="todo_list_round_trip",
+                timeout_sec=timeout_sec,
+                usage=_aggregate_attempt_usage(attempt_usages),
+                offending_command_kind=plan_round_trip["kind"],
+                offending_command_sha256=plan_round_trip["command_sha256"],
+            )
+            raise RuntimeError("todo_list_round_trip")
         try:
             raw_output = Path(output_path).read_text(encoding="utf-8")
             plan = json.loads(raw_output)

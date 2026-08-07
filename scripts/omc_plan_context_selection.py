@@ -47,11 +47,11 @@ FROZEN_SELECTION_SHA256 = (
     "71c8c7ae186b0ecce09b3f4a442629c5ac72c18ab4fc7e4ddef53a8588216ea5"
 )
 FROZEN_RANKING_V4_SOURCE_COMMIT = "4e1ac03d4bed1fa945989b549af6cd61b9c51a34"
-FROZEN_PREREGISTRATION_V4_SHA256 = (
-    "798b51963f841c818618aa373542b4dbc84dd61f9ff9834c246d5fa35aac2388"
+FROZEN_PREREGISTRATION_V5_SHA256 = (
+    "23233eb4029018a2004fdff12e84c553d0082e8889d834504141159bb5beb91a"
 )
-FROZEN_PREREGISTRATION_V4_PUBLIC_KEY = (
-    "wMKTe7b3C7WNmJlOw/azackmyf63r69TQ/xwdJhZjww="
+FROZEN_PREREGISTRATION_V5_PUBLIC_KEY = (
+    "vhrI5ivtsp5g85x0nbbulcB7QQF6FElkLGP4/58xSKs="
 )
 FROZEN_DIAGNOSTIC_SELECTION_SHA256 = (
     "7d9305445938ed6f71361c4a99a63e6e1b6a6bedef5ef3404a33c0167864a65b"
@@ -224,7 +224,7 @@ def validate_confirmatory_preregistration_manifest(
     if (
         manifest["manifest_sha256"]
         != _preregistration_manifest_digest(manifest)
-        or manifest["manifest_sha256"] != FROZEN_PREREGISTRATION_V4_SHA256
+        or manifest["manifest_sha256"] != FROZEN_PREREGISTRATION_V5_SHA256
     ):
         raise ValueError("confirmatory preregistration frozen manifest mismatch")
 
@@ -255,7 +255,7 @@ def validate_confirmatory_preregistration_manifest(
     public_key = signoff["signer_public_key"]
     if (
         signoff["signer"] != "local-preregistration-v1"
-        or public_key != FROZEN_PREREGISTRATION_V4_PUBLIC_KEY
+        or public_key != FROZEN_PREREGISTRATION_V5_PUBLIC_KEY
         or public_key not in trusted_preregistration_public_keys
     ):
         raise ValueError("confirmatory preregistration signer is not trusted")

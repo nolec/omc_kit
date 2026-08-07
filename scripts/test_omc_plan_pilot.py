@@ -801,6 +801,15 @@ def test_adjudicator_prompt_requires_symmetric_semantic_scoring():
     assert "modified target" in prompt
 
 
+def test_adjudicator_prompt_requires_one_link_per_task():
+    prompt = omc_plan_pilot.build_adjudication_prompt(
+        _indexed_adjudication_session()
+    )
+
+    assert "Each task_index may appear at most once" in prompt
+    assert "one task_requirement_links object" in prompt
+
+
 def test_adjudication_output_schema_enforces_item_local_bounds():
     schema = omc_plan_pilot.build_adjudication_output_schema(
         _indexed_adjudication_session()
@@ -816,6 +825,7 @@ def test_adjudication_output_schema_enforces_item_local_bounds():
     assert properties["task_requirement_links"]["items"]["properties"][
         "task_index"
     ]["maximum"] == 2
+    assert properties["task_requirement_links"]["maxItems"] == 3
     assert properties["edge_requirement_links"]["items"]["properties"][
         "edge_index"
     ]["maximum"] == 3
@@ -912,6 +922,39 @@ def test_normalize_indexed_adjudication_derives_dependency_labels():
         {"before": "finish B", "after": "prepare A"}
     ]
     assert item["unsupported_assumptions"] == ["ASSUME-1"]
+
+
+def test_normalize_indexed_adjudication_merges_duplicate_task_links():
+    session = _indexed_adjudication_session()
+    result = {
+        "session_id": "session-1",
+        "adjudication_execution_id": "execution-1",
+        "items": [{
+            "item_index": 0,
+            "requirement_hit_indexes": [],
+            "scope_violation_indexes": [],
+            "task_requirement_links": [
+                {"task_index": 0, "requirement_indexes": [0, 1]},
+                {"task_index": 1, "requirement_indexes": [2]},
+                {"task_index": 0, "requirement_indexes": [1, 2]},
+            ],
+            "edge_requirement_links": [],
+            "unsupported_assumption_indexes": [],
+        }],
+    }
+
+    normalized = omc_plan_pilot.normalize_adjudication_result(result, session)
+
+    assert normalized["items"][0]["task_requirement_links"] == [
+        {
+            "task_id": session["items"][0]["plan"]["tasks"][0]["id"],
+            "requirement_ids": ["REQ-A", "REQ-B", "REQ-C"],
+        },
+        {
+            "task_id": session["items"][0]["plan"]["tasks"][1]["id"],
+            "requirement_ids": ["REQ-C"],
+        },
+    ]
 
 
 def test_normalize_rejects_out_of_range_item_local_index():

@@ -7,6 +7,11 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     text = Path("docs/automatic_model_routing_roadmap.md").read_text(encoding="utf-8")
 
     assert "## 로드맵 상태판" in text
+    assert "Plan Fresh paired adjudication canonicalization 보강" in text
+    assert "semantic task link duplicates task" in text
+    assert "OMC overhead는 `15,385`(`5.9%`)" in text
+    assert "indexed canonicalization 교정 완료" in text
+    assert "전체 빠른 회귀 `1858 passed, 3 skipped, 12 deselected`" in text
     assert "## Operator Experience" in text
     assert "plan / task / review" in text
     assert "작업 운영 원칙" in text
