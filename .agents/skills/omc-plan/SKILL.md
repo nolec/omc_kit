@@ -1,58 +1,48 @@
 ---
 skill_name: omc-plan
-description: "구현 전 계획·설계·TDD 태스크 분해. 트리거: 계획해줘, 설계해줘, 분해해줘, 어떻게 구현할지, 태스크 나눠줘. RED→GREEN→VERIFY 단계로 분해. omc-task 실행 전 반드시 사용."
+description: "계획·설계·TDD 분해. 트리거: 계획해줘, 설계해줘, 태스크 나눠줘. 범위·DoD 확정."
 ---
 
 # OMC 설계·계획
 
-이 스킬의 목적은 구현 착수 전 범위와 DoD를 확정하고, 작은 작업은 lite로 압축하되 위험 작업은 full로 유지하는 것입니다. 판단 속도는 `docs/orchestration_usage.md`와 같게 읽습니다: 범위가 좁혀졌으면 fast, 범위가 흔들리면 normal.
+`docs/orchestration_usage.md`: 고정 범위는 fast, 불명확하면 normal.
 
 ## Phase 0. 상태 확인
-
-주입된 OMC 세션 문맥을 먼저 사용합니다. 현재 요청과 동기화되어 있으면 상태 명령을 실행하지 않습니다. `scripts/omc.py`가 제공된 정확한 context path에 없으면 격리 입력으로 보고 탐색·상태 명령을 생략합니다. 문맥이 없거나 오래됐고 해당 경로가 명시적으로 제공된 경우에만 아래 동기화를 한 번 실행합니다.
-
+주입된 OMC 세션 문맥 우선. 동기화되어 있으면 상태 명령을 실행하지 않습니다. `scripts/omc.py`가 제공된 정확한 context path에 없으면 격리 입력으로 보고 탐색 생략. 문맥이 없거나 오래됐고 경로가 명시된 경우만 실행한다.
 ```bash
 python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-plan" --request "<현재 작업 한 줄 요약>" --roles analysis
 ```
+AGENTS.md Tier 1 요구사항은 CONTRACT 입력으로 사용한다.
 
-AGENTS.md Tier 1 작업은 이 Phase 1 요구사항을 CONTRACT 입력으로 삼습니다.
+## Phase 1. CONTRACT
+목표 / 범위 (포함) / 범위 (제외) / DoD / 제약 / 사용자 컨펌을 고정한다. 사용자에게 보여줄 단계: CONTRACT·최소 설계·TDD 태스크·`$omc-task` handoff | 시스템이 암묵적으로 처리: 자명한 재안내·선택 스킬 추천·반복 코칭.
 
-## Phase 1. 요구사항 CONTRACT — 목표 / 범위 (포함) / 범위 (제외) / DoD / 제약 / 사용자 컨펌:
+## Phase 2. 최소 설계
+입력 / 출력 / 성공 지표 / 실패 정책 / 영향받는 파일. `decision / risk / next_action / policy_profile`: 진행 가능 여부 / 변경 위험도 / 다음 스킬 1개 / cost-quality 기본 추천. `policy_reason_summary / policy_confidence`도 출력한다.
+공통 결정표: stage=plan / outcome=unresolved|ready / user_selection_needed=yes|no | confidence=low → balanced + user_selection_needed=yes.
+- `plan full`: CONTRACT + 최소 설계 + 다중 TDD 태스크. 새 파일·신규 파일 생성, API·시그니처 변경, 3개 이상 파일, 검증 명령 축약 불가, 범위 불명확이면 사용한다.
+- `plan lite`: CONTRACT + 최소 설계 + 태스크 2개 이하. 기존 파일 중심, 검증 명령 1개, 범위를 한 문장으로 설명 가능할 때만 사용한다. 애매하거나 설명이 약하면 full 재계획한다.
+현재 dirty 변경과 이번 계획 범위는 분리한다.
 
-사용자에게 보여줄 단계: CONTRACT / 최소 설계 / TDD 태스크 / `$omc-task` handoff | 시스템이 암묵적으로 처리: 자명한 재안내 / 선택 스킬 추천 / 반복 코칭
-
-## Phase 2. 최소 설계 — 입력 / 출력 / 성공 지표 / 실패 정책 / 영향받는 파일:
-- decision / risk / next_action / policy_profile: 진행 가능 여부 / 변경 위험도 / 다음 스킬 1개 / cost-quality 기본 추천
-- policy_reason_summary / policy_confidence: 추천 이유 요약 / 확신도(low면 선택 필요)
-- 공통 결정표: stage=plan / outcome=unresolved|ready / user_selection_needed=yes|no | confidence=low → balanced + user_selection_needed=yes
-
-출력 모드:
-- `plan full`: CONTRACT + 최소 설계 + 다중 TDD 태스크 | `plan lite`: CONTRACT + 최소 설계 + 태스크 2개 이하
-- lite 조건: 기존 파일 중심 / 검증 명령 1개 / 범위를 한 문장으로 설명 가능 | full 조건: 새 파일 또는 신규 파일 생성 / API 또는 시그니처 변경 / 3개 이상 파일 / 검증 명령 축약 불가 / 범위 불명확 | 애매하면 full, lite가 쓰였지만 설명이 약하면 `full 재계획` | 현재 dirty 변경과 이번 계획 범위는 분리해서 다룹니다.
-
-## Phase 3. TDD 태스크 분해 — 근거 추출: 격리 benchmark에서는 runner가 주입한 frozen context만 사용하고 shell·추가 tool 호출 없이 즉시 구조화 결과 작성 / 일반 실행에서는 제공·언급된 근거 파일은 한 번의 명령으로 직접 읽고 진행 메시지·pwd·재탐색 금지 / 코드 symbol·사용자 관찰 동작·실패 경로를 요구사항 후보에 먼저 연결 / 선택된 객체에서 동작이 시작되면 ID·수신자 전달을 상태·payload까지 추적해 supports·VERIFY에 연결 / 근거 매핑 완료 전 lite 금지 / `입력·상태·연결 지점 보정` 같은 검증 불가능한 포괄 표현 금지, 근거가 없으면 구현 가정 대신 decisions_required / 요구사항은 짧은 ID로 고정하고 `supports에는 ID만` 재사용 / 좁은 변경은 제공된 근거에서 직접 인접한 사용자 관찰 가능 비대상 동작만 surface당 1개 보존 요구사항으로 고정해 supports·VERIFY에 연결하고 근거 부족 시 decisions_required / 같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합 / 확인하지 않은 예시 명령 금지 / assumptions·decisions는 구현을 막는 항목만 / 반복 설명 금지 / 항목별 한 문장 / 불필요한 후속 제안 금지
-
+## Phase 3. TDD 태스크 분해·근거 추출
+- 격리 benchmark는 runner가 주입한 frozen context만 사용해 shell·추가 tool 호출 없이 즉시 구조화 결과를 작성한다. 구조화 출력은 CONTRACT·handoff 없이 schema 필드만 반환하고 요구사항·scope·task 중복 금지, 항목별 한 문장, 짧은 ID를 적용한다.
+- 일반 실행은 근거 파일은 한 번의 명령으로 직접 읽고 진행 메시지·pwd·재탐색 금지. 코드 symbol·사용자 관찰 동작·실패 경로를 요구사항 후보에 연결하고 근거 매핑 완료 전 lite 금지.
+- 선택된 객체의 동작은 ID·수신자 전달을 상태·payload까지 추적해 supports·VERIFY에 연결한다. 요구사항은 짧은 ID로 고정하고 supports에는 ID만 재사용한다.
+- 직접 인접한 사용자 관찰 가능 비대상 동작은 surface당 1개만 보존 요구사항으로 고정한다. 포괄 표현 금지, 확인하지 않은 예시 명령 금지, 같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합한다.
+- assumptions는 요청·frozen context가 명시적으로 허용한 근거만 기록한다. 비차단 불확실성은 생략하고 구현을 막는 불확실성만 decisions_required로 옮긴다. assumptions·decisions는 구현을 막는 항목만 남기며 반복 설명 금지·불필요한 후속 제안 금지.
 ```text
-plan full
-태스크 1: [기능] / RED: [실패 테스트 파일 + 케이스] / GREEN: [최소 구현 파일] / VERIFY: [검증 커맨드]
-
-plan lite
-태스크 1: [핵심 변경] / RED: [실패 테스트 파일 + 케이스] / GREEN: [최소 구현 파일] / VERIFY: [검증 커맨드]
+태스크 N: [기능] / RED: [실패 테스트 파일+케이스] / GREEN: [최소 구현 파일] / VERIFY: [검증 커맨드]
 ```
 
-## Phase 4. 세션 기록 — 사용자 컨펌 완료 전에는 `python3 scripts/omc.py state confirm --target .` 를 실행하지 않으며, confirm 후에만 `$omc-task`로 넘깁니다.
+## Phase 4. 세션 기록
+사용자 컨펌 완료 전에는 `python3 scripts/omc.py state confirm --target .`를 실행하지 않으며, confirm 후에만 `$omc-task`로 넘긴다.
 
 ## 다음 추천
-
-- 우선순위는 항상 `현재 병목 > 기본 파이프라인`
-- 주추천 1개만 제시, 새 파일/API 변경/3개 이상 파일 같은 고위험이면 먼저 `$omc-critique`
-- outcome=ready + user_selection_needed=no + 범위 고정 + 컨펌 완료면 `$omc-task`
-- outcome=unresolved + risk=high 또는 범위 불명확이면 `$omc-critique`
-- outcome=unresolved + risk=low + user_selection_needed=yes면 `$omc-office-hours`
-- 사용자가 설계만 확인 중이거나 다음 단계를 아직 고르지 않음 → 사용자 선택 대기
-- 자동으로 진행하지는 않습니다.
-
----
+- 우선순위는 현재 병목 > 기본 파이프라인이며 주추천 1개만 제시한다. 새 파일/API 변경/3개 이상 파일 같은 고위험이면 먼저 `$omc-critique`.
+- outcome=ready + user_selection_needed=no + 범위 고정 + 컨펌 완료면 `$omc-task`.
+- outcome=unresolved + risk=high 또는 범위 불명확이면 `$omc-critique`.
+- outcome=unresolved + risk=low + user_selection_needed=yes면 `$omc-office-hours`.
+- 사용자가 설계만 확인 중이거나 다음 단계를 아직 고르지 않음 → 사용자 선택 대기. 자동으로 진행하지는 않습니다.
 
 ## ⛔ 자동 진입 금지
-이 스킬이 완료된 후 자동으로 다음 스킬을 실행하지 않고, 사용자가 명시적으로 다음 스킬을 요청할 때까지 멈추고 기다린다.
+완료 후 사용자가 다음 스킬을 명시할 때까지 멈춘다.

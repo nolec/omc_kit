@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_NON_EMPTY_LINES = 40
+MAX_SKILL_BYTES = 4500
 
 REQUIRED_PLAN_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-plan" / "SKILL.md",
@@ -66,6 +67,22 @@ REQUIRED_OUTPUT_EFFICIENCY_MARKERS = [
     "같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합",
     "확인하지 않은 예시 명령 금지",
     "구현을 막는 항목만",
+]
+
+REQUIRED_STRUCTURED_COMPACTION_MARKERS = [
+    "구조화 출력",
+    "schema 필드만",
+    "요구사항·scope·task 중복 금지",
+    "비차단 불확실성은 생략",
+    "명시적으로 허용한 근거",
+    "구현을 막는 불확실성만 decisions_required",
+]
+
+REQUIRED_NATURAL_TRIGGER_MARKERS = [
+    "트리거:",
+    "계획해줘",
+    "설계해줘",
+    "태스크 나눠줘",
 ]
 
 REQUIRED_ADJACENT_PRESERVATION_MARKERS = [
@@ -361,6 +378,18 @@ def test_plan_skill_stays_short_enough_to_scan():
     )
 
 
+def test_plan_skill_stays_within_input_budget():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    assert len(text.encode("utf-8")) <= MAX_SKILL_BYTES
+
+
+def test_plan_skill_frontmatter_preserves_natural_language_triggers():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    frontmatter = text.split("---", 2)[1]
+    missing = [marker for marker in REQUIRED_NATURAL_TRIGGER_MARKERS if marker not in frontmatter]
+    assert not missing, f"missing natural trigger markers: {missing}"
+
+
 def test_plan_skill_preserves_required_execution_order():
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     cursor = -1
@@ -461,6 +490,14 @@ def test_plan_skill_declares_output_efficiency_contract():
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_OUTPUT_EFFICIENCY_MARKERS if marker not in text]
     assert not missing, f"missing output efficiency markers: {missing}"
+
+
+def test_plan_skill_declares_structured_compaction_and_assumption_policy():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    missing = [
+        marker for marker in REQUIRED_STRUCTURED_COMPACTION_MARKERS if marker not in text
+    ]
+    assert not missing, f"missing structured compaction markers: {missing}"
 
 
 def test_plan_skill_limits_adjacent_behavior_preservation_requirements():
