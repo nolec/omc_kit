@@ -2195,6 +2195,7 @@ def _validate_runtime_gold_case(item: dict[str, Any]) -> None:
         if (
             isinstance(weight, bool)
             or not isinstance(weight, (int, float))
+            or (isinstance(weight, float) and not math.isfinite(weight))
             or weight <= 0
         ):
             raise ValueError(f"runtime gold required_items[{index}].weight must be positive")

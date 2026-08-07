@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ from jsonschema import validate as validate_json_schema
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from omc_plan_benchmark import (
+    _validate_gold_case,
     build_fixture_bundle,
     build_fixture_documents,
     canonical_digest,
@@ -51,6 +53,44 @@ def _public_key(private_key):
 
 _ADJUDICATION_PUBLIC_KEY = _public_key(_ADJUDICATION_PRIVATE_KEY)
 _GOLD_SIGNER_PUBLIC_KEY = _public_key(_GOLD_SIGNER_PRIVATE_KEY)
+
+
+def test_gold_case_accepts_positive_fractional_requirement_weight():
+    gold_case = {
+        "case_id": "fractional-weight",
+        "required_items": [{"id": "REQ-1", "weight": 0.9, "critical": True}],
+        "excluded_scope": [],
+        "dependency_edges": [],
+        "allowed_assumptions": [],
+    }
+
+    assert _validate_gold_case(gold_case, 0) == gold_case
+
+
+@pytest.mark.parametrize("weight", [math.nan, math.inf, -math.inf])
+def test_gold_case_rejects_non_finite_requirement_weight(weight):
+    gold_case = {
+        "case_id": "non-finite-weight",
+        "required_items": [{"id": "REQ-1", "weight": weight, "critical": True}],
+        "excluded_scope": [],
+        "dependency_edges": [],
+        "allowed_assumptions": [],
+    }
+
+    with pytest.raises(ValueError, match="weight must be positive"):
+        _validate_gold_case(gold_case, 0)
+
+
+def test_gold_case_accepts_arbitrary_precision_positive_integer_weight():
+    gold_case = {
+        "case_id": "large-integer-weight",
+        "required_items": [{"id": "REQ-1", "weight": 10**1000, "critical": True}],
+        "excluded_scope": [],
+        "dependency_edges": [],
+        "allowed_assumptions": [],
+    }
+
+    assert _validate_gold_case(gold_case, 0) == gold_case
 
 
 def _bundle():

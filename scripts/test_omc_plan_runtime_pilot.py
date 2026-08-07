@@ -99,6 +99,22 @@ def _gold(index=1):
     }
 
 
+@pytest.mark.parametrize("weight", [math.nan, math.inf, -math.inf])
+def test_runtime_gold_rejects_non_finite_requirement_weight(weight):
+    gold = _gold()
+    gold["required_items"][0]["weight"] = weight
+
+    with pytest.raises(ValueError, match="weight must be positive"):
+        runtime._validate_runtime_gold_case(gold)
+
+
+def test_runtime_gold_accepts_arbitrary_precision_positive_integer_weight():
+    gold = _gold()
+    gold["required_items"][0]["weight"] = 10**1000
+
+    runtime._validate_runtime_gold_case(gold)
+
+
 def _reviewed_gold_output(author_output_sha256):
     return {
         "cases": [_gold(index) for index in range(1, 11)],

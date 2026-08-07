@@ -7,6 +7,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import re
 from copy import deepcopy
 from datetime import datetime
@@ -377,7 +378,12 @@ def _validate_gold_case(gold_case: Any, index: int) -> dict[str, Any]:
             raise ValueError(f"duplicate gold required item id: {item_id}")
         required_ids.add(item_id)
         weight = required_item["weight"]
-        if not isinstance(weight, int) or isinstance(weight, bool) or weight <= 0:
+        if (
+            not isinstance(weight, (int, float))
+            or isinstance(weight, bool)
+            or (isinstance(weight, float) and not math.isfinite(weight))
+            or weight <= 0
+        ):
             raise ValueError(f"gold required item weight must be positive: {item_id}")
         if not isinstance(required_item["critical"], bool):
             raise ValueError(f"gold critical flag must be boolean: {item_id}")
