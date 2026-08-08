@@ -648,6 +648,62 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     assert approval["confirmatory_manifest"] is None
     assert len(approval["runtime_corpus"]["cases"]) == 10
 
+    retrieval_only_selection = _confirmatory_selection(source_cases)
+    retrieval_only_selection["retrieval_policy"] = retrieval_only_selection.pop(
+        "selection_policy"
+    )
+    with pytest.raises(ValueError, match="selection contract"):
+        runtime.prepare_confirmatory_runtime_inputs(
+            readiness=readiness,
+            public_corpus=public_corpus,
+            selection=retrieval_only_selection,
+            gold_document=gold,
+            trusted_prior_fingerprints=prior,
+            skill_sha256="a" * 64,
+            producer="fresh-batch-curator",
+            author_session_id="gold-author",
+            reviewer_session_id="gold-reviewer",
+            signer="independent-confirmatory-reviewer",
+            signer_public_key=signer_public_key,
+            trusted_gold_signer_public_keys=trusted_gold,
+        )
+
+    duplicate_selection = _confirmatory_selection(source_cases)
+    duplicate_selection["cases"].append(duplicate_selection["cases"][0])
+    with pytest.raises(ValueError, match="selection and runtime cases"):
+        runtime.prepare_confirmatory_runtime_inputs(
+            readiness=readiness,
+            public_corpus=public_corpus,
+            selection=duplicate_selection,
+            gold_document=gold,
+            trusted_prior_fingerprints=prior,
+            skill_sha256="a" * 64,
+            producer="fresh-batch-curator",
+            author_session_id="gold-author",
+            reviewer_session_id="gold-reviewer",
+            signer="independent-confirmatory-reviewer",
+            signer_public_key=signer_public_key,
+            trusted_gold_signer_public_keys=trusted_gold,
+        )
+
+    reordered_selection = _confirmatory_selection(source_cases)
+    reordered_selection["cases"].reverse()
+    with pytest.raises(ValueError, match="selection and runtime cases"):
+        runtime.prepare_confirmatory_runtime_inputs(
+            readiness=readiness,
+            public_corpus=public_corpus,
+            selection=reordered_selection,
+            gold_document=gold,
+            trusted_prior_fingerprints=prior,
+            skill_sha256="a" * 64,
+            producer="fresh-batch-curator",
+            author_session_id="gold-author",
+            reviewer_session_id="gold-reviewer",
+            signer="independent-confirmatory-reviewer",
+            signer_public_key=signer_public_key,
+            trusted_gold_signer_public_keys=trusted_gold,
+        )
+
     with pytest.raises(ValueError, match="approved payload hash"):
         runtime.prepare_confirmatory_runtime_inputs(
             readiness=readiness,

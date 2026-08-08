@@ -16,6 +16,8 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "실패 gate는 `total_tokens` 하나" in text
     assert "Batch A 통과 판정의 상한은 `PROVISIONALLY_REPLACEABLE`" in text
     assert "indexed canonicalization 교정 후 Fresh Batch A 유효 판정 완료" in text
+    assert "runner·skill content hash와 frozen input hash" in text
+    assert "manifest의 직접 봉인 대상이라고 과장하지 않는다" in text
     assert "전체 빠른 회귀 `1858 passed, 3 skipped, 12 deselected`" in text
     assert "## Operator Experience" in text
     assert "plan / task / review" in text

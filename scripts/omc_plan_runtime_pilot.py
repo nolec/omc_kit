@@ -1211,6 +1211,33 @@ def prepare_confirmatory_runtime_inputs(
         item["case_id"] for item in cases
     }:
         raise ValueError("runtime bridge gold case ids do not match")
+    labels = selection.get("cases")
+    policy = selection.get("selection_policy")
+    if not isinstance(labels, list) or not isinstance(policy, dict):
+        raise ValueError("confirmatory selection contract is invalid")
+    expected_case_ids = [case["case_id"] for case in cases]
+    actual_case_ids = [
+        item.get("case_id") if isinstance(item, dict) else None for item in labels
+    ]
+    if actual_case_ids != expected_case_ids:
+        raise ValueError("confirmatory selection and runtime cases do not match")
+    semantic_contract = {
+        "required_surface_counts": policy.get("required_surface_counts"),
+        "required_ambiguity_counts": policy.get("required_ambiguity_counts"),
+        "maximum_selected_object_cases": policy.get(
+            "maximum_selected_object_cases"
+        ),
+        "case_labels": [
+            {
+                "case_id": item.get("case_id"),
+                "surface": item.get("surface"),
+                "ambiguity": item.get("ambiguity"),
+                "selected_object": item.get("selected_object"),
+            }
+            for item in labels
+        ],
+    }
+    _validate_confirmatory_semantic_contract(semantic_contract, cases=cases)
     if not _is_sha256(skill_sha256):
         raise ValueError("confirmatory skill hash is invalid")
     external_payload_sha256 = confirmatory_external_payload_digest(
@@ -1237,10 +1264,6 @@ def prepare_confirmatory_runtime_inputs(
     if approved_payload_sha256 != external_payload_sha256:
         raise ValueError("confirmatory approved payload hash mismatch")
 
-    policy = selection.get("selection_policy", {})
-    labels = selection.get("cases")
-    if not isinstance(labels, list):
-        raise ValueError("confirmatory selection cases are required")
     manifest = {
         "schema_version": 4,
         "status": "signed_off",
@@ -1254,22 +1277,7 @@ def prepare_confirmatory_runtime_inputs(
             "eligibility_rule": "observed requests not used by prior evaluations",
             "ordering_rule": "frozen selection order",
             "sampling_frame_sha256": canonical_digest(labels),
-            "semantic_contract": {
-                "required_surface_counts": policy.get("required_surface_counts"),
-                "required_ambiguity_counts": policy.get("required_ambiguity_counts"),
-                "maximum_selected_object_cases": policy.get(
-                    "maximum_selected_object_cases"
-                ),
-                "case_labels": [
-                    {
-                        "case_id": item.get("case_id"),
-                        "surface": item.get("surface"),
-                        "ambiguity": item.get("ambiguity"),
-                        "selected_object": item.get("selected_object"),
-                    }
-                    for item in labels
-                ],
-            },
+            "semantic_contract": deepcopy(semantic_contract),
         },
         "prior_registry_sha256": canonical_digest(trusted_prior_fingerprints),
         "prior_fingerprints": deepcopy(trusted_prior_fingerprints),
