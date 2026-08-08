@@ -749,8 +749,12 @@ def test_codex_adjudicator_records_successful_external_call(tmp_path):
 def test_codex_adjudicator_records_timed_out_external_call(tmp_path, monkeypatch):
     session = _indexed_adjudication_session()
     ledger = tmp_path / "adjudication-call-ledger.json"
+    attempts_observed_before_external_call = []
 
     def timed_out(command, **kwargs):
+        attempts_observed_before_external_call.extend(
+            json.loads(ledger.read_text(encoding="utf-8"))["attempts"]
+        )
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
 
     monkeypatch.setattr(subprocess, "run", timed_out)
@@ -768,6 +772,7 @@ def test_codex_adjudicator_records_timed_out_external_call(tmp_path, monkeypatch
         )
 
     attempt = json.loads(ledger.read_text(encoding="utf-8"))["attempts"][0]
+    assert attempts_observed_before_external_call == [attempt]
     assert attempt["status"] == "failed"
     assert attempt["session_id"] == session["session_id"]
     assert attempt["adjudication_execution_id"] is None

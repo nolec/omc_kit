@@ -3961,12 +3961,68 @@ def run_runtime_adjudication(
     ledger_path = root / "adjudication-call-ledger.json"
     results_path = root / "adjudication-results.json"
     result_root = root / "adjudication-results"
-    if ledger_path.exists() or results_path.exists() or result_root.exists():
-        raise ValueError("runtime adjudication artifacts already exist")
-    result_root.mkdir()
+    if results_path.exists():
+        raise ValueError("runtime adjudication is already complete")
+    if ledger_path.exists() and not result_root.exists():
+        raise ValueError("runtime adjudication checkpoint is incomplete")
+    if (
+        result_root.exists()
+        and not ledger_path.exists()
+        and any(result_root.iterdir())
+    ):
+        raise ValueError("runtime adjudication checkpoint is incomplete")
+    if not result_root.exists():
+        result_root.mkdir()
 
-    adjudication_results = []
+    expected_result_paths = {
+        result_root / f"session-{index:02d}.json": session
+        for index, session in enumerate(blind_sessions, start=1)
+    }
+    unexpected_result_paths = set(result_root.glob("*.json")) - set(
+        expected_result_paths
+    )
+    if unexpected_result_paths:
+        raise ValueError("runtime adjudication checkpoint has unexpected results")
+
+    adjudication_results_by_session: dict[str, dict[str, Any]] = {}
+    for result_path, session in expected_result_paths.items():
+        if not result_path.exists():
+            continue
+        result = _load_json(result_path)
+        validate_adjudication_result_contract(result, session)
+        adjudication_results_by_session[session["session_id"]] = result
+
+    if ledger_path.exists():
+        checkpoint_ledger = _load_json(ledger_path)
+        validate_end_to_end_call_budget(
+            provider_budget,
+            checkpoint_ledger,
+            adjudication_results=list(adjudication_results_by_session.values()),
+            expected_batch_id=batch_id,
+        )
+        if any(
+            attempt["session_id"] not in session_ids
+            for attempt in checkpoint_ledger["attempts"]
+        ):
+            raise ValueError("adjudication call ledger has an unknown session")
+        attempt_count = len(checkpoint_ledger["attempts"])
+    else:
+        attempt_count = 0
+
+    pending_session_count = len(blind_sessions) - len(
+        adjudication_results_by_session
+    )
+    if (
+        provider_budget["used_external_calls"]
+        + attempt_count
+        + pending_session_count
+        > provider_budget["maximum_external_calls"]
+    ):
+        raise RuntimeError("end-to-end external call budget exceeded")
+
     for index, session in enumerate(blind_sessions, start=1):
+        if session["session_id"] in adjudication_results_by_session:
+            continue
         result = executor(
             session=deepcopy(session),
             model=model,
@@ -3979,7 +4035,12 @@ def run_runtime_adjudication(
         (result_root / f"session-{index:02d}.json").write_text(
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        adjudication_results.append(result)
+        adjudication_results_by_session[session["session_id"]] = result
+
+    adjudication_results = [
+        adjudication_results_by_session[session["session_id"]]
+        for session in blind_sessions
+    ]
 
     adjudication_call_ledger = _load_json(ledger_path)
     external_call_budget = validate_end_to_end_call_budget(

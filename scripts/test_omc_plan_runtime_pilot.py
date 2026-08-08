@@ -4421,11 +4421,12 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
         )
 
     adjudicator_calls = []
+    timed_out_sessions = set()
+    timeout_session_id = result["blind_sessions"][3]["session_id"]
 
     def fake_adjudicator_executor(
         *, session, model, reasoning_effort, call_ledger_path, batch_id, timeout_sec
     ):
-        adjudication = _adjudications([session])[0]
         adjudicator_calls.append(
             (session["session_id"], model, reasoning_effort, timeout_sec)
         )
@@ -4435,13 +4436,23 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
             if ledger_path.exists()
             else {"schema_version": 1, "batch_id": batch_id, "attempts": []}
         )
+        should_timeout = (
+            session["session_id"] == timeout_session_id
+            and session["session_id"] not in timed_out_sessions
+        )
+        adjudication = _adjudications([session])[0]
         ledger["attempts"].append({
             "attempt_id": f"attempt-{len(ledger['attempts']) + 1}",
             "session_id": session["session_id"],
-            "status": "success",
-            "adjudication_execution_id": adjudication["adjudication_execution_id"],
+            "status": "failed" if should_timeout else "success",
+            "adjudication_execution_id": (
+                None if should_timeout else adjudication["adjudication_execution_id"]
+            ),
         })
         ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+        if should_timeout:
+            timed_out_sessions.add(session["session_id"])
+            raise subprocess.TimeoutExpired("codex", timeout_sec)
         return adjudication
 
     tampered_batch = deepcopy(result["provider_batch"])
@@ -4465,6 +4476,75 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
         encoding="utf-8",
     )
 
+    # A hard stop can occur after the runner creates the result directory but
+    # before the executor records its first ledger attempt.
+    interrupted_result_root = tmp_path / "batch/adjudication-results"
+    interrupted_result_root.mkdir()
+    orphan_result_path = interrupted_result_root / "session-01.json"
+    orphan_result_path.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="checkpoint is incomplete"):
+        runtime.run_runtime_adjudication(
+            protocol=_protocol(),
+            provider_batch=result["provider_batch"],
+            blind_sessions=result["blind_sessions"],
+            private_mapping=result["private_mapping"],
+            trusted_runtime_signer_public_key=runtime_signer_public_key,
+            executor=fake_adjudicator_executor,
+            artifact_root=tmp_path / "batch",
+        )
+    assert adjudicator_calls == []
+    orphan_result_path.unlink()
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        runtime.run_runtime_adjudication(
+            protocol=_protocol(),
+            provider_batch=result["provider_batch"],
+            blind_sessions=result["blind_sessions"],
+            private_mapping=result["private_mapping"],
+            trusted_runtime_signer_public_key=runtime_signer_public_key,
+            executor=fake_adjudicator_executor,
+            artifact_root=tmp_path / "batch",
+        )
+    assert len(adjudicator_calls) == 4
+    assert len(list((tmp_path / "batch/adjudication-results").glob("*.json"))) == 3
+    assert not (tmp_path / "batch/adjudication-results.json").exists()
+
+    checkpoint_result_path = tmp_path / "batch/adjudication-results/session-01.json"
+    checkpoint_result = json.loads(checkpoint_result_path.read_text(encoding="utf-8"))
+    tampered_result = deepcopy(checkpoint_result)
+    tampered_result["_adjudication_provenance"]["index_catalog_sha256"] = "f" * 64
+    checkpoint_result_path.write_text(json.dumps(tampered_result), encoding="utf-8")
+    with pytest.raises(ValueError, match="provenance does not match"):
+        runtime.run_runtime_adjudication(
+            protocol=_protocol(),
+            provider_batch=result["provider_batch"],
+            blind_sessions=result["blind_sessions"],
+            private_mapping=result["private_mapping"],
+            trusted_runtime_signer_public_key=runtime_signer_public_key,
+            executor=fake_adjudicator_executor,
+            artifact_root=tmp_path / "batch",
+        )
+    assert len(adjudicator_calls) == 4
+    checkpoint_result_path.write_text(json.dumps(checkpoint_result), encoding="utf-8")
+
+    ledger_path = tmp_path / "batch/adjudication-call-ledger.json"
+    checkpoint_ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    tampered_ledger = deepcopy(checkpoint_ledger)
+    tampered_ledger["attempts"][-1]["session_id"] = "unknown-session"
+    ledger_path.write_text(json.dumps(tampered_ledger), encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown session"):
+        runtime.run_runtime_adjudication(
+            protocol=_protocol(),
+            provider_batch=result["provider_batch"],
+            blind_sessions=result["blind_sessions"],
+            private_mapping=result["private_mapping"],
+            trusted_runtime_signer_public_key=runtime_signer_public_key,
+            executor=fake_adjudicator_executor,
+            artifact_root=tmp_path / "batch",
+        )
+    assert len(adjudicator_calls) == 4
+    ledger_path.write_text(json.dumps(checkpoint_ledger), encoding="utf-8")
+
     adjudication_run = runtime.run_runtime_adjudication(
         protocol=_protocol(),
         provider_batch=result["provider_batch"],
@@ -4474,11 +4554,17 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
         executor=fake_adjudicator_executor,
         artifact_root=tmp_path / "batch",
     )
-    assert len(adjudicator_calls) == 5
+    assert len(adjudicator_calls) == 6
+    assert [call[0] for call in adjudicator_calls[-2:]] == [
+        result["blind_sessions"][3]["session_id"],
+        result["blind_sessions"][4]["session_id"],
+    ]
     assert all(
         call[3] == _protocol()["execution"]["timeout_sec"]
         for call in adjudicator_calls
     )
+    assert len(adjudication_run["adjudication_results"]) == 5
+    assert adjudication_run["external_call_budget"]["adjudication_external_calls"] == 6
     assert (tmp_path / "batch/adjudication-results.json").is_file()
     assert (tmp_path / "batch/adjudication-call-ledger.json").is_file()
 

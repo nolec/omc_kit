@@ -2012,6 +2012,7 @@ def codex_adjudicator_executor(
         "--json",
         "-",
     ]
+    persist_attempt()
     try:
         completed = subprocess.run(
             command,
