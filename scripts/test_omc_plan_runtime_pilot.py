@@ -4018,8 +4018,49 @@ def test_runtime_metrics_are_derived_from_scores_and_observed_usage():
     assert metrics["evaluation_scope"] == "confirmatory"
     assert metrics["token_measurement_status"] == "observed"
     assert metrics["omc-plan"]["task_evidence_accuracy"] == 0.9
+    assert metrics["omc-plan"]["input_tokens"] == 10
     assert metrics["omc-plan"]["total_tokens"] == 15
+    assert metrics["token_deltas"] == {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
     assert metrics["paired_primary_deltas"] == [0.0]
+
+
+def test_runtime_metrics_do_not_claim_zero_token_delta_when_usage_is_unavailable():
+    scores = {
+        provider_id: [{
+            "weighted_coverage": 0.9,
+            "critical_omissions": [],
+            "executable_step_rate": 0.8,
+            "unsupported_assumptions": [],
+            "bloat_ratio": 0.1,
+        }]
+        for provider_id in runtime.PROVIDERS
+    }
+    executions = [
+        {
+            "provider_id": provider_id,
+            "case_id": "unavailable-01",
+            "usage": {"status": "unavailable"},
+        }
+        for provider_id in runtime.PROVIDERS
+    ]
+
+    metrics = runtime.build_runtime_metrics(
+        scores,
+        executions,
+        expected_case_count=1,
+        evaluation_scope="confirmatory",
+    )
+
+    assert metrics["token_measurement_status"] == "unavailable"
+    assert metrics["token_deltas"] == {
+        "input_tokens": None,
+        "output_tokens": None,
+        "total_tokens": None,
+    }
 
 
 def test_runtime_metrics_reject_usage_total_mismatch():

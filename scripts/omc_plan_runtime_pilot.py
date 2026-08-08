@@ -3865,6 +3865,10 @@ def build_runtime_metrics(
             "task_evidence_accuracy": sum(
                 1.0 - score["bloat_ratio"] for score in scores
             ) / len(scores),
+            "input_tokens": sum(
+                usage.get("input_tokens", 0) for usage in usages
+                if isinstance(usage, dict)
+            ),
             "output_tokens": sum(
                 usage.get("output_tokens", 0) for usage in usages
                 if isinstance(usage, dict)
@@ -3874,6 +3878,15 @@ def build_runtime_metrics(
                 if isinstance(usage, dict)
             ),
         }
+    token_fields = ("input_tokens", "output_tokens", "total_tokens")
+    metrics["token_deltas"] = (
+        {
+            field: metrics["omc-plan"][field] - metrics["baseline-plan"][field]
+            for field in token_fields
+        }
+        if metrics["token_measurement_status"] == "observed"
+        else {field: None for field in token_fields}
+    )
     baseline_cases = score_by_case["baseline-plan"]
     omc_cases = score_by_case["omc-plan"]
     if set(baseline_cases) != set(omc_cases):

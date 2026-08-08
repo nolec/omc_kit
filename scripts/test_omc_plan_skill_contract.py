@@ -120,6 +120,12 @@ REQUIRED_EXECUTION_EFFICIENCY_MARKERS = [
     "assumption이 필수 데이터 경로 검증을 대체 금지",
 ]
 
+REQUIRED_DATA_PATH_BOUNDARY_MARKERS = [
+    "source/model → adapter/state → consumer/UI",
+    "병합 전 각 requirement",
+    "최소 하나의 task와 VERIFY",
+]
+
 REQUIRED_TASK_SPECIFICITY_MARKERS = [
     "RED: [실패 테스트 파일+케이스]",
     "GREEN: [최소 구현 파일]",
@@ -454,6 +460,17 @@ def test_plan_skill_forbids_non_evidence_execution_round_trips():
     for path, text in texts.items():
         missing = [marker for marker in REQUIRED_EXECUTION_EFFICIENCY_MARKERS if marker not in text]
         assert not missing, f"{path} missing execution-efficiency markers: {missing}"
+
+
+def test_plan_skill_preserves_required_data_path_boundaries():
+    texts = _collect_plan_skill_texts(
+        root=ROOT,
+        required_paths=REQUIRED_PLAN_SKILL_PATHS,
+        optional_paths=OPTIONAL_PLAN_SKILL_PATHS,
+    )
+    for path, text in texts.items():
+        missing = [marker for marker in REQUIRED_DATA_PATH_BOUNDARY_MARKERS if marker not in text]
+        assert not missing, f"{path} missing data-path boundary markers: {missing}"
 
 
 def test_plan_skill_recommendations_are_state_based_and_guarded():
