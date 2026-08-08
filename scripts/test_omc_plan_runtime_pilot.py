@@ -409,6 +409,22 @@ def _adjudications(sessions):
     ]
 
 
+def _adjudication_call_ledger(adjudications, batch_id):
+    return {
+        "schema_version": 1,
+        "batch_id": batch_id,
+        "attempts": [
+            {
+                "attempt_id": f"attempt-{index}",
+                "session_id": result["session_id"],
+                "status": "success",
+                "adjudication_execution_id": result["adjudication_execution_id"],
+            }
+            for index, result in enumerate(adjudications, start=1)
+        ],
+    }
+
+
 def _metrics():
     return {
         "evaluation_scope": "confirmatory",
@@ -421,6 +437,8 @@ def _metrics():
             "executable_task_rate": 0.85,
             "unsupported_assumption_count": 1,
             "task_evidence_accuracy": 0.90,
+            "decision_proxy_count": 10,
+            "decision_proxy_mean": 1.0,
             "output_tokens": 1000,
             "total_tokens": 10000,
         },
@@ -430,6 +448,8 @@ def _metrics():
             "executable_task_rate": 0.90,
             "unsupported_assumption_count": 1,
             "task_evidence_accuracy": 0.92,
+            "decision_proxy_count": 8,
+            "decision_proxy_mean": 0.8,
             "output_tokens": 1200,
             "total_tokens": 10400,
         },
@@ -3663,6 +3683,13 @@ def test_replacement_requires_all_quality_cost_and_provenance_gates():
     assert result["decision"] == "NOT_PROVEN"
     assert "unsupported_assumptions" in result["failed_gates"]
 
+    failed = _metrics()
+    failed["omc-plan"]["decision_proxy_count"] = 11
+    failed["omc-plan"]["decision_proxy_mean"] = 1.1
+    result = runtime.decide_replacement(failed, _protocol()["acceptance"])
+    assert result["decision"] == "NOT_PROVEN"
+    assert "decision_proxy" in result["failed_gates"]
+
 
 def test_runtime_corpus_rejects_provider_forbidden_case_fields():
     cases = [_case(index) for index in range(1, 11)]
@@ -3993,6 +4020,7 @@ def test_runtime_metrics_are_derived_from_scores_and_observed_usage():
             "executable_step_rate": 0.8,
             "unsupported_assumptions": [],
             "bloat_ratio": 0.1,
+            "decision_proxy": 2 if provider_id == "baseline-plan" else 1,
         }]
         for provider_id in runtime.PROVIDERS
     }
@@ -4020,6 +4048,9 @@ def test_runtime_metrics_are_derived_from_scores_and_observed_usage():
     assert metrics["omc-plan"]["task_evidence_accuracy"] == 0.9
     assert metrics["omc-plan"]["input_tokens"] == 10
     assert metrics["omc-plan"]["total_tokens"] == 15
+    assert metrics["baseline-plan"]["decision_proxy_count"] == 2
+    assert metrics["omc-plan"]["decision_proxy_count"] == 1
+    assert metrics["decision_proxy_delta"] == -1
     assert metrics["token_deltas"] == {
         "input_tokens": 0,
         "output_tokens": 0,
@@ -4036,6 +4067,7 @@ def test_runtime_metrics_do_not_claim_zero_token_delta_when_usage_is_unavailable
             "executable_step_rate": 0.8,
             "unsupported_assumptions": [],
             "bloat_ratio": 0.1,
+            "decision_proxy": 0,
         }]
         for provider_id in runtime.PROVIDERS
     }
@@ -4071,6 +4103,7 @@ def test_runtime_metrics_reject_usage_total_mismatch():
             "executable_step_rate": 0.8,
             "unsupported_assumptions": [],
             "bloat_ratio": 0.1,
+            "decision_proxy": 0,
         }]
         for provider_id in runtime.PROVIDERS
     }
@@ -4093,6 +4126,104 @@ def test_runtime_metrics_reject_usage_total_mismatch():
             executions,
             expected_case_count=1,
             evaluation_scope="confirmatory",
+        )
+
+
+def test_end_to_end_call_budget_includes_adjudication_attempts():
+    provider_budget = {
+        **runtime.FROZEN_CONFIRMATORY_BUDGET,
+        "used_total_tokens": 100,
+        "used_external_calls": 22,
+    }
+    results = [
+        {
+            "session_id": f"session-{index}",
+            "adjudication_execution_id": f"execution-{index}",
+        }
+        for index in range(1, 6)
+    ]
+    ledger = {
+        "schema_version": 1,
+        "batch_id": "batch-a",
+        "attempts": [
+            {
+                "attempt_id": f"attempt-{index}",
+                "session_id": f"session-{min(index, 5)}",
+                "status": "success" if index <= 5 else "failed",
+                "adjudication_execution_id": (
+                    f"execution-{index}" if index <= 5 else None
+                ),
+            }
+            for index in range(1, 7)
+        ],
+    }
+
+    summary = runtime.validate_end_to_end_call_budget(
+        provider_budget,
+        ledger,
+        adjudication_results=results,
+        expected_batch_id="batch-a",
+    )
+    assert summary == {
+        "maximum_external_calls": 30,
+        "provider_external_calls": 22,
+        "adjudication_external_calls": 6,
+        "total_external_calls": 28,
+    }
+
+    ledger["attempts"].extend(
+        {
+            "attempt_id": f"attempt-{index}",
+            "session_id": "session-5",
+            "status": "failed",
+            "adjudication_execution_id": None,
+        }
+        for index in range(7, 10)
+    )
+    with pytest.raises(RuntimeError, match="end-to-end external call budget exceeded"):
+        runtime.validate_end_to_end_call_budget(
+            provider_budget,
+            ledger,
+            adjudication_results=results,
+            expected_batch_id="batch-a",
+        )
+
+
+def test_end_to_end_call_budget_rejects_swapped_session_execution_mapping():
+    provider_budget = {
+        **runtime.FROZEN_CONFIRMATORY_BUDGET,
+        "used_total_tokens": 100,
+        "used_external_calls": 22,
+    }
+    results = [
+        {"session_id": "session-1", "adjudication_execution_id": "execution-1"},
+        {"session_id": "session-2", "adjudication_execution_id": "execution-2"},
+    ]
+    ledger = {
+        "schema_version": 1,
+        "batch_id": "batch-a",
+        "attempts": [
+            {
+                "attempt_id": "attempt-1",
+                "session_id": "session-2",
+                "status": "success",
+                "adjudication_execution_id": "execution-1",
+            },
+            {
+                "attempt_id": "attempt-2",
+                "session_id": "session-1",
+                "status": "success",
+                "adjudication_execution_id": "execution-2",
+            },
+        ],
+    }
+
+    with pytest.raises(ValueError, match="does not match results"):
+        runtime.validate_end_to_end_call_budget(
+            provider_budget,
+            ledger,
+            adjudication_results=results,
+            expected_batch_id="batch-a",
         )
 
 
@@ -4289,6 +4420,68 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
             confirmatory_manifest=confirmatory_manifest,
         )
 
+    adjudicator_calls = []
+
+    def fake_adjudicator_executor(
+        *, session, model, reasoning_effort, call_ledger_path, batch_id, timeout_sec
+    ):
+        adjudication = _adjudications([session])[0]
+        adjudicator_calls.append(
+            (session["session_id"], model, reasoning_effort, timeout_sec)
+        )
+        ledger_path = Path(call_ledger_path)
+        ledger = (
+            json.loads(ledger_path.read_text(encoding="utf-8"))
+            if ledger_path.exists()
+            else {"schema_version": 1, "batch_id": batch_id, "attempts": []}
+        )
+        ledger["attempts"].append({
+            "attempt_id": f"attempt-{len(ledger['attempts']) + 1}",
+            "session_id": session["session_id"],
+            "status": "success",
+            "adjudication_execution_id": adjudication["adjudication_execution_id"],
+        })
+        ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+        return adjudication
+
+    tampered_batch = deepcopy(result["provider_batch"])
+    tampered_batch["model"] = "tampered-model"
+    (tmp_path / "batch/provider-batch.json").write_text(
+        json.dumps(tampered_batch), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="runtime attestation mismatch"):
+        runtime.run_runtime_adjudication(
+            protocol=_protocol(),
+            provider_batch=tampered_batch,
+            blind_sessions=result["blind_sessions"],
+            private_mapping=result["private_mapping"],
+            trusted_runtime_signer_public_key=runtime_signer_public_key,
+            executor=fake_adjudicator_executor,
+            artifact_root=tmp_path / "batch",
+        )
+    assert adjudicator_calls == []
+    (tmp_path / "batch/provider-batch.json").write_text(
+        json.dumps(result["provider_batch"], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    adjudication_run = runtime.run_runtime_adjudication(
+        protocol=_protocol(),
+        provider_batch=result["provider_batch"],
+        blind_sessions=result["blind_sessions"],
+        private_mapping=result["private_mapping"],
+        trusted_runtime_signer_public_key=runtime_signer_public_key,
+        executor=fake_adjudicator_executor,
+        artifact_root=tmp_path / "batch",
+    )
+    assert len(adjudicator_calls) == 5
+    assert all(
+        call[3] == _protocol()["execution"]["timeout_sec"]
+        for call in adjudicator_calls
+    )
+    assert (tmp_path / "batch/adjudication-results.json").is_file()
+    assert (tmp_path / "batch/adjudication-call-ledger.json").is_file()
+
     adjudicator_key, adjudicator_public_key = _signer()
     report = runtime.finalize_runtime_batch(
         protocol=_protocol(),
@@ -4303,7 +4496,8 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
             (tmp_path / "batch/blind-sessions.json").read_text(encoding="utf-8")
         ),
         private_mapping=result["private_mapping"],
-        adjudication_results=_adjudications(result["blind_sessions"]),
+        adjudication_results=adjudication_run["adjudication_results"],
+        adjudication_call_ledger=adjudication_run["adjudication_call_ledger"],
         adjudicator_private_key=adjudicator_key,
         trusted_adjudicator_public_key=adjudicator_public_key,
         adjudicator="independent-test-adjudicator",
@@ -4311,6 +4505,65 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
         trusted_runtime_signer_public_key=runtime_signer_public_key,
     )
     assert report["decision"]["decision"] == "PROVISIONALLY_REPLACEABLE"
+
+
+def test_run_adjudication_cli_delegates_frozen_batch_artifacts(
+    tmp_path, monkeypatch, capsys
+):
+    protocol_path = tmp_path / "protocol.json"
+    provider_path = tmp_path / "provider-batch.json"
+    sessions_path = tmp_path / "blind-sessions.json"
+    mapping_path = tmp_path / "private-mapping.json"
+    schema_path = tmp_path / "schema.json"
+    artifact_root = tmp_path / "batch"
+    provider_batch = {"batch_id": "runtime-batch"}
+    blind_sessions = [{"session_id": "session-1"}]
+    private_mapping = {
+        "blind-1": {"provider_id": "omc-plan", "case_id": "case-1"}
+    }
+    protocol_path.write_text(json.dumps(_protocol()), encoding="utf-8")
+    provider_path.write_text(json.dumps(provider_batch), encoding="utf-8")
+    sessions_path.write_text(json.dumps(blind_sessions), encoding="utf-8")
+    mapping_path.write_text(json.dumps(private_mapping), encoding="utf-8")
+    schema_path.write_text("{}", encoding="utf-8")
+    captured = {}
+
+    def fake_run_runtime_adjudication(**kwargs):
+        captured.update(kwargs)
+        return {"adjudication_results": []}
+
+    monkeypatch.setattr(
+        runtime, "run_runtime_adjudication", fake_run_runtime_adjudication
+    )
+    monkeypatch.setattr(sys, "argv", [
+        "omc_plan_runtime_pilot.py",
+        "run-adjudication",
+        str(protocol_path),
+        str(provider_path),
+        str(sessions_path),
+        str(mapping_path),
+        "--output-schema",
+        str(schema_path),
+        "--artifact-root",
+        str(artifact_root),
+        "--trusted-runtime-signer-public-key",
+        "runtime-public-key",
+        "--repo-root",
+        str(tmp_path),
+    ])
+
+    assert runtime.main() == 0
+    assert captured["provider_batch"] == provider_batch
+    assert captured["protocol"] == _protocol()
+    assert captured["blind_sessions"] == blind_sessions
+    assert captured["private_mapping"] == private_mapping
+    assert captured["trusted_runtime_signer_public_key"] == "runtime-public-key"
+    assert captured["artifact_root"] == str(artifact_root)
+    assert captured["repo_root"] == str(tmp_path)
+    assert callable(captured["executor"])
+    assert capsys.readouterr().out.strip() == str(
+        artifact_root.resolve() / "adjudication-results.json"
+    )
 
 
 def test_restore_blind_session_plan_labels_uses_private_mapping():
@@ -4703,6 +4956,9 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
         blind_sessions=sessions,
         private_mapping=mapping,
         adjudication_results=adjudications,
+        adjudication_call_ledger=_adjudication_call_ledger(
+            adjudications, provider_batch["batch_id"]
+        ),
         adjudicator_private_key=adjudicator_key,
         trusted_adjudicator_public_key=adjudicator_public_key,
         adjudicator="independent-test-adjudicator",
@@ -4712,6 +4968,14 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
     assert report["decision"]["decision"] == "PROVISIONALLY_REPLACEABLE"
     assert report["metrics"]["evaluation_scope"] == "confirmatory"
     assert report["metrics"]["omc-plan"]["task_evidence_accuracy"] == 1.0
+    assert report["metrics"]["omc-plan"]["decision_proxy_count"] == 0
+    assert report["metrics"]["decision_proxy_delta"] == 0
+    assert report["metrics"]["external_call_budget"] == {
+        "maximum_external_calls": 30,
+        "provider_external_calls": 22,
+        "adjudication_external_calls": 5,
+        "total_external_calls": 27,
+    }
     assert report["provenance"]["protocol_sha256"] == provider_batch["protocol_sha256"]
     assert report["execution_config"] == {
         "model": "gpt-test",
@@ -4751,6 +5015,9 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
             blind_sessions=sessions,
             private_mapping=mapping,
             adjudication_results=adjudications,
+            adjudication_call_ledger=_adjudication_call_ledger(
+                adjudications, provider_batch["batch_id"]
+            ),
             adjudicator_private_key=adjudicator_key,
             trusted_adjudicator_public_key=adjudicator_public_key,
             adjudicator="independent-test-adjudicator",

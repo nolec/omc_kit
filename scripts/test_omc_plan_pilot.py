@@ -1,6 +1,7 @@
 import base64
 import json
 import re
+import subprocess
 from copy import deepcopy
 from pathlib import Path
 
@@ -683,6 +684,7 @@ def test_codex_adjudicator_rejects_mismatched_session_id(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_CODEX_SESSION_ID", "wrong-session")
     session = _indexed_adjudication_session()
     session["session_id"] = "expected-session"
+    ledger = tmp_path / "adjudication-call-ledger.json"
 
     with pytest.raises(ValueError, match="session_id"):
         codex_adjudicator_executor(
@@ -692,7 +694,83 @@ def test_codex_adjudicator_rejects_mismatched_session_id(tmp_path, monkeypatch):
             codex_binary=str(fake_codex),
             output_schema=FIXTURES / "omc_plan_adjudication_output_schema.json",
             workspace=tmp_path,
+            call_ledger_path=ledger,
+            batch_id="batch-a",
         )
+    attempts = json.loads(ledger.read_text(encoding="utf-8"))["attempts"]
+    assert len(attempts) == 1
+    assert attempts[0]["status"] == "failed"
+    assert attempts[0]["adjudication_execution_id"] is None
+
+
+def test_codex_adjudicator_does_not_record_preflight_failure_as_external_call(tmp_path):
+    schema = tmp_path / "invalid-schema.json"
+    schema.write_text("{", encoding="utf-8")
+    ledger = tmp_path / "adjudication-call-ledger.json"
+
+    with pytest.raises(json.JSONDecodeError):
+        codex_adjudicator_executor(
+            session={"session_id": "session-1"},
+            model="gpt-test",
+            reasoning_effort="low",
+            codex_binary="/not-invoked",
+            output_schema=schema,
+            workspace=tmp_path,
+            call_ledger_path=ledger,
+            batch_id="batch-a",
+        )
+
+    assert not ledger.exists()
+
+
+def test_codex_adjudicator_records_successful_external_call(tmp_path):
+    fake_codex = tmp_path / "fake-codex"
+    _write_fake_codex(fake_codex)
+    session = _indexed_adjudication_session()
+    ledger = tmp_path / "adjudication-call-ledger.json"
+
+    result = codex_adjudicator_executor(
+        session=session,
+        model="gpt-test",
+        reasoning_effort="low",
+        codex_binary=str(fake_codex),
+        output_schema=FIXTURES / "omc_plan_adjudication_output_schema.json",
+        workspace=tmp_path,
+        call_ledger_path=ledger,
+        batch_id="batch-a",
+    )
+
+    attempt = json.loads(ledger.read_text(encoding="utf-8"))["attempts"][0]
+    assert attempt["status"] == "success"
+    assert attempt["session_id"] == session["session_id"]
+    assert attempt["adjudication_execution_id"] == result["adjudication_execution_id"]
+
+
+def test_codex_adjudicator_records_timed_out_external_call(tmp_path, monkeypatch):
+    session = _indexed_adjudication_session()
+    ledger = tmp_path / "adjudication-call-ledger.json"
+
+    def timed_out(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", timed_out)
+    with pytest.raises(subprocess.TimeoutExpired):
+        codex_adjudicator_executor(
+            session=session,
+            model="gpt-test",
+            reasoning_effort="low",
+            codex_binary="codex",
+            output_schema=FIXTURES / "omc_plan_adjudication_output_schema.json",
+            workspace=tmp_path,
+            call_ledger_path=ledger,
+            batch_id="batch-a",
+            timeout_sec=3,
+        )
+
+    attempt = json.loads(ledger.read_text(encoding="utf-8"))["attempts"][0]
+    assert attempt["status"] == "failed"
+    assert attempt["session_id"] == session["session_id"]
+    assert attempt["adjudication_execution_id"] is None
 
 
 def _indexed_adjudication_session():
@@ -1560,11 +1638,36 @@ def test_full_pilot_runs_split_aware_provider_and_adjudication_counts(
         ]
         return {"plan": plan, "raw_output": json.dumps(plan), "events_jsonl": ""}
 
-    def adjudicator_executor(*, session, model, reasoning_effort):
-        adjudicator_calls.append((session["session_id"], model, reasoning_effort))
+    def adjudicator_executor(
+        *, session, model, reasoning_effort, call_ledger_path, batch_id
+    ):
+        execution_id = f"fresh-{len(adjudicator_calls) + 1}"
+        adjudicator_calls.append(
+            (
+                session["session_id"],
+                model,
+                reasoning_effort,
+                Path(call_ledger_path),
+                batch_id,
+                execution_id,
+            )
+        )
+        ledger_path = Path(call_ledger_path)
+        ledger = (
+            json.loads(ledger_path.read_text(encoding="utf-8"))
+            if ledger_path.exists()
+            else {"schema_version": 1, "batch_id": batch_id, "attempts": []}
+        )
+        ledger["attempts"].append({
+            "attempt_id": f"attempt-{len(ledger['attempts']) + 1}",
+            "session_id": session["session_id"],
+            "status": "success",
+            "adjudication_execution_id": execution_id,
+        })
+        ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
         return {
             "session_id": session["session_id"],
-            "adjudication_execution_id": f"fresh-{len(adjudicator_calls)}",
+            "adjudication_execution_id": execution_id,
             "items": [{
                 "item_index": item_index,
                 "requirement_hit_indexes": [],
@@ -1603,6 +1706,15 @@ def test_full_pilot_runs_split_aware_provider_and_adjudication_counts(
     assert all(call[2] == 0 for call in provider_calls)
     assert all(call[3] == expected_provider_effort for call in provider_calls)
     assert all(call[2] == expected_adjudicator_effort for call in adjudicator_calls)
+    ledger_path = artifact_root / "batch-full" / "adjudication-call-ledger.json"
+    assert all(call[3] == ledger_path for call in adjudicator_calls)
+    assert all(call[4] == "batch-full" for call in adjudicator_calls)
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert len(ledger["attempts"]) == expected_session_count
+    assert {
+        (attempt["session_id"], attempt["adjudication_execution_id"])
+        for attempt in ledger["attempts"]
+    } == {(call[0], call[5]) for call in adjudicator_calls}
     assert report["evaluation_status"] == "draft_not_for_comparison"
     if split == "development":
         assert report["superiority_claim_status"] == "blocked_development_diagnostic"
@@ -1781,11 +1893,27 @@ def test_full_pilot_can_resume_complete_provider_batch_without_repeating_calls(t
     def forbidden_provider(**kwargs):
         raise AssertionError("resume must not repeat provider calls")
 
-    def adjudicator_executor(*, session, model, reasoning_effort):
+    def adjudicator_executor(
+        *, session, model, reasoning_effort, call_ledger_path, batch_id
+    ):
         assert not (artifact_root / batch_id / "private-provider-mapping.json").exists()
+        execution_id = f"fresh-{session['session_id']}"
+        ledger_path = Path(call_ledger_path)
+        ledger = (
+            json.loads(ledger_path.read_text(encoding="utf-8"))
+            if ledger_path.exists()
+            else {"schema_version": 1, "batch_id": batch_id, "attempts": []}
+        )
+        ledger["attempts"].append({
+            "attempt_id": f"attempt-{len(ledger['attempts']) + 1}",
+            "session_id": session["session_id"],
+            "status": "success",
+            "adjudication_execution_id": execution_id,
+        })
+        ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
         return {
             "session_id": session["session_id"],
-            "adjudication_execution_id": f"fresh-{session['session_id']}",
+            "adjudication_execution_id": execution_id,
             "items": [{
                 "item_index": item_index,
                 "requirement_hit_indexes": [],

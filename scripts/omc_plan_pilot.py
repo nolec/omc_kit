@@ -1715,6 +1715,7 @@ def run_full_pilot(
     adjudication_artifacts = [
         *root.glob("adjudication-session-*"),
         *(root / name for name in (
+            "adjudication-call-ledger.json",
             "private-provider-mapping.json",
             "sealed-provider-batch.json",
             "pilot-report.json",
@@ -1738,6 +1739,7 @@ def run_full_pilot(
     )
     adjudication_results = []
     adjudication_contract_sessions = []
+    adjudication_call_ledger_path = root / "adjudication-call-ledger.json"
     for index, session in enumerate(sessions, start=1):
         (root / f"adjudication-session-{index}-blind.json").write_text(
             json.dumps(session, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1746,6 +1748,8 @@ def run_full_pilot(
             session=deepcopy(session),
             model=model,
             reasoning_effort=adjudicator_effort,
+            call_ledger_path=adjudication_call_ledger_path,
+            batch_id=batch_id,
         )
         expected_provenance = validate_adjudication_result_contract(
             raw_result, session
@@ -1932,8 +1936,52 @@ def codex_adjudicator_executor(
     codex_binary: str,
     output_schema: str | Path,
     workspace: str | Path,
+    call_ledger_path: str | Path | None = None,
+    batch_id: str | None = None,
+    timeout_sec: int | None = None,
 ) -> dict[str, Any]:
     """Run one fresh blind adjudication session in an isolated workspace."""
+    if (call_ledger_path is None) != (batch_id is None):
+        raise ValueError("adjudication call ledger path and batch id are required together")
+    if timeout_sec is not None and (
+        type(timeout_sec) is not int or timeout_sec <= 0
+    ):
+        raise ValueError("adjudication timeout must be a positive integer")
+    attempt_id = f"attempt-{uuid.uuid4().hex}"
+    attempt = {
+        "attempt_id": attempt_id,
+        "session_id": session["session_id"],
+        "status": "failed",
+        "adjudication_execution_id": None,
+    }
+
+    def persist_attempt() -> None:
+        if call_ledger_path is None:
+            return
+        ledger_path = Path(call_ledger_path)
+        if ledger_path.exists():
+            ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+            if (
+                not isinstance(ledger, dict)
+                or ledger.get("schema_version") != 1
+                or ledger.get("batch_id") != batch_id
+                or not isinstance(ledger.get("attempts"), list)
+            ):
+                raise ValueError("adjudication call ledger is invalid")
+            ledger["attempts"] = [
+                attempt if item.get("attempt_id") == attempt_id else item
+                for item in ledger["attempts"]
+            ]
+            if not any(item.get("attempt_id") == attempt_id for item in ledger["attempts"]):
+                ledger["attempts"].append(attempt)
+        else:
+            ledger = {"schema_version": 1, "batch_id": batch_id, "attempts": [attempt]}
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        ledger_path.write_text(
+            json.dumps(ledger, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
     output_path = Path(workspace) / f"adjudication-{uuid.uuid4().hex}.json"
     base_schema = json.loads(Path(output_schema).read_text(encoding="utf-8"))
     bound_schema = build_adjudication_output_schema(
@@ -1964,14 +2012,20 @@ def codex_adjudicator_executor(
         "--json",
         "-",
     ]
-    completed = subprocess.run(
-        command,
-        input=prompt,
-        text=True,
-        capture_output=True,
-        cwd=workspace,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            input=prompt,
+            text=True,
+            capture_output=True,
+            cwd=workspace,
+            check=False,
+            timeout=timeout_sec,
+        )
+    except subprocess.TimeoutExpired:
+        persist_attempt()
+        raise
+    persist_attempt()
     if completed.returncode != 0:
         raise RuntimeError(completed.stderr.strip() or "Codex adjudication failed")
     result = json.loads(output_path.read_text(encoding="utf-8"))
@@ -1987,6 +2041,9 @@ def codex_adjudicator_executor(
     if canonical_digest(prompt) != expected_provenance["adjudication_prompt_sha256"]:
         raise ValueError("adjudication prompt differs from the runner contract")
     result["_adjudication_provenance"] = expected_provenance
+    attempt["status"] = "success"
+    attempt["adjudication_execution_id"] = result["adjudication_execution_id"]
+    persist_attempt()
     return result
 
 

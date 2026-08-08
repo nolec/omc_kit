@@ -1970,6 +1970,82 @@ def validate_execution_budget_evidence(
         raise ValueError("confirmatory execution budget evidence mismatch")
 
 
+def validate_end_to_end_call_budget(
+    provider_budget: dict[str, Any],
+    adjudication_call_ledger: dict[str, Any],
+    *,
+    adjudication_results: list[dict[str, Any]],
+    expected_batch_id: str,
+) -> dict[str, int]:
+    """Bind every adjudicator attempt to the frozen provider call budget."""
+    validate_execution_budget_state(
+        provider_budget,
+        expected_budget=FROZEN_CONFIRMATORY_BUDGET,
+    )
+    if (
+        not isinstance(adjudication_call_ledger, dict)
+        or set(adjudication_call_ledger) != {"schema_version", "batch_id", "attempts"}
+        or adjudication_call_ledger.get("schema_version") != 1
+        or adjudication_call_ledger.get("batch_id") != expected_batch_id
+        or not isinstance(adjudication_call_ledger.get("attempts"), list)
+    ):
+        raise ValueError("adjudication call ledger is invalid")
+    attempts = adjudication_call_ledger["attempts"]
+    attempt_ids: set[str] = set()
+    successful_execution_ids: set[str] = set()
+    successful_bindings: set[tuple[str, str]] = set()
+    for attempt in attempts:
+        if (
+            not isinstance(attempt, dict)
+            or set(attempt)
+            != {"attempt_id", "session_id", "status", "adjudication_execution_id"}
+            or not isinstance(attempt.get("attempt_id"), str)
+            or not attempt["attempt_id"].strip()
+            or attempt["attempt_id"] in attempt_ids
+            or not isinstance(attempt.get("session_id"), str)
+            or not attempt["session_id"].strip()
+            or attempt.get("status") not in {"success", "failed"}
+        ):
+            raise ValueError("adjudication call ledger attempt is invalid")
+        attempt_ids.add(attempt["attempt_id"])
+        execution_id = attempt.get("adjudication_execution_id")
+        if attempt["status"] == "success":
+            if (
+                not isinstance(execution_id, str)
+                or not execution_id.strip()
+                or execution_id in successful_execution_ids
+            ):
+                raise ValueError("adjudication call ledger success is invalid")
+            successful_execution_ids.add(execution_id)
+            successful_bindings.add((attempt["session_id"], execution_id))
+        elif execution_id is not None:
+            raise ValueError("failed adjudication call cannot have an execution id")
+    result_execution_ids = {
+        result.get("adjudication_execution_id") for result in adjudication_results
+    }
+    result_bindings = {
+        (result.get("session_id"), result.get("adjudication_execution_id"))
+        for result in adjudication_results
+    }
+    if (
+        None in result_execution_ids
+        or len(result_bindings) != len(adjudication_results)
+        or successful_execution_ids != result_execution_ids
+        or successful_bindings != result_bindings
+    ):
+        raise ValueError("adjudication call ledger does not match results")
+    provider_calls = provider_budget["used_external_calls"]
+    total_calls = provider_calls + len(attempts)
+    if total_calls > provider_budget["maximum_external_calls"]:
+        raise RuntimeError("end-to-end external call budget exceeded")
+    return {
+        "maximum_external_calls": provider_budget["maximum_external_calls"],
+        "provider_external_calls": provider_calls,
+        "adjudication_external_calls": len(attempts),
+        "total_external_calls": total_calls,
+    }
+
+
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -3809,6 +3885,120 @@ def run_runtime_batch(
     }
 
 
+def run_runtime_adjudication(
+    *,
+    protocol: dict[str, Any],
+    provider_batch: dict[str, Any],
+    blind_sessions: list[dict[str, Any]],
+    private_mapping: dict[str, dict[str, str]],
+    trusted_runtime_signer_public_key: str,
+    executor: Any,
+    artifact_root: str | Path,
+    repo_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Execute the frozen blind sessions and persist finalizer-ready evidence."""
+    from omc_plan_pilot import validate_adjudication_result_contract
+
+    root = _validate_artifact_root(
+        artifact_root,
+        repo_root=repo_root or Path(__file__).resolve().parents[1],
+    )
+    provider_path = root / "provider-batch.json"
+    sessions_path = root / "blind-sessions.json"
+    mapping_path = root / "private-mapping.json"
+    if (
+        not provider_path.is_file()
+        or not sessions_path.is_file()
+        or not mapping_path.is_file()
+        or _load_json(provider_path) != provider_batch
+        or _load_json(sessions_path) != blind_sessions
+        or _load_json(mapping_path) != private_mapping
+    ):
+        raise ValueError("runtime adjudication inputs do not match batch artifacts")
+    if provider_batch.get("protocol_sha256") != canonical_digest(protocol):
+        raise ValueError("runtime adjudication protocol does not match provider batch")
+    verify_runtime_attestation(
+        provider_batch,
+        blind_sessions,
+        private_mapping,
+        trusted_public_key=trusted_runtime_signer_public_key,
+    )
+    batch_id = provider_batch.get("batch_id")
+    model = provider_batch.get("model")
+    reasoning_effort = provider_batch.get("reasoning_effort")
+    session_ids = [
+        session.get("session_id") if isinstance(session, dict) else None
+        for session in blind_sessions
+    ]
+    if (
+        not isinstance(batch_id, str)
+        or not batch_id.strip()
+        or not isinstance(model, str)
+        or not model.strip()
+        or not isinstance(reasoning_effort, str)
+        or not reasoning_effort.strip()
+        or len(session_ids) != 5
+        or None in session_ids
+        or len(set(session_ids)) != 5
+    ):
+        raise ValueError("runtime adjudication batch contract is invalid")
+    provider_budget = provider_batch.get("execution_budget")
+    if not isinstance(provider_budget, dict):
+        raise ValueError("runtime adjudication execution budget is invalid")
+    validate_execution_budget_state(
+        provider_budget,
+        expected_budget=FROZEN_CONFIRMATORY_BUDGET,
+    )
+    timeout_sec = protocol.get("execution", {}).get("timeout_sec")
+    if type(timeout_sec) is not int or timeout_sec <= 0:
+        raise ValueError("runtime adjudication timeout is invalid")
+    if (
+        provider_budget["used_external_calls"] + len(blind_sessions)
+        > provider_budget["maximum_external_calls"]
+    ):
+        raise RuntimeError("end-to-end external call budget exceeded")
+
+    ledger_path = root / "adjudication-call-ledger.json"
+    results_path = root / "adjudication-results.json"
+    result_root = root / "adjudication-results"
+    if ledger_path.exists() or results_path.exists() or result_root.exists():
+        raise ValueError("runtime adjudication artifacts already exist")
+    result_root.mkdir()
+
+    adjudication_results = []
+    for index, session in enumerate(blind_sessions, start=1):
+        result = executor(
+            session=deepcopy(session),
+            model=model,
+            reasoning_effort=reasoning_effort,
+            call_ledger_path=ledger_path,
+            batch_id=batch_id,
+            timeout_sec=timeout_sec,
+        )
+        validate_adjudication_result_contract(result, session)
+        (result_root / f"session-{index:02d}.json").write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        adjudication_results.append(result)
+
+    adjudication_call_ledger = _load_json(ledger_path)
+    external_call_budget = validate_end_to_end_call_budget(
+        provider_budget,
+        adjudication_call_ledger,
+        adjudication_results=adjudication_results,
+        expected_batch_id=batch_id,
+    )
+    results_path.write_text(
+        json.dumps(adjudication_results, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return {
+        "adjudication_results": adjudication_results,
+        "adjudication_call_ledger": adjudication_call_ledger,
+        "external_call_budget": external_call_budget,
+    }
+
+
 def build_runtime_metrics(
     scores_by_provider: dict[str, list[dict[str, Any]]],
     executions: list[dict[str, Any]],
@@ -3865,6 +4055,9 @@ def build_runtime_metrics(
             "task_evidence_accuracy": sum(
                 1.0 - score["bloat_ratio"] for score in scores
             ) / len(scores),
+            "decision_proxy_count": sum(score["decision_proxy"] for score in scores),
+            "decision_proxy_mean": sum(score["decision_proxy"] for score in scores)
+            / len(scores),
             "input_tokens": sum(
                 usage.get("input_tokens", 0) for usage in usages
                 if isinstance(usage, dict)
@@ -3886,6 +4079,10 @@ def build_runtime_metrics(
         }
         if metrics["token_measurement_status"] == "observed"
         else {field: None for field in token_fields}
+    )
+    metrics["decision_proxy_delta"] = (
+        metrics["omc-plan"]["decision_proxy_count"]
+        - metrics["baseline-plan"]["decision_proxy_count"]
     )
     baseline_cases = score_by_case["baseline-plan"]
     omc_cases = score_by_case["omc-plan"]
@@ -3912,6 +4109,7 @@ def finalize_runtime_batch(
     blind_sessions: list[dict[str, Any]],
     private_mapping: dict[str, dict[str, str]],
     adjudication_results: list[dict[str, Any]],
+    adjudication_call_ledger: dict[str, Any],
     adjudicator_private_key: Any,
     trusted_adjudicator_public_key: str,
     adjudicator: str,
@@ -3999,6 +4197,12 @@ def finalize_runtime_batch(
         raise ValueError("runtime adjudication requires exactly 5 distinct sessions")
     if len(adjudication_results) != 5:
         raise ValueError("runtime adjudication results must cover exactly 5 sessions")
+    end_to_end_call_budget = validate_end_to_end_call_budget(
+        provider_batch.get("execution_budget"),
+        adjudication_call_ledger,
+        adjudication_results=adjudication_results,
+        expected_batch_id=provider_batch.get("batch_id"),
+    )
     normalized_results = []
     for result in adjudication_results:
         session = sessions_by_id.get(result.get("session_id"))
@@ -4066,6 +4270,7 @@ def finalize_runtime_batch(
         expected_case_count=expected_count,
         evaluation_scope=provider_batch["evaluation_scope"],
     )
+    metrics["external_call_budget"] = end_to_end_call_budget
     decision = decide_superiority_batch(
         metrics,
         protocol["acceptance"],
@@ -4163,6 +4368,21 @@ def main() -> int:
         "--repo-root", default=str(Path(__file__).resolve().parents[1])
     )
 
+    adjudication_parser = subparsers.add_parser("run-adjudication")
+    adjudication_parser.add_argument("protocol")
+    adjudication_parser.add_argument("provider_batch")
+    adjudication_parser.add_argument("blind_sessions")
+    adjudication_parser.add_argument("private_mapping")
+    adjudication_parser.add_argument("--codex-binary", default="codex")
+    adjudication_parser.add_argument("--output-schema", required=True)
+    adjudication_parser.add_argument("--artifact-root", required=True)
+    adjudication_parser.add_argument(
+        "--trusted-runtime-signer-public-key", required=True
+    )
+    adjudication_parser.add_argument(
+        "--repo-root", default=str(Path(__file__).resolve().parents[1])
+    )
+
     diagnostic_parser = subparsers.add_parser("prepare-diagnostic-rejudge")
     diagnostic_parser.add_argument("protocol")
     diagnostic_parser.add_argument("cases")
@@ -4197,6 +4417,7 @@ def main() -> int:
     finalize_parser.add_argument("blind_sessions")
     finalize_parser.add_argument("private_mapping")
     finalize_parser.add_argument("adjudication_results")
+    finalize_parser.add_argument("adjudication_call_ledger")
     finalize_parser.add_argument(
         "--trusted-gold-signer-public-key", action="append", required=True
     )
@@ -4412,6 +4633,34 @@ def main() -> int:
         return 0
 
     protocol = load_runtime_protocol(args.protocol)
+    if args.command == "run-adjudication":
+        from omc_plan_pilot import codex_adjudicator_executor
+
+        def execute_adjudication(**kwargs: Any) -> dict[str, Any]:
+            with tempfile.TemporaryDirectory(
+                prefix="omc-plan-runtime-adjudicator-"
+            ) as workspace:
+                return codex_adjudicator_executor(
+                    **kwargs,
+                    codex_binary=args.codex_binary,
+                    output_schema=args.output_schema,
+                    workspace=workspace,
+                )
+
+        run_runtime_adjudication(
+            protocol=protocol,
+            provider_batch=_load_json(args.provider_batch),
+            blind_sessions=_load_json(args.blind_sessions),
+            private_mapping=_load_json(args.private_mapping),
+            trusted_runtime_signer_public_key=(
+                args.trusted_runtime_signer_public_key
+            ),
+            executor=execute_adjudication,
+            artifact_root=args.artifact_root,
+            repo_root=args.repo_root,
+        )
+        print(Path(args.artifact_root).resolve() / "adjudication-results.json")
+        return 0
     if args.command == "validate-corpus":
         cases = _load_json(args.cases)
         gold = _load_json(args.gold)
@@ -4517,6 +4766,7 @@ def main() -> int:
             blind_sessions=_load_json(args.blind_sessions),
             private_mapping=_load_json(args.private_mapping),
             adjudication_results=_load_json(args.adjudication_results),
+            adjudication_call_ledger=_load_json(args.adjudication_call_ledger),
             adjudicator_private_key=private_key,
             trusted_adjudicator_public_key=args.trusted_adjudicator_public_key,
             adjudicator=args.adjudicator,
@@ -4656,6 +4906,8 @@ def decide_replacement(
         failed.append("unsupported_assumptions")
     if omc["task_evidence_accuracy"] < baseline["task_evidence_accuracy"]:
         failed.append("task_evidence_accuracy")
+    if omc["decision_proxy_count"] > baseline["decision_proxy_count"]:
+        failed.append("decision_proxy")
     if omc["output_tokens"] > baseline["output_tokens"] * acceptance["maximum_output_token_ratio"]:
         failed.append("output_bloat")
 
@@ -4890,9 +5142,14 @@ def _valid_provider_metrics(metrics: dict[str, Any]) -> bool:
         "executable_task_rate",
         "task_evidence_accuracy",
     }
-    count_fields = {"critical_omission_count", "unsupported_assumption_count"}
+    count_fields = {
+        "critical_omission_count",
+        "unsupported_assumption_count",
+        "decision_proxy_count",
+    }
+    mean_fields = {"decision_proxy_mean"}
     token_fields = {"output_tokens", "total_tokens"}
-    if not (rate_fields | count_fields | token_fields) <= set(metrics):
+    if not (rate_fields | count_fields | mean_fields | token_fields) <= set(metrics):
         return False
     for field in rate_fields:
         value = metrics[field]
@@ -4906,6 +5163,15 @@ def _valid_provider_metrics(metrics: dict[str, Any]) -> bool:
     for field in count_fields | token_fields:
         value = metrics[field]
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return False
+    for field in mean_fields:
+        value = metrics[field]
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
             return False
     return metrics["total_tokens"] > 0
 
