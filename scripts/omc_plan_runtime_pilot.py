@@ -2422,11 +2422,8 @@ def build_provider_prompt(
         return (
             receipt_instruction
             + context_instruction
-            + "Do not create a todo list or use a planning tool. Return only the "
-            + "output-schema fields; write each descriptive item and task text field as one "
-            + "concise sentence without repeating requirement text. Keep supports and other "
-            + "ID-reference arrays as short IDs; apply the loaded skill and "
-            + "produce the implementation plan immediately.\n\n"
+            + "Apply the loaded $omc-plan frozen-context fast path; return schema only "
+            + "without tools or todo lists.\n\n"
             + "$omc-plan\n\n"
             + request
         )

@@ -2284,15 +2284,18 @@ def test_provider_prompt_rejects_context_paths_without_frozen_content():
 def test_omc_activation_prompt_uses_native_skill_without_shell_command():
     prompt = runtime.build_provider_prompt("omc-plan", "Return activation receipt")
 
-    assert "apply the loaded skill" in prompt
+    assert "Apply the loaded $omc-plan frozen-context fast path" in prompt
     assert "Do not run a shell command" in prompt
-    assert "Do not create a todo list or use a planning tool" in prompt
-    assert "Return only the output-schema fields" in prompt
-    assert "descriptive item and task text field as one concise sentence" in prompt
-    assert "Keep supports and other ID-reference arrays as short IDs" in prompt
-    assert "each list item and task field" not in prompt
+    assert "return schema only without tools or todo lists" in prompt
     assert "cat --" not in prompt
     assert ".agents/skills/omc-plan/SKILL.md" not in prompt
+
+
+def test_omc_provider_treatment_prompt_stays_within_input_budget():
+    baseline = runtime.build_provider_prompt("baseline-plan", "x")
+    omc = runtime.build_provider_prompt("omc-plan", "x")
+
+    assert len(omc.encode("utf-8")) - len(baseline.encode("utf-8")) <= 160
 
 
 def test_omc_plan_skill_uses_runner_injected_context_in_isolated_runtime():

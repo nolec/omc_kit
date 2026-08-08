@@ -10,7 +10,12 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "Plan Fresh paired adjudication canonicalization 보강" in text
     assert "semantic task link duplicates task" in text
     assert "OMC overhead는 `15,385`(`5.9%`)" in text
-    assert "indexed canonicalization 교정 완료" in text
+    assert "Plan Fresh paired Batch A token overhead 재검증" in text
+    assert "`260,081 → 277,678`" in text
+    assert "`17,597`(`6.77%`)" in text
+    assert "실패 gate는 `total_tokens` 하나" in text
+    assert "Batch A 통과 판정의 상한은 `PROVISIONALLY_REPLACEABLE`" in text
+    assert "indexed canonicalization 교정 후 Fresh Batch A 유효 판정 완료" in text
     assert "전체 빠른 회귀 `1858 passed, 3 skipped, 12 deselected`" in text
     assert "## Operator Experience" in text
     assert "plan / task / review" in text

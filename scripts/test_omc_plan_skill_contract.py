@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_NON_EMPTY_LINES = 40
-MAX_SKILL_BYTES = 4500
+MAX_SKILL_BYTES = 3700
 
 REQUIRED_PLAN_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-plan" / "SKILL.md",
@@ -118,6 +118,12 @@ REQUIRED_EXECUTION_EFFICIENCY_MARKERS = [
     "todo_list·planning tool 생성 금지",
     "검증 경계가 다르면 요구사항 ID 분리",
     "assumption이 필수 데이터 경로 검증을 대체 금지",
+]
+
+REQUIRED_TASK_SPECIFICITY_MARKERS = [
+    "RED: [실패 테스트 파일+케이스]",
+    "GREEN: [최소 구현 파일]",
+    "VERIFY: [검증 커맨드]",
 ]
 
 REQUIRED_DECISION_OUTPUT_MARKERS = [
@@ -384,6 +390,19 @@ def test_plan_skill_stays_short_enough_to_scan():
 def test_plan_skill_stays_within_input_budget():
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     assert len(text.encode("utf-8")) <= MAX_SKILL_BYTES
+
+
+def test_plan_skill_preserves_executable_tdd_task_specificity():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_TASK_SPECIFICITY_MARKERS if marker not in text]
+    assert not missing, f"missing executable task markers: {missing}"
+
+
+def test_plan_skill_places_frozen_benchmark_fast_path_before_general_phases():
+    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    fast_path = text.index("격리 benchmark fast-path")
+    assert fast_path < text.index("## Phase 0")
+    assert "아래 일반 Phase를 적용하지 않는다" in text[fast_path:text.index("## Phase 0")]
 
 
 def test_plan_skill_frontmatter_preserves_natural_language_triggers():
