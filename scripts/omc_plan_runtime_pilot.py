@@ -1199,6 +1199,7 @@ def _runtime_cases_from_transfer_readiness(
 
 def prepare_confirmatory_runtime_inputs(
     *,
+    protocol: dict[str, Any],
     readiness: dict[str, Any],
     public_corpus: dict[str, Any],
     selection: dict[str, Any],
@@ -1214,6 +1215,7 @@ def prepare_confirmatory_runtime_inputs(
     approved_payload_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Build the exact runtime corpus and require approval before signing."""
+    validate_runtime_protocol(protocol)
     cases = _runtime_cases_from_transfer_readiness(readiness, public_corpus)
     _verify_gold_signoff(
         public_corpus["cases"],
@@ -1278,13 +1280,14 @@ def prepare_confirmatory_runtime_inputs(
         raise ValueError("confirmatory approved payload hash mismatch")
 
     manifest = {
-        "schema_version": 4,
+        "schema_version": 5,
         "status": "signed_off",
         "producer": producer,
         "source_corpus_sha256": public_corpus["corpus_sha256"],
         "corpus_sha256": runtime_corpus["corpus_sha256"],
         "gold_sha256": gold_document["gold_sha256"],
         "runtime_runner_sha256": _runtime_runner_sha256(),
+        "protocol_sha256": canonical_digest(protocol),
         "sampling": {
             "source_window": "preregistered-disjoint-selection",
             "eligibility_rule": "observed requests not used by prior evaluations",
@@ -1324,6 +1327,7 @@ def prepare_confirmatory_runtime_inputs(
 def seal_confirmatory_runtime_inputs(
     preparation: dict[str, Any],
     *,
+    protocol: dict[str, Any],
     signature: str,
     gold_document: dict[str, Any],
     trusted_prior_fingerprints: list[dict[str, str]],
@@ -1332,6 +1336,7 @@ def seal_confirmatory_runtime_inputs(
     trusted_confirmatory_signer_public_keys: set[str],
 ) -> dict[str, Any]:
     """Attach the independent signature and emit an execution-ready receipt."""
+    validate_runtime_protocol(protocol)
     if preparation.get("preparation_sha256") != canonical_digest(
         _without_digest(preparation, "preparation_sha256")
     ):
@@ -1373,6 +1378,7 @@ def seal_confirmatory_runtime_inputs(
     )
     validate_confirmatory_manifest(
         manifest,
+        protocol=protocol,
         cases=cases,
         gold_document=gold_document,
         trusted_prior_fingerprints=trusted_prior_fingerprints,
@@ -1620,12 +1626,14 @@ def validate_confirmatory_candidate_selection(
 def validate_confirmatory_manifest(
     manifest: dict[str, Any],
     *,
+    protocol: dict[str, Any],
     cases: list[dict[str, Any]],
     gold_document: dict[str, Any],
     trusted_prior_fingerprints: list[dict[str, str]],
     trusted_signer_public_keys: set[str],
 ) -> None:
     """Prove sampling, disjointness, and gold independence before execution."""
+    validate_runtime_protocol(protocol)
     expected_fields = {
         "schema_version",
         "status",
@@ -1634,6 +1642,7 @@ def validate_confirmatory_manifest(
         "corpus_sha256",
         "gold_sha256",
         "runtime_runner_sha256",
+        "protocol_sha256",
         "sampling",
         "prior_registry_sha256",
         "prior_fingerprints",
@@ -1648,7 +1657,7 @@ def validate_confirmatory_manifest(
     if (
         not isinstance(manifest, dict)
         or set(manifest) != expected_fields
-        or schema_version != 4
+        or schema_version != 5
         or manifest.get("status") != "signed_off"
         or not isinstance(manifest.get("producer"), str)
         or not manifest["producer"].strip()
@@ -1661,6 +1670,8 @@ def validate_confirmatory_manifest(
         raise ValueError("confirmatory source corpus hash mismatch")
     if manifest.get("runtime_runner_sha256") != _runtime_runner_sha256():
         raise ValueError("confirmatory runtime runner hash mismatch")
+    if manifest.get("protocol_sha256") != canonical_digest(protocol):
+        raise ValueError("confirmatory protocol hash mismatch")
     if (
         manifest.get("corpus_sha256") != canonical_digest(cases)
         or manifest.get("gold_sha256") != gold_document.get("gold_sha256")
@@ -3961,6 +3972,7 @@ def run_runtime_batch(
     )
     validate_confirmatory_manifest(
         confirmatory_manifest,
+        protocol=protocol,
         cases=cases,
         gold_document=gold_document,
         trusted_prior_fingerprints=trusted_prior_fingerprints,
@@ -4527,6 +4539,7 @@ def finalize_runtime_batch(
     )
     validate_confirmatory_manifest(
         confirmatory_manifest,
+        protocol=protocol,
         cases=cases,
         gold_document=gold_document,
         trusted_prior_fingerprints=trusted_prior_fingerprints,
@@ -4868,6 +4881,7 @@ def main() -> int:
     prepare_confirmatory_parser = subparsers.add_parser(
         "prepare-confirmatory"
     )
+    prepare_confirmatory_parser.add_argument("protocol")
     prepare_confirmatory_parser.add_argument("readiness")
     prepare_confirmatory_parser.add_argument("public_corpus")
     prepare_confirmatory_parser.add_argument("selection")
@@ -4892,6 +4906,7 @@ def main() -> int:
     prepare_confirmatory_parser.add_argument("--output", required=True)
 
     seal_confirmatory_parser = subparsers.add_parser("seal-confirmatory")
+    seal_confirmatory_parser.add_argument("protocol")
     seal_confirmatory_parser.add_argument("preparation")
     seal_confirmatory_parser.add_argument("gold")
     seal_confirmatory_parser.add_argument("trusted_prior_registry")
@@ -4965,10 +4980,12 @@ def main() -> int:
         return 0
 
     if args.command == "prepare-confirmatory":
+        protocol = load_runtime_protocol(args.protocol)
         skill_sha256 = _sha256_text(
             Path(args.skill_file).read_text(encoding="utf-8")
         )
         result = prepare_confirmatory_runtime_inputs(
+            protocol=protocol,
             readiness=_load_json(args.readiness),
             public_corpus=_load_json(args.public_corpus),
             selection=_load_json(args.selection),
@@ -4998,11 +5015,13 @@ def main() -> int:
         return 0
 
     if args.command == "seal-confirmatory":
+        protocol = load_runtime_protocol(args.protocol)
         skill_sha256 = _sha256_text(
             Path(args.skill_file).read_text(encoding="utf-8")
         )
         result = seal_confirmatory_runtime_inputs(
             _load_json(args.preparation),
+            protocol=protocol,
             signature=Path(args.signature_file).read_text(
                 encoding="utf-8"
             ).strip(),
@@ -5074,6 +5093,7 @@ def main() -> int:
         )
         validate_confirmatory_manifest(
             confirmatory_manifest,
+            protocol=protocol,
             cases=cases["cases"],
             gold_document=gold,
             trusted_prior_fingerprints=_load_prior_registry(

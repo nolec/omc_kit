@@ -172,8 +172,9 @@ def _signer():
 
 
 def _signed_confirmatory_manifest(
-    cases, gold, *, prior_cases=None, skill_sha256="a" * 64
+    cases, gold, *, prior_cases=None, skill_sha256="a" * 64, protocol=None
 ):
+    protocol = _protocol() if protocol is None else protocol
     private_key, public_key = _signer()
     prior_cases = [_case(99)] if prior_cases is None else prior_cases
     prior_fingerprints = [
@@ -197,13 +198,14 @@ def _signed_confirmatory_manifest(
         "high", "high", "high",
     )
     manifest = {
-        "schema_version": 4,
+        "schema_version": 5,
         "status": "signed_off",
         "producer": "fixture-curator",
         "source_corpus_sha256": gold["corpus_sha256"],
         "corpus_sha256": runtime.canonical_digest(cases),
         "gold_sha256": gold["gold_sha256"],
         "runtime_runner_sha256": runtime._runtime_runner_sha256(),
+        "protocol_sha256": runtime.canonical_digest(protocol),
         "sampling": {
             "source_window": "2026-08-01/2026-08-03",
             "eligibility_rule": "observed requests not used by prior evaluations",
@@ -802,6 +804,7 @@ def test_confirmatory_manifest_binds_sampling_gold_and_disjoint_fingerprints():
 
     runtime.validate_confirmatory_manifest(
         manifest,
+        protocol=_protocol(),
         cases=cases,
         gold_document=gold,
         trusted_prior_fingerprints=manifest["prior_fingerprints"],
@@ -822,6 +825,7 @@ def test_confirmatory_manifest_binds_sampling_gold_and_disjoint_fingerprints():
     with pytest.raises(ValueError, match="source fingerprint overlap"):
         runtime.validate_confirmatory_manifest(
             manifest,
+            protocol=_protocol(),
             cases=cases,
             gold_document=gold,
             trusted_prior_fingerprints=manifest["prior_fingerprints"],
@@ -836,9 +840,71 @@ def test_confirmatory_manifest_binds_sampling_gold_and_disjoint_fingerprints():
     with pytest.raises(ValueError, match="prior registry"):
         runtime.validate_confirmatory_manifest(
             manifest,
+            protocol=_protocol(),
             cases=cases,
             gold_document=gold,
             trusted_prior_fingerprints=trusted_prior,
+            trusted_signer_public_keys={trusted},
+        )
+
+
+def test_confirmatory_manifest_rejects_protocol_unbound_schema_v4():
+    cases = [_case(index) for index in range(1, 11)]
+    gold, _ = _signed_gold(cases, [_gold(index) for index in range(1, 11)])
+    manifest, trusted = _signed_confirmatory_manifest(cases, gold)
+    manifest["schema_version"] = 4
+    manifest.pop("protocol_sha256")
+
+    with pytest.raises(ValueError, match="manifest fields"):
+        runtime.validate_confirmatory_manifest(
+            manifest,
+            protocol=_protocol_v2(),
+            cases=cases,
+            gold_document=gold,
+            trusted_prior_fingerprints=manifest["prior_fingerprints"],
+            trusted_signer_public_keys={trusted},
+        )
+
+
+def test_confirmatory_manifest_rejects_missing_or_mismatched_protocol_binding():
+    cases = [_case(index) for index in range(1, 11)]
+    gold, _ = _signed_gold(cases, [_gold(index) for index in range(1, 11)])
+    protocol = _protocol_v2()
+    manifest, trusted = _signed_confirmatory_manifest(
+        cases, gold, protocol=protocol
+    )
+
+    missing = deepcopy(manifest)
+    missing.pop("protocol_sha256")
+    with pytest.raises(ValueError, match="manifest fields"):
+        runtime.validate_confirmatory_manifest(
+            missing,
+            protocol=protocol,
+            cases=cases,
+            gold_document=gold,
+            trusted_prior_fingerprints=manifest["prior_fingerprints"],
+            trusted_signer_public_keys={trusted},
+        )
+
+    tampered = deepcopy(manifest)
+    tampered["protocol_sha256"] = "f" * 64
+    with pytest.raises(ValueError, match="protocol hash mismatch"):
+        runtime.validate_confirmatory_manifest(
+            tampered,
+            protocol=protocol,
+            cases=cases,
+            gold_document=gold,
+            trusted_prior_fingerprints=manifest["prior_fingerprints"],
+            trusted_signer_public_keys={trusted},
+        )
+
+    with pytest.raises(ValueError, match="protocol hash mismatch"):
+        runtime.validate_confirmatory_manifest(
+            manifest,
+            protocol=_protocol(),
+            cases=cases,
+            gold_document=gold,
+            trusted_prior_fingerprints=manifest["prior_fingerprints"],
             trusted_signer_public_keys={trusted},
         )
 
@@ -871,6 +937,7 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     prior = [runtime._case_fingerprint(_case(99))]
 
     approval = runtime.prepare_confirmatory_runtime_inputs(
+        protocol=_protocol_v2(),
         readiness=readiness,
         public_corpus=public_corpus,
         selection=_confirmatory_selection(source_cases),
@@ -896,6 +963,7 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     )
     with pytest.raises(ValueError, match="selection contract"):
         runtime.prepare_confirmatory_runtime_inputs(
+            protocol=_protocol_v2(),
             readiness=readiness,
             public_corpus=public_corpus,
             selection=retrieval_only_selection,
@@ -914,6 +982,7 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     duplicate_selection["cases"].append(duplicate_selection["cases"][0])
     with pytest.raises(ValueError, match="selection and runtime cases"):
         runtime.prepare_confirmatory_runtime_inputs(
+            protocol=_protocol_v2(),
             readiness=readiness,
             public_corpus=public_corpus,
             selection=duplicate_selection,
@@ -932,6 +1001,7 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     reordered_selection["cases"].reverse()
     with pytest.raises(ValueError, match="selection and runtime cases"):
         runtime.prepare_confirmatory_runtime_inputs(
+            protocol=_protocol_v2(),
             readiness=readiness,
             public_corpus=public_corpus,
             selection=reordered_selection,
@@ -948,6 +1018,7 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
 
     with pytest.raises(ValueError, match="approved payload hash"):
         runtime.prepare_confirmatory_runtime_inputs(
+            protocol=_protocol_v2(),
             readiness=readiness,
             public_corpus=public_corpus,
             selection=_confirmatory_selection(source_cases),
@@ -964,6 +1035,7 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
         )
 
     prepared = runtime.prepare_confirmatory_runtime_inputs(
+        protocol=_protocol_v2(),
         readiness=readiness,
         public_corpus=public_corpus,
         selection=_confirmatory_selection(source_cases),
@@ -983,6 +1055,10 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     assert prepared["confirmatory_manifest"]["runtime_runner_sha256"] == (
         runtime._runtime_runner_sha256()
     )
+    assert prepared["confirmatory_manifest"]["schema_version"] == 5
+    assert prepared["confirmatory_manifest"]["protocol_sha256"] == (
+        runtime.canonical_digest(_protocol_v2())
+    )
 
     signature = base64.b64encode(signer.sign(
         runtime.confirmatory_manifest_signoff_payload(
@@ -991,6 +1067,7 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     )).decode("ascii")
     receipt = runtime.seal_confirmatory_runtime_inputs(
         prepared,
+        protocol=_protocol_v2(),
         signature=signature,
         gold_document=gold,
         trusted_prior_fingerprints=prior,
@@ -1000,6 +1077,17 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     )
     assert receipt["status"] == "execution_ready"
     assert receipt["provider_execution_allowed"] is True
+    with pytest.raises(ValueError, match="protocol hash mismatch"):
+        runtime.seal_confirmatory_runtime_inputs(
+            prepared,
+            protocol=_protocol(),
+            signature=signature,
+            gold_document=gold,
+            trusted_prior_fingerprints=prior,
+            skill_sha256="a" * 64,
+            trusted_gold_signer_public_keys=trusted_gold,
+            trusted_confirmatory_signer_public_keys={signer_public_key},
+        )
     tampered_payload = deepcopy(prepared)
     tampered_payload["external_payload_sha256"] = "b" * 64
     tampered_payload["preparation_sha256"] = runtime.canonical_digest(
@@ -1008,6 +1096,7 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     with pytest.raises(ValueError, match="preparation envelope"):
         runtime.seal_confirmatory_runtime_inputs(
             tampered_payload,
+            protocol=_protocol_v2(),
             signature=signature,
             gold_document=gold,
             trusted_prior_fingerprints=prior,
@@ -1024,6 +1113,7 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     with pytest.raises(ValueError, match="preparation envelope"):
         runtime.seal_confirmatory_runtime_inputs(
             tampered_corpus,
+            protocol=_protocol_v2(),
             signature=signature,
             gold_document=gold,
             trusted_prior_fingerprints=prior,
@@ -1040,6 +1130,7 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     with pytest.raises(ValueError, match="preparation envelope"):
         runtime.seal_confirmatory_runtime_inputs(
             tampered_source,
+            protocol=_protocol_v2(),
             signature=signature,
             gold_document=gold,
             trusted_prior_fingerprints=prior,
@@ -1051,6 +1142,7 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     with pytest.raises(ValueError, match="signer is not trusted"):
         runtime.seal_confirmatory_runtime_inputs(
             prepared,
+            protocol=_protocol_v2(),
             signature=signature,
             gold_document=gold,
             trusted_prior_fingerprints=prior,
@@ -1063,6 +1155,7 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     with pytest.raises(ValueError, match="runtime runner hash mismatch"):
         runtime.seal_confirmatory_runtime_inputs(
             prepared,
+            protocol=_protocol_v2(),
             signature=signature,
             gold_document=gold,
             trusted_prior_fingerprints=prior,
@@ -1100,6 +1193,7 @@ def test_confirmatory_prepare_and_seal_cli_round_trip(tmp_path):
     prior = [runtime._case_fingerprint(_case(99))]
 
     inputs = {
+        "protocol": _protocol_v2(),
         "readiness": readiness,
         "public-corpus": public_corpus,
         "selection": _confirmatory_selection(source_cases),
@@ -1121,6 +1215,7 @@ def test_confirmatory_prepare_and_seal_cli_round_trip(tmp_path):
         sys.executable,
         str(Path(runtime.__file__)),
         "prepare-confirmatory",
+        str(paths["protocol"]),
         str(paths["readiness"]),
         str(paths["public-corpus"]),
         str(paths["selection"]),
@@ -1178,6 +1273,7 @@ def test_confirmatory_prepare_and_seal_cli_round_trip(tmp_path):
             sys.executable,
             str(Path(runtime.__file__)),
             "seal-confirmatory",
+            str(paths["protocol"]),
             str(prepared_path),
             str(paths["gold"]),
             str(paths["prior"]),
@@ -1283,6 +1379,7 @@ def test_confirmatory_runtime_bridge_accepts_generated_anonymized_public_corpus(
     _, signer_public_key = _signer()
 
     preparation = runtime.prepare_confirmatory_runtime_inputs(
+        protocol=_protocol_v2(),
         readiness=readiness,
         public_corpus=payload["public_corpus"],
         selection=selection,
@@ -2010,6 +2107,7 @@ def test_confirmatory_runtime_bridge_rejects_transfer_or_skill_drift():
     tampered["transfer_bundle"]["cases"][0]["request"] = "tampered"
     with pytest.raises(ValueError, match="readiness hash"):
         runtime.prepare_confirmatory_runtime_inputs(
+            protocol=_protocol_v2(),
             readiness=tampered,
             public_corpus=public_corpus,
             selection=_confirmatory_selection(source_cases),
@@ -2062,6 +2160,7 @@ def test_confirmatory_runtime_bridge_rejects_transfer_or_skill_drift():
     )
     with pytest.raises(ValueError, match="context hash"):
         runtime.prepare_confirmatory_runtime_inputs(
+            protocol=_protocol_v2(),
             readiness=substituted,
             public_corpus=public_corpus,
             selection=_confirmatory_selection(source_cases),
@@ -2110,6 +2209,7 @@ def test_confirmatory_manifest_enforces_semantic_quota(mutation, message):
     with pytest.raises(ValueError, match=message):
         runtime.validate_confirmatory_manifest(
             manifest,
+            protocol=_protocol(),
             cases=cases,
             gold_document=gold,
             trusted_prior_fingerprints=manifest["prior_fingerprints"],
@@ -2128,6 +2228,7 @@ def test_confirmatory_manifest_rejects_legacy_schema_without_semantic_quota():
     with pytest.raises(ValueError, match="fields are invalid"):
         runtime.validate_confirmatory_manifest(
             manifest,
+            protocol=_protocol(),
             cases=cases,
             gold_document=gold,
             trusted_prior_fingerprints=manifest["prior_fingerprints"],
@@ -2222,6 +2323,7 @@ def test_confirmatory_manifest_rejects_gold_role_or_provider_leakage():
     with pytest.raises(ValueError, match="gold sessions must be independent"):
         runtime.validate_confirmatory_manifest(
             manifest,
+            protocol=_protocol(),
             cases=cases,
             gold_document=gold,
             trusted_prior_fingerprints=manifest["prior_fingerprints"],
@@ -2233,6 +2335,7 @@ def test_confirmatory_manifest_rejects_gold_role_or_provider_leakage():
     with pytest.raises(ValueError, match="provider outputs must be unavailable"):
         runtime.validate_confirmatory_manifest(
             manifest,
+            protocol=_protocol(),
             cases=cases,
             gold_document=gold,
             trusted_prior_fingerprints=manifest["prior_fingerprints"],
