@@ -21,6 +21,10 @@ from typing import Any
 
 
 PROVIDERS = ("baseline-plan", "omc-plan")
+MINIMAL_ACTIVATION_CONTROL_PATH = (
+    Path(__file__).resolve().parent
+    / "fixtures/omc_plan_minimal_activation_control.md"
+)
 RUNTIME_PROTOCOL_FIELDS = {
     "schema_version",
     "benchmark_scope",
@@ -31,6 +35,13 @@ RUNTIME_PROTOCOL_FIELDS = {
     "confirmatory",
     "acceptance",
     "superiority",
+}
+RUNTIME_PROTOCOL_V2_FIELDS = RUNTIME_PROTOCOL_FIELDS | {"activation_cost"}
+ACTIVATION_COST_FIELDS = {
+    "control",
+    "control_skill_sha256",
+    "raw_native_policy",
+    "maximum_controllable_input_token_increase_per_case",
 }
 ACCEPTANCE_FIELDS = {
     "case_count",
@@ -1955,9 +1966,12 @@ def validate_execution_budget_evidence(
         reported_state, expected_budget=expected_budget
     )
     probe_executions = activation_probe.get("executions")
+    expected_probe_executions = set(PROVIDERS)
+    if activation_probe.get("activation_cost") is not None:
+        expected_probe_executions.add("minimal-native-plan")
     if (
         not isinstance(probe_executions, dict)
-        or set(probe_executions) != set(PROVIDERS)
+        or set(probe_executions) != expected_probe_executions
     ):
         raise ValueError("confirmatory activation budget evidence is invalid")
     observed_state = new_execution_budget_state(expected_budget)
@@ -2080,10 +2094,18 @@ def _safe_context_path(value: Any) -> str:
 
 def validate_runtime_protocol(protocol: dict[str, Any]) -> dict[str, Any]:
     """Reject mutable or incomplete replacement criteria before execution."""
-    if not isinstance(protocol, dict) or set(protocol) != RUNTIME_PROTOCOL_FIELDS:
+    if not isinstance(protocol, dict):
         raise ValueError("runtime protocol fields are invalid")
-    if protocol["schema_version"] != 1:
-        raise ValueError("runtime protocol schema_version must be 1")
+    schema_version = protocol.get("schema_version")
+    expected_fields = (
+        RUNTIME_PROTOCOL_V2_FIELDS
+        if schema_version == 2
+        else RUNTIME_PROTOCOL_FIELDS
+    )
+    if set(protocol) != expected_fields:
+        raise ValueError("runtime protocol fields are invalid")
+    if schema_version not in {1, 2}:
+        raise ValueError("runtime protocol schema_version must be 1 or 2")
     if protocol["benchmark_scope"] != "repository_grounded_skill_runtime":
         raise ValueError("runtime benchmark scope is invalid")
     if protocol["providers"] != list(PROVIDERS):
@@ -2132,6 +2154,20 @@ def validate_runtime_protocol(protocol: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("activation baseline_sentinel must be frozen")
     if activation["max_attempts"] != 2:
         raise ValueError("activation max_attempts must match the frozen contract")
+
+    if schema_version == 2:
+        activation_cost = protocol["activation_cost"]
+        if (
+            not isinstance(activation_cost, dict)
+            or set(activation_cost) != ACTIVATION_COST_FIELDS
+            or activation_cost["control"] != "minimal_native_skill"
+            or activation_cost["raw_native_policy"] != "report_only"
+            or activation_cost[
+                "maximum_controllable_input_token_increase_per_case"
+            ] != 100
+            or not _is_sha256(activation_cost["control_skill_sha256"])
+        ):
+            raise ValueError("activation cost contract is invalid")
 
     variability = protocol["variability"]
     if set(variability) != {
@@ -2408,10 +2444,7 @@ def build_activation_output_schema(
 
 
 def instrument_skill(skill_text: str, receipt: str) -> str:
-    receipt_block = (
-        "Runtime benchmark: set `runtime_activation_receipt`="
-        f"`{receipt}`."
-    )
+    receipt_block = f"R={receipt}"
     if skill_text.startswith("---\n"):
         frontmatter_end = skill_text.find("\n---", 4)
         if frontmatter_end != -1:
@@ -2513,11 +2546,8 @@ def build_provider_prompt(
         )
     if provider_id == "omc-plan":
         return (
-            receipt_instruction
-            + context_instruction
-            + "Apply the loaded $omc-plan frozen-context fast path; return schema only "
-            + "without tools or todo lists.\n\n"
-            + "$omc-plan\n\n"
+            context_instruction
+            + "Set runtime_activation_receipt from skill R. $omc-plan\n"
             + request
         )
     raise ValueError(f"unsupported provider: {provider_id}")
@@ -3224,6 +3254,7 @@ def execute_provider(
         ],
         "activation": activation,
         "usage": usage,
+        "successful_attempt_usage": attempt_usages[-1],
         "command_sha256": _sha256_text(json.dumps(command, ensure_ascii=False)),
         "prompt_sha256": _sha256_text(prompt),
     }
@@ -3302,6 +3333,161 @@ def _aggregate_attempt_usage(usages: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def require_activation_input_budget(
+    activation_probe: dict[str, Any],
+    *,
+    maximum_increase: int,
+    enforce_limit: bool = True,
+) -> int:
+    """Return paired activation input overhead and fail closed when unmeasured."""
+    executions = activation_probe.get("executions")
+    if not isinstance(executions, dict):
+        raise ValueError("activation_input_token_usage_unavailable")
+    inputs: dict[str, int] = {}
+    for provider_id in PROVIDERS:
+        execution = executions.get(provider_id)
+        usage = (
+            execution.get("successful_attempt_usage", execution.get("usage"))
+            if isinstance(execution, dict)
+            else None
+        )
+        if not isinstance(usage, dict) or usage.get("status") != "observed":
+            raise ValueError("activation_input_token_usage_unavailable")
+        input_tokens = usage.get("input_tokens")
+        output_tokens = usage.get("output_tokens")
+        total_tokens = usage.get("total_tokens")
+        if (
+            type(input_tokens) is not int
+            or type(output_tokens) is not int
+            or type(total_tokens) is not int
+            or input_tokens < 0
+            or output_tokens < 0
+            or total_tokens != input_tokens + output_tokens
+        ):
+            raise ValueError("activation_input_token_usage_unavailable")
+        inputs[provider_id] = input_tokens
+    delta = inputs["omc-plan"] - inputs["baseline-plan"]
+    if enforce_limit and delta > maximum_increase:
+        raise ValueError(
+            "activation_input_token_overhead: "
+            f"observed={delta} maximum={maximum_increase}"
+        )
+    return delta
+
+
+def require_activation_cost_budget(
+    activation_probe: dict[str, Any],
+    *,
+    maximum_controllable_increase: int,
+) -> dict[str, int | str]:
+    """Separate native loader cost from the OMC-controlled skill payload."""
+    executions = activation_probe.get("executions")
+    if not isinstance(executions, dict):
+        raise ValueError("activation_input_token_usage_unavailable")
+    inputs: dict[str, int] = {}
+    for execution_id in ("baseline-plan", "minimal-native-plan", "omc-plan"):
+        execution = executions.get(execution_id)
+        usage = (
+            execution.get("successful_attempt_usage", execution.get("usage"))
+            if isinstance(execution, dict)
+            else None
+        )
+        if not isinstance(usage, dict) or usage.get("status") != "observed":
+            raise ValueError("activation_input_token_usage_unavailable")
+        input_tokens = usage.get("input_tokens")
+        output_tokens = usage.get("output_tokens")
+        total_tokens = usage.get("total_tokens")
+        if (
+            type(input_tokens) is not int
+            or type(output_tokens) is not int
+            or type(total_tokens) is not int
+            or input_tokens < 0
+            or output_tokens < 0
+            or total_tokens != input_tokens + output_tokens
+        ):
+            raise ValueError("activation_input_token_usage_unavailable")
+        inputs[execution_id] = input_tokens
+    raw_delta = inputs["omc-plan"] - inputs["baseline-plan"]
+    platform_floor = inputs["minimal-native-plan"] - inputs["baseline-plan"]
+    controllable_delta = inputs["omc-plan"] - inputs["minimal-native-plan"]
+    if (
+        raw_delta < 0
+        or platform_floor < 0
+        or controllable_delta < 0
+        or raw_delta != platform_floor + controllable_delta
+    ):
+        raise ValueError("activation_input_token_decomposition_invalid")
+    if controllable_delta > maximum_controllable_increase:
+        raise ValueError(
+            "controllable_activation_input_overhead: "
+            f"observed={controllable_delta} maximum={maximum_controllable_increase}"
+        )
+    return {
+        "raw_native_input_delta": raw_delta,
+        "platform_floor_input_delta": platform_floor,
+        "controllable_payload_input_delta": controllable_delta,
+        "raw_native_status": "report_only",
+        "controllable_payload_status": "pass",
+    }
+
+
+def _valid_activation_cost_summary(
+    activation_cost: Any,
+    activation_cost_contract: dict[str, Any],
+) -> bool:
+    expected_fields = {
+        "raw_native_input_delta",
+        "platform_floor_input_delta",
+        "controllable_payload_input_delta",
+        "raw_native_status",
+        "controllable_payload_status",
+    }
+    delta_fields = (
+        "raw_native_input_delta",
+        "platform_floor_input_delta",
+        "controllable_payload_input_delta",
+    )
+    return (
+        isinstance(activation_cost, dict)
+        and set(activation_cost) == expected_fields
+        and activation_cost.get("raw_native_status") == "report_only"
+        and activation_cost.get("controllable_payload_status") == "pass"
+        and all(
+            type(activation_cost.get(field)) is int
+            and activation_cost[field] >= 0
+            for field in delta_fields
+        )
+        and activation_cost["raw_native_input_delta"]
+        == activation_cost["platform_floor_input_delta"]
+        + activation_cost["controllable_payload_input_delta"]
+        and activation_cost["controllable_payload_input_delta"]
+        <= activation_cost_contract[
+            "maximum_controllable_input_token_increase_per_case"
+        ]
+    )
+
+
+def validate_activation_cost_evidence(
+    activation_probe: dict[str, Any],
+    activation_cost_contract: dict[str, Any],
+) -> dict[str, int | str]:
+    """Recompute the signed activation summary from its execution evidence."""
+    if (
+        activation_probe.get("minimal_control_skill_sha256")
+        != activation_cost_contract["control_skill_sha256"]
+    ):
+        raise ValueError("activation_cost_control_mismatch")
+    computed = require_activation_cost_budget(
+        activation_probe,
+        maximum_controllable_increase=activation_cost_contract[
+            "maximum_controllable_input_token_increase_per_case"
+        ],
+    )
+    if activation_probe.get("activation_cost") != computed:
+        raise ValueError("activation_cost_evidence_mismatch")
+    return computed
+
+
 def run_activation_probe(
     *,
     protocol: dict[str, Any],
@@ -3319,9 +3505,25 @@ def run_activation_probe(
     if not skill_text.strip():
         raise ValueError("OMC Plan skill must not be empty")
     skill_sha256 = _sha256_text(skill_text)
-    receipt = secrets.token_hex(32)
+    receipt = secrets.token_hex(8)
     instrumented_skill = instrument_skill(skill_text, receipt)
     instrumented_skill_sha256 = _sha256_text(instrumented_skill)
+    activation_cost_contract = protocol.get("activation_cost")
+    minimal_skill_text = None
+    minimal_receipt = None
+    minimal_instrumented_skill = None
+    minimal_skill_sha256 = None
+    if activation_cost_contract is not None:
+        minimal_skill_text = MINIMAL_ACTIVATION_CONTROL_PATH.read_text(
+            encoding="utf-8"
+        )
+        minimal_skill_sha256 = _sha256_text(minimal_skill_text)
+        if minimal_skill_sha256 != activation_cost_contract["control_skill_sha256"]:
+            raise ValueError("minimal activation control skill hash mismatch")
+        minimal_receipt = secrets.token_hex(8)
+        minimal_instrumented_skill = instrument_skill(
+            minimal_skill_text, minimal_receipt
+        )
     probe_case = {
         "case_id": "runtime-activation-probe",
         "request": "Plan a bounded retry change without modifying the public API.",
@@ -3333,8 +3535,13 @@ def run_activation_probe(
     root = Path(artifact_root)
     root.mkdir(parents=True, exist_ok=True)
     baseline_root = root / "baseline-workspace"
+    minimal_native_root = root / "minimal-native-workspace"
     omc_root = root / "omc-workspace"
-    if baseline_root.exists() or omc_root.exists():
+    if (
+        baseline_root.exists()
+        or minimal_native_root.exists()
+        or omc_root.exists()
+    ):
         raise ValueError("probe artifact root must not contain prior workspaces")
     baseline_manifest = materialize_case_workspace(baseline_root, probe_case)
     outputs = root / "outputs"
@@ -3343,7 +3550,14 @@ def run_activation_probe(
         output_schema, root / "activation-output-schema.json"
     )
 
-    def execute(provider_id: str, workspace: Path) -> dict[str, Any]:
+    def execute(
+        provider_id: str,
+        workspace: Path,
+        *,
+        output_id: str,
+        active_skill_sha256: str,
+        expected_receipt: str,
+    ) -> dict[str, Any]:
         return execute_provider(
             provider_id=provider_id,
             request=probe_case["request"],
@@ -3353,21 +3567,47 @@ def run_activation_probe(
             reasoning_effort=reasoning_effort,
             sandbox=protocol["execution"]["sandbox"],
             output_schema=activation_schema,
-            output_path=outputs / f"{provider_id}.json",
-            skill_sha256=skill_sha256,
-            expected_activation_receipt=receipt,
+            output_path=outputs / f"{output_id}.json",
+            skill_sha256=active_skill_sha256,
+            expected_activation_receipt=expected_receipt,
             baseline_sentinel=protocol["activation"]["baseline_sentinel"],
             timeout_sec=protocol["execution"]["timeout_sec"],
             max_activation_attempts=protocol["activation"]["max_attempts"],
-            failure_receipt_path=outputs / f"{provider_id}.failure.json",
+            failure_receipt_path=outputs / f"{output_id}.failure.json",
             private_events_path=(
-                Path(private_event_root) / f"{provider_id}.jsonl"
+                Path(private_event_root) / f"{output_id}.jsonl"
                 if private_event_root is not None
                 else None
             ),
         )
 
-    executions = {"baseline-plan": execute("baseline-plan", baseline_root)}
+    executions = {
+        "baseline-plan": execute(
+            "baseline-plan",
+            baseline_root,
+            output_id="baseline-plan",
+            active_skill_sha256=skill_sha256,
+            expected_receipt=receipt,
+        )
+    }
+    if minimal_instrumented_skill is not None:
+        minimal_manifest = materialize_case_workspace(
+            minimal_native_root,
+            probe_case,
+            skill_text=minimal_instrumented_skill,
+        )
+        validate_workspace_parity(
+            baseline_manifest,
+            minimal_manifest,
+            allowed_delta=protocol["execution"]["allowed_workspace_delta"],
+        )
+        executions["minimal-native-plan"] = execute(
+            "omc-plan",
+            minimal_native_root,
+            output_id="minimal-native-plan",
+            active_skill_sha256=minimal_skill_sha256,
+            expected_receipt=minimal_receipt,
+        )
     omc_manifest = materialize_case_workspace(
         omc_root, probe_case, skill_text=instrumented_skill
     )
@@ -3376,7 +3616,13 @@ def run_activation_probe(
         omc_manifest,
         allowed_delta=protocol["execution"]["allowed_workspace_delta"],
     )
-    executions["omc-plan"] = execute("omc-plan", omc_root)
+    executions["omc-plan"] = execute(
+        "omc-plan",
+        omc_root,
+        output_id="omc-plan",
+        active_skill_sha256=skill_sha256,
+        expected_receipt=receipt,
+    )
     report = {
         "status": "pass",
         "scope": "non_scored_activation_probe",
@@ -3388,6 +3634,28 @@ def run_activation_probe(
         "reasoning_effort": reasoning_effort,
         "executions": executions,
     }
+    if activation_cost_contract is None:
+        report["input_token_delta"] = require_activation_input_budget(
+            report,
+            maximum_increase=protocol["acceptance"][
+                "maximum_input_token_increase_per_case"
+            ],
+            enforce_limit=False,
+        )
+        report["input_budget_status"] = (
+            "pass"
+            if report["input_token_delta"]
+            <= protocol["acceptance"]["maximum_input_token_increase_per_case"]
+            else "fail"
+        )
+    else:
+        report["minimal_control_skill_sha256"] = minimal_skill_sha256
+        report["activation_cost"] = require_activation_cost_budget(
+            report,
+            maximum_controllable_increase=activation_cost_contract[
+                "maximum_controllable_input_token_increase_per_case"
+            ],
+        )
     (root / "activation-probe.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -3712,9 +3980,14 @@ def run_runtime_batch(
     ):
         raise ValueError("confirmatory external transmission payload mismatch")
     budget_state = new_execution_budget_state(confirmatory_manifest["budget"])
+    activation_provider_count = 2 if protocol.get("activation_cost") else 1
     assert_execution_budget_available(
         budget_state,
-        required_external_calls=1 + protocol["activation"]["max_attempts"],
+        required_external_calls=(
+            1
+            + activation_provider_count
+            * protocol["activation"]["max_attempts"]
+        ),
     )
     activation_probe = run_activation_probe(
         protocol=protocol,
@@ -3738,7 +4011,26 @@ def run_runtime_batch(
             failure_receipt_path=root / "confirmatory-budget-failure.json",
             execution_id=f"{batch_id}:activation-probe:{provider_id}",
         )
-    receipt = secrets.token_hex(32)
+    activation_cost_contract = protocol.get("activation_cost")
+    if activation_cost_contract is None:
+        activation_input_delta = require_activation_input_budget(
+            activation_probe,
+            maximum_increase=protocol["acceptance"][
+                "maximum_input_token_increase_per_case"
+            ],
+        )
+        reported_activation_input_delta = activation_probe.get("input_token_delta")
+        if (
+            reported_activation_input_delta is not None
+            and reported_activation_input_delta != activation_input_delta
+        ):
+            raise ValueError("activation_input_token_delta_mismatch")
+    else:
+        validate_activation_cost_evidence(
+            activation_probe,
+            activation_cost_contract,
+        )
+    receipt = secrets.token_hex(8)
     instrumented_skill = instrument_skill(skill_text, receipt)
     instrumented_skill_sha256 = _sha256_text(instrumented_skill)
     activation_schema = build_activation_output_schema(
@@ -4266,6 +4558,12 @@ def finalize_runtime_batch(
         != canonical_digest(activation_probe)
     ):
         raise ValueError("runtime activation probe mismatch")
+    activation_cost_contract = protocol.get("activation_cost")
+    if activation_cost_contract is not None:
+        validate_activation_cost_evidence(
+            activation_probe,
+            activation_cost_contract,
+        )
     executions = validate_runtime_executions(
         provider_batch.get("executions"), expected_case_count=expected_count
     )
@@ -4367,12 +4665,15 @@ def finalize_runtime_batch(
         expected_case_count=expected_count,
         evaluation_scope=provider_batch["evaluation_scope"],
     )
+    if protocol.get("activation_cost") is not None:
+        metrics["activation_cost"] = deepcopy(activation_probe["activation_cost"])
     metrics["external_call_budget"] = end_to_end_call_budget
     decision = decide_superiority_batch(
         metrics,
         protocol["acceptance"],
         protocol["superiority"],
         batch_id=provider_batch.get("batch_id"),
+        activation_cost_contract=protocol.get("activation_cost"),
     )
     report = {
         "schema_version": 1,
@@ -4785,7 +5086,11 @@ def main() -> int:
         print("runtime corpus valid")
         return 0
     if args.command == "assess":
-        result = decide_replacement(_load_json(args.metrics), protocol["acceptance"])
+        result = decide_replacement(
+            _load_json(args.metrics),
+            protocol["acceptance"],
+            activation_cost_contract=protocol.get("activation_cost"),
+        )
         payload = json.dumps(result, ensure_ascii=False, indent=2)
         if args.output:
             Path(args.output).write_text(payload, encoding="utf-8")
@@ -4948,7 +5253,10 @@ def evaluate_variability(
 
 
 def decide_replacement(
-    metrics: dict[str, Any], acceptance: dict[str, Any]
+    metrics: dict[str, Any],
+    acceptance: dict[str, Any],
+    *,
+    activation_cost_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Apply a frozen non-inferiority and cost gate without subjective overrides."""
     evaluation_scope = metrics.get("evaluation_scope")
@@ -4989,6 +5297,18 @@ def decide_replacement(
             "failed_gates": ["replacement_claim_eligibility"],
         }
 
+    if activation_cost_contract is not None:
+        activation_cost = metrics.get("activation_cost")
+        if not _valid_activation_cost_summary(
+            activation_cost,
+            activation_cost_contract,
+        ):
+            return {
+                "decision": "INVALID_RUN",
+                "reason_code": "activation_cost_evidence_invalid",
+                "failed_gates": ["activation_cost_evidence"],
+            }
+
     failed: list[str] = []
     if omc["weighted_requirement_recall"] < baseline["weighted_requirement_recall"]:
         failed.append("weighted_requirement_recall")
@@ -5027,7 +5347,11 @@ def decide_replacement(
                 "reason_code": "paired_input_token_metrics_invalid",
                 "failed_gates": ["paired_input_token_metrics"],
             }
-        if max(paired_input_token_deltas) > acceptance["maximum_input_token_increase_per_case"]:
+        if (
+            activation_cost_contract is None
+            and max(paired_input_token_deltas)
+            > acceptance["maximum_input_token_increase_per_case"]
+        ):
             failed.append("input_token_overhead")
         if omc["total_tokens"] > baseline["total_tokens"]:
             increase_ratio = (omc["total_tokens"] - baseline["total_tokens"]) / baseline["total_tokens"]
@@ -5056,11 +5380,16 @@ def decide_superiority_batch(
     superiority: dict[str, Any],
     *,
     batch_id: str | None = None,
+    activation_cost_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Classify one frozen batch without promoting it to final superiority."""
     if superiority != FROZEN_SUPERIORITY:
         raise ValueError("superiority thresholds must match the frozen contract")
-    replacement = decide_replacement(metrics, acceptance)
+    replacement = decide_replacement(
+        metrics,
+        acceptance,
+        activation_cost_contract=activation_cost_contract,
+    )
     if replacement["decision"] != "PROVISIONALLY_REPLACEABLE":
         return {**replacement, "batch_id": batch_id}
 

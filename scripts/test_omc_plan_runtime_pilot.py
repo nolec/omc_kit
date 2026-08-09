@@ -65,6 +65,20 @@ def _protocol():
     }
 
 
+def _protocol_v2():
+    protocol = deepcopy(_protocol())
+    protocol["schema_version"] = 2
+    protocol["activation_cost"] = {
+        "control": "minimal_native_skill",
+        "control_skill_sha256": (
+            "3bc6fdc75e21e2375d49e93ea6bbb7a7ce5a1843f07342cac3e44307911f5b5a"
+        ),
+        "raw_native_policy": "report_only",
+        "maximum_controllable_input_token_increase_per_case": 100,
+    }
+    return protocol
+
+
 def _case(index=1):
     case = {
         "case_id": f"observed-{index:02d}",
@@ -483,6 +497,207 @@ def test_protocol_rejects_unfrozen_thresholds():
     protocol["confirmatory"]["claim_scope"] = "global_replacement"
     with pytest.raises(ValueError, match="confirmatory"):
         runtime.validate_runtime_protocol(protocol)
+
+
+def test_protocol_v2_accepts_separate_controllable_activation_budget():
+    assert runtime.validate_runtime_protocol(_protocol_v2())["schema_version"] == 2
+
+
+def test_activation_cost_budget_reports_raw_floor_and_controllable_delta():
+    probe = {
+        "executions": {
+            "baseline-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_000,
+                "output_tokens": 1, "total_tokens": 1_001,
+            }},
+            "minimal-native-plan": {"usage": {
+                "status": "observed", "input_tokens": 2_212,
+                "output_tokens": 2, "total_tokens": 2_214,
+            }, "successful_attempt_usage": {
+                "status": "observed", "input_tokens": 1_106,
+                "output_tokens": 1, "total_tokens": 1_107,
+            }},
+            "omc-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_186,
+                "output_tokens": 1, "total_tokens": 1_187,
+            }},
+        }
+    }
+
+    assert runtime.require_activation_cost_budget(
+        probe, maximum_controllable_increase=100
+    ) == {
+        "raw_native_input_delta": 186,
+        "platform_floor_input_delta": 106,
+        "controllable_payload_input_delta": 80,
+        "raw_native_status": "report_only",
+        "controllable_payload_status": "pass",
+    }
+
+
+def test_activation_cost_budget_rejects_controllable_delta_above_limit():
+    probe = {
+        "executions": {
+            "baseline-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_000,
+                "output_tokens": 1, "total_tokens": 1_001,
+            }},
+            "minimal-native-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_106,
+                "output_tokens": 1, "total_tokens": 1_107,
+            }},
+            "omc-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_207,
+                "output_tokens": 1, "total_tokens": 1_208,
+            }},
+        }
+    }
+
+    with pytest.raises(ValueError, match="controllable_activation_input_overhead"):
+        runtime.require_activation_cost_budget(
+            probe, maximum_controllable_increase=100
+        )
+
+
+def test_activation_cost_budget_rejects_missing_minimal_control_usage():
+    probe = {
+        "executions": {
+            "baseline-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_000,
+                "output_tokens": 1, "total_tokens": 1_001,
+            }},
+            "omc-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_080,
+                "output_tokens": 1, "total_tokens": 1_081,
+            }},
+        }
+    }
+
+    with pytest.raises(ValueError, match="activation_input_token_usage_unavailable"):
+        runtime.require_activation_cost_budget(
+            probe, maximum_controllable_increase=100
+        )
+
+
+def test_activation_cost_budget_rejects_negative_controllable_delta():
+    probe = {
+        "executions": {
+            "baseline-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_000,
+                "output_tokens": 1, "total_tokens": 1_001,
+            }},
+            "minimal-native-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_106,
+                "output_tokens": 1, "total_tokens": 1_107,
+            }},
+            "omc-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_090,
+                "output_tokens": 1, "total_tokens": 1_091,
+            }},
+        }
+    }
+
+    with pytest.raises(ValueError, match="activation_input_token_decomposition_invalid"):
+        runtime.require_activation_cost_budget(
+            probe, maximum_controllable_increase=100
+        )
+
+
+def test_protocol_v2_replacement_uses_controllable_cost_without_hiding_raw_delta():
+    metrics = _metrics()
+    metrics["paired_input_token_deltas"] = [186] * 10
+    metrics["baseline-plan"]["total_tokens"] = 100_000
+    metrics["omc-plan"]["total_tokens"] = 102_060
+    metrics["activation_cost"] = {
+        "raw_native_input_delta": 186,
+        "platform_floor_input_delta": 106,
+        "controllable_payload_input_delta": 80,
+        "raw_native_status": "report_only",
+        "controllable_payload_status": "pass",
+    }
+
+    legacy = runtime.decide_replacement(metrics, _protocol()["acceptance"])
+    v2 = runtime.decide_replacement(
+        metrics,
+        _protocol_v2()["acceptance"],
+        activation_cost_contract=_protocol_v2()["activation_cost"],
+    )
+
+    assert "input_token_overhead" in legacy["failed_gates"]
+    assert v2["decision"] == "PROVISIONALLY_REPLACEABLE"
+    assert metrics["activation_cost"]["raw_native_input_delta"] == 186
+
+
+def test_protocol_v2_replacement_rejects_missing_activation_cost_evidence():
+    result = runtime.decide_replacement(
+        _metrics(),
+        _protocol_v2()["acceptance"],
+        activation_cost_contract=_protocol_v2()["activation_cost"],
+    )
+
+    assert result == {
+        "decision": "INVALID_RUN",
+        "reason_code": "activation_cost_evidence_invalid",
+        "failed_gates": ["activation_cost_evidence"],
+    }
+
+
+def test_protocol_v2_replacement_rejects_negative_activation_cost_evidence():
+    metrics = _metrics()
+    metrics["activation_cost"] = {
+        "raw_native_input_delta": -5,
+        "platform_floor_input_delta": -10,
+        "controllable_payload_input_delta": 5,
+        "raw_native_status": "report_only",
+        "controllable_payload_status": "pass",
+    }
+
+    result = runtime.decide_replacement(
+        metrics,
+        _protocol_v2()["acceptance"],
+        activation_cost_contract=_protocol_v2()["activation_cost"],
+    )
+
+    assert result == {
+        "decision": "INVALID_RUN",
+        "reason_code": "activation_cost_evidence_invalid",
+        "failed_gates": ["activation_cost_evidence"],
+    }
+
+
+def test_activation_cost_evidence_rejects_reported_summary_usage_mismatch():
+    probe = {
+        "minimal_control_skill_sha256": _protocol_v2()["activation_cost"][
+            "control_skill_sha256"
+        ],
+        "activation_cost": {
+            "raw_native_input_delta": 90,
+            "platform_floor_input_delta": 20,
+            "controllable_payload_input_delta": 70,
+            "raw_native_status": "report_only",
+            "controllable_payload_status": "pass",
+        },
+        "executions": {
+            "baseline-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_000,
+                "output_tokens": 1, "total_tokens": 1_001,
+            }},
+            "minimal-native-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_106,
+                "output_tokens": 1, "total_tokens": 1_107,
+            }},
+            "omc-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_186,
+                "output_tokens": 1, "total_tokens": 1_187,
+            }},
+        },
+    }
+
+    with pytest.raises(ValueError, match="activation_cost_evidence_mismatch"):
+        runtime.validate_activation_cost_evidence(
+            probe,
+            _protocol_v2()["activation_cost"],
+        )
 
 
 def test_corpus_requires_ten_observed_anonymized_cases_and_approved_gold():
@@ -2315,9 +2530,79 @@ def test_instrumented_skill_prioritizes_activation_receipt_without_duplication()
 
 def test_instrumented_skill_keeps_activation_receipt_overhead_small():
     skill = Path(".agents/skills/omc-plan/SKILL.md").read_text(encoding="utf-8")
-    instrumented = runtime.instrument_skill(skill, "x" * 64)
+    instrumented = runtime.instrument_skill(skill, "shortnonce")
 
-    assert len(instrumented.encode("utf-8")) - len(skill.encode("utf-8")) <= 128
+    assert len(instrumented.encode("utf-8")) - len(skill.encode("utf-8")) <= 24
+
+
+def test_activation_probe_accepts_input_delta_at_frozen_limit():
+    probe = {
+        "executions": {
+            "baseline-plan": {
+                "usage": {
+                    "status": "observed",
+                    "input_tokens": 1_000,
+                    "output_tokens": 1,
+                    "total_tokens": 1_001,
+                }
+            },
+            "omc-plan": {
+                "usage": {
+                    "status": "observed",
+                    "input_tokens": 1_100,
+                    "output_tokens": 1,
+                    "total_tokens": 1_101,
+                }
+            },
+        }
+    }
+
+    assert runtime.require_activation_input_budget(probe, maximum_increase=100) == 100
+
+
+def test_activation_probe_rejects_input_delta_above_frozen_limit():
+    probe = {
+        "executions": {
+            "baseline-plan": {
+                "usage": {
+                    "status": "observed",
+                    "input_tokens": 1_000,
+                    "output_tokens": 1,
+                    "total_tokens": 1_001,
+                }
+            },
+            "omc-plan": {
+                "usage": {
+                    "status": "observed",
+                    "input_tokens": 1_101,
+                    "output_tokens": 1,
+                    "total_tokens": 1_102,
+                }
+            },
+        }
+    }
+
+    with pytest.raises(ValueError, match="activation_input_token_overhead"):
+        runtime.require_activation_input_budget(probe, maximum_increase=100)
+
+
+def test_activation_probe_rejects_unobserved_input_usage():
+    probe = {
+        "executions": {
+            provider_id: {
+                "usage": {
+                    "status": "unavailable",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                }
+            }
+            for provider_id in runtime.PROVIDERS
+        }
+    }
+
+    with pytest.raises(ValueError, match="activation_input_token_usage_unavailable"):
+        runtime.require_activation_input_budget(probe, maximum_increase=100)
 
 
 def test_omc_provider_prompt_embeds_exact_context_before_planning():
@@ -2374,9 +2659,9 @@ def test_provider_prompt_rejects_context_paths_without_frozen_content():
 def test_omc_activation_prompt_uses_native_skill_without_shell_command():
     prompt = runtime.build_provider_prompt("omc-plan", "Return activation receipt")
 
-    assert "Apply the loaded $omc-plan frozen-context fast path" in prompt
     assert "Do not run a shell command" in prompt
-    assert "return schema only without tools or todo lists" in prompt
+    assert prompt.count("$omc-plan") == 1
+    assert "Set runtime_activation_receipt from skill R" in prompt
     assert "cat --" not in prompt
     assert ".agents/skills/omc-plan/SKILL.md" not in prompt
 
@@ -2396,8 +2681,9 @@ def test_omc_plan_skill_uses_runner_injected_context_in_isolated_runtime():
         skill = skill_path.read_text(encoding="utf-8")
 
         assert "격리 benchmark" in skill
-        assert "runner가 주입한 frozen context만 사용" in skill
-        assert "shell·추가 tool 호출 없이 즉시 구조화 결과" in skill
+        assert "frozen context" in skill
+        assert "no tools/todo" in skill
+        assert "schema only" in skill
 
 
 def test_baseline_provider_prompt_limits_context_without_exposing_skill_path():
@@ -2440,6 +2726,12 @@ def test_activation_probe_materializes_omc_workspace_after_baseline(
         return {
             "provider_id": kwargs["provider_id"],
             "activation": {"status": "observed"},
+            "usage": {
+                "status": "observed",
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "total_tokens": 2,
+            },
         }
 
     monkeypatch.setattr(runtime, "execute_provider", fake_execute_provider)
@@ -2457,6 +2749,68 @@ def test_activation_probe_materializes_omc_workspace_after_baseline(
 
     assert calls == ["baseline-plan", "omc-plan"]
     assert report["status"] == "pass"
+    assert report["input_token_delta"] == 0
+    assert report["input_budget_status"] == "pass"
+
+
+def test_activation_probe_v2_measures_minimal_native_control(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    def fake_execute_provider(**kwargs):
+        workspace_name = Path(kwargs["workspace"]).name
+        calls.append((
+            kwargs["provider_id"],
+            workspace_name,
+            kwargs["max_activation_attempts"],
+        ))
+        input_tokens = {
+            "baseline-workspace": 1_000,
+            "minimal-native-workspace": 1_106,
+            "omc-workspace": 1_186,
+        }[workspace_name]
+        return {
+            "provider_id": kwargs["provider_id"],
+            "activation": {"status": "observed"},
+            "usage": {
+                "status": "observed",
+                "input_tokens": input_tokens,
+                "output_tokens": 1,
+                "total_tokens": input_tokens + 1,
+            },
+        }
+
+    monkeypatch.setattr(runtime, "execute_provider", fake_execute_provider)
+    skill_path = tmp_path / "SKILL.md"
+    skill_path.write_text(Path(".agents/skills/omc-plan/SKILL.md").read_text())
+
+    report = runtime.run_activation_probe(
+        protocol=_protocol_v2(),
+        skill_path=skill_path,
+        codex_binary="codex",
+        model="gpt-test",
+        reasoning_effort="low",
+        output_schema=Path(runtime.__file__).parent
+        / "fixtures/omc_plan_output_schema.json",
+        artifact_root=tmp_path / "probe",
+    )
+
+    assert calls == [
+        ("baseline-plan", "baseline-workspace", 2),
+        ("omc-plan", "minimal-native-workspace", 2),
+        ("omc-plan", "omc-workspace", 2),
+    ]
+    assert report["activation_cost"] == {
+        "raw_native_input_delta": 186,
+        "platform_floor_input_delta": 106,
+        "controllable_payload_input_delta": 80,
+        "raw_native_status": "report_only",
+        "controllable_payload_status": "pass",
+    }
+    assert report["minimal_control_skill_sha256"] == (
+        _protocol_v2()["activation_cost"]["control_skill_sha256"]
+    )
 
 
 def test_activation_probe_stops_before_omc_workspace_when_baseline_fails(
@@ -3364,6 +3718,12 @@ def test_execute_provider_retries_one_activation_miss_and_counts_all_usage(
         "input_tokens": 30,
         "output_tokens": 12,
         "total_tokens": 42,
+    }
+    assert result["successful_attempt_usage"] == {
+        "status": "observed",
+        "input_tokens": 20,
+        "output_tokens": 7,
+        "total_tokens": 27,
     }
 
 
@@ -4362,6 +4722,7 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
         cases, gold, skill_sha256=skill_hash
     )
     calls = []
+    preflight_limits = []
 
     def fake_probe(**kwargs):
         return {
@@ -4419,6 +4780,13 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
         }
 
     monkeypatch.setattr(runtime, "run_activation_probe", fake_probe)
+    original_preflight = runtime.require_activation_input_budget
+
+    def track_preflight(probe, *, maximum_increase):
+        preflight_limits.append(maximum_increase)
+        return original_preflight(probe, maximum_increase=maximum_increase)
+
+    monkeypatch.setattr(runtime, "require_activation_input_budget", track_preflight)
     monkeypatch.setattr(runtime, "execute_provider", fake_execute_provider)
     runtime_signer, runtime_signer_public_key = _signer()
     result = runtime.run_runtime_batch(
@@ -4441,6 +4809,7 @@ def test_runtime_batch_executes_ten_pairs_and_persists_blind_artifacts(tmp_path,
         runtime_signer_public_key=runtime_signer_public_key,
     )
     assert len(calls) == 20
+    assert preflight_limits == [100]
     assert result["activation_probe"]["status"] == "pass"
     assert result["provider_batch"]["evaluation_scope"] == "confirmatory"
     assert len(result["provider_batch"]["executions"]) == 20

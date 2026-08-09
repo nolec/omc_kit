@@ -1,0 +1,57 @@
+{
+  "schema_version": 2,
+  "benchmark_scope": "repository_grounded_skill_runtime",
+  "providers": [
+    "baseline-plan",
+    "omc-plan"
+  ],
+  "execution": {
+    "sandbox": "read-only",
+    "ignore_user_config": true,
+    "ephemeral": true,
+    "require_same_model_config": true,
+    "allowed_workspace_delta": ".agents/skills/omc-plan/SKILL.md",
+    "timeout_sec": 180
+  },
+  "activation": {
+    "required_for_omc": true,
+    "forbidden_for_baseline": true,
+    "proof_method": "output_nonce",
+    "output_field": "runtime_activation_receipt",
+    "baseline_sentinel": "unavailable",
+    "max_attempts": 2
+  },
+  "activation_cost": {
+    "control": "minimal_native_skill",
+    "control_skill_sha256": "3bc6fdc75e21e2375d49e93ea6bbb7a7ce5a1843f07342cac3e44307911f5b5a",
+    "raw_native_policy": "report_only",
+    "maximum_controllable_input_token_increase_per_case": 100
+  },
+  "variability": {
+    "development_case_count": 4,
+    "runs_per_provider": 2,
+    "max_metric_delta": 0.1
+  },
+  "confirmatory": {
+    "manifest_required": true,
+    "claim_scope": "single_confirmatory_corpus",
+    "observed_total_token_stop_threshold": 1200000,
+    "maximum_external_calls": 30
+  },
+  "acceptance": {
+    "case_count": 10,
+    "minimum_executable_task_rate": 0.8,
+    "maximum_input_token_increase_per_case": 100,
+    "maximum_output_token_ratio": 1.25,
+    "maximum_total_token_increase_ratio": 0.05,
+    "minimum_quality_gain_for_token_increase": 0.05
+  },
+  "superiority": {
+    "primary_metric": "weighted_requirement_recall",
+    "minimum_primary_gain": 0.05,
+    "confidence_level": 0.95,
+    "bootstrap_iterations": 10000,
+    "bootstrap_seed": 20260803,
+    "required_confirmation_batches": 2
+  }
+}

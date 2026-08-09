@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MAX_NON_EMPTY_LINES = 40
 MAX_SKILL_BYTES = 3700
-MAX_ROUTER_BYTES = 700
+MAX_ROUTER_BYTES = 320
 
 REQUIRED_PLAN_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-plan" / "SKILL.md",
@@ -124,7 +124,7 @@ REQUIRED_SELECTED_CONTEXT_MARKERS = [
 REQUIRED_EXECUTION_EFFICIENCY_MARKERS = [
     "근거 파일은 한 번의 명령",
     "진행 메시지·pwd·재탐색 금지",
-    "즉시 구조화 결과",
+    "schema only",
     "todo_list·planning tool 생성 금지",
     "검증 경계가 다르면 요구사항 ID 분리",
     "assumption이 필수 데이터 경로 검증을 대체 금지",
@@ -451,7 +451,8 @@ def test_plan_skill_places_frozen_benchmark_fast_path_before_general_phases():
     fast_path = text.index("격리 benchmark fast-path")
     general_path = text.index("일반 요청")
     assert fast_path < general_path
-    assert "아래 일반 Phase를 적용하지 않는다" in text[fast_path:general_path]
+    assert "schema only" in text[fast_path:general_path]
+    assert "references/workflow.md" not in text[fast_path:general_path]
     assert "references/workflow.md" in text[general_path:]
 
 
