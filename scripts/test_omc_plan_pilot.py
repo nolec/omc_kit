@@ -220,8 +220,10 @@ def test_omc_plan_treatment_requires_compact_non_repeating_output():
 
 def test_compact_output_contract_is_shared_by_protocol_and_actual_skill():
     treatment = _protocol()["providers"]["omc-plan"]["treatment"]
-    skill = (FIXTURES.parents[1] / ".agents/skills/omc-plan/SKILL.md").read_text(
-        encoding="utf-8"
+    skill_root = FIXTURES.parents[1] / ".agents/skills/omc-plan"
+    skill = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (skill_root / "SKILL.md", skill_root / "references/workflow.md")
     )
 
     assert "Do not repeat rationale" in treatment

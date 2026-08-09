@@ -35,6 +35,7 @@
   "acceptance": {
     "case_count": 10,
     "minimum_executable_task_rate": 0.8,
+    "maximum_input_token_increase_per_case": 100,
     "maximum_output_token_ratio": 1.25,
     "maximum_total_token_increase_ratio": 0.05,
     "minimum_quality_gain_for_token_increase": 0.05

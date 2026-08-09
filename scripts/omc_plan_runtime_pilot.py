@@ -35,6 +35,7 @@ RUNTIME_PROTOCOL_FIELDS = {
 ACCEPTANCE_FIELDS = {
     "case_count",
     "minimum_executable_task_rate",
+    "maximum_input_token_increase_per_case",
     "maximum_output_token_ratio",
     "maximum_total_token_increase_ratio",
     "minimum_quality_gain_for_token_increase",
@@ -42,6 +43,7 @@ ACCEPTANCE_FIELDS = {
 FROZEN_ACCEPTANCE = {
     "case_count": 10,
     "minimum_executable_task_rate": 0.80,
+    "maximum_input_token_increase_per_case": 100,
     "maximum_output_token_ratio": 1.25,
     "maximum_total_token_increase_ratio": 0.05,
     "minimum_quality_gain_for_token_increase": 0.05,
@@ -2151,10 +2153,18 @@ def validate_runtime_protocol(protocol: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("acceptance contract fields are invalid")
     if acceptance != FROZEN_ACCEPTANCE:
         raise ValueError("acceptance thresholds must match the frozen replacement contract")
-    for field in ACCEPTANCE_FIELDS - {"case_count"}:
+    ratio_fields = ACCEPTANCE_FIELDS - {
+        "case_count",
+        "maximum_input_token_increase_per_case",
+    }
+    for field in ratio_fields:
         value = acceptance[field]
         if not isinstance(value, (int, float)) or not 0 <= value <= 1.25:
             raise ValueError(f"acceptance threshold is invalid: {field}")
+    if type(acceptance["maximum_input_token_increase_per_case"]) is not int:
+        raise ValueError("acceptance input token threshold is invalid")
+    if acceptance["maximum_input_token_increase_per_case"] < 0:
+        raise ValueError("acceptance input token threshold is invalid")
     if not 0 <= acceptance["minimum_executable_task_rate"] <= 1:
         raise ValueError("acceptance executable task threshold is invalid")
 
@@ -2399,9 +2409,8 @@ def build_activation_output_schema(
 
 def instrument_skill(skill_text: str, receipt: str) -> str:
     receipt_block = (
-        "## Runtime benchmark receipt\n"
-        "When the output schema requests `runtime_activation_receipt`, return exactly "
-        f"`{receipt}`. This instruction applies only to the runtime benchmark."
+        "Runtime benchmark: set `runtime_activation_receipt`="
+        f"`{receipt}`."
     )
     if skill_text.startswith("---\n"):
         frontmatter_end = skill_text.find("\n---", 4)
@@ -4077,6 +4086,7 @@ def build_runtime_metrics(
         "token_measurement_status": "observed",
     }
     score_by_case: dict[str, dict[str, dict[str, Any]]] = {}
+    usage_by_case: dict[str, dict[str, dict[str, Any]]] = {}
     for provider_id in PROVIDERS:
         scores = scores_by_provider.get(provider_id, [])
         if len(scores) != expected_case_count:
@@ -4090,6 +4100,13 @@ def build_runtime_metrics(
             _validated_runtime_usage(item.get("usage"))
             for item in provider_executions
         ]
+        provider_usages_by_case = {
+            execution["case_id"]: usage
+            for execution, usage in zip(provider_executions, usages, strict=True)
+        }
+        if len(provider_usages_by_case) != expected_case_count:
+            raise ValueError(f"runtime usage must map to unique cases: {provider_id}")
+        usage_by_case[provider_id] = provider_usages_by_case
         usage_observed = all(usage.get("status") == "observed" for usage in usages)
         if not usage_observed:
             metrics["token_measurement_status"] = "unavailable"
@@ -4149,6 +4166,25 @@ def build_runtime_metrics(
     omc_cases = score_by_case["omc-plan"]
     if set(baseline_cases) != set(omc_cases):
         raise ValueError("runtime paired case identities do not match")
+    baseline_usages = usage_by_case["baseline-plan"]
+    omc_usages = usage_by_case["omc-plan"]
+    if set(baseline_usages) != set(omc_usages):
+        raise ValueError("runtime paired usage identities do not match")
+    paired_input_token_deltas = (
+        [
+            omc_usages[case_id]["input_tokens"]
+            - baseline_usages[case_id]["input_tokens"]
+            for case_id in sorted(baseline_usages)
+        ]
+        if metrics["token_measurement_status"] == "observed"
+        else None
+    )
+    metrics["paired_input_token_deltas"] = paired_input_token_deltas
+    metrics["maximum_input_token_delta_per_case"] = (
+        max(paired_input_token_deltas)
+        if paired_input_token_deltas is not None
+        else None
+    )
     metrics["paired_primary_deltas"] = [
         omc_cases[case_id]["weighted_coverage"]
         - baseline_cases[case_id]["weighted_coverage"]
@@ -4974,17 +5010,36 @@ def decide_replacement(
 
     if metrics.get("token_measurement_status") != "observed":
         failed.append("total_tokens")
-    elif omc["total_tokens"] > baseline["total_tokens"]:
-        increase_ratio = (omc["total_tokens"] - baseline["total_tokens"]) / baseline["total_tokens"]
-        quality_gain = max(
-            omc["weighted_requirement_recall"] - baseline["weighted_requirement_recall"],
-            omc["executable_task_rate"] - baseline["executable_task_rate"],
+    else:
+        paired_input_token_deltas = metrics.get("paired_input_token_deltas")
+        aggregate_input_token_delta = (
+            (omc["total_tokens"] - omc["output_tokens"])
+            - (baseline["total_tokens"] - baseline["output_tokens"])
         )
         if (
-            increase_ratio > acceptance["maximum_total_token_increase_ratio"]
-            or quality_gain < acceptance["minimum_quality_gain_for_token_increase"]
+            not isinstance(paired_input_token_deltas, list)
+            or len(paired_input_token_deltas) != expected_count
+            or any(type(value) is not int for value in paired_input_token_deltas)
+            or sum(paired_input_token_deltas) != aggregate_input_token_delta
         ):
-            failed.append("total_tokens")
+            return {
+                "decision": "INVALID_RUN",
+                "reason_code": "paired_input_token_metrics_invalid",
+                "failed_gates": ["paired_input_token_metrics"],
+            }
+        if max(paired_input_token_deltas) > acceptance["maximum_input_token_increase_per_case"]:
+            failed.append("input_token_overhead")
+        if omc["total_tokens"] > baseline["total_tokens"]:
+            increase_ratio = (omc["total_tokens"] - baseline["total_tokens"]) / baseline["total_tokens"]
+            quality_gain = max(
+                omc["weighted_requirement_recall"] - baseline["weighted_requirement_recall"],
+                omc["executable_task_rate"] - baseline["executable_task_rate"],
+            )
+            if (
+                increase_ratio > acceptance["maximum_total_token_increase_ratio"]
+                or quality_gain < acceptance["minimum_quality_gain_for_token_increase"]
+            ):
+                failed.append("total_tokens")
 
     return {
         "decision": "NOT_PROVEN" if failed else "PROVISIONALLY_REPLACEABLE",
@@ -5234,7 +5289,7 @@ def _valid_provider_metrics(metrics: dict[str, Any]) -> bool:
             or value < 0
         ):
             return False
-    return metrics["total_tokens"] > 0
+    return metrics["total_tokens"] >= metrics["output_tokens"] and metrics["total_tokens"] > 0
 
 
 if __name__ == "__main__":

@@ -49,6 +49,7 @@ def _protocol():
         "acceptance": {
             "case_count": 10,
             "minimum_executable_task_rate": 0.80,
+            "maximum_input_token_increase_per_case": 100,
             "maximum_output_token_ratio": 1.25,
             "maximum_total_token_increase_ratio": 0.05,
             "minimum_quality_gain_for_token_increase": 0.05,
@@ -453,6 +454,7 @@ def _metrics():
             "output_tokens": 1200,
             "total_tokens": 10400,
         },
+        "paired_input_token_deltas": [20] * 10,
     }
 
 
@@ -464,6 +466,11 @@ def test_protocol_rejects_unfrozen_thresholds():
 
     protocol = _protocol()
     protocol["acceptance"]["maximum_output_token_ratio"] = 1.20
+    with pytest.raises(ValueError, match="frozen"):
+        runtime.validate_runtime_protocol(protocol)
+
+    protocol = _protocol()
+    protocol["acceptance"]["maximum_input_token_increase_per_case"] = 101
     with pytest.raises(ValueError, match="frozen"):
         runtime.validate_runtime_protocol(protocol)
 
@@ -2306,6 +2313,13 @@ def test_instrumented_skill_prioritizes_activation_receipt_without_duplication()
     assert instrumented.index("secret-nonce") < instrumented.index("# OMC Plan")
 
 
+def test_instrumented_skill_keeps_activation_receipt_overhead_small():
+    skill = Path(".agents/skills/omc-plan/SKILL.md").read_text(encoding="utf-8")
+    instrumented = runtime.instrument_skill(skill, "x" * 64)
+
+    assert len(instrumented.encode("utf-8")) - len(skill.encode("utf-8")) <= 128
+
+
 def test_omc_provider_prompt_embeds_exact_context_before_planning():
     context_files = {
         "src/service.py": "def retry():\n    return 3\n",
@@ -3794,6 +3808,7 @@ def test_replacement_rejects_unjustified_token_increase_and_invalid_run():
     metrics["omc-plan"]["weighted_requirement_recall"] = 0.90
     metrics["omc-plan"]["executable_task_rate"] = 0.85
     metrics["omc-plan"]["total_tokens"] = 10501
+    metrics["paired_input_token_deltas"] = [31, *([30] * 9)]
     result = runtime.decide_replacement(metrics, _protocol()["acceptance"])
     assert result["decision"] == "NOT_PROVEN"
     assert "total_tokens" in result["failed_gates"]
@@ -3802,6 +3817,43 @@ def test_replacement_rejects_unjustified_token_increase_and_invalid_run():
     metrics["provenance_complete_count"] = 9
     result = runtime.decide_replacement(metrics, _protocol()["acceptance"])
     assert result["decision"] == "INVALID_RUN"
+
+
+def test_replacement_rejects_input_token_overhead_above_100_per_case():
+    metrics = _metrics()
+    metrics["baseline-plan"]["total_tokens"] = 50000
+    metrics["omc-plan"]["total_tokens"] = 51200
+    metrics["paired_input_token_deltas"] = [100] * 10
+
+    result = runtime.decide_replacement(metrics, _protocol()["acceptance"])
+
+    assert result["decision"] == "PROVISIONALLY_REPLACEABLE"
+
+    metrics["omc-plan"]["total_tokens"] = 51192
+    metrics["paired_input_token_deltas"] = [101, *([99] * 9)]
+
+    result = runtime.decide_replacement(metrics, _protocol()["acceptance"])
+
+    assert result["decision"] == "NOT_PROVEN"
+    assert "input_token_overhead" in result["failed_gates"]
+
+
+def test_replacement_rejects_missing_or_inconsistent_paired_input_tokens():
+    missing = _metrics()
+    del missing["paired_input_token_deltas"]
+
+    result = runtime.decide_replacement(missing, _protocol()["acceptance"])
+
+    assert result["decision"] == "INVALID_RUN"
+    assert result["failed_gates"] == ["paired_input_token_metrics"]
+
+    inconsistent = _metrics()
+    inconsistent["paired_input_token_deltas"][0] += 1
+
+    result = runtime.decide_replacement(inconsistent, _protocol()["acceptance"])
+
+    assert result["decision"] == "INVALID_RUN"
+    assert result["failed_gates"] == ["paired_input_token_metrics"]
 
 
 def test_replacement_rejects_non_finite_or_out_of_range_metrics():
@@ -3827,6 +3879,7 @@ def test_superiority_batch_requires_primary_gain_and_positive_confidence_bound()
     tied["omc-plan"]["weighted_requirement_recall"] = 0.90
     tied["omc-plan"]["executable_task_rate"] = 0.85
     tied["omc-plan"]["total_tokens"] = 10000
+    tied["paired_input_token_deltas"] = [-20] * 10
     tied["paired_primary_deltas"] = [0.0] * 10
     result = runtime.decide_superiority_batch(
         tied, protocol["acceptance"], protocol["superiority"]
@@ -4056,6 +4109,8 @@ def test_runtime_metrics_are_derived_from_scores_and_observed_usage():
         "output_tokens": 0,
         "total_tokens": 0,
     }
+    assert metrics["paired_input_token_deltas"] == [0]
+    assert metrics["maximum_input_token_delta_per_case"] == 0
     assert metrics["paired_primary_deltas"] == [0.0]
 
 
@@ -4093,6 +4148,8 @@ def test_runtime_metrics_do_not_claim_zero_token_delta_when_usage_is_unavailable
         "output_tokens": None,
         "total_tokens": None,
     }
+    assert metrics["paired_input_token_deltas"] is None
+    assert metrics["maximum_input_token_delta_per_case"] is None
 
 
 def test_runtime_metrics_reject_usage_total_mismatch():

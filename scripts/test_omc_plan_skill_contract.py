@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MAX_NON_EMPTY_LINES = 40
 MAX_SKILL_BYTES = 3700
+MAX_ROUTER_BYTES = 700
 
 REQUIRED_PLAN_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-plan" / "SKILL.md",
@@ -21,6 +22,15 @@ REQUIRED_PLAN_SKILL_PATHS = [
 ]
 OPTIONAL_PLAN_SKILL_PATHS = [
     ROOT / ".agent" / "skills" / "omc-plan" / "SKILL.md",
+]
+
+REQUIRED_PLAN_WORKFLOW_PATHS = [
+    ROOT / ".agents" / "skills" / "omc-plan" / "references" / "workflow.md",
+    ROOT / "templates" / ".agents" / "skills" / "omc-plan" / "references" / "workflow.md",
+    ROOT / "templates" / ".agent" / "skills" / "omc-plan" / "references" / "workflow.md",
+]
+OPTIONAL_PLAN_WORKFLOW_PATHS = [
+    ROOT / ".agent" / "skills" / "omc-plan" / "references" / "workflow.md",
 ]
 
 REQUIRED_SEQUENCE = [
@@ -284,6 +294,12 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _read_plan_contract() -> str:
+    return "\n".join(
+        (_read(REQUIRED_PLAN_SKILL_PATHS[0]), _read(REQUIRED_PLAN_WORKFLOW_PATHS[0]))
+    )
+
+
 def _collect_plan_skill_texts(
     *,
     root: Path,
@@ -362,6 +378,21 @@ def test_plan_skill_paths_are_identical():
     mismatched = [name for name, text in texts.items() if text != canonical]
     assert not mismatched, f"omc-plan skill copies differ: {mismatched}"
 
+    workflows = _collect_plan_skill_texts(
+        root=ROOT,
+        required_paths=REQUIRED_PLAN_WORKFLOW_PATHS,
+        optional_paths=OPTIONAL_PLAN_WORKFLOW_PATHS,
+    )
+    canonical_workflow = workflows[
+        ".agents/skills/omc-plan/references/workflow.md"
+    ]
+    mismatched_workflows = [
+        name for name, text in workflows.items() if text != canonical_workflow
+    ]
+    assert not mismatched_workflows, (
+        f"omc-plan workflow copies differ: {mismatched_workflows}"
+    )
+
 
 def test_ignored_live_agent_plan_path_is_optional(tmp_path: Path):
     canonical = tmp_path / ".agents" / "skills" / "omc-plan" / "SKILL.md"
@@ -398,8 +429,19 @@ def test_plan_skill_stays_within_input_budget():
     assert len(text.encode("utf-8")) <= MAX_SKILL_BYTES
 
 
+def test_plan_skill_router_uses_progressive_disclosure_with_a_small_fixed_input():
+    router = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+
+    assert len(router.encode("utf-8")) <= MAX_ROUTER_BYTES
+    assert "references/workflow.md" in router
+    assert "frozen context" in router
+    assert "일반 요청" in router
+    for path in REQUIRED_PLAN_WORKFLOW_PATHS:
+        assert path.exists(), f"missing progressive disclosure reference: {path}"
+
+
 def test_plan_skill_preserves_executable_tdd_task_specificity():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     missing = [marker for marker in REQUIRED_TASK_SPECIFICITY_MARKERS if marker not in text]
     assert not missing, f"missing executable task markers: {missing}"
 
@@ -407,8 +449,10 @@ def test_plan_skill_preserves_executable_tdd_task_specificity():
 def test_plan_skill_places_frozen_benchmark_fast_path_before_general_phases():
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     fast_path = text.index("격리 benchmark fast-path")
-    assert fast_path < text.index("## Phase 0")
-    assert "아래 일반 Phase를 적용하지 않는다" in text[fast_path:text.index("## Phase 0")]
+    general_path = text.index("일반 요청")
+    assert fast_path < general_path
+    assert "아래 일반 Phase를 적용하지 않는다" in text[fast_path:general_path]
+    assert "references/workflow.md" in text[general_path:]
 
 
 def test_plan_skill_frontmatter_preserves_natural_language_triggers():
@@ -419,7 +463,7 @@ def test_plan_skill_frontmatter_preserves_natural_language_triggers():
 
 
 def test_plan_skill_preserves_required_execution_order():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     cursor = -1
     missing_or_reordered: list[str] = []
 
@@ -434,47 +478,32 @@ def test_plan_skill_preserves_required_execution_order():
 
 
 def test_plan_skill_avoids_redundant_state_round_trip():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     assert "python3 scripts/omc.py state status --target ." not in text
     assert "동기화되어 있으면 상태 명령을 실행하지 않습니다" in text
     assert "scripts/omc.py`가 제공된 정확한 context path" in text
 
 
 def test_plan_skill_traces_selected_context_into_state_and_payload():
-    texts = _collect_plan_skill_texts(
-        root=ROOT,
-        required_paths=REQUIRED_PLAN_SKILL_PATHS,
-        optional_paths=OPTIONAL_PLAN_SKILL_PATHS,
-    )
-    for path, text in texts.items():
-        missing = [marker for marker in REQUIRED_SELECTED_CONTEXT_MARKERS if marker not in text]
-        assert not missing, f"{path} missing selected-context markers: {missing}"
+    text = _read_plan_contract()
+    missing = [marker for marker in REQUIRED_SELECTED_CONTEXT_MARKERS if marker not in text]
+    assert not missing, f"omc-plan contract missing selected-context markers: {missing}"
 
 
 def test_plan_skill_forbids_non_evidence_execution_round_trips():
-    texts = _collect_plan_skill_texts(
-        root=ROOT,
-        required_paths=REQUIRED_PLAN_SKILL_PATHS,
-        optional_paths=OPTIONAL_PLAN_SKILL_PATHS,
-    )
-    for path, text in texts.items():
-        missing = [marker for marker in REQUIRED_EXECUTION_EFFICIENCY_MARKERS if marker not in text]
-        assert not missing, f"{path} missing execution-efficiency markers: {missing}"
+    text = _read_plan_contract()
+    missing = [marker for marker in REQUIRED_EXECUTION_EFFICIENCY_MARKERS if marker not in text]
+    assert not missing, f"omc-plan contract missing execution-efficiency markers: {missing}"
 
 
 def test_plan_skill_preserves_required_data_path_boundaries():
-    texts = _collect_plan_skill_texts(
-        root=ROOT,
-        required_paths=REQUIRED_PLAN_SKILL_PATHS,
-        optional_paths=OPTIONAL_PLAN_SKILL_PATHS,
-    )
-    for path, text in texts.items():
-        missing = [marker for marker in REQUIRED_DATA_PATH_BOUNDARY_MARKERS if marker not in text]
-        assert not missing, f"{path} missing data-path boundary markers: {missing}"
+    text = _read_plan_contract()
+    missing = [marker for marker in REQUIRED_DATA_PATH_BOUNDARY_MARKERS if marker not in text]
+    assert not missing, f"omc-plan contract missing data-path boundary markers: {missing}"
 
 
 def test_plan_skill_recommendations_are_state_based_and_guarded():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     required_markers = [
         "다음 추천",
         "우선순위",
@@ -491,7 +520,7 @@ def test_plan_skill_recommendations_are_state_based_and_guarded():
 
 
 def test_plan_skill_next_recommendation_lines_each_resolve_to_one_action():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     lines = []
     in_section = False
     for raw_line in text.splitlines():
@@ -510,7 +539,7 @@ def test_plan_skill_next_recommendation_lines_each_resolve_to_one_action():
 
 
 def test_plan_skill_recommends_critique_for_high_risk_even_when_scope_is_clear():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     missing = [marker for marker in REQUIRED_HIGH_RISK_RECOMMENDATION_MARKERS if marker not in text]
     assert not missing, f"missing high-risk recommendation markers: {missing}"
 
@@ -520,19 +549,19 @@ def test_plan_recommendation_fixture_prefers_critique_for_high_risk():
 
 
 def test_plan_skill_explains_visible_vs_implicit_steps():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
     assert not missing, f"missing focus markers: {missing}"
 
 
 def test_plan_skill_declares_output_efficiency_contract():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     missing = [marker for marker in REQUIRED_OUTPUT_EFFICIENCY_MARKERS if marker not in text]
     assert not missing, f"missing output efficiency markers: {missing}"
 
 
 def test_plan_skill_declares_structured_compaction_and_assumption_policy():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     missing = [
         marker for marker in REQUIRED_STRUCTURED_COMPACTION_MARKERS if marker not in text
     ]
@@ -540,7 +569,7 @@ def test_plan_skill_declares_structured_compaction_and_assumption_policy():
 
 
 def test_plan_skill_limits_adjacent_behavior_preservation_requirements():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     missing = [
         marker for marker in REQUIRED_ADJACENT_PRESERVATION_MARKERS if marker not in text
     ]
@@ -548,31 +577,31 @@ def test_plan_skill_limits_adjacent_behavior_preservation_requirements():
 
 
 def test_plan_skill_requires_evidence_before_lite_task_compression():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     missing = [marker for marker in REQUIRED_EVIDENCE_FIRST_MARKERS if marker not in text]
     assert not missing, f"missing evidence-first markers: {missing}"
 
 
 def test_plan_skill_declares_decision_risk_next_action_contract():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     missing = [marker for marker in REQUIRED_DECISION_OUTPUT_MARKERS if marker not in text]
     assert not missing, f"missing decision output markers: {missing}"
 
 
 def test_plan_skill_declares_common_decision_table_axes():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     missing = [marker for marker in REQUIRED_DECISION_TABLE_MARKERS if marker not in text]
     assert not missing, f"missing decision table markers: {missing}"
 
 
 def test_plan_skill_surfaces_cost_quality_policy_summary():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     missing = [marker for marker in REQUIRED_POLICY_SURFACE_MARKERS if marker not in text]
     assert not missing, f"missing policy surface markers: {missing}"
 
 
 def test_plan_skill_declares_lite_full_risk_concepts():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     missing = _missing_concepts(text, REQUIRED_RISK_CONCEPTS)
     assert not missing, f"missing lite/full risk concepts: {missing}"
 
@@ -615,7 +644,7 @@ def test_plan_recommendation_fixture_keeps_single_next_action_per_state():
 
 
 def test_plan_skill_prioritizes_current_bottleneck_over_default_pipeline():
-    text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    text = _read_plan_contract()
     for marker in [
         "현재 병목 > 기본 파이프라인",
         "고위험이면 먼저 `$omc-critique`",
