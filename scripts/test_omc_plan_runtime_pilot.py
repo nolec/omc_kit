@@ -2611,6 +2611,14 @@ def test_activation_uses_hidden_output_nonce_instead_of_unsupported_events():
             baseline_sentinel="unavailable",
         )
 
+    with pytest.raises(ValueError, match="activation_receipt_mismatch"):
+        runtime.require_activation_receipt(
+            {"runtime_activation_receipt": "R=secret-nonce"},
+            provider_id="omc-plan",
+            expected_receipt="secret-nonce",
+            baseline_sentinel="unavailable",
+        )
+
 
 def test_baseline_must_return_activation_sentinel():
     with pytest.raises(ValueError, match="baseline_skill_activation"):
@@ -2628,6 +2636,8 @@ def test_instrumented_skill_prioritizes_activation_receipt_without_duplication()
 
     assert instrumented.startswith("---\nskill_name: omc-plan\n---")
     assert instrumented.count("secret-nonce") == 1
+    assert '{"runtime_activation_receipt":"secret-nonce"}' in instrumented
+    assert "R=secret-nonce" not in instrumented
     assert instrumented.index("secret-nonce") < instrumented.index("# OMC Plan")
 
 
@@ -2635,7 +2645,7 @@ def test_instrumented_skill_keeps_activation_receipt_overhead_small():
     skill = Path(".agents/skills/omc-plan/SKILL.md").read_text(encoding="utf-8")
     instrumented = runtime.instrument_skill(skill, "shortnonce")
 
-    assert len(instrumented.encode("utf-8")) - len(skill.encode("utf-8")) <= 24
+    assert len(instrumented.encode("utf-8")) - len(skill.encode("utf-8")) <= 64
 
 
 def test_activation_probe_accepts_input_delta_at_frozen_limit():
@@ -2764,7 +2774,9 @@ def test_omc_activation_prompt_uses_native_skill_without_shell_command():
 
     assert "Do not run a shell command" in prompt
     assert prompt.count("$omc-plan") == 1
-    assert "Set runtime_activation_receipt from skill R" in prompt
+    assert "Copy only the string value from the skill activation JSON" in prompt
+    assert "exclude its key and JSON syntax" in prompt
+    assert "skill R" not in prompt
     assert "cat --" not in prompt
     assert ".agents/skills/omc-plan/SKILL.md" not in prompt
 

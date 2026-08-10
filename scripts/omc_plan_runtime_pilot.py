@@ -2455,7 +2455,11 @@ def build_activation_output_schema(
 
 
 def instrument_skill(skill_text: str, receipt: str) -> str:
-    receipt_block = f"R={receipt}"
+    receipt_block = json.dumps(
+        {"runtime_activation_receipt": receipt},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     if skill_text.startswith("---\n"):
         frontmatter_end = skill_text.find("\n---", 4)
         if frontmatter_end != -1:
@@ -2558,7 +2562,8 @@ def build_provider_prompt(
     if provider_id == "omc-plan":
         return (
             context_instruction
-            + "Set runtime_activation_receipt from skill R. $omc-plan\n"
+            + "Copy only the string value from the skill activation JSON into "
+            "runtime_activation_receipt; exclude its key and JSON syntax. $omc-plan\n"
             + request
         )
     raise ValueError(f"unsupported provider: {provider_id}")
