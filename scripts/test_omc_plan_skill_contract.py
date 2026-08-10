@@ -473,8 +473,24 @@ def test_plan_workflow_preserves_atomic_requirements_before_compression():
         "ID를 다시 정의하거나 병합하지 않는다",
         "검증 경계별 독립 ID",
         "모든 requirement ID가 task.supports와 VERIFY에 연결",
+        "회귀 테스트 산출물도 독립 requirement ID",
+        "VERIFY로 흡수하지 않는다",
+        "공유 task의 supports에 각 ID를 모두 유지",
     ):
         assert marker in text
+
+
+def test_plan_workflow_atomic_test_requirement_contract_is_synced():
+    markers = (
+        "회귀 테스트 산출물도 독립 requirement ID",
+        "VERIFY로 흡수하지 않는다",
+        "공유 task의 supports에 각 ID를 모두 유지",
+    )
+
+    for path in REQUIRED_PLAN_WORKFLOW_PATHS:
+        text = _read(path)
+        missing = [marker for marker in markers if marker not in text]
+        assert not missing, f"{path} missing test requirement markers: {missing}"
 
 
 def test_plan_skill_places_frozen_benchmark_fast_path_before_general_phases():

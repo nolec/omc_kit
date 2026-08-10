@@ -3066,6 +3066,22 @@ def test_omc_provider_prompt_preloads_workflow_without_tool_round_trip():
     assert "cat --" not in prompt
 
 
+def test_omc_provider_prompt_preserves_regression_test_as_atomic_requirement():
+    workflow = Path(
+        ".agents/skills/omc-plan/references/workflow.md"
+    ).read_text(encoding="utf-8")
+
+    prompt = runtime.build_provider_prompt(
+        "omc-plan",
+        "Plan a cache invalidation change with regression coverage.",
+        workflow_reference=workflow,
+    )
+
+    assert "회귀 테스트 산출물도 독립 requirement ID" in prompt
+    assert "VERIFY로 흡수하지 않는다" in prompt
+    assert "공유 task의 supports에 각 ID를 모두 유지" in prompt
+
+
 def test_omc_provider_treatment_prompt_stays_within_input_budget():
     baseline = runtime.build_provider_prompt("baseline-plan", "x")
     omc = runtime.build_provider_prompt("omc-plan", "x")
