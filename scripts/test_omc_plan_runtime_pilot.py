@@ -2801,6 +2801,26 @@ def test_omc_plan_skill_uses_runner_injected_context_in_isolated_runtime():
         assert "schema only" in skill
 
 
+def test_omc_plan_skill_keeps_surface_regression_tests_separate_from_data_tests():
+    for skill_path in (
+        Path(".agents/skills/omc-plan/SKILL.md"),
+        Path("templates/.agents/skills/omc-plan/SKILL.md"),
+    ):
+        skill = skill_path.read_text(encoding="utf-8")
+
+        assert "observable behavior->direct surface regression test" in skill
+        assert "data-path test!=surface test" in skill
+        assert len(skill.encode("utf-8")) <= 420
+
+    for workflow_path in (
+        Path(".agents/skills/omc-plan/references/workflow.md"),
+        Path("templates/.agents/skills/omc-plan/references/workflow.md"),
+    ):
+        workflow = workflow_path.read_text(encoding="utf-8")
+
+        assert "데이터 경로 테스트는 surface 회귀 테스트를 대체하지 않는다" in workflow
+
+
 def test_baseline_provider_prompt_limits_context_without_exposing_skill_path():
     context_files = {
         "src/service.py": "def retry():\n    return 3\n",

@@ -24,6 +24,7 @@ dirty 변경과 계획 범위 분리.
 - 선택된 객체: ID·수신자 → 상태·payload → supports·VERIFY. 요구사항은 짧은 ID; supports에는 ID만.
 - 직접 인접 사용자 관찰 가능 동작은 surface당 1개. 포괄 표현 금지·확인하지 않은 예시 명령 금지. 같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합.
 - 필수 데이터 경로: source/model → adapter/state → consumer/UI. 병합 전 각 requirement는 최소 하나의 task와 VERIFY 연결; 검증 경계가 다르면 요구사항 ID 분리; assumption이 필수 데이터 경로 검증을 대체 금지.
+- 사용자 관찰 동작은 직접 surface 회귀 테스트 task/VERIFY로 연결한다. 데이터 경로 테스트는 surface 회귀 테스트를 대체하지 않는다.
 - assumptions는 명시적으로 허용한 근거만. 비차단 불확실성은 생략; 구현을 막는 불확실성만 decisions_required, 구현을 막는 항목만.
 ```text
 태스크 N: [기능] / RED: [실패 테스트 파일+케이스] / GREEN: [최소 구현 파일] / VERIFY: [검증 커맨드]
