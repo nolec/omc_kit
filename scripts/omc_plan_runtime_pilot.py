@@ -3426,12 +3426,7 @@ def require_activation_cost_budget(
     raw_delta = inputs["omc-plan"] - inputs["baseline-plan"]
     platform_floor = inputs["minimal-native-plan"] - inputs["baseline-plan"]
     controllable_delta = inputs["omc-plan"] - inputs["minimal-native-plan"]
-    if (
-        raw_delta < 0
-        or platform_floor < 0
-        or controllable_delta < 0
-        or raw_delta != platform_floor + controllable_delta
-    ):
+    if raw_delta != platform_floor + controllable_delta:
         raise ValueError("activation_input_token_decomposition_invalid")
     if controllable_delta > maximum_controllable_increase:
         raise ValueError(
@@ -3458,10 +3453,9 @@ def _valid_activation_cost_summary(
         "raw_native_status",
         "controllable_payload_status",
     }
-    delta_fields = (
+    signed_delta_fields = (
         "raw_native_input_delta",
         "platform_floor_input_delta",
-        "controllable_payload_input_delta",
     )
     return (
         isinstance(activation_cost, dict)
@@ -3470,9 +3464,9 @@ def _valid_activation_cost_summary(
         and activation_cost.get("controllable_payload_status") == "pass"
         and all(
             type(activation_cost.get(field)) is int
-            and activation_cost[field] >= 0
-            for field in delta_fields
+            for field in signed_delta_fields
         )
+        and type(activation_cost.get("controllable_payload_input_delta")) is int
         and activation_cost["raw_native_input_delta"]
         == activation_cost["platform_floor_input_delta"]
         + activation_cost["controllable_payload_input_delta"]
@@ -3639,8 +3633,9 @@ def run_activation_probe(
         active_skill_sha256=skill_sha256,
         expected_receipt=receipt,
     )
+    report_path = root / "activation-probe.json"
     report = {
-        "status": "pass",
+        "status": "measurement_complete",
         "scope": "non_scored_activation_probe",
         "skill_sha256": skill_sha256,
         "instrumented_skill_sha256": instrumented_skill_sha256,
@@ -3650,6 +3645,9 @@ def run_activation_probe(
         "reasoning_effort": reasoning_effort,
         "executions": executions,
     }
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     if activation_cost_contract is None:
         report["input_token_delta"] = require_activation_input_budget(
             report,
@@ -3672,7 +3670,8 @@ def run_activation_probe(
                 "maximum_controllable_input_token_increase_per_case"
             ],
         )
-    (root / "activation-probe.json").write_text(
+    report["status"] = "pass"
+    report_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return report

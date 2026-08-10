@@ -23,7 +23,7 @@
   },
   "activation_cost": {
     "control": "minimal_native_skill",
-    "control_skill_sha256": "3bc6fdc75e21e2375d49e93ea6bbb7a7ce5a1843f07342cac3e44307911f5b5a",
+    "control_skill_sha256": "5e23c4c8f68bc5c806bf55721d29c45d087982cd262eb4f3ac15bee60212eae7",
     "raw_native_policy": "report_only",
     "maximum_controllable_input_token_increase_per_case": 100
   },

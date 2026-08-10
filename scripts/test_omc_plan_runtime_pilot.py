@@ -71,7 +71,7 @@ def _protocol_v2():
     protocol["activation_cost"] = {
         "control": "minimal_native_skill",
         "control_skill_sha256": (
-            "3bc6fdc75e21e2375d49e93ea6bbb7a7ce5a1843f07342cac3e44307911f5b5a"
+            "5e23c4c8f68bc5c806bf55721d29c45d087982cd262eb4f3ac15bee60212eae7"
         ),
         "raw_native_policy": "report_only",
         "maximum_controllable_input_token_increase_per_case": 100,
@@ -581,7 +581,7 @@ def test_activation_cost_budget_rejects_missing_minimal_control_usage():
         )
 
 
-def test_activation_cost_budget_rejects_negative_controllable_delta():
+def test_activation_cost_budget_accepts_negative_controllable_delta():
     probe = {
         "executions": {
             "baseline-plan": {"usage": {
@@ -599,10 +599,44 @@ def test_activation_cost_budget_rejects_negative_controllable_delta():
         }
     }
 
-    with pytest.raises(ValueError, match="activation_input_token_decomposition_invalid"):
-        runtime.require_activation_cost_budget(
-            probe, maximum_controllable_increase=100
-        )
+    assert runtime.require_activation_cost_budget(
+        probe, maximum_controllable_increase=100
+    ) == {
+        "raw_native_input_delta": 90,
+        "platform_floor_input_delta": 106,
+        "controllable_payload_input_delta": -16,
+        "raw_native_status": "report_only",
+        "controllable_payload_status": "pass",
+    }
+
+
+def test_activation_cost_budget_accepts_signed_native_delta():
+    probe = {
+        "executions": {
+            "baseline-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_000,
+                "output_tokens": 1, "total_tokens": 1_001,
+            }},
+            "minimal-native-plan": {"usage": {
+                "status": "observed", "input_tokens": 990,
+                "output_tokens": 1, "total_tokens": 991,
+            }},
+            "omc-plan": {"usage": {
+                "status": "observed", "input_tokens": 995,
+                "output_tokens": 1, "total_tokens": 996,
+            }},
+        }
+    }
+
+    assert runtime.require_activation_cost_budget(
+        probe, maximum_controllable_increase=100
+    ) == {
+        "raw_native_input_delta": -5,
+        "platform_floor_input_delta": -10,
+        "controllable_payload_input_delta": 5,
+        "raw_native_status": "report_only",
+        "controllable_payload_status": "pass",
+    }
 
 
 def test_protocol_v2_replacement_uses_controllable_cost_without_hiding_raw_delta():
@@ -644,7 +678,7 @@ def test_protocol_v2_replacement_rejects_missing_activation_cost_evidence():
     }
 
 
-def test_protocol_v2_replacement_rejects_negative_activation_cost_evidence():
+def test_protocol_v2_replacement_accepts_signed_native_activation_cost():
     metrics = _metrics()
     metrics["activation_cost"] = {
         "raw_native_input_delta": -5,
@@ -660,11 +694,7 @@ def test_protocol_v2_replacement_rejects_negative_activation_cost_evidence():
         activation_cost_contract=_protocol_v2()["activation_cost"],
     )
 
-    assert result == {
-        "decision": "INVALID_RUN",
-        "reason_code": "activation_cost_evidence_invalid",
-        "failed_gates": ["activation_cost_evidence"],
-    }
+    assert result["decision"] == "PROVISIONALLY_REPLACEABLE"
 
 
 def test_activation_cost_evidence_rejects_reported_summary_usage_mismatch():
@@ -2946,6 +2976,49 @@ def test_activation_probe_v2_measures_minimal_native_control(
     assert report["minimal_control_skill_sha256"] == (
         _protocol_v2()["activation_cost"]["control_skill_sha256"]
     )
+
+
+def test_activation_probe_preserves_raw_usage_when_budget_check_fails(
+    tmp_path, monkeypatch
+):
+    def fake_execute_provider(**kwargs):
+        input_tokens = {
+            "baseline-workspace": 1_000,
+            "minimal-native-workspace": 1_106,
+            "omc-workspace": 3_526,
+        }[Path(kwargs["workspace"]).name]
+        return {
+            "provider_id": kwargs["provider_id"],
+            "activation": {"status": "observed"},
+            "usage": {
+                "status": "observed",
+                "input_tokens": input_tokens,
+                "output_tokens": 1,
+                "total_tokens": input_tokens + 1,
+            },
+        }
+
+    monkeypatch.setattr(runtime, "execute_provider", fake_execute_provider)
+    skill_path = tmp_path / "SKILL.md"
+    skill_path.write_text(Path(".agents/skills/omc-plan/SKILL.md").read_text())
+    artifact_root = tmp_path / "probe"
+
+    with pytest.raises(ValueError, match="controllable_activation_input_overhead"):
+        runtime.run_activation_probe(
+            protocol=_protocol_v2(),
+            skill_path=skill_path,
+            codex_binary="codex",
+            model="gpt-test",
+            reasoning_effort="low",
+            output_schema=Path(runtime.__file__).parent
+            / "fixtures/omc_plan_output_schema.json",
+            artifact_root=artifact_root,
+        )
+
+    report = json.loads((artifact_root / "activation-probe.json").read_text())
+    assert report["status"] == "measurement_complete"
+    assert report["executions"]["omc-plan"]["usage"]["input_tokens"] == 3_526
+    assert "activation_cost" not in report
 
 
 def test_activation_probe_stops_before_omc_workspace_when_baseline_fails(

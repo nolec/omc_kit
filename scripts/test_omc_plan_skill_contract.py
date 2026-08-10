@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MAX_NON_EMPTY_LINES = 40
 MAX_SKILL_BYTES = 3700
-MAX_ROUTER_BYTES = 320
+MAX_ROUTER_BYTES = 322
 
 REQUIRED_PLAN_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-plan" / "SKILL.md",
@@ -438,6 +438,25 @@ def test_plan_skill_router_uses_progressive_disclosure_with_a_small_fixed_input(
     assert "일반 요청" in router
     for path in REQUIRED_PLAN_WORKFLOW_PATHS:
         assert path.exists(), f"missing progressive disclosure reference: {path}"
+
+
+def test_plan_skill_router_keeps_general_workflow_reference_non_executable():
+    expected_reference = "일반 요청:`references/workflow.md`"
+
+    for path in REQUIRED_PLAN_SKILL_PATHS:
+        router = _read(path)
+        assert expected_reference in router, (
+            f"{path} must keep the workflow reference code-formatted"
+        )
+        assert "일반 요청:references/workflow.md" not in router
+
+
+def test_minimal_activation_control_preserves_plan_activation_surface():
+    router = _read(REQUIRED_PLAN_SKILL_PATHS[0])
+    control = _read(ROOT / "scripts/fixtures/omc_plan_minimal_activation_control.md")
+
+    assert router.split("---", 2)[1] == control.split("---", 2)[1]
+    assert len(router.encode("utf-8")) - len(control.encode("utf-8")) <= 200
 
 
 def test_plan_skill_preserves_executable_tdd_task_specificity():
