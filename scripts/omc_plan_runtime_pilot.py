@@ -21,6 +21,8 @@ from typing import Any
 
 
 PROVIDERS = ("baseline-plan", "omc-plan")
+WORKFLOW_REFERENCE_PATH = ".agents/skills/omc-plan/references/workflow.md"
+WORKFLOW_READ_COMMAND = f"cat -- {WORKFLOW_REFERENCE_PATH}"
 MINIMAL_ACTIVATION_CONTROL_PATH = (
     Path(__file__).resolve().parent
     / "fixtures/omc_plan_minimal_activation_control.md"
@@ -40,8 +42,9 @@ RUNTIME_PROTOCOL_V2_FIELDS = RUNTIME_PROTOCOL_FIELDS | {"activation_cost"}
 ACTIVATION_COST_FIELDS = {
     "control",
     "control_skill_sha256",
+    "router_projection",
     "raw_native_policy",
-    "maximum_controllable_input_token_increase_per_case",
+    "maximum_router_input_token_increase_per_case",
 }
 ACCEPTANCE_FIELDS = {
     "case_count",
@@ -74,7 +77,7 @@ EVALUATION_SCOPES = {
 CONFIRMATORY_CLAIM_SCOPE = "single_confirmatory_corpus"
 FROZEN_CONFIRMATORY_BUDGET = {
     "observed_total_token_stop_threshold": 1_200_000,
-    "maximum_external_calls": 30,
+    "maximum_external_calls": 31,
 }
 FROZEN_CONFIRMATORY_PROTOCOL = {
     "manifest_required": True,
@@ -380,15 +383,46 @@ def confirmatory_external_payload_digest(
     cases: list[dict[str, Any]],
     gold_document: dict[str, Any],
     skill_sha256: str,
+    *,
+    workflow_reference_sha256: str | None = None,
 ) -> str:
     if not _is_sha256(skill_sha256):
         raise ValueError("confirmatory skill hash is invalid")
-    return canonical_digest({
+    if workflow_reference_sha256 is not None and not _is_sha256(
+        workflow_reference_sha256
+    ):
+        raise ValueError("confirmatory workflow reference hash is invalid")
+    payload = {
         "schema_version": 1,
         "cases": cases,
         "gold": gold_document,
         "skill_sha256": skill_sha256,
-    })
+    }
+    if workflow_reference_sha256 is not None:
+        payload["schema_version"] = 2
+        payload["workflow_reference_sha256"] = workflow_reference_sha256
+    return canonical_digest(payload)
+
+
+def _confirmatory_workflow_reference_sha256(
+    protocol: dict[str, Any],
+    workflow_reference_sha256: str | None,
+) -> str | None:
+    if protocol.get("activation_cost") is None:
+        return None
+    if not _is_sha256(workflow_reference_sha256):
+        raise ValueError("confirmatory workflow reference hash is required")
+    return workflow_reference_sha256
+
+
+def _workflow_reference_sha256_for_skill(skill_path: str | Path) -> str:
+    workflow_path = Path(skill_path).parent / "references/workflow.md"
+    if not workflow_path.is_file():
+        raise ValueError("workflow_reference_missing")
+    workflow_reference = workflow_path.read_text(encoding="utf-8")
+    if not workflow_reference.strip():
+        raise ValueError("workflow_reference_empty")
+    return _sha256_text(workflow_reference)
 
 
 def _without_digest(value: dict[str, Any], field: str) -> dict[str, Any]:
@@ -1212,6 +1246,7 @@ def prepare_confirmatory_runtime_inputs(
     signer: str,
     signer_public_key: str,
     trusted_gold_signer_public_keys: set[str],
+    workflow_reference_sha256: str | None = None,
     approved_payload_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Build the exact runtime corpus and require approval before signing."""
@@ -1255,8 +1290,14 @@ def prepare_confirmatory_runtime_inputs(
     _validate_confirmatory_semantic_contract(semantic_contract, cases=cases)
     if not _is_sha256(skill_sha256):
         raise ValueError("confirmatory skill hash is invalid")
+    workflow_reference_sha256 = _confirmatory_workflow_reference_sha256(
+        protocol, workflow_reference_sha256
+    )
     external_payload_sha256 = confirmatory_external_payload_digest(
-        cases, gold_document, skill_sha256
+        cases,
+        gold_document,
+        skill_sha256,
+        workflow_reference_sha256=workflow_reference_sha256,
     )
     runtime_corpus = {
         "schema_version": 1,
@@ -1332,6 +1373,7 @@ def seal_confirmatory_runtime_inputs(
     gold_document: dict[str, Any],
     trusted_prior_fingerprints: list[dict[str, str]],
     skill_sha256: str,
+    workflow_reference_sha256: str | None = None,
     trusted_gold_signer_public_keys: set[str],
     trusted_confirmatory_signer_public_keys: set[str],
 ) -> dict[str, Any]:
@@ -1346,6 +1388,8 @@ def seal_confirmatory_runtime_inputs(
     manifest = deepcopy(preparation.get("confirmatory_manifest"))
     if not isinstance(manifest, dict):
         raise ValueError("confirmatory manifest is required")
+    if manifest.get("protocol_sha256") != canonical_digest(protocol):
+        raise ValueError("confirmatory manifest protocol hash mismatch")
     runtime_corpus = preparation.get("runtime_corpus")
     if not isinstance(runtime_corpus, dict):
         raise ValueError("confirmatory preparation envelope mismatch")
@@ -1353,8 +1397,14 @@ def seal_confirmatory_runtime_inputs(
     if not isinstance(cases, list):
         raise ValueError("confirmatory preparation envelope mismatch")
     computed_corpus_sha256 = canonical_digest(cases)
+    workflow_reference_sha256 = _confirmatory_workflow_reference_sha256(
+        protocol, workflow_reference_sha256
+    )
     computed_payload_sha256 = confirmatory_external_payload_digest(
-        cases, gold_document, skill_sha256
+        cases,
+        gold_document,
+        skill_sha256,
+        workflow_reference_sha256=workflow_reference_sha256,
     )
     transmission = manifest.get("transmission")
     if (
@@ -1979,7 +2029,9 @@ def validate_execution_budget_evidence(
     probe_executions = activation_probe.get("executions")
     expected_probe_executions = set(PROVIDERS)
     if activation_probe.get("activation_cost") is not None:
-        expected_probe_executions.add("minimal-native-plan")
+        expected_probe_executions.update(
+            {"minimal-native-plan", "router-native-plan"}
+        )
     if (
         not isinstance(probe_executions, dict)
         or set(probe_executions) != expected_probe_executions
@@ -2172,9 +2224,11 @@ def validate_runtime_protocol(protocol: dict[str, Any]) -> dict[str, Any]:
             not isinstance(activation_cost, dict)
             or set(activation_cost) != ACTIVATION_COST_FIELDS
             or activation_cost["control"] != "minimal_native_skill"
+            or activation_cost["router_projection"]
+            != "bare_general_workflow_reference"
             or activation_cost["raw_native_policy"] != "report_only"
             or activation_cost[
-                "maximum_controllable_input_token_increase_per_case"
+                "maximum_router_input_token_increase_per_case"
             ] != 100
             or not _is_sha256(activation_cost["control_skill_sha256"])
         ):
@@ -2491,14 +2545,22 @@ def validate_workspace_parity(
     omc: dict[str, str],
     *,
     allowed_delta: str,
+    allowed_additional_deltas: tuple[str, ...] = (),
 ) -> None:
-    allowed_delta = _safe_context_path(allowed_delta)
-    baseline_without_delta = {key: value for key, value in baseline.items() if key != allowed_delta}
-    omc_without_delta = {key: value for key, value in omc.items() if key != allowed_delta}
+    allowed_deltas = {
+        _safe_context_path(allowed_delta),
+        *(_safe_context_path(path) for path in allowed_additional_deltas),
+    }
+    baseline_without_delta = {
+        key: value for key, value in baseline.items() if key not in allowed_deltas
+    }
+    omc_without_delta = {
+        key: value for key, value in omc.items() if key not in allowed_deltas
+    }
     if baseline_without_delta != omc_without_delta:
         raise ValueError("workspace_mismatch: provider workspaces differ outside the skill")
-    if allowed_delta in baseline or allowed_delta not in omc:
-        raise ValueError("workspace_mismatch: OMC skill must be the only workspace delta")
+    if any(path in baseline or path not in omc for path in allowed_deltas):
+        raise ValueError("workspace_mismatch: required OMC skill delta is missing")
 
 
 def materialize_case_workspace(
@@ -2506,6 +2568,7 @@ def materialize_case_workspace(
     case: dict[str, Any],
     *,
     skill_text: str | None = None,
+    skill_references: dict[str, str] | None = None,
 ) -> dict[str, str]:
     root_path = Path(root)
     root_path.mkdir(parents=True, exist_ok=True)
@@ -2517,7 +2580,24 @@ def materialize_case_workspace(
         skill_path = root_path / ".agents/skills/omc-plan/SKILL.md"
         skill_path.parent.mkdir(parents=True, exist_ok=True)
         skill_path.write_text(skill_text, encoding="utf-8")
+        for relative, content in (skill_references or {}).items():
+            reference_path = _safe_context_path(relative)
+            if reference_path == "SKILL.md":
+                raise ValueError("skill reference must not replace SKILL.md")
+            target = skill_path.parent / reference_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+    elif skill_references:
+        raise ValueError("skill references require skill text")
     return workspace_manifest(root_path)
+
+
+def build_router_activation_projection(skill_text: str) -> str:
+    """Keep the router surface while disabling the on-demand workflow load."""
+    marker = "일반 요청:`references/workflow.md`"
+    if skill_text.count(marker) != 1:
+        raise ValueError("router activation projection marker must occur exactly once")
+    return skill_text.replace(marker, "일반 요청:references/workflow.md")
 
 
 def build_provider_prompt(
@@ -2526,6 +2606,7 @@ def build_provider_prompt(
     *,
     context_paths: tuple[str, ...] = (),
     context_files: dict[str, str] | None = None,
+    required_read_command: str = "",
 ) -> str:
     receipt_instruction = (
         "The output schema may request runtime_activation_receipt. Return `unavailable` "
@@ -2544,14 +2625,24 @@ def build_provider_prompt(
         sort_keys=True,
         separators=(",", ":"),
     )
-    context_instruction = (
+    context_prefix = (
         "Frozen context is embedded below as canonical JSON. Treat each key as its "
-        "relative path and its value as the complete file content. Do not run a shell "
-        "command or call another tool; plan directly from this context. "
+        "relative path and its value as the complete file content. "
         f"<frozen_context>{context_payload}</frozen_context> "
         if normalized_context_files
-        else "No context files were provided. Do not run a shell command or call another tool; "
+        else "No context files were provided. "
     )
+    if required_read_command:
+        context_instruction = (
+            context_prefix
+            + "Before planning, run exactly this one shell command and no other tool or "
+            f"command: `{required_read_command}`. "
+        )
+    else:
+        context_instruction = (
+            context_prefix
+            + "Do not run a shell command or call another tool; plan directly from this context. "
+        )
     if provider_id == "baseline-plan":
         return (
             receipt_instruction
@@ -2575,6 +2666,7 @@ def build_provider_input_envelope(
     *,
     allowed_workspace_delta: str,
     instrumented_skill_sha256: str,
+    workflow_reference_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Bind a provider call to its exact request, context, prompt, and skill delta."""
     if provider_id not in PROVIDERS:
@@ -2595,6 +2687,10 @@ def build_provider_input_envelope(
     delta_path = _safe_context_path(allowed_workspace_delta)
     if not _is_sha256(instrumented_skill_sha256):
         raise ValueError("provider input skill hash is invalid")
+    if workflow_reference_sha256 is not None and (
+        provider_id != "omc-plan" or not _is_sha256(workflow_reference_sha256)
+    ):
+        raise ValueError("provider input workflow reference hash is invalid")
 
     context_manifest = {
         _safe_context_path(path): _sha256_text(content)
@@ -2605,6 +2701,11 @@ def build_provider_input_envelope(
     if provider_id == "omc-plan":
         workspace[delta_path] = instrumented_skill_sha256
         provider_delta_sha256 = instrumented_skill_sha256
+        if workflow_reference_sha256 is not None:
+            workspace[WORKFLOW_REFERENCE_PATH] = workflow_reference_sha256
+    required_read_command = (
+        WORKFLOW_READ_COMMAND if workflow_reference_sha256 is not None else ""
+    )
     context_paths = tuple(sorted(context_manifest))
     prompt_sha256 = _sha256_text(
         build_provider_prompt(
@@ -2612,6 +2713,7 @@ def build_provider_input_envelope(
             request,
             context_paths=context_paths,
             context_files=context_files,
+            required_read_command=required_read_command,
         )
     )
     payload = {
@@ -2626,6 +2728,9 @@ def build_provider_input_envelope(
         "provider_delta_sha256": provider_delta_sha256,
         "prompt_sha256": prompt_sha256,
     }
+    if workflow_reference_sha256 is not None:
+        payload["workflow_reference_sha256"] = workflow_reference_sha256
+        payload["required_read_command"] = required_read_command
     return {**payload, "provider_input_sha256": canonical_digest(payload)}
 
 
@@ -3115,6 +3220,8 @@ def execute_provider(
     private_events_path: str | Path | None = None,
     context_paths: tuple[str, ...] = (),
     context_files: dict[str, str] | None = None,
+    expected_read_command: str | None = None,
+    expected_read_sha256: str | None = None,
 ) -> dict[str, Any]:
     if type(max_activation_attempts) is not int or not 1 <= max_activation_attempts <= 2:
         raise ValueError("max_activation_attempts must be 1 or 2")
@@ -3131,7 +3238,19 @@ def execute_provider(
         request,
         context_paths=context_paths,
         context_files=context_files,
+        required_read_command=expected_read_command or "",
     )
+    if expected_read_command:
+        if (
+            not _is_sha256(expected_read_sha256)
+            or not expected_read_command.startswith("cat -- ")
+        ):
+            raise ValueError("expected workflow read evidence is invalid")
+        expected_read_path = _safe_context_path(
+            expected_read_command.removeprefix("cat -- ")
+        )
+    else:
+        expected_read_path = None
     attempt_limit = max_activation_attempts if provider_id == "omc-plan" else 1
     attempt_events: list[str] = []
     attempt_usages: list[dict[str, Any]] = []
@@ -3194,6 +3313,24 @@ def execute_provider(
                 offending_command_sha256=unsafe_command["command_sha256"],
             )
             raise RuntimeError("unsafe_shell_command")
+        if expected_read_command is not None:
+            shell_contract_violation = detect_omc_plan_shell_contract_violation(
+                completed.stdout,
+                expected_read_command,
+            )
+            if shell_contract_violation is not None:
+                _write_failure_receipt(
+                    failure_receipt_path,
+                    provider_id=provider_id,
+                    reason_code=shell_contract_violation["kind"],
+                    timeout_sec=timeout_sec,
+                    usage=_aggregate_attempt_usage(attempt_usages),
+                    offending_command_kind=shell_contract_violation["kind"],
+                    offending_command_sha256=shell_contract_violation[
+                        "command_sha256"
+                    ],
+                )
+                raise RuntimeError(shell_contract_violation["kind"])
         plan_round_trip = detect_unnecessary_plan_round_trip(completed.stdout)
         if plan_round_trip is not None and plan_round_trip["kind"] == "todo_list":
             _write_failure_receipt(
@@ -3256,7 +3393,7 @@ def execute_provider(
     normalized_output = json.dumps(plan, ensure_ascii=False, sort_keys=True)
     usage = _aggregate_attempt_usage(attempt_usages)
     events_jsonl = "\n".join(attempt_events)
-    return {
+    result = {
         "provider_id": provider_id,
         "plan": plan,
         "raw_output": normalized_output,
@@ -3274,6 +3411,14 @@ def execute_provider(
         "command_sha256": _sha256_text(json.dumps(command, ensure_ascii=False)),
         "prompt_sha256": _sha256_text(prompt),
     }
+    if expected_read_path is not None:
+        result["reference_read"] = {
+            "status": "observed",
+            "path": expected_read_path,
+            "content_sha256": expected_read_sha256,
+            "command_sha256": _sha256_text(expected_read_command),
+        }
+    return result
 
 
 def _write_failure_receipt(
@@ -3394,14 +3539,19 @@ def require_activation_input_budget(
 def require_activation_cost_budget(
     activation_probe: dict[str, Any],
     *,
-    maximum_controllable_increase: int,
+    maximum_router_increase: int,
 ) -> dict[str, int | str]:
-    """Separate native loader cost from the OMC-controlled skill payload."""
+    """Gate router cost while reporting the on-demand workflow payload."""
     executions = activation_probe.get("executions")
     if not isinstance(executions, dict):
         raise ValueError("activation_input_token_usage_unavailable")
     inputs: dict[str, int] = {}
-    for execution_id in ("baseline-plan", "minimal-native-plan", "omc-plan"):
+    for execution_id in (
+        "baseline-plan",
+        "minimal-native-plan",
+        "router-native-plan",
+        "omc-plan",
+    ):
         execution = executions.get(execution_id)
         usage = (
             execution.get("successful_attempt_usage", execution.get("usage"))
@@ -3425,20 +3575,23 @@ def require_activation_cost_budget(
         inputs[execution_id] = input_tokens
     raw_delta = inputs["omc-plan"] - inputs["baseline-plan"]
     platform_floor = inputs["minimal-native-plan"] - inputs["baseline-plan"]
-    controllable_delta = inputs["omc-plan"] - inputs["minimal-native-plan"]
-    if raw_delta != platform_floor + controllable_delta:
+    router_delta = inputs["router-native-plan"] - inputs["minimal-native-plan"]
+    workflow_delta = inputs["omc-plan"] - inputs["router-native-plan"]
+    if raw_delta != platform_floor + router_delta + workflow_delta:
         raise ValueError("activation_input_token_decomposition_invalid")
-    if controllable_delta > maximum_controllable_increase:
+    if router_delta > maximum_router_increase:
         raise ValueError(
-            "controllable_activation_input_overhead: "
-            f"observed={controllable_delta} maximum={maximum_controllable_increase}"
+            "router_activation_input_overhead: "
+            f"observed={router_delta} maximum={maximum_router_increase}"
         )
     return {
         "raw_native_input_delta": raw_delta,
         "platform_floor_input_delta": platform_floor,
-        "controllable_payload_input_delta": controllable_delta,
+        "router_payload_input_delta": router_delta,
+        "workflow_payload_input_delta": workflow_delta,
         "raw_native_status": "report_only",
-        "controllable_payload_status": "pass",
+        "router_payload_status": "pass",
+        "workflow_payload_status": "report_only",
     }
 
 
@@ -3449,9 +3602,11 @@ def _valid_activation_cost_summary(
     expected_fields = {
         "raw_native_input_delta",
         "platform_floor_input_delta",
-        "controllable_payload_input_delta",
+        "router_payload_input_delta",
+        "workflow_payload_input_delta",
         "raw_native_status",
-        "controllable_payload_status",
+        "router_payload_status",
+        "workflow_payload_status",
     }
     signed_delta_fields = (
         "raw_native_input_delta",
@@ -3461,18 +3616,21 @@ def _valid_activation_cost_summary(
         isinstance(activation_cost, dict)
         and set(activation_cost) == expected_fields
         and activation_cost.get("raw_native_status") == "report_only"
-        and activation_cost.get("controllable_payload_status") == "pass"
+        and activation_cost.get("router_payload_status") == "pass"
+        and activation_cost.get("workflow_payload_status") == "report_only"
         and all(
             type(activation_cost.get(field)) is int
             for field in signed_delta_fields
         )
-        and type(activation_cost.get("controllable_payload_input_delta")) is int
+        and type(activation_cost.get("router_payload_input_delta")) is int
+        and type(activation_cost.get("workflow_payload_input_delta")) is int
         and activation_cost["raw_native_input_delta"]
         == activation_cost["platform_floor_input_delta"]
-        + activation_cost["controllable_payload_input_delta"]
-        and activation_cost["controllable_payload_input_delta"]
+        + activation_cost["router_payload_input_delta"]
+        + activation_cost["workflow_payload_input_delta"]
+        and activation_cost["router_payload_input_delta"]
         <= activation_cost_contract[
-            "maximum_controllable_input_token_increase_per_case"
+            "maximum_router_input_token_increase_per_case"
         ]
     )
 
@@ -3487,10 +3645,68 @@ def validate_activation_cost_evidence(
         != activation_cost_contract["control_skill_sha256"]
     ):
         raise ValueError("activation_cost_control_mismatch")
+    source_skill = activation_probe.get("router_projection_source_skill")
+    router_projection_sha256 = activation_probe.get("router_projection_skill_sha256")
+    if (
+        not isinstance(source_skill, str)
+        or not source_skill.strip()
+        or _sha256_text(source_skill) != activation_probe.get("skill_sha256")
+        or _sha256_text(build_router_activation_projection(source_skill))
+        != router_projection_sha256
+    ):
+        raise ValueError("router_projection_derivation_mismatch")
+    router_execution = activation_probe.get("executions", {}).get(
+        "router-native-plan"
+    )
+    if (
+        not isinstance(router_execution, dict)
+        or router_execution.get("activation", {}).get("skill_sha256")
+        != router_projection_sha256
+    ):
+        raise ValueError("router_projection_execution_mismatch")
+    workflow_reference = activation_probe.get("workflow_reference_source")
+    if (
+        not isinstance(workflow_reference, str)
+        or not workflow_reference.strip()
+        or _sha256_text(workflow_reference)
+        != activation_probe.get("workflow_reference_sha256")
+    ):
+        raise ValueError("workflow_reference_evidence_mismatch")
+    workspace_manifests = activation_probe.get("workspace_manifests")
+    router_manifest = (
+        workspace_manifests.get("router-native-plan")
+        if isinstance(workspace_manifests, dict)
+        else None
+    )
+    omc_manifest = (
+        workspace_manifests.get("omc-plan")
+        if isinstance(workspace_manifests, dict)
+        else None
+    )
+    if (
+        not isinstance(router_manifest, dict)
+        or not isinstance(omc_manifest, dict)
+        or WORKFLOW_REFERENCE_PATH in router_manifest
+        or omc_manifest.get(WORKFLOW_REFERENCE_PATH)
+        != activation_probe.get("workflow_reference_sha256")
+    ):
+        raise ValueError("workflow_reference_workspace_mismatch")
+    omc_execution = activation_probe.get("executions", {}).get("omc-plan")
+    expected_reference_read = {
+        "status": "observed",
+        "path": WORKFLOW_REFERENCE_PATH,
+        "content_sha256": activation_probe.get("workflow_reference_sha256"),
+        "command_sha256": _sha256_text(WORKFLOW_READ_COMMAND),
+    }
+    if (
+        not isinstance(omc_execution, dict)
+        or omc_execution.get("reference_read") != expected_reference_read
+    ):
+        raise ValueError("workflow_reference_read_evidence_mismatch")
     computed = require_activation_cost_budget(
         activation_probe,
-        maximum_controllable_increase=activation_cost_contract[
-            "maximum_controllable_input_token_increase_per_case"
+        maximum_router_increase=activation_cost_contract[
+            "maximum_router_input_token_increase_per_case"
         ],
     )
     if activation_probe.get("activation_cost") != computed:
@@ -3519,11 +3735,24 @@ def run_activation_probe(
     instrumented_skill = instrument_skill(skill_text, receipt)
     instrumented_skill_sha256 = _sha256_text(instrumented_skill)
     activation_cost_contract = protocol.get("activation_cost")
+    workflow_reference = None
+    workflow_reference_sha256 = None
     minimal_skill_text = None
     minimal_receipt = None
     minimal_instrumented_skill = None
     minimal_skill_sha256 = None
+    router_projection = None
+    router_receipt = None
+    router_instrumented_skill = None
+    router_projection_skill_sha256 = None
     if activation_cost_contract is not None:
+        workflow_reference_path = Path(skill_path).parent / "references/workflow.md"
+        if not workflow_reference_path.is_file():
+            raise ValueError("OMC Plan workflow reference is required")
+        workflow_reference = workflow_reference_path.read_text(encoding="utf-8")
+        if not workflow_reference.strip():
+            raise ValueError("OMC Plan workflow reference must not be empty")
+        workflow_reference_sha256 = _sha256_text(workflow_reference)
         minimal_skill_text = MINIMAL_ACTIVATION_CONTROL_PATH.read_text(
             encoding="utf-8"
         )
@@ -3533,6 +3762,12 @@ def run_activation_probe(
         minimal_receipt = secrets.token_hex(8)
         minimal_instrumented_skill = instrument_skill(
             minimal_skill_text, minimal_receipt
+        )
+        router_projection = build_router_activation_projection(skill_text)
+        router_projection_skill_sha256 = _sha256_text(router_projection)
+        router_receipt = secrets.token_hex(8)
+        router_instrumented_skill = instrument_skill(
+            router_projection, router_receipt
         )
     probe_case = {
         "case_id": "runtime-activation-probe",
@@ -3546,10 +3781,12 @@ def run_activation_probe(
     root.mkdir(parents=True, exist_ok=True)
     baseline_root = root / "baseline-workspace"
     minimal_native_root = root / "minimal-native-workspace"
+    router_root = root / "router-workspace"
     omc_root = root / "omc-workspace"
     if (
         baseline_root.exists()
         or minimal_native_root.exists()
+        or router_root.exists()
         or omc_root.exists()
     ):
         raise ValueError("probe artifact root must not contain prior workspaces")
@@ -3567,6 +3804,8 @@ def run_activation_probe(
         output_id: str,
         active_skill_sha256: str,
         expected_receipt: str,
+        expected_read_command: str = "",
+        expected_read_sha256: str | None = None,
     ) -> dict[str, Any]:
         return execute_provider(
             provider_id=provider_id,
@@ -3589,8 +3828,11 @@ def run_activation_probe(
                 if private_event_root is not None
                 else None
             ),
+            expected_read_command=expected_read_command,
+            expected_read_sha256=expected_read_sha256,
         )
 
+    workspace_manifests = {"baseline-plan": baseline_manifest}
     executions = {
         "baseline-plan": execute(
             "baseline-plan",
@@ -3611,6 +3853,7 @@ def run_activation_probe(
             minimal_manifest,
             allowed_delta=protocol["execution"]["allowed_workspace_delta"],
         )
+        workspace_manifests["minimal-native-plan"] = minimal_manifest
         executions["minimal-native-plan"] = execute(
             "omc-plan",
             minimal_native_root,
@@ -3618,20 +3861,56 @@ def run_activation_probe(
             active_skill_sha256=minimal_skill_sha256,
             expected_receipt=minimal_receipt,
         )
+    if router_instrumented_skill is not None:
+        router_manifest = materialize_case_workspace(
+            router_root,
+            probe_case,
+            skill_text=router_instrumented_skill,
+        )
+        validate_workspace_parity(
+            baseline_manifest,
+            router_manifest,
+            allowed_delta=protocol["execution"]["allowed_workspace_delta"],
+        )
+        workspace_manifests["router-native-plan"] = router_manifest
+        executions["router-native-plan"] = execute(
+            "omc-plan",
+            router_root,
+            output_id="router-native-plan",
+            active_skill_sha256=router_projection_skill_sha256,
+            expected_receipt=router_receipt,
+        )
     omc_manifest = materialize_case_workspace(
-        omc_root, probe_case, skill_text=instrumented_skill
+        omc_root,
+        probe_case,
+        skill_text=instrumented_skill,
+        skill_references=(
+            {"references/workflow.md": workflow_reference}
+            if workflow_reference is not None
+            else None
+        ),
     )
     validate_workspace_parity(
         baseline_manifest,
         omc_manifest,
         allowed_delta=protocol["execution"]["allowed_workspace_delta"],
+        allowed_additional_deltas=(
+            (".agents/skills/omc-plan/references/workflow.md",)
+            if workflow_reference is not None
+            else ()
+        ),
     )
+    workspace_manifests["omc-plan"] = omc_manifest
     executions["omc-plan"] = execute(
         "omc-plan",
         omc_root,
         output_id="omc-plan",
         active_skill_sha256=skill_sha256,
         expected_receipt=receipt,
+        expected_read_command=(
+            WORKFLOW_READ_COMMAND if workflow_reference is not None else ""
+        ),
+        expected_read_sha256=workflow_reference_sha256,
     )
     report_path = root / "activation-probe.json"
     report = {
@@ -3644,7 +3923,16 @@ def run_activation_probe(
         "model": model,
         "reasoning_effort": reasoning_effort,
         "executions": executions,
+        "workspace_manifests": workspace_manifests,
     }
+    if activation_cost_contract is not None:
+        report["router_projection_source_skill"] = skill_text
+        report["minimal_control_skill_sha256"] = minimal_skill_sha256
+        report["router_projection_skill_sha256"] = (
+            router_projection_skill_sha256
+        )
+        report["workflow_reference_source"] = workflow_reference
+        report["workflow_reference_sha256"] = workflow_reference_sha256
     report_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -3663,11 +3951,10 @@ def run_activation_probe(
             else "fail"
         )
     else:
-        report["minimal_control_skill_sha256"] = minimal_skill_sha256
         report["activation_cost"] = require_activation_cost_budget(
             report,
-            maximum_controllable_increase=activation_cost_contract[
-                "maximum_controllable_input_token_increase_per_case"
+            maximum_router_increase=activation_cost_contract[
+                "maximum_router_input_token_increase_per_case"
             ],
         )
     report["status"] = "pass"
@@ -3910,6 +4197,11 @@ def validate_runtime_provenance(
         raise ValueError("runtime input provenance mismatch")
 
     cases_by_id = {case["case_id"]: case for case in cases}
+    workflow_reference_sha256 = (
+        activation_probe.get("workflow_reference_sha256")
+        if protocol.get("activation_cost") is not None
+        else None
+    )
     for execution in provider_batch.get("executions", []):
         provider_id = execution.get("provider_id")
         case = cases_by_id.get(execution.get("case_id"))
@@ -3920,6 +4212,11 @@ def validate_runtime_provenance(
                 allowed_workspace_delta=protocol["execution"]["allowed_workspace_delta"],
                 instrumented_skill_sha256=provider_batch.get(
                     "instrumented_skill_sha256"
+                ),
+                workflow_reference_sha256=(
+                    workflow_reference_sha256
+                    if provider_id == "omc-plan"
+                    else None
                 ),
             )
             if provider_id in PROVIDERS and case is not None
@@ -3934,10 +4231,27 @@ def validate_runtime_provenance(
                 case["request"],
                 context_paths=tuple(case["context_files"]),
                 context_files=case["context_files"],
+                required_read_command=(
+                    WORKFLOW_READ_COMMAND
+                    if provider_id == "omc-plan"
+                    and workflow_reference_sha256 is not None
+                    else ""
+                ),
             ))
             or execution.get("provider_input_sha256")
             != expected_input["provider_input_sha256"]
             or execution.get("activation", {}).get("skill_sha256") != skill_sha256
+            or (
+                provider_id == "omc-plan"
+                and workflow_reference_sha256 is not None
+                and execution.get("reference_read")
+                != {
+                    "status": "observed",
+                    "path": WORKFLOW_REFERENCE_PATH,
+                    "content_sha256": workflow_reference_sha256,
+                    "command_sha256": _sha256_text(WORKFLOW_READ_COMMAND),
+                }
+            )
         ):
             raise ValueError("runtime execution provenance mismatch")
 
@@ -3991,12 +4305,22 @@ def run_runtime_batch(
     root.mkdir(parents=True, exist_ok=True)
     skill_text = Path(skill_path).read_text(encoding="utf-8")
     skill_sha256 = _sha256_text(skill_text)
+    workflow_reference_sha256 = (
+        _workflow_reference_sha256_for_skill(skill_path)
+        if protocol.get("activation_cost") is not None
+        else None
+    )
     if confirmatory_manifest["transmission"]["payload_sha256"] != (
-        confirmatory_external_payload_digest(cases, gold_document, skill_sha256)
+        confirmatory_external_payload_digest(
+            cases,
+            gold_document,
+            skill_sha256,
+            workflow_reference_sha256=workflow_reference_sha256,
+        )
     ):
         raise ValueError("confirmatory external transmission payload mismatch")
     budget_state = new_execution_budget_state(confirmatory_manifest["budget"])
-    activation_provider_count = 2 if protocol.get("activation_cost") else 1
+    activation_provider_count = 3 if protocol.get("activation_cost") else 1
     assert_execution_budget_available(
         budget_state,
         required_external_calls=(
@@ -4046,6 +4370,16 @@ def run_runtime_batch(
             activation_probe,
             activation_cost_contract,
         )
+    workflow_reference = (
+        activation_probe.get("workflow_reference_source")
+        if activation_cost_contract is not None
+        else None
+    )
+    workflow_reference_sha256 = (
+        activation_probe.get("workflow_reference_sha256")
+        if activation_cost_contract is not None
+        else None
+    )
     receipt = secrets.token_hex(8)
     instrumented_skill = instrument_skill(skill_text, receipt)
     instrumented_skill_sha256 = _sha256_text(instrumented_skill)
@@ -4059,12 +4393,24 @@ def run_runtime_batch(
         omc_root = case_root / "omc-plan"
         baseline_manifest = materialize_case_workspace(baseline_root, case)
         omc_manifest = materialize_case_workspace(
-            omc_root, case, skill_text=instrumented_skill
+            omc_root,
+            case,
+            skill_text=instrumented_skill,
+            skill_references=(
+                {"references/workflow.md": workflow_reference}
+                if workflow_reference is not None
+                else None
+            ),
         )
         validate_workspace_parity(
             baseline_manifest,
             omc_manifest,
             allowed_delta=protocol["execution"]["allowed_workspace_delta"],
+            allowed_additional_deltas=(
+                (WORKFLOW_REFERENCE_PATH,)
+                if workflow_reference is not None
+                else ()
+            ),
         )
         provider_order = list(PROVIDERS)
         if case_index % 2:
@@ -4079,6 +4425,11 @@ def run_runtime_batch(
                 case,
                 allowed_workspace_delta=protocol["execution"]["allowed_workspace_delta"],
                 instrumented_skill_sha256=instrumented_skill_sha256,
+                workflow_reference_sha256=(
+                    workflow_reference_sha256
+                    if provider_id == "omc-plan"
+                    else None
+                ),
             )
             validate_provider_workspace_manifest(actual_manifest, provider_input)
             output_path = root / "outputs" / case["case_id"] / f"{provider_id}.json"
@@ -4130,6 +4481,17 @@ def run_runtime_batch(
                 ),
                 context_paths=tuple(case["context_files"]),
                 context_files=case["context_files"],
+                expected_read_command=(
+                    WORKFLOW_READ_COMMAND
+                    if provider_id == "omc-plan"
+                    and workflow_reference_sha256 is not None
+                    else ""
+                ),
+                expected_read_sha256=(
+                    workflow_reference_sha256
+                    if provider_id == "omc-plan"
+                    else None
+                ),
             )
             if execution.get("prompt_sha256") != provider_input["prompt_sha256"]:
                 raise ValueError("runtime provider prompt does not match input envelope")
@@ -4558,8 +4920,20 @@ def finalize_runtime_batch(
         trusted_signer_public_keys=trusted_confirmatory_signer_public_keys,
     )
     skill_sha256 = provider_batch.get("skill_sha256")
+    activation_probe = provider_batch.get("activation_probe")
+    workflow_reference_sha256 = (
+        activation_probe.get("workflow_reference_sha256")
+        if isinstance(activation_probe, dict)
+        and protocol.get("activation_cost") is not None
+        else None
+    )
     if confirmatory_manifest["transmission"]["payload_sha256"] != (
-        confirmatory_external_payload_digest(cases, gold_document, skill_sha256)
+        confirmatory_external_payload_digest(
+            cases,
+            gold_document,
+            skill_sha256,
+            workflow_reference_sha256=workflow_reference_sha256,
+        )
     ):
         raise ValueError("confirmatory external transmission payload mismatch")
     verify_runtime_attestation(
@@ -4575,7 +4949,6 @@ def finalize_runtime_batch(
         gold_document=gold_document,
         confirmatory_manifest=confirmatory_manifest,
     )
-    activation_probe = provider_batch.get("activation_probe")
     if (
         not isinstance(activation_probe, dict)
         or activation_probe.get("status") != "pass"
@@ -4996,6 +5369,11 @@ def main() -> int:
         skill_sha256 = _sha256_text(
             Path(args.skill_file).read_text(encoding="utf-8")
         )
+        workflow_reference_sha256 = (
+            _workflow_reference_sha256_for_skill(args.skill_file)
+            if protocol.get("activation_cost") is not None
+            else None
+        )
         result = prepare_confirmatory_runtime_inputs(
             protocol=protocol,
             readiness=_load_json(args.readiness),
@@ -5006,6 +5384,7 @@ def main() -> int:
                 args.trusted_prior_registry
             ),
             skill_sha256=skill_sha256,
+            workflow_reference_sha256=workflow_reference_sha256,
             producer=args.producer,
             author_session_id=args.author_session_id,
             reviewer_session_id=args.reviewer_session_id,
@@ -5031,6 +5410,11 @@ def main() -> int:
         skill_sha256 = _sha256_text(
             Path(args.skill_file).read_text(encoding="utf-8")
         )
+        workflow_reference_sha256 = (
+            _workflow_reference_sha256_for_skill(args.skill_file)
+            if protocol.get("activation_cost") is not None
+            else None
+        )
         result = seal_confirmatory_runtime_inputs(
             _load_json(args.preparation),
             protocol=protocol,
@@ -5042,6 +5426,7 @@ def main() -> int:
                 args.trusted_prior_registry
             ),
             skill_sha256=skill_sha256,
+            workflow_reference_sha256=workflow_reference_sha256,
             trusted_gold_signer_public_keys=set(
                 args.trusted_gold_signer_public_key
             ),

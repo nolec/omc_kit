@@ -44,7 +44,7 @@ def _protocol():
             "manifest_required": True,
             "claim_scope": "single_confirmatory_corpus",
             "observed_total_token_stop_threshold": 1_200_000,
-            "maximum_external_calls": 30,
+            "maximum_external_calls": 31,
         },
         "acceptance": {
             "case_count": 10,
@@ -73,10 +73,34 @@ def _protocol_v2():
         "control_skill_sha256": (
             "5e23c4c8f68bc5c806bf55721d29c45d087982cd262eb4f3ac15bee60212eae7"
         ),
+        "router_projection": "bare_general_workflow_reference",
         "raw_native_policy": "report_only",
-        "maximum_controllable_input_token_increase_per_case": 100,
+        "maximum_router_input_token_increase_per_case": 100,
     }
     return protocol
+
+
+def test_confirmatory_external_payload_digest_binds_workflow_reference():
+    cases = [_case(index) for index in range(1, 11)]
+    gold = {
+        "schema_version": 1,
+        "cases": [_gold(index) for index in range(1, 11)],
+    }
+
+    first = runtime.confirmatory_external_payload_digest(
+        cases,
+        gold,
+        "a" * 64,
+        workflow_reference_sha256="b" * 64,
+    )
+    second = runtime.confirmatory_external_payload_digest(
+        cases,
+        gold,
+        "a" * 64,
+        workflow_reference_sha256="c" * 64,
+    )
+
+    assert first != second
 
 
 def _case(index=1):
@@ -175,6 +199,11 @@ def _signed_confirmatory_manifest(
     cases, gold, *, prior_cases=None, skill_sha256="a" * 64, protocol=None
 ):
     protocol = _protocol() if protocol is None else protocol
+    workflow_reference_sha256 = (
+        runtime._sha256_text("workflow")
+        if protocol.get("activation_cost") is not None
+        else None
+    )
     private_key, public_key = _signer()
     prior_cases = [_case(99)] if prior_cases is None else prior_cases
     prior_fingerprints = [
@@ -249,11 +278,14 @@ def _signed_confirmatory_manifest(
         },
         "budget": {
             "observed_total_token_stop_threshold": 1_200_000,
-            "maximum_external_calls": 30,
+            "maximum_external_calls": 31,
         },
         "transmission": {
             "payload_sha256": runtime.confirmatory_external_payload_digest(
-                cases, gold, skill_sha256
+                cases,
+                gold,
+                skill_sha256,
+                workflow_reference_sha256=workflow_reference_sha256,
             ),
             "approved": True,
         },
@@ -501,11 +533,11 @@ def test_protocol_rejects_unfrozen_thresholds():
         runtime.validate_runtime_protocol(protocol)
 
 
-def test_protocol_v2_accepts_separate_controllable_activation_budget():
+def test_protocol_v2_accepts_separate_router_activation_budget():
     assert runtime.validate_runtime_protocol(_protocol_v2())["schema_version"] == 2
 
 
-def test_activation_cost_budget_reports_raw_floor_and_controllable_delta():
+def test_activation_cost_budget_gates_router_and_reports_workflow_payload():
     probe = {
         "executions": {
             "baseline-plan": {"usage": {
@@ -519,25 +551,31 @@ def test_activation_cost_budget_reports_raw_floor_and_controllable_delta():
                 "status": "observed", "input_tokens": 1_106,
                 "output_tokens": 1, "total_tokens": 1_107,
             }},
-            "omc-plan": {"usage": {
+            "router-native-plan": {"usage": {
                 "status": "observed", "input_tokens": 1_186,
                 "output_tokens": 1, "total_tokens": 1_187,
+            }},
+            "omc-plan": {"usage": {
+                "status": "observed", "input_tokens": 3_526,
+                "output_tokens": 1, "total_tokens": 3_527,
             }},
         }
     }
 
     assert runtime.require_activation_cost_budget(
-        probe, maximum_controllable_increase=100
+        probe, maximum_router_increase=100
     ) == {
-        "raw_native_input_delta": 186,
+        "raw_native_input_delta": 2_526,
         "platform_floor_input_delta": 106,
-        "controllable_payload_input_delta": 80,
+        "router_payload_input_delta": 80,
+        "workflow_payload_input_delta": 2_340,
         "raw_native_status": "report_only",
-        "controllable_payload_status": "pass",
+        "router_payload_status": "pass",
+        "workflow_payload_status": "report_only",
     }
 
 
-def test_activation_cost_budget_rejects_controllable_delta_above_limit():
+def test_activation_cost_budget_rejects_router_delta_above_limit():
     probe = {
         "executions": {
             "baseline-plan": {"usage": {
@@ -548,16 +586,20 @@ def test_activation_cost_budget_rejects_controllable_delta_above_limit():
                 "status": "observed", "input_tokens": 1_106,
                 "output_tokens": 1, "total_tokens": 1_107,
             }},
-            "omc-plan": {"usage": {
+            "router-native-plan": {"usage": {
                 "status": "observed", "input_tokens": 1_207,
                 "output_tokens": 1, "total_tokens": 1_208,
+            }},
+            "omc-plan": {"usage": {
+                "status": "observed", "input_tokens": 3_000,
+                "output_tokens": 1, "total_tokens": 3_001,
             }},
         }
     }
 
-    with pytest.raises(ValueError, match="controllable_activation_input_overhead"):
+    with pytest.raises(ValueError, match="router_activation_input_overhead"):
         runtime.require_activation_cost_budget(
-            probe, maximum_controllable_increase=100
+            probe, maximum_router_increase=100
         )
 
 
@@ -577,11 +619,11 @@ def test_activation_cost_budget_rejects_missing_minimal_control_usage():
 
     with pytest.raises(ValueError, match="activation_input_token_usage_unavailable"):
         runtime.require_activation_cost_budget(
-            probe, maximum_controllable_increase=100
+            probe, maximum_router_increase=100
         )
 
 
-def test_activation_cost_budget_accepts_negative_controllable_delta():
+def test_activation_cost_budget_accepts_negative_router_delta():
     probe = {
         "executions": {
             "baseline-plan": {"usage": {
@@ -592,6 +634,10 @@ def test_activation_cost_budget_accepts_negative_controllable_delta():
                 "status": "observed", "input_tokens": 1_106,
                 "output_tokens": 1, "total_tokens": 1_107,
             }},
+            "router-native-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_090,
+                "output_tokens": 1, "total_tokens": 1_091,
+            }},
             "omc-plan": {"usage": {
                 "status": "observed", "input_tokens": 1_090,
                 "output_tokens": 1, "total_tokens": 1_091,
@@ -600,13 +646,15 @@ def test_activation_cost_budget_accepts_negative_controllable_delta():
     }
 
     assert runtime.require_activation_cost_budget(
-        probe, maximum_controllable_increase=100
+        probe, maximum_router_increase=100
     ) == {
         "raw_native_input_delta": 90,
         "platform_floor_input_delta": 106,
-        "controllable_payload_input_delta": -16,
+        "router_payload_input_delta": -16,
+        "workflow_payload_input_delta": 0,
         "raw_native_status": "report_only",
-        "controllable_payload_status": "pass",
+        "router_payload_status": "pass",
+        "workflow_payload_status": "report_only",
     }
 
 
@@ -621,6 +669,10 @@ def test_activation_cost_budget_accepts_signed_native_delta():
                 "status": "observed", "input_tokens": 990,
                 "output_tokens": 1, "total_tokens": 991,
             }},
+            "router-native-plan": {"usage": {
+                "status": "observed", "input_tokens": 995,
+                "output_tokens": 1, "total_tokens": 996,
+            }},
             "omc-plan": {"usage": {
                 "status": "observed", "input_tokens": 995,
                 "output_tokens": 1, "total_tokens": 996,
@@ -629,17 +681,19 @@ def test_activation_cost_budget_accepts_signed_native_delta():
     }
 
     assert runtime.require_activation_cost_budget(
-        probe, maximum_controllable_increase=100
+        probe, maximum_router_increase=100
     ) == {
         "raw_native_input_delta": -5,
         "platform_floor_input_delta": -10,
-        "controllable_payload_input_delta": 5,
+        "router_payload_input_delta": 5,
+        "workflow_payload_input_delta": 0,
         "raw_native_status": "report_only",
-        "controllable_payload_status": "pass",
+        "router_payload_status": "pass",
+        "workflow_payload_status": "report_only",
     }
 
 
-def test_protocol_v2_replacement_uses_controllable_cost_without_hiding_raw_delta():
+def test_protocol_v2_replacement_uses_router_cost_without_hiding_raw_delta():
     metrics = _metrics()
     metrics["paired_input_token_deltas"] = [186] * 10
     metrics["baseline-plan"]["total_tokens"] = 100_000
@@ -647,9 +701,11 @@ def test_protocol_v2_replacement_uses_controllable_cost_without_hiding_raw_delta
     metrics["activation_cost"] = {
         "raw_native_input_delta": 186,
         "platform_floor_input_delta": 106,
-        "controllable_payload_input_delta": 80,
+        "router_payload_input_delta": 80,
+        "workflow_payload_input_delta": 0,
         "raw_native_status": "report_only",
-        "controllable_payload_status": "pass",
+        "router_payload_status": "pass",
+        "workflow_payload_status": "report_only",
     }
 
     legacy = runtime.decide_replacement(metrics, _protocol()["acceptance"])
@@ -683,9 +739,11 @@ def test_protocol_v2_replacement_accepts_signed_native_activation_cost():
     metrics["activation_cost"] = {
         "raw_native_input_delta": -5,
         "platform_floor_input_delta": -10,
-        "controllable_payload_input_delta": 5,
+        "router_payload_input_delta": 5,
+        "workflow_payload_input_delta": 0,
         "raw_native_status": "report_only",
-        "controllable_payload_status": "pass",
+        "router_payload_status": "pass",
+        "workflow_payload_status": "report_only",
     }
 
     result = runtime.decide_replacement(
@@ -698,16 +756,33 @@ def test_protocol_v2_replacement_accepts_signed_native_activation_cost():
 
 
 def test_activation_cost_evidence_rejects_reported_summary_usage_mismatch():
+    source_skill = Path(".agents/skills/omc-plan/SKILL.md").read_text()
+    projection_sha256 = runtime._sha256_text(
+        runtime.build_router_activation_projection(source_skill)
+    )
     probe = {
+        "skill_sha256": runtime._sha256_text(source_skill),
+        "router_projection_source_skill": source_skill,
         "minimal_control_skill_sha256": _protocol_v2()["activation_cost"][
             "control_skill_sha256"
         ],
+        "router_projection_skill_sha256": projection_sha256,
+        "workflow_reference_source": "workflow",
+        "workflow_reference_sha256": runtime._sha256_text("workflow"),
+        "workspace_manifests": {
+            "router-native-plan": {},
+            "omc-plan": {
+                runtime.WORKFLOW_REFERENCE_PATH: runtime._sha256_text("workflow")
+            },
+        },
         "activation_cost": {
             "raw_native_input_delta": 90,
             "platform_floor_input_delta": 20,
-            "controllable_payload_input_delta": 70,
+            "router_payload_input_delta": 70,
+            "workflow_payload_input_delta": 0,
             "raw_native_status": "report_only",
-            "controllable_payload_status": "pass",
+            "router_payload_status": "pass",
+            "workflow_payload_status": "report_only",
         },
         "executions": {
             "baseline-plan": {"usage": {
@@ -718,6 +793,70 @@ def test_activation_cost_evidence_rejects_reported_summary_usage_mismatch():
                 "status": "observed", "input_tokens": 1_106,
                 "output_tokens": 1, "total_tokens": 1_107,
             }},
+            "router-native-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_150,
+                "output_tokens": 1, "total_tokens": 1_151,
+            }, "activation": {"skill_sha256": projection_sha256}},
+            "omc-plan": {
+                "usage": {
+                    "status": "observed", "input_tokens": 1_186,
+                    "output_tokens": 1, "total_tokens": 1_187,
+                },
+                "reference_read": {
+                    "status": "observed",
+                    "path": runtime.WORKFLOW_REFERENCE_PATH,
+                    "content_sha256": runtime._sha256_text("workflow"),
+                    "command_sha256": runtime._sha256_text(
+                        runtime.WORKFLOW_READ_COMMAND
+                    ),
+                },
+            },
+        },
+    }
+
+    with pytest.raises(ValueError, match="activation_cost_evidence_mismatch"):
+        runtime.validate_activation_cost_evidence(
+            probe,
+            _protocol_v2()["activation_cost"],
+        )
+
+
+def test_activation_cost_evidence_rejects_projection_not_derived_from_source():
+    source_skill = Path(".agents/skills/omc-plan/SKILL.md").read_text()
+    forged_projection_sha256 = runtime._sha256_text("forged projection")
+    probe = {
+        "skill_sha256": runtime._sha256_text(source_skill),
+        "router_projection_source_skill": source_skill,
+        "minimal_control_skill_sha256": _protocol_v2()["activation_cost"][
+            "control_skill_sha256"
+        ],
+        "router_projection_skill_sha256": forged_projection_sha256,
+        "workflow_reference_sha256": runtime._sha256_text("workflow"),
+        "activation_cost": {
+            "raw_native_input_delta": 186,
+            "platform_floor_input_delta": 106,
+            "router_payload_input_delta": 44,
+            "workflow_payload_input_delta": 36,
+            "raw_native_status": "report_only",
+            "router_payload_status": "pass",
+            "workflow_payload_status": "report_only",
+        },
+        "executions": {
+            "baseline-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_000,
+                "output_tokens": 1, "total_tokens": 1_001,
+            }},
+            "minimal-native-plan": {"usage": {
+                "status": "observed", "input_tokens": 1_106,
+                "output_tokens": 1, "total_tokens": 1_107,
+            }},
+            "router-native-plan": {
+                "usage": {
+                    "status": "observed", "input_tokens": 1_150,
+                    "output_tokens": 1, "total_tokens": 1_151,
+                },
+                "activation": {"skill_sha256": forged_projection_sha256},
+            },
             "omc-plan": {"usage": {
                 "status": "observed", "input_tokens": 1_186,
                 "output_tokens": 1, "total_tokens": 1_187,
@@ -725,7 +864,7 @@ def test_activation_cost_evidence_rejects_reported_summary_usage_mismatch():
         },
     }
 
-    with pytest.raises(ValueError, match="activation_cost_evidence_mismatch"):
+    with pytest.raises(ValueError, match="router_projection_derivation_mismatch"):
         runtime.validate_activation_cost_evidence(
             probe,
             _protocol_v2()["activation_cost"],
@@ -966,6 +1105,28 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     signer, signer_public_key = _signer()
     prior = [runtime._case_fingerprint(_case(99))]
 
+    original_prepare = runtime.prepare_confirmatory_runtime_inputs
+    original_seal = runtime.seal_confirmatory_runtime_inputs
+
+    def prepare_with_workflow(**kwargs):
+        kwargs.setdefault(
+            "workflow_reference_sha256", runtime._sha256_text("workflow")
+        )
+        return original_prepare(**kwargs)
+
+    def seal_with_workflow(preparation, **kwargs):
+        kwargs.setdefault(
+            "workflow_reference_sha256", runtime._sha256_text("workflow")
+        )
+        return original_seal(preparation, **kwargs)
+
+    monkeypatch.setattr(
+        runtime, "prepare_confirmatory_runtime_inputs", prepare_with_workflow
+    )
+    monkeypatch.setattr(
+        runtime, "seal_confirmatory_runtime_inputs", seal_with_workflow
+    )
+
     approval = runtime.prepare_confirmatory_runtime_inputs(
         protocol=_protocol_v2(),
         readiness=readiness,
@@ -974,6 +1135,7 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
         gold_document=gold,
         trusted_prior_fingerprints=prior,
         skill_sha256="a" * 64,
+        workflow_reference_sha256=runtime._sha256_text("workflow"),
         producer="fresh-batch-curator",
         author_session_id="gold-author",
         reviewer_session_id="gold-reviewer",
@@ -1107,6 +1269,18 @@ def test_prepare_confirmatory_runtime_inputs_requires_exact_payload_approval(mon
     )
     assert receipt["status"] == "execution_ready"
     assert receipt["provider_execution_allowed"] is True
+    with pytest.raises(ValueError, match="preparation envelope"):
+        runtime.seal_confirmatory_runtime_inputs(
+            prepared,
+            protocol=_protocol_v2(),
+            signature=signature,
+            gold_document=gold,
+            trusted_prior_fingerprints=prior,
+            skill_sha256="a" * 64,
+            workflow_reference_sha256=runtime._sha256_text("changed-workflow"),
+            trusted_gold_signer_public_keys=trusted_gold,
+            trusted_confirmatory_signer_public_keys={signer_public_key},
+        )
     with pytest.raises(ValueError, match="protocol hash mismatch"):
         runtime.seal_confirmatory_runtime_inputs(
             prepared,
@@ -1237,6 +1411,9 @@ def test_confirmatory_prepare_and_seal_cli_round_trip(tmp_path):
         paths[name] = path
     skill_path = tmp_path / "SKILL.md"
     skill_path.write_text("confirmatory plan skill\n", encoding="utf-8")
+    workflow_path = tmp_path / "references" / "workflow.md"
+    workflow_path.parent.mkdir()
+    workflow_path.write_text("workflow\n", encoding="utf-8")
     approval_path = tmp_path / "approval.json"
     prepared_path = tmp_path / "prepared.json"
     receipt_path = tmp_path / "receipt.json"
@@ -1416,6 +1593,7 @@ def test_confirmatory_runtime_bridge_accepts_generated_anonymized_public_corpus(
         gold_document=gold,
         trusted_prior_fingerprints=[runtime._case_fingerprint(_case(99))],
         skill_sha256="a" * 64,
+        workflow_reference_sha256=runtime._sha256_text("workflow"),
         producer="fresh-batch-curator",
         author_session_id="gold-author",
         reviewer_session_id="gold-reviewer",
@@ -2144,6 +2322,7 @@ def test_confirmatory_runtime_bridge_rejects_transfer_or_skill_drift():
             gold_document=gold,
             trusted_prior_fingerprints=prior,
             skill_sha256="a" * 64,
+            workflow_reference_sha256=runtime._sha256_text("workflow"),
             producer="fresh-batch-curator",
             author_session_id="gold-author",
             reviewer_session_id="gold-reviewer",
@@ -2197,6 +2376,7 @@ def test_confirmatory_runtime_bridge_rejects_transfer_or_skill_drift():
             gold_document=gold,
             trusted_prior_fingerprints=prior,
             skill_sha256="a" * 64,
+            workflow_reference_sha256=runtime._sha256_text("workflow"),
             producer="fresh-batch-curator",
             author_session_id="gold-author",
             reviewer_session_id="gold-reviewer",
@@ -2472,7 +2652,7 @@ def test_confirmatory_budget_reserves_largest_observed_provider_call(tmp_path):
 def test_confirmatory_token_budget_is_an_auditable_stop_threshold(tmp_path):
     assert runtime.FROZEN_CONFIRMATORY_BUDGET == {
         "observed_total_token_stop_threshold": 1_200_000,
-        "maximum_external_calls": 30,
+        "maximum_external_calls": 31,
     }
     state = runtime.new_execution_budget_state({
         "observed_total_token_stop_threshold": 100,
@@ -2587,6 +2767,40 @@ def test_confirmatory_budget_must_match_execution_evidence():
             executions=executions,
             expected_budget=runtime.FROZEN_CONFIRMATORY_BUDGET,
         )
+
+
+def test_confirmatory_budget_accepts_v2_router_activation_evidence():
+    execution = {
+        "activation": {"attempt_count": 1},
+        "usage": {
+            "status": "observed",
+            "input_tokens": 4,
+            "output_tokens": 1,
+            "total_tokens": 5,
+        },
+    }
+    activation_probe = {
+        "activation_cost": {},
+        "executions": {
+            provider_id: deepcopy(execution)
+            for provider_id in (
+                "baseline-plan",
+                "minimal-native-plan",
+                "router-native-plan",
+                "omc-plan",
+            )
+        },
+    }
+    reported = runtime.new_execution_budget_state(runtime.FROZEN_CONFIRMATORY_BUDGET)
+    for item in activation_probe["executions"].values():
+        runtime.consume_execution_budget(reported, item)
+
+    runtime.validate_execution_budget_evidence(
+        reported,
+        activation_probe=activation_probe,
+        executions=[],
+        expected_budget=runtime.FROZEN_CONFIRMATORY_BUDGET,
+    )
 
 
 def test_confirmatory_budget_rejects_inconsistent_activation_usage():
@@ -2890,7 +3104,10 @@ def test_activation_probe_materializes_omc_workspace_after_baseline(
             assert omc_workspace.is_dir()
         return {
             "provider_id": kwargs["provider_id"],
-            "activation": {"status": "observed"},
+            "activation": {
+                "status": "observed",
+                "skill_sha256": kwargs["skill_sha256"],
+            },
             "usage": {
                 "status": "observed",
                 "input_tokens": 1,
@@ -2918,13 +3135,33 @@ def test_activation_probe_materializes_omc_workspace_after_baseline(
     assert report["input_budget_status"] == "pass"
 
 
-def test_activation_probe_v2_measures_minimal_native_control(
+def test_router_activation_projection_disables_reference_loading():
+    skill_text = Path(".agents/skills/omc-plan/SKILL.md").read_text()
+
+    projection = runtime.build_router_activation_projection(skill_text)
+
+    assert "일반 요청:references/workflow.md" in projection
+    assert "일반 요청:`references/workflow.md`" not in projection
+
+
+def test_router_activation_projection_rejects_missing_marker():
+    with pytest.raises(ValueError, match="router activation projection marker"):
+        runtime.build_router_activation_projection("# OMC Plan\n")
+
+
+def test_activation_probe_v2_measures_router_and_workflow_costs(
     tmp_path, monkeypatch
 ):
     calls = []
 
     def fake_execute_provider(**kwargs):
         workspace_name = Path(kwargs["workspace"]).name
+        expected_read = (
+            "cat -- .agents/skills/omc-plan/references/workflow.md"
+            if workspace_name == "omc-workspace"
+            else ""
+        )
+        assert kwargs["expected_read_command"] == expected_read
         calls.append((
             kwargs["provider_id"],
             workspace_name,
@@ -2934,10 +3171,14 @@ def test_activation_probe_v2_measures_minimal_native_control(
             "baseline-workspace": 1_000,
             "minimal-native-workspace": 1_106,
             "omc-workspace": 1_186,
+            "router-workspace": 1_150,
         }[workspace_name]
-        return {
+        execution = {
             "provider_id": kwargs["provider_id"],
-            "activation": {"status": "observed"},
+            "activation": {
+                "status": "observed",
+                "skill_sha256": kwargs["skill_sha256"],
+            },
             "usage": {
                 "status": "observed",
                 "input_tokens": input_tokens,
@@ -2945,10 +3186,24 @@ def test_activation_probe_v2_measures_minimal_native_control(
                 "total_tokens": input_tokens + 1,
             },
         }
+        if expected_read:
+            execution["reference_read"] = {
+                "status": "observed",
+                "path": ".agents/skills/omc-plan/references/workflow.md",
+                "content_sha256": kwargs["expected_read_sha256"],
+                "command_sha256": runtime._sha256_text(expected_read),
+            }
+        return execution
 
     monkeypatch.setattr(runtime, "execute_provider", fake_execute_provider)
-    skill_path = tmp_path / "SKILL.md"
+    skill_path = tmp_path / "omc-plan" / "SKILL.md"
+    skill_path.parent.mkdir()
     skill_path.write_text(Path(".agents/skills/omc-plan/SKILL.md").read_text())
+    workflow_path = skill_path.parent / "references" / "workflow.md"
+    workflow_path.parent.mkdir()
+    workflow_path.write_text(
+        Path(".agents/skills/omc-plan/references/workflow.md").read_text()
+    )
 
     report = runtime.run_activation_probe(
         protocol=_protocol_v2(),
@@ -2964,18 +3219,44 @@ def test_activation_probe_v2_measures_minimal_native_control(
     assert calls == [
         ("baseline-plan", "baseline-workspace", 2),
         ("omc-plan", "minimal-native-workspace", 2),
+        ("omc-plan", "router-workspace", 2),
         ("omc-plan", "omc-workspace", 2),
     ]
     assert report["activation_cost"] == {
         "raw_native_input_delta": 186,
         "platform_floor_input_delta": 106,
-        "controllable_payload_input_delta": 80,
+        "router_payload_input_delta": 44,
+        "workflow_payload_input_delta": 36,
         "raw_native_status": "report_only",
-        "controllable_payload_status": "pass",
+        "router_payload_status": "pass",
+        "workflow_payload_status": "report_only",
     }
     assert report["minimal_control_skill_sha256"] == (
         _protocol_v2()["activation_cost"]["control_skill_sha256"]
     )
+    assert report["router_projection_skill_sha256"] == runtime._sha256_text(
+        runtime.build_router_activation_projection(skill_path.read_text())
+    )
+    assert report["workflow_reference_sha256"] == runtime._sha256_text(
+        workflow_path.read_text()
+    )
+    assert not (
+        tmp_path / "probe/router-workspace/.agents/skills/omc-plan/references/workflow.md"
+    ).exists()
+    assert (
+        tmp_path / "probe/omc-workspace/.agents/skills/omc-plan/references/workflow.md"
+    ).is_file()
+    assert report["workspace_manifests"]["router-native-plan"].get(
+        ".agents/skills/omc-plan/references/workflow.md"
+    ) is None
+    assert report["workspace_manifests"]["omc-plan"][
+        ".agents/skills/omc-plan/references/workflow.md"
+    ] == report["workflow_reference_sha256"]
+    assert report["executions"]["omc-plan"]["reference_read"]["status"] == "observed"
+    assert runtime.validate_activation_cost_evidence(
+        report,
+        _protocol_v2()["activation_cost"],
+    ) == report["activation_cost"]
 
 
 def test_activation_probe_preserves_raw_usage_when_budget_check_fails(
@@ -2985,6 +3266,7 @@ def test_activation_probe_preserves_raw_usage_when_budget_check_fails(
         input_tokens = {
             "baseline-workspace": 1_000,
             "minimal-native-workspace": 1_106,
+            "router-workspace": 1_207,
             "omc-workspace": 3_526,
         }[Path(kwargs["workspace"]).name]
         return {
@@ -2999,11 +3281,17 @@ def test_activation_probe_preserves_raw_usage_when_budget_check_fails(
         }
 
     monkeypatch.setattr(runtime, "execute_provider", fake_execute_provider)
-    skill_path = tmp_path / "SKILL.md"
+    skill_path = tmp_path / "omc-plan" / "SKILL.md"
+    skill_path.parent.mkdir()
     skill_path.write_text(Path(".agents/skills/omc-plan/SKILL.md").read_text())
+    workflow_path = skill_path.parent / "references" / "workflow.md"
+    workflow_path.parent.mkdir()
+    workflow_path.write_text(
+        Path(".agents/skills/omc-plan/references/workflow.md").read_text()
+    )
     artifact_root = tmp_path / "probe"
 
-    with pytest.raises(ValueError, match="controllable_activation_input_overhead"):
+    with pytest.raises(ValueError, match="router_activation_input_overhead"):
         runtime.run_activation_probe(
             protocol=_protocol_v2(),
             skill_path=skill_path,
@@ -3018,6 +3306,8 @@ def test_activation_probe_preserves_raw_usage_when_budget_check_fails(
     report = json.loads((artifact_root / "activation-probe.json").read_text())
     assert report["status"] == "measurement_complete"
     assert report["executions"]["omc-plan"]["usage"]["input_tokens"] == 3_526
+    assert report["executions"]["router-native-plan"]["usage"]["input_tokens"] == 1_207
+    assert runtime._is_sha256(report["router_projection_skill_sha256"])
     assert "activation_cost" not in report
 
 
@@ -3131,6 +3421,62 @@ def test_execute_provider_preserves_activation_and_usage(tmp_path, monkeypatch):
     assert result["activation"]["status"] == "observed"
     assert "runtime_activation_receipt" not in result["plan"]
     assert result["usage"]["total_tokens"] == 15
+
+
+def test_execute_provider_binds_exact_workflow_read_receipt(tmp_path, monkeypatch):
+    output_path = tmp_path / "output.json"
+    workflow_sha256 = "d" * 64
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+        stdout = "\n".join([
+            json.dumps({
+                "type": "item.completed",
+                "item": {
+                    "id": "read-workflow",
+                    "type": "command_execution",
+                    "command": runtime.WORKFLOW_READ_COMMAND,
+                },
+            }),
+            json.dumps({
+                "type": "turn.completed",
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }),
+        ])
+
+    def fake_run(command, **kwargs):
+        output_path.write_text(json.dumps({
+            "requirements": [],
+            "runtime_activation_receipt": "secret-nonce",
+        }), encoding="utf-8")
+        return Completed()
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+    result = runtime.execute_provider(
+        provider_id="omc-plan",
+        request="Plan this change",
+        workspace=tmp_path,
+        codex_binary="codex",
+        model="gpt-test",
+        reasoning_effort="low",
+        sandbox="read-only",
+        output_schema="schema.json",
+        output_path=output_path,
+        skill_sha256="c" * 64,
+        expected_activation_receipt="secret-nonce",
+        baseline_sentinel="unavailable",
+        timeout_sec=180,
+        expected_read_command=runtime.WORKFLOW_READ_COMMAND,
+        expected_read_sha256=workflow_sha256,
+    )
+
+    assert result["reference_read"] == {
+        "status": "observed",
+        "path": runtime.WORKFLOW_REFERENCE_PATH,
+        "content_sha256": workflow_sha256,
+        "command_sha256": runtime._sha256_text(runtime.WORKFLOW_READ_COMMAND),
+    }
 
 
 def test_execute_provider_rejects_state_sync_as_unsafe_shell_command(
@@ -4321,6 +4667,24 @@ def test_provider_input_envelope_binds_request_context_and_skill():
     assert baseline["provider_input_sha256"] != changed_envelope["provider_input_sha256"]
 
 
+def test_provider_input_envelope_binds_workflow_reference_for_full_omc():
+    case = _case()
+    workflow_sha256 = "b" * 64
+
+    omc = runtime.build_provider_input_envelope(
+        "omc-plan",
+        case,
+        allowed_workspace_delta=".agents/skills/omc-plan/SKILL.md",
+        instrumented_skill_sha256="a" * 64,
+        workflow_reference_sha256=workflow_sha256,
+    )
+
+    assert omc["workflow_reference_sha256"] == workflow_sha256
+    assert omc["required_read_command"] == (
+        "cat -- .agents/skills/omc-plan/references/workflow.md"
+    )
+
+
 def test_provider_workspace_manifest_must_match_input_envelope():
     case = _case()
     case["context_files"] = {
@@ -4798,7 +5162,7 @@ def test_end_to_end_call_budget_includes_adjudication_attempts():
         expected_batch_id="batch-a",
     )
     assert summary == {
-        "maximum_external_calls": 30,
+        "maximum_external_calls": 31,
         "provider_external_calls": 22,
         "adjudication_external_calls": 6,
         "total_external_calls": 28,
@@ -4811,7 +5175,7 @@ def test_end_to_end_call_budget_includes_adjudication_attempts():
             "status": "failed",
             "adjudication_execution_id": None,
         }
-        for index in range(7, 10)
+        for index in range(7, 11)
     )
     with pytest.raises(RuntimeError, match="end-to-end external call budget exceeded"):
         runtime.validate_end_to_end_call_budget(
@@ -5699,7 +6063,7 @@ def test_finalize_runtime_batch_seals_scores_and_decides(tmp_path):
     assert report["metrics"]["omc-plan"]["decision_proxy_count"] == 0
     assert report["metrics"]["decision_proxy_delta"] == 0
     assert report["metrics"]["external_call_budget"] == {
-        "maximum_external_calls": 30,
+        "maximum_external_calls": 31,
         "provider_external_calls": 22,
         "adjudication_external_calls": 5,
         "total_external_calls": 27,
