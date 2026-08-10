@@ -1925,6 +1925,7 @@ def validate_adjudication_result_contract(
     expected = build_adjudication_provenance(session)
     if supplied != expected:
         raise ValueError("adjudication provenance does not match the runner contract")
+    normalize_adjudication_result(result, session)
     return expected
 
 
@@ -2042,6 +2043,7 @@ def codex_adjudicator_executor(
     if canonical_digest(prompt) != expected_provenance["adjudication_prompt_sha256"]:
         raise ValueError("adjudication prompt differs from the runner contract")
     result["_adjudication_provenance"] = expected_provenance
+    validate_adjudication_result_contract(result, session)
     attempt["status"] = "success"
     attempt["adjudication_execution_id"] = result["adjudication_execution_id"]
     persist_attempt()

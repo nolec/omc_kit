@@ -150,9 +150,20 @@ output_path = Path(args[args.index("--output-last-message") + 1])
 prompt = sys.stdin.read()
 if "independent semantic adjudicator" in prompt:
     session = json.loads(prompt.split("\n\n", 1)[1])
-    result = {
-        "session_id": os.environ.get("FAKE_CODEX_SESSION_ID", session["session_id"]),
-        "items": [
+    if session.get("schema_version") == 2:
+        items = [
+            {
+                "item_index": index,
+                "requirement_hit_indexes": [],
+                "scope_violation_indexes": [],
+                "task_requirement_links": [],
+                "edge_requirement_links": [],
+                "unsupported_assumption_indexes": [],
+            }
+            for index, _ in enumerate(session["items"])
+        ]
+    else:
+        items = [
             {
                 "blind_id": item["blind_id"],
                 "case_id": item["case_id"],
@@ -164,7 +175,10 @@ if "independent semantic adjudicator" in prompt:
                 "unsupported_assumptions": [],
             }
             for item in session["items"]
-        ],
+        ]
+    result = {
+        "session_id": os.environ.get("FAKE_CODEX_SESSION_ID", session["session_id"]),
+        "items": items,
     }
 else:
     result = {
@@ -746,6 +760,57 @@ def test_codex_adjudicator_records_successful_external_call(tmp_path):
     assert attempt["status"] == "success"
     assert attempt["session_id"] == session["session_id"]
     assert attempt["adjudication_execution_id"] == result["adjudication_execution_id"]
+
+
+def test_codex_adjudicator_records_semantically_invalid_output_as_failed(
+    tmp_path, monkeypatch
+):
+    session = _indexed_adjudication_session()
+    ledger = tmp_path / "adjudication-call-ledger.json"
+
+    def invalid_adjudication(command, **kwargs):
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text(json.dumps({
+            "session_id": session["session_id"],
+            "items": [{
+                "item_index": 0,
+                "requirement_hit_indexes": [],
+                "scope_violation_indexes": [],
+                "task_requirement_links": [],
+                "edge_requirement_links": [
+                    {
+                        "edge_index": 0,
+                        "before_requirement_indexes": [0],
+                        "after_requirement_indexes": [1],
+                    },
+                    {
+                        "edge_index": 0,
+                        "before_requirement_indexes": [0],
+                        "after_requirement_indexes": [1],
+                    },
+                ],
+                "unsupported_assumption_indexes": [],
+            }],
+        }), encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", invalid_adjudication)
+
+    with pytest.raises(ValueError, match="duplicate item-local edge index"):
+        codex_adjudicator_executor(
+            session=session,
+            model="gpt-test",
+            reasoning_effort="low",
+            codex_binary="codex",
+            output_schema=FIXTURES / "omc_plan_adjudication_output_schema.json",
+            workspace=tmp_path,
+            call_ledger_path=ledger,
+            batch_id="batch-a",
+        )
+
+    attempt = json.loads(ledger.read_text(encoding="utf-8"))["attempts"][0]
+    assert attempt["status"] == "failed"
+    assert attempt["adjudication_execution_id"] is None
 
 
 def test_codex_adjudicator_records_timed_out_external_call(tmp_path, monkeypatch):

@@ -4579,6 +4579,14 @@ def test_runtime_metrics_are_derived_from_scores_and_observed_usage():
     assert metrics["baseline-plan"]["decision_proxy_count"] == 2
     assert metrics["omc-plan"]["decision_proxy_count"] == 1
     assert metrics["decision_proxy_delta"] == -1
+    assert metrics["user_intervention"] == {
+        "measurement_status": "proxy_only",
+        "observed_user_intervention_count": None,
+        "proxy_metric": "decisions_required_count",
+        "baseline_proxy_count": 2,
+        "omc_proxy_count": 1,
+        "proxy_delta": -1,
+    }
     assert metrics["token_deltas"] == {
         "input_tokens": 0,
         "output_tokens": 0,

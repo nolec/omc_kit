@@ -4471,6 +4471,14 @@ def build_runtime_metrics(
         metrics["omc-plan"]["decision_proxy_count"]
         - metrics["baseline-plan"]["decision_proxy_count"]
     )
+    metrics["user_intervention"] = {
+        "measurement_status": "proxy_only",
+        "observed_user_intervention_count": None,
+        "proxy_metric": "decisions_required_count",
+        "baseline_proxy_count": metrics["baseline-plan"]["decision_proxy_count"],
+        "omc_proxy_count": metrics["omc-plan"]["decision_proxy_count"],
+        "proxy_delta": metrics["decision_proxy_delta"],
+    }
     baseline_cases = score_by_case["baseline-plan"]
     omc_cases = score_by_case["omc-plan"]
     if set(baseline_cases) != set(omc_cases):
