@@ -755,11 +755,18 @@ def test_protocol_v2_replacement_accepts_signed_native_activation_cost():
     assert result["decision"] == "PROVISIONALLY_REPLACEABLE"
 
 
-def test_activation_cost_evidence_rejects_reported_summary_usage_mismatch():
+def _activation_cost_evidence_probe():
     source_skill = Path(".agents/skills/omc-plan/SKILL.md").read_text()
     projection_sha256 = runtime._sha256_text(
         runtime.build_router_activation_projection(source_skill)
     )
+    workflow = "workflow"
+    probe_case = runtime._runtime_activation_probe_case()
+    prompt_sha256 = runtime._sha256_text(runtime.build_provider_prompt(
+        "omc-plan",
+        probe_case["request"],
+        workflow_reference=workflow,
+    ))
     probe = {
         "skill_sha256": runtime._sha256_text(source_skill),
         "router_projection_source_skill": source_skill,
@@ -767,19 +774,17 @@ def test_activation_cost_evidence_rejects_reported_summary_usage_mismatch():
             "control_skill_sha256"
         ],
         "router_projection_skill_sha256": projection_sha256,
-        "workflow_reference_source": "workflow",
-        "workflow_reference_sha256": runtime._sha256_text("workflow"),
+        "workflow_reference_source": workflow,
+        "workflow_reference_sha256": runtime._sha256_text(workflow),
         "workspace_manifests": {
             "router-native-plan": {},
-            "omc-plan": {
-                runtime.WORKFLOW_REFERENCE_PATH: runtime._sha256_text("workflow")
-            },
+            "omc-plan": {},
         },
         "activation_cost": {
-            "raw_native_input_delta": 90,
-            "platform_floor_input_delta": 20,
-            "router_payload_input_delta": 70,
-            "workflow_payload_input_delta": 0,
+            "raw_native_input_delta": 186,
+            "platform_floor_input_delta": 106,
+            "router_payload_input_delta": 44,
+            "workflow_payload_input_delta": 36,
             "raw_native_status": "report_only",
             "router_payload_status": "pass",
             "workflow_payload_status": "report_only",
@@ -802,19 +807,40 @@ def test_activation_cost_evidence_rejects_reported_summary_usage_mismatch():
                     "status": "observed", "input_tokens": 1_186,
                     "output_tokens": 1, "total_tokens": 1_187,
                 },
-                "reference_read": {
-                    "status": "observed",
-                    "path": runtime.WORKFLOW_REFERENCE_PATH,
-                    "content_sha256": runtime._sha256_text("workflow"),
-                    "command_sha256": runtime._sha256_text(
-                        runtime.WORKFLOW_READ_COMMAND
-                    ),
+                "prompt_sha256": prompt_sha256,
+                "workflow_delivery": {
+                    "status": "runner_preloaded",
+                    "content_sha256": runtime._sha256_text(workflow),
+                    "prompt_sha256": prompt_sha256,
                 },
             },
         },
     }
+    return probe
+
+
+def test_activation_cost_evidence_rejects_reported_summary_usage_mismatch():
+    probe = _activation_cost_evidence_probe()
+    probe["activation_cost"]["raw_native_input_delta"] = 90
+    probe["activation_cost"]["platform_floor_input_delta"] = 20
+    probe["activation_cost"]["router_payload_input_delta"] = 70
+    probe["activation_cost"]["workflow_payload_input_delta"] = 0
 
     with pytest.raises(ValueError, match="activation_cost_evidence_mismatch"):
+        runtime.validate_activation_cost_evidence(
+            probe,
+            _protocol_v2()["activation_cost"],
+        )
+
+
+def test_activation_cost_evidence_rejects_self_reported_workflow_prompt_hash():
+    probe = _activation_cost_evidence_probe()
+    probe["executions"]["omc-plan"]["prompt_sha256"] = "f" * 64
+    probe["executions"]["omc-plan"]["workflow_delivery"]["prompt_sha256"] = (
+        "f" * 64
+    )
+
+    with pytest.raises(ValueError, match="workflow_delivery_evidence_mismatch"):
         runtime.validate_activation_cost_evidence(
             probe,
             _protocol_v2()["activation_cost"],
@@ -3025,6 +3051,21 @@ def test_omc_activation_prompt_uses_native_skill_without_shell_command():
     assert ".agents/skills/omc-plan/SKILL.md" not in prompt
 
 
+def test_omc_provider_prompt_preloads_workflow_without_tool_round_trip():
+    workflow = "# Workflow\n\nPreserve atomic requirements.\n"
+
+    prompt = runtime.build_provider_prompt(
+        "omc-plan",
+        "Plan this change",
+        workflow_reference=workflow,
+    )
+
+    assert "<omc_plan_workflow>" in prompt
+    assert workflow in prompt
+    assert "Do not run a shell command or call another tool" in prompt
+    assert "cat --" not in prompt
+
+
 def test_omc_provider_treatment_prompt_stays_within_input_budget():
     baseline = runtime.build_provider_prompt("baseline-plan", "x")
     omc = runtime.build_provider_prompt("omc-plan", "x")
@@ -3156,12 +3197,11 @@ def test_activation_probe_v2_measures_router_and_workflow_costs(
 
     def fake_execute_provider(**kwargs):
         workspace_name = Path(kwargs["workspace"]).name
-        expected_read = (
-            "cat -- .agents/skills/omc-plan/references/workflow.md"
-            if workspace_name == "omc-workspace"
-            else ""
-        )
-        assert kwargs["expected_read_command"] == expected_read
+        assert kwargs["expected_read_command"] == ""
+        if workspace_name == "omc-workspace":
+            assert kwargs["workflow_reference"] == workflow_path.read_text()
+        else:
+            assert kwargs["workflow_reference"] is None
         calls.append((
             kwargs["provider_id"],
             workspace_name,
@@ -3186,12 +3226,17 @@ def test_activation_probe_v2_measures_router_and_workflow_costs(
                 "total_tokens": input_tokens + 1,
             },
         }
-        if expected_read:
-            execution["reference_read"] = {
-                "status": "observed",
-                "path": ".agents/skills/omc-plan/references/workflow.md",
+        if workspace_name == "omc-workspace":
+            prompt_sha256 = runtime._sha256_text(runtime.build_provider_prompt(
+                kwargs["provider_id"],
+                kwargs["request"],
+                workflow_reference=kwargs["workflow_reference"],
+            ))
+            execution["prompt_sha256"] = prompt_sha256
+            execution["workflow_delivery"] = {
+                "status": "runner_preloaded",
                 "content_sha256": kwargs["expected_read_sha256"],
-                "command_sha256": runtime._sha256_text(expected_read),
+                "prompt_sha256": prompt_sha256,
             }
         return execution
 
@@ -3243,16 +3288,18 @@ def test_activation_probe_v2_measures_router_and_workflow_costs(
     assert not (
         tmp_path / "probe/router-workspace/.agents/skills/omc-plan/references/workflow.md"
     ).exists()
-    assert (
+    assert not (
         tmp_path / "probe/omc-workspace/.agents/skills/omc-plan/references/workflow.md"
-    ).is_file()
+    ).exists()
     assert report["workspace_manifests"]["router-native-plan"].get(
         ".agents/skills/omc-plan/references/workflow.md"
     ) is None
-    assert report["workspace_manifests"]["omc-plan"][
+    assert report["workspace_manifests"]["omc-plan"].get(
         ".agents/skills/omc-plan/references/workflow.md"
-    ] == report["workflow_reference_sha256"]
-    assert report["executions"]["omc-plan"]["reference_read"]["status"] == "observed"
+    ) is None
+    assert report["executions"]["omc-plan"]["workflow_delivery"]["status"] == (
+        "runner_preloaded"
+    )
     assert runtime.validate_activation_cost_evidence(
         report,
         _protocol_v2()["activation_cost"],
@@ -4669,7 +4716,8 @@ def test_provider_input_envelope_binds_request_context_and_skill():
 
 def test_provider_input_envelope_binds_workflow_reference_for_full_omc():
     case = _case()
-    workflow_sha256 = "b" * 64
+    workflow = "# Workflow\n"
+    workflow_sha256 = runtime._sha256_text(workflow)
 
     omc = runtime.build_provider_input_envelope(
         "omc-plan",
@@ -4677,12 +4725,13 @@ def test_provider_input_envelope_binds_workflow_reference_for_full_omc():
         allowed_workspace_delta=".agents/skills/omc-plan/SKILL.md",
         instrumented_skill_sha256="a" * 64,
         workflow_reference_sha256=workflow_sha256,
+        workflow_reference=workflow,
     )
 
     assert omc["workflow_reference_sha256"] == workflow_sha256
-    assert omc["required_read_command"] == (
-        "cat -- .agents/skills/omc-plan/references/workflow.md"
-    )
+    assert omc["workflow_delivery"] == "runner_preloaded"
+    assert "required_read_command" not in omc
+    assert runtime.WORKFLOW_REFERENCE_PATH not in omc["context_paths"]
 
 
 def test_provider_workspace_manifest_must_match_input_envelope():

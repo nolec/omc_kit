@@ -2607,6 +2607,7 @@ def build_provider_prompt(
     context_paths: tuple[str, ...] = (),
     context_files: dict[str, str] | None = None,
     required_read_command: str = "",
+    workflow_reference: str | None = None,
 ) -> str:
     receipt_instruction = (
         "The output schema may request runtime_activation_receipt. Return `unavailable` "
@@ -2619,6 +2620,12 @@ def build_provider_prompt(
     }
     if tuple(sorted(normalized_context_files)) != normalized_context_paths:
         raise ValueError("provider prompt context paths do not match frozen context")
+    if workflow_reference is not None and (
+        provider_id != "omc-plan" or not workflow_reference.strip()
+    ):
+        raise ValueError("provider prompt workflow reference is invalid")
+    if workflow_reference is not None and required_read_command:
+        raise ValueError("preloaded workflow must not require a provider read")
     context_payload = json.dumps(
         normalized_context_files,
         ensure_ascii=False,
@@ -2651,13 +2658,32 @@ def build_provider_prompt(
             + request
         )
     if provider_id == "omc-plan":
+        workflow_instruction = (
+            "The runner preloaded the exact OMC Plan workflow below. Apply it directly; "
+            "do not load a reference or call a tool. "
+            f"<omc_plan_workflow>{workflow_reference}</omc_plan_workflow> "
+            if workflow_reference is not None
+            else ""
+        )
         return (
-            context_instruction
+            workflow_instruction
+            + context_instruction
             + "Copy only the string value from the skill activation JSON into "
             "runtime_activation_receipt; exclude its key and JSON syntax. $omc-plan\n"
             + request
         )
     raise ValueError(f"unsupported provider: {provider_id}")
+
+
+def _runtime_activation_probe_case() -> dict[str, Any]:
+    return {
+        "case_id": "runtime-activation-probe",
+        "request": "Plan a bounded retry change without modifying the public API.",
+        "context_files": {
+            "src/service.py": "def request():\n    return None\n",
+            "tests/test_service.py": "def test_request():\n    assert True\n",
+        },
+    }
 
 
 def build_provider_input_envelope(
@@ -2667,6 +2693,7 @@ def build_provider_input_envelope(
     allowed_workspace_delta: str,
     instrumented_skill_sha256: str,
     workflow_reference_sha256: str | None = None,
+    workflow_reference: str | None = None,
 ) -> dict[str, Any]:
     """Bind a provider call to its exact request, context, prompt, and skill delta."""
     if provider_id not in PROVIDERS:
@@ -2691,6 +2718,11 @@ def build_provider_input_envelope(
         provider_id != "omc-plan" or not _is_sha256(workflow_reference_sha256)
     ):
         raise ValueError("provider input workflow reference hash is invalid")
+    if workflow_reference_sha256 is not None and (
+        not isinstance(workflow_reference, str)
+        or _sha256_text(workflow_reference) != workflow_reference_sha256
+    ):
+        raise ValueError("provider input workflow reference content is invalid")
 
     context_manifest = {
         _safe_context_path(path): _sha256_text(content)
@@ -2701,11 +2733,6 @@ def build_provider_input_envelope(
     if provider_id == "omc-plan":
         workspace[delta_path] = instrumented_skill_sha256
         provider_delta_sha256 = instrumented_skill_sha256
-        if workflow_reference_sha256 is not None:
-            workspace[WORKFLOW_REFERENCE_PATH] = workflow_reference_sha256
-    required_read_command = (
-        WORKFLOW_READ_COMMAND if workflow_reference_sha256 is not None else ""
-    )
     context_paths = tuple(sorted(context_manifest))
     prompt_sha256 = _sha256_text(
         build_provider_prompt(
@@ -2713,7 +2740,7 @@ def build_provider_input_envelope(
             request,
             context_paths=context_paths,
             context_files=context_files,
-            required_read_command=required_read_command,
+            workflow_reference=workflow_reference,
         )
     )
     payload = {
@@ -2730,7 +2757,7 @@ def build_provider_input_envelope(
     }
     if workflow_reference_sha256 is not None:
         payload["workflow_reference_sha256"] = workflow_reference_sha256
-        payload["required_read_command"] = required_read_command
+        payload["workflow_delivery"] = "runner_preloaded"
     return {**payload, "provider_input_sha256": canonical_digest(payload)}
 
 
@@ -3222,6 +3249,7 @@ def execute_provider(
     context_files: dict[str, str] | None = None,
     expected_read_command: str | None = None,
     expected_read_sha256: str | None = None,
+    workflow_reference: str | None = None,
 ) -> dict[str, Any]:
     if type(max_activation_attempts) is not int or not 1 <= max_activation_attempts <= 2:
         raise ValueError("max_activation_attempts must be 1 or 2")
@@ -3239,7 +3267,13 @@ def execute_provider(
         context_paths=context_paths,
         context_files=context_files,
         required_read_command=expected_read_command or "",
+        workflow_reference=workflow_reference,
     )
+    if workflow_reference is not None and (
+        not _is_sha256(expected_read_sha256)
+        or _sha256_text(workflow_reference) != expected_read_sha256
+    ):
+        raise ValueError("preloaded workflow evidence is invalid")
     if expected_read_command:
         if (
             not _is_sha256(expected_read_sha256)
@@ -3417,6 +3451,12 @@ def execute_provider(
             "path": expected_read_path,
             "content_sha256": expected_read_sha256,
             "command_sha256": _sha256_text(expected_read_command),
+        }
+    elif workflow_reference is not None:
+        result["workflow_delivery"] = {
+            "status": "runner_preloaded",
+            "content_sha256": expected_read_sha256,
+            "prompt_sha256": result["prompt_sha256"],
         }
     return result
 
@@ -3687,22 +3727,27 @@ def validate_activation_cost_evidence(
         not isinstance(router_manifest, dict)
         or not isinstance(omc_manifest, dict)
         or WORKFLOW_REFERENCE_PATH in router_manifest
-        or omc_manifest.get(WORKFLOW_REFERENCE_PATH)
-        != activation_probe.get("workflow_reference_sha256")
+        or WORKFLOW_REFERENCE_PATH in omc_manifest
     ):
         raise ValueError("workflow_reference_workspace_mismatch")
     omc_execution = activation_probe.get("executions", {}).get("omc-plan")
-    expected_reference_read = {
-        "status": "observed",
-        "path": WORKFLOW_REFERENCE_PATH,
+    probe_case = _runtime_activation_probe_case()
+    expected_prompt_sha256 = _sha256_text(build_provider_prompt(
+        "omc-plan",
+        probe_case["request"],
+        workflow_reference=workflow_reference,
+    ))
+    expected_workflow_delivery = {
+        "status": "runner_preloaded",
         "content_sha256": activation_probe.get("workflow_reference_sha256"),
-        "command_sha256": _sha256_text(WORKFLOW_READ_COMMAND),
+        "prompt_sha256": expected_prompt_sha256,
     }
     if (
         not isinstance(omc_execution, dict)
-        or omc_execution.get("reference_read") != expected_reference_read
+        or omc_execution.get("prompt_sha256") != expected_prompt_sha256
+        or omc_execution.get("workflow_delivery") != expected_workflow_delivery
     ):
-        raise ValueError("workflow_reference_read_evidence_mismatch")
+        raise ValueError("workflow_delivery_evidence_mismatch")
     computed = require_activation_cost_budget(
         activation_probe,
         maximum_router_increase=activation_cost_contract[
@@ -3732,7 +3777,12 @@ def run_activation_probe(
         raise ValueError("OMC Plan skill must not be empty")
     skill_sha256 = _sha256_text(skill_text)
     receipt = secrets.token_hex(8)
-    instrumented_skill = instrument_skill(skill_text, receipt)
+    single_input_skill_text = (
+        build_router_activation_projection(skill_text)
+        if protocol.get("activation_cost") is not None
+        else skill_text
+    )
+    instrumented_skill = instrument_skill(single_input_skill_text, receipt)
     instrumented_skill_sha256 = _sha256_text(instrumented_skill)
     activation_cost_contract = protocol.get("activation_cost")
     workflow_reference = None
@@ -3769,14 +3819,7 @@ def run_activation_probe(
         router_instrumented_skill = instrument_skill(
             router_projection, router_receipt
         )
-    probe_case = {
-        "case_id": "runtime-activation-probe",
-        "request": "Plan a bounded retry change without modifying the public API.",
-        "context_files": {
-            "src/service.py": "def request():\n    return None\n",
-            "tests/test_service.py": "def test_request():\n    assert True\n",
-        },
-    }
+    probe_case = _runtime_activation_probe_case()
     root = Path(artifact_root)
     root.mkdir(parents=True, exist_ok=True)
     baseline_root = root / "baseline-workspace"
@@ -3806,6 +3849,7 @@ def run_activation_probe(
         expected_receipt: str,
         expected_read_command: str = "",
         expected_read_sha256: str | None = None,
+        workflow_reference_input: str | None = None,
     ) -> dict[str, Any]:
         return execute_provider(
             provider_id=provider_id,
@@ -3830,6 +3874,7 @@ def run_activation_probe(
             ),
             expected_read_command=expected_read_command,
             expected_read_sha256=expected_read_sha256,
+            workflow_reference=workflow_reference_input,
         )
 
     workspace_manifests = {"baseline-plan": baseline_manifest}
@@ -3884,21 +3929,11 @@ def run_activation_probe(
         omc_root,
         probe_case,
         skill_text=instrumented_skill,
-        skill_references=(
-            {"references/workflow.md": workflow_reference}
-            if workflow_reference is not None
-            else None
-        ),
     )
     validate_workspace_parity(
         baseline_manifest,
         omc_manifest,
         allowed_delta=protocol["execution"]["allowed_workspace_delta"],
-        allowed_additional_deltas=(
-            (".agents/skills/omc-plan/references/workflow.md",)
-            if workflow_reference is not None
-            else ()
-        ),
     )
     workspace_manifests["omc-plan"] = omc_manifest
     executions["omc-plan"] = execute(
@@ -3907,10 +3942,8 @@ def run_activation_probe(
         output_id="omc-plan",
         active_skill_sha256=skill_sha256,
         expected_receipt=receipt,
-        expected_read_command=(
-            WORKFLOW_READ_COMMAND if workflow_reference is not None else ""
-        ),
         expected_read_sha256=workflow_reference_sha256,
+        workflow_reference_input=workflow_reference,
     )
     report_path = root / "activation-probe.json"
     report = {
@@ -4218,6 +4251,11 @@ def validate_runtime_provenance(
                     if provider_id == "omc-plan"
                     else None
                 ),
+                workflow_reference=(
+                    activation_probe.get("workflow_reference_source")
+                    if provider_id == "omc-plan"
+                    else None
+                ),
             )
             if provider_id in PROVIDERS and case is not None
             else None
@@ -4231,11 +4269,10 @@ def validate_runtime_provenance(
                 case["request"],
                 context_paths=tuple(case["context_files"]),
                 context_files=case["context_files"],
-                required_read_command=(
-                    WORKFLOW_READ_COMMAND
+                workflow_reference=(
+                    activation_probe.get("workflow_reference_source")
                     if provider_id == "omc-plan"
-                    and workflow_reference_sha256 is not None
-                    else ""
+                    else None
                 ),
             ))
             or execution.get("provider_input_sha256")
@@ -4244,12 +4281,11 @@ def validate_runtime_provenance(
             or (
                 provider_id == "omc-plan"
                 and workflow_reference_sha256 is not None
-                and execution.get("reference_read")
+                and execution.get("workflow_delivery")
                 != {
-                    "status": "observed",
-                    "path": WORKFLOW_REFERENCE_PATH,
+                    "status": "runner_preloaded",
                     "content_sha256": workflow_reference_sha256,
-                    "command_sha256": _sha256_text(WORKFLOW_READ_COMMAND),
+                    "prompt_sha256": execution.get("prompt_sha256"),
                 }
             )
         ):
@@ -4381,7 +4417,12 @@ def run_runtime_batch(
         else None
     )
     receipt = secrets.token_hex(8)
-    instrumented_skill = instrument_skill(skill_text, receipt)
+    single_input_skill_text = (
+        build_router_activation_projection(skill_text)
+        if workflow_reference is not None
+        else skill_text
+    )
+    instrumented_skill = instrument_skill(single_input_skill_text, receipt)
     instrumented_skill_sha256 = _sha256_text(instrumented_skill)
     activation_schema = build_activation_output_schema(
         output_schema, root / "activation-output-schema.json"
@@ -4396,21 +4437,11 @@ def run_runtime_batch(
             omc_root,
             case,
             skill_text=instrumented_skill,
-            skill_references=(
-                {"references/workflow.md": workflow_reference}
-                if workflow_reference is not None
-                else None
-            ),
         )
         validate_workspace_parity(
             baseline_manifest,
             omc_manifest,
             allowed_delta=protocol["execution"]["allowed_workspace_delta"],
-            allowed_additional_deltas=(
-                (WORKFLOW_REFERENCE_PATH,)
-                if workflow_reference is not None
-                else ()
-            ),
         )
         provider_order = list(PROVIDERS)
         if case_index % 2:
@@ -4429,6 +4460,9 @@ def run_runtime_batch(
                     workflow_reference_sha256
                     if provider_id == "omc-plan"
                     else None
+                ),
+                workflow_reference=(
+                    workflow_reference if provider_id == "omc-plan" else None
                 ),
             )
             validate_provider_workspace_manifest(actual_manifest, provider_input)
@@ -4481,16 +4515,13 @@ def run_runtime_batch(
                 ),
                 context_paths=tuple(case["context_files"]),
                 context_files=case["context_files"],
-                expected_read_command=(
-                    WORKFLOW_READ_COMMAND
-                    if provider_id == "omc-plan"
-                    and workflow_reference_sha256 is not None
-                    else ""
-                ),
                 expected_read_sha256=(
                     workflow_reference_sha256
                     if provider_id == "omc-plan"
                     else None
+                ),
+                workflow_reference=(
+                    workflow_reference if provider_id == "omc-plan" else None
                 ),
             )
             if execution.get("prompt_sha256") != provider_input["prompt_sha256"]:

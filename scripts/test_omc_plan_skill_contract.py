@@ -465,6 +465,18 @@ def test_plan_skill_preserves_executable_tdd_task_specificity():
     assert not missing, f"missing executable task markers: {missing}"
 
 
+def test_plan_workflow_preserves_atomic_requirements_before_compression():
+    text = _read(REQUIRED_PLAN_WORKFLOW_PATHS[0])
+
+    for marker in (
+        "원자 requirement ledger",
+        "ID를 다시 정의하거나 병합하지 않는다",
+        "검증 경계별 독립 ID",
+        "모든 requirement ID가 task.supports와 VERIFY에 연결",
+    ):
+        assert marker in text
+
+
 def test_plan_skill_places_frozen_benchmark_fast_path_before_general_phases():
     text = _read(REQUIRED_PLAN_SKILL_PATHS[0])
     fast_path = text.index("격리 benchmark fast-path")

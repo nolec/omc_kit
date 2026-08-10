@@ -19,6 +19,8 @@ AGENTS.md Tier 1 → CONTRACT 입력.
 dirty 변경과 계획 범위 분리.
 
 ## Phase 3. TDD 태스크·근거 추출
+- 압축 전에 원자 requirement ledger를 고정하고 이후 ID를 다시 정의하거나 병합하지 않는다. 데이터 공급, 소비자 동작, 회귀 검증처럼 증거가 다른 항목은 검증 경계별 독립 ID로 유지한다.
+- 출력 전 모든 requirement ID가 task.supports와 VERIFY에 연결됐는지 확인한다. request/response 계약, member/guest 분기, filter query처럼 독립적으로 실패할 수 있는 경계를 포괄 표현에 흡수하지 않는다.
 - 구조화 출력은 schema 필드만 사용하고 요구사항·scope·task 중복 금지, todo_list·planning tool 생성 금지. 반복 설명 금지, 항목별 한 문장.
 - 근거 파일은 한 번의 명령으로 직접 읽고 진행 메시지·pwd·재탐색 금지. 코드 symbol·사용자 관찰 동작·실패 경로 근거 매핑 완료 전 lite 금지.
 - 선택된 객체: ID·수신자 → 상태·payload → supports·VERIFY. 요구사항은 짧은 ID; supports에는 ID만.
