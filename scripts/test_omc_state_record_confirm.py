@@ -442,9 +442,17 @@ def test_status_matches_latest_after_sequential_sync_session_role_change(tmp_pat
 def test_core_omc_skills_document_use_session_sync_step():
     expected_markers = {}
     for skills_root in (ROOT / ".agent" / "skills", ROOT / ".agents" / "skills"):
+        plan_skill = skills_root / "omc-plan" / "SKILL.md"
+        plan_workflow = skills_root / "omc-plan" / "references" / "workflow.md"
+        plan_skill_text = plan_skill.read_text(encoding="utf-8")
+        plan_workflow_text = plan_workflow.read_text(encoding="utf-8")
+        assert "일반 요청:`references/workflow.md`" in plan_skill_text
+        assert (
+            "python3 scripts/omc.py state sync-session --target . --mode autopilot"
+            in plan_workflow_text
+        )
         expected_markers.update(
             {
-                skills_root / "omc-plan" / "SKILL.md": "python3 scripts/omc.py state sync-session --target . --mode autopilot",
                 skills_root / "omc-task" / "SKILL.md": "python3 scripts/omc_guard.py sync-require --target . --mode autopilot",
                 skills_root / "omc-review" / "SKILL.md": "python3 scripts/omc.py state sync-session --target . --mode autopilot",
                 skills_root / "omc-investigate" / "SKILL.md": "python3 scripts/omc.py state sync-session --target . --mode autopilot",
