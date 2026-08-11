@@ -187,6 +187,10 @@ $omc-reentry 이 프로젝트 뭐였지
 - **Codex**: `.agents/skills/omc-*/` — `$omc-plan` 또는 자연어
 - **Gemini CLI**: `.gemini/commands/` — `/plan` 형식
 
+## 오케스트레이션 사용 원칙
+
+Codex, Claude, Gemini의 입력 방식과 실행 범위 기준은 `docs/orchestration_usage.md`를 따릅니다.
+
 ---
 
 ## 스프린트 파이프라인 (Plan → Build → Review → Ship → Reflect)

@@ -6,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / "docs" / "orchestration_usage.md"
 AGENTS = ROOT / "AGENTS.md"
+AGENTS_TEMPLATE = ROOT / "templates" / "AGENTS.md"
 
 
 def test_orchestration_usage_doc_exists_with_required_sections() -> None:
@@ -38,6 +39,20 @@ def test_agents_references_orchestration_usage_doc() -> None:
     ]
     missing = [marker for marker in required_markers if marker not in text]
     assert not missing, f"missing AGENTS orchestration markers: {missing}"
+
+
+def test_agents_template_references_orchestration_usage_doc() -> None:
+    text = AGENTS_TEMPLATE.read_text(encoding="utf-8")
+
+    required_markers = [
+        "오케스트레이션 사용 원칙",
+        "docs/orchestration_usage.md",
+        "Codex",
+        "Claude",
+        "Gemini",
+    ]
+    missing = [marker for marker in required_markers if marker not in text]
+    assert not missing, f"missing AGENTS template orchestration markers: {missing}"
 
 
 def test_orchestration_usage_doc_keeps_claude_input_conservative() -> None:
