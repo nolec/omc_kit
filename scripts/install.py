@@ -35,6 +35,30 @@ def _copy(src: Path, dst: Path, *, force: bool) -> None:
     dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
 
+def _install_post_commit_hook(template: Path, hook: Path, *, force: bool) -> None:
+    marker = "OMC:POST_COMMIT:V1"
+    if not hook.exists():
+        _copy(template, hook, force=force)
+        _ensure_executable(hook)
+        return
+
+    existing = hook.read_text(encoding="utf-8")
+    if marker not in existing:
+        if not force:
+            print(f"[WARN] existing post-commit hook preserved; rerun with --force to chain OMC: {hook}")
+            return
+        backup = hook.with_name("post-commit.omc-original")
+        if backup.exists():
+            print(f"[WARN] existing post-commit hook preserved; backup already exists: {backup}")
+            return
+        backup.write_text(existing, encoding="utf-8")
+        backup.chmod(hook.stat().st_mode)
+        _ensure_executable(backup)
+
+    _copy(template, hook, force=True if marker not in existing else force)
+    _ensure_executable(hook)
+
+
 def _remove_legacy_overlay(dst: Path, marker: str) -> None:
     if not dst.exists():
         return
@@ -946,6 +970,16 @@ python3 scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
                 "  chmod +x .git/hooks/pre-commit\n"
                 "  또는: python3 scripts/omc_doctor.py --fix"
             )
+
+    post_commit_template = templates / "post-commit"
+    if post_commit_template.exists():
+        git_hooks_dir = tgt / ".git" / "hooks"
+        if git_hooks_dir.exists():
+            dst = git_hooks_dir / "post-commit"
+            _install_post_commit_hook(post_commit_template, dst, force=force)
+        else:
+            dst = tgt / "scripts" / "post-commit.sample"
+            _copy(post_commit_template, dst, force=force)
 
     print(f"Installed OMC kit into: {tgt}")
 

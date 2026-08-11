@@ -1,0 +1,15 @@
+#!/bin/sh
+# OMC:POST_COMMIT:V1
+
+status=0
+original="$(dirname "$0")/post-commit.omc-original"
+if [ -x "$original" ]; then
+  "$original" "$@" || status=$?
+fi
+
+if [ -f scripts/omc.py ]; then
+  python3 scripts/omc.py state complete --target . ||
+    printf '%s\n' '[OMC] completion receipt collection failed' >&2
+fi
+
+exit "$status"

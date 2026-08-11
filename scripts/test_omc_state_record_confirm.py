@@ -24,6 +24,209 @@ def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def _init_git_repo(repo: Path) -> str:
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "omc-test@example.com")
+    _git(repo, "config", "user.name", "OMC Test")
+    (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-qm", "baseline")
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _sync_task_session(repo: Path, request: str = "observed task") -> str:
+    init = _run("state", "init", "--target", str(repo))
+    assert init.returncode == 0, init.stderr
+    sync = _run(
+        "state",
+        "sync-session",
+        "--target",
+        str(repo),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-task",
+        "--request",
+        request,
+        "--roles",
+        "senior_coding",
+    )
+    assert sync.returncode == 0, sync.stderr
+    latest = _read_json(repo / ".omc" / "state" / "latest.json")
+    return str(latest["latest_session_id"])
+
+
+def _sync_review_session(repo: Path) -> str:
+    sync = _run(
+        "state",
+        "sync-session",
+        "--target",
+        str(repo),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-review",
+        "--request",
+        "review observed task",
+        "--roles",
+        "code_review",
+    )
+    assert sync.returncode == 0, sync.stderr
+    latest = _read_json(repo / ".omc" / "state" / "latest.json")
+    return str(latest["latest_session_id"])
+
+
+def _sync_ship_session(repo: Path) -> str:
+    sync = _run(
+        "state",
+        "sync-session",
+        "--target",
+        str(repo),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-ship",
+        "--request",
+        "ship observed task",
+        "--roles",
+        "directive",
+    )
+    assert sync.returncode == 0, sync.stderr
+    latest = _read_json(repo / ".omc" / "state" / "latest.json")
+    return str(latest["latest_session_id"])
+
+
+def test_state_complete_writes_verified_completion_receipt_for_one_followup_commit(tmp_path: Path):
+    target = tmp_path / "repo"
+    baseline = _init_git_repo(target)
+    request = "observed completion receipt"
+    session_id = _sync_task_session(target, request)
+
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _git(target, "add", "app.py")
+    _git(target, "commit", "-qm", "implement task")
+    followup = _git(target, "rev-parse", "HEAD")
+
+    result = _run("state", "complete", "--target", str(target))
+    assert result.returncode == 0, result.stderr
+
+    receipt_path = target / ".omc" / "state" / "sessions" / session_id / "completion.json"
+    receipt = _read_json(receipt_path)
+    assert receipt["schema_version"] == 1
+    assert receipt["session_id"] == session_id
+    assert receipt["baseline_commit"] == baseline
+    assert receipt["followup_commit"] == followup
+    assert receipt["changed_paths"] == ["app.py"]
+    assert receipt["provider_outputs_available"] is False
+
+
+def test_state_complete_skips_completion_receipt_without_followup_commit(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    session_id = _sync_task_session(target)
+
+    result = _run("state", "complete", "--target", str(target))
+    assert result.returncode == 0, result.stderr
+
+    receipt_path = target / ".omc" / "state" / "sessions" / session_id / "completion.json"
+    assert not receipt_path.exists()
+
+
+def test_state_complete_skips_ambiguous_multi_commit_completion(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    session_id = _sync_task_session(target)
+
+    for value in (2, 3):
+        (target / "app.py").write_text(f"value = {value}\n", encoding="utf-8")
+        _git(target, "add", "app.py")
+        _git(target, "commit", "-qm", f"task step {value}")
+
+    result = _run("state", "complete", "--target", str(target))
+    assert result.returncode == 0, result.stderr
+
+    receipt_path = target / ".omc" / "state" / "sessions" / session_id / "completion.json"
+    assert not receipt_path.exists()
+
+
+def test_state_complete_attributes_commit_to_task_before_review_session(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    task_session_id = _sync_task_session(target, "task then review then commit")
+    review_session_id = _sync_review_session(target)
+
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _git(target, "add", "app.py")
+    _git(target, "commit", "-qm", "implement reviewed task")
+
+    result = _run("state", "complete", "--target", str(target))
+    assert result.returncode == 0, result.stderr
+
+    task_receipt = target / ".omc" / "state" / "sessions" / task_session_id / "completion.json"
+    review_receipt = target / ".omc" / "state" / "sessions" / review_session_id / "completion.json"
+    assert task_receipt.exists()
+    assert not review_receipt.exists()
+
+
+def test_state_complete_preserves_task_through_review_and_ship_sessions(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    task_session_id = _sync_task_session(target, "task then review then ship then commit")
+    review_session_id = _sync_review_session(target)
+    ship_session_id = _sync_ship_session(target)
+
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _git(target, "add", "app.py")
+    _git(target, "commit", "-qm", "ship implemented task")
+
+    result = _run("state", "complete", "--target", str(target))
+    assert result.returncode == 0, result.stderr
+
+    task_receipt = target / ".omc" / "state" / "sessions" / task_session_id / "completion.json"
+    review_receipt = target / ".omc" / "state" / "sessions" / review_session_id / "completion.json"
+    ship_receipt = target / ".omc" / "state" / "sessions" / ship_session_id / "completion.json"
+    assert task_receipt.exists()
+    assert not review_receipt.exists()
+    assert not ship_receipt.exists()
+
+
+def test_state_complete_uses_latest_explicit_task_when_baseline_is_duplicated(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    stale_session_id = _sync_task_session(target, "abandoned task")
+    active_session_id = _sync_task_session(target, "task that produced the commit")
+
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _git(target, "add", "app.py")
+    _git(target, "commit", "-qm", "implement active task")
+
+    result = _run("state", "complete", "--target", str(target))
+    assert result.returncode == 0, result.stderr
+
+    stale_receipt = target / ".omc" / "state" / "sessions" / stale_session_id / "completion.json"
+    active_receipt = target / ".omc" / "state" / "sessions" / active_session_id / "completion.json"
+    assert not stale_receipt.exists()
+    assert active_receipt.exists()
+
+
+def test_post_commit_template_records_verified_completion_receipt():
+    template = ROOT / "templates" / "post-commit"
+    assert template.exists()
+    assert "python3 scripts/omc.py state complete --target ." in template.read_text(encoding="utf-8")
+
+
 def _load_state_module():
     module_path = ROOT / "scripts" / "omc_state.py"
     spec = importlib.util.spec_from_file_location("omc_state_test_module", module_path)

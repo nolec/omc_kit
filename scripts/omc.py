@@ -249,6 +249,9 @@ def main() -> int:
     state_status = state_sub.add_parser("status", help="Show current state summary.")
     state_status.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
 
+    state_complete = state_sub.add_parser("complete", help="Record a verified receipt for the latest commit.")
+    state_complete.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+
     state_confirm = state_sub.add_parser("confirm", help="Mark the latest or a specific session as confirmed.")
     state_confirm.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     state_confirm.add_argument("--session-id", type=str, default=None, help="Specific session id to confirm.")
@@ -466,6 +469,8 @@ def main() -> int:
             return _run_script(hook_script, ["post_compact", "--target", str(args.target)])
         if args.state_command == "status":
             return _run_script(state_script, ["status", "--target", str(args.target)])
+        if args.state_command == "complete":
+            return _run_script(state_script, ["complete", "--target", str(args.target)])
         if args.state_command == "confirm":
             # TDD 게이트: 컨펌 전에 staged 파일 TDD 체크
             tdd_script = args.target / "scripts" / "omc_tdd_check.py"

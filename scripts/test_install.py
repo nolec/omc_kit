@@ -52,6 +52,44 @@ class TestCopy(unittest.TestCase):
                 _install._copy(src, dst, force=False)
 
 
+class TestPostCommitHookInstall(unittest.TestCase):
+    def test_existing_hook_is_untouched_without_force(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            template = root / "template"
+            hook = root / "hooks" / "post-commit"
+            hook.parent.mkdir()
+            template.write_text("#!/bin/sh\n# OMC:POST_COMMIT:V1\n", encoding="utf-8")
+            custom = "#!/bin/sh\nprintf 'custom hook\\n'\n"
+            hook.write_text(custom, encoding="utf-8")
+
+            _install._install_post_commit_hook(template, hook, force=False)
+
+            self.assertEqual(hook.read_text(encoding="utf-8"), custom)
+            self.assertFalse(hook.with_name("post-commit.omc-original").exists())
+
+    def test_existing_hook_is_backed_up_and_chained_idempotently(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            template = root / "template"
+            hook = root / "hooks" / "post-commit"
+            hook.parent.mkdir()
+            template.write_text(
+                "#!/bin/sh\n# OMC:POST_COMMIT:V1\n"
+                'original="$(dirname "$0")/post-commit.omc-original"\n',
+                encoding="utf-8",
+            )
+            hook.write_text("#!/bin/sh\nprintf 'custom hook\\n'\n", encoding="utf-8")
+
+            _install._install_post_commit_hook(template, hook, force=True)
+            backup = hook.with_name("post-commit.omc-original")
+            self.assertEqual(backup.read_text(encoding="utf-8"), "#!/bin/sh\nprintf 'custom hook\\n'\n")
+            self.assertIn("OMC:POST_COMMIT:V1", hook.read_text(encoding="utf-8"))
+
+            _install._install_post_commit_hook(template, hook, force=True)
+            self.assertEqual(backup.read_text(encoding="utf-8"), "#!/bin/sh\nprintf 'custom hook\\n'\n")
+
+
 class TestWrite(unittest.TestCase):
     def test_write_creates_file_with_trailing_newline(self):
         with tempfile.TemporaryDirectory() as tmp:

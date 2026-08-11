@@ -5,6 +5,7 @@ import argparse
 from collections.abc import Callable
 from contextlib import contextmanager
 import fcntl
+import hashlib
 import json
 import re
 import subprocess
@@ -84,6 +85,10 @@ def _summary_path(project_root: Path) -> Path:
 
 def _latest_path(project_root: Path) -> Path:
     return _state_dir(project_root) / "latest.json"
+
+
+def _pending_completion_path(project_root: Path) -> Path:
+    return _state_dir(project_root) / "pending-completion.json"
 
 
 def _hooks_path(project_root: Path) -> Path:
@@ -298,6 +303,132 @@ def _git_info(project_root: Path) -> dict[str, object]:
         "last_commit": last_commit,
         "dirty_count": dirty_count,
     }
+
+
+def record_completion_receipt(project_root: Path) -> dict[str, object]:
+    """Bind HEAD to the explicitly pending coding session in constant time."""
+    with _omc_lock(project_root):
+        def run_git(*args: str, text: bool = True) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                ["git", "-C", str(project_root), *args],
+                check=False,
+                capture_output=True,
+                text=text,
+            )
+
+        followup_result = run_git("rev-parse", "--verify", "HEAD^{commit}")
+        baseline_result = run_git("rev-parse", "--verify", "HEAD^1^{commit}")
+        if followup_result.returncode != 0 or baseline_result.returncode != 0:
+            return {"status": "skipped", "reason": "git commit cannot be resolved"}
+        followup = followup_result.stdout.strip()
+        baseline = baseline_result.stdout.strip()
+
+        pending_path = _pending_completion_path(project_root)
+        pending = _read_json(pending_path, {})
+        if set(pending) != {
+            "schema_version",
+            "session_id",
+            "baseline_head",
+            "request_sha256",
+        } or pending.get("schema_version") != 1:
+            return {"status": "skipped", "reason": "pending completion is invalid"}
+
+        session_id = pending.get("session_id")
+        if not isinstance(session_id, str):
+            return {"status": "skipped", "reason": "pending completion is invalid"}
+        session_path = _session_path(project_root, session_id)
+        session = _read_json(session_path, {})
+        confirmation = session.get("confirmation")
+        role_ids = session.get("role_ids")
+        request = session.get("request")
+        git = session.get("git")
+        if (
+            session.get("session_id") != session_id
+            or not isinstance(confirmation, dict)
+            or confirmation.get("status") != "confirmed"
+            or not isinstance(role_ids, list)
+            or "senior_coding" not in role_ids
+            or not isinstance(request, str)
+            or not request.strip()
+            or not isinstance(git, dict)
+            or git.get("head") != pending.get("baseline_head")
+            or _canonical_sha256(request) != pending.get("request_sha256")
+        ):
+            return {"status": "skipped", "reason": "pending completion does not match session"}
+
+        session_head = run_git("rev-parse", "--verify", f"{git['head']}^{{commit}}")
+        if session_head.returncode != 0 or session_head.stdout.strip() != baseline:
+            return {"status": "skipped", "reason": "pending completion does not match commit parent"}
+        receipt_path = session_path.parent / "completion.json"
+        if receipt_path.exists():
+            return {"status": "skipped", "reason": "completion receipt already exists"}
+
+        changed_result = run_git(
+            "diff",
+            "--name-only",
+            "-z",
+            baseline,
+            followup,
+            text=False,
+        )
+        if changed_result.returncode != 0:
+            return {"status": "skipped", "reason": "changed paths cannot be resolved"}
+        changed_paths = sorted(
+            path.decode("utf-8")
+            for path in changed_result.stdout.split(b"\0")
+            if path
+        )
+        if not changed_paths:
+            return {"status": "skipped", "reason": "followup commit has no changed paths"}
+
+        receipt = {
+            "schema_version": 1,
+            "session_id": str(session_id),
+            "request_sha256": _canonical_sha256(request),
+            "baseline_commit": baseline,
+            "followup_commit": followup,
+            "completed_at": _iso_now(),
+            "changed_paths": changed_paths,
+            "provider_outputs_available": False,
+        }
+        _write_json(receipt_path, receipt)
+        pending_path.unlink(missing_ok=True)
+        return {"status": "ok", "path": str(receipt_path), "receipt": receipt}
+
+
+def _canonical_sha256(value: object) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _sync_pending_completion(project_root: Path, session: dict[str, object]) -> None:
+    role_ids = session.get("role_ids")
+    if not isinstance(role_ids, list):
+        return
+    if "senior_coding" in role_ids:
+        git = session.get("git")
+        request = session.get("request")
+        if isinstance(git, dict) and isinstance(git.get("head"), str) and isinstance(request, str):
+            _write_json(
+                _pending_completion_path(project_root),
+                {
+                    "schema_version": 1,
+                    "session_id": session["session_id"],
+                    "baseline_head": git["head"],
+                    "request_sha256": _canonical_sha256(request),
+                },
+            )
+        return
+    preserves_task_completion = "code_review" in role_ids or (
+        "directive" in role_ids and session.get("title") == "omc-ship"
+    )
+    if not preserves_task_completion:
+        _pending_completion_path(project_root).unlink(missing_ok=True)
 
 
 def _git_scope_snapshot(project_root: Path) -> dict[str, list[str]]:
@@ -1097,6 +1228,8 @@ def record_session(
             "latest_run_id": prev_latest.get("latest_run_id"),
         }
         _write_json(_latest_path(project_root), latest)
+        if confirmed:
+            _sync_pending_completion(project_root, entry)
         _rewrite_notepad(project_root)
         return entry
 
@@ -1145,6 +1278,7 @@ def confirm_session(project_root: Path, *, session_id: str | None = None) -> dic
         latest["latest_confirmed_request"] = session.get("request")
         latest["latest_confirmation"] = dict(confirmation)
         _write_json(_latest_path(project_root), latest)
+        _sync_pending_completion(project_root, session)
         _rewrite_notepad(project_root)
         return session
 
@@ -1500,6 +1634,9 @@ def _parser() -> argparse.ArgumentParser:
     status_cmd = sub.add_parser("status", help="Show current state summary.")
     status_cmd.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
 
+    complete = sub.add_parser("complete", help="Record a verified receipt for the latest commit.")
+    complete.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+
     confirm = sub.add_parser("confirm", help="Mark the latest or a specific session as confirmed.")
     confirm.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     confirm.add_argument("--session-id", type=str, default=None, help="Specific session id to confirm.")
@@ -1593,6 +1730,10 @@ def main() -> int:
 
     if args.command == "status":
         print(status(omc_utils.project_root(args.target)))
+        return 0
+
+    if args.command == "complete":
+        print(json.dumps(record_completion_receipt(omc_utils.project_root(args.target)), ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "confirm":
