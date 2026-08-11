@@ -132,6 +132,50 @@ def _public_key(private_key: Ed25519PrivateKey) -> str:
     )).decode("ascii")
 
 
+def _anchor_entry(batch_id: str, *, marker: str) -> dict:
+    return {
+        "batch_id": batch_id,
+        "status": "active",
+        "selection_sha256": marker * 64,
+        "selection_commit": marker * 40,
+        "preregistration_manifest_sha256": marker.upper() * 64,
+        "source_commit": marker.upper() * 40,
+        "retrieval_policy_sha256": ("f" if marker != "f" else "e") * 64,
+        "selection_signer_public_key": base64.b64encode(
+            bytes([int(marker, 16)]) * 32
+        ).decode("ascii"),
+        "preregistration_signer_public_key": base64.b64encode(
+            bytes([int(marker, 16) + 1]) * 32
+        ).decode("ascii"),
+    }
+
+
+def _anchor_registry(
+    private_key: Ed25519PrivateKey,
+    batches: list[dict],
+    *,
+    generation: int = 1,
+    previous_registry_sha256: str | None = None,
+) -> dict:
+    registry = {
+        "schema_version": 1,
+        "status": "active",
+        "generation": generation,
+        "previous_registry_sha256": previous_registry_sha256,
+        "batches": deepcopy(batches),
+        "signoff": {
+            "signer": "confirmatory-anchor-root-v1",
+            "signer_public_key": _public_key(private_key),
+            "signature": "",
+        },
+    }
+    registry["registry_sha256"] = context_selection._anchor_registry_digest(registry)
+    registry["signoff"]["signature"] = base64.b64encode(
+        private_key.sign(context_selection.anchor_registry_payload(registry))
+    ).decode("ascii")
+    return registry
+
+
 def _selection_provenance(
     selection: dict,
     private_key: Ed25519PrivateKey,
@@ -288,6 +332,167 @@ def test_active_frozen_selection_anchor_matches_fresh_batch_a_v2():
     assert context_selection.FROZEN_SELECTION_COMMIT == (
         "337f00da0a89ca9dd74c84ca092838bbd2fb820b"
     )
+
+
+def test_anchor_registry_accepts_trusted_append_only_chain():
+    root_key = Ed25519PrivateKey.generate()
+    first = _anchor_registry(root_key, [_anchor_entry("batch-a", marker="1")])
+    second = _anchor_registry(
+        root_key,
+        [
+            _anchor_entry("batch-a", marker="1"),
+            _anchor_entry("batch-b", marker="2"),
+        ],
+        generation=2,
+        previous_registry_sha256=first["registry_sha256"],
+    )
+
+    result = context_selection.validate_confirmatory_anchor_registry(
+        second,
+        trusted_root_public_keys={_public_key(root_key)},
+        expected_registry_sha256=second["registry_sha256"],
+        previous_registry=first,
+    )
+
+    assert result == {
+        "batch-a": _anchor_entry("batch-a", marker="1"),
+        "batch-b": _anchor_entry("batch-b", marker="2"),
+    }
+
+
+def test_anchor_registry_accepts_next_generation_from_signed_checkpoint():
+    root_key = Ed25519PrivateKey.generate()
+    first = _anchor_registry(root_key, [_anchor_entry("batch-a", marker="1")])
+    second = _anchor_registry(
+        root_key,
+        [
+            _anchor_entry("batch-a", marker="1"),
+            _anchor_entry("batch-b", marker="2"),
+        ],
+        generation=2,
+        previous_registry_sha256=first["registry_sha256"],
+    )
+    third = _anchor_registry(
+        root_key,
+        [
+            _anchor_entry("batch-a", marker="1"),
+            _anchor_entry("batch-b", marker="2"),
+            _anchor_entry("batch-c", marker="3"),
+        ],
+        generation=3,
+        previous_registry_sha256=second["registry_sha256"],
+    )
+
+    result = context_selection.validate_confirmatory_anchor_registry(
+        third,
+        trusted_root_public_keys={_public_key(root_key)},
+        expected_registry_sha256=third["registry_sha256"],
+        previous_registry=second,
+    )
+
+    assert list(result) == ["batch-a", "batch-b", "batch-c"]
+
+
+def test_anchor_registry_rejects_stale_signed_genesis():
+    root_key = Ed25519PrivateKey.generate()
+    first = _anchor_registry(root_key, [_anchor_entry("batch-a", marker="1")])
+    second = _anchor_registry(
+        root_key,
+        [
+            _anchor_entry("batch-a", marker="1"),
+            _anchor_entry("batch-b", marker="2"),
+        ],
+        generation=2,
+        previous_registry_sha256=first["registry_sha256"],
+    )
+
+    with pytest.raises(ValueError, match="expected registry hash mismatch"):
+        context_selection.validate_confirmatory_anchor_registry(
+            first,
+            trusted_root_public_keys={_public_key(root_key)},
+            expected_registry_sha256=second["registry_sha256"],
+        )
+
+
+def test_anchor_registry_rejects_untrusted_self_signature():
+    root_key = Ed25519PrivateKey.generate()
+    registry = _anchor_registry(root_key, [_anchor_entry("batch-a", marker="1")])
+
+    with pytest.raises(ValueError, match="anchor root signer is not trusted"):
+        context_selection.validate_confirmatory_anchor_registry(
+            registry,
+            trusted_root_public_keys=set(),
+            expected_registry_sha256=registry["registry_sha256"],
+        )
+
+
+def test_anchor_registry_rejects_trusted_signature_tampering():
+    root_key = Ed25519PrivateKey.generate()
+    registry = _anchor_registry(root_key, [_anchor_entry("batch-a", marker="1")])
+    registry["batches"][0]["source_commit"] = "f" * 40
+    registry["registry_sha256"] = context_selection._anchor_registry_digest(registry)
+
+    with pytest.raises(ValueError, match="anchor registry signature is invalid"):
+        context_selection.validate_confirmatory_anchor_registry(
+            registry,
+            trusted_root_public_keys={_public_key(root_key)},
+            expected_registry_sha256=registry["registry_sha256"],
+        )
+
+
+def test_anchor_registry_rejects_reused_selection_hash():
+    root_key = Ed25519PrivateKey.generate()
+    first_entry = _anchor_entry("batch-a", marker="1")
+    second_entry = _anchor_entry("batch-b", marker="2")
+    second_entry["selection_sha256"] = first_entry["selection_sha256"]
+    registry = _anchor_registry(root_key, [first_entry, second_entry])
+
+    with pytest.raises(ValueError, match="selection hashes must be unique"):
+        context_selection.validate_confirmatory_anchor_registry(
+            registry,
+            trusted_root_public_keys={_public_key(root_key)},
+            expected_registry_sha256=registry["registry_sha256"],
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation,error",
+    [
+        ("previous_hash", "previous registry hash mismatch"),
+        ("generation", "anchor registry generation is invalid"),
+        ("existing_batch", "anchor registry must be append-only"),
+        ("duplicate_batch", "anchor registry batch ids must be unique"),
+    ],
+)
+def test_anchor_registry_rejects_rollback_replay_and_mutation(mutation, error):
+    root_key = Ed25519PrivateKey.generate()
+    first_entry = _anchor_entry("batch-a", marker="1")
+    first = _anchor_registry(root_key, [first_entry])
+    second_entries = [first_entry, _anchor_entry("batch-b", marker="2")]
+    generation = 2
+    previous_hash = first["registry_sha256"]
+    if mutation == "previous_hash":
+        previous_hash = "0" * 64
+    elif mutation == "generation":
+        generation = 1
+    elif mutation == "existing_batch":
+        second_entries[0] = _anchor_entry("batch-a", marker="3")
+    elif mutation == "duplicate_batch":
+        second_entries[1] = _anchor_entry("batch-a", marker="2")
+    second = _anchor_registry(
+        root_key,
+        second_entries,
+        generation=generation,
+        previous_registry_sha256=previous_hash,
+    )
+
+    with pytest.raises(ValueError, match=error):
+        context_selection.validate_confirmatory_anchor_registry(
+            second,
+            trusted_root_public_keys={_public_key(root_key)},
+            expected_registry_sha256=second["registry_sha256"],
+            previous_registry=first,
+        )
 
 
 def test_confirmatory_preregistration_binds_all_claim_inputs():

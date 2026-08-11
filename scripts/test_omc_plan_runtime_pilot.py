@@ -2527,6 +2527,212 @@ def test_batch_a_candidate_selection_is_preregistered_and_disjoint():
         )
 
 
+def _batch_b_candidate_universe():
+    fixture_root = Path(__file__).parent / "fixtures"
+    batch_a = json.loads(
+        (fixture_root / "omc_plan_confirmatory_batch_a_selection.json").read_text()
+    )
+    prior_registry = json.loads(
+        (fixture_root / "omc_plan_confirmatory_prior_commits_v2.json").read_text()
+    )
+    candidates = []
+    for index, source_case in enumerate(batch_a["cases"]):
+        for variant in ("a", "b"):
+            case = deepcopy(source_case)
+            case["case_id"] = f"batch-b-{index + 1:02d}-{variant}"
+            case["repo_alias"] = f"batch-b-repo-{index + 1:02d}"
+            case["baseline_commit"] = runtime._sha256_text(
+                f"batch-b-baseline-{index}-{variant}"
+            )[:40]
+            case["followup_commit"] = runtime._sha256_text(
+                f"batch-b-followup-{index}-{variant}"
+            )[:40]
+            case["request"] = f"Batch B request {index + 1} variant {variant}"
+            case["context_candidate_paths"] = [
+                f"src/case-{index + 1}-{variant}.py"
+            ]
+            candidates.append({
+                "case": case,
+                "observed_at": "2026-07-15",
+                "eligible": True,
+                "exclusion_reason": None,
+            })
+
+    universe = {
+        "schema_version": 1,
+        "status": "preregistered",
+        "batch_id": "fresh-batch-b",
+        "eligibility_policy": {
+            "repository_aliases": sorted({
+                candidate["case"]["repo_alias"] for candidate in candidates
+            }),
+            "observed_from": "2026-07-01",
+            "observed_through": "2026-07-31",
+            "excluded_case_reasons": [
+                "duplicate_context",
+                "outside_window",
+                "prior_overlap",
+            ],
+        },
+        "selection_policy": {
+            "algorithm_version": "seeded-quota-dp-v1",
+            "seed": "batch-b-seed-v1",
+            "tie_breaker": "sha256-seed-case-v1",
+            "provider_outputs_available_during_selection": False,
+            "prior_registry_sha256": runtime.canonical_digest(
+                prior_registry["commits"]
+            ),
+            "required_surface_counts": deepcopy(
+                runtime.FROZEN_CONFIRMATORY_SURFACE_COUNTS
+            ),
+            "required_ambiguity_counts": deepcopy(
+                runtime.FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS
+            ),
+            "maximum_selected_object_cases": (
+                runtime.FROZEN_CONFIRMATORY_MAX_SELECTED_OBJECT_CASES
+            ),
+        },
+        "candidates": candidates,
+    }
+    universe["universe_sha256"] = runtime.canonical_digest(universe)
+    return universe, prior_registry["commits"]
+
+
+def test_batch_b_candidate_universe_builds_deterministic_v2_selection():
+    universe, prior_commits = _batch_b_candidate_universe()
+
+    first = runtime.build_confirmatory_candidate_selection(
+        universe,
+        trusted_prior_commits=prior_commits,
+    )
+    second = runtime.build_confirmatory_candidate_selection(
+        deepcopy(universe),
+        trusted_prior_commits=prior_commits,
+    )
+
+    assert first == second
+    assert first["schema_version"] == 2
+    assert len(first["cases"]) == 10
+    assert first["selection_policy"]["candidate_universe_sha256"] == (
+        universe["universe_sha256"]
+    )
+    runtime.validate_confirmatory_candidate_selection(
+        first,
+        trusted_prior_commits=prior_commits,
+    )
+
+    tampered = deepcopy(first)
+    tampered["selection_policy"]["selection_seed"] = "tampered-seed"
+    with pytest.raises(ValueError, match="selection hash mismatch"):
+        runtime.validate_confirmatory_candidate_selection(
+            tampered,
+            trusted_prior_commits=prior_commits,
+        )
+
+    replayed = deepcopy(first)
+    replayed["batch_id"] = "replayed-batch"
+    with pytest.raises(ValueError, match="selection hash mismatch"):
+        runtime.validate_confirmatory_candidate_selection(
+            replayed,
+            trusted_prior_commits=prior_commits,
+        )
+
+
+def test_batch_b_candidate_universe_seed_changes_shortlist():
+    universe, prior_commits = _batch_b_candidate_universe()
+    first = runtime.build_confirmatory_candidate_selection(
+        universe,
+        trusted_prior_commits=prior_commits,
+    )
+    universe["selection_policy"]["seed"] = "batch-b-seed-v2"
+    universe["universe_sha256"] = runtime.canonical_digest({
+        key: value for key, value in universe.items() if key != "universe_sha256"
+    })
+
+    second = runtime.build_confirmatory_candidate_selection(
+        universe,
+        trusted_prior_commits=prior_commits,
+    )
+
+    assert [case["case_id"] for case in first["cases"]] != [
+        case["case_id"] for case in second["cases"]
+    ]
+
+
+@pytest.mark.parametrize(
+    "mutation,error",
+    [
+        ("universe_hash", "candidate universe hash mismatch"),
+        ("provider_output", "provider outputs must be unavailable"),
+        ("prior_overlap", "prior commit overlap"),
+        ("quota_shortage", "cannot satisfy frozen quotas"),
+    ],
+)
+def test_batch_b_candidate_universe_fails_closed(mutation, error):
+    universe, prior_commits = _batch_b_candidate_universe()
+    if mutation == "universe_hash":
+        universe["universe_sha256"] = "0" * 64
+    elif mutation == "provider_output":
+        universe["selection_policy"][
+            "provider_outputs_available_during_selection"
+        ] = True
+        universe["universe_sha256"] = runtime.canonical_digest({
+            key: value for key, value in universe.items()
+            if key != "universe_sha256"
+        })
+    elif mutation == "prior_overlap":
+        universe["candidates"][0]["case"]["followup_commit"] = prior_commits[0]
+        universe["universe_sha256"] = runtime.canonical_digest({
+            key: value for key, value in universe.items()
+            if key != "universe_sha256"
+        })
+    elif mutation == "quota_shortage":
+        universe["candidates"] = [
+            candidate for candidate in universe["candidates"]
+            if candidate["case"]["ambiguity"] != "high"
+        ]
+        universe["eligibility_policy"]["repository_aliases"] = sorted({
+            candidate["case"]["repo_alias"]
+            for candidate in universe["candidates"]
+        })
+        universe["universe_sha256"] = runtime.canonical_digest({
+            key: value for key, value in universe.items()
+            if key != "universe_sha256"
+        })
+
+    with pytest.raises(ValueError, match=error):
+        runtime.build_confirmatory_candidate_selection(
+            universe,
+            trusted_prior_commits=prior_commits,
+        )
+
+
+@pytest.mark.parametrize("exclusion_reason", ["prior_overlap", "duplicate_context"])
+def test_batch_b_candidate_universe_preserves_valid_exclusions(exclusion_reason):
+    universe, prior_commits = _batch_b_candidate_universe()
+    excluded = universe["candidates"][0]
+    excluded["eligible"] = False
+    excluded["exclusion_reason"] = exclusion_reason
+    if exclusion_reason == "prior_overlap":
+        excluded["case"]["followup_commit"] = prior_commits[0]
+    else:
+        excluded["case"]["context_candidate_paths"] = deepcopy(
+            universe["candidates"][1]["case"]["context_candidate_paths"]
+        )
+    universe["universe_sha256"] = runtime.canonical_digest({
+        key: value for key, value in universe.items() if key != "universe_sha256"
+    })
+
+    selection = runtime.build_confirmatory_candidate_selection(
+        universe,
+        trusted_prior_commits=prior_commits,
+    )
+
+    assert excluded["case"]["case_id"] not in {
+        case["case_id"] for case in selection["cases"]
+    }
+
+
 def test_fresh_batch_a_v2_selection_consumes_the_diagnostic_batch():
     fixture_root = Path(__file__).parent / "fixtures"
     old_selection = json.loads(

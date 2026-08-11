@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import hashlib
 import io
 import json
@@ -168,6 +169,200 @@ def canonical_digest(value: Any) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def anchor_registry_payload(registry: dict[str, Any]) -> bytes:
+    payload = deepcopy(registry)
+    signoff = payload.get("signoff")
+    if not isinstance(signoff, dict):
+        raise ValueError("confirmatory anchor registry signoff is required")
+    signoff["signature"] = ""
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _anchor_registry_digest(registry: dict[str, Any]) -> str:
+    payload = deepcopy(registry)
+    payload.pop("registry_sha256", None)
+    signoff = payload.get("signoff")
+    if not isinstance(signoff, dict):
+        raise ValueError("confirmatory anchor registry signoff is required")
+    signoff["signature"] = ""
+    return canonical_digest(payload)
+
+
+def _is_lower_hex(value: Any, length: int) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == length
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _is_ed25519_public_key(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return len(base64.b64decode(value, validate=True)) == 32
+    except (binascii.Error, ValueError):
+        return False
+
+
+def _validate_anchor_batch(batch: Any) -> None:
+    expected_fields = {
+        "batch_id",
+        "status",
+        "selection_sha256",
+        "selection_commit",
+        "preregistration_manifest_sha256",
+        "source_commit",
+        "retrieval_policy_sha256",
+        "selection_signer_public_key",
+        "preregistration_signer_public_key",
+    }
+    if not isinstance(batch, dict) or set(batch) != expected_fields:
+        raise ValueError("confirmatory anchor registry batch fields are invalid")
+    if (
+        not isinstance(batch["batch_id"], str)
+        or not batch["batch_id"].strip()
+        or batch["status"] != "active"
+        or not _is_lower_hex(batch["selection_sha256"], 64)
+        or not _is_lower_hex(batch["selection_commit"], 40)
+        or not _is_lower_hex(batch["preregistration_manifest_sha256"], 64)
+        or not _is_lower_hex(batch["source_commit"], 40)
+        or not _is_lower_hex(batch["retrieval_policy_sha256"], 64)
+        or not _is_ed25519_public_key(batch["selection_signer_public_key"])
+        or not _is_ed25519_public_key(
+            batch["preregistration_signer_public_key"]
+        )
+    ):
+        raise ValueError("confirmatory anchor registry batch is invalid")
+
+
+def _validate_anchor_registry_document(
+    registry: dict[str, Any],
+    *,
+    trusted_root_public_keys: set[str],
+) -> tuple[dict[str, dict[str, Any]], str]:
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    expected_fields = {
+        "schema_version",
+        "status",
+        "generation",
+        "previous_registry_sha256",
+        "batches",
+        "signoff",
+        "registry_sha256",
+    }
+    if not isinstance(registry, dict) or set(registry) != expected_fields:
+        raise ValueError("confirmatory anchor registry fields are invalid")
+    generation = registry["generation"]
+    if (
+        registry["schema_version"] != 1
+        or registry["status"] != "active"
+        or isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation < 1
+    ):
+        raise ValueError("confirmatory anchor registry generation is invalid")
+    previous_hash = registry["previous_registry_sha256"]
+    if (generation == 1 and previous_hash is not None) or (
+        generation > 1 and not _is_lower_hex(previous_hash, 64)
+    ):
+        raise ValueError("confirmatory anchor registry generation is invalid")
+    if (
+        not _is_lower_hex(registry["registry_sha256"], 64)
+        or registry["registry_sha256"] != _anchor_registry_digest(registry)
+    ):
+        raise ValueError("confirmatory anchor registry digest mismatch")
+
+    signoff = registry["signoff"]
+    if not isinstance(signoff, dict) or set(signoff) != {
+        "signer",
+        "signer_public_key",
+        "signature",
+    }:
+        raise ValueError("confirmatory anchor registry signoff fields are invalid")
+    public_key = signoff["signer_public_key"]
+    if (
+        signoff["signer"] != "confirmatory-anchor-root-v1"
+        or not _is_ed25519_public_key(public_key)
+        or public_key not in trusted_root_public_keys
+    ):
+        raise ValueError("confirmatory anchor root signer is not trusted")
+    try:
+        Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key)).verify(
+            base64.b64decode(signoff["signature"], validate=True),
+            anchor_registry_payload(registry),
+        )
+    except (InvalidSignature, binascii.Error, ValueError) as error:
+        raise ValueError("confirmatory anchor registry signature is invalid") from error
+
+    batches = registry["batches"]
+    if not isinstance(batches, list) or not batches:
+        raise ValueError("confirmatory anchor registry batches are required")
+    for batch in batches:
+        _validate_anchor_batch(batch)
+    batch_ids = [batch["batch_id"] for batch in batches]
+    if len(batch_ids) != len(set(batch_ids)):
+        raise ValueError("confirmatory anchor registry batch ids must be unique")
+    selection_hashes = [batch["selection_sha256"] for batch in batches]
+    if len(selection_hashes) != len(set(selection_hashes)):
+        raise ValueError("confirmatory anchor registry selection hashes must be unique")
+
+    return {batch["batch_id"]: deepcopy(batch) for batch in batches}, public_key
+
+
+def validate_confirmatory_anchor_registry(
+    registry: dict[str, Any],
+    *,
+    trusted_root_public_keys: set[str],
+    expected_registry_sha256: str,
+    previous_registry: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Validate an externally trusted, append-only confirmatory batch registry."""
+    if (
+        not _is_lower_hex(expected_registry_sha256, 64)
+        or not isinstance(registry, dict)
+        or registry.get("registry_sha256") != expected_registry_sha256
+    ):
+        raise ValueError("confirmatory expected registry hash mismatch")
+    current_batches, public_key = _validate_anchor_registry_document(
+        registry,
+        trusted_root_public_keys=trusted_root_public_keys,
+    )
+    generation = registry["generation"]
+    previous_hash = registry["previous_registry_sha256"]
+    if previous_registry is None:
+        if generation != 1:
+            raise ValueError("confirmatory anchor registry generation is invalid")
+    else:
+        previous_batches, previous_public_key = _validate_anchor_registry_document(
+            previous_registry,
+            trusted_root_public_keys=trusted_root_public_keys,
+        )
+        if generation != previous_registry["generation"] + 1:
+            raise ValueError("confirmatory anchor registry generation is invalid")
+        if previous_hash != previous_registry["registry_sha256"]:
+            raise ValueError("confirmatory previous registry hash mismatch")
+        if public_key != previous_public_key:
+            raise ValueError(
+                "confirmatory anchor root rotation requires a schema migration"
+            )
+        previous_entries = list(previous_batches.values())
+        current_entries = list(current_batches.values())
+        if len(current_entries) <= len(previous_entries) or current_entries[
+            :len(previous_entries)
+        ] != previous_entries:
+            raise ValueError("confirmatory anchor registry must be append-only")
+
+    return current_batches
 
 
 def preregistration_manifest_payload(manifest: dict[str, Any]) -> bytes:

@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 from collections import Counter
 from copy import deepcopy
+from datetime import date
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -97,6 +98,20 @@ FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS = {
     "high": 3,
 }
 FROZEN_CONFIRMATORY_MAX_SELECTED_OBJECT_CASES = 2
+CONFIRMATORY_CANDIDATE_SELECTION_ALGORITHM = "seeded-quota-dp-v1"
+CONFIRMATORY_CANDIDATE_TIE_BREAKER = "sha256-seed-case-v1"
+MAX_CONFIRMATORY_CANDIDATE_COUNT = 500
+CONFIRMATORY_CANDIDATE_CASE_FIELDS = {
+    "case_id",
+    "repo_alias",
+    "baseline_commit",
+    "followup_commit",
+    "request",
+    "context_candidate_paths",
+    "surface",
+    "ambiguity",
+    "selected_object",
+}
 CONFIRMATORY_ANONYMIZATION_POLICY = {
     "schema_version": 1,
     "path_strategy": "ordered-generic-label-with-extension",
@@ -1534,30 +1549,7 @@ def _is_git_sha(value: Any) -> bool:
     )
 
 
-def validate_confirmatory_candidate_selection(
-    selection: dict[str, Any],
-    *,
-    trusted_prior_commits: list[str],
-) -> None:
-    """Validate the frozen candidate set before corpus or gold construction."""
-    expected_fields = {
-        "schema_version",
-        "status",
-        "batch_id",
-        "selection_policy",
-        "cases",
-        "selection_sha256",
-    }
-    if (
-        not isinstance(selection, dict)
-        or set(selection) != expected_fields
-        or selection.get("schema_version") != 1
-        or selection.get("status") != "preregistered"
-        or not isinstance(selection.get("batch_id"), str)
-        or not selection["batch_id"].strip()
-    ):
-        raise ValueError("confirmatory candidate selection fields are invalid")
-
+def _validate_trusted_prior_commits(trusted_prior_commits: Any) -> None:
     if (
         not isinstance(trusted_prior_commits, list)
         or not trusted_prior_commits
@@ -1566,47 +1558,33 @@ def validate_confirmatory_candidate_selection(
     ):
         raise ValueError("confirmatory trusted prior commits are invalid")
 
-    policy = selection["selection_policy"]
-    expected_policy_fields = {
-        "provider_outputs_available_during_selection",
-        "prior_registry_sha256",
-        "required_surface_counts",
-        "required_ambiguity_counts",
-        "maximum_selected_object_cases",
-    }
-    if not isinstance(policy, dict) or set(policy) != expected_policy_fields:
-        raise ValueError("confirmatory candidate selection policy is invalid")
-    if policy["provider_outputs_available_during_selection"] is not False:
-        raise ValueError("confirmatory provider outputs must be unavailable during selection")
-    if policy["prior_registry_sha256"] != canonical_digest(trusted_prior_commits):
-        raise ValueError("confirmatory prior commit registry mismatch")
 
-    cases = selection["cases"]
-    if not isinstance(cases, list) or len(cases) != sum(
-        FROZEN_CONFIRMATORY_SURFACE_COUNTS.values()
+def _validate_confirmatory_candidate_cases(
+    cases: Any,
+    *,
+    trusted_prior_commits: list[str],
+    exact_count: int | None = None,
+    enforce_prior_disjoint: bool = True,
+    enforce_context_disjoint: bool = True,
+) -> list[dict[str, Any]]:
+    if (
+        not isinstance(cases, list)
+        or not cases
+        or len(cases) > MAX_CONFIRMATORY_CANDIDATE_COUNT
+        or (exact_count is not None and len(cases) != exact_count)
     ):
-        raise ValueError("confirmatory candidate selection requires exactly 10 cases")
-    if selection["selection_sha256"] != canonical_digest(cases):
-        raise ValueError("confirmatory candidate selection hash mismatch")
+        if exact_count is not None:
+            raise ValueError(
+                f"confirmatory candidate selection requires exactly {exact_count} cases"
+            )
+        raise ValueError("confirmatory candidate cases are invalid")
 
-    expected_case_fields = {
-        "case_id",
-        "repo_alias",
-        "baseline_commit",
-        "followup_commit",
-        "request",
-        "context_candidate_paths",
-        "surface",
-        "ambiguity",
-        "selected_object",
-    }
     case_ids: list[str] = []
     requests: list[str] = []
     followup_commits: list[str] = []
     context_path_keys: list[tuple[str, str]] = []
-    semantic_labels: list[dict[str, Any]] = []
     for case in cases:
-        if not isinstance(case, dict) or set(case) != expected_case_fields:
+        if not isinstance(case, dict) or set(case) != CONFIRMATORY_CANDIDATE_CASE_FIELDS:
             raise ValueError("confirmatory candidate case fields are invalid")
         case_id = case["case_id"]
         repo_alias = case["repo_alias"]
@@ -1624,6 +1602,9 @@ def validate_confirmatory_candidate_selection(
             or not _is_git_sha(baseline_commit)
             or not _is_git_sha(followup_commit)
             or baseline_commit == followup_commit
+            or case["surface"] not in FROZEN_CONFIRMATORY_SURFACE_COUNTS
+            or case["ambiguity"] not in FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS
+            or type(case["selected_object"]) is not bool
         ):
             raise ValueError("confirmatory candidate case identity is invalid")
         if not isinstance(context_candidate_paths, list) or not context_candidate_paths:
@@ -1638,12 +1619,6 @@ def validate_confirmatory_candidate_selection(
         case_ids.append(case_id)
         requests.append(request)
         followup_commits.append(followup_commit)
-        semantic_labels.append({
-            "case_id": case_id,
-            "surface": case["surface"],
-            "ambiguity": case["ambiguity"],
-            "selected_object": case["selected_object"],
-        })
 
     for values, message in (
         (case_ids, "case ids"),
@@ -1652,13 +1627,404 @@ def validate_confirmatory_candidate_selection(
     ):
         if len(values) != len(set(values)):
             raise ValueError(f"confirmatory candidate {message} must be unique")
-    if set(followup_commits).intersection(trusted_prior_commits):
+    if enforce_prior_disjoint and set(followup_commits).intersection(
+        trusted_prior_commits
+    ):
         raise ValueError("confirmatory prior commit overlap")
     baseline_commits = {case["baseline_commit"] for case in cases}
     if baseline_commits.intersection(followup_commits):
         raise ValueError("confirmatory selected cases contain chained commits")
-    if len(context_path_keys) != len(set(context_path_keys)):
+    if enforce_context_disjoint and len(context_path_keys) != len(
+        set(context_path_keys)
+    ):
         raise ValueError("confirmatory candidate context path overlap")
+    return cases
+
+
+def _parse_candidate_date(value: Any, *, label: str) -> date:
+    if not isinstance(value, str):
+        raise ValueError(f"confirmatory candidate {label} is invalid")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError(f"confirmatory candidate {label} is invalid") from error
+
+
+def validate_confirmatory_candidate_universe(
+    universe: dict[str, Any],
+    *,
+    trusted_prior_commits: list[str],
+) -> list[dict[str, Any]]:
+    """Validate the preregistered population before deterministic sampling."""
+    expected_fields = {
+        "schema_version",
+        "status",
+        "batch_id",
+        "eligibility_policy",
+        "selection_policy",
+        "candidates",
+        "universe_sha256",
+    }
+    if (
+        not isinstance(universe, dict)
+        or set(universe) != expected_fields
+        or universe.get("schema_version") != 1
+        or universe.get("status") != "preregistered"
+        or not isinstance(universe.get("batch_id"), str)
+        or not universe["batch_id"].strip()
+    ):
+        raise ValueError("confirmatory candidate universe fields are invalid")
+    unsigned_universe = {
+        key: value for key, value in universe.items() if key != "universe_sha256"
+    }
+    if universe["universe_sha256"] != canonical_digest(unsigned_universe):
+        raise ValueError("confirmatory candidate universe hash mismatch")
+
+    _validate_trusted_prior_commits(trusted_prior_commits)
+    policy = universe["selection_policy"]
+    expected_policy_fields = {
+        "algorithm_version",
+        "seed",
+        "tie_breaker",
+        "provider_outputs_available_during_selection",
+        "prior_registry_sha256",
+        "required_surface_counts",
+        "required_ambiguity_counts",
+        "maximum_selected_object_cases",
+    }
+    if not isinstance(policy, dict) or set(policy) != expected_policy_fields:
+        raise ValueError("confirmatory candidate universe selection policy is invalid")
+    if (
+        policy["algorithm_version"] != CONFIRMATORY_CANDIDATE_SELECTION_ALGORITHM
+        or not isinstance(policy["seed"], str)
+        or not policy["seed"].strip()
+        or policy["tie_breaker"] != CONFIRMATORY_CANDIDATE_TIE_BREAKER
+    ):
+        raise ValueError("confirmatory candidate selection algorithm is invalid")
+    if policy["provider_outputs_available_during_selection"] is not False:
+        raise ValueError("confirmatory provider outputs must be unavailable during selection")
+    if policy["prior_registry_sha256"] != canonical_digest(trusted_prior_commits):
+        raise ValueError("confirmatory prior commit registry mismatch")
+    if (
+        policy["required_surface_counts"] != FROZEN_CONFIRMATORY_SURFACE_COUNTS
+        or policy["required_ambiguity_counts"]
+        != FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS
+        or policy["maximum_selected_object_cases"]
+        != FROZEN_CONFIRMATORY_MAX_SELECTED_OBJECT_CASES
+    ):
+        raise ValueError("confirmatory candidate quota contract is invalid")
+
+    eligibility = universe["eligibility_policy"]
+    expected_eligibility_fields = {
+        "repository_aliases",
+        "observed_from",
+        "observed_through",
+        "excluded_case_reasons",
+    }
+    if not isinstance(eligibility, dict) or set(eligibility) != expected_eligibility_fields:
+        raise ValueError("confirmatory candidate eligibility policy is invalid")
+    aliases = eligibility["repository_aliases"]
+    excluded_reasons = eligibility["excluded_case_reasons"]
+    if (
+        not isinstance(aliases, list)
+        or not aliases
+        or aliases != sorted(set(aliases))
+        or any(not isinstance(alias, str) or not alias.strip() for alias in aliases)
+        or not isinstance(excluded_reasons, list)
+        or excluded_reasons != sorted(set(excluded_reasons))
+        or any(
+            not isinstance(reason, str) or not reason.strip()
+            for reason in excluded_reasons
+        )
+    ):
+        raise ValueError("confirmatory candidate eligibility policy is invalid")
+    observed_from = _parse_candidate_date(
+        eligibility["observed_from"], label="observed-from date"
+    )
+    observed_through = _parse_candidate_date(
+        eligibility["observed_through"], label="observed-through date"
+    )
+    if observed_from > observed_through:
+        raise ValueError("confirmatory candidate observation window is invalid")
+
+    candidates = universe["candidates"]
+    if (
+        not isinstance(candidates, list)
+        or len(candidates) < sum(FROZEN_CONFIRMATORY_SURFACE_COUNTS.values())
+        or len(candidates) > MAX_CONFIRMATORY_CANDIDATE_COUNT
+    ):
+        raise ValueError("confirmatory candidate universe population is invalid")
+    eligible_cases: list[dict[str, Any]] = []
+    all_cases: list[dict[str, Any]] = []
+    excluded_candidates: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or set(candidate) != {
+            "case",
+            "observed_at",
+            "eligible",
+            "exclusion_reason",
+        }:
+            raise ValueError("confirmatory candidate universe entry is invalid")
+        case = candidate["case"]
+        observed_at = _parse_candidate_date(
+            candidate["observed_at"], label="observed-at date"
+        )
+        eligible = candidate["eligible"]
+        exclusion_reason = candidate["exclusion_reason"]
+        if (
+            type(eligible) is not bool
+            or (eligible and exclusion_reason is not None)
+            or (
+                not eligible
+                and (
+                    not isinstance(exclusion_reason, str)
+                    or exclusion_reason not in excluded_reasons
+                )
+            )
+            or not isinstance(case, dict)
+            or case.get("repo_alias") not in aliases
+        ):
+            raise ValueError("confirmatory candidate eligibility is invalid")
+        if eligible and not observed_from <= observed_at <= observed_through:
+            raise ValueError("confirmatory eligible candidate is outside observation window")
+        all_cases.append(case)
+        if eligible:
+            eligible_cases.append(case)
+        else:
+            excluded_candidates.append(candidate)
+
+    _validate_confirmatory_candidate_cases(
+        all_cases,
+        trusted_prior_commits=trusted_prior_commits,
+        enforce_prior_disjoint=False,
+        enforce_context_disjoint=False,
+    )
+    _validate_confirmatory_candidate_cases(
+        eligible_cases,
+        trusted_prior_commits=trusted_prior_commits,
+    )
+    context_key_counts = Counter(
+        (case["repo_alias"], PurePosixPath(path).as_posix())
+        for case in all_cases
+        for path in case["context_candidate_paths"]
+    )
+    for candidate in excluded_candidates:
+        case = candidate["case"]
+        observed_at = date.fromisoformat(candidate["observed_at"])
+        reason = candidate["exclusion_reason"]
+        if reason == "prior_overlap" and case["followup_commit"] not in set(
+            trusted_prior_commits
+        ):
+            raise ValueError("confirmatory prior-overlap exclusion is unsupported")
+        if reason == "duplicate_context" and not any(
+            context_key_counts[(
+                case["repo_alias"],
+                PurePosixPath(path).as_posix(),
+            )] > 1
+            for path in case["context_candidate_paths"]
+        ):
+            raise ValueError("confirmatory duplicate-context exclusion is unsupported")
+        if reason == "outside_window" and observed_from <= observed_at <= observed_through:
+            raise ValueError("confirmatory outside-window exclusion is unsupported")
+    return eligible_cases
+
+
+def _deterministic_quota_shortlist(
+    cases: list[dict[str, Any]],
+    *,
+    algorithm_version: str,
+    seed: str,
+) -> list[dict[str, Any]]:
+    surface_names = tuple(FROZEN_CONFIRMATORY_SURFACE_COUNTS)
+    ambiguity_names = tuple(FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS)
+    ranked = sorted(
+        cases,
+        key=lambda case: (
+            canonical_digest({
+                "algorithm_version": algorithm_version,
+                "seed": seed,
+                "case": case,
+            }),
+            case["case_id"],
+        ),
+    )
+    zero_state = (0,) * (len(surface_names) + len(ambiguity_names) + 1)
+    states: dict[tuple[int, ...], tuple[int, ...]] = {zero_state: ()}
+    for index, case in enumerate(ranked):
+        surface_index = surface_names.index(case["surface"])
+        ambiguity_index = len(surface_names) + ambiguity_names.index(
+            case["ambiguity"]
+        )
+        selected_object_index = len(surface_names) + len(ambiguity_names)
+        for state, path in tuple(states.items()):
+            next_state = list(state)
+            next_state[surface_index] += 1
+            next_state[ambiguity_index] += 1
+            next_state[selected_object_index] += int(case["selected_object"])
+            if (
+                next_state[surface_index]
+                > FROZEN_CONFIRMATORY_SURFACE_COUNTS[case["surface"]]
+                or next_state[ambiguity_index]
+                > FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS[case["ambiguity"]]
+                or next_state[selected_object_index]
+                > FROZEN_CONFIRMATORY_MAX_SELECTED_OBJECT_CASES
+            ):
+                continue
+            states.setdefault(tuple(next_state), path + (index,))
+
+    target_prefix = tuple(FROZEN_CONFIRMATORY_SURFACE_COUNTS[name] for name in surface_names)
+    target_prefix += tuple(
+        FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS[name] for name in ambiguity_names
+    )
+    matching_paths = [
+        states[target_prefix + (selected_object_count,)]
+        for selected_object_count in range(
+            FROZEN_CONFIRMATORY_MAX_SELECTED_OBJECT_CASES + 1
+        )
+        if target_prefix + (selected_object_count,) in states
+    ]
+    if not matching_paths:
+        raise ValueError("confirmatory candidate universe cannot satisfy frozen quotas")
+    selected_path = min(matching_paths)
+    return [deepcopy(ranked[index]) for index in selected_path]
+
+
+def build_confirmatory_candidate_selection(
+    universe: dict[str, Any],
+    *,
+    trusted_prior_commits: list[str],
+) -> dict[str, Any]:
+    """Build a deterministic schema-v2 shortlist from a frozen universe."""
+    eligible_cases = validate_confirmatory_candidate_universe(
+        universe,
+        trusted_prior_commits=trusted_prior_commits,
+    )
+    universe_policy = universe["selection_policy"]
+    cases = _deterministic_quota_shortlist(
+        eligible_cases,
+        algorithm_version=universe_policy["algorithm_version"],
+        seed=universe_policy["seed"],
+    )
+    selection_policy = {
+        "provider_outputs_available_during_selection": False,
+        "prior_registry_sha256": universe_policy["prior_registry_sha256"],
+        "required_surface_counts": deepcopy(
+            universe_policy["required_surface_counts"]
+        ),
+        "required_ambiguity_counts": deepcopy(
+            universe_policy["required_ambiguity_counts"]
+        ),
+        "maximum_selected_object_cases": universe_policy[
+            "maximum_selected_object_cases"
+        ],
+        "candidate_universe_sha256": universe["universe_sha256"],
+        "selection_algorithm_version": universe_policy["algorithm_version"],
+        "selection_seed": universe_policy["seed"],
+        "tie_breaker": universe_policy["tie_breaker"],
+    }
+    selection = {
+        "schema_version": 2,
+        "status": "preregistered",
+        "batch_id": universe["batch_id"],
+        "selection_policy": selection_policy,
+        "cases": cases,
+    }
+    selection["selection_sha256"] = canonical_digest(selection)
+    validate_confirmatory_candidate_selection(
+        selection,
+        trusted_prior_commits=trusted_prior_commits,
+    )
+    return selection
+
+
+def validate_confirmatory_candidate_selection(
+    selection: dict[str, Any],
+    *,
+    trusted_prior_commits: list[str],
+) -> None:
+    """Validate the frozen candidate set before corpus or gold construction."""
+    expected_fields = {
+        "schema_version",
+        "status",
+        "batch_id",
+        "selection_policy",
+        "cases",
+        "selection_sha256",
+    }
+    if (
+        not isinstance(selection, dict)
+        or set(selection) != expected_fields
+        or selection.get("schema_version") not in {1, 2}
+        or selection.get("status") != "preregistered"
+        or not isinstance(selection.get("batch_id"), str)
+        or not selection["batch_id"].strip()
+    ):
+        raise ValueError("confirmatory candidate selection fields are invalid")
+
+    _validate_trusted_prior_commits(trusted_prior_commits)
+
+    policy = selection["selection_policy"]
+    expected_policy_fields = {
+        "provider_outputs_available_during_selection",
+        "prior_registry_sha256",
+        "required_surface_counts",
+        "required_ambiguity_counts",
+        "maximum_selected_object_cases",
+    }
+    if selection["schema_version"] == 2:
+        expected_policy_fields |= {
+            "candidate_universe_sha256",
+            "selection_algorithm_version",
+            "selection_seed",
+            "tie_breaker",
+        }
+    if not isinstance(policy, dict) or set(policy) != expected_policy_fields:
+        raise ValueError("confirmatory candidate selection policy is invalid")
+    if policy["provider_outputs_available_during_selection"] is not False:
+        raise ValueError("confirmatory provider outputs must be unavailable during selection")
+    if policy["prior_registry_sha256"] != canonical_digest(trusted_prior_commits):
+        raise ValueError("confirmatory prior commit registry mismatch")
+    if selection["schema_version"] == 2 and (
+        not isinstance(policy["candidate_universe_sha256"], str)
+        or len(policy["candidate_universe_sha256"]) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in policy["candidate_universe_sha256"]
+        )
+        or policy["selection_algorithm_version"]
+        != CONFIRMATORY_CANDIDATE_SELECTION_ALGORITHM
+        or not isinstance(policy["selection_seed"], str)
+        or not policy["selection_seed"].strip()
+        or policy["tie_breaker"] != CONFIRMATORY_CANDIDATE_TIE_BREAKER
+    ):
+        raise ValueError("confirmatory candidate selection provenance is invalid")
+
+    cases = selection["cases"]
+    expected_count = sum(FROZEN_CONFIRMATORY_SURFACE_COUNTS.values())
+    expected_selection_sha256 = canonical_digest(cases)
+    if selection["schema_version"] == 2:
+        expected_selection_sha256 = canonical_digest({
+            key: value
+            for key, value in selection.items()
+            if key != "selection_sha256"
+        })
+    if selection["selection_sha256"] != expected_selection_sha256:
+        raise ValueError("confirmatory candidate selection hash mismatch")
+    _validate_confirmatory_candidate_cases(
+        cases,
+        trusted_prior_commits=trusted_prior_commits,
+        exact_count=expected_count,
+    )
+
+    semantic_labels: list[dict[str, Any]] = []
+    for case in cases:
+        case_id = case["case_id"]
+        semantic_labels.append({
+            "case_id": case_id,
+            "surface": case["surface"],
+            "ambiguity": case["ambiguity"],
+            "selected_object": case["selected_object"],
+        })
 
     _validate_confirmatory_semantic_contract(
         {
