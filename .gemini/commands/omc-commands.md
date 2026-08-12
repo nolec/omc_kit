@@ -270,6 +270,7 @@ git status -sb && git diff
 1. 목표 / 범위 / DoD / 제약 확정
 2. 태스크마다 `RED(테스트) → GREEN(구현) → VERIFY(커맨드)` 명시
 3. 계획 확정 후 `python3 scripts/omc.py state confirm --target .` 으로 세션 기록
+4. 출력 절약: 요구사항은 짧은 ID로 고정하고 `supports에는 ID만` 재사용 / 같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합 / 확인하지 않은 예시 명령 금지 / assumptions·decisions는 구현을 막는 항목만
 
 ---
 
