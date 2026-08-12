@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import omc_plan_candidate_universe as candidate_universe
 import omc_plan_context_selection as context_selection
+import omc_rfc3161_timestamp as timestamp
 
 
 SURFACES = (
@@ -148,6 +149,25 @@ def _external_registration_receipt(
         private_key=authority_key,
         digest_field="receipt_sha256",
     )
+
+
+def _sigstore_trusted_root() -> dict:
+    return {
+        "schema_version": 1,
+        "source": "sigstore_tuf",
+        "service_id": timestamp.SIGSTORE_TSA_SERVICE_ID,
+        "operator": timestamp.SIGSTORE_TSA_OPERATOR,
+        "endpoint": timestamp.SIGSTORE_TSA_ENDPOINT,
+        "valid_for": {
+            "start": "2026-01-01T00:00:00+00:00",
+            "end": "2027-01-01T00:00:00+00:00",
+        },
+        "certificate_chain_pem": [
+            "-----BEGIN CERTIFICATE-----\nROOT\n-----END CERTIFICATE-----\n",
+            "-----BEGIN CERTIFICATE-----\nLEAF\n-----END CERTIFICATE-----\n",
+        ],
+        "tuf_root_sha256": "1" * 64,
+    }
 
 
 def _records(count: int = 20) -> list[dict]:
@@ -693,6 +713,281 @@ def test_prospective_preregistration_enforces_first_n_and_task_eligibility(
     assert dispositions["excluded-document_only"] == "document_only_task"
     assert dispositions["excluded-benchmark_maintenance"] == (
         "benchmark_maintenance_task"
+    )
+
+
+def test_sigstore_preregistration_v2_freezes_public_trust_identity(tmp_path: Path):
+    signer_key = Ed25519PrivateKey.generate()
+    anchor_repo, anchor_commit, start, end, cutoff = _collection_anchor(tmp_path)
+    trusted_root = _sigstore_trusted_root()
+
+    draft = candidate_universe.prepare_sigstore_collection_preregistration(
+        batch_id="fresh-batch-b-sigstore",
+        collection_anchor_commit=anchor_commit,
+        collection_anchor_repository_root=str(anchor_repo),
+        observed_from=start.isoformat(),
+        observed_through=end.isoformat(),
+        provider_ledger_cutoff=cutoff.isoformat(),
+        pilot_session_ids=["pilot-01"],
+        trusted_root=trusted_root,
+        approved_trusted_root_sha256=timestamp.trusted_root_sha256(trusted_root),
+    )
+    frozen = candidate_universe.seal_collection_preregistration(
+        draft,
+        signer_key,
+        collection_anchor_repository_root=str(anchor_repo),
+        expected_preregistration_sha256=draft["preregistration_sha256"],
+    )
+
+    assert frozen["schema_version"] == 2
+    assert frozen["registration_authority"] == timestamp.trust_identity(
+        trusted_root,
+        expected_trusted_root_sha256=timestamp.trusted_root_sha256(trusted_root),
+    )
+    assert "registration_authority_public_key" not in frozen
+    candidate_universe.validate_collection_preregistration(
+        frozen,
+        trusted_preregistration_public_keys={
+            candidate_universe.public_key_text(signer_key)
+        },
+        expected_preregistration_sha256=frozen["preregistration_sha256"],
+        approved_trusted_root_sha256=timestamp.trusted_root_sha256(trusted_root),
+    )
+    with pytest.raises(ValueError, match="trusted root is not approved"):
+        candidate_universe.validate_collection_preregistration(
+            frozen,
+            trusted_preregistration_public_keys={
+                candidate_universe.public_key_text(signer_key)
+            },
+            expected_preregistration_sha256=frozen["preregistration_sha256"],
+            approved_trusted_root_sha256="0" * 64,
+        )
+
+
+def test_sigstore_receipt_v2_requires_verified_claim_and_pre_window_time(
+    tmp_path: Path,
+    monkeypatch,
+):
+    signer_key = Ed25519PrivateKey.generate()
+    anchor_repo, anchor_commit, start, end, cutoff = _collection_anchor(tmp_path)
+    trusted_root = _sigstore_trusted_root()
+    draft = candidate_universe.prepare_sigstore_collection_preregistration(
+        batch_id="fresh-batch-b-sigstore",
+        collection_anchor_commit=anchor_commit,
+        collection_anchor_repository_root=str(anchor_repo),
+        observed_from=start.isoformat(),
+        observed_through=end.isoformat(),
+        provider_ledger_cutoff=cutoff.isoformat(),
+        pilot_session_ids=["pilot-01"],
+        trusted_root=trusted_root,
+        approved_trusted_root_sha256=timestamp.trusted_root_sha256(trusted_root),
+    )
+    frozen = candidate_universe.seal_collection_preregistration(
+        draft,
+        signer_key,
+        collection_anchor_repository_root=str(anchor_repo),
+        expected_preregistration_sha256=draft["preregistration_sha256"],
+    )
+    registry_commit, registry_path = _commit_preregistration_registry(
+        anchor_repo, frozen
+    )
+    evidence = {
+        "gen_time": (start - timedelta(seconds=1)).isoformat(),
+        "response_sha256": "2" * 64,
+    }
+    seen: dict = {}
+
+    def verify(candidate, **kwargs):
+        seen.update(kwargs)
+        assert candidate == evidence
+        return candidate
+
+    monkeypatch.setattr(timestamp, "verify_registration_evidence", verify)
+    receipt = candidate_universe.prepare_sigstore_registration_receipt(
+        frozen,
+        registry_commit=registry_commit,
+        registry_path=registry_path,
+        registration_evidence=evidence,
+        trusted_root=trusted_root,
+        approved_trusted_root_sha256=timestamp.trusted_root_sha256(trusted_root),
+    )
+
+    assert receipt["schema_version"] == 2
+    assert receipt["registered_at"] == evidence["gen_time"]
+    assert seen["claim"] == timestamp.registration_claim(
+        batch_id=frozen["batch_id"],
+        preregistration_sha256=frozen["preregistration_sha256"],
+        registry_commit=registry_commit,
+        registry_path=registry_path,
+    )
+    candidate_universe.validate_preregistration_registration_receipt(
+        receipt,
+        preregistration=frozen,
+        trusted_receipt_public_keys=set(),
+        expected_receipt_sha256=receipt["receipt_sha256"],
+        trusted_root=trusted_root,
+        approved_trusted_root_sha256=timestamp.trusted_root_sha256(trusted_root),
+    )
+
+
+def test_prepare_source_snapshot_propagates_approved_trusted_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    approved_root_sha256 = "a" * 64
+
+    class ExpectedValidationStop(Exception):
+        pass
+
+    def validate_preregistration(
+        preregistration: dict[str, object],
+        *,
+        trusted_preregistration_public_keys: set[str],
+        expected_preregistration_sha256: str,
+        approved_trusted_root_sha256: str,
+    ) -> None:
+        assert approved_trusted_root_sha256 == approved_root_sha256
+        raise ExpectedValidationStop
+
+    monkeypatch.setattr(
+        candidate_universe,
+        "validate_collection_preregistration",
+        validate_preregistration,
+    )
+
+    with pytest.raises(ExpectedValidationStop):
+        candidate_universe.prepare_preregistered_source_snapshot(
+            sources=[],
+            preregistration={},
+            trusted_preregistration_public_keys=set(),
+            expected_preregistration_sha256="b" * 64,
+            preregistration_registry_repository_root=".",
+            preregistration_registry_commit="c" * 40,
+            preregistration_registry_path="registry.json",
+            registration_receipt={},
+            trusted_registration_receipt_public_keys=set(),
+            expected_registration_receipt_sha256="d" * 64,
+            trusted_registration_root={},
+            approved_trusted_registration_root_sha256=approved_root_sha256,
+        )
+
+
+def test_prepare_universe_propagates_approved_trusted_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    approved_root_sha256 = "a" * 64
+
+    class ExpectedValidationStop(Exception):
+        pass
+
+    def verify_inventory(
+        inventory: dict[str, object],
+        **kwargs: object,
+    ) -> None:
+        assert (
+            kwargs["approved_trusted_registration_root_sha256"]
+            == approved_root_sha256
+        )
+        raise ExpectedValidationStop
+
+    monkeypatch.setattr(
+        candidate_universe,
+        "_verify_private_inventory",
+        verify_inventory,
+    )
+
+    with pytest.raises(ExpectedValidationStop):
+        candidate_universe.prepare_frozen_universe(
+            {},
+            trusted_collector_public_keys=set(),
+            expected_inventory_sha256="b" * 64,
+            label_receipt={},
+            trusted_label_public_keys=set(),
+            prior_snapshot={},
+            trusted_prior_snapshot_public_keys=set(),
+            expected_prior_snapshot_sha256="c" * 64,
+            prior_anchor_registry={},
+            trusted_anchor_public_keys=set(),
+            expected_anchor_registry_sha256="d" * 64,
+            batch_id="fresh-batch-b",
+            source_snapshot_sha256="e" * 64,
+            trusted_registration_root={},
+            approved_trusted_registration_root_sha256=approved_root_sha256,
+        )
+
+
+def test_prepare_universe_cli_accepts_approved_trusted_root_digest() -> None:
+    approved_root_sha256 = "a" * 64
+
+    args = candidate_universe._parser().parse_args([
+        "prepare-universe",
+        "inventory.json",
+        "labels.json",
+        "prior.json",
+        "anchors.json",
+        "--batch-id", "fresh-batch-b",
+        "--source-snapshot-sha256", "b" * 64,
+        "--trusted-label-public-key", "label-key",
+        "--trusted-collector-public-key", "collector-key",
+        "--expected-inventory-sha256", "c" * 64,
+        "--trusted-prior-snapshot-public-key", "prior-key",
+        "--expected-prior-snapshot-sha256", "d" * 64,
+        "--trusted-anchor-public-key", "anchor-key",
+        "--expected-anchor-registry-sha256", "e" * 64,
+        "--approved-trusted-registration-root-sha256",
+        approved_root_sha256,
+        "--output", "universe.json",
+    ])
+
+    assert args.approved_trusted_registration_root_sha256 == (
+        approved_root_sha256
+    )
+
+
+def test_prepare_universe_cli_propagates_approved_trusted_root_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    approved_root_sha256 = "a" * 64
+    inputs = []
+    for name in ("inventory", "labels", "prior", "anchors", "root"):
+        path = tmp_path / f"{name}.json"
+        path.write_text("{}")
+        inputs.append(path)
+    output = tmp_path / "universe.json"
+    seen: dict[str, object] = {}
+
+    def prepare_universe(
+        inventory: dict[str, object],
+        **kwargs: object,
+    ) -> dict[str, object]:
+        seen.update(kwargs)
+        return {}
+
+    monkeypatch.setattr(
+        candidate_universe,
+        "prepare_frozen_universe",
+        prepare_universe,
+    )
+
+    assert candidate_universe.main([
+        "prepare-universe",
+        *(str(path) for path in inputs[:4]),
+        "--batch-id", "fresh-batch-b",
+        "--source-snapshot-sha256", "b" * 64,
+        "--trusted-label-public-key", "label-key",
+        "--trusted-collector-public-key", "collector-key",
+        "--expected-inventory-sha256", "c" * 64,
+        "--trusted-registration-root", str(inputs[4]),
+        "--approved-trusted-registration-root-sha256",
+        approved_root_sha256,
+        "--trusted-prior-snapshot-public-key", "prior-key",
+        "--expected-prior-snapshot-sha256", "d" * 64,
+        "--trusted-anchor-public-key", "anchor-key",
+        "--expected-anchor-registry-sha256", "e" * 64,
+        "--output", str(output),
+    ]) == 0
+    assert seen["approved_trusted_registration_root_sha256"] == (
+        approved_root_sha256
     )
 
 
