@@ -1,0 +1,15 @@
+{
+  "batch_id": "omc-plan-batch-b-20260812",
+  "preregistration_sha256": "bf651249b7d2d3c5e159f6e53ebfb9d623a7979c2ecb272cc97055e11e11c434",
+  "receipt_sha256": "870e6e9960bbff22d63664e6eaa1433e05aac460a8ab557d3023ebe6590e4714",
+  "registered_at": "2026-08-12T12:32:02+09:00",
+  "registry_commit": "b7195a9417c515810d65f74a645279fe2d5995ac",
+  "registry_path": ".benchmarks/plan-batch-b/omc-plan-batch-b-20260812/registry-record.json",
+  "schema_version": 1,
+  "signoff": {
+    "signature": "SpaFjAgTim+BKwZ6HOs+PL+swDfhgancu7sSgkGN179kVfSrqN9KALosafaF+NUvJSf7kGE3EpIXrPy/hoOgCw==",
+    "signer": "independent-preregistration-timestamp-v1",
+    "signer_public_key": "gW8leIOOaekOK7G0xKUzvsqMfsBTRRYvq6ZugUjaHqs="
+  },
+  "status": "registered"
+}
