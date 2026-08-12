@@ -824,6 +824,7 @@ def _run_step(
     routing_policy = routing["routing_policy"]
     routing_reason_codes = list(routing.get("routing_reason_codes") or [])
     routing_reason_summary = str(routing.get("routing_reason_summary") or "").strip()
+    started_at = _now()
     started_monotonic = time.monotonic()
 
     def build_step_runtime(*, finished_at: str | None = None, failed_at: str | None = None) -> dict:
@@ -846,6 +847,11 @@ def _run_step(
             "variant": str(step.get("variant") or "").strip(),
             "environment_fingerprint": os.environ.get("OMC_ENVIRONMENT_FINGERPRINT", "").strip(),
             "elapsed_ms": int((time.monotonic() - started_monotonic) * 1000),
+            "duration_ms": int((time.monotonic() - started_monotonic) * 1000),
+            "started_at": started_at,
+            "provider_call_count": 1,
+            "tool_call_count": None,
+            "tool_call_measurement_status": "unavailable",
             "timeout_sec": timeout_sec,
         }
         if finished_at:
@@ -996,6 +1002,50 @@ def _collect_overview_run_records(root: Path) -> list[dict]:
     return run_records
 
 
+def _build_execution_metrics(state: dict) -> dict[str, object]:
+    """Aggregate durable timing, attempt, call, and token metrics."""
+    started = _parse_pipeline_timestamp(state.get("started_at"))
+    finished = _parse_pipeline_timestamp(state.get("finished_at"))
+    incomplete = state.get("status") != "completed" or finished is None
+    duration_ms = (
+        int((finished - started).total_seconds() * 1000)
+        if started is not None and finished is not None
+        else None
+    )
+    if isinstance(state.get("execution_duration_ms"), (int, float)) and not incomplete:
+        duration_ms = int(state["execution_duration_ms"])
+    attempt_count = 0
+    provider_call_count = 0
+    input_tokens = 0
+    output_tokens = 0
+    for step in (state.get("steps") or {}).values():
+        if not isinstance(step, dict):
+            continue
+        attempts = step.get("attempts")
+        if not isinstance(attempts, list):
+            attempts = [step] if step.get("attempt") else []
+        attempt_count += len(attempts)
+        for attempt in attempts:
+            if not isinstance(attempt, dict):
+                continue
+            provider_call_count += int(attempt.get("provider_call_count") or 0)
+            usage = attempt.get("token_usage")
+            if isinstance(usage, dict):
+                input_tokens += int(usage.get("input_tokens") or 0)
+                output_tokens += int(usage.get("output_tokens") or 0)
+    return {
+        "duration_ms": duration_ms,
+        "incomplete": incomplete,
+        "attempt_count": attempt_count,
+        "retry_count": max(0, attempt_count - 1),
+        "provider_call_count": provider_call_count,
+        "tool_call_count": None,
+        "tool_call_measurement_status": "unavailable",
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
+
+
 def _build_task_run_result(
     *,
     root: Path,
@@ -1017,6 +1067,7 @@ def _build_task_run_result(
         "simulated": bool(state.get("simulated") is True),
         "completion_requires_real_runs": bool(state.get("completion_requires_real_runs") is True),
         "steps": state.get("steps", {}),
+        "execution_metrics": _build_execution_metrics(state),
     }
     for key in (
         "title",
@@ -1151,6 +1202,7 @@ def cmd_run(
     state["started_at"] = state.get("started_at") or _now()
     state["status"] = "running"
     state["simulated"] = bool(dry_run)
+    execution_started_monotonic = time.monotonic()
     if "completion_requires_real_runs" in task:
         state["completion_requires_real_runs"] = completion_requires_real_runs
     if "steps" not in state:
@@ -1224,6 +1276,7 @@ def cmd_run(
             "status": "running",
             "started_at": _now(),
             "attempt": 0,
+            "attempts": [],
         }
         previous_step_state = state["steps"].get(sid, {})
         if isinstance(previous_step_state, dict):
@@ -1252,6 +1305,8 @@ def cmd_run(
                 active_prompt = f"{active_prompt}\nResolved source_run_id: {source_run_id}"
             # step 복사본에 수정된 프롬프트를 넣어 _run_step에 전달
             step_with_prompt = {**step, "prompt": active_prompt}
+            cost_info = None
+            step_runtime = None
 
             if dry_run:
                 print(f"  [DRY-RUN] 스텝 실행 시뮬레이션 (attempt {attempt})")
@@ -1280,6 +1335,20 @@ def cmd_run(
             step_state["last_output"] = output[:2000]
             if bool(step.get("complexity_class_required") is True):
                 step_state.update(_extract_complexity_class(output))
+
+            attempt_record = {
+                "attempt": attempt,
+                "status": "completed" if rc == 0 else "failed",
+                "started_at": (step_runtime or {}).get("started_at") or step_state["started_at"],
+                "finished_at": (step_runtime or {}).get("finished_at") or (step_runtime or {}).get("failed_at") or _now(),
+                "duration_ms": int((step_runtime or {}).get("duration_ms") or 0),
+                "provider_call_count": int((step_runtime or {}).get("provider_call_count") or 0),
+                "tool_call_count": (step_runtime or {}).get("tool_call_count"),
+                "tool_call_measurement_status": (step_runtime or {}).get("tool_call_measurement_status", "unavailable"),
+            }
+            if cost_info is not None:
+                attempt_record["token_usage"] = cost_info["token_usage"]
+            step_state["attempts"].append(attempt_record)
 
             # LLM 실행 자체 실패
             if rc != 0:
@@ -1372,6 +1441,9 @@ def cmd_run(
     )
     state["status"] = "completed" if all_done else "failed"
     state["finished_at"] = _now()
+    state["execution_duration_ms"] = int(
+        (time.monotonic() - execution_started_monotonic) * 1000
+    )
     if all_done and not dry_run:
         run_result = _build_task_run_result(root=root, task=task, state=state, executor=executor)
         _save_pipeline_result(root, run_result)
@@ -3090,6 +3162,26 @@ def _step_payload(
     return payload
 
 
+def _build_pipeline_execution_metrics(result: dict) -> dict[str, object]:
+    """파이프라인 모드와 실제 오케스트레이션 경로를 공통 schema로 정규화한다."""
+    mode = str(result.get("mode") or "full").strip().lower()
+    skill_path = (
+        ["omc-task", "omc-review"]
+        if mode == "lite"
+        else ["omc-plan", "omc-critique", "omc-task", "omc-review"]
+    )
+    duration_ms = None
+    if result.get("status") in _PIPELINE_TERMINAL_STATUSES:
+        raw_duration = result.get("execution_duration_ms")
+        if isinstance(raw_duration, (int, float)) and not isinstance(raw_duration, bool):
+            duration_ms = int(raw_duration)
+    return {
+        "mode": mode,
+        "skill_path": skill_path,
+        "duration_ms": duration_ms,
+    }
+
+
 def _build_capability_observations(data: dict) -> list[dict[str, object]]:
     """Build step-scoped capability observations without inferring environment data."""
     steps = data.get("steps") if isinstance(data.get("steps"), dict) else {}
@@ -3604,6 +3696,7 @@ def cmd_pipeline(
         auto: 사람 게이트(plan 승인) 없이 자동 진행
     """
     started_at = _now()
+    execution_started_monotonic = time.monotonic()
     executor = _detect_executor(executor_pref)
     mode = _detect_pipeline_mode(branch, instruction, mode_arg)
     result: dict = {
@@ -3652,8 +3745,12 @@ def cmd_pipeline(
         _sync_pipeline_retry_count(result)
         if status in _PIPELINE_TERMINAL_STATUSES:
             result["finished_at"] = _now()
+            result["execution_duration_ms"] = int(
+                (time.monotonic() - execution_started_monotonic) * 1000
+            )
         else:
             result["finished_at"] = None
+        result["execution_metrics"] = _build_pipeline_execution_metrics(result)
         _save_pipeline_result(root, result)
 
     print(f"\n[PIPELINE] ▶ 시작: {instruction[:60]}")

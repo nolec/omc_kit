@@ -1605,6 +1605,64 @@ def test_v4b_operational_maintenance_verify_step_is_expect_only():
         assert saved["status"] == "failed"
         assert saved["failure_category"] == "completion_requires_real_runs_unsatisfied"
 
+    def test_cmd_run_preserves_retry_attempts_in_execution_metrics(self, tmp_path):
+        tasks_dir = tmp_path / ".omc" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        task = {
+            "id": "retry-metrics",
+            "title": "Retry Metrics",
+            "executor": "auto",
+            "max_retries": 1,
+            "steps": [
+                {"id": "s1", "prompt": "실행", "depends_on": [], "timeout_sec": 10},
+            ],
+        }
+        task_file = tasks_dir / "retry-metrics.json"
+        task_file.write_text(json.dumps(task), encoding="utf-8")
+        calls = []
+
+        def _fake_run_step(root, step, **kwargs):
+            attempt = len(calls)
+            calls.append(attempt)
+            runtime = {
+                "duration_ms": 25 + attempt,
+                "started_at": f"2026-08-13T00:00:0{attempt}Z",
+                "finished_at": f"2026-08-13T00:00:0{attempt + 1}Z",
+                "provider_call_count": 1,
+                "tool_call_count": None,
+                "tool_call_measurement_status": "unavailable",
+            }
+            return (1, "provider failed", runtime, None) if attempt == 0 else (0, "ok", runtime, None)
+
+        with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
+            omc_autopilot,
+            "_run_step",
+            side_effect=_fake_run_step,
+        ):
+            code = omc_autopilot.cmd_run(tmp_path, task_file, dry_run=False)
+
+        assert code == 0
+        assert calls == [0, 1]
+        state = json.loads(
+            (tmp_path / ".omc" / "state" / "autopilot" / "retry-metrics.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        attempts = state["steps"]["s1"]["attempts"]
+        assert len(attempts) == 2
+        assert [attempt["status"] for attempt in attempts] == ["failed", "completed"]
+        assert [attempt["provider_call_count"] for attempt in attempts] == [1, 1]
+        assert all(attempt["tool_call_count"] is None for attempt in attempts)
+
+        result = json.loads(
+            (tmp_path / ".omc" / "pipeline_run_result.json").read_text(encoding="utf-8")
+        )
+        metrics = result["execution_metrics"]
+        assert metrics["attempt_count"] == 2
+        assert metrics["retry_count"] == 1
+        assert metrics["provider_call_count"] == 2
+        assert metrics["tool_call_count"] is None
+
     def test_completion_requires_real_runs_succeeds_when_task_saves_observed_run_metadata(self, tmp_path):
         tasks_dir = tmp_path / ".omc" / "tasks"
         tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -2406,3 +2464,101 @@ def test_ensure_staged_allows_custom_prefix_from_env(monkeypatch, tmp_path):
 
     add_calls = [c for c in calls if len(c) >= 2 and c[0] == "git" and c[1] == "add"]
     assert any("custom/file.txt" in c for c in add_calls), "custom path should be stageable via explicit allow prefix"
+
+
+@pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
+def test_execution_metrics_preserve_attempts_and_aggregate_usage():
+    state = {
+        "status": "completed",
+        "started_at": "2026-08-13T00:00:00.000Z",
+        "finished_at": "2026-08-13T00:00:02.500Z",
+        "execution_duration_ms": 2500,
+        "steps": {
+            "task": {
+                "status": "completed",
+                "attempt": 2,
+                "started_at": "2026-08-13T00:00:00.000Z",
+                "finished_at": "2026-08-13T00:00:01.500Z",
+                "attempts": [
+                    {
+                        "attempt": 1,
+                        "status": "failed",
+                        "started_at": "2026-08-13T00:00:00.000Z",
+                        "finished_at": "2026-08-13T00:00:00.500Z",
+                        "provider_call_count": 1,
+                        "token_usage": {"input_tokens": 10, "output_tokens": 5},
+                    },
+                    {
+                        "attempt": 2,
+                        "status": "completed",
+                        "started_at": "2026-08-13T00:00:00.500Z",
+                        "finished_at": "2026-08-13T00:00:01.500Z",
+                        "provider_call_count": 1,
+                        "token_usage": {"input_tokens": 20, "output_tokens": 15},
+                    },
+                ],
+            },
+        },
+    }
+
+    metrics = omc_autopilot._build_execution_metrics(state)
+
+    assert metrics["duration_ms"] == 2500
+    assert metrics["attempt_count"] == 2
+    assert metrics["retry_count"] == 1
+    assert metrics["provider_call_count"] == 2
+    assert metrics["tool_call_count"] is None
+    assert metrics["input_tokens"] == 30
+    assert metrics["output_tokens"] == 20
+    assert metrics["incomplete"] is False
+
+
+@pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
+def test_execution_metrics_mark_running_runs_incomplete():
+    state = {
+        "status": "running",
+        "started_at": "2026-08-13T00:00:00.000Z",
+        "finished_at": None,
+        "steps": {},
+    }
+
+    metrics = omc_autopilot._build_execution_metrics(state)
+
+    assert metrics["duration_ms"] is None
+    assert metrics["incomplete"] is True
+
+
+@pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
+def test_pipeline_execution_contract_exposes_mode_skill_path_and_duration():
+    result = {
+        "status": "completed",
+        "mode": "lite",
+        "steps": {
+            "preflight": {"status": "completed"},
+            "task": {"status": "completed"},
+            "review": {"status": "completed"},
+        },
+        "execution_duration_ms": 321,
+    }
+
+    metrics = omc_autopilot._build_pipeline_execution_metrics(result)
+
+    assert metrics["mode"] == "lite"
+    assert metrics["skill_path"] == ["omc-task", "omc-review"]
+    assert metrics["duration_ms"] == 321
+
+
+@pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
+def test_pipeline_execution_contract_uses_full_skill_path_for_full_mode():
+    result = {"status": "running", "mode": "full", "steps": {}}
+
+    metrics = omc_autopilot._build_pipeline_execution_metrics(result)
+
+    assert metrics["mode"] == "full"
+    assert metrics["skill_path"] == [
+        "omc-plan",
+        "omc-critique",
+        "omc-task",
+        "omc-review",
+    ]
+    assert metrics["duration_ms"] is None
