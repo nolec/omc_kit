@@ -148,6 +148,12 @@ Codex와 `omc-review` 실행 결과를 비교 샘플로 기록할 때는 `run_re
 `envelope_context`를 생략한 legacy 호출은 `{result, execution_metadata}`를 반환하므로 기존
 호출과의 하위 호환에는 사용할 수 있지만, 신규 comparison 수집에는 사용하지 않습니다.
 
+`execution_metrics`는 실행 결과의 핵심 telemetry 요약입니다.
+
+- `duration_ms`: 실행 전체 또는 최종 측정 구간의 소요 시간(ms)입니다. 완료된 실행은 실제 경과 시간을, 아직 끝나지 않은 실행은 `null`을 사용합니다.
+- `mode`: 파이프라인 실행 모드입니다. 현재는 `lite`와 `full`을 사용하며, 어떤 경로가 수행됐는지 판별하는 운영 기본값입니다.
+- `skill_path`: 해당 실행에서 실제로 밟은 스킬 경로입니다. 예를 들어 `["omc-task", "omc-review"]`처럼 단계별 스킬 순서를 기록합니다.
+
 ```python
 from omc_review_orchestration import run_review_in_snapshot
 

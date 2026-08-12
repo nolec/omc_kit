@@ -645,6 +645,14 @@ Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_pr
 - 설치/동기화 작업은 setup / gitignore / hook 같은 운영성 변경에 한해 예외적으로 묶는다.
 - 저장소를 넘는 작업은 코드와 설치를 분리하고, setup은 대상별로 끝낸다.
 
+### OMC latency baseline 및 reroute 억제 (2026-08-13)
+
+- 실행 이력 409건을 점검했지만 기존 기록에는 단계별 `execution_metrics`가 없어 과거 p50/p95를 소급 산출하지 않는다.
+- 신규 관측에서는 Lite 경로(`omc-task -> omc-review`)와 Full 경로(`omc-plan -> omc-critique -> omc-task -> omc-review`)를 분리해 실행 시간과 실제 skill path를 기록한다.
+- 실제 baseline 1건 기준 Lite는 약 106초, Full은 약 552초로 관측됐으며 Full은 반복 critique와 plan 재시도에서 HOLD로 종료됐다. 이 값은 표본 1건씩이므로 일반 성능 결론이 아니라 병목 확인용 baseline이다.
+- critique 반복이 해결되지 않은 상태에서 plan을 자동 재진입하면 같은 준비 왕복이 반복되므로, task retry 소진 후 자동 plan reroute를 중단하고 사용자 HOLD로 승격하도록 `_CRITIQUE_AUTO_RETRY_MAX=0`을 고정했다.
+- 단계별 `duration_ms`, `mode`, `skill_path`는 실행 결과의 `execution_metrics`로 보존한다. provider token metadata가 없는 실행은 token p50/p95로 해석하지 않으며, 충분한 신규 표본이 쌓인 뒤 별도로 산출한다.
+
 ## 바로 다음 작업 계획
 
 현재 기준 상태는 아래와 같다.

@@ -3450,7 +3450,9 @@ def step_verdict_allowed(output: str, allowed_verdicts: list[str]) -> bool:
 
 
 _UNSET_VERDICT = object()  # prev_verdict 초기 sentinel — None 과 구분
-_CRITIQUE_AUTO_RETRY_MAX = 1  # critique 루프 탈출 후 plan 자동 재진입 최대 횟수
+# 반복 critique를 해결하지 못한 상태에서 plan을 다시 실행하면 같은 준비 왕복을
+# 반복하므로, 사용자 HOLD로 넘기고 명시적 재설계를 기다린다.
+_CRITIQUE_AUTO_RETRY_MAX = 0  # critique 루프 탈출 후 plan 자동 재진입 최대 횟수
 _TASK_AUTO_RETRY_MAX = 2      # critique 루프 탈출 후 task 자동 재실행 최대 횟수
 _PLAN_RETRY_REASON_CODE_PATTERN = re.compile(r"^REASON_CODE\s*:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 

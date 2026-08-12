@@ -2562,3 +2562,16 @@ def test_pipeline_execution_contract_uses_full_skill_path_for_full_mode():
         "omc-review",
     ]
     assert metrics["duration_ms"] is None
+
+
+@pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
+def test_recovery_does_not_auto_reroute_to_plan_after_task_retries_exhausted():
+    target = omc_autopilot._recovery_target_from_decision(
+        loop_step="critique",
+        decision_name="same",
+        reroute_target="",
+        task_auto_retry_count=omc_autopilot._TASK_AUTO_RETRY_MAX,
+        critique_auto_retry_count=0,
+    )
+
+    assert target is None
