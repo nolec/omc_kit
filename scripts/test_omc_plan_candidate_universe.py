@@ -1482,6 +1482,76 @@ def test_prospective_preregistration_rejects_late_receipt_for_backdated_commit(
         )
 
 
+def test_local_authority_batch_is_in_default_revocation_set():
+    assert (
+        "bf651249b7d2d3c5e159f6e53ebfb9d623a7979c2ecb272cc97055e11e11c434"
+        in candidate_universe.REVOKED_COLLECTION_PREREGISTRATION_SHA256S
+    )
+
+
+def test_registration_receipt_rejects_revoked_preregistration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    signer_key = Ed25519PrivateKey.generate()
+    authority_key = Ed25519PrivateKey.generate()
+    anchor_repo, anchor_commit, start, end, cutoff = _collection_anchor(tmp_path)
+    draft = candidate_universe.prepare_collection_preregistration(
+        batch_id="revoked-batch-b",
+        collection_anchor_commit=anchor_commit,
+        collection_anchor_repository_root=str(anchor_repo),
+        observed_from=start.isoformat(),
+        observed_through=end.isoformat(),
+        provider_ledger_cutoff=cutoff.isoformat(),
+        pilot_session_ids=["pilot-01"],
+        registration_authority_public_key=(
+            candidate_universe.public_key_text(authority_key)
+        ),
+    )
+    frozen = candidate_universe.seal_collection_preregistration(
+        draft,
+        signer_key,
+        collection_anchor_repository_root=str(anchor_repo),
+        expected_preregistration_sha256=draft["preregistration_sha256"],
+    )
+    registry_commit, registry_path = _commit_preregistration_registry(
+        anchor_repo,
+        frozen,
+    )
+    receipt = _external_registration_receipt(
+        frozen,
+        authority_key=authority_key,
+        registry_commit=registry_commit,
+        registry_path=registry_path,
+        registered_at=start - timedelta(seconds=1),
+    )
+    monkeypatch.setattr(
+        candidate_universe,
+        "REVOKED_COLLECTION_PREREGISTRATION_SHA256S",
+        frozenset({frozen["preregistration_sha256"]}),
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match="preregistration is revoked"):
+        candidate_universe.validate_collection_preregistration(
+            frozen,
+            trusted_preregistration_public_keys={
+                candidate_universe.public_key_text(signer_key)
+            },
+            expected_preregistration_sha256=frozen["preregistration_sha256"],
+        )
+
+    with pytest.raises(ValueError, match="preregistration is revoked"):
+        candidate_universe.validate_preregistration_registration_receipt(
+            receipt,
+            preregistration=frozen,
+            trusted_receipt_public_keys={
+                candidate_universe.public_key_text(authority_key)
+            },
+            expected_receipt_sha256=receipt["receipt_sha256"],
+        )
+
+
 def test_preregistration_rejects_receipt_from_post_hoc_trusted_signer(
     tmp_path: Path,
 ):

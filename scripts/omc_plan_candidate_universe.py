@@ -174,6 +174,10 @@ COLLECTION_SAMPLING_POLICY = {
     "document_only_tasks_allowed": False,
     "benchmark_maintenance_tasks_allowed": False,
 }
+REVOKED_COLLECTION_PREREGISTRATION_SHA256S = frozenset({
+    # Local authority key custody invalidated this historical Batch B.
+    "bf651249b7d2d3c5e159f6e53ebfb9d623a7979c2ecb272cc97055e11e11c434",
+})
 
 
 def canonical_digest(value: Any) -> str:
@@ -585,6 +589,18 @@ def _validate_pilot_session_ids(pilot_session_ids: Any) -> list[str]:
     return sorted(pilot_session_ids)
 
 
+def _reject_revoked_collection_preregistration(
+    preregistration: Any,
+) -> None:
+    digest = (
+        preregistration.get("preregistration_sha256")
+        if isinstance(preregistration, dict)
+        else None
+    )
+    if digest in REVOKED_COLLECTION_PREREGISTRATION_SHA256S:
+        raise ValueError("collection preregistration is revoked")
+
+
 def prepare_collection_preregistration(
     *,
     batch_id: str,
@@ -677,6 +693,7 @@ def validate_collection_preregistration(
     trusted_preregistration_public_keys: set[str],
     expected_preregistration_sha256: str,
 ) -> None:
+    _reject_revoked_collection_preregistration(preregistration)
     _validate_collection_preregistration_envelope(
         preregistration, expected_status="frozen"
     )
@@ -777,6 +794,7 @@ def validate_preregistration_registration_receipt(
     trusted_receipt_public_keys: set[str],
     expected_receipt_sha256: str,
 ) -> None:
+    _reject_revoked_collection_preregistration(preregistration)
     _validate_preregistration_registration_receipt_envelope(receipt)
     _verify_document(
         receipt,
