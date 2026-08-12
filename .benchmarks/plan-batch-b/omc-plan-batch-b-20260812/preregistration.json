@@ -1,0 +1,32 @@
+{
+  "batch_id": "omc-plan-batch-b-20260812",
+  "collection_anchor_commit": "34911fd749cb54bc732a9db11028a75aa5f37f52",
+  "collection_anchor_committed_at": "2026-08-12T11:55:14+09:00",
+  "observation_window": {
+    "observed_from": "2026-08-13T00:00:00+09:00",
+    "observed_through": "2026-09-11T23:59:59+09:00"
+  },
+  "pilot_session_ids": [
+    "20260811T160453-0862907a",
+    "20260811T161251-7d35f901",
+    "20260811T162647-0fab68f5"
+  ],
+  "preregistration_sha256": "bf651249b7d2d3c5e159f6e53ebfb9d623a7979c2ecb272cc97055e11e11c434",
+  "provider_ledger_cutoff": "2026-09-11T23:59:59+09:00",
+  "registration_authority_public_key": "gW8leIOOaekOK7G0xKUzvsqMfsBTRRYvq6ZugUjaHqs=",
+  "sampling_policy": {
+    "benchmark_maintenance_tasks_allowed": false,
+    "document_only_tasks_allowed": false,
+    "maximum_accepted_receipts": 15,
+    "mode": "prospective_chronological_first_n",
+    "provider_outputs_available_during_collection": false,
+    "synthetic_tasks_allowed": false
+  },
+  "schema_version": 1,
+  "signoff": {
+    "signature": "h2j+QW2G2C7/no4PHbvHU5l9FzegkWlWRDgeq6Ggxcx9+QZYafgoWo1DzzBiyR8g4dizo6cZoP4ClcsrQQDEBg==",
+    "signer": "prospective-collection-preregistration-v1",
+    "signer_public_key": "aQeC6ULLPlzsTlQyxXYjpNHgqxJ7hwqz3qtLaj2DpHA="
+  },
+  "status": "frozen"
+}
