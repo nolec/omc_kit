@@ -14,6 +14,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 import install as _install
 import omc_doctor as _doctor
+import omc_hooks as _hooks
 import omc_hook_contract as _hook_contract
 
 
@@ -53,6 +54,86 @@ class TestCopy(unittest.TestCase):
 
 
 class TestInstallManifest(unittest.TestCase):
+    def test_auto_update_status_is_up_to_date_for_matching_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            target = root / "target"
+            (source / "templates").mkdir(parents=True)
+            target.mkdir()
+            (source / "templates" / "skill.md").write_text("v1\n", encoding="utf-8")
+            source_hash = _install._source_sha256(source)
+            _install._write_install_source_metadata(target, source)
+            _install._write_install_receipt(
+                target,
+                source_sha256=source_hash,
+                entries={},
+            )
+
+            result = _install._classify_auto_update(source, target)
+
+            self.assertEqual(result["status"], "up_to_date")
+            self.assertEqual(result["source_sha256"], source_hash)
+
+    def test_auto_update_status_detects_local_conflict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            target = root / "target"
+            source.mkdir()
+            target.mkdir()
+            source_file = source / "managed.md"
+            target_file = target / "managed.md"
+            source_file.write_text("new\n", encoding="utf-8")
+            target_file.write_text("installed\n", encoding="utf-8")
+            _install._write_install_source_metadata(target, source)
+            _install._write_install_receipt(
+                target,
+                source_sha256="old-source",
+                entries={
+                    "managed.md": {
+                        "policy": "managed_exact",
+                        "source_sha256": "old-file",
+                        "target_sha256": _install._sha256_file(target_file),
+                    }
+                },
+            )
+            target_file.write_text("user edit\n", encoding="utf-8")
+
+            result = _install._classify_auto_update(source, target)
+
+            self.assertEqual(result["status"], "local_conflict")
+            self.assertEqual(result["conflicts"], ["managed.md"])
+
+    def test_auto_update_status_reports_missing_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "missing-source"
+            target = root / "target"
+            target.mkdir()
+            _install._write_install_source_metadata(target, source)
+
+            result = _install._classify_auto_update(source, target)
+
+            self.assertEqual(result["status"], "source_missing")
+
+    def test_auto_update_status_blocks_unrecorded_managed_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            target = root / "target"
+            (source / "scripts").mkdir(parents=True)
+            (target / "scripts").mkdir(parents=True)
+            (source / "scripts" / "omc_new.py").write_text("new\n", encoding="utf-8")
+            (target / "scripts" / "omc_new.py").write_text("local\n", encoding="utf-8")
+            _install._write_install_source_metadata(target, source)
+            _install._write_install_receipt(target, source_sha256="old-source", entries={})
+
+            result = _install._classify_auto_update(source, target)
+
+            self.assertEqual(result["status"], "local_conflict")
+            self.assertEqual(result["conflicts"], ["scripts/omc_new.py"])
+
     def test_source_hash_ignores_runtime_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
@@ -335,6 +416,63 @@ class TestPostCommitHookInstall(unittest.TestCase):
 
             _install._install_post_commit_hook(template, hook, force=True)
             self.assertEqual(backup.read_text(encoding="utf-8"), "#!/bin/sh\nprintf 'custom hook\\n'\n")
+
+
+class TestAutoUpdateHook(unittest.TestCase):
+    def test_auto_update_exit_code_preserves_up_to_date_success(self):
+        self.assertEqual(_install._auto_update_exit_code("up_to_date"), 0)
+        self.assertEqual(_install._auto_update_exit_code("update_available"), 0)
+        self.assertEqual(_install._auto_update_exit_code("local_conflict"), 10)
+        self.assertEqual(_install._auto_update_exit_code("source_missing"), 11)
+
+    def test_auto_update_is_disabled_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict("os.environ", {}, clear=True):
+                result = _hooks._auto_update(Path(tmp))
+
+            self.assertEqual(result["status"], "skipped")
+
+    def test_auto_update_invokes_installer_only_when_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            installer = root / "scripts" / "install.py"
+            installer.parent.mkdir()
+            installer.write_text("# installer\n", encoding="utf-8")
+            with patch.dict("os.environ", {"OMC_AUTO_UPDATE": "1"}, clear=True):
+                with patch.object(_hooks.subprocess, "run") as run:
+                    run.return_value.returncode = 0
+                    result = _hooks._auto_update(root)
+
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(run.call_args.args[0][-1], "--auto-update")
+
+    def test_auto_update_reports_blocked_when_installer_rejects_conflict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            installer = root / "scripts" / "install.py"
+            installer.parent.mkdir()
+            installer.write_text("# installer\n", encoding="utf-8")
+            with patch.dict("os.environ", {"OMC_AUTO_UPDATE": "1"}, clear=True):
+                with patch.object(_hooks.subprocess, "run") as run:
+                    run.return_value.returncode = 10
+                    result = _hooks._auto_update(root)
+
+            self.assertEqual(result["status"], "blocked")
+            self.assertEqual(result["reason"], "local_conflict")
+
+    def test_auto_update_reports_blocked_when_source_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            installer = root / "scripts" / "install.py"
+            installer.parent.mkdir()
+            installer.write_text("# installer\n", encoding="utf-8")
+            with patch.dict("os.environ", {"OMC_AUTO_UPDATE": "1"}, clear=True):
+                with patch.object(_hooks.subprocess, "run") as run:
+                    run.return_value.returncode = 11
+                    result = _hooks._auto_update(root)
+
+            self.assertEqual(result["status"], "blocked")
+            self.assertEqual(result["reason"], "source_missing")
 
 
 class TestWrite(unittest.TestCase):

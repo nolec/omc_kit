@@ -135,6 +135,75 @@ def _write_install_receipt(
     return receipt
 
 
+def _classify_auto_update(source_kit: Path, target: Path) -> dict[str, object]:
+    """Classify whether a session-start update may safely proceed.
+
+    Automatic updates are allowed only when the source is present and every
+    previously managed file still matches the last install receipt.
+    """
+    result: dict[str, object] = {
+        "status": "source_missing",
+        "source_sha256": "",
+        "conflicts": [],
+    }
+    if not source_kit.is_dir():
+        return result
+
+    source_sha256 = _source_sha256(source_kit)
+    result["source_sha256"] = source_sha256
+    receipt_path = target / INSTALL_RECEIPT
+    if not receipt_path.is_file():
+        result["status"] = "update_available"
+        return result
+
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        result["status"] = "local_conflict"
+        result["conflicts"] = [".omc/install-receipt.json"]
+        return result
+
+    conflicts: list[str] = []
+    entries = receipt.get("entries", {})
+    if isinstance(entries, dict):
+        for rel, entry in entries.items():
+            if not isinstance(entry, dict) or entry.get("policy") not in {
+                "managed_exact",
+                "managed_generated",
+            }:
+                continue
+            target_file = target / str(rel)
+            current_hash = _sha256_file(target_file) if target_file.is_file() else ""
+            if current_hash != str(entry.get("target_sha256", "")):
+                conflicts.append(str(rel))
+
+    if isinstance(entries, dict):
+        manifest = _build_install_manifest(source_kit, target)
+        for rel, entry in manifest.items():
+            if rel in entries or entry.get("policy") != "managed_exact":
+                continue
+            if (target / rel).is_file():
+                conflicts.append(rel)
+
+    if conflicts:
+        result["status"] = "local_conflict"
+        result["conflicts"] = conflicts
+    elif receipt.get("source_sha256") == source_sha256:
+        result["status"] = "up_to_date"
+    else:
+        result["status"] = "update_available"
+    return result
+
+
+def _auto_update_exit_code(status: str) -> int:
+    """Return a stable process contract for session-start auto updates."""
+    if status == "local_conflict":
+        return 10
+    if status == "source_missing":
+        return 11
+    return 0
+
+
 def _finalize_install_manifest(target: Path, manifest: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
     """Mark generated managed outputs with their final content hash."""
     for rel, entry in manifest.items():
@@ -724,6 +793,11 @@ def _main() -> int:
     ap.add_argument("--target", type=Path, required=True, help="Target repository root.")
     ap.add_argument("--force", action="store_true", help="Overwrite existing files.")
     ap.add_argument(
+        "--auto-update",
+        action="store_true",
+        help="Only update when the installed OMC files are conflict-free.",
+    )
+    ap.add_argument(
         "--migrate-shared-tasks",
         action="store_true",
         help="Requires --force; migrate matching legacy shared tasks before refreshing them.",
@@ -733,8 +807,17 @@ def _main() -> int:
     kit = _kit_root()
     tgt = args.target.resolve()
     force = bool(args.force)
+    auto_update = bool(args.auto_update)
     migrate_shared_tasks = bool(args.migrate_shared_tasks)
     source_kit = _resolve_source_kit(kit, tgt)
+    if auto_update:
+        update = _classify_auto_update(source_kit, tgt)
+        print(f"[auto-update] {update['status']}")
+        if update["status"] != "update_available":
+            if update.get("conflicts"):
+                print("[auto-update] 충돌 파일: " + ", ".join(update["conflicts"]))
+            return _auto_update_exit_code(str(update["status"]))
+        force = True
     templates = _templates_root(source_kit)
     global _INSTALL_POLICY_ROOT, _INSTALL_POLICY_MANIFEST
     install_manifest = _build_install_manifest(source_kit, tgt)

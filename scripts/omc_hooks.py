@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import omc_state
@@ -100,6 +102,25 @@ def _reset_pipeline_guard_session(project_root: Path) -> dict[str, object]:
         return {"status": "error", "type": "builtin", "name": "pipeline_guard.session-start", "error": str(exc)}
 
 
+def _auto_update(project_root: Path) -> dict[str, object]:
+    """Opt-in clean-only refresh; never force-update by default."""
+    if os.environ.get("OMC_AUTO_UPDATE") != "1":
+        return {"status": "skipped", "reason": "OMC_AUTO_UPDATE is not enabled"}
+    installer = project_root / "scripts" / "install.py"
+    if not installer.is_file():
+        return {"status": "skipped", "reason": "install.py not found"}
+    code = subprocess.run(
+        [sys.executable, str(installer), "--target", str(project_root), "--auto-update"],
+        cwd=project_root,
+        check=False,
+    ).returncode
+    if code == 10:
+        return {"status": "blocked", "name": "omc.auto-update", "reason": "local_conflict"}
+    if code == 11:
+        return {"status": "blocked", "name": "omc.auto-update", "reason": "source_missing"}
+    return {"status": "ok" if code == 0 else "error", "name": "omc.auto-update", "code": code}
+
+
 def run_event(project_root: Path, event: str) -> dict[str, object]:
     if event not in HOOK_EVENTS:
         known = ", ".join(sorted(HOOK_EVENTS))
@@ -112,6 +133,7 @@ def run_event(project_root: Path, event: str) -> dict[str, object]:
     # session_start 이벤트 발생 시 모든 LLM 공통으로 CONTRACT 플래그 초기화
     if event == "session_start":
         results.append(_reset_pipeline_guard_session(project_root))
+        results.append(_auto_update(project_root))
 
     for hook in hooks:
         try:
