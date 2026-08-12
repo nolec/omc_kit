@@ -652,6 +652,9 @@ Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_pr
 - 실제 baseline 1건 기준 Lite는 약 106초, Full은 약 552초로 관측됐으며 Full은 반복 critique와 plan 재시도에서 HOLD로 종료됐다. 이 값은 표본 1건씩이므로 일반 성능 결론이 아니라 병목 확인용 baseline이다.
 - critique 반복이 해결되지 않은 상태에서 plan을 자동 재진입하면 같은 준비 왕복이 반복되므로, task retry 소진 후 자동 plan reroute를 중단하고 사용자 HOLD로 승격하도록 `_CRITIQUE_AUTO_RETRY_MAX=0`을 고정했다.
 - 단계별 `duration_ms`, `mode`, `skill_path`는 실행 결과의 `execution_metrics`로 보존한다. provider token metadata가 없는 실행은 token p50/p95로 해석하지 않으며, 충분한 신규 표본이 쌓인 뒤 별도로 산출한다.
+- `latency-summary --runs-dir` CLI가 완료된 실행만 `mode`별 nearest-rank p50/p95로 집계하고, legacy·실패·미완료·telemetry 누락 실행의 제외 건수를 함께 출력한다.
+- 현재 `.omc/runs` 412건 중 유효 telemetry 표본은 Lite 1건뿐이다. Lite p50/p95는 `106,462ms`이며 Full은 표본 부족으로 산출하지 않는다.
+- 따라서 latency baseline 측정 경로는 구현됐지만, 운영 결론과 전후 비교를 위해서는 Lite/Full 각각의 신규 표본 축적이 남아 있다.
 
 ## 바로 다음 작업 계획
 

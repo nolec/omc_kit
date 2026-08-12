@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -232,6 +233,65 @@ def _count_question_marks(text: str) -> int:
 
 def _average(values: list[int | float]) -> float:
     return sum(values) / len(values) if values else 0
+
+
+def _nearest_rank_percentile(values: list[int | float], percentile: float) -> float:
+    """Return a deterministic nearest-rank percentile for small runtime samples."""
+    if not values:
+        raise ValueError("percentile requires at least one value")
+    if not 0 < percentile <= 100:
+        raise ValueError("percentile must be greater than 0 and at most 100")
+    ordered = sorted(float(value) for value in values)
+    rank = max(1, math.ceil((percentile / 100) * len(ordered)))
+    return ordered[rank - 1]
+
+
+def build_latency_summary(runs_dir: Path) -> dict[str, object]:
+    """Aggregate completed pipeline telemetry without treating legacy runs as samples."""
+    run_count = 0
+    eligible_count = 0
+    excluded_count = 0
+    durations_by_mode: dict[str, list[float]] = {}
+
+    for result_path in sorted(runs_dir.glob("*/result.json")):
+        run_count += 1
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            excluded_count += 1
+            continue
+        metrics = result.get("execution_metrics")
+        mode = metrics.get("mode") if isinstance(metrics, dict) else None
+        duration = metrics.get("duration_ms") if isinstance(metrics, dict) else None
+        if (
+            result.get("status") != "completed"
+            or not isinstance(mode, str)
+            or not mode
+            or isinstance(duration, bool)
+            or not isinstance(duration, (int, float))
+            or duration < 0
+        ):
+            excluded_count += 1
+            continue
+        eligible_count += 1
+        durations_by_mode.setdefault(mode, []).append(float(duration))
+
+    by_mode = {
+        mode: {
+            "sample_count": len(values),
+            "duration_ms": {
+                "p50": _nearest_rank_percentile(values, 50),
+                "p95": _nearest_rank_percentile(values, 95),
+            },
+        }
+        for mode, values in sorted(durations_by_mode.items())
+    }
+    return {
+        "run_count": run_count,
+        "eligible_run_count": eligible_count,
+        "excluded_run_count": excluded_count,
+        "by_mode": by_mode,
+    }
 
 
 def _case_participates_in_decision_metric(case: dict[str, object], metric: str) -> bool:
@@ -2189,6 +2249,11 @@ def _parser() -> argparse.ArgumentParser:
     expensive_flows.add_argument(
         "--top-n", type=int, default=5, help="Number of expensive flows to return"
     )
+    latency_summary = sub.add_parser(
+        "latency-summary",
+        help="Aggregate completed execution telemetry by pipeline mode.",
+    )
+    latency_summary.add_argument("--runs-dir", type=Path, required=True, help="Runs directory path")
     return parser
 
 
@@ -2214,6 +2279,11 @@ def main() -> int:
     if args.command == "top-expensive-flows":
         cases = _load_response_mode_cases(args.input)
         report = build_expensive_flow_report(cases, top_n=args.top_n)
+        json.dump(report, sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+        return 0
+    if args.command == "latency-summary":
+        report = build_latency_summary(args.runs_dir)
         json.dump(report, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
         return 0
