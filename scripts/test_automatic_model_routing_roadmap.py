@@ -18,7 +18,18 @@ def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     assert "indexed canonicalization 교정 후 Fresh Batch A 유효 판정 완료" in text
     assert "Plan Batch B completion receipt 자동 수집 보강" in text
     assert "`task → review → ship → commit` 흐름은 task 귀속을 유지" in text
-    assert "실제 observed 10건 수집·universe 동결 대기" in text
+    assert "기존 observed receipt 3건은 `pilot_observed`" in text
+    assert "confirmatory receipt는 `0/15`" in text
+    assert "prospective chronological first-N" in text
+    assert "complete-session-ledger snapshot" in text
+    assert "Git commit 시각은 관측 전 등록 증거로 신뢰하지 않는다" in text
+    assert "외부 timestamp authority 공개키를 preregistration digest에 고정" in text
+    assert "self-signed backdating 경로를 fail-close" in text
+    assert "registration receipt hash와 registry anchor를 source snapshot" in text
+    assert "downstream label·universe 단계도 preregistration 서명" in text
+    assert "collector가 preregistration signer·timestamp authority·source signer" in text
+    assert "malformed receipt signoff는 예외를 누출하지 않고" in text
+    assert "로컬 receipt 발급 API·CLI는 두지 않아" in text
     assert "전체 빠른 회귀 `1858 passed, 3 skipped, 12 deselected`" in text
     assert "## Operator Experience" in text
     assert "plan / task / review" in text

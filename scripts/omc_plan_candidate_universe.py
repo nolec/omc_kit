@@ -56,6 +56,55 @@ SESSION_SOURCE_FIELDS = {
     "ambiguity",
     "selected_object",
 }
+PREREGISTERED_SESSION_SOURCE_FIELDS = SESSION_SOURCE_FIELDS | {"work_class"}
+PREREGISTERED_SOURCE_MANIFEST_FIELDS = {
+    "schema_version",
+    "status",
+    "preregistration_sha256",
+    "preregistration_registry",
+    "registration_receipt_sha256",
+    "completeness_attestation",
+    "sources",
+    "signoff",
+    "source_snapshot_sha256",
+}
+PREREGISTRATION_REGISTRY_RECORD_FIELDS = {
+    "schema_version",
+    "batch_id",
+    "preregistration_sha256",
+}
+PREREGISTRATION_REGISTRY_ANCHOR_FIELDS = {"commit", "path"}
+PREREGISTRATION_RECEIPT_FIELDS = {
+    "schema_version",
+    "status",
+    "batch_id",
+    "preregistration_sha256",
+    "registry_commit",
+    "registry_path",
+    "registered_at",
+    "signoff",
+    "receipt_sha256",
+}
+PREREGISTERED_WORK_CLASSES = {
+    "implementation",
+    "synthetic",
+    "document_only",
+    "benchmark_maintenance",
+}
+SOURCE_SNAPSHOT_COMPLETENESS_ATTESTATION = {
+    "scope": "all_sessions_observed_before_provider_cutoff",
+    "omissions_allowed": False,
+    "work_class_locked_before_collection": True,
+}
+INVENTORY_REJECTION_REASONS = {
+    "invalid_provenance",
+    "pilot_observed",
+    "outside_window",
+    "synthetic_task",
+    "document_only_task",
+    "benchmark_maintenance_task",
+    "collection_limit_exceeded",
+}
 COMPLETION_RECEIPT_FIELDS = {
     "schema_version",
     "session_id",
@@ -103,6 +152,28 @@ UNIVERSE_SELECTION_POLICY_FIELDS = {
     "required_ambiguity_counts",
     "maximum_selected_object_cases",
 }
+COLLECTION_PREREGISTRATION_FIELDS = {
+    "schema_version",
+    "status",
+    "batch_id",
+    "collection_anchor_commit",
+    "collection_anchor_committed_at",
+    "observation_window",
+    "provider_ledger_cutoff",
+    "sampling_policy",
+    "pilot_session_ids",
+    "registration_authority_public_key",
+    "signoff",
+    "preregistration_sha256",
+}
+COLLECTION_SAMPLING_POLICY = {
+    "mode": "prospective_chronological_first_n",
+    "maximum_accepted_receipts": 15,
+    "provider_outputs_available_during_collection": False,
+    "synthetic_tasks_allowed": False,
+    "document_only_tasks_allowed": False,
+    "benchmark_maintenance_tasks_allowed": False,
+}
 
 
 def canonical_digest(value: Any) -> str:
@@ -115,6 +186,15 @@ def public_key_text(private_key: Ed25519PrivateKey) -> str:
         format=serialization.PublicFormat.Raw,
     )
     return base64.b64encode(raw).decode("ascii")
+
+
+def _valid_public_key_text(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return len(base64.b64decode(value, validate=True)) == 32
+    except (ValueError, TypeError):
+        return False
 
 
 def _is_lower_hex(value: Any, length: int) -> bool:
@@ -423,12 +503,616 @@ def _verify_document(
         raise ValueError(f"{label} signature is invalid") from error
 
 
+def _validate_collection_preregistration_envelope(
+    preregistration: dict[str, Any],
+    *,
+    expected_status: str,
+) -> None:
+    if (
+        not isinstance(preregistration, dict)
+        or set(preregistration) != COLLECTION_PREREGISTRATION_FIELDS
+    ):
+        raise ValueError("collection preregistration fields are invalid")
+    window = preregistration.get("observation_window")
+    pilot_session_ids = preregistration.get("pilot_session_ids")
+    if (
+        preregistration.get("schema_version") != 1
+        or preregistration.get("status") != expected_status
+        or not isinstance(preregistration.get("batch_id"), str)
+        or not preregistration["batch_id"].strip()
+        or not _is_lower_hex(preregistration.get("collection_anchor_commit"), 40)
+        or not isinstance(window, dict)
+        or set(window) != {"observed_from", "observed_through"}
+        or preregistration.get("sampling_policy") != COLLECTION_SAMPLING_POLICY
+        or not isinstance(pilot_session_ids, list)
+        or not pilot_session_ids
+        or len(pilot_session_ids) != len(set(pilot_session_ids))
+        or any(
+            not isinstance(session_id, str) or not session_id.strip()
+            for session_id in pilot_session_ids
+        )
+        or not _valid_public_key_text(
+            preregistration.get("registration_authority_public_key")
+        )
+        or not _is_lower_hex(preregistration.get("preregistration_sha256"), 64)
+    ):
+        raise ValueError("collection preregistration provenance is invalid")
+    try:
+        anchor_committed_at = _parse_timestamp(
+            preregistration["collection_anchor_committed_at"]
+        )
+        start = _parse_timestamp(window["observed_from"])
+        end = _parse_timestamp(window["observed_through"])
+        cutoff = _parse_timestamp(preregistration["provider_ledger_cutoff"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("collection preregistration provenance is invalid") from error
+    if anchor_committed_at >= start or start > end or end > cutoff:
+        raise ValueError("collection preregistration observation window is invalid")
+
+
+def _verified_collection_anchor(
+    repository_root: str,
+    collection_anchor_commit: str,
+) -> datetime:
+    root = Path(repository_root)
+    if not root.is_absolute() or not _is_lower_hex(collection_anchor_commit, 40):
+        raise ValueError("collection anchor is invalid")
+    resolved = _git_output(
+        root, "rev-parse", f"{collection_anchor_commit}^{{commit}}"
+    )
+    committed_at = _git_output(
+        root, "show", "-s", "--format=%cI", collection_anchor_commit
+    )
+    if resolved != collection_anchor_commit or committed_at is None:
+        raise ValueError("collection anchor is invalid")
+    try:
+        return _parse_timestamp(committed_at)
+    except ValueError as error:
+        raise ValueError("collection anchor is invalid") from error
+
+
+def _validate_pilot_session_ids(pilot_session_ids: Any) -> list[str]:
+    if (
+        not isinstance(pilot_session_ids, list)
+        or not pilot_session_ids
+        or any(
+            not isinstance(session_id, str) or not session_id.strip()
+            for session_id in pilot_session_ids
+        )
+        or len(pilot_session_ids) != len(set(pilot_session_ids))
+    ):
+        raise ValueError("pilot session ids are invalid")
+    return sorted(pilot_session_ids)
+
+
+def prepare_collection_preregistration(
+    *,
+    batch_id: str,
+    collection_anchor_commit: str,
+    collection_anchor_repository_root: str,
+    observed_from: str,
+    observed_through: str,
+    provider_ledger_cutoff: str,
+    pilot_session_ids: list[str],
+    registration_authority_public_key: str,
+) -> dict[str, Any]:
+    """Prepare a prospective collection contract before confirmatory receipts exist."""
+    sorted_pilot_session_ids = _validate_pilot_session_ids(pilot_session_ids)
+    anchor_committed_at = _verified_collection_anchor(
+        collection_anchor_repository_root, collection_anchor_commit
+    )
+    document = {
+        "schema_version": 1,
+        "status": "draft",
+        "batch_id": batch_id,
+        "collection_anchor_commit": collection_anchor_commit,
+        "collection_anchor_committed_at": anchor_committed_at.isoformat(),
+        "observation_window": {
+            "observed_from": observed_from,
+            "observed_through": observed_through,
+        },
+        "provider_ledger_cutoff": provider_ledger_cutoff,
+        "sampling_policy": deepcopy(COLLECTION_SAMPLING_POLICY),
+        "pilot_session_ids": sorted_pilot_session_ids,
+        "registration_authority_public_key": (
+            registration_authority_public_key
+        ),
+        "signoff": {
+            "signer": "prospective-collection-preregistration-v1",
+            "signer_public_key": "",
+            "signature": "",
+        },
+        "preregistration_sha256": "",
+    }
+    document["preregistration_sha256"] = _signed_digest(
+        document, "preregistration_sha256"
+    )
+    _validate_collection_preregistration_envelope(
+        document, expected_status="draft"
+    )
+    return document
+
+
+def seal_collection_preregistration(
+    preregistration: dict[str, Any],
+    signer_private_key: Ed25519PrivateKey,
+    *,
+    collection_anchor_repository_root: str,
+    expected_preregistration_sha256: str,
+) -> dict[str, Any]:
+    _validate_collection_preregistration_envelope(
+        preregistration, expected_status="draft"
+    )
+    anchor_committed_at = _verified_collection_anchor(
+        collection_anchor_repository_root,
+        preregistration["collection_anchor_commit"],
+    )
+    if (
+        public_key_text(signer_private_key)
+        == preregistration["registration_authority_public_key"]
+    ):
+        raise ValueError("registration authority must be independent")
+    if (
+        anchor_committed_at.isoformat()
+        != preregistration["collection_anchor_committed_at"]
+        or
+        preregistration["preregistration_sha256"]
+        != expected_preregistration_sha256
+        or preregistration["preregistration_sha256"]
+        != _signed_digest(preregistration, "preregistration_sha256")
+    ):
+        raise ValueError("collection preregistration draft digest mismatch")
+    frozen = deepcopy(preregistration)
+    frozen["status"] = "frozen"
+    return _seal_document(
+        frozen,
+        private_key=signer_private_key,
+        digest_field="preregistration_sha256",
+    )
+
+
+def validate_collection_preregistration(
+    preregistration: dict[str, Any],
+    *,
+    trusted_preregistration_public_keys: set[str],
+    expected_preregistration_sha256: str,
+) -> None:
+    _validate_collection_preregistration_envelope(
+        preregistration, expected_status="frozen"
+    )
+    _verify_document(
+        preregistration,
+        digest_field="preregistration_sha256",
+        trusted_public_keys=trusted_preregistration_public_keys,
+        expected_digest=expected_preregistration_sha256,
+        expected_signer="prospective-collection-preregistration-v1",
+        label="collection preregistration",
+    )
+    if (
+        preregistration["signoff"]["signer_public_key"]
+        == preregistration["registration_authority_public_key"]
+    ):
+        raise ValueError("registration authority must be independent")
+
+
+def prepare_preregistration_registry_record(
+    preregistration: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the immutable record that must be committed before observation."""
+    _validate_collection_preregistration_envelope(
+        preregistration, expected_status="frozen"
+    )
+    return {
+        "schema_version": 1,
+        "batch_id": preregistration["batch_id"],
+        "preregistration_sha256": preregistration["preregistration_sha256"],
+    }
+
+
+def validate_preregistration_registry_anchor(
+    preregistration: dict[str, Any],
+    *,
+    repository_root: str,
+    registry_commit: str,
+    registry_path: str,
+) -> None:
+    """Prove that Git contains the exact signed preregistration record."""
+    _validate_collection_preregistration_envelope(
+        preregistration, expected_status="frozen"
+    )
+    root = Path(repository_root)
+    if (
+        not root.is_absolute()
+        or not _is_lower_hex(registry_commit, 40)
+        or not _relative_paths([registry_path])
+    ):
+        raise ValueError("preregistration registry anchor is invalid")
+    _verified_collection_anchor(root, registry_commit)
+    if _git_output(
+        root,
+        "merge-base",
+        "--is-ancestor",
+        preregistration["collection_anchor_commit"],
+        registry_commit,
+    ) is None:
+        raise ValueError("preregistration registry ancestry is invalid")
+    raw_record = _git_output(
+        root, "show", f"{registry_commit}:{registry_path}", strip=False
+    )
+    try:
+        record = json.loads(raw_record) if raw_record is not None else None
+    except json.JSONDecodeError as error:
+        raise ValueError("preregistration registry record is invalid") from error
+    if (
+        not isinstance(record, dict)
+        or set(record) != PREREGISTRATION_REGISTRY_RECORD_FIELDS
+        or record != prepare_preregistration_registry_record(preregistration)
+    ):
+        raise ValueError("preregistration registry record is invalid")
+
+
+def _validate_preregistration_registration_receipt_envelope(
+    receipt: dict[str, Any],
+) -> None:
+    if (
+        not isinstance(receipt, dict)
+        or set(receipt) != PREREGISTRATION_RECEIPT_FIELDS
+        or receipt.get("schema_version") != 1
+        or receipt.get("status") != "registered"
+        or not isinstance(receipt.get("batch_id"), str)
+        or not receipt["batch_id"].strip()
+        or not _is_lower_hex(receipt.get("preregistration_sha256"), 64)
+        or not _is_lower_hex(receipt.get("registry_commit"), 40)
+        or not _relative_paths([receipt.get("registry_path")])
+        or not _is_lower_hex(receipt.get("receipt_sha256"), 64)
+    ):
+        raise ValueError("preregistration registration receipt is invalid")
+    _parse_timestamp(receipt.get("registered_at"))
+
+
+def validate_preregistration_registration_receipt(
+    receipt: dict[str, Any],
+    *,
+    preregistration: dict[str, Any],
+    trusted_receipt_public_keys: set[str],
+    expected_receipt_sha256: str,
+) -> None:
+    _validate_preregistration_registration_receipt_envelope(receipt)
+    _verify_document(
+        receipt,
+        digest_field="receipt_sha256",
+        trusted_public_keys=trusted_receipt_public_keys,
+        expected_digest=expected_receipt_sha256,
+        expected_signer="independent-preregistration-timestamp-v1",
+        label="preregistration registration receipt",
+    )
+    authority_public_key = (
+        preregistration.get("registration_authority_public_key")
+        if isinstance(preregistration, dict)
+        else None
+    )
+    if receipt["signoff"]["signer_public_key"] != authority_public_key:
+        raise ValueError("registration receipt authority mismatch")
+    if (
+        receipt["batch_id"] != preregistration["batch_id"]
+        or receipt["preregistration_sha256"]
+        != preregistration["preregistration_sha256"]
+        or _parse_timestamp(receipt["registered_at"])
+        >= _parse_timestamp(
+            preregistration["observation_window"]["observed_from"]
+        )
+    ):
+        raise ValueError("preregistration registration receipt mismatch")
+
+
+def _validate_preregistered_sources(sources: Any) -> None:
+    if not isinstance(sources, list) or not sources:
+        raise ValueError("preregistered session sources are required")
+    if any(
+        not isinstance(source, dict)
+        or set(source) != PREREGISTERED_SESSION_SOURCE_FIELDS
+        or source.get("work_class") not in PREREGISTERED_WORK_CLASSES
+        or not _valid_session_source({
+            field: source.get(field) for field in SESSION_SOURCE_FIELDS
+        })
+        for source in sources
+    ):
+        raise ValueError("preregistered session source is invalid")
+    source_ids = [source["source_record_id"] for source in sources]
+    session_ids = [source["session_id"] for source in sources]
+    if (
+        len(source_ids) != len(set(source_ids))
+        or len(session_ids) != len(set(session_ids))
+    ):
+        raise ValueError("preregistered session source identity must be unique")
+
+
+def _validate_preregistered_source_snapshot_envelope(
+    source_snapshot: dict[str, Any],
+    *,
+    expected_status: str,
+) -> None:
+    if (
+        not isinstance(source_snapshot, dict)
+        or set(source_snapshot) != PREREGISTERED_SOURCE_MANIFEST_FIELDS
+        or source_snapshot.get("schema_version") != 2
+        or source_snapshot.get("status") != expected_status
+        or not _is_lower_hex(
+            source_snapshot.get("preregistration_sha256"), 64
+        )
+        or not _is_lower_hex(
+            source_snapshot.get("source_snapshot_sha256"), 64
+        )
+        or not _is_lower_hex(
+            source_snapshot.get("registration_receipt_sha256"), 64
+        )
+        or source_snapshot.get("completeness_attestation")
+        != SOURCE_SNAPSHOT_COMPLETENESS_ATTESTATION
+    ):
+        raise ValueError("preregistered source snapshot is invalid")
+    registry = source_snapshot.get("preregistration_registry")
+    if (
+        not isinstance(registry, dict)
+        or set(registry) != PREREGISTRATION_REGISTRY_ANCHOR_FIELDS
+        or not _is_lower_hex(registry.get("commit"), 40)
+        or not _relative_paths([registry.get("path")])
+    ):
+        raise ValueError("preregistration source registry is invalid")
+    _validate_preregistered_sources(source_snapshot.get("sources"))
+
+
+def prepare_preregistered_source_snapshot(
+    *,
+    sources: list[dict[str, Any]],
+    preregistration: dict[str, Any],
+    trusted_preregistration_public_keys: set[str],
+    expected_preregistration_sha256: str,
+    preregistration_registry_repository_root: str,
+    preregistration_registry_commit: str,
+    preregistration_registry_path: str,
+    registration_receipt: dict[str, Any],
+    trusted_registration_receipt_public_keys: set[str],
+    expected_registration_receipt_sha256: str,
+) -> dict[str, Any]:
+    """Prepare the complete session-ledger snapshot for independent signoff."""
+    validate_collection_preregistration(
+        preregistration,
+        trusted_preregistration_public_keys=(
+            trusted_preregistration_public_keys
+        ),
+        expected_preregistration_sha256=expected_preregistration_sha256,
+    )
+    validate_preregistration_registry_anchor(
+        preregistration,
+        repository_root=preregistration_registry_repository_root,
+        registry_commit=preregistration_registry_commit,
+        registry_path=preregistration_registry_path,
+    )
+    validate_preregistration_registration_receipt(
+        registration_receipt,
+        preregistration=preregistration,
+        trusted_receipt_public_keys=(
+            trusted_registration_receipt_public_keys
+        ),
+        expected_receipt_sha256=expected_registration_receipt_sha256,
+    )
+    if (
+        registration_receipt["registry_commit"]
+        != preregistration_registry_commit
+        or registration_receipt["registry_path"]
+        != preregistration_registry_path
+    ):
+        raise ValueError("registration receipt registry anchor mismatch")
+    _validate_preregistered_sources(sources)
+    document = {
+        "schema_version": 2,
+        "status": "draft",
+        "preregistration_sha256": expected_preregistration_sha256,
+        "preregistration_registry": {
+            "commit": preregistration_registry_commit,
+            "path": preregistration_registry_path,
+        },
+        "registration_receipt_sha256": (
+            expected_registration_receipt_sha256
+        ),
+        "completeness_attestation": deepcopy(
+            SOURCE_SNAPSHOT_COMPLETENESS_ATTESTATION
+        ),
+        "sources": sorted(
+            deepcopy(sources), key=lambda source: source["source_record_id"]
+        ),
+        "signoff": {
+            "signer": "complete-session-ledger-snapshot-v1",
+            "signer_public_key": "",
+            "signature": "",
+        },
+        "source_snapshot_sha256": "",
+    }
+    document["source_snapshot_sha256"] = _signed_digest(
+        document, "source_snapshot_sha256"
+    )
+    _validate_preregistered_source_snapshot_envelope(
+        document, expected_status="draft"
+    )
+    return document
+
+
+def seal_preregistered_source_snapshot(
+    source_snapshot: dict[str, Any],
+    signer_private_key: Ed25519PrivateKey,
+    *,
+    expected_source_snapshot_sha256: str,
+) -> dict[str, Any]:
+    _validate_preregistered_source_snapshot_envelope(
+        source_snapshot, expected_status="draft"
+    )
+    if (
+        source_snapshot["source_snapshot_sha256"]
+        != expected_source_snapshot_sha256
+        or source_snapshot["source_snapshot_sha256"]
+        != _signed_digest(source_snapshot, "source_snapshot_sha256")
+    ):
+        raise ValueError("source snapshot draft digest mismatch")
+    frozen = deepcopy(source_snapshot)
+    frozen["status"] = "frozen"
+    return _seal_document(
+        frozen,
+        private_key=signer_private_key,
+        digest_field="source_snapshot_sha256",
+    )
+
+
+def validate_preregistered_source_snapshot(
+    source_snapshot: dict[str, Any],
+    *,
+    trusted_source_snapshot_public_keys: set[str],
+    expected_source_snapshot_sha256: str,
+    expected_preregistration_sha256: str,
+) -> None:
+    _validate_preregistered_source_snapshot_envelope(
+        source_snapshot, expected_status="frozen"
+    )
+    if (
+        source_snapshot["preregistration_sha256"]
+        != expected_preregistration_sha256
+    ):
+        raise ValueError("source snapshot preregistration mismatch")
+    _verify_document(
+        source_snapshot,
+        digest_field="source_snapshot_sha256",
+        trusted_public_keys=trusted_source_snapshot_public_keys,
+        expected_digest=expected_source_snapshot_sha256,
+        expected_signer="complete-session-ledger-snapshot-v1",
+        label="source snapshot",
+    )
+
+
+def validate_preregistered_provenance_chain(
+    *,
+    preregistration: dict[str, Any],
+    trusted_preregistration_public_keys: set[str],
+    expected_preregistration_sha256: str,
+    source_snapshot: dict[str, Any],
+    trusted_source_snapshot_public_keys: set[str],
+    expected_source_snapshot_sha256: str,
+    preregistration_registry_repository_root: str,
+    registration_receipt: dict[str, Any],
+    trusted_registration_receipt_public_keys: set[str],
+    expected_registration_receipt_sha256: str,
+) -> None:
+    validate_collection_preregistration(
+        preregistration,
+        trusted_preregistration_public_keys=trusted_preregistration_public_keys,
+        expected_preregistration_sha256=expected_preregistration_sha256,
+    )
+    validate_preregistered_source_snapshot(
+        source_snapshot,
+        trusted_source_snapshot_public_keys=(
+            trusted_source_snapshot_public_keys
+        ),
+        expected_source_snapshot_sha256=expected_source_snapshot_sha256,
+        expected_preregistration_sha256=expected_preregistration_sha256,
+    )
+    if source_snapshot["signoff"]["signer_public_key"] in {
+        preregistration["signoff"]["signer_public_key"],
+        preregistration["registration_authority_public_key"],
+    }:
+        raise ValueError("source snapshot signer must be independent")
+    registry = source_snapshot["preregistration_registry"]
+    validate_preregistration_registry_anchor(
+        preregistration,
+        repository_root=preregistration_registry_repository_root,
+        registry_commit=registry["commit"],
+        registry_path=registry["path"],
+    )
+    validate_preregistration_registration_receipt(
+        registration_receipt,
+        preregistration=preregistration,
+        trusted_receipt_public_keys=(
+            trusted_registration_receipt_public_keys
+        ),
+        expected_receipt_sha256=expected_registration_receipt_sha256,
+    )
+    if (
+        source_snapshot["registration_receipt_sha256"]
+        != expected_registration_receipt_sha256
+        or registration_receipt["registry_commit"] != registry["commit"]
+        or registration_receipt["registry_path"] != registry["path"]
+    ):
+        raise ValueError("registration receipt source snapshot mismatch")
+
+
+def classify_preregistered_sessions(
+    preregistration: dict[str, Any],
+    *,
+    sessions: list[dict[str, Any]],
+    trusted_preregistration_public_keys: set[str],
+    expected_preregistration_sha256: str,
+) -> list[dict[str, str]]:
+    validate_collection_preregistration(
+        preregistration,
+        trusted_preregistration_public_keys=trusted_preregistration_public_keys,
+        expected_preregistration_sha256=expected_preregistration_sha256,
+    )
+    window = preregistration["observation_window"]
+    start = _parse_timestamp(window["observed_from"])
+    end = _parse_timestamp(window["observed_through"])
+    if not isinstance(sessions, list):
+        raise ValueError("preregistered sessions are invalid")
+    work_class_exclusions = {
+        "synthetic": "synthetic_task",
+        "document_only": "document_only_task",
+        "benchmark_maintenance": "benchmark_maintenance_task",
+    }
+    allowed_work_classes = {"implementation", *work_class_exclusions}
+    pilot_ids = set(preregistration["pilot_session_ids"])
+    classifications: list[dict[str, str]] = []
+    eligible: list[tuple[datetime, str, int]] = []
+    seen_session_ids: set[str] = set()
+    for session in sessions:
+        if (
+            not isinstance(session, dict)
+            or set(session) != {"session_id", "completed_at", "work_class"}
+            or not isinstance(session.get("session_id"), str)
+            or not session["session_id"].strip()
+            or session["session_id"] in seen_session_ids
+            or session.get("work_class") not in allowed_work_classes
+        ):
+            raise ValueError("preregistered sessions are invalid")
+        session_id = session["session_id"]
+        seen_session_ids.add(session_id)
+        completed_at = _parse_timestamp(session["completed_at"])
+        if session_id in pilot_ids:
+            disposition = "pilot_observed"
+        elif not start <= completed_at <= end:
+            disposition = "outside_window"
+        elif session["work_class"] in work_class_exclusions:
+            disposition = work_class_exclusions[session["work_class"]]
+        else:
+            disposition = "pending_first_n"
+            eligible.append((completed_at, session_id, len(classifications)))
+        classifications.append({
+            "session_id": session_id,
+            "disposition": disposition,
+        })
+
+    maximum = preregistration["sampling_policy"]["maximum_accepted_receipts"]
+    eligible.sort(key=lambda item: (item[0], item[1]))
+    for rank, (_, _, index) in enumerate(eligible, start=1):
+        classifications[index]["disposition"] = (
+            "confirmatory_candidate"
+            if rank <= maximum
+            else "collection_limit_exceeded"
+        )
+    return classifications
+
+
 def _validate_inventory_envelope(
     inventory: dict[str, Any],
     *,
     expected_status: str,
 ) -> None:
-    fields = {
+    base_fields = {
         "schema_version",
         "status",
         "observation_window",
@@ -439,15 +1123,30 @@ def _validate_inventory_envelope(
         "signoff",
         "inventory_sha256",
     }
-    if not isinstance(inventory, dict) or set(inventory) != fields:
+    schema_version = inventory.get("schema_version") if isinstance(
+        inventory, dict
+    ) else None
+    expected_fields = (
+        base_fields
+        if schema_version == 1
+        else base_fields | {
+            "preregistration_sha256",
+            "source_snapshot_sha256",
+            "collector_public_key",
+        }
+    )
+    if (
+        not isinstance(inventory, dict)
+        or schema_version not in {1, 2}
+        or set(inventory) != expected_fields
+    ):
         raise ValueError("private inventory fields are invalid")
     window = inventory.get("observation_window")
     audit = inventory.get("audit")
     accepted = inventory.get("accepted_records")
     rejected = inventory.get("rejected_records")
     if (
-        inventory.get("schema_version") != 1
-        or inventory.get("status") != expected_status
+        inventory.get("status") != expected_status
         or not isinstance(window, dict)
         or set(window) != {"observed_from", "observed_through"}
         or not isinstance(accepted, list)
@@ -459,6 +1158,12 @@ def _validate_inventory_envelope(
             "rejected_count",
             "rejected_reason_counts",
         }
+    ):
+        raise ValueError("private inventory provenance is invalid")
+    if schema_version == 2 and (
+        not _is_lower_hex(inventory.get("preregistration_sha256"), 64)
+        or not _is_lower_hex(inventory.get("source_snapshot_sha256"), 64)
+        or not _valid_public_key_text(inventory.get("collector_public_key"))
     ):
         raise ValueError("private inventory provenance is invalid")
     try:
@@ -480,7 +1185,11 @@ def _validate_inventory_envelope(
         or set(record) != {"source_record_id", "source_record_sha256", "reason"}
         or not isinstance(record["source_record_id"], str)
         or not _is_lower_hex(record["source_record_sha256"], 64)
-        or record["reason"] != "invalid_provenance"
+        or record["reason"] not in (
+            {"invalid_provenance"}
+            if schema_version == 1
+            else INVENTORY_REJECTION_REASONS
+        )
         for record in rejected
     ):
         raise ValueError("private inventory audit is invalid")
@@ -499,18 +1208,19 @@ def _validate_inventory_envelope(
         or counts[1] != len(accepted)
         or counts[2] != len(rejected)
         or audit["rejected_reason_counts"]
-        != ({"invalid_provenance": len(rejected)} if rejected else {})
+        != dict(sorted(Counter(
+            record["reason"] for record in rejected
+        ).items()))
     ):
         raise ValueError("private inventory audit is invalid")
 
 
-def seal_private_inventory(
+def _seal_validated_private_inventory(
     inventory: dict[str, Any],
     collector_private_key: Ed25519PrivateKey,
     *,
     expected_inventory_sha256: str,
 ) -> dict[str, Any]:
-    _validate_inventory_envelope(inventory, expected_status="collected")
     if (
         inventory.get("inventory_sha256") != expected_inventory_sha256
         or inventory["inventory_sha256"] != _inventory_digest(inventory)
@@ -525,11 +1235,79 @@ def seal_private_inventory(
     )
 
 
+def seal_private_inventory(
+    inventory: dict[str, Any],
+    collector_private_key: Ed25519PrivateKey,
+    *,
+    expected_inventory_sha256: str,
+) -> dict[str, Any]:
+    _validate_inventory_envelope(inventory, expected_status="collected")
+    if inventory["schema_version"] != 1:
+        raise ValueError("preregistered inventory requires source snapshot")
+    return _seal_validated_private_inventory(
+        inventory,
+        collector_private_key,
+        expected_inventory_sha256=expected_inventory_sha256,
+    )
+
+
+def seal_preregistered_inventory(
+    inventory: dict[str, Any],
+    collector_private_key: Ed25519PrivateKey,
+    *,
+    source_snapshot: dict[str, Any],
+    trusted_source_snapshot_public_keys: set[str],
+    expected_source_snapshot_sha256: str,
+    expected_preregistration_sha256: str,
+    expected_inventory_sha256: str,
+) -> dict[str, Any]:
+    _validate_inventory_envelope(inventory, expected_status="collected")
+    if inventory["schema_version"] != 2:
+        raise ValueError("preregistered inventory schema is required")
+    validate_preregistered_source_snapshot(
+        source_snapshot,
+        trusted_source_snapshot_public_keys=(
+            trusted_source_snapshot_public_keys
+        ),
+        expected_source_snapshot_sha256=expected_source_snapshot_sha256,
+        expected_preregistration_sha256=expected_preregistration_sha256,
+    )
+    if (
+        inventory["source_snapshot_sha256"]
+        != expected_source_snapshot_sha256
+        or inventory["preregistration_sha256"]
+        != expected_preregistration_sha256
+    ):
+        raise ValueError("preregistered inventory source snapshot mismatch")
+    if (
+        public_key_text(collector_private_key)
+        == source_snapshot["signoff"]["signer_public_key"]
+    ):
+        raise ValueError("inventory collector must be independent")
+    if public_key_text(collector_private_key) != inventory["collector_public_key"]:
+        raise ValueError("inventory collector identity mismatch")
+    return _seal_validated_private_inventory(
+        inventory,
+        collector_private_key,
+        expected_inventory_sha256=expected_inventory_sha256,
+    )
+
+
 def _verify_private_inventory(
     inventory: dict[str, Any],
     *,
     trusted_collector_public_keys: set[str],
     expected_inventory_sha256: str,
+    source_snapshot: dict[str, Any] | None = None,
+    trusted_source_snapshot_public_keys: set[str] | None = None,
+    expected_source_snapshot_sha256: str | None = None,
+    expected_preregistration_sha256: str | None = None,
+    preregistration: dict[str, Any] | None = None,
+    trusted_preregistration_public_keys: set[str] | None = None,
+    preregistration_registry_repository_root: str | None = None,
+    registration_receipt: dict[str, Any] | None = None,
+    trusted_registration_receipt_public_keys: set[str] | None = None,
+    expected_registration_receipt_sha256: str | None = None,
 ) -> None:
     try:
         _validate_inventory_envelope(inventory, expected_status="approved")
@@ -543,6 +1321,60 @@ def _verify_private_inventory(
         expected_signer="observed-inventory-collector-v1",
         label="collector inventory",
     )
+    if inventory["schema_version"] == 1:
+        return
+    if (
+        source_snapshot is None
+        or not trusted_source_snapshot_public_keys
+        or expected_source_snapshot_sha256 is None
+        or expected_preregistration_sha256 is None
+    ):
+        raise ValueError("preregistered inventory source snapshot evidence is required")
+    if (
+        preregistration is None
+        or not trusted_preregistration_public_keys
+        or preregistration_registry_repository_root is None
+        or registration_receipt is None
+        or not trusted_registration_receipt_public_keys
+        or expected_registration_receipt_sha256 is None
+    ):
+        raise ValueError("preregistered inventory complete provenance evidence is required")
+    validate_preregistered_provenance_chain(
+        preregistration=preregistration,
+        trusted_preregistration_public_keys=(
+            trusted_preregistration_public_keys
+        ),
+        expected_preregistration_sha256=expected_preregistration_sha256,
+        source_snapshot=source_snapshot,
+        trusted_source_snapshot_public_keys=trusted_source_snapshot_public_keys,
+        expected_source_snapshot_sha256=expected_source_snapshot_sha256,
+        preregistration_registry_repository_root=(
+            preregistration_registry_repository_root
+        ),
+        registration_receipt=registration_receipt,
+        trusted_registration_receipt_public_keys=(
+            trusted_registration_receipt_public_keys
+        ),
+        expected_registration_receipt_sha256=(
+            expected_registration_receipt_sha256
+        ),
+    )
+    if (
+        inventory["source_snapshot_sha256"]
+        != expected_source_snapshot_sha256
+        or inventory["preregistration_sha256"]
+        != expected_preregistration_sha256
+    ):
+        raise ValueError("preregistered inventory source snapshot mismatch")
+    collector_public_key = inventory["signoff"]["signer_public_key"]
+    if collector_public_key != inventory["collector_public_key"]:
+        raise ValueError("inventory collector identity mismatch")
+    if collector_public_key in {
+        preregistration["signoff"]["signer_public_key"],
+        preregistration["registration_authority_public_key"],
+        source_snapshot["signoff"]["signer_public_key"],
+    }:
+        raise ValueError("inventory collector must be independent")
 
 
 def sign_label_receipt(
@@ -551,11 +1383,37 @@ def sign_label_receipt(
     *,
     trusted_collector_public_keys: set[str],
     expected_inventory_sha256: str,
+    source_snapshot: dict[str, Any] | None = None,
+    trusted_source_snapshot_public_keys: set[str] | None = None,
+    expected_source_snapshot_sha256: str | None = None,
+    expected_preregistration_sha256: str | None = None,
+    preregistration: dict[str, Any] | None = None,
+    trusted_preregistration_public_keys: set[str] | None = None,
+    preregistration_registry_repository_root: str | None = None,
+    registration_receipt: dict[str, Any] | None = None,
+    trusted_registration_receipt_public_keys: set[str] | None = None,
+    expected_registration_receipt_sha256: str | None = None,
 ) -> dict[str, Any]:
     _verify_private_inventory(
         inventory,
         trusted_collector_public_keys=trusted_collector_public_keys,
         expected_inventory_sha256=expected_inventory_sha256,
+        source_snapshot=source_snapshot,
+        trusted_source_snapshot_public_keys=trusted_source_snapshot_public_keys,
+        expected_source_snapshot_sha256=expected_source_snapshot_sha256,
+        expected_preregistration_sha256=expected_preregistration_sha256,
+        preregistration=preregistration,
+        trusted_preregistration_public_keys=trusted_preregistration_public_keys,
+        preregistration_registry_repository_root=(
+            preregistration_registry_repository_root
+        ),
+        registration_receipt=registration_receipt,
+        trusted_registration_receipt_public_keys=(
+            trusted_registration_receipt_public_keys
+        ),
+        expected_registration_receipt_sha256=(
+            expected_registration_receipt_sha256
+        ),
     )
     labels = [{
         "source_record_id": record["source_record_id"],
@@ -836,12 +1694,37 @@ def prepare_frozen_universe(
     expected_anchor_registry_sha256: str,
     batch_id: str,
     source_snapshot_sha256: str,
+    source_snapshot: dict[str, Any] | None = None,
+    trusted_source_snapshot_public_keys: set[str] | None = None,
+    expected_preregistration_sha256: str | None = None,
+    preregistration: dict[str, Any] | None = None,
+    trusted_preregistration_public_keys: set[str] | None = None,
+    preregistration_registry_repository_root: str | None = None,
+    registration_receipt: dict[str, Any] | None = None,
+    trusted_registration_receipt_public_keys: set[str] | None = None,
+    expected_registration_receipt_sha256: str | None = None,
     previous_anchor_registry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _verify_private_inventory(
         inventory,
         trusted_collector_public_keys=trusted_collector_public_keys,
         expected_inventory_sha256=expected_inventory_sha256,
+        source_snapshot=source_snapshot,
+        trusted_source_snapshot_public_keys=trusted_source_snapshot_public_keys,
+        expected_source_snapshot_sha256=source_snapshot_sha256,
+        expected_preregistration_sha256=expected_preregistration_sha256,
+        preregistration=preregistration,
+        trusted_preregistration_public_keys=trusted_preregistration_public_keys,
+        preregistration_registry_repository_root=(
+            preregistration_registry_repository_root
+        ),
+        registration_receipt=registration_receipt,
+        trusted_registration_receipt_public_keys=(
+            trusted_registration_receipt_public_keys
+        ),
+        expected_registration_receipt_sha256=(
+            expected_registration_receipt_sha256
+        ),
     )
     _validate_label_receipt(
         label_receipt,
@@ -1324,6 +2207,125 @@ def collect_inventory_from_session_manifest(
     )
 
 
+def collect_preregistered_inventory_from_session_manifest(
+    source_snapshot: dict[str, Any],
+    *,
+    preregistration: dict[str, Any],
+    trusted_preregistration_public_keys: set[str],
+    expected_preregistration_sha256: str,
+    trusted_source_snapshot_public_keys: set[str],
+    expected_source_snapshot_sha256: str,
+    collector_public_key: str,
+    preregistration_registry_repository_root: str,
+    registration_receipt: dict[str, Any],
+    trusted_registration_receipt_public_keys: set[str],
+    expected_registration_receipt_sha256: str,
+) -> dict[str, Any]:
+    """Collect a signed prospective first-N cohort from explicit receipts."""
+    validate_preregistered_provenance_chain(
+        preregistration=preregistration,
+        trusted_preregistration_public_keys=(
+            trusted_preregistration_public_keys
+        ),
+        expected_preregistration_sha256=expected_preregistration_sha256,
+        source_snapshot=source_snapshot,
+        trusted_source_snapshot_public_keys=(
+            trusted_source_snapshot_public_keys
+        ),
+        expected_source_snapshot_sha256=expected_source_snapshot_sha256,
+        preregistration_registry_repository_root=(
+            preregistration_registry_repository_root
+        ),
+        registration_receipt=registration_receipt,
+        trusted_registration_receipt_public_keys=(
+            trusted_registration_receipt_public_keys
+        ),
+        expected_registration_receipt_sha256=(
+            expected_registration_receipt_sha256
+        ),
+    )
+    if not _valid_public_key_text(collector_public_key):
+        raise ValueError("inventory collector public key is invalid")
+    if collector_public_key in {
+        preregistration["signoff"]["signer_public_key"],
+        preregistration["registration_authority_public_key"],
+        source_snapshot["signoff"]["signer_public_key"],
+    }:
+        raise ValueError("inventory collector must be independent")
+    sources = source_snapshot["sources"]
+
+    window = preregistration["observation_window"]
+    legacy_manifest = {
+        "schema_version": 1,
+        "observed_from": _parse_timestamp(
+            window["observed_from"]
+        ).date().isoformat(),
+        "observed_through": _parse_timestamp(
+            window["observed_through"]
+        ).date().isoformat(),
+        "provider_ledger_cutoff": preregistration["provider_ledger_cutoff"],
+        "sources": [{
+            field: source[field] for field in SESSION_SOURCE_FIELDS
+        } for source in sources],
+    }
+    inventory = collect_inventory_from_session_manifest(legacy_manifest)
+    work_class_by_session = {
+        source["session_id"]: source["work_class"] for source in sources
+    }
+    classifications = classify_preregistered_sessions(
+        preregistration,
+        sessions=[{
+            "session_id": record["session_id"],
+            "completed_at": record["completed_at"],
+            "work_class": work_class_by_session[record["session_id"]],
+        } for record in inventory["accepted_records"]],
+        trusted_preregistration_public_keys=(
+            trusted_preregistration_public_keys
+        ),
+        expected_preregistration_sha256=expected_preregistration_sha256,
+    )
+    disposition_by_session = {
+        item["session_id"]: item["disposition"] for item in classifications
+    }
+    accepted: list[dict[str, Any]] = []
+    rejected = deepcopy(inventory["rejected_records"])
+    for record in inventory["accepted_records"]:
+        disposition = disposition_by_session[record["session_id"]]
+        if disposition == "confirmatory_candidate":
+            accepted.append(record)
+            continue
+        rejected.append({
+            "source_record_id": record["source_record_id"],
+            "source_record_sha256": canonical_digest(record),
+            "reason": disposition,
+        })
+
+    accepted.sort(key=lambda item: item["source_record_id"])
+    rejected.sort(
+        key=lambda item: (
+            item["source_record_id"], item["source_record_sha256"]
+        )
+    )
+    reason_counts = dict(sorted(Counter(
+        record["reason"] for record in rejected
+    ).items()))
+    inventory["accepted_records"] = accepted
+    inventory["rejected_records"] = rejected
+    inventory["schema_version"] = 2
+    inventory["preregistration_sha256"] = expected_preregistration_sha256
+    inventory["source_snapshot_sha256"] = expected_source_snapshot_sha256
+    inventory["collector_public_key"] = collector_public_key
+    inventory["audit"] = {
+        "discovered_count": len(sources),
+        "accepted_count": len(accepted),
+        "rejected_count": len(rejected),
+        "rejected_reason_counts": reason_counts,
+    }
+    inventory["inventory_sha256"] = _inventory_digest(inventory)
+    _validate_inventory_envelope(inventory, expected_status="collected")
+    return inventory
+
+
 def session_has_explicit_completion_receipt(session: dict[str, Any]) -> bool:
     git = session.get("git") if isinstance(session, dict) else None
     return (
@@ -1373,16 +2375,137 @@ def _parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    preregister = subparsers.add_parser("prepare-preregistration")
+    preregister.add_argument("--batch-id", required=True)
+    preregister.add_argument("--collection-anchor-commit", required=True)
+    preregister.add_argument(
+        "--collection-anchor-repository-root", required=True
+    )
+    preregister.add_argument("--observed-from", required=True)
+    preregister.add_argument("--observed-through", required=True)
+    preregister.add_argument("--provider-ledger-cutoff", required=True)
+    preregister.add_argument("--pilot-session-id", action="append", required=True)
+    preregister.add_argument(
+        "--registration-authority-public-key", required=True
+    )
+    preregister.add_argument("--output", required=True)
+
+    seal_preregistration = subparsers.add_parser("seal-preregistration")
+    seal_preregistration.add_argument("preregistration")
+    seal_preregistration.add_argument("--private-key", required=True)
+    seal_preregistration.add_argument(
+        "--collection-anchor-repository-root", required=True
+    )
+    seal_preregistration.add_argument(
+        "--approved-preregistration-sha256", required=True
+    )
+    seal_preregistration.add_argument("--output", required=True)
+
+    prepare_registry_record = subparsers.add_parser(
+        "prepare-preregistration-registry-record"
+    )
+    prepare_registry_record.add_argument("preregistration")
+    prepare_registry_record.add_argument("--output", required=True)
+
+    prepare_source_snapshot = subparsers.add_parser(
+        "prepare-source-snapshot"
+    )
+    prepare_source_snapshot.add_argument("sources")
+    prepare_source_snapshot.add_argument("preregistration")
+    prepare_source_snapshot.add_argument("registration_receipt")
+    prepare_source_snapshot.add_argument(
+        "--trusted-preregistration-public-key",
+        action="append",
+        required=True,
+    )
+    prepare_source_snapshot.add_argument(
+        "--expected-preregistration-sha256", required=True
+    )
+    prepare_source_snapshot.add_argument(
+        "--preregistration-registry-repository-root", required=True
+    )
+    prepare_source_snapshot.add_argument(
+        "--preregistration-registry-commit", required=True
+    )
+    prepare_source_snapshot.add_argument(
+        "--preregistration-registry-path", required=True
+    )
+    prepare_source_snapshot.add_argument(
+        "--trusted-registration-receipt-public-key",
+        action="append",
+        required=True,
+    )
+    prepare_source_snapshot.add_argument(
+        "--expected-registration-receipt-sha256", required=True
+    )
+    prepare_source_snapshot.add_argument("--output", required=True)
+
+    seal_source_snapshot = subparsers.add_parser("seal-source-snapshot")
+    seal_source_snapshot.add_argument("source_snapshot")
+    seal_source_snapshot.add_argument("--private-key", required=True)
+    seal_source_snapshot.add_argument(
+        "--approved-source-snapshot-sha256", required=True
+    )
+    seal_source_snapshot.add_argument("--output", required=True)
+
     collect = subparsers.add_parser("collect-sessions")
     collect.add_argument("manifest")
     collect.add_argument("--private-key", required=True)
     collect.add_argument("--output", required=True)
+
+    collect_preregistered = subparsers.add_parser(
+        "collect-preregistered-sessions"
+    )
+    collect_preregistered.add_argument("manifest")
+    collect_preregistered.add_argument("preregistration")
+    collect_preregistered.add_argument("registration_receipt")
+    collect_preregistered.add_argument(
+        "--trusted-preregistration-public-key",
+        action="append",
+        required=True,
+    )
+    collect_preregistered.add_argument(
+        "--expected-preregistration-sha256", required=True
+    )
+    collect_preregistered.add_argument(
+        "--trusted-source-snapshot-public-key",
+        action="append",
+        required=True,
+    )
+    collect_preregistered.add_argument(
+        "--expected-source-snapshot-sha256", required=True
+    )
+    collect_preregistered.add_argument(
+        "--preregistration-registry-repository-root", required=True
+    )
+    collect_preregistered.add_argument(
+        "--trusted-registration-receipt-public-key",
+        action="append",
+        required=True,
+    )
+    collect_preregistered.add_argument(
+        "--expected-registration-receipt-sha256", required=True
+    )
+    collect_preregistered.add_argument("--private-key", required=True)
+    collect_preregistered.add_argument("--output", required=True)
 
     labels = subparsers.add_parser("sign-labels")
     labels.add_argument("inventory")
     labels.add_argument("--private-key", required=True)
     labels.add_argument("--trusted-collector-public-key", action="append", required=True)
     labels.add_argument("--expected-inventory-sha256", required=True)
+    labels.add_argument("--source-snapshot")
+    labels.add_argument("--trusted-source-snapshot-public-key", action="append")
+    labels.add_argument("--expected-source-snapshot-sha256")
+    labels.add_argument("--expected-preregistration-sha256")
+    labels.add_argument("--preregistration")
+    labels.add_argument("--trusted-preregistration-public-key", action="append")
+    labels.add_argument("--preregistration-registry-repository-root")
+    labels.add_argument("--registration-receipt")
+    labels.add_argument(
+        "--trusted-registration-receipt-public-key", action="append"
+    )
+    labels.add_argument("--expected-registration-receipt-sha256")
     labels.add_argument("--output", required=True)
 
     prior = subparsers.add_parser("sign-prior-snapshot")
@@ -1401,6 +2524,17 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--trusted-label-public-key", action="append", required=True)
     prepare.add_argument("--trusted-collector-public-key", action="append", required=True)
     prepare.add_argument("--expected-inventory-sha256", required=True)
+    prepare.add_argument("--source-snapshot")
+    prepare.add_argument("--trusted-source-snapshot-public-key", action="append")
+    prepare.add_argument("--expected-preregistration-sha256")
+    prepare.add_argument("--preregistration")
+    prepare.add_argument("--trusted-preregistration-public-key", action="append")
+    prepare.add_argument("--preregistration-registry-repository-root")
+    prepare.add_argument("--registration-receipt")
+    prepare.add_argument(
+        "--trusted-registration-receipt-public-key", action="append"
+    )
+    prepare.add_argument("--expected-registration-receipt-sha256")
     prepare.add_argument("--trusted-prior-snapshot-public-key", action="append", required=True)
     prepare.add_argument("--expected-prior-snapshot-sha256", required=True)
     prepare.add_argument("--trusted-anchor-public-key", action="append", required=True)
@@ -1444,11 +2578,126 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.command == "collect-sessions":
+    if args.command == "prepare-preregistration":
+        result = prepare_collection_preregistration(
+            batch_id=args.batch_id,
+            collection_anchor_commit=args.collection_anchor_commit,
+            collection_anchor_repository_root=(
+                args.collection_anchor_repository_root
+            ),
+            observed_from=args.observed_from,
+            observed_through=args.observed_through,
+            provider_ledger_cutoff=args.provider_ledger_cutoff,
+            pilot_session_ids=args.pilot_session_id,
+            registration_authority_public_key=(
+                args.registration_authority_public_key
+            ),
+        )
+    elif args.command == "seal-preregistration":
+        result = seal_collection_preregistration(
+            _read_json(args.preregistration),
+            _read_private_key(args.private_key),
+            collection_anchor_repository_root=(
+                args.collection_anchor_repository_root
+            ),
+            expected_preregistration_sha256=(
+                args.approved_preregistration_sha256
+            ),
+        )
+    elif args.command == "prepare-preregistration-registry-record":
+        result = prepare_preregistration_registry_record(
+            _read_json(args.preregistration)
+        )
+    elif args.command == "prepare-source-snapshot":
+        source_document = _read_json(args.sources)
+        if (
+            not isinstance(source_document, dict)
+            or set(source_document) != {"schema_version", "sources"}
+            or source_document.get("schema_version") != 1
+        ):
+            raise ValueError("source ledger input is invalid")
+        result = prepare_preregistered_source_snapshot(
+            sources=source_document["sources"],
+            preregistration=_read_json(args.preregistration),
+            trusted_preregistration_public_keys=set(
+                args.trusted_preregistration_public_key
+            ),
+            expected_preregistration_sha256=(
+                args.expected_preregistration_sha256
+            ),
+            preregistration_registry_repository_root=(
+                args.preregistration_registry_repository_root
+            ),
+            preregistration_registry_commit=(
+                args.preregistration_registry_commit
+            ),
+            preregistration_registry_path=args.preregistration_registry_path,
+            registration_receipt=_read_json(args.registration_receipt),
+            trusted_registration_receipt_public_keys=set(
+                args.trusted_registration_receipt_public_key
+            ),
+            expected_registration_receipt_sha256=(
+                args.expected_registration_receipt_sha256
+            ),
+        )
+    elif args.command == "seal-source-snapshot":
+        result = seal_preregistered_source_snapshot(
+            _read_json(args.source_snapshot),
+            _read_private_key(args.private_key),
+            expected_source_snapshot_sha256=(
+                args.approved_source_snapshot_sha256
+            ),
+        )
+    elif args.command == "collect-sessions":
         draft = collect_inventory_from_session_manifest(_read_json(args.manifest))
         result = seal_private_inventory(
             draft,
             _read_private_key(args.private_key),
+            expected_inventory_sha256=draft["inventory_sha256"],
+        )
+    elif args.command == "collect-preregistered-sessions":
+        source_snapshot = _read_json(args.manifest)
+        collector_private_key = _read_private_key(args.private_key)
+        draft = collect_preregistered_inventory_from_session_manifest(
+            source_snapshot,
+            preregistration=_read_json(args.preregistration),
+            trusted_preregistration_public_keys=set(
+                args.trusted_preregistration_public_key
+            ),
+            expected_preregistration_sha256=(
+                args.expected_preregistration_sha256
+            ),
+            trusted_source_snapshot_public_keys=set(
+                args.trusted_source_snapshot_public_key
+            ),
+            expected_source_snapshot_sha256=(
+                args.expected_source_snapshot_sha256
+            ),
+            collector_public_key=public_key_text(collector_private_key),
+            preregistration_registry_repository_root=(
+                args.preregistration_registry_repository_root
+            ),
+            registration_receipt=_read_json(args.registration_receipt),
+            trusted_registration_receipt_public_keys=set(
+                args.trusted_registration_receipt_public_key
+            ),
+            expected_registration_receipt_sha256=(
+                args.expected_registration_receipt_sha256
+            ),
+        )
+        result = seal_preregistered_inventory(
+            draft,
+            collector_private_key,
+            source_snapshot=source_snapshot,
+            trusted_source_snapshot_public_keys=set(
+                args.trusted_source_snapshot_public_key
+            ),
+            expected_source_snapshot_sha256=(
+                args.expected_source_snapshot_sha256
+            ),
+            expected_preregistration_sha256=(
+                args.expected_preregistration_sha256
+            ),
             expected_inventory_sha256=draft["inventory_sha256"],
         )
     elif args.command == "sign-labels":
@@ -1457,6 +2706,32 @@ def main(argv: list[str] | None = None) -> int:
             _read_private_key(args.private_key),
             trusted_collector_public_keys=set(args.trusted_collector_public_key),
             expected_inventory_sha256=args.expected_inventory_sha256,
+            source_snapshot=_read_optional_json(args.source_snapshot),
+            trusted_source_snapshot_public_keys=set(
+                args.trusted_source_snapshot_public_key or []
+            ),
+            expected_source_snapshot_sha256=(
+                args.expected_source_snapshot_sha256
+            ),
+            expected_preregistration_sha256=(
+                args.expected_preregistration_sha256
+            ),
+            preregistration=_read_optional_json(args.preregistration),
+            trusted_preregistration_public_keys=set(
+                args.trusted_preregistration_public_key or []
+            ),
+            preregistration_registry_repository_root=(
+                args.preregistration_registry_repository_root
+            ),
+            registration_receipt=_read_optional_json(
+                args.registration_receipt
+            ),
+            trusted_registration_receipt_public_keys=set(
+                args.trusted_registration_receipt_public_key or []
+            ),
+            expected_registration_receipt_sha256=(
+                args.expected_registration_receipt_sha256
+            ),
         )
     elif args.command == "sign-prior-snapshot":
         prior_document = _read_json(args.prior_commits)
@@ -1491,6 +2766,29 @@ def main(argv: list[str] | None = None) -> int:
             ),
             batch_id=args.batch_id,
             source_snapshot_sha256=args.source_snapshot_sha256,
+            source_snapshot=_read_optional_json(args.source_snapshot),
+            trusted_source_snapshot_public_keys=set(
+                args.trusted_source_snapshot_public_key or []
+            ),
+            expected_preregistration_sha256=(
+                args.expected_preregistration_sha256
+            ),
+            preregistration=_read_optional_json(args.preregistration),
+            trusted_preregistration_public_keys=set(
+                args.trusted_preregistration_public_key or []
+            ),
+            preregistration_registry_repository_root=(
+                args.preregistration_registry_repository_root
+            ),
+            registration_receipt=_read_optional_json(
+                args.registration_receipt
+            ),
+            trusted_registration_receipt_public_keys=set(
+                args.trusted_registration_receipt_public_key or []
+            ),
+            expected_registration_receipt_sha256=(
+                args.expected_registration_receipt_sha256
+            ),
         )
     elif args.command == "seal-universe":
         result = seal_frozen_universe(
