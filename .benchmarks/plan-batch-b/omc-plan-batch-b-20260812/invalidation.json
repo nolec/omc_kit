@@ -1,0 +1,12 @@
+{
+  "batch_id": "omc-plan-batch-b-20260812",
+  "claim_eligible": false,
+  "invalidated_at": "2026-08-12T13:44:15+09:00",
+  "reason": "registration_authority_private_key_was_generated_and_used_in_the_same_local_operator_context",
+  "replacement_requirement": "start_a_new_batch_with_a_public_key_generated_and_operated_by_an_external_timestamp_authority",
+  "schema_version": 1,
+  "superseded_receipt_commit": "e84fda0e1df0e2d81f6f1ca086ec7ccffd66acaa",
+  "superseded_receipt_file_sha256": "ef0a9df95026105c752c9197204cde2767d449b2620b2bb9ed0dd079a8b591dc",
+  "superseded_receipt_sha256": "870e6e9960bbff22d63664e6eaa1433e05aac460a8ab557d3023ebe6590e4714",
+  "status": "invalid_local_authority"
+}
