@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import stat
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from omc_hook_contract import (
@@ -24,12 +26,178 @@ AGENTS_OMC_MARKER = "## OMC — Orchestrated Multi-agent Craft"
 AGENTS_ETHOS_MARKER = "## Engineering Ethos"
 AGENTS_LEGACY_END_MARKER = '> "PROCEED 판정입니다. 바로 플랜을 작성하겠습니다. [plan 내용 시작]..."'
 INSTALL_SOURCE_METADATA = Path(".omc") / "install-source.json"
+INSTALL_RECEIPT = Path(".omc") / "install-receipt.json"
+_INSTALL_POLICY_ROOT: Path | None = None
+_INSTALL_POLICY_MANIFEST: dict[str, dict[str, str]] = {}
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _source_sha256(source_kit: Path) -> str:
+    digest = hashlib.sha256()
+    excluded = {".git", ".omc", ".benchmarks", ".codex-artifacts", ".private-artifacts"}
+    for path in sorted(
+        p for p in source_kit.rglob("*") if p.is_file() and not any(part in excluded for part in p.parts)
+    ):
+        digest.update(str(path.relative_to(source_kit)).encode("utf-8"))
+        digest.update(_sha256_file(path).encode("ascii"))
+    return digest.hexdigest()
+
+
+def _should_update_install_entry(relative_path: str, *, force: bool) -> bool:
+    if not force:
+        return True
+    path = Path(relative_path)
+    if path.parts and path.parts[0] in {
+        "scripts",
+        "prompts",
+        ".agent",
+        ".agent-hooks",
+        ".agents",
+        ".claude",
+        ".gemini",
+        ".codex",
+        ".cursor",
+    }:
+        return True
+    return path.as_posix().startswith("docs/omc_") or path.as_posix() in {
+        "docs/quickstart_kr.md",
+        "docs/kit_map.md",
+        "docs/next_project_pack.md",
+        "docs/agent_behavior.md",
+        "docs/verification_checklist.md",
+    }
+
+
+def _receipt_entry(*, policy: str, source_sha256: str, target_sha256: str) -> dict[str, str]:
+    if policy == "preserve":
+        status = "preserved"
+    elif not source_sha256 or source_sha256 != target_sha256:
+        status = "blocked"
+    else:
+        status = "updated"
+    return {
+        "policy": policy,
+        "status": status,
+        "verification_mode": {
+            "preserve": "preserved_existing",
+            "managed_generated": "generated_output",
+        }.get(policy, "source_exact"),
+        "source_sha256": source_sha256,
+        "target_sha256": target_sha256,
+    }
+
+
+def _build_install_manifest(source_kit: Path, target: Path) -> dict[str, dict[str, str]]:
+    """Return a deterministic preview of managed OMC scripts and preserved target files."""
+    manifest: dict[str, dict[str, str]] = {}
+    for source in sorted((source_kit / "scripts").glob("*.py")):
+        if not (source.name.startswith("omc_") or source.name in _SCRIPTS_EXTRA):
+            continue
+        rel = f"scripts/{source.name}"
+        target_file = target / rel
+        manifest[rel] = {
+            "policy": "managed_exact",
+            "source_sha256": _sha256_file(source),
+            "target_sha256": _sha256_file(target_file) if target_file.is_file() else "",
+        }
+    for target_file in sorted(target.rglob("*")):
+        if not target_file.is_file() or ".git" in target_file.parts or ".omc" in target_file.parts:
+            continue
+        rel = str(target_file.relative_to(target))
+        policy = "managed_exact" if _should_update_install_entry(rel, force=True) else "preserve"
+        manifest.setdefault(rel, {"policy": policy, "source_sha256": "", "target_sha256": _sha256_file(target_file)})
+    return manifest
+
+
+def _write_install_receipt(
+    target: Path,
+    *,
+    source_sha256: str,
+    entries: dict[str, dict[str, str]],
+) -> dict[str, object]:
+    receipt: dict[str, object] = {
+        "schema_version": 1,
+        "source_sha256": source_sha256,
+        "target": str(target.resolve()),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "entries": entries,
+    }
+    path = target / INSTALL_RECEIPT
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return receipt
+
+
+def _finalize_install_manifest(target: Path, manifest: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    """Mark generated managed outputs with their final content hash."""
+    for rel, entry in manifest.items():
+        target_file = target / rel
+        if (
+            entry.get("policy") == "managed_exact"
+            and entry.get("registered_generated")
+            and target_file.is_file()
+        ):
+            digest = _sha256_file(target_file)
+            entry["policy"] = "managed_generated"
+            entry["source_sha256"] = digest
+            entry["target_sha256"] = digest
+    return manifest
+
+
+def _register_generated_output(path: Path) -> None:
+    if _INSTALL_POLICY_ROOT is None:
+        return
+    try:
+        rel = str(path.resolve().relative_to(_INSTALL_POLICY_ROOT.resolve()))
+    except ValueError:
+        return
+    entry = _INSTALL_POLICY_MANIFEST.setdefault(
+        rel,
+        {"policy": "managed_exact", "source_sha256": "", "target_sha256": ""},
+    )
+    entry["registered_generated"] = True
+
+
+def _reset_install_policy_context() -> None:
+    global _INSTALL_POLICY_ROOT, _INSTALL_POLICY_MANIFEST
+    _INSTALL_POLICY_ROOT = None
+    _INSTALL_POLICY_MANIFEST = {}
 
 
 def _copy(src: Path, dst: Path, *, force: bool) -> None:
     if not src.exists():
         raise FileNotFoundError(src)
+    rel = ""
+    entry = None
+    if _INSTALL_POLICY_ROOT is not None:
+        try:
+            rel = str(dst.resolve().relative_to(_INSTALL_POLICY_ROOT.resolve()))
+        except ValueError:
+            rel = ""
+        entry = _INSTALL_POLICY_MANIFEST.get(rel)
+        if entry and entry.get("policy") == "preserve":
+            if force:
+                return
+        elif rel:
+            _INSTALL_POLICY_MANIFEST[rel] = {
+                "policy": "managed_exact",
+                "source_sha256": _sha256_file(src),
+                "target_sha256": _sha256_file(dst) if dst.is_file() else "",
+            }
     if dst.exists() and not force:
+        if rel and entry is None:
+            entry = _INSTALL_POLICY_MANIFEST[rel]
+        if entry is not None:
+            entry["policy"] = "preserve"
+            entry["source_sha256"] = ""
+            entry["target_sha256"] = _sha256_file(dst)
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
@@ -71,10 +239,16 @@ def _remove_legacy_overlay(dst: Path, marker: str) -> None:
 
 
 def _write(dst: Path, content: str, *, force: bool) -> None:
+    _write_generated_file(dst, content, force=force)
+
+
+def _write_generated_file(dst: Path, content: str, *, force: bool) -> None:
+    """Write a generated target and register it for receipt finalization."""
     if dst.exists() and not force:
         return
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(content.rstrip() + "\n", encoding="utf-8")
+    _register_generated_output(dst)
 
 
 def _extract_agents_omc_block(template_text: str) -> str:
@@ -128,7 +302,7 @@ def _merge_agents_template(dst: Path, omc_block: str) -> None:
         else:
             merged = current.rstrip() + "\n\n" + omc_block
 
-    dst.write_text(merged.rstrip() + "\n", encoding="utf-8")
+    _write_generated_file(dst, merged, force=True)
 
 
 _SCRIPTS_EXTRA = {
@@ -209,12 +383,16 @@ def _install_claude_settings(settings_path: Path, *, force: bool) -> None:
             hooks["SessionEnd"] = omc_hooks["hooks"]["SessionEnd"]
         if "UserPromptSubmit" not in hooks:
             hooks["UserPromptSubmit"] = omc_hooks["hooks"]["UserPromptSubmit"]
-        settings_path.write_text(
-            json.dumps(existing, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        _write_generated_file(
+            settings_path,
+            json.dumps(existing, ensure_ascii=False, indent=2),
+            force=True,
         )
     else:
-        settings_path.write_text(
-            json.dumps(omc_hooks, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        _write_generated_file(
+            settings_path,
+            json.dumps(omc_hooks, ensure_ascii=False, indent=2),
+            force=True,
         )
 
 
@@ -295,12 +473,16 @@ def _install_gemini_settings(settings_path: Path, *, force: bool) -> None:
             hooks["SessionEnd"] = omc_hooks["hooks"]["SessionEnd"]
         if "BeforeAgent" not in hooks:
             hooks["BeforeAgent"] = omc_hooks["hooks"]["BeforeAgent"]
-        settings_path.write_text(
-            json.dumps(existing, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        _write_generated_file(
+            settings_path,
+            json.dumps(existing, ensure_ascii=False, indent=2),
+            force=True,
         )
     else:
-        settings_path.write_text(
-            json.dumps(omc_hooks, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        _write_generated_file(
+            settings_path,
+            json.dumps(omc_hooks, ensure_ascii=False, indent=2),
+            force=True,
         )
 
 
@@ -372,6 +554,7 @@ def _write_install_source_metadata(target: Path, source_kit: Path) -> None:
         "source_kind": "external",
         "source_path": str(source_kit.resolve()),
         "installer_version": "v1",
+        "source_sha256": _source_sha256(source_kit),
     }
     metadata_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -536,7 +719,7 @@ def _check_force_regression(kit: Path, tgt: Path) -> bool:
     return ans in ("y", "yes")
 
 
-def main() -> int:
+def _main() -> int:
     ap = argparse.ArgumentParser(description="Install OMC kit into a target repository.")
     ap.add_argument("--target", type=Path, required=True, help="Target repository root.")
     ap.add_argument("--force", action="store_true", help="Overwrite existing files.")
@@ -553,6 +736,10 @@ def main() -> int:
     migrate_shared_tasks = bool(args.migrate_shared_tasks)
     source_kit = _resolve_source_kit(kit, tgt)
     templates = _templates_root(source_kit)
+    global _INSTALL_POLICY_ROOT, _INSTALL_POLICY_MANIFEST
+    install_manifest = _build_install_manifest(source_kit, tgt)
+    _INSTALL_POLICY_ROOT = tgt
+    _INSTALL_POLICY_MANIFEST = install_manifest
 
     if force and not _check_force_regression(source_kit, tgt):
         print("[install] 중단됨")
@@ -1003,6 +1190,22 @@ python3 scripts/omc_tdd_check.py --staged
     )
     _install_shared_lessons(source_kit, tgt)
 
+    receipt_manifest = _finalize_install_manifest(tgt, _INSTALL_POLICY_MANIFEST)
+    receipt_entries = {
+        rel: _receipt_entry(
+            policy=entry["policy"],
+            source_sha256=entry["source_sha256"],
+            target_sha256=_sha256_file(tgt / rel) if (tgt / rel).is_file() else "",
+        )
+        for rel, entry in receipt_manifest.items()
+    }
+    _write_install_receipt(
+        tgt,
+        source_sha256=_source_sha256(source_kit),
+        entries=receipt_entries,
+    )
+    _reset_install_policy_context()
+
     return 0
 
 
@@ -1243,6 +1446,12 @@ def _install_shared_tasks(
             f"[shared_tasks] {copied}개 복사, {skipped}개 건너뜀"
             f" → {tasks_dir.relative_to(tgt)}"
         )
+
+def main() -> int:
+    try:
+        return _main()
+    finally:
+        _reset_install_policy_context()
 
 
 if __name__ == "__main__":

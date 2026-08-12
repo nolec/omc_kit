@@ -52,6 +52,253 @@ class TestCopy(unittest.TestCase):
                 _install._copy(src, dst, force=False)
 
 
+class TestInstallManifest(unittest.TestCase):
+    def test_source_hash_ignores_runtime_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            (source / "scripts").mkdir(parents=True)
+            (source / "scripts" / "omc.py").write_text("source\n", encoding="utf-8")
+            first = _install._source_sha256(source)
+            (source / ".omc").mkdir()
+            (source / ".omc" / "state.json").write_text("runtime-1\n", encoding="utf-8")
+            second = _install._source_sha256(source)
+            (source / ".omc" / "state.json").write_text("runtime-2\n", encoding="utf-8")
+            third = _install._source_sha256(source)
+
+            self.assertEqual(first, second)
+            self.assertEqual(second, third)
+
+    def test_manifest_policy_controls_force_update_scope(self):
+        self.assertTrue(_install._should_update_install_entry("scripts/omc.py", force=True))
+        self.assertTrue(_install._should_update_install_entry("docs/omc_workflow.md", force=True))
+        self.assertTrue(_install._should_update_install_entry("docs/quickstart_kr.md", force=True))
+        self.assertTrue(_install._should_update_install_entry(".agent-hooks/omc.sh", force=True))
+        self.assertTrue(_install._should_update_install_entry(".agent/skills/omc-task/SKILL.md", force=True))
+        self.assertFalse(_install._should_update_install_entry("src/app.py", force=True))
+
+    def test_manifest_classifies_managed_and_preserved_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            target = root / "target"
+            (source / "scripts").mkdir(parents=True)
+            (target / "scripts").mkdir(parents=True)
+            (source / "scripts" / "omc.py").write_text("new\n", encoding="utf-8")
+            (target / "scripts" / "omc.py").write_text("old\n", encoding="utf-8")
+            (target / "src").mkdir()
+            (target / "src" / "app.py").write_text("user\n", encoding="utf-8")
+
+            manifest = _install._build_install_manifest(source, target)
+
+            self.assertEqual(manifest["scripts/omc.py"]["policy"], "managed_exact")
+            self.assertEqual(manifest["src/app.py"]["policy"], "preserve")
+            self.assertNotEqual(manifest["scripts/omc.py"]["source_sha256"], "")
+
+    def test_manifest_classifies_all_omc_deployment_roots_as_managed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            target = root / "target"
+            (source / "scripts").mkdir(parents=True)
+            (target / "docs").mkdir(parents=True)
+            (source / "scripts" / "omc.py").write_text("source\n", encoding="utf-8")
+            (target / "docs" / "omc_workflow.md").write_text("custom\n", encoding="utf-8")
+
+            manifest = _install._build_install_manifest(source, target)
+
+            self.assertEqual(manifest["docs/omc_workflow.md"]["policy"], "managed_exact")
+
+    def test_copy_respects_manifest_preserve_policy_even_with_force(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "source.txt"
+            dst = root / "src" / "app.py"
+            src.write_text("omc\n", encoding="utf-8")
+            dst.parent.mkdir(parents=True)
+            dst.write_text("user\n", encoding="utf-8")
+            previous_root = _install._INSTALL_POLICY_ROOT
+            previous_manifest = _install._INSTALL_POLICY_MANIFEST
+            try:
+                _install._INSTALL_POLICY_ROOT = root
+                _install._INSTALL_POLICY_MANIFEST = {
+                    "src/app.py": {"policy": "preserve"},
+                }
+                _install._copy(src, dst, force=True)
+            finally:
+                _install._INSTALL_POLICY_ROOT = previous_root
+                _install._INSTALL_POLICY_MANIFEST = previous_manifest
+
+            self.assertEqual(dst.read_text(encoding="utf-8"), "user\n")
+
+    def test_copy_registers_managed_source_hash_for_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "templates" / "omc.md"
+            dst = root / "docs" / "omc.md"
+            src.parent.mkdir(parents=True)
+            src.write_text("managed\n", encoding="utf-8")
+            _install._INSTALL_POLICY_ROOT = root
+            _install._INSTALL_POLICY_MANIFEST = {}
+            try:
+                _install._copy(src, dst, force=True)
+                entry = _install._INSTALL_POLICY_MANIFEST["docs/omc.md"]
+            finally:
+                _install._INSTALL_POLICY_ROOT = None
+                _install._INSTALL_POLICY_MANIFEST = {}
+
+            self.assertEqual(entry["policy"], "managed_exact")
+            self.assertEqual(entry["source_sha256"], _install._sha256_file(src))
+
+    def test_finalize_manifest_marks_generated_entries_with_target_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "generated.json"
+            target.write_text("generated\n", encoding="utf-8")
+            manifest = {
+                "generated.json": {
+                    "policy": "managed_exact",
+                    "source_sha256": "",
+                    "target_sha256": "",
+                    "registered_generated": True,
+                }
+            }
+
+            finalized = _install._finalize_install_manifest(root, manifest)
+
+            self.assertEqual(finalized["generated.json"]["policy"], "managed_generated")
+            self.assertEqual(finalized["generated.json"]["source_sha256"], _install._sha256_file(target))
+
+    def test_finalize_manifest_preserves_unregistered_exact_entry(self):
+        manifest = {
+            "docs/not-copied.md": {
+                "policy": "managed_exact",
+                "source_sha256": "",
+                "target_sha256": "",
+            }
+        }
+
+        finalized = _install._finalize_install_manifest(Path("/tmp"), manifest)
+
+        self.assertEqual(finalized["docs/not-copied.md"]["policy"], "managed_exact")
+
+    def test_receipt_uses_install_manifest_entries_not_rebuilt_target_scan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.md"
+            target = root / "docs" / "omc.md"
+            source.write_text("source\n", encoding="utf-8")
+            target.parent.mkdir(parents=True)
+            target.write_text("source\n", encoding="utf-8")
+            manifest = {
+                "docs/omc.md": {
+                    "policy": "managed_exact",
+                    "source_sha256": _install._sha256_file(source),
+                    "target_sha256": _install._sha256_file(target),
+                }
+            }
+
+            finalized = _install._finalize_install_manifest(root, manifest)
+
+            self.assertEqual(finalized["docs/omc.md"]["policy"], "managed_exact")
+            self.assertNotEqual(finalized["docs/omc.md"]["source_sha256"], "")
+
+    def test_receipt_distinguishes_generated_verification_mode(self):
+        generated = _install._receipt_entry(
+            policy="managed_generated",
+            source_sha256="same",
+            target_sha256="same",
+        )
+        exact = _install._receipt_entry(
+            policy="managed_exact",
+            source_sha256="same",
+            target_sha256="same",
+        )
+
+        self.assertEqual(generated["verification_mode"], "generated_output")
+        self.assertEqual(exact["verification_mode"], "source_exact")
+
+    def test_reset_install_policy_context_clears_global_state(self):
+        _install._INSTALL_POLICY_ROOT = Path("/tmp/omc-target")
+        _install._INSTALL_POLICY_MANIFEST = {"scripts/omc.py": {"policy": "managed_exact"}}
+
+        _install._reset_install_policy_context()
+
+        self.assertIsNone(_install._INSTALL_POLICY_ROOT)
+        self.assertEqual(_install._INSTALL_POLICY_MANIFEST, {})
+
+    def test_non_force_existing_managed_file_is_preserved_in_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "source.txt"
+            dst = root / "scripts" / "omc.py"
+            src.write_text("new\n", encoding="utf-8")
+            dst.parent.mkdir(parents=True)
+            dst.write_text("old\n", encoding="utf-8")
+            _install._INSTALL_POLICY_ROOT = root
+            _install._INSTALL_POLICY_MANIFEST = {}
+            try:
+                _install._copy(src, dst, force=False)
+                entry = _install._INSTALL_POLICY_MANIFEST["scripts/omc.py"]
+            finally:
+                _install._reset_install_policy_context()
+
+            self.assertEqual(entry["policy"], "preserve")
+            self.assertEqual(entry["target_sha256"], _install._sha256_file(dst))
+
+    def test_direct_generated_writer_registers_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dst = root / ".gemini" / "settings.json"
+            _install._INSTALL_POLICY_ROOT = root
+            _install._INSTALL_POLICY_MANIFEST = {}
+            try:
+                dst.parent.mkdir(parents=True)
+                dst.write_text("{}\n", encoding="utf-8")
+                _install._register_generated_output(dst)
+                entry = _install._INSTALL_POLICY_MANIFEST[".gemini/settings.json"]
+            finally:
+                _install._reset_install_policy_context()
+
+            self.assertTrue(entry["registered_generated"])
+
+    def test_generated_writer_helper_registers_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dst = root / ".claude" / "settings.json"
+            _install._INSTALL_POLICY_ROOT = root
+            _install._INSTALL_POLICY_MANIFEST = {}
+            try:
+                _install._write_generated_file(dst, "{}", force=True)
+                entry = _install._INSTALL_POLICY_MANIFEST[".claude/settings.json"]
+            finally:
+                _install._reset_install_policy_context()
+
+            self.assertEqual(dst.read_text(encoding="utf-8"), "{}\n")
+            self.assertTrue(entry["registered_generated"])
+
+    def test_install_receipt_records_source_and_target_hashes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt = _install._write_install_receipt(
+                root,
+                source_sha256="source-hash",
+                entries={"scripts/omc.py": {"status": "updated"}},
+            )
+
+            self.assertEqual(receipt["source_sha256"], "source-hash")
+            self.assertEqual(receipt["entries"]["scripts/omc.py"]["status"], "updated")
+            self.assertTrue((root / ".omc" / "install-receipt.json").exists())
+
+    def test_receipt_marks_hash_mismatch_as_blocked(self):
+        entry = _install._receipt_entry(
+            policy="managed_exact",
+            source_sha256="source",
+            target_sha256="different",
+        )
+
+        self.assertEqual(entry["status"], "blocked")
+
+
 class TestPostCommitHookInstall(unittest.TestCase):
     def test_existing_hook_is_untouched_without_force(self):
         with tempfile.TemporaryDirectory() as tmp:

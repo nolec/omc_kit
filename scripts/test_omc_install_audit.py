@@ -61,6 +61,41 @@ class TestInstallAudit(unittest.TestCase):
             self.assertTrue(result["has_install_source"])
             self.assertEqual(result["status"], "ok")
 
+    def test_audit_target_reports_install_receipt_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            metadata = target / ".omc"
+            metadata.mkdir(parents=True)
+            (metadata / "install-source.json").write_text(
+                json.dumps({"source_kind": "external", "source_path": "/kit", "source_sha256": "src"}),
+                encoding="utf-8",
+            )
+            (metadata / "install-receipt.json").write_text(
+                json.dumps({"source_sha256": "src", "entries": {
+                    "scripts/omc.py": {"status": "updated"},
+                    "AGENTS.md": {"status": "preserved"},
+                }}),
+                encoding="utf-8",
+            )
+
+            result = _audit.audit_target(target)
+
+            self.assertTrue(result["has_install_receipt"])
+            self.assertEqual(result["install_source_sha256"], "src")
+            self.assertEqual(result["install_entry_counts"], {"updated": 1, "preserved": 1})
+
+    def test_audit_target_reports_invalid_receipt_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            receipt_dir = target / ".omc"
+            receipt_dir.mkdir(parents=True)
+            (receipt_dir / "install-receipt.json").write_text("[]", encoding="utf-8")
+
+            result = _audit.audit_target(target)
+
+            self.assertFalse(result["has_install_receipt"])
+            self.assertEqual(result["receipt_error"], "invalid-json-shape")
+
     def test_cli_json_outputs_all_targets(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
