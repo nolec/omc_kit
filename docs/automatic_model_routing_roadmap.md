@@ -655,7 +655,7 @@ Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_pr
 - critique 반복이 해결되지 않은 상태에서 plan을 자동 재진입하면 같은 준비 왕복이 반복되므로, task retry 소진 후 자동 plan reroute를 중단하고 사용자 HOLD로 승격하도록 `_CRITIQUE_AUTO_RETRY_MAX=0`을 고정했다.
 - 단계별 `duration_ms`, `mode`, `skill_path`는 실행 결과의 `execution_metrics`로 보존한다. provider token metadata가 없는 실행은 token p50/p95로 해석하지 않으며, 충분한 신규 표본이 쌓인 뒤 별도로 산출한다.
 - `latency-summary --runs-dir` CLI가 완료된 실행만 `mode`별 nearest-rank p50/p95로 집계하고, legacy·실패·미완료·telemetry 누락 실행의 제외 건수를 함께 출력한다.
-- 현재 `.omc/runs` 412건 중 유효 telemetry 표본은 Lite 1건뿐이다. Lite p50/p95는 `106,462ms`이며 Full은 표본 부족으로 산출하지 않는다.
+- 현재 `.omc/runs` 413건 중 유효 telemetry 표본은 Lite 1건뿐이다. Lite p50/p95는 `106,462ms`이며 Full은 표본 부족으로 산출하지 않는다. 최신 커밋 `48a9782` 기준으로도 작업 디렉터리 diff는 없고, 이 결과는 구현 회귀가 아닌 표본 부족 상태다.
 - 따라서 latency baseline 측정 경로는 구현됐지만, 운영 결론과 전후 비교를 위해서는 Lite/Full 각각의 신규 표본 축적이 남아 있다.
 - Full baseline 재실행에서 확인된 explicit `reroute_target=plan_retry` 우회도 retry budget을 검사하도록 보강했다. critique budget이 소진되면 명시적 plan retry라도 `HOLD`로 끝나며, 같은 준비 왕복을 다시 만들지 않는다.
 - 이 보강은 테스트와 리뷰까지 완료했지만 아직 수정 커밋 기준의 Full 재실행 전이므로, 병목 해결 효과와 Full latency 개선은 `NOT_PROVEN`으로 유지한다.
@@ -681,7 +681,7 @@ decision engine 잔여 예외 감사는 완료됐고, 추가 코드 gap은 발�
    빠른 회귀 경로와 느린 health 경로를 분리했다. 다음 운영 검증 시 `python3 -m pytest scripts/test_omc_health.py -q -m slow`를 실행해 실제 OMC scripts 문법·테스트 수집 결과를 확인한다.
 
 4. Lite/Full latency 표본 축적 - 다음 작업
-   최신 Lite `--skip-pr` 완료 경로를 기준으로 Lite 4건과 Full 5건을 순차 실행하고, 각 결과의 단계별 시간·input/output/total token·retry를 수집한다. Lite/Full 각각 최소 5건이 쌓이기 전에는 p50/p95 기반 라우팅 경계를 확정하지 않는다.
+   최신 커밋 `48a9782`의 `--benchmark --skip-pr` 완료 경로를 기준으로 Lite 4건과 Full 5건을 순차 실행하고, 각 결과의 단계별 시간·input/output/total token·retry를 수집한다. 현재 유효 표본은 Lite `1/5`, Full `0/5`이므로 각각 최소 5건이 쌓이기 전에는 p50/p95 기반 라우팅 경계를 확정하지 않는다.
 
 최근 보강:
 - `Executor Recommendation Surface`의 추천-only acceptance line과 handoff acceptance binding을 문서/테스트로 고정해, executor surface가 어디까지 설명하고 어디서 reroute layer로 넘기는지 경계를 명시했다.
