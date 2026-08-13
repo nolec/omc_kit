@@ -3166,6 +3166,31 @@ def _step_payload(
     return payload
 
 
+def _finalize_skipped_pr(result: dict, finished_at: str, *, benchmark: bool = False) -> None:
+    """Mark the optional PR stage as skipped for local benchmark runs."""
+    result["pr_url"] = None
+    _apply_benchmark_provenance(result, benchmark)
+    result["steps"]["pr"] = _step_payload(
+        "skipped",
+        finished_at,
+        finished_at,
+        reason="skip_pr",
+    )
+    result["status"] = "completed"
+
+
+def _apply_benchmark_provenance(result: dict, benchmark: bool) -> None:
+    """Persist benchmark provenance without changing normal run schemas."""
+    if benchmark:
+        result["benchmark"] = True
+
+
+def _restore_benchmark_provenance(result: dict, previous_result: dict) -> None:
+    """Carry benchmark provenance across resume without widening normal runs."""
+    if previous_result.get("benchmark") is True:
+        result["benchmark"] = True
+
+
 def _build_pipeline_execution_metrics(result: dict) -> dict[str, object]:
     """파이프라인 모드와 실제 오케스트레이션 경로를 공통 schema로 정규화한다."""
     mode = str(result.get("mode") or "full").strip().lower()
@@ -3690,6 +3715,8 @@ def cmd_pipeline(
     mode_arg: str = "auto",
     allow_dirty: bool = False,
     resume: bool = False,
+    skip_pr: bool = False,
+    benchmark: bool = False,
 ) -> int:
     """plan→critique→task→review→PR 전체 자동화 파이프라인.
 
@@ -3723,6 +3750,7 @@ def cmd_pipeline(
         "approval_required": False,
         "manual_gate_reason": None,
     }
+    _apply_benchmark_provenance(result, benchmark)
 
     # ── resume 처리 ──────────────────────────────────────────────────────
     _resume_data: dict | None = None
@@ -3743,6 +3771,7 @@ def cmd_pipeline(
         result["approval_required"] = bool(_resume_data.get("approval_required", False))
         result["manual_gate_reason"] = _resume_data.get("manual_gate_reason")
         result["last_heartbeat_at"] = _resume_data.get("last_heartbeat_at") or started_at
+        _restore_benchmark_provenance(result, _resume_data)
         print(f"[PIPELINE] 🔄 resume: 이전 실행 결과 로드 완료")
 
     def save(status: str) -> None:
@@ -4651,6 +4680,13 @@ def cmd_pipeline(
         _save_pipeline_result(root, result)
 
     # ── PR 생성 ──────────────────────────────────────────────────────────
+    if skip_pr:
+        _finalize_skipped_pr(result, _now(), benchmark=benchmark)
+        save("completed")
+        print("[PIPELINE] ⏭️  PR 생성 건너뜀 (--skip-pr)")
+        print(f"\n[PIPELINE] ✅ 완료  결과: {_PIPELINE_RESULT_PATH}")
+        return 0
+
     pr_url = None
     if not dry_run:
         pr_started_at = _now()
@@ -4740,6 +4776,10 @@ def main() -> int:
                             help="uncommitted 변경이 있어도 강제 실행")
     p_pipeline.add_argument("--resume", action="store_true",
                             help="이전 실행 결과에서 실패 단계부터 재개")
+    p_pipeline.add_argument("--skip-pr", action="store_true",
+                            help="PR 생성만 건너뛰고 파이프라인 telemetry를 완료로 기록")
+    p_pipeline.add_argument("--benchmark", action="store_true",
+                            help="benchmark 전용 실행으로 표시")
 
 
     p_pipeline_status = sub.add_parser("pipeline-status", help="pipeline 실행 결과 상태 조회")
@@ -4784,6 +4824,9 @@ def main() -> int:
         return cmd_overview(root, limit=args.limit)
     if args.cmd == "pipeline":
         # pre-flight 검증
+        if args.skip_pr and not args.benchmark:
+            print("[PIPELINE] ❌ --skip-pr는 --benchmark과 함께 사용해야 합니다", file=sys.stderr)
+            return 1
         args.instruction = args.instruction.strip()
         if not args.instruction:
             print("[PIPELINE] ❌ --instruction이 비어있습니다.", file=sys.stderr)
@@ -4810,6 +4853,8 @@ def main() -> int:
             mode_arg=args.mode,
             allow_dirty=args.allow_dirty,
             resume=args.resume,
+            skip_pr=args.skip_pr,
+            benchmark=args.benchmark,
         )
     return 1
 

@@ -683,6 +683,7 @@ decision engine 잔여 예외 감사는 완료됐고, 추가 코드 gap은 발�
 - 추가로 fallback은 executor 대체안 제시, reroute는 다음 경로 결정 소유라는 책임 분리를 문서/테스트로 더 직접 고정했다.
 - 자동 추천·자동 라우팅 1차를 반영해, 범위가 고정된 단순 task는 `task + cost_saver`를 추천하고 복잡·고위험 task는 `plan + user_selection_needed=yes`로 멈추도록 공통 decision surface를 맞췄다. 파일 수정·커밋·배포 자동 실행은 계속 금지한다.
 - benchmark pair report에 `skill_count`, 모델 profile, 사용자 확인 횟수, input/output tokens, elapsed time의 선택적 before/after delta를 추가했고, 부분 토큰 메타데이터는 `total_tokens_delta`를 산출하지 않도록 검증한다.
+- latency baseline 측정을 위해 `pipeline --benchmark --skip-pr` 경로를 추가했다. PR 생성은 건너뛰되 PLAN/TASK/REVIEW telemetry는 완료로 기록하고, 결과에 `benchmark=true` provenance를 남긴다. 일반 pipeline에서 `--skip-pr` 단독 사용은 차단하며, resume 시에도 benchmark provenance를 보존한다. 이 경로는 실행 지연 p50/p95와 토큰 지표 측정 전용이며 실제 PR 완료를 의미하지 않는다.
 
 ## 다음 순환 목표
 

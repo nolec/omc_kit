@@ -44,6 +44,93 @@ def test_step_verdict_gate_rejects_review_revise_and_accepts_approve():
     assert omc_autopilot.step_verdict_allowed("VERDICT: BLOCK", ["APPROVE"]) is False
 
 
+def test_skip_pr_finalization_marks_pipeline_completed_without_pr():
+    result = {"status": "running", "pr_url": None, "steps": {}}
+
+    omc_autopilot._finalize_skipped_pr(result, "2026-08-13T02:00:00Z")
+
+    assert result["status"] == "completed"
+    assert result["pr_url"] is None
+    assert result["steps"]["pr"]["status"] == "skipped"
+    assert result["steps"]["pr"]["reason"] == "skip_pr"
+
+
+def test_pipeline_cli_forwards_skip_pr_to_pipeline(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_pipeline(root, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(omc_autopilot, "cmd_pipeline", fake_pipeline)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "omc_autopilot.py",
+            "--target",
+            str(tmp_path),
+            "pipeline",
+            "--instruction",
+            "benchmark sample",
+            "--skip-pr",
+            "--benchmark",
+        ],
+    )
+
+    assert omc_autopilot.main() == 0
+    assert captured["skip_pr"] is True
+    assert captured["benchmark"] is True
+
+
+def test_pipeline_cli_rejects_skip_pr_without_benchmark(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(omc_autopilot, "cmd_pipeline", lambda *args, **kwargs: pytest.fail("must not run"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "omc_autopilot.py",
+            "--target",
+            str(tmp_path),
+            "pipeline",
+            "--instruction",
+            "benchmark sample",
+            "--skip-pr",
+        ],
+    )
+
+    assert omc_autopilot.main() == 1
+    assert "--skip-pr는 --benchmark과 함께 사용해야 합니다" in capsys.readouterr().err
+
+
+def test_benchmark_result_marks_provenance():
+    result = {"status": "running", "pr_url": None, "steps": {}}
+
+    omc_autopilot._finalize_skipped_pr(result, "2026-08-13T02:00:00Z", benchmark=True)
+
+    assert result["benchmark"] is True
+
+
+def test_benchmark_provenance_is_omitted_for_normal_runs():
+    benchmark_result = {"status": "running"}
+    normal_result = {"status": "running"}
+
+    omc_autopilot._apply_benchmark_provenance(benchmark_result, True)
+    omc_autopilot._apply_benchmark_provenance(normal_result, False)
+
+    assert benchmark_result["benchmark"] is True
+    assert "benchmark" not in normal_result
+
+
+def test_benchmark_provenance_preserves_existing_resume_marker():
+    resumed_result = {"status": "running"}
+    previous_result = {"benchmark": True}
+
+    omc_autopilot._restore_benchmark_provenance(resumed_result, previous_result)
+
+    assert resumed_result["benchmark"] is True
+
+
 def test_observed_cost_pilot_fixture_has_five_real_run_cases():
     fixture = json.loads(
         (Path(__file__).resolve().parents[1] / "templates/shared_tasks/observed-cost-pilot.json").read_text(
