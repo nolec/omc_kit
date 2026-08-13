@@ -2978,6 +2978,12 @@ def _decision_policy_entry(
         }
 
     if normalized_failure_class == "quality_failure":
+        if "verdict_block" in normalized_reason_codes:
+            return {
+                "decision": "hold",
+                "decision_reason": "blocking quality failure requires explicit hold",
+                "reroute_target": None,
+            }
         if normalized_policy == "conservative":
             return {
                 "decision": "hold",
@@ -2986,8 +2992,8 @@ def _decision_policy_entry(
             }
         return {
             "decision": "reroute",
-            "decision_reason": "quality failure reroutes to planning",
-            "reroute_target": "plan_retry",
+            "decision_reason": "revisable quality failure reroutes to implementation",
+            "reroute_target": "task_retry",
         }
 
     if normalized_failure_class == "execution_failure":
@@ -3057,7 +3063,7 @@ def _recovery_target_from_decision(
     if decision_name == "hold":
         return None
     if decision_name == "reroute" and reroute_target == "task_retry":
-        return "task_retry"
+        return "task_retry" if task_auto_retry_count < _TASK_AUTO_RETRY_MAX else None
     if decision_name == "reroute" and reroute_target == "plan_retry":
         if critique_auto_retry_count < _CRITIQUE_AUTO_RETRY_MAX:
             return "plan_retry"
@@ -4433,8 +4439,39 @@ def cmd_pipeline(
                 )
                 break
 
+            # REVISE means the current diff must change. Re-reviewing the same
+            # diff cannot resolve it, so persist the finding and enter the
+            # shared task-retry recovery path immediately.
+            if rc == 0 and verdict == "REVISE":
+                print(f"[PIPELINE] 🔄 {loop_step.upper()} VERDICT: REVISE — TASK 교정으로 전환")
+                critique_issues = _extract_critique_issues(out)
+                if not critique_issues:
+                    critique_issues = f"{loop_step} requested revision without parseable issue details"
+                step_payload = _step_payload(
+                    "revision_requested",
+                    loop_started_at,
+                    loop_finished_at,
+                    verdict="REVISE",
+                    last_output=out[:2000],
+                    critique_issues=critique_issues,
+                    attempt=retry_count + 1,
+                    **_build_failure_metadata(
+                        step_name=loop_step,
+                        status="revision_requested",
+                        verdict="REVISE",
+                    ),
+                )
+                decision = _failure_step_decision(
+                    step_name=loop_step,
+                    step_payload=step_payload,
+                    retry_count=retry_count,
+                )
+                result["steps"][loop_step] = _persist_escalation_decision(step_payload, decision)
+                _save_pipeline_result(root, result)
+                same_verdict_streak = _PIPELINE_MAX_SAME_VERDICT
+
             # T2: BLOCK 즉시 탈출 — 재시도 없이 바로 에스컬레이션
-            if rc == 0 and verdict == "BLOCK":
+            elif rc == 0 and verdict == "BLOCK":
                 print(f"[PIPELINE] ❌ {loop_step.upper()} VERDICT: BLOCK — 즉시 탈출")
                 critique_issues = _extract_critique_issues(out)
                 step_payload = _step_payload(
@@ -4475,7 +4512,7 @@ def cmd_pipeline(
 
             if same_verdict_streak >= _PIPELINE_MAX_SAME_VERDICT:
                 # BLOCK 즉시 탈출이 이미 result["steps"]를 저장했으면 덮어쓰지 않음
-                if result["steps"].get(loop_step, {}).get("verdict") != "BLOCK":
+                if result["steps"].get(loop_step, {}).get("verdict") not in {"BLOCK", "REVISE"}:
                     print(f"[PIPELINE] ❌ {loop_step.upper()} 동일 verdict({verdict}) {same_verdict_streak + 1}회 연속 — 탈출")
                     critique_issues = _extract_critique_issues(out)
                     step_payload = _step_payload(

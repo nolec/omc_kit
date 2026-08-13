@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "source_commit": "48a9782",
+  "prompt": "Implement exactly one bounded maintenance change in scripts/omc_exec.py. When a configured Codex executable cannot be used, emit one clear remediation error containing the resolved value and OMC_CODEX_BIN or PATH guidance. Preserve all existing successful and soft-failure contracts: OMC_CODEX_BIN command names remain supported; main returns 127 and preserves the prompt; headless preflight returns a soft-failure tuple; absolute paths are validated independently from PATH command names. Modify only scripts/omc_exec.py and add scripts/test_omc_exec_resolution.py. Add focused regression coverage and run the complete related test command. Do not change docs, dependencies, unrelated code, or existing benchmark results.",
+  "related_test_command": "pytest -q scripts/test_omc_exec_resolution.py scripts/test_omc_exec_codex_headless.py scripts/test_omc_exec_interface.py",
+  "execution": {
+    "benchmark": true,
+    "skip_pr": true,
+    "requires_user_confirmation_between_steps": false
+  }
+}

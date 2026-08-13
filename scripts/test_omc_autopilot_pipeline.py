@@ -841,8 +841,8 @@ def test_critique_same_verdict_repeated_exits_failed_critique_loop(tmp_path: Pat
     assert "plan_retry" not in call_log
 
 
-def test_failed_critique_loop_quality_failure_uses_plan_retry_before_task_retry(tmp_path: Path, monkeypatch):
-    """동일 REVISE 반복 시 persisted reroute_target=plan_retry를 실제 분기에서 소비해야 한다."""
+def test_critique_revise_immediately_runs_task_retry_before_re_review(tmp_path: Path, monkeypatch):
+    """첫 REVISE는 동일 diff 재검토 없이 지적을 반영하는 task_retry로 이어져야 한다."""
     import importlib
     import omc_autopilot as mod
     importlib.reload(mod)
@@ -858,10 +858,10 @@ def test_failed_critique_loop_quality_failure_uses_plan_retry_before_task_retry(
             return 0, "VERDICT: PROCEED"
         if step_name == "critique":
             critique_calls["n"] += 1
-            if critique_calls["n"] <= 3:
-                return 0, "VERDICT: REVISE"
+            if critique_calls["n"] == 1:
+                return 0, "CRITICAL:\n- resolver contract regression\nVERDICT: REVISE"
             return 0, "VERDICT: PROCEED"
-        if step_name == "plan_retry":
+        if step_name == "task_retry":
             return 0, "VERDICT: PROCEED"
         if step_name == "review":
             return 0, "VERDICT: APPROVE"
@@ -890,12 +890,15 @@ def test_failed_critique_loop_quality_failure_uses_plan_retry_before_task_retry(
     )
 
     assert rc == 0
-    assert "plan_retry" in call_log, f"plan_retry가 호출되지 않음: {call_log}"
-    assert "task_retry" not in call_log, f"plan_retry보다 task_retry가 먼저 실행됨: {call_log}"
+    first_critique = call_log.index("critique")
+    task_retry = call_log.index("task_retry")
+    second_critique = call_log.index("critique", first_critique + 1)
+    assert first_critique < task_retry < second_critique, call_log
+    assert "plan_retry" not in call_log, call_log
 
 
-def test_failed_review_loop_quality_failure_uses_plan_retry_before_task_retry(tmp_path: Path, monkeypatch):
-    """review 동일 REVISE 반복도 critique와 같은 recovery 엔진을 타야 한다."""
+def test_review_revise_immediately_runs_task_retry_before_re_review(tmp_path: Path, monkeypatch):
+    """review 첫 REVISE도 동일 diff 재검토 없이 task_retry를 먼저 실행해야 한다."""
     import importlib
     import omc_autopilot as mod
     importlib.reload(mod)
@@ -915,7 +918,7 @@ def test_failed_review_loop_quality_failure_uses_plan_retry_before_task_retry(tm
             return 0, "VERDICT: PROCEED"
         if step_name == "review":
             review_calls["n"] += 1
-            if review_calls["n"] <= 3:
+            if review_calls["n"] == 1:
                 return 0, "VERDICT: REVISE"
             return 0, "VERDICT: APPROVE"
         if step_name == "plan_retry":
@@ -947,8 +950,11 @@ def test_failed_review_loop_quality_failure_uses_plan_retry_before_task_retry(tm
     )
 
     assert rc == 0
-    assert "plan_retry" in call_log, f"review plan_retry가 호출되지 않음: {call_log}"
-    assert "task_retry" not in call_log, f"review quality failure에서 task_retry가 먼저 실행됨: {call_log}"
+    first_review = call_log.index("review")
+    task_retry = call_log.index("task_retry")
+    second_review = call_log.index("review", first_review + 1)
+    assert first_review < task_retry < second_review, call_log
+    assert "plan_retry" not in call_log, call_log
 
 
 def test_build_benchmark_report_treats_failed_critique_loop_as_quality_failure():
@@ -1110,7 +1116,7 @@ def test_decision_policy_entry_exposes_default_execution_rule():
     }
 
 
-def test_decision_policy_entry_exposes_default_quality_rule():
+def test_decision_policy_entry_holds_blocking_quality_failure():
     import importlib
     import omc_autopilot as mod
     importlib.reload(mod)
@@ -1123,9 +1129,28 @@ def test_decision_policy_entry_exposes_default_quality_rule():
     )
 
     assert policy == {
+        "decision": "hold",
+        "decision_reason": "blocking quality failure requires explicit hold",
+        "reroute_target": None,
+    }
+
+
+def test_decision_policy_entry_reroutes_revisable_quality_failure_to_task():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    policy = mod._decision_policy_entry(
+        failure_class="quality_failure",
+        escalation_policy="default",
+        retry_count=0,
+        reason_codes=["verdict_revise"],
+    )
+
+    assert policy == {
         "decision": "reroute",
-        "decision_reason": "quality failure reroutes to planning",
-        "reroute_target": "plan_retry",
+        "decision_reason": "revisable quality failure reroutes to implementation",
+        "reroute_target": "task_retry",
     }
 
 
@@ -1190,7 +1215,7 @@ def test_recovery_target_from_decision_prefers_explicit_reroute_then_auto_retry(
             task_auto_retry_count=0,
             critique_auto_retry_count=0,
         )
-        == "plan_retry"
+        is None
     )
     assert (
         mod._recovery_target_from_decision(
@@ -1210,7 +1235,7 @@ def test_recovery_target_from_decision_prefers_explicit_reroute_then_auto_retry(
             task_auto_retry_count=2,
             critique_auto_retry_count=0,
         )
-        == "plan_retry"
+        is None
     )
     assert (
         mod._recovery_target_from_decision(
@@ -1230,7 +1255,7 @@ def test_recovery_target_from_decision_prefers_explicit_reroute_then_auto_retry(
             task_auto_retry_count=0,
             critique_auto_retry_count=0,
         )
-        == "plan_retry"
+        is None
     )
     assert (
         mod._recovery_target_from_decision(
@@ -1244,7 +1269,7 @@ def test_recovery_target_from_decision_prefers_explicit_reroute_then_auto_retry(
     )
 
 
-def test_decide_escalation_action_quality_failure_reroutes_plan():
+def test_decide_escalation_action_blocking_quality_failure_holds():
     import importlib
     import omc_autopilot as mod
     importlib.reload(mod)
@@ -1256,8 +1281,8 @@ def test_decide_escalation_action_quality_failure_reroutes_plan():
         escalation_policy="default",
     )
 
-    assert decision["decision"] == "reroute"
-    assert decision["reroute_target"] == "plan_retry"
+    assert decision["decision"] == "hold"
+    assert decision["reroute_target"] is None
 
 
 def test_decide_escalation_action_contract_failure_holds_even_when_aggressive():
@@ -1349,7 +1374,7 @@ def test_failure_step_decision_uses_step_metadata_policy(monkeypatch):
 
     assert decision == {
         "decision": "hold",
-        "decision_reason": "conservative policy holds on quality failure",
+        "decision_reason": "blocking quality failure requires explicit hold",
         "reroute_target": None,
     }
 
@@ -1767,7 +1792,8 @@ def test_task_stage_plan_retry_does_not_consume_critique_plan_retry_budget(tmp_p
     )
 
     assert rc == 0
-    assert call_log.count("plan_retry") == 2, f"critique plan_retry 예산이 task-stage plan_retry에 잠식됨: {call_log}"
+    assert call_log.count("plan_retry") == 1, call_log
+    assert call_log.count("task_retry") == 1, call_log
 
 
 def test_resume_skips_already_completed_task_stage_plan_retry(tmp_path: Path, monkeypatch):
@@ -2520,8 +2546,8 @@ def test_retry_exhausted_triggers_task_retry(tmp_path: Path, monkeypatch):
     )
 
 
-def test_retry_exhausted_records_non_empty_critique_issues(tmp_path: Path, monkeypatch):
-    """retry_exhausted가 hold로 소비되더라도 critique_issues는 항상 비어있지 않아야 한다."""
+def test_revision_requested_records_non_empty_critique_issues(tmp_path: Path, monkeypatch):
+    """REVISE가 교정 예산 부족으로 HOLD돼도 critique_issues를 보존해야 한다."""
     import importlib
     import omc_autopilot as mod
     importlib.reload(mod)
@@ -2564,15 +2590,15 @@ def test_retry_exhausted_records_non_empty_critique_issues(tmp_path: Path, monke
     result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
     assert result["status"] == "hold"
     critique = result["steps"]["critique"]
-    assert critique["status"] == "retry_exhausted"
+    assert critique["status"] == "revision_requested"
     assert bool((critique.get("critique_issues") or "").strip())
-    assert critique["decision"] == "hold"
-    assert critique["decision_reason"] == "contract failure requires explicit hold"
-    assert critique["reroute_target"] is None
+    assert critique["decision"] == "reroute"
+    assert critique["decision_reason"] == "revisable quality failure reroutes to implementation"
+    assert critique["reroute_target"] == "task_retry"
 
 
-def test_retry_exhausted_uses_step_escalation_policy(tmp_path: Path, monkeypatch):
-    """retry_exhausted decision이 hold로 소비되더라도 escalation_policy는 유지돼야 한다."""
+def test_revision_requested_uses_step_escalation_policy(tmp_path: Path, monkeypatch):
+    """REVISE의 즉시 교정 결정에도 step escalation_policy를 적용해야 한다."""
     import importlib
     import omc_autopilot as mod
     importlib.reload(mod)
@@ -2629,15 +2655,15 @@ def test_retry_exhausted_uses_step_escalation_policy(tmp_path: Path, monkeypatch
     result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
     assert result["status"] == "hold"
     critique = result["steps"]["critique"]
-    assert critique["status"] == "retry_exhausted"
+    assert critique["status"] == "revision_requested"
     assert critique["failure_class"] == "quality_failure"
     assert critique["decision"] == "hold"
     assert critique["decision_reason"] == "conservative policy holds on quality failure"
     assert critique["reroute_target"] is None
 
 
-def test_retry_exhausted_quality_failure_uses_plan_retry_before_task_retry(tmp_path: Path, monkeypatch):
-    """retry_exhausted + quality_failure(default)는 persisted reroute_target=plan_retry를 소비해야 한다."""
+def test_revise_holds_when_task_retry_budget_is_exhausted(tmp_path: Path, monkeypatch):
+    """REVISE 교정 예산이 0이면 task/plan을 우회하지 않고 HOLD해야 한다."""
     import importlib
     import omc_autopilot as mod
     importlib.reload(mod)
@@ -2651,9 +2677,7 @@ def test_retry_exhausted_quality_failure_uses_plan_retry_before_task_retry(tmp_p
             return 0, "VERDICT: PROCEED"
         if step_name == "critique":
             critique_calls["n"] += 1
-            if critique_calls["n"] <= 4:
-                return 0, "VERDICT: REVISE"
-            return 0, "VERDICT: PROCEED"
+            return 0, "VERDICT: REVISE"
         if step_name == "plan_retry":
             return 0, "VERDICT: PROCEED"
         if step_name == "review":
@@ -2685,9 +2709,10 @@ def test_retry_exhausted_quality_failure_uses_plan_retry_before_task_retry(tmp_p
         allow_dirty=True,
     )
 
-    assert rc == 0
-    assert "plan_retry" in call_log, f"plan_retry가 호출되지 않음: {call_log}"
-    assert "task_retry" not in call_log, f"task_retry가 잘못 호출됨: {call_log}"
+    assert rc == 2
+    assert call_log.count("critique") == 1, call_log
+    assert "plan_retry" not in call_log, call_log
+    assert "task_retry" not in call_log, call_log
 
 
 def test_task_retry_completed_persists_decision_metadata(tmp_path: Path, monkeypatch):
@@ -2752,12 +2777,11 @@ def test_plan_retry_completed_persists_decision_metadata(tmp_path: Path, monkeyp
     critique_calls = {"n": 0}
 
     def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
-        if step_name in ("plan", "task"):
+        if step_name == "plan":
             return 0, "VERDICT: PROCEED"
+        if step_name == "task":
+            return 0, "REASON_CODE: bad_entry_skill\nVERDICT: BLOCK"
         if step_name == "critique":
-            critique_calls["n"] += 1
-            if critique_calls["n"] <= 4:
-                return 0, "VERDICT: REVISE"
             return 0, "VERDICT: PROCEED"
         if step_name == "plan_retry":
             return 0, "VERDICT: PROCEED"
@@ -2766,9 +2790,6 @@ def test_plan_retry_completed_persists_decision_metadata(tmp_path: Path, monkeyp
         return 0, "VERDICT: PROCEED"
 
     monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
-    monkeypatch.setattr(mod, "_TASK_AUTO_RETRY_MAX", 0)
-    monkeypatch.setattr(mod, "_CRITIQUE_AUTO_RETRY_MAX", 1)
-    monkeypatch.setattr(mod, "_PIPELINE_MAX_SAME_VERDICT", 99)
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
 
     import subprocess as sp
@@ -2799,13 +2820,13 @@ def test_plan_retry_completed_persists_decision_metadata(tmp_path: Path, monkeyp
     assert plan_retry["reroute_target"] is None
 
 
-def test_critique_retry_prompt_includes_issues(tmp_path: Path, monkeypatch):
-    """critique retry 프롬프트에 이전 지적 내용이 포함돼야 한다."""
+def test_task_retry_prompt_includes_critique_issues(tmp_path: Path, monkeypatch):
+    """REVISE 후 task_retry 프롬프트에 critique 지적 내용이 포함돼야 한다."""
     import importlib
     import omc_autopilot as mod
     importlib.reload(mod)
 
-    captured = {"critique_retry_prompt": ""}
+    captured = {"task_retry_prompt": ""}
     call_count = {"n": 0}
     ISSUE_MARKER = "[critique-issue-marker]"
 
@@ -2819,8 +2840,9 @@ def test_critique_retry_prompt_includes_issues(tmp_path: Path, monkeypatch):
             if call_count["n"] == 1:
                 # 첫 critique: 이슈를 포함한 REVISE 반환
                 return 0, f"발견된 문제:\n{ISSUE_MARKER}\nVERDICT: REVISE"
-            # 두 번째 critique: 프롬프트 캡처
-            captured["critique_retry_prompt"] = prompt
+            return 0, "VERDICT: PROCEED"
+        if step_name == "task_retry":
+            captured["task_retry_prompt"] = prompt
             return 0, "VERDICT: PROCEED"
         return 0, "VERDICT: PROCEED"
 
@@ -2844,8 +2866,8 @@ def test_critique_retry_prompt_includes_issues(tmp_path: Path, monkeypatch):
         allow_dirty=True,
     )
 
-    assert ISSUE_MARKER in captured["critique_retry_prompt"], (
-        f"critique retry 프롬프트에 이전 지적 내용이 없음:\n{captured['critique_retry_prompt'][:300]}"
+    assert ISSUE_MARKER in captured["task_retry_prompt"], (
+        f"task_retry 프롬프트에 critique 지적 내용이 없음:\n{captured['task_retry_prompt'][:300]}"
     )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2926,8 +2948,8 @@ def test_critique_prompt_refreshed_after_task_retry(tmp_path: Path, monkeypatch)
 
 # ── 버그 A/B/C 회귀 방지 테스트 ────────────────────────────────────────────
 
-def test_plan_retry_resets_task_auto_retry_count(tmp_path: Path, monkeypatch):
-    """버그 C: plan_retry 완료 후 critique 루프 재진입 시 task_auto_retry_count가 0이어야 한다."""
+def test_task_stage_plan_retry_still_reaches_critique(tmp_path: Path, monkeypatch):
+    """task-stage orchestration failure의 plan_retry 경로는 품질 정책 변경 후에도 유지된다."""
     import importlib
     import omc_autopilot as mod
     importlib.reload(mod)
@@ -2942,15 +2964,10 @@ def test_plan_retry_resets_task_auto_retry_count(tmp_path: Path, monkeypatch):
         if step_name == "plan":
             return 0, "VERDICT: PROCEED"
         if step_name == "task":
-            return 0, "VERDICT: PROCEED"
+            return 0, "REASON_CODE: bad_entry_skill\nVERDICT: BLOCK"
         if step_name == "critique":
             critique_call["n"] += 1
-            if not plan_retry_done["v"]:
-                # 첫 번째 critique 루프: retry 소진 유도 (REVISE 반복)
-                return 0, "VERDICT: REVISE"
-            else:
-                # plan_retry 후 재진입: PROCEED 반환
-                return 0, "VERDICT: PROCEED"
+            return 0, "VERDICT: PROCEED"
         if step_name == "task_retry":
             return 0, "VERDICT: PROCEED"
         if step_name == "plan_retry":
@@ -2989,7 +3006,7 @@ def test_plan_retry_resets_task_auto_retry_count(tmp_path: Path, monkeypatch):
     )
 
     assert plan_retry_done["v"], "plan_retry가 실행되지 않음"
-    # plan_retry 후 critique가 PROCEED를 반환했으므로 결과가 hold가 아니어야 함
+    assert critique_call["n"] == 1
     final_status = result_data.get("status", "")
     assert final_status not in ("hold",), (
         f"plan_retry 후 task_auto_retry_count 미리셋으로 인해 루프가 조기 종료됨: status={final_status}"
