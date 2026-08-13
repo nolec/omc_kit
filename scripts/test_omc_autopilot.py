@@ -55,6 +55,30 @@ def test_skip_pr_finalization_marks_pipeline_completed_without_pr():
     assert result["steps"]["pr"]["reason"] == "skip_pr"
 
 
+def test_lite_benchmark_skip_pr_completes_without_pr_creation(tmp_path, monkeypatch):
+    result_path = tmp_path / ".omc" / "pipeline_run_result.json"
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(result_path))
+
+    rc = omc_autopilot.cmd_pipeline(
+        tmp_path,
+        "benchmark sample",
+        "chore/lite-test",
+        executor_pref="codex",
+        mode_arg="lite",
+        dry_run=True,
+        skip_pr=True,
+        benchmark=True,
+    )
+
+    assert rc == 0
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["status"] == "completed"
+    assert result["benchmark"] is True
+    assert result["pr_url"] is None
+    assert result["steps"]["pr"]["status"] == "skipped"
+    assert result["steps"]["pr"]["reason"] == "skip_pr"
+
+
 def test_pipeline_cli_forwards_skip_pr_to_pipeline(monkeypatch, tmp_path):
     captured = {}
 

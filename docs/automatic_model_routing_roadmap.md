@@ -678,12 +678,16 @@ decision engine 잔여 예외 감사는 완료됐고, 추가 코드 gap은 발�
 3. slow health 운영 검증 - 준비 완료
    빠른 회귀 경로와 느린 health 경로를 분리했다. 다음 운영 검증 시 `python3 -m pytest scripts/test_omc_health.py -q -m slow`를 실행해 실제 OMC scripts 문법·테스트 수집 결과를 확인한다.
 
+4. Lite/Full latency 표본 축적 - 다음 작업
+   최신 Lite `--skip-pr` 완료 경로를 기준으로 Lite 4건과 Full 5건을 순차 실행하고, 각 결과의 단계별 시간·input/output/total token·retry를 수집한다. Lite/Full 각각 최소 5건이 쌓이기 전에는 p50/p95 기반 라우팅 경계를 확정하지 않는다.
+
 최근 보강:
 - `Executor Recommendation Surface`의 추천-only acceptance line과 handoff acceptance binding을 문서/테스트로 고정해, executor surface가 어디까지 설명하고 어디서 reroute layer로 넘기는지 경계를 명시했다.
 - 추가로 fallback은 executor 대체안 제시, reroute는 다음 경로 결정 소유라는 책임 분리를 문서/테스트로 더 직접 고정했다.
 - 자동 추천·자동 라우팅 1차를 반영해, 범위가 고정된 단순 task는 `task + cost_saver`를 추천하고 복잡·고위험 task는 `plan + user_selection_needed=yes`로 멈추도록 공통 decision surface를 맞췄다. 파일 수정·커밋·배포 자동 실행은 계속 금지한다.
 - benchmark pair report에 `skill_count`, 모델 profile, 사용자 확인 횟수, input/output tokens, elapsed time의 선택적 before/after delta를 추가했고, 부분 토큰 메타데이터는 `total_tokens_delta`를 산출하지 않도록 검증한다.
 - latency baseline 측정을 위해 `pipeline --benchmark --skip-pr` 경로를 추가했다. PR 생성은 건너뛰되 PLAN/TASK/REVIEW telemetry는 완료로 기록하고, 결과에 `benchmark=true` provenance를 남긴다. 일반 pipeline에서 `--skip-pr` 단독 사용은 차단하며, resume 시에도 benchmark provenance를 보존한다. 이 경로는 실행 지연 p50/p95와 토큰 지표 측정 전용이며 실제 PR 완료를 의미하지 않는다.
+- Lite 경로도 `--benchmark --skip-pr`에서 push/PR 생성 없이 `completed`로 종료되도록 보강했고, `cmd_pipeline()` 기반 dry-run 통합 테스트로 `benchmark` provenance와 PR skip 상태를 검증한다. 관련 테스트는 `120 passed, 1 skipped`이며, 아직 운영 표본은 Lite 1건뿐이고 Full 표본은 없어 라우팅 기준은 확정하지 않는다.
 
 ## 다음 순환 목표
 

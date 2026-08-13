@@ -3966,6 +3966,13 @@ def cmd_pipeline(
             return 1
 
         # PR 생성 (LITE)
+        if skip_pr:
+            _finalize_skipped_pr(result, _now(), benchmark=benchmark)
+            save("completed")
+            print("[PIPELINE] ⏭️  PR 생성 건너뜀 (--skip-pr)")
+            print(f"\n[PIPELINE] ✅ LITE 완료  결과: {_PIPELINE_RESULT_PATH}")
+            return 0
+
         pr_url = None
         if not dry_run:
             git_push = subprocess.run(
