@@ -3047,8 +3047,12 @@ def _recovery_target_from_decision(
 ) -> str | None:
     if decision_name == "hold":
         return None
-    if decision_name == "reroute" and reroute_target in {"task_retry", "plan_retry"}:
-        return reroute_target
+    if decision_name == "reroute" and reroute_target == "task_retry":
+        return "task_retry"
+    if decision_name == "reroute" and reroute_target == "plan_retry":
+        if critique_auto_retry_count < _CRITIQUE_AUTO_RETRY_MAX:
+            return "plan_retry"
+        return None
     if task_auto_retry_count < _TASK_AUTO_RETRY_MAX:
         return "task_retry"
     if critique_auto_retry_count < _CRITIQUE_AUTO_RETRY_MAX:

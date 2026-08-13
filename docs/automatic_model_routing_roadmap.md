@@ -655,6 +655,8 @@ Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_pr
 - `latency-summary --runs-dir` CLI가 완료된 실행만 `mode`별 nearest-rank p50/p95로 집계하고, legacy·실패·미완료·telemetry 누락 실행의 제외 건수를 함께 출력한다.
 - 현재 `.omc/runs` 412건 중 유효 telemetry 표본은 Lite 1건뿐이다. Lite p50/p95는 `106,462ms`이며 Full은 표본 부족으로 산출하지 않는다.
 - 따라서 latency baseline 측정 경로는 구현됐지만, 운영 결론과 전후 비교를 위해서는 Lite/Full 각각의 신규 표본 축적이 남아 있다.
+- Full baseline 재실행에서 확인된 explicit `reroute_target=plan_retry` 우회도 retry budget을 검사하도록 보강했다. critique budget이 소진되면 명시적 plan retry라도 `HOLD`로 끝나며, 같은 준비 왕복을 다시 만들지 않는다.
+- 이 보강은 테스트와 리뷰까지 완료했지만 아직 수정 커밋 기준의 Full 재실행 전이므로, 병목 해결 효과와 Full latency 개선은 `NOT_PROVEN`으로 유지한다.
 
 ## 바로 다음 작업 계획
 

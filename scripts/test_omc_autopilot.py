@@ -2575,3 +2575,16 @@ def test_recovery_does_not_auto_reroute_to_plan_after_task_retries_exhausted():
     )
 
     assert target is None
+
+
+@pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
+def test_recovery_blocks_explicit_plan_retry_when_critique_budget_is_exhausted():
+    target = omc_autopilot._recovery_target_from_decision(
+        loop_step="critique",
+        decision_name="reroute",
+        reroute_target="plan_retry",
+        task_auto_retry_count=omc_autopilot._TASK_AUTO_RETRY_MAX,
+        critique_auto_retry_count=omc_autopilot._CRITIQUE_AUTO_RETRY_MAX,
+    )
+
+    assert target is None

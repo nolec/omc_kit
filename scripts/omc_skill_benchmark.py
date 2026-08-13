@@ -246,8 +246,10 @@ def _nearest_rank_percentile(values: list[int | float], percentile: float) -> fl
     return ordered[rank - 1]
 
 
-def build_latency_summary(runs_dir: Path) -> dict[str, object]:
+def build_latency_summary(runs_dir: Path, *, min_samples: int = 5) -> dict[str, object]:
     """Aggregate completed pipeline telemetry without treating legacy runs as samples."""
+    if min_samples < 1:
+        raise ValueError("min_samples must be at least 1")
     run_count = 0
     eligible_count = 0
     excluded_count = 0
@@ -279,6 +281,7 @@ def build_latency_summary(runs_dir: Path) -> dict[str, object]:
     by_mode = {
         mode: {
             "sample_count": len(values),
+            "readiness": "ready" if len(values) >= min_samples else "insufficient_samples",
             "duration_ms": {
                 "p50": _nearest_rank_percentile(values, 50),
                 "p95": _nearest_rank_percentile(values, 95),
@@ -290,6 +293,7 @@ def build_latency_summary(runs_dir: Path) -> dict[str, object]:
         "run_count": run_count,
         "eligible_run_count": eligible_count,
         "excluded_run_count": excluded_count,
+        "min_samples_per_mode": min_samples,
         "by_mode": by_mode,
     }
 
@@ -2254,6 +2258,9 @@ def _parser() -> argparse.ArgumentParser:
         help="Aggregate completed execution telemetry by pipeline mode.",
     )
     latency_summary.add_argument("--runs-dir", type=Path, required=True, help="Runs directory path")
+    latency_summary.add_argument(
+        "--min-samples", type=int, default=5, help="Minimum samples required per mode for readiness"
+    )
     return parser
 
 
@@ -2283,7 +2290,7 @@ def main() -> int:
         sys.stdout.write("\n")
         return 0
     if args.command == "latency-summary":
-        report = build_latency_summary(args.runs_dir)
+        report = build_latency_summary(args.runs_dir, min_samples=args.min_samples)
         json.dump(report, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
         return 0

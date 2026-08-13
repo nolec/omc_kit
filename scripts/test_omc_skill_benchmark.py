@@ -73,9 +73,15 @@ def test_latency_summary_uses_completed_telemetry_and_excludes_legacy_runs(tmp_p
     assert summary["excluded_run_count"] == 2
     assert summary["by_mode"]["lite"] == {
         "sample_count": 2,
+        "readiness": "insufficient_samples",
         "duration_ms": {"p50": 100.0, "p95": 200.0},
     }
-    assert summary["by_mode"]["full"]["duration_ms"] == {"p50": 500.0, "p95": 500.0}
+    assert summary["by_mode"]["full"] == {
+        "sample_count": 1,
+        "readiness": "insufficient_samples",
+        "duration_ms": {"p50": 500.0, "p95": 500.0},
+    }
+    assert summary["min_samples_per_mode"] == 5
 
 
 def test_nearest_rank_percentile_rejects_empty_or_invalid_inputs():
@@ -85,6 +91,8 @@ def test_nearest_rank_percentile_rejects_empty_or_invalid_inputs():
         mod._nearest_rank_percentile([], 50)
     with pytest.raises(ValueError, match="at most 100"):
         mod._nearest_rank_percentile([1], 101)
+    with pytest.raises(ValueError, match="at least 1"):
+        mod.build_latency_summary(Path("/does/not/exist"), min_samples=0)
 
 
 def test_evaluate_case_scores_core_metrics():
