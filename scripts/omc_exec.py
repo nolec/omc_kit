@@ -35,7 +35,21 @@ _CLAUDE_MODEL_MAP = {
     "mini_high": "sonnet",
     "full_default": "sonnet",
 }
-_CODEX_REASONING_EFFORT_SUPPORTED: bool | None = None
+_CODEX_REASONING_EFFORT_SUPPORTED: tuple[str, bool] | None = None
+
+
+def _resolve_codex_binary() -> str:
+    """Resolve Codex CLI without requiring an app-bundled macOS binary on PATH."""
+    explicit = os.environ.get("OMC_CODEX_BIN", "").strip()
+    if explicit:
+        return explicit
+    found = shutil.which("codex")
+    if found:
+        return found
+    app_binary = Path("/Applications/ChatGPT.app/Contents/Resources/codex")
+    if app_binary.is_file():
+        return str(app_binary)
+    return "codex"
 HEADLESS_NETWORK_UNAVAILABLE_EXIT_CODE = 75
 _HEADLESS_NETWORK_FAILURE_MARKERS = (
     "failed to lookup address information",
@@ -640,7 +654,7 @@ def _detect_executor(preferred: str) -> str:
 
 
 def _codex_interactive_command(project_root: Path, prompt_text: str) -> list[str]:
-    return ["codex", "-C", str(project_root), prompt_text]
+    return [_resolve_codex_binary(), "-C", str(project_root), prompt_text]
 
 
 def _codex_headless_command(
@@ -653,7 +667,7 @@ def _codex_headless_command(
 ) -> list[str]:
     profile = _resolve_codex_profile_settings(model_profile)
     cmd = [
-        "codex",
+        _resolve_codex_binary(),
         "exec",
         "--ephemeral",
         "--json",
@@ -726,14 +740,14 @@ def _manual_retry(executor: str, *, prompt_path: Path, project_root: Path) -> st
         return f'cd "{project_root}" && gemini --prompt-interactive "$(cat "{prompt_path}")"'
     if executor == "claude":
         return f'cd "{project_root}" && claude "$(cat "{prompt_path}")"'
-    return f'codex -C "{project_root}" "$(cat "{prompt_path}")"'
+    return f'"{_resolve_codex_binary()}" -C "{project_root}" "$(cat "{prompt_path}")"'
 
 
 def _check_codex_auth() -> bool:
     """Quickly check if codex is authenticated."""
     try:
         # Use a fast, read-only command to check auth
-        proc = subprocess.run(["codex", "features"], capture_output=True, text=True, timeout=5)
+        proc = subprocess.run([_resolve_codex_binary(), "features"], capture_output=True, text=True, timeout=5)
         if proc.returncode == 0:
             return True
         if "401 Unauthorized" in proc.stderr or "401 Unauthorized" in proc.stdout:
@@ -745,28 +759,32 @@ def _check_codex_auth() -> bool:
 
 def _codex_supports_reasoning_effort() -> bool:
     global _CODEX_REASONING_EFFORT_SUPPORTED
-    if _CODEX_REASONING_EFFORT_SUPPORTED is not None:
-        return _CODEX_REASONING_EFFORT_SUPPORTED
+    binary = _resolve_codex_binary()
+    if (
+        _CODEX_REASONING_EFFORT_SUPPORTED is not None
+        and _CODEX_REASONING_EFFORT_SUPPORTED[0] == binary
+    ):
+        return _CODEX_REASONING_EFFORT_SUPPORTED[1]
     try:
         proc = subprocess.run(
-            ["codex", "exec", "--help"],
+            [binary, "exec", "--help"],
             capture_output=True,
             text=True,
             timeout=5,
         )
         help_text = (proc.stdout or "") + (proc.stderr or "")
-        _CODEX_REASONING_EFFORT_SUPPORTED = "--reasoning-effort" in help_text
+        _CODEX_REASONING_EFFORT_SUPPORTED = (binary, "--reasoning-effort" in help_text)
     except Exception:
-        _CODEX_REASONING_EFFORT_SUPPORTED = False
-    return _CODEX_REASONING_EFFORT_SUPPORTED
+        _CODEX_REASONING_EFFORT_SUPPORTED = (binary, False)
+    return _CODEX_REASONING_EFFORT_SUPPORTED[1]
 
 
 def _codex_headless_preflight(*, timeout_sec: int = 10) -> tuple[bool, str]:
     """Verify the supported non-interactive Codex policy before a model call."""
-    if shutil.which("codex") is None:
+    if not Path(_resolve_codex_binary()).exists() and shutil.which(_resolve_codex_binary()) is None:
         return False, "binary_missing"
     command = [
-        "codex",
+        _resolve_codex_binary(),
         "exec",
         "--strict-config",
         "-c",
@@ -1246,7 +1264,7 @@ def main() -> int:
     model_profile = args.model_profile or resolved_routing["model_profile"]
 
     if executor == "codex":
-        if not shutil.which("codex"):
+        if not Path(_resolve_codex_binary()).exists() and shutil.which(_resolve_codex_binary()) is None:
             print(f"codex CLI not found. Prompt preserved at: {prompt_path}")
             return 127
         
@@ -1254,7 +1272,7 @@ def main() -> int:
         if not _check_codex_auth():
             print("\n[!] Codex authentication failed. Attempting login...")
             try:
-                subprocess.run(["codex", "login"], check=True)
+                subprocess.run([_resolve_codex_binary(), "login"], check=True)
                 print("[+] Login successful.\n")
             except subprocess.CalledProcessError:
                 print("[-] Login failed or cancelled.")

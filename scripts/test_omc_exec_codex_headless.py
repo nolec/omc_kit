@@ -45,6 +45,7 @@ def test_codex_headless_preflight_accepts_supported_noninteractive_policy(monkey
         return subprocess.CompletedProcess(cmd, 0, stdout="help", stderr="")
 
     monkeypatch.setattr(omc_exec.subprocess, "run", fake_run)
+    monkeypatch.setattr(omc_exec, "_resolve_codex_binary", lambda: "codex")
 
     ok, reason = omc_exec._codex_headless_preflight()
 
@@ -516,3 +517,39 @@ def test_main_honors_model_profile_cli_override(monkeypatch, tmp_path: Path) -> 
     assert rc == 0
     assert captured["model_profile"] == "full_default"
     assert captured["task_kind"] == "task"
+
+
+def test_codex_binary_prefers_explicit_environment_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("OMC_CODEX_BIN", str(tmp_path / "codex"))
+    assert omc_exec._resolve_codex_binary() == str(tmp_path / "codex")
+
+
+def test_codex_headless_preflight_uses_resolved_binary(monkeypatch, tmp_path: Path):
+    binary = tmp_path / "codex"
+    binary.touch()
+    calls = []
+
+    monkeypatch.setattr(omc_exec, "_resolve_codex_binary", lambda: str(binary))
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="help", stderr="")
+
+    monkeypatch.setattr(omc_exec.subprocess, "run", fake_run)
+
+    assert omc_exec._codex_headless_preflight() == (True, "ready")
+    assert calls[0][0] == str(binary)
+
+
+def test_reasoning_capability_cache_does_not_cross_binary_boundaries(monkeypatch):
+    monkeypatch.setattr(omc_exec, "_CODEX_REASONING_EFFORT_SUPPORTED", ("/tmp/old-codex", True))
+    monkeypatch.setattr(omc_exec, "_resolve_codex_binary", lambda: "/tmp/other-codex")
+    monkeypatch.setattr(
+        omc_exec.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 0, stdout="legacy help", stderr=""
+        ),
+    )
+
+    assert omc_exec._codex_supports_reasoning_effort() is False
