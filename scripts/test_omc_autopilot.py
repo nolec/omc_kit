@@ -79,6 +79,278 @@ def test_lite_benchmark_skip_pr_completes_without_pr_creation(tmp_path, monkeypa
     assert result["steps"]["pr"]["reason"] == "skip_pr"
 
 
+def _stub_pipeline_shell(monkeypatch):
+    monkeypatch.setattr(
+        omc_autopilot.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(
+        omc_autopilot,
+        "_checkout_new_branch",
+        lambda _root, branch, max_retry: branch,
+    )
+    monkeypatch.setattr(omc_autopilot, "_ensure_staged", lambda *_args, **_kwargs: None)
+
+
+def test_lite_benchmark_task_timeout_uses_bounded_budget_and_persists_timeout(tmp_path, monkeypatch):
+    result_path = tmp_path / ".omc" / "pipeline_run_result.json"
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(result_path))
+    _stub_pipeline_shell(monkeypatch)
+    calls = []
+
+    def fake_step(_root, step_name, _prompt, _executor, timeout_sec, **_kwargs):
+        calls.append((step_name, timeout_sec))
+        return 124, f"[ERROR] timeout ({timeout_sec}s)"
+
+    monkeypatch.setattr(omc_autopilot, "_run_pipeline_step", fake_step)
+
+    rc = omc_autopilot.cmd_pipeline(
+        tmp_path,
+        "bounded benchmark sample",
+        "chore/lite-timeout",
+        executor_pref="codex",
+        mode_arg="lite",
+        skip_pr=True,
+        benchmark=True,
+    )
+
+    assert rc == 1
+    assert calls == [("task", 300)]
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["status"] == "timeout"
+    assert result["steps"]["task"]["status"] == "timeout"
+    assert result["steps"]["task"]["reason_codes"] == ["timeout"]
+    assert result["steps"]["task"]["timeout_sec"] == 300
+    assert isinstance(result["steps"]["task"]["duration_ms"], int)
+
+
+def test_lite_benchmark_task_timeout_is_capped_by_pipeline_max_time(tmp_path, monkeypatch):
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+    monkeypatch.setattr(omc_autopilot.time, "time", lambda: 1000.0)
+    _stub_pipeline_shell(monkeypatch)
+    calls = []
+
+    def fake_step(_root, step_name, _prompt, _executor, timeout_sec, **_kwargs):
+        calls.append((step_name, timeout_sec))
+        return 124, "timeout"
+
+    monkeypatch.setattr(omc_autopilot, "_run_pipeline_step", fake_step)
+
+    rc = omc_autopilot.cmd_pipeline(
+        tmp_path,
+        "bounded benchmark sample",
+        "chore/lite-deadline",
+        executor_pref="codex",
+        max_time=30,
+        mode_arg="lite",
+        skip_pr=True,
+        benchmark=True,
+    )
+
+    assert rc == 1
+    assert calls == [("task", 30)]
+
+
+def test_lite_benchmark_does_not_round_subsecond_budget_above_deadline(tmp_path, monkeypatch):
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+    observed_times = iter([1000.0, 1000.99])
+    monkeypatch.setattr(omc_autopilot.time, "time", lambda: next(observed_times))
+    _stub_pipeline_shell(monkeypatch)
+    calls = []
+
+    def fake_step(_root, step_name, _prompt, _executor, timeout_sec, **_kwargs):
+        calls.append((step_name, timeout_sec))
+        return 124, "timeout"
+
+    monkeypatch.setattr(omc_autopilot, "_run_pipeline_step", fake_step)
+
+    rc = omc_autopilot.cmd_pipeline(
+        tmp_path,
+        "bounded benchmark sample",
+        "chore/lite-subsecond-deadline",
+        executor_pref="codex",
+        max_time=1,
+        mode_arg="lite",
+        skip_pr=True,
+        benchmark=True,
+    )
+
+    assert rc == 1
+    assert calls == []
+
+
+def test_lite_benchmark_does_not_call_provider_after_pipeline_deadline(tmp_path, monkeypatch):
+    result_path = tmp_path / "result.json"
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(result_path))
+    monkeypatch.setattr(omc_autopilot.time, "time", lambda: 1000.0)
+    _stub_pipeline_shell(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        omc_autopilot,
+        "_run_pipeline_step",
+        lambda *_args, **_kwargs: calls.append((_args, _kwargs)),
+    )
+
+    rc = omc_autopilot.cmd_pipeline(
+        tmp_path,
+        "bounded benchmark sample",
+        "chore/lite-expired",
+        executor_pref="codex",
+        max_time=0,
+        mode_arg="lite",
+        skip_pr=True,
+        benchmark=True,
+    )
+
+    assert rc == 1
+    assert calls == []
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["status"] == "timeout"
+    assert result["steps"]["task"]["status"] == "timeout"
+    assert result["steps"]["task"]["reason_codes"] == [
+        "timeout",
+        "pipeline_deadline_exhausted",
+    ]
+    assert result["steps"]["task"]["timeout_sec"] == 0
+
+
+def test_lite_benchmark_review_uses_budget_remaining_after_task(tmp_path, monkeypatch):
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+    observed_times = iter([1000.0, 1000.0, 1020.0])
+    monkeypatch.setattr(omc_autopilot.time, "time", lambda: next(observed_times))
+    _stub_pipeline_shell(monkeypatch)
+    calls = []
+
+    def fake_step(_root, step_name, _prompt, _executor, timeout_sec, **_kwargs):
+        calls.append((step_name, timeout_sec))
+        if step_name == "task":
+            return 0, "VERDICT: PROCEED"
+        return 124, "timeout"
+
+    monkeypatch.setattr(omc_autopilot, "_run_pipeline_step", fake_step)
+
+    rc = omc_autopilot.cmd_pipeline(
+        tmp_path,
+        "bounded benchmark sample",
+        "chore/lite-remaining",
+        executor_pref="codex",
+        max_time=30,
+        mode_arg="lite",
+        skip_pr=True,
+        benchmark=True,
+    )
+
+    assert rc == 1
+    assert calls == [("task", 30), ("review", 10)]
+
+
+def test_lite_benchmark_resume_skips_completed_task_and_retries_review(tmp_path, monkeypatch):
+    result_path = tmp_path / ".omc" / "pipeline_run_result.json"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(
+            {
+                "status": "timeout",
+                "mode": "lite",
+                "branch": "chore/lite-resume",
+                "benchmark": True,
+                "steps": {
+                    "task": {"status": "completed"},
+                    "review": {"status": "timeout", "reason_codes": ["timeout"]},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(result_path))
+    _stub_pipeline_shell(monkeypatch)
+    calls = []
+
+    def fake_step(_root, step_name, _prompt, _executor, timeout_sec, **_kwargs):
+        calls.append((step_name, timeout_sec))
+        return 0, "VERDICT: APPROVE"
+
+    monkeypatch.setattr(omc_autopilot, "_run_pipeline_step", fake_step)
+
+    rc = omc_autopilot.cmd_pipeline(
+        tmp_path,
+        "bounded benchmark sample",
+        "chore/lite-resume",
+        executor_pref="codex",
+        mode_arg="lite",
+        resume=True,
+        skip_pr=True,
+        benchmark=True,
+    )
+
+    assert rc == 0
+    assert calls == [("review", 180)]
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["status"] == "completed"
+    assert result["steps"]["task"]["status"] == "completed"
+    assert result["steps"]["review"]["status"] == "completed"
+
+
+def test_lite_benchmark_review_timeout_persists_review_budget(tmp_path, monkeypatch):
+    result_path = tmp_path / ".omc" / "pipeline_run_result.json"
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(result_path))
+    _stub_pipeline_shell(monkeypatch)
+    calls = []
+
+    def fake_step(_root, step_name, _prompt, _executor, timeout_sec, **_kwargs):
+        calls.append((step_name, timeout_sec))
+        if step_name == "task":
+            return 0, "VERDICT: PROCEED"
+        return 124, f"[ERROR] timeout ({timeout_sec}s)"
+
+    monkeypatch.setattr(omc_autopilot, "_run_pipeline_step", fake_step)
+
+    rc = omc_autopilot.cmd_pipeline(
+        tmp_path,
+        "bounded benchmark sample",
+        "chore/lite-review-timeout",
+        executor_pref="codex",
+        mode_arg="lite",
+        skip_pr=True,
+        benchmark=True,
+    )
+
+    assert rc == 1
+    assert calls == [("task", 300), ("review", 180)]
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["status"] == "timeout"
+    assert result["steps"]["task"]["status"] == "completed"
+    assert result["steps"]["review"]["status"] == "timeout"
+    assert result["steps"]["review"]["reason_codes"] == ["timeout"]
+    assert result["steps"]["review"]["timeout_sec"] == 180
+    assert isinstance(result["steps"]["review"]["duration_ms"], int)
+
+
+def test_normal_lite_pipeline_keeps_existing_step_budgets(tmp_path, monkeypatch):
+    _stub_pipeline_shell(monkeypatch)
+    calls = []
+
+    def fake_step(_root, step_name, _prompt, _executor, timeout_sec, **_kwargs):
+        calls.append((step_name, timeout_sec))
+        verdict = "APPROVE" if step_name == "review" else "PROCEED"
+        return 0, f"VERDICT: {verdict}"
+
+    monkeypatch.setattr(omc_autopilot, "_run_pipeline_step", fake_step)
+
+    rc = omc_autopilot.cmd_pipeline(
+        tmp_path,
+        "normal lite sample",
+        "chore/lite-normal",
+        executor_pref="codex",
+        mode_arg="lite",
+        dry_run=True,
+    )
+
+    assert rc == 0
+    assert calls == [("task", 1200), ("review", 600)]
+
+
 def test_pipeline_cli_forwards_skip_pr_to_pipeline(monkeypatch, tmp_path):
     captured = {}
 

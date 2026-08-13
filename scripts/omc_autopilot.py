@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import signal
 import tempfile
@@ -2670,6 +2671,8 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
 # ---------------------------------------------------------------------------
 
 _PIPELINE_RESULT_PATH = ".omc/pipeline_run_result.json"
+_LITE_BENCHMARK_TASK_TIMEOUT_SEC = 300
+_LITE_BENCHMARK_REVIEW_TIMEOUT_SEC = 180
 _PIPELINE_TERMINAL_STATUSES = {
     "completed",
     "failed",
@@ -2777,6 +2780,12 @@ def _step_already_done(resume_data: dict | None, step: str) -> bool:
         return False
     steps = resume_data.get("steps", {})
     return steps.get(step, {}).get("status") == "completed"
+
+
+def _bounded_step_timeout(configured_timeout_sec: int, deadline: float) -> int:
+    """Cap a step timeout by the remaining whole-pipeline budget."""
+    remaining_sec = max(0, math.floor(deadline - time.time()))
+    return min(configured_timeout_sec, remaining_sec)
 
 
 def _compute_step_duration_sec(started_at: object, finished_at: object) -> int | None:
@@ -3887,6 +3896,12 @@ def cmd_pipeline(
         print("\n[PIPELINE] ⚡ LITE 모드 — plan/critique 스킵")
         result["steps"]["preflight"]["mode"] = "lite"
         _save_pipeline_result(root, result)
+        configured_lite_task_timeout_sec = (
+            _LITE_BENCHMARK_TASK_TIMEOUT_SEC if benchmark else STEP_TIMEOUT * 2
+        )
+        configured_lite_review_timeout_sec = (
+            _LITE_BENCHMARK_REVIEW_TIMEOUT_SEC if benchmark else STEP_TIMEOUT
+        )
         # TASK 스텝으로 바로 진입
         task_prompt_lite = (
             "[자동화 모드] 사용자 확인 없이 즉시 실행하세요.\n\n"
@@ -3902,19 +3917,56 @@ def cmd_pipeline(
         else:
             print("\n[PIPELINE] ▶ TASK 스텝 (LITE)...")
             task_started_at = _now()
+            task_started_monotonic = time.monotonic()
+            lite_task_timeout_sec = _bounded_step_timeout(
+                configured_lite_task_timeout_sec,
+                deadline,
+            )
+            if lite_task_timeout_sec == 0:
+                result["steps"]["task"] = _failed_step_payload(
+                    step_name="task",
+                    status="timeout",
+                    started_at=task_started_at,
+                    finished_at=task_started_at,
+                    reason_codes=["timeout", "pipeline_deadline_exhausted"],
+                    rc=124,
+                    output_preview="[ERROR] pipeline deadline exhausted before task",
+                    timeout_sec=0,
+                    duration_ms=0,
+                )
+                save("timeout")
+                return 1
             task_rc, task_out = _run_pipeline_step(
-                root, "task", task_prompt_lite, executor, STEP_TIMEOUT * 2, dry_run=dry_run
+                root,
+                "task",
+                task_prompt_lite,
+                executor,
+                lite_task_timeout_sec,
+                dry_run=dry_run,
             )
             task_finished_at = _now()
-            result["steps"]["task"] = (
-                _step_payload(
+            task_duration_ms = int((time.monotonic() - task_started_monotonic) * 1000)
+            if task_rc == 0:
+                result["steps"]["task"] = _step_payload(
                     "completed",
                     task_started_at,
                     task_finished_at,
                     output_preview=task_out[:300],
                 )
-                if task_rc == 0
-                else _failed_step_payload(
+            elif task_rc == 124:
+                result["steps"]["task"] = _failed_step_payload(
+                    step_name="task",
+                    status="timeout",
+                    started_at=task_started_at,
+                    finished_at=task_finished_at,
+                    reason_codes=["timeout"],
+                    rc=task_rc,
+                    output_preview=task_out[:300],
+                    timeout_sec=lite_task_timeout_sec,
+                    duration_ms=task_duration_ms,
+                )
+            else:
+                result["steps"]["task"] = _failed_step_payload(
                     step_name="task",
                     status="failed",
                     started_at=task_started_at,
@@ -3922,9 +3974,8 @@ def cmd_pipeline(
                     rc=task_rc,
                     output_preview=task_out[:300],
                 )
-            )
             if task_rc != 0:
-                save("failed")
+                save("timeout" if task_rc == 124 else "failed")
                 return 1
 
         # REVIEW 스텝 (retry 없음)
@@ -3938,10 +3989,49 @@ def cmd_pipeline(
         else:
             print("\n[PIPELINE] ▶ REVIEW 스텝 (LITE, retry 없음)...")
             review_started_at = _now()
+            review_started_monotonic = time.monotonic()
+            lite_review_timeout_sec = _bounded_step_timeout(
+                configured_lite_review_timeout_sec,
+                deadline,
+            )
+            if lite_review_timeout_sec == 0:
+                result["steps"]["review"] = _failed_step_payload(
+                    step_name="review",
+                    status="timeout",
+                    started_at=review_started_at,
+                    finished_at=review_started_at,
+                    reason_codes=["timeout", "pipeline_deadline_exhausted"],
+                    rc=124,
+                    output_preview="[ERROR] pipeline deadline exhausted before review",
+                    timeout_sec=0,
+                    duration_ms=0,
+                )
+                save("timeout")
+                return 1
             review_rc, review_out = _run_pipeline_step(
-                root, "review", review_prompt_lite, executor, STEP_TIMEOUT, dry_run=dry_run
+                root,
+                "review",
+                review_prompt_lite,
+                executor,
+                lite_review_timeout_sec,
+                dry_run=dry_run,
             )
             review_finished_at = _now()
+            review_duration_ms = int((time.monotonic() - review_started_monotonic) * 1000)
+            if review_rc == 124:
+                result["steps"]["review"] = _failed_step_payload(
+                    step_name="review",
+                    status="timeout",
+                    started_at=review_started_at,
+                    finished_at=review_finished_at,
+                    reason_codes=["timeout"],
+                    rc=review_rc,
+                    output_preview=review_out[:300],
+                    timeout_sec=lite_review_timeout_sec,
+                    duration_ms=review_duration_ms,
+                )
+                save("timeout")
+                return 1
         review_verdict = _grep_verdict(review_out)
         print(f"  VERDICT: {review_verdict or '미감지'}")
         if not _step_already_done(_resume_data, "review"):
