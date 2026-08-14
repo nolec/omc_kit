@@ -957,6 +957,59 @@ def test_review_revise_immediately_runs_task_retry_before_re_review(tmp_path: Pa
     assert "plan_retry" not in call_log, call_log
 
 
+def test_critique_task_retry_budget_does_not_starve_review_recovery(tmp_path: Path, monkeypatch):
+    """critique 교정 예산을 모두 써도 review는 독립 교정 기회를 가져야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    call_log: list[str] = []
+    critique_verdicts = iter(["REVISE", "REVISE", "PROCEED"])
+    review_verdicts = iter(["REVISE", "APPROVE"])
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        call_log.append(step_name)
+        if step_name in {"plan", "task", "task_retry"}:
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            return 0, f"VERDICT: {next(critique_verdicts)}"
+        if step_name == "review":
+            return 0, f"VERDICT: {next(review_verdicts)}"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/independent-review-recovery-budget",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 0
+    assert call_log.count("task_retry") == 3, call_log
+    first_review = call_log.index("review")
+    review_task_retry = call_log.index("task_retry", first_review + 1)
+    second_review = call_log.index("review", first_review + 1)
+    assert first_review < review_task_retry < second_review, call_log
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert result["steps"]["task_retry"]["source_loop_step"] == "review"
+    assert result["task_retry_counts"] == {"critique": 2, "review": 1}
+
+
 def test_build_benchmark_report_treats_failed_critique_loop_as_quality_failure():
     import importlib
     import omc_autopilot as mod
@@ -2766,6 +2819,98 @@ def test_task_retry_completed_persists_decision_metadata(tmp_path: Path, monkeyp
     assert task_retry["decision"] == "same"
     assert task_retry["decision_reason"] == "completed retry stays on current path"
     assert task_retry["reroute_target"] is None
+    assert task_retry["retry_count"] == 1
+
+
+def test_task_retry_payload_persists_second_attempt_for_resume():
+    """2회 사용한 retry 예산은 resume이 정확히 복원할 수 있게 payload에 남아야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    payload = mod._retry_step_payload(
+        step_name="task_retry",
+        rc=0,
+        started_at="start",
+        finished_at="finish",
+        output_preview="VERDICT: PROCEED",
+        retry_count=2,
+    )
+
+    assert payload["retry_count"] == 2
+    assert mod._recovery_target_from_decision(
+        loop_step="review",
+        decision_name="reroute",
+        reroute_target="task_retry",
+        task_auto_retry_count=payload["retry_count"],
+        critique_auto_retry_count=0,
+    ) is None
+
+
+def test_resume_preserves_critique_budget_after_review_retry_overwrites_last_step(
+    tmp_path: Path, monkeypatch
+):
+    """review의 마지막 retry 기록이 critique 누적 예산을 지우면 안 된다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    result_path = tmp_path / "result.json"
+    result_path.write_text(json.dumps({
+        "status": "running",
+        "steps": {
+            "plan": {"status": "completed"},
+            "task": {"status": "completed"},
+            "critique": {"status": "completed", "verdict": "PROCEED"},
+            "task_retry": {
+                "status": "completed",
+                "source_loop_step": "review",
+                "retry_count": 1,
+            },
+        },
+        "task_retry_counts": {"critique": 2, "review": 1},
+        "last_completed_step": "task_retry",
+    }), encoding="utf-8")
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(result_path))
+
+    call_log: list[str] = []
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        call_log.append(step_name)
+        if step_name == "critique":
+            return 0, "VERDICT: REVISE"
+        if step_name == "task_retry":
+            return 0, "VERDICT: PROCEED"
+        if step_name == "review":
+            return 0, "VERDICT: APPROVE"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/resume-stage-retry-budget",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+        resume=True,
+    )
+
+    assert rc == 2
+    assert call_log == ["critique"], call_log
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["status"] == "hold"
 
 
 def test_plan_retry_completed_persists_decision_metadata(tmp_path: Path, monkeypatch):

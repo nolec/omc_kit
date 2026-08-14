@@ -3089,6 +3089,7 @@ def _retry_step_payload(
         started_at,
         finished_at,
         output_preview=output_preview,
+        retry_count=retry_count,
         **(
             _build_failure_metadata(
                 step_name=step_name,
@@ -3761,6 +3762,7 @@ def cmd_pipeline(
         "last_completed_step": None,
         "last_heartbeat_at": started_at,
         "retry_count": 0,
+        "task_retry_counts": {"critique": 0, "review": 0},
         "resume_count": 0,
         "approval_required": False,
         "manual_gate_reason": None,
@@ -3782,6 +3784,12 @@ def cmd_pipeline(
         # 이전 steps를 현재 result에 복원
         result["steps"] = _resume_data.get("steps", {})
         result["retry_count"] = int(_resume_data.get("retry_count") or 0)
+        resumed_counts = _resume_data.get("task_retry_counts")
+        if isinstance(resumed_counts, dict):
+            for quality_step in ("critique", "review"):
+                resumed_value = resumed_counts.get(quality_step)
+                if isinstance(resumed_value, int) and not isinstance(resumed_value, bool):
+                    result["task_retry_counts"][quality_step] = max(0, resumed_value)
         result["resume_count"] = int(_resume_data.get("resume_count") or 0) + 1
         result["approval_required"] = bool(_resume_data.get("approval_required", False))
         result["manual_gate_reason"] = _resume_data.get("manual_gate_reason")
@@ -4252,7 +4260,7 @@ def cmd_pipeline(
 
     # ── CRITIQUE/REVIEW 루프 ────────────────────────────────────────────
     critique_auto_retry_count = 0  # critique 루프 탈출 후 plan 자동 재진입 횟수
-    task_auto_retry_count = 0       # critique 루프 탈출 후 task 재실행 횟수
+    task_auto_retry_count = 0       # 현재 품질 단계의 task 재실행 횟수
     task_stage_plan_retry_count = 0
 
     def _run_plan_retry_recovery(
@@ -4320,6 +4328,7 @@ def cmd_pipeline(
             save("hold")
             return False
         task_auto_retry_count = 0  # plan_retry 후 task retry 기회 복원
+        result["task_retry_counts"]["critique"] = 0
         needs_ctx_refresh = True  # plan_retry 후 새 diff 반영
         return True
 
@@ -4341,15 +4350,30 @@ def cmd_pipeline(
         save("hold")
         return 2
 
-    # resume 시 task_retry/plan_retry 완료 여부로 루프 카운터 복원
+    # resume 시 task_retry가 어느 품질 단계에서 발생했는지 함께 복원한다.
+    resumed_task_retry_counts = dict(result["task_retry_counts"])
     if _resume_data:
-        if _step_already_done(_resume_data, "task_retry"):
-            task_auto_retry_count = 1
+        if (
+            not isinstance(_resume_data.get("task_retry_counts"), dict)
+            and _step_already_done(_resume_data, "task_retry")
+        ):
+            resumed_task_retry = _resume_data.get("steps", {}).get("task_retry", {})
+            resumed_source = str(resumed_task_retry.get("source_loop_step") or "critique")
+            if resumed_source in resumed_task_retry_counts:
+                resumed_count = resumed_task_retry.get("retry_count")
+                resumed_task_retry_counts[resumed_source] = (
+                    max(1, resumed_count)
+                    if isinstance(resumed_count, int) and not isinstance(resumed_count, bool)
+                    else 1
+                )
         if _step_already_done(_resume_data, "plan_retry"):
             critique_auto_retry_count = 1
-            task_auto_retry_count = 0  # plan_retry 후엔 task retry 기회 복원
+            resumed_task_retry_counts["critique"] = 0
 
     for loop_step in ("critique", "review"):
+        # critique의 교정 횟수가 review의 독립적인 교정 기회를 소진하면
+        # review가 실제 수정 없이 HOLD되므로 품질 단계별로 예산을 분리한다.
+        task_auto_retry_count = resumed_task_retry_counts[loop_step]
         verdict_ok = ("PROCEED", "APPROVE")
         retry_count = 0
         prev_verdict: object = _UNSET_VERDICT  # sentinel: 아직 verdict 없음
@@ -4567,6 +4591,7 @@ def cmd_pipeline(
                 # 소진 시: hold
                 if recovery_target == "task_retry":
                     task_auto_retry_count += 1
+                    result["task_retry_counts"][loop_step] = task_auto_retry_count
                     print(
                         f"[PIPELINE] 🔄 TASK 재실행 ({task_auto_retry_count}/{_TASK_AUTO_RETRY_MAX})"
                         " — critique 이슈 반영"
@@ -4601,6 +4626,7 @@ def cmd_pipeline(
                         output_preview=task_retry_out[:300],
                         retry_count=task_auto_retry_count,
                     )
+                    result["steps"]["task_retry"]["source_loop_step"] = loop_step
                     result["last_completed_step"] = "task_retry"
                     _save_pipeline_result(root, result)
                     if task_retry_rc != 0:
@@ -4622,6 +4648,7 @@ def cmd_pipeline(
                             retry_count=task_auto_retry_count,
                             reason_codes=task_retry_orchestration_reason_codes,
                         )
+                        result["steps"]["task_retry"]["source_loop_step"] = loop_step
                         _save_pipeline_result(root, result)
                         save("hold")
                         return 2
@@ -4696,6 +4723,7 @@ def cmd_pipeline(
                 )
                 if recovery_target == "task_retry":
                     task_auto_retry_count += 1
+                    result["task_retry_counts"][loop_step] = task_auto_retry_count
                     print(
                         f"[PIPELINE] 🔄 TASK 재실행 ({task_auto_retry_count}/{_TASK_AUTO_RETRY_MAX})"
                         " — retry_exhausted 복구"
@@ -4727,6 +4755,7 @@ def cmd_pipeline(
                         output_preview=task_retry_out[:300],
                         retry_count=task_auto_retry_count,
                     )
+                    result["steps"]["task_retry"]["source_loop_step"] = loop_step
                     _save_pipeline_result(root, result)
                     task_retry_verdict = _grep_verdict(task_retry_out)
                     task_retry_orchestration_reason_codes = _ensure_block_without_reason_code(
@@ -4750,6 +4779,7 @@ def cmd_pipeline(
                             retry_count=task_auto_retry_count,
                             reason_codes=task_retry_orchestration_reason_codes,
                         )
+                        result["steps"]["task_retry"]["source_loop_step"] = loop_step
                         _save_pipeline_result(root, result)
                     # task_retry 실패/BLOCK → retry_exhausted 유지
                     print("[PIPELINE] ❌ TASK 재실행 실패 또는 BLOCK — retry_exhausted")
@@ -4803,6 +4833,7 @@ def cmd_pipeline(
                     prev_verdict = _UNSET_VERDICT
                     same_verdict_streak = 0
                     task_auto_retry_count = 0
+                    result["task_retry_counts"][loop_step] = 0
                     needs_ctx_refresh = True
                     continue
 
