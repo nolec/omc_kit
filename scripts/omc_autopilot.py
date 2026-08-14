@@ -32,6 +32,7 @@ omc_autopilot.py — 멀티 LLM 자율 루프 (옵트인)
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -2845,6 +2846,11 @@ def _build_failure_metadata(
         for code in normalized_reason_codes
     ):
         failure_class = "orchestration_failure"
+    elif any(
+        code in {"scope_violation", "quality_unresolved"}
+        for code in normalized_reason_codes
+    ):
+        failure_class = "quality_failure"
     elif normalized_verdict in {"BLOCK", "REVISE"} and ("review" in name or "critique" in name):
         failure_class = "quality_failure"
     elif normalized_verdict == "HOLD" or normalized_status == "blocked":
@@ -3119,8 +3125,10 @@ def _task_retry_block_failure_payload(
     output_preview: str,
     retry_count: int,
     reason_codes: list[str],
+    output_tail: str = "",
+    output_sha256: str = "",
 ) -> dict[str, object]:
-    return _failed_step_payload(
+    payload = _failed_step_payload(
         step_name="task_retry",
         status="failed",
         started_at=started_at,
@@ -3128,8 +3136,20 @@ def _task_retry_block_failure_payload(
         verdict="BLOCK",
         reason_codes=reason_codes,
         output_preview=output_preview,
+        output_tail=output_tail,
+        output_sha256=output_sha256,
         retry_count=retry_count,
     )
+    if reason_codes and "block_without_reason_code" not in reason_codes:
+        return _persist_escalation_decision(
+            payload,
+            {
+                "decision": "hold",
+                "decision_reason": "explicit task retry block requires hold",
+                "reroute_target": None,
+            },
+        )
+    return payload
 
 
 def _failed_step_payload(
@@ -3143,11 +3163,13 @@ def _failed_step_payload(
     rc: int | None = None,
     **extra: object,
 ) -> dict[str, object]:
+    verdict_payload = {"verdict": verdict} if verdict else {}
     payload = _step_payload(
         status,
         started_at,
         finished_at,
         **extra,
+        **verdict_payload,
         **_build_failure_metadata(
             step_name=step_name,
             status=status,
@@ -3535,11 +3557,49 @@ def _extract_critique_issues(output: str) -> str:
     return "\n".join(lines[start:verdict_idx])
 
 
-_ORCHESTRATION_REASON_CODE_KEYWORDS = ("bad_entry_skill", "metadata_missing", "reroute_loop")
+_TASK_BLOCK_REASON_CODE_KEYWORDS = (
+    "bad_entry_skill",
+    "metadata_missing",
+    "reroute_loop",
+    "test_failure",
+    "tdd_gate_failure",
+    "scope_violation",
+    "quality_unresolved",
+)
+
+_TASK_RETRY_VERDICT_CONTRACT = (
+    "반드시 마지막 줄에 `VERDICT: PROCEED` (성공) 또는 `VERDICT: BLOCK` (실패)를 출력하세요.\n"
+    "BLOCK이면 바로 이전 줄에 `REASON_CODE: test_failure|tdd_gate_failure|scope_violation|"
+    "quality_unresolved|bad_entry_skill|metadata_missing|reroute_loop` 중 하나를 출력하세요."
+)
 
 
-def _extract_orchestration_reason_codes(output: str) -> list[str]:
-    """출력 문자열에서 구조화된 orchestration failure reason code를 추출한다."""
+def _build_task_retry_prompt(
+    *,
+    instruction: str,
+    issues: str,
+    issue_source: str,
+) -> str:
+    """Build one retry prompt whose machine-readable output contract is last."""
+    normalized_source = str(issue_source or "critique").strip().lower()
+    source_label = "review" if normalized_source == "review" else "critique"
+    issues_section = f"\n\n[{source_label} 지적 사항]\n{issues}\n" if issues else ""
+    return (
+        "[자동화 모드] 사용자 확인 없이 즉시 실행하세요.\n\n"
+        f"{instruction}\n\n"
+        f"이전 {source_label}에서 다음 문제가 지적됐습니다. 이를 수정해 재구현하세요."
+        f"{issues_section}"
+        "TDD로 구현하세요.\n"
+        "1. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
+        "2. 구현 후 테스트 GREEN 확인\n"
+        "3. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
+        + _CRITIQUE_QUALITY_HINT
+        + _TASK_RETRY_VERDICT_CONTRACT
+    )
+
+
+def _extract_task_reason_codes(output: str) -> list[str]:
+    """Extract structured task BLOCK reason codes from provider output."""
     if not output:
         return []
     codes: list[str] = []
@@ -3547,9 +3607,14 @@ def _extract_orchestration_reason_codes(output: str) -> list[str]:
         raw_codes = match.group(1)
         for raw_code in re.split(r"[,\s]+", raw_codes):
             code = raw_code.strip().lower()
-            if code in _ORCHESTRATION_REASON_CODE_KEYWORDS and code not in codes:
+            if code in _TASK_BLOCK_REASON_CODE_KEYWORDS and code not in codes:
                 codes.append(code)
     return codes
+
+
+def _extract_orchestration_reason_codes(output: str) -> list[str]:
+    """Backward-compatible alias for callers using the former parser name."""
+    return _extract_task_reason_codes(output)
 
 
 def _ensure_block_without_reason_code(
@@ -3568,6 +3633,19 @@ def _ensure_block_without_reason_code(
     return reason_codes
 
 
+def _bounded_output_evidence(
+    output: str,
+    *,
+    preview_limit: int = 300,
+    tail_limit: int = 1200,
+) -> dict[str, str]:
+    """Keep bounded audit evidence without persisting full provider output."""
+    normalized = str(output or "")
+    return {
+        "output_preview": normalized[:preview_limit],
+        "output_tail": normalized[-tail_limit:],
+        "output_sha256": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+    }
 
 def _get_critique_context(root: Path, max_diff_lines: int = 200) -> str:
     """staged diff + TDD 결과를 critique 컨텍스트로 반환한다.
@@ -4596,21 +4674,10 @@ def cmd_pipeline(
                         f"[PIPELINE] 🔄 TASK 재실행 ({task_auto_retry_count}/{_TASK_AUTO_RETRY_MAX})"
                         " — critique 이슈 반영"
                     )
-                    issues_section = (
-                        f"\n\n[critique 지적 사항]\n{critique_issues}\n"
-                        if critique_issues else ""
-                    )
-                    task_retry_prompt = (
-                        "[자동화 모드] 사용자 확인 없이 즉시 실행하세요.\n\n"
-                        f"{instruction}\n\n"
-                        "이전 critique에서 다음 문제가 지적됐습니다. 이를 수정해 재구현하세요."
-                        f"{issues_section}"
-                        "TDD로 구현하세요.\n"
-                        "1. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
-                        "2. 구현 후 테스트 GREEN 확인\n"
-                        "3. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
-                        "반드시 마지막 줄에 `VERDICT: PROCEED` (성공) 또는 `VERDICT: BLOCK` (실패)를 출력하세요."
-                        + _CRITIQUE_QUALITY_HINT
+                    task_retry_prompt = _build_task_retry_prompt(
+                        instruction=instruction,
+                        issues=critique_issues,
+                        issue_source=loop_step,
                     )
                     print("\n[PIPELINE] ▶ TASK 재실행 (critique 이슈 반영)...")
                     task_retry_started_at = _now()
@@ -4637,14 +4704,17 @@ def cmd_pipeline(
                     task_retry_orchestration_reason_codes = _ensure_block_without_reason_code(
                         step_name="task_retry",
                         verdict=task_retry_verdict,
-                        reason_codes=_extract_orchestration_reason_codes(task_retry_out),
+                        reason_codes=_extract_task_reason_codes(task_retry_out),
                     )
                     if task_retry_verdict == "BLOCK":
                         print("[PIPELINE] ❌ TASK 재실행 VERDICT: BLOCK — HOLD")
+                        task_retry_evidence = _bounded_output_evidence(task_retry_out)
                         result["steps"]["task_retry"] = _task_retry_block_failure_payload(
                             started_at=task_retry_started_at,
                             finished_at=task_retry_finished_at,
-                            output_preview=task_retry_out[:300],
+                            output_preview=task_retry_evidence["output_preview"],
+                            output_tail=task_retry_evidence["output_tail"],
+                            output_sha256=task_retry_evidence["output_sha256"],
                             retry_count=task_auto_retry_count,
                             reason_codes=task_retry_orchestration_reason_codes,
                         )
@@ -4728,18 +4798,10 @@ def cmd_pipeline(
                         f"[PIPELINE] 🔄 TASK 재실행 ({task_auto_retry_count}/{_TASK_AUTO_RETRY_MAX})"
                         " — retry_exhausted 복구"
                     )
-                    issues_section = f"\n\n[critique 지적 사항]\n{critique_issues}\n"
-                    task_retry_prompt = (
-                        "[자동화 모드] 사용자 확인 없이 즉시 실행하세요.\n\n"
-                        f"{instruction}\n\n"
-                        "critique에서 다음 문제가 지적됐습니다. 이를 수정해 재구현하세요."
-                        f"{issues_section}"
-                        "TDD로 구현하세요.\n"
-                        "1. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
-                        "2. 구현 후 테스트 GREEN 확인\n"
-                        "3. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
-                        "반드시 마지막 줄에 `VERDICT: PROCEED` (성공) 또는 `VERDICT: BLOCK` (실패)를 출력하세요."
-                        + _CRITIQUE_QUALITY_HINT
+                    task_retry_prompt = _build_task_retry_prompt(
+                        instruction=instruction,
+                        issues=critique_issues,
+                        issue_source=loop_step,
                     )
                     print("\n[PIPELINE] ▶ TASK 재실행 (retry_exhausted 복구)...")
                     task_retry_started_at = _now()
@@ -4761,7 +4823,7 @@ def cmd_pipeline(
                     task_retry_orchestration_reason_codes = _ensure_block_without_reason_code(
                         step_name="task_retry",
                         verdict=task_retry_verdict,
-                        reason_codes=_extract_orchestration_reason_codes(task_retry_out),
+                        reason_codes=_extract_task_reason_codes(task_retry_out),
                     )
                     if task_retry_rc == 0 and task_retry_verdict not in ("BLOCK", None):
                         # critique 루프 재진입
@@ -4772,15 +4834,22 @@ def cmd_pipeline(
                         needs_ctx_refresh = True  # task_retry 후 새 diff 반영
                         continue
                     if task_retry_verdict == "BLOCK":
+                        task_retry_evidence = _bounded_output_evidence(task_retry_out)
                         result["steps"]["task_retry"] = _task_retry_block_failure_payload(
                             started_at=task_retry_started_at,
                             finished_at=task_retry_finished_at,
-                            output_preview=task_retry_out[:300],
+                            output_preview=task_retry_evidence["output_preview"],
+                            output_tail=task_retry_evidence["output_tail"],
+                            output_sha256=task_retry_evidence["output_sha256"],
                             retry_count=task_auto_retry_count,
                             reason_codes=task_retry_orchestration_reason_codes,
                         )
                         result["steps"]["task_retry"]["source_loop_step"] = loop_step
                         _save_pipeline_result(root, result)
+                        if result["steps"]["task_retry"].get("decision") == "hold":
+                            print("[PIPELINE] ❌ TASK 재실행 VERDICT: BLOCK — HOLD")
+                            save("hold")
+                            return 2
                     # task_retry 실패/BLOCK → retry_exhausted 유지
                     print("[PIPELINE] ❌ TASK 재실행 실패 또는 BLOCK — retry_exhausted")
 

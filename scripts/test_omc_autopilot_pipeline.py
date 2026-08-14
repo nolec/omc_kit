@@ -712,6 +712,28 @@ def test_build_failure_metadata_marks_block_without_reason_code_as_orchestration
     assert payload["reason_codes"] == ["block_without_reason_code"]
 
 
+def test_build_failure_metadata_separates_task_retry_block_causes():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    test_failure = mod._build_failure_metadata(
+        step_name="task_retry",
+        status="failed",
+        verdict="BLOCK",
+        reason_codes=["test_failure"],
+    )
+    scope_failure = mod._build_failure_metadata(
+        step_name="task_retry",
+        status="failed",
+        verdict="BLOCK",
+        reason_codes=["scope_violation"],
+    )
+
+    assert test_failure["failure_class"] == "execution_failure"
+    assert scope_failure["failure_class"] == "quality_failure"
+
+
 def test_build_benchmark_report_handles_mixed_timezone_timestamps():
     import importlib
     import omc_autopilot as mod
@@ -1738,6 +1760,80 @@ def test_task_retry_block_without_reason_code_marks_step_failed():
     assert payload["reroute_target"] == "plan_retry"
 
 
+def test_task_retry_block_payload_preserves_structured_verdict_and_bounded_evidence():
+    import hashlib
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    output = "implementation summary\n" + ("x" * 500) + "\nREASON_CODE: test_failure\nVERDICT: BLOCK"
+    evidence = mod._bounded_output_evidence(output)
+    payload = mod._task_retry_block_failure_payload(
+        started_at="2026-06-30T00:00:00Z",
+        finished_at="2026-06-30T00:00:10Z",
+        output_preview=evidence["output_preview"],
+        output_tail=evidence["output_tail"],
+        output_sha256=evidence["output_sha256"],
+        retry_count=1,
+        reason_codes=["test_failure"],
+    )
+
+    assert payload["verdict"] == "BLOCK"
+    assert payload["failure_class"] == "execution_failure"
+    assert payload["decision"] == "hold"
+    assert payload["reroute_target"] is None
+    assert payload["output_tail"].endswith("REASON_CODE: test_failure\nVERDICT: BLOCK")
+    assert payload["output_sha256"] == hashlib.sha256(output.encode("utf-8")).hexdigest()
+
+    quality_payload = mod._task_retry_block_failure_payload(
+        started_at="2026-06-30T00:00:00Z",
+        finished_at="2026-06-30T00:00:10Z",
+        output_preview="VERDICT: BLOCK",
+        retry_count=2,
+        reason_codes=["scope_violation"],
+    )
+    assert quality_payload["decision"] == "hold"
+    assert quality_payload["reroute_target"] is None
+
+
+def test_task_retry_contract_requires_reason_code_for_block():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    assert "BLOCK이면" in mod._TASK_RETRY_VERDICT_CONTRACT
+    assert "REASON_CODE:" in mod._TASK_RETRY_VERDICT_CONTRACT
+    assert "test_failure" in mod._TASK_RETRY_VERDICT_CONTRACT
+    assert "quality_unresolved" in mod._TASK_RETRY_VERDICT_CONTRACT
+
+
+def test_task_retry_prompt_places_structured_verdict_contract_last():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    prompt = mod._build_task_retry_prompt(
+        instruction="implement bounded fix",
+        issues="tests still fail",
+        issue_source="review",
+    )
+
+    assert "implement bounded fix" in prompt
+    assert "tests still fail" in prompt
+    assert mod._CRITIQUE_QUALITY_HINT.strip() in prompt
+    assert prompt.endswith(mod._TASK_RETRY_VERDICT_CONTRACT)
+
+
+def test_extract_task_retry_reason_codes_supports_quality_and_execution_failures():
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    assert mod._extract_task_reason_codes(
+        "REASON_CODE: test_failure, scope_violation\nVERDICT: BLOCK"
+    ) == ["test_failure", "scope_violation"]
+
+
 def test_task_retry_block_without_reason_code_is_failed_in_pipeline(tmp_path: Path, monkeypatch):
     """cmd_pipeline 경로에서도 task_retry 무사유 BLOCK이 failed로 저장돼야 한다."""
     import importlib
@@ -2597,6 +2693,55 @@ def test_retry_exhausted_triggers_task_retry(tmp_path: Path, monkeypatch):
     assert "task_retry" in call_log, (
         f"retry_exhausted 후 task_retry가 호출되지 않음. 호출 순서: {call_log}"
     )
+
+
+def test_retry_exhausted_task_retry_structured_block_holds(tmp_path: Path, monkeypatch):
+    """retry_exhausted 복구의 명시적 task BLOCK은 top-level HOLD로 종료해야 한다."""
+    import importlib
+    import omc_autopilot as mod
+    importlib.reload(mod)
+
+    critique_call = {"n": 0}
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        if step_name in ("plan", "task"):
+            return 0, "VERDICT: PROCEED"
+        if step_name == "critique":
+            critique_call["n"] += 1
+            return 1, "critique command failed"
+        if step_name == "task_retry":
+            return 0, "REASON_CODE: test_failure\nVERDICT: BLOCK"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+
+    import subprocess as sp
+    original_run = sp.run
+
+    def mock_subprocess(cmd, **kwargs):
+        if isinstance(cmd, list) and "git" in cmd:
+            return sp.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, **kwargs)
+
+    monkeypatch.setattr(sp, "run", mock_subprocess)
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/t7-structured-block",
+        executor_pref="cursor",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 2
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "hold"
+    task_retry = result["steps"]["task_retry"]
+    assert task_retry["reason_codes"] == ["test_failure"]
+    assert task_retry["decision"] == "hold"
+    assert task_retry["reroute_target"] is None
 
 
 def test_revision_requested_records_non_empty_critique_issues(tmp_path: Path, monkeypatch):
