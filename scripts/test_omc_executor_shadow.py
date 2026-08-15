@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from datetime import datetime, timezone
+
 from omc_executor_shadow import (
     build_noop_shadow_record,
     build_single_child_execution_grant,
+    reserve_single_child_execution_grant,
 )
 import pytest
 
@@ -121,6 +125,155 @@ def test_single_child_execution_grant_reuses_shadow_safety_gate():
     assert grant["status"] == "blocked"
     assert grant["reason_code"] == "duplicate_idempotency_key"
     assert grant["execution_allowed"] is False
+
+
+def test_single_child_execution_grant_is_reserved_once_without_mutating_input():
+    grant = build_single_child_execution_grant(
+        _single_child_pilot_request(
+            execution_requested=True,
+            execution_mode="single_child_opt_in",
+        )
+    )
+    ledger = {"schema_version": 1, "revision": 0, "entries": []}
+    original = deepcopy(ledger)
+
+    result = reserve_single_child_execution_grant(
+        grant,
+        ledger,
+        expected_scope_hash="scope-abc",
+        expected_ledger_revision=0,
+        now=datetime(2026, 8, 16, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "reserved"
+    assert result["reason_code"] == "grant_reserved"
+    assert result["reservation"]["idempotency_key"] == "run-child-1"
+    assert result["reservation"]["max_attempts"] == 1
+    assert result["ledger"]["entries"] == [result["reservation"]]
+    assert result["ledger"]["revision"] == 1
+    assert ledger == original
+
+
+def test_single_child_execution_grant_rejects_duplicate_reservation():
+    grant = build_single_child_execution_grant(
+        _single_child_pilot_request(
+            execution_requested=True,
+            execution_mode="single_child_opt_in",
+        )
+    )
+    ledger = {
+        "schema_version": 1,
+        "revision": 1,
+        "entries": [{"idempotency_key": "run-child-1"}],
+    }
+
+    result = reserve_single_child_execution_grant(
+        grant,
+        ledger,
+        expected_scope_hash="scope-abc",
+        expected_ledger_revision=1,
+        now=datetime(2026, 8, 16, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "duplicate_grant_consumption"
+    assert result["ledger"] == ledger
+
+
+@pytest.mark.parametrize(
+    ("scope_hash", "now", "reason_code"),
+    [
+        (
+            "scope-other",
+            datetime(2026, 8, 16, tzinfo=timezone.utc),
+            "grant_scope_mismatch",
+        ),
+        (
+            "scope-abc",
+            datetime(2100, 1, 1, tzinfo=timezone.utc),
+            "grant_expired",
+        ),
+    ],
+)
+def test_single_child_execution_grant_blocks_invalid_reservation(
+    scope_hash, now, reason_code
+):
+    grant = build_single_child_execution_grant(
+        _single_child_pilot_request(
+            execution_requested=True,
+            execution_mode="single_child_opt_in",
+        )
+    )
+
+    result = reserve_single_child_execution_grant(
+        grant,
+        {"schema_version": 1, "revision": 0, "entries": []},
+        expected_scope_hash=scope_hash,
+        expected_ledger_revision=0,
+        now=now,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == reason_code
+    assert result["reservation"] is None
+
+
+@pytest.mark.parametrize(
+    ("mutate", "reason_code"),
+    [
+        (
+            lambda grant: grant.pop("max_output_chars"),
+            "execution_grant_invalid",
+        ),
+        (
+            lambda grant: grant.update(
+                {"approval_expires_at": "2099-01-01T00:00:00"}
+            ),
+            "execution_grant_invalid",
+        ),
+    ],
+)
+def test_single_child_execution_grant_fails_closed_on_tampering(
+    mutate, reason_code
+):
+    grant = build_single_child_execution_grant(
+        _single_child_pilot_request(
+            execution_requested=True,
+            execution_mode="single_child_opt_in",
+        )
+    )
+    mutate(grant)
+
+    result = reserve_single_child_execution_grant(
+        grant,
+        {"schema_version": 1, "revision": 0, "entries": []},
+        expected_scope_hash="scope-abc",
+        expected_ledger_revision=0,
+        now=datetime(2026, 8, 16, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == reason_code
+
+
+def test_single_child_execution_grant_blocks_stale_ledger_revision():
+    grant = build_single_child_execution_grant(
+        _single_child_pilot_request(
+            execution_requested=True,
+            execution_mode="single_child_opt_in",
+        )
+    )
+
+    result = reserve_single_child_execution_grant(
+        grant,
+        {"schema_version": 1, "revision": 2, "entries": []},
+        expected_scope_hash="scope-abc",
+        expected_ledger_revision=1,
+        now=datetime(2026, 8, 16, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "consumption_ledger_stale"
 
 
 @pytest.mark.parametrize(

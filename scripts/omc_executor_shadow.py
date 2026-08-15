@@ -6,6 +6,7 @@ process, network client, filesystem mutation, or external LLM.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timezone
 import math
 from typing import Any
@@ -310,4 +311,128 @@ def build_single_child_execution_grant(request: dict[str, Any]) -> dict[str, Any
         "approval_expires_at": request["approval"]["expires_at"],
         "shadow_recorded": True,
         "fallback_action": "parent_review",
+    }
+
+
+def reserve_single_child_execution_grant(
+    grant: dict[str, Any],
+    ledger: dict[str, Any],
+    *,
+    expected_scope_hash: str,
+    expected_ledger_revision: int,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Return a CAS-ready ledger transition for one validated grant."""
+    ledger_copy = deepcopy(ledger)
+
+    def blocked(reason_code: str) -> dict[str, Any]:
+        return {
+            "status": "blocked",
+            "reason_code": reason_code,
+            "reservation": None,
+            "ledger": ledger_copy,
+        }
+
+    entries = ledger_copy.get("entries") if isinstance(ledger_copy, dict) else None
+    if (
+        not isinstance(ledger_copy, dict)
+        or ledger_copy.get("schema_version") != 1
+        or not isinstance(ledger_copy.get("revision"), int)
+        or isinstance(ledger_copy.get("revision"), bool)
+        or ledger_copy["revision"] < 0
+        or not isinstance(entries, list)
+        or any(
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("idempotency_key"), str)
+            or not entry["idempotency_key"].strip()
+            for entry in entries
+        )
+    ):
+        return blocked("consumption_ledger_invalid")
+    if (
+        not isinstance(expected_ledger_revision, int)
+        or isinstance(expected_ledger_revision, bool)
+        or expected_ledger_revision < 0
+    ):
+        return blocked("expected_ledger_revision_invalid")
+    if ledger_copy["revision"] != expected_ledger_revision:
+        return blocked("consumption_ledger_stale")
+    if not isinstance(expected_scope_hash, str) or not expected_scope_hash.strip():
+        return blocked("expected_scope_missing")
+    if (
+        not isinstance(grant, dict)
+        or grant.get("mode") != "single_child_execution_grant"
+        or grant.get("status") != "ready"
+        or grant.get("execution_allowed") is not True
+        or grant.get("max_attempts") != 1
+        or not isinstance(grant.get("max_total_elapsed_sec"), (int, float))
+        or isinstance(grant.get("max_total_elapsed_sec"), bool)
+        or not _is_finite_number(grant.get("max_total_elapsed_sec"))
+        or grant["max_total_elapsed_sec"] <= 0
+        or not isinstance(grant.get("max_output_chars"), int)
+        or isinstance(grant.get("max_output_chars"), bool)
+        or grant["max_output_chars"] <= 0
+        or grant.get("fallback_action") != "parent_review"
+    ):
+        return blocked("execution_grant_invalid")
+
+    required_text = (
+        "parent_id",
+        "child_id",
+        "executor",
+        "approval_id",
+        "session_id",
+        "idempotency_key",
+        "scope_hash",
+        "approval_expires_at",
+    )
+    if any(
+        not isinstance(grant.get(field), str) or not grant[field].strip()
+        for field in required_text
+    ):
+        return blocked("execution_grant_invalid")
+    if grant["scope_hash"] != expected_scope_hash:
+        return blocked("grant_scope_mismatch")
+
+    current_time = now or datetime.now(timezone.utc)
+    if current_time.tzinfo is None or current_time.utcoffset() is None:
+        return blocked("reservation_time_invalid")
+    try:
+        expires_at = datetime.fromisoformat(
+            grant["approval_expires_at"].replace("Z", "+00:00")
+        )
+    except ValueError:
+        return blocked("execution_grant_invalid")
+    if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+        return blocked("execution_grant_invalid")
+    if expires_at <= current_time:
+        return blocked("grant_expired")
+    if any(
+        entry["idempotency_key"] == grant["idempotency_key"] for entry in entries
+    ):
+        return blocked("duplicate_grant_consumption")
+
+    reservation = {
+        "parent_id": grant["parent_id"],
+        "child_id": grant["child_id"],
+        "executor": grant["executor"],
+        "approval_id": grant["approval_id"],
+        "session_id": grant["session_id"],
+        "idempotency_key": grant["idempotency_key"],
+        "scope_hash": grant["scope_hash"],
+        "reserved_at": current_time.astimezone(timezone.utc).isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "max_attempts": 1,
+        "max_total_elapsed_sec": grant["max_total_elapsed_sec"],
+        "max_output_chars": grant["max_output_chars"],
+        "fallback_action": grant["fallback_action"],
+    }
+    entries.append(reservation)
+    ledger_copy["revision"] += 1
+    return {
+        "status": "reserved",
+        "reason_code": "grant_reserved",
+        "reservation": reservation,
+        "ledger": ledger_copy,
     }
