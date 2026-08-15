@@ -266,3 +266,48 @@ def build_noop_shadow_record(request: dict[str, Any]) -> dict[str, Any]:
             }
         )
     return record
+
+
+def build_single_child_execution_grant(request: dict[str, Any]) -> dict[str, Any]:
+    """Issue a bounded grant without invoking the selected executor.
+
+    The existing shadow gate remains the single source of truth for approval,
+    scope, dependency, budget, and idempotency validation. The caller must
+    consume the grant separately; this function never starts a process.
+    """
+    if (
+        request.get("execution_requested") is not True
+        or request.get("execution_mode") != "single_child_opt_in"
+    ):
+        return _rejected(
+            request,
+            status="blocked",
+            reason_code="execution_opt_in_missing",
+        )
+    if request.get("pilot_mode") != "single_child":
+        return _rejected(
+            request,
+            status="blocked",
+            reason_code="single_child_required",
+        )
+
+    shadow_request = dict(request)
+    shadow_request["execution_requested"] = False
+    shadow = build_noop_shadow_record(shadow_request)
+    if shadow.get("status") != "simulated" or shadow.get("gate_status") != "allowed":
+        return shadow
+
+    budget = request["budget"]
+    return {
+        **shadow,
+        "mode": "single_child_execution_grant",
+        "status": "ready",
+        "execution_allowed": True,
+        "max_attempts": budget["max_attempts"],
+        "max_total_elapsed_sec": budget["max_total_elapsed_sec"],
+        "max_output_chars": budget["max_output_chars"],
+        "scope_hash": request["scope_hash"],
+        "approval_expires_at": request["approval"]["expires_at"],
+        "shadow_recorded": True,
+        "fallback_action": "parent_review",
+    }

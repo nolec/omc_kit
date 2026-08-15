@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from omc_executor_shadow import build_noop_shadow_record
+from omc_executor_shadow import (
+    build_noop_shadow_record,
+    build_single_child_execution_grant,
+)
 import pytest
 
 
@@ -78,6 +81,46 @@ def test_single_child_pilot_gate_allows_only_noop_shadow():
     assert record["execution_allowed"] is False
     assert record["fallback_action"] == "parent_review"
     assert record["idempotency_key"] == "run-child-1"
+
+
+def test_single_child_execution_grant_requires_explicit_opt_in():
+    request = _single_child_pilot_request(
+        execution_requested=True,
+        execution_mode="single_child_opt_in",
+    )
+
+    grant = build_single_child_execution_grant(request)
+
+    assert grant["mode"] == "single_child_execution_grant"
+    assert grant["status"] == "ready"
+    assert grant["execution_allowed"] is True
+    assert grant["max_attempts"] == 1
+    assert grant["fallback_action"] == "parent_review"
+    assert grant["idempotency_key"] == "run-child-1"
+    assert grant["scope_hash"] == "scope-abc"
+    assert grant["approval_expires_at"] == "2099-01-01T00:00:00Z"
+
+
+def test_single_child_execution_grant_blocks_missing_opt_in():
+    grant = build_single_child_execution_grant(_single_child_pilot_request())
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "execution_opt_in_missing"
+    assert grant["execution_allowed"] is False
+
+
+def test_single_child_execution_grant_reuses_shadow_safety_gate():
+    request = _single_child_pilot_request(
+        execution_requested=True,
+        execution_mode="single_child_opt_in",
+        seen_idempotency_keys=["run-child-1"],
+    )
+
+    grant = build_single_child_execution_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "duplicate_idempotency_key"
+    assert grant["execution_allowed"] is False
 
 
 @pytest.mark.parametrize(
