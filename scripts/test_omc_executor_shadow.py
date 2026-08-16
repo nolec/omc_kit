@@ -8,6 +8,8 @@ import multiprocessing
 from omc_executor_shadow import (
     build_noop_shadow_record,
     build_single_child_execution_grant,
+    finalize_single_child_execution_reservation,
+    finalize_single_child_execution_reservation_file,
     reserve_single_child_execution_grant,
     reserve_single_child_execution_grant_file,
 )
@@ -20,6 +22,21 @@ def _reserve_grant_worker(grant, ledger_path, queue):
         ledger_path,
         expected_scope_hash="scope-abc",
         now=datetime(2026, 8, 16, tzinfo=timezone.utc),
+    )
+    queue.put((result["status"], result["reason_code"]))
+
+
+def _finalize_reservation_worker(ledger_path, queue):
+    result = finalize_single_child_execution_reservation_file(
+        ledger_path,
+        idempotency_key="run-child-1",
+        outcome={
+            "status": "succeeded",
+            "reason_code": "completed",
+            "elapsed_sec": 4.5,
+            "output_chars": 320,
+        },
+        now=datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
     )
     queue.put((result["status"], result["reason_code"]))
 
@@ -76,6 +93,30 @@ def _single_child_pilot_request(**overrides):
     )
     request.update(overrides)
     return request
+
+
+def _reserved_ledger():
+    return {
+        "schema_version": 1,
+        "revision": 1,
+        "entries": [
+            {
+                "parent_id": "parent-1",
+                "child_id": "child-1",
+                "executor": "codex",
+                "approval_id": "approval-1",
+                "session_id": "session-1",
+                "idempotency_key": "run-child-1",
+                "scope_hash": "scope-abc",
+                "status": "reserved",
+                "reserved_at": "2026-08-16T00:00:00Z",
+                "max_attempts": 1,
+                "max_total_elapsed_sec": 120,
+                "max_output_chars": 12000,
+                "fallback_action": "parent_review",
+            }
+        ],
+    }
 
 
 def test_shadow_adapter_returns_non_executing_record():
@@ -239,16 +280,12 @@ def test_single_child_execution_grant_blocks_invalid_reservation(
             "execution_grant_invalid",
         ),
         (
-            lambda grant: grant.update(
-                {"approval_expires_at": "2099-01-01T00:00:00"}
-            ),
+            lambda grant: grant.update({"approval_expires_at": "2099-01-01T00:00:00"}),
             "execution_grant_invalid",
         ),
     ],
 )
-def test_single_child_execution_grant_fails_closed_on_tampering(
-    mutate, reason_code
-):
+def test_single_child_execution_grant_fails_closed_on_tampering(mutate, reason_code):
     grant = build_single_child_execution_grant(
         _single_child_pilot_request(
             execution_requested=True,
@@ -375,17 +412,217 @@ def test_single_child_execution_grant_file_serializes_processes(tmp_path):
     ]
 
 
+@pytest.mark.parametrize("terminal_status", ["succeeded", "failed", "timeout"])
+def test_single_child_execution_reservation_records_terminal_outcome_without_mutation(
+    terminal_status,
+):
+    ledger = _reserved_ledger()
+    original = deepcopy(ledger)
+
+    result = finalize_single_child_execution_reservation(
+        ledger,
+        idempotency_key="run-child-1",
+        outcome={
+            "status": terminal_status,
+            "reason_code": "completed"
+            if terminal_status == "succeeded"
+            else "executor_error",
+            "elapsed_sec": 12.5,
+            "output_chars": 240,
+        },
+        expected_ledger_revision=1,
+        now=datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "finalized"
+    assert result["reason_code"] == "execution_outcome_recorded"
+    assert result["entry"]["status"] == terminal_status
+    assert result["entry"]["completed_at"] == "2026-08-16T00:01:00Z"
+    assert result["ledger"]["revision"] == 2
+    assert ledger == original
+
+
+def test_single_child_execution_reservation_blocks_duplicate_finalization():
+    ledger = _reserved_ledger()
+    ledger["entries"][0]["status"] = "succeeded"
+
+    result = finalize_single_child_execution_reservation(
+        ledger,
+        idempotency_key="run-child-1",
+        outcome={
+            "status": "failed",
+            "reason_code": "executor_error",
+            "elapsed_sec": 1,
+            "output_chars": 0,
+        },
+        expected_ledger_revision=1,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "execution_already_finalized"
+    assert result["ledger"] == ledger
+
+
+@pytest.mark.parametrize(
+    ("revision", "outcome", "reason_code"),
+    [
+        (
+            0,
+            {
+                "status": "succeeded",
+                "reason_code": "completed",
+                "elapsed_sec": 1,
+                "output_chars": 1,
+            },
+            "consumption_ledger_stale",
+        ),
+        (
+            1,
+            {
+                "status": "running",
+                "reason_code": "started",
+                "elapsed_sec": 1,
+                "output_chars": 1,
+            },
+            "execution_outcome_invalid",
+        ),
+        (
+            1,
+            {
+                "status": [],
+                "reason_code": "started",
+                "elapsed_sec": 1,
+                "output_chars": 1,
+            },
+            "execution_outcome_invalid",
+        ),
+        (
+            1,
+            {
+                "status": "failed",
+                "reason_code": "executor_error",
+                "elapsed_sec": float("nan"),
+                "output_chars": 1,
+            },
+            "execution_outcome_invalid",
+        ),
+        (
+            1,
+            {
+                "status": "timeout",
+                "reason_code": "deadline",
+                "elapsed_sec": 121,
+                "output_chars": 1,
+            },
+            "execution_budget_exceeded",
+        ),
+        (
+            1,
+            {
+                "status": "succeeded",
+                "reason_code": "completed",
+                "elapsed_sec": 1,
+                "output_chars": 12001,
+            },
+            "execution_budget_exceeded",
+        ),
+    ],
+)
+def test_single_child_execution_reservation_fails_closed(
+    revision, outcome, reason_code
+):
+    result = finalize_single_child_execution_reservation(
+        _reserved_ledger(),
+        idempotency_key="run-child-1",
+        outcome=outcome,
+        expected_ledger_revision=revision,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == reason_code
+
+
+def test_single_child_execution_reservation_file_persists_once(tmp_path):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_reserved_ledger()))
+    outcome = {
+        "status": "succeeded",
+        "reason_code": "completed",
+        "elapsed_sec": 4.5,
+        "output_chars": 320,
+    }
+
+    first = finalize_single_child_execution_reservation_file(
+        ledger_path,
+        idempotency_key="run-child-1",
+        outcome=outcome,
+        now=datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+    second = finalize_single_child_execution_reservation_file(
+        ledger_path,
+        idempotency_key="run-child-1",
+        outcome=outcome,
+    )
+
+    persisted = json.loads(ledger_path.read_text())
+    assert first["status"] == "finalized"
+    assert second["status"] == "blocked"
+    assert second["reason_code"] == "execution_already_finalized"
+    assert persisted["revision"] == 2
+    assert persisted["entries"][0]["status"] == "succeeded"
+
+
+def test_single_child_execution_reservation_file_serializes_processes(tmp_path):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_reserved_ledger()))
+    context = multiprocessing.get_context("fork")
+    queue = context.Queue()
+    processes = [
+        context.Process(
+            target=_finalize_reservation_worker,
+            args=(ledger_path, queue),
+        )
+        for _ in range(2)
+    ]
+
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=5)
+
+    outcomes = sorted(queue.get(timeout=1) for _ in processes)
+    assert all(process.exitcode == 0 for process in processes)
+    assert outcomes == [
+        ("blocked", "execution_already_finalized"),
+        ("finalized", "execution_outcome_recorded"),
+    ]
+
+
 @pytest.mark.parametrize(
     ("override", "status", "reason"),
     [
         ({"child_count": 2}, "blocked", "single_child_required"),
         ({"child_status": "blocked"}, "hold", "child_not_ready"),
         ({"sensitive_paths": [".env"]}, "blocked", "sensitive_scope"),
-        ({"dependency_statuses": {"dependency-1": "running"}}, "hold", "dependency_not_ready"),
-        ({"plan_fingerprint": "plan-other"}, "blocked", "plan_scope_mismatch"),
-        ({"seen_idempotency_keys": ["run-child-1"]}, "blocked", "duplicate_idempotency_key"),
         (
-            {"budget": {"max_attempts": 2, "max_total_elapsed_sec": 120, "max_output_chars": 12000}},
+            {"dependency_statuses": {"dependency-1": "running"}},
+            "hold",
+            "dependency_not_ready",
+        ),
+        ({"plan_fingerprint": "plan-other"}, "blocked", "plan_scope_mismatch"),
+        (
+            {"seen_idempotency_keys": ["run-child-1"]},
+            "blocked",
+            "duplicate_idempotency_key",
+        ),
+        (
+            {
+                "budget": {
+                    "max_attempts": 2,
+                    "max_total_elapsed_sec": 120,
+                    "max_output_chars": 12000,
+                }
+            },
             "blocked",
             "budget_invalid",
         ),
