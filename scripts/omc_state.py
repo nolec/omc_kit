@@ -406,6 +406,9 @@ def _canonical_sha256(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+_COMPLETION_PRESERVING_DIRECTIVE_TITLES = {"omc-ship", "roadmap-sync-commit"}
+
+
 def _sync_pending_completion(project_root: Path, session: dict[str, object]) -> None:
     role_ids = session.get("role_ids")
     if not isinstance(role_ids, list):
@@ -425,7 +428,8 @@ def _sync_pending_completion(project_root: Path, session: dict[str, object]) -> 
             )
         return
     preserves_task_completion = "code_review" in role_ids or (
-        "directive" in role_ids and session.get("title") == "omc-ship"
+        "directive" in role_ids
+        and session.get("title") in _COMPLETION_PRESERVING_DIRECTIVE_TITLES
     )
     if not preserves_task_completion:
         _pending_completion_path(project_root).unlink(missing_ok=True)

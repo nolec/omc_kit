@@ -108,6 +108,26 @@ def _sync_ship_session(repo: Path) -> str:
     return str(latest["latest_session_id"])
 
 
+def _sync_directive_session(repo: Path, title: str) -> str:
+    sync = _run(
+        "state",
+        "sync-session",
+        "--target",
+        str(repo),
+        "--mode",
+        "autopilot",
+        "--title",
+        title,
+        "--request",
+        f"run {title}",
+        "--roles",
+        "directive",
+    )
+    assert sync.returncode == 0, sync.stderr
+    latest = _read_json(repo / ".omc" / "state" / "latest.json")
+    return str(latest["latest_session_id"])
+
+
 def test_state_complete_writes_verified_completion_receipt_for_one_followup_commit(tmp_path: Path):
     target = tmp_path / "repo"
     baseline = _init_git_repo(target)
@@ -200,6 +220,44 @@ def test_state_complete_preserves_task_through_review_and_ship_sessions(tmp_path
     assert task_receipt.exists()
     assert not review_receipt.exists()
     assert not ship_receipt.exists()
+
+
+def test_state_complete_preserves_task_through_roadmap_sync_commit_session(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    task_session_id = _sync_task_session(target, "task then roadmap sync then commit")
+    roadmap_session_id = _sync_directive_session(target, "roadmap-sync-commit")
+
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _git(target, "add", "app.py")
+    _git(target, "commit", "-qm", "implement task and sync roadmap")
+
+    result = _run("state", "complete", "--target", str(target))
+    assert result.returncode == 0, result.stderr
+
+    task_receipt = target / ".omc" / "state" / "sessions" / task_session_id / "completion.json"
+    roadmap_receipt = target / ".omc" / "state" / "sessions" / roadmap_session_id / "completion.json"
+    assert task_receipt.exists()
+    assert not roadmap_receipt.exists()
+
+
+def test_state_complete_clears_task_for_unrelated_directive(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    task_session_id = _sync_task_session(target, "task then unrelated directive")
+    directive_session_id = _sync_directive_session(target, "deploy-maintenance")
+
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _git(target, "add", "app.py")
+    _git(target, "commit", "-qm", "unrelated directive commit")
+
+    result = _run("state", "complete", "--target", str(target))
+    assert result.returncode == 0, result.stderr
+
+    task_receipt = target / ".omc" / "state" / "sessions" / task_session_id / "completion.json"
+    directive_receipt = target / ".omc" / "state" / "sessions" / directive_session_id / "completion.json"
+    assert not task_receipt.exists()
+    assert not directive_receipt.exists()
 
 
 def test_state_complete_uses_latest_explicit_task_when_baseline_is_duplicated(tmp_path: Path):
