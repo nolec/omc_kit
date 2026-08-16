@@ -140,12 +140,13 @@ def test_resume_without_critique_issues_no_keyerror(tmp_repo, monkeypatch):
             raise AssertionError(f"KeyError: {e}")
 
 def test_plan_retry_hold_verdict_exits_hold(tmp_repo, monkeypatch):
-    """plan_retry VERDICT=HOLD 이면 critique 재진입 없이 즉시 hold + exit 2 해야 한다."""
+    """task orchestration failure 뒤 plan_retry HOLD면 즉시 hold + exit 2 해야 한다."""
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
-    # plan, task, critique(REVISE×3 탈출), plan_retry(rc=0 but HOLD) → 즉시 hold
+    # task 무사유 BLOCK은 orchestration failure로 분류되어 plan_retry로 이동한다.
+    # plan_retry가 HOLD를 반환하면 추가 스텝 없이 즉시 hold한다.
     # plan_retry 후 추가 _run_pipeline_step 호출이 없어야 함
     step_calls: list[str] = []
-    verdicts = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE", "HOLD"])
+    verdicts = iter(["PROCEED", "BLOCK", "HOLD"])
     def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         step_calls.append(step)
         v = next(verdicts, "HOLD")
@@ -160,8 +161,7 @@ def test_plan_retry_hold_verdict_exits_hold(tmp_repo, monkeypatch):
     data = json.loads((tmp_repo / "result.json").read_text())
     assert rc == 2, f"HOLD exit code 여야 함 (rc={rc})"
     assert data["status"] == "hold", f"status={data['status']}"
-    # plan_retry 이후 critique 가 추가 호출되면 안 됨
-    # 예상 순서: plan, task, critique(×3), plan_retry
+    # 예상 순서: plan, task, plan_retry
     assert step_calls[-1] == "plan_retry", \
         f"plan_retry 가 마지막 호출이어야 함, 실제: {step_calls}"
 
@@ -198,15 +198,14 @@ def test_task_prompt_contains_critique_quality_hint(tmp_repo, monkeypatch):
 
 
 # ─────────────────────────────────────────────
-# T2 (A): critique REVISE × 3 탈출 시 plan_retry 경로를 소비
+# T2 (A): critique REVISE 시 task_retry 경로를 소비
 # ─────────────────────────────────────────────
 
-def test_critique_revise_triggers_plan_retry_then_proceeds(tmp_repo, monkeypatch):
-    """critique REVISE×3 탈출 → plan_retry → critique PROCEED → completed."""
+def test_critique_revise_triggers_task_retry_then_proceeds(tmp_repo, monkeypatch):
+    """critique REVISE → task_retry → critique PROCEED → completed."""
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
-    # plan, task, critique(REVISE×3 탈출), plan_retry, critique_retry(PROCEED), review(APPROVE)
-    verdicts = iter(["PROCEED", "PROCEED", "REVISE", "REVISE", "REVISE",
-                     "PROCEED", "PROCEED", "APPROVE"])
+    # plan, task, critique(REVISE), task_retry, critique_retry(PROCEED), review(APPROVE)
+    verdicts = iter(["PROCEED", "PROCEED", "REVISE", "PROCEED", "PROCEED", "APPROVE"])
 
     def _mock_step(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
         v = next(verdicts, "PROCEED")
@@ -227,7 +226,8 @@ def test_critique_revise_triggers_plan_retry_then_proceeds(tmp_repo, monkeypatch
     data = json.loads((tmp_repo / "result.json").read_text())
     assert rc == 0, f"rc={rc}"
     assert data["status"] == "completed", f"status={data['status']}"
-    assert "plan_retry" in data.get("steps", {}), "plan_retry 스텝이 result.json 에 없음"
+    assert "task_retry" in data.get("steps", {}), "task_retry 스텝이 result.json 에 없음"
+    assert "plan_retry" not in data.get("steps", {}), "품질 REVISE가 plan_retry로 잘못 이동함"
 
 
 # ─────────────────────────────────────────────
@@ -365,23 +365,21 @@ def test_critique_none_verdict_streak_triggers_task_retry(tmp_repo, monkeypatch)
 
 
 # ─────────────────────────────────────────────
-# T2: critique verdict=BLOCK 1회 → 즉시 plan_retry → completed
+# T2: critique verdict=BLOCK 1회 → 즉시 hold
 # ─────────────────────────────────────────────
 
-def test_critique_block_verdict_immediate_plan_retry(tmp_repo, monkeypatch):
-    """critique BLOCK 1회 → streak 기다리지 않고 즉시 plan_retry → completed."""
+def test_critique_block_verdict_immediate_hold(tmp_repo, monkeypatch):
+    """critique BLOCK 1회 → retry 없이 즉시 hold."""
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_repo / "result.json"))
-    # plan(PROCEED), task(PROCEED), critique(BLOCK 1회 즉시 탈출),
-    # plan_retry(PROCEED), critique_retry(PROCEED), review(APPROVE)
+    step_calls: list[str] = []
     step_verdicts = {
         "plan":       iter(["PROCEED"]),
         "task":       iter(["PROCEED"]),
-        "critique":   iter(["BLOCK", "PROCEED"]),  # BLOCK 1회 → 즉시 탈출, retry 후 PROCEED
-        "plan_retry": iter(["PROCEED"]),
-        "review":     iter(["APPROVE"]),
+        "critique":   iter(["BLOCK"]),
     }
 
     def _mock(root, step, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        step_calls.append(step)
         v = next(step_verdicts.get(step, iter(["PROCEED"])), "PROCEED")
         return (0, f"output\nVERDICT: {v}")
 
@@ -399,9 +397,10 @@ def test_critique_block_verdict_immediate_plan_retry(tmp_repo, monkeypatch):
                                dry_run=False, auto=True, mode_arg="full", allow_dirty=True)
 
     data = json.loads((tmp_repo / "result.json").read_text())
-    assert rc == 0, f"rc={rc}"
-    assert data["status"] == "completed", f"status={data['status']}"
-    assert "plan_retry" in data.get("steps", {}), "plan_retry 가 result.json 에 없음"
+    assert rc == 2, f"rc={rc}"
+    assert data["status"] == "hold", f"status={data['status']}"
+    assert step_calls[-1] == "critique", f"BLOCK 이후 스텝이 실행됨: {step_calls}"
+    assert "plan_retry" not in data.get("steps", {}), "품질 BLOCK이 plan_retry로 잘못 이동함"
 
 # ─────────────────────────────────────────────
 # REVIEW-FIX R3: critique 첫 번째 None만으로 streak이 발동하지 않아야 한다

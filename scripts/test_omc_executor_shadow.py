@@ -7,6 +7,7 @@ import multiprocessing
 
 import omc_executor_shadow
 from omc_executor_shadow import (
+    build_parent_review_recovery,
     build_noop_shadow_record,
     build_single_child_execution_grant,
     execute_reserved_single_child_grant_file,
@@ -16,6 +17,99 @@ from omc_executor_shadow import (
     reserve_single_child_execution_grant_file,
 )
 import pytest
+
+
+@pytest.mark.parametrize(
+    (
+        "execution_result",
+        "recovery_action",
+        "expected_execution_status",
+        "expected_execution_reason_code",
+    ),
+    [
+        (
+            {"status": "failed", "reason_code": "executor_failed"},
+            "inspect_child_failure",
+            "failed",
+            "executor_failed",
+        ),
+        (
+            {"status": "timeout", "reason_code": "executor_timeout"},
+            "inspect_timeout_and_partial_output",
+            "timeout",
+            "executor_timeout",
+        ),
+        (
+            {
+                "status": "indeterminate",
+                "reason_code": "consumption_ledger_durability_unknown",
+                "execution_status": "succeeded",
+                "execution_reason_code": "executor_completed",
+            },
+            "reconcile_execution_ledger",
+            "succeeded",
+            "executor_completed",
+        ),
+        (
+            {
+                "status": "blocked",
+                "reason_code": "completion_time_before_reservation",
+                "execution_status": "succeeded",
+                "execution_reason_code": "executor_completed",
+            },
+            "reconcile_execution_ledger",
+            "succeeded",
+            "executor_completed",
+        ),
+    ],
+)
+def test_parent_review_recovery_classifies_terminal_failures(
+    execution_result,
+    recovery_action,
+    expected_execution_status,
+    expected_execution_reason_code,
+):
+    result = build_parent_review_recovery(execution_result)
+
+    assert result == {
+        "status": "review_required",
+        "action": "parent_review",
+        "execution_status": expected_execution_status,
+        "execution_reason_code": expected_execution_reason_code,
+        "recovery_reason_code": execution_result["reason_code"],
+        "recovery_action": recovery_action,
+        "automatic_retry_allowed": False,
+        "automatic_redistribution_allowed": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "execution_result",
+    [
+        {"status": "succeeded", "reason_code": "executor_completed"},
+        {"status": "failed"},
+        {"status": "unknown", "reason_code": "executor_failed"},
+        {"status": "blocked", "reason_code": "execution_reservation_mismatch"},
+        {
+            "status": "indeterminate",
+            "reason_code": "consumption_ledger_durability_unknown",
+            "execution_status": "unknown",
+        },
+        {
+            "status": "indeterminate",
+            "reason_code": "consumption_ledger_durability_unknown",
+            "execution_status": "succeeded",
+        },
+        None,
+    ],
+)
+def test_parent_review_recovery_rejects_non_failure_or_malformed_results(
+    execution_result,
+):
+    assert build_parent_review_recovery(execution_result) == {
+        "status": "blocked",
+        "reason_code": "parent_review_input_invalid",
+    }
 
 
 def _reserve_grant_worker(grant, ledger_path, queue):
@@ -688,6 +782,7 @@ def test_reserved_single_child_adapter_executes_once_and_finalizes(tmp_path):
     persisted = json.loads(ledger_path.read_text())
     assert result["status"] == "succeeded"
     assert result["reason_code"] == "executor_completed"
+    assert "parent_review" not in result
     assert len(calls) == 1
     assert calls[0] == {
         "executor": "codex",
@@ -748,26 +843,35 @@ def test_reserved_single_child_adapter_terminalizes_non_string_runner_output(tmp
 
 
 @pytest.mark.parametrize(
-    ("runner", "status", "reason_code"),
+    ("runner", "status", "reason_code", "recovery_action"),
     [
         (
             lambda **_: {"returncode": 7, "output": "failed"},
             "failed",
             "executor_failed",
+            "inspect_child_failure",
         ),
         (
             lambda **_: (_ for _ in ()).throw(TimeoutError("deadline")),
             "timeout",
             "executor_timeout",
+            "inspect_timeout_and_partial_output",
         ),
         (
             lambda **_: (_ for _ in ()).throw(RuntimeError("boom")),
             "failed",
             "executor_exception",
+            "inspect_child_failure",
         ),
     ],
 )
-def test_reserved_single_child_adapter_terminalizes_runner_failures(tmp_path, runner, status, reason_code):
+def test_reserved_single_child_adapter_terminalizes_runner_failures(
+    tmp_path,
+    runner,
+    status,
+    reason_code,
+    recovery_action,
+):
     ledger_path = tmp_path / "execution-grants.json"
     ledger_path.write_text(json.dumps(_reserved_ledger()))
 
@@ -784,7 +888,58 @@ def test_reserved_single_child_adapter_terminalizes_runner_failures(tmp_path, ru
     persisted = json.loads(ledger_path.read_text())
     assert result["status"] == status
     assert result["reason_code"] == reason_code
+    assert result["parent_review"] == {
+        "status": "review_required",
+        "action": "parent_review",
+        "execution_status": status,
+        "execution_reason_code": reason_code,
+        "recovery_reason_code": reason_code,
+        "recovery_action": recovery_action,
+        "automatic_retry_allowed": False,
+        "automatic_redistribution_allowed": False,
+    }
     assert persisted["entries"][0]["status"] == status
+
+
+def test_reserved_single_child_adapter_requires_parent_review_when_finalization_blocks(
+    tmp_path,
+):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_reserved_ledger()))
+    calls = []
+    times = iter(
+        [
+            datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+            datetime(2026, 8, 15, 23, 59, 59, tzinfo=timezone.utc),
+        ]
+    )
+
+    result = execute_reserved_single_child_grant_file(
+        _execution_grant(),
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs)
+        or {"returncode": 0, "output": "completed"},
+        monotonic=_monotonic_values(1.0, 2.0),
+        now=lambda: next(times),
+    )
+
+    assert len(calls) == 1
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "completion_time_before_reservation"
+    assert result["execution_status"] == "succeeded"
+    assert result["execution_reason_code"] == "executor_completed"
+    assert result["parent_review"] == {
+        "status": "review_required",
+        "action": "parent_review",
+        "execution_status": "succeeded",
+        "execution_reason_code": "executor_completed",
+        "recovery_reason_code": "completion_time_before_reservation",
+        "recovery_action": "reconcile_execution_ledger",
+        "automatic_retry_allowed": False,
+        "automatic_redistribution_allowed": False,
+    }
 
 
 def test_reserved_single_child_adapter_blocks_before_runner_on_binding_mismatch(
@@ -804,6 +959,7 @@ def test_reserved_single_child_adapter_blocks_before_runner_on_binding_mismatch(
 
     assert result["status"] == "blocked"
     assert result["reason_code"] == "execution_reservation_mismatch"
+    assert "parent_review" not in result
     assert calls == []
 
 
@@ -935,6 +1091,16 @@ def test_reserved_single_child_adapter_does_not_run_after_uncertain_claim(tmp_pa
     persisted = json.loads(ledger_path.read_text())
     assert result["status"] == "indeterminate"
     assert result["reason_code"] == "execution_claim_durability_unknown"
+    assert result["parent_review"]["recovery_action"] == (
+        "reconcile_execution_ledger"
+    )
+    assert result["parent_review"]["execution_status"] == "indeterminate"
+    assert result["parent_review"]["execution_reason_code"] == (
+        "execution_claim_durability_unknown"
+    )
+    assert result["parent_review"]["recovery_reason_code"] == (
+        "execution_claim_durability_unknown"
+    )
     assert persisted["entries"][0]["status"] == "running"
     assert calls == []
 
@@ -967,6 +1133,14 @@ def test_reserved_single_child_adapter_propagates_uncertain_terminal_write(tmp_p
     persisted = json.loads(ledger_path.read_text())
     assert result["status"] == "indeterminate"
     assert result["reason_code"] == "consumption_ledger_durability_unknown"
+    assert result["parent_review"]["recovery_action"] == (
+        "reconcile_execution_ledger"
+    )
+    assert result["parent_review"]["execution_status"] == "succeeded"
+    assert result["parent_review"]["execution_reason_code"] == "executor_completed"
+    assert result["parent_review"]["recovery_reason_code"] == (
+        "consumption_ledger_durability_unknown"
+    )
     assert result["execution_status"] == "succeeded"
     assert result["execution_reason_code"] == "executor_completed"
     assert persisted["entries"][0]["status"] == "succeeded"

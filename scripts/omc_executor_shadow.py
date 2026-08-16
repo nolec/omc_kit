@@ -25,6 +25,76 @@ def _is_finite_number(value: object) -> bool:
         return False
 
 
+def build_parent_review_recovery(execution_result: Any) -> dict[str, Any]:
+    """Map a terminal child failure to one bounded parent-review action."""
+    if not isinstance(execution_result, dict):
+        return {
+            "status": "blocked",
+            "reason_code": "parent_review_input_invalid",
+        }
+    execution_status = execution_result.get("status")
+    execution_reason_code = execution_result.get("reason_code")
+    recovery_actions = {
+        "failed": "inspect_child_failure",
+        "timeout": "inspect_timeout_and_partial_output",
+        "indeterminate": "reconcile_execution_ledger",
+        "blocked": "reconcile_execution_ledger",
+    }
+    if (
+        execution_status not in recovery_actions
+        or not isinstance(execution_reason_code, str)
+        or not execution_reason_code.strip()
+    ):
+        return {
+            "status": "blocked",
+            "reason_code": "parent_review_input_invalid",
+        }
+    reported_execution_status = execution_status
+    reported_execution_reason_code = execution_reason_code
+    if execution_status in {"indeterminate", "blocked"}:
+        terminal_execution_status = execution_result.get("execution_status")
+        terminal_execution_reason_code = execution_result.get(
+            "execution_reason_code"
+        )
+        if terminal_execution_status is not None:
+            if (
+                terminal_execution_status not in {"succeeded", "failed", "timeout"}
+                or not isinstance(terminal_execution_reason_code, str)
+                or not terminal_execution_reason_code.strip()
+            ):
+                return {
+                    "status": "blocked",
+                    "reason_code": "parent_review_input_invalid",
+                }
+            reported_execution_status = terminal_execution_status
+            reported_execution_reason_code = terminal_execution_reason_code
+        elif (
+            terminal_execution_reason_code is not None
+            or execution_status == "blocked"
+        ):
+            return {
+                "status": "blocked",
+                "reason_code": "parent_review_input_invalid",
+            }
+    return {
+        "status": "review_required",
+        "action": "parent_review",
+        "execution_status": reported_execution_status,
+        "execution_reason_code": reported_execution_reason_code,
+        "recovery_reason_code": execution_reason_code,
+        "recovery_action": recovery_actions[execution_status],
+        "automatic_retry_allowed": False,
+        "automatic_redistribution_allowed": False,
+    }
+
+
+def _with_parent_review_recovery(result: dict[str, Any]) -> dict[str, Any]:
+    recovery = build_parent_review_recovery(result)
+    if recovery["status"] != "review_required":
+        return result
+    return {**result, "parent_review": recovery}
+
+
 def _base_record(request: dict[str, Any]) -> dict[str, Any]:
     return {
         "mode": "noop_shadow",
@@ -765,7 +835,7 @@ def execute_reserved_single_child_grant_file(
         return {"status": "blocked", "reason_code": "execution_input_invalid"}
     claim = _claim_single_child_execution_reservation_file(grant, ledger_path, now=now)
     if claim["status"] != "claimed":
-        return claim
+        return _with_parent_review_recovery(claim)
 
     max_elapsed = float(grant["max_total_elapsed_sec"])
     max_output = int(grant["max_output_chars"])
@@ -818,13 +888,13 @@ def execute_reserved_single_child_grant_file(
         now=now(),
     )
     if finalized["status"] not in {"finalized", "indeterminate"}:
-        return {
+        return _with_parent_review_recovery({
             **finalized,
             "execution_status": terminal_status,
             "execution_reason_code": reason_code,
-        }
+        })
     if finalized["status"] == "indeterminate":
-        return {
+        return _with_parent_review_recovery({
             "status": "indeterminate",
             "reason_code": finalized["reason_code"],
             "execution_status": terminal_status,
@@ -834,8 +904,8 @@ def execute_reserved_single_child_grant_file(
             "observed_elapsed_sec": observed_elapsed,
             "ledger_status": finalized["status"],
             "entry": finalized["entry"],
-        }
-    return {
+        })
+    return _with_parent_review_recovery({
         "status": terminal_status,
         "reason_code": reason_code,
         "output": output,
@@ -843,7 +913,7 @@ def execute_reserved_single_child_grant_file(
         "observed_elapsed_sec": observed_elapsed,
         "ledger_status": finalized["status"],
         "entry": finalized["entry"],
-    }
+    })
 
 
 def finalize_single_child_execution_reservation_file(
