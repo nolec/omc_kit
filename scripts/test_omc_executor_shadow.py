@@ -9,6 +9,7 @@ import omc_executor_shadow
 from omc_executor_shadow import (
     build_noop_shadow_record,
     build_single_child_execution_grant,
+    execute_reserved_single_child_grant_file,
     finalize_single_child_execution_reservation,
     finalize_single_child_execution_reservation_file,
     reserve_single_child_execution_grant,
@@ -109,6 +110,7 @@ def _reserved_ledger():
                 "session_id": "session-1",
                 "idempotency_key": "run-child-1",
                 "scope_hash": "scope-abc",
+                "approval_expires_at": "2099-01-01T00:00:00Z",
                 "status": "reserved",
                 "reserved_at": "2026-08-16T00:00:00Z",
                 "max_attempts": 1,
@@ -118,6 +120,21 @@ def _reserved_ledger():
             }
         ],
     }
+
+
+def _execution_grant(**overrides):
+    request = _single_child_pilot_request(
+        execution_requested=True,
+        execution_mode="single_child_opt_in",
+    )
+    grant = build_single_child_execution_grant(request)
+    grant.update(overrides)
+    return grant
+
+
+def _monotonic_values(*values):
+    iterator = iter(values)
+    return lambda: next(iterator)
 
 
 def test_shadow_adapter_returns_non_executing_record():
@@ -250,9 +267,7 @@ def test_single_child_execution_grant_rejects_duplicate_reservation():
         ),
     ],
 )
-def test_single_child_execution_grant_blocks_invalid_reservation(
-    scope_hash, now, reason_code
-):
+def test_single_child_execution_grant_blocks_invalid_reservation(scope_hash, now, reason_code):
     grant = build_single_child_execution_grant(
         _single_child_pilot_request(
             execution_requested=True,
@@ -425,9 +440,7 @@ def test_single_child_execution_reservation_records_terminal_outcome_without_mut
         idempotency_key="run-child-1",
         outcome={
             "status": terminal_status,
-            "reason_code": "completed"
-            if terminal_status == "succeeded"
-            else "executor_error",
+            "reason_code": "completed" if terminal_status == "succeeded" else "executor_error",
             "elapsed_sec": 12.5,
             "output_chars": 240,
         },
@@ -550,9 +563,7 @@ def test_single_child_execution_reservation_blocks_completion_before_reservation
         ),
     ],
 )
-def test_single_child_execution_reservation_fails_closed(
-    revision, outcome, reason_code
-):
+def test_single_child_execution_reservation_fails_closed(revision, outcome, reason_code):
     result = finalize_single_child_execution_reservation(
         _reserved_ledger(),
         idempotency_key="run-child-1",
@@ -594,9 +605,7 @@ def test_single_child_execution_reservation_file_persists_once(tmp_path):
     assert persisted["entries"][0]["status"] == "succeeded"
 
 
-def test_single_child_execution_reservation_file_reports_post_replace_uncertainty(
-    tmp_path, monkeypatch
-):
+def test_single_child_execution_reservation_file_reports_post_replace_uncertainty(tmp_path, monkeypatch):
     ledger_path = tmp_path / "execution-grants.json"
     ledger_path.write_text(json.dumps(_reserved_ledger()))
     real_fsync = omc_executor_shadow.os.fsync
@@ -655,6 +664,312 @@ def test_single_child_execution_reservation_file_serializes_processes(tmp_path):
         ("blocked", "execution_already_finalized"),
         ("finalized", "execution_outcome_recorded"),
     ]
+
+
+def test_reserved_single_child_adapter_executes_once_and_finalizes(tmp_path):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_reserved_ledger()))
+    calls = []
+
+    def runner(**kwargs):
+        calls.append(kwargs)
+        return {"returncode": 0, "output": "completed"}
+
+    result = execute_reserved_single_child_grant_file(
+        _execution_grant(),
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=runner,
+        monotonic=_monotonic_values(10.0, 14.5),
+        now=lambda: datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+
+    persisted = json.loads(ledger_path.read_text())
+    assert result["status"] == "succeeded"
+    assert result["reason_code"] == "executor_completed"
+    assert len(calls) == 1
+    assert calls[0] == {
+        "executor": "codex",
+        "prompt": "implement child",
+        "project_root": tmp_path,
+        "timeout_sec": 120,
+    }
+    assert persisted["revision"] == 3
+    assert persisted["entries"][0]["status"] == "succeeded"
+    assert persisted["entries"][0]["attempt_count"] == 1
+    assert persisted["entries"][0]["outcome"]["elapsed_sec"] == 4.5
+    assert persisted["entries"][0]["outcome"]["output_chars"] == 9
+
+
+def test_reserved_single_child_adapter_truncates_output_to_grant_budget(tmp_path):
+    ledger = _reserved_ledger()
+    ledger["entries"][0]["max_output_chars"] = 4
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(ledger))
+    grant = _execution_grant(max_output_chars=4)
+
+    result = execute_reserved_single_child_grant_file(
+        grant,
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=lambda **_: {"returncode": 0, "output": "abcdef"},
+        monotonic=_monotonic_values(1.0, 2.0),
+        now=lambda: datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+
+    persisted = json.loads(ledger_path.read_text())
+    assert result["output"] == "abcd"
+    assert result["output_truncated"] is True
+    assert persisted["entries"][0]["outcome"]["output_chars"] == 4
+
+
+def test_reserved_single_child_adapter_terminalizes_non_string_runner_output(tmp_path):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_reserved_ledger()))
+
+    result = execute_reserved_single_child_grant_file(
+        _execution_grant(),
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=lambda **_: {"returncode": 0, "output": 123},
+        monotonic=_monotonic_values(1.0, 2.0),
+        now=lambda: datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+
+    persisted = json.loads(ledger_path.read_text())
+    assert result["status"] == "failed"
+    assert result["reason_code"] == "executor_exception"
+    assert result["output"] == ""
+    assert result["output_truncated"] is False
+    assert persisted["entries"][0]["status"] == "failed"
+
+
+@pytest.mark.parametrize(
+    ("runner", "status", "reason_code"),
+    [
+        (
+            lambda **_: {"returncode": 7, "output": "failed"},
+            "failed",
+            "executor_failed",
+        ),
+        (
+            lambda **_: (_ for _ in ()).throw(TimeoutError("deadline")),
+            "timeout",
+            "executor_timeout",
+        ),
+        (
+            lambda **_: (_ for _ in ()).throw(RuntimeError("boom")),
+            "failed",
+            "executor_exception",
+        ),
+    ],
+)
+def test_reserved_single_child_adapter_terminalizes_runner_failures(tmp_path, runner, status, reason_code):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_reserved_ledger()))
+
+    result = execute_reserved_single_child_grant_file(
+        _execution_grant(),
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=runner,
+        monotonic=_monotonic_values(1.0, 2.0),
+        now=lambda: datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+
+    persisted = json.loads(ledger_path.read_text())
+    assert result["status"] == status
+    assert result["reason_code"] == reason_code
+    assert persisted["entries"][0]["status"] == status
+
+
+def test_reserved_single_child_adapter_blocks_before_runner_on_binding_mismatch(
+    tmp_path,
+):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_reserved_ledger()))
+    calls = []
+
+    result = execute_reserved_single_child_grant_file(
+        _execution_grant(scope_hash="other-scope"),
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "execution_reservation_mismatch"
+    assert calls == []
+
+
+def test_reserved_single_child_adapter_fails_closed_on_malformed_ledger(tmp_path):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text("[]")
+    calls = []
+
+    result = execute_reserved_single_child_grant_file(
+        _execution_grant(),
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs),
+        now=lambda: datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "consumption_ledger_invalid"
+    assert calls == []
+
+
+def test_reserved_single_child_adapter_blocks_expired_grant_before_runner(tmp_path):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger = _reserved_ledger()
+    ledger["entries"][0]["approval_expires_at"] = "2026-08-15T23:59:59Z"
+    ledger_path.write_text(json.dumps(ledger))
+    calls = []
+
+    result = execute_reserved_single_child_grant_file(
+        _execution_grant(approval_expires_at="2026-08-15T23:59:59Z"),
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs),
+        now=lambda: datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "grant_expired"
+    assert calls == []
+
+
+def test_reserved_single_child_adapter_rechecks_expiry_after_lock(tmp_path, monkeypatch):
+    expires_at = "2026-08-16T00:00:30Z"
+    ledger = _reserved_ledger()
+    ledger["entries"][0]["approval_expires_at"] = expires_at
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(ledger))
+    grant = _execution_grant(approval_expires_at=expires_at)
+    calls = []
+    clock = {"current": datetime(2026, 8, 16, 0, 0, tzinfo=timezone.utc)}
+
+    def acquire_after_expiry(*_args):
+        clock["current"] = datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(omc_executor_shadow.fcntl, "flock", acquire_after_expiry)
+
+    result = execute_reserved_single_child_grant_file(
+        grant,
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs),
+        monotonic=_monotonic_values(1.0, 2.0),
+        now=lambda: clock["current"],
+    )
+
+    persisted = json.loads(ledger_path.read_text())
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "grant_expired"
+    assert persisted["entries"][0]["status"] == "reserved"
+    assert calls == []
+
+
+def test_reserved_single_child_adapter_blocks_second_execution(tmp_path):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_reserved_ledger()))
+    calls = []
+
+    first = execute_reserved_single_child_grant_file(
+        _execution_grant(),
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs) or {"returncode": 0, "output": "ok"},
+        monotonic=_monotonic_values(1.0, 2.0),
+        now=lambda: datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+    second = execute_reserved_single_child_grant_file(
+        _execution_grant(),
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs) or {"returncode": 0, "output": "again"},
+    )
+
+    assert first["status"] == "succeeded"
+    assert second["status"] == "blocked"
+    assert second["reason_code"] == "execution_already_claimed"
+    assert len(calls) == 1
+
+
+def test_reserved_single_child_adapter_does_not_run_after_uncertain_claim(tmp_path, monkeypatch):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_reserved_ledger()))
+    calls = []
+    real_fsync = omc_executor_shadow.os.fsync
+    fsync_calls = 0
+
+    def fail_claim_directory_fsync(fd):
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 2:
+            raise OSError("directory fsync failed")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(omc_executor_shadow.os, "fsync", fail_claim_directory_fsync)
+
+    result = execute_reserved_single_child_grant_file(
+        _execution_grant(),
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs),
+        now=lambda: datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+
+    persisted = json.loads(ledger_path.read_text())
+    assert result["status"] == "indeterminate"
+    assert result["reason_code"] == "execution_claim_durability_unknown"
+    assert persisted["entries"][0]["status"] == "running"
+    assert calls == []
+
+
+def test_reserved_single_child_adapter_propagates_uncertain_terminal_write(tmp_path, monkeypatch):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_reserved_ledger()))
+    real_fsync = omc_executor_shadow.os.fsync
+    fsync_calls = 0
+
+    def fail_terminal_directory_fsync(fd):
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 4:
+            raise OSError("terminal directory fsync failed")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(omc_executor_shadow.os, "fsync", fail_terminal_directory_fsync)
+
+    result = execute_reserved_single_child_grant_file(
+        _execution_grant(),
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=lambda **_: {"returncode": 0, "output": "completed"},
+        monotonic=_monotonic_values(1.0, 2.0),
+        now=lambda: datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+
+    persisted = json.loads(ledger_path.read_text())
+    assert result["status"] == "indeterminate"
+    assert result["reason_code"] == "consumption_ledger_durability_unknown"
+    assert result["execution_status"] == "succeeded"
+    assert result["execution_reason_code"] == "executor_completed"
+    assert persisted["entries"][0]["status"] == "succeeded"
 
 
 @pytest.mark.parametrize(

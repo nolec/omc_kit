@@ -8,6 +8,52 @@ import omc_cost
 import omc_exec
 
 
+def test_single_child_headless_runner_disables_codex_fallback(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(project_root, prompt_text, **kwargs):
+        captured.update(
+            project_root=project_root,
+            prompt_text=prompt_text,
+            **kwargs,
+        )
+        print("child output")
+        return 0
+
+    monkeypatch.setattr(omc_exec, "_run_codex_headless", fake_run)
+
+    result = omc_exec.run_headless_executor_once(
+        executor="codex",
+        prompt="child prompt",
+        project_root=tmp_path,
+        timeout_sec=30,
+    )
+
+    assert result == {"returncode": 0, "output": "child output\n"}
+    assert captured["allow_fallback"] is False
+    assert captured["task_kind"] == "task"
+
+
+def test_single_child_headless_runner_preserves_fractional_timeout(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(project_root, prompt_text, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(omc_exec, "_run_codex_headless", fake_run)
+
+    result = omc_exec.run_headless_executor_once(
+        executor="codex",
+        prompt="child prompt",
+        project_root=tmp_path,
+        timeout_sec=0.5,
+    )
+
+    assert result["returncode"] == 0
+    assert captured["timeout_sec"] == 0.5
+
+
 def test_codex_headless_command_uses_workspace_write_sandbox(tmp_path: Path) -> None:
     cmd = omc_exec._codex_headless_command(tmp_path, "prompt", tmp_path / "out.txt")
 
@@ -19,9 +65,7 @@ def test_codex_headless_command_uses_workspace_write_sandbox(tmp_path: Path) -> 
     assert "-o" in cmd
 
 
-def test_codex_headless_command_uses_supported_noninteractive_policy(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_codex_headless_command_uses_supported_noninteractive_policy(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("OMC_CODEX_FULL_AUTO", "1")
     cmd = omc_exec._codex_headless_command(
         tmp_path,
@@ -85,7 +129,9 @@ def test_run_codex_headless_fails_fast_when_preflight_fails(monkeypatch, tmp_pat
     assert rc == 78
 
 
-def test_codex_headless_command_reasoning_effort_precedes_prompt(tmp_path: Path) -> None:
+def test_codex_headless_command_reasoning_effort_precedes_prompt(
+    tmp_path: Path,
+) -> None:
     cmd = omc_exec._codex_headless_command(
         tmp_path,
         "my prompt",
@@ -97,7 +143,9 @@ def test_codex_headless_command_reasoning_effort_precedes_prompt(tmp_path: Path)
     assert cmd[-1] == "my prompt", f"prompt_text가 마지막이어야 함, 실제: {cmd[-1]!r}"
 
 
-def test_codex_headless_command_prompt_text_is_always_last_element(tmp_path: Path) -> None:
+def test_codex_headless_command_prompt_text_is_always_last_element(
+    tmp_path: Path,
+) -> None:
     for profile in ("mini_default", "mini_high", "full_default"):
         cmd = omc_exec._codex_headless_command(
             tmp_path,
@@ -108,7 +156,9 @@ def test_codex_headless_command_prompt_text_is_always_last_element(tmp_path: Pat
         assert cmd[-1] == "my prompt", f"profile={profile}: cmd[-1]={cmd[-1]!r}"
 
 
-def test_codex_headless_command_applies_profile_model_and_reasoning_flags(tmp_path: Path) -> None:
+def test_codex_headless_command_applies_profile_model_and_reasoning_flags(
+    tmp_path: Path,
+) -> None:
     cmd = omc_exec._codex_headless_command(
         tmp_path,
         "prompt",
@@ -122,7 +172,9 @@ def test_codex_headless_command_applies_profile_model_and_reasoning_flags(tmp_pa
     assert "high" in cmd
 
 
-def test_codex_headless_command_omits_reasoning_effort_when_unsupported(tmp_path: Path) -> None:
+def test_codex_headless_command_omits_reasoning_effort_when_unsupported(
+    tmp_path: Path,
+) -> None:
     cmd = omc_exec._codex_headless_command(
         tmp_path,
         "prompt",
@@ -141,10 +193,7 @@ def test_prepare_codex_headless_runtime_uses_temp_codex_home(monkeypatch, tmp_pa
     source_home.mkdir()
     (source_home / "auth.json").write_text('{"token":"secret"}', encoding="utf-8")
     (source_home / "config.toml").write_text(
-        'model = "gpt-5.3-codex"\n'
-        '\n'
-        "[notice.model_migrations]\n"
-        '"gpt-5.3-codex" = "gpt-5.4"\n',
+        'model = "gpt-5.3-codex"\n' "\n" "[notice.model_migrations]\n" '"gpt-5.3-codex" = "gpt-5.4"\n',
         encoding="utf-8",
     )
     (source_home / "version.json").write_text('{"version":"1"}', encoding="utf-8")
@@ -172,10 +221,7 @@ def test_prepare_codex_headless_runtime_overrides_model_for_full_default(
     source_home.mkdir()
     (source_home / "auth.json").write_text('{"token":"secret"}', encoding="utf-8")
     (source_home / "config.toml").write_text(
-        'model = "gpt-5.3-codex"\n'
-        '\n'
-        "[notice.model_migrations]\n"
-        '"gpt-5.3-codex" = "gpt-5.4"\n',
+        'model = "gpt-5.3-codex"\n' "\n" "[notice.model_migrations]\n" '"gpt-5.3-codex" = "gpt-5.4"\n',
         encoding="utf-8",
     )
     monkeypatch.setenv("CODEX_HOME", str(source_home))
@@ -237,7 +283,16 @@ def test_run_codex_headless_records_cost_log_row(monkeypatch, tmp_path: Path) ->
             stderr="",
         )
 
-    def fake_record(root, *, executor, session_id=None, task_title=None, llm_json=None, model="", base_ref="HEAD"):
+    def fake_record(
+        root,
+        *,
+        executor,
+        session_id=None,
+        task_title=None,
+        llm_json=None,
+        model="",
+        base_ref="HEAD",
+    ):
         recorded["root"] = root
         recorded["executor"] = executor
         recorded["task_title"] = task_title
@@ -270,7 +325,16 @@ def test_run_codex_headless_records_timeout_row(monkeypatch, tmp_path: Path) -> 
     def fake_run(*_args, **_kwargs):
         raise subprocess.TimeoutExpired(cmd=["codex"], timeout=5)
 
-    def fake_record(root, *, executor, session_id=None, task_title=None, llm_json=None, model="", base_ref="HEAD"):
+    def fake_record(
+        root,
+        *,
+        executor,
+        session_id=None,
+        task_title=None,
+        llm_json=None,
+        model="",
+        base_ref="HEAD",
+    ):
         recorded["root"] = root
         recorded["executor"] = executor
         recorded["task_title"] = task_title
@@ -331,6 +395,54 @@ def test_run_codex_headless_network_timeout_falls_back(monkeypatch, tmp_path: Pa
 
     assert rc == 0
     assert fallback_calls == ["gemini"]
+
+
+def test_run_codex_headless_strict_network_timeout_does_not_fallback(monkeypatch, tmp_path: Path) -> None:
+    class _Runtime:
+        def cleanup(self):
+            return None
+
+    fallback_calls: list[str] = []
+
+    monkeypatch.setattr(
+        omc_exec,
+        "_prepare_codex_headless_runtime",
+        lambda model_profile="mini_default": (_Runtime(), {}),
+    )
+    monkeypatch.setattr(omc_exec, "_codex_headless_preflight", lambda: (True, "ready"))
+    monkeypatch.setattr(omc_exec, "_codex_supports_reasoning_effort", lambda: False)
+    monkeypatch.setattr(omc_exec, "_record_headless_cost", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        omc_exec.shutil,
+        "which",
+        lambda executable: "/usr/bin/fake" if executable in {"codex", "gemini"} else None,
+    )
+    monkeypatch.setattr(
+        omc_exec.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(
+                cmd=["codex"],
+                timeout=5,
+                output=b"stream disconnected before completion",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        omc_exec,
+        "_run_gemini_headless",
+        lambda *args, **kwargs: fallback_calls.append("gemini") or 0,
+    )
+
+    rc = omc_exec._run_codex_headless(
+        tmp_path,
+        "prompt",
+        timeout_sec=5,
+        allow_fallback=False,
+    )
+
+    assert rc == 124
+    assert fallback_calls == []
 
 
 def test_run_codex_headless_dns_timeout_does_not_fallback(monkeypatch, tmp_path: Path) -> None:
@@ -547,9 +659,7 @@ def test_reasoning_capability_cache_does_not_cross_binary_boundaries(monkeypatch
     monkeypatch.setattr(
         omc_exec.subprocess,
         "run",
-        lambda command, **_kwargs: subprocess.CompletedProcess(
-            command, 0, stdout="legacy help", stderr=""
-        ),
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, stdout="legacy help", stderr=""),
     )
 
     assert omc_exec._codex_supports_reasoning_effort() is False

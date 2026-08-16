@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import json
 import os
 import re
@@ -10,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+from typing import Any
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -50,6 +53,8 @@ def _resolve_codex_binary() -> str:
     if app_binary.is_file():
         return str(app_binary)
     return "codex"
+
+
 HEADLESS_NETWORK_UNAVAILABLE_EXIT_CODE = 75
 _HEADLESS_NETWORK_FAILURE_MARKERS = (
     "failed to lookup address information",
@@ -275,9 +280,7 @@ def _resolve_policy_decision(
     normalized_operator_goal = _normalize_text(operator_goal) or "balance"
 
     conflicting_speed_vs_quality = (
-        normalized_operator_goal == "speed"
-        and normalized_failure_cost == "high"
-        and normalized_ambiguity == "high"
+        normalized_operator_goal == "speed" and normalized_failure_cost == "high" and normalized_ambiguity == "high"
     )
     if conflicting_speed_vs_quality:
         return _build_policy_decision("balanced", "balanced_default", "low")
@@ -287,11 +290,7 @@ def _resolve_policy_decision(
     if normalized_ambiguity == "high" and normalized_failure_cost == "high":
         return _build_policy_decision("quality_first", "high_ambiguity_and_cost", "medium")
 
-    if (
-        normalized_failure_cost == "low"
-        and normalized_ambiguity == "low"
-        and normalized_operator_goal == "speed"
-    ):
+    if normalized_failure_cost == "low" and normalized_ambiguity == "low" and normalized_operator_goal == "speed":
         return _build_policy_decision("cost_saver", "explicit_lightweight", "high")
 
     return _build_policy_decision("balanced", "balanced_default", "high")
@@ -332,8 +331,14 @@ def classify_policy_comparison(
     if profile == "cost_saver" and (quality_failure or retry_count > 0):
         return {"status": "over_aggressive", "reason": "cost saver required recovery"}
     if profile == "quality_first" and _normalize_text(cost_delta) == "higher" and not quality_failure:
-        return {"status": "over_conservative", "reason": "quality-first increased cost without quality failure"}
-    return {"status": "hit", "reason": "observed outcome matches the selected policy direction"}
+        return {
+            "status": "over_conservative",
+            "reason": "quality-first increased cost without quality failure",
+        }
+    return {
+        "status": "hit",
+        "reason": "observed outcome matches the selected policy direction",
+    }
 
 
 def build_executor_handoff_contract(
@@ -395,7 +400,11 @@ def _resolve_executor_recommendation(
     normalized_kind = _normalize_text(task_kind) or "task"
     normalized_policy = _normalize_text(policy_profile) or "balanced"
 
-    if normalized_policy == "quality_first" and normalized_kind in {"plan", "review", "investigate"}:
+    if normalized_policy == "quality_first" and normalized_kind in {
+        "plan",
+        "review",
+        "investigate",
+    }:
         return _build_executor_recommendation("claude", "quality_first_claude", "codex")
     if normalized_policy == "cost_saver":
         return _build_executor_recommendation("gemini", "cost_saver_gemini", "codex")
@@ -410,9 +419,7 @@ def _build_executor_recommendation(
     return {
         "recommended_executor": recommended_executor,
         "executor_reason_code": reason_code,
-        "executor_reason_summary": _EXECUTOR_REASON_SUMMARIES.get(
-            reason_code, reason_code.replace("_", " ")
-        ),
+        "executor_reason_summary": _EXECUTOR_REASON_SUMMARIES.get(reason_code, reason_code.replace("_", " ")),
         "executor_fallback": fallback_executor,
     }
 
@@ -436,10 +443,7 @@ def _resolve_next_skill_surface(
         _normalize_text(complexity) == "high"
         or _normalize_text(risk) == "high"
         or _normalize_text(ambiguity_level) == "high"
-        or (
-            normalized_failure_cost == "high"
-            and normalized_operator_goal == "quality"
-        )
+        or (normalized_failure_cost == "high" and normalized_operator_goal == "quality")
         or not scope_fixed
     ):
         recommended_next_skill = "plan"
@@ -630,7 +634,6 @@ def _resolve_codex_profile_settings(model_profile: str) -> dict[str, str | None]
     return _CODEX_MODEL_MAP.get(model_profile, _CODEX_MODEL_MAP["mini_default"])
 
 
-
 def _is_tty_available() -> bool:
     term = os.environ.get("TERM", "").strip().lower()
     if term in {"", "dumb"}:
@@ -708,13 +711,27 @@ def _claude_headless_command(prompt_text: str, *, model_profile: str = "mini_def
 
 
 # Gemini CLI에서 실제로 제공되는 도구 이름 목록 (gemini-cli-core tool-names.js 기준)
-_GEMINI_KNOWN_TOOLS: frozenset[str] = frozenset({
-    "glob", "grep_search", "list_directory", "read_file", "read_many_files",
-    "replace", "run_shell_command", "write_file", "write_todos",
-    "google_web_search", "web_fetch", "save_memory",
-    "ask_user", "activate_skill", "enter_plan_mode", "exit_plan_mode",
-    "get_internal_docs",
-})
+_GEMINI_KNOWN_TOOLS: frozenset[str] = frozenset(
+    {
+        "glob",
+        "grep_search",
+        "list_directory",
+        "read_file",
+        "read_many_files",
+        "replace",
+        "run_shell_command",
+        "write_file",
+        "write_todos",
+        "google_web_search",
+        "web_fetch",
+        "save_memory",
+        "ask_user",
+        "activate_skill",
+        "enter_plan_mode",
+        "exit_plan_mode",
+        "get_internal_docs",
+    }
+)
 
 
 def _adapt_prompt_for_executor(prompt_text: str, *, executor: str) -> str:
@@ -747,12 +764,17 @@ def _check_codex_auth() -> bool:
     """Quickly check if codex is authenticated."""
     try:
         # Use a fast, read-only command to check auth
-        proc = subprocess.run([_resolve_codex_binary(), "features"], capture_output=True, text=True, timeout=5)
+        proc = subprocess.run(
+            [_resolve_codex_binary(), "features"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
         if proc.returncode == 0:
             return True
         if "401 Unauthorized" in proc.stderr or "401 Unauthorized" in proc.stdout:
             return False
-        return True # Assume OK for other errors to avoid false positives
+        return True  # Assume OK for other errors to avoid false positives
     except Exception:
         return True
 
@@ -760,10 +782,7 @@ def _check_codex_auth() -> bool:
 def _codex_supports_reasoning_effort() -> bool:
     global _CODEX_REASONING_EFFORT_SUPPORTED
     binary = _resolve_codex_binary()
-    if (
-        _CODEX_REASONING_EFFORT_SUPPORTED is not None
-        and _CODEX_REASONING_EFFORT_SUPPORTED[0] == binary
-    ):
+    if _CODEX_REASONING_EFFORT_SUPPORTED is not None and _CODEX_REASONING_EFFORT_SUPPORTED[0] == binary:
         return _CODEX_REASONING_EFFORT_SUPPORTED[1]
     try:
         proc = subprocess.run(
@@ -987,9 +1006,10 @@ def _run_codex_headless(
     project_root: Path,
     prompt_text: str,
     *,
-    timeout_sec: int,
+    timeout_sec: int | float,
     model_profile: str = "mini_default",
     task_kind: str = "task",
+    allow_fallback: bool = True,
 ) -> int:
     preflight_ok, preflight_reason = _codex_headless_preflight()
     if not preflight_ok:
@@ -1035,12 +1055,18 @@ def _run_codex_headless(
                     part for part in (partial_output, _decode_headless_output(exc.stderr)) if part
                 )
             if _is_headless_dns_failure(partial_output):
-                print("[!] Codex headless DNS unavailable; skipping provider fallback.", file=sys.stderr)
+                print(
+                    "[!] Codex headless DNS unavailable; skipping provider fallback.",
+                    file=sys.stderr,
+                )
                 return HEADLESS_NETWORK_UNAVAILABLE_EXIT_CODE
-            if _is_headless_network_failure(partial_output):
+            if allow_fallback and _is_headless_network_failure(partial_output):
                 fallback_executor = _resolve_headless_network_fallback_executor("codex")
                 if fallback_executor == "gemini":
-                    print("[!] Codex headless network timeout detected. Falling back to Gemini.", file=sys.stderr)
+                    print(
+                        "[!] Codex headless network timeout detected. Falling back to Gemini.",
+                        file=sys.stderr,
+                    )
                     return _run_gemini_headless(
                         project_root,
                         prompt_text,
@@ -1049,7 +1075,10 @@ def _run_codex_headless(
                         task_kind=task_kind,
                     )
                 if fallback_executor == "claude":
-                    print("[!] Codex headless network timeout detected. Falling back to Claude.", file=sys.stderr)
+                    print(
+                        "[!] Codex headless network timeout detected. Falling back to Claude.",
+                        file=sys.stderr,
+                    )
                     return _run_claude_headless(
                         project_root,
                         prompt_text,
@@ -1057,8 +1086,14 @@ def _run_codex_headless(
                         model_profile=model_profile,
                         task_kind=task_kind,
                     )
-                print("[!] Codex headless network unavailable during timeout.", file=sys.stderr)
-            print(f"[!] Codex headless execution timed out after {timeout_sec}s", file=sys.stderr)
+                print(
+                    "[!] Codex headless network unavailable during timeout.",
+                    file=sys.stderr,
+                )
+            print(
+                f"[!] Codex headless execution timed out after {timeout_sec}s",
+                file=sys.stderr,
+            )
             return 124
         raw_output = proc.stdout or ""
         _write_raw_output_if_requested(raw_output)
@@ -1071,7 +1106,7 @@ def _run_codex_headless(
         )
         combined_output = "\n".join(part for part in [proc.stdout, proc.stderr] if part)
         fallback_executor = None
-        if proc.returncode != 0 and _is_headless_network_failure(combined_output):
+        if allow_fallback and proc.returncode != 0 and _is_headless_network_failure(combined_output):
             fallback_executor = _resolve_headless_network_fallback_executor("codex")
 
         if fallback_executor is None:
@@ -1084,7 +1119,10 @@ def _run_codex_headless(
                 print(proc.stderr.strip(), file=sys.stderr)
         if proc.returncode != 0:
             if fallback_executor == "gemini":
-                print("[!] Codex headless network failure detected. Falling back to Gemini.", file=sys.stderr)
+                print(
+                    "[!] Codex headless network failure detected. Falling back to Gemini.",
+                    file=sys.stderr,
+                )
                 return _run_gemini_headless(
                     project_root,
                     prompt_text,
@@ -1093,7 +1131,10 @@ def _run_codex_headless(
                     task_kind=task_kind,
                 )
             if fallback_executor == "claude":
-                print("[!] Codex headless network failure detected. Falling back to Claude.", file=sys.stderr)
+                print(
+                    "[!] Codex headless network failure detected. Falling back to Claude.",
+                    file=sys.stderr,
+                )
                 return _run_claude_headless(
                     project_root,
                     prompt_text,
@@ -1113,7 +1154,7 @@ def _run_gemini_headless(
     project_root: Path,
     prompt_text: str,
     *,
-    timeout_sec: int,
+    timeout_sec: int | float,
     model_profile: str = "mini_default",
     task_kind: str = "task",
 ) -> int:
@@ -1134,7 +1175,10 @@ def _run_gemini_headless(
             model_profile=model_profile,
             task_kind=task_kind,
         )
-        print(f"[!] Gemini headless execution timed out after {timeout_sec}s", file=sys.stderr)
+        print(
+            f"[!] Gemini headless execution timed out after {timeout_sec}s",
+            file=sys.stderr,
+        )
         return 124
     raw_output = proc.stdout or ""
     _write_raw_output_if_requested(raw_output)
@@ -1157,7 +1201,7 @@ def _run_claude_headless(
     project_root: Path,
     prompt_text: str,
     *,
-    timeout_sec: int,
+    timeout_sec: int | float,
     model_profile: str = "mini_default",
     task_kind: str = "task",
 ) -> int:
@@ -1178,7 +1222,10 @@ def _run_claude_headless(
             model_profile=model_profile,
             task_kind=task_kind,
         )
-        print(f"[!] Claude headless execution timed out after {timeout_sec}s", file=sys.stderr)
+        print(
+            f"[!] Claude headless execution timed out after {timeout_sec}s",
+            file=sys.stderr,
+        )
         return 124
     raw_output = proc.stdout or ""
     _write_raw_output_if_requested(raw_output)
@@ -1196,11 +1243,47 @@ def _run_claude_headless(
     return int(proc.returncode)
 
 
+def run_headless_executor_once(
+    *,
+    executor: str,
+    prompt: str,
+    project_root: str | Path,
+    timeout_sec: int | float,
+) -> dict[str, Any]:
+    """Run exactly one selected provider without fallback or retry."""
+    root = Path(project_root)
+    timeout = timeout_sec
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        if executor == "codex":
+            returncode = _run_codex_headless(
+                root,
+                prompt,
+                timeout_sec=timeout,
+                task_kind="task",
+                allow_fallback=False,
+            )
+        elif executor == "gemini":
+            returncode = _run_gemini_headless(root, prompt, timeout_sec=timeout, task_kind="task")
+        elif executor == "claude":
+            returncode = _run_claude_headless(root, prompt, timeout_sec=timeout, task_kind="task")
+        else:
+            raise ValueError("unsupported executor")
+    output = "".join((stdout.getvalue(), stderr.getvalue()))
+    return {"returncode": returncode, "output": output}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Execute an OMC-composed prompt with Codex/Gemini/Claude.")
     ap.add_argument("--target", type=Path, default=Path.cwd(), help="Project root.")
     ap.add_argument("--prompt-file", type=Path, required=True, help="Composed prompt markdown file.")
-    ap.add_argument("--executor", choices=["auto", "codex", "gemini", "claude"], default="auto", help="LLM CLI executor.")
+    ap.add_argument(
+        "--executor",
+        choices=["auto", "codex", "gemini", "claude"],
+        default="auto",
+        help="LLM CLI executor.",
+    )
     ap.add_argument(
         "--execution-mode",
         choices=["interactive", "headless"],
@@ -1267,7 +1350,7 @@ def main() -> int:
         if not Path(_resolve_codex_binary()).exists() and shutil.which(_resolve_codex_binary()) is None:
             print(f"codex CLI not found. Prompt preserved at: {prompt_path}")
             return 127
-        
+
         # 1. Auth Check & Auto Login
         if not _check_codex_auth():
             print("\n[!] Codex authentication failed. Attempting login...")
@@ -1292,7 +1375,7 @@ def main() -> int:
         print(f"🧭 Launching Codex CLI for {project_root.name}...")
         cmd = _codex_interactive_command(project_root, prompt_text)
         proc = subprocess.run(cmd, check=False)
-        
+
         if proc.returncode != 0:
             print(f"\n[!] Codex CLI exited with code {proc.returncode}")
             print(f"Prompt preserved at: {prompt_path}")

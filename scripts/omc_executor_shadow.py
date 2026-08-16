@@ -14,7 +14,8 @@ import math
 import os
 from pathlib import Path
 import tempfile
-from typing import Any
+import time
+from typing import Any, Callable
 
 
 def _is_finite_number(value: object) -> bool:
@@ -55,25 +56,17 @@ def _single_child_pilot_rejection(
 ) -> dict[str, Any] | None:
     """Return a gate rejection for the bounded single-child pilot, if any."""
     child_count = request.get("child_count")
-    if (
-        not isinstance(child_count, int)
-        or isinstance(child_count, bool)
-        or child_count != 1
-    ):
+    if not isinstance(child_count, int) or isinstance(child_count, bool) or child_count != 1:
         return _rejected(request, status="blocked", reason_code="single_child_required")
 
     if request.get("child_status") != "ready":
         return _rejected(request, status="hold", reason_code="child_not_ready")
 
     if "sensitive_paths" not in request:
-        return _rejected(
-            request, status="blocked", reason_code="scope_metadata_missing"
-        )
+        return _rejected(request, status="blocked", reason_code="scope_metadata_missing")
     sensitive_paths = request["sensitive_paths"]
     if not isinstance(sensitive_paths, list):
-        return _rejected(
-            request, status="blocked", reason_code="scope_metadata_missing"
-        )
+        return _rejected(request, status="blocked", reason_code="scope_metadata_missing")
     if sensitive_paths:
         return _rejected(request, status="blocked", reason_code="sensitive_scope")
 
@@ -91,9 +84,7 @@ def _single_child_pilot_rejection(
             status="blocked",
             reason_code="dependency_metadata_missing",
         )
-    if any(
-        dependency_statuses.get(dependency) != "completed" for dependency in depends_on
-    ):
+    if any(dependency_statuses.get(dependency) != "completed" for dependency in depends_on):
         return _rejected(request, status="hold", reason_code="dependency_not_ready")
 
     plan_fingerprint = request.get("plan_fingerprint")
@@ -101,19 +92,13 @@ def _single_child_pilot_rejection(
     if not isinstance(plan_fingerprint, str) or not plan_fingerprint.strip():
         return _rejected(request, status="blocked", reason_code="plan_scope_missing")
     if not isinstance(idempotency_key, str) or not idempotency_key.strip():
-        return _rejected(
-            request, status="blocked", reason_code="idempotency_key_missing"
-        )
+        return _rejected(request, status="blocked", reason_code="idempotency_key_missing")
 
     seen_idempotency_keys = request.get("seen_idempotency_keys", [])
     if not isinstance(seen_idempotency_keys, list):
-        return _rejected(
-            request, status="blocked", reason_code="idempotency_key_invalid"
-        )
+        return _rejected(request, status="blocked", reason_code="idempotency_key_invalid")
     if idempotency_key in seen_idempotency_keys:
-        return _rejected(
-            request, status="blocked", reason_code="duplicate_idempotency_key"
-        )
+        return _rejected(request, status="blocked", reason_code="duplicate_idempotency_key")
 
     budget = request.get("budget")
     if not isinstance(budget, dict):
@@ -134,10 +119,7 @@ def _single_child_pilot_rejection(
     ):
         return _rejected(request, status="blocked", reason_code="budget_invalid")
 
-    if (
-        approval.get("operator_confirmed") is not True
-        or approval.get("approval_status") != "approved"
-    ):
+    if approval.get("operator_confirmed") is not True or approval.get("approval_status") != "approved":
         return _rejected(
             request,
             status="blocked",
@@ -195,15 +177,11 @@ def build_noop_shadow_record(request: dict[str, Any]) -> dict[str, Any]:
             reason_code="approval_metadata_missing",
         )
 
-    if approval.get("child_id") != request.get("child_id") or approval.get(
-        "scope_hash"
-    ) != request.get("scope_hash"):
+    if approval.get("child_id") != request.get("child_id") or approval.get("scope_hash") != request.get("scope_hash"):
         return _rejected(request, status="blocked", reason_code="scope_mismatch")
 
     try:
-        expires_at = datetime.fromisoformat(
-            str(approval["expires_at"]).replace("Z", "+00:00")
-        )
+        expires_at = datetime.fromisoformat(str(approval["expires_at"]).replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return _rejected(
             request,
@@ -226,10 +204,7 @@ def build_noop_shadow_record(request: dict[str, Any]) -> dict[str, Any]:
     if (
         not isinstance(allowed_executors, list)
         or not allowed_executors
-        or any(
-            not isinstance(executor, str) or not executor.strip()
-            for executor in allowed_executors
-        )
+        or any(not isinstance(executor, str) or not executor.strip() for executor in allowed_executors)
         or not isinstance(timeout_sec, (int, float))
         or isinstance(timeout_sec, bool)
         or timeout_sec <= 0
@@ -300,10 +275,7 @@ def build_single_child_execution_grant(request: dict[str, Any]) -> dict[str, Any
     scope, dependency, budget, and idempotency validation. The caller must
     consume the grant separately; this function never starts a process.
     """
-    if (
-        request.get("execution_requested") is not True
-        or request.get("execution_mode") != "single_child_opt_in"
-    ):
+    if request.get("execution_requested") is not True or request.get("execution_mode") != "single_child_opt_in":
         return _rejected(
             request,
             status="blocked",
@@ -410,10 +382,7 @@ def reserve_single_child_execution_grant(
         "scope_hash",
         "approval_expires_at",
     )
-    if any(
-        not isinstance(grant.get(field), str) or not grant[field].strip()
-        for field in required_text
-    ):
+    if any(not isinstance(grant.get(field), str) or not grant[field].strip() for field in required_text):
         return blocked("execution_grant_invalid")
     if grant["scope_hash"] != expected_scope_hash:
         return blocked("grant_scope_mismatch")
@@ -422,9 +391,7 @@ def reserve_single_child_execution_grant(
     if current_time.tzinfo is None or current_time.utcoffset() is None:
         return blocked("reservation_time_invalid")
     try:
-        expires_at = datetime.fromisoformat(
-            grant["approval_expires_at"].replace("Z", "+00:00")
-        )
+        expires_at = datetime.fromisoformat(grant["approval_expires_at"].replace("Z", "+00:00"))
     except ValueError:
         return blocked("execution_grant_invalid")
     if expires_at.tzinfo is None or expires_at.utcoffset() is None:
@@ -442,10 +409,9 @@ def reserve_single_child_execution_grant(
         "session_id": grant["session_id"],
         "idempotency_key": grant["idempotency_key"],
         "scope_hash": grant["scope_hash"],
+        "approval_expires_at": grant["approval_expires_at"],
         "status": "reserved",
-        "reserved_at": current_time.astimezone(timezone.utc)
-        .isoformat()
-        .replace("+00:00", "Z"),
+        "reserved_at": current_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
         "max_attempts": 1,
         "max_total_elapsed_sec": grant["max_total_elapsed_sec"],
         "max_output_chars": grant["max_output_chars"],
@@ -528,18 +494,12 @@ def finalize_single_child_execution_reservation(
     ):
         return blocked("execution_outcome_invalid")
 
-    matches = [
-        entry for entry in entries if entry["idempotency_key"] == idempotency_key
-    ]
+    matches = [entry for entry in entries if entry["idempotency_key"] == idempotency_key]
     if len(matches) != 1:
-        return blocked(
-            "execution_reservation_missing"
-            if not matches
-            else "consumption_ledger_invalid"
-        )
+        return blocked("execution_reservation_missing" if not matches else "consumption_ledger_invalid")
     entry = matches[0]
     # Ledgers written before status was explicit represent reserved entries.
-    if entry.get("status", "reserved") != "reserved":
+    if entry.get("status", "reserved") not in {"reserved", "running"}:
         return blocked("execution_already_finalized")
     max_elapsed = entry.get("max_total_elapsed_sec")
     max_output = entry.get("max_output_chars")
@@ -579,9 +539,7 @@ def finalize_single_child_execution_reservation(
     entry.update(
         {
             "status": terminal_status,
-            "completed_at": current_time.astimezone(timezone.utc)
-            .isoformat()
-            .replace("+00:00", "Z"),
+            "completed_at": current_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
             "outcome": normalized_outcome,
         }
     )
@@ -591,6 +549,300 @@ def finalize_single_child_execution_reservation(
         "reason_code": "execution_outcome_recorded",
         "entry": entry,
         "ledger": ledger_copy,
+    }
+
+
+def _claim_single_child_execution_reservation_file(
+    grant: dict[str, Any],
+    ledger_path: str | Path,
+    *,
+    now: Callable[[], datetime],
+) -> dict[str, Any]:
+    """Atomically claim a reserved grant before any executor side effect."""
+    path = Path(ledger_path)
+    lock_path = path.with_name(f"{path.name}.lock")
+
+    def blocked(reason_code: str) -> dict[str, Any]:
+        return {
+            "status": "blocked",
+            "reason_code": reason_code,
+            "entry": None,
+            "ledger": None,
+        }
+
+    if path.is_symlink() or lock_path.is_symlink():
+        return blocked("consumption_ledger_path_invalid")
+    if not path.exists():
+        return blocked("consumption_ledger_read_failed")
+
+    lock_flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        lock_flags |= os.O_NOFOLLOW
+    try:
+        lock_fd = os.open(lock_path, lock_flags, 0o600)
+    except OSError:
+        return blocked("consumption_ledger_lock_failed")
+
+    temp_path: Path | None = None
+    replace_completed = False
+    try:
+        with os.fdopen(lock_fd, "r+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                current_time = now()
+            except Exception:
+                return blocked("claim_time_invalid")
+            if (
+                not isinstance(current_time, datetime)
+                or current_time.tzinfo is None
+                or current_time.utcoffset() is None
+            ):
+                return blocked("claim_time_invalid")
+            if path.is_symlink():
+                return blocked("consumption_ledger_path_invalid")
+            try:
+                ledger = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                return blocked("consumption_ledger_read_failed")
+            entries = ledger.get("entries") if isinstance(ledger, dict) else None
+            revision = ledger.get("revision") if isinstance(ledger, dict) else None
+            if (
+                not isinstance(ledger, dict)
+                or ledger.get("schema_version") != 1
+                or not isinstance(revision, int)
+                or isinstance(revision, bool)
+                or not isinstance(entries, list)
+                or any(
+                    not isinstance(candidate, dict)
+                    or not isinstance(candidate.get("idempotency_key"), str)
+                    or not candidate["idempotency_key"].strip()
+                    for candidate in entries
+                )
+            ):
+                return blocked("consumption_ledger_invalid")
+            if (
+                not isinstance(grant, dict)
+                or grant.get("mode") != "single_child_execution_grant"
+                or grant.get("status") != "ready"
+                or grant.get("execution_allowed") is not True
+                or grant.get("max_attempts") != 1
+                or not isinstance(grant.get("max_total_elapsed_sec"), (int, float))
+                or isinstance(grant.get("max_total_elapsed_sec"), bool)
+                or not _is_finite_number(grant.get("max_total_elapsed_sec"))
+                or grant["max_total_elapsed_sec"] <= 0
+                or not isinstance(grant.get("max_output_chars"), int)
+                or isinstance(grant.get("max_output_chars"), bool)
+                or grant["max_output_chars"] <= 0
+            ):
+                return blocked("execution_grant_invalid")
+            idempotency_key = grant.get("idempotency_key")
+            matches = [
+                entry
+                for entry in entries
+                if isinstance(entry, dict) and entry.get("idempotency_key") == idempotency_key
+            ]
+            if len(matches) != 1:
+                return blocked("execution_reservation_missing")
+            entry = matches[0]
+            if entry.get("status", "reserved") != "reserved":
+                return blocked("execution_already_claimed")
+            binding_fields = (
+                "parent_id",
+                "child_id",
+                "executor",
+                "approval_id",
+                "session_id",
+                "idempotency_key",
+                "scope_hash",
+                "approval_expires_at",
+                "max_attempts",
+                "max_total_elapsed_sec",
+                "max_output_chars",
+                "fallback_action",
+            )
+            if any(entry.get(field) != grant.get(field) for field in binding_fields):
+                return blocked("execution_reservation_mismatch")
+            try:
+                expires_at = datetime.fromisoformat(grant["approval_expires_at"].replace("Z", "+00:00"))
+            except (AttributeError, ValueError):
+                return blocked("execution_grant_invalid")
+            if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+                return blocked("execution_grant_invalid")
+            if expires_at <= current_time:
+                return blocked("grant_expired")
+
+            entry.update(
+                {
+                    "status": "running",
+                    "started_at": current_time.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                    "attempt_count": 1,
+                }
+            )
+            ledger["revision"] = revision + 1
+            fd, raw_temp_path = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+            temp_path = Path(raw_temp_path)
+            try:
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
+                    json.dump(
+                        ledger,
+                        temp_file,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    temp_file.write("\n")
+                    temp_file.flush()
+                    os.fsync(temp_file.fileno())
+                os.replace(temp_path, path)
+                replace_completed = True
+                temp_path = None
+                directory_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError:
+                if replace_completed:
+                    try:
+                        persisted_ledger = json.loads(path.read_text(encoding="utf-8"))
+                    except (OSError, UnicodeError, json.JSONDecodeError):
+                        persisted_ledger = None
+                    persisted_entry = None
+                    if isinstance(persisted_ledger, dict) and isinstance(persisted_ledger.get("entries"), list):
+                        persisted_entry = next(
+                            (
+                                candidate
+                                for candidate in persisted_ledger["entries"]
+                                if isinstance(candidate, dict)
+                                and candidate.get("idempotency_key") == grant.get("idempotency_key")
+                            ),
+                            None,
+                        )
+                    return {
+                        "status": "indeterminate",
+                        "reason_code": "execution_claim_durability_unknown",
+                        "entry": persisted_entry,
+                        "ledger": persisted_ledger,
+                    }
+                return blocked("consumption_ledger_write_failed")
+            return {
+                "status": "claimed",
+                "reason_code": "execution_claimed",
+                "entry": deepcopy(entry),
+                "ledger": ledger,
+            }
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def execute_reserved_single_child_grant_file(
+    grant: dict[str, Any],
+    ledger_path: str | Path,
+    *,
+    prompt: str,
+    project_root: str | Path,
+    runner: Callable[..., dict[str, Any]] | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> dict[str, Any]:
+    """Claim, execute once, and terminalize one bounded child grant.
+
+    The injected runner is the provider boundary. This adapter never selects a
+    fallback executor and never retries after a claim.
+    """
+    if not isinstance(prompt, str) or not prompt.strip():
+        return {"status": "blocked", "reason_code": "execution_input_invalid"}
+    if runner is None:
+        from omc_exec import run_headless_executor_once
+
+        runner = run_headless_executor_once
+    if not callable(runner):
+        return {"status": "blocked", "reason_code": "execution_input_invalid"}
+    claim = _claim_single_child_execution_reservation_file(grant, ledger_path, now=now)
+    if claim["status"] != "claimed":
+        return claim
+
+    max_elapsed = float(grant["max_total_elapsed_sec"])
+    max_output = int(grant["max_output_chars"])
+    started = monotonic()
+    output = ""
+    raw_output = ""
+    terminal_status = "failed"
+    reason_code = "executor_result_invalid"
+    try:
+        runner_result = runner(
+            executor=grant["executor"],
+            prompt=prompt,
+            project_root=Path(project_root),
+            timeout_sec=grant["max_total_elapsed_sec"],
+        )
+        if not isinstance(runner_result, dict):
+            raise TypeError("runner result must be a mapping")
+        returncode = runner_result.get("returncode")
+        candidate_output = runner_result.get("output", "")
+        if not isinstance(returncode, int) or isinstance(returncode, bool) or not isinstance(candidate_output, str):
+            raise TypeError("runner result contract invalid")
+        raw_output = candidate_output
+        output = raw_output[:max_output]
+        if returncode == 124:
+            terminal_status = "timeout"
+            reason_code = "executor_timeout"
+        else:
+            terminal_status = "succeeded" if returncode == 0 else "failed"
+            reason_code = "executor_completed" if returncode == 0 else "executor_failed"
+    except TimeoutError:
+        terminal_status = "timeout"
+        reason_code = "executor_timeout"
+    except Exception:
+        terminal_status = "failed"
+        reason_code = "executor_exception"
+    observed_elapsed = max(0.0, monotonic() - started)
+    if observed_elapsed > max_elapsed:
+        terminal_status = "timeout"
+        reason_code = "executor_timeout"
+    recorded_elapsed = min(observed_elapsed, max_elapsed)
+    finalized = finalize_single_child_execution_reservation_file(
+        ledger_path,
+        idempotency_key=grant["idempotency_key"],
+        outcome={
+            "status": terminal_status,
+            "reason_code": reason_code,
+            "elapsed_sec": recorded_elapsed,
+            "output_chars": len(output),
+        },
+        now=now(),
+    )
+    if finalized["status"] not in {"finalized", "indeterminate"}:
+        return {
+            **finalized,
+            "execution_status": terminal_status,
+            "execution_reason_code": reason_code,
+        }
+    if finalized["status"] == "indeterminate":
+        return {
+            "status": "indeterminate",
+            "reason_code": finalized["reason_code"],
+            "execution_status": terminal_status,
+            "execution_reason_code": reason_code,
+            "output": output,
+            "output_truncated": len(output) < len(raw_output),
+            "observed_elapsed_sec": observed_elapsed,
+            "ledger_status": finalized["status"],
+            "entry": finalized["entry"],
+        }
+    return {
+        "status": terminal_status,
+        "reason_code": reason_code,
+        "output": output,
+        "output_truncated": len(output) < len(raw_output),
+        "observed_elapsed_sec": observed_elapsed,
+        "ledger_status": finalized["status"],
+        "entry": finalized["entry"],
     }
 
 
@@ -685,15 +937,12 @@ def finalize_single_child_execution_reservation_file(
                     except (OSError, UnicodeError, json.JSONDecodeError):
                         persisted_ledger = None
                     persisted_entry = None
-                    if isinstance(persisted_ledger, dict) and isinstance(
-                        persisted_ledger.get("entries"), list
-                    ):
+                    if isinstance(persisted_ledger, dict) and isinstance(persisted_ledger.get("entries"), list):
                         persisted_entry = next(
                             (
                                 candidate
                                 for candidate in persisted_ledger["entries"]
-                                if isinstance(candidate, dict)
-                                and candidate.get("idempotency_key") == idempotency_key
+                                if isinstance(candidate, dict) and candidate.get("idempotency_key") == idempotency_key
                             ),
                             None,
                         )
