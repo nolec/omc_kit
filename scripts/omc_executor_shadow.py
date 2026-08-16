@@ -559,6 +559,17 @@ def finalize_single_child_execution_reservation(
     current_time = now or datetime.now(timezone.utc)
     if current_time.tzinfo is None or current_time.utcoffset() is None:
         return blocked("completion_time_invalid")
+    reserved_at_text = entry.get("reserved_at")
+    if not isinstance(reserved_at_text, str) or not reserved_at_text.strip():
+        return blocked("consumption_ledger_invalid")
+    try:
+        reserved_at = datetime.fromisoformat(reserved_at_text.replace("Z", "+00:00"))
+    except ValueError:
+        return blocked("consumption_ledger_invalid")
+    if reserved_at.tzinfo is None or reserved_at.utcoffset() is None:
+        return blocked("consumption_ledger_invalid")
+    if current_time < reserved_at:
+        return blocked("completion_time_before_reservation")
     normalized_outcome = {
         "status": terminal_status,
         "reason_code": reason_code,
@@ -616,6 +627,7 @@ def finalize_single_child_execution_reservation_file(
         return blocked("consumption_ledger_lock_failed")
 
     temp_path: Path | None = None
+    replace_completed = False
     try:
         with os.fdopen(lock_fd, "r+", encoding="utf-8") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
@@ -659,6 +671,7 @@ def finalize_single_child_execution_reservation_file(
                     temp_file.flush()
                     os.fsync(temp_file.fileno())
                 os.replace(temp_path, path)
+                replace_completed = True
                 temp_path = None
                 directory_fd = os.open(path.parent, os.O_RDONLY)
                 try:
@@ -666,6 +679,30 @@ def finalize_single_child_execution_reservation_file(
                 finally:
                     os.close(directory_fd)
             except OSError:
+                if replace_completed:
+                    try:
+                        persisted_ledger = json.loads(path.read_text(encoding="utf-8"))
+                    except (OSError, UnicodeError, json.JSONDecodeError):
+                        persisted_ledger = None
+                    persisted_entry = None
+                    if isinstance(persisted_ledger, dict) and isinstance(
+                        persisted_ledger.get("entries"), list
+                    ):
+                        persisted_entry = next(
+                            (
+                                candidate
+                                for candidate in persisted_ledger["entries"]
+                                if isinstance(candidate, dict)
+                                and candidate.get("idempotency_key") == idempotency_key
+                            ),
+                            None,
+                        )
+                    return {
+                        "status": "indeterminate",
+                        "reason_code": "consumption_ledger_durability_unknown",
+                        "entry": persisted_entry,
+                        "ledger": persisted_ledger,
+                    }
                 return blocked("consumption_ledger_write_failed")
             return result
     finally:

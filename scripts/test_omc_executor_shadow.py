@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 import multiprocessing
 
+import omc_executor_shadow
 from omc_executor_shadow import (
     build_noop_shadow_record,
     build_single_child_execution_grant,
@@ -463,6 +464,27 @@ def test_single_child_execution_reservation_blocks_duplicate_finalization():
     assert result["ledger"] == ledger
 
 
+def test_single_child_execution_reservation_blocks_completion_before_reservation():
+    ledger = _reserved_ledger()
+
+    result = finalize_single_child_execution_reservation(
+        ledger,
+        idempotency_key="run-child-1",
+        outcome={
+            "status": "succeeded",
+            "reason_code": "completed",
+            "elapsed_sec": 1,
+            "output_chars": 1,
+        },
+        expected_ledger_revision=1,
+        now=datetime(2026, 8, 15, 23, 59, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "completion_time_before_reservation"
+    assert result["ledger"] == ledger
+
+
 @pytest.mark.parametrize(
     ("revision", "outcome", "reason_code"),
     [
@@ -569,6 +591,43 @@ def test_single_child_execution_reservation_file_persists_once(tmp_path):
     assert second["status"] == "blocked"
     assert second["reason_code"] == "execution_already_finalized"
     assert persisted["revision"] == 2
+    assert persisted["entries"][0]["status"] == "succeeded"
+
+
+def test_single_child_execution_reservation_file_reports_post_replace_uncertainty(
+    tmp_path, monkeypatch
+):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_reserved_ledger()))
+    real_fsync = omc_executor_shadow.os.fsync
+    call_count = 0
+
+    def fail_directory_fsync(fd):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise OSError("directory fsync failed")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(omc_executor_shadow.os, "fsync", fail_directory_fsync)
+
+    result = finalize_single_child_execution_reservation_file(
+        ledger_path,
+        idempotency_key="run-child-1",
+        outcome={
+            "status": "succeeded",
+            "reason_code": "completed",
+            "elapsed_sec": 4.5,
+            "output_chars": 320,
+        },
+        now=datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+
+    persisted = json.loads(ledger_path.read_text())
+    assert result["status"] == "indeterminate"
+    assert result["reason_code"] == "consumption_ledger_durability_unknown"
+    assert result["ledger"] == persisted
+    assert result["entry"] == persisted["entries"][0]
     assert persisted["entries"][0]["status"] == "succeeded"
 
 
