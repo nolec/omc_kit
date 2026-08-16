@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import fcntl
+import json
 import math
+import os
+from pathlib import Path
+import tempfile
 from typing import Any
 
 
@@ -436,3 +441,98 @@ def reserve_single_child_execution_grant(
         "reservation": reservation,
         "ledger": ledger_copy,
     }
+
+
+def reserve_single_child_execution_grant_file(
+    grant: dict[str, Any],
+    ledger_path: str | Path,
+    *,
+    expected_scope_hash: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Persist one grant reservation under an exclusive filesystem lock."""
+    path = Path(ledger_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f"{path.name}.lock")
+
+    def blocked(reason_code: str) -> dict[str, Any]:
+        return {
+            "status": "blocked",
+            "reason_code": reason_code,
+            "reservation": None,
+            "ledger": None,
+        }
+
+    if path.is_symlink() or lock_path.is_symlink():
+        return blocked("consumption_ledger_path_invalid")
+
+    lock_flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        lock_flags |= os.O_NOFOLLOW
+    try:
+        lock_fd = os.open(lock_path, lock_flags, 0o600)
+    except OSError:
+        return blocked("consumption_ledger_lock_failed")
+
+    temp_path: Path | None = None
+    try:
+        with os.fdopen(lock_fd, "r+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            if path.is_symlink():
+                return blocked("consumption_ledger_path_invalid")
+            if path.exists():
+                try:
+                    ledger = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, json.JSONDecodeError):
+                    return blocked("consumption_ledger_read_failed")
+            else:
+                ledger = {"schema_version": 1, "revision": 0, "entries": []}
+
+            revision = ledger.get("revision") if isinstance(ledger, dict) else None
+            if not isinstance(revision, int) or isinstance(revision, bool):
+                return blocked("consumption_ledger_invalid")
+            result = reserve_single_child_execution_grant(
+                grant,
+                ledger,
+                expected_scope_hash=expected_scope_hash,
+                expected_ledger_revision=revision,
+                now=now,
+            )
+            if result["status"] != "reserved":
+                return result
+
+            fd, raw_temp_path = tempfile.mkstemp(
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                dir=path.parent,
+            )
+            temp_path = Path(raw_temp_path)
+            try:
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
+                    json.dump(
+                        result["ledger"],
+                        temp_file,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    temp_file.write("\n")
+                    temp_file.flush()
+                    os.fsync(temp_file.fileno())
+                os.replace(temp_path, path)
+                temp_path = None
+                directory_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError:
+                return blocked("consumption_ledger_write_failed")
+            return result
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass

@@ -2,13 +2,26 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import json
+import multiprocessing
 
 from omc_executor_shadow import (
     build_noop_shadow_record,
     build_single_child_execution_grant,
     reserve_single_child_execution_grant,
+    reserve_single_child_execution_grant_file,
 )
 import pytest
+
+
+def _reserve_grant_worker(grant, ledger_path, queue):
+    result = reserve_single_child_execution_grant_file(
+        grant,
+        ledger_path,
+        expected_scope_hash="scope-abc",
+        now=datetime(2026, 8, 16, tzinfo=timezone.utc),
+    )
+    queue.put((result["status"], result["reason_code"]))
 
 
 def _request(**overrides):
@@ -274,6 +287,92 @@ def test_single_child_execution_grant_blocks_stale_ledger_revision():
 
     assert result["status"] == "blocked"
     assert result["reason_code"] == "consumption_ledger_stale"
+
+
+def test_single_child_execution_grant_file_reserves_only_once(tmp_path):
+    grant = build_single_child_execution_grant(
+        _single_child_pilot_request(
+            execution_requested=True,
+            execution_mode="single_child_opt_in",
+        )
+    )
+    ledger_path = tmp_path / "execution-grants.json"
+    now = datetime(2026, 8, 16, tzinfo=timezone.utc)
+
+    first = reserve_single_child_execution_grant_file(
+        grant,
+        ledger_path,
+        expected_scope_hash="scope-abc",
+        now=now,
+    )
+    second = reserve_single_child_execution_grant_file(
+        grant,
+        ledger_path,
+        expected_scope_hash="scope-abc",
+        now=now,
+    )
+
+    persisted = json.loads(ledger_path.read_text())
+    assert first["status"] == "reserved"
+    assert second["status"] == "blocked"
+    assert second["reason_code"] == "duplicate_grant_consumption"
+    assert persisted["revision"] == 1
+    assert len(persisted["entries"]) == 1
+
+
+def test_single_child_execution_grant_file_fails_closed_on_malformed_ledger(
+    tmp_path,
+):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text("not-json")
+    grant = build_single_child_execution_grant(
+        _single_child_pilot_request(
+            execution_requested=True,
+            execution_mode="single_child_opt_in",
+        )
+    )
+
+    result = reserve_single_child_execution_grant_file(
+        grant,
+        ledger_path,
+        expected_scope_hash="scope-abc",
+        now=datetime(2026, 8, 16, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "consumption_ledger_read_failed"
+    assert ledger_path.read_text() == "not-json"
+
+
+def test_single_child_execution_grant_file_serializes_processes(tmp_path):
+    grant = build_single_child_execution_grant(
+        _single_child_pilot_request(
+            execution_requested=True,
+            execution_mode="single_child_opt_in",
+        )
+    )
+    ledger_path = tmp_path / "execution-grants.json"
+    context = multiprocessing.get_context("fork")
+    queue = context.Queue()
+    processes = [
+        context.Process(
+            target=_reserve_grant_worker,
+            args=(grant, ledger_path, queue),
+        )
+        for _ in range(2)
+    ]
+
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=5)
+
+    outcomes = sorted(queue.get(timeout=1) for _ in processes)
+    assert all(process.exitcode == 0 for process in processes)
+    assert outcomes == [
+        ("blocked", "duplicate_grant_consumption"),
+        ("reserved", "grant_reserved"),
+    ]
 
 
 @pytest.mark.parametrize(
