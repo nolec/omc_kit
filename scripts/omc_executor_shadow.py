@@ -606,6 +606,11 @@ def finalize_single_child_execution_reservation(
         "elapsed_sec": elapsed_sec,
         "output_chars": output_chars,
     }
+    parent_review = build_parent_review_recovery(
+        {"status": terminal_status, "reason_code": reason_code}
+    )
+    if parent_review["status"] == "review_required":
+        normalized_outcome["parent_review"] = parent_review
     entry.update(
         {
             "status": terminal_status,

@@ -550,6 +550,49 @@ def test_single_child_execution_reservation_records_terminal_outcome_without_mut
     assert ledger == original
 
 
+def test_single_child_execution_reservation_persists_parent_review_for_failure():
+    result = finalize_single_child_execution_reservation(
+        _reserved_ledger(),
+        idempotency_key="run-child-1",
+        outcome={
+            "status": "failed",
+            "reason_code": "executor_failed",
+            "elapsed_sec": 12.5,
+            "output_chars": 240,
+        },
+        expected_ledger_revision=1,
+        now=datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+
+    assert result["entry"]["outcome"]["parent_review"] == {
+        "status": "review_required",
+        "action": "parent_review",
+        "execution_status": "failed",
+        "execution_reason_code": "executor_failed",
+        "recovery_reason_code": "executor_failed",
+        "recovery_action": "inspect_child_failure",
+        "automatic_retry_allowed": False,
+        "automatic_redistribution_allowed": False,
+    }
+
+
+def test_single_child_execution_reservation_omits_parent_review_for_success():
+    result = finalize_single_child_execution_reservation(
+        _reserved_ledger(),
+        idempotency_key="run-child-1",
+        outcome={
+            "status": "succeeded",
+            "reason_code": "executor_completed",
+            "elapsed_sec": 12.5,
+            "output_chars": 240,
+        },
+        expected_ledger_revision=1,
+        now=datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+
+    assert "parent_review" not in result["entry"]["outcome"]
+
+
 def test_single_child_execution_reservation_blocks_duplicate_finalization():
     ledger = _reserved_ledger()
     ledger["entries"][0]["status"] = "succeeded"
@@ -899,6 +942,7 @@ def test_reserved_single_child_adapter_terminalizes_runner_failures(
         "automatic_redistribution_allowed": False,
     }
     assert persisted["entries"][0]["status"] == status
+    assert persisted["entries"][0]["outcome"]["parent_review"] == result["parent_review"]
 
 
 def test_reserved_single_child_adapter_requires_parent_review_when_finalization_blocks(
