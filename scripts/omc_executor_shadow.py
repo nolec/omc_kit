@@ -627,6 +627,157 @@ def finalize_single_child_execution_reservation(
     }
 
 
+def record_single_child_parent_review_decision(
+    ledger: dict[str, Any],
+    *,
+    idempotency_key: str,
+    approval: dict[str, Any],
+    expected_ledger_revision: int,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Record one operator-bound parent judgment without executing recovery."""
+    ledger_copy = deepcopy(ledger)
+
+    def blocked(reason_code: str) -> dict[str, Any]:
+        return {
+            "status": "blocked",
+            "reason_code": reason_code,
+            "decision": None,
+            "entry": None,
+            "ledger": ledger_copy,
+        }
+
+    entries = ledger_copy.get("entries") if isinstance(ledger_copy, dict) else None
+    if (
+        not isinstance(ledger_copy, dict)
+        or ledger_copy.get("schema_version") != 1
+        or not isinstance(ledger_copy.get("revision"), int)
+        or isinstance(ledger_copy.get("revision"), bool)
+        or ledger_copy["revision"] < 0
+        or not isinstance(entries, list)
+        or any(not isinstance(entry, dict) for entry in entries)
+    ):
+        return blocked("consumption_ledger_invalid")
+    if (
+        not isinstance(expected_ledger_revision, int)
+        or isinstance(expected_ledger_revision, bool)
+        or expected_ledger_revision < 0
+    ):
+        return blocked("expected_ledger_revision_invalid")
+    if ledger_copy["revision"] != expected_ledger_revision:
+        return blocked("consumption_ledger_stale")
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+        return blocked("idempotency_key_invalid")
+    if not isinstance(approval, dict):
+        return blocked("parent_review_approval_invalid")
+
+    matches = [
+        entry
+        for entry in entries
+        if entry.get("idempotency_key") == idempotency_key
+    ]
+    if len(matches) != 1:
+        return blocked(
+            "execution_reservation_missing"
+            if not matches
+            else "consumption_ledger_invalid"
+        )
+    entry = matches[0]
+    if "parent_review_decision" in entry:
+        return blocked("parent_review_already_decided")
+    outcome = entry.get("outcome")
+    if (
+        entry.get("status") not in {"failed", "timeout"}
+        or not isinstance(outcome, dict)
+        or outcome.get("status") != entry.get("status")
+    ):
+        return blocked("parent_review_not_required")
+    expected_review = build_parent_review_recovery(
+        {"status": outcome.get("status"), "reason_code": outcome.get("reason_code")}
+    )
+    if (
+        expected_review.get("status") != "review_required"
+        or outcome.get("parent_review") != expected_review
+    ):
+        return blocked("parent_review_not_required")
+
+    decision = approval.get("decision")
+    if not isinstance(decision, str) or decision not in {"acknowledge", "hold"}:
+        return blocked("parent_review_decision_invalid")
+    required_text = (
+        "approval_id",
+        "parent_id",
+        "child_id",
+        "scope_hash",
+        "idempotency_key",
+        "recovery_action",
+        "expires_at",
+    )
+    if (
+        approval.get("operator_confirmed") is not True
+        or approval.get("approval_status") != "approved"
+        or any(
+            not isinstance(approval.get(field), str)
+            or not approval[field].strip()
+            for field in required_text
+        )
+    ):
+        return blocked("parent_review_approval_invalid")
+    if (
+        approval["parent_id"] != entry.get("parent_id")
+        or approval["child_id"] != entry.get("child_id")
+        or approval["scope_hash"] != entry.get("scope_hash")
+        or approval["idempotency_key"] != idempotency_key
+        or approval["recovery_action"] != expected_review["recovery_action"]
+    ):
+        return blocked("parent_review_approval_binding_mismatch")
+
+    current_time = now or datetime.now(timezone.utc)
+    if current_time.tzinfo is None or current_time.utcoffset() is None:
+        return blocked("parent_review_decision_time_invalid")
+    try:
+        expires_at = datetime.fromisoformat(
+            approval["expires_at"].replace("Z", "+00:00")
+        )
+        completed_at = datetime.fromisoformat(
+            str(entry.get("completed_at", "")).replace("Z", "+00:00")
+        )
+    except ValueError:
+        return blocked("parent_review_approval_invalid")
+    if (
+        expires_at.tzinfo is None
+        or expires_at.utcoffset() is None
+        or completed_at.tzinfo is None
+        or completed_at.utcoffset() is None
+    ):
+        return blocked("parent_review_approval_invalid")
+    if current_time >= expires_at:
+        return blocked("parent_review_approval_expired")
+    if current_time < completed_at:
+        return blocked("parent_review_decision_time_invalid")
+
+    decision_record = {
+        "status": "recorded",
+        "decision": decision,
+        "approval_id": approval["approval_id"],
+        "decided_at": current_time.astimezone(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "recovery_action": expected_review["recovery_action"],
+        "automatic_retry_allowed": False,
+        "automatic_redistribution_allowed": False,
+    }
+    entry["parent_review_decision"] = decision_record
+    ledger_copy["revision"] += 1
+    return {
+        "status": "recorded",
+        "reason_code": "parent_review_decision_recorded",
+        "decision": decision_record,
+        "entry": entry,
+        "ledger": ledger_copy,
+    }
+
+
 def _claim_single_child_execution_reservation_file(
     grant: dict[str, Any],
     ledger_path: str | Path,
@@ -1028,6 +1179,124 @@ def finalize_single_child_execution_reservation_file(
                         "ledger": persisted_ledger,
                     }
                 return blocked("consumption_ledger_write_failed")
+            return result
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def record_single_child_parent_review_decision_file(
+    ledger_path: str | Path,
+    *,
+    idempotency_key: str,
+    approval: dict[str, Any],
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Persist one parent judgment under the execution ledger lock."""
+    path = Path(ledger_path)
+    lock_path = path.with_name(f"{path.name}.lock")
+
+    def blocked(reason_code: str) -> dict[str, Any]:
+        return {
+            "status": "blocked",
+            "reason_code": reason_code,
+            "decision": None,
+            "entry": None,
+            "ledger": None,
+        }
+
+    if path.is_symlink() or lock_path.is_symlink():
+        return blocked("consumption_ledger_path_invalid")
+    if not path.exists():
+        return blocked("consumption_ledger_read_failed")
+
+    lock_flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        lock_flags |= os.O_NOFOLLOW
+    try:
+        lock_fd = os.open(lock_path, lock_flags, 0o600)
+    except OSError:
+        return blocked("consumption_ledger_lock_failed")
+
+    temp_path: Path | None = None
+    replace_completed = False
+    try:
+        with os.fdopen(lock_fd, "r+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            if path.is_symlink():
+                return blocked("consumption_ledger_path_invalid")
+            try:
+                ledger = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                return blocked("consumption_ledger_read_failed")
+            revision = ledger.get("revision") if isinstance(ledger, dict) else None
+            if not isinstance(revision, int) or isinstance(revision, bool):
+                return blocked("consumption_ledger_invalid")
+            result = record_single_child_parent_review_decision(
+                ledger,
+                idempotency_key=idempotency_key,
+                approval=approval,
+                expected_ledger_revision=revision,
+                now=now,
+            )
+            if result["status"] != "recorded":
+                return result
+
+            raw_fd: int | None = None
+            try:
+                raw_fd, raw_temp_path = tempfile.mkstemp(
+                    prefix=f".{path.name}.",
+                    suffix=".tmp",
+                    dir=path.parent,
+                )
+                temp_path = Path(raw_temp_path)
+                os.fchmod(raw_fd, 0o600)
+                temp_file = os.fdopen(raw_fd, "w", encoding="utf-8")
+                raw_fd = None
+                with temp_file:
+                    json.dump(
+                        result["ledger"],
+                        temp_file,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    temp_file.write("\n")
+                    temp_file.flush()
+                    os.fsync(temp_file.fileno())
+                os.replace(temp_path, path)
+                replace_completed = True
+                temp_path = None
+                directory_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError:
+                if replace_completed:
+                    try:
+                        persisted_ledger = json.loads(
+                            path.read_text(encoding="utf-8")
+                        )
+                    except (OSError, UnicodeError, json.JSONDecodeError):
+                        persisted_ledger = None
+                    return {
+                        "status": "indeterminate",
+                        "reason_code": "consumption_ledger_durability_unknown",
+                        "decision": None,
+                        "entry": None,
+                        "ledger": persisted_ledger,
+                    }
+                return blocked("consumption_ledger_write_failed")
+            finally:
+                if raw_fd is not None:
+                    try:
+                        os.close(raw_fd)
+                    except OSError:
+                        pass
             return result
     finally:
         if temp_path is not None:

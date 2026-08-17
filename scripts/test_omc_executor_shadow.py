@@ -13,6 +13,8 @@ from omc_executor_shadow import (
     execute_reserved_single_child_grant_file,
     finalize_single_child_execution_reservation,
     finalize_single_child_execution_reservation_file,
+    record_single_child_parent_review_decision,
+    record_single_child_parent_review_decision_file,
     reserve_single_child_execution_grant,
     reserve_single_child_execution_grant_file,
 )
@@ -591,6 +593,188 @@ def test_single_child_execution_reservation_omits_parent_review_for_success():
     )
 
     assert "parent_review" not in result["entry"]["outcome"]
+
+
+def _terminal_failure_ledger():
+    finalized = finalize_single_child_execution_reservation(
+        _reserved_ledger(),
+        idempotency_key="run-child-1",
+        outcome={
+            "status": "failed",
+            "reason_code": "executor_failed",
+            "elapsed_sec": 12.5,
+            "output_chars": 240,
+        },
+        expected_ledger_revision=1,
+        now=datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+    return finalized["ledger"]
+
+
+def _parent_review_approval(**overrides):
+    approval = {
+        "approval_id": "parent-review-approval-1",
+        "approval_status": "approved",
+        "operator_confirmed": True,
+        "parent_id": "parent-1",
+        "child_id": "child-1",
+        "scope_hash": "scope-abc",
+        "idempotency_key": "run-child-1",
+        "decision": "hold",
+        "recovery_action": "inspect_child_failure",
+        "expires_at": "2099-01-01T00:00:00Z",
+    }
+    approval.update(overrides)
+    return approval
+
+
+def test_parent_review_decision_records_one_bound_operator_judgment_without_mutation():
+    ledger = _terminal_failure_ledger()
+    original = deepcopy(ledger)
+
+    result = record_single_child_parent_review_decision(
+        ledger,
+        idempotency_key="run-child-1",
+        approval=_parent_review_approval(),
+        expected_ledger_revision=2,
+        now=datetime(2026, 8, 16, 0, 2, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "recorded"
+    assert result["reason_code"] == "parent_review_decision_recorded"
+    assert result["ledger"]["revision"] == 3
+    assert result["entry"]["parent_review_decision"] == {
+        "status": "recorded",
+        "decision": "hold",
+        "approval_id": "parent-review-approval-1",
+        "decided_at": "2026-08-16T00:02:00Z",
+        "recovery_action": "inspect_child_failure",
+        "automatic_retry_allowed": False,
+        "automatic_redistribution_allowed": False,
+    }
+    assert ledger == original
+
+
+def _mismatch_terminal_outcome(ledger, approval):
+    outcome = ledger["entries"][0]["outcome"]
+    outcome["status"] = "timeout"
+    outcome["parent_review"] = build_parent_review_recovery(
+        {"status": "timeout", "reason_code": outcome["reason_code"]}
+    )
+    approval["recovery_action"] = "inspect_timeout_and_partial_output"
+
+
+@pytest.mark.parametrize(
+    ("mutate", "reason_code"),
+    [
+        (
+            lambda ledger, approval: ledger["entries"][0].update(
+                {"status": "succeeded"}
+            ),
+            "parent_review_not_required",
+        ),
+        (
+            lambda ledger, approval: ledger["entries"][0]["outcome"].pop(
+                "parent_review"
+            ),
+            "parent_review_not_required",
+        ),
+        (
+            lambda ledger, approval: approval.update({"scope_hash": "other"}),
+            "parent_review_approval_binding_mismatch",
+        ),
+        (
+            lambda ledger, approval: approval.update({"decision": "retry"}),
+            "parent_review_decision_invalid",
+        ),
+        (
+            lambda ledger, approval: approval.update({"decision": []}),
+            "parent_review_decision_invalid",
+        ),
+        (
+            _mismatch_terminal_outcome,
+            "parent_review_not_required",
+        ),
+        (
+            lambda ledger, approval: approval.update(
+                {"recovery_action": "redistribute_child"}
+            ),
+            "parent_review_approval_binding_mismatch",
+        ),
+    ],
+)
+def test_parent_review_decision_fails_closed_without_changing_ledger(
+    mutate,
+    reason_code,
+):
+    ledger = _terminal_failure_ledger()
+    approval = _parent_review_approval()
+    mutate(ledger, approval)
+    original = deepcopy(ledger)
+
+    result = record_single_child_parent_review_decision(
+        ledger,
+        idempotency_key="run-child-1",
+        approval=approval,
+        expected_ledger_revision=2,
+        now=datetime(2026, 8, 16, 0, 2, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == reason_code
+    assert result["ledger"] == original
+    assert ledger == original
+
+
+def test_parent_review_decision_file_persists_once(tmp_path):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_terminal_failure_ledger()))
+    approval = _parent_review_approval()
+
+    first = record_single_child_parent_review_decision_file(
+        ledger_path,
+        idempotency_key="run-child-1",
+        approval=approval,
+        now=datetime(2026, 8, 16, 0, 2, tzinfo=timezone.utc),
+    )
+    second = record_single_child_parent_review_decision_file(
+        ledger_path,
+        idempotency_key="run-child-1",
+        approval=approval,
+        now=datetime(2026, 8, 16, 0, 2, tzinfo=timezone.utc),
+    )
+
+    persisted = json.loads(ledger_path.read_text())
+    assert first["status"] == "recorded"
+    assert second["status"] == "blocked"
+    assert second["reason_code"] == "parent_review_already_decided"
+    assert persisted["revision"] == 3
+    assert persisted["entries"][0]["parent_review_decision"] == first["decision"]
+
+
+def test_parent_review_decision_file_blocks_tempfile_creation_failure(
+    tmp_path,
+    monkeypatch,
+):
+    ledger_path = tmp_path / "execution-grants.json"
+    original = _terminal_failure_ledger()
+    ledger_path.write_text(json.dumps(original))
+
+    def fail_mkstemp(**_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(omc_executor_shadow.tempfile, "mkstemp", fail_mkstemp)
+
+    result = record_single_child_parent_review_decision_file(
+        ledger_path,
+        idempotency_key="run-child-1",
+        approval=_parent_review_approval(),
+        now=datetime(2026, 8, 16, 0, 2, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "consumption_ledger_write_failed"
+    assert json.loads(ledger_path.read_text()) == original
 
 
 def test_single_child_execution_reservation_blocks_duplicate_finalization():
