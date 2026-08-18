@@ -151,6 +151,7 @@ def main() -> int:
         "hook",
         "domain",
         "doctor",
+        "verify-install",
         "quickstart",
         "run",
         "peer-review",
@@ -184,6 +185,14 @@ def main() -> int:
 
     doctor = sub.add_parser("doctor", help="Check common OMC setup and UX dependencies.")
     doctor.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+
+    verify_install = sub.add_parser(
+        "verify-install",
+        help="Verify setup output against the install receipt.",
+    )
+    verify_install.add_argument(
+        "--target", type=Path, default=Path.cwd(), help="Target repository root."
+    )
 
     guard = sub.add_parser("guard", help="Check whether the latest OMC session is confirmed.")
     guard.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -389,6 +398,10 @@ def main() -> int:
     if args.command == "doctor":
         doctor_script = kit / "scripts" / "omc_doctor.py"
         return _run_script(doctor_script, ["--target", str(args.target)])
+
+    if args.command == "verify-install":
+        audit_script = kit / "scripts" / "omc_install_audit.py"
+        return _run_script(audit_script, ["--strict", str(args.target.resolve())])
 
     if args.command == "guard":
         guard_script = kit / "scripts" / "omc_guard.py"

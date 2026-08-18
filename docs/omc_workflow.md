@@ -50,6 +50,7 @@ python scripts/omc.py autopilot --task-file .omc/tasks/feat-x.json --dry-run
 
 # 상태/훅/compact
 python scripts/omc.py setup --target .
+python scripts/omc.py verify-install --target .  # setup 결과·managed 파일 hash 검증
 python scripts/omc.py hook session_start
 python scripts/omc.py state status
 python scripts/omc.py state compact

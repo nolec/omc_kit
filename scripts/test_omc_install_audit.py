@@ -2,14 +2,55 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 import omc_install_audit as _audit
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_verified_install(target: Path) -> None:
+    managed = target / "scripts" / "omc.py"
+    managed.parent.mkdir(parents=True)
+    managed.write_text("# installed\n", encoding="utf-8")
+    metadata = target / ".omc"
+    metadata.mkdir(parents=True)
+    (metadata / "install-source.json").write_text(
+        json.dumps(
+            {
+                "source_kind": "external",
+                "source_path": "/kit",
+                "source_sha256": "source-digest",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (metadata / "install-receipt.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "source_sha256": "source-digest",
+                "target": str(target.resolve()),
+                "entries": {
+                    "scripts/omc.py": {
+                        "policy": "managed_exact",
+                        "status": "updated",
+                        "target_sha256": _sha256(managed),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 class TestInstallAudit(unittest.TestCase):
@@ -127,6 +168,119 @@ class TestInstallAudit(unittest.TestCase):
             self.assertEqual(data[0]["target"], str(first.resolve()))
             self.assertEqual(data[1]["target"], str(second.resolve()))
             self.assertEqual(data[1]["status"], "missing")
+
+    def test_verify_target_accepts_matching_install_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            _write_verified_install(target)
+
+            result = _audit.audit_target(target)
+
+            self.assertEqual(result["verification_status"], "ok")
+            self.assertEqual(result["verification_errors"], [])
+
+    def test_verify_target_rejects_managed_file_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            _write_verified_install(target)
+            (target / "scripts" / "omc.py").write_text("# drifted\n", encoding="utf-8")
+
+            result = _audit.audit_target(target)
+
+            self.assertEqual(result["verification_status"], "failed")
+            self.assertEqual(result["verification_errors"], ["drift:scripts/omc.py"])
+
+    def test_verify_target_reports_unreadable_managed_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            _write_verified_install(target)
+
+            with patch.object(_audit, "_sha256_file", side_effect=OSError("unreadable")):
+                result = _audit.audit_target(target)
+
+            self.assertEqual(result["verification_status"], "failed")
+            self.assertEqual(result["verification_errors"], ["unreadable:scripts/omc.py"])
+
+    def test_verify_target_rejects_managed_file_through_parent_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "project"
+            _write_verified_install(target)
+            managed = target / "scripts" / "omc.py"
+            managed.unlink()
+            managed.parent.rmdir()
+            outside = root / "outside"
+            outside.mkdir()
+            (outside / "omc.py").write_text("# installed\n", encoding="utf-8")
+            (target / "scripts").symlink_to(outside, target_is_directory=True)
+
+            result = _audit.audit_target(target)
+
+            self.assertEqual(result["verification_status"], "failed")
+            self.assertEqual(
+                result["verification_errors"],
+                ["outside-target:scripts/omc.py"],
+            )
+
+    def test_verify_target_rejects_source_mismatch_and_blocked_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            _write_verified_install(target)
+            receipt_path = target / ".omc" / "install-receipt.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["source_sha256"] = "different-source"
+            receipt["entries"]["scripts/omc.py"]["status"] = "blocked"
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+            result = _audit.audit_target(target)
+
+            self.assertEqual(result["verification_status"], "failed")
+            self.assertEqual(
+                result["verification_errors"],
+                ["receipt:source-mismatch", "blocked:scripts/omc.py"],
+            )
+
+    def test_omc_verify_install_command_returns_nonzero_for_missing_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            target.mkdir()
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).parent / "omc.py"),
+                    "verify-install",
+                    "--target",
+                    str(target),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertIn("verification_status: failed", proc.stdout)
+
+    def test_omc_verify_install_command_accepts_matching_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            _write_verified_install(target)
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).parent / "omc.py"),
+                    "verify-install",
+                    "--target",
+                    str(target),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("verification_status: ok", proc.stdout)
 
 
 if __name__ == "__main__":
