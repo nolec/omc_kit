@@ -142,6 +142,7 @@ def main() -> int:
         "prompt",
         "autopilot",
         "orchestrate",
+        "execute-sequence",
         "team",
         "ulw",
         "ralph",
@@ -211,6 +212,13 @@ def main() -> int:
     orchestrate.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     orchestrate.add_argument("--dry-run", action="store_true", help="Required safety marker; never executes stages.")
     orchestrate.add_argument("--execute-simple", action="store_true", help="Opt in to gated simple-task autopilot execution.")
+
+    execute_sequence = sub.add_parser(
+        "execute-sequence",
+        help="Execute one explicitly approved exact two-child sequence.",
+    )
+    execute_sequence.add_argument("--request-file", type=Path, required=True)
+    execute_sequence.add_argument("--target", type=Path, default=Path.cwd())
 
     peer_review = sub.add_parser("peer-review", help="Run peer-review of the latest uncommitted changes.")
     peer_review.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -424,6 +432,18 @@ def main() -> int:
     if args.command == "peer-review":
         peer_review_script = kit / "scripts" / "omc_peer_review.py"
         return _run_script(peer_review_script, ["--target", str(args.target), *(["--async-mode"] if getattr(args, "async_mode", False) else [])])
+
+    if args.command == "execute-sequence":
+        sequence_script = kit / "scripts" / "omc_sequence.py"
+        return _run_script(
+            sequence_script,
+            [
+                "--request-file",
+                str(args.request_file),
+                "--target",
+                str(args.target.resolve()),
+            ],
+        )
 
     if args.command == "state":
         state_script = kit / "scripts" / "omc_state.py"
