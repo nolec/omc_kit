@@ -50,7 +50,23 @@ def _work_class_lock_key(tmp_path: Path) -> tuple[Path, str]:
     )
     key_path = tmp_path / "work-class-lock.key"
     key_path.write_text(base64.b64encode(raw_private_key).decode("ascii"))
+    key_path.chmod(0o600)
     return key_path, base64.b64encode(raw_public_key).decode("ascii")
+
+
+def _work_class_lock_config_env(config_path: Path) -> dict[str, str]:
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key
+        not in {
+            "OMC_REQUIRE_WORK_CLASS_LOCK",
+            "OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE",
+            "OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY",
+        }
+    }
+    env["OMC_WORK_CLASS_LOCK_CONFIG_FILE"] = str(config_path)
+    return env
 
 
 def test_sync_require_forwards_explicit_work_class(tmp_path: Path):
@@ -222,6 +238,62 @@ def test_sync_require_seals_required_work_class_lock_before_completion(
     ) == "implementation"
 
 
+def test_sync_require_uses_external_work_class_lock_config(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    key_path, public_key = _work_class_lock_key(tmp_path)
+    config_path = tmp_path / "work-class-lock.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "enabled": True,
+                "private_key_file": str(key_path),
+                "trusted_public_key": public_key,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(GUARD),
+            "sync-require",
+            "--target",
+            str(target),
+            "--mode",
+            "autopilot",
+            "--title",
+            "omc-task",
+            "--request",
+            "observed implementation",
+            "--roles",
+            "senior_coding",
+            "--work-class",
+            "implementation",
+            "--for",
+            "task",
+        ],
+        env=_work_class_lock_config_env(config_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    latest = json.loads((target / ".omc" / "state" / "latest.json").read_text())
+    lock_path = (
+        target
+        / ".omc"
+        / "state"
+        / "sessions"
+        / latest["latest_session_id"]
+        / "work_class_lock.json"
+    )
+    assert json.loads(lock_path.read_text())["signoff"]["signer_public_key"] == public_key
+
+
 def test_prepare_work_class_lock_cli_resolves_stored_short_sha(
     tmp_path: Path,
 ):
@@ -387,7 +459,7 @@ def test_sync_require_fails_before_session_when_required_lock_key_is_missing(
     )
 
     assert result.returncode != 0
-    assert "work class lock key configuration is required" in result.stderr
+    assert "work class lock environment configuration is incomplete" in result.stderr
     assert not (target / ".omc" / "state" / "latest.json").exists()
 
 
@@ -399,6 +471,7 @@ def test_sync_require_rejects_repository_internal_work_class_lock_key(
     external_key_path, public_key = _work_class_lock_key(tmp_path)
     internal_key_path = target / "work-class-lock.key"
     internal_key_path.write_text(external_key_path.read_text())
+    internal_key_path.chmod(0o600)
 
     result = subprocess.run(
         [
@@ -433,4 +506,48 @@ def test_sync_require_rejects_repository_internal_work_class_lock_key(
 
     assert result.returncode != 0
     assert "must be outside the repository" in result.stderr
+    assert not (target / ".omc" / "state" / "latest.json").exists()
+
+
+def test_sync_require_rejects_group_readable_work_class_lock_key(
+    tmp_path: Path,
+):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    key_path, public_key = _work_class_lock_key(tmp_path)
+    key_path.chmod(0o640)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(GUARD),
+            "sync-require",
+            "--target",
+            str(target),
+            "--mode",
+            "autopilot",
+            "--title",
+            "omc-task",
+            "--request",
+            "observed implementation",
+            "--roles",
+            "senior_coding",
+            "--work-class",
+            "implementation",
+            "--for",
+            "task",
+        ],
+        env={
+            **os.environ,
+            "OMC_REQUIRE_WORK_CLASS_LOCK": "1",
+            "OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE": str(key_path),
+            "OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY": public_key,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "permissions must be 0600" in result.stderr
     assert not (target / ".omc" / "state" / "latest.json").exists()

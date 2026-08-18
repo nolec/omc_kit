@@ -18,6 +18,15 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "slow: tests that run external health checks")
 
 
+@pytest.fixture(autouse=True)
+def isolate_work_class_lock_custody(monkeypatch):
+    """Keep developer-level signer custody from changing repository tests."""
+    monkeypatch.setenv("OMC_REQUIRE_WORK_CLASS_LOCK", "0")
+    monkeypatch.delenv("OMC_WORK_CLASS_LOCK_CONFIG_FILE", raising=False)
+    monkeypatch.delenv("OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE", raising=False)
+    monkeypatch.delenv("OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY", raising=False)
+
+
 @pytest.fixture()
 def isolated_result_path(tmp_path: Path, monkeypatch):
     """OmC_PIPELINE_RESULT_PATH를 tmp_path 기반으로 격리한다 (opt-in)."""

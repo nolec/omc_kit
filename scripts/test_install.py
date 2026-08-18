@@ -157,6 +157,13 @@ class TestInstallManifest(unittest.TestCase):
         self.assertTrue(_install._should_update_install_entry(".agent/skills/omc-task/SKILL.md", force=True))
         self.assertFalse(_install._should_update_install_entry("src/app.py", force=True))
 
+    def test_work_class_lock_cli_is_deployed_without_external_custody(self):
+        names = _install._deployed_script_names(Path(__file__).parent.parent)
+
+        self.assertIn("omc_work_class_lock.py", names)
+        self.assertNotIn("work-class-lock.key", names)
+        self.assertNotIn("work-class-lock.json", names)
+
     def test_manifest_classifies_managed_and_preserved_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

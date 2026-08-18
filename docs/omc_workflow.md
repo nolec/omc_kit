@@ -76,6 +76,20 @@ python scripts/compose_prompt.py --roles "$roles" --out /tmp/prompt.md
 3) `senior_coding`으로 구현/검증
 4) `code_review`로 diff 리스크 점검
 
+### Prospective work-class lock
+
+Batch B처럼 구현 작업의 분류를 사전에 고정해야 할 때 외부 signer custody를 한 번 생성합니다.
+
+```bash
+python3 scripts/omc_work_class_lock.py init --target .
+python3 scripts/omc_work_class_lock.py preflight --target .
+```
+
+- 기본 config와 private key는 `~/.config/omc/`에 생성되며 저장소나 setup-force 대상에 포함되지 않습니다.
+- Guard는 사용자 config가 활성화되어 있으면 `senior_coding` 세션을 pending으로 기록하고 lock 봉인 성공 뒤에만 confirm합니다.
+- `OMC_REQUIRE_WORK_CLASS_LOCK` 환경변수를 명시하면 환경변수 방식이 config보다 우선합니다. `0`은 명시적 비활성화이고, `1`이면 private key 경로와 pinned public key도 함께 필요합니다.
+- 기존 lock 없는 receipt는 소급 변환하지 않습니다.
+
 ## 7) 삭제/정리 작업 안전수칙
 
 - 기본 정책: 삭제는 `rm`이 아니라 휴지통 이동으로 처리합니다.

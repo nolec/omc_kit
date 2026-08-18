@@ -13,31 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_utils
 
 
-def _truthy_env(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
 def _prospective_work_class_lock(project_root: Path):
-    if not _truthy_env("OMC_REQUIRE_WORK_CLASS_LOCK"):
-        return None
-    key_path = os.environ.get("OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE", "").strip()
-    trusted_public_key = os.environ.get(
-        "OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY", ""
-    ).strip()
-    if not key_path or not trusted_public_key:
-        raise ValueError("work class lock key configuration is required")
-    import omc_plan_candidate_universe as candidate_universe
+    import omc_work_class_lock
 
-    return candidate_universe.load_work_class_lock_private_key(
-        key_path,
-        project_root=project_root,
-        trusted_public_key=trusted_public_key,
-    )
+    return omc_work_class_lock.load_private_key(project_root)
 
 MUTATING_ROLE_IDS = {"directive", "senior_coding"}
 READ_ONLY_COMMAND_HINTS = (
