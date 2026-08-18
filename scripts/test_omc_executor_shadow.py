@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+import hashlib
 import json
 import multiprocessing
 
@@ -10,7 +11,9 @@ from omc_executor_shadow import (
     build_parent_review_recovery,
     build_noop_shadow_record,
     build_single_child_execution_grant,
+    build_two_child_sequence_grant,
     execute_reserved_single_child_grant_file,
+    execute_two_child_sequence_grant_file,
     finalize_single_child_execution_reservation,
     finalize_single_child_execution_reservation_file,
     record_single_child_parent_review_decision,
@@ -233,6 +236,373 @@ def _execution_grant(**overrides):
 def _monotonic_values(*values):
     iterator = iter(values)
     return lambda: next(iterator)
+
+
+def _canonical_hash(value):
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _two_child_sequence_request(**overrides):
+    first = _execution_grant()
+    second = deepcopy(first)
+    second.update(
+        {
+            "child_id": "child-2",
+            "approval_id": "approval-2",
+            "idempotency_key": "run-child-2",
+            "scope_hash": "scope-def",
+        }
+    )
+    children = [
+        {"child_id": "child-1", "depends_on": []},
+        {"child_id": "child-2", "depends_on": ["child-1"]},
+    ]
+    ordered_child_ids = ["child-1", "child-2"]
+    grants = [first, second]
+    prompts = {"child-1": "implement first", "child-2": "implement second"}
+    request = {
+        "sequence_id": "sequence-1",
+        "execution_mode": "two_child_sequential_opt_in",
+        "execution_requested": True,
+        "children": children,
+        "ordered_child_ids": ordered_child_ids,
+        "child_grants": grants,
+        "child_prompts": prompts,
+        "aggregate_budget": {
+            "max_external_calls": 2,
+            "max_total_elapsed_sec": 240,
+            "max_output_chars": 24000,
+        },
+        "sequence_approval": {
+            "approval_id": "sequence-approval-1",
+            "sequence_id": "sequence-1",
+            "operator_confirmed": True,
+            "expires_at": "2099-01-01T00:00:00Z",
+            "graph_sha256": _canonical_hash(children),
+            "execution_order_sha256": _canonical_hash(ordered_child_ids),
+            "child_grant_sha256s": [_canonical_hash(grant) for grant in grants],
+            "prompt_sha256s": {
+                child_id: _canonical_hash(prompts[child_id])
+                for child_id in ordered_child_ids
+            },
+        },
+    }
+    request.update(overrides)
+    return request
+
+
+def test_two_child_sequence_grant_binds_graph_order_and_child_approvals():
+    grant = build_two_child_sequence_grant(_two_child_sequence_request())
+
+    assert grant["status"] == "ready"
+    assert grant["mode"] == "two_child_sequence_grant"
+    assert grant["ordered_child_ids"] == ["child-1", "child-2"]
+    assert grant["max_external_calls"] == 2
+    assert grant["automatic_retry_allowed"] is False
+    assert grant["automatic_redistribution_allowed"] is False
+    assert grant["automatic_resume_allowed"] is False
+
+
+def test_two_child_sequence_grant_blocks_approval_hash_mismatch():
+    request = _two_child_sequence_request()
+    request["sequence_approval"]["graph_sha256"] = "wrong"
+
+    grant = build_two_child_sequence_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "sequence_approval_binding_mismatch"
+
+
+def test_two_child_sequence_grant_blocks_prompt_changed_after_approval():
+    request = _two_child_sequence_request()
+    request["child_prompts"]["child-2"] = "unapproved replacement prompt"
+
+    grant = build_two_child_sequence_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "sequence_approval_binding_mismatch"
+
+
+def test_two_child_sequence_executes_in_order_and_uses_separate_ledger(tmp_path):
+    grant = build_two_child_sequence_grant(_two_child_sequence_request())
+    calls = []
+
+    result = execute_two_child_sequence_grant_file(
+        grant,
+        tmp_path / "sequences" / "sequence-1.json",
+        tmp_path / "single-child.json",
+        prompts={"child-1": "implement first", "child-2": "implement second"},
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs["prompt"])
+        or {"returncode": 0, "output": "ok"},
+        monotonic=_monotonic_values(1.0, 2.0, 3.0, 4.0),
+        now=lambda: datetime(2026, 8, 18, 8, 30, tzinfo=timezone.utc),
+    )
+
+    persisted = json.loads((tmp_path / "sequences" / "sequence-1.json").read_text())
+    assert result["status"] == "completed"
+    assert result["completed_child_ids"] == ["child-1", "child-2"]
+    assert result["external_call_count"] == 2
+    assert result["total_elapsed_sec"] == 2.0
+    assert result["total_output_chars"] == 4
+    assert calls == ["implement first", "implement second"]
+    assert persisted["sequence"]["status"] == "completed"
+    assert persisted["sequence"]["children"][1]["status"] == "succeeded"
+
+
+def test_two_child_sequence_stops_after_first_failure_and_routes_parent_review(tmp_path):
+    grant = build_two_child_sequence_grant(_two_child_sequence_request())
+    calls = []
+
+    result = execute_two_child_sequence_grant_file(
+        grant,
+        tmp_path / "sequence.json",
+        tmp_path / "single-child.json",
+        prompts={"child-1": "implement first", "child-2": "implement second"},
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs["prompt"])
+        or {"returncode": 1, "output": "failed"},
+        monotonic=_monotonic_values(1.0, 2.0),
+        now=lambda: datetime(2026, 8, 18, 8, 30, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "review_required"
+    assert result["failed_child_id"] == "child-1"
+    assert result["pending_child_ids"] == ["child-2"]
+    assert result["parent_review"]["status"] == "review_required"
+    assert result["external_call_count"] == 1
+    assert result["total_elapsed_sec"] == 1.0
+    assert result["total_output_chars"] == 6
+    assert calls == ["implement first"]
+
+
+def test_two_child_sequence_does_not_count_claim_time_expiry_as_external_call(tmp_path):
+    request = _two_child_sequence_request()
+    request["child_grants"][1]["approval_expires_at"] = "2026-08-18T08:30:30Z"
+    request["sequence_approval"]["child_grant_sha256s"] = [
+        _canonical_hash(grant) for grant in request["child_grants"]
+    ]
+    grant = build_two_child_sequence_grant(request)
+    current_times = iter(
+        [
+            datetime(2026, 8, 18, 8, 30, 0, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 8, 30, 1, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 8, 30, 10, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 8, 31, 0, tzinfo=timezone.utc),
+        ]
+    )
+    calls = []
+
+    result = execute_two_child_sequence_grant_file(
+        grant,
+        tmp_path / "sequence.json",
+        tmp_path / "single-child.json",
+        prompts=request["child_prompts"],
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs["prompt"])
+        or {"returncode": 0, "output": "ok"},
+        monotonic=_monotonic_values(1.0, 2.0),
+        now=lambda: next(current_times),
+    )
+
+    assert result["status"] == "review_required"
+    assert result["children"][1]["reason_code"] == "grant_expired"
+    assert result["external_call_count"] == 1
+    assert result["total_elapsed_sec"] == 1.0
+    assert result["total_output_chars"] == 2
+    assert calls == ["implement first"]
+
+
+def test_two_child_sequence_rechecks_sequence_approval_before_second_child(tmp_path):
+    request = _two_child_sequence_request()
+    request["sequence_approval"]["expires_at"] = "2026-08-18T08:30:30Z"
+    grant = build_two_child_sequence_grant(request)
+    current_times = iter(
+        [
+            datetime(2026, 8, 18, 8, 30, 0, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 8, 30, 1, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 8, 30, 2, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 8, 30, 40, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 8, 30, 41, tzinfo=timezone.utc),
+        ]
+    )
+    calls = []
+
+    result = execute_two_child_sequence_grant_file(
+        grant,
+        tmp_path / "sequence.json",
+        tmp_path / "single-child.json",
+        prompts=request["child_prompts"],
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs["prompt"])
+        or {"returncode": 0, "output": "ok"},
+        monotonic=_monotonic_values(1.0, 2.0, 3.0, 4.0),
+        now=lambda: next(current_times),
+    )
+
+    assert result["status"] == "review_required"
+    assert result["reason_code"] == "sequence_grant_expired"
+    assert result["completed_child_ids"] == ["child-1"]
+    assert result["pending_child_ids"] == ["child-2"]
+    assert result["external_call_count"] == 1
+    assert calls == ["implement first"]
+
+
+def test_two_child_sequence_rechecks_sequence_approval_at_provider_claim(tmp_path):
+    request = _two_child_sequence_request()
+    request["sequence_approval"]["expires_at"] = "2026-08-18T08:30:30Z"
+    grant = build_two_child_sequence_grant(request)
+    current_times = iter(
+        [
+            datetime(2026, 8, 18, 8, 30, 0, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 8, 30, 1, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 8, 30, 2, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 8, 30, 10, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 8, 30, 31, tzinfo=timezone.utc),
+            datetime(2026, 8, 18, 8, 30, 32, tzinfo=timezone.utc),
+        ]
+    )
+    calls = []
+
+    result = execute_two_child_sequence_grant_file(
+        grant,
+        tmp_path / "sequence.json",
+        tmp_path / "single-child.json",
+        prompts=request["child_prompts"],
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs["prompt"])
+        or {"returncode": 0, "output": "ok"},
+        monotonic=_monotonic_values(1.0, 2.0, 3.0, 4.0),
+        now=lambda: next(current_times),
+    )
+
+    assert result["status"] == "review_required"
+    assert result["children"][1]["reason_code"] == "sequence_grant_expired"
+    assert result["external_call_count"] == 1
+    assert calls == ["implement first"]
+
+
+def test_two_child_sequence_preserves_observed_usage_when_finalization_fails(
+    tmp_path, monkeypatch
+):
+    request = _two_child_sequence_request()
+    grant = build_two_child_sequence_grant(request)
+
+    monkeypatch.setattr(
+        omc_executor_shadow,
+        "finalize_single_child_execution_reservation_file",
+        lambda *_args, **_kwargs: {
+            "status": "blocked",
+            "reason_code": "consumption_ledger_write_failed",
+            "entry": None,
+            "ledger": None,
+        },
+    )
+
+    result = execute_two_child_sequence_grant_file(
+        grant,
+        tmp_path / "sequence.json",
+        tmp_path / "single-child.json",
+        prompts=request["child_prompts"],
+        project_root=tmp_path,
+        runner=lambda **_kwargs: {"returncode": 0, "output": "used"},
+        monotonic=_monotonic_values(1.0, 2.5),
+        now=lambda: datetime(2026, 8, 18, 8, 30, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "review_required"
+    assert result["external_call_count"] == 1
+    assert result["total_elapsed_sec"] == 1.5
+    assert result["total_output_chars"] == 4
+    assert result["children"][0]["usage_durability"] == "observed_only"
+
+
+def test_two_child_sequence_never_automatically_resumes_existing_ledger(tmp_path):
+    grant = build_two_child_sequence_grant(_two_child_sequence_request())
+    sequence_path = tmp_path / "sequence.json"
+    sequence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "revision": 1,
+                "sequence": {"sequence_id": "sequence-1", "status": "running"},
+            }
+        )
+    )
+    calls = []
+
+    result = execute_two_child_sequence_grant_file(
+        grant,
+        sequence_path,
+        tmp_path / "single-child.json",
+        prompts={"child-1": "implement first", "child-2": "implement second"},
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "sequence_already_started"
+    assert calls == []
+
+
+def test_two_child_sequence_blocks_grant_tampering_before_execution(tmp_path):
+    grant = build_two_child_sequence_grant(_two_child_sequence_request())
+    grant["child_grants"][1]["scope_hash"] = "tampered"
+    calls = []
+
+    result = execute_two_child_sequence_grant_file(
+        grant,
+        tmp_path / "sequence.json",
+        tmp_path / "single-child.json",
+        prompts={"child-1": "implement first", "child-2": "implement second"},
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "sequence_grant_binding_mismatch"
+    assert calls == []
+
+
+def test_two_child_sequence_ledger_rejects_non_mapping_without_exception(tmp_path):
+    sequence_path = tmp_path / "sequence.json"
+    sequence_path.write_text("[]")
+
+    result = omc_executor_shadow._persist_two_child_sequence_state(
+        sequence_path,
+        {"sequence_id": "sequence-1"},
+        create=False,
+    )
+
+    assert result["status"] == "indeterminate"
+    assert result["reason_code"] == "sequence_ledger_invalid"
+
+
+def test_two_child_sequence_lock_failure_routes_parent_review(tmp_path, monkeypatch):
+    grant = build_two_child_sequence_grant(_two_child_sequence_request())
+
+    def fail_flock(*_args):
+        raise OSError("lock unavailable")
+
+    monkeypatch.setattr(omc_executor_shadow.fcntl, "flock", fail_flock)
+
+    result = execute_two_child_sequence_grant_file(
+        grant,
+        tmp_path / "sequence.json",
+        tmp_path / "single-child.json",
+        prompts={"child-1": "implement first", "child-2": "implement second"},
+        project_root=tmp_path,
+    )
+
+    assert result["status"] == "indeterminate"
+    assert result["reason_code"] == "sequence_ledger_lock_failed"
+    assert result["parent_review"]["status"] == "review_required"
 
 
 def test_shadow_adapter_returns_non_executing_record():

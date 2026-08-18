@@ -9,6 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timezone
 import fcntl
+import hashlib
 import json
 import math
 import os
@@ -377,6 +378,154 @@ def build_single_child_execution_grant(request: dict[str, Any]) -> dict[str, Any
         "approval_expires_at": request["approval"]["expires_at"],
         "shadow_recorded": True,
         "fallback_action": "parent_review",
+    }
+
+
+def _canonical_sha256(value: Any) -> str:
+    payload = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _valid_sequence_child_grant(grant: Any, child_id: str) -> bool:
+    return (
+        isinstance(grant, dict)
+        and grant.get("mode") == "single_child_execution_grant"
+        and grant.get("status") == "ready"
+        and grant.get("execution_allowed") is True
+        and grant.get("child_id") == child_id
+        and grant.get("max_attempts") == 1
+        and grant.get("fallback_action") == "parent_review"
+        and _is_finite_number(grant.get("max_total_elapsed_sec"))
+        and float(grant["max_total_elapsed_sec"]) > 0
+        and isinstance(grant.get("max_output_chars"), int)
+        and not isinstance(grant.get("max_output_chars"), bool)
+        and grant["max_output_chars"] > 0
+    )
+
+
+def build_two_child_sequence_grant(request: dict[str, Any]) -> dict[str, Any]:
+    """Build an explicit, approval-bound grant for exactly two children."""
+
+    def blocked(reason_code: str) -> dict[str, Any]:
+        return {
+            "mode": "two_child_sequence_grant",
+            "status": "blocked",
+            "reason_code": reason_code,
+            "execution_allowed": False,
+        }
+
+    if (
+        not isinstance(request, dict)
+        or request.get("execution_requested") is not True
+        or request.get("execution_mode") != "two_child_sequential_opt_in"
+    ):
+        return blocked("sequence_opt_in_missing")
+    sequence_id = request.get("sequence_id")
+    children = request.get("children")
+    ordered_child_ids = request.get("ordered_child_ids")
+    child_grants = request.get("child_grants")
+    child_prompts = request.get("child_prompts")
+    approval = request.get("sequence_approval")
+    budget = request.get("aggregate_budget")
+    if not isinstance(sequence_id, str) or not sequence_id.strip():
+        return blocked("sequence_input_invalid")
+    if (
+        not isinstance(children, list)
+        or len(children) != 2
+        or not all(isinstance(child, dict) for child in children)
+    ):
+        return blocked("exactly_two_children_required")
+    child_ids = [child.get("child_id") for child in children]
+    if (
+        not all(isinstance(child_id, str) and child_id.strip() for child_id in child_ids)
+        or len(set(child_ids)) != 2
+        or ordered_child_ids != child_ids
+        or children[0].get("depends_on") != []
+        or children[1].get("depends_on") != [child_ids[0]]
+    ):
+        return blocked("sequence_graph_invalid")
+    if (
+        not isinstance(child_grants, list)
+        or len(child_grants) != 2
+        or not all(
+            _valid_sequence_child_grant(grant, child_id)
+            for grant, child_id in zip(child_grants, child_ids)
+        )
+    ):
+        return blocked("child_execution_grant_invalid")
+    if (
+        not isinstance(child_prompts, dict)
+        or set(child_prompts) != set(child_ids)
+        or any(
+            not isinstance(child_prompts[child_id], str)
+            or not child_prompts[child_id].strip()
+            for child_id in child_ids
+        )
+    ):
+        return blocked("sequence_prompt_invalid")
+    if not isinstance(budget, dict) or budget.get("max_external_calls") != 2:
+        return blocked("sequence_budget_invalid")
+    max_elapsed = budget.get("max_total_elapsed_sec")
+    max_output = budget.get("max_output_chars")
+    child_elapsed_limit = sum(float(grant["max_total_elapsed_sec"]) for grant in child_grants)
+    child_output_limit = sum(grant["max_output_chars"] for grant in child_grants)
+    if (
+        not _is_finite_number(max_elapsed)
+        or float(max_elapsed) < child_elapsed_limit
+        or not isinstance(max_output, int)
+        or isinstance(max_output, bool)
+        or max_output < child_output_limit
+    ):
+        return blocked("sequence_budget_invalid")
+
+    graph_sha256 = _canonical_sha256(children)
+    order_sha256 = _canonical_sha256(ordered_child_ids)
+    child_grant_sha256s = [_canonical_sha256(grant) for grant in child_grants]
+    prompt_sha256s = {
+        child_id: _canonical_sha256(child_prompts[child_id])
+        for child_id in child_ids
+    }
+    if (
+        not isinstance(approval, dict)
+        or approval.get("operator_confirmed") is not True
+        or approval.get("sequence_id") != sequence_id
+        or not isinstance(approval.get("approval_id"), str)
+        or not approval["approval_id"].strip()
+        or not isinstance(approval.get("expires_at"), str)
+        or approval.get("graph_sha256") != graph_sha256
+        or approval.get("execution_order_sha256") != order_sha256
+        or approval.get("child_grant_sha256s") != child_grant_sha256s
+        or approval.get("prompt_sha256s") != prompt_sha256s
+    ):
+        return blocked("sequence_approval_binding_mismatch")
+
+    return {
+        "mode": "two_child_sequence_grant",
+        "status": "ready",
+        "reason_code": "sequence_ready",
+        "execution_allowed": True,
+        "sequence_id": sequence_id,
+        "approval_id": approval["approval_id"],
+        "approval_expires_at": approval["expires_at"],
+        "children": deepcopy(children),
+        "ordered_child_ids": list(ordered_child_ids),
+        "child_grants": deepcopy(child_grants),
+        "prompt_sha256s": prompt_sha256s,
+        "graph_sha256": graph_sha256,
+        "execution_order_sha256": order_sha256,
+        "child_grant_sha256s": child_grant_sha256s,
+        "max_external_calls": 2,
+        "max_total_elapsed_sec": float(max_elapsed),
+        "max_output_chars": max_output,
+        "automatic_retry_allowed": False,
+        "automatic_redistribution_allowed": False,
+        "automatic_fallback_allowed": False,
+        "automatic_resume_allowed": False,
     }
 
 
@@ -955,6 +1104,7 @@ def _claim_single_child_execution_reservation_file(
     ledger_path: str | Path,
     *,
     now: Callable[[], datetime],
+    sequence_expires_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Atomically claim a reserved grant before any executor side effect."""
     path = Path(ledger_path)
@@ -996,6 +1146,15 @@ def _claim_single_child_execution_reservation_file(
                 or current_time.utcoffset() is None
             ):
                 return blocked("claim_time_invalid")
+            if sequence_expires_at is not None:
+                if (
+                    not isinstance(sequence_expires_at, datetime)
+                    or sequence_expires_at.tzinfo is None
+                    or sequence_expires_at.utcoffset() is None
+                ):
+                    return blocked("sequence_grant_invalid")
+                if sequence_expires_at <= current_time:
+                    return blocked("sequence_grant_expired")
             if path.is_symlink():
                 return blocked("consumption_ledger_path_invalid")
             try:
@@ -1147,6 +1306,7 @@ def execute_reserved_single_child_grant_file(
     runner: Callable[..., dict[str, Any]] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    sequence_expires_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Claim, execute once, and terminalize one bounded child grant.
 
@@ -1154,16 +1314,31 @@ def execute_reserved_single_child_grant_file(
     fallback executor and never retries after a claim.
     """
     if not isinstance(prompt, str) or not prompt.strip():
-        return {"status": "blocked", "reason_code": "execution_input_invalid"}
+        return {
+            "status": "blocked",
+            "reason_code": "execution_input_invalid",
+            "external_call_performed": False,
+        }
     if runner is None:
         from omc_exec import run_headless_executor_once
 
         runner = run_headless_executor_once
     if not callable(runner):
-        return {"status": "blocked", "reason_code": "execution_input_invalid"}
-    claim = _claim_single_child_execution_reservation_file(grant, ledger_path, now=now)
+        return {
+            "status": "blocked",
+            "reason_code": "execution_input_invalid",
+            "external_call_performed": False,
+        }
+    claim = _claim_single_child_execution_reservation_file(
+        grant,
+        ledger_path,
+        now=now,
+        sequence_expires_at=sequence_expires_at,
+    )
     if claim["status"] != "claimed":
-        return _with_parent_review_recovery(claim)
+        return _with_parent_review_recovery(
+            {**claim, "external_call_performed": False}
+        )
 
     max_elapsed = float(grant["max_total_elapsed_sec"])
     max_output = int(grant["max_output_chars"])
@@ -1172,7 +1347,9 @@ def execute_reserved_single_child_grant_file(
     raw_output = ""
     terminal_status = "failed"
     reason_code = "executor_result_invalid"
+    external_call_performed = False
     try:
+        external_call_performed = True
         runner_result = runner(
             executor=grant["executor"],
             prompt=prompt,
@@ -1220,6 +1397,12 @@ def execute_reserved_single_child_grant_file(
             **finalized,
             "execution_status": terminal_status,
             "execution_reason_code": reason_code,
+            "output": output,
+            "output_truncated": len(output) < len(raw_output),
+            "observed_elapsed_sec": observed_elapsed,
+            "recorded_elapsed_sec": recorded_elapsed,
+            "output_chars": len(output),
+            "external_call_performed": external_call_performed,
         })
     if finalized["status"] == "indeterminate":
         return _with_parent_review_recovery({
@@ -1230,6 +1413,9 @@ def execute_reserved_single_child_grant_file(
             "output": output,
             "output_truncated": len(output) < len(raw_output),
             "observed_elapsed_sec": observed_elapsed,
+            "recorded_elapsed_sec": recorded_elapsed,
+            "output_chars": len(output),
+            "external_call_performed": external_call_performed,
             "ledger_status": finalized["status"],
             "entry": finalized["entry"],
         })
@@ -1239,9 +1425,359 @@ def execute_reserved_single_child_grant_file(
         "output": output,
         "output_truncated": len(output) < len(raw_output),
         "observed_elapsed_sec": observed_elapsed,
+        "recorded_elapsed_sec": recorded_elapsed,
+        "output_chars": len(output),
+        "external_call_performed": external_call_performed,
         "ledger_status": finalized["status"],
         "entry": finalized["entry"],
     })
+
+
+def _persist_two_child_sequence_state(
+    ledger_path: str | Path,
+    state: dict[str, Any],
+    *,
+    create: bool,
+) -> dict[str, Any]:
+    path = Path(ledger_path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return {"status": "indeterminate", "reason_code": "sequence_ledger_write_failed"}
+    lock_path = path.with_name(f"{path.name}.lock")
+    if path.is_symlink() or lock_path.is_symlink():
+        return {"status": "blocked", "reason_code": "sequence_ledger_path_invalid"}
+    lock_flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        lock_flags |= os.O_NOFOLLOW
+    try:
+        lock_fd = os.open(lock_path, lock_flags, 0o600)
+    except OSError:
+        return {"status": "blocked", "reason_code": "sequence_ledger_lock_failed"}
+
+    temp_path: Path | None = None
+    try:
+        with os.fdopen(lock_fd, "r+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            if path.is_symlink():
+                return {"status": "blocked", "reason_code": "sequence_ledger_path_invalid"}
+            if create and path.exists():
+                return {"status": "blocked", "reason_code": "sequence_already_started"}
+            if not create:
+                try:
+                    current = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, json.JSONDecodeError):
+                    return {"status": "indeterminate", "reason_code": "sequence_ledger_read_failed"}
+                current_sequence = current.get("sequence") if isinstance(current, dict) else None
+                if (
+                    not isinstance(current, dict)
+                    or current.get("schema_version") != 1
+                    or not isinstance(current.get("revision"), int)
+                    or isinstance(current.get("revision"), bool)
+                    or not isinstance(current_sequence, dict)
+                    or current_sequence.get("sequence_id") != state.get("sequence_id")
+                ):
+                    return {"status": "indeterminate", "reason_code": "sequence_ledger_invalid"}
+                revision = current["revision"] + 1
+            else:
+                revision = 1
+            ledger = {
+                "schema_version": 1,
+                "revision": revision,
+                "sequence": deepcopy(state),
+            }
+            try:
+                fd, raw_temp_path = tempfile.mkstemp(
+                    prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+                )
+                temp_path = Path(raw_temp_path)
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as temp_file:
+                    json.dump(
+                        ledger,
+                        temp_file,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    temp_file.write("\n")
+                    temp_file.flush()
+                    os.fsync(temp_file.fileno())
+                os.replace(temp_path, path)
+                temp_path = None
+                directory_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError:
+                return {"status": "indeterminate", "reason_code": "sequence_ledger_write_failed"}
+            return {"status": "persisted", "reason_code": "sequence_state_persisted", "ledger": ledger}
+    except OSError:
+        return {"status": "indeterminate", "reason_code": "sequence_ledger_lock_failed"}
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _with_sequence_parent_review(result: dict[str, Any]) -> dict[str, Any]:
+    if result.get("status") not in {"blocked", "indeterminate"}:
+        return result
+    return {
+        **result,
+        "parent_review": {
+            "status": "review_required",
+            "reason_code": "sequence_state_requires_review",
+            "sequence_reason_code": result.get("reason_code", "sequence_state_unknown"),
+        },
+    }
+
+
+def _two_child_sequence_result(state: dict[str, Any]) -> dict[str, Any]:
+    children = state["children"]
+    completed = [child["child_id"] for child in children if child["status"] == "succeeded"]
+    pending = [child["child_id"] for child in children if child["status"] == "not_started"]
+    failed = next(
+        (child["child_id"] for child in children if child["status"] in {"failed", "timeout", "blocked", "indeterminate"}),
+        None,
+    )
+    result = {
+        "status": state["status"],
+        "reason_code": state["reason_code"],
+        "sequence_id": state["sequence_id"],
+        "children": deepcopy(children),
+        "completed_child_ids": completed,
+        "pending_child_ids": pending,
+        "failed_child_id": failed,
+        "external_call_count": state["external_call_count"],
+        "total_elapsed_sec": state["total_elapsed_sec"],
+        "total_output_chars": state["total_output_chars"],
+    }
+    if state.get("parent_review") is not None:
+        result["parent_review"] = deepcopy(state["parent_review"])
+    return result
+
+
+def execute_two_child_sequence_grant_file(
+    grant: dict[str, Any],
+    sequence_ledger_path: str | Path,
+    single_child_ledger_path: str | Path,
+    *,
+    prompts: dict[str, str],
+    project_root: str | Path,
+    runner: Callable[..., dict[str, Any]] | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> dict[str, Any]:
+    """Execute an approved two-child sequence without retry or auto-resume."""
+    if (
+        not isinstance(grant, dict)
+        or grant.get("mode") != "two_child_sequence_grant"
+        or grant.get("status") != "ready"
+        or grant.get("execution_allowed") is not True
+        or grant.get("max_external_calls") != 2
+        or any(
+            grant.get(flag) is not False
+            for flag in (
+                "automatic_retry_allowed",
+                "automatic_redistribution_allowed",
+                "automatic_fallback_allowed",
+                "automatic_resume_allowed",
+            )
+        )
+    ):
+        return {"status": "blocked", "reason_code": "sequence_grant_invalid"}
+    if Path(sequence_ledger_path) == Path(single_child_ledger_path):
+        return {"status": "blocked", "reason_code": "separate_sequence_ledger_required"}
+    child_ids = grant.get("ordered_child_ids")
+    child_grants = grant.get("child_grants")
+    if (
+        not isinstance(child_ids, list)
+        or len(child_ids) != 2
+        or not isinstance(child_grants, list)
+        or len(child_grants) != 2
+        or not isinstance(prompts, dict)
+        or set(prompts) != set(child_ids)
+        or any(
+            not isinstance(prompts[child_id], str)
+            or not prompts[child_id].strip()
+            or grant.get("prompt_sha256s", {}).get(child_id) != _canonical_sha256(prompts[child_id])
+            for child_id in child_ids
+        )
+    ):
+        return {"status": "blocked", "reason_code": "sequence_input_invalid"}
+    if (
+        grant.get("graph_sha256") != _canonical_sha256(grant.get("children"))
+        or grant.get("execution_order_sha256") != _canonical_sha256(child_ids)
+        or grant.get("child_grant_sha256s")
+        != [_canonical_sha256(child_grant) for child_grant in child_grants]
+        or any(
+            not _valid_sequence_child_grant(child_grant, child_id)
+            for child_grant, child_id in zip(child_grants, child_ids)
+        )
+    ):
+        return {"status": "blocked", "reason_code": "sequence_grant_binding_mismatch"}
+    try:
+        current_time = now()
+    except Exception:
+        return {"status": "blocked", "reason_code": "sequence_time_invalid"}
+    try:
+        expires_at = datetime.fromisoformat(grant["approval_expires_at"].replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return {"status": "blocked", "reason_code": "sequence_grant_invalid"}
+    if (
+        not isinstance(current_time, datetime)
+        or current_time.tzinfo is None
+        or current_time.utcoffset() is None
+        or expires_at.tzinfo is None
+        or expires_at <= current_time
+    ):
+        return {"status": "blocked", "reason_code": "sequence_grant_expired"}
+
+    state = {
+        "sequence_id": grant["sequence_id"],
+        "status": "reserved",
+        "reason_code": "sequence_reserved",
+        "graph_sha256": grant["graph_sha256"],
+        "execution_order_sha256": grant["execution_order_sha256"],
+        "external_call_count": 0,
+        "total_elapsed_sec": 0.0,
+        "total_output_chars": 0,
+        "parent_review": None,
+        "children": [
+            {"child_id": child_id, "status": "not_started", "reason_code": "awaiting_dependency" if index else "ready"}
+            for index, child_id in enumerate(child_ids)
+        ],
+    }
+    persisted = _persist_two_child_sequence_state(sequence_ledger_path, state, create=True)
+    if persisted["status"] != "persisted":
+        return _with_sequence_parent_review(persisted)
+
+    for index, (child_id, child_grant) in enumerate(zip(child_ids, child_grants)):
+        try:
+            child_start_time = current_time if index == 0 else now()
+        except Exception:
+            child_start_time = None
+        if (
+            not isinstance(child_start_time, datetime)
+            or child_start_time.tzinfo is None
+            or child_start_time.utcoffset() is None
+            or expires_at <= child_start_time
+        ):
+            state["status"] = "review_required"
+            state["reason_code"] = (
+                "sequence_grant_expired"
+                if isinstance(child_start_time, datetime)
+                and child_start_time.tzinfo is not None
+                and child_start_time.utcoffset() is not None
+                else "sequence_time_invalid"
+            )
+            state["children"][index]["reason_code"] = state["reason_code"]
+            state["parent_review"] = {
+                "status": "review_required",
+                "reason_code": "sequence_child_requires_review",
+                "failed_child_id": child_id,
+            }
+            persisted = _persist_two_child_sequence_state(
+                sequence_ledger_path, state, create=False
+            )
+            return (
+                _with_sequence_parent_review(persisted)
+                if persisted["status"] != "persisted"
+                else _two_child_sequence_result(state)
+            )
+        state["status"] = "running"
+        state["reason_code"] = "child_running"
+        state["children"][index].update({"status": "running", "reason_code": "execution_claim_pending"})
+        persisted = _persist_two_child_sequence_state(sequence_ledger_path, state, create=False)
+        if persisted["status"] != "persisted":
+            return _with_sequence_parent_review(persisted)
+        reservation = reserve_single_child_execution_grant_file(
+            child_grant,
+            single_child_ledger_path,
+            expected_scope_hash=child_grant["scope_hash"],
+            now=child_start_time,
+        )
+        if reservation["status"] != "reserved":
+            child_result = {
+                "status": "indeterminate" if reservation["status"] == "indeterminate" else "blocked",
+                "reason_code": reservation["reason_code"],
+                "external_call_performed": False,
+            }
+        else:
+            child_result = execute_reserved_single_child_grant_file(
+                child_grant,
+                single_child_ledger_path,
+                prompt=prompts[child_id],
+                project_root=project_root,
+                runner=runner,
+                monotonic=monotonic,
+                now=now,
+                sequence_expires_at=expires_at,
+            )
+        if child_result.get("external_call_performed") is True:
+            state["external_call_count"] += 1
+        entry = child_result.get("entry") if isinstance(child_result, dict) else None
+        outcome = entry.get("outcome") if isinstance(entry, dict) else None
+        if isinstance(outcome, dict):
+            elapsed = outcome.get("elapsed_sec", 0.0)
+            output_chars = outcome.get("output_chars", 0)
+            usage_durability = (
+                "durable"
+                if child_result.get("ledger_status") == "finalized"
+                else "durability_unknown"
+            )
+        elif child_result.get("external_call_performed") is True:
+            elapsed = child_result.get("recorded_elapsed_sec", 0.0)
+            output_chars = child_result.get("output_chars", 0)
+            usage_durability = "observed_only"
+        else:
+            elapsed = 0.0
+            output_chars = 0
+            usage_durability = "not_applicable"
+        state["total_elapsed_sec"] += float(elapsed) if _is_finite_number(elapsed) else 0.0
+        state["total_output_chars"] += output_chars if isinstance(output_chars, int) else 0
+        state["children"][index].update(
+            {
+                "status": child_result.get("status", "indeterminate"),
+                "reason_code": child_result.get("reason_code", "execution_result_invalid"),
+                "elapsed_sec": elapsed,
+                "output_chars": output_chars,
+                "usage_durability": usage_durability,
+            }
+        )
+        if child_result.get("status") != "succeeded":
+            state["status"] = "indeterminate" if child_result.get("status") == "indeterminate" else "review_required"
+            state["reason_code"] = "child_not_succeeded"
+            state["parent_review"] = child_result.get("parent_review") or {
+                "status": "review_required",
+                "reason_code": "sequence_child_requires_review",
+                "failed_child_id": child_id,
+            }
+            if index == 0:
+                state["children"][1]["reason_code"] = "dependency_not_succeeded"
+            persisted = _persist_two_child_sequence_state(sequence_ledger_path, state, create=False)
+            return (
+                _with_sequence_parent_review(persisted)
+                if persisted["status"] != "persisted"
+                else _two_child_sequence_result(state)
+            )
+
+        persisted = _persist_two_child_sequence_state(sequence_ledger_path, state, create=False)
+        if persisted["status"] != "persisted":
+            return _with_sequence_parent_review(persisted)
+
+    state["status"] = "completed"
+    state["reason_code"] = "sequence_completed"
+    persisted = _persist_two_child_sequence_state(sequence_ledger_path, state, create=False)
+    return (
+        _with_sequence_parent_review(persisted)
+        if persisted["status"] != "persisted"
+        else _two_child_sequence_result(state)
+    )
 
 
 def finalize_single_child_execution_reservation_file(
