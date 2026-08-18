@@ -473,6 +473,25 @@ def test_state_complete_preserves_task_through_roadmap_sync_commit_session(tmp_p
     assert not roadmap_receipt.exists()
 
 
+def test_state_complete_preserves_task_through_roadmap_and_commit_alias(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    task_session_id = _sync_task_session(target, "task then roadmap alias then commit")
+    roadmap_session_id = _sync_directive_session(target, "roadmap-and-commit")
+
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _git(target, "add", "app.py")
+    _git(target, "commit", "-qm", "implement task and sync roadmap through alias")
+
+    result = _run("state", "complete", "--target", str(target))
+    assert result.returncode == 0, result.stderr
+
+    task_receipt = target / ".omc" / "state" / "sessions" / task_session_id / "completion.json"
+    roadmap_receipt = target / ".omc" / "state" / "sessions" / roadmap_session_id / "completion.json"
+    assert task_receipt.exists()
+    assert not roadmap_receipt.exists()
+
+
 def test_state_complete_clears_task_for_unrelated_directive(tmp_path: Path):
     target = tmp_path / "repo"
     _init_git_repo(target)

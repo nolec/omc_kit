@@ -432,7 +432,11 @@ def _canonical_sha256(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-_COMPLETION_PRESERVING_DIRECTIVE_TITLES = {"omc-ship", "roadmap-sync-commit"}
+_COMPLETION_PRESERVING_DIRECTIVE_TITLES = {
+    "omc-ship",
+    "roadmap-sync-commit",
+    "roadmap-and-commit",
+}
 _COMPLETION_WORK_CLASSES = {
     "implementation",
     "synthetic",
