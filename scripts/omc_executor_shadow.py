@@ -778,6 +778,178 @@ def record_single_child_parent_review_decision(
     }
 
 
+def record_single_child_parent_review_followup(
+    ledger: dict[str, Any],
+    *,
+    idempotency_key: str,
+    followup: dict[str, Any],
+    expected_ledger_revision: int,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Record one operator-observed outcome after a parent-review decision."""
+    ledger_copy = deepcopy(ledger)
+
+    def blocked(reason_code: str) -> dict[str, Any]:
+        return {
+            "status": "blocked",
+            "reason_code": reason_code,
+            "followup": None,
+            "entry": None,
+            "ledger": ledger_copy,
+        }
+
+    entries = ledger_copy.get("entries") if isinstance(ledger_copy, dict) else None
+    if (
+        not isinstance(ledger_copy, dict)
+        or ledger_copy.get("schema_version") != 1
+        or not isinstance(ledger_copy.get("revision"), int)
+        or isinstance(ledger_copy.get("revision"), bool)
+        or ledger_copy["revision"] < 0
+        or not isinstance(entries, list)
+        or any(not isinstance(entry, dict) for entry in entries)
+    ):
+        return blocked("consumption_ledger_invalid")
+    if (
+        not isinstance(expected_ledger_revision, int)
+        or isinstance(expected_ledger_revision, bool)
+        or expected_ledger_revision < 0
+    ):
+        return blocked("expected_ledger_revision_invalid")
+    if ledger_copy["revision"] != expected_ledger_revision:
+        return blocked("consumption_ledger_stale")
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+        return blocked("idempotency_key_invalid")
+    if not isinstance(followup, dict):
+        return blocked("parent_review_followup_invalid")
+
+    matches = [
+        entry
+        for entry in entries
+        if entry.get("idempotency_key") == idempotency_key
+    ]
+    if len(matches) != 1:
+        return blocked(
+            "execution_reservation_missing"
+            if not matches
+            else "consumption_ledger_invalid"
+        )
+    entry = matches[0]
+    if "parent_review_followup" in entry:
+        return blocked("parent_review_followup_already_recorded")
+    decision = entry.get("parent_review_decision")
+    outcome = entry.get("outcome")
+    expected_review = (
+        build_parent_review_recovery(
+            {
+                "status": outcome.get("status"),
+                "reason_code": outcome.get("reason_code"),
+            }
+        )
+        if isinstance(outcome, dict)
+        else {}
+    )
+    decision_value = decision.get("decision") if isinstance(decision, dict) else None
+    if (
+        not isinstance(decision, dict)
+        or decision.get("status") != "recorded"
+        or not isinstance(decision_value, str)
+        or decision_value not in {"acknowledge", "hold"}
+        or not isinstance(decision.get("approval_id"), str)
+        or not decision["approval_id"].strip()
+        or entry.get("status") not in {"failed", "timeout"}
+        or not isinstance(outcome, dict)
+        or outcome.get("status") != entry.get("status")
+        or expected_review.get("status") != "review_required"
+        or outcome.get("parent_review") != expected_review
+        or decision.get("recovery_action") != expected_review["recovery_action"]
+        or decision.get("automatic_retry_allowed") is not False
+        or decision.get("automatic_redistribution_allowed") is not False
+    ):
+        return blocked("parent_review_decision_missing")
+
+    required_text = (
+        "followup_id",
+        "approval_id",
+        "parent_id",
+        "child_id",
+        "scope_hash",
+        "idempotency_key",
+        "reason_code",
+    )
+    followup_outcome = followup.get("outcome")
+    if (
+        followup.get("operator_confirmed") is not True
+        or any(
+            not isinstance(followup.get(field), str)
+            or not followup[field].strip()
+            for field in required_text
+        )
+        or not isinstance(followup_outcome, str)
+        or followup_outcome not in {"resolved", "still_blocked", "escalated"}
+    ):
+        return blocked("parent_review_followup_invalid")
+    if (
+        followup.get("automatic_retry_performed") is not False
+        or followup.get("automatic_redistribution_performed") is not False
+    ):
+        return blocked("parent_review_followup_forbidden_automation")
+    if (
+        followup["approval_id"] != decision["approval_id"]
+        or followup["parent_id"] != entry.get("parent_id")
+        or followup["child_id"] != entry.get("child_id")
+        or followup["scope_hash"] != entry.get("scope_hash")
+        or followup["idempotency_key"] != idempotency_key
+    ):
+        return blocked("parent_review_followup_binding_mismatch")
+    if any(
+        candidate.get("parent_review_followup", {}).get("followup_id")
+        == followup["followup_id"]
+        for candidate in entries
+        if isinstance(candidate.get("parent_review_followup"), dict)
+    ):
+        return blocked("parent_review_followup_id_reused")
+
+    current_time = now or datetime.now(timezone.utc)
+    if (
+        not isinstance(current_time, datetime)
+        or current_time.tzinfo is None
+        or current_time.utcoffset() is None
+    ):
+        return blocked("parent_review_followup_time_invalid")
+    try:
+        decided_at = datetime.fromisoformat(
+            str(decision.get("decided_at", "")).replace("Z", "+00:00")
+        )
+    except ValueError:
+        return blocked("parent_review_decision_missing")
+    if decided_at.tzinfo is None or decided_at.utcoffset() is None:
+        return blocked("parent_review_decision_missing")
+    if current_time < decided_at:
+        return blocked("parent_review_followup_time_invalid")
+
+    followup_record = {
+        "status": "recorded",
+        "followup_id": followup["followup_id"],
+        "approval_id": followup["approval_id"],
+        "outcome": followup_outcome,
+        "reason_code": followup["reason_code"],
+        "observed_at": current_time.astimezone(timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "automatic_retry_performed": False,
+        "automatic_redistribution_performed": False,
+    }
+    entry["parent_review_followup"] = followup_record
+    ledger_copy["revision"] += 1
+    return {
+        "status": "recorded",
+        "reason_code": "parent_review_followup_recorded",
+        "followup": followup_record,
+        "entry": entry,
+        "ledger": ledger_copy,
+    }
+
+
 def _claim_single_child_execution_reservation_file(
     grant: dict[str, Any],
     ledger_path: str | Path,
@@ -1287,6 +1459,127 @@ def record_single_child_parent_review_decision_file(
                         "status": "indeterminate",
                         "reason_code": "consumption_ledger_durability_unknown",
                         "decision": None,
+                        "entry": None,
+                        "ledger": persisted_ledger,
+                    }
+                return blocked("consumption_ledger_write_failed")
+            finally:
+                if raw_fd is not None:
+                    try:
+                        os.close(raw_fd)
+                    except OSError:
+                        pass
+            return result
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def record_single_child_parent_review_followup_file(
+    ledger_path: str | Path,
+    *,
+    idempotency_key: str,
+    followup: dict[str, Any],
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Persist one parent-review follow-up under the execution ledger lock."""
+    path = Path(ledger_path)
+    lock_path = path.with_name(f"{path.name}.lock")
+
+    def blocked(reason_code: str) -> dict[str, Any]:
+        return {
+            "status": "blocked",
+            "reason_code": reason_code,
+            "followup": None,
+            "entry": None,
+            "ledger": None,
+        }
+
+    if path.is_symlink() or lock_path.is_symlink():
+        return blocked("consumption_ledger_path_invalid")
+    if not path.exists():
+        return blocked("consumption_ledger_read_failed")
+
+    lock_flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        lock_flags |= os.O_NOFOLLOW
+    try:
+        lock_fd = os.open(lock_path, lock_flags, 0o600)
+    except OSError:
+        return blocked("consumption_ledger_lock_failed")
+
+    temp_path: Path | None = None
+    replace_completed = False
+    try:
+        with os.fdopen(lock_fd, "r+", encoding="utf-8") as lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            except OSError:
+                return blocked("consumption_ledger_lock_failed")
+            if path.is_symlink():
+                return blocked("consumption_ledger_path_invalid")
+            try:
+                ledger = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                return blocked("consumption_ledger_read_failed")
+            revision = ledger.get("revision") if isinstance(ledger, dict) else None
+            if not isinstance(revision, int) or isinstance(revision, bool):
+                return blocked("consumption_ledger_invalid")
+            result = record_single_child_parent_review_followup(
+                ledger,
+                idempotency_key=idempotency_key,
+                followup=followup,
+                expected_ledger_revision=revision,
+                now=now,
+            )
+            if result["status"] != "recorded":
+                return result
+
+            raw_fd: int | None = None
+            try:
+                raw_fd, raw_temp_path = tempfile.mkstemp(
+                    prefix=f".{path.name}.",
+                    suffix=".tmp",
+                    dir=path.parent,
+                )
+                temp_path = Path(raw_temp_path)
+                os.fchmod(raw_fd, 0o600)
+                temp_file = os.fdopen(raw_fd, "w", encoding="utf-8")
+                raw_fd = None
+                with temp_file:
+                    json.dump(
+                        result["ledger"],
+                        temp_file,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    temp_file.write("\n")
+                    temp_file.flush()
+                    os.fsync(temp_file.fileno())
+                os.replace(temp_path, path)
+                replace_completed = True
+                temp_path = None
+                directory_fd = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError:
+                if replace_completed:
+                    try:
+                        persisted_ledger = json.loads(
+                            path.read_text(encoding="utf-8")
+                        )
+                    except (OSError, UnicodeError, json.JSONDecodeError):
+                        persisted_ledger = None
+                    return {
+                        "status": "indeterminate",
+                        "reason_code": "consumption_ledger_durability_unknown",
+                        "followup": None,
                         "entry": None,
                         "ledger": persisted_ledger,
                     }

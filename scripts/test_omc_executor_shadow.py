@@ -15,6 +15,8 @@ from omc_executor_shadow import (
     finalize_single_child_execution_reservation_file,
     record_single_child_parent_review_decision,
     record_single_child_parent_review_decision_file,
+    record_single_child_parent_review_followup,
+    record_single_child_parent_review_followup_file,
     reserve_single_child_execution_grant,
     reserve_single_child_execution_grant_file,
 )
@@ -775,6 +777,258 @@ def test_parent_review_decision_file_blocks_tempfile_creation_failure(
     assert result["status"] == "blocked"
     assert result["reason_code"] == "consumption_ledger_write_failed"
     assert json.loads(ledger_path.read_text()) == original
+
+
+def _decided_parent_review_ledger():
+    decided = record_single_child_parent_review_decision(
+        _terminal_failure_ledger(),
+        idempotency_key="run-child-1",
+        approval=_parent_review_approval(),
+        expected_ledger_revision=2,
+        now=datetime(2026, 8, 16, 0, 2, tzinfo=timezone.utc),
+    )
+    return decided["ledger"]
+
+
+def _parent_review_followup(**overrides):
+    followup = {
+        "followup_id": "parent-review-followup-1",
+        "approval_id": "parent-review-approval-1",
+        "operator_confirmed": True,
+        "parent_id": "parent-1",
+        "child_id": "child-1",
+        "scope_hash": "scope-abc",
+        "idempotency_key": "run-child-1",
+        "outcome": "still_blocked",
+        "reason_code": "dependency_fix_required",
+        "automatic_retry_performed": False,
+        "automatic_redistribution_performed": False,
+    }
+    followup.update(overrides)
+    return followup
+
+
+def test_parent_review_followup_records_one_bound_manual_outcome_without_mutation():
+    ledger = _decided_parent_review_ledger()
+    original = deepcopy(ledger)
+
+    result = record_single_child_parent_review_followup(
+        ledger,
+        idempotency_key="run-child-1",
+        followup=_parent_review_followup(),
+        expected_ledger_revision=3,
+        now=datetime(2026, 8, 16, 0, 3, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "recorded"
+    assert result["reason_code"] == "parent_review_followup_recorded"
+    assert result["ledger"]["revision"] == 4
+    assert result["entry"]["parent_review_followup"] == {
+        "status": "recorded",
+        "followup_id": "parent-review-followup-1",
+        "approval_id": "parent-review-approval-1",
+        "outcome": "still_blocked",
+        "reason_code": "dependency_fix_required",
+        "observed_at": "2026-08-16T00:03:00Z",
+        "automatic_retry_performed": False,
+        "automatic_redistribution_performed": False,
+    }
+    assert ledger == original
+
+
+@pytest.mark.parametrize(
+    ("mutate", "reason_code"),
+    [
+        (
+            lambda ledger, followup: ledger["entries"][0].pop(
+                "parent_review_decision"
+            ),
+            "parent_review_decision_missing",
+        ),
+        (
+            lambda ledger, followup: followup.update({"approval_id": "other"}),
+            "parent_review_followup_binding_mismatch",
+        ),
+        (
+            lambda ledger, followup: followup.update({"outcome": "retried"}),
+            "parent_review_followup_invalid",
+        ),
+        (
+            lambda ledger, followup: followup.update({"outcome": []}),
+            "parent_review_followup_invalid",
+        ),
+        (
+            lambda ledger, followup: ledger["entries"][0][
+                "parent_review_decision"
+            ].update({"decision": []}),
+            "parent_review_decision_missing",
+        ),
+        (
+            lambda ledger, followup: ledger["entries"][0].update(
+                {"status": "succeeded"}
+            ),
+            "parent_review_decision_missing",
+        ),
+        (
+            lambda ledger, followup: followup.update(
+                {"automatic_retry_performed": True}
+            ),
+            "parent_review_followup_forbidden_automation",
+        ),
+        (
+            lambda ledger, followup: followup.update(
+                {"automatic_redistribution_performed": True}
+            ),
+            "parent_review_followup_forbidden_automation",
+        ),
+    ],
+)
+def test_parent_review_followup_fails_closed_without_changing_ledger(
+    mutate,
+    reason_code,
+):
+    ledger = _decided_parent_review_ledger()
+    followup = _parent_review_followup()
+    mutate(ledger, followup)
+    original = deepcopy(ledger)
+
+    result = record_single_child_parent_review_followup(
+        ledger,
+        idempotency_key="run-child-1",
+        followup=followup,
+        expected_ledger_revision=3,
+        now=datetime(2026, 8, 16, 0, 3, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == reason_code
+    assert result["ledger"] == original
+    assert ledger == original
+
+
+def test_parent_review_followup_file_persists_once(tmp_path):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_decided_parent_review_ledger()))
+    followup = _parent_review_followup()
+
+    first = record_single_child_parent_review_followup_file(
+        ledger_path,
+        idempotency_key="run-child-1",
+        followup=followup,
+        now=datetime(2026, 8, 16, 0, 3, tzinfo=timezone.utc),
+    )
+    second = record_single_child_parent_review_followup_file(
+        ledger_path,
+        idempotency_key="run-child-1",
+        followup=followup,
+        now=datetime(2026, 8, 16, 0, 3, tzinfo=timezone.utc),
+    )
+
+    persisted = json.loads(ledger_path.read_text())
+    assert first["status"] == "recorded"
+    assert second["status"] == "blocked"
+    assert second["reason_code"] == "parent_review_followup_already_recorded"
+    assert persisted["revision"] == 4
+    assert persisted["entries"][0]["parent_review_followup"] == first["followup"]
+
+
+def test_parent_review_followup_file_blocks_tempfile_creation_failure(
+    tmp_path,
+    monkeypatch,
+):
+    ledger_path = tmp_path / "execution-grants.json"
+    original = _decided_parent_review_ledger()
+    ledger_path.write_text(json.dumps(original))
+
+    def fail_mkstemp(**_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(omc_executor_shadow.tempfile, "mkstemp", fail_mkstemp)
+
+    result = record_single_child_parent_review_followup_file(
+        ledger_path,
+        idempotency_key="run-child-1",
+        followup=_parent_review_followup(),
+        now=datetime(2026, 8, 16, 0, 3, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "consumption_ledger_write_failed"
+    assert json.loads(ledger_path.read_text()) == original
+
+
+def test_parent_review_followup_file_blocks_lock_acquisition_failure(
+    tmp_path,
+    monkeypatch,
+):
+    ledger_path = tmp_path / "execution-grants.json"
+    original = _decided_parent_review_ledger()
+    ledger_path.write_text(json.dumps(original))
+
+    def fail_flock(*_args):
+        raise OSError("lock unavailable")
+
+    monkeypatch.setattr(omc_executor_shadow.fcntl, "flock", fail_flock)
+
+    result = record_single_child_parent_review_followup_file(
+        ledger_path,
+        idempotency_key="run-child-1",
+        followup=_parent_review_followup(),
+        now=datetime(2026, 8, 16, 0, 3, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "consumption_ledger_lock_failed"
+    assert json.loads(ledger_path.read_text()) == original
+
+
+def test_parent_review_operational_sample_records_manual_followup_without_retry(
+    tmp_path,
+):
+    ledger_path = tmp_path / "execution-grants.json"
+    ledger_path.write_text(json.dumps(_reserved_ledger()))
+    calls = []
+
+    execution = execute_reserved_single_child_grant_file(
+        _execution_grant(),
+        ledger_path,
+        prompt="implement child",
+        project_root=tmp_path,
+        runner=lambda **kwargs: calls.append(kwargs)
+        or {"returncode": 1, "output": "failed"},
+        monotonic=_monotonic_values(1.0, 2.0),
+        now=lambda: datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc),
+    )
+    decision = record_single_child_parent_review_decision_file(
+        ledger_path,
+        idempotency_key="run-child-1",
+        approval=_parent_review_approval(),
+        now=datetime(2026, 8, 16, 0, 2, tzinfo=timezone.utc),
+    )
+    followup = record_single_child_parent_review_followup_file(
+        ledger_path,
+        idempotency_key="run-child-1",
+        followup=_parent_review_followup(),
+        now=datetime(2026, 8, 16, 0, 3, tzinfo=timezone.utc),
+    )
+
+    persisted = json.loads(ledger_path.read_text())
+    assert execution["status"] == "failed"
+    assert execution["parent_review"]["status"] == "review_required"
+    assert decision["status"] == "recorded"
+    assert followup["status"] == "recorded"
+    assert len(calls) == 1
+    assert persisted["revision"] == 5
+    assert persisted["entries"][0]["parent_review_decision"]["decision"] == "hold"
+    assert persisted["entries"][0]["parent_review_followup"]["outcome"] == (
+        "still_blocked"
+    )
+    assert persisted["entries"][0]["parent_review_followup"][
+        "automatic_retry_performed"
+    ] is False
+    assert persisted["entries"][0]["parent_review_followup"][
+        "automatic_redistribution_performed"
+    ] is False
 
 
 def test_single_child_execution_reservation_blocks_duplicate_finalization():
