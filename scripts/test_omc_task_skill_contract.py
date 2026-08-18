@@ -23,7 +23,8 @@ OPTIONAL_TASK_SKILL_PATHS = [
 ]
 
 REQUIRED_SEQUENCE = [
-    "python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title \"omc-task\" --request \"<현재 작업 한 줄 요약>\" --roles senior_coding --for \"task\"",
+    "python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title \"omc-task\" --request \"<현재 작업 한 줄 요약>\" --roles senior_coding --work-class \"<implementation|synthetic|document_only|benchmark_maintenance>\" --for \"task\"",
+    "Guard 실행 전에 작업 성격을 분류",
     "필수 체크",
     "CONTRACT 등록",
     "RED 등록",
@@ -78,6 +79,9 @@ REQUIRED_SAFETY_MARKERS = [
     "Handoff",
     "작은 후속 수정",
     "범위 분리",
+    "OMC_REQUIRE_WORK_CLASS_LOCK",
+    "OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE",
+    "OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY",
 ]
 
 

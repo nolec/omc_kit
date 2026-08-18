@@ -1,8 +1,11 @@
+import hashlib
 import json
 import subprocess
 import sys
 import importlib.util
 from pathlib import Path
+
+import auto_prompt
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -46,10 +49,15 @@ def _init_git_repo(repo: Path) -> str:
     return _git(repo, "rev-parse", "HEAD")
 
 
-def _sync_task_session(repo: Path, request: str = "observed task") -> str:
+def _sync_task_session(
+    repo: Path,
+    request: str = "observed task",
+    *,
+    work_class: str | None = "implementation",
+) -> str:
     init = _run("state", "init", "--target", str(repo))
     assert init.returncode == 0, init.stderr
-    sync = _run(
+    args = [
         "state",
         "sync-session",
         "--target",
@@ -62,7 +70,10 @@ def _sync_task_session(repo: Path, request: str = "observed task") -> str:
         request,
         "--roles",
         "senior_coding",
-    )
+    ]
+    if work_class is not None:
+        args.extend(["--work-class", work_class])
+    sync = _run(*args)
     assert sync.returncode == 0, sync.stderr
     latest = _read_json(repo / ".omc" / "state" / "latest.json")
     return str(latest["latest_session_id"])
@@ -108,6 +119,124 @@ def _sync_ship_session(repo: Path) -> str:
     return str(latest["latest_session_id"])
 
 
+def test_natural_entry_infers_conservative_work_class_for_coding_roles():
+    assert auto_prompt._work_class_for_request(
+        "latency benchmark fixture를 재측정해줘",
+        ["senior_coding"],
+    ) == "benchmark_maintenance"
+    assert auto_prompt._work_class_for_request(
+        "README 문서만 최신화해줘",
+        ["senior_coding"],
+    ) == "document_only"
+    assert auto_prompt._work_class_for_request(
+        "Update README capitalization",
+        ["senior_coding"],
+    ) == "document_only"
+    assert auto_prompt._work_class_for_request(
+        "Document API usage in README",
+        ["senior_coding"],
+    ) == "document_only"
+    assert auto_prompt._work_class_for_request(
+        "로그인 오류를 수정해줘",
+        ["senior_coding"],
+    ) == "implementation"
+    assert auto_prompt._work_class_for_request(
+        "README를 업데이트하고 로그인 API를 구현해줘",
+        ["senior_coding"],
+    ) == "implementation"
+    assert auto_prompt._work_class_for_request(
+        "benchmark 결과를 표시하는 제품 기능을 구현해줘",
+        ["senior_coding"],
+    ) == "implementation"
+    assert auto_prompt._work_class_for_request(
+        "latency benchmark runner를 구현해줘",
+        ["senior_coding"],
+    ) == "benchmark_maintenance"
+    assert auto_prompt._work_class_for_request(
+        "benchmark suite를 구현해줘",
+        ["senior_coding"],
+    ) == "benchmark_maintenance"
+    assert auto_prompt._work_class_for_request(
+        "benchmark 로드맵 문서만 최신화해줘",
+        ["senior_coding"],
+    ) == "document_only"
+    assert auto_prompt._work_class_for_request(
+        "benchmark dashboard를 구현해줘",
+        ["senior_coding"],
+    ) == "implementation"
+    assert auto_prompt._work_class_for_request(
+        "benchmark 결과를 UI 컴포넌트로 구현해줘",
+        ["senior_coding"],
+    ) == "implementation"
+    assert auto_prompt._work_class_for_request(
+        "상태를 요약해줘",
+        ["analysis"],
+    ) is None
+
+
+def test_natural_entry_explicit_work_class_overrides_inference():
+    assert auto_prompt._work_class_for_request(
+        "benchmark helper를 구현해줘",
+        ["senior_coding"],
+        explicit="synthetic",
+    ) == "synthetic"
+
+
+def test_natural_prompt_entry_records_inferred_work_class(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+
+    result = _run(
+        "prompt",
+        "latency benchmark fixture를 재측정해줘",
+        "--roles",
+        "senior_coding",
+        "--assume-confirm",
+        "--context-mode",
+        "lean",
+        "--out",
+        str(target / "prompt.md"),
+        cwd=target,
+    )
+
+    assert result.returncode == 0, result.stderr
+    latest = _read_json(target / ".omc" / "state" / "latest.json")
+    session = _read_json(
+        target
+        / ".omc"
+        / "state"
+        / "sessions"
+        / latest["latest_session_id"]
+        / "session.json"
+    )
+    assert session["work_class"] == "benchmark_maintenance"
+
+
+def test_natural_prompt_entry_fails_when_explicit_work_class_has_no_coding_role(
+    tmp_path: Path,
+):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+
+    result = _run(
+        "prompt",
+        "상태를 요약해줘",
+        "--roles",
+        "analysis",
+        "--work-class",
+        "synthetic",
+        "--assume-confirm",
+        "--context-mode",
+        "lean",
+        "--out",
+        str(target / "prompt.md"),
+        cwd=target,
+    )
+
+    assert result.returncode != 0
+    assert "work class requires a senior_coding session" in result.stderr
+
+
 def _sync_directive_session(repo: Path, title: str) -> str:
     sync = _run(
         "state",
@@ -144,12 +273,115 @@ def test_state_complete_writes_verified_completion_receipt_for_one_followup_comm
 
     receipt_path = target / ".omc" / "state" / "sessions" / session_id / "completion.json"
     receipt = _read_json(receipt_path)
-    assert receipt["schema_version"] == 1
+    assert receipt["schema_version"] == 2
     assert receipt["session_id"] == session_id
     assert receipt["baseline_commit"] == baseline
     assert receipt["followup_commit"] == followup
     assert receipt["changed_paths"] == ["app.py"]
     assert receipt["provider_outputs_available"] is False
+    assert receipt["work_class"] == "implementation"
+    session = _read_json(
+        target / ".omc" / "state" / "sessions" / session_id / "session.json"
+    )
+    assert receipt["work_class_locked_at"] == session["created_at"]
+
+
+def test_state_complete_preserves_explicit_work_class_from_session_start(
+    tmp_path: Path,
+):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    session_id = _sync_task_session(
+        target,
+        "measure benchmark latency",
+        work_class="benchmark_maintenance",
+    )
+
+    session_path = target / ".omc" / "state" / "sessions" / session_id / "session.json"
+    assert _read_json(session_path)["work_class"] == "benchmark_maintenance"
+
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _git(target, "add", "app.py")
+    _git(target, "commit", "-qm", "measure benchmark")
+    result = _run("state", "complete", "--target", str(target))
+    assert result.returncode == 0, result.stderr
+
+    receipt_path = target / ".omc" / "state" / "sessions" / session_id / "completion.json"
+    receipt = _read_json(receipt_path)
+    assert receipt["schema_version"] == 2
+    assert receipt["work_class"] == "benchmark_maintenance"
+    assert receipt["work_class_locked_at"] == _read_json(session_path)["created_at"]
+
+
+def test_state_complete_preserves_pre_upgrade_v1_pending_completion(
+    tmp_path: Path,
+):
+    target = tmp_path / "repo"
+    baseline = _init_git_repo(target)
+    request = "legacy observed completion receipt"
+    session_id = _sync_task_session(target, request)
+    session_path = target / ".omc" / "state" / "sessions" / session_id / "session.json"
+    session = _read_json(session_path)
+    session.pop("work_class")
+    session_path.write_text(json.dumps(session), encoding="utf-8")
+    pending_path = target / ".omc" / "state" / "pending-completion.json"
+    pending = _read_json(pending_path)
+    pending["schema_version"] = 1
+    pending.pop("work_class")
+    pending.pop("work_class_locked_at")
+    pending_path.write_text(json.dumps(pending), encoding="utf-8")
+
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _git(target, "add", "app.py")
+    _git(target, "commit", "-qm", "complete legacy task")
+    followup = _git(target, "rev-parse", "HEAD")
+
+    result = _run("state", "complete", "--target", str(target))
+    assert result.returncode == 0, result.stderr
+    receipt = _read_json(session_path.parent / "completion.json")
+    assert receipt == {
+        "schema_version": 1,
+        "session_id": session_id,
+        "request_sha256": hashlib.sha256(
+            json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+        "baseline_commit": baseline,
+        "followup_commit": followup,
+        "completed_at": receipt["completed_at"],
+        "changed_paths": ["app.py"],
+        "provider_outputs_available": False,
+    }
+
+
+def test_confirm_legacy_coding_session_skips_pending_completion_safely(
+    tmp_path: Path,
+):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    session_id = _sync_task_session(
+        target,
+        "legacy coding session",
+        work_class="implementation",
+    )
+    session_path = target / ".omc" / "state" / "sessions" / session_id / "session.json"
+    session = _read_json(session_path)
+    session.pop("work_class")
+    session_path.write_text(json.dumps(session), encoding="utf-8")
+    (target / ".omc" / "state" / "pending_completion.json").unlink(
+        missing_ok=True
+    )
+
+    result = _run(
+        "state",
+        "confirm",
+        "--target",
+        str(target),
+        "--session-id",
+        session_id,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (target / ".omc" / "state" / "pending_completion.json").exists()
 
 
 def test_state_complete_skips_completion_receipt_without_followup_commit(tmp_path: Path):
@@ -429,6 +661,8 @@ def test_notepad_marks_active_session_as_cleanup_needed_when_reason_exists(tmp_p
         "종료 의미 라벨 확인",
         "--roles",
         "senior_coding",
+        "--work-class",
+        "implementation",
     )
     assert sync.returncode == 0, sync.stderr
 
@@ -484,6 +718,8 @@ def test_status_matches_latest_after_sequential_sync_session_role_change(tmp_pat
         "second coding session",
         "--roles",
         "senior_coding",
+        "--work-class",
+        "implementation",
     )
     assert second.returncode == 0, second.stderr
 
@@ -558,6 +794,8 @@ def test_omc_guard_sync_require_records_confirmed_session(tmp_path: Path):
         "sync require request",
         "--roles",
         "senior_coding",
+        "--work-class",
+        "implementation",
         "--for",
         "task",
     )
@@ -655,6 +893,8 @@ def test_pending_sync_session_keeps_previous_latest_skill(tmp_path: Path):
         "pending request",
         "--roles",
         "senior_coding",
+        "--work-class",
+        "implementation",
     )
     assert second.returncode == 0, second.stderr
 
@@ -694,6 +934,8 @@ def test_status_separates_staged_scope_from_out_of_scope_dirty_changes(tmp_path:
         "scope separation",
         "--roles",
         "senior_coding",
+        "--work-class",
+        "implementation",
     )
     assert sync.returncode == 0, sync.stderr
 
@@ -729,6 +971,8 @@ def test_status_includes_latest_run_and_recent_runs_context(tmp_path: Path):
         "run visibility",
         "--roles",
         "senior_coding",
+        "--work-class",
+        "implementation",
     )
     assert sync.returncode == 0, sync.stderr
 
@@ -823,6 +1067,8 @@ def test_status_counts_state_runs_and_autopilot_run_history_together(tmp_path: P
         "mixed run count visibility",
         "--roles",
         "senior_coding",
+        "--work-class",
+        "implementation",
     )
     assert sync.returncode == 0, sync.stderr
 

@@ -73,6 +73,8 @@ def _auto_prompt_args(args: argparse.Namespace, *, mode: str) -> list[str]:
         cmd.append("--quiet-write")
     if getattr(args, "context_mode", None):
         cmd.extend(["--context-mode", args.context_mode])
+    if getattr(args, "work_class", None):
+        cmd.extend(["--work-class", args.work_class])
     for b in args.base:
         cmd.extend(["--base", str(b)])
     for t in args.team:
@@ -217,6 +219,10 @@ def main() -> int:
     state_record.add_argument("--title", required=True, help="Mode title.")
     state_record.add_argument("--request", required=True, help="Request text.")
     state_record.add_argument("--roles", required=True, help="Comma-separated role ids.")
+    state_record.add_argument(
+        "--work-class",
+        choices=["implementation", "synthetic", "document_only", "benchmark_maintenance"],
+    )
     state_record.add_argument("--prompt-path", type=str, default=None, help="Prompt output path.")
     state_record.add_argument("--confirm", action="store_true", help="Record the session as already confirmed/active.")
     state_record.add_argument(
@@ -233,6 +239,10 @@ def main() -> int:
     state_sync.add_argument("--title", required=True, help="Mode title.")
     state_sync.add_argument("--request", required=True, help="Request text.")
     state_sync.add_argument("--roles", required=True, help="Comma-separated role ids.")
+    state_sync.add_argument(
+        "--work-class",
+        choices=["implementation", "synthetic", "document_only", "benchmark_maintenance"],
+    )
     state_sync.add_argument("--prompt-path", type=str, default=None, help="Prompt output path.")
     state_sync.add_argument("--keep", type=int, default=80, help="Maximum stored entries.")
 
@@ -287,6 +297,12 @@ def main() -> int:
         sp = sub.add_parser(name, help=f"Compose a prompt in {name} mode.")
         sp.add_argument("request", nargs="?", default=None, help="Request text.")
         sp.add_argument("--request-file", type=Path, default=None, help="Read request text from file.")
+        sp.add_argument(
+            "--work-class",
+            choices=["implementation", "synthetic", "document_only", "benchmark_maintenance"],
+            default=None,
+            help="Explicit coding-session work class.",
+        )
         sp.add_argument("--out", type=Path, default=Path("/tmp/prompt.md"))
         sp.add_argument("--no-confirm", action="store_true", help="Skip the interactive role confirmation step.")
         sp.add_argument(
@@ -417,6 +433,7 @@ def main() -> int:
                     args.request,
                     "--roles",
                     args.roles,
+                    *(["--work-class", args.work_class] if args.work_class else []),
                     *(["--prompt-path", args.prompt_path] if args.prompt_path is not None else []),
                     *(["--confirm"] if args.confirm else []),
                     *(["--confirmation-source", args.confirmation_source] if args.confirmation_source else []),
@@ -454,6 +471,7 @@ def main() -> int:
                     args.request,
                     "--roles",
                     args.roles,
+                    *(["--work-class", args.work_class] if args.work_class else []),
                     *(["--prompt-path", args.prompt_path] if args.prompt_path is not None else []),
                     "--keep",
                     str(args.keep),

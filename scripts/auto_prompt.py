@@ -105,6 +105,100 @@ def _should_use_light_mode(text: str) -> bool:
     return _light_mode_decision(text)[0]
 
 
+WORK_CLASSES = (
+    "implementation",
+    "synthetic",
+    "document_only",
+    "benchmark_maintenance",
+)
+
+
+def _contains_work_class_marker(text: str, marker: str) -> bool:
+    if marker.isascii():
+        return re.search(
+            rf"(?<![a-z0-9_]){re.escape(marker)}(?![a-z0-9_])",
+            text,
+        ) is not None
+    return marker in text
+
+
+def _work_class_for_request(
+    request: str,
+    role_ids: list[str],
+    *,
+    explicit: str | None = None,
+) -> str | None:
+    if explicit is not None:
+        if explicit not in WORK_CLASSES:
+            raise ValueError("work class is invalid")
+        if "senior_coding" not in role_ids:
+            raise ValueError("work class requires a senior_coding session")
+        return explicit
+    if "senior_coding" not in role_ids:
+        return None
+
+    normalized = _normalize(request)
+    benchmark_markers = (
+        "benchmark", "벤치마크", "latency", "telemetry", "fixture",
+        "holdout", "adjudication", "preregistration",
+    )
+    product_surface_markers = (
+        "결과를 표시", "제품 기능", "product feature", "사용자 화면",
+        "ui 컴포넌트", "ui component", "ui에", "ui를", "ui로",
+        "화면", "페이지", "dashboard", "대시보드",
+    )
+    product_implementation_markers = (
+        "구현", "개발", "기능", "api", "endpoint", "컴포넌트",
+        "component", "함수", "로직", "production", "제품",
+    )
+    explicit_implementation_actions = (
+        "구현", "개발", "implement", "build", "develop",
+    )
+    has_benchmark_marker = any(
+        _contains_work_class_marker(normalized, marker)
+        for marker in benchmark_markers
+    )
+    has_product_surface = any(
+        _contains_work_class_marker(normalized, marker)
+        for marker in product_surface_markers
+    )
+    has_product_implementation = any(
+        _contains_work_class_marker(normalized, marker)
+        for marker in product_implementation_markers
+    )
+    has_explicit_implementation_action = any(
+        _contains_work_class_marker(normalized, marker)
+        for marker in explicit_implementation_actions
+    )
+    has_synthetic_marker = any(
+        _contains_work_class_marker(normalized, marker)
+        for marker in ("합성", "synthetic", "mock case", "test case 생성")
+    )
+    has_document_only_marker = any(
+        _contains_work_class_marker(normalized, marker)
+        for marker in ("문서만", "docs only", "readme", "로드맵 최신화")
+    )
+    if has_product_surface and has_product_implementation:
+        return "implementation"
+    if has_synthetic_marker and not has_product_surface:
+        return "synthetic"
+    if (
+        has_document_only_marker
+        and not has_product_surface
+        and not has_explicit_implementation_action
+    ):
+        return "document_only"
+    if has_benchmark_marker:
+        return "benchmark_maintenance"
+    if has_product_implementation:
+        return "implementation"
+    if has_synthetic_marker:
+        return "synthetic"
+    if has_document_only_marker:
+        return "document_only"
+    return "implementation"
+
+
 @dataclass(frozen=True)
 class ModeSpec:
     prompt_file: str
@@ -665,6 +759,12 @@ def main() -> int:
     )
     ap.add_argument("--request", type=str, default=None, help="User request text to append.")
     ap.add_argument("--request-file", type=Path, default=None, help="Read user request from file.")
+    ap.add_argument(
+        "--work-class",
+        choices=WORK_CLASSES,
+        default=None,
+        help="Explicit coding-session work class. Otherwise inferred conservatively.",
+    )
     ap.add_argument("--confirm", action="store_true", help="Ask to confirm/edit suggested roles before composing.")
     ap.add_argument("--assume-confirm", action="store_true", help="Confirm the recommended roles automatically.")
     ap.add_argument(
@@ -872,6 +972,11 @@ def main() -> int:
             print(f"Wrote: {args.out}")
 
     if record_session is not None:
+        work_class = _work_class_for_request(
+            request_text,
+            role_ids,
+            explicit=args.work_class,
+        )
         try:
             project_root = Path.cwd()
             session = record_session(
@@ -895,6 +1000,7 @@ def main() -> int:
                     "reason": routing_reason,
                     "light_mode": light_mode,
                 },
+                work_class=work_class,
             )
             print(
                 "[OMC] session recorded: "

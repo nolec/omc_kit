@@ -45,6 +45,16 @@ def _sha(marker: str) -> str:
     return candidate_universe.canonical_digest(marker)[:40]
 
 
+@pytest.mark.parametrize("length", [7, 12, 39, 40])
+def test_git_commit_prefix_accepts_valid_git_abbreviation_lengths(length: int):
+    assert candidate_universe._is_git_commit_prefix("a" * length)
+
+
+@pytest.mark.parametrize("value", ["a" * 6, "a" * 41, "A" * 12, "g" * 12, ""])
+def test_git_commit_prefix_rejects_invalid_values(value: str):
+    assert not candidate_universe._is_git_commit_prefix(value)
+
+
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -866,6 +876,7 @@ def test_prepare_source_snapshot_propagates_approved_trusted_root(
             registration_receipt={},
             trusted_registration_receipt_public_keys=set(),
             expected_registration_receipt_sha256="d" * 64,
+            trusted_work_class_lock_public_keys=set(),
             trusted_registration_root={},
             approved_trusted_registration_root_sha256=approved_root_sha256,
         )
@@ -999,6 +1010,10 @@ def test_preregistered_collector_consumes_sampling_policy(
     registration_receipt_key = Ed25519PrivateKey.generate()
     source_snapshot_key = Ed25519PrivateKey.generate()
     collector_key = Ed25519PrivateKey.generate()
+    work_class_lock_key = Ed25519PrivateKey.generate()
+    work_class_lock_public_key = candidate_universe.public_key_text(
+        work_class_lock_key
+    )
     anchor_repo, anchor_commit, start, end, cutoff = _collection_anchor(tmp_path)
     draft = candidate_universe.prepare_collection_preregistration(
         batch_id="fresh-batch-b",
@@ -1050,6 +1065,21 @@ def test_preregistered_collector_consumes_sampling_policy(
         "collect_inventory_from_session_manifest",
         lambda manifest: raw_inventory,
     )
+    monkeypatch.setattr(
+        candidate_universe,
+        "_validated_work_class_lock",
+        lambda source, **kwargs: (
+            source["work_class"],
+            {
+                "session_id": source["session_id"],
+                "receipt_sha256": candidate_universe.canonical_digest(
+                    source["session_id"]
+                ),
+                "signer_public_key": work_class_lock_public_key,
+                "signed_at": start.isoformat(),
+            },
+        ),
+    )
     sources = [{
             "source_record_id": record["source_record_id"],
             "repo_alias": record["repo_alias"],
@@ -1061,6 +1091,83 @@ def test_preregistered_collector_consumes_sampling_policy(
             "selected_object": record["selected_object"],
             "work_class": work_classes[index],
         } for index, record in enumerate(records)]
+    monkeypatch.setattr(candidate_universe, "_current_time", lambda: end)
+    with pytest.raises(ValueError, match="observation window has not closed"):
+        candidate_universe.prepare_preregistered_source_snapshot(
+            sources=sources,
+            preregistration=frozen,
+            trusted_preregistration_public_keys={
+                candidate_universe.public_key_text(signer_key)
+            },
+            expected_preregistration_sha256=frozen["preregistration_sha256"],
+            preregistration_registry_repository_root=str(anchor_repo),
+            preregistration_registry_commit=registry_commit,
+            preregistration_registry_path=registry_path,
+            registration_receipt=registration_receipt,
+            trusted_registration_receipt_public_keys={
+                candidate_universe.public_key_text(registration_receipt_key)
+            },
+            expected_registration_receipt_sha256=(
+                registration_receipt["receipt_sha256"]
+            ),
+            trusted_work_class_lock_public_keys=set(),
+        )
+
+    monkeypatch.setattr(
+        candidate_universe,
+        "_current_time",
+        lambda: end + timedelta(seconds=1),
+    )
+    monkeypatch.setattr(
+        candidate_universe,
+        "_validated_work_class_lock",
+        lambda source, **kwargs: (
+            "benchmark_maintenance",
+            {
+                "session_id": source["session_id"],
+                "receipt_sha256": candidate_universe.canonical_digest(
+                    source["session_id"]
+                ),
+                "signer_public_key": work_class_lock_public_key,
+                "signed_at": start.isoformat(),
+            },
+        ),
+    )
+    with pytest.raises(ValueError, match="does not match locked completion"):
+        candidate_universe.prepare_preregistered_source_snapshot(
+            sources=sources,
+            preregistration=frozen,
+            trusted_preregistration_public_keys={
+                candidate_universe.public_key_text(signer_key)
+            },
+            expected_preregistration_sha256=frozen["preregistration_sha256"],
+            preregistration_registry_repository_root=str(anchor_repo),
+            preregistration_registry_commit=registry_commit,
+            preregistration_registry_path=registry_path,
+            registration_receipt=registration_receipt,
+            trusted_registration_receipt_public_keys={
+                candidate_universe.public_key_text(registration_receipt_key)
+            },
+            expected_registration_receipt_sha256=(
+                registration_receipt["receipt_sha256"]
+            ),
+            trusted_work_class_lock_public_keys=set(),
+        )
+    monkeypatch.setattr(
+        candidate_universe,
+        "_validated_work_class_lock",
+        lambda source, **kwargs: (
+            source["work_class"],
+            {
+                "session_id": source["session_id"],
+                "receipt_sha256": candidate_universe.canonical_digest(
+                    source["session_id"]
+                ),
+                "signer_public_key": work_class_lock_public_key,
+                "signed_at": start.isoformat(),
+            },
+        ),
+    )
     source_snapshot_draft = (
         candidate_universe.prepare_preregistered_source_snapshot(
             sources=sources,
@@ -1081,8 +1188,11 @@ def test_preregistered_collector_consumes_sampling_policy(
             expected_registration_receipt_sha256=(
                 registration_receipt["receipt_sha256"]
             ),
+            trusted_work_class_lock_public_keys=set(),
         )
     )
+    assert source_snapshot_draft["schema_version"] == 3
+    assert len(source_snapshot_draft["work_class_locks"]) == len(sources)
     source_snapshot = candidate_universe.seal_preregistered_source_snapshot(
         source_snapshot_draft,
         source_snapshot_key,
@@ -1145,6 +1255,102 @@ def test_preregistered_collector_consumes_sampling_policy(
             },
             expected_source_snapshot_sha256=(
                 authority_signer_snapshot["source_snapshot_sha256"]
+            ),
+            collector_public_key=candidate_universe.public_key_text(collector_key),
+            preregistration_registry_repository_root=str(anchor_repo),
+            registration_receipt=registration_receipt,
+            trusted_registration_receipt_public_keys={
+                candidate_universe.public_key_text(registration_receipt_key)
+            },
+            expected_registration_receipt_sha256=(
+                registration_receipt["receipt_sha256"]
+            ),
+        )
+
+    lock_signer_snapshot = candidate_universe.seal_preregistered_source_snapshot(
+        source_snapshot_draft,
+        work_class_lock_key,
+        expected_source_snapshot_sha256=(
+            source_snapshot_draft["source_snapshot_sha256"]
+        ),
+    )
+    with pytest.raises(ValueError, match="signer must be independent"):
+        candidate_universe.collect_preregistered_inventory_from_session_manifest(
+            lock_signer_snapshot,
+            preregistration=frozen,
+            trusted_preregistration_public_keys={
+                candidate_universe.public_key_text(signer_key)
+            },
+            expected_preregistration_sha256=frozen["preregistration_sha256"],
+            trusted_source_snapshot_public_keys={work_class_lock_public_key},
+            expected_source_snapshot_sha256=(
+                lock_signer_snapshot["source_snapshot_sha256"]
+            ),
+            collector_public_key=candidate_universe.public_key_text(collector_key),
+            preregistration_registry_repository_root=str(anchor_repo),
+            registration_receipt=registration_receipt,
+            trusted_registration_receipt_public_keys={
+                candidate_universe.public_key_text(registration_receipt_key)
+            },
+            expected_registration_receipt_sha256=(
+                registration_receipt["receipt_sha256"]
+            ),
+        )
+
+    with pytest.raises(ValueError, match="collector must be independent"):
+        candidate_universe.collect_preregistered_inventory_from_session_manifest(
+            source_snapshot,
+            preregistration=frozen,
+            trusted_preregistration_public_keys={
+                candidate_universe.public_key_text(signer_key)
+            },
+            expected_preregistration_sha256=frozen["preregistration_sha256"],
+            trusted_source_snapshot_public_keys={
+                candidate_universe.public_key_text(source_snapshot_key)
+            },
+            expected_source_snapshot_sha256=(
+                source_snapshot["source_snapshot_sha256"]
+            ),
+            collector_public_key=work_class_lock_public_key,
+            preregistration_registry_repository_root=str(anchor_repo),
+            registration_receipt=registration_receipt,
+            trusted_registration_receipt_public_keys={
+                candidate_universe.public_key_text(registration_receipt_key)
+            },
+            expected_registration_receipt_sha256=(
+                registration_receipt["receipt_sha256"]
+            ),
+        )
+
+    legacy_snapshot_draft = deepcopy(source_snapshot_draft)
+    legacy_snapshot_draft["schema_version"] = 2
+    legacy_snapshot_draft.pop("work_class_locks")
+    legacy_snapshot_draft["source_snapshot_sha256"] = (
+        candidate_universe._signed_digest(
+            legacy_snapshot_draft,
+            "source_snapshot_sha256",
+        )
+    )
+    legacy_snapshot = candidate_universe.seal_preregistered_source_snapshot(
+        legacy_snapshot_draft,
+        source_snapshot_key,
+        expected_source_snapshot_sha256=(
+            legacy_snapshot_draft["source_snapshot_sha256"]
+        ),
+    )
+    with pytest.raises(ValueError, match="schema v3 is required"):
+        candidate_universe.collect_preregistered_inventory_from_session_manifest(
+            legacy_snapshot,
+            preregistration=frozen,
+            trusted_preregistration_public_keys={
+                candidate_universe.public_key_text(signer_key)
+            },
+            expected_preregistration_sha256=frozen["preregistration_sha256"],
+            trusted_source_snapshot_public_keys={
+                candidate_universe.public_key_text(source_snapshot_key)
+            },
+            expected_source_snapshot_sha256=(
+                legacy_snapshot["source_snapshot_sha256"]
             ),
             collector_public_key=candidate_universe.public_key_text(collector_key),
             preregistration_registry_repository_root=str(anchor_repo),
@@ -1534,6 +1740,8 @@ def test_preregistered_collector_consumes_sampling_policy(
         candidate_universe.public_key_text(registration_receipt_key),
         "--expected-registration-receipt-sha256",
         registration_receipt["receipt_sha256"],
+        "--trusted-work-class-lock-public-key",
+        candidate_universe.public_key_text(signer_key),
         "--output",
         str(source_draft_path),
     ]) == 0
@@ -2117,6 +2325,176 @@ def test_session_collector_requires_explicit_completion_receipt(tmp_path: Path):
     assert collected["accepted_records"][0]["completion_source"] == (
         "explicit_completion_receipt"
     )
+
+    completion["schema_version"] = 2
+    completion["work_class"] = "implementation"
+    completion["work_class_locked_at"] = session["created_at"]
+    session["work_class"] = "implementation"
+    (session_dir / "session.json").write_text(json.dumps(session))
+    (session_dir / "completion.json").write_text(json.dumps(completion))
+    collected_v2 = candidate_universe.collect_inventory_from_session_manifest(manifest)
+    assert collected_v2["audit"]["accepted_count"] == 1
+    with pytest.raises(ValueError, match="source work class is not locked"):
+        candidate_universe._locked_completion_work_class(
+            manifest["sources"][0] | {"work_class": "implementation"},
+            trusted_work_class_lock_public_keys=set(),
+        )
+
+
+def test_work_class_lock_receipt_rejects_mutable_state_reclassification(
+    tmp_path: Path,
+    monkeypatch,
+):
+    repo = tmp_path / "repo"
+    session_id = "20260818T010101-locked"
+    session_dir = repo / ".omc" / "state" / "sessions" / session_id
+    session_dir.mkdir(parents=True)
+    session = {
+        "session_id": session_id,
+        "created_at": "2026-08-18T01:01:01+09:00",
+        "request": "measure benchmark latency",
+        "work_class": "benchmark_maintenance",
+        "git": {"head": "a" * 40},
+    }
+    completion = {
+        "schema_version": 2,
+        "session_id": session_id,
+        "request_sha256": candidate_universe.canonical_digest(
+            session["request"]
+        ),
+        "baseline_commit": "a" * 40,
+        "followup_commit": "b" * 40,
+        "completed_at": "2026-08-18T01:02:01+09:00",
+        "changed_paths": ["scripts/benchmark.py"],
+        "provider_outputs_available": False,
+        "work_class": "benchmark_maintenance",
+        "work_class_locked_at": session["created_at"],
+    }
+    session_path = session_dir / "session.json"
+    completion_path = session_dir / "completion.json"
+    session_path.write_text(json.dumps(session), encoding="utf-8")
+    completion_path.write_text(json.dumps(completion), encoding="utf-8")
+
+    signer = Ed25519PrivateKey.generate()
+    monkeypatch.setattr(
+        candidate_universe,
+        "_current_time",
+        lambda: datetime.fromisoformat("2026-08-18T01:01:30+09:00"),
+    )
+    draft = candidate_universe.prepare_work_class_lock_receipt(session)
+    sealed = candidate_universe.seal_work_class_lock_receipt(
+        draft,
+        signer,
+        expected_receipt_sha256=draft["receipt_sha256"],
+    )
+    (session_dir / "work_class_lock.json").write_text(
+        json.dumps(sealed),
+        encoding="utf-8",
+    )
+    trusted_keys = {candidate_universe.public_key_text(signer)}
+    source = {
+        "repository_root": str(repo),
+        "session_id": session_id,
+        "work_class": "benchmark_maintenance",
+    }
+
+    assert candidate_universe._locked_completion_work_class(
+        source,
+        trusted_work_class_lock_public_keys=trusted_keys,
+    ) == "benchmark_maintenance"
+    assert sealed["signed_at"] == "2026-08-18T01:01:30+09:00"
+    with pytest.raises(ValueError, match="signer is not trusted"):
+        candidate_universe._locked_completion_work_class(
+            source,
+            trusted_work_class_lock_public_keys=set(),
+        )
+
+    session["work_class"] = "implementation"
+    completion["work_class"] = "implementation"
+    session_path.write_text(json.dumps(session), encoding="utf-8")
+    completion_path.write_text(json.dumps(completion), encoding="utf-8")
+    with pytest.raises(ValueError, match="source work class is not locked"):
+        candidate_universe._locked_completion_work_class(
+            source | {"work_class": "implementation"},
+            trusted_work_class_lock_public_keys=trusted_keys,
+        )
+
+
+def test_work_class_lock_rejects_signature_after_completion(
+    tmp_path: Path,
+    monkeypatch,
+):
+    repo = tmp_path / "repo"
+    session_id = "20260818T010101-late"
+    session_dir = repo / ".omc" / "state" / "sessions" / session_id
+    session_dir.mkdir(parents=True)
+    session = {
+        "session_id": session_id,
+        "created_at": "2026-08-18T01:01:01+09:00",
+        "request": "observed implementation",
+        "work_class": "implementation",
+        "git": {"head": "a" * 40},
+    }
+    completion = {
+        "schema_version": 2,
+        "session_id": session_id,
+        "request_sha256": candidate_universe.canonical_digest(session["request"]),
+        "baseline_commit": "a" * 40,
+        "followup_commit": "b" * 40,
+        "completed_at": "2026-08-18T01:02:01+09:00",
+        "changed_paths": ["app.py"],
+        "provider_outputs_available": False,
+        "work_class": "implementation",
+        "work_class_locked_at": session["created_at"],
+    }
+    (session_dir / "session.json").write_text(json.dumps(session))
+    (session_dir / "completion.json").write_text(json.dumps(completion))
+    signer = Ed25519PrivateKey.generate()
+    monkeypatch.setattr(
+        candidate_universe,
+        "_current_time",
+        lambda: datetime.fromisoformat("2026-08-18T01:01:30+09:00"),
+    )
+    draft = candidate_universe.prepare_work_class_lock_receipt(session)
+    monkeypatch.setattr(
+        candidate_universe,
+        "_current_time",
+        lambda: datetime.fromisoformat("2026-08-18T01:03:01+09:00"),
+    )
+    sealed = candidate_universe.seal_work_class_lock_receipt(
+        draft,
+        signer,
+        expected_receipt_sha256=draft["receipt_sha256"],
+    )
+    (session_dir / "work_class_lock.json").write_text(json.dumps(sealed))
+
+    with pytest.raises(ValueError, match="source work class is not locked"):
+        candidate_universe._locked_completion_work_class(
+            {
+                "repository_root": str(repo),
+                "session_id": session_id,
+                "work_class": "implementation",
+            },
+            trusted_work_class_lock_public_keys={
+                candidate_universe.public_key_text(signer)
+            },
+        )
+
+
+def test_work_class_lock_signer_must_be_independent():
+    shared_key = Ed25519PrivateKey.generate()
+    shared_public_key = candidate_universe.public_key_text(shared_key)
+    with pytest.raises(ValueError, match="work class lock signer must be independent"):
+        candidate_universe._validate_work_class_lock_independence(
+            [{
+                "session_id": "session-01",
+                "receipt_sha256": "a" * 64,
+                "signer_public_key": shared_public_key,
+                "signed_at": "2026-08-18T01:01:30+09:00",
+            }],
+            preregistration_actor_public_keys={shared_public_key},
+            registration_receipt_public_key="b" * 44,
+        )
 
 
 def test_session_collector_rejects_receipt_without_git_evidence(tmp_path: Path):

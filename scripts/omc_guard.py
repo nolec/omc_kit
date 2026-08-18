@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -10,6 +11,33 @@ import omc_state
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_utils
+
+
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _prospective_work_class_lock(project_root: Path):
+    if not _truthy_env("OMC_REQUIRE_WORK_CLASS_LOCK"):
+        return None
+    key_path = os.environ.get("OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE", "").strip()
+    trusted_public_key = os.environ.get(
+        "OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY", ""
+    ).strip()
+    if not key_path or not trusted_public_key:
+        raise ValueError("work class lock key configuration is required")
+    import omc_plan_candidate_universe as candidate_universe
+
+    return candidate_universe.load_work_class_lock_private_key(
+        key_path,
+        project_root=project_root,
+        trusted_public_key=trusted_public_key,
+    )
 
 MUTATING_ROLE_IDS = {"directive", "senior_coding"}
 READ_ONLY_COMMAND_HINTS = (
@@ -197,6 +225,10 @@ def _parser() -> argparse.ArgumentParser:
     sync_require.add_argument("--request", required=True, help="Request text.")
     sync_require.add_argument("--roles", required=True, help="Comma-separated role ids.")
     sync_require.add_argument(
+        "--work-class",
+        choices=["implementation", "synthetic", "document_only", "benchmark_maintenance"],
+    )
+    sync_require.add_argument(
         "--for",
         dest="command_name",
         required=True,
@@ -228,15 +260,38 @@ def main() -> int:
     args = _parser().parse_args()
     project_root = omc_utils.project_root(args.target)
     if args.command == "sync-require":
-        omc_state.record_session(
+        role_ids = [x.strip() for x in args.roles.split(",") if x.strip()]
+        if "senior_coding" in role_ids and args.work_class is None:
+            raise ValueError("work class is required for a senior_coding session")
+        lock_private_key = (
+            _prospective_work_class_lock(project_root)
+            if "senior_coding" in role_ids
+            else None
+        )
+        session = omc_state.record_session(
             project_root,
             mode=args.mode,
             title=args.title,
             request=args.request,
-            role_ids=[x.strip() for x in args.roles.split(",") if x.strip()],
-            confirmed=True,
-            confirmation_source="guard.sync_require",
+            role_ids=role_ids,
+            work_class=args.work_class,
+            confirmed=lock_private_key is None,
+            confirmation_source=(
+                "guard.sync_require" if lock_private_key is None else None
+            ),
         )
+        if lock_private_key is not None:
+            import omc_plan_candidate_universe as candidate_universe
+
+            candidate_universe.seal_session_work_class_lock(
+                project_root,
+                session,
+                lock_private_key,
+            )
+            omc_state.confirm_session(
+                project_root,
+                session_id=str(session["session_id"]),
+            )
         return require_confirmation(project_root, command_name=args.command_name, scope=args.scope)
     if args.command == "require":
         return require_confirmation(project_root, command_name=args.command_name, scope=args.scope)

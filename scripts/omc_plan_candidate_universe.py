@@ -69,6 +69,15 @@ PREREGISTERED_SOURCE_MANIFEST_FIELDS = {
     "signoff",
     "source_snapshot_sha256",
 }
+PREREGISTERED_SOURCE_MANIFEST_V3_FIELDS = (
+    PREREGISTERED_SOURCE_MANIFEST_FIELDS | {"work_class_locks"}
+)
+WORK_CLASS_LOCK_EVIDENCE_FIELDS = {
+    "session_id",
+    "receipt_sha256",
+    "signer_public_key",
+    "signed_at",
+}
 PREREGISTRATION_REGISTRY_RECORD_FIELDS = {
     "schema_version",
     "batch_id",
@@ -126,6 +135,22 @@ COMPLETION_RECEIPT_FIELDS = {
     "completed_at",
     "changed_paths",
     "provider_outputs_available",
+}
+COMPLETION_RECEIPT_V2_FIELDS = COMPLETION_RECEIPT_FIELDS | {
+    "work_class",
+    "work_class_locked_at",
+}
+WORK_CLASS_LOCK_RECEIPT_FIELDS = {
+    "schema_version",
+    "status",
+    "session_id",
+    "work_class",
+    "work_class_locked_at",
+    "signed_at",
+    "request_sha256",
+    "baseline_commit",
+    "signoff",
+    "receipt_sha256",
 }
 UNIVERSE_FIELDS = {
     "schema_version",
@@ -222,6 +247,14 @@ def _is_lower_hex(value: Any, length: int) -> bool:
     return (
         isinstance(value, str)
         and len(value) == length
+        and set(value) <= HEX_DIGITS
+    )
+
+
+def _is_git_commit_prefix(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and 7 <= len(value) <= 40
         and set(value) <= HEX_DIGITS
     )
 
@@ -1060,15 +1093,345 @@ def _validate_preregistered_sources(sources: Any) -> None:
         raise ValueError("preregistered session source identity must be unique")
 
 
-def _validate_preregistered_source_snapshot_envelope(
-    source_snapshot: dict[str, Any],
+def _completion_receipt_fields(receipt: Any) -> set[str] | None:
+    if not isinstance(receipt, dict):
+        return None
+    if receipt.get("schema_version") == 1:
+        return COMPLETION_RECEIPT_FIELDS
+    if receipt.get("schema_version") == 2:
+        return COMPLETION_RECEIPT_V2_FIELDS
+    return None
+
+
+def prepare_work_class_lock_receipt(
+    session: dict[str, Any],
+) -> dict[str, Any]:
+    git = session.get("git") if isinstance(session, dict) else None
+    if (
+        not isinstance(session, dict)
+        or not isinstance(session.get("session_id"), str)
+        or not isinstance(session.get("request"), str)
+        or session.get("work_class") not in PREREGISTERED_WORK_CLASSES
+        or not isinstance(session.get("created_at"), str)
+        or not isinstance(git, dict)
+        or not _is_lower_hex(git.get("head"), 40)
+    ):
+        raise ValueError("work class lock source session is invalid")
+    locked_at = _parse_timestamp(session["created_at"])
+    signed_at = _current_time().replace(microsecond=0)
+    if signed_at.tzinfo is None:
+        raise ValueError("work class lock current time must be timezone-aware")
+    signed_timestamp = signed_at
+    if signed_timestamp < locked_at:
+        raise ValueError("work class lock signature predates session")
+    receipt = {
+        "schema_version": 1,
+        "status": "draft",
+        "session_id": session["session_id"],
+        "work_class": session["work_class"],
+        "work_class_locked_at": session["created_at"],
+        "signed_at": signed_at.isoformat(),
+        "request_sha256": canonical_digest(session["request"]),
+        "baseline_commit": git["head"],
+        "signoff": {
+            "signer": "independent-work-class-lock-v1",
+            "signer_public_key": "",
+            "signature": "",
+        },
+        "receipt_sha256": "",
+    }
+    receipt["receipt_sha256"] = _signed_digest(receipt, "receipt_sha256")
+    return receipt
+
+
+def _validate_work_class_lock_receipt_envelope(
+    receipt: Any,
     *,
     expected_status: str,
 ) -> None:
     if (
+        not isinstance(receipt, dict)
+        or set(receipt) != WORK_CLASS_LOCK_RECEIPT_FIELDS
+        or receipt.get("schema_version") != 1
+        or receipt.get("status") != expected_status
+        or not isinstance(receipt.get("session_id"), str)
+        or not receipt["session_id"].strip()
+        or receipt.get("work_class") not in PREREGISTERED_WORK_CLASSES
+        or not _is_lower_hex(receipt.get("request_sha256"), 64)
+        or not _is_lower_hex(receipt.get("baseline_commit"), 40)
+        or not _is_lower_hex(receipt.get("receipt_sha256"), 64)
+    ):
+        raise ValueError("work class lock receipt is invalid")
+    _parse_timestamp(receipt.get("work_class_locked_at"))
+    signed_at = _parse_timestamp(receipt.get("signed_at"))
+    if signed_at < _parse_timestamp(receipt["work_class_locked_at"]):
+        raise ValueError("work class lock receipt is invalid")
+
+
+def seal_work_class_lock_receipt(
+    receipt: dict[str, Any],
+    signer_private_key: Ed25519PrivateKey,
+    *,
+    expected_receipt_sha256: str,
+) -> dict[str, Any]:
+    _validate_work_class_lock_receipt_envelope(
+        receipt,
+        expected_status="draft",
+    )
+    if (
+        receipt.get("receipt_sha256") != expected_receipt_sha256
+        or receipt["receipt_sha256"]
+        != _signed_digest(receipt, "receipt_sha256")
+        or receipt.get("signoff") != {
+            "signer": "independent-work-class-lock-v1",
+            "signer_public_key": "",
+            "signature": "",
+        }
+    ):
+        raise ValueError("work class lock receipt draft is invalid")
+    sealed = deepcopy(receipt)
+    sealed["status"] = "frozen"
+    signed_at = _current_time().replace(microsecond=0)
+    if signed_at.tzinfo is None:
+        raise ValueError("work class lock current time must be timezone-aware")
+    sealed["signed_at"] = signed_at.isoformat()
+    if signed_at < _parse_timestamp(sealed["work_class_locked_at"]):
+        raise ValueError("work class lock signature predates session")
+    return _seal_document(
+        sealed,
+        private_key=signer_private_key,
+        digest_field="receipt_sha256",
+    )
+
+
+def load_work_class_lock_private_key(
+    private_key_path: str | Path,
+    *,
+    project_root: str | Path,
+    trusted_public_key: str,
+) -> Ed25519PrivateKey:
+    """Load a repository-external key and bind it to the pinned signer."""
+    key_path = Path(private_key_path).expanduser().resolve()
+    repository = Path(project_root).resolve()
+    try:
+        key_path.relative_to(repository)
+    except ValueError:
+        pass
+    else:
+        raise ValueError(
+            "work class lock private key must be outside the repository"
+        )
+    private_key = _read_private_key(str(key_path))
+    if public_key_text(private_key) != trusted_public_key.strip():
+        raise ValueError(
+            "work class lock private key does not match trusted public key"
+        )
+    return private_key
+
+
+def _resolved_work_class_lock_session(
+    project_root: str | Path,
+    session: dict[str, Any],
+) -> dict[str, Any]:
+    resolved = deepcopy(session)
+    git = resolved.get("git") if isinstance(resolved, dict) else None
+    recorded_head = git.get("head") if isinstance(git, dict) else None
+    if not _is_git_commit_prefix(recorded_head):
+        raise ValueError("work class lock baseline commit is invalid")
+    result = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD^{commit}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    full_head = result.stdout.strip()
+    if (
+        result.returncode != 0
+        or not _is_lower_hex(full_head, 40)
+        or not full_head.startswith(recorded_head)
+    ):
+        raise ValueError("work class lock baseline commit is invalid")
+    resolved["git"] = {**git, "head": full_head}
+    return resolved
+
+
+def seal_session_work_class_lock(
+    project_root: str | Path,
+    session: dict[str, Any],
+    signer_private_key: Ed25519PrivateKey,
+) -> dict[str, Any]:
+    """Seal a session's work class before prospective work can continue."""
+    lock_session = _resolved_work_class_lock_session(project_root, session)
+    draft = prepare_work_class_lock_receipt(lock_session)
+    sealed = seal_work_class_lock_receipt(
+        draft,
+        signer_private_key,
+        expected_receipt_sha256=draft["receipt_sha256"],
+    )
+    destination = (
+        Path(project_root)
+        / ".omc"
+        / "state"
+        / "sessions"
+        / session["session_id"]
+        / "work_class_lock.json"
+    )
+    if destination.exists():
+        raise ValueError("work class lock receipt already exists")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(sealed, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(destination)
+    return sealed
+
+
+def _validated_work_class_lock(
+    source: dict[str, Any],
+    *,
+    trusted_work_class_lock_public_keys: set[str],
+) -> tuple[str, dict[str, str]]:
+    session_dir = (
+        Path(source["repository_root"])
+        / ".omc"
+        / "state"
+        / "sessions"
+        / source["session_id"]
+    )
+    try:
+        receipt = json.loads(
+            (session_dir / "completion.json").read_text(encoding="utf-8")
+        )
+        session = json.loads(
+            (session_dir / "session.json").read_text(encoding="utf-8")
+        )
+        lock_receipt = json.loads(
+            (session_dir / "work_class_lock.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError("source work class is not locked") from error
+    locked_at = receipt.get("work_class_locked_at")
+    try:
+        _validate_work_class_lock_receipt_envelope(
+            lock_receipt,
+            expected_status="frozen",
+        )
+    except ValueError as error:
+        raise ValueError("source work class is not locked") from error
+    session_git = session.get("git") if isinstance(session, dict) else None
+    session_head = session_git.get("head") if isinstance(session_git, dict) else None
+    baseline_commit = receipt.get("baseline_commit")
+    _verify_document(
+        lock_receipt,
+        digest_field="receipt_sha256",
+        trusted_public_keys=trusted_work_class_lock_public_keys,
+        expected_digest=lock_receipt.get("receipt_sha256"),
+        expected_signer="independent-work-class-lock-v1",
+        label="work class lock receipt",
+    )
+    if (
+        _completion_receipt_fields(receipt) != COMPLETION_RECEIPT_V2_FIELDS
+        or set(receipt) != COMPLETION_RECEIPT_V2_FIELDS
+        or receipt.get("session_id") != source["session_id"]
+        or receipt.get("work_class") not in PREREGISTERED_WORK_CLASSES
+        or not isinstance(session, dict)
+        or session.get("session_id") != source["session_id"]
+        or session.get("work_class") != receipt.get("work_class")
+        or session.get("created_at") != locked_at
+        or not isinstance(session.get("request"), str)
+        or canonical_digest(session["request"]) != receipt.get("request_sha256")
+        or not _is_git_commit_prefix(session_head)
+        or not _is_lower_hex(baseline_commit, 40)
+        or not baseline_commit.startswith(session_head)
+        or lock_receipt.get("session_id") != source["session_id"]
+        or lock_receipt.get("work_class") != receipt.get("work_class")
+        or lock_receipt.get("work_class_locked_at") != locked_at
+        or lock_receipt.get("request_sha256") != receipt.get("request_sha256")
+        or lock_receipt.get("baseline_commit")
+        != receipt.get("baseline_commit")
+    ):
+        raise ValueError("source work class is not locked")
+    try:
+        signed_at = _parse_timestamp(lock_receipt["signed_at"])
+        if (
+            _parse_timestamp(locked_at) > signed_at
+            or signed_at > _parse_timestamp(receipt["completed_at"])
+        ):
+            raise ValueError("source work class is not locked")
+    except (TypeError, ValueError) as error:
+        raise ValueError("source work class is not locked") from error
+    return receipt["work_class"], {
+        "session_id": source["session_id"],
+        "receipt_sha256": lock_receipt["receipt_sha256"],
+        "signer_public_key": lock_receipt["signoff"]["signer_public_key"],
+        "signed_at": lock_receipt["signed_at"],
+    }
+
+
+def _locked_completion_work_class(
+    source: dict[str, Any],
+    *,
+    trusted_work_class_lock_public_keys: set[str],
+) -> str:
+    return _validated_work_class_lock(
+        source,
+        trusted_work_class_lock_public_keys=(
+            trusted_work_class_lock_public_keys
+        ),
+    )[0]
+
+
+def _validate_work_class_lock_independence(
+    evidence: list[dict[str, str]],
+    *,
+    preregistration_actor_public_keys: set[str],
+    registration_receipt_public_key: str,
+) -> None:
+    forbidden_keys = {
+        *preregistration_actor_public_keys,
+        registration_receipt_public_key,
+    }
+    if any(item["signer_public_key"] in forbidden_keys for item in evidence):
+        raise ValueError("work class lock signer must be independent")
+
+
+def _work_class_lock_signer_keys(
+    source_snapshot: dict[str, Any],
+) -> set[str]:
+    if source_snapshot.get("schema_version") != 3:
+        return set()
+    return {
+        lock["signer_public_key"]
+        for lock in source_snapshot["work_class_locks"]
+    }
+
+
+def _current_time() -> datetime:
+    return datetime.now().astimezone()
+
+
+def _validate_preregistered_source_snapshot_envelope(
+    source_snapshot: dict[str, Any],
+    *,
+    expected_status: str,
+    validate_payload: bool = True,
+) -> None:
+    schema_version = source_snapshot.get("schema_version") if isinstance(
+        source_snapshot, dict
+    ) else None
+    expected_fields = (
+        PREREGISTERED_SOURCE_MANIFEST_FIELDS
+        if schema_version == 2
+        else PREREGISTERED_SOURCE_MANIFEST_V3_FIELDS
+        if schema_version == 3
+        else None
+    )
+    if (
         not isinstance(source_snapshot, dict)
-        or set(source_snapshot) != PREREGISTERED_SOURCE_MANIFEST_FIELDS
-        or source_snapshot.get("schema_version") != 2
+        or expected_fields is None
+        or set(source_snapshot) != expected_fields
         or source_snapshot.get("status") != expected_status
         or not _is_lower_hex(
             source_snapshot.get("preregistration_sha256"), 64
@@ -1083,6 +1446,29 @@ def _validate_preregistered_source_snapshot_envelope(
         != SOURCE_SNAPSHOT_COMPLETENESS_ATTESTATION
     ):
         raise ValueError("preregistered source snapshot is invalid")
+    if not validate_payload:
+        return
+    if schema_version == 3:
+        locks = source_snapshot.get("work_class_locks")
+        source_session_ids = {
+            source["session_id"] for source in source_snapshot.get("sources", [])
+            if isinstance(source, dict) and "session_id" in source
+        }
+        if (
+            not isinstance(locks, list)
+            or len(locks) != len(source_snapshot.get("sources", []))
+            or any(
+                not isinstance(lock, dict)
+                or set(lock) != WORK_CLASS_LOCK_EVIDENCE_FIELDS
+                or not _is_lower_hex(lock.get("receipt_sha256"), 64)
+                or not _valid_public_key_text(lock.get("signer_public_key"))
+                for lock in locks
+            )
+            or {lock["session_id"] for lock in locks} != source_session_ids
+        ):
+            raise ValueError("source snapshot work class locks are invalid")
+        for lock in locks:
+            _parse_timestamp(lock.get("signed_at"))
     registry = source_snapshot.get("preregistration_registry")
     if (
         not isinstance(registry, dict)
@@ -1106,6 +1492,7 @@ def prepare_preregistered_source_snapshot(
     registration_receipt: dict[str, Any],
     trusted_registration_receipt_public_keys: set[str],
     expected_registration_receipt_sha256: str,
+    trusted_work_class_lock_public_keys: set[str],
     trusted_registration_root: dict[str, Any] | None = None,
     approved_trusted_registration_root_sha256: str | None = None,
 ) -> dict[str, Any]:
@@ -1145,9 +1532,37 @@ def prepare_preregistered_source_snapshot(
         != preregistration_registry_path
     ):
         raise ValueError("registration receipt registry anchor mismatch")
+    observed_through = _parse_timestamp(
+        preregistration["observation_window"]["observed_through"]
+    )
+    now = _current_time()
+    if now.tzinfo is None:
+        raise ValueError("source snapshot current time must be timezone-aware")
+    if now <= observed_through:
+        raise ValueError("observation window has not closed")
     _validate_preregistered_sources(sources)
+    work_class_locks: list[dict[str, str]] = []
+    for source in sources:
+        locked_work_class, lock_evidence = _validated_work_class_lock(
+            source,
+            trusted_work_class_lock_public_keys=(
+                trusted_work_class_lock_public_keys
+            ),
+        )
+        if locked_work_class != source["work_class"]:
+            raise ValueError("source work class does not match locked completion")
+        work_class_locks.append(lock_evidence)
+    _validate_work_class_lock_independence(
+        work_class_locks,
+        preregistration_actor_public_keys=(
+            _preregistration_actor_public_keys(preregistration)
+        ),
+        registration_receipt_public_key=(
+            registration_receipt["signoff"]["signer_public_key"]
+        ),
+    )
     document = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "draft",
         "preregistration_sha256": expected_preregistration_sha256,
         "preregistration_registry": {
@@ -1162,6 +1577,9 @@ def prepare_preregistered_source_snapshot(
         ),
         "sources": sorted(
             deepcopy(sources), key=lambda source: source["source_record_id"]
+        ),
+        "work_class_locks": sorted(
+            deepcopy(work_class_locks), key=lambda lock: lock["session_id"]
         ),
         "signoff": {
             "signer": "complete-session-ledger-snapshot-v1",
@@ -1212,13 +1630,10 @@ def validate_preregistered_source_snapshot(
     expected_preregistration_sha256: str,
 ) -> None:
     _validate_preregistered_source_snapshot_envelope(
-        source_snapshot, expected_status="frozen"
+        source_snapshot,
+        expected_status="frozen",
+        validate_payload=False,
     )
-    if (
-        source_snapshot["preregistration_sha256"]
-        != expected_preregistration_sha256
-    ):
-        raise ValueError("source snapshot preregistration mismatch")
     _verify_document(
         source_snapshot,
         digest_field="source_snapshot_sha256",
@@ -1227,6 +1642,14 @@ def validate_preregistered_source_snapshot(
         expected_signer="complete-session-ledger-snapshot-v1",
         label="source snapshot",
     )
+    _validate_preregistered_source_snapshot_envelope(
+        source_snapshot, expected_status="frozen"
+    )
+    if (
+        source_snapshot["preregistration_sha256"]
+        != expected_preregistration_sha256
+    ):
+        raise ValueError("source snapshot preregistration mismatch")
 
 
 def validate_preregistered_provenance_chain(
@@ -1244,6 +1667,8 @@ def validate_preregistered_provenance_chain(
     trusted_registration_root: dict[str, Any] | None = None,
     approved_trusted_registration_root_sha256: str | None = None,
 ) -> None:
+    if source_snapshot.get("schema_version") != 3:
+        raise ValueError("source snapshot schema v3 is required")
     validate_collection_preregistration(
         preregistration,
         trusted_preregistration_public_keys=trusted_preregistration_public_keys,
@@ -1265,6 +1690,7 @@ def validate_preregistered_provenance_chain(
     )
     if source_snapshot["signoff"]["signer_public_key"] in (
         preregistration_actor_keys
+        | _work_class_lock_signer_keys(source_snapshot)
     ):
         raise ValueError("source snapshot signer must be independent")
     registry = source_snapshot["preregistration_registry"]
@@ -1519,6 +1945,8 @@ def seal_preregistered_inventory(
     _validate_inventory_envelope(inventory, expected_status="collected")
     if inventory["schema_version"] != 2:
         raise ValueError("preregistered inventory schema is required")
+    if source_snapshot.get("schema_version") != 3:
+        raise ValueError("source snapshot schema v3 is required")
     validate_preregistered_source_snapshot(
         source_snapshot,
         trusted_source_snapshot_public_keys=(
@@ -1534,9 +1962,9 @@ def seal_preregistered_inventory(
         != expected_preregistration_sha256
     ):
         raise ValueError("preregistered inventory source snapshot mismatch")
-    if (
-        public_key_text(collector_private_key)
-        == source_snapshot["signoff"]["signer_public_key"]
+    if public_key_text(collector_private_key) in (
+        {source_snapshot["signoff"]["signer_public_key"]}
+        | _work_class_lock_signer_keys(source_snapshot)
     ):
         raise ValueError("inventory collector must be independent")
     if public_key_text(collector_private_key) != inventory["collector_public_key"]:
@@ -1636,9 +2064,11 @@ def _verify_private_inventory(
     collector_public_key = inventory["signoff"]["signer_public_key"]
     if collector_public_key != inventory["collector_public_key"]:
         raise ValueError("inventory collector identity mismatch")
-    disallowed_collector_keys = _preregistration_actor_public_keys(
-        preregistration
-    ) | {source_snapshot["signoff"]["signer_public_key"]}
+    disallowed_collector_keys = (
+        _preregistration_actor_public_keys(preregistration)
+        | {source_snapshot["signoff"]["signer_public_key"]}
+        | _work_class_lock_signer_keys(source_snapshot)
+    )
     if collector_public_key in disallowed_collector_keys:
         raise ValueError("inventory collector must be independent")
 
@@ -2435,8 +2865,8 @@ def collect_inventory_from_session_manifest(
         baseline = completion.get("baseline_commit")
         session_head = git.get("head") if isinstance(git, dict) else None
         if (
-            set(completion) != COMPLETION_RECEIPT_FIELDS
-            or completion.get("schema_version") != 1
+            _completion_receipt_fields(completion) is None
+            or set(completion) != _completion_receipt_fields(completion)
             or completion.get("session_id") != source["session_id"]
             or session.get("session_id") != source["session_id"]
             or not isinstance(confirmation, dict)
@@ -2530,9 +2960,11 @@ def collect_preregistered_inventory_from_session_manifest(
     )
     if not _valid_public_key_text(collector_public_key):
         raise ValueError("inventory collector public key is invalid")
-    disallowed_collector_keys = _preregistration_actor_public_keys(
-        preregistration
-    ) | {source_snapshot["signoff"]["signer_public_key"]}
+    disallowed_collector_keys = (
+        _preregistration_actor_public_keys(preregistration)
+        | {source_snapshot["signoff"]["signer_public_key"]}
+        | _work_class_lock_signer_keys(source_snapshot)
+    )
     if collector_public_key in disallowed_collector_keys:
         raise ValueError("inventory collector must be independent")
     sources = source_snapshot["sources"]
@@ -2728,6 +3160,21 @@ def _parser() -> argparse.ArgumentParser:
     )
     prepare_sigstore_receipt.add_argument("--output", required=True)
 
+    prepare_work_class_lock = subparsers.add_parser(
+        "prepare-work-class-lock"
+    )
+    prepare_work_class_lock.add_argument("session")
+    prepare_work_class_lock.add_argument("--repository-root", required=True)
+    prepare_work_class_lock.add_argument("--output", required=True)
+
+    seal_work_class_lock = subparsers.add_parser("seal-work-class-lock")
+    seal_work_class_lock.add_argument("receipt")
+    seal_work_class_lock.add_argument("--private-key", required=True)
+    seal_work_class_lock.add_argument(
+        "--approved-receipt-sha256", required=True
+    )
+    seal_work_class_lock.add_argument("--output", required=True)
+
     prepare_source_snapshot = subparsers.add_parser(
         "prepare-source-snapshot"
     )
@@ -2761,6 +3208,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     prepare_source_snapshot.add_argument(
         "--expected-registration-receipt-sha256", required=True
+    )
+    prepare_source_snapshot.add_argument(
+        "--trusted-work-class-lock-public-key",
+        action="append",
+        required=True,
     )
     prepare_source_snapshot.add_argument("--output", required=True)
 
@@ -2962,6 +3414,19 @@ def main(argv: list[str] | None = None) -> int:
             trusted_root=_read_json(args.trusted_registration_root),
             approved_trusted_root_sha256=args.approved_trusted_root_sha256,
         )
+    elif args.command == "prepare-work-class-lock":
+        result = prepare_work_class_lock_receipt(
+            _resolved_work_class_lock_session(
+                args.repository_root,
+                _read_json(args.session),
+            )
+        )
+    elif args.command == "seal-work-class-lock":
+        result = seal_work_class_lock_receipt(
+            _read_json(args.receipt),
+            _read_private_key(args.private_key),
+            expected_receipt_sha256=args.approved_receipt_sha256,
+        )
     elif args.command == "prepare-source-snapshot":
         source_document = _read_json(args.sources)
         if (
@@ -2992,6 +3457,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             expected_registration_receipt_sha256=(
                 args.expected_registration_receipt_sha256
+            ),
+            trusted_work_class_lock_public_keys=set(
+                args.trusted_work_class_lock_public_key
             ),
             trusted_registration_root=_read_optional_json(
                 args.trusted_registration_root

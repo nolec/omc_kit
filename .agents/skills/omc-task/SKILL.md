@@ -10,10 +10,13 @@ description: "7단계 TDD 파이프라인으로 구현 실행. 트리거: 구현
 ## 0. Guard
 
 ```bash
-python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title "omc-task" --request "<현재 작업 한 줄 요약>" --roles senior_coding --for "task"
+python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title "omc-task" --request "<현재 작업 한 줄 요약>" --roles senior_coding --work-class "<implementation|synthetic|document_only|benchmark_maintenance>" --for "task"
 ```
 
+Guard 실행 전에 작업 성격을 분류합니다. 제품 코드 변경은 `implementation`, 합성 fixture는 `synthetic`, 문서만 변경하면 `document_only`, benchmark 도구·측정 변경은 `benchmark_maintenance`입니다. 모호하면 임의 기본값을 쓰지 말고 범위를 확인합니다.
+
 실패하면 세션 확인 또는 confirm부터 처리하고 중단합니다.
+Prospective 수집은 `OMC_REQUIRE_WORK_CLASS_LOCK=1`, 외부 `OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE`, pinned `OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY`를 설정하며 Guard가 세션 생성 즉시 lock을 봉인합니다.
 
 ## 필수 체크
 

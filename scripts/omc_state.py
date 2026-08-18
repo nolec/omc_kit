@@ -325,12 +325,24 @@ def record_completion_receipt(project_root: Path) -> dict[str, object]:
 
         pending_path = _pending_completion_path(project_root)
         pending = _read_json(pending_path, {})
-        if set(pending) != {
+        pending_v1_fields = {
             "schema_version",
             "session_id",
             "baseline_head",
             "request_sha256",
-        } or pending.get("schema_version") != 1:
+        }
+        pending_v2_fields = pending_v1_fields | {
+            "work_class",
+            "work_class_locked_at",
+        }
+        pending_schema = pending.get("schema_version")
+        expected_pending_fields = (
+            pending_v1_fields if pending_schema == 1 else pending_v2_fields
+        )
+        if (
+            pending_schema not in {1, 2}
+            or set(pending) != expected_pending_fields
+        ):
             return {"status": "skipped", "reason": "pending completion is invalid"}
 
         session_id = pending.get("session_id")
@@ -342,6 +354,8 @@ def record_completion_receipt(project_root: Path) -> dict[str, object]:
         role_ids = session.get("role_ids")
         request = session.get("request")
         git = session.get("git")
+        work_class = session.get("work_class")
+        work_class_locked_at = session.get("created_at")
         if (
             session.get("session_id") != session_id
             or not isinstance(confirmation, dict)
@@ -353,6 +367,13 @@ def record_completion_receipt(project_root: Path) -> dict[str, object]:
             or not isinstance(git, dict)
             or git.get("head") != pending.get("baseline_head")
             or _canonical_sha256(request) != pending.get("request_sha256")
+        ):
+            return {"status": "skipped", "reason": "pending completion does not match session"}
+        if pending_schema == 2 and (
+            work_class not in _COMPLETION_WORK_CLASSES
+            or work_class != pending.get("work_class")
+            or not isinstance(work_class_locked_at, str)
+            or work_class_locked_at != pending.get("work_class_locked_at")
         ):
             return {"status": "skipped", "reason": "pending completion does not match session"}
 
@@ -382,7 +403,7 @@ def record_completion_receipt(project_root: Path) -> dict[str, object]:
             return {"status": "skipped", "reason": "followup commit has no changed paths"}
 
         receipt = {
-            "schema_version": 1,
+            "schema_version": pending_schema,
             "session_id": str(session_id),
             "request_sha256": _canonical_sha256(request),
             "baseline_commit": baseline,
@@ -391,6 +412,11 @@ def record_completion_receipt(project_root: Path) -> dict[str, object]:
             "changed_paths": changed_paths,
             "provider_outputs_available": False,
         }
+        if pending_schema == 2:
+            receipt.update({
+                "work_class": work_class,
+                "work_class_locked_at": work_class_locked_at,
+            })
         _write_json(receipt_path, receipt)
         pending_path.unlink(missing_ok=True)
         return {"status": "ok", "path": str(receipt_path), "receipt": receipt}
@@ -407,6 +433,26 @@ def _canonical_sha256(value: object) -> str:
 
 
 _COMPLETION_PRESERVING_DIRECTIVE_TITLES = {"omc-ship", "roadmap-sync-commit"}
+_COMPLETION_WORK_CLASSES = {
+    "implementation",
+    "synthetic",
+    "document_only",
+    "benchmark_maintenance",
+}
+
+
+def _resolve_work_class(
+    work_class: str | None,
+    role_ids: list[str],
+) -> str | None:
+    if "senior_coding" not in role_ids:
+        if work_class is not None:
+            raise ValueError("work class requires a senior_coding session")
+        return None
+    resolved = work_class or "implementation"
+    if resolved not in _COMPLETION_WORK_CLASSES:
+        raise ValueError("work class is invalid")
+    return resolved
 
 
 def _sync_pending_completion(project_root: Path, session: dict[str, object]) -> None:
@@ -416,16 +462,28 @@ def _sync_pending_completion(project_root: Path, session: dict[str, object]) -> 
     if "senior_coding" in role_ids:
         git = session.get("git")
         request = session.get("request")
-        if isinstance(git, dict) and isinstance(git.get("head"), str) and isinstance(request, str):
+        work_class = session.get("work_class")
+        created_at = session.get("created_at")
+        if (
+            isinstance(git, dict)
+            and isinstance(git.get("head"), str)
+            and isinstance(request, str)
+            and work_class in _COMPLETION_WORK_CLASSES
+            and isinstance(created_at, str)
+        ):
             _write_json(
                 _pending_completion_path(project_root),
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "session_id": session["session_id"],
                     "baseline_head": git["head"],
                     "request_sha256": _canonical_sha256(request),
+                    "work_class": work_class,
+                    "work_class_locked_at": created_at,
                 },
             )
+        else:
+            _pending_completion_path(project_root).unlink(missing_ok=True)
         return
     preserves_task_completion = "code_review" in role_ids or (
         "directive" in role_ids
@@ -1152,6 +1210,7 @@ def record_session(
     confirmed: bool = False,
     confirmation_source: str | None = None,
     routing: dict[str, object] | None = None,
+    work_class: str | None = None,
     keep_entries: int = 80,
 ) -> dict[str, object]:
     with _omc_lock(project_root):
@@ -1167,6 +1226,7 @@ def record_session(
         )
         prev_latest_session_id = prev_latest.get("latest_session_id")
         session_id = f"{_slug_now()}-{uuid.uuid4().hex[:8]}"
+        resolved_work_class = _resolve_work_class(work_class, role_ids)
         entry = {
             "kind": "session",
             "session_id": session_id,
@@ -1175,6 +1235,7 @@ def record_session(
             "title": title,
             "request": request.strip(),
             "role_ids": list(role_ids),
+            "work_class": resolved_work_class,
             "prompt_path": prompt_path,
             "base_paths": list(base_paths or []),
             "team_paths": list(team_paths or []),
@@ -1602,6 +1663,7 @@ def _parser() -> argparse.ArgumentParser:
     record.add_argument("--title", required=True, help="Mode title.")
     record.add_argument("--request", required=True, help="Request text.")
     record.add_argument("--roles", required=True, help="Comma-separated role ids.")
+    record.add_argument("--work-class", choices=sorted(_COMPLETION_WORK_CLASSES))
     record.add_argument("--prompt-path", type=str, default=None, help="Prompt output path.")
     record.add_argument("--base", action="append", default=[], help="Base prompt path(s).")
     record.add_argument("--team", action="append", default=[], help="Team file path(s).")
@@ -1620,6 +1682,7 @@ def _parser() -> argparse.ArgumentParser:
     sync_session.add_argument("--title", required=True, help="Mode title.")
     sync_session.add_argument("--request", required=True, help="Request text.")
     sync_session.add_argument("--roles", required=True, help="Comma-separated role ids.")
+    sync_session.add_argument("--work-class", choices=sorted(_COMPLETION_WORK_CLASSES))
     sync_session.add_argument("--prompt-path", type=str, default=None, help="Prompt output path.")
     sync_session.add_argument("--base", action="append", default=[], help="Base prompt path(s).")
     sync_session.add_argument("--team", action="append", default=[], help="Team file path(s).")
@@ -1690,6 +1753,7 @@ def main() -> int:
             title=args.title,
             request=args.request,
             role_ids=[x.strip() for x in args.roles.split(",") if x.strip()],
+            work_class=args.work_class,
             prompt_path=args.prompt_path,
             base_paths=[str(p) for p in args.base],
             team_paths=[str(p) for p in args.team],
@@ -1707,6 +1771,7 @@ def main() -> int:
             title=args.title,
             request=args.request,
             role_ids=[x.strip() for x in args.roles.split(",") if x.strip()],
+            work_class=args.work_class,
             prompt_path=args.prompt_path,
             base_paths=[str(p) for p in args.base],
             team_paths=[str(p) for p in args.team],
