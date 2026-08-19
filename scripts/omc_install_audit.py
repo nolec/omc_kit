@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from collections import Counter
 from pathlib import Path
 
 
@@ -76,6 +77,7 @@ def audit_target(target: Path) -> dict[str, object]:
         status = "warn"
 
     verification_errors: list[str] = []
+    verification_notices: list[str] = []
     if status != "ok":
         verification_errors.append(f"audit:{status}")
     if not has_receipt:
@@ -111,11 +113,21 @@ def audit_target(target: Path) -> dict[str, object]:
             verification_errors.append(f"entry-invalid:{rel}")
             continue
         if policy != "preserve" and entry_status == "blocked":
-            verification_errors.append(f"blocked:{rel}")
+            source_hash = entry.get("source_sha256")
+            target_hash = entry.get("target_sha256")
+            if (
+                not isinstance(source_hash, str)
+                or not source_hash
+                or source_hash == target_hash
+            ):
+                verification_errors.append(f"manifest-policy-error:{rel}")
+            else:
+                verification_errors.append(f"managed-drift:{rel}")
         elif policy != "preserve" and entry_status != "updated":
             verification_errors.append(f"entry-invalid:{rel}")
             continue
         if policy == "preserve":
+            verification_notices.append(f"preserved-local:{rel}")
             continue
         installed = resolved / rel_path
         try:
@@ -151,6 +163,16 @@ def audit_target(target: Path) -> dict[str, object]:
         if actual_hash != expected_hash:
             verification_errors.append(f"drift:{rel}")
 
+    issue_counts = Counter()
+    for issue in verification_errors:
+        prefix = issue.split(":", 1)[0]
+        if prefix in {"receipt", "audit"}:
+            issue_counts["receipt_error"] += 1
+        elif prefix in {"entry-invalid", "manifest-policy-error"}:
+            issue_counts["manifest_policy_error"] += 1
+        else:
+            issue_counts["managed_drift"] += 1
+
     return {
         "target": str(resolved),
         "has_legacy_embedded_omc_kit": legacy_dir.exists(),
@@ -166,6 +188,8 @@ def audit_target(target: Path) -> dict[str, object]:
         "status": status,
         "verification_status": "ok" if not verification_errors else "failed",
         "verification_errors": verification_errors,
+        "verification_notices": verification_notices,
+        "verification_issue_counts": dict(sorted(issue_counts.items())),
     }
 
 
@@ -177,6 +201,12 @@ def _render_text(results: list[dict[str, object]]) -> str:
         lines.append(f"verification_status: {item['verification_status']}")
         if item["verification_errors"]:
             lines.append(f"verification_errors: {item['verification_errors']}")
+        if item["verification_notices"]:
+            lines.append(f"verification_notices: {item['verification_notices']}")
+        if item["verification_issue_counts"]:
+            lines.append(
+                f"verification_issue_counts: {item['verification_issue_counts']}"
+            )
         lines.append(f"legacy_embedded_omc_kit: {item['has_legacy_embedded_omc_kit']}")
         lines.append(f"install_source: {item['has_install_source']}")
         if item["source_kind"] is not None or item["source_path"] is not None:

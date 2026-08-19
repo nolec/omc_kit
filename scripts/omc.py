@@ -381,6 +381,10 @@ def main() -> int:
         init_code = _run_script(init_state, ["init", "--target", str(target), *(["--force"] if args.force else [])])
         if init_code != 0:
             raise SystemExit(init_code)
+        audit_script = kit / "scripts" / "omc_install_audit.py"
+        verify_code = _run_script(audit_script, ["--strict", str(target)])
+        if verify_code != 0:
+            raise SystemExit(verify_code)
         if args.skip_session_start:
             return 0
         return _run_script(hook_script, ["session_start", "--target", str(target)])

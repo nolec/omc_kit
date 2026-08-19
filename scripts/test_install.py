@@ -164,7 +164,7 @@ class TestInstallManifest(unittest.TestCase):
         self.assertNotIn("work-class-lock.key", names)
         self.assertNotIn("work-class-lock.json", names)
 
-    def test_manifest_classifies_managed_and_preserved_files(self):
+    def test_manifest_registers_source_managed_files_without_user_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "source"
@@ -179,22 +179,151 @@ class TestInstallManifest(unittest.TestCase):
             manifest = _install._build_install_manifest(source, target)
 
             self.assertEqual(manifest["scripts/omc.py"]["policy"], "managed_exact")
-            self.assertEqual(manifest["src/app.py"]["policy"], "preserve")
+            self.assertNotIn("src/app.py", manifest)
             self.assertNotEqual(manifest["scripts/omc.py"]["source_sha256"], "")
 
-    def test_manifest_classifies_all_omc_deployment_roots_as_managed(self):
+    def test_manifest_tracks_stale_deployment_root_from_previous_receipt(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "source"
             target = root / "target"
             (source / "scripts").mkdir(parents=True)
             (target / "docs").mkdir(parents=True)
+            (target / ".omc").mkdir()
             (source / "scripts" / "omc.py").write_text("source\n", encoding="utf-8")
-            (target / "docs" / "omc_workflow.md").write_text("custom\n", encoding="utf-8")
+            workflow = target / "docs" / "omc_workflow.md"
+            workflow.write_text("custom\n", encoding="utf-8")
+            (target / ".omc" / "install-receipt.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "entries": {
+                            "docs/omc_workflow.md": {
+                                "policy": "managed_exact",
+                                "source_sha256": "old-source",
+                                "target_sha256": _install._sha256_file(workflow),
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             manifest = _install._build_install_manifest(source, target)
 
             self.assertEqual(manifest["docs/omc_workflow.md"]["policy"], "managed_exact")
+            self.assertTrue(manifest["docs/omc_workflow.md"]["previously_managed"])
+
+    def test_manifest_does_not_scan_or_register_unmanaged_target_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            target = root / "target"
+            (source / "scripts").mkdir(parents=True)
+            (target / "scripts").mkdir(parents=True)
+            (target / "src").mkdir()
+            (source / "scripts" / "omc.py").write_text("new\n", encoding="utf-8")
+            (target / "scripts" / "project_task.py").write_text(
+                "project\n", encoding="utf-8"
+            )
+            (target / "src" / "app.py").write_text("user\n", encoding="utf-8")
+
+            with patch.object(
+                Path,
+                "rglob",
+                side_effect=AssertionError("target-wide scan is forbidden"),
+            ):
+                manifest = _install._build_install_manifest(source, target)
+
+            self.assertIn("scripts/omc.py", manifest)
+            self.assertNotIn("scripts/project_task.py", manifest)
+            self.assertNotIn("src/app.py", manifest)
+
+    def test_manifest_carries_only_previous_managed_entries_for_stale_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            target = root / "target"
+            (source / "scripts").mkdir(parents=True)
+            (target / ".omc").mkdir(parents=True)
+            (target / "docs").mkdir()
+            (source / "scripts" / "omc.py").write_text("new\n", encoding="utf-8")
+            stale = target / "docs" / "omc_removed.md"
+            stale.write_text("old managed\n", encoding="utf-8")
+            (target / "docs" / "product.md").write_text("product\n", encoding="utf-8")
+            (target / ".omc" / "install-receipt.json").write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "entries": {
+                        "docs/omc_removed.md": {
+                            "policy": "managed_exact",
+                            "source_sha256": "old-source",
+                            "target_sha256": _install._sha256_file(stale),
+                        },
+                        "docs/product.md": {
+                            "policy": "preserve",
+                            "source_sha256": "",
+                            "target_sha256": "ignored",
+                        },
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            manifest = _install._build_install_manifest(source, target)
+
+            self.assertIn("docs/omc_removed.md", manifest)
+            self.assertNotIn("docs/product.md", manifest)
+            self.assertTrue(manifest["docs/omc_removed.md"]["previously_managed"])
+
+    def test_manifest_rejects_damaged_previous_receipt_without_target_scan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            target = root / "target"
+            (source / "scripts").mkdir(parents=True)
+            (target / ".omc").mkdir(parents=True)
+            (source / "scripts" / "omc.py").write_text("new\n", encoding="utf-8")
+            (target / ".omc" / "install-receipt.json").write_text(
+                "{damaged", encoding="utf-8"
+            )
+
+            with patch.object(
+                Path,
+                "rglob",
+                side_effect=AssertionError("target-wide scan is forbidden"),
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "manifest_policy_error:invalid-install-receipt"
+                ):
+                    _install._build_install_manifest(source, target)
+
+    def test_install_cli_reports_damaged_receipt_without_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            (target / ".omc").mkdir(parents=True)
+            (target / ".omc" / "install-receipt.json").write_text(
+                "{damaged", encoding="utf-8"
+            )
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).parent / "install.py"),
+                    "--target",
+                    str(target),
+                    "--force",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn(
+                "manifest_policy_error:invalid-install-receipt", proc.stderr
+            )
+            self.assertNotIn("Traceback", proc.stderr)
 
     def test_copy_respects_manifest_preserve_policy_even_with_force(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -305,6 +434,53 @@ class TestInstallManifest(unittest.TestCase):
         self.assertEqual(generated["verification_mode"], "generated_output")
         self.assertEqual(exact["verification_mode"], "source_exact")
 
+    def test_receipt_attributes_setup_changes(self):
+        created = _install._receipt_entry(
+            policy="managed_exact",
+            source_sha256="new",
+            target_sha256="new",
+            previous_target_sha256="",
+        )
+        changed = _install._receipt_entry(
+            policy="managed_exact",
+            source_sha256="new",
+            target_sha256="new",
+            previous_target_sha256="old",
+        )
+        unchanged = _install._receipt_entry(
+            policy="managed_exact",
+            source_sha256="same",
+            target_sha256="same",
+            previous_target_sha256="same",
+        )
+
+        self.assertEqual(created["change"], "created")
+        self.assertEqual(changed["change"], "changed_by_setup")
+        self.assertEqual(unchanged["change"], "unchanged")
+
+    def test_install_summary_counts_changes_and_reports_bounded_scan(self):
+        summary = _install._install_summary(
+            {
+                "a": {"change": "created"},
+                "b": {"change": "changed_by_setup"},
+                "c": {"change": "unchanged"},
+                "d": {"change": "preserved"},
+            },
+            stage_timings_ms={"manifest": 3, "apply": 8, "receipt": 2},
+        )
+
+        self.assertEqual(summary["scan_strategy"], "bounded_manifest")
+        self.assertEqual(
+            summary["change_counts"],
+            {
+                "changed_by_setup": 1,
+                "created": 1,
+                "preserved": 1,
+                "unchanged": 1,
+            },
+        )
+        self.assertEqual(summary["stage_timings_ms"]["apply"], 8)
+
     def test_reset_install_policy_context_clears_global_state(self):
         _install._INSTALL_POLICY_ROOT = Path("/tmp/omc-target")
         _install._INSTALL_POLICY_MANIFEST = {"scripts/omc.py": {"policy": "managed_exact"}}
@@ -332,6 +508,32 @@ class TestInstallManifest(unittest.TestCase):
 
             self.assertEqual(entry["policy"], "preserve")
             self.assertEqual(entry["target_sha256"], _install._sha256_file(dst))
+
+    def test_non_force_preserve_updates_prebuilt_manifest_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "source.txt"
+            dst = root / "scripts" / "omc.py"
+            src.write_text("new\n", encoding="utf-8")
+            dst.parent.mkdir(parents=True)
+            dst.write_text("old\n", encoding="utf-8")
+            _install._INSTALL_POLICY_ROOT = root
+            _install._INSTALL_POLICY_MANIFEST = {
+                "scripts/omc.py": {
+                    "policy": "managed_exact",
+                    "source_sha256": "old-source",
+                    "target_sha256": _install._sha256_file(dst),
+                    "previously_managed": True,
+                }
+            }
+            try:
+                _install._copy(src, dst, force=False)
+                entry = _install._INSTALL_POLICY_MANIFEST["scripts/omc.py"]
+            finally:
+                _install._reset_install_policy_context()
+
+            self.assertEqual(entry["policy"], "preserve")
+            self.assertEqual(entry["source_sha256"], "")
 
     def test_direct_generated_writer_registers_output(self):
         with tempfile.TemporaryDirectory() as tmp:

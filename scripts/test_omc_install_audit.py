@@ -237,8 +237,36 @@ class TestInstallAudit(unittest.TestCase):
             self.assertEqual(result["verification_status"], "failed")
             self.assertEqual(
                 result["verification_errors"],
-                ["receipt:source-mismatch", "blocked:scripts/omc.py"],
+                ["receipt:source-mismatch", "manifest-policy-error:scripts/omc.py"],
             )
+            self.assertEqual(
+                result["verification_issue_counts"],
+                {"manifest_policy_error": 1, "receipt_error": 1},
+            )
+
+    def test_verify_target_reports_preserved_local_as_notice_not_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            _write_verified_install(target)
+            receipt_path = target / ".omc" / "install-receipt.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["entries"]["scripts/project_task.py"] = {
+                "policy": "preserve",
+                "status": "preserved",
+                "verification_mode": "preserved_existing",
+                "source_sha256": "",
+                "target_sha256": "local",
+            }
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+            result = _audit.audit_target(target)
+
+            self.assertEqual(result["verification_status"], "ok")
+            self.assertEqual(
+                result["verification_notices"],
+                ["preserved-local:scripts/project_task.py"],
+            )
+            self.assertEqual(result["verification_issue_counts"], {})
 
     def test_omc_verify_install_command_returns_nonzero_for_missing_install(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -281,6 +309,30 @@ class TestInstallAudit(unittest.TestCase):
 
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertIn("verification_status: ok", proc.stdout)
+
+    def test_omc_setup_runs_strict_post_install_verification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            target.mkdir()
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).parent / "omc.py"),
+                    "setup",
+                    "--target",
+                    str(target),
+                    "--force",
+                    "--skip-session-start",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("verification_status: ok", proc.stdout)
+            self.assertIn('"scan_strategy": "bounded_manifest"', proc.stdout)
 
 
 if __name__ == "__main__":
