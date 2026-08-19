@@ -164,6 +164,10 @@ UNIVERSE_FIELDS = {
     "signoff",
     "universe_sha256",
 }
+UNIVERSE_V3_FIELDS = UNIVERSE_FIELDS | {
+    "coverage_contract",
+    "preregistration_sha256",
+}
 UNIVERSE_PROVENANCE_FIELDS = {
     "private_inventory_sha256",
     "source_snapshot_sha256",
@@ -208,6 +212,16 @@ SIGSTORE_COLLECTION_PREREGISTRATION_FIELDS = (
     - {"registration_authority_public_key"}
     | {"registration_authority"}
 )
+MULTIREPOSITORY_COLLECTION_PREREGISTRATION_FIELDS = (
+    SIGSTORE_COLLECTION_PREREGISTRATION_FIELDS | {"coverage_contract"}
+)
+COVERAGE_CONTRACT_FIELDS = {
+    "claim_scope",
+    "minimum_repository_count",
+    "required_surface_counts",
+    "required_ambiguity_counts",
+    "maximum_receipts_per_repository",
+}
 COLLECTION_SAMPLING_POLICY = {
     "mode": "prospective_chronological_first_n",
     "maximum_accepted_receipts": 15,
@@ -570,6 +584,8 @@ def _validate_collection_preregistration_envelope(
         if schema_version == 1
         else SIGSTORE_COLLECTION_PREREGISTRATION_FIELDS
         if schema_version == 2
+        else MULTIREPOSITORY_COLLECTION_PREREGISTRATION_FIELDS
+        if schema_version == 3
         else None
     )
     if expected_fields is None or set(preregistration) != expected_fields:
@@ -594,6 +610,10 @@ def _validate_collection_preregistration_envelope(
         or not _is_lower_hex(preregistration.get("preregistration_sha256"), 64)
     ):
         raise ValueError("collection preregistration provenance is invalid")
+    if schema_version == 3:
+        _validate_preregistered_coverage_contract(
+            preregistration.get("coverage_contract")
+        )
     if schema_version == 1:
         if not _valid_public_key_text(
             preregistration.get("registration_authority_public_key")
@@ -775,6 +795,77 @@ def prepare_sigstore_collection_preregistration(
     return document
 
 
+def _validate_preregistered_coverage_contract(contract: Any) -> None:
+    if (
+        not isinstance(contract, dict)
+        or set(contract) != COVERAGE_CONTRACT_FIELDS
+        or contract.get("claim_scope") != "multi_repository"
+        or isinstance(contract.get("minimum_repository_count"), bool)
+        or not isinstance(contract.get("minimum_repository_count"), int)
+        or contract["minimum_repository_count"] < 2
+        or isinstance(contract.get("maximum_receipts_per_repository"), bool)
+        or not isinstance(contract.get("maximum_receipts_per_repository"), int)
+        or contract["maximum_receipts_per_repository"] < 1
+        or contract["maximum_receipts_per_repository"]
+        >= COLLECTION_SAMPLING_POLICY["maximum_accepted_receipts"]
+        or contract.get("required_surface_counts")
+        != runtime.FROZEN_CONFIRMATORY_SURFACE_COUNTS
+        or contract.get("required_ambiguity_counts")
+        != runtime.FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS
+    ):
+        raise ValueError("collection preregistration coverage contract is invalid")
+
+
+def prepare_multirepository_collection_preregistration(
+    *,
+    batch_id: str,
+    collection_anchor_commit: str,
+    collection_anchor_repository_root: str,
+    observed_from: str,
+    observed_through: str,
+    provider_ledger_cutoff: str,
+    pilot_session_ids: list[str],
+    trusted_root: dict[str, Any],
+    approved_trusted_root_sha256: str,
+    minimum_repository_count: int,
+    maximum_receipts_per_repository: int,
+) -> dict[str, Any]:
+    """Prepare a prospective multi-repository contract before observation."""
+    document = prepare_sigstore_collection_preregistration(
+        batch_id=batch_id,
+        collection_anchor_commit=collection_anchor_commit,
+        collection_anchor_repository_root=collection_anchor_repository_root,
+        observed_from=observed_from,
+        observed_through=observed_through,
+        provider_ledger_cutoff=provider_ledger_cutoff,
+        pilot_session_ids=pilot_session_ids,
+        trusted_root=trusted_root,
+        approved_trusted_root_sha256=approved_trusted_root_sha256,
+    )
+    document["schema_version"] = 3
+    document["coverage_contract"] = {
+        "claim_scope": "multi_repository",
+        "minimum_repository_count": minimum_repository_count,
+        "required_surface_counts": deepcopy(
+            runtime.FROZEN_CONFIRMATORY_SURFACE_COUNTS
+        ),
+        "required_ambiguity_counts": deepcopy(
+            runtime.FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS
+        ),
+        "maximum_receipts_per_repository": maximum_receipts_per_repository,
+    }
+    document["signoff"]["signer"] = (
+        "prospective-collection-preregistration-v3"
+    )
+    document["preregistration_sha256"] = _signed_digest(
+        document, "preregistration_sha256"
+    )
+    _validate_collection_preregistration_envelope(
+        document, expected_status="draft"
+    )
+    return document
+
+
 def seal_collection_preregistration(
     preregistration: dict[str, Any],
     signer_private_key: Ed25519PrivateKey,
@@ -835,10 +926,12 @@ def validate_collection_preregistration(
             "prospective-collection-preregistration-v1"
             if preregistration["schema_version"] == 1
             else "prospective-collection-preregistration-v2"
+            if preregistration["schema_version"] == 2
+            else "prospective-collection-preregistration-v3"
         ),
         label="collection preregistration",
     )
-    if preregistration["schema_version"] == 2 and (
+    if preregistration["schema_version"] in {2, 3} and (
         not _is_lower_hex(approved_trusted_root_sha256, 64)
         or preregistration["registration_authority"]["trusted_root_sha256"]
         != approved_trusted_root_sha256
@@ -955,8 +1048,8 @@ def prepare_sigstore_registration_receipt(
     _validate_collection_preregistration_envelope(
         preregistration, expected_status="frozen"
     )
-    if preregistration["schema_version"] != 2:
-        raise ValueError("Sigstore registration requires preregistration v2")
+    if preregistration["schema_version"] not in {2, 3}:
+        raise ValueError("Sigstore registration requires preregistration v2 or v3")
     if preregistration["registration_authority"]["trusted_root_sha256"] != (
         approved_trusted_root_sha256
     ):
@@ -1011,7 +1104,10 @@ def validate_preregistration_registration_receipt(
     _reject_revoked_collection_preregistration(preregistration)
     _validate_preregistration_registration_receipt_envelope(receipt)
     if receipt["schema_version"] == 2:
-        if preregistration.get("schema_version") != 2 or trusted_root is None:
+        if (
+            preregistration.get("schema_version") not in {2, 3}
+            or trusted_root is None
+        ):
             raise ValueError("Sigstore registration trust is required")
         if receipt["receipt_sha256"] != expected_receipt_sha256 or receipt[
             "receipt_sha256"
@@ -1788,6 +1884,161 @@ def classify_preregistered_sessions(
     return classifications
 
 
+def audit_prospective_candidates(
+    preregistration: dict[str, Any],
+    *,
+    sessions: list[dict[str, Any]],
+    trusted_preregistration_public_keys: set[str],
+    expected_preregistration_sha256: str,
+    approved_trusted_root_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Report pre-snapshot candidates without promoting eligibility."""
+    classifications = classify_preregistered_sessions(
+        preregistration,
+        sessions=sessions,
+        trusted_preregistration_public_keys=(
+            trusted_preregistration_public_keys
+        ),
+        expected_preregistration_sha256=expected_preregistration_sha256,
+        approved_trusted_root_sha256=approved_trusted_root_sha256,
+    )
+    provisional = [
+        item["session_id"]
+        for item in classifications
+        if item["disposition"] == "confirmatory_candidate"
+    ]
+    rejected = [
+        item for item in classifications
+        if item["disposition"] != "confirmatory_candidate"
+    ]
+    return {
+        "schema_version": 1,
+        "status": "pre_snapshot_audit",
+        "batch_id": preregistration["batch_id"],
+        "claim_scope": (
+            preregistration.get("coverage_contract", {}).get(
+                "claim_scope", "repository_scoped_pilot"
+            )
+        ),
+        "counts": {
+            "discovered": len(classifications),
+            "provisional": len(provisional),
+            "rejected": len(rejected),
+            "validated_eligible": 0,
+        },
+        "provisional_candidates": provisional,
+        "rejected_candidates": rejected,
+        "rejected_reason_counts": dict(sorted(Counter(
+            item["disposition"] for item in rejected
+        ).items())),
+        "eligibility_gate": "source_snapshot_required",
+    }
+
+
+def _validate_count_contract(value: Any, *, label: str) -> dict[str, int]:
+    if (
+        not isinstance(value, dict)
+        or not value
+        or any(
+            not isinstance(name, str)
+            or not name
+            or isinstance(count, bool)
+            or not isinstance(count, int)
+            or count < 1
+            for name, count in value.items()
+        )
+    ):
+        raise ValueError(f"{label} coverage counts are invalid")
+    return value
+
+
+def validate_multirepository_coverage(
+    records: list[dict[str, Any]],
+    *,
+    coverage_contract: dict[str, Any],
+    repository_identity_field: str = "repository_root",
+) -> None:
+    """Fail closed when observed records cannot support the frozen claim."""
+    if (
+        not isinstance(coverage_contract, dict)
+        or set(coverage_contract) != COVERAGE_CONTRACT_FIELDS
+        or coverage_contract.get("claim_scope") != "multi_repository"
+    ):
+        raise ValueError("coverage contract is invalid")
+    minimum_repositories = coverage_contract.get("minimum_repository_count")
+    maximum_per_repository = coverage_contract.get(
+        "maximum_receipts_per_repository"
+    )
+    if (
+        isinstance(minimum_repositories, bool)
+        or not isinstance(minimum_repositories, int)
+        or minimum_repositories < 2
+        or isinstance(maximum_per_repository, bool)
+        or not isinstance(maximum_per_repository, int)
+        or maximum_per_repository < 1
+    ):
+        raise ValueError("coverage contract is invalid")
+    surface_contract = _validate_count_contract(
+        coverage_contract.get("required_surface_counts"), label="surface"
+    )
+    ambiguity_contract = _validate_count_contract(
+        coverage_contract.get("required_ambiguity_counts"), label="ambiguity"
+    )
+    if not isinstance(records, list) or any(
+        not isinstance(record, dict)
+        or not isinstance(record.get("repo_alias"), str)
+        or not record["repo_alias"].strip()
+        or not isinstance(record.get(repository_identity_field), str)
+        or not record[repository_identity_field].strip()
+        or not isinstance(record.get("surface"), str)
+        or not isinstance(record.get("ambiguity"), str)
+        for record in records
+    ):
+        raise ValueError("coverage records are invalid")
+    alias_to_identity: dict[str, str] = {}
+    identity_to_alias: dict[str, str] = {}
+    repository_identities = []
+    for record in records:
+        alias = record["repo_alias"].strip()
+        raw_identity = record[repository_identity_field].strip()
+        identity = (
+            str(Path(raw_identity).resolve())
+            if repository_identity_field == "repository_root"
+            else raw_identity
+        )
+        if (
+            alias in alias_to_identity
+            and alias_to_identity[alias] != identity
+        ) or (
+            identity in identity_to_alias
+            and identity_to_alias[identity] != alias
+        ):
+            raise ValueError("repository alias binding is invalid")
+        alias_to_identity[alias] = identity
+        identity_to_alias[identity] = alias
+        repository_identities.append(identity)
+    repository_counts = Counter(repository_identities)
+    if len(repository_counts) < minimum_repositories:
+        raise ValueError("minimum repository coverage is not satisfied")
+    if any(
+        count > maximum_per_repository
+        for count in repository_counts.values()
+    ):
+        raise ValueError("per-repository limit is exceeded")
+    surface_counts = Counter(record["surface"] for record in records)
+    ambiguity_counts = Counter(record["ambiguity"] for record in records)
+    if any(
+        surface_counts[name] < count
+        for name, count in surface_contract.items()
+    ):
+        raise ValueError("required surface coverage is not satisfied")
+    if any(
+        ambiguity_counts[name] < count
+        for name, count in ambiguity_contract.items()
+    ):
+        raise ValueError("required ambiguity coverage is not satisfied")
+
+
 def _validate_inventory_envelope(
     inventory: dict[str, Any],
     *,
@@ -2314,7 +2565,17 @@ def _validate_universe_envelope(
     *,
     expected_status: str,
 ) -> None:
-    if not isinstance(universe, dict) or set(universe) != UNIVERSE_FIELDS:
+    schema_version = universe.get("schema_version") if isinstance(
+        universe, dict
+    ) else None
+    expected_fields = (
+        UNIVERSE_FIELDS
+        if schema_version == 2
+        else UNIVERSE_V3_FIELDS
+        if schema_version == 3
+        else None
+    )
+    if expected_fields is None or set(universe) != expected_fields:
         raise ValueError("candidate universe fields are invalid")
     provenance = universe.get("provenance")
     audit = universe.get("audit")
@@ -2322,8 +2583,7 @@ def _validate_universe_envelope(
     candidates = universe.get("candidates")
     signoff = universe.get("signoff")
     if (
-        universe.get("schema_version") != 2
-        or universe.get("status") != expected_status
+        universe.get("status") != expected_status
         or not isinstance(universe.get("batch_id"), str)
         or not universe["batch_id"].strip()
         or not isinstance(provenance, dict)
@@ -2349,6 +2609,17 @@ def _validate_universe_envelope(
         or signoff["signer"] != "candidate-universe-signer-v1"
     ):
         raise ValueError("candidate universe provenance is invalid")
+    if schema_version == 3:
+        if not _is_lower_hex(universe.get("preregistration_sha256"), 64):
+            raise ValueError("candidate universe preregistration is invalid")
+        try:
+            _validate_preregistered_coverage_contract(
+                universe.get("coverage_contract")
+            )
+        except ValueError as error:
+            raise ValueError(
+                "candidate universe coverage contract is invalid"
+            ) from error
     try:
         _parse_timestamp(provenance["provider_ledger_cutoff"])
     except ValueError as error:
@@ -2511,8 +2782,35 @@ def prepare_frozen_universe(
             "exclusion_reason": reason,
         })
 
+    coverage_contract = (
+        preregistration.get("coverage_contract")
+        if isinstance(preregistration, dict)
+        and preregistration.get("schema_version") == 3
+        else None
+    )
+    if coverage_contract is not None:
+        validate_multirepository_coverage(
+            [
+                record
+                for record, candidate in zip(records, candidates, strict=True)
+                if candidate["eligible"]
+            ],
+            coverage_contract=coverage_contract,
+        )
+
+    required_surface_counts = (
+        deepcopy(coverage_contract["required_surface_counts"])
+        if coverage_contract is not None
+        else deepcopy(runtime.FROZEN_CONFIRMATORY_SURFACE_COUNTS)
+    )
+    required_ambiguity_counts = (
+        deepcopy(coverage_contract["required_ambiguity_counts"])
+        if coverage_contract is not None
+        else deepcopy(runtime.FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS)
+    )
+
     document = {
-        "schema_version": 2,
+        "schema_version": 3 if coverage_contract is not None else 2,
         "status": "draft",
         "batch_id": batch_id,
         "eligibility_policy": {
@@ -2533,12 +2831,8 @@ def prepare_frozen_universe(
             "provider_outputs_available_during_selection": False,
             "prior_registry_sha256": canonical_digest(prior_commits),
             "prior_anchor_registry_sha256": expected_anchor_registry_sha256,
-            "required_surface_counts": deepcopy(
-                runtime.FROZEN_CONFIRMATORY_SURFACE_COUNTS
-            ),
-            "required_ambiguity_counts": deepcopy(
-                runtime.FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS
-            ),
+            "required_surface_counts": required_surface_counts,
+            "required_ambiguity_counts": required_ambiguity_counts,
             "maximum_selected_object_cases": (
                 runtime.FROZEN_CONFIRMATORY_MAX_SELECTED_OBJECT_CASES
             ),
@@ -2560,6 +2854,11 @@ def prepare_frozen_universe(
         },
         "universe_sha256": "",
     }
+    if coverage_contract is not None:
+        document["coverage_contract"] = deepcopy(coverage_contract)
+        document["preregistration_sha256"] = preregistration[
+            "preregistration_sha256"
+        ]
     document["universe_sha256"] = _signed_digest(
         document, "universe_sha256"
     )
@@ -2574,6 +2873,11 @@ def seal_frozen_universe(
     prior_snapshot: dict[str, Any],
     trusted_prior_snapshot_public_keys: set[str],
     expected_prior_snapshot_sha256: str,
+    inventory: dict[str, Any] | None = None,
+    trusted_collector_public_keys: set[str] | None = None,
+    preregistration: dict[str, Any] | None = None,
+    trusted_preregistration_public_keys: set[str] | None = None,
+    approved_trusted_root_sha256: str | None = None,
 ) -> dict[str, Any]:
     _validate_universe_envelope(draft, expected_status="draft")
     if (
@@ -2594,6 +2898,17 @@ def seal_frozen_universe(
             "prior_anchor_registry_sha256"
         ],
     )
+    if draft["schema_version"] == 3:
+        _validate_v3_universe_coverage_evidence(
+            draft,
+            inventory=inventory,
+            trusted_collector_public_keys=trusted_collector_public_keys,
+            preregistration=preregistration,
+            trusted_preregistration_public_keys=(
+                trusted_preregistration_public_keys
+            ),
+            approved_trusted_root_sha256=approved_trusted_root_sha256,
+        )
     runtime.validate_confirmatory_candidate_universe(
         _materialize_runtime_universe(draft, seed="validation-only-seed"),
         trusted_prior_commits=prior_commits,
@@ -2604,6 +2919,84 @@ def seal_frozen_universe(
         frozen,
         private_key=signer_private_key,
         digest_field="universe_sha256",
+    )
+
+
+def _validate_v3_universe_coverage_evidence(
+    draft: dict[str, Any],
+    *,
+    inventory: dict[str, Any] | None,
+    trusted_collector_public_keys: set[str] | None,
+    preregistration: dict[str, Any] | None,
+    trusted_preregistration_public_keys: set[str] | None,
+    approved_trusted_root_sha256: str | None,
+) -> None:
+    if (
+        inventory is None
+        or not trusted_collector_public_keys
+        or preregistration is None
+        or not trusted_preregistration_public_keys
+        or not _is_lower_hex(approved_trusted_root_sha256, 64)
+    ):
+        raise ValueError("candidate universe coverage evidence is required")
+    validate_collection_preregistration(
+        preregistration,
+        trusted_preregistration_public_keys=(
+            trusted_preregistration_public_keys
+        ),
+        expected_preregistration_sha256=draft["preregistration_sha256"],
+        approved_trusted_root_sha256=approved_trusted_root_sha256,
+    )
+    try:
+        _validate_inventory_envelope(inventory, expected_status="approved")
+        _verify_document(
+            inventory,
+            digest_field="inventory_sha256",
+            trusted_public_keys=trusted_collector_public_keys,
+            expected_digest=draft["provenance"]["private_inventory_sha256"],
+            expected_signer="observed-inventory-collector-v1",
+            label="collector inventory",
+        )
+    except ValueError as error:
+        raise ValueError("candidate universe inventory evidence is invalid") from error
+    if (
+        inventory["schema_version"] != 2
+        or inventory.get("preregistration_sha256")
+        != draft["preregistration_sha256"]
+        or inventory.get("collector_public_key")
+        != inventory["signoff"]["signer_public_key"]
+        or inventory["signoff"]["signer_public_key"]
+        in _preregistration_actor_public_keys(preregistration)
+        or draft["coverage_contract"]
+        != preregistration.get("coverage_contract")
+        or draft["audit"] != inventory["audit"]
+    ):
+        raise ValueError("candidate universe coverage evidence mismatch")
+
+    records_by_id = {
+        record["source_record_id"]: record
+        for record in inventory["accepted_records"]
+    }
+    candidates_by_id = {
+        candidate["case"]["case_id"]: candidate
+        for candidate in draft["candidates"]
+    }
+    if set(candidates_by_id) != set(records_by_id):
+        raise ValueError("candidate universe coverage evidence mismatch")
+    eligible_records = []
+    for source_record_id, candidate in candidates_by_id.items():
+        record = records_by_id[source_record_id]
+        if (
+            candidate["case"] != _case_from_record(record)
+            or candidate["observed_at"]
+            != _parse_timestamp(record["completed_at"]).date().isoformat()
+        ):
+            raise ValueError("candidate universe coverage evidence mismatch")
+        if candidate["eligible"]:
+            eligible_records.append(record)
+    validate_multirepository_coverage(
+        eligible_records,
+        coverage_contract=draft["coverage_contract"],
     )
 
 
@@ -2694,6 +3087,17 @@ def validate_frozen_universe(
         raise ValueError("candidate universe seed mode is invalid")
     if "seed" in universe["selection_policy"]:
         raise ValueError("candidate universe must be seedless")
+    if universe["schema_version"] == 3:
+        eligible_cases = [
+            candidate["case"]
+            for candidate in universe["candidates"]
+            if candidate["eligible"]
+        ]
+        validate_multirepository_coverage(
+            eligible_cases,
+            coverage_contract=universe["coverage_contract"],
+            repository_identity_field="repo_alias",
+        )
     runtime.validate_confirmatory_candidate_universe(
         _materialize_runtime_universe(universe, seed="validation-only-seed"),
         trusted_prior_commits=prior_commits,
@@ -3128,6 +3532,54 @@ def _parser() -> argparse.ArgumentParser:
     )
     sigstore_preregister.add_argument("--output", required=True)
 
+    multirepo_preregister = subparsers.add_parser(
+        "prepare-multirepository-preregistration"
+    )
+    multirepo_preregister.add_argument("--batch-id", required=True)
+    multirepo_preregister.add_argument(
+        "--collection-anchor-commit", required=True
+    )
+    multirepo_preregister.add_argument(
+        "--collection-anchor-repository-root", required=True
+    )
+    multirepo_preregister.add_argument("--observed-from", required=True)
+    multirepo_preregister.add_argument("--observed-through", required=True)
+    multirepo_preregister.add_argument(
+        "--provider-ledger-cutoff", required=True
+    )
+    multirepo_preregister.add_argument(
+        "--pilot-session-id", action="append", required=True
+    )
+    multirepo_preregister.add_argument(
+        "--trusted-registration-root", required=True
+    )
+    multirepo_preregister.add_argument(
+        "--approved-trusted-root-sha256", required=True
+    )
+    multirepo_preregister.add_argument(
+        "--minimum-repository-count", type=int, required=True
+    )
+    multirepo_preregister.add_argument(
+        "--maximum-receipts-per-repository", type=int, required=True
+    )
+    multirepo_preregister.add_argument("--output", required=True)
+
+    audit_candidates = subparsers.add_parser(
+        "audit-prospective-candidates"
+    )
+    audit_candidates.add_argument("sessions")
+    audit_candidates.add_argument("preregistration")
+    audit_candidates.add_argument(
+        "--trusted-preregistration-public-key",
+        action="append",
+        required=True,
+    )
+    audit_candidates.add_argument(
+        "--expected-preregistration-sha256", required=True
+    )
+    audit_candidates.add_argument("--approved-trusted-root-sha256")
+    audit_candidates.add_argument("--output", required=True)
+
     seal_preregistration = subparsers.add_parser("seal-preregistration")
     seal_preregistration.add_argument("preregistration")
     seal_preregistration.add_argument("--private-key", required=True)
@@ -3332,6 +3784,13 @@ def _parser() -> argparse.ArgumentParser:
     seal.add_argument("--approved-draft-sha256", required=True)
     seal.add_argument("--trusted-prior-snapshot-public-key", action="append", required=True)
     seal.add_argument("--expected-prior-snapshot-sha256", required=True)
+    seal.add_argument("--inventory")
+    seal.add_argument("--trusted-collector-public-key", action="append")
+    seal.add_argument("--preregistration")
+    seal.add_argument(
+        "--trusted-preregistration-public-key", action="append"
+    )
+    seal.add_argument("--approved-trusted-root-sha256")
     seal.add_argument("--output", required=True)
 
     seed = subparsers.add_parser("issue-seed")
@@ -3389,6 +3848,45 @@ def main(argv: list[str] | None = None) -> int:
             pilot_session_ids=args.pilot_session_id,
             trusted_root=_read_json(args.trusted_registration_root),
             approved_trusted_root_sha256=args.approved_trusted_root_sha256,
+        )
+    elif args.command == "prepare-multirepository-preregistration":
+        result = prepare_multirepository_collection_preregistration(
+            batch_id=args.batch_id,
+            collection_anchor_commit=args.collection_anchor_commit,
+            collection_anchor_repository_root=(
+                args.collection_anchor_repository_root
+            ),
+            observed_from=args.observed_from,
+            observed_through=args.observed_through,
+            provider_ledger_cutoff=args.provider_ledger_cutoff,
+            pilot_session_ids=args.pilot_session_id,
+            trusted_root=_read_json(args.trusted_registration_root),
+            approved_trusted_root_sha256=args.approved_trusted_root_sha256,
+            minimum_repository_count=args.minimum_repository_count,
+            maximum_receipts_per_repository=(
+                args.maximum_receipts_per_repository
+            ),
+        )
+    elif args.command == "audit-prospective-candidates":
+        session_document = _read_json(args.sessions)
+        if (
+            not isinstance(session_document, dict)
+            or set(session_document) != {"schema_version", "sessions"}
+            or session_document.get("schema_version") != 1
+        ):
+            raise ValueError("prospective session ledger is invalid")
+        result = audit_prospective_candidates(
+            _read_json(args.preregistration),
+            sessions=session_document["sessions"],
+            trusted_preregistration_public_keys=set(
+                args.trusted_preregistration_public_key
+            ),
+            expected_preregistration_sha256=(
+                args.expected_preregistration_sha256
+            ),
+            approved_trusted_root_sha256=(
+                args.approved_trusted_root_sha256
+            ),
         )
     elif args.command == "seal-preregistration":
         result = seal_collection_preregistration(
@@ -3646,6 +4144,17 @@ def main(argv: list[str] | None = None) -> int:
                 args.trusted_prior_snapshot_public_key
             ),
             expected_prior_snapshot_sha256=args.expected_prior_snapshot_sha256,
+            inventory=_read_optional_json(args.inventory),
+            trusted_collector_public_keys=set(
+                args.trusted_collector_public_key or []
+            ),
+            preregistration=_read_optional_json(args.preregistration),
+            trusted_preregistration_public_keys=set(
+                args.trusted_preregistration_public_key or []
+            ),
+            approved_trusted_root_sha256=(
+                args.approved_trusted_root_sha256
+            ),
         )
     elif args.command == "issue-seed":
         result = issue_seed_receipt(

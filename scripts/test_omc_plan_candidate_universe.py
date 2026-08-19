@@ -774,6 +774,424 @@ def test_sigstore_preregistration_v2_freezes_public_trust_identity(tmp_path: Pat
         )
 
 
+def test_multirepository_preregistration_v3_freezes_coverage_contract(
+    tmp_path: Path,
+    monkeypatch,
+):
+    signer_key = Ed25519PrivateKey.generate()
+    anchor_repo, anchor_commit, start, end, cutoff = _collection_anchor(tmp_path)
+    trusted_root = _sigstore_trusted_root()
+
+    draft = candidate_universe.prepare_multirepository_collection_preregistration(
+        batch_id="fresh-batch-b-multirepo",
+        collection_anchor_commit=anchor_commit,
+        collection_anchor_repository_root=str(anchor_repo),
+        observed_from=start.isoformat(),
+        observed_through=end.isoformat(),
+        provider_ledger_cutoff=cutoff.isoformat(),
+        pilot_session_ids=["pilot-01"],
+        trusted_root=trusted_root,
+        approved_trusted_root_sha256=timestamp.trusted_root_sha256(trusted_root),
+        minimum_repository_count=3,
+        maximum_receipts_per_repository=5,
+    )
+    frozen = candidate_universe.seal_collection_preregistration(
+        draft,
+        signer_key,
+        collection_anchor_repository_root=str(anchor_repo),
+        expected_preregistration_sha256=draft["preregistration_sha256"],
+    )
+
+    assert frozen["schema_version"] == 3
+    assert frozen["coverage_contract"] == {
+        "claim_scope": "multi_repository",
+        "minimum_repository_count": 3,
+        "required_surface_counts": (
+            candidate_universe.runtime.FROZEN_CONFIRMATORY_SURFACE_COUNTS
+        ),
+        "required_ambiguity_counts": (
+            candidate_universe.runtime.FROZEN_CONFIRMATORY_AMBIGUITY_COUNTS
+        ),
+        "maximum_receipts_per_repository": 5,
+    }
+    candidate_universe.validate_collection_preregistration(
+        frozen,
+        trusted_preregistration_public_keys={
+            candidate_universe.public_key_text(signer_key)
+        },
+        expected_preregistration_sha256=frozen["preregistration_sha256"],
+        approved_trusted_root_sha256=timestamp.trusted_root_sha256(trusted_root),
+    )
+
+    registry_commit, registry_path = _commit_preregistration_registry(
+        anchor_repo, frozen
+    )
+    evidence = {
+        "gen_time": (start - timedelta(seconds=1)).isoformat(),
+        "response_sha256": "2" * 64,
+    }
+    monkeypatch.setattr(
+        timestamp,
+        "verify_registration_evidence",
+        lambda candidate, **_: candidate,
+    )
+    receipt = candidate_universe.prepare_sigstore_registration_receipt(
+        frozen,
+        registry_commit=registry_commit,
+        registry_path=registry_path,
+        registration_evidence=evidence,
+        trusted_root=trusted_root,
+        approved_trusted_root_sha256=timestamp.trusted_root_sha256(trusted_root),
+    )
+    candidate_universe.validate_preregistration_registration_receipt(
+        receipt,
+        preregistration=frozen,
+        trusted_receipt_public_keys=set(),
+        expected_receipt_sha256=receipt["receipt_sha256"],
+        trusted_root=trusted_root,
+        approved_trusted_root_sha256=timestamp.trusted_root_sha256(trusted_root),
+    )
+
+    tampered = deepcopy(frozen)
+    tampered["coverage_contract"]["minimum_repository_count"] = 1
+    with pytest.raises(ValueError, match="coverage contract"):
+        candidate_universe.validate_collection_preregistration(
+            tampered,
+            trusted_preregistration_public_keys={
+                candidate_universe.public_key_text(signer_key)
+            },
+            expected_preregistration_sha256=frozen["preregistration_sha256"],
+            approved_trusted_root_sha256=timestamp.trusted_root_sha256(trusted_root),
+        )
+
+
+def test_prospective_candidate_audit_never_promotes_before_snapshot(
+    tmp_path: Path,
+):
+    signer_key = Ed25519PrivateKey.generate()
+    authority_key = Ed25519PrivateKey.generate()
+    anchor_repo, anchor_commit, start, end, cutoff = _collection_anchor(tmp_path)
+    draft = candidate_universe.prepare_collection_preregistration(
+        batch_id="repository-scoped-pilot",
+        collection_anchor_commit=anchor_commit,
+        collection_anchor_repository_root=str(anchor_repo),
+        observed_from=start.isoformat(),
+        observed_through=end.isoformat(),
+        provider_ledger_cutoff=cutoff.isoformat(),
+        pilot_session_ids=["pilot-01"],
+        registration_authority_public_key=(
+            candidate_universe.public_key_text(authority_key)
+        ),
+    )
+    frozen = candidate_universe.seal_collection_preregistration(
+        draft,
+        signer_key,
+        collection_anchor_repository_root=str(anchor_repo),
+        expected_preregistration_sha256=draft["preregistration_sha256"],
+    )
+    sessions = [{
+        "session_id": "candidate-01",
+        "completed_at": (start + timedelta(minutes=1)).isoformat(),
+        "work_class": "implementation",
+    }, {
+        "session_id": "docs-01",
+        "completed_at": (start + timedelta(minutes=2)).isoformat(),
+        "work_class": "document_only",
+    }]
+
+    audit = candidate_universe.audit_prospective_candidates(
+        frozen,
+        sessions=sessions,
+        trusted_preregistration_public_keys={
+            candidate_universe.public_key_text(signer_key)
+        },
+        expected_preregistration_sha256=frozen["preregistration_sha256"],
+    )
+
+    assert audit["counts"] == {
+        "discovered": 2,
+        "provisional": 1,
+        "rejected": 1,
+        "validated_eligible": 0,
+    }
+    assert audit["provisional_candidates"] == ["candidate-01"]
+    assert audit["rejected_reason_counts"] == {"document_only_task": 1}
+    assert "eligible_candidates" not in audit
+
+    sessions_path = tmp_path / "sessions.json"
+    preregistration_path = tmp_path / "preregistration.json"
+    output_path = tmp_path / "audit.json"
+    sessions_path.write_text(json.dumps({
+        "schema_version": 1,
+        "sessions": sessions,
+    }))
+    preregistration_path.write_text(json.dumps(frozen))
+    assert candidate_universe.main([
+        "audit-prospective-candidates",
+        str(sessions_path),
+        str(preregistration_path),
+        "--trusted-preregistration-public-key",
+        candidate_universe.public_key_text(signer_key),
+        "--expected-preregistration-sha256",
+        frozen["preregistration_sha256"],
+        "--output",
+        str(output_path),
+    ]) == 0
+    assert json.loads(output_path.read_text()) == audit
+
+
+def test_multirepository_coverage_rejects_insufficient_or_concentrated_records():
+    contract = {
+        "claim_scope": "multi_repository",
+        "minimum_repository_count": 3,
+        "required_surface_counts": {"ui_state": 2, "api_payload": 1},
+        "required_ambiguity_counts": {"low": 1, "medium": 1, "high": 1},
+        "maximum_receipts_per_repository": 2,
+    }
+    valid_records = [{
+        "repo_alias": "repo-a",
+        "repository_root": "/private/work/repo-a",
+        "surface": "ui_state",
+        "ambiguity": "low",
+    }, {
+        "repo_alias": "repo-b",
+        "repository_root": "/private/work/repo-b",
+        "surface": "ui_state",
+        "ambiguity": "medium",
+    }, {
+        "repo_alias": "repo-c",
+        "repository_root": "/private/work/repo-c",
+        "surface": "api_payload",
+        "ambiguity": "high",
+    }]
+    candidate_universe.validate_multirepository_coverage(
+        valid_records,
+        coverage_contract=contract,
+    )
+
+    with pytest.raises(ValueError, match="minimum repository coverage"):
+        candidate_universe.validate_multirepository_coverage(
+            [
+                record | {
+                    "repo_alias": "repo-a",
+                    "repository_root": "/private/work/repo-a",
+                }
+                for record in valid_records
+            ],
+            coverage_contract=contract,
+        )
+    with pytest.raises(ValueError, match="per-repository limit"):
+        candidate_universe.validate_multirepository_coverage(
+            valid_records + [valid_records[0], valid_records[0]],
+            coverage_contract=contract,
+        )
+    with pytest.raises(ValueError, match="repository alias binding"):
+        candidate_universe.validate_multirepository_coverage(
+            [
+                record | {"repository_root": "/private/work/shared"}
+                for record in valid_records
+            ],
+            coverage_contract=contract,
+        )
+
+
+def test_selection_revalidates_signed_multirepository_coverage_contract(
+    tmp_path: Path,
+):
+    _, legacy_universe, prior_trust, universe_key, seed_key = _frozen_inputs()
+    anchor_repo, anchor_commit, _, _, _ = _collection_anchor(
+        tmp_path,
+        committed_at=datetime.fromisoformat("2026-07-31T00:00:00+00:00"),
+    )
+    trusted_root = _sigstore_trusted_root()
+    trusted_root_sha256 = timestamp.trusted_root_sha256(trusted_root)
+    preregistration_key = Ed25519PrivateKey.generate()
+    preregistration_draft = (
+        candidate_universe.prepare_multirepository_collection_preregistration(
+            batch_id="fresh-batch-b-multirepository-universe",
+            collection_anchor_commit=anchor_commit,
+            collection_anchor_repository_root=str(anchor_repo),
+            observed_from="2026-08-01T00:00:00+00:00",
+            observed_through="2026-08-31T00:00:00+00:00",
+            provider_ledger_cutoff="2026-09-01T00:00:00+09:00",
+            pilot_session_ids=["pilot-01"],
+            trusted_root=trusted_root,
+            approved_trusted_root_sha256=trusted_root_sha256,
+            minimum_repository_count=3,
+            maximum_receipts_per_repository=10,
+        )
+    )
+    preregistration = candidate_universe.seal_collection_preregistration(
+        preregistration_draft,
+        preregistration_key,
+        collection_anchor_repository_root=str(anchor_repo),
+        expected_preregistration_sha256=preregistration_draft[
+            "preregistration_sha256"
+        ],
+    )
+    collector_key = Ed25519PrivateKey.generate()
+    inventory_draft = _inventory()
+    inventory_draft["schema_version"] = 2
+    inventory_draft["preregistration_sha256"] = preregistration[
+        "preregistration_sha256"
+    ]
+    inventory_draft["source_snapshot_sha256"] = "b" * 64
+    inventory_draft["collector_public_key"] = (
+        candidate_universe.public_key_text(collector_key)
+    )
+    inventory_draft["inventory_sha256"] = candidate_universe._inventory_digest(
+        inventory_draft
+    )
+    inventory = candidate_universe._seal_document(
+        inventory_draft | {"status": "approved"},
+        private_key=collector_key,
+        digest_field="inventory_sha256",
+    )
+
+    draft = candidate_universe.unseal_frozen_universe(legacy_universe)
+    draft["schema_version"] = 3
+    draft["preregistration_sha256"] = preregistration[
+        "preregistration_sha256"
+    ]
+    draft["coverage_contract"] = preregistration["coverage_contract"]
+    draft["provenance"]["private_inventory_sha256"] = inventory[
+        "inventory_sha256"
+    ]
+    draft["universe_sha256"] = candidate_universe._signed_digest(
+        draft, "universe_sha256"
+    )
+    with pytest.raises(ValueError, match="coverage evidence is required"):
+        candidate_universe.seal_frozen_universe(
+            draft,
+            universe_key,
+            expected_draft_sha256=draft["universe_sha256"],
+            prior_snapshot=prior_trust["prior_snapshot"],
+            trusted_prior_snapshot_public_keys=prior_trust[
+                "trusted_prior_snapshot_public_keys"
+            ],
+            expected_prior_snapshot_sha256=prior_trust[
+                "expected_prior_snapshot_sha256"
+            ],
+        )
+    valid_frozen = candidate_universe.seal_frozen_universe(
+        draft,
+        universe_key,
+        expected_draft_sha256=draft["universe_sha256"],
+        prior_snapshot=prior_trust["prior_snapshot"],
+        trusted_prior_snapshot_public_keys=prior_trust[
+            "trusted_prior_snapshot_public_keys"
+        ],
+        expected_prior_snapshot_sha256=prior_trust[
+            "expected_prior_snapshot_sha256"
+        ],
+        inventory=inventory,
+        trusted_collector_public_keys={
+            candidate_universe.public_key_text(collector_key)
+        },
+        preregistration=preregistration,
+        trusted_preregistration_public_keys={
+            candidate_universe.public_key_text(preregistration_key)
+        },
+        approved_trusted_root_sha256=trusted_root_sha256,
+    )
+
+    concentrated_inventory = deepcopy(inventory)
+    for record in concentrated_inventory["accepted_records"]:
+        record["repository_root"] = "/private/work/shared"
+    concentrated_inventory["inventory_sha256"] = (
+        candidate_universe._inventory_digest(concentrated_inventory)
+    )
+    concentrated_inventory = candidate_universe._seal_document(
+        concentrated_inventory,
+        private_key=collector_key,
+        digest_field="inventory_sha256",
+    )
+    concentrated_draft = deepcopy(draft)
+    concentrated_draft["provenance"]["private_inventory_sha256"] = (
+        concentrated_inventory["inventory_sha256"]
+    )
+    concentrated_draft["universe_sha256"] = (
+        candidate_universe._signed_digest(
+            concentrated_draft, "universe_sha256"
+        )
+    )
+    with pytest.raises(ValueError, match="repository alias binding"):
+        candidate_universe.seal_frozen_universe(
+            concentrated_draft,
+            universe_key,
+            expected_draft_sha256=concentrated_draft["universe_sha256"],
+            prior_snapshot=prior_trust["prior_snapshot"],
+            trusted_prior_snapshot_public_keys=prior_trust[
+                "trusted_prior_snapshot_public_keys"
+            ],
+            expected_prior_snapshot_sha256=prior_trust[
+                "expected_prior_snapshot_sha256"
+            ],
+            inventory=concentrated_inventory,
+            trusted_collector_public_keys={
+                candidate_universe.public_key_text(collector_key)
+            },
+            preregistration=preregistration,
+            trusted_preregistration_public_keys={
+                candidate_universe.public_key_text(preregistration_key)
+            },
+            approved_trusted_root_sha256=trusted_root_sha256,
+        )
+
+    valid_seed_receipt = candidate_universe.issue_seed_receipt(
+        valid_frozen,
+        approved_universe_sha256=valid_frozen["universe_sha256"],
+        seed="valid-multirepository-selection",
+        signer_private_key=seed_key,
+    )
+    candidate_universe.build_selection_bundle(
+        valid_frozen,
+        seed_receipt=valid_seed_receipt,
+        **prior_trust,
+        trusted_universe_public_keys={
+            candidate_universe.public_key_text(universe_key)
+        },
+        trusted_seed_public_keys={
+            candidate_universe.public_key_text(seed_key)
+        },
+        expected_universe_sha256=valid_frozen["universe_sha256"],
+        expected_seed_receipt_sha256=valid_seed_receipt["receipt_sha256"],
+    )
+
+    draft["eligibility_policy"]["repository_aliases"] = ["same-repository"]
+    for candidate in draft["candidates"]:
+        candidate["case"]["repo_alias"] = "same-repository"
+    draft["universe_sha256"] = candidate_universe._signed_digest(
+        draft, "universe_sha256"
+    )
+    frozen = candidate_universe._seal_document(
+        draft | {"status": "frozen"},
+        private_key=universe_key,
+        digest_field="universe_sha256",
+    )
+    seed_receipt = candidate_universe.issue_seed_receipt(
+        frozen,
+        approved_universe_sha256=frozen["universe_sha256"],
+        seed="multirepository-selection-recheck",
+        signer_private_key=seed_key,
+    )
+
+    with pytest.raises(ValueError, match="minimum repository coverage"):
+        candidate_universe.build_selection_bundle(
+            frozen,
+            seed_receipt=seed_receipt,
+            **prior_trust,
+            trusted_universe_public_keys={
+                candidate_universe.public_key_text(universe_key)
+            },
+            trusted_seed_public_keys={
+                candidate_universe.public_key_text(seed_key)
+            },
+            expected_universe_sha256=frozen["universe_sha256"],
+            expected_seed_receipt_sha256=seed_receipt["receipt_sha256"],
+        )
+
+
 def test_sigstore_receipt_v2_requires_verified_claim_and_pre_window_time(
     tmp_path: Path,
     monkeypatch,
