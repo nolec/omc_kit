@@ -15,7 +15,14 @@ SCRIPT = str(ROOT / "templates" / ".agent-hooks" / "omc-prompt-inject.sh")
 OMC = str(ROOT / "scripts" / "omc.py")
 
 
-def _run(prompt: str, latest: dict, pipeline: dict | None = None, cwd: str | None = None) -> subprocess.CompletedProcess:
+def _run(
+    prompt: str,
+    latest: dict,
+    pipeline: dict | None = None,
+    cwd: str | None = None,
+    *,
+    lesson_probe: bool = False,
+) -> subprocess.CompletedProcess:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(cwd) if cwd else Path(tmp)
         (root / ".omc" / "state").mkdir(parents=True, exist_ok=True)
@@ -29,6 +36,13 @@ def _run(prompt: str, latest: dict, pipeline: dict | None = None, cwd: str | Non
             (root / ".omc" / "pipeline_session.json").write_text(
                 json.dumps(pipeline), encoding="utf-8"
             )
+        if lesson_probe:
+            scripts = root / "scripts"
+            scripts.mkdir(exist_ok=True)
+            (scripts / "omc_lesson.py").write_text(
+                "import sys\nprint('LESSON_QUERY=' + sys.argv[2])\n",
+                encoding="utf-8",
+            )
         env = {**os.environ, "PROMPT": prompt, "OMC_CLI_SCRIPT": OMC}
         result = subprocess.run(
             ["sh", SCRIPT],
@@ -39,6 +53,32 @@ def _run(prompt: str, latest: dict, pipeline: dict | None = None, cwd: str | Non
 
 
 class TestPromptInjectThreeState(unittest.TestCase):
+
+    def test_pure_explicit_skill_link_has_zero_output(self):
+        result = _run(
+            prompt="[$omc-task](/tmp/.agents/skills/omc-task/SKILL.md)",
+            latest={
+                "latest_confirmation": {"status": "confirmed"},
+                "latest_confirmed_session_id": "sess-explicit",
+            },
+            lesson_probe=True,
+        )
+        self.assertEqual("", result.stdout)
+
+    def test_explicit_skill_link_is_removed_from_lesson_query(self):
+        result = _run(
+            prompt=(
+                "[$omc-task](/tmp/.agents/skills/omc-task/SKILL.md) "
+                "confirmed session false block regression test implementation"
+            ),
+            latest={
+                "latest_confirmation": {"status": "confirmed"},
+                "latest_confirmed_session_id": "sess-described",
+            },
+            lesson_probe=True,
+        )
+        self.assertIn("LESSON_QUERY=confirmed session false block regression test implementation", result.stdout)
+        self.assertNotIn("SKILL.md", result.stdout)
 
     def test_active_pipeline_no_ambiguous_inject(self):
         """파이프라인 진행 중(active)이면 '모호 메시지'여도 확인 질문 주입 안 함."""

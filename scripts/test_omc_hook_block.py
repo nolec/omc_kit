@@ -3,7 +3,7 @@
 test_omc_hook_block.py — 훅 차단 로직 단위 테스트
 
 검증 항목:
-  1. omc-prompt-inject.sh: confirmed 상태 + 긴 프롬프트 → 세션 경고 포함
+  1. omc-prompt-inject.sh: confirmed 상태 + 긴 프롬프트 → 거짓 세션 경고 없음
   2. omc-prompt-inject.sh: 30자 미만 프롬프트 → 세션 경고 없음(스킵)
   3. omc-prompt-inject.sh: pending 상태 → 경고 없음
   4. .cursor/hooks/omc-pipeline-check.sh: confirmed + create_file → permission:deny
@@ -89,14 +89,14 @@ def _run_pipeline_check(hook_path: Path, *, tool_name: str, file_path: str, cwd:
 # 테스트 함수
 # ─────────────────────────────────────────────────────────────
 
-def test_prompt_inject_warns_on_confirmed(tmp_path: Path) -> None:
-    """confirmed 상태 + 긴 프롬프트 → stdout에 [OMC] 또는 세션 경고 포함."""
+def test_prompt_inject_does_not_warn_on_confirmed(tmp_path: Path) -> None:
+    """confirmed 상태 + 긴 프롬프트 → 거짓 세션 경고 없음."""
     _make_omc_state(tmp_path, status="confirmed")
     hook = ROOT / ".agent-hooks" / "omc-prompt-inject.sh"
     result = _run_hook(hook, prompt="새로운 기능을 추가해 주세요. 충분히 긴 프롬프트입니다.", cwd=tmp_path)
     combined = result.stdout + result.stderr
-    assert "OMC" in combined or "세션" in combined or "작업" in combined, (
-        f"confirmed 상태에서 경고가 없음\nstdout={result.stdout!r}\nstderr={result.stderr!r}"
+    assert "[OMC BLOCK]" not in combined and "활성 세션 없음" not in combined, (
+        f"confirmed 상태에서 거짓 경고가 나와서는 안 됨\nstdout={result.stdout!r}\nstderr={result.stderr!r}"
     )
 
 
@@ -252,7 +252,7 @@ def test_doctor_has_hook_block_check() -> None:
 
 def main() -> int:
     tests = [
-        test_prompt_inject_warns_on_confirmed,
+        test_prompt_inject_does_not_warn_on_confirmed,
         test_prompt_inject_skips_short_prompt,
         test_prompt_inject_no_warn_on_pending,
         test_cursor_hook_denies_on_confirmed,

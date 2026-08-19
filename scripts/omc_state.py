@@ -35,10 +35,6 @@ def _iso_now() -> str:
 def _find_constitution(project_root: Path) -> str | None:
     """프로젝트의 근간이 되는 규칙 문서를 우선순위대로 찾아 내용을 반환합니다."""
     candidates = [
-        project_root / ".gemini" / "GEMINI.md",
-        project_root / ".claude" / "CLAUDE.md",
-        project_root / "GEMINI.md",
-        project_root / "CLAUDE.md",
         project_root / "CONTRACT.md",
         project_root / "AGENTS.md",
     ]

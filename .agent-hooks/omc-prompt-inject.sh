@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # UserPromptSubmit 훅 — 사용자 메시지를 BM25 쿼리로 관련 교훈 자동 주입
-# + OMC 세션 동기화 경고 (enforce_confirm=true + 활성 세션 없을 때, 세션당 1회)
+# 짧고 모호한 진행 요청에는 현재 파이프라인 상태에 맞는 확인 질문을 제공
 # Claude Code / Codex: stdout 평문 → 컨텍스트로 자동 주입됨
 set -u
 
@@ -40,6 +40,20 @@ _EXPLICIT=0
 # 명시적 스킬명 포함 여부 먼저 확인
 if printf '%s' "${PROMPT}" | grep -qiE "omc-|/plan|/task|/review|/ship|/investigate|/critique|/brainstorm|스킬|skill"; then
   _EXPLICIT=1
+fi
+
+# Codex의 Markdown skill 링크는 검색어가 아니라 호출 메타데이터다.
+# 링크만 있는 호출은 추가 컨텍스트가 필요 없고, 설명이 붙으면 설명만 BM25에 사용한다.
+if [ "${_EXPLICIT}" -eq 1 ]; then
+  PROMPT=$(PROMPT="${PROMPT}" "${PYTHON_BIN}" -c '
+import os, re
+value = os.environ.get("PROMPT", "")
+value = re.sub(r"\[\$?omc-[^\]]+\]\([^)]*\)", " ", value, flags=re.IGNORECASE)
+print(" ".join(value.split()))
+' 2>/dev/null || printf '%s' "${PROMPT}")
+  if [[ -z "${PROMPT}" ]]; then
+    exit 0
+  fi
 fi
 
 # 짧은 응답은 먼저 현재 세션의 단일 local-commit decision에 결합합니다.
@@ -157,65 +171,6 @@ _resolve_script() {
   if [[ -f "omc_kit/scripts/$1" ]]; then echo "omc_kit/scripts/$1"; return 0; fi
   return 1
 }
-
-# ── 세션 ID 추출 (경고 중복 방지용) ──────────────────────────────────────
-SESSION_ID=$("${PYTHON_BIN}" -c "
-import json
-from pathlib import Path
-try:
-    d = json.loads(Path('.omc/state/latest.json').read_text(encoding='utf-8'))
-    print(d.get('latest_session_id', 'unknown'))
-except Exception:
-    print('unknown')
-" 2>/dev/null || echo "unknown")
-
-WARNED_FLAG="/tmp/omc-session-warned-${SESSION_ID}"
-
-# ── OMC 세션 동기화 경고 (세션당 1회만) ──────────────────────────────────
-if [[ ! -f "${WARNED_FLAG}" ]]; then
-  OMC_WARNING=$("${PYTHON_BIN}" -c '
-import json, sys
-from pathlib import Path
-
-policy_path = Path(".omc/policy.json")
-latest_path = Path(".omc/state/latest.json")
-
-if not policy_path.exists() or not latest_path.exists():
-    sys.exit(0)
-
-try:
-    policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    latest = json.loads(latest_path.read_text(encoding="utf-8"))
-except Exception:
-    sys.exit(0)
-
-if not policy.get("enforce_confirm", False):
-    sys.exit(0)
-
-status = (latest.get("latest_confirmation") or {}).get("status", "")
-request = latest.get("latest_confirmed_request", "(알 수 없음)")
-
-if status != "confirmed":
-    sys.exit(0)
-
-print()
-print("=========================================================")
-print("[OMC BLOCK] 활성 세션 없음 — 새 작업 선언이 필요합니다")
-print(f"  마지막 완료 작업: \"{request}\"")
-print()
-print("  파일을 수정·생성하기 전에 반드시 선언하세요:")
-print("    python3 scripts/omc.py \"새 작업 내용\"")
-print("  또는 IDE 커맨드: /plan [작업] / /task [설명]")
-print()
-print("  ⚠ 선언 없이 진행하면 TDD 게이트·커밋 훅이 차단합니다.")
-print("=========================================================")
-' 2>/dev/null || true)
-
-  if [[ -n "${OMC_WARNING}" ]]; then
-    echo "${OMC_WARNING}"
-    touch "${WARNED_FLAG}"
-  fi
-fi
 
 LESSON_SCRIPT="$(_resolve_script omc_lesson.py || true)"
 if [[ -z "${LESSON_SCRIPT}" ]]; then

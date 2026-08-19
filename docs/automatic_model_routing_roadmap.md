@@ -699,6 +699,7 @@ Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_pr
 - 고정 benchmark 입력 v2를 `scripts/fixtures/omc_latency_benchmark_v2.json`에 보존했다. 기준 커밋 `48a9782`, resolver 수정 범위, 신규 resolution test, 전체 관련 테스트 명령을 저장소 안에서 검증하며 임시 디렉터리 입력은 기준 계약으로 사용하지 않는다.
 - 고정 입력 기준 1차 재측정은 Lite 성공 4건·실패 1건, Full 성공 2건·quality HOLD 2건·수동 gate 중단 1건으로 끝났다. Full 5건 성공 표본과 token telemetry가 아직 부족하므로 p50/p95 라우팅 기준은 계속 `NOT_PROVEN`이다.
 - Lite benchmark의 장기 정체를 제한하도록 task `300초`, review `180초` 상한을 추가하고, 각 단계 timeout을 pipeline 전체 `max_time` 잔여 예산으로 다시 제한했다. 잔여 시간이 1초 미만이면 provider를 호출하지 않고 `pipeline_deadline_exhausted`로 종료하며, 실제 provider timeout은 `status=timeout`, `rc=124`, `timeout_sec`, monotonic `duration_ms`로 보존한다. 완료된 task 뒤 review timeout이 난 실행은 resume에서 task를 건너뛰고 review만 재시도한다. 일반 Lite의 기존 task `1200초`, review `600초` 계약은 유지한다. sub-second 경계 회귀를 포함한 autopilot 테스트 `128 passed, 1 skipped`, TDD gate, OMC review `APPROVE`를 확인했다.
+- 스킬 진입 훅 오버헤드와 중복 컨텍스트를 줄이기 위해 순수 Codex skill 링크 호출은 UserPromptSubmit에서 `0 byte`로 종료하고, 설명이 붙은 호출은 링크를 제거한 실제 설명만 BM25 검색에 사용하도록 정리했다. SessionStart는 executor·stable `event_id`·저장소 root에 결속된 receipt로 중복 lifecycle과 context 출력을 억제하며, 매 실행에서 공통 summary를 강제 재생성해 executor overlay와 stale summary가 섞이지 않게 했다. 동일 이벤트의 순차·동시 중복, PID 기록 전 lock 경쟁, state/session/output 실패 재시도, 동시 선행 실패 후 후행 인계, 비식별 diagnostics를 포함한 hook 회귀 `30 passed`, 셸 문법·template/install 정합성·TDD gate, OMC review `APPROVE WITH NOTES`를 확인했다. 이 변경은 진입 중복과 실패 복구 경로의 구현 완료를 뜻하지만 Lite/Full p50/p95 개선 증거는 아니므로 운영 latency 판정은 계속 `NOT_PROVEN`으로 유지한다.
 
 ## 바로 다음 작업 계획
 
