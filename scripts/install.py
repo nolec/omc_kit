@@ -115,11 +115,14 @@ def _install_summary(
     entries: dict[str, dict[str, str]],
     *,
     stage_timings_ms: dict[str, int],
+    removed_by_setup: int = 0,
 ) -> dict[str, object]:
     """Return a bounded setup summary without exposing project-local paths."""
     change_counts = Counter(
         str(entry.get("change", "unknown")) for entry in entries.values()
     )
+    if removed_by_setup:
+        change_counts["removed_by_setup"] = removed_by_setup
     return {
         "scan_strategy": "bounded_manifest",
         "managed_entry_count": len(entries),
@@ -357,6 +360,31 @@ def _finalize_install_manifest(target: Path, manifest: dict[str, dict[str, str]]
             entry["source_sha256"] = digest
             entry["target_sha256"] = digest
     return manifest
+
+
+def _prune_stale_managed_outputs(
+    target: Path,
+    manifest: dict[str, dict[str, str]],
+    *,
+    force: bool,
+) -> int:
+    """Remove retired OMC-owned files only during an explicit force install."""
+    if not force:
+        return 0
+    removed = 0
+    for rel, entry in list(manifest.items()):
+        if (
+            not entry.get("previously_managed")
+            or entry.get("registered_current_install")
+            or not _is_bounded_previous_managed_path(rel)
+        ):
+            continue
+        path = target / rel
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+            removed += 1
+        manifest.pop(rel, None)
+    return removed
 
 
 def _register_generated_output(
@@ -1451,6 +1479,9 @@ python3 scripts/omc_tdd_check.py --staged
 
     apply_finished = time.perf_counter()
     receipt_started = time.perf_counter()
+    removed_by_setup = _prune_stale_managed_outputs(
+        tgt, _INSTALL_POLICY_MANIFEST, force=force
+    )
     receipt_manifest = _finalize_install_manifest(tgt, _INSTALL_POLICY_MANIFEST)
     receipt_entries = {
         rel: _receipt_entry(
@@ -1475,6 +1506,7 @@ python3 scripts/omc_tdd_check.py --staged
             "receipt": round((receipt_finished - receipt_started) * 1000),
             "total": round((receipt_finished - setup_started) * 1000),
         },
+        removed_by_setup=removed_by_setup,
     )
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     _reset_install_policy_context()

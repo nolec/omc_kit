@@ -304,6 +304,56 @@ class TestInstallManifest(unittest.TestCase):
             self.assertIn("docs/omc_removed.md", manifest)
             self.assertIn("prompts/ROLE_RETIRED_ASSISTANT.md", manifest)
 
+    def test_force_prunes_only_bounded_stale_managed_outputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            stale = target / ".cursor" / "rules" / "omc-retired.mdc"
+            stale.parent.mkdir(parents=True)
+            stale.write_text("retired\n", encoding="utf-8")
+            manifest = {
+                ".cursor/rules/omc-retired.mdc": {
+                    "policy": "managed_exact",
+                    "previously_managed": True,
+                    "registered_current_install": False,
+                },
+                "scripts/project.py": {
+                    "policy": "managed_exact",
+                    "previously_managed": True,
+                    "registered_current_install": False,
+                },
+            }
+
+            removed = _install._prune_stale_managed_outputs(
+                target, manifest, force=True
+            )
+
+            self.assertEqual(removed, 1)
+            self.assertFalse(stale.exists())
+            self.assertNotIn(".cursor/rules/omc-retired.mdc", manifest)
+            self.assertIn("scripts/project.py", manifest)
+
+    def test_non_force_keeps_stale_managed_output_for_audit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            stale = target / "docs" / "omc_retired.md"
+            stale.parent.mkdir(parents=True)
+            stale.write_text("retired\n", encoding="utf-8")
+            manifest = {
+                "docs/omc_retired.md": {
+                    "policy": "managed_exact",
+                    "previously_managed": True,
+                    "registered_current_install": False,
+                }
+            }
+
+            removed = _install._prune_stale_managed_outputs(
+                target, manifest, force=False
+            )
+
+            self.assertEqual(removed, 0)
+            self.assertTrue(stale.exists())
+            self.assertIn("docs/omc_retired.md", manifest)
+
     def test_manifest_rejects_damaged_previous_receipt_without_target_scan(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
