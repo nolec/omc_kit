@@ -10,6 +10,7 @@ T3/T4 DoD:
 from __future__ import annotations
 
 import json
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,14 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 AUTOPILOT = ROOT / "scripts" / "omc_autopilot.py"
+
+
+def _load_autopilot():
+    spec = importlib.util.spec_from_file_location("omc_autopilot_contract_test", AUTOPILOT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _run(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -133,6 +142,211 @@ def test_plan_hold_verdict_aborts_pipeline(tmp_path: Path):
     assert mod._grep_verdict("VERDICT: HOLD") == "HOLD"
     assert mod._grep_verdict("VERDICT: APPROVE") == "APPROVE"
     assert mod._grep_verdict("no verdict here") is None
+
+
+def test_pipeline_output_normalizes_legacy_pilot_stage_verdict():
+    mod = _load_autopilot()
+    normalized = mod._normalize_pipeline_output(
+        step_name="task",
+        output="implementation complete\nVERDICT: PROCEED",
+    )
+
+    assert "OMC_OUTPUT:" in normalized
+    assert '"stage":"task"' in normalized
+    assert "[OUTPUT_CONTRACT_SOURCE] legacy_normalized" in normalized
+    assert normalized.endswith("VERDICT: PROCEED")
+
+
+@pytest.mark.parametrize(
+    ("raw_output", "expected_source"),
+    [
+        ("legacy body\n" + ("x" * 600) + "\nVERDICT: PROCEED", "legacy_normalized"),
+        (
+            'OMC_OUTPUT: {"next_skill":"omc-review","outcome":"done",'
+            '"reason_code":null,"risk":"low","schema_version":"omc-output/v1",'
+            '"stage":"task","user_selection_needed":false}\nVERDICT: PROCEED',
+            "raw_compliant",
+        ),
+    ],
+)
+def test_pipeline_step_payload_persists_output_contract_source(
+    raw_output: str,
+    expected_source: str,
+):
+    mod = _load_autopilot()
+    normalized = mod._normalize_pipeline_output(step_name="task", output=raw_output)
+
+    payload = mod._step_payload(
+        "completed",
+        "2026-08-20T00:00:00+00:00",
+        "2026-08-20T00:00:01+00:00",
+        output_preview=normalized[:300],
+    )
+
+    assert payload["output_contract_source"] == expected_source
+
+
+def test_pipeline_output_rejects_explicit_envelope_conflict():
+    mod = _load_autopilot()
+    output = (
+        'OMC_OUTPUT: {"schema_version":"omc-output/v1","stage":"review",'
+        '"outcome":"approved","risk":"low","next_skill":null,'
+        '"user_selection_needed":false,"reason_code":null}\n'
+        "VERDICT: BLOCK"
+    )
+
+    with pytest.raises(mod.omc_output.OutputContractError):
+        mod._normalize_pipeline_output(step_name="review", output=output)
+
+
+def test_pipeline_output_leaves_non_pilot_stage_unchanged():
+    mod = _load_autopilot()
+    output = "CRITICAL: issue\nVERDICT: REVISE"
+    assert mod._normalize_pipeline_output(step_name="critique", output=output) == output
+
+
+@pytest.mark.parametrize(
+    ("step_name", "stage"),
+    [("plan_retry", "plan"), ("task_retry", "task")],
+)
+def test_pipeline_output_normalizes_retry_to_canonical_stage(step_name: str, stage: str):
+    mod = _load_autopilot()
+
+    normalized = mod._normalize_pipeline_output(
+        step_name=step_name,
+        output="VERDICT: PROCEED",
+    )
+
+    assert f'"stage":"{stage}"' in normalized
+
+
+@pytest.mark.parametrize("verdict", ["HOLD", "REVISE"])
+def test_plan_rework_verdicts_share_the_same_stop_policy(verdict: str):
+    mod = _load_autopilot()
+    assert mod._plan_requires_rework(verdict) is True
+    assert mod._plan_requires_rework("PROCEED") is False
+
+
+def test_pipeline_step_rejects_success_without_pilot_contract(tmp_path: Path, monkeypatch):
+    mod = _load_autopilot()
+
+    class Process:
+        pid = 999999
+        returncode = 0
+
+        def communicate(self):
+            return "plan body without verdict", ""
+
+    monkeypatch.setattr(mod.subprocess, "Popen", lambda *args, **kwargs: Process())
+
+    rc, output = mod._run_pipeline_step(
+        tmp_path,
+        "plan",
+        "make a plan",
+        "codex",
+        30,
+    )
+
+    assert rc == 65
+    assert "OUTPUT_CONTRACT_ERROR" in output
+
+
+def test_pipeline_step_validates_stdout_and_preserves_stderr_before_contract(
+    tmp_path: Path,
+    monkeypatch,
+):
+    mod = _load_autopilot()
+    stdout = mod.omc_output.render_envelope(
+        stage="task",
+        verdict="PROCEED",
+        risk="low",
+        next_skill="omc-review",
+        user_selection_needed=False,
+    )
+
+    class Process:
+        pid = 999999
+        returncode = 0
+
+        def communicate(self):
+            return stdout, "provider cache warning\nVERDICT: BLOCK"
+
+    monkeypatch.setattr(mod.subprocess, "Popen", lambda *args, **kwargs: Process())
+
+    rc, output = mod._run_pipeline_step(
+        tmp_path,
+        "task",
+        "implement",
+        "codex",
+        30,
+    )
+
+    assert rc == 0
+    assert output.startswith("[OUTPUT_CONTRACT_SOURCE] raw_compliant")
+    assert "[EXECUTOR_STDERR] provider cache warning" in output
+    assert "[EXECUTOR_STDERR] VERDICT: BLOCK" in output
+    assert output.splitlines()[-2].startswith("OMC_OUTPUT:")
+    assert output.splitlines()[-1] == "VERDICT: PROCEED"
+
+
+def test_plan_revise_stops_before_task(tmp_path: Path, monkeypatch):
+    mod = _load_autopilot()
+    calls: list[str] = []
+
+    def mock_step(root, step_name, prompt, executor, timeout, *, dry_run=False, isolated=False):
+        calls.append(step_name)
+        if step_name == "plan":
+            return 0, "VERDICT: REVISE"
+        return 0, "VERDICT: PROCEED"
+
+    monkeypatch.setattr(mod, "_run_pipeline_step", mock_step)
+    monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(tmp_path / "result.json"))
+    monkeypatch.setattr(
+        mod.subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
+    )
+
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="x" * 200,
+        branch="feat/output-contract",
+        executor_pref="codex",
+        dry_run=True,
+        allow_dirty=True,
+    )
+
+    assert rc == 1
+    assert calls == ["plan"]
+    data = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert data["status"] == "plan_revise"
+    assert data["finished_at"] is not None
+    assert data["execution_duration_ms"] is not None
+    assert "plan_revise" in mod._PIPELINE_TERMINAL_STATUSES
+
+
+@pytest.mark.parametrize("verdict", ["HOLD", "REVISE"])
+def test_plan_retry_rework_metadata_preserves_actual_verdict(verdict: str):
+    mod = _load_autopilot()
+    payload = mod._step_payload("completed", None)
+
+    mod._mark_plan_rework_payload(payload, step_name="plan_retry", verdict=verdict)
+
+    assert payload["verdict"] == verdict
+    assert f"verdict_{verdict.lower()}" in payload["reason_codes"]
+
+
+@pytest.mark.parametrize("status", ["plan_hold", "plan_revise"])
+def test_plan_rework_terminal_status_has_hold_overview_priority(status: str):
+    mod = _load_autopilot()
+    summary = {"status": status, "stale": False}
+
+    assert mod._overview_status_priority(summary) == 1
+
+
+def test_review_approve_with_notes_verdict_is_not_truncated():
+    mod = _load_autopilot()
+    assert mod._grep_verdict("VERDICT: APPROVE WITH NOTES") == "APPROVE WITH NOTES"
 
 
 def test_git_push_failure_saves_failed_status(tmp_path: Path):

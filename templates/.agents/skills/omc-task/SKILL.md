@@ -32,7 +32,7 @@ Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`�
 
 ## PHASE 2 ▸ DESIGN — 입력/출력 계약 / 실패·에러 정책 / 영향받는 파일:
 - decision / risk / next_action: 구현 상태 / 변경 위험도 / 다음 스킬 1개
-- 공통 결정표: stage=task / outcome=unresolved|done / user_selection_needed=yes|no
+- 공통 결정표: stage=task / outcome=blocked|done / user_selection_needed=yes|no
 - 계약이 약한 작업도 빈칸 없이 적고, 작은 후속 수정도 영향 파일과 실패 정책은 생략하지 않습니다.
 
 ## PHASE 3 ▸ RED — 테스트 파일 / 테스트 케이스 / 실제 FAIL 출력:
@@ -65,8 +65,9 @@ python3 scripts/omc_lesson.py add -i
 
 - 막히면 `교훈 없음`을 명시합니다.
 
-## Handoff
-- 모든 단계가 끝나면 `$omc-review`로 넘깁니다.
+## Handoff — 모든 단계가 끝나면 `$omc-review`로 넘깁니다.
+
+## Machine output contract — 마지막 두 줄은 `OMC_OUTPUT: {JSON}`과 `VERDICT: <VALUE>`; JSON은 `schema_version=omc-output/v1`, `stage`, `outcome`, `risk`, `next_skill`, `user_selection_needed`, `reason_code`; `next_skill`은 canonical `omc-*` 또는 null; unresolved/blocked는 `reason_code` 필수; legacy 정규화는 표시하고 명시적 오류는 보정하지 않습니다.
 
 ## 다음 추천
 

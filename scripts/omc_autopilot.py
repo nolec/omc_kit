@@ -53,6 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_utils
 import omc_cost
 import omc_exec
+import omc_output_contract as omc_output
 import omc_orchestrator
 from omc_decision_input import (
     build_next_priority_surface_input,
@@ -2174,7 +2175,7 @@ def _overview_status_priority(summary: dict[str, object]) -> int:
     stale = bool(summary.get("stale"))
     if stale and status == "running":
         return 0
-    if status in {"hold", "auto_hold", "blocked"}:
+    if status in _PIPELINE_HOLD_STATUSES:
         return 1
     if status in {"failed", "retry_exhausted", "timeout", "aborted"}:
         return 2
@@ -2674,6 +2675,7 @@ def cmd_overview(root: Path, *, limit: int = 10) -> int:
 _PIPELINE_RESULT_PATH = ".omc/pipeline_run_result.json"
 _LITE_BENCHMARK_TASK_TIMEOUT_SEC = 300
 _LITE_BENCHMARK_REVIEW_TIMEOUT_SEC = 180
+_PIPELINE_HOLD_STATUSES = {"hold", "auto_hold", "blocked", "plan_hold", "plan_revise"}
 _PIPELINE_TERMINAL_STATUSES = {
     "completed",
     "failed",
@@ -2684,6 +2686,7 @@ _PIPELINE_TERMINAL_STATUSES = {
     "timeout",
     "aborted",
     "plan_hold",
+    "plan_revise",
     "hold",
 }
 
@@ -3201,6 +3204,14 @@ def _step_payload(
         if duration_sec is not None:
             payload["duration_sec"] = duration_sec
     payload.update(extra)
+    output_preview = str(payload.get("output_preview") or "")
+    source_match = re.search(
+        r"^\[OUTPUT_CONTRACT_SOURCE\]\s+(raw_compliant|legacy_normalized)\s*$",
+        output_preview,
+        re.MULTILINE,
+    )
+    if source_match:
+        payload["output_contract_source"] = source_match.group(1)
     return payload
 
 
@@ -3287,7 +3298,16 @@ def _build_capability_observations(data: dict) -> list[dict[str, object]]:
 
 _PIPELINE_MAX_RETRIES = 3
 _PIPELINE_MAX_SAME_VERDICT = 2  # 동일 verdict 연속 허용 횟수
-_VERDICT_PATTERN = r"VERDICT:\s*(PROCEED|APPROVE|BLOCK|REVISE|HOLD)"
+_VERDICT_PATTERN = (
+    r"^VERDICT\s*:\s*(APPROVE WITH NOTES|PROCEED|APPROVE|BLOCK|REVISE|HOLD)\s*$"
+)
+_OUTPUT_CONTRACT_PILOT_STAGES = {
+    "plan": "plan",
+    "plan_retry": "plan",
+    "task": "task",
+    "task_retry": "task",
+    "review": "review",
+}
 
 _LITE_BRANCH_PREFIXES = ("fix/", "hotfix/", "chore/", "docs/")
 _LITE_INSTRUCTION_MAX_LEN = 50
@@ -3504,10 +3524,60 @@ def _populate_observed_output_schema(data: dict, task_meta: dict[str, object]) -
 
 def _grep_verdict(output: str) -> str | None:
     """LLM 출력에서 VERDICT: <판정> 키워드를 추출한다."""
-    m = re.search(_VERDICT_PATTERN, output, re.IGNORECASE)
+    m = re.search(_VERDICT_PATTERN, output, re.IGNORECASE | re.MULTILINE)
     if m:
         return m.group(1).upper()
     return None
+
+
+def _pilot_stage_for_step(step_name: str) -> str | None:
+    return _OUTPUT_CONTRACT_PILOT_STAGES.get(str(step_name).strip().lower())
+
+
+def _normalize_pipeline_output(*, step_name: str, output: str) -> str:
+    """Normalize only the plan/task/review pilot without touching other skills."""
+    stage = _pilot_stage_for_step(step_name)
+    if stage is None:
+        return output
+    source = omc_output.contract_source(output, stage=stage)
+    normalized = omc_output.normalize_output(output, stage=stage)
+    marker = f"[OUTPUT_CONTRACT_SOURCE] {source}"
+    return f"{marker}\n{normalized}"
+
+
+def _attach_executor_stderr(output: str, stderr: str) -> str:
+    """Preserve executor diagnostics without letting them alter the terminal contract."""
+    diagnostics = [
+        f"[EXECUTOR_STDERR] {line}"
+        for line in str(stderr).splitlines()
+        if line.strip()
+    ]
+    if not diagnostics:
+        return output
+    lines = str(output).splitlines()
+    return "\n".join([*lines[:-2], *diagnostics, *lines[-2:]])
+
+
+def _plan_requires_rework(verdict: str | None) -> bool:
+    return verdict in {"HOLD", "REVISE"}
+
+
+def _mark_plan_rework_payload(
+    payload: dict[str, object],
+    *,
+    step_name: str,
+    verdict: str,
+) -> None:
+    """Persist the actual Plan rework verdict and its matching failure metadata."""
+    normalized_verdict = str(verdict).strip().upper()
+    payload["verdict"] = normalized_verdict
+    payload.update(
+        _build_failure_metadata(
+            step_name=step_name,
+            status=str(payload.get("status") or ""),
+            verdict=normalized_verdict,
+        )
+    )
 
 
 def step_verdict_allowed(output: str, allowed_verdicts: list[str]) -> bool:
@@ -3695,11 +3765,15 @@ def _run_pipeline_step(
     isolated=True 이면 이전 세션 컨텍스트 없이 새 컨텍스트로 실행한다.
     critique/review 스텝에 사용해 task 대화 이력과 격리한다.
     """
+    pilot_stage = _pilot_stage_for_step(step_name)
+    if pilot_stage:
+        prompt = f"{prompt.rstrip()}\n\n{omc_output.prompt_contract(pilot_stage)}"
     if dry_run:
         print(f"  [DRY-RUN] {step_name} 시뮬레이션")
         # review 스텝은 APPROVE, 그 외는 PROCEED (verdict 일관성)
         dry_verdict = "APPROVE" if step_name == "review" else "PROCEED"
-        return 0, f"[DRY-RUN] {step_name} — VERDICT: {dry_verdict}"
+        dry_output = f"[DRY-RUN] {step_name}\nVERDICT: {dry_verdict}"
+        return 0, _normalize_pipeline_output(step_name=step_name, output=dry_output)
 
     exec_script = Path(__file__).resolve().parent / "omc_exec.py"
     if not exec_script.exists():
@@ -3750,8 +3824,19 @@ def _run_pipeline_step(
         if timed_out:
             return 124, f"[ERROR] 타임아웃 ({timeout_sec}s) — 프로세스 그룹 종료"
 
-        output = (stdout or "") + (stderr or "")
-        return int(proc.returncode), output.strip()
+        stdout_output = (stdout or "").strip()
+        stderr_output = (stderr or "").strip()
+        return_code = int(proc.returncode)
+        if return_code == 0 and pilot_stage:
+            try:
+                output = _normalize_pipeline_output(step_name=step_name, output=stdout_output)
+                output = _attach_executor_stderr(output, stderr_output)
+            except omc_output.OutputContractError as exc:
+                combined = f"{stdout_output}\n{stderr_output}".strip()
+                return 65, f"{combined}\n[OUTPUT_CONTRACT_ERROR] {exc}"
+        else:
+            output = f"{stdout_output}\n{stderr_output}".strip()
+        return return_code, output
     except Exception as exc:
         return 1, f"[ERROR] {exc}"
     finally:
@@ -4194,7 +4279,7 @@ def cmd_pipeline(
     plan_prompt = (
         f"다음 지시문에 대한 구현 계획을 작성하세요.\n\n{instruction}\n\n"
         "목표/범위/DoD/제약/실패조건을 각각 한 줄로 명시하세요.\n"
-        "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: HOLD`를 출력하세요."
+        "반드시 마지막 줄에 `VERDICT: PROCEED`, `VERDICT: HOLD`, 또는 `VERDICT: REVISE`를 출력하세요."
     )
     print("\n[PIPELINE] ▶ PLAN 스텝 실행 중...")
     if _step_already_done(_resume_data, "plan"):
@@ -4229,12 +4314,12 @@ def cmd_pipeline(
         save("failed")
         return 1
 
-    # PLAN VERDICT 판별 — HOLD이면 중단
+    # PLAN VERDICT 판별 — HOLD/REVISE이면 구현 전에 중단
     plan_verdict = _grep_verdict(out)
-    if plan_verdict == "HOLD":
-        print(f"[PIPELINE] ❌ PLAN VERDICT: HOLD — 재설계 필요")
-        result["steps"]["plan"]["verdict"] = "HOLD"
-        save("plan_hold")
+    if _plan_requires_rework(plan_verdict):
+        print(f"[PIPELINE] ❌ PLAN VERDICT: {plan_verdict} — 재설계 필요")
+        result["steps"]["plan"]["verdict"] = plan_verdict
+        save(f"plan_{plan_verdict.lower()}")
         return 1
 
     # 사람 게이트 (--auto 없으면)
@@ -4370,7 +4455,7 @@ def cmd_pipeline(
             f"{reason_label}에 의해 plan 재실행이 필요합니다.{issues_section}"
             f"\n지시문: {instruction[:200]}\n\n"
             "목표/범위/DoD/제약/실패조건을 각각 한 줄로 명시하세요.\n"
-            "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: HOLD`를 출력하세요."
+            "반드시 마지막 줄에 `VERDICT: PROCEED`, `VERDICT: HOLD`, 또는 `VERDICT: REVISE`를 출력하세요."
         )
         print("\n[PIPELINE] ▶ PLAN 재실행...")
         plan_retry_started_at = _now()
@@ -4392,15 +4477,13 @@ def cmd_pipeline(
             print("[PIPELINE] ❌ PLAN 재실행 실패 — HOLD")
             save("hold")
             return False
-        if _grep_verdict(plan_out) == "HOLD":
-            print("[PIPELINE] ❌ PLAN 재실행 VERDICT: HOLD — 재설계 필요")
-            result["steps"]["plan_retry"]["verdict"] = "HOLD"
-            result["steps"]["plan_retry"].update(
-                _build_failure_metadata(
-                    step_name="plan_retry",
-                    status=result["steps"]["plan_retry"].get("status"),
-                    verdict="HOLD",
-                )
+        plan_retry_verdict = _grep_verdict(plan_out)
+        if _plan_requires_rework(plan_retry_verdict):
+            print("[PIPELINE] ❌ PLAN 재실행 — 재설계 필요")
+            _mark_plan_rework_payload(
+                result["steps"]["plan_retry"],
+                step_name="plan_retry",
+                verdict=str(plan_retry_verdict),
             )
             _save_pipeline_result(root, result)
             save("hold")
@@ -4864,7 +4947,7 @@ def cmd_pipeline(
                         f"이전 critique에서 다음 문제가 지적됐습니다. 이를 반영해 구현 계획을 수정하세요.{issues_section}"
                         f"\n지시문: {instruction[:200]}\n\n"
                         "목표/범위/DoD/제약/실패조건을 각각 한 줄로 명시하세요.\n"
-                        "반드시 마지막 줄에 `VERDICT: PROCEED` 또는 `VERDICT: HOLD`를 출력하세요."
+                        "반드시 마지막 줄에 `VERDICT: PROCEED`, `VERDICT: HOLD`, 또는 `VERDICT: REVISE`를 출력하세요."
                     )
                     print("\n[PIPELINE] ▶ PLAN 재실행 (critique 이슈 반영)...")
                     plan_retry_started_at = _now()
@@ -4885,15 +4968,13 @@ def cmd_pipeline(
                         print("[PIPELINE] ❌ PLAN 재실행 실패 — HOLD")
                         save("hold")
                         return 2
-                    if _grep_verdict(plan_out) == "HOLD":
-                        print("[PIPELINE] ❌ PLAN 재실행 VERDICT: HOLD — 재설계 필요")
-                        result["steps"]["plan_retry"]["verdict"] = "HOLD"
-                        result["steps"]["plan_retry"].update(
-                            _build_failure_metadata(
-                                step_name="plan_retry",
-                                status=result["steps"]["plan_retry"].get("status"),
-                                verdict="HOLD",
-                            )
+                    plan_retry_verdict = _grep_verdict(plan_out)
+                    if _plan_requires_rework(plan_retry_verdict):
+                        print("[PIPELINE] ❌ PLAN 재실행 — 재설계 필요")
+                        _mark_plan_rework_payload(
+                            result["steps"]["plan_retry"],
+                            step_name="plan_retry",
+                            verdict=str(plan_retry_verdict),
                         )
                         _save_pipeline_result(root, result)
                         save("hold")

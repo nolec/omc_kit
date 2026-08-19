@@ -190,7 +190,7 @@ def resolve_run_overview_followup_from_input(decision_input: dict[str, object]) 
         return "recover stale pipeline", "stale running pipeline should be recovered before further inspection"
     if status == "completed":
         return "review final output", "completed run should move to final output review"
-    if status in {"hold", "auto_hold", "blocked"}:
+    if status in {"hold", "auto_hold", "blocked", "plan_hold", "plan_revise"}:
         if "critique" in failure_reason:
             return "inspect critique findings", "critique-related hold should inspect critique findings first"
         return "inspect blocked step", "blocked run should inspect the blocked step first"

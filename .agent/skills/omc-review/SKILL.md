@@ -15,8 +15,7 @@ find . -newer .git/index
 python3 scripts/omc.py state status --target .
 ```
 ## 필수 체크
-- 범위 확정 / 파일:라인 근거 / 검증 커맨드를 기록한다. 출력이 길어져도 마지막 `검증 커맨드 / 판정 / VERDICT / 다음 추천`은 생략하지 않습니다.
-- 리뷰어가 사용자에게 바로 보여줄 것: 근거 이슈·검증·판정 | 시스템이 암묵적으로 처리: 분할·요약·범위 밖 제외
+- 범위 확정 / 파일:라인 근거 / 검증 커맨드를 기록한다. 출력이 길어져도 마지막 `검증 커맨드 / 판정 / VERDICT / 다음 추천`은 생략하지 않습니다. | 리뷰어가 사용자에게 바로 보여줄 것: 근거 이슈·검증·판정 | 시스템이 암묵적으로 처리: 분할·요약·범위 밖 제외
 - 안전 필수 항목: 파일:라인 / VERDICT / [치명] [중대] [경미] [제안]
 리뷰 범위: `git diff HEAD` 전체와 필요한 untracked/ignored 파일을 직접 읽고, `.omc/runs` `.omc/lessons` `pipeline_run_result`는 제외한다. 200줄 이상은 파일별로 나눈다.
 ## Step 1. REVIEW CHECKLIST
@@ -44,10 +43,12 @@ C7 유지보수·책임·이름 / C8 외부 계약: optional/null/unknown fallba
 판정: BLOCK / REVISE / APPROVE WITH NOTES / APPROVE
 VERDICT: 판정과 동일하며 한 번만 출력
 decision: REVISE / APPROVE (판정 결과) | risk: HIGH / MED / LOW (리스크 요약) | next_action: 다음 스킬 1개
-공통 결정표: stage=review / outcome=revise|done / user_selection_needed=yes|no / ship_intent_explicit=yes|no
+공통 결정표: stage=review / outcome=approved|blocked / user_selection_needed=yes|no / ship_intent_explicit=yes|no
 ```
 - 강한 finding은 `evidence_class: behavioral_direct`와 비어 있지 않은 `evidence:`가 필수다. 가설은 `[확인 필요]`로 내린다.
 - 판정 규칙: 치명=BLOCK, 중대=REVISE, 경미/제안만=APPROVE WITH NOTES, 없음=APPROVE. REVISE/BLOCK면 수정 방향 포함.
+## Machine output contract — 마지막 두 줄은 `OMC_OUTPUT: {JSON}`과 `VERDICT: <VALUE>`; JSON은 `schema_version=omc-output/v1`, `stage`, `outcome`, `risk`, `next_skill`, `user_selection_needed`, `reason_code`; `next_skill`은 canonical `omc-*` 또는 null; unresolved/blocked는 `reason_code` 필수; legacy 정규화는 표시하고 명시적 오류는 보정하지 않습니다.
+
 ## 다음 추천
 - 우선순위는 `현재 병목 > 기본 파이프라인`, 주추천 1개만 제시한다.
 - REVISE/BLOCK면 `$omc-task`

@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_decision_input as mod
@@ -120,6 +122,21 @@ def test_run_overview_followup_prefers_task_retry_for_task_failure():
     assert mod.resolve_run_overview_followup_from_input(decision_input) == (
         "fix task failure and retry",
         "task-stage failure should return to task retry guidance",
+    )
+
+
+@pytest.mark.parametrize("status", ["plan_hold", "plan_revise"])
+def test_run_overview_followup_treats_plan_rework_as_blocked(status: str):
+    decision_input = mod.build_run_overview_followup_input(
+        status=status,
+        stale=False,
+        failure_reason="-",
+        current_step="plan",
+    )
+
+    assert mod.resolve_run_overview_followup_from_input(decision_input) == (
+        "inspect blocked step",
+        "blocked run should inspect the blocked step first",
     )
 
 
