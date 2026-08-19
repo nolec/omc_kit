@@ -276,6 +276,34 @@ class TestInstallManifest(unittest.TestCase):
             self.assertNotIn("docs/product.md", manifest)
             self.assertTrue(manifest["docs/omc_removed.md"]["previously_managed"])
 
+    def test_manifest_drops_legacy_broad_scope_receipt_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source"
+            target = root / "target"
+            (source / "scripts").mkdir(parents=True)
+            (target / ".omc").mkdir(parents=True)
+            (source / "scripts" / "omc.py").write_text("new\n", encoding="utf-8")
+            entries = {
+                "scripts/project.py": {"policy": "managed_exact"},
+                "scripts/__pycache__/omc.pyc": {"policy": "managed_exact"},
+                ".agent/.DS_Store": {"policy": "managed_exact"},
+                "docs/omc_removed.md": {"policy": "managed_exact"},
+                "prompts/ROLE_RETIRED_ASSISTANT.md": {"policy": "managed_exact"},
+            }
+            (target / ".omc" / "install-receipt.json").write_text(
+                json.dumps({"schema_version": 1, "entries": entries}),
+                encoding="utf-8",
+            )
+
+            manifest = _install._build_install_manifest(source, target)
+
+            self.assertNotIn("scripts/project.py", manifest)
+            self.assertNotIn("scripts/__pycache__/omc.pyc", manifest)
+            self.assertNotIn(".agent/.DS_Store", manifest)
+            self.assertIn("docs/omc_removed.md", manifest)
+            self.assertIn("prompts/ROLE_RETIRED_ASSISTANT.md", manifest)
+
     def test_manifest_rejects_damaged_previous_receipt_without_target_scan(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

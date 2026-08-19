@@ -128,6 +128,77 @@ def _install_summary(
     }
 
 
+def _is_bounded_previous_managed_path(relative_path: str) -> bool:
+    """Accept only paths whose OMC ownership is identifiable without target scan."""
+    path = Path(relative_path)
+    parts = path.parts
+    if not parts or path.is_absolute() or ".." in parts:
+        return False
+    if any(part in {"__pycache__", ".pytest_cache"} for part in parts):
+        return False
+    if path.name == ".DS_Store":
+        return False
+    if len(parts) == 2 and parts[0] == "scripts":
+        return path.name.startswith("omc_") or path.name in _SCRIPTS_EXTRA
+    if len(parts) == 2 and parts[0] == "docs":
+        return path.name.startswith("omc_") or path.as_posix() in {
+            "docs/quickstart_kr.md",
+            "docs/kit_map.md",
+            "docs/next_project_pack.md",
+            "docs/agent_behavior.md",
+            "docs/verification_checklist.md",
+        }
+    if len(parts) == 2 and parts[0] == "prompts":
+        return (
+            path.name.startswith(("ROLE_", "MODE_"))
+            or path.name in {"README.md", "team.json"}
+        )
+    if parts[0] == ".agent-hooks":
+        return path.name.startswith("omc-")
+    if parts[0] in {".agent", ".agents"}:
+        return any(part.startswith("omc-") for part in parts[1:]) or (
+            "skills" in parts and "pr-create" in parts
+        )
+    if parts[0] == ".cursor":
+        return (
+            path.as_posix() in {".cursor/hooks.json"}
+            or path.name.startswith("omc-")
+        )
+    if parts[0] in {".codex", ".gemini"}:
+        return path.name in {"hooks.json", "settings.json", "omc-commands.md"}
+    if parts[0] == ".claude":
+        command_names = {
+            "autopilot.md",
+            "benchmark.md",
+            "brainstorm.md",
+            "ceo-review.md",
+            "critique.md",
+            "investigate.md",
+            "lesson.md",
+            "office-hours.md",
+            "plan.md",
+            "qa.md",
+            "reentry.md",
+            "retro.md",
+            "review.md",
+            "ship.md",
+            "status.md",
+            "task.md",
+        }
+        return path.name == "settings.json" or path.name in command_names
+    return path.as_posix() in {
+        ".cursorignore",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "CODEX.md",
+        "CONVENTIONS.md",
+        "ETHOS.md",
+        "GEMINI.md",
+        "pre-commit",
+        "run",
+    }
+
+
 def _build_install_manifest(source_kit: Path, target: Path) -> dict[str, dict[str, str]]:
     """Return managed install paths without scanning unrelated project files."""
     manifest: dict[str, dict[str, str]] = {}
@@ -150,6 +221,7 @@ def _build_install_manifest(source_kit: Path, target: Path) -> dict[str, dict[st
                     "managed_exact",
                     "managed_generated",
                 }
+                or not _is_bounded_previous_managed_path(rel)
                 or rel_path.is_absolute()
                 or ".." in rel_path.parts
             ):
