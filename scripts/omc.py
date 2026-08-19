@@ -291,6 +291,21 @@ def main() -> int:
     state_session_status.add_argument("--reason", type=str, default=None)
     state_session_status.add_argument("--superseded-by", type=str, default=None)
 
+    state_decision_open = state_sub.add_parser("decision-open", help="Open an advisory local-commit decision.")
+    state_decision_open.add_argument("--target", type=Path, default=Path.cwd())
+    state_decision_open.add_argument("--decision-id", required=True)
+    state_decision_open.add_argument("--action", required=True)
+    state_decision_open.add_argument("--options-json", required=True)
+    state_decision_open.add_argument("--ttl-seconds", type=int, default=1800)
+
+    state_decision_resolve = state_sub.add_parser("decision-resolve", help="Resolve an advisory decision.")
+    state_decision_resolve.add_argument("--target", type=Path, default=Path.cwd())
+    state_decision_resolve.add_argument("--response", required=True)
+
+    state_decision_consume = state_sub.add_parser("decision-consume", help="Consume an advisory decision.")
+    state_decision_consume.add_argument("--target", type=Path, default=Path.cwd())
+    state_decision_consume.add_argument("--decision-id", required=True)
+
     state_run_start = state_sub.add_parser("run-start", help="Mark a guarded command as running.")
     state_run_start.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     state_run_start.add_argument("--command-name", required=True, help="Human-readable command name.")
@@ -563,6 +578,45 @@ def main() -> int:
                     *(["--session-id", args.session_id] if args.session_id else []),
                     *(["--reason", args.reason] if args.reason else []),
                     *(["--superseded-by", args.superseded_by] if args.superseded_by else []),
+                ],
+            )
+        if args.state_command == "decision-open":
+            return _run_script(
+                state_script,
+                [
+                    "decision-open",
+                    "--target",
+                    str(args.target),
+                    "--decision-id",
+                    args.decision_id,
+                    "--action",
+                    args.action,
+                    "--options-json",
+                    args.options_json,
+                    "--ttl-seconds",
+                    str(args.ttl_seconds),
+                ],
+            )
+        if args.state_command == "decision-resolve":
+            return _run_script(
+                state_script,
+                [
+                    "decision-resolve",
+                    "--target",
+                    str(args.target),
+                    "--response",
+                    args.response,
+                ],
+            )
+        if args.state_command == "decision-consume":
+            return _run_script(
+                state_script,
+                [
+                    "decision-consume",
+                    "--target",
+                    str(args.target),
+                    "--decision-id",
+                    args.decision_id,
                 ],
             )
         if args.state_command == "run-start":

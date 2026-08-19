@@ -42,6 +42,34 @@ if printf '%s' "${PROMPT}" | grep -qiE "omc-|/plan|/task|/review|/ship|/investig
   _EXPLICIT=1
 fi
 
+# 짧은 응답은 먼저 현재 세션의 단일 local-commit decision에 결합합니다.
+# 이 receipt는 UX 중복 질문 억제용이며 push/deploy 권한으로 사용하지 않습니다.
+if [ "${_EXPLICIT}" -eq 0 ] && [ "${#PROMPT}" -lt 30 ]; then
+  _OMC_CLI="${OMC_CLI_SCRIPT:-}"
+  if [ -z "${_OMC_CLI}" ] && [ -f "scripts/omc.py" ]; then
+    _OMC_CLI="scripts/omc.py"
+  elif [ -z "${_OMC_CLI}" ] && [ -f "omc_kit/scripts/omc.py" ]; then
+    _OMC_CLI="omc_kit/scripts/omc.py"
+  fi
+  if [ -n "${_OMC_CLI}" ]; then
+    _DECISION_RESULT=$("${PYTHON_BIN}" "${_OMC_CLI}" state decision-resolve --target . --response "${PROMPT}" 2>/dev/null || true)
+    _DECISION_RESOLVED=$(printf '%s' "${_DECISION_RESULT}" | "${PYTHON_BIN}" -c '
+import json, sys
+try:
+    print("1" if json.load(sys.stdin).get("resolved") is True else "0")
+except Exception:
+    print("0")
+' 2>/dev/null || echo "0")
+    if [ "${_DECISION_RESOLVED}" = "1" ]; then
+      echo ""
+      echo "[OMC] 승인된 현재 작업 계속 실행 — local commit acknowledgment inherited"
+      echo "  커밋 메시지는 저장소 규칙과 확정 범위에서 자동 생성합니다."
+      echo "  push/deploy/delete 승인은 포함하지 않습니다."
+      exit 0
+    fi
+  fi
+fi
+
 if [ "${_EXPLICIT}" -eq 0 ]; then
   # 완전 일치 패턴
   if printf '%s' "${PROMPT}" | grep -qE "^(진행|계속|ㅇ|응|고고|go|next|ok|ㅇㅇ|yes|계속해|그래|그렇게 진행|진행하자|계속하자)$"; then

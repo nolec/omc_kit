@@ -11,7 +11,7 @@ import re
 import subprocess
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -537,6 +537,453 @@ def _git_scope_snapshot(project_root: Path) -> dict[str, list[str]]:
         "omc_artifacts": sorted(dict.fromkeys(omc_artifacts)),
         "untracked": sorted(dict.fromkeys(untracked)),
     }
+
+
+def _is_local_commit_runtime_artifact(path: str) -> bool:
+    runtime_prefixes = (
+        ".omc/state/",
+        ".omc/context/",
+        ".omc/runs/",
+    )
+    runtime_files = {
+        ".omc/.DS_Store",
+        ".omc/agent-hook.log",
+        ".omc/allow_log.jsonl",
+        ".omc/context.md",
+        ".omc/cost_log.jsonl",
+        ".omc/install-receipt.json",
+        ".omc/install-source.json",
+        ".omc/notepad.md",
+        ".omc/pipeline.log",
+        ".omc/pipeline_run_result.json",
+        ".omc/pipeline_session.json",
+        ".omc/project-memory.json",
+        ".omc/summary.md",
+    }
+    return (
+        path in runtime_files
+        or path.startswith(runtime_prefixes)
+        or (path.startswith(".omc/native-review-") and path.endswith(".json"))
+    )
+
+
+def _decode_null_delimited_paths(payload: bytes) -> list[str]:
+    return [
+        path.decode("utf-8", errors="surrogateescape")
+        for path in payload.split(b"\0")
+        if path
+    ]
+
+
+def _local_commit_scope_snapshot(project_root: Path) -> dict[str, object]:
+    """Capture the local commit candidate independent of staged placement."""
+    tracked = subprocess.run(
+        ["git", "-C", str(project_root), "diff", "--name-only", "-z", "HEAD"],
+        check=False,
+        capture_output=True,
+    )
+    untracked_result = subprocess.run(
+        ["git", "-C", str(project_root), "ls-files", "--others", "--exclude-standard", "-z"],
+        check=False,
+        capture_output=True,
+    )
+    if tracked.returncode != 0 or untracked_result.returncode != 0:
+        raise ValueError("target is not a git repository")
+
+    tracked_paths = [
+        path
+        for path in _decode_null_delimited_paths(tracked.stdout)
+        if not _is_local_commit_runtime_artifact(path)
+    ]
+    untracked_paths = [
+        path
+        for path in _decode_null_delimited_paths(untracked_result.stdout)
+        if not _is_local_commit_runtime_artifact(path)
+    ]
+    paths = sorted(set(tracked_paths + untracked_paths))
+    untracked: list[dict[str, str]] = []
+    for path in untracked_paths:
+        candidate = project_root / path
+        digest = "missing"
+        if candidate.is_file():
+            digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+        untracked.append({"path": path, "sha256": digest})
+
+    diff_bytes = b""
+    if tracked_paths:
+        diff = subprocess.run(
+            ["git", "-C", str(project_root), "diff", "HEAD", "--binary", "--", *sorted(set(tracked_paths))],
+            check=False,
+            capture_output=True,
+        )
+        if diff.returncode != 0:
+            raise ValueError("failed to read local commit scope")
+        diff_bytes = diff.stdout
+    payload = {
+        "paths": paths,
+        "entries": {
+            path: _working_tree_commit_entry(project_root, path) for path in paths
+        },
+        "tracked_diff_sha256": hashlib.sha256(diff_bytes).hexdigest(),
+        "untracked": sorted(untracked, key=lambda item: item["path"]),
+    }
+    return payload
+
+
+def _git_blob_oid(project_root: Path, *, path: str, content: bytes) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(project_root), "hash-object", f"--path={path}", "--stdin"],
+        check=False,
+        input=content,
+        capture_output=True,
+        text=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise ValueError(f"cannot hash local commit content: {path}")
+    return result.stdout.decode("ascii").strip()
+
+
+def _tracked_index_mode(project_root: Path, path: str) -> str | None:
+    result = subprocess.run(
+        ["git", "-C", str(project_root), "ls-files", "-s", "-z", "--", path],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0 or not result.stdout:
+        return None
+    metadata = result.stdout.split(b"\t", 1)[0].split()
+    return metadata[0].decode("ascii") if metadata else None
+
+
+def _working_tree_commit_entry(project_root: Path, path: str) -> dict[str, str]:
+    candidate = project_root / path
+    if candidate.is_symlink():
+        content = str(candidate.readlink()).encode("utf-8", errors="surrogateescape")
+        return {
+            "mode": "120000",
+            "type": "blob",
+            "oid": _git_blob_oid(project_root, path=path, content=content),
+        }
+    if not candidate.exists():
+        return {"mode": "missing", "type": "missing", "oid": "missing"}
+    if candidate.is_dir():
+        result = subprocess.run(
+            ["git", "-C", str(candidate), "rev-parse", "--verify", "HEAD^{commit}"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            raise ValueError(f"unsupported local commit path: {path}")
+        return {"mode": "160000", "type": "commit", "oid": result.stdout.strip()}
+    if not candidate.is_file():
+        raise ValueError(f"unsupported local commit path: {path}")
+
+    indexed_mode = _tracked_index_mode(project_root, path)
+    filemode = subprocess.run(
+        ["git", "-C", str(project_root), "config", "--bool", "core.filemode"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    honors_filemode = filemode.returncode != 0 or filemode.stdout.strip() != "false"
+    if indexed_mode and not honors_filemode:
+        mode = indexed_mode
+    else:
+        mode = "100755" if candidate.stat().st_mode & 0o111 else "100644"
+    return {
+        "mode": mode,
+        "type": "blob",
+        "oid": _git_blob_oid(project_root, path=path, content=candidate.read_bytes()),
+    }
+
+
+def _commit_tree_entry(project_root: Path, *, head: str, path: str) -> dict[str, str]:
+    result = subprocess.run(
+        ["git", "-C", str(project_root), "ls-tree", "-z", head, "--", path],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise ValueError(f"cannot read committed content: {path}")
+    if not result.stdout:
+        return {"mode": "missing", "type": "missing", "oid": "missing"}
+    metadata = result.stdout.split(b"\t", 1)[0].split()
+    if len(metadata) != 3:
+        raise ValueError(f"invalid committed content metadata: {path}")
+    return {
+        "mode": metadata[0].decode("ascii"),
+        "type": metadata[1].decode("ascii"),
+        "oid": metadata[2].decode("ascii"),
+    }
+
+
+def _local_commit_scope_fingerprint(project_root: Path) -> str:
+    payload = _local_commit_scope_snapshot(project_root)
+    canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _git_commit(project_root: Path) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "--verify", "HEAD^{commit}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise ValueError("git HEAD cannot be resolved")
+    return result.stdout.strip()
+
+
+def _committed_paths(project_root: Path, *, base_head: str, head: str) -> list[str]:
+    result = subprocess.run(
+        ["git", "-C", str(project_root), "diff", "--name-only", "-z", base_head, head],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise ValueError("committed local scope cannot be resolved")
+    return sorted(
+        path
+        for path in _decode_null_delimited_paths(result.stdout)
+        if not _is_local_commit_runtime_artifact(path)
+    )
+
+
+def _normalize_decision_response(value: str) -> str:
+    return re.sub(r"\s+", "", value).casefold()
+
+
+def _decision_history(latest: dict[str, object]) -> list[dict[str, object]]:
+    history = latest.get("decision_history")
+    return [dict(item) for item in history if isinstance(item, dict)] if isinstance(history, list) else []
+
+
+def open_pending_decision(
+    project_root: Path,
+    *,
+    decision_id: str,
+    action: str,
+    options: list[dict[str, object]],
+    ttl_seconds: int = 1800,
+) -> dict[str, object]:
+    """Open an advisory, single-session acknowledgement for a local commit."""
+    if action != "local_commit":
+        raise ValueError("only local_commit decisions may inherit acknowledgement")
+    if not decision_id.strip():
+        raise ValueError("decision_id is required")
+    if not 1 <= ttl_seconds <= 3600:
+        raise ValueError("ttl_seconds must be between 1 and 3600")
+    if not options:
+        raise ValueError("at least one decision option is required")
+
+    normalized_options: list[dict[str, object]] = []
+    seen_aliases: set[str] = set()
+    for raw in options:
+        if not isinstance(raw, dict):
+            raise ValueError("each option must be a JSON object")
+        option_id = str(raw.get("id", "")).strip()
+        aliases = raw.get("aliases")
+        if not option_id or not isinstance(aliases, list) or not aliases:
+            raise ValueError("each option requires id and aliases")
+        normalized_aliases = []
+        for alias in aliases:
+            normalized = _normalize_decision_response(str(alias))
+            if not normalized or normalized in seen_aliases:
+                raise ValueError("decision aliases must be non-empty and unique")
+            seen_aliases.add(normalized)
+            normalized_aliases.append(str(alias))
+        raw_paths = raw.get("paths")
+        if raw_paths is None:
+            normalized_paths = None
+        elif not isinstance(raw_paths, list) or not raw_paths:
+            raise ValueError("option paths must be a non-empty JSON array")
+        else:
+            normalized_paths = sorted(
+                {
+                    str(path)
+                    for path in raw_paths
+                    if isinstance(path, str) and str(path)
+                }
+            )
+            if len(normalized_paths) != len(raw_paths):
+                raise ValueError("option paths must be non-empty unique strings")
+        normalized_options.append(
+            {
+                "id": option_id,
+                "aliases": normalized_aliases,
+                "value": raw.get("value"),
+                "paths": normalized_paths,
+            }
+        )
+    if len(normalized_options) > 1 and any(
+        option["paths"] is None for option in normalized_options
+    ):
+        raise ValueError("each option requires paths when multiple options are present")
+
+    with _omc_lock(project_root):
+        _ensure_tree(project_root)
+        latest = _read_json(_latest_path(project_root), {})
+        session_id = str(latest.get("latest_confirmed_session_id") or "")
+        latest_confirmation = latest.get("latest_confirmation")
+        if (
+            not session_id
+            or latest.get("latest_session_id") != session_id
+            or not isinstance(latest_confirmation, dict)
+            or latest_confirmation.get("status") != "confirmed"
+        ):
+            raise ValueError("a current confirmed session is required")
+        now = _now()
+        scope = _local_commit_scope_snapshot(project_root)
+        available_paths = set(scope["paths"])
+        for option in normalized_options:
+            option_paths = option["paths"]
+            if option_paths is None:
+                option_paths = list(scope["paths"])
+                option["paths"] = option_paths
+            if not set(option_paths).issubset(available_paths):
+                raise ValueError("option paths must belong to the current local commit scope")
+        history = _decision_history(latest)
+        current = latest.get("pending_decision")
+        if isinstance(current, dict) and current.get("status") in {"pending", "acknowledged"}:
+            superseded = dict(current)
+            superseded["status"] = "superseded"
+            superseded["superseded_at"] = now.isoformat(timespec="seconds")
+            history.append(superseded)
+        decision = {
+            "schema_version": 1,
+            "decision_id": decision_id.strip(),
+            "session_id": session_id,
+            "action": action,
+            "options": normalized_options,
+            "options_hash": hashlib.sha256(
+                json.dumps(normalized_options, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+            "base_head": _git_commit(project_root),
+            "scope_paths": scope["paths"],
+            "scope_entries": scope["entries"],
+            "scope_fingerprint": hashlib.sha256(
+                json.dumps(scope, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest(),
+            "status": "pending",
+            "selected_option": None,
+            "created_at": now.isoformat(timespec="seconds"),
+            "expires_at": (now + timedelta(seconds=ttl_seconds)).isoformat(timespec="seconds"),
+            "acknowledged_at": None,
+            "consumed_at": None,
+            "authorization": False,
+        }
+        latest["pending_decision"] = decision
+        latest["decision_history"] = history[-20:]
+        latest["updated_at"] = _iso_now()
+        _write_json(_latest_path(project_root), latest)
+        return decision
+
+
+def resolve_pending_decision(project_root: Path, *, response: str) -> dict[str, object]:
+    with _omc_lock(project_root):
+        _ensure_tree(project_root)
+        latest = _read_json(_latest_path(project_root), {})
+        decision = latest.get("pending_decision")
+        if not isinstance(decision, dict):
+            return {"resolved": False, "reason": "no_pending_decision"}
+        if decision.get("action") != "local_commit" or decision.get("authorization") is not False:
+            return {"resolved": False, "reason": "unsupported_action"}
+        if decision.get("status") != "pending":
+            return {"resolved": False, "reason": "decision_not_pending"}
+        if decision.get("session_id") != latest.get("latest_confirmed_session_id"):
+            decision["status"] = "superseded"
+            _write_json(_latest_path(project_root), latest)
+            return {"resolved": False, "reason": "session_changed"}
+        try:
+            expires_at = datetime.fromisoformat(str(decision.get("expires_at")))
+        except ValueError:
+            expires_at = _now() - timedelta(seconds=1)
+        if expires_at <= _now():
+            decision["status"] = "expired"
+            _write_json(_latest_path(project_root), latest)
+            return {"resolved": False, "reason": "expired"}
+        if decision.get("scope_fingerprint") != _local_commit_scope_fingerprint(project_root):
+            return {"resolved": False, "reason": "scope_changed"}
+
+        normalized = _normalize_decision_response(response)
+        matches = []
+        for option in decision.get("options", []):
+            if not isinstance(option, dict):
+                continue
+            aliases = {_normalize_decision_response(str(alias)) for alias in option.get("aliases", [])}
+            if normalized in aliases:
+                matches.append(option)
+        if len(matches) != 1:
+            return {"resolved": False, "reason": "response_not_unique"}
+
+        selected = matches[0]
+        selected_paths = selected.get("paths")
+        scope_entries = decision.get("scope_entries")
+        if not isinstance(selected_paths, list) or not isinstance(scope_entries, dict):
+            return {"resolved": False, "reason": "invalid_option_scope"}
+        decision["status"] = "acknowledged"
+        decision["selected_option"] = selected.get("id")
+        decision["selected_value"] = selected.get("value")
+        decision["selected_scope_paths"] = list(selected_paths)
+        decision["selected_scope_entries"] = {
+            path: scope_entries[path]
+            for path in selected_paths
+            if isinstance(path, str) and path in scope_entries
+        }
+        decision["acknowledged_at"] = _iso_now()
+        latest["updated_at"] = _iso_now()
+        _write_json(_latest_path(project_root), latest)
+        return {
+            "resolved": True,
+            "reason": "acknowledged",
+            "decision_id": decision.get("decision_id"),
+            "action": decision.get("action"),
+            "selected_option": selected.get("id"),
+            "selected_value": selected.get("value"),
+        }
+
+
+def consume_pending_decision(project_root: Path, *, decision_id: str) -> dict[str, object]:
+    with _omc_lock(project_root):
+        _ensure_tree(project_root)
+        latest = _read_json(_latest_path(project_root), {})
+        decision = latest.get("pending_decision")
+        if not isinstance(decision, dict) or decision.get("decision_id") != decision_id:
+            return {"consumed": False, "reason": "decision_not_found"}
+        if decision.get("status") != "acknowledged":
+            return {"consumed": False, "reason": "decision_not_acknowledged"}
+        if (
+            decision.get("session_id") != latest.get("latest_session_id")
+            or decision.get("session_id") != latest.get("latest_confirmed_session_id")
+        ):
+            return {"consumed": False, "reason": "session_changed"}
+        base_head = str(decision.get("base_head") or "")
+        head = _git_commit(project_root)
+        if not base_head or head == base_head:
+            return {"consumed": False, "reason": "commit_not_observed"}
+        committed_paths = _committed_paths(project_root, base_head=base_head, head=head)
+        scope_paths = {
+            str(path)
+            for path in decision.get("selected_scope_paths", [])
+            if isinstance(path, str)
+        }
+        if not committed_paths or not set(committed_paths).issubset(scope_paths):
+            return {"consumed": False, "reason": "commit_scope_mismatch"}
+        scope_entries = decision.get("selected_scope_entries")
+        if not isinstance(scope_entries, dict) or any(
+            scope_entries.get(path) != _commit_tree_entry(project_root, head=head, path=path)
+            for path in committed_paths
+        ):
+            return {"consumed": False, "reason": "commit_content_mismatch"}
+        decision["status"] = "consumed"
+        decision["consumed_at"] = _iso_now()
+        decision["commit_head"] = head
+        decision["committed_paths"] = committed_paths
+        latest["updated_at"] = _iso_now()
+        _write_json(_latest_path(project_root), latest)
+        return {"consumed": True, "decision_id": decision_id, "action": decision.get("action")}
 
 
 def _format_scope_bucket(paths: list[str], *, empty: str = "없음", limit: int = 4) -> str:
@@ -1229,6 +1676,13 @@ def record_session(
             },
         )
         prev_latest_session_id = prev_latest.get("latest_session_id")
+        decision_history = _decision_history(prev_latest)
+        previous_decision = prev_latest.get("pending_decision")
+        if isinstance(previous_decision, dict) and previous_decision.get("status") in {"pending", "acknowledged"}:
+            superseded_decision = dict(previous_decision)
+            superseded_decision["status"] = "superseded"
+            superseded_decision["superseded_at"] = _iso_now()
+            decision_history.append(superseded_decision)
         session_id = f"{_slug_now()}-{uuid.uuid4().hex[:8]}"
         resolved_work_class = _resolve_work_class(work_class, role_ids)
         entry = {
@@ -1293,6 +1747,7 @@ def record_session(
                 "confirmed_at": entry["confirmation"]["confirmed_at"],
                 "source": confirmation_source if confirmed else None,
             },
+            "decision_history": decision_history[-20:],
             "active_run_id": prev_latest.get("active_run_id"),
             "latest_run_id": prev_latest.get("latest_run_id"),
         }
@@ -1719,6 +2174,21 @@ def _parser() -> argparse.ArgumentParser:
     session_status_cmd.add_argument("--reason", type=str, default=None, help="Short status reason.")
     session_status_cmd.add_argument("--superseded-by", type=str, default=None, help="Newer session id when superseded.")
 
+    decision_open = sub.add_parser("decision-open", help="Open an advisory local-commit decision.")
+    decision_open.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+    decision_open.add_argument("--decision-id", required=True)
+    decision_open.add_argument("--action", required=True)
+    decision_open.add_argument("--options-json", required=True, help="JSON array of id/aliases/value options.")
+    decision_open.add_argument("--ttl-seconds", type=int, default=1800)
+
+    decision_resolve = sub.add_parser("decision-resolve", help="Resolve the current advisory decision.")
+    decision_resolve.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+    decision_resolve.add_argument("--response", required=True)
+
+    decision_consume = sub.add_parser("decision-consume", help="Consume an acknowledged local-commit decision.")
+    decision_consume.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+    decision_consume.add_argument("--decision-id", required=True)
+
     run_start = sub.add_parser("run-start", help="Mark a guarded command as running.")
     run_start.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     run_start.add_argument("--command-name", dest="command_name", required=True, help="Human-readable command name.")
@@ -1826,6 +2296,44 @@ def main() -> int:
         print(f"Updated session: {session.get('session_id')} status={session.get('lifecycle', {}).get('status')}")
         print(status(omc_utils.project_root(args.target)))
         return 0
+
+    if args.command == "decision-open":
+        try:
+            options = json.loads(args.options_json)
+            if not isinstance(options, list):
+                raise ValueError("options_json must be a JSON array")
+            decision = open_pending_decision(
+                omc_utils.project_root(args.target),
+                decision_id=args.decision_id,
+                action=args.action,
+                options=options,
+                ttl_seconds=int(args.ttl_seconds),
+            )
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+            print(json.dumps({"opened": False, "reason": str(exc)}, ensure_ascii=False))
+            return 2
+        print(json.dumps({"opened": True, **decision}, ensure_ascii=False))
+        return 0
+
+    if args.command == "decision-resolve":
+        try:
+            result = resolve_pending_decision(
+                omc_utils.project_root(args.target), response=args.response
+            )
+        except (OSError, ValueError) as exc:
+            result = {"resolved": False, "reason": str(exc)}
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("resolved") is True else 2
+
+    if args.command == "decision-consume":
+        try:
+            result = consume_pending_decision(
+                omc_utils.project_root(args.target), decision_id=args.decision_id
+            )
+        except (OSError, ValueError) as exc:
+            result = {"consumed": False, "reason": str(exc)}
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("consumed") is True else 2
 
     if args.command == "run-start":
         run = start_run(omc_utils.project_root(args.target), command_name=args.command_name, summary=args.summary)

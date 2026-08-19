@@ -660,6 +660,631 @@ def test_sync_session_stores_latest_skill_in_latest_json(tmp_path: Path):
     )
 
 
+def test_local_commit_decision_is_scope_bound_and_single_use(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    session_id = _sync_task_session(target, "commit approved changes")
+    options = json.dumps(
+        [
+            {
+                "id": "1",
+                "aliases": ["1", "1번"],
+                "value": "selected-group",
+            }
+        ],
+        ensure_ascii=False,
+    )
+
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-group",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+        "--ttl-seconds",
+        "600",
+    )
+    assert opened.returncode == 0, opened.stderr
+
+    resolved = _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "1번",
+    )
+    assert resolved.returncode == 0, resolved.stderr
+    result = json.loads(resolved.stdout)
+    assert result["resolved"] is True
+    assert result["action"] == "local_commit"
+    assert result["selected_option"] == "1"
+
+    latest = _read_json(target / ".omc" / "state" / "latest.json")
+    decision = latest["pending_decision"]
+    assert decision["session_id"] == session_id
+    assert decision["status"] == "acknowledged"
+    assert decision["scope_fingerprint"]
+
+    subprocess.run(["git", "add", "app.py"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-qm", "update app"], cwd=target, check=True)
+    consumed = _run(
+        "state",
+        "decision-consume",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-group",
+    )
+    assert consumed.returncode == 0, consumed.stderr
+    replay = _run(
+        "state",
+        "decision-consume",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-group",
+    )
+    assert replay.returncode != 0
+
+
+def test_local_commit_decision_rejects_commit_from_unselected_group(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    (target / "other.py").write_text("other = 1\n", encoding="utf-8")
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _sync_task_session(target, "commit selected group")
+    options = json.dumps(
+        [
+            {"id": "1", "aliases": ["1"], "value": "app", "paths": ["app.py"]},
+            {"id": "2", "aliases": ["2"], "value": "other", "paths": ["other.py"]},
+        ],
+        ensure_ascii=False,
+    )
+
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "grouped-commit",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    )
+    assert opened.returncode == 0, opened.stderr
+    resolved = _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "1",
+    )
+    assert resolved.returncode == 0, resolved.stderr
+
+    subprocess.run(["git", "add", "other.py"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-qm", "commit unselected group"], cwd=target, check=True)
+    consumed = _run(
+        "state",
+        "decision-consume",
+        "--target",
+        str(target),
+        "--decision-id",
+        "grouped-commit",
+    )
+    assert consumed.returncode != 0
+    assert json.loads(consumed.stdout)["reason"] == "commit_scope_mismatch"
+
+
+def test_local_commit_decision_consumes_commit_from_selected_group(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    (target / "other.py").write_text("other = 1\n", encoding="utf-8")
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _sync_task_session(target, "commit selected group")
+    options = json.dumps(
+        [
+            {"id": "1", "aliases": ["1"], "value": "app", "paths": ["app.py"]},
+            {"id": "2", "aliases": ["2"], "value": "other", "paths": ["other.py"]},
+        ],
+        ensure_ascii=False,
+    )
+
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "grouped-commit",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    )
+    assert opened.returncode == 0, opened.stderr
+    resolved = _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "1",
+    )
+    assert resolved.returncode == 0, resolved.stderr
+
+    subprocess.run(["git", "add", "app.py"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-qm", "commit selected group"], cwd=target, check=True)
+    consumed = _run(
+        "state",
+        "decision-consume",
+        "--target",
+        str(target),
+        "--decision-id",
+        "grouped-commit",
+    )
+    assert consumed.returncode == 0, consumed.stderr
+    assert json.loads(consumed.stdout)["consumed"] is True
+
+
+def test_local_commit_decision_requires_paths_for_multiple_groups(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _sync_task_session(target, "commit selected group")
+    options = json.dumps(
+        [
+            {"id": "1", "aliases": ["1"], "value": "app"},
+            {"id": "2", "aliases": ["2"], "value": "other"},
+        ],
+        ensure_ascii=False,
+    )
+
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "grouped-commit",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    )
+    assert opened.returncode != 0
+    assert "paths" in json.loads(opened.stdout)["reason"]
+
+
+def test_local_commit_decision_rejects_non_object_option_with_structured_error(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    _sync_task_session(target, "commit selected group")
+
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "malformed-option",
+        "--action",
+        "local_commit",
+        "--options-json",
+        "[null]",
+    )
+    assert opened.returncode == 2
+    result = json.loads(opened.stdout)
+    assert result["opened"] is False
+    assert result["reason"] == "each option must be a JSON object"
+    assert "Traceback" not in opened.stderr
+
+
+def test_local_commit_decision_rejects_stale_confirmed_session(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    _sync_task_session(target, "old confirmed task")
+    pending = _run(
+        "state",
+        "record",
+        "--target",
+        str(target),
+        "--mode",
+        "autopilot",
+        "--title",
+        "omc-task",
+        "--request",
+        "new pending task",
+        "--roles",
+        "senior_coding",
+        "--work-class",
+        "implementation",
+    )
+    assert pending.returncode == 0, pending.stderr
+    options = json.dumps(
+        [{"id": "confirm", "aliases": ["확인"], "value": "commit"}],
+        ensure_ascii=False,
+    )
+
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "stale-commit",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    )
+    assert opened.returncode != 0
+    assert "current confirmed session" in json.loads(opened.stdout)["reason"]
+
+
+def test_local_commit_decision_rejects_committed_path_outside_open_scope(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _sync_task_session(target, "commit approved changes")
+    options = json.dumps(
+        [{"id": "confirm", "aliases": ["확인"], "value": "commit"}],
+        ensure_ascii=False,
+    )
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-confirm",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    )
+    assert opened.returncode == 0, opened.stderr
+    resolved = _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "확인",
+    )
+    assert resolved.returncode == 0, resolved.stderr
+
+    (target / "outside.py").write_text("outside = True\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py", "outside.py"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-qm", "commit outside scope"], cwd=target, check=True)
+    consumed = _run(
+        "state",
+        "decision-consume",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-confirm",
+    )
+    assert consumed.returncode != 0
+    assert json.loads(consumed.stdout)["reason"] == "commit_scope_mismatch"
+
+
+def test_local_commit_decision_rejects_content_changed_after_acknowledgement(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _sync_task_session(target, "commit approved changes")
+    options = json.dumps(
+        [{"id": "confirm", "aliases": ["확인"], "value": "commit"}],
+        ensure_ascii=False,
+    )
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-confirm",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    )
+    assert opened.returncode == 0, opened.stderr
+    resolved = _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "확인",
+    )
+    assert resolved.returncode == 0, resolved.stderr
+
+    (target / "app.py").write_text("value = 'unapproved'\n", encoding="utf-8")
+    subprocess.run(["git", "add", "app.py"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-qm", "replace approved content"], cwd=target, check=True)
+    consumed = _run(
+        "state",
+        "decision-consume",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-confirm",
+    )
+    assert consumed.returncode != 0
+    assert json.loads(consumed.stdout)["reason"] == "commit_content_mismatch"
+
+
+def test_local_commit_decision_rejects_scope_drift_and_privileged_action(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    _sync_task_session(target, "commit approved changes")
+    options = json.dumps(
+        [{"id": "confirm", "aliases": ["응", "확인"], "value": "commit"}],
+        ensure_ascii=False,
+    )
+
+    privileged = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "push",
+        "--action",
+        "push",
+        "--options-json",
+        options,
+    )
+    assert privileged.returncode != 0
+
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-confirm",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    )
+    assert opened.returncode == 0, opened.stderr
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+
+    resolved = _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "응",
+    )
+    assert resolved.returncode != 0
+    result = json.loads(resolved.stdout)
+    assert result["resolved"] is False
+    assert result["reason"] == "scope_changed"
+
+
+def test_local_commit_decision_survives_staging_but_expires(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _sync_task_session(target, "commit approved changes")
+    options = json.dumps(
+        [{"id": "confirm", "aliases": ["확인"], "value": "commit"}],
+        ensure_ascii=False,
+    )
+
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-confirm",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    )
+    assert opened.returncode == 0, opened.stderr
+    subprocess.run(["git", "add", "app.py"], cwd=target, check=True)
+
+    resolved = _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "확인",
+    )
+    assert resolved.returncode == 0, resolved.stderr
+
+    latest_path = target / ".omc" / "state" / "latest.json"
+    latest = _read_json(latest_path)
+    latest["pending_decision"]["status"] = "pending"
+    latest["pending_decision"]["expires_at"] = "2000-01-01T00:00:00+00:00"
+    latest_path.write_text(json.dumps(latest), encoding="utf-8")
+    expired = _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "확인",
+    )
+    assert expired.returncode != 0
+    assert json.loads(expired.stdout)["reason"] == "expired"
+
+
+def test_local_commit_decision_is_superseded_by_new_session(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    _sync_task_session(target, "commit approved changes")
+    options = json.dumps(
+        [{"id": "confirm", "aliases": ["확인"], "value": "commit"}],
+        ensure_ascii=False,
+    )
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-confirm",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    )
+    assert opened.returncode == 0, opened.stderr
+
+    _sync_task_session(target, "different task")
+    resolved = _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "확인",
+    )
+    assert resolved.returncode != 0
+    assert json.loads(resolved.stdout)["reason"] == "no_pending_decision"
+    latest = _read_json(target / ".omc" / "state" / "latest.json")
+    assert latest["decision_history"][-1]["status"] == "superseded"
+
+
+def test_local_commit_decision_rejects_duplicate_aliases(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    _sync_task_session(target, "commit approved changes")
+    options = json.dumps(
+        [
+            {"id": "one", "aliases": ["1"], "value": "group-one"},
+            {"id": "two", "aliases": [" 1 "], "value": "group-two"},
+        ],
+        ensure_ascii=False,
+    )
+
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-group",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    )
+    assert opened.returncode != 0
+    assert "unique" in json.loads(opened.stdout)["reason"]
+
+
+def test_local_commit_decision_ignores_tracked_omc_state_changes(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    init = _run("state", "init", "--target", str(target))
+    assert init.returncode == 0, init.stderr
+    subprocess.run(["git", "add", ".omc"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-qm", "track omc state"], cwd=target, check=True)
+    _sync_task_session(target, "commit approved changes")
+    options = json.dumps(
+        [{"id": "confirm", "aliases": ["확인"], "value": "commit"}],
+        ensure_ascii=False,
+    )
+
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-confirm",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    )
+    assert opened.returncode == 0, opened.stderr
+    resolved = _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "확인",
+    )
+    assert resolved.returncode == 0, resolved.stdout
+
+
+def test_local_commit_decision_rejects_unapproved_tracked_omc_policy(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    init = _run("state", "init", "--target", str(target))
+    assert init.returncode == 0, init.stderr
+    subprocess.run(["git", "add", ".omc"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-qm", "track omc baseline"], cwd=target, check=True)
+    _sync_task_session(target, "commit app only")
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    (target / ".omc" / "policy.json").write_text(
+        json.dumps({"enforce_confirm": False}), encoding="utf-8"
+    )
+    options = json.dumps(
+        [{"id": "1", "aliases": ["1"], "value": "app", "paths": ["app.py"]}],
+        ensure_ascii=False,
+    )
+
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "app-only",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    )
+    assert opened.returncode == 0, opened.stderr
+    resolved = _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "1",
+    )
+    assert resolved.returncode == 0, resolved.stderr
+
+    subprocess.run(["git", "add", "app.py", ".omc/policy.json"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-qm", "app plus unapproved policy"], cwd=target, check=True)
+    consumed = _run(
+        "state",
+        "decision-consume",
+        "--target",
+        str(target),
+        "--decision-id",
+        "app-only",
+    )
+    assert consumed.returncode != 0
+    assert json.loads(consumed.stdout)["reason"] == "commit_scope_mismatch"
+
+
 def test_notepad_marks_active_session_as_cleanup_needed_when_reason_exists(tmp_path: Path):
     target = tmp_path / "repo"
     target.mkdir()

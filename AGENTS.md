@@ -405,6 +405,18 @@ python3 scripts/omc_autopilot.py status
 사용자가 "진행하자", "계속해", "응" 같은 짧은 승인을 해도
 **명시적으로 다음 스킬 이름이 언급되지 않으면 자동 진입 금지.**
 
+### 예외: 이미 제시한 local commit 선택의 단일 승인 상속
+
+새 스킬 진입이 아니라, 현재 세션에서 이미 범위와 선택지를 제시한 **로컬 커밋**을 확정하는 짧은 응답은 다시 묻지 않습니다.
+
+- 선택지를 보여주기 직전에 `python3 scripts/omc.py state decision-open --target . --decision-id <id> --action local_commit --options-json '<options>'`으로 pending decision을 기록합니다.
+- 여러 커밋 그룹을 제시할 때는 각 option에 `paths` 배열을 넣어 선택 그룹의 파일 범위를 명시합니다. 단일 option은 생략 시 현재 로컬 커밋 범위 전체를 사용합니다.
+- 같은 세션·같은 변경 내용·TTL 이내의 정확한 별칭(`1`, `1번`, `확인` 등)만 상속합니다. staging 위치만 바뀐 것은 같은 범위로 봅니다.
+- 범위나 세션이 바뀌거나, 만료·중복 별칭·불명확한 응답이면 상속하지 않고 다시 확인합니다.
+- 범위와 의도가 확정됐으면 커밋 메시지는 저장소 규칙에 맞게 자동 작성하며 별도로 재확인하지 않습니다.
+- 로컬 커밋 성공 후 `python3 scripts/omc.py state decision-consume --target . --decision-id <id>`로 receipt를 1회 소비합니다.
+- 이 상속은 UX acknowledgment일 뿐 권한 승인이 아닙니다. push, PR, deploy, delete, reset 등은 항상 별도 요청이 필요합니다.
+
 | 완료된 스킬 | 금지 동작 |
 |---|---|
 | omc-office-hours | PROCEED 판정 후 자동으로 omc-plan 실행 금지 |

@@ -181,6 +181,21 @@ python3 scripts/omc_pipeline_guard.py status
 - 입력이 "응", "ㅇ", "진행하자", "계속해" 등 15자 미만 모호 패턴
 - 명시적 스킬명(`omc-task`, `/plan` 등) 없을 때
 
+단, 에이전트가 현재 세션의 로컬 커밋 선택지를 `state decision-open`으로 먼저 기록했다면 정확히 일치하는 짧은 선택은 현재 작업 승인으로 상속됩니다. 같은 세션과 변경 범위에서만 유효하고, 커밋 성공 후 `state decision-consume`으로 한 번만 소비됩니다. push·PR·deploy·delete 권한은 상속하지 않습니다.
+
+```bash
+# 선택지를 사용자에게 보여주기 직전에 기록
+python3 scripts/omc.py state decision-open --target . \
+  --decision-id commit-group \
+  --action local_commit \
+  --options-json '[{"id":"1","aliases":["1","1번"],"value":"selected-group"}]'
+
+# 커밋 성공 후 receipt 소비
+python3 scripts/omc.py state decision-consume --target . --decision-id commit-group
+```
+
+여러 커밋 그룹을 제시한다면 각 option에 `"paths":["path/to/file"]`을 넣어야 합니다. 선택되지 않은 그룹의 파일은 승인된 커밋으로 소비되지 않습니다.
+
 출력 예시:
 ```
 [OMC] 모호한 진행 요청입니다 — 무엇을 진행할까요?
