@@ -16,7 +16,6 @@ MAX_NON_EMPTY_LINES = 40
 REQUIRED_RETRO_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-retro" / "SKILL.md",
     ROOT / "templates" / ".agents" / "skills" / "omc-retro" / "SKILL.md",
-    ROOT / "templates" / ".agent" / "skills" / "omc-retro" / "SKILL.md",
 ]
 OPTIONAL_RETRO_SKILL_PATHS = [
     ROOT / ".agent" / "skills" / "omc-retro" / "SKILL.md",

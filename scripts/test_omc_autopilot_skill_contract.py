@@ -19,7 +19,6 @@ REQUIRED_SKILL_PATHS = [
 ]
 OPTIONAL_SKILL_PATHS = [
     ROOT / ".agent" / "skills" / "omc-autopilot" / "SKILL.md",
-    ROOT / "templates" / ".agent" / "skills" / "omc-autopilot" / "SKILL.md",
 ]
 AUTOPILOT_SCRIPT = ROOT / "scripts" / "omc_autopilot.py"
 

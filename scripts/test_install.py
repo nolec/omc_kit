@@ -53,6 +53,47 @@ class TestCopy(unittest.TestCase):
                 _install._copy(src, dst, force=False)
 
 
+class TestSkillTemplateSsot(unittest.TestCase):
+    def test_singular_skill_template_tree_is_not_a_second_source(self):
+        root = Path(__file__).parent.parent
+        singular_templates = root / "templates" / ".agent" / "skills"
+
+        self.assertFalse(
+            singular_templates.exists()
+            and any(path.is_file() for path in singular_templates.rglob("*"))
+        )
+
+    def test_installer_generates_both_skill_surfaces_from_plural_source(self):
+        root = Path(__file__).parent.parent
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            target.mkdir()
+            result = subprocess.run(
+                [sys.executable, str(root / "scripts" / "install.py"), "--target", str(target)],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            canonical = target / ".agents" / "skills"
+            compatibility = target / ".agent" / "skills"
+            canonical_files = {
+                path.relative_to(canonical): path.read_bytes()
+                for path in canonical.rglob("*")
+                if path.is_file()
+            }
+            compatibility_files = {
+                path.relative_to(compatibility): path.read_bytes()
+                for path in compatibility.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(compatibility_files, canonical_files)
+            self.assertTrue((target / ".agent" / "workflows").is_dir())
+            self.assertTrue((target / ".agent" / "rules").is_dir())
+
+
 class TestInstallManifest(unittest.TestCase):
     def test_auto_update_status_is_up_to_date_for_matching_receipt(self):
         with tempfile.TemporaryDirectory() as tmp:

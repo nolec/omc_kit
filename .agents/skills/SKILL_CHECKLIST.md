@@ -49,7 +49,6 @@ SKILL.md 품질 체크리스트
 
 ```bash
 cp .agents/skills/SKILL_TEMPLATE.md .agents/skills/omc-[NAME]/SKILL.md
-cp .agents/skills/SKILL_TEMPLATE.md .agent/skills/omc-[NAME]/SKILL.md
 ```
 
 ---
@@ -64,13 +63,13 @@ NEW SKILL REGISTRATION CHECKLIST
 스킬: omc-[NAME]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-[ 1 ] Cursor (Agent Skills)
-      파일: .agent/skills/omc-[NAME]/SKILL.md
+[ 1 ] Canonical Agent Skill
+      파일: .agents/skills/omc-[NAME]/SKILL.md
       확인: skill_name, description, 트리거 키워드 포함
 
-[ 2 ] Codex (Agent Skills)
-      파일: .agents/skills/omc-[NAME]/SKILL.md
-      확인: .agent/skills와 동일 내용 복사
+[ 2 ] Antigravity 설치 미러
+      파일: setup 후 .agent/skills/omc-[NAME]/SKILL.md
+      확인: install.py가 canonical skill과 동일하게 생성
 
 [ 3 ] Claude Code (Slash Command)
       파일: .claude/commands/[NAME].md
@@ -97,7 +96,6 @@ NEW SKILL REGISTRATION CHECKLIST
 [ 9 ] omc_kit SSOT 동기화
       커맨드:
         OMC_KIT=$(cat .omc/hub.path)
-        cp .agent/skills/omc-[NAME]/SKILL.md  $OMC_KIT/templates/.agent/skills/omc-[NAME]/SKILL.md
         cp .agents/skills/omc-[NAME]/SKILL.md $OMC_KIT/templates/.agents/skills/omc-[NAME]/SKILL.md
         cp .claude/commands/[NAME].md          $OMC_KIT/templates/.claude/commands/[NAME].md
         cp .gemini/commands/omc-commands.md    $OMC_KIT/templates/.gemini/commands/omc-commands.md
@@ -125,16 +123,12 @@ if [ -z "$OMC_KIT" ] || [ ! -d "$OMC_KIT" ]; then
   exit 1
 fi
 
-# 1-2: Cursor + Codex 스킬 디렉토리 생성 (템플릿 복사)
-mkdir -p .agent/skills/omc-$SKILL_NAME
+# 1: canonical 스킬 디렉토리 생성
 mkdir -p .agents/skills/omc-$SKILL_NAME
-cp .agents/skills/SKILL_TEMPLATE.md .agent/skills/omc-$SKILL_NAME/SKILL.md
 cp .agents/skills/SKILL_TEMPLATE.md .agents/skills/omc-$SKILL_NAME/SKILL.md
 
 # 9: SSOT 동기화 (파일 작성 후 실행)
-mkdir -p $OMC_KIT/templates/.agent/skills/omc-$SKILL_NAME
 mkdir -p $OMC_KIT/templates/.agents/skills/omc-$SKILL_NAME
-cp .agent/skills/omc-$SKILL_NAME/SKILL.md  $OMC_KIT/templates/.agent/skills/omc-$SKILL_NAME/SKILL.md
 cp .agents/skills/omc-$SKILL_NAME/SKILL.md $OMC_KIT/templates/.agents/skills/omc-$SKILL_NAME/SKILL.md
 cp .claude/commands/$SKILL_NAME.md          $OMC_KIT/templates/.claude/commands/$SKILL_NAME.md
 cp .gemini/commands/omc-commands.md         $OMC_KIT/templates/.gemini/commands/omc-commands.md
@@ -171,7 +165,7 @@ python3 path/to/omc_kit/scripts/install.py --target . --force
 
 ## 각 LLM 파일 최소 요구사항
 
-### `.agent/skills/omc-[NAME]/SKILL.md` (Cursor + Codex 공통)
+### `.agents/skills/omc-[NAME]/SKILL.md` (Agent Skills canonical source)
 
 `SKILL_TEMPLATE.md`를 복사해서 시작합니다. 최소 구조는 아래와 같습니다.
 

@@ -17,7 +17,6 @@ MAX_NON_EMPTY_LINES = 49
 REQUIRED_LESSON_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-lesson" / "SKILL.md",
     ROOT / "templates" / ".agents" / "skills" / "omc-lesson" / "SKILL.md",
-    ROOT / "templates" / ".agent" / "skills" / "omc-lesson" / "SKILL.md",
 ]
 OPTIONAL_LESSON_SKILL_PATHS = [
     ROOT / ".agent" / "skills" / "omc-lesson" / "SKILL.md",

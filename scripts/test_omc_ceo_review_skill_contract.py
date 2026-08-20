@@ -16,7 +16,6 @@ MAX_NON_EMPTY_LINES = 42
 REQUIRED_CEO_REVIEW_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-ceo-review" / "SKILL.md",
     ROOT / "templates" / ".agents" / "skills" / "omc-ceo-review" / "SKILL.md",
-    ROOT / "templates" / ".agent" / "skills" / "omc-ceo-review" / "SKILL.md",
 ]
 OPTIONAL_CEO_REVIEW_SKILL_PATHS = [
     ROOT / ".agent" / "skills" / "omc-ceo-review" / "SKILL.md",
@@ -161,22 +160,20 @@ def test_ceo_review_skill_paths_are_identical():
 def test_ignored_live_agent_ceo_review_path_is_optional(tmp_path: Path):
     canonical = tmp_path / ".agents" / "skills" / "omc-ceo-review" / "SKILL.md"
     template_codex = tmp_path / "templates" / ".agents" / "skills" / "omc-ceo-review" / "SKILL.md"
-    template_agent = tmp_path / "templates" / ".agent" / "skills" / "omc-ceo-review" / "SKILL.md"
     ignored_live_agent = tmp_path / ".agent" / "skills" / "omc-ceo-review" / "SKILL.md"
 
-    for path in (canonical, template_codex, template_agent):
+    for path in (canonical, template_codex):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("same", encoding="utf-8")
 
     texts = _collect_ceo_review_skill_texts(
         root=tmp_path,
-        required_paths=(canonical, template_codex, template_agent),
+        required_paths=(canonical, template_codex),
         optional_paths=(ignored_live_agent,),
     )
     assert texts == {
         ".agents/skills/omc-ceo-review/SKILL.md": "same",
         "templates/.agents/skills/omc-ceo-review/SKILL.md": "same",
-        "templates/.agent/skills/omc-ceo-review/SKILL.md": "same",
     }
 
 

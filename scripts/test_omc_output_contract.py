@@ -353,9 +353,6 @@ def test_reason_aware_stage_rejects_unknown_reason_code():
         ("templates/.agents/skills/omc-plan/references/workflow.md", "stage=plan / outcome=unresolved|ready"),
         ("templates/.agents/skills/omc-task/SKILL.md", "stage=task / outcome=blocked|done"),
         ("templates/.agents/skills/omc-review/SKILL.md", "stage=review / outcome=approved|blocked"),
-        ("templates/.agent/skills/omc-plan/references/workflow.md", "stage=plan / outcome=unresolved|ready"),
-        ("templates/.agent/skills/omc-task/SKILL.md", "stage=task / outcome=blocked|done"),
-        ("templates/.agent/skills/omc-review/SKILL.md", "stage=review / outcome=approved|blocked"),
         (".agents/skills/omc-critique/SKILL.md", "stage=critique-plan|critique-code"),
         (".agents/skills/omc-investigate/SKILL.md", "stage=investigate"),
         (".agents/skills/omc-ship/SKILL.md", "stage=ship"),
@@ -413,14 +410,12 @@ PILOT_SKILL_PATHS = [
     for prefix in (
         Path(".agents/skills"),
         Path("templates/.agents/skills"),
-        Path("templates/.agent/skills"),
     )
 ] + [
     ROOT / prefix / skill / "SKILL.md"
     for prefix in (
         Path(".agents/skills"),
         Path("templates/.agents/skills"),
-        Path("templates/.agent/skills"),
     )
     for skill in ("omc-task", "omc-review")
 ]

@@ -16,7 +16,6 @@ MAX_NON_EMPTY_LINES = 42
 REQUIRED_BENCHMARK_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-benchmark" / "SKILL.md",
     ROOT / "templates" / ".agents" / "skills" / "omc-benchmark" / "SKILL.md",
-    ROOT / "templates" / ".agent" / "skills" / "omc-benchmark" / "SKILL.md",
 ]
 OPTIONAL_BENCHMARK_SKILL_PATHS = [
     ROOT / ".agent" / "skills" / "omc-benchmark" / "SKILL.md",

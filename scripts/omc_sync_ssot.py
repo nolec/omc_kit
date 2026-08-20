@@ -40,12 +40,6 @@ SYNC_MAP: list[tuple[str, str]] = [
     ("CLAUDE.md", "templates/CLAUDE.md"),
     ("GEMINI.md", "templates/GEMINI.md"),
     ("CODEX.md",  "templates/CODEX.md"),
-    # .agent/skills (Antigravity Agent Skills)
-    *[
-        (f".agent/skills/{p.parent.name}/{p.name}", f"templates/.agent/skills/{p.parent.name}/{p.name}")
-        for p in (ROOT / ".agent" / "skills").rglob("*.md")
-        if (ROOT / ".agent" / "skills").exists()
-    ],
     # .codex/commands
     *[
         (f".codex/commands/{p.name}", f"templates/.codex/commands/{p.name}")

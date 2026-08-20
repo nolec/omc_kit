@@ -16,7 +16,6 @@ MAX_NON_EMPTY_LINES = 54
 REQUIRED_TASK_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-task" / "SKILL.md",
     ROOT / "templates" / ".agents" / "skills" / "omc-task" / "SKILL.md",
-    ROOT / "templates" / ".agent" / "skills" / "omc-task" / "SKILL.md",
 ]
 OPTIONAL_TASK_SKILL_PATHS = [
     ROOT / ".agent" / "skills" / "omc-task" / "SKILL.md",
@@ -123,22 +122,20 @@ def test_ignored_live_agent_skill_path_is_optional(tmp_path: Path):
     """Clean checkouts may not have the ignored .agent live mirror."""
     canonical = tmp_path / ".agents" / "skills" / "omc-task" / "SKILL.md"
     template_codex = tmp_path / "templates" / ".agents" / "skills" / "omc-task" / "SKILL.md"
-    template_agent = tmp_path / "templates" / ".agent" / "skills" / "omc-task" / "SKILL.md"
     ignored_live_agent = tmp_path / ".agent" / "skills" / "omc-task" / "SKILL.md"
 
-    for path in (canonical, template_codex, template_agent):
+    for path in (canonical, template_codex):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("same", encoding="utf-8")
 
     texts = _collect_task_skill_texts(
         root=tmp_path,
-        required_paths=(canonical, template_codex, template_agent),
+        required_paths=(canonical, template_codex),
         optional_paths=(ignored_live_agent,),
     )
     assert texts == {
         ".agents/skills/omc-task/SKILL.md": "same",
         "templates/.agents/skills/omc-task/SKILL.md": "same",
-        "templates/.agent/skills/omc-task/SKILL.md": "same",
     }
 
 
