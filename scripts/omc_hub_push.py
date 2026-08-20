@@ -22,6 +22,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 HUB_PATH_FILE = ROOT / ".omc" / "hub.path"
 
+_MANAGED_AGENT_SKILL_ROOTS = {"pr-create"}
+_MANAGED_AGENT_SKILL_FILES = {"SKILL_CHECKLIST.md", "SKILL_TEMPLATE.md"}
+
+
+def _is_managed_agent_skill(relative_path: Path) -> bool:
+    if len(relative_path.parts) == 1:
+        return relative_path.name in _MANAGED_AGENT_SKILL_FILES
+    skill_root = relative_path.parts[0]
+    return skill_root.startswith("omc-") or skill_root in _MANAGED_AGENT_SKILL_ROOTS
+
 SYNC_MAP: list[tuple[str, str]] = [
     *[(f"scripts/{p.name}", f"scripts/{p.name}") for p in (ROOT / "scripts").glob("omc_*.py")],
     *[
@@ -44,6 +54,7 @@ SYNC_MAP: list[tuple[str, str]] = [
         )
         for p in (ROOT / ".agents" / "skills").rglob("*.md")
         if (ROOT / ".agents" / "skills").exists()
+        and _is_managed_agent_skill(p.relative_to(ROOT / ".agents" / "skills"))
     ],
     *[
         (f".codex/commands/{p.name}", f"templates/.codex/commands/{p.name}")

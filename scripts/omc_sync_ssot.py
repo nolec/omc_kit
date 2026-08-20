@@ -21,6 +21,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 KIT = ROOT / "omc_kit"
 
+_MANAGED_AGENT_SKILL_ROOTS = {"pr-create"}
+_MANAGED_AGENT_SKILL_FILES = {"SKILL_CHECKLIST.md", "SKILL_TEMPLATE.md"}
+
+
+def _is_managed_agent_skill(relative_path: Path) -> bool:
+    if len(relative_path.parts) == 1:
+        return relative_path.name in _MANAGED_AGENT_SKILL_FILES
+    skill_root = relative_path.parts[0]
+    return skill_root.startswith("omc-") or skill_root in _MANAGED_AGENT_SKILL_ROOTS
+
 # 라이브 파일 → 템플릿 경로 매핑
 SYNC_MAP: list[tuple[str, str]] = [
     # scripts
@@ -48,6 +58,7 @@ SYNC_MAP: list[tuple[str, str]] = [
         )
         for p in (ROOT / ".agents" / "skills").rglob("*.md")
         if (ROOT / ".agents" / "skills").exists()
+        and _is_managed_agent_skill(p.relative_to(ROOT / ".agents" / "skills"))
     ],
     # .codex/commands
     *[
