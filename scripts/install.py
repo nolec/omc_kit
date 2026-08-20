@@ -20,6 +20,7 @@ from omc_hook_contract import (
     codex_contract_issues,
     gemini_contract_issues,
 )
+from omc_source_hash import source_sha256 as _source_sha256
 
 AGENTS_OMC_BEGIN = "<!-- OMC:BEGIN -->"
 AGENTS_OMC_END = "<!-- OMC:END -->"
@@ -38,17 +39,6 @@ def _sha256_file(path: Path) -> str:
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _source_sha256(source_kit: Path) -> str:
-    digest = hashlib.sha256()
-    excluded = {".git", ".omc", ".benchmarks", ".codex-artifacts", ".private-artifacts"}
-    for path in sorted(
-        p for p in source_kit.rglob("*") if p.is_file() and not any(part in excluded for part in p.parts)
-    ):
-        digest.update(str(path.relative_to(source_kit)).encode("utf-8"))
-        digest.update(_sha256_file(path).encode("ascii"))
     return digest.hexdigest()
 
 

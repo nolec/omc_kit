@@ -5,7 +5,10 @@ import argparse
 import hashlib
 import json
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
+
+from omc_source_hash import source_sha256 as _source_sha256
 
 
 def _metadata_path(target: Path) -> Path:
@@ -18,6 +21,42 @@ def _receipt_path(target: Path) -> Path:
 
 def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _looks_like_source_kit(path: Path) -> bool:
+    return (
+        (path / "templates").is_dir()
+        and (path / "scripts" / "install.py").is_file()
+        and (path / "prompts" / "team.json").is_file()
+    )
+
+
+@lru_cache(maxsize=8)
+def _cached_source_sha256(source_path: str) -> str:
+    return _source_sha256(Path(source_path))
+
+
+def _source_freshness(
+    source_path: object,
+    installed_source_sha256: object,
+) -> tuple[str, str | None, str | None]:
+    if not isinstance(source_path, str) or not source_path.strip():
+        return "unknown", None, "missing-source-path"
+    try:
+        source = Path(source_path).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return "unknown", None, "unreadable-source-path"
+    if not _looks_like_source_kit(source):
+        return "unknown", None, "source-unavailable"
+    try:
+        current_hash = _cached_source_sha256(str(source))
+    except OSError:
+        return "unknown", None, "source-unreadable"
+    if not isinstance(installed_source_sha256, str) or not installed_source_sha256:
+        return "unknown", current_hash, "missing-installed-source-hash"
+    if current_hash != installed_source_sha256:
+        return "update_available", current_hash, "source-hash-mismatch"
+    return "up_to_date", current_hash, None
 
 
 def audit_target(target: Path) -> dict[str, object]:
@@ -163,11 +202,24 @@ def audit_target(target: Path) -> dict[str, object]:
         if actual_hash != expected_hash:
             verification_errors.append(f"drift:{rel}")
 
+    installed_integrity_status = "ok" if not verification_errors else "failed"
+    (
+        source_freshness_status,
+        current_source_sha256,
+        source_freshness_reason,
+    ) = _source_freshness(source_path, metadata_source_sha256)
+    if source_freshness_status == "update_available":
+        verification_errors.append("source:update-available")
+    elif source_freshness_status == "unknown":
+        verification_errors.append("source:freshness-unknown")
+
     issue_counts = Counter()
     for issue in verification_errors:
         prefix = issue.split(":", 1)[0]
         if prefix in {"receipt", "audit"}:
             issue_counts["receipt_error"] += 1
+        elif prefix == "source":
+            issue_counts["source_freshness"] += 1
         elif prefix in {"entry-invalid", "manifest-policy-error"}:
             issue_counts["manifest_policy_error"] += 1
         else:
@@ -186,6 +238,10 @@ def audit_target(target: Path) -> dict[str, object]:
         "install_entry_counts": receipt_entry_counts,
         "receipt_error": receipt_error,
         "status": status,
+        "installed_integrity_status": installed_integrity_status,
+        "source_freshness_status": source_freshness_status,
+        "source_freshness_reason": source_freshness_reason,
+        "current_source_sha256": current_source_sha256,
         "verification_status": "ok" if not verification_errors else "failed",
         "verification_errors": verification_errors,
         "verification_notices": verification_notices,
@@ -198,6 +254,12 @@ def _render_text(results: list[dict[str, object]]) -> str:
     for item in results:
         lines.append(f"== {item['target']} ==")
         lines.append(f"status: {item['status']}")
+        lines.append(f"installed_integrity_status: {item['installed_integrity_status']}")
+        lines.append(f"source_freshness_status: {item['source_freshness_status']}")
+        if item["source_freshness_reason"] is not None:
+            lines.append(f"source_freshness_reason: {item['source_freshness_reason']}")
+        if item["current_source_sha256"] is not None:
+            lines.append(f"current_source_sha256: {item['current_source_sha256']}")
         lines.append(f"verification_status: {item['verification_status']}")
         if item["verification_errors"]:
             lines.append(f"verification_errors: {item['verification_errors']}")

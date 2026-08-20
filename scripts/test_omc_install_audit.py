@@ -18,7 +18,19 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _write_source_kit(source: Path, *, marker: str = "v1") -> str:
+    (source / "templates").mkdir(parents=True, exist_ok=True)
+    (source / "scripts").mkdir(parents=True, exist_ok=True)
+    (source / "prompts").mkdir(parents=True, exist_ok=True)
+    (source / "scripts" / "install.py").write_text("# installer\n", encoding="utf-8")
+    (source / "prompts" / "team.json").write_text("{}\n", encoding="utf-8")
+    (source / "templates" / "marker.txt").write_text(marker + "\n", encoding="utf-8")
+    return _audit._source_sha256(source)
+
+
 def _write_verified_install(target: Path) -> None:
+    source = target.parent / "kit"
+    source_sha256 = _write_source_kit(source)
     managed = target / "scripts" / "omc.py"
     managed.parent.mkdir(parents=True)
     managed.write_text("# installed\n", encoding="utf-8")
@@ -28,8 +40,8 @@ def _write_verified_install(target: Path) -> None:
         json.dumps(
             {
                 "source_kind": "external",
-                "source_path": "/kit",
-                "source_sha256": "source-digest",
+                "source_path": str(source),
+                "source_sha256": source_sha256,
             }
         ),
         encoding="utf-8",
@@ -38,7 +50,7 @@ def _write_verified_install(target: Path) -> None:
         json.dumps(
             {
                 "schema_version": 1,
-                "source_sha256": "source-digest",
+                "source_sha256": source_sha256,
                 "target": str(target.resolve()),
                 "entries": {
                     "scripts/omc.py": {
@@ -51,7 +63,6 @@ def _write_verified_install(target: Path) -> None:
         ),
         encoding="utf-8",
     )
-
 
 class TestInstallAudit(unittest.TestCase):
     def test_audit_target_reports_legacy_and_metadata(self):
@@ -179,6 +190,54 @@ class TestInstallAudit(unittest.TestCase):
             self.assertEqual(result["verification_status"], "ok")
             self.assertEqual(result["verification_errors"], [])
 
+    def test_verify_target_reports_matching_source_freshness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "project"
+            source = root / "kit"
+            source_hash = _write_source_kit(source)
+            _write_verified_install(target)
+            metadata_path = target / ".omc" / "install-source.json"
+            receipt_path = target / ".omc" / "install-receipt.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            metadata.update(source_path=str(source), source_sha256=source_hash)
+            receipt["source_sha256"] = source_hash
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+            result = _audit.audit_target(target)
+
+            self.assertEqual(result["installed_integrity_status"], "ok")
+            self.assertEqual(result["source_freshness_status"], "up_to_date")
+            self.assertEqual(result["current_source_sha256"], source_hash)
+            self.assertEqual(result["verification_status"], "ok")
+
+    def test_verify_target_rejects_known_stale_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "project"
+            source = root / "kit"
+            installed_source_hash = _write_source_kit(source)
+            _write_verified_install(target)
+            metadata_path = target / ".omc" / "install-source.json"
+            receipt_path = target / ".omc" / "install-receipt.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            metadata.update(source_path=str(source), source_sha256=installed_source_hash)
+            receipt["source_sha256"] = installed_source_hash
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            (source / "templates" / "marker.txt").write_text("v2\n", encoding="utf-8")
+
+            result = _audit.audit_target(target)
+
+            self.assertEqual(result["installed_integrity_status"], "ok")
+            self.assertEqual(result["source_freshness_status"], "update_available")
+            self.assertNotEqual(result["current_source_sha256"], installed_source_hash)
+            self.assertEqual(result["verification_status"], "failed")
+            self.assertEqual(result["verification_errors"], ["source:update-available"])
+
     def test_verify_target_rejects_managed_file_drift(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "project"
@@ -194,8 +253,15 @@ class TestInstallAudit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "project"
             _write_verified_install(target)
+            managed = target / "scripts" / "omc.py"
+            original_sha256_file = _audit._sha256_file
 
-            with patch.object(_audit, "_sha256_file", side_effect=OSError("unreadable")):
+            def hash_or_raise(path: Path) -> str:
+                if path.resolve() == managed.resolve():
+                    raise OSError("unreadable")
+                return original_sha256_file(path)
+
+            with patch.object(_audit, "_sha256_file", side_effect=hash_or_raise):
                 result = _audit.audit_target(target)
 
             self.assertEqual(result["verification_status"], "failed")
@@ -308,7 +374,37 @@ class TestInstallAudit(unittest.TestCase):
             )
 
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("installed_integrity_status: ok", proc.stdout)
+            self.assertIn("source_freshness_status: up_to_date", proc.stdout)
             self.assertIn("verification_status: ok", proc.stdout)
+
+    def test_omc_verify_install_command_rejects_unknown_source_freshness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            _write_verified_install(target)
+            metadata_path = target / ".omc" / "install-source.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["source_path"] = str(Path(tmp) / "missing-kit")
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).parent / "omc.py"),
+                    "verify-install",
+                    "--target",
+                    str(target),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+            self.assertIn("installed_integrity_status: ok", proc.stdout)
+            self.assertIn("source_freshness_status: unknown", proc.stdout)
+            self.assertIn("source:freshness-unknown", proc.stdout)
+            self.assertIn("verification_status: failed", proc.stdout)
 
     def test_omc_setup_runs_strict_post_install_verification(self):
         with tempfile.TemporaryDirectory() as tmp:

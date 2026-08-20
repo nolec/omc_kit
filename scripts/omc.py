@@ -189,7 +189,7 @@ def main() -> int:
 
     verify_install = sub.add_parser(
         "verify-install",
-        help="Verify setup output against the install receipt.",
+        help="Verify setup integrity and current source freshness.",
     )
     verify_install.add_argument(
         "--target", type=Path, default=Path.cwd(), help="Target repository root."
