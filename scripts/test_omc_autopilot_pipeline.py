@@ -199,10 +199,15 @@ def test_pipeline_output_rejects_explicit_envelope_conflict():
         mod._normalize_pipeline_output(step_name="review", output=output)
 
 
-def test_pipeline_output_leaves_non_pilot_stage_unchanged():
+def test_pipeline_output_normalizes_critique_as_code_stage():
     mod = _load_autopilot()
-    output = "CRITICAL: issue\nVERDICT: REVISE"
-    assert mod._normalize_pipeline_output(step_name="critique", output=output) == output
+    output = "WARNING:\n- 근거: issue\n  대안: fix\nVERDICT: REVISE"
+    normalized = mod._normalize_pipeline_output(step_name="critique", output=output)
+
+    assert '[OUTPUT_CONTRACT_SOURCE] legacy_normalized' in normalized
+    assert '"stage":"critique-code"' in normalized
+    assert '"next_skill":"omc-task"' in normalized
+    assert normalized.endswith("VERDICT: REVISE")
 
 
 @pytest.mark.parametrize(
@@ -285,7 +290,7 @@ def test_pipeline_step_validates_stdout_and_preserves_stderr_before_contract(
     assert output.startswith("[OUTPUT_CONTRACT_SOURCE] raw_compliant")
     assert "[EXECUTOR_STDERR] provider cache warning" in output
     assert "[EXECUTOR_STDERR] VERDICT: BLOCK" in output
-    assert output.splitlines()[-2].startswith("OMC_OUTPUT:")
+    assert output.splitlines()[-2].startswith("<!-- OMC_OUTPUT:")
     assert output.splitlines()[-1] == "VERDICT: PROCEED"
 
 
@@ -347,6 +352,12 @@ def test_plan_rework_terminal_status_has_hold_overview_priority(status: str):
 def test_review_approve_with_notes_verdict_is_not_truncated():
     mod = _load_autopilot()
     assert mod._grep_verdict("VERDICT: APPROVE WITH NOTES") == "APPROVE WITH NOTES"
+
+
+@pytest.mark.parametrize("step_name", ["critique", "review"])
+def test_quality_loop_accepts_approve_with_notes(step_name: str):
+    mod = _load_autopilot()
+    assert mod._quality_verdict_succeeded(step_name, "APPROVE WITH NOTES") is True
 
 
 def test_git_push_failure_saves_failed_status(tmp_path: Path):

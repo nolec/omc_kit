@@ -59,4 +59,4 @@ untracked:
 - 실제 배포 후 → `$omc-retro`
 - BLOCKED + 테스트/회귀 실패 → `$omc-investigate`
 - BLOCKED + 신규 테스트 누락/TDD 위반 → `$omc-task`
-- 자동으로 진행하지는 않습니다.
+- 자동으로 진행하지는 않습니다. Machine output contract는 `omc-output/v1`, `stage=ship`, JSON 필드 `outcome/risk/next_skill/user_selection_needed/reason_code`; `PROCEED+all_gates_passed→ready,null,true`, `BLOCK+test_or_regression_failure→blocked,omc-investigate,false`, `BLOCK+tdd_or_test_missing→blocked,omc-task,false`, `BLOCK+approval_missing→blocked,null,true`; 마지막 두 줄은 `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT`이며 본문 `SHIP READY`는 machine `PROCEED`, `BLOCKED`는 `BLOCK`입니다.

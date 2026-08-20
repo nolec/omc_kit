@@ -56,7 +56,7 @@ delay 이유: ...
 2. ...
 3. ...
 
-VERDICT: HOLD / REVISE / PROCEED / BLOCK / APPROVE
+VERDICT: HOLD / REVISE / PROCEED / BLOCK / APPROVE / APPROVE WITH NOTES
 ```
 
 ## 비용 체크포인트 — REVISE / HOLD 판정 후 `$omc-task` 진입 전 `변경 비용 추정`을 확인합니다.
@@ -78,4 +78,4 @@ VERDICT: HOLD / REVISE / PROCEED / BLOCK / APPROVE
 - PROCEED + CODE 모드 → 사용자 선택 대기 (`$omc-review`)
 - 자동으로 진행하지는 않습니다.
 
-## ⛔ 자동 진입 금지 — 이 스킬이 완료되면 사용자가 명시적으로 다음 스킬을 요청할 때까지 멈추고 기다린다.
+## Machine output contract — `omc-output/v1`; `stage=critique-plan|critique-code`; JSON 필드 `outcome/risk/next_skill/user_selection_needed/reason_code`; 본문 표현 `PROCEED WITH CAUTION`은 machine `PROCEED`, PLAN은 `PROCEED→omc-task / REVISE|HOLD→omc-plan`, CODE는 `PROCEED|APPROVE|APPROVE WITH NOTES→omc-review / REVISE→omc-task / BLOCK|HOLD→null`; 마지막 두 줄은 `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT`; 자동 진입 금지, 사용자가 다음 스킬을 명시할 때까지 기다린다.

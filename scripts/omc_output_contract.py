@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compact machine envelope for OMC plan, task, and review outputs."""
+"""Compact machine envelope for OMC skill outputs."""
 from __future__ import annotations
 
 import json
@@ -9,6 +9,8 @@ from typing import Any
 
 SCHEMA_VERSION = "omc-output/v1"
 _ENVELOPE_PREFIX = "OMC_OUTPUT:"
+_HIDDEN_ENVELOPE_PREFIX = "<!-- OMC_OUTPUT:"
+_HIDDEN_ENVELOPE_SUFFIX = "-->"
 _VERDICT_RE = re.compile(
     r"^VERDICT\s*:\s*(APPROVE WITH NOTES|PROCEED|APPROVE|BLOCK|REVISE|HOLD)\s*$",
     re.IGNORECASE | re.MULTILINE,
@@ -27,6 +29,28 @@ _STAGE_VERDICTS = {
         "APPROVE": "approved",
         "APPROVE WITH NOTES": "approved",
         "REVISE": "blocked",
+        "BLOCK": "blocked",
+    },
+    "critique-plan": {
+        "PROCEED": "ready",
+        "HOLD": "unresolved",
+        "REVISE": "unresolved",
+    },
+    "critique-code": {
+        "PROCEED": "approved",
+        "APPROVE": "approved",
+        "APPROVE WITH NOTES": "approved",
+        "REVISE": "blocked",
+        "BLOCK": "blocked",
+        "HOLD": "unresolved",
+    },
+    "investigate": {
+        "PROCEED": "ready",
+        "REVISE": "unresolved",
+        "HOLD": "unresolved",
+    },
+    "ship": {
+        "PROCEED": "ready",
         "BLOCK": "blocked",
     },
 }
@@ -50,6 +74,15 @@ _LEGACY_DEFAULTS = {
     ("review", "APPROVE WITH NOTES"): ("medium", None, True, None),
     ("review", "REVISE"): ("medium", "omc-task", False, "legacy_verdict_only"),
     ("review", "BLOCK"): ("high", None, True, "legacy_verdict_only"),
+    ("critique-plan", "PROCEED"): ("low", "omc-task", False, None),
+    ("critique-plan", "HOLD"): ("high", "omc-plan", True, "legacy_verdict_only"),
+    ("critique-plan", "REVISE"): ("medium", "omc-plan", True, "legacy_verdict_only"),
+    ("critique-code", "PROCEED"): ("low", "omc-review", False, None),
+    ("critique-code", "APPROVE"): ("low", "omc-review", False, None),
+    ("critique-code", "APPROVE WITH NOTES"): ("medium", "omc-review", False, None),
+    ("critique-code", "REVISE"): ("medium", "omc-task", False, "legacy_verdict_only"),
+    ("critique-code", "BLOCK"): ("high", None, True, "legacy_verdict_only"),
+    ("critique-code", "HOLD"): ("high", None, True, "legacy_verdict_only"),
 }
 _ROUTING_POLICY = {
     ("plan", "PROCEED"): ("omc-task", False),
@@ -61,6 +94,35 @@ _ROUTING_POLICY = {
     ("review", "APPROVE WITH NOTES"): (None, None),
     ("review", "REVISE"): ("omc-task", False),
     ("review", "BLOCK"): (None, True),
+    ("critique-plan", "PROCEED"): ("omc-task", False),
+    ("critique-plan", "HOLD"): ("omc-plan", True),
+    ("critique-plan", "REVISE"): ("omc-plan", True),
+    ("critique-code", "PROCEED"): ("omc-review", False),
+    ("critique-code", "APPROVE"): ("omc-review", False),
+    ("critique-code", "APPROVE WITH NOTES"): ("omc-review", False),
+    ("critique-code", "REVISE"): ("omc-task", False),
+    ("critique-code", "BLOCK"): (None, True),
+    ("critique-code", "HOLD"): (None, True),
+}
+_REASON_ROUTING_POLICY = {
+    ("investigate", "PROCEED"): {
+        "root_cause_confirmed": ("omc-task", False),
+        "fix_already_applied": ("omc-review", False),
+    },
+    ("investigate", "REVISE"): {
+        "architecture_scope_issue": ("omc-ceo-review", False),
+    },
+    ("investigate", "HOLD"): {
+        "insufficient_evidence": (None, True),
+    },
+    ("ship", "PROCEED"): {
+        "all_gates_passed": (None, True),
+    },
+    ("ship", "BLOCK"): {
+        "test_or_regression_failure": ("omc-investigate", False),
+        "tdd_or_test_missing": ("omc-task", False),
+        "approval_missing": (None, True),
+    },
 }
 _PROMPT_ROUTING = {
     "plan": (
@@ -72,11 +134,48 @@ _PROMPT_ROUTING = {
         "APPROVE=>approved,null,context; APPROVE WITH NOTES=>approved,null,context; "
         "REVISE=>blocked,omc-task,false; BLOCK=>blocked,null,true"
     ),
+    "critique-plan": (
+        "PROCEED=>ready,omc-task,false; HOLD=>unresolved,omc-plan,true; "
+        "REVISE=>unresolved,omc-plan,true"
+    ),
+    "critique-code": (
+        "PROCEED|APPROVE|APPROVE WITH NOTES=>approved,omc-review,false; "
+        "REVISE=>blocked,omc-task,false; BLOCK=>blocked,null,true; "
+        "HOLD=>unresolved,null,true"
+    ),
+    "investigate": (
+        "PROCEED+root_cause_confirmed=>ready,omc-task,false; "
+        "PROCEED+fix_already_applied=>ready,omc-review,false; "
+        "REVISE+architecture_scope_issue=>unresolved,omc-ceo-review,false; "
+        "HOLD+insufficient_evidence=>unresolved,null,true"
+    ),
+    "ship": (
+        "PROCEED+all_gates_passed=>ready,null,true; "
+        "BLOCK+test_or_regression_failure=>blocked,omc-investigate,false; "
+        "BLOCK+tdd_or_test_missing=>blocked,omc-task,false; "
+        "BLOCK+approval_missing=>blocked,null,true"
+    ),
 }
 
 
 class OutputContractError(ValueError):
     """Raised when an OMC output envelope is missing or inconsistent."""
+
+
+def _envelope_payload_from_line(line: str) -> str | None:
+    stripped = str(line).strip()
+    if stripped.startswith(_ENVELOPE_PREFIX):
+        return stripped[len(_ENVELOPE_PREFIX) :].strip()
+    if stripped.startswith(_HIDDEN_ENVELOPE_PREFIX) and stripped.endswith(
+        _HIDDEN_ENVELOPE_SUFFIX
+    ):
+        return stripped[len(_HIDDEN_ENVELOPE_PREFIX) : -len(_HIDDEN_ENVELOPE_SUFFIX)].strip()
+    return None
+
+
+def _html_comment_safe_payload(serialized: str) -> str:
+    """Prevent JSON string values from opening or closing the HTML comment."""
+    return serialized.replace("--", "\\u002d\\u002d")
 
 
 def outcome_for(stage: str, verdict: str) -> str:
@@ -96,6 +195,19 @@ def _validate_next_skill(value: Any) -> str | None:
     if not isinstance(value, str) or not re.fullmatch(r"omc-[a-z][a-z-]*", value):
         raise OutputContractError("next_skill must be a canonical omc-* skill id or null")
     return value
+
+
+def _routing_for(
+    stage: str,
+    verdict: str,
+    reason_code: str | None,
+) -> tuple[str | None, bool | None]:
+    reason_routes = _REASON_ROUTING_POLICY.get((stage, verdict))
+    if reason_routes is not None:
+        if reason_code not in reason_routes:
+            raise OutputContractError("reason_code is not valid for stage verdict routing")
+        return reason_routes[reason_code]
+    return _ROUTING_POLICY[(stage, verdict)]
 
 
 def _validate_payload(payload: dict[str, Any], verdict: str) -> dict[str, Any]:
@@ -124,7 +236,7 @@ def _validate_payload(payload: dict[str, Any], verdict: str) -> dict[str, Any]:
     if expected_outcome in {"blocked", "unresolved"} and not reason_code:
         raise OutputContractError("reason_code is required for blocked or unresolved outcomes")
 
-    expected_next_skill, expected_selection = _ROUTING_POLICY[(stage, verdict)]
+    expected_next_skill, expected_selection = _routing_for(stage, verdict, reason_code)
     if next_skill != expected_next_skill:
         raise OutputContractError("next_skill conflicts with stage routing policy")
     if expected_selection is not None and selection_needed is not expected_selection:
@@ -168,23 +280,31 @@ def render_envelope(
         separators=(",", ":"),
         sort_keys=True,
     )
-    return f"{_ENVELOPE_PREFIX} {serialized}\nVERDICT: {normalized_verdict}"
+    serialized = _html_comment_safe_payload(serialized)
+    return (
+        f"{_HIDDEN_ENVELOPE_PREFIX} {serialized} {_HIDDEN_ENVELOPE_SUFFIX}\n"
+        f"VERDICT: {normalized_verdict}"
+    )
 
 
 def parse_envelope(output: str) -> dict[str, Any]:
-    nonempty_lines = [line for line in str(output).splitlines() if line.strip()]
+    output_lines = str(output).splitlines()
+    marker_lines = [line for line in output_lines if _ENVELOPE_PREFIX in line]
+    if len(marker_lines) != 1:
+        raise OutputContractError("output must contain exactly one OMC_OUTPUT envelope")
+    nonempty_lines = [line for line in output_lines if line.strip()]
     if (
         len(nonempty_lines) < 2
-        or not nonempty_lines[-2].startswith(_ENVELOPE_PREFIX)
+        or _envelope_payload_from_line(nonempty_lines[-2]) is None
         or _VERDICT_RE.fullmatch(nonempty_lines[-1]) is None
     ):
         raise OutputContractError(
             "the last two non-empty lines must be OMC_OUTPUT and VERDICT"
         )
     envelope_lines = [
-        line[len(_ENVELOPE_PREFIX) :].strip()
-        for line in str(output).splitlines()
-        if line.startswith(_ENVELOPE_PREFIX)
+        payload
+        for line in output_lines
+        if (payload := _envelope_payload_from_line(line)) is not None
     ]
     if len(envelope_lines) != 1:
         raise OutputContractError("output must contain exactly one OMC_OUTPUT envelope")
@@ -251,8 +371,8 @@ def prompt_contract(stage: str) -> str:
         raise OutputContractError(f"unsupported stage: {normalized_stage}")
     verdicts = "|".join(allowed)
     return (
-        "마지막 두 줄은 compact machine contract여야 합니다: "
-        f"`OMC_OUTPUT: {{JSON}}` 뒤 `VERDICT: {verdicts}`. "
+        "끝 두 줄: "
+        f"`<!-- OMC_OUTPUT: {{JSON}} -->`, `VERDICT: {verdicts}`. "
         f"JSON은 schema_version={SCHEMA_VERSION}, stage={normalized_stage}, outcome, risk, "
         "next_skill(canonical omc-* 또는 null), user_selection_needed(boolean), reason_code를 포함하세요. "
         f"라우팅(outcome,next_skill,user_selection_needed): {_PROMPT_ROUTING[normalized_stage]}; "

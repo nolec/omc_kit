@@ -42,6 +42,66 @@ def test_render_and_parse_plan_ready_envelope():
         "verdict": "PROCEED",
     }
     assert rendered.splitlines()[-1] == "VERDICT: PROCEED"
+    assert rendered.splitlines()[-2].startswith("<!-- OMC_OUTPUT: ")
+    assert rendered.splitlines()[-2].endswith(" -->")
+
+
+def test_parse_accepts_legacy_visible_envelope():
+    module = _load_module()
+    output = (
+        'OMC_OUTPUT: {"schema_version":"omc-output/v1","stage":"task",'
+        '"outcome":"done","risk":"low","next_skill":"omc-review",'
+        '"user_selection_needed":false,"reason_code":null}\n'
+        "VERDICT: PROCEED"
+    )
+
+    assert module.parse_envelope(output)["stage"] == "task"
+
+
+def test_parse_rejects_unclosed_hidden_envelope():
+    module = _load_module()
+    output = (
+        '<!-- OMC_OUTPUT: {"schema_version":"omc-output/v1","stage":"task",'
+        '"outcome":"done","risk":"low","next_skill":"omc-review",'
+        '"user_selection_needed":false,"reason_code":null}\n'
+        "VERDICT: PROCEED"
+    )
+
+    with pytest.raises(module.OutputContractError, match="last two non-empty lines"):
+        module.parse_envelope(output)
+
+
+def test_render_escapes_html_comment_delimiters_in_payload():
+    module = _load_module()
+    reason_code = "x-->VISIBLE<!--y"
+
+    rendered = module.render_envelope(
+        stage="task",
+        verdict="BLOCK",
+        risk="high",
+        next_skill=None,
+        user_selection_needed=True,
+        reason_code=reason_code,
+    )
+
+    assert rendered.count("<!--") == 1
+    assert rendered.count("-->") == 1
+    assert module.parse_envelope(rendered)["reason_code"] == reason_code
+
+
+def test_parse_rejects_malformed_marker_before_valid_hidden_envelope():
+    module = _load_module()
+    valid = module.render_envelope(
+        stage="task",
+        verdict="PROCEED",
+        risk="low",
+        next_skill="omc-review",
+        user_selection_needed=False,
+    )
+    output = f"<!-- OMC_OUTPUT: broken\nbody\n{valid}"
+
+    with pytest.raises(module.OutputContractError, match="exactly one OMC_OUTPUT envelope"):
+        module.parse_envelope(output)
 
 
 @pytest.mark.parametrize(
@@ -53,6 +113,14 @@ def test_render_and_parse_plan_ready_envelope():
         ("review", "APPROVE", "approved"),
         ("review", "APPROVE WITH NOTES", "approved"),
         ("review", "REVISE", "blocked"),
+        ("critique-plan", "PROCEED", "ready"),
+        ("critique-plan", "HOLD", "unresolved"),
+        ("critique-code", "APPROVE WITH NOTES", "approved"),
+        ("critique-code", "BLOCK", "blocked"),
+        ("investigate", "PROCEED", "ready"),
+        ("investigate", "HOLD", "unresolved"),
+        ("ship", "PROCEED", "ready"),
+        ("ship", "BLOCK", "blocked"),
     ],
 )
 def test_stage_verdict_mapping(stage: str, verdict: str, outcome: str):
@@ -195,6 +263,88 @@ def test_compact_envelope_stays_within_output_budget():
 
 
 @pytest.mark.parametrize(
+    ("stage", "verdict", "reason_code", "next_skill", "selection_needed"),
+    [
+        ("critique-plan", "PROCEED", None, "omc-task", False),
+        ("critique-plan", "REVISE", "plan_gap", "omc-plan", True),
+        ("critique-code", "APPROVE", None, "omc-review", False),
+        ("critique-code", "REVISE", "code_risk", "omc-task", False),
+        ("investigate", "PROCEED", "root_cause_confirmed", "omc-task", False),
+        ("investigate", "PROCEED", "fix_already_applied", "omc-review", False),
+        ("investigate", "REVISE", "architecture_scope_issue", "omc-ceo-review", False),
+        ("investigate", "HOLD", "insufficient_evidence", None, True),
+        ("ship", "PROCEED", "all_gates_passed", None, True),
+        ("ship", "BLOCK", "test_or_regression_failure", "omc-investigate", False),
+        ("ship", "BLOCK", "tdd_or_test_missing", "omc-task", False),
+        ("ship", "BLOCK", "approval_missing", None, True),
+    ],
+)
+def test_extended_stage_reason_aware_routing(
+    stage: str,
+    verdict: str,
+    reason_code: str | None,
+    next_skill: str | None,
+    selection_needed: bool,
+):
+    module = _load_module()
+
+    rendered = module.render_envelope(
+        stage=stage,
+        verdict=verdict,
+        risk="medium",
+        next_skill=next_skill,
+        user_selection_needed=selection_needed,
+        reason_code=reason_code,
+    )
+
+    parsed = module.parse_envelope(rendered)
+    assert parsed["next_skill"] == next_skill
+    assert parsed["reason_code"] == reason_code
+
+
+@pytest.mark.parametrize(
+    ("stage", "verdict", "reason_code", "wrong_next_skill"),
+    [
+        ("investigate", "PROCEED", "root_cause_confirmed", "omc-review"),
+        ("investigate", "REVISE", "architecture_scope_issue", "omc-plan"),
+        ("ship", "BLOCK", "test_or_regression_failure", "omc-task"),
+        ("ship", "BLOCK", "approval_missing", "omc-investigate"),
+    ],
+)
+def test_reason_aware_routing_rejects_wrong_next_skill(
+    stage: str,
+    verdict: str,
+    reason_code: str,
+    wrong_next_skill: str,
+):
+    module = _load_module()
+
+    with pytest.raises(module.OutputContractError, match="routing policy"):
+        module.render_envelope(
+            stage=stage,
+            verdict=verdict,
+            risk="high",
+            next_skill=wrong_next_skill,
+            user_selection_needed=False,
+            reason_code=reason_code,
+        )
+
+
+def test_reason_aware_stage_rejects_unknown_reason_code():
+    module = _load_module()
+
+    with pytest.raises(module.OutputContractError, match="reason_code"):
+        module.render_envelope(
+            stage="ship",
+            verdict="BLOCK",
+            risk="high",
+            next_skill=None,
+            user_selection_needed=True,
+            reason_code="unknown_ship_failure",
+        )
+
+
+@pytest.mark.parametrize(
     ("relative_path", "expected_contract"),
     [
         (".agents/skills/omc-plan/references/workflow.md", "stage=plan / outcome=unresolved|ready"),
@@ -206,6 +356,9 @@ def test_compact_envelope_stays_within_output_budget():
         ("templates/.agent/skills/omc-plan/references/workflow.md", "stage=plan / outcome=unresolved|ready"),
         ("templates/.agent/skills/omc-task/SKILL.md", "stage=task / outcome=blocked|done"),
         ("templates/.agent/skills/omc-review/SKILL.md", "stage=review / outcome=approved|blocked"),
+        (".agents/skills/omc-critique/SKILL.md", "stage=critique-plan|critique-code"),
+        (".agents/skills/omc-investigate/SKILL.md", "stage=investigate"),
+        (".agents/skills/omc-ship/SKILL.md", "stage=ship"),
     ],
 )
 def test_skill_output_contract_matches_parser_schema(relative_path: str, expected_contract: str):
@@ -219,6 +372,24 @@ def test_skill_output_contract_matches_parser_schema(relative_path: str, expecte
         ("plan", ("PROCEED=>ready,omc-task,false", "REVISE=>unresolved,omc-plan,true")),
         ("task", ("PROCEED=>done,omc-review,false", "BLOCK=>blocked,null,true")),
         ("review", ("APPROVE=>approved,null,context", "REVISE=>blocked,omc-task,false")),
+        ("critique-plan", ("PROCEED=>ready,omc-task,false", "HOLD=>unresolved,omc-plan,true")),
+        ("critique-code", ("approved,omc-review,false", "REVISE=>blocked,omc-task,false")),
+        (
+            "investigate",
+            (
+                "PROCEED+root_cause_confirmed=>ready,omc-task,false",
+                "REVISE+architecture_scope_issue=>unresolved,omc-ceo-review,false",
+                "HOLD+insufficient_evidence=>unresolved,null,true",
+            ),
+        ),
+        (
+            "ship",
+            (
+                "PROCEED+all_gates_passed=>ready,null,true",
+                "BLOCK+test_or_regression_failure=>blocked,omc-investigate,false",
+                "BLOCK+approval_missing=>blocked,null,true",
+            ),
+        ),
     ],
 )
 def test_prompt_contract_declares_stage_routing_policy(stage: str, markers: tuple[str, ...]):
@@ -226,6 +397,15 @@ def test_prompt_contract_declares_stage_routing_policy(stage: str, markers: tupl
     prompt = module.prompt_contract(stage)
     for marker in markers:
         assert marker in prompt
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ("plan", "task", "review", "critique-plan", "critique-code", "investigate", "ship"),
+)
+def test_prompt_contract_stays_within_byte_budget(stage: str):
+    module = _load_module()
+    assert len(module.prompt_contract(stage).encode("utf-8")) <= 600
 
 
 PILOT_SKILL_PATHS = [
@@ -260,7 +440,7 @@ def test_pilot_skills_declare_compact_machine_envelope(path: Path):
     text = path.read_text(encoding="utf-8")
     for marker in (
         "omc-output/v1",
-        "OMC_OUTPUT: {JSON}",
+        "<!-- OMC_OUTPUT: {JSON} -->",
         "next_skill",
         "user_selection_needed",
         "reason_code",

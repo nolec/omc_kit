@@ -57,4 +57,4 @@ python3 scripts/omc.py state status --target .
 - 자동으로 진행하지는 않습니다.
 
 - 모든 LLM 공통 출력 형식: 현상, 가설, 검증, 근본 원인, FIX PLAN 순서 고정
-- 입력 부족 시 중단: 재현 조건 또는 검증 결과가 비면 수정 단계로 넘기지 않습니다.
+- 입력 부족 시 중단: 재현 조건 또는 검증 결과가 비면 수정 단계로 넘기지 않습니다. Machine output contract는 `omc-output/v1`, `stage=investigate`, JSON 필드 `outcome/risk/next_skill/user_selection_needed/reason_code`; `PROCEED+root_cause_confirmed→ready,omc-task,false`, `PROCEED+fix_already_applied→ready,omc-review,false`, `REVISE+architecture_scope_issue→unresolved,omc-ceo-review,false`, `HOLD+insufficient_evidence→unresolved,null,true`; 마지막 두 줄은 `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT`입니다.

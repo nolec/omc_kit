@@ -68,6 +68,19 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "교훈",
     "SHIP READY",
     "BLOCKED",
+    "omc-output/v1",
+    "stage=ship",
+    "all_gates_passed",
+    "test_or_regression_failure",
+    "tdd_or_test_missing",
+    "approval_missing",
+    "next_skill",
+    "user_selection_needed",
+    "reason_code",
+    "<!-- OMC_OUTPUT: {JSON} -->",
+    "PROCEED+all_gates_passed→ready,null,true",
+    "BLOCK+test_or_regression_failure→blocked,omc-investigate,false",
+    "BLOCK+approval_missing→blocked,null,true",
 ]
 
 REQUIRED_FOCUS_MARKERS = [

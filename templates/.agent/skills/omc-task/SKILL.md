@@ -67,7 +67,7 @@ python3 scripts/omc_lesson.py add -i
 
 ## Handoff — 모든 단계가 끝나면 `$omc-review`로 넘깁니다.
 
-## Machine output contract — 마지막 두 줄은 `OMC_OUTPUT: {JSON}`과 `VERDICT: <VALUE>`; JSON은 `schema_version=omc-output/v1`, `stage`, `outcome`, `risk`, `next_skill`, `user_selection_needed`, `reason_code`; `next_skill`은 canonical `omc-*` 또는 null; unresolved/blocked는 `reason_code` 필수; legacy 정규화는 표시하고 명시적 오류는 보정하지 않습니다.
+## Machine output contract — 마지막 두 줄은 `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT: <VALUE>`; JSON은 `schema_version=omc-output/v1`, `stage`, `outcome`, `risk`, `next_skill`, `user_selection_needed`, `reason_code`; `next_skill`은 canonical `omc-*` 또는 null; unresolved/blocked는 `reason_code` 필수; legacy 평문 입력은 허용하되 새 출력은 숨김 형식만 사용하고 명시적 오류는 보정하지 않습니다.
 
 ## 다음 추천
 

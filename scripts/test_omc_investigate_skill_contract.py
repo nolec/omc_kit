@@ -62,6 +62,19 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "근본 원인 확정 전 구현 금지",
     "모든 LLM 공통 출력 형식",
     "입력 부족 시 중단",
+    "omc-output/v1",
+    "stage=investigate",
+    "root_cause_confirmed",
+    "fix_already_applied",
+    "architecture_scope_issue",
+    "insufficient_evidence",
+    "next_skill",
+    "user_selection_needed",
+    "reason_code",
+    "<!-- OMC_OUTPUT: {JSON} -->",
+    "PROCEED+root_cause_confirmed→ready,omc-task,false",
+    "REVISE+architecture_scope_issue→unresolved,omc-ceo-review,false",
+    "HOLD+insufficient_evidence→unresolved,null,true",
 ]
 
 REQUIRED_FOCUS_MARKERS = [

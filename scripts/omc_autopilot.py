@@ -3306,6 +3306,7 @@ _OUTPUT_CONTRACT_PILOT_STAGES = {
     "plan_retry": "plan",
     "task": "task",
     "task_retry": "task",
+    "critique": "critique-code",
     "review": "review",
 }
 
@@ -3530,12 +3531,19 @@ def _grep_verdict(output: str) -> str | None:
     return None
 
 
+def _quality_verdict_succeeded(step_name: str, verdict: str | None) -> bool:
+    """Return whether a critique/review verdict completes its quality loop."""
+    if step_name not in {"critique", "review"}:
+        return False
+    return verdict in {"PROCEED", "APPROVE", "APPROVE WITH NOTES"}
+
+
 def _pilot_stage_for_step(step_name: str) -> str | None:
     return _OUTPUT_CONTRACT_PILOT_STAGES.get(str(step_name).strip().lower())
 
 
 def _normalize_pipeline_output(*, step_name: str, output: str) -> str:
-    """Normalize only the plan/task/review pilot without touching other skills."""
+    """Normalize output-contract pilot stages without touching other steps."""
     stage = _pilot_stage_for_step(step_name)
     if stage is None:
         return output
@@ -4535,7 +4543,6 @@ def cmd_pipeline(
         # critique의 교정 횟수가 review의 독립적인 교정 기회를 소진하면
         # review가 실제 수정 없이 HOLD되므로 품질 단계별로 예산을 분리한다.
         task_auto_retry_count = resumed_task_retry_counts[loop_step]
-        verdict_ok = ("PROCEED", "APPROVE")
         retry_count = 0
         prev_verdict: object = _UNSET_VERDICT  # sentinel: 아직 verdict 없음
         same_verdict_streak = 0
@@ -4553,7 +4560,8 @@ def cmd_pipeline(
                 "구현 의도나 지시문은 제공하지 않습니다 — 코드와 테스트 결과 자체로만 판단하세요.\n\n"
                 f"{ctx}\n\n"
                 "반드시 마지막 줄에 `VERDICT: PROCEED` / `VERDICT: APPROVE` / "
-                "`VERDICT: REVISE` / `VERDICT: BLOCK` / `VERDICT: HOLD` 중 하나를 출력하세요."
+                "`VERDICT: APPROVE WITH NOTES` / `VERDICT: REVISE` / "
+                "`VERDICT: BLOCK` / `VERDICT: HOLD` 중 하나를 출력하세요."
             )
 
         base_loop_prompt = _make_loop_prompt()
@@ -4614,7 +4622,7 @@ def cmd_pipeline(
                 if _issues:
                     prev_critique_issues = _issues
 
-            if rc == 0 and verdict in verdict_ok:
+            if rc == 0 and _quality_verdict_succeeded(loop_step, verdict):
                 result["steps"][loop_step] = _step_payload(
                     "completed",
                     loop_started_at,

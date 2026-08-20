@@ -67,6 +67,12 @@ REQUIRED_MARKERS = [
     "delay 이유",
     "재개 조건",
     "사용자 선택 대기",
+    "omc-output/v1",
+    "stage=critique-plan|critique-code",
+    "<!-- OMC_OUTPUT: {JSON} -->",
+    "next_skill",
+    "user_selection_needed",
+    "reason_code",
 ]
 
 REQUIRED_FOCUS_MARKERS = [
