@@ -340,11 +340,7 @@ def _finalize_install_manifest(target: Path, manifest: dict[str, dict[str, str]]
         ):
             entry["source_sha256"] = ""
             entry["stale_managed"] = True
-        if (
-            entry.get("policy") == "managed_exact"
-            and entry.get("registered_generated")
-            and target_file.is_file()
-        ):
+        if entry.get("registered_generated") and target_file.is_file():
             digest = _sha256_file(target_file)
             entry["policy"] = "managed_generated"
             entry["source_sha256"] = digest

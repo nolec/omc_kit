@@ -463,6 +463,27 @@ class TestInstallManifest(unittest.TestCase):
             self.assertEqual(finalized["generated.json"]["policy"], "managed_generated")
             self.assertEqual(finalized["generated.json"]["source_sha256"], _install._sha256_file(target))
 
+    def test_finalize_manifest_refreshes_existing_generated_entry_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "AGENTS.md"
+            target.write_text("new generated content\n", encoding="utf-8")
+            manifest = {
+                "AGENTS.md": {
+                    "policy": "managed_generated",
+                    "source_sha256": "previous-generated-hash",
+                    "target_sha256": "previous-generated-hash",
+                    "registered_generated": True,
+                }
+            }
+
+            finalized = _install._finalize_install_manifest(root, manifest)
+
+            expected_hash = _install._sha256_file(target)
+            self.assertEqual(finalized["AGENTS.md"]["policy"], "managed_generated")
+            self.assertEqual(finalized["AGENTS.md"]["source_sha256"], expected_hash)
+            self.assertEqual(finalized["AGENTS.md"]["target_sha256"], expected_hash)
+
     def test_finalize_manifest_preserves_unregistered_exact_entry(self):
         manifest = {
             "docs/not-copied.md": {
