@@ -20,7 +20,13 @@ from omc_hook_contract import (
     codex_contract_issues,
     gemini_contract_issues,
 )
-from omc_source_hash import source_sha256 as _source_sha256
+from omc_source_hash import (
+    DEPLOYED_DOCUMENTS,
+    DEPLOYED_PROMPTS,
+    DEPLOYED_SCRIPT_EXTRAS as _SCRIPTS_EXTRA,
+    is_deployed_script_name,
+    source_sha256 as _source_sha256,
+)
 from omc_version import SourceIdentity, capture_source_identity
 
 AGENTS_OMC_BEGIN = "<!-- OMC:BEGIN -->"
@@ -585,18 +591,12 @@ def _merge_agents_template(dst: Path, omc_block: str) -> None:
     _write_generated_file(dst, merged, force=True)
 
 
-_SCRIPTS_EXTRA = {
-    "install.py",        # 인스톨러 자체 — 타겟에서 재실행 가능하도록
-    "omc.py",            # OMC 진입점
-    "compose_prompt.py", # 프롬프트 조합 유틸
-}
-
 def _deployed_script_names(kit_root: Path) -> set[str]:
     scripts_src = kit_root / "scripts"
     names: set[str] = set()
     if scripts_src.exists():
         for src in sorted(scripts_src.glob("*.py")):
-            if src.name.startswith("omc_") or src.name in _SCRIPTS_EXTRA:
+            if is_deployed_script_name(src.name):
                 names.add(src.name)
     return names
 
@@ -1056,24 +1056,8 @@ def _main() -> int:
         return 1
 
     to_copy = [
-        # ── prompts ──────────────────────────────────────────────────────────
-        (source_kit / "prompts" / "README.md", tgt / "prompts" / "README.md"),
-        (source_kit / "prompts" / "team.json", tgt / "prompts" / "team.json"),
-        (source_kit / "prompts" / "ROLE_ORCHESTRATOR.md", tgt / "prompts" / "ROLE_ORCHESTRATOR.md"),
-        (source_kit / "prompts" / "MODE_AUTOPILOT.md", tgt / "prompts" / "MODE_AUTOPILOT.md"),
-        (source_kit / "prompts" / "MODE_TEAM.md", tgt / "prompts" / "MODE_TEAM.md"),
-        (source_kit / "prompts" / "MODE_ULTRAWORK.md", tgt / "prompts" / "MODE_ULTRAWORK.md"),
-        (source_kit / "prompts" / "MODE_RALPH.md", tgt / "prompts" / "MODE_RALPH.md"),
-        (source_kit / "prompts" / "MODE_DEEP_INTERVIEW.md", tgt / "prompts" / "MODE_DEEP_INTERVIEW.md"),
-        (source_kit / "prompts" / "ROLE_SEARCH_ASSISTANT.md", tgt / "prompts" / "ROLE_SEARCH_ASSISTANT.md"),
-        (source_kit / "prompts" / "ROLE_ANALYSIS_ASSISTANT.md", tgt / "prompts" / "ROLE_ANALYSIS_ASSISTANT.md"),
-        (source_kit / "prompts" / "ROLE_CODE_REVIEW_ASSISTANT.md", tgt / "prompts" / "ROLE_CODE_REVIEW_ASSISTANT.md"),
-        (source_kit / "prompts" / "ROLE_SENIOR_CODING_ASSISTANT.md", tgt / "prompts" / "ROLE_SENIOR_CODING_ASSISTANT.md"),
-        # ── scripts (타겟에 배포되는 공용 스크립트) ───────────────────────────
-        # kit-only (배포 안 됨): auto_prompt.py, autopilot.py, safe_trash.py,
-        #   export_repo.py, test_*.py, conftest.py
-        # omc_hub_push.py / omc_sync_ssot.py — omc_* 패턴으로 배포됨 (타겟→hub 역기여 지원)
-        # 수동 목록 대신 glob 자동 감지 — 새 스크립트 추가 시 자동 포함됨
+        (source_kit / "prompts" / name, tgt / "prompts" / name)
+        for name in sorted(DEPLOYED_PROMPTS)
     ]
 
     # scripts: 화이트리스트 방식 — 명시된 파일만 배포 (기본값: 제외)
@@ -1086,14 +1070,8 @@ def _main() -> int:
     for s, d in to_copy:
         _copy(s, d, force=force)
 
-    _copy(source_kit / "docs" / "omc_workflow.md", tgt / "docs" / "omc_workflow.md", force=force)
-    _copy(source_kit / "docs" / "quickstart_kr.md", tgt / "docs" / "quickstart_kr.md", force=force)
-    _copy(source_kit / "docs" / "kit_map.md", tgt / "docs" / "kit_map.md", force=force)
-    _copy(source_kit / "docs" / "next_project_pack.md", tgt / "docs" / "next_project_pack.md", force=force)
-    _copy(source_kit / "docs" / "agent_behavior.md", tgt / "docs" / "agent_behavior.md", force=force)
-    _copy(source_kit / "docs" / "verification_checklist.md", tgt / "docs" / "verification_checklist.md", force=force)
-    _copy(source_kit / "docs" / "omc_quality_gates.md", tgt / "docs" / "omc_quality_gates.md", force=force)
-    _copy(source_kit / "docs" / "omc_versioning.md", tgt / "docs" / "omc_versioning.md", force=force)
+    for name in sorted(DEPLOYED_DOCUMENTS):
+        _copy(source_kit / "docs" / name, tgt / "docs" / name, force=force)
 
     _write_install_source_metadata(
         tgt,

@@ -55,6 +55,35 @@ class TestSourceHash(unittest.TestCase):
 
             self.assertNotEqual(source_sha256(source), before)
 
+    def test_non_deployed_document_does_not_change_source_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "kit"
+            _write_source_kit(source)
+            before = source_sha256(source)
+
+            docs = source / "docs"
+            docs.mkdir()
+            (docs / "automatic_model_routing_roadmap.md").write_text(
+                "roadmap update\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(source_sha256(source), before)
+
+    def test_deployed_document_change_updates_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "kit"
+            _write_source_kit(source)
+            docs = source / "docs"
+            docs.mkdir()
+            deployed = docs / "omc_quality_gates.md"
+            deployed.write_text("v1\n", encoding="utf-8")
+            before = source_sha256(source)
+
+            deployed.write_text("v2\n", encoding="utf-8")
+
+            self.assertNotEqual(source_sha256(source), before)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

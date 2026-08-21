@@ -234,6 +234,18 @@ def audit_target(target: Path) -> dict[str, object]:
         else:
             issue_counts["managed_drift"] += 1
 
+    if (
+        installed_integrity_status != "ok"
+        or version_readiness["receipt_status"] == "invalid"
+    ):
+        core_usage_readiness = "blocked"
+    elif source_freshness_status == "update_available":
+        core_usage_readiness = "ready_update_available"
+    elif source_freshness_status == "unknown":
+        core_usage_readiness = "ready_source_unknown"
+    else:
+        core_usage_readiness = "ready"
+
     return {
         "target": str(resolved),
         "has_legacy_embedded_omc_kit": legacy_dir.exists(),
@@ -248,8 +260,11 @@ def audit_target(target: Path) -> dict[str, object]:
         "receipt_error": receipt_error,
         "status": status,
         "installed_integrity_status": installed_integrity_status,
+        "core_usage_readiness": core_usage_readiness,
         "source_freshness_status": source_freshness_status,
         "quality_gate_readiness": _quality_gate_readiness(resolved),
+        "quality_gate_scope": "delivery_validation",
+        "quality_gate_core_impact": "does_not_block_core_usage",
         "version_readiness": version_readiness,
         "source_freshness_reason": source_freshness_reason,
         "current_source_sha256": current_source_sha256,
@@ -266,8 +281,11 @@ def _render_text(results: list[dict[str, object]]) -> str:
         lines.append(f"== {item['target']} ==")
         lines.append(f"status: {item['status']}")
         lines.append(f"installed_integrity_status: {item['installed_integrity_status']}")
+        lines.append(f"core_usage_readiness: {item['core_usage_readiness']}")
         lines.append(f"source_freshness_status: {item['source_freshness_status']}")
         lines.append(f"quality_gate_readiness: {item['quality_gate_readiness']}")
+        lines.append(f"quality_gate_scope: {item['quality_gate_scope']}")
+        lines.append(f"quality_gate_core_impact: {item['quality_gate_core_impact']}")
         version = item["version_readiness"]
         lines.append(f"omc_installed_version: {version['installed_version']}")
         lines.append(f"omc_source_version: {version['source_version']}")

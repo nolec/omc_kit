@@ -238,6 +238,7 @@ class TestInstallAudit(unittest.TestCase):
 
             self.assertEqual(result["verification_status"], "failed")
             self.assertIn("version:invalid-receipt", result["verification_errors"])
+            self.assertEqual(result["core_usage_readiness"], "blocked")
 
     def test_verify_target_reports_matching_source_freshness(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -424,8 +425,14 @@ class TestInstallAudit(unittest.TestCase):
 
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertIn("installed_integrity_status: ok", proc.stdout)
+            self.assertIn("core_usage_readiness: ready", proc.stdout)
             self.assertIn("source_freshness_status: up_to_date", proc.stdout)
             self.assertIn("quality_gate_readiness: missing", proc.stdout)
+            self.assertIn("quality_gate_scope: delivery_validation", proc.stdout)
+            self.assertIn(
+                "quality_gate_core_impact: does_not_block_core_usage",
+                proc.stdout,
+            )
             self.assertIn("verification_status: ok", proc.stdout)
 
     def test_install_audit_reports_invalid_quality_gate_without_failing_install(self):
@@ -438,6 +445,12 @@ class TestInstallAudit(unittest.TestCase):
             result = _audit.audit_target(target)
 
             self.assertEqual(result["quality_gate_readiness"], "invalid")
+            self.assertEqual(result["core_usage_readiness"], "ready")
+            self.assertEqual(result["quality_gate_scope"], "delivery_validation")
+            self.assertEqual(
+                result["quality_gate_core_impact"],
+                "does_not_block_core_usage",
+            )
             self.assertEqual(result["verification_status"], "ok")
 
     def test_omc_verify_install_command_rejects_unknown_source_freshness(self):
