@@ -26,6 +26,7 @@ build/
 .omc/context/
 .omc/pipeline_session.json
 .omc/install-source.json
+.omc/install-receipt.json
 .omc/notepad.md
 .omc/summary.md
 .omc/project-memory.json

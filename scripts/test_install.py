@@ -1089,9 +1089,10 @@ class TestTemplateRootResolution(unittest.TestCase):
 
 
 class TestRepositoryGitignore(unittest.TestCase):
-    def test_gitignore_excludes_install_source_metadata(self):
+    def test_gitignore_excludes_install_metadata(self):
         gitignore = (Path(__file__).resolve().parents[1] / ".gitignore").read_text(encoding="utf-8")
         self.assertIn(".omc/install-source.json", gitignore)
+        self.assertIn(".omc/install-receipt.json", gitignore)
 
     def test_gitignore_keeps_claude_command_docs_trackable(self):
         gitignore = (Path(__file__).resolve().parents[1] / ".gitignore").read_text(encoding="utf-8")
