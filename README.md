@@ -46,6 +46,14 @@ python3 scripts/install.py --target /path/to/your-project --force
 
 여러 저장소에 설치할 때는 OMC 킷을 별도로 보관하고 각 target에 반복 설치합니다. 설치 후 target 저장소의 프로젝트 규칙과 기존 `AGENTS.md` 내용은 확인하고, 무조건 덮어쓰지 마세요.
 
+OMC 릴리스 버전은 source kit의 `VERSION`을 기준으로 하며 target 프로젝트의
+루트에는 복사하지 않습니다. 설치된 버전과 원본 최신성은 다음 명령으로 확인합니다.
+
+```bash
+python3 scripts/omc.py version --target .
+python3 scripts/omc.py version --target . --json
+```
+
 ## 설치 후 점검
 
 1. `ETHOS.md`의 프로젝트 맥락과 `CONVENTIONS.md`의 팀 규칙을 프로젝트에 맞게 작성합니다.
@@ -203,6 +211,7 @@ envelope = run_review_in_snapshot(
 | `scripts/omc_pipeline_guard.py` | CONTRACT·RED 파이프라인 gate |
 | `scripts/omc_tdd_check.py` | staged 변경의 테스트 커버리지 검사 |
 | `scripts/omc_doctor.py` | 설치·hook 진단 및 수정 |
+| `scripts/omc_version.py` | OMC 버전·원본 변경·설치 무결성 판정 |
 | `scripts/omc_sync_ssot.py` | 템플릿 SSOT 동기화 검사 |
 | `scripts/omc_lesson.py` | 교훈 저장·검색 |
 | `scripts/install.py` | target 저장소 설치·force 갱신 |

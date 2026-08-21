@@ -29,7 +29,8 @@
 
 ```
 omc_kit/
-  scripts/          ← SSOT (18개 스크립트)
+  VERSION           ← OMC 릴리스 버전 SSOT (target 루트에는 미배포)
+  scripts/          ← 공용 실행·검증 스크립트 SSOT
   templates/        ← SSOT 템플릿 (install.py가 배포)
     AGENTS.md         공통 에이전트 규칙 (모든 LLM)
     CLAUDE.md         Claude Code 오버레이 템플릿
@@ -78,6 +79,7 @@ project_prompts/    ← 현재 프로젝트 도메인 role/profile (선택)
 | `omc_chat.py` | 자연어 → OMC 실행 라우팅 |
 | `omc_peer_review.py` | 피어 리뷰 자동화 |
 | `omc_doctor.py` | 설치 상태 진단 + 자동 수정 |
+| `omc_version.py` | 릴리스·원본·설치 무결성 상태 판정 |
 | `omc_utils.py` | 공통 유틸 (project_root) |
 | `install.py` | 다른 프로젝트로 배포 |
 | `auto_prompt.py` | 프롬프트 합성 |
@@ -94,6 +96,7 @@ project_prompts/    ← 현재 프로젝트 도메인 role/profile (선택)
 
 프로젝트 추가할 때:
 - `python omc_kit/scripts/omc.py setup --target /path/to/new-project`
+- `python scripts/omc.py version --target .`으로 설치 버전과 최신성 확인
 
 ## CI/CD
 

@@ -101,13 +101,14 @@ class TestInstallManifest(unittest.TestCase):
             source = root / "source"
             target = root / "target"
             (source / "templates").mkdir(parents=True)
+            (source / "VERSION").write_text("0.1.0\n", encoding="utf-8")
             target.mkdir()
             (source / "templates" / "skill.md").write_text("v1\n", encoding="utf-8")
             source_hash = _install._source_sha256(source)
             _install._write_install_source_metadata(target, source)
             _install._write_install_receipt(
                 target,
-                source_sha256=source_hash,
+                source_identity=_install.SourceIdentity("0.1.0", source_hash, None),
                 entries={},
             )
 
@@ -122,6 +123,7 @@ class TestInstallManifest(unittest.TestCase):
             source = root / "source"
             target = root / "target"
             source.mkdir()
+            (source / "VERSION").write_text("0.1.0\n", encoding="utf-8")
             target.mkdir()
             source_file = source / "managed.md"
             target_file = target / "managed.md"
@@ -130,7 +132,7 @@ class TestInstallManifest(unittest.TestCase):
             _install._write_install_source_metadata(target, source)
             _install._write_install_receipt(
                 target,
-                source_sha256="old-source",
+                source_identity=_install.SourceIdentity("0.1.0", "old-source", None),
                 entries={
                     "managed.md": {
                         "policy": "managed_exact",
@@ -152,7 +154,12 @@ class TestInstallManifest(unittest.TestCase):
             source = root / "missing-source"
             target = root / "target"
             target.mkdir()
-            _install._write_install_source_metadata(target, source)
+            metadata = target / ".omc" / "install-source.json"
+            metadata.parent.mkdir(parents=True)
+            metadata.write_text(
+                json.dumps({"source_kind": "external", "source_path": str(source)}),
+                encoding="utf-8",
+            )
 
             result = _install._classify_auto_update(source, target)
 
@@ -164,11 +171,16 @@ class TestInstallManifest(unittest.TestCase):
             source = root / "source"
             target = root / "target"
             (source / "scripts").mkdir(parents=True)
+            (source / "VERSION").write_text("0.1.0\n", encoding="utf-8")
             (target / "scripts").mkdir(parents=True)
             (source / "scripts" / "omc_new.py").write_text("new\n", encoding="utf-8")
             (target / "scripts" / "omc_new.py").write_text("local\n", encoding="utf-8")
             _install._write_install_source_metadata(target, source)
-            _install._write_install_receipt(target, source_sha256="old-source", entries={})
+            _install._write_install_receipt(
+                target,
+                source_identity=_install.SourceIdentity("0.1.0", "old-source", None),
+                entries={},
+            )
 
             result = _install._classify_auto_update(source, target)
 
@@ -709,9 +721,12 @@ class TestInstallManifest(unittest.TestCase):
     def test_install_receipt_records_source_and_target_hashes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            source = root / "source"
+            source.mkdir()
+            (source / "VERSION").write_text("0.1.0\n", encoding="utf-8")
             receipt = _install._write_install_receipt(
                 root,
-                source_sha256="source-hash",
+                source_identity=_install.SourceIdentity("0.1.0", "source-hash", None),
                 entries={"scripts/omc.py": {"status": "updated"}},
             )
 
@@ -1079,6 +1094,7 @@ class TestRepositoryGitignore(unittest.TestCase):
             target.mkdir()
 
             (kit / "scripts").mkdir(parents=True)
+            (kit / "VERSION").write_text("0.1.0\n", encoding="utf-8")
             (kit / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
             templates = kit / "templates"
             templates.mkdir(parents=True)
@@ -1110,6 +1126,7 @@ class TestRepositoryGitignore(unittest.TestCase):
                 "agent_behavior.md",
                 "verification_checklist.md",
                 "omc_quality_gates.md",
+                "omc_versioning.md",
             ]:
                 (kit / "docs" / name).write_text("doc\n", encoding="utf-8")
             (templates / ".claude").mkdir(parents=True)
@@ -1134,10 +1151,40 @@ class TestRepositoryGitignore(unittest.TestCase):
             metadata = json.loads((target / ".omc" / "install-source.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["source_path"], str(kit.resolve()))
             self.assertEqual(metadata["source_kind"], "external")
+            self.assertEqual(metadata["omc_version"], "0.1.0")
+            receipt = json.loads(
+                (target / ".omc" / "install-receipt.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(receipt["schema_version"], 2)
+            self.assertEqual(receipt["omc_version"], "0.1.0")
+            self.assertFalse((target / "VERSION").exists())
             self.assertFalse((target / "omc_kit" / "templates" / ".DS_Store").exists())
 
 
 class TestInstallSourceResolution(unittest.TestCase):
+    def test_main_rejects_missing_version_before_manifest_or_target_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source-kit"
+            target = root / "project"
+            (source / "templates").mkdir(parents=True)
+            (source / "scripts").mkdir()
+            (source / "prompts").mkdir()
+            (source / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
+            (source / "prompts" / "team.json").write_text("{}\n", encoding="utf-8")
+            target.mkdir()
+            marker = target / "keep.txt"
+            marker.write_text("unchanged\n", encoding="utf-8")
+
+            with patch.object(_install, "_kit_root", return_value=source), \
+                 patch.object(_install, "_build_install_manifest") as build_manifest, \
+                 patch("sys.argv", ["install.py", "--target", str(target)]):
+                with self.assertRaisesRegex(ValueError, "VERSION"):
+                    _install.main()
+
+            build_manifest.assert_not_called()
+            self.assertEqual(marker.read_text(encoding="utf-8"), "unchanged\n")
+
     def test_resolve_source_kit_rejects_non_omc_local_structure_even_with_install_script(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1147,6 +1194,7 @@ class TestInstallSourceResolution(unittest.TestCase):
             (current / "scripts" / "install.py").write_text("# unrelated install\n", encoding="utf-8")
             source = root / "source-kit"
             (source / "templates").mkdir(parents=True)
+            (source / "VERSION").write_text("0.1.0\n", encoding="utf-8")
             (source / "scripts").mkdir(parents=True)
             (source / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
             (source / "prompts").mkdir(parents=True)
@@ -1162,6 +1210,7 @@ class TestInstallSourceResolution(unittest.TestCase):
             (current / "templates").mkdir(parents=True)
             source = root / "source-kit"
             (source / "templates").mkdir(parents=True)
+            (source / "VERSION").write_text("0.1.0\n", encoding="utf-8")
             (source / "scripts").mkdir(parents=True)
             (source / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
             (source / "prompts").mkdir(parents=True)
@@ -1177,6 +1226,7 @@ class TestInstallSourceResolution(unittest.TestCase):
             current.mkdir()
             source = root / "source-kit"
             (source / "templates").mkdir(parents=True)
+            (source / "VERSION").write_text("0.1.0\n", encoding="utf-8")
             (source / "scripts").mkdir(parents=True)
             (source / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
             (source / "prompts").mkdir(parents=True)
@@ -1191,7 +1241,12 @@ class TestInstallSourceResolution(unittest.TestCase):
             current = root / "project"
             current.mkdir()
             missing = root / "missing-kit"
-            _install._write_install_source_metadata(current, missing)
+            metadata = current / ".omc" / "install-source.json"
+            metadata.parent.mkdir(parents=True)
+            metadata.write_text(
+                json.dumps({"source_kind": "external", "source_path": str(missing)}),
+                encoding="utf-8",
+            )
 
             with self.assertRaisesRegex(SystemExit, "install source path is missing"):
                 _install._resolve_source_kit(current, current)
@@ -1288,6 +1343,7 @@ class TestCheckForceRegression(unittest.TestCase):
             kit = Path(tmp) / "kit"
             (kit / "templates" / ".cursor" / "rules").mkdir(parents=True)
             (kit / "scripts").mkdir(parents=True)
+            (kit / "VERSION").write_text("0.1.0\n", encoding="utf-8")
             tgt = Path(tmp) / "tgt"
             tgt.mkdir()
             result = _install._check_force_regression(kit, tgt)
@@ -1659,6 +1715,7 @@ class TestHookContractMarkers(unittest.TestCase):
             target.mkdir()
 
             (kit / "scripts").mkdir(parents=True)
+            (kit / "VERSION").write_text("0.1.0\n", encoding="utf-8")
             (kit / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
             (kit / "prompts").mkdir(parents=True)
             (kit / "prompts" / "team.json").write_text("{}", encoding="utf-8")
@@ -1745,6 +1802,7 @@ class TestClaudeOverlayInstall(unittest.TestCase):
             target.mkdir()
 
             (kit / "scripts").mkdir(parents=True)
+            (kit / "VERSION").write_text("0.1.0\n", encoding="utf-8")
             (kit / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
             (kit / "prompts").mkdir(parents=True)
             (kit / "prompts" / "team.json").write_text("{}", encoding="utf-8")
@@ -1797,6 +1855,7 @@ class TestPersonalOverlayInstall(unittest.TestCase):
             target.mkdir()
 
             (kit / "scripts").mkdir(parents=True)
+            (kit / "VERSION").write_text("0.1.0\n", encoding="utf-8")
             (kit / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
             templates = kit / "templates"
             templates.mkdir(parents=True)
@@ -1864,6 +1923,7 @@ class TestPersonalOverlayInstall(unittest.TestCase):
             (target / "GEMINI.md").write_text("## OMC Overlay For Gemini\n", encoding="utf-8")
 
             (kit / "scripts").mkdir(parents=True)
+            (kit / "VERSION").write_text("0.1.0\n", encoding="utf-8")
             (kit / "scripts" / "install.py").write_text("# install\n", encoding="utf-8")
             (kit / "prompts").mkdir(parents=True)
             (kit / "prompts" / "team.json").write_text("{}", encoding="utf-8")

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from omc_source_hash import source_sha256 as _source_sha256
 from omc_quality_gate import readiness as _quality_gate_readiness
+import omc_version as _version
 
 
 def _metadata_path(target: Path) -> Path:
@@ -122,7 +123,7 @@ def audit_target(target: Path) -> dict[str, object]:
         verification_errors.append(f"audit:{status}")
     if not has_receipt:
         verification_errors.append("receipt:missing-or-invalid")
-    elif receipt_schema_version != 1:
+    elif receipt_schema_version not in {1, 2}:
         verification_errors.append("receipt:unsupported-schema")
     elif receipt_target != str(resolved):
         verification_errors.append("receipt:target-mismatch")
@@ -204,6 +205,13 @@ def audit_target(target: Path) -> dict[str, object]:
             verification_errors.append(f"drift:{rel}")
 
     installed_integrity_status = "ok" if not verification_errors else "failed"
+    version_readiness = _version.version_readiness(
+        resolved,
+        source_path=source_path if isinstance(source_path, str) else None,
+        install_integrity_status=installed_integrity_status,
+    )
+    if version_readiness["receipt_status"] == "invalid":
+        verification_errors.append("version:invalid-receipt")
     (
         source_freshness_status,
         current_source_sha256,
@@ -217,7 +225,7 @@ def audit_target(target: Path) -> dict[str, object]:
     issue_counts = Counter()
     for issue in verification_errors:
         prefix = issue.split(":", 1)[0]
-        if prefix in {"receipt", "audit"}:
+        if prefix in {"receipt", "audit", "version"}:
             issue_counts["receipt_error"] += 1
         elif prefix == "source":
             issue_counts["source_freshness"] += 1
@@ -242,6 +250,7 @@ def audit_target(target: Path) -> dict[str, object]:
         "installed_integrity_status": installed_integrity_status,
         "source_freshness_status": source_freshness_status,
         "quality_gate_readiness": _quality_gate_readiness(resolved),
+        "version_readiness": version_readiness,
         "source_freshness_reason": source_freshness_reason,
         "current_source_sha256": current_source_sha256,
         "verification_status": "ok" if not verification_errors else "failed",
@@ -259,6 +268,11 @@ def _render_text(results: list[dict[str, object]]) -> str:
         lines.append(f"installed_integrity_status: {item['installed_integrity_status']}")
         lines.append(f"source_freshness_status: {item['source_freshness_status']}")
         lines.append(f"quality_gate_readiness: {item['quality_gate_readiness']}")
+        version = item["version_readiness"]
+        lines.append(f"omc_installed_version: {version['installed_version']}")
+        lines.append(f"omc_source_version: {version['source_version']}")
+        lines.append(f"omc_release_status: {version['release_status']}")
+        lines.append(f"omc_version_status: {version['overall_status']}")
         if item["source_freshness_reason"] is not None:
             lines.append(f"source_freshness_reason: {item['source_freshness_reason']}")
         if item["current_source_sha256"] is not None:

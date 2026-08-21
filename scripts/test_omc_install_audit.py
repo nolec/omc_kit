@@ -25,6 +25,7 @@ def _write_source_kit(source: Path, *, marker: str = "v1") -> str:
     (source / "prompts").mkdir(parents=True, exist_ok=True)
     (source / "scripts" / "install.py").write_text("# installer\n", encoding="utf-8")
     (source / "prompts" / "team.json").write_text("{}\n", encoding="utf-8")
+    (source / "VERSION").write_text("0.1.0\n", encoding="utf-8")
     (source / "templates" / "marker.txt").write_text(marker + "\n", encoding="utf-8")
     return _audit._source_sha256(source)
 
@@ -190,6 +191,53 @@ class TestInstallAudit(unittest.TestCase):
 
             self.assertEqual(result["verification_status"], "ok")
             self.assertEqual(result["verification_errors"], [])
+            self.assertEqual(result["version_readiness"]["receipt_status"], "legacy")
+            self.assertEqual(result["version_readiness"]["overall_status"], "legacy_receipt")
+
+    def test_verify_target_reports_v2_version_readiness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            _write_verified_install(target)
+            receipt_path = target / ".omc" / "install-receipt.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt.update(
+                schema_version=2,
+                omc_version="0.1.0",
+                source_revision=None,
+                installed_at="2026-08-01T00:00:00+00:00",
+                updated_at="2026-08-21T00:00:00+00:00",
+            )
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+            result = _audit.audit_target(target)
+
+            self.assertEqual(result["verification_status"], "ok")
+            self.assertEqual(
+                result["version_readiness"],
+                {
+                    "installed_version": "0.1.0",
+                    "source_version": "0.1.0",
+                    "receipt_status": "current",
+                    "release_status": "up_to_date",
+                    "source_status": "unchanged",
+                    "install_integrity": "clean",
+                    "overall_status": "up_to_date",
+                },
+            )
+
+    def test_verify_target_rejects_v2_receipt_without_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            _write_verified_install(target)
+            receipt_path = target / ".omc" / "install-receipt.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["schema_version"] = 2
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+            result = _audit.audit_target(target)
+
+            self.assertEqual(result["verification_status"], "failed")
+            self.assertIn("version:invalid-receipt", result["verification_errors"])
 
     def test_verify_target_reports_matching_source_freshness(self):
         with tempfile.TemporaryDirectory() as tmp:

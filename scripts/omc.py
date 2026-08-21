@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import runpy
 import subprocess
 import sys
@@ -153,6 +154,7 @@ def main() -> int:
         "domain",
         "doctor",
         "verify-install",
+        "version",
         "quickstart",
         "run",
         "peer-review",
@@ -194,6 +196,10 @@ def main() -> int:
     verify_install.add_argument(
         "--target", type=Path, default=Path.cwd(), help="Target repository root."
     )
+
+    version = sub.add_parser("version", help="Show installed and source OMC versions.")
+    version.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+    version.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
 
     guard = sub.add_parser("guard", help="Check whether the latest OMC session is confirmed.")
     guard.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -429,6 +435,22 @@ def main() -> int:
     if args.command == "verify-install":
         audit_script = kit / "scripts" / "omc_install_audit.py"
         return _run_script(audit_script, ["--strict", str(args.target.resolve())])
+
+    if args.command == "version":
+        import omc_install_audit
+
+        audit = omc_install_audit.audit_target(args.target.resolve())
+        report = audit["version_readiness"]
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+        else:
+            print(f"OMC installed: {report['installed_version'] or 'unknown'}")
+            print(f"OMC source:    {report['source_version'] or 'unavailable'}")
+            print(f"Release:       {report['release_status']}")
+            print(f"Source:        {report['source_status']}")
+            print(f"Integrity:     {report['install_integrity']}")
+            print(f"Overall:       {report['overall_status']}")
+        return 2 if report["overall_status"] == "invalid" else 0
 
     if args.command == "guard":
         guard_script = kit / "scripts" / "omc_guard.py"

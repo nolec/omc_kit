@@ -21,6 +21,7 @@ from omc_hook_contract import (
     gemini_contract_issues,
 )
 from omc_source_hash import source_sha256 as _source_sha256
+from omc_version import SourceIdentity, capture_source_identity
 
 AGENTS_OMC_BEGIN = "<!-- OMC:BEGIN -->"
 AGENTS_OMC_END = "<!-- OMC:END -->"
@@ -246,23 +247,42 @@ def _build_install_manifest(source_kit: Path, target: Path) -> dict[str, dict[st
 def _write_install_receipt(
     target: Path,
     *,
-    source_sha256: str,
+    source_identity: SourceIdentity,
     entries: dict[str, dict[str, str]],
 ) -> dict[str, object]:
+    now = datetime.now(timezone.utc).isoformat()
+    installed_at = now
+    path = target / INSTALL_RECEIPT
+    if path.is_file():
+        try:
+            previous = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            previous = None
+        if isinstance(previous, dict):
+            candidate = previous.get("installed_at") or previous.get("created_at")
+            if isinstance(candidate, str) and candidate:
+                installed_at = candidate
     receipt: dict[str, object] = {
-        "schema_version": 1,
-        "source_sha256": source_sha256,
+        "schema_version": 2,
+        "omc_version": source_identity.version,
+        "source_sha256": source_identity.sha256,
+        "source_revision": source_identity.revision,
         "target": str(target.resolve()),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "installed_at": installed_at,
+        "updated_at": now,
         "entries": entries,
     }
-    path = target / INSTALL_RECEIPT
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return receipt
 
 
-def _classify_auto_update(source_kit: Path, target: Path) -> dict[str, object]:
+def _classify_auto_update(
+    source_kit: Path,
+    target: Path,
+    *,
+    source_identity: SourceIdentity | None = None,
+) -> dict[str, object]:
     """Classify whether a session-start update may safely proceed.
 
     Automatic updates are allowed only when the source is present and every
@@ -276,8 +296,8 @@ def _classify_auto_update(source_kit: Path, target: Path) -> dict[str, object]:
     if not source_kit.is_dir():
         return result
 
-    source_sha256 = _source_sha256(source_kit)
-    result["source_sha256"] = source_sha256
+    identity = source_identity or capture_source_identity(source_kit)
+    result["source_sha256"] = identity.sha256
     receipt_path = target / INSTALL_RECEIPT
     if not receipt_path.is_file():
         result["status"] = "update_available"
@@ -315,7 +335,11 @@ def _classify_auto_update(source_kit: Path, target: Path) -> dict[str, object]:
     if conflicts:
         result["status"] = "local_conflict"
         result["conflicts"] = conflicts
-    elif receipt.get("source_sha256") == source_sha256:
+    elif (
+        receipt.get("schema_version") == 2
+        and receipt.get("omc_version") == identity.version
+        and receipt.get("source_sha256") == identity.sha256
+    ):
         result["status"] = "up_to_date"
     else:
         result["status"] = "update_available"
@@ -803,14 +827,22 @@ def _install_source_metadata_path(target: Path) -> Path:
     return target / INSTALL_SOURCE_METADATA
 
 
-def _write_install_source_metadata(target: Path, source_kit: Path) -> None:
+def _write_install_source_metadata(
+    target: Path,
+    source_kit: Path,
+    *,
+    source_identity: SourceIdentity | None = None,
+) -> None:
+    identity = source_identity or capture_source_identity(source_kit)
     metadata_path = _install_source_metadata_path(target)
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "source_kind": "external",
         "source_path": str(source_kit.resolve()),
         "installer_version": "v1",
-        "source_sha256": _source_sha256(source_kit),
+        "omc_version": identity.version,
+        "source_sha256": identity.sha256,
+        "source_revision": identity.revision,
     }
     metadata_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -998,8 +1030,13 @@ def _main() -> int:
     auto_update = bool(args.auto_update)
     migrate_shared_tasks = bool(args.migrate_shared_tasks)
     source_kit = _resolve_source_kit(kit, tgt)
+    source_identity = capture_source_identity(source_kit)
     if auto_update:
-        update = _classify_auto_update(source_kit, tgt)
+        update = _classify_auto_update(
+            source_kit,
+            tgt,
+            source_identity=source_identity,
+        )
         print(f"[auto-update] {update['status']}")
         if update["status"] != "update_available":
             if update.get("conflicts"):
@@ -1056,8 +1093,13 @@ def _main() -> int:
     _copy(source_kit / "docs" / "agent_behavior.md", tgt / "docs" / "agent_behavior.md", force=force)
     _copy(source_kit / "docs" / "verification_checklist.md", tgt / "docs" / "verification_checklist.md", force=force)
     _copy(source_kit / "docs" / "omc_quality_gates.md", tgt / "docs" / "omc_quality_gates.md", force=force)
+    _copy(source_kit / "docs" / "omc_versioning.md", tgt / "docs" / "omc_versioning.md", force=force)
 
-    _write_install_source_metadata(tgt, source_kit)
+    _write_install_source_metadata(
+        tgt,
+        source_kit,
+        source_identity=source_identity,
+    )
 
     run_template = templates / "run"
     if run_template.exists():
@@ -1481,7 +1523,7 @@ python3 scripts/omc_tdd_check.py --staged
     }
     _write_install_receipt(
         tgt,
-        source_sha256=_source_sha256(source_kit),
+        source_identity=source_identity,
         entries=receipt_entries,
     )
     receipt_finished = time.perf_counter()

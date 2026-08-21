@@ -44,6 +44,7 @@ _EXPECTED_SCRIPTS = {
     "omc_sync_ssot.py",
     "omc_tdd_check.py",
     "omc_utils.py",
+    "omc_version.py",
 }
 
 _KIT_ONLY_SCRIPTS = {
@@ -97,3 +98,11 @@ def test_install_excludes_kit_only_files(installed_target: Path) -> None:
 
 def test_install_copies_quality_gate_contract(installed_target: Path) -> None:
     assert (installed_target / "docs" / "omc_quality_gates.md").is_file()
+
+
+def test_install_copies_version_contract_without_project_version_file(
+    installed_target: Path,
+) -> None:
+    assert (installed_target / "scripts" / "omc_version.py").is_file()
+    assert (installed_target / "docs" / "omc_versioning.md").is_file()
+    assert not (installed_target / "VERSION").exists()

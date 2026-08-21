@@ -117,7 +117,12 @@ python3 scripts/omc.py state compact
 python omc_kit/scripts/omc.py setup --target /path/to/project
 cd /path/to/project
 python scripts/omc_doctor.py --target .
+python scripts/omc.py version --target .
 ```
+
+설치 버전과 원본 최신성, 관리 파일 무결성을 기계적으로 확인하려면
+`python scripts/omc.py version --target . --json`을 사용합니다. 기존 schema v1
+설치 영수증은 다음 `setup --force` 또는 안전한 자동 업데이트에서 v2로 승격됩니다.
 
 ---
 
