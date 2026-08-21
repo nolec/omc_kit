@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 import omc_install_audit as _audit
+import omc_quality_gate as _quality_gate
 
 
 def _sha256(path: Path) -> str:
@@ -376,7 +377,20 @@ class TestInstallAudit(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertIn("installed_integrity_status: ok", proc.stdout)
             self.assertIn("source_freshness_status: up_to_date", proc.stdout)
+            self.assertIn("quality_gate_readiness: missing", proc.stdout)
             self.assertIn("verification_status: ok", proc.stdout)
+
+    def test_install_audit_reports_invalid_quality_gate_without_failing_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            _write_verified_install(target)
+            config = target / ".omc" / "quality-gates.json"
+            config.write_text("{}", encoding="utf-8")
+
+            result = _audit.audit_target(target)
+
+            self.assertEqual(result["quality_gate_readiness"], "invalid")
+            self.assertEqual(result["verification_status"], "ok")
 
     def test_omc_verify_install_command_rejects_unknown_source_freshness(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -410,6 +424,33 @@ class TestInstallAudit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "project"
             target.mkdir()
+            evidence = target / "project-manifest"
+            evidence.write_text("project-owned gate\n", encoding="utf-8")
+            config_path = target / ".omc" / "quality-gates.json"
+            config_path.parent.mkdir(parents=True)
+            config = {
+                "schema_version": "omc-quality-gates/v1",
+                "base_ref": "HEAD~1",
+                "evidence": [
+                    {"path": "project-manifest", "sha256": _quality_gate.file_sha256(evidence)}
+                ],
+                "gates": [
+                    {
+                        "id": "test",
+                        "purpose": "test",
+                        "argv": ["true", "{changed_files}"],
+                        "scope": "changed",
+                        "required": True,
+                        "timeout_sec": 30,
+                    }
+                ],
+            }
+            original_config = json.dumps(config, sort_keys=True) + "\n"
+            config_path.write_text(original_config, encoding="utf-8")
+            _quality_gate.approve(
+                target,
+                expected_config_sha256=_quality_gate.canonical_file_sha256(config_path),
+            )
 
             proc = subprocess.run(
                 [
@@ -428,6 +469,8 @@ class TestInstallAudit(unittest.TestCase):
 
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertIn("verification_status: ok", proc.stdout)
+            self.assertIn("quality_gate_readiness: ready", proc.stdout)
+            self.assertEqual(config_path.read_text(encoding="utf-8"), original_config)
             self.assertIn('"scan_strategy": "bounded_manifest"', proc.stdout)
 
 

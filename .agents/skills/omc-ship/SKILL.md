@@ -11,21 +11,21 @@ description: "배포·릴리즈 준비 체크. 트리거: 배포해줘, 릴리�
 - OMC 가드/TDD 및 프로젝트 품질 게이트 통과, 테스트/타입/린트 PASS, 비밀값 검사 통과, 사용자 승인 확인
 
 사용자에게 보여줄 것: OMC 가드 / TDD 게이트 / 테스트 / 타입 / 린트 / 비밀값 / 승인 상태 / 결론
-시스템이 암묵적으로 처리: package.json/README/ETHOS.md 확인, Nx 여부 분기, 배포 전 차단 유지, 현재 ship 대상 범위와 범위 밖 dirty 변경 분리. 품질 게이트 설정 후보는 `docs/omc_quality_gates.md` 계약을 따르며 승인 전 실행하지 않습니다.
+시스템이 암묵적으로 처리: 배포 전 차단 유지, 현재 ship 대상 범위와 범위 밖 dirty 변경 분리. 프로젝트 품질 명령은 추측하지 않고 `docs/omc_quality_gates.md` 계약을 따르며 승인 전 실행하지 않습니다.
 
 ## Phase 0. 게이트
 
 ```bash
 python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title "omc-ship" --request "<현재 작업 한 줄 요약>" --roles directive --for "ship"
-python3 scripts/omc_tdd_check.py --run-tests
+python3 scripts/omc_tdd_check.py --staged
+python3 scripts/omc_quality_gate.py --target . status
+python3 scripts/omc_quality_gate.py --target . run
 git status -sb
 git diff HEAD
 git ls-files --others --exclude-standard
 ```
 
-프로젝트별 명령은 `package.json`, `README`, `ETHOS.md`에서 확인합니다. 명령은 예시입니다.
-- 테스트: Nx면 `npx nx affected --target=test`, Nx 미사용이면 프로젝트 테스트 명령
-- 타입·린트: 예 `npx tsc --noEmit`, Nx면 `npx nx affected --target=lint`, Nx 미사용이면 프로젝트 린트 명령
+`status`가 `ready`가 아니면 실행하지 않습니다. 설정이 없거나 근거가 바뀌면 proposal을 생성·검증하고 사용자의 적용 및 실행 승인을 각각 받은 뒤 재시도합니다.
 - 비밀값: `SECRET`, `KEY`, `TOKEN`, `PASSWORD`, `.env`가 diff/untracked에 없는지 확인
 
 실패 시: 기존 테스트 회귀/테스트 실패 → `$omc-investigate`, 신규 테스트 누락/TDD 위반 → `$omc-task`
@@ -50,7 +50,7 @@ untracked:
 결론: SHIP READY / BLOCKED
 ```
 
-- 배포 예시: PR 기반 `git push origin HEAD` 후 `$pr-create` / Nx `npx nx run <app>:deploy` / 직접 배포는 프로젝트 문서의 deploy 명령
+- 배포 예시: PR 기반 `git push origin HEAD` 후 `$pr-create` / 직접 배포는 프로젝트 문서의 deploy 명령
 - 실제 배포 후에만 헬스체크, 교훈 기록, `$omc-retro`를 진행합니다.
 
 ## 다음 추천

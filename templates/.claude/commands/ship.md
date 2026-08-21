@@ -16,17 +16,16 @@ python3 scripts/omc_guard.py require --target . --for "ship"
 python3 scripts/omc.py state confirm --target .
 ```
 
-### 2. TDD 강제 체크 (MANDATORY — 실제 스크립트 실행)
+### 2. TDD 대응 관계 체크
 
 > 더 이상 AI 스스로 판단하지 않습니다. 스크립트가 물리적으로 차단합니다.
 
 ```bash
-python3 scripts/omc_tdd_check.py --run-tests
+python3 scripts/omc_tdd_check.py --staged
 ```
 
-- 신규/수정된 구현 파일 중 **테스트 파일이 없으면 즉시 종료 코드 1** 로 차단
-- `--run-tests` 플래그: 테스트 파일 존재 확인 후 **실제 테스트까지 실행**
-- 예외 허용(경고만 출력): `python3 scripts/omc_tdd_check.py --run-tests --report-only`
+- 신규 구현 파일에 대응 테스트가 없으면 종료 코드 1로 차단합니다.
+- 프로젝트 테스트·타입·린트·빌드는 이 스크립트가 직접 추측하거나 실행하지 않습니다.
 
 스크립트가 없으면 수동으로 확인:
 ```bash
@@ -37,11 +36,13 @@ git diff --name-only --diff-filter=ACM origin/main...HEAD \
 
 **위 목록에 파일이 있으면 배포 중단** — 테스트 없는 파일이 하나라도 있으면 안 됩니다.
 
-### 3. 린트 / 타입 체크 / 전체 테스트
+### 3. 프로젝트 품질 게이트
 ```bash
-# 프로젝트에 맞는 명령어로 교체하세요
-npx nx affected --target=test
+python3 scripts/omc_quality_gate.py --target . status
+python3 scripts/omc_quality_gate.py --target . run
 ```
+
+`status`가 `ready`가 아니면 배포를 중단합니다. 설정 proposal의 검증·적용과 실행 승인은 `docs/omc_quality_gates.md`를 따릅니다.
 
 ### 4. Git 상태 확인
 ```bash
@@ -54,7 +55,8 @@ git log --oneline -5
 ## 배포 전 체크리스트
 
 - [ ] OMC 가드 통과 (미확정 세션 없음)
-- [ ] **TDD 체크 통과** (`omc_tdd_check.py --run-tests` 반환값 0)
+- [ ] **TDD 체크 통과** (`omc_tdd_check.py --staged` 반환값 0)
+- [ ] **프로젝트 품질 게이트 통과** (`omc_quality_gate.py run` 반환값 0)
 - [ ] 타입 에러 0개
 - [ ] 린트 에러 0개
 - [ ] 테스트 전부 통과

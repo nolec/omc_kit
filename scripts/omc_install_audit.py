@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from omc_source_hash import source_sha256 as _source_sha256
+from omc_quality_gate import readiness as _quality_gate_readiness
 
 
 def _metadata_path(target: Path) -> Path:
@@ -240,6 +241,7 @@ def audit_target(target: Path) -> dict[str, object]:
         "status": status,
         "installed_integrity_status": installed_integrity_status,
         "source_freshness_status": source_freshness_status,
+        "quality_gate_readiness": _quality_gate_readiness(resolved),
         "source_freshness_reason": source_freshness_reason,
         "current_source_sha256": current_source_sha256,
         "verification_status": "ok" if not verification_errors else "failed",
@@ -256,6 +258,7 @@ def _render_text(results: list[dict[str, object]]) -> str:
         lines.append(f"status: {item['status']}")
         lines.append(f"installed_integrity_status: {item['installed_integrity_status']}")
         lines.append(f"source_freshness_status: {item['source_freshness_status']}")
+        lines.append(f"quality_gate_readiness: {item['quality_gate_readiness']}")
         if item["source_freshness_reason"] is not None:
             lines.append(f"source_freshness_reason: {item['source_freshness_reason']}")
         if item["current_source_sha256"] is not None:

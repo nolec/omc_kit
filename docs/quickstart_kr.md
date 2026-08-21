@@ -211,7 +211,7 @@ python3 scripts/omc.py state decision-consume --target . --decision-id commit-gr
 
 ```yaml
 # push / PR 마다 자동 실행
-# ubuntu: 단위 테스트 + omc_tdd_check.py --run-tests
+# ubuntu: 단위 테스트 + 이벤트 base SHA 기준 omc_tdd_check.py --base <sha>
 # macOS:  omc-pipeline-check.sh 등 셸 훅 테스트
 ```
 

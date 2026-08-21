@@ -341,9 +341,10 @@ python3 scripts/omc_lesson.py search "키워드"
 
 **실행**:
 1. `python3 scripts/omc_guard.py require --target . --for "ship"` → 미확정 세션 차단
-2. `python3 scripts/omc_tdd_check.py --run-tests` → 테스트 없거나 실패 시 차단
-3. 타입 체크 → 린트 → 테스트 → 빌드 확인
-4. 전부 통과 시에만 배포 진행
+2. `python3 scripts/omc_tdd_check.py --staged` → 신규 구현의 테스트 대응 관계 확인
+3. `python3 scripts/omc_quality_gate.py --target . status` → 승인·근거 상태 확인
+4. `python3 scripts/omc_quality_gate.py --target . run` → 프로젝트가 선언한 품질 게이트 실행
+5. 전부 통과 시에만 배포 진행
 
 **배포 후 — 작업 규모 + 토큰 비용 기록 (MANDATORY)**:
 

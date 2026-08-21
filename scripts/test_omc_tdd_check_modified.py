@@ -15,7 +15,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -235,24 +235,38 @@ class TestStagedModeModified:
 
 
 # ---------------------------------------------------------------------------
-# 5. --run-tests Python fallback은 구현 파일이 아니라 대응 테스트 파일을 실행
+# 5. --run-tests 호환 경로는 승인된 도구 중립 품질 게이트로 위임
 # ---------------------------------------------------------------------------
 
-class TestRunTestsPythonFallback:
-    def test_python_runner_uses_related_test_files_instead_of_impl_files(self, tmp_path: Path):
-        """pytest fallback은 구현 파일 경로가 아니라 대응 테스트 파일 경로를 실행해야 함."""
-        (tmp_path / "src" / "core").mkdir(parents=True)
-        (tmp_path / "tests" / "core").mkdir(parents=True)
-        (tmp_path / "src" / "core" / "foo.py").write_text("def foo(): return 1")
-        (tmp_path / "tests" / "core" / "test_foo.py").write_text("def test_foo(): assert True")
-        (tmp_path / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
-
-        with patch.object(tdd.subprocess, "run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            passed, runner_cmd = tdd._run_tests_for_files([Path("src/core/foo.py")], tmp_path, "origin/main")
+class TestRunTestsQualityGateShim:
+    def test_run_tests_delegates_to_tool_neutral_quality_gate(self, tmp_path: Path):
+        """legacy --run-tests는 프로젝트 runner를 추측하지 않고 공통 gate로 위임한다."""
+        with patch.object(tdd.quality_gate, "run", return_value={"status": "passed"}) as run_gate:
+            passed, runner_cmd = tdd._run_quality_gates(tmp_path)
 
         assert passed is True
-        called_cmd = mock_run.call_args.args[0]
-        assert called_cmd[:3] == ["pytest", "--tb=short", "-q"]
-        assert str(tmp_path / "tests" / "core" / "test_foo.py") in called_cmd
-        assert str(tmp_path / "src" / "core" / "foo.py") not in called_cmd
+        assert runner_cmd == "omc_quality_gate.py run"
+        run_gate.assert_called_once_with(tmp_path)
+
+    def test_run_tests_fails_closed_when_quality_gate_is_not_ready(self, tmp_path: Path):
+        """설정 없음·미승인·stale 상태는 legacy shim에서도 차단한다."""
+        with patch.object(
+            tdd.quality_gate,
+            "run",
+            side_effect=tdd.quality_gate.QualityGateError("quality gate is not ready"),
+        ):
+            passed, runner_cmd = tdd._run_quality_gates(tmp_path)
+
+        assert passed is False
+        assert "not ready" in runner_cmd
+
+    def test_legacy_project_marker_does_not_change_quality_gate_dispatch(self, tmp_path: Path):
+        """프로젝트의 framework marker는 OMC 실행 경로 선택에 관여하지 않는다."""
+        (tmp_path / "nx.json").write_text("{}\n", encoding="utf-8")
+
+        with patch.object(tdd.quality_gate, "run", return_value={"status": "passed"}) as run_gate:
+            passed, runner_cmd = tdd._run_quality_gates(tmp_path)
+
+        assert passed is True
+        assert runner_cmd == "omc_quality_gate.py run"
+        run_gate.assert_called_once_with(tmp_path)

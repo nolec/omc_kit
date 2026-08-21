@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -187,21 +189,43 @@ def _status_for_snapshot(root: Path, config: dict[str, Any], config_sha256: str)
         return {"status": "stale", "config_sha256": config_sha256, "stale_evidence": stale}
 
     receipt = _load_receipt(root)
-    if not receipt or receipt.get("config_sha256") != config_sha256:
+    if not receipt:
         return {"status": "approval_required", "config_sha256": config_sha256}
+    if receipt.get("config_sha256") != config_sha256:
+        return {"status": "approval_stale", "config_sha256": config_sha256}
     if any(gate["scope"] == "full" for gate in config["gates"]) and not receipt.get("allow_full"):
         return {"status": "full_scope_approval_required", "config_sha256": config_sha256}
     return {"status": "ready", "config_sha256": config_sha256}
 
 
 def status(root: Path) -> dict[str, Any]:
-    if not (root / CONFIG_PATH).is_file():
+    config_path = root / CONFIG_PATH
+    if not config_path.is_file():
         return {"status": "unconfigured", "config_path": CONFIG_PATH.as_posix()}
     try:
         config, config_sha256 = load_config_snapshot(root)
     except QualityGateError as error:
-        return {"status": "invalid", "reason": str(error)}
+        result = {"status": "invalid", "reason": str(error)}
+        if not config_path.is_symlink():
+            try:
+                result["config_file_sha256"] = file_sha256(config_path)
+            except OSError:
+                pass
+        return result
     return _status_for_snapshot(root, config, config_sha256)
+
+
+def readiness(root: Path) -> str:
+    current = status(root)["status"]
+    if current == "unconfigured":
+        return "missing"
+    if current in {"invalid", "stale"}:
+        return "invalid"
+    if current == "approval_stale":
+        return "approval_stale"
+    if current in {"approval_required", "full_scope_approval_required"}:
+        return "approval_required"
+    return "ready"
 
 
 def approve(root: Path, *, expected_config_sha256: str, allow_full: bool = False) -> dict[str, Any]:
@@ -379,6 +403,100 @@ def validate_proposal(proposal: Any, root: Path) -> dict[str, Any]:
     return proposal
 
 
+def _atomic_write_config(root: Path, config: dict[str, Any]) -> None:
+    config_path = root / CONFIG_PATH
+    if config_path.parent.is_symlink():
+        raise QualityGateError("quality gate config must stay inside the project")
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    if config_path.is_symlink() or not config_path.parent.resolve().is_relative_to(root.resolve()):
+        raise QualityGateError("quality gate config must stay inside the project")
+    payload = json.dumps(config, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    temp_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=config_path.parent,
+            prefix=".quality-gates.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp:
+            temp.write(payload)
+            temp.flush()
+            os.fsync(temp.fileno())
+            temp_name = temp.name
+        os.replace(temp_name, config_path)
+        temp_name = None
+    finally:
+        if temp_name is not None:
+            Path(temp_name).unlink(missing_ok=True)
+
+
+def apply_proposal(
+    root: Path,
+    proposal_path: Path,
+    *,
+    expect_absent: bool = False,
+    expected_current_sha256: str | None = None,
+    expected_current_file_sha256: str | None = None,
+) -> dict[str, Any]:
+    try:
+        proposal = json.loads(proposal_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise QualityGateError("quality gate proposal is invalid JSON") from error
+    validated = validate_proposal(proposal, root)
+    proposed_config = validated["config"]
+    proposed_sha256 = _canonical_sha256(proposed_config)
+    config_path = root / CONFIG_PATH
+    lock_path = root / ".omc" / "state" / "quality-gate-config.lock"
+    if (root / ".omc").is_symlink() or lock_path.parent.is_symlink():
+        raise QualityGateError("quality gate state must stay inside the project")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if not lock_path.parent.resolve().is_relative_to(root.resolve()):
+        raise QualityGateError("quality gate state must stay inside the project")
+
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if config_path.exists():
+            if config_path.is_symlink():
+                raise QualityGateError("quality gate config must not be a symlink")
+            if expect_absent:
+                raise QualityGateError("--expect-absent conflicts with an existing config")
+            current_file_sha256 = file_sha256(config_path)
+            try:
+                _, current_sha256 = load_config_snapshot(root)
+            except QualityGateError:
+                if expected_current_sha256 is not None:
+                    raise QualityGateError(
+                        "invalid config requires --expected-current-file-sha256"
+                    )
+                if expected_current_file_sha256 is None:
+                    raise QualityGateError(
+                        "invalid config requires --expected-current-file-sha256"
+                    )
+                if current_file_sha256 != expected_current_file_sha256:
+                    raise QualityGateError("current config file sha256 does not match")
+            else:
+                if expected_current_file_sha256 is not None:
+                    raise QualityGateError(
+                        "valid config requires --expected-current-sha256"
+                    )
+                if current_sha256 == proposed_sha256:
+                    return {"status": "unchanged", "config_sha256": proposed_sha256}
+                if expected_current_sha256 is None:
+                    raise QualityGateError("existing config requires --expected-current-sha256")
+                if current_sha256 != expected_current_sha256:
+                    raise QualityGateError("current config sha256 does not match")
+        else:
+            if not expect_absent:
+                raise QualityGateError("missing config requires --expect-absent")
+            if expected_current_sha256 is not None or expected_current_file_sha256 is not None:
+                raise QualityGateError("expected current sha256 requires an existing config")
+        _atomic_write_config(root, proposed_config)
+
+    return {"status": "applied", "config_sha256": proposed_sha256}
+
+
 def _print_json(value: Any) -> None:
     print(json.dumps(value, ensure_ascii=False, sort_keys=True))
 
@@ -394,6 +512,11 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("run")
     proposal_parser = subparsers.add_parser("proposal-validate")
     proposal_parser.add_argument("proposal", type=Path)
+    apply_parser = subparsers.add_parser("proposal-apply")
+    apply_parser.add_argument("proposal", type=Path)
+    apply_parser.add_argument("--expect-absent", action="store_true")
+    apply_parser.add_argument("--expected-current-sha256")
+    apply_parser.add_argument("--expected-current-file-sha256")
     args = parser.parse_args(argv)
     root = args.target.resolve()
     try:
@@ -407,9 +530,17 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "run":
             result = run(root)
-        else:
+        elif args.command == "proposal-validate":
             proposal = json.loads(args.proposal.read_text(encoding="utf-8"))
             result = validate_proposal(proposal, root)
+        else:
+            result = apply_proposal(
+                root,
+                args.proposal,
+                expect_absent=args.expect_absent,
+                expected_current_sha256=args.expected_current_sha256,
+                expected_current_file_sha256=args.expected_current_file_sha256,
+            )
         _print_json(result)
         if args.command == "status":
             return 0 if result.get("status") == "ready" else 1

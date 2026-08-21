@@ -2,13 +2,13 @@
 """
 omc_tdd_check.py — TDD 진짜 강제 스크립트 (Superpowers 방식)
 
-git diff 기반으로 신규/수정된 구현 파일을 탐지하고,
-대응 테스트 파일 존재 여부 확인 + 실제 테스트를 실행해 차단합니다.
+git diff 기반으로 신규/수정된 구현 파일을 탐지하고 대응 테스트 파일 존재 여부를 확인합니다.
+프로젝트 품질 실행은 승인된 ``omc_quality_gate.py`` 설정으로만 위임합니다.
 
 사용:
   python3 scripts/omc_tdd_check.py                    # 기본: main 대비 신규 파일 체크
   python3 scripts/omc_tdd_check.py --base HEAD~1      # 최근 커밋 대비
-  python3 scripts/omc_tdd_check.py --run-tests        # 테스트 실행 + human review gate
+  python3 scripts/omc_tdd_check.py --run-tests        # 품질 게이트 호환 실행 + human review gate
   python3 scripts/omc_tdd_check.py --run-tests --skip-review  # review gate 없이 통과 (CI용)
   python3 scripts/omc_tdd_check.py --staged           # staged 파일만 체크 (pre-commit용)
   python3 scripts/omc_tdd_check.py --report-only      # 차단하지 않고 보고만
@@ -24,6 +24,8 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+import omc_quality_gate as quality_gate
 
 
 # ---------------------------------------------------------------------------
@@ -231,49 +233,16 @@ def _find_test_file(impl: Path, root: Path) -> Path | None:
 
 
 # ---------------------------------------------------------------------------
-# 테스트 실행
+# 프로젝트 품질 게이트 호환 실행
 # ---------------------------------------------------------------------------
 
-def _detect_runner(root: Path) -> list[str] | None:
-    """프로젝트 타입에 맞는 테스트 커맨드 감지"""
-    if (root / "nx.json").exists():
-        return None  # nx는 별도 처리
-    if (root / "package.json").exists():
-        return ["npx", "jest", "--passWithNoTests", "--findRelatedTests"]
-    for name in ["pytest.ini", "setup.cfg", "pyproject.toml"]:
-        if (root / name).exists():
-            return ["pytest", "--tb=short", "-q"]
-    return None
-
-
-def _run_tests_for_files(impl_files: list[Path], root: Path, base: str) -> tuple[bool, str]:
-    """관련 테스트를 실제로 실행하고 결과를 반환한다."""
-    # nx affected 우선
-    if (root / "nx.json").exists():
-        cmd = ["npx", "nx", "affected", "--target=test", f"--base={base}", "--head=HEAD"]
-        result = subprocess.run(cmd, cwd=str(root), capture_output=False, text=True)
-        return result.returncode == 0, " ".join(cmd)
-
-    runner = _detect_runner(root)
-    if not runner:
-        return True, "(테스트 러너 미감지 — 건너뜀)"
-
-    file_args: list[str] = []
-    if runner[:1] == ["pytest"]:
-        related_tests: list[Path] = []
-        seen: set[Path] = set()
-        for impl in impl_files:
-            test_file = _find_test_file(impl, root)
-            if test_file and test_file not in seen:
-                seen.add(test_file)
-                related_tests.append(test_file)
-        file_args = [str(root / f) for f in related_tests] if related_tests else [str(root / f) for f in impl_files]
-    else:
-        file_args = [str(root / f) for f in impl_files]
-
-    cmd = runner + file_args
-    result = subprocess.run(cmd, cwd=str(root), capture_output=False, text=True)
-    return result.returncode == 0, " ".join(runner)
+def _run_quality_gates(root: Path) -> tuple[bool, str]:
+    """Legacy --run-tests를 승인된 프로젝트 품질 게이트로 위임한다."""
+    try:
+        result = quality_gate.run(root)
+    except quality_gate.QualityGateError as error:
+        return False, f"omc_quality_gate.py run ({error})"
+    return result.get("status") == "passed", "omc_quality_gate.py run"
 
 
 # ── human review gate helpers ────────────────────────────────────────────────
@@ -344,6 +313,11 @@ def check(
     if not added_files and not modified_files:
         print("[TDD] ✅ 신규 구현 파일 없음 — 통과")
         if run_tests:
+            if os.environ.get("OMC_SKIP_REAL_TESTS") != "1":
+                passed, runner_cmd = _run_quality_gates(root)
+                if not passed:
+                    print(f"[TDD] ❌ 품질 게이트 실패: {runner_cmd}")
+                    return 0 if report_only else 1
             _maybe_run_review_gate(skip_review, False)
             if _review_gate_blocked(skip_review):
                 return 1
@@ -383,7 +357,7 @@ def check(
             print(f"   1. 테스트 파일 생성: {test_candidate}")
             print(f"   2. 실패하는 테스트 케이스 작성")
             print(f"   3. 실행 → FAIL 출력 확인 (실제 출력 캡처):")
-            print(f"        npx jest {test_candidate} --verbose 2>&1 | head -40")
+            print(f"        <프로젝트에 승인된 테스트 명령> {test_candidate}")
             print(f"   4. RED 등록: python3 scripts/omc_pipeline_guard.py red-done {test_candidate}")
         print()
         print(" ─── 일괄 예외 허용 ─────────────────────────────────────────────")
@@ -419,26 +393,19 @@ def check(
         print(" (수정 파일 미테스트는 경고만, 차단하지 않습니다)")
         print(" ────────────────────────────────────────────────────────────────")
 
-    # 실제 테스트 실행
-    all_impl_files = added_files + modified_files
-
-    # OMC_SKIP_REAL_TESTS=1: 테스트 실행 자체를 건너뛰고 review gate만 테스트 (단위 테스트용)
-    if os.environ.get("OMC_SKIP_REAL_TESTS") == "1":
-        all_impl_files = []
-
-    if run_tests and all_impl_files:
-        print(f"\n[TDD] 🧪 테스트 실행 중...")
-        passed, runner_cmd = _run_tests_for_files(all_impl_files, root, base)
+    skip_real_tests = os.environ.get("OMC_SKIP_REAL_TESTS") == "1"
+    if run_tests and not skip_real_tests:
+        print("\n[TDD] 🧪 프로젝트 품질 게이트 실행 중...")
+        passed, runner_cmd = _run_quality_gates(root)
         if not passed:
-            print(f"[TDD] ❌ 테스트 실패: {runner_cmd}")
+            print(f"[TDD] ❌ 품질 게이트 실패: {runner_cmd}")
             blocked = True
         else:
-            print(f"[TDD] ✅ 테스트 통과: {runner_cmd}")
+            print(f"[TDD] ✅ 품질 게이트 통과: {runner_cmd}")
             _maybe_run_review_gate(skip_review, blocked)
             if _review_gate_blocked(skip_review):
                 blocked = True
-    elif run_tests and not all_impl_files:
-        # 파일은 없지만 --run-tests 플래그가 있으면 review gate만 실행
+    elif run_tests:
         _maybe_run_review_gate(skip_review, blocked)
         if _review_gate_blocked(skip_review):
             blocked = True
@@ -461,7 +428,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="OMC TDD 강제 체크")
     ap.add_argument("--base", default="origin/main", help="비교 기준 브랜치/커밋 (기본: origin/main)")
     ap.add_argument("--staged", action="store_true", help="staged 파일만 체크 (pre-commit 모드)")
-    ap.add_argument("--run-tests", action="store_true", help="테스트 파일 존재 확인 후 실제 테스트도 실행")
+    ap.add_argument("--run-tests", action="store_true", help="승인된 프로젝트 품질 게이트 실행 (호환 옵션)")
     ap.add_argument("--report-only", action="store_true", help="차단하지 않고 보고만 (경고 모드)")
     ap.add_argument("--skip-review", action="store_true", help="human review gate 없이 자동 통과 (CI 환경)")
     ap.add_argument("--target", type=Path, default=Path.cwd(), help="프로젝트 루트")

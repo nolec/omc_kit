@@ -28,16 +28,13 @@ REQUIRED_SEQUENCE = [
     "게이트 통과",
     "비밀값 검사",
     "python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title \"omc-ship\" --request \"<현재 작업 한 줄 요약>\" --roles directive --for \"ship\"",
-    "python3 scripts/omc_tdd_check.py --run-tests",
+    "python3 scripts/omc_tdd_check.py --staged",
+    "python3 scripts/omc_quality_gate.py --target . status",
+    "python3 scripts/omc_quality_gate.py --target . run",
     "git status -sb",
     "git diff HEAD",
     "git ls-files --others --exclude-standard",
-    "package.json",
-    "README",
-    "ETHOS.md",
-    "테스트",
-    "타입",
-    "린트",
+    "`ready`",
     "SECRET",
     "KEY",
     "TOKEN",
@@ -55,8 +52,8 @@ REQUIRED_SEQUENCE = [
 
 REQUIRED_BEHAVIOR_MARKERS = [
     "배포 차단",
-    "명령은 예시",
-    "Nx 미사용",
+    "프로젝트 품질 명령은 추측하지 않고",
+    "승인 전 실행하지 않습니다",
     "필수 체크",
     "현재 ship 대상 범위",
     "범위 밖 dirty 변경",
@@ -93,12 +90,13 @@ TDD 게이트: PASS
 테스트: PASS
 타입: PASS
 린트: PASS
+품질 게이트 상태: ready
+품질 게이트 실행: PASS
 현재 ship 대상 범위: templates/.claude/commands/plan.md, scripts/test_llm_autopilot_commands.py
 범위 밖 dirty 변경: docs/omc_quickstart.md
 git status -sb: clean
 git diff HEAD: SECRET/KEY/TOKEN/PASSWORD 없음
 untracked: 없음
-프로젝트별 명령 확인: package.json, README, ETHOS.md 확인
 사용자 명시 승인: 완료
 결론: SHIP READY
 """
@@ -169,10 +167,11 @@ def _validate_ship_output(sample: str) -> list[str]:
         "tests": r"테스트:\s*PASS",
         "types": r"타입:\s*PASS",
         "lint": r"린트:\s*PASS",
+        "quality_status": r"품질 게이트 상태:\s*ready",
+        "quality_run": r"품질 게이트 실행:\s*PASS",
         "status": r"git status -sb:\s*\S",
         "secrets": r"SECRET/KEY/TOKEN/PASSWORD 없음",
         "untracked": r"untracked:\s*\S",
-        "project_commands": r"package\.json.*README.*ETHOS\.md",
         "approval": r"사용자 명시 승인:\s*완료",
         "verdict": r"결론:\s*SHIP READY",
     }

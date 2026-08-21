@@ -49,16 +49,27 @@ class TestOmcCiWorkflow(unittest.TestCase):
         self.assertIn("test_omc_post_file_check", c, "post-file-check 테스트 --ignore 없음")
 
     def test_has_omc_tdd_check_step(self):
-        """omc_tdd_check.py --run-tests step 포함 (--report-only는 exit 0 → CI 무효)."""
+        """CI의 clean checkout에서는 이벤트 기준 커밋 diff를 검사한다."""
         c = _content()
         self.assertIn("omc_tdd_check", c, "omc_tdd_check.py step 없음")
-        self.assertIn("--run-tests", c, "--report-only는 항상 exit 0 — --run-tests여야 CI에서 차단됨")
+        self.assertIn('--base "$OMC_TDD_BASE"', c, "이벤트 기준 커밋이 TDD 게이트에 전달되지 않음")
+        self.assertNotIn("--staged", c, "clean checkout에서 staged 검사는 항상 no-op")
+        self.assertNotIn("--run-tests", c, "CI가 legacy 품질 실행 shim을 호출하면 안 됨")
         self.assertNotIn("--report-only", c, "--report-only 사용 금지 (CI 게이트 무효화)")
 
     def test_checkout_action_present(self):
         """actions/checkout step 포함."""
         c = _content()
         self.assertIn("actions/checkout", c, "checkout action 없음")
+        self.assertIn("fetch-depth: 0", c, "커밋 diff를 위한 전체 history checkout이 없음")
+
+    def test_tdd_base_resolution_fails_closed(self):
+        """PR/push/default branch 어디에서도 base를 못 찾으면 CI가 실패해야 한다."""
+        c = _content()
+        self.assertIn("OMC_PR_BASE_SHA", c)
+        self.assertIn("OMC_PUSH_BEFORE_SHA", c)
+        self.assertIn("OMC_DEFAULT_BRANCH", c)
+        self.assertIn("exit 1", c, "base 미확정 시 fail-close가 없음")
 
     def test_python_setup_present(self):
         """Python setup step 포함."""

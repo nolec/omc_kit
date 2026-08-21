@@ -91,6 +91,243 @@ def test_config_change_invalidates_previous_approval(tmp_path: Path):
     config["gates"][0]["timeout_sec"] = 31
     config_path.write_text(json.dumps(config), encoding="utf-8")
 
+    assert module.status(tmp_path)["status"] == "approval_stale"
+
+
+def test_proposal_apply_requires_explicit_absent_expectation(tmp_path: Path):
+    module = _load_module()
+    config_path = _write_config(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config_path.unlink()
+    proposal_path = tmp_path / "proposal.json"
+    proposal_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omc-quality-gate-proposal/v1",
+                "config": config,
+                "rationale": [
+                    {
+                        "gate_id": "test",
+                        "evidence_paths": ["project-manifest"],
+                        "scope_reason": "manifest defines a changed-file gate",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.QualityGateError, match="expect-absent"):
+        module.apply_proposal(tmp_path, proposal_path)
+
+
+def test_proposal_apply_writes_config_and_requires_separate_approval(tmp_path: Path):
+    module = _load_module()
+    config_path = _write_config(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config_path.unlink()
+    proposal_path = tmp_path / "proposal.json"
+    proposal_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omc-quality-gate-proposal/v1",
+                "config": config,
+                "rationale": [
+                    {
+                        "gate_id": "test",
+                        "evidence_paths": ["project-manifest"],
+                        "scope_reason": "manifest defines a changed-file gate",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = module.apply_proposal(tmp_path, proposal_path, expect_absent=True)
+
+    assert result["status"] == "applied"
+    assert result["config_sha256"] == module.canonical_file_sha256(config_path)
+    assert module.status(tmp_path)["status"] == "approval_required"
+
+
+def test_proposal_apply_rejects_changed_existing_config(tmp_path: Path):
+    module = _load_module()
+    config_path = _write_config(tmp_path)
+    current_hash = module.canonical_file_sha256(config_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["gates"][0]["timeout_sec"] = 31
+    proposal_path = tmp_path / "proposal.json"
+    proposal_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omc-quality-gate-proposal/v1",
+                "config": config,
+                "rationale": [
+                    {
+                        "gate_id": "test",
+                        "evidence_paths": ["project-manifest"],
+                        "scope_reason": "manifest defines a changed-file gate",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.QualityGateError, match="current config sha256"):
+        module.apply_proposal(
+            tmp_path,
+            proposal_path,
+            expected_current_sha256="0" * 64,
+        )
+
+    assert module.canonical_file_sha256(config_path) == current_hash
+
+
+def test_proposal_apply_is_idempotent_for_identical_config(tmp_path: Path):
+    module = _load_module()
+    config_path = _write_config(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    proposal_path = tmp_path / "proposal.json"
+    proposal_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omc-quality-gate-proposal/v1",
+                "config": config,
+                "rationale": [
+                    {
+                        "gate_id": "test",
+                        "evidence_paths": ["project-manifest"],
+                        "scope_reason": "manifest defines a changed-file gate",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = module.apply_proposal(tmp_path, proposal_path)
+
+    assert result == {
+        "status": "unchanged",
+        "config_sha256": module.canonical_file_sha256(config_path),
+    }
+
+
+def test_proposal_apply_cli_uses_compare_and_swap_contract(tmp_path: Path, capsys):
+    module = _load_module()
+    config_path = _write_config(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config_path.unlink()
+    proposal_path = tmp_path / "proposal.json"
+    proposal_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omc-quality-gate-proposal/v1",
+                "config": config,
+                "rationale": [
+                    {
+                        "gate_id": "test",
+                        "evidence_paths": ["project-manifest"],
+                        "scope_reason": "manifest defines a changed-file gate",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert module.main(
+        [
+            "--target",
+            str(tmp_path),
+            "proposal-apply",
+            str(proposal_path),
+            "--expect-absent",
+        ]
+    ) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "applied"
+
+
+def test_invalid_config_status_exposes_raw_file_sha256(tmp_path: Path):
+    module = _load_module()
+    config_path = _write_config(tmp_path)
+    config_path.write_text("{broken", encoding="utf-8")
+
+    result = module.status(tmp_path)
+
+    assert result == {
+        "status": "invalid",
+        "reason": "quality gate config is invalid JSON",
+        "config_file_sha256": module.file_sha256(config_path),
+    }
+
+
+def test_proposal_apply_rejects_changed_invalid_config(tmp_path: Path):
+    module = _load_module()
+    config_path = _write_config(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    proposal_path = tmp_path / "proposal.json"
+    proposal_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omc-quality-gate-proposal/v1",
+                "config": config,
+                "rationale": [
+                    {
+                        "gate_id": "test",
+                        "evidence_paths": ["project-manifest"],
+                        "scope_reason": "manifest defines a changed-file gate",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_path.write_text("{broken", encoding="utf-8")
+
+    with pytest.raises(module.QualityGateError, match="config file sha256 does not match"):
+        module.apply_proposal(
+            tmp_path,
+            proposal_path,
+            expected_current_file_sha256="0" * 64,
+        )
+
+    assert config_path.read_text(encoding="utf-8") == "{broken"
+
+
+def test_proposal_apply_replaces_invalid_config_with_matching_raw_sha256(tmp_path: Path):
+    module = _load_module()
+    config_path = _write_config(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    proposal_path = tmp_path / "proposal.json"
+    proposal_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omc-quality-gate-proposal/v1",
+                "config": config,
+                "rationale": [
+                    {
+                        "gate_id": "test",
+                        "evidence_paths": ["project-manifest"],
+                        "scope_reason": "manifest defines a changed-file gate",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_path.write_text("{broken", encoding="utf-8")
+    current_file_sha256 = module.file_sha256(config_path)
+
+    result = module.apply_proposal(
+        tmp_path,
+        proposal_path,
+        expected_current_file_sha256=current_file_sha256,
+    )
+
+    assert result["status"] == "applied"
     assert module.status(tmp_path)["status"] == "approval_required"
 
 
@@ -359,7 +596,11 @@ def test_all_llm_ship_surfaces_reference_shared_proposal_contract():
     ]
 
     for path in paths:
-        assert "docs/omc_quality_gates.md" in path.read_text(encoding="utf-8"), path
+        text = path.read_text(encoding="utf-8")
+        assert "docs/omc_quality_gates.md" in text, path
+        assert "omc_quality_gate.py --target . status" in text, path
+        assert "omc_quality_gate.py --target . run" in text, path
+        assert "omc_tdd_check.py --run-tests" not in text, path
 
 
 def test_shared_proposal_contract_is_tool_neutral():
@@ -371,3 +612,10 @@ def test_shared_proposal_contract_is_tool_neutral():
     assert "프로젝트 manifest" in text
     for tool_name in ("Nx", "Jest", "Pytest"):
         assert tool_name not in text
+
+
+def test_tdd_compatibility_path_does_not_invoke_framework_commands_directly():
+    text = (ROOT / "scripts/omc_tdd_check.py").read_text(encoding="utf-8")
+
+    for fragment in ("npx nx", "npx jest", "pytest --"):
+        assert fragment not in text
