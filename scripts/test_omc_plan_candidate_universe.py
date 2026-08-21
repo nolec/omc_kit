@@ -865,6 +865,74 @@ def test_multirepository_preregistration_v3_freezes_coverage_contract(
         )
 
 
+def test_multirepository_candidate_classification_caps_each_repository_and_backfills(
+    tmp_path: Path,
+):
+    signer_key = Ed25519PrivateKey.generate()
+    anchor_repo, anchor_commit, start, end, cutoff = _collection_anchor(tmp_path)
+    trusted_root = _sigstore_trusted_root()
+    trusted_root_sha256 = timestamp.trusted_root_sha256(trusted_root)
+    draft = candidate_universe.prepare_multirepository_collection_preregistration(
+        batch_id="fresh-batch-b-multirepo-cap",
+        collection_anchor_commit=anchor_commit,
+        collection_anchor_repository_root=str(anchor_repo),
+        observed_from=start.isoformat(),
+        observed_through=end.isoformat(),
+        provider_ledger_cutoff=cutoff.isoformat(),
+        pilot_session_ids=["pilot-01"],
+        trusted_root=trusted_root,
+        approved_trusted_root_sha256=trusted_root_sha256,
+        minimum_repository_count=3,
+        maximum_receipts_per_repository=5,
+    )
+    frozen = candidate_universe.seal_collection_preregistration(
+        draft,
+        signer_key,
+        collection_anchor_repository_root=str(anchor_repo),
+        expected_preregistration_sha256=draft["preregistration_sha256"],
+    )
+    sessions = []
+    minute = 1
+    for repo_alias, count in (("repo-a", 7), ("repo-b", 5), ("repo-c", 5)):
+        for index in range(1, count + 1):
+            sessions.append({
+                "session_id": f"{repo_alias}-{index}",
+                "completed_at": (start + timedelta(minutes=minute)).isoformat(),
+                "work_class": "implementation",
+                "repo_alias": repo_alias,
+            })
+            minute += 1
+    sessions.append({
+        "session_id": "repo-d-1",
+        "completed_at": (start + timedelta(minutes=minute)).isoformat(),
+        "work_class": "implementation",
+        "repo_alias": "repo-d",
+    })
+
+    classified = candidate_universe.classify_preregistered_sessions(
+        frozen,
+        sessions=sessions,
+        trusted_preregistration_public_keys={
+            candidate_universe.public_key_text(signer_key)
+        },
+        expected_preregistration_sha256=frozen["preregistration_sha256"],
+        approved_trusted_root_sha256=trusted_root_sha256,
+    )
+    dispositions = {
+        item["session_id"]: item["disposition"] for item in classified
+    }
+
+    assert dispositions["repo-a-5"] == "confirmatory_candidate"
+    assert dispositions["repo-a-6"] == "repository_limit_exceeded"
+    assert dispositions["repo-a-7"] == "repository_limit_exceeded"
+    assert dispositions["repo-c-5"] == "confirmatory_candidate"
+    assert dispositions["repo-d-1"] == "collection_limit_exceeded"
+    assert sum(
+        disposition == "confirmatory_candidate"
+        for disposition in dispositions.values()
+    ) == 15
+
+
 def test_prospective_candidate_audit_never_promotes_before_snapshot(
     tmp_path: Path,
 ):

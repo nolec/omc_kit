@@ -1843,17 +1843,28 @@ def classify_preregistered_sessions(
     }
     allowed_work_classes = {"implementation", *work_class_exclusions}
     pilot_ids = set(preregistration["pilot_session_ids"])
+    multirepository = preregistration.get("schema_version") == 3
+    required_session_fields = {"session_id", "completed_at", "work_class"}
+    if multirepository:
+        required_session_fields.add("repo_alias")
     classifications: list[dict[str, str]] = []
-    eligible: list[tuple[datetime, str, int]] = []
+    eligible: list[tuple[datetime, str, int, str | None]] = []
     seen_session_ids: set[str] = set()
     for session in sessions:
         if (
             not isinstance(session, dict)
-            or set(session) != {"session_id", "completed_at", "work_class"}
+            or set(session) != required_session_fields
             or not isinstance(session.get("session_id"), str)
             or not session["session_id"].strip()
             or session["session_id"] in seen_session_ids
             or session.get("work_class") not in allowed_work_classes
+            or (
+                multirepository
+                and (
+                    not isinstance(session.get("repo_alias"), str)
+                    or not session["repo_alias"].strip()
+                )
+            )
         ):
             raise ValueError("preregistered sessions are invalid")
         session_id = session["session_id"]
@@ -1867,7 +1878,12 @@ def classify_preregistered_sessions(
             disposition = work_class_exclusions[session["work_class"]]
         else:
             disposition = "pending_first_n"
-            eligible.append((completed_at, session_id, len(classifications)))
+            eligible.append((
+                completed_at,
+                session_id,
+                len(classifications),
+                session["repo_alias"].strip() if multirepository else None,
+            ))
         classifications.append({
             "session_id": session_id,
             "disposition": disposition,
@@ -1875,12 +1891,28 @@ def classify_preregistered_sessions(
 
     maximum = preregistration["sampling_policy"]["maximum_accepted_receipts"]
     eligible.sort(key=lambda item: (item[0], item[1]))
-    for rank, (_, _, index) in enumerate(eligible, start=1):
-        classifications[index]["disposition"] = (
-            "confirmatory_candidate"
-            if rank <= maximum
-            else "collection_limit_exceeded"
-        )
+    maximum_per_repository = (
+        preregistration["coverage_contract"]["maximum_receipts_per_repository"]
+        if multirepository
+        else None
+    )
+    accepted_count = 0
+    repository_counts: Counter[str] = Counter()
+    for _, _, index, repo_alias in eligible:
+        if accepted_count >= maximum:
+            disposition = "collection_limit_exceeded"
+        elif (
+            maximum_per_repository is not None
+            and repo_alias is not None
+            and repository_counts[repo_alias] >= maximum_per_repository
+        ):
+            disposition = "repository_limit_exceeded"
+        else:
+            disposition = "confirmatory_candidate"
+            accepted_count += 1
+            if repo_alias is not None:
+                repository_counts[repo_alias] += 1
+        classifications[index]["disposition"] = disposition
     return classifications
 
 
@@ -3397,6 +3429,11 @@ def collect_preregistered_inventory_from_session_manifest(
             "session_id": record["session_id"],
             "completed_at": record["completed_at"],
             "work_class": work_class_by_session[record["session_id"]],
+            **(
+                {"repo_alias": record["repo_alias"]}
+                if preregistration.get("schema_version") == 3
+                else {}
+            ),
         } for record in inventory["accepted_records"]],
         trusted_preregistration_public_keys=(
             trusted_preregistration_public_keys
