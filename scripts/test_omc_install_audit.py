@@ -67,6 +67,138 @@ def _write_verified_install(target: Path) -> None:
     )
 
 class TestInstallAudit(unittest.TestCase):
+    def test_husky_dispatcher_accepts_direct_shell_delegation(self):
+        self.assertTrue(
+            _audit._husky_dispatches_public_hook(
+                Path("/nonexistent"),
+                '#!/bin/sh\nexec sh "$(dirname "$0")/../post-commit" "$@"\n',
+            )
+        )
+
+    def test_husky_dispatcher_rejects_non_shell_direct_delegation(self):
+        self.assertFalse(
+            _audit._husky_dispatches_public_hook(
+                Path("/nonexistent"),
+                "#!/bin/sh\nexec echo ../post-commit\n",
+            )
+        )
+
+    def test_husky_dispatcher_rejects_non_shell_helper_execution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            hooks_dir = Path(tmp)
+            (hooks_dir / "h").write_text(
+                'n=$(basename "$0")\n'
+                's=$(dirname "$(dirname "$0")")/$n\n'
+                'exec echo "$s"\n',
+                encoding="utf-8",
+            )
+
+            self.assertFalse(
+                _audit._husky_dispatches_public_hook(
+                    hooks_dir,
+                    '#!/bin/sh\n. "$(dirname "$0")/h"\n',
+                )
+            )
+
+    def test_completion_hook_readiness_rejects_unreachable_git_hook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            target.mkdir()
+            subprocess.run(["git", "-C", str(target), "init", "-q"], check=True)
+            subprocess.run(
+                ["git", "-C", str(target), "config", "core.hooksPath", ".husky/_"],
+                check=True,
+            )
+            stale_hook = target / ".git" / "hooks" / "post-commit"
+            stale_hook.write_text("#!/bin/sh\n# OMC:POST_COMMIT:V1\n", encoding="utf-8")
+
+            result = _audit.completion_hook_readiness(target)
+
+            self.assertEqual(result["backend"], "husky")
+            self.assertEqual(result["readiness"], "missing")
+            self.assertFalse(result["dispatch_reachable"])
+            self.assertEqual(
+                result["installed_hook_path"],
+                str((target / ".husky" / "post-commit").resolve()),
+            )
+
+    def test_completion_hook_readiness_accepts_husky_public_hook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            target.mkdir()
+            subprocess.run(["git", "-C", str(target), "init", "-q"], check=True)
+            subprocess.run(
+                ["git", "-C", str(target), "config", "core.hooksPath", ".husky/_"],
+                check=True,
+            )
+            dispatcher = target / ".husky" / "_" / "post-commit"
+            dispatcher.parent.mkdir(parents=True)
+            dispatcher.write_text(
+                '#!/usr/bin/env sh\n. "$(dirname "$0")/h"\n',
+                encoding="utf-8",
+            )
+            dispatcher.chmod(0o755)
+            (dispatcher.parent / "h").write_text(
+                '#!/usr/bin/env sh\n'
+                'n=$(basename "$0")\n'
+                's=$(dirname "$(dirname "$0")")/$n\n'
+                'sh -e "$s" "$@"\n',
+                encoding="utf-8",
+            )
+            public_hook = target / ".husky" / "post-commit"
+            public_hook.write_text("#!/bin/sh\n# OMC:POST_COMMIT:V1\n", encoding="utf-8")
+            public_hook.chmod(0o755)
+
+            result = _audit.completion_hook_readiness(target)
+
+            self.assertEqual(result["readiness"], "ready")
+            self.assertTrue(result["dispatch_reachable"])
+
+    def test_completion_hook_readiness_rejects_non_delegating_husky_dispatcher(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            target.mkdir()
+            subprocess.run(["git", "-C", str(target), "init", "-q"], check=True)
+            subprocess.run(
+                ["git", "-C", str(target), "config", "core.hooksPath", ".husky/_"],
+                check=True,
+            )
+            dispatcher = target / ".husky" / "_" / "post-commit"
+            dispatcher.parent.mkdir(parents=True)
+            dispatcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            dispatcher.chmod(0o755)
+            public_hook = target / ".husky" / "post-commit"
+            public_hook.write_text("#!/bin/sh\n# OMC:POST_COMMIT:V1\n", encoding="utf-8")
+            public_hook.chmod(0o755)
+
+            result = _audit.completion_hook_readiness(target)
+
+            self.assertEqual(result["readiness"], "unreachable")
+            self.assertFalse(result["dispatch_reachable"])
+
+    def test_completion_hook_readiness_requires_manual_external_integration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "project"
+            target.mkdir()
+            subprocess.run(["git", "-C", str(target), "init", "-q"], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(target),
+                    "config",
+                    "core.hooksPath",
+                    str(root / "shared-hooks"),
+                ],
+                check=True,
+            )
+
+            result = _audit.completion_hook_readiness(target)
+
+            self.assertEqual(result["readiness"], "manual_integration_required")
+            self.assertFalse(result["dispatch_reachable"])
+
     def test_audit_target_reports_legacy_and_metadata(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -781,6 +781,50 @@ class TestPostCommitHookInstall(unittest.TestCase):
             _install._install_post_commit_hook(template, hook, force=True)
             self.assertEqual(backup.read_text(encoding="utf-8"), "#!/bin/sh\nprintf 'custom hook\\n'\n")
 
+    def test_husky_install_preserves_dispatcher_and_uses_public_hook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+            subprocess.run(
+                ["git", "-C", str(repo), "config", "core.hooksPath", ".husky/_"],
+                check=True,
+            )
+            dispatcher = repo / ".husky" / "_" / "post-commit"
+            dispatcher.parent.mkdir(parents=True)
+            dispatcher_content = "#!/bin/sh\n# generated husky dispatcher\n"
+            dispatcher.write_text(dispatcher_content, encoding="utf-8")
+            template = root / "post-commit"
+            template.write_text("#!/bin/sh\n# OMC:POST_COMMIT:V1\n", encoding="utf-8")
+
+            result = _install._install_completion_hook(template, repo, force=True)
+
+            self.assertEqual(result.backend, "husky")
+            self.assertEqual(dispatcher.read_text(encoding="utf-8"), dispatcher_content)
+            public_hook = repo / ".husky" / "post-commit"
+            self.assertIn("OMC:POST_COMMIT:V1", public_hook.read_text(encoding="utf-8"))
+
+    def test_external_shared_hook_is_not_modified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+            shared = root / "shared-hooks"
+            subprocess.run(
+                ["git", "-C", str(repo), "config", "core.hooksPath", str(shared)],
+                check=True,
+            )
+            template = root / "post-commit"
+            template.write_text("#!/bin/sh\n# OMC:POST_COMMIT:V1\n", encoding="utf-8")
+
+            result = _install._install_completion_hook(template, repo, force=True)
+
+            self.assertEqual(result.backend, "external_shared")
+            self.assertFalse((shared / "post-commit").exists())
+            self.assertTrue((repo / "scripts" / "post-commit.sample").exists())
+
 
 class TestAutoUpdateHook(unittest.TestCase):
     def test_auto_update_exit_code_preserves_up_to_date_success(self):

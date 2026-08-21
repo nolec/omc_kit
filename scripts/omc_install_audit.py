@@ -4,10 +4,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shlex
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 
+from omc_git_hooks import resolve_completion_hook
 from omc_source_hash import source_sha256 as _source_sha256
 from omc_quality_gate import readiness as _quality_gate_readiness
 import omc_version as _version
@@ -31,6 +33,133 @@ def _looks_like_source_kit(path: Path) -> bool:
         and (path / "scripts" / "install.py").is_file()
         and (path / "prompts" / "team.json").is_file()
     )
+
+
+def _active_shell_lines(content: str) -> list[str]:
+    return [
+        line.strip()
+        for line in content.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def _delegated_script(line: str) -> str | None:
+    try:
+        tokens = shlex.split(line, posix=True)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    used_exec = tokens[0] == "exec"
+    if used_exec:
+        tokens = tokens[1:]
+    if len(tokens) < 2:
+        return None
+
+    command_token = tokens[0]
+    if command_token in {".", "source"}:
+        return None if used_exec else tokens[1]
+    command = Path(command_token).name
+    if command not in {"sh", "bash", "dash", "ksh", "zsh"}:
+        return None
+
+    arguments = tokens[1:]
+    while arguments and arguments[0].startswith("-"):
+        option = arguments.pop(0)
+        if option == "--":
+            break
+        if option == "-" or not set(option[1:]).issubset({"e", "u", "x"}):
+            return None
+    return arguments[0] if arguments else None
+
+
+def _husky_dispatches_public_hook(hooks_dir: Path, dispatcher_content: str) -> bool:
+    dispatcher_lines = _active_shell_lines(dispatcher_content)
+    direct_delegation = any(
+        (script := _delegated_script(line)) is not None
+        and script.endswith("../post-commit")
+        for line in dispatcher_lines
+    )
+    if direct_delegation:
+        return True
+
+    helper_delegation = any(
+        (script := _delegated_script(line)) is not None and script.endswith("/h")
+        for line in dispatcher_lines
+    )
+    helper = hooks_dir / "h"
+    if not helper_delegation or not helper.is_file():
+        return False
+    try:
+        helper_lines = _active_shell_lines(helper.read_text(encoding="utf-8"))
+    except OSError:
+        return False
+    resolves_hook_name = any("basename" in line and '"$0"' in line for line in helper_lines)
+    resolves_public_path = any(
+        'dirname "$(dirname "$0")"' in line and "$n" in line
+        for line in helper_lines
+    )
+    executes_public_hook = any(
+        _delegated_script(line) in {"$s", "${s}"}
+        for line in helper_lines
+    )
+    return resolves_hook_name and resolves_public_path and executes_public_hook
+
+
+def completion_hook_readiness(target: Path) -> dict[str, object]:
+    resolution = resolve_completion_hook(target)
+    hook = resolution.install_hook_path
+    result: dict[str, object] = {
+        "backend": resolution.backend,
+        "configured_hooks_path": resolution.configured_hooks_path,
+        "effective_hooks_dir": (
+            str(resolution.effective_hooks_dir) if resolution.effective_hooks_dir else None
+        ),
+        "installed_hook_path": str(hook) if hook else None,
+        "dispatch_reachable": False,
+    }
+    if resolution.backend == "not_git_repository":
+        result["readiness"] = "not_applicable"
+        return result
+    if resolution.backend == "external_shared":
+        result["readiness"] = "manual_integration_required"
+        return result
+    if hook is None:
+        result["readiness"] = "unresolved"
+        return result
+    if not hook.is_file():
+        result["readiness"] = "missing"
+        return result
+    try:
+        content = hook.read_text(encoding="utf-8")
+    except OSError:
+        result["readiness"] = "unreadable"
+        return result
+    if "OMC:POST_COMMIT:V1" not in content:
+        result["readiness"] = "local_conflict"
+        return result
+    if not hook.stat().st_mode & 0o111:
+        result["readiness"] = "not_executable"
+        return result
+    if resolution.backend == "husky":
+        dispatcher = resolution.effective_hooks_dir / "post-commit"
+        if not dispatcher.is_file() or not dispatcher.stat().st_mode & 0o111:
+            result["readiness"] = "unreachable"
+            return result
+        try:
+            dispatcher_content = dispatcher.read_text(encoding="utf-8")
+        except OSError:
+            result["readiness"] = "unreachable"
+            return result
+        if not _husky_dispatches_public_hook(
+            resolution.effective_hooks_dir,
+            dispatcher_content,
+        ):
+            result["readiness"] = "unreachable"
+            return result
+    result["readiness"] = "ready"
+    result["dispatch_reachable"] = True
+    return result
 
 
 @lru_cache(maxsize=8)
@@ -63,6 +192,7 @@ def _source_freshness(
 
 def audit_target(target: Path) -> dict[str, object]:
     resolved = target.resolve()
+    completion_hook = completion_hook_readiness(resolved)
     legacy_dir = resolved / "omc_kit" / "templates"
     metadata_path = _metadata_path(resolved)
     receipt_path = _receipt_path(resolved)
@@ -248,6 +378,7 @@ def audit_target(target: Path) -> dict[str, object]:
 
     return {
         "target": str(resolved),
+        "completion_hook": completion_hook,
         "has_legacy_embedded_omc_kit": legacy_dir.exists(),
         "has_install_source": has_metadata,
         "source_kind": source_kind,

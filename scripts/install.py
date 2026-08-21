@@ -11,6 +11,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
+from omc_git_hooks import CompletionHookResolution, resolve_completion_hook
 from omc_hook_contract import (
     CLAUDE_HOOK_CONTRACT,
     GEMINI_HOOK_CONTRACT,
@@ -508,6 +509,27 @@ def _install_post_commit_hook(template: Path, hook: Path, *, force: bool) -> Non
 
     _copy(template, hook, force=True if marker not in existing else force)
     _ensure_executable(hook)
+
+
+def _install_completion_hook(
+    template: Path,
+    target: Path,
+    *,
+    force: bool,
+) -> CompletionHookResolution:
+    resolution = resolve_completion_hook(target)
+    if resolution.auto_install_allowed and resolution.install_hook_path is not None:
+        _install_post_commit_hook(template, resolution.install_hook_path, force=force)
+        return resolution
+
+    sample = target / "scripts" / "post-commit.sample"
+    _copy(template, sample, force=force)
+    if resolution.backend == "external_shared":
+        print(
+            "[WARN] external core.hooksPath preserved; "
+            f"manual post-commit integration required: {resolution.effective_hooks_dir}"
+        )
+    return resolution
 
 
 def _remove_legacy_overlay(dst: Path, marker: str) -> None:
@@ -1465,13 +1487,7 @@ python3 scripts/omc_tdd_check.py --staged
 
     post_commit_template = templates / "post-commit"
     if post_commit_template.exists():
-        git_hooks_dir = tgt / ".git" / "hooks"
-        if git_hooks_dir.exists():
-            dst = git_hooks_dir / "post-commit"
-            _install_post_commit_hook(post_commit_template, dst, force=force)
-        else:
-            dst = tgt / "scripts" / "post-commit.sample"
-            _copy(post_commit_template, dst, force=force)
+        _install_completion_hook(post_commit_template, tgt, force=force)
 
     print(f"Installed OMC kit into: {tgt}")
 
