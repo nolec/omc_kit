@@ -337,6 +337,8 @@ python3 scripts/omc_lesson.py search "키워드"
 
 **말하는 방법**: "배포 전 체크해줘" / "ship 준비해줘"
 
+품질 게이트 설정 후보가 필요하면 `docs/omc_quality_gates.md`의 공통 계약을 따르며 승인 전 실행하지 않습니다.
+
 **실행**:
 1. `python3 scripts/omc_guard.py require --target . --for "ship"` → 미확정 세션 차단
 2. `python3 scripts/omc_tdd_check.py --run-tests` → 테스트 없거나 실패 시 차단

@@ -36,6 +36,7 @@ _EXPECTED_SCRIPTS = {
     "omc_lesson.py",
     "omc_peer_review.py",
     "omc_pipeline_guard.py",
+    "omc_quality_gate.py",
     "omc_role_suggest.py",
     "omc_run.py",
     "omc_skill_check.py",
@@ -92,3 +93,7 @@ def test_install_excludes_kit_only_files(installed_target: Path) -> None:
     copied = _scripts(installed_target)
     leaked = _KIT_ONLY_SCRIPTS & copied
     assert not leaked, f"omc_kit 전용 파일이 타겟에 배포됨: {leaked}"
+
+
+def test_install_copies_quality_gate_contract(installed_target: Path) -> None:
+    assert (installed_target / "docs" / "omc_quality_gates.md").is_file()

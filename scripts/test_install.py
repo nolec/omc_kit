@@ -1109,6 +1109,7 @@ class TestRepositoryGitignore(unittest.TestCase):
                 "next_project_pack.md",
                 "agent_behavior.md",
                 "verification_checklist.md",
+                "omc_quality_gates.md",
             ]:
                 (kit / "docs" / name).write_text("doc\n", encoding="utf-8")
             (templates / ".claude").mkdir(parents=True)

@@ -1055,6 +1055,7 @@ def _main() -> int:
     _copy(source_kit / "docs" / "next_project_pack.md", tgt / "docs" / "next_project_pack.md", force=force)
     _copy(source_kit / "docs" / "agent_behavior.md", tgt / "docs" / "agent_behavior.md", force=force)
     _copy(source_kit / "docs" / "verification_checklist.md", tgt / "docs" / "verification_checklist.md", force=force)
+    _copy(source_kit / "docs" / "omc_quality_gates.md", tgt / "docs" / "omc_quality_gates.md", force=force)
 
     _write_install_source_metadata(tgt, source_kit)
 
