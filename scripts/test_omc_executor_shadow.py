@@ -8,6 +8,7 @@ import multiprocessing
 
 import omc_executor_shadow
 from omc_executor_shadow import (
+    build_n_child_dag_grant,
     build_parent_review_recovery,
     build_noop_shadow_record,
     build_single_child_execution_grant,
@@ -295,6 +296,307 @@ def _two_child_sequence_request(**overrides):
     }
     request.update(overrides)
     return request
+
+
+def _n_child_dag_request(**overrides):
+    grants = []
+    for index in range(1, 4):
+        grant = _execution_grant()
+        grant.update(
+            {
+                "child_id": f"child-{index}",
+                "approval_id": f"approval-{index}",
+                "idempotency_key": f"run-child-{index}",
+                "scope_hash": f"scope-{index}",
+            }
+        )
+        grants.append(grant)
+    children = [
+        {
+            "child_id": "child-1",
+            "depends_on": [],
+            "scope_paths": ["src/api"],
+            "scope_hash": "scope-1",
+        },
+        {
+            "child_id": "child-2",
+            "depends_on": ["child-1"],
+            "scope_paths": ["src/ui"],
+            "scope_hash": "scope-2",
+        },
+        {
+            "child_id": "child-3",
+            "depends_on": [],
+            "scope_paths": ["tests"],
+            "scope_hash": "scope-3",
+        },
+    ]
+    prompts = {
+        "child-1": "implement api",
+        "child-2": "implement ui",
+        "child-3": "add tests",
+    }
+    budget = {
+        "max_external_calls": 3,
+        "max_parallelism": 2,
+        "max_total_elapsed_sec": 240,
+        "max_output_chars": 36000,
+    }
+    request = {
+        "schema_version": "omc-n-child-dag/v1",
+        "dag_id": "dag-1",
+        "execution_mode": "n_child_dag_opt_in",
+        "execution_requested": True,
+        "children": children,
+        "child_grants": grants,
+        "child_prompts": prompts,
+        "aggregate_budget": budget,
+        "dag_approval": {
+            "approval_id": "dag-approval-1",
+            "dag_id": "dag-1",
+            "operator_confirmed": True,
+            "expires_at": "2099-01-01T00:00:00Z",
+            "graph_sha256": _canonical_hash(children),
+            "child_grant_sha256s": [_canonical_hash(grant) for grant in grants],
+            "prompt_sha256s": {
+                child_id: _canonical_hash(prompts[child_id])
+                for child_id in prompts
+            },
+            "aggregate_budget_sha256": _canonical_hash(budget),
+        },
+    }
+    request.update(overrides)
+    return request
+
+
+def test_n_child_dag_grant_binds_graph_prompts_grants_and_budget():
+    grant = build_n_child_dag_grant(_n_child_dag_request())
+
+    assert grant["status"] == "ready"
+    assert grant["mode"] == "n_child_dag_grant"
+    assert grant["schema_version"] == "omc-n-child-dag/v1"
+    assert grant["child_ids"] == ["child-1", "child-2", "child-3"]
+    assert grant["ready_child_ids"] == ["child-1", "child-3"]
+    assert grant["max_parallelism"] == 2
+    assert grant["max_external_calls"] == 3
+    assert grant["automatic_retry_allowed"] is False
+    assert grant["automatic_redistribution_allowed"] is False
+
+
+@pytest.mark.parametrize("child_count", [2, 6])
+def test_n_child_dag_grant_requires_three_to_five_children(child_count):
+    request = _n_child_dag_request()
+    request["children"] = [
+        {
+            "child_id": f"child-{index}",
+            "depends_on": [],
+            "scope_paths": [f"scope/{index}"],
+            "scope_hash": f"scope-{index}",
+        }
+        for index in range(child_count)
+    ]
+
+    grant = build_n_child_dag_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "n_child_count_invalid"
+
+
+@pytest.mark.parametrize(
+    "children",
+    [
+        [
+            {"child_id": "child-1", "depends_on": ["missing"], "scope_paths": ["src/api"], "scope_hash": "scope-1"},
+            {"child_id": "child-2", "depends_on": [], "scope_paths": ["src/ui"], "scope_hash": "scope-2"},
+            {"child_id": "child-3", "depends_on": [], "scope_paths": ["tests"], "scope_hash": "scope-3"},
+        ],
+        [
+            {"child_id": "child-1", "depends_on": ["child-2"], "scope_paths": ["src/api"], "scope_hash": "scope-1"},
+            {"child_id": "child-2", "depends_on": ["child-1"], "scope_paths": ["src/ui"], "scope_hash": "scope-2"},
+            {"child_id": "child-3", "depends_on": [], "scope_paths": ["tests"], "scope_hash": "scope-3"},
+        ],
+    ],
+)
+def test_n_child_dag_grant_rejects_missing_dependencies_and_cycles(children):
+    request = _n_child_dag_request(children=children)
+
+    grant = build_n_child_dag_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "dag_graph_invalid"
+
+
+def test_n_child_dag_grant_rejects_overlapping_scope_paths():
+    request = _n_child_dag_request()
+    request["children"][1]["scope_paths"] = ["src/api/routes"]
+
+    grant = build_n_child_dag_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "dag_scope_overlap"
+
+
+@pytest.mark.parametrize(
+    ("budget_key", "budget_value"),
+    [("max_output_chars", 12000), ("max_total_elapsed_sec", 120)],
+)
+def test_n_child_dag_grant_rejects_insufficient_aggregate_budget(
+    budget_key, budget_value
+):
+    request = _n_child_dag_request()
+    request["aggregate_budget"][budget_key] = budget_value
+
+    grant = build_n_child_dag_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "dag_budget_invalid"
+
+
+def test_n_child_dag_grant_rejects_scope_hash_mismatch():
+    request = _n_child_dag_request()
+    request["children"][0]["scope_hash"] = "different-scope"
+
+    grant = build_n_child_dag_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "child_execution_grant_invalid"
+
+
+@pytest.mark.parametrize(
+    "required_field",
+    [
+        "parent_id",
+        "executor",
+        "approval_id",
+        "session_id",
+        "idempotency_key",
+        "approval_expires_at",
+        "plan_fingerprint",
+    ],
+)
+def test_n_child_dag_grant_rejects_child_grants_missing_execution_metadata(
+    required_field,
+):
+    request = _n_child_dag_request()
+    request["child_grants"][0].pop(required_field)
+    request["dag_approval"]["child_grant_sha256s"] = [
+        _canonical_hash(grant) for grant in request["child_grants"]
+    ]
+
+    grant = build_n_child_dag_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "child_execution_grant_invalid"
+
+
+def test_n_child_dag_grant_rejects_duplicate_child_idempotency_keys():
+    request = _n_child_dag_request()
+    request["child_grants"][1]["idempotency_key"] = request["child_grants"][0][
+        "idempotency_key"
+    ]
+    request["dag_approval"]["child_grant_sha256s"] = [
+        _canonical_hash(grant) for grant in request["child_grants"]
+    ]
+
+    grant = build_n_child_dag_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "child_execution_grant_invalid"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("max_attempts", 1.0), ("max_total_elapsed_sec", "120")],
+)
+def test_n_child_dag_grant_rejects_invalid_child_numeric_types(field, value):
+    request = _n_child_dag_request()
+    request["child_grants"][0][field] = value
+    request["dag_approval"]["child_grant_sha256s"] = [
+        _canonical_hash(grant) for grant in request["child_grants"]
+    ]
+
+    grant = build_n_child_dag_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "child_execution_grant_invalid"
+
+
+@pytest.mark.parametrize("budget_owner", ["child", "aggregate"])
+def test_n_child_dag_grant_rejects_boolean_elapsed_budgets(budget_owner):
+    request = _n_child_dag_request()
+    if budget_owner == "child":
+        request["child_grants"][0]["max_total_elapsed_sec"] = True
+        request["dag_approval"]["child_grant_sha256s"] = [
+            _canonical_hash(grant) for grant in request["child_grants"]
+        ]
+        expected_reason = "child_execution_grant_invalid"
+    else:
+        for child_grant in request["child_grants"]:
+            child_grant["max_total_elapsed_sec"] = 0.1
+        request["aggregate_budget"]["max_total_elapsed_sec"] = True
+        request["dag_approval"]["child_grant_sha256s"] = [
+            _canonical_hash(grant) for grant in request["child_grants"]
+        ]
+        request["dag_approval"]["aggregate_budget_sha256"] = _canonical_hash(
+            request["aggregate_budget"]
+        )
+        expected_reason = "dag_budget_invalid"
+
+    grant = build_n_child_dag_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == expected_reason
+
+
+def test_n_child_dag_grant_rejects_non_integer_external_call_budget():
+    request = _n_child_dag_request()
+    request["aggregate_budget"]["max_external_calls"] = 3.0
+    request["dag_approval"]["aggregate_budget_sha256"] = _canonical_hash(
+        request["aggregate_budget"]
+    )
+
+    grant = build_n_child_dag_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "dag_budget_invalid"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason_code"),
+    [
+        ("schema_version", "omc-n-child-dag/v2", "dag_input_invalid"),
+        ("expires_at", "not-a-timestamp", "dag_approval_invalid"),
+    ],
+)
+def test_n_child_dag_grant_rejects_invalid_contract_metadata(
+    field, value, reason_code
+):
+    request = _n_child_dag_request()
+    if field == "expires_at":
+        request["dag_approval"][field] = value
+    else:
+        request[field] = value
+
+    grant = build_n_child_dag_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == reason_code
+
+
+@pytest.mark.parametrize("changed_field", ["prompt", "executor", "budget"])
+def test_n_child_dag_grant_rejects_changes_after_approval(changed_field):
+    request = _n_child_dag_request()
+    if changed_field == "prompt":
+        request["child_prompts"]["child-3"] = "unapproved replacement"
+    elif changed_field == "executor":
+        request["child_grants"][0]["executor"] = "unapproved-executor"
+    else:
+        request["aggregate_budget"]["max_total_elapsed_sec"] = 300
+
+    grant = build_n_child_dag_grant(request)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "dag_approval_binding_mismatch"
 
 
 def test_two_child_sequence_grant_binds_graph_order_and_child_approvals():

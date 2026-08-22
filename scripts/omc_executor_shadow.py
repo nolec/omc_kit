@@ -408,6 +408,302 @@ def _valid_sequence_child_grant(grant: Any, child_id: str) -> bool:
     )
 
 
+def _dag_blocked(reason_code: str) -> dict[str, Any]:
+    return {
+        "mode": "n_child_dag_grant",
+        "status": "blocked",
+        "reason_code": reason_code,
+        "execution_allowed": False,
+    }
+
+
+def _dag_graph_is_valid(children: list[dict[str, Any]]) -> bool:
+    child_ids = [child.get("child_id") for child in children]
+    if (
+        not all(isinstance(child_id, str) and child_id.strip() for child_id in child_ids)
+        or len(set(child_ids)) != len(child_ids)
+    ):
+        return False
+    child_id_set = set(child_ids)
+    dependency_map: dict[str, list[str]] = {}
+    for child, child_id in zip(children, child_ids):
+        dependencies = child.get("depends_on")
+        if (
+            not isinstance(dependencies, list)
+            or any(
+                not isinstance(dependency, str) or not dependency.strip()
+                for dependency in dependencies
+            )
+            or len(set(dependencies)) != len(dependencies)
+            or child_id in dependencies
+            or not set(dependencies).issubset(child_id_set)
+        ):
+            return False
+        dependency_map[child_id] = dependencies
+
+    remaining = {
+        child_id: set(dependencies)
+        for child_id, dependencies in dependency_map.items()
+    }
+    ready = [
+        child_id for child_id, dependencies in remaining.items() if not dependencies
+    ]
+    visited = 0
+    while ready:
+        completed = ready.pop()
+        visited += 1
+        for child_id, dependencies in remaining.items():
+            if completed not in dependencies:
+                continue
+            dependencies.remove(completed)
+            if not dependencies:
+                ready.append(child_id)
+    return visited == len(children)
+
+
+def _scope_parts(value: Any) -> tuple[str, ...] | None:
+    if not isinstance(value, str) or not value.strip() or "\\" in value:
+        return None
+    normalized = value.strip().rstrip("/")
+    parts = tuple(normalized.split("/"))
+    if normalized.startswith("/") or any(part in {"", ".", ".."} for part in parts):
+        return None
+    return parts
+
+
+def _dag_scopes_are_disjoint(children: list[dict[str, Any]]) -> bool:
+    scopes: list[tuple[str, ...]] = []
+    for child in children:
+        scope_paths = child.get("scope_paths")
+        scope_hash = child.get("scope_hash")
+        if (
+            not isinstance(scope_paths, list)
+            or not scope_paths
+            or not isinstance(scope_hash, str)
+            or not scope_hash.strip()
+        ):
+            return False
+        for scope_path in scope_paths:
+            parts = _scope_parts(scope_path)
+            if parts is None:
+                return False
+            if any(
+                parts[: len(existing)] == existing
+                or existing[: len(parts)] == parts
+                for existing in scopes
+            ):
+                return False
+            scopes.append(parts)
+    return True
+
+
+def _dag_critical_path_elapsed(
+    children: list[dict[str, Any]],
+    child_grants: list[dict[str, Any]],
+) -> float:
+    dependencies = {
+        child["child_id"]: child["depends_on"]
+        for child in children
+    }
+    durations = {
+        child["child_id"]: float(grant["max_total_elapsed_sec"])
+        for child, grant in zip(children, child_grants)
+    }
+    elapsed_by_child: dict[str, float] = {}
+
+    def elapsed(child_id: str) -> float:
+        if child_id not in elapsed_by_child:
+            dependency_elapsed = max(
+                (elapsed(dependency) for dependency in dependencies[child_id]),
+                default=0.0,
+            )
+            elapsed_by_child[child_id] = dependency_elapsed + durations[child_id]
+        return elapsed_by_child[child_id]
+
+    return max(elapsed(child_id) for child_id in dependencies)
+
+
+def _valid_future_timestamp(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (
+        parsed.tzinfo is not None
+        and parsed.utcoffset() is not None
+        and parsed > datetime.now(timezone.utc)
+    )
+
+
+def _valid_n_child_execution_grant(grant: Any, child_id: str) -> bool:
+    required_text_fields = (
+        "parent_id",
+        "executor",
+        "approval_id",
+        "session_id",
+        "idempotency_key",
+        "scope_hash",
+        "plan_fingerprint",
+    )
+    return (
+        _valid_sequence_child_grant(grant, child_id)
+        and all(
+            isinstance(grant.get(field), str) and grant[field].strip()
+            for field in required_text_fields
+        )
+        and grant.get("approval_status") == "validated"
+        and grant.get("gate_status") == "allowed"
+        and grant.get("shadow_recorded") is True
+        and isinstance(grant.get("max_attempts"), int)
+        and not isinstance(grant.get("max_attempts"), bool)
+        and isinstance(grant.get("max_total_elapsed_sec"), (int, float))
+        and not isinstance(grant.get("max_total_elapsed_sec"), bool)
+        and _valid_future_timestamp(grant.get("approval_expires_at"))
+    )
+
+
+def build_n_child_dag_grant(request: dict[str, Any]) -> dict[str, Any]:
+    """Build an approval-bound contract for a bounded three-to-five child DAG.
+
+    This validates the future scheduler input only. It does not reserve budget,
+    mutate a ledger, or invoke an executor.
+    """
+    if (
+        not isinstance(request, dict)
+        or request.get("execution_requested") is not True
+        or request.get("execution_mode") != "n_child_dag_opt_in"
+    ):
+        return _dag_blocked("dag_opt_in_missing")
+
+    dag_id = request.get("dag_id")
+    children = request.get("children")
+    child_grants = request.get("child_grants")
+    child_prompts = request.get("child_prompts")
+    budget = request.get("aggregate_budget")
+    approval = request.get("dag_approval")
+    if (
+        request.get("schema_version") != "omc-n-child-dag/v1"
+        or not isinstance(dag_id, str)
+        or not dag_id.strip()
+    ):
+        return _dag_blocked("dag_input_invalid")
+    if (
+        not isinstance(children, list)
+        or not 3 <= len(children) <= 5
+        or not all(isinstance(child, dict) for child in children)
+    ):
+        return _dag_blocked("n_child_count_invalid")
+    if not _dag_graph_is_valid(children):
+        return _dag_blocked("dag_graph_invalid")
+    if not _dag_scopes_are_disjoint(children):
+        return _dag_blocked("dag_scope_overlap")
+
+    child_ids = [child["child_id"] for child in children]
+    if (
+        not isinstance(child_grants, list)
+        or len(child_grants) != len(children)
+        or not all(
+            _valid_n_child_execution_grant(grant, child_id)
+            and grant.get("scope_hash") == child.get("scope_hash")
+            for grant, child, child_id in zip(child_grants, children, child_ids)
+        )
+        or len({grant["idempotency_key"] for grant in child_grants})
+        != len(child_grants)
+    ):
+        return _dag_blocked("child_execution_grant_invalid")
+    if (
+        not isinstance(child_prompts, dict)
+        or set(child_prompts) != set(child_ids)
+        or any(
+            not isinstance(child_prompts[child_id], str)
+            or not child_prompts[child_id].strip()
+            for child_id in child_ids
+        )
+    ):
+        return _dag_blocked("dag_prompt_invalid")
+
+    if not isinstance(budget, dict):
+        return _dag_blocked("dag_budget_invalid")
+    max_external_calls = budget.get("max_external_calls")
+    max_parallelism = budget.get("max_parallelism")
+    max_elapsed = budget.get("max_total_elapsed_sec")
+    max_output = budget.get("max_output_chars")
+    child_elapsed_floor = _dag_critical_path_elapsed(children, child_grants)
+    child_output_limit = sum(grant["max_output_chars"] for grant in child_grants)
+    if (
+        not isinstance(max_external_calls, int)
+        or isinstance(max_external_calls, bool)
+        or max_external_calls != len(children)
+        or not isinstance(max_parallelism, int)
+        or isinstance(max_parallelism, bool)
+        or not 1 <= max_parallelism <= len(children)
+        or isinstance(max_elapsed, bool)
+        or not _is_finite_number(max_elapsed)
+        or float(max_elapsed) < child_elapsed_floor
+        or not isinstance(max_output, int)
+        or isinstance(max_output, bool)
+        or max_output < child_output_limit
+    ):
+        return _dag_blocked("dag_budget_invalid")
+
+    graph_sha256 = _canonical_sha256(children)
+    child_grant_sha256s = [_canonical_sha256(grant) for grant in child_grants]
+    prompt_sha256s = {
+        child_id: _canonical_sha256(child_prompts[child_id])
+        for child_id in child_ids
+    }
+    budget_sha256 = _canonical_sha256(budget)
+    if (
+        not isinstance(approval, dict)
+        or approval.get("operator_confirmed") is not True
+        or not isinstance(approval.get("approval_id"), str)
+        or not approval["approval_id"].strip()
+        or not _valid_future_timestamp(approval.get("expires_at"))
+    ):
+        return _dag_blocked("dag_approval_invalid")
+    if (
+        approval.get("dag_id") != dag_id
+        or approval.get("graph_sha256") != graph_sha256
+        or approval.get("child_grant_sha256s") != child_grant_sha256s
+        or approval.get("prompt_sha256s") != prompt_sha256s
+        or approval.get("aggregate_budget_sha256") != budget_sha256
+    ):
+        return _dag_blocked("dag_approval_binding_mismatch")
+
+    return {
+        "schema_version": "omc-n-child-dag/v1",
+        "mode": "n_child_dag_grant",
+        "status": "ready",
+        "reason_code": "dag_ready",
+        "execution_allowed": True,
+        "dag_id": dag_id,
+        "approval_id": approval["approval_id"],
+        "approval_expires_at": approval["expires_at"],
+        "children": deepcopy(children),
+        "child_ids": child_ids,
+        "ready_child_ids": [
+            child["child_id"] for child in children if not child["depends_on"]
+        ],
+        "child_grants": deepcopy(child_grants),
+        "child_prompts": deepcopy(child_prompts),
+        "graph_sha256": graph_sha256,
+        "child_grant_sha256s": child_grant_sha256s,
+        "prompt_sha256s": prompt_sha256s,
+        "aggregate_budget_sha256": budget_sha256,
+        "max_external_calls": max_external_calls,
+        "max_parallelism": max_parallelism,
+        "max_total_elapsed_sec": float(max_elapsed),
+        "max_output_chars": max_output,
+        "fallback_action": "parent_review",
+        "automatic_retry_allowed": False,
+        "automatic_redistribution_allowed": False,
+        "automatic_fallback_allowed": False,
+        "automatic_resume_allowed": False,
+    }
+
+
 def build_two_child_sequence_grant(request: dict[str, Any]) -> dict[str, Any]:
     """Build an explicit, approval-bound grant for exactly two children."""
 
