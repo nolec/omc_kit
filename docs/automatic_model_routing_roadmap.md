@@ -608,7 +608,9 @@ Policy comparison observed 연결 완료(2026-07-18): observed run을 `policy_pr
 - [docs/fugu_benchmark.md](/Users/noseunglae/Downloads/dev/omc_kit/docs/fugu_benchmark.md)
 - [docs/orchestration_usage.md](/Users/noseunglae/Downloads/dev/omc_kit/docs/orchestration_usage.md)
 
-## 즉시 착수 1순위 4개
+## 초기 구현 우선순위 4개 (완료된 역사 기록)
+
+이 절은 V1 초기 구현 순서를 보존하는 역사 기록이며 현재 착수 목록이 아니다. 현재 상태와 다음 작업은 상단의 품질 검증 상태표와 `바로 다음 작업 계획`을 기준으로 한다.
 
 ### 1. Step metadata 확장
 
