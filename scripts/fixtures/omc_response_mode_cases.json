@@ -234,6 +234,23 @@
       "evidence": "2026-06-25 실제 세션 요청문 추출: orchestration 개선 계획 수립"
     },
     {
+      "request": "$omc-autopilot 다음 계획",
+      "expected_mode": "answer-first",
+      "expected_next_action": "사용자 선택 대기",
+      "baseline_policy": "baseline",
+      "candidate_policy": "candidate",
+      "baseline_trace": ["assistant: 저장소/브랜치/실제 구현 작업을 다시 요청", "user: 현재 위치와 다음 계획을 이미 알고 있지 않나"],
+      "candidate_trace": ["assistant: 현재 문맥의 병목을 답변", "assistant: 입력 재요청과 pipeline 명령을 생략"],
+      "baseline_output_chars": 412,
+      "candidate_output_chars": 238,
+      "baseline_task_start_delay": 1,
+      "candidate_task_start_delay": 0,
+      "baseline_next_action": "$omc-autopilot",
+      "candidate_next_action": "사용자 선택 대기",
+      "source_type": "observed_request",
+      "evidence": "2026-08-22 실제 세션 요청문: Autopilot 다음 계획 조회에서 이미 알려진 실행 입력을 재질문"
+    },
+    {
       "request": "현재 로드맵 최신화하고 다음 작업 체크",
       "expected_mode": "answer-first",
       "expected_next_action": "$omc-plan",

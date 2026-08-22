@@ -79,6 +79,31 @@ REQUIRED_FOCUS_MARKERS = [
     "시스템이 암묵적으로 처리",
 ]
 
+REQUIRED_QUERY_BOUNDARY_MARKERS = [
+    "상태·계획 조회",
+    "실행 준비",
+    "실행 준비 요청일 때만",
+    "실행 준비에만 적용",
+    "다음 계획",
+    "재질문하지",
+    "active + confirmed + 현재 저장소 일치 + 미완료",
+    "저장소 기본 브랜치",
+    "git symbolic-ref --short refs/remotes/origin/HEAD",
+    "기본 브랜치 확인 실패",
+    "실행 명령",
+]
+
+REQUIRED_NATURAL_TRIGGER_MARKERS = [
+    "자동으로 해줘",
+    "자동화",
+    "autopilot",
+    "잘 때 돌려줘",
+    "pipeline 실행",
+    "조회 표현만 있으면 조회를 우선",
+    "모든 자연어 트리거",
+    "명시적 `$omc-autopilot` 호출",
+]
+
 CLI_OPTIONS = [
     "--instruction",
     "--branch",
@@ -182,6 +207,21 @@ def test_omc_autopilot_skill_explains_visible_vs_implicit_work():
     text = _read(REQUIRED_SKILL_PATHS[0])
     missing = [marker for marker in REQUIRED_FOCUS_MARKERS if marker not in text]
     assert not missing, f"missing focus markers: {missing}"
+
+
+def test_omc_autopilot_skill_separates_context_queries_from_execution():
+    text = _read(REQUIRED_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_QUERY_BOUNDARY_MARKERS if marker not in text]
+    assert not missing, f"missing query/execution boundary markers: {missing}"
+    assert text.index("상태·계획 조회") < text.index("실행 준비에만 적용")
+    assert "## 실행 준비에만 적용하는 필수 체크" in text
+    assert "반드시 지시문과 브랜치명을 먼저 확정한다" not in text
+
+
+def test_omc_autopilot_skill_preserves_natural_triggers_without_forcing_execution():
+    text = _read(REQUIRED_SKILL_PATHS[0])
+    missing = [marker for marker in REQUIRED_NATURAL_TRIGGER_MARKERS if marker not in text]
+    assert not missing, f"missing natural trigger markers: {missing}"
 
 
 def test_documented_pipeline_options_exist_in_real_cli():
