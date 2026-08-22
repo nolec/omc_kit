@@ -596,6 +596,128 @@ def test_pipeline_status_recover_flag_exists():
     )
 
 
+def test_pipeline_status_start_receipt_flags_exist():
+    """background launch receipt를 현재 요청과 결합하는 옵션이 있어야 한다."""
+    r = _run(["pipeline-status", "--help"])
+    assert r.returncode == 0, f"pipeline-status --help 실패: {r.stderr}"
+    combined = r.stdout + r.stderr
+    for option in ("--expect-pid", "--expect-branch", "--expect-instruction", "--wait-start"):
+        assert option in combined, f"{option} 옵션 미등록: {combined[:500]}"
+
+
+def test_pipeline_status_rejects_stale_receipt_for_expected_launch(tmp_path: Path):
+    """이전 실행 결과는 새 background launch의 시작 증거가 될 수 없다."""
+    result_path = tmp_path / ".omc" / "pipeline_run_result.json"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "pid": 111,
+                "branch": "fix/old-run",
+                "instruction": "이전 작업",
+                "steps": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    r = _run(
+        [
+            "--target",
+            str(tmp_path),
+            "pipeline-status",
+            "--expect-pid",
+            "222",
+            "--expect-branch",
+            "fix/new-run",
+            "--expect-instruction",
+            "새 작업",
+            "--wait-start",
+            "0",
+        ]
+    )
+
+    assert r.returncode == 2
+    assert "start receipt" in (r.stdout + r.stderr).lower()
+    assert "stale" in (r.stdout + r.stderr).lower()
+
+
+def test_pipeline_status_accepts_matching_start_receipt(tmp_path: Path):
+    """PID·요청 브랜치·지시문이 모두 같으면 현재 launch로 인정한다."""
+    result_path = tmp_path / ".omc" / "pipeline_run_result.json"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "pid": 222,
+                "branch": "fix/new-run",
+                "instruction": "새 작업",
+                "steps": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    r = _run(
+        [
+            "--target",
+            str(tmp_path),
+            "pipeline-status",
+            "--expect-pid",
+            "222",
+            "--expect-branch",
+            "fix/new-run",
+            "--expect-instruction",
+            "새 작업",
+            "--wait-start",
+            "0",
+        ]
+    )
+
+    assert r.returncode == 0
+    assert "branch=fix/new-run" in r.stdout
+
+
+def test_pipeline_status_accepts_collision_suffix_for_requested_branch(tmp_path: Path):
+    """충돌 회피 suffix가 붙어도 승인된 요청 브랜치 receipt는 유지된다."""
+    result_path = tmp_path / ".omc" / "pipeline_run_result.json"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "pid": 222,
+                "requested_branch": "fix/new-run",
+                "branch": "fix/new-run-2",
+                "instruction": "새 작업",
+                "steps": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    r = _run(
+        [
+            "--target",
+            str(tmp_path),
+            "pipeline-status",
+            "--expect-pid",
+            "222",
+            "--expect-branch",
+            "fix/new-run",
+            "--expect-instruction",
+            "새 작업",
+            "--wait-start",
+            "0",
+        ]
+    )
+
+    assert r.returncode == 0
+    assert "branch=fix/new-run-2" in r.stdout
+
+
 def test_pipeline_status_recover_changes_stale_running_to_hold(tmp_path: Path):
     """--recover 시 stale running 상태를 hold로 확정해야 한다."""
     omc_dir = tmp_path / ".omc"

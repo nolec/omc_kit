@@ -26,7 +26,7 @@ REQUIRED_SEQUENCE = [
     "omc-autopilot",
     "지시문",
     "브랜치",
-    "실제 pipeline 실행 금지",
+    "승인 후 실제 pipeline 실행",
     "읽기 전용 확인",
     "git branch --show-current",
     "git status --porcelain",
@@ -35,20 +35,21 @@ REQUIRED_SEQUENCE = [
     "필수 체크",
     "지시문·브랜치 확정",
     "명시 승인",
-    "명령만 출력",
+    "승인 후 실행",
     "실행 전 확정",
     "dirty",
     "--allow-dirty",
     "사용자 승인",
     "명령 출력",
+    "대안 옵션",
+    "--dry-run",
+    "--force",
+    "--resume",
     "nohup python3 scripts/omc_autopilot.py pipeline",
     "--instruction",
     "--branch",
     "--mode",
     "--auto",
-    "--dry-run",
-    "--force",
-    "--resume",
     "python3 scripts/omc_autopilot.py pipeline-status",
     "python3 scripts/omc_autopilot.py benchmark-report",
 ]
@@ -67,7 +68,7 @@ REQUIRED_BEHAVIOR_MARKERS = [
 ]
 
 REQUIRED_RECOMMENDATION_MARKERS = [
-    "준비 단계",
+    "실행 단계",
     "다음 추천",
     "주추천 1개",
     "사용자 선택 대기",
@@ -234,11 +235,36 @@ def test_documented_pipeline_options_exist_in_real_cli():
     assert not missing, f"documented pipeline options missing in CLI: {missing}"
 
 
-def test_omc_autopilot_skill_does_not_execute_pipeline_itself():
+def test_omc_autopilot_skill_executes_pipeline_after_explicit_approval():
     text = _read(REQUIRED_SKILL_PATHS[0])
-    forbidden = [r"실행한다", r"직접 실행", r"자동으로 시작"]
-    found = [pattern for pattern in forbidden if re.search(pattern, text)]
-    assert not found, f"skill should output commands, not run pipeline: {found}"
+    required = [
+        "명시 승인 전에는 실행하지 않습니다",
+        "승인 후 실제 pipeline 실행",
+        "승인된 같은 지시문·브랜치·dirty 조건",
+        "실행 도구로 즉시 시작",
+        "pipeline-status",
+        "현재 요청과 일치",
+        "stale",
+        "--expect-pid",
+        "--expect-branch",
+        "--expect-instruction",
+        "--wait-start",
+    ]
+    missing = [marker for marker in required if marker not in text]
+    assert not missing, f"missing approved execution contract: {missing}"
+    assert "실제 pipeline 실행 금지" not in text
+
+
+def test_omc_autopilot_skill_has_exactly_one_launch_command():
+    text = _read(REQUIRED_SKILL_PATHS[0])
+    launch_commands = re.findall(
+        r"^(?:nohup )?python3 scripts/omc_autopilot\.py pipeline --instruction",
+        text,
+        re.M,
+    )
+    assert len(launch_commands) == 1
+    assert "대안 옵션" in text
+    assert "선택한 옵션만" in text
 
 
 def test_omc_autopilot_skill_has_recommendation_markers():

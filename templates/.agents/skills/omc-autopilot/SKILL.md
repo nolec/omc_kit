@@ -1,11 +1,11 @@
 ---
 skill_name: omc-autopilot
-description: "지시문 하나로 plan→task→review→PR 파이프라인을 준비. 트리거: 자동으로 해줘, 자동화, autopilot, 잘 때 돌려줘, pipeline 실행. 상태·계획 조회는 현재 문맥으로 답한다."
+description: "지시문 하나로 plan→task→review→PR 파이프라인을 실행. 트리거: 자동으로 해줘, 자동화, autopilot, 잘 때 돌려줘, pipeline 실행. 상태·계획 조회는 현재 문맥으로 답한다."
 ---
 
 # OMC Autopilot
 
-상태·계획 조회는 현재 문맥으로 답하고, 실행 준비 요청일 때만 준비 단계에서 지시문과 브랜치를 확정해 전체 파이프라인 명령을 출력합니다. 실제 pipeline 실행 금지.
+상태·계획 조회는 현재 문맥으로 답합니다. 실행 준비 요청일 때만 지시문과 브랜치를 확정하고, 명시 승인 전에는 실행하지 않습니다. 승인 후 실제 pipeline 실행까지 담당합니다.
 
 ## Phase 0. 읽기 전용 확인
 
@@ -27,7 +27,7 @@ python3 scripts/omc.py state status --target .
 ## 실행 준비에만 적용하는 필수 체크
 - 지시문·브랜치 확정: 빈 값이면 중단
 - 명시 승인: `미승인`이면 명령만 제시하고 종료
-- 명령만 출력: 실제 실행은 사용자 승인 후 별도 수행
+- 승인 후 실행: 승인된 같은 지시문·브랜치·dirty 조건의 명령을 실행 도구로 즉시 시작하며, 명령을 답변으로만 출력하지 않음
 
 사용자에게 보여줄 것: 실행 전 확정 / 명령 출력 / 결과 확인 / 다음 액션 | 시스템이 암묵적으로 처리: dirty 판단 / 모드 추정 / 읽기 전용 상태 확인
 
@@ -40,14 +40,15 @@ AUTOPILOT 실행 전 확정:
 - 지시문이 모호하면 `$omc-office-hours` 또는 `$omc-brainstorm`
 - 짧은 fix/chore/docs는 LITE, 긴 feat는 FULL: plan→critique→task→review | dirty면 실행 차단, 승인 시에만 `--allow-dirty` 안내 | PR 생성 가능성이 있으므로 사용자 승인 없이 시작하지 않음
 
-## Phase 2. 명령 출력
+## Phase 2. 명령 출력 및 승인 후 실행
+
+대안 옵션(실행 명령에 선택한 옵션만 추가): 검증만 `--dry-run` | dirty 승인 `--force --allow-dirty` | 실패 재개 `--resume`
 
 ```bash
-nohup python3 scripts/omc_autopilot.py pipeline --instruction "[지시문]" --branch "[브랜치]" --mode [auto|lite|full] --auto > .omc/pipeline.log 2>&1 &
-python3 scripts/omc_autopilot.py pipeline --instruction "[지시문]" --branch "[브랜치]" --dry-run
-python3 scripts/omc_autopilot.py pipeline --instruction "[지시문]" --branch "[브랜치]" --force --allow-dirty
-python3 scripts/omc_autopilot.py pipeline --instruction "[지시문]" --branch "[브랜치]" --resume
+nohup python3 scripts/omc_autopilot.py pipeline --instruction "[지시문]" --branch "[브랜치]" --mode [auto|lite|full] --auto > .omc/pipeline.log 2>&1 & pipeline_pid=$!
+python3 scripts/omc_autopilot.py pipeline-status --expect-pid "$pipeline_pid" --expect-branch "[브랜치]" --expect-instruction "[지시문]" --wait-start 10
 ```
+- 미승인: 실행 명령을 보여주고 사용자 선택 대기 | 승인: 선택한 옵션만 launch에 추가하고 위 두 줄을 같은 셸에서 한 번 실행. 호출 없이 완료로 보고하지 않음
 
 ## Phase 3. 결과 확인
 
@@ -56,9 +57,9 @@ python3 scripts/omc_autopilot.py pipeline-status
 python3 scripts/omc_autopilot.py benchmark-report --format json
 cat .omc/pipeline.log .omc/pipeline_run_result.json
 ```
-결과: status completed / failed / N/A — 이유 / mode / benchmark-report / PR / 다음 액션
+결과: status completed / failed / N/A — 이유 / mode / benchmark-report / PR / 다음 액션. branch와 instruction이 현재 요청과 일치해야 하며 이전 결과는 stale로 판정합니다.
 
 ## 다음 추천
 
-- 주추천 1개: 승인 전이거나 결과만 확인 중이면 사용자 선택 대기
+- 주추천 1개: 승인 전이거나 결과만 확인 중이면 사용자 선택 대기, 승인 후에는 실행 단계 결과를 보고
 - 실패/재확인 단계에서만 `pipeline-status` 또는 benchmark-report 확인

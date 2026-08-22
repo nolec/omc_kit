@@ -1584,7 +1584,55 @@ _STATUS_ICON_MAP = {
 _PIPELINE_STATUS_ICON = _STATUS_ICON_MAP
 
 
-def cmd_pipeline_status(root: Path, watch: bool = False, interval: int = 2, recover: bool = False) -> int:
+def _wait_for_pipeline_start_receipt(
+    root: Path,
+    *,
+    expected_pid: int,
+    expected_branch: str,
+    expected_instruction: str,
+    timeout: float,
+) -> tuple[bool, str]:
+    """Wait until the result file identifies the background launch we just started."""
+    result_path = root / _PIPELINE_RESULT_PATH
+    deadline = time.monotonic() + timeout
+    last_reason = "result file missing"
+    expected_instruction = expected_instruction[:200]
+
+    while True:
+        if result_path.exists():
+            try:
+                data = json.loads(result_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:
+                last_reason = f"result file invalid: {exc}"
+            else:
+                mismatches = []
+                if data.get("pid") != expected_pid:
+                    mismatches.append(f"pid={data.get('pid')!r}")
+                receipt_branch = data.get("requested_branch", data.get("branch"))
+                if receipt_branch != expected_branch:
+                    mismatches.append(f"requested_branch={receipt_branch!r}")
+                if data.get("instruction") != expected_instruction:
+                    mismatches.append("instruction mismatch")
+                if not mismatches:
+                    return True, "matched"
+                last_reason = ", ".join(mismatches)
+
+        if time.monotonic() >= deadline:
+            return False, last_reason
+        time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
+
+
+def cmd_pipeline_status(
+    root: Path,
+    watch: bool = False,
+    interval: int = 2,
+    recover: bool = False,
+    *,
+    expected_pid: int | None = None,
+    expected_branch: str | None = None,
+    expected_instruction: str | None = None,
+    wait_start: float = 0,
+) -> int:
     """pipeline_run_result.json 기반 파이프라인 진행 상황 출력.
 
     Args:
@@ -1593,6 +1641,34 @@ def cmd_pipeline_status(root: Path, watch: bool = False, interval: int = 2, reco
     """
     if watch and interval < 1:
         print("[PIPELINE STATUS] --interval은 1 이상이어야 합니다.", file=sys.stderr)
+        return 1
+    if wait_start < 0:
+        print("[PIPELINE STATUS] --wait-start는 0 이상이어야 합니다.", file=sys.stderr)
+        return 1
+
+    expectations = (expected_pid, expected_branch, expected_instruction)
+    if any(value is not None for value in expectations):
+        if not all(value is not None for value in expectations):
+            print(
+                "[PIPELINE STATUS] --expect-pid/--expect-branch/--expect-instruction은 함께 필요합니다.",
+                file=sys.stderr,
+            )
+            return 1
+        matched, reason = _wait_for_pipeline_start_receipt(
+            root,
+            expected_pid=expected_pid,
+            expected_branch=expected_branch,
+            expected_instruction=expected_instruction,
+            timeout=wait_start,
+        )
+        if not matched:
+            print(
+                f"[PIPELINE STATUS] stale start receipt: 현재 실행을 확인하지 못했습니다 ({reason})",
+                file=sys.stderr,
+            )
+            return 2
+    elif wait_start:
+        print("[PIPELINE STATUS] --wait-start에는 expect 옵션 3개가 필요합니다.", file=sys.stderr)
         return 1
 
     if watch:
@@ -3922,6 +3998,7 @@ def cmd_pipeline(
     result: dict = {
         "status": "running",
         "mode": mode,
+        "requested_branch": branch,
         "branch": branch,
         "instruction": instruction[:200],
         "executor": executor,
@@ -5109,6 +5186,10 @@ def main() -> int:
     p_pipeline_status.add_argument("--watch", action="store_true", help="N초 간격으로 화면을 갱신하며 실시간 모니터링")
     p_pipeline_status.add_argument("--interval", type=int, default=2, help="--watch 갱신 주기(초, 기본 2, 최소 1)")
     p_pipeline_status.add_argument("--recover", action="store_true", help="stale running 상태를 hold로 수동 복구")
+    p_pipeline_status.add_argument("--expect-pid", type=int, default=None, help="방금 시작한 pipeline PID")
+    p_pipeline_status.add_argument("--expect-branch", default=None, help="방금 시작한 pipeline 브랜치")
+    p_pipeline_status.add_argument("--expect-instruction", default=None, help="방금 시작한 pipeline 지시문")
+    p_pipeline_status.add_argument("--wait-start", type=float, default=0, help="일치하는 시작 receipt 대기 시간(초)")
 
     p_benchmark_report = sub.add_parser("benchmark-report", help="pipeline 결과를 벤치마크 리포트 JSON으로 출력")
     p_benchmark_report.add_argument("--result-file", type=Path, default=None, help="읽을 pipeline result JSON 경로")
@@ -5138,7 +5219,16 @@ def main() -> int:
     if args.cmd == "status":
         return cmd_status(root, args.task_id)
     if args.cmd == "pipeline-status":
-        return cmd_pipeline_status(root, watch=args.watch, interval=args.interval, recover=args.recover)
+        return cmd_pipeline_status(
+            root,
+            watch=args.watch,
+            interval=args.interval,
+            recover=args.recover,
+            expected_pid=args.expect_pid,
+            expected_branch=args.expect_branch,
+            expected_instruction=args.expect_instruction,
+            wait_start=args.wait_start,
+        )
     if args.cmd == "benchmark-report":
         return cmd_benchmark_report(root, result_file=args.result_file, output_format=args.format)
     if args.cmd == "runs":
