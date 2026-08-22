@@ -1,10 +1,99 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from pathlib import Path
 
 
+ROADMAP_PATH = Path("docs/automatic_model_routing_roadmap.md")
+HISTORY_PATH = Path("docs/automatic_model_routing_roadmap_history.md")
+HISTORY_MANIFEST_PATH = Path(
+    "scripts/fixtures/automatic_model_routing_roadmap_history_manifest.json"
+)
+
+
+def _roadmap_corpus() -> str:
+    return "\n".join(
+        (
+            ROADMAP_PATH.read_text(encoding="utf-8"),
+            HISTORY_PATH.read_text(encoding="utf-8"),
+        )
+    )
+
+
+def _history_sections(history: str) -> list[dict[str, object]]:
+    matches = list(re.finditer(r"(?m)^## .+$", history))
+    sections: list[dict[str, object]] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(history)
+        body = history[match.start() : end].rstrip() + "\n"
+        sections.append(
+            {
+                "index": index,
+                "heading": match.group(0),
+                "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            }
+        )
+    return sections
+
+
+def test_roadmap_first_screen_is_the_canonical_current_view() -> None:
+    text = ROADMAP_PATH.read_text(encoding="utf-8")
+    first_screen = "\n".join(text.splitlines()[:150])
+
+    assert "## Current Roadmap" in first_screen
+    assert "### Implementation P0" in first_screen
+    assert "bounded N-child scheduler" in first_screen
+    assert "### Operational Obligation" in first_screen
+    assert "Plan Batch B receipt 수집" in first_screen
+    assert "### Active Quality Validation" in first_screen
+    assert "Plan Quality Validation" in first_screen
+    assert "Review Quality Validation" in first_screen
+    assert "automatic_model_routing_roadmap_history.md" in first_screen
+
+
+def test_roadmap_current_priority_is_single_and_public_anchors_remain() -> None:
+    text = ROADMAP_PATH.read_text(encoding="utf-8")
+
+    assert text.count("### Implementation P0") == 1
+    assert "### Review Quality Validation" in text
+    assert "### Operator Experience 1차 통합안" in text
+    assert "Codex `3/8 hit, 3 FP`, OMC `6/8 hit, 6 FP`는 참고 수치" in text
+
+
+def test_roadmap_history_matches_the_frozen_section_manifest() -> None:
+    history = HISTORY_PATH.read_text(encoding="utf-8")
+    manifest = json.loads(HISTORY_MANIFEST_PATH.read_text(encoding="utf-8"))
+    archived_source = history.split("---\n\n", maxsplit=1)[1]
+
+    assert manifest["schema_version"] == 2
+    assert manifest["snapshot_source_path"] == ROADMAP_PATH.as_posix()
+    assert manifest["history_path"] == HISTORY_PATH.as_posix()
+    assert hashlib.sha256(archived_source.encode("utf-8")).hexdigest() == manifest[
+        "archived_source_sha256"
+    ]
+    assert "source_path" not in manifest
+    assert "source_sha256" not in manifest
+    assert manifest["sections"]
+    assert manifest["sections"] == _history_sections(history)
+
+
+def test_roadmap_tracks_post_benchmark_product_gaps() -> None:
+    text = _roadmap_corpus()
+
+    assert "### Oh My Claude Code 벤치마크 후 개선 백로그 (2026-08-23)" in text
+    assert "| P0 | bounded N-child 실제 실행" in text
+    assert "scope 정규화와 child `approval_id` 고유성" in text
+    assert "| P1 | 자동 모드 선택과 사용자 개입 감축" in text
+    assert "| P1 | 비용·품질 운영 증거" in text
+    assert "| P2 | 도구 중립 UX 차별화" in text
+    assert "P0 N-child scheduler → P1 개입 감축 → P1 비용·품질 검증 → P2 멀티 호스트 UX" in text
+    assert "재현 가능한 receipt로 증명하는 도구 중립 오케스트레이터" in text
+
+
 def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
-    text = Path("docs/automatic_model_routing_roadmap.md").read_text(encoding="utf-8")
+    text = _roadmap_corpus()
 
     assert "## 로드맵 상태판" in text
     assert "Plan Fresh paired adjudication canonicalization 보강" in text

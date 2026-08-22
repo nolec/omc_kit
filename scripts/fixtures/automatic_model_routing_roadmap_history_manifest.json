@@ -1,0 +1,119 @@
+{
+  "schema_version": 2,
+  "snapshot_source_path": "docs/automatic_model_routing_roadmap.md",
+  "history_path": "docs/automatic_model_routing_roadmap_history.md",
+  "snapshot_date": "2026-08-23",
+  "archived_source_sha256": "e005827444dc6c11fa746c2f6d3c289bd2e8a7e87c71cb8115fd4a84e9e726b0",
+  "sections": [
+    {
+      "index": 0,
+      "heading": "## 목표",
+      "sha256": "2734bb96545cc4f1887c1218fedb5f0d45c68a895cb2f819aa8b1fc2888b5525"
+    },
+    {
+      "index": 1,
+      "heading": "## 현재 위치",
+      "sha256": "cf5f95966b9fc4d0fe1c2f667e1a75b7c58e3fcb73909a077360f5c31d2b0737"
+    },
+    {
+      "index": 2,
+      "heading": "## 제품 목표 상태",
+      "sha256": "240ba2b15086a45cd3bcc3415e83eefb9638eb0b636ba8705f55179654d47809"
+    },
+    {
+      "index": 3,
+      "heading": "## 로드맵 상태판",
+      "sha256": "cdb6011d200523f11d7216285ea05dc151369d7df2471ec0ce12edfa9b3f8532"
+    },
+    {
+      "index": 4,
+      "heading": "## V1 ~ V5 로드맵",
+      "sha256": "2ff4ef58ed8399df441949c487563314f94fcedb953321acb23604d4b2271f77"
+    },
+    {
+      "index": 5,
+      "heading": "## Operator Experience",
+      "sha256": "cf2eb5ec30f141301523cd7a76430667fc4045db13350c8a6bc0bd4fe9d664e0"
+    },
+    {
+      "index": 6,
+      "heading": "## 제품 아키텍처",
+      "sha256": "0bc4ec9b5c0c2750dceb4c054273ceaf90362e7f5e65264ea090f23e5d4e3805"
+    },
+    {
+      "index": 7,
+      "heading": "## 운영 원칙",
+      "sha256": "b701cf45f85c1464fbe634ca01b4041e46bee183350ec20c42fef0f5a0003ad7"
+    },
+    {
+      "index": 8,
+      "heading": "## 현재 구현 연결점",
+      "sha256": "916c96c87d8ff646c8a2494ea522a3c729c1e6757a210efff8ff39c03e9c1f55"
+    },
+    {
+      "index": 9,
+      "heading": "## 초기 구현 우선순위 4개 (완료된 역사 기록)",
+      "sha256": "89599b805b09ea4d8be83ae2a71d2f08557c6497cadace6e8e8a01d1d35007bd"
+    },
+    {
+      "index": 10,
+      "heading": "## 이번 분기 현실적 목표",
+      "sha256": "350236597b0111f28f7d3f8293a7c18de76077c6bd3af465e0f39c5f1d3001e6"
+    },
+    {
+      "index": 11,
+      "heading": "## 작업 운영 원칙",
+      "sha256": "1a8c0e4b1f32b59fb3366f11d1bd33307879ac3bafb7c198269c51988754c3e6"
+    },
+    {
+      "index": 12,
+      "heading": "## 바로 다음 작업 계획",
+      "sha256": "7e349b890878ea901bd5731175b18b90654f961b2a2d166ebecea0b6823a24aa"
+    },
+    {
+      "index": 13,
+      "heading": "## 다음 순환 목표",
+      "sha256": "21ceeada5434d327dc0186b06419e4981813991371f3f2db296e973beb2e6d95"
+    },
+    {
+      "index": 14,
+      "heading": "## V5 후보 트랙 구체화",
+      "sha256": "802b9bc31381e7b814017febe2c6bb5fa0f642b63bdc2c33d299801125063cb2"
+    },
+    {
+      "index": 15,
+      "heading": "## Learned Orchestrator 진입 게이트",
+      "sha256": "5160c0f4ccb75cc893eba3ede3bdea2ba204e9908a9fa4312b96382b2a4a8e4d"
+    },
+    {
+      "index": 16,
+      "heading": "## Fugu식 기능 MVP 설계",
+      "sha256": "a46b655d4cc2c80a98552c13ececce630887765262b2e61de934e31f98d5ea49"
+    },
+    {
+      "index": 17,
+      "heading": "## 로드맵 검증 매트릭스",
+      "sha256": "994bfa090a722a58dcb2a961b18d5ee54c5a17275b8c476efc6043cc533c4b54"
+    },
+    {
+      "index": 18,
+      "heading": "## 토큰 대비 효과 점수표",
+      "sha256": "794b8e1caf5665f1ce225702abb192bff9ac2cad1f1db69bc26ae5cbf2454bb4"
+    },
+    {
+      "index": 19,
+      "heading": "## Decision Engine Spec",
+      "sha256": "b5aaeeb61bb389a693cc879ab1fb9398a2b18edcb233e51f74fc4ba86249c82b"
+    },
+    {
+      "index": 20,
+      "heading": "## 하지 말아야 할 것",
+      "sha256": "8cada5fc24fd85ff8c2df5429903caa7f249de90a9d2ac71885a423deba801aa"
+    },
+    {
+      "index": 21,
+      "heading": "## 한 줄 결론",
+      "sha256": "724b601c01ad778569af990aa87ffc2206e8b600e1d74a4040f67d356bcd1102"
+    }
+  ]
+}
