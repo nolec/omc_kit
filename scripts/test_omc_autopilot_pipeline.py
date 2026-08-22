@@ -680,6 +680,58 @@ def test_pipeline_status_accepts_matching_start_receipt(tmp_path: Path):
     assert "branch=fix/new-run" in r.stdout
 
 
+def test_pipeline_status_polls_until_delayed_start_receipt_appears(tmp_path: Path):
+    """start receipt가 늦게 생겨도 polling으로 기다렸다가 현재 launch를 인정한다."""
+    import os
+    import threading
+    import time as real_time
+
+    result_path = tmp_path / ".omc" / "pipeline_run_result.json"
+    result_path.parent.mkdir(parents=True)
+
+    expected_pid = os.getpid()
+    expected_instruction = "지연된 start receipt polling 회귀 검증 " + ("x" * 240)
+
+    def write_receipt_later() -> None:
+        real_time.sleep(0.15)
+        result_path.write_text(
+            json.dumps(
+                {
+                    "status": "running",
+                    "pid": expected_pid,
+                    "requested_branch": "fix/new-run",
+                    "branch": "fix/new-run",
+                    "instruction": expected_instruction[:200],
+                    "steps": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    threading.Thread(target=write_receipt_later, daemon=True).start()
+
+    r = _run(
+        [
+            "--target",
+            str(tmp_path),
+            "pipeline-status",
+            "--expect-pid",
+            str(expected_pid),
+            "--expect-branch",
+            "fix/new-run",
+            "--expect-instruction",
+            expected_instruction,
+            "--wait-start",
+            "1",
+        ]
+    )
+
+    assert r.returncode == 0, (
+        f"delayed start receipt polling 실패\nstdout: {r.stdout}\nstderr: {r.stderr}"
+    )
+    assert "branch=fix/new-run" in r.stdout
+
+
 def test_pipeline_status_accepts_collision_suffix_for_requested_branch(tmp_path: Path):
     """충돌 회피 suffix가 붙어도 승인된 요청 브랜치 receipt는 유지된다."""
     result_path = tmp_path / ".omc" / "pipeline_run_result.json"
