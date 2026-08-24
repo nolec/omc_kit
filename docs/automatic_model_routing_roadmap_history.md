@@ -4,6 +4,8 @@
 > 현재 상태와 다음 우선순위는 [Current Roadmap](automatic_model_routing_roadmap.md)을 기준으로 판단합니다.
 > 아래 snapshot은 immutable evidence archive이며 의미를 바꾸는 수정 대신 새 current 기록을 추가합니다.
 
+**V5 bounded N-child scheduler·provider adapter 완료(2026-08-24):** 승인된 v2 grant만 소비해 ready wave를 최대 병렬도 안에서 실행하고 dependency 성공 뒤 후속 child를 해제하는 scheduler를 추가했다. 각 child는 격리 workspace에서 실행하며 canonical scope 밖 변경과 symlink를 차단하고, 검증된 patch만 원본에 적용한다. 별도 DAG·child ledger가 claim·finalization·실행별 token receipt를 보존하고 call·elapsed·output·token aggregate budget을 fail-close한다. provider adapter는 capability handshake 뒤 immutable snapshot으로 고정되며 stdout·stderr를 bounded file I/O로 수집한다. token receipt 누락·불완전·한도 초과 결과는 실패 처리 전에 원본 patch가 적용되지 않도록 순서를 고정했다. retry·재분배·fallback·resume은 열지 않고 실패·timeout을 bounded parent review로 전환한다. 관련 회귀 `213 passed`, 전체 회귀 `2551 passed, 3 skipped`, staged TDD gate와 OMC review `APPROVE`를 확인했다. 다음 P0는 실제 3–5 child 성공·실패·timeout acceptance와 single-agent 대비 비용·개입 telemetry 축적이다.
+
 **V5 N-child v2 실행 전 계약 완료(2026-08-24):** symlink·case·glob·escape·casefold·Unicode alias와 parent-child overlap을 fail-close하는 target-bound canonical scope 정책을 추가했다. 승인 전 canonical proposal은 3–5 child graph·prompt·개별 execution grant·aggregate budget·scope와 trusted target identity를 하나의 proposal hash에 결속한다. 승인 시에는 child expiry, parent-child approval ID 충돌, parent expiry 상한과 proposal 전체 의미를 재구성해 검증하며 이 절차를 통과한 v2 grant만 `scheduler_eligible=true`다. legacy v1 grant는 호환 출력을 유지하되 scheduler 진입은 금지했다. package-style과 script-path import를 모두 지원하며 관련 회귀 `156 passed`, 전체 회귀 `2513 passed, 3 skipped`, TDD gate와 OMC review `APPROVE`를 확인했다. 다음 P0는 이 v2 grant만 소비하는 bounded N-child scheduler와 provider execution adapter다.
 
 ---

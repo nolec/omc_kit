@@ -43,7 +43,7 @@ def test_roadmap_first_screen_is_the_canonical_current_view() -> None:
     first_screen = "\n".join(text.splitlines()[:150])
 
     assert "## Current Roadmap" in first_screen
-    assert "### Implementation P0" in first_screen
+    assert "### Operational P0" in first_screen
     assert "bounded N-child scheduler" in first_screen
     assert "### Operational Obligation" in first_screen
     assert "Plan Batch B receipt 수집" in first_screen
@@ -56,7 +56,7 @@ def test_roadmap_first_screen_is_the_canonical_current_view() -> None:
 def test_roadmap_current_priority_is_single_and_public_anchors_remain() -> None:
     text = ROADMAP_PATH.read_text(encoding="utf-8")
 
-    assert text.count("### Implementation P0") == 1
+    assert text.count("### Operational P0") == 1
     assert "### Review Quality Validation" in text
     assert "### Operator Experience 1차 통합안" in text
     assert "Codex `3/8 hit, 3 FP`, OMC `6/8 hit, 6 FP`는 참고 수치" in text
@@ -98,8 +98,9 @@ def test_roadmap_tracks_completed_n_child_v2_prerequisites() -> None:
 
     assert "scope normalization과 child `approval_id` 고유성 정책은 완료" in current
     assert "승인 전 canonical proposal" in current
-    assert "1. bounded N-child scheduler와 provider execution adapter를 구현한다." in current
+    assert "1. 고정된 실제 3–5 child 작업으로 성공·실패·timeout acceptance를 실행한다." in current
     assert "1. P0 선행 정책인 scope normalization" not in current
+    assert "V5 bounded N-child scheduler·provider adapter 완료(2026-08-24)" in history
     assert "V5 N-child v2 실행 전 계약 완료(2026-08-24)" in history
 
 

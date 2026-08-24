@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import uuid
 from typing import Any
 from pathlib import Path
 
@@ -895,18 +896,21 @@ def _record_headless_cost(
     raw_output: str,
     model_profile: str,
     task_kind: str,
-) -> None:
+    receipt_id: str | None = None,
+) -> dict[str, Any] | None:
     task_label = f"{task_kind or 'task'}: headless"
     try:
-        omc_cost.record(
+        return omc_cost.record(
             project_root,
             executor=executor,
+            session_id=receipt_id,
             task_title=task_label,
             llm_json=raw_output,
             model=_resolve_executor_model(executor, model_profile),
         )
     except Exception as exc:
         print(f"[WARN] cost record failed: {exc}", file=sys.stderr)
+        return None
 
 
 def _resolve_codex_home() -> Path:
@@ -1010,6 +1014,7 @@ def _run_codex_headless(
     model_profile: str = "mini_default",
     task_kind: str = "task",
     allow_fallback: bool = True,
+    receipt_id: str | None = None,
 ) -> int:
     preflight_ok, preflight_reason = _codex_headless_preflight()
     if not preflight_ok:
@@ -1046,6 +1051,7 @@ def _run_codex_headless(
                 raw_output="",
                 model_profile=model_profile,
                 task_kind=task_kind,
+                receipt_id=receipt_id,
             )
             partial_output = ""
             if isinstance(getattr(exc, "stdout", None), (bytes, str)):
@@ -1073,6 +1079,7 @@ def _run_codex_headless(
                         timeout_sec=timeout_sec,
                         model_profile=model_profile,
                         task_kind=task_kind,
+                        receipt_id=receipt_id,
                     )
                 if fallback_executor == "claude":
                     print(
@@ -1085,6 +1092,7 @@ def _run_codex_headless(
                         timeout_sec=timeout_sec,
                         model_profile=model_profile,
                         task_kind=task_kind,
+                        receipt_id=receipt_id,
                     )
                 print(
                     "[!] Codex headless network unavailable during timeout.",
@@ -1103,6 +1111,7 @@ def _run_codex_headless(
             raw_output=raw_output,
             model_profile=model_profile,
             task_kind=task_kind,
+            receipt_id=receipt_id,
         )
         combined_output = "\n".join(part for part in [proc.stdout, proc.stderr] if part)
         fallback_executor = None
@@ -1129,6 +1138,7 @@ def _run_codex_headless(
                     timeout_sec=timeout_sec,
                     model_profile=model_profile,
                     task_kind=task_kind,
+                    receipt_id=receipt_id,
                 )
             if fallback_executor == "claude":
                 print(
@@ -1141,6 +1151,7 @@ def _run_codex_headless(
                     timeout_sec=timeout_sec,
                     model_profile=model_profile,
                     task_kind=task_kind,
+                    receipt_id=receipt_id,
                 )
             print(f"[!] Codex headless execution exited with code {proc.returncode}")
         return int(proc.returncode)
@@ -1157,6 +1168,7 @@ def _run_gemini_headless(
     timeout_sec: int | float,
     model_profile: str = "mini_default",
     task_kind: str = "task",
+    receipt_id: str | None = None,
 ) -> int:
     try:
         proc = subprocess.run(
@@ -1174,6 +1186,7 @@ def _run_gemini_headless(
             raw_output="",
             model_profile=model_profile,
             task_kind=task_kind,
+            receipt_id=receipt_id,
         )
         print(
             f"[!] Gemini headless execution timed out after {timeout_sec}s",
@@ -1188,6 +1201,7 @@ def _run_gemini_headless(
         raw_output=raw_output,
         model_profile=model_profile,
         task_kind=task_kind,
+        receipt_id=receipt_id,
     )
     text = _extract_gemini_headless_text(proc.stdout)
     if text:
@@ -1204,6 +1218,7 @@ def _run_claude_headless(
     timeout_sec: int | float,
     model_profile: str = "mini_default",
     task_kind: str = "task",
+    receipt_id: str | None = None,
 ) -> int:
     try:
         proc = subprocess.run(
@@ -1221,6 +1236,7 @@ def _run_claude_headless(
             raw_output="",
             model_profile=model_profile,
             task_kind=task_kind,
+            receipt_id=receipt_id,
         )
         print(
             f"[!] Claude headless execution timed out after {timeout_sec}s",
@@ -1235,6 +1251,7 @@ def _run_claude_headless(
         raw_output=raw_output,
         model_profile=model_profile,
         task_kind=task_kind,
+        receipt_id=receipt_id,
     )
     if proc.stdout.strip():
         print(proc.stdout.strip())
@@ -1253,6 +1270,8 @@ def run_headless_executor_once(
     """Run exactly one selected provider without fallback or retry."""
     root = Path(project_root)
     timeout = timeout_sec
+    cost_log = root / ".omc" / "cost_log.jsonl"
+    receipt_id = f"headless-{uuid.uuid4().hex}"
     stdout = io.StringIO()
     stderr = io.StringIO()
     with redirect_stdout(stdout), redirect_stderr(stderr):
@@ -1263,15 +1282,63 @@ def run_headless_executor_once(
                 timeout_sec=timeout,
                 task_kind="task",
                 allow_fallback=False,
+                receipt_id=receipt_id,
             )
         elif executor == "gemini":
-            returncode = _run_gemini_headless(root, prompt, timeout_sec=timeout, task_kind="task")
+            returncode = _run_gemini_headless(
+                root,
+                prompt,
+                timeout_sec=timeout,
+                task_kind="task",
+                receipt_id=receipt_id,
+            )
         elif executor == "claude":
-            returncode = _run_claude_headless(root, prompt, timeout_sec=timeout, task_kind="task")
+            returncode = _run_claude_headless(
+                root,
+                prompt,
+                timeout_sec=timeout,
+                task_kind="task",
+                receipt_id=receipt_id,
+            )
         else:
             raise ValueError("unsupported executor")
     output = "".join((stdout.getvalue(), stderr.getvalue()))
-    return {"returncode": returncode, "output": output}
+    result: dict[str, Any] = {"returncode": returncode, "output": output}
+    try:
+        with cost_log.open("r", encoding="utf-8") as log_file:
+            entries = [
+                json.loads(line)
+                for line in log_file
+                if line.strip()
+            ]
+        entry = next(
+            (
+                candidate
+                for candidate in reversed(entries)
+                if isinstance(candidate, dict)
+                and candidate.get("session_id") == receipt_id
+            ),
+            None,
+        )
+        if isinstance(entry, dict):
+            input_tokens = entry.get("input_tokens")
+            output_tokens = entry.get("output_tokens")
+            if (
+                isinstance(input_tokens, int)
+                and not isinstance(input_tokens, bool)
+                and input_tokens >= 0
+                and isinstance(output_tokens, int)
+                and not isinstance(output_tokens, bool)
+                and output_tokens >= 0
+            ):
+                result["token_usage"] = {
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": input_tokens + output_tokens,
+                }
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        pass
+    return result
 
 
 def main() -> int:

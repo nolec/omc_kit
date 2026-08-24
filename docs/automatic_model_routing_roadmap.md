@@ -12,21 +12,21 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V2 Step-level Routing | 완료 | step metadata가 실제 profile 선택에 반영 | 운영 surface 미세조정 |
 | V3 Failure-driven Escalation | 완료 | failure class·retry·reroute·hold decision 통합 | multi-run tuning |
 | V4 Telemetry-driven Tuning | 완료 | token·cost·retry·reroute·readiness KPI 수집 | 운영 drift 감시 |
-| V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child 실행, canonical scope와 승인 결속 3–5 child DAG v2 grant | N-child scheduler·provider 실행 |
+| V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter | 실제 3–5 child 운영 acceptance |
 | Operator Experience | 진행중 | output contract와 Lite/Full routing 기반 구축 | 지연·개입 횟수 운영 검증 |
 
-현재 OMC는 `rule-based orchestration v1`을 넘어 telemetry와 승인 계약을 갖춘 `bounded orchestration` 단계다. 완전 자동 N-child 위임, 실패 재분배, 자동 모델 전환, 자동 ship은 아직 완료되지 않았다.
+현재 OMC는 `rule-based orchestration v1`을 넘어 승인된 v2 grant를 제한 병렬 실행하는 `bounded orchestration` 단계다. 일반 N-child 실행 코드는 갖췄지만 운영 acceptance, 실패 재분배, 자동 모델 전환, 자동 ship은 아직 완료되지 않았다.
 
-### Implementation P0
+### Operational P0
 
-**bounded N-child scheduler**를 단일 구현 최우선 작업으로 둔다.
+**bounded N-child 실제 acceptance**를 단일 운영 최우선 작업으로 둔다.
 
 - 입력: 승인된 `3–5` child DAG grant, dependency, prompt, scope, aggregate budget
 - 선행 정책: scope normalization과 child `approval_id` 고유성 정책은 완료
 - 실행 전 계약: 승인 전 canonical proposal이 graph·prompt·grant·budget·target-bound scope를 결속하고, 승인 시 같은 의미와 expiry를 재검증한 v2 grant만 `scheduler_eligible=true`
-- 실행: ready child claim, 독립 child 제한 병렬 실행, dependency 완료 후 다음 child 해제
-- 안전 경계: provider call·elapsed·token budget 초과 차단, idempotency와 expiry 재검증
-- 실패 정책: retry·자동 재분배·fallback·resume 없이 bounded `parent_review`로 전환
+- 구현 완료: ready child claim, 제한 병렬 실행, dependency 해제, scope 격리 patch, 별도 DAG·child ledger
+- 안전 경계 완료: immutable provider snapshot, hard output bound, call·elapsed·token budget, idempotency·expiry 재검증
+- 실패 정책 완료: retry·자동 재분배·fallback·resume 없이 bounded `parent_review`로 전환하고 실패 결과의 patch 적용 차단
 - 완료 기준: 실제 3–5 child 작업에서 중복 실행·범위 침범·예산 초과 없이 완료하고 실패·timeout이 같은 parent review 계약으로 수렴
 
 ### Operational Obligation
@@ -80,16 +80,16 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## Oh My Claude Code 벤치마크 후 개선 백로그
 
-공식 저장소 `v4.15.10`의 Team·Autopilot·Ralph·UltraQA·멀티 provider CLI surface를 기준으로 비교했다. OMC는 승인 hash, scope·dependency·budget, provenance, fail-close 검증에서 경쟁 가능한 기반을 갖췄지만 실제 N-child 실행, 자동 복구, 자연어 중심 UX에서는 열위다. 경쟁 제품의 토큰 절감 주장과 OMC의 안전성 우위 가설은 동일 작업 직접 측정 전까지 확정 사실로 사용하지 않는다.
+공식 저장소 `v4.15.10`의 Team·Autopilot·Ralph·UltraQA·멀티 provider CLI surface를 기준으로 비교했다. OMC는 승인 hash, scope·dependency·budget, provenance, fail-close N-child 실행 기반을 갖췄지만 운영 증거, 자동 복구, 자연어 중심 UX에서는 열위다. 경쟁 제품의 토큰 절감 주장과 OMC의 안전성 우위 가설은 동일 작업 직접 측정 전까지 확정 사실로 사용하지 않는다.
 
 | 우선순위 | 개선 축 | 다음 범위 | 종료 기준 |
 |---|---|---|---|
-| P0 | bounded N-child 실제 실행 | scheduler·provider 실행과 budget enforcement | 실제 3–5 child acceptance 통과 |
+| P0 | bounded N-child 운영 검증 | 실제 3–5 child 실행 receipt와 budget enforcement 증거 | 실제 3–5 child acceptance 통과 |
 | P1 | 자동 모드 선택과 사용자 개입 감축 | Lite/Full 자동 분기와 fail-safe 승격 | 품질 유지 + 개입·p50/p95 감소 |
 | P1 | 비용·품질 운영 증거 | single-agent 대비 token·elapsed·retry·intervention 비교 | 사전 등록 10건 acceptance 통과 |
 | P2 | 도구 중립 UX 차별화 | Codex·Claude Code·Gemini·Cursor 공통 receipt·readiness | 3개 이상 호스트 동일 fixture 통과 |
 
-작업 순서는 `P0 N-child scheduler → P1 개입 감축 → P1 비용·품질 검증 → P2 멀티 호스트 UX`로 고정한다. 새로운 스킬 수를 늘리거나 경쟁 제품의 mode를 복제하는 작업은 이 acceptance를 앞당기지 않으면 우선하지 않는다.
+작업 순서는 `P0 N-child acceptance → P1 개입 감축 → P1 비용·품질 검증 → P2 멀티 호스트 UX`로 고정한다. 새로운 스킬 수를 늘리거나 경쟁 제품의 mode를 복제하는 작업은 이 acceptance를 앞당기지 않으면 우선하지 않는다.
 
 ## 제품 원칙과 금지선
 
@@ -110,11 +110,11 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 다음 실행 순서
 
-1. bounded N-child scheduler와 provider execution adapter를 구현한다.
-2. 3–5 child 실제 acceptance와 비용·개입 telemetry를 축적한다.
+1. 고정된 실제 3–5 child 작업으로 성공·실패·timeout acceptance를 실행한다.
+2. single-agent baseline과 비용·개입·token telemetry를 비교한다.
 3. Lite/Full 경계를 운영 지표로 조정한다.
 4. 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
 
 ## 한 줄 결론
 
-현재 OMC의 다음 제품 전환점은 새로운 스킬 추가가 아니라, 이미 검증한 N-child grant를 예산·범위·승인 계약 안에서 실제 실행하는 scheduler다.
+현재 OMC의 다음 제품 전환점은 scheduler 추가 구현이 아니라, 완성된 bounded N-child 실행을 실제 3–5 child 표본에서 검증하고 비용·개입 receipt로 증명하는 것이다.

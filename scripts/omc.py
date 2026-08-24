@@ -144,6 +144,7 @@ def main() -> int:
         "autopilot",
         "orchestrate",
         "execute-sequence",
+        "execute-n-child",
         "team",
         "ulw",
         "ralph",
@@ -225,6 +226,17 @@ def main() -> int:
     )
     execute_sequence.add_argument("--request-file", type=Path, required=True)
     execute_sequence.add_argument("--target", type=Path, default=Path.cwd())
+
+    execute_n_child = sub.add_parser(
+        "execute-n-child",
+        help="Execute one approved bounded N-child DAG through a provider adapter.",
+    )
+    execute_n_child.add_argument("--grant-file", type=Path, required=True)
+    execute_n_child.add_argument("--prompts-file", type=Path, required=True)
+    execute_n_child.add_argument("--target", type=Path, default=Path.cwd())
+    execute_n_child.add_argument("--dag-ledger", type=Path, required=True)
+    execute_n_child.add_argument("--child-ledger", type=Path, required=True)
+    execute_n_child.add_argument("--provider-adapter", type=Path, required=True)
 
     peer_review = sub.add_parser("peer-review", help="Run peer-review of the latest uncommitted changes.")
     peer_review.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -483,6 +495,26 @@ def main() -> int:
                 str(args.request_file),
                 "--target",
                 str(args.target.resolve()),
+            ],
+        )
+
+    if args.command == "execute-n-child":
+        scheduler_script = kit / "scripts" / "omc_n_child_scheduler.py"
+        return _run_script(
+            scheduler_script,
+            [
+                "--grant-file",
+                str(args.grant_file.resolve()),
+                "--prompts-file",
+                str(args.prompts_file.resolve()),
+                "--target",
+                str(args.target.resolve()),
+                "--dag-ledger",
+                str(args.dag_ledger.resolve()),
+                "--child-ledger",
+                str(args.child_ledger.resolve()),
+                "--provider-adapter",
+                str(args.provider_adapter.resolve()),
             ],
         )
 

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from pathlib import Path
 
 import omc_cost
@@ -52,6 +55,96 @@ def test_single_child_headless_runner_preserves_fractional_timeout(monkeypatch, 
 
     assert result["returncode"] == 0
     assert captured["timeout_sec"] == 0.5
+
+
+def test_single_child_headless_runner_returns_current_call_token_usage(
+    monkeypatch, tmp_path
+):
+    def fake_run(project_root, _prompt_text, **kwargs):
+        log_path = project_root / ".omc/cost_log.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(
+            json.dumps(
+                {
+                    "executor": "codex",
+                    "session_id": kwargs["receipt_id"],
+                    "input_tokens": 11,
+                    "output_tokens": 7,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return 0
+
+    monkeypatch.setattr(omc_exec, "_run_codex_headless", fake_run)
+
+    result = omc_exec.run_headless_executor_once(
+        executor="codex",
+        prompt="child prompt",
+        project_root=tmp_path,
+        timeout_sec=30,
+    )
+
+    assert result["token_usage"] == {
+        "input_tokens": 11,
+        "output_tokens": 7,
+        "total_tokens": 18,
+    }
+
+
+def test_concurrent_headless_runners_keep_token_receipts_isolated(
+    monkeypatch, tmp_path
+):
+    first_written = Event()
+    second_written = Event()
+
+    def fake_run(project_root, prompt_text, **_kwargs):
+        log_path = project_root / ".omc/cost_log.jsonl"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        if prompt_text == "first":
+            usage = {"input_tokens": 11, "output_tokens": 1}
+        else:
+            first_written.wait(timeout=2)
+            usage = {"input_tokens": 22, "output_tokens": 2}
+        with log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(
+                json.dumps(
+                    {
+                        "executor": "codex",
+                        "session_id": _kwargs["receipt_id"],
+                        **usage,
+                    }
+                )
+                + "\n"
+            )
+        if prompt_text == "first":
+            first_written.set()
+            second_written.wait(timeout=2)
+        else:
+            second_written.set()
+        return 0
+
+    monkeypatch.setattr(omc_exec, "_run_codex_headless", fake_run)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(
+            omc_exec.run_headless_executor_once,
+            executor="codex",
+            prompt="first",
+            project_root=tmp_path,
+            timeout_sec=30,
+        )
+        second = pool.submit(
+            omc_exec.run_headless_executor_once,
+            executor="codex",
+            prompt="second",
+            project_root=tmp_path,
+            timeout_sec=30,
+        )
+
+    assert first.result()["token_usage"]["total_tokens"] == 12
+    assert second.result()["token_usage"]["total_tokens"] == 24
 
 
 def test_codex_headless_command_uses_workspace_write_sandbox(tmp_path: Path) -> None:

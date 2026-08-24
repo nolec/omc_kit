@@ -598,6 +598,8 @@ def _valid_n_child_budget(
     max_parallelism = budget.get("max_parallelism")
     max_elapsed = budget.get("max_total_elapsed_sec")
     max_output = budget.get("max_output_chars")
+    max_tokens = budget.get("max_total_tokens")
+    child_token_limits = [grant.get("max_total_tokens") for grant in child_grants]
     return (
         isinstance(max_external_calls, int)
         and not isinstance(max_external_calls, bool)
@@ -611,6 +613,15 @@ def _valid_n_child_budget(
         and isinstance(max_output, int)
         and not isinstance(max_output, bool)
         and max_output >= sum(grant["max_output_chars"] for grant in child_grants)
+        and isinstance(max_tokens, int)
+        and not isinstance(max_tokens, bool)
+        and all(
+            isinstance(limit, int)
+            and not isinstance(limit, bool)
+            and limit > 0
+            for limit in child_token_limits
+        )
+        and max_tokens >= sum(child_token_limits)
     )
 
 
@@ -848,6 +859,7 @@ def build_n_child_dag_v2_grant(
         "max_parallelism": budget["max_parallelism"],
         "max_total_elapsed_sec": float(budget["max_total_elapsed_sec"]),
         "max_output_chars": budget["max_output_chars"],
+        "max_total_tokens": budget["max_total_tokens"],
         "fallback_action": "parent_review",
         "automatic_retry_allowed": False,
         "automatic_redistribution_allowed": False,
@@ -1286,6 +1298,7 @@ def finalize_single_child_execution_reservation(
     reason_code = outcome.get("reason_code")
     elapsed_sec = outcome.get("elapsed_sec")
     output_chars = outcome.get("output_chars")
+    token_usage = outcome.get("token_usage")
     if (
         not isinstance(terminal_status, str)
         or terminal_status not in {"succeeded", "failed", "timeout"}
@@ -1343,6 +1356,20 @@ def finalize_single_child_execution_reservation(
         "elapsed_sec": elapsed_sec,
         "output_chars": output_chars,
     }
+    if token_usage is not None:
+        if (
+            not isinstance(token_usage, dict)
+            or any(
+                not isinstance(token_usage.get(field), int)
+                or isinstance(token_usage.get(field), bool)
+                or token_usage[field] < 0
+                for field in ("input_tokens", "output_tokens", "total_tokens")
+            )
+            or token_usage["total_tokens"]
+            != token_usage["input_tokens"] + token_usage["output_tokens"]
+        ):
+            return blocked("execution_outcome_invalid")
+        normalized_outcome["token_usage"] = deepcopy(token_usage)
     parent_review = build_parent_review_recovery(
         {"status": terminal_status, "reason_code": reason_code}
     )
@@ -1895,6 +1922,7 @@ def execute_reserved_single_child_grant_file(
     monotonic: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     sequence_expires_at: datetime | None = None,
+    require_token_usage: bool = False,
 ) -> dict[str, Any]:
     """Claim, execute once, and terminalize one bounded child grant.
 
@@ -1930,20 +1958,26 @@ def execute_reserved_single_child_grant_file(
 
     max_elapsed = float(grant["max_total_elapsed_sec"])
     max_output = int(grant["max_output_chars"])
+    max_total_tokens = grant.get("max_total_tokens") if require_token_usage else None
     started = monotonic()
     output = ""
     raw_output = ""
     terminal_status = "failed"
     reason_code = "executor_result_invalid"
     external_call_performed = False
+    token_usage: dict[str, int] | None = None
     try:
         external_call_performed = True
-        runner_result = runner(
-            executor=grant["executor"],
-            prompt=prompt,
-            project_root=Path(project_root),
-            timeout_sec=grant["max_total_elapsed_sec"],
-        )
+        runner_kwargs = {
+            "executor": grant["executor"],
+            "prompt": prompt,
+            "project_root": Path(project_root),
+            "timeout_sec": grant["max_total_elapsed_sec"],
+        }
+        if require_token_usage:
+            runner_kwargs["max_total_tokens"] = max_total_tokens
+            runner_kwargs["max_output_chars"] = max_output
+        runner_result = runner(**runner_kwargs)
         if not isinstance(runner_result, dict):
             raise TypeError("runner result must be a mapping")
         returncode = runner_result.get("returncode")
@@ -1952,12 +1986,34 @@ def execute_reserved_single_child_grant_file(
             raise TypeError("runner result contract invalid")
         raw_output = candidate_output
         output = raw_output[:max_output]
+        candidate_usage = runner_result.get("token_usage")
+        if isinstance(candidate_usage, dict) and all(
+            isinstance(candidate_usage.get(field), int)
+            and not isinstance(candidate_usage.get(field), bool)
+            and candidate_usage[field] >= 0
+            for field in ("input_tokens", "output_tokens", "total_tokens")
+        ) and candidate_usage["total_tokens"] == (
+            candidate_usage["input_tokens"] + candidate_usage["output_tokens"]
+        ):
+            token_usage = {
+                field: candidate_usage[field]
+                for field in ("input_tokens", "output_tokens", "total_tokens")
+            }
         if returncode == 124:
             terminal_status = "timeout"
             reason_code = "executor_timeout"
+        elif returncode != 0:
+            terminal_status = "failed"
+            reason_code = "executor_failed"
+        elif require_token_usage and token_usage is None:
+            terminal_status = "failed"
+            reason_code = "token_usage_unavailable"
+        elif require_token_usage and token_usage["total_tokens"] > max_total_tokens:
+            terminal_status = "failed"
+            reason_code = "provider_token_limit_violated"
         else:
-            terminal_status = "succeeded" if returncode == 0 else "failed"
-            reason_code = "executor_completed" if returncode == 0 else "executor_failed"
+            terminal_status = "succeeded"
+            reason_code = "executor_completed"
     except TimeoutError:
         terminal_status = "timeout"
         reason_code = "executor_timeout"
@@ -1977,6 +2033,7 @@ def execute_reserved_single_child_grant_file(
             "reason_code": reason_code,
             "elapsed_sec": recorded_elapsed,
             "output_chars": len(output),
+            **({"token_usage": token_usage} if token_usage is not None else {}),
         },
         now=now(),
     )
@@ -1991,6 +2048,7 @@ def execute_reserved_single_child_grant_file(
             "recorded_elapsed_sec": recorded_elapsed,
             "output_chars": len(output),
             "external_call_performed": external_call_performed,
+            "token_usage": token_usage,
         })
     if finalized["status"] == "indeterminate":
         return _with_parent_review_recovery({
@@ -2004,6 +2062,7 @@ def execute_reserved_single_child_grant_file(
             "recorded_elapsed_sec": recorded_elapsed,
             "output_chars": len(output),
             "external_call_performed": external_call_performed,
+            "token_usage": token_usage,
             "ledger_status": finalized["status"],
             "entry": finalized["entry"],
         })
@@ -2016,6 +2075,7 @@ def execute_reserved_single_child_grant_file(
         "recorded_elapsed_sec": recorded_elapsed,
         "output_chars": len(output),
         "external_call_performed": external_call_performed,
+        "token_usage": token_usage,
         "ledger_status": finalized["status"],
         "entry": finalized["entry"],
     })

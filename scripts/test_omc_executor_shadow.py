@@ -393,7 +393,9 @@ def _n_child_dag_v2_request(**overrides):
     request = _n_child_dag_request()
     request["schema_version"] = "omc-n-child-dag/v2"
     request.pop("dag_approval")
+    request["aggregate_budget"]["max_total_tokens"] = 36_000
     for child, grant in zip(request["children"], request["child_grants"]):
+        grant["max_total_tokens"] = 12_000
         scope_hash = canonical_scope_sha256(child["scope_paths"])
         child["scope_hash"] = scope_hash
         grant["scope_hash"] = scope_hash
@@ -474,6 +476,17 @@ def test_n_child_dag_v2_grant_binds_approval_to_proposal(tmp_path):
     assert grant["proposal_sha256"] == proposal["proposal_sha256"]
     assert grant["execution_allowed"] is True
     assert grant["scheduler_eligible"] is True
+    assert grant["max_total_tokens"] == 36_000
+
+
+def test_n_child_dag_v2_proposal_rejects_unfunded_child_token_caps(tmp_path):
+    request = _n_child_dag_v2_request()
+    request["aggregate_budget"]["max_total_tokens"] = 35_999
+
+    proposal = build_n_child_dag_proposal(tmp_path, request)
+
+    assert proposal["status"] == "blocked"
+    assert proposal["reason_code"] == "dag_budget_invalid"
 
 
 def test_n_child_dag_v2_grant_revalidates_expired_child_grants(
