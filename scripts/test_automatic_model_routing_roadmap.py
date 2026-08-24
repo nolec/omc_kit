@@ -92,6 +92,17 @@ def test_roadmap_tracks_post_benchmark_product_gaps() -> None:
     assert "재현 가능한 receipt로 증명하는 도구 중립 오케스트레이터" in text
 
 
+def test_roadmap_tracks_completed_n_child_v2_prerequisites() -> None:
+    current = ROADMAP_PATH.read_text(encoding="utf-8")
+    history = HISTORY_PATH.read_text(encoding="utf-8")
+
+    assert "scope normalization과 child `approval_id` 고유성 정책은 완료" in current
+    assert "승인 전 canonical proposal" in current
+    assert "1. bounded N-child scheduler와 provider execution adapter를 구현한다." in current
+    assert "1. P0 선행 정책인 scope normalization" not in current
+    assert "V5 N-child v2 실행 전 계약 완료(2026-08-24)" in history
+
+
 def test_roadmap_includes_status_board_and_operator_experience_track() -> None:
     text = _roadmap_corpus()
 

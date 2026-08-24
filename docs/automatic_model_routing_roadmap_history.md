@@ -4,6 +4,8 @@
 > 현재 상태와 다음 우선순위는 [Current Roadmap](automatic_model_routing_roadmap.md)을 기준으로 판단합니다.
 > 아래 snapshot은 immutable evidence archive이며 의미를 바꾸는 수정 대신 새 current 기록을 추가합니다.
 
+**V5 N-child v2 실행 전 계약 완료(2026-08-24):** symlink·case·glob·escape·casefold·Unicode alias와 parent-child overlap을 fail-close하는 target-bound canonical scope 정책을 추가했다. 승인 전 canonical proposal은 3–5 child graph·prompt·개별 execution grant·aggregate budget·scope와 trusted target identity를 하나의 proposal hash에 결속한다. 승인 시에는 child expiry, parent-child approval ID 충돌, parent expiry 상한과 proposal 전체 의미를 재구성해 검증하며 이 절차를 통과한 v2 grant만 `scheduler_eligible=true`다. legacy v1 grant는 호환 출력을 유지하되 scheduler 진입은 금지했다. package-style과 script-path import를 모두 지원하며 관련 회귀 `156 passed`, 전체 회귀 `2513 passed, 3 skipped`, TDD gate와 OMC review `APPROVE`를 확인했다. 다음 P0는 이 v2 grant만 소비하는 bounded N-child scheduler와 provider execution adapter다.
+
 ---
 
 # Automatic Model Routing Roadmap

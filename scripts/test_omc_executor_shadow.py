@@ -5,10 +5,15 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import multiprocessing
+from pathlib import Path
+import subprocess
+import sys
 
 import omc_executor_shadow
 from omc_executor_shadow import (
     build_n_child_dag_grant,
+    build_n_child_dag_proposal,
+    build_n_child_dag_v2_grant,
     build_parent_review_recovery,
     build_noop_shadow_record,
     build_single_child_execution_grant,
@@ -25,6 +30,21 @@ from omc_executor_shadow import (
     reserve_single_child_execution_grant_file,
 )
 import pytest
+
+from omc_scope import canonical_scope_sha256
+
+
+def test_executor_shadow_supports_package_style_import():
+    repo_root = Path(__file__).resolve().parents[1]
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import scripts.omc_executor_shadow"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize(
@@ -369,6 +389,18 @@ def _n_child_dag_request(**overrides):
     return request
 
 
+def _n_child_dag_v2_request(**overrides):
+    request = _n_child_dag_request()
+    request["schema_version"] = "omc-n-child-dag/v2"
+    request.pop("dag_approval")
+    for child, grant in zip(request["children"], request["child_grants"]):
+        scope_hash = canonical_scope_sha256(child["scope_paths"])
+        child["scope_hash"] = scope_hash
+        grant["scope_hash"] = scope_hash
+    request.update(overrides)
+    return request
+
+
 def test_n_child_dag_grant_binds_graph_prompts_grants_and_budget():
     grant = build_n_child_dag_grant(_n_child_dag_request())
 
@@ -381,6 +413,200 @@ def test_n_child_dag_grant_binds_graph_prompts_grants_and_budget():
     assert grant["max_external_calls"] == 3
     assert grant["automatic_retry_allowed"] is False
     assert grant["automatic_redistribution_allowed"] is False
+    assert grant["scheduler_eligible"] is False
+
+
+def test_n_child_dag_proposal_binds_canonical_scope_and_all_inputs(tmp_path):
+    request = _n_child_dag_v2_request()
+
+    proposal = build_n_child_dag_proposal(tmp_path, request)
+
+    assert proposal["status"] == "ready"
+    assert proposal["reason_code"] == "dag_proposal_ready"
+    assert proposal["execution_allowed"] is False
+    assert proposal["scheduler_eligible"] is False
+    assert proposal["scope_policy_version"] == "omc-scope/v1"
+    assert proposal["children"][0]["scope_paths"] == ["src/api"]
+    assert proposal["children"][0]["scope_hash"] == canonical_scope_sha256(
+        ["src/api"]
+    )
+    assert isinstance(proposal["target_identity_sha256"], str)
+    assert isinstance(proposal["proposal_sha256"], str)
+
+
+def test_n_child_dag_proposal_blocked_response_uses_proposal_mode(tmp_path):
+    proposal = build_n_child_dag_proposal(
+        tmp_path,
+        {"execution_requested": False},
+    )
+
+    assert proposal["status"] == "blocked"
+    assert proposal["mode"] == "n_child_dag_proposal"
+
+
+@pytest.mark.parametrize("approval_id", ["approval-1", " approval-2 "])
+def test_n_child_dag_proposal_rejects_duplicate_or_noncanonical_child_approval(
+    tmp_path, approval_id
+):
+    request = _n_child_dag_v2_request()
+    request["child_grants"][1]["approval_id"] = approval_id
+
+    proposal = build_n_child_dag_proposal(tmp_path, request)
+
+    assert proposal["status"] == "blocked"
+    assert proposal["reason_code"] == "child_approval_id_invalid"
+
+
+def test_n_child_dag_v2_grant_binds_approval_to_proposal(tmp_path):
+    proposal = build_n_child_dag_proposal(tmp_path, _n_child_dag_v2_request())
+    approval = {
+        "approval_id": "dag-approval-v2",
+        "dag_id": "dag-1",
+        "operator_confirmed": True,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "proposal_sha256": proposal["proposal_sha256"],
+    }
+
+    grant = build_n_child_dag_v2_grant(tmp_path, proposal, approval)
+
+    assert grant["status"] == "ready"
+    assert grant["schema_version"] == "omc-n-child-dag/v2"
+    assert grant["proposal_sha256"] == proposal["proposal_sha256"]
+    assert grant["execution_allowed"] is True
+    assert grant["scheduler_eligible"] is True
+
+
+def test_n_child_dag_v2_grant_revalidates_expired_child_grants(
+    tmp_path, monkeypatch
+):
+    proposal = build_n_child_dag_proposal(tmp_path, _n_child_dag_v2_request())
+
+    class FutureDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2100, 1, 1, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(omc_executor_shadow, "datetime", FutureDateTime)
+    approval = {
+        "approval_id": "dag-approval-v2",
+        "dag_id": "dag-1",
+        "operator_confirmed": True,
+        "expires_at": "2200-01-01T00:00:00Z",
+        "proposal_sha256": proposal["proposal_sha256"],
+    }
+
+    grant = build_n_child_dag_v2_grant(tmp_path, proposal, approval)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "child_execution_grant_expired"
+
+
+def test_n_child_dag_v2_grant_rejects_parent_expiry_after_child_grant(tmp_path):
+    proposal = build_n_child_dag_proposal(tmp_path, _n_child_dag_v2_request())
+    approval = {
+        "approval_id": "dag-approval-v2",
+        "dag_id": "dag-1",
+        "operator_confirmed": True,
+        "expires_at": "2200-01-01T00:00:00Z",
+        "proposal_sha256": proposal["proposal_sha256"],
+    }
+
+    grant = build_n_child_dag_v2_grant(tmp_path, proposal, approval)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "dag_approval_exceeds_child_grant"
+
+
+def test_n_child_dag_v2_grant_rejects_parent_child_approval_collision(tmp_path):
+    proposal = build_n_child_dag_proposal(tmp_path, _n_child_dag_v2_request())
+    approval = {
+        "approval_id": "approval-1",
+        "dag_id": "dag-1",
+        "operator_confirmed": True,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "proposal_sha256": proposal["proposal_sha256"],
+    }
+
+    grant = build_n_child_dag_v2_grant(tmp_path, proposal, approval)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "approval_id_collision"
+
+
+def test_n_child_dag_v2_grant_rejects_proposal_tampering(tmp_path):
+    proposal = build_n_child_dag_proposal(tmp_path, _n_child_dag_v2_request())
+    proposal["child_prompts"]["child-1"] = "tampered"
+    approval = {
+        "approval_id": "dag-approval-v2",
+        "dag_id": "dag-1",
+        "operator_confirmed": True,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "proposal_sha256": proposal["proposal_sha256"],
+    }
+
+    grant = build_n_child_dag_v2_grant(tmp_path, proposal, approval)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "dag_proposal_invalid"
+
+
+def test_n_child_dag_v2_grant_rejects_rehashed_cyclic_proposal(tmp_path):
+    proposal = build_n_child_dag_proposal(tmp_path, _n_child_dag_v2_request())
+    proposal["children"][0]["depends_on"] = ["child-2"]
+    proposal["children"][1]["depends_on"] = ["child-1"]
+    proposal["graph_sha256"] = _canonical_hash(proposal["children"])
+    proposal["proposal_sha256"] = omc_executor_shadow._canonical_sha256(
+        omc_executor_shadow._proposal_hash_payload(proposal)
+    )
+    approval = {
+        "approval_id": "dag-approval-v2",
+        "dag_id": "dag-1",
+        "operator_confirmed": True,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "proposal_sha256": proposal["proposal_sha256"],
+    }
+
+    grant = build_n_child_dag_v2_grant(tmp_path, proposal, approval)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "dag_proposal_invalid"
+
+
+def test_n_child_dag_v2_grant_rejects_safety_metadata_tampering(tmp_path):
+    proposal = build_n_child_dag_proposal(tmp_path, _n_child_dag_v2_request())
+    proposal["scheduler_eligible"] = True
+    approval = {
+        "approval_id": "dag-approval-v2",
+        "dag_id": "dag-1",
+        "operator_confirmed": True,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "proposal_sha256": proposal["proposal_sha256"],
+    }
+
+    grant = build_n_child_dag_v2_grant(tmp_path, proposal, approval)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "dag_proposal_invalid"
+
+
+def test_n_child_dag_v2_grant_rejects_different_trusted_target(tmp_path):
+    original = tmp_path / "original"
+    different = tmp_path / "different"
+    original.mkdir()
+    different.mkdir()
+    proposal = build_n_child_dag_proposal(original, _n_child_dag_v2_request())
+    approval = {
+        "approval_id": "dag-approval-v2",
+        "dag_id": "dag-1",
+        "operator_confirmed": True,
+        "expires_at": "2099-01-01T00:00:00Z",
+        "proposal_sha256": proposal["proposal_sha256"],
+    }
+
+    grant = build_n_child_dag_v2_grant(different, proposal, approval)
+
+    assert grant["status"] == "blocked"
+    assert grant["reason_code"] == "dag_target_mismatch"
 
 
 @pytest.mark.parametrize("child_count", [2, 6])

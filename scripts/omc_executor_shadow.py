@@ -18,6 +18,11 @@ import tempfile
 import time
 from typing import Any, Callable
 
+if __package__:
+    from .omc_scope import canonicalize_child_scopes
+else:
+    from omc_scope import canonicalize_child_scopes
+
 
 def _is_finite_number(value: object) -> bool:
     try:
@@ -417,6 +422,16 @@ def _dag_blocked(reason_code: str) -> dict[str, Any]:
     }
 
 
+def _dag_proposal_blocked(reason_code: str) -> dict[str, Any]:
+    return {
+        "mode": "n_child_dag_proposal",
+        "status": "blocked",
+        "reason_code": reason_code,
+        "execution_allowed": False,
+        "scheduler_eligible": False,
+    }
+
+
 def _dag_graph_is_valid(children: list[dict[str, Any]]) -> bool:
     child_ids = [child.get("child_id") for child in children]
     if (
@@ -524,17 +539,25 @@ def _dag_critical_path_elapsed(
 
 
 def _valid_future_timestamp(value: Any) -> bool:
-    if not isinstance(value, str):
-        return False
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return False
+    parsed = _parse_timestamp(value)
     return (
-        parsed.tzinfo is not None
+        parsed is not None
+        and parsed.tzinfo is not None
         and parsed.utcoffset() is not None
         and parsed > datetime.now(timezone.utc)
     )
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
 
 
 def _valid_n_child_execution_grant(grant: Any, child_id: str) -> bool:
@@ -564,6 +587,274 @@ def _valid_n_child_execution_grant(grant: Any, child_id: str) -> bool:
     )
 
 
+def _valid_n_child_budget(
+    children: list[dict[str, Any]],
+    child_grants: list[dict[str, Any]],
+    budget: Any,
+) -> bool:
+    if not isinstance(budget, dict):
+        return False
+    max_external_calls = budget.get("max_external_calls")
+    max_parallelism = budget.get("max_parallelism")
+    max_elapsed = budget.get("max_total_elapsed_sec")
+    max_output = budget.get("max_output_chars")
+    return (
+        isinstance(max_external_calls, int)
+        and not isinstance(max_external_calls, bool)
+        and max_external_calls == len(children)
+        and isinstance(max_parallelism, int)
+        and not isinstance(max_parallelism, bool)
+        and 1 <= max_parallelism <= len(children)
+        and not isinstance(max_elapsed, bool)
+        and _is_finite_number(max_elapsed)
+        and float(max_elapsed) >= _dag_critical_path_elapsed(children, child_grants)
+        and isinstance(max_output, int)
+        and not isinstance(max_output, bool)
+        and max_output >= sum(grant["max_output_chars"] for grant in child_grants)
+    )
+
+
+def _proposal_hash_payload(proposal: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "schema_version",
+        "mode",
+        "status",
+        "reason_code",
+        "dag_id",
+        "execution_mode",
+        "execution_requested",
+        "execution_allowed",
+        "scheduler_eligible",
+        "children",
+        "child_grants",
+        "child_prompts",
+        "aggregate_budget",
+        "scope_policy_version",
+        "target_identity_sha256",
+        "graph_sha256",
+        "child_grant_sha256s",
+        "prompt_sha256s",
+        "aggregate_budget_sha256",
+    )
+    return {key: deepcopy(proposal.get(key)) for key in keys}
+
+
+def build_n_child_dag_proposal(
+    trusted_target: str | Path,
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a canonical v2 DAG proposal before operator approval."""
+    if (
+        not isinstance(request, dict)
+        or request.get("execution_requested") is not True
+        or request.get("execution_mode") != "n_child_dag_opt_in"
+    ):
+        return _dag_proposal_blocked("dag_opt_in_missing")
+    dag_id = request.get("dag_id")
+    children = request.get("children")
+    child_grants = request.get("child_grants")
+    child_prompts = request.get("child_prompts")
+    budget = request.get("aggregate_budget")
+    if (
+        request.get("schema_version") != "omc-n-child-dag/v2"
+        or not isinstance(dag_id, str)
+        or not dag_id.strip()
+    ):
+        return _dag_proposal_blocked("dag_input_invalid")
+    if (
+        not isinstance(children, list)
+        or not 3 <= len(children) <= 5
+        or not all(isinstance(child, dict) for child in children)
+    ):
+        return _dag_proposal_blocked("n_child_count_invalid")
+    if not _dag_graph_is_valid(children):
+        return _dag_proposal_blocked("dag_graph_invalid")
+
+    scope_result = canonicalize_child_scopes(trusted_target, children)
+    if scope_result.get("status") != "ready":
+        return _dag_proposal_blocked(str(scope_result.get("reason_code")))
+    normalized_children = scope_result["children"]
+    child_ids = [child["child_id"] for child in normalized_children]
+    if (
+        not isinstance(child_grants, list)
+        or len(child_grants) != len(normalized_children)
+        or not all(
+            _valid_n_child_execution_grant(grant, child_id)
+            and child.get("scope_hash") == normalized.get("scope_hash")
+            and grant.get("scope_hash") == normalized.get("scope_hash")
+            for grant, child, normalized, child_id in zip(
+                child_grants, children, normalized_children, child_ids
+            )
+        )
+        or len({grant["idempotency_key"] for grant in child_grants})
+        != len(child_grants)
+    ):
+        return _dag_proposal_blocked("child_execution_grant_invalid")
+    approval_ids = [grant["approval_id"] for grant in child_grants]
+    if (
+        any(approval_id != approval_id.strip() for approval_id in approval_ids)
+        or len(set(approval_ids)) != len(approval_ids)
+    ):
+        return _dag_proposal_blocked("child_approval_id_invalid")
+    if (
+        not isinstance(child_prompts, dict)
+        or set(child_prompts) != set(child_ids)
+        or any(
+            not isinstance(child_prompts[child_id], str)
+            or not child_prompts[child_id].strip()
+            for child_id in child_ids
+        )
+    ):
+        return _dag_proposal_blocked("dag_prompt_invalid")
+    if not _valid_n_child_budget(normalized_children, child_grants, budget):
+        return _dag_proposal_blocked("dag_budget_invalid")
+
+    proposal = {
+        "schema_version": "omc-n-child-dag/v2",
+        "mode": "n_child_dag_proposal",
+        "status": "ready",
+        "reason_code": "dag_proposal_ready",
+        "execution_mode": "n_child_dag_opt_in",
+        "execution_requested": True,
+        "execution_allowed": False,
+        "scheduler_eligible": False,
+        "dag_id": dag_id,
+        "children": deepcopy(normalized_children),
+        "child_grants": deepcopy(child_grants),
+        "child_prompts": deepcopy(child_prompts),
+        "aggregate_budget": deepcopy(budget),
+        "scope_policy_version": scope_result["scope_policy_version"],
+        "target_identity_sha256": scope_result["target_identity_sha256"],
+        "graph_sha256": _canonical_sha256(normalized_children),
+        "child_grant_sha256s": [
+            _canonical_sha256(grant) for grant in child_grants
+        ],
+        "prompt_sha256s": {
+            child_id: _canonical_sha256(child_prompts[child_id])
+            for child_id in child_ids
+        },
+        "aggregate_budget_sha256": _canonical_sha256(budget),
+    }
+    proposal["proposal_sha256"] = _canonical_sha256(
+        _proposal_hash_payload(proposal)
+    )
+    return proposal
+
+
+def build_n_child_dag_v2_grant(
+    trusted_target: str | Path,
+    proposal: dict[str, Any],
+    approval: dict[str, Any],
+) -> dict[str, Any]:
+    """Issue scheduler eligibility only for an intact, target-bound proposal."""
+    if (
+        not isinstance(proposal, dict)
+        or proposal.get("schema_version") != "omc-n-child-dag/v2"
+        or proposal.get("mode") != "n_child_dag_proposal"
+        or proposal.get("status") != "ready"
+        or proposal.get("reason_code") != "dag_proposal_ready"
+        or proposal.get("execution_mode") != "n_child_dag_opt_in"
+        or proposal.get("execution_requested") is not True
+        or proposal.get("execution_allowed") is not False
+        or proposal.get("scheduler_eligible") is not False
+    ):
+        return _dag_blocked("dag_proposal_invalid")
+    scope_result = canonicalize_child_scopes(
+        trusted_target,
+        proposal.get("children"),
+    )
+    if scope_result.get("status") != "ready":
+        return _dag_blocked(str(scope_result.get("reason_code")))
+    if scope_result.get("target_identity_sha256") != proposal.get(
+        "target_identity_sha256"
+    ):
+        return _dag_blocked("dag_target_mismatch")
+    if scope_result.get("children") != proposal.get("children"):
+        return _dag_blocked("dag_proposal_invalid")
+    expected_proposal_hash = _canonical_sha256(_proposal_hash_payload(proposal))
+    if proposal.get("proposal_sha256") != expected_proposal_hash:
+        return _dag_blocked("dag_proposal_invalid")
+    child_grants = proposal.get("child_grants")
+    if (
+        isinstance(child_grants, list)
+        and child_grants
+        and all(isinstance(grant, dict) for grant in child_grants)
+        and any(
+            not _valid_future_timestamp(grant.get("approval_expires_at"))
+            for grant in child_grants
+        )
+    ):
+        return _dag_blocked("child_execution_grant_expired")
+    rebuilt_proposal = build_n_child_dag_proposal(
+        trusted_target,
+        {
+            "schema_version": proposal.get("schema_version"),
+            "dag_id": proposal.get("dag_id"),
+            "execution_mode": proposal.get("execution_mode"),
+            "execution_requested": proposal.get("execution_requested"),
+            "children": deepcopy(proposal.get("children")),
+            "child_grants": deepcopy(child_grants),
+            "child_prompts": deepcopy(proposal.get("child_prompts")),
+            "aggregate_budget": deepcopy(proposal.get("aggregate_budget")),
+        },
+    )
+    if rebuilt_proposal != proposal:
+        return _dag_blocked("dag_proposal_invalid")
+    if (
+        not isinstance(approval, dict)
+        or approval.get("operator_confirmed") is not True
+        or not isinstance(approval.get("approval_id"), str)
+        or not approval["approval_id"].strip()
+        or approval["approval_id"] != approval["approval_id"].strip()
+        or not _valid_future_timestamp(approval.get("expires_at"))
+    ):
+        return _dag_blocked("dag_approval_invalid")
+    if approval["approval_id"] in {
+        grant["approval_id"] for grant in proposal["child_grants"]
+    }:
+        return _dag_blocked("approval_id_collision")
+    if (
+        approval.get("dag_id") != proposal.get("dag_id")
+        or approval.get("proposal_sha256") != expected_proposal_hash
+    ):
+        return _dag_blocked("dag_approval_binding_mismatch")
+
+    children = proposal["children"]
+    approval_expiry = _parse_timestamp(approval["expires_at"])
+    child_expiries = [
+        _parse_timestamp(grant["approval_expires_at"])
+        for grant in child_grants
+    ]
+    if approval_expiry is None or any(expiry is None for expiry in child_expiries):
+        return _dag_blocked("dag_approval_invalid")
+    if approval_expiry > min(child_expiries):
+        return _dag_blocked("dag_approval_exceeds_child_grant")
+
+    budget = proposal["aggregate_budget"]
+    return {
+        **deepcopy(proposal),
+        "mode": "n_child_dag_grant",
+        "status": "ready",
+        "reason_code": "dag_ready",
+        "execution_allowed": True,
+        "scheduler_eligible": True,
+        "approval_id": approval["approval_id"],
+        "approval_expires_at": approval["expires_at"],
+        "child_ids": [child["child_id"] for child in children],
+        "ready_child_ids": [
+            child["child_id"] for child in children if not child["depends_on"]
+        ],
+        "max_external_calls": budget["max_external_calls"],
+        "max_parallelism": budget["max_parallelism"],
+        "max_total_elapsed_sec": float(budget["max_total_elapsed_sec"]),
+        "max_output_chars": budget["max_output_chars"],
+        "fallback_action": "parent_review",
+        "automatic_retry_allowed": False,
+        "automatic_redistribution_allowed": False,
+        "automatic_fallback_allowed": False,
+        "automatic_resume_allowed": False,
+        "replay_check_required": True,
+    }
 def build_n_child_dag_grant(request: dict[str, Any]) -> dict[str, Any]:
     """Build an approval-bound contract for a bounded three-to-five child DAG.
 
@@ -678,6 +969,7 @@ def build_n_child_dag_grant(request: dict[str, Any]) -> dict[str, Any]:
         "status": "ready",
         "reason_code": "dag_ready",
         "execution_allowed": True,
+        "scheduler_eligible": False,
         "dag_id": dag_id,
         "approval_id": approval["approval_id"],
         "approval_expires_at": approval["expires_at"],

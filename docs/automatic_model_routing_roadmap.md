@@ -12,7 +12,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V2 Step-level Routing | 완료 | step metadata가 실제 profile 선택에 반영 | 운영 surface 미세조정 |
 | V3 Failure-driven Escalation | 완료 | failure class·retry·reroute·hold decision 통합 | multi-run tuning |
 | V4 Telemetry-driven Tuning | 완료 | token·cost·retry·reroute·readiness KPI 수집 | 운영 drift 감시 |
-| V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child 실행, bounded 3–5 child DAG grant | N-child scheduler·provider 실행 |
+| V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child 실행, canonical scope와 승인 결속 3–5 child DAG v2 grant | N-child scheduler·provider 실행 |
 | Operator Experience | 진행중 | output contract와 Lite/Full routing 기반 구축 | 지연·개입 횟수 운영 검증 |
 
 현재 OMC는 `rule-based orchestration v1`을 넘어 telemetry와 승인 계약을 갖춘 `bounded orchestration` 단계다. 완전 자동 N-child 위임, 실패 재분배, 자동 모델 전환, 자동 ship은 아직 완료되지 않았다.
@@ -22,7 +22,8 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 **bounded N-child scheduler**를 단일 구현 최우선 작업으로 둔다.
 
 - 입력: 승인된 `3–5` child DAG grant, dependency, prompt, scope, aggregate budget
-- 선행 조건: symlink·case·glob scope 정규화와 child `approval_id` 고유성
+- 선행 정책: scope normalization과 child `approval_id` 고유성 정책은 완료
+- 실행 전 계약: 승인 전 canonical proposal이 graph·prompt·grant·budget·target-bound scope를 결속하고, 승인 시 같은 의미와 expiry를 재검증한 v2 grant만 `scheduler_eligible=true`
 - 실행: ready child claim, 독립 child 제한 병렬 실행, dependency 완료 후 다음 child 해제
 - 안전 경계: provider call·elapsed·token budget 초과 차단, idempotency와 expiry 재검증
 - 실패 정책: retry·자동 재분배·fallback·resume 없이 bounded `parent_review`로 전환
@@ -109,11 +110,10 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 다음 실행 순서
 
-1. P0 선행 정책인 scope normalization과 child approval ID 고유성을 고정한다.
-2. bounded N-child scheduler와 provider execution adapter를 구현한다.
-3. 3–5 child 실제 acceptance와 비용·개입 telemetry를 축적한다.
-4. Lite/Full 경계를 운영 지표로 조정한다.
-5. 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
+1. bounded N-child scheduler와 provider execution adapter를 구현한다.
+2. 3–5 child 실제 acceptance와 비용·개입 telemetry를 축적한다.
+3. Lite/Full 경계를 운영 지표로 조정한다.
+4. 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
 
 ## 한 줄 결론
 
