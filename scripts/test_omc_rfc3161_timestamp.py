@@ -115,6 +115,18 @@ def test_trust_identity_requires_independently_approved_snapshot_digest():
     )
 
 
+def test_validate_trust_identity_rejects_invalid_trusted_root_digest():
+    trusted_root = _trusted_root()
+    identity = timestamp.trust_identity(
+        trusted_root,
+        expected_trusted_root_sha256=timestamp.trusted_root_sha256(trusted_root),
+    )
+    identity["trusted_root_sha256"] = "not-a-sha256"
+
+    with pytest.raises(ValueError, match="trust identity is invalid"):
+        timestamp.validate_trust_identity(identity)
+
+
 def test_verify_evidence_uses_last_certificate_as_trust_anchor():
     claim = timestamp.registration_claim(
         batch_id="batch-b-01",

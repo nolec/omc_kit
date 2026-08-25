@@ -79,7 +79,9 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "Product Value preregistration 계약 완료" in text
     assert "canonical workload 순서·해시 불변성" in text
     assert "이 상태는 `claim_eligible=false`" in text
-    assert "실제 구현 workload 5건을 선정" in text
+    assert "Product Value 중립 등록 검증 경로 완료" in text
+    assert "`validate-registration`" in text
+    assert "실제 구현 workload 6건" in text
     assert "1건 비판정 pilot과 동일 조건 paired 5건" in text
     assert "운영 증거 없는 자동화 확대 금지" in text
     assert "README와 실제 executor 구현 상태 정합화" in text

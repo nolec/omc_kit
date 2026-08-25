@@ -262,11 +262,32 @@ def main() -> int:
     )
     product_value_preregistration.add_argument(
         "preregistration_command",
-        choices=("prepare", "validate"),
+        choices=(
+            "prepare",
+            "prepare-v2",
+            "validate",
+            "registry-record",
+            "prepare-receipt",
+            "validate-registration",
+        ),
     )
     product_value_preregistration.add_argument("--batch-id")
     product_value_preregistration.add_argument("--workloads", type=Path)
     product_value_preregistration.add_argument("--manifest", type=Path)
+    product_value_preregistration.add_argument("--observed-from")
+    product_value_preregistration.add_argument("--observed-through")
+    product_value_preregistration.add_argument("--registration-authority", type=Path)
+    product_value_preregistration.add_argument("--repository-root", type=Path)
+    product_value_preregistration.add_argument("--registry-commit")
+    product_value_preregistration.add_argument("--registry-path")
+    product_value_preregistration.add_argument("--required-ancestor-commit")
+    product_value_preregistration.add_argument("--registration-evidence", type=Path)
+    product_value_preregistration.add_argument("--registration-receipt", type=Path)
+    product_value_preregistration.add_argument(
+        "--expected-registration-receipt-sha256"
+    )
+    product_value_preregistration.add_argument("--trusted-root", type=Path)
+    product_value_preregistration.add_argument("--approved-trusted-root-sha256")
     product_value_preregistration.add_argument("--out", type=Path)
 
     peer_review = sub.add_parser("peer-review", help="Run peer-review of the latest uncommitted changes.")
@@ -576,10 +597,34 @@ def main() -> int:
         forwarded = [args.preregistration_command]
         if args.batch_id is not None:
             forwarded.extend(["--batch-id", args.batch_id])
-        for option in ("workloads", "manifest", "out"):
+        for option in (
+            "observed_from",
+            "observed_through",
+            "registry_commit",
+            "registry_path",
+            "required_ancestor_commit",
+            "expected_registration_receipt_sha256",
+            "approved_trusted_root_sha256",
+        ):
             value = getattr(args, option)
             if value is not None:
-                forwarded.extend([f"--{option}", str(value.resolve())])
+                forwarded.extend([f"--{option.replace('_', '-')}", value])
+        for option in (
+            "workloads",
+            "manifest",
+            "registration_authority",
+            "repository_root",
+            "registration_evidence",
+            "registration_receipt",
+            "trusted_root",
+            "out",
+        ):
+            value = getattr(args, option)
+            if value is not None:
+                forwarded.extend([
+                    f"--{option.replace('_', '-')}",
+                    str(value.resolve()),
+                ])
         return _run_script(preregistration_script, forwarded)
 
     if args.command == "state":

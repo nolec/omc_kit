@@ -202,6 +202,7 @@ def validate_trust_identity(identity: Any) -> None:
         or identity.get("service_id") != SIGSTORE_TSA_SERVICE_ID
         or identity.get("operator") != SIGSTORE_TSA_OPERATOR
         or not _is_lower_hex(identity.get("certificate_chain_sha256"), 64)
+        or not _is_lower_hex(identity.get("trusted_root_sha256"), 64)
         or not _is_lower_hex(identity.get("tuf_root_sha256"), 64)
     ):
         raise ValueError("Sigstore trust identity is invalid")
