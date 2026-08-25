@@ -24,6 +24,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 import omc_plan_runtime_pilot as runtime
 import omc_plan_context_selection as context_selection
+import omc_preregistration_registry as preregistration_registry
 import omc_rfc3161_timestamp as rfc3161
 
 
@@ -78,11 +79,9 @@ WORK_CLASS_LOCK_EVIDENCE_FIELDS = {
     "signer_public_key",
     "signed_at",
 }
-PREREGISTRATION_REGISTRY_RECORD_FIELDS = {
-    "schema_version",
-    "batch_id",
-    "preregistration_sha256",
-}
+PREREGISTRATION_REGISTRY_RECORD_FIELDS = (
+    preregistration_registry.REGISTRY_RECORD_FIELDS
+)
 PREREGISTRATION_REGISTRY_ANCHOR_FIELDS = {"commit", "path"}
 PREREGISTRATION_RECEIPT_FIELDS = {
     "schema_version",
@@ -95,17 +94,9 @@ PREREGISTRATION_RECEIPT_FIELDS = {
     "signoff",
     "receipt_sha256",
 }
-SIGSTORE_PREREGISTRATION_RECEIPT_FIELDS = {
-    "schema_version",
-    "status",
-    "batch_id",
-    "preregistration_sha256",
-    "registry_commit",
-    "registry_path",
-    "registered_at",
-    "registration_evidence",
-    "receipt_sha256",
-}
+SIGSTORE_PREREGISTRATION_RECEIPT_FIELDS = (
+    preregistration_registry.SIGSTORE_RECEIPT_FIELDS
+)
 PREREGISTERED_WORK_CLASSES = {
     "implementation",
     "synthetic",
@@ -953,11 +944,10 @@ def prepare_preregistration_registry_record(
     _validate_collection_preregistration_envelope(
         preregistration, expected_status="frozen"
     )
-    return {
-        "schema_version": 1,
-        "batch_id": preregistration["batch_id"],
-        "preregistration_sha256": preregistration["preregistration_sha256"],
-    }
+    return preregistration_registry.prepare_registry_record(
+        batch_id=preregistration["batch_id"],
+        preregistration_sha256=preregistration["preregistration_sha256"],
+    )
 
 
 def validate_preregistration_registry_anchor(
@@ -971,35 +961,13 @@ def validate_preregistration_registry_anchor(
     _validate_collection_preregistration_envelope(
         preregistration, expected_status="frozen"
     )
-    root = Path(repository_root)
-    if (
-        not root.is_absolute()
-        or not _is_lower_hex(registry_commit, 40)
-        or not _relative_paths([registry_path])
-    ):
-        raise ValueError("preregistration registry anchor is invalid")
-    _verified_collection_anchor(root, registry_commit)
-    if _git_output(
-        root,
-        "merge-base",
-        "--is-ancestor",
-        preregistration["collection_anchor_commit"],
-        registry_commit,
-    ) is None:
-        raise ValueError("preregistration registry ancestry is invalid")
-    raw_record = _git_output(
-        root, "show", f"{registry_commit}:{registry_path}", strip=False
+    preregistration_registry.validate_registry_anchor(
+        prepare_preregistration_registry_record(preregistration),
+        repository_root=repository_root,
+        registry_commit=registry_commit,
+        registry_path=registry_path,
+        required_ancestor_commit=preregistration["collection_anchor_commit"],
     )
-    try:
-        record = json.loads(raw_record) if raw_record is not None else None
-    except json.JSONDecodeError as error:
-        raise ValueError("preregistration registry record is invalid") from error
-    if (
-        not isinstance(record, dict)
-        or set(record) != PREREGISTRATION_REGISTRY_RECORD_FIELDS
-        or record != prepare_preregistration_registry_record(preregistration)
-    ):
-        raise ValueError("preregistration registry record is invalid")
 
 
 def _validate_preregistration_registration_receipt_envelope(
@@ -1031,9 +999,10 @@ def _validate_preregistration_registration_receipt_envelope(
 
 
 def _unsigned_document_digest(document: dict[str, Any], digest_field: str) -> str:
-    payload = deepcopy(document)
-    payload.pop(digest_field, None)
-    return canonical_digest(payload)
+    return preregistration_registry.unsigned_document_digest(
+        document,
+        digest_field,
+    )
 
 
 def prepare_sigstore_registration_receipt(
@@ -1054,42 +1023,19 @@ def prepare_sigstore_registration_receipt(
         approved_trusted_root_sha256
     ):
         raise ValueError("Sigstore registration trusted root is not approved")
-    if preregistration["registration_authority"] != rfc3161.trust_identity(
-        trusted_root,
-        expected_trusted_root_sha256=approved_trusted_root_sha256,
-    ):
-        raise ValueError("Sigstore registration authority mismatch")
-    claim = rfc3161.registration_claim(
+    return preregistration_registry.prepare_sigstore_registration_receipt(
         batch_id=preregistration["batch_id"],
         preregistration_sha256=preregistration["preregistration_sha256"],
         registry_commit=registry_commit,
         registry_path=registry_path,
-    )
-    verified_evidence = rfc3161.verify_registration_evidence(
-        registration_evidence,
-        claim=claim,
-        trusted_root=trusted_root,
-        expected_trusted_root_sha256=approved_trusted_root_sha256,
+        registration_authority=preregistration["registration_authority"],
         observation_starts_at=(
             preregistration["observation_window"]["observed_from"]
         ),
+        registration_evidence=registration_evidence,
+        trusted_root=trusted_root,
+        approved_trusted_root_sha256=approved_trusted_root_sha256,
     )
-    receipt = {
-        "schema_version": 2,
-        "status": "registered",
-        "batch_id": preregistration["batch_id"],
-        "preregistration_sha256": preregistration["preregistration_sha256"],
-        "registry_commit": registry_commit,
-        "registry_path": registry_path,
-        "registered_at": verified_evidence["gen_time"],
-        "registration_evidence": deepcopy(verified_evidence),
-        "receipt_sha256": "",
-    }
-    receipt["receipt_sha256"] = _unsigned_document_digest(
-        receipt, "receipt_sha256"
-    )
-    _validate_preregistration_registration_receipt_envelope(receipt)
-    return receipt
 
 
 def validate_preregistration_registration_receipt(
@@ -1109,36 +1055,18 @@ def validate_preregistration_registration_receipt(
             or trusted_root is None
         ):
             raise ValueError("Sigstore registration trust is required")
-        if receipt["receipt_sha256"] != expected_receipt_sha256 or receipt[
-            "receipt_sha256"
-        ] != _unsigned_document_digest(receipt, "receipt_sha256"):
-            raise ValueError("preregistration registration receipt digest mismatch")
-        if preregistration["registration_authority"]["trusted_root_sha256"] != (
-            approved_trusted_root_sha256
-        ):
-            raise ValueError("registration receipt trusted root is not approved")
-        if preregistration["registration_authority"] != rfc3161.trust_identity(
-            trusted_root,
-            expected_trusted_root_sha256=approved_trusted_root_sha256,
-        ):
-            raise ValueError("registration receipt authority mismatch")
-        claim = rfc3161.registration_claim(
-            batch_id=receipt["batch_id"],
-            preregistration_sha256=receipt["preregistration_sha256"],
-            registry_commit=receipt["registry_commit"],
-            registry_path=receipt["registry_path"],
-        )
-        evidence = rfc3161.verify_registration_evidence(
-            receipt["registration_evidence"],
-            claim=claim,
-            trusted_root=trusted_root,
-            expected_trusted_root_sha256=approved_trusted_root_sha256,
+        preregistration_registry.validate_sigstore_registration_receipt(
+            receipt,
+            batch_id=preregistration["batch_id"],
+            preregistration_sha256=preregistration["preregistration_sha256"],
+            registration_authority=preregistration["registration_authority"],
             observation_starts_at=(
                 preregistration["observation_window"]["observed_from"]
             ),
+            expected_receipt_sha256=expected_receipt_sha256,
+            trusted_root=trusted_root,
+            approved_trusted_root_sha256=approved_trusted_root_sha256,
         )
-        if receipt["registered_at"] != evidence["gen_time"]:
-            raise ValueError("preregistration registration receipt mismatch")
     else:
         _verify_document(
             receipt,

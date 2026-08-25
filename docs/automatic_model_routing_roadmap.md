@@ -43,7 +43,8 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 - acceptance 계약 완료: 고정 5-case 카탈로그(성공 2·실패·timeout·scope violation), source commit·request hash·receipt·DAG/child ledger 결속, authoritative reload 전용 최종 판정
 - 합성 E2E 통과: capability handshake·hard token/output limit·process-group timeout·scope/budget 위반 차단을 고정 fixture로 검증; 이 결과는 운영 표본으로 간주하지 않음
 - Product Value preregistration 계약 완료: prospective 고정 5건, 최소 2개 저장소·2개 구현 유형, canonical workload 순서·해시 불변성, repository alias↔identity 일대일 매핑, 사후 제외 금지, 동일 비교 조건·개입 측정·판정 threshold를 `prepared` manifest로 고정한다. 이 상태는 `claim_eligible=false`이며 등록 완료나 운영 acceptance를 의미하지 않는다.
-- 현재 병목: 실제 구현 workload 5건을 선정해 source·request·DoD·verification hash를 채우고 preregistration 서명·등록 receipt를 확보한 뒤, 1건 비판정 pilot과 동일 조건 paired 5건을 순서대로 실행한다.
+- 중립 등록 기반 완료: Git registry의 정확한 preregistration record·ancestor와 RFC 3161 claim·authority·관측 시작 전 timestamp를 검증하는 공통 primitive를 추출하고 기존 Plan consumer를 동일 계약의 래퍼로 전환했다. Product Value schema v2와 실제 외부 registration receipt는 아직 미구현이다.
+- 현재 병목: 실제 구현 workload 5건을 선정해 source·request·DoD·verification hash를 채우고, 공통 primitive를 소비하는 Product Value schema v2를 봉인해 등록 receipt를 확보한 뒤 1건 비판정 pilot과 동일 조건 paired 5건을 순서대로 실행한다.
 - 완료 기준: 실제 3–5 child 작업에서 중복 실행·범위 침범·예산 초과 없이 완료하고 실패·timeout이 같은 parent review 계약으로 수렴
 
 ### Operational Obligation
