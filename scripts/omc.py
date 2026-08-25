@@ -145,6 +145,7 @@ def main() -> int:
         "orchestrate",
         "execute-sequence",
         "execute-n-child",
+        "n-child-acceptance",
         "team",
         "ulw",
         "ralph",
@@ -237,6 +238,22 @@ def main() -> int:
     execute_n_child.add_argument("--dag-ledger", type=Path, required=True)
     execute_n_child.add_argument("--child-ledger", type=Path, required=True)
     execute_n_child.add_argument("--provider-adapter", type=Path, required=True)
+
+    n_child_acceptance = sub.add_parser(
+        "n-child-acceptance",
+        help="Run or evaluate frozen bounded N-child acceptance evidence.",
+    )
+    n_child_acceptance.add_argument(
+        "acceptance_command",
+        choices=("prepare", "validate", "run", "finalize"),
+    )
+    n_child_acceptance.add_argument("--manifest", type=Path)
+    n_child_acceptance.add_argument("--acceptance-id")
+    n_child_acceptance.add_argument("--packet-root", type=Path)
+    n_child_acceptance.add_argument("--source-root", type=Path)
+    n_child_acceptance.add_argument("--artifact-root", type=Path)
+    n_child_acceptance.add_argument("--provider-adapter", type=Path)
+    n_child_acceptance.add_argument("--out", type=Path)
 
     peer_review = sub.add_parser("peer-review", help="Run peer-review of the latest uncommitted changes.")
     peer_review.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -516,6 +533,28 @@ def main() -> int:
                 "--provider-adapter",
                 str(args.provider_adapter.resolve()),
             ],
+        )
+
+    if args.command == "n-child-acceptance":
+        acceptance_script = kit / "scripts" / "omc_n_child_acceptance.py"
+        forwarded = [args.acceptance_command]
+        if args.manifest is not None:
+            forwarded.extend(["--manifest", str(args.manifest.resolve())])
+        if args.acceptance_id is not None:
+            forwarded.extend(["--acceptance-id", args.acceptance_id])
+        for option in (
+            "packet_root",
+            "source_root",
+            "artifact_root",
+            "provider_adapter",
+            "out",
+        ):
+            value = getattr(args, option)
+            if value is not None:
+                forwarded.extend([f"--{option.replace('_', '-')}", str(value.resolve())])
+        return _run_script(
+            acceptance_script,
+            forwarded,
         )
 
     if args.command == "state":

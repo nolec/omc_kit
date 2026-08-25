@@ -1171,6 +1171,7 @@ class TestRepositoryGitignore(unittest.TestCase):
                 "agent_behavior.md",
                 "verification_checklist.md",
                 "omc_quality_gates.md",
+                "omc_n_child_acceptance.md",
                 "omc_versioning.md",
             ]:
                 (kit / "docs" / name).write_text("doc\n", encoding="utf-8")

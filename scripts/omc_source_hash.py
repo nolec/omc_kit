@@ -34,6 +34,7 @@ DEPLOYED_DOCUMENTS = {
     "kit_map.md",
     "next_project_pack.md",
     "omc_quality_gates.md",
+    "omc_n_child_acceptance.md",
     "omc_versioning.md",
     "omc_workflow.md",
     "quickstart_kr.md",

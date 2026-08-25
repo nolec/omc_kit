@@ -12,10 +12,10 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V2 Step-level Routing | 완료 | step metadata가 실제 profile 선택에 반영 | 운영 surface 미세조정 |
 | V3 Failure-driven Escalation | 완료 | failure class·retry·reroute·hold decision 통합 | multi-run tuning |
 | V4 Telemetry-driven Tuning | 완료 | token·cost·retry·reroute·readiness KPI 수집 | 운영 drift 감시 |
-| V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter | 실제 3–5 child 운영 acceptance |
+| V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter, authoritative acceptance harness | 실제 3–5 child 운영 표본 acceptance |
 | Operator Experience | 진행중 | output contract와 Lite/Full routing 기반 구축 | 지연·개입 횟수 운영 검증 |
 
-현재 OMC는 `rule-based orchestration v1`을 넘어 승인된 v2 grant를 제한 병렬 실행하는 `bounded orchestration` 단계다. 일반 N-child 실행 코드는 갖췄지만 운영 acceptance, 실패 재분배, 자동 모델 전환, 자동 ship은 아직 완료되지 않았다.
+현재 OMC는 `rule-based orchestration v1`을 넘어 승인된 v2 grant를 제한 병렬 실행하는 `bounded orchestration` 단계다. 일반 N-child 실행과 authoritative acceptance 판정 코드는 갖췄지만 실제 운영 표본 acceptance, 실패 재분배, 자동 모델 전환, 자동 ship은 아직 완료되지 않았다.
 
 ### Operational P0
 
@@ -27,6 +27,8 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 - 구현 완료: ready child claim, 제한 병렬 실행, dependency 해제, scope 격리 patch, 별도 DAG·child ledger
 - 안전 경계 완료: immutable provider snapshot, hard output bound, call·elapsed·token budget, idempotency·expiry 재검증
 - 실패 정책 완료: retry·자동 재분배·fallback·resume 없이 bounded `parent_review`로 전환하고 실패 결과의 patch 적용 차단
+- acceptance 계약 완료: 고정 5-case 카탈로그(성공 2·실패·timeout·scope violation), source commit·request hash·receipt·DAG/child ledger 결속, authoritative reload 전용 최종 판정
+- 합성 E2E 통과: capability handshake·hard token/output limit·process-group timeout·scope/budget 위반 차단을 고정 fixture로 검증; 이 결과는 운영 표본으로 간주하지 않음
 - 완료 기준: 실제 3–5 child 작업에서 중복 실행·범위 침범·예산 초과 없이 완료하고 실패·timeout이 같은 parent review 계약으로 수렴
 
 ### Operational Obligation
@@ -110,7 +112,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 다음 실행 순서
 
-1. 고정된 실제 3–5 child 작업으로 성공·실패·timeout acceptance를 실행한다.
+1. authoritative acceptance 진입점으로 고정된 실제 3–5 child 작업의 성공·실패·timeout receipt를 수집한다.
 2. single-agent baseline과 비용·개입·token telemetry를 비교한다.
 3. Lite/Full 경계를 운영 지표로 조정한다.
 4. 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.

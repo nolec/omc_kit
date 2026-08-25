@@ -98,7 +98,10 @@ def test_roadmap_tracks_completed_n_child_v2_prerequisites() -> None:
 
     assert "scope normalization과 child `approval_id` 고유성 정책은 완료" in current
     assert "승인 전 canonical proposal" in current
-    assert "1. 고정된 실제 3–5 child 작업으로 성공·실패·timeout acceptance를 실행한다." in current
+    assert (
+        "1. authoritative acceptance 진입점으로 고정된 실제 3–5 child 작업의 "
+        "성공·실패·timeout receipt를 수집한다."
+    ) in current
     assert "1. P0 선행 정책인 scope normalization" not in current
     assert "V5 bounded N-child scheduler·provider adapter 완료(2026-08-24)" in history
     assert "V5 N-child v2 실행 전 계약 완료(2026-08-24)" in history

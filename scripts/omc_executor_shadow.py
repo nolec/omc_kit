@@ -1236,6 +1236,15 @@ def reserve_single_child_execution_grant(
         "max_output_chars": grant["max_output_chars"],
         "fallback_action": grant["fallback_action"],
     }
+    max_total_tokens = grant.get("max_total_tokens")
+    if max_total_tokens is not None:
+        if (
+            not isinstance(max_total_tokens, int)
+            or isinstance(max_total_tokens, bool)
+            or max_total_tokens <= 0
+        ):
+            return blocked("execution_grant_invalid")
+        reservation["max_total_tokens"] = max_total_tokens
     entries.append(reservation)
     ledger_copy["revision"] += 1
     return {
@@ -1356,6 +1365,11 @@ def finalize_single_child_execution_reservation(
         "elapsed_sec": elapsed_sec,
         "output_chars": output_chars,
     }
+    for evidence_field in ("patch_applied", "scope_violation_detected"):
+        evidence_value = outcome.get(evidence_field, False)
+        if not isinstance(evidence_value, bool):
+            return blocked("execution_outcome_invalid")
+        normalized_outcome[evidence_field] = evidence_value
     if token_usage is not None:
         if (
             not isinstance(token_usage, dict)
@@ -1834,6 +1848,10 @@ def _claim_single_child_execution_reservation_file(
             )
             if any(entry.get(field) != grant.get(field) for field in binding_fields):
                 return blocked("execution_reservation_mismatch")
+            if "max_total_tokens" in grant and entry.get("max_total_tokens") != grant.get(
+                "max_total_tokens"
+            ):
+                return blocked("execution_reservation_mismatch")
             try:
                 expires_at = datetime.fromisoformat(grant["approval_expires_at"].replace("Z", "+00:00"))
             except (AttributeError, ValueError):
@@ -1966,6 +1984,8 @@ def execute_reserved_single_child_grant_file(
     reason_code = "executor_result_invalid"
     external_call_performed = False
     token_usage: dict[str, int] | None = None
+    patch_applied = False
+    scope_violation_detected = False
     try:
         external_call_performed = True
         runner_kwargs = {
@@ -1987,6 +2007,8 @@ def execute_reserved_single_child_grant_file(
         raw_output = candidate_output
         output = raw_output[:max_output]
         candidate_usage = runner_result.get("token_usage")
+        patch_applied = runner_result.get("patch_applied") is True
+        scope_violation_detected = runner_result.get("scope_violation_detected") is True
         if isinstance(candidate_usage, dict) and all(
             isinstance(candidate_usage.get(field), int)
             and not isinstance(candidate_usage.get(field), bool)
@@ -2004,7 +2026,16 @@ def execute_reserved_single_child_grant_file(
             reason_code = "executor_timeout"
         elif returncode != 0:
             terminal_status = "failed"
-            reason_code = "executor_failed"
+            candidate_reason = runner_result.get("reason_code")
+            reason_code = (
+                candidate_reason
+                if candidate_reason in {
+                    "scope_policy_violation",
+                    "scope_patch_conflict",
+                    "scope_patch_apply_failed",
+                }
+                else "executor_failed"
+            )
         elif require_token_usage and token_usage is None:
             terminal_status = "failed"
             reason_code = "token_usage_unavailable"
@@ -2033,6 +2064,8 @@ def execute_reserved_single_child_grant_file(
             "reason_code": reason_code,
             "elapsed_sec": recorded_elapsed,
             "output_chars": len(output),
+            "patch_applied": patch_applied,
+            "scope_violation_detected": scope_violation_detected,
             **({"token_usage": token_usage} if token_usage is not None else {}),
         },
         now=now(),

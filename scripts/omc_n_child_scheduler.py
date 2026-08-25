@@ -9,6 +9,7 @@ import json
 import math
 import os
 from pathlib import Path, PurePosixPath
+import signal
 import shutil
 import subprocess
 import tempfile
@@ -61,6 +62,13 @@ def _current_time(now: Callable[[], datetime]) -> datetime | None:
     return current
 
 
+def _kill_process_group(proc: subprocess.Popen[Any]) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
 def _run_bounded_adapter_command(
     command: list[str],
     *,
@@ -86,6 +94,7 @@ def _run_bounded_adapter_command(
                 stdin=input_file,
                 stdout=stdout_file,
                 stderr=stderr_file,
+                start_new_session=True,
             )
             deadline = time.monotonic() + timeout_sec
             limit_exceeded = False
@@ -94,11 +103,11 @@ def _run_bounded_adapter_command(
                 response_size = stdout_path.stat().st_size + stderr_path.stat().st_size
                 if response_size > max_response_bytes:
                     limit_exceeded = True
-                    proc.kill()
+                    _kill_process_group(proc)
                     break
                 if time.monotonic() >= deadline:
                     timed_out = True
-                    proc.kill()
+                    _kill_process_group(proc)
                     break
                 time.sleep(0.01)
             proc.wait()
@@ -694,9 +703,17 @@ def _scoped_provider_runner(
                 return {
                     "returncode": 65,
                     "output": "scope violation: " + ", ".join(sorted(violations)),
+                    "reason_code": "scope_policy_violation",
+                    "patch_applied": False,
+                    "scope_violation_detected": True,
+                    "token_usage": runner_result.get("token_usage"),
                 }
             if not changed_paths:
-                return runner_result
+                return {
+                    **runner_result,
+                    "patch_applied": False,
+                    "scope_violation_detected": False,
+                }
 
             patch_result = _run_git(
                 ["diff", "--cached", "--binary", baseline], cwd=workspace
@@ -715,6 +732,10 @@ def _scoped_provider_runner(
                 return {
                     "returncode": 66,
                     "output": "scope patch conflict",
+                    "reason_code": "scope_patch_conflict",
+                    "patch_applied": False,
+                    "scope_violation_detected": False,
+                    "token_usage": runner_result.get("token_usage"),
                 }
             applied = _run_git(
                 ["apply", "--whitespace=nowarn", "-"],
@@ -725,8 +746,16 @@ def _scoped_provider_runner(
                 return {
                     "returncode": 66,
                     "output": "scope patch apply failed",
+                    "reason_code": "scope_patch_apply_failed",
+                    "patch_applied": False,
+                    "scope_violation_detected": False,
+                    "token_usage": runner_result.get("token_usage"),
                 }
-            return runner_result
+            return {
+                **runner_result,
+                "patch_applied": True,
+                "scope_violation_detected": False,
+            }
 
     return run
 
