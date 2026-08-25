@@ -87,6 +87,88 @@ def test_pipeline_dry_run_records_operational_metadata_fields(tmp_path: Path):
     assert data.get("retry_count") == 0
     assert data.get("resume_count") == 0
     assert data.get("approval_required") is False
+    assert data["pipeline_identity"]["schema_version"] == "omc-pipeline-identity/v1"
+    assert data["pipeline_identity"]["mode"] == "full"
+    assert data["pipeline_identity"]["mode_source"] == "explicit"
+    assert data["pipeline_identity"]["skill_path"]
+    assert data["pipeline_identity"]["requested_branch"] == "feat/test-operational-metadata"
+    assert len(data["pipeline_identity"]["instruction_sha256"]) == 64
+
+
+def test_resume_rejects_changed_instruction_for_bound_pipeline(tmp_path: Path, monkeypatch):
+    import omc_autopilot as mod
+
+    old_instruction = "결제 API를 교체하고 테스트해줘"
+    old_path = mod.omc_orchestrator.build_pipeline_skill_path(
+        mode="full",
+        mode_source="explicit",
+        request=old_instruction,
+    )
+    result_path = tmp_path / ".omc" / "pipeline_run_result.json"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(json.dumps({
+        "status": "failed",
+        "mode": "full",
+        "instruction": old_instruction,
+        "pipeline_identity": mod._build_pipeline_identity(
+            instruction=old_instruction,
+            mode="full",
+            mode_source="explicit",
+            skill_path=old_path,
+            requested_branch="feat/resume-identity",
+        ),
+        "steps": {"plan": {"status": "completed"}},
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(mod, "_PIPELINE_RESULT_PATH", Path(".omc/pipeline_run_result.json"))
+    rc = mod.cmd_pipeline(
+        root=tmp_path,
+        instruction="문서와 테스트 설명을 정리해줘",
+        branch="feat/resume-identity",
+        executor_pref="cursor",
+        mode_arg="full",
+        dry_run=True,
+        allow_dirty=True,
+        resume=True,
+    )
+
+    assert rc == 2
+    assert json.loads(result_path.read_text(encoding="utf-8"))["instruction"] == old_instruction
+
+
+def test_resume_rejects_legacy_receipt_without_pipeline_identity():
+    import omc_autopilot as mod
+
+    current = mod._build_pipeline_identity(
+        instruction="문서와 테스트 설명을 정리해줘",
+        mode="full",
+        mode_source="explicit",
+        skill_path=["omc-plan", "omc-task", "omc-critique", "omc-review"],
+        requested_branch="feat/resume-identity",
+    )
+
+    assert mod._pipeline_identity_matches(None, current) is False
+
+
+def test_pipeline_identity_binds_requested_branch():
+    import omc_autopilot as mod
+
+    common = {
+        "instruction": "문서와 테스트 설명을 정리해줘",
+        "mode": "full",
+        "mode_source": "explicit",
+        "skill_path": ["omc-plan", "omc-task", "omc-critique", "omc-review"],
+    }
+    previous = mod._build_pipeline_identity(
+        **common,
+        requested_branch="feat/original",
+    )
+    current = mod._build_pipeline_identity(
+        **common,
+        requested_branch="feat/other",
+    )
+
+    assert mod._pipeline_identity_matches(previous, current) is False
 
 
 def test_pipeline_dry_run_records_step_timing_metadata(tmp_path: Path):
@@ -410,6 +492,8 @@ def test_resume_without_result_file_exits_nonzero(tmp_path: Path):
 
 def test_resume_skips_completed_steps(tmp_path: Path):
     """plan=completed 상태에서 --resume 시 plan을 건너뛰어야 한다."""
+    import omc_autopilot as mod
+
     omc_dir = tmp_path / ".omc"
     omc_dir.mkdir()
     long_instruction = "FULL 모드를 강제하기 위해 50자를 초과하는 충분히 긴 지시문입니다 여기서 더 길게"
@@ -418,6 +502,13 @@ def test_resume_skips_completed_steps(tmp_path: Path):
         "mode": "full",
         "branch": "feat/resume-test",
         "instruction": long_instruction,
+        "pipeline_identity": mod._build_pipeline_identity(
+            instruction=long_instruction,
+            mode="full",
+            mode_source="explicit",
+            skill_path=["omc-plan", "omc-task", "omc-critique", "omc-review"],
+            requested_branch="feat/resume-test",
+        ),
         "executor": "codex",
         "started_at": "2026-01-01T000000Z",
         "steps": {
@@ -2385,6 +2476,13 @@ def test_resume_skips_already_completed_task_stage_plan_retry(tmp_path: Path, mo
         "mode": "full",
         "branch": "feat/task-plan-retry-resume",
         "instruction": "x" * 200,
+        "pipeline_identity": mod._build_pipeline_identity(
+            instruction="x" * 200,
+            mode="full",
+            mode_source="legacy_api",
+            skill_path=["omc-plan", "omc-task", "omc-critique", "omc-review"],
+            requested_branch="feat/task-plan-retry-resume",
+        ),
         "executor": "codex",
         "started_at": "2026-06-30T00:00:00Z",
         "resume_count": 1,
@@ -2577,11 +2675,18 @@ def test_pipeline_does_not_crash_when_resumed_with_existing_block_critique(tmp_p
     result_path.parent.mkdir(parents=True, exist_ok=True)
     result_path.write_text(
         json.dumps(
-            {
-                "status": "hold",
-                "mode": "full",
-                "branch": "feat/x",
-                "instruction": "x" * 60,
+                {
+                    "status": "hold",
+                    "mode": "full",
+                    "branch": "feat/x",
+                    "instruction": "x" * 60,
+                    "pipeline_identity": mod._build_pipeline_identity(
+                        instruction="x" * 60,
+                        mode="full",
+                        mode_source="explicit",
+                        skill_path=["omc-plan", "omc-task", "omc-critique", "omc-review"],
+                        requested_branch="feat/x",
+                    ),
                 "executor": "codex",
                 "started_at": "2026-06-01T000000Z",
                 "steps": {
@@ -3402,6 +3507,16 @@ def test_resume_preserves_critique_budget_after_review_retry_overwrites_last_ste
     result_path = tmp_path / "result.json"
     result_path.write_text(json.dumps({
         "status": "running",
+        "mode": "full",
+        "branch": "feat/resume-stage-retry-budget",
+        "instruction": "x" * 200,
+        "pipeline_identity": mod._build_pipeline_identity(
+            instruction="x" * 200,
+            mode="full",
+            mode_source="legacy_api",
+            skill_path=["omc-plan", "omc-task", "omc-critique", "omc-review"],
+            requested_branch="feat/resume-stage-retry-budget",
+        ),
         "steps": {
             "plan": {"status": "completed"},
             "task": {"status": "completed"},

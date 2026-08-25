@@ -13,7 +13,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V3 Failure-driven Escalation | 완료 | failure class·retry·reroute·hold decision 통합 | multi-run tuning |
 | V4 Telemetry-driven Tuning | 완료 | token·cost·retry·reroute·readiness KPI 수집 | 운영 drift 감시 |
 | V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter, authoritative acceptance harness | 실제 3–5 child 운영 표본 acceptance |
-| Operator Experience | 진행중 | output contract와 Lite/Full routing 기반 구축 | 지연·개입 횟수 운영 검증 |
+| Operator Experience | 진행중 | output contract, Lite/Full routing, Stage graph SSOT, resume identity fail-close 구축 | 지연·개입 횟수 운영 검증 |
 
 현재 OMC는 `rule-based orchestration v1`을 넘어 승인된 v2 grant를 제한 병렬 실행하는 `bounded orchestration` 단계다. 일반 N-child 실행과 authoritative acceptance 판정 코드는 갖췄지만 실제 운영 표본 acceptance, 실패 재분배, 자동 모델 전환, 자동 ship은 아직 완료되지 않았다.
 
@@ -66,7 +66,11 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 
 - 작은 작업: 안전 조건을 만족하면 Lite `task → review`
 - 복잡한 작업: Full `plan → task → review`
-- 모호·고위험 작업: 필요한 경우에만 brainstorm·office-hours·critique를 선행
+- 고위험 또는 명시적 Full override: `plan → task → critique → review`
+- Stage graph SSOT 완료: 계획 생성, 실제 autopilot 품질 루프, execution metrics가 같은 `skill_path` 결정을 소비한다.
+- 실행 receipt 보강 완료: instruction hash·mode·mode source·skill path·requested branch를 `pipeline_identity/v1`으로 결속한다.
+- resume fail-close 완료: identity가 없거나 instruction·mode·mode source·skill path·requested branch가 다르면 기존 단계를 재사용하지 않는다.
+- 회귀 검증: 관련 테스트 `411 passed, 1 skipped`, 전체 테스트 `2582 passed, 3 skipped`, TDD gate 통과.
 - 목표: 품질 gate를 유지하면서 반복 확인, p50/p95 지연, input/output/total token을 줄인다.
 - 현재 유효 latency 표본은 history의 운영 기록을 따르며 표본 기준 충족 전 라우팅 경계를 확정하지 않는다.
 

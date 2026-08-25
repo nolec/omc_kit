@@ -246,6 +246,8 @@ def test_lite_benchmark_review_uses_budget_remaining_after_task(tmp_path, monkey
 
 
 def test_lite_benchmark_resume_skips_completed_task_and_retries_review(tmp_path, monkeypatch):
+    instruction = "bounded benchmark sample"
+    branch = "chore/lite-resume"
     result_path = tmp_path / ".omc" / "pipeline_run_result.json"
     result_path.parent.mkdir(parents=True)
     result_path.write_text(
@@ -253,7 +255,14 @@ def test_lite_benchmark_resume_skips_completed_task_and_retries_review(tmp_path,
             {
                 "status": "timeout",
                 "mode": "lite",
-                "branch": "chore/lite-resume",
+                "branch": branch,
+                "pipeline_identity": omc_autopilot._build_pipeline_identity(
+                    instruction=instruction,
+                    mode="lite",
+                    mode_source="explicit",
+                    skill_path=["omc-task", "omc-review"],
+                    requested_branch=branch,
+                ),
                 "benchmark": True,
                 "steps": {
                     "task": {"status": "completed"},
@@ -275,8 +284,8 @@ def test_lite_benchmark_resume_skips_completed_task_and_retries_review(tmp_path,
 
     rc = omc_autopilot.cmd_pipeline(
         tmp_path,
-        "bounded benchmark sample",
-        "chore/lite-resume",
+        instruction,
+        branch,
         executor_pref="codex",
         mode_arg="lite",
         resume=True,
@@ -2933,18 +2942,58 @@ def test_pipeline_execution_contract_exposes_mode_skill_path_and_duration():
 
 @pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
 def test_pipeline_execution_contract_uses_full_skill_path_for_full_mode():
-    result = {"status": "running", "mode": "full", "steps": {}}
+    result = {
+        "status": "running",
+        "mode": "full",
+        "instruction": "결제 API를 교체하고 프론트와 백엔드 테스트까지 업데이트해줘",
+        "steps": {},
+    }
 
     metrics = omc_autopilot._build_pipeline_execution_metrics(result)
 
     assert metrics["mode"] == "full"
     assert metrics["skill_path"] == [
         "omc-plan",
-        "omc-critique",
         "omc-task",
+        "omc-critique",
         "omc-review",
     ]
     assert metrics["duration_ms"] is None
+
+
+@pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
+def test_pipeline_execution_contract_skips_unnecessary_full_critique():
+    result = {
+        "status": "running",
+        "mode": "full",
+        "instruction": "여러 문서와 테스트 설명을 함께 정리해줘",
+        "steps": {},
+    }
+
+    metrics = omc_autopilot._build_pipeline_execution_metrics(result)
+
+    assert metrics["skill_path"] == ["omc-plan", "omc-task", "omc-review"]
+
+
+@pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")
+def test_pipeline_execution_contract_uses_frozen_skill_path_not_truncated_instruction():
+    result = {
+        "status": "running",
+        "mode": "full",
+        "instruction": "x" * 200,
+        "pipeline_identity": {
+            "schema_version": "omc-pipeline-identity/v1",
+            "instruction_sha256": "a" * 64,
+            "mode": "full",
+            "mode_source": "auto",
+            "skill_path": ["omc-plan", "omc-task", "omc-review"],
+        },
+        "steps": {},
+    }
+
+    metrics = omc_autopilot._build_pipeline_execution_metrics(result)
+
+    assert metrics["skill_path"] == ["omc-plan", "omc-task", "omc-review"]
 
 
 @pytest.mark.skipif(not _MODULE_PRESENT, reason="omc_autopilot.py 없음")

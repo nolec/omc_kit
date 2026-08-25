@@ -38,7 +38,7 @@ AUTOPILOT 실행 전 확정:
 - 지시문 / 브랜치 / 모드 / dirty: clean / dirty N개 / N/A — 이유 / 사용자 승인: 미승인 / 승인
 ```
 - 지시문이 모호하면 `$omc-office-hours` 또는 `$omc-brainstorm`
-- 짧은 fix/chore/docs는 LITE, 긴 feat는 FULL: plan→critique→task→review | dirty면 실행 차단, 승인 시에만 `--allow-dirty` 안내 | PR 생성 가능성이 있으므로 사용자 승인 없이 시작하지 않음
+- 짧은 fix/chore/docs는 LITE, 긴 feat는 FULL: plan→task→조건부 critique→review | 고위험 또는 명시적 Full override에서만 critique 실행 | dirty면 실행 차단, 승인 시에만 `--allow-dirty` 안내 | PR 생성 가능성이 있으므로 사용자 승인 없이 시작하지 않음
 
 ## Phase 2. 명령 출력 및 승인 후 실행
 

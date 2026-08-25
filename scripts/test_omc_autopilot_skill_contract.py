@@ -58,7 +58,7 @@ REQUIRED_BEHAVIOR_MARKERS = [
     "필수 체크",
     "LITE",
     "FULL",
-    "plan→critique→task→review",
+    "plan→task→조건부 critique→review",
     "PR",
     ".omc/pipeline.log",
     ".omc/pipeline_run_result.json",

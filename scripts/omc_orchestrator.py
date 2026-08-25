@@ -1020,6 +1020,34 @@ def _classify_request(request: str) -> tuple[str, str, str]:
     return "single_task", complexity, risk
 
 
+def build_pipeline_skill_path(
+    *,
+    mode: str,
+    request: str,
+    mode_source: str = "auto",
+) -> list[str]:
+    """Return the canonical user-visible skill order for a pipeline request."""
+    normalized_mode = str(mode or "").strip().lower()
+    normalized_source = str(mode_source or "").strip().lower()
+    if normalized_source not in {"auto", "explicit", "legacy_api"}:
+        raise ValueError("mode_source must be auto, explicit, or legacy_api")
+    if normalized_mode == "lite":
+        return ["omc-task", "omc-review"]
+    if normalized_mode != "full":
+        raise ValueError("mode must be lite or full")
+
+    classification, _, risk = _classify_request(request)
+    path = ["omc-plan", "omc-task"]
+    # Explicit Full and legacy API calls stay conservative for small requests;
+    # auto-selected medium-risk Full work can skip the extra critique pass.
+    if risk == "high" or (
+        classification == "single_task" and normalized_source != "auto"
+    ):
+        path.append("omc-critique")
+    path.append("omc-review")
+    return path
+
+
 def validate_stage_graph(stages: list[dict[str, object]]) -> list[str]:
     ids = {str(stage.get("id") or "") for stage in stages}
     errors: list[str] = []
@@ -1103,24 +1131,21 @@ def build_orchestration_plan(request: str, *, target: str | Path = ".") -> dict[
         raise ValueError("request must not be empty")
     classification, complexity, risk = _classify_request(normalized)
     stage_kwargs = {"request": normalized, "complexity": complexity, "risk": risk}
-    if classification == "single_task":
-        stages = [
-            _stage("task", "omc-task", [], "동작 범위가 작고 실패 비용이 낮음", **stage_kwargs),
-            _stage("review", "omc-review", ["task"], "작은 변경의 회귀 여부 확인", **stage_kwargs),
-        ]
-    elif classification == "needs_plan":
-        stages = [
-            _stage("plan", "omc-plan", [], "다중 파일 또는 통합 영향 범위 분석 필요", **stage_kwargs),
-            _stage("task", "omc-task", ["plan"], "계획 결과를 기준으로 구현", **stage_kwargs),
-            _stage("review", "omc-review", ["task"], "구현 결과의 회귀 검증", **stage_kwargs),
-        ]
-    else:
-        stages = [
-            _stage("plan", "omc-plan", [], "고위험·다중 영역 작업의 영향 분석", **stage_kwargs),
-            _stage("task", "omc-task", ["plan"], "분해된 구현 태스크 실행 계획", **stage_kwargs),
-            _stage("critique", "omc-critique", ["task"], "고위험 변경의 실패 가능성 사전 검토", **stage_kwargs),
-            _stage("review", "omc-review", ["critique"], "최종 diff와 테스트 검증", **stage_kwargs),
-        ]
+    mode = "lite" if classification == "single_task" else "full"
+    skill_path = build_pipeline_skill_path(mode=mode, request=normalized)
+    reasons = {
+        "plan": "고위험·다중 영역 작업의 영향 분석" if risk == "high" else "다중 파일 또는 통합 영향 범위 분석 필요",
+        "task": "동작 범위가 작고 실패 비용이 낮음" if mode == "lite" else "계획 결과를 기준으로 구현",
+        "critique": "고위험 변경 구현의 실패 가능성 검토",
+        "review": "최종 diff와 테스트 검증",
+    }
+    stages = []
+    for index, skill in enumerate(skill_path):
+        stage_id = skill.removeprefix("omc-")
+        dependencies = [] if index == 0 else [skill_path[index - 1].removeprefix("omc-")]
+        stages.append(
+            _stage(stage_id, skill, dependencies, reasons[stage_id], **stage_kwargs)
+        )
     graph_errors = validate_stage_graph(stages)
     return {
         "request": normalized,

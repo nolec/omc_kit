@@ -33,6 +33,45 @@ def test_complex_request_builds_delegation_graph_without_execution():
     assert plan["stages"][2]["model_profile"] == "full_default"
 
 
+def test_pipeline_skill_path_keeps_critique_after_task_for_high_risk_full_work():
+    assert omc_orchestrator.build_pipeline_skill_path(
+        mode="full",
+        request="결제 API를 교체하고 프론트와 백엔드 테스트까지 업데이트해줘",
+    ) == ["omc-plan", "omc-task", "omc-critique", "omc-review"]
+
+
+def test_pipeline_skill_path_skips_critique_for_non_high_risk_full_work():
+    assert omc_orchestrator.build_pipeline_skill_path(
+        mode="full",
+        request="여러 문서와 테스트 설명을 함께 정리해줘",
+    ) == ["omc-plan", "omc-task", "omc-review"]
+
+
+def test_auto_full_does_not_treat_length_only_as_explicit_override():
+    assert omc_orchestrator.build_pipeline_skill_path(
+        mode="full",
+        mode_source="auto",
+        request="긴 설명 " * 40,
+    ) == ["omc-plan", "omc-task", "omc-review"]
+
+
+def test_explicit_full_keeps_conservative_critique_for_small_work():
+    assert omc_orchestrator.build_pipeline_skill_path(
+        mode="full",
+        mode_source="explicit",
+        request="README 문구 수정",
+    ) == ["omc-plan", "omc-task", "omc-critique", "omc-review"]
+
+
+def test_lite_rejects_unknown_mode_source():
+    with pytest.raises(ValueError, match="mode_source"):
+        omc_orchestrator.build_pipeline_skill_path(
+            mode="lite",
+            mode_source="typo",
+            request="README 문구 수정",
+        )
+
+
 def _valid_shadow_request(**overrides):
     request = {
         "parent_id": "parent-1",

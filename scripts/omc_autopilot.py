@@ -3319,11 +3319,16 @@ def _restore_benchmark_provenance(result: dict, previous_result: dict) -> None:
 def _build_pipeline_execution_metrics(result: dict) -> dict[str, object]:
     """파이프라인 모드와 실제 오케스트레이션 경로를 공통 schema로 정규화한다."""
     mode = str(result.get("mode") or "full").strip().lower()
-    skill_path = (
-        ["omc-task", "omc-review"]
-        if mode == "lite"
-        else ["omc-plan", "omc-critique", "omc-task", "omc-review"]
-    )
+    identity = result.get("pipeline_identity")
+    frozen_path = identity.get("skill_path") if isinstance(identity, dict) else None
+    if isinstance(frozen_path, list) and all(isinstance(item, str) for item in frozen_path):
+        skill_path = list(frozen_path)
+    else:
+        skill_path = omc_orchestrator.build_pipeline_skill_path(
+            mode=mode,
+            request=str(result.get("instruction") or ""),
+            mode_source="legacy_api",
+        )
     duration_ms = None
     if result.get("status") in _PIPELINE_TERMINAL_STATUSES:
         raw_duration = result.get("execution_duration_ms")
@@ -3334,6 +3339,34 @@ def _build_pipeline_execution_metrics(result: dict) -> dict[str, object]:
         "skill_path": skill_path,
         "duration_ms": duration_ms,
     }
+
+
+def _build_pipeline_identity(
+    *,
+    instruction: str,
+    mode: str,
+    mode_source: str,
+    skill_path: list[str],
+    requested_branch: str,
+) -> dict[str, object]:
+    """Bind a pipeline run and every resume to its original stage decision."""
+    return {
+        "schema_version": "omc-pipeline-identity/v1",
+        "instruction_sha256": hashlib.sha256(instruction.encode("utf-8")).hexdigest(),
+        "mode": mode,
+        "mode_source": mode_source,
+        "skill_path": list(skill_path),
+        "requested_branch": requested_branch,
+    }
+
+
+def _pipeline_identity_matches(previous: object, current: dict[str, object]) -> bool:
+    """Only resume receipts bound to the exact current v1 pipeline identity."""
+    if not isinstance(previous, dict):
+        return False
+    if previous.get("schema_version") != "omc-pipeline-identity/v1":
+        return False
+    return previous == current
 
 
 def _build_capability_observations(data: dict) -> list[dict[str, object]]:
@@ -3975,13 +4008,13 @@ def cmd_pipeline(
     *,
     dry_run: bool = False,
     auto: bool = False,
-    mode_arg: str = "auto",
+    mode_arg: str | None = None,
     allow_dirty: bool = False,
     resume: bool = False,
     skip_pr: bool = False,
     benchmark: bool = False,
 ) -> int:
-    """plan→critique→task→review→PR 전체 자동화 파이프라인.
+    """plan→task→conditional critique→review→PR 전체 자동화 파이프라인.
 
     Args:
         instruction: 사람이 작성한 작업 지시문
@@ -3994,13 +4027,32 @@ def cmd_pipeline(
     started_at = _now()
     execution_started_monotonic = time.monotonic()
     executor = _detect_executor(executor_pref)
-    mode = _detect_pipeline_mode(branch, instruction, mode_arg)
+    effective_mode_arg = mode_arg or "auto"
+    mode = _detect_pipeline_mode(branch, instruction, effective_mode_arg)
+    mode_source = (
+        "explicit"
+        if effective_mode_arg in {"lite", "full"}
+        else "legacy_api" if mode_arg is None else "auto"
+    )
+    pipeline_skill_path = omc_orchestrator.build_pipeline_skill_path(
+        mode=mode,
+        request=instruction,
+        mode_source=mode_source,
+    )
+    pipeline_identity = _build_pipeline_identity(
+        instruction=instruction,
+        mode=mode,
+        mode_source=mode_source,
+        skill_path=pipeline_skill_path,
+        requested_branch=branch,
+    )
     result: dict = {
         "status": "running",
         "mode": mode,
         "requested_branch": branch,
         "branch": branch,
         "instruction": instruction[:200],
+        "pipeline_identity": pipeline_identity,
         "executor": executor,
         "pid": os.getpid(),
         "started_at": started_at,
@@ -4029,6 +4081,12 @@ def cmd_pipeline(
             print("[PIPELINE] ✅ 이미 완료된 파이프라인입니다. (--resume 불필요)")
             print(f"  PR: {_resume_data.get('pr_url') or '없음'}")
             return 0
+        if not _pipeline_identity_matches(
+            _resume_data.get("pipeline_identity"),
+            pipeline_identity,
+        ):
+            print("[PIPELINE] ❌ --resume: instruction/mode/skill path identity mismatch")
+            return 2
         # 이전 steps를 현재 result에 복원
         result["steps"] = _resume_data.get("steps", {})
         result["retry_count"] = int(_resume_data.get("retry_count") or 0)
@@ -4062,7 +4120,7 @@ def cmd_pipeline(
     print(f"\n[PIPELINE] ▶ 시작: {instruction[:60]}")
     print(f"           브랜치={branch}  executor={executor}  dry_run={dry_run}")
     _mode_reason = (
-        f"--mode {mode_arg} 명시" if mode_arg != "auto"
+        f"--mode {effective_mode_arg} 명시" if mode_source == "explicit"
         else f"브랜치={branch[:20]}, 지시문={len(instruction)}자"
     )
     print(f"           모드: {mode.upper()} (근거: {_mode_reason})")
@@ -4616,7 +4674,12 @@ def cmd_pipeline(
             critique_auto_retry_count = 1
             resumed_task_retry_counts["critique"] = 0
 
-    for loop_step in ("critique", "review"):
+    quality_loop_steps = tuple(
+        stage
+        for stage in ("critique", "review")
+        if f"omc-{stage}" in pipeline_skill_path
+    )
+    for loop_step in quality_loop_steps:
         # critique의 교정 횟수가 review의 독립적인 교정 기회를 소진하면
         # review가 실제 수정 없이 HOLD되므로 품질 단계별로 예산을 분리한다.
         task_auto_retry_count = resumed_task_retry_counts[loop_step]
@@ -5161,7 +5224,7 @@ def main() -> int:
     p_status = sub.add_parser("status", help="실행 기록 조회")
     p_status.add_argument("--task-id", default=None, help="특정 태스크 ID 조회")
 
-    p_pipeline = sub.add_parser("pipeline", help="full-pipeline 자동화 (plan→critique→task→review→PR)")
+    p_pipeline = sub.add_parser("pipeline", help="full-pipeline 자동화 (plan→task→conditional critique→review→PR)")
     p_pipeline.add_argument("--instruction", required=True, help="작업 지시문")
     p_pipeline.add_argument("--branch", default="feat/autopilot", help="생성할 feature 브랜치 이름")
     p_pipeline.add_argument("--executor", default="auto", help="LLM 실행기 (auto|codex|gemini|claude)")
