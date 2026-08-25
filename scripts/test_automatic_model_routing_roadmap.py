@@ -76,6 +76,11 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "single-agent baseline 대비 성공률·시간·token·개입 횟수" in text
     assert "baseline 대비 성공률은 같거나 높고" in text
     assert "시간·token·개입 횟수는 사전 등록된 개선 기준을 충족" in text
+    assert "Product Value preregistration 계약 완료" in text
+    assert "canonical workload 순서·해시 불변성" in text
+    assert "이 상태는 `claim_eligible=false`" in text
+    assert "실제 구현 workload 5건을 선정" in text
+    assert "1건 비판정 pilot과 동일 조건 paired 5건" in text
     assert "운영 증거 없는 자동화 확대 금지" in text
     assert "README와 실제 executor 구현 상태 정합화" in text
     assert "새 스킬·정책·benchmark fixture 수 증가는 완료 지표로 사용하지 않는다" in text

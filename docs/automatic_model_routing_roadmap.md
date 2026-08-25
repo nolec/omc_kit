@@ -42,6 +42,8 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 - 실패 정책 완료: retry·자동 재분배·fallback·resume 없이 bounded `parent_review`로 전환하고 실패 결과의 patch 적용 차단
 - acceptance 계약 완료: 고정 5-case 카탈로그(성공 2·실패·timeout·scope violation), source commit·request hash·receipt·DAG/child ledger 결속, authoritative reload 전용 최종 판정
 - 합성 E2E 통과: capability handshake·hard token/output limit·process-group timeout·scope/budget 위반 차단을 고정 fixture로 검증; 이 결과는 운영 표본으로 간주하지 않음
+- Product Value preregistration 계약 완료: prospective 고정 5건, 최소 2개 저장소·2개 구현 유형, canonical workload 순서·해시 불변성, repository alias↔identity 일대일 매핑, 사후 제외 금지, 동일 비교 조건·개입 측정·판정 threshold를 `prepared` manifest로 고정한다. 이 상태는 `claim_eligible=false`이며 등록 완료나 운영 acceptance를 의미하지 않는다.
+- 현재 병목: 실제 구현 workload 5건을 선정해 source·request·DoD·verification hash를 채우고 preregistration 서명·등록 receipt를 확보한 뒤, 1건 비판정 pilot과 동일 조건 paired 5건을 순서대로 실행한다.
 - 완료 기준: 실제 3–5 child 작업에서 중복 실행·범위 침범·예산 초과 없이 완료하고 실패·timeout이 같은 parent review 계약으로 수렴
 
 ### Operational Obligation
@@ -103,7 +105,7 @@ Oh My Claude Code `v4.15.10` 비교에서 확인한 운영 증거·자동 복구
 
 | 우선순위 | 개선 축 | 다음 범위 | 종료 기준 |
 |---|---|---|---|
-| P0 | bounded N-child 운영 검증 | 실제 3–5 child 실행 receipt와 budget enforcement 증거 | 실제 3–5 child acceptance 통과 |
+| P0 | bounded N-child 운영 검증 | preregistration된 실제 구현 5건의 등록 receipt, 1건 pilot, paired 실행·budget enforcement 증거 | 실제 3–5 child acceptance 통과 |
 | P1 | 자동 모드 선택과 사용자 개입 감축 | Lite/Full 자동 분기와 fail-safe 승격 | 품질 유지 + 개입·p50/p95 감소 |
 | P1 | 비용·품질 운영 증거 | single-agent 대비 token·elapsed·retry·intervention 비교 | 사전 등록 10건 acceptance 통과 |
 | P2 | 도구 중립 UX 차별화 | Codex·Claude Code·Gemini·Cursor 공통 receipt·readiness | 3개 이상 호스트 동일 fixture 통과 |

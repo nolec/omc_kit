@@ -146,6 +146,7 @@ def main() -> int:
         "execute-sequence",
         "execute-n-child",
         "n-child-acceptance",
+        "product-value-preregistration",
         "team",
         "ulw",
         "ralph",
@@ -254,6 +255,19 @@ def main() -> int:
     n_child_acceptance.add_argument("--artifact-root", type=Path)
     n_child_acceptance.add_argument("--provider-adapter", type=Path)
     n_child_acceptance.add_argument("--out", type=Path)
+
+    product_value_preregistration = sub.add_parser(
+        "product-value-preregistration",
+        help="Prepare or validate a prospective Product Value workload universe.",
+    )
+    product_value_preregistration.add_argument(
+        "preregistration_command",
+        choices=("prepare", "validate"),
+    )
+    product_value_preregistration.add_argument("--batch-id")
+    product_value_preregistration.add_argument("--workloads", type=Path)
+    product_value_preregistration.add_argument("--manifest", type=Path)
+    product_value_preregistration.add_argument("--out", type=Path)
 
     peer_review = sub.add_parser("peer-review", help="Run peer-review of the latest uncommitted changes.")
     peer_review.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -556,6 +570,17 @@ def main() -> int:
             acceptance_script,
             forwarded,
         )
+
+    if args.command == "product-value-preregistration":
+        preregistration_script = kit / "scripts" / "omc_product_value_preregistration.py"
+        forwarded = [args.preregistration_command]
+        if args.batch_id is not None:
+            forwarded.extend(["--batch-id", args.batch_id])
+        for option in ("workloads", "manifest", "out"):
+            value = getattr(args, option)
+            if value is not None:
+                forwarded.extend([f"--{option}", str(value.resolve())])
+        return _run_script(preregistration_script, forwarded)
 
     if args.command == "state":
         state_script = kit / "scripts" / "omc_state.py"
