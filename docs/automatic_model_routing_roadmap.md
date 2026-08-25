@@ -17,6 +17,19 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 
 현재 OMC는 `rule-based orchestration v1`을 넘어 승인된 v2 grant를 제한 병렬 실행하는 `bounded orchestration` 단계다. 일반 N-child 실행과 authoritative acceptance 판정 코드는 갖췄지만 실제 운영 표본 acceptance, 실패 재분배, 자동 모델 전환, 자동 ship은 아직 완료되지 않았다.
 
+### 제품 약점 기반 개선 축
+
+기능 수가 아니라 사용자가 실제 작업을 더 잘 끝내는지를 기준으로 남은 약점을 세 핵심 축과 하나의 지원 축으로 관리한다. Product Value·Operator Experience·Evidence를 핵심 축으로, Maintainability를 이를 지속시키는 지원 축으로 둔다. 구현 완료와 제품 효과 검증을 분리하며, 새 스킬·정책·benchmark fixture 수 증가는 완료 지표로 사용하지 않는다.
+
+| 개선 축 | 우선순위 | 현재 약점 | 다음 범위 | 종료 기준 |
+|---|---|---|---|---|
+| Product Value | P0 | bounded scheduler는 완성됐지만 실제 다중 child 가치가 미검증 | 실제 3–5 child 운영 acceptance와 single-agent baseline 비교 | 중복 실행·scope·budget 위반 없이 완료하며, baseline 대비 성공률은 같거나 높고 시간·token·개입 횟수는 사전 등록된 개선 기준을 충족 |
+| Operator Experience | P1 | 반복 승인·상태 확인·스킬 왕복이 작은 작업의 준비 시간을 키움 | Lite/Full observed 표본에서 단계별 latency·retry·개입 측정 후 안전한 자동 분기 조정 | 품질 gate를 유지하면서 p50/p95·token·사용자 개입 횟수 감소 |
+| Evidence | P1 | Plan·Review 품질 우위와 비용 절감이 독립 운영 증거로 확정되지 않음 | single-agent baseline 대비 성공률·시간·token·개입 횟수, durable raw output, blind adjudication 수집 | 사전 등록된 독립 배치의 acceptance를 통과한 지표만 대체·우월 판정에 사용 |
+| Maintainability | P2 | 문서·fixture·검증 도구가 커져 사용자 기능과 내부 연구 경계가 흐림 | README와 실제 executor 구현 상태 정합화, 사용자 명령과 benchmark 내부 도구 구분 | README·CLI·로드맵 상태가 일치하고 일반 사용 경로가 setup·task·autopilot·status·ship 중심으로 설명됨 |
+
+운영 증거 없는 자동화 확대 금지를 공통 원칙으로 둔다. 실제 병목을 줄이지 않는 새 추상화, 정책, 스킬 추가는 위 종료 기준보다 우선하지 않는다.
+
 ### Operational P0
 
 **bounded N-child 실제 acceptance**를 단일 운영 최우선 작업으로 둔다.
@@ -84,9 +97,9 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 
 Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분한다. 경쟁 제품의 문서 주장과 OMC의 구현 근거도 같은 증거 수준처럼 혼합하지 않는다.
 
-## Oh My Claude Code 벤치마크 후 개선 백로그
+## 제품 개선 실행 백로그
 
-공식 저장소 `v4.15.10`의 Team·Autopilot·Ralph·UltraQA·멀티 provider CLI surface를 기준으로 비교했다. OMC는 승인 hash, scope·dependency·budget, provenance, fail-close N-child 실행 기반을 갖췄지만 운영 증거, 자동 복구, 자연어 중심 UX에서는 열위다. 경쟁 제품의 토큰 절감 주장과 OMC의 안전성 우위 가설은 동일 작업 직접 측정 전까지 확정 사실로 사용하지 않는다.
+Oh My Claude Code `v4.15.10` 비교에서 확인한 운영 증거·자동 복구·자연어 UX 약점을 OMC 제품 축에 편입한다. 경쟁 제품의 mode를 복제하는 대신 Product Value, Operator Experience, Evidence 종료 기준을 직접 충족한다. 경쟁 제품의 토큰 절감 주장과 OMC의 안전성 우위 가설은 동일 작업 직접 측정 전까지 확정 사실로 사용하지 않는다.
 
 | 우선순위 | 개선 축 | 다음 범위 | 종료 기준 |
 |---|---|---|---|
@@ -95,7 +108,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 | P1 | 비용·품질 운영 증거 | single-agent 대비 token·elapsed·retry·intervention 비교 | 사전 등록 10건 acceptance 통과 |
 | P2 | 도구 중립 UX 차별화 | Codex·Claude Code·Gemini·Cursor 공통 receipt·readiness | 3개 이상 호스트 동일 fixture 통과 |
 
-작업 순서는 `P0 N-child acceptance → P1 개입 감축 → P1 비용·품질 검증 → P2 멀티 호스트 UX`로 고정한다. 새로운 스킬 수를 늘리거나 경쟁 제품의 mode를 복제하는 작업은 이 acceptance를 앞당기지 않으면 우선하지 않는다.
+작업 순서는 `P0 Product Value acceptance → P1 Operator Experience 측정·조정 → P1 Evidence 독립 검증 → P2 유지보수·멀티 호스트 UX`로 고정한다. 새로운 스킬 수를 늘리거나 경쟁 제품의 mode를 복제하는 작업은 이 acceptance를 앞당기지 않으면 우선하지 않는다.
 
 ## 제품 원칙과 금지선
 
@@ -117,10 +130,11 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 ## 다음 실행 순서
 
 1. authoritative acceptance 진입점으로 고정된 실제 3–5 child 작업의 성공·실패·timeout receipt를 수집한다.
-2. single-agent baseline과 비용·개입·token telemetry를 비교한다.
-3. Lite/Full 경계를 운영 지표로 조정한다.
-4. 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
+2. 같은 작업의 single-agent baseline과 성공률·시간·token·개입 telemetry를 비교한다.
+3. 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
+4. Plan Batch B와 native Review 독립 검증을 계속해 대체 판정을 갱신한다.
+5. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
 
 ## 한 줄 결론
 
-현재 OMC의 다음 제품 전환점은 scheduler 추가 구현이 아니라, 완성된 bounded N-child 실행을 실제 3–5 child 표본에서 검증하고 비용·개입 receipt로 증명하는 것이다.
+현재 OMC의 다음 제품 전환점은 기능 추가가 아니라, 완성된 bounded N-child 실행이 실제 작업의 성공률을 높이고 시간·token·개입을 줄이는지 독립 receipt로 증명하는 것이다.

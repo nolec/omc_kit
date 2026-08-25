@@ -62,6 +62,25 @@ def test_roadmap_current_priority_is_single_and_public_anchors_remain() -> None:
     assert "Codex `3/8 hit, 3 FP`, OMC `6/8 hit, 6 FP`는 참고 수치" in text
 
 
+def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence() -> None:
+    text = ROADMAP_PATH.read_text(encoding="utf-8")
+
+    assert "### 제품 약점 기반 개선 축" in text
+    assert "세 핵심 축과 하나의 지원 축" in text
+    assert "| Product Value | P0" in text
+    assert "| Operator Experience | P1" in text
+    assert "| Evidence | P1" in text
+    assert "| Maintainability | P2" in text
+    assert "실제 3–5 child 운영 acceptance" in text
+    assert "반복 승인·상태 확인·스킬 왕복" in text
+    assert "single-agent baseline 대비 성공률·시간·token·개입 횟수" in text
+    assert "baseline 대비 성공률은 같거나 높고" in text
+    assert "시간·token·개입 횟수는 사전 등록된 개선 기준을 충족" in text
+    assert "운영 증거 없는 자동화 확대 금지" in text
+    assert "README와 실제 executor 구현 상태 정합화" in text
+    assert "새 스킬·정책·benchmark fixture 수 증가는 완료 지표로 사용하지 않는다" in text
+
+
 def test_roadmap_history_matches_the_frozen_section_manifest() -> None:
     history = HISTORY_PATH.read_text(encoding="utf-8")
     manifest = json.loads(HISTORY_MANIFEST_PATH.read_text(encoding="utf-8"))
