@@ -81,6 +81,37 @@ def _registration_authority() -> dict[str, object]:
     }
 
 
+def _execution_contract() -> dict[str, object]:
+    return {
+        "provider_snapshot": {
+            "provider_family": "codex",
+            "model": "gpt-5.3-codex",
+            "reasoning_profile": "high",
+            "adapter_sha256": "d" * 64,
+        },
+        "limits": {
+            "max_total_tokens": 10_000,
+            "max_total_elapsed_sec": 600,
+            "max_output_chars": 100_000,
+        },
+        "runner_schema": "omc-product-value-acceptance/v1",
+        "telemetry_schema": "omc-product-value-telemetry/v1",
+    }
+
+
+def _workloads_v3() -> list[dict[str, object]]:
+    workloads = _workloads_v2()
+    for index, workload in enumerate(workloads, start=1):
+        workload.update({
+            "pair_id": f"pair-{index}",
+            "execution_order": (
+                ["omc", "baseline"] if index % 2 else ["baseline", "omc"]
+            ),
+            "execution_packet_sha256": chr(96 + index) * 64,
+        })
+    return workloads
+
+
 def test_builds_and_validates_five_workload_prospective_contract() -> None:
     manifest = build_preregistration("product-value-batch-1", _workloads())
 
@@ -474,6 +505,77 @@ def test_v2_rejects_invalid_registration_authority_digest() -> None:
             observed_from="2026-09-01T00:00:00+00:00",
             observed_through="2026-09-08T00:00:00+00:00",
             registration_authority=authority,
+        )
+
+
+def test_v3_binds_concrete_execution_contract_and_pair_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+
+    manifest = preregistration.build_preregistration_v3(
+        "product-value-batch-3",
+        _workloads_v3(),
+        observed_from="2026-09-01T00:00:00+00:00",
+        observed_through="2026-09-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=_execution_contract(),
+    )
+
+    assert manifest["schema_version"] == "omc-product-value-preregistration/v3"
+    assert manifest["execution_contract"] == _execution_contract()
+    assert manifest["workloads"][0]["pair_id"] == "pair-1"
+    assert manifest["workloads"][0]["execution_order"] == ["omc", "baseline"]
+    assert validate_preregistration(manifest) == manifest
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason"),
+    [
+        (
+            lambda contract, workloads: contract["provider_snapshot"].pop("model"),
+            "execution_contract_invalid",
+        ),
+        (
+            lambda contract, workloads: workloads[1].update(
+                {"pair_id": workloads[0]["pair_id"]}
+            ),
+            "pair_id_duplicate",
+        ),
+        (
+            lambda contract, workloads: workloads[0].update(
+                {"execution_order": ["omc", "omc"]}
+            ),
+            "execution_order_invalid",
+        ),
+    ],
+)
+def test_v3_rejects_incomplete_or_ambiguous_execution_binding(
+    monkeypatch: pytest.MonkeyPatch,
+    mutation,
+    reason: str,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    contract = _execution_contract()
+    workloads = _workloads_v3()
+    mutation(contract, workloads)
+
+    with pytest.raises(ValueError, match=reason):
+        preregistration.build_preregistration_v3(
+            "product-value-batch-3",
+            workloads,
+            observed_from="2026-09-01T00:00:00+00:00",
+            observed_through="2026-09-08T00:00:00+00:00",
+            registration_authority={"trusted_root_sha256": "c" * 64},
+            execution_contract=contract,
         )
 
 

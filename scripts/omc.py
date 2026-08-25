@@ -147,6 +147,7 @@ def main() -> int:
         "execute-n-child",
         "n-child-acceptance",
         "product-value-preregistration",
+        "product-value-acceptance",
         "team",
         "ulw",
         "ralph",
@@ -265,6 +266,7 @@ def main() -> int:
         choices=(
             "prepare",
             "prepare-v2",
+            "prepare-v3",
             "validate",
             "registry-record",
             "prepare-receipt",
@@ -277,6 +279,7 @@ def main() -> int:
     product_value_preregistration.add_argument("--observed-from")
     product_value_preregistration.add_argument("--observed-through")
     product_value_preregistration.add_argument("--registration-authority", type=Path)
+    product_value_preregistration.add_argument("--execution-contract", type=Path)
     product_value_preregistration.add_argument("--repository-root", type=Path)
     product_value_preregistration.add_argument("--registry-commit")
     product_value_preregistration.add_argument("--registry-path")
@@ -289,6 +292,22 @@ def main() -> int:
     product_value_preregistration.add_argument("--trusted-root", type=Path)
     product_value_preregistration.add_argument("--approved-trusted-root-sha256")
     product_value_preregistration.add_argument("--out", type=Path)
+
+    product_value_acceptance = sub.add_parser(
+        "product-value-acceptance",
+        help="Run or finalize manifest-bound Product Value paired evidence.",
+    )
+    product_value_acceptance.add_argument(
+        "acceptance_command",
+        choices=("validate", "run-pilot", "run-confirmatory", "finalize"),
+    )
+    product_value_acceptance.add_argument("--manifest", type=Path)
+    product_value_acceptance.add_argument("--registration-context", type=Path)
+    product_value_acceptance.add_argument("--packet-root", type=Path)
+    product_value_acceptance.add_argument("--source-roots", type=Path)
+    product_value_acceptance.add_argument("--artifact-root", type=Path)
+    product_value_acceptance.add_argument("--arm-adapter", type=Path)
+    product_value_acceptance.add_argument("--out", type=Path)
 
     peer_review = sub.add_parser("peer-review", help="Run peer-review of the latest uncommitted changes.")
     peer_review.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -613,6 +632,7 @@ def main() -> int:
             "workloads",
             "manifest",
             "registration_authority",
+            "execution_contract",
             "repository_root",
             "registration_evidence",
             "registration_receipt",
@@ -626,6 +646,26 @@ def main() -> int:
                     str(value.resolve()),
                 ])
         return _run_script(preregistration_script, forwarded)
+
+    if args.command == "product-value-acceptance":
+        acceptance_script = kit / "scripts" / "omc_product_value_acceptance.py"
+        forwarded = [args.acceptance_command]
+        for option in (
+            "manifest",
+            "registration_context",
+            "packet_root",
+            "source_roots",
+            "artifact_root",
+            "arm_adapter",
+            "out",
+        ):
+            value = getattr(args, option)
+            if value is not None:
+                forwarded.extend([
+                    f"--{option.replace('_', '-')}",
+                    str(value.resolve()),
+                ])
+        return _run_script(acceptance_script, forwarded)
 
     if args.command == "state":
         state_script = kit / "scripts" / "omc_state.py"

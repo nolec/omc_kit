@@ -77,10 +77,15 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "baseline 대비 성공률은 같거나 높고" in text
     assert "시간·token·개입 횟수는 사전 등록된 개선 기준을 충족" in text
     assert "Product Value preregistration 계약 완료" in text
-    assert "canonical workload 순서·해시 불변성" in text
+    assert "canonical workload·pair 순서·execution packet 해시" in text
     assert "이 상태는 `claim_eligible=false`" in text
     assert "Product Value 중립 등록 검증 경로 완료" in text
     assert "`validate-registration`" in text
+    assert "Product Value paired acceptance harness 완료" in text
+    assert "`run-pilot` → `run-confirmatory` → `finalize`" in text
+    assert "authoritative reload" in text
+    assert "runner 실측 elapsed" in text
+    assert "모든 arm 성공" in text
     assert "실제 구현 workload 6건" in text
     assert "1건 비판정 pilot과 동일 조건 paired 5건" in text
     assert "운영 증거 없는 자동화 확대 금지" in text
@@ -124,8 +129,9 @@ def test_roadmap_tracks_completed_n_child_v2_prerequisites() -> None:
 
     assert "scope normalization과 child `approval_id` 고유성 정책은 완료" in current
     assert "승인 전 canonical proposal" in current
+    assert "verification timeout과 출력 상한 초과가 겹치는 경우" in current
     assert (
-        "1. authoritative acceptance 진입점으로 고정된 실제 3–5 child 작업의 "
+        "2. authoritative acceptance 진입점으로 고정된 실제 3–5 child 작업의 "
         "성공·실패·timeout receipt를 수집한다."
     ) in current
     assert "1. P0 선행 정책인 scope normalization" not in current
