@@ -21,6 +21,10 @@ def _canonical_sha(value: object) -> str:
     (
         "pytest>=9.0.2\n",
         "pytest\n",
+        "pytest==latest\n",
+        "pytest==1.*\n",
+        "pytest[testing]==9.0.2\n",
+        "pytest==9.0.2; python_version >= '3.11'\n",
         "-e git+https://example.invalid/repo.git\n",
         "pkg @ https://example.invalid/pkg.whl\n",
         "pytest==9.0.2\npytest==9.0.2\n",
@@ -33,8 +37,8 @@ def test_dependency_lock_rejects_non_exact_or_duplicate_entries(content: str) ->
 
 def test_dependency_lock_is_canonicalized() -> None:
     assert corpus.validate_dependency_lock(
-        "pytest==9.0.2\njsonschema==4.25.1\n"
-    ) == "jsonschema==4.25.1\npytest==9.0.2\n"
+        "Py_Test==9.0.2\njsonschema==4.25.1\n"
+    ) == "jsonschema==4.25.1\npy-test==9.0.2\n"
 
 
 def _git(root: Path, *args: str) -> str:

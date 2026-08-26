@@ -311,6 +311,82 @@ def test_prepare_inputs_rejects_workload_without_direct_surface_verification(
         )
 
 
+def test_prepare_inputs_cli_rejects_surface_evidence_missing_from_frozen_commit(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    workload = inputs["workloads"][0]
+    workload_id = workload["workload_id"]
+    source_root = Path(inputs["source_roots"][workload["repo_alias"]]["path"])
+    worktree_only = source_root / "worktree-only-surface.json"
+    worktree_only.write_text('{"status":"verified"}\n', encoding="utf-8")
+
+    corpus_root = tmp_path / "corpus"
+    (corpus_root / "packets").mkdir(parents=True)
+    (corpus_root / "workloads.json").write_text(
+        json.dumps(inputs["workloads"]), encoding="utf-8"
+    )
+    (corpus_root / "source-roots.json").write_text(
+        json.dumps(inputs["source_roots"]), encoding="utf-8"
+    )
+    for packet_id, packet in inputs["packets"].items():
+        (corpus_root / "packets" / f"{packet_id}.json").write_text(
+            json.dumps(packet), encoding="utf-8"
+        )
+
+    execution_specs = tmp_path / "execution-specs.json"
+    execution_specs.write_text(json.dumps(inputs["executions"]), encoding="utf-8")
+    environment_specs = {
+        item["workload_id"]: {
+            "dependency_lock_path": inputs["environments"][item["workload_id"]][
+                "dependency_lock_path"
+            ],
+            "runtime_identity_path": inputs["environments"][item["workload_id"]][
+                "runtime_identity_path"
+            ],
+            "cache_path": inputs["environments"][item["workload_id"]]["cache_path"],
+            "readiness": inputs["environments"][item["workload_id"]]["readiness"],
+            "direct_surface_verification_path": (
+                "worktree-only-surface.json"
+                if item["workload_id"] == workload_id
+                else "surface-verification.json"
+            ),
+            "direct_surface_verification_sha256": (
+                freeze.file_sha256(worktree_only)
+                if item["workload_id"] == workload_id
+                else inputs["surface_verifications"][item["workload_id"]]["sha256"]
+            ),
+        }
+        for item in inputs["workloads"]
+    }
+    environment_specs_path = tmp_path / "environment-specs.json"
+    environment_specs_path.write_text(json.dumps(environment_specs), encoding="utf-8")
+    provider = tmp_path / "provider.json"
+    provider.write_text(json.dumps({
+        "provider_family": "codex",
+        "model": "gpt-test",
+        "reasoning_profile": "high",
+        "backend_sha256": "a" * 64,
+    }), encoding="utf-8")
+    limits = tmp_path / "limits.json"
+    limits.write_text(json.dumps({
+        "max_total_tokens": 100,
+        "max_total_elapsed_sec": 30,
+        "max_output_chars": 1000,
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="freeze_direct_surface_unverified"):
+        freeze.main([
+            "prepare-inputs",
+            "--corpus-root", str(corpus_root),
+            "--execution-specs", str(execution_specs),
+            "--environment-specs", str(environment_specs_path),
+            "--provider-snapshot", str(provider),
+            "--limits", str(limits),
+            "--out", str(tmp_path / "prepared"),
+        ])
+
+
 def test_cli_exposes_product_value_freeze_surface() -> None:
     result = subprocess.run(
         ["python3", "scripts/omc.py", "product-value-freeze", "--help"],

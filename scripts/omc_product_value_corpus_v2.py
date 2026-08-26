@@ -24,7 +24,7 @@ EXPECTED_ALIASES = {f"source-{letter}" for letter in "abcdef"}
 EXPECTED_WORKLOAD_IDS = {f"pv-{index:02d}" for index in range(1, 7)}
 EXACT_LOCK_ENTRY = re.compile(
     r"^(?P<name>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)=="
-    r"(?P<version>[A-Za-z0-9](?:[A-Za-z0-9._+-]*[A-Za-z0-9])?)$"
+    r"(?P<version>[0-9]+(?:\.[0-9]+)*)$"
 )
 
 
@@ -234,7 +234,7 @@ def _assert_source_unchanged(source: Path, expected_digest: str) -> None:
 
 
 def validate_dependency_lock(content: str) -> str:
-    """Return a deterministic exact-pin lock or reject ambiguous sources."""
+    """Canonicalize name==numeric.release pins and reject ambiguous sources."""
     if not isinstance(content, str):
         raise ValueError("corpus_v2_dependency_lock_invalid")
     entries: dict[str, str] = {}
