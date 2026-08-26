@@ -188,6 +188,44 @@ def _gitignore_sha256(gitignore: Path) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def _legacy_gitignore_before(gitignore: Path) -> str:
+    if not gitignore.is_file():
+        raise MigrationStateError("legacy migration receipt requires managed block")
+    try:
+        existing = gitignore.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise MigrationStateError("invalid migration receipt") from error
+    if existing.count(BEGIN_MARKER) != 1 or existing.count(END_MARKER) != 1:
+        raise MigrationStateError("legacy migration receipt requires managed block")
+    before, remainder = existing.split(BEGIN_MARKER, 1)
+    _, after = remainder.split(END_MARKER, 1)
+    prefix = before.rstrip()
+    suffix = after.lstrip("\n")
+    if prefix and suffix:
+        return prefix + "\n\n" + suffix
+    if prefix:
+        return prefix + "\n"
+    return suffix
+
+
+def _upgrade_v1_migration(payload: dict[str, Any], gitignore: Path) -> dict[str, Any]:
+    raw_paths = payload.get("untracked")
+    if not isinstance(raw_paths, list):
+        raise MigrationStateError("invalid migration receipt")
+    paths: list[str] = []
+    for raw in raw_paths:
+        if not isinstance(raw, str) or (safe_path := _safe_relative_path(raw)) is None:
+            raise MigrationStateError("invalid migration receipt")
+        paths.append(safe_path)
+    return {
+        "schema_version": 2,
+        "untracked": sorted(set(paths)),
+        "gitignore_existed": True,
+        "gitignore_before": _legacy_gitignore_before(gitignore),
+        "gitignore_after_sha256": _gitignore_sha256(gitignore),
+    }
+
+
 def _load_active_migration(
     migration_path: Path, gitignore: Path
 ) -> dict[str, Any] | None:
@@ -197,6 +235,8 @@ def _load_active_migration(
         payload = json.loads(migration_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise MigrationStateError("invalid migration receipt") from error
+    if isinstance(payload, dict) and payload.get("schema_version") == 1:
+        return _upgrade_v1_migration(payload, gitignore)
     if (
         not isinstance(payload, dict)
         or payload.get("schema_version") != 2
@@ -225,7 +265,6 @@ def update_managed_gitignore(
     migration_path = target / MIGRATION_RECEIPT
     migration = None
     if sync_migration_receipt:
-        validate_active_migration(target)
         migration = _load_active_migration(migration_path, gitignore)
     existing = gitignore.read_text(encoding="utf-8") if gitignore.is_file() else ""
     if existing.count(BEGIN_MARKER) != existing.count(END_MARKER):
