@@ -144,6 +144,7 @@ def main() -> int:
         "n-child-acceptance",
         "product-value-preregistration",
         "product-value-acceptance",
+        "product-value-freeze",
         "team",
         "ulw",
         "ralph",
@@ -315,6 +316,32 @@ def main() -> int:
     product_value_acceptance.add_argument("--executor-shadow", type=Path)
     product_value_acceptance.add_argument("--provider-adapter", type=Path)
     product_value_acceptance.add_argument("--out", type=Path)
+
+    product_value_freeze = sub.add_parser(
+        "product-value-freeze",
+        help="Prepare or validate Product Value v4 freeze inputs and candidates.",
+    )
+    product_value_freeze.add_argument(
+        "freeze_command", choices=("prepare-inputs", "prepare", "validate")
+    )
+    for option in (
+        "corpus_root",
+        "execution_specs",
+        "environment_specs",
+        "provider_snapshot",
+        "limits",
+        "input_root",
+        "acceptance_runner",
+        "arm_adapter",
+        "scheduler",
+        "executor_shadow",
+        "provider_adapter",
+        "candidate_root",
+        "out",
+    ):
+        product_value_freeze.add_argument(
+            f"--{option.replace('_', '-')}", type=Path
+        )
 
     peer_review = sub.add_parser("peer-review", help="Run peer-review of the latest uncommitted changes.")
     peer_review.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -683,6 +710,32 @@ def main() -> int:
                     str(value.resolve()),
                 ])
         return _run_script(acceptance_script, forwarded)
+
+    if args.command == "product-value-freeze":
+        freeze_script = kit / "scripts" / "omc_product_value_v4_freeze.py"
+        forwarded = [args.freeze_command]
+        for option in (
+            "corpus_root",
+            "execution_specs",
+            "environment_specs",
+            "provider_snapshot",
+            "limits",
+            "input_root",
+            "acceptance_runner",
+            "arm_adapter",
+            "scheduler",
+            "executor_shadow",
+            "provider_adapter",
+            "candidate_root",
+            "out",
+        ):
+            value = getattr(args, option)
+            if value is not None:
+                forwarded.extend([
+                    f"--{option.replace('_', '-')}",
+                    str(value.resolve()),
+                ])
+        return _run_script(freeze_script, forwarded)
 
     if args.command == "state":
         state_script = kit / "scripts" / "omc_state.py"

@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -21,6 +22,10 @@ LOCK_FILENAME = "benchmark-dependencies.lock"
 LOCK_ALIASES = {"source-e", "source-f"}
 EXPECTED_ALIASES = {f"source-{letter}" for letter in "abcdef"}
 EXPECTED_WORKLOAD_IDS = {f"pv-{index:02d}" for index in range(1, 7)}
+EXACT_LOCK_ENTRY = re.compile(
+    r"^(?P<name>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)=="
+    r"(?P<version>[A-Za-z0-9](?:[A-Za-z0-9._+-]*[A-Za-z0-9])?)$"
+)
 
 
 def canonical_sha256(value: Any) -> str:
@@ -228,6 +233,25 @@ def _assert_source_unchanged(source: Path, expected_digest: str) -> None:
         raise ValueError("corpus_v2_source_mutated")
 
 
+def validate_dependency_lock(content: str) -> str:
+    """Return a deterministic exact-pin lock or reject ambiguous sources."""
+    if not isinstance(content, str):
+        raise ValueError("corpus_v2_dependency_lock_invalid")
+    entries: dict[str, str] = {}
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        match = EXACT_LOCK_ENTRY.fullmatch(line)
+        if match is None:
+            raise ValueError("corpus_v2_dependency_lock_invalid")
+        normalized_name = re.sub(r"[-_.]+", "-", match.group("name")).lower()
+        if normalized_name in entries:
+            raise ValueError("corpus_v2_dependency_lock_invalid")
+        entries[normalized_name] = f"{normalized_name}=={match.group('version')}"
+    if not entries:
+        raise ValueError("corpus_v2_dependency_lock_invalid")
+    return "\n".join(entries[name] for name in sorted(entries)) + "\n"
+
+
 def _validate_locks(value: Mapping[str, str]) -> dict[str, str]:
     if (
         not isinstance(value, Mapping)
@@ -235,10 +259,7 @@ def _validate_locks(value: Mapping[str, str]) -> dict[str, str]:
         or any(not isinstance(value[alias], str) or not value[alias].strip() for alias in LOCK_ALIASES)
     ):
         raise ValueError("corpus_v2_dependency_locks_invalid")
-    return {
-        alias: value[alias].rstrip("\n") + "\n"
-        for alias in sorted(LOCK_ALIASES)
-    }
+    return {alias: validate_dependency_lock(value[alias]) for alias in sorted(LOCK_ALIASES)}
 
 
 def _clone_at_commit(source: Path, destination: Path, commit: str) -> None:

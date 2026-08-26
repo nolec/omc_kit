@@ -21,6 +21,7 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
     packets = {}
     executions = {}
     environments = {}
+    surface_verifications = {}
     source_roots = {}
     for index in range(1, 7):
         workload_id = f"pv-{index:02d}"
@@ -28,6 +29,11 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
         source = tmp_path / alias
         source.mkdir()
         (source / "environment.lock").write_text("frozen\n", encoding="utf-8")
+        surface_evidence = source / "surface-verification.json"
+        surface_evidence.write_text(
+            json.dumps({"workload_id": workload_id, "status": "verified"}),
+            encoding="utf-8",
+        )
         subprocess.run(["git", "init", "-q", str(source)], check=True)
         subprocess.run(
             ["git", "-C", str(source), "config", "user.email", "freeze@example.com"],
@@ -37,7 +43,7 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
             ["git", "-C", str(source), "config", "user.name", "Freeze Test"],
             check=True,
         )
-        subprocess.run(["git", "-C", str(source), "add", "environment.lock"], check=True)
+        subprocess.run(["git", "-C", str(source), "add", "."], check=True)
         subprocess.run(
             ["git", "-C", str(source), "commit", "-qm", "fixture"],
             check=True,
@@ -118,6 +124,10 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
             "cache_path": str(cache.resolve()),
             "readiness": {"argv": [str(runtime.resolve()), "--version"]},
         }
+        surface_verifications[workload_id] = {
+            "path": "surface-verification.json",
+            "sha256": freeze.file_sha256(surface_evidence),
+        }
         source_roots[alias] = {
             "path": str(source),
             "identity_sha256": f"{index:x}" * 64,
@@ -132,6 +142,7 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
         "packets": packets,
         "executions": executions,
         "environments": environments,
+        "surface_verifications": surface_verifications,
         "source_roots": source_roots,
         "bundle": bundle,
     }
@@ -184,8 +195,13 @@ def test_freeze_candidate_is_deterministic_and_binds_complete_bundle(
     }
     assert len(first["packets"]) == 6
     assert all(
-        packet["schema_version"] == "omc-product-value-execution-packet/v2"
+        packet["schema_version"] == "omc-product-value-execution-packet/v3"
         for packet in first["packets"].values()
+    )
+    assert all(
+        packet["direct_surface_verification"]
+        == inputs["surface_verifications"][workload_id]
+        for workload_id, packet in first["packets"].items()
     )
     output = tmp_path / "frozen-candidate"
     receipt = freeze.write_v4_candidate(first, output)
@@ -247,3 +263,166 @@ def test_freeze_candidate_rejects_source_commit_not_in_repository(
             },
             grant_validator=lambda *_args, **_kwargs: True,
         )
+
+
+def test_prepare_inputs_rejects_workload_without_direct_surface_verification(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    environment_specs = {
+        workload["workload_id"]: {
+            "dependency_lock_path": inputs["environments"][workload["workload_id"]][
+                "dependency_lock_path"
+            ],
+            "runtime_identity_path": inputs["environments"][workload["workload_id"]][
+                "runtime_identity_path"
+            ],
+            "cache_path": inputs["environments"][workload["workload_id"]][
+                "cache_path"
+            ],
+            "readiness": inputs["environments"][workload["workload_id"]]["readiness"],
+            "direct_surface_verification_path": "surface-verification.json",
+            "direct_surface_verification_sha256": (
+                inputs["surface_verifications"][workload["workload_id"]]["sha256"]
+                if workload["workload_id"] != "pv-06"
+                else "b" * 64
+            ),
+        }
+        for workload in inputs["workloads"]
+    }
+
+    with pytest.raises(ValueError, match="freeze_direct_surface_unverified"):
+        freeze.prepare_v4_inputs(
+            workloads=inputs["workloads"],
+            executions=inputs["executions"],
+            environment_specs=environment_specs,
+            source_roots=inputs["source_roots"],
+            provider_snapshot={
+                "provider_family": "codex",
+                "model": "gpt-test",
+                "reasoning_profile": "high",
+                "backend_sha256": "a" * 64,
+            },
+            limits={
+                "max_total_tokens": 100,
+                "max_total_elapsed_sec": 30,
+                "max_output_chars": 1000,
+            },
+        )
+
+
+def test_cli_exposes_product_value_freeze_surface() -> None:
+    result = subprocess.run(
+        ["python3", "scripts/omc.py", "product-value-freeze", "--help"],
+        cwd=Path(__file__).resolve().parents[1],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "prepare-inputs" in result.stdout
+    assert "prepare" in result.stdout
+    assert "validate" in result.stdout
+
+
+def test_freeze_cli_prepares_inputs_candidate_and_validates_surface(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs = _inputs(tmp_path)
+    corpus_root = tmp_path / "corpus"
+    corpus_root.mkdir()
+    (corpus_root / "packets").mkdir()
+    (corpus_root / "workloads.json").write_text(
+        json.dumps(inputs["workloads"]), encoding="utf-8"
+    )
+    (corpus_root / "source-roots.json").write_text(
+        json.dumps(inputs["source_roots"]), encoding="utf-8"
+    )
+    for workload_id, packet in inputs["packets"].items():
+        (corpus_root / "packets" / f"{workload_id}.json").write_text(
+            json.dumps(packet), encoding="utf-8"
+        )
+    execution_specs = tmp_path / "execution-specs.json"
+    execution_specs.write_text(json.dumps(inputs["executions"]), encoding="utf-8")
+    environment_specs = tmp_path / "environment-specs.json"
+    environment_specs.write_text(
+        json.dumps({
+            workload["workload_id"]: {
+                "dependency_lock_path": inputs["environments"][workload["workload_id"]][
+                    "dependency_lock_path"
+                ],
+                "runtime_identity_path": inputs["environments"][workload["workload_id"]][
+                    "runtime_identity_path"
+                ],
+                "cache_path": inputs["environments"][workload["workload_id"]][
+                    "cache_path"
+                ],
+                "readiness": inputs["environments"][workload["workload_id"]]["readiness"],
+                "direct_surface_verification_path": "surface-verification.json",
+                "direct_surface_verification_sha256": inputs["surface_verifications"][
+                    workload["workload_id"]
+                ]["sha256"],
+            }
+            for workload in inputs["workloads"]
+        }),
+        encoding="utf-8",
+    )
+    provider = tmp_path / "provider.json"
+    provider.write_text(json.dumps({
+        "provider_family": "codex",
+        "model": "gpt-test",
+        "reasoning_profile": "high",
+        "backend_sha256": "a" * 64,
+    }), encoding="utf-8")
+    limits = tmp_path / "limits.json"
+    limits.write_text(json.dumps({
+        "max_total_tokens": 100,
+        "max_total_elapsed_sec": 30,
+        "max_output_chars": 1000,
+    }), encoding="utf-8")
+    prepared = tmp_path / "prepared"
+    assert freeze.main([
+        "prepare-inputs",
+        "--corpus-root", str(corpus_root),
+        "--execution-specs", str(execution_specs),
+        "--environment-specs", str(environment_specs),
+        "--provider-snapshot", str(provider),
+        "--limits", str(limits),
+        "--out", str(prepared),
+    ]) == 0
+
+    monkeypatch.setattr(freeze, "_default_grant_validator", lambda *_args: True)
+    bundle_args = [
+        item
+        for name in freeze.BUNDLE_PATH_FIELDS
+        for item in (f"--{name.replace('_', '-')}", str(inputs["bundle"][name]))
+    ]
+    candidate = tmp_path / "candidate"
+    assert freeze.main([
+        "prepare",
+        "--corpus-root", str(corpus_root),
+        "--input-root", str(prepared),
+        *bundle_args,
+        "--out", str(candidate),
+    ]) == 0
+    assert freeze.main([
+        "validate",
+        "--corpus-root", str(corpus_root),
+        "--input-root", str(prepared),
+        *bundle_args,
+        "--candidate-root", str(candidate),
+    ]) == 0
+
+    packet_path = candidate / "packets" / "pv-01.json"
+    packet = json.loads(packet_path.read_text(encoding="utf-8"))
+    packet["request"] = "tampered"
+    packet_path.write_text(json.dumps(packet), encoding="utf-8")
+    with pytest.raises(ValueError, match="freeze_candidate_artifact_mismatch"):
+        freeze.main([
+            "validate",
+            "--corpus-root", str(corpus_root),
+            "--input-root", str(prepared),
+            *bundle_args,
+            "--candidate-root", str(candidate),
+        ])

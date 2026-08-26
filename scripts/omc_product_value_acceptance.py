@@ -27,6 +27,7 @@ SCHEMA_VERSION = "omc-product-value-acceptance/v1"
 SCHEMA_VERSION_V2 = "omc-product-value-acceptance/v2"
 PACKET_SCHEMA_VERSION = "omc-product-value-execution-packet/v1"
 PACKET_SCHEMA_VERSION_V2 = "omc-product-value-execution-packet/v2"
+PACKET_SCHEMA_VERSION_V3 = "omc-product-value-execution-packet/v3"
 TELEMETRY_SCHEMA_VERSION = "omc-product-value-telemetry/v1"
 ARM_PROTOCOL = "omc-product-value-arm/v1"
 ARMS = ("omc", "baseline")
@@ -221,7 +222,12 @@ def validate_execution_packet(
 ) -> dict[str, Any]:
     manifest = _validate_acceptance_manifest(manifest)
     if manifest["schema_version"] == preregistration.SCHEMA_VERSION_V4:
-        return _validate_execution_packet_v2(manifest, workload, packet)
+        packet_schema = packet.get("schema_version") if isinstance(packet, dict) else None
+        if packet_schema == PACKET_SCHEMA_VERSION_V2:
+            return _validate_execution_packet_v2(manifest, workload, packet)
+        if packet_schema == PACKET_SCHEMA_VERSION_V3:
+            return _validate_execution_packet_v3(manifest, workload, packet)
+        raise ValueError("execution_packet_invalid")
     if (
         not isinstance(packet, dict)
         or set(packet) != {
@@ -272,6 +278,35 @@ def validate_execution_packet(
 def _validate_execution_packet_v2(
     manifest: dict[str, Any], workload: dict[str, Any], packet: Any
 ) -> dict[str, Any]:
+    return _validate_bounded_execution_packet(
+        manifest,
+        workload,
+        packet,
+        packet_schema=PACKET_SCHEMA_VERSION_V2,
+        require_surface_verification=False,
+    )
+
+
+def _validate_execution_packet_v3(
+    manifest: dict[str, Any], workload: dict[str, Any], packet: Any
+) -> dict[str, Any]:
+    return _validate_bounded_execution_packet(
+        manifest,
+        workload,
+        packet,
+        packet_schema=PACKET_SCHEMA_VERSION_V3,
+        require_surface_verification=True,
+    )
+
+
+def _validate_bounded_execution_packet(
+    manifest: dict[str, Any],
+    workload: dict[str, Any],
+    packet: Any,
+    *,
+    packet_schema: str,
+    require_surface_verification: bool,
+) -> dict[str, Any]:
     expected_fields = {
         "schema_version",
         "workload_id",
@@ -284,10 +319,12 @@ def _validate_execution_packet_v2(
         "baseline_execution_brief",
         "environment_receipt",
     }
+    if require_surface_verification:
+        expected_fields.add("direct_surface_verification")
     if (
         not isinstance(packet, dict)
         or set(packet) != expected_fields
-        or packet.get("schema_version") != PACKET_SCHEMA_VERSION_V2
+        or packet.get("schema_version") != packet_schema
         or packet.get("workload_id") != workload["workload_id"]
         or packet.get("repo_alias") != workload["repo_alias"]
         or packet.get("source_commit") != workload["source_commit"]
@@ -298,6 +335,15 @@ def _validate_execution_packet_v2(
         or not _valid_verification(packet.get("verification"))
     ):
         raise ValueError("execution_packet_invalid")
+    if require_surface_verification:
+        surface_verification = packet.get("direct_surface_verification")
+        if (
+            not isinstance(surface_verification, dict)
+            or set(surface_verification) != {"path", "sha256"}
+            or not _safe_relative_path(surface_verification.get("path"))
+            or not _is_sha256(surface_verification.get("sha256"))
+        ):
+            raise ValueError("execution_packet_invalid")
     if (
         canonical_sha256(packet) != workload["execution_packet_sha256"]
         or canonical_sha256(packet["request"]) != workload["request_sha256"]

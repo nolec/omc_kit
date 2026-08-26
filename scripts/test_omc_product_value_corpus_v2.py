@@ -16,6 +16,27 @@ def _canonical_sha(value: object) -> str:
     ).hexdigest()
 
 
+@pytest.mark.parametrize(
+    "content",
+    (
+        "pytest>=9.0.2\n",
+        "pytest\n",
+        "-e git+https://example.invalid/repo.git\n",
+        "pkg @ https://example.invalid/pkg.whl\n",
+        "pytest==9.0.2\npytest==9.0.2\n",
+    ),
+)
+def test_dependency_lock_rejects_non_exact_or_duplicate_entries(content: str) -> None:
+    with pytest.raises(ValueError, match="corpus_v2_dependency_lock_invalid"):
+        corpus.validate_dependency_lock(content)
+
+
+def test_dependency_lock_is_canonicalized() -> None:
+    assert corpus.validate_dependency_lock(
+        "pytest==9.0.2\njsonschema==4.25.1\n"
+    ) == "jsonschema==4.25.1\npytest==9.0.2\n"
+
+
 def _git(root: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", "-C", str(root), *args],

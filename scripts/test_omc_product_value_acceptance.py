@@ -113,7 +113,7 @@ def _v4_manifest_and_packet(monkeypatch: pytest.MonkeyPatch):
         "argv": [sys.executable, "-c", f"print({json.dumps(json.dumps(environment_probe))})"]
     }
     packet = {
-        "schema_version": "omc-product-value-execution-packet/v2",
+        "schema_version": "omc-product-value-execution-packet/v3",
         "workload_id": "workload-1",
         "repo_alias": "repo-a",
         "source_commit": "1" * 40,
@@ -123,6 +123,10 @@ def _v4_manifest_and_packet(monkeypatch: pytest.MonkeyPatch):
         "omc_execution": {"grant": grant, "prompts": deepcopy(prompts)},
         "baseline_execution_brief": "",
         "environment_receipt": environment,
+        "direct_surface_verification": {
+            "path": "surface-verification.json",
+            "sha256": "9" * 64,
+        },
     }
     packet["baseline_execution_brief"] = acceptance.build_baseline_execution_brief(
         packet["request"], packet["dod"], children, prompts
@@ -221,6 +225,17 @@ def test_v4_packet_binds_equivalent_omc_and_baseline_inputs(
     assert acceptance.validate_execution_packet(manifest, workload, packet) == packet
 
 
+def test_v4_packet_preserves_legacy_v2_compatibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, workload, packet = _v4_manifest_and_packet(monkeypatch)
+    packet["schema_version"] = "omc-product-value-execution-packet/v2"
+    packet.pop("direct_surface_verification")
+    workload["execution_packet_sha256"] = acceptance.canonical_sha256(packet)
+
+    assert acceptance.validate_execution_packet(manifest, workload, packet) == packet
+
+
 @pytest.mark.parametrize(
     ("mutation", "reason"),
     [
@@ -239,6 +254,12 @@ def test_v4_packet_binds_equivalent_omc_and_baseline_inputs(
                 {"cache_sha256": "f" * 64}
             ),
             "execution_packet_environment_mismatch",
+        ),
+        (
+            lambda packet: packet["direct_surface_verification"].update(
+                {"sha256": "invalid"}
+            ),
+            "execution_packet_invalid",
         ),
         (
             lambda packet: packet["omc_execution"]["grant"]["children"][0].update(

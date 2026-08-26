@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
@@ -21,6 +22,7 @@ from omc_n_child_scheduler import _validate_grant
 
 
 SCHEMA_VERSION = "omc-product-value-v4-freeze/v1"
+INPUT_SCHEMA_VERSION = "omc-product-value-v4-inputs/v1"
 BUNDLE_PATH_FIELDS = (
     "acceptance_runner",
     "arm_adapter",
@@ -167,6 +169,37 @@ def _environment(
     return deepcopy(value)
 
 
+def _surface_verification(
+    value: Any, *, source_root: Path, source_commit: str
+) -> dict[str, str]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"path", "sha256"}
+        or not _safe_relative(value.get("path"))
+        or not preregistration._is_sha256(value.get("sha256"))
+    ):
+        raise ValueError("freeze_direct_surface_unverified")
+    evidence_path = (source_root / value["path"]).resolve(strict=False)
+    try:
+        committed = subprocess.run(
+            ["git", "-C", str(source_root), "show", f"{source_commit}:{value['path']}"],
+            check=False,
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError("freeze_direct_surface_unverified") from error
+    if (
+        source_root not in evidence_path.parents
+        or not evidence_path.is_file()
+        or file_sha256(evidence_path) != value["sha256"]
+        or committed.returncode != 0
+        or hashlib.sha256(committed.stdout).hexdigest() != value["sha256"]
+    ):
+        raise ValueError("freeze_direct_surface_unverified")
+    return deepcopy(value)
+
+
 def _source_root(
     source_roots: Mapping[str, Any], workload: dict[str, Any]
 ) -> Path:
@@ -222,6 +255,7 @@ def freeze_v4_candidate(
     packets: Mapping[str, dict[str, Any]],
     executions: Mapping[str, dict[str, Any]],
     environments: Mapping[str, dict[str, Any]],
+    surface_verifications: Mapping[str, dict[str, str]],
     source_roots: Mapping[str, dict[str, str]],
     bundle: Mapping[str, str | Path],
     provider_snapshot: dict[str, Any],
@@ -243,9 +277,14 @@ def freeze_v4_candidate(
     }
     if (
         len(workload_ids) != 6
+        or not isinstance(packets, Mapping)
         or set(packets) != workload_ids
+        or not isinstance(executions, Mapping)
         or set(executions) != workload_ids
+        or not isinstance(environments, Mapping)
         or set(environments) != workload_ids
+        or not isinstance(surface_verifications, Mapping)
+        or set(surface_verifications) != workload_ids
     ):
         raise ValueError("freeze_input_coverage_invalid")
     validate_grant = grant_validator or _default_grant_validator
@@ -290,6 +329,11 @@ def freeze_v4_candidate(
             workload=workload,
             source_root=source_root,
         )
+        surface_verification = _surface_verification(
+            surface_verifications[workload_id],
+            source_root=source_root,
+            source_commit=workload["source_commit"],
+        )
         children = execution["grant"]["children"]
         upgraded = {
             key: deepcopy(packet[key])
@@ -303,7 +347,7 @@ def freeze_v4_candidate(
             )
         }
         upgraded.update({
-            "schema_version": "omc-product-value-execution-packet/v2",
+            "schema_version": "omc-product-value-execution-packet/v3",
             "omc_execution": execution,
             "baseline_execution_brief": acceptance.build_baseline_execution_brief(
                 packet["request"],
@@ -312,6 +356,7 @@ def freeze_v4_candidate(
                 execution["prompts"],
             ),
             "environment_receipt": environment,
+            "direct_surface_verification": surface_verification,
         })
         workload["execution_packet_sha256"] = canonical_sha256(upgraded)
         workload["environment_receipt_sha256"] = canonical_sha256(environment)
@@ -356,6 +401,215 @@ def _write_json(path: Path, value: Any) -> None:
     path.write_text(
         json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+    )
+
+
+def _load_json(path: str | Path) -> Any:
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("freeze_input_file_invalid") from error
+
+
+def prepare_v4_inputs(
+    *,
+    workloads: list[dict[str, Any]],
+    executions: Mapping[str, dict[str, Any]],
+    environment_specs: Mapping[str, dict[str, Any]],
+    source_roots: Mapping[str, dict[str, str]],
+    provider_snapshot: dict[str, Any],
+    limits: dict[str, int],
+) -> dict[str, Any]:
+    """Bind approved execution and environment specs before candidate freeze."""
+    provider, bounded_limits = _validate_provider_and_limits(
+        provider_snapshot, limits
+    )
+    if not isinstance(workloads, list) or len(workloads) != 6:
+        raise ValueError("freeze_input_coverage_invalid")
+    workload_by_id = {
+        item.get("workload_id"): item
+        for item in workloads
+        if isinstance(item, dict) and isinstance(item.get("workload_id"), str)
+    }
+    workload_ids = set(workload_by_id)
+    if (
+        len(workload_ids) != 6
+        or not isinstance(executions, Mapping)
+        or set(executions) != workload_ids
+        or not isinstance(environment_specs, Mapping)
+        or set(environment_specs) != workload_ids
+    ):
+        raise ValueError("freeze_input_coverage_invalid")
+    environments: dict[str, dict[str, Any]] = {}
+    prepared_executions: dict[str, dict[str, Any]] = {}
+    surface_verifications: dict[str, dict[str, str]] = {}
+    for workload_id in sorted(workload_ids):
+        workload = workload_by_id[workload_id]
+        execution = deepcopy(executions[workload_id])
+        if (
+            not isinstance(execution, dict)
+            or set(execution) != {"grant", "prompts"}
+            or not isinstance(execution.get("grant"), dict)
+            or not isinstance(execution.get("prompts"), dict)
+            or execution["prompts"] != execution["grant"].get("child_prompts")
+            or any(
+                execution["grant"].get(field) != bounded_limits[field]
+                for field in bounded_limits
+            )
+        ):
+            raise ValueError("freeze_execution_invalid")
+        spec = environment_specs[workload_id]
+        expected_spec_fields = {
+            "dependency_lock_path",
+            "runtime_identity_path",
+            "cache_path",
+            "readiness",
+            "direct_surface_verification_path",
+            "direct_surface_verification_sha256",
+        }
+        if not isinstance(spec, dict) or set(spec) != expected_spec_fields:
+            raise ValueError("freeze_environment_spec_invalid")
+        source_root = _source_root(source_roots, workload)
+        lock = (source_root / str(spec["dependency_lock_path"])).resolve(
+            strict=False
+        )
+        runtime = Path(str(spec["runtime_identity_path"])).resolve(strict=False)
+        cache = Path(str(spec["cache_path"])).resolve(strict=False)
+        try:
+            environment = {
+                "schema_version": "omc-product-value-environment/v3",
+                "source_commit": workload["source_commit"],
+                "dependency_lock_path": spec["dependency_lock_path"],
+                "dependency_lock_sha256": file_sha256(lock),
+                "cache_sha256": cache_inventory_sha256(cache),
+                "runtime_identity_path": str(runtime),
+                "runtime_identity_sha256": file_sha256(runtime),
+                "cache_path": str(cache),
+                "readiness": deepcopy(spec["readiness"]),
+            }
+        except OSError as error:
+            raise ValueError("freeze_environment_invalid") from error
+        environments[workload_id] = _environment(
+            environment, workload=workload, source_root=source_root
+        )
+        prepared_executions[workload_id] = execution
+        surface_verifications[workload_id] = _surface_verification(
+            {
+                "path": spec["direct_surface_verification_path"],
+                "sha256": spec["direct_surface_verification_sha256"],
+            },
+            source_root=source_root,
+            source_commit=workload["source_commit"],
+        )
+    prepared = {
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "status": "inputs_prepared",
+        "executions": prepared_executions,
+        "environments": environments,
+        "surface_verifications": surface_verifications,
+        "provider_snapshot": provider,
+        "limits": bounded_limits,
+    }
+    prepared["inputs_sha256"] = canonical_sha256(prepared)
+    return prepared
+
+
+def write_v4_inputs(value: dict[str, Any], output_root: str | Path) -> dict[str, Any]:
+    unsigned = deepcopy(value)
+    expected_hash = unsigned.pop("inputs_sha256", None)
+    if (
+        value.get("schema_version") != INPUT_SCHEMA_VERSION
+        or value.get("status") != "inputs_prepared"
+        or canonical_sha256(unsigned) != expected_hash
+    ):
+        raise ValueError("freeze_inputs_invalid")
+    destination = Path(output_root).expanduser().resolve(strict=False)
+    if destination.exists():
+        raise ValueError("freeze_output_exists")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{destination.name}-", dir=destination.parent)
+    )
+    try:
+        for name in (
+            "executions",
+            "environments",
+            "surface_verifications",
+            "provider_snapshot",
+            "limits",
+        ):
+            _write_json(staging / f"{name.replace('_', '-')}.json", value[name])
+        receipt = {
+            "schema_version": INPUT_SCHEMA_VERSION,
+            "status": "inputs_prepared",
+            "inputs_sha256": expected_hash,
+        }
+        _write_json(staging / "input-receipt.json", receipt)
+        os.replace(staging, destination)
+        return receipt
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
+def _load_corpus(
+    root: Path,
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    workloads = _load_json(root / "workloads.json")
+    source_roots = _load_json(root / "source-roots.json")
+    if not isinstance(workloads, list):
+        raise ValueError("freeze_input_file_invalid")
+    try:
+        packets = {
+            workload["workload_id"]: _load_json(
+                root / "packets" / f"{workload['workload_id']}.json"
+            )
+            for workload in workloads
+        }
+    except (KeyError, TypeError) as error:
+        raise ValueError("freeze_input_file_invalid") from error
+    return workloads, packets, source_roots
+
+
+def _load_prepared_inputs(root: Path) -> dict[str, Any]:
+    value = {
+        "schema_version": INPUT_SCHEMA_VERSION,
+        "status": "inputs_prepared",
+        "executions": _load_json(root / "executions.json"),
+        "environments": _load_json(root / "environments.json"),
+        "surface_verifications": _load_json(root / "surface-verifications.json"),
+        "provider_snapshot": _load_json(root / "provider-snapshot.json"),
+        "limits": _load_json(root / "limits.json"),
+    }
+    receipt = _load_json(root / "input-receipt.json")
+    value["inputs_sha256"] = canonical_sha256(value)
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schema_version") != INPUT_SCHEMA_VERSION
+        or receipt.get("status") != "inputs_prepared"
+        or receipt.get("inputs_sha256") != value["inputs_sha256"]
+    ):
+        raise ValueError("freeze_inputs_invalid")
+    return value
+
+
+def _bundle_from_args(args: argparse.Namespace) -> dict[str, Path]:
+    return {name: Path(getattr(args, name)) for name in BUNDLE_PATH_FIELDS}
+
+
+def _candidate_from_files(args: argparse.Namespace) -> dict[str, Any]:
+    workloads, packets, source_roots = _load_corpus(Path(args.corpus_root))
+    prepared = _load_prepared_inputs(Path(args.input_root))
+    return freeze_v4_candidate(
+        workloads=workloads,
+        packets=packets,
+        executions=prepared["executions"],
+        environments=prepared["environments"],
+        surface_verifications=prepared["surface_verifications"],
+        source_roots=source_roots,
+        bundle=_bundle_from_args(args),
+        provider_snapshot=prepared["provider_snapshot"],
+        limits=prepared["limits"],
     )
 
 
@@ -409,3 +663,106 @@ def write_v4_candidate(
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+
+
+def validate_v4_candidate(
+    candidate: dict[str, Any], candidate_root: str | Path
+) -> dict[str, Any]:
+    root = Path(candidate_root).expanduser().resolve(strict=False)
+    try:
+        stored = _load_json(root / "candidate.json")
+        stored_workloads = _load_json(root / "workloads.json")
+        stored_contract = _load_json(root / "execution-contract.json")
+        packet_root = root / "packets"
+        expected_packet_names = {
+            f"{workload_id}.json" for workload_id in candidate["packets"]
+        }
+        actual_packet_names = {
+            path.name for path in packet_root.iterdir() if path.is_file()
+        }
+        if actual_packet_names != expected_packet_names:
+            raise ValueError("freeze_candidate_artifact_mismatch")
+        stored_packets = {
+            workload_id: _load_json(packet_root / f"{workload_id}.json")
+            for workload_id in candidate["packets"]
+        }
+        receipt = _load_json(root / "freeze-receipt.json")
+    except (KeyError, OSError, TypeError, ValueError) as error:
+        if isinstance(error, ValueError) and str(error) == "freeze_candidate_artifact_mismatch":
+            raise
+        raise ValueError("freeze_candidate_artifact_mismatch") from error
+    if stored != candidate:
+        raise ValueError("freeze_candidate_mismatch")
+    if (
+        stored_workloads != candidate["workloads"]
+        or stored_contract != candidate["execution_contract"]
+        or stored_packets != candidate["packets"]
+    ):
+        raise ValueError("freeze_candidate_artifact_mismatch")
+    expected = candidate.get("candidate_sha256")
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schema_version") != SCHEMA_VERSION
+        or receipt.get("status") != "candidate_frozen"
+        or receipt.get("candidate_sha256") != expected
+        or receipt.get("workloads_sha256")
+        != canonical_sha256(candidate["workloads"])
+        or receipt.get("execution_contract_sha256")
+        != canonical_sha256(candidate["execution_contract"])
+        or receipt.get("packet_sha256s")
+        != {
+            workload_id: canonical_sha256(packet)
+            for workload_id, packet in sorted(candidate["packets"].items())
+        }
+    ):
+        raise ValueError("freeze_receipt_invalid")
+    return {"status": "valid", "candidate_sha256": expected}
+
+
+def _add_bundle_arguments(parser: argparse.ArgumentParser) -> None:
+    for name in BUNDLE_PATH_FIELDS:
+        parser.add_argument(f"--{name.replace('_', '-')}", required=True, type=Path)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    prepare_inputs = sub.add_parser("prepare-inputs")
+    prepare_inputs.add_argument("--corpus-root", required=True, type=Path)
+    prepare_inputs.add_argument("--execution-specs", required=True, type=Path)
+    prepare_inputs.add_argument("--environment-specs", required=True, type=Path)
+    prepare_inputs.add_argument("--provider-snapshot", required=True, type=Path)
+    prepare_inputs.add_argument("--limits", required=True, type=Path)
+    prepare_inputs.add_argument("--out", required=True, type=Path)
+    prepare = sub.add_parser("prepare")
+    validate = sub.add_parser("validate")
+    for command in (prepare, validate):
+        command.add_argument("--corpus-root", required=True, type=Path)
+        command.add_argument("--input-root", required=True, type=Path)
+        _add_bundle_arguments(command)
+    prepare.add_argument("--out", required=True, type=Path)
+    validate.add_argument("--candidate-root", required=True, type=Path)
+    args = parser.parse_args(argv)
+    if args.command == "prepare-inputs":
+        workloads, _packets, source_roots = _load_corpus(args.corpus_root)
+        value = prepare_v4_inputs(
+            workloads=workloads,
+            executions=_load_json(args.execution_specs),
+            environment_specs=_load_json(args.environment_specs),
+            source_roots=source_roots,
+            provider_snapshot=_load_json(args.provider_snapshot),
+            limits=_load_json(args.limits),
+        )
+        result = write_v4_inputs(value, args.out)
+    elif args.command == "prepare":
+        result = write_v4_candidate(_candidate_from_files(args), args.out)
+    else:
+        result = validate_v4_candidate(
+            _candidate_from_files(args), args.candidate_root
+        )
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
