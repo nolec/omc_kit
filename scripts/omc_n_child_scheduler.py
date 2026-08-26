@@ -223,19 +223,19 @@ def build_process_provider_runner(
 def _proposal_from_grant(
     grant: dict[str, Any], trusted_target: str | Path
 ) -> dict[str, Any]:
-    return build_n_child_dag_proposal(
-        trusted_target,
-        {
-            "schema_version": grant.get("schema_version"),
-            "dag_id": grant.get("dag_id"),
-            "execution_mode": grant.get("execution_mode"),
-            "execution_requested": grant.get("execution_requested"),
-            "children": deepcopy(grant.get("children")),
-            "child_grants": deepcopy(grant.get("child_grants")),
-            "child_prompts": deepcopy(grant.get("child_prompts")),
-            "aggregate_budget": deepcopy(grant.get("aggregate_budget")),
-        },
-    )
+    request = {
+        "schema_version": grant.get("schema_version"),
+        "dag_id": grant.get("dag_id"),
+        "execution_mode": grant.get("execution_mode"),
+        "execution_requested": grant.get("execution_requested"),
+        "children": deepcopy(grant.get("children")),
+        "child_grants": deepcopy(grant.get("child_grants")),
+        "child_prompts": deepcopy(grant.get("child_prompts")),
+        "aggregate_budget": deepcopy(grant.get("aggregate_budget")),
+    }
+    if "target_binding" in grant:
+        request["target_binding"] = deepcopy(grant["target_binding"])
+    return build_n_child_dag_proposal(trusted_target, request)
 
 
 def _validate_grant(
@@ -288,6 +288,8 @@ def _validate_grant(
         "aggregate_budget_sha256",
         "proposal_sha256",
     )
+    if "target_binding" in grant or "target_binding" in proposal:
+        proposal_fields += ("target_binding",)
     if any(grant.get(field) != proposal.get(field) for field in proposal_fields):
         return None, None, _blocked("dag_grant_binding_mismatch")
 

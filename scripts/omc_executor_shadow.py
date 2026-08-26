@@ -647,7 +647,10 @@ def _proposal_hash_payload(proposal: dict[str, Any]) -> dict[str, Any]:
         "prompt_sha256s",
         "aggregate_budget_sha256",
     )
-    return {key: deepcopy(proposal.get(key)) for key in keys}
+    payload = {key: deepcopy(proposal.get(key)) for key in keys}
+    if "target_binding" in proposal:
+        payload["target_binding"] = deepcopy(proposal["target_binding"])
+    return payload
 
 
 def build_n_child_dag_proposal(
@@ -666,6 +669,7 @@ def build_n_child_dag_proposal(
     child_grants = request.get("child_grants")
     child_prompts = request.get("child_prompts")
     budget = request.get("aggregate_budget")
+    target_binding = request.get("target_binding")
     if (
         request.get("schema_version") != "omc-n-child-dag/v2"
         or not isinstance(dag_id, str)
@@ -681,7 +685,11 @@ def build_n_child_dag_proposal(
     if not _dag_graph_is_valid(children):
         return _dag_proposal_blocked("dag_graph_invalid")
 
-    scope_result = canonicalize_child_scopes(trusted_target, children)
+    scope_result = canonicalize_child_scopes(
+        trusted_target,
+        children,
+        target_binding=target_binding,
+    )
     if scope_result.get("status") != "ready":
         return _dag_proposal_blocked(str(scope_result.get("reason_code")))
     normalized_children = scope_result["children"]
@@ -746,6 +754,8 @@ def build_n_child_dag_proposal(
         },
         "aggregate_budget_sha256": _canonical_sha256(budget),
     }
+    if target_binding is not None:
+        proposal["target_binding"] = deepcopy(target_binding)
     proposal["proposal_sha256"] = _canonical_sha256(
         _proposal_hash_payload(proposal)
     )
@@ -773,6 +783,7 @@ def build_n_child_dag_v2_grant(
     scope_result = canonicalize_child_scopes(
         trusted_target,
         proposal.get("children"),
+        target_binding=proposal.get("target_binding"),
     )
     if scope_result.get("status") != "ready":
         return _dag_blocked(str(scope_result.get("reason_code")))
@@ -807,6 +818,11 @@ def build_n_child_dag_v2_grant(
             "child_grants": deepcopy(child_grants),
             "child_prompts": deepcopy(proposal.get("child_prompts")),
             "aggregate_budget": deepcopy(proposal.get("aggregate_budget")),
+            **(
+                {"target_binding": deepcopy(proposal["target_binding"])}
+                if "target_binding" in proposal
+                else {}
+            ),
         },
     )
     if rebuilt_proposal != proposal:
