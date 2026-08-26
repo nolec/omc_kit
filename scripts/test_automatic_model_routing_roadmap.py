@@ -77,7 +77,11 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "baseline 대비 성공률은 같거나 높고" in text
     assert "시간·token·개입 횟수는 사전 등록된 개선 기준을 충족" in text
     assert "Product Value preregistration 계약 완료" in text
-    assert "canonical workload·pair 순서·execution packet 해시" in text
+    assert (
+        "canonical workload·pair 순서·execution packet·environment receipt 해시"
+        in text
+    )
+    assert "immutable runner·arm adapter·scheduler·provider adapter bundle" in text
     assert "이 상태는 `claim_eligible=false`" in text
     assert "Product Value 중립 등록 검증 경로 완료" in text
     assert "`validate-registration`" in text
@@ -130,14 +134,15 @@ def test_roadmap_tracks_completed_n_child_v2_prerequisites() -> None:
     assert "scope normalization과 child `approval_id` 고유성 정책은 완료" in current
     assert "승인 전 canonical proposal" in current
     assert "acceptance 복합 제한 분류 완료" in current
-    assert "실제 v2 grant·child prompt·dependency·aggregate budget" in current
+    assert "승인된 v2 grant·child prompt·dependency·scope·aggregate budget" in current
     assert (
-        "3. authoritative acceptance 진입점으로 고정된 실제 3–5 child 작업의 "
-        "성공·실패·timeout receipt를 수집한다."
+        "3. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 "
+        "수집한다."
     ) in current
     assert "1. P0 선행 정책인 scope normalization" not in current
     assert "V5 bounded N-child scheduler·provider adapter 완료(2026-08-24)" in history
     assert "V5 N-child v2 실행 전 계약 완료(2026-08-24)" in history
+    assert "Product Value v4 실행·환경 무결성 계약 완료(2026-08-26)" in history
 
 
 def test_roadmap_includes_status_board_and_operator_experience_track() -> None:

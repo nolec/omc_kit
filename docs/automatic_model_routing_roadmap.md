@@ -42,12 +42,12 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 - 실패 정책 완료: retry·자동 재분배·fallback·resume 없이 bounded `parent_review`로 전환하고 실패 결과의 patch 적용 차단
 - acceptance 계약 완료: 고정 5-case 카탈로그(성공 2·실패·timeout·scope violation), source commit·request hash·receipt·DAG/child ledger 결속, authoritative reload 전용 최종 판정
 - 합성 E2E 통과: capability handshake·hard token/output limit·process-group timeout·scope/budget 위반 차단을 고정 fixture로 검증; 이 결과는 운영 표본으로 간주하지 않음
-- Product Value preregistration 계약 완료: v1의 prospective 고정 5건과 v2의 등록 계약 호환성을 유지하고, v3는 1건 비판정 pilot과 paired confirmatory 5건, 최소 2개 저장소·2개 구현 유형, canonical workload·pair 순서·execution packet 해시, repository alias↔identity 일대일 매핑, 관측 창·등록 authority, provider/model/reasoning/adapter snapshot, 실행 한도와 판정 threshold를 `frozen` manifest로 고정한다. 이 상태는 `claim_eligible=false`이며 등록 완료나 운영 acceptance를 의미하지 않는다.
+- Product Value preregistration 계약 완료: v1의 prospective 고정 5건과 v2·v3 등록 계약 호환성을 유지한다. v4는 1건 비판정 pilot과 paired confirmatory 5건, 최소 2개 저장소·2개 구현 유형, canonical workload·pair 순서·execution packet·environment receipt 해시, repository alias↔identity 일대일 매핑, 관측 창·등록 authority, provider/model/reasoning snapshot, immutable runner·arm adapter·scheduler·provider adapter bundle, 환경 정책, 실행 한도와 판정 threshold를 `frozen` manifest로 고정한다. 이 상태는 `claim_eligible=false`이며 등록 완료나 운영 acceptance를 의미하지 않는다.
 - Product Value 중립 등록 검증 경로 완료: Git registry의 exact preregistration record·ancestor와 RFC 3161 claim·authority·관측 시작 전 timestamp·receipt digest를 공통 primitive로 검증하고, Product Value schema v2의 `prepare-v2` → `registry-record` → `prepare-receipt` → `validate-registration` 경로를 연결했다. 정확한 registry anchor와 유효한 receipt를 모두 통과한 경우에만 `claim_eligible=true`다. 실제 외부 registration receipt와 운영 acceptance는 아직 확보하지 않았다.
-- Product Value paired acceptance harness 완료: schema v3 manifest와 등록 gate를 소비해 각 workload의 OMC/baseline arm을 동일 commit의 격리 clone에서 사전 등록 순서대로 실행한다. pilot 성공 전 confirmatory를 차단하고 token·runner 실측 elapsed·개입·review·scope·budget·중복 실행 telemetry와 raw output·verification·DAG/child ledger를 hash-bound artifact로 남긴다. clone·checkout·provider·verification·diff 수집은 하나의 elapsed budget을 공유하고 verification 출력도 등록된 상한으로 제한하며 malformed 응답·timeout·출력 초과를 `parent_review` receipt로 보존한다. phase별 OS 배타 잠금으로 중복 provider 실행을 호출 전에 차단하고, 완성된 index까지 임시 경로에서 만든 뒤 원자적으로 공개한다. 최종 판정은 저장된 원문을 authoritative reload해 confirmatory 5쌍의 모든 arm 성공을 전제로 비교하며 합성 E2E는 운영 표본으로 간주하지 않는다.
+- Product Value paired acceptance harness 완료: schema v3 호환 경로와 schema v4 manifest·등록 gate를 소비해 각 workload의 OMC/baseline arm을 동일 commit의 격리 clone에서 사전 등록 순서대로 실행한다. v4 OMC arm은 승인된 v2 grant·child prompt·dependency·scope·aggregate budget을 bounded scheduler에 전달하고 baseline arm은 같은 provider adapter의 single-agent brief를 사용한다. 실행 bundle hash와 provider attestation을 검증하며 dependency lock·read-only cache inventory·readiness runtime identity를 실행 전후 재측정해 drift·timeout·malformed 입력을 `parent_review`로 보존한다. pilot 성공 전 confirmatory를 차단하고 token·runner 실측 elapsed·개입·review·scope·budget·중복 실행 telemetry와 raw output·verification·DAG/child ledger를 hash-bound artifact로 남긴다. 최종 판정은 저장된 원문과 environment receipt 결속을 authoritative reload해 confirmatory 5쌍의 모든 arm 성공을 전제로 비교하며 합성 E2E는 운영 표본으로 간주하지 않는다.
 - acceptance 복합 제한 분류 완료: verification timeout과 출력 상한 초과가 동시에 발생해도 timeout return code와 출력 초과 `parent_review` reason·`budget_violations`를 함께 보존한다.
 - corpus 준비 완료: implementation completion receipt에서 선정한 실제 구현 workload 6건(1건 비판정 pilot과 동일 조건 paired 5건)을 정답 commit history가 없는 단일-commit 격리 source snapshot으로 재구성하고 request·DoD·verification·교차 실행 순서를 packet hash에 결속했다. private source mapping은 외부 payload에서 분리한다.
-- 현재 병목: Product Value packet은 `expected_child_count`만 고정하고 실제 v2 grant·child prompt·dependency·aggregate budget을 결속하지 않으며, 이 계약을 실행할 immutable Product Value arm adapter도 아직 없다. 실제 실행 전에 packet schema가 승인된 grant와 prompts를 hash-bound 입력으로 포함하고 adapter가 OMC arm은 bounded scheduler, baseline arm은 동일 provider single-agent 경로로 실행하도록 구현·검증한다. 이후 exact Git registry record와 실제 외부 RFC 3161 registration receipt를 관측 전에 확보·검증한 뒤 `run-pilot` → `run-confirmatory` → `finalize`를 실행한다.
+- 현재 병목: 실행 계약과 fail-close 환경 무결성 경로는 구현·회귀 검증됐지만, v4 packet·execution bundle을 고정한 exact Git registry record와 실제 외부 RFC 3161 registration receipt가 아직 없다. 관측 전에 이를 확보·검증한 뒤 준비된 실제 workload 6건을 `run-pilot` → `run-confirmatory` → `finalize` 순서로 실행해 single-agent baseline 대비 제품 가치를 판정한다.
 - 완료 기준: 실제 3–5 child 작업에서 중복 실행·범위 침범·예산 초과 없이 완료하고 실패·timeout이 같은 parent review 계약으로 수렴
 
 ### Operational Obligation
@@ -135,10 +135,10 @@ Oh My Claude Code `v4.15.10` 비교에서 확인한 운영 증거·자동 복구
 
 ## 다음 실행 순서
 
-1. Product Value packet에 승인된 v2 grant·child prompts·dependency·budget을 hash-bound 입력으로 추가하고 OMC/baseline arm adapter를 구현한다.
-2. 준비된 실제 workload 6건의 packet·adapter를 동결하고 외부 registration receipt를 확보한다.
-3. authoritative acceptance 진입점으로 고정된 실제 3–5 child 작업의 성공·실패·timeout receipt를 수집한다.
-4. 같은 작업의 single-agent baseline과 성공률·시간·token·개입 telemetry를 비교한다.
+1. 준비된 실제 workload 6건의 v4 packet과 immutable execution bundle을 동결하고 exact Git registry record·외부 RFC 3161 registration receipt를 확보한다.
+2. authoritative acceptance 진입점으로 pilot 1건을 실행하고 성공 gate를 확인한다.
+3. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 수집한다.
+4. 같은 작업의 single-agent baseline과 성공률·시간·token·개입 telemetry를 비교하고 `finalize` 판정을 발행한다.
 5. 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
 6. Plan Batch B와 native Review 독립 검증을 계속해 대체 판정을 갱신한다.
 7. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.

@@ -112,6 +112,46 @@ def _workloads_v3() -> list[dict[str, object]]:
     return workloads
 
 
+def _workloads_v4() -> list[dict[str, object]]:
+    workloads = _workloads_v3()
+    for index, workload in enumerate(workloads, start=1):
+        workload["environment_receipt_sha256"] = f"{index + 6:x}" * 64
+    return workloads
+
+
+def _execution_contract_v4() -> dict[str, object]:
+    return {
+        "provider_snapshot": {
+            "provider_family": "codex",
+            "model": "gpt-5.3-codex",
+            "reasoning_profile": "high",
+            "backend_sha256": "a" * 64,
+        },
+        "limits": {
+            "max_total_tokens": 10_000,
+            "max_total_elapsed_sec": 600,
+            "max_output_chars": 100_000,
+        },
+        "runner_schema": "omc-product-value-acceptance/v2",
+        "telemetry_schema": "omc-product-value-telemetry/v1",
+        "execution_bundle": {
+            "acceptance_runner_sha256": "b" * 64,
+            "arm_adapter_sha256": "c" * 64,
+            "scheduler_sha256": "d" * 64,
+            "provider_adapter_sha256": "e" * 64,
+        },
+        "environment_policy": {
+            "receipt_schema": "omc-product-value-environment/v3",
+            "probe_schema": "omc-product-value-environment-probe/v1",
+            "cache_inventory_schema": "omc-product-value-cache-inventory/v1",
+            "cache_inventory_max_entries": 10_000,
+            "cache_inventory_max_bytes": 1_073_741_824,
+            "same_readonly_cache_required": True,
+            "preparation_cost_included": False,
+        },
+    }
+
+
 def test_builds_and_validates_five_workload_prospective_contract() -> None:
     manifest = build_preregistration("product-value-batch-1", _workloads())
 
@@ -531,6 +571,137 @@ def test_v3_binds_concrete_execution_contract_and_pair_order(
     assert manifest["workloads"][0]["pair_id"] == "pair-1"
     assert manifest["workloads"][0]["execution_order"] == ["omc", "baseline"]
     assert validate_preregistration(manifest) == manifest
+
+
+def test_v4_binds_bounded_execution_bundle_and_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+
+    manifest = preregistration.build_preregistration_v4(
+        "product-value-batch-4",
+        _workloads_v4(),
+        observed_from="2026-09-01T00:00:00+00:00",
+        observed_through="2026-09-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=_execution_contract_v4(),
+    )
+
+    assert manifest["schema_version"] == "omc-product-value-preregistration/v4"
+    assert manifest["claim_scope"] == "bounded_execution_value_v1"
+    assert manifest["execution_contract"] == _execution_contract_v4()
+    assert validate_preregistration(manifest) == manifest
+
+
+def test_prepare_v4_cli_writes_valid_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    workloads = tmp_path / "workloads.json"
+    authority = tmp_path / "authority.json"
+    contract = tmp_path / "execution-contract.json"
+    output = tmp_path / "manifest.json"
+    workloads.write_text(json.dumps(_workloads_v4()), encoding="utf-8")
+    authority.write_text(
+        json.dumps({"trusted_root_sha256": "c" * 64}), encoding="utf-8"
+    )
+    contract.write_text(json.dumps(_execution_contract_v4()), encoding="utf-8")
+
+    result = preregistration.main([
+        "prepare-v4",
+        "--batch-id",
+        "product-value-batch-4",
+        "--workloads",
+        str(workloads),
+        "--observed-from",
+        "2026-09-01T00:00:00+00:00",
+        "--observed-through",
+        "2026-09-08T00:00:00+00:00",
+        "--registration-authority",
+        str(authority),
+        "--execution-contract",
+        str(contract),
+        "--out",
+        str(output),
+    ])
+
+    assert result == 0
+    assert validate_preregistration(json.loads(output.read_text()))[
+        "schema_version"
+    ] == preregistration.SCHEMA_VERSION_V4
+
+
+def test_omc_cli_accepts_prepare_v4_command() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/omc.py",
+            "product-value-preregistration",
+            "prepare-v4",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "invalid choice" not in result.stderr
+    assert "--batch-id" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason"),
+    [
+        (
+            lambda contract, workloads: contract["execution_bundle"].pop(
+                "scheduler_sha256"
+            ),
+            "execution_contract_invalid",
+        ),
+        (
+            lambda contract, workloads: contract["environment_policy"].update(
+                {"preparation_cost_included": True}
+            ),
+            "execution_contract_invalid",
+        ),
+        (
+            lambda contract, workloads: workloads[0].update(
+                {"environment_receipt_sha256": "invalid"}
+            ),
+            "environment_receipt_sha256_invalid",
+        ),
+    ],
+)
+def test_v4_rejects_incomplete_execution_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+    mutation,
+    reason: str,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    contract = _execution_contract_v4()
+    workloads = _workloads_v4()
+    mutation(contract, workloads)
+
+    with pytest.raises(ValueError, match=reason):
+        preregistration.build_preregistration_v4(
+            "product-value-batch-4",
+            workloads,
+            observed_from="2026-09-01T00:00:00+00:00",
+            observed_through="2026-09-08T00:00:00+00:00",
+            registration_authority={"trusted_root_sha256": "c" * 64},
+            execution_contract=contract,
+        )
 
 
 @pytest.mark.parametrize(

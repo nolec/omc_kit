@@ -267,6 +267,7 @@ def main() -> int:
             "prepare",
             "prepare-v2",
             "prepare-v3",
+            "prepare-v4",
             "validate",
             "registry-record",
             "prepare-receipt",
@@ -307,6 +308,8 @@ def main() -> int:
     product_value_acceptance.add_argument("--source-roots", type=Path)
     product_value_acceptance.add_argument("--artifact-root", type=Path)
     product_value_acceptance.add_argument("--arm-adapter", type=Path)
+    product_value_acceptance.add_argument("--scheduler", type=Path)
+    product_value_acceptance.add_argument("--provider-adapter", type=Path)
     product_value_acceptance.add_argument("--out", type=Path)
 
     peer_review = sub.add_parser("peer-review", help="Run peer-review of the latest uncommitted changes.")
@@ -657,6 +660,8 @@ def main() -> int:
             "source_roots",
             "artifact_root",
             "arm_adapter",
+            "scheduler",
+            "provider_adapter",
             "out",
         ):
             value = getattr(args, option)

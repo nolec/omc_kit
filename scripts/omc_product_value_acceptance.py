@@ -9,8 +9,10 @@ import fcntl
 import hashlib
 import json
 import math
+import os
 from pathlib import Path, PurePosixPath
 import shutil
+import stat
 import statistics
 import subprocess
 import tempfile
@@ -22,11 +24,15 @@ from omc_n_child_scheduler import _run_bounded_adapter_command
 
 
 SCHEMA_VERSION = "omc-product-value-acceptance/v1"
+SCHEMA_VERSION_V2 = "omc-product-value-acceptance/v2"
 PACKET_SCHEMA_VERSION = "omc-product-value-execution-packet/v1"
+PACKET_SCHEMA_VERSION_V2 = "omc-product-value-execution-packet/v2"
 TELEMETRY_SCHEMA_VERSION = "omc-product-value-telemetry/v1"
 ARM_PROTOCOL = "omc-product-value-arm/v1"
 ARMS = ("omc", "baseline")
 REVIEW_SEVERITIES = {"critical", "major", "minor", "suggestion"}
+CACHE_INVENTORY_MAX_ENTRIES = 10_000
+CACHE_INVENTORY_MAX_BYTES = 1_073_741_824
 
 
 def canonical_sha256(value: Any) -> str:
@@ -81,15 +87,72 @@ def _load_envelope(path: Path) -> tuple[dict[str, Any], str]:
     return payload, digest
 
 
-def _validate_v3_manifest(payload: Any) -> dict[str, Any]:
+def _validate_acceptance_manifest(payload: Any) -> dict[str, Any]:
     manifest = preregistration.validate_preregistration(payload)
-    if manifest.get("schema_version") != preregistration.SCHEMA_VERSION_V3:
-        raise ValueError("acceptance_requires_preregistration_v3")
-    if manifest["execution_contract"]["runner_schema"] != SCHEMA_VERSION:
+    schema = manifest.get("schema_version")
+    expected_runner = {
+        preregistration.SCHEMA_VERSION_V3: SCHEMA_VERSION,
+        preregistration.SCHEMA_VERSION_V4: SCHEMA_VERSION_V2,
+    }.get(schema)
+    if expected_runner is None:
+        raise ValueError("acceptance_requires_paired_preregistration")
+    if manifest["execution_contract"]["runner_schema"] != expected_runner:
         raise ValueError("acceptance_runner_schema_mismatch")
     if manifest["execution_contract"]["telemetry_schema"] != TELEMETRY_SCHEMA_VERSION:
         raise ValueError("acceptance_telemetry_schema_mismatch")
     return manifest
+
+
+def build_baseline_execution_brief(
+    request: str,
+    dod: str,
+    children: list[dict[str, Any]],
+    prompts: dict[str, str],
+) -> str:
+    if (
+        not isinstance(request, str)
+        or not request.strip()
+        or not isinstance(dod, str)
+        or not dod.strip()
+        or not isinstance(children, list)
+        or not 3 <= len(children) <= 5
+        or not isinstance(prompts, dict)
+    ):
+        raise ValueError("baseline_execution_brief_input_invalid")
+    steps: list[dict[str, Any]] = []
+    child_ids: list[str] = []
+    for child in children:
+        if not isinstance(child, dict):
+            raise ValueError("baseline_execution_brief_input_invalid")
+        child_id = child.get("child_id")
+        depends_on = child.get("depends_on")
+        scope_paths = child.get("scope_paths")
+        if (
+            not isinstance(child_id, str)
+            or not child_id.strip()
+            or not isinstance(depends_on, list)
+            or not all(isinstance(item, str) and item for item in depends_on)
+            or not isinstance(scope_paths, list)
+            or not all(isinstance(item, str) and item for item in scope_paths)
+            or not isinstance(prompts.get(child_id), str)
+            or not prompts[child_id].strip()
+        ):
+            raise ValueError("baseline_execution_brief_input_invalid")
+        child_ids.append(child_id)
+        steps.append({
+            "child_id": child_id,
+            "depends_on": depends_on,
+            "scope_paths": scope_paths,
+            "instruction": prompts[child_id],
+        })
+    if len(set(child_ids)) != len(child_ids) or set(prompts) != set(child_ids):
+        raise ValueError("baseline_execution_brief_input_invalid")
+    return json.dumps(
+        {"request": request, "dod": dod, "steps": steps},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _default_registration_validator(
@@ -156,7 +219,9 @@ def _valid_verification(value: Any) -> bool:
 def validate_execution_packet(
     manifest: dict[str, Any], workload: dict[str, Any], packet: Any
 ) -> dict[str, Any]:
-    manifest = _validate_v3_manifest(manifest)
+    manifest = _validate_acceptance_manifest(manifest)
+    if manifest["schema_version"] == preregistration.SCHEMA_VERSION_V4:
+        return _validate_execution_packet_v2(manifest, workload, packet)
     if (
         not isinstance(packet, dict)
         or set(packet) != {
@@ -201,6 +266,176 @@ def validate_execution_packet(
             != ("bounded_n_child" if arm == "omc" else "single_agent")
         ):
             raise ValueError("execution_packet_arm_invalid")
+    return deepcopy(packet)
+
+
+def _validate_execution_packet_v2(
+    manifest: dict[str, Any], workload: dict[str, Any], packet: Any
+) -> dict[str, Any]:
+    expected_fields = {
+        "schema_version",
+        "workload_id",
+        "repo_alias",
+        "source_commit",
+        "request",
+        "dod",
+        "verification",
+        "omc_execution",
+        "baseline_execution_brief",
+        "environment_receipt",
+    }
+    if (
+        not isinstance(packet, dict)
+        or set(packet) != expected_fields
+        or packet.get("schema_version") != PACKET_SCHEMA_VERSION_V2
+        or packet.get("workload_id") != workload["workload_id"]
+        or packet.get("repo_alias") != workload["repo_alias"]
+        or packet.get("source_commit") != workload["source_commit"]
+        or not isinstance(packet.get("request"), str)
+        or not packet["request"].strip()
+        or not isinstance(packet.get("dod"), str)
+        or not packet["dod"].strip()
+        or not _valid_verification(packet.get("verification"))
+    ):
+        raise ValueError("execution_packet_invalid")
+    if (
+        canonical_sha256(packet) != workload["execution_packet_sha256"]
+        or canonical_sha256(packet["request"]) != workload["request_sha256"]
+        or canonical_sha256(packet["dod"]) != workload["dod_sha256"]
+        or canonical_sha256(packet["verification"])
+        != workload["verification_sha256"]
+    ):
+        raise ValueError("execution_packet_hash_mismatch")
+    execution = packet.get("omc_execution")
+    if not isinstance(execution, dict) or set(execution) != {"grant", "prompts"}:
+        raise ValueError("execution_packet_omc_input_invalid")
+    grant = execution.get("grant")
+    prompts = execution.get("prompts")
+    if (
+        not isinstance(grant, dict)
+        or grant.get("schema_version") != "omc-n-child-dag/v2"
+        or grant.get("mode") != "n_child_dag_grant"
+        or grant.get("status") != "ready"
+        or grant.get("execution_allowed") is not True
+        or grant.get("scheduler_eligible") is not True
+        or not isinstance(grant.get("children"), list)
+        or len(grant["children"]) != workload["expected_child_count"]
+        or not isinstance(prompts, dict)
+        or prompts != grant.get("child_prompts")
+    ):
+        raise ValueError("execution_packet_omc_input_invalid")
+    child_ids = [
+        child.get("child_id") if isinstance(child, dict) else None
+        for child in grant["children"]
+    ]
+    if (
+        any(not isinstance(child_id, str) or not child_id for child_id in child_ids)
+        or len(set(child_ids)) != len(child_ids)
+        or set(prompts) != set(child_ids)
+        or any(
+            not isinstance(prompts[child_id], str) or not prompts[child_id].strip()
+            for child_id in child_ids
+        )
+    ):
+        raise ValueError("execution_packet_omc_input_invalid")
+    child_id_set = set(child_ids)
+    dependencies: dict[str, list[str]] = {}
+    for child in grant["children"]:
+        depends_on = child.get("depends_on")
+        scope_paths = child.get("scope_paths")
+        if (
+            not isinstance(depends_on, list)
+            or any(
+                not isinstance(dependency, str)
+                or dependency not in child_id_set
+                or dependency == child["child_id"]
+                for dependency in depends_on
+            )
+            or len(set(depends_on)) != len(depends_on)
+            or not isinstance(scope_paths, list)
+            or not scope_paths
+            or any(
+                not isinstance(scope, str)
+                or not scope
+                or not _in_scope(scope, workload["scope_paths"])
+                for scope in scope_paths
+            )
+        ):
+            raise ValueError("execution_packet_omc_input_invalid")
+        dependencies[child["child_id"]] = depends_on
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(child_id: str) -> None:
+        if child_id in visiting:
+            raise ValueError("execution_packet_omc_input_invalid")
+        if child_id in visited:
+            return
+        visiting.add(child_id)
+        for dependency in dependencies[child_id]:
+            visit(dependency)
+        visiting.remove(child_id)
+        visited.add(child_id)
+
+    for child_id in child_ids:
+        visit(child_id)
+    limits = manifest["execution_contract"]["limits"]
+    if any(
+        grant.get(field) != limits[field]
+        for field in (
+            "max_total_tokens",
+            "max_total_elapsed_sec",
+            "max_output_chars",
+        )
+    ):
+        raise ValueError("execution_packet_omc_input_invalid")
+    try:
+        expected_brief = build_baseline_execution_brief(
+            packet["request"], packet["dod"], grant["children"], prompts
+        )
+    except ValueError as error:
+        raise ValueError("execution_packet_omc_input_invalid") from error
+    if packet.get("baseline_execution_brief") != expected_brief:
+        raise ValueError("execution_packet_baseline_brief_invalid")
+    environment = packet.get("environment_receipt")
+    if (
+        not isinstance(environment, dict)
+        or set(environment) != {
+            "schema_version",
+            "source_commit",
+            "dependency_lock_path",
+            "dependency_lock_sha256",
+            "cache_sha256",
+            "runtime_identity_path",
+            "runtime_identity_sha256",
+            "cache_path",
+            "readiness",
+        }
+        or environment.get("schema_version")
+        != "omc-product-value-environment/v3"
+        or environment.get("source_commit") != workload["source_commit"]
+        or any(
+            not _is_sha256(environment.get(field))
+            for field in (
+                "dependency_lock_sha256",
+                "cache_sha256",
+                "runtime_identity_sha256",
+            )
+        )
+        or not isinstance(environment.get("cache_path"), str)
+        or not Path(environment["cache_path"]).is_absolute()
+        or not isinstance(environment.get("runtime_identity_path"), str)
+        or not Path(environment["runtime_identity_path"]).is_absolute()
+        or not _valid_verification(environment.get("readiness"))
+        or not Path(environment["readiness"]["argv"][0]).is_absolute()
+        or Path(environment["runtime_identity_path"]).expanduser().resolve()
+        != Path(environment["readiness"]["argv"][0]).expanduser().resolve()
+        or not isinstance(environment.get("dependency_lock_path"), str)
+        or not _safe_relative_path(environment["dependency_lock_path"])
+        or canonical_sha256(environment)
+        != workload["environment_receipt_sha256"]
+    ):
+        raise ValueError("execution_packet_environment_mismatch")
     return deepcopy(packet)
 
 
@@ -268,6 +503,16 @@ def _in_scope(path: str, scopes: list[str]) -> bool:
         candidate == PurePosixPath(scope.rstrip("/"))
         or PurePosixPath(scope.rstrip("/")) in candidate.parents
         for scope in scopes
+    )
+
+
+def _safe_relative_path(path: str) -> bool:
+    candidate = PurePosixPath(path)
+    return bool(
+        path
+        and not candidate.is_absolute()
+        and candidate.parts
+        and all(part not in {"", ".", ".."} for part in candidate.parts)
     )
 
 
@@ -340,14 +585,70 @@ def _validated_result(result: Any, limits: dict[str, int]) -> dict[str, Any]:
 def build_process_arm_executor(
     adapter_path: str | Path,
     provider_snapshot: dict[str, Any],
+    *,
+    adapter_sha256: str | None = None,
+    execution_bundle: dict[str, Any] | None = None,
+    scheduler_path: str | Path | None = None,
+    provider_adapter_path: str | Path | None = None,
 ) -> Callable[..., dict[str, Any]]:
     source = Path(adapter_path).expanduser().resolve()
-    if not source.is_file() or canonical_file_sha256(source) != provider_snapshot["adapter_sha256"]:
-        raise ValueError("provider_snapshot_mismatch")
+    bundle_sources: dict[str, Path] = {}
+    expected_hashes: dict[str, str] = {}
+    if execution_bundle is None:
+        expected_sha256 = adapter_sha256 or provider_snapshot.get("adapter_sha256")
+        if (
+            not _is_sha256(expected_sha256)
+            or not source.is_file()
+        ):
+            raise ValueError("provider_snapshot_mismatch")
+        bundle_sources = {"arm_adapter": source}
+        expected_hashes = {"arm_adapter": expected_sha256}
+    else:
+        expected_fields = {
+            "acceptance_runner_sha256",
+            "arm_adapter_sha256",
+            "scheduler_sha256",
+            "provider_adapter_sha256",
+        }
+        if (
+            set(execution_bundle) != expected_fields
+            or scheduler_path is None
+            or provider_adapter_path is None
+        ):
+            raise ValueError("execution_bundle_mismatch")
+        bundle_sources = {
+            "acceptance_runner": Path(__file__).resolve(),
+            "arm_adapter": source,
+            "scheduler": Path(scheduler_path).expanduser().resolve(),
+            "provider_adapter": Path(provider_adapter_path).expanduser().resolve(),
+        }
+        for name, path in bundle_sources.items():
+            expected_sha256 = execution_bundle[f"{name}_sha256"]
+            if (
+                not _is_sha256(expected_sha256)
+                or not path.is_file()
+            ):
+                raise ValueError("execution_bundle_mismatch")
+            expected_hashes[name] = expected_sha256
     runtime = tempfile.TemporaryDirectory(prefix="omc-product-value-adapter-")
-    adapter = Path(runtime.name) / "arm-adapter"
-    shutil.copy2(source, adapter)
-    adapter.chmod(0o500)
+    immutable_snapshots: dict[str, Path] = {}
+    try:
+        for name, path in bundle_sources.items():
+            snapshot = Path(runtime.name) / name.replace("_", "-")
+            shutil.copy2(path, snapshot)
+            if canonical_file_sha256(snapshot) != expected_hashes[name]:
+                raise ValueError(
+                    "execution_bundle_mismatch"
+                    if execution_bundle is not None
+                    else "provider_snapshot_mismatch"
+                )
+            snapshot.chmod(0o500 if name != "acceptance_runner" else 0o400)
+            immutable_snapshots[name] = snapshot
+    except (OSError, ValueError):
+        runtime.cleanup()
+        raise
+    adapter = immutable_snapshots["arm_adapter"]
+    bundle_snapshots = immutable_snapshots if execution_bundle is not None else {}
     capability = _run_bounded_adapter_command(
         [str(adapter), "capabilities"],
         timeout_sec=10,
@@ -382,6 +683,10 @@ def build_process_arm_executor(
             "limits": kwargs["limits"],
             "artifact_root": str(kwargs["arm_artifact"].resolve()),
         }
+        if bundle_snapshots:
+            request["execution_bundle"] = {
+                name: str(path) for name, path in bundle_snapshots.items()
+            }
         proc = _run_bounded_adapter_command(
             [str(adapter), "execute"],
             cwd=kwargs["workspace"],
@@ -402,12 +707,89 @@ def build_process_arm_executor(
     return execute
 
 
-def canonical_file_sha256(path: Path) -> str:
+def canonical_file_sha256(
+    path: Path,
+    *,
+    deadline: float | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+        while True:
+            if deadline is not None and monotonic() >= deadline:
+                raise ValueError("cache_inventory_timeout")
+            chunk = source.read(1024 * 1024)
+            if not chunk:
+                break
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def canonical_cache_inventory_sha256(
+    root: Path,
+    *,
+    max_entries: int = CACHE_INVENTORY_MAX_ENTRIES,
+    max_total_bytes: int = CACHE_INVENTORY_MAX_BYTES,
+    require_readonly: bool = False,
+    deadline: float | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> str:
+    if not root.is_dir() or root.is_symlink():
+        raise ValueError("cache_inventory_invalid")
+    if require_readonly and stat.S_IMODE(root.stat().st_mode) & (
+        stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+    ):
+        raise ValueError("cache_inventory_invalid")
+    rows: list[dict[str, Any]] = []
+    total_bytes = 0
+    entry_count = 0
+    pending = [root]
+    try:
+        while pending:
+            current = pending.pop()
+            with os.scandir(current) as entries:
+                for candidate in entries:
+                    if deadline is not None and monotonic() >= deadline:
+                        raise ValueError("cache_inventory_timeout")
+                    entry_count += 1
+                    if entry_count > max_entries:
+                        raise ValueError("cache_inventory_limit")
+                    entry = Path(candidate.path)
+                    if candidate.is_symlink():
+                        raise ValueError("cache_inventory_invalid")
+                    metadata = candidate.stat(follow_symlinks=False)
+                    if require_readonly and stat.S_IMODE(metadata.st_mode) & (
+                        stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH
+                    ):
+                        raise ValueError("cache_inventory_invalid")
+                    relative = entry.relative_to(root).as_posix()
+                    if candidate.is_dir(follow_symlinks=False):
+                        rows.append({"path": relative, "type": "directory"})
+                        pending.append(entry)
+                        continue
+                    if not candidate.is_file(follow_symlinks=False):
+                        raise ValueError("cache_inventory_invalid")
+                    total_bytes += metadata.st_size
+                    if total_bytes > max_total_bytes:
+                        raise ValueError("cache_inventory_limit")
+                    rows.append({
+                        "path": relative,
+                        "type": "file",
+                        "size": metadata.st_size,
+                        "sha256": canonical_file_sha256(
+                            entry,
+                            deadline=deadline,
+                            monotonic=monotonic,
+                        ),
+                    })
+    except OSError as error:
+        raise ValueError("cache_inventory_invalid") from error
+    rows.sort(key=lambda row: row["path"])
+    return canonical_sha256({
+        "schema_version": "omc-product-value-cache-inventory/v1",
+        "entries": rows,
+        "total_bytes": total_bytes,
+    })
 
 
 def _failed_arm_result(reason_code: str) -> dict[str, Any]:
@@ -451,6 +833,114 @@ def _mark_arm_failure(
     if budget_violation:
         failed["budget_violations"] = max(1, failed["budget_violations"])
     return failed
+
+
+def _environment_readiness_failure(
+    packet: dict[str, Any],
+    workspace: Path,
+    *,
+    timeout_sec: float,
+    max_response_bytes: int,
+) -> dict[str, Any] | None:
+    environment = packet.get("environment_receipt")
+    if environment is None:
+        return None
+    deadline = time.monotonic() + timeout_sec
+    try:
+        readiness = _run_bounded_adapter_command(
+            environment["readiness"]["argv"],
+            cwd=workspace,
+            timeout_sec=timeout_sec,
+            max_response_bytes=max_response_bytes,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return _failed_arm_result("environment_readiness_unavailable")
+    if readiness["timed_out"]:
+        failure = _failed_arm_result("environment_readiness_timeout")
+        failure["budget_violations"] = 1
+        return failure
+    if readiness["limit_exceeded"]:
+        failure = _failed_arm_result("environment_readiness_output_limit")
+        failure["budget_violations"] = 1
+        return failure
+    if readiness["returncode"] != 0:
+        return _failed_arm_result("environment_readiness_failed")
+    try:
+        probe = json.loads(readiness["stdout"])
+    except (TypeError, json.JSONDecodeError):
+        return _failed_arm_result("environment_readiness_mismatch")
+    expected_probe = {
+        "schema_version": "omc-product-value-environment-probe/v1",
+        "source_commit": environment.get("source_commit"),
+        "dependency_lock_sha256": environment.get("dependency_lock_sha256"),
+        "cache_sha256": environment.get("cache_sha256"),
+        "runtime_identity_sha256": environment.get("runtime_identity_sha256"),
+        "cache_path": environment.get("cache_path"),
+        "cache_readonly": True,
+    }
+    if probe != expected_probe:
+        return _failed_arm_result("environment_readiness_mismatch")
+    measurement_error = _environment_measurement_error(
+        environment,
+        workspace,
+        deadline=deadline,
+    )
+    if measurement_error == "timeout":
+        failure = _failed_arm_result("environment_readiness_timeout")
+        failure["budget_violations"] = 1
+        return failure
+    if measurement_error is not None:
+        return _failed_arm_result("environment_readiness_mismatch")
+    return None
+
+
+def _environment_measurement_error(
+    environment: dict[str, Any],
+    workspace: Path,
+    *,
+    deadline: float,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> str | None:
+    cache_path = Path(environment["cache_path"])
+    try:
+        if environment.get("schema_version") == "omc-product-value-environment/v2":
+            canonical_cache_inventory_sha256(
+                cache_path,
+                require_readonly=True,
+                deadline=deadline,
+                monotonic=monotonic,
+            )
+            return None
+        lock_relative = PurePosixPath(environment["dependency_lock_path"])
+        lock_path = workspace.joinpath(*lock_relative.parts)
+        runtime_path = Path(environment["runtime_identity_path"])
+        if (
+            lock_path.is_symlink()
+            or not lock_path.is_file()
+            or runtime_path.is_symlink()
+            or not runtime_path.is_file()
+            or canonical_file_sha256(
+                lock_path, deadline=deadline, monotonic=monotonic
+            )
+            != environment["dependency_lock_sha256"]
+            or canonical_cache_inventory_sha256(
+                cache_path,
+                require_readonly=True,
+                deadline=deadline,
+                monotonic=monotonic,
+            )
+            != environment["cache_sha256"]
+            or canonical_file_sha256(
+                runtime_path, deadline=deadline, monotonic=monotonic
+            )
+            != environment["runtime_identity_sha256"]
+        ):
+            return "mismatch"
+    except ValueError as error:
+        return "timeout" if str(error) == "cache_inventory_timeout" else "mismatch"
+    except OSError:
+        return "mismatch"
+    return None
 
 
 def _acquire_phase_claim(artifact_root: Path, phase: str) -> Any:
@@ -532,15 +1022,35 @@ def _run_arm(
                         raw_result = _failed_arm_result("source_checkout_failed")
                     else:
                         workspace_ready = True
+        execution_ready = workspace_ready
+        if execution_ready and packet.get("environment_receipt") is not None:
+            readiness_started = _clock_value(monotonic, minimum=clone_finished)
+            readiness_budget = _remaining_elapsed(deadline, readiness_started)
+            if readiness_budget <= 0:
+                raw_result = _failed_arm_result("environment_readiness_timeout")
+                raw_result["budget_violations"] = 1
+                execution_ready = False
+            else:
+                readiness_failure = _environment_readiness_failure(
+                    packet,
+                    workspace,
+                    timeout_sec=readiness_budget,
+                    max_response_bytes=manifest["execution_contract"]["limits"][
+                        "max_output_chars"
+                    ],
+                )
+                if readiness_failure is not None:
+                    raw_result = readiness_failure
+                    execution_ready = False
         provider_started = _clock_value(monotonic, minimum=clone_finished)
         arm_limits = deepcopy(manifest["execution_contract"]["limits"])
         arm_limits["max_total_elapsed_sec"] = _remaining_elapsed(
             deadline, provider_started
         )
-        if workspace_ready and arm_limits["max_total_elapsed_sec"] <= 0:
+        if execution_ready and arm_limits["max_total_elapsed_sec"] <= 0:
             raw_result = _failed_arm_result("execution_budget_exhausted")
             raw_result["budget_violations"] = 1
-        elif workspace_ready:
+        elif execution_ready:
             try:
                 raw_result = _validated_result(
                     arm_executor(
@@ -558,6 +1068,33 @@ def _run_arm(
                 )
             except Exception:
                 raw_result = _failed_arm_result("provider_result_invalid")
+            if (
+                packet.get("environment_receipt") is not None
+                and raw_result["status"] == "completed"
+                and raw_result.get("environment_receipt_sha256")
+                != workload["environment_receipt_sha256"]
+            ):
+                raw_result = _mark_arm_failure(
+                    raw_result,
+                    "provider_environment_attestation_mismatch",
+                )
+        if (
+            execution_ready
+            and raw_result["status"] == "completed"
+            and packet.get("environment_receipt") is not None
+        ):
+            postcheck_error = _environment_measurement_error(
+                packet["environment_receipt"],
+                workspace,
+                deadline=deadline,
+                monotonic=monotonic,
+            )
+            if postcheck_error is not None:
+                raw_result = _mark_arm_failure(
+                    raw_result,
+                    "environment_changed_after_execution",
+                    budget_violation=postcheck_error == "timeout",
+                )
         provider_finished = _clock_value(monotonic, minimum=provider_started)
         scheduler_evidence_verified = False
         if arm == "omc" and raw_result["status"] == "completed":
@@ -697,6 +1234,10 @@ def _run_arm(
                 "dag_ledger_sha256": raw_result["dag_ledger_sha256"],
                 "child_ledger_sha256": raw_result["child_ledger_sha256"],
             })
+    if packet.get("environment_receipt") is not None:
+        receipt["environment_receipt_sha256"] = workload[
+            "environment_receipt_sha256"
+        ]
     receipt["success"] = (
         receipt["status"] == "completed"
         and receipt["verification"]["passed"]
@@ -712,6 +1253,14 @@ def _run_arm(
 def _phase_workloads(manifest: dict[str, Any], phase: str) -> list[dict[str, Any]]:
     role = "pilot" if phase == "pilot" else "confirmatory"
     return [item for item in manifest["workloads"] if item["evaluation_role"] == role]
+
+
+def _acceptance_schema_version(manifest: dict[str, Any]) -> str:
+    return (
+        SCHEMA_VERSION_V2
+        if manifest["schema_version"] == preregistration.SCHEMA_VERSION_V4
+        else SCHEMA_VERSION
+    )
 
 
 def _validate_pilot_gate(
@@ -765,7 +1314,7 @@ def run_product_value_phase(
     registration_validator: Callable[..., dict[str, Any]] = _default_registration_validator,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
-    manifest = _validate_v3_manifest(manifest)
+    manifest = _validate_acceptance_manifest(manifest)
     if phase not in {"pilot", "confirmatory"}:
         raise ValueError("acceptance_phase_invalid")
     registration = _registration_gate(
@@ -835,7 +1384,7 @@ def run_product_value_phase(
             else "confirmatory_completed_with_failures"
         )
         result = {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": _acceptance_schema_version(manifest),
             "phase": phase,
             "status": status,
             "manifest_sha256": manifest["preregistration_sha256"],
@@ -864,7 +1413,8 @@ def _load_phase_receipts(
     expected_ids = [item["workload_id"] for item in expected]
     listed = index.get("workloads") if isinstance(index, dict) else None
     if (
-        index.get("manifest_sha256") != manifest["preregistration_sha256"]
+        index.get("schema_version") != _acceptance_schema_version(manifest)
+        or index.get("manifest_sha256") != manifest["preregistration_sha256"]
         or not isinstance(listed, list)
         or [item.get("workload_id") for item in listed] != expected_ids
     ):
@@ -889,6 +1439,7 @@ def _load_phase_receipts(
                 != workload["execution_packet_sha256"]
             ):
                 raise ValueError("artifact_binding_mismatch")
+            _validate_environment_receipt_binding(manifest, workload, receipt)
             arm_artifact = (
                 artifact_root / phase / workload["workload_id"] / f"{arm}-artifacts"
             )
@@ -936,6 +1487,19 @@ def _load_phase_receipts(
     return receipts
 
 
+def _validate_environment_receipt_binding(
+    manifest: dict[str, Any],
+    workload: dict[str, Any],
+    receipt: dict[str, Any],
+) -> None:
+    if (
+        manifest["schema_version"] == preregistration.SCHEMA_VERSION_V4
+        and receipt.get("environment_receipt_sha256")
+        != workload["environment_receipt_sha256"]
+    ):
+        raise ValueError("artifact_environment_binding_mismatch")
+
+
 def _arm_metrics(receipts: list[dict[str, Any]], arm: str) -> dict[str, Any]:
     selected = [item for item in receipts if item["arm"] == arm]
     return {
@@ -959,7 +1523,7 @@ def _arm_metrics(receipts: list[dict[str, Any]], arm: str) -> dict[str, Any]:
 def finalize_product_value_acceptance(
     manifest: dict[str, Any], artifact_root: str | Path
 ) -> dict[str, Any]:
-    manifest = _validate_v3_manifest(manifest)
+    manifest = _validate_acceptance_manifest(manifest)
     artifact_root = Path(artifact_root).resolve()
     registration, _ = _load_envelope(artifact_root / "registration-gate.json")
     if (
@@ -1007,7 +1571,7 @@ def finalize_product_value_acceptance(
         ),
     }
     report = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": _acceptance_schema_version(manifest),
         "status": "finalized",
         "manifest_sha256": manifest["preregistration_sha256"],
         "registration_receipt_sha256": registration[
@@ -1036,10 +1600,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-roots", type=Path)
     parser.add_argument("--artifact-root", type=Path)
     parser.add_argument("--arm-adapter", type=Path)
+    parser.add_argument("--scheduler", type=Path)
+    parser.add_argument("--provider-adapter", type=Path)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
     try:
-        manifest = _validate_v3_manifest(_load_json(args.manifest))
+        manifest = _validate_acceptance_manifest(_load_json(args.manifest))
         if args.command == "validate":
             result = {
                 "status": "ready",
@@ -1061,9 +1627,23 @@ def main(argv: list[str] | None = None) -> int:
                 )
             ):
                 raise ValueError("acceptance_execution_input_required")
+            contract = manifest["execution_contract"]
+            is_v4 = (
+                manifest["schema_version"] == preregistration.SCHEMA_VERSION_V4
+            )
+            if is_v4 and (args.scheduler is None or args.provider_adapter is None):
+                raise ValueError("acceptance_execution_bundle_input_required")
             executor = build_process_arm_executor(
                 args.arm_adapter,
-                manifest["execution_contract"]["provider_snapshot"],
+                contract["provider_snapshot"],
+                adapter_sha256=(
+                    contract["execution_bundle"]["arm_adapter_sha256"]
+                    if is_v4
+                    else None
+                ),
+                execution_bundle=contract.get("execution_bundle") if is_v4 else None,
+                scheduler_path=args.scheduler,
+                provider_adapter_path=args.provider_adapter,
             )
             result = run_product_value_phase(
                 manifest,

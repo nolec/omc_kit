@@ -19,6 +19,7 @@ import omc_rfc3161_timestamp as rfc3161
 SCHEMA_VERSION_V1 = "omc-product-value-preregistration/v1"
 SCHEMA_VERSION_V2 = "omc-product-value-preregistration/v2"
 SCHEMA_VERSION_V3 = "omc-product-value-preregistration/v3"
+SCHEMA_VERSION_V4 = "omc-product-value-preregistration/v4"
 SCHEMA_VERSION = SCHEMA_VERSION_V1
 WORKLOAD_FIELDS = {
     "workload_id",
@@ -39,6 +40,7 @@ WORKLOAD_V3_FIELDS = WORKLOAD_V2_FIELDS | {
     "execution_order",
     "execution_packet_sha256",
 }
+WORKLOAD_V4_FIELDS = WORKLOAD_V3_FIELDS | {"environment_receipt_sha256"}
 SELECTION_POLICY = {
     "mode": "prospective_fixed_universe",
     "required_workload_count": 5,
@@ -112,6 +114,7 @@ MANIFEST_V2_FIELDS = MANIFEST_FIELDS | {
     "registration_authority",
 }
 MANIFEST_V3_FIELDS = MANIFEST_V2_FIELDS | {"execution_contract"}
+MANIFEST_V4_FIELDS = MANIFEST_V3_FIELDS
 
 
 def canonical_sha256(value: Any) -> str:
@@ -219,17 +222,85 @@ def _validate_execution_contract(value: Any) -> dict[str, Any]:
     return deepcopy(value)
 
 
+def _validate_execution_contract_v4(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {
+        "provider_snapshot",
+        "limits",
+        "runner_schema",
+        "telemetry_schema",
+        "execution_bundle",
+        "environment_policy",
+    }:
+        raise ValueError("execution_contract_invalid")
+    provider = value.get("provider_snapshot")
+    if not isinstance(provider, dict) or set(provider) != {
+        "provider_family",
+        "model",
+        "reasoning_profile",
+        "backend_sha256",
+    }:
+        raise ValueError("execution_contract_invalid")
+    if any(
+        not isinstance(provider.get(field), str) or not provider[field].strip()
+        for field in ("provider_family", "model", "reasoning_profile")
+    ) or not _is_sha256(provider.get("backend_sha256")):
+        raise ValueError("execution_contract_invalid")
+    limits = value.get("limits")
+    if not isinstance(limits, dict) or set(limits) != {
+        "max_total_tokens",
+        "max_total_elapsed_sec",
+        "max_output_chars",
+    } or any(
+        not isinstance(limits.get(field), int)
+        or isinstance(limits[field], bool)
+        or limits[field] <= 0
+        for field in limits
+    ):
+        raise ValueError("execution_contract_invalid")
+    bundle = value.get("execution_bundle")
+    if not isinstance(bundle, dict) or set(bundle) != {
+        "acceptance_runner_sha256",
+        "arm_adapter_sha256",
+        "scheduler_sha256",
+        "provider_adapter_sha256",
+    } or any(not _is_sha256(bundle.get(field)) for field in bundle):
+        raise ValueError("execution_contract_invalid")
+    if value.get("environment_policy") != {
+        "receipt_schema": "omc-product-value-environment/v3",
+        "probe_schema": "omc-product-value-environment-probe/v1",
+        "cache_inventory_schema": "omc-product-value-cache-inventory/v1",
+        "cache_inventory_max_entries": 10_000,
+        "cache_inventory_max_bytes": 1_073_741_824,
+        "same_readonly_cache_required": True,
+        "preparation_cost_included": False,
+    }:
+        raise ValueError("execution_contract_invalid")
+    if (
+        value.get("runner_schema") != "omc-product-value-acceptance/v2"
+        or value.get("telemetry_schema") != "omc-product-value-telemetry/v1"
+    ):
+        raise ValueError("execution_contract_invalid")
+    return deepcopy(value)
+
+
 def _validate_workloads(
     workloads: Any,
     *,
     schema_version: str = SCHEMA_VERSION_V1,
 ) -> list[dict[str, Any]]:
-    is_evaluation = schema_version in {SCHEMA_VERSION_V2, SCHEMA_VERSION_V3}
-    is_v3 = schema_version == SCHEMA_VERSION_V3
+    is_evaluation = schema_version in {
+        SCHEMA_VERSION_V2,
+        SCHEMA_VERSION_V3,
+        SCHEMA_VERSION_V4,
+    }
+    is_paired = schema_version in {SCHEMA_VERSION_V3, SCHEMA_VERSION_V4}
+    is_v4 = schema_version == SCHEMA_VERSION_V4
     required_count = 6 if is_evaluation else 5
     expected_fields = (
-        WORKLOAD_V3_FIELDS
-        if is_v3
+        WORKLOAD_V4_FIELDS
+        if is_v4
+        else WORKLOAD_V3_FIELDS
+        if is_paired
         else WORKLOAD_V2_FIELDS
         if is_evaluation
         else WORKLOAD_FIELDS
@@ -268,7 +339,7 @@ def _validate_workloads(
             if evaluation_role not in {"pilot", "confirmatory"}:
                 raise ValueError("evaluation_role_invalid")
             evaluation_roles.append(evaluation_role)
-        if is_v3:
+        if is_paired:
             pair_id = workload.get("pair_id")
             if not isinstance(pair_id, str) or not pair_id.strip():
                 raise ValueError("pair_id_invalid")
@@ -282,6 +353,8 @@ def _validate_workloads(
             if not _is_sha256(workload.get("execution_packet_sha256")):
                 raise ValueError("execution_packet_sha256_invalid")
             pair_ids.add(pair_id)
+        if is_v4 and not _is_sha256(workload.get("environment_receipt_sha256")):
+            raise ValueError("environment_receipt_sha256_invalid")
         if not isinstance(workload.get("source_commit"), str) or re.fullmatch(
             r"[0-9a-f]{40}", workload["source_commit"]
         ) is None:
@@ -381,6 +454,46 @@ def build_preregistration_v3(
     return validate_preregistration(manifest)
 
 
+def build_preregistration_v4(
+    batch_id: str,
+    workloads: Any,
+    *,
+    observed_from: str,
+    observed_through: str,
+    registration_authority: dict[str, Any],
+    execution_contract: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(batch_id, str) or not batch_id.strip():
+        raise ValueError("batch_id_invalid")
+    manifest = {
+        "schema_version": SCHEMA_VERSION_V4,
+        "status": "frozen",
+        "batch_id": batch_id.strip(),
+        "claim_scope": "bounded_execution_value_v1",
+        "selection_policy": deepcopy(SELECTION_POLICY_V2),
+        "pilot_contract": deepcopy(PILOT_CONTRACT),
+        "comparison_contract": deepcopy(COMPARISON_CONTRACT),
+        "intervention_contract": deepcopy(INTERVENTION_CONTRACT),
+        "thresholds": deepcopy(THRESHOLDS),
+        "workloads": _validate_workloads(
+            workloads,
+            schema_version=SCHEMA_VERSION_V4,
+        ),
+        "observation_window": _validate_observation_window({
+            "observed_from": observed_from,
+            "observed_through": observed_through,
+        }),
+        "registration_authority": _validate_registration_authority(
+            registration_authority
+        ),
+        "execution_contract": _validate_execution_contract_v4(
+            execution_contract
+        ),
+    }
+    manifest["preregistration_sha256"] = canonical_sha256(manifest)
+    return validate_preregistration(manifest)
+
+
 def build_preregistration_v2(
     batch_id: str,
     workloads: Any,
@@ -428,6 +541,8 @@ def validate_preregistration(payload: Any) -> dict[str, Any]:
         if schema_version == SCHEMA_VERSION_V2
         else MANIFEST_V3_FIELDS
         if schema_version == SCHEMA_VERSION_V3
+        else MANIFEST_V4_FIELDS
+        if schema_version == SCHEMA_VERSION_V4
         else None
     )
     if fields is None or set(payload) != fields:
@@ -448,6 +563,7 @@ def validate_preregistration(payload: Any) -> dict[str, Any]:
         SCHEMA_VERSION_V1: "product_value_paired_v1",
         SCHEMA_VERSION_V2: "product_value_paired_v2",
         SCHEMA_VERSION_V3: "product_value_paired_v3",
+        SCHEMA_VERSION_V4: "bounded_execution_value_v1",
     }[schema_version]
     if payload.get("claim_scope") != expected_claim_scope:
         raise ValueError("claim_scope_invalid")
@@ -471,18 +587,24 @@ def validate_preregistration(payload: Any) -> dict[str, Any]:
     )
     if payload["workloads"] != validated_workloads:
         raise ValueError("workload_order_invalid")
-    if schema_version in {SCHEMA_VERSION_V2, SCHEMA_VERSION_V3}:
+    if schema_version in {SCHEMA_VERSION_V2, SCHEMA_VERSION_V3, SCHEMA_VERSION_V4}:
         _validate_observation_window(payload.get("observation_window"))
         _validate_registration_authority(payload.get("registration_authority"))
     if schema_version == SCHEMA_VERSION_V3:
         _validate_execution_contract(payload.get("execution_contract"))
+    if schema_version == SCHEMA_VERSION_V4:
+        _validate_execution_contract_v4(payload.get("execution_contract"))
     validated = deepcopy(payload)
     return validated
 
 
 def _validated_registered_schema(payload: Any) -> dict[str, Any]:
     validated = validate_preregistration(payload)
-    if validated["schema_version"] not in {SCHEMA_VERSION_V2, SCHEMA_VERSION_V3}:
+    if validated["schema_version"] not in {
+        SCHEMA_VERSION_V2,
+        SCHEMA_VERSION_V3,
+        SCHEMA_VERSION_V4,
+    }:
         raise ValueError("registration_requires_v2")
     return validated
 
@@ -597,6 +719,14 @@ def main(argv: list[str] | None = None) -> int:
     prepare_v3.add_argument("--registration-authority", type=Path, required=True)
     prepare_v3.add_argument("--execution-contract", type=Path, required=True)
     prepare_v3.add_argument("--out", type=Path, required=True)
+    prepare_v4 = sub.add_parser("prepare-v4")
+    prepare_v4.add_argument("--batch-id", required=True)
+    prepare_v4.add_argument("--workloads", type=Path, required=True)
+    prepare_v4.add_argument("--observed-from", required=True)
+    prepare_v4.add_argument("--observed-through", required=True)
+    prepare_v4.add_argument("--registration-authority", type=Path, required=True)
+    prepare_v4.add_argument("--execution-contract", type=Path, required=True)
+    prepare_v4.add_argument("--out", type=Path, required=True)
     validate = sub.add_parser("validate")
     validate.add_argument("--manifest", type=Path, required=True)
     registry_record = sub.add_parser("registry-record")
@@ -654,6 +784,22 @@ def main(argv: list[str] | None = None) -> int:
             }
         elif args.command == "prepare-v3":
             manifest = build_preregistration_v3(
+                args.batch_id,
+                _load_json(args.workloads),
+                observed_from=args.observed_from,
+                observed_through=args.observed_through,
+                registration_authority=_load_json(args.registration_authority),
+                execution_contract=_load_json(args.execution_contract),
+            )
+            _write_json(args.out, manifest)
+            result = {
+                "claim_eligible": False,
+                "preregistration_sha256": manifest["preregistration_sha256"],
+                "registration_required": True,
+                "status": manifest["status"],
+            }
+        elif args.command == "prepare-v4":
+            manifest = build_preregistration_v4(
                 args.batch_id,
                 _load_json(args.workloads),
                 observed_from=args.observed_from,
