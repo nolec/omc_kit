@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -54,6 +55,7 @@ import omc_utils
 import omc_cost
 import omc_exec
 import omc_output_contract as omc_output
+import omc_autopilot_workflow as autopilot_workflow
 import omc_orchestrator
 from omc_decision_input import (
     build_next_priority_surface_input,
@@ -1144,6 +1146,14 @@ def cmd_run(
         print(f"[AUTOPILOT] 태스크 파일 파싱 오류: {exc}")
         return 1
 
+    workflow_v2 = task.get("schema_version") == autopilot_workflow.SCHEMA_VERSION
+    if workflow_v2:
+        workflow_errors = autopilot_workflow.validate_task_spec(task)
+        if workflow_errors:
+            print(f"[AUTOPILOT] workflow 계약 오류: {', '.join(workflow_errors)}")
+            return 1
+    task_spec_hash = autopilot_workflow.task_spec_sha256(task) if workflow_v2 else None
+
     task_id = task.get("id") or task_file.stem
     title = task.get("title", task_id)
     require_clean_scope = bool(task.get("require_clean_scope", False))
@@ -1192,6 +1202,21 @@ def cmd_run(
         print(f"[AUTOPILOT] {exc}")
         return 1
 
+    if workflow_v2:
+        recorded_task_hash = state.get("task_spec_sha256")
+        if recorded_task_hash and recorded_task_hash != task_spec_hash:
+            state["status"] = "failed"
+            state["failure_reason"] = "task_spec_hash_mismatch"
+            _save_state(root, task_id, state)
+            print("[AUTOPILOT] task spec hash mismatch — 기존 상태를 재사용할 수 없습니다.")
+            return 1
+        if state.get("stale_reason"):
+            state["status"] = "manual_reconciliation_required"
+            state["failure_reason"] = "stale_external_execution_requires_reconciliation"
+            _save_state(root, task_id, state)
+            print("[AUTOPILOT] 이전 실행이 provider 호출 중 종료됐습니다. 중복 실행 방지를 위해 수동 대조가 필요합니다.")
+            return 1
+
     print(f"\n[AUTOPILOT] ▶ 태스크 시작: {title}")
     print(f"           executor={executor}  스텝={len(steps)}개  max_retries={max_retries}")
     if dry_run:
@@ -1205,6 +1230,8 @@ def cmd_run(
     state["started_at"] = state.get("started_at") or _now()
     state["status"] = "running"
     state["simulated"] = bool(dry_run)
+    if task_spec_hash:
+        state["task_spec_sha256"] = task_spec_hash
     execution_started_monotonic = time.monotonic()
     if "completion_requires_real_runs" in task:
         state["completion_requires_real_runs"] = completion_requires_real_runs
@@ -1231,6 +1258,34 @@ def cmd_run(
         # dry-run으로만 완료된 step은 실제 실행에서 다시 돈다.
         existing_step_state = state["steps"].get(sid, {})
         if existing_step_state.get("status") == "completed":
+            if workflow_v2 and not dry_run:
+                predecessor_receipts = [
+                    str(state["steps"][dep]["completion_receipt"]["receipt_sha256"])
+                    for dep in step.get("depends_on", [])
+                    if isinstance(state["steps"].get(dep), dict)
+                    and isinstance(state["steps"][dep].get("completion_receipt"), dict)
+                ]
+                current_artifact_hash, current_artifact_error = (
+                    autopilot_workflow.validate_completion_artifact(root, step)
+                )
+                receipt = existing_step_state.get("completion_receipt")
+                if (
+                    len(predecessor_receipts) != len(step.get("depends_on", []))
+                    or current_artifact_error
+                    or not isinstance(receipt, dict)
+                    or receipt.get("artifact_sha256") != current_artifact_hash
+                    or not autopilot_workflow.completion_receipt_valid(
+                        existing_step_state.get("completion_receipt"),
+                        task=task,
+                        step=step,
+                        predecessor_receipts=predecessor_receipts,
+                    )
+                ):
+                    state["status"] = "failed"
+                    state["failure_reason"] = "completion_receipt_missing_or_invalid"
+                    _save_state(root, task_id, state)
+                    print(f"[AUTOPILOT] {sid}: 완료 receipt가 없거나 현재 workflow와 일치하지 않습니다.")
+                    return 1
             if dry_run or not _step_state_is_simulated(existing_step_state):
                 print(f"  [SKIP] {sid}: {step_title} (이미 완료)")
                 continue
@@ -1259,6 +1314,19 @@ def cmd_run(
         if blocked:
             _save_state(root, task_id, state)
             continue
+
+        if workflow_v2 and not dry_run and not autopilot_workflow.approval_receipt_valid(
+            root, task=task, step=step
+        ):
+            state["status"] = "waiting_step_approval"
+            state["waiting_step_id"] = sid
+            state["steps"][sid] = {
+                "status": "waiting_approval",
+                "approval_gate": step.get("approval_gate"),
+            }
+            _save_state(root, task_id, state)
+            print(f"[AUTOPILOT] ⏸ {sid}: exact payload 승인이 필요합니다.")
+            return autopilot_workflow.APPROVAL_REQUIRED_EXIT_CODE
 
         print(f"\n  [STEP {sid}] {step_title}")
         prompt_preview = textwrap.shorten(step.get("prompt", ""), width=80)
@@ -1310,6 +1378,11 @@ def cmd_run(
             step_with_prompt = {**step, "prompt": active_prompt}
             cost_info = None
             step_runtime = None
+            completion_snapshot_before = (
+                autopilot_workflow.completion_artifact_snapshot(root, step)
+                if workflow_v2 and not dry_run
+                else None
+            )
 
             if dry_run:
                 print(f"  [DRY-RUN] 스텝 실행 시뮬레이션 (attempt {attempt})")
@@ -1333,9 +1406,19 @@ def cmd_run(
                     step_state["token_usage"] = cost_info["token_usage"]
                     step_state["cost_estimate"] = cost_info["cost_estimate"]
                 if step_runtime is not None:
-                    step_state.update(step_runtime)
+                    runtime_to_store = (
+                        autopilot_workflow.sanitize_step_runtime(step_runtime)
+                        if workflow_v2
+                        else step_runtime
+                    )
+                    step_state.update(runtime_to_store)
 
-            step_state["last_output"] = output[:2000]
+            if workflow_v2:
+                step_state["last_output_diagnostics"] = (
+                    autopilot_workflow.output_diagnostics(output)
+                )
+            else:
+                step_state["last_output"] = output[:2000]
             if bool(step.get("complexity_class_required") is True):
                 step_state.update(_extract_complexity_class(output))
 
@@ -1348,6 +1431,7 @@ def cmd_run(
                 "provider_call_count": int((step_runtime or {}).get("provider_call_count") or 0),
                 "tool_call_count": (step_runtime or {}).get("tool_call_count"),
                 "tool_call_measurement_status": (step_runtime or {}).get("tool_call_measurement_status", "unavailable"),
+                **autopilot_workflow.output_diagnostics(output),
             }
             if cost_info is not None:
                 attempt_record["token_usage"] = cost_info["token_usage"]
@@ -1421,6 +1505,29 @@ def cmd_run(
                     continue
                 else:
                     print(f"  ✅ expect 검증 통과 ({len(check_results)}개)")
+
+            if workflow_v2 and not dry_run:
+                artifact_sha256, completion_error = autopilot_workflow.validate_completion_artifact(root, step)
+                completion_snapshot_after = autopilot_workflow.completion_artifact_snapshot(root, step)
+                if completion_error is None and completion_snapshot_after == completion_snapshot_before:
+                    completion_error = "completion_artifact_unchanged"
+                if completion_error:
+                    last_failures = [{"label": "completion receipt", "output": completion_error}]
+                    step_state["completion_error"] = completion_error
+                    print(f"  ❌ completion 검증 실패: {completion_error}")
+                    if attempt <= max_retries:
+                        continue
+                    break
+                predecessor_receipts = [
+                    str(state["steps"][dep]["completion_receipt"]["receipt_sha256"])
+                    for dep in step.get("depends_on", [])
+                ]
+                step_state["completion_receipt"] = autopilot_workflow.build_completion_receipt(
+                    task=task,
+                    step=step,
+                    artifact_sha256=str(artifact_sha256),
+                    predecessor_receipts=predecessor_receipts,
+                )
 
             step_state["status"] = "completed"
             step_state["completed_at"] = _now()
@@ -1534,6 +1641,46 @@ def cmd_new(root: Path, task_id: str, title: str) -> int:
     out.write_text(json.dumps(template, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[AUTOPILOT] ✅ 태스크 파일 생성: {out.relative_to(root)}")
     print(f"            편집 후 실행: python3 scripts/omc_autopilot.py run --task {out.relative_to(root)}")
+    return 0
+
+
+def cmd_approve(
+    root: Path,
+    *,
+    task_file: Path,
+    step_id: str,
+    payload_sha256: str,
+) -> int:
+    """Record an explicit exact-hash approval for one schema-v2 step."""
+    try:
+        task = json.loads(task_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[AUTOPILOT] 태스크 파일 읽기 실패: {exc}")
+        return 1
+    errors = autopilot_workflow.validate_task_spec(task)
+    if errors:
+        print(f"[AUTOPILOT] workflow 계약 오류: {', '.join(errors)}")
+        return 1
+    step = next((candidate for candidate in task["steps"] if candidate["id"] == step_id), None)
+    if not isinstance(step, dict):
+        print(f"[AUTOPILOT] 승인 대상 step 없음: {step_id}")
+        return 1
+    gate = step.get("approval_gate")
+    if not isinstance(gate, dict):
+        print(f"[AUTOPILOT] approval gate가 없는 step입니다: {step_id}")
+        return 1
+    if payload_sha256 != gate["payload_sha256"]:
+        print("[AUTOPILOT] payload hash가 task spec과 일치하지 않습니다.")
+        return 1
+    receipt_path = autopilot_workflow.write_approval_receipt(
+        root,
+        task_id=str(task["id"]),
+        task_spec_sha256=autopilot_workflow.task_spec_sha256(task),
+        step_id=step_id,
+        approval_id=str(gate["approval_id"]),
+        payload_sha256=payload_sha256,
+    )
+    print(f"[AUTOPILOT] approval receipt 기록: {receipt_path.relative_to(root)}")
     return 0
 
 
@@ -3242,6 +3389,9 @@ def _failed_step_payload(
     rc: int | None = None,
     **extra: object,
 ) -> dict[str, object]:
+    output_text = extra.pop("output_text", None)
+    if isinstance(output_text, str):
+        extra.update(autopilot_workflow.output_diagnostics(output_text))
     verdict_payload = {"verdict": verdict} if verdict else {}
     payload = _step_payload(
         status,
@@ -3289,6 +3439,46 @@ def _step_payload(
     if source_match:
         payload["output_contract_source"] = source_match.group(1)
     return payload
+
+
+def _build_pipeline_task_prompt(instruction: str, plan_output: str) -> str:
+    """Bind the implementation request to the exact PLAN output."""
+    return (
+        "[자동화 모드] 사용자 확인 없이 즉시 실행하세요.\n\n"
+        f"[원래 지시문]\n{instruction}\n\n"
+        f"[확정 PLAN 산출물]\n{plan_output}\n\n"
+        "위 PLAN의 범위와 완료 조건만 TDD로 구현하세요. PLAN 밖 완료 상태를 만들지 마세요.\n"
+        "1. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
+        "2. 구현 후 테스트 GREEN 확인\n"
+        "3. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
+        "만약 `VERDICT: BLOCK`이면 마지막에 `REASON_CODE: bad_entry_skill|metadata_missing|reroute_loop` 중 하나를 출력하세요.\n"
+        "반드시 마지막 줄에 `VERDICT: PROCEED` (성공) 또는 `VERDICT: BLOCK` (실패)를 출력하세요."
+        + _CRITIQUE_QUALITY_HINT
+    )
+
+
+def _pipeline_plan_output_payload(plan_output: str) -> dict[str, str]:
+    """Persist the exact PLAN output needed for a deterministic resume."""
+    return {
+        "output": plan_output,
+        "output_sha256": hashlib.sha256(plan_output.encode("utf-8")).hexdigest(),
+    }
+
+
+def _resume_plan_output(resume_data: dict[str, object]) -> str:
+    """Restore a hash-bound PLAN output or fail closed."""
+    steps = resume_data.get("steps")
+    plan_state = steps.get("plan") if isinstance(steps, dict) else None
+    if not isinstance(plan_state, dict):
+        raise ValueError("resume_plan_output_missing")
+    plan_output = plan_state.get("output")
+    expected_hash = plan_state.get("output_sha256")
+    if not isinstance(plan_output, str) or not plan_output:
+        raise ValueError("resume_plan_output_missing")
+    observed_hash = hashlib.sha256(plan_output.encode("utf-8")).hexdigest()
+    if not isinstance(expected_hash, str) or not hmac.compare_digest(observed_hash, expected_hash):
+        raise ValueError("resume_plan_output_hash_mismatch")
+    return plan_output
 
 
 def _finalize_skipped_pr(result: dict, finished_at: str, *, benchmark: bool = False) -> None:
@@ -4428,7 +4618,45 @@ def cmd_pipeline(
     if _step_already_done(_resume_data, "plan"):
         print("[PIPELINE] ⏭ PLAN 건너뜀 (이미 완료)")
         rc = 0
-        out = "[RESUME] plan skipped"
+        assert _resume_data is not None
+        if _step_already_done(_resume_data, "task"):
+            try:
+                out = _resume_plan_output(_resume_data)
+            except ValueError:
+                out = "[RESUME] completed task does not consume legacy plan output"
+        else:
+            try:
+                out = _resume_plan_output(_resume_data)
+            except ValueError:
+                print("[PIPELINE] ⚠️ legacy PLAN artifact 없음 — exact PLAN 재생성")
+                plan_started_at = _now()
+                rc, out = _run_pipeline_step(
+                    root,
+                    "plan",
+                    plan_prompt,
+                    executor,
+                    STEP_TIMEOUT,
+                    dry_run=dry_run,
+                )
+                plan_finished_at = _now()
+                result["steps"]["plan"] = (
+                    _step_payload(
+                        "completed",
+                        plan_started_at,
+                        plan_finished_at,
+                        output_preview=out[:300],
+                        **_pipeline_plan_output_payload(out),
+                    )
+                    if rc == 0
+                    else _failed_step_payload(
+                        step_name="plan",
+                        status="failed",
+                        started_at=plan_started_at,
+                        finished_at=plan_finished_at,
+                        rc=rc,
+                        output_preview=out[:300],
+                    )
+                )
     else:
         plan_started_at = _now()
         rc, out = _run_pipeline_step(root, "plan", plan_prompt, executor, STEP_TIMEOUT, dry_run=dry_run)
@@ -4439,6 +4667,7 @@ def cmd_pipeline(
                 plan_started_at,
                 plan_finished_at,
                 output_preview=out[:300],
+                **_pipeline_plan_output_payload(out),
             )
             if rc == 0
             else _failed_step_payload(
@@ -4482,17 +4711,7 @@ def cmd_pipeline(
         save("running")
 
     # ── TASK 스텝 ────────────────────────────────────────────────────────
-    task_prompt = (
-        "[자동화 모드] 사용자 확인 없이 즉시 실행하세요.\n\n"
-        f"{instruction}\n\n"
-        "위 계획을 TDD로 구현하세요.\n"
-        "1. 실패하는 테스트 작성 후 `python3 scripts/omc_pipeline_guard.py red-done <파일>` 실행\n"
-        "2. 구현 후 테스트 GREEN 확인\n"
-        "3. `python3 scripts/omc_tdd_check.py --staged` exit 0 확인\n"
-        "만약 `VERDICT: BLOCK`이면 마지막에 `REASON_CODE: bad_entry_skill|metadata_missing|reroute_loop` 중 하나를 출력하세요.\n"
-        "반드시 마지막 줄에 `VERDICT: PROCEED` (성공) 또는 `VERDICT: BLOCK` (실패)를 출력하세요."
-        + _CRITIQUE_QUALITY_HINT
-    )
+    task_prompt = _build_pipeline_task_prompt(instruction, out)
     print("\n[PIPELINE] ▶ TASK 스텝 실행 중...")
     if _step_already_done(_resume_data, "task"):
         print("[PIPELINE] ⏭ TASK 건너뜀 (이미 완료)")
@@ -4552,6 +4771,7 @@ def cmd_pipeline(
                     finished_at=task_finished_at,
                     rc=task_rc,
                     output_preview=task_out[:300],
+                    output_text=task_out,
                 )
             )
     result["last_completed_step"] = "task"
@@ -5221,6 +5441,11 @@ def main() -> int:
     p_new.add_argument("--id", dest="task_id", required=True, help="태스크 ID (파일명)")
     p_new.add_argument("--title", required=True, help="태스크 제목")
 
+    p_approve = sub.add_parser("approve", help="schema v2 step의 exact payload 승인 기록")
+    p_approve.add_argument("--task", type=Path, required=True, help="태스크 JSON 파일 경로")
+    p_approve.add_argument("--step-id", required=True, help="승인할 step ID")
+    p_approve.add_argument("--payload-sha256", required=True, help="승인할 exact payload SHA-256")
+
     p_status = sub.add_parser("status", help="실행 기록 조회")
     p_status.add_argument("--task-id", default=None, help="특정 태스크 ID 조회")
 
@@ -5279,6 +5504,14 @@ def main() -> int:
         )
     if args.cmd == "new":
         return cmd_new(root, args.task_id, args.title)
+    if args.cmd == "approve":
+        task_file = args.task if args.task.is_absolute() else (root / args.task)
+        return cmd_approve(
+            root,
+            task_file=task_file,
+            step_id=args.step_id,
+            payload_sha256=args.payload_sha256,
+        )
     if args.cmd == "status":
         return cmd_status(root, args.task_id)
     if args.cmd == "pipeline-status":
