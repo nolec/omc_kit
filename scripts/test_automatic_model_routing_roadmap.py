@@ -129,9 +129,10 @@ def test_roadmap_tracks_completed_n_child_v2_prerequisites() -> None:
 
     assert "scope normalization과 child `approval_id` 고유성 정책은 완료" in current
     assert "승인 전 canonical proposal" in current
-    assert "verification timeout과 출력 상한 초과가 겹치는 경우" in current
+    assert "acceptance 복합 제한 분류 완료" in current
+    assert "실제 v2 grant·child prompt·dependency·aggregate budget" in current
     assert (
-        "2. authoritative acceptance 진입점으로 고정된 실제 3–5 child 작업의 "
+        "3. authoritative acceptance 진입점으로 고정된 실제 3–5 child 작업의 "
         "성공·실패·timeout receipt를 수집한다."
     ) in current
     assert "1. P0 선행 정책인 scope normalization" not in current

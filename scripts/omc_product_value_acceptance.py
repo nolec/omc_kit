@@ -595,7 +595,7 @@ def _run_arm(
             verification_stderr = verification["stderr"]
             if verification["timed_out"]:
                 verification_returncode = 124
-            elif verification["limit_exceeded"]:
+            if verification["limit_exceeded"]:
                 raw_result = _mark_arm_failure(
                     raw_result,
                     "verification_output_limit_exceeded",

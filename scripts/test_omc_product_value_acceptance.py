@@ -691,6 +691,44 @@ def test_verification_output_limit_becomes_failure_receipt(
     assert stdout.stat().st_size <= 129
 
 
+def test_verification_timeout_preserves_simultaneous_output_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, packet_root, source_roots, registration = _fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        acceptance,
+        "_run_bounded_adapter_command",
+        lambda *_args, **_kwargs: {
+            "returncode": -9,
+            "stdout": "x" * 129,
+            "stderr": "",
+            "timed_out": True,
+            "limit_exceeded": True,
+        },
+    )
+    artifacts = tmp_path / "artifacts"
+
+    result = acceptance.run_product_value_phase(
+        manifest,
+        registration,
+        packet_root=packet_root,
+        source_roots=source_roots,
+        artifact_root=artifacts,
+        phase="pilot",
+        arm_executor=_executor,
+        registration_validator=lambda *_args, **_kwargs: registration,
+    )
+
+    assert result["status"] == "pilot_blocked"
+    omc_receipt, _ = acceptance._load_envelope(
+        artifacts / "pilot" / "workload-1" / "omc.json"
+    )
+    assert omc_receipt["status"] == "parent_review"
+    assert omc_receipt["reason_code"] == "verification_output_limit_exceeded"
+    assert omc_receipt["budget_violations"] == 1
+    assert omc_receipt["verification"]["returncode"] == 124
+
+
 def test_verification_receives_only_remaining_elapsed_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
