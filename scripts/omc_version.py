@@ -93,7 +93,7 @@ def _read_receipt(target: Path) -> tuple[dict[str, Any] | None, str]:
     schema = payload.get("schema_version")
     if schema == 1:
         return payload, "legacy"
-    if schema != 2:
+    if schema not in {2, 3}:
         return None, "invalid"
     version = payload.get("omc_version")
     if not isinstance(version, str):

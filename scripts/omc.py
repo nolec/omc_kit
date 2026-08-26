@@ -16,11 +16,6 @@ def _kit_root() -> Path:
     if direct_install.exists() and (base / "templates").is_dir():
         return base
 
-    nested = base / "omc_kit"
-    nested_install = nested / "scripts" / "install.py"
-    if nested_install.exists() and (nested / "templates").is_dir():
-        return nested
-
     # Last resort: return base even without templates
     if direct_install.exists():
         return base
@@ -140,6 +135,7 @@ def main() -> int:
     argv = sys.argv[1:]
     commands = {
         "setup",
+        "setup-ignore",
         "prompt",
         "autopilot",
         "orchestrate",
@@ -178,6 +174,13 @@ def main() -> int:
         action="store_true",
         help="Skip running the session_start lifecycle hook after setup.",
     )
+
+    setup_ignore = sub.add_parser(
+        "setup-ignore",
+        help="Dry-run, apply, or roll back Git ignore migration for setup-owned files.",
+    )
+    setup_ignore.add_argument("action", choices=["dry-run", "apply", "rollback"])
+    setup_ignore.add_argument("--target", type=Path, default=Path.cwd())
 
     hook = sub.add_parser("hook", help="Run OMC lifecycle hooks.")
     hook.add_argument("event", choices=["session_start", "session_end", "pre_compact", "post_compact"])
@@ -496,6 +499,13 @@ def main() -> int:
         if args.skip_session_start:
             return 0
         return _run_script(hook_script, ["session_start", "--target", str(target)])
+
+    if args.command == "setup-ignore":
+        migration_script = kit / "scripts" / "omc_setup_gitignore.py"
+        return _run_script(
+            migration_script,
+            [args.action, "--target", str(args.target.resolve())],
+        )
 
     if args.command == "hook":
         hook_script = kit / "scripts" / "omc_hooks.py"

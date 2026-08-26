@@ -1,8 +1,7 @@
 ---
-description: OMC 인프라 파일 수정 시 반드시 omc_kit/templates/ 를 SSOT로 사용
+description: OMC 인프라 수정 시 install-source metadata가 가리키는 source checkout을 SSOT로 사용
 globs:
   - "scripts/omc_*.py"
-  - "omc_kit/**"
   - ".cursor/rules/omc-*.mdc"
   - ".claude/commands/*.md"
   - ".gemini/commands/*.md"
@@ -12,11 +11,15 @@ globs:
 alwaysApply: true
 ---
 
-# OMC 인프라 수정 규칙 — SSOT는 omc_kit/templates/
+# OMC 인프라 수정 규칙 — SSOT는 기록된 source checkout
 
 ## 절대 원칙
 
-**`omc_kit/templates/` 가 모든 OMC 인프라의 SSOT다.**
+**`.omc/install-source.json`의 `source_path`가 모든 OMC 인프라의 SSOT다.**
+
+이 파일이 없고 현재 저장소에 `VERSION`, `templates/`, `scripts/install.py`가
+모두 있으면 현재 저장소 루트가 source checkout이다. `omc_kit/`은 source
+checkout을 그 이름으로 submodule 배치했을 때만 유효하며 고정 경로가 아니다.
 
 라이브 프로젝트 파일을 직접 수정하는 것은 임시 패치일 뿐이며,
 새 프로젝트에 install.py를 실행하면 덮어써져 사라진다.
@@ -25,19 +28,21 @@ alwaysApply: true
 
 ## 올바른 수정 순서
 
-### 방법 A — 템플릿 먼저 (권장)
+### 방법 A — source checkout 먼저 (권장)
 ```
-1. omc_kit/templates/ 또는 omc_kit/scripts/ 의 파일 수정
-2. python3 omc_kit/scripts/install.py --target . --force 실행
-3. 라이브 파일은 install.py가 자동 배포
+1. .omc/install-source.json에서 source_path 확인
+2. <OMC_SOURCE>/templates/ 또는 <OMC_SOURCE>/scripts/ 파일 수정
+3. 대상 프로젝트에서 python3 scripts/omc.py setup --target . --force 실행
+4. 라이브 파일은 install.py가 자동 배포
 ```
 
 ### 방법 B — 라이브 먼저 수정했다면 즉시 동기화
 ```
-# 수정한 라이브 파일을 템플릿으로 즉시 복사
-cp scripts/omc_XXXX.py omc_kit/scripts/omc_XXXX.py
-cp .cursor/rules/omc-XXX.mdc omc_kit/templates/.cursor/rules/omc-XXX.mdc
-cp .claude/commands/XXX.md omc_kit/templates/.claude/commands/XXX.md
+# 먼저 source 경로를 확인한 뒤 수정한 라이브 파일을 source로 복사
+python3 -c 'import json; print(json.load(open(".omc/install-source.json"))["source_path"])'
+cp scripts/omc_XXXX.py <OMC_SOURCE>/scripts/omc_XXXX.py
+cp .cursor/rules/omc-XXX.mdc <OMC_SOURCE>/templates/.cursor/rules/omc-XXX.mdc
+cp .claude/commands/XXX.md <OMC_SOURCE>/templates/.claude/commands/XXX.md
 ```
 
 **방법 B를 쓴 경우, 파일 수정 직후 동기화 커맨드를 반드시 실행한다. 나중에 하겠다고 미루지 않는다.**
@@ -48,25 +53,23 @@ cp .claude/commands/XXX.md omc_kit/templates/.claude/commands/XXX.md
 
 | 라이브 파일 | 템플릿 경로 |
 |-------------|------------|
-| `scripts/omc_*.py` | `omc_kit/scripts/omc_*.py` |
-| `.cursor/rules/omc-*.mdc` | `omc_kit/templates/.cursor/rules/omc-*.mdc` |
-| `.cursor/rules/bm-*.mdc` | `omc_kit/templates/.cursor/rules/bm-*.mdc` |
-| `.claude/commands/*.md` | `omc_kit/templates/.claude/commands/*.md` |
-| `.gemini/commands/*.md` | `omc_kit/templates/.gemini/commands/*.md` |
-| `AGENTS.md` | `omc_kit/templates/AGENTS.md` |
-| `CLAUDE.md` | `omc_kit/templates/CLAUDE.md` |
-| `GEMINI.md` | `omc_kit/templates/GEMINI.md` |
+| `scripts/omc_*.py` | `<OMC_SOURCE>/scripts/omc_*.py` |
+| `.cursor/rules/omc-*.mdc` | `<OMC_SOURCE>/templates/.cursor/rules/omc-*.mdc` |
+| `.cursor/rules/bm-*.mdc` | `<OMC_SOURCE>/templates/.cursor/rules/bm-*.mdc` |
+| `.claude/commands/*.md` | `<OMC_SOURCE>/templates/.claude/commands/*.md` |
+| `.gemini/commands/*.md` | `<OMC_SOURCE>/templates/.gemini/commands/*.md` |
+| `AGENTS.md` | `<OMC_SOURCE>/templates/AGENTS.md` |
+| `CLAUDE.md` | `<OMC_SOURCE>/templates/CLAUDE.md` |
+| `GEMINI.md` | `<OMC_SOURCE>/templates/GEMINI.md` |
 
 ---
 
 ## 동기화 확인 커맨드
 
 ```bash
-# scripts 동기화 상태 확인
-diff <(ls scripts/ | grep omc | sort) <(ls omc_kit/scripts/ | grep omc | sort)
-
-# cursor rules 동기화 상태 확인
-diff <(ls .cursor/rules/ | sort) <(ls omc_kit/templates/.cursor/rules/ | sort)
+# 설치 source와 현재 배포 상태 확인
+python3 scripts/omc.py version --target . --json
+python3 scripts/omc_install_audit.py --strict .
 ```
 
 차이가 있으면 즉시 동기화한다.

@@ -2,6 +2,7 @@
 """install.py 핵심 함수 테스트 — stdlib only (pytest 불필요)"""
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import subprocess
@@ -367,6 +368,9 @@ class TestInstallManifest(unittest.TestCase):
                 ".cursor/rules/omc-retired.mdc": {
                     "policy": "managed_exact",
                     "previously_managed": True,
+                    "ownership": "exclusive_managed",
+                    "previous_receipt_schema_version": 3,
+                    "previous_target_sha256": _install._sha256_file(stale),
                     "registered_current_install": False,
                 },
                 "scripts/project.py": {
@@ -1201,13 +1205,81 @@ class TestRepositoryGitignore(unittest.TestCase):
             receipt = json.loads(
                 (target / ".omc" / "install-receipt.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(receipt["schema_version"], 2)
+            self.assertEqual(receipt["schema_version"], 3)
             self.assertEqual(receipt["omc_version"], "0.1.0")
             self.assertFalse((target / "VERSION").exists())
             self.assertFalse((target / "omc_kit" / "templates" / ".DS_Store").exists())
 
 
 class TestInstallSourceResolution(unittest.TestCase):
+    def test_main_reports_malformed_active_migration_without_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source-kit"
+            target = root / "project"
+            source.mkdir()
+            target.mkdir()
+            migration = target / ".omc" / "setup-git-migration.json"
+            migration.parent.mkdir()
+            migration.write_text("{truncated", encoding="utf-8")
+
+            with patch.object(_install, "_kit_root", return_value=source), \
+                 patch.object(_install, "_resolve_source_kit", return_value=source), \
+                 patch.object(
+                     _install,
+                     "capture_source_identity",
+                     return_value=_install.SourceIdentity("0.1.0", "source", None),
+                 ), \
+                 patch.object(_install, "_build_install_manifest") as build_manifest, \
+                 patch("sys.argv", ["install.py", "--target", str(target)]), \
+                 patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                result = _install.main()
+
+            self.assertEqual(result, 2)
+            self.assertIn("invalid migration receipt", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            build_manifest.assert_not_called()
+
+    def test_main_validates_active_migration_before_manifest_or_target_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source-kit"
+            target = root / "project"
+            source.mkdir()
+            target.mkdir()
+            gitignore = target / ".gitignore"
+            gitignore.write_text("local-change/\n", encoding="utf-8")
+            migration = target / ".omc" / "setup-git-migration.json"
+            migration.parent.mkdir()
+            migration.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "untracked": [],
+                        "gitignore_existed": False,
+                        "gitignore_before": "",
+                        "gitignore_after_sha256": hashlib.sha256(b"").hexdigest(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.object(_install, "_kit_root", return_value=source), \
+                 patch.object(_install, "_resolve_source_kit", return_value=source), \
+                 patch.object(
+                     _install,
+                     "capture_source_identity",
+                     return_value=_install.SourceIdentity("0.1.0", "source", None),
+                 ), \
+                 patch.object(_install, "_build_install_manifest") as build_manifest, \
+                 patch("sys.argv", ["install.py", "--target", str(target)]), \
+                 patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                result = _install.main()
+
+            self.assertEqual(result, 2)
+            self.assertIn("gitignore changed after migration", stderr.getvalue())
+            build_manifest.assert_not_called()
+
     def test_main_rejects_missing_version_before_manifest_or_target_mutation(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

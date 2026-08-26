@@ -93,7 +93,7 @@ NEW SKILL REGISTRATION CHECKLIST
 [ 8 ] .cursor/rules/omc-roles.mdc
       확인: 트리거 키워드 테이블에 키워드 추가
 
-[ 9 ] omc_kit SSOT 동기화
+[ 9 ] OMC source checkout SSOT 동기화
       커맨드:
         OMC_KIT=$(cat .omc/hub.path)
         cp .agents/skills/omc-[NAME]/SKILL.md $OMC_KIT/templates/.agents/skills/omc-[NAME]/SKILL.md
@@ -147,7 +147,7 @@ cp .cursor/rules/omc-roles.mdc              $OMC_KIT/templates/.cursor/rules/omc
 | # | 원인 | 해결 |
 |---|---|---|
 | 1 | SSOT 경로 오류 | `templates/.agents/skills/`에 있는지 확인. `.agent/skills/`에만 넣으면 install 시 무시됨 |
-| 2 | install --force 미실행 | `python3 omc_kit/scripts/install.py --target . --force` 재실행 |
+| 2 | setup --force 미실행 | `python3 scripts/omc.py setup --target . --force` 재실행 |
 | 3 | Cursor 세션 캐시 | 스킬 파일 저장 후 Cursor 세션 재시작 (Cmd+Shift+P → "Reload Window") |
 
 **빠른 진단:**
@@ -156,7 +156,7 @@ cp .cursor/rules/omc-roles.mdc              $OMC_KIT/templates/.cursor/rules/omc
 python3 scripts/omc_skill_check.py --all
 
 # 2. 누락된 스킬이 있으면 재설치
-python3 path/to/omc_kit/scripts/install.py --target . --force
+python3 scripts/omc.py setup --target . --force
 
 # 3. 그래도 안 보이면 → Cursor 재시작
 ```

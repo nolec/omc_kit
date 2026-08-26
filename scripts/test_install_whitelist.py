@@ -39,6 +39,7 @@ _EXPECTED_SCRIPTS = {
     "omc_quality_gate.py",
     "omc_role_suggest.py",
     "omc_run.py",
+    "omc_setup_gitignore.py",
     "omc_skill_check.py",
     "omc_state.py",
     "omc_sync_ssot.py",

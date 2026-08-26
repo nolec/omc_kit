@@ -114,7 +114,7 @@ python3 scripts/omc.py state compact
 ## 시나리오 6. 새 프로젝트에 설치
 
 ```bash
-python omc_kit/scripts/omc.py setup --target /path/to/project
+python <OMC_SOURCE>/scripts/omc.py setup --target /path/to/project
 cd /path/to/project
 python scripts/omc_doctor.py --target .
 python scripts/omc.py version --target .

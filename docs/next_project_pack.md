@@ -2,10 +2,11 @@
 
 ## 가장 단순한 답
 
-다음 프로젝트에 가져갈 것은 `omc_kit/` 하나입니다.
+다음 프로젝트에 필요한 것은 OMC source checkout 하나입니다. 아래
+`<OMC_SOURCE>`는 `.omc/install-source.json`에 기록될 실제 source 경로입니다.
 
 ```bash
-python omc_kit/scripts/omc.py setup --target /path/to/new-project
+python <OMC_SOURCE>/scripts/omc.py setup --target /path/to/new-project
 ```
 
 이 명령 하나로 스크립트 18개, 에이전트 규칙, 훅 설정, `.omc/` 초기 상태가 모두 설치됩니다.
@@ -14,7 +15,7 @@ python omc_kit/scripts/omc.py setup --target /path/to/new-project
 
 ```bash
 # 1. 설치
-python omc_kit/scripts/omc.py setup --target /path/to/new-project
+python <OMC_SOURCE>/scripts/omc.py setup --target /path/to/new-project
 
 # 2. 이동
 cd /path/to/new-project

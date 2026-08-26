@@ -24,6 +24,9 @@ git submodule add <REMOTE_URL> omc_kit
 python omc_kit/scripts/install.py --target .
 ```
 
+이 예시에서만 `omc_kit/`은 방금 추가한 submodule 경로입니다. 일반 설치에서는
+`.omc/install-source.json`의 `source_path`를 사용하며 경로 이름을 가정하지 않습니다.
+
 - 장점: 킷 업데이트를 한 번에 여러 프로젝트에 배포하기 쉬움
 - 단점: submodule 운영(업데이트/고정 버전) 규칙이 필요
 

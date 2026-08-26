@@ -28,6 +28,13 @@ from omc_source_hash import (
     is_deployed_script_name,
     source_sha256 as _source_sha256,
 )
+from omc_setup_gitignore import (
+    MigrationStateError,
+    add_receipt_ownership,
+    classify_receipt_entry_ownership,
+    update_managed_gitignore,
+    validate_active_migration,
+)
 from omc_version import SourceIdentity, capture_source_identity
 
 AGENTS_OMC_BEGIN = "<!-- OMC:BEGIN -->"
@@ -235,6 +242,9 @@ def _build_install_manifest(source_kit: Path, target: Path) -> dict[str, dict[st
                     _sha256_file(target_file) if target_file.is_file() else ""
                 ),
                 "previously_managed": True,
+                "ownership": str(entry.get("ownership", "")),
+                "previous_receipt_schema_version": receipt.get("schema_version"),
+                "previous_target_sha256": str(entry.get("target_sha256", "")),
                 "registered_current_install": False,
             }
     for source in sorted((source_kit / "scripts").glob("*.py")):
@@ -269,8 +279,9 @@ def _write_install_receipt(
             candidate = previous.get("installed_at") or previous.get("created_at")
             if isinstance(candidate, str) and candidate:
                 installed_at = candidate
+    add_receipt_ownership(entries)
     receipt: dict[str, object] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "omc_version": source_identity.version,
         "source_sha256": source_identity.sha256,
         "source_revision": source_identity.revision,
@@ -279,6 +290,7 @@ def _write_install_receipt(
         "updated_at": now,
         "entries": entries,
     }
+    update_managed_gitignore(target, receipt, sync_migration_receipt=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return receipt
@@ -343,7 +355,7 @@ def _classify_auto_update(
         result["status"] = "local_conflict"
         result["conflicts"] = conflicts
     elif (
-        receipt.get("schema_version") == 2
+        receipt.get("schema_version") in {2, 3}
         and receipt.get("omc_version") == identity.version
         and receipt.get("source_sha256") == identity.sha256
     ):
@@ -398,6 +410,16 @@ def _prune_stale_managed_outputs(
             continue
         path = target / rel
         if path.is_file() or path.is_symlink():
+            ownership = classify_receipt_entry_ownership(
+                {"schema_version": entry.get("previous_receipt_schema_version")},
+                rel,
+                entry,
+            )
+            if ownership != "exclusive_managed":
+                continue
+            previous_hash = str(entry.get("previous_target_sha256", ""))
+            if not previous_hash or _sha256_file(path) != previous_hash:
+                continue
             path.unlink()
             removed += 1
         manifest.pop(rel, None)
@@ -1065,6 +1087,7 @@ def _main() -> int:
                 print("[auto-update] 충돌 파일: " + ", ".join(update["conflicts"]))
             return _auto_update_exit_code(str(update["status"]))
         force = True
+    validate_active_migration(tgt)
     templates = _templates_root(source_kit)
     global _INSTALL_POLICY_ROOT, _INSTALL_POLICY_MANIFEST
     manifest_started = time.perf_counter()
@@ -1784,6 +1807,9 @@ def main() -> int:
     try:
         try:
             return _main()
+        except MigrationStateError as error:
+            print(f"[install] migration preflight failed: {error}", file=sys.stderr)
+            return 2
         except ValueError as error:
             if str(error).startswith("manifest_policy_error:"):
                 print(f"[install] {error}", file=sys.stderr)

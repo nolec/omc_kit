@@ -12,12 +12,10 @@ from pathlib import Path
 
 def _resolve_install_script(start_dir: Path) -> Path:
     for base in [start_dir, *start_dir.parents]:
-        # Dev-repo smoke should prefer the root installer; nested omc_kit/ is fallback for packaged layouts.
-        for rel in ("scripts/install.py", "omc_kit/scripts/install.py"):
-            candidate = base / rel
-            if candidate.exists():
-                return candidate.resolve()
-    raise SystemExit("could not locate install.py from current script path")
+        candidate = base / "scripts" / "install.py"
+        if candidate.exists():
+            return candidate.resolve()
+    raise SystemExit("could not locate supported install.py from current script path")
 
 
 def _run(cmd: list[str], *, cwd: Path, env: dict[str, str] | None = None, timeout: int = 240) -> subprocess.CompletedProcess[str]:

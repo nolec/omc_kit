@@ -253,7 +253,7 @@ def audit_target(target: Path) -> dict[str, object]:
         verification_errors.append(f"audit:{status}")
     if not has_receipt:
         verification_errors.append("receipt:missing-or-invalid")
-    elif receipt_schema_version not in {1, 2}:
+    elif receipt_schema_version not in {1, 2, 3}:
         verification_errors.append("receipt:unsupported-schema")
     elif receipt_target != str(resolved):
         verification_errors.append("receipt:target-mismatch")
@@ -277,7 +277,16 @@ def audit_target(target: Path) -> dict[str, object]:
             continue
         policy = entry.get("policy")
         entry_status = entry.get("status")
+        ownership = entry.get("ownership")
         if policy not in {"managed_exact", "managed_generated", "preserve"}:
+            verification_errors.append(f"entry-invalid:{rel}")
+            continue
+        if receipt_schema_version == 3 and ownership not in {
+            "exclusive_managed",
+            "merged_host",
+            "preserved",
+            "manual_review",
+        }:
             verification_errors.append(f"entry-invalid:{rel}")
             continue
         if policy == "preserve" and entry_status != "preserved":

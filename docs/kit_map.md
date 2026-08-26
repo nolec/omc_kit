@@ -6,14 +6,18 @@
 
 ## SSOT
 
-공통 킷의 SSOT는 `omc_kit/` 입니다.
+공통 킷의 SSOT는 설치 receipt가 기록한 source checkout입니다.
 
-**모든 변경은 `omc_kit/scripts/` 또는 `omc_kit/templates/`에 먼저 적용 후 `install.py --force`로 라이브에 동기화합니다.**
+설치된 프로젝트에서는 `.omc/install-source.json`의 `source_path`를 확인합니다.
+source checkout이 우연히 `omc_kit/`이라는 이름으로 배치될 수는 있지만 고정
+경로는 아닙니다. 모든 변경은 `<OMC_SOURCE>/scripts/` 또는
+`<OMC_SOURCE>/templates/`에 먼저 적용한 뒤 설치된 프로젝트에서
+`python3 scripts/omc.py setup --target . --force`로 동기화합니다.
 
 ## 다음 프로젝트로 가져갈 최소 묶음
 
 필수:
-- `omc_kit/`  (이 하나가 전부입니다)
+- OMC source checkout 전체
 
 선택:
 - `AGENTS.md` (강권 — 세션 시작 훅이 자동 생성하지만 커스터마이즈 가능)
@@ -87,15 +91,15 @@ project_prompts/    ← 현재 프로젝트 도메인 role/profile (선택)
 ## 실무 규칙
 
 공통 로직을 고칠 때:
-- `omc_kit/scripts/` 또는 `templates/`를 수정
-- `install.py --target . --force`로 동기화
+- `<OMC_SOURCE>/scripts/` 또는 `<OMC_SOURCE>/templates/`를 수정
+- 대상 프로젝트에서 `python3 scripts/omc.py setup --target . --force`로 동기화
 - `omc_doctor.py --target .`로 검증
 
 현재 프로젝트만 다르게 하고 싶을 때:
 - `project_prompts/` 또는 `.omc/policy.json`을 수정
 
 프로젝트 추가할 때:
-- `python omc_kit/scripts/omc.py setup --target /path/to/new-project`
+- `python <OMC_SOURCE>/scripts/omc.py setup --target /path/to/new-project`
 - `python scripts/omc.py version --target .`으로 설치 버전과 최신성 확인
 
 ## CI/CD

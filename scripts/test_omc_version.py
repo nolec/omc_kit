@@ -198,7 +198,7 @@ def test_omc_version_json_surface(tmp_path: Path):
     assert payload["overall_status"] == "up_to_date"
 
 
-def test_install_receipt_v2_preserves_original_install_time(tmp_path: Path):
+def test_install_receipt_v3_preserves_original_install_time(tmp_path: Path):
     source = _source_kit(tmp_path)
     target = tmp_path / "project"
     receipt_path = target / ".omc" / "install-receipt.json"
@@ -222,7 +222,7 @@ def test_install_receipt_v2_preserves_original_install_time(tmp_path: Path):
         entries={"scripts/omc.py": {"status": "updated"}},
     )
 
-    assert receipt["schema_version"] == 2
+    assert receipt["schema_version"] == 3
     assert receipt["omc_version"] == "0.1.0"
     assert receipt["installed_at"] == "2026-08-01T00:00:00+00:00"
     assert receipt["updated_at"] != receipt["installed_at"]
