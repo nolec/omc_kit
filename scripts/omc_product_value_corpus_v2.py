@@ -20,6 +20,8 @@ from typing import Any, Mapping
 SCHEMA_VERSION = "omc-product-value-selection/v2"
 LOCK_FILENAME = "benchmark-dependencies.lock"
 LOCK_ALIASES = {"source-e", "source-f"}
+OVERRIDABLE_ALIASES = {"source-e", "source-f"}
+SAFE_REQUIRED_PATH_MODES = {"040000", "100644", "100755"}
 EXPECTED_ALIASES = {f"source-{letter}" for letter in "abcdef"}
 EXPECTED_WORKLOAD_IDS = {f"pv-{index:02d}" for index in range(1, 7)}
 EXACT_LOCK_ENTRY = re.compile(
@@ -262,6 +264,83 @@ def _validate_locks(value: Mapping[str, str]) -> dict[str, str]:
     return {alias: validate_dependency_lock(value[alias]) for alias in sorted(LOCK_ALIASES)}
 
 
+def _validate_source_overrides(
+    value: Mapping[str, Mapping[str, Any]] | None,
+) -> dict[str, dict[str, Any]]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping) or not set(value).issubset(OVERRIDABLE_ALIASES):
+        raise ValueError("corpus_v2_source_override_invalid")
+    normalized: dict[str, dict[str, Any]] = {}
+    for alias, override in value.items():
+        if not isinstance(override, Mapping) or set(override) != {
+            "path",
+            "source_commit",
+            "source_tree",
+            "required_paths",
+        }:
+            raise ValueError("corpus_v2_source_override_invalid")
+        path = override.get("path")
+        commit = override.get("source_commit")
+        tree = override.get("source_tree")
+        required_paths = override.get("required_paths")
+        if (
+            not isinstance(path, str)
+            or not path.strip()
+            or not isinstance(commit, str)
+            or len(commit) != 40
+            or any(character not in "0123456789abcdef" for character in commit)
+            or not isinstance(tree, str)
+            or len(tree) != 40
+            or any(character not in "0123456789abcdef" for character in tree)
+            or not isinstance(required_paths, list)
+            or not required_paths
+            or len(set(required_paths)) != len(required_paths)
+        ):
+            raise ValueError("corpus_v2_source_override_invalid")
+        normalized_required_paths: list[str] = []
+        for required_path in required_paths:
+            candidate = Path(required_path) if isinstance(required_path, str) else None
+            if (
+                candidate is None
+                or candidate.is_absolute()
+                or not candidate.parts
+                or ".." in candidate.parts
+                or any(ord(character) < 32 for character in required_path)
+            ):
+                raise ValueError("corpus_v2_source_override_invalid")
+            normalized_required_paths.append(candidate.as_posix())
+        if len(set(normalized_required_paths)) != len(normalized_required_paths):
+            raise ValueError("corpus_v2_source_override_invalid")
+        repository = Path(path).expanduser().resolve(strict=False)
+        try:
+            observed_tree = _git(repository, "rev-parse", f"{commit}^{{tree}}")
+        except ValueError as error:
+            raise ValueError("corpus_v2_source_override_invalid") from error
+        if not hmac.compare_digest(observed_tree, tree):
+            raise ValueError("corpus_v2_source_override_invalid")
+        normalized[alias] = {
+            "path": str(repository),
+            "source_commit": commit,
+            "source_tree": tree,
+            "required_paths": sorted(normalized_required_paths),
+        }
+    return normalized
+
+
+def _required_paths_are_safe(repository: Path, required_paths: list[str]) -> bool:
+    for required_path in required_paths:
+        listing = _git(repository, "ls-tree", "HEAD", "--", required_path)
+        lines = listing.splitlines()
+        if len(lines) != 1 or "\t" not in lines[0]:
+            return False
+        metadata, observed_path = lines[0].split("\t", 1)
+        mode = metadata.split(" ", 1)[0]
+        if observed_path != required_path or mode not in SAFE_REQUIRED_PATH_MODES:
+            return False
+    return True
+
+
 def _clone_at_commit(source: Path, destination: Path, commit: str) -> None:
     try:
         clone = subprocess.run(
@@ -301,8 +380,10 @@ def build_corpus_v2(
     batch_id: str,
     expected_parent_source_digest: str,
     dependency_locks: Mapping[str, str],
+    source_overrides: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     locks = _validate_locks(dependency_locks)
+    overrides = _validate_source_overrides(source_overrides)
     if not isinstance(batch_id, str) or not batch_id.strip():
         raise ValueError("corpus_v2_batch_id_invalid")
     if not _is_sha256(expected_parent_source_digest):
@@ -341,11 +422,34 @@ def build_corpus_v2(
                 raise ValueError("corpus_v2_input_invalid")
             repository = staging / "sources" / alias
             repository.parent.mkdir(parents=True, exist_ok=True)
+            override = overrides.get(alias)
+            clone_source = Path(source_entry["path"]).expanduser().resolve(strict=False)
+            clone_commit = workload["source_commit"]
+            if override is not None:
+                clone_source = Path(override["path"])
+                clone_commit = override["source_commit"]
             _clone_at_commit(
-                Path(source_entry["path"]).expanduser().resolve(strict=False),
+                clone_source,
                 repository,
-                workload["source_commit"],
+                clone_commit,
             )
+            selection = selection_by_id[workload_id]
+            if override is not None:
+                if not _required_paths_are_safe(
+                    repository,
+                    override["required_paths"],
+                ):
+                    raise ValueError("corpus_v2_source_override_contract_invalid")
+                workload["source_commit"] = clone_commit
+                workload["repository_identity_sha256"] = canonical_sha256({
+                    "repo_alias": alias,
+                    "parent_identity_sha256": workload["repository_identity_sha256"],
+                    "source_commit": clone_commit,
+                    "source_tree": override["source_tree"],
+                    "required_paths": override["required_paths"],
+                })
+                selection["original_repository"] = str(clone_source)
+                selection["original_baseline_commit"] = clone_commit
             if alias in locks:
                 previous_identity = workload["repository_identity_sha256"]
                 new_commit = _commit_lock(repository, locks[alias])
@@ -359,7 +463,6 @@ def build_corpus_v2(
             packet = deepcopy(packets[workload_id])
             packet["source_commit"] = workload["source_commit"]
             workload["execution_packet_sha256"] = canonical_sha256(packet)
-            selection = selection_by_id[workload_id]
             selection["snapshot_commit"] = workload["source_commit"]
             selection["repository_identity_sha256"] = workload[
                 "repository_identity_sha256"
@@ -382,6 +485,15 @@ def build_corpus_v2(
             "source_identities": {
                 alias: entry["identity_sha256"]
                 for alias, entry in sorted(frozen_roots.items())
+            },
+            "source_override_sha256s": {
+                alias: canonical_sha256({
+                    "repo_alias": alias,
+                    "source_commit": override["source_commit"],
+                    "source_tree": override["source_tree"],
+                    "required_paths": override["required_paths"],
+                })
+                for alias, override in sorted(overrides.items())
             },
         }
         receipt = {
@@ -434,7 +546,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-parent-source-digest", required=True)
     parser.add_argument("--source-e-lock", required=True, type=Path)
     parser.add_argument("--source-f-lock", required=True, type=Path)
+    parser.add_argument("--source-overrides", type=Path)
     args = parser.parse_args(argv)
+    source_overrides = (
+        _load_json(args.source_overrides) if args.source_overrides is not None else None
+    )
     receipt = build_corpus_v2(
         args.source,
         args.out,
@@ -444,6 +560,7 @@ def main(argv: list[str] | None = None) -> int:
             "source-e": args.source_e_lock.read_text(encoding="utf-8"),
             "source-f": args.source_f_lock.read_text(encoding="utf-8"),
         },
+        source_overrides=source_overrides,
     )
     print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
     return 0

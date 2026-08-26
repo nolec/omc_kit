@@ -170,6 +170,137 @@ def test_build_corpus_v2_preserves_v1_and_rebinds_changed_sources(
         assert _canonical_sha(packet) == workloads[index]["execution_packet_sha256"]
 
 
+def test_build_corpus_v2_rejects_override_missing_required_paths(
+    tmp_path: Path,
+) -> None:
+    source = _fixture(tmp_path)
+    approved_digest = corpus.corpus_source_digest(source)
+    override = source / "sources" / "source-e"
+
+    with pytest.raises(
+        ValueError,
+        match="corpus_v2_source_override_contract_invalid",
+    ):
+        corpus.build_corpus_v2(
+            source,
+            tmp_path / "product-value-batch-v2",
+            batch_id="product-value-batch-v2",
+            expected_parent_source_digest=approved_digest,
+            dependency_locks={
+                "source-e": "pytest==9.0.2\n",
+                "source-f": "pytest==9.0.2\n",
+            },
+            source_overrides={
+                "source-e": {
+                    "path": str(override),
+                    "source_commit": _git(override, "rev-parse", "HEAD"),
+                    "source_tree": _git(override, "rev-parse", "HEAD^{tree}"),
+                    "required_paths": ["tests/extraction/test_development_slice.py"],
+                }
+            },
+        )
+
+    assert not (tmp_path / "product-value-batch-v2").exists()
+
+
+def test_build_corpus_v2_rejects_symlinked_override_required_path(
+    tmp_path: Path,
+) -> None:
+    source = _fixture(tmp_path)
+    approved_digest = corpus.corpus_source_digest(source)
+    override = tmp_path / "symlinked-source-e"
+    override.mkdir()
+    subprocess.run(["git", "init", "-q", str(override)], check=True)
+    _git(override, "config", "user.email", "corpus@example.com")
+    _git(override, "config", "user.name", "Corpus Test")
+    required_path = "tests/extraction/test_development_slice.py"
+    (override / "tests/extraction").mkdir(parents=True)
+    external = tmp_path / "external-test.py"
+    external.write_text("def test_external():\n    assert True\n")
+    (override / required_path).symlink_to(external)
+    _git(override, "add", required_path)
+    _git(override, "commit", "-qm", "add external test symlink")
+    output = tmp_path / "product-value-batch-v2"
+
+    with pytest.raises(
+        ValueError,
+        match="corpus_v2_source_override_contract_invalid",
+    ):
+        corpus.build_corpus_v2(
+            source,
+            output,
+            batch_id="product-value-batch-v2",
+            expected_parent_source_digest=approved_digest,
+            dependency_locks={
+                "source-e": "pytest==9.0.2\n",
+                "source-f": "pytest==9.0.2\n",
+            },
+            source_overrides={
+                "source-e": {
+                    "path": str(override),
+                    "source_commit": _git(override, "rev-parse", "HEAD"),
+                    "source_tree": _git(override, "rev-parse", "HEAD^{tree}"),
+                    "required_paths": [required_path],
+                }
+            },
+        )
+
+    assert not output.exists()
+
+
+def test_build_corpus_v2_rebinds_an_approved_source_override(
+    tmp_path: Path,
+) -> None:
+    source = _fixture(tmp_path)
+    approved_digest = corpus.corpus_source_digest(source)
+    override = tmp_path / "approved-source-e"
+    override.mkdir()
+    subprocess.run(["git", "init", "-q", str(override)], check=True)
+    _git(override, "config", "user.email", "corpus@example.com")
+    _git(override, "config", "user.name", "Corpus Test")
+    required_path = "tests/extraction/test_development_slice.py"
+    (override / "tests/extraction").mkdir(parents=True)
+    (override / required_path).write_text("def test_slice():\n    assert True\n")
+    _git(override, "add", required_path)
+    _git(override, "commit", "-qm", "approved extraction slice")
+    override_commit = _git(override, "rev-parse", "HEAD")
+    override_tree = _git(override, "rev-parse", "HEAD^{tree}")
+    output = tmp_path / "product-value-batch-v2"
+
+    receipt = corpus.build_corpus_v2(
+        source,
+        output,
+        batch_id="product-value-batch-v2",
+        expected_parent_source_digest=approved_digest,
+        dependency_locks={
+            "source-e": "pytest==9.0.2\n",
+            "source-f": "pytest==9.0.2\n",
+        },
+        source_overrides={
+            "source-e": {
+                "path": str(override),
+                "source_commit": override_commit,
+                "source_tree": override_tree,
+                "required_paths": [required_path],
+            }
+        },
+    )
+
+    workloads = json.loads((output / "workloads.json").read_text())
+    workload = next(row for row in workloads if row["repo_alias"] == "source-e")
+    frozen = output / "sources/source-e"
+    payload = json.loads((output / "selection-public-payload.json").read_text())
+    selection = json.loads((output / "private-selection.json").read_text())
+    selected = next(row for row in selection if row["repo_alias"] == "source-e")
+    assert receipt["public_payload_sha256"] == _canonical_sha(payload)
+    assert _git(frozen, "rev-parse", "HEAD^") == override_commit
+    assert (frozen / required_path).is_file()
+    assert set(payload["source_override_sha256s"]) == {"source-e"}
+    assert selected["original_repository"] == str(override.resolve())
+    assert selected["original_baseline_commit"] == override_commit
+    assert selected["snapshot_commit"] == workload["source_commit"]
+
+
 def test_build_corpus_v2_rejects_incomplete_locks_and_existing_output(
     tmp_path: Path,
 ) -> None:
