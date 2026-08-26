@@ -196,7 +196,8 @@ def _v4_manifest_and_packet(monkeypatch: pytest.MonkeyPatch):
                 "acceptance_runner_sha256": "b" * 64,
                 "arm_adapter_sha256": "c" * 64,
                 "scheduler_sha256": "d" * 64,
-                "provider_adapter_sha256": "e" * 64,
+                "executor_shadow_sha256": "e" * 64,
+                "provider_adapter_sha256": "f" * 64,
             },
             "environment_policy": {
                 "receipt_schema": "omc-product-value-environment/v3",
@@ -762,9 +763,11 @@ def test_v4_process_adapter_uses_execution_bundle_hash(
 ) -> None:
     adapter = tmp_path / "arm-adapter"
     scheduler = tmp_path / "scheduler.py"
+    executor_shadow = tmp_path / "omc_executor_shadow.py"
     provider_adapter = tmp_path / "provider-adapter"
     adapter.write_text("#!/bin/sh\n", encoding="utf-8")
     scheduler.write_text("# scheduler\n", encoding="utf-8")
+    executor_shadow.write_text("# executor dependency\n", encoding="utf-8")
     provider_adapter.write_text("#!/bin/sh\n", encoding="utf-8")
     adapter.chmod(0o755)
     monkeypatch.setattr(
@@ -792,15 +795,98 @@ def test_v4_process_adapter_uses_execution_bundle_hash(
             ),
             "arm_adapter_sha256": acceptance.canonical_file_sha256(adapter),
             "scheduler_sha256": acceptance.canonical_file_sha256(scheduler),
+            "executor_shadow_sha256": acceptance.canonical_file_sha256(
+                executor_shadow
+            ),
             "provider_adapter_sha256": acceptance.canonical_file_sha256(
                 provider_adapter
             ),
         },
         scheduler_path=scheduler,
+        executor_shadow_path=executor_shadow,
         provider_adapter_path=provider_adapter,
     )
 
     assert callable(executor)
+
+
+def test_v4_process_adapter_snapshots_scheduler_import_dependency(
+    tmp_path: Path,
+) -> None:
+    adapter = tmp_path / "arm-adapter"
+    scheduler = tmp_path / "scheduler-source.py"
+    executor_shadow = tmp_path / "executor-source.py"
+    provider_adapter = tmp_path / "provider-adapter"
+    adapter.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, pathlib, subprocess, sys\n"
+        "if sys.argv[1] == 'capabilities':\n"
+        "    print(json.dumps({'protocol': 'omc-product-value-arm/v1', "
+        "'hard_total_token_limit': True, 'hard_output_limit': True, "
+        "'supported_arms': ['omc', 'baseline']}))\n"
+        "else:\n"
+        "    request = json.load(sys.stdin)\n"
+        "    bundle = request['execution_bundle']\n"
+        "    scheduler = pathlib.Path(bundle['scheduler'])\n"
+        "    dependency = pathlib.Path(bundle['executor_shadow'])\n"
+        "    probe = subprocess.run([sys.executable, str(scheduler), '--help'], "
+        "capture_output=True, text=True)\n"
+        "    valid = (scheduler.name == 'omc_n_child_scheduler.py' and "
+        "dependency.name == 'omc_executor_shadow.py' and "
+        "scheduler.parent == dependency.parent and probe.returncode == 0)\n"
+        "    print(json.dumps({'status': 'completed' if valid else 'parent_review', "
+        "'reason_code': 'completed' if valid else 'dependency_import_failed', "
+        "'elapsed_sec': 0.01, 'output': probe.stderr, "
+        "'token_usage': {'input_tokens': 1, 'output_tokens': 1, "
+        "'total_tokens': 2}, 'intervention_events': [], "
+        "'review_findings': [], 'duplicate_executions': 0, "
+        "'budget_violations': 0}))\n",
+        encoding="utf-8",
+    )
+    adapter.chmod(0o755)
+    scheduler.write_text(
+        "import argparse\nimport omc_executor_shadow\n"
+        "argparse.ArgumentParser().parse_args()\n",
+        encoding="utf-8",
+    )
+    executor_shadow.write_text("VALUE = 'frozen'\n", encoding="utf-8")
+    provider_adapter.write_text("#!/bin/sh\n", encoding="utf-8")
+    bundle = {
+        "acceptance_runner_sha256": acceptance.canonical_file_sha256(
+            Path(acceptance.__file__)
+        ),
+        "arm_adapter_sha256": acceptance.canonical_file_sha256(adapter),
+        "scheduler_sha256": acceptance.canonical_file_sha256(scheduler),
+        "executor_shadow_sha256": acceptance.canonical_file_sha256(
+            executor_shadow
+        ),
+        "provider_adapter_sha256": acceptance.canonical_file_sha256(
+            provider_adapter
+        ),
+    }
+    executor = acceptance.build_process_arm_executor(
+        adapter,
+        {"backend_sha256": "a" * 64},
+        execution_bundle=bundle,
+        scheduler_path=scheduler,
+        executor_shadow_path=executor_shadow,
+        provider_adapter_path=provider_adapter,
+    )
+
+    result = executor(
+        arm="omc",
+        packet={},
+        provider_snapshot={"backend_sha256": "a" * 64},
+        limits={
+            "max_total_tokens": 100,
+            "max_total_elapsed_sec": 10,
+            "max_output_chars": 1000,
+        },
+        arm_artifact=tmp_path / "artifacts",
+        workspace=tmp_path,
+    )
+
+    assert result["status"] == "completed", result
 
 
 @pytest.mark.parametrize(
@@ -809,6 +895,7 @@ def test_v4_process_adapter_uses_execution_bundle_hash(
         "acceptance_runner_sha256",
         "arm_adapter_sha256",
         "scheduler_sha256",
+        "executor_shadow_sha256",
         "provider_adapter_sha256",
     ],
 )
@@ -818,8 +905,9 @@ def test_v4_process_adapter_rejects_any_execution_bundle_mismatch(
 ) -> None:
     adapter = tmp_path / "arm-adapter"
     scheduler = tmp_path / "scheduler.py"
+    executor_shadow = tmp_path / "omc_executor_shadow.py"
     provider_adapter = tmp_path / "provider-adapter"
-    for path in (adapter, scheduler, provider_adapter):
+    for path in (adapter, scheduler, executor_shadow, provider_adapter):
         path.write_text("snapshot\n", encoding="utf-8")
     bundle = {
         "acceptance_runner_sha256": acceptance.canonical_file_sha256(
@@ -827,6 +915,9 @@ def test_v4_process_adapter_rejects_any_execution_bundle_mismatch(
         ),
         "arm_adapter_sha256": acceptance.canonical_file_sha256(adapter),
         "scheduler_sha256": acceptance.canonical_file_sha256(scheduler),
+        "executor_shadow_sha256": acceptance.canonical_file_sha256(
+            executor_shadow
+        ),
         "provider_adapter_sha256": acceptance.canonical_file_sha256(
             provider_adapter
         ),
@@ -839,6 +930,7 @@ def test_v4_process_adapter_rejects_any_execution_bundle_mismatch(
             {"backend_sha256": "a" * 64},
             execution_bundle=bundle,
             scheduler_path=scheduler,
+            executor_shadow_path=executor_shadow,
             provider_adapter_path=provider_adapter,
         )
 
@@ -848,8 +940,9 @@ def test_v4_process_adapter_hashes_copied_snapshot_before_execution(
 ) -> None:
     adapter = tmp_path / "arm-adapter"
     scheduler = tmp_path / "scheduler.py"
+    executor_shadow = tmp_path / "omc_executor_shadow.py"
     provider_adapter = tmp_path / "provider-adapter"
-    for path in (adapter, scheduler, provider_adapter):
+    for path in (adapter, scheduler, executor_shadow, provider_adapter):
         path.write_text("frozen\n", encoding="utf-8")
     bundle = {
         "acceptance_runner_sha256": acceptance.canonical_file_sha256(
@@ -857,6 +950,9 @@ def test_v4_process_adapter_hashes_copied_snapshot_before_execution(
         ),
         "arm_adapter_sha256": acceptance.canonical_file_sha256(adapter),
         "scheduler_sha256": acceptance.canonical_file_sha256(scheduler),
+        "executor_shadow_sha256": acceptance.canonical_file_sha256(
+            executor_shadow
+        ),
         "provider_adapter_sha256": acceptance.canonical_file_sha256(
             provider_adapter
         ),
@@ -873,6 +969,7 @@ def test_v4_process_adapter_hashes_copied_snapshot_before_execution(
             {"backend_sha256": "a" * 64},
             execution_bundle=bundle,
             scheduler_path=scheduler,
+            executor_shadow_path=executor_shadow,
             provider_adapter_path=provider_adapter,
         )
 
@@ -888,6 +985,8 @@ def test_omc_cli_forwards_v4_execution_bundle_paths(tmp_path: Path) -> None:
             str(tmp_path / "missing-manifest.json"),
             "--scheduler",
             str(tmp_path / "scheduler.py"),
+            "--executor-shadow",
+            str(tmp_path / "omc_executor_shadow.py"),
             "--provider-adapter",
             str(tmp_path / "provider-adapter"),
         ],

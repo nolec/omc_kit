@@ -138,7 +138,8 @@ def _execution_contract_v4() -> dict[str, object]:
             "acceptance_runner_sha256": "b" * 64,
             "arm_adapter_sha256": "c" * 64,
             "scheduler_sha256": "d" * 64,
-            "provider_adapter_sha256": "e" * 64,
+            "executor_shadow_sha256": "e" * 64,
+            "provider_adapter_sha256": "f" * 64,
         },
         "environment_policy": {
             "receipt_schema": "omc-product-value-environment/v3",

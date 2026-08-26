@@ -589,6 +589,7 @@ def build_process_arm_executor(
     adapter_sha256: str | None = None,
     execution_bundle: dict[str, Any] | None = None,
     scheduler_path: str | Path | None = None,
+    executor_shadow_path: str | Path | None = None,
     provider_adapter_path: str | Path | None = None,
 ) -> Callable[..., dict[str, Any]]:
     source = Path(adapter_path).expanduser().resolve()
@@ -608,11 +609,13 @@ def build_process_arm_executor(
             "acceptance_runner_sha256",
             "arm_adapter_sha256",
             "scheduler_sha256",
+            "executor_shadow_sha256",
             "provider_adapter_sha256",
         }
         if (
             set(execution_bundle) != expected_fields
             or scheduler_path is None
+            or executor_shadow_path is None
             or provider_adapter_path is None
         ):
             raise ValueError("execution_bundle_mismatch")
@@ -620,6 +623,7 @@ def build_process_arm_executor(
             "acceptance_runner": Path(__file__).resolve(),
             "arm_adapter": source,
             "scheduler": Path(scheduler_path).expanduser().resolve(),
+            "executor_shadow": Path(executor_shadow_path).expanduser().resolve(),
             "provider_adapter": Path(provider_adapter_path).expanduser().resolve(),
         }
         for name, path in bundle_sources.items():
@@ -632,9 +636,16 @@ def build_process_arm_executor(
             expected_hashes[name] = expected_sha256
     runtime = tempfile.TemporaryDirectory(prefix="omc-product-value-adapter-")
     immutable_snapshots: dict[str, Path] = {}
+    snapshot_names = {
+        "acceptance_runner": "omc_product_value_acceptance.py",
+        "arm_adapter": "arm-adapter",
+        "scheduler": "omc_n_child_scheduler.py",
+        "executor_shadow": "omc_executor_shadow.py",
+        "provider_adapter": "provider-adapter",
+    }
     try:
         for name, path in bundle_sources.items():
-            snapshot = Path(runtime.name) / name.replace("_", "-")
+            snapshot = Path(runtime.name) / snapshot_names[name]
             shutil.copy2(path, snapshot)
             if canonical_file_sha256(snapshot) != expected_hashes[name]:
                 raise ValueError(
@@ -1601,6 +1612,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--artifact-root", type=Path)
     parser.add_argument("--arm-adapter", type=Path)
     parser.add_argument("--scheduler", type=Path)
+    parser.add_argument("--executor-shadow", type=Path)
     parser.add_argument("--provider-adapter", type=Path)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
@@ -1631,7 +1643,11 @@ def main(argv: list[str] | None = None) -> int:
             is_v4 = (
                 manifest["schema_version"] == preregistration.SCHEMA_VERSION_V4
             )
-            if is_v4 and (args.scheduler is None or args.provider_adapter is None):
+            if is_v4 and (
+                args.scheduler is None
+                or args.executor_shadow is None
+                or args.provider_adapter is None
+            ):
                 raise ValueError("acceptance_execution_bundle_input_required")
             executor = build_process_arm_executor(
                 args.arm_adapter,
@@ -1643,6 +1659,7 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 execution_bundle=contract.get("execution_bundle") if is_v4 else None,
                 scheduler_path=args.scheduler,
+                executor_shadow_path=args.executor_shadow,
                 provider_adapter_path=args.provider_adapter,
             )
             result = run_product_value_phase(

@@ -262,6 +262,7 @@ def _validate_execution_contract_v4(value: Any) -> dict[str, Any]:
         "acceptance_runner_sha256",
         "arm_adapter_sha256",
         "scheduler_sha256",
+        "executor_shadow_sha256",
         "provider_adapter_sha256",
     } or any(not _is_sha256(bundle.get(field)) for field in bundle):
         raise ValueError("execution_contract_invalid")

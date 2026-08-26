@@ -309,6 +309,7 @@ def main() -> int:
     product_value_acceptance.add_argument("--artifact-root", type=Path)
     product_value_acceptance.add_argument("--arm-adapter", type=Path)
     product_value_acceptance.add_argument("--scheduler", type=Path)
+    product_value_acceptance.add_argument("--executor-shadow", type=Path)
     product_value_acceptance.add_argument("--provider-adapter", type=Path)
     product_value_acceptance.add_argument("--out", type=Path)
 
@@ -661,6 +662,7 @@ def main() -> int:
             "artifact_root",
             "arm_adapter",
             "scheduler",
+            "executor_shadow",
             "provider_adapter",
             "out",
         ):
