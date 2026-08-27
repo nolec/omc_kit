@@ -16,6 +16,114 @@ def _sha(value: object) -> str:
     ).hexdigest()
 
 
+def _write_provider_backend(path: Path, *, hard_token_limit: bool = True) -> None:
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "if sys.argv[1:] == ['capabilities']:\n"
+        "    print(json.dumps({'protocol': 'omc-provider-backend/v1', "
+        f"'hard_total_token_limit': {hard_token_limit!r}, "
+        "'hard_output_limit': True}))\n"
+        "    raise SystemExit(0)\n"
+        "raise SystemExit(2)\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def test_provider_backend_preflight_binds_verified_capabilities(tmp_path: Path) -> None:
+    backend = tmp_path / "provider-backend"
+    _write_provider_backend(backend)
+    snapshot = {
+        "provider_family": "codex",
+        "model": "gpt-test",
+        "reasoning_profile": "low",
+        "backend_sha256": freeze.file_sha256(backend),
+    }
+
+    receipt = freeze.provider_backend_capability_receipt(snapshot, backend)
+
+    assert receipt == {
+        "schema_version": "omc-product-value-provider-backend-capability/v1",
+        "status": "verified",
+        "backend_sha256": snapshot["backend_sha256"],
+        "protocol": "omc-provider-backend/v1",
+        "hard_total_token_limit": True,
+        "hard_output_limit": True,
+    }
+
+
+def test_provider_backend_preflight_rejects_raw_cli_shape(tmp_path: Path) -> None:
+    backend = tmp_path / "raw-cli"
+    backend.write_text("#!/bin/sh\necho not-json\nexit 1\n", encoding="utf-8")
+    backend.chmod(0o755)
+    snapshot = {
+        "provider_family": "codex",
+        "model": "gpt-test",
+        "reasoning_profile": "low",
+        "backend_sha256": freeze.file_sha256(backend),
+    }
+
+    with pytest.raises(ValueError, match="freeze_provider_backend_incompatible"):
+        freeze.provider_backend_capability_receipt(snapshot, backend)
+
+
+def test_provider_backend_preflight_rejects_hash_mismatch(tmp_path: Path) -> None:
+    backend = tmp_path / "provider-backend"
+    _write_provider_backend(backend)
+    snapshot = {
+        "provider_family": "codex",
+        "model": "gpt-test",
+        "reasoning_profile": "low",
+        "backend_sha256": "a" * 64,
+    }
+
+    with pytest.raises(ValueError, match="freeze_provider_backend_hash_mismatch"):
+        freeze.provider_backend_capability_receipt(snapshot, backend)
+
+
+def test_provider_backend_preflight_rejects_missing_hard_token_limit(
+    tmp_path: Path,
+) -> None:
+    backend = tmp_path / "provider-backend"
+    _write_provider_backend(backend, hard_token_limit=False)
+    snapshot = {
+        "provider_family": "codex",
+        "model": "gpt-test",
+        "reasoning_profile": "low",
+        "backend_sha256": freeze.file_sha256(backend),
+    }
+
+    with pytest.raises(ValueError, match="freeze_provider_backend_incompatible"):
+        freeze.provider_backend_capability_receipt(snapshot, backend)
+
+
+def test_provider_backend_preflight_executes_immutable_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = tmp_path / "provider-backend"
+    _write_provider_backend(backend)
+    snapshot = {
+        "provider_family": "codex",
+        "model": "gpt-test",
+        "reasoning_profile": "low",
+        "backend_sha256": freeze.file_sha256(backend),
+    }
+    original_runner = freeze._run_bounded_adapter_command
+    executed_paths: list[Path] = []
+
+    def capture(command: list[str], **kwargs: object) -> dict[str, object]:
+        executed_paths.append(Path(command[0]).resolve())
+        return original_runner(command, **kwargs)
+
+    monkeypatch.setattr(freeze, "_run_bounded_adapter_command", capture)
+
+    freeze.provider_backend_capability_receipt(snapshot, backend)
+
+    assert executed_paths[0] != backend.resolve()
+    assert freeze.file_sha256(backend) == snapshot["backend_sha256"]
+
+
 def _inputs(tmp_path: Path) -> dict[str, object]:
     workloads = []
     packets = {}
@@ -137,6 +245,9 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
         path = tmp_path / name
         path.write_text(name, encoding="utf-8")
         bundle[name] = path
+    provider_backend = tmp_path / "candidate-provider-backend"
+    _write_provider_backend(provider_backend)
+    provider_backend_sha256 = freeze.file_sha256(provider_backend)
     return {
         "workloads": workloads,
         "packets": packets,
@@ -145,6 +256,15 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
         "surface_verifications": surface_verifications,
         "source_roots": source_roots,
         "bundle": bundle,
+        "provider_backend": provider_backend,
+        "provider_capability": {
+            "schema_version": "omc-product-value-provider-backend-capability/v1",
+            "status": "verified",
+            "backend_sha256": provider_backend_sha256,
+            "protocol": "omc-provider-backend/v1",
+            "hard_total_token_limit": True,
+            "hard_output_limit": True,
+        },
     }
 
 
@@ -159,7 +279,7 @@ def test_freeze_candidate_is_deterministic_and_binds_complete_bundle(
             "provider_family": "codex",
             "model": "gpt-test",
             "reasoning_profile": "high",
-            "backend_sha256": "a" * 64,
+            "backend_sha256": inputs["provider_capability"]["backend_sha256"],
         },
         limits={
             "max_total_tokens": 100,
@@ -174,7 +294,7 @@ def test_freeze_candidate_is_deterministic_and_binds_complete_bundle(
             "provider_family": "codex",
             "model": "gpt-test",
             "reasoning_profile": "high",
-            "backend_sha256": "a" * 64,
+            "backend_sha256": inputs["provider_capability"]["backend_sha256"],
         },
         limits={
             "max_total_tokens": 100,
@@ -186,6 +306,7 @@ def test_freeze_candidate_is_deterministic_and_binds_complete_bundle(
 
     assert first == second
     assert first["status"] == "candidate_frozen"
+    assert first["provider_capability"] == inputs["provider_capability"]
     assert set(first["execution_contract"]["execution_bundle"]) == {
         "acceptance_runner_sha256",
         "arm_adapter_sha256",
@@ -224,7 +345,33 @@ def test_freeze_candidate_rejects_missing_environment(tmp_path: Path) -> None:
                 "provider_family": "codex",
                 "model": "gpt-test",
                 "reasoning_profile": "high",
-                "backend_sha256": "a" * 64,
+                "backend_sha256": inputs["provider_capability"]["backend_sha256"],
+            },
+            limits={
+                "max_total_tokens": 100,
+                "max_total_elapsed_sec": 30,
+                "max_output_chars": 1000,
+            },
+            grant_validator=lambda *_args, **_kwargs: True,
+        )
+
+
+def test_freeze_candidate_rejects_unverified_provider_capability(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    inputs["provider_capability"]["hard_total_token_limit"] = False
+
+    with pytest.raises(
+        ValueError, match="freeze_provider_backend_capability_invalid"
+    ):
+        freeze.freeze_v4_candidate(
+            **inputs,
+            provider_snapshot={
+                "provider_family": "codex",
+                "model": "gpt-test",
+                "reasoning_profile": "high",
+                "backend_sha256": inputs["provider_capability"]["backend_sha256"],
             },
             limits={
                 "max_total_tokens": 100,
@@ -254,7 +401,7 @@ def test_freeze_candidate_rejects_source_commit_not_in_repository(
                 "provider_family": "codex",
                 "model": "gpt-test",
                 "reasoning_profile": "high",
-                "backend_sha256": "a" * 64,
+                "backend_sha256": inputs["provider_capability"]["backend_sha256"],
             },
             limits={
                 "max_total_tokens": 100,
@@ -269,6 +416,8 @@ def test_prepare_inputs_rejects_workload_without_direct_surface_verification(
     tmp_path: Path,
 ) -> None:
     inputs = _inputs(tmp_path)
+    backend = tmp_path / "provider-backend"
+    _write_provider_backend(backend)
     environment_specs = {
         workload["workload_id"]: {
             "dependency_lock_path": inputs["environments"][workload["workload_id"]][
@@ -301,8 +450,9 @@ def test_prepare_inputs_rejects_workload_without_direct_surface_verification(
                 "provider_family": "codex",
                 "model": "gpt-test",
                 "reasoning_profile": "high",
-                "backend_sha256": "a" * 64,
+                "backend_sha256": freeze.file_sha256(backend),
             },
+            provider_backend=backend,
             limits={
                 "max_total_tokens": 100,
                 "max_total_elapsed_sec": 30,
@@ -315,6 +465,8 @@ def test_prepare_inputs_cli_rejects_surface_evidence_missing_from_frozen_commit(
     tmp_path: Path,
 ) -> None:
     inputs = _inputs(tmp_path)
+    backend = tmp_path / "provider-backend"
+    _write_provider_backend(backend)
     workload = inputs["workloads"][0]
     workload_id = workload["workload_id"]
     source_root = Path(inputs["source_roots"][workload["repo_alias"]]["path"])
@@ -366,7 +518,7 @@ def test_prepare_inputs_cli_rejects_surface_evidence_missing_from_frozen_commit(
         "provider_family": "codex",
         "model": "gpt-test",
         "reasoning_profile": "high",
-        "backend_sha256": "a" * 64,
+        "backend_sha256": freeze.file_sha256(backend),
     }), encoding="utf-8")
     limits = tmp_path / "limits.json"
     limits.write_text(json.dumps({
@@ -382,6 +534,7 @@ def test_prepare_inputs_cli_rejects_surface_evidence_missing_from_frozen_commit(
             "--execution-specs", str(execution_specs),
             "--environment-specs", str(environment_specs_path),
             "--provider-snapshot", str(provider),
+            "--provider-backend", str(backend),
             "--limits", str(limits),
             "--out", str(tmp_path / "prepared"),
         ])
@@ -406,6 +559,8 @@ def test_freeze_cli_prepares_inputs_candidate_and_validates_surface(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     inputs = _inputs(tmp_path)
+    backend = tmp_path / "provider-backend"
+    _write_provider_backend(backend)
     corpus_root = tmp_path / "corpus"
     corpus_root.mkdir()
     (corpus_root / "packets").mkdir()
@@ -449,7 +604,7 @@ def test_freeze_cli_prepares_inputs_candidate_and_validates_surface(
         "provider_family": "codex",
         "model": "gpt-test",
         "reasoning_profile": "high",
-        "backend_sha256": "a" * 64,
+        "backend_sha256": freeze.file_sha256(backend),
     }), encoding="utf-8")
     limits = tmp_path / "limits.json"
     limits.write_text(json.dumps({
@@ -464,6 +619,7 @@ def test_freeze_cli_prepares_inputs_candidate_and_validates_surface(
         "--execution-specs", str(execution_specs),
         "--environment-specs", str(environment_specs),
         "--provider-snapshot", str(provider),
+        "--provider-backend", str(backend),
         "--limits", str(limits),
         "--out", str(prepared),
     ]) == 0
@@ -474,6 +630,7 @@ def test_freeze_cli_prepares_inputs_candidate_and_validates_surface(
         for name in freeze.BUNDLE_PATH_FIELDS
         for item in (f"--{name.replace('_', '-')}", str(inputs["bundle"][name]))
     ]
+    bundle_args.extend(["--provider-backend", str(backend)])
     candidate = tmp_path / "candidate"
     assert freeze.main([
         "prepare",

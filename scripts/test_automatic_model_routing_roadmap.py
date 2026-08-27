@@ -136,7 +136,7 @@ def test_roadmap_tracks_completed_n_child_v2_prerequisites() -> None:
     assert "acceptance 복합 제한 분류 완료" in current
     assert "승인된 v2 grant·child prompt·dependency·scope·aggregate budget" in current
     assert (
-        "3. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 "
+        "4. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 "
         "수집한다."
     ) in current
     assert "1. P0 선행 정책인 scope normalization" not in current

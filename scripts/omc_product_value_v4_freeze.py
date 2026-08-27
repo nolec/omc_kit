@@ -18,11 +18,15 @@ from typing import Any, Callable, Mapping
 
 import omc_product_value_acceptance as acceptance
 import omc_product_value_preregistration as preregistration
-from omc_n_child_scheduler import _validate_grant
+from omc_n_child_scheduler import _run_bounded_adapter_command, _validate_grant
 
 
 SCHEMA_VERSION = "omc-product-value-v4-freeze/v1"
-INPUT_SCHEMA_VERSION = "omc-product-value-v4-inputs/v1"
+INPUT_SCHEMA_VERSION = "omc-product-value-v4-inputs/v2"
+PROVIDER_CAPABILITY_SCHEMA_VERSION = (
+    "omc-product-value-provider-backend-capability/v1"
+)
+PROVIDER_BACKEND_PROTOCOL = "omc-provider-backend/v1"
 BUNDLE_PATH_FIELDS = (
     "acceptance_runner",
     "arm_adapter",
@@ -101,6 +105,83 @@ def _validate_provider_and_limits(
     ):
         raise ValueError("freeze_limits_invalid")
     return deepcopy(provider_snapshot), deepcopy(limits)
+
+
+def provider_backend_capability_receipt(
+    provider_snapshot: dict[str, Any], backend_path: str | Path
+) -> dict[str, Any]:
+    """Verify the exact provider backend implements the hard-limit protocol."""
+    provider, _limits = _validate_provider_and_limits(
+        provider_snapshot,
+        {
+            "max_total_tokens": 1,
+            "max_total_elapsed_sec": 1,
+            "max_output_chars": 1,
+        },
+    )
+    backend = Path(backend_path).expanduser().resolve(strict=False)
+    if not backend.is_file() or not os.access(backend, os.X_OK):
+        raise ValueError("freeze_provider_backend_incompatible")
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="omc-product-value-provider-backend-"
+        ) as raw_runtime:
+            snapshot = Path(raw_runtime) / "provider-backend"
+            shutil.copy2(backend, snapshot)
+            snapshot.chmod(0o500)
+            if file_sha256(snapshot) != provider["backend_sha256"]:
+                raise ValueError("freeze_provider_backend_hash_mismatch")
+            result = _run_bounded_adapter_command(
+                [str(snapshot), "capabilities"],
+                timeout_sec=10,
+                max_response_bytes=64 * 1024,
+            )
+            payload = json.loads(result["stdout"])
+    except ValueError as error:
+        if str(error) == "freeze_provider_backend_hash_mismatch":
+            raise
+        raise ValueError("freeze_provider_backend_incompatible") from error
+    except (
+        OSError,
+        subprocess.SubprocessError,
+        TypeError,
+        json.JSONDecodeError,
+    ) as error:
+        raise ValueError("freeze_provider_backend_incompatible") from error
+    expected = {
+        "protocol": PROVIDER_BACKEND_PROTOCOL,
+        "hard_total_token_limit": True,
+        "hard_output_limit": True,
+    }
+    if (
+        result["returncode"] != 0
+        or result["timed_out"]
+        or result["limit_exceeded"]
+        or payload != expected
+    ):
+        raise ValueError("freeze_provider_backend_incompatible")
+    return {
+        "schema_version": PROVIDER_CAPABILITY_SCHEMA_VERSION,
+        "status": "verified",
+        "backend_sha256": provider["backend_sha256"],
+        **expected,
+    }
+
+
+def _validate_provider_capability(
+    value: Any, provider_snapshot: dict[str, Any]
+) -> dict[str, Any]:
+    expected = {
+        "schema_version": PROVIDER_CAPABILITY_SCHEMA_VERSION,
+        "status": "verified",
+        "backend_sha256": provider_snapshot["backend_sha256"],
+        "protocol": PROVIDER_BACKEND_PROTOCOL,
+        "hard_total_token_limit": True,
+        "hard_output_limit": True,
+    }
+    if value != expected:
+        raise ValueError("freeze_provider_backend_capability_invalid")
+    return deepcopy(value)
 
 
 def _bundle_contract(bundle: Mapping[str, str | Path]) -> dict[str, str]:
@@ -259,6 +340,8 @@ def freeze_v4_candidate(
     source_roots: Mapping[str, dict[str, str]],
     bundle: Mapping[str, str | Path],
     provider_snapshot: dict[str, Any],
+    provider_capability: dict[str, Any],
+    provider_backend: str | Path,
     limits: dict[str, int],
     grant_validator: Callable[[dict[str, Any], Path, dict[str, str]], bool]
     | None = None,
@@ -267,6 +350,12 @@ def freeze_v4_candidate(
     provider, bounded_limits = _validate_provider_and_limits(
         provider_snapshot, limits
     )
+    measured_capability = provider_backend_capability_receipt(
+        provider, provider_backend
+    )
+    _validate_provider_capability(provider_capability, provider)
+    if provider_capability != measured_capability:
+        raise ValueError("freeze_provider_backend_capability_invalid")
     bundle_hashes = _bundle_contract(bundle)
     if not isinstance(workloads, list) or len(workloads) != 6:
         raise ValueError("freeze_input_coverage_invalid")
@@ -388,6 +477,7 @@ def freeze_v4_candidate(
         "status": "candidate_frozen",
         "registration_status": "not_registered",
         "approval_status": "pending",
+        "provider_capability": measured_capability,
         "workloads": frozen_workloads,
         "packets": frozen_packets,
         "execution_contract": execution_contract,
@@ -418,11 +508,15 @@ def prepare_v4_inputs(
     environment_specs: Mapping[str, dict[str, Any]],
     source_roots: Mapping[str, dict[str, str]],
     provider_snapshot: dict[str, Any],
+    provider_backend: str | Path,
     limits: dict[str, int],
 ) -> dict[str, Any]:
     """Bind approved execution and environment specs before candidate freeze."""
     provider, bounded_limits = _validate_provider_and_limits(
         provider_snapshot, limits
+    )
+    provider_capability = provider_backend_capability_receipt(
+        provider, provider_backend
     )
     if not isinstance(workloads, list) or len(workloads) != 6:
         raise ValueError("freeze_input_coverage_invalid")
@@ -508,6 +602,7 @@ def prepare_v4_inputs(
         "environments": environments,
         "surface_verifications": surface_verifications,
         "provider_snapshot": provider,
+        "provider_capability": provider_capability,
         "limits": bounded_limits,
     }
     prepared["inputs_sha256"] = canonical_sha256(prepared)
@@ -536,6 +631,7 @@ def write_v4_inputs(value: dict[str, Any], output_root: str | Path) -> dict[str,
             "environments",
             "surface_verifications",
             "provider_snapshot",
+            "provider_capability",
             "limits",
         ):
             _write_json(staging / f"{name.replace('_', '-')}.json", value[name])
@@ -579,6 +675,7 @@ def _load_prepared_inputs(root: Path) -> dict[str, Any]:
         "environments": _load_json(root / "environments.json"),
         "surface_verifications": _load_json(root / "surface-verifications.json"),
         "provider_snapshot": _load_json(root / "provider-snapshot.json"),
+        "provider_capability": _load_json(root / "provider-capability.json"),
         "limits": _load_json(root / "limits.json"),
     }
     receipt = _load_json(root / "input-receipt.json")
@@ -609,6 +706,8 @@ def _candidate_from_files(args: argparse.Namespace) -> dict[str, Any]:
         source_roots=source_roots,
         bundle=_bundle_from_args(args),
         provider_snapshot=prepared["provider_snapshot"],
+        provider_capability=prepared["provider_capability"],
+        provider_backend=args.provider_backend,
         limits=prepared["limits"],
     )
 
@@ -732,6 +831,7 @@ def main(argv: list[str] | None = None) -> int:
     prepare_inputs.add_argument("--execution-specs", required=True, type=Path)
     prepare_inputs.add_argument("--environment-specs", required=True, type=Path)
     prepare_inputs.add_argument("--provider-snapshot", required=True, type=Path)
+    prepare_inputs.add_argument("--provider-backend", required=True, type=Path)
     prepare_inputs.add_argument("--limits", required=True, type=Path)
     prepare_inputs.add_argument("--out", required=True, type=Path)
     prepare = sub.add_parser("prepare")
@@ -739,6 +839,7 @@ def main(argv: list[str] | None = None) -> int:
     for command in (prepare, validate):
         command.add_argument("--corpus-root", required=True, type=Path)
         command.add_argument("--input-root", required=True, type=Path)
+        command.add_argument("--provider-backend", required=True, type=Path)
         _add_bundle_arguments(command)
     prepare.add_argument("--out", required=True, type=Path)
     validate.add_argument("--candidate-root", required=True, type=Path)
@@ -751,6 +852,7 @@ def main(argv: list[str] | None = None) -> int:
             environment_specs=_load_json(args.environment_specs),
             source_roots=source_roots,
             provider_snapshot=_load_json(args.provider_snapshot),
+            provider_backend=args.provider_backend,
             limits=_load_json(args.limits),
         )
         result = write_v4_inputs(value, args.out)
