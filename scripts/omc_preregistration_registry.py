@@ -15,11 +15,12 @@ from typing import Any
 import omc_rfc3161_timestamp as rfc3161
 
 
-REGISTRY_RECORD_FIELDS = {
+REGISTRY_RECORD_V1_FIELDS = {
     "schema_version",
     "batch_id",
     "preregistration_sha256",
 }
+REGISTRY_RECORD_V2_FIELDS = REGISTRY_RECORD_V1_FIELDS | {"preregistration"}
 SIGSTORE_RECEIPT_FIELDS = {
     "schema_version",
     "status",
@@ -93,6 +94,7 @@ def prepare_registry_record(
     *,
     batch_id: str,
     preregistration_sha256: str,
+    preregistration: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if (
         not isinstance(batch_id, str)
@@ -100,10 +102,29 @@ def prepare_registry_record(
         or not _is_lower_hex(preregistration_sha256, 64)
     ):
         raise ValueError("preregistration registry record is invalid")
-    return {
+    record = {
         "schema_version": 1,
         "batch_id": batch_id,
         "preregistration_sha256": preregistration_sha256,
+    }
+    if preregistration is None:
+        return record
+    if (
+        not isinstance(preregistration, dict)
+        or preregistration.get("batch_id") != batch_id
+        or preregistration.get("preregistration_sha256")
+        != preregistration_sha256
+        or unsigned_document_digest(
+            preregistration,
+            "preregistration_sha256",
+        )
+        != preregistration_sha256
+    ):
+        raise ValueError("preregistration registry manifest is invalid")
+    return {
+        **record,
+        "schema_version": 2,
+        "preregistration": deepcopy(preregistration),
     }
 
 
@@ -116,12 +137,22 @@ def validate_registry_anchor(
     required_ancestor_commit: str | None = None,
 ) -> None:
     root = Path(repository_root)
+    schema_version = (
+        record.get("schema_version") if isinstance(record, dict) else None
+    )
+    expected_fields = (
+        REGISTRY_RECORD_V2_FIELDS
+        if schema_version == 2
+        else REGISTRY_RECORD_V1_FIELDS
+    )
     if (
         not isinstance(record, dict)
-        or set(record) != REGISTRY_RECORD_FIELDS
+        or schema_version not in {1, 2}
+        or set(record) != expected_fields
         or record != prepare_registry_record(
             batch_id=record.get("batch_id"),
             preregistration_sha256=record.get("preregistration_sha256"),
+            preregistration=record.get("preregistration"),
         )
         or not root.is_absolute()
         or not _is_lower_hex(registry_commit, 40)

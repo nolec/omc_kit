@@ -10,6 +10,10 @@ import pytest
 import omc_preregistration_registry as registry
 
 
+def test_candidate_universe_imports_after_registry_schema_extension() -> None:
+    import omc_plan_candidate_universe  # noqa: F401
+
+
 def _git(root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(root), *args],
@@ -55,6 +59,59 @@ def test_registry_anchor_requires_exact_committed_record(tmp_path: Path) -> None
     with pytest.raises(ValueError, match="registry record is invalid"):
         registry.validate_registry_anchor(
             wrong,
+            repository_root=root,
+            registry_commit=registry_commit,
+            registry_path=registry_path,
+            required_ancestor_commit=ancestor_commit,
+        )
+
+
+def test_registry_anchor_v2_binds_embedded_preregistration(tmp_path: Path) -> None:
+    root = tmp_path / "registry"
+    root.mkdir()
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "registry@example.com")
+    _git(root, "config", "user.name", "Registry Test")
+    anchor = root / "anchor.txt"
+    anchor.write_text("anchor\n", encoding="utf-8")
+    _git(root, "add", ".")
+    _git(root, "commit", "-qm", "anchor")
+    ancestor_commit = _git(root, "rev-parse", "HEAD")
+    manifest = {
+        "batch_id": "product-value-2",
+        "status": "frozen",
+        "preregistration_sha256": "",
+    }
+    manifest["preregistration_sha256"] = registry.unsigned_document_digest(
+        manifest,
+        "preregistration_sha256",
+    )
+    record = registry.prepare_registry_record(
+        batch_id=manifest["batch_id"],
+        preregistration_sha256=manifest["preregistration_sha256"],
+        preregistration=manifest,
+    )
+    registry_path = ".omc/registry/product-value-2.json"
+    target = root / registry_path
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps(record), encoding="utf-8")
+    _git(root, "add", registry_path)
+    _git(root, "commit", "-qm", "register durable manifest")
+    registry_commit = _git(root, "rev-parse", "HEAD")
+
+    registry.validate_registry_anchor(
+        record,
+        repository_root=root,
+        registry_commit=registry_commit,
+        registry_path=registry_path,
+        required_ancestor_commit=ancestor_commit,
+    )
+
+    tampered = json.loads(json.dumps(record))
+    tampered["preregistration"]["status"] = "changed"
+    with pytest.raises(ValueError, match="registry manifest is invalid"):
+        registry.validate_registry_anchor(
+            tampered,
             repository_root=root,
             registry_commit=registry_commit,
             registry_path=registry_path,

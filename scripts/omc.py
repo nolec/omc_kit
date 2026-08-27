@@ -276,6 +276,7 @@ def main() -> int:
             "validate",
             "registry-record",
             "prepare-receipt",
+            "receipt-record",
             "validate-registration",
         ),
     )

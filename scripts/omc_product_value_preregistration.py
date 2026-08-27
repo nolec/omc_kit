@@ -696,7 +696,84 @@ def prepare_registry_record(payload: Any) -> dict[str, Any]:
     return registry.prepare_registry_record(
         batch_id=validated["batch_id"],
         preregistration_sha256=validated["preregistration_sha256"],
+        preregistration=validated,
     )
+
+
+def prepare_registration_metadata_record(
+    payload: Any,
+    registration_receipt: Any,
+    *,
+    repository_root: str | Path,
+    registry_commit: str,
+    registry_path: str,
+    required_ancestor_commit: str,
+    expected_registration_receipt_sha256: str,
+    trusted_root: dict[str, Any],
+    approved_trusted_root_sha256: str,
+) -> dict[str, Any]:
+    validate_registered_preregistration(
+        payload,
+        repository_root=repository_root,
+        registry_commit=registry_commit,
+        registry_path=registry_path,
+        required_ancestor_commit=required_ancestor_commit,
+        registration_receipt=registration_receipt,
+        expected_registration_receipt_sha256=(
+            expected_registration_receipt_sha256
+        ),
+        trusted_root=trusted_root,
+        approved_trusted_root_sha256=approved_trusted_root_sha256,
+    )
+    validated = _validated_registered_schema(payload)
+    if not isinstance(registration_receipt, dict):
+        raise ValueError("registration_receipt_invalid")
+    receipt_sha256 = registration_receipt.get("receipt_sha256")
+    if (
+        not isinstance(receipt_sha256, str)
+        or len(receipt_sha256) != 64
+        or registry.unsigned_document_digest(
+            registration_receipt,
+            "receipt_sha256",
+        )
+        != receipt_sha256
+    ):
+        raise ValueError("registration_receipt_digest_mismatch")
+    if (
+        registration_receipt.get("batch_id") != validated["batch_id"]
+        or registration_receipt.get("preregistration_sha256")
+        != validated["preregistration_sha256"]
+    ):
+        raise ValueError("registration_receipt_mismatch")
+    required_strings = (
+        "registry_commit",
+        "registry_path",
+        "registered_at",
+    )
+    if any(
+        not isinstance(registration_receipt.get(field), str)
+        or not registration_receipt[field]
+        for field in required_strings
+    ) or not isinstance(registration_receipt.get("registration_evidence"), dict):
+        raise ValueError("registration_receipt_invalid")
+    record = {
+        "schema_version": "omc-product-value-registration-metadata/v1",
+        "batch_id": validated["batch_id"],
+        "preregistration_sha256": validated["preregistration_sha256"],
+        "registry_commit": registration_receipt["registry_commit"],
+        "registry_path": registration_receipt["registry_path"],
+        "registered_at": registration_receipt["registered_at"],
+        "registration_receipt_sha256": receipt_sha256,
+        "registration_evidence_sha256": registry.canonical_digest(
+            registration_receipt["registration_evidence"]
+        ),
+        "metadata_sha256": "",
+    }
+    record["metadata_sha256"] = registry.unsigned_document_digest(
+        record,
+        "metadata_sha256",
+    )
+    return record
 
 
 def prepare_registration_receipt(
@@ -837,6 +914,27 @@ def main(argv: list[str] | None = None) -> int:
     prepare_receipt.add_argument("--trusted-root", type=Path, required=True)
     prepare_receipt.add_argument("--approved-trusted-root-sha256", required=True)
     prepare_receipt.add_argument("--out", type=Path, required=True)
+    receipt_record = sub.add_parser("receipt-record")
+    receipt_record.add_argument("--manifest", type=Path, required=True)
+    receipt_record.add_argument(
+        "--registration-receipt",
+        type=Path,
+        required=True,
+    )
+    receipt_record.add_argument("--repository-root", type=Path, required=True)
+    receipt_record.add_argument("--registry-commit", required=True)
+    receipt_record.add_argument("--registry-path", required=True)
+    receipt_record.add_argument("--required-ancestor-commit", required=True)
+    receipt_record.add_argument(
+        "--expected-registration-receipt-sha256",
+        required=True,
+    )
+    receipt_record.add_argument("--trusted-root", type=Path, required=True)
+    receipt_record.add_argument(
+        "--approved-trusted-root-sha256",
+        required=True,
+    )
+    receipt_record.add_argument("--out", type=Path, required=True)
     validate_registration = sub.add_parser("validate-registration")
     validate_registration.add_argument("--manifest", type=Path, required=True)
     validate_registration.add_argument("--repository-root", type=Path, required=True)
@@ -965,6 +1063,33 @@ def main(argv: list[str] | None = None) -> int:
                 "registration_receipt_sha256": receipt["receipt_sha256"],
                 "registration_required": True,
                 "status": "receipt_prepared",
+            }
+        elif args.command == "receipt-record":
+            manifest = validate_preregistration(_load_json(args.manifest))
+            record = prepare_registration_metadata_record(
+                manifest,
+                _load_json(args.registration_receipt),
+                repository_root=args.repository_root.resolve(),
+                registry_commit=args.registry_commit,
+                registry_path=args.registry_path,
+                required_ancestor_commit=args.required_ancestor_commit,
+                expected_registration_receipt_sha256=(
+                    args.expected_registration_receipt_sha256
+                ),
+                trusted_root=_load_json(args.trusted_root),
+                approved_trusted_root_sha256=(
+                    args.approved_trusted_root_sha256
+                ),
+            )
+            _write_json(args.out, record)
+            result = {
+                "claim_eligible": False,
+                "preregistration_sha256": manifest["preregistration_sha256"],
+                "registration_receipt_sha256": record[
+                    "registration_receipt_sha256"
+                ],
+                "registration_required": True,
+                "status": "receipt_record_prepared",
             }
         else:
             result = validate_registered_preregistration(

@@ -609,6 +609,239 @@ def test_v5_binds_lineage_bounded_execution_bundle_and_environment(
     assert validate_preregistration(manifest) == manifest
 
 
+def test_product_value_registry_record_embeds_public_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    manifest = preregistration.build_preregistration_v5(
+        "product-value-batch-durable",
+        _workloads_v4(),
+        observed_from="2026-09-01T00:00:00+00:00",
+        observed_through="2026-09-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=_execution_contract_v4(),
+        artifact_lineage=_artifact_lineage_v5(),
+    )
+
+    record = preregistration.prepare_registry_record(manifest)
+
+    assert record["schema_version"] == 2
+    assert record["preregistration"] == manifest
+    assert record["preregistration_sha256"] == manifest["preregistration_sha256"]
+
+
+def test_registration_metadata_record_binds_validated_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    manifest = preregistration.build_preregistration_v5(
+        "product-value-batch-durable",
+        _workloads_v4(),
+        observed_from="2026-09-01T00:00:00+00:00",
+        observed_through="2026-09-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=_execution_contract_v4(),
+        artifact_lineage=_artifact_lineage_v5(),
+    )
+    receipt = {
+        "schema_version": 2,
+        "status": "registered",
+        "batch_id": manifest["batch_id"],
+        "preregistration_sha256": manifest["preregistration_sha256"],
+        "registry_commit": "4" * 40,
+        "registry_path": ".omc/registry/product-value-batch-durable.json",
+        "registered_at": "2026-08-31T00:00:00+00:00",
+        "registration_evidence": {"type": "rfc3161"},
+        "receipt_sha256": "",
+    }
+    receipt["receipt_sha256"] = preregistration.registry.unsigned_document_digest(
+        receipt,
+        "receipt_sha256",
+    )
+
+    validation_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        preregistration,
+        "validate_registered_preregistration",
+        lambda *args, **kwargs: validation_calls.append(kwargs),
+    )
+    record = preregistration.prepare_registration_metadata_record(
+        manifest,
+        receipt,
+        repository_root=".",
+        registry_commit=receipt["registry_commit"],
+        registry_path=receipt["registry_path"],
+        required_ancestor_commit=manifest["artifact_lineage"][
+            "implementation_commit"
+        ],
+        expected_registration_receipt_sha256=receipt["receipt_sha256"],
+        trusted_root={"fixture": "trusted-root"},
+        approved_trusted_root_sha256="c" * 64,
+    )
+
+    assert record["schema_version"] == "omc-product-value-registration-metadata/v1"
+    assert record["registration_receipt_sha256"] == receipt["receipt_sha256"]
+    assert record["registry_commit"] == receipt["registry_commit"]
+    assert len(validation_calls) == 1
+
+    tampered = deepcopy(receipt)
+    tampered["registered_at"] = "2026-08-30T00:00:00+00:00"
+    with pytest.raises(ValueError, match="registration_receipt_digest_mismatch"):
+        preregistration.prepare_registration_metadata_record(
+            manifest,
+            tampered,
+            repository_root=".",
+            registry_commit=receipt["registry_commit"],
+            registry_path=receipt["registry_path"],
+            required_ancestor_commit=manifest["artifact_lineage"][
+                "implementation_commit"
+            ],
+            expected_registration_receipt_sha256=receipt["receipt_sha256"],
+            trusted_root={"fixture": "trusted-root"},
+            approved_trusted_root_sha256="c" * 64,
+        )
+
+
+def test_registration_metadata_rejects_unverified_rfc3161_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authority = _registration_authority()
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "trust_identity",
+        lambda *args, **kwargs: authority,
+    )
+    monkeypatch.setattr(
+        preregistration.registry,
+        "validate_registry_anchor",
+        lambda *args, **kwargs: None,
+    )
+    manifest = preregistration.build_preregistration_v5(
+        "product-value-batch-unverified-receipt",
+        _workloads_v4(),
+        observed_from="2026-09-01T00:00:00+00:00",
+        observed_through="2026-09-08T00:00:00+00:00",
+        registration_authority=authority,
+        execution_contract=_execution_contract_v4(),
+        artifact_lineage=_artifact_lineage_v5(),
+    )
+    receipt = {
+        "schema_version": 2,
+        "status": "registered",
+        "batch_id": manifest["batch_id"],
+        "preregistration_sha256": manifest["preregistration_sha256"],
+        "registry_commit": "4" * 40,
+        "registry_path": ".omc/registry/product-value-batch-unverified-receipt.json",
+        "registered_at": "2026-08-31T00:00:00+00:00",
+        "registration_evidence": {"type": "rfc3161"},
+        "receipt_sha256": "",
+    }
+    receipt["receipt_sha256"] = preregistration.registry.unsigned_document_digest(
+        receipt,
+        "receipt_sha256",
+    )
+
+    with pytest.raises(ValueError, match="RFC 3161 registration evidence fields"):
+        preregistration.prepare_registration_metadata_record(
+            manifest,
+            receipt,
+            repository_root=".",
+            registry_commit=receipt["registry_commit"],
+            registry_path=receipt["registry_path"],
+            required_ancestor_commit=manifest["artifact_lineage"][
+                "implementation_commit"
+            ],
+            expected_registration_receipt_sha256=receipt["receipt_sha256"],
+            trusted_root={"fixture": "trusted-root"},
+            approved_trusted_root_sha256="c" * 64,
+        )
+
+
+def test_receipt_record_cli_writes_durable_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration,
+        "validate_registered_preregistration",
+        lambda *args, **kwargs: None,
+    )
+    manifest = preregistration.build_preregistration_v5(
+        "product-value-batch-durable",
+        _workloads_v4(),
+        observed_from="2026-09-01T00:00:00+00:00",
+        observed_through="2026-09-08T00:00:00+00:00",
+        registration_authority=_registration_authority(),
+        execution_contract=_execution_contract_v4(),
+        artifact_lineage=_artifact_lineage_v5(),
+    )
+    receipt = {
+        "schema_version": 2,
+        "status": "registered",
+        "batch_id": manifest["batch_id"],
+        "preregistration_sha256": manifest["preregistration_sha256"],
+        "registry_commit": "4" * 40,
+        "registry_path": ".omc/registry/product-value-batch-durable.json",
+        "registered_at": "2026-08-31T00:00:00+00:00",
+        "registration_evidence": {"type": "rfc3161"},
+        "receipt_sha256": "",
+    }
+    receipt["receipt_sha256"] = preregistration.registry.unsigned_document_digest(
+        receipt,
+        "receipt_sha256",
+    )
+    manifest_path = tmp_path / "manifest.json"
+    receipt_path = tmp_path / "receipt.json"
+    trusted_root_path = tmp_path / "trusted-root.json"
+    output_path = tmp_path / "receipt-record.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    trusted_root_path.write_text("{}", encoding="utf-8")
+
+    result = preregistration.main(
+        [
+            "receipt-record",
+            "--manifest",
+            str(manifest_path),
+            "--registration-receipt",
+            str(receipt_path),
+            "--repository-root",
+            str(tmp_path),
+            "--registry-commit",
+            receipt["registry_commit"],
+            "--registry-path",
+            receipt["registry_path"],
+            "--required-ancestor-commit",
+            manifest["artifact_lineage"]["implementation_commit"],
+            "--expected-registration-receipt-sha256",
+            receipt["receipt_sha256"],
+            "--trusted-root",
+            str(trusted_root_path),
+            "--approved-trusted-root-sha256",
+            "c" * 64,
+            "--out",
+            str(output_path),
+        ]
+    )
+
+    assert result == 0
+    record = json.loads(output_path.read_text(encoding="utf-8"))
+    assert record["registration_receipt_sha256"] == receipt["receipt_sha256"]
+
+
 def test_v4_manifest_remains_valid_without_v5_artifact_lineage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -907,6 +1140,21 @@ def test_v1_cannot_enter_registration_flow() -> None:
                 "payload.json",
                 "--expected-registration-receipt-sha256",
                 "c" * 64,
+            ],
+        ),
+        (
+            "receipt-record",
+            [
+                "--repository-root",
+                ".",
+                "--required-ancestor-commit",
+                "b" * 40,
+                "--registration-receipt",
+                "payload.json",
+                "--expected-registration-receipt-sha256",
+                "c" * 64,
+                "--out",
+                "receipt-record.json",
             ],
         ),
     ],
