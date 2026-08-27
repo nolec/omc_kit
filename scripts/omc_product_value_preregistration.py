@@ -20,6 +20,7 @@ SCHEMA_VERSION_V1 = "omc-product-value-preregistration/v1"
 SCHEMA_VERSION_V2 = "omc-product-value-preregistration/v2"
 SCHEMA_VERSION_V3 = "omc-product-value-preregistration/v3"
 SCHEMA_VERSION_V4 = "omc-product-value-preregistration/v4"
+SCHEMA_VERSION_V5 = "omc-product-value-preregistration/v5"
 SCHEMA_VERSION = SCHEMA_VERSION_V1
 WORKLOAD_FIELDS = {
     "workload_id",
@@ -115,6 +116,13 @@ MANIFEST_V2_FIELDS = MANIFEST_FIELDS | {
 }
 MANIFEST_V3_FIELDS = MANIFEST_V2_FIELDS | {"execution_contract"}
 MANIFEST_V4_FIELDS = MANIFEST_V3_FIELDS
+MANIFEST_V5_FIELDS = MANIFEST_V4_FIELDS | {"artifact_lineage"}
+ARTIFACT_LINEAGE_V5_FIELDS = {
+    "parent_corpus_batch_id",
+    "parent_corpus_source_sha256",
+    "parent_corpus_public_payload_sha256",
+    "implementation_commit",
+}
 
 
 def canonical_sha256(value: Any) -> str:
@@ -284,6 +292,21 @@ def _validate_execution_contract_v4(value: Any) -> dict[str, Any]:
     return deepcopy(value)
 
 
+def _validate_artifact_lineage_v5(value: Any) -> dict[str, str]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != ARTIFACT_LINEAGE_V5_FIELDS
+        or not isinstance(value.get("parent_corpus_batch_id"), str)
+        or not value["parent_corpus_batch_id"].strip()
+        or not _is_sha256(value.get("parent_corpus_source_sha256"))
+        or not _is_sha256(value.get("parent_corpus_public_payload_sha256"))
+        or not isinstance(value.get("implementation_commit"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", value["implementation_commit"]) is None
+    ):
+        raise ValueError("artifact_lineage_invalid")
+    return deepcopy(value)
+
+
 def _validate_workloads(
     workloads: Any,
     *,
@@ -293,13 +316,18 @@ def _validate_workloads(
         SCHEMA_VERSION_V2,
         SCHEMA_VERSION_V3,
         SCHEMA_VERSION_V4,
+        SCHEMA_VERSION_V5,
     }
-    is_paired = schema_version in {SCHEMA_VERSION_V3, SCHEMA_VERSION_V4}
-    is_v4 = schema_version == SCHEMA_VERSION_V4
+    is_paired = schema_version in {
+        SCHEMA_VERSION_V3,
+        SCHEMA_VERSION_V4,
+        SCHEMA_VERSION_V5,
+    }
+    is_bounded = schema_version in {SCHEMA_VERSION_V4, SCHEMA_VERSION_V5}
     required_count = 6 if is_evaluation else 5
     expected_fields = (
         WORKLOAD_V4_FIELDS
-        if is_v4
+        if is_bounded
         else WORKLOAD_V3_FIELDS
         if is_paired
         else WORKLOAD_V2_FIELDS
@@ -354,7 +382,7 @@ def _validate_workloads(
             if not _is_sha256(workload.get("execution_packet_sha256")):
                 raise ValueError("execution_packet_sha256_invalid")
             pair_ids.add(pair_id)
-        if is_v4 and not _is_sha256(workload.get("environment_receipt_sha256")):
+        if is_bounded and not _is_sha256(workload.get("environment_receipt_sha256")):
             raise ValueError("environment_receipt_sha256_invalid")
         if not isinstance(workload.get("source_commit"), str) or re.fullmatch(
             r"[0-9a-f]{40}", workload["source_commit"]
@@ -495,6 +523,48 @@ def build_preregistration_v4(
     return validate_preregistration(manifest)
 
 
+def build_preregistration_v5(
+    batch_id: str,
+    workloads: Any,
+    *,
+    observed_from: str,
+    observed_through: str,
+    registration_authority: dict[str, Any],
+    execution_contract: dict[str, Any],
+    artifact_lineage: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(batch_id, str) or not batch_id.strip():
+        raise ValueError("batch_id_invalid")
+    manifest = {
+        "schema_version": SCHEMA_VERSION_V5,
+        "status": "frozen",
+        "batch_id": batch_id.strip(),
+        "claim_scope": "bounded_execution_value_v2",
+        "selection_policy": deepcopy(SELECTION_POLICY_V2),
+        "pilot_contract": deepcopy(PILOT_CONTRACT),
+        "comparison_contract": deepcopy(COMPARISON_CONTRACT),
+        "intervention_contract": deepcopy(INTERVENTION_CONTRACT),
+        "thresholds": deepcopy(THRESHOLDS),
+        "workloads": _validate_workloads(
+            workloads,
+            schema_version=SCHEMA_VERSION_V5,
+        ),
+        "observation_window": _validate_observation_window({
+            "observed_from": observed_from,
+            "observed_through": observed_through,
+        }),
+        "registration_authority": _validate_registration_authority(
+            registration_authority
+        ),
+        "execution_contract": _validate_execution_contract_v4(
+            execution_contract
+        ),
+        "artifact_lineage": _validate_artifact_lineage_v5(artifact_lineage),
+    }
+    manifest["preregistration_sha256"] = canonical_sha256(manifest)
+    return validate_preregistration(manifest)
+
+
 def build_preregistration_v2(
     batch_id: str,
     workloads: Any,
@@ -544,6 +614,8 @@ def validate_preregistration(payload: Any) -> dict[str, Any]:
         if schema_version == SCHEMA_VERSION_V3
         else MANIFEST_V4_FIELDS
         if schema_version == SCHEMA_VERSION_V4
+        else MANIFEST_V5_FIELDS
+        if schema_version == SCHEMA_VERSION_V5
         else None
     )
     if fields is None or set(payload) != fields:
@@ -565,6 +637,7 @@ def validate_preregistration(payload: Any) -> dict[str, Any]:
         SCHEMA_VERSION_V2: "product_value_paired_v2",
         SCHEMA_VERSION_V3: "product_value_paired_v3",
         SCHEMA_VERSION_V4: "bounded_execution_value_v1",
+        SCHEMA_VERSION_V5: "bounded_execution_value_v2",
     }[schema_version]
     if payload.get("claim_scope") != expected_claim_scope:
         raise ValueError("claim_scope_invalid")
@@ -588,13 +661,20 @@ def validate_preregistration(payload: Any) -> dict[str, Any]:
     )
     if payload["workloads"] != validated_workloads:
         raise ValueError("workload_order_invalid")
-    if schema_version in {SCHEMA_VERSION_V2, SCHEMA_VERSION_V3, SCHEMA_VERSION_V4}:
+    if schema_version in {
+        SCHEMA_VERSION_V2,
+        SCHEMA_VERSION_V3,
+        SCHEMA_VERSION_V4,
+        SCHEMA_VERSION_V5,
+    }:
         _validate_observation_window(payload.get("observation_window"))
         _validate_registration_authority(payload.get("registration_authority"))
     if schema_version == SCHEMA_VERSION_V3:
         _validate_execution_contract(payload.get("execution_contract"))
-    if schema_version == SCHEMA_VERSION_V4:
+    if schema_version in {SCHEMA_VERSION_V4, SCHEMA_VERSION_V5}:
         _validate_execution_contract_v4(payload.get("execution_contract"))
+    if schema_version == SCHEMA_VERSION_V5:
+        _validate_artifact_lineage_v5(payload.get("artifact_lineage"))
     validated = deepcopy(payload)
     return validated
 
@@ -605,6 +685,7 @@ def _validated_registered_schema(payload: Any) -> dict[str, Any]:
         SCHEMA_VERSION_V2,
         SCHEMA_VERSION_V3,
         SCHEMA_VERSION_V4,
+        SCHEMA_VERSION_V5,
     }:
         raise ValueError("registration_requires_v2")
     return validated
@@ -654,6 +735,12 @@ def validate_registered_preregistration(
     approved_trusted_root_sha256: str,
 ) -> dict[str, Any]:
     validated = _validated_registered_schema(payload)
+    if (
+        validated["schema_version"] == SCHEMA_VERSION_V5
+        and required_ancestor_commit
+        != validated["artifact_lineage"]["implementation_commit"]
+    ):
+        raise ValueError("artifact_lineage_commit_mismatch")
     registry.validate_registry_anchor(
         prepare_registry_record(validated),
         repository_root=repository_root,
@@ -728,6 +815,15 @@ def main(argv: list[str] | None = None) -> int:
     prepare_v4.add_argument("--registration-authority", type=Path, required=True)
     prepare_v4.add_argument("--execution-contract", type=Path, required=True)
     prepare_v4.add_argument("--out", type=Path, required=True)
+    prepare_v5 = sub.add_parser("prepare-v5")
+    prepare_v5.add_argument("--batch-id", required=True)
+    prepare_v5.add_argument("--workloads", type=Path, required=True)
+    prepare_v5.add_argument("--observed-from", required=True)
+    prepare_v5.add_argument("--observed-through", required=True)
+    prepare_v5.add_argument("--registration-authority", type=Path, required=True)
+    prepare_v5.add_argument("--execution-contract", type=Path, required=True)
+    prepare_v5.add_argument("--artifact-lineage", type=Path, required=True)
+    prepare_v5.add_argument("--out", type=Path, required=True)
     validate = sub.add_parser("validate")
     validate.add_argument("--manifest", type=Path, required=True)
     registry_record = sub.add_parser("registry-record")
@@ -807,6 +903,23 @@ def main(argv: list[str] | None = None) -> int:
                 observed_through=args.observed_through,
                 registration_authority=_load_json(args.registration_authority),
                 execution_contract=_load_json(args.execution_contract),
+            )
+            _write_json(args.out, manifest)
+            result = {
+                "claim_eligible": False,
+                "preregistration_sha256": manifest["preregistration_sha256"],
+                "registration_required": True,
+                "status": manifest["status"],
+            }
+        elif args.command == "prepare-v5":
+            manifest = build_preregistration_v5(
+                args.batch_id,
+                _load_json(args.workloads),
+                observed_from=args.observed_from,
+                observed_through=args.observed_through,
+                registration_authority=_load_json(args.registration_authority),
+                execution_contract=_load_json(args.execution_contract),
+                artifact_lineage=_load_json(args.artifact_lineage),
             )
             _write_json(args.out, manifest)
             result = {

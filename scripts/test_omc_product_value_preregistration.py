@@ -153,6 +153,15 @@ def _execution_contract_v4() -> dict[str, object]:
     }
 
 
+def _artifact_lineage_v5() -> dict[str, str]:
+    return {
+        "parent_corpus_batch_id": "product-value-batch-20260826-v2-r1",
+        "parent_corpus_source_sha256": "1" * 64,
+        "parent_corpus_public_payload_sha256": "2" * 64,
+        "implementation_commit": "3" * 40,
+    }
+
+
 def test_builds_and_validates_five_workload_prospective_contract() -> None:
     manifest = build_preregistration("product-value-batch-1", _workloads())
 
@@ -574,7 +583,33 @@ def test_v3_binds_concrete_execution_contract_and_pair_order(
     assert validate_preregistration(manifest) == manifest
 
 
-def test_v4_binds_bounded_execution_bundle_and_environment(
+def test_v5_binds_lineage_bounded_execution_bundle_and_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+
+    manifest = preregistration.build_preregistration_v5(
+        "product-value-batch-4",
+        _workloads_v4(),
+        observed_from="2026-09-01T00:00:00+00:00",
+        observed_through="2026-09-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=_execution_contract_v4(),
+        artifact_lineage=_artifact_lineage_v5(),
+    )
+
+    assert manifest["schema_version"] == "omc-product-value-preregistration/v5"
+    assert manifest["claim_scope"] == "bounded_execution_value_v2"
+    assert manifest["execution_contract"] == _execution_contract_v4()
+    assert manifest["artifact_lineage"] == _artifact_lineage_v5()
+    assert validate_preregistration(manifest) == manifest
+
+
+def test_v4_manifest_remains_valid_without_v5_artifact_lineage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -584,7 +619,7 @@ def test_v4_binds_bounded_execution_bundle_and_environment(
     )
 
     manifest = preregistration.build_preregistration_v4(
-        "product-value-batch-4",
+        "product-value-legacy-batch-4",
         _workloads_v4(),
         observed_from="2026-09-01T00:00:00+00:00",
         observed_through="2026-09-08T00:00:00+00:00",
@@ -592,13 +627,99 @@ def test_v4_binds_bounded_execution_bundle_and_environment(
         execution_contract=_execution_contract_v4(),
     )
 
-    assert manifest["schema_version"] == "omc-product-value-preregistration/v4"
-    assert manifest["claim_scope"] == "bounded_execution_value_v1"
-    assert manifest["execution_contract"] == _execution_contract_v4()
+    assert "artifact_lineage" not in manifest
     assert validate_preregistration(manifest) == manifest
 
 
-def test_prepare_v4_cli_writes_valid_manifest(
+def test_v5_rejects_missing_or_mutated_artifact_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    manifest = preregistration.build_preregistration_v5(
+        "product-value-batch-4",
+        _workloads_v4(),
+        observed_from="2026-09-01T00:00:00+00:00",
+        observed_through="2026-09-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=_execution_contract_v4(),
+        artifact_lineage=_artifact_lineage_v5(),
+    )
+
+    manifest["artifact_lineage"].pop("implementation_commit")
+    manifest.pop("preregistration_sha256")
+    manifest["preregistration_sha256"] = canonical_sha256(manifest)
+
+    with pytest.raises(ValueError, match="artifact_lineage_invalid"):
+        validate_preregistration(manifest)
+
+
+def test_v5_registration_rejects_ancestor_outside_artifact_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    monkeypatch.setattr(
+        preregistration.registry,
+        "validate_registry_anchor",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        preregistration.registry,
+        "validate_sigstore_registration_receipt",
+        lambda *args, **kwargs: None,
+    )
+    manifest = preregistration.build_preregistration_v5(
+        "product-value-batch-5",
+        _workloads_v4(),
+        observed_from="2026-09-01T00:00:00+00:00",
+        observed_through="2026-09-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=_execution_contract_v4(),
+        artifact_lineage=_artifact_lineage_v5(),
+    )
+    receipt = {
+        "registry_commit": "4" * 40,
+        "registry_path": ".omc/registry/product-value-batch-5.json",
+        "receipt_sha256": "5" * 64,
+    }
+
+    with pytest.raises(ValueError, match="artifact_lineage_commit_mismatch"):
+        preregistration.validate_registered_preregistration(
+            manifest,
+            repository_root=".",
+            registry_commit=receipt["registry_commit"],
+            registry_path=receipt["registry_path"],
+            required_ancestor_commit="4" * 40,
+            registration_receipt=receipt,
+            expected_registration_receipt_sha256=receipt["receipt_sha256"],
+            trusted_root={"fixture": "trusted-root"},
+            approved_trusted_root_sha256="c" * 64,
+        )
+
+    result = preregistration.validate_registered_preregistration(
+        manifest,
+        repository_root=".",
+        registry_commit=receipt["registry_commit"],
+        registry_path=receipt["registry_path"],
+        required_ancestor_commit=manifest["artifact_lineage"][
+            "implementation_commit"
+        ],
+        registration_receipt=receipt,
+        expected_registration_receipt_sha256=receipt["receipt_sha256"],
+        trusted_root={"fixture": "trusted-root"},
+        approved_trusted_root_sha256="c" * 64,
+    )
+    assert result["claim_eligible"] is True
+
+
+def test_prepare_v5_cli_writes_valid_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
@@ -609,15 +730,17 @@ def test_prepare_v4_cli_writes_valid_manifest(
     workloads = tmp_path / "workloads.json"
     authority = tmp_path / "authority.json"
     contract = tmp_path / "execution-contract.json"
+    lineage = tmp_path / "artifact-lineage.json"
     output = tmp_path / "manifest.json"
     workloads.write_text(json.dumps(_workloads_v4()), encoding="utf-8")
     authority.write_text(
         json.dumps({"trusted_root_sha256": "c" * 64}), encoding="utf-8"
     )
     contract.write_text(json.dumps(_execution_contract_v4()), encoding="utf-8")
+    lineage.write_text(json.dumps(_artifact_lineage_v5()), encoding="utf-8")
 
     result = preregistration.main([
-        "prepare-v4",
+        "prepare-v5",
         "--batch-id",
         "product-value-batch-4",
         "--workloads",
@@ -630,6 +753,8 @@ def test_prepare_v4_cli_writes_valid_manifest(
         str(authority),
         "--execution-contract",
         str(contract),
+        "--artifact-lineage",
+        str(lineage),
         "--out",
         str(output),
     ])
@@ -637,16 +762,16 @@ def test_prepare_v4_cli_writes_valid_manifest(
     assert result == 0
     assert validate_preregistration(json.loads(output.read_text()))[
         "schema_version"
-    ] == preregistration.SCHEMA_VERSION_V4
+    ] == preregistration.SCHEMA_VERSION_V5
 
 
-def test_omc_cli_accepts_prepare_v4_command() -> None:
+def test_omc_cli_accepts_prepare_v5_command() -> None:
     result = subprocess.run(
         [
             sys.executable,
             "scripts/omc.py",
             "product-value-preregistration",
-            "prepare-v4",
+            "prepare-v5",
         ],
         check=False,
         capture_output=True,
@@ -695,13 +820,14 @@ def test_v4_rejects_incomplete_execution_provenance(
     mutation(contract, workloads)
 
     with pytest.raises(ValueError, match=reason):
-        preregistration.build_preregistration_v4(
+        preregistration.build_preregistration_v5(
             "product-value-batch-4",
             workloads,
             observed_from="2026-09-01T00:00:00+00:00",
             observed_through="2026-09-08T00:00:00+00:00",
             registration_authority={"trusted_root_sha256": "c" * 64},
             execution_contract=contract,
+            artifact_lineage=_artifact_lineage_v5(),
         )
 
 

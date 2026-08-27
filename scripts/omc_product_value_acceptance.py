@@ -94,6 +94,7 @@ def _validate_acceptance_manifest(payload: Any) -> dict[str, Any]:
     expected_runner = {
         preregistration.SCHEMA_VERSION_V3: SCHEMA_VERSION,
         preregistration.SCHEMA_VERSION_V4: SCHEMA_VERSION_V2,
+        preregistration.SCHEMA_VERSION_V5: SCHEMA_VERSION_V2,
     }.get(schema)
     if expected_runner is None:
         raise ValueError("acceptance_requires_paired_preregistration")
@@ -221,7 +222,10 @@ def validate_execution_packet(
     manifest: dict[str, Any], workload: dict[str, Any], packet: Any
 ) -> dict[str, Any]:
     manifest = _validate_acceptance_manifest(manifest)
-    if manifest["schema_version"] == preregistration.SCHEMA_VERSION_V4:
+    if manifest["schema_version"] in {
+        preregistration.SCHEMA_VERSION_V4,
+        preregistration.SCHEMA_VERSION_V5,
+    }:
         packet_schema = packet.get("schema_version") if isinstance(packet, dict) else None
         if packet_schema == PACKET_SCHEMA_VERSION_V2:
             return _validate_execution_packet_v2(manifest, workload, packet)
@@ -1315,7 +1319,10 @@ def _phase_workloads(manifest: dict[str, Any], phase: str) -> list[dict[str, Any
 def _acceptance_schema_version(manifest: dict[str, Any]) -> str:
     return (
         SCHEMA_VERSION_V2
-        if manifest["schema_version"] == preregistration.SCHEMA_VERSION_V4
+        if manifest["schema_version"] in {
+            preregistration.SCHEMA_VERSION_V4,
+            preregistration.SCHEMA_VERSION_V5,
+        }
         else SCHEMA_VERSION
     )
 
@@ -1550,7 +1557,10 @@ def _validate_environment_receipt_binding(
     receipt: dict[str, Any],
 ) -> None:
     if (
-        manifest["schema_version"] == preregistration.SCHEMA_VERSION_V4
+        manifest["schema_version"] in {
+            preregistration.SCHEMA_VERSION_V4,
+            preregistration.SCHEMA_VERSION_V5,
+        }
         and receipt.get("environment_receipt_sha256")
         != workload["environment_receipt_sha256"]
     ):
@@ -1686,9 +1696,10 @@ def main(argv: list[str] | None = None) -> int:
             ):
                 raise ValueError("acceptance_execution_input_required")
             contract = manifest["execution_contract"]
-            is_v4 = (
-                manifest["schema_version"] == preregistration.SCHEMA_VERSION_V4
-            )
+            is_v4 = manifest["schema_version"] in {
+                preregistration.SCHEMA_VERSION_V4,
+                preregistration.SCHEMA_VERSION_V5,
+            }
             if is_v4 and (
                 args.scheduler is None
                 or args.executor_shadow is None

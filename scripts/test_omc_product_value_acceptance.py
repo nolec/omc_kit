@@ -176,12 +176,18 @@ def _v4_manifest_and_packet(monkeypatch: pytest.MonkeyPatch):
         "validate_trust_identity",
         lambda candidate: None,
     )
-    manifest = preregistration.build_preregistration_v4(
+    manifest = preregistration.build_preregistration_v5(
         "product-value-batch-4",
         workloads,
         observed_from="2026-09-01T00:00:00+00:00",
         observed_through="2026-09-08T00:00:00+00:00",
         registration_authority={"trusted_root_sha256": "c" * 64},
+        artifact_lineage={
+            "parent_corpus_batch_id": "product-value-batch-20260826-v2-r1",
+            "parent_corpus_source_sha256": "1" * 64,
+            "parent_corpus_public_payload_sha256": "2" * 64,
+            "implementation_commit": "3" * 40,
+        },
         execution_contract={
             "provider_snapshot": {
                 "provider_family": "codex",
