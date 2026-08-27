@@ -30,10 +30,33 @@ PACKET_SCHEMA_VERSION_V2 = "omc-product-value-execution-packet/v2"
 PACKET_SCHEMA_VERSION_V3 = "omc-product-value-execution-packet/v3"
 TELEMETRY_SCHEMA_VERSION = "omc-product-value-telemetry/v1"
 ARM_PROTOCOL = "omc-product-value-arm/v1"
+ARM_TOKEN_ENFORCEMENT = {
+    "mode": "provider_enforced_total",
+    "request_field": "max_total_tokens",
+    "over_limit_behavior": "reject_before_or_during_generation",
+}
 ARMS = ("omc", "baseline")
 REVIEW_SEVERITIES = {"critical", "major", "minor", "suggestion"}
 CACHE_INVENTORY_MAX_ENTRIES = 10_000
 CACHE_INVENTORY_MAX_BYTES = 1_073_741_824
+
+
+class _CapabilityBoundArmExecutor:
+    __slots__ = ("_execute", "_transport_attestation")
+
+    def __init__(
+        self,
+        execute: Callable[..., dict[str, Any]],
+        transport_attestation: dict[str, Any],
+    ) -> None:
+        self._execute = execute
+        self._transport_attestation = deepcopy(transport_attestation)
+
+    def __call__(self, **kwargs: Any) -> dict[str, Any]:
+        return self._execute(**kwargs)
+
+    def transport_attestation(self) -> dict[str, Any]:
+        return deepcopy(self._transport_attestation)
 
 
 def canonical_sha256(value: Any) -> str:
@@ -623,6 +646,8 @@ def _validated_result(result: Any, limits: dict[str, int]) -> dict[str, Any]:
         ):
             raise ValueError("arm_metric_invalid")
     bounded = deepcopy(result)
+    # Provider output cannot self-attest the transport used by the runner.
+    bounded["transport_profile"] = "unknown"
     if (
         usage["total_tokens"] > limits["max_total_tokens"]
         or result["elapsed_sec"] > limits["max_total_elapsed_sec"]
@@ -630,6 +655,100 @@ def _validated_result(result: Any, limits: dict[str, int]) -> dict[str, Any]:
     ):
         bounded["budget_violations"] += 1
     return bounded
+
+
+def _frozen_provider_transport_attestation(
+    provider_adapter: Path | None,
+    provider_adapter_sha256: str | None,
+    provider_backend_sha256: str | None,
+    provider_backend: Path | None = None,
+) -> dict[str, Any]:
+    attestation = {
+        "profile": "unknown",
+        "adapter_sha256": None,
+        "backend_sha256": None,
+        "capabilities_sha256": None,
+    }
+    if (
+        provider_adapter is None
+        or not _is_sha256(provider_adapter_sha256)
+        or not _is_sha256(provider_backend_sha256)
+    ):
+        return attestation
+    backend = provider_backend or provider_adapter
+    if provider_adapter_sha256 == provider_backend_sha256:
+        bound_backend_sha256 = provider_backend_sha256
+    else:
+        configured_backend = os.environ.get("OMC_PROVIDER_BACKEND", "").strip()
+        backend = (
+            provider_backend
+            if provider_backend is not None
+            else Path(configured_backend).expanduser().resolve(strict=False)
+        )
+        if (
+            (provider_backend is None and not configured_backend)
+            or not backend.is_file()
+            or canonical_file_sha256(backend) != provider_backend_sha256
+        ):
+            return attestation
+        bound_backend_sha256 = provider_backend_sha256
+    if canonical_file_sha256(provider_adapter) != provider_adapter_sha256:
+        return attestation
+    capability = _run_bounded_adapter_command(
+        [str(provider_adapter), "capabilities"],
+        timeout_sec=10,
+        max_response_bytes=64 * 1024,
+        env_overrides={"OMC_PROVIDER_BACKEND": str(backend)},
+    )
+    try:
+        payload = json.loads(capability["stdout"])
+    except (TypeError, json.JSONDecodeError):
+        return attestation
+    if (
+        capability["returncode"] != 0
+        or capability["timed_out"]
+        or capability["limit_exceeded"]
+        or not isinstance(payload, dict)
+        or payload.get("protocol") != "omc-provider/v1"
+    ):
+        return attestation
+    profile = "unknown"
+    if (
+        payload.get("hard_total_token_limit") is True
+        and payload.get("hard_output_limit") is True
+        and payload.get("token_enforcement")
+        == {
+            "mode": "provider_enforced_total",
+            "request_field": "max_total_tokens",
+            "over_limit_behavior": "reject_before_or_during_generation",
+        }
+    ):
+        profile = "provider_enforced"
+    elif (
+        payload.get("execution_profile") == "subscription_bounded"
+        and payload.get("hard_total_token_limit") is False
+        and payload.get("hard_output_limit") is True
+    ):
+        profile = "subscription_bounded"
+    return {
+        "profile": profile,
+        "adapter_sha256": provider_adapter_sha256,
+        "backend_sha256": bound_backend_sha256,
+        "capabilities_sha256": canonical_sha256(payload),
+    }
+
+
+def _arm_executor_transport_attestation(
+    arm_executor: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    if isinstance(arm_executor, _CapabilityBoundArmExecutor):
+        return arm_executor.transport_attestation()
+    return {
+        "profile": "unknown",
+        "adapter_sha256": None,
+        "backend_sha256": None,
+        "capabilities_sha256": None,
+    }
 
 
 def build_process_arm_executor(
@@ -684,6 +803,18 @@ def build_process_arm_executor(
             ):
                 raise ValueError("execution_bundle_mismatch")
             expected_hashes[name] = expected_sha256
+        configured_backend = os.environ.get("OMC_PROVIDER_BACKEND", "").strip()
+        provider_backend = Path(configured_backend).expanduser().resolve(strict=False)
+        provider_backend_sha256 = provider_snapshot.get("backend_sha256")
+        if configured_backend:
+            if (
+                not _is_sha256(provider_backend_sha256)
+                or not provider_backend.is_file()
+                or canonical_file_sha256(provider_backend) != provider_backend_sha256
+            ):
+                raise ValueError("provider_snapshot_mismatch")
+            bundle_sources["provider_backend"] = provider_backend
+            expected_hashes["provider_backend"] = provider_backend_sha256
     runtime = tempfile.TemporaryDirectory(prefix="omc-product-value-adapter-")
     immutable_snapshots: dict[str, Path] = {}
     snapshot_names = {
@@ -692,6 +823,7 @@ def build_process_arm_executor(
         "scheduler": "omc_n_child_scheduler.py",
         "executor_shadow": "omc_executor_shadow.py",
         "provider_adapter": "provider-adapter",
+        "provider_backend": "provider-backend",
     }
     try:
         for name, path in bundle_sources.items():
@@ -709,7 +841,15 @@ def build_process_arm_executor(
         runtime.cleanup()
         raise
     adapter = immutable_snapshots["arm_adapter"]
-    bundle_snapshots = immutable_snapshots if execution_bundle is not None else {}
+    bundle_snapshots = (
+        {
+            name: path
+            for name, path in immutable_snapshots.items()
+            if name != "provider_backend"
+        }
+        if execution_bundle is not None
+        else {}
+    )
     capability = _run_bounded_adapter_command(
         [str(adapter), "capabilities"],
         timeout_sec=10,
@@ -728,6 +868,7 @@ def build_process_arm_executor(
             "protocol": ARM_PROTOCOL,
             "hard_total_token_limit": True,
             "hard_output_limit": True,
+            "token_enforcement": ARM_TOKEN_ENFORCEMENT,
             "supported_arms": ["omc", "baseline"],
         }
     ):
@@ -754,6 +895,11 @@ def build_process_arm_executor(
             input_text=json.dumps(request, ensure_ascii=False),
             timeout_sec=kwargs["limits"]["max_total_elapsed_sec"],
             max_response_bytes=kwargs["limits"]["max_output_chars"] * 6 + 4096,
+            env_overrides={
+                "OMC_PROVIDER_BACKEND": str(immutable_snapshots["provider_backend"])
+            }
+            if "provider_backend" in immutable_snapshots
+            else None,
         )
         if proc["timed_out"]:
             return _failed_arm_result("provider_timeout")
@@ -763,9 +909,17 @@ def build_process_arm_executor(
             result = json.loads(proc["stdout"])
         except json.JSONDecodeError:
             return _failed_arm_result("provider_result_invalid")
+        if not isinstance(result, dict):
+            return _failed_arm_result("provider_result_invalid")
         return result
 
-    return execute
+    transport_attestation = _frozen_provider_transport_attestation(
+        immutable_snapshots.get("provider_adapter"),
+        expected_hashes.get("provider_adapter"),
+        provider_snapshot.get("backend_sha256"),
+        immutable_snapshots.get("provider_backend"),
+    )
+    return _CapabilityBoundArmExecutor(execute, transport_attestation)
 
 
 def canonical_file_sha256(
@@ -860,6 +1014,7 @@ def _failed_arm_result(reason_code: str) -> dict[str, Any]:
         "elapsed_sec": 0.0,
         "output": "",
         "token_usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        "transport_profile": "unknown",
         "intervention_events": [],
         "review_findings": [],
         "duplicate_executions": 0,
@@ -1033,6 +1188,7 @@ def _run_arm(
     arm_executor: Callable[..., dict[str, Any]],
     monotonic: Callable[[], float],
 ) -> tuple[dict[str, Any], str]:
+    transport_attestation = _arm_executor_transport_attestation(arm_executor)
     workload_root = phase_root / workload["workload_id"]
     workload_root.mkdir(parents=True, exist_ok=True)
     arm_artifact = workload_root / f"{arm}-artifacts"
@@ -1268,6 +1424,8 @@ def _run_arm(
         "provider_reported_elapsed_sec": float(raw_result["elapsed_sec"]),
         "output_sha256": canonical_file_sha256(raw_output_path),
         "token_usage": raw_result["token_usage"],
+        "transport_profile": transport_attestation["profile"],
+        "transport_capability_attestation": transport_attestation,
         "intervention_events": raw_result["intervention_events"],
         "intervention_count": sum(
             event in included_events for event in raw_result["intervention_events"]
@@ -1587,8 +1745,63 @@ def _arm_metrics(receipts: list[dict[str, Any]], arm: str) -> dict[str, Any]:
     }
 
 
+def build_product_value_verdicts(
+    checks: dict[str, bool], *, strict_transport_eligible: bool
+) -> dict[str, str]:
+    if (
+        not isinstance(checks, dict)
+        or not checks
+        or not all(isinstance(value, bool) for value in checks.values())
+        or not isinstance(strict_transport_eligible, bool)
+    ):
+        raise ValueError("acceptance_verdict_contract_invalid")
+    operational_passed = all(checks.values())
+    strict_certified = operational_passed and strict_transport_eligible
+    return {
+        "operational_verdict": (
+            "OPERATIONALLY_REPLACEABLE"
+            if operational_passed
+            else "NOT_REPLACEABLE"
+        ),
+        "strict_certification_verdict": (
+            "STRICTLY_CERTIFIED"
+            if strict_certified
+            else "HOLD_TRANSPORT"
+            if operational_passed
+            else "NOT_CERTIFIED"
+        ),
+        # Preserve the v1 consumer contract while making its strict meaning explicit.
+        "verdict": "PASS" if strict_certified else "FAIL",
+    }
+
+
+def _strict_transport_receipt_eligible(
+    manifest: dict[str, Any], receipt: dict[str, Any]
+) -> bool:
+    expected_adapter_sha256 = (
+        manifest["execution_contract"]
+        .get("execution_bundle", {})
+        .get("provider_adapter_sha256")
+    )
+    expected_backend_sha256 = manifest["execution_contract"][
+        "provider_snapshot"
+    ].get("backend_sha256")
+    attestation = receipt.get("transport_capability_attestation")
+    return bool(
+        _is_sha256(expected_adapter_sha256)
+        and isinstance(attestation, dict)
+        and attestation.get("profile") == "provider_enforced"
+        and attestation.get("adapter_sha256") == expected_adapter_sha256
+        and _is_sha256(expected_backend_sha256)
+        and attestation.get("backend_sha256") == expected_backend_sha256
+        and _is_sha256(attestation.get("capabilities_sha256"))
+        and receipt.get("transport_profile") == "provider_enforced"
+    )
+
+
 def finalize_product_value_acceptance(
-    manifest: dict[str, Any], artifact_root: str | Path
+    manifest: dict[str, Any],
+    artifact_root: str | Path,
 ) -> dict[str, Any]:
     manifest = _validate_acceptance_manifest(manifest)
     artifact_root = Path(artifact_root).resolve()
@@ -1637,6 +1850,13 @@ def finalize_product_value_acceptance(
             <= thresholds["max_additional_critical_or_major_review_findings"]
         ),
     }
+    verdicts = build_product_value_verdicts(
+        checks,
+        strict_transport_eligible=all(
+            _strict_transport_receipt_eligible(manifest, receipt)
+            for receipt in receipts
+        ),
+    )
     report = {
         "schema_version": _acceptance_schema_version(manifest),
         "status": "finalized",
@@ -1648,7 +1868,7 @@ def finalize_product_value_acceptance(
         "metrics": metrics,
         "intervention_ratio": intervention_ratio,
         "checks": checks,
-        "verdict": "PASS" if all(checks.values()) else "FAIL",
+        **verdicts,
     }
     report["report_sha256"] = canonical_sha256(report)
     return report

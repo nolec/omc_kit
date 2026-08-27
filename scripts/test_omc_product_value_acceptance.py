@@ -450,6 +450,117 @@ def _executor(*, arm: str, arm_artifact: Path, expected_child_count: int, **_kwa
     return result
 
 
+@pytest.mark.parametrize(
+    "transport_profile", [None, "forged-profile", "provider_enforced"]
+)
+def test_transport_profile_missing_or_invalid_fails_closed(
+    transport_profile: str | None,
+) -> None:
+    result = {
+        "status": "completed",
+        "reason_code": "execution_completed",
+        "elapsed_sec": 1.0,
+        "output": "ok",
+        "token_usage": {
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "total_tokens": 2,
+        },
+        "intervention_events": [],
+        "review_findings": [],
+        "duplicate_executions": 0,
+        "budget_violations": 0,
+    }
+    if transport_profile is not None:
+        result["transport_profile"] = transport_profile
+
+    bounded = acceptance._validated_result(
+        result,
+        {
+            "max_total_tokens": 10,
+            "max_total_elapsed_sec": 10,
+            "max_output_chars": 10,
+        },
+    )
+
+    assert bounded["transport_profile"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("capabilities", "expected_profile", "strict_eligible"),
+    [
+        (
+            {
+                "protocol": "omc-provider/v1",
+                "hard_total_token_limit": True,
+                "hard_output_limit": True,
+                "token_enforcement": {
+                    "mode": "provider_enforced_total",
+                    "request_field": "max_total_tokens",
+                    "over_limit_behavior": "reject_before_or_during_generation",
+                },
+            },
+            "provider_enforced",
+            True,
+        ),
+        (
+            {
+                "protocol": "omc-provider/v1",
+                "execution_profile": "subscription_bounded",
+                "hard_total_token_limit": False,
+                "hard_output_limit": True,
+            },
+            "subscription_bounded",
+            False,
+        ),
+    ],
+)
+def test_frozen_provider_capability_controls_strict_transport_eligibility(
+    tmp_path: Path,
+    capabilities: dict[str, object],
+    expected_profile: str,
+    strict_eligible: bool,
+) -> None:
+    provider = tmp_path / "provider-adapter"
+    provider.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        f"print(json.dumps({capabilities!r}))\n",
+        encoding="utf-8",
+    )
+    provider.chmod(0o755)
+    provider_sha256 = acceptance.canonical_file_sha256(provider)
+
+    attestation = acceptance._frozen_provider_transport_attestation(
+        provider,
+        provider_sha256,
+        provider_sha256,
+    )
+    manifest = {
+        "execution_contract": {
+            "execution_bundle": {
+                "provider_adapter_sha256": provider_sha256,
+            },
+            "provider_snapshot": {"backend_sha256": provider_sha256},
+        }
+    }
+    receipt = {
+        "transport_profile": expected_profile,
+        "transport_capability_attestation": attestation,
+    }
+
+    assert attestation["profile"] == expected_profile
+    assert acceptance._strict_transport_receipt_eligible(
+        manifest, receipt
+    ) is strict_eligible
+    mismatched = acceptance._frozen_provider_transport_attestation(
+        provider,
+        provider_sha256,
+        "f" * 64,
+    )
+    assert mismatched["profile"] == "unknown"
+
+
 def _failed_executor(**_kwargs) -> dict[str, object]:
     return {
         "status": "parent_review",
@@ -586,7 +697,9 @@ def test_authoritative_finalize_compares_five_pairs_and_rejects_tampering(
     assert confirmatory["status"] == "confirmatory_completed"
 
     report = acceptance.finalize_product_value_acceptance(manifest, artifacts)
-    assert report["verdict"] == "PASS"
+    assert report["verdict"] == "FAIL"
+    assert report["operational_verdict"] == "OPERATIONALLY_REPLACEABLE"
+    assert report["strict_certification_verdict"] == "HOLD_TRANSPORT"
     assert report["confirmatory_pair_count"] == 5
     assert report["metrics"]["omc"]["median_total_tokens"] == 100
     assert report["metrics"]["baseline"]["median_total_tokens"] == 120
@@ -692,6 +805,51 @@ def test_finalize_cannot_pass_when_confirmatory_arms_fail(
 
     assert report["checks"]["all_confirmatory_arms_succeeded"] is False
     assert report["verdict"] == "FAIL"
+    assert report["operational_verdict"] == "NOT_REPLACEABLE"
+    assert report["strict_certification_verdict"] == "NOT_CERTIFIED"
+
+
+def test_operational_finalize_does_not_imply_strict_certification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, packet_root, source_roots, registration = _fixture(tmp_path, monkeypatch)
+    artifacts = tmp_path / "artifacts"
+    validator = lambda *_args, **_kwargs: registration
+    monotonic = _paired_clock(manifest)
+
+    def subscription_executor(**kwargs):
+        result = _executor(**kwargs)
+        result["transport_profile"] = "subscription_bounded"
+        return result
+
+    acceptance.run_product_value_phase(
+        manifest,
+        registration,
+        packet_root=packet_root,
+        source_roots=source_roots,
+        artifact_root=artifacts,
+        phase="pilot",
+        arm_executor=subscription_executor,
+        registration_validator=validator,
+        monotonic=monotonic,
+    )
+    acceptance.run_product_value_phase(
+        manifest,
+        registration,
+        packet_root=packet_root,
+        source_roots=source_roots,
+        artifact_root=artifacts,
+        phase="confirmatory",
+        arm_executor=subscription_executor,
+        registration_validator=validator,
+        monotonic=monotonic,
+    )
+
+    report = acceptance.finalize_product_value_acceptance(manifest, artifacts)
+
+    assert report["operational_verdict"] == "OPERATIONALLY_REPLACEABLE"
+    assert report["strict_certification_verdict"] == "HOLD_TRANSPORT"
+    assert report["verdict"] == "FAIL"
 
 
 def test_elapsed_is_measured_by_runner_across_provider_and_verification(
@@ -750,6 +908,9 @@ def test_process_adapter_failure_becomes_pilot_receipt(
         "if sys.argv[1] == 'capabilities':\n"
         " print(json.dumps({'protocol':'omc-product-value-arm/v1',"
         "'hard_total_token_limit':True,'hard_output_limit':True,"
+        "'token_enforcement':{'mode':'provider_enforced_total',"
+        "'request_field':'max_total_tokens','over_limit_behavior':"
+        "'reject_before_or_during_generation'},"
         "'supported_arms':['omc','baseline']}))\n"
         "else:\n"
         " sys.exit(1)\n",
@@ -805,6 +966,7 @@ def test_v4_process_adapter_uses_execution_bundle_hash(
                 "protocol": acceptance.ARM_PROTOCOL,
                 "hard_total_token_limit": True,
                 "hard_output_limit": True,
+                "token_enforcement": acceptance.ARM_TOKEN_ENFORCEMENT,
                 "supported_arms": ["omc", "baseline"],
             }),
             "returncode": 0,
@@ -837,6 +999,122 @@ def test_v4_process_adapter_uses_execution_bundle_hash(
     assert callable(executor)
 
 
+def test_repository_execution_bundle_produces_provider_enforced_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = Path(__file__).resolve().parent
+    arm_adapter = root / "omc_product_value_arm_adapter.py"
+    scheduler = root / "omc_n_child_scheduler.py"
+    executor_shadow = root / "omc_executor_shadow.py"
+    provider_adapter = root / "omc_provider_exec_adapter.py"
+    provider_backend = root / "omc_openai_responses_transport.py"
+    monkeypatch.setenv("OMC_PROVIDER_BACKEND", str(provider_backend))
+    bundle = {
+        "acceptance_runner_sha256": acceptance.canonical_file_sha256(
+            Path(acceptance.__file__)
+        ),
+        "arm_adapter_sha256": acceptance.canonical_file_sha256(arm_adapter),
+        "scheduler_sha256": acceptance.canonical_file_sha256(scheduler),
+        "executor_shadow_sha256": acceptance.canonical_file_sha256(executor_shadow),
+        "provider_adapter_sha256": acceptance.canonical_file_sha256(provider_adapter),
+    }
+
+    executor = acceptance.build_process_arm_executor(
+        arm_adapter,
+        {"backend_sha256": acceptance.canonical_file_sha256(provider_backend)},
+        execution_bundle=bundle,
+        scheduler_path=scheduler,
+        executor_shadow_path=executor_shadow,
+        provider_adapter_path=provider_adapter,
+    )
+
+    attestation = acceptance._arm_executor_transport_attestation(executor)
+    assert attestation["profile"] == "provider_enforced"
+    assert attestation["adapter_sha256"] == bundle["provider_adapter_sha256"]
+    assert attestation["backend_sha256"] == acceptance.canonical_file_sha256(
+        provider_backend
+    )
+    assert acceptance._is_sha256(attestation["capabilities_sha256"])
+
+
+def test_process_executor_uses_frozen_provider_backend_after_source_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arm_adapter = tmp_path / "arm-adapter"
+    scheduler = tmp_path / "scheduler.py"
+    executor_shadow = tmp_path / "omc_executor_shadow.py"
+    provider_adapter = tmp_path / "provider-adapter"
+    provider_backend = tmp_path / "provider-backend"
+    arm_adapter.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, pathlib, sys\n"
+        "if sys.argv[1] == 'capabilities':\n"
+        " print(json.dumps({'protocol':'omc-product-value-arm/v1',"
+        "'hard_total_token_limit':True,'hard_output_limit':True,"
+        "'token_enforcement':{'mode':'provider_enforced_total',"
+        "'request_field':'max_total_tokens','over_limit_behavior':"
+        "'reject_before_or_during_generation'},"
+        "'supported_arms':['omc','baseline']}))\n"
+        "else:\n"
+        " backend = pathlib.Path(os.environ['OMC_PROVIDER_BACKEND'])\n"
+        " print(json.dumps({'status':'completed','reason_code':'completed',"
+        "'elapsed_sec':0.01,'output':backend.read_text(),"
+        "'token_usage':{'input_tokens':1,'output_tokens':1,'total_tokens':2},"
+        "'intervention_events':[],'review_findings':[],"
+        "'duplicate_executions':0,'budget_violations':0}))\n",
+        encoding="utf-8",
+    )
+    provider_adapter.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'protocol':'omc-provider/v1',"
+        "'hard_total_token_limit':True,'hard_output_limit':True,"
+        "'token_enforcement':{'mode':'provider_enforced_total',"
+        "'request_field':'max_total_tokens','over_limit_behavior':"
+        "'reject_before_or_during_generation'}}))\n",
+        encoding="utf-8",
+    )
+    scheduler.write_text("# scheduler\n", encoding="utf-8")
+    executor_shadow.write_text("# executor shadow\n", encoding="utf-8")
+    provider_backend.write_text("frozen backend\n", encoding="utf-8")
+    for executable in (arm_adapter, provider_adapter, provider_backend):
+        executable.chmod(0o755)
+    monkeypatch.setenv("OMC_PROVIDER_BACKEND", str(provider_backend))
+    bundle = {
+        "acceptance_runner_sha256": acceptance.canonical_file_sha256(
+            Path(acceptance.__file__)
+        ),
+        "arm_adapter_sha256": acceptance.canonical_file_sha256(arm_adapter),
+        "scheduler_sha256": acceptance.canonical_file_sha256(scheduler),
+        "executor_shadow_sha256": acceptance.canonical_file_sha256(executor_shadow),
+        "provider_adapter_sha256": acceptance.canonical_file_sha256(provider_adapter),
+    }
+    executor = acceptance.build_process_arm_executor(
+        arm_adapter,
+        {"backend_sha256": acceptance.canonical_file_sha256(provider_backend)},
+        execution_bundle=bundle,
+        scheduler_path=scheduler,
+        executor_shadow_path=executor_shadow,
+        provider_adapter_path=provider_adapter,
+    )
+    provider_backend.write_text("mutated backend\n", encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    artifact = tmp_path / "artifact"
+    workspace.mkdir()
+    artifact.mkdir()
+
+    result = executor(
+        arm="baseline",
+        packet={},
+        provider_snapshot={"backend_sha256": "0" * 64},
+        limits={"max_total_elapsed_sec": 10, "max_output_chars": 1000},
+        workspace=workspace,
+        arm_artifact=artifact,
+    )
+
+    assert result["output"] == "frozen backend\n"
+
+
 def test_v4_process_adapter_snapshots_scheduler_import_dependency(
     tmp_path: Path,
 ) -> None:
@@ -850,6 +1128,9 @@ def test_v4_process_adapter_snapshots_scheduler_import_dependency(
         "if sys.argv[1] == 'capabilities':\n"
         "    print(json.dumps({'protocol': 'omc-product-value-arm/v1', "
         "'hard_total_token_limit': True, 'hard_output_limit': True, "
+        "'token_enforcement': {'mode': 'provider_enforced_total', "
+        "'request_field': 'max_total_tokens', 'over_limit_behavior': "
+        "'reject_before_or_during_generation'}, "
         "'supported_arms': ['omc', 'baseline']}))\n"
         "else:\n"
         "    request = json.load(sys.stdin)\n"
@@ -1619,6 +1900,9 @@ def test_malformed_process_adapter_result_becomes_pilot_receipt(
         "if sys.argv[1] == 'capabilities':\n"
         " print(json.dumps({'protocol':'omc-product-value-arm/v1',"
         "'hard_total_token_limit':True,'hard_output_limit':True,"
+        "'token_enforcement':{'mode':'provider_enforced_total',"
+        "'request_field':'max_total_tokens','over_limit_behavior':"
+        "'reject_before_or_during_generation'},"
         "'supported_arms':['omc','baseline']}))\n"
         "else:\n"
         " print('{}')\n",

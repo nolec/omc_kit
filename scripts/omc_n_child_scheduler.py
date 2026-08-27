@@ -76,6 +76,7 @@ def _run_bounded_adapter_command(
     input_text: str = "",
     timeout_sec: float,
     max_response_bytes: int,
+    env_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="omc-provider-io-") as raw_temp:
         temp_root = Path(raw_temp)
@@ -91,6 +92,11 @@ def _run_bounded_adapter_command(
             proc = subprocess.Popen(
                 command,
                 cwd=str(cwd) if cwd is not None else None,
+                env=(
+                    {**os.environ, **env_overrides}
+                    if env_overrides is not None
+                    else None
+                ),
                 stdin=input_file,
                 stdout=stdout_file,
                 stderr=stderr_file,
