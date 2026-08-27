@@ -50,11 +50,12 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 - Product Value freeze 운영 surface 완료: dependency lock은 exact package/version만 허용하고 canonical 정렬하며, workload별 grant·prompt·runtime·read-only cache·직접 surface 검증 파일의 commit 결속 path·hash를 파일 기반 receipt와 v3 execution packet에 결속한다. `product-value-freeze prepare-inputs → prepare → validate` CLI가 v4 candidate, 분할 저장 artifact와 5-file execution bundle을 재계산 검증한다. Product Value 계약 회귀 `118 passed`, 최신 전체 회귀 `2764 passed, 3 skipped`, TDD gate와 diff check를 확인했다.
 - Product Value v4 decomposition·실행 환경 계약 완료: corpus workload 6건의 exact 3–5 child decomposition을 non-executable approval packet으로 고정하고, 승인 receipt와 동일한 graph·prompt·scope·budget만 scheduler-eligible v2 grant로 발급한다. target identity를 절대 경로 대신 repository identity와 exact source commit의 canonical binding으로 결속해 clean fresh clone은 허용하고 commit drift·dirty worktree·binding 누락은 fail-close한다. read-only cache archive는 경로 탈출·symlink escape·entry·logical byte 제한을 순차 검사한 뒤 격리 workspace에 materialize한다. 기존 path-bound approval packet은 재사용하지 않고 새 binding 계약으로 재생성·재승인해야 한다.
 - Product Value 신규 배치 lineage·등록 완료: preregistration schema v5는 기존 v4 artifact의 읽기 호환성을 유지하면서 parent corpus batch·source digest·승인 public payload hash와 OMC 구현 commit을 `artifact_lineage`로 직접 결속한다. `product-value-batch-20260826-v5-r1` manifest hash `69115b41...af8df`를 사용자 승인했고 exact Git registry commit `8b23f83`과 Sigstore RFC 3161 receipt hash `70d18121...d510`을 확보했다. 등록 시 `implementation_commit`과 required ancestor commit의 정확한 일치를 요구하고, threshold·provider snapshot·execution bundle·workload universe와 함께 단일 preregistration hash에 포함해 rehash된 lineage 누락·변조도 fail-close한다. 등록은 완료됐지만 해당 manifest가 raw Codex backend hash를 고정했으므로 현재 pilot 실행 적격을 의미하지 않는다.
-- Product Value production provider freeze preflight 완료: `prepare-inputs`, candidate `prepare`, `validate`가 모두 provider snapshot과 동일 SHA의 실행 파일을 immutable 임시 snapshot으로 복사해 `omc-provider-backend/v1` capability와 hard total-token/output limit를 bounded handshake로 재검증한다. 측정 receipt는 prepared-input v2와 최종 candidate SHA에 결속하고, raw CLI·hash mismatch·capability 조작·동적 경로 이중 읽기를 fail-close한다. Product Value 관련 회귀 `112 passed`, TDD gate, diff check와 OMC review `APPROVE`를 확인했다.
+- Product Value provider enforcement 계약 v2 완료: `omc-provider-backend/v1` handshake가 boolean 자기 선언 대신 `provider_enforced_total` mode, `max_total_tokens` request field, generation 전·도중 over-limit reject 동작을 정확히 선언하도록 강제한다. provider adapter·bounded N-child scheduler·Product Value arm adapter·v4 freeze가 같은 계약만 소비하며 boolean-only backend를 외부 실행 전에 거부한다. capability receipt는 v2, prepared input은 v3로 올렸고 legacy v2 prepared input 재사용을 fail-close한다. 관련 회귀 `137 passed`, TDD gate, diff check와 OMC review `APPROVE WITH NOTES`를 확인했다.
+- 위 계약은 provider identity와 제한 방식의 선언을 검증할 뿐 실제 provider가 total-token limit를 강제했다는 증거는 아니다. production backend가 over-limit 요청을 generation 전 또는 도중 실제 거부하는 adversarial conformance와 disposable shadow execution receipt를 통과하기 전에는 pilot 적격이나 Product Value 우위를 주장하지 않는다.
 - 외부 등록 전 freeze 보강 완료: source-e/f lock 문법을 정규화된 배포 이름과 숫자 release segment만 허용하는 `name==numeric.release`로 고정해 range·wildcard·marker·extra·URL·symbolic version을 거부한다. `prepare-inputs` CLI surface에서 evidence가 worktree에만 있고 frozen source commit에는 없는 경우를 `freeze_direct_surface_unverified`로 차단하는 전용 회귀를 추가했다. Product Value 핵심 회귀 `86 passed`, 전체 회귀 `2730 passed, 3 skipped`, OMC review `APPROVE WITH NOTES`를 확인했다. 최상위 `scripts/omc.py` subprocess의 전체 인자 전달 회귀는 비차단 테스트 보강으로 남기며 실제 corpus v2 생성보다 우선하지 않는다.
 - acceptance 복합 제한 분류 완료: verification timeout과 출력 상한 초과가 동시에 발생해도 timeout return code와 출력 초과 `parent_review` reason·`budget_violations`를 함께 보존한다.
 - corpus 준비 완료: implementation completion receipt에서 선정한 실제 구현 workload 6건(1건 비판정 pilot과 동일 조건 paired 5건)을 정답 commit history가 없는 단일-commit 격리 source snapshot으로 재구성하고 request·DoD·verification·교차 실행 순서를 packet hash에 결속했다. private source mapping은 외부 payload에서 분리한다.
-- 현재 병목: corpus v2-r1, decomposition·환경 실행 계약, v4 후보, schema v5 manifest, exact Git registry와 외부 RFC 3161 receipt까지 확보했다. 그러나 현재 등록된 후보는 raw Codex 실행 파일을 provider backend로 고정해 `omc-provider-backend/v1` hard-limit capability preflight에서 `provider_backend_protocol_mismatch`로 차단됐다. protocol-compliant production backend를 구현·검증한 뒤 backend hash가 바뀐 새 v4 candidate와 v5 preregistration을 재동결·재승인·재등록해야 한다. 그 후 실제 workload 6건을 `run-pilot` → `run-confirmatory` → `finalize` 순서로 실행하며, 그 전에는 pilot이나 Product Value 우위 판정을 진행하지 않는다.
+- 현재 병목: corpus v2-r1, decomposition·환경 실행 계약, v4 후보, schema v5 manifest, exact Git registry와 외부 RFC 3161 receipt, provider enforcement 계약 v2까지 확보했다. 그러나 현재 등록된 후보는 raw Codex 실행 파일을 provider backend로 고정해 preflight에서 `provider_backend_protocol_mismatch`로 차단됐고, 계약을 실제로 집행하는 production backend와 adversarial conformance receipt가 없다. production backend 구현·검증 후 backend hash가 바뀐 새 v4 candidate와 v5 preregistration을 재동결·재승인·재등록해야 한다. 그 후 실제 workload 6건을 `run-pilot` → `run-confirmatory` → `finalize` 순서로 실행하며, 그 전에는 pilot이나 Product Value 우위 판정을 진행하지 않는다.
 - 완료 기준: 실제 3–5 child 작업에서 중복 실행·범위 침범·예산 초과 없이 완료하고 실패·timeout이 같은 parent review 계약으로 수렴
 
 ### Operational Obligation
@@ -151,14 +152,15 @@ Oh My Claude Code `v4.15.10` 비교에서 확인한 운영 증거·자동 복구
 
 ## 다음 실행 순서
 
-1. hard total-token/output limit를 실제로 강제하는 `omc-provider-backend/v1` production backend를 구현하고 capability preflight 및 bounded execute 계약을 검증한다.
-2. 승인된 corpus v2-r1과 기존 decomposition을 유지하되 새 backend hash를 결속한 v4 candidate와 schema v5 preregistration을 `prepare-inputs → prepare → validate`로 재동결·재승인하고, 새 exact Git registry record와 외부 RFC 3161 receipt를 확보한다.
-3. authoritative acceptance 진입점으로 pilot 1건을 실행하고 성공 gate를 확인한다.
-4. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 수집한다.
-5. 같은 작업의 single-agent baseline과 성공률·시간·token·개입 telemetry를 비교하고 `finalize` 판정을 발행한다.
-6. 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
-7. Plan Batch B와 native Review 독립 검증을 계속해 대체 판정을 갱신한다.
-8. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
+1. hard total-token/output limit를 실제로 강제하는 `omc-provider-backend/v1` production backend를 구현한다.
+2. over-limit 요청, forged capability·usage, timeout, output overflow를 포함한 adversarial conformance와 disposable shadow execution으로 provider-enforced limit를 증명한다.
+3. 승인된 corpus v2-r1과 기존 decomposition을 유지하되 새 backend hash를 결속한 v4 candidate와 schema v5 preregistration을 `prepare-inputs → prepare → validate`로 재동결·재승인하고, 새 exact Git registry record와 외부 RFC 3161 receipt를 확보한다.
+4. authoritative acceptance 진입점으로 pilot 1건을 실행하고 성공 gate를 확인한다.
+5. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 수집한다.
+6. 같은 작업의 single-agent baseline과 성공률·시간·token·개입 telemetry를 비교하고 `finalize` 판정을 발행한다.
+7. 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
+8. Plan Batch B와 native Review 독립 검증을 계속해 대체 판정을 갱신한다.
+9. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
 
 ## 한 줄 결론
 

@@ -15,6 +15,11 @@ from typing import Any
 
 PROTOCOL = "omc-provider/v1"
 BACKEND_PROTOCOL = "omc-provider-backend/v1"
+TOKEN_ENFORCEMENT_CONTRACT = {
+    "mode": "provider_enforced_total",
+    "request_field": "max_total_tokens",
+    "over_limit_behavior": "reject_before_or_during_generation",
+}
 
 
 def _error(reason_code: str) -> dict[str, Any]:
@@ -122,6 +127,25 @@ def _capabilities(backend: Path) -> dict[str, Any] | None:
     return payload
 
 
+def _supports_hard_limits(payload: Any) -> bool:
+    return (
+        isinstance(payload, dict)
+        and payload.get("hard_total_token_limit") is True
+        and payload.get("hard_output_limit") is True
+        and payload.get("token_enforcement") == TOKEN_ENFORCEMENT_CONTRACT
+    )
+
+
+def _unsupported_reason(payload: Any) -> str:
+    if (
+        isinstance(payload, dict)
+        and payload.get("hard_total_token_limit") is True
+        and payload.get("hard_output_limit") is True
+    ):
+        return "backend_enforcement_contract_missing"
+    return "backend_hard_limit_unsupported"
+
+
 def _valid_positive_number(value: Any) -> bool:
     return (
         isinstance(value, (int, float))
@@ -180,12 +204,8 @@ def capabilities() -> int:
         print(json.dumps(_error("backend_unavailable"), sort_keys=True))
         return 2
     payload = _capabilities(backend)
-    if (
-        payload is None
-        or payload.get("hard_total_token_limit") is not True
-        or payload.get("hard_output_limit") is not True
-    ):
-        print(json.dumps(_error("backend_hard_limit_unsupported"), sort_keys=True))
+    if not _supports_hard_limits(payload):
+        print(json.dumps(_error(_unsupported_reason(payload)), sort_keys=True))
         return 2
     print(
         json.dumps(
@@ -193,6 +213,7 @@ def capabilities() -> int:
                 "protocol": PROTOCOL,
                 "hard_total_token_limit": True,
                 "hard_output_limit": True,
+                "token_enforcement": TOKEN_ENFORCEMENT_CONTRACT,
             },
             sort_keys=True,
         )
@@ -206,12 +227,8 @@ def execute() -> int:
         print(json.dumps({"returncode": 69, "output": "backend unavailable", "reason_code": "backend_unavailable"}))
         return 0
     capabilities_payload = _capabilities(backend)
-    if (
-        capabilities_payload is None
-        or capabilities_payload.get("hard_total_token_limit") is not True
-        or capabilities_payload.get("hard_output_limit") is not True
-    ):
-        print(json.dumps({"returncode": 69, "output": "backend hard limit unsupported", "reason_code": "backend_hard_limit_unsupported"}))
+    if not _supports_hard_limits(capabilities_payload):
+        print(json.dumps({"returncode": 69, "output": "backend hard limit unsupported", "reason_code": _unsupported_reason(capabilities_payload)}))
         return 0
     try:
         request = _validate_request(json.load(sys.stdin))

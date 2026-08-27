@@ -10,13 +10,23 @@ import sys
 ADAPTER = Path(__file__).with_name("omc_provider_exec_adapter.py")
 
 
-def _write_backend(path: Path, *, hard_limit: bool = True) -> None:
+def _write_backend(
+    path: Path, *, hard_limit: bool = True, enforcement_contract: bool = True
+) -> None:
+    enforcement = (
+        ", 'token_enforcement': {'mode': 'provider_enforced_total', "
+        "'request_field': 'max_total_tokens', 'over_limit_behavior': "
+        "'reject_before_or_during_generation'}"
+        if enforcement_contract
+        else ""
+    )
     path.write_text(
         "#!/usr/bin/env python3\n"
         "import json, sys\n"
         "if sys.argv[1] == 'capabilities':\n"
         "    print(json.dumps({'protocol': 'omc-provider-backend/v1', "
-        f"'hard_total_token_limit': {hard_limit!r}, 'hard_output_limit': True}}))\n"
+        f"'hard_total_token_limit': {hard_limit!r}, 'hard_output_limit': True"
+        f"{enforcement}}}))\n"
         "else:\n"
         "    request = json.load(sys.stdin)\n"
         "    print(json.dumps({'returncode': 0, 'output': 'ok', 'token_usage': "
@@ -49,6 +59,11 @@ def test_adapter_advertises_hard_limits_only_after_backend_handshake(tmp_path):
         "hard_output_limit": True,
         "hard_total_token_limit": True,
         "protocol": "omc-provider/v1",
+        "token_enforcement": {
+            "mode": "provider_enforced_total",
+            "request_field": "max_total_tokens",
+            "over_limit_behavior": "reject_before_or_during_generation",
+        },
     }
 
 
@@ -60,6 +75,16 @@ def test_adapter_rejects_backend_without_hard_token_capability(tmp_path):
 
     assert proc.returncode != 0
     assert json.loads(proc.stdout)["reason_code"] == "backend_hard_limit_unsupported"
+
+
+def test_adapter_rejects_boolean_only_hard_limit_claim(tmp_path):
+    backend = tmp_path / "backend"
+    _write_backend(backend, enforcement_contract=False)
+
+    proc = _run_adapter(backend, "capabilities")
+
+    assert proc.returncode != 0
+    assert json.loads(proc.stdout)["reason_code"] == "backend_enforcement_contract_missing"
 
 
 def test_adapter_rejects_usage_over_signed_request_limit(tmp_path):
@@ -90,7 +115,10 @@ def test_adapter_kills_backend_when_raw_response_exceeds_bound(tmp_path):
         "import json, sys\n"
         "if sys.argv[1] == 'capabilities':\n"
         "    print(json.dumps({'protocol': 'omc-provider-backend/v1', "
-        "'hard_total_token_limit': True, 'hard_output_limit': True}))\n"
+        "'hard_total_token_limit': True, 'hard_output_limit': True, "
+        "'token_enforcement': {'mode': 'provider_enforced_total', "
+        "'request_field': 'max_total_tokens', 'over_limit_behavior': "
+        "'reject_before_or_during_generation'}}))\n"
         "else:\n"
         "    print('x' * 1000000)\n",
         encoding="utf-8",

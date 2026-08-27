@@ -7,6 +7,8 @@ import subprocess
 import sys
 from threading import Barrier, Lock
 
+import pytest
+
 import omc_exec
 from omc_executor_shadow import (
     build_n_child_dag_grant,
@@ -88,7 +90,9 @@ def test_omc_cli_executes_n_child_with_capability_checked_process_adapter(tmp_pa
         "import json, sys\n"
         "if sys.argv[1] == 'capabilities':\n"
         "    print(json.dumps({'hard_total_token_limit': True, 'hard_output_limit': True, "
-        "'protocol': 'omc-provider/v1'}))\n"
+        "'token_enforcement': {'mode': 'provider_enforced_total', "
+        "'request_field': 'max_total_tokens', 'over_limit_behavior': "
+        "'reject_before_or_during_generation'}, 'protocol': 'omc-provider/v1'}))\n"
         "else:\n"
         "    request = json.load(sys.stdin)\n"
         "    assert request['max_total_tokens'] == 12000\n"
@@ -152,6 +156,22 @@ def test_process_provider_adapter_rejects_missing_hard_token_capability(tmp_path
     assert not marker_path.exists()
 
 
+def test_process_provider_adapter_rejects_boolean_only_enforcement_claim(tmp_path):
+    adapter_path = tmp_path / "boolean-only-provider"
+    adapter_path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "if sys.argv[1] == 'capabilities':\n"
+        "    print(json.dumps({'hard_total_token_limit': True, "
+        "'hard_output_limit': True, 'protocol': 'omc-provider/v1'}))\n",
+        encoding="utf-8",
+    )
+    adapter_path.chmod(0o755)
+
+    with pytest.raises(ValueError, match="provider_token_limit_unsupported"):
+        build_process_provider_runner(adapter_path)
+
+
 def test_process_provider_runner_uses_immutable_handshake_snapshot(tmp_path):
     adapter_path = tmp_path / "bounded-provider"
     adapter_path.write_text(
@@ -159,7 +179,9 @@ def test_process_provider_runner_uses_immutable_handshake_snapshot(tmp_path):
         "import json, sys\n"
         "if sys.argv[1] == 'capabilities':\n"
         "    print(json.dumps({'hard_total_token_limit': True, 'hard_output_limit': True, "
-        "'protocol': 'omc-provider/v1'}))\n"
+        "'token_enforcement': {'mode': 'provider_enforced_total', "
+        "'request_field': 'max_total_tokens', 'over_limit_behavior': "
+        "'reject_before_or_during_generation'}, 'protocol': 'omc-provider/v1'}))\n"
         "else:\n"
         "    json.load(sys.stdin)\n"
         "    print(json.dumps({'returncode': 0, 'output': 'snapshot', 'token_usage': "
@@ -190,7 +212,9 @@ def test_process_provider_runner_terminates_oversized_raw_response(tmp_path):
         "import json, sys, time\n"
         "if sys.argv[1] == 'capabilities':\n"
         "    print(json.dumps({'hard_total_token_limit': True, 'hard_output_limit': True, "
-        "'protocol': 'omc-provider/v1'}))\n"
+        "'token_enforcement': {'mode': 'provider_enforced_total', "
+        "'request_field': 'max_total_tokens', 'over_limit_behavior': "
+        "'reject_before_or_during_generation'}, 'protocol': 'omc-provider/v1'}))\n"
         "else:\n"
         "    json.load(sys.stdin)\n"
         "    print('x' * 200000, flush=True)\n"

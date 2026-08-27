@@ -22,11 +22,16 @@ from omc_n_child_scheduler import _run_bounded_adapter_command, _validate_grant
 
 
 SCHEMA_VERSION = "omc-product-value-v4-freeze/v1"
-INPUT_SCHEMA_VERSION = "omc-product-value-v4-inputs/v2"
+INPUT_SCHEMA_VERSION = "omc-product-value-v4-inputs/v3"
 PROVIDER_CAPABILITY_SCHEMA_VERSION = (
-    "omc-product-value-provider-backend-capability/v1"
+    "omc-product-value-provider-backend-capability/v2"
 )
 PROVIDER_BACKEND_PROTOCOL = "omc-provider-backend/v1"
+TOKEN_ENFORCEMENT_CONTRACT = {
+    "mode": "provider_enforced_total",
+    "request_field": "max_total_tokens",
+    "over_limit_behavior": "reject_before_or_during_generation",
+}
 BUNDLE_PATH_FIELDS = (
     "acceptance_runner",
     "arm_adapter",
@@ -152,6 +157,7 @@ def provider_backend_capability_receipt(
         "protocol": PROVIDER_BACKEND_PROTOCOL,
         "hard_total_token_limit": True,
         "hard_output_limit": True,
+        "token_enforcement": TOKEN_ENFORCEMENT_CONTRACT,
     }
     if (
         result["returncode"] != 0
@@ -159,6 +165,16 @@ def provider_backend_capability_receipt(
         or result["limit_exceeded"]
         or payload != expected
     ):
+        if (
+            isinstance(payload, dict)
+            and payload.get("protocol") == PROVIDER_BACKEND_PROTOCOL
+            and payload.get("hard_total_token_limit") is True
+            and payload.get("hard_output_limit") is True
+            and "token_enforcement" not in payload
+        ):
+            raise ValueError(
+                "freeze_provider_backend_enforcement_contract_missing"
+            )
         raise ValueError("freeze_provider_backend_incompatible")
     return {
         "schema_version": PROVIDER_CAPABILITY_SCHEMA_VERSION,
@@ -178,6 +194,7 @@ def _validate_provider_capability(
         "protocol": PROVIDER_BACKEND_PROTOCOL,
         "hard_total_token_limit": True,
         "hard_output_limit": True,
+        "token_enforcement": TOKEN_ENFORCEMENT_CONTRACT,
     }
     if value != expected:
         raise ValueError("freeze_provider_backend_capability_invalid")

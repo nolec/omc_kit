@@ -148,6 +148,12 @@ def _baseline(request: dict[str, Any], environment_hash: str) -> dict[str, Any]:
         or capabilities.get("protocol") != PROVIDER_PROTOCOL
         or capabilities.get("hard_total_token_limit") is not True
         or capabilities.get("hard_output_limit") is not True
+        or capabilities.get("token_enforcement")
+        != {
+            "mode": "provider_enforced_total",
+            "request_field": "max_total_tokens",
+            "over_limit_behavior": "reject_before_or_during_generation",
+        }
     ):
         return _result(
             "parent_review",
@@ -284,6 +290,11 @@ def capabilities() -> int:
         "protocol": PROTOCOL,
         "hard_total_token_limit": True,
         "hard_output_limit": True,
+        "token_enforcement": {
+            "mode": "provider_enforced_total",
+            "request_field": "max_total_tokens",
+            "over_limit_behavior": "reject_before_or_during_generation",
+        },
         "supported_arms": ["omc", "baseline"],
     }, sort_keys=True))
     return 0

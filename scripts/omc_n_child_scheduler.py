@@ -163,6 +163,12 @@ def build_process_provider_runner(
         or capabilities.get("protocol") != "omc-provider/v1"
         or capabilities.get("hard_total_token_limit") is not True
         or capabilities.get("hard_output_limit") is not True
+        or capabilities.get("token_enforcement")
+        != {
+            "mode": "provider_enforced_total",
+            "request_field": "max_total_tokens",
+            "over_limit_behavior": "reject_before_or_during_generation",
+        }
     ):
         runtime.cleanup()
         raise ValueError("provider_token_limit_unsupported")

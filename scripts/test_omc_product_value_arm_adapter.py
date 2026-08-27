@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 
 ADAPTER = Path(__file__).with_name("omc_product_value_arm_adapter.py")
 
@@ -46,7 +48,10 @@ def _request(tmp_path: Path, *, arm: str = "baseline") -> tuple[dict, Path]:
         "import json, sys\n"
         "if sys.argv[1] == 'capabilities':\n"
         "    print(json.dumps({'protocol': 'omc-provider/v1', "
-        "'hard_total_token_limit': True, 'hard_output_limit': True}))\n"
+        "'hard_total_token_limit': True, 'hard_output_limit': True, "
+        "'token_enforcement': {'mode': 'provider_enforced_total', "
+        "'request_field': 'max_total_tokens', 'over_limit_behavior': "
+        "'reject_before_or_during_generation'}}))\n"
         "    raise SystemExit(0)\n"
         "request = json.load(sys.stdin)\n"
         "print(json.dumps({'returncode': 0, 'output': 'baseline-ok', "
@@ -99,6 +104,11 @@ def test_arm_adapter_advertises_bounded_dual_arm_contract() -> None:
         "protocol": "omc-product-value-arm/v1",
         "hard_total_token_limit": True,
         "hard_output_limit": True,
+        "token_enforcement": {
+            "mode": "provider_enforced_total",
+            "request_field": "max_total_tokens",
+            "over_limit_behavior": "reject_before_or_during_generation",
+        },
         "supported_arms": ["omc", "baseline"],
     }
 
@@ -153,6 +163,31 @@ def test_baseline_arm_rejects_provider_without_hard_limit_capabilities(
         "if sys.argv[1] == 'capabilities':\n"
         "    print(json.dumps({'protocol': 'omc-provider/v1', "
         "'hard_total_token_limit': False, 'hard_output_limit': True}))\n"
+        "    raise SystemExit(0)\n"
+        "raise RuntimeError('execute must not be called')\n",
+    )
+
+    proc = _run(tmp_path, request, backend=backend)
+
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["status"] == "parent_review"
+    assert result["reason_code"] == "provider_capability_invalid"
+    assert result["token_usage"]["total_tokens"] == 0
+
+
+def test_baseline_arm_rejects_boolean_only_enforcement_claim(
+    tmp_path: Path,
+) -> None:
+    request, backend = _request(tmp_path)
+    provider = Path(request["execution_bundle"]["provider_adapter"])
+    _write_executable(
+        provider,
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "if sys.argv[1] == 'capabilities':\n"
+        "    print(json.dumps({'protocol': 'omc-provider/v1', "
+        "'hard_total_token_limit': True, 'hard_output_limit': True}))\n"
         "    raise SystemExit(0)\n"
         "raise RuntimeError('execute must not be called')\n",
     )

@@ -16,14 +16,26 @@ def _sha(value: object) -> str:
     ).hexdigest()
 
 
-def _write_provider_backend(path: Path, *, hard_token_limit: bool = True) -> None:
+def _write_provider_backend(
+    path: Path,
+    *,
+    hard_token_limit: bool = True,
+    enforcement_contract: bool = True,
+) -> None:
+    enforcement = (
+        ", 'token_enforcement': {'mode': 'provider_enforced_total', "
+        "'request_field': 'max_total_tokens', 'over_limit_behavior': "
+        "'reject_before_or_during_generation'}"
+        if enforcement_contract
+        else ""
+    )
     path.write_text(
         "#!/usr/bin/env python3\n"
         "import json, sys\n"
         "if sys.argv[1:] == ['capabilities']:\n"
         "    print(json.dumps({'protocol': 'omc-provider-backend/v1', "
         f"'hard_total_token_limit': {hard_token_limit!r}, "
-        "'hard_output_limit': True}))\n"
+        f"'hard_output_limit': True{enforcement}}}))\n"
         "    raise SystemExit(0)\n"
         "raise SystemExit(2)\n",
         encoding="utf-8",
@@ -44,12 +56,17 @@ def test_provider_backend_preflight_binds_verified_capabilities(tmp_path: Path) 
     receipt = freeze.provider_backend_capability_receipt(snapshot, backend)
 
     assert receipt == {
-        "schema_version": "omc-product-value-provider-backend-capability/v1",
+        "schema_version": "omc-product-value-provider-backend-capability/v2",
         "status": "verified",
         "backend_sha256": snapshot["backend_sha256"],
         "protocol": "omc-provider-backend/v1",
         "hard_total_token_limit": True,
         "hard_output_limit": True,
+        "token_enforcement": {
+            "mode": "provider_enforced_total",
+            "request_field": "max_total_tokens",
+            "over_limit_behavior": "reject_before_or_during_generation",
+        },
     }
 
 
@@ -95,6 +112,24 @@ def test_provider_backend_preflight_rejects_missing_hard_token_limit(
     }
 
     with pytest.raises(ValueError, match="freeze_provider_backend_incompatible"):
+        freeze.provider_backend_capability_receipt(snapshot, backend)
+
+
+def test_provider_backend_preflight_rejects_boolean_only_enforcement_claim(
+    tmp_path: Path,
+) -> None:
+    backend = tmp_path / "provider-backend"
+    _write_provider_backend(backend, enforcement_contract=False)
+    snapshot = {
+        "provider_family": "codex",
+        "model": "gpt-test",
+        "reasoning_profile": "low",
+        "backend_sha256": freeze.file_sha256(backend),
+    }
+
+    with pytest.raises(
+        ValueError, match="freeze_provider_backend_enforcement_contract_missing"
+    ):
         freeze.provider_backend_capability_receipt(snapshot, backend)
 
 
@@ -258,12 +293,17 @@ def _inputs(tmp_path: Path) -> dict[str, object]:
         "bundle": bundle,
         "provider_backend": provider_backend,
         "provider_capability": {
-            "schema_version": "omc-product-value-provider-backend-capability/v1",
+            "schema_version": "omc-product-value-provider-backend-capability/v2",
             "status": "verified",
             "backend_sha256": provider_backend_sha256,
             "protocol": "omc-provider-backend/v1",
             "hard_total_token_limit": True,
             "hard_output_limit": True,
+            "token_enforcement": {
+                "mode": "provider_enforced_total",
+                "request_field": "max_total_tokens",
+                "over_limit_behavior": "reject_before_or_during_generation",
+            },
         },
     }
 
@@ -553,6 +593,46 @@ def test_cli_exposes_product_value_freeze_surface() -> None:
     assert "prepare-inputs" in result.stdout
     assert "prepare" in result.stdout
     assert "validate" in result.stdout
+
+
+def test_load_prepared_inputs_rejects_legacy_v2_receipt(tmp_path: Path) -> None:
+    legacy = {
+        "schema_version": "omc-product-value-v4-inputs/v2",
+        "status": "inputs_prepared",
+        "executions": {},
+        "environments": {},
+        "surface_verifications": {},
+        "provider_snapshot": {},
+        "provider_capability": {
+            "schema_version": "omc-product-value-provider-backend-capability/v1"
+        },
+        "limits": {},
+    }
+    legacy_hash = freeze.canonical_sha256(legacy)
+    for name in (
+        "executions",
+        "environments",
+        "surface_verifications",
+        "provider_snapshot",
+        "provider_capability",
+        "limits",
+    ):
+        (tmp_path / f"{name.replace('_', '-')}.json").write_text(
+            json.dumps(legacy[name]), encoding="utf-8"
+        )
+    (tmp_path / "input-receipt.json").write_text(
+        json.dumps(
+            {
+                "schema_version": legacy["schema_version"],
+                "status": legacy["status"],
+                "inputs_sha256": legacy_hash,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="freeze_inputs_invalid"):
+        freeze._load_prepared_inputs(tmp_path)
 
 
 def test_freeze_cli_prepares_inputs_candidate_and_validates_surface(

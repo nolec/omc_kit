@@ -87,6 +87,11 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "`validate-registration`" in text
     assert "Product Value paired acceptance harness 완료" in text
     assert "`run-pilot` → `run-confirmatory` → `finalize`" in text
+    assert "Product Value provider enforcement 계약 v2 완료" in text
+    assert "boolean-only backend를 외부 실행 전에 거부" in text
+    assert "legacy v2 prepared input 재사용을 fail-close" in text
+    assert "adversarial conformance와 disposable shadow execution receipt" in text
+    assert "over-limit 요청, forged capability·usage, timeout, output overflow" in text
     assert "authoritative reload" in text
     assert "runner 실측 elapsed" in text
     assert "모든 arm 성공" in text
@@ -136,7 +141,7 @@ def test_roadmap_tracks_completed_n_child_v2_prerequisites() -> None:
     assert "acceptance 복합 제한 분류 완료" in current
     assert "승인된 v2 grant·child prompt·dependency·scope·aggregate budget" in current
     assert (
-        "4. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 "
+        "5. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 "
         "수집한다."
     ) in current
     assert "1. P0 선행 정책인 scope normalization" not in current

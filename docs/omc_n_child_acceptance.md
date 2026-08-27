@@ -22,11 +22,18 @@ case 구성, 순서, packet hash, source commit, threshold 중 하나라도 바�
 {
   "protocol": "omc-provider-backend/v1",
   "hard_total_token_limit": true,
-  "hard_output_limit": true
+  "hard_output_limit": true,
+  "token_enforcement": {
+    "mode": "provider_enforced_total",
+    "request_field": "max_total_tokens",
+    "over_limit_behavior": "reject_before_or_during_generation"
+  }
 }
 ```
 
-둘 중 하나라도 없으면 외부 호출 전에 차단한다. 실행 후 token receipt가 없거나 서명된 한도를 넘겨도 결과를 적용하지 않는다. adapter와 scheduler는 별도로 응답 바이트와 timeout을 제한한다.
+boolean 두 개만 선언하거나 enforcement 계약이 정확히 일치하지 않으면 외부 호출 전에 차단한다. `provider_enforced_total`은 provider가 `max_total_tokens`를 생성 전 또는 생성 중에 강제한다는 의미이며, 실행 후 token receipt가 없거나 서명된 한도를 넘겨도 결과를 적용하지 않는다. adapter와 scheduler는 별도로 응답 바이트와 timeout을 제한한다.
+
+capability handshake는 강제 방식의 식별 계약이며 그 자체로 적합성 증명이 아니다. production backend는 한도 초과를 유도하는 별도 conformance test를 통과하기 전까지 등록 후보로 사용하지 않는다.
 
 ## Packet 준비
 
