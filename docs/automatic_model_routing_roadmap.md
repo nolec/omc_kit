@@ -34,31 +34,32 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 
 **bounded N-child 실제 acceptance**를 단일 운영 최우선 작업으로 둔다.
 
-- 입력: 승인된 `3–5` child DAG grant, dependency, prompt, scope, aggregate budget
-- 선행 정책: scope normalization과 child `approval_id` 고유성 정책은 완료
-- 실행 전 계약: 승인 전 canonical proposal이 graph·prompt·grant·budget·target-bound scope를 결속하고, 승인 시 같은 의미와 expiry를 재검증한 v2 grant만 `scheduler_eligible=true`
-- 구현 완료: ready child claim, 제한 병렬 실행, dependency 해제, scope 격리 patch, 별도 DAG·child ledger
-- 안전 경계 완료: immutable provider snapshot, hard output bound, call·elapsed·token budget, idempotency·expiry 재검증
-- 실패 정책 완료: retry·자동 재분배·fallback·resume 없이 bounded `parent_review`로 전환하고 실패 결과의 patch 적용 차단
-- acceptance 계약 완료: 고정 5-case 카탈로그(성공 2·실패·timeout·scope violation), source commit·request hash·receipt·DAG/child ledger 결속, authoritative reload 전용 최종 판정
-- 합성 E2E 통과: capability handshake·hard token/output limit·process-group timeout·scope/budget 위반 차단을 고정 fixture로 검증; 이 결과는 운영 표본으로 간주하지 않음
-- Product Value preregistration 계약 완료: v1의 prospective 고정 5건과 v2·v3 등록 계약 호환성을 유지한다. v4는 1건 비판정 pilot과 paired confirmatory 5건, 최소 2개 저장소·2개 구현 유형, canonical workload·pair 순서·execution packet·environment receipt 해시, repository alias↔identity 일대일 매핑, 관측 창·등록 authority, provider/model/reasoning snapshot, immutable runner·arm adapter·scheduler·provider adapter bundle, 환경 정책, 실행 한도와 판정 threshold를 `frozen` manifest로 고정한다. scheduler bundle은 import dependency인 executor shadow까지 별도 해시로 결속한다. 이 상태는 `claim_eligible=false`이며 등록 완료나 운영 acceptance를 의미하지 않는다.
-- Product Value 중립 등록 검증 경로 완료: Git registry의 exact preregistration record·ancestor와 RFC 3161 claim·authority·관측 시작 전 timestamp·receipt digest를 공통 primitive로 검증하고, Product Value schema v2의 `prepare-v2` → `registry-record` → `prepare-receipt` → `validate-registration` 경로를 연결했다. 정확한 registry anchor와 유효한 receipt를 모두 통과한 경우에만 `claim_eligible=true`다. 이 경로를 사용한 schema v5 실제 외부 registration receipt는 아래 신규 배치 등록에서 확보했으며 운영 acceptance는 아직 완료하지 않았다.
-- Product Value paired acceptance harness 완료: schema v3 호환 경로와 schema v4 manifest·등록 gate를 소비해 각 workload의 OMC/baseline arm을 동일 commit의 격리 clone에서 사전 등록 순서대로 실행한다. production dual-arm adapter는 backend 실행 파일 해시와 provider의 hard token/output capability를 호출 전에 확인하고, OMC arm은 승인된 v2 grant·child prompt·dependency·scope·aggregate budget을 executor shadow가 함께 동결된 bounded scheduler에 전달하며 baseline arm은 같은 provider adapter의 single-agent brief를 사용한다. 실행 bundle hash와 provider attestation을 검증하며 dependency lock·read-only cache inventory·readiness runtime identity를 실행 전후 재측정해 drift·timeout·malformed 입력을 `parent_review`로 보존한다. pilot 성공 전 confirmatory를 차단하고 token·runner 실측 elapsed·개입·review·scope·budget·중복 실행 telemetry와 raw output·verification·DAG/child ledger를 hash-bound artifact로 남긴다. 최종 판정은 저장된 원문과 environment receipt 결속을 authoritative reload해 confirmatory 5쌍의 모든 arm 성공을 전제로 비교하며 합성 E2E는 운영 표본으로 간주하지 않는다.
-- Product Value v4 후보 동결 도구 완료: 실제 workload 정확히 6건의 v1 packet·승인 grant/prompt·environment receipt·source identity를 검증해 v3 packet과 immutable 5-file execution bundle hash를 결정론적으로 생성한다. acceptance는 기존 v2 packet 호환성을 유지한다. source commit이 실제 Git object인지 확인하고, 결과는 `candidate_frozen`·`not_registered`·`pending`으로만 원자 저장해 승인·등록 완료를 선점하지 않는다.
-- Product Value corpus v2 재구성·실제 생성·승인 완료: 승인된 v1 corpus digest와 source-e/f dependency lock으로 실제 6-workload `product-value-batch-20260826-v2-r1`을 생성했다. 최초 v2는 source-e 실행 surface 불일치로 판정에서 제외해 보존하고, 승인된 source override의 commit·tree·필수 Git object mode를 재결속한 v2-r1으로 교정했다. 필수 경로는 Git tree의 일반 파일·실행 파일·디렉터리만 허용해 symlink·submodule·누락 경로를 fail-close한다. v1 source digest `73407a89...b5a3a`, v2-r1 source digest `0b545d23...918`, public payload hash `0f9b4e46...dc74`, workload `6`건을 validator `PASS`로 확인했고 별도 `corpus-approval.json`에 사용자 승인을 기록했다. 이 corpus 승인은 v4 후보 동결 진입만 허용하며 별도 decomposition 승인·grant 발급·등록 완료를 대신하지 않는다.
-- Product Value freeze 운영 surface 완료: dependency lock은 exact package/version만 허용하고 canonical 정렬하며, workload별 grant·prompt·runtime·read-only cache·직접 surface 검증 파일의 commit 결속 path·hash를 파일 기반 receipt와 v3 execution packet에 결속한다. `product-value-freeze prepare-inputs → prepare → validate` CLI가 v4 candidate, 분할 저장 artifact와 5-file execution bundle을 재계산 검증한다. Product Value 계약 회귀 `118 passed`, 최신 전체 회귀 `2764 passed, 3 skipped`, TDD gate와 diff check를 확인했다.
-- Product Value v4 decomposition·실행 환경 계약 완료: corpus workload 6건의 exact 3–5 child decomposition을 non-executable approval packet으로 고정하고, 승인 receipt와 동일한 graph·prompt·scope·budget만 scheduler-eligible v2 grant로 발급한다. target identity를 절대 경로 대신 repository identity와 exact source commit의 canonical binding으로 결속해 clean fresh clone은 허용하고 commit drift·dirty worktree·binding 누락은 fail-close한다. read-only cache archive는 경로 탈출·symlink escape·entry·logical byte 제한을 순차 검사한 뒤 격리 workspace에 materialize한다. 기존 path-bound approval packet은 재사용하지 않고 새 binding 계약으로 재생성·재승인해야 한다.
-- Product Value 신규 배치 lineage·등록 완료: preregistration schema v5는 기존 v4 artifact의 읽기 호환성을 유지하면서 parent corpus batch·source digest·승인 public payload hash와 OMC 구현 commit을 `artifact_lineage`로 직접 결속한다. `product-value-batch-20260826-v5-r1` manifest hash `69115b41...af8df`를 사용자 승인했고 exact Git registry commit `8b23f83`과 Sigstore RFC 3161 receipt hash `70d18121...d510`을 확보했다. 등록 시 `implementation_commit`과 required ancestor commit의 정확한 일치를 요구하고, threshold·provider snapshot·execution bundle·workload universe와 함께 단일 preregistration hash에 포함해 rehash된 lineage 누락·변조도 fail-close한다. 등록은 완료됐지만 해당 manifest가 raw Codex backend hash를 고정했으므로 현재 pilot 실행 적격을 의미하지 않는다.
-- Product Value provider enforcement 계약 v2 완료: `omc-provider-backend/v1` handshake가 boolean 자기 선언 대신 `provider_enforced_total` mode, `max_total_tokens` request field, generation 전·도중 over-limit reject 동작을 정확히 선언하도록 강제한다. provider adapter·bounded N-child scheduler·Product Value arm adapter·v4 freeze가 같은 계약만 소비하며 boolean-only backend를 외부 실행 전에 거부한다. capability receipt는 v2, prepared input은 v3로 올렸고 legacy v2 prepared input 재사용을 fail-close한다. 관련 회귀 `137 passed`, TDD gate, diff check와 OMC review `APPROVE WITH NOTES`를 확인했다.
-- Product Value durable registration artifact 완료: 공통 Git registry schema v2가 hash-only record 대신 전체 public preregistration manifest를 exact commit에 포함하고, 기존 Plan candidate-universe의 schema v1 consumer는 명시적 v1 계약으로 유지한다. `receipt-record`는 exact registry anchor·ancestor와 trusted-root 기반 RFC 3161 evidence·관측 시작 전 시각·receipt digest를 모두 검증한 뒤에만 durable metadata를 생성하며, 자체 해시만 맞는 불완전 evidence를 거부한다. 관련 회귀 `102 passed`, 전체 회귀 `2785 passed, 3 skipped`, staged TDD gate, diff check와 OMC review `APPROVE WITH NOTES`를 확인했다.
-- Product Value provider conformance 증거 계약 완료: trusted transport metering key가 서명한 exact input count·usage·output chars·failure receipt만 소비하는 worst-case reservation broker를 추가했다. trusted receipt의 request/native cap/usage/output 위반과 실행 실패는 예약 상한으로 `indeterminate` 봉인하고 후속 호출을 차단하며, untrusted receipt는 예약을 소진하지 않아 forged receipt 기반 DoS를 막는다. 9개 adversarial scenario, disposable workspace·scope/symlink/process-group cleanup, backend attestation과 독립 verifier 결속을 검증하는 `evidence_prepared` receipt를 제공하되 실제 harness 실행 전에는 `claim_eligible=false`를 유지한다. 전용 회귀 `22 passed`, provider adapter·shadow 연관 회귀 `178 passed`, 최신 전체 회귀 `2807 passed, 3 skipped`, diff check와 OMC review `APPROVE`를 확인했다.
-- 위 계약은 provider identity와 제한 방식의 선언을 검증할 뿐 실제 provider가 total-token limit를 강제했다는 증거는 아니다. production backend가 over-limit 요청을 generation 전 또는 도중 실제 거부하는 adversarial conformance와 disposable shadow execution receipt를 통과하기 전에는 pilot 적격이나 Product Value 우위를 주장하지 않는다.
-- 외부 등록 전 freeze 보강 완료: source-e/f lock 문법을 정규화된 배포 이름과 숫자 release segment만 허용하는 `name==numeric.release`로 고정해 range·wildcard·marker·extra·URL·symbolic version을 거부한다. `prepare-inputs` CLI surface에서 evidence가 worktree에만 있고 frozen source commit에는 없는 경우를 `freeze_direct_surface_unverified`로 차단하는 전용 회귀를 추가했다. Product Value 핵심 회귀 `86 passed`, 전체 회귀 `2730 passed, 3 skipped`, OMC review `APPROVE WITH NOTES`를 확인했다. 최상위 `scripts/omc.py` subprocess의 전체 인자 전달 회귀는 비차단 테스트 보강으로 남기며 실제 corpus v2 생성보다 우선하지 않는다.
-- acceptance 복합 제한 분류 완료: verification timeout과 출력 상한 초과가 동시에 발생해도 timeout return code와 출력 초과 `parent_review` reason·`budget_violations`를 함께 보존한다.
-- corpus 준비 완료: implementation completion receipt에서 선정한 실제 구현 workload 6건(1건 비판정 pilot과 동일 조건 paired 5건)을 정답 commit history가 없는 단일-commit 격리 source snapshot으로 재구성하고 request·DoD·verification·교차 실행 순서를 packet hash에 결속했다. private source mapping은 외부 payload에서 분리한다.
-- 현재 병목: corpus v2-r1, decomposition·환경 실행 계약, v4 후보, schema v5 manifest, exact Git registry와 외부 RFC 3161 receipt, provider enforcement 계약 v2와 conformance 증거 계약까지 확보했다. 그러나 현재 등록된 후보는 raw Codex 실행 파일을 provider backend로 고정해 preflight에서 `provider_backend_protocol_mismatch`로 차단됐고, 계약을 실제로 집행하는 production backend와 실제 adversarial conformance receipt가 없다. production backend 구현·실행 검증 후 backend hash가 바뀐 새 v4 candidate와 v5 preregistration을 재동결·재승인·재등록해야 한다. 그 후 실제 workload 6건을 `run-pilot` → `run-confirmatory` → `finalize` 순서로 실행하며, 그 전에는 pilot이나 Product Value 우위 판정을 진행하지 않는다.
-- 완료 기준: 실제 3–5 child 작업에서 중복 실행·범위 침범·예산 초과 없이 완료하고 실패·timeout이 같은 parent review 계약으로 수렴
+**현재 병목**
+
+등록된 후보는 raw Codex 실행 파일을 backend로 고정해 `provider_backend_protocol_mismatch`로 차단된다. raw Codex transport는 필수 capability surface가 없어 계속 `HOLD_TRANSPORT_UNSUPPORTED`다. 대신 exact input count, native output cap, streamed usage를 제공하는 OpenAI Responses transport/backend 후보와 서명된 feasibility probe를 구현해 격리 self-test에서 `SUPPORTED`를 확보했다. 이 증거는 외부 provider 호출 없이 생성된 `claim_eligible=false` 준비 증거이므로, 실제 API canary와 adversarial conformance receipt 전에는 pilot 적격과 Product Value 우위를 주장하지 않는다.
+
+**준비 완료 체크포인트**
+
+| 영역 | 완료 근거 |
+|---|---|
+| Scheduler | scope normalization과 child `approval_id` 고유성 정책은 완료. 승인 전 canonical proposal과 v2 grant 재검증, ready-child claim, 제한 병렬 실행, dependency 해제, scope 격리 patch, DAG·child ledger를 구현했다. |
+| 안전·실패 | immutable provider snapshot, hard output/call·elapsed·token budget, idempotency·expiry를 강제한다. timeout·scope violation·부분 실패는 bounded `parent_review`로 수렴하고 patch 적용을 막는다. acceptance 복합 제한 분류 완료. |
+| Preregistration | Product Value preregistration 계약 완료. 1건 비판정 pilot과 동일 조건 paired 5건, canonical workload·pair 순서·execution packet·environment receipt 해시, immutable runner·arm adapter·scheduler·provider adapter bundle을 frozen manifest에 결속한다. 이 상태는 `claim_eligible=false`이며 등록이나 acceptance를 선점하지 않는다. |
+| 등록 | Product Value 중립 등록 검증 경로 완료. `prepare-v2` → `registry-record` → `prepare-receipt` → `validate-registration`과 durable schema v2 record가 exact Git anchor·RFC 3161 receipt를 검증한다. schema v5 manifest `69115b41...af8df`, registry commit `8b23f83`, receipt `70d18121...d510`을 확보했다. |
+| Corpus·freeze | 실제 구현 workload 6건의 corpus v2-r1, exact 3–5 child decomposition, repository identity/source commit, dependency lock, read-only cache와 immutable execution bundle을 동결했다. `product-value-freeze prepare-inputs → prepare → validate`로 재계산한다. |
+| Acceptance | Product Value paired acceptance harness 완료. OMC arm은 승인된 v2 grant·child prompt·dependency·scope·aggregate budget을 사용하고 baseline arm은 동일 provider adapter를 사용한다. runner 실측 elapsed·token·개입·scope·budget과 raw output을 저장하며 authoritative reload 후 모든 arm 성공일 때만 `run-pilot` → `run-confirmatory` → `finalize`한다. |
+| Provider 계약 | Product Value provider enforcement 계약 v2 완료. OpenAI Responses backend 후보도 구현해 count endpoint의 exact input count에서 남은 output budget을 계산하고 native `max_output_tokens`로 전달하며, completed usage가 reservation을 넘으면 fail-close한다. boolean-only backend를 외부 실행 전에 거부하고 legacy v2 prepared input 재사용을 fail-close한다. |
+| Conformance | Product Value provider conformance 증거 계약 완료. trusted metering receipt만 정산하고 위반·실패는 worst-case `indeterminate`로 봉인한다. over-limit 요청, forged capability·usage, timeout, output overflow를 포함한 9개 adversarial scenario와 disposable shadow execution receipt를 검증하되 실제 실행 전 `claim_eligible=false`다. |
+| Transport feasibility | 승인 hash의 immutable snapshot만 고정 명령으로 실행하고 canonical argv, timeout·출력 상한, 자식 프로세스 정리, runtime hash와 Ed25519 evidence를 결속한다. signer private key는 저장소·artifact 밖에서만 읽는다. raw Codex는 `HOLD_TRANSPORT_UNSUPPORTED`, Responses transport 후보는 격리 self-test에서 `SUPPORTED`이며 외부 provider 호출과 claim 승격은 수행하지 않았다. |
+
+최신 검증은 Responses transport·signed probe·provider adapter·shadow 연관 회귀 `190 passed`, transport evidence validator `VALID`, raw Codex probe `HOLD_TRANSPORT_UNSUPPORTED`, Responses transport 격리 probe `SUPPORTED`, staged TDD gate와 OMC review `APPROVE`다. 기존 conformance `22 passed`, 전체 회귀 `2807 passed, 3 skipped`도 보존한다. 합성 E2E와 준비된 receipt는 운영 표본으로 계산하지 않는다.
+
+**P0 종료 기준**
+
+- 실제 3–5 child 작업을 중복 실행·범위 침범·예산 초과 없이 완료한다.
+- 실패·timeout은 동일한 `parent_review` 계약으로 수렴한다.
+- baseline 대비 성공률은 같거나 높고 시간·token·개입 횟수는 사전 등록된 개선 기준을 충족한다.
+- production backend가 adversarial conformance와 disposable shadow execution receipt를 통과한 뒤에만 pilot을 연다.
 
 ### Operational Obligation
 
@@ -122,18 +123,9 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 
 Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분한다. 경쟁 제품의 문서 주장과 OMC의 구현 근거도 같은 증거 수준처럼 혼합하지 않는다.
 
-## 제품 개선 실행 백로그
+## 실행 우선순위
 
-Oh My Claude Code `v4.15.10` 비교에서 확인한 운영 증거·자동 복구·자연어 UX 약점을 OMC 제품 축에 편입한다. 경쟁 제품의 mode를 복제하는 대신 Product Value, Operator Experience, Evidence 종료 기준을 직접 충족한다. 경쟁 제품의 토큰 절감 주장과 OMC의 안전성 우위 가설은 동일 작업 직접 측정 전까지 확정 사실로 사용하지 않는다.
-
-| 우선순위 | 개선 축 | 다음 범위 | 종료 기준 |
-|---|---|---|---|
-| P0 | bounded N-child 운영 검증 | preregistration된 실제 구현 6건의 등록 receipt, 1건 pilot, confirmatory 5건 paired 실행·budget enforcement 증거 | 실제 3–5 child acceptance 통과 |
-| P1 | 자동 모드 선택과 사용자 개입 감축 | Lite/Full 자동 분기와 fail-safe 승격 | 품질 유지 + 개입·p50/p95 감소 |
-| P1 | 비용·품질 운영 증거 | single-agent 대비 token·elapsed·retry·intervention 비교 | 사전 등록 10건 acceptance 통과 |
-| P2 | 도구 중립 UX 차별화 | Codex·Claude Code·Gemini·Cursor 공통 receipt·readiness | 3개 이상 호스트 동일 fixture 통과 |
-
-작업 순서는 `P0 Product Value acceptance → P1 Operator Experience 측정·조정 → P1 Evidence 독립 검증 → P2 유지보수·멀티 호스트 UX`로 고정한다. 새로운 스킬 수를 늘리거나 경쟁 제품의 mode를 복제하는 작업은 이 acceptance를 앞당기지 않으면 우선하지 않는다.
+`P0 Product Value acceptance → P1 Operator Experience 측정·조정 → P1 Evidence 독립 검증 → P2 유지보수·멀티 호스트 UX` 순서로 고정한다. 경쟁 제품의 mode를 복제하거나 새 스킬을 늘리는 작업은 이 acceptance를 앞당길 때만 수행한다.
 
 ## 제품 원칙과 금지선
 
@@ -154,15 +146,16 @@ Oh My Claude Code `v4.15.10` 비교에서 확인한 운영 증거·자동 복구
 
 ## 다음 실행 순서
 
-1. 완성된 conformance·trusted metering 계약을 소비해 hard total-token/output limit를 실제로 강제하는 `omc-provider-backend/v1` production backend를 구현한다.
-2. over-limit 요청, forged capability·usage, timeout, output overflow를 포함한 고정 9개 adversarial scenario를 실제 harness에서 실행하고 독립 verifier·timestamp가 결속된 disposable shadow conformance receipt로 provider-enforced limit를 증명한다.
-3. 승인된 corpus v2-r1과 기존 decomposition을 유지하되 새 backend hash를 결속한 v4 candidate와 schema v5 preregistration을 `prepare-inputs → prepare → validate`로 재동결·재승인하고, 새 exact Git registry record와 외부 RFC 3161 receipt를 확보한다.
-4. authoritative acceptance 진입점으로 pilot 1건을 실행하고 성공 gate를 확인한다.
-5. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 수집한다.
-6. 같은 작업의 single-agent baseline과 성공률·시간·token·개입 telemetry를 비교하고 `finalize` 판정을 발행한다.
-7. 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
-8. Plan Batch B와 native Review 독립 검증을 계속해 대체 판정을 갱신한다.
-9. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
+1. Responses transport/backend 후보의 exact hash와 외부 custody signer public key를 승인해 durable `SUPPORTED` feasibility evidence를 발행한다.
+2. 최소 권한 API credential로 실제 count→generation canary를 실행해 exact input count, native output cap, cached/reasoning usage와 reservation fail-close를 확인한다.
+3. over-limit 요청, forged capability·usage, timeout, output overflow를 포함한 고정 9개 adversarial scenario를 실제 harness에서 실행하고 독립 verifier·timestamp가 결속된 disposable shadow conformance receipt로 provider-enforced limit를 증명한다.
+4. 승인된 corpus v2-r1과 기존 decomposition을 유지하되 새 transport·backend hash를 결속한 v4 candidate와 schema v5 preregistration을 `prepare-inputs → prepare → validate`로 재동결·재승인하고, 새 exact Git registry record와 외부 RFC 3161 receipt를 확보한다.
+5. authoritative acceptance 진입점으로 pilot 1건을 실행하고 성공 gate를 확인한다.
+6. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 수집한다.
+7. 같은 작업의 single-agent baseline과 성공률·시간·token·개입 telemetry를 비교하고 `finalize` 판정을 발행한다.
+8. 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
+9. Plan Batch B와 native Review 독립 검증을 계속해 대체 판정을 갱신한다.
+10. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
 
 ## 한 줄 결론
 

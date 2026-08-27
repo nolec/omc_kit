@@ -140,8 +140,11 @@ def test_roadmap_tracks_completed_n_child_v2_prerequisites() -> None:
     assert "승인 전 canonical proposal" in current
     assert "acceptance 복합 제한 분류 완료" in current
     assert "승인된 v2 grant·child prompt·dependency·scope·aggregate budget" in current
+    assert "Responses transport 격리 probe `SUPPORTED`" in current
+    assert "signer private key는 저장소·artifact 밖에서만 읽는다" in current
+    assert "실제 count→generation canary" in current
     assert (
-        "5. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 "
+        "6. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 "
         "수집한다."
     ) in current
     assert "1. P0 선행 정책인 scope normalization" not in current
