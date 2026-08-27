@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 from threading import Barrier, Lock
+import time
 
 import pytest
 
@@ -170,6 +172,164 @@ def test_process_provider_adapter_rejects_boolean_only_enforcement_claim(tmp_pat
 
     with pytest.raises(ValueError, match="provider_token_limit_unsupported"):
         build_process_provider_runner(adapter_path)
+
+
+def test_process_provider_runner_accepts_explicit_subscription_profile(tmp_path):
+    adapter_path = tmp_path / "subscription-adapter"
+    adapter_path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "if sys.argv[1] == 'capabilities':\n"
+        "    print(json.dumps({'protocol': 'omc-provider/v1', "
+        "'execution_profile': 'subscription_bounded', "
+        "'authentication': 'chatgpt_subscription', "
+        "'hard_total_token_limit': False, 'hard_output_limit': True, "
+        "'token_usage_mode': 'observed_post_call', "
+        "'hard_bounds': ['elapsed_time', 'output_chars', 'process_group']}))\n"
+        "else:\n"
+        "    json.load(sys.stdin)\n"
+        "    print(json.dumps({'returncode': 0, 'output': 'ok', "
+        "'token_usage': {'input_tokens': 2, 'output_tokens': 3, "
+        "'total_tokens': 5}, 'token_usage_mode': 'observed_post_call'}))\n",
+        encoding="utf-8",
+    )
+    adapter_path.chmod(0o755)
+
+    runner = build_process_provider_runner(
+        adapter_path,
+        capability_profile="subscription_bounded",
+    )
+    result = runner(
+        executor="codex",
+        prompt="bounded subscription child",
+        project_root=tmp_path,
+        timeout_sec=5,
+        max_total_tokens=100,
+        max_output_chars=100,
+    )
+
+    assert result["returncode"] == 0
+    assert result["token_usage"]["total_tokens"] == 5
+
+
+def test_process_provider_runner_does_not_mix_subscription_and_hard_token_profiles(
+    tmp_path,
+):
+    adapter_path = tmp_path / "subscription-adapter"
+    adapter_path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'protocol': 'omc-provider/v1', "
+        "'execution_profile': 'subscription_bounded', "
+        "'authentication': 'chatgpt_subscription', "
+        "'hard_total_token_limit': False, 'hard_output_limit': True, "
+        "'token_usage_mode': 'observed_post_call', "
+        "'hard_bounds': ['elapsed_time', 'output_chars', 'process_group']}))\n",
+        encoding="utf-8",
+    )
+    adapter_path.chmod(0o755)
+
+    with pytest.raises(ValueError, match="provider_token_limit_unsupported"):
+        build_process_provider_runner(adapter_path)
+
+
+def test_process_provider_runner_rejects_non_object_capabilities(tmp_path):
+    adapter_path = tmp_path / "invalid-provider"
+    adapter_path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps([]))\n",
+        encoding="utf-8",
+    )
+    adapter_path.chmod(0o755)
+
+    with pytest.raises(ValueError, match="provider_token_limit_unsupported"):
+        build_process_provider_runner(adapter_path)
+
+
+def test_subscription_runner_timeout_does_not_leave_codex_process(
+    tmp_path,
+    monkeypatch,
+):
+    pid_path = tmp_path / "codex.pid"
+    codex_path = tmp_path / "codex"
+    codex_path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, pathlib, sys, time\n"
+        "if sys.argv[1:3] == ['login', 'status']:\n"
+        "    time.sleep(0.25)\n"
+        "    print('Logged in using ChatGPT')\n"
+        "    raise SystemExit(0)\n"
+        f"pathlib.Path({str(pid_path)!r}).write_text(str(os.getpid()))\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    codex_path.chmod(0o755)
+    monkeypatch.setenv("OMC_CODEX_BINARY", str(codex_path))
+    adapter_path = Path(__file__).with_name("omc_codex_subscription_adapter.py")
+    runner = build_process_provider_runner(
+        adapter_path,
+        capability_profile="subscription_bounded",
+    )
+
+    result = runner(
+        executor="codex",
+        prompt="orphan-probe",
+        project_root=tmp_path,
+        timeout_sec=0.5,
+        max_total_tokens=100,
+        max_output_chars=100,
+    )
+
+    assert result["returncode"] == 124
+    assert pid_path.is_file()
+    pid = int(pid_path.read_text(encoding="utf-8"))
+    try:
+        time.sleep(0.1)
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        try:
+            os.kill(pid, 9)
+        except ProcessLookupError:
+            pass
+
+
+def test_provider_enforced_runner_keeps_strict_external_timeout(tmp_path):
+    adapter_path = tmp_path / "slow-provider"
+    adapter_path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys, time\n"
+        "if sys.argv[1] == 'capabilities':\n"
+        "    print(json.dumps({'protocol': 'omc-provider/v1', "
+        "'hard_total_token_limit': True, 'hard_output_limit': True, "
+        "'token_enforcement': {'mode': 'provider_enforced_total', "
+        "'request_field': 'max_total_tokens', 'over_limit_behavior': "
+        "'reject_before_or_during_generation'}}))\n"
+        "else:\n"
+        "    json.load(sys.stdin)\n"
+        "    time.sleep(0.35)\n"
+        "    print(json.dumps({'returncode': 0, 'output': 'late-success', "
+        "'token_usage': {'input_tokens': 1, 'output_tokens': 1, "
+        "'total_tokens': 2}}))\n",
+        encoding="utf-8",
+    )
+    adapter_path.chmod(0o755)
+    runner = build_process_provider_runner(adapter_path)
+
+    started = time.monotonic()
+    result = runner(
+        executor="codex",
+        prompt="strict-timeout",
+        project_root=tmp_path,
+        timeout_sec=0.1,
+        max_total_tokens=10,
+        max_output_chars=100,
+    )
+    elapsed = time.monotonic() - started
+
+    assert result["returncode"] == 124
+    assert elapsed < 0.3
 
 
 def test_process_provider_runner_uses_immutable_handshake_snapshot(tmp_path):

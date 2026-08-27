@@ -132,8 +132,9 @@ def build_process_provider_runner(
     adapter_path: str | Path,
     *,
     capability_timeout_sec: float = 10.0,
+    capability_profile: str = "provider_enforced",
 ) -> Callable[..., dict[str, Any]]:
-    """Create a provider runner after a fail-closed hard-token handshake."""
+    """Create a provider runner after an explicit fail-closed capability handshake."""
     source_path = Path(adapter_path).expanduser().resolve(strict=False)
     if not source_path.is_file() or not os.access(source_path, os.X_OK):
         raise ValueError("provider_adapter_unavailable")
@@ -155,20 +156,37 @@ def build_process_provider_runner(
     except (TypeError, json.JSONDecodeError) as exc:
         runtime.cleanup()
         raise ValueError("provider_adapter_capability_invalid") from exc
+    hard_token_profile = isinstance(capabilities, dict) and (
+        capabilities.get("hard_total_token_limit") is True
+        and capabilities.get("hard_output_limit") is True
+        and capabilities.get("token_enforcement")
+        == {
+            "mode": "provider_enforced_total",
+            "request_field": "max_total_tokens",
+            "over_limit_behavior": "reject_before_or_during_generation",
+        }
+    )
+    subscription_profile = isinstance(capabilities, dict) and (
+        capabilities.get("execution_profile") == "subscription_bounded"
+        and capabilities.get("authentication") == "chatgpt_subscription"
+        and capabilities.get("hard_total_token_limit") is False
+        and capabilities.get("hard_output_limit") is True
+        and capabilities.get("token_usage_mode") == "observed_post_call"
+        and capabilities.get("hard_bounds")
+        == ["elapsed_time", "output_chars", "process_group"]
+    )
+    profile_supported = (
+        capability_profile == "provider_enforced" and hard_token_profile
+    ) or (
+        capability_profile == "subscription_bounded" and subscription_profile
+    )
     if (
         capability_proc["returncode"] != 0
         or capability_proc["timed_out"]
         or capability_proc["limit_exceeded"]
         or not isinstance(capabilities, dict)
         or capabilities.get("protocol") != "omc-provider/v1"
-        or capabilities.get("hard_total_token_limit") is not True
-        or capabilities.get("hard_output_limit") is not True
-        or capabilities.get("token_enforcement")
-        != {
-            "mode": "provider_enforced_total",
-            "request_field": "max_total_tokens",
-            "over_limit_behavior": "reject_before_or_during_generation",
-        }
+        or not profile_supported
     ):
         runtime.cleanup()
         raise ValueError("provider_token_limit_unsupported")
@@ -190,7 +208,10 @@ def build_process_provider_runner(
                 [str(path), "execute"],
                 cwd=request["project_root"],
                 input_text=json.dumps(request, ensure_ascii=False),
-                timeout_sec=float(request["timeout_sec"]),
+                # Subscription adapters own the semantic deadline and need a
+                # bounded window to kill their process group and emit a receipt.
+                timeout_sec=float(request["timeout_sec"])
+                + (2.0 if capability_profile == "subscription_bounded" else 0.0),
                 max_response_bytes=max_response_bytes,
             )
         except OSError as exc:
@@ -1193,6 +1214,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dag-ledger", type=Path, required=True)
     parser.add_argument("--child-ledger", type=Path, required=True)
     parser.add_argument("--provider-adapter", type=Path, required=True)
+    parser.add_argument(
+        "--provider-profile",
+        choices=("provider_enforced", "subscription_bounded"),
+        default="provider_enforced",
+        help="Capability contract required from the provider adapter.",
+    )
     args = parser.parse_args(argv)
     try:
         grant = json.loads(args.grant_file.read_text(encoding="utf-8"))
@@ -1206,7 +1233,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 2
     try:
-        runner = build_process_provider_runner(args.provider_adapter)
+        runner = build_process_provider_runner(
+            args.provider_adapter,
+            capability_profile=args.provider_profile,
+        )
     except ValueError as exc:
         result = _blocked(str(exc))
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))

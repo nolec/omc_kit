@@ -36,7 +36,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 
 **현재 병목**
 
-등록된 후보는 raw Codex 실행 파일을 backend로 고정해 `provider_backend_protocol_mismatch`로 차단된다. raw Codex transport는 필수 capability surface가 없어 계속 `HOLD_TRANSPORT_UNSUPPORTED`다. 대신 exact input count, native output cap, streamed usage를 제공하는 OpenAI Responses transport/backend 후보와 서명된 feasibility probe를 구현해 격리 self-test에서 `SUPPORTED`를 확보했다. 이 증거는 외부 provider 호출 없이 생성된 `claim_eligible=false` 준비 증거이므로, 실제 API canary와 adversarial conformance receipt 전에는 pilot 적격과 Product Value 우위를 주장하지 않는다.
+등록된 Product Value 후보가 요구하는 `provider_enforced` hard-token 계약에는 raw Codex 실행 파일을 직접 사용할 수 없어 계속 `HOLD_TRANSPORT_UNSUPPORTED`다. 다만 API 키 없이 ChatGPT 로그인 상태를 사용하는 별도 `subscription_bounded` adapter를 구현해 elapsed time·output chars·process group을 강제하고 실제 input/output/total token을 호출 후 receipt로 기록할 수 있게 됐다. 이 경로는 hard total-token cap을 주장하지 않으며 strict Product Value acceptance에는 부적격이지만, no-key 운영 진단과 비용·지연 표본 수집에는 사용할 수 있다. exact input count와 native output cap이 필요한 strict 증명 경로는 기존 Responses transport/backend 후보와 분리해 유지한다.
 
 **준비 완료 체크포인트**
 
@@ -48,11 +48,11 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | 등록 | Product Value 중립 등록 검증 경로 완료. `prepare-v2` → `registry-record` → `prepare-receipt` → `validate-registration`과 durable schema v2 record가 exact Git anchor·RFC 3161 receipt를 검증한다. schema v5 manifest `69115b41...af8df`, registry commit `8b23f83`, receipt `70d18121...d510`을 확보했다. |
 | Corpus·freeze | 실제 구현 workload 6건의 corpus v2-r1, exact 3–5 child decomposition, repository identity/source commit, dependency lock, read-only cache와 immutable execution bundle을 동결했다. `product-value-freeze prepare-inputs → prepare → validate`로 재계산한다. |
 | Acceptance | Product Value paired acceptance harness 완료. OMC arm은 승인된 v2 grant·child prompt·dependency·scope·aggregate budget을 사용하고 baseline arm은 동일 provider adapter를 사용한다. runner 실측 elapsed·token·개입·scope·budget과 raw output을 저장하며 authoritative reload 후 모든 arm 성공일 때만 `run-pilot` → `run-confirmatory` → `finalize`한다. |
-| Provider 계약 | Product Value provider enforcement 계약 v2 완료. OpenAI Responses backend 후보도 구현해 count endpoint의 exact input count에서 남은 output budget을 계산하고 native `max_output_tokens`로 전달하며, completed usage가 reservation을 넘으면 fail-close한다. boolean-only backend를 외부 실행 전에 거부하고 legacy v2 prepared input 재사용을 fail-close한다. |
-| Conformance | Product Value provider conformance 증거 계약 완료. trusted metering receipt만 정산하고 위반·실패는 worst-case `indeterminate`로 봉인한다. over-limit 요청, forged capability·usage, timeout, output overflow를 포함한 9개 adversarial scenario와 disposable shadow execution receipt를 검증하되 실제 실행 전 `claim_eligible=false`다. |
-| Transport feasibility | 승인 hash의 immutable snapshot만 고정 명령으로 실행하고 canonical argv, timeout·출력 상한, 자식 프로세스 정리, runtime hash와 Ed25519 evidence를 결속한다. signer private key는 저장소·artifact 밖에서만 읽는다. raw Codex는 `HOLD_TRANSPORT_UNSUPPORTED`, Responses transport 후보는 격리 self-test에서 `SUPPORTED`이며 외부 provider 호출과 claim 승격은 수행하지 않았다. |
+| Provider 계약 | Product Value provider enforcement 계약 v2 완료. OpenAI Responses backend 후보도 구현해 count endpoint의 exact input count에서 남은 output budget을 계산하고 native `max_output_tokens`로 전달하며, completed usage가 reservation을 넘으면 fail-close한다. boolean-only backend를 외부 실행 전에 거부하고 legacy v2 prepared input 재사용을 fail-close한다. 별도 `subscription_bounded` profile은 ChatGPT 구독 인증과 post-call usage만 허용하며 기존 `provider_enforced` 기본값과 혼용되지 않도록 capability handshake에서 차단한다. |
+| Conformance | Product Value provider conformance 증거 계약 완료. trusted metering receipt만 정산하고 위반·실패는 worst-case `indeterminate`로 봉인한다. over-limit 요청, forged capability·usage, timeout, output overflow를 포함한 adversarial conformance와 disposable shadow execution receipt를 검증하되 실제 실행 전 `claim_eligible=false`다. |
+| Transport feasibility | 승인 hash의 immutable snapshot만 고정 명령으로 실행하고 canonical argv, timeout·출력 상한, 자식 프로세스 정리, runtime hash와 Ed25519 evidence를 결속한다. signer private key는 저장소·artifact 밖에서만 읽는다. Responses 후보의 실제 count→generation canary와 격리 self-test는 `SUPPORTED`지만 raw Codex의 hard-token provider 사용은 `HOLD_TRANSPORT_UNSUPPORTED`다. ChatGPT 구독 adapter는 prompt를 stdin으로 전달하고 API key를 제거하며 실제 no-key smoke와 timeout 후 잔존 PID 방지를 통과했지만 `claim_eligible=false` 진단 lane으로만 분류한다. |
 
-최신 검증은 Responses transport·signed probe·provider adapter·shadow 연관 회귀 `190 passed`, transport evidence validator `VALID`, raw Codex probe `HOLD_TRANSPORT_UNSUPPORTED`, Responses transport 격리 probe `SUPPORTED`, staged TDD gate와 OMC review `APPROVE`다. 기존 conformance `22 passed`, 전체 회귀 `2807 passed, 3 skipped`도 보존한다. 합성 E2E와 준비된 receipt는 운영 표본으로 계산하지 않는다.
+최신 검증은 ChatGPT 구독 adapter·N-child scheduler·기존 provider·Product Value 연관 회귀 `115 passed`, 실제 stdin smoke `OMC_SUBSCRIPTION_STDIN_OK`, strict provider timeout·subscription child cleanup 회귀, staged TDD gate와 OMC review `APPROVE`다. 기존 Responses transport 연관 회귀 `190 passed`, transport evidence validator `VALID`, hard-token raw Codex probe `HOLD_TRANSPORT_UNSUPPORTED`, Responses transport 격리 probe `SUPPORTED`, conformance `22 passed`, 전체 회귀 `2807 passed, 3 skipped`도 보존한다. 합성 E2E와 준비된 receipt, subscription 진단 실행은 운영 acceptance 표본으로 계산하지 않는다.
 
 **P0 종료 기준**
 
@@ -146,16 +146,15 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 다음 실행 순서
 
-1. Responses transport/backend 후보의 exact hash와 외부 custody signer public key를 승인해 durable `SUPPORTED` feasibility evidence를 발행한다.
-2. 최소 권한 API credential로 실제 count→generation canary를 실행해 exact input count, native output cap, cached/reasoning usage와 reservation fail-close를 확인한다.
-3. over-limit 요청, forged capability·usage, timeout, output overflow를 포함한 고정 9개 adversarial scenario를 실제 harness에서 실행하고 독립 verifier·timestamp가 결속된 disposable shadow conformance receipt로 provider-enforced limit를 증명한다.
-4. 승인된 corpus v2-r1과 기존 decomposition을 유지하되 새 transport·backend hash를 결속한 v4 candidate와 schema v5 preregistration을 `prepare-inputs → prepare → validate`로 재동결·재승인하고, 새 exact Git registry record와 외부 RFC 3161 receipt를 확보한다.
-5. authoritative acceptance 진입점으로 pilot 1건을 실행하고 성공 gate를 확인한다.
-6. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 수집한다.
-7. 같은 작업의 single-agent baseline과 성공률·시간·token·개입 telemetry를 비교하고 `finalize` 판정을 발행한다.
-8. 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
-9. Plan Batch B와 native Review 독립 검증을 계속해 대체 판정을 갱신한다.
-10. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
+1. `subscription_bounded` adapter와 scheduler profile을 고정 커밋으로 만들고 no-key capability·smoke receipt를 durable evidence로 보존한다.
+2. 승인된 workload 중 1건을 subscription 진단 pilot으로 실행해 성공·시간·post-call token·개입 receipt를 수집하되 Product Value acceptance나 hard-cap 증거로 승격하지 않는다.
+3. 진단 결과가 실행 가능성을 뒷받침하면 같은 조건의 paired 진단 표본을 추가하고 single-agent baseline과 성공률·시간·token·개입을 비교한다.
+4. `provider_enforced` strict acceptance는 API key를 사용자 기본 전제로 요구하지 않는다. no-key transport가 exact count·native cap을 제공할 때 재개하거나, 사용자가 별도로 credentialed transport를 선택한 경우에만 Responses canary와 9개 adversarial conformance를 수행한다.
+5. strict transport가 확보되면 corpus v2-r1과 decomposition을 유지한 새 v4 candidate·schema v5 preregistration을 재동결하고 Git registry·RFC 3161 receipt를 갱신한다.
+6. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 수집한다. authoritative pilot 1건과 이 confirmatory 표본을 모두 확보한 뒤에만 Product Value `finalize` 판정을 발행한다.
+7. 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
+8. Plan Batch B와 native Review 독립 검증을 계속해 대체 판정을 갱신한다.
+9. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
 
 ## 한 줄 결론
 
