@@ -4,17 +4,23 @@ TDD 게이트와 telemetry를 갖춘 멀티 LLM 오케스트레이션 킷입니�
 
 ## 현재 상태
 
-2026-07-13 기준 OMC는 **안전한 자동 오케스트레이션**에 초점을 둔 단계입니다.
+2026-08-28 기준 OMC는 **승인 범위 안에서 제한 병렬 실행을 수행하는 bounded orchestration** 단계입니다.
 
 - V1 스킬 기반 라우팅: 완료
 - V2 단계별 모델 라우팅: 완료
 - V3 실패 감지·재시도·승격: 완료
 - V4 telemetry·비용·KPI·observed 검증: 완료
+- V5 bounded N-child scheduler·provider adapter: 부분 반영
 - Operator Experience: 진행중
-- Executor candidate 관측과 child handoff/dependency validation: 추천-only 구현 완료
-- 실제 executor 호출·승인 lifecycle·자동 위임·자동 모델 전환: 아직 미구현
+- 승인된 v2 grant의 single child·exact 2-child·bounded N-child 실행: 구현 완료
+- 실제 3–5 child 운영 acceptance·실패 자동 재분배·자동 모델 전환·자동 ship: 미완료
 
-현재 executor 관련 결과는 모두 `execution_allowed=false`입니다. OMC는 먼저 작업을 분해하고, 후보·근거·scope·dependency를 설명한 뒤 사람이 다음 실행을 결정하도록 합니다.
+실행 가능 여부는 승인 grant, scope, dependency, budget과 provider capability에 따라 fail-close 판정됩니다. 실행 코드가 있다는 사실만으로 제품 효과가 검증된 것은 아니며, 실제 3–5 child 작업의 single-agent baseline 비교는 아직 진행 중입니다.
+
+Product Value 결과는 두 판정을 분리합니다.
+
+- **운영 대체 판정**: no-key `subscription_bounded` 경로에서도 성공률·시간·token·개입·안전 위반을 비교해 `OPERATIONALLY_REPLACEABLE` 또는 `NOT_REPLACEABLE`로 종료할 수 있습니다.
+- **strict hard-token 인증**: exact input count와 native output cap을 증명하는 `provider_enforced` transport만 `STRICTLY_CERTIFIED`가 될 수 있습니다. 운영 기준을 통과했지만 이 capability가 없으면 `HOLD_TRANSPORT`이며, 운영 대체 판정을 무효화하지 않습니다.
 
 상세 상태와 남은 작업은 [자동 모델 라우팅 로드맵](docs/automatic_model_routing_roadmap.md)을 참고하세요.
 
@@ -26,7 +32,7 @@ TDD 게이트와 telemetry를 갖춘 멀티 LLM 오케스트레이션 킷입니�
 - **실패 대응**: retry, plan retry, timeout, critique/review 실패, reroute 경로를 decision engine으로 정리
 - **운영 telemetry**: token, cost, retry, reroute, 성공률, multi-run KPI를 `.omc/runs`에 기록
 - **observed evidence**: executor별 capability evidence를 fresh/stale·환경·품질 상태와 함께 집계
-- **추천-only handoff**: parent-child scope, dependency, cycle, malformed metadata를 검증하고 다음 액션을 제시
+- **제한 병렬 handoff**: 승인된 v2 grant 안에서 parent-child scope, dependency, cycle, budget을 검증하고 bounded N-child scheduler로 실행
 - **설명 가능한 결과**: `decision`, `risk`, `next_action`, 추천 이유와 policy confidence를 유지
 - **안전한 opt-in autopilot**: 단순·저위험·scope-fixed 작업만 별도 조건에서 제한적으로 실행 가능
 
@@ -279,10 +285,10 @@ python3 scripts/omc_tdd_check.py --staged
 
 현재 우선순위는 다음 순서입니다.
 
-1. V4 observed telemetry와 Operator Experience 유지 검증
-2. 추천-only child handoff와 dependency contract 확장
-3. 충분한 운영 데이터가 쌓인 뒤 비용·품질 기반 executor eligibility 정책 검토
-4. 승인 기반 실행·budget/retry/timeout guard 검토
-5. 마지막에 V5 Learned Orchestrator shadow mode 검토
+1. corpus v2-r1을 schema v2 registry·RFC 3161 receipt·durable evidence bundle에 등록
+2. clean clone에서 bundle 복구와 availability preflight 검증
+3. no-key subscription pilot 1건과 paired confirmatory 5건 실행
+4. 운영 대체 판정 후 Lite/Full 경계 조정
+5. Plan Batch B와 native Review 독립 검증
 
-실제 executor 자동 전환을 먼저 넣지 않는 이유는 잘못된 도메인 분류, 잘못된 모델 선택, child dependency 오류, 비용 폭증과 무한 retry를 운영 데이터 없이 안전하게 검증하기 어렵기 때문입니다.
+위 acceptance가 끝날 때까지 새 schema·transport·benchmark fixture를 추가하지 않습니다. strict hard-token 인증은 no-key transport가 필요한 capability를 제공하거나 사용자가 별도 credentialed transport를 선택한 경우에만 재개합니다.

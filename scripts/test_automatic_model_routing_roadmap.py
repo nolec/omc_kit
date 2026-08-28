@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 ROADMAP_PATH = Path("docs/automatic_model_routing_roadmap.md")
+README_PATH = Path("README.md")
 HISTORY_PATH = Path("docs/automatic_model_routing_roadmap_history.md")
 HISTORY_MANIFEST_PATH = Path(
     "scripts/fixtures/automatic_model_routing_roadmap_history_manifest.json"
@@ -60,6 +61,19 @@ def test_roadmap_current_priority_is_single_and_public_anchors_remain() -> None:
     assert "### Review Quality Validation" in text
     assert "### Operator Experience 1차 통합안" in text
     assert "Codex `3/8 hit, 3 FP`, OMC `6/8 hit, 6 FP`는 참고 수치" in text
+    assert "운영 대체 판정은 strict hard-token 인증과 독립적으로 종료" in text
+    assert "새 schema·transport·benchmark fixture 추가를 중단" in text
+    assert "`claim_eligible=false` 진단 lane으로만 분류" not in text
+
+
+def test_readme_matches_the_current_bounded_execution_and_verdict_contract() -> None:
+    text = README_PATH.read_text(encoding="utf-8")
+
+    assert "bounded N-child scheduler" in text
+    assert "운영 대체 판정" in text
+    assert "strict hard-token 인증" in text
+    assert "실제 executor 호출·승인 lifecycle·자동 위임·자동 모델 전환: 아직 미구현" not in text
+    assert "현재 executor 관련 결과는 모두 `execution_allowed=false`" not in text
 
 
 def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence() -> None:
