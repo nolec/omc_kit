@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 from copy import deepcopy
 import fcntl
 import hashlib
@@ -41,6 +43,22 @@ CACHE_INVENTORY_MAX_ENTRIES = 10_000
 CACHE_INVENTORY_MAX_BYTES = 1_073_741_824
 PRODUCT_VALUE_CLAIM_SCOPE = "bounded_n_child_execution"
 EVIDENCE_TIERS = {"development", "holdout"}
+ACCEPTANCE_CHECK_NAMES = {
+    "all_confirmatory_arms_succeeded",
+    "success_rate",
+    "median_total_tokens",
+    "median_elapsed",
+    "intervention_ratio",
+    "scope_violations",
+    "budget_violations",
+    "duplicate_executions",
+    "additional_critical_or_major_review_findings",
+}
+AUTHORITY_RECEIPT_SCHEMA_VERSION = "omc-product-value-authority-receipt/v1"
+AUTHORITY_SUBJECT_PACKET_SCHEMA_VERSION = (
+    "omc-product-value-authority-subjects/v1"
+)
+AUTHORITY_ROLES = ("selection", "gold", "execution", "adjudication")
 
 
 class _CapabilityBoundArmExecutor:
@@ -61,14 +79,86 @@ class _CapabilityBoundArmExecutor:
         return deepcopy(self._transport_attestation)
 
 
-def canonical_sha256(value: Any) -> str:
-    payload = json.dumps(
+def canonical_bytes(value: Any) -> bytes:
+    return json.dumps(
         value,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+
+
+def canonical_sha256(value: Any) -> str:
+    return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
+def validate_authority_receipts(
+    receipts: Any,
+    *,
+    authority_bindings: Any,
+    expected_subjects: Any,
+) -> dict[str, dict[str, str]]:
+    try:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PublicKey,
+        )
+    except ImportError as exc:
+        raise ValueError("authority_crypto_unavailable") from exc
+    if (
+        not isinstance(receipts, dict)
+        or set(receipts) != set(AUTHORITY_ROLES)
+        or not isinstance(authority_bindings, dict)
+        or set(authority_bindings) != preregistration.AUTHORITY_BINDING_FIELDS
+        or not isinstance(expected_subjects, dict)
+        or set(expected_subjects) != set(AUTHORITY_ROLES)
+    ):
+        raise ValueError("authority_receipts_invalid")
+    validated: dict[str, dict[str, str]] = {}
+    for role in AUTHORITY_ROLES:
+        receipt = receipts.get(role)
+        expected_identity = authority_bindings.get(f"{role}_authority_sha256")
+        expected_subject = expected_subjects.get(role)
+        if (
+            not isinstance(receipt, dict)
+            or set(receipt)
+            != {
+                "schema_version",
+                "role",
+                "signer_public_key",
+                "subject_sha256",
+                "signature",
+            }
+            or receipt.get("schema_version") != AUTHORITY_RECEIPT_SCHEMA_VERSION
+            or receipt.get("role") != role
+            or not isinstance(receipt.get("signer_public_key"), str)
+            or receipt.get("subject_sha256") != expected_subject
+            or not _is_sha256(expected_subject)
+            or not _is_sha256(expected_identity)
+            or not isinstance(receipt.get("signature"), str)
+        ):
+            raise ValueError("authority_receipts_invalid")
+        try:
+            public_raw = base64.b64decode(
+                receipt["signer_public_key"], validate=True
+            )
+            signature = base64.b64decode(receipt["signature"], validate=True)
+            if (
+                len(public_raw) != 32
+                or hashlib.sha256(public_raw).hexdigest() != expected_identity
+            ):
+                raise ValueError("authority_receipts_invalid")
+            signed_payload = {
+                key: value for key, value in receipt.items() if key != "signature"
+            }
+            Ed25519PublicKey.from_public_bytes(public_raw).verify(
+                signature,
+                canonical_bytes(signed_payload),
+            )
+        except (ValueError, TypeError, binascii.Error, InvalidSignature) as exc:
+            raise ValueError("authority_receipts_invalid") from exc
+        validated[role] = deepcopy(receipt)
+    return validated
 
 
 def _is_sha256(value: Any) -> bool:
@@ -1811,6 +1901,53 @@ def _arm_metrics(receipts: list[dict[str, Any]], arm: str) -> dict[str, Any]:
     }
 
 
+def _acceptance_measurements(
+    receipts: list[dict[str, Any]],
+    thresholds: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], float, dict[str, bool]]:
+    if len(receipts) != 10:
+        raise ValueError("confirmatory_receipt_count_invalid")
+    metrics = {arm: _arm_metrics(receipts, arm) for arm in ARMS}
+    omc = metrics["omc"]
+    baseline = metrics["baseline"]
+    if baseline["intervention_count"] == 0:
+        intervention_ratio = 0.0 if omc["intervention_count"] == 0 else math.inf
+    else:
+        intervention_ratio = (
+            omc["intervention_count"] / baseline["intervention_count"]
+        )
+    checks = {
+        "all_confirmatory_arms_succeeded": all(
+            receipt.get("success") is True for receipt in receipts
+        ),
+        "success_rate": omc["success_rate"] >= baseline["success_rate"],
+        "median_total_tokens": (
+            _minimum_token_improvement_met(
+                omc["median_total_tokens"],
+                baseline["median_total_tokens"],
+                minimum=thresholds["median_total_tokens_improvement_min"],
+            )
+            if "median_total_tokens_improvement_min" in thresholds
+            else omc["median_total_tokens"] < baseline["median_total_tokens"]
+        ),
+        "median_elapsed": omc["median_elapsed_sec"] <= baseline["median_elapsed_sec"],
+        "intervention_ratio": intervention_ratio
+        <= thresholds["intervention_ratio_max"],
+        "scope_violations": omc["scope_violations"]
+        <= thresholds["max_scope_violations"],
+        "budget_violations": omc["budget_violations"]
+        <= thresholds["max_budget_violations"],
+        "duplicate_executions": omc["duplicate_executions"]
+        <= thresholds["max_duplicate_executions"],
+        "additional_critical_or_major_review_findings": (
+            omc["critical_or_major_review_findings"]
+            - baseline["critical_or_major_review_findings"]
+            <= thresholds["max_additional_critical_or_major_review_findings"]
+        ),
+    }
+    return metrics, intervention_ratio, checks
+
+
 def build_product_value_verdicts(
     checks: dict[str, bool],
     *,
@@ -1881,11 +2018,130 @@ def _manifest_evidence_contract(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def authority_subjects(
+    *,
+    manifest_sha256: str,
+    holdout_workload_inventory_sha256: str,
+    selection_policy_sha256: str,
+    thresholds_sha256: str,
+    confirmatory_evidence_sha256: str,
+    checks_sha256: str,
+) -> dict[str, str]:
+    values = {
+        "manifest_sha256": manifest_sha256,
+        "holdout_workload_inventory_sha256": holdout_workload_inventory_sha256,
+        "selection_policy_sha256": selection_policy_sha256,
+        "thresholds_sha256": thresholds_sha256,
+        "confirmatory_evidence_sha256": confirmatory_evidence_sha256,
+        "checks_sha256": checks_sha256,
+    }
+    if any(not _is_sha256(value) for value in values.values()):
+        raise ValueError("authority_subjects_invalid")
+    return {
+        "selection": canonical_sha256({
+            "role": "selection",
+            "manifest_sha256": manifest_sha256,
+            "holdout_workload_inventory_sha256": (
+                holdout_workload_inventory_sha256
+            ),
+            "selection_policy_sha256": selection_policy_sha256,
+        }),
+        "gold": canonical_sha256({
+            "role": "gold",
+            "manifest_sha256": manifest_sha256,
+            "thresholds_sha256": thresholds_sha256,
+        }),
+        "execution": canonical_sha256({
+            "role": "execution",
+            "manifest_sha256": manifest_sha256,
+            "confirmatory_evidence_sha256": confirmatory_evidence_sha256,
+        }),
+        "adjudication": canonical_sha256({
+            "role": "adjudication",
+            "manifest_sha256": manifest_sha256,
+            "checks_sha256": checks_sha256,
+        }),
+    }
+
+
+def prepare_authority_subject_packet(
+    manifest: dict[str, Any],
+    artifact_root: str | Path,
+) -> dict[str, Any]:
+    manifest = _validate_acceptance_manifest(manifest)
+    if manifest["schema_version"] != preregistration.SCHEMA_VERSION_V6:
+        raise ValueError("authority_receipts_require_v6")
+    artifact_root = Path(artifact_root).resolve()
+    _validate_pilot_gate(manifest, artifact_root)
+    receipts = _load_phase_receipts(manifest, artifact_root, "confirmatory")
+    _metrics, _intervention_ratio, checks = _acceptance_measurements(
+        receipts,
+        manifest["thresholds"],
+    )
+    evidence_contract = _manifest_evidence_contract(manifest)
+    confirmatory_evidence_sha256 = canonical_sha256(receipts)
+    checks_sha256 = canonical_sha256(checks)
+    packet = {
+        "schema_version": AUTHORITY_SUBJECT_PACKET_SCHEMA_VERSION,
+        "manifest_sha256": manifest["preregistration_sha256"],
+        "authority_bindings": deepcopy(evidence_contract["authority_bindings"]),
+        "holdout_workload_inventory_sha256": evidence_contract[
+            "holdout_workload_inventory_sha256"
+        ],
+        "selection_policy_sha256": evidence_contract[
+            "selection_policy_sha256"
+        ],
+        "thresholds_sha256": canonical_sha256(manifest["thresholds"]),
+        "confirmatory_evidence_sha256": confirmatory_evidence_sha256,
+        "checks_sha256": checks_sha256,
+        "subjects": authority_subjects(
+            manifest_sha256=manifest["preregistration_sha256"],
+            holdout_workload_inventory_sha256=evidence_contract[
+                "holdout_workload_inventory_sha256"
+            ],
+            selection_policy_sha256=evidence_contract[
+                "selection_policy_sha256"
+            ],
+            thresholds_sha256=canonical_sha256(manifest["thresholds"]),
+            confirmatory_evidence_sha256=confirmatory_evidence_sha256,
+            checks_sha256=checks_sha256,
+        ),
+    }
+    packet["subject_packet_sha256"] = canonical_sha256(packet)
+    return packet
+
+
+def record_authority_receipts(
+    manifest: dict[str, Any],
+    artifact_root: str | Path,
+    receipts: Any,
+) -> dict[str, str]:
+    artifact_root = Path(artifact_root).resolve()
+    packet = prepare_authority_subject_packet(manifest, artifact_root)
+    validated = validate_authority_receipts(
+        receipts,
+        authority_bindings=packet["authority_bindings"],
+        expected_subjects=packet["subjects"],
+    )
+    receipt_path = artifact_root / "authority-receipts.json"
+    if receipt_path.exists():
+        existing, digest = _load_envelope(receipt_path)
+        if existing != validated:
+            raise ValueError("authority_receipts_already_recorded")
+    else:
+        digest = _write_envelope(receipt_path, validated)
+    return {
+        "status": "authority_receipts_recorded",
+        "authority_receipts_sha256": digest,
+        "subject_packet_sha256": packet["subject_packet_sha256"],
+    }
+
+
 def validate_prior_holdout_report(
     report: Any,
     *,
     expected_sha256: str,
-    current_manifest_sha256: str,
+    current_manifest: dict[str, Any],
     development_preregistration_sha256: str,
     selection_policy_sha256: str,
 ) -> dict[str, Any]:
@@ -1894,17 +2150,54 @@ def validate_prior_holdout_report(
     unsigned = deepcopy(report)
     report_sha256 = unsigned.pop("report_sha256", None)
     holdout_evidence = report.get("holdout_evidence")
+    prior_inventory = report.get("holdout_workload_inventory")
+    current_inventory = preregistration.workload_inventory(
+        current_manifest.get("workloads")
+    )
+    try:
+        normalized_prior_inventory = preregistration.workload_inventory(
+            prior_inventory
+        )
+    except ValueError as exc:
+        raise ValueError("prior_holdout_report_invalid") from exc
+    prior_authorities = report.get("authority_bindings")
+    current_authorities = current_manifest.get("evidence_contract", {}).get(
+        "authority_bindings"
+    )
     if (
         not _is_sha256(expected_sha256)
         or report_sha256 != expected_sha256
         or canonical_sha256(unsigned) != expected_sha256
-        or report.get("manifest_sha256") == current_manifest_sha256
+        or report.get("manifest_sha256")
+        == current_manifest.get("preregistration_sha256")
         or report.get("claim_scope") != PRODUCT_VALUE_CLAIM_SCOPE
         or report.get("evidence_tier") != "holdout"
         or report.get("replication_role") != "initial"
         or report.get("development_preregistration_sha256")
         != development_preregistration_sha256
         or report.get("selection_policy_sha256") != selection_policy_sha256
+        or not isinstance(prior_inventory, list)
+        or prior_inventory != normalized_prior_inventory
+        or canonical_sha256(prior_inventory)
+        != report.get("holdout_workload_inventory_sha256")
+        or report.get("thresholds_sha256")
+        != canonical_sha256(current_manifest.get("thresholds"))
+        or not _is_sha256(report.get("confirmatory_evidence_sha256"))
+        or not _is_sha256(report.get("checks_sha256"))
+        or report.get("checks_sha256") != canonical_sha256(report.get("checks"))
+        or not isinstance(report.get("authority_receipts"), dict)
+        or report.get("authority_receipts_sha256")
+        != canonical_sha256(report.get("authority_receipts"))
+        or not isinstance(prior_authorities, dict)
+        or set(prior_authorities) != preregistration.AUTHORITY_BINDING_FIELDS
+        or any(not _is_sha256(value) for value in prior_authorities.values())
+        or len(set(prior_authorities.values()))
+        != len(preregistration.AUTHORITY_BINDING_FIELDS)
+        or not isinstance(current_authorities, dict)
+        or set(current_authorities) != preregistration.AUTHORITY_BINDING_FIELDS
+        or any(not _is_sha256(value) for value in current_authorities.values())
+        or len(set(current_authorities.values()))
+        != len(preregistration.AUTHORITY_BINDING_FIELDS)
         or not _is_sha256(
             report.get("development_registration_receipt_sha256")
         )
@@ -1920,11 +2213,58 @@ def validate_prior_holdout_report(
         != report.get("selection_policy_sha256")
         or report.get("operational_verdict") != "HOLDOUT_PROVISIONAL_PASS"
         or not isinstance(report.get("checks"), dict)
-        or not report["checks"]
+        or set(report["checks"]) != ACCEPTANCE_CHECK_NAMES
         or not all(value is True for value in report["checks"].values())
     ):
         raise ValueError("prior_holdout_report_invalid")
+    try:
+        validate_authority_receipts(
+            report["authority_receipts"],
+            authority_bindings=prior_authorities,
+            expected_subjects=authority_subjects(
+                manifest_sha256=report["manifest_sha256"],
+                holdout_workload_inventory_sha256=report[
+                    "holdout_workload_inventory_sha256"
+                ],
+                selection_policy_sha256=report["selection_policy_sha256"],
+                thresholds_sha256=report["thresholds_sha256"],
+                confirmatory_evidence_sha256=report[
+                    "confirmatory_evidence_sha256"
+                ],
+                checks_sha256=report["checks_sha256"],
+            ),
+        )
+    except ValueError as exc:
+        raise ValueError("prior_holdout_report_invalid") from exc
+    for field in preregistration.WORKLOAD_INVENTORY_FIELDS:
+        if {item[field] for item in prior_inventory} & {
+            item[field] for item in current_inventory
+        }:
+            raise ValueError("prior_holdout_report_not_independent")
+    prior_sources = {
+        (item["repository_identity_sha256"], item["source_commit"])
+        for item in prior_inventory
+    }
+    current_sources = {
+        (item["repository_identity_sha256"], item["source_commit"])
+        for item in current_inventory
+    }
+    if prior_sources & current_sources or set(prior_authorities.values()) & set(
+        current_authorities.values()
+    ):
+        raise ValueError("prior_holdout_report_not_independent")
     return deepcopy(report)
+
+
+def _minimum_token_improvement_met(
+    omc_tokens: float,
+    baseline_tokens: float,
+    *,
+    minimum: float,
+) -> bool:
+    if baseline_tokens <= 0 or not 0 < minimum < 1:
+        return False
+    return omc_tokens <= baseline_tokens * (1 - minimum)
 
 
 def _strict_transport_receipt_eligible(
@@ -1966,18 +2306,11 @@ def finalize_product_value_acceptance(
     _validate_pilot_gate(manifest, artifact_root)
     _load_phase_receipts(manifest, artifact_root, "pilot")
     receipts = _load_phase_receipts(manifest, artifact_root, "confirmatory")
-    if len(receipts) != 10:
-        raise ValueError("confirmatory_receipt_count_invalid")
-    metrics = {arm: _arm_metrics(receipts, arm) for arm in ARMS}
-    omc = metrics["omc"]
-    baseline = metrics["baseline"]
-    if baseline["intervention_count"] == 0:
-        intervention_ratio = 0.0 if omc["intervention_count"] == 0 else math.inf
-    else:
-        intervention_ratio = (
-            omc["intervention_count"] / baseline["intervention_count"]
-        )
     thresholds = manifest["thresholds"]
+    metrics, intervention_ratio, checks = _acceptance_measurements(
+        receipts,
+        thresholds,
+    )
     evidence_contract = _manifest_evidence_contract(manifest)
     if evidence_contract["replication_role"] == "replication":
         prior_report, _ = _load_envelope(
@@ -1986,7 +2319,7 @@ def finalize_product_value_acceptance(
         validate_prior_holdout_report(
             prior_report,
             expected_sha256=evidence_contract["prior_holdout_report_sha256"],
-            current_manifest_sha256=manifest["preregistration_sha256"],
+            current_manifest=manifest,
             development_preregistration_sha256=evidence_contract[
                 "development_preregistration_sha256"
             ],
@@ -1994,27 +2327,30 @@ def finalize_product_value_acceptance(
                 "selection_policy_sha256"
             ],
         )
-    checks = {
-        "all_confirmatory_arms_succeeded": all(
-            receipt.get("success") is True for receipt in receipts
-        ),
-        "success_rate": omc["success_rate"] >= baseline["success_rate"],
-        "median_total_tokens": (
-            omc["median_total_tokens"] < baseline["median_total_tokens"]
-        ),
-        "median_elapsed": omc["median_elapsed_sec"] <= baseline["median_elapsed_sec"],
-        "intervention_ratio": intervention_ratio <= thresholds["intervention_ratio_max"],
-        "scope_violations": omc["scope_violations"] <= thresholds["max_scope_violations"],
-        "budget_violations": omc["budget_violations"] <= thresholds["max_budget_violations"],
-        "duplicate_executions": (
-            omc["duplicate_executions"] <= thresholds["max_duplicate_executions"]
-        ),
-        "additional_critical_or_major_review_findings": (
-            omc["critical_or_major_review_findings"]
-            - baseline["critical_or_major_review_findings"]
-            <= thresholds["max_additional_critical_or_major_review_findings"]
-        ),
-    }
+    authority_receipts = None
+    authority_receipts_sha256 = None
+    confirmatory_evidence_sha256 = canonical_sha256(receipts)
+    checks_sha256 = canonical_sha256(checks)
+    if manifest["schema_version"] == preregistration.SCHEMA_VERSION_V6:
+        authority_receipts, authority_receipts_sha256 = _load_envelope(
+            artifact_root / "authority-receipts.json"
+        )
+        authority_receipts = validate_authority_receipts(
+            authority_receipts,
+            authority_bindings=evidence_contract["authority_bindings"],
+            expected_subjects=authority_subjects(
+                manifest_sha256=manifest["preregistration_sha256"],
+                holdout_workload_inventory_sha256=evidence_contract[
+                    "holdout_workload_inventory_sha256"
+                ],
+                selection_policy_sha256=evidence_contract[
+                    "selection_policy_sha256"
+                ],
+                thresholds_sha256=canonical_sha256(manifest["thresholds"]),
+                confirmatory_evidence_sha256=confirmatory_evidence_sha256,
+                checks_sha256=checks_sha256,
+            ),
+        )
     verdicts = build_product_value_verdicts(
         checks,
         strict_transport_eligible=all(
@@ -2032,6 +2368,7 @@ def finalize_product_value_acceptance(
             "registration_receipt_sha256"
         ],
         "confirmatory_pair_count": 5,
+        "thresholds_sha256": canonical_sha256(manifest["thresholds"]),
         **evidence_contract,
         "metrics": metrics,
         "intervention_ratio": intervention_ratio,
@@ -2044,6 +2381,13 @@ def finalize_product_value_acceptance(
                 "development_registration_receipt_sha256"
             ],
             "holdout_evidence": deepcopy(registration["holdout_evidence"]),
+            "holdout_workload_inventory": preregistration.workload_inventory(
+                manifest["workloads"]
+            ),
+            "confirmatory_evidence_sha256": confirmatory_evidence_sha256,
+            "checks_sha256": checks_sha256,
+            "authority_receipts": authority_receipts,
+            "authority_receipts_sha256": authority_receipts_sha256,
         })
     report["report_sha256"] = canonical_sha256(report)
     return report
@@ -2054,7 +2398,15 @@ def main(argv: list[str] | None = None) -> int:
         description="Run manifest-bound Product Value paired acceptance."
     )
     parser.add_argument(
-        "command", choices=("validate", "run-pilot", "run-confirmatory", "finalize")
+        "command",
+        choices=(
+            "validate",
+            "run-pilot",
+            "run-confirmatory",
+            "prepare-authority-subjects",
+            "record-authority-receipts",
+            "finalize",
+        ),
     )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--registration-context", type=Path)
@@ -2065,6 +2417,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scheduler", type=Path)
     parser.add_argument("--executor-shadow", type=Path)
     parser.add_argument("--provider-adapter", type=Path)
+    parser.add_argument("--authority-receipts", type=Path)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
     try:
@@ -2074,10 +2427,34 @@ def main(argv: list[str] | None = None) -> int:
                 "status": "ready",
                 "preregistration_sha256": manifest["preregistration_sha256"],
             }
-        elif args.command == "finalize":
+        elif args.command in {
+            "prepare-authority-subjects",
+            "record-authority-receipts",
+            "finalize",
+        }:
             if args.artifact_root is None:
                 raise ValueError("artifact_root_required")
-            result = finalize_product_value_acceptance(manifest, args.artifact_root)
+            if args.command == "prepare-authority-subjects":
+                result = prepare_authority_subject_packet(
+                    manifest,
+                    args.artifact_root,
+                )
+            elif args.command == "record-authority-receipts":
+                if args.authority_receipts is None:
+                    raise ValueError("authority_receipts_required")
+                result = record_authority_receipts(
+                    manifest,
+                    args.artifact_root,
+                    _load_json(
+                        args.authority_receipts,
+                        "authority_receipts_unavailable",
+                    ),
+                )
+            else:
+                result = finalize_product_value_acceptance(
+                    manifest,
+                    args.artifact_root,
+                )
         else:
             if any(
                 value is None

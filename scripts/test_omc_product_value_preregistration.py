@@ -166,7 +166,7 @@ def _evidence_contract_v6(
     *,
     replication_role: str = "initial",
     workloads: list[dict[str, object]] | None = None,
-) -> dict[str, str | None]:
+) -> dict[str, object]:
     selected_workloads = _workloads_v4() if workloads is None else workloads
     return {
         "evidence_tier": "holdout",
@@ -183,6 +183,12 @@ def _evidence_contract_v6(
         "prior_holdout_report_sha256": (
             None if replication_role == "initial" else "8" * 64
         ),
+        "authority_bindings": {
+            "selection_authority_sha256": "9" * 64,
+            "gold_authority_sha256": "a" * 64,
+            "execution_authority_sha256": "b" * 64,
+            "adjudication_authority_sha256": "c" * 64,
+        },
     }
 
 
@@ -652,6 +658,7 @@ def test_v5_binds_lineage_bounded_execution_bundle_and_environment(
     assert manifest["claim_scope"] == "bounded_execution_value_v2"
     assert manifest["execution_contract"] == _execution_contract_v4()
     assert manifest["artifact_lineage"] == _artifact_lineage_v5()
+    assert "median_total_tokens_improvement_min" not in manifest["thresholds"]
     assert validate_preregistration(manifest) == manifest
 
 
@@ -678,6 +685,7 @@ def test_v6_binds_authoritative_holdout_evidence_contract(
     assert manifest["schema_version"] == preregistration.SCHEMA_VERSION_V6
     assert manifest["claim_scope"] == "bounded_execution_holdout_v1"
     assert manifest["evidence_contract"] == _evidence_contract_v6()
+    assert manifest["thresholds"]["median_total_tokens_improvement_min"] == 0.10
     assert validate_preregistration(manifest) == manifest
 
 
@@ -781,6 +789,35 @@ def test_v6_rejects_inventory_or_selection_hash_not_derived_from_manifest(
                 artifact_lineage=_artifact_lineage_v5(),
                 evidence_contract=contract,
             )
+
+
+def test_v6_rejects_reused_authority_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    contract = _evidence_contract_v6()
+    contract["authority_bindings"] = {
+        "selection_authority_sha256": "9" * 64,
+        "gold_authority_sha256": "9" * 64,
+        "execution_authority_sha256": "a" * 64,
+        "adjudication_authority_sha256": "b" * 64,
+    }
+
+    with pytest.raises(ValueError, match="authority_identity_reuse"):
+        preregistration.build_preregistration_v6(
+            "product-value-holdout-a",
+            _workloads_v4(),
+            observed_from="2026-10-01T00:00:00+00:00",
+            observed_through="2026-10-08T00:00:00+00:00",
+            registration_authority={"trusted_root_sha256": "c" * 64},
+            execution_contract=_execution_contract_v4(),
+            artifact_lineage=_artifact_lineage_v5(),
+            evidence_contract=contract,
+        )
 
 
 def test_v6_holdout_contract_requires_disjoint_development_inventory(

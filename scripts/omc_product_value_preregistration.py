@@ -98,6 +98,10 @@ THRESHOLDS = {
     "max_duplicate_executions": 0,
     "max_additional_critical_or_major_review_findings": 0,
 }
+THRESHOLDS_V6 = {
+    **THRESHOLDS,
+    "median_total_tokens_improvement_min": 0.10,
+}
 MANIFEST_FIELDS = {
     "schema_version",
     "status",
@@ -134,6 +138,13 @@ EVIDENCE_CONTRACT_V6_FIELDS = {
     "holdout_workload_inventory_sha256",
     "selection_policy_sha256",
     "prior_holdout_report_sha256",
+    "authority_bindings",
+}
+AUTHORITY_BINDING_FIELDS = {
+    "selection_authority_sha256",
+    "gold_authority_sha256",
+    "execution_authority_sha256",
+    "adjudication_authority_sha256",
 }
 
 
@@ -156,7 +167,7 @@ WORKLOAD_INVENTORY_FIELDS = (
 )
 
 
-def workload_inventory_sha256(workloads: Any) -> str:
+def workload_inventory(workloads: Any) -> list[dict[str, str]]:
     if not isinstance(workloads, list) or not workloads:
         raise ValueError("workload_inventory_invalid")
     inventory: list[dict[str, str]] = []
@@ -168,7 +179,11 @@ def workload_inventory_sha256(workloads: Any) -> str:
             raise ValueError("workload_inventory_invalid")
         inventory.append(row)
     inventory.sort(key=lambda row: row["workload_id"])
-    return canonical_sha256(inventory)
+    return inventory
+
+
+def workload_inventory_sha256(workloads: Any) -> str:
+    return canonical_sha256(workload_inventory(workloads))
 
 
 def _is_sha256(value: Any) -> bool:
@@ -362,6 +377,18 @@ def _validate_evidence_contract_v6(value: Any) -> dict[str, Any]:
         )
     ):
         raise ValueError("evidence_contract_invalid")
+    authority_bindings = value.get("authority_bindings")
+    if (
+        not isinstance(authority_bindings, dict)
+        or set(authority_bindings) != AUTHORITY_BINDING_FIELDS
+        or any(
+            not _is_sha256(authority_bindings.get(field))
+            for field in AUTHORITY_BINDING_FIELDS
+        )
+    ):
+        raise ValueError("authority_bindings_invalid")
+    if len(set(authority_bindings.values())) != len(AUTHORITY_BINDING_FIELDS):
+        raise ValueError("authority_identity_reuse")
     prior_report = value.get("prior_holdout_report_sha256")
     if (
         value["replication_role"] == "initial"
@@ -738,7 +765,7 @@ def build_preregistration_v6(
         "pilot_contract": deepcopy(PILOT_CONTRACT),
         "comparison_contract": deepcopy(COMPARISON_CONTRACT),
         "intervention_contract": deepcopy(INTERVENTION_CONTRACT),
-        "thresholds": deepcopy(THRESHOLDS),
+        "thresholds": deepcopy(THRESHOLDS_V6),
         "workloads": validated_workloads,
         "observation_window": _validate_observation_window({
             "observed_from": observed_from,
@@ -845,7 +872,9 @@ def validate_preregistration(payload: Any) -> dict[str, Any]:
         "pilot_contract": PILOT_CONTRACT,
         "comparison_contract": COMPARISON_CONTRACT,
         "intervention_contract": INTERVENTION_CONTRACT,
-        "thresholds": THRESHOLDS,
+        "thresholds": (
+            THRESHOLDS_V6 if schema_version == SCHEMA_VERSION_V6 else THRESHOLDS
+        ),
     }
     for field, expected in fixed_contracts.items():
         if payload.get(field) != expected:

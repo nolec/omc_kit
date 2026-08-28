@@ -95,6 +95,12 @@ def test_product_value_claim_scope_and_evidence_states_are_explicit() -> None:
     assert "구현·판정 기준을 동결" in roadmap
     assert "disjoint holdout 5건" in roadmap
     assert "holdout evidence만 운영 대체 판정" in roadmap
+    assert "initial과 replication 사이의 비중복" in roadmap
+    assert "Ed25519 공개키 identity와 역할별 signed subject" in roadmap
+    assert "네 서명과 subject를 다시 검증" in roadmap
+    assert "최소 10%" in roadmap
+    assert "operational pilot" in roadmap
+    assert "strict certification" in roadmap
 
 
 def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence() -> None:
@@ -129,7 +135,10 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "clean clone에서 loader로 전체 bundle을 복구·검증" in text
     assert "schema v2 registry record" in text
     assert "Product Value paired acceptance harness 완료" in text
-    assert "`run-pilot` → `run-confirmatory` → `finalize`" in text
+    assert (
+        "`run-pilot` → `run-confirmatory` → `prepare-authority-subjects` → "
+        "외부 서명 → `record-authority-receipts` → `finalize`"
+    ) in text
     assert "Product Value provider enforcement 계약 v2 완료" in text
     assert "boolean-only backend를 외부 실행 전에 거부" in text
     assert "legacy v2 prepared input 재사용을 fail-close" in text

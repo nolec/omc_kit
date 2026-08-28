@@ -309,7 +309,14 @@ def main() -> int:
     )
     product_value_acceptance.add_argument(
         "acceptance_command",
-        choices=("validate", "run-pilot", "run-confirmatory", "finalize"),
+        choices=(
+            "validate",
+            "run-pilot",
+            "run-confirmatory",
+            "prepare-authority-subjects",
+            "record-authority-receipts",
+            "finalize",
+        ),
     )
     product_value_acceptance.add_argument("--manifest", type=Path)
     product_value_acceptance.add_argument("--registration-context", type=Path)
@@ -320,6 +327,7 @@ def main() -> int:
     product_value_acceptance.add_argument("--scheduler", type=Path)
     product_value_acceptance.add_argument("--executor-shadow", type=Path)
     product_value_acceptance.add_argument("--provider-adapter", type=Path)
+    product_value_acceptance.add_argument("--authority-receipts", type=Path)
     product_value_acceptance.add_argument("--out", type=Path)
 
     product_value_freeze = sub.add_parser(
@@ -708,6 +716,7 @@ def main() -> int:
             "scheduler",
             "executor_shadow",
             "provider_adapter",
+            "authority_receipts",
             "out",
         ):
             value = getattr(args, option)

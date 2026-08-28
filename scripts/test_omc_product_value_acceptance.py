@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import ast
+import base64
+import builtins
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -9,9 +13,134 @@ import sys
 import threading
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import omc_product_value_acceptance as acceptance
 import omc_product_value_preregistration as preregistration
+
+
+def _authority_key_material() -> tuple[Ed25519PrivateKey, str, str]:
+    private_key = Ed25519PrivateKey.generate()
+    public_raw = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return (
+        private_key,
+        base64.b64encode(public_raw).decode("ascii"),
+        hashlib.sha256(public_raw).hexdigest(),
+    )
+
+
+def _signed_authority_receipt(
+    role: str,
+    private_key: Ed25519PrivateKey,
+    signer_public_key: str,
+    subject_sha256: str,
+) -> dict[str, str]:
+    receipt = {
+        "schema_version": "omc-product-value-authority-receipt/v1",
+        "role": role,
+        "signer_public_key": signer_public_key,
+        "subject_sha256": subject_sha256,
+    }
+    receipt["signature"] = base64.b64encode(
+        private_key.sign(acceptance.canonical_bytes(receipt))
+    ).decode("ascii")
+    return receipt
+
+
+def test_v6_authority_receipts_bind_actual_signers_and_subjects() -> None:
+    roles = ("selection", "gold", "execution", "adjudication")
+    key_material = {role: _authority_key_material() for role in roles}
+    authority_bindings = {
+        f"{role}_authority_sha256": key_material[role][2] for role in roles
+    }
+    expected_subjects = {
+        role: acceptance.canonical_sha256({"role": role}) for role in roles
+    }
+    receipts = {
+        role: _signed_authority_receipt(
+            role,
+            key_material[role][0],
+            key_material[role][1],
+            expected_subjects[role],
+        )
+        for role in roles
+    }
+
+    validated = acceptance.validate_authority_receipts(
+        receipts,
+        authority_bindings=authority_bindings,
+        expected_subjects=expected_subjects,
+    )
+
+    assert validated == receipts
+
+    tampered = deepcopy(receipts)
+    tampered["gold"]["subject_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="authority_receipts_invalid"):
+        acceptance.validate_authority_receipts(
+            tampered,
+            authority_bindings=authority_bindings,
+            expected_subjects=expected_subjects,
+        )
+
+    tampered_signature = deepcopy(receipts)
+    tampered_signature["execution"]["signature"] = base64.b64encode(
+        b"invalid-signature"
+    ).decode("ascii")
+    with pytest.raises(ValueError, match="authority_receipts_invalid"):
+        acceptance.validate_authority_receipts(
+            tampered_signature,
+            authority_bindings=authority_bindings,
+            expected_subjects=expected_subjects,
+        )
+
+    arbitrary_bindings = {
+        f"{role}_authority_sha256": f"{index:x}" * 64
+        for index, role in enumerate(roles, start=1)
+    }
+    with pytest.raises(ValueError, match="authority_receipts_invalid"):
+        acceptance.validate_authority_receipts(
+            receipts,
+            authority_bindings=arbitrary_bindings,
+            expected_subjects=expected_subjects,
+        )
+
+
+def test_authority_crypto_dependency_is_lazy_and_actionable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_tree = ast.parse(Path(acceptance.__file__).read_text(encoding="utf-8"))
+    assert not any(
+        (
+            isinstance(node, ast.Import)
+            and any(alias.name.startswith("cryptography") for alias in node.names)
+        )
+        or (
+            isinstance(node, ast.ImportFrom)
+            and isinstance(node.module, str)
+            and node.module.startswith("cryptography")
+        )
+        for node in module_tree.body
+    )
+
+    original_import = builtins.__import__
+
+    def reject_crypto(name, *args, **kwargs):
+        if name.startswith("cryptography"):
+            raise ModuleNotFoundError(name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_crypto)
+    with pytest.raises(ValueError, match="authority_crypto_unavailable"):
+        acceptance.validate_authority_receipts(
+            {},
+            authority_bindings={},
+            expected_subjects={},
+        )
 
 
 def _git(root: Path, *args: str) -> str:
@@ -922,6 +1051,12 @@ def test_v6_registration_validates_development_registration_and_provenance(
             preregistration.SELECTION_POLICY_V2
         ),
         "prior_holdout_report_sha256": None,
+        "authority_bindings": {
+            "selection_authority_sha256": "9" * 64,
+            "gold_authority_sha256": "a" * 64,
+            "execution_authority_sha256": "b" * 64,
+            "adjudication_authority_sha256": "c" * 64,
+        },
     }
     holdout = preregistration.build_preregistration_v6(
         "product-value-holdout-a",
@@ -1015,8 +1150,76 @@ def test_v6_registration_validates_development_registration_and_provenance(
         acceptance.finalize_product_value_acceptance(holdout, artifact_root)
 
 
-def test_holdout_replication_requires_a_valid_prior_provisional_report() -> None:
-    prior = {
+def _replication_authorities() -> dict[str, str]:
+    return {
+        "selection_authority_sha256": "d" * 64,
+        "gold_authority_sha256": "e" * 64,
+        "execution_authority_sha256": "f" * 64,
+        "adjudication_authority_sha256": "0" * 64,
+    }
+
+
+def _replication_manifest() -> dict[str, object]:
+    return {
+        "preregistration_sha256": "4" * 64,
+        "workloads": [
+            {
+                "workload_id": "replication-1",
+                "repository_identity_sha256": "d" * 64,
+                "source_commit": "e" * 40,
+                "request_sha256": "f" * 64,
+                "execution_packet_sha256": "0" * 64,
+            }
+        ],
+        "evidence_contract": {
+            "authority_bindings": _replication_authorities(),
+        },
+        "thresholds": preregistration.THRESHOLDS_V6,
+    }
+
+
+def _valid_prior_holdout_report() -> dict[str, object]:
+    roles = ("selection", "gold", "execution", "adjudication")
+    key_material = {role: _authority_key_material() for role in roles}
+    authority_bindings = {
+        f"{role}_authority_sha256": key_material[role][2] for role in roles
+    }
+    inventory = [
+        {
+            "workload_id": "initial-1",
+            "repository_identity_sha256": "5" * 64,
+            "source_commit": "6" * 40,
+            "request_sha256": "7" * 64,
+            "execution_packet_sha256": "8" * 64,
+        }
+    ]
+    inventory_sha256 = acceptance.canonical_sha256(inventory)
+    checks = {name: True for name in acceptance.ACCEPTANCE_CHECK_NAMES}
+    checks_sha256 = acceptance.canonical_sha256(checks)
+    confirmatory_evidence_sha256 = acceptance.canonical_sha256(
+        {"batch": "initial"}
+    )
+    thresholds_sha256 = acceptance.canonical_sha256(
+        preregistration.THRESHOLDS_V6
+    )
+    subjects = acceptance.authority_subjects(
+        manifest_sha256="1" * 64,
+        holdout_workload_inventory_sha256=inventory_sha256,
+        selection_policy_sha256="3" * 64,
+        thresholds_sha256=thresholds_sha256,
+        confirmatory_evidence_sha256=confirmatory_evidence_sha256,
+        checks_sha256=checks_sha256,
+    )
+    authority_receipts = {
+        role: _signed_authority_receipt(
+            role,
+            key_material[role][0],
+            key_material[role][1],
+            subjects[role],
+        )
+        for role in roles
+    }
+    report: dict[str, object] = {
         "schema_version": acceptance.SCHEMA_VERSION_V2,
         "status": "finalized",
         "manifest_sha256": "1" * 64,
@@ -1025,25 +1228,39 @@ def test_holdout_replication_requires_a_valid_prior_provisional_report() -> None
         "replication_role": "initial",
         "development_preregistration_sha256": "2" * 64,
         "development_workload_inventory_sha256": "5" * 64,
-        "holdout_workload_inventory_sha256": "6" * 64,
+        "holdout_workload_inventory_sha256": inventory_sha256,
+        "holdout_workload_inventory": inventory,
         "selection_policy_sha256": "3" * 64,
+        "authority_bindings": authority_bindings,
+        "authority_receipts": authority_receipts,
+        "authority_receipts_sha256": acceptance.canonical_sha256(
+            authority_receipts
+        ),
+        "confirmatory_evidence_sha256": confirmatory_evidence_sha256,
+        "checks_sha256": checks_sha256,
         "development_registration_receipt_sha256": "7" * 64,
         "holdout_evidence": {
             "status": "validated",
             "development_preregistration_sha256": "2" * 64,
             "development_workload_inventory_sha256": "5" * 64,
-            "holdout_workload_inventory_sha256": "6" * 64,
+            "holdout_workload_inventory_sha256": inventory_sha256,
             "selection_policy_sha256": "3" * 64,
         },
-        "checks": {"success_rate": True},
+        "thresholds_sha256": thresholds_sha256,
+        "checks": checks,
         "operational_verdict": "HOLDOUT_PROVISIONAL_PASS",
     }
-    prior["report_sha256"] = acceptance.canonical_sha256(prior)
+    report["report_sha256"] = acceptance.canonical_sha256(report)
+    return report
+
+
+def test_holdout_replication_requires_a_valid_prior_provisional_report() -> None:
+    prior = _valid_prior_holdout_report()
 
     assert acceptance.validate_prior_holdout_report(
         prior,
         expected_sha256=prior["report_sha256"],
-        current_manifest_sha256="4" * 64,
+        current_manifest=_replication_manifest(),
         development_preregistration_sha256="2" * 64,
         selection_policy_sha256="3" * 64,
     )["operational_verdict"] == "HOLDOUT_PROVISIONAL_PASS"
@@ -1056,7 +1273,7 @@ def test_holdout_replication_requires_a_valid_prior_provisional_report() -> None
         acceptance.validate_prior_holdout_report(
             prior,
             expected_sha256=prior["report_sha256"],
-            current_manifest_sha256="4" * 64,
+            current_manifest=_replication_manifest(),
             development_preregistration_sha256="2" * 64,
             selection_policy_sha256="3" * 64,
         )
@@ -1067,48 +1284,376 @@ def test_holdout_replication_requires_a_valid_prior_provisional_report() -> None
     [
         ("missing_development_receipt", None),
         ("tampered_holdout_inventory", "0" * 64),
+        ("invalid_authority", "invalid"),
     ],
 )
 def test_holdout_replication_rejects_prior_report_without_bound_provenance(
     mutation: str,
     value: str | None,
 ) -> None:
-    prior = {
-        "schema_version": acceptance.SCHEMA_VERSION_V2,
-        "status": "finalized",
-        "manifest_sha256": "1" * 64,
-        "claim_scope": acceptance.PRODUCT_VALUE_CLAIM_SCOPE,
-        "evidence_tier": "holdout",
-        "replication_role": "initial",
-        "development_preregistration_sha256": "2" * 64,
-        "development_workload_inventory_sha256": "5" * 64,
-        "holdout_workload_inventory_sha256": "6" * 64,
-        "selection_policy_sha256": "3" * 64,
-        "development_registration_receipt_sha256": "7" * 64,
-        "holdout_evidence": {
-            "status": "validated",
-            "development_preregistration_sha256": "2" * 64,
-            "development_workload_inventory_sha256": "5" * 64,
-            "holdout_workload_inventory_sha256": "6" * 64,
-            "selection_policy_sha256": "3" * 64,
-        },
-        "checks": {"success_rate": True},
-        "operational_verdict": "HOLDOUT_PROVISIONAL_PASS",
-    }
+    prior = _valid_prior_holdout_report()
     if mutation == "missing_development_receipt":
         prior.pop("development_registration_receipt_sha256")
-    else:
+    elif mutation == "tampered_holdout_inventory":
         prior["holdout_evidence"]["holdout_workload_inventory_sha256"] = value
+    else:
+        prior["authority_bindings"]["gold_authority_sha256"] = value
     prior["report_sha256"] = acceptance.canonical_sha256(prior)
 
     with pytest.raises(ValueError, match="prior_holdout_report_invalid"):
         acceptance.validate_prior_holdout_report(
             prior,
             expected_sha256=prior["report_sha256"],
-            current_manifest_sha256="4" * 64,
+            current_manifest=_replication_manifest(),
             development_preregistration_sha256="2" * 64,
             selection_policy_sha256="3" * 64,
         )
+
+
+def test_holdout_replication_rejects_initial_workload_and_authority_reuse() -> None:
+    prior = _valid_prior_holdout_report()
+    prior_inventory = prior["holdout_workload_inventory"]
+    prior_authorities = prior["authority_bindings"]
+    replication = {
+        "preregistration_sha256": "e" * 64,
+        "workloads": [
+            {
+                **prior_inventory[0],
+                "workload_id": "replication-1",
+            }
+        ],
+        "evidence_contract": {
+            "authority_bindings": {
+                "selection_authority_sha256": prior_authorities[
+                    "selection_authority_sha256"
+                ],
+                "gold_authority_sha256": "f" * 64,
+                "execution_authority_sha256": "0" * 64,
+                "adjudication_authority_sha256": "1" * 64,
+            }
+        },
+        "thresholds": preregistration.THRESHOLDS_V6,
+    }
+
+    with pytest.raises(ValueError, match="prior_holdout_report_not_independent"):
+        acceptance.validate_prior_holdout_report(
+            prior,
+            expected_sha256=prior["report_sha256"],
+            current_manifest=replication,
+            development_preregistration_sha256="2" * 64,
+            selection_policy_sha256="3" * 64,
+        )
+
+
+@pytest.mark.parametrize(
+    ("omc_tokens", "baseline_tokens", "expected"),
+    [(90, 100, True), (91, 100, False), (99, 100, False)],
+)
+def test_token_improvement_requires_preregistered_ten_percent_margin(
+    omc_tokens: float,
+    baseline_tokens: float,
+    expected: bool,
+) -> None:
+    assert acceptance._minimum_token_improvement_met(
+        omc_tokens,
+        baseline_tokens,
+        minimum=0.10,
+    ) is expected
+
+
+def test_v6_cli_flow_prepares_subjects_and_records_authority_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    roles = ("selection", "gold", "execution", "adjudication")
+    key_material = {role: _authority_key_material() for role in roles}
+    inventory = _valid_prior_holdout_report()["holdout_workload_inventory"]
+    manifest = {
+        "schema_version": preregistration.SCHEMA_VERSION_V6,
+        "claim_scope": "bounded_execution_holdout_v1",
+        "preregistration_sha256": "1" * 64,
+        "thresholds": preregistration.THRESHOLDS_V6,
+        "workloads": inventory,
+        "evidence_contract": {
+            "evidence_tier": "holdout",
+            "replication_role": "initial",
+            "holdout_workload_inventory_sha256": (
+                preregistration.workload_inventory_sha256(inventory)
+            ),
+            "selection_policy_sha256": "3" * 64,
+            "authority_bindings": {
+                f"{role}_authority_sha256": key_material[role][2]
+                for role in roles
+            },
+        },
+    }
+    confirmatory_receipts = [
+        {
+            "arm": arm,
+            "success": True,
+            "token_usage": {"total_tokens": total_tokens},
+            "elapsed_sec": elapsed,
+            "intervention_count": 0,
+            "scope_violations": [],
+            "budget_violations": 0,
+            "duplicate_executions": 0,
+            "critical_or_major_review_findings": 0,
+        }
+        for _index in range(5)
+        for arm, total_tokens, elapsed in (
+            ("omc", 90, 1.0),
+            ("baseline", 100, 2.0),
+        )
+    ]
+    monkeypatch.setattr(acceptance, "_validate_acceptance_manifest", lambda value: value)
+    monkeypatch.setattr(acceptance, "_validate_pilot_gate", lambda *_args: None)
+    monkeypatch.setattr(
+        acceptance,
+        "_load_phase_receipts",
+        lambda *_args: deepcopy(confirmatory_receipts),
+    )
+
+    packet = acceptance.prepare_authority_subject_packet(manifest, tmp_path)
+    authority_receipts = {
+        role: _signed_authority_receipt(
+            role,
+            key_material[role][0],
+            key_material[role][1],
+            packet["subjects"][role],
+        )
+        for role in roles
+    }
+    recorded = acceptance.record_authority_receipts(
+        manifest,
+        tmp_path,
+        authority_receipts,
+    )
+
+    stored, digest = acceptance._load_envelope(
+        tmp_path / "authority-receipts.json"
+    )
+    assert packet["schema_version"] == (
+        "omc-product-value-authority-subjects/v1"
+    )
+    assert packet["subject_packet_sha256"] == acceptance.canonical_sha256(
+        {key: value for key, value in packet.items() if key != "subject_packet_sha256"}
+    )
+    assert stored == authority_receipts
+    assert recorded == {
+        "status": "authority_receipts_recorded",
+        "authority_receipts_sha256": digest,
+        "subject_packet_sha256": packet["subject_packet_sha256"],
+    }
+    assert acceptance.record_authority_receipts(
+        manifest,
+        tmp_path,
+        authority_receipts,
+    ) == recorded
+
+    conflicting = deepcopy(authority_receipts)
+    conflicting["selection"]["signature"] = base64.b64encode(
+        b"not-the-recorded-signature"
+    ).decode("ascii")
+    monkeypatch.setattr(
+        acceptance,
+        "validate_authority_receipts",
+        lambda *_args, **_kwargs: conflicting,
+    )
+    with pytest.raises(ValueError, match="authority_receipts_already_recorded"):
+        acceptance.record_authority_receipts(
+            manifest,
+            tmp_path,
+            conflicting,
+        )
+
+
+def test_initial_report_flows_into_disjoint_replication_finalize(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    roles = ("selection", "gold", "execution", "adjudication")
+    initial_keys = {role: _authority_key_material() for role in roles}
+    replication_keys = {role: _authority_key_material() for role in roles}
+    initial_manifest = {
+        "schema_version": preregistration.SCHEMA_VERSION_V6,
+        "claim_scope": "bounded_execution_holdout_v1",
+        "preregistration_sha256": "1" * 64,
+        "thresholds": preregistration.THRESHOLDS_V6,
+        "workloads": _valid_prior_holdout_report()[
+            "holdout_workload_inventory"
+        ],
+        "evidence_contract": {
+            "evidence_tier": "holdout",
+            "replication_role": "initial",
+            "development_batch_id": "development-v1",
+            "development_preregistration_sha256": "2" * 64,
+            "development_workload_inventory_sha256": "5" * 64,
+            "holdout_workload_inventory_sha256": acceptance.canonical_sha256(
+                _valid_prior_holdout_report()["holdout_workload_inventory"]
+            ),
+            "selection_policy_sha256": "3" * 64,
+            "prior_holdout_report_sha256": None,
+            "authority_bindings": {
+                f"{role}_authority_sha256": initial_keys[role][2]
+                for role in roles
+            },
+        },
+    }
+    replication_manifest = _replication_manifest()
+    replication_manifest.update({
+        "schema_version": preregistration.SCHEMA_VERSION_V6,
+        "claim_scope": "bounded_execution_holdout_v1",
+    })
+    replication_manifest["evidence_contract"].update({
+        "evidence_tier": "holdout",
+        "replication_role": "replication",
+        "development_batch_id": "development-v1",
+        "development_preregistration_sha256": "2" * 64,
+        "development_workload_inventory_sha256": "5" * 64,
+        "holdout_workload_inventory_sha256": (
+            preregistration.workload_inventory_sha256(
+                replication_manifest["workloads"]
+            )
+        ),
+        "selection_policy_sha256": "3" * 64,
+        "prior_holdout_report_sha256": "pending",
+        "authority_bindings": {
+            f"{role}_authority_sha256": replication_keys[role][2]
+            for role in roles
+        },
+    })
+    receipts = []
+    for index in range(5):
+        for arm, total_tokens, elapsed in (
+            ("omc", 90, 1.0),
+            ("baseline", 100, 2.0),
+        ):
+            receipts.append({
+                "workload_id": f"confirmatory-{index}",
+                "arm": arm,
+                "success": True,
+                "token_usage": {"total_tokens": total_tokens},
+                "elapsed_sec": elapsed,
+                "intervention_count": 0,
+                "scope_violations": [],
+                "budget_violations": 0,
+                "duplicate_executions": 0,
+                "critical_or_major_review_findings": 0,
+            })
+
+    monkeypatch.setattr(acceptance, "_validate_acceptance_manifest", lambda value: value)
+    monkeypatch.setattr(
+        acceptance,
+        "_validate_registration_result",
+        lambda _manifest, value, **_kwargs: value,
+    )
+    monkeypatch.setattr(acceptance, "_validate_pilot_gate", lambda *_args: None)
+    monkeypatch.setattr(
+        acceptance,
+        "_load_phase_receipts",
+        lambda *_args: deepcopy(receipts),
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "_strict_transport_receipt_eligible",
+        lambda *_args: False,
+    )
+
+    def write_registration(root: Path, manifest: dict[str, object]) -> None:
+        contract = manifest["evidence_contract"]
+        acceptance._write_envelope(
+            root / "registration-gate.json",
+            {
+                "registration_receipt_sha256": "6" * 64,
+                "development_registration_receipt_sha256": "7" * 64,
+                "holdout_evidence": {
+                    "status": "validated",
+                    "development_preregistration_sha256": contract[
+                        "development_preregistration_sha256"
+                    ],
+                    "development_workload_inventory_sha256": contract[
+                        "development_workload_inventory_sha256"
+                    ],
+                    "holdout_workload_inventory_sha256": contract[
+                        "holdout_workload_inventory_sha256"
+                    ],
+                    "selection_policy_sha256": contract[
+                        "selection_policy_sha256"
+                    ],
+                },
+            },
+        )
+
+    def write_authority_receipts(
+        root: Path,
+        manifest: dict[str, object],
+        key_material: dict[
+            str, tuple[Ed25519PrivateKey, str, str]
+        ],
+    ) -> None:
+        contract = manifest["evidence_contract"]
+        checks = {name: True for name in acceptance.ACCEPTANCE_CHECK_NAMES}
+        subjects = acceptance.authority_subjects(
+            manifest_sha256=manifest["preregistration_sha256"],
+            holdout_workload_inventory_sha256=contract[
+                "holdout_workload_inventory_sha256"
+            ],
+            selection_policy_sha256=contract["selection_policy_sha256"],
+            thresholds_sha256=acceptance.canonical_sha256(
+                manifest["thresholds"]
+            ),
+            confirmatory_evidence_sha256=acceptance.canonical_sha256(
+                receipts
+            ),
+            checks_sha256=acceptance.canonical_sha256(checks),
+        )
+        acceptance._write_envelope(
+            root / "authority-receipts.json",
+            {
+                role: _signed_authority_receipt(
+                    role,
+                    key_material[role][0],
+                    key_material[role][1],
+                    subjects[role],
+                )
+                for role in roles
+            },
+        )
+
+    initial_root = tmp_path / "initial"
+    initial_root.mkdir()
+    write_registration(initial_root, initial_manifest)
+    write_authority_receipts(initial_root, initial_manifest, initial_keys)
+    initial_report = acceptance.finalize_product_value_acceptance(
+        initial_manifest,
+        initial_root,
+    )
+    assert initial_report["operational_verdict"] == "HOLDOUT_PROVISIONAL_PASS"
+
+    replication_manifest["evidence_contract"]["prior_holdout_report_sha256"] = (
+        initial_report["report_sha256"]
+    )
+    replication_root = tmp_path / "replication"
+    replication_root.mkdir()
+    write_registration(replication_root, replication_manifest)
+    write_authority_receipts(
+        replication_root,
+        replication_manifest,
+        replication_keys,
+    )
+    acceptance._write_envelope(
+        replication_root / "prior-holdout-report.json",
+        initial_report,
+    )
+
+    replication_report = acceptance.finalize_product_value_acceptance(
+        replication_manifest,
+        replication_root,
+    )
+    assert replication_report["operational_verdict"] == (
+        "OPERATIONALLY_REPLACEABLE"
+    )
+    assert replication_report["checks"]["median_total_tokens"] is True
 
 
 def test_unknown_evidence_tier_fails_closed() -> None:
@@ -2451,4 +2996,13 @@ def test_cli_exposes_product_value_acceptance_surface() -> None:
     assert result.returncode == 0
     assert "run-pilot" in result.stdout
     assert "run-confirmatory" in result.stdout
+    assert "prepare-authority-subjects" in result.stdout
+    assert "record-authority-receipts" in result.stdout
+    assert "--authority-receipts" in result.stdout
     assert "finalize" in result.stdout
+
+    wrapper = Path("scripts/omc.py").read_text(encoding="utf-8")
+    forwarding = wrapper.split(
+        'if args.command == "product-value-acceptance":', 1
+    )[1].split('if args.command == "product-value-freeze":', 1)[0]
+    assert '"authority_receipts"' in forwarding
