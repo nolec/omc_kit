@@ -120,6 +120,7 @@ def _validate_acceptance_manifest(payload: Any) -> dict[str, Any]:
         preregistration.SCHEMA_VERSION_V3: SCHEMA_VERSION,
         preregistration.SCHEMA_VERSION_V4: SCHEMA_VERSION_V2,
         preregistration.SCHEMA_VERSION_V5: SCHEMA_VERSION_V2,
+        preregistration.SCHEMA_VERSION_V6: SCHEMA_VERSION_V2,
     }.get(schema)
     if expected_runner is None:
         raise ValueError("acceptance_requires_paired_preregistration")
@@ -195,9 +196,11 @@ def _default_registration_validator(
         "trusted_root",
         "approved_trusted_root_sha256",
     }
-    if not isinstance(context, dict) or set(context) != required:
+    is_v6 = manifest.get("schema_version") == preregistration.SCHEMA_VERSION_V6
+    expected = required | ({"development_evidence"} if is_v6 else set())
+    if not isinstance(context, dict) or set(context) != expected:
         raise ValueError("registration_context_invalid")
-    return preregistration.validate_registered_preregistration(
+    result = preregistration.validate_registered_preregistration(
         manifest,
         repository_root=Path(context["repository_root"]).resolve(),
         registry_commit=context["registry_commit"],
@@ -210,6 +213,32 @@ def _default_registration_validator(
         trusted_root=context["trusted_root"],
         approved_trusted_root_sha256=context["approved_trusted_root_sha256"],
     )
+    if not is_v6:
+        return result
+    development_evidence = context["development_evidence"]
+    if not isinstance(development_evidence, dict) or set(development_evidence) != {
+        "manifest",
+        "registration_context",
+    }:
+        raise ValueError("development_evidence_invalid")
+    development = preregistration.validate_preregistration(
+        development_evidence["manifest"]
+    )
+    development_registration = _default_registration_validator(
+        development,
+        development_evidence["registration_context"],
+    )
+    provenance = preregistration.validate_holdout_evidence_contract(
+        manifest,
+        development,
+    )
+    return {
+        **result,
+        "development_registration_receipt_sha256": development_registration[
+            "registration_receipt_sha256"
+        ],
+        "holdout_evidence": provenance,
+    }
 
 
 def _registration_gate(
@@ -221,6 +250,19 @@ def _registration_gate(
         result = validator(manifest, context)
     except Exception as error:
         raise ValueError("registration_blocked") from error
+    return _validate_registration_result(
+        manifest,
+        result,
+        reason="registration_blocked",
+    )
+
+
+def _validate_registration_result(
+    manifest: dict[str, Any],
+    result: Any,
+    *,
+    reason: str,
+) -> dict[str, Any]:
     if (
         not isinstance(result, dict)
         or result.get("claim_eligible") is not True
@@ -229,7 +271,26 @@ def _registration_gate(
         != manifest["preregistration_sha256"]
         or not _is_sha256(result.get("registration_receipt_sha256"))
     ):
-        raise ValueError("registration_blocked")
+        raise ValueError(reason)
+    if manifest.get("schema_version") == preregistration.SCHEMA_VERSION_V6:
+        contract = manifest["evidence_contract"]
+        evidence = result.get("holdout_evidence")
+        if (
+            not _is_sha256(
+                result.get("development_registration_receipt_sha256")
+            )
+            or not isinstance(evidence, dict)
+            or evidence.get("status") != "validated"
+            or evidence.get("development_preregistration_sha256")
+            != contract["development_preregistration_sha256"]
+            or evidence.get("development_workload_inventory_sha256")
+            != contract["development_workload_inventory_sha256"]
+            or evidence.get("holdout_workload_inventory_sha256")
+            != contract["holdout_workload_inventory_sha256"]
+            or evidence.get("selection_policy_sha256")
+            != contract["selection_policy_sha256"]
+        ):
+            raise ValueError(reason)
     return deepcopy(result)
 
 
@@ -250,6 +311,7 @@ def validate_execution_packet(
     if manifest["schema_version"] in {
         preregistration.SCHEMA_VERSION_V4,
         preregistration.SCHEMA_VERSION_V5,
+        preregistration.SCHEMA_VERSION_V6,
     }:
         packet_schema = packet.get("schema_version") if isinstance(packet, dict) else None
         if packet_schema == PACKET_SCHEMA_VERSION_V2:
@@ -1482,6 +1544,7 @@ def _acceptance_schema_version(manifest: dict[str, Any]) -> str:
         if manifest["schema_version"] in {
             preregistration.SCHEMA_VERSION_V4,
             preregistration.SCHEMA_VERSION_V5,
+            preregistration.SCHEMA_VERSION_V6,
         }
         else SCHEMA_VERSION
     )
@@ -1720,6 +1783,7 @@ def _validate_environment_receipt_binding(
         manifest["schema_version"] in {
             preregistration.SCHEMA_VERSION_V4,
             preregistration.SCHEMA_VERSION_V5,
+            preregistration.SCHEMA_VERSION_V6,
         }
         and receipt.get("environment_receipt_sha256")
         != workload["environment_receipt_sha256"]
@@ -1748,7 +1812,11 @@ def _arm_metrics(receipts: list[dict[str, Any]], arm: str) -> dict[str, Any]:
 
 
 def build_product_value_verdicts(
-    checks: dict[str, bool], *, strict_transport_eligible: bool, evidence_tier: str
+    checks: dict[str, bool],
+    *,
+    strict_transport_eligible: bool,
+    evidence_tier: str,
+    replication_role: str | None = None,
 ) -> dict[str, str]:
     if (
         not isinstance(checks, dict)
@@ -1759,12 +1827,19 @@ def build_product_value_verdicts(
         raise ValueError("acceptance_verdict_contract_invalid")
     if evidence_tier not in EVIDENCE_TIERS:
         raise ValueError("acceptance_evidence_tier_invalid")
+    if (evidence_tier == "development" and replication_role is not None) or (
+        evidence_tier == "holdout"
+        and replication_role not in {"initial", "replication"}
+    ):
+        raise ValueError("acceptance_replication_role_invalid")
     operational_passed = all(checks.values())
     strict_certified = operational_passed and strict_transport_eligible
     if not operational_passed:
         operational_verdict = "NOT_REPLACEABLE"
     elif evidence_tier == "development":
         operational_verdict = "DEVELOPMENT_PASS"
+    elif replication_role == "initial":
+        operational_verdict = "HOLDOUT_PROVISIONAL_PASS"
     else:
         operational_verdict = "OPERATIONALLY_REPLACEABLE"
     return {
@@ -1781,12 +1856,20 @@ def build_product_value_verdicts(
     }
 
 
-def _manifest_evidence_contract(manifest: dict[str, Any]) -> dict[str, str]:
+def _manifest_evidence_contract(manifest: dict[str, Any]) -> dict[str, Any]:
     development_claims = {
         preregistration.SCHEMA_VERSION_V3: "product_value_paired_v3",
         preregistration.SCHEMA_VERSION_V4: "bounded_execution_value_v1",
         preregistration.SCHEMA_VERSION_V5: "bounded_execution_value_v2",
     }
+    if manifest.get("schema_version") == preregistration.SCHEMA_VERSION_V6:
+        if manifest.get("claim_scope") != "bounded_execution_holdout_v1":
+            raise ValueError("acceptance_evidence_contract_invalid")
+        contract = deepcopy(manifest["evidence_contract"])
+        return {
+            "claim_scope": PRODUCT_VALUE_CLAIM_SCOPE,
+            **contract,
+        }
     if development_claims.get(manifest.get("schema_version")) != manifest.get(
         "claim_scope"
     ):
@@ -1794,7 +1877,54 @@ def _manifest_evidence_contract(manifest: dict[str, Any]) -> dict[str, str]:
     return {
         "claim_scope": PRODUCT_VALUE_CLAIM_SCOPE,
         "evidence_tier": "development",
+        "replication_role": None,
     }
+
+
+def validate_prior_holdout_report(
+    report: Any,
+    *,
+    expected_sha256: str,
+    current_manifest_sha256: str,
+    development_preregistration_sha256: str,
+    selection_policy_sha256: str,
+) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        raise ValueError("prior_holdout_report_invalid")
+    unsigned = deepcopy(report)
+    report_sha256 = unsigned.pop("report_sha256", None)
+    holdout_evidence = report.get("holdout_evidence")
+    if (
+        not _is_sha256(expected_sha256)
+        or report_sha256 != expected_sha256
+        or canonical_sha256(unsigned) != expected_sha256
+        or report.get("manifest_sha256") == current_manifest_sha256
+        or report.get("claim_scope") != PRODUCT_VALUE_CLAIM_SCOPE
+        or report.get("evidence_tier") != "holdout"
+        or report.get("replication_role") != "initial"
+        or report.get("development_preregistration_sha256")
+        != development_preregistration_sha256
+        or report.get("selection_policy_sha256") != selection_policy_sha256
+        or not _is_sha256(
+            report.get("development_registration_receipt_sha256")
+        )
+        or not isinstance(holdout_evidence, dict)
+        or holdout_evidence.get("status") != "validated"
+        or holdout_evidence.get("development_preregistration_sha256")
+        != report.get("development_preregistration_sha256")
+        or holdout_evidence.get("development_workload_inventory_sha256")
+        != report.get("development_workload_inventory_sha256")
+        or holdout_evidence.get("holdout_workload_inventory_sha256")
+        != report.get("holdout_workload_inventory_sha256")
+        or holdout_evidence.get("selection_policy_sha256")
+        != report.get("selection_policy_sha256")
+        or report.get("operational_verdict") != "HOLDOUT_PROVISIONAL_PASS"
+        or not isinstance(report.get("checks"), dict)
+        or not report["checks"]
+        or not all(value is True for value in report["checks"].values())
+    ):
+        raise ValueError("prior_holdout_report_invalid")
+    return deepcopy(report)
 
 
 def _strict_transport_receipt_eligible(
@@ -1828,14 +1958,11 @@ def finalize_product_value_acceptance(
     manifest = _validate_acceptance_manifest(manifest)
     artifact_root = Path(artifact_root).resolve()
     registration, _ = _load_envelope(artifact_root / "registration-gate.json")
-    if (
-        registration.get("claim_eligible") is not True
-        or registration.get("status") != "registered"
-        or registration.get("preregistration_sha256")
-        != manifest["preregistration_sha256"]
-        or not _is_sha256(registration.get("registration_receipt_sha256"))
-    ):
-        raise ValueError("registration_gate_mismatch")
+    registration = _validate_registration_result(
+        manifest,
+        registration,
+        reason="registration_gate_mismatch",
+    )
     _validate_pilot_gate(manifest, artifact_root)
     _load_phase_receipts(manifest, artifact_root, "pilot")
     receipts = _load_phase_receipts(manifest, artifact_root, "confirmatory")
@@ -1852,6 +1979,21 @@ def finalize_product_value_acceptance(
         )
     thresholds = manifest["thresholds"]
     evidence_contract = _manifest_evidence_contract(manifest)
+    if evidence_contract["replication_role"] == "replication":
+        prior_report, _ = _load_envelope(
+            artifact_root / "prior-holdout-report.json"
+        )
+        validate_prior_holdout_report(
+            prior_report,
+            expected_sha256=evidence_contract["prior_holdout_report_sha256"],
+            current_manifest_sha256=manifest["preregistration_sha256"],
+            development_preregistration_sha256=evidence_contract[
+                "development_preregistration_sha256"
+            ],
+            selection_policy_sha256=evidence_contract[
+                "selection_policy_sha256"
+            ],
+        )
     checks = {
         "all_confirmatory_arms_succeeded": all(
             receipt.get("success") is True for receipt in receipts
@@ -1880,6 +2022,7 @@ def finalize_product_value_acceptance(
             for receipt in receipts
         ),
         evidence_tier=evidence_contract["evidence_tier"],
+        replication_role=evidence_contract["replication_role"],
     )
     report = {
         "schema_version": _acceptance_schema_version(manifest),
@@ -1895,6 +2038,13 @@ def finalize_product_value_acceptance(
         "checks": checks,
         **verdicts,
     }
+    if manifest["schema_version"] == preregistration.SCHEMA_VERSION_V6:
+        report.update({
+            "development_registration_receipt_sha256": registration[
+                "development_registration_receipt_sha256"
+            ],
+            "holdout_evidence": deepcopy(registration["holdout_evidence"]),
+        })
     report["report_sha256"] = canonical_sha256(report)
     return report
 
@@ -1944,6 +2094,7 @@ def main(argv: list[str] | None = None) -> int:
             is_v4 = manifest["schema_version"] in {
                 preregistration.SCHEMA_VERSION_V4,
                 preregistration.SCHEMA_VERSION_V5,
+                preregistration.SCHEMA_VERSION_V6,
             }
             if is_v4 and (
                 args.scheduler is None

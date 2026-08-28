@@ -90,10 +90,10 @@ def test_product_value_claim_scope_and_evidence_states_are_explicit() -> None:
     assert "evidence-state" in roadmap
     assert "| Plan | `NOT_PROVEN` |" in roadmap
     assert "| Review | `NOT_PROVEN` |" in roadmap
-    assert "| Product Value | `DEVELOPMENT_READY` |" in roadmap
+    assert "| Product Value | `HOLDOUT_PIPELINE_READY` |" in roadmap
     assert "development evidence 판정 gate 구현 완료" in roadmap
     assert "구현·판정 기준을 동결" in roadmap
-    assert "disjoint holdout 3–5건" in roadmap
+    assert "disjoint holdout 5건" in roadmap
     assert "holdout evidence만 운영 대체 판정" in roadmap
 
 
@@ -117,7 +117,9 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
         in text
     )
     assert "immutable runner·arm adapter·scheduler·provider adapter bundle" in text
-    assert "이 상태는 `claim_eligible=false`" in text
+    assert "실제 등록 증거 없이는 claim eligible이 아니다" in text
+    assert "`HOLDOUT_PROVISIONAL_PASS`" in text
+    assert "`OPERATIONALLY_REPLACEABLE`" in text
     assert "Product Value 중립 등록 검증 코드" in text
     assert "`validate-registration`" in text
     assert "manifest 원문이 없는 schema v1" in text

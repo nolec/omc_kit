@@ -165,19 +165,47 @@ def _artifact_lineage_v5() -> dict[str, str]:
 def _evidence_contract_v6(
     *,
     replication_role: str = "initial",
+    workloads: list[dict[str, object]] | None = None,
 ) -> dict[str, str | None]:
+    selected_workloads = _workloads_v4() if workloads is None else workloads
     return {
         "evidence_tier": "holdout",
         "replication_role": replication_role,
         "development_batch_id": "product-value-development-v1",
         "development_preregistration_sha256": "4" * 64,
         "development_workload_inventory_sha256": "5" * 64,
-        "holdout_workload_inventory_sha256": "6" * 64,
-        "selection_policy_sha256": "7" * 64,
+        "holdout_workload_inventory_sha256": (
+            preregistration.workload_inventory_sha256(selected_workloads)
+        ),
+        "selection_policy_sha256": preregistration.canonical_sha256(
+            preregistration.SELECTION_POLICY_V2
+        ),
         "prior_holdout_report_sha256": (
             None if replication_role == "initial" else "8" * 64
         ),
     }
+
+
+def _disjoint_workloads_v4() -> list[dict[str, object]]:
+    workloads = _workloads_v4()
+    for index, workload in enumerate(workloads, start=1):
+        workload.update({
+            "workload_id": f"holdout-{index}",
+            "repo_alias": "repo-c" if index <= 3 else "repo-d",
+            "repository_identity_sha256": (
+                "c" * 64 if index <= 3 else "d" * 64
+            ),
+            "source_commit": preregistration.canonical_sha256(
+                f"holdout-source-{index}"
+            )[:40],
+            "request_sha256": preregistration.canonical_sha256(
+                f"holdout-request-{index}"
+            ),
+            "execution_packet_sha256": preregistration.canonical_sha256(
+                f"holdout-packet-{index}"
+            ),
+        })
+    return workloads
 
 
 def test_builds_and_validates_five_workload_prospective_contract() -> None:
@@ -725,6 +753,124 @@ def test_v6_rejects_hash_bound_evidence_contract_tampering(
 
     with pytest.raises(ValueError, match="preregistration_hash_mismatch"):
         validate_preregistration(manifest)
+
+
+def test_v6_rejects_inventory_or_selection_hash_not_derived_from_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+
+    for field in (
+        "holdout_workload_inventory_sha256",
+        "selection_policy_sha256",
+    ):
+        contract = _evidence_contract_v6()
+        contract[field] = "0" * 64
+        with pytest.raises(ValueError, match="evidence_contract_binding_invalid"):
+            preregistration.build_preregistration_v6(
+                "product-value-holdout-a",
+                _workloads_v4(),
+                observed_from="2026-10-01T00:00:00+00:00",
+                observed_through="2026-10-08T00:00:00+00:00",
+                registration_authority={"trusted_root_sha256": "c" * 64},
+                execution_contract=_execution_contract_v4(),
+                artifact_lineage=_artifact_lineage_v5(),
+                evidence_contract=contract,
+            )
+
+
+def test_v6_holdout_contract_requires_disjoint_development_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    development = preregistration.build_preregistration_v5(
+        "product-value-development-v1",
+        _workloads_v4(),
+        observed_from="2026-09-01T00:00:00+00:00",
+        observed_through="2026-09-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=_execution_contract_v4(),
+        artifact_lineage=_artifact_lineage_v5(),
+    )
+    contract = _evidence_contract_v6()
+    contract["development_batch_id"] = development["batch_id"]
+    contract["development_preregistration_sha256"] = development[
+        "preregistration_sha256"
+    ]
+    contract["development_workload_inventory_sha256"] = (
+        preregistration.workload_inventory_sha256(development["workloads"])
+    )
+    holdout = preregistration.build_preregistration_v6(
+        "product-value-holdout-a",
+        _workloads_v4(),
+        observed_from="2026-10-01T00:00:00+00:00",
+        observed_through="2026-10-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=_execution_contract_v4(),
+        artifact_lineage=_artifact_lineage_v5(),
+        evidence_contract=contract,
+    )
+
+    with pytest.raises(ValueError, match="holdout_workload_overlap"):
+        preregistration.validate_holdout_evidence_contract(holdout, development)
+
+
+def test_v6_holdout_contract_accepts_bound_disjoint_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    development = preregistration.build_preregistration_v5(
+        "product-value-development-v1",
+        _workloads_v4(),
+        observed_from="2026-09-01T00:00:00+00:00",
+        observed_through="2026-09-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=_execution_contract_v4(),
+        artifact_lineage=_artifact_lineage_v5(),
+    )
+    holdout_workloads = _disjoint_workloads_v4()
+    contract = _evidence_contract_v6(workloads=holdout_workloads)
+    contract.update({
+        "development_batch_id": development["batch_id"],
+        "development_preregistration_sha256": development[
+            "preregistration_sha256"
+        ],
+        "development_workload_inventory_sha256": (
+            preregistration.workload_inventory_sha256(development["workloads"])
+        ),
+    })
+    holdout = preregistration.build_preregistration_v6(
+        "product-value-holdout-a",
+        holdout_workloads,
+        observed_from="2026-10-01T00:00:00+00:00",
+        observed_through="2026-10-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=_execution_contract_v4(),
+        artifact_lineage=_artifact_lineage_v5(),
+        evidence_contract=contract,
+    )
+
+    result = preregistration.validate_holdout_evidence_contract(
+        holdout,
+        development,
+    )
+
+    assert result["status"] == "validated"
+    assert result["holdout_workload_inventory_sha256"] == contract[
+        "holdout_workload_inventory_sha256"
+    ]
 
 
 def test_product_value_registry_record_embeds_public_manifest(

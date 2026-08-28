@@ -868,10 +868,247 @@ def test_only_holdout_evidence_can_emit_operational_replacement() -> None:
         checks,
         strict_transport_eligible=False,
         evidence_tier="holdout",
+        replication_role="replication",
+    )
+    initial = acceptance.build_product_value_verdicts(
+        checks,
+        strict_transport_eligible=False,
+        evidence_tier="holdout",
+        replication_role="initial",
     )
 
     assert development["operational_verdict"] == "DEVELOPMENT_PASS"
+    assert initial["operational_verdict"] == "HOLDOUT_PROVISIONAL_PASS"
     assert holdout["operational_verdict"] == "OPERATIONALLY_REPLACEABLE"
+
+
+def test_v6_registration_validates_development_registration_and_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    development, _, _ = _v4_manifest_and_packet(monkeypatch)
+    workloads = deepcopy(development["workloads"])
+    for index, workload in enumerate(workloads, start=1):
+        workload.update({
+            "workload_id": f"holdout-{index}",
+            "repo_alias": "repo-c" if index <= 3 else "repo-d",
+            "repository_identity_sha256": (
+                "c" * 64 if index <= 3 else "d" * 64
+            ),
+            "source_commit": acceptance.canonical_sha256(
+                f"holdout-source-{index}"
+            )[:40],
+            "request_sha256": acceptance.canonical_sha256(
+                f"holdout-request-{index}"
+            ),
+            "execution_packet_sha256": acceptance.canonical_sha256(
+                f"holdout-packet-{index}"
+            ),
+        })
+    contract = {
+        "evidence_tier": "holdout",
+        "replication_role": "initial",
+        "development_batch_id": development["batch_id"],
+        "development_preregistration_sha256": development[
+            "preregistration_sha256"
+        ],
+        "development_workload_inventory_sha256": (
+            preregistration.workload_inventory_sha256(development["workloads"])
+        ),
+        "holdout_workload_inventory_sha256": (
+            preregistration.workload_inventory_sha256(workloads)
+        ),
+        "selection_policy_sha256": acceptance.canonical_sha256(
+            preregistration.SELECTION_POLICY_V2
+        ),
+        "prior_holdout_report_sha256": None,
+    }
+    holdout = preregistration.build_preregistration_v6(
+        "product-value-holdout-a",
+        workloads,
+        observed_from="2026-10-01T00:00:00+00:00",
+        observed_through="2026-10-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=development["execution_contract"],
+        artifact_lineage=development["artifact_lineage"],
+        evidence_contract=contract,
+    )
+    calls: list[str] = []
+
+    def validate_registered(manifest, **_kwargs):
+        calls.append(manifest["batch_id"])
+        return {
+            "claim_eligible": True,
+            "status": "registered",
+            "preregistration_sha256": manifest["preregistration_sha256"],
+            "registration_receipt_sha256": acceptance.canonical_sha256(
+                manifest["batch_id"]
+            ),
+        }
+
+    monkeypatch.setattr(
+        preregistration,
+        "validate_registered_preregistration",
+        validate_registered,
+    )
+    base_context = {
+        "repository_root": ".",
+        "registry_commit": "1" * 40,
+        "registry_path": "registry.json",
+        "required_ancestor_commit": "3" * 40,
+        "registration_receipt": {},
+        "expected_registration_receipt_sha256": "4" * 64,
+        "trusted_root": {},
+        "approved_trusted_root_sha256": "5" * 64,
+    }
+    result = acceptance._default_registration_validator(
+        holdout,
+        {
+            **base_context,
+            "development_evidence": {
+                "manifest": development,
+                "registration_context": base_context,
+            },
+        },
+    )
+
+    assert calls == [holdout["batch_id"], development["batch_id"]]
+    assert result["holdout_evidence"]["status"] == "validated"
+    assert result["development_registration_receipt_sha256"] == (
+        acceptance.canonical_sha256(development["batch_id"])
+    )
+    gated = acceptance._registration_gate(
+        holdout,
+        {},
+        lambda *_args, **_kwargs: result,
+    )
+    assert gated["holdout_evidence"] == result["holdout_evidence"]
+
+    tampered = deepcopy(result)
+    tampered["holdout_evidence"]["selection_policy_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="registration_blocked"):
+        acceptance._registration_gate(
+            holdout,
+            {},
+            lambda *_args, **_kwargs: tampered,
+        )
+
+    generic_registration = {
+        "claim_eligible": True,
+        "status": "registered",
+        "preregistration_sha256": holdout["preregistration_sha256"],
+        "registration_receipt_sha256": "e" * 64,
+    }
+    with pytest.raises(ValueError, match="registration_blocked"):
+        acceptance._registration_gate(
+            holdout,
+            {},
+            lambda *_args, **_kwargs: generic_registration,
+        )
+
+    artifact_root = tmp_path / "generic-registration"
+    acceptance._write_envelope(
+        artifact_root / "registration-gate.json",
+        generic_registration,
+    )
+    with pytest.raises(ValueError, match="registration_gate_mismatch"):
+        acceptance.finalize_product_value_acceptance(holdout, artifact_root)
+
+
+def test_holdout_replication_requires_a_valid_prior_provisional_report() -> None:
+    prior = {
+        "schema_version": acceptance.SCHEMA_VERSION_V2,
+        "status": "finalized",
+        "manifest_sha256": "1" * 64,
+        "claim_scope": acceptance.PRODUCT_VALUE_CLAIM_SCOPE,
+        "evidence_tier": "holdout",
+        "replication_role": "initial",
+        "development_preregistration_sha256": "2" * 64,
+        "development_workload_inventory_sha256": "5" * 64,
+        "holdout_workload_inventory_sha256": "6" * 64,
+        "selection_policy_sha256": "3" * 64,
+        "development_registration_receipt_sha256": "7" * 64,
+        "holdout_evidence": {
+            "status": "validated",
+            "development_preregistration_sha256": "2" * 64,
+            "development_workload_inventory_sha256": "5" * 64,
+            "holdout_workload_inventory_sha256": "6" * 64,
+            "selection_policy_sha256": "3" * 64,
+        },
+        "checks": {"success_rate": True},
+        "operational_verdict": "HOLDOUT_PROVISIONAL_PASS",
+    }
+    prior["report_sha256"] = acceptance.canonical_sha256(prior)
+
+    assert acceptance.validate_prior_holdout_report(
+        prior,
+        expected_sha256=prior["report_sha256"],
+        current_manifest_sha256="4" * 64,
+        development_preregistration_sha256="2" * 64,
+        selection_policy_sha256="3" * 64,
+    )["operational_verdict"] == "HOLDOUT_PROVISIONAL_PASS"
+
+    prior["checks"]["success_rate"] = False
+    prior["report_sha256"] = acceptance.canonical_sha256(
+        {key: value for key, value in prior.items() if key != "report_sha256"}
+    )
+    with pytest.raises(ValueError, match="prior_holdout_report_invalid"):
+        acceptance.validate_prior_holdout_report(
+            prior,
+            expected_sha256=prior["report_sha256"],
+            current_manifest_sha256="4" * 64,
+            development_preregistration_sha256="2" * 64,
+            selection_policy_sha256="3" * 64,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "value"),
+    [
+        ("missing_development_receipt", None),
+        ("tampered_holdout_inventory", "0" * 64),
+    ],
+)
+def test_holdout_replication_rejects_prior_report_without_bound_provenance(
+    mutation: str,
+    value: str | None,
+) -> None:
+    prior = {
+        "schema_version": acceptance.SCHEMA_VERSION_V2,
+        "status": "finalized",
+        "manifest_sha256": "1" * 64,
+        "claim_scope": acceptance.PRODUCT_VALUE_CLAIM_SCOPE,
+        "evidence_tier": "holdout",
+        "replication_role": "initial",
+        "development_preregistration_sha256": "2" * 64,
+        "development_workload_inventory_sha256": "5" * 64,
+        "holdout_workload_inventory_sha256": "6" * 64,
+        "selection_policy_sha256": "3" * 64,
+        "development_registration_receipt_sha256": "7" * 64,
+        "holdout_evidence": {
+            "status": "validated",
+            "development_preregistration_sha256": "2" * 64,
+            "development_workload_inventory_sha256": "5" * 64,
+            "holdout_workload_inventory_sha256": "6" * 64,
+            "selection_policy_sha256": "3" * 64,
+        },
+        "checks": {"success_rate": True},
+        "operational_verdict": "HOLDOUT_PROVISIONAL_PASS",
+    }
+    if mutation == "missing_development_receipt":
+        prior.pop("development_registration_receipt_sha256")
+    else:
+        prior["holdout_evidence"]["holdout_workload_inventory_sha256"] = value
+    prior["report_sha256"] = acceptance.canonical_sha256(prior)
+
+    with pytest.raises(ValueError, match="prior_holdout_report_invalid"):
+        acceptance.validate_prior_holdout_report(
+            prior,
+            expected_sha256=prior["report_sha256"],
+            current_manifest_sha256="4" * 64,
+            development_preregistration_sha256="2" * 64,
+            selection_policy_sha256="3" * 64,
+        )
 
 
 def test_unknown_evidence_tier_fails_closed() -> None:

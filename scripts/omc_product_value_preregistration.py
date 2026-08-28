@@ -147,6 +147,30 @@ def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+WORKLOAD_INVENTORY_FIELDS = (
+    "workload_id",
+    "repository_identity_sha256",
+    "source_commit",
+    "request_sha256",
+    "execution_packet_sha256",
+)
+
+
+def workload_inventory_sha256(workloads: Any) -> str:
+    if not isinstance(workloads, list) or not workloads:
+        raise ValueError("workload_inventory_invalid")
+    inventory: list[dict[str, str]] = []
+    for workload in workloads:
+        if not isinstance(workload, dict):
+            raise ValueError("workload_inventory_invalid")
+        row = {field: workload.get(field) for field in WORKLOAD_INVENTORY_FIELDS}
+        if not all(isinstance(value, str) and value for value in row.values()):
+            raise ValueError("workload_inventory_invalid")
+        inventory.append(row)
+    inventory.sort(key=lambda row: row["workload_id"])
+    return canonical_sha256(inventory)
+
+
 def _is_sha256(value: Any) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
@@ -348,6 +372,72 @@ def _validate_evidence_contract_v6(value: Any) -> dict[str, Any]:
     ):
         raise ValueError("evidence_contract_invalid")
     return deepcopy(value)
+
+
+def validate_holdout_evidence_contract(
+    holdout_manifest: Any,
+    development_manifest: Any,
+) -> dict[str, Any]:
+    holdout = validate_preregistration(holdout_manifest)
+    development = validate_preregistration(development_manifest)
+    if holdout["schema_version"] != SCHEMA_VERSION_V6 or development[
+        "schema_version"
+    ] not in {SCHEMA_VERSION_V3, SCHEMA_VERSION_V4, SCHEMA_VERSION_V5}:
+        raise ValueError("holdout_evidence_manifest_invalid")
+    contract = holdout["evidence_contract"]
+    if (
+        contract["development_batch_id"] != development["batch_id"]
+        or contract["development_preregistration_sha256"]
+        != development["preregistration_sha256"]
+        or contract["development_workload_inventory_sha256"]
+        != workload_inventory_sha256(development["workloads"])
+        or contract["holdout_workload_inventory_sha256"]
+        != workload_inventory_sha256(holdout["workloads"])
+        or contract["selection_policy_sha256"]
+        != canonical_sha256(holdout["selection_policy"])
+    ):
+        raise ValueError("evidence_contract_binding_invalid")
+    for field in (
+        "workload_id",
+        "repository_identity_sha256",
+        "request_sha256",
+        "execution_packet_sha256",
+    ):
+        development_values = {item[field] for item in development["workloads"]}
+        holdout_values = {item[field] for item in holdout["workloads"]}
+        if development_values & holdout_values:
+            raise ValueError("holdout_workload_overlap")
+    development_sources = {
+        (item["repository_identity_sha256"], item["source_commit"])
+        for item in development["workloads"]
+    }
+    holdout_sources = {
+        (item["repository_identity_sha256"], item["source_commit"])
+        for item in holdout["workloads"]
+    }
+    if development_sources & holdout_sources:
+        raise ValueError("holdout_workload_overlap")
+    development_end = datetime.fromisoformat(
+        development["observation_window"]["observed_through"]
+    )
+    holdout_start = datetime.fromisoformat(
+        holdout["observation_window"]["observed_from"]
+    )
+    if development_end > holdout_start:
+        raise ValueError("holdout_observation_chronology_invalid")
+    return {
+        "status": "validated",
+        "development_preregistration_sha256": development[
+            "preregistration_sha256"
+        ],
+        "development_workload_inventory_sha256": contract[
+            "development_workload_inventory_sha256"
+        ],
+        "holdout_workload_inventory_sha256": contract[
+            "holdout_workload_inventory_sha256"
+        ],
+        "selection_policy_sha256": contract["selection_policy_sha256"],
+    }
 
 
 def _validate_workloads(
@@ -627,6 +717,18 @@ def build_preregistration_v6(
 ) -> dict[str, Any]:
     if not isinstance(batch_id, str) or not batch_id.strip():
         raise ValueError("batch_id_invalid")
+    validated_workloads = _validate_workloads(
+        workloads,
+        schema_version=SCHEMA_VERSION_V6,
+    )
+    validated_evidence = _validate_evidence_contract_v6(evidence_contract)
+    if (
+        validated_evidence["holdout_workload_inventory_sha256"]
+        != workload_inventory_sha256(validated_workloads)
+        or validated_evidence["selection_policy_sha256"]
+        != canonical_sha256(SELECTION_POLICY_V2)
+    ):
+        raise ValueError("evidence_contract_binding_invalid")
     manifest = {
         "schema_version": SCHEMA_VERSION_V6,
         "status": "frozen",
@@ -637,10 +739,7 @@ def build_preregistration_v6(
         "comparison_contract": deepcopy(COMPARISON_CONTRACT),
         "intervention_contract": deepcopy(INTERVENTION_CONTRACT),
         "thresholds": deepcopy(THRESHOLDS),
-        "workloads": _validate_workloads(
-            workloads,
-            schema_version=SCHEMA_VERSION_V6,
-        ),
+        "workloads": validated_workloads,
         "observation_window": _validate_observation_window({
             "observed_from": observed_from,
             "observed_through": observed_through,
@@ -652,7 +751,7 @@ def build_preregistration_v6(
             execution_contract
         ),
         "artifact_lineage": _validate_artifact_lineage_v5(artifact_lineage),
-        "evidence_contract": _validate_evidence_contract_v6(evidence_contract),
+        "evidence_contract": validated_evidence,
     }
     manifest["preregistration_sha256"] = canonical_sha256(manifest)
     return validate_preregistration(manifest)
@@ -777,7 +876,16 @@ def validate_preregistration(payload: Any) -> dict[str, Any]:
     if schema_version in {SCHEMA_VERSION_V5, SCHEMA_VERSION_V6}:
         _validate_artifact_lineage_v5(payload.get("artifact_lineage"))
     if schema_version == SCHEMA_VERSION_V6:
-        _validate_evidence_contract_v6(payload.get("evidence_contract"))
+        evidence_contract = _validate_evidence_contract_v6(
+            payload.get("evidence_contract")
+        )
+        if (
+            evidence_contract["holdout_workload_inventory_sha256"]
+            != workload_inventory_sha256(validated_workloads)
+            or evidence_contract["selection_policy_sha256"]
+            != canonical_sha256(payload["selection_policy"])
+        ):
+            raise ValueError("evidence_contract_binding_invalid")
     validated = deepcopy(payload)
     return validated
 
