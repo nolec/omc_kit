@@ -25,7 +25,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 |---|---|---|---|
 | Routing V1–V4 | `OPERATIONALLY_VALIDATED` | 라우팅·실패 복구·telemetry 코드와 운영 receipt | 운영 drift 감시 유지 |
 | Bounded scheduler | `IMPLEMENTED` | v2 grant 전용 N-child scheduler·provider adapter·회귀 테스트 | 실제 3–5 child acceptance |
-| Product Value | `DEVELOPMENT_READY` | 동결된 6건 corpus와 availability preflight | 고정 구현·기준으로 disjoint holdout 3–5건 재현 |
+| Product Value | `DEVELOPMENT_READY` | 동결된 6건 corpus·availability preflight와 schema v6 holdout preregistration 계약 | 고정 구현·기준으로 disjoint holdout 3–5건 재현 |
 | Product Value independence | `NOT_REPRODUCED` | 현재 corpus는 구현과 기준 교정에 사용한 development evidence | 별도 선정한 holdout에서 primary metric 충족 |
 | Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재 | 독립 Batch B와 confirmatory batch 재현 |
 | Review | `NOT_PROVEN` | durable native provider 원문 부재 | 동일 diff native 재실행과 blind adjudication |
@@ -55,7 +55,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 
 등록된 Product Value 후보가 요구하는 `provider_enforced` hard-token 계약에는 raw Codex 실행 파일을 직접 사용할 수 없어 계속 `HOLD_TRANSPORT_UNSUPPORTED`다. 다만 API 키 없이 ChatGPT 로그인 상태를 사용하는 별도 `subscription_bounded` adapter를 구현해 elapsed time·output chars·process group을 강제하고 실제 input/output/total token을 호출 후 receipt로 기록할 수 있게 됐다. 이 경로는 hard total-token cap을 주장하지 않으며 strict Product Value acceptance에는 부적격이지만, no-key 운영 진단과 비용·지연 표본 수집에는 사용할 수 있다. exact input count와 native output cap이 필요한 strict 증명 경로는 기존 Responses transport/backend 후보와 분리해 유지한다.
 
-운영 대체 판정은 strict hard-token 인증과 독립적으로 종료한다. no-key paired 결과가 사전 등록된 품질·시간·token·개입·안전 기준을 충족하면 운영 판정을 발행하고, strict capability가 없다는 이유만으로 이를 무효화하지 않는다. 이 acceptance가 끝날 때까지 새 schema·transport·benchmark fixture 추가를 중단하고 기존 실행·등록·evidence 경로만 사용한다.
+운영 대체 판정은 strict hard-token 인증과 독립적으로 종료한다. no-key paired 결과가 사전 등록된 품질·시간·token·개입·안전 기준을 충족하면 운영 판정을 발행하고, strict capability가 없다는 이유만으로 이를 무효화하지 않는다. holdout provenance를 고정하는 schema v6 계약까지 완료했으며, 이 acceptance가 끝날 때까지 새 schema·transport·benchmark fixture 추가를 중단하고 기존 실행·등록·evidence 경로만 사용한다.
 
 고정 커밋 `906cfcc`에서 subscription 진단 pilot을 열기 위한 preflight를 실행했지만 `preregistration_schema_invalid`로 fail-close했다. 현재 Git registry에는 preregistration hash만 가진 schema v1 record만 남아 있고, 해당 hash의 signed manifest·6개 execution packet·RFC 3161 receipt 원문은 저장소·개발 디렉터리·임시 저장소에서 복구되지 않았다. runner 차단 출력은 `/private/tmp/omc-product-value-906cfcc-pilot-preflight.json`에 보존했으며 SHA-256은 `402a8f3d...c630568`이다. 이 파일은 임시 진단 증거일 뿐 durable acceptance artifact가 아니므로 기존 batch의 pilot·confirmatory 실행은 종료하고 새 corpus와 schema v2 durable registration을 생성해야 한다.
 
@@ -67,7 +67,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 |---|---|
 | Scheduler | scope normalization과 child `approval_id` 고유성 정책은 완료. 승인 전 canonical proposal과 v2 grant 재검증, ready-child claim, 제한 병렬 실행, dependency 해제, scope 격리 patch, DAG·child ledger를 구현했다. |
 | 안전·실패 | immutable provider snapshot, hard output/call·elapsed·token budget, idempotency·expiry를 강제한다. timeout·scope violation·부분 실패는 bounded `parent_review`로 수렴하고 patch 적용을 막는다. acceptance 복합 제한 분류 완료. |
-| Preregistration | Product Value preregistration 계약 완료. 1건 비판정 pilot과 동일 조건 paired 5건, canonical workload·pair 순서·execution packet·environment receipt 해시, immutable runner·arm adapter·scheduler·provider adapter bundle을 frozen manifest에 결속한다. 이 상태는 `claim_eligible=false`이며 등록이나 acceptance를 선점하지 않는다. |
+| Preregistration | Product Value preregistration 계약 완료. schema v6는 1건 비판정 pilot과 동일 조건 paired 5건, canonical workload·pair 순서·execution packet·environment receipt 해시, immutable runner·arm adapter·scheduler·provider adapter bundle을 frozen manifest에 결속한다. `evidence_tier=holdout`, initial/replication 역할, development 기준·workload inventory·selection policy·선행 holdout report 해시도 manifest digest에 추가로 결속한다. 이 상태는 `claim_eligible=false`이며 disjointness나 acceptance를 선점하지 않는다. |
 | 등록 | Product Value 중립 등록 검증 코드는 `prepare-v2` → `registry-record` → `prepare-receipt` → `validate-registration`과 durable schema v2 record를 지원한다. 다만 기존 batch의 실제 registry commit `8b23f83`은 manifest 원문이 없는 schema v1이며, 문서에 기록된 manifest `69115b41...af8df`·receipt `70d18121...d510` 원문을 복구하지 못했다. 기존 batch는 실행 불가로 판정하고 새 batch를 schema v2로 다시 등록한다. |
 | Evidence durability | immutable bundle writer·loader와 crash-safe no-replace atomic publish를 구현했다. 임시 root·필수 artifact 누락·path escape·digest 변조·중복/경쟁 게시를 fail-close하고 게시 후 fsync 불확정 상태에서도 완전한 bundle을 보존한다. 실제 batch 연결과 clean-clone 복구 검증은 남아 있다. |
 | Corpus·freeze | 실제 구현 workload 6건의 corpus v2-r1, exact 3–5 child decomposition, repository identity/source commit, dependency lock, read-only cache와 immutable execution bundle을 동결했다. `product-value-freeze prepare-inputs → prepare → validate`로 재계산하며, 별도 availability preflight가 정확히 `pv-01..06`만 허용하고 source root·commit·packet·환경 artifact·committed blob 결속을 읽기 전용으로 확인한다. |
@@ -76,7 +76,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | Conformance | Product Value provider conformance 증거 계약 완료. trusted metering receipt만 정산하고 위반·실패는 worst-case `indeterminate`로 봉인한다. over-limit 요청, forged capability·usage, timeout, output overflow를 포함한 adversarial conformance와 disposable shadow execution receipt를 검증하되 실제 실행 전 `claim_eligible=false`다. |
 | Transport feasibility | 승인 hash의 arm adapter·scheduler·provider adapter·provider backend immutable snapshot만 고정 명령으로 실행하고 canonical argv, 명시적 backend 환경, timeout·출력 상한, 자식 프로세스 정리, runtime hash와 Ed25519 evidence를 결속한다. signer private key는 저장소·artifact 밖에서만 읽는다. Responses 후보의 실제 count→generation canary와 격리 self-test는 `SUPPORTED`지만 raw Codex의 hard-token provider 사용은 `HOLD_TRANSPORT_UNSUPPORTED`다. ChatGPT 구독 adapter는 prompt를 stdin으로 전달하고 API key를 제거하며 실제 no-key smoke와 timeout 후 잔존 PID 방지를 통과했다. 등록 gate를 통과한 `subscription_bounded` receipt는 운영 대체 판정에 사용할 수 있지만 strict hard-token 인증에는 부적격이다. |
 
-최신 검증은 runner-owned transport attestation과 provider backend immutable snapshot 회귀를 포함한 Product Value 관련 테스트 `164 passed`, staged TDD gate와 OMC review `APPROVE`다. 원본 backend를 executor 생성 뒤 교체해도 snapshot만 실행되는 동적 회귀를 포함한다. durable evidence bundle 단위 회귀 `10 passed`, preregistration·registry·corpus·freeze·acceptance 연계 회귀 `155 passed`, staged TDD gate와 OMC review `APPROVE`도 확인했다. ChatGPT 구독 adapter의 실제 stdin smoke `OMC_SUBSCRIPTION_STDIN_OK`, 기존 Responses transport 연관 회귀 `190 passed`, transport evidence validator `VALID`, hard-token raw Codex probe `HOLD_TRANSPORT_UNSUPPORTED`, Responses transport 격리 probe `SUPPORTED`, conformance `22 passed`, 전체 회귀 `2807 passed, 3 skipped`도 보존한다. `906cfcc` pilot preflight 후 acceptance·arm adapter·scheduler 회귀 `113 passed`와 staged TDD gate를 재확인했다. corpus availability preflight 전용 회귀 `12 passed`, Product Value 연관 회귀 `187 passed`를 통과했고 실제 6건은 `ready_count=6`, `provider_call_count=0`, input binding `50bda4bd...644b50`, report `0facbba5...788c0`으로 확인했다. 합성 E2E·smoke·blocked preflight receipt와 availability report는 운영 acceptance 표본으로 계산하지 않는다.
+최신 검증은 runner-owned transport attestation과 provider backend immutable snapshot 회귀를 포함한 Product Value 관련 테스트 `164 passed`, staged TDD gate와 OMC review `APPROVE`다. 원본 backend를 executor 생성 뒤 교체해도 snapshot만 실행되는 동적 회귀를 포함한다. durable evidence bundle 단위 회귀 `10 passed`, preregistration·registry·corpus·freeze·acceptance 연계 회귀 `155 passed`, staged TDD gate와 OMC review `APPROVE`도 확인했다. ChatGPT 구독 adapter의 실제 stdin smoke `OMC_SUBSCRIPTION_STDIN_OK`, 기존 Responses transport 연관 회귀 `190 passed`, transport evidence validator `VALID`, hard-token raw Codex probe `HOLD_TRANSPORT_UNSUPPORTED`, Responses transport 격리 probe `SUPPORTED`, conformance `22 passed`, 전체 회귀 `2807 passed, 3 skipped`도 보존한다. `906cfcc` pilot preflight 후 acceptance·arm adapter·scheduler 회귀 `113 passed`와 staged TDD gate를 재확인했다. corpus availability preflight 전용 회귀 `12 passed`, Product Value 연관 회귀 `187 passed`를 통과했고 실제 6건은 `ready_count=6`, `provider_call_count=0`, input binding `50bda4bd...644b50`, report `0facbba5...788c0`으로 확인했다. schema v6 holdout preregistration 추가 후 Product Value 연관 회귀 `196 passed`, preregistration 회귀 `43 passed`, staged TDD gate와 OMC review `APPROVE`를 확인했다. 합성 E2E·smoke·blocked preflight receipt와 availability report는 운영 acceptance 표본으로 계산하지 않는다.
 
 **P0 종료 기준**
 
@@ -172,14 +172,16 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 1. **완료** — 기존 schema v1 Product Value batch를 실행 대상에서 제외하고 실제 6개 workload의 source commit·request·DoD·verification·environment artifact를 corpus v2-r1로 다시 수집했다. availability preflight가 6건 모두를 provider 호출 없이 `ready`로 확인한다.
 2. **완료** — `bounded_n_child_execution` claim scope와 development evidence 판정 gate 구현 완료. 기존 v3–v5 manifest는 `development`로 정규화하며 통과해도 최고 `DEVELOPMENT_PASS`만 발행한다.
-3. 현재 구현·판정 기준을 동결하고, development corpus와 repository·request·workload가 겹치지 않는 disjoint holdout 3–5건을 선정한다. 현재 acceptance harness에서는 confirmatory 5건으로 고정한다.
-4. holdout corpus와 exact 3–5 child decomposition을 사전 승인한 뒤 schema v5 preregistration을 동결하고 schema v2 registry record·RFC 3161 receipt·execution packet을 durable evidence root에 게시한다. clean clone에서 loader로 전체 bundle을 복구·검증한다.
-5. 고정 커밋과 동일 no-key `subscription_bounded` 조건에서 비판정 pilot 1건과 paired confirmatory 5건을 실행해 성공률·elapsed·post-call token·개입·scope·duplicate·major regression receipt를 수집한다.
-6. holdout evidence만 운영 대체 판정에 사용한다. primary metric을 모두 충족하면 `BOUNDED_EXECUTION_OPERATIONALLY_REPLACEABLE`, 실패하면 `NOT_REPLACEABLE`로 종료하며 Plan·Review·전체 OMC 판정은 변경하지 않는다.
-7. strict hard-token 인증은 기본 운영 판정과 분리한다. no-key transport가 exact count·native cap을 제공하거나 사용자가 credentialed transport를 별도로 선택한 경우에만 conformance와 `STRICTLY_CERTIFIED` 평가를 재개한다.
-8. Product Value 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
-9. Plan Batch B와 native Review 독립 검증을 계속해 각 대체 판정을 별도로 갱신한다.
-10. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
+3. **완료** — schema v6 holdout manifest 계약과 `prepare-v6` CLI를 구현했다. initial/replication 역할과 development 기준·양쪽 workload inventory·selection policy·선행 holdout report 해시를 preregistration digest에 결속하며 기존 v3–v5 직렬화와 판정은 유지한다.
+4. 현재 구현·판정 기준을 동결하고, development corpus와 repository·request·workload가 겹치지 않는 disjoint holdout 3–5건을 선정한다. 현재 acceptance harness에서는 confirmatory 5건으로 고정하며, v6 validator가 inventory 불일치와 observation 전 동결 실패를 거부하게 한다.
+5. holdout corpus와 exact 3–5 child decomposition을 사전 승인한 뒤 schema v6 preregistration을 동결하고 schema v2 registry record·RFC 3161 receipt·execution packet을 durable evidence root에 게시한다. clean clone에서 loader로 전체 bundle을 복구·검증한다.
+6. acceptance runner가 등록·disjointness·chronology 검증을 통과한 v6 manifest만 `holdout`으로 소비하게 하고, initial 통과는 provisional, 독립 replication 통과 후에만 최종 운영 판정을 허용한다.
+7. 고정 커밋과 동일 no-key `subscription_bounded` 조건에서 비판정 pilot 1건과 paired confirmatory 5건을 실행해 성공률·elapsed·post-call token·개입·scope·duplicate·major regression receipt를 수집한다.
+8. holdout evidence만 운영 대체 판정에 사용한다. primary metric을 모두 충족하면 `BOUNDED_EXECUTION_OPERATIONALLY_REPLACEABLE`, 실패하면 `NOT_REPLACEABLE`로 종료하며 Plan·Review·전체 OMC 판정은 변경하지 않는다.
+9. strict hard-token 인증은 기본 운영 판정과 분리한다. no-key transport가 exact count·native cap을 제공하거나 사용자가 credentialed transport를 별도로 선택한 경우에만 conformance와 `STRICTLY_CERTIFIED` 평가를 재개한다.
+10. Product Value 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
+11. Plan Batch B와 native Review 독립 검증을 계속해 각 대체 판정을 별도로 갱신한다.
+12. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
 
 ## 한 줄 결론
 

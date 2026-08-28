@@ -162,6 +162,24 @@ def _artifact_lineage_v5() -> dict[str, str]:
     }
 
 
+def _evidence_contract_v6(
+    *,
+    replication_role: str = "initial",
+) -> dict[str, str | None]:
+    return {
+        "evidence_tier": "holdout",
+        "replication_role": replication_role,
+        "development_batch_id": "product-value-development-v1",
+        "development_preregistration_sha256": "4" * 64,
+        "development_workload_inventory_sha256": "5" * 64,
+        "holdout_workload_inventory_sha256": "6" * 64,
+        "selection_policy_sha256": "7" * 64,
+        "prior_holdout_report_sha256": (
+            None if replication_role == "initial" else "8" * 64
+        ),
+    }
+
+
 def test_builds_and_validates_five_workload_prospective_contract() -> None:
     manifest = build_preregistration("product-value-batch-1", _workloads())
 
@@ -609,6 +627,106 @@ def test_v5_binds_lineage_bounded_execution_bundle_and_environment(
     assert validate_preregistration(manifest) == manifest
 
 
+def test_v6_binds_authoritative_holdout_evidence_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+
+    manifest = preregistration.build_preregistration_v6(
+        "product-value-holdout-a",
+        _workloads_v4(),
+        observed_from="2026-10-01T00:00:00+00:00",
+        observed_through="2026-10-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=_execution_contract_v4(),
+        artifact_lineage=_artifact_lineage_v5(),
+        evidence_contract=_evidence_contract_v6(),
+    )
+
+    assert manifest["schema_version"] == preregistration.SCHEMA_VERSION_V6
+    assert manifest["claim_scope"] == "bounded_execution_holdout_v1"
+    assert manifest["evidence_contract"] == _evidence_contract_v6()
+    assert validate_preregistration(manifest) == manifest
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason"),
+    [
+        (
+            lambda contract: contract.update({"evidence_tier": "development"}),
+            "evidence_contract_invalid",
+        ),
+        (
+            lambda contract: contract.update(
+                {"prior_holdout_report_sha256": "8" * 64}
+            ),
+            "evidence_contract_invalid",
+        ),
+        (
+            lambda contract: contract.update(
+                {
+                    "replication_role": "replication",
+                    "prior_holdout_report_sha256": None,
+                }
+            ),
+            "evidence_contract_invalid",
+        ),
+    ],
+)
+def test_v6_rejects_ambiguous_holdout_evidence_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    mutation,
+    reason: str,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    evidence_contract = _evidence_contract_v6()
+    mutation(evidence_contract)
+
+    with pytest.raises(ValueError, match=reason):
+        preregistration.build_preregistration_v6(
+            "product-value-holdout-a",
+            _workloads_v4(),
+            observed_from="2026-10-01T00:00:00+00:00",
+            observed_through="2026-10-08T00:00:00+00:00",
+            registration_authority={"trusted_root_sha256": "c" * 64},
+            execution_contract=_execution_contract_v4(),
+            artifact_lineage=_artifact_lineage_v5(),
+            evidence_contract=evidence_contract,
+        )
+
+
+def test_v6_rejects_hash_bound_evidence_contract_tampering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    manifest = preregistration.build_preregistration_v6(
+        "product-value-holdout-a",
+        _workloads_v4(),
+        observed_from="2026-10-01T00:00:00+00:00",
+        observed_through="2026-10-08T00:00:00+00:00",
+        registration_authority={"trusted_root_sha256": "c" * 64},
+        execution_contract=_execution_contract_v4(),
+        artifact_lineage=_artifact_lineage_v5(),
+        evidence_contract=_evidence_contract_v6(),
+    )
+    manifest["evidence_contract"]["selection_policy_sha256"] = "9" * 64
+
+    with pytest.raises(ValueError, match="preregistration_hash_mismatch"):
+        validate_preregistration(manifest)
+
+
 def test_product_value_registry_record_embeds_public_manifest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -998,6 +1116,55 @@ def test_prepare_v5_cli_writes_valid_manifest(
     ] == preregistration.SCHEMA_VERSION_V5
 
 
+def test_prepare_v6_cli_writes_valid_holdout_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        preregistration.rfc3161,
+        "validate_trust_identity",
+        lambda candidate: None,
+    )
+    inputs = {
+        "workloads": _workloads_v4(),
+        "authority": {"trusted_root_sha256": "c" * 64},
+        "execution-contract": _execution_contract_v4(),
+        "artifact-lineage": _artifact_lineage_v5(),
+        "evidence-contract": _evidence_contract_v6(),
+    }
+    paths: dict[str, Path] = {}
+    for name, payload in inputs.items():
+        paths[name] = tmp_path / f"{name}.json"
+        paths[name].write_text(json.dumps(payload), encoding="utf-8")
+    output = tmp_path / "manifest.json"
+
+    result = preregistration.main([
+        "prepare-v6",
+        "--batch-id",
+        "product-value-holdout-a",
+        "--workloads",
+        str(paths["workloads"]),
+        "--observed-from",
+        "2026-10-01T00:00:00+00:00",
+        "--observed-through",
+        "2026-10-08T00:00:00+00:00",
+        "--registration-authority",
+        str(paths["authority"]),
+        "--execution-contract",
+        str(paths["execution-contract"]),
+        "--artifact-lineage",
+        str(paths["artifact-lineage"]),
+        "--evidence-contract",
+        str(paths["evidence-contract"]),
+        "--out",
+        str(output),
+    ])
+
+    assert result == 0
+    manifest = validate_preregistration(json.loads(output.read_text()))
+    assert manifest["schema_version"] == preregistration.SCHEMA_VERSION_V6
+    assert manifest["evidence_contract"]["evidence_tier"] == "holdout"
+
+
 def test_omc_cli_accepts_prepare_v5_command() -> None:
     result = subprocess.run(
         [
@@ -1013,6 +1180,24 @@ def test_omc_cli_accepts_prepare_v5_command() -> None:
 
     assert "invalid choice" not in result.stderr
     assert "--batch-id" in result.stderr
+
+
+def test_omc_cli_accepts_prepare_v6_command() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/omc.py",
+            "product-value-preregistration",
+            "prepare-v6",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "invalid choice" not in result.stderr
+    assert "--batch-id" in result.stderr
+    assert "--evidence-contract" in result.stderr
 
 
 @pytest.mark.parametrize(

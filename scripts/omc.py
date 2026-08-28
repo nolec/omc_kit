@@ -273,6 +273,7 @@ def main() -> int:
             "prepare-v3",
             "prepare-v4",
             "prepare-v5",
+            "prepare-v6",
             "validate",
             "registry-record",
             "prepare-receipt",
@@ -288,6 +289,7 @@ def main() -> int:
     product_value_preregistration.add_argument("--registration-authority", type=Path)
     product_value_preregistration.add_argument("--execution-contract", type=Path)
     product_value_preregistration.add_argument("--artifact-lineage", type=Path)
+    product_value_preregistration.add_argument("--evidence-contract", type=Path)
     product_value_preregistration.add_argument("--repository-root", type=Path)
     product_value_preregistration.add_argument("--registry-commit")
     product_value_preregistration.add_argument("--registry-path")
@@ -678,6 +680,7 @@ def main() -> int:
             "registration_authority",
             "execution_contract",
             "artifact_lineage",
+            "evidence_contract",
             "repository_root",
             "registration_evidence",
             "registration_receipt",
