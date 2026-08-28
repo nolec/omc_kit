@@ -22,6 +22,8 @@ Product Value 결과는 두 판정을 분리합니다.
 - **운영 대체 판정**: no-key `subscription_bounded` 경로에서도 성공률·시간·token·개입·안전 위반을 비교해 `OPERATIONALLY_REPLACEABLE` 또는 `NOT_REPLACEABLE`로 종료할 수 있습니다.
 - **strict hard-token 인증**: exact input count와 native output cap을 증명하는 `provider_enforced` transport만 `STRICTLY_CERTIFIED`가 될 수 있습니다. 운영 기준을 통과했지만 이 capability가 없으면 `HOLD_TRANSPORT`이며, 운영 대체 판정을 무효화하지 않습니다.
 
+두 판정의 claim scope는 `bounded_n_child_execution`으로 제한됩니다. 현재 6건 corpus는 구현과 기준 교정에 사용한 development evidence이며, 이 결과만으로 Plan, Review 또는 전체 OMC가 기준 제품을 대체한다고 주장하지 않습니다. 외부 운영 대체 주장은 구현과 판정 기준을 고정한 뒤 별도로 선정한 disjoint holdout에서 재현됐을 때만 허용합니다.
+
 상세 상태와 남은 작업은 [자동 모델 라우팅 로드맵](docs/automatic_model_routing_roadmap.md)을 참고하세요.
 
 ## 주요 기능

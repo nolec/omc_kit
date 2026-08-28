@@ -76,6 +76,27 @@ def test_readme_matches_the_current_bounded_execution_and_verdict_contract() -> 
     assert "현재 executor 관련 결과는 모두 `execution_allowed=false`" not in text
 
 
+def test_product_value_claim_scope_and_evidence_states_are_explicit() -> None:
+    roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
+    readme = README_PATH.read_text(encoding="utf-8")
+
+    for text in (roadmap, readme):
+        assert "`bounded_n_child_execution`" in text
+        assert "development evidence" in text
+        assert "disjoint holdout" in text
+        assert "전체 OMC" in text
+
+    assert "`DEVELOPMENT_PASS`" in roadmap
+    assert "evidence-state" in roadmap
+    assert "| Plan | `NOT_PROVEN` |" in roadmap
+    assert "| Review | `NOT_PROVEN` |" in roadmap
+    assert "| Product Value | `DEVELOPMENT_READY` |" in roadmap
+    assert "development evidence 판정 gate 구현 완료" in roadmap
+    assert "구현·판정 기준을 동결" in roadmap
+    assert "disjoint holdout 3–5건" in roadmap
+    assert "holdout evidence만 운영 대체 판정" in roadmap
+
+
 def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence() -> None:
     text = ROADMAP_PATH.read_text(encoding="utf-8")
 
@@ -163,10 +184,9 @@ def test_roadmap_tracks_completed_n_child_v2_prerequisites() -> None:
     assert "Responses transport 격리 probe `SUPPORTED`" in current
     assert "signer private key는 저장소·artifact 밖에서만 읽는다" in current
     assert "실제 count→generation canary" in current
-    assert (
-        "6. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 "
-        "수집한다."
-    ) in current
+    assert "paired confirmatory 5건을 실행" in current
+    assert "성공률·elapsed·post-call token·개입·scope·duplicate" in current
+    assert "holdout evidence만 운영 대체 판정에 사용" in current
     assert "1. P0 선행 정책인 scope normalization" not in current
     assert "V5 bounded N-child scheduler·provider adapter 완료(2026-08-24)" in history
     assert "V5 N-child v2 실행 전 계약 완료(2026-08-24)" in history

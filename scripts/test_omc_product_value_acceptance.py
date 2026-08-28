@@ -698,7 +698,9 @@ def test_authoritative_finalize_compares_five_pairs_and_rejects_tampering(
 
     report = acceptance.finalize_product_value_acceptance(manifest, artifacts)
     assert report["verdict"] == "FAIL"
-    assert report["operational_verdict"] == "OPERATIONALLY_REPLACEABLE"
+    assert report["claim_scope"] == "bounded_n_child_execution"
+    assert report["evidence_tier"] == "development"
+    assert report["operational_verdict"] == "DEVELOPMENT_PASS"
     assert report["strict_certification_verdict"] == "HOLD_TRANSPORT"
     assert report["confirmatory_pair_count"] == 5
     assert report["metrics"]["omc"]["median_total_tokens"] == 100
@@ -847,9 +849,38 @@ def test_operational_finalize_does_not_imply_strict_certification(
 
     report = acceptance.finalize_product_value_acceptance(manifest, artifacts)
 
-    assert report["operational_verdict"] == "OPERATIONALLY_REPLACEABLE"
+    assert report["claim_scope"] == "bounded_n_child_execution"
+    assert report["evidence_tier"] == "development"
+    assert report["operational_verdict"] == "DEVELOPMENT_PASS"
     assert report["strict_certification_verdict"] == "HOLD_TRANSPORT"
     assert report["verdict"] == "FAIL"
+
+
+def test_only_holdout_evidence_can_emit_operational_replacement() -> None:
+    checks = {"success_rate": True, "scope_violations": True}
+
+    development = acceptance.build_product_value_verdicts(
+        checks,
+        strict_transport_eligible=False,
+        evidence_tier="development",
+    )
+    holdout = acceptance.build_product_value_verdicts(
+        checks,
+        strict_transport_eligible=False,
+        evidence_tier="holdout",
+    )
+
+    assert development["operational_verdict"] == "DEVELOPMENT_PASS"
+    assert holdout["operational_verdict"] == "OPERATIONALLY_REPLACEABLE"
+
+
+def test_unknown_evidence_tier_fails_closed() -> None:
+    with pytest.raises(ValueError, match="acceptance_evidence_tier_invalid"):
+        acceptance.build_product_value_verdicts(
+            {"success_rate": True},
+            strict_transport_eligible=False,
+            evidence_tier="unknown",
+        )
 
 
 def test_elapsed_is_measured_by_runner_across_provider_and_verification(

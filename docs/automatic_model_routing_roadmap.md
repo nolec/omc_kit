@@ -17,6 +17,23 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 
 현재 OMC는 `rule-based orchestration v1`을 넘어 승인된 v2 grant를 제한 병렬 실행하는 `bounded orchestration` 단계다. 일반 N-child 실행과 authoritative acceptance 판정 코드는 갖췄지만 실제 운영 표본 acceptance, 실패 재분배, 자동 모델 전환, 자동 ship은 아직 완료되지 않았다.
 
+### Evidence-state Scorecard
+
+완성도 백분율 대신 코드, 회귀 테스트, 운영 표본, 독립 재현의 증거 단계를 분리한다. Product Value의 claim scope는 `bounded_n_child_execution`이며 다른 스킬이나 전체 OMC의 대체 판정으로 확대하지 않는다.
+
+| 대상 | evidence-state | 현재 근거 | 승격 조건 |
+|---|---|---|---|
+| Routing V1–V4 | `OPERATIONALLY_VALIDATED` | 라우팅·실패 복구·telemetry 코드와 운영 receipt | 운영 drift 감시 유지 |
+| Bounded scheduler | `IMPLEMENTED` | v2 grant 전용 N-child scheduler·provider adapter·회귀 테스트 | 실제 3–5 child acceptance |
+| Product Value | `DEVELOPMENT_READY` | 동결된 6건 corpus와 availability preflight | 고정 구현·기준으로 disjoint holdout 3–5건 재현 |
+| Product Value independence | `NOT_REPRODUCED` | 현재 corpus는 구현과 기준 교정에 사용한 development evidence | 별도 선정한 holdout에서 primary metric 충족 |
+| Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재 | 독립 Batch B와 confirmatory batch 재현 |
+| Review | `NOT_PROVEN` | durable native provider 원문 부재 | 동일 diff native 재실행과 blind adjudication |
+| Autopilot | `LIMITED` | 안전한 opt-in 경로와 identity fail-close | 운영 latency·개입 acceptance |
+| Setup | `OPERATIONALLY_VALIDATED` | 사용처 8곳 strict install audit 통과 | source freshness와 rollback 회귀 유지 |
+
+현재 6건 corpus의 최고 판정은 `DEVELOPMENT_PASS`다. 이는 development evidence에서 acceptance 계약이 작동한다는 뜻이며 외부 대체 주장이 아니다. 구현과 임계값을 먼저 고정하고 비중복 disjoint holdout을 선정한 뒤 성공률·시간·개입·안전 primary metric을 재측정해야 `BOUNDED_EXECUTION_OPERATIONALLY_REPLACEABLE`로 승격할 수 있다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
+
 ### 제품 약점 기반 개선 축
 
 기능 수가 아니라 사용자가 실제 작업을 더 잘 끝내는지를 기준으로 남은 약점을 세 핵심 축과 하나의 지원 축으로 관리한다. Product Value·Operator Experience·Evidence를 핵심 축으로, Maintainability를 이를 지속시키는 지원 축으로 둔다. 구현 완료와 제품 효과 검증을 분리하며, 새 스킬·정책·benchmark fixture 수 증가는 완료 지표로 사용하지 않는다.
@@ -154,14 +171,15 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 ## 다음 실행 순서
 
 1. **완료** — 기존 schema v1 Product Value batch를 실행 대상에서 제외하고 실제 6개 workload의 source commit·request·DoD·verification·environment artifact를 corpus v2-r1로 다시 수집했다. availability preflight가 6건 모두를 provider 호출 없이 `ready`로 확인한다.
-2. 새 corpus와 exact 3–5 child decomposition을 사전 승인한 뒤 schema v5 preregistration을 동결하고, signed manifest 원문을 포함한 schema v2 registry record·RFC 3161 receipt·execution packet을 새 bundle writer로 durable evidence root에 게시한다. Git에는 public hash index만 기록하고 clean clone에서 loader로 전체 bundle을 복구·검증한다.
-3. 새 batch의 고정 커밋에서 승인된 pilot workload 1건을 subscription 진단으로 실행해 성공·시간·post-call token·개입 receipt를 수집하되 Product Value acceptance나 hard-cap 증거로 승격하지 않는다.
-4. `provider_enforced` strict acceptance는 API key를 사용자 기본 전제로 요구하지 않는다. no-key transport가 exact count·native cap을 제공할 때 재개하거나, 사용자가 별도로 credentialed transport를 선택한 경우에만 Responses canary와 9개 adversarial conformance를 수행한다.
-5. strict transport가 확보되면 1–2번에서 새로 등록한 corpus·decomposition으로 provider-enforced candidate를 동결하고 Git registry·RFC 3161 receipt를 갱신한다.
-6. paired confirmatory 5건의 실제 3–5 child 성공·실패·timeout receipt를 수집한다. authoritative pilot 1건과 이 confirmatory 표본을 모두 확보한 뒤에만 Product Value `finalize` 판정을 발행한다.
-7. 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
-8. Plan Batch B와 native Review 독립 검증을 계속해 대체 판정을 갱신한다.
-9. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
+2. **완료** — `bounded_n_child_execution` claim scope와 development evidence 판정 gate 구현 완료. 기존 v3–v5 manifest는 `development`로 정규화하며 통과해도 최고 `DEVELOPMENT_PASS`만 발행한다.
+3. 현재 구현·판정 기준을 동결하고, development corpus와 repository·request·workload가 겹치지 않는 disjoint holdout 3–5건을 선정한다. 현재 acceptance harness에서는 confirmatory 5건으로 고정한다.
+4. holdout corpus와 exact 3–5 child decomposition을 사전 승인한 뒤 schema v5 preregistration을 동결하고 schema v2 registry record·RFC 3161 receipt·execution packet을 durable evidence root에 게시한다. clean clone에서 loader로 전체 bundle을 복구·검증한다.
+5. 고정 커밋과 동일 no-key `subscription_bounded` 조건에서 비판정 pilot 1건과 paired confirmatory 5건을 실행해 성공률·elapsed·post-call token·개입·scope·duplicate·major regression receipt를 수집한다.
+6. holdout evidence만 운영 대체 판정에 사용한다. primary metric을 모두 충족하면 `BOUNDED_EXECUTION_OPERATIONALLY_REPLACEABLE`, 실패하면 `NOT_REPLACEABLE`로 종료하며 Plan·Review·전체 OMC 판정은 변경하지 않는다.
+7. strict hard-token 인증은 기본 운영 판정과 분리한다. no-key transport가 exact count·native cap을 제공하거나 사용자가 credentialed transport를 별도로 선택한 경우에만 conformance와 `STRICTLY_CERTIFIED` 평가를 재개한다.
+8. Product Value 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
+9. Plan Batch B와 native Review 독립 검증을 계속해 각 대체 판정을 별도로 갱신한다.
+10. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
 
 ## 한 줄 결론
 

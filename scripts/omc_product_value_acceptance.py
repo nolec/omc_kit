@@ -39,6 +39,8 @@ ARMS = ("omc", "baseline")
 REVIEW_SEVERITIES = {"critical", "major", "minor", "suggestion"}
 CACHE_INVENTORY_MAX_ENTRIES = 10_000
 CACHE_INVENTORY_MAX_BYTES = 1_073_741_824
+PRODUCT_VALUE_CLAIM_SCOPE = "bounded_n_child_execution"
+EVIDENCE_TIERS = {"development", "holdout"}
 
 
 class _CapabilityBoundArmExecutor:
@@ -1746,7 +1748,7 @@ def _arm_metrics(receipts: list[dict[str, Any]], arm: str) -> dict[str, Any]:
 
 
 def build_product_value_verdicts(
-    checks: dict[str, bool], *, strict_transport_eligible: bool
+    checks: dict[str, bool], *, strict_transport_eligible: bool, evidence_tier: str
 ) -> dict[str, str]:
     if (
         not isinstance(checks, dict)
@@ -1755,14 +1757,18 @@ def build_product_value_verdicts(
         or not isinstance(strict_transport_eligible, bool)
     ):
         raise ValueError("acceptance_verdict_contract_invalid")
+    if evidence_tier not in EVIDENCE_TIERS:
+        raise ValueError("acceptance_evidence_tier_invalid")
     operational_passed = all(checks.values())
     strict_certified = operational_passed and strict_transport_eligible
+    if not operational_passed:
+        operational_verdict = "NOT_REPLACEABLE"
+    elif evidence_tier == "development":
+        operational_verdict = "DEVELOPMENT_PASS"
+    else:
+        operational_verdict = "OPERATIONALLY_REPLACEABLE"
     return {
-        "operational_verdict": (
-            "OPERATIONALLY_REPLACEABLE"
-            if operational_passed
-            else "NOT_REPLACEABLE"
-        ),
+        "operational_verdict": operational_verdict,
         "strict_certification_verdict": (
             "STRICTLY_CERTIFIED"
             if strict_certified
@@ -1772,6 +1778,22 @@ def build_product_value_verdicts(
         ),
         # Preserve the v1 consumer contract while making its strict meaning explicit.
         "verdict": "PASS" if strict_certified else "FAIL",
+    }
+
+
+def _manifest_evidence_contract(manifest: dict[str, Any]) -> dict[str, str]:
+    development_claims = {
+        preregistration.SCHEMA_VERSION_V3: "product_value_paired_v3",
+        preregistration.SCHEMA_VERSION_V4: "bounded_execution_value_v1",
+        preregistration.SCHEMA_VERSION_V5: "bounded_execution_value_v2",
+    }
+    if development_claims.get(manifest.get("schema_version")) != manifest.get(
+        "claim_scope"
+    ):
+        raise ValueError("acceptance_evidence_contract_invalid")
+    return {
+        "claim_scope": PRODUCT_VALUE_CLAIM_SCOPE,
+        "evidence_tier": "development",
     }
 
 
@@ -1829,6 +1851,7 @@ def finalize_product_value_acceptance(
             omc["intervention_count"] / baseline["intervention_count"]
         )
     thresholds = manifest["thresholds"]
+    evidence_contract = _manifest_evidence_contract(manifest)
     checks = {
         "all_confirmatory_arms_succeeded": all(
             receipt.get("success") is True for receipt in receipts
@@ -1856,6 +1879,7 @@ def finalize_product_value_acceptance(
             _strict_transport_receipt_eligible(manifest, receipt)
             for receipt in receipts
         ),
+        evidence_tier=evidence_contract["evidence_tier"],
     )
     report = {
         "schema_version": _acceptance_schema_version(manifest),
@@ -1865,6 +1889,7 @@ def finalize_product_value_acceptance(
             "registration_receipt_sha256"
         ],
         "confirmatory_pair_count": 5,
+        **evidence_contract,
         "metrics": metrics,
         "intervention_ratio": intervention_ratio,
         "checks": checks,
