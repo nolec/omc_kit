@@ -83,8 +83,11 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     )
     assert "immutable runner·arm adapter·scheduler·provider adapter bundle" in text
     assert "이 상태는 `claim_eligible=false`" in text
-    assert "Product Value 중립 등록 검증 경로 완료" in text
+    assert "Product Value 중립 등록 검증 코드" in text
     assert "`validate-registration`" in text
+    assert "manifest 원문이 없는 schema v1" in text
+    assert "기존 batch는 실행 불가" in text
+    assert "schema v2 registry record" in text
     assert "Product Value paired acceptance harness 완료" in text
     assert "`run-pilot` → `run-confirmatory` → `finalize`" in text
     assert "Product Value provider enforcement 계약 v2 완료" in text
