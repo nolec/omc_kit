@@ -15,7 +15,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter, authoritative acceptance harness | 실제 3–5 child 운영 표본 acceptance |
 | Operator Experience | 진행중 | output contract, Lite/Full routing, Stage graph SSOT, resume identity fail-close 구축 | 지연·개입 횟수 운영 검증 |
 
-현재 OMC는 `rule-based orchestration v1`을 넘어 승인된 v2 grant를 제한 병렬 실행하는 `bounded orchestration` 단계다. 일반 N-child 실행과 authoritative acceptance 판정 코드는 갖췄지만 실제 운영 표본 acceptance, 실패 재분배, 자동 모델 전환, 자동 ship은 아직 완료되지 않았다.
+현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. 승인된 v2 grant를 제한 병렬 실행하는 `bounded orchestration`과 authoritative acceptance 판정 코드는 갖췄지만 실제 운영 표본 acceptance, 실패 재분배, 자동 모델 전환, 자동 ship은 아직 완료되지 않았다.
 
 ### Evidence-state Scorecard
 
@@ -48,6 +48,14 @@ Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 �
 | Maintainability | P2 | setup 배포 SSOT·소유권·rollback은 정리됐지만 문서·fixture·검증 도구가 커져 사용자 기능과 내부 연구 경계가 흐림 | README와 실제 executor 구현 상태 정합화, 사용자 명령과 benchmark 내부 도구 구분 | README·CLI·로드맵 상태가 일치하고 일반 사용 경로가 setup·task·autopilot·status·ship 중심으로 설명됨 |
 
 운영 증거 없는 자동화 확대 금지를 공통 원칙으로 둔다. 실제 병목을 줄이지 않는 새 추상화, 정책, 스킬 추가는 위 종료 기준보다 우선하지 않는다.
+
+### Product Value P0 실행 동결
+
+- 준비 기한: `2026-09-05`. 기한 내 실행 준비 미완료는 `BLOCKED`로 기록하고 새 기능 개발로 우회하지 않는다.
+- 허용 범위: holdout 선정·등록·실행·판정과 이를 막는 결함 수정만 허용한다.
+- 금지 범위: Product Value 판정 전까지 신규 schema·transport·benchmark fixture와 Plan·Review·Work Packet 신규 기능 변경을 금지한다.
+- 책임 분리: 사용자는 corpus·외부 전송·서명을 승인하고, OMC runner는 frozen 입력을 실행하며, 역할별 독립 authority는 결과 subject만 판정한다.
+- 재시도 정책: 기술 실패는 동일 frozen 입력과 새 batch ID로 1회만 재시도하고, 품질 실패는 재교정 없이 `NOT_REPLACEABLE`로 종료한다.
 
 ### Operational P0
 

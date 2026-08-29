@@ -103,6 +103,19 @@ def test_product_value_claim_scope_and_evidence_states_are_explicit() -> None:
     assert "strict certification" in roadmap
 
 
+def test_product_value_p0_freezes_non_execution_work_and_has_an_exit_policy() -> None:
+    roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
+
+    assert "운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증" in roadmap
+    assert "### Product Value P0 실행 동결" in roadmap
+    assert "준비 기한: `2026-09-05`" in roadmap
+    assert "holdout 선정·등록·실행·판정과 이를 막는 결함 수정만 허용" in roadmap
+    assert "Plan·Review·Work Packet 신규 기능 변경을 금지" in roadmap
+    assert "기술 실패는 동일 frozen 입력과 새 batch ID로 1회만 재시도" in roadmap
+    assert "품질 실패는 재교정 없이 `NOT_REPLACEABLE`" in roadmap
+    assert "기한 내 실행 준비 미완료는 `BLOCKED`" in roadmap
+
+
 def test_roadmap_tracks_work_packet_prospective_feasibility_without_overclaim() -> None:
     text = ROADMAP_PATH.read_text(encoding="utf-8")
 
