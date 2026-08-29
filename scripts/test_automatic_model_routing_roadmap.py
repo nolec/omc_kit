@@ -103,6 +103,18 @@ def test_product_value_claim_scope_and_evidence_states_are_explicit() -> None:
     assert "strict certification" in roadmap
 
 
+def test_roadmap_tracks_work_packet_prospective_feasibility_without_overclaim() -> None:
+    text = ROADMAP_PATH.read_text(encoding="utf-8")
+
+    assert "Work Packet prospective feasibility" in text
+    assert "검증 코드 완료 / 실제 수집 0/5" in text
+    assert "canonical inventory commit" in text
+    assert "source snapshot과 completion ledger의 exact equality" in text
+    assert "관련 registry·RFC 3161 연계 회귀 `41 passed`" in text
+    assert "실제 적격 case `0/5`" in text
+    assert "Plan Batch B evidence로 자동 승격하지 않는다" in text
+
+
 def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence() -> None:
     text = ROADMAP_PATH.read_text(encoding="utf-8")
 

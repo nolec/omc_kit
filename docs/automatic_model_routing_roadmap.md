@@ -34,6 +34,8 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 
 현재 6건 corpus의 최고 판정은 `DEVELOPMENT_PASS`다. 이는 development evidence에서 acceptance 계약이 작동한다는 뜻이며 외부 대체 주장이 아니다. 구현과 임계값을 먼저 고정하고 비중복 disjoint holdout을 선정한 뒤 성공률·시간·개입·안전 primary metric을 재측정해야 `BOUNDED_EXECUTION_OPERATIONALLY_REPLACEABLE`로 승격할 수 있다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
 
+Work Packet prospective feasibility는 **검증 코드 완료 / 실제 수집 0/5** 상태다. 5건 chronological first-N capture는 전체 RFC 3161 trust identity와 Git registry anchor, 서로 다른 registration·source snapshot·completion collector·executor 키, preregistration에 고정된 source inventory path, registry commit의 후손인 canonical inventory commit, source snapshot과 completion ledger의 exact equality, raw request·provider output의 execution receipt 결속을 모두 통과해야 한다. 이 계약은 독립적인 작은 운영 표본을 안전하게 모으기 위한 것이며 실제 5건이 수집되기 전에는 제품 가치나 Plan 대체 증거로 사용하지 않는다.
+
 ### 제품 약점 기반 개선 축
 
 기능 수가 아니라 사용자가 실제 작업을 더 잘 끝내는지를 기준으로 남은 약점을 세 핵심 축과 하나의 지원 축으로 관리한다. Product Value·Operator Experience·Evidence를 핵심 축으로, Maintainability를 이를 지속시키는 지원 축으로 둔다. 구현 완료와 제품 효과 검증을 분리하며, 새 스킬·정책·benchmark fixture 수 증가는 완료 지표로 사용하지 않는다.
@@ -95,6 +97,14 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 - 현재 감사 상태: raw provisional receipt `7건/3개 저장소`, cap 초과 `3건` 제외, source snapshot 검증 전 `validated_eligible=0`
 - 금지: 관측 창 사후 연장, quota 변경, synthetic·document·benchmark maintenance 혼입
 - 다음 단계: 관측 종료 후 source snapshot 동결, universe·shortlist 10건, 독립 gold sign-off, paired 실행, blind adjudication
+
+**Work Packet 5건 feasibility**는 Batch B와 분리된 진단 lane으로 병행한다.
+
+- 구현 상태: prospective preregistration, external registration proof, canonical Git inventory, source snapshot, completion ledger, execution receipt, atomic case capture와 authoritative reload 완료
+- 검증 상태: 관련 registry·RFC 3161 연계 회귀 `41 passed`, 전체 회귀 `2937 passed, 3 skipped`, staged TDD gate와 OMC review `APPROVE`
+- 현재 표본: 실제 적격 case `0/5`; 합성 unit fixture는 운영 표본으로 계산하지 않는다.
+- 다음 단계: 실제 authority와 source inventory를 사전 등록한 뒤 chronological first-N 5건을 capture·reload하고 projection 가능 여부만 판정한다.
+- 경계: `benchmark_maintenance`를 허용하는 Work Packet 결과를 implementation-only Plan Batch B evidence로 자동 승격하지 않는다.
 
 ### Active Quality Validation
 
@@ -181,8 +191,9 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 8. holdout evidence만 운영 대체 판정에 사용한다. primary metric을 모두 충족하면 `BOUNDED_EXECUTION_OPERATIONALLY_REPLACEABLE`, 실패하면 `NOT_REPLACEABLE`로 종료하며 Plan·Review·전체 OMC 판정은 변경하지 않는다.
 9. strict hard-token 인증은 기본 운영 판정과 분리한다. no-key transport가 exact count·native cap을 제공하거나 사용자가 credentialed transport를 별도로 선택한 경우에만 conformance와 `STRICTLY_CERTIFIED` 평가를 재개한다.
 10. Product Value 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
-11. Plan Batch B와 native Review 독립 검증을 계속해 각 대체 판정을 별도로 갱신한다.
-12. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
+11. **검증 코드 완료 / 실제 표본 대기** — Work Packet feasibility manifest와 외부 registration·canonical inventory·4-authority 분리 계약을 고정한 상태로 실제 chronological first-N 5건을 수집·reload한다. 결과는 feasibility projection에만 사용하고 Plan Batch B 또는 Product Value acceptance로 합산하지 않는다.
+12. Plan Batch B와 native Review 독립 검증을 계속해 각 대체 판정을 별도로 갱신한다.
+13. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
 
 ## 한 줄 결론
 
