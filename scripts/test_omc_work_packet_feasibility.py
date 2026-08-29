@@ -146,13 +146,61 @@ def _manifest() -> dict[str, object]:
     )
 
 
+def _authority_custody() -> dict[str, object]:
+    return {
+        "registration": {
+            "operator_id": "operator-registration",
+            "custody_id": "custody-registration",
+        },
+        "source_snapshot": {
+            "operator_id": "operator-source",
+            "custody_id": "custody-source",
+        },
+        "completion_collector": {
+            "operator_id": "operator-collector",
+            "custody_id": "custody-collector",
+        },
+        "executor": {
+            "operator_id": "operator-executor",
+            "custody_id": "custody-executor",
+        },
+    }
+
+
+def _v2_manifest(**overrides: object) -> dict[str, object]:
+    kwargs = {
+        "study_id": "work-packet-prospective-v2",
+        "created_at": CREATED_AT,
+        "observation_ends_at": "2026-09-04T10:00:00Z",
+        "registration_authority_public_key": _public_key(REGISTRATION_KEY),
+        "registration_authority": _registration_authority(),
+        "completion_collector_public_key": _public_key(COLLECTOR_KEY),
+        "executor_public_key": _public_key(EXECUTOR_KEY),
+        "source_snapshot_public_key": _public_key(SOURCE_KEY),
+        "authority_custody": _authority_custody(),
+        "source_inventory": {
+            "source_id": "omc-session-ledger",
+            "inventory_path": ".omc/work-packet/source-inventory.json",
+            "commit_policy": "git_commit_required",
+        },
+        "restart_parent": None,
+    }
+    kwargs.update(overrides)
+    return build_preregistration(**kwargs)
+
+
 def _registration_receipt(manifest: dict[str, object]) -> dict[str, object]:
+    registered_at = (
+        "2026-08-28T09:45:00Z"
+        if manifest["schema_version"] == "omc-work-packet-preregistration/v2"
+        else "2026-08-28T09:59:00Z"
+    )
     return _signed_receipt(
         {
             "schema_version": "omc-work-packet-registration-receipt/v1",
             "study_id": manifest["study_id"],
             "preregistration_sha256": manifest["preregistration_sha256"],
-            "registered_at": "2026-08-28T09:59:00Z",
+            "registered_at": registered_at,
             "observation_starts_at": manifest["created_at"],
         },
         private_key=REGISTRATION_KEY,
@@ -162,6 +210,11 @@ def _registration_receipt(manifest: dict[str, object]) -> dict[str, object]:
 
 def _registration_proof(manifest: dict[str, object]) -> dict[str, object]:
     trusted_root = _trusted_root()
+    registered_at = (
+        "2026-08-28T09:45:00Z"
+        if manifest["schema_version"] == "omc-work-packet-preregistration/v2"
+        else "2026-08-28T09:59:00Z"
+    )
     return {
         "registry_record": {
             "schema_version": 1,
@@ -176,7 +229,7 @@ def _registration_proof(manifest: dict[str, object]) -> dict[str, object]:
             "preregistration_sha256": manifest["preregistration_sha256"],
             "registry_commit": "d" * 40,
             "registry_path": ".omc/registry/work-packet.json",
-            "registered_at": "2026-08-28T09:59:00Z",
+            "registered_at": registered_at,
             "registration_evidence": {"fixture": True},
             "receipt_sha256": "e" * 64,
         },
@@ -234,10 +287,11 @@ def _completion_ledger(
 def _source_snapshot(
     manifest: dict[str, object],
     entries: list[dict[str, object]],
+    *,
+    previous_source_snapshot_sha256: str | None = None,
 ) -> dict[str, object]:
     inventory_path = manifest["source_inventory"]["inventory_path"]
-    return _signed_receipt(
-        {
+    payload = {
             "schema_version": "omc-work-packet-source-snapshot/v1",
             "study_id": manifest["study_id"],
             "preregistration_sha256": manifest["preregistration_sha256"],
@@ -250,7 +304,13 @@ def _source_snapshot(
             "entry_count": len(entries),
             "entries_sha256": canonical_sha256(entries),
             "entries": entries,
-        },
+        }
+    if manifest["schema_version"] == "omc-work-packet-preregistration/v2":
+        payload["previous_source_snapshot_sha256"] = (
+            previous_source_snapshot_sha256
+        )
+    return _signed_receipt(
+        payload,
         private_key=SOURCE_KEY,
         signer="work-packet-source-snapshot-authority-v1",
     )
@@ -281,6 +341,22 @@ def _ledger_entry(evidence: dict[str, object]) -> dict[str, object]:
             "completed_at",
         )
     }
+
+
+def _chained_ledger_entries(
+    evidences: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for sequence, evidence in enumerate(evidences, start=1):
+        entry = {
+            **_ledger_entry(evidence),
+            "sequence": sequence,
+            "previous_entry_sha256": (
+                canonical_sha256(entries[-1]) if entries else None
+            ),
+        }
+        entries.append(entry)
+    return entries
 
 
 def _execution_receipt(
@@ -320,9 +396,24 @@ def _capture_case(**kwargs):
         json.loads(path.read_text(encoding="utf-8"))
         for path in sorted((study_root / "cases").glob("*/evidence.json"))
     ]
-    ledger_entries = [_ledger_entry(item) for item in prior_evidence]
-    ledger_entries.append(_ledger_entry(evidence))
-    source_snapshot = _source_snapshot(manifest, ledger_entries)
+    all_evidence = [*prior_evidence, evidence]
+    ledger_entries = (
+        _chained_ledger_entries(all_evidence)
+        if manifest["schema_version"] == "omc-work-packet-preregistration/v2"
+        else [_ledger_entry(item) for item in all_evidence]
+    )
+    previous_snapshot = None
+    if existing:
+        previous_snapshot = json.loads(
+            existing[-1].with_name("source-snapshot.json").read_text(
+                encoding="utf-8"
+            )
+        )["receipt_sha256"]
+    source_snapshot = _source_snapshot(
+        manifest,
+        ledger_entries,
+        previous_source_snapshot_sha256=previous_snapshot,
+    )
     return capture_case(
         **kwargs,
         registration_receipt=_registration_receipt(manifest),
@@ -1073,7 +1164,8 @@ def test_validate_study_reports_collecting_then_complete(tmp_path: Path) -> None
         )
 
     report = _validate_study(manifest=manifest, study_root=tmp_path)
-    assert report["status"] == "ready_for_projection"
+    assert report["status"] == "capture_complete"
+    assert "projection" not in report
     assert report["case_count"] == 5
     assert report["report_sha256"] == canonical_sha256(
         {key: value for key, value in report.items() if key != "report_sha256"}
@@ -1256,3 +1348,461 @@ def test_cli_capture_binds_signed_provenance_receipts(
 
     report = _validate_study(manifest=manifest, study_root=tmp_path / "study")
     assert report["case_count"] == 1
+
+
+def test_v2_preregistration_is_capture_only_and_freezes_independent_custody() -> None:
+    manifest = _v2_manifest()
+
+    assert manifest["schema_version"] == "omc-work-packet-preregistration/v2"
+    assert manifest["study_purpose"] == "capture_feasibility_only"
+    assert manifest["observation_ends_at"] == "2026-09-04T10:00:00Z"
+    assert manifest["authority_custody"] == _authority_custody()
+    assert manifest["selection_policy"]["eligible_work_classes"] == ["implementation"]
+    assert "minimum_time_improvement_ratio" not in manifest
+    assert manifest["claim_policy"]["quality_projection_allowed"] is False
+
+
+def test_v2_capture_connects_registration_source_and_completion_chains(
+    tmp_path: Path,
+) -> None:
+    manifest = _v2_manifest()
+    receipt = _capture_case(
+        manifest=manifest,
+        study_root=tmp_path,
+        case_id="case-01",
+        request=b"request",
+        baseline_output=b"output",
+        evidence=_evidence(),
+        captured_at="2026-08-28T10:04:00Z",
+    )
+
+    snapshot = json.loads(
+        (tmp_path / "cases/case-01/source-snapshot.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert snapshot["previous_source_snapshot_sha256"] is None
+    assert snapshot["entries"][0]["sequence"] == 1
+    assert snapshot["entries"][0]["previous_entry_sha256"] is None
+    assert receipt["source_snapshot_sha256"] == snapshot["receipt_sha256"]
+    assert _validate_study(manifest=manifest, study_root=tmp_path)["status"] == (
+        "collecting"
+    )
+
+
+def test_v2_preregistration_rejects_reused_custody_identity() -> None:
+    custody = _authority_custody()
+    custody["executor"] = deepcopy(custody["completion_collector"])
+
+    with pytest.raises(ValueError, match="preregistration_authority_custody_reused"):
+        _v2_manifest(authority_custody=custody)
+
+
+def test_registration_requires_fifteen_minute_observation_buffer() -> None:
+    manifest = _v2_manifest()
+    receipt = _registration_receipt(manifest)
+    receipt["registered_at"] = "2026-08-28T09:46:00Z"
+    receipt = _signed_receipt(
+        {
+            key: value
+            for key, value in receipt.items()
+            if key not in {"receipt_sha256", "signoff"}
+        },
+        private_key=REGISTRATION_KEY,
+        signer="work-packet-registration-authority-v1",
+    )
+
+    with pytest.raises(ValueError, match="registration_safety_window_too_short"):
+        feasibility._validate_registration_receipt(receipt, manifest=manifest)
+
+
+def test_external_registration_requires_fifteen_minute_observation_buffer() -> None:
+    manifest = _v2_manifest()
+    proof = _registration_proof(manifest)
+    proof["registration_receipt"]["registered_at"] = "2026-08-28T09:46:00Z"
+
+    with pytest.raises(
+        ValueError, match="external_registration_safety_window_too_short"
+    ):
+        feasibility._validate_external_registration_proof(proof, manifest=manifest)
+
+
+def test_source_entries_require_contiguous_hash_chain() -> None:
+    manifest = _v2_manifest()
+    first = {
+        **_ledger_entry(_evidence(feature_id="feature-01")),
+        "sequence": 1,
+        "previous_entry_sha256": None,
+    }
+    second = {
+        **_ledger_entry(_evidence(feature_id="feature-02")),
+        "sequence": 3,
+        "previous_entry_sha256": canonical_sha256(first),
+    }
+
+    with pytest.raises(ValueError, match="source_snapshot_sequence_invalid"):
+        feasibility._validate_ledger_entries(
+            [first, second],
+            manifest=manifest,
+            observed_through=feasibility._parse_timestamp(
+                "2026-08-28T10:04:00Z", error="timestamp"
+            ),
+            error_prefix="source_snapshot",
+        )
+
+
+def test_capture_only_study_rejects_benchmark_maintenance_case() -> None:
+    manifest = _v2_manifest()
+    evidence = {**_evidence(), "work_class": "benchmark_maintenance"}
+
+    with pytest.raises(ValueError, match="case_work_class_ineligible"):
+        feasibility._validate_case_evidence(
+            evidence,
+            preregistered_at=feasibility._parse_timestamp(
+                manifest["created_at"], error="timestamp"
+            ),
+            captured_at=feasibility._parse_timestamp(
+                "2026-08-28T10:04:00Z", error="timestamp"
+            ),
+            eligible_work_classes=manifest["selection_policy"][
+                "eligible_work_classes"
+            ],
+            observation_ends_at=feasibility._observation_end(manifest),
+        )
+
+
+def test_failed_study_is_sealed_and_cannot_capture_more_cases(tmp_path: Path) -> None:
+    manifest = _v2_manifest()
+    failure = _signed_receipt(
+        {
+            "schema_version": "omc-work-packet-study-failure/v1",
+            "study_id": manifest["study_id"],
+            "preregistration_sha256": manifest["preregistration_sha256"],
+            "failed_at": "2026-08-28T10:04:00Z",
+            "status": "FAILED",
+            "reason_code": "source_checkpoint_gap",
+            "case_receipt_sha256s": [],
+        },
+        private_key=REGISTRATION_KEY,
+        signer="work-packet-registration-authority-v1",
+    )
+
+    feasibility.record_study_failure(
+        manifest=manifest,
+        study_root=tmp_path,
+        failure_receipt=failure,
+    )
+    report = _validate_study(manifest=manifest, study_root=tmp_path)
+    assert report["status"] == "failed"
+    assert report["failure_reason_code"] == "source_checkpoint_gap"
+    with pytest.raises(ValueError, match="study_failed"):
+        _capture_case(
+            manifest=manifest,
+            study_root=tmp_path,
+            case_id="case-01",
+            request=b"request",
+            baseline_output=b"output",
+            evidence=_evidence(),
+            captured_at="2026-08-28T10:04:00Z",
+        )
+
+
+def test_existing_failure_receipt_is_revalidated_before_idempotent_return(
+    tmp_path: Path,
+) -> None:
+    manifest = _v2_manifest()
+    failure = _signed_receipt(
+        {
+            "schema_version": "omc-work-packet-study-failure/v1",
+            "study_id": manifest["study_id"],
+            "preregistration_sha256": manifest["preregistration_sha256"],
+            "failed_at": "2026-08-28T10:04:00Z",
+            "status": "FAILED",
+            "reason_code": "source_checkpoint_gap",
+            "case_receipt_sha256s": [],
+        },
+        private_key=REGISTRATION_KEY,
+        signer="work-packet-registration-authority-v1",
+    )
+    failure["reason_code"] = "tampered"
+    feasibility._write_json(tmp_path / "failure.json", failure)
+
+    with pytest.raises(ValueError, match="study_failure_digest_mismatch"):
+        feasibility.record_study_failure(
+            manifest=manifest,
+            study_root=tmp_path,
+            failure_receipt=failure,
+        )
+
+
+def test_failure_receipt_cannot_predate_bound_case_capture(tmp_path: Path) -> None:
+    manifest = _v2_manifest()
+    case = _capture_case(
+        manifest=manifest,
+        study_root=tmp_path,
+        case_id="case-01",
+        request=b"request",
+        baseline_output=b"output",
+        evidence=_evidence(),
+        captured_at="2026-08-28T10:04:00Z",
+    )
+    failure = _signed_receipt(
+        {
+            "schema_version": "omc-work-packet-study-failure/v1",
+            "study_id": manifest["study_id"],
+            "preregistration_sha256": manifest["preregistration_sha256"],
+            "failed_at": "2026-08-28T10:02:00Z",
+            "status": "FAILED",
+            "reason_code": "source_checkpoint_gap",
+            "case_receipt_sha256s": [case["receipt_sha256"]],
+        },
+        private_key=REGISTRATION_KEY,
+        signer="work-packet-registration-authority-v1",
+    )
+
+    with pytest.raises(ValueError, match="study_failure_chronology_invalid"):
+        feasibility.record_study_failure(
+            manifest=manifest,
+            study_root=tmp_path,
+            failure_receipt=failure,
+        )
+
+
+def test_reload_rejects_failure_receipt_predating_bound_case_capture(
+    tmp_path: Path,
+) -> None:
+    manifest = _v2_manifest()
+    case = _capture_case(
+        manifest=manifest,
+        study_root=tmp_path,
+        case_id="case-01",
+        request=b"request",
+        baseline_output=b"output",
+        evidence=_evidence(),
+        captured_at="2026-08-28T10:04:00Z",
+    )
+    failure = _signed_receipt(
+        {
+            "schema_version": "omc-work-packet-study-failure/v1",
+            "study_id": manifest["study_id"],
+            "preregistration_sha256": manifest["preregistration_sha256"],
+            "failed_at": "2026-08-28T10:02:00Z",
+            "status": "INDETERMINATE",
+            "reason_code": "source_checkpoint_gap",
+            "case_receipt_sha256s": [case["receipt_sha256"]],
+        },
+        private_key=REGISTRATION_KEY,
+        signer="work-packet-registration-authority-v1",
+    )
+    feasibility._write_json(tmp_path / "failure.json", failure)
+
+    with pytest.raises(ValueError, match="study_failure_chronology_invalid"):
+        _validate_study(manifest=manifest, study_root=tmp_path)
+
+
+def test_restart_manifest_requires_parent_failure_and_explicit_approval() -> None:
+    with pytest.raises(ValueError, match="restart_parent_invalid"):
+        _v2_manifest(
+            restart_parent={
+                "study_id": "failed-study",
+                "failure_receipt_sha256": "a" * 64,
+                "approval_id": "",
+            }
+        )
+
+
+def test_publish_and_reload_study_bundle_detects_tampering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = _v2_manifest()
+    study_root = tmp_path / "study"
+    study_root.mkdir()
+    feasibility._write_json(study_root / "preregistration.json", manifest)
+    evidence_root = tmp_path / "durable"
+    evidence_root.mkdir()
+    monkeypatch.setattr(feasibility, "_temporary_roots", lambda: ())
+
+    index = feasibility.publish_study_bundle(
+        study_root=study_root,
+        evidence_root=evidence_root,
+        study_id=manifest["study_id"],
+    )
+    assert feasibility.load_study_bundle(
+        evidence_root=evidence_root,
+        study_id=manifest["study_id"],
+    ) == index
+
+    published_manifest = evidence_root / manifest["study_id"] / "preregistration.json"
+    published_manifest.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="study_bundle_digest_mismatch"):
+        feasibility.load_study_bundle(
+            evidence_root=evidence_root,
+            study_id=manifest["study_id"],
+        )
+
+
+def test_publish_and_reload_preserves_nested_bundle_index_filename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = _v2_manifest()
+    study_root = tmp_path / "study"
+    nested = study_root / "nested"
+    nested.mkdir(parents=True)
+    feasibility._write_json(study_root / "preregistration.json", manifest)
+    (nested / feasibility.STUDY_BUNDLE_INDEX).write_text(
+        "nested artifact\n", encoding="utf-8"
+    )
+    evidence_root = tmp_path / "durable"
+    evidence_root.mkdir()
+    monkeypatch.setattr(feasibility, "_temporary_roots", lambda: ())
+
+    index = feasibility.publish_study_bundle(
+        study_root=study_root,
+        evidence_root=evidence_root,
+        study_id=manifest["study_id"],
+    )
+
+    assert f"nested/{feasibility.STUDY_BUNDLE_INDEX}" in index["artifacts"]
+    assert feasibility.load_study_bundle(
+        evidence_root=evidence_root,
+        study_id=manifest["study_id"],
+    ) == index
+
+
+def test_publish_rejects_source_root_bundle_index_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = _v2_manifest()
+    study_root = tmp_path / "study"
+    study_root.mkdir()
+    feasibility._write_json(study_root / "preregistration.json", manifest)
+    (study_root / feasibility.STUDY_BUNDLE_INDEX).write_text(
+        "conflicting source index\n", encoding="utf-8"
+    )
+    evidence_root = tmp_path / "durable"
+    evidence_root.mkdir()
+    monkeypatch.setattr(feasibility, "_temporary_roots", lambda: ())
+
+    with pytest.raises(ValueError, match="study_bundle_reserved_index_conflict"):
+        feasibility.publish_study_bundle(
+            study_root=study_root,
+            evidence_root=evidence_root,
+            study_id=manifest["study_id"],
+        )
+
+
+def test_publish_study_bundle_rejects_directory_manifest_identity_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = _v2_manifest()
+    study_root = tmp_path / "study"
+    study_root.mkdir()
+    feasibility._write_json(study_root / "preregistration.json", manifest)
+    evidence_root = tmp_path / "durable"
+    evidence_root.mkdir()
+    monkeypatch.setattr(feasibility, "_temporary_roots", lambda: ())
+
+    with pytest.raises(ValueError, match="study_bundle_study_id_mismatch"):
+        feasibility.publish_study_bundle(
+            study_root=study_root,
+            evidence_root=evidence_root,
+            study_id="different-study",
+        )
+
+
+def test_cli_v2_preregister_failure_and_durable_bundle_surface(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    study_root = tmp_path / "study"
+    failure_path = tmp_path / "failure.json"
+    evidence_root = tmp_path / "durable"
+    evidence_root.mkdir()
+    monkeypatch.setattr(feasibility, "_temporary_roots", lambda: ())
+
+    assert main(
+        [
+            "preregister",
+            "--study-id",
+            "work-packet-cli-v2",
+            "--created-at",
+            CREATED_AT,
+            "--observation-ends-at",
+            "2026-09-04T10:00:00Z",
+            "--registration-authority-public-key",
+            _public_key(REGISTRATION_KEY),
+            "--registration-authority",
+            json.dumps(_registration_authority()),
+            "--completion-collector-public-key",
+            _public_key(COLLECTOR_KEY),
+            "--executor-public-key",
+            _public_key(EXECUTOR_KEY),
+            "--source-snapshot-public-key",
+            _public_key(SOURCE_KEY),
+            "--source-inventory",
+            json.dumps(
+                {
+                    "source_id": "omc-session-ledger",
+                    "inventory_path": ".omc/work-packet/source-inventory.json",
+                    "commit_policy": "git_commit_required",
+                }
+            ),
+            "--authority-custody",
+            json.dumps(_authority_custody()),
+            "--output",
+            str(manifest_path),
+        ]
+    ) == 0
+    capsys.readouterr()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    failure = _signed_receipt(
+        {
+            "schema_version": "omc-work-packet-study-failure/v1",
+            "study_id": manifest["study_id"],
+            "preregistration_sha256": manifest["preregistration_sha256"],
+            "failed_at": "2026-08-28T10:04:00Z",
+            "status": "INDETERMINATE",
+            "reason_code": "external_authority_unavailable",
+            "case_receipt_sha256s": [],
+        },
+        private_key=REGISTRATION_KEY,
+        signer="work-packet-registration-authority-v1",
+    )
+    failure_path.write_text(json.dumps(failure), encoding="utf-8")
+
+    assert main(
+        [
+            "fail",
+            "--manifest",
+            str(manifest_path),
+            "--study-root",
+            str(study_root),
+            "--failure-receipt",
+            str(failure_path),
+        ]
+    ) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "INDETERMINATE"
+    assert main(
+        [
+            "publish",
+            "--study-root",
+            str(study_root),
+            "--evidence-root",
+            str(evidence_root),
+            "--study-id",
+            manifest["study_id"],
+        ]
+    ) == 0
+    published = json.loads(capsys.readouterr().out)
+    assert main(
+        [
+            "load",
+            "--evidence-root",
+            str(evidence_root),
+            "--study-id",
+            manifest["study_id"],
+        ]
+    ) == 0
+    assert json.loads(capsys.readouterr().out) == published

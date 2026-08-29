@@ -107,12 +107,20 @@ def test_roadmap_tracks_work_packet_prospective_feasibility_without_overclaim() 
     text = ROADMAP_PATH.read_text(encoding="utf-8")
 
     assert "Work Packet prospective feasibility" in text
-    assert "검증 코드 완료 / 실제 수집 0/5" in text
+    assert "capture-only schema v2 검증 코드 완료 / 실제 수집 0/5" in text
+    assert "observation 시작 15분 전에 완료된 RFC 3161 registration" in text
+    assert "서로 다른 registration·source snapshot·completion collector·executor 키와 custody identity" in text
     assert "canonical inventory commit" in text
+    assert "연속 sequence·entry hash·source snapshot checkpoint chain" in text
     assert "source snapshot과 completion ledger의 exact equality" in text
-    assert "관련 registry·RFC 3161 연계 회귀 `41 passed`" in text
+    assert "Work Packet 집중 회귀 `45 passed`" in text
+    assert "관련 registry·RFC 3161·로드맵 회귀 `70 passed`" in text
+    assert "전체 회귀 `2955 passed, 3 skipped`" in text
+    assert "OMC review `APPROVE`" in text
+    assert "signed failure seal·승인된 restart parent" in text
+    assert "durable evidence publish·authoritative reload" in text
     assert "실제 적격 case `0/5`" in text
-    assert "Plan Batch B evidence로 자동 승격하지 않는다" in text
+    assert "품질 projection, Plan Batch B evidence 또는 대체 판정으로 자동 승격하지 않는다" in text
 
 
 def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence() -> None:
