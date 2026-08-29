@@ -107,13 +107,29 @@ def test_product_value_p0_freezes_non_execution_work_and_has_an_exit_policy() ->
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
 
     assert "운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증" in roadmap
+    assert "전체 완성도 백분율을 사용하지 않는다" in roadmap
     assert "### Product Value P0 실행 동결" in roadmap
-    assert "준비 기한: `2026-09-05`" in roadmap
+    assert "최종 판정 기한: `2026-09-05`" in roadmap
+    assert "`2026-08-31`: initial·replication 등록과 durable bundle 게시" in roadmap
+    assert "`2026-09-01`: 비판정 pilot 1건 완료" in roadmap
+    assert "`2026-09-02`: initial paired 5건 실행 완료" in roadmap
+    assert "`2026-09-03`: initial 독립 adjudication 완료" in roadmap
+    assert "`2026-09-04`: replication paired 5건과 독립 adjudication 완료" in roadmap
     assert "holdout 선정·등록·실행·판정과 이를 막는 결함 수정만 허용" in roadmap
     assert "Plan·Review·Work Packet 신규 기능 변경을 금지" in roadmap
-    assert "기술 실패는 동일 frozen 입력과 새 batch ID로 1회만 재시도" in roadmap
+    assert "provider 호출 전에 발생한 재현 가능한 기술 오류" in roadmap
+    assert "최대 3개 파일·120 LOC" in roadmap
+    assert "동일 workload·threshold·selection" in roadmap
+    assert "새 implementation commit·execution bundle·manifest·registration" in roadmap
+    assert "retry lineage" in roadmap
+    assert "기존 frozen execution bundle을 재사용하지 않는다" in roadmap
+    assert "retry lineage 재동결·재등록만 단계별 기한의 유일한 예외" in roadmap
+    assert "기술 실패 확인 다음 날까지 완료" in roadmap
+    assert "`2026-09-05` 최종 판정 기한은 연장하지 않는다" in roadmap
+    assert "기술 실패는 새 batch ID로 1회만 재시도" in roadmap
     assert "품질 실패는 재교정 없이 `NOT_REPLACEABLE`" in roadmap
-    assert "기한 내 실행 준비 미완료는 `BLOCKED`" in roadmap
+    assert "단계별 기한 미준수 또는 최종 판정 미완료는 `BLOCKED`" in roadmap
+    assert "사용자 개입 횟수와 승인부터 최종 결과까지의 단계 수" in roadmap
 
 
 def test_roadmap_tracks_work_packet_prospective_feasibility_without_overclaim() -> None:

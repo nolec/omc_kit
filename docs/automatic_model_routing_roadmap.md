@@ -51,11 +51,20 @@ Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 �
 
 ### Product Value P0 실행 동결
 
-- 준비 기한: `2026-09-05`. 기한 내 실행 준비 미완료는 `BLOCKED`로 기록하고 새 기능 개발로 우회하지 않는다.
+- 상태 보고: 전체 완성도 백분율을 사용하지 않는다. 구현·검증 준비·운영 검증·독립 재현 evidence-state를 대상별로 보고한다.
+- 최종 판정 기한: `2026-09-05`. 단계별 기한 미준수 또는 최종 판정 미완료는 `BLOCKED`로 기록하고 새 기능 개발로 우회하지 않는다.
+- `2026-08-30`: 종료 계약과 frozen commit을 확정한다.
+- `2026-08-31`: initial·replication 등록과 durable bundle 게시를 완료한다.
+- `2026-09-01`: 비판정 pilot 1건 완료 후 실행 경로만 검증한다.
+- `2026-09-02`: initial paired 5건 실행 완료 후 frozen raw output을 보존한다.
+- `2026-09-03`: initial 독립 adjudication 완료 후 실패면 `NOT_REPLACEABLE`로 종료한다.
+- `2026-09-04`: replication paired 5건과 독립 adjudication 완료 후 최종 판정 입력을 동결한다.
 - 허용 범위: holdout 선정·등록·실행·판정과 이를 막는 결함 수정만 허용한다.
 - 금지 범위: Product Value 판정 전까지 신규 schema·transport·benchmark fixture와 Plan·Review·Work Packet 신규 기능 변경을 금지한다.
+- 결함 예외: frozen runner가 provider 호출 전에 발생한 재현 가능한 기술 오류만 수정할 수 있다. 변경 예산은 전체 평가에서 최대 3개 파일·120 LOC이며 재현 테스트를 먼저 추가한다.
 - 책임 분리: 사용자는 corpus·외부 전송·서명을 승인하고, OMC runner는 frozen 입력을 실행하며, 역할별 독립 authority는 결과 subject만 판정한다.
-- 재시도 정책: 기술 실패는 동일 frozen 입력과 새 batch ID로 1회만 재시도하고, 품질 실패는 재교정 없이 `NOT_REPLACEABLE`로 종료한다.
+- primary metric: 성공률·시간·token·안전과 함께 사용자 개입 횟수와 승인부터 최종 결과까지의 단계 수를 기록한다.
+- 재시도 정책: 기술 실패는 새 batch ID로 1회만 재시도하며 동일 workload·threshold·selection을 유지한다. 실행 코드를 수정했다면 새 implementation commit·execution bundle·manifest·registration을 `retry lineage`로 다시 동결하고 기존 frozen execution bundle을 재사용하지 않는다. retry lineage 재동결·재등록만 단계별 기한의 유일한 예외이며 기술 실패 확인 다음 날까지 완료하고 `2026-09-05` 최종 판정 기한은 연장하지 않는다. 품질 실패는 재교정 없이 `NOT_REPLACEABLE`로 종료한다.
 
 ### Operational P0
 
