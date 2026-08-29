@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import argparse
 import ctypes
+from copy import deepcopy
 import errno
 import hashlib
 import json
@@ -26,6 +28,24 @@ REQUIRED_PATHS = {
     "runner/executor-shadow.py",
     "runner/provider-adapter.py",
 }
+
+
+class MaterializedEvidenceBundle:
+    """Own a verified, private snapshot for one acceptance process."""
+
+    def __init__(
+        self,
+        runtime: tempfile.TemporaryDirectory[str],
+        index: dict[str, Any],
+        paths: dict[str, Path],
+    ) -> None:
+        self._runtime = runtime
+        self.index = index
+        self.paths = paths
+        self.root = Path(runtime.name)
+
+    def cleanup(self) -> None:
+        self._runtime.cleanup()
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -321,3 +341,98 @@ def load_evidence_bundle(
         ):
             raise ValueError("evidence_bundle_digest_mismatch")
     return index
+
+
+def materialize_evidence_bundle(
+    evidence_root: str | Path,
+    *,
+    batch_id: str,
+) -> MaterializedEvidenceBundle:
+    """Verify and copy a bundle into a process-private read-only snapshot."""
+    root = _validate_evidence_root(evidence_root)
+    normalized_batch_id = _validate_batch_id(batch_id)
+    index = load_evidence_bundle(root, batch_id=normalized_batch_id)
+    source_root = root / normalized_batch_id
+    runtime = tempfile.TemporaryDirectory(prefix="omc-product-value-evidence-")
+    snapshot_root = Path(runtime.name)
+    paths: dict[str, Path] = {}
+    try:
+        for relative, metadata in index["artifacts"].items():
+            source = source_root.joinpath(*PurePosixPath(relative).parts)
+            snapshot = snapshot_root.joinpath(*PurePosixPath(relative).parts)
+            snapshot.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, snapshot)
+            if (
+                snapshot.stat().st_size != metadata["size_bytes"]
+                or _file_sha256(snapshot) != metadata["sha256"]
+            ):
+                raise ValueError("evidence_bundle_digest_mismatch")
+            snapshot.chmod(0o400)
+            paths[relative] = snapshot
+        for directory in sorted(
+            (path for path in snapshot_root.rglob("*") if path.is_dir()),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        ):
+            directory.chmod(0o500)
+        snapshot_root.chmod(0o500)
+        return MaterializedEvidenceBundle(runtime, deepcopy(index), paths)
+    except (OSError, ValueError):
+        runtime.cleanup()
+        raise
+
+
+def _load_artifact_map(path: Path) -> dict[str, Path]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("evidence_bundle_artifact_map_invalid") from error
+    if not isinstance(payload, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in payload.items()
+    ):
+        raise ValueError("evidence_bundle_artifact_map_invalid")
+    return {key: Path(value) for key, value in payload.items()}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    for command in ("publish", "verify"):
+        action = sub.add_parser(command)
+        action.add_argument("--evidence-root", type=Path, required=True)
+        action.add_argument("--batch-id", required=True)
+        if command == "publish":
+            action.add_argument("--artifacts", type=Path, required=True)
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "publish":
+            index = publish_evidence_bundle(
+                args.evidence_root,
+                batch_id=args.batch_id,
+                artifacts=_load_artifact_map(args.artifacts),
+            )
+            status = "published"
+        else:
+            index = load_evidence_bundle(
+                args.evidence_root,
+                batch_id=args.batch_id,
+            )
+            status = "verified"
+        print(json.dumps({
+            "status": status,
+            "batch_id": index["batch_id"],
+            "bundle_sha256": index["bundle_sha256"],
+            "artifact_count": len(index["artifacts"]),
+        }, ensure_ascii=False, sort_keys=True))
+        return 0
+    except (OSError, ValueError) as error:
+        print(json.dumps({
+            "status": "blocked",
+            "reason_code": str(error),
+        }, ensure_ascii=False, sort_keys=True))
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

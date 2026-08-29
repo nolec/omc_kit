@@ -150,9 +150,10 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "`validate-registration`" in text
     assert "manifest 원문이 없는 schema v1" in text
     assert "기존 batch는 실행 불가" in text
-    assert "durable evidence bundle primitive는 완료" in text
+    assert "durable evidence bundle primitive와 CLI 연결은 완료" in text
     assert "Evidence durability" in text
-    assert "clean clone에서 loader로 전체 bundle을 복구·검증" in text
+    assert "Git clean clone에서 독립 loader가 같은 bundle hash" in text
+    assert "실제 외부 evidence root와 등록된 holdout bundle은 아직" in text
     assert "schema v2 registry record" in text
     assert "Product Value paired acceptance harness 완료" in text
     assert (

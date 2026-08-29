@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -60,6 +63,39 @@ def test_publish_and_load_evidence_bundle_round_trip(
         evidence_root,
         batch_id="product-value-v1",
     ) == index
+
+
+def test_materialize_verified_bundle_isolated_from_source_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_test_root(monkeypatch)
+    evidence_root = tmp_path / "durable-evidence"
+    evidence_root.mkdir()
+    bundle.publish_evidence_bundle(
+        evidence_root,
+        batch_id="product-value-v1",
+        artifacts=_sources(tmp_path),
+    )
+
+    materialized = bundle.materialize_evidence_bundle(
+        evidence_root,
+        batch_id="product-value-v1",
+    )
+    try:
+        source = evidence_root / "product-value-v1" / "preregistration.json"
+        snapshot = materialized.paths["preregistration.json"]
+        assert snapshot != source
+        assert snapshot.read_text(encoding="utf-8") == "manifest\n"
+
+        source.write_text("mutated\n", encoding="utf-8")
+
+        assert snapshot.read_text(encoding="utf-8") == "manifest\n"
+        assert snapshot.stat().st_mode & 0o222 == 0
+    finally:
+        snapshot_root = materialized.root
+        materialized.cleanup()
+    assert not snapshot_root.exists()
 
 
 def test_publish_rejects_ephemeral_root(tmp_path: Path) -> None:
@@ -274,3 +310,113 @@ def test_publish_preserves_complete_bundle_when_post_publish_fsync_fails(
         evidence_root,
         batch_id="product-value-v1",
     )["batch_id"] == "product-value-v1"
+
+
+def test_cli_publishes_and_verifies_without_mutable_artifact_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _allow_test_root(monkeypatch)
+    evidence_root = tmp_path / "durable-evidence"
+    evidence_root.mkdir()
+    artifacts = _sources(tmp_path)
+    artifact_map = tmp_path / "artifact-map.json"
+    artifact_map.write_text(
+        json.dumps({key: str(value) for key, value in artifacts.items()}),
+        encoding="utf-8",
+    )
+
+    assert bundle.main([
+        "publish",
+        "--evidence-root",
+        str(evidence_root),
+        "--batch-id",
+        "product-value-v1",
+        "--artifacts",
+        str(artifact_map),
+    ]) == 0
+    published = json.loads(capsys.readouterr().out)
+    assert published["status"] == "published"
+
+    assert bundle.main([
+        "verify",
+        "--evidence-root",
+        str(evidence_root),
+        "--batch-id",
+        "product-value-v1",
+    ]) == 0
+    verified = json.loads(capsys.readouterr().out)
+    assert verified["status"] == "verified"
+    assert verified["bundle_sha256"] == published["bundle_sha256"]
+    assert verified["artifact_count"] == len(REQUIRED_ARTIFACTS)
+    assert "artifact_paths" not in verified
+    assert "artifact_paths" not in published
+
+
+def test_omc_cli_exposes_product_value_evidence_surface() -> None:
+    result = subprocess.run(
+        [sys.executable, "scripts/omc.py", "product-value-evidence", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "publish" in result.stdout
+    assert "verify" in result.stdout
+    assert "--evidence-root" in result.stdout
+    assert "--batch-id" in result.stdout
+
+
+def test_cli_surface_is_available_from_a_clean_source_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _allow_test_root(monkeypatch)
+    source = Path(bundle.__file__).resolve()
+    repository = tmp_path / "repository"
+    scripts = repository / "scripts"
+    scripts.mkdir(parents=True)
+    (scripts / source.name).write_bytes(source.read_bytes())
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "omc@example.com"],
+        cwd=repository,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "OMC Test"],
+        cwd=repository,
+        check=True,
+    )
+    subprocess.run(["git", "add", "."], cwd=repository, check=True)
+    subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repository, check=True)
+    clone = tmp_path / "clean-clone"
+    subprocess.run(
+        ["git", "clone", "-q", str(repository), str(clone)],
+        check=True,
+    )
+
+    spec = importlib.util.spec_from_file_location(
+        "clean_clone_evidence_bundle",
+        clone / "scripts" / source.name,
+    )
+    assert spec is not None and spec.loader is not None
+    clean_bundle = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(clean_bundle)
+    clean_bundle._temporary_roots = lambda: (Path("/private/tmp"), Path("/tmp"))
+    evidence_root = tmp_path / "durable-evidence"
+    evidence_root.mkdir()
+    expected = bundle.publish_evidence_bundle(
+        evidence_root,
+        batch_id="product-value-v1",
+        artifacts=_sources(tmp_path),
+    )
+
+    recovered = clean_bundle.load_evidence_bundle(
+        evidence_root,
+        batch_id="product-value-v1",
+    )
+
+    assert recovered["bundle_sha256"] == expected["bundle_sha256"]

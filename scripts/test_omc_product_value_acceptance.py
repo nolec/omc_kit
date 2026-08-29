@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import omc_product_value_acceptance as acceptance
+import omc_product_value_evidence_bundle as evidence_bundle
 import omc_product_value_preregistration as preregistration
 
 
@@ -1377,6 +1378,8 @@ def test_v6_cli_flow_prepares_subjects_and_records_authority_receipts(
         "evidence_contract": {
             "evidence_tier": "holdout",
             "replication_role": "initial",
+            "development_preregistration_sha256": "2" * 64,
+            "development_workload_inventory_sha256": "4" * 64,
             "holdout_workload_inventory_sha256": (
                 preregistration.workload_inventory_sha256(inventory)
             ),
@@ -1413,6 +1416,35 @@ def test_v6_cli_flow_prepares_subjects_and_records_authority_receipts(
         lambda *_args: deepcopy(confirmatory_receipts),
     )
 
+    with pytest.raises(ValueError, match="^registration_gate_missing$"):
+        acceptance.prepare_authority_subject_packet(manifest, tmp_path)
+    acceptance._write_envelope(
+        tmp_path / "registration-gate.json",
+        {"evidence_bundle_sha256": "9" * 64},
+    )
+    with pytest.raises(ValueError, match="^registration_gate_mismatch$"):
+        acceptance.prepare_authority_subject_packet(manifest, tmp_path)
+
+    acceptance._write_envelope(
+        tmp_path / "registration-gate.json",
+        {
+            "claim_eligible": True,
+            "status": "registered",
+            "preregistration_sha256": manifest["preregistration_sha256"],
+            "registration_receipt_sha256": "8" * 64,
+            "development_registration_receipt_sha256": "7" * 64,
+            "holdout_evidence": {
+                "status": "validated",
+                "development_preregistration_sha256": "2" * 64,
+                "development_workload_inventory_sha256": "4" * 64,
+                "holdout_workload_inventory_sha256": manifest[
+                    "evidence_contract"
+                ]["holdout_workload_inventory_sha256"],
+                "selection_policy_sha256": "3" * 64,
+            },
+            "evidence_bundle_sha256": "9" * 64,
+        },
+    )
     packet = acceptance.prepare_authority_subject_packet(manifest, tmp_path)
     authority_receipts = {
         role: _signed_authority_receipt(
@@ -2999,6 +3031,8 @@ def test_cli_exposes_product_value_acceptance_surface() -> None:
     assert "prepare-authority-subjects" in result.stdout
     assert "record-authority-receipts" in result.stdout
     assert "--authority-receipts" in result.stdout
+    assert "--evidence-root" in result.stdout
+    assert "--bundle-batch-id" in result.stdout
     assert "finalize" in result.stdout
 
     wrapper = Path("scripts/omc.py").read_text(encoding="utf-8")
@@ -3006,3 +3040,216 @@ def test_cli_exposes_product_value_acceptance_surface() -> None:
         'if args.command == "product-value-acceptance":', 1
     )[1].split('if args.command == "product-value-freeze":', 1)[0]
     assert '"authority_receipts"' in forwarding
+    assert '"evidence_root"' in forwarding
+    assert '"bundle_batch_id"' in forwarding
+
+
+def test_holdout_acceptance_resolves_only_verified_bundle_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        evidence_bundle,
+        "_temporary_roots",
+        lambda: (Path("/private/tmp"), Path("/tmp")),
+    )
+    evidence_root = tmp_path / "durable-evidence"
+    evidence_root.mkdir()
+    sources: dict[str, Path] = {}
+    contents = {
+        "preregistration.json": json.dumps({
+            "evidence_contract": {"evidence_tier": "holdout"}
+        }),
+        "registration-receipt.json": "{}",
+        "packets/holdout-01.json": "{}",
+        "runner/acceptance.py": Path(acceptance.__file__).read_text(encoding="utf-8"),
+        "runner/arm-adapter.py": "# arm\n",
+        "runner/scheduler.py": "# scheduler\n",
+        "runner/executor-shadow.py": "# shadow\n",
+        "runner/provider-adapter.py": "# provider\n",
+    }
+    for relative, content in contents.items():
+        path = tmp_path / "sources" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        sources[relative] = path
+    index = evidence_bundle.publish_evidence_bundle(
+        evidence_root,
+        batch_id="holdout-a",
+        artifacts=sources,
+    )
+
+    resolved = acceptance.resolve_evidence_bundle_inputs(
+        evidence_root=evidence_root,
+        batch_id="holdout-a",
+        direct_inputs={},
+    )
+
+    assert resolved["bundle_sha256"] == index["bundle_sha256"]
+    assert resolved["manifest"] != (
+        evidence_root / "holdout-a" / "preregistration.json"
+    )
+    assert resolved["manifest"].read_text(encoding="utf-8") == contents[
+        "preregistration.json"
+    ]
+    assert resolved["registration_receipt"].read_text(encoding="utf-8") == "{}"
+    assert resolved["bundle_runtime"] is not None
+    resolved["bundle_runtime"].cleanup()
+
+
+def test_bundle_registration_receipt_must_match_execution_context(
+    tmp_path: Path,
+) -> None:
+    receipt_path = tmp_path / "registration-receipt.json"
+    receipt_path.write_text(json.dumps({"receipt_sha256": "a" * 64}), encoding="utf-8")
+    context = {
+        "registration_receipt": {"receipt_sha256": "b" * 64},
+        "expected_registration_receipt_sha256": "b" * 64,
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="^acceptance_bundle_registration_receipt_mismatch$",
+    ):
+        acceptance.bind_bundle_registration_receipt(context, receipt_path)
+
+
+def test_bundle_runner_must_match_current_acceptance_runner(tmp_path: Path) -> None:
+    runner = tmp_path / "acceptance.py"
+    runner.write_text("# stale runner\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="^acceptance_bundle_runner_mismatch$"):
+        acceptance.validate_bundle_acceptance_runner(runner)
+
+
+def test_bundle_execution_contract_must_match_materialized_runners(
+    tmp_path: Path,
+) -> None:
+    paths = {}
+    for name in (
+        "acceptance_runner",
+        "arm_adapter",
+        "scheduler",
+        "executor_shadow",
+        "provider_adapter",
+    ):
+        path = tmp_path / name
+        path.write_text(name, encoding="utf-8")
+        paths[name] = path
+    manifest = {
+        "execution_contract": {
+            "execution_bundle": {
+                f"{name}_sha256": acceptance.canonical_file_sha256(path)
+                for name, path in paths.items()
+            }
+        }
+    }
+    manifest["execution_contract"]["execution_bundle"][
+        "scheduler_sha256"
+    ] = "0" * 64
+
+    with pytest.raises(ValueError, match="^execution_bundle_mismatch$"):
+        acceptance.validate_bundle_execution_contract(manifest, paths)
+
+    manifest["execution_contract"]["execution_bundle"][
+        "scheduler_sha256"
+    ] = acceptance.canonical_file_sha256(paths["scheduler"])
+    acceptance.validate_bundle_execution_contract(manifest, paths)
+
+
+def test_phase_and_authority_subjects_bind_evidence_bundle_hash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, packet_root, source_roots, registration = _fixture(tmp_path, monkeypatch)
+    bundle_sha256 = "9" * 64
+    artifacts = tmp_path / "artifacts"
+
+    result = acceptance.run_product_value_phase(
+        manifest,
+        registration,
+        packet_root=packet_root,
+        source_roots=source_roots,
+        artifact_root=artifacts,
+        phase="pilot",
+        arm_executor=_executor,
+        registration_validator=lambda *_args, **_kwargs: registration,
+        evidence_bundle_sha256=bundle_sha256,
+    )
+
+    gate, _ = acceptance._load_envelope(artifacts / "registration-gate.json")
+    assert result["evidence_bundle_sha256"] == bundle_sha256
+    assert gate["evidence_bundle_sha256"] == bundle_sha256
+    acceptance.run_product_value_phase(
+        manifest,
+        registration,
+        packet_root=packet_root,
+        source_roots=source_roots,
+        artifact_root=artifacts,
+        phase="confirmatory",
+        arm_executor=_executor,
+        registration_validator=lambda *_args, **_kwargs: registration,
+        evidence_bundle_sha256=bundle_sha256,
+    )
+    report = acceptance.finalize_product_value_acceptance(
+        manifest,
+        artifacts,
+        expected_evidence_bundle_sha256=bundle_sha256,
+    )
+    assert report["evidence_bundle_sha256"] == bundle_sha256
+    subjects = acceptance.authority_subjects(
+        manifest_sha256="1" * 64,
+        holdout_workload_inventory_sha256="2" * 64,
+        selection_policy_sha256="3" * 64,
+        thresholds_sha256="4" * 64,
+        confirmatory_evidence_sha256="5" * 64,
+        checks_sha256="6" * 64,
+        evidence_bundle_sha256=bundle_sha256,
+    )
+    assert subjects["execution"] != acceptance.authority_subjects(
+        manifest_sha256="1" * 64,
+        holdout_workload_inventory_sha256="2" * 64,
+        selection_policy_sha256="3" * 64,
+        thresholds_sha256="4" * 64,
+        confirmatory_evidence_sha256="5" * 64,
+        checks_sha256="6" * 64,
+    )["execution"]
+
+
+def test_holdout_acceptance_rejects_mixed_bundle_and_direct_inputs(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="acceptance_bundle_input_mixed"):
+        acceptance.resolve_evidence_bundle_inputs(
+            evidence_root=tmp_path / "evidence",
+            batch_id="holdout-a",
+            direct_inputs={"manifest": tmp_path / "manifest.json"},
+        )
+
+
+def test_holdout_cli_rejects_direct_manifest_without_durable_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        acceptance,
+        "_validate_acceptance_manifest",
+        lambda _value: {
+            "schema_version": preregistration.SCHEMA_VERSION_V6,
+            "preregistration_sha256": "1" * 64,
+            "evidence_contract": {"evidence_tier": "holdout"},
+        },
+    )
+
+    assert acceptance.main([
+        "validate",
+        "--manifest",
+        str(manifest_path),
+    ]) == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "blocked",
+        "reason_code": "acceptance_holdout_bundle_required",
+    }

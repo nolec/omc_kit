@@ -143,6 +143,7 @@ def main() -> int:
         "execute-n-child",
         "n-child-acceptance",
         "product-value-preregistration",
+        "product-value-evidence",
         "product-value-acceptance",
         "product-value-freeze",
         "team",
@@ -303,6 +304,17 @@ def main() -> int:
     product_value_preregistration.add_argument("--approved-trusted-root-sha256")
     product_value_preregistration.add_argument("--out", type=Path)
 
+    product_value_evidence = sub.add_parser(
+        "product-value-evidence",
+        help="Publish or verify immutable Product Value evidence bundles.",
+    )
+    product_value_evidence.add_argument(
+        "evidence_command", choices=("publish", "verify")
+    )
+    product_value_evidence.add_argument("--evidence-root", type=Path, required=True)
+    product_value_evidence.add_argument("--batch-id", required=True)
+    product_value_evidence.add_argument("--artifacts", type=Path)
+
     product_value_acceptance = sub.add_parser(
         "product-value-acceptance",
         help="Run or finalize manifest-bound Product Value paired evidence.",
@@ -319,6 +331,8 @@ def main() -> int:
         ),
     )
     product_value_acceptance.add_argument("--manifest", type=Path)
+    product_value_acceptance.add_argument("--evidence-root", type=Path)
+    product_value_acceptance.add_argument("--bundle-batch-id")
     product_value_acceptance.add_argument("--registration-context", type=Path)
     product_value_acceptance.add_argument("--packet-root", type=Path)
     product_value_acceptance.add_argument("--source-roots", type=Path)
@@ -703,11 +717,26 @@ def main() -> int:
                 ])
         return _run_script(preregistration_script, forwarded)
 
+    if args.command == "product-value-evidence":
+        evidence_script = kit / "scripts" / "omc_product_value_evidence_bundle.py"
+        forwarded = [
+            args.evidence_command,
+            "--evidence-root",
+            str(args.evidence_root.resolve()),
+            "--batch-id",
+            args.batch_id,
+        ]
+        if args.artifacts is not None:
+            forwarded.extend(["--artifacts", str(args.artifacts.resolve())])
+        return _run_script(evidence_script, forwarded)
+
     if args.command == "product-value-acceptance":
         acceptance_script = kit / "scripts" / "omc_product_value_acceptance.py"
         forwarded = [args.acceptance_command]
         for option in (
             "manifest",
+            "evidence_root",
+            "bundle_batch_id",
             "registration_context",
             "packet_root",
             "source_roots",
@@ -721,10 +750,8 @@ def main() -> int:
         ):
             value = getattr(args, option)
             if value is not None:
-                forwarded.extend([
-                    f"--{option.replace('_', '-')}",
-                    str(value.resolve()),
-                ])
+                rendered = str(value.resolve()) if isinstance(value, Path) else str(value)
+                forwarded.extend([f"--{option.replace('_', '-')}", rendered])
         return _run_script(acceptance_script, forwarded)
 
     if args.command == "product-value-freeze":

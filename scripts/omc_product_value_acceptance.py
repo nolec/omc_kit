@@ -22,6 +22,7 @@ import time
 from typing import Any, Callable
 
 import omc_product_value_preregistration as preregistration
+import omc_product_value_evidence_bundle as evidence_bundle
 from omc_n_child_scheduler import _run_bounded_adapter_command
 
 
@@ -59,6 +60,97 @@ AUTHORITY_SUBJECT_PACKET_SCHEMA_VERSION = (
     "omc-product-value-authority-subjects/v1"
 )
 AUTHORITY_ROLES = ("selection", "gold", "execution", "adjudication")
+BUNDLE_EVIDENCE_INPUTS = {
+    "manifest",
+    "packet_root",
+    "arm_adapter",
+    "scheduler",
+    "executor_shadow",
+    "provider_adapter",
+}
+
+
+def resolve_evidence_bundle_inputs(
+    *,
+    evidence_root: str | Path,
+    batch_id: str,
+    direct_inputs: dict[str, Path | None],
+) -> dict[str, Any]:
+    """Resolve immutable evidence inputs without mixing caller-owned paths."""
+    if any(direct_inputs.get(name) is not None for name in BUNDLE_EVIDENCE_INPUTS):
+        raise ValueError("acceptance_bundle_input_mixed")
+    materialized = evidence_bundle.materialize_evidence_bundle(
+        evidence_root,
+        batch_id=batch_id,
+    )
+    index = materialized.index
+    paths = materialized.paths
+    try:
+        validate_bundle_acceptance_runner(paths["runner/acceptance.py"])
+    except (OSError, ValueError):
+        materialized.cleanup()
+        raise
+    root = paths["preregistration.json"].parent
+    return {
+        "bundle_sha256": index["bundle_sha256"],
+        "bundle_runtime": materialized,
+        "manifest": paths["preregistration.json"],
+        "registration_receipt": paths["registration-receipt.json"],
+        "packet_root": root / "packets",
+        "acceptance_runner": paths["runner/acceptance.py"],
+        "arm_adapter": paths["runner/arm-adapter.py"],
+        "scheduler": paths["runner/scheduler.py"],
+        "executor_shadow": paths["runner/executor-shadow.py"],
+        "provider_adapter": paths["runner/provider-adapter.py"],
+    }
+
+
+def validate_bundle_acceptance_runner(path: str | Path) -> None:
+    if canonical_file_sha256(path) != canonical_file_sha256(
+        Path(__file__).resolve()
+    ):
+        raise ValueError("acceptance_bundle_runner_mismatch")
+
+
+def validate_bundle_execution_contract(
+    manifest: dict[str, Any],
+    paths: dict[str, Path],
+) -> None:
+    expected = manifest.get("execution_contract", {}).get("execution_bundle")
+    runner_names = {
+        "acceptance_runner",
+        "arm_adapter",
+        "scheduler",
+        "executor_shadow",
+        "provider_adapter",
+    }
+    if not isinstance(expected, dict) or set(paths) != runner_names:
+        raise ValueError("execution_bundle_mismatch")
+    for name in runner_names:
+        path = Path(paths[name])
+        if (
+            not path.is_file()
+            or expected.get(f"{name}_sha256") != canonical_file_sha256(path)
+        ):
+            raise ValueError("execution_bundle_mismatch")
+
+
+def bind_bundle_registration_receipt(
+    context: dict[str, Any],
+    receipt_path: str | Path,
+) -> dict[str, Any]:
+    receipt = _load_json(
+        Path(receipt_path),
+        "acceptance_bundle_registration_receipt_invalid",
+    )
+    if (
+        not isinstance(context, dict)
+        or context.get("registration_receipt") != receipt
+        or context.get("expected_registration_receipt_sha256")
+        != receipt.get("receipt_sha256")
+    ):
+        raise ValueError("acceptance_bundle_registration_receipt_mismatch")
+    return deepcopy(context)
 
 
 class _CapabilityBoundArmExecutor:
@@ -909,6 +1001,7 @@ def build_process_arm_executor(
     adapter_path: str | Path,
     provider_snapshot: dict[str, Any],
     *,
+    acceptance_runner_path: str | Path | None = None,
     adapter_sha256: str | None = None,
     execution_bundle: dict[str, Any] | None = None,
     scheduler_path: str | Path | None = None,
@@ -943,7 +1036,9 @@ def build_process_arm_executor(
         ):
             raise ValueError("execution_bundle_mismatch")
         bundle_sources = {
-            "acceptance_runner": Path(__file__).resolve(),
+            "acceptance_runner": Path(
+                acceptance_runner_path or __file__
+            ).expanduser().resolve(),
             "arm_adapter": source,
             "scheduler": Path(scheduler_path).expanduser().resolve(),
             "executor_shadow": Path(executor_shadow_path).expanduser().resolve(),
@@ -1679,6 +1774,21 @@ def _bind_registration_gate(
     _write_envelope(path, registration)
 
 
+def _load_validated_registration_gate(
+    manifest: dict[str, Any],
+    artifact_root: Path,
+) -> dict[str, Any]:
+    path = artifact_root / "registration-gate.json"
+    if not path.exists():
+        raise ValueError("registration_gate_missing")
+    registration, _ = _load_envelope(path)
+    return _validate_registration_result(
+        manifest,
+        registration,
+        reason="registration_gate_mismatch",
+    )
+
+
 def run_product_value_phase(
     manifest: dict[str, Any],
     registration_context: dict[str, Any],
@@ -1690,6 +1800,7 @@ def run_product_value_phase(
     arm_executor: Callable[..., dict[str, Any]],
     registration_validator: Callable[..., dict[str, Any]] = _default_registration_validator,
     monotonic: Callable[[], float] = time.monotonic,
+    evidence_bundle_sha256: str | None = None,
 ) -> dict[str, Any]:
     manifest = _validate_acceptance_manifest(manifest)
     if phase not in {"pilot", "confirmatory"}:
@@ -1697,6 +1808,10 @@ def run_product_value_phase(
     registration = _registration_gate(
         manifest, registration_context, registration_validator
     )
+    if evidence_bundle_sha256 is not None:
+        if not _is_sha256(evidence_bundle_sha256):
+            raise ValueError("evidence_bundle_sha256_invalid")
+        registration["evidence_bundle_sha256"] = evidence_bundle_sha256
     packet_root = Path(packet_root).resolve()
     artifact_root = Path(artifact_root).resolve()
     _bind_registration_gate(manifest, artifact_root, registration)
@@ -1771,6 +1886,8 @@ def run_product_value_phase(
             "workload_count": len(workload_receipts),
             "workloads": workload_receipts,
         }
+        if evidence_bundle_sha256 is not None:
+            result["evidence_bundle_sha256"] = evidence_bundle_sha256
         result["phase_receipt_sha256"] = _write_envelope(
             staging_root / "index.json", result
         )
@@ -2026,6 +2143,7 @@ def authority_subjects(
     thresholds_sha256: str,
     confirmatory_evidence_sha256: str,
     checks_sha256: str,
+    evidence_bundle_sha256: str | None = None,
 ) -> dict[str, str]:
     values = {
         "manifest_sha256": manifest_sha256,
@@ -2036,6 +2154,10 @@ def authority_subjects(
         "checks_sha256": checks_sha256,
     }
     if any(not _is_sha256(value) for value in values.values()):
+        raise ValueError("authority_subjects_invalid")
+    if evidence_bundle_sha256 is not None and not _is_sha256(
+        evidence_bundle_sha256
+    ):
         raise ValueError("authority_subjects_invalid")
     return {
         "selection": canonical_sha256({
@@ -2055,11 +2177,21 @@ def authority_subjects(
             "role": "execution",
             "manifest_sha256": manifest_sha256,
             "confirmatory_evidence_sha256": confirmatory_evidence_sha256,
+            **(
+                {"evidence_bundle_sha256": evidence_bundle_sha256}
+                if evidence_bundle_sha256 is not None
+                else {}
+            ),
         }),
         "adjudication": canonical_sha256({
             "role": "adjudication",
             "manifest_sha256": manifest_sha256,
             "checks_sha256": checks_sha256,
+            **(
+                {"evidence_bundle_sha256": evidence_bundle_sha256}
+                if evidence_bundle_sha256 is not None
+                else {}
+            ),
         }),
     }
 
@@ -2067,11 +2199,20 @@ def authority_subjects(
 def prepare_authority_subject_packet(
     manifest: dict[str, Any],
     artifact_root: str | Path,
+    *,
+    expected_evidence_bundle_sha256: str | None = None,
 ) -> dict[str, Any]:
     manifest = _validate_acceptance_manifest(manifest)
     if manifest["schema_version"] != preregistration.SCHEMA_VERSION_V6:
         raise ValueError("authority_receipts_require_v6")
     artifact_root = Path(artifact_root).resolve()
+    registration = _load_validated_registration_gate(manifest, artifact_root)
+    evidence_bundle_sha256 = registration.get("evidence_bundle_sha256")
+    if (
+        expected_evidence_bundle_sha256 is not None
+        and evidence_bundle_sha256 != expected_evidence_bundle_sha256
+    ):
+        raise ValueError("evidence_bundle_gate_mismatch")
     _validate_pilot_gate(manifest, artifact_root)
     receipts = _load_phase_receipts(manifest, artifact_root, "confirmatory")
     _metrics, _intervention_ratio, checks = _acceptance_measurements(
@@ -2094,6 +2235,11 @@ def prepare_authority_subject_packet(
         "thresholds_sha256": canonical_sha256(manifest["thresholds"]),
         "confirmatory_evidence_sha256": confirmatory_evidence_sha256,
         "checks_sha256": checks_sha256,
+        **(
+            {"evidence_bundle_sha256": evidence_bundle_sha256}
+            if evidence_bundle_sha256 is not None
+            else {}
+        ),
         "subjects": authority_subjects(
             manifest_sha256=manifest["preregistration_sha256"],
             holdout_workload_inventory_sha256=evidence_contract[
@@ -2105,6 +2251,7 @@ def prepare_authority_subject_packet(
             thresholds_sha256=canonical_sha256(manifest["thresholds"]),
             confirmatory_evidence_sha256=confirmatory_evidence_sha256,
             checks_sha256=checks_sha256,
+            evidence_bundle_sha256=evidence_bundle_sha256,
         ),
     }
     packet["subject_packet_sha256"] = canonical_sha256(packet)
@@ -2115,9 +2262,15 @@ def record_authority_receipts(
     manifest: dict[str, Any],
     artifact_root: str | Path,
     receipts: Any,
+    *,
+    expected_evidence_bundle_sha256: str | None = None,
 ) -> dict[str, str]:
     artifact_root = Path(artifact_root).resolve()
-    packet = prepare_authority_subject_packet(manifest, artifact_root)
+    packet = prepare_authority_subject_packet(
+        manifest,
+        artifact_root,
+        expected_evidence_bundle_sha256=expected_evidence_bundle_sha256,
+    )
     validated = validate_authority_receipts(
         receipts,
         authority_bindings=packet["authority_bindings"],
@@ -2294,15 +2447,18 @@ def _strict_transport_receipt_eligible(
 def finalize_product_value_acceptance(
     manifest: dict[str, Any],
     artifact_root: str | Path,
+    *,
+    expected_evidence_bundle_sha256: str | None = None,
 ) -> dict[str, Any]:
     manifest = _validate_acceptance_manifest(manifest)
     artifact_root = Path(artifact_root).resolve()
-    registration, _ = _load_envelope(artifact_root / "registration-gate.json")
-    registration = _validate_registration_result(
-        manifest,
-        registration,
-        reason="registration_gate_mismatch",
-    )
+    registration = _load_validated_registration_gate(manifest, artifact_root)
+    if (
+        expected_evidence_bundle_sha256 is not None
+        and registration.get("evidence_bundle_sha256")
+        != expected_evidence_bundle_sha256
+    ):
+        raise ValueError("evidence_bundle_gate_mismatch")
     _validate_pilot_gate(manifest, artifact_root)
     _load_phase_receipts(manifest, artifact_root, "pilot")
     receipts = _load_phase_receipts(manifest, artifact_root, "confirmatory")
@@ -2331,6 +2487,7 @@ def finalize_product_value_acceptance(
     authority_receipts_sha256 = None
     confirmatory_evidence_sha256 = canonical_sha256(receipts)
     checks_sha256 = canonical_sha256(checks)
+    evidence_bundle_sha256 = registration.get("evidence_bundle_sha256")
     if manifest["schema_version"] == preregistration.SCHEMA_VERSION_V6:
         authority_receipts, authority_receipts_sha256 = _load_envelope(
             artifact_root / "authority-receipts.json"
@@ -2349,6 +2506,7 @@ def finalize_product_value_acceptance(
                 thresholds_sha256=canonical_sha256(manifest["thresholds"]),
                 confirmatory_evidence_sha256=confirmatory_evidence_sha256,
                 checks_sha256=checks_sha256,
+                evidence_bundle_sha256=evidence_bundle_sha256,
             ),
         )
     verdicts = build_product_value_verdicts(
@@ -2375,6 +2533,8 @@ def finalize_product_value_acceptance(
         "checks": checks,
         **verdicts,
     }
+    if evidence_bundle_sha256 is not None:
+        report["evidence_bundle_sha256"] = evidence_bundle_sha256
     if manifest["schema_version"] == preregistration.SCHEMA_VERSION_V6:
         report.update({
             "development_registration_receipt_sha256": registration[
@@ -2408,7 +2568,9 @@ def main(argv: list[str] | None = None) -> int:
             "finalize",
         ),
     )
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--evidence-root", type=Path)
+    parser.add_argument("--bundle-batch-id")
     parser.add_argument("--registration-context", type=Path)
     parser.add_argument("--packet-root", type=Path)
     parser.add_argument("--source-roots", type=Path)
@@ -2420,13 +2582,53 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--authority-receipts", type=Path)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
+    bundle_runtime = None
     try:
-        manifest = _validate_acceptance_manifest(_load_json(args.manifest))
+        bundle_inputs = None
+        if args.evidence_root is not None or args.bundle_batch_id is not None:
+            if args.evidence_root is None or args.bundle_batch_id is None:
+                raise ValueError("acceptance_bundle_input_incomplete")
+            bundle_inputs = resolve_evidence_bundle_inputs(
+                evidence_root=args.evidence_root,
+                batch_id=args.bundle_batch_id,
+                direct_inputs={
+                    name: getattr(args, name) for name in BUNDLE_EVIDENCE_INPUTS
+                },
+            )
+            bundle_runtime = bundle_inputs["bundle_runtime"]
+        elif args.manifest is None:
+            raise ValueError("manifest_required")
+        manifest_path = (
+            bundle_inputs["manifest"] if bundle_inputs is not None else args.manifest
+        )
+        manifest = _validate_acceptance_manifest(_load_json(manifest_path))
+        if bundle_inputs is not None:
+            validate_bundle_execution_contract(
+                manifest,
+                {
+                    name: bundle_inputs[name]
+                    for name in (
+                        "acceptance_runner",
+                        "arm_adapter",
+                        "scheduler",
+                        "executor_shadow",
+                        "provider_adapter",
+                    )
+                },
+            )
+        if (
+            manifest.get("evidence_contract", {}).get("evidence_tier")
+            == "holdout"
+            and bundle_inputs is None
+        ):
+            raise ValueError("acceptance_holdout_bundle_required")
         if args.command == "validate":
             result = {
                 "status": "ready",
                 "preregistration_sha256": manifest["preregistration_sha256"],
             }
+            if bundle_inputs is not None:
+                result["bundle_sha256"] = bundle_inputs["bundle_sha256"]
         elif args.command in {
             "prepare-authority-subjects",
             "record-authority-receipts",
@@ -2438,6 +2640,11 @@ def main(argv: list[str] | None = None) -> int:
                 result = prepare_authority_subject_packet(
                     manifest,
                     args.artifact_root,
+                    expected_evidence_bundle_sha256=(
+                        bundle_inputs["bundle_sha256"]
+                        if bundle_inputs is not None
+                        else None
+                    ),
                 )
             elif args.command == "record-authority-receipts":
                 if args.authority_receipts is None:
@@ -2449,24 +2656,65 @@ def main(argv: list[str] | None = None) -> int:
                         args.authority_receipts,
                         "authority_receipts_unavailable",
                     ),
+                    expected_evidence_bundle_sha256=(
+                        bundle_inputs["bundle_sha256"]
+                        if bundle_inputs is not None
+                        else None
+                    ),
                 )
             else:
                 result = finalize_product_value_acceptance(
                     manifest,
                     args.artifact_root,
+                    expected_evidence_bundle_sha256=(
+                        bundle_inputs["bundle_sha256"]
+                        if bundle_inputs is not None
+                        else None
+                    ),
                 )
         else:
+            packet_root = (
+                bundle_inputs["packet_root"]
+                if bundle_inputs is not None
+                else args.packet_root
+            )
+            arm_adapter = (
+                bundle_inputs["arm_adapter"]
+                if bundle_inputs is not None
+                else args.arm_adapter
+            )
+            scheduler = (
+                bundle_inputs["scheduler"]
+                if bundle_inputs is not None
+                else args.scheduler
+            )
+            executor_shadow = (
+                bundle_inputs["executor_shadow"]
+                if bundle_inputs is not None
+                else args.executor_shadow
+            )
+            provider_adapter = (
+                bundle_inputs["provider_adapter"]
+                if bundle_inputs is not None
+                else args.provider_adapter
+            )
             if any(
                 value is None
                 for value in (
                     args.registration_context,
-                    args.packet_root,
+                    packet_root,
                     args.source_roots,
                     args.artifact_root,
-                    args.arm_adapter,
+                    arm_adapter,
                 )
             ):
                 raise ValueError("acceptance_execution_input_required")
+            registration_context = _load_json(args.registration_context)
+            if bundle_inputs is not None:
+                registration_context = bind_bundle_registration_receipt(
+                    registration_context,
+                    bundle_inputs["registration_receipt"],
+                )
             contract = manifest["execution_contract"]
             is_v4 = manifest["schema_version"] in {
                 preregistration.SCHEMA_VERSION_V4,
@@ -2474,32 +2722,42 @@ def main(argv: list[str] | None = None) -> int:
                 preregistration.SCHEMA_VERSION_V6,
             }
             if is_v4 and (
-                args.scheduler is None
-                or args.executor_shadow is None
-                or args.provider_adapter is None
+                scheduler is None
+                or executor_shadow is None
+                or provider_adapter is None
             ):
                 raise ValueError("acceptance_execution_bundle_input_required")
             executor = build_process_arm_executor(
-                args.arm_adapter,
+                arm_adapter,
                 contract["provider_snapshot"],
+                acceptance_runner_path=(
+                    bundle_inputs["acceptance_runner"]
+                    if bundle_inputs is not None
+                    else None
+                ),
                 adapter_sha256=(
                     contract["execution_bundle"]["arm_adapter_sha256"]
                     if is_v4
                     else None
                 ),
                 execution_bundle=contract.get("execution_bundle") if is_v4 else None,
-                scheduler_path=args.scheduler,
-                executor_shadow_path=args.executor_shadow,
-                provider_adapter_path=args.provider_adapter,
+                scheduler_path=scheduler,
+                executor_shadow_path=executor_shadow,
+                provider_adapter_path=provider_adapter,
             )
             result = run_product_value_phase(
                 manifest,
-                _load_json(args.registration_context),
-                packet_root=args.packet_root,
+                registration_context,
+                packet_root=packet_root,
                 source_roots=_load_json(args.source_roots),
                 artifact_root=args.artifact_root,
                 phase=("pilot" if args.command == "run-pilot" else "confirmatory"),
                 arm_executor=executor,
+                evidence_bundle_sha256=(
+                    bundle_inputs["bundle_sha256"]
+                    if bundle_inputs is not None
+                    else None
+                ),
             )
         if args.out is not None:
             _write_json(args.out, result)
@@ -2514,6 +2772,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 2
+    finally:
+        if bundle_runtime is not None:
+            bundle_runtime.cleanup()
 
 
 if __name__ == "__main__":
