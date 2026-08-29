@@ -25,14 +25,14 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 |---|---|---|---|
 | Routing V1–V4 | `OPERATIONALLY_VALIDATED` | 라우팅·실패 복구·telemetry 코드와 운영 receipt | 운영 drift 감시 유지 |
 | Bounded scheduler | `IMPLEMENTED` | v2 grant 전용 N-child scheduler·provider adapter·회귀 테스트 | 실제 3–5 child acceptance |
-| Product Value | `HOLDOUT_PIPELINE_READY` | 동결된 6건 development corpus와 schema v6 등록·비중복·chronology·initial/replication acceptance 계약 | 고정 구현·기준으로 disjoint holdout 5건을 실제 등록·실행 |
-| Product Value independence | `NOT_REPRODUCED` | 현재 corpus는 구현과 기준 교정에 사용한 development evidence | 별도 선정한 holdout에서 primary metric 충족 |
+| Product Value | `BLOCKED` | acceptance 코드와 등록 계약은 구현됐지만 기존 development evidence 원문이 소실되어 실행 불가 | 별도 prospective development study 6건을 사전 등록·수집·검증한 뒤 disjoint holdout을 새로 계획 |
+| Product Value independence | `NOT_REPRODUCED` | 유효한 development evidence 없음 | 신규 development evidence 검증 후 별도 선정한 holdout에서 primary metric 충족 |
 | Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재 | 독립 Batch B와 confirmatory batch 재현 |
 | Review | `NOT_PROVEN` | durable native provider 원문 부재 | 동일 diff native 재실행과 blind adjudication |
 | Autopilot | `LIMITED` | 안전한 opt-in 경로와 identity fail-close | 운영 latency·개입 acceptance |
 | Setup | `OPERATIONALLY_VALIDATED` | 사용처 8곳 strict install audit 통과 | source freshness와 rollback 회귀 유지 |
 
-현재 6건 corpus의 최고 판정은 `DEVELOPMENT_PASS`다. 이는 development evidence에서 acceptance 계약이 작동한다는 뜻이며 외부 대체 주장이 아니다. 구현과 임계값을 먼저 고정하고 비중복 disjoint holdout을 선정한 뒤 성공률·시간·개입·안전 primary metric을 재측정해야 `BOUNDED_EXECUTION_OPERATIONALLY_REPLACEABLE`로 승격할 수 있다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
+과거 6건 corpus에서 `DEVELOPMENT_PASS`가 기록됐지만 manifest·workload inventory·execution packet 원문을 현재 검증할 수 없어 유효한 development evidence로 승계하지 않는다. 구현과 acceptance 계약은 유지하되 새 prospective development study에서 chronological first-N 6건을 다시 확보하고, 그 증거가 검증된 뒤에만 비중복 disjoint holdout을 별도로 계획한다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
 
 Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 완료 / 실제 수집 0/5** 상태다. 5건 chronological first-N capture는 observation 시작 15분 전에 완료된 RFC 3161 registration, Git registry anchor, 서로 다른 registration·source snapshot·completion collector·executor 키와 custody identity, preregistration에 고정된 source inventory path, registry commit의 후손인 canonical inventory commit, 연속 sequence·entry hash·source snapshot checkpoint chain, source snapshot과 completion ledger의 exact equality, raw request·provider output의 execution receipt 결속을 모두 통과해야 한다. 실패·불확정 study는 서명된 failure receipt로 봉인하며 자동 재시작하지 않고, 새 study는 승인된 restart parent를 명시해야 한다. 완료 artifact는 임시 경로가 아닌 durable evidence root에 원자적으로 게시하고 digest 검증 후 reload한다. 이 계약은 독립적인 작은 운영 표본의 **수집 가능성만** 검증하며 실제 5건이 수집되기 전에는 제품 가치, 품질 projection 또는 Plan 대체 증거로 사용하지 않는다.
 
@@ -49,22 +49,20 @@ Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 �
 
 운영 증거 없는 자동화 확대 금지를 공통 원칙으로 둔다. 실제 병목을 줄이지 않는 새 추상화, 정책, 스킬 추가는 위 종료 기준보다 우선하지 않는다.
 
-### Product Value P0 실행 동결
+### Product Value P0 evidence-loss 종료 승인 대기와 신규 prospective study
 
 - 상태 보고: 전체 완성도 백분율을 사용하지 않는다. 구현·검증 준비·운영 검증·독립 재현 evidence-state를 대상별로 보고한다.
-- 최종 판정 기한: `2026-09-05`. 단계별 기한 미준수 또는 최종 판정 미완료는 `BLOCKED`로 기록하고 새 기능 개발로 우회하지 않는다.
-- `2026-08-30`: 종료 계약과 frozen commit을 확정한다.
-- `2026-08-31`: initial·replication 등록과 durable bundle 게시를 완료한다.
-- `2026-09-01`: 비판정 pilot 1건 완료 후 실행 경로만 검증한다.
-- `2026-09-02`: initial paired 5건 실행 완료 후 frozen raw output을 보존한다.
-- `2026-09-03`: initial 독립 adjudication 완료 후 실패면 `NOT_REPLACEABLE`로 종료한다.
-- `2026-09-04`: replication paired 5건과 독립 adjudication 완료 후 최종 판정 입력을 동결한다.
-- 허용 범위: holdout 선정·등록·실행·판정과 이를 막는 결함 수정만 허용한다.
-- 금지 범위: Product Value 판정 전까지 신규 schema·transport·benchmark fixture와 Plan·Review·Work Packet 신규 기능 변경을 금지한다.
-- 결함 예외: frozen runner가 provider 호출 전에 발생한 재현 가능한 기술 오류만 수정할 수 있다. 변경 예산은 전체 평가에서 최대 3개 파일·120 LOC이며 재현 테스트를 먼저 추가한다.
-- 책임 분리: 사용자는 corpus·외부 전송·서명을 승인하고, OMC runner는 frozen 입력을 실행하며, 역할별 독립 authority는 결과 subject만 판정한다.
-- primary metric: 성공률·시간·token·안전과 함께 사용자 개입 횟수와 승인부터 최종 결과까지의 단계 수를 기록한다.
-- 재시도 정책: 기술 실패는 새 batch ID로 1회만 재시도하며 동일 workload·threshold·selection을 유지한다. 실행 코드를 수정했다면 새 implementation commit·execution bundle·manifest·registration을 `retry lineage`로 다시 동결하고 기존 frozen execution bundle을 재사용하지 않는다. retry lineage 재동결·재등록만 단계별 기한의 유일한 예외이며 기술 실패 확인 다음 날까지 완료하고 `2026-09-05` 최종 판정 기한은 연장하지 않는다. 품질 실패는 재교정 없이 `NOT_REPLACEABLE`로 종료한다.
+- 기존 종료 승인 대기: `product-value-batch-20260826-v5-r1`과 preregistration `69115b41210a14b42ea9096bf3cea98c8897a2047b5bc0a322e5f7a64c2af8df`는 manifest·workload inventory·execution packet 원문을 복구하지 못했으므로 `2026-08-30`에 `BLOCKED` / `evidence_loss` 종료 승인 대기로 전환한다. signer identity·서명·durable failure receipt 게시를 검증한 뒤에만 종료 완료로 승격한다. 기존 `2026-09-05` 최종 판정 기한은 연장하지 않는다.
+- 복구 금지: 기존 batch의 manifest·workload inventory·execution packet을 추정하거나 재구성하지 않는다. hash-only registry record와 임시 진단 receipt는 실행·판정 입력으로 승격하지 않는다.
+- study 분리: 신규 study는 기존 batch의 retry 또는 continuation이 아니다. 새 evaluation ID·selection policy·source universe·authority commitment·registration lineage를 사용한다.
+- `2026-08-31`: selection policy·source universe·authority commitment를 observation 전에 등록한다.
+- `2026-09-01`부터 `2026-09-07`: chronological first-N development case 6건을 수집하고 각 case의 source snapshot·inventory·completion evidence를 즉시 봉인한다.
+- `2026-09-08`: schema v5 registration과 durable evidence bundle을 생성·검증한다.
+- `2026-09-09`: development evidence 검증 후에만 별도 holdout 계획을 열 수 있다.
+- authority 분리: source snapshot signer·preregistration signer·registration authority·inventory collector는 서로 다른 key·operator·custody identity를 사용하며 key 재사용 또는 provenance 불일치는 fail-close한다.
+- 허용 범위: failure receipt, 신규 development preregistration, chronological capture, registration, durable evidence 검증과 이를 막는 최소 결함 수정만 허용한다.
+- 금지 범위: development evidence 검증 전 provider 호출과 holdout 실행을 금지하며 신규 schema·transport·benchmark fixture를 추가하지 않는다.
+- claim 제한: 신규 study는 development evidence만 생성한다. 결과를 Plan·Review 또는 전체 OMC의 대체·우월 증거로 사용하지 않는다.
 
 ### Operational P0
 
@@ -89,7 +87,7 @@ Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 �
 | Preregistration | Product Value preregistration 계약 완료. schema v6는 1건 비판정 pilot과 동일 조건 paired 5건, canonical workload·pair 순서·execution packet·environment receipt 해시, immutable runner·arm adapter·scheduler·provider adapter bundle을 frozen manifest에 결속한다. `evidence_tier=holdout`, initial/replication 역할, development 기준·양쪽 workload inventory·selection policy·선행 holdout report 해시와 selection·gold·execution·adjudication authority identity도 manifest digest에 결속한다. validator는 manifest의 inventory·selection hash를 재계산하고 development와 holdout, initial과 replication 사이의 비중복 및 authority 분리를 fail-close한다. 실제 등록 증거 없이는 claim eligible이 아니다. |
 | 등록 | Product Value 중립 등록 검증 코드는 `prepare-v2` → `registry-record` → `prepare-receipt` → `validate-registration`과 durable schema v2 record를 지원한다. 다만 기존 batch의 실제 registry commit `8b23f83`은 manifest 원문이 없는 schema v1이며, 문서에 기록된 manifest `69115b41...af8df`·receipt `70d18121...d510` 원문을 복구하지 못했다. 기존 batch는 실행 불가로 판정하고 새 batch를 schema v2로 다시 등록한다. |
 | Evidence durability | immutable bundle writer·loader, `publish`·`verify` CLI, holdout acceptance bundle-only gate와 crash-safe no-replace atomic publish를 구현했다. 임시 root·필수 artifact 누락·path escape·digest 변조·직접 입력 혼합·receipt/runner 불일치·중복/경쟁 게시를 fail-close한다. 실행은 검증된 private read-only snapshot만 사용하고 bundle hash를 registration·phase·authority·final report에 결속하며 Git clean clone에서 같은 bundle hash 복구를 검증한다. 실제 외부 durable root에 등록된 holdout bundle을 게시하는 작업은 남아 있다. |
-| Corpus·freeze | 실제 구현 workload 6건의 corpus v2-r1, exact 3–5 child decomposition, repository identity/source commit, dependency lock, read-only cache와 immutable execution bundle을 동결했다. `product-value-freeze prepare-inputs → prepare → validate`로 재계산하며, 별도 availability preflight가 정확히 `pv-01..06`만 허용하고 source root·commit·packet·환경 artifact·committed blob 결속을 읽기 전용으로 확인한다. |
+| Corpus·freeze | `product-value-freeze prepare-inputs → prepare → validate`와 availability preflight 구현은 완료됐다. 과거 실제 구현 workload 6건의 corpus v2-r1은 원문 evidence가 소실되어 신규 study 입력으로 재사용할 수 없다. 신규 chronological first-N 6건은 새 source universe·registration lineage 아래 source root·commit·packet·환경 artifact·committed blob 결속을 다시 검증한다. |
 | Acceptance | Product Value paired acceptance harness 완료. OMC arm은 승인된 v2 grant·child prompt·dependency·scope·aggregate budget을 사용하고 baseline arm은 동일 provider adapter를 사용한다. v6 runner는 holdout과 development 양쪽의 등록 receipt를 검증하고 provenance 결과를 registration gate에 결속한다. selection·gold·execution·adjudication authority 선언은 Ed25519 공개키 identity와 역할별 signed subject로 검증하며, initial report를 replication에서 소비할 때도 네 서명과 subject를 다시 검증한다. runner 실측 elapsed·token·개입·scope·budget과 raw output을 저장하며 authoritative reload 후 모든 arm 성공일 때만 `run-pilot` → `run-confirmatory` → `prepare-authority-subjects` → 외부 서명 → `record-authority-receipts` → `finalize`한다. receipt 기록은 검증 후 멱등 저장하고 다른 값의 교체를 거부하며, authority 검증에만 lazy crypto dependency를 요구한다. initial holdout 통과는 `HOLDOUT_PROVISIONAL_PASS`만 발행한다. replication은 선행 report의 전체 workload inventory·threshold·authority evidence를 다시 검증하고, initial과 replication 각각에서 token 중앙값 최소 10% 개선과 나머지 primary metric을 모두 충족할 때만 `OPERATIONALLY_REPLACEABLE`을 허용한다. 운영 교체 판정과 strict hard-token 인증은 분리한다. |
 | Provider 계약 | Product Value provider enforcement 계약 v2 완료. provider 출력의 profile 자기 주장은 폐기하고 runner가 adapter·backend·capability hash를 직접 결속한다. backend는 승인 hash 확인 후 immutable runtime으로 복사하고 모든 provider subprocess의 `OMC_PROVIDER_BACKEND`를 snapshot 경로로 고정해 검사-실행 간 교체를 차단한다. OpenAI Responses backend 후보는 count endpoint의 exact input count에서 남은 output budget을 계산하고 native `max_output_tokens`로 전달하며 completed usage가 reservation을 넘으면 fail-close한다. boolean-only backend를 외부 실행 전에 거부하고 legacy v2 prepared input 재사용을 fail-close한다. 별도 `subscription_bounded` profile은 ChatGPT 구독 인증과 post-call usage만 허용하며 `provider_enforced`와 혼용하지 않는다. |
 | Conformance | Product Value provider conformance 증거 계약 완료. trusted metering receipt만 정산하고 위반·실패는 worst-case `indeterminate`로 봉인한다. over-limit 요청, forged capability·usage, timeout, output overflow를 포함한 adversarial conformance와 disposable shadow execution receipt를 검증하되 실제 실행 전 `claim_eligible=false`다. |

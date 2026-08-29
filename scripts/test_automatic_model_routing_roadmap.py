@@ -90,7 +90,8 @@ def test_product_value_claim_scope_and_evidence_states_are_explicit() -> None:
     assert "evidence-state" in roadmap
     assert "| Plan | `NOT_PROVEN` |" in roadmap
     assert "| Review | `NOT_PROVEN` |" in roadmap
-    assert "| Product Value | `HOLDOUT_PIPELINE_READY` |" in roadmap
+    assert "| Product Value | `BLOCKED` |" in roadmap
+    assert "| Product Value independence | `NOT_REPRODUCED` | 유효한 development evidence 없음 |" in roadmap
     assert "development evidence 판정 gate 구현 완료" in roadmap
     assert "구현·판정 기준을 동결" in roadmap
     assert "disjoint holdout 5건" in roadmap
@@ -103,33 +104,27 @@ def test_product_value_claim_scope_and_evidence_states_are_explicit() -> None:
     assert "strict certification" in roadmap
 
 
-def test_product_value_p0_freezes_non_execution_work_and_has_an_exit_policy() -> None:
+def test_product_value_p0_tracks_pending_closure_and_starts_a_separate_prospective_study() -> None:
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
 
     assert "운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증" in roadmap
     assert "전체 완성도 백분율을 사용하지 않는다" in roadmap
-    assert "### Product Value P0 실행 동결" in roadmap
-    assert "최종 판정 기한: `2026-09-05`" in roadmap
-    assert "`2026-08-31`: initial·replication 등록과 durable bundle 게시" in roadmap
-    assert "`2026-09-01`: 비판정 pilot 1건 완료" in roadmap
-    assert "`2026-09-02`: initial paired 5건 실행 완료" in roadmap
-    assert "`2026-09-03`: initial 독립 adjudication 완료" in roadmap
-    assert "`2026-09-04`: replication paired 5건과 독립 adjudication 완료" in roadmap
-    assert "holdout 선정·등록·실행·판정과 이를 막는 결함 수정만 허용" in roadmap
-    assert "Plan·Review·Work Packet 신규 기능 변경을 금지" in roadmap
-    assert "provider 호출 전에 발생한 재현 가능한 기술 오류" in roadmap
-    assert "최대 3개 파일·120 LOC" in roadmap
-    assert "동일 workload·threshold·selection" in roadmap
-    assert "새 implementation commit·execution bundle·manifest·registration" in roadmap
-    assert "retry lineage" in roadmap
-    assert "기존 frozen execution bundle을 재사용하지 않는다" in roadmap
-    assert "retry lineage 재동결·재등록만 단계별 기한의 유일한 예외" in roadmap
-    assert "기술 실패 확인 다음 날까지 완료" in roadmap
-    assert "`2026-09-05` 최종 판정 기한은 연장하지 않는다" in roadmap
-    assert "기술 실패는 새 batch ID로 1회만 재시도" in roadmap
-    assert "품질 실패는 재교정 없이 `NOT_REPLACEABLE`" in roadmap
-    assert "단계별 기한 미준수 또는 최종 판정 미완료는 `BLOCKED`" in roadmap
-    assert "사용자 개입 횟수와 승인부터 최종 결과까지의 단계 수" in roadmap
+    assert "### Product Value P0 evidence-loss 종료 승인 대기와 신규 prospective study" in roadmap
+    assert "`product-value-batch-20260826-v5-r1`" in roadmap
+    assert "`69115b41210a14b42ea9096bf3cea98c8897a2047b5bc0a322e5f7a64c2af8df`" in roadmap
+    assert "`2026-08-30`에 `BLOCKED` / `evidence_loss` 종료 승인 대기" in roadmap
+    assert "signer identity·서명·durable failure receipt 게시를 검증한 뒤에만 종료 완료" in roadmap
+    assert "기존 `2026-09-05` 최종 판정 기한은 연장하지 않는다" in roadmap
+    assert "기존 batch의 manifest·workload inventory·execution packet을 추정하거나 재구성하지 않는다" in roadmap
+    assert "신규 study는 기존 batch의 retry 또는 continuation이 아니다" in roadmap
+    assert "`2026-08-31`: selection policy·source universe·authority commitment를 observation 전에 등록" in roadmap
+    assert "`2026-09-01`부터 `2026-09-07`: chronological first-N development case 6건" in roadmap
+    assert "`2026-09-08`: schema v5 registration과 durable evidence bundle" in roadmap
+    assert "`2026-09-09`: development evidence 검증 후에만 별도 holdout 계획" in roadmap
+    assert "source snapshot signer·preregistration signer·registration authority·inventory collector" in roadmap
+    assert "서로 다른 key·operator·custody identity" in roadmap
+    assert "provider 호출과 holdout 실행을 금지" in roadmap
+    assert "Plan·Review 또는 전체 OMC의 대체·우월 증거로 사용하지 않는다" in roadmap
 
 
 def test_roadmap_tracks_work_packet_prospective_feasibility_without_overclaim() -> None:
@@ -197,7 +192,8 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "authoritative reload" in text
     assert "runner 실측 elapsed" in text
     assert "모든 arm 성공" in text
-    assert "실제 구현 workload 6건" in text
+    assert "과거 실제 구현 workload 6건" in text
+    assert "신규 study 입력으로 재사용할 수 없다" in text
     assert "1건 비판정 pilot과 동일 조건 paired 5건" in text
     assert "운영 증거 없는 자동화 확대 금지" in text
     assert "README와 실제 executor 구현 상태 정합화" in text
