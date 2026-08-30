@@ -158,10 +158,12 @@ Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 �
 
 - 설치 receipt schema v3가 배포 파일을 `exclusive_managed`·`merged_host`·`preserved`·`manual_review`로 분류한다.
 - `setup-ignore`가 OMC 전용 파일만 literal pathspec으로 Git 추적에서 제외하고 로컬 파일을 보존하며, migration receipt 기반 rollback을 제공한다.
+- setup이 생성하는 OMC ignore block은 공유 `.gitignore`가 아니라 `git rev-parse --git-path info/exclude`로 찾은 repository-local exclude에 기록한다. 예약된 OMC namespace만 wildcard로 압축하고 일반 경로는 literal rule로 유지하며, linked worktree와 비 Git 대상의 동작을 분리한다.
 - 설치 SSOT는 고정된 `omc_kit/` 경로가 아니라 `.omc/install-source.json`의 `source_path`로 통일했다. 저장소에 추적되던 legacy `omc_kit/scripts` 복사본과 nested installer fallback은 제거했다.
-- active migration의 receipt·`.gitignore` hash가 불일치하거나 receipt가 손상되면 manifest 생성과 파일 변경 전에 exit code `2`로 fail-close한다.
+- active migration은 legacy schema v1/v2의 `.gitignore` 결속을 유지하고 schema v3부터 local exclude hash에 결속한다. receipt가 손상되거나 결속된 ignore surface가 달라지면 manifest 생성과 파일 변경 전에 exit code `2`로 fail-close한다.
 - receipt schema v3를 install audit·version 판정이 인식하며, legacy migration receipt v1의 안전한 v2 승격까지 지원한다.
-- 실제 사용처 8곳에 `setup --force`를 적용했고 strict install audit `8/8`에서 source metadata·receipt schema·관리 block·설치 무결성·source freshness가 모두 통과했다. 비 Git 대상 1곳은 completion hook을 `not_applicable`로 판정하고 핵심 OMC 사용 준비 상태는 `ready`로 확인했다.
+- local-exclude 전환은 관련 회귀 `185 passed`, 핵심 setup/gitignore 테스트 `126 passed`, staged TDD gate와 fresh setup smoke를 통과했다. smoke에서 공유 `.gitignore`는 그대로 유지됐고 exclusive receipt 214개 경로는 86개 rule로 압축됐다(59.8% 감소).
+- 실제 사용처 8곳에 대한 기존 `setup --force`와 strict install audit `8/8`은 전환 이전 커밋 기준으로 통과했다. 이번 local-exclude 전환 커밋 기준 재배포·strict audit은 별도 rollout으로 남겨 두며 완료 증거에 합산하지 않는다. 비 Git 대상은 completion hook을 `not_applicable`로 유지한다.
 
 ## 로드맵 검증 매트릭스
 
