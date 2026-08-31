@@ -1,0 +1,16 @@
+{
+  "schema_version": "omc-study-supersession/v1",
+  "superseded_study_id": "real-use-product-observation-202609-v1",
+  "superseded_artifact": "docs/real_use_product_observation_preregistration_v1.json",
+  "superseded_artifact_sha256": "16aa508b5ec85f302e6d157895bf5e31bfb5d7007f9aaba3c449a4cbff45bc2c",
+  "terminal_status": "superseded_before_observation",
+  "observed_candidate_count": 0,
+  "observation_allowed": false,
+  "sample_inheritance_allowed": false,
+  "successor_artifact": "docs/real_use_product_observation_preregistration_v2.json",
+  "mutation_policy": "immutable_git_blob_after_commit",
+  "write_once_authority": "git_commit_object",
+  "effective_when": "artifact and roadmap hash binding are committed together",
+  "reason_code": "study_scope_and_operational_outcome_split",
+  "recorded_at": "2026-08-31T16:20:00+09:00"
+}

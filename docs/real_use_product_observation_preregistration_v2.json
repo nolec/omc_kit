@@ -1,0 +1,281 @@
+{
+  "schema_version": "omc-real-use-observation-preregistration/v2",
+  "study_id": "real-use-product-observation-v2",
+  "study_status": "draft_unregistered",
+  "claim_eligible": false,
+  "observation_allowed": false,
+  "predecessor": {
+    "artifact": "docs/real_use_product_observation_preregistration_v1.json",
+    "supersession_artifact": "docs/real_use_product_observation_v1_supersession.json",
+    "terminal_status": "superseded_before_observation",
+    "inherited_candidate_count": 0,
+    "sample_inheritance_allowed": false
+  },
+  "repositories": [
+    "sixshop3-storefront-fe",
+    "market-reasoning-engine",
+    "research-auto"
+  ],
+  "observation_window": {
+    "starts_at": null,
+    "ends_at": null,
+    "minimum_registration_buffer_hours": 24,
+    "fixed_duration_days": 14,
+    "automatic_extension_allowed": false,
+    "activation_policy": "freeze exact timestamps and source hashes before immutable registry registration; enroll repositories afterward; observation starts only after final enrollment plus buffer"
+  },
+  "source_freeze": {
+    "omc_kit_commit": null,
+    "observer_source_sha256": null,
+    "completion_validator_sha256": null,
+    "operator_validator_sha256": null,
+    "source_change_policy": "close_current_study_and_preregister_new_study"
+  },
+  "cohort": {
+    "relationship": "shared_cohort_independent_outcomes",
+    "candidate_population": "every OMC session in an enrolled repository during the fixed observation window",
+    "selection_policy": "prospective_chronological_first_n",
+    "selection_count": 6,
+    "minimum_repositories": 2,
+    "replacement_allowed": false,
+    "tie_breaker": "session_start_recorded_at_then_session_id_ascending",
+    "eligibility_recorded_before_mutation": true,
+    "provisional_work_class": "implementation",
+    "terminal_work_class_validation_required": true,
+    "excluded_work_classes": [
+      "document_only",
+      "setup",
+      "roadmap",
+      "benchmark_maintenance",
+      "synthetic"
+    ],
+    "repository_path_policy_required": true,
+    "no_diff_policy": "excluded_without_replacement",
+    "docs_only_policy": "excluded_without_replacement",
+    "scope_mismatch_policy": "OBSERVATION_INCONCLUSIVE"
+  },
+  "population_inventory": {
+    "source": "omc_session_state_stream",
+    "baseline_checkpoint_required": true,
+    "complete_session_stream_reconciliation_required": true,
+    "every_session_maps_to_exactly_one_observer_inventory_event": true,
+    "missing_session_policy": "OBSERVATION_INCONCLUSIVE",
+    "skipped_eligible_candidate_policy": "OBSERVATION_INCONCLUSIVE",
+    "overlapping_mutating_session_policy": "continue_user_work_and_invalidate_study",
+    "required_session_start_fields": [
+      "session_id",
+      "repository",
+      "recorded_at",
+      "head_commit",
+      "index_sha256",
+      "worktree_sha256",
+      "dirty_paths_sha256",
+      "request_sha256",
+      "provisional_work_class"
+    ]
+  },
+  "observer_contract": {
+    "mode": "passive_fail_open_for_user_work_fail_close_for_evidence",
+    "network_calls_allowed": false,
+    "provider_calls_allowed": false,
+    "child_subprocesses_allowed": false,
+    "hook_invocations_per_session": {
+      "session_start": 1,
+      "task_terminal": 1
+    },
+    "preflight": {
+      "invocations_per_surface": 200,
+      "warmup_invocations_excluded": 10,
+      "percentile": 95,
+      "session_start_maximum_ms": 100,
+      "task_terminal_maximum_ms": 100,
+      "failure_policy": "registration_blocked"
+    }
+  },
+  "terminal_contract": {
+    "task_terminal_metric_cutoff": "observer_and_decision_metrics_at_task_terminal_before_user_signoff",
+    "post_cutoff_required_metrics": [
+      "user_acceptance_from_final_user_signoff",
+      "friction_acceptable_from_final_user_signoff"
+    ],
+    "required_every_terminal_fields": [
+      "decision_receipt_count",
+      "decision_stream_complete"
+    ],
+    "exactly_one_state_required": true,
+    "states": [
+      "VERIFIED_COMPLETION",
+      "MANUAL_TAKEOVER",
+      "ABANDONED"
+    ],
+    "automatic_completion_requires": [
+      "terminal_diff_sha256",
+      "contract_scope_sha256",
+      "verification_receipt_sha256",
+      "verification_writer_identity"
+    ],
+    "user_acceptance_required": true,
+    "user_signoff_recorded_after_task_terminal_metric_cutoff": true,
+    "automatic_verification_conflict_policy": "user_rejection_prevents_verified_completion"
+  },
+  "metric_definitions": {
+    "verified_and_user_accepted": {
+      "source": "TASK_TERMINAL joined to FINAL_USER_SIGNOFF by selected_session_id",
+      "count_when": "terminal_state == VERIFIED_COMPLETION and user_acceptance == true",
+      "population": "all six selected eligible tasks",
+      "missing_policy": "COMPLETION_SAMPLE_INCONCLUSIVE"
+    },
+    "manual_takeover": {
+      "source": "TASK_TERMINAL.terminal_state",
+      "count_when": "terminal_state == MANUAL_TAKEOVER",
+      "population": "all six selected eligible tasks",
+      "missing_policy": "COMPLETION_SAMPLE_INCONCLUSIVE"
+    },
+    "abandonment": {
+      "source": "TASK_TERMINAL.terminal_state",
+      "count_when": "terminal_state == ABANDONED",
+      "population": "all six selected eligible tasks",
+      "missing_policy": "COMPLETION_SAMPLE_INCONCLUSIVE"
+    },
+    "recorded_decision_count": {
+      "source": "TASK_TERMINAL.decision_receipt_count",
+      "reconciliation_source": "unique durable decision_receipt events",
+      "population": "all six selected eligible tasks",
+      "window": "eligibility_recorded_at through task_terminal",
+      "deduplication_key": "decision_receipt_id",
+      "zero_count_policy": "valid only when decision_receipt_count == 0 and decision_stream_complete == true",
+      "stream_completeness_policy": "decision_stream_complete must be true for every selected task; false or missing is OPERATOR_EXPERIENCE_SAMPLE_INCONCLUSIVE",
+      "reconciliation_policy": "terminal count must equal unique durable event count; mismatch is OPERATOR_EXPERIENCE_SAMPLE_INCONCLUSIVE",
+      "missing_policy": "OPERATOR_EXPERIENCE_SAMPLE_INCONCLUSIVE",
+      "median_method": "sort ascending; for even N use arithmetic mean of the two middle values"
+    },
+    "friction_acceptable": {
+      "source": "FINAL_USER_SIGNOFF.case_assessments[].friction_acceptable",
+      "allowed_values": [
+        true,
+        false
+      ],
+      "required_signer_role": "final_user_signer",
+      "population": "all six selected eligible tasks",
+      "missing_policy": "OPERATOR_EXPERIENCE_SAMPLE_INCONCLUSIVE",
+      "collection_timing": "after_task_terminal_metric_cutoff"
+    },
+    "observer_latency_ms": {
+      "source": "observer monotonic_ns end minus start",
+      "conversion": "duration_ns / 1000000",
+      "quantile_method": "nearest-rank: sorted_values[ceil(0.95 * N) - 1]",
+      "preflight_population": "200 invocations per surface minus the first 10 warmups",
+      "runtime_population": "one session_start and one task_terminal event for each selected task",
+      "missing_policy": "OPERATOR_EXPERIENCE_SAMPLE_INCONCLUSIVE"
+    },
+    "task_wall_time_ms": {
+      "source": "TASK_TERMINAL.recorded_at minus SESSION_INVENTORY.recorded_at",
+      "population": "all six selected eligible tasks",
+      "use_for_pass_fail": false,
+      "missing_policy": "REPORT_ONLY_MISSING_NO_AXIS_EFFECT"
+    }
+  },
+  "outcome_axes": {
+    "completion_reliability": {
+      "ready_outcome": "COMPLETION_SAMPLE_READY",
+      "not_ready_outcome": "COMPLETION_SAMPLE_NOT_READY",
+      "inconclusive_outcome": "COMPLETION_SAMPLE_INCONCLUSIVE",
+      "detached_receipt_required": true,
+      "thresholds": {
+        "verified_and_user_accepted_minimum_count": 5,
+        "manual_takeover_maximum_count": 1,
+        "abandonment_maximum_count": 0,
+        "missing_evidence_maximum_count": 0,
+        "skipped_candidate_maximum_count": 0,
+        "overlapping_mutating_session_maximum_count": 0
+      }
+    },
+    "operator_experience": {
+      "ready_outcome": "OPERATOR_EXPERIENCE_SAMPLE_READY",
+      "not_ready_outcome": "OPERATOR_EXPERIENCE_SAMPLE_NOT_READY",
+      "inconclusive_outcome": "OPERATOR_EXPERIENCE_SAMPLE_INCONCLUSIVE",
+      "detached_receipt_required": true,
+      "baseline": "none_by_design",
+      "comparative_improvement_claim_allowed": false,
+      "task_wall_time_policy": "report_only",
+      "metric_cutoff": "observer_and_decision_metrics_at_task_terminal_before_user_signoff",
+      "post_cutoff_required_metrics": [
+        "friction_acceptable_from_final_user_signoff"
+      ],
+      "thresholds": {
+        "recorded_decision_count_maximum_median": 2,
+        "friction_acceptable_minimum_count": 5,
+        "manual_takeover_maximum_count": 1,
+        "abandonment_maximum_count": 0,
+        "missing_observer_event_maximum_count": 0,
+        "session_start_observer_p95_maximum_ms": 100,
+        "terminal_observer_p95_maximum_ms": 100
+      }
+    }
+  },
+  "outcome_precedence": {
+    "global": [
+      "INVALID_REGISTRATION_OR_SOURCE_FREEZE -> OBSERVATION_INCONCLUSIVE",
+      "INVENTORY_MISSING_SKIPPED_OR_OVERLAPPING -> OBSERVATION_INCONCLUSIVE",
+      "SELECTED_ELIGIBLE_TASKS_BELOW_6_OR_REPOSITORIES_BELOW_2 -> LOW_NATURAL_DEMAND",
+      "EVALUATE_AXIS_OUTCOMES"
+    ],
+    "completion_reliability": [
+      "MISSING_REQUIRED_EVIDENCE -> COMPLETION_SAMPLE_INCONCLUSIVE",
+      "ALL_THRESHOLDS_PASS -> COMPLETION_SAMPLE_READY",
+      "OTHERWISE -> COMPLETION_SAMPLE_NOT_READY"
+    ],
+    "operator_experience": [
+      "MISSING_OBSERVER_OR_SIGNOFF_EVIDENCE -> OPERATOR_EXPERIENCE_SAMPLE_INCONCLUSIVE",
+      "ALL_THRESHOLDS_PASS -> OPERATOR_EXPERIENCE_SAMPLE_READY",
+      "OTHERWISE -> OPERATOR_EXPERIENCE_SAMPLE_NOT_READY"
+    ],
+    "aggregation": [
+      "ANY_AXIS_INCONCLUSIVE -> OBSERVATION_INCONCLUSIVE",
+      "EXACTLY_ONE_AXIS_READY_AND_ONE_NOT_READY -> OBSERVATION_INCONCLUSIVE",
+      "BOTH_AXES_NOT_READY -> PRODUCT_WORKFLOW_NOT_READY",
+      "BOTH_AXES_READY_AND_VALID_FINAL_USER_SIGNOFF -> OPERATIONAL_SAMPLE_READY",
+      "OTHERWISE -> OBSERVATION_INCONCLUSIVE"
+    ]
+  },
+  "authority_separation": {
+    "roles": [
+      "observer_collector",
+      "completion_validator",
+      "operator_validator",
+      "final_user_signer"
+    ],
+    "key_reuse_allowed": false,
+    "collector_may_issue_outcome_receipts": false,
+    "axis_validators_may_issue_final_user_signoff": false,
+    "identity_and_subject_hash_required": true
+  },
+  "aggregation": {
+    "ready_outcome": "OPERATIONAL_SAMPLE_READY",
+    "required_inputs": [
+      "COMPLETION_SAMPLE_READY",
+      "OPERATOR_EXPERIENCE_SAMPLE_READY",
+      "VALID_FINAL_USER_SIGNOFF"
+    ],
+    "partial_pass_policy": "OBSERVATION_INCONCLUSIVE",
+    "single_axis_ready_allowed": false,
+    "product_value_promotion_allowed": false,
+    "comparative_superiority_claim_allowed": false
+  },
+  "missing_data_policy": {
+    "imputation_allowed": false,
+    "default_numeric_value_allowed": false,
+    "outcome": "OBSERVATION_INCONCLUSIVE"
+  },
+  "registration": {
+    "required_before_observation": true,
+    "required_receipts": [
+      "immutable_git_registry_record",
+      "rfc3161_timestamp_receipt",
+      "repository_enrollment_receipt"
+    ],
+    "mutable_branch_reference_allowed": false,
+    "all_repository_enrollments_required_before_buffer": true,
+    "activation_requires_exact_window": true
+  }
+}
