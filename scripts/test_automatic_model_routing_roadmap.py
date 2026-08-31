@@ -200,6 +200,148 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "새 스킬·정책·benchmark fixture 수 증가는 완료 지표로 사용하지 않는다" in text
 
 
+def test_real_use_product_observation_is_preregistered_before_n_child_acceptance() -> None:
+    text = ROADMAP_PATH.read_text(encoding="utf-8")
+    preregistration_path = Path(
+        "docs/real_use_product_observation_preregistration_v1.json"
+    )
+    preregistration_bytes = preregistration_path.read_bytes()
+    preregistration = json.loads(preregistration_bytes)
+    preregistration_sha256 = hashlib.sha256(preregistration_bytes).hexdigest()
+
+    assert "### Real-use Product Observation" in text
+    assert "`2026-09-01`부터 `2026-09-14`" in text
+    assert "`sixshop3-storefront-fe`" in text
+    assert "`market-reasoning-engine`" in text
+    assert "`research-auto`" in text
+    assert "최소 2개 저장소의 자연 발생 복잡 작업 6건" in text
+    assert "verified completion `80% 이상`" in text
+    assert "manual takeover `20% 이하`" in text
+    assert "abandonment `10% 이하`" in text
+    assert "confirmation 중앙값 `2회 이하`" in text
+    assert "신규 benchmark 코드·schema·transport·skill 추가를 금지" in text
+    assert "`LOW_NATURAL_DEMAND`" in text
+    assert "`PRODUCT_WORKFLOW_NOT_READY`" in text
+    assert "`OPERATIONAL_SAMPLE_READY`" in text
+    assert "14일 이후 자동 연장하지 않는다" in text
+    assert "수동 append-only observation ledger" in text
+    assert preregistration["schema_version"] == (
+        "omc-real-use-observation-preregistration/v1"
+    )
+    assert preregistration["study_id"] == "real-use-product-observation-202609-v1"
+    assert preregistration["source_freeze"]["omc_kit_commit"] == (
+        "3dc2dc45e0752b94c2c017d2cc87bc17e359db84"
+    )
+    assert preregistration["source_freeze"]["receipt_required_before_eligibility"] is True
+    assert preregistration["eligibility"]["candidate_capture_policy"] == (
+        "prospective_chronological_first_n"
+    )
+    assert preregistration["eligibility"]["record_every_candidate"] is True
+    assert preregistration["eligibility"]["observed_at_source"] == (
+        "session_start_receipt.recorded_at"
+    )
+    assert preregistration["eligibility"]["eligibility_decision_values"] == [
+        "eligible",
+        "excluded",
+    ]
+    assert preregistration["eligibility"]["exclusion_reason_policy"] == (
+        "null for eligible; non-empty string for excluded"
+    )
+    assert preregistration["eligibility"]["selection_tie_breaker"] == (
+        "candidate_event_id_ascending"
+    )
+    assert preregistration["eligibility"]["replacement_allowed"] is False
+    assert preregistration["eligibility"]["candidate_universe_source"] == (
+        "complete_session_start_receipt_inventory"
+    )
+    assert preregistration["eligibility"]["completeness_reconciliation_required"] is True
+    assert preregistration["metrics"]["eligible_tasks"]["required_count"] == 6
+    assert preregistration["metrics"]["verified_completion"]["minimum_count"] == 5
+    assert preregistration["metrics"]["manual_takeover"]["maximum_count"] == 1
+    assert preregistration["metrics"]["abandonment"]["maximum_count"] == 0
+    assert preregistration["metrics"]["confirmation"]["maximum_median"] == 2
+    assert preregistration["metrics"]["repeat_use"]["minimum_repositories"] == 2
+    assert preregistration["metrics"]["repeat_use"]["minimum_tasks_per_repository"] == 2
+    assert preregistration["terminal_state_contract"]["exactly_one_required"] is True
+    assert preregistration["missing_data_policy"]["outcome"] == (
+        "OBSERVATION_INCONCLUSIVE"
+    )
+    assert preregistration["ledger"]["path"] == (
+        ".omc/observations/real-use-product-observation-202609-v1.jsonl"
+    )
+    assert preregistration["ledger"]["mutation_policy"] == "append_only"
+    assert preregistration["ledger"]["required_every_event_fields"] == [
+        "event_id",
+        "study_id",
+        "preregistration_sha256",
+        "registration_git_commit",
+    ]
+    event_types = preregistration["ledger"]["event_types"]
+    candidate_fields = event_types["CANDIDATE_OBSERVED"]["required_fields"]
+    terminal_fields = event_types["TASK_TERMINAL"]["required_fields"]
+    assert "candidate_event_id" in candidate_fields
+    assert "terminal_state" not in candidate_fields
+    assert "candidate_event_id" in terminal_fields
+    assert "terminal_state" in terminal_fields
+    assert event_types["TASK_TERMINAL"]["requires_selected_candidate"] is True
+    assert event_types["CORRECTION"]["required_fields"] == [
+        "supersedes_event_id",
+        "correction_reason",
+    ]
+    assert "session_start_inventory_sha256_by_repository" in (
+        event_types["FINALIZATION"]["required_fields"]
+    )
+    assert "ledger_sha256" not in event_types["FINALIZATION"]["required_fields"]
+    assert "pre_finalization_ledger_sha256" in (
+        event_types["FINALIZATION"]["required_fields"]
+    )
+    assert "source_receipt_sha256_by_repository" in (
+        event_types["FINALIZATION"]["required_fields"]
+    )
+    assert event_types["FINALIZATION"]["requires_candidate_stream_reconciliation"] is True
+    assert preregistration["ledger"]["pre_finalization_hash_scope"] == (
+        "all complete JSONL event lines before FINALIZATION, including one LF byte "
+        "after each line"
+    )
+    detached_receipt = preregistration["ledger"]["detached_finalization_receipt"]
+    assert detached_receipt["path"] == (
+        ".omc/observations/"
+        "real-use-product-observation-202609-v1.finalization-receipt.json"
+    )
+    assert "finalized_ledger_sha256" in detached_receipt["required_fields"]
+    assert "finalization_event_sha256" in detached_receipt["required_fields"]
+    assert detached_receipt["finalization_event_hash_scope"] == (
+        "the complete FINALIZATION JSONL line, including one trailing LF byte"
+    )
+    assert preregistration["missing_data_policy"]["validation_scope"] == (
+        "required_fields_for_each_event_type"
+    )
+    assert preregistration["binding_validation"][
+        "event_preregistration_sha256_must_equal_registered_artifact_sha256"
+    ] is True
+    assert preregistration["outcome_order"][0]["outcome"] == (
+        "OBSERVATION_INCONCLUSIVE"
+    )
+    assert preregistration["outcome_order"][1]["outcome"] == "LOW_NATURAL_DEMAND"
+    assert preregistration_sha256 in text
+    assert "첫 eligible session 이전 Git commit" in text
+    assert "모든 자연 발생 후보 작업" in text
+    assert "시간순 첫 6건" in text
+    assert "모든 ledger event" in text
+    assert "event type별 필수 필드" in text
+    assert "session-start inventory" in text
+    assert "pre-finalization ledger SHA-256" in text
+    assert "detached finalization receipt" in text
+    assert "완전한 FINALIZATION JSONL line과 trailing LF 1바이트" in text
+    assert "서로 배타적인 terminal state" in text
+    assert "누락되면 `OBSERVATION_INCONCLUSIVE`" in text
+    assert "절대 운영 기준" in text
+    assert (
+        "Real-use Product Observation → P0 Product Value acceptance"
+        in text
+    )
+
+
 def test_roadmap_history_matches_the_frozen_section_manifest() -> None:
     history = HISTORY_PATH.read_text(encoding="utf-8")
     manifest = json.loads(HISTORY_MANIFEST_PATH.read_text(encoding="utf-8"))

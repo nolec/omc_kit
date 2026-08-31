@@ -49,6 +49,19 @@ Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 �
 
 운영 증거 없는 자동화 확대 금지를 공통 원칙으로 둔다. 실제 병목을 줄이지 않는 새 추상화, 정책, 스킬 추가는 위 종료 기준보다 우선하지 않는다.
 
+### Real-use Product Observation
+
+제품 가설은 `bounded N-child` 자체가 아니라, OMC가 실제 개발 작업에서 검증 완료율과 사용자 확인·수동 개입·포기의 절대 운영 기준을 충족해 반복 사용할 가치가 있는지다. 이 관측만으로 기존 workflow 대비 감축을 주장하지 않는다. `2026-09-01`부터 `2026-09-14`까지 `sixshop3-storefront-fe`, `market-reasoning-engine`, `research-auto`를 관측 대상으로 고정하며, 기간 중 최소 2개 저장소의 자연 발생 복잡 작업 6건을 확보한다. 대상 작업은 시작 전에 eligibility를 기록하고, 실제 구현·버그 수정·리팩터링이면서 검증 가능한 DoD가 있고 파일 3개 이상·신규 API·복수 의존성·30분 이상 예상 작업 중 하나를 만족해야 한다. 문서·setup·roadmap·benchmark 수정, 합성 fixture, 완료 작업 재실행은 제외한다.
+
+- 사전등록: canonical 계약은 `docs/real_use_product_observation_preregistration_v1.json`이며 SHA-256은 `16aa508b5ec85f302e6d157895bf5e31bfb5d7007f9aaba3c449a4cbff45bc2c`다. 이 artifact를 첫 eligible session 이전 Git commit에 포함하고, 첫 ledger event가 registration commit과 artifact hash를 기록해야 한다. 모든 ledger event는 study ID·preregistration hash·registration commit을 다시 결속하며 preregistration hash는 등록 artifact hash와 정확히 같아야 한다. 후보·terminal event는 해당 저장소의 source receipt hash를, FINALIZATION은 저장소별 source receipt hash map을 기록한다. 순서 또는 hash가 다르면 전체 판정을 `OBSERVATION_INCONCLUSIVE`로 닫는다.
+- 표본 선택: candidate universe는 고정 저장소와 기간의 전체 OMC session-start inventory다. 모든 자연 발생 후보 작업을 실행 전에 기록하고 제외 작업도 eligibility와 제외 사유를 남긴다. 각 session-start receipt는 candidate stream에 정확히 한 번 나타나야 하며, receipt의 `recorded_at`으로 적격 후보를 정렬한 시간순 첫 6건만 선택한다. eligible의 제외 사유는 null, excluded의 제외 사유는 비어 있지 않은 문자열이어야 한다. 동률은 candidate event ID 오름차순으로 해소하고 선택된 작업은 결과와 무관하게 교체하지 않는다.
+- 성공 기준: 서로 배타적인 terminal state를 작업마다 정확히 하나 기록한다. verified completion `80% 이상`은 6건 중 `5건 이상`, manual takeover `20% 이하`는 `1건 이하`, abandonment `10% 이하`는 `0건`, confirmation 중앙값 `2회 이하`로 판정한다. repeat use는 최소 2개 저장소에서 각각 적격 작업 2건 이상일 때만 인정한다.
+- 측정: 기존 session·run·completion receipt를 우선 사용한다. 직접 제공되지 않는 사용자 행동 필드는 `.omc/observations/real-use-product-observation-202609-v1.jsonl`의 수동 append-only observation ledger에 기록한다. `CANDIDATE_OBSERVED`, `TASK_TERMINAL`, `CORRECTION`, `FINALIZATION`의 event type별 필수 필드를 적용하고 terminal event는 선택된 candidate event ID를 참조해야 한다. 수정은 기존 event를 덮어쓰지 않고 `supersedes_event_id`가 있는 새 event로 추가한다. pre-finalization ledger SHA-256은 FINALIZATION 직전까지의 완전한 JSONL line과 각 line 뒤의 LF byte를 대상으로 계산한다.
+- 누락 정책: 각 event type의 필수 필드를 독립적으로 검사한다. 후보 event에는 terminal 필드를 요구하지 않으며 terminal event에는 session ID·저장소·OMC source commit·설치 manifest hash·검증 명령·결과·confirmation 수·terminal state를 요구한다. 해당 유형의 필수 값이 누락되면 `OBSERVATION_INCONCLUSIVE`이며 값을 추정하거나 0으로 대체하지 않는다.
+- 동결: OMC source는 `3dc2dc45e0752b94c2c017d2cc87bc17e359db84`로 고정한다. 각 대상 저장소는 eligibility 전에 같은 source commit·install manifest hash·strict audit pass를 담은 설치 receipt를 기록해야 한다. 관측 중 신규 benchmark 코드·schema·transport·skill 추가를 금지하고 routing·threshold·workflow도 변경하지 않는다. 치명적 UX 결함 수정이 필요하면 현재 study를 종료하고 새 preregistration으로 시작한다.
+- 종료: 관측 종료 시 `FINALIZATION` event가 저장소별 session-start inventory hash·건수와 candidate stream hash·건수를 대조하고 pre-finalization ledger SHA-256을 기록한다. finalization event SHA-256은 완전한 FINALIZATION JSONL line과 trailing LF 1바이트를 대상으로 계산한다. 이 event를 append한 전체 ledger와 마지막 LF byte의 SHA-256 및 finalization event SHA-256은 ledger 밖의 write-once detached finalization receipt에 기록한다. candidate stream·event type별 필수 데이터·registration·source receipt·detached receipt가 하나라도 불완전하면 `OBSERVATION_INCONCLUSIVE`로 판정한다. 검증된 적격 작업이 6건 미만이면 `LOW_NATURAL_DEMAND`, 지표가 하나라도 미달하면 `PRODUCT_WORKFLOW_NOT_READY`, 모두 충족하면 `OPERATIONAL_SAMPLE_READY`로 판정한다. 14일 이후 자동 연장하지 않는다.
+- 경계: 관측 결과는 제품 수요·사용성 gate이며 Product Value development·holdout evidence로 자동 승격하지 않는다. `OPERATIONAL_SAMPLE_READY` 이후에도 기존 development evidence와 독립 holdout 계약을 별도로 통과해야만 bounded N-child acceptance를 열 수 있다.
+
 ### Product Value P0 evidence-loss 종료 승인 대기와 신규 prospective study
 
 - 상태 보고: 전체 완성도 백분율을 사용하지 않는다. 구현·검증 준비·운영 검증·독립 재현 evidence-state를 대상별로 보고한다.
@@ -179,7 +192,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 실행 우선순위
 
-`P0 Product Value acceptance → P1 Operator Experience 측정·조정 → P1 Evidence 독립 검증 → P2 유지보수·멀티 호스트 UX` 순서로 고정한다. 경쟁 제품의 mode를 복제하거나 새 스킬을 늘리는 작업은 이 acceptance를 앞당길 때만 수행한다.
+`Real-use Product Observation → P0 Product Value acceptance → P1 Operator Experience 측정·조정 → P1 Evidence 독립 검증 → P2 유지보수·멀티 호스트 UX` 순서로 고정한다. 경쟁 제품의 mode를 복제하거나 새 스킬을 늘리는 작업은 이 acceptance를 앞당길 때만 수행한다.
 
 ## 제품 원칙과 금지선
 
@@ -216,4 +229,4 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 한 줄 결론
 
-현재 OMC의 다음 제품 전환점은 기능 추가가 아니라, 완성된 bounded N-child 실행이 실제 작업의 성공률을 높이고 시간·token·개입을 줄이는지 독립 receipt로 증명하는 것이다.
+현재 OMC의 다음 제품 전환점은 기능 추가가 아니라, 자연 발생 작업에서 OMC가 반복 사용될 가치가 있는지 먼저 확인하고 그 gate를 통과한 뒤 bounded N-child가 성공률·시간·token·개입을 개선하는지 독립 receipt로 증명하는 것이다.
