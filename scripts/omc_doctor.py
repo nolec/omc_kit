@@ -16,6 +16,7 @@ import stat
 import subprocess
 from pathlib import Path
 
+import omc_install_audit
 from omc_hook_contract import (
     CLAUDE_HOOK_CONTRACT,
     CODEX_HOOK_CONTRACT,
@@ -93,6 +94,30 @@ def _run_status(project_root: Path) -> tuple[bool, str]:
     if proc.returncode != 0:
         return False, (proc.stderr or proc.stdout).strip()
     return True, proc.stdout.strip()
+
+
+def _installation_readiness(project_root: Path) -> dict[str, object]:
+    """Return the same readiness report used by the public version command."""
+    try:
+        audit = omc_install_audit.audit_target(project_root)
+        report = audit.get("version_readiness")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return {
+            "overall_status": "invalid",
+            "release_status": "invalid",
+            "source_status": "invalid",
+            "install_integrity": "invalid",
+            "error": str(exc),
+        }
+    if not isinstance(report, dict):
+        return {
+            "overall_status": "invalid",
+            "release_status": "invalid",
+            "source_status": "invalid",
+            "install_integrity": "invalid",
+            "error": "missing version_readiness report",
+        }
+    return report
 
 
 _FALLBACK_DEPLOYED_SCRIPTS = {
@@ -648,6 +673,19 @@ def main() -> int:
         print(_warn("OMC 상태", status_text or "failed",
                     fix="python3 scripts/omc.py state init --target ."))
 
+    readiness = _installation_readiness(root)
+    readiness_status = str(readiness.get("overall_status", "invalid"))
+    readiness_ok = readiness_status == "up_to_date"
+    readiness_detail = (
+        f"release={readiness.get('release_status', 'invalid')}, "
+        f"source={readiness.get('source_status', 'invalid')}, "
+        f"integrity={readiness.get('install_integrity', 'invalid')}"
+    )
+    if readiness_ok:
+        print(_ok(f"OMC readiness: {readiness_status}", readiness_detail))
+    else:
+        print(_warn(f"OMC readiness: {readiness_status}", readiness_detail))
+
     # ── 자동 수정 ──────────────────────────────────────────────────────────
     if args.fix and warnings:
         fixable = [c for c in warnings if c.fix_fn]
@@ -670,7 +708,7 @@ def main() -> int:
     elif warnings:
         print(f"\n총 {len(warnings)}개 경고 — 자동 수정하려면: python3 scripts/omc_doctor.py --fix")
 
-    if not warnings and status_ok:
+    if not warnings and status_ok and readiness_ok:
         print("\n OMC 설치 상태 이상 없음")
         return 0
 

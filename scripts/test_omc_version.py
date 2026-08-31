@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -11,12 +12,21 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 import omc_version
+import omc_state
+import omc_doctor
+import omc_install_audit
 import install
 from omc_source_hash import source_sha256
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _readiness_command(target: Path) -> str:
+    script = shlex.quote(str((target / "scripts" / "omc.py").resolve()))
+    resolved_target = shlex.quote(str(target.resolve()))
+    return f"python3 {script} version --target {resolved_target}"
 
 
 def _source_kit(root: Path, version: str = "0.1.0") -> Path:
@@ -196,6 +206,111 @@ def test_omc_version_json_surface(tmp_path: Path):
     payload = json.loads(proc.stdout)
     assert payload["installed_version"] == "0.1.0"
     assert payload["overall_status"] == "up_to_date"
+
+
+def test_doctor_is_authoritative_and_state_defers_readiness_check(tmp_path: Path):
+    source = _source_kit(tmp_path)
+    target = _installed_target(tmp_path, source)
+    (source / "VERSION").write_text("0.2.0\n", encoding="utf-8")
+
+    expected = omc_version.version_readiness(
+        target,
+        source_path=str(source),
+        install_integrity_status="ok",
+    )["overall_status"]
+    doctor = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).parent / "omc_doctor.py"),
+            "--target",
+            str(target),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    state_output = omc_state.status(target)
+
+    assert expected == "upgrade_available"
+    assert f"OMC readiness: {expected}" in doctor.stdout
+    assert "- readiness: unverified" in state_output
+    assert f"- readiness_command: {_readiness_command(target)}" in state_output
+
+
+def test_state_status_readiness_command_quotes_target_path(tmp_path: Path):
+    target = tmp_path / "consumer project"
+    target.mkdir()
+
+    output = omc_state.status(target)
+
+    assert f"- readiness_command: {_readiness_command(target)}" in output
+
+
+def test_state_status_readiness_command_runs_outside_target(tmp_path: Path):
+    target = _installed_target(tmp_path, _source_kit(tmp_path))
+    foreign_cwd = tmp_path / "foreign cwd"
+    foreign_cwd.mkdir()
+    output = omc_state.status(target)
+    command = next(
+        line.removeprefix("- readiness_command: ")
+        for line in output.splitlines()
+        if line.startswith("- readiness_command: ")
+    )
+
+    proc = subprocess.run(
+        shlex.split(command),
+        cwd=foreign_cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_state_status_fast_path_does_not_run_install_audit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    target = _installed_target(tmp_path, _source_kit(tmp_path))
+
+    def fail_if_called(project_root: Path) -> dict[str, object]:
+        raise AssertionError(f"unexpected full install audit for {project_root}")
+
+    monkeypatch.setattr(omc_install_audit, "audit_target", fail_if_called)
+
+    output = omc_state.status(target)
+
+    assert "- readiness: unverified" in output
+
+
+def test_doctor_does_not_report_healthy_when_readiness_is_drifted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    monkeypatch.setattr(omc_doctor, "_build_checks", lambda root: [])
+    monkeypatch.setattr(omc_doctor, "_run_status", lambda root: (True, ""))
+    monkeypatch.setattr(
+        omc_doctor,
+        "_installation_readiness",
+        lambda root: {
+            "overall_status": "install_drifted",
+            "release_status": "up_to_date",
+            "source_status": "modified",
+            "install_integrity": "drifted",
+        },
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["omc_doctor.py", "--target", str(tmp_path)],
+    )
+
+    assert omc_doctor.main() == 0
+    output = capsys.readouterr().out
+    assert "OMC readiness: install_drifted" in output
+    assert "OMC 설치 상태 이상 없음" not in output
 
 
 def test_install_receipt_v3_preserves_original_install_time(tmp_path: Path):

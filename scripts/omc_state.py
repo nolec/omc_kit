@@ -8,6 +8,7 @@ import fcntl
 import hashlib
 import json
 import re
+import shlex
 import subprocess
 import sys
 import uuid
@@ -2227,6 +2228,18 @@ def status(project_root: Path) -> str:
     if recent_finished_runs:
         lines.append(f"- recent_runs: {_format_recent_runs_bucket(recent_finished_runs)}")
     lines.append(f"- enforce_confirm: {policy.get('enforce_confirm', True)}")
+    lines.append("- readiness: unverified")
+    lines.append(
+        "- readiness_reason: authoritative install audit is intentionally deferred"
+    )
+    readiness_script = shlex.quote(
+        str((project_root / "scripts" / "omc.py").resolve())
+    )
+    readiness_target = shlex.quote(str(project_root.resolve()))
+    lines.append(
+        f"- readiness_command: python3 {readiness_script} version --target "
+        f"{readiness_target}"
+    )
     lines.append(f"- 현재 커밋 범위: {_format_scope_bucket(git_scope['staged'])}")
     lines.append(f"- 범위 밖 dirty 변경: {_format_scope_bucket(git_scope['unstaged'])}")
     lines.append(f"- .omc 실행 아티팩트: {_format_scope_bucket(git_scope['omc_artifacts'])}")

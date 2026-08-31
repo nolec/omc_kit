@@ -160,6 +160,7 @@ Operator Experience의 반복 커밋 확인 병목은 `2026-08-31`에 코드 계
 ### Operator Experience 1차 통합안
 
 - CLI fast-path 1차 완료: 루트 `-h`·`--help`를 prompt 옵션으로 잘못 라우팅하던 회귀를 수정하고, source freshness hash는 저장소 전체가 아니라 실제 설치 대상만 순회한다. template 탐색 오류는 불완전한 hash를 반환하지 않고 fail-close한다.
+- readiness fast-path 완료: 반복 호출되는 `state status`는 전체 설치 감사를 수행하지 않고 `unverified`와 동일 target의 권위 확인 명령만 출력한다. `version`과 `doctor`는 install audit의 `version_readiness`를 SSOT로 사용하며 drift 상태에서 정상 설치 문구를 출력하지 않는다. target과 CWD가 달라도 공백을 포함한 절대 script·target 경로의 안내 명령을 실행할 수 있게 고정했다. 관련 회귀 `88 passed`, 외부 CWD 실행, `py_compile`, diff check, staged TDD gate와 OMC review `APPROVE`를 확인했으며 단독 `state` 20회 측정은 median `194ms`, p95 `223ms`였다.
 - 실제 5회 측정: help p95 `71.8ms`, version p95 `255.5ms`, status p95 `202.0ms`. 설치·버전·hash 집중 회귀 `155 passed`, staged TDD gate와 OMC review `APPROVE`를 통과했다.
 - 작은 작업: 안전 조건을 만족하면 Lite `task → review`
 - 복잡한 작업: Full `plan → task → review`
