@@ -30,7 +30,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재 | 독립 Batch B와 confirmatory batch 재현 |
 | Review | `NOT_PROVEN` | durable native provider 원문 부재 | 동일 diff native 재실행과 blind adjudication |
 | Autopilot | `LIMITED` | 안전한 opt-in 경로와 identity fail-close | 운영 latency·개입 acceptance |
-| Setup | `OPERATIONALLY_VALIDATED` | 사용처 8곳 strict install audit 통과 | source freshness와 rollback 회귀 유지 |
+| Setup | `OPERATIONALLY_VALIDATED` | 최신 배포 기준 사용처 8곳 `setup --force`·strict audit 통과, 기존 Git 상태 보존 | source freshness와 rollback 회귀 유지 |
 
 과거 6건 corpus에서 `DEVELOPMENT_PASS`가 기록됐지만 manifest·workload inventory·execution packet 원문을 현재 검증할 수 없어 유효한 development evidence로 승계하지 않는다. 구현과 acceptance 계약은 유지하되 새 prospective development study에서 chronological first-N 6건을 다시 확보하고, 그 증거가 검증된 뒤에만 비중복 disjoint holdout을 별도로 계획한다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
 
@@ -165,7 +165,7 @@ Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 �
 - active migration은 legacy schema v1/v2의 `.gitignore` 결속을 유지하고 schema v3부터 local exclude hash에 결속한다. receipt가 손상되거나 결속된 ignore surface가 달라지면 manifest 생성과 파일 변경 전에 exit code `2`로 fail-close한다.
 - receipt schema v3를 install audit·version 판정이 인식하며, legacy migration receipt v1의 안전한 v2 승격까지 지원한다.
 - local-exclude 전환은 관련 회귀 `185 passed`, 핵심 setup/gitignore 테스트 `126 passed`, staged TDD gate와 fresh setup smoke를 통과했다. smoke에서 공유 `.gitignore`는 그대로 유지됐고 exclusive receipt 214개 경로는 86개 rule로 압축됐다(59.8% 감소).
-- 실제 사용처 8곳에 대한 기존 `setup --force`와 strict install audit `8/8`은 전환 이전 커밋 기준으로 통과했다. 이번 local-exclude 전환 커밋 기준 재배포·strict audit은 별도 rollout으로 남겨 두며 완료 증거에 합산하지 않는다. 비 Git 대상은 completion hook을 `not_applicable`로 유지한다.
+- 실제 사용처 8곳은 `55252ec` 기준 `setup --force` 재배포와 strict install audit `8/8`을 통과했다. 모든 대상에서 `installed_integrity_status=ok`, `core_usage_readiness=ready`, `source_freshness_status=up_to_date`, `verification_status=ok`를 확인했고 설치 전후 Git 상태가 동일해 기존 로컬 작업도 보존됐다. 소스 `omc_kit` 자체는 consumer inventory에서 제외했으며 비 Git 대상 1곳은 completion hook을 `not_applicable`로 유지했다.
 
 ## 로드맵 검증 매트릭스
 
