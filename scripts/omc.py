@@ -309,11 +309,29 @@ def main() -> int:
         help="Publish or verify immutable Product Value evidence bundles.",
     )
     product_value_evidence.add_argument(
-        "evidence_command", choices=("publish", "verify")
+        "evidence_command",
+        choices=(
+            "publish",
+            "verify",
+            "prepare-closure",
+            "validate-closure",
+            "record-closure",
+        ),
     )
-    product_value_evidence.add_argument("--evidence-root", type=Path, required=True)
-    product_value_evidence.add_argument("--batch-id", required=True)
+    product_value_evidence.add_argument("--evidence-root", type=Path)
+    product_value_evidence.add_argument("--batch-id")
     product_value_evidence.add_argument("--artifacts", type=Path)
+    product_value_evidence.add_argument("--preregistration-sha256")
+    product_value_evidence.add_argument("--registry-record", type=Path)
+    product_value_evidence.add_argument("--registry-path")
+    product_value_evidence.add_argument("--registry-commit")
+    product_value_evidence.add_argument("--diagnostic-receipt-sha256")
+    product_value_evidence.add_argument("--closure-authority-sha256")
+    product_value_evidence.add_argument("--closed-at")
+    product_value_evidence.add_argument("--final-decision-deadline")
+    product_value_evidence.add_argument("--subject", type=Path)
+    product_value_evidence.add_argument("--receipt", type=Path)
+    product_value_evidence.add_argument("--out", type=Path)
 
     product_value_acceptance = sub.add_parser(
         "product-value-acceptance",
@@ -719,15 +737,37 @@ def main() -> int:
 
     if args.command == "product-value-evidence":
         evidence_script = kit / "scripts" / "omc_product_value_evidence_bundle.py"
-        forwarded = [
-            args.evidence_command,
-            "--evidence-root",
-            str(args.evidence_root.resolve()),
-            "--batch-id",
-            args.batch_id,
-        ]
-        if args.artifacts is not None:
-            forwarded.extend(["--artifacts", str(args.artifacts.resolve())])
+        forwarded = [args.evidence_command]
+        if args.evidence_command in {
+            "publish",
+            "verify",
+            "prepare-closure",
+            "validate-closure",
+            "record-closure",
+        }:
+            forwarded.extend(["--repository-root", str(kit.resolve())])
+        for option in (
+            "evidence_root",
+            "batch_id",
+            "artifacts",
+            "preregistration_sha256",
+            "registry_record",
+            "registry_path",
+            "registry_commit",
+            "diagnostic_receipt_sha256",
+            "closure_authority_sha256",
+            "closed_at",
+            "final_decision_deadline",
+            "subject",
+            "receipt",
+            "out",
+        ):
+            value = getattr(args, option)
+            if value is not None:
+                rendered = (
+                    str(value.resolve()) if isinstance(value, Path) else str(value)
+                )
+                forwarded.extend([f"--{option.replace('_', '-')}", rendered])
         return _run_script(evidence_script, forwarded)
 
     if args.command == "product-value-acceptance":

@@ -68,6 +68,24 @@ BUNDLE_EVIDENCE_INPUTS = {
     "executor_shadow",
     "provider_adapter",
 }
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+
+
+def ensure_acceptance_batch_open(manifest: dict[str, Any]) -> None:
+    """Reject any manifest whose signed Git registry marker closes the batch."""
+    batch_id = manifest.get("batch_id")
+    preregistration_sha256 = manifest.get("preregistration_sha256")
+    if not isinstance(batch_id, str) or not isinstance(
+        preregistration_sha256, str
+    ):
+        return
+    closure = evidence_bundle.load_failure_closure_marker(
+        REPOSITORY_ROOT,
+        batch_id=batch_id,
+        preregistration_sha256=preregistration_sha256,
+    )
+    if closure is not None:
+        raise ValueError("acceptance_batch_closed")
 
 
 def resolve_evidence_bundle_inputs(
@@ -82,9 +100,13 @@ def resolve_evidence_bundle_inputs(
     materialized = evidence_bundle.materialize_evidence_bundle(
         evidence_root,
         batch_id=batch_id,
+        repository_root=REPOSITORY_ROOT,
     )
     index = materialized.index
     paths = materialized.paths
+    if set(paths) == evidence_bundle.CLOSURE_PATHS:
+        materialized.cleanup()
+        raise ValueError("acceptance_batch_closed")
     try:
         validate_bundle_acceptance_runner(paths["runner/acceptance.py"])
     except (OSError, ValueError):
@@ -2602,6 +2624,7 @@ def main(argv: list[str] | None = None) -> int:
             bundle_inputs["manifest"] if bundle_inputs is not None else args.manifest
         )
         manifest = _validate_acceptance_manifest(_load_json(manifest_path))
+        ensure_acceptance_batch_open(manifest)
         if bundle_inputs is not None:
             validate_bundle_execution_contract(
                 manifest,

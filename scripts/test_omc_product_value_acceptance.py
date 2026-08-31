@@ -167,6 +167,33 @@ def _repo(root: Path, name: str) -> tuple[Path, str]:
     return repo, _git(repo, "rev-parse", "HEAD")
 
 
+def _closure_registry_repo(
+    root: Path,
+    *,
+    batch_id: str,
+    preregistration_sha256: str,
+) -> tuple[Path, str, dict[str, object]]:
+    repository = root / "closure-registry"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.email", "closure@example.com")
+    _git(repository, "config", "user.name", "Closure Test")
+    registry_record = {
+        "schema_version": 1,
+        "batch_id": batch_id,
+        "preregistration_sha256": preregistration_sha256,
+    }
+    registry_root = repository / ".omc" / "registry"
+    registry_root.mkdir(parents=True)
+    (registry_root / f"{batch_id}.json").write_text(
+        json.dumps(registry_record),
+        encoding="utf-8",
+    )
+    _git(repository, "add", ".")
+    _git(repository, "commit", "-qm", "register batch")
+    return repository, _git(repository, "rev-parse", "HEAD"), registry_record
+
+
 def _packet(workload_id: str, repo_alias: str, source_commit: str) -> dict[str, object]:
     request = f"Implement {workload_id}"
     dod = f"Verify {workload_id}"
@@ -3095,6 +3122,120 @@ def test_holdout_acceptance_resolves_only_verified_bundle_inputs(
     assert resolved["registration_receipt"].read_text(encoding="utf-8") == "{}"
     assert resolved["bundle_runtime"] is not None
     resolved["bundle_runtime"].cleanup()
+
+
+def test_failure_closure_bundle_cannot_resume_acceptance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        evidence_bundle,
+        "_temporary_roots",
+        lambda: (Path("/private/tmp"), Path("/tmp")),
+    )
+    private_key, public_key, authority_sha256 = _authority_key_material()
+    repository, registry_commit, registry_record = _closure_registry_repo(
+        tmp_path,
+        batch_id="product-value-batch-20260826-v5-r1",
+        preregistration_sha256="6" * 64,
+    )
+    subject = evidence_bundle.prepare_failure_closure_subject(
+        repository_root=repository,
+        batch_id="product-value-batch-20260826-v5-r1",
+        preregistration_sha256="6" * 64,
+        registry_path=(
+            ".omc/registry/product-value-batch-20260826-v5-r1.json"
+        ),
+        registry_commit=registry_commit,
+        diagnostic_receipt_sha256="4" * 64,
+        closure_authority_sha256=authority_sha256,
+        closed_at="2026-08-30T13:00:00+09:00",
+        final_decision_deadline="2026-09-05",
+        missing_artifacts=("manifest", "workload_inventory", "execution_packets"),
+    )
+    receipt = {
+        "schema_version": "omc-product-value-authority-receipt/v1",
+        "role": "closure",
+        "signer_public_key": public_key,
+        "subject_sha256": evidence_bundle._canonical_sha256(subject),
+    }
+    receipt["signature"] = base64.b64encode(
+        private_key.sign(evidence_bundle._canonical_bytes(receipt))
+    ).decode("ascii")
+    source_root = tmp_path / "closure"
+    source_root.mkdir()
+    subject_path = source_root / "closure-subject.json"
+    receipt_path = source_root / "closure-receipt.json"
+    registry_path = source_root / "registry-record.json"
+    subject_path.write_text(json.dumps(subject), encoding="utf-8")
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    registry_path.write_text(json.dumps(registry_record), encoding="utf-8")
+    evidence_root = tmp_path / "durable-evidence"
+    evidence_root.mkdir()
+    evidence_bundle.publish_evidence_bundle(
+        evidence_root,
+        batch_id="product-value-batch-20260826-v5-r1-closure",
+        artifacts={
+            "closure-subject.json": subject_path,
+            "closure-receipt.json": receipt_path,
+            "registry-record.json": registry_path,
+        },
+        repository_root=repository,
+    )
+    monkeypatch.setattr(acceptance, "REPOSITORY_ROOT", repository)
+
+    with pytest.raises(ValueError, match="^acceptance_batch_closed$"):
+        acceptance.resolve_evidence_bundle_inputs(
+            evidence_root=evidence_root,
+            batch_id="product-value-batch-20260826-v5-r1-closure",
+            direct_inputs={},
+        )
+
+
+def test_direct_manifest_is_blocked_by_signed_closure_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, _, _ = _v4_manifest_and_packet(monkeypatch)
+    batch_id = manifest["batch_id"]
+    preregistration_sha256 = manifest["preregistration_sha256"]
+    repository, registry_commit, _ = _closure_registry_repo(
+        tmp_path,
+        batch_id=batch_id,
+        preregistration_sha256=preregistration_sha256,
+    )
+    private_key, public_key, authority_sha256 = _authority_key_material()
+    subject = evidence_bundle.prepare_failure_closure_subject(
+        repository_root=repository,
+        batch_id=batch_id,
+        preregistration_sha256=preregistration_sha256,
+        registry_path=f".omc/registry/{batch_id}.json",
+        registry_commit=registry_commit,
+        diagnostic_receipt_sha256="4" * 64,
+        closure_authority_sha256=authority_sha256,
+        closed_at="2026-08-30T13:00:00+09:00",
+        final_decision_deadline="2026-09-05",
+        missing_artifacts=("manifest", "workload_inventory", "execution_packets"),
+    )
+    receipt = {
+        "schema_version": "omc-product-value-authority-receipt/v1",
+        "role": "closure",
+        "signer_public_key": public_key,
+        "subject_sha256": evidence_bundle._canonical_sha256(subject),
+    }
+    receipt["signature"] = base64.b64encode(
+        private_key.sign(evidence_bundle._canonical_bytes(receipt))
+    ).decode("ascii")
+    evidence_bundle.record_failure_closure(
+        repository,
+        subject=subject,
+        receipt=receipt,
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(acceptance, "REPOSITORY_ROOT", repository)
+
+    assert acceptance.main(["validate", "--manifest", str(manifest_path)]) == 2
 
 
 def test_bundle_registration_receipt_must_match_execution_context(
