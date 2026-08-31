@@ -286,3 +286,18 @@ def test_source_version_file_is_not_a_managed_target_path(tmp_path: Path):
     manifest = install._build_install_manifest(source, target)
 
     assert "VERSION" not in manifest
+
+
+def test_root_help_lists_root_commands_instead_of_prompt_options():
+    result = subprocess.run(
+        [sys.executable, str(Path(__file__).with_name("omc.py")), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "{setup," in result.stdout
+    assert "version" in result.stdout
+    assert "usage: omc.py prompt" not in result.stdout

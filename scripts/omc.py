@@ -161,7 +161,11 @@ def main() -> int:
         "run",
         "peer-review",
     }
-    if not argv or argv[0].startswith("-") or argv[0] not in commands:
+    if not argv:
+        argv = ["prompt", *argv]
+    elif argv[0] not in {"-h", "--help"} and (
+        argv[0].startswith("-") or argv[0] not in commands
+    ):
         argv = ["prompt", *argv]
     sys.argv = [sys.argv[0], *argv]
 

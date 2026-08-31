@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
+from typing import Iterator
 
 
 _EXCLUDED_DIRECTORIES = {
@@ -79,33 +81,48 @@ def is_deployed_script_name(name: str) -> bool:
     return name.startswith("omc_") or name in DEPLOYED_SCRIPT_EXTRAS
 
 
-def _is_installable_source_file(source_kit: Path, path: Path) -> bool:
-    if not _is_candidate_file(source_kit, path):
-        return False
-    relative = path.relative_to(source_kit)
-    if relative == Path("VERSION"):
-        return True
-    if relative.parts[0] == "templates":
-        return True
-    if len(relative.parts) != 2:
-        return False
-    parent, name = relative.parts
-    if parent == "scripts":
-        return is_deployed_script_name(name)
-    if parent == "docs":
-        return name in DEPLOYED_DOCUMENTS
-    if parent == "prompts":
-        return name in DEPLOYED_PROMPTS
-    return False
+def _raise_scan_error(error: OSError) -> None:
+    raise error
+
+
+def _iter_template_files(source_kit: Path) -> Iterator[Path]:
+    templates = source_kit / "templates"
+    if not templates.is_dir():
+        return
+    for root, directories, files in os.walk(templates, onerror=_raise_scan_error):
+        directories[:] = sorted(
+            name for name in directories if name not in _EXCLUDED_DIRECTORIES
+        )
+        root_path = Path(root)
+        for name in sorted(files):
+            path = root_path / name
+            if _is_candidate_file(source_kit, path):
+                yield path
+
+
+def _iter_installable_source_files(source_kit: Path) -> Iterator[Path]:
+    version = source_kit / "VERSION"
+    if _is_candidate_file(source_kit, version):
+        yield version
+
+    yield from _iter_template_files(source_kit)
+
+    scripts = source_kit / "scripts"
+    if scripts.is_dir():
+        for path in scripts.iterdir():
+            if is_deployed_script_name(path.name) and _is_candidate_file(source_kit, path):
+                yield path
+
+    for parent, names in (("docs", DEPLOYED_DOCUMENTS), ("prompts", DEPLOYED_PROMPTS)):
+        for name in names:
+            path = source_kit / parent / name
+            if _is_candidate_file(source_kit, path):
+                yield path
 
 
 def source_sha256(source_kit: Path) -> str:
     digest = hashlib.sha256()
-    for path in sorted(
-        candidate
-        for candidate in source_kit.rglob("*")
-        if _is_installable_source_file(source_kit, candidate)
-    ):
+    for path in sorted(_iter_installable_source_files(source_kit)):
         digest.update(str(path.relative_to(source_kit)).encode("utf-8"))
         digest.update(_sha256_file(path).encode("ascii"))
     return digest.hexdigest()

@@ -13,7 +13,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V3 Failure-driven Escalation | 완료 | failure class·retry·reroute·hold decision 통합 | multi-run tuning |
 | V4 Telemetry-driven Tuning | 완료 | token·cost·retry·reroute·readiness KPI 수집 | 운영 drift 감시 |
 | V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter, authoritative acceptance harness | 실제 3–5 child 운영 표본 acceptance |
-| Operator Experience | 진행중 | output contract, Lite/Full routing, Stage graph SSOT, resume identity fail-close 구축 | 지연·개입 횟수 운영 검증 |
+| Operator Experience | 진행중 | output contract, Lite/Full routing, Stage graph SSOT, resume identity fail-close, CLI fast-path 구축 | 지연·개입 횟수 운영 검증 |
 
 현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. 승인된 v2 grant를 제한 병렬 실행하는 `bounded orchestration`과 authoritative acceptance 판정 코드는 갖췄지만 실제 운영 표본 acceptance, 실패 재분배, 자동 모델 전환, 자동 ship은 아직 완료되지 않았다.
 
@@ -49,10 +49,10 @@ Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 �
 
 운영 증거 없는 자동화 확대 금지를 공통 원칙으로 둔다. 실제 병목을 줄이지 않는 새 추상화, 정책, 스킬 추가는 위 종료 기준보다 우선하지 않는다.
 
-### Product Value P0 evidence-loss 종료 경로와 신규 prospective study
+### Product Value P0 evidence-loss 종료 승인 대기와 신규 prospective study
 
 - 상태 보고: 전체 완성도 백분율을 사용하지 않는다. 구현·검증 준비·운영 검증·독립 재현 evidence-state를 대상별로 보고한다.
-- 기존 종료 상태: `product-value-batch-20260826-v5-r1`과 preregistration `69115b41210a14b42ea9096bf3cea98c8897a2047b5bc0a322e5f7a64c2af8df`는 manifest·workload inventory·execution packet 원문을 복구하지 못했으므로 `2026-08-30`에 `BLOCKED` / `evidence_loss` 종료 승인 대기로 전환했다. schema v1 Git registry blob, closure subject, Ed25519 authority receipt를 결속하고 no-replace marker로 acceptance 재개를 차단하는 fail-close 경로는 구현·검증했다. 실제 승인된 signer identity로 durable closure marker를 기록하기 전까지는 종료 완료로 승격하지 않으며 기존 `2026-09-05` 최종 판정 기한도 연장하지 않는다.
+- 기존 종료 상태: `product-value-batch-20260826-v5-r1`과 preregistration `69115b41210a14b42ea9096bf3cea98c8897a2047b5bc0a322e5f7a64c2af8df`는 manifest·workload inventory·execution packet 원문을 복구하지 못했으므로 `2026-08-30`에 `BLOCKED` / `evidence_loss` 종료 승인 대기로 전환했다. schema v1 Git registry blob, closure subject, Ed25519 authority receipt를 결속하고 no-replace marker로 acceptance 재개를 차단하는 fail-close 경로는 구현·검증했다. 실제 승인된 signer identity·서명·durable failure receipt 게시를 검증한 뒤에만 종료 완료로 승격한다. 기존 `2026-09-05` 최종 판정 기한은 연장하지 않는다.
 - 복구 금지: 기존 batch의 manifest·workload inventory·execution packet을 추정하거나 재구성하지 않는다. hash-only registry record와 임시 진단 receipt는 실행·판정 입력으로 승격하지 않는다.
 - study 분리: 신규 study는 기존 batch의 retry 또는 continuation이 아니다. 새 evaluation ID·selection policy·source universe·authority commitment·registration lineage를 사용한다.
 - `2026-08-31`: selection policy·source universe·authority commitment를 observation 전에 등록한다.
@@ -144,6 +144,8 @@ Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 �
 
 ### Operator Experience 1차 통합안
 
+- CLI fast-path 1차 완료: 루트 `-h`·`--help`를 prompt 옵션으로 잘못 라우팅하던 회귀를 수정하고, source freshness hash는 저장소 전체가 아니라 실제 설치 대상만 순회한다. template 탐색 오류는 불완전한 hash를 반환하지 않고 fail-close한다.
+- 실제 5회 측정: help p95 `71.8ms`, version p95 `255.5ms`, status p95 `202.0ms`. 설치·버전·hash 집중 회귀 `155 passed`, staged TDD gate와 OMC review `APPROVE`를 통과했다.
 - 작은 작업: 안전 조건을 만족하면 Lite `task → review`
 - 복잡한 작업: Full `plan → task → review`
 - 고위험 또는 명시적 Full override: `plan → task → critique → review`
@@ -210,7 +212,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 10. Product Value 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
 11. **capture-only schema v2 코드 완료 / 실제 표본 대기** — Work Packet manifest의 15분 registration buffer, implementation-only selection, 4-authority key·custody 분리, append-only source checkpoint, failure seal·명시적 restart parent, durable publish/reload 계약을 고정했다. 다음은 실제 chronological first-N 5건을 capture·publish·reload해 수집 가능성만 판정하는 것이며 Plan Batch B, Product Value acceptance 또는 품질 projection으로 합산하지 않는다.
 12. Plan Batch B와 native Review 독립 검증을 계속해 각 대체 판정을 별도로 갱신한다.
-13. README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증한다.
+13. **CLI fast-path 1차 완료 / 멀티 호스트 검증 대기** — 루트 help와 source freshness hash 병목을 제거하고 fail-close 회귀를 고정했다. 다음은 README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증하는 것이다.
 
 ## 한 줄 결론
 

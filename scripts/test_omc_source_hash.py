@@ -5,10 +5,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 import install as _install
 import omc_install_audit as _audit
+import omc_source_hash as _source_hash
 from omc_source_hash import source_sha256
 
 
@@ -25,6 +27,29 @@ class TestSourceHash(unittest.TestCase):
     def test_consumers_share_source_hash_contract(self):
         self.assertIs(_install._source_sha256, source_sha256)
         self.assertIs(_audit._source_sha256, source_sha256)
+
+    def test_source_hash_does_not_scan_the_entire_repository_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "kit"
+            _write_source_kit(source)
+
+            with patch.object(Path, "rglob", side_effect=AssertionError("full tree scan")):
+                self.assertTrue(source_sha256(source))
+
+    def test_template_scan_error_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "kit"
+            _write_source_kit(source)
+
+            def walk_with_error(_root, **kwargs):
+                onerror = kwargs.get("onerror")
+                if onerror is not None:
+                    onerror(PermissionError("template scan denied"))
+                return []
+
+            with patch.object(_source_hash.os, "walk", side_effect=walk_with_error):
+                with self.assertRaisesRegex(PermissionError, "template scan denied"):
+                    source_sha256(source)
 
     def test_runtime_artifacts_do_not_change_source_hash(self):
         with tempfile.TemporaryDirectory() as tmp:
