@@ -47,6 +47,8 @@ Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 �
 | Evidence | P1 | Plan·Review 품질 우위와 비용 절감이 독립 운영 증거로 확정되지 않음 | single-agent baseline 대비 성공률·시간·token·개입 횟수, durable raw output, blind adjudication 수집 | 사전 등록된 독립 배치의 acceptance를 통과한 지표만 대체·우월 판정에 사용 |
 | Maintainability | P2 | public/research CLI 경계와 setup 배포 SSOT는 정리됐지만 상태 수명주기·source freshness와 검증 도구 규모가 여전히 사용자 신뢰를 저해 | stale session과 운영 파일 기반 거짓 source drift 교정, 멀티 호스트 동일 fixture 검증 | README·CLI·로드맵 상태가 일치하고 일반 사용 경로가 setup·task·autopilot·status·ship 중심으로 동작하며 완료 상태와 freshness가 실제 Git·run 상태와 일치 |
 
+Operator Experience의 반복 커밋 확인 병목은 `2026-08-31`에 코드 계약을 닫았다. 리뷰에서 이미 제시한 동일 범위 local commit 선택은 현재 confirmed session·TTL·선택 path·blob과 정확한 staged tree에 결속된 authorization으로 pre-commit에서 한 번만 검증하고, 실제 commit tree가 일치할 때 post-commit에서 receipt를 한 번 소비한다. 범위·내용·세션·만료가 달라지면 fail-close하며, 실패한 재검증은 이전 authorization을 즉시 폐기해 `--no-verify` 뒤 만료 receipt가 소비되는 경로도 막는다. push·PR·deploy 권한은 상속하지 않는다. 실제 post-commit hook 통합 테스트를 포함한 관련 회귀 `178 passed`, 문법 검사, staged TDD gate와 OMC review `APPROVE`를 확인했다. 이는 반복 확인 한 종류를 제거한 구현 완료 근거이며, Lite/Full 운영 표본의 p50/p95·token·전체 사용자 개입 감소를 증명한 것은 아니다.
+
 운영 증거 없는 자동화 확대 금지를 공통 원칙으로 둔다. 실제 병목을 줄이지 않는 새 추상화, 정책, 스킬 추가는 위 종료 기준보다 우선하지 않는다.
 
 ### Real-use Product Observation

@@ -8,6 +8,8 @@ if [ -x "$original" ]; then
 fi
 
 if [ -f scripts/omc.py ]; then
+  python3 scripts/omc.py state decision-consume-current --target . ||
+    printf '%s\n' '[OMC] local commit decision consumption failed' >&2
   python3 scripts/omc.py state complete --target . ||
     printf '%s\n' '[OMC] completion receipt collection failed' >&2
 fi

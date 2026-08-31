@@ -502,6 +502,13 @@ def main() -> int:
     state_decision_consume = state_sub.add_parser("decision-consume", help="Consume an advisory decision.")
     state_decision_consume.add_argument("--target", type=Path, default=Path.cwd())
     state_decision_consume.add_argument("--decision-id", required=True)
+    state_decision_consume_current = state_sub.add_parser(
+        "decision-consume-current",
+        help="Consume the current pre-commit-authorized local decision.",
+    )
+    state_decision_consume_current.add_argument(
+        "--target", type=Path, default=Path.cwd()
+    )
 
     state_run_start = state_sub.add_parser("run-start", help="Mark a guarded command as running.")
     state_run_start.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -1003,6 +1010,15 @@ def main() -> int:
                     str(args.target),
                     "--decision-id",
                     args.decision_id,
+                ],
+            )
+        if args.state_command == "decision-consume-current":
+            return _run_script(
+                state_script,
+                [
+                    "decision-consume-current",
+                    "--target",
+                    str(args.target),
                 ],
             )
         if args.state_command == "run-start":

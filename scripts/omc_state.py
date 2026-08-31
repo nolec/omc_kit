@@ -941,6 +941,111 @@ def resolve_pending_decision(project_root: Path, *, response: str) -> dict[str, 
         }
 
 
+def authorize_pending_local_commit(project_root: Path) -> dict[str, object]:
+    """Validate the staged commit against the acknowledged decision snapshot."""
+    with _omc_lock(project_root):
+        _ensure_tree(project_root)
+        latest = _read_json(_latest_path(project_root), {})
+        decision = latest.get("pending_decision")
+        if not isinstance(decision, dict):
+            return {"authorized": False, "reason": "no_pending_decision"}
+
+        reason = "authorized"
+        if decision.get("action") != "local_commit":
+            reason = "unsupported_action"
+        elif decision.get("status") != "acknowledged":
+            reason = "decision_not_acknowledged"
+        elif (
+            decision.get("session_id") != latest.get("latest_session_id")
+            or decision.get("session_id") != latest.get("latest_confirmed_session_id")
+        ):
+            reason = "session_changed"
+        else:
+            try:
+                expires_at = datetime.fromisoformat(str(decision.get("expires_at")))
+            except (TypeError, ValueError):
+                expires_at = _now() - timedelta(seconds=1)
+            if expires_at <= _now():
+                reason = "expired"
+
+        selected_paths = {
+            str(path)
+            for path in decision.get("selected_scope_paths", [])
+            if isinstance(path, str)
+        }
+        selected_entries = decision.get("selected_scope_entries")
+        if reason == "authorized" and (
+            not selected_paths or not isinstance(selected_entries, dict)
+        ):
+            reason = "invalid_option_scope"
+
+        staged_paths: list[str] = []
+        staged_tree = ""
+        if reason == "authorized":
+            staged_result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(project_root),
+                    "diff",
+                    "--cached",
+                    "--name-only",
+                    "-z",
+                    "HEAD",
+                ],
+                check=False,
+                capture_output=True,
+            )
+            tree_result = subprocess.run(
+                ["git", "-C", str(project_root), "write-tree"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if staged_result.returncode != 0 or tree_result.returncode != 0:
+                reason = "staged_scope_unavailable"
+            else:
+                staged_paths = sorted(
+                    path
+                    for path in _decode_null_delimited_paths(staged_result.stdout)
+                    if not _is_local_commit_runtime_artifact(path)
+                )
+                staged_tree = tree_result.stdout.strip()
+                if not staged_paths or set(staged_paths) != selected_paths:
+                    reason = "staged_scope_changed"
+
+        if reason == "authorized" and any(
+            selected_entries.get(path)
+            != _commit_tree_entry(project_root, head=staged_tree, path=path)
+            for path in staged_paths
+        ):
+            reason = "staged_content_changed"
+
+        checked_at = _iso_now()
+        if reason == "authorized":
+            decision["authorization"] = {
+                "action": "local_commit",
+                "checked_at": checked_at,
+                "decision_id": decision.get("decision_id"),
+                "staged_paths": staged_paths,
+                "staged_tree": staged_tree,
+            }
+        else:
+            decision["authorization"] = False
+            decision["last_authorization_failure"] = {
+                "checked_at": checked_at,
+                "reason": reason,
+            }
+        latest["updated_at"] = checked_at
+        _write_json(_latest_path(project_root), latest)
+        return {
+            "authorized": reason == "authorized",
+            "reason": reason,
+            "decision_id": decision.get("decision_id"),
+            "action": decision.get("action"),
+        }
+
+
 def consume_pending_decision(project_root: Path, *, decision_id: str) -> dict[str, object]:
     with _omc_lock(project_root):
         _ensure_tree(project_root)
@@ -980,6 +1085,38 @@ def consume_pending_decision(project_root: Path, *, decision_id: str) -> dict[st
         latest["updated_at"] = _iso_now()
         _write_json(_latest_path(project_root), latest)
         return {"consumed": True, "decision_id": decision_id, "action": decision.get("action")}
+
+
+def consume_current_pending_decision(project_root: Path) -> dict[str, object]:
+    latest = _read_json(_latest_path(project_root), {})
+    decision = latest.get("pending_decision")
+    if not isinstance(decision, dict) or decision.get("status") != "acknowledged":
+        return {"consumed": False, "reason": "no_acknowledged_decision"}
+    authorization = decision.get("authorization")
+    if not isinstance(authorization, dict) or authorization.get("action") != "local_commit":
+        return {"consumed": False, "reason": "decision_not_authorized"}
+    try:
+        expires_at = datetime.fromisoformat(str(decision.get("expires_at")))
+    except (TypeError, ValueError):
+        expires_at = _now() - timedelta(seconds=1)
+    if expires_at <= _now():
+        return {"consumed": False, "reason": "expired"}
+    decision_id = str(decision.get("decision_id") or "")
+    if not decision_id:
+        return {"consumed": False, "reason": "decision_not_found"}
+    if authorization.get("decision_id") != decision_id:
+        return {"consumed": False, "reason": "authorization_mismatch"}
+    tree_result = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "--verify", "HEAD^{tree}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if tree_result.returncode != 0 or not tree_result.stdout.strip():
+        return {"consumed": False, "reason": "commit_tree_unavailable"}
+    if authorization.get("staged_tree") != tree_result.stdout.strip():
+        return {"consumed": False, "reason": "authorization_tree_mismatch"}
+    return consume_pending_decision(project_root, decision_id=decision_id)
 
 
 def _format_scope_bucket(paths: list[str], *, empty: str = "없음", limit: int = 4) -> str:
@@ -2184,6 +2321,13 @@ def _parser() -> argparse.ArgumentParser:
     decision_consume = sub.add_parser("decision-consume", help="Consume an acknowledged local-commit decision.")
     decision_consume.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     decision_consume.add_argument("--decision-id", required=True)
+    decision_consume_current = sub.add_parser(
+        "decision-consume-current",
+        help="Consume the pre-commit-authorized local decision after commit.",
+    )
+    decision_consume_current.add_argument(
+        "--target", type=Path, default=Path.cwd(), help="Target repository root."
+    )
 
     run_start = sub.add_parser("run-start", help="Mark a guarded command as running.")
     run_start.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -2330,6 +2474,18 @@ def main() -> int:
             result = {"consumed": False, "reason": str(exc)}
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result.get("consumed") is True else 2
+
+    if args.command == "decision-consume-current":
+        try:
+            result = consume_current_pending_decision(
+                omc_utils.project_root(args.target)
+            )
+        except (OSError, ValueError) as exc:
+            result = {"consumed": False, "reason": str(exc)}
+        print(json.dumps(result, ensure_ascii=False))
+        if result.get("consumed") is True:
+            return 0
+        return 0 if result.get("reason") == "no_acknowledged_decision" else 2
 
     if args.command == "run-start":
         run = start_run(omc_utils.project_root(args.target), command_name=args.command_name, summary=args.summary)

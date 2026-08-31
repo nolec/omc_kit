@@ -150,7 +150,24 @@ def require_confirmation(project_root: Path, *, command_name: str, scope: str = 
         return 3
     roles = _confirmed_roles(latest)
     resolved_scope = _resolved_scope(command_name, scope)
-    if resolved_scope == "mutate" and not _has_mutating_role(roles):
+    local_commit_authorization = None
+    if command_name == "git commit":
+        local_commit_authorization = omc_state.authorize_pending_local_commit(
+            project_root
+        )
+    if (
+        resolved_scope == "mutate"
+        and not _has_mutating_role(roles)
+        and not (
+            isinstance(local_commit_authorization, dict)
+            and local_commit_authorization.get("authorized") is True
+        )
+    ):
+        if isinstance(local_commit_authorization, dict):
+            print(
+                "[OMC-GUARD] local_commit receipt rejected: "
+                f"{local_commit_authorization.get('reason')}"
+            )
         required = ",".join(sorted(MUTATING_ROLE_IDS))
         found = ",".join(sorted(roles)) or "none"
         print(
@@ -160,6 +177,14 @@ def require_confirmation(project_root: Path, *, command_name: str, scope: str = 
         print(f"[OMC-GUARD] found roles={found}; required any of={required}")
         print("Run: ./run omc \"작업 요청\" and confirm roles including directive or senior_coding.")
         return 4
+    if (
+        isinstance(local_commit_authorization, dict)
+        and local_commit_authorization.get("authorized") is True
+    ):
+        print(
+            "[OMC-GUARD] local_commit "
+            f"decision={local_commit_authorization.get('decision_id')} scope=staged"
+        )
     print(
         f"[OMC-GUARD] confirmed: session={latest_confirmed_session_id} "
         f"roles={','.join(sorted(roles))} scope={resolved_scope}"

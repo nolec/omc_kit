@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 import importlib.util
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import auto_prompt
@@ -533,7 +534,218 @@ def test_state_complete_uses_latest_explicit_task_when_baseline_is_duplicated(tm
 def test_post_commit_template_records_verified_completion_receipt():
     template = ROOT / "templates" / "post-commit"
     assert template.exists()
-    assert "python3 scripts/omc.py state complete --target ." in template.read_text(encoding="utf-8")
+    text = template.read_text(encoding="utf-8")
+    assert "python3 scripts/omc.py state decision-consume-current --target ." in text
+    assert "python3 scripts/omc.py state complete --target ." in text
+
+
+def test_current_local_commit_decision_is_consumed_after_matching_commit(
+    tmp_path: Path,
+):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _sync_task_session(target, "commit approved changes")
+    options = json.dumps(
+        [
+            {
+                "id": "confirm",
+                "aliases": ["확인"],
+                "value": "commit",
+                "paths": ["app.py"],
+            }
+        ],
+        ensure_ascii=False,
+    )
+    opened = _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-confirm",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    )
+    assert opened.returncode == 0, opened.stderr
+    resolved = _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "확인",
+    )
+    assert resolved.returncode == 0, resolved.stderr
+    _git(target, "add", "app.py")
+    authorized = subprocess.run(
+        [
+            sys.executable,
+            str(GUARD),
+            "require",
+            "--target",
+            str(target),
+            "--for",
+            "git commit",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert authorized.returncode == 0, authorized.stdout
+    _git(target, "commit", "-qm", "approved update")
+
+    consumed = _run(
+        "state",
+        "decision-consume-current",
+        "--target",
+        str(target),
+    )
+
+    assert consumed.returncode == 0, consumed.stderr
+    assert json.loads(consumed.stdout)["consumed"] is True
+
+
+def test_current_local_commit_decision_rejects_expired_authorization(
+    tmp_path: Path,
+):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _sync_task_session(target, "commit approved changes")
+    options = json.dumps(
+        [
+            {
+                "id": "confirm",
+                "aliases": ["확인"],
+                "value": "commit",
+                "paths": ["app.py"],
+            }
+        ],
+        ensure_ascii=False,
+    )
+    assert _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-confirm",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    ).returncode == 0
+    assert _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "확인",
+    ).returncode == 0
+    _git(target, "add", "app.py")
+    authorized = subprocess.run(
+        [
+            sys.executable,
+            str(GUARD),
+            "require",
+            "--target",
+            str(target),
+            "--for",
+            "git commit",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert authorized.returncode == 0, authorized.stdout
+
+    latest_path = target / ".omc" / "state" / "latest.json"
+    latest = _read_json(latest_path)
+    latest["pending_decision"]["expires_at"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=1)
+    ).isoformat(timespec="seconds")
+    latest_path.write_text(json.dumps(latest), encoding="utf-8")
+    _git(target, "commit", "--no-verify", "-qm", "expired update")
+
+    consumed = _run(
+        "state",
+        "decision-consume-current",
+        "--target",
+        str(target),
+    )
+
+    assert consumed.returncode != 0
+    assert json.loads(consumed.stdout)["reason"] == "expired"
+
+
+def test_post_commit_hook_consumes_authorized_local_commit_decision(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    _sync_task_session(target, "commit approved changes")
+    options = json.dumps(
+        [
+            {
+                "id": "confirm",
+                "aliases": ["확인"],
+                "value": "commit",
+                "paths": ["app.py"],
+            }
+        ],
+        ensure_ascii=False,
+    )
+    assert _run(
+        "state",
+        "decision-open",
+        "--target",
+        str(target),
+        "--decision-id",
+        "commit-confirm",
+        "--action",
+        "local_commit",
+        "--options-json",
+        options,
+    ).returncode == 0
+    assert _run(
+        "state",
+        "decision-resolve",
+        "--target",
+        str(target),
+        "--response",
+        "확인",
+    ).returncode == 0
+    _git(target, "add", "app.py")
+    authorized = subprocess.run(
+        [
+            sys.executable,
+            str(GUARD),
+            "require",
+            "--target",
+            str(target),
+            "--for",
+            "git commit",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert authorized.returncode == 0, authorized.stdout
+
+    (target / "scripts").symlink_to(ROOT / "scripts", target_is_directory=True)
+    hook = target / ".git" / "hooks" / "post-commit"
+    hook.write_bytes((ROOT / "templates" / "post-commit").read_bytes())
+    hook.chmod(0o755)
+    _git(target, "commit", "-qm", "approved update")
+
+    latest = _read_json(target / ".omc" / "state" / "latest.json")
+    assert latest["pending_decision"]["status"] == "consumed"
+    assert latest["pending_decision"]["commit_head"] == _git(
+        target, "rev-parse", "HEAD"
+    )
 
 
 def _load_state_module():

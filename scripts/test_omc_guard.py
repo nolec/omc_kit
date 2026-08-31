@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -35,6 +36,181 @@ def _init_git_repo(target: Path) -> None:
         ["git", "-C", str(target), "commit", "-qm", "baseline"],
         check=True,
     )
+
+
+def _acknowledge_local_commit(target: Path) -> None:
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    synced = subprocess.run(
+        [
+            sys.executable,
+            str(OMC),
+            "state",
+            "sync-session",
+            "--target",
+            str(target),
+            "--mode",
+            "autopilot",
+            "--title",
+            "omc-review",
+            "--request",
+            "reviewed local commit",
+            "--roles",
+            "code_review",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert synced.returncode == 0, synced.stderr
+    options = json.dumps(
+        [
+            {
+                "id": "confirm",
+                "aliases": ["확인"],
+                "value": "commit",
+                "paths": ["app.py"],
+            }
+        ],
+        ensure_ascii=False,
+    )
+    opened = subprocess.run(
+        [
+            sys.executable,
+            str(OMC),
+            "state",
+            "decision-open",
+            "--target",
+            str(target),
+            "--decision-id",
+            "reviewed-commit",
+            "--action",
+            "local_commit",
+            "--options-json",
+            options,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert opened.returncode == 0, opened.stderr
+    resolved = subprocess.run(
+        [
+            sys.executable,
+            str(OMC),
+            "state",
+            "decision-resolve",
+            "--target",
+            str(target),
+            "--response",
+            "확인",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert resolved.returncode == 0, resolved.stderr
+    subprocess.run(["git", "-C", str(target), "add", "app.py"], check=True)
+
+
+def test_git_commit_guard_accepts_scope_bound_local_commit_receipt(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    _acknowledge_local_commit(target)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(GUARD),
+            "require",
+            "--target",
+            str(target),
+            "--for",
+            "git commit",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout
+    assert "local_commit decision=reviewed-commit" in result.stdout
+
+
+def test_git_commit_guard_rejects_local_commit_receipt_after_content_drift(
+    tmp_path: Path,
+):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    _acknowledge_local_commit(target)
+    (target / "app.py").write_text("value = 3\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(target), "add", "app.py"], check=True)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(GUARD),
+            "require",
+            "--target",
+            str(target),
+            "--for",
+            "git commit",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 4
+    assert "local_commit receipt rejected: staged_content_changed" in result.stdout
+
+
+def test_git_commit_guard_clears_prior_authorization_after_expiry(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    _acknowledge_local_commit(target)
+
+    authorized = subprocess.run(
+        [
+            sys.executable,
+            str(GUARD),
+            "require",
+            "--target",
+            str(target),
+            "--for",
+            "git commit",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert authorized.returncode == 0, authorized.stdout
+
+    latest_path = target / ".omc" / "state" / "latest.json"
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    latest["pending_decision"]["expires_at"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=1)
+    ).isoformat(timespec="seconds")
+    latest_path.write_text(json.dumps(latest), encoding="utf-8")
+
+    rejected = subprocess.run(
+        [
+            sys.executable,
+            str(GUARD),
+            "require",
+            "--target",
+            str(target),
+            "--for",
+            "git commit",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert rejected.returncode == 4
+    assert "local_commit receipt rejected: expired" in rejected.stdout
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    assert latest["pending_decision"]["authorization"] is False
 
 
 def _work_class_lock_key(tmp_path: Path) -> tuple[Path, str]:
