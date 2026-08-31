@@ -45,7 +45,7 @@ Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 �
 | Product Value | P0 | bounded scheduler는 완성됐지만 실제 다중 child 가치가 미검증 | 실제 3–5 child 운영 acceptance와 single-agent baseline 비교 | 중복 실행·scope·budget 위반 없이 완료하며, baseline 대비 성공률은 같거나 높고 시간·token·개입 횟수는 사전 등록된 개선 기준을 충족 |
 | Operator Experience | P1 | 반복 승인·상태 확인·스킬 왕복이 작은 작업의 준비 시간을 키움 | Lite/Full observed 표본에서 단계별 latency·retry·개입 측정 후 안전한 자동 분기 조정 | 품질 gate를 유지하면서 p50/p95·token·사용자 개입 횟수 감소 |
 | Evidence | P1 | Plan·Review 품질 우위와 비용 절감이 독립 운영 증거로 확정되지 않음 | single-agent baseline 대비 성공률·시간·token·개입 횟수, durable raw output, blind adjudication 수집 | 사전 등록된 독립 배치의 acceptance를 통과한 지표만 대체·우월 판정에 사용 |
-| Maintainability | P2 | setup 배포 SSOT·소유권·rollback은 정리됐지만 문서·fixture·검증 도구가 커져 사용자 기능과 내부 연구 경계가 흐림 | README와 실제 executor 구현 상태 정합화, 사용자 명령과 benchmark 내부 도구 구분 | README·CLI·로드맵 상태가 일치하고 일반 사용 경로가 setup·task·autopilot·status·ship 중심으로 설명됨 |
+| Maintainability | P2 | public/research CLI 경계와 setup 배포 SSOT는 정리됐지만 상태 수명주기·source freshness와 검증 도구 규모가 여전히 사용자 신뢰를 저해 | stale session과 운영 파일 기반 거짓 source drift 교정, 멀티 호스트 동일 fixture 검증 | README·CLI·로드맵 상태가 일치하고 일반 사용 경로가 setup·task·autopilot·status·ship 중심으로 동작하며 완료 상태와 freshness가 실제 Git·run 상태와 일치 |
 
 운영 증거 없는 자동화 확대 금지를 공통 원칙으로 둔다. 실제 병목을 줄이지 않는 새 추상화, 정책, 스킬 추가는 위 종료 기준보다 우선하지 않는다.
 
@@ -225,7 +225,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 10. Product Value 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
 11. **capture-only schema v2 코드 완료 / 실제 표본 대기** — Work Packet manifest의 15분 registration buffer, implementation-only selection, 4-authority key·custody 분리, append-only source checkpoint, failure seal·명시적 restart parent, durable publish/reload 계약을 고정했다. 다음은 실제 chronological first-N 5건을 capture·publish·reload해 수집 가능성만 판정하는 것이며 Plan Batch B, Product Value acceptance 또는 품질 projection으로 합산하지 않는다.
 12. Plan Batch B와 native Review 독립 검증을 계속해 각 대체 판정을 별도로 갱신한다.
-13. **CLI fast-path 1차 완료 / 멀티 호스트 검증 대기** — 루트 help와 source freshness hash 병목을 제거하고 fail-close 회귀를 고정했다. 다음은 README·CLI·로드맵 정합성을 맞춘 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증하는 것이다.
+13. **public CLI 경계 완료 / 상태 신뢰성·멀티 호스트 검증 대기** — 루트 help는 setup·task·status·review·ship 핵심 흐름과 orchestrate·autopilot·team advanced 흐름을 우선 표시한다. Product Value·N-child research 명령은 직접 호출 호환성을 유지한 채 루트 help에서 숨겼고 README 계약과 CLI 회귀 테스트를 고정했다. 다음은 stale active session과 `.omc` 운영 파일 기반 거짓 source drift를 교정한 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증하는 것이다.
 
 ## 한 줄 결론
 

@@ -113,6 +113,27 @@ def _quickstart_text() -> str:
 """
 
 
+_ROOT_HELP_EPILOG = """Core workflows:
+  setup / doctor / verify-install  Install and verify OMC in a project.
+  $omc-task                       Implement an approved plan through the Agent Skill.
+  state status                    Inspect the current OMC session and run state.
+  $omc-review / $omc-ship         Review changes and prepare an approved release.
+
+Advanced workflows:
+  orchestrate / autopilot / team  Plan or run opt-in orchestration workflows.
+  quickstart                      Print the Korean getting-started guide.
+
+Research commands are hidden from this overview but remain callable directly.
+"""
+
+
+def _hide_suppressed_subcommands(action: argparse._SubParsersAction) -> None:
+    # argparse keeps suppressed subcommands in its display-only choice actions.
+    action._choices_actions[:] = [
+        choice for choice in action._choices_actions if choice.help != argparse.SUPPRESS
+    ]
+
+
 def _project_root(target: Path | None = None) -> Path:
     return (target or Path.cwd()).resolve()
 
@@ -169,8 +190,12 @@ def main() -> int:
         argv = ["prompt", *argv]
     sys.argv = [sys.argv[0], *argv]
 
-    ap = argparse.ArgumentParser(description="OMC-style single entrypoint for the OMC kit.")
-    sub = ap.add_subparsers(dest="command", required=True)
+    ap = argparse.ArgumentParser(
+        description="OMC-style single entrypoint for the OMC kit.",
+        epilog=_ROOT_HELP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = ap.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     setup = sub.add_parser("setup", help="Install the kit into the current or target project.")
     setup.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
@@ -234,14 +259,14 @@ def main() -> int:
 
     execute_sequence = sub.add_parser(
         "execute-sequence",
-        help="Execute one explicitly approved exact two-child sequence.",
+        help=argparse.SUPPRESS,
     )
     execute_sequence.add_argument("--request-file", type=Path, required=True)
     execute_sequence.add_argument("--target", type=Path, default=Path.cwd())
 
     execute_n_child = sub.add_parser(
         "execute-n-child",
-        help="Execute one approved bounded N-child DAG through a provider adapter.",
+        help=argparse.SUPPRESS,
     )
     execute_n_child.add_argument("--grant-file", type=Path, required=True)
     execute_n_child.add_argument("--prompts-file", type=Path, required=True)
@@ -252,7 +277,7 @@ def main() -> int:
 
     n_child_acceptance = sub.add_parser(
         "n-child-acceptance",
-        help="Run or evaluate frozen bounded N-child acceptance evidence.",
+        help=argparse.SUPPRESS,
     )
     n_child_acceptance.add_argument(
         "acceptance_command",
@@ -268,7 +293,7 @@ def main() -> int:
 
     product_value_preregistration = sub.add_parser(
         "product-value-preregistration",
-        help="Prepare or validate a prospective Product Value workload universe.",
+        help=argparse.SUPPRESS,
     )
     product_value_preregistration.add_argument(
         "preregistration_command",
@@ -310,7 +335,7 @@ def main() -> int:
 
     product_value_evidence = sub.add_parser(
         "product-value-evidence",
-        help="Publish or verify immutable Product Value evidence bundles.",
+        help=argparse.SUPPRESS,
     )
     product_value_evidence.add_argument(
         "evidence_command",
@@ -339,7 +364,7 @@ def main() -> int:
 
     product_value_acceptance = sub.add_parser(
         "product-value-acceptance",
-        help="Run or finalize manifest-bound Product Value paired evidence.",
+        help=argparse.SUPPRESS,
     )
     product_value_acceptance.add_argument(
         "acceptance_command",
@@ -368,7 +393,7 @@ def main() -> int:
 
     product_value_freeze = sub.add_parser(
         "product-value-freeze",
-        help="Prepare or validate Product Value v4 freeze inputs and candidates.",
+        help=argparse.SUPPRESS,
     )
     product_value_freeze.add_argument(
         "freeze_command", choices=("prepare-inputs", "prepare", "validate")
@@ -554,6 +579,7 @@ def main() -> int:
                 help="태스크 파일 실행 시 실제 LLM 호출 없이 계획만 출력합니다.",
             )
 
+    _hide_suppressed_subcommands(sub)
     args = ap.parse_args()
     kit = _kit_root()
 

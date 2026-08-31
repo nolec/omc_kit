@@ -288,7 +288,7 @@ def test_source_version_file_is_not_a_managed_target_path(tmp_path: Path):
     assert "VERSION" not in manifest
 
 
-def test_root_help_lists_root_commands_instead_of_prompt_options():
+def test_root_help_prioritizes_user_workflows_and_hides_research_commands():
     result = subprocess.run(
         [sys.executable, str(Path(__file__).with_name("omc.py")), "--help"],
         check=False,
@@ -298,6 +298,48 @@ def test_root_help_lists_root_commands_instead_of_prompt_options():
     )
 
     assert result.returncode == 0, result.stderr
-    assert "{setup," in result.stdout
+    assert "Core workflows" in result.stdout
+    assert "$omc-task" in result.stdout
+    assert "$omc-ship" in result.stdout
+    assert "orchestrate / autopilot / team" in result.stdout
+    assert "Research commands are hidden" in result.stdout
+    for hidden_command in (
+        "execute-sequence",
+        "execute-n-child",
+        "n-child-acceptance",
+        "product-value-preregistration",
+        "product-value-evidence",
+        "product-value-acceptance",
+        "product-value-freeze",
+    ):
+        assert hidden_command not in result.stdout
     assert "version" in result.stdout
     assert "usage: omc.py prompt" not in result.stdout
+
+
+def test_hidden_research_command_remains_directly_callable():
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("omc.py")),
+            "product-value-acceptance",
+            "--help",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "usage: omc.py product-value-acceptance" in result.stdout
+
+
+def test_readme_separates_agent_skill_workflow_from_research_cli():
+    readme = Path(__file__).resolve().parents[1] / "README.md"
+    text = readme.read_text(encoding="utf-8")
+
+    assert "## 일반 사용 경로" in text
+    assert "`$omc-task`" in text
+    assert "`$omc-ship`" in text
+    assert "내부 research 명령" in text

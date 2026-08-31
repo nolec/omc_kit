@@ -26,6 +26,17 @@ Product Value 결과는 두 판정을 분리합니다.
 
 상세 상태와 남은 작업은 [자동 모델 라우팅 로드맵](docs/automatic_model_routing_roadmap.md)을 참고하세요.
 
+## 일반 사용 경로
+
+일반 개발 작업은 내부 benchmark 명령을 직접 조합하지 않고 아래 흐름으로 사용합니다.
+
+1. `python3 scripts/omc.py setup --target /path/to/project`으로 설치합니다.
+2. 구현은 Codex의 `$omc-task`, Claude Code·Gemini CLI의 `/task`, Cursor의 자연어 요청으로 시작합니다.
+3. `python3 scripts/omc.py state status --target .`로 현재 세션과 실행 상태를 확인합니다.
+4. 변경 검토는 `$omc-review`, 배포 준비는 `$omc-ship`을 사용합니다.
+
+`product-value-*`, `execute-n-child`, acceptance·evidence 명령은 OMC 자체를 검증하는 내부 research 명령입니다. 기존 자동화와 호환되도록 직접 호출은 유지하지만 루트 `--help`의 일반 사용 목록에는 노출하지 않습니다.
+
 ## 주요 기능
 
 - **공통 작업 흐름**: plan, task, critique, review, ship, status, reentry 등 역할별 스킬 제공
