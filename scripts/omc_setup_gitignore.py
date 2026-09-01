@@ -74,6 +74,28 @@ _V2_EXCLUSIVE_PATHS = {
     "scripts/omc.py",
 }
 
+_LOCAL_RUNTIME_PATHS = {
+    ".omc/context.md",
+    ".omc/context/",
+    ".omc/hooks.json",
+    ".omc/install-receipt.json",
+    ".omc/install-source.json",
+    ".omc/lessons/",
+    ".omc/notepad.md",
+    ".omc/pipeline_session.json",
+    ".omc/policy.json",
+    ".omc/project-memory.json",
+    ".omc/runs/",
+    ".omc/setup-git-migration.json",
+    ".omc/state/",
+    ".omc/summary.md",
+    ".omc/tasks/",
+}
+
+
+def local_runtime_paths() -> tuple[str, ...]:
+    return tuple(sorted(_LOCAL_RUNTIME_PATHS))
+
 
 def _safe_relative_path(value: str) -> str | None:
     if any(ord(character) < 32 or ord(character) == 127 for character in value):
@@ -181,7 +203,19 @@ def classify_receipt_paths(receipt: dict[str, Any]) -> dict[str, list[str]]:
 
 
 def _exclusive_paths(receipt: dict[str, Any]) -> list[str]:
-    return classify_receipt_paths(receipt)["exclusive_managed"]
+    classified = classify_receipt_paths(receipt)
+    entries = receipt.get("entries", {})
+    setup_created_merged_hosts = {
+        path
+        for path in classified["merged_host"]
+        if isinstance(entries.get(path), dict)
+        and entries[path].get("setup_created") is True
+    }
+    return sorted(
+        set(classified["exclusive_managed"])
+        | setup_created_merged_hosts
+        | set(local_runtime_paths())
+    )
 
 
 def _gitignore_literal_path(path: str) -> str:

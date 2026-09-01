@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import shlex
+import subprocess
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
@@ -13,6 +14,7 @@ from omc_git_hooks import resolve_completion_hook
 from omc_source_hash import source_sha256 as _source_sha256
 from omc_quality_gate import readiness as _quality_gate_readiness
 import omc_version as _version
+from omc_setup_gitignore import local_runtime_paths, _safe_relative_path
 
 
 def _metadata_path(target: Path) -> Path:
@@ -33,6 +35,50 @@ def _looks_like_source_kit(path: Path) -> bool:
         and (path / "scripts" / "install.py").is_file()
         and (path / "prompts" / "team.json").is_file()
     )
+
+
+def _visible_setup_created_paths(
+    target: Path, receipt_schema_version: object, entries: dict[str, object]
+) -> tuple[list[str], str | None]:
+    if receipt_schema_version != 3:
+        return [], None
+    repository = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=target,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if repository.returncode != 0 or repository.stdout.strip() != "true":
+        error = "git-query-failed" if (target / ".git").exists() else None
+        return [], error
+    candidates = set(local_runtime_paths())
+    for rel, entry in sorted(entries.items()):
+        if not isinstance(entry, dict) or entry.get("setup_created") is not True:
+            continue
+        safe_path = _safe_relative_path(rel)
+        if safe_path is not None:
+            candidates.add(safe_path)
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=target,
+        check=False,
+        capture_output=True,
+    )
+    if untracked.returncode != 0:
+        return [], "git-query-failed"
+    visible: list[str] = []
+    for raw_path in untracked.stdout.split(b"\0"):
+        if not raw_path:
+            continue
+        path = raw_path.decode("utf-8", errors="surrogateescape")
+        if any(
+            path == candidate
+            or (candidate.endswith("/") and path.startswith(candidate))
+            for candidate in candidates
+        ):
+            visible.append(path)
+    return sorted(set(visible)), None
 
 
 def _active_shell_lines(content: str) -> list[str]:
@@ -342,6 +388,15 @@ def audit_target(target: Path) -> dict[str, object]:
             continue
         if actual_hash != expected_hash:
             verification_errors.append(f"drift:{rel}")
+
+    visible_setup_paths, visibility_query_error = _visible_setup_created_paths(
+        resolved, receipt_schema_version, receipt_entries
+    )
+    verification_errors.extend(
+        f"setup-visibility:{rel}" for rel in visible_setup_paths
+    )
+    if visibility_query_error is not None:
+        verification_errors.append(f"setup-visibility:{visibility_query_error}")
 
     installed_integrity_status = "ok" if not verification_errors else "failed"
     version_readiness = _version.version_readiness(

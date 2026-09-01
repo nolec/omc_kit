@@ -1141,6 +1141,9 @@ class TestRepositoryGitignore(unittest.TestCase):
             kit = root / "kit"
             target = root / "target"
             target.mkdir()
+            subprocess.run(
+                ["git", "init", "-q"], cwd=target, check=True, capture_output=True
+            )
 
             (kit / "scripts").mkdir(parents=True)
             (kit / "VERSION").write_text("0.1.0\n", encoding="utf-8")
@@ -1207,6 +1210,16 @@ class TestRepositoryGitignore(unittest.TestCase):
             )
             self.assertEqual(receipt["schema_version"], 3)
             self.assertEqual(receipt["omc_version"], "0.1.0")
+            self.assertTrue(receipt["entries"]["AGENTS.md"]["setup_created"])
+            self.assertTrue(receipt["entries"]["ETHOS.md"]["setup_created"])
+            status = subprocess.run(
+                ["git", "status", "--short", "--untracked-files=all"],
+                cwd=target,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(status.stdout, "")
             self.assertFalse((target / "VERSION").exists())
             self.assertFalse((target / "omc_kit" / "templates" / ".DS_Store").exists())
 

@@ -188,6 +188,8 @@ Work-unit closure primitive는 `2026-09-01`에 구현·검증했다. session·ta
 - receipt schema v3를 install audit·version 판정이 인식하며, legacy migration receipt v1의 안전한 v2 승격까지 지원한다.
 - local-exclude 전환은 관련 회귀 `185 passed`, 핵심 setup/gitignore 테스트 `126 passed`, staged TDD gate와 fresh setup smoke를 통과했다. smoke에서 공유 `.gitignore`는 그대로 유지됐고 exclusive receipt 214개 경로는 86개 rule로 압축됐다(59.8% 감소).
 - 실제 사용처 8곳은 `55252ec` 기준 `setup --force` 재배포와 strict install audit `8/8`을 통과했다. 모든 대상에서 `installed_integrity_status=ok`, `core_usage_readiness=ready`, `source_freshness_status=up_to_date`, `verification_status=ok`를 확인했고 설치 전후 Git 상태가 동일해 기존 로컬 작업도 보존됐다. 소스 `omc_kit` 자체는 consumer inventory에서 제외했으며 비 Git 대상 1곳은 completion hook을 `not_applicable`로 유지했다.
+- setup-created ownership과 Git visibility 검증을 보강했다. receipt가 최초 생성 파일을 `setup_created`로 기록하고, setup-created merged host와 OMC runtime 경로만 local exclude에 포함한다. strict audit은 이 경로가 다시 untracked로 노출되거나 Git probe가 실패하면 `setup-visibility` 오류로 fail-close한다. 관련 집중 회귀 `161 passed`, staged TDD gate, diff check와 OMC review `APPROVE`를 통과했다.
+- 최신 source hash `7471392acd9bc4a02875223e864486a0694ae37c8b9e7e48f0eeb11aadce38ba` 기준 실제 사용처 9곳을 다시 `setup --force` 배포하고 strict audit `9/9`을 통과했다. 모든 대상이 `installed_integrity_status=ok`, `core_usage_readiness=ready`, `source_freshness_status=up_to_date`, `verification_status=ok`였고 설치 전후 Git 상태를 보존했다. per-target 백업과 실행 로그는 `/private/tmp/omc-setup-force-20260901-2145`에 남겼다.
 
 ## 로드맵 검증 매트릭스
 

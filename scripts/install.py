@@ -88,7 +88,8 @@ def _receipt_entry(
     source_sha256: str,
     target_sha256: str,
     previous_target_sha256: str | None = None,
-) -> dict[str, str]:
+    setup_created: bool = False,
+) -> dict[str, object]:
     if policy == "preserve":
         status = "preserved"
     elif not source_sha256 or source_sha256 != target_sha256:
@@ -107,6 +108,7 @@ def _receipt_entry(
         "policy": policy,
         "status": status,
         "change": change,
+        "setup_created": setup_created,
         "verification_mode": {
             "preserve": "preserved_existing",
             "managed_generated": "generated_output",
@@ -245,6 +247,7 @@ def _build_install_manifest(source_kit: Path, target: Path) -> dict[str, dict[st
                 "ownership": str(entry.get("ownership", "")),
                 "previous_receipt_schema_version": receipt.get("schema_version"),
                 "previous_target_sha256": str(entry.get("target_sha256", "")),
+                "setup_created": entry.get("setup_created") is True,
                 "registered_current_install": False,
             }
     for source in sorted((source_kit / "scripts").glob("*.py")):
@@ -594,6 +597,7 @@ def _merge_agents_template(dst: Path, omc_block: str) -> None:
     if not dst.exists():
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(omc_block, encoding="utf-8")
+        _register_generated_output(dst, previous_target_sha256="")
         return
 
     current = dst.read_text(encoding="utf-8")
@@ -1535,6 +1539,13 @@ python3 scripts/omc_tdd_check.py --staged
             source_sha256=entry["source_sha256"],
             target_sha256=_sha256_file(tgt / rel) if (tgt / rel).is_file() else "",
             previous_target_sha256=str(entry.get("previous_target_sha256", "")),
+            setup_created=(
+                entry.get("setup_created") is True
+                or (
+                    not entry.get("previously_managed")
+                    and str(entry.get("previous_target_sha256", "")) == ""
+                )
+            ),
         )
         for rel, entry in receipt_manifest.items()
     }

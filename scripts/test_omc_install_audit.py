@@ -67,6 +67,132 @@ def _write_verified_install(target: Path) -> None:
     )
 
 class TestInstallAudit(unittest.TestCase):
+    def test_schema_v3_audit_rejects_visible_setup_created_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            target.mkdir()
+            _write_verified_install(target)
+            subprocess.run(["git", "init", "-q"], cwd=target, check=True)
+            agents = target / "AGENTS.md"
+            agents.write_text("managed\n", encoding="utf-8")
+            receipt_path = target / ".omc" / "install-receipt.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["schema_version"] = 3
+            receipt["entries"]["scripts/omc.py"]["ownership"] = "exclusive_managed"
+            receipt["entries"]["AGENTS.md"] = {
+                "policy": "managed_generated",
+                "status": "updated",
+                "ownership": "merged_host",
+                "setup_created": True,
+                "target_sha256": _sha256(agents),
+            }
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+            result = _audit.audit_target(target)
+
+            self.assertIn("setup-visibility:AGENTS.md", result["verification_errors"])
+
+    def test_schema_v3_audit_rejects_visible_runtime_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            target.mkdir()
+            _write_verified_install(target)
+            subprocess.run(["git", "init", "-q"], cwd=target, check=True)
+            receipt_path = target / ".omc" / "install-receipt.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["schema_version"] = 3
+            receipt["entries"]["scripts/omc.py"]["ownership"] = "exclusive_managed"
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            state = target / ".omc" / "state" / "latest.json"
+            state.parent.mkdir(parents=True)
+            state.write_text("{}\n", encoding="utf-8")
+
+            result = _audit.audit_target(target)
+
+            self.assertIn(
+                "setup-visibility:.omc/state/latest.json",
+                result["verification_errors"],
+            )
+
+    def test_visibility_check_batches_git_queries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=target, check=True)
+            entries = {
+                f"generated/file-{index}.txt": {"setup_created": True}
+                for index in range(100)
+            }
+
+            with patch.object(
+                _audit.subprocess, "run", wraps=subprocess.run
+            ) as run:
+                visible, error = _audit._visible_setup_created_paths(
+                    target, 3, entries
+                )
+
+            self.assertEqual(visible, [])
+            self.assertIsNone(error)
+            self.assertEqual(run.call_count, 2)
+
+    def test_visibility_check_reports_git_query_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            with patch.object(
+                _audit.subprocess,
+                "run",
+                side_effect=[
+                    subprocess.CompletedProcess(
+                        args=["git", "rev-parse"], returncode=0, stdout="true\n"
+                    ),
+                    subprocess.CompletedProcess(
+                        args=["git", "ls-files"], returncode=128, stderr=b"fatal"
+                    ),
+                ],
+            ):
+                visible, error = _audit._visible_setup_created_paths(target, 3, {})
+
+            self.assertEqual(visible, [])
+            self.assertEqual(error, "git-query-failed")
+
+    def test_visibility_check_reports_repository_probe_failure_with_git_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            (target / ".git").mkdir()
+            with patch.object(
+                _audit.subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess(
+                    args=["git", "rev-parse"], returncode=128, stderr="fatal"
+                ),
+            ):
+                visible, error = _audit._visible_setup_created_paths(target, 3, {})
+
+            self.assertEqual(visible, [])
+            self.assertEqual(error, "git-query-failed")
+
+    def test_audit_fails_closed_when_visibility_query_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            target.mkdir()
+            _write_verified_install(target)
+            receipt_path = target / ".omc" / "install-receipt.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["schema_version"] = 3
+            receipt["entries"]["scripts/omc.py"]["ownership"] = "exclusive_managed"
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+            with patch.object(
+                _audit,
+                "_visible_setup_created_paths",
+                return_value=([], "git-query-failed"),
+            ):
+                result = _audit.audit_target(target)
+
+            self.assertIn(
+                "setup-visibility:git-query-failed",
+                result["verification_errors"],
+            )
+
     def test_husky_dispatcher_accepts_direct_shell_delegation(self):
         self.assertTrue(
             _audit._husky_dispatches_public_hook(

@@ -66,14 +66,59 @@ def test_update_managed_gitignore_is_exclusive_only_and_idempotent(
     first = update_managed_gitignore(tmp_path, receipt)
     second = update_managed_gitignore(tmp_path, receipt)
 
-    assert first == ["scripts/omc.py"]
-    assert second == ["scripts/omc.py"]
+    assert first == second
+    assert "scripts/omc.py" in first
+    assert ".omc/install-receipt.json" in first
     content = _git_exclude_path(tmp_path).read_text(encoding="utf-8")
     assert content.count("# OMC-KIT:BEGIN") == 1
     assert "/scripts/omc.py" in content
     assert "AGENTS.md" not in content
     assert "local.md" not in content
     assert gitignore.read_text(encoding="utf-8") == ".venv/\n"
+
+
+def test_update_managed_gitignore_hides_only_setup_created_merged_hosts(
+    tmp_path: Path,
+) -> None:
+    assert _git(tmp_path, "init").returncode == 0
+    receipt = {
+        "schema_version": 3,
+        "entries": {
+            "AGENTS.md": {
+                "policy": "managed_generated",
+                "ownership": "merged_host",
+                "setup_created": True,
+            },
+            "CODEX.md": {
+                "policy": "managed_generated",
+                "ownership": "merged_host",
+                "setup_created": False,
+            },
+        },
+    }
+
+    paths = update_managed_gitignore(tmp_path, receipt)
+
+    content = _git_exclude_path(tmp_path).read_text(encoding="utf-8")
+    assert "AGENTS.md" in paths
+    assert "/AGENTS.md" in content
+    assert "CODEX.md" not in paths
+    assert "/CODEX.md" not in content
+
+
+def test_update_managed_gitignore_hides_consumer_runtime_without_hiding_quality_gate(
+    tmp_path: Path,
+) -> None:
+    assert _git(tmp_path, "init").returncode == 0
+
+    paths = update_managed_gitignore(tmp_path, {"schema_version": 3, "entries": {}})
+
+    content = _git_exclude_path(tmp_path).read_text(encoding="utf-8")
+    assert ".omc/install-receipt.json" in paths
+    assert "/.omc/install-receipt.json" in content
+    assert "/.omc/state/" in content
+    assert "/.omc/context/" in content
+    assert "quality-gates.json" not in content
 
 
 def test_managed_exclude_compacts_only_reserved_namespaces(tmp_path: Path) -> None:
@@ -169,7 +214,7 @@ def test_receipt_paths_with_control_characters_are_never_managed(
 
     paths = update_managed_gitignore(tmp_path, receipt)
 
-    assert paths == []
+    assert injected not in paths
     assert ".env" not in _git_exclude_path(tmp_path).read_text(encoding="utf-8")
 
 
