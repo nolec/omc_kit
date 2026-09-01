@@ -53,6 +53,147 @@ def test_pipeline_dry_run_exits_zero(tmp_path: Path):
     )
 
 
+def test_safe_pipeline_rejects_dry_run_instead_of_executing(monkeypatch, tmp_path: Path):
+    mod = _load_autopilot()
+    called = False
+
+    def safe_pipeline(*args, **kwargs):
+        nonlocal called
+        del args, kwargs
+        called = True
+        return 0
+
+    monkeypatch.setattr(mod, "cmd_safe_pipeline", safe_pipeline)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(AUTOPILOT),
+            "--target",
+            str(tmp_path),
+            "pipeline",
+            "--instruction",
+            "안전 파이프라인 dry-run은 실행하지 않는다",
+            "--work-contract",
+            str(tmp_path / "contract.json"),
+            "--dry-run",
+        ],
+    )
+
+    assert mod.main() == 1
+    assert called is False
+
+
+def test_pipeline_step_forwards_read_only_sandbox(monkeypatch, tmp_path: Path):
+    mod = _load_autopilot()
+    captured: dict[str, object] = {}
+
+    class FakeProc:
+        pid = 4102
+        returncode = 0
+
+        def __init__(self, cmd, **kwargs):
+            captured["cmd"] = cmd
+
+        def communicate(self):
+            return ("VERDICT: APPROVE", "")
+
+    monkeypatch.setattr(mod.subprocess, "Popen", FakeProc)
+
+    rc, _output = mod._run_pipeline_step(
+        root=tmp_path,
+        step_name="review",
+        prompt="review prompt",
+        executor="codex",
+        timeout_sec=30,
+        isolated=True,
+        sandbox_mode="read-only",
+    )
+
+    assert rc == 0
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    mode_index = cmd.index("--sandbox-mode")
+    assert cmd[mode_index + 1] == "read-only"
+
+
+def test_pipeline_step_can_disable_provider_fallback(monkeypatch, tmp_path: Path):
+    mod = _load_autopilot()
+    captured: dict[str, object] = {}
+
+    class FakeProc:
+        pid = 4103
+        returncode = 0
+
+        def __init__(self, cmd, **_kwargs):
+            captured["cmd"] = cmd
+
+        def communicate(self):
+            return ("VERDICT: PROCEED", "")
+
+    monkeypatch.setattr(mod.subprocess, "Popen", FakeProc)
+
+    rc, _output = mod._run_pipeline_step(
+        root=tmp_path,
+        step_name="safe_task",
+        prompt="task prompt",
+        executor="codex",
+        timeout_sec=30,
+        isolated=True,
+        sandbox_mode="workspace-write",
+        allow_fallback=False,
+    )
+
+    assert rc == 0
+    assert "--disable-fallback" in captured["cmd"]
+
+
+def test_freeze_work_contract_cli_binds_clean_source_and_instruction(tmp_path: Path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "contract@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Contract Test"], cwd=tmp_path, check=True)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "status.md").write_text("pending\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "baseline"], cwd=tmp_path, check=True)
+    output = tmp_path.parent / f"{tmp_path.name}-contract.json"
+    instruction = "docs/status.md의 오타만 수정한다"
+
+    result = _run(
+        [
+            "--target",
+            str(tmp_path),
+            "freeze-work-contract",
+            "--instruction",
+            instruction,
+            "--run-id",
+            "cli-contract-001",
+            "--allowed-path",
+            "docs/status.md",
+            "--allowed-operation",
+            "modify",
+            "--change-class",
+            "document_only",
+            "--test-policy",
+            "optional",
+            "--mode",
+            "lite",
+            "--branch",
+            "codex/contract-candidate",
+            "--output",
+            str(output),
+        ],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["source_identity"]["clean"] == "true"
+    assert payload["candidate_branch"] == "codex/contract-candidate"
+    assert len(payload["contract_sha256"]) == 64
+
+
 def test_pipeline_dry_run_creates_result_file(tmp_path: Path):
     """pipeline --dry-run 완료 후 pipeline_run_result.json이 생성돼야 한다."""
     _run(

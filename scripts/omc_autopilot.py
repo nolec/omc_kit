@@ -55,6 +55,8 @@ import omc_utils
 import omc_cost
 import omc_exec
 import omc_output_contract as omc_output
+import omc_autopilot_safe as autopilot_safe
+import omc_autopilot_workspace as autopilot_workspace
 import omc_autopilot_workflow as autopilot_workflow
 import omc_orchestrator
 from omc_decision_input import (
@@ -4066,6 +4068,8 @@ def _run_pipeline_step(
     *,
     dry_run: bool = False,
     isolated: bool = False,
+    sandbox_mode: str = "workspace-write",
+    allow_fallback: bool = True,
 ) -> tuple[int, str]:
     """단일 파이프라인 스텝을 LLM으로 실행하고 (returncode, output)을 반환한다.
 
@@ -4106,7 +4110,14 @@ def _run_pipeline_step(
             "--executor", executor,
             "--execution-mode", "headless",
             "--timeout-sec", str(timeout_sec),
+            "--sandbox-mode", sandbox_mode,
         ]
+        if not allow_fallback:
+            cmd.append("--disable-fallback")
+        if step_name in {"review", "safe_review", "critique", "safe_critique"}:
+            cmd += ["--task-kind", "review"]
+        else:
+            cmd += ["--task-kind", "task"]
         proc = subprocess.Popen(
             cmd, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, start_new_session=True,
@@ -4188,6 +4199,189 @@ def _ensure_staged(root: Path, dry_run: bool, label: str = "TASK") -> None:
         print(f"[PIPELINE] {level} {label} 후 안전 파일만 자동 스테이징: {len(safe_files)}개")
     if blocked_files:
         print(f"[PIPELINE] ⚠️  {label} 후 자동 스테이징 제외 파일 감지({len(blocked_files)}개) — 수동 검토 필요")
+
+
+def cmd_safe_pipeline(
+    root: Path,
+    *,
+    instruction: str,
+    contract_path: Path,
+    executor_pref: str,
+    max_time: int,
+) -> int:
+    """Run the Phase A pipeline in an isolated clone and promote only a branch ref."""
+    try:
+        contract = autopilot_workspace.load_work_contract(contract_path)
+    except autopilot_workspace.AutopilotWorkspaceError as exc:
+        print(f"[SAFE PIPELINE] blocked: {exc}", file=sys.stderr)
+        return 1
+    executor = _detect_executor(executor_pref)
+    if executor != "codex" or contract["executor"] != "codex":
+        print("[SAFE PIPELINE] blocked: executor_confinement_unsupported", file=sys.stderr)
+        return 1
+
+    deadline_monotonic = time.monotonic() + max_time
+    stage_count = 3 if contract["pipeline_mode"] == "full" else 2
+    stage_timeout = max(1, max_time // stage_count)
+
+    def remaining_stage_timeout() -> int | None:
+        remaining = deadline_monotonic - time.monotonic()
+        if remaining < 1:
+            return None
+        return min(stage_timeout, int(remaining))
+
+    def run_task(workspace_root: Path, prompt: str) -> tuple[int, str]:
+        timeout = remaining_stage_timeout()
+        if timeout is None:
+            return 124, "[ERROR] pipeline_deadline_exceeded"
+        return _run_pipeline_step(
+            workspace_root,
+            "safe_task",
+            prompt,
+            executor,
+            timeout,
+            isolated=True,
+            sandbox_mode="workspace-write",
+            allow_fallback=False,
+        )
+
+    def run_review(workspace_root: Path, prompt: str) -> tuple[int, str]:
+        timeout = remaining_stage_timeout()
+        if timeout is None:
+            return 124, "[ERROR] pipeline_deadline_exceeded"
+        return _run_pipeline_step(
+            workspace_root,
+            "safe_review",
+            prompt,
+            executor,
+            timeout,
+            isolated=True,
+            sandbox_mode="read-only",
+            allow_fallback=False,
+        )
+
+    def run_critique(workspace_root: Path, prompt: str) -> tuple[int, str]:
+        timeout = remaining_stage_timeout()
+        if timeout is None:
+            return 124, "[ERROR] pipeline_deadline_exceeded"
+        return _run_pipeline_step(
+            workspace_root,
+            "safe_critique",
+            prompt,
+            executor,
+            timeout,
+            isolated=True,
+            sandbox_mode="read-only",
+            allow_fallback=False,
+        )
+
+    runs_parent = Path(
+        os.environ.get(
+            "OMC_AUTOPILOT_SAFE_RUNS",
+            str(Path(tempfile.gettempdir()) / "omc-autopilot-safe-runs"),
+        )
+    ).resolve()
+    result = autopilot_safe.run_safe_pipeline(
+        source=root,
+        contract_path=contract_path,
+        instruction=instruction,
+        task_runner=run_task,
+        critique_runner=run_critique if contract["pipeline_mode"] == "full" else None,
+        review_runner=run_review,
+        workspace_parent=runs_parent,
+        deadline_monotonic=deadline_monotonic,
+    )
+    completed_stages = set(result.get("completed_stages") or [])
+    stage_order = ["task", "verification"]
+    if contract["pipeline_mode"] == "full":
+        stage_order.append("critique")
+    stage_order.append("review")
+    stage_order.append("promotion")
+    blocked_stage = next(
+        (stage for stage in stage_order if stage not in completed_stages),
+        None,
+    )
+    steps = {
+        stage: {
+            "status": (
+                "completed"
+                if stage in completed_stages
+                else "blocked"
+                if result.get("status") == "blocked" and stage == blocked_stage
+                else "not_completed"
+            )
+        }
+        for stage in stage_order
+    }
+    persisted = {
+        **result,
+        "instruction": instruction,
+        "branch": result.get("candidate_branch") or contract["candidate_branch"],
+        "mode": contract["pipeline_mode"],
+        "safe_execution": True,
+        "work_contract_sha256": contract["contract_sha256"],
+        "steps": steps,
+    }
+    _save_pipeline_result(root, persisted)
+    if result.get("status") == "candidate_ready":
+        print(
+            "[SAFE PIPELINE] candidate ready: "
+            f"{result.get('candidate_branch')} ({result.get('candidate_commit')})"
+        )
+        return 0
+    print(f"[SAFE PIPELINE] blocked: {result.get('reason_code')}", file=sys.stderr)
+    return 1
+
+
+def cmd_freeze_work_contract(
+    root: Path,
+    *,
+    instruction: str,
+    run_id: str,
+    allowed_paths: list[str],
+    allowed_operations: list[str],
+    change_class: str,
+    test_policy: str,
+    verification_commands: list[list[str]],
+    mode: str,
+    branch: str,
+    output: Path,
+) -> int:
+    """Bind an approved task scope to the current clean source identity."""
+    resolved_root = root.resolve()
+    resolved_output = output.resolve()
+    if resolved_output == resolved_root or resolved_root in resolved_output.parents:
+        print("[SAFE PIPELINE] blocked: work_contract_output_inside_source", file=sys.stderr)
+        return 1
+    identity = autopilot_workspace.source_identity(resolved_root)
+    if identity["clean"] != "true":
+        print("[SAFE PIPELINE] blocked: source_worktree_not_clean", file=sys.stderr)
+        return 1
+    payload = {
+        "schema_version": autopilot_workspace.WORK_CONTRACT_SCHEMA_VERSION,
+        "run_id": run_id,
+        "instruction_sha256": hashlib.sha256(instruction.encode("utf-8")).hexdigest(),
+        "base_commit": identity["head"],
+        "source_identity": identity,
+        "allowed_paths": allowed_paths,
+        "allowed_operations": allowed_operations,
+        "change_class": change_class,
+        "test_policy": test_policy,
+        "verification_commands": verification_commands,
+        "pipeline_mode": mode,
+        "executor": "codex",
+        "required_capabilities": ["workspace_write_confined"],
+        "candidate_branch": branch,
+        "promotion_policy": "branch_ref_only",
+    }
+    try:
+        frozen = autopilot_workspace.freeze_work_contract(resolved_output, payload)
+    except autopilot_workspace.AutopilotWorkspaceError as exc:
+        print(f"[SAFE PIPELINE] blocked: {exc}", file=sys.stderr)
+        return 1
+    print(f"[SAFE PIPELINE] work contract: {resolved_output}")
+    print(f"WORK_CONTRACT_SHA256: {frozen['contract_sha256']}")
+    return 0
 
 def cmd_pipeline(
     root: Path,
@@ -5468,6 +5662,43 @@ def main() -> int:
                             help="PR 생성만 건너뛰고 파이프라인 telemetry를 완료로 기록")
     p_pipeline.add_argument("--benchmark", action="store_true",
                             help="benchmark 전용 실행으로 표시")
+    p_pipeline.add_argument(
+        "--work-contract",
+        type=Path,
+        default=None,
+        help="Phase A frozen work contract를 사용해 격리·범위 제한 pipeline 실행",
+    )
+
+    p_freeze_contract = sub.add_parser(
+        "freeze-work-contract",
+        help="현재 clean commit과 승인된 Autopilot 작업 범위를 불변 contract로 동결",
+    )
+    p_freeze_contract.add_argument("--instruction", required=True)
+    p_freeze_contract.add_argument("--run-id", required=True)
+    p_freeze_contract.add_argument("--allowed-path", action="append", required=True)
+    p_freeze_contract.add_argument(
+        "--allowed-operation",
+        action="append",
+        choices=["create", "modify", "delete"],
+        required=True,
+    )
+    p_freeze_contract.add_argument(
+        "--change-class",
+        choices=["document_only", "implementation", "synthetic", "benchmark_maintenance"],
+        required=True,
+    )
+    p_freeze_contract.add_argument(
+        "--test-policy", choices=["optional", "required"], required=True
+    )
+    p_freeze_contract.add_argument(
+        "--verify-command-json",
+        action="append",
+        default=[],
+        help='검증 argv JSON 배열. 예: ["pytest","-q"]',
+    )
+    p_freeze_contract.add_argument("--mode", choices=["lite", "full"], required=True)
+    p_freeze_contract.add_argument("--branch", required=True)
+    p_freeze_contract.add_argument("--output", type=Path, required=True)
 
 
     p_pipeline_status = sub.add_parser("pipeline-status", help="pipeline 실행 결과 상태 조회")
@@ -5514,6 +5745,31 @@ def main() -> int:
         )
     if args.cmd == "status":
         return cmd_status(root, args.task_id)
+    if args.cmd == "freeze-work-contract":
+        verification_commands: list[list[str]] = []
+        try:
+            for raw_command in args.verify_command_json:
+                parsed = json.loads(raw_command)
+                if not isinstance(parsed, list):
+                    raise ValueError("verification command must be an argv array")
+                verification_commands.append(parsed)
+        except (json.JSONDecodeError, ValueError) as exc:
+            print(f"[SAFE PIPELINE] invalid verification command: {exc}", file=sys.stderr)
+            return 1
+        output = args.output if args.output.is_absolute() else root / args.output
+        return cmd_freeze_work_contract(
+            root,
+            instruction=args.instruction,
+            run_id=args.run_id,
+            allowed_paths=args.allowed_path,
+            allowed_operations=args.allowed_operation,
+            change_class=args.change_class,
+            test_policy=args.test_policy,
+            verification_commands=verification_commands,
+            mode=args.mode,
+            branch=args.branch,
+            output=output,
+        )
     if args.cmd == "pipeline-status":
         return cmd_pipeline_status(
             root,
@@ -5551,6 +5807,31 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+        if args.work_contract is not None:
+            if args.dry_run:
+                print(
+                    "[SAFE PIPELINE] --dry-run은 아직 지원하지 않습니다. 실제 실행 없이 contract만 검증하려면 별도 검증 명령을 사용하세요.",
+                    file=sys.stderr,
+                )
+                return 1
+            if args.allow_dirty or args.resume or args.skip_pr or args.benchmark:
+                print(
+                    "[SAFE PIPELINE] --allow-dirty/--resume/--skip-pr/--benchmark는 지원하지 않습니다",
+                    file=sys.stderr,
+                )
+                return 1
+            contract_path = (
+                args.work_contract
+                if args.work_contract.is_absolute()
+                else root / args.work_contract
+            )
+            return cmd_safe_pipeline(
+                root,
+                instruction=args.instruction,
+                contract_path=contract_path,
+                executor_pref=args.executor,
+                max_time=args.max_time,
+            )
         return cmd_pipeline(
             root,
             instruction=args.instruction,

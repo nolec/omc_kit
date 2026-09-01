@@ -29,7 +29,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | Product Value independence | `NOT_REPRODUCED` | 유효한 development evidence 없음 | 신규 development evidence 검증 후 별도 선정한 holdout에서 primary metric 충족 |
 | Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재 | 독립 Batch B와 confirmatory batch 재현 |
 | Review | `NOT_PROVEN` | durable native provider 원문 부재 | 동일 diff native 재실행과 blind adjudication |
-| Autopilot | `LIMITED` | 안전한 opt-in 경로와 identity fail-close | 운영 latency·개입 acceptance |
+| Autopilot | `LIMITED` | frozen work contract, 격리 candidate 실행, trusted-base critique/review, candidate branch 전용 promotion까지 fail-close | 외부 provider 실사용 smoke와 운영 latency·개입 acceptance |
 | Setup | `OPERATIONALLY_VALIDATED` | 최신 배포 기준 사용처 8곳 `setup --force`·strict audit 통과, 기존 Git 상태 보존 | source freshness와 rollback 회귀 유지 |
 
 과거 6건 corpus에서 `DEVELOPMENT_PASS`가 기록됐지만 manifest·workload inventory·execution packet 원문을 현재 검증할 수 없어 유효한 development evidence로 승계하지 않는다. 구현과 acceptance 계약은 유지하되 새 prospective development study에서 chronological first-N 6건을 다시 확보하고, 그 증거가 검증된 뒤에만 비중복 disjoint holdout을 별도로 계획한다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
@@ -170,6 +170,8 @@ Work-unit closure primitive는 `2026-09-01`에 구현·검증했다. session·ta
 - Stage graph SSOT 완료: 계획 생성, 실제 autopilot 품질 루프, execution metrics가 같은 `skill_path` 결정을 소비한다.
 - 실행 receipt 보강 완료: instruction hash·mode·mode source·skill path·requested branch를 `pipeline_identity/v1`으로 결속한다.
 - resume fail-close 완료: identity가 없거나 instruction·mode·mode source·skill path·requested branch가 다르면 기존 단계를 재사용하지 않는다.
+- 안전 실행 경계 완료: frozen work contract를 기준으로 task를 격리 clone에서 실행하고 scope·verification을 검증한 뒤 immutable review packet을 생성한다. critique와 final review는 각각 별도 clean clone의 trusted `base_commit`에서 read-only로 실행하므로 candidate가 수정한 `AGENTS.md`·hook·skill을 reviewer control plane으로 자동 주입할 수 없다. 승인된 candidate만 전용 branch로 promotion하며 clone·commit·packet 결속 불일치는 fail-close한다.
+- 안전 실행 검증: 관련 전체 회귀 `351 passed, 1 skipped`, reviewer 격리 집중 회귀 `3 passed`, staged TDD gate, staged diff 검사와 OMC review `APPROVE`를 통과했다. 외부 provider live smoke는 실행하지 않았으므로 이 근거만으로 운영 Autopilot 완성이나 latency 개선을 주장하지 않는다.
 - 회귀 검증: 관련 테스트 `411 passed, 1 skipped`, 전체 테스트 `2582 passed, 3 skipped`, TDD gate 통과.
 - 목표: 품질 gate를 유지하면서 반복 확인, p50/p95 지연, input/output/total token을 줄인다.
 - 현재 유효 latency 표본은 history의 운영 기록을 따르며 표본 기준 충족 전 라우팅 경계를 확정하지 않는다.
@@ -231,6 +233,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 11. **capture-only schema v2 코드 완료 / 실제 표본 대기** — Work Packet manifest의 15분 registration buffer, implementation-only selection, 4-authority key·custody 분리, append-only source checkpoint, failure seal·명시적 restart parent, durable publish/reload 계약을 고정했다. 다음은 실제 chronological first-N 5건을 capture·publish·reload해 수집 가능성만 판정하는 것이며 Plan Batch B, Product Value acceptance 또는 품질 projection으로 합산하지 않는다.
 12. Plan Batch B와 native Review 독립 검증을 계속해 각 대체 판정을 별도로 갱신한다.
 13. **public CLI 경계 완료 / 상태 신뢰성·멀티 호스트 검증 대기** — 루트 help는 setup·task·status·review·ship 핵심 흐름과 orchestrate·autopilot·team advanced 흐름을 우선 표시한다. Product Value·N-child research 명령은 직접 호출 호환성을 유지한 채 루트 help에서 숨겼고 README 계약과 CLI 회귀 테스트를 고정했다. 다음은 stale active session과 `.omc` 운영 파일 기반 거짓 source drift를 교정한 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증하는 것이다.
+14. **Autopilot 안전 실행 코드 완료 / 외부 smoke 대기** — frozen work contract, 격리 task workspace, trusted-base critique/review, immutable review packet과 candidate branch 전용 promotion을 고정했다. 다음은 고정 커밋의 격리 clone에서 실제 provider TASK→CRITIQUE→REVIEW smoke를 실행해 candidate 변경 보존, reviewer control-plane 비오염, 실패 시 promotion 차단, latency·token·사용자 개입 receipt를 함께 확인하는 것이다.
 
 ## 한 줄 결론
 

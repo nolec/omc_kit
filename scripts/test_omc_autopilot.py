@@ -1084,6 +1084,19 @@ def test_detects_codex_network_transport_failure():
 
 
 @pytest.mark.skipif(not _EXEC_MODULE_PRESENT, reason="omc_exec.py 없음")
+def test_codex_headless_command_accepts_read_only_sandbox(tmp_path):
+    cmd = omc_exec._codex_headless_command(
+        tmp_path,
+        "review prompt",
+        tmp_path / "output.txt",
+        sandbox_mode="read-only",
+    )
+
+    sandbox_index = cmd.index("-s")
+    assert cmd[sandbox_index + 1] == "read-only"
+
+
+@pytest.mark.skipif(not _EXEC_MODULE_PRESENT, reason="omc_exec.py 없음")
 def test_run_codex_headless_falls_back_to_gemini_on_network_failure(tmp_path, monkeypatch):
     class _Runtime:
         def cleanup(self):

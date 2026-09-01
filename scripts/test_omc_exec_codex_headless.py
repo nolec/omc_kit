@@ -407,6 +407,25 @@ def test_run_codex_headless_records_cost_log_row(monkeypatch, tmp_path: Path) ->
     assert recorded["model"] == "gpt-5.4-mini"
 
 
+def test_headless_cost_record_does_not_follow_runtime_symlink(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.txt"
+    outside.write_text("sentinel\n", encoding="utf-8")
+    runtime = tmp_path / "workspace" / ".omc"
+    runtime.mkdir(parents=True)
+    (runtime / "cost_log.jsonl").symlink_to(outside)
+
+    result = omc_exec._record_headless_cost(
+        tmp_path / "workspace",
+        executor="codex",
+        raw_output="",
+        model_profile="mini_default",
+        task_kind="task",
+    )
+
+    assert result is None
+    assert outside.read_text(encoding="utf-8") == "sentinel\n"
+
+
 def test_run_codex_headless_records_timeout_row(monkeypatch, tmp_path: Path) -> None:
     source_home = tmp_path / "source-home"
     source_home.mkdir()
@@ -722,6 +741,42 @@ def test_main_honors_model_profile_cli_override(monkeypatch, tmp_path: Path) -> 
     assert rc == 0
     assert captured["model_profile"] == "full_default"
     assert captured["task_kind"] == "task"
+
+
+def test_main_can_disable_codex_provider_fallback(monkeypatch, tmp_path: Path) -> None:
+    prompt_file = tmp_path / "prompt.md"
+    prompt_file.write_text("safe task", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(omc_exec, "_detect_executor", lambda _preferred: "codex")
+    monkeypatch.setattr(omc_exec, "_is_tty_available", lambda: False)
+    monkeypatch.setattr(omc_exec, "_check_codex_auth", lambda: True)
+    monkeypatch.setattr(omc_exec.shutil, "which", lambda _name: "/usr/bin/codex")
+
+    def fake_run_codex_headless(_root, _prompt, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(omc_exec, "_run_codex_headless", fake_run_codex_headless)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "omc_exec.py",
+            "--target",
+            str(tmp_path),
+            "--prompt-file",
+            str(prompt_file),
+            "--executor",
+            "codex",
+            "--execution-mode",
+            "headless",
+            "--disable-fallback",
+        ],
+    )
+
+    assert omc_exec.main() == 0
+    assert captured["allow_fallback"] is False
 
 
 def test_codex_binary_prefers_explicit_environment_override(monkeypatch, tmp_path):

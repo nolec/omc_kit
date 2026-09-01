@@ -668,7 +668,10 @@ def _codex_headless_command(
     *,
     model_profile: str = "mini_default",
     allow_reasoning_effort: bool = True,
+    sandbox_mode: str = "workspace-write",
 ) -> list[str]:
+    if sandbox_mode not in {"workspace-write", "read-only"}:
+        raise ValueError(f"unsupported Codex sandbox mode: {sandbox_mode}")
     profile = _resolve_codex_profile_settings(model_profile)
     cmd = [
         _resolve_codex_binary(),
@@ -678,7 +681,7 @@ def _codex_headless_command(
         "-c",
         'approval_policy="never"',
         "-s",
-        "workspace-write",
+        sandbox_mode,
         "-C",
         str(project_root),
         "-o",
@@ -1015,7 +1018,13 @@ def _run_codex_headless(
     task_kind: str = "task",
     allow_fallback: bool = True,
     receipt_id: str | None = None,
+    sandbox_mode: str = "workspace-write",
 ) -> int:
+    if sandbox_mode not in {"workspace-write", "read-only"}:
+        raise ValueError(f"unsupported Codex sandbox mode: {sandbox_mode}")
+    if sandbox_mode == "read-only":
+        # Other provider CLIs do not expose an equivalent confinement contract.
+        allow_fallback = False
     preflight_ok, preflight_reason = _codex_headless_preflight()
     if not preflight_ok:
         print(
@@ -1034,6 +1043,7 @@ def _run_codex_headless(
             output_path,
             model_profile=model_profile,
             allow_reasoning_effort=_codex_supports_reasoning_effort(),
+            sandbox_mode=sandbox_mode,
         )
         try:
             proc = subprocess.run(
@@ -1266,6 +1276,7 @@ def run_headless_executor_once(
     prompt: str,
     project_root: str | Path,
     timeout_sec: int | float,
+    sandbox_mode: str = "workspace-write",
 ) -> dict[str, Any]:
     """Run exactly one selected provider without fallback or retry."""
     root = Path(project_root)
@@ -1283,8 +1294,11 @@ def run_headless_executor_once(
                 task_kind="task",
                 allow_fallback=False,
                 receipt_id=receipt_id,
+                sandbox_mode=sandbox_mode,
             )
         elif executor == "gemini":
+            if sandbox_mode != "workspace-write":
+                raise ValueError("read-only sandbox is only supported by the Codex executor")
             returncode = _run_gemini_headless(
                 root,
                 prompt,
@@ -1293,6 +1307,8 @@ def run_headless_executor_once(
                 receipt_id=receipt_id,
             )
         elif executor == "claude":
+            if sandbox_mode != "workspace-write":
+                raise ValueError("read-only sandbox is only supported by the Codex executor")
             returncode = _run_claude_headless(
                 root,
                 prompt,
@@ -1356,6 +1372,17 @@ def main() -> int:
         choices=["interactive", "headless"],
         default="interactive",
         help="Use TUI handoff or non-interactive script mode.",
+    )
+    ap.add_argument(
+        "--sandbox-mode",
+        choices=["workspace-write", "read-only"],
+        default="workspace-write",
+        help="Codex filesystem sandbox for headless execution.",
+    )
+    ap.add_argument(
+        "--disable-fallback",
+        action="store_true",
+        help="Do not fall back to another provider when Codex headless execution fails.",
     )
     ap.add_argument(
         "--timeout-sec",
@@ -1429,13 +1456,16 @@ def main() -> int:
                 return 1
 
         if args.execution_mode == "headless":
-            return _run_codex_headless(
-                project_root,
-                prompt_text,
-                timeout_sec=args.timeout_sec,
-                model_profile=model_profile,
-                task_kind=args.task_kind,
-            )
+            headless_kwargs = {
+                "timeout_sec": args.timeout_sec,
+                "model_profile": model_profile,
+                "task_kind": args.task_kind,
+            }
+            if args.disable_fallback:
+                headless_kwargs["allow_fallback"] = False
+            if args.sandbox_mode != "workspace-write":
+                headless_kwargs["sandbox_mode"] = args.sandbox_mode
+            return _run_codex_headless(project_root, prompt_text, **headless_kwargs)
 
         # 2. Transition to Interactive CLI (TUI)
         # We use subprocess.run without capturing to hand over the terminal (TTY)
@@ -1449,6 +1479,9 @@ def main() -> int:
         return int(proc.returncode)
 
     if executor == "gemini":
+        if args.sandbox_mode != "workspace-write":
+            print("read-only sandbox is only supported by the Codex executor", file=sys.stderr)
+            return 2
         if not shutil.which("gemini"):
             print(f"gemini CLI not found. Prompt preserved at: {prompt_path}")
             return 127
@@ -1463,6 +1496,9 @@ def main() -> int:
         proc = subprocess.run(_gemini_command(prompt_text), cwd=str(project_root), check=False)
         return int(proc.returncode)
 
+    if args.sandbox_mode != "workspace-write":
+        print("read-only sandbox is only supported by the Codex executor", file=sys.stderr)
+        return 2
     if not shutil.which("claude"):
         print(f"claude CLI not found. Prompt preserved at: {prompt_path}")
         return 127

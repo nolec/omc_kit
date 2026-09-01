@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -67,6 +68,35 @@ def _supports_cost_estimation(executor: str = "", model: str = "") -> bool:
 
 def _cost_log(root):
     return root / ".omc" / "cost_log.jsonl"
+
+
+def _append_cost_entry(log_path: Path, payload: bytes) -> None:
+    """Append telemetry without following provider-controlled links."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    directory_fd = os.open(log_path.parent, directory_flags)
+    try:
+        file_flags = (
+            os.O_WRONLY
+            | os.O_APPEND
+            | os.O_CREAT
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        file_fd = os.open(log_path.name, file_flags, 0o600, dir_fd=directory_fd)
+        try:
+            metadata = os.fstat(file_fd)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise OSError("unsafe cost log target")
+            offset = 0
+            while offset < len(payload):
+                written = os.write(file_fd, payload[offset:])
+                if written <= 0:
+                    raise OSError("incomplete cost log write")
+                offset += written
+        finally:
+            os.close(file_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def _git_diff_stat(root, base="HEAD"):
@@ -308,9 +338,10 @@ def record(root, *, executor, session_id=None, task_title=None,
                 entry["cost_usd"] = estimated_usd
 
     log_path = _cost_log(root)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    _append_cost_entry(
+        log_path,
+        (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8"),
+    )
     return entry
 
 
