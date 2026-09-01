@@ -15,6 +15,7 @@ from typing import Any
 
 
 WORK_CONTRACT_SCHEMA_VERSION = "omc-autopilot-work-contract/v1"
+WORK_CONTRACT_SCHEMA_VERSION_V2 = "omc-autopilot-work-contract/v2"
 REVIEW_PACKET_SCHEMA_VERSION = "omc-autopilot-review-packet/v1"
 
 _SHA256_LENGTH = 64
@@ -34,6 +35,13 @@ _CONTRACT_FIELDS = {
     "required_capabilities",
     "candidate_branch",
     "promotion_policy",
+}
+_MISSION_CONTRACT_FIELDS = {
+    "mission_packet_path",
+    "mission_packet_sha256",
+    "mission_approval_path",
+    "mission_approval_sha256",
+    "mission_approval_session_id",
 }
 _ALLOWED_OPERATIONS = {"create", "modify", "delete"}
 _ALLOWED_CHANGE_CLASSES = {"document_only", "implementation", "synthetic", "benchmark_maintenance"}
@@ -125,12 +133,15 @@ def source_identity(root: Path) -> dict[str, str]:
 def validate_work_contract(payload: object, *, require_digest: bool = False) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise AutopilotWorkspaceError("work_contract_not_object")
+    schema_version = payload.get("schema_version")
     expected = set(_CONTRACT_FIELDS)
+    if schema_version == WORK_CONTRACT_SCHEMA_VERSION_V2:
+        expected.update(_MISSION_CONTRACT_FIELDS)
     if require_digest:
         expected.add("contract_sha256")
     if set(payload) != expected:
         raise AutopilotWorkspaceError("work_contract_fields_invalid")
-    if payload.get("schema_version") != WORK_CONTRACT_SCHEMA_VERSION:
+    if schema_version not in {WORK_CONTRACT_SCHEMA_VERSION, WORK_CONTRACT_SCHEMA_VERSION_V2}:
         raise AutopilotWorkspaceError("work_contract_schema_invalid")
     run_id = str(payload.get("run_id") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", run_id):
@@ -185,8 +196,26 @@ def validate_work_contract(payload: object, *, require_digest: bool = False) -> 
         raise AutopilotWorkspaceError("promotion_policy_invalid")
     normalized = dict(payload)
     normalized["allowed_paths"] = normalized_paths
+    if schema_version == WORK_CONTRACT_SCHEMA_VERSION_V2:
+        normalized["mission_packet_path"] = _safe_relative_path(
+            payload.get("mission_packet_path"), "mission_packet_path"
+        )
+        normalized["mission_approval_path"] = _safe_relative_path(
+            payload.get("mission_approval_path"), "mission_approval_path"
+        )
+        _require_sha256(payload.get("mission_packet_sha256"), "mission_packet_sha256")
+        _require_sha256(payload.get("mission_approval_sha256"), "mission_approval_sha256")
+        session_id = str(payload.get("mission_approval_session_id") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", session_id):
+            raise AutopilotWorkspaceError("mission_approval_session_id_invalid")
+        normalized["mission_approval_session_id"] = session_id
     if require_digest:
-        expected_digest = _sha256(_canonical_bytes({key: normalized[key] for key in _CONTRACT_FIELDS}))
+        digest_fields = _CONTRACT_FIELDS | (
+            _MISSION_CONTRACT_FIELDS
+            if schema_version == WORK_CONTRACT_SCHEMA_VERSION_V2
+            else set()
+        )
+        expected_digest = _sha256(_canonical_bytes({key: normalized[key] for key in digest_fields}))
         if normalized.get("contract_sha256") != expected_digest:
             raise AutopilotWorkspaceError("work_contract_digest_mismatch")
     return normalized

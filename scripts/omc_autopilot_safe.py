@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import omc_autopilot_workspace as workspace
+import omc_mission as mission
 
 
 Runner = Callable[[Path, str], tuple[int, str]]
@@ -41,7 +42,9 @@ def _result(status: str, reason_code: str | None, **values: Any) -> dict[str, An
     return {"status": status, "reason_code": reason_code, **values}
 
 
-def _task_prompt(contract: dict[str, Any], instruction: str) -> str:
+def _task_prompt(
+    contract: dict[str, Any], instruction: str, briefing: dict[str, Any] | None = None
+) -> str:
     test_rule = (
         "검증 명령에 필요한 테스트를 작성하세요."
         if contract["test_policy"] == "required"
@@ -49,6 +52,12 @@ def _task_prompt(contract: dict[str, Any], instruction: str) -> str:
     )
     return (
         "[OMC SAFE AUTOPILOT]\n"
+        + (
+            f"MISSION_BRIEFING: {json.dumps(briefing, ensure_ascii=False, sort_keys=True)}\n"
+            if briefing is not None
+            else ""
+        )
+        +
         f"지시문: {instruction}\n"
         f"허용 경로: {json.dumps(contract['allowed_paths'], ensure_ascii=False)}\n"
         f"허용 작업: {json.dumps(contract['allowed_operations'])}\n"
@@ -60,10 +69,16 @@ def _task_prompt(contract: dict[str, Any], instruction: str) -> str:
     )
 
 
-def _review_prompt(packet: dict[str, Any]) -> str:
+def _review_prompt(packet: dict[str, Any], briefing: dict[str, Any] | None = None) -> str:
     digest = str(packet["packet_sha256"])
     return (
         "아래 immutable review packet만 검토하세요. workspace를 수정하지 마세요.\n"
+        + (
+            f"MISSION_BRIEFING: {json.dumps(briefing, ensure_ascii=False, sort_keys=True)}\n"
+            if briefing is not None
+            else ""
+        )
+        +
         f"REVIEW_PACKET_SHA256: {digest}\n"
         f"{json.dumps(packet, ensure_ascii=False, sort_keys=True)}\n\n"
         f"마지막 두 줄에 정확히 REVIEW_PACKET_SHA256: {digest} 와 "
@@ -521,8 +536,37 @@ def run_safe_pipeline(
             **values,
         )
 
+    mission_packet: dict[str, Any] | None = None
+    mission_receipt: dict[str, Any] | None = None
+    if contract["schema_version"] == workspace.WORK_CONTRACT_SCHEMA_VERSION_V2:
+        packet_path = contract_path.parent / str(contract["mission_packet_path"])
+        approval_path = contract_path.parent / str(contract["mission_approval_path"])
+        try:
+            mission_packet = mission.load_mission_packet(packet_path)
+            if mission_packet["packet_sha256"] != contract["mission_packet_sha256"]:
+                return finish("blocked", "mission_packet_contract_mismatch")
+            if approval_path.is_symlink():
+                return finish("blocked", "mission_approval_symlink")
+            approval_bytes = approval_path.read_bytes()
+            approval_digest = hashlib.sha256(approval_bytes).hexdigest()
+            if approval_digest != contract["mission_approval_sha256"]:
+                return finish("blocked", "mission_approval_contract_mismatch")
+            mission_receipt = json.loads(approval_bytes.decode("utf-8"))
+            mission.validate_mission_approval_receipt(
+                mission_receipt,
+                packet=mission_packet,
+                session_id=str(contract["mission_approval_session_id"]),
+            )
+        except (OSError, json.JSONDecodeError, mission.MissionError):
+            return finish("blocked", "mission_approval_invalid")
+
     if _sha256_text(instruction) != contract["instruction_sha256"]:
         return finish("blocked", "instruction_identity_mismatch")
+    if mission_packet is not None:
+        if mission_packet["request_sha256"] != contract["instruction_sha256"]:
+            return finish("blocked", "mission_request_identity_mismatch")
+        if mission_packet["base_commit"] != contract["base_commit"]:
+            return finish("blocked", "mission_base_commit_mismatch")
     if workspace.source_identity(source) != contract["source_identity"]:
         return finish("blocked", "source_identity_drift")
     if contract["pipeline_mode"] == "full" and critique_runner is None:
@@ -557,7 +601,14 @@ def run_safe_pipeline(
 
     before = workspace.snapshot_workspace(isolated)
     git_control_before = workspace.snapshot_git_control_plane(isolated)
-    task_rc, task_output = task_runner(isolated, _task_prompt(contract, instruction))
+    task_briefing = (
+        mission.build_stage_briefing(mission_packet, stage="task")
+        if mission_packet is not None
+        else None
+    )
+    task_rc, task_output = task_runner(
+        isolated, _task_prompt(contract, instruction, task_briefing)
+    )
     if task_rc != 0 or _terminal_verdict(task_output) != "PROCEED":
         return finish("blocked", "task_failed", isolated_workspace=str(isolated))
 
@@ -664,7 +715,18 @@ def run_safe_pipeline(
     except workspace.AutopilotWorkspaceError as exc:
         return finish("blocked", str(exc), isolated_workspace=str(isolated))
     packet_digest = str(packet["packet_sha256"])
-    prompt = _review_prompt(packet)
+    critique_prompt = _review_prompt(
+        packet,
+        mission.build_stage_briefing(mission_packet, stage="critique")
+        if mission_packet is not None
+        else None,
+    )
+    review_prompt = _review_prompt(
+        packet,
+        mission.build_stage_briefing(mission_packet, stage="review")
+        if mission_packet is not None
+        else None,
+    )
 
     if critique_runner is not None:
         critique_workspace = run_root / "critique-workspace"
@@ -678,7 +740,7 @@ def run_safe_pipeline(
             )
         critique, error = _run_readonly_stage(
             root=critique_workspace,
-            prompt=prompt,
+            prompt=critique_prompt,
             runner=critique_runner,
             packet_digest=packet_digest,
             stage="critique",
@@ -700,7 +762,7 @@ def run_safe_pipeline(
         )
     review, error = _run_readonly_stage(
         root=review_workspace,
-        prompt=prompt,
+        prompt=review_prompt,
         runner=review_runner,
         packet_digest=packet_digest,
         stage="review",
@@ -727,6 +789,14 @@ def run_safe_pipeline(
         candidate_branch=candidate_branch,
         candidate_commit=candidate_commit,
         review_packet_sha256=packet_digest,
+        mission_packet_sha256=(
+            mission_packet["packet_sha256"] if mission_packet is not None else None
+        ),
+        mission_approval_sha256=(
+            contract.get("mission_approval_sha256")
+            if mission_receipt is not None
+            else None
+        ),
         review=review,
         isolated_workspace=str(isolated),
     )

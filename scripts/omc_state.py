@@ -7,10 +7,13 @@ from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
+import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
+import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -160,6 +163,65 @@ def _omc_lock(project_root: Path):
 
 def _write_json(path: Path, payload: dict) -> None:
     _atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def _receipt_matches(path: Path, data: bytes) -> bool:
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return False
+    try:
+        file_stat = os.fstat(fd)
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size != len(data):
+            return False
+        existing = bytearray()
+        while len(existing) < len(data):
+            chunk = os.read(fd, len(data) - len(existing))
+            if not chunk:
+                break
+            existing.extend(chunk)
+        return bytes(existing) == data
+    finally:
+        os.close(fd)
+
+
+def _write_immutable_receipt(path: Path, receipt: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.parent.is_symlink() or path.is_symlink():
+        raise ValueError("mission_receipt_path_untrusted")
+    data = (
+        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    fd, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        try:
+            offset = 0
+            while offset < len(data):
+                written = os.write(fd, data[offset:])
+                if written <= 0:
+                    raise OSError("mission_receipt_write_incomplete")
+                offset += written
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            os.link(temporary_path, path, follow_symlinks=False)
+        except FileExistsError as exc:
+            if not _receipt_matches(path, data):
+                raise ValueError("mission_receipt_already_exists") from exc
+    finally:
+        try:
+            os.unlink(temporary_path)
+        except FileNotFoundError:
+            pass
+    directory_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def _ensure_tree(project_root: Path) -> None:
@@ -766,7 +828,7 @@ def open_pending_decision(
     ttl_seconds: int = 1800,
 ) -> dict[str, object]:
     """Open a single-session acknowledgement for a supported local action."""
-    if action not in {"local_commit", "closure_accept"}:
+    if action not in {"local_commit", "closure_accept", "mission_accept"}:
         raise ValueError("unsupported pending decision action")
     if not decision_id.strip():
         raise ValueError("decision_id is required")
@@ -814,13 +876,13 @@ def open_pending_decision(
                 "paths": normalized_paths,
             }
         )
-    if action == "closure_accept" and len(normalized_options) != 1:
-        raise ValueError("closure_accept requires exactly one option")
-    if action == "closure_accept" and (
+    if action in {"closure_accept", "mission_accept"} and len(normalized_options) != 1:
+        raise ValueError(f"{action} requires exactly one option")
+    if action in {"closure_accept", "mission_accept"} and (
         normalized_options[0]["paths"] is not None
         or not isinstance(normalized_options[0]["value"], dict)
     ):
-        raise ValueError("closure_accept requires one binding object without paths")
+        raise ValueError(f"{action} requires one binding object without paths")
     if action == "local_commit" and len(normalized_options) > 1 and any(
         option["paths"] is None for option in normalized_options
     ):
@@ -849,7 +911,7 @@ def open_pending_decision(
                     option["paths"] = option_paths
                 if not set(option_paths).issubset(available_paths):
                     raise ValueError("option paths must belong to the current local commit scope")
-        else:
+        elif action == "closure_accept":
             binding = normalized_options[0]["value"]
             expected_keys = {
                 "session_id",
@@ -863,6 +925,28 @@ def open_pending_decision(
             }
             if set(binding) != expected_keys or binding["session_id"] != session_id:
                 raise ValueError("closure_accept binding is invalid")
+            scope = {"paths": [], "entries": {}}
+        else:
+            binding = normalized_options[0]["value"]
+            expected_keys = {
+                "session_id",
+                "request_sha256",
+                "base_commit",
+                "mission_packet_sha256",
+            }
+            if set(binding) != expected_keys or binding["session_id"] != session_id:
+                raise ValueError("mission_accept binding is invalid")
+            digest_values = (
+                binding["request_sha256"],
+                binding["mission_packet_sha256"],
+            )
+            if any(
+                not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+                for value in digest_values
+            ) or not isinstance(binding["base_commit"], str) or not re.fullmatch(
+                r"[0-9a-f]{40}", binding["base_commit"]
+            ):
+                raise ValueError("mission_accept binding is invalid")
             scope = {"paths": [], "entries": {}}
         history = _decision_history(latest)
         current = latest.get("pending_decision")
@@ -908,7 +992,7 @@ def resolve_pending_decision(project_root: Path, *, response: str) -> dict[str, 
         decision = latest.get("pending_decision")
         if not isinstance(decision, dict):
             return {"resolved": False, "reason": "no_pending_decision"}
-        if decision.get("action") not in {"local_commit", "closure_accept"}:
+        if decision.get("action") not in {"local_commit", "closure_accept", "mission_accept"}:
             return {"resolved": False, "reason": "unsupported_action"}
         if decision.get("status") != "pending":
             return {"resolved": False, "reason": "decision_not_pending"}
@@ -1076,7 +1160,12 @@ def authorize_pending_local_commit(project_root: Path) -> dict[str, object]:
         }
 
 
-def consume_pending_decision(project_root: Path, *, decision_id: str) -> dict[str, object]:
+def consume_pending_decision(
+    project_root: Path,
+    *,
+    decision_id: str,
+    receipt_output: Path | None = None,
+) -> dict[str, object]:
     with _omc_lock(project_root):
         _ensure_tree(project_root)
         latest = _read_json(_latest_path(project_root), {})
@@ -1119,29 +1208,59 @@ def consume_pending_decision(project_root: Path, *, decision_id: str) -> dict[st
         ]
         if len(selected_options) != 1:
             return {"consumed": False, "reason": "decision_binding_changed"}
-        if decision.get("action") == "closure_accept":
+        if decision.get("action") in {"closure_accept", "mission_accept"}:
             binding = decision.get("selected_value")
             if (
                 not isinstance(binding, dict)
                 or selected_options[0].get("value") != binding
             ):
                 return {"consumed": False, "reason": "decision_binding_changed"}
+            action = str(decision.get("action"))
+            if action == "mission_accept" and receipt_output is None:
+                return {
+                    "consumed": False,
+                    "reason": "mission_receipt_output_required",
+                }
             receipt = {
-                "schema_version": "omc-closure-acceptance-receipt/v1",
+                "schema_version": (
+                    "omc-closure-acceptance-receipt/v1"
+                    if action == "closure_accept"
+                    else "omc-autopilot-mission-approval/v1"
+                ),
                 "decision_id": decision_id,
                 "session_id": decision.get("session_id"),
-                "action": "closure_accept",
+                "action": action,
                 "status": "consumed",
                 "binding": binding,
-                "binding_sha256": hashlib.sha256(
+            }
+            digest_field = "binding_sha256"
+            digest_value = hashlib.sha256(
+                json.dumps(
+                    binding,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            if action == "closure_accept":
+                receipt[digest_field] = digest_value
+            else:
+                receipt.pop("session_id")
+                receipt["receipt_sha256"] = hashlib.sha256(
                     json.dumps(
-                        binding,
+                        receipt,
                         ensure_ascii=False,
                         sort_keys=True,
                         separators=(",", ":"),
                     ).encode("utf-8")
-                ).hexdigest(),
-            }
+                ).hexdigest()
+                if receipt_output is not None:
+                    output = (
+                        receipt_output
+                        if receipt_output.is_absolute()
+                        else project_root / receipt_output
+                    )
+                    _write_immutable_receipt(output, receipt)
             decision["status"] = "consumed"
             decision["consumed_at"] = _iso_now()
             decision["acceptance_receipt"] = receipt
@@ -1150,7 +1269,7 @@ def consume_pending_decision(project_root: Path, *, decision_id: str) -> dict[st
             return {
                 "consumed": True,
                 "decision_id": decision_id,
-                "action": "closure_accept",
+                "action": action,
                 "acceptance_receipt": receipt,
             }
         base_head = str(decision.get("base_head") or "")
@@ -2426,6 +2545,12 @@ def _parser() -> argparse.ArgumentParser:
     decision_consume = sub.add_parser("decision-consume", help="Consume an acknowledged local-commit decision.")
     decision_consume.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     decision_consume.add_argument("--decision-id", required=True)
+    decision_consume.add_argument(
+        "--receipt-output",
+        type=Path,
+        default=None,
+        help="Required for mission_accept; persists an immutable JSON receipt.",
+    )
     decision_consume_current = sub.add_parser(
         "decision-consume-current",
         help="Consume the pre-commit-authorized local decision after commit.",
@@ -2573,7 +2698,9 @@ def main() -> int:
     if args.command == "decision-consume":
         try:
             result = consume_pending_decision(
-                omc_utils.project_root(args.target), decision_id=args.decision_id
+                omc_utils.project_root(args.target),
+                decision_id=args.decision_id,
+                receipt_output=args.receipt_output,
             )
         except (OSError, ValueError) as exc:
             result = {"consumed": False, "reason": str(exc)}

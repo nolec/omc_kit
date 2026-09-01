@@ -29,10 +29,12 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | Product Value independence | `NOT_REPRODUCED` | 유효한 development evidence 없음 | 신규 development evidence 검증 후 별도 선정한 holdout에서 primary metric 충족 |
 | Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재 | 독립 Batch B와 confirmatory batch 재현 |
 | Review | `NOT_PROVEN` | durable native provider 원문 부재 | 동일 diff native 재실행과 blind adjudication |
-| Autopilot | `LIMITED` | frozen work contract, 격리 candidate 실행, trusted-base critique/review, candidate branch 전용 promotion까지 fail-close | 외부 provider 실사용 smoke와 운영 latency·개입 acceptance |
+| Autopilot | `LIMITED` | mission packet 동결, 명시적 `mission_accept` receipt, work contract v2 결속, provider 호출 전 mission briefing 재검증, 격리 candidate 실행과 trusted-base review까지 fail-close | 고정 커밋 기준 외부 provider TASK→REVIEW smoke와 운영 latency·개입 acceptance |
 | Setup | `OPERATIONALLY_VALIDATED` | 최신 배포 기준 사용처 8곳 `setup --force`·strict audit 통과, 기존 Git 상태 보존 | source freshness와 rollback 회귀 유지 |
 
 과거 6건 corpus에서 `DEVELOPMENT_PASS`가 기록됐지만 manifest·workload inventory·execution packet 원문을 현재 검증할 수 없어 유효한 development evidence로 승계하지 않는다. 구현과 acceptance 계약은 유지하되 새 prospective development study에서 chronological first-N 6건을 다시 확보하고, 그 증거가 검증된 뒤에만 비중복 disjoint holdout을 별도로 계획한다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
+
+Autopilot Phase A mission gate는 구현·회귀 검증을 완료했다. 사용자 요청과 base commit을 mission packet으로 동결하고 exact `mission_accept` receipt를 work contract v2에 결속하며, safe runner는 provider 호출 전에 packet·approval·session·request·base를 재검증해 mission briefing을 주입한다. receipt는 완전 쓰기와 `fsync` 후 no-replace 방식으로 게시하고, 부분 쓰기 또는 상태 저장 사이 실패는 동일 receipt 재시도로만 복구한다. 관련 회귀 `194 passed`, staged TDD gate, diff check와 OMC review `APPROVE`를 확인했다. 이는 실행 전 목적 결속의 구현 근거이며 외부 provider 실사용 smoke나 운영 acceptance를 대신하지 않는다.
 
 Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 완료 / 실제 수집 0/5** 상태다. 5건 chronological first-N capture는 observation 시작 15분 전에 완료된 RFC 3161 registration, Git registry anchor, 서로 다른 registration·source snapshot·completion collector·executor 키와 custody identity, preregistration에 고정된 source inventory path, registry commit의 후손인 canonical inventory commit, 연속 sequence·entry hash·source snapshot checkpoint chain, source snapshot과 completion ledger의 exact equality, raw request·provider output의 execution receipt 결속을 모두 통과해야 한다. 실패·불확정 study는 서명된 failure receipt로 봉인하며 자동 재시작하지 않고, 새 study는 승인된 restart parent를 명시해야 한다. 완료 artifact는 임시 경로가 아닌 durable evidence root에 원자적으로 게시하고 digest 검증 후 reload한다. 이 계약은 독립적인 작은 운영 표본의 **수집 가능성만** 검증하며 실제 5건이 수집되기 전에는 제품 가치, 품질 projection 또는 Plan 대체 증거로 사용하지 않는다.
 

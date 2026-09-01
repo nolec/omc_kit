@@ -58,6 +58,7 @@ import omc_output_contract as omc_output
 import omc_autopilot_safe as autopilot_safe
 import omc_autopilot_workspace as autopilot_workspace
 import omc_autopilot_workflow as autopilot_workflow
+import omc_mission
 import omc_orchestrator
 from omc_decision_input import (
     build_next_priority_surface_input,
@@ -4346,6 +4347,9 @@ def cmd_freeze_work_contract(
     mode: str,
     branch: str,
     output: Path,
+    mission_packet_path: Path,
+    mission_approval_path: Path,
+    mission_approval_session_id: str,
 ) -> int:
     """Bind an approved task scope to the current clean source identity."""
     resolved_root = root.resolve()
@@ -4357,10 +4361,35 @@ def cmd_freeze_work_contract(
     if identity["clean"] != "true":
         print("[SAFE PIPELINE] blocked: source_worktree_not_clean", file=sys.stderr)
         return 1
+    resolved_packet = mission_packet_path.resolve()
+    resolved_approval = mission_approval_path.resolve()
+    try:
+        packet_relative = resolved_packet.relative_to(resolved_output.parent)
+        approval_relative = resolved_approval.relative_to(resolved_output.parent)
+        packet = omc_mission.load_mission_packet(resolved_packet)
+        if resolved_approval.is_symlink():
+            raise omc_mission.MissionError("mission_approval_symlink")
+        approval_bytes = resolved_approval.read_bytes()
+        approval = json.loads(approval_bytes.decode("utf-8"))
+        omc_mission.validate_mission_approval_receipt(
+            approval,
+            packet=packet,
+            session_id=mission_approval_session_id,
+        )
+    except (ValueError, OSError, json.JSONDecodeError, omc_mission.MissionError) as exc:
+        print(f"[SAFE PIPELINE] blocked: mission_contract_invalid:{exc}", file=sys.stderr)
+        return 1
+    instruction_sha256 = hashlib.sha256(instruction.encode("utf-8")).hexdigest()
+    if packet["request_sha256"] != instruction_sha256:
+        print("[SAFE PIPELINE] blocked: mission_request_identity_mismatch", file=sys.stderr)
+        return 1
+    if packet["base_commit"] != identity["head"]:
+        print("[SAFE PIPELINE] blocked: mission_base_commit_mismatch", file=sys.stderr)
+        return 1
     payload = {
-        "schema_version": autopilot_workspace.WORK_CONTRACT_SCHEMA_VERSION,
+        "schema_version": autopilot_workspace.WORK_CONTRACT_SCHEMA_VERSION_V2,
         "run_id": run_id,
-        "instruction_sha256": hashlib.sha256(instruction.encode("utf-8")).hexdigest(),
+        "instruction_sha256": instruction_sha256,
         "base_commit": identity["head"],
         "source_identity": identity,
         "allowed_paths": allowed_paths,
@@ -4373,6 +4402,11 @@ def cmd_freeze_work_contract(
         "required_capabilities": ["workspace_write_confined"],
         "candidate_branch": branch,
         "promotion_policy": "branch_ref_only",
+        "mission_packet_path": packet_relative.as_posix(),
+        "mission_packet_sha256": packet["packet_sha256"],
+        "mission_approval_path": approval_relative.as_posix(),
+        "mission_approval_sha256": hashlib.sha256(approval_bytes).hexdigest(),
+        "mission_approval_session_id": mission_approval_session_id,
     }
     try:
         frozen = autopilot_workspace.freeze_work_contract(resolved_output, payload)
@@ -5699,6 +5733,9 @@ def main() -> int:
     p_freeze_contract.add_argument("--mode", choices=["lite", "full"], required=True)
     p_freeze_contract.add_argument("--branch", required=True)
     p_freeze_contract.add_argument("--output", type=Path, required=True)
+    p_freeze_contract.add_argument("--mission-packet", type=Path, required=True)
+    p_freeze_contract.add_argument("--mission-approval", type=Path, required=True)
+    p_freeze_contract.add_argument("--mission-approval-session-id", required=True)
 
 
     p_pipeline_status = sub.add_parser("pipeline-status", help="pipeline 실행 결과 상태 조회")
@@ -5769,6 +5806,9 @@ def main() -> int:
             mode=args.mode,
             branch=args.branch,
             output=output,
+            mission_packet_path=args.mission_packet,
+            mission_approval_path=args.mission_approval,
+            mission_approval_session_id=args.mission_approval_session_id,
         )
     if args.cmd == "pipeline-status":
         return cmd_pipeline_status(

@@ -9,6 +9,7 @@ T3/T4 DoD:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import importlib.util
 import subprocess
@@ -19,6 +20,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 AUTOPILOT = ROOT / "scripts" / "omc_autopilot.py"
+sys.path.insert(0, str(ROOT / "scripts"))
+import omc_mission as mission  # noqa: E402
 
 
 def _load_autopilot():
@@ -159,6 +162,47 @@ def test_freeze_work_contract_cli_binds_clean_source_and_instruction(tmp_path: P
     subprocess.run(["git", "commit", "-qm", "baseline"], cwd=tmp_path, check=True)
     output = tmp_path.parent / f"{tmp_path.name}-contract.json"
     instruction = "docs/status.md의 오타만 수정한다"
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    packet_path = tmp_path.parent / f"{tmp_path.name}-mission.json"
+    approval_path = tmp_path.parent / f"{tmp_path.name}-mission-approval.json"
+    packet = mission.freeze_mission_packet(
+        packet_path,
+        {
+            "schema_version": mission.MISSION_SCHEMA_VERSION,
+            "request_sha256": hashlib.sha256(instruction.encode("utf-8")).hexdigest(),
+            "base_commit": head,
+            "outcome": "문서 오타가 수정된다",
+            "deliverables": ["docs/status.md"],
+            "definition_of_done": ["status 문서 오타 수정"],
+            "non_goals": ["다른 파일 수정"],
+            "validation": {"max_total_rounds": 2, "max_revisions_per_issue": 1},
+        },
+    )
+    approval = mission.build_mission_approval_receipt(
+        decision_id="mission-cli-1", session_id="session-cli-1", packet=packet
+    )
+    approval_path.write_text(
+        json.dumps(approval, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+
+    missing_mission = _run(
+        [
+            "--target", str(tmp_path), "freeze-work-contract",
+            "--instruction", instruction, "--run-id", "missing-mission",
+            "--allowed-path", "docs/status.md", "--allowed-operation", "modify",
+            "--change-class", "document_only", "--test-policy", "optional",
+            "--mode", "lite", "--branch", "codex/contract-candidate",
+            "--output", str(output),
+        ],
+        cwd=tmp_path,
+    )
+    assert missing_mission.returncode != 0
 
     result = _run(
         [
@@ -183,14 +227,22 @@ def test_freeze_work_contract_cli_binds_clean_source_and_instruction(tmp_path: P
             "codex/contract-candidate",
             "--output",
             str(output),
+            "--mission-packet",
+            str(packet_path),
+            "--mission-approval",
+            str(approval_path),
+            "--mission-approval-session-id",
+            "session-cli-1",
         ],
         cwd=tmp_path,
     )
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "omc-autopilot-work-contract/v2"
     assert payload["source_identity"]["clean"] == "true"
     assert payload["candidate_branch"] == "codex/contract-candidate"
+    assert payload["mission_packet_sha256"] == packet["packet_sha256"]
     assert len(payload["contract_sha256"]) == 64
 
 

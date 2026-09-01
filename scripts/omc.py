@@ -502,6 +502,7 @@ def main() -> int:
     state_decision_consume = state_sub.add_parser("decision-consume", help="Consume an advisory decision.")
     state_decision_consume.add_argument("--target", type=Path, default=Path.cwd())
     state_decision_consume.add_argument("--decision-id", required=True)
+    state_decision_consume.add_argument("--receipt-output", type=Path, default=None)
     state_decision_consume_current = state_sub.add_parser(
         "decision-consume-current",
         help="Consume the current pre-commit-authorized local decision.",
@@ -1002,15 +1003,18 @@ def main() -> int:
                 ],
             )
         if args.state_command == "decision-consume":
+            consume_args = [
+                "decision-consume",
+                "--target",
+                str(args.target),
+                "--decision-id",
+                args.decision_id,
+            ]
+            if args.receipt_output is not None:
+                consume_args.extend(["--receipt-output", str(args.receipt_output)])
             return _run_script(
                 state_script,
-                [
-                    "decision-consume",
-                    "--target",
-                    str(args.target),
-                    "--decision-id",
-                    args.decision_id,
-                ],
+                consume_args,
             )
         if args.state_command == "decision-consume-current":
             return _run_script(

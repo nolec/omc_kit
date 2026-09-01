@@ -14,6 +14,7 @@ import pytest
 import omc_autopilot_safe as safe
 import omc_autopilot_workspace as workspace
 import omc_autopilot as autopilot
+import omc_mission as mission
 
 
 def _git(root: Path, *args: str) -> str:
@@ -69,6 +70,230 @@ def _freeze_contract(
     path = tmp_path / "contract.json"
     workspace.freeze_work_contract(path, payload)
     return path
+
+
+def _freeze_mission_contract(
+    source: Path,
+    tmp_path: Path,
+    instruction: str,
+    *,
+    approval_session_id: str = "session-1",
+) -> Path:
+    packet_path = tmp_path / "mission.json"
+    packet = mission.freeze_mission_packet(
+        packet_path,
+        {
+            "schema_version": mission.MISSION_SCHEMA_VERSION,
+            "request_sha256": hashlib.sha256(instruction.encode()).hexdigest(),
+            "base_commit": _git(source, "rev-parse", "HEAD"),
+            "outcome": "문서 오타를 안전하게 수정한다.",
+            "deliverables": ["수정된 문서"],
+            "definition_of_done": ["오타 수정", "검증 통과"],
+            "non_goals": ["배포"],
+            "validation": {"max_total_rounds": 2, "max_revisions_per_issue": 1},
+        },
+    )
+    receipt = mission.build_mission_approval_receipt(
+        decision_id="mission-1", session_id="session-1", packet=packet
+    )
+    approval_path = tmp_path / "mission-approval.json"
+    approval_path.write_text(
+        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    payload = {
+        "schema_version": workspace.WORK_CONTRACT_SCHEMA_VERSION_V2,
+        "run_id": "safe-mission-run-001",
+        "instruction_sha256": hashlib.sha256(instruction.encode()).hexdigest(),
+        "base_commit": _git(source, "rev-parse", "HEAD"),
+        "source_identity": workspace.source_identity(source),
+        "allowed_paths": ["docs/status.md"],
+        "allowed_operations": ["modify"],
+        "change_class": "document_only",
+        "test_policy": "optional",
+        "verification_commands": [],
+        "pipeline_mode": "lite",
+        "executor": "codex",
+        "required_capabilities": ["workspace_write_confined"],
+        "candidate_branch": "codex/safe-mission-candidate",
+        "promotion_policy": "branch_ref_only",
+        "mission_packet_path": packet_path.name,
+        "mission_packet_sha256": packet["packet_sha256"],
+        "mission_approval_path": approval_path.name,
+        "mission_approval_sha256": hashlib.sha256(approval_path.read_bytes()).hexdigest(),
+        "mission_approval_session_id": approval_session_id,
+    }
+    contract_path = tmp_path / "mission-contract.json"
+    workspace.freeze_work_contract(contract_path, payload)
+    return contract_path
+
+
+def test_safe_pipeline_binds_same_approved_mission_to_task_and_review(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    instruction = "docs/status.md의 pendng를 pending으로 수정하고 다른 파일은 변경하지 않는다"
+    contract = _freeze_mission_contract(source, tmp_path, instruction)
+    observed: dict[str, str] = {}
+
+    def task(root: Path, prompt: str) -> tuple[int, str]:
+        observed["task"] = prompt
+        (root / "docs" / "status.md").write_text("status: pending\n", encoding="utf-8")
+        return 0, "VERDICT: PROCEED"
+
+    def review(root: Path, prompt: str) -> tuple[int, str]:
+        observed["review"] = prompt
+        return _approve_review(root, prompt)
+
+    result = safe.run_safe_pipeline(
+        source=source,
+        contract_path=contract,
+        instruction=instruction,
+        task_runner=task,
+        review_runner=review,
+        workspace_parent=tmp_path / "runs",
+    )
+
+    assert result["status"] == "candidate_ready"
+    digest = result["mission_packet_sha256"]
+    assert digest in observed["task"]
+    assert digest in observed["review"]
+
+
+def test_safe_pipeline_blocks_invalid_mission_before_provider(tmp_path: Path) -> None:
+    source = _source(tmp_path)
+    instruction = "docs/status.md의 pendng를 pending으로 수정하고 다른 파일은 변경하지 않는다"
+    contract = _freeze_mission_contract(source, tmp_path, instruction)
+    (tmp_path / "mission-approval.json").write_text("{}", encoding="utf-8")
+    calls = {"task": 0}
+
+    def task(_root: Path, _prompt: str) -> tuple[int, str]:
+        calls["task"] += 1
+        return 0, "VERDICT: PROCEED"
+
+    result = safe.run_safe_pipeline(
+        source=source,
+        contract_path=contract,
+        instruction=instruction,
+        task_runner=task,
+        review_runner=_approve_review,
+        workspace_parent=tmp_path / "runs",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "mission_approval_contract_mismatch"
+    assert calls["task"] == 0
+
+
+def test_safe_pipeline_blocks_wrong_mission_approval_session_before_provider(
+    tmp_path: Path,
+) -> None:
+    source = _source(tmp_path)
+    instruction = "docs/status.md의 pendng를 pending으로 수정하고 다른 파일은 변경하지 않는다"
+    contract = _freeze_mission_contract(
+        source, tmp_path, instruction, approval_session_id="session-2"
+    )
+    calls = {"task": 0}
+
+    def task(_root: Path, _prompt: str) -> tuple[int, str]:
+        calls["task"] += 1
+        return 0, "VERDICT: PROCEED"
+
+    result = safe.run_safe_pipeline(
+        source=source,
+        contract_path=contract,
+        instruction=instruction,
+        task_runner=task,
+        review_runner=_approve_review,
+        workspace_parent=tmp_path / "runs",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "mission_approval_invalid"
+    assert calls["task"] == 0
+
+
+@pytest.mark.parametrize(
+    ("mission_request", "mission_base", "reason"),
+    [
+        ("f" * 64, None, "mission_request_identity_mismatch"),
+        (None, "f" * 40, "mission_base_commit_mismatch"),
+    ],
+)
+def test_safe_pipeline_blocks_mission_identity_drift_before_provider(
+    tmp_path: Path,
+    mission_request: str | None,
+    mission_base: str | None,
+    reason: str,
+) -> None:
+    source = _source(tmp_path)
+    instruction = "docs/status.md의 pendng를 pending으로 수정하고 다른 파일은 변경하지 않는다"
+    contract = _freeze_mission_contract(source, tmp_path, instruction)
+    packet_path = tmp_path / "mission.json"
+    payload = json.loads(packet_path.read_text(encoding="utf-8"))
+    payload.pop("packet_sha256")
+    if mission_request is not None:
+        payload["request_sha256"] = mission_request
+    if mission_base is not None:
+        payload["base_commit"] = mission_base
+    packet_path.unlink()
+    packet = mission.freeze_mission_packet(packet_path, payload)
+    receipt_path = tmp_path / "mission-approval.json"
+    receipt = mission.build_mission_approval_receipt(
+        decision_id="mission-2", session_id="session-1", packet=packet
+    )
+    receipt_path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+    contract_payload = json.loads(contract.read_text(encoding="utf-8"))
+    contract_payload.pop("contract_sha256")
+    contract_payload["mission_packet_sha256"] = packet["packet_sha256"]
+    contract_payload["mission_approval_sha256"] = hashlib.sha256(
+        receipt_path.read_bytes()
+    ).hexdigest()
+    contract.unlink()
+    workspace.freeze_work_contract(contract, contract_payload)
+    calls = {"task": 0}
+
+    result = safe.run_safe_pipeline(
+        source=source,
+        contract_path=contract,
+        instruction=instruction,
+        task_runner=lambda _root, _prompt: (
+            calls.__setitem__("task", calls["task"] + 1) or 0,
+            "VERDICT: PROCEED",
+        ),
+        review_runner=_approve_review,
+        workspace_parent=tmp_path / "runs",
+    )
+
+    assert result["reason_code"] == reason
+    assert calls["task"] == 0
+
+
+def test_safe_pipeline_reads_approval_bytes_once(tmp_path: Path, monkeypatch) -> None:
+    source = _source(tmp_path)
+    instruction = "docs/status.md의 pendng를 pending으로 수정하고 다른 파일은 변경하지 않는다"
+    contract = _freeze_mission_contract(source, tmp_path, instruction)
+    real_read_text = Path.read_text
+
+    def guarded_read_text(path: Path, *args, **kwargs):
+        if path.name == "mission-approval.json":
+            raise AssertionError("approval must be decoded from the hashed bytes")
+        return real_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+
+    def task(root: Path, _prompt: str) -> tuple[int, str]:
+        (root / "docs" / "status.md").write_text("status: pending\n")
+        return 0, "VERDICT: PROCEED"
+
+    result = safe.run_safe_pipeline(
+        source=source,
+        contract_path=contract,
+        instruction=instruction,
+        task_runner=task,
+        review_runner=_approve_review,
+        workspace_parent=tmp_path / "runs",
+    )
+
+    assert result["status"] == "candidate_ready"
 
 
 def _approve_review(_root: Path, prompt: str) -> tuple[int, str]:
