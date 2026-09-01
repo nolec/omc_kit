@@ -765,9 +765,9 @@ def open_pending_decision(
     options: list[dict[str, object]],
     ttl_seconds: int = 1800,
 ) -> dict[str, object]:
-    """Open an advisory, single-session acknowledgement for a local commit."""
-    if action != "local_commit":
-        raise ValueError("only local_commit decisions may inherit acknowledgement")
+    """Open a single-session acknowledgement for a supported local action."""
+    if action not in {"local_commit", "closure_accept"}:
+        raise ValueError("unsupported pending decision action")
     if not decision_id.strip():
         raise ValueError("decision_id is required")
     if not 1 <= ttl_seconds <= 3600:
@@ -814,7 +814,14 @@ def open_pending_decision(
                 "paths": normalized_paths,
             }
         )
-    if len(normalized_options) > 1 and any(
+    if action == "closure_accept" and len(normalized_options) != 1:
+        raise ValueError("closure_accept requires exactly one option")
+    if action == "closure_accept" and (
+        normalized_options[0]["paths"] is not None
+        or not isinstance(normalized_options[0]["value"], dict)
+    ):
+        raise ValueError("closure_accept requires one binding object without paths")
+    if action == "local_commit" and len(normalized_options) > 1 and any(
         option["paths"] is None for option in normalized_options
     ):
         raise ValueError("each option requires paths when multiple options are present")
@@ -832,15 +839,31 @@ def open_pending_decision(
         ):
             raise ValueError("a current confirmed session is required")
         now = _now()
-        scope = _local_commit_scope_snapshot(project_root)
-        available_paths = set(scope["paths"])
-        for option in normalized_options:
-            option_paths = option["paths"]
-            if option_paths is None:
-                option_paths = list(scope["paths"])
-                option["paths"] = option_paths
-            if not set(option_paths).issubset(available_paths):
-                raise ValueError("option paths must belong to the current local commit scope")
+        if action == "local_commit":
+            scope = _local_commit_scope_snapshot(project_root)
+            available_paths = set(scope["paths"])
+            for option in normalized_options:
+                option_paths = option["paths"]
+                if option_paths is None:
+                    option_paths = list(scope["paths"])
+                    option["paths"] = option_paths
+                if not set(option_paths).issubset(available_paths):
+                    raise ValueError("option paths must belong to the current local commit scope")
+        else:
+            binding = normalized_options[0]["value"]
+            expected_keys = {
+                "session_id",
+                "task_id",
+                "request_digest",
+                "contract_sha256",
+                "scope_sha256",
+                "verification_receipt_sha256",
+                "accepted_residual_issue_ids",
+                "accepted_residual_issues_sha256",
+            }
+            if set(binding) != expected_keys or binding["session_id"] != session_id:
+                raise ValueError("closure_accept binding is invalid")
+            scope = {"paths": [], "entries": {}}
         history = _decision_history(latest)
         current = latest.get("pending_decision")
         if isinstance(current, dict) and current.get("status") in {"pending", "acknowledged"}:
@@ -857,7 +880,7 @@ def open_pending_decision(
             "options_hash": hashlib.sha256(
                 json.dumps(normalized_options, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
             ).hexdigest(),
-            "base_head": _git_commit(project_root),
+            "base_head": _git_commit(project_root) if action == "local_commit" else None,
             "scope_paths": scope["paths"],
             "scope_entries": scope["entries"],
             "scope_fingerprint": hashlib.sha256(
@@ -885,7 +908,7 @@ def resolve_pending_decision(project_root: Path, *, response: str) -> dict[str, 
         decision = latest.get("pending_decision")
         if not isinstance(decision, dict):
             return {"resolved": False, "reason": "no_pending_decision"}
-        if decision.get("action") != "local_commit" or decision.get("authorization") is not False:
+        if decision.get("action") not in {"local_commit", "closure_accept"}:
             return {"resolved": False, "reason": "unsupported_action"}
         if decision.get("status") != "pending":
             return {"resolved": False, "reason": "decision_not_pending"}
@@ -901,7 +924,10 @@ def resolve_pending_decision(project_root: Path, *, response: str) -> dict[str, 
             decision["status"] = "expired"
             _write_json(_latest_path(project_root), latest)
             return {"resolved": False, "reason": "expired"}
-        if decision.get("scope_fingerprint") != _local_commit_scope_fingerprint(project_root):
+        if (
+            decision.get("action") == "local_commit"
+            and decision.get("scope_fingerprint") != _local_commit_scope_fingerprint(project_root)
+        ):
             return {"resolved": False, "reason": "scope_changed"}
 
         normalized = _normalize_decision_response(response)
@@ -918,17 +944,20 @@ def resolve_pending_decision(project_root: Path, *, response: str) -> dict[str, 
         selected = matches[0]
         selected_paths = selected.get("paths")
         scope_entries = decision.get("scope_entries")
-        if not isinstance(selected_paths, list) or not isinstance(scope_entries, dict):
+        if decision.get("action") == "local_commit" and (
+            not isinstance(selected_paths, list) or not isinstance(scope_entries, dict)
+        ):
             return {"resolved": False, "reason": "invalid_option_scope"}
         decision["status"] = "acknowledged"
         decision["selected_option"] = selected.get("id")
         decision["selected_value"] = selected.get("value")
-        decision["selected_scope_paths"] = list(selected_paths)
-        decision["selected_scope_entries"] = {
-            path: scope_entries[path]
-            for path in selected_paths
-            if isinstance(path, str) and path in scope_entries
-        }
+        if decision.get("action") == "local_commit":
+            decision["selected_scope_paths"] = list(selected_paths)
+            decision["selected_scope_entries"] = {
+                path: scope_entries[path]
+                for path in selected_paths
+                if isinstance(path, str) and path in scope_entries
+            }
         decision["acknowledged_at"] = _iso_now()
         latest["updated_at"] = _iso_now()
         _write_json(_latest_path(project_root), latest)
@@ -1061,6 +1090,69 @@ def consume_pending_decision(project_root: Path, *, decision_id: str) -> dict[st
             or decision.get("session_id") != latest.get("latest_confirmed_session_id")
         ):
             return {"consumed": False, "reason": "session_changed"}
+        try:
+            expires_at = datetime.fromisoformat(str(decision.get("expires_at")))
+        except (TypeError, ValueError):
+            expires_at = _now() - timedelta(seconds=1)
+        if expires_at <= _now():
+            decision["status"] = "expired"
+            _write_json(_latest_path(project_root), latest)
+            return {"consumed": False, "reason": "expired"}
+        options = decision.get("options")
+        if not isinstance(options, list):
+            return {"consumed": False, "reason": "decision_options_changed"}
+        current_options_hash = hashlib.sha256(
+            json.dumps(
+                options,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        if current_options_hash != decision.get("options_hash"):
+            return {"consumed": False, "reason": "decision_options_changed"}
+        selected_options = [
+            option
+            for option in options
+            if isinstance(option, dict)
+            and option.get("id") == decision.get("selected_option")
+        ]
+        if len(selected_options) != 1:
+            return {"consumed": False, "reason": "decision_binding_changed"}
+        if decision.get("action") == "closure_accept":
+            binding = decision.get("selected_value")
+            if (
+                not isinstance(binding, dict)
+                or selected_options[0].get("value") != binding
+            ):
+                return {"consumed": False, "reason": "decision_binding_changed"}
+            receipt = {
+                "schema_version": "omc-closure-acceptance-receipt/v1",
+                "decision_id": decision_id,
+                "session_id": decision.get("session_id"),
+                "action": "closure_accept",
+                "status": "consumed",
+                "binding": binding,
+                "binding_sha256": hashlib.sha256(
+                    json.dumps(
+                        binding,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+            }
+            decision["status"] = "consumed"
+            decision["consumed_at"] = _iso_now()
+            decision["acceptance_receipt"] = receipt
+            latest["updated_at"] = _iso_now()
+            _write_json(_latest_path(project_root), latest)
+            return {
+                "consumed": True,
+                "decision_id": decision_id,
+                "action": "closure_accept",
+                "acceptance_receipt": receipt,
+            }
         base_head = str(decision.get("base_head") or "")
         head = _git_commit(project_root)
         if not base_head or head == base_head:

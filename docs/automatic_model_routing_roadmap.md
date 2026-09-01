@@ -157,6 +157,8 @@ Operator Experience의 반복 커밋 확인 병목은 `2026-08-31`에 코드 계
 - 대체 판정은 위 증거 마일스톤 완료 때만 갱신하며 historical pilot만으로 승격하지 않는다.
 - 상세 계약: [OMC Review Synthetic Comparison](omc_review_synthetic_comparison.md)
 
+Work-unit closure primitive는 `2026-09-01`에 구현·검증했다. session·task·request digest에 결속된 immutable envelope, 사용자 acceptance의 단일 소비 receipt, residual issue 내용 hash, validation round와 issue event의 분리, issue revision lineage·budget, scope·verification binding을 fail-close로 판정한다. envelope 동결 전에 별도 enrollment marker를 no-replace로 게시해 동결 파일이 사라진 work unit이 legacy mode로 강등되는 경로를 차단한다. closure/state 관련 회귀 `123 passed`, context/version 회귀 `36 passed`, 문법·staged diff·TDD gate와 OMC review `APPROVE WITH NOTES`를 확인했다. 이 근거는 primitive 구현 완료만 의미하며 실제 task/review/ship 종료 consumer에는 아직 연결하지 않았다. production consumer 연결, marker-only crash recovery failpoint, parent-directory durability 검증을 완료하기 전에는 일반 OMC 완료 판정에 사용하지 않는다.
+
 ### Operator Experience 1차 통합안
 
 - CLI fast-path 1차 완료: 루트 `-h`·`--help`를 prompt 옵션으로 잘못 라우팅하던 회귀를 수정하고, source freshness hash는 저장소 전체가 아니라 실제 설치 대상만 순회한다. template 탐색 오류는 불완전한 hash를 반환하지 않고 fail-close한다.
