@@ -30,6 +30,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재 | 독립 Batch B와 confirmatory batch 재현 |
 | Review | `NOT_PROVEN` | durable native provider 원문 부재 | 동일 diff native 재실행과 blind adjudication |
 | Autopilot | `LIMITED` | mission packet 동결, 명시적 `mission_accept` receipt, work contract v2 결속, provider 호출 전 mission briefing 재검증, 격리 candidate 실행과 trusted-base review까지 fail-close | 고정 커밋 기준 외부 provider TASK→REVIEW smoke와 운영 latency·개입 acceptance |
+| Decision Policy | `IMPLEMENTED` | 실제 결과·독립 causal review·정책 승인·동일 subject paired packet을 결속하는 feasibility 계약과 회귀 테스트 | chronological first-N 실패 5건 수집 후 paired 실행·독립 판정 |
 | Setup | `OPERATIONALLY_VALIDATED` | 최신 배포 기준 사용처 9곳 `setup --force`·strict audit 통과, 기존 Git 상태 보존 | source freshness와 rollback 회귀 유지 |
 
 과거 6건 corpus에서 `DEVELOPMENT_PASS`가 기록됐지만 manifest·workload inventory·execution packet 원문을 현재 검증할 수 없어 유효한 development evidence로 승계하지 않는다. 구현과 acceptance 계약은 유지하되 새 prospective development study에서 chronological first-N 6건을 다시 확보하고, 그 증거가 검증된 뒤에만 비중복 disjoint holdout을 별도로 계획한다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
@@ -37,6 +38,8 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 Autopilot Phase A mission gate는 구현·회귀 검증을 완료했다. 사용자 요청과 base commit을 mission packet으로 동결하고 exact `mission_accept` receipt를 work contract v2에 결속하며, safe runner는 provider 호출 전에 packet·approval·session·request·base를 재검증해 mission briefing을 주입한다. receipt는 완전 쓰기와 `fsync` 후 no-replace 방식으로 게시하고, 부분 쓰기 또는 상태 저장 사이 실패는 동일 receipt 재시도로만 복구한다. 관련 회귀 `194 passed`, staged TDD gate, diff check와 OMC review `APPROVE`를 확인했다. 이는 실행 전 목적 결속의 구현 근거이며 외부 provider 실사용 smoke나 운영 acceptance를 대신하지 않는다.
 
 Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 완료 / 실제 수집 0/5** 상태다. 5건 chronological first-N capture는 observation 시작 15분 전에 완료된 RFC 3161 registration, Git registry anchor, 서로 다른 registration·source snapshot·completion collector·executor 키와 custody identity, preregistration에 고정된 source inventory path, registry commit의 후손인 canonical inventory commit, 연속 sequence·entry hash·source snapshot checkpoint chain, source snapshot과 completion ledger의 exact equality, raw request·provider output의 execution receipt 결속을 모두 통과해야 한다. 실패·불확정 study는 서명된 failure receipt로 봉인하며 자동 재시작하지 않고, 새 study는 승인된 restart parent를 명시해야 한다. 완료 artifact는 임시 경로가 아닌 durable evidence root에 원자적으로 게시하고 digest 검증 후 reload한다. 이 계약은 독립적인 작은 운영 표본의 **수집 가능성만** 검증하며 실제 5건이 수집되기 전에는 제품 가치, 품질 projection 또는 Plan 대체 증거로 사용하지 않는다.
+
+Decision Policy prospective feasibility는 **증거·실행 계약 구현 완료 / 실제 적격 표본 0/5** 상태다. failure corpus는 실제 result JSON과 별도 Ed25519 causal-review receipt를 동일 run·request·commit·source tree에 결속하고, 외부 trust root와 chronology가 일치하는 경우만 적격으로 인정한다. 정책 packet은 decision priority·tradeoff·evidence boundary·stop condition과 독립 승인 receipt를 동결하며, baseline/policy 두 arm은 같은 request·base·runner·adapter·tool contract subject를 사용해야 한다. artifact는 root-relative descriptor와 descriptor 기반 `openat`·`O_NOFOLLOW` 단일 읽기로 경로 이탈, 중간 symlink, digest 교체를 fail-close한다. 이는 persona가 검증 루프에 머물지 않고 명시적 종료 정책으로 작업을 완결하는지 측정하기 위한 준비 근거일 뿐이며, 실제 5건과 paired 결과 전에는 제품 효과 또는 Codex Plan 대체 근거로 사용하지 않는다.
 
 ### 제품 약점 기반 개선 축
 
@@ -236,6 +239,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 12. Plan Batch B와 native Review 독립 검증을 계속해 각 대체 판정을 별도로 갱신한다.
 13. **public CLI 경계 완료 / 상태 신뢰성·멀티 호스트 검증 대기** — 루트 help는 setup·task·status·review·ship 핵심 흐름과 orchestrate·autopilot·team advanced 흐름을 우선 표시한다. Product Value·N-child research 명령은 직접 호출 호환성을 유지한 채 루트 help에서 숨겼고 README 계약과 CLI 회귀 테스트를 고정했다. 다음은 stale active session과 `.omc` 운영 파일 기반 거짓 source drift를 교정한 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증하는 것이다.
 14. **Autopilot 안전 실행 코드 완료 / 외부 smoke 대기** — frozen work contract, 격리 task workspace, trusted-base critique/review, immutable review packet과 candidate branch 전용 promotion을 고정했다. 다음은 고정 커밋의 격리 clone에서 실제 provider TASK→CRITIQUE→REVIEW smoke를 실행해 candidate 변경 보존, reviewer control-plane 비오염, 실패 시 promotion 차단, latency·token·사용자 개입 receipt를 함께 확인하는 것이다.
+15. **Decision Policy feasibility 계약 완료 / 실제 evidence 대기** — 실제 결과와 독립 causal-review receipt로 확인된 chronological first-N 실패 5건을 수집하고, 사전 승인된 정책과 동일 subject의 baseline/policy arm을 paired 실행한다. 완료율·불필요한 검증 왕복·사용자 개입·token을 사전 고정 기준으로 비교하며 독립 판정 전에는 효과를 주장하지 않는다.
 
 ## 한 줄 결론
 
