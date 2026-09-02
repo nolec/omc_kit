@@ -41,7 +41,7 @@ def _history_sections(history: str) -> list[dict[str, object]]:
 
 def test_roadmap_first_screen_is_the_canonical_current_view() -> None:
     text = ROADMAP_PATH.read_text(encoding="utf-8")
-    first_screen = "\n".join(text.splitlines()[:150])
+    first_screen = text.split("### Operator Experience 1차 통합안", 1)[0]
 
     assert "## Current Roadmap" in first_screen
     assert "### Operational P0" in first_screen
@@ -52,6 +52,8 @@ def test_roadmap_first_screen_is_the_canonical_current_view() -> None:
     assert "Plan Quality Validation" in first_screen
     assert "Review Quality Validation" in first_screen
     assert "automatic_model_routing_roadmap_history.md" in first_screen
+    assert "실행 receipt v2는 provider·model·reasoning·paired timeout" in first_screen
+    assert "누락·위조·순서 불일치는 `INCONCLUSIVE`" in first_screen
 
 
 def test_roadmap_current_priority_is_single_and_public_anchors_remain() -> None:

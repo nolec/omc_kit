@@ -24,9 +24,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 CORPUS_SCHEMA = "omc-decision-policy-failure-corpus/v2"
 CAUSAL_RECEIPT_SCHEMA = "omc-decision-policy-causal-review/v1"
+EXCLUSION_RECEIPT_SCHEMA = "omc-decision-policy-exclusion-review/v1"
 POLICY_SCHEMA = "omc-decision-policy-packet/v2"
 POLICY_APPROVAL_SCHEMA = "omc-decision-policy-approval/v1"
 PAIRED_SCHEMA = "omc-decision-policy-paired-packet/v2"
+PREREGISTRATION_SCHEMA = "omc-decision-policy-preregistration/v1"
+INVENTORY_SCHEMA = "omc-decision-policy-candidate-inventory/v1"
+EXECUTION_RECEIPT_SCHEMA = "omc-decision-policy-execution-receipt/v2"
+ADJUDICATION_RECEIPT_SCHEMA = "omc-decision-policy-blind-adjudication/v1"
 TARGET_CASE_COUNT = 5
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
@@ -53,6 +58,37 @@ _OBSERVED_FAILURES = {
     "goal_drift",
     "redundant_confirmation",
     "incomplete_delivery",
+}
+OBSERVED_FAILURES = frozenset(_OBSERVED_FAILURES)
+
+_AUTHORITY_ROLES = {
+    "preregistration_signer",
+    "causal_reviewer",
+    "policy_approver",
+    "runner_operator",
+    "blind_adjudicator",
+}
+_METRIC_POLICY = {
+    "primary": "completion_noninferior",
+    "safety_veto": ["major_regressions", "scope_violations", "abandoned"],
+    "user_interventions": "policy_total_lte_baseline_and_strictly_lower",
+    "efficiency": [
+        "validation_rounds_or_total_tokens_policy_total_strictly_lower",
+        "elapsed_ms_report_only",
+    ],
+    "missing_evidence": "INCONCLUSIVE",
+}
+_RESOURCE_LIMITS = {
+    "max_artifact_bytes": 2_000_000,
+    "timeout_sec": 1_200,
+    "max_retries": 0,
+    "max_provider_calls": TARGET_CASE_COUNT * 2,
+}
+_EXECUTION_POLICY = {
+    "arm_order": "balanced_alternating",
+    "fresh_session_per_arm": True,
+    "shared_context_forbidden": True,
+    "identical_provider_controls": True,
 }
 
 
@@ -158,8 +194,11 @@ def _read_artifact_once(root: Path, value: object, field: str) -> tuple[Path, by
             os.close(directory_fd)
             directory_fd = next_fd
         file_fd = os.open(parts[-1], file_flags, dir_fd=directory_fd)
-        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+        file_stat = os.fstat(file_fd)
+        if not stat.S_ISREG(file_stat.st_mode):
             raise ValueError(f"{field}_untrusted")
+        if file_stat.st_size > _RESOURCE_LIMITS["max_artifact_bytes"]:
+            raise ValueError(f"{field}_too_large")
         chunks: list[bytes] = []
         while chunk := os.read(file_fd, 1024 * 1024):
             chunks.append(chunk)
@@ -231,6 +270,160 @@ def _verify_signed_receipt(
     return dict(receipt)
 
 
+def _validate_authorities(authorities: object, preregistration_key: str) -> list[dict[str, str]]:
+    if not isinstance(authorities, list) or len(authorities) != len(_AUTHORITY_ROLES):
+        raise ValueError("authorities_invalid")
+    normalized: list[dict[str, str]] = []
+    for authority in authorities:
+        if not isinstance(authority, dict) or set(authority) != {
+            "role",
+            "operator_id",
+            "custody_id",
+            "public_key",
+        }:
+            raise ValueError("authority_fields_invalid")
+        role = _require_text(authority.get("role"), "authority_role")
+        if role not in _AUTHORITY_ROLES:
+            raise ValueError("authority_role_invalid")
+        public_key = _require_text(authority.get("public_key"), "public_key")
+        try:
+            public_bytes = base64.b64decode(public_key, validate=True)
+            Ed25519PublicKey.from_public_bytes(public_bytes)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("authority_public_key_invalid") from exc
+        normalized.append(
+            {
+                "role": role,
+                "operator_id": _require_id(authority.get("operator_id"), "operator_id"),
+                "custody_id": _require_id(authority.get("custody_id"), "custody_id"),
+                "public_key": public_key,
+            }
+        )
+    if {item["role"] for item in normalized} != _AUTHORITY_ROLES:
+        raise ValueError("authority_roles_invalid")
+    for field in ("operator_id", "custody_id", "public_key"):
+        if len({item[field] for item in normalized}) != len(normalized):
+            raise ValueError("authority_not_independent")
+    signer = next(item for item in normalized if item["role"] == "preregistration_signer")
+    if signer["public_key"] != preregistration_key:
+        raise ValueError("preregistration_authority_mismatch")
+    return normalized
+
+
+def validate_prospective_preregistration(
+    payload: object, *, trusted_preregistration_public_key: str
+) -> dict[str, Any]:
+    if not isinstance(payload, dict) or payload.get("schema_version") != PREREGISTRATION_SCHEMA:
+        raise ValueError("preregistration_schema_invalid")
+    expected = {
+        "schema_version",
+        "status",
+        "study_id",
+        "registered_at",
+        "observation_start",
+        "observation_end",
+        "selection",
+        "metric_policy",
+        "resource_limits",
+        "execution_policy",
+        "claim_scope",
+        "authorities",
+        "signer_public_key",
+        "signature",
+        "preregistration_sha256",
+    }
+    if set(payload) != expected or payload.get("status") != "registered_pre_observation":
+        raise ValueError("preregistration_fields_invalid")
+    _require_id(payload.get("study_id"), "study_id")
+    registered = _parse_timestamp(payload.get("registered_at"), "registered_at")
+    start = _parse_timestamp(payload.get("observation_start"), "observation_start")
+    end = _parse_timestamp(payload.get("observation_end"), "observation_end")
+    if not registered < start < end:
+        raise ValueError("preregistration_chronology_invalid")
+    selection = payload.get("selection")
+    if not isinstance(selection, dict) or set(selection) != {
+        "policy",
+        "target_count",
+        "source_repositories",
+        "failure_taxonomy",
+        "exclusion_rules",
+        "replacement_allowed",
+    }:
+        raise ValueError("selection_contract_invalid")
+    if (
+        selection.get("policy") != "chronological_first_n_eligible"
+        or selection.get("target_count") != TARGET_CASE_COUNT
+        or selection.get("replacement_allowed") is not False
+    ):
+        raise ValueError("selection_policy_invalid")
+    _require_text_list(selection.get("source_repositories"), "source_repositories")
+    taxonomy = _require_text_list(selection.get("failure_taxonomy"), "failure_taxonomy")
+    if set(taxonomy) != _OBSERVED_FAILURES:
+        raise ValueError("failure_taxonomy_invalid")
+    _require_text_list(selection.get("exclusion_rules"), "exclusion_rules")
+    if payload.get("metric_policy") != _METRIC_POLICY:
+        raise ValueError("metric_policy_invalid")
+    if payload.get("resource_limits") != _RESOURCE_LIMITS:
+        raise ValueError("resource_limits_invalid")
+    if payload.get("execution_policy") != _EXECUTION_POLICY:
+        raise ValueError("execution_policy_invalid")
+    if payload.get("claim_scope") != "decision_policy_feasibility_only":
+        raise ValueError("claim_scope_invalid")
+    recorded_key = _require_text(payload.get("signer_public_key"), "signer_public_key")
+    if recorded_key != trusted_preregistration_public_key:
+        raise ValueError("preregistration_signer_untrusted")
+    _validate_authorities(payload.get("authorities"), recorded_key)
+    _verify_signed_receipt(
+        payload,
+        trusted_public_key=trusted_preregistration_public_key,
+        hash_field="preregistration_sha256",
+        expected_schema=PREREGISTRATION_SCHEMA,
+    )
+    return dict(payload)
+
+
+def build_prospective_preregistration(
+    *,
+    study_id: str,
+    registered_at: str,
+    observation_start: str,
+    observation_end: str,
+    source_repositories: list[str],
+    failure_taxonomy: list[str],
+    exclusion_rules: list[str],
+    authorities: list[dict[str, str]],
+    private_key: Ed25519PrivateKey,
+) -> dict[str, Any]:
+    signer_key = public_key_b64(private_key)
+    body = {
+        "schema_version": PREREGISTRATION_SCHEMA,
+        "status": "registered_pre_observation",
+        "study_id": _require_id(study_id, "study_id"),
+        "registered_at": registered_at,
+        "observation_start": observation_start,
+        "observation_end": observation_end,
+        "selection": {
+            "policy": "chronological_first_n_eligible",
+            "target_count": TARGET_CASE_COUNT,
+            "source_repositories": source_repositories,
+            "failure_taxonomy": failure_taxonomy,
+            "exclusion_rules": exclusion_rules,
+            "replacement_allowed": False,
+        },
+        "metric_policy": dict(_METRIC_POLICY),
+        "resource_limits": dict(_RESOURCE_LIMITS),
+        "execution_policy": dict(_EXECUTION_POLICY),
+        "claim_scope": "decision_policy_feasibility_only",
+        "authorities": authorities,
+    }
+    packet = _sign_receipt(
+        body, private_key=private_key, hash_field="preregistration_sha256"
+    )
+    return validate_prospective_preregistration(
+        packet, trusted_preregistration_public_key=signer_key
+    )
+
+
 def build_causal_review_receipt(
     *,
     run_id: str,
@@ -275,6 +468,56 @@ def _validate_causal_receipt(
         or validated.get("observed_failure") not in _OBSERVED_FAILURES
     ):
         raise ValueError("causal_receipt_subject_mismatch")
+    _require_id(validated.get("reviewer_id"), "reviewer_id")
+    _parse_timestamp(validated.get("reviewed_at"), "reviewed_at")
+    return validated
+
+
+def build_exclusion_review_receipt(
+    *,
+    candidate_id: str,
+    run_id: str,
+    result_sha256: str,
+    exclusion_reason: str,
+    reviewer_id: str,
+    reviewed_at: str,
+    private_key: Ed25519PrivateKey,
+) -> dict[str, Any]:
+    body = {
+        "schema_version": EXCLUSION_RECEIPT_SCHEMA,
+        "candidate_id": _require_id(candidate_id, "candidate_id"),
+        "run_id": _require_id(run_id, "run_id"),
+        "result_sha256": _require_digest(result_sha256, "result_sha256"),
+        "exclusion_reason": _require_text(exclusion_reason, "exclusion_reason"),
+        "reviewer_id": _require_id(reviewer_id, "reviewer_id"),
+        "reviewed_at": reviewed_at,
+    }
+    _parse_timestamp(reviewed_at, "reviewed_at")
+    return _sign_receipt(body, private_key=private_key, hash_field="receipt_sha256")
+
+
+def _validate_exclusion_receipt(
+    receipt: object,
+    *,
+    trusted_public_key: str,
+    candidate_id: str,
+    run_id: str,
+    result_sha256: str,
+    exclusion_reason: str,
+) -> dict[str, Any]:
+    validated = _verify_signed_receipt(
+        receipt,
+        trusted_public_key=trusted_public_key,
+        hash_field="receipt_sha256",
+        expected_schema=EXCLUSION_RECEIPT_SCHEMA,
+    )
+    if (
+        validated.get("candidate_id") != candidate_id
+        or validated.get("run_id") != run_id
+        or validated.get("result_sha256") != result_sha256
+        or validated.get("exclusion_reason") != exclusion_reason
+    ):
+        raise ValueError("exclusion_receipt_subject_mismatch")
     _require_id(validated.get("reviewer_id"), "reviewer_id")
     _parse_timestamp(validated.get("reviewed_at"), "reviewed_at")
     return validated
@@ -713,6 +956,12 @@ def validate_paired_packet(
     order = payload.get("execution_order")
     if not isinstance(order, list) or len(order) != 10 or set(order) != expected_order:
         raise ValueError("execution_order_invalid")
+    balanced_order: list[str] = []
+    for index, case_id in enumerate(sorted(expected_ids), start=1):
+        arms = ("baseline", "policy") if index % 2 else ("policy", "baseline")
+        balanced_order.extend(f"{case_id}:{arm}" for arm in arms)
+    if order != balanced_order:
+        raise ValueError("execution_order_not_balanced")
     if payload.get("metrics") != [
         "completion",
         "critical_omission",
@@ -798,6 +1047,626 @@ def build_paired_packet(
         trusted_causal_reviewer_public_key=trusted_causal_reviewer_public_key,
         trusted_approver_public_key=trusted_approver_public_key,
     )
+
+
+def _inventory_entry(
+    entry: object,
+    *,
+    sequence: int,
+    previous: str,
+    preregistration: dict[str, Any],
+    evidence_root: Path,
+    trusted_causal_reviewer_public_key: str,
+) -> dict[str, Any]:
+    required = {
+        "candidate_id",
+        "repository_id",
+        "observed_at",
+        "result_path",
+        "causal_receipt_path",
+        "exclusion_reason",
+    }
+    allowed = required | {"exclusion_receipt_path"}
+    if not isinstance(entry, dict) or not required.issubset(entry) or not set(entry) <= allowed:
+        raise ValueError("inventory_evidence_descriptor_missing")
+    _, result, result_sha256 = _load_json_artifact(
+        evidence_root, entry.get("result_path"), "result_path"
+    )
+    identity = _result_identity(result, result_sha256)
+    exclusion_reason = entry.get("exclusion_reason")
+    failure_type: str | None = None
+    receipt_sha256: str | None = None
+    exclusion_receipt_sha256: str | None = None
+    signed_observed_at: str
+    if exclusion_reason is None:
+        _, receipt, receipt_sha256 = _load_json_artifact(
+            evidence_root, entry.get("causal_receipt_path"), "causal_receipt_path"
+        )
+        validated = _validate_causal_receipt(
+            receipt,
+            trusted_public_key=trusted_causal_reviewer_public_key,
+            run_id=identity["run_id"],
+            result_sha256=result_sha256,
+        )
+        failure_type = str(validated["observed_failure"])
+        signed_observed_at = str(validated["reviewed_at"])
+        eligibility = "eligible"
+        reason = "causal_review_confirmed"
+    else:
+        reason = _require_text(exclusion_reason, "exclusion_reason")
+        if reason not in preregistration["selection"]["exclusion_rules"]:
+            raise ValueError("inventory_exclusion_reason_invalid")
+        exclusion_path = entry.get("exclusion_receipt_path")
+        if not exclusion_path:
+            raise ValueError("inventory_exclusion_receipt_missing")
+        _, exclusion_receipt, exclusion_receipt_sha256 = _load_json_artifact(
+            evidence_root, exclusion_path, "exclusion_receipt_path"
+        )
+        validated = _validate_exclusion_receipt(
+            exclusion_receipt,
+            trusted_public_key=trusted_causal_reviewer_public_key,
+            candidate_id=_require_id(entry.get("candidate_id"), "candidate_id"),
+            run_id=identity["run_id"],
+            result_sha256=result_sha256,
+            exclusion_reason=reason,
+        )
+        signed_observed_at = str(validated["reviewed_at"])
+        eligibility = "excluded"
+    if entry.get("observed_at") != signed_observed_at:
+        raise ValueError("inventory_observed_at_unbound")
+    normalized = {
+        "sequence": sequence,
+        "previous_entry_sha256": previous,
+        "candidate_id": _require_id(entry.get("candidate_id"), "candidate_id"),
+        "run_id": identity["run_id"],
+        "repository_id": _require_id(entry.get("repository_id"), "repository_id"),
+        "observed_at": signed_observed_at,
+        "failure_type": failure_type,
+        "eligibility": eligibility,
+        "reason": reason,
+        "result_path": str(entry["result_path"]),
+        "result_sha256": result_sha256,
+        "request_sha256": identity["request_sha256"],
+        "base_commit": identity["base_commit"],
+        "source_tree": identity["source_tree"],
+        "causal_receipt_path": str(entry["causal_receipt_path"]),
+        "causal_receipt_sha256": receipt_sha256,
+        "exclusion_receipt_path": entry.get("exclusion_receipt_path"),
+        "exclusion_receipt_sha256": exclusion_receipt_sha256,
+    }
+    _parse_timestamp(normalized["observed_at"], "observed_at")
+    normalized["entry_sha256"] = canonical_sha256(normalized)
+    return normalized
+
+
+def validate_candidate_inventory(
+    payload: object,
+    *,
+    preregistration: dict[str, Any],
+    trusted_preregistration_public_key: str,
+    evidence_root: Path,
+    trusted_causal_reviewer_public_key: str,
+) -> dict[str, Any]:
+    validate_prospective_preregistration(
+        preregistration,
+        trusted_preregistration_public_key=trusted_preregistration_public_key,
+    )
+    if not isinstance(payload, dict) or set(payload) != {
+        "schema_version",
+        "status",
+        "preregistration_sha256",
+        "entries",
+        "selected_candidate_ids",
+        "inventory_sha256",
+    }:
+        raise ValueError("inventory_fields_invalid")
+    if payload.get("schema_version") != INVENTORY_SCHEMA or payload.get("status") != "frozen":
+        raise ValueError("inventory_schema_invalid")
+    if payload.get("preregistration_sha256") != preregistration["preregistration_sha256"]:
+        raise ValueError("inventory_preregistration_mismatch")
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError("inventory_entries_invalid")
+    repositories = set(preregistration["selection"]["source_repositories"])
+    causal_authority = next(
+        item for item in preregistration["authorities"] if item["role"] == "causal_reviewer"
+    )
+    if causal_authority["public_key"] != trusted_causal_reviewer_public_key:
+        raise ValueError("causal_reviewer_authority_mismatch")
+    start = _parse_timestamp(preregistration["observation_start"], "observation_start")
+    end = _parse_timestamp(preregistration["observation_end"], "observation_end")
+    previous = "0" * 64
+    candidate_ids: list[str] = []
+    run_ids: list[str] = []
+    eligible_ids: list[str] = []
+    previous_order_key: tuple[datetime, str] | None = None
+    for sequence, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict) or entry.get("sequence") != sequence:
+            raise ValueError("inventory_sequence_invalid")
+        if entry.get("previous_entry_sha256") != previous:
+            raise ValueError("inventory_chain_invalid")
+        unsigned = dict(entry)
+        entry_hash = unsigned.pop("entry_sha256", None)
+        if entry_hash != canonical_sha256(unsigned):
+            raise ValueError("inventory_entry_digest_mismatch")
+        if entry.get("repository_id") not in repositories:
+            raise ValueError("inventory_repository_invalid")
+        observed = _parse_timestamp(entry.get("observed_at"), "observed_at")
+        if not start <= observed < end:
+            raise ValueError("inventory_observation_outside_window")
+        candidate_id = _require_id(entry.get("candidate_id"), "candidate_id")
+        order_key = (observed, candidate_id)
+        if previous_order_key is not None and order_key <= previous_order_key:
+            raise ValueError("inventory_chronology_invalid")
+        previous_order_key = order_key
+        _, result, result_sha256 = _load_json_artifact(
+            evidence_root, entry.get("result_path"), "result_path"
+        )
+        identity = _result_identity(result, result_sha256)
+        if any(
+            entry.get(field) != identity[field]
+            for field in (
+                "run_id",
+                "result_sha256",
+                "request_sha256",
+                "base_commit",
+                "source_tree",
+            )
+        ):
+            raise ValueError("inventory_result_subject_mismatch")
+        candidate_ids.append(candidate_id)
+        run_ids.append(_require_id(entry.get("run_id"), "run_id"))
+        if entry.get("eligibility") == "eligible":
+            _, receipt, receipt_sha256 = _load_json_artifact(
+                evidence_root, entry.get("causal_receipt_path"), "causal_receipt_path"
+            )
+            if receipt_sha256 != entry.get("causal_receipt_sha256"):
+                raise ValueError("inventory_causal_receipt_digest_mismatch")
+            validated = _validate_causal_receipt(
+                receipt,
+                trusted_public_key=trusted_causal_reviewer_public_key,
+                run_id=identity["run_id"],
+                result_sha256=result_sha256,
+            )
+            if entry.get("failure_type") != validated["observed_failure"]:
+                raise ValueError("inventory_failure_type_mismatch")
+            if entry.get("observed_at") != validated["reviewed_at"]:
+                raise ValueError("inventory_observed_at_unbound")
+            eligible_ids.append(str(entry["candidate_id"]))
+        elif entry.get("eligibility") != "excluded":
+            raise ValueError("inventory_eligibility_invalid")
+        elif entry.get("reason") not in preregistration["selection"]["exclusion_rules"]:
+            raise ValueError("inventory_exclusion_reason_invalid")
+        else:
+            _, exclusion_receipt, exclusion_receipt_sha256 = _load_json_artifact(
+                evidence_root,
+                entry.get("exclusion_receipt_path"),
+                "exclusion_receipt_path",
+            )
+            if exclusion_receipt_sha256 != entry.get("exclusion_receipt_sha256"):
+                raise ValueError("inventory_exclusion_receipt_digest_mismatch")
+            validated = _validate_exclusion_receipt(
+                exclusion_receipt,
+                trusted_public_key=trusted_causal_reviewer_public_key,
+                candidate_id=candidate_id,
+                run_id=identity["run_id"],
+                result_sha256=result_sha256,
+                exclusion_reason=str(entry["reason"]),
+            )
+            if entry.get("observed_at") != validated["reviewed_at"]:
+                raise ValueError("inventory_observed_at_unbound")
+        previous = str(entry_hash)
+    if len(candidate_ids) != len(set(candidate_ids)) or len(run_ids) != len(set(run_ids)):
+        raise ValueError("inventory_duplicate_candidate")
+    selected = eligible_ids[:TARGET_CASE_COUNT]
+    if payload.get("selected_candidate_ids") != selected:
+        raise ValueError("inventory_first_n_selection_invalid")
+    _verify_hash(payload, "inventory_sha256")
+    return dict(payload)
+
+
+def build_candidate_inventory(
+    *,
+    preregistration: dict[str, Any],
+    entries: list[dict[str, Any]],
+    trusted_preregistration_public_key: str,
+    evidence_root: Path,
+    trusted_causal_reviewer_public_key: str,
+) -> dict[str, Any]:
+    previous = "0" * 64
+    frozen: list[dict[str, Any]] = []
+    for sequence, source in enumerate(entries, start=1):
+        entry = _inventory_entry(
+            source,
+            sequence=sequence,
+            previous=previous,
+            preregistration=preregistration,
+            evidence_root=evidence_root,
+            trusted_causal_reviewer_public_key=trusted_causal_reviewer_public_key,
+        )
+        frozen.append(entry)
+        previous = entry["entry_sha256"]
+    selected = [
+        entry["candidate_id"] for entry in frozen if entry["eligibility"] == "eligible"
+    ][:TARGET_CASE_COUNT]
+    payload: dict[str, Any] = {
+        "schema_version": INVENTORY_SCHEMA,
+        "status": "frozen",
+        "preregistration_sha256": preregistration["preregistration_sha256"],
+        "entries": frozen,
+        "selected_candidate_ids": selected,
+    }
+    payload["inventory_sha256"] = canonical_sha256(payload)
+    return validate_candidate_inventory(
+        payload,
+        preregistration=preregistration,
+        trusted_preregistration_public_key=trusted_preregistration_public_key,
+        evidence_root=evidence_root,
+        trusted_causal_reviewer_public_key=trusted_causal_reviewer_public_key,
+    )
+
+
+def build_execution_receipt(
+    *,
+    preregistration_sha256: str,
+    inventory_sha256: str,
+    paired_packet_sha256: str,
+    subject: dict[str, object],
+    arm: str,
+    sequence: int,
+    session_id: str,
+    completion: bool,
+    major_regressions: int,
+    critical_omissions: int,
+    scope_violations: int,
+    abandoned: bool,
+    validation_rounds: int,
+    user_interventions: int,
+    elapsed_ms: int,
+    total_tokens: int,
+    artifact_bytes: int,
+    provider_calls: int,
+    attempts: int,
+    executed_at: str,
+    provider: str,
+    model: str,
+    reasoning: str,
+    private_key: Ed25519PrivateKey,
+) -> dict[str, Any]:
+    normalized_subject = _validate_execution_subject(subject)
+    _parse_timestamp(executed_at, "executed_at")
+    body = {
+        "schema_version": EXECUTION_RECEIPT_SCHEMA,
+        "preregistration_sha256": _require_digest(
+            preregistration_sha256, "preregistration_sha256"
+        ),
+        "inventory_sha256": _require_digest(inventory_sha256, "inventory_sha256"),
+        "paired_packet_sha256": _require_digest(
+            paired_packet_sha256, "paired_packet_sha256"
+        ),
+        "subject_sha256": canonical_sha256(normalized_subject),
+        "case_id": normalized_subject["case_id"],
+        "arm": arm,
+        "sequence": sequence,
+        "session_id": _require_id(session_id, "session_id"),
+        "executed_at": executed_at,
+        "provider": _require_text(provider, "provider"),
+        "model": _require_text(model, "model"),
+        "reasoning": _require_text(reasoning, "reasoning"),
+        "completion": completion,
+        "major_regressions": major_regressions,
+        "critical_omissions": critical_omissions,
+        "scope_violations": scope_violations,
+        "abandoned": abandoned,
+        "validation_rounds": validation_rounds,
+        "user_interventions": user_interventions,
+        "elapsed_ms": elapsed_ms,
+        "total_tokens": total_tokens,
+        "artifact_bytes": artifact_bytes,
+        "provider_calls": provider_calls,
+        "attempts": attempts,
+    }
+    return _sign_receipt(body, private_key=private_key, hash_field="receipt_sha256")
+
+
+def build_blind_adjudication_receipt(
+    *,
+    paired_packet_sha256: str,
+    case_id: str,
+    baseline_execution_receipt_sha256: str,
+    policy_execution_receipt_sha256: str,
+    winner: str,
+    major_quality_loss: bool,
+    adjudicator_id: str,
+    adjudicated_at: str,
+    private_key: Ed25519PrivateKey,
+) -> dict[str, Any]:
+    if winner not in {"baseline", "policy", "tie"}:
+        raise ValueError("adjudication_winner_invalid")
+    if not isinstance(major_quality_loss, bool):
+        raise ValueError("major_quality_loss_invalid")
+    body = {
+        "schema_version": ADJUDICATION_RECEIPT_SCHEMA,
+        "paired_packet_sha256": _require_digest(
+            paired_packet_sha256, "paired_packet_sha256"
+        ),
+        "case_id": _require_id(case_id, "case_id"),
+        "baseline_execution_receipt_sha256": _require_digest(
+            baseline_execution_receipt_sha256,
+            "baseline_execution_receipt_sha256",
+        ),
+        "policy_execution_receipt_sha256": _require_digest(
+            policy_execution_receipt_sha256,
+            "policy_execution_receipt_sha256",
+        ),
+        "winner": winner,
+        "major_quality_loss": major_quality_loss,
+        "adjudicator_id": _require_id(adjudicator_id, "adjudicator_id"),
+        "adjudicated_at": adjudicated_at,
+    }
+    _parse_timestamp(adjudicated_at, "adjudicated_at")
+    return _sign_receipt(body, private_key=private_key, hash_field="receipt_sha256")
+
+
+def evaluate_paired_results(
+    *,
+    preregistration: dict[str, Any],
+    inventory: dict[str, Any],
+    paired_packet: dict[str, Any],
+    corpus: dict[str, Any],
+    policy_packet: dict[str, Any],
+    evidence_root: Path,
+    receipts: list[dict[str, Any]],
+    adjudication_receipts: list[dict[str, Any]],
+    trusted_preregistration_public_key: str,
+    trusted_causal_reviewer_public_key: str,
+    trusted_approver_public_key: str,
+) -> dict[str, Any]:
+    validate_prospective_preregistration(
+        preregistration,
+        trusted_preregistration_public_key=trusted_preregistration_public_key,
+    )
+    validate_candidate_inventory(
+        inventory,
+        preregistration=preregistration,
+        trusted_preregistration_public_key=trusted_preregistration_public_key,
+        evidence_root=evidence_root,
+        trusted_causal_reviewer_public_key=trusted_causal_reviewer_public_key,
+    )
+    validate_paired_packet(
+        paired_packet,
+        corpus=corpus,
+        policy_packet=policy_packet,
+        evidence_root=evidence_root,
+        trusted_causal_reviewer_public_key=trusted_causal_reviewer_public_key,
+        trusted_approver_public_key=trusted_approver_public_key,
+    )
+    selected = set(inventory["selected_candidate_ids"])
+    paired_subjects = {
+        pair["case_id"]: pair["baseline"] for pair in paired_packet["case_subjects"]
+    }
+    if selected != set(paired_subjects):
+        raise ValueError("execution_case_selection_mismatch")
+    selected_entries = {
+        entry["candidate_id"]: entry
+        for entry in inventory["entries"]
+        if entry["candidate_id"] in selected
+    }
+    for case_id, subject in paired_subjects.items():
+        entry = selected_entries[case_id]
+        if any(
+            entry.get(field) != subject.get(field)
+            for field in ("request_sha256", "base_commit", "source_tree")
+        ):
+            raise ValueError("execution_subject_inventory_mismatch")
+    runner_key = next(
+        item["public_key"]
+        for item in preregistration["authorities"]
+        if item["role"] == "runner_operator"
+    )
+    normalized: dict[tuple[str, str], dict[str, Any]] = {}
+    sessions: set[str] = set()
+    seen_receipts: set[str] = set()
+    invalid = False
+    controls = preregistration["resource_limits"]
+    expected_order = paired_packet["execution_order"]
+    previous_execution_at: datetime | None = None
+    for sequence, raw_receipt in enumerate(receipts, start=1):
+        try:
+            result = _verify_signed_receipt(
+                raw_receipt,
+                trusted_public_key=runner_key,
+                hash_field="receipt_sha256",
+                expected_schema=EXECUTION_RECEIPT_SCHEMA,
+            )
+            case_id = _require_id(result.get("case_id"), "case_id")
+            session_id = _require_id(result.get("session_id"), "session_id")
+            receipt = _require_digest(result.get("receipt_sha256"), "receipt_sha256")
+            executed_at = _parse_timestamp(result.get("executed_at"), "executed_at")
+            provider = _require_text(result.get("provider"), "provider")
+            model = _require_text(result.get("model"), "model")
+            reasoning = _require_text(result.get("reasoning"), "reasoning")
+        except ValueError:
+            invalid = True
+            continue
+        arm = str(result.get("arm"))
+        if arm not in {"baseline", "policy"}:
+            invalid = True
+            continue
+        key = (case_id, arm)
+        if key in normalized or session_id in sessions or receipt in seen_receipts:
+            invalid = True
+            continue
+        subject = paired_subjects.get(case_id)
+        paired_controls = paired_packet["execution_controls"]
+        if (
+            subject is None
+            or result.get("preregistration_sha256") != preregistration["preregistration_sha256"]
+            or result.get("inventory_sha256") != inventory["inventory_sha256"]
+            or result.get("paired_packet_sha256") != paired_packet["paired_packet_sha256"]
+            or result.get("subject_sha256") != canonical_sha256(subject)
+            or result.get("sequence") != sequence
+            or sequence > len(expected_order)
+            or expected_order[sequence - 1] != f"{case_id}:{arm}"
+            or (
+                previous_execution_at is not None
+                and executed_at <= previous_execution_at
+            )
+            or executed_at
+            < _parse_timestamp(
+                paired_packet["execution_not_before"], "execution_not_before"
+            )
+            or provider != paired_controls["provider"]
+            or model != paired_controls["model"]
+            or reasoning != paired_controls["reasoning"]
+        ):
+            invalid = True
+            continue
+        if not isinstance(result.get("completion"), bool) or not isinstance(
+            result.get("abandoned"), bool
+        ):
+            invalid = True
+            continue
+        for field in (
+            "major_regressions",
+            "critical_omissions",
+            "scope_violations",
+            "validation_rounds",
+            "user_interventions",
+            "elapsed_ms",
+            "total_tokens",
+            "artifact_bytes",
+            "provider_calls",
+            "attempts",
+        ):
+            value = result.get(field)
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 0
+            ):
+                invalid = True
+                break
+        else:
+            if (
+                result["artifact_bytes"] > controls["max_artifact_bytes"]
+                or result["elapsed_ms"] > controls["timeout_sec"] * 1000
+                or result["elapsed_ms"]
+                > paired_controls["timeout_sec"] * 1000
+                or result["provider_calls"] != 1
+                or result["attempts"] != 1
+            ):
+                invalid = True
+                continue
+            normalized[key] = result
+            sessions.add(session_id)
+            seen_receipts.add(receipt)
+            previous_execution_at = executed_at
+    case_ids = {case_id for case_id, _ in normalized}
+    complete_pairs = len(case_ids) == TARGET_CASE_COUNT and all(
+        (case_id, arm) in normalized
+        for case_id in case_ids
+        for arm in ("baseline", "policy")
+    )
+    adjudicator_key = next(
+        item["public_key"]
+        for item in preregistration["authorities"]
+        if item["role"] == "blind_adjudicator"
+    )
+    adjudicated: dict[str, dict[str, Any]] = {}
+    for raw_adjudication in adjudication_receipts:
+        try:
+            adjudication = _verify_signed_receipt(
+                raw_adjudication,
+                trusted_public_key=adjudicator_key,
+                hash_field="receipt_sha256",
+                expected_schema=ADJUDICATION_RECEIPT_SCHEMA,
+            )
+            case_id = _require_id(adjudication.get("case_id"), "case_id")
+            _require_id(adjudication.get("adjudicator_id"), "adjudicator_id")
+            adjudicated_at = _parse_timestamp(
+                adjudication.get("adjudicated_at"), "adjudicated_at"
+            )
+            baseline_receipt = normalized[(case_id, "baseline")]["receipt_sha256"]
+            policy_receipt = normalized[(case_id, "policy")]["receipt_sha256"]
+            latest_execution_at = max(
+                _parse_timestamp(
+                    normalized[(case_id, arm)]["executed_at"], "executed_at"
+                )
+                for arm in ("baseline", "policy")
+            )
+            if (
+                case_id in adjudicated
+                or adjudication.get("paired_packet_sha256")
+                != paired_packet["paired_packet_sha256"]
+                or adjudication.get("baseline_execution_receipt_sha256")
+                != baseline_receipt
+                or adjudication.get("policy_execution_receipt_sha256")
+                != policy_receipt
+                or adjudicated_at <= latest_execution_at
+                or adjudication.get("winner") not in {"baseline", "policy", "tie"}
+                or not isinstance(adjudication.get("major_quality_loss"), bool)
+            ):
+                raise ValueError("adjudication_subject_mismatch")
+        except (KeyError, ValueError):
+            invalid = True
+            continue
+        adjudicated[case_id] = adjudication
+    blind_quality_ok = (
+        len(adjudicated) == TARGET_CASE_COUNT
+        and all(not item["major_quality_loss"] for item in adjudicated.values())
+    )
+    if (
+        invalid
+        or len(seen_receipts) != TARGET_CASE_COUNT * 2
+        or len(normalized) != TARGET_CASE_COUNT * 2
+        or not complete_pairs
+        or len(adjudication_receipts) != TARGET_CASE_COUNT
+    ):
+        verdict = "INCONCLUSIVE"
+    else:
+        baseline = [value for (case_id, arm), value in normalized.items() if arm == "baseline"]
+        policy = [value for (case_id, arm), value in normalized.items() if arm == "policy"]
+        completion_ok = sum(item["completion"] for item in policy) >= sum(
+            item["completion"] for item in baseline
+        )
+        safety_ok = all(
+            item["major_regressions"] == 0
+            and item["scope_violations"] == 0
+            and not item["abandoned"]
+            for item in policy
+        )
+        critical_omissions_ok = sum(
+            item["critical_omissions"] for item in policy
+        ) <= sum(item["critical_omissions"] for item in baseline)
+        baseline_interventions = sum(item["user_interventions"] for item in baseline)
+        policy_interventions = sum(item["user_interventions"] for item in policy)
+        interventions_ok = policy_interventions < baseline_interventions
+        validation_ok = sum(item["validation_rounds"] for item in policy) < sum(
+            item["validation_rounds"] for item in baseline
+        )
+        tokens_ok = sum(item["total_tokens"] for item in policy) < sum(
+            item["total_tokens"] for item in baseline
+        )
+        verdict = (
+            "FEASIBILITY_PASS"
+            if completion_ok
+            and safety_ok
+            and critical_omissions_ok
+            and blind_quality_ok
+            and interventions_ok
+            and (validation_ok or tokens_ok)
+            else "FEASIBILITY_FAIL"
+        )
+    report = {
+        "schema_version": "omc-decision-policy-feasibility-report/v1",
+        "preregistration_sha256": preregistration["preregistration_sha256"],
+        "claim_scope": "decision_policy_feasibility_only",
+        "result_count": len(receipts),
+        "verdict": verdict,
+    }
+    report["report_sha256"] = canonical_sha256(report)
+    return report
 
 
 def diagnose_candidate_artifacts(
