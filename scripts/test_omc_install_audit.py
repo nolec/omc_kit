@@ -67,6 +67,120 @@ def _write_verified_install(target: Path) -> None:
     )
 
 class TestInstallAudit(unittest.TestCase):
+    def test_clean_source_workspace_needs_no_install_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "kit"
+            current_hash = _write_source_kit(source)
+
+            result = _audit.audit_target(source, trusted_source_root=source)
+
+            self.assertEqual(result["target_kind"], "source_workspace")
+            self.assertFalse(result["has_install_source"])
+            self.assertFalse(result["has_install_receipt"])
+            self.assertEqual(result["current_source_sha256"], current_hash)
+            self.assertEqual(result["verification_status"], "ok")
+            self.assertEqual(
+                result["version_readiness"]["overall_status"],
+                "development_source",
+            )
+
+    def test_source_workspace_does_not_use_stale_self_install_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "kit"
+            current_hash = _write_source_kit(source)
+            metadata = source / ".omc"
+            metadata.mkdir()
+            (metadata / "install-source.json").write_text(
+                json.dumps(
+                    {
+                        "source_kind": "external",
+                        "source_path": str(source),
+                        "source_sha256": "stale-source-hash",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (metadata / "install-receipt.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 3,
+                        "omc_version": "0.1.0",
+                        "source_sha256": "stale-source-hash",
+                        "target": str(source.resolve()),
+                        "entries": {
+                            "scripts/install.py": {
+                                "policy": "managed_exact",
+                                "status": "updated",
+                                "ownership": "exclusive_managed",
+                                "target_sha256": "stale-file-hash",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = _audit.audit_target(source, trusted_source_root=source)
+
+            self.assertEqual(result["target_kind"], "source_workspace")
+            self.assertEqual(result["installed_integrity_status"], "not_applicable")
+            self.assertEqual(result["source_freshness_status"], "source_workspace")
+            self.assertEqual(result["current_source_sha256"], current_hash)
+            self.assertEqual(result["core_usage_readiness"], "ready")
+            self.assertEqual(result["verification_status"], "ok")
+            self.assertEqual(
+                result["version_readiness"]["overall_status"],
+                "development_source",
+            )
+
+    def test_consumer_cannot_self_claim_source_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            trusted_source = root / "trusted-kit"
+            consumer = root / "consumer"
+            _write_source_kit(trusted_source)
+            _write_source_kit(consumer)
+            metadata = consumer / ".omc"
+            metadata.mkdir()
+            (metadata / "install-source.json").write_text(
+                json.dumps(
+                    {
+                        "source_kind": "external",
+                        "source_path": str(consumer),
+                        "source_sha256": "self-claimed-source-hash",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (metadata / "install-receipt.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 3,
+                        "omc_version": "0.1.0",
+                        "source_sha256": "self-claimed-source-hash",
+                        "target": str(consumer.resolve()),
+                        "entries": {
+                            "scripts/install.py": {
+                                "policy": "managed_exact",
+                                "status": "updated",
+                                "ownership": "exclusive_managed",
+                                "target_sha256": "stale-file-hash",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = _audit.audit_target(
+                consumer,
+                trusted_source_root=trusted_source,
+            )
+
+            self.assertNotEqual(result.get("target_kind"), "source_workspace")
+            self.assertEqual(result["verification_status"], "failed")
+            self.assertIn("drift:scripts/install.py", result["verification_errors"])
+
     def test_schema_v3_audit_rejects_visible_setup_created_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "project"

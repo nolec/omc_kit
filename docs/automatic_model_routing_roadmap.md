@@ -15,7 +15,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter, authoritative acceptance harness | 실제 3–5 child 운영 표본 acceptance |
 | Operator Experience | 진행중 | output contract, Lite/Full routing, Stage graph SSOT, resume identity fail-close, CLI fast-path 구축 | 지연·개입 횟수 운영 검증 |
 
-현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. 승인된 v2 grant를 제한 병렬 실행하는 `bounded orchestration`과 authoritative acceptance 판정 코드는 갖췄지만 실제 운영 표본 acceptance, 실패 재분배, 자동 모델 전환, 자동 ship은 아직 완료되지 않았다.
+현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했고, 자연어 5건 acceptance가 끝날 때까지 새 schema·transport·benchmark fixture를 추가하지 않는 안정화 동결 상태다.
 
 ### Evidence-state Scorecard
 
@@ -30,7 +30,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재 | 독립 Batch B와 confirmatory batch 재현 |
 | Review | `NOT_PROVEN` | durable native provider 원문 부재 | 동일 diff native 재실행과 blind adjudication |
 | Autopilot | `LIMITED` | mission packet 동결, 명시적 `mission_accept` receipt, work contract v2 결속, provider 호출 전 mission briefing 재검증, 격리 candidate 실행과 trusted-base review까지 fail-close | 고정 커밋 기준 외부 provider TASK→REVIEW smoke와 운영 latency·개입 acceptance |
-| Setup | `OPERATIONALLY_VALIDATED` | 최신 배포 기준 사용처 8곳 `setup --force`·strict audit 통과, 기존 Git 상태 보존 | source freshness와 rollback 회귀 유지 |
+| Setup | `OPERATIONALLY_VALIDATED` | 최신 배포 기준 사용처 9곳 `setup --force`·strict audit 통과, 기존 Git 상태 보존 | source freshness와 rollback 회귀 유지 |
 
 과거 6건 corpus에서 `DEVELOPMENT_PASS`가 기록됐지만 manifest·workload inventory·execution packet 원문을 현재 검증할 수 없어 유효한 development evidence로 승계하지 않는다. 구현과 acceptance 계약은 유지하되 새 prospective development study에서 chronological first-N 6건을 다시 확보하고, 그 증거가 검증된 뒤에만 비중복 disjoint holdout을 별도로 계획한다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
 
@@ -112,6 +112,8 @@ Operator Experience의 반복 커밋 확인 병목은 `2026-08-31`에 코드 계
 
 최신 검증은 runner-owned transport attestation과 provider backend immutable snapshot 회귀를 포함한 Product Value 관련 테스트 `164 passed`, staged TDD gate와 OMC review `APPROVE`다. 원본 backend를 executor 생성 뒤 교체해도 snapshot만 실행되는 동적 회귀를 포함한다. durable evidence bundle 단위 회귀 `10 passed`, preregistration·registry·corpus·freeze·acceptance 연계 회귀 `155 passed`, staged TDD gate와 OMC review `APPROVE`도 확인했다. ChatGPT 구독 adapter의 실제 stdin smoke `OMC_SUBSCRIPTION_STDIN_OK`, 기존 Responses transport 연관 회귀 `190 passed`, transport evidence validator `VALID`, hard-token raw Codex probe `HOLD_TRANSPORT_UNSUPPORTED`, Responses transport 격리 probe `SUPPORTED`, conformance `22 passed`, 전체 회귀 `2807 passed, 3 skipped`도 보존한다. `906cfcc` pilot preflight 후 acceptance·arm adapter·scheduler 회귀 `113 passed`와 staged TDD gate를 재확인했다. corpus availability preflight 전용 회귀 `12 passed`, Product Value 연관 회귀 `187 passed`를 통과했고 실제 6건은 `ready_count=6`, `provider_call_count=0`, input binding `50bda4bd...644b50`, report `0facbba5...788c0`으로 확인했다. schema v6 holdout preregistration 추가 후 Product Value 연관 회귀 `196 passed`, preregistration 회귀 `43 passed`, staged TDD gate와 OMC review `APPROVE`를 확인했다. v6 inventory 재계산·development/holdout 비중복·양쪽 등록 검증·initial/replication 판정과 prior-report provenance 연속성 보강 후 Product Value 확장 회귀 `214 passed`, preregistration·acceptance·roadmap 집중 회귀 `129 passed`, staged TDD gate와 OMC review `APPROVE WITH NOTES`를 확인했다. 이후 initial→replication finalize 통합 경로, 양 배치 workload·authority 비중복, 배치별 token 최소 10% 개선 계약과 역할별 Ed25519 signer·subject 재검증을 보강했다. authority subject 준비·외부 receipt 기록 CLI, 멱등·교체 차단, lazy crypto 계약까지 포함한 Product Value 전체 회귀 `224 passed`, authority·replication 집중 회귀 `15 passed`, staged TDD gate와 OMC review `APPROVE WITH NOTES`를 확인했다. durable bundle의 private snapshot·receipt/runner fail-close·manifest execution bundle 검증·registration/phase/authority/final hash 결속과 authority 전 사전 provenance gate 검증 보강 후 집중 회귀 `114 passed`, 전체 회귀 `2966 passed, 3 skipped`, staged TDD gate와 최종 OMC review `APPROVE`를 통과했다. 기존 evidence-loss batch closure는 Git commit blob 결속, signer·subject 검증, fd 기반 symlink 차단, crash-safe no-replace marker, 미설치 registry 호환을 보강했으며 Product Value 전체 회귀 `243 passed`, `py_compile`, staged diff 검사와 OMC review `APPROVE WITH NOTES`를 통과했다. 합성 E2E·smoke·blocked preflight receipt와 availability report는 운영 acceptance 표본으로 계산하지 않는다.
 
+source workspace 신뢰 루트 결속, clean clone readiness, 설치 consumer self-claim 차단을 포함한 최신 안정화 검증은 집중 회귀 `78 passed`, 전체 회귀 `3161 passed, 3 skipped`, staged TDD gate, diff check와 OMC review `APPROVE`를 통과했다.
+
 **P0 종료 기준**
 
 - 실제 3–5 child 작업을 중복 실행·범위 침범·예산 초과 없이 완료한다.
@@ -139,16 +141,12 @@ Operator Experience의 반복 커밋 확인 병목은 `2026-08-31`에 코드 계
 - 경계: Work Packet 결과를 품질 projection, Plan Batch B evidence 또는 대체 판정으로 자동 승격하지 않는다.
 
 ### Active Quality Validation
-
 품질 대체 판정은 구현 완료와 분리한다. 같은 작업의 durable raw output과 독립 adjudication 없이는 우월성이나 완전 대체를 선언하지 않는다.
-
 ### Plan Quality Validation
-
 - 현재 판정: 다중 저장소 기준 `NOT_PROVEN`
 - 참고 근거: 단일 corpus Fresh Batch A의 `PROVISIONALLY_REPLACEABLE`은 repository-scoped pilot로만 보존
 - 다음 마일스톤: Operational Obligation의 Batch B 수집과 독립 confirmatory batch 완료
 - 종료 기준: 신규 disjoint Batch B 통과 후 별도 독립 confirmatory batch에서 재현해야 `REPLACEABLE`; 두 독립 배치가 primary gain·confidence gate까지 통과해야 `BENCHMARK_SUPERIOR`
-
 ### Review Quality Validation
 
 - 현재 판정: durable native provider 원문 부재로 `NOT_PROVEN`

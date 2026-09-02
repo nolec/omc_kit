@@ -236,7 +236,28 @@ def _source_freshness(
     return "up_to_date", current_hash, None
 
 
-def audit_target(target: Path) -> dict[str, object]:
+def _is_source_workspace(
+    target: Path,
+    trusted_source_root: Path | None,
+) -> bool:
+    if trusted_source_root is None:
+        return False
+    try:
+        authority = trusted_source_root.expanduser().resolve()
+    except (OSError, RuntimeError):
+        return False
+    resolved_target = target.resolve()
+    return (
+        authority == resolved_target
+        and _looks_like_source_kit(resolved_target)
+    )
+
+
+def audit_target(
+    target: Path,
+    *,
+    trusted_source_root: Path | None = None,
+) -> dict[str, object]:
     resolved = target.resolve()
     completion_hook = completion_hook_readiness(resolved)
     legacy_dir = resolved / "omc_kit" / "templates"
@@ -286,6 +307,43 @@ def audit_target(target: Path) -> dict[str, object]:
         except (OSError, json.JSONDecodeError):
             has_receipt = False
             receipt_error = "invalid-json"
+
+    if _is_source_workspace(resolved, trusted_source_root):
+        current_source_sha256 = _cached_source_sha256(str(resolved))
+        notices = ["source-workspace:trusted-root"]
+        if has_receipt:
+            notices.append("source-workspace:install-receipt-not-authoritative")
+        if legacy_dir.exists():
+            notices.append("source-workspace:legacy-embedded-copy-present")
+        return {
+            "target": str(resolved),
+            "target_kind": "source_workspace",
+            "completion_hook": completion_hook,
+            "has_legacy_embedded_omc_kit": legacy_dir.exists(),
+            "has_install_source": has_metadata,
+            "source_kind": source_kind,
+            "source_path": source_path,
+            "metadata_source_sha256": metadata_source_sha256,
+            "metadata_error": metadata_error,
+            "has_install_receipt": has_receipt,
+            "install_source_sha256": receipt_source_sha256,
+            "install_entry_counts": receipt_entry_counts,
+            "receipt_error": receipt_error,
+            "status": "source_workspace",
+            "installed_integrity_status": "not_applicable",
+            "core_usage_readiness": "ready",
+            "source_freshness_status": "source_workspace",
+            "quality_gate_readiness": _quality_gate_readiness(resolved),
+            "quality_gate_scope": "delivery_validation",
+            "quality_gate_core_impact": "does_not_block_core_usage",
+            "version_readiness": _version.source_workspace_readiness(resolved),
+            "source_freshness_reason": None,
+            "current_source_sha256": current_source_sha256,
+            "verification_status": "ok",
+            "verification_errors": [],
+            "verification_notices": notices,
+            "verification_issue_counts": {},
+        }
 
     status = "missing"
     if has_metadata and not legacy_dir.exists() and metadata_error is None:
@@ -526,7 +584,11 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    results = [audit_target(Path(target)) for target in args.targets]
+    trusted_source_root = Path(__file__).resolve().parent.parent
+    results = [
+        audit_target(Path(target), trusted_source_root=trusted_source_root)
+        for target in args.targets
+    ]
     if args.json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
     else:

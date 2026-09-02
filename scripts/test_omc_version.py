@@ -15,6 +15,7 @@ import omc_version
 import omc_state
 import omc_doctor
 import omc_install_audit
+import omc
 import install
 from omc_source_hash import source_sha256
 
@@ -208,6 +209,59 @@ def test_omc_version_json_surface(tmp_path: Path):
     assert payload["overall_status"] == "up_to_date"
 
 
+def test_omc_version_reports_source_workspace_without_install_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    source = _source_kit(tmp_path)
+    metadata = source / ".omc"
+    metadata.mkdir()
+    (metadata / "install-source.json").write_text(
+        json.dumps(
+            {
+                "source_kind": "external",
+                "source_path": str(source),
+                "source_sha256": "stale-source-hash",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (metadata / "install-receipt.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "omc_version": "0.1.0",
+                "source_sha256": "stale-source-hash",
+                "target": str(source.resolve()),
+                "entries": {
+                    "scripts/install.py": {
+                        "policy": "managed_exact",
+                        "status": "updated",
+                        "ownership": "exclusive_managed",
+                        "target_sha256": "stale-file-hash",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(omc, "_kit_root", lambda: source)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["omc.py", "version", "--target", str(source), "--json"],
+    )
+
+    assert omc.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["workspace_kind"] == "source"
+    assert payload["installed_version"] is None
+    assert payload["source_version"] == "0.1.0"
+    assert payload["overall_status"] == "development_source"
+
+
 def test_doctor_is_authoritative_and_state_defers_readiness_check(tmp_path: Path):
     source = _source_kit(tmp_path)
     target = _installed_target(tmp_path, source)
@@ -311,6 +365,35 @@ def test_doctor_does_not_report_healthy_when_readiness_is_drifted(
     output = capsys.readouterr().out
     assert "OMC readiness: install_drifted" in output
     assert "OMC 설치 상태 이상 없음" not in output
+
+
+def test_doctor_accepts_development_source_readiness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    monkeypatch.setattr(omc_doctor, "_build_checks", lambda root: [])
+    monkeypatch.setattr(omc_doctor, "_run_status", lambda root: (True, ""))
+    monkeypatch.setattr(
+        omc_doctor,
+        "_installation_readiness",
+        lambda root: {
+            "overall_status": "development_source",
+            "release_status": "development_source",
+            "source_status": "workspace",
+            "install_integrity": "not_applicable",
+        },
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["omc_doctor.py", "--target", str(tmp_path)],
+    )
+
+    assert omc_doctor.main() == 0
+    output = capsys.readouterr().out
+    assert "OMC readiness: development_source" in output
+    assert "OMC 설치 상태 이상 없음" in output
 
 
 def test_install_receipt_v3_preserves_original_install_time(tmp_path: Path):

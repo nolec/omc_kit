@@ -99,7 +99,10 @@ def _run_status(project_root: Path) -> tuple[bool, str]:
 def _installation_readiness(project_root: Path) -> dict[str, object]:
     """Return the same readiness report used by the public version command."""
     try:
-        audit = omc_install_audit.audit_target(project_root)
+        audit = omc_install_audit.audit_target(
+            project_root,
+            trusted_source_root=Path(__file__).resolve().parent.parent,
+        )
         report = audit.get("version_readiness")
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return {
@@ -675,7 +678,7 @@ def main() -> int:
 
     readiness = _installation_readiness(root)
     readiness_status = str(readiness.get("overall_status", "invalid"))
-    readiness_ok = readiness_status == "up_to_date"
+    readiness_ok = readiness_status in {"up_to_date", "development_source"}
     readiness_detail = (
         f"release={readiness.get('release_status', 'invalid')}, "
         f"source={readiness.get('source_status', 'invalid')}, "

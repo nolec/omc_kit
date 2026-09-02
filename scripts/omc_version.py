@@ -207,3 +207,18 @@ def version_readiness(
             install_integrity=install_integrity,
         ),
     }
+
+
+def source_workspace_readiness(source: Path) -> dict[str, str | None]:
+    """Report version state for the kit source, not an installed consumer."""
+    source_version = read_source_version(source.resolve())
+    return {
+        "workspace_kind": "source",
+        "installed_version": None,
+        "source_version": source_version,
+        "receipt_status": "not_applicable",
+        "release_status": "development_source",
+        "source_status": "workspace",
+        "install_integrity": "not_applicable",
+        "overall_status": "development_source",
+    }

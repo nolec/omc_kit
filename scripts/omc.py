@@ -646,7 +646,10 @@ def main() -> int:
     if args.command == "version":
         import omc_install_audit
 
-        audit = omc_install_audit.audit_target(args.target.resolve())
+        audit = omc_install_audit.audit_target(
+            args.target.resolve(),
+            trusted_source_root=kit,
+        )
         report = audit["version_readiness"]
         if args.json:
             print(json.dumps(report, ensure_ascii=False, sort_keys=True))
