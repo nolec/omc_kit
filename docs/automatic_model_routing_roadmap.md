@@ -15,11 +15,13 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter, authoritative acceptance harness | 실제 3–5 child 운영 표본 acceptance |
 | Operator Experience | 진행중 | output contract, Lite/Full routing, Stage graph SSOT, resume identity fail-close, CLI fast-path 구축 | 지연·개입 횟수 운영 검증 |
 
-현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했고, 실제 자연 발생 implementation 작업 3건의 acceptance가 끝날 때까지 새 schema·transport·benchmark fixture를 추가하지 않는 안정화 동결 상태다.
+현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했다. 3건 paired pilot의 계약·테스트·OMC review `APPROVE`까지 마쳤고 실제 적격 표본은 `0/3`이다. 사용자 승인 `pilot-start receipt`로 T0를 열어 acceptance를 완료할 때까지 새 schema·transport·benchmark fixture를 추가하지 않는 안정화 동결 상태다.
 
 ### 단일 활성 검증 lane
 
 첫 제품 범위는 복잡한 코드 변경을 `task → review`로 안전하게 완료하는 흐름이다. 실제 자연 발생 implementation 작업 3건을 최소 2개 저장소에서 동일 request·base commit·verification 조건의 OMC/Baseline arm으로 실행하고, 완료율·wall-clock 시간·사용자 개입·재작업만 primary metric으로 비교한다. 전체 실행 기한은 최대 7일, arm별 재시도는 1회, 작업별 사용자 승인·질문은 3회로 제한한다.
+
+실행 SSOT는 [Task Review Product Focus Pilot](task_review_product_focus_pilot.md)이다. 사용자 승인 `pilot-start receipt` 이후 first eligible 3건을 교체 없이 수집하며, 이 소표본은 통계적 우월성을 주장하지 않는다. 결과가 `CONTINUE`여도 원본 저장소에 자동 반영하지 않고 사용자가 선택한 arm만 별도 작업에서 적용한다.
 
 - `CONTINUE`: 3건 중 2건 이상 완료하고 baseline보다 완료율이 낮지 않으며, elapsed와 사용자 개입 중앙값이 모두 baseline보다 악화되지 않고 둘 중 하나 이상이 15% 이상 개선되며, 재작업도 baseline보다 증가하지 않으며 중대 회귀·scope 위반·중복 실행이 없다.
 - `REDUCE`: 완료율은 유지하지만 시간·개입 개선이 기준에 못 미치거나 신규 schema·transport가 필요하면 `REDUCE`로 종료하고 단일-agent `task → review` guard로 범위를 축소한다.
@@ -35,7 +37,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | Routing V1–V4 | `OPERATIONALLY_VALIDATED` | 라우팅·실패 복구·telemetry 코드와 운영 receipt | 운영 drift 감시 유지 |
 | Bounded scheduler | `IMPLEMENTED` | v2 grant 전용 N-child scheduler·provider adapter·회귀 테스트 | 실제 3–5 child acceptance |
 | Product Value | `BLOCKED` | 기존 evidence-loss batch는 종료했으며 prospective study는 `PAUSED_NOT_CANCELLED` | 별도 사용자 결정으로 재개 |
-| Product focus | `PILOT_PENDING` | 단일 3건 `task → review` acceptance lane을 확정 | 최대 7일 안에 kill-or-continue 판정 |
+| Product focus | `PILOT_READY` | 단일 3건 `task → review` 계약·테스트·OMC review `APPROVE`, 실제 적격 표본 `0/3` | 사용자 승인 `pilot-start receipt` 후 최대 7일 안에 kill-or-continue 판정 |
 | Product Value independence | `NOT_REPRODUCED` | 유효한 development evidence 없음 | 신규 development evidence 검증 후 별도 선정한 holdout에서 primary metric 충족 |
 | Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재하며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
 | Review | `NOT_PROVEN` | durable native provider 원문 부재이며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |

@@ -98,6 +98,15 @@ def test_product_focus_is_one_three_case_task_review_acceptance_lane() -> None:
     assert "**bounded N-child 실제 acceptance**는 `PAUSED_NOT_CANCELLED`" in roadmap
     assert "Plan Batch B receipt 수집은 Implementation P0와 별개로 중단 없이 병행" not in roadmap
     assert "Work Packet 5건 feasibility는 Batch B와 분리된 진단 lane으로 병행" not in roadmap
+    assert "task_review_product_focus_pilot.md" in roadmap
+    assert "실행 SSOT" in roadmap
+    assert "통계적 우월성" in roadmap
+    assert "pilot-start receipt" in roadmap
+    assert "선택한 arm만 별도 작업에서 적용" in roadmap
+    assert "| Product focus | `PILOT_READY` |" in roadmap
+    assert "실제 적격 표본 `0/3`" in roadmap
+    assert "계약·테스트·OMC review `APPROVE`" in roadmap
+    assert "`PILOT_PENDING`" not in roadmap
 
     assert "1. 실제 자연 발생 implementation 작업 3건" in readme
     assert "corpus v2-r1을 schema v2 registry" not in readme
