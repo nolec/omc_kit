@@ -106,23 +106,27 @@ def test_product_value_claim_scope_and_evidence_states_are_explicit() -> None:
     assert "strict certification" in roadmap
 
 
-def test_product_value_p0_tracks_pending_closure_and_starts_a_separate_prospective_study() -> None:
+def test_product_value_p0_tracks_completed_closure_and_starts_a_separate_prospective_study() -> None:
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
 
     assert "운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증" in roadmap
     assert "전체 완성도 백분율을 사용하지 않는다" in roadmap
-    assert "### Product Value P0 evidence-loss 종료 승인 대기와 신규 prospective study" in roadmap
+    assert "### Product Value P0 evidence-loss 종료 완료와 신규 prospective study" in roadmap
     assert "`product-value-batch-20260826-v5-r1`" in roadmap
     assert "`69115b41210a14b42ea9096bf3cea98c8897a2047b5bc0a322e5f7a64c2af8df`" in roadmap
-    assert "`2026-08-30`에 `BLOCKED` / `evidence_loss` 종료 승인 대기" in roadmap
-    assert "signer identity·서명·durable failure receipt 게시를 검증한 뒤에만 종료 완료" in roadmap
+    assert "`2026-09-02`에 승인·서명·durable failure marker 기록을 완료" in roadmap
+    assert "`5b83c246de93c626c0f91b09318f20425e63292b3c39081189150f41a9229ea8`" in roadmap
+    assert "`f88f1abbd31f74240f726b4c45b9150842cfcbaa80f67e351b9424f917a92967`" in roadmap
     assert "기존 `2026-09-05` 최종 판정 기한은 연장하지 않는다" in roadmap
     assert "기존 batch의 manifest·workload inventory·execution packet을 추정하거나 재구성하지 않는다" in roadmap
+    assert "1. **BLOCKED_EVIDENCE_LOSS**" in roadmap
+    assert "corpus v2-r1로 다시 수집했다" not in roadmap
+    assert "새로운 미래 observation window를 사전 등록" in roadmap
     assert "신규 study는 기존 batch의 retry 또는 continuation이 아니다" in roadmap
-    assert "`2026-08-31`: selection policy·source universe·authority commitment를 observation 전에 등록" in roadmap
-    assert "`2026-09-01`부터 `2026-09-07`: chronological first-N development case 6건" in roadmap
-    assert "`2026-09-08`: schema v5 registration과 durable evidence bundle" in roadmap
-    assert "`2026-09-09`: development evidence 검증 후에만 별도 holdout 계획" in roadmap
+    assert "T0에 Git registry와 RFC 3161 receipt를 검증" in roadmap
+    assert "T0+24시간부터 정확히 7일간" in roadmap
+    assert "chronological first-N development case 6건" in roadmap
+    assert "development evidence 검증 후에만 별도 holdout 계획" in roadmap
     assert "source snapshot signer·preregistration signer·registration authority·inventory collector" in roadmap
     assert "서로 다른 key·operator·custody identity" in roadmap
     assert "provider 호출과 holdout 실행을 금지" in roadmap

@@ -69,16 +69,16 @@ Operator Experience의 반복 커밋 확인 병목은 `2026-08-31`에 코드 계
 - 활성화 순서: observer·validator 구현과 200회 surface별 preflight 통과 → source commit 동결 → v2 exact window와 source hash 확정 → immutable registry와 RFC 3161 등록 → 동일 source 설치·strict audit → 저장소별 enrollment → 마지막 enrollment 이후 최소 24시간 buffer 순서다. exact 14일 뒤 자동 연장 없이 종료하며 어느 단계도 생략하거나 사후 보정하지 않는다.
 - 경계: invalid registration/source와 inventory 누락·후보 건너뛰기·중첩 session은 먼저 `OBSERVATION_INCONCLUSIVE`, 표본 6건 또는 저장소 2개 미달은 `LOW_NATURAL_DEMAND`, 완전한 evidence에서 threshold 미달은 축별 NOT_READY로 판정한다. 정확히 한 축만 READY이고 다른 축이 NOT_READY면 `OBSERVATION_INCONCLUSIVE`, 두 축 모두 NOT_READY면 `PRODUCT_WORKFLOW_NOT_READY`다. Product Value development·holdout, Plan·Review 대체 판정, 비교 우월성 증거로 자동 승격하지 않는다.
 
-### Product Value P0 evidence-loss 종료 승인 대기와 신규 prospective study
+### Product Value P0 evidence-loss 종료 완료와 신규 prospective study
 
 - 상태 보고: 전체 완성도 백분율을 사용하지 않는다. 구현·검증 준비·운영 검증·독립 재현 evidence-state를 대상별로 보고한다.
-- 기존 종료 상태: `product-value-batch-20260826-v5-r1`과 preregistration `69115b41210a14b42ea9096bf3cea98c8897a2047b5bc0a322e5f7a64c2af8df`는 manifest·workload inventory·execution packet 원문을 복구하지 못했으므로 `2026-08-30`에 `BLOCKED` / `evidence_loss` 종료 승인 대기로 전환했다. schema v1 Git registry blob, closure subject, Ed25519 authority receipt를 결속하고 no-replace marker로 acceptance 재개를 차단하는 fail-close 경로는 구현·검증했다. 실제 승인된 signer identity·서명·durable failure receipt 게시를 검증한 뒤에만 종료 완료로 승격한다. 기존 `2026-09-05` 최종 판정 기한은 연장하지 않는다.
+- 기존 종료 상태: `product-value-batch-20260826-v5-r1`과 preregistration `69115b41210a14b42ea9096bf3cea98c8897a2047b5bc0a322e5f7a64c2af8df`는 manifest·workload inventory·execution packet 원문을 복구하지 못해 `BLOCKED` / `evidence_loss`로 종료했다. `2026-09-02`에 승인·서명·durable failure marker 기록을 완료했으며 closure subject SHA-256은 `5b83c246de93c626c0f91b09318f20425e63292b3c39081189150f41a9229ea8`, marker file SHA-256은 `f88f1abbd31f74240f726b4c45b9150842cfcbaa80f67e351b9424f917a92967`이다. schema v1 Git registry blob, closure subject, Ed25519 authority receipt를 결속한 no-replace marker가 acceptance 재개를 차단한다. 기존 `2026-09-05` 최종 판정 기한은 연장하지 않는다.
 - 복구 금지: 기존 batch의 manifest·workload inventory·execution packet을 추정하거나 재구성하지 않는다. hash-only registry record와 임시 진단 receipt는 실행·판정 입력으로 승격하지 않는다.
 - study 분리: 신규 study는 기존 batch의 retry 또는 continuation이 아니다. 새 evaluation ID·selection policy·source universe·authority commitment·registration lineage를 사용한다.
-- `2026-08-31`: selection policy·source universe·authority commitment를 observation 전에 등록한다.
-- `2026-09-01`부터 `2026-09-07`: chronological first-N development case 6건을 수집하고 각 case의 source snapshot·inventory·completion evidence를 즉시 봉인한다.
-- `2026-09-08`: schema v5 registration과 durable evidence bundle을 생성·검증한다.
-- `2026-09-09`: development evidence 검증 후에만 별도 holdout 계획을 열 수 있다.
+- 기존 `2026-08-31`∼`2026-09-09` 일정은 observation 전 preregistration·receipt를 확보하지 못했으므로 실행 대상에서 폐기한다.
+- 새로운 미래 observation window를 사전 등록하고 T0에 Git registry와 RFC 3161 receipt를 검증한다.
+- T0+24시간부터 정확히 7일간 chronological first-N development case 6건을 수집하고 각 case의 source snapshot·inventory·completion evidence를 즉시 봉인한다.
+- window 종료 후 schema v5 registration과 durable evidence bundle을 생성·검증하며, development evidence 검증 후에만 별도 holdout 계획을 열 수 있다.
 - authority 분리: source snapshot signer·preregistration signer·registration authority·inventory collector는 서로 다른 key·operator·custody identity를 사용하며 key 재사용 또는 provenance 불일치는 fail-close한다.
 - 허용 범위: failure receipt, 신규 development preregistration, chronological capture, registration, durable evidence 검증과 이를 막는 최소 결함 수정만 허용한다.
 - 금지 범위: development evidence 검증 전 provider 호출과 holdout 실행을 금지하며 신규 schema·transport·benchmark fixture를 추가하지 않는다.
@@ -225,7 +225,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 다음 실행 순서
 
-1. **완료** — 기존 schema v1 Product Value batch를 실행 대상에서 제외하고 실제 6개 workload의 source commit·request·DoD·verification·environment artifact를 corpus v2-r1로 다시 수집했다. availability preflight가 6건 모두를 provider 호출 없이 `ready`로 확인한다.
+1. **BLOCKED_EVIDENCE_LOSS** — 기존 schema v1 Product Value batch는 실행 대상에서 제외했지만 corpus v2-r1의 source commit·request·DoD·verification·environment artifact 원문과 durable registration을 현재 검증할 수 없다. hash-only record와 과거 availability 요약은 development evidence로 승계하지 않으며, 신규 prospective study를 사전 등록해 다시 수집한다.
 2. **완료** — `bounded_n_child_execution` claim scope와 development evidence 판정 gate 구현 완료. 기존 v3–v5 manifest는 `development`로 정규화하며 통과해도 최고 `DEVELOPMENT_PASS`만 발행한다.
 3. **완료** — schema v6 holdout manifest 계약과 `prepare-v6` CLI를 구현했다. initial/replication 역할과 development 기준·양쪽 workload inventory·selection policy·선행 holdout report 해시를 preregistration digest에 결속하며 기존 v3–v5 직렬화와 판정은 유지한다.
 4. **검증 코드 완료 / 실제 corpus 대기** — 현재 구현·판정 기준을 동결하고, development corpus와 repository·source snapshot·request·workload·execution packet이 겹치지 않는 disjoint holdout 5건을 initial과 replication에 각각 선정한다. v6 validator는 canonical inventory 불일치, observation chronology 위반, initial과 replication 사이의 비중복 또는 authority 역할 분리 위반을 거부한다. 실제 holdout 선정은 아직 남아 있다.

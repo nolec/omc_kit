@@ -1,0 +1,28 @@
+{
+  "receipt": {
+    "role": "closure",
+    "schema_version": "omc-product-value-authority-receipt/v1",
+    "signature": "FQyDRg8i3A+pP4TboX2ZaHaUM623GoYgFfU8rfN7m2xnHzrHGGOLcq7OUu7nPTBGIthY7NVh0uX6lWGRae+PAQ==",
+    "signer_public_key": "HNLH3MaurdxYmrlLJNSKhfOiisMxYlEVVkFaQ9c5hqs=",
+    "subject_sha256": "5b83c246de93c626c0f91b09318f20425e63292b3c39081189150f41a9229ea8"
+  },
+  "subject": {
+    "batch_id": "product-value-batch-20260826-v5-r1",
+    "closed_at": "2026-09-02T21:07:26+09:00",
+    "closure_authority_sha256": "b5cbc530edb5c93f0a17974bbb6c8ab4bcd358d472f90c7afff2513d92dd8dd5",
+    "diagnostic_receipt_sha256": "e83a2799fa3411f6e4e45dd1738668ff0805f272ea88f943448c507af8beec2b",
+    "execution_eligible": false,
+    "final_decision_deadline": "2026-09-05",
+    "missing_artifacts": [
+      "execution_packets",
+      "manifest",
+      "workload_inventory"
+    ],
+    "preregistration_sha256": "69115b41210a14b42ea9096bf3cea98c8897a2047b5bc0a322e5f7a64c2af8df",
+    "reason_code": "evidence_loss",
+    "registry_commit": "8b23f83621cf3396005e5da18b599d929a8cac9a",
+    "registry_path": ".omc/registry/product-value-batch-20260826-v5-r1.json",
+    "registry_record_sha256": "fbe9e76b6b7a13cc19ef185fa7e3cffc563b00cd866bf3d86346ee79a0217e39",
+    "status": "BLOCKED"
+  }
+}
