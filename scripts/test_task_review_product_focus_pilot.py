@@ -78,3 +78,12 @@ def test_contract_keeps_execution_and_adoption_human_gated() -> None:
     assert "선택한 arm만" in text
     assert "별도 작업" in text
     assert "provider 실행은 이 문서 작성 범위에 포함하지 않는다" in text
+
+
+def test_contract_names_existing_preflight_and_verdict_surfaces() -> None:
+    text = _contract()
+
+    assert "omc_task_review_pilot.py" in text
+    assert "session state stream" in text
+    assert "native review adapter" in text
+    assert "preflight" in text

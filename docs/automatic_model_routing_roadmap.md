@@ -15,7 +15,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter, authoritative acceptance harness | 실제 3–5 child 운영 표본 acceptance |
 | Operator Experience | 진행중 | output contract, Lite/Full routing, Stage graph SSOT, resume identity fail-close, CLI fast-path 구축 | 지연·개입 횟수 운영 검증 |
 
-현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했다. 3건 paired pilot의 계약·테스트·OMC review `APPROVE`까지 마쳤고 실제 적격 표본은 `0/3`이다. 사용자 승인 `pilot-start receipt`로 T0를 열어 acceptance를 완료할 때까지 새 schema·transport·benchmark fixture를 추가하지 않는 안정화 동결 상태다.
+현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했다. 3건 paired pilot의 계약, frozen case·후보 순서·review verdict preflight와 OMC review `APPROVE`까지 마쳤지만 실제 T0·후보 수집 명령은 미구현이고 적격 표본은 `0/3`이다. 사용자 승인 `pilot-start receipt`로 T0를 열어 acceptance를 완료할 때까지 새 schema·transport·benchmark fixture를 추가하지 않는 안정화 동결 상태다.
 
 ### 단일 활성 검증 lane
 
@@ -37,7 +37,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | Routing V1–V4 | `OPERATIONALLY_VALIDATED` | 라우팅·실패 복구·telemetry 코드와 운영 receipt | 운영 drift 감시 유지 |
 | Bounded scheduler | `IMPLEMENTED` | v2 grant 전용 N-child scheduler·provider adapter·회귀 테스트 | 실제 3–5 child acceptance |
 | Product Value | `BLOCKED` | 기존 evidence-loss batch는 종료했으며 prospective study는 `PAUSED_NOT_CANCELLED` | 별도 사용자 결정으로 재개 |
-| Product focus | `PILOT_READY` | 단일 3건 `task → review` 계약·테스트·OMC review `APPROVE`, 실제 적격 표본 `0/3` | 사용자 승인 `pilot-start receipt` 후 최대 7일 안에 kill-or-continue 판정 |
+| Product focus | `CONTRACT_READY` | 단일 3건 `task → review` 계약과 frozen case·후보 순서·review verdict preflight 완료. native artifact는 hash·identity·단일-FD 읽기와 symlink 차단으로 검증하며 실제 적격 표본 `0/3`; 실제 T0·후보 수집 명령은 미구현 | 기존 state evidence만 소비하는 T0·후보 수집 dry-run 통과 후 `PILOT_READY` 승격 |
 | Product Value independence | `NOT_REPRODUCED` | 유효한 development evidence 없음 | 신규 development evidence 검증 후 별도 선정한 holdout에서 primary metric 충족 |
 | Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재하며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
 | Review | `NOT_PROVEN` | durable native provider 원문 부재이며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |

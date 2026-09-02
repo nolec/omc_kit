@@ -6,6 +6,8 @@
 
 T0는 사용자가 pilot 시작을 승인해 `pilot-start receipt`가 생성된 시각이다. T0부터 최대 7일 동안 최소 2개 저장소에서 발생한 `chronological first eligible 3`을 사용하고, 탈락하거나 불리한 case를 교체하지 않는다. 적격 case는 T0 이후 시작된 실제 자연 발생 implementation 작업이며 합성 fixture, 문서 전용 작업, benchmark 유지보수는 제외한다.
 
+실행 전 `scripts/omc_task_review_pilot.py`의 preflight를 적용한다. 후보 모집단은 기존 `session state stream` 전체이며 입력 순서를 사후 정렬하지 않는다. 중복 identity, 비단조 timestamp, eligibility 누락은 selection 실패로 처리한다. 이 검증은 기존 state evidence를 소비할 뿐 별도 pilot receipt schema나 provider runner를 만들지 않는다.
+
 ## Frozen Case
 
 각 case는 실행 전에 다음 값을 하나의 case receipt로 고정한다.
@@ -41,6 +43,7 @@ T0는 사용자가 pilot 시작을 승인해 `pilot-start receipt`가 생성된 
 ## 측정 계약
 
 - `completion`: DoD와 verification이 모두 통과하고 해당 arm review가 `APPROVE` 또는 `APPROVE WITH NOTES`일 때만 완료다. machine output을 소비할 때는 두 verdict에 대응하는 `outcome=approved`를 사용한다.
+- `review normalization`: OMC arm은 기존 output contract의 `stage=review` envelope를, Baseline arm은 기존 `native review adapter` verdict를 사용한다. 빈 출력, 파싱 실패, 상충 evidence는 승인으로 보정하지 않고 전체 pilot을 `INCONCLUSIVE`로 종료한다.
 - `end-to-end wall-clock`: 격리 clone materialization부터 terminal receipt까지의 경과 시간이며 primary 시간 지표다.
 - `workflow time`: 첫 provider call부터 terminal receipt까지의 경과 시간이며 secondary 지표다.
 - `user intervention`: case 적격 판정부터 terminal까지 작업 진행에 필요했던 실제 사용자 응답 turn의 고유 개수이며 case별 최대 3회다. T0 승인과 최종 채택 결정은 제외한다.

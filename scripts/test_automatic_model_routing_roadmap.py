@@ -103,9 +103,10 @@ def test_product_focus_is_one_three_case_task_review_acceptance_lane() -> None:
     assert "통계적 우월성" in roadmap
     assert "pilot-start receipt" in roadmap
     assert "선택한 arm만 별도 작업에서 적용" in roadmap
-    assert "| Product focus | `PILOT_READY` |" in roadmap
+    assert "| Product focus | `CONTRACT_READY` |" in roadmap
+    assert "실제 T0·후보 수집 명령은 미구현" in roadmap
     assert "실제 적격 표본 `0/3`" in roadmap
-    assert "계약·테스트·OMC review `APPROVE`" in roadmap
+    assert "계약과 frozen case·후보 순서·review verdict preflight" in roadmap
     assert "`PILOT_PENDING`" not in roadmap
 
     assert "1. 실제 자연 발생 implementation 작업 3건" in readme
