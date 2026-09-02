@@ -17,12 +17,14 @@ TDD 게이트와 telemetry를 갖춘 멀티 LLM 오케스트레이션 킷입니�
 
 실행 가능 여부는 승인 grant, scope, dependency, budget과 provider capability에 따라 fail-close 판정됩니다. 실행 코드가 있다는 사실만으로 제품 효과가 검증된 것은 아니며, 실제 3–5 child 작업의 single-agent baseline 비교는 아직 진행 중입니다.
 
+현재 첫 제품 범위는 복잡한 코드 변경을 `task → review`로 안전하게 완료하는 흐름입니다. 실제 자연 발생 implementation 작업 3건을 최소 2개 저장소에서 최대 7일 동안 OMC/Baseline 동일 조건으로 비교하며, 완료율·wall-clock 시간·사용자 개입·재작업만 primary metric으로 사용합니다. 이 gate가 끝날 때까지 Plan·Review 대체 검증과 다른 연구 lane은 `PAUSED_NOT_CANCELLED`입니다.
+
 Product Value 결과는 두 판정을 분리합니다.
 
 - **운영 대체 판정**: no-key `subscription_bounded` 경로에서도 성공률·시간·token·개입·안전 위반을 비교해 `OPERATIONALLY_REPLACEABLE` 또는 `NOT_REPLACEABLE`로 종료할 수 있습니다.
 - **strict hard-token 인증**: exact input count와 native output cap을 증명하는 `provider_enforced` transport만 `STRICTLY_CERTIFIED`가 될 수 있습니다. 운영 기준을 통과했지만 이 capability가 없으면 `HOLD_TRANSPORT`이며, 운영 대체 판정을 무효화하지 않습니다.
 
-두 판정의 claim scope는 `bounded_n_child_execution`으로 제한됩니다. 현재 6건 corpus는 구현과 기준 교정에 사용한 development evidence이며, 이 결과만으로 Plan, Review 또는 전체 OMC가 기준 제품을 대체한다고 주장하지 않습니다. 외부 운영 대체 주장은 구현과 판정 기준을 고정한 뒤 별도로 선정한 disjoint holdout에서 재현됐을 때만 허용합니다.
+두 판정의 claim scope는 `bounded_n_child_execution`으로 제한됩니다. 과거 6건 corpus는 원문 evidence가 소실되어 유효한 development evidence로 승계하지 않으며, 이 결과만으로 Plan, Review 또는 전체 OMC가 기준 제품을 대체한다고 주장하지 않습니다. 외부 운영 대체 주장은 구현과 판정 기준을 고정한 뒤 별도로 선정한 disjoint holdout에서 재현됐을 때만 허용합니다.
 
 상세 상태와 남은 작업은 [자동 모델 라우팅 로드맵](docs/automatic_model_routing_roadmap.md)을 참고하세요.
 
@@ -298,10 +300,8 @@ python3 scripts/omc_tdd_check.py --staged
 
 현재 우선순위는 다음 순서입니다.
 
-1. corpus v2-r1을 schema v2 registry·RFC 3161 receipt·durable evidence bundle에 등록
-2. clean clone에서 bundle 복구와 availability preflight 검증
-3. no-key subscription pilot 1건과 paired confirmatory 5건 실행
-4. 운영 대체 판정 후 Lite/Full 경계 조정
-5. Plan Batch B와 native Review 독립 검증
+1. 실제 자연 발생 implementation 작업 3건을 최소 2개 저장소에서 동일 조건의 OMC/Baseline arm으로 실행
+2. 완료율·wall-clock 시간·사용자 개입·재작업을 비교해 최대 7일 안에 `CONTINUE`, `REDUCE`, `STOP` 판정
+3. `CONTINUE`인 경우에만 사용자가 `PAUSED_NOT_CANCELLED` backlog 중 다음 lane 하나를 선택
 
-위 acceptance가 끝날 때까지 새 schema·transport·benchmark fixture를 추가하지 않습니다. strict hard-token 인증은 no-key transport가 필요한 capability를 제공하거나 사용자가 별도 credentialed transport를 선택한 경우에만 재개합니다.
+위 acceptance가 끝날 때까지 Product Value corpus, bounded N-child, Plan Batch B, native Review, Work Packet, Decision Policy를 실행하거나 새 schema·transport·benchmark fixture를 추가하지 않습니다. strict hard-token 인증도 사용자가 해당 lane을 별도로 재개한 경우에만 검토합니다.

@@ -15,7 +15,16 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter, authoritative acceptance harness | 실제 3–5 child 운영 표본 acceptance |
 | Operator Experience | 진행중 | output contract, Lite/Full routing, Stage graph SSOT, resume identity fail-close, CLI fast-path 구축 | 지연·개입 횟수 운영 검증 |
 
-현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했고, 자연어 5건 acceptance가 끝날 때까지 새 schema·transport·benchmark fixture를 추가하지 않는 안정화 동결 상태다.
+현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했고, 실제 자연 발생 implementation 작업 3건의 acceptance가 끝날 때까지 새 schema·transport·benchmark fixture를 추가하지 않는 안정화 동결 상태다.
+
+### 단일 활성 검증 lane
+
+첫 제품 범위는 복잡한 코드 변경을 `task → review`로 안전하게 완료하는 흐름이다. 실제 자연 발생 implementation 작업 3건을 최소 2개 저장소에서 동일 request·base commit·verification 조건의 OMC/Baseline arm으로 실행하고, 완료율·wall-clock 시간·사용자 개입·재작업만 primary metric으로 비교한다. 전체 실행 기한은 최대 7일, arm별 재시도는 1회, 작업별 사용자 승인·질문은 3회로 제한한다.
+
+- `CONTINUE`: 3건 중 2건 이상 완료하고 baseline보다 완료율이 낮지 않으며, elapsed와 사용자 개입 중앙값이 모두 baseline보다 악화되지 않고 둘 중 하나 이상이 15% 이상 개선되며, 재작업도 baseline보다 증가하지 않으며 중대 회귀·scope 위반·중복 실행이 없다.
+- `REDUCE`: 완료율은 유지하지만 시간·개입 개선이 기준에 못 미치거나 신규 schema·transport가 필요하면 `REDUCE`로 종료하고 단일-agent `task → review` guard로 범위를 축소한다.
+- `STOP`: 완료율이 baseline보다 낮거나 중대 회귀·scope 위반이 발생하거나 7일 안에 적격 3건을 확보하지 못하면 추가 검증 인프라 없이 종료한다.
+- Product Value 6건 prospective study, Plan Batch B, native Review 비교, Work Packet, Decision Policy는 모두 `PAUSED_NOT_CANCELLED`다. 3건 gate가 `CONTINUE`일 때만 별도 사용자 결정으로 하나를 재개한다.
 
 ### Evidence-state Scorecard
 
@@ -25,15 +34,16 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 |---|---|---|---|
 | Routing V1–V4 | `OPERATIONALLY_VALIDATED` | 라우팅·실패 복구·telemetry 코드와 운영 receipt | 운영 drift 감시 유지 |
 | Bounded scheduler | `IMPLEMENTED` | v2 grant 전용 N-child scheduler·provider adapter·회귀 테스트 | 실제 3–5 child acceptance |
-| Product Value | `BLOCKED` | acceptance 코드와 등록 계약은 구현됐지만 기존 development evidence 원문이 소실되어 실행 불가 | 별도 prospective development study 6건을 사전 등록·수집·검증한 뒤 disjoint holdout을 새로 계획 |
+| Product Value | `BLOCKED` | 기존 evidence-loss batch는 종료했으며 prospective study는 `PAUSED_NOT_CANCELLED` | 별도 사용자 결정으로 재개 |
+| Product focus | `PILOT_PENDING` | 단일 3건 `task → review` acceptance lane을 확정 | 최대 7일 안에 kill-or-continue 판정 |
 | Product Value independence | `NOT_REPRODUCED` | 유효한 development evidence 없음 | 신규 development evidence 검증 후 별도 선정한 holdout에서 primary metric 충족 |
-| Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재 | 독립 Batch B와 confirmatory batch 재현 |
-| Review | `NOT_PROVEN` | durable native provider 원문 부재 | 동일 diff native 재실행과 blind adjudication |
+| Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재하며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
+| Review | `NOT_PROVEN` | durable native provider 원문 부재이며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
 | Autopilot | `LIMITED` | mission packet 동결, 명시적 `mission_accept` receipt, work contract v2 결속, provider 호출 전 mission briefing 재검증, 격리 candidate 실행과 trusted-base review까지 fail-close | 고정 커밋 기준 외부 provider TASK→REVIEW smoke와 운영 latency·개입 acceptance |
-| Decision Policy | `IMPLEMENTED` | 실제 결과·독립 causal review·정책 승인·동일 subject paired packet을 결속하는 feasibility 계약과 회귀 테스트 | chronological first-N 실패 5건 수집 후 paired 실행·독립 판정 |
+| Decision Policy | `IMPLEMENTED` | feasibility 계약과 회귀 테스트는 구현됐으며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
 | Setup | `OPERATIONALLY_VALIDATED` | 최신 배포 기준 사용처 9곳 `setup --force`·strict audit 통과, 기존 Git 상태 보존 | source freshness와 rollback 회귀 유지 |
 
-과거 6건 corpus에서 `DEVELOPMENT_PASS`가 기록됐지만 manifest·workload inventory·execution packet 원문을 현재 검증할 수 없어 유효한 development evidence로 승계하지 않는다. 구현과 acceptance 계약은 유지하되 새 prospective development study에서 chronological first-N 6건을 다시 확보하고, 그 증거가 검증된 뒤에만 비중복 disjoint holdout을 별도로 계획한다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
+과거 6건 corpus에서 `DEVELOPMENT_PASS`가 기록됐지만 manifest·workload inventory·execution packet 원문을 현재 검증할 수 없어 유효한 development evidence로 승계하지 않는다. 구현과 acceptance 계약은 유지하되, 3건 gate 이후 사용자가 재개를 결정한 경우에만 새 prospective development study에서 chronological first-N 6건을 다시 확보한다. 그 증거가 검증된 뒤에만 비중복 disjoint holdout을 별도로 계획한다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
 
 Autopilot Phase A mission gate는 구현·회귀 검증을 완료했다. 사용자 요청과 base commit을 mission packet으로 동결하고 exact `mission_accept` receipt를 work contract v2에 결속하며, safe runner는 provider 호출 전에 packet·approval·session·request·base를 재검증해 mission briefing을 주입한다. receipt는 완전 쓰기와 `fsync` 후 no-replace 방식으로 게시하고, 부분 쓰기 또는 상태 저장 사이 실패는 동일 receipt 재시도로만 복구한다. 관련 회귀 `194 passed`, staged TDD gate, diff check와 OMC review `APPROVE`를 확인했다. 이는 실행 전 목적 결속의 구현 근거이며 외부 provider 실사용 smoke나 운영 acceptance를 대신하지 않는다.
 
@@ -86,7 +96,7 @@ Operator Experience의 반복 커밋 확인 병목은 `2026-08-31`에 코드 계
 
 ### Operational P0
 
-**bounded N-child 실제 acceptance**를 단일 운영 최우선 작업으로 둔다.
+**bounded N-child 실제 acceptance**는 `PAUSED_NOT_CANCELLED`다. 아래 내용은 재개 시 사용할 보존 계약이며 현재 실행 우선순위가 아니다.
 
 **현재 병목**
 
@@ -127,7 +137,7 @@ source workspace 신뢰 루트 결속, clean clone readiness, 설치 consumer se
 
 ### Operational Obligation
 
-**Plan Batch B receipt 수집**은 Implementation P0와 별개로 중단 없이 병행한다.
+**Plan Batch B receipt 수집**은 `PAUSED_NOT_CANCELLED`다.
 
 - 등록된 관측 창: `2026-08-20`부터 `2026-09-18`
 - 수집 계약: lock-backed implementation receipt, 최소 3개 저장소, 저장소별 최대 5건, 전체 최대 15건
@@ -135,7 +145,7 @@ source workspace 신뢰 루트 결속, clean clone readiness, 설치 consumer se
 - 금지: 관측 창 사후 연장, quota 변경, synthetic·document·benchmark maintenance 혼입
 - 다음 단계: 관측 종료 후 source snapshot 동결, universe·shortlist 10건, 독립 gold sign-off, paired 실행, blind adjudication
 
-**Work Packet 5건 feasibility**는 Batch B와 분리된 진단 lane으로 병행한다.
+**Work Packet 5건 feasibility**는 `PAUSED_NOT_CANCELLED`다.
 
 - 구현 상태: capture-only preregistration schema v2, 15분 registration buffer, 4개 authority key·operator·custody 분리, implementation-only selection, append-only source sequence·snapshot checkpoint, signed failure seal·승인된 restart parent, execution receipt, atomic case capture, durable evidence publish·authoritative reload 완료
 - 검증 상태: Work Packet 집중 회귀 `45 passed`, 관련 registry·RFC 3161·로드맵 회귀 `70 passed`, 전체 회귀 `2955 passed, 3 skipped`, staged TDD gate 통과, OMC review `APPROVE`
@@ -204,7 +214,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 실행 우선순위
 
-`Real-use Product Observation → P0 Product Value acceptance → P1 Operator Experience 측정·조정 → P1 Evidence 독립 검증 → P2 유지보수·멀티 호스트 UX` 순서로 고정한다. 경쟁 제품의 mode를 복제하거나 새 스킬을 늘리는 작업은 이 acceptance를 앞당길 때만 수행한다.
+`3건 task → review acceptance → CONTINUE/REDUCE/STOP 판정`만 현재 실행한다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이며, 경쟁 제품의 mode를 복제하거나 새 스킬을 늘리는 작업은 금지한다.
 
 ## 제품 원칙과 금지선
 
@@ -225,7 +235,11 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 다음 실행 순서
 
-1. **BLOCKED_EVIDENCE_LOSS** — 기존 schema v1 Product Value batch는 실행 대상에서 제외했지만 corpus v2-r1의 source commit·request·DoD·verification·environment artifact 원문과 durable registration을 현재 검증할 수 없다. hash-only record와 과거 availability 요약은 development evidence로 승계하지 않으며, 신규 prospective study를 사전 등록해 다시 수집한다.
+0. **ACTIVE** — 실제 자연 발생 implementation 작업 3건을 최소 2개 저장소에서 선정하고 최대 7일 안에 동일 조건 OMC/Baseline arm의 완료율·wall-clock 시간·사용자 개입·재작업을 비교해 `CONTINUE`, `REDUCE`, `STOP` 중 하나로 종료한다.
+
+아래 1–15번은 모두 `PAUSED_NOT_CANCELLED` backlog다. 0번이 `CONTINUE`로 끝난 뒤 사용자가 명시적으로 하나를 선택하기 전에는 실행하지 않는다.
+
+1. **BLOCKED_EVIDENCE_LOSS** (`PAUSED_NOT_CANCELLED`) — 기존 schema v1 Product Value batch는 실행 대상에서 제외했지만 corpus v2-r1의 source commit·request·DoD·verification·environment artifact 원문과 durable registration을 현재 검증할 수 없다. hash-only record와 과거 availability 요약은 development evidence로 승계하지 않으며, 재개가 승인되면 신규 prospective study를 사전 등록해 다시 수집한다.
 2. **완료** — `bounded_n_child_execution` claim scope와 development evidence 판정 gate 구현 완료. 기존 v3–v5 manifest는 `development`로 정규화하며 통과해도 최고 `DEVELOPMENT_PASS`만 발행한다.
 3. **완료** — schema v6 holdout manifest 계약과 `prepare-v6` CLI를 구현했다. initial/replication 역할과 development 기준·양쪽 workload inventory·selection policy·선행 holdout report 해시를 preregistration digest에 결속하며 기존 v3–v5 직렬화와 판정은 유지한다.
 4. **검증 코드 완료 / 실제 corpus 대기** — 현재 구현·판정 기준을 동결하고, development corpus와 repository·source snapshot·request·workload·execution packet이 겹치지 않는 disjoint holdout 5건을 initial과 replication에 각각 선정한다. v6 validator는 canonical inventory 불일치, observation chronology 위반, initial과 replication 사이의 비중복 또는 authority 역할 분리 위반을 거부한다. 실제 holdout 선정은 아직 남아 있다.

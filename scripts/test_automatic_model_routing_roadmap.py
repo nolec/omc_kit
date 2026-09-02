@@ -78,6 +78,31 @@ def test_readme_matches_the_current_bounded_execution_and_verdict_contract() -> 
     assert "현재 executor 관련 결과는 모두 `execution_allowed=false`" not in text
 
 
+def test_product_focus_is_one_three_case_task_review_acceptance_lane() -> None:
+    roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
+    readme = README_PATH.read_text(encoding="utf-8")
+
+    for text in (roadmap, readme):
+        assert "복잡한 코드 변경을 `task → review`로 안전하게 완료" in text
+        assert "실제 자연 발생 implementation 작업 3건" in text
+        assert "최대 7일" in text
+        assert "완료율·wall-clock 시간·사용자 개입·재작업" in text
+
+    assert "단일 활성 검증 lane" in roadmap
+    assert "`PAUSED_NOT_CANCELLED`" in roadmap
+    assert "신규 schema·transport가 필요하면 `REDUCE`" in roadmap
+    assert "3건 중 2건 이상" in roadmap
+    assert "elapsed와 사용자 개입 중앙값이 모두 baseline보다 악화되지 않고" in roadmap
+    assert "둘 중 하나 이상이 15% 이상 개선" in roadmap
+    assert "재작업도 baseline보다 증가하지 않으며" in roadmap
+    assert "**bounded N-child 실제 acceptance**는 `PAUSED_NOT_CANCELLED`" in roadmap
+    assert "Plan Batch B receipt 수집은 Implementation P0와 별개로 중단 없이 병행" not in roadmap
+    assert "Work Packet 5건 feasibility는 Batch B와 분리된 진단 lane으로 병행" not in roadmap
+
+    assert "1. 실제 자연 발생 implementation 작업 3건" in readme
+    assert "corpus v2-r1을 schema v2 registry" not in readme
+
+
 def test_product_value_claim_scope_and_evidence_states_are_explicit() -> None:
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
     readme = README_PATH.read_text(encoding="utf-8")
