@@ -1408,6 +1408,30 @@ def build_blind_adjudication_receipt(
     return _sign_receipt(body, private_key=private_key, hash_field="receipt_sha256")
 
 
+def _build_feasibility_report(
+    *,
+    preregistration: object,
+    result_count: int,
+    verdict: str,
+    reason_code: str,
+) -> dict[str, Any]:
+    preregistration_sha256 = None
+    if isinstance(preregistration, dict):
+        candidate = preregistration.get("preregistration_sha256")
+        if isinstance(candidate, str) and _SHA256_RE.fullmatch(candidate):
+            preregistration_sha256 = candidate
+    report = {
+        "schema_version": "omc-decision-policy-feasibility-report/v1",
+        "preregistration_sha256": preregistration_sha256,
+        "claim_scope": "decision_policy_feasibility_only",
+        "result_count": result_count,
+        "verdict": verdict,
+        "reason_code": reason_code,
+    }
+    report["report_sha256"] = canonical_sha256(report)
+    return report
+
+
 def evaluate_paired_results(
     *,
     preregistration: dict[str, Any],
@@ -1422,43 +1446,52 @@ def evaluate_paired_results(
     trusted_causal_reviewer_public_key: str,
     trusted_approver_public_key: str,
 ) -> dict[str, Any]:
-    validate_prospective_preregistration(
-        preregistration,
-        trusted_preregistration_public_key=trusted_preregistration_public_key,
-    )
-    validate_candidate_inventory(
-        inventory,
-        preregistration=preregistration,
-        trusted_preregistration_public_key=trusted_preregistration_public_key,
-        evidence_root=evidence_root,
-        trusted_causal_reviewer_public_key=trusted_causal_reviewer_public_key,
-    )
-    validate_paired_packet(
-        paired_packet,
-        corpus=corpus,
-        policy_packet=policy_packet,
-        evidence_root=evidence_root,
-        trusted_causal_reviewer_public_key=trusted_causal_reviewer_public_key,
-        trusted_approver_public_key=trusted_approver_public_key,
-    )
-    selected = set(inventory["selected_candidate_ids"])
-    paired_subjects = {
-        pair["case_id"]: pair["baseline"] for pair in paired_packet["case_subjects"]
-    }
-    if selected != set(paired_subjects):
-        raise ValueError("execution_case_selection_mismatch")
-    selected_entries = {
-        entry["candidate_id"]: entry
-        for entry in inventory["entries"]
-        if entry["candidate_id"] in selected
-    }
-    for case_id, subject in paired_subjects.items():
-        entry = selected_entries[case_id]
-        if any(
-            entry.get(field) != subject.get(field)
-            for field in ("request_sha256", "base_commit", "source_tree")
-        ):
-            raise ValueError("execution_subject_inventory_mismatch")
+    try:
+        validate_prospective_preregistration(
+            preregistration,
+            trusted_preregistration_public_key=trusted_preregistration_public_key,
+        )
+        validate_candidate_inventory(
+            inventory,
+            preregistration=preregistration,
+            trusted_preregistration_public_key=trusted_preregistration_public_key,
+            evidence_root=evidence_root,
+            trusted_causal_reviewer_public_key=trusted_causal_reviewer_public_key,
+        )
+        validate_paired_packet(
+            paired_packet,
+            corpus=corpus,
+            policy_packet=policy_packet,
+            evidence_root=evidence_root,
+            trusted_causal_reviewer_public_key=trusted_causal_reviewer_public_key,
+            trusted_approver_public_key=trusted_approver_public_key,
+        )
+        selected = set(inventory["selected_candidate_ids"])
+        paired_subjects = {
+            pair["case_id"]: pair["baseline"]
+            for pair in paired_packet["case_subjects"]
+        }
+        if selected != set(paired_subjects):
+            raise ValueError("execution_case_selection_mismatch")
+        selected_entries = {
+            entry["candidate_id"]: entry
+            for entry in inventory["entries"]
+            if entry["candidate_id"] in selected
+        }
+        for case_id, subject in paired_subjects.items():
+            entry = selected_entries[case_id]
+            if any(
+                entry.get(field) != subject.get(field)
+                for field in ("request_sha256", "base_commit", "source_tree")
+            ):
+                raise ValueError("execution_subject_inventory_mismatch")
+    except ValueError as exc:
+        return _build_feasibility_report(
+            preregistration=preregistration,
+            result_count=len(receipts),
+            verdict="INCONCLUSIVE",
+            reason_code=str(exc),
+        )
     runner_key = next(
         item["public_key"]
         for item in preregistration["authorities"]
@@ -1624,6 +1657,7 @@ def evaluate_paired_results(
         or len(adjudication_receipts) != TARGET_CASE_COUNT
     ):
         verdict = "INCONCLUSIVE"
+        reason_code = "execution_or_adjudication_evidence_invalid"
     else:
         baseline = [value for (case_id, arm), value in normalized.items() if arm == "baseline"]
         policy = [value for (case_id, arm), value in normalized.items() if arm == "policy"]
@@ -1658,15 +1692,17 @@ def evaluate_paired_results(
             and (validation_ok or tokens_ok)
             else "FEASIBILITY_FAIL"
         )
-    report = {
-        "schema_version": "omc-decision-policy-feasibility-report/v1",
-        "preregistration_sha256": preregistration["preregistration_sha256"],
-        "claim_scope": "decision_policy_feasibility_only",
-        "result_count": len(receipts),
-        "verdict": verdict,
-    }
-    report["report_sha256"] = canonical_sha256(report)
-    return report
+        reason_code = (
+            "criteria_satisfied"
+            if verdict == "FEASIBILITY_PASS"
+            else "criteria_not_satisfied"
+        )
+    return _build_feasibility_report(
+        preregistration=preregistration,
+        result_count=len(receipts),
+        verdict=verdict,
+        reason_code=reason_code,
+    )
 
 
 def diagnose_candidate_artifacts(

@@ -858,16 +858,31 @@ def test_deterministic_verdict_applies_noninferiority_and_safety_veto(tmp_path: 
         evidence_root=tmp_path,
         trusted_causal_reviewer_public_key=_reviewer_public_key(),
     )
-    with pytest.raises(ValueError, match="execution_subject_inventory_mismatch"):
-        feasibility.evaluate_paired_results(
-            preregistration=preregistration,
-            inventory=mismatched_inventory, paired_packet=paired_packet, corpus=corpus,
-            policy_packet=policy_packet, evidence_root=tmp_path, receipts=receipts,
-            adjudication_receipts=_adjudications(receipts, paired_packet),
-            trusted_preregistration_public_key=feasibility.public_key_b64(PREREGISTRATION_KEY),
-            trusted_causal_reviewer_public_key=_reviewer_public_key(),
-            trusted_approver_public_key=_approver_public_key(),
-        )
+    mismatched_report = feasibility.evaluate_paired_results(
+        preregistration=preregistration,
+        inventory=mismatched_inventory, paired_packet=paired_packet, corpus=corpus,
+        policy_packet=policy_packet, evidence_root=tmp_path, receipts=receipts,
+        adjudication_receipts=_adjudications(receipts, paired_packet),
+        trusted_preregistration_public_key=feasibility.public_key_b64(PREREGISTRATION_KEY),
+        trusted_causal_reviewer_public_key=_reviewer_public_key(),
+        trusted_approver_public_key=_approver_public_key(),
+    )
+    assert mismatched_report["verdict"] == "INCONCLUSIVE"
+    assert mismatched_report["reason_code"] == "execution_subject_inventory_mismatch"
+
+    forged_preregistration = deepcopy(preregistration)
+    forged_preregistration["observation_end"] = "2026-09-05T00:00:00Z"
+    forged_preregistration_report = feasibility.evaluate_paired_results(
+        preregistration=forged_preregistration,
+        inventory=inventory, paired_packet=paired_packet, corpus=corpus,
+        policy_packet=policy_packet, evidence_root=tmp_path, receipts=receipts,
+        adjudication_receipts=_adjudications(receipts, paired_packet),
+        trusted_preregistration_public_key=feasibility.public_key_b64(PREREGISTRATION_KEY),
+        trusted_causal_reviewer_public_key=_reviewer_public_key(),
+        trusted_approver_public_key=_approver_public_key(),
+    )
+    assert forged_preregistration_report["verdict"] == "INCONCLUSIVE"
+    assert forged_preregistration_report["reason_code"] == "preregistration_sha256_mismatch"
 
     unsafe = deepcopy(receipts)
     unsafe[-1]["major_regressions"] = 1
