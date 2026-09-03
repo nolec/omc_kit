@@ -1,14 +1,17 @@
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+import omc_task_review_pilot
 
 from omc_task_review_pilot import (
     PilotPreflightError,
+    build_execution_capability_matrix,
     build_inventory_dry_run,
     build_pilot_roster,
     build_readiness_receipt,
@@ -44,6 +47,19 @@ def _repo(tmp_path: Path, name: str, remote: str) -> Path:
     return repo
 
 
+def _execution_source_repo(tmp_path: Path) -> Path:
+    repo = _repo(
+        tmp_path, "execution-source", "https://example.com/execution-source.git"
+    )
+    scripts = repo / "scripts"
+    scripts.mkdir()
+    for name in ("omc_task_review_pilot.py", "omc_output_contract.py"):
+        shutil.copy2(Path(__file__).with_name(name), scripts / name)
+    _git(repo, "add", "scripts")
+    _git(repo, "commit", "-qm", "add pilot helper")
+    return repo
+
+
 def _sha(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
@@ -64,6 +80,101 @@ def _frozen_case() -> dict[str, object]:
         "repository_id": "repo-a",
         "dependency_condition": "locked dependencies available",
     }
+
+
+def test_execution_capability_matrix_preserves_paired_boundaries(monkeypatch) -> None:
+    source_repository = Path(__file__).resolve().parents[1]
+    monkeypatch.setattr(
+        omc_task_review_pilot, "_execution_source_is_clean", lambda _: True
+    )
+    matrix = build_execution_capability_matrix(
+        source_repository=source_repository,
+        source_commit=_git(source_repository, "rev-parse", "HEAD"),
+        pilot_contract_sha256="b" * 64,
+    )
+
+    assert matrix["schema_version"] == "omc-task-review-pilot-capability/v1"
+    assert matrix["source_commit"] == _git(source_repository, "rev-parse", "HEAD")
+    assert matrix["pilot_contract_sha256"] == "b" * 64
+    assert matrix["capability_matrix_sha256"] == _sha(
+        {key: value for key, value in matrix.items() if key != "capability_matrix_sha256"}
+    )
+    capabilities = {item["requirement_id"]: item for item in matrix["capabilities"]}
+
+    assert capabilities["R1_ISOLATED_WORKSPACE"]["status"] == "SUPPORTED"
+    assert capabilities["R2_APPROVED_FROZEN_INPUT"]["status"] == "ADAPTER_REQUIRED"
+    assert "DoD/provider/model/reasoning/timeout" in capabilities[
+        "R2_APPROVED_FROZEN_INPUT"
+    ]["evidence"]
+    assert capabilities["R3_OMC_TASK_REVIEW"]["status"] == "ADAPTER_REQUIRED"
+    assert "$omc-task/$omc-review" in capabilities["R3_OMC_TASK_REVIEW"]["evidence"]
+
+    # A one-arm safe pipeline must not be presented as proof of paired parity.
+    assert capabilities["R4_BASELINE_ARM"]["status"] == "ADAPTER_REQUIRED"
+    assert capabilities["R5_COUNTERBALANCED_ORDER"]["status"] == "ADAPTER_REQUIRED"
+    assert capabilities["R6_PAIRED_TERMINAL_RECEIPT"]["status"] == "ADAPTER_REQUIRED"
+    assert capabilities["R7_SHARED_PROVIDER_CONFIGURATION"]["status"] == "ADAPTER_REQUIRED"
+
+    for capability in capabilities.values():
+        assert capability["evidence"]
+        assert capability["status"] in {
+            "SUPPORTED",
+            "ADAPTER_REQUIRED",
+            "UNSUPPORTED",
+        }
+
+
+def test_execution_capability_matrix_rejects_source_commit_mismatch(monkeypatch) -> None:
+    source_repository = Path(__file__).resolve().parents[1]
+    monkeypatch.setattr(
+        omc_task_review_pilot, "_execution_source_is_clean", lambda _: True
+    )
+
+    with pytest.raises(PilotPreflightError, match="pilot_source_commit_mismatch"):
+        build_execution_capability_matrix(
+            source_repository=source_repository,
+            source_commit="a" * 40,
+            pilot_contract_sha256="b" * 64,
+        )
+
+
+def test_execution_capability_matrix_rejects_foreign_repository(tmp_path) -> None:
+    foreign_repository = _repo(
+        tmp_path, "foreign-source", "https://example.com/foreign-source.git"
+    )
+
+    with pytest.raises(PilotPreflightError, match="pilot_source_repository_mismatch"):
+        build_execution_capability_matrix(
+            source_repository=foreign_repository,
+            source_commit=_git(foreign_repository, "rev-parse", "HEAD"),
+            pilot_contract_sha256="b" * 64,
+        )
+
+
+def test_capability_matrix_cli_rejects_dirty_execution_source(tmp_path) -> None:
+    output = tmp_path / "evidence" / "capability-matrix.json"
+    source_repository = _execution_source_repo(tmp_path)
+    source_commit = _git(source_repository, "rev-parse", "HEAD")
+    (source_repository / "app.py").write_text("value = 2\n", encoding="utf-8")
+    command = [
+        sys.executable,
+        str(source_repository / "scripts" / "omc_task_review_pilot.py"),
+        "capability-matrix",
+        "--source-repository",
+        str(source_repository),
+        "--source-commit",
+        source_commit,
+        "--pilot-contract-sha256",
+        "b" * 64,
+        "--output",
+        str(output),
+    ]
+
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["reason"] == "pilot_execution_source_dirty"
+    assert not output.exists()
 
 
 def _native_result(tmp_path, *, verdict: str = "APPROVE") -> dict[str, object]:
@@ -552,6 +663,65 @@ def test_prepare_roster_cli_publishes_machine_readable_evidence(tmp_path) -> Non
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["schema_version"] == "omc-task-review-pilot-roster/v1"
     assert json.loads(output.read_text())["roster_sha256"]
+
+
+def test_capability_matrix_cli_publishes_no_replace_artifact(tmp_path) -> None:
+    output = tmp_path / "evidence" / "capability-matrix.json"
+    source_repository = _execution_source_repo(tmp_path)
+    source_commit = _git(source_repository, "rev-parse", "HEAD")
+    command = [
+        sys.executable,
+        str(source_repository / "scripts" / "omc_task_review_pilot.py"),
+        "capability-matrix",
+        "--source-repository",
+        str(source_repository),
+        "--source-commit",
+        source_commit,
+        "--pilot-contract-sha256",
+        "b" * 64,
+        "--output",
+        str(output),
+    ]
+
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["schema_version"] == "omc-task-review-pilot-capability/v1"
+    assert json.loads(result.stdout)["source_commit"] == source_commit
+    assert json.loads(result.stdout)["pilot_contract_sha256"] == "b" * 64
+    assert json.loads(result.stdout)["capability_matrix_sha256"]
+    assert json.loads(output.read_text()) == json.loads(result.stdout)
+
+    repeated = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert repeated.returncode == 2
+    assert json.loads(repeated.stdout)["reason"] == "pilot_evidence_already_exists"
+
+
+def test_capability_matrix_cli_rejects_foreign_repository(tmp_path) -> None:
+    output = tmp_path / "evidence" / "capability-matrix.json"
+    execution_source = _execution_source_repo(tmp_path)
+    foreign_repository = _repo(
+        tmp_path, "foreign-source", "https://example.com/foreign-source.git"
+    )
+    command = [
+        sys.executable,
+        str(execution_source / "scripts" / "omc_task_review_pilot.py"),
+        "capability-matrix",
+        "--source-repository",
+        str(foreign_repository),
+        "--source-commit",
+        _git(foreign_repository, "rev-parse", "HEAD"),
+        "--pilot-contract-sha256",
+        "b" * 64,
+        "--output",
+        str(output),
+    ]
+
+    result = subprocess.run(command, check=False, capture_output=True, text=True)
+
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["reason"] == "pilot_source_repository_mismatch"
+    assert not output.exists()
 
 
 def test_preflight_rejects_missing_frozen_field() -> None:

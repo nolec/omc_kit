@@ -18,6 +18,8 @@ pilot v2는 source commit `b0d62fcf66a54ac9f077afea46191880ad5e8dc7`과 roster h
 
 선택된 case는 `market-reasoning-engine` session `20260903T173719-8ad22dcb`, `research-auto` session `20260903T181149-c08adff4`, `market-reasoning-engine` session `20260903T183906-a7062648`이다. provider 호출과 paired arm terminal receipt는 아직 `0`건이다. 수동 execution packet은 독립 anchor와 provider receipt가 확보되기 전까지 `MANUAL_CHECKLIST_ONLY`이며 `CONTINUE`, `REDUCE`, `STOP`의 근거로 사용하지 않는다.
 
+실행 capability matrix는 `scripts/omc_task_review_pilot.py capability-matrix`로 생성한다. 입력 repository는 실행 스크립트가 속한 OMC Git root와 같아야 하고, tracked source가 clean하며 전달한 `source_commit`이 그 repository의 `HEAD`와 일치해야 한다. 이 gate는 실행 전 provenance만 보장하며 paired arm·provider session·terminal receipt 또는 pilot 종료 판정을 대체하지 않는다.
+
 ## Frozen Case
 
 각 case는 실행 전에 다음 값을 하나의 case receipt로 고정한다.

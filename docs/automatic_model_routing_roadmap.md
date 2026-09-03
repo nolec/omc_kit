@@ -15,7 +15,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter, authoritative acceptance harness | 실제 3–5 child 운영 표본 acceptance |
 | Operator Experience | 진행중 | output contract, Lite/Full routing, Stage graph SSOT, resume identity fail-close, CLI fast-path 구축 | 지연·개입 횟수 운영 검증 |
 
-현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했다. task-review pilot v2의 roster·repository identity·T0 decision·inventory dry-run·review verdict preflight를 구현했고, 사용자 승인 T0는 `2026-09-03T16:34:19+09:00`, 수집 마감은 `2026-09-10T16:34:19+09:00`이다. inventory hash `a0822834...aaf0fa`는 최소 2개 저장소의 chronological first eligible 3건을 선택해 `PILOT_READY`를 확인했고 provider 호출은 `0`건이다. paired arm 실행과 독립 terminal receipt는 아직 없으며, 수동 packet은 최종 판정 증거가 아닌 pre-execution checklist로만 취급한다. 새 transport·benchmark fixture를 추가하지 않는 안정화 동결 상태는 유지한다.
+현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했다. task-review pilot v2의 roster·repository identity·T0 decision·inventory dry-run·review verdict preflight를 구현했고, 사용자 승인 T0는 `2026-09-03T16:34:19+09:00`, 수집 마감은 `2026-09-10T16:34:19+09:00`이다. inventory hash `a0822834...aaf0fa`는 최소 2개 저장소의 chronological first eligible 3건을 선택해 `PILOT_READY`를 확인했고 provider 호출은 `0`건이다. capability matrix는 실행 OMC 저장소와 입력 repository root의 동일성, clean tracked source, `HEAD` commit 일치를 확인한 뒤에만 생성되는 pre-execution provenance gate다. paired arm 실행과 독립 terminal receipt는 아직 없으며, capability matrix와 수동 packet은 최종 판정 증거가 아닌 pre-execution checklist로만 취급한다. 새 transport·benchmark fixture를 추가하지 않는 안정화 동결 상태는 유지한다.
 
 ### 단일 활성 검증 lane
 

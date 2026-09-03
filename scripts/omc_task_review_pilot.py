@@ -31,6 +31,78 @@ FROZEN_CASE_FIELDS = (
 )
 
 
+def build_execution_capability_matrix(
+    *, source_repository: Path, source_commit: str, pilot_contract_sha256: str
+) -> dict[str, Any]:
+    """Describe which frozen pilot requirements existing execution surfaces prove."""
+    if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+        raise PilotPreflightError("pilot_source_commit_invalid")
+    if not re.fullmatch(r"[0-9a-f]{64}", pilot_contract_sha256):
+        raise PilotPreflightError("pilot_contract_hash_invalid")
+    source_root = Path(
+        _git(source_repository, "rev-parse", "--show-toplevel")
+    ).resolve()
+    execution_root = Path(
+        _git(Path(__file__).resolve().parent, "rev-parse", "--show-toplevel")
+    ).resolve()
+    if source_root != execution_root:
+        raise PilotPreflightError("pilot_source_repository_mismatch")
+    if not _execution_source_is_clean(execution_root):
+        raise PilotPreflightError("pilot_execution_source_dirty")
+    if _git(source_root, "rev-parse", "HEAD") != source_commit:
+        raise PilotPreflightError("pilot_source_commit_mismatch")
+    capabilities = [
+        {
+            "requirement_id": "R1_ISOLATED_WORKSPACE",
+            "status": "SUPPORTED",
+            "evidence": "omc_autopilot_workspace.materialize_isolated_clone",
+        },
+        {
+            "requirement_id": "R2_APPROVED_FROZEN_INPUT",
+            "status": "ADAPTER_REQUIRED",
+            "evidence": "safe pipeline binds instruction/base commit but not pilot DoD/provider/model/reasoning/timeout",
+        },
+        {
+            "requirement_id": "R3_OMC_TASK_REVIEW",
+            "status": "ADAPTER_REQUIRED",
+            "evidence": "safe pipeline runs task/review prompts, not the $omc-task/$omc-review skill contracts",
+        },
+        {
+            "requirement_id": "R4_BASELINE_ARM",
+            "status": "ADAPTER_REQUIRED",
+            "evidence": "normalize_review_outcome validates native evidence but does not execute a baseline arm",
+        },
+        {
+            "requirement_id": "R5_COUNTERBALANCED_ORDER",
+            "status": "ADAPTER_REQUIRED",
+            "evidence": "safe pipeline executes one arm and has no paired arm scheduler",
+        },
+        {
+            "requirement_id": "R6_PAIRED_TERMINAL_RECEIPT",
+            "status": "ADAPTER_REQUIRED",
+            "evidence": "safe pipeline returns one candidate result, not a sealed two-arm metric receipt",
+        },
+        {
+            "requirement_id": "R7_SHARED_PROVIDER_CONFIGURATION",
+            "status": "ADAPTER_REQUIRED",
+            "evidence": "safe pipeline confines the codex executor but does not bind provider/model/reasoning across arms",
+        },
+        {
+            "requirement_id": "R8_BOUNDED_ARM_RETRY",
+            "status": "ADAPTER_REQUIRED",
+            "evidence": "pilot contract allows one retry per arm but safe pipeline has no paired retry ledger",
+        },
+    ]
+    matrix: dict[str, Any] = {
+        "schema_version": "omc-task-review-pilot-capability/v1",
+        "source_commit": source_commit,
+        "pilot_contract_sha256": pilot_contract_sha256,
+        "capabilities": capabilities,
+    }
+    matrix["capability_matrix_sha256"] = _canonical_sha256(matrix)
+    return matrix
+
+
 class PilotPreflightError(ValueError):
     """Raised when pilot evidence cannot support a deterministic decision."""
 
@@ -56,6 +128,19 @@ def _git(repo: Path, *args: str) -> str:
     if result.returncode != 0 or not result.stdout.strip():
         raise PilotPreflightError("repository_git_evidence_unavailable")
     return result.stdout.strip()
+
+
+def _execution_source_is_clean(repo: Path) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(repo), "diff", "--quiet", "HEAD"],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise PilotPreflightError("repository_git_evidence_unavailable")
 
 
 def _canonical_origin(raw: str) -> str:
@@ -519,6 +604,11 @@ def _parser() -> argparse.ArgumentParser:
     readiness.add_argument("--start-receipt", type=Path, required=True)
     readiness.add_argument("--inventory", type=Path, required=True)
     readiness.add_argument("--output", type=Path, required=True)
+    capability_matrix = sub.add_parser("capability-matrix")
+    capability_matrix.add_argument("--source-repository", type=Path, required=True)
+    capability_matrix.add_argument("--source-commit", required=True)
+    capability_matrix.add_argument("--pilot-contract-sha256", required=True)
+    capability_matrix.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -544,7 +634,7 @@ def main(argv: list[str] | None = None) -> int:
                 _read_json_object(args.start_receipt), expected_binding=binding
             )
             value = build_inventory_dry_run(roster, t0=start["t0"])
-        else:
+        elif args.command == "readiness":
             roster = _read_json_object(args.roster)
             start_receipt = _read_json_object(args.start_receipt)
             binding = {
@@ -558,6 +648,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             value = build_readiness_receipt(
                 roster, start, _read_json_object(args.inventory)
+            )
+        else:
+            value = build_execution_capability_matrix(
+                source_repository=args.source_repository,
+                source_commit=args.source_commit,
+                pilot_contract_sha256=args.pilot_contract_sha256,
             )
         write_json_no_replace(args.output, value)
     except PilotPreflightError as exc:
