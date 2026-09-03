@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_plan_candidate_universe as candidate_universe
+import omc_state
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -288,6 +289,304 @@ def test_sync_require_forwards_explicit_work_class(tmp_path: Path):
         ).read_text(encoding="utf-8")
     )
     assert session["work_class"] == "benchmark_maintenance"
+
+
+def test_document_only_start_rejects_obvious_source_changes(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable, str(GUARD), "sync-require", "--target", str(target),
+            "--mode", "autopilot", "--title", "omc-task",
+            "--request", "document current work", "--roles", "senior_coding",
+            "--work-class", "document_only", "--completion-action", "start",
+            "--for", "task",
+        ],
+        capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode != 0
+    assert "work_class_scope_conflict" in result.stderr
+
+
+def test_document_only_start_rejects_document_renamed_to_source(tmp_path: Path):
+    target = tmp_path / "repo"
+    target.mkdir()
+    subprocess.run(["git", "-C", str(target), "init", "-q"], check=True)
+    subprocess.run(
+        ["git", "-C", str(target), "config", "user.email", "omc@example.com"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(target), "config", "user.name", "OMC"],
+        check=True,
+    )
+    (target / "README.md").write_text("documentation\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(target), "add", "README.md"], check=True)
+    subprocess.run(
+        ["git", "-C", str(target), "commit", "-qm", "baseline"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(target), "mv", "README.md", "app.py"], check=True
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable, str(GUARD), "sync-require", "--target", str(target),
+            "--mode", "autopilot", "--title", "omc-task",
+            "--request", "document current work", "--roles", "senior_coding",
+            "--work-class", "document_only", "--completion-action", "start",
+            "--for", "task",
+        ],
+        capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode != 0
+    assert "work_class_scope_conflict" in result.stderr
+
+
+def test_start_rejects_caller_supplied_work_id(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+
+    try:
+        omc_state.record_session(
+            target, mode="autopilot", title="omc-task", request="new work",
+            role_ids=["senior_coding"], work_class="implementation",
+            completion_action="start", work_id="reused-id", confirmed=True,
+        )
+    except ValueError as error:
+        assert str(error) == "work id is generated for completion start"
+    else:
+        raise AssertionError("caller supplied work id was accepted")
+
+
+def test_continue_rejects_work_class_change(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    started = omc_state.record_session(
+        target, mode="autopilot", title="omc-task", request="implementation",
+        role_ids=["senior_coding"], work_class="implementation",
+        completion_action="start", confirmed=True,
+    )
+
+    try:
+        omc_state.record_session(
+            target, mode="autopilot", title="omc-task", request="reclassify",
+            role_ids=["senior_coding"], work_class="document_only",
+            completion_action="continue", work_id=started["work_id"], confirmed=True,
+        )
+    except ValueError as error:
+        assert str(error) == "completion continuation work class mismatch"
+    else:
+        raise AssertionError("completion continuation changed work class")
+
+
+def test_continue_extends_valid_lineage(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    started = omc_state.record_session(
+        target, mode="autopilot", title="omc-task", request="implementation",
+        role_ids=["senior_coding"], work_class="implementation",
+        completion_action="start", confirmed=True,
+    )
+
+    continued = omc_state.record_session(
+        target, mode="autopilot", title="omc-task", request="fix review",
+        role_ids=["senior_coding"], work_class="implementation",
+        completion_action="continue", work_id=started["work_id"], confirmed=True,
+    )
+
+    pending = json.loads(
+        (target / ".omc" / "state" / "pending-completion.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert pending["work_id"] == started["work_id"]
+    assert pending["root_session_id"] == started["session_id"]
+    assert pending["session_ids"] == [started["session_id"], continued["session_id"]]
+    assert pending["rework_count"] == 1
+
+
+def test_continue_rejects_malformed_lineage_without_recording_session(
+    tmp_path: Path,
+):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    started = omc_state.record_session(
+        target, mode="autopilot", title="omc-task", request="implementation",
+        role_ids=["senior_coding"], work_class="implementation",
+        completion_action="start", confirmed=True,
+    )
+    pending_path = target / ".omc" / "state" / "pending-completion.json"
+    pending = json.loads(pending_path.read_text(encoding="utf-8"))
+    pending["session_ids"] = 1
+    pending_path.write_text(json.dumps(pending), encoding="utf-8")
+    latest_path = target / ".omc" / "state" / "latest.json"
+    latest_before = json.loads(latest_path.read_text(encoding="utf-8"))
+    sessions_dir = target / ".omc" / "state" / "sessions"
+    sessions_before = sorted(path.name for path in sessions_dir.iterdir())
+
+    try:
+        omc_state.record_session(
+            target, mode="autopilot", title="omc-task", request="fix review",
+            role_ids=["senior_coding"], work_class="implementation",
+            completion_action="continue", work_id=started["work_id"], confirmed=True,
+        )
+    except ValueError as error:
+        assert str(error) == "completion continuation does not match pending work"
+    else:
+        raise AssertionError("malformed completion lineage was continued")
+
+    assert json.loads(latest_path.read_text(encoding="utf-8")) == latest_before
+    assert sorted(path.name for path in sessions_dir.iterdir()) == sessions_before
+
+
+def test_preserve_rejects_stale_baseline(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    omc_state.record_session(
+        target, mode="autopilot", title="omc-task", request="implementation",
+        role_ids=["senior_coding"], work_class="implementation",
+        completion_action="start", confirmed=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(target), "commit", "--allow-empty", "-qm", "unrelated"],
+        check=True,
+    )
+
+    try:
+        omc_state.record_session(
+            target, mode="autopilot", title="omc-task", request="commit old work",
+            role_ids=["senior_coding"], work_class="implementation",
+            completion_action="preserve", confirmed=True,
+        )
+    except ValueError as error:
+        assert str(error) == "completion preserve does not match pending baseline"
+    else:
+        raise AssertionError("stale completion candidate was preserved")
+
+
+def test_preserve_rejects_pending_that_does_not_match_source_session(
+    tmp_path: Path,
+):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    omc_state.record_session(
+        target, mode="autopilot", title="omc-task", request="implementation",
+        role_ids=["senior_coding"], work_class="implementation",
+        completion_action="start", confirmed=True,
+    )
+    pending_path = target / ".omc" / "state" / "pending-completion.json"
+    pending = json.loads(pending_path.read_text(encoding="utf-8"))
+    pending["request_sha256"] = "0" * 64
+    pending_path.write_text(json.dumps(pending), encoding="utf-8")
+
+    try:
+        omc_state.record_session(
+            target, mode="autopilot", title="omc-task", request="commit old work",
+            role_ids=["senior_coding"], work_class="implementation",
+            completion_action="preserve", confirmed=True,
+        )
+    except ValueError as error:
+        assert str(error) == "completion preserve does not match pending session"
+    else:
+        raise AssertionError("mismatched completion candidate was preserved")
+
+
+def test_preserve_rejects_work_id_that_does_not_match_source_session(
+    tmp_path: Path,
+):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    omc_state.record_session(
+        target, mode="autopilot", title="omc-task", request="implementation",
+        role_ids=["senior_coding"], work_class="implementation",
+        completion_action="start", confirmed=True,
+    )
+    pending_path = target / ".omc" / "state" / "pending-completion.json"
+    pending = json.loads(pending_path.read_text(encoding="utf-8"))
+    pending["work_id"] = "different-work"
+    pending_path.write_text(json.dumps(pending), encoding="utf-8")
+
+    try:
+        omc_state.record_session(
+            target, mode="autopilot", title="omc-task", request="commit old work",
+            role_ids=["senior_coding"], work_class="implementation",
+            completion_action="preserve", confirmed=True,
+        )
+    except ValueError as error:
+        assert str(error) == "completion preserve does not match pending session"
+    else:
+        raise AssertionError("mismatched work id was preserved")
+
+
+def test_completion_receipt_rejects_inconsistent_v3_lineage(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    session = omc_state.record_session(
+        target, mode="autopilot", title="omc-task", request="implementation",
+        role_ids=["senior_coding"], work_class="implementation",
+        completion_action="start", confirmed=True,
+    )
+    pending_path = target / ".omc" / "state" / "pending-completion.json"
+    pending = json.loads(pending_path.read_text(encoding="utf-8"))
+    pending["rework_count"] = 7
+    pending_path.write_text(json.dumps(pending), encoding="utf-8")
+    (target / "app.py").write_text("value = 2\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(target), "add", "app.py"], check=True)
+    subprocess.run(
+        ["git", "-C", str(target), "commit", "--no-verify", "-qm", "complete"],
+        check=True,
+    )
+
+    result = omc_state.record_completion_receipt(target)
+
+    assert result == {"status": "skipped", "reason": "pending completion is invalid"}
+    session_dir = target / ".omc" / "state" / "sessions" / session["session_id"]
+    assert not (session_dir / "completion-lineage.json").exists()
+
+
+def test_record_session_reads_git_snapshot_once(tmp_path: Path, monkeypatch):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    calls = 0
+
+    def fake_git_info(_project_root: Path) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"branch": "main", "head": "baseline", "dirty": False}
+
+    monkeypatch.setattr(omc_state, "_git_info", fake_git_info)
+    monkeypatch.setattr(omc_state, "_rewrite_notepad", lambda _project_root: None)
+    session = omc_state.record_session(
+        target, mode="autopilot", title="omc-task", request="implementation",
+        role_ids=["senior_coding"], work_class="implementation",
+        completion_action="start", confirmed=True,
+    )
+
+    assert calls == 1
+    assert session["git"]["head"] == "baseline"
+
+
+def test_document_only_check_fails_closed_when_git_status_fails(tmp_path: Path):
+    target = tmp_path / "not-a-repository"
+    target.mkdir()
+
+    result = subprocess.run(
+        [
+            sys.executable, str(GUARD), "sync-require", "--target", str(target),
+            "--mode", "autopilot", "--title", "omc-task", "--request", "docs",
+            "--roles", "senior_coding", "--work-class", "document_only",
+            "--completion-action", "start", "--for", "task",
+        ],
+        capture_output=True, text=True, check=False,
+    )
+
+    assert result.returncode != 0
+    assert "work_class_scope_unavailable" in result.stderr
 
 
 def test_sync_require_rejects_missing_work_class_for_coding_session(

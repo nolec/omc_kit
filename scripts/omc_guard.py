@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -47,6 +48,40 @@ DESTRUCTIVE_COMMAND_PATTERNS = (
 )
 
 ALLOW_DESTRUCTIVE_FLAG = "#ALLOW_DESTRUCTIVE"
+_OBVIOUS_SOURCE_SUFFIXES = {
+    ".c", ".cc", ".cpp", ".go", ".java", ".js", ".jsx", ".kt", ".php",
+    ".py", ".rb", ".rs", ".swift", ".ts", ".tsx",
+}
+
+
+def _obvious_source_changes(project_root: Path) -> list[str]:
+    result = subprocess.run(
+        ["git", "-C", str(project_root), "status", "--porcelain", "-z"],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise ValueError("work_class_scope_unavailable: git status failed")
+    paths: list[str] = []
+    entries = [entry for entry in result.stdout.split(b"\0") if entry]
+    index = 0
+    while index < len(entries):
+        entry = entries[index].decode("utf-8", errors="surrogateescape")
+        status = entry[:2]
+        candidate_paths = [entry[3:]]
+        if any(marker in {"R", "C"} for marker in status):
+            index += 1
+            if index < len(entries):
+                candidate_paths.append(
+                    entries[index].decode("utf-8", errors="surrogateescape")
+                )
+        paths.extend(
+            path
+            for path in candidate_paths
+            if Path(path).suffix.casefold() in _OBVIOUS_SOURCE_SUFFIXES
+        )
+        index += 1
+    return sorted(paths)
 
 
 def _latest(project_root: Path) -> dict:
@@ -233,6 +268,12 @@ def _parser() -> argparse.ArgumentParser:
         choices=["implementation", "synthetic", "document_only", "benchmark_maintenance"],
     )
     sync_require.add_argument(
+        "--completion-action",
+        choices=["start", "continue", "preserve"],
+        default="start",
+    )
+    sync_require.add_argument("--work-id")
+    sync_require.add_argument(
         "--for",
         dest="command_name",
         required=True,
@@ -267,6 +308,12 @@ def main() -> int:
         role_ids = [x.strip() for x in args.roles.split(",") if x.strip()]
         if "senior_coding" in role_ids and args.work_class is None:
             raise ValueError("work class is required for a senior_coding session")
+        if (
+            args.work_class == "document_only"
+            and args.completion_action == "start"
+            and _obvious_source_changes(project_root)
+        ):
+            raise ValueError("work_class_scope_conflict: document_only includes source changes")
         lock_private_key = (
             _prospective_work_class_lock(project_root)
             if "senior_coding" in role_ids
@@ -279,6 +326,8 @@ def main() -> int:
             request=args.request,
             role_ids=role_ids,
             work_class=args.work_class,
+            completion_action=args.completion_action,
+            work_id=args.work_id,
             confirmed=lock_private_key is None,
             confirmation_source=(
                 "guard.sync_require" if lock_private_key is None else None

@@ -324,12 +324,18 @@ def test_state_complete_preserves_pre_upgrade_v1_pending_completion(
     session_path = target / ".omc" / "state" / "sessions" / session_id / "session.json"
     session = _read_json(session_path)
     session.pop("work_class")
+    session.pop("completion_action")
+    session.pop("work_id")
     session_path.write_text(json.dumps(session), encoding="utf-8")
     pending_path = target / ".omc" / "state" / "pending-completion.json"
     pending = _read_json(pending_path)
     pending["schema_version"] = 1
     pending.pop("work_class")
     pending.pop("work_class_locked_at")
+    pending.pop("work_id")
+    pending.pop("root_session_id")
+    pending.pop("session_ids")
+    pending.pop("rework_count")
     pending_path.write_text(json.dumps(pending), encoding="utf-8")
 
     (target / "app.py").write_text("value = 2\n", encoding="utf-8")

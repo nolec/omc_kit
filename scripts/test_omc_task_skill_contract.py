@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MAX_NON_EMPTY_LINES = 54
+MAX_NON_EMPTY_LINES = 55
 
 REQUIRED_TASK_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-task" / "SKILL.md",
@@ -22,7 +22,7 @@ OPTIONAL_TASK_SKILL_PATHS = [
 ]
 
 REQUIRED_SEQUENCE = [
-    "python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title \"omc-task\" --request \"<현재 작업 한 줄 요약>\" --roles senior_coding --work-class \"<implementation|synthetic|document_only|benchmark_maintenance>\" --for \"task\"",
+    "python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title \"omc-task\" --request \"<현재 작업 한 줄 요약>\" --roles senior_coding --work-class \"<implementation|synthetic|document_only|benchmark_maintenance>\" --completion-action \"<start|continue|preserve>\" --for \"task\"",
     "Guard 실행 전에 작업 성격을 분류",
     "필수 체크",
     "CONTRACT 등록",
@@ -81,6 +81,9 @@ REQUIRED_SAFETY_MARKERS = [
     "OMC_REQUIRE_WORK_CLASS_LOCK",
     "OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE",
     "OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY",
+    "work_id",
+    "continue",
+    "preserve",
 ]
 
 

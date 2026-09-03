@@ -10,10 +10,12 @@ description: "7단계 TDD 파이프라인으로 구현 실행. 트리거: 구현
 ## 0. Guard
 
 ```bash
-python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title "omc-task" --request "<현재 작업 한 줄 요약>" --roles senior_coding --work-class "<implementation|synthetic|document_only|benchmark_maintenance>" --for "task"
+python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title "omc-task" --request "<현재 작업 한 줄 요약>" --roles senior_coding --work-class "<implementation|synthetic|document_only|benchmark_maintenance>" --completion-action "<start|continue|preserve>" --for "task"
 ```
 
 Guard 실행 전에 작업 성격을 분류합니다. 제품 코드 변경은 `implementation`, 합성 fixture는 `synthetic`, 문서만 변경하면 `document_only`, benchmark 도구·측정 변경은 `benchmark_maintenance`입니다. 모호하면 임의 기본값을 쓰지 말고 범위를 확인합니다.
+
+새 자연 작업은 `start`, 같은 작업의 리뷰 수정은 pending receipt의 `work_id`와 함께 `continue`, 승인된 기존 변경의 문서 정리·로컬 커밋만 수행하면 `preserve`를 사용합니다. `preserve`는 기존 pending 작업이 없으면 실패합니다. 같은 baseline이라는 이유만으로 `work_id`를 추론하거나 다른 작업에 재사용하지 않습니다.
 
 실패하면 세션 확인 또는 confirm부터 처리하고 중단합니다.
 Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`으로 저장소 밖 사용자 custody를 한 번 생성하고 `preflight`로 확인합니다. Guard는 이 설정을 자동 로드해 세션 생성 즉시 lock을 봉인합니다. CI처럼 환경변수가 필요한 곳은 `OMC_REQUIRE_WORK_CLASS_LOCK=1`, 외부 `OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE`, pinned `OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY`를 함께 설정합니다.

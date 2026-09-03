@@ -437,6 +437,8 @@ def main() -> int:
         "--work-class",
         choices=["implementation", "synthetic", "document_only", "benchmark_maintenance"],
     )
+    state_record.add_argument("--completion-action", choices=["start", "continue", "preserve"])
+    state_record.add_argument("--work-id")
     state_record.add_argument("--prompt-path", type=str, default=None, help="Prompt output path.")
     state_record.add_argument("--confirm", action="store_true", help="Record the session as already confirmed/active.")
     state_record.add_argument(
@@ -457,6 +459,8 @@ def main() -> int:
         "--work-class",
         choices=["implementation", "synthetic", "document_only", "benchmark_maintenance"],
     )
+    state_sync.add_argument("--completion-action", choices=["start", "continue", "preserve"])
+    state_sync.add_argument("--work-id")
     state_sync.add_argument("--prompt-path", type=str, default=None, help="Prompt output path.")
     state_sync.add_argument("--keep", type=int, default=80, help="Maximum stored entries.")
 
@@ -883,6 +887,8 @@ def main() -> int:
                     "--roles",
                     args.roles,
                     *(["--work-class", args.work_class] if args.work_class else []),
+                    *(["--completion-action", args.completion_action] if args.completion_action else []),
+                    *(["--work-id", args.work_id] if args.work_id else []),
                     *(["--prompt-path", args.prompt_path] if args.prompt_path is not None else []),
                     *(["--confirm"] if args.confirm else []),
                     *(["--confirmation-source", args.confirmation_source] if args.confirmation_source else []),
@@ -921,6 +927,8 @@ def main() -> int:
                     "--roles",
                     args.roles,
                     *(["--work-class", args.work_class] if args.work_class else []),
+                    *(["--completion-action", args.completion_action] if args.completion_action else []),
+                    *(["--work-id", args.work_id] if args.work_id else []),
                     *(["--prompt-path", args.prompt_path] if args.prompt_path is not None else []),
                     "--keep",
                     str(args.keep),

@@ -174,6 +174,8 @@ source workspace 신뢰 루트 결속, clean clone readiness, 설치 consumer se
 
 Work-unit closure primitive는 `2026-09-01`에 구현·검증했다. session·task·request digest에 결속된 immutable envelope, 사용자 acceptance의 단일 소비 receipt, residual issue 내용 hash, validation round와 issue event의 분리, issue revision lineage·budget, scope·verification binding을 fail-close로 판정한다. envelope 동결 전에 별도 enrollment marker를 no-replace로 게시해 동결 파일이 사라진 work unit이 legacy mode로 강등되는 경로를 차단한다. closure/state 관련 회귀 `123 passed`, context/version 회귀 `36 passed`, 문법·staged diff·TDD gate와 OMC review `APPROVE WITH NOTES`를 확인했다. 이 근거는 primitive 구현 완료만 의미하며 실제 task/review/ship 종료 consumer에는 아직 연결하지 않았다. production consumer 연결, marker-only crash recovery failpoint, parent-directory durability 검증을 완료하기 전에는 일반 OMC 완료 판정에 사용하지 않는다.
 
+Task completion lineage schema v3도 구현했다. `start`, `continue`, `preserve` 동작과 generated `work_id`, root/current session 순서, 중복 없는 `session_ids`, `rework_count`를 하나의 pending completion에 결속하고, continuation의 request·work class·baseline 불일치와 `document_only` 세션의 source 변경을 fail-close한다. 완료 receipt의 기존 schema v2 호환성은 유지하면서 별도 lineage sidecar를 `informational_unverified`로 기록한다. 관련 회귀 `93 passed`, `py_compile`, staged diff·TDD gate와 OMC review `APPROVE WITH NOTES`를 확인했다. 이는 3건 pilot에서 재작업을 중복 case가 아닌 동일 work unit으로 계수할 수 있게 한 구현 근거이며, 실제 적격 표본 `0/3`과 제품 판정은 변경하지 않는다.
+
 ### Operator Experience 1차 통합안
 
 - CLI fast-path 1차 완료: 루트 `-h`·`--help`를 prompt 옵션으로 잘못 라우팅하던 회귀를 수정하고, source freshness hash는 저장소 전체가 아니라 실제 설치 대상만 순회한다. template 탐색 오류는 불완전한 hash를 반환하지 않고 fail-close한다.
@@ -216,7 +218,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 실행 우선순위
 
-`3건 task → review acceptance → CONTINUE/REDUCE/STOP 판정`만 현재 실행한다. `2026-09-03T11:59:05+09:00` 재수집에서도 적격 표본은 `0/3`, provider 호출은 `0`이었다. 다음 핵심 작업은 roster에 등록된 저장소의 자연 발생 implementation 작업을 OMC 세션에서 실제로 완료해 first eligible case로 남기는 것이다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이며, 경쟁 제품의 mode를 복제하거나 새 스킬·schema·transport·benchmark fixture를 늘리는 작업은 금지한다.
+`3건 task → review acceptance → CONTINUE/REDUCE/STOP 판정`만 현재 실행한다. `2026-09-03T11:59:05+09:00` 재수집에서도 적격 표본은 `0/3`, provider 호출은 `0`이었다. completion lineage schema v3로 동일 work의 재작업 세션을 묶는 계수 기반은 완료했으며, 다음 핵심 작업은 roster에 등록된 저장소의 자연 발생 implementation 작업을 OMC 세션에서 실제로 완료해 first eligible case로 남기는 것이다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이며, 경쟁 제품의 mode를 복제하거나 새 스킬·schema·transport·benchmark fixture를 늘리는 작업은 금지한다.
 
 ## 제품 원칙과 금지선
 

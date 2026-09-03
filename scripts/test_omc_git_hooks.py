@@ -93,6 +93,76 @@ class TestCompletionHookResolver(unittest.TestCase):
 
 
 class TestCompletionHookExecution(unittest.TestCase):
+    def test_commit_only_session_preserves_implementation_completion_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            _git(repo, "init", "-q")
+            _git(repo, "config", "user.email", "omc-hooks@example.com")
+            _git(repo, "config", "user.name", "OMC Hooks")
+            (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+            _git(repo, "add", "app.py")
+            _git(repo, "commit", "-qm", "baseline")
+
+            install = subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "install.py"), "--target", str(repo), "--force"],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(install.returncode, 0, install.stdout + install.stderr)
+            env = {**os.environ, "XDG_CONFIG_HOME": str(root / "config")}
+            subprocess.run(
+                [sys.executable, "scripts/omc_work_class_lock.py", "init", "--target", "."],
+                cwd=repo,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            implementation = subprocess.run(
+                [
+                    sys.executable, "scripts/omc_guard.py", "sync-require",
+                    "--target", ".", "--mode", "autopilot", "--title", "omc-task",
+                    "--request", "implement behavior", "--roles", "senior_coding",
+                    "--work-class", "implementation", "--completion-action", "start",
+                    "--for", "task",
+                ],
+                cwd=repo, env=env, check=False, capture_output=True, text=True,
+            )
+            self.assertEqual(implementation.returncode, 0, implementation.stdout + implementation.stderr)
+            pending_before = json.loads((repo / ".omc/state/pending-completion.json").read_text())
+
+            commit_only = subprocess.run(
+                [
+                    sys.executable, "scripts/omc_guard.py", "sync-require",
+                    "--target", ".", "--mode", "autopilot", "--title", "omc-task",
+                    "--request", "document and commit approved existing work", "--roles", "senior_coding",
+                    "--work-class", "document_only", "--completion-action", "preserve",
+                    "--for", "task",
+                ],
+                cwd=repo, env=env, check=False, capture_output=True, text=True,
+            )
+            self.assertEqual(commit_only.returncode, 0, commit_only.stdout + commit_only.stderr)
+            pending_after = json.loads((repo / ".omc/state/pending-completion.json").read_text())
+            self.assertEqual(pending_after, pending_before)
+
+            (repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+            _git(repo, "add", "app.py")
+            _git(repo, "commit", "--no-verify", "-qm", "implement behavior")
+
+            receipt_path = (
+                repo / ".omc/state/sessions" / pending_before["session_id"] / "completion.json"
+            )
+            receipt = json.loads(receipt_path.read_text())
+            self.assertEqual(receipt["work_class"], "implementation")
+            lineage = json.loads((receipt_path.parent / "completion-lineage.json").read_text())
+            self.assertEqual(lineage["work_id"], pending_before["work_id"])
+            self.assertEqual(lineage["evidence_status"], "informational_unverified")
+
     def test_native_and_husky_commits_create_bound_completion_receipts(self):
         for backend in ("native", "husky"):
             with self.subTest(backend=backend), tempfile.TemporaryDirectory() as tmp:
