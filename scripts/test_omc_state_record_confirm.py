@@ -1048,6 +1048,63 @@ def test_local_commit_decision_consumes_commit_from_selected_group(tmp_path: Pat
     assert json.loads(consumed.stdout)["consumed"] is True
 
 
+def test_task_review_pilot_start_decision_requires_exact_binding_and_receipt(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    session_id = _sync_task_session(target, "start task review pilot")
+    binding = {
+        "session_id": session_id,
+        "roster_sha256": "a" * 64,
+        "pilot_contract_sha256": "b" * 64,
+        "source_commit": _git(target, "rev-parse", "HEAD"),
+    }
+    options = json.dumps(
+        [{"id": "approve", "aliases": ["승인"], "value": binding}],
+        ensure_ascii=False,
+    )
+    opened = _run(
+        "state", "decision-open", "--target", str(target),
+        "--decision-id", "pilot-start", "--action", "task_review_pilot_start",
+        "--options-json", options,
+    )
+    assert opened.returncode == 0, opened.stderr
+    resolved = _run(
+        "state", "decision-resolve", "--target", str(target), "--response", "승인"
+    )
+    assert resolved.returncode == 0, resolved.stderr
+    receipt_path = target / ".omc/state/task-review-pilot/pilot-start.json"
+    consumed = _run(
+        "state", "decision-consume", "--target", str(target),
+        "--decision-id", "pilot-start", "--receipt-output", str(receipt_path),
+    )
+    assert consumed.returncode == 0, consumed.stderr
+    receipt = _read_json(receipt_path)
+    assert receipt["schema_version"] == "omc-task-review-pilot-start/v1"
+    assert receipt["action"] == "task_review_pilot_start"
+    assert receipt["binding"] == binding
+    assert receipt["consumed_at"]
+
+
+def test_task_review_pilot_start_rejects_invalid_binding(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    session_id = _sync_task_session(target, "start task review pilot")
+    options = json.dumps(
+        [{
+            "id": "approve",
+            "aliases": ["승인"],
+            "value": {"session_id": session_id, "roster_sha256": "a" * 64},
+        }],
+        ensure_ascii=False,
+    )
+    opened = _run(
+        "state", "decision-open", "--target", str(target),
+        "--decision-id", "pilot-start", "--action", "task_review_pilot_start",
+        "--options-json", options,
+    )
+    assert opened.returncode != 0
+
+
 def test_local_commit_decision_requires_paths_for_multiple_groups(tmp_path: Path):
     target = tmp_path / "repo"
     _init_git_repo(target)

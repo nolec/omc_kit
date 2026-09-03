@@ -828,7 +828,12 @@ def open_pending_decision(
     ttl_seconds: int = 1800,
 ) -> dict[str, object]:
     """Open a single-session acknowledgement for a supported local action."""
-    if action not in {"local_commit", "closure_accept", "mission_accept"}:
+    supported_binding_actions = {
+        "closure_accept",
+        "mission_accept",
+        "task_review_pilot_start",
+    }
+    if action not in {"local_commit", *supported_binding_actions}:
         raise ValueError("unsupported pending decision action")
     if not decision_id.strip():
         raise ValueError("decision_id is required")
@@ -876,9 +881,9 @@ def open_pending_decision(
                 "paths": normalized_paths,
             }
         )
-    if action in {"closure_accept", "mission_accept"} and len(normalized_options) != 1:
+    if action in supported_binding_actions and len(normalized_options) != 1:
         raise ValueError(f"{action} requires exactly one option")
-    if action in {"closure_accept", "mission_accept"} and (
+    if action in supported_binding_actions and (
         normalized_options[0]["paths"] is not None
         or not isinstance(normalized_options[0]["value"], dict)
     ):
@@ -926,7 +931,7 @@ def open_pending_decision(
             if set(binding) != expected_keys or binding["session_id"] != session_id:
                 raise ValueError("closure_accept binding is invalid")
             scope = {"paths": [], "entries": {}}
-        else:
+        elif action == "mission_accept":
             binding = normalized_options[0]["value"]
             expected_keys = {
                 "session_id",
@@ -947,6 +952,28 @@ def open_pending_decision(
                 r"[0-9a-f]{40}", binding["base_commit"]
             ):
                 raise ValueError("mission_accept binding is invalid")
+            scope = {"paths": [], "entries": {}}
+        else:
+            binding = normalized_options[0]["value"]
+            expected_keys = {
+                "session_id",
+                "roster_sha256",
+                "pilot_contract_sha256",
+                "source_commit",
+            }
+            if set(binding) != expected_keys or binding["session_id"] != session_id:
+                raise ValueError("task_review_pilot_start binding is invalid")
+            digest_values = (
+                binding["roster_sha256"],
+                binding["pilot_contract_sha256"],
+            )
+            if any(
+                not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
+                for value in digest_values
+            ) or not isinstance(binding["source_commit"], str) or not re.fullmatch(
+                r"[0-9a-f]{40}", binding["source_commit"]
+            ):
+                raise ValueError("task_review_pilot_start binding is invalid")
             scope = {"paths": [], "entries": {}}
         history = _decision_history(latest)
         current = latest.get("pending_decision")
@@ -992,7 +1019,12 @@ def resolve_pending_decision(project_root: Path, *, response: str) -> dict[str, 
         decision = latest.get("pending_decision")
         if not isinstance(decision, dict):
             return {"resolved": False, "reason": "no_pending_decision"}
-        if decision.get("action") not in {"local_commit", "closure_accept", "mission_accept"}:
+        if decision.get("action") not in {
+            "local_commit",
+            "closure_accept",
+            "mission_accept",
+            "task_review_pilot_start",
+        }:
             return {"resolved": False, "reason": "unsupported_action"}
         if decision.get("status") != "pending":
             return {"resolved": False, "reason": "decision_not_pending"}
@@ -1208,7 +1240,11 @@ def consume_pending_decision(
         ]
         if len(selected_options) != 1:
             return {"consumed": False, "reason": "decision_binding_changed"}
-        if decision.get("action") in {"closure_accept", "mission_accept"}:
+        if decision.get("action") in {
+            "closure_accept",
+            "mission_accept",
+            "task_review_pilot_start",
+        }:
             binding = decision.get("selected_value")
             if (
                 not isinstance(binding, dict)
@@ -1216,16 +1252,25 @@ def consume_pending_decision(
             ):
                 return {"consumed": False, "reason": "decision_binding_changed"}
             action = str(decision.get("action"))
-            if action == "mission_accept" and receipt_output is None:
+            if action in {"mission_accept", "task_review_pilot_start"} and receipt_output is None:
                 return {
                     "consumed": False,
-                    "reason": "mission_receipt_output_required",
+                    "reason": (
+                        "mission_receipt_output_required"
+                        if action == "mission_accept"
+                        else "task_review_pilot_start_receipt_output_required"
+                    ),
                 }
+            consumed_at = _iso_now()
             receipt = {
                 "schema_version": (
                     "omc-closure-acceptance-receipt/v1"
                     if action == "closure_accept"
-                    else "omc-autopilot-mission-approval/v1"
+                    else (
+                        "omc-autopilot-mission-approval/v1"
+                        if action == "mission_accept"
+                        else "omc-task-review-pilot-start/v1"
+                    )
                 ),
                 "decision_id": decision_id,
                 "session_id": decision.get("session_id"),
@@ -1233,6 +1278,8 @@ def consume_pending_decision(
                 "status": "consumed",
                 "binding": binding,
             }
+            if action == "task_review_pilot_start":
+                receipt["consumed_at"] = consumed_at
             digest_field = "binding_sha256"
             digest_value = hashlib.sha256(
                 json.dumps(
@@ -1244,7 +1291,7 @@ def consume_pending_decision(
             ).hexdigest()
             if action == "closure_accept":
                 receipt[digest_field] = digest_value
-            else:
+            elif action == "mission_accept":
                 receipt.pop("session_id")
                 receipt["receipt_sha256"] = hashlib.sha256(
                     json.dumps(
@@ -1261,8 +1308,23 @@ def consume_pending_decision(
                         else project_root / receipt_output
                     )
                     _write_immutable_receipt(output, receipt)
+            else:
+                receipt["receipt_sha256"] = hashlib.sha256(
+                    json.dumps(
+                        receipt,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+                output = (
+                    receipt_output
+                    if receipt_output.is_absolute()
+                    else project_root / receipt_output
+                )
+                _write_immutable_receipt(output, receipt)
             decision["status"] = "consumed"
-            decision["consumed_at"] = _iso_now()
+            decision["consumed_at"] = consumed_at
             decision["acceptance_receipt"] = receipt
             latest["updated_at"] = _iso_now()
             _write_json(_latest_path(project_root), latest)

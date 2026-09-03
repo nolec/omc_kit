@@ -4,9 +4,13 @@
 
 이 문서는 OMC의 첫 제품 범위인 복잡한 코드 변경의 `task → review` 흐름을 Baseline과 비교하는 최소 실행 SSOT다. 이 3건 pilot은 kill-or-continue 운영 판단용이며 통계적 우월성이나 Codex 전체 대체를 주장하지 않는다. provider 실행은 이 문서 작성 범위에 포함하지 않는다.
 
-T0는 사용자가 pilot 시작을 승인해 `pilot-start receipt`가 생성된 시각이다. T0부터 최대 7일 동안 최소 2개 저장소에서 발생한 `chronological first eligible 3`을 사용하고, 탈락하거나 불리한 case를 교체하지 않는다. 적격 case는 T0 이후 시작된 실제 자연 발생 implementation 작업이며 합성 fixture, 문서 전용 작업, benchmark 유지보수는 제외한다.
+T0는 사용자가 `task_review_pilot_start` 결정을 승인하고 그 `pilot-start receipt`가 소비된 `consumed_at`이다. T0부터 최대 7일 동안 최소 2개 저장소에서 발생한 `chronological first eligible 3`을 사용하고, 탈락하거나 불리한 case를 교체하지 않는다. 첫 3건이 한 저장소에 집중되면 이후 case로 다양성을 맞추지 않고 `STOP_ELIGIBILITY_DIVERSITY`로 종료한다. 적격 case는 T0 이후 시작된 실제 자연 발생 implementation 작업이며 합성 fixture, 문서 전용 작업, benchmark 유지보수는 제외한다.
 
-실행 전 `scripts/omc_task_review_pilot.py`의 preflight를 적용한다. 후보 모집단은 기존 `session state stream` 전체이며 입력 순서를 사후 정렬하지 않는다. 중복 identity, 비단조 timestamp, eligibility 누락은 selection 실패로 처리한다. 이 검증은 기존 state evidence를 소비할 뿐 별도 pilot receipt schema나 provider runner를 만들지 않는다.
+T0 전에는 참여 저장소 roster를 먼저 동결한다. 각 identity는 credential과 protocol을 제거한 canonical `origin`과 단일 root commit의 SHA-256이며 local-only 저장소, 중복 identity, 사후 remote/root 변경은 차단한다. roster는 저장소별 `.omc/state` 위치와 마지막 `(created_at, session_id)` checkpoint를 포함하고 `pilot contract hash`, source commit과 함께 승인 decision에 결속한다. consumed decision 원문과 roster는 `.omc/state/task-review-pilot/<pilot-id>/`에 no-replace로 보존한다.
+
+실행 전 `scripts/omc_task_review_pilot.py`의 readiness preflight인 `prepare-roster → inventory-dry-run → readiness`를 적용한다. collector는 기존 `session state stream`의 `session.json`과 `completion.json`만 읽고 checkpoint 이후 stream 전체를 검사한다. 시작과 완료 work class가 모두 `implementation`이어야 하며 baseline/followup의 실제 Git diff가 receipt의 changed paths와 일치해야 한다. 누락·혼합·불일치는 자동 보정하지 않고 `classification_review_required` 또는 명시적 부적격 사유로 남긴다. dry-run은 scanned session IDs, 저장소별 terminal cursor, disposition과 inventory hash를 저장하며 provider call 수는 항상 0이다.
+
+roster, consumed T0 receipt, inventory가 같은 hash로 결속되고 first eligible 3건과 저장소 다양성을 만족할 때만 `PILOT_READY` receipt를 발행한다. readiness 이전에는 paired 실행을 시작하지 않는다. 이 검증은 기존 state evidence를 소비하며 provider runner를 만들지 않는다.
 
 ## Frozen Case
 

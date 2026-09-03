@@ -2,13 +2,17 @@
 """Fail-closed preflight helpers for the task-review product-focus pilot."""
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
+import re
 import stat
-from datetime import datetime
+import subprocess
+from datetime import datetime, timedelta
 from pathlib import Path, PurePath
 from typing import Any
+from urllib.parse import urlsplit
 
 from omc_output_contract import OutputContractError, parse_envelope
 
@@ -29,6 +33,542 @@ FROZEN_CASE_FIELDS = (
 
 class PilotPreflightError(ValueError):
     """Raised when pilot evidence cannot support a deterministic decision."""
+
+
+def _canonical_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise PilotPreflightError("repository_git_evidence_unavailable")
+    return result.stdout.strip()
+
+
+def _canonical_origin(raw: str) -> str:
+    value = raw.strip()
+    scp_match = re.fullmatch(r"(?:[^@/]+@)?([^:]+):(.+)", value)
+    if scp_match and "://" not in value:
+        host, path = scp_match.groups()
+    else:
+        parsed = urlsplit(value)
+        host = parsed.hostname or ""
+        path = parsed.path
+    normalized_path = path.strip("/")
+    if normalized_path.endswith(".git"):
+        normalized_path = normalized_path[:-4]
+    if not host or not normalized_path:
+        raise PilotPreflightError("repository_origin_invalid")
+    return f"{host.casefold()}/{normalized_path}"
+
+
+def canonical_repository_identity(repo: Path) -> dict[str, str]:
+    """Derive a clone-stable identity without trusting caller supplied labels."""
+    try:
+        origin = _git(repo, "remote", "get-url", "origin")
+    except PilotPreflightError as exc:
+        raise PilotPreflightError("repository_origin_missing") from exc
+    canonical_origin = _canonical_origin(origin)
+    roots = _git(repo, "rev-list", "--max-parents=0", "HEAD").splitlines()
+    if len(roots) != 1 or not re.fullmatch(r"[0-9a-f]{40}", roots[0]):
+        raise PilotPreflightError("repository_root_commit_invalid")
+    root_commit = roots[0]
+    repository_id = hashlib.sha256(
+        f"{canonical_origin}\n{root_commit}".encode("utf-8")
+    ).hexdigest()
+    return {
+        "repository_id": repository_id,
+        "canonical_origin": canonical_origin,
+        "root_commit": root_commit,
+    }
+
+
+def _session_checkpoint(state_root: Path) -> dict[str, str] | None:
+    sessions_root = state_root / "sessions"
+    sessions: list[tuple[datetime, str, str]] = []
+    if not sessions_root.is_dir():
+        return None
+    for path in sessions_root.glob("*/session.json"):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            session_id = value["session_id"]
+            created_at = value["created_at"]
+            parsed = datetime.fromisoformat(created_at)
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise PilotPreflightError("session_checkpoint_invalid") from exc
+        if (
+            not isinstance(session_id, str)
+            or not session_id
+            or not isinstance(created_at, str)
+            or parsed.tzinfo is None
+        ):
+            raise PilotPreflightError("session_checkpoint_invalid")
+        sessions.append((parsed, session_id, created_at))
+    if not sessions:
+        return None
+    _, session_id, created_at = max(sessions, key=lambda item: (item[0], item[1]))
+    return {"created_at": created_at, "session_id": session_id}
+
+
+def build_pilot_roster(
+    repositories: list[Path],
+    *,
+    pilot_id: str,
+    pilot_contract_sha256: str,
+    source_commit: str,
+) -> dict[str, Any]:
+    if not pilot_id.strip():
+        raise PilotPreflightError("pilot_id_missing")
+    if not re.fullmatch(r"[0-9a-f]{64}", pilot_contract_sha256):
+        raise PilotPreflightError("pilot_contract_hash_invalid")
+    if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
+        raise PilotPreflightError("pilot_source_commit_invalid")
+    entries: list[dict[str, Any]] = []
+    identities: set[str] = set()
+    for raw_repo in repositories:
+        repo = raw_repo.resolve()
+        identity = canonical_repository_identity(repo)
+        repository_id = identity["repository_id"]
+        if repository_id in identities:
+            raise PilotPreflightError("repository_identity_duplicate")
+        identities.add(repository_id)
+        state_root = repo / ".omc" / "state"
+        entries.append(
+            {
+                **identity,
+                "repository_root": str(repo),
+                "state_root": str(state_root),
+                "checkpoint": _session_checkpoint(state_root),
+            }
+        )
+    if len(entries) < 2:
+        raise PilotPreflightError("insufficient_roster_repositories")
+    payload: dict[str, Any] = {
+        "schema_version": "omc-task-review-pilot-roster/v1",
+        "pilot_id": pilot_id.strip(),
+        "pilot_contract_sha256": pilot_contract_sha256,
+        "source_commit": source_commit,
+        "repositories": sorted(entries, key=lambda item: item["repository_id"]),
+    }
+    payload["roster_sha256"] = _canonical_sha256(payload)
+    return payload
+
+
+def validate_pilot_start_receipt(
+    receipt: dict[str, Any], *, expected_binding: dict[str, Any]
+) -> dict[str, Any]:
+    consumed_at = receipt.get("consumed_at")
+    try:
+        parsed = datetime.fromisoformat(str(consumed_at))
+    except ValueError as exc:
+        raise PilotPreflightError("pilot_start_receipt_invalid") from exc
+    receipt_hash = receipt.get("receipt_sha256")
+    hash_payload = {
+        key: value for key, value in receipt.items() if key != "receipt_sha256"
+    }
+    if receipt_hash != _canonical_sha256(hash_payload):
+        raise PilotPreflightError("pilot_start_receipt_hash_mismatch")
+    if (
+        receipt.get("schema_version") != "omc-task-review-pilot-start/v1"
+        or receipt.get("action") != "task_review_pilot_start"
+        or receipt.get("status") != "consumed"
+        or receipt.get("binding") != expected_binding
+        or parsed.tzinfo is None
+    ):
+        raise PilotPreflightError("pilot_start_receipt_invalid")
+    return {"binding": dict(expected_binding), "t0": str(consumed_at)}
+
+
+def _git_changed_paths(repo: Path, baseline: str, followup: str) -> list[str]:
+    result = subprocess.run(
+        ["git", "-C", str(repo), "diff", "--name-only", "-z", baseline, followup],
+        check=False,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise PilotPreflightError("completion_commit_evidence_invalid")
+    return sorted(
+        item.decode("utf-8") for item in result.stdout.split(b"\0") if item
+    )
+
+
+def build_inventory_dry_run(
+    roster: dict[str, Any], *, t0: str, observed_at: str | None = None
+) -> dict[str, Any]:
+    try:
+        t0_at = datetime.fromisoformat(t0)
+    except (TypeError, ValueError) as exc:
+        raise PilotPreflightError("pilot_t0_invalid") from exc
+    if t0_at.tzinfo is None:
+        raise PilotPreflightError("pilot_t0_invalid")
+    try:
+        observation_at = (
+            datetime.now(t0_at.tzinfo)
+            if observed_at is None
+            else datetime.fromisoformat(observed_at)
+        )
+    except (TypeError, ValueError) as exc:
+        raise PilotPreflightError("pilot_observed_at_invalid") from exc
+    if observation_at.tzinfo is None or observation_at < t0_at:
+        raise PilotPreflightError("pilot_observed_at_invalid")
+    collection_deadline = t0_at + timedelta(days=7)
+    raw_repositories = roster.get("repositories")
+    if not isinstance(raw_repositories, list) or len(raw_repositories) < 2:
+        raise PilotPreflightError("pilot_roster_invalid")
+    expected_hash = roster.get("roster_sha256")
+    actual_hash = _canonical_sha256(
+        {key: value for key, value in roster.items() if key != "roster_sha256"}
+    )
+    if expected_hash != actual_hash:
+        raise PilotPreflightError("pilot_roster_hash_mismatch")
+
+    inventory: list[dict[str, Any]] = []
+    terminal_cursors: dict[str, dict[str, str] | None] = {}
+    seen_repository_ids: set[str] = set()
+    seen_sessions: set[tuple[str, str]] = set()
+    for entry in raw_repositories:
+        if not isinstance(entry, dict):
+            raise PilotPreflightError("pilot_roster_invalid")
+        repo = Path(str(entry.get("repository_root", ""))).resolve()
+        identity = canonical_repository_identity(repo)
+        if any(identity[key] != entry.get(key) for key in identity):
+            raise PilotPreflightError("repository_identity_changed")
+        repository_id = identity["repository_id"]
+        if repository_id in seen_repository_ids:
+            raise PilotPreflightError("repository_identity_duplicate")
+        seen_repository_ids.add(repository_id)
+        state_root = Path(str(entry.get("state_root", ""))).resolve()
+        if state_root != repo / ".omc" / "state":
+            raise PilotPreflightError("repository_state_root_changed")
+        checkpoint = entry.get("checkpoint")
+        checkpoint_key = (
+            (datetime.min.replace(tzinfo=t0_at.tzinfo), "")
+            if checkpoint is None
+            else (datetime.fromisoformat(checkpoint["created_at"]), checkpoint["session_id"])
+        )
+        observed: list[tuple[datetime, str, Path, dict[str, Any]]] = []
+        sessions_root = state_root / "sessions"
+        for session_path in sessions_root.glob("*/session.json") if sessions_root.is_dir() else ():
+            try:
+                session = json.loads(session_path.read_text(encoding="utf-8"))
+                session_id = session["session_id"]
+                created_at = datetime.fromisoformat(session["created_at"])
+            except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise PilotPreflightError("session_inventory_invalid") from exc
+            if created_at.tzinfo is None or not isinstance(session_id, str):
+                raise PilotPreflightError("session_inventory_invalid")
+            if (created_at, session_id) <= checkpoint_key or created_at <= t0_at:
+                continue
+            if session_path.parent.name != session_id:
+                raise PilotPreflightError("session_directory_mismatch")
+            session_key = (repository_id, session_id)
+            if session_key in seen_sessions:
+                raise PilotPreflightError("session_identity_duplicate")
+            seen_sessions.add(session_key)
+            observed.append((created_at, session_id, session_path, session))
+        observed.sort(key=lambda item: (item[0], item[1]))
+        terminal_cursors[repository_id] = (
+            {"created_at": observed[-1][0].isoformat(), "session_id": observed[-1][1]}
+            if observed
+            else checkpoint
+        )
+        for created_at, session_id, session_path, session in observed:
+            item: dict[str, Any] = {
+                "session_id": session_id,
+                "created_at": created_at.isoformat(),
+                "repository_id": repository_id,
+                "eligible": False,
+            }
+            completion_path = session_path.with_name("completion.json")
+            if created_at > observation_at:
+                item["disposition"] = "future_session_timestamp"
+            elif created_at > collection_deadline:
+                item["disposition"] = "collection_window_expired"
+            elif session.get("work_class") != "implementation":
+                item["disposition"] = "classification_review_required"
+            elif not completion_path.is_file():
+                item["disposition"] = "completion_receipt_missing"
+            else:
+                try:
+                    completion = json.loads(completion_path.read_text(encoding="utf-8"))
+                    baseline = completion["baseline_commit"]
+                    followup = completion["followup_commit"]
+                    changed_paths = completion["changed_paths"]
+                except (OSError, KeyError, TypeError, json.JSONDecodeError):
+                    item["disposition"] = "completion_receipt_invalid"
+                else:
+                    if (
+                        completion.get("session_id") != session_id
+                        or completion.get("work_class") != "implementation"
+                    ):
+                        item["disposition"] = "classification_review_required"
+                    else:
+                        try:
+                            actual_paths = _git_changed_paths(repo, baseline, followup)
+                        except PilotPreflightError:
+                            item["disposition"] = "completion_commit_evidence_invalid"
+                        else:
+                            if not actual_paths or actual_paths != sorted(changed_paths):
+                                item["disposition"] = "completion_changed_paths_mismatch"
+                            else:
+                                item.update(
+                                    {
+                                        "eligible": True,
+                                        "disposition": "eligible",
+                                        "baseline_commit": baseline,
+                                        "followup_commit": followup,
+                                        "changed_paths": actual_paths,
+                                    }
+                                )
+            inventory.append(item)
+    inventory.sort(key=lambda item: (item["created_at"], item["session_id"]))
+    eligible = [item for item in inventory if item["eligible"]][:3]
+    diverse = len({item["repository_id"] for item in eligible}) >= 2
+    status = (
+        "PILOT_READY"
+        if len(eligible) == 3 and diverse
+        else (
+            "STOP_ELIGIBILITY_DIVERSITY"
+            if len(eligible) == 3
+            else (
+                "STOP_COLLECTION_WINDOW_EXPIRED"
+                if observation_at > collection_deadline
+                else "WAITING_FOR_CASES"
+            )
+        )
+    )
+    report: dict[str, Any] = {
+        "schema_version": "omc-task-review-pilot-inventory/v1",
+        "roster_sha256": expected_hash,
+        "t0": t0,
+        "observed_at": observation_at.isoformat(),
+        "collection_deadline": collection_deadline.isoformat(),
+        "status": status,
+        "provider_call_count": 0,
+        "inventory": inventory,
+        "scanned_session_ids": [item["session_id"] for item in inventory],
+        "terminal_cursors": terminal_cursors,
+        "selected_cases": eligible if status == "PILOT_READY" else [],
+    }
+    report["inventory_sha256"] = _canonical_sha256(report)
+    return report
+
+
+def build_readiness_receipt(
+    roster: dict[str, Any],
+    start: dict[str, Any],
+    inventory: dict[str, Any],
+) -> dict[str, Any]:
+    roster_hash = roster.get("roster_sha256")
+    if roster_hash != _canonical_sha256(
+        {key: value for key, value in roster.items() if key != "roster_sha256"}
+    ):
+        raise PilotPreflightError("readiness_roster_hash_mismatch")
+    inventory_hash = inventory.get("inventory_sha256")
+    if inventory_hash != _canonical_sha256(
+        {key: value for key, value in inventory.items() if key != "inventory_sha256"}
+    ):
+        raise PilotPreflightError("readiness_inventory_hash_mismatch")
+    if inventory.get("provider_call_count") != 0:
+        raise PilotPreflightError("readiness_provider_call_detected")
+    if inventory.get("t0") != start.get("t0"):
+        raise PilotPreflightError("readiness_t0_mismatch")
+    try:
+        t0_at = datetime.fromisoformat(str(start.get("t0")))
+        deadline = datetime.fromisoformat(str(inventory.get("collection_deadline")))
+        observed_at = datetime.fromisoformat(str(inventory.get("observed_at")))
+    except ValueError as exc:
+        raise PilotPreflightError("readiness_time_window_invalid") from exc
+    if (
+        t0_at.tzinfo is None
+        or deadline.tzinfo is None
+        or observed_at.tzinfo is None
+        or deadline != t0_at + timedelta(days=7)
+        or observed_at < t0_at
+    ):
+        raise PilotPreflightError("readiness_time_window_invalid")
+    raw_inventory = inventory.get("inventory")
+    selected_cases = inventory.get("selected_cases")
+    if not isinstance(raw_inventory, list) or not isinstance(selected_cases, list):
+        raise PilotPreflightError("readiness_selected_cases_invalid")
+    repository_ids = {
+        entry.get("repository_id")
+        for entry in roster.get("repositories", [])
+        if isinstance(entry, dict)
+    }
+    eligible: list[dict[str, Any]] = []
+    seen_case_ids: set[tuple[object, object]] = set()
+    previous_key: tuple[datetime, str] | None = None
+    for item in raw_inventory:
+        if not isinstance(item, dict):
+            raise PilotPreflightError("readiness_selected_case_invalid")
+        try:
+            created_at = datetime.fromisoformat(str(item.get("created_at")))
+        except ValueError as exc:
+            raise PilotPreflightError("readiness_selected_case_invalid") from exc
+        session_id = item.get("session_id")
+        repository_id = item.get("repository_id")
+        if (
+            created_at.tzinfo is None
+            or not isinstance(session_id, str)
+            or not session_id
+            or repository_id not in repository_ids
+        ):
+            raise PilotPreflightError("readiness_selected_case_invalid")
+        order_key = (created_at, session_id)
+        if previous_key is not None and order_key < previous_key:
+            raise PilotPreflightError("readiness_inventory_not_chronological")
+        previous_key = order_key
+        case_id = (repository_id, session_id)
+        if case_id in seen_case_ids:
+            raise PilotPreflightError("readiness_selected_case_duplicate")
+        seen_case_ids.add(case_id)
+        if item.get("eligible") is True:
+            if not (t0_at < created_at <= min(deadline, observed_at)):
+                raise PilotPreflightError("readiness_selected_case_invalid")
+            eligible.append(item)
+    expected_cases = eligible[:3]
+    if len(expected_cases) != 3 or selected_cases != expected_cases:
+        raise PilotPreflightError("readiness_selected_cases_invalid")
+    if len({item["repository_id"] for item in expected_cases}) < 2:
+        raise PilotPreflightError("readiness_repository_diversity_invalid")
+    if (
+        inventory.get("status") != "PILOT_READY"
+        or start.get("binding", {}).get("roster_sha256") != roster_hash
+        or inventory.get("roster_sha256") != roster_hash
+        or inventory.get("schema_version") != "omc-task-review-pilot-inventory/v1"
+        or not re.fullmatch(r"[0-9a-f]{64}", str(inventory_hash or ""))
+    ):
+        raise PilotPreflightError("readiness_binding_mismatch")
+    receipt: dict[str, Any] = {
+        "schema_version": "omc-task-review-pilot-readiness/v1",
+        "status": "PILOT_READY",
+        "roster_sha256": roster_hash,
+        "inventory_sha256": inventory["inventory_sha256"],
+        "t0": start.get("t0"),
+        "provider_call_count": 0,
+    }
+    receipt["readiness_sha256"] = _canonical_sha256(receipt)
+    return receipt
+
+
+def write_json_no_replace(path: Path, value: dict[str, Any]) -> None:
+    """Publish canonical pilot evidence once and durably."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = (
+        json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError as exc:
+        raise PilotPreflightError("pilot_evidence_already_exists") from exc
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PilotPreflightError("pilot_evidence_invalid") from exc
+    if not isinstance(value, dict):
+        raise PilotPreflightError("pilot_evidence_invalid")
+    return value
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    roster = sub.add_parser("prepare-roster")
+    roster.add_argument("--repository", type=Path, action="append", required=True)
+    roster.add_argument("--pilot-id", required=True)
+    roster.add_argument("--pilot-contract-sha256", required=True)
+    roster.add_argument("--source-commit", required=True)
+    roster.add_argument("--output", type=Path, required=True)
+    inventory = sub.add_parser("inventory-dry-run")
+    inventory.add_argument("--roster", type=Path, required=True)
+    inventory.add_argument("--start-receipt", type=Path, required=True)
+    inventory.add_argument("--output", type=Path, required=True)
+    readiness = sub.add_parser("readiness")
+    readiness.add_argument("--roster", type=Path, required=True)
+    readiness.add_argument("--start-receipt", type=Path, required=True)
+    readiness.add_argument("--inventory", type=Path, required=True)
+    readiness.add_argument("--output", type=Path, required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        if args.command == "prepare-roster":
+            value = build_pilot_roster(
+                args.repository,
+                pilot_id=args.pilot_id,
+                pilot_contract_sha256=args.pilot_contract_sha256,
+                source_commit=args.source_commit,
+            )
+        elif args.command == "inventory-dry-run":
+            roster = _read_json_object(args.roster)
+            binding = {
+                "session_id": _read_json_object(args.start_receipt).get("binding", {}).get("session_id"),
+                "roster_sha256": roster.get("roster_sha256"),
+                "pilot_contract_sha256": roster.get("pilot_contract_sha256"),
+                "source_commit": roster.get("source_commit"),
+            }
+            start = validate_pilot_start_receipt(
+                _read_json_object(args.start_receipt), expected_binding=binding
+            )
+            value = build_inventory_dry_run(roster, t0=start["t0"])
+        else:
+            roster = _read_json_object(args.roster)
+            start_receipt = _read_json_object(args.start_receipt)
+            binding = {
+                "session_id": start_receipt.get("binding", {}).get("session_id"),
+                "roster_sha256": roster.get("roster_sha256"),
+                "pilot_contract_sha256": roster.get("pilot_contract_sha256"),
+                "source_commit": roster.get("source_commit"),
+            }
+            start = validate_pilot_start_receipt(
+                start_receipt, expected_binding=binding
+            )
+            value = build_readiness_receipt(
+                roster, start, _read_json_object(args.inventory)
+            )
+        write_json_no_replace(args.output, value)
+    except PilotPreflightError as exc:
+        print(json.dumps({"status": "blocked", "reason": str(exc)}))
+        return 2
+    print(json.dumps(value, ensure_ascii=False, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 
 def _present(value: object) -> bool:

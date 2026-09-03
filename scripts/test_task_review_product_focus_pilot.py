@@ -87,3 +87,22 @@ def test_contract_names_existing_preflight_and_verdict_surfaces() -> None:
     assert "session state stream" in text
     assert "native review adapter" in text
     assert "preflight" in text
+
+
+def test_contract_freezes_roster_identity_t0_and_readiness_before_execution() -> None:
+    text = _contract()
+
+    for requirement in (
+        "task_review_pilot_start",
+        "consumed_at",
+        "canonical `origin`",
+        "root commit",
+        "checkpoint",
+        "inventory-dry-run",
+        "classification_review_required",
+        "terminal cursor",
+        "provider call 수는 항상 0",
+        "PILOT_READY",
+        "STOP_ELIGIBILITY_DIVERSITY",
+    ):
+        assert requirement in text
