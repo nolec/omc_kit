@@ -271,6 +271,53 @@ def _render_block(paths: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _current_receipt_paths(receipt: dict[str, Any]) -> set[str]:
+    classified = classify_receipt_paths(receipt)
+    return {
+        path
+        for ownership_paths in classified.values()
+        for path in ownership_paths
+        if _safe_relative_path(path) is not None
+    }
+
+
+def _existing_managed_literal_paths(
+    content: str,
+    *,
+    current_paths: set[str],
+) -> set[str]:
+    if content.count(BEGIN_MARKER) != content.count(END_MARKER):
+        raise MigrationStateError("damaged OMC-KIT ignore marker block")
+    if content.count(BEGIN_MARKER) > 1:
+        raise MigrationStateError("duplicate OMC-KIT ignore marker blocks")
+    if BEGIN_MARKER not in content:
+        return set()
+    _, remainder = content.split(BEGIN_MARKER, 1)
+    block, _ = remainder.split(END_MARKER, 1)
+    literal_to_path = {
+        _gitignore_literal_path(path): path for path in current_paths
+    }
+    return {
+        literal_to_path[line.strip()]
+        for line in block.splitlines()
+        if line.strip() in literal_to_path
+    }
+
+
+def _carry_forward_setup_created(
+    receipt: dict[str, Any], managed_paths: set[str]
+) -> None:
+    entries = receipt.get("entries", {})
+    if not isinstance(entries, dict):
+        return
+    for path in managed_paths:
+        entry = entries.get(path)
+        if not isinstance(entry, dict):
+            continue
+        if classify_receipt_entry_ownership(receipt, path, entry) == "merged_host":
+            entry["setup_created"] = True
+
+
 def _gitignore_sha256(gitignore: Path) -> str:
     content = gitignore.read_bytes() if gitignore.is_file() else b""
     return hashlib.sha256(content).hexdigest()
@@ -417,12 +464,24 @@ def update_managed_gitignore(
     gitignore_existing = (
         gitignore.read_text(encoding="utf-8") if gitignore.is_file() else ""
     )
+    current_receipt_paths = _current_receipt_paths(receipt)
+    prior_managed_paths = _existing_managed_literal_paths(
+        gitignore_existing,
+        current_paths=current_receipt_paths,
+    )
+    paths = sorted(set(paths) | prior_managed_paths)
     gitignore_updated = _without_managed_block(gitignore_existing)
     if gitignore_updated != gitignore_existing:
         gitignore.write_text(gitignore_updated, encoding="utf-8")
 
     exclude_existed = exclude.is_file()
     existing = exclude.read_text(encoding="utf-8") if exclude_existed else ""
+    prior_managed_paths |= _existing_managed_literal_paths(
+        existing,
+        current_paths=current_receipt_paths,
+    )
+    _carry_forward_setup_created(receipt, prior_managed_paths)
+    paths = sorted(set(paths) | prior_managed_paths)
     existing_without_block = _without_managed_block(existing)
 
     block = _render_block(paths)
