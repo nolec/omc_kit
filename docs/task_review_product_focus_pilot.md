@@ -12,6 +12,12 @@ T0 전에는 참여 저장소 roster를 먼저 동결한다. 각 identity는 cre
 
 roster, consumed T0 receipt, inventory가 같은 hash로 결속되고 first eligible 3건과 저장소 다양성을 만족할 때만 `PILOT_READY` receipt를 발행한다. readiness 이전에는 paired 실행을 시작하지 않는다. 이 검증은 기존 state evidence를 소비하며 provider runner를 만들지 않는다.
 
+## 현재 증거 상태
+
+pilot v2는 source commit `b0d62fcf66a54ac9f077afea46191880ad5e8dc7`과 roster hash `609a575b9f9a58cf9e7b32b604c4f14f8d89cd277b3ab3f00e33f42aeb082933`에 결속됐다. T0는 `2026-09-03T16:34:19+09:00`이며, inventory hash `a082283499f715ffb7ad7d74987d4cdbb16e8349786f2ff89c1d7d1369aaf0fa`와 readiness hash `6bd082433f9c31853298dca324dafe437cfb697bc553b0345145d64f81d6196a`는 chronological first eligible 3건과 2개 저장소 다양성을 확인해 `PILOT_READY`를 기록한다.
+
+선택된 case는 `market-reasoning-engine` session `20260903T173719-8ad22dcb`, `research-auto` session `20260903T181149-c08adff4`, `market-reasoning-engine` session `20260903T183906-a7062648`이다. provider 호출과 paired arm terminal receipt는 아직 `0`건이다. 수동 execution packet은 독립 anchor와 provider receipt가 확보되기 전까지 `MANUAL_CHECKLIST_ONLY`이며 `CONTINUE`, `REDUCE`, `STOP`의 근거로 사용하지 않는다.
+
 ## Frozen Case
 
 각 case는 실행 전에 다음 값을 하나의 case receipt로 고정한다.

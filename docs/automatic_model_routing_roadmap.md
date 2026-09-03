@@ -15,7 +15,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter, authoritative acceptance harness | 실제 3–5 child 운영 표본 acceptance |
 | Operator Experience | 진행중 | output contract, Lite/Full routing, Stage graph SSOT, resume identity fail-close, CLI fast-path 구축 | 지연·개입 횟수 운영 검증 |
 
-현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했다. 3건 paired pilot의 계약과 roster·repository identity·T0 decision·inventory dry-run·review verdict preflight를 구현했고 사용자 승인 `task_review_pilot_start` receipt를 `2026-09-03T10:20:43+09:00`에 소비했다. 현재 inventory는 `WAITING_FOR_CASES`, 실제 적격 표본은 `0/3`, 수집 마감은 `2026-09-10T10:20:43+09:00`이다. first eligible 3건과 저장소 다양성을 충족해 `PILOT_READY`로 승격하거나 마감 판정이 날 때까지 새 transport·benchmark fixture를 추가하지 않는 안정화 동결 상태다.
+현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했다. task-review pilot v2의 roster·repository identity·T0 decision·inventory dry-run·review verdict preflight를 구현했고, 사용자 승인 T0는 `2026-09-03T16:34:19+09:00`, 수집 마감은 `2026-09-10T16:34:19+09:00`이다. inventory hash `a0822834...aaf0fa`는 최소 2개 저장소의 chronological first eligible 3건을 선택해 `PILOT_READY`를 확인했고 provider 호출은 `0`건이다. paired arm 실행과 독립 terminal receipt는 아직 없으며, 수동 packet은 최종 판정 증거가 아닌 pre-execution checklist로만 취급한다. 새 transport·benchmark fixture를 추가하지 않는 안정화 동결 상태는 유지한다.
 
 ### 단일 활성 검증 lane
 
@@ -37,7 +37,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | Routing V1–V4 | `OPERATIONALLY_VALIDATED` | 라우팅·실패 복구·telemetry 코드와 운영 receipt | 운영 drift 감시 유지 |
 | Bounded scheduler | `IMPLEMENTED` | v2 grant 전용 N-child scheduler·provider adapter·회귀 테스트 | 실제 3–5 child acceptance |
 | Product Value | `BLOCKED` | 기존 evidence-loss batch는 종료했으며 prospective study는 `PAUSED_NOT_CANCELLED` | 별도 사용자 결정으로 재개 |
-| Product focus | `T0_STARTED_WAITING_FOR_CASES` | 단일 3건 `task → review` 계약과 frozen case·후보 순서·review verdict preflight, roster·repository identity·T0 receipt 소비와 inventory dry-run 완료. native artifact는 hash·identity·단일-FD 읽기와 symlink 차단으로 검증하며 실제 적격 표본 `0/3` | `2026-09-10T10:20:43+09:00`까지 first eligible 3건과 저장소 다양성을 충족하면 `PILOT_READY`, 아니면 사전 등록된 STOP 판정 |
+| Product focus | `PILOT_READY` | v2 roster hash `609a575b...82933`, readiness hash `6bd08243...d6196a`, 적격 3건과 저장소 다양성 확인. 각 case는 `market-reasoning-engine`, `research-auto`, `market-reasoning-engine` 순서이며 provider 호출 `0`건 | 동일 조건 paired arm 실행을 위한 독립 payload·provider session·terminal receipt를 확보. 수동 checklist만으로는 `CONTINUE`·`REDUCE`·`STOP` 판정 금지 |
 | Product Value independence | `NOT_REPRODUCED` | 유효한 development evidence 없음 | 신규 development evidence 검증 후 별도 선정한 holdout에서 primary metric 충족 |
 | Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재하며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
 | Review | `NOT_PROVEN` | durable native provider 원문 부재이며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
@@ -174,7 +174,7 @@ source workspace 신뢰 루트 결속, clean clone readiness, 설치 consumer se
 
 Work-unit closure primitive는 `2026-09-01`에 구현·검증했다. session·task·request digest에 결속된 immutable envelope, 사용자 acceptance의 단일 소비 receipt, residual issue 내용 hash, validation round와 issue event의 분리, issue revision lineage·budget, scope·verification binding을 fail-close로 판정한다. envelope 동결 전에 별도 enrollment marker를 no-replace로 게시해 동결 파일이 사라진 work unit이 legacy mode로 강등되는 경로를 차단한다. closure/state 관련 회귀 `123 passed`, context/version 회귀 `36 passed`, 문법·staged diff·TDD gate와 OMC review `APPROVE WITH NOTES`를 확인했다. 이 근거는 primitive 구현 완료만 의미하며 실제 task/review/ship 종료 consumer에는 아직 연결하지 않았다. production consumer 연결, marker-only crash recovery failpoint, parent-directory durability 검증을 완료하기 전에는 일반 OMC 완료 판정에 사용하지 않는다.
 
-Task completion lineage schema v3도 구현했다. `start`, `continue`, `preserve` 동작과 generated `work_id`, root/current session 순서, 중복 없는 `session_ids`, `rework_count`를 하나의 pending completion에 결속하고, continuation의 request·work class·baseline 불일치와 `document_only` 세션의 source 변경을 fail-close한다. 완료 receipt의 기존 schema v2 호환성은 유지하면서 별도 lineage sidecar를 `informational_unverified`로 기록한다. 관련 회귀 `93 passed`, `py_compile`, staged diff·TDD gate와 OMC review `APPROVE WITH NOTES`를 확인했다. 이는 3건 pilot에서 재작업을 중복 case가 아닌 동일 work unit으로 계수할 수 있게 한 구현 근거이며, 실제 적격 표본 `0/3`과 제품 판정은 변경하지 않는다.
+Task completion lineage schema v3도 구현했다. `start`, `continue`, `preserve` 동작과 generated `work_id`, root/current session 순서, 중복 없는 `session_ids`, `rework_count`를 하나의 pending completion에 결속하고, continuation의 request·work class·baseline 불일치와 `document_only` 세션의 source 변경을 fail-close한다. 완료 receipt의 기존 schema v2 호환성은 유지하면서 별도 lineage sidecar를 `informational_unverified`로 기록한다. 관련 회귀 `93 passed`, `py_compile`, staged diff·TDD gate와 OMC review `APPROVE WITH NOTES`를 확인했다. 이는 3건 pilot에서 재작업을 중복 case가 아닌 동일 work unit으로 계수할 수 있게 한 구현 근거다. 현재 v2 roster는 적격 표본 `3/3`으로 `PILOT_READY`지만 paired arm 실행과 독립 terminal receipt가 없으므로 제품 판정은 변경하지 않는다.
 
 ### Operator Experience 1차 통합안
 
@@ -218,7 +218,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 실행 우선순위
 
-`3건 task → review acceptance → CONTINUE/REDUCE/STOP 판정`만 현재 실행한다. `2026-09-03T11:59:05+09:00` 재수집에서도 적격 표본은 `0/3`, provider 호출은 `0`이었다. completion lineage schema v3로 동일 work의 재작업 세션을 묶는 계수 기반은 완료했으며, 다음 핵심 작업은 roster에 등록된 저장소의 자연 발생 implementation 작업을 OMC 세션에서 실제로 완료해 first eligible case로 남기는 것이다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이며, 경쟁 제품의 mode를 복제하거나 새 스킬·schema·transport·benchmark fixture를 늘리는 작업은 금지한다.
+`3건 task → review paired acceptance → CONTINUE/REDUCE/STOP 판정`만 현재 실행한다. `2026-09-03T18:45:09+09:00` 재수집에서 적격 표본은 `3/3`, provider 호출은 `0`이었고 readiness는 `PILOT_READY`다. completion lineage schema v3로 동일 work의 재작업 세션을 묶는 계수 기반은 완료했다. 다음 핵심 작업은 첫 case의 입력·환경·arm 격리·독립 receipt를 확정하는 것이며, 독립 evidence가 없으면 결과는 `INCONCLUSIVE`다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이며, 경쟁 제품의 mode를 복제하거나 새 스킬·schema·transport·benchmark fixture를 늘리는 작업은 금지한다.
 
 ## 제품 원칙과 금지선
 
