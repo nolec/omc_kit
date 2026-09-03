@@ -103,9 +103,16 @@ def test_product_focus_is_one_three_case_task_review_acceptance_lane() -> None:
     assert "통계적 우월성" in roadmap
     assert "pilot-start receipt" in roadmap
     assert "선택한 arm만 별도 작업에서 적용" in roadmap
-    assert "| Product focus | `READINESS_IMPLEMENTED` |" in roadmap
+    assert "| Product focus | `T0_STARTED_WAITING_FOR_CASES` |" in roadmap
     assert "inventory dry-run" in roadmap
     assert "실제 적격 표본 `0/3`" in roadmap
+    assert "수집 마감은 `2026-09-10T10:20:43+09:00`" in roadmap
+    assert "실제 T0는 열지 않았" not in roadmap
+    assert "실제 T0는 미개시" not in roadmap
+    assert "| Setup | `OPERATIONALLY_VALIDATED` |" in roadmap
+    assert "OMC `0.2.0`을 실제 Git 사용처 8곳" in roadmap
+    assert "strict audit `8/8`" in roadmap
+    assert "현재 확인한 consumer는 최신 source 재배포 대기" not in roadmap
     assert "계약과 frozen case·후보 순서·review verdict preflight" in roadmap
     assert "`PILOT_PENDING`" not in roadmap
 
@@ -240,6 +247,10 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "public/research CLI 경계와 setup 배포 SSOT는 정리" in text
     assert "운영 파일 기반 거짓 source drift는 격리 consumer" in text
     assert "stale session 교정, 멀티 호스트 동일 fixture 검증" in text
+    assert "운영 파일 기반 거짓 source drift를 교정한 뒤" not in text
+    assert "public CLI·운영 source drift·consumer 재배포 완료" in text
+    assert "`2026-09-03T11:59:05+09:00` 재수집에서도 적격 표본은 `0/3`" in text
+    assert "새 스킬·schema·transport·benchmark fixture를 늘리는 작업은 금지" in text
     assert "Product Value·N-child research 명령은 직접 호출 호환성을 유지" in text
     assert "새 스킬·정책·benchmark fixture 수 증가는 완료 지표로 사용하지 않는다" in text
 

@@ -15,7 +15,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter, authoritative acceptance harness | 실제 3–5 child 운영 표본 acceptance |
 | Operator Experience | 진행중 | output contract, Lite/Full routing, Stage graph SSOT, resume identity fail-close, CLI fast-path 구축 | 지연·개입 횟수 운영 검증 |
 
-현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했다. 3건 paired pilot의 계약과 roster·repository identity·T0 decision·inventory dry-run·review verdict preflight를 구현했지만 실제 T0는 열지 않았고 적격 표본은 `0/3`이다. 사용자 승인 `task_review_pilot_start` receipt와 dry-run `PILOT_READY`를 확보해 acceptance를 시작할 때까지 새 transport·benchmark fixture를 추가하지 않는 안정화 동결 상태다.
+현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했다. 3건 paired pilot의 계약과 roster·repository identity·T0 decision·inventory dry-run·review verdict preflight를 구현했고 사용자 승인 `task_review_pilot_start` receipt를 `2026-09-03T10:20:43+09:00`에 소비했다. 현재 inventory는 `WAITING_FOR_CASES`, 실제 적격 표본은 `0/3`, 수집 마감은 `2026-09-10T10:20:43+09:00`이다. first eligible 3건과 저장소 다양성을 충족해 `PILOT_READY`로 승격하거나 마감 판정이 날 때까지 새 transport·benchmark fixture를 추가하지 않는 안정화 동결 상태다.
 
 ### 단일 활성 검증 lane
 
@@ -37,13 +37,13 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | Routing V1–V4 | `OPERATIONALLY_VALIDATED` | 라우팅·실패 복구·telemetry 코드와 운영 receipt | 운영 drift 감시 유지 |
 | Bounded scheduler | `IMPLEMENTED` | v2 grant 전용 N-child scheduler·provider adapter·회귀 테스트 | 실제 3–5 child acceptance |
 | Product Value | `BLOCKED` | 기존 evidence-loss batch는 종료했으며 prospective study는 `PAUSED_NOT_CANCELLED` | 별도 사용자 결정으로 재개 |
-| Product focus | `READINESS_IMPLEMENTED` | 단일 3건 `task → review` 계약과 frozen case·후보 순서·review verdict preflight, roster·repository identity·T0 decision·inventory dry-run 완료. native artifact는 hash·identity·단일-FD 읽기와 symlink 차단으로 검증하며 실제 T0는 미개시, 실제 적격 표본 `0/3` | 사용자 승인 T0 receipt와 후보 수집 dry-run 통과 후 `PILOT_READY` 승격 |
+| Product focus | `T0_STARTED_WAITING_FOR_CASES` | 단일 3건 `task → review` 계약과 frozen case·후보 순서·review verdict preflight, roster·repository identity·T0 receipt 소비와 inventory dry-run 완료. native artifact는 hash·identity·단일-FD 읽기와 symlink 차단으로 검증하며 실제 적격 표본 `0/3` | `2026-09-10T10:20:43+09:00`까지 first eligible 3건과 저장소 다양성을 충족하면 `PILOT_READY`, 아니면 사전 등록된 STOP 판정 |
 | Product Value independence | `NOT_REPRODUCED` | 유효한 development evidence 없음 | 신규 development evidence 검증 후 별도 선정한 holdout에서 primary metric 충족 |
 | Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재하며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
 | Review | `NOT_PROVEN` | durable native provider 원문 부재이며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
 | Autopilot | `LIMITED` | mission packet 동결, 명시적 `mission_accept` receipt, work contract v2 결속, provider 호출 전 mission briefing 재검증, 격리 candidate 실행과 trusted-base review까지 fail-close | 고정 커밋 기준 외부 provider TASK→REVIEW smoke와 운영 latency·개입 acceptance |
 | Decision Policy | `IMPLEMENTED` | feasibility 계약과 회귀 테스트는 구현됐으며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
-| Setup | `OPERATIONALLY_VALIDATED` | 최신 배포 기준 사용처 9곳 `setup --force`·strict audit 통과, 기존 Git 상태 보존 | source freshness와 rollback 회귀 유지 |
+| Setup | `OPERATIONALLY_VALIDATED` | OMC `0.2.0`을 실제 Git 사용처 8곳에 `setup --force`로 재배포하고 strict audit `8/8` 통과. 비 Git 잔재 1곳은 백업 후 consumer inventory에서 제거했으며 기존 Git 상태를 보존 | source freshness와 rollback 회귀 유지 |
 
 과거 6건 corpus에서 `DEVELOPMENT_PASS`가 기록됐지만 manifest·workload inventory·execution packet 원문을 현재 검증할 수 없어 유효한 development evidence로 승계하지 않는다. 구현과 acceptance 계약은 유지하되, 3건 gate 이후 사용자가 재개를 결정한 경우에만 새 prospective development study에서 chronological first-N 6건을 다시 확보한다. 그 증거가 검증된 뒤에만 비중복 disjoint holdout을 별도로 계획한다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
 
@@ -216,7 +216,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 실행 우선순위
 
-`3건 task → review acceptance → CONTINUE/REDUCE/STOP 판정`만 현재 실행한다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이며, 경쟁 제품의 mode를 복제하거나 새 스킬을 늘리는 작업은 금지한다.
+`3건 task → review acceptance → CONTINUE/REDUCE/STOP 판정`만 현재 실행한다. `2026-09-03T11:59:05+09:00` 재수집에서도 적격 표본은 `0/3`, provider 호출은 `0`이었다. 다음 핵심 작업은 roster에 등록된 저장소의 자연 발생 implementation 작업을 OMC 세션에서 실제로 완료해 first eligible case로 남기는 것이다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이며, 경쟁 제품의 mode를 복제하거나 새 스킬·schema·transport·benchmark fixture를 늘리는 작업은 금지한다.
 
 ## 제품 원칙과 금지선
 
@@ -253,7 +253,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 10. Product Value 결과를 근거로 Lite/Full 경계를 조정하고 불확실한 요청은 Full로 fail-safe 승격한다.
 11. **capture-only schema v2 코드 완료 / 실제 표본 대기** — Work Packet manifest의 15분 registration buffer, implementation-only selection, 4-authority key·custody 분리, append-only source checkpoint, failure seal·명시적 restart parent, durable publish/reload 계약을 고정했다. 다음은 실제 chronological first-N 5건을 capture·publish·reload해 수집 가능성만 판정하는 것이며 Plan Batch B, Product Value acceptance 또는 품질 projection으로 합산하지 않는다.
 12. Plan Batch B와 native Review 독립 검증을 계속해 각 대체 판정을 별도로 갱신한다.
-13. **public CLI 경계 완료 / 상태 신뢰성·멀티 호스트 검증 대기** — 루트 help는 setup·task·status·review·ship 핵심 흐름과 orchestrate·autopilot·team advanced 흐름을 우선 표시한다. Product Value·N-child research 명령은 직접 호출 호환성을 유지한 채 루트 help에서 숨겼고 README 계약과 CLI 회귀 테스트를 고정했다. 다음은 stale active session과 `.omc` 운영 파일 기반 거짓 source drift를 교정한 뒤 멀티 호스트 동일 fixture로 도구 중립 UX를 검증하는 것이다.
+13. **public CLI·운영 source drift·consumer 재배포 완료 / 상태 신뢰성·멀티 호스트 검증 대기** — 루트 help는 setup·task·status·review·ship 핵심 흐름과 orchestrate·autopilot·team advanced 흐름을 우선 표시한다. Product Value·N-child research 명령은 직접 호출 호환성을 유지한 채 루트 help에서 숨겼고 README 계약과 CLI 회귀 테스트를 고정했다. `.omc` 운영 상태 변경이 source hash·version·strict audit를 오염하지 않고 실제 배포 대상 변경은 `update_available`로 탐지하는 것을 격리 consumer에서 확인했다. OMC `0.2.0`을 실제 Git 사용처 8곳에 재배포하고 strict audit `8/8`을 통과했다. 다음은 stale active session 교정과 멀티 호스트 동일 fixture 검증이다.
 14. **Autopilot 안전 실행 코드 완료 / 외부 smoke 대기** — frozen work contract, 격리 task workspace, trusted-base critique/review, immutable review packet과 candidate branch 전용 promotion을 고정했다. 다음은 고정 커밋의 격리 clone에서 실제 provider TASK→CRITIQUE→REVIEW smoke를 실행해 candidate 변경 보존, reviewer control-plane 비오염, 실패 시 promotion 차단, latency·token·사용자 개입 receipt를 함께 확인하는 것이다.
 15. **Decision Policy feasibility 계약 완료 / 실제 evidence 대기** — 실제 결과와 독립 causal-review receipt로 확인된 chronological first-N 실패 5건을 수집하고, 사전 승인된 정책과 동일 subject의 baseline/policy arm을 paired 실행한다. 완료율·불필요한 검증 왕복·사용자 개입·token을 사전 고정 기준으로 비교하며 독립 판정 전에는 효과를 주장하지 않는다.
 
