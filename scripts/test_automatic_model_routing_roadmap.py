@@ -238,7 +238,8 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "1건 비판정 pilot과 동일 조건 paired 5건" in text
     assert "운영 증거 없는 자동화 확대 금지" in text
     assert "public/research CLI 경계와 setup 배포 SSOT는 정리" in text
-    assert "stale session과 운영 파일 기반 거짓 source drift 교정" in text
+    assert "운영 파일 기반 거짓 source drift는 격리 consumer" in text
+    assert "stale session 교정, 멀티 호스트 동일 fixture 검증" in text
     assert "Product Value·N-child research 명령은 직접 호출 호환성을 유지" in text
     assert "새 스킬·정책·benchmark fixture 수 증가는 완료 지표로 사용하지 않는다" in text
 
