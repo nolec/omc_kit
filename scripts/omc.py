@@ -113,6 +113,58 @@ def _quickstart_text() -> str:
 """
 
 
+_COMMAND_SURFACES = {
+    "core": frozenset(
+        {
+            "setup",
+            "setup-ignore",
+            "hook",
+            "domain",
+            "doctor",
+            "verify-install",
+            "version",
+            "guard",
+            "quickstart",
+            "run",
+            "peer-review",
+            "state",
+            "prompt",
+        }
+    ),
+    "advanced": frozenset(
+        {
+            "autopilot",
+            "orchestrate",
+            "team",
+            "ulw",
+            "ralph",
+            "deep-interview",
+        }
+    ),
+    "research": frozenset(
+        {
+            "execute-sequence",
+            "execute-n-child",
+            "n-child-acceptance",
+            "product-value-preregistration",
+            "product-value-evidence",
+            "product-value-acceptance",
+            "product-value-freeze",
+        }
+    ),
+}
+
+
+def command_surfaces() -> dict[str, frozenset[str]]:
+    """Return the ownership classification for every direct CLI command."""
+    return dict(_COMMAND_SURFACES)
+
+
+def direct_commands() -> set[str]:
+    """Return commands that must bypass natural-language prompt routing."""
+    return set().union(*_COMMAND_SURFACES.values())
+
+
 _ROOT_HELP_EPILOG = """Core workflows:
   setup / doctor / verify-install  Install and verify OMC in a project.
   $omc-task                       Implement an approved plan through the Agent Skill.
@@ -154,34 +206,7 @@ def _run_guarded(project_root: Path, *, label: str, command: list[str]) -> int:
 
 def main() -> int:
     argv = sys.argv[1:]
-    commands = {
-        "setup",
-        "setup-ignore",
-        "prompt",
-        "autopilot",
-        "orchestrate",
-        "execute-sequence",
-        "execute-n-child",
-        "n-child-acceptance",
-        "product-value-preregistration",
-        "product-value-evidence",
-        "product-value-acceptance",
-        "product-value-freeze",
-        "team",
-        "ulw",
-        "ralph",
-        "deep-interview",
-        "state",
-        "guard",
-        "hook",
-        "domain",
-        "doctor",
-        "verify-install",
-        "version",
-        "quickstart",
-        "run",
-        "peer-review",
-    }
+    commands = direct_commands()
     if not argv:
         argv = ["prompt", *argv]
     elif argv[0] not in {"-h", "--help"} and (

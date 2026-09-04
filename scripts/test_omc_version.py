@@ -515,6 +515,40 @@ def test_root_help_prioritizes_user_workflows_and_hides_research_commands():
     assert "usage: omc.py prompt" not in result.stdout
 
 
+def test_command_surface_registry_covers_every_direct_command_once():
+    surfaces = omc.command_surfaces()
+    direct_commands = set().union(*surfaces.values())
+
+    assert set(surfaces) == {"core", "advanced", "research"}
+    assert len(direct_commands) == sum(len(commands) for commands in surfaces.values())
+    assert direct_commands == omc.direct_commands()
+    assert {"setup", "quickstart", "run", "peer-review"} <= surfaces["core"]
+    assert {"orchestrate", "autopilot", "team"} <= surfaces["advanced"]
+    assert {"execute-n-child", "product-value-acceptance"} <= surfaces["research"]
+
+
+def test_core_commands_are_not_misrouted_to_prompt_mode():
+    quickstart = subprocess.run(
+        [sys.executable, str(Path(__file__).with_name("omc.py")), "quickstart"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    run = subprocess.run(
+        [sys.executable, str(Path(__file__).with_name("omc.py")), "run"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+
+    assert quickstart.returncode == 0, quickstart.stderr
+    assert "# OMC Quickstart KR" in quickstart.stdout
+    assert "usage: omc.py prompt" not in run.stderr
+    assert "usage: omc.py run" in run.stderr
+
+
 def test_hidden_research_command_remains_directly_callable():
     result = subprocess.run(
         [
@@ -541,3 +575,4 @@ def test_readme_separates_agent_skill_workflow_from_research_cli():
     assert "`$omc-task`" in text
     assert "`$omc-ship`" in text
     assert "내부 research 명령" in text
+    assert "관찰 표본에 포함하지 않습니다" in text

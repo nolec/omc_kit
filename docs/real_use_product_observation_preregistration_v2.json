@@ -49,6 +49,7 @@
       "benchmark_maintenance",
       "synthetic"
     ],
+    "research_execution_policy": "exclude_research_and_benchmark_execution_without_replacement",
     "repository_path_policy_required": true,
     "no_diff_policy": "excluded_without_replacement",
     "docs_only_policy": "excluded_without_replacement",

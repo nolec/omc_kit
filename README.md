@@ -38,6 +38,7 @@ Product Value 결과는 두 판정을 분리합니다.
 4. 변경 검토는 `$omc-review`, 배포 준비는 `$omc-ship`을 사용합니다.
 
 `product-value-*`, `execute-n-child`, acceptance·evidence 명령은 OMC 자체를 검증하는 내부 research 명령입니다. 기존 자동화와 호환되도록 직접 호출은 유지하지만 루트 `--help`의 일반 사용 목록에는 노출하지 않습니다.
+이 research 실행은 일반 개발 작업의 완료율·사용자 마찰 관찰 표본에 포함하지 않습니다.
 
 ## 주요 기능
 

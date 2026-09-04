@@ -77,6 +77,15 @@ def test_v2_uses_one_cohort_with_two_independent_outcome_receipts() -> None:
     assert axes["operator_experience"]["detached_receipt_required"] is True
 
 
+def test_v2_excludes_research_execution_from_the_user_workflow_cohort() -> None:
+    preregistration = _load(V2_PATH)
+    cohort = preregistration["cohort"]
+
+    assert cohort["research_execution_policy"] == (
+        "exclude_research_and_benchmark_execution_without_replacement"
+    )
+
+
 def test_v2_freezes_exact_completion_and_operator_thresholds() -> None:
     preregistration = _load(V2_PATH)
     axes = preregistration["outcome_axes"]
