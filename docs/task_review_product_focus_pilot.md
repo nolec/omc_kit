@@ -14,11 +14,11 @@ roster, consumed T0 receipt, inventory가 같은 hash로 결속되고 first elig
 
 ## 현재 증거 상태
 
-pilot v2는 source commit `b0d62fcf66a54ac9f077afea46191880ad5e8dc7`과 roster hash `609a575b9f9a58cf9e7b32b604c4f14f8d89cd277b3ab3f00e33f42aeb082933`에 결속됐다. T0는 `2026-09-03T16:34:19+09:00`이며, inventory hash `a082283499f715ffb7ad7d74987d4cdbb16e8349786f2ff89c1d7d1369aaf0fa`와 readiness hash `6bd082433f9c31853298dca324dafe437cfb697bc553b0345145d64f81d6196a`는 chronological first eligible 3건과 2개 저장소 다양성을 확인해 `PILOT_READY`를 기록한다.
-
-선택된 case는 `market-reasoning-engine` session `20260903T173719-8ad22dcb`, `research-auto` session `20260903T181149-c08adff4`, `market-reasoning-engine` session `20260903T183906-a7062648`이다. provider 호출과 paired arm terminal receipt는 아직 `0`건이다. 수동 execution packet은 독립 anchor와 provider receipt가 확보되기 전까지 `MANUAL_CHECKLIST_ONLY`이며 `CONTINUE`, `REDUCE`, `STOP`의 근거로 사용하지 않는다.
+pilot v2는 source commit `b0d62fcf66a54ac9f077afea46191880ad5e8dc7`, roster hash `609a575b9f9a58cf9e7b32b604c4f14f8d89cd277b3ab3f00e33f42aeb082933`, T0 `2026-09-03T16:34:19+09:00`에 결속됐다. 그러나 현재 선언된 local v2 state의 inventory는 `WAITING_FOR_CASES`이며 선택 case는 비어 있다. readiness receipt가 아직 없으므로 `PILOT_READY`가 아니다. provider 호출, paired arm terminal receipt와 decision receipt도 아직 없다. 수동 execution packet은 독립 anchor와 provider receipt가 확보되기 전까지 `MANUAL_CHECKLIST_ONLY`이며 `CONTINUE`, `REDUCE`, `STOP`의 근거로 사용하지 않는다.
 
 실행 capability matrix는 `scripts/omc_task_review_pilot.py capability-matrix`로 생성한다. 입력 repository는 실행 스크립트가 속한 OMC Git root와 같아야 하고, tracked source가 clean하며 전달한 `source_commit`이 그 repository의 `HEAD`와 일치해야 한다. 이 gate는 실행 전 provenance만 보장하며 paired arm·provider session·terminal receipt 또는 pilot 종료 판정을 대체하지 않는다.
+
+v2 artifact의 local 관찰은 `prepare-reconciliation`으로 declared root의 regular-file manifest와 execution evidence schema를 subject로 만든 뒤, operator custody의 **별도** reconciliation authority가 서명한 receipt만 `record-reconciliation`으로 게시한다. `OMC_TASK_REVIEW_PILOT_TRUSTED_RECONCILIATION_PUBLIC_KEY`는 executor trust anchor와 분리하며, 선언 root가 완전하지 않으면 `LOCAL_ARTIFACT_SNAPSHOT_INCOMPLETE`, 모든 선언 root에서 readiness·terminal·decision evidence가 없으면 `NO_EXECUTION_EVIDENCE_IN_DECLARED_ROOTS`만 기록한다. 이는 선언하지 않은 외부 root나 실제 provider 실행의 부재를 주장하지 않으며, 서명 receipt가 발행되기 전에는 v2 상태를 변경하지 않는다.
 
 ## Frozen Case
 
@@ -27,6 +27,8 @@ pilot v2는 source commit `b0d62fcf66a54ac9f077afea46191880ad5e8dc7`과 roster h
 - request, base commit, DoD, verification command
 - provider, model, reasoning, timeout
 - 저장소 identity와 dependency 준비 조건
+
+실행 권한은 case 입력에 포함하지 않는다. T0 승인 binding에 `execution_authority`(executor 공개키와 그 hash)를 먼저 고정하고, 이를 포함한 readiness v2만 paired 실행에 사용할 수 있다. 실행 전에 operator custody에서 `OMC_TASK_REVIEW_PILOT_TRUSTED_EXECUTION_PUBLIC_KEY`를 설정하며, readiness·frozen case·dry-run의 executor 공개키가 이 값과 다르면 모두 거부한다. 따라서 receipt 자체의 self-hash는 무결성 검증일 뿐 trust anchor가 될 수 없다. legacy readiness v1은 관찰 증거로 보존하되 실행 입력으로는 거부한다. 각 arm은 signed execution receipt 파일의 상대 경로와 파일 hash를 arm receipt에 결속하며, terminal은 해당 파일을 `O_NOFOLLOW`로 다시 열어 파일 hash, receipt hash, 공개키 서명, frozen configuration과 raw output을 모두 재검증한다. terminal은 검증한 dry-run과 두 arm receipt를 sealed bundle로 보존하고, `decide --readiness <readiness.json>`은 이를 다시 열어 해당 readiness의 roster·inventory·T0 binding과 일치할 때만 최종 판정한다.
 
 준비 상태 또는 dependency가 arm 사이에서 다르거나 frozen evidence를 복구할 수 없으면 품질 실패로 세지 않고 전체 pilot을 `INCONCLUSIVE`로 종료한다.
 

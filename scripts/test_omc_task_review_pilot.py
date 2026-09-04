@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -8,16 +9,25 @@ from pathlib import Path
 
 import pytest
 import omc_task_review_pilot
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from omc_task_review_pilot import (
     PilotPreflightError,
     build_execution_capability_matrix,
     build_inventory_dry_run,
+    build_pilot_decision,
+    build_paired_dry_run,
     build_pilot_roster,
     build_readiness_receipt,
+    build_runner_arm_receipt,
+    build_terminal_receipt,
     canonical_repository_identity,
+    freeze_case,
     normalize_review_outcome,
     preflight_case,
+    prepare_reconciliation_subject,
+    record_reconciliation_receipt,
     select_first_eligible_cases,
     validate_pilot_start_receipt,
     write_json_no_replace,
@@ -66,6 +76,58 @@ def _sha(value: object) -> str:
     ).hexdigest()
 
 
+_EXECUTION_SIGNER = Ed25519PrivateKey.from_private_bytes(b"\x01" * 32)
+_EXECUTION_SIGNER_PUBLIC_KEY = base64.b64encode(
+    _EXECUTION_SIGNER.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+).decode("ascii")
+
+_RECONCILIATION_SIGNER = Ed25519PrivateKey.from_private_bytes(b"\x03" * 32)
+_RECONCILIATION_SIGNER_PUBLIC_KEY = base64.b64encode(
+    _RECONCILIATION_SIGNER.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+).decode("ascii")
+
+
+@pytest.fixture(autouse=True)
+def _pin_trusted_execution_authority(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "OMC_TASK_REVIEW_PILOT_TRUSTED_EXECUTION_PUBLIC_KEY",
+        _EXECUTION_SIGNER_PUBLIC_KEY,
+    )
+    monkeypatch.setenv(
+        "OMC_TASK_REVIEW_PILOT_TRUSTED_RECONCILIATION_PUBLIC_KEY",
+        _RECONCILIATION_SIGNER_PUBLIC_KEY,
+    )
+
+
+def _reconciliation_authority_receipt(
+    subject: dict[str, object], *, signer: Ed25519PrivateKey = _RECONCILIATION_SIGNER,
+    public_key: str = _RECONCILIATION_SIGNER_PUBLIC_KEY,
+) -> dict[str, str]:
+    receipt = {
+        "schema_version": "omc-task-review-pilot-reconciliation-authority/v1",
+        "signer": "omc-task-review-pilot-reconciliation-v1",
+        "signer_public_key": public_key,
+        "subject_sha256": subject["reconciliation_subject_sha256"],
+        "signature": "",
+    }
+    receipt["signature"] = base64.b64encode(
+        signer.sign(omc_task_review_pilot._canonical_bytes(receipt))
+    ).decode("ascii")
+    return receipt
+
+
+def _sign_execution_receipt(receipt: dict[str, object]) -> dict[str, object]:
+    receipt["execution_receipt_sha256"] = omc_task_review_pilot._execution_unsigned_digest(receipt)
+    receipt["signoff"]["signature"] = base64.b64encode(
+        _EXECUTION_SIGNER.sign(omc_task_review_pilot._execution_signed_bytes(receipt))
+    ).decode("ascii")
+    return receipt
+
+
 def _frozen_case() -> dict[str, object]:
     return {
         "case_id": "case-01",
@@ -80,6 +142,29 @@ def _frozen_case() -> dict[str, object]:
         "repository_id": "repo-a",
         "dependency_condition": "locked dependencies available",
     }
+
+
+def _execution_readiness(value: str = "b" * 64) -> dict[str, object]:
+    authority = {
+        "schema_version": "omc-task-review-pilot-execution-authority/v1",
+        "executor_public_key": _EXECUTION_SIGNER_PUBLIC_KEY,
+    }
+    authority["execution_authority_sha256"] = _sha(authority)
+    receipt = {
+        "schema_version": "omc-task-review-pilot-readiness/v2",
+        "status": "PILOT_READY",
+        "roster_sha256": "a" * 64,
+        "inventory_sha256": value,
+        "t0": "2026-09-03T02:00:00+09:00",
+        "provider_call_count": 0,
+        "execution_authority": authority,
+    }
+    receipt["readiness_sha256"] = _sha(receipt)
+    return receipt
+
+
+def _freeze_case(case: dict[str, object] | None = None, *, value: str = "b" * 64) -> dict[str, object]:
+    return freeze_case(case or _frozen_case(), readiness_receipt=_execution_readiness(value))
 
 
 def test_execution_capability_matrix_preserves_paired_boundaries(monkeypatch) -> None:
@@ -509,7 +594,13 @@ def test_readiness_requires_bound_roster_start_and_inventory_hashes() -> None:
     }
     roster["roster_sha256"] = _sha(roster)
     t0 = "2026-09-03T02:00:00+09:00"
-    start = {"binding": {"roster_sha256": roster["roster_sha256"]}, "t0": t0}
+    start = {
+        "binding": {
+            "roster_sha256": roster["roster_sha256"],
+            "execution_authority": _execution_readiness()["execution_authority"],
+        },
+        "t0": t0,
+    }
     selected_cases = [
         {
             "session_id": "s1",
@@ -599,7 +690,13 @@ def test_readiness_revalidates_inventory_semantics(mutation, reason) -> None:
     roster = {"repositories": [{"repository_id": "repo-a"}, {"repository_id": "repo-b"}]}
     roster["roster_sha256"] = _sha(roster)
     t0 = "2026-09-03T02:00:00+09:00"
-    start = {"binding": {"roster_sha256": roster["roster_sha256"]}, "t0": t0}
+    start = {
+        "binding": {
+            "roster_sha256": roster["roster_sha256"],
+            "execution_authority": _execution_readiness()["execution_authority"],
+        },
+        "t0": t0,
+    }
     inventory = {
         "schema_version": "omc-task-review-pilot-inventory/v1",
         "status": "PILOT_READY",
@@ -724,6 +821,195 @@ def test_capability_matrix_cli_rejects_foreign_repository(tmp_path) -> None:
     assert not output.exists()
 
 
+def test_freeze_case_and_paired_dry_run_cli_publish_no_provider_call_artifacts(tmp_path) -> None:
+    case_path = tmp_path / "case.json"
+    readiness_path = tmp_path / "readiness.json"
+    frozen_path = tmp_path / "evidence" / "case.json"
+    dry_run_path = tmp_path / "evidence" / "dry-run.json"
+    case_path.write_text(json.dumps(_frozen_case()), encoding="utf-8")
+    readiness_path.write_text(json.dumps(_execution_readiness()), encoding="utf-8")
+    script = str(Path(__file__).with_name("omc_task_review_pilot.py"))
+
+    freeze = subprocess.run(
+        [
+            sys.executable,
+            script,
+            "freeze-case",
+            "--case",
+            str(case_path),
+            "--readiness",
+            str(readiness_path),
+            "--output",
+            str(frozen_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert freeze.returncode == 0, freeze.stderr
+
+    dry_run = subprocess.run(
+        [
+            sys.executable,
+            script,
+            "paired-dry-run",
+            "--case-receipt",
+            str(frozen_path),
+            "--case-position",
+            "2",
+            "--output",
+            str(dry_run_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert dry_run.returncode == 0, dry_run.stderr
+    assert json.loads(dry_run.stdout)["provider_call_count"] == 0
+    assert json.loads(dry_run_path.read_text())["arm_order"] == ["baseline", "omc"]
+
+
+def test_reconciliation_receipt_binds_a_signed_declared_root_snapshot(tmp_path) -> None:
+    root = tmp_path / "v2-state"
+    root.mkdir()
+    (root / "roster.json").write_text('{"schema_version":"roster/v1"}\n')
+
+    subject = prepare_reconciliation_subject(
+        pilot_id="task-review-product-focus-20260903-v2",
+        declared_roots=[{"root_id": "local-v2-state", "path": root}],
+        observed_at="2026-09-04T15:10:00+09:00",
+    )
+
+    assert subject["status"] == "NO_EXECUTION_EVIDENCE_IN_DECLARED_ROOTS"
+    assert subject["declared_roots"][0]["root_id"] == "local-v2-state"
+    assert subject["declared_roots"][0]["files"][0]["path"] == "roster.json"
+    assert subject["missing_execution_evidence"] == [
+        "readiness",
+        "terminal",
+        "decision",
+    ]
+
+    receipt = record_reconciliation_receipt(
+        subject, _reconciliation_authority_receipt(subject)
+    )
+
+    assert receipt["status"] == "NO_EXECUTION_EVIDENCE_IN_DECLARED_ROOTS"
+    assert receipt["authority"]["signer_public_key"] == _RECONCILIATION_SIGNER_PUBLIC_KEY
+    assert receipt["reconciliation_sha256"] == _sha(
+        {key: value for key, value in receipt.items() if key != "reconciliation_sha256"}
+    )
+
+
+def test_reconciliation_rejects_missing_roots_and_executor_key_reuse(tmp_path) -> None:
+    with pytest.raises(PilotPreflightError, match="reconciliation_root_missing"):
+        prepare_reconciliation_subject(
+            pilot_id="task-review-product-focus-20260903-v2",
+            declared_roots=[{"root_id": "missing", "path": tmp_path / "missing"}],
+            observed_at="2026-09-04T15:10:00+09:00",
+        )
+
+    root = tmp_path / "v2-state"
+    root.mkdir()
+    subject = prepare_reconciliation_subject(
+        pilot_id="task-review-product-focus-20260903-v2",
+        declared_roots=[{"root_id": "local-v2-state", "path": root}],
+        observed_at="2026-09-04T15:10:00+09:00",
+    )
+    reused_executor_key = _reconciliation_authority_receipt(
+        subject,
+        signer=_EXECUTION_SIGNER,
+        public_key=_EXECUTION_SIGNER_PUBLIC_KEY,
+    )
+
+    with pytest.raises(PilotPreflightError, match="reconciliation_authority_mismatch"):
+        record_reconciliation_receipt(subject, reused_executor_key)
+
+
+def test_reconciliation_rejects_malformed_public_function_inputs(tmp_path) -> None:
+    with pytest.raises(PilotPreflightError, match="reconciliation_root_descriptor_invalid"):
+        prepare_reconciliation_subject(
+            pilot_id="task-review-product-focus-20260903-v2",
+            declared_roots=[{"root_id": "local-v2-state", "path": 7}],
+            observed_at="2026-09-04T15:10:00+09:00",
+        )
+
+    with pytest.raises(PilotPreflightError, match="reconciliation_subject_invalid"):
+        record_reconciliation_receipt([], {})  # type: ignore[arg-type]
+
+    malformed = {
+        "schema_version": "omc-task-review-pilot-reconciliation-subject/v1",
+        "status": "NO_EXECUTION_EVIDENCE_IN_DECLARED_ROOTS",
+    }
+    malformed["reconciliation_subject_sha256"] = _sha(malformed)
+    with pytest.raises(PilotPreflightError, match="reconciliation_subject_invalid"):
+        record_reconciliation_receipt(malformed, {})
+
+
+def test_reconciliation_rejects_a_trusted_signature_for_the_wrong_subject_schema(tmp_path) -> None:
+    root = tmp_path / "v2-state"
+    root.mkdir()
+    subject = prepare_reconciliation_subject(
+        pilot_id="task-review-product-focus-20260903-v2",
+        declared_roots=[{"root_id": "local-v2-state", "path": root}],
+        observed_at="2026-09-04T15:10:00+09:00",
+    )
+    subject["schema_version"] = "omc-task-review-pilot-reconciliation-subject/v0"
+    subject["reconciliation_subject_sha256"] = _sha(
+        {key: value for key, value in subject.items() if key != "reconciliation_subject_sha256"}
+    )
+
+    with pytest.raises(PilotPreflightError, match="reconciliation_subject_invalid"):
+        record_reconciliation_receipt(
+            subject, _reconciliation_authority_receipt(subject)
+        )
+
+
+def test_reconciliation_rejects_unhashable_execution_evidence(tmp_path) -> None:
+    root = tmp_path / "v2-state"
+    root.mkdir()
+    subject = prepare_reconciliation_subject(
+        pilot_id="task-review-product-focus-20260903-v2",
+        declared_roots=[{"root_id": "local-v2-state", "path": root}],
+        observed_at="2026-09-04T15:10:00+09:00",
+    )
+    subject["declared_roots"][0]["execution_evidence"] = [{}]
+    subject["reconciliation_subject_sha256"] = _sha(
+        {key: value for key, value in subject.items() if key != "reconciliation_subject_sha256"}
+    )
+
+    with pytest.raises(PilotPreflightError, match="reconciliation_subject_invalid"):
+        record_reconciliation_receipt(subject, {})
+
+
+def test_reconciliation_cli_requires_a_valid_declared_root_descriptor(tmp_path) -> None:
+    output = tmp_path / "subject.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("omc_task_review_pilot.py")),
+            "prepare-reconciliation",
+            "--pilot-id",
+            "task-review-product-focus-20260903-v2",
+            "--artifact-root",
+            "missing-separator",
+            "--observed-at",
+            "2026-09-04T15:10:00+09:00",
+            "--output",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert json.loads(result.stdout) == {
+        "status": "blocked",
+        "reason": "reconciliation_root_descriptor_invalid",
+    }
+    assert not output.exists()
+
+
 def test_preflight_rejects_missing_frozen_field() -> None:
     case = _frozen_case()
     del case["verification_command"]
@@ -738,6 +1024,495 @@ def test_preflight_rejects_boolean_timeout() -> None:
 
     with pytest.raises(PilotPreflightError, match="invalid_timeout_sec"):
         preflight_case(case)
+
+
+def test_freeze_case_binds_all_execution_inputs_without_mutation() -> None:
+    case = _frozen_case()
+
+    receipt = _freeze_case(case)
+
+    assert receipt["schema_version"] == "omc-task-review-pilot-case/v2"
+    assert receipt["readiness_sha256"] == _execution_readiness()["readiness_sha256"]
+    assert receipt["case"] == case
+    assert receipt["case_sha256"] == _sha(
+        {key: value for key, value in receipt.items() if key != "case_sha256"}
+    )
+    case["model"] = "changed-after-freeze"
+    assert receipt["case"]["model"] == "gpt-test"
+
+
+def test_paired_dry_run_requires_a_valid_frozen_case_and_shared_configuration() -> None:
+    receipt = _freeze_case()
+
+    dry_run = build_paired_dry_run(receipt, case_position=2)
+
+    assert dry_run["provider_call_count"] == 0
+    assert dry_run["arm_order"] == ["baseline", "omc"]
+    assert dry_run["arms"][0]["configuration"] == dry_run["arms"][1]["configuration"]
+    assert dry_run["arms"][0]["configuration"]["model"] == "gpt-test"
+
+    receipt["case"]["model"] = "forged"
+    with pytest.raises(PilotPreflightError, match="frozen_case_hash_mismatch"):
+        build_paired_dry_run(receipt, case_position=2)
+
+
+def test_paired_dry_run_rejects_invalid_counterbalance_position() -> None:
+    receipt = _freeze_case()
+
+    with pytest.raises(PilotPreflightError, match="invalid_case_position"):
+        build_paired_dry_run(receipt, case_position=4)
+
+
+def _terminal_arm(arm: str, *, elapsed: float, intervention: int = 0) -> dict[str, object]:
+    return {
+        "arm": arm,
+        "verification_passed": True,
+        "review_outcome": "approved",
+        "elapsed_seconds": elapsed,
+        "user_intervention": intervention,
+        "rework_count": 0,
+        "fatal_violation": False,
+        "provider_call_count": 1,
+        "raw_output_sha256": "a" * 64,
+    }
+
+
+def _runner_arm_receipt(
+    dry_run: dict[str, object], tmp_path: Path, arm: str, *, elapsed: float,
+    intervention: int = 0, provider_calls: int = 1, model: str = "gpt-test",
+    review_outcome: str = "approved",
+) -> dict[str, object]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    output = tmp_path / f"{arm}.txt"
+    output.write_text(f"{arm} output\n", encoding="utf-8")
+    result = _terminal_arm(arm, elapsed=elapsed, intervention=intervention)
+    result["provider_call_count"] = provider_calls
+    result["review_outcome"] = review_outcome
+    result["raw_output_path"] = output.name
+    result["raw_output_sha256"] = hashlib.sha256(output.read_bytes()).hexdigest()
+    configuration = {
+        "provider": "codex",
+        "model": model,
+        "reasoning": "medium",
+        "timeout_sec": 600,
+        "verification_command": "pytest -q",
+    }
+    execution = {
+        "schema_version": "omc-task-review-pilot-execution/v2",
+        "dry_run_sha256": dry_run["dry_run_sha256"],
+        "case_sha256": dry_run["case_sha256"],
+        "arm": arm,
+        "configuration": configuration,
+        "result": result,
+        "signoff": {
+            "signer": "omc-task-review-pilot-executor-v1",
+            "signer_public_key": _EXECUTION_SIGNER_PUBLIC_KEY,
+            "signature": "",
+        },
+    }
+    _sign_execution_receipt(execution)
+    execution_path = tmp_path / f"{arm}.execution.json"
+    execution_path.write_text(json.dumps(execution), encoding="utf-8")
+    return build_runner_arm_receipt(
+        dry_run, execution_path, artifact_root=tmp_path
+    )
+
+
+def test_terminal_receipt_requires_runner_arm_receipts_and_calculates_completion(tmp_path) -> None:
+    dry_run = build_paired_dry_run(
+        _freeze_case(), case_position=1
+    )
+    terminal = build_terminal_receipt(
+        dry_run,
+        [
+            _runner_arm_receipt(dry_run, tmp_path, "omc", elapsed=80),
+            _runner_arm_receipt(dry_run, tmp_path, "baseline", elapsed=100),
+        ],
+    )
+
+    assert terminal["completion"]["omc"] is True
+    assert terminal["terminal_sha256"] == _sha(
+        {key: value for key, value in terminal.items() if key != "terminal_sha256"}
+    )
+    with pytest.raises(PilotPreflightError, match="terminal_arm_set_invalid"):
+        build_terminal_receipt(
+            dry_run, [_runner_arm_receipt(dry_run, tmp_path, "omc", elapsed=80)]
+        )
+    with pytest.raises(PilotPreflightError, match="terminal_arm_receipt_invalid"):
+        build_terminal_receipt(
+            dry_run, [_terminal_arm("omc", elapsed=80), _terminal_arm("baseline", elapsed=100)]
+        )
+
+
+def test_terminal_receipt_preserves_blocked_review_and_actual_provider_calls(tmp_path) -> None:
+    dry_run = build_paired_dry_run(
+        _freeze_case(), case_position=1
+    )
+    blocked = _runner_arm_receipt(
+        dry_run,
+        tmp_path,
+        "baseline",
+        elapsed=120,
+        provider_calls=2,
+        review_outcome="blocked",
+    )
+
+    terminal = build_terminal_receipt(
+        dry_run, [_runner_arm_receipt(dry_run, tmp_path, "omc", elapsed=80), blocked]
+    )
+
+    assert terminal["completion"]["baseline"] is False
+    assert terminal["provider_call_count"] == 3
+    assert terminal["arms"]["baseline"]["raw_output_sha256"] == hashlib.sha256(
+        (tmp_path / "baseline.txt").read_bytes()
+    ).hexdigest()
+
+
+def test_runner_arm_receipt_binds_durable_output_and_frozen_configuration(tmp_path) -> None:
+    dry_run = build_paired_dry_run(
+        _freeze_case(), case_position=1
+    )
+    receipt = _runner_arm_receipt(dry_run, tmp_path, "omc", elapsed=80)
+    assert receipt["result"]["raw_output_sha256"] == hashlib.sha256(
+        (tmp_path / "omc.txt").read_bytes()
+    ).hexdigest()
+
+    with pytest.raises(PilotPreflightError, match="execution_receipt_schema_invalid"):
+        invalid_path = tmp_path / "invalid.execution.json"
+        invalid_path.write_text(json.dumps(_terminal_arm("baseline", elapsed=100)), encoding="utf-8")
+        build_runner_arm_receipt(
+            dry_run, invalid_path, artifact_root=tmp_path
+        )
+
+    # A self-hash proves only integrity after creation, not who executed the arm.
+    unsigned = {
+        "schema_version": "omc-task-review-pilot-execution/v2",
+        "dry_run_sha256": dry_run["dry_run_sha256"],
+        "case_sha256": dry_run["case_sha256"],
+        "arm": "omc",
+        "configuration": dry_run["arms"][1]["configuration"],
+        "result": receipt["result"],
+    }
+    unsigned["execution_receipt_sha256"] = _sha(unsigned)
+    unsigned_path = tmp_path / "unsigned.execution.json"
+    unsigned_path.write_text(json.dumps(unsigned), encoding="utf-8")
+    with pytest.raises(PilotPreflightError, match="execution_receipt_signoff_invalid"):
+        build_runner_arm_receipt(dry_run, unsigned_path, artifact_root=tmp_path)
+
+    with pytest.raises(PilotPreflightError, match="execution_receipt_binding_mismatch"):
+        _runner_arm_receipt(dry_run, tmp_path, "baseline", elapsed=100, model="other")
+
+    symlink = tmp_path / "baseline.txt"
+    symlink.unlink()
+    symlink.symlink_to(tmp_path / "omc.txt")
+    linked = {
+        "schema_version": "omc-task-review-pilot-execution/v2",
+        "dry_run_sha256": dry_run["dry_run_sha256"],
+        "case_sha256": dry_run["case_sha256"],
+        "arm": "baseline",
+        "configuration": dry_run["arms"][0]["configuration"],
+        "result": {
+            **_terminal_arm("baseline", elapsed=100),
+            "raw_output_path": symlink.name,
+            "raw_output_sha256": hashlib.sha256((tmp_path / "omc.txt").read_bytes()).hexdigest(),
+        },
+        "signoff": {
+            "signer": "omc-task-review-pilot-executor-v1",
+            "signer_public_key": _EXECUTION_SIGNER_PUBLIC_KEY,
+            "signature": "",
+        },
+    }
+    _sign_execution_receipt(linked)
+    linked_path = tmp_path / "linked.execution.json"
+    linked_path.write_text(json.dumps(linked), encoding="utf-8")
+    with pytest.raises(PilotPreflightError, match="runner_output_path_invalid"):
+        build_runner_arm_receipt(dry_run, linked_path, artifact_root=tmp_path)
+
+
+def test_terminal_receipt_rechecks_runner_output_durability(tmp_path) -> None:
+    dry_run = build_paired_dry_run(
+        _freeze_case(), case_position=1
+    )
+    omc = _runner_arm_receipt(dry_run, tmp_path, "omc", elapsed=80)
+    baseline = _runner_arm_receipt(dry_run, tmp_path, "baseline", elapsed=100)
+    (tmp_path / "omc.txt").unlink()
+
+    with pytest.raises(PilotPreflightError, match="runner_output_missing"):
+        build_terminal_receipt(dry_run, [omc, baseline])
+
+
+def test_execution_authority_is_not_accepted_from_the_case() -> None:
+    """The executor key must originate in approved pilot evidence, not the case."""
+    authority = {
+        "schema_version": "omc-task-review-pilot-execution-authority/v1",
+        "executor_public_key": _EXECUTION_SIGNER_PUBLIC_KEY,
+    }
+    authority["execution_authority_sha256"] = _sha(authority)
+    readiness = {
+        "schema_version": "omc-task-review-pilot-readiness/v2",
+        "status": "PILOT_READY",
+        "roster_sha256": "a" * 64,
+        "inventory_sha256": "b" * 64,
+        "t0": "2026-09-03T02:00:00+09:00",
+        "provider_call_count": 0,
+        "execution_authority": authority,
+    }
+    readiness["readiness_sha256"] = _sha(readiness)
+
+    case = _frozen_case()
+    case["execution_signer_public_key"] = "A" * 44
+    frozen = freeze_case(case, readiness_receipt=readiness)
+    dry_run = build_paired_dry_run(frozen, case_position=1)
+
+    assert dry_run["execution_signer_public_key"] == _EXECUTION_SIGNER_PUBLIC_KEY
+    assert "execution_signer_public_key" not in frozen["case"]
+
+
+def test_freeze_case_rejects_self_issued_execution_authority(monkeypatch) -> None:
+    attacker = Ed25519PrivateKey.from_private_bytes(b"\x02" * 32)
+    attacker_public_key = base64.b64encode(
+        attacker.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+    ).decode("ascii")
+    readiness = _execution_readiness()
+    authority = readiness["execution_authority"]
+    authority["executor_public_key"] = attacker_public_key
+    authority["execution_authority_sha256"] = _sha(
+        {
+            "schema_version": authority["schema_version"],
+            "executor_public_key": attacker_public_key,
+        }
+    )
+    readiness["readiness_sha256"] = _sha(
+        {key: value for key, value in readiness.items() if key != "readiness_sha256"}
+    )
+
+    with pytest.raises(PilotPreflightError, match="trusted_execution_authority_mismatch"):
+        freeze_case(_frozen_case(), readiness_receipt=readiness)
+
+    monkeypatch.delenv("OMC_TASK_REVIEW_PILOT_TRUSTED_EXECUTION_PUBLIC_KEY")
+    with pytest.raises(PilotPreflightError, match="trusted_execution_authority_missing"):
+        freeze_case(_frozen_case(), readiness_receipt=_execution_readiness())
+
+
+def test_terminal_reopens_and_revalidates_execution_receipt(tmp_path) -> None:
+    """An arm hash alone cannot stand in for the original signed execution receipt."""
+    dry_run = build_paired_dry_run(
+        _freeze_case(), case_position=1
+    )
+    omc = _runner_arm_receipt(dry_run, tmp_path, "omc", elapsed=80)
+    baseline = _runner_arm_receipt(dry_run, tmp_path, "baseline", elapsed=100)
+
+    execution_path = tmp_path / omc["execution_receipt"]["path"]
+    execution_path.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(PilotPreflightError, match="execution_receipt"):
+        build_terminal_receipt(dry_run, [omc, baseline])
+
+
+def test_pilot_decision_rejects_self_hashed_terminal_metric_forgery(tmp_path) -> None:
+    dry_run = build_paired_dry_run(_freeze_case(), case_position=1)
+    terminal = build_terminal_receipt(
+        dry_run,
+        [
+            _runner_arm_receipt(dry_run, tmp_path, "omc", elapsed=80),
+            _runner_arm_receipt(dry_run, tmp_path, "baseline", elapsed=100),
+        ],
+    )
+    terminal["arms"]["omc"]["elapsed_seconds"] = 1
+    terminal["terminal_sha256"] = _sha(
+        {key: value for key, value in terminal.items() if key != "terminal_sha256"}
+    )
+
+    with pytest.raises(PilotPreflightError, match="terminal_arm_bundle_mismatch"):
+        build_pilot_decision(
+            [terminal, terminal, terminal], readiness_receipt=_execution_readiness()
+        )
+
+
+def test_pilot_decision_blocks_a_self_hashed_malformed_terminal_arm_bundle(tmp_path) -> None:
+    dry_run = build_paired_dry_run(_freeze_case(), case_position=1)
+    terminal = build_terminal_receipt(
+        dry_run,
+        [
+            _runner_arm_receipt(dry_run, tmp_path, "omc", elapsed=80),
+            _runner_arm_receipt(dry_run, tmp_path, "baseline", elapsed=100),
+        ],
+    )
+    terminal["arm_receipts"][0] = {}
+    terminal["terminal_sha256"] = _sha(
+        {key: value for key, value in terminal.items() if key != "terminal_sha256"}
+    )
+
+    with pytest.raises(PilotPreflightError, match="terminal_arm_bundle_invalid"):
+        build_pilot_decision(
+            [terminal, terminal, terminal], readiness_receipt=_execution_readiness()
+        )
+
+
+def test_pilot_decision_blocks_a_self_hashed_non_object_dry_run(tmp_path) -> None:
+    dry_run = build_paired_dry_run(_freeze_case(), case_position=1)
+    terminal = build_terminal_receipt(
+        dry_run,
+        [
+            _runner_arm_receipt(dry_run, tmp_path, "omc", elapsed=80),
+            _runner_arm_receipt(dry_run, tmp_path, "baseline", elapsed=100),
+        ],
+    )
+    terminal["dry_run"] = []
+    terminal["terminal_sha256"] = _sha(
+        {key: value for key, value in terminal.items() if key != "terminal_sha256"}
+    )
+
+    with pytest.raises(PilotPreflightError, match="paired_dry_run_schema_invalid"):
+        build_pilot_decision(
+            [terminal, terminal, terminal], readiness_receipt=_execution_readiness()
+        )
+
+
+def test_pilot_decision_rejects_terminal_from_other_readiness(tmp_path) -> None:
+    readiness = _execution_readiness()
+    dry_run = build_paired_dry_run(
+        freeze_case(_frozen_case(), readiness_receipt=readiness), case_position=1
+    )
+    terminal = build_terminal_receipt(
+        dry_run,
+        [
+            _runner_arm_receipt(dry_run, tmp_path, "omc", elapsed=80),
+            _runner_arm_receipt(dry_run, tmp_path, "baseline", elapsed=100),
+        ],
+    )
+
+    with pytest.raises(PilotPreflightError, match="terminal_pilot_binding_mismatch"):
+        build_pilot_decision(
+            [terminal, terminal, terminal],
+            readiness_receipt=_execution_readiness("c" * 64),
+        )
+
+
+def test_pilot_decision_requires_three_sealed_receipts_and_uses_fixed_thresholds(tmp_path) -> None:
+    readiness = _execution_readiness()
+    terminals = []
+    for position in (1, 2, 3):
+        case = _frozen_case()
+        case["case_id"] = f"case-{position}"
+        dry_run = build_paired_dry_run(
+            freeze_case(case, readiness_receipt=readiness),
+            case_position=position,
+        )
+        terminals.append(
+            build_terminal_receipt(
+                    dry_run,
+                    [
+                        _runner_arm_receipt(dry_run, tmp_path / str(position), "omc", elapsed=80),
+                        _runner_arm_receipt(dry_run, tmp_path / str(position), "baseline", elapsed=100),
+                ],
+            )
+        )
+
+    assert build_pilot_decision(
+        terminals, readiness_receipt=readiness
+    )["status"] == "CONTINUE"
+    assert build_pilot_decision(
+        terminals[:2], readiness_receipt=readiness
+    )["status"] == "INCONCLUSIVE"
+
+    terminals[0]["arms"]["omc"]["fatal_violation"] = True
+    with pytest.raises(PilotPreflightError, match="terminal_hash_mismatch"):
+        build_pilot_decision(terminals, readiness_receipt=readiness)
+
+
+def test_pilot_decision_rejects_terminal_receipts_without_provider_calls(tmp_path) -> None:
+    readiness = _execution_readiness()
+    terminals = []
+    for position in (1, 2, 3):
+        case = _frozen_case()
+        case["case_id"] = f"case-{position}"
+        dry_run = build_paired_dry_run(
+            freeze_case(case, readiness_receipt=readiness),
+            case_position=position,
+        )
+        artifact_root = tmp_path / str(position)
+        artifact_root.mkdir()
+        omc = _runner_arm_receipt(dry_run, artifact_root, "omc", elapsed=80, provider_calls=0)
+        baseline = _runner_arm_receipt(dry_run, artifact_root, "baseline", elapsed=100, provider_calls=0)
+        terminals.append(build_terminal_receipt(dry_run, [omc, baseline]))
+
+    assert build_pilot_decision(
+        terminals, readiness_receipt=readiness
+    )["status"] == "INCONCLUSIVE"
+    assert build_pilot_decision(
+        terminals, readiness_receipt=readiness
+    )["reason"] == "provider_execution_absent"
+
+
+def test_terminal_and_decision_cli_publish_evidence(tmp_path) -> None:
+    script = str(Path(__file__).with_name("omc_task_review_pilot.py"))
+    dry_run_path = tmp_path / "dry-run.json"
+    omc_path = tmp_path / "omc.json"
+    baseline_path = tmp_path / "baseline.json"
+    terminal_path = tmp_path / "terminal.json"
+    decision_path = tmp_path / "decision.json"
+    readiness_path = tmp_path / "readiness.json"
+    readiness_path.write_text(json.dumps(_execution_readiness()), encoding="utf-8")
+    dry_run_path.write_text(
+        json.dumps(
+            build_paired_dry_run(
+                _freeze_case(),
+                case_position=1,
+            )
+        ),
+        encoding="utf-8",
+    )
+    dry_run = json.loads(dry_run_path.read_text(encoding="utf-8"))
+    omc_path.write_text(json.dumps(_runner_arm_receipt(dry_run, tmp_path, "omc", elapsed=80)), encoding="utf-8")
+    baseline_path.write_text(
+        json.dumps(_runner_arm_receipt(dry_run, tmp_path, "baseline", elapsed=100)), encoding="utf-8"
+    )
+
+    terminal = subprocess.run(
+        [
+            sys.executable,
+            script,
+            "terminal-receipt",
+            "--dry-run",
+            str(dry_run_path),
+            "--arm-receipt",
+            str(omc_path),
+            "--arm-receipt",
+            str(baseline_path),
+            "--output",
+            str(terminal_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert terminal.returncode == 0, terminal.stderr
+
+    decision = subprocess.run(
+        [
+            sys.executable,
+            script,
+            "decide",
+            "--terminal-receipt",
+            str(terminal_path),
+            "--terminal-receipt",
+            str(terminal_path),
+                "--terminal-receipt",
+                str(terminal_path),
+                "--readiness",
+                str(readiness_path),
+                "--output",
+            str(decision_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert decision.returncode == 2
+    assert json.loads(decision.stdout)["reason"] == "terminal_case_duplicate"
 
 
 def test_selection_uses_first_three_eligible_sessions_without_replacement() -> None:

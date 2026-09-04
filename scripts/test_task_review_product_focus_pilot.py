@@ -106,3 +106,10 @@ def test_contract_freezes_roster_identity_t0_and_readiness_before_execution() ->
         "STOP_ELIGIBILITY_DIVERSITY",
     ):
         assert requirement in text
+
+
+def test_contract_labels_v2_as_waiting_until_a_readiness_receipt_exists() -> None:
+    text = _contract()
+
+    assert "`WAITING_FOR_CASES`" in text
+    assert "readiness receipt가 아직 없으므로 `PILOT_READY`가 아니다" in text

@@ -28,6 +28,12 @@ Product Value 결과는 두 판정을 분리합니다.
 
 상세 상태와 남은 작업은 [자동 모델 라우팅 로드맵](docs/automatic_model_routing_roadmap.md)을 참고하세요.
 
+## Target Architecture — Not Implemented
+
+OMC의 제품 방향은 여러 레포를 운영하는 SaaS 창업자가 새 제품 기능을 요구사항·검증·리뷰 기준까지 완료하도록 돕는 것이다. 제안된 **persona-guided Codex Pilot v3**는 `PROPOSAL — decision required`이며, OMC가 persona·DoD·검증 계약을 정하고 Codex가 실행한 뒤 OMC가 선언된 검증과 종료 판정을 제공하는 구조를 목표로 한다.
+
+Codex adapter는 아직 구현되지 않았다. 따라서 이것은 현재 제공 기능이나 Pilot v2의 결과가 아니며, 기존 v2의 T0·roster·inventory·readiness·receipt를 바꾸지 않는다. v3는 별도 adapter contract, 승인된 범위, 실제 사용자 효용 측정이 확정된 뒤에만 시작할 수 있다.
+
 ## 일반 사용 경로
 
 일반 개발 작업은 내부 benchmark 명령을 직접 조합하지 않고 아래 흐름으로 사용합니다.
@@ -301,8 +307,8 @@ python3 scripts/omc_tdd_check.py --staged
 
 현재 우선순위는 다음 순서입니다.
 
-1. 실제 자연 발생 implementation 작업 3건을 최소 2개 저장소에서 동일 조건의 OMC/Baseline arm으로 실행
-2. 완료율·wall-clock 시간·사용자 개입·재작업을 비교해 최대 7일 안에 `CONTINUE`, `REDUCE`, `STOP` 판정
+1. 실제 자연 발생 implementation 작업 3건을 최소 2개 저장소에서 chronological first eligible 순서로 수집해 readiness 발행
+2. readiness 뒤에만 동일 조건의 OMC/Baseline arm을 실행하고, 완료율·wall-clock 시간·사용자 개입·재작업을 비교해 최대 7일 안에 `CONTINUE`, `REDUCE`, `STOP` 판정
 3. `CONTINUE`인 경우에만 사용자가 `PAUSED_NOT_CANCELLED` backlog 중 다음 lane 하나를 선택
 
 위 acceptance가 끝날 때까지 Product Value corpus, bounded N-child, Plan Batch B, native Review, Work Packet, Decision Policy를 실행하거나 새 schema·transport·benchmark fixture를 추가하지 않습니다. strict hard-token 인증도 사용자가 해당 lane을 별도로 재개한 경우에만 검토합니다.

@@ -4,6 +4,20 @@
 
 OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 조합하지 않아도 요청의 난이도·위험·실패 신호에 따라 안전한 실행 경로를 선택하는 도구 중립 오케스트레이터다. 현재 판단과 다음 작업은 이 문서를 기준으로 하며, 완료 이력과 과거 실험 원문은 [Roadmap History](automatic_model_routing_roadmap_history.md)에 보존한다.
 
+## Current Evidence
+
+- V1–V4 routing, TDD guard, bounded scheduler와 fail-closed receipt 검증은 구현·회귀 근거가 있다. 이는 기능 존재의 근거이며, 모든 제품 효과 또는 자동 실행의 근거는 아니다.
+- task-review pilot v2는 roster와 T0는 보존됐지만, 현재 선언된 local v2 inventory가 `WAITING_FOR_CASES`이며 readiness receipt가 없다. 따라서 `PILOT_READY`가 아니고 paired arm 실행·독립 terminal receipt·decision receipt도 없다.
+- 완료 이력·중단된 실험·세부 설계는 [Roadmap History](automatic_model_routing_roadmap_history.md)에 보존한다. 과거 receipt나 테스트 통과를 현재 운영 효과로 승격하지 않는다.
+
+## Active Decision Gate
+
+현재 활성 작업은 `3건 task → review paired acceptance → CONTINUE/REDUCE/STOP` 단 하나다. 사용자 승인 T0는 `2026-09-03T16:34:19+09:00`, 수집 마감은 `2026-09-10T16:34:19+09:00`이다. 동일 request·base commit·verification 조건에서 OMC/Baseline을 비교하고, 독립 receipt가 누락·위조·불일치하면 `INCONCLUSIVE`로 닫는다. Product Value·Plan·Review·Work Packet·Decision Policy는 `PAUSED_NOT_CANCELLED`이며, 이 gate의 명시적 사용자 결정 전에는 재개하지 않는다.
+
+## Target Architecture — Not Implemented
+
+**persona-guided Codex Pilot v3**는 `PROPOSAL — decision required`다. 목표는 여러 레포를 운영하는 SaaS 창업자가 새 제품 기능을 요구사항·검증·리뷰 기준까지 완료하도록, OMC가 persona·DoD·검증 계약을 정하고 Codex가 실행한 뒤 OMC가 선언된 검증과 종료 판정을 제공하는 것이다. Codex adapter는 아직 구현되지 않았다. v2의 T0·roster·inventory·readiness·receipt 계약은 이 제안으로 변경하거나 재해석하지 않으며, v3를 시작하려면 별도 scope·adapter contract·실제 사용자 효용 측정·승인 결정이 필요하다.
+
 ### 현재 위치
 
 | 트랙 | 상태 | 현재 근거 | 남은 핵심 |
@@ -15,7 +29,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter, authoritative acceptance harness | 실제 3–5 child 운영 표본 acceptance |
 | Operator Experience | 진행중 | output contract, Lite/Full routing, Stage graph SSOT, resume identity fail-close, CLI fast-path 구축 | 지연·개입 횟수 운영 검증 |
 
-현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했다. task-review pilot v2의 roster·repository identity·T0 decision·inventory dry-run·review verdict preflight를 구현했고, 사용자 승인 T0는 `2026-09-03T16:34:19+09:00`, 수집 마감은 `2026-09-10T16:34:19+09:00`이다. inventory hash `a0822834...aaf0fa`는 최소 2개 저장소의 chronological first eligible 3건을 선택해 `PILOT_READY`를 확인했고 provider 호출은 `0`건이다. capability matrix는 실행 OMC 저장소와 입력 repository root의 동일성, clean tracked source, `HEAD` commit 일치를 확인한 뒤에만 생성되는 pre-execution provenance gate다. paired arm 실행과 독립 terminal receipt는 아직 없으며, capability matrix와 수동 packet은 최종 판정 증거가 아닌 pre-execution checklist로만 취급한다. 새 transport·benchmark fixture를 추가하지 않는 안정화 동결 상태는 유지한다.
+현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했다. task-review pilot v2의 roster·repository identity·T0 decision·inventory dry-run·review verdict preflight를 구현했고, capability matrix는 실행 OMC 저장소와 입력 repository root의 동일성, clean tracked source, `HEAD` commit 일치를 확인한 뒤에만 생성되는 pre-execution provenance gate다. paired arm 실행과 독립 terminal receipt는 최종 판정 증거가 아닌 pre-execution checklist로만 취급한다. 현재 pilot 상태와 다음 행동은 위 **Current Evidence** 및 아래 scorecard를 SSOT로 삼는다.
 
 ### 단일 활성 검증 lane
 
@@ -37,7 +51,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | Routing V1–V4 | `OPERATIONALLY_VALIDATED` | 라우팅·실패 복구·telemetry 코드와 운영 receipt | 운영 drift 감시 유지 |
 | Bounded scheduler | `IMPLEMENTED` | v2 grant 전용 N-child scheduler·provider adapter·회귀 테스트 | 실제 3–5 child acceptance |
 | Product Value | `BLOCKED` | 기존 evidence-loss batch는 종료했으며 prospective study는 `PAUSED_NOT_CANCELLED` | 별도 사용자 결정으로 재개 |
-| Product focus | `PILOT_READY` | v2 roster hash `609a575b...82933`, readiness hash `6bd08243...d6196a`, 적격 3건과 저장소 다양성 확인. 각 case는 `market-reasoning-engine`, `research-auto`, `market-reasoning-engine` 순서이며 provider 호출 `0`건 | 동일 조건 paired arm 실행을 위한 독립 payload·provider session·terminal receipt를 확보. 수동 checklist만으로는 `CONTINUE`·`REDUCE`·`STOP` 판정 금지 |
+| Product focus | `WAITING_FOR_CASES` | v2 roster와 T0는 보존됐지만 현재 선언된 local inventory에 선택 case와 readiness receipt가 없다 | chronological first eligible 3건을 수집해 readiness를 발행한 뒤, 동일 조건 paired arm 실행을 위한 독립 payload·provider session·terminal receipt를 확보. 수동 checklist만으로는 `CONTINUE`·`REDUCE`·`STOP` 판정 금지 |
 | Product Value independence | `NOT_REPRODUCED` | 유효한 development evidence 없음 | 신규 development evidence 검증 후 별도 선정한 holdout에서 primary metric 충족 |
 | Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재하며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
 | Review | `NOT_PROVEN` | durable native provider 원문 부재이며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
@@ -174,7 +188,7 @@ source workspace 신뢰 루트 결속, clean clone readiness, 설치 consumer se
 
 Work-unit closure primitive는 `2026-09-01`에 구현·검증했다. session·task·request digest에 결속된 immutable envelope, 사용자 acceptance의 단일 소비 receipt, residual issue 내용 hash, validation round와 issue event의 분리, issue revision lineage·budget, scope·verification binding을 fail-close로 판정한다. envelope 동결 전에 별도 enrollment marker를 no-replace로 게시해 동결 파일이 사라진 work unit이 legacy mode로 강등되는 경로를 차단한다. closure/state 관련 회귀 `123 passed`, context/version 회귀 `36 passed`, 문법·staged diff·TDD gate와 OMC review `APPROVE WITH NOTES`를 확인했다. 이 근거는 primitive 구현 완료만 의미하며 실제 task/review/ship 종료 consumer에는 아직 연결하지 않았다. production consumer 연결, marker-only crash recovery failpoint, parent-directory durability 검증을 완료하기 전에는 일반 OMC 완료 판정에 사용하지 않는다.
 
-Task completion lineage schema v3도 구현했다. `start`, `continue`, `preserve` 동작과 generated `work_id`, root/current session 순서, 중복 없는 `session_ids`, `rework_count`를 하나의 pending completion에 결속하고, continuation의 request·work class·baseline 불일치와 `document_only` 세션의 source 변경을 fail-close한다. 완료 receipt의 기존 schema v2 호환성은 유지하면서 별도 lineage sidecar를 `informational_unverified`로 기록한다. 관련 회귀 `93 passed`, `py_compile`, staged diff·TDD gate와 OMC review `APPROVE WITH NOTES`를 확인했다. 이는 3건 pilot에서 재작업을 중복 case가 아닌 동일 work unit으로 계수할 수 있게 한 구현 근거다. 현재 v2 roster는 적격 표본 `3/3`으로 `PILOT_READY`지만 paired arm 실행과 독립 terminal receipt가 없으므로 제품 판정은 변경하지 않는다.
+Task completion lineage schema v3도 구현했다. `start`, `continue`, `preserve` 동작과 generated `work_id`, root/current session 순서, 중복 없는 `session_ids`, `rework_count`를 하나의 pending completion에 결속하고, continuation의 request·work class·baseline 불일치와 `document_only` 세션의 source 변경을 fail-close한다. 완료 receipt의 기존 schema v2 호환성은 유지하면서 별도 lineage sidecar를 `informational_unverified`로 기록한다. 관련 회귀 `93 passed`, `py_compile`, staged diff·TDD gate와 OMC review `APPROVE WITH NOTES`를 확인했다. 이는 3건 pilot에서 재작업을 중복 case가 아닌 동일 work unit으로 계수할 수 있게 한 구현 근거다.
 
 ### Operator Experience 1차 통합안
 
@@ -218,7 +232,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 실행 우선순위
 
-`3건 task → review paired acceptance → CONTINUE/REDUCE/STOP 판정`만 현재 실행한다. `2026-09-03T18:45:09+09:00` 재수집에서 적격 표본은 `3/3`, provider 호출은 `0`이었고 readiness는 `PILOT_READY`다. completion lineage schema v3로 동일 work의 재작업 세션을 묶는 계수 기반은 완료했다. 다음 핵심 작업은 첫 case의 입력·환경·arm 격리·독립 receipt를 확정하는 것이며, 독립 evidence가 없으면 결과는 `INCONCLUSIVE`다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이며, 경쟁 제품의 mode를 복제하거나 새 스킬·schema·transport·benchmark fixture를 늘리는 작업은 금지한다.
+`3건 task → review paired acceptance → CONTINUE/REDUCE/STOP 판정`만 현재 실행한다. 현재 `WAITING_FOR_CASES` 단계의 다음 행동은 chronological first eligible case 3건을 수집해 readiness를 발행하는 것이다. 그 뒤에만 동일 조건 paired arm을 실행한다. completion lineage schema v3로 동일 work의 재작업 세션을 묶는 계수 기반은 완료했다. readiness와 독립 evidence가 없으면 결과는 `INCONCLUSIVE`다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이며, 경쟁 제품의 mode를 복제하거나 새 스킬·schema·transport·benchmark fixture를 늘리는 작업은 금지한다.
 
 ## 제품 원칙과 금지선
 
@@ -239,7 +253,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 다음 실행 순서
 
-0. **ACTIVE** — 실제 자연 발생 implementation 작업 3건을 최소 2개 저장소에서 선정하고 최대 7일 안에 동일 조건 OMC/Baseline arm의 완료율·wall-clock 시간·사용자 개입·재작업을 비교해 `CONTINUE`, `REDUCE`, `STOP` 중 하나로 종료한다.
+0. **ACTIVE** — 최소 2개 저장소에서 chronological first eligible implementation 작업 3건을 수집해 readiness를 발행한다. readiness 뒤에만 최대 7일 안에 동일 조건 OMC/Baseline arm의 완료율·wall-clock 시간·사용자 개입·재작업을 비교해 `CONTINUE`, `REDUCE`, `STOP` 중 하나로 종료한다.
 
 아래 1–15번은 모두 `PAUSED_NOT_CANCELLED` backlog다. 0번이 `CONTINUE`로 끝난 뒤 사용자가 명시적으로 하나를 선택하기 전에는 실행하지 않는다.
 

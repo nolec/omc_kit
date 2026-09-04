@@ -78,6 +78,31 @@ def test_readme_matches_the_current_bounded_execution_and_verdict_contract() -> 
     assert "현재 executor 관련 결과는 모두 `execution_allowed=false`" not in text
 
 
+def test_current_evidence_is_separate_from_the_unimplemented_v3_proposal() -> None:
+    text = ROADMAP_PATH.read_text(encoding="utf-8")
+    first_screen = text.split("### Operator Experience 1차 통합안", 1)[0]
+
+    assert "## Current Evidence" in first_screen
+    assert "## Active Decision Gate" in first_screen
+    assert "`WAITING_FOR_CASES`" in first_screen
+    assert "readiness receipt가 없다" in first_screen
+    assert "## Target Architecture — Not Implemented" in first_screen
+    assert "persona-guided Codex Pilot v3" in first_screen
+    assert "`PROPOSAL — decision required`" in first_screen
+    assert "Codex adapter는 아직 구현되지 않았다" in first_screen
+
+
+def test_readme_labels_persona_guided_codex_as_a_target_not_a_feature() -> None:
+    text = README_PATH.read_text(encoding="utf-8")
+
+    assert "## Target Architecture — Not Implemented" in text
+    assert "여러 레포를 운영하는 SaaS 창업자" in text
+    assert "선언된 검증" in text
+    assert "persona-guided Codex Pilot v3" in text
+    assert "`PROPOSAL — decision required`" in text
+    assert "Codex adapter는 아직 구현되지 않았다" in text
+
+
 def test_product_focus_is_one_three_case_task_review_acceptance_lane() -> None:
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
     readme = README_PATH.read_text(encoding="utf-8")
@@ -103,9 +128,9 @@ def test_product_focus_is_one_three_case_task_review_acceptance_lane() -> None:
     assert "통계적 우월성" in roadmap
     assert "pilot-start receipt" in roadmap
     assert "선택한 arm만 별도 작업에서 적용" in roadmap
-    assert "| Product focus | `PILOT_READY` |" in roadmap
+    assert "| Product focus | `WAITING_FOR_CASES` |" in roadmap
     assert "inventory dry-run" in roadmap
-    assert "적격 3건과 저장소 다양성 확인" in roadmap
+    assert "chronological first eligible 3건을 수집해 readiness를 발행" in roadmap
     assert "수동 checklist만으로는 `CONTINUE`·`REDUCE`·`STOP` 판정 금지" in roadmap
     assert "수집 마감은 `2026-09-10T16:34:19+09:00`" in roadmap
     assert "실제 T0는 열지 않았" not in roadmap
@@ -250,7 +275,8 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "stale session 교정, 멀티 호스트 동일 fixture 검증" in text
     assert "운영 파일 기반 거짓 source drift를 교정한 뒤" not in text
     assert "public CLI·운영 source drift·consumer 재배포 완료" in text
-    assert "`2026-09-03T18:45:09+09:00` 재수집에서 적격 표본은 `3/3`" in text
+    assert "`2026-09-03T18:45:09+09:00` 재수집에서 적격 표본은 `3/3`" not in text
+    assert "현재 선언된 local v2 inventory가 `WAITING_FOR_CASES`" in text
     assert "새 스킬·schema·transport·benchmark fixture를 늘리는 작업은 금지" in text
     assert "Product Value·N-child research 명령은 직접 호출 호환성을 유지" in text
     assert "새 스킬·정책·benchmark fixture 수 증가는 완료 지표로 사용하지 않는다" in text
