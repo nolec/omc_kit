@@ -117,10 +117,21 @@
     "total_human_intervention_non_inferiority_required": true,
     "median_wall_clock_noninferiority_ratio": 1.15,
     "fatal_violation_allowed": false,
-    "missing_or_invalid_receipt_outcome": "INCONCLUSIVE",
+    "missing_or_invalid_receipt_outcome": "blocked",
     "operational_preflight_error_outcome": "blocked",
+    "provider_execution_absent_outcome": "INCONCLUSIVE",
     "insufficient_baseline_events_outcome": "INCONCLUSIVE",
     "deadline_or_sample_shortfall_outcome": "INCONCLUSIVE",
+    "decision_precedence": [
+      "fatal_violation",
+      "provider_execution_absent",
+      "completion_noninferiority",
+      "verification_noninferiority",
+      "total_human_intervention_noninferiority",
+      "median_wall_clock_noninferiority",
+      "minimum_baseline_correction_events",
+      "minimum_relative_reduction"
+    ],
     "deadline_shortfall_receipt": "A reconciliation-signed omc-task-review-persona-collection-close/v1 receipt must bind the registration hash, enrollment count, final enrollment hash, and an observed_at timestamp at or after the frozen deadline.",
     "passing_outcome": "CONTINUE",
     "non_passing_outcome": "REDUCE_OR_STOP_BY_FAILURE_CLASS"

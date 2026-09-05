@@ -34,7 +34,7 @@ Product Value 결과는 두 판정을 분리합니다.
 
 OMC의 제품 방향은 여러 레포를 운영하는 SaaS 창업자가 새 제품 기능을 요구사항·검증·리뷰 기준까지 완료하도록 돕는 것이다. **persona-guided Codex Pilot v3**는 연구 계약까지 승인됐으며, OMC가 persona·DoD·검증 계약을 정하고 Codex가 실행한 뒤 OMC가 선언된 검증과 종료 판정을 제공하는 구조를 검증한다.
 
-Codex adapter는 아직 구현되지 않았고 이번 범위에서 개발하지 않는다. external Codex executor 수동 receipt 프로토콜로만 실행하며, 실제 실행 전 study·reconciliation 공동 서명 registration, fresh T0와 21일 창, anonymous arm mapping, execution·reconciliation·study·blind-adjudication authority가 필요하다. 각 case는 state evidence cursor와 직전 enrollment hash를 검증하기 전에는 provider를 호출할 수 없다.
+Codex adapter는 아직 구현되지 않았고 이번 범위에서 개발하지 않는다. external Codex executor 수동 receipt 프로토콜로만 실행하며, 실제 실행 전 study·reconciliation 공동 서명 registration, fresh T0와 21일 창, anonymous arm mapping, execution·reconciliation·study·blind-adjudication authority가 필요하다. OMC는 외부 executor의 provider 호출 자체를 통제하지 않으며, state evidence cursor와 직전 enrollment hash를 검증하기 전에 수행된 실행은 유효한 Pilot evidence로 인정하지 않는다.
 
 ## 일반 사용 경로
 

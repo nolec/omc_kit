@@ -179,8 +179,19 @@ def test_persona_effectiveness_metric_requires_ten_pairs_and_real_corrections() 
     assert decision["verification_non_inferiority_required"] is True
     assert decision["total_human_intervention_non_inferiority_required"] is True
     assert decision["median_wall_clock_noninferiority_ratio"] == 1.15
-    assert decision["missing_or_invalid_receipt_outcome"] == "INCONCLUSIVE"
+    assert decision["missing_or_invalid_receipt_outcome"] == "blocked"
     assert decision["operational_preflight_error_outcome"] == "blocked"
+    assert decision["provider_execution_absent_outcome"] == "INCONCLUSIVE"
+    assert decision["decision_precedence"] == [
+        "fatal_violation",
+        "provider_execution_absent",
+        "completion_noninferiority",
+        "verification_noninferiority",
+        "total_human_intervention_noninferiority",
+        "median_wall_clock_noninferiority",
+        "minimum_baseline_correction_events",
+        "minimum_relative_reduction",
+    ]
 
 
 def test_persona_study_preregisters_mapping_before_execution() -> None:

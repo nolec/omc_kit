@@ -117,6 +117,17 @@ def test_readme_labels_persona_guided_codex_as_a_target_not_a_feature() -> None:
     assert "persona-guided Codex Pilot v3" in text
     assert "연구 계약까지 승인" in text
     assert "Codex adapter는 아직 구현되지 않았고" in text
+    assert "유효한 Pilot evidence로 인정하지 않는다" in text
+    assert "provider를 호출할 수 없다" not in text
+
+
+def test_persona_decision_contract_matches_the_fail_closed_implementation() -> None:
+    roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
+
+    assert "fatal violation → provider 실행 부재 → completion" in roadmap
+    assert "provider 실행 부재는 `INCONCLUSIVE`" in roadmap
+    assert "유효한 Pilot evidence로 인정하지 않는다" in roadmap
+    assert "provider를 호출하지 않는다" not in roadmap
 
 
 def test_product_focus_is_the_fresh_ten_case_persona_effectiveness_lane() -> None:

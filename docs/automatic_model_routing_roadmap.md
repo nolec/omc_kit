@@ -39,8 +39,9 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 실행 절차 SSOT는 [Task Review Product Focus Pilot](task_review_product_focus_pilot.md), machine-readable 판정 SSOT는 [persona-effectiveness preregistration](task_review_persona_effectiveness_preregistration_v1.json)이다. 실제 실행 전에 fresh authority와 T0를 동결하고 operator custody의 trusted execution public key를 설정해야 한다. 결과가 `CONTINUE`여도 원본 저장소에 자동 반영하지 않고 사용자가 선택한 arm만 별도 작업에서 적용한다.
 
 - `CONTINUE`: baseline correction event가 최소 3건 있고, OMC persona arm의 사람 추가 수정 지시율이 30% 이상 감소하며 completion·verification pass rate·총 사람 개입 수가 비열화가 아니고 median wall-clock이 baseline의 115% 이내이며 fatal violation이 없다.
-- `INCONCLUSIVE`: 유효한 10쌍에서 baseline correction event가 3건 미만이거나, 21일 deadline에 10건 미달임을 유효한 signed collection-close receipt로 봉인한 경우다. receipt·서명·hash·binding·raw output·blind adjudication 증거의 누락·위조·불일치는 결과로 승격하지 않고 `blocked`로 차단한다.
+- `INCONCLUSIVE`: fatal violation이 없는 유효한 terminal에서 provider 실행 부재가 확인되거나, 앞선 비열화 gate를 모두 통과한 유효한 10쌍에서 baseline correction event가 3건 미만이거나, 21일 deadline에 10건 미달임을 유효한 signed collection-close receipt로 봉인한 경우다. receipt·서명·hash·binding·raw output·blind adjudication 증거의 누락·위조·불일치는 결과로 승격하지 않고 `blocked`로 차단한다.
 - `REDUCE/STOP`: 30% 개선에 못 미치면 범위를 축소하고, completion·verification 악화 또는 fatal violation이 있으면 정지한다.
+- 완성 표본의 판정 우선순위는 `fatal violation → provider 실행 부재 → completion → verification → 총 사람 개입 → median wall-clock → baseline correction event 수 → 30% 감소율`이다. 따라서 provider 실행 부재는 `INCONCLUSIVE`지만 fatal violation은 항상 `STOP`이며, baseline event가 부족해도 앞선 비열화가 확인되면 `STOP`이다.
 - 나머지 연구 lane은 `PAUSED_NOT_CANCELLED`이며 persona-effectiveness 결과 후에만 별도 사용자 결정으로 하나를 재개한다.
 
 ### Evidence-state Scorecard
@@ -234,7 +235,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 실행 우선순위
 
-`task-review-persona-effectiveness-20260904-v1` 하나만 현재 활성 lane으로 유지한다. 다음 행동은 외부 custody의 study registration과 anonymous arm mapping을 공동 서명해 fresh T0·21일 창·선정 정책·authority를 동결하는 것이다. 이 gate와 case별 enrollment 검증이 끝나기 전에는 해당 case의 provider를 호출하지 않는다. 그 뒤 각 자연 발생 작업을 `enrollment → persona freeze → persona dry-run → external Codex signed execution → terminal` 순으로 즉시 처리해 10쌍을 수집하고, enrollment chain을 다시 대조한 blind adjudication 뒤 decision을 발행한다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이다. 이 active lane 밖의 새 스킬·transport·benchmark fixture는 늘리지 않는다.
+`task-review-persona-effectiveness-20260904-v1` 하나만 현재 활성 lane으로 유지한다. 다음 행동은 외부 custody의 study registration과 anonymous arm mapping을 공동 서명해 fresh T0·21일 창·선정 정책·authority를 동결하는 것이다. OMC는 외부 executor의 provider 호출 자체를 통제하지 않으며, 이 gate와 case별 enrollment 검증 전에 수행된 실행은 유효한 Pilot evidence로 인정하지 않는다. 그 뒤 각 자연 발생 작업을 `enrollment → persona freeze → persona dry-run → external Codex signed execution → terminal` 순으로 즉시 처리해 10쌍을 수집하고, enrollment chain을 다시 대조한 blind adjudication 뒤 decision을 발행한다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이다. 이 active lane 밖의 새 스킬·transport·benchmark fixture는 늘리지 않는다.
 
 ## 제품 원칙과 금지선
 
