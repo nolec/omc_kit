@@ -1,0 +1,141 @@
+{
+  "schema_version": "omc-task-review-persona-effectiveness-preregistration/v1",
+  "study_id": "task-review-persona-effectiveness-20260904-v1",
+  "status": "approved_not_started",
+  "approved_at": "2026-09-04",
+  "claim": "OMC persona, DoD, and verification guidance reduces human additional correction instructions without reducing completion or verification quality.",
+  "claim_scope": "solo_saas_founder_multi_repository_task_review",
+  "predecessor": {
+    "pilot_id": "task-review-pilot-v2",
+    "terminal_status": "ARCHIVED_INCOMPLETE",
+    "reason": "readiness_and_execution_evidence_absent",
+    "bindings_reusable": false
+  },
+  "fresh_bindings": [
+    "signed_study_registration",
+    "canonical_repository_roster",
+    "append_only_case_enrollments",
+    "state_evidence_cursor_chain",
+    "execution_authority",
+    "reconciliation_authority",
+    "blind_adjudication_authority"
+  ],
+  "execution": {
+    "mode": "external_codex_manual_receipt",
+    "adapter_development_allowed": false,
+    "provider_execution_in_repository": false,
+    "required_environment": [
+      "OMC_TASK_REVIEW_PILOT_TRUSTED_EXECUTION_PUBLIC_KEY",
+      "OMC_TASK_REVIEW_PILOT_TRUSTED_RECONCILIATION_PUBLIC_KEY",
+      "OMC_TASK_REVIEW_PERSONA_TRUSTED_ADJUDICATION_PUBLIC_KEY",
+      "OMC_TASK_REVIEW_PERSONA_TRUSTED_STUDY_PUBLIC_KEY"
+    ],
+    "receipt_verifiers": [
+      "scripts/omc_task_review_pilot.py persona-decision",
+      "scripts/omc_task_review_pilot.py persona-collection-close"
+    ],
+    "reused_v2_primitive": "terminal_receipt_validation_only",
+    "common_sequence": [
+      "signed_study_registration_and_t0",
+      "signed_anonymous_arm_mapping",
+      "case_enrollment_with_state_evidence",
+      "persona_freeze_case",
+      "persona_paired_dry_run",
+      "external_codex_execution",
+      "signed_execution_receipt",
+      "arm_receipt",
+      "terminal_receipt"
+    ],
+    "complete_decision_path": [
+      "repeat_enrollment_through_case_ten",
+      "blind_adjudication",
+      "persona_decision"
+    ],
+    "deadline_shortfall_path": [
+      "deadline_reached_before_case_ten",
+      "signed_collection_close",
+      "inconclusive_decision"
+    ]
+  },
+  "key_custody": {
+    "distinct_role_keys_required": true,
+    "roles": [
+      "study_binding",
+      "execution",
+      "reconciliation",
+      "blind_adjudication"
+    ],
+    "private_keys_in_repository_allowed": false,
+    "self_asserted_public_key_allowed": false
+  },
+  "design": {
+    "persona": "solo_saas_founder_multi_repository",
+    "case_source": "natural_implementation_work",
+    "pair_count": 10,
+    "arms": [
+      "direct_codex",
+      "omc_persona"
+    ],
+    "same_case_inputs": [
+      "request",
+      "base_commit",
+      "provider",
+      "model",
+      "reasoning",
+      "timeout_sec",
+      "verification_command"
+    ],
+    "balanced_order_required": true,
+    "blind_adjudication": true,
+    "collection_window_days": 21,
+    "selection_policy": "chronological_first_eligible_implementation_no_replacement",
+    "minimum_repository_count": 2,
+    "maximum_cases_per_repository": 7,
+    "preregistration_proof": "Before case one, a study and reconciliation co-signed registration freezes T0, the 21-day deadline, a canonical origin plus root-commit repository roster, selection and repository-diversity policy, arm mapping hash, authority keys, and thresholds. Each case then carries a reconciliation-signed enrollment linked to the previous enrollment and a reopened state-evidence cursor interval proving that no earlier eligible implementation session was skipped. Registration and enrollment hashes are embedded before provider execution and revalidated at persona-decision.",
+    "primary_metric": "human_additional_correction_instruction_rate",
+    "secondary_metrics": [
+      "completion_rate",
+      "verification_pass_rate",
+      "total_human_interventions",
+      "rework_count",
+      "end_to_end_wall_clock"
+    ],
+    "excluded_work_classes": [
+      "synthetic",
+      "document_only",
+      "benchmark_maintenance"
+    ]
+  },
+  "decision": {
+    "minimum_relative_reduction": 0.3,
+    "minimum_baseline_correction_events": 3,
+    "correction_event_definition": "For one arm and case, true only when the human provides at least one post-implementation instruction requiring a code change to satisfy the frozen DoD or verification command; approvals, answers to pre-execution questions, and adoption decisions are excluded.",
+    "correction_rate_denominator": "ten_paired_cases_per_arm",
+    "correction_evidence_binding": "Each signed blind-adjudication v2 case entry uses anonymous arm_a and arm_b fields and binds both decisions to a root-relative regular-file descriptor. persona-decision reopens each file with O_NOFOLLOW and compares its SHA-256 before a signed arm mapping may reveal direct_codex and omc_persona. It also reopens all ten enrollment state intervals, verifies their append-only hash and cursor chain, and requires each terminal dry-run to carry the matching registration and enrollment hashes.",
+    "completion_non_inferiority_required": true,
+    "verification_non_inferiority_required": true,
+    "total_human_intervention_non_inferiority_required": true,
+    "median_wall_clock_noninferiority_ratio": 1.15,
+    "fatal_violation_allowed": false,
+    "missing_or_invalid_receipt_outcome": "INCONCLUSIVE",
+    "operational_preflight_error_outcome": "blocked",
+    "insufficient_baseline_events_outcome": "INCONCLUSIVE",
+    "deadline_or_sample_shortfall_outcome": "INCONCLUSIVE",
+    "deadline_shortfall_receipt": "A reconciliation-signed omc-task-review-persona-collection-close/v1 receipt must bind the registration hash, enrollment count, final enrollment hash, and an observed_at timestamp at or after the frozen deadline.",
+    "passing_outcome": "CONTINUE",
+    "non_passing_outcome": "REDUCE_OR_STOP_BY_FAILURE_CLASS"
+  },
+  "start_gate": {
+    "provider_execution_started": false,
+    "required_before_start": [
+      "study_and_reconciliation_cosigned_registration",
+      "fresh_t0_and_21_day_deadline",
+      "chronological_first_eligible_selection_policy",
+      "minimum_two_repositories_and_maximum_seven_cases_per_repository",
+      "pinned_execution_public_key",
+      "pinned_reconciliation_public_key",
+      "pinned_blind_adjudication_public_key",
+      "signed_anonymous_arm_mapping"
+    ]
+  }
+}

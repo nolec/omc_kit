@@ -7,16 +7,17 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 ## Current Evidence
 
 - V1–V4 routing, TDD guard, bounded scheduler와 fail-closed receipt 검증은 구현·회귀 근거가 있다. 이는 기능 존재의 근거이며, 모든 제품 효과 또는 자동 실행의 근거는 아니다.
-- task-review pilot v2는 roster와 T0는 보존됐지만, 현재 선언된 local v2 inventory가 `WAITING_FOR_CASES`이며 readiness receipt가 없다. 따라서 `PILOT_READY`가 아니고 paired arm 실행·독립 terminal receipt·decision receipt도 없다.
+- task-review pilot v2는 roster와 T0는 보존됐지만 readiness·paired arm 실행·terminal·decision receipt가 없어 `ARCHIVED_INCOMPLETE`로 동결했다. reconciliation과 감사 외에 재사용하지 않는다.
+- 사용자가 승인한 fresh study `task-review-persona-effectiveness-20260904-v1`은 10건 paired case에서 direct Codex 대비 사람의 추가 수정 지시 30% 감소와 완료·검증 품질 비열화를 검증한다. external Codex executor receipt 계약은 고정됐지만 실제 provider 실행은 아직 시작하지 않았다.
 - 완료 이력·중단된 실험·세부 설계는 [Roadmap History](automatic_model_routing_roadmap_history.md)에 보존한다. 과거 receipt나 테스트 통과를 현재 운영 효과로 승격하지 않는다.
 
 ## Active Decision Gate
 
-현재 활성 작업은 `3건 task → review paired acceptance → CONTINUE/REDUCE/STOP` 단 하나다. 사용자 승인 T0는 `2026-09-03T16:34:19+09:00`, 수집 마감은 `2026-09-10T16:34:19+09:00`이다. 동일 request·base commit·verification 조건에서 OMC/Baseline을 비교하고, 독립 receipt가 누락·위조·불일치하면 `INCONCLUSIVE`로 닫는다. Product Value·Plan·Review·Work Packet·Decision Policy는 `PAUSED_NOT_CANCELLED`이며, 이 gate의 명시적 사용자 결정 전에는 재개하지 않는다.
+현재 활성 작업은 `task-review-persona-effectiveness-20260904-v1` 실행 준비다. v2는 `ARCHIVED_INCOMPLETE`이며 신규 study는 v2 binding을 승계하지 않는다. case 1 전에 fresh T0와 21일 창, chronological first eligible implementation 10건·무대체, 최소 2개 저장소·저장소당 최대 7건, arm mapping과 네 authority를 공동 서명 registration으로 동결한다. 이후 자연 작업마다 enrollment를 append-only hash/cursor chain으로 먼저 검증하고 곧바로 external Codex 두 arm과 terminal을 실행한다. blind adjudication 뒤에는 추가 수정 지시 30% 이상 감소와 completion·verification·총 사람 개입·median wall-clock 비열화를 함께 판정한다. 서명·hash·binding·raw output 증거가 누락·위조·불일치하면 운영 명령은 `blocked`로 차단한다. 21일 내 10건을 채우지 못한 경우에만 reconciliation authority가 서명한 유효한 collection-close receipt로 study outcome을 `INCONCLUSIVE`로 닫는다.
 
-## Target Architecture — Not Implemented
+## Target Architecture — Approved Study, Execution Not Started
 
-**persona-guided Codex Pilot v3**는 `PROPOSAL — decision required`다. 목표는 여러 레포를 운영하는 SaaS 창업자가 새 제품 기능을 요구사항·검증·리뷰 기준까지 완료하도록, OMC가 persona·DoD·검증 계약을 정하고 Codex가 실행한 뒤 OMC가 선언된 검증과 종료 판정을 제공하는 것이다. Codex adapter는 아직 구현되지 않았다. v2의 T0·roster·inventory·readiness·receipt 계약은 이 제안으로 변경하거나 재해석하지 않으며, v3를 시작하려면 별도 scope·adapter contract·실제 사용자 효용 측정·승인 결정이 필요하다.
+**persona-guided Codex Pilot v3**의 연구 범위와 판정 계약은 승인됐다. 목표는 여러 레포를 운영하는 SaaS 창업자가 새 제품 기능을 요구사항·검증·리뷰 기준까지 완료하도록, OMC가 persona·DoD·검증 계약을 정하고 Codex가 실행한 뒤 OMC가 선언된 검증과 종료 판정을 제공하는 것이다. Codex adapter는 아직 구현되지 않았고 이번 범위에서 개발하지 않는다. external Codex executor 수동 receipt 프로토콜을 사용하며, machine-readable SSOT는 [persona-effectiveness preregistration](task_review_persona_effectiveness_preregistration_v1.json)이다.
 
 ### 현재 위치
 
@@ -29,18 +30,18 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | V5 Learned Orchestrator | 부분 반영 | single child, exact 2-child, v2 grant 전용 bounded N-child scheduler·provider adapter, authoritative acceptance harness | 실제 3–5 child 운영 표본 acceptance |
 | Operator Experience | 진행중 | output contract, Lite/Full routing, Stage graph SSOT, resume identity fail-close, CLI fast-path 구축 | 지연·개입 횟수 운영 검증 |
 
-현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. source workspace와 설치 consumer readiness 분리 및 전체 회귀 정상화는 완료했다. task-review pilot v2의 roster·repository identity·T0 decision·inventory dry-run·review verdict preflight를 구현했고, capability matrix는 실행 OMC 저장소와 입력 repository root의 동일성, clean tracked source, `HEAD` commit 일치를 확인한 뒤에만 생성되는 pre-execution provenance gate다. paired arm 실행과 독립 terminal receipt는 최종 판정 증거가 아닌 pre-execution checklist로만 취급한다. 현재 pilot 상태와 다음 행동은 위 **Current Evidence** 및 아래 scorecard를 SSOT로 삼는다.
+현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. task-review pilot v2에서 구현한 roster·repository identity·T0 decision·inventory dry-run·signed execution·terminal receipt 검증 코드는 유지하지만, v2 study 자체는 증거 미완료로 동결했다. 신규 study는 검증 코드만 재사용하고 v2 identity와 evidence는 재사용하지 않는다.
 
 ### 단일 활성 검증 lane
 
-첫 제품 범위는 복잡한 코드 변경을 `task → review`로 안전하게 완료하는 흐름이다. 실제 자연 발생 implementation 작업 3건을 최소 2개 저장소에서 동일 request·base commit·verification 조건의 OMC/Baseline arm으로 실행하고, 완료율·wall-clock 시간·사용자 개입·재작업만 primary metric으로 비교한다. 전체 실행 기한은 최대 7일, arm별 재시도는 1회, 작업별 사용자 승인·질문은 3회로 제한한다.
+첫 제품 범위는 복잡한 코드 변경을 `task → review`로 안전하게 완료하는 흐름이다. 새 study는 자연 발생 implementation 10건을 `direct_codex`와 `omc_persona` arm으로 paired 실행한다. 같은 request·base commit·provider·model·reasoning·`timeout_sec`·verification command를 사용하고, order를 balanced하게 고정하며 arm identity를 숨긴 blind adjudication으로 결과를 판정한다.
 
-실행 SSOT는 [Task Review Product Focus Pilot](task_review_product_focus_pilot.md)이다. 사용자 승인 `pilot-start receipt` 이후 first eligible 3건을 교체 없이 수집하며, 이 소표본은 통계적 우월성을 주장하지 않는다. 결과가 `CONTINUE`여도 원본 저장소에 자동 반영하지 않고 사용자가 선택한 arm만 별도 작업에서 적용한다.
+실행 절차 SSOT는 [Task Review Product Focus Pilot](task_review_product_focus_pilot.md), machine-readable 판정 SSOT는 [persona-effectiveness preregistration](task_review_persona_effectiveness_preregistration_v1.json)이다. 실제 실행 전에 fresh authority와 T0를 동결하고 operator custody의 trusted execution public key를 설정해야 한다. 결과가 `CONTINUE`여도 원본 저장소에 자동 반영하지 않고 사용자가 선택한 arm만 별도 작업에서 적용한다.
 
-- `CONTINUE`: 3건 중 2건 이상 완료하고 baseline보다 완료율이 낮지 않으며, elapsed와 사용자 개입 중앙값이 모두 baseline보다 악화되지 않고 둘 중 하나 이상이 15% 이상 개선되며, 재작업도 baseline보다 증가하지 않으며 중대 회귀·scope 위반·중복 실행이 없다.
-- `REDUCE`: 완료율은 유지하지만 시간·개입 개선이 기준에 못 미치거나 신규 schema·transport가 필요하면 `REDUCE`로 종료하고 단일-agent `task → review` guard로 범위를 축소한다.
-- `STOP`: 완료율이 baseline보다 낮거나 중대 회귀·scope 위반이 발생하거나 7일 안에 적격 3건을 확보하지 못하면 추가 검증 인프라 없이 종료한다.
-- Product Value 6건 prospective study, Plan Batch B, native Review 비교, Work Packet, Decision Policy는 모두 `PAUSED_NOT_CANCELLED`다. 3건 gate가 `CONTINUE`일 때만 별도 사용자 결정으로 하나를 재개한다.
+- `CONTINUE`: baseline correction event가 최소 3건 있고, OMC persona arm의 사람 추가 수정 지시율이 30% 이상 감소하며 completion·verification pass rate·총 사람 개입 수가 비열화가 아니고 median wall-clock이 baseline의 115% 이내이며 fatal violation이 없다.
+- `INCONCLUSIVE`: 유효한 10쌍에서 baseline correction event가 3건 미만이거나, 21일 deadline에 10건 미달임을 유효한 signed collection-close receipt로 봉인한 경우다. receipt·서명·hash·binding·raw output·blind adjudication 증거의 누락·위조·불일치는 결과로 승격하지 않고 `blocked`로 차단한다.
+- `REDUCE/STOP`: 30% 개선에 못 미치면 범위를 축소하고, completion·verification 악화 또는 fatal violation이 있으면 정지한다.
+- 나머지 연구 lane은 `PAUSED_NOT_CANCELLED`이며 persona-effectiveness 결과 후에만 별도 사용자 결정으로 하나를 재개한다.
 
 ### Evidence-state Scorecard
 
@@ -51,15 +52,16 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | Routing V1–V4 | `OPERATIONALLY_VALIDATED` | 라우팅·실패 복구·telemetry 코드와 운영 receipt | 운영 drift 감시 유지 |
 | Bounded scheduler | `IMPLEMENTED` | v2 grant 전용 N-child scheduler·provider adapter·회귀 테스트 | 실제 3–5 child acceptance |
 | Product Value | `BLOCKED` | 기존 evidence-loss batch는 종료했으며 prospective study는 `PAUSED_NOT_CANCELLED` | 별도 사용자 결정으로 재개 |
-| Product focus | `WAITING_FOR_CASES` | v2 roster와 T0는 보존됐지만 현재 선언된 local inventory에 선택 case와 readiness receipt가 없다 | chronological first eligible 3건을 수집해 readiness를 발행한 뒤, 동일 조건 paired arm 실행을 위한 독립 payload·provider session·terminal receipt를 확보. 수동 checklist만으로는 `CONTINUE`·`REDUCE`·`STOP` 판정 금지 |
+| Product focus v2 | `ARCHIVED_INCOMPLETE` | roster·T0는 보존, readiness·provider·terminal·decision evidence는 없음 | reconciliation과 감사만 허용; binding·case 재사용 금지 |
+| Persona effectiveness | `APPROVED_NOT_STARTED` | 10건 paired case·30% 추가 수정 지시 감소·비열화·external receipt 계약 사전 등록 | fresh authority와 T0를 동결한 뒤 actual provider execution 시작 |
 | Product Value independence | `NOT_REPRODUCED` | 유효한 development evidence 없음 | 신규 development evidence 검증 후 별도 선정한 holdout에서 primary metric 충족 |
-| Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재하며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
-| Review | `NOT_PROVEN` | durable native provider 원문 부재이며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
+| Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재하며 현재 `PAUSED_NOT_CANCELLED` | persona-effectiveness 결과 이후 재개 여부 결정 |
+| Review | `NOT_PROVEN` | durable native provider 원문 부재이며 현재 `PAUSED_NOT_CANCELLED` | persona-effectiveness 결과 이후 재개 여부 결정 |
 | Autopilot | `LIMITED` | mission packet 동결, 명시적 `mission_accept` receipt, work contract v2 결속, provider 호출 전 mission briefing 재검증, 격리 candidate 실행과 trusted-base review까지 fail-close | 고정 커밋 기준 외부 provider TASK→REVIEW smoke와 운영 latency·개입 acceptance |
-| Decision Policy | `IMPLEMENTED` | feasibility 계약과 회귀 테스트는 구현됐으며 현재 `PAUSED_NOT_CANCELLED` | 3건 gate 이후 재개 여부 결정 |
+| Decision Policy | `IMPLEMENTED` | feasibility 계약과 회귀 테스트는 구현됐으며 현재 `PAUSED_NOT_CANCELLED` | persona-effectiveness 결과 이후 재개 여부 결정 |
 | Setup | `OPERATIONALLY_VALIDATED` | OMC `0.2.0`을 실제 Git 사용처 8곳에 `setup --force`로 재배포하고 strict audit `8/8` 통과. 비 Git 잔재 1곳은 백업 후 consumer inventory에서 제거했으며 기존 Git 상태를 보존 | source freshness와 rollback 회귀 유지 |
 
-과거 6건 corpus에서 `DEVELOPMENT_PASS`가 기록됐지만 manifest·workload inventory·execution packet 원문을 현재 검증할 수 없어 유효한 development evidence로 승계하지 않는다. 구현과 acceptance 계약은 유지하되, 3건 gate 이후 사용자가 재개를 결정한 경우에만 새 prospective development study에서 chronological first-N 6건을 다시 확보한다. 그 증거가 검증된 뒤에만 비중복 disjoint holdout을 별도로 계획한다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
+과거 6건 corpus에서 `DEVELOPMENT_PASS`가 기록됐지만 manifest·workload inventory·execution packet 원문을 현재 검증할 수 없어 유효한 development evidence로 승계하지 않는다. 구현과 acceptance 계약은 유지하되, persona-effectiveness 결과 이후 사용자가 재개를 결정한 경우에만 새 prospective development study에서 chronological first-N 6건을 다시 확보한다. 그 증거가 검증된 뒤에만 비중복 disjoint holdout을 별도로 계획한다. post-call token은 비교 지표로만 사용하며 strict hard-budget 증거로 취급하지 않는다. Product Value 결과는 Plan, Review 또는 전체 OMC 판정을 변경하지 않는다.
 
 Autopilot Phase A mission gate는 구현·회귀 검증을 완료했다. 사용자 요청과 base commit을 mission packet으로 동결하고 exact `mission_accept` receipt를 work contract v2에 결속하며, safe runner는 provider 호출 전에 packet·approval·session·request·base를 재검증해 mission briefing을 주입한다. receipt는 완전 쓰기와 `fsync` 후 no-replace 방식으로 게시하고, 부분 쓰기 또는 상태 저장 사이 실패는 동일 receipt 재시도로만 복구한다. 관련 회귀 `194 passed`, staged TDD gate, diff check와 OMC review `APPROVE`를 확인했다. 이는 실행 전 목적 결속의 구현 근거이며 외부 provider 실사용 smoke나 운영 acceptance를 대신하지 않는다.
 
@@ -232,7 +234,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 실행 우선순위
 
-`3건 task → review paired acceptance → CONTINUE/REDUCE/STOP 판정`만 현재 실행한다. 현재 `WAITING_FOR_CASES` 단계의 다음 행동은 chronological first eligible case 3건을 수집해 readiness를 발행하는 것이다. 그 뒤에만 동일 조건 paired arm을 실행한다. completion lineage schema v3로 동일 work의 재작업 세션을 묶는 계수 기반은 완료했다. readiness와 독립 evidence가 없으면 결과는 `INCONCLUSIVE`다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이며, 경쟁 제품의 mode를 복제하거나 새 스킬·schema·transport·benchmark fixture를 늘리는 작업은 금지한다.
+`task-review-persona-effectiveness-20260904-v1` 하나만 현재 활성 lane으로 유지한다. 다음 행동은 외부 custody의 study registration과 anonymous arm mapping을 공동 서명해 fresh T0·21일 창·선정 정책·authority를 동결하는 것이다. 이 gate와 case별 enrollment 검증이 끝나기 전에는 해당 case의 provider를 호출하지 않는다. 그 뒤 각 자연 발생 작업을 `enrollment → persona freeze → persona dry-run → external Codex signed execution → terminal` 순으로 즉시 처리해 10쌍을 수집하고, enrollment chain을 다시 대조한 blind adjudication 뒤 decision을 발행한다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이다. 이 active lane 밖의 새 스킬·transport·benchmark fixture는 늘리지 않는다.
 
 ## 제품 원칙과 금지선
 
@@ -253,7 +255,7 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 
 ## 다음 실행 순서
 
-0. **ACTIVE** — 최소 2개 저장소에서 chronological first eligible implementation 작업 3건을 수집해 readiness를 발행한다. readiness 뒤에만 최대 7일 안에 동일 조건 OMC/Baseline arm의 완료율·wall-clock 시간·사용자 개입·재작업을 비교해 `CONTINUE`, `REDUCE`, `STOP` 중 하나로 종료한다.
+0. **ACTIVE — REGISTRATION PENDING / EXECUTION 0/10** — case 1 전에 21일 collection window와 arm mapping·authority·선정 정책을 공동 서명 registration으로 고정한다. 이후 최소 2개 저장소, 저장소당 최대 7건 조건으로 chronological first eligible implementation 10건을 무대체 enrollment하고 각 건을 즉시 paired 실행한다. deadline의 10건 미달은 signed collection-close receipt가 있을 때만 `INCONCLUSIVE`로 닫고, 분포·receipt·binding 위반은 `blocked`로 차단한다. 유효한 10쌍은 수정 지시 30% 감소와 completion·verification·총 개입·wall-clock 비열화 gate로 `CONTINUE`, `REDUCE`, `STOP`을 결정한다.
 
 아래 1–15번은 모두 `PAUSED_NOT_CANCELLED` backlog다. 0번이 `CONTINUE`로 끝난 뒤 사용자가 명시적으로 하나를 선택하기 전에는 실행하지 않는다.
 

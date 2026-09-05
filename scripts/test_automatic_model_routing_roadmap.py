@@ -78,71 +78,68 @@ def test_readme_matches_the_current_bounded_execution_and_verdict_contract() -> 
     assert "현재 executor 관련 결과는 모두 `execution_allowed=false`" not in text
 
 
-def test_current_evidence_is_separate_from_the_unimplemented_v3_proposal() -> None:
+def test_current_evidence_is_separate_from_the_approved_unstarted_v3_study() -> None:
     text = ROADMAP_PATH.read_text(encoding="utf-8")
     first_screen = text.split("### Operator Experience 1차 통합안", 1)[0]
 
     assert "## Current Evidence" in first_screen
     assert "## Active Decision Gate" in first_screen
-    assert "`WAITING_FOR_CASES`" in first_screen
-    assert "readiness receipt가 없다" in first_screen
-    assert "## Target Architecture — Not Implemented" in first_screen
+    assert "`ARCHIVED_INCOMPLETE`" in first_screen
+    assert "readiness·paired arm 실행·terminal·decision receipt가 없어" in first_screen
+    assert "## Target Architecture — Approved Study, Execution Not Started" in first_screen
     assert "persona-guided Codex Pilot v3" in first_screen
-    assert "`PROPOSAL — decision required`" in first_screen
-    assert "Codex adapter는 아직 구현되지 않았다" in first_screen
+    assert "연구 범위와 판정 계약은 승인" in first_screen
+    assert "Codex adapter는 아직 구현되지 않았고" in first_screen
+
+
+def test_roadmap_promotes_the_approved_persona_study_without_reopening_v2() -> None:
+    roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
+    readme = README_PATH.read_text(encoding="utf-8")
+
+    for text in (roadmap, readme):
+        assert "task-review-persona-effectiveness-20260904-v1" in text
+        assert "10건 paired case" in text
+        assert "추가 수정 지시 30%" in text
+        assert "external Codex executor" in text
+        assert "실제 provider 실행은 아직 시작하지 않" in text
+
+    assert "v2는 `ARCHIVED_INCOMPLETE`" in roadmap
+    assert "fresh T0와 21일 창" in roadmap
+    assert "저장소당 최대 7건" in roadmap
 
 
 def test_readme_labels_persona_guided_codex_as_a_target_not_a_feature() -> None:
     text = README_PATH.read_text(encoding="utf-8")
 
-    assert "## Target Architecture — Not Implemented" in text
+    assert "## Target Architecture — Approved Study, Execution Not Started" in text
     assert "여러 레포를 운영하는 SaaS 창업자" in text
     assert "선언된 검증" in text
     assert "persona-guided Codex Pilot v3" in text
-    assert "`PROPOSAL — decision required`" in text
-    assert "Codex adapter는 아직 구현되지 않았다" in text
+    assert "연구 계약까지 승인" in text
+    assert "Codex adapter는 아직 구현되지 않았고" in text
 
 
-def test_product_focus_is_one_three_case_task_review_acceptance_lane() -> None:
+def test_product_focus_is_the_fresh_ten_case_persona_effectiveness_lane() -> None:
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
     readme = README_PATH.read_text(encoding="utf-8")
 
     for text in (roadmap, readme):
-        assert "복잡한 코드 변경을 `task → review`로 안전하게 완료" in text
-        assert "실제 자연 발생 implementation 작업 3건" in text
-        assert "최대 7일" in text
-        assert "완료율·wall-clock 시간·사용자 개입·재작업" in text
+        assert "task-review-persona-effectiveness-20260904-v1" in text
+        assert "10건 paired case" in text
+        assert "추가 수정 지시 30%" in text
+        assert "실제 provider 실행은 아직 시작하지 않" in text
 
-    assert "단일 활성 검증 lane" in roadmap
-    assert "`PAUSED_NOT_CANCELLED`" in roadmap
-    assert "신규 schema·transport가 필요하면 `REDUCE`" in roadmap
-    assert "3건 중 2건 이상" in roadmap
-    assert "elapsed와 사용자 개입 중앙값이 모두 baseline보다 악화되지 않고" in roadmap
-    assert "둘 중 하나 이상이 15% 이상 개선" in roadmap
-    assert "재작업도 baseline보다 증가하지 않으며" in roadmap
-    assert "**bounded N-child 실제 acceptance**는 `PAUSED_NOT_CANCELLED`" in roadmap
-    assert "Plan Batch B receipt 수집은 Implementation P0와 별개로 중단 없이 병행" not in roadmap
-    assert "Work Packet 5건 feasibility는 Batch B와 분리된 진단 lane으로 병행" not in roadmap
-    assert "task_review_product_focus_pilot.md" in roadmap
-    assert "실행 SSOT" in roadmap
-    assert "통계적 우월성" in roadmap
-    assert "pilot-start receipt" in roadmap
-    assert "선택한 arm만 별도 작업에서 적용" in roadmap
-    assert "| Product focus | `WAITING_FOR_CASES` |" in roadmap
-    assert "inventory dry-run" in roadmap
-    assert "chronological first eligible 3건을 수집해 readiness를 발행" in roadmap
-    assert "수동 checklist만으로는 `CONTINUE`·`REDUCE`·`STOP` 판정 금지" in roadmap
-    assert "수집 마감은 `2026-09-10T16:34:19+09:00`" in roadmap
-    assert "실제 T0는 열지 않았" not in roadmap
-    assert "실제 T0는 미개시" not in roadmap
+    assert "| Product focus v2 | `ARCHIVED_INCOMPLETE` |" in roadmap
+    assert "| Persona effectiveness | `APPROVED_NOT_STARTED` |" in roadmap
+    assert "external Codex executor" in roadmap
+    assert "blind adjudication" in roadmap
+    assert "task_review_persona_effectiveness_preregistration_v1.json" in roadmap
+    assert "`WAITING_FOR_CASES`" not in roadmap.split("### Operator Experience 1차 통합안", 1)[0]
     assert "| Setup | `OPERATIONALLY_VALIDATED` |" in roadmap
     assert "OMC `0.2.0`을 실제 Git 사용처 8곳" in roadmap
     assert "strict audit `8/8`" in roadmap
     assert "현재 확인한 consumer는 최신 source 재배포 대기" not in roadmap
-    assert "roster·repository identity·T0 decision·inventory dry-run·review verdict preflight" in roadmap
     assert "`PILOT_PENDING`" not in roadmap
-
-    assert "1. 실제 자연 발생 implementation 작업 3건" in readme
     assert "corpus v2-r1을 schema v2 registry" not in readme
 
 
@@ -276,8 +273,9 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "운영 파일 기반 거짓 source drift를 교정한 뒤" not in text
     assert "public CLI·운영 source drift·consumer 재배포 완료" in text
     assert "`2026-09-03T18:45:09+09:00` 재수집에서 적격 표본은 `3/3`" not in text
-    assert "현재 선언된 local v2 inventory가 `WAITING_FOR_CASES`" in text
-    assert "새 스킬·schema·transport·benchmark fixture를 늘리는 작업은 금지" in text
+    assert "task-review pilot v2는 roster와 T0는 보존됐지만 readiness" in text
+    assert "`ARCHIVED_INCOMPLETE`로 동결" in text
+    assert "active lane 밖의 새 스킬·transport·benchmark fixture는 늘리지 않는다" in text
     assert "Product Value·N-child research 명령은 직접 호출 호환성을 유지" in text
     assert "새 스킬·정책·benchmark fixture 수 증가는 완료 지표로 사용하지 않는다" in text
 

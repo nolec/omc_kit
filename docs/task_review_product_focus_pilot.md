@@ -1,8 +1,16 @@
 # Task Review Product Focus Pilot
 
-## 목적과 범위
+## 현재 판정
 
-이 문서는 OMC의 첫 제품 범위인 복잡한 코드 변경의 `task → review` 흐름을 Baseline과 비교하는 최소 실행 SSOT다. 이 3건 pilot은 kill-or-continue 운영 판단용이며 통계적 우월성이나 Codex 전체 대체를 주장하지 않는다. provider 실행은 이 문서 작성 범위에 포함하지 않는다.
+pilot v2는 `ARCHIVED_INCOMPLETE`로 동결한다. roster와 T0는 보존됐지만 readiness, paired provider execution, terminal receipt, decision receipt가 없어 제품 효과를 판정할 수 없다. v2는 재개·보정·case 추가 없이 reconciliation과 감사용으로만 보존하며, v2의 T0·roster·inventory·readiness·receipt를 승계하지 않는다.
+
+사용자가 승인한 다음 검증은 `task-review-persona-effectiveness-20260904-v1`이다. 여러 레포를 운영하는 1인 SaaS 창업자의 자연 발생 implementation 10건 paired case에서 direct Codex와 OMC persona 경로를 비교한다. primary success criterion은 사람의 추가 수정 지시 30% 이상 감소이며 completion과 verification pass rate는 악화되면 안 된다. 실제 provider 실행은 아직 시작하지 않았다.
+
+실행은 새 adapter 개발 대신 external Codex executor의 수동 signed receipt 프로토콜을 사용한다. case 1 전에 study·reconciliation authority가 함께 서명한 registration으로 T0, 21일 deadline, canonical origin+root commit 저장소 roster, chronological first eligible implementation 10건·무대체, 최소 2개 저장소·저장소당 최대 7건, arm mapping hash, 네 authority와 판정 임계값을 고정한다. 10건을 미리 기다리지 않고 각 자연 작업마다 `enrollment → persona-freeze-case → persona-paired-dry-run → execution → terminal`을 즉시 수행한다. enrollment는 직전 enrollment hash와 state stream cursor 구간을 결속하며, 해당 구간 원문을 `O_NOFOLLOW`로 다시 열어 먼저 나타난 적격 작업을 건너뛰지 않았는지 검증한다. persona frozen case와 dry-run은 v2 readiness를 재사용하지 않고 registration·현재 enrollment hash를 signed execution receipt와 terminal bundle까지 계승한다. case 10 뒤 decision은 enrollment chain과 terminal의 repository·base commit 및 registration hash를 다시 대조한다. 기존 v2 `paired-dry-run`과 3건 readiness 계약은 archive 상태로 동결한다. 추가 수정 event는 첫 구현 응답 후 frozen DoD 또는 verification을 충족하기 위해 사람이 코드 변경을 요구한 case로만 계수하고, 승인·실행 전 질문 답변·최종 채택 결정은 제외한다. blind adjudicator는 실제 arm identity를 모른 채 `arm_a`/`arm_b` boolean과 root-relative 근거 원문 descriptor를 서명한다. `CONTINUE`는 30% 감소뿐 아니라 completion·verification, 총 사람 개입 수, median wall-clock(+15% 이내)의 비열화를 모두 요구한다. 유효하지 않은 운영 입력은 구조화된 `blocked`와 exit 2로 차단한다. 21일 안에 10건을 채우지 못한 경우에는 reconciliation authority가 registration hash·현재 enrollment count·마지막 enrollment hash·deadline 이후 observed time을 묶은 collection-close receipt를 서명해야만 `INCONCLUSIVE`로 종결한다. 이 결정은 검증된 close receipt 전체와 canonical hash를 함께 봉인하여 deadline 근거를 다시 검증할 수 있어야 한다. 정확한 machine-readable 계약은 [persona-effectiveness preregistration](task_review_persona_effectiveness_preregistration_v1.json)을 SSOT로 삼는다.
+
+## v2 보존 계약
+
+아래는 OMC의 기존 3건 `task → review` v2 계약을 변경하지 않고 보존한 archive다. 이 3건 pilot은 kill-or-continue 운영 판단용이었으며 통계적 우월성이나 Codex 전체 대체를 주장하지 않는다. provider 실행은 이 문서 작성 범위에 포함하지 않는다.
 
 T0는 사용자가 `task_review_pilot_start` 결정을 승인하고 그 `pilot-start receipt`가 소비된 `consumed_at`이다. T0부터 최대 7일 동안 최소 2개 저장소에서 발생한 `chronological first eligible 3`을 사용하고, 탈락하거나 불리한 case를 교체하지 않는다. 첫 3건이 한 저장소에 집중되면 이후 case로 다양성을 맞추지 않고 `STOP_ELIGIBILITY_DIVERSITY`로 종료한다. 적격 case는 T0 이후 시작된 실제 자연 발생 implementation 작업이며 합성 fixture, 문서 전용 작업, benchmark 유지보수는 제외한다.
 
@@ -12,7 +20,7 @@ T0 전에는 참여 저장소 roster를 먼저 동결한다. 각 identity는 cre
 
 roster, consumed T0 receipt, inventory가 같은 hash로 결속되고 first eligible 3건과 저장소 다양성을 만족할 때만 `PILOT_READY` receipt를 발행한다. readiness 이전에는 paired 실행을 시작하지 않는다. 이 검증은 기존 state evidence를 소비하며 provider runner를 만들지 않는다.
 
-## 현재 증거 상태
+## v2 증거 상태
 
 pilot v2는 source commit `b0d62fcf66a54ac9f077afea46191880ad5e8dc7`, roster hash `609a575b9f9a58cf9e7b32b604c4f14f8d89cd277b3ab3f00e33f42aeb082933`, T0 `2026-09-03T16:34:19+09:00`에 결속됐다. 그러나 현재 선언된 local v2 state의 inventory는 `WAITING_FOR_CASES`이며 선택 case는 비어 있다. readiness receipt가 아직 없으므로 `PILOT_READY`가 아니다. provider 호출, paired arm terminal receipt와 decision receipt도 아직 없다. 수동 execution packet은 독립 anchor와 provider receipt가 확보되기 전까지 `MANUAL_CHECKLIST_ONLY`이며 `CONTINUE`, `REDUCE`, `STOP`의 근거로 사용하지 않는다.
 

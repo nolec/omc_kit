@@ -18,6 +18,7 @@ from omc_task_review_pilot import (
     build_inventory_dry_run,
     build_pilot_decision,
     build_paired_dry_run,
+    build_persona_paired_dry_run,
     build_pilot_roster,
     build_readiness_receipt,
     build_runner_arm_receipt,
@@ -90,6 +91,20 @@ _RECONCILIATION_SIGNER_PUBLIC_KEY = base64.b64encode(
     )
 ).decode("ascii")
 
+_ADJUDICATION_SIGNER = Ed25519PrivateKey.from_private_bytes(b"\x04" * 32)
+_ADJUDICATION_SIGNER_PUBLIC_KEY = base64.b64encode(
+    _ADJUDICATION_SIGNER.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+).decode("ascii")
+
+_STUDY_SIGNER = Ed25519PrivateKey.from_private_bytes(b"\x05" * 32)
+_STUDY_SIGNER_PUBLIC_KEY = base64.b64encode(
+    _STUDY_SIGNER.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+).decode("ascii")
+
 
 @pytest.fixture(autouse=True)
 def _pin_trusted_execution_authority(monkeypatch) -> None:
@@ -100,6 +115,14 @@ def _pin_trusted_execution_authority(monkeypatch) -> None:
     monkeypatch.setenv(
         "OMC_TASK_REVIEW_PILOT_TRUSTED_RECONCILIATION_PUBLIC_KEY",
         _RECONCILIATION_SIGNER_PUBLIC_KEY,
+    )
+    monkeypatch.setenv(
+        "OMC_TASK_REVIEW_PERSONA_TRUSTED_ADJUDICATION_PUBLIC_KEY",
+        _ADJUDICATION_SIGNER_PUBLIC_KEY,
+    )
+    monkeypatch.setenv(
+        "OMC_TASK_REVIEW_PERSONA_TRUSTED_STUDY_PUBLIC_KEY",
+        _STUDY_SIGNER_PUBLIC_KEY,
     )
 
 
@@ -1063,6 +1086,84 @@ def test_paired_dry_run_rejects_invalid_counterbalance_position() -> None:
         build_paired_dry_run(receipt, case_position=4)
 
 
+def test_persona_counterbalance_accepts_ten_positions_and_rejects_eleven() -> None:
+    receipt = _freeze_case()
+    study_binding_sha256 = "b" * 64
+
+    dry_run = build_persona_paired_dry_run(
+        receipt,
+        case_position=10,
+        study_binding_sha256=study_binding_sha256,
+    )
+
+    assert dry_run["arm_order"] == ["baseline", "omc"]
+    assert dry_run["study_binding_sha256"] == study_binding_sha256
+    with pytest.raises(PilotPreflightError, match="invalid_case_position"):
+        build_persona_paired_dry_run(
+            receipt,
+            case_position=11,
+            study_binding_sha256=study_binding_sha256,
+        )
+
+
+def test_persona_paired_dry_run_cli_blocks_invalid_source_before_execution(
+    tmp_path: Path,
+) -> None:
+    mapping = _persona_mapping()
+    registration = _persona_registration(mapping)
+    enrollments = _persona_enrollments(registration, tmp_path)
+    frozen = omc_task_review_pilot.freeze_persona_case(
+        _frozen_case(),
+        registration_receipt=registration,
+        arm_mapping_receipt=mapping,
+    )
+    frozen["case"]["base_commit"] = "main"
+    frozen["case_sha256"] = _sha(
+        {key: value for key, value in frozen.items() if key != "case_sha256"}
+    )
+    frozen_path = tmp_path / "frozen.json"
+    registration_path = tmp_path / "registration.json"
+    mapping_path = tmp_path / "mapping.json"
+    enrollment_path = tmp_path / "enrollment.json"
+    output_path = tmp_path / "dry-run.json"
+    frozen_path.write_text(json.dumps(frozen), encoding="utf-8")
+    registration_path.write_text(json.dumps(registration), encoding="utf-8")
+    mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
+    enrollment_path.write_text(json.dumps(enrollments[0]), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("omc_task_review_pilot.py")),
+            "persona-paired-dry-run",
+            "--case-receipt",
+            str(frozen_path),
+            "--case-position",
+            "1",
+            "--registration",
+            str(registration_path),
+            "--enrollment-receipt",
+            str(enrollment_path),
+            "--arm-mapping",
+            str(mapping_path),
+            "--artifact-root",
+            str(tmp_path),
+            "--output",
+            str(output_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert json.loads(result.stdout) == {
+        "status": "blocked",
+        "reason": "persona_enrollment_case_binding_mismatch",
+    }
+    assert not output_path.exists()
+
+
 def _terminal_arm(arm: str, *, elapsed: float, intervention: int = 0) -> dict[str, object]:
     return {
         "arm": arm,
@@ -1099,6 +1200,7 @@ def _runner_arm_receipt(
     }
     execution = {
         "schema_version": "omc-task-review-pilot-execution/v2",
+        "signed_at": "2026-09-03T02:02:00+09:00",
         "dry_run_sha256": dry_run["dry_run_sha256"],
         "case_sha256": dry_run["case_sha256"],
         "arm": arm,
@@ -1447,6 +1549,523 @@ def test_pilot_decision_rejects_terminal_receipts_without_provider_calls(tmp_pat
     )["reason"] == "provider_execution_absent"
 
 
+def _persona_terminal(index: int, study_binding_sha256: str) -> dict[str, object]:
+    repository_id = "repo-a" if index < 7 else "repo-b"
+    return {
+        "terminal_sha256": f"{index + 1:064x}",
+        "case_sha256": f"{index + 101:064x}",
+        "dry_run": {
+            "schema_version": "omc-task-review-persona-paired-dry-run/v1",
+            "case_position": index + 1,
+            "study_binding_sha256": study_binding_sha256,
+            "case_source": {
+                "repository_id": repository_id,
+                "base_commit": "a" * 40,
+            },
+        },
+        "completion": {"omc": True, "baseline": True},
+        "arms": {
+            "omc": {
+                "verification_passed": True,
+                "fatal_violation": False,
+                "provider_call_count": 1,
+                "elapsed_seconds": 80,
+                "user_intervention": 0,
+            },
+            "baseline": {
+                "verification_passed": True,
+                "fatal_violation": False,
+                "provider_call_count": 1,
+                "elapsed_seconds": 100,
+                "user_intervention": 1,
+            },
+        },
+    }
+
+
+def _persona_mapping() -> dict[str, object]:
+    receipt: dict[str, object] = {
+        "schema_version": "omc-task-review-persona-arm-mapping/v1",
+        "study_id": "task-review-persona-effectiveness-20260904-v1",
+        "arm_a": "baseline",
+        "arm_b": "omc",
+        "registered_at": "2026-09-03T02:01:00+09:00",
+        "signer_public_key": _STUDY_SIGNER_PUBLIC_KEY,
+        "signature": "",
+    }
+    receipt["signature"] = base64.b64encode(
+        _STUDY_SIGNER.sign(
+            omc_task_review_pilot._persona_arm_mapping_signed_bytes(receipt)
+        )
+    ).decode("ascii")
+    return receipt
+
+
+def _persona_study_binding(
+    readiness: dict[str, object], mapping: dict[str, object], artifact_root: Path,
+) -> dict[str, object]:
+    source_snapshot_path = artifact_root / "source-snapshot.json"
+    source_snapshot_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omc-task-review-persona-source-snapshot/v1",
+                "study_id": "task-review-persona-effectiveness-20260904-v1",
+                "cases": [
+                    {
+                        "case_position": index + 1,
+                        "repository_id": "repo-a" if index < 7 else "repo-b",
+                        "base_commit": "a" * 40,
+                    }
+                    for index in range(10)
+                ],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    source_snapshot_sha256 = hashlib.sha256(
+        source_snapshot_path.read_bytes()
+    ).hexdigest()
+    receipt: dict[str, object] = {
+        "schema_version": "omc-task-review-persona-study-binding/v1",
+        "study_id": "task-review-persona-effectiveness-20260904-v1",
+        "readiness_sha256": readiness["readiness_sha256"],
+        "source_snapshot_sha256": source_snapshot_sha256,
+        "source_snapshot": {
+            "path": source_snapshot_path.name,
+            "sha256": source_snapshot_sha256,
+        },
+        "adjudication_public_key": _ADJUDICATION_SIGNER_PUBLIC_KEY,
+        "arm_mapping_sha256": _sha(mapping),
+        "registered_at": "2026-09-03T02:01:00+09:00",
+        "signer_public_key": _STUDY_SIGNER_PUBLIC_KEY,
+        "reconciliation_public_key": _RECONCILIATION_SIGNER_PUBLIC_KEY,
+        "reconciliation_signature": "",
+        "signature": "",
+    }
+    signed_bytes = omc_task_review_pilot._persona_study_binding_signed_bytes(receipt)
+    receipt["signature"] = base64.b64encode(
+        _STUDY_SIGNER.sign(signed_bytes)
+    ).decode("ascii")
+    receipt["reconciliation_signature"] = base64.b64encode(
+        _RECONCILIATION_SIGNER.sign(signed_bytes)
+    ).decode("ascii")
+    return receipt
+
+
+def _blind_persona_adjudication(
+    terminals: list[dict[str, object]], artifact_root: Path,
+    *, arm_a_events: int, arm_b_events: int,
+) -> dict[str, object]:
+    cases = []
+    for index, terminal in enumerate(terminals):
+        arm_a_path = artifact_root / f"case-{index}-a.txt"
+        arm_b_path = artifact_root / f"case-{index}-b.txt"
+        arm_a_path.write_text(f"anonymous correction evidence a {index}\n", encoding="utf-8")
+        arm_b_path.write_text(f"anonymous correction evidence b {index}\n", encoding="utf-8")
+        cases.append(
+            {
+                "terminal_sha256": terminal["terminal_sha256"],
+                "case_sha256": terminal["case_sha256"],
+                "arm_a_additional_correction_required": index < arm_a_events,
+                "arm_b_additional_correction_required": index < arm_b_events,
+                "arm_a_correction_evidence": {
+                    "path": arm_a_path.name,
+                    "sha256": hashlib.sha256(arm_a_path.read_bytes()).hexdigest(),
+                },
+                "arm_b_correction_evidence": {
+                    "path": arm_b_path.name,
+                    "sha256": hashlib.sha256(arm_b_path.read_bytes()).hexdigest(),
+                },
+            }
+        )
+    receipt: dict[str, object] = {
+        "schema_version": "omc-task-review-persona-adjudication/v2",
+        "signer": "omc-task-review-persona-blind-adjudicator-v1",
+        "signer_public_key": _ADJUDICATION_SIGNER_PUBLIC_KEY,
+        "study_id": "task-review-persona-effectiveness-20260904-v1",
+        "cases": cases,
+        "signature": "",
+    }
+    receipt["signature"] = base64.b64encode(
+        _ADJUDICATION_SIGNER.sign(
+            omc_task_review_pilot._persona_adjudication_signed_bytes(receipt)
+        )
+    ).decode("ascii")
+    return receipt
+
+
+def test_persona_decision_requires_fresh_binding_blind_mapping_and_real_evidence(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    readiness = _execution_readiness()
+    mapping = _persona_mapping()
+    binding = _persona_study_binding(readiness, mapping, tmp_path)
+    terminals = [_persona_terminal(index, _sha(binding)) for index in range(10)]
+    adjudication = _blind_persona_adjudication(
+        terminals, tmp_path, arm_a_events=5, arm_b_events=3
+    )
+    monkeypatch.setattr(
+        omc_task_review_pilot,
+        "_validated_terminal_receipt",
+        lambda receipt, **kwargs: receipt,
+    )
+
+    decision = omc_task_review_pilot.build_persona_study_decision(
+        terminals,
+        adjudication_receipt=adjudication,
+        readiness_receipt=readiness,
+        study_binding_receipt=binding,
+        arm_mapping_receipt=mapping,
+        artifact_root=tmp_path,
+    )
+    assert decision["status"] == "CONTINUE"
+
+    (tmp_path / "case-0-a.txt").write_text("tampered\n", encoding="utf-8")
+    with pytest.raises(PilotPreflightError, match="persona_correction_evidence_hash_mismatch"):
+        omc_task_review_pilot.build_persona_study_decision(
+            terminals,
+            adjudication_receipt=adjudication,
+            readiness_receipt=readiness,
+            study_binding_receipt=binding,
+            arm_mapping_receipt=mapping,
+            artifact_root=tmp_path,
+        )
+
+
+def test_persona_decision_revalidates_ten_real_sealed_terminals(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    readiness = _execution_readiness()
+    mapping = _persona_mapping()
+    adjudication_root = tmp_path / "adjudication"
+    adjudication_root.mkdir()
+    binding = _persona_study_binding(readiness, mapping, adjudication_root)
+    study_binding_sha256 = _sha(binding)
+    terminals = []
+    for index in range(10):
+        case = _frozen_case()
+        case["case_id"] = f"persona-case-{index + 1}"
+        case["repository_id"] = "repo-a" if index < 7 else "repo-b"
+        dry_run = build_persona_paired_dry_run(
+            freeze_case(case, readiness_receipt=readiness),
+            case_position=index + 1,
+            study_binding_sha256=study_binding_sha256,
+        )
+        case_root = tmp_path / f"terminal-{index + 1}"
+        terminals.append(
+            build_terminal_receipt(
+                dry_run,
+                [
+                    _runner_arm_receipt(dry_run, case_root, "omc", elapsed=80),
+                    _runner_arm_receipt(dry_run, case_root, "baseline", elapsed=100),
+                ],
+            )
+        )
+    original_read_execution_receipt_file = (
+        omc_task_review_pilot._read_execution_receipt_file
+    )
+    execution_receipt_read_count = 0
+
+    def counted_read_execution_receipt_file(*args, **kwargs):
+        nonlocal execution_receipt_read_count
+        execution_receipt_read_count += 1
+        return original_read_execution_receipt_file(*args, **kwargs)
+
+    monkeypatch.setattr(
+        omc_task_review_pilot,
+        "_read_execution_receipt_file",
+        counted_read_execution_receipt_file,
+    )
+
+    decision = omc_task_review_pilot.build_persona_study_decision(
+        terminals,
+        adjudication_receipt=_blind_persona_adjudication(
+            terminals, adjudication_root, arm_a_events=5, arm_b_events=3
+        ),
+        readiness_receipt=readiness,
+        study_binding_receipt=binding,
+        arm_mapping_receipt=mapping,
+        artifact_root=adjudication_root,
+    )
+
+    assert decision["status"] == "CONTINUE"
+    assert decision["terminal_receipt_count"] == 10
+    assert execution_receipt_read_count == 20
+
+
+def test_persona_decision_rejects_posthoc_mapping_rebound_after_execution(
+    tmp_path: Path,
+) -> None:
+    readiness = _execution_readiness()
+    evidence_root = tmp_path / "late-adjudication"
+    evidence_root.mkdir()
+    original_mapping = _persona_mapping()
+    original_binding = _persona_study_binding(
+        readiness, original_mapping, evidence_root
+    )
+    original_binding_sha256 = _sha(original_binding)
+    terminals = []
+    for index in range(10):
+        case = _frozen_case()
+        case["case_id"] = f"late-map-case-{index + 1}"
+        dry_run = build_persona_paired_dry_run(
+            freeze_case(case, readiness_receipt=readiness),
+            case_position=index + 1,
+            study_binding_sha256=original_binding_sha256,
+        )
+        case_root = tmp_path / f"late-terminal-{index + 1}"
+        terminals.append(
+            build_terminal_receipt(
+                dry_run,
+                [
+                    _runner_arm_receipt(dry_run, case_root, "omc", elapsed=80),
+                    _runner_arm_receipt(dry_run, case_root, "baseline", elapsed=100),
+                ],
+            )
+        )
+
+    posthoc_mapping = _persona_mapping()
+    posthoc_mapping["arm_a"] = "omc"
+    posthoc_mapping["arm_b"] = "baseline"
+    posthoc_mapping["signature"] = base64.b64encode(
+        _STUDY_SIGNER.sign(
+            omc_task_review_pilot._persona_arm_mapping_signed_bytes(posthoc_mapping)
+        )
+    ).decode("ascii")
+    posthoc_binding = _persona_study_binding(
+        readiness, posthoc_mapping, evidence_root
+    )
+
+    with pytest.raises(
+        PilotPreflightError, match="persona_terminal_study_binding_mismatch"
+    ):
+        omc_task_review_pilot.build_persona_study_decision(
+            terminals,
+            adjudication_receipt=_blind_persona_adjudication(
+                terminals, evidence_root, arm_a_events=5, arm_b_events=3
+            ),
+            readiness_receipt=readiness,
+            study_binding_receipt=posthoc_binding,
+            arm_mapping_receipt=posthoc_mapping,
+            artifact_root=evidence_root,
+        )
+
+
+def test_persona_decision_rejects_tampered_source_snapshot(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    readiness = _execution_readiness()
+    mapping = _persona_mapping()
+    binding = _persona_study_binding(readiness, mapping, tmp_path)
+    terminals = [_persona_terminal(index, _sha(binding)) for index in range(10)]
+    monkeypatch.setattr(
+        omc_task_review_pilot,
+        "_validated_terminal_receipt",
+        lambda receipt, *, expected_pilot_binding: receipt,
+    )
+    (tmp_path / "source-snapshot.json").write_text("tampered\n", encoding="utf-8")
+
+    with pytest.raises(
+        PilotPreflightError, match="persona_source_snapshot_hash_mismatch"
+    ):
+        omc_task_review_pilot.build_persona_study_decision(
+            terminals,
+            adjudication_receipt=_blind_persona_adjudication(
+                terminals, tmp_path, arm_a_events=5, arm_b_events=3
+            ),
+            readiness_receipt=readiness,
+            study_binding_receipt=binding,
+            arm_mapping_receipt=mapping,
+            artifact_root=tmp_path,
+        )
+
+
+def test_persona_decision_requires_reconciliation_trust_anchor(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    readiness = _execution_readiness()
+    mapping = _persona_mapping()
+    binding = _persona_study_binding(readiness, mapping, tmp_path)
+    terminals = [_persona_terminal(index, _sha(binding)) for index in range(10)]
+    monkeypatch.delenv(
+        "OMC_TASK_REVIEW_PILOT_TRUSTED_RECONCILIATION_PUBLIC_KEY"
+    )
+
+    with pytest.raises(PilotPreflightError, match="reconciliation_authority_missing"):
+        omc_task_review_pilot.build_persona_study_decision(
+            terminals,
+            adjudication_receipt={},
+            readiness_receipt=readiness,
+            study_binding_receipt=binding,
+            arm_mapping_receipt=mapping,
+            artifact_root=tmp_path,
+        )
+
+
+def test_persona_decision_rejects_invalid_reconciliation_signature(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    readiness = _execution_readiness()
+    mapping = _persona_mapping()
+    binding = _persona_study_binding(readiness, mapping, tmp_path)
+    terminals = [_persona_terminal(index, _sha(binding)) for index in range(10)]
+    binding["reconciliation_signature"] = base64.b64encode(b"invalid").decode(
+        "ascii"
+    )
+    monkeypatch.setattr(
+        omc_task_review_pilot,
+        "_validated_terminal_receipt",
+        lambda receipt, *, expected_pilot_binding: receipt,
+    )
+
+    with pytest.raises(
+        PilotPreflightError,
+        match="persona_study_reconciliation_signature_invalid",
+    ):
+        omc_task_review_pilot.build_persona_study_decision(
+            terminals,
+            adjudication_receipt={},
+            readiness_receipt=readiness,
+            study_binding_receipt=binding,
+            arm_mapping_receipt=mapping,
+            artifact_root=tmp_path,
+        )
+
+
+def test_persona_decision_rejects_v2_dry_run_mixed_into_study(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    readiness = _execution_readiness()
+    mapping = _persona_mapping()
+    binding = _persona_study_binding(readiness, mapping, tmp_path)
+    terminals = [_persona_terminal(index, _sha(binding)) for index in range(10)]
+    terminals[0]["dry_run"]["schema_version"] = (
+        "omc-task-review-pilot-paired-dry-run/v1"
+    )
+    monkeypatch.setattr(
+        omc_task_review_pilot,
+        "_validated_terminal_receipt",
+        lambda receipt, *, expected_pilot_binding: receipt,
+    )
+
+    with pytest.raises(
+        PilotPreflightError, match="persona_terminal_study_binding_mismatch"
+    ):
+        omc_task_review_pilot.build_persona_study_decision(
+            terminals,
+            adjudication_receipt={},
+            readiness_receipt=readiness,
+            study_binding_receipt=binding,
+            arm_mapping_receipt=mapping,
+            artifact_root=tmp_path,
+        )
+
+
+def test_persona_decision_is_inconclusive_without_three_baseline_events(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    readiness = _execution_readiness()
+    mapping = _persona_mapping()
+    binding = _persona_study_binding(readiness, mapping, tmp_path)
+    terminals = [_persona_terminal(index, _sha(binding)) for index in range(10)]
+    monkeypatch.setattr(
+        omc_task_review_pilot,
+        "_validated_terminal_receipt",
+        lambda receipt, *, expected_pilot_binding: receipt,
+    )
+
+    decision = omc_task_review_pilot.build_persona_study_decision(
+        terminals,
+        adjudication_receipt=_blind_persona_adjudication(
+            terminals, tmp_path, arm_a_events=2, arm_b_events=0
+        ),
+        readiness_receipt=readiness,
+        study_binding_receipt=binding,
+        arm_mapping_receipt=mapping,
+        artifact_root=tmp_path,
+    )
+
+    assert decision["status"] == "INCONCLUSIVE"
+    assert decision["reason"] == "insufficient_baseline_correction_events"
+
+
+def test_persona_decision_rejects_tampered_or_duplicate_adjudication(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    readiness = _execution_readiness()
+    mapping = _persona_mapping()
+    binding = _persona_study_binding(readiness, mapping, tmp_path)
+    terminals = [_persona_terminal(index, _sha(binding)) for index in range(10)]
+    monkeypatch.setattr(
+        omc_task_review_pilot,
+        "_validated_terminal_receipt",
+        lambda receipt, *, expected_pilot_binding: receipt,
+    )
+    adjudication = _blind_persona_adjudication(
+        terminals, tmp_path, arm_a_events=5, arm_b_events=3
+    )
+    adjudication["cases"][0]["arm_b_additional_correction_required"] = False
+
+    with pytest.raises(
+        PilotPreflightError, match="persona_adjudication_signature_invalid"
+    ):
+        omc_task_review_pilot.build_persona_study_decision(
+            terminals,
+            adjudication_receipt=adjudication,
+            readiness_receipt=readiness,
+            study_binding_receipt=binding,
+            arm_mapping_receipt=mapping,
+            artifact_root=tmp_path,
+        )
+
+    with pytest.raises(PilotPreflightError, match="persona_terminal_case_duplicate"):
+        omc_task_review_pilot.build_persona_study_decision(
+            terminals[:-1] + [terminals[0]],
+            adjudication_receipt=_blind_persona_adjudication(
+                terminals[:-1] + [terminals[0]], tmp_path,
+                arm_a_events=5, arm_b_events=3
+            ),
+            readiness_receipt=readiness,
+            study_binding_receipt=binding,
+            arm_mapping_receipt=mapping,
+            artifact_root=tmp_path,
+        )
+
+
+def test_persona_decision_requires_independent_adjudicator(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    readiness = _execution_readiness()
+    mapping = _persona_mapping()
+    binding = _persona_study_binding(readiness, mapping, tmp_path)
+    terminals = [_persona_terminal(index, _sha(binding)) for index in range(10)]
+    monkeypatch.setattr(
+        omc_task_review_pilot,
+        "_validated_terminal_receipt",
+        lambda receipt, *, expected_pilot_binding: receipt,
+    )
+    monkeypatch.setenv(
+        "OMC_TASK_REVIEW_PERSONA_TRUSTED_ADJUDICATION_PUBLIC_KEY",
+        _EXECUTION_SIGNER_PUBLIC_KEY,
+    )
+    with pytest.raises(
+        PilotPreflightError, match="persona_adjudication_authority_not_independent"
+    ):
+        omc_task_review_pilot.build_persona_study_decision(
+            terminals,
+            adjudication_receipt=_blind_persona_adjudication(
+                terminals, tmp_path, arm_a_events=5, arm_b_events=3
+            ),
+            readiness_receipt=readiness,
+            study_binding_receipt=binding,
+            arm_mapping_receipt=mapping,
+            artifact_root=tmp_path,
+        )
+
+
 def test_terminal_and_decision_cli_publish_evidence(tmp_path) -> None:
     script = str(Path(__file__).with_name("omc_task_review_pilot.py"))
     dry_run_path = tmp_path / "dry-run.json"
@@ -1557,6 +2176,459 @@ def test_selection_uses_first_three_eligible_sessions_without_replacement() -> N
     )
 
     assert [item["session_id"] for item in selected] == ["s1", "s2", "s3"]
+
+
+def _persona_registration(mapping: dict[str, object]) -> dict[str, object]:
+    repositories = []
+    for name, root_commit in (("repo-a", "a" * 40), ("repo-b", "b" * 40)):
+        canonical_origin = f"example.com/{name}"
+        repositories.append(
+            {
+                "repository_id": hashlib.sha256(
+                    f"{canonical_origin}\n{root_commit}".encode("utf-8")
+                ).hexdigest(),
+                "canonical_origin": canonical_origin,
+                "root_commit": root_commit,
+            }
+        )
+    repositories.sort(key=lambda item: item["repository_id"])
+    receipt: dict[str, object] = {
+        "schema_version": "omc-task-review-persona-study-registration/v1",
+        "study_id": "task-review-persona-effectiveness-20260904-v1",
+        "t0": "2026-09-03T02:01:00+09:00",
+        "collection_deadline": "2026-09-24T02:01:00+09:00",
+        "case_count": 10,
+        "minimum_repository_count": 2,
+        "maximum_cases_per_repository": 7,
+        "wall_clock_noninferiority_ratio": 1.15,
+        "selection_policy": "chronological_first_eligible_implementation_no_replacement",
+        "arm_order_policy": "odd_omc_first_even_direct_first",
+        "arm_mapping_sha256": _sha(mapping),
+        "repositories": repositories,
+        "execution_public_key": _EXECUTION_SIGNER_PUBLIC_KEY,
+        "study_public_key": _STUDY_SIGNER_PUBLIC_KEY,
+        "reconciliation_public_key": _RECONCILIATION_SIGNER_PUBLIC_KEY,
+        "adjudication_public_key": _ADJUDICATION_SIGNER_PUBLIC_KEY,
+        "initial_previous_enrollment_sha256": "0" * 64,
+        "user_approved": True,
+        "registered_at": "2026-09-03T02:01:00+09:00",
+        "signer_public_key": _STUDY_SIGNER_PUBLIC_KEY,
+        "reconciliation_signature": "",
+        "signature": "",
+    }
+    signed = omc_task_review_pilot._persona_registration_signed_bytes(receipt)
+    receipt["signature"] = base64.b64encode(_STUDY_SIGNER.sign(signed)).decode("ascii")
+    receipt["reconciliation_signature"] = base64.b64encode(
+        _RECONCILIATION_SIGNER.sign(signed)
+    ).decode("ascii")
+    return receipt
+
+
+def _persona_enrollments(
+    registration: dict[str, object], artifact_root: Path, *, repo_b_start: int = 7,
+    cases: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
+    registration_sha256 = _sha(registration)
+    previous = "0" * 64
+    enrollments: list[dict[str, object]] = []
+    for index in range(10):
+        case = cases[index] if cases is not None else None
+        repository_ids = [
+            item["repository_id"] for item in registration["repositories"]
+        ]
+        repository_id = (
+            str(case["repository_id"])
+            if case is not None
+            else (
+                repository_ids[0] if index < repo_b_start else repository_ids[1]
+            )
+        )
+        created_at = f"2026-09-{4 + index:02d}T02:01:00+09:00"
+        session = {
+            "session_id": f"persona-session-{index + 1}",
+            "created_at": created_at,
+            "repository_id": repository_id,
+            "base_commit": case["base_commit"] if case is not None else "a" * 40,
+            "work_class": "implementation",
+            "eligible": True,
+            "request_sha256": _sha(case["request"]) if case is not None else f"{index + 201:064x}",
+            "dod_sha256": _sha(case["dod"]) if case is not None else f"{index + 301:064x}",
+            "verification_sha256": _sha(case["verification_command"]) if case is not None else f"{index + 401:064x}",
+        }
+        evidence_path = artifact_root / f"enrollment-{index + 1}-state.json"
+        evidence_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "omc-task-review-persona-state-evidence/v1",
+                    "study_id": registration["study_id"],
+                    "previous_terminal_cursor": None if index == 0 else f"cursor-{index}",
+                    "terminal_cursor": f"cursor-{index + 1}",
+                    "sessions": [session],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ) + "\n",
+            encoding="utf-8",
+        )
+        receipt: dict[str, object] = {
+            "schema_version": "omc-task-review-persona-enrollment/v1",
+            "study_id": registration["study_id"],
+            "registration_sha256": registration_sha256,
+            "previous_enrollment_sha256": previous,
+            "sequence": index + 1,
+            "session_id": session["session_id"],
+            "session_created_at": created_at,
+            "enrolled_at": created_at,
+            "repository_id": repository_id,
+            "base_commit": session["base_commit"],
+            "work_class": "implementation",
+            "request_sha256": session["request_sha256"],
+            "dod_sha256": session["dod_sha256"],
+            "verification_sha256": session["verification_sha256"],
+            "state_evidence": {
+                "path": evidence_path.name,
+                "sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+            },
+            "signer_public_key": _RECONCILIATION_SIGNER_PUBLIC_KEY,
+            "signature": "",
+        }
+        receipt["signature"] = base64.b64encode(
+            _RECONCILIATION_SIGNER.sign(
+                omc_task_review_pilot._persona_enrollment_signed_bytes(receipt)
+            )
+        ).decode("ascii")
+        previous = _sha(receipt)
+        enrollments.append(receipt)
+    return enrollments
+
+
+def test_persona_enrollment_chain_proves_first_ten_and_repository_diversity(
+    tmp_path: Path,
+) -> None:
+    mapping = _persona_mapping()
+    registration = _persona_registration(mapping)
+    enrollments = _persona_enrollments(registration, tmp_path)
+
+    validated = omc_task_review_pilot.validate_persona_enrollment_chain(
+        registration,
+        enrollments,
+        arm_mapping_receipt=mapping,
+        artifact_root=tmp_path,
+    )
+
+    assert [item["sequence"] for item in validated] == list(range(1, 11))
+    enrollments = _persona_enrollments(registration, tmp_path, repo_b_start=10)
+    with pytest.raises(PilotPreflightError, match="persona_repository_distribution_invalid"):
+        omc_task_review_pilot.validate_persona_enrollment_chain(
+            registration,
+            enrollments,
+            arm_mapping_receipt=mapping,
+            artifact_root=tmp_path,
+        )
+
+
+def test_persona_enrollment_rejects_skipped_eligible_session(tmp_path: Path) -> None:
+    mapping = _persona_mapping()
+    registration = _persona_registration(mapping)
+    enrollments = _persona_enrollments(registration, tmp_path)
+    evidence_path = tmp_path / "enrollment-1-state.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    skipped = dict(evidence["sessions"][0])
+    skipped["session_id"] = "skipped-first-eligible"
+    skipped["created_at"] = "2026-09-03T03:01:00+09:00"
+    evidence["sessions"].insert(0, skipped)
+    evidence_path.write_text(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    enrollments[0]["state_evidence"]["sha256"] = hashlib.sha256(
+        evidence_path.read_bytes()
+    ).hexdigest()
+    enrollments[0]["signature"] = base64.b64encode(
+        _RECONCILIATION_SIGNER.sign(
+            omc_task_review_pilot._persona_enrollment_signed_bytes(enrollments[0])
+        )
+    ).decode("ascii")
+
+    with pytest.raises(PilotPreflightError, match="persona_enrollment_not_first_eligible"):
+        omc_task_review_pilot.validate_persona_enrollment_chain(
+            registration,
+            enrollments,
+            arm_mapping_receipt=mapping,
+            artifact_root=tmp_path,
+        )
+
+
+def test_persona_registration_rejects_malformed_arm_mapping() -> None:
+    mapping = _persona_mapping()
+    del mapping["arm_b"]
+    mapping["signature"] = base64.b64encode(
+        _STUDY_SIGNER.sign(
+            omc_task_review_pilot._persona_arm_mapping_signed_bytes(mapping)
+        )
+    ).decode("ascii")
+    registration = _persona_registration(mapping)
+
+    with pytest.raises(PilotPreflightError, match="persona_arm_mapping_invalid"):
+        omc_task_review_pilot.freeze_persona_case(
+            _frozen_case(),
+            registration_receipt=registration,
+            arm_mapping_receipt=mapping,
+        )
+
+    mapping = _persona_mapping()
+    mapping["arm_a"] = {}
+    mapping["signature"] = base64.b64encode(
+        _STUDY_SIGNER.sign(
+            omc_task_review_pilot._persona_arm_mapping_signed_bytes(mapping)
+        )
+    ).decode("ascii")
+    registration = _persona_registration(mapping)
+    with pytest.raises(PilotPreflightError, match="persona_arm_mapping_invalid"):
+        omc_task_review_pilot.freeze_persona_case(
+            _frozen_case(),
+            registration_receipt=registration,
+            arm_mapping_receipt=mapping,
+        )
+
+
+def test_persona_enrollment_rejects_non_boolean_eligibility(tmp_path: Path) -> None:
+    mapping = _persona_mapping()
+    registration = _persona_registration(mapping)
+    enrollments = _persona_enrollments(registration, tmp_path)
+    evidence_path = tmp_path / "enrollment-1-state.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    evidence["sessions"][-1]["eligible"] = 1
+    evidence_path.write_text(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    enrollments[0]["state_evidence"]["sha256"] = hashlib.sha256(
+        evidence_path.read_bytes()
+    ).hexdigest()
+    enrollments[0]["signature"] = base64.b64encode(
+        _RECONCILIATION_SIGNER.sign(
+            omc_task_review_pilot._persona_enrollment_signed_bytes(enrollments[0])
+        )
+    ).decode("ascii")
+
+    with pytest.raises(PilotPreflightError, match="persona_enrollment_state_invalid"):
+        omc_task_review_pilot.validate_persona_enrollment_chain(
+            registration,
+            enrollments,
+            arm_mapping_receipt=mapping,
+            artifact_root=tmp_path,
+        )
+
+
+def test_persona_registration_rejects_noncanonical_repository_roster() -> None:
+    mapping = _persona_mapping()
+    registration = _persona_registration(mapping)
+    registration["repositories"][0]["repository_id"] = "f" * 64
+    registration["signature"] = ""
+    registration["reconciliation_signature"] = ""
+    signed = omc_task_review_pilot._persona_registration_signed_bytes(registration)
+    registration["signature"] = base64.b64encode(
+        _STUDY_SIGNER.sign(signed)
+    ).decode("ascii")
+    registration["reconciliation_signature"] = base64.b64encode(
+        _RECONCILIATION_SIGNER.sign(signed)
+    ).decode("ascii")
+
+    with pytest.raises(PilotPreflightError, match="persona_repository_roster_invalid"):
+        omc_task_review_pilot.freeze_persona_case(
+            _frozen_case(),
+            registration_receipt=registration,
+            arm_mapping_receipt=mapping,
+        )
+
+
+def test_persona_decision_metric_gate_includes_total_interventions_and_wall_clock() -> None:
+    terminals = [_persona_terminal(index, "b" * 64) for index in range(10)]
+    for terminal in terminals:
+        terminal["arms"]["baseline"].update({"elapsed_seconds": 100, "user_intervention": 1})
+        terminal["arms"]["omc"].update({"elapsed_seconds": 116, "user_intervention": 0})
+
+    result = omc_task_review_pilot._persona_metric_decision(
+        terminals,
+        correction_events={"direct_codex": 5, "omc_persona": 3},
+        wall_clock_noninferiority_ratio=1.15,
+    )
+
+    assert result["status"] == "STOP"
+    assert result["reason"] == "wall_clock_noninferiority_failed"
+
+
+def test_persona_fatal_violation_precedes_low_baseline_event_inconclusive() -> None:
+    terminals = [_persona_terminal(index, "b" * 64) for index in range(10)]
+    terminals[0]["arms"]["omc"]["fatal_violation"] = True
+
+    result = omc_task_review_pilot._persona_metric_decision(
+        terminals,
+        correction_events={"direct_codex": 2, "omc_persona": 0},
+        wall_clock_noninferiority_ratio=1.15,
+    )
+
+    assert result["status"] == "STOP"
+    assert result["reason"] == "fatal_violation"
+
+
+def test_persona_collection_close_returns_signed_deadline_shortfall(
+    tmp_path: Path,
+) -> None:
+    mapping = _persona_mapping()
+    registration = _persona_registration(mapping)
+    enrollments = _persona_enrollments(registration, tmp_path)[:9]
+    close_receipt: dict[str, object] = {
+        "schema_version": "omc-task-review-persona-collection-close/v1",
+        "study_id": registration["study_id"],
+        "registration_sha256": _sha(registration),
+        "enrollment_count": 9,
+        "final_enrollment_sha256": _sha(enrollments[-1]),
+        "observed_at": registration["collection_deadline"],
+        "signer_public_key": _RECONCILIATION_SIGNER_PUBLIC_KEY,
+        "signature": "",
+    }
+    close_receipt["signature"] = base64.b64encode(
+        _RECONCILIATION_SIGNER.sign(
+            omc_task_review_pilot._persona_collection_close_signed_bytes(close_receipt)
+        )
+    ).decode("ascii")
+
+    result = omc_task_review_pilot.build_persona_collection_close_decision(
+        registration,
+        enrollments,
+        arm_mapping_receipt=mapping,
+        collection_close_receipt=close_receipt,
+        artifact_root=tmp_path,
+    )
+
+    assert result["status"] == "INCONCLUSIVE"
+    assert result["reason"] == "deadline_or_sample_shortfall"
+    assert result["enrollment_count"] == 9
+    assert result["collection_close_receipt"] == close_receipt
+    assert result["collection_close_sha256"] == _sha(close_receipt)
+    close_receipt["observed_at"] = "tampered"
+    assert result["collection_close_receipt"]["observed_at"] == registration[
+        "collection_deadline"
+    ]
+
+
+def test_enrolled_persona_fatal_violation_precedes_provider_absence(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    mapping = _persona_mapping()
+    registration = _persona_registration(mapping)
+    enrollments = _persona_enrollments(registration, tmp_path)
+    terminals = [_persona_terminal(index, _sha(registration)) for index in range(10)]
+    for terminal in terminals:
+        terminal["persona_registration_sha256"] = _sha(registration)
+        terminal["dry_run"]["registration_sha256"] = _sha(registration)
+        terminal["dry_run"]["enrollment_sha256"] = _sha(
+            enrollments[terminal["dry_run"]["case_position"] - 1]
+        )
+        enrollment = enrollments[terminal["dry_run"]["case_position"] - 1]
+        terminal["dry_run"]["enrollment_session_id"] = enrollment["session_id"]
+        terminal["dry_run"]["case_source"] = {
+            "repository_id": enrollment["repository_id"],
+            "base_commit": enrollment["base_commit"],
+        }
+        terminal["arms"]["omc"]["provider_call_count"] = 0
+        terminal["arms"]["baseline"]["provider_call_count"] = 0
+    terminals[0]["arms"]["omc"]["fatal_violation"] = True
+    monkeypatch.setattr(
+        omc_task_review_pilot,
+        "_validated_terminal_receipt",
+        lambda receipt, **kwargs: receipt,
+    )
+
+    result = omc_task_review_pilot.build_enrolled_persona_study_decision(
+        terminals,
+        adjudication_receipt=_blind_persona_adjudication(
+            terminals, tmp_path, arm_a_events=0, arm_b_events=0
+        ),
+        arm_mapping_receipt=mapping,
+        registration_receipt=registration,
+        enrollment_receipts=enrollments,
+        artifact_root=tmp_path,
+    )
+
+    assert result["status"] == "STOP"
+    assert result["reason"] == "fatal_violation"
+
+
+def test_enrolled_persona_decision_binds_all_terminals_to_enrollment_chain(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    mapping = _persona_mapping()
+    registration = _persona_registration(mapping)
+    repository_ids = [
+        item["repository_id"] for item in registration["repositories"]
+    ]
+    cases = []
+    for index in range(10):
+        case = _frozen_case()
+        case["case_id"] = f"enrolled-persona-{index + 1}"
+        case["repository_id"] = repository_ids[0] if index < 7 else repository_ids[1]
+        cases.append(case)
+    enrollments = _persona_enrollments(registration, tmp_path, cases=cases)
+    registration_sha256 = _sha(registration)
+    terminals = []
+    for index, case in enumerate(cases):
+        frozen = omc_task_review_pilot.freeze_persona_case(
+            case,
+            registration_receipt=registration,
+            arm_mapping_receipt=mapping,
+        )
+        dry_run = omc_task_review_pilot.build_enrolled_persona_paired_dry_run(
+            frozen,
+            case_position=index + 1,
+            registration_receipt=registration,
+            enrollment_receipts=enrollments[: index + 1],
+            arm_mapping_receipt=mapping,
+            artifact_root=tmp_path,
+        )
+        case_root = tmp_path / f"enrolled-terminal-{index + 1}"
+        terminals.append(
+            build_terminal_receipt(
+                dry_run,
+                [
+                    _runner_arm_receipt(dry_run, case_root, "omc", elapsed=80),
+                    _runner_arm_receipt(
+                        dry_run, case_root, "baseline", elapsed=100, intervention=1
+                    ),
+                ],
+            )
+        )
+
+    decision = omc_task_review_pilot.build_enrolled_persona_study_decision(
+        terminals,
+        adjudication_receipt=_blind_persona_adjudication(
+            terminals, tmp_path, arm_a_events=5, arm_b_events=3
+        ),
+        arm_mapping_receipt=mapping,
+        registration_receipt=registration,
+        enrollment_receipts=enrollments,
+        artifact_root=tmp_path,
+    )
+
+    assert decision["status"] == "CONTINUE"
+    assert decision["enrollment_count"] == 10
+    terminals[0]["persona_registration_sha256"] = "f" * 64
+    terminals[0]["terminal_sha256"] = _sha(
+        {key: value for key, value in terminals[0].items() if key != "terminal_sha256"}
+    )
+    with pytest.raises(
+        PilotPreflightError, match="terminal_pilot_binding_mismatch"
+    ):
+        omc_task_review_pilot.build_enrolled_persona_study_decision(
+            terminals,
+            adjudication_receipt={},
+            arm_mapping_receipt=mapping,
+            registration_receipt=registration,
+            enrollment_receipts=enrollments,
+            artifact_root=tmp_path,
+        )
 
 
 def test_selection_rejects_non_chronological_inventory() -> None:

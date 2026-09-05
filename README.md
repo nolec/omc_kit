@@ -17,7 +17,9 @@ TDD 게이트와 telemetry를 갖춘 멀티 LLM 오케스트레이션 킷입니�
 
 실행 가능 여부는 승인 grant, scope, dependency, budget과 provider capability에 따라 fail-close 판정됩니다. 실행 코드가 있다는 사실만으로 제품 효과가 검증된 것은 아니며, 실제 3–5 child 작업의 single-agent baseline 비교는 아직 진행 중입니다.
 
-현재 첫 제품 범위는 복잡한 코드 변경을 `task → review`로 안전하게 완료하는 흐름입니다. 실제 자연 발생 implementation 작업 3건을 최소 2개 저장소에서 최대 7일 동안 OMC/Baseline 동일 조건으로 비교하며, 완료율·wall-clock 시간·사용자 개입·재작업만 primary metric으로 사용합니다. 이 gate가 끝날 때까지 Plan·Review 대체 검증과 다른 연구 lane은 `PAUSED_NOT_CANCELLED`입니다.
+기존 3건 task-review pilot v2는 readiness와 실행 증거가 없어 `ARCHIVED_INCOMPLETE`로 동결했습니다. v2 binding은 새 연구에 승계하지 않습니다.
+
+현재 승인된 다음 검증은 `task-review-persona-effectiveness-20260904-v1`입니다. 여러 레포를 운영하는 1인 SaaS 창업자의 자연 발생 implementation 10건 paired case에서 direct Codex와 OMC persona 경로를 비교합니다. 21일 안에 chronological first eligible 10건을 최소 2개 저장소·저장소당 최대 7건으로 무대체 수집하며, 각 case는 append-only enrollment 검증 뒤 즉시 실행합니다. 사람의 추가 수정 지시 30% 이상 감소와 완료·검증·총 사람 개입·wall-clock 비열화를 동시에 요구합니다. external Codex executor의 signed receipt를 fail-closed verifier로 검증하며, 실제 provider 실행은 아직 시작하지 않았습니다.
 
 Product Value 결과는 두 판정을 분리합니다.
 
@@ -28,11 +30,11 @@ Product Value 결과는 두 판정을 분리합니다.
 
 상세 상태와 남은 작업은 [자동 모델 라우팅 로드맵](docs/automatic_model_routing_roadmap.md)을 참고하세요.
 
-## Target Architecture — Not Implemented
+## Target Architecture — Approved Study, Execution Not Started
 
-OMC의 제품 방향은 여러 레포를 운영하는 SaaS 창업자가 새 제품 기능을 요구사항·검증·리뷰 기준까지 완료하도록 돕는 것이다. 제안된 **persona-guided Codex Pilot v3**는 `PROPOSAL — decision required`이며, OMC가 persona·DoD·검증 계약을 정하고 Codex가 실행한 뒤 OMC가 선언된 검증과 종료 판정을 제공하는 구조를 목표로 한다.
+OMC의 제품 방향은 여러 레포를 운영하는 SaaS 창업자가 새 제품 기능을 요구사항·검증·리뷰 기준까지 완료하도록 돕는 것이다. **persona-guided Codex Pilot v3**는 연구 계약까지 승인됐으며, OMC가 persona·DoD·검증 계약을 정하고 Codex가 실행한 뒤 OMC가 선언된 검증과 종료 판정을 제공하는 구조를 검증한다.
 
-Codex adapter는 아직 구현되지 않았다. 따라서 이것은 현재 제공 기능이나 Pilot v2의 결과가 아니며, 기존 v2의 T0·roster·inventory·readiness·receipt를 바꾸지 않는다. v3는 별도 adapter contract, 승인된 범위, 실제 사용자 효용 측정이 확정된 뒤에만 시작할 수 있다.
+Codex adapter는 아직 구현되지 않았고 이번 범위에서 개발하지 않는다. external Codex executor 수동 receipt 프로토콜로만 실행하며, 실제 실행 전 study·reconciliation 공동 서명 registration, fresh T0와 21일 창, anonymous arm mapping, execution·reconciliation·study·blind-adjudication authority가 필요하다. 각 case는 state evidence cursor와 직전 enrollment hash를 검증하기 전에는 provider를 호출할 수 없다.
 
 ## 일반 사용 경로
 
@@ -307,8 +309,9 @@ python3 scripts/omc_tdd_check.py --staged
 
 현재 우선순위는 다음 순서입니다.
 
-1. 실제 자연 발생 implementation 작업 3건을 최소 2개 저장소에서 chronological first eligible 순서로 수집해 readiness 발행
-2. readiness 뒤에만 동일 조건의 OMC/Baseline arm을 실행하고, 완료율·wall-clock 시간·사용자 개입·재작업을 비교해 최대 7일 안에 `CONTINUE`, `REDUCE`, `STOP` 판정
-3. `CONTINUE`인 경우에만 사용자가 `PAUSED_NOT_CANCELLED` backlog 중 다음 lane 하나를 선택
+1. 공동 서명 study registration으로 T0·21일 창·선정/다양성 정책·arm mapping·네 authority를 동결
+2. 실제 자연 발생 implementation 작업을 chronological first eligible 순서로 case별 enrollment하고, 검증 직후 동일 조건 OMC/Baseline arm을 실행해 10쌍 수집
+3. 최소 2개 저장소·저장소당 최대 7건과 무대체 chain을 확인한 뒤 수정 지시 30% 감소 및 완료·검증·총 개입·wall-clock 비열화로 `CONTINUE`, `REDUCE`, `STOP` 판정
+4. `CONTINUE`인 경우에만 사용자가 `PAUSED_NOT_CANCELLED` backlog 중 다음 lane 하나를 선택
 
 위 acceptance가 끝날 때까지 Product Value corpus, bounded N-child, Plan Batch B, native Review, Work Packet, Decision Policy를 실행하거나 새 schema·transport·benchmark fixture를 추가하지 않습니다. strict hard-token 인증도 사용자가 해당 lane을 별도로 재개한 경우에만 검토합니다.
