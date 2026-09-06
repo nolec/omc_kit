@@ -1,11 +1,15 @@
+import hashlib
 import json
 from pathlib import Path
+
+import omc_task_review_pilot
 
 
 CONTRACT_PATH = Path("docs/task_review_product_focus_pilot.md")
 PERSONA_STUDY_PATH = Path(
     "docs/task_review_persona_effectiveness_preregistration_v1.json"
 )
+PERSONA_RUNBOOK_PATH = Path("docs/task_review_persona_operator_runbook.md")
 
 
 def _contract() -> str:
@@ -194,6 +198,46 @@ def test_persona_effectiveness_metric_requires_ten_pairs_and_real_corrections() 
     ]
 
 
+def test_persona_registration_contract_matches_preregistration_ssot() -> None:
+    study = json.loads(PERSONA_STUDY_PATH.read_text(encoding="utf-8"))
+    decision = study["decision"]
+
+    assert omc_task_review_pilot.PERSONA_PREREGISTRATION_SHA256 == hashlib.sha256(
+        PERSONA_STUDY_PATH.read_bytes()
+    ).hexdigest()
+    assert omc_task_review_pilot.PERSONA_CONTRACT_REVISION == study["contract_revision"]
+    assert (
+        omc_task_review_pilot.PERSONA_MINIMUM_RELATIVE_REDUCTION
+        == study["decision"]["minimum_relative_reduction"]
+    )
+    assert (
+        omc_task_review_pilot.PERSONA_MINIMUM_BASELINE_CORRECTION_EVENTS
+        == study["decision"]["minimum_baseline_correction_events"]
+    )
+    assert study["contract_revision"] == 2
+    assert study["amendment"]["semantic_threshold_changed"] is False
+    assert study["amendment"]["outcome_changed"] is False
+    assert study["amendment"]["previous_document_sha256"] == (
+        "597d29609e5a243852dc67232aa3e8d380b0ebff8886278f3ba2a77de9548adb"
+    )
+    assert decision["ordered_rules"] == [
+        {"condition": rule["condition"], "outcome": rule["outcome"]}
+        for rule in omc_task_review_pilot.PERSONA_DECISION_RULES
+    ]
+
+
+def test_persona_operator_runbook_exposes_signing_and_reverification_surfaces() -> None:
+    text = PERSONA_RUNBOOK_PATH.read_text(encoding="utf-8")
+    help_text = omc_task_review_pilot._parser().format_help()
+
+    assert "persona-signing-payload" in text
+    assert "persona-verify-decision" in text
+    assert "private key와 decoded payload는 저장소에 저장하지 않는다" in text
+    assert "registration, mapping, enrollment, terminal, adjudication" in text
+    assert "persona-signing-payload" in help_text
+    assert "persona-verify-decision" in help_text
+
+
 def test_persona_study_preregisters_mapping_before_execution() -> None:
     study = json.loads(PERSONA_STUDY_PATH.read_text(encoding="utf-8"))
     execution = study["execution"]
@@ -207,8 +251,8 @@ def test_persona_study_preregisters_mapping_before_execution() -> None:
     ]
     assert "required_sequence" not in execution
     assert common == [
-        "signed_study_registration_and_t0",
         "signed_anonymous_arm_mapping",
+        "signed_study_registration_and_t0",
         "case_enrollment_with_state_evidence",
         "persona_freeze_case",
         "persona_paired_dry_run",

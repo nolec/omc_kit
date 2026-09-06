@@ -13,7 +13,21 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 
 ## Active Decision Gate
 
-현재 활성 작업은 `task-review-persona-effectiveness-20260904-v1` 실행 준비다. v2는 `ARCHIVED_INCOMPLETE`이며 신규 study는 v2 binding을 승계하지 않는다. case 1 전에 fresh T0와 21일 창, chronological first eligible implementation 10건·무대체, 최소 2개 저장소·저장소당 최대 7건, arm mapping과 네 authority를 공동 서명 registration으로 동결한다. 이후 자연 작업마다 enrollment를 append-only hash/cursor chain으로 먼저 검증하고 곧바로 external Codex 두 arm과 terminal을 실행한다. blind adjudication 뒤에는 추가 수정 지시 30% 이상 감소와 completion·verification·총 사람 개입·median wall-clock 비열화를 함께 판정한다. 서명·hash·binding·raw output 증거가 누락·위조·불일치하면 운영 명령은 `blocked`로 차단한다. 21일 내 10건을 채우지 못한 경우에만 reconciliation authority가 서명한 유효한 collection-close receipt로 study outcome을 `INCONCLUSIVE`로 닫는다.
+공동 서명 registration은 machine-readable preregistration의 hash와 contract revision, 30% 최소 감소율, baseline correction event 최소 3건을 직접 포함해 판정 계약까지 동결한다.
+
+현재 활성 작업은 `task-review-persona-effectiveness-20260904-v1` 실행 준비다. v2는 `ARCHIVED_INCOMPLETE`이며 신규 study는 v2 binding을 승계하지 않는다. case 1 전에 fresh T0와 21일 창, chronological first eligible implementation 10건·무대체, 최소 2개 저장소·저장소당 최대 7건, arm mapping과 네 authority를 공동 서명 registration으로 동결한다. 이후 자연 작업마다 enrollment를 append-only hash/cursor chain으로 먼저 검증하고 곧바로 external Codex 두 arm과 terminal을 실행한다. blind adjudication 뒤에는 추가 수정 지시 30% 이상 감소와 completion·verification·총 사람 개입·median wall-clock 비열화를 함께 판정한다. 서명·hash·binding·raw output 증거가 누락·위조·불일치하면 운영 명령은 `blocked`로 차단한다. 유효한 terminal의 provider 실행 부재 또는 signed collection-close가 증명한 deadline 표본 부족은 `INCONCLUSIVE`로 닫는다.
+
+| Decision condition | Outcome |
+|---|---|
+| `fatal_violation` | `STOP` |
+| `provider_execution_absent` | `INCONCLUSIVE` |
+| `completion_noninferiority_failed` | `STOP` |
+| `verification_noninferiority_failed` | `STOP` |
+| `total_intervention_noninferiority_failed` | `STOP` |
+| `wall_clock_noninferiority_failed` | `STOP` |
+| `insufficient_baseline_correction_events` | `INCONCLUSIVE` |
+| `correction_reduction_target_missed` | `REDUCE` |
+| `all_gates_passed` | `CONTINUE` |
 
 ## Target Architecture — Approved Study, Execution Not Started
 
@@ -255,6 +269,8 @@ Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분
 - 현재 문서가 history와 충돌하면 전용 benchmark artifact를 확인하고 현재 요약을 교정한다.
 
 ## 다음 실행 순서
+
+0번 registration은 preregistration hash·contract revision·30% 최소 감소율·baseline correction event 최소 3건까지 함께 동결하며, 외부 custody 절차와 최종 sealed decision 재검증은 [Persona Pilot Operator Runbook](task_review_persona_operator_runbook.md)을 따른다.
 
 0. **ACTIVE — REGISTRATION PENDING / EXECUTION 0/10** — case 1 전에 21일 collection window와 arm mapping·authority·선정 정책을 공동 서명 registration으로 고정한다. 이후 최소 2개 저장소, 저장소당 최대 7건 조건으로 chronological first eligible implementation 10건을 무대체 enrollment하고 각 건을 즉시 paired 실행한다. deadline의 10건 미달은 signed collection-close receipt가 있을 때만 `INCONCLUSIVE`로 닫고, 분포·receipt·binding 위반은 `blocked`로 차단한다. 유효한 10쌍은 수정 지시 30% 감소와 completion·verification·총 개입·wall-clock 비열화 gate로 `CONTINUE`, `REDUCE`, `STOP`을 결정한다.
 

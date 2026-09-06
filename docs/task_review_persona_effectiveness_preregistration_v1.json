@@ -3,6 +3,14 @@
   "study_id": "task-review-persona-effectiveness-20260904-v1",
   "status": "approved_not_started",
   "approved_at": "2026-09-04",
+  "contract_revision": 2,
+  "amendment": {
+    "amended_at": "2026-09-06",
+    "reason": "Bind the approved decision semantics and correct the signing dependency order before provider execution starts.",
+    "previous_document_sha256": "597d29609e5a243852dc67232aa3e8d380b0ebff8886278f3ba2a77de9548adb",
+    "semantic_threshold_changed": false,
+    "outcome_changed": false
+  },
   "claim": "OMC persona, DoD, and verification guidance reduces human additional correction instructions without reducing completion or verification quality.",
   "claim_scope": "solo_saas_founder_multi_repository_task_review",
   "predecessor": {
@@ -36,8 +44,8 @@
     ],
     "reused_v2_primitive": "terminal_receipt_validation_only",
     "common_sequence": [
-      "signed_study_registration_and_t0",
       "signed_anonymous_arm_mapping",
+      "signed_study_registration_and_t0",
       "case_enrollment_with_state_evidence",
       "persona_freeze_case",
       "persona_paired_dry_run",
@@ -131,6 +139,17 @@
       "median_wall_clock_noninferiority",
       "minimum_baseline_correction_events",
       "minimum_relative_reduction"
+    ],
+    "ordered_rules": [
+      {"condition": "fatal_violation", "outcome": "STOP"},
+      {"condition": "provider_execution_absent", "outcome": "INCONCLUSIVE"},
+      {"condition": "completion_noninferiority_failed", "outcome": "STOP"},
+      {"condition": "verification_noninferiority_failed", "outcome": "STOP"},
+      {"condition": "total_intervention_noninferiority_failed", "outcome": "STOP"},
+      {"condition": "wall_clock_noninferiority_failed", "outcome": "STOP"},
+      {"condition": "insufficient_baseline_correction_events", "outcome": "INCONCLUSIVE"},
+      {"condition": "correction_reduction_target_missed", "outcome": "REDUCE"},
+      {"condition": "all_gates_passed", "outcome": "CONTINUE"}
     ],
     "deadline_shortfall_receipt": "A reconciliation-signed omc-task-review-persona-collection-close/v1 receipt must bind the registration hash, enrollment count, final enrollment hash, and an observed_at timestamp at or after the frozen deadline.",
     "passing_outcome": "CONTINUE",

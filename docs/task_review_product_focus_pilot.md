@@ -2,6 +2,10 @@
 
 ## 현재 판정
 
+공동 서명 registration은 machine-readable preregistration의 hash와 contract revision, 30% 최소 감소율, baseline correction event 최소 3건을 직접 포함해 판정 계약까지 동결한다.
+
+외부 custody의 canonical payload 생성·서명·최종 decision 재검증 절차는 [Persona Pilot Operator Runbook](task_review_persona_operator_runbook.md)을 따른다. 모든 terminal outcome은 registration·mapping·enrollment·terminal·adjudication sealed bundle과 `decision_sha256`을 보존한다.
+
 pilot v2는 `ARCHIVED_INCOMPLETE`로 동결한다. roster와 T0는 보존됐지만 readiness, paired provider execution, terminal receipt, decision receipt가 없어 제품 효과를 판정할 수 없다. v2는 재개·보정·case 추가 없이 reconciliation과 감사용으로만 보존하며, v2의 T0·roster·inventory·readiness·receipt를 승계하지 않는다.
 
 사용자가 승인한 다음 검증은 `task-review-persona-effectiveness-20260904-v1`이다. 여러 레포를 운영하는 1인 SaaS 창업자의 자연 발생 implementation 10건 paired case에서 direct Codex와 OMC persona 경로를 비교한다. primary success criterion은 사람의 추가 수정 지시 30% 이상 감소이며 completion과 verification pass rate는 악화되면 안 된다. 실제 provider 실행은 아직 시작하지 않았다.

@@ -9,6 +9,9 @@ from pathlib import Path
 ROADMAP_PATH = Path("docs/automatic_model_routing_roadmap.md")
 README_PATH = Path("README.md")
 HISTORY_PATH = Path("docs/automatic_model_routing_roadmap_history.md")
+PERSONA_STUDY_PATH = Path(
+    "docs/task_review_persona_effectiveness_preregistration_v1.json"
+)
 HISTORY_MANIFEST_PATH = Path(
     "scripts/fixtures/automatic_model_routing_roadmap_history_manifest.json"
 )
@@ -123,11 +126,22 @@ def test_readme_labels_persona_guided_codex_as_a_target_not_a_feature() -> None:
 
 def test_persona_decision_contract_matches_the_fail_closed_implementation() -> None:
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
+    study = json.loads(PERSONA_STUDY_PATH.read_text(encoding="utf-8"))
 
     assert "fatal violation → provider 실행 부재 → completion" in roadmap
     assert "provider 실행 부재는 `INCONCLUSIVE`" in roadmap
     assert "유효한 Pilot evidence로 인정하지 않는다" in roadmap
     assert "provider를 호출하지 않는다" not in roadmap
+    assert "경우에만 reconciliation authority" not in roadmap
+    active_gate = roadmap.split("## Active Decision Gate", 1)[1].split(
+        "## Target Architecture", 1
+    )[0]
+    roadmap_rules = re.findall(r"(?m)^\| `([^`]+)` \| `([^`]+)` \|$", active_gate)
+    expected_rules = [
+        (rule["condition"], rule["outcome"])
+        for rule in study["decision"]["ordered_rules"]
+    ]
+    assert roadmap_rules == expected_rules
 
 
 def test_product_focus_is_the_fresh_ten_case_persona_effectiveness_lane() -> None:

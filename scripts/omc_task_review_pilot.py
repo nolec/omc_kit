@@ -50,6 +50,106 @@ TRUSTED_PERSONA_STUDY_PUBLIC_KEY_ENV = (
     "OMC_TASK_REVIEW_PERSONA_TRUSTED_STUDY_PUBLIC_KEY"
 )
 PERSONA_STUDY_ID = "task-review-persona-effectiveness-20260904-v1"
+PERSONA_PREREGISTRATION_SHA256 = (
+    "0dc5f8d1270162bfc97841525e9191d863c7e6809fbd6d5d8a24e33d5da0ceab"
+)
+PERSONA_CONTRACT_REVISION = 2
+PERSONA_MINIMUM_RELATIVE_REDUCTION = 0.30
+PERSONA_MINIMUM_BASELINE_CORRECTION_EVENTS = 3
+PERSONA_DECISION_RULES = (
+    {"condition": "fatal_violation", "outcome": "STOP", "reason": "fatal_violation"},
+    {
+        "condition": "provider_execution_absent",
+        "outcome": "INCONCLUSIVE",
+        "reason": "provider_execution_absent",
+    },
+    {
+        "condition": "completion_noninferiority_failed",
+        "outcome": "STOP",
+        "reason": "completion_noninferiority_failed",
+    },
+    {
+        "condition": "verification_noninferiority_failed",
+        "outcome": "STOP",
+        "reason": "verification_noninferiority_failed",
+    },
+    {
+        "condition": "total_intervention_noninferiority_failed",
+        "outcome": "STOP",
+        "reason": "total_intervention_noninferiority_failed",
+    },
+    {
+        "condition": "wall_clock_noninferiority_failed",
+        "outcome": "STOP",
+        "reason": "wall_clock_noninferiority_failed",
+    },
+    {
+        "condition": "insufficient_baseline_correction_events",
+        "outcome": "INCONCLUSIVE",
+        "reason": "insufficient_baseline_correction_events",
+    },
+    {
+        "condition": "correction_reduction_target_missed",
+        "outcome": "REDUCE",
+        "reason": "correction_reduction_target_missed",
+    },
+    {"condition": "all_gates_passed", "outcome": "CONTINUE", "reason": None},
+)
+
+
+def _validated_persona_decision_rules() -> tuple[dict[str, Any], ...]:
+    rules = PERSONA_DECISION_RULES
+    conditions = [rule.get("condition") for rule in rules if isinstance(rule, dict)]
+    if (
+        len(rules) != 9
+        or any(
+            not isinstance(rule, dict)
+            or set(rule) != {"condition", "outcome", "reason"}
+            for rule in rules
+        )
+        or len(conditions) != len(rules)
+        or any(not isinstance(condition, str) for condition in conditions)
+        or len(set(conditions)) != len(conditions)
+        or conditions[-1] != "all_gates_passed"
+        or any(
+            not isinstance(rule["outcome"], str)
+            or rule["outcome"] not in {"STOP", "INCONCLUSIVE", "REDUCE", "CONTINUE"}
+            for rule in rules
+        )
+        or any(not isinstance(rule["reason"], str) for rule in rules[:-1])
+        or rules[-1]["reason"] is not None
+    ):
+        raise PilotPreflightError("persona_decision_policy_invalid")
+    return rules
+
+
+def _evaluate_persona_decision(signals: dict[str, bool]) -> dict[str, Any]:
+    rules = _validated_persona_decision_rules()
+    expected = {rule["condition"] for rule in rules[:-1]}
+    if set(signals) != expected or any(
+        type(value) is not bool for value in signals.values()
+    ):
+        raise PilotPreflightError("persona_decision_signals_invalid")
+    for rule in rules[:-1]:
+        if signals[rule["condition"]]:
+            return {"status": rule["outcome"], "reason": rule["reason"]}
+    return {"status": rules[-1]["outcome"]}
+
+
+def _persona_pre_metric_decision(terminals: list[dict[str, Any]]) -> dict[str, str]:
+    rules = _validated_persona_decision_rules()
+    signals = {rule["condition"]: False for rule in rules[:-1]}
+    signals["fatal_violation"] = any(
+        item["arms"][arm]["fatal_violation"]
+        for item in terminals
+        for arm in ("omc", "baseline")
+    )
+    signals["provider_execution_absent"] = any(
+        item["arms"][arm]["provider_call_count"] == 0
+        for item in terminals
+        for arm in ("omc", "baseline")
+    )
+    return _evaluate_persona_decision(signals)
 _RECONCILIATION_EXECUTION_SCHEMAS = {
     "omc-task-review-pilot-readiness/v2": "readiness",
     "omc-task-review-pilot-terminal/v1": "terminal",
@@ -223,6 +323,124 @@ def _persona_collection_close_signed_bytes(receipt: dict[str, Any]) -> bytes:
     signed = deepcopy(receipt)
     signed["signature"] = ""
     return _canonical_bytes(signed)
+
+
+def build_persona_signing_payload(
+    receipt: Any, *, kind: str,
+) -> dict[str, Any]:
+    if not isinstance(receipt, dict):
+        raise PilotPreflightError("persona_signing_payload_invalid")
+    builders = {
+        "registration": _persona_registration_signed_bytes,
+        "arm_mapping": _persona_arm_mapping_signed_bytes,
+        "enrollment": _persona_enrollment_signed_bytes,
+        "adjudication": _persona_adjudication_signed_bytes,
+        "collection_close": _persona_collection_close_signed_bytes,
+    }
+    builder = builders.get(kind)
+    if builder is None:
+        raise PilotPreflightError("persona_signing_payload_kind_invalid")
+    required_fields = {
+        "registration": {
+            "schema_version", "study_id", "t0", "collection_deadline",
+            "case_count", "minimum_repository_count",
+            "maximum_cases_per_repository", "wall_clock_noninferiority_ratio",
+            "preregistration_sha256", "contract_revision",
+            "minimum_relative_reduction", "minimum_baseline_correction_events",
+            "selection_policy", "arm_order_policy", "arm_mapping_sha256",
+            "repositories", "execution_public_key", "study_public_key",
+            "reconciliation_public_key", "adjudication_public_key",
+            "initial_previous_enrollment_sha256", "user_approved",
+            "registered_at", "signer_public_key", "reconciliation_signature",
+            "signature",
+        },
+        "arm_mapping": {
+            "schema_version", "study_id", "arm_a", "arm_b", "registered_at",
+            "signer_public_key", "signature",
+        },
+        "enrollment": {
+            "schema_version", "study_id", "registration_sha256",
+            "previous_enrollment_sha256", "sequence", "session_id",
+            "session_created_at", "enrolled_at", "repository_id", "base_commit",
+            "work_class", "request_sha256", "dod_sha256", "verification_sha256",
+            "state_evidence", "signer_public_key", "signature",
+        },
+        "adjudication": {
+            "schema_version", "signer", "signer_public_key", "study_id", "cases",
+            "signature",
+        },
+        "collection_close": {
+            "schema_version", "study_id", "registration_sha256",
+            "enrollment_count", "final_enrollment_sha256", "observed_at",
+            "signer_public_key", "signature",
+        },
+    }
+    if set(receipt) != required_fields[kind]:
+        raise PilotPreflightError("persona_signing_payload_invalid")
+    expected_schemas = {
+        "registration": "omc-task-review-persona-study-registration/v1",
+        "arm_mapping": "omc-task-review-persona-arm-mapping/v1",
+        "enrollment": "omc-task-review-persona-enrollment/v1",
+        "adjudication": "omc-task-review-persona-adjudication/v2",
+        "collection_close": "omc-task-review-persona-collection-close/v1",
+    }
+    if (
+        receipt.get("schema_version") != expected_schemas[kind]
+        or receipt.get("study_id") != PERSONA_STUDY_ID
+        or receipt.get("signature") != ""
+        or not isinstance(receipt.get("signer_public_key"), str)
+    ):
+        raise PilotPreflightError("persona_signing_payload_invalid")
+    if kind == "registration" and (
+        receipt.get("reconciliation_signature") != ""
+        or receipt.get("preregistration_sha256") != PERSONA_PREREGISTRATION_SHA256
+        or receipt.get("contract_revision") != PERSONA_CONTRACT_REVISION
+        or receipt.get("minimum_relative_reduction")
+        != PERSONA_MINIMUM_RELATIVE_REDUCTION
+        or receipt.get("minimum_baseline_correction_events")
+        != PERSONA_MINIMUM_BASELINE_CORRECTION_EVENTS
+        or receipt.get("wall_clock_noninferiority_ratio") != 1.15
+        or receipt.get("user_approved") is not True
+    ):
+        raise PilotPreflightError("persona_signing_payload_invalid")
+    if kind == "arm_mapping":
+        arm_a = receipt.get("arm_a")
+        arm_b = receipt.get("arm_b")
+        if (
+            not isinstance(arm_a, str)
+            or not isinstance(arm_b, str)
+            or arm_a not in {"omc", "baseline"}
+            or arm_b not in {"omc", "baseline"}
+            or arm_a == arm_b
+            or not isinstance(receipt.get("registered_at"), str)
+        ):
+            raise PilotPreflightError("persona_signing_payload_invalid")
+    if kind == "enrollment" and (
+        type(receipt.get("sequence")) is not int
+        or receipt.get("sequence", 0) < 1
+        or receipt.get("work_class") != "implementation"
+        or not isinstance(receipt.get("state_evidence"), dict)
+    ):
+        raise PilotPreflightError("persona_signing_payload_invalid")
+    if kind == "adjudication" and (
+        receipt.get("signer")
+        != "omc-task-review-persona-blind-adjudicator-v1"
+        or not isinstance(receipt.get("cases"), list)
+    ):
+        raise PilotPreflightError("persona_signing_payload_invalid")
+    if kind == "collection_close" and (
+        type(receipt.get("enrollment_count")) is not int
+        or receipt.get("enrollment_count", -1) < 0
+        or not isinstance(receipt.get("observed_at"), str)
+    ):
+        raise PilotPreflightError("persona_signing_payload_invalid")
+    payload = builder(receipt)
+    return {
+        "schema_version": "omc-task-review-persona-signing-payload/v1",
+        "artifact_kind": kind,
+        "payload_base64": base64.b64encode(payload).decode("ascii"),
+        "payload_sha256": hashlib.sha256(payload).hexdigest(),
+    }
 
 
 def _trusted_persona_study_public_key() -> str:
@@ -2018,6 +2236,8 @@ def _validated_persona_registration(
         "schema_version", "study_id", "t0", "collection_deadline",
         "case_count", "minimum_repository_count",
         "maximum_cases_per_repository", "wall_clock_noninferiority_ratio",
+        "preregistration_sha256", "contract_revision",
+        "minimum_relative_reduction", "minimum_baseline_correction_events",
         "selection_policy", "arm_order_policy", "arm_mapping_sha256",
         "repositories",
         "execution_public_key", "study_public_key",
@@ -2041,6 +2261,13 @@ def _validated_persona_registration(
         or receipt.get("minimum_repository_count") != 2
         or receipt.get("maximum_cases_per_repository") != 7
         or receipt.get("wall_clock_noninferiority_ratio") != 1.15
+        or receipt.get("preregistration_sha256")
+        != PERSONA_PREREGISTRATION_SHA256
+        or receipt.get("contract_revision") != PERSONA_CONTRACT_REVISION
+        or receipt.get("minimum_relative_reduction")
+        != PERSONA_MINIMUM_RELATIVE_REDUCTION
+        or receipt.get("minimum_baseline_correction_events")
+        != PERSONA_MINIMUM_BASELINE_CORRECTION_EVENTS
         or receipt.get("selection_policy")
         != "chronological_first_eligible_implementation_no_replacement"
         or receipt.get("arm_order_policy")
@@ -2301,7 +2528,8 @@ def validate_persona_enrollment_chain(
 
 def _persona_metric_decision(
     terminals: list[dict[str, Any]], *, correction_events: dict[str, int],
-    wall_clock_noninferiority_ratio: float,
+    wall_clock_noninferiority_ratio: float, minimum_relative_reduction: float,
+    minimum_baseline_correction_events: int,
 ) -> dict[str, Any]:
     completion = {
         "direct_codex": sum(item["completion"]["baseline"] for item in terminals),
@@ -2320,38 +2548,49 @@ def _persona_metric_decision(
         "omc_persona": median(item["arms"]["omc"]["elapsed_seconds"] for item in terminals),
     }
     baseline_events = correction_events["direct_codex"]
-    relative_reduction = None if baseline_events < 3 else (
+    relative_reduction = None if baseline_events < minimum_baseline_correction_events else (
         baseline_events - correction_events["omc_persona"]
     ) / baseline_events
-    status = "CONTINUE"
-    reason: str | None = None
-    if any(
-        item["arms"][arm]["fatal_violation"]
-        for item in terminals for arm in ("omc", "baseline")
-    ):
-        status, reason = "STOP", "fatal_violation"
-    elif completion["omc_persona"] < completion["direct_codex"]:
-        status, reason = "STOP", "completion_noninferiority_failed"
-    elif verification["omc_persona"] < verification["direct_codex"]:
-        status, reason = "STOP", "verification_noninferiority_failed"
-    elif interventions["omc_persona"] > interventions["direct_codex"]:
-        status, reason = "STOP", "total_intervention_noninferiority_failed"
-    elif elapsed["omc_persona"] > elapsed["direct_codex"] * wall_clock_noninferiority_ratio:
-        status, reason = "STOP", "wall_clock_noninferiority_failed"
-    elif baseline_events < 3:
-        status, reason = "INCONCLUSIVE", "insufficient_baseline_correction_events"
-    elif relative_reduction is not None and relative_reduction < 0.30:
-        status, reason = "REDUCE", "correction_reduction_target_missed"
+    outcome = _evaluate_persona_decision(
+        {
+            "fatal_violation": any(
+                item["arms"][arm]["fatal_violation"]
+                for item in terminals
+                for arm in ("omc", "baseline")
+            ),
+            "provider_execution_absent": False,
+            "completion_noninferiority_failed": (
+                completion["omc_persona"] < completion["direct_codex"]
+            ),
+            "verification_noninferiority_failed": (
+                verification["omc_persona"] < verification["direct_codex"]
+            ),
+            "total_intervention_noninferiority_failed": (
+                interventions["omc_persona"] > interventions["direct_codex"]
+            ),
+            "wall_clock_noninferiority_failed": (
+                elapsed["omc_persona"]
+                > elapsed["direct_codex"] * wall_clock_noninferiority_ratio
+            ),
+            "insufficient_baseline_correction_events": (
+                baseline_events < minimum_baseline_correction_events
+            ),
+            "correction_reduction_target_missed": (
+                relative_reduction is not None
+                and relative_reduction < minimum_relative_reduction
+            ),
+        }
+    )
     result: dict[str, Any] = {
-        "status": status,
+        "status": outcome["status"],
         "relative_reduction": relative_reduction,
         "completion": completion,
         "verification": verification,
         "total_human_interventions": interventions,
         "median_wall_clock_seconds": elapsed,
     }
-    if reason is not None:
-        result["reason"] = reason
+    if "reason" in outcome:
+        result["reason"] = outcome["reason"]
     return result
 
 
@@ -2484,14 +2723,8 @@ def build_persona_study_decision(
     adjudication = _validated_persona_adjudication(
         adjudication_receipt, terminals=terminals, artifact_root=artifact_root
     )
-    fatal_violation = any(
-        terminal["arms"][arm]["fatal_violation"]
-        for terminal in terminals for arm in ("omc", "baseline")
-    )
-    if not fatal_violation and any(
-        terminal["arms"][arm]["provider_call_count"] == 0
-        for terminal in terminals for arm in ("omc", "baseline")
-    ):
+    pre_metric_decision = _persona_pre_metric_decision(terminals)
+    if pre_metric_decision.get("reason") == "provider_execution_absent":
         return {
             "schema_version": "omc-task-review-persona-decision/v1",
             "study_id": PERSONA_STUDY_ID,
@@ -2514,6 +2747,10 @@ def build_persona_study_decision(
         terminals,
         correction_events=correction_events,
         wall_clock_noninferiority_ratio=1.15,
+        minimum_relative_reduction=PERSONA_MINIMUM_RELATIVE_REDUCTION,
+        minimum_baseline_correction_events=(
+            PERSONA_MINIMUM_BASELINE_CORRECTION_EVENTS
+        ),
     )
     completion = metric_decision["completion"]
     verification = metric_decision["verification"]
@@ -2559,15 +2796,21 @@ def build_enrolled_persona_study_decision(
     enrollment_receipts: list[dict[str, Any]], artifact_root: Path,
 ) -> dict[str, Any]:
     """Operational decision path: require the prospective enrollment chain."""
+    registration = _validated_persona_registration(
+        registration_receipt, arm_mapping_receipt=arm_mapping_receipt
+    )
+    mapping = _validated_persona_arm_mapping(
+        arm_mapping_receipt, trusted_key=_trusted_persona_study_public_key()
+    )
     enrollments = validate_persona_enrollment_chain(
-        registration_receipt,
+        registration,
         enrollment_receipts,
         arm_mapping_receipt=arm_mapping_receipt,
         artifact_root=artifact_root,
     )
     if not isinstance(terminal_receipts, list) or len(terminal_receipts) != 10:
         raise PilotPreflightError("persona_terminal_receipt_count_invalid")
-    registration_sha256 = _canonical_sha256(registration_receipt)
+    registration_sha256 = _canonical_sha256(registration)
     terminals = [
         _validated_terminal_receipt(
             terminal,
@@ -2597,24 +2840,7 @@ def build_enrolled_persona_study_decision(
     adjudication = _validated_persona_adjudication(
         adjudication_receipt, terminals=terminals, artifact_root=artifact_root
     )
-    fatal_violation = any(
-        terminal["arms"][arm]["fatal_violation"]
-        for terminal in terminals for arm in ("omc", "baseline")
-    )
-    if not fatal_violation and any(
-        terminal["arms"][arm]["provider_call_count"] == 0
-        for terminal in terminals for arm in ("omc", "baseline")
-    ):
-        return {
-            "schema_version": "omc-task-review-persona-decision/v2",
-            "study_id": PERSONA_STUDY_ID,
-            "status": "INCONCLUSIVE",
-            "reason": "provider_execution_absent",
-            "registration_sha256": registration_sha256,
-        }
-    mapping = _validated_persona_arm_mapping(
-        arm_mapping_receipt, trusted_key=_trusted_persona_study_public_key()
-    )
+    pre_metric_decision = _persona_pre_metric_decision(terminals)
     correction_by_execution_arm = {
         mapping[alias]: sum(
             item[f"{alias}_additional_correction_required"]
@@ -2629,8 +2855,14 @@ def build_enrolled_persona_study_decision(
     metric_decision = _persona_metric_decision(
         terminals,
         correction_events=correction_events,
-        wall_clock_noninferiority_ratio=registration_receipt[
+        wall_clock_noninferiority_ratio=registration[
             "wall_clock_noninferiority_ratio"
+        ],
+        minimum_relative_reduction=registration[
+            "minimum_relative_reduction"
+        ],
+        minimum_baseline_correction_events=registration[
+            "minimum_baseline_correction_events"
         ],
     )
     metrics = {
@@ -2644,10 +2876,15 @@ def build_enrolled_persona_study_decision(
         }
         for arm in ("direct_codex", "omc_persona")
     }
+    outcome = (
+        pre_metric_decision
+        if pre_metric_decision.get("reason") == "provider_execution_absent"
+        else metric_decision
+    )
     decision: dict[str, Any] = {
         "schema_version": "omc-task-review-persona-decision/v2",
         "study_id": PERSONA_STUDY_ID,
-        "status": metric_decision["status"],
+        "status": outcome["status"],
         "terminal_receipt_count": 10,
         "enrollment_count": 10,
         "metrics": metrics,
@@ -2655,12 +2892,61 @@ def build_enrolled_persona_study_decision(
         "registration_sha256": registration_sha256,
         "final_enrollment_sha256": _canonical_sha256(enrollments[-1]),
         "adjudication_signature": adjudication["signature"],
-        "arm_mapping_sha256": registration_receipt["arm_mapping_sha256"],
+        "arm_mapping_sha256": registration["arm_mapping_sha256"],
+        "evidence_bundle": {
+            "registration": registration,
+            "arm_mapping": mapping,
+            "enrollments": deepcopy(enrollments),
+            "terminals": deepcopy(terminals),
+            "adjudication": adjudication,
+        },
     }
-    if "reason" in metric_decision:
-        decision["reason"] = metric_decision["reason"]
+    if "reason" in outcome:
+        decision["reason"] = outcome["reason"]
     decision["decision_sha256"] = _canonical_sha256(decision)
     return decision
+
+
+def verify_enrolled_persona_study_decision(
+    decision_receipt: Any, *, artifact_root: Path,
+) -> dict[str, Any]:
+    try:
+        if (
+            not isinstance(decision_receipt, dict)
+            or decision_receipt.get("schema_version")
+            != "omc-task-review-persona-decision/v2"
+            or decision_receipt.get("decision_sha256")
+            != _canonical_sha256(
+                {
+                    key: value
+                    for key, value in decision_receipt.items()
+                    if key != "decision_sha256"
+                }
+            )
+        ):
+            raise PilotPreflightError("persona_decision_bundle_invalid")
+        bundle = decision_receipt.get("evidence_bundle")
+        if not isinstance(bundle, dict) or set(bundle) != {
+            "registration", "arm_mapping", "enrollments", "terminals", "adjudication"
+        }:
+            raise PilotPreflightError("persona_decision_bundle_invalid")
+        rebuilt = build_enrolled_persona_study_decision(
+            bundle["terminals"],
+            adjudication_receipt=bundle["adjudication"],
+            arm_mapping_receipt=bundle["arm_mapping"],
+            registration_receipt=bundle["registration"],
+            enrollment_receipts=bundle["enrollments"],
+            artifact_root=artifact_root,
+        )
+        if rebuilt != decision_receipt:
+            raise PilotPreflightError("persona_decision_reverification_failed")
+        return rebuilt
+    except PilotPreflightError as exc:
+        if str(exc) == "persona_decision_reverification_failed":
+            raise
+        raise PilotPreflightError("persona_decision_bundle_invalid") from exc
+    except (KeyError, TypeError, AttributeError) as exc:
+        raise PilotPreflightError("persona_decision_bundle_invalid") from exc
 
 
 def build_persona_collection_close_decision(
@@ -2824,6 +3110,14 @@ def _parser() -> argparse.ArgumentParser:
     collection_close.add_argument("--collection-close-receipt", type=Path, required=True)
     collection_close.add_argument("--artifact-root", type=Path, required=True)
     collection_close.add_argument("--output", type=Path, required=True)
+    signing_payload = sub.add_parser("persona-signing-payload")
+    signing_payload.add_argument("--kind", required=True)
+    signing_payload.add_argument("--receipt", type=Path, required=True)
+    signing_payload.add_argument("--output", type=Path, required=True)
+    verify_decision = sub.add_parser("persona-verify-decision")
+    verify_decision.add_argument("--decision", type=Path, required=True)
+    verify_decision.add_argument("--artifact-root", type=Path, required=True)
+    verify_decision.add_argument("--output", type=Path, required=True)
     prepare_reconciliation = sub.add_parser("prepare-reconciliation")
     prepare_reconciliation.add_argument("--pilot-id", required=True)
     prepare_reconciliation.add_argument(
@@ -2928,6 +3222,14 @@ def main(argv: list[str] | None = None) -> int:
                     args.collection_close_receipt
                 ),
                 artifact_root=args.artifact_root,
+            )
+        elif args.command == "persona-signing-payload":
+            value = build_persona_signing_payload(
+                _read_json_object(args.receipt), kind=args.kind
+            )
+        elif args.command == "persona-verify-decision":
+            value = verify_enrolled_persona_study_decision(
+                _read_json_object(args.decision), artifact_root=args.artifact_root
             )
         elif args.command == "prepare-reconciliation":
             value = prepare_reconciliation_subject(

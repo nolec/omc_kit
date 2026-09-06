@@ -2201,6 +2201,12 @@ def _persona_registration(mapping: dict[str, object]) -> dict[str, object]:
         "minimum_repository_count": 2,
         "maximum_cases_per_repository": 7,
         "wall_clock_noninferiority_ratio": 1.15,
+        "preregistration_sha256": (
+            "0dc5f8d1270162bfc97841525e9191d863c7e6809fbd6d5d8a24e33d5da0ceab"
+        ),
+        "contract_revision": 2,
+        "minimum_relative_reduction": 0.30,
+        "minimum_baseline_correction_events": 3,
         "selection_policy": "chronological_first_eligible_implementation_no_replacement",
         "arm_order_policy": "odd_omc_first_even_direct_first",
         "arm_mapping_sha256": _sha(mapping),
@@ -2443,6 +2449,44 @@ def test_persona_registration_rejects_noncanonical_repository_roster() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("field", "tampered_value"),
+    [
+        ("preregistration_sha256", "f" * 64),
+        ("contract_revision", 3),
+        ("minimum_relative_reduction", 0.29),
+        ("minimum_baseline_correction_events", 2),
+    ],
+)
+def test_persona_registration_rejects_resigned_decision_contract_tampering(
+    field: str, tampered_value: object,
+) -> None:
+    mapping = _persona_mapping()
+    registration = _persona_registration(mapping)
+    omc_task_review_pilot.freeze_persona_case(
+        _frozen_case(),
+        registration_receipt=registration,
+        arm_mapping_receipt=mapping,
+    )
+    registration[field] = tampered_value
+    registration["signature"] = ""
+    registration["reconciliation_signature"] = ""
+    signed = omc_task_review_pilot._persona_registration_signed_bytes(registration)
+    registration["signature"] = base64.b64encode(
+        _STUDY_SIGNER.sign(signed)
+    ).decode("ascii")
+    registration["reconciliation_signature"] = base64.b64encode(
+        _RECONCILIATION_SIGNER.sign(signed)
+    ).decode("ascii")
+
+    with pytest.raises(PilotPreflightError, match="persona_study_registration_invalid"):
+        omc_task_review_pilot.freeze_persona_case(
+            _frozen_case(),
+            registration_receipt=registration,
+            arm_mapping_receipt=mapping,
+        )
+
+
 def test_persona_decision_metric_gate_includes_total_interventions_and_wall_clock() -> None:
     terminals = [_persona_terminal(index, "b" * 64) for index in range(10)]
     for terminal in terminals:
@@ -2453,6 +2497,8 @@ def test_persona_decision_metric_gate_includes_total_interventions_and_wall_cloc
         terminals,
         correction_events={"direct_codex": 5, "omc_persona": 3},
         wall_clock_noninferiority_ratio=1.15,
+        minimum_relative_reduction=0.30,
+        minimum_baseline_correction_events=3,
     )
 
     assert result["status"] == "STOP"
@@ -2467,10 +2513,71 @@ def test_persona_fatal_violation_precedes_low_baseline_event_inconclusive() -> N
         terminals,
         correction_events={"direct_codex": 2, "omc_persona": 0},
         wall_clock_noninferiority_ratio=1.15,
+        minimum_relative_reduction=0.30,
+        minimum_baseline_correction_events=3,
     )
 
     assert result["status"] == "STOP"
     assert result["reason"] == "fatal_violation"
+
+
+def test_persona_decision_policy_is_ordered_and_fail_closed(monkeypatch) -> None:
+    rules = omc_task_review_pilot.PERSONA_DECISION_RULES
+    assert [rule["condition"] for rule in rules] == [
+        "fatal_violation",
+        "provider_execution_absent",
+        "completion_noninferiority_failed",
+        "verification_noninferiority_failed",
+        "total_intervention_noninferiority_failed",
+        "wall_clock_noninferiority_failed",
+        "insufficient_baseline_correction_events",
+        "correction_reduction_target_missed",
+        "all_gates_passed",
+    ]
+    signals = {rule["condition"]: False for rule in rules[:-1]}
+    signals["provider_execution_absent"] = True
+    signals["completion_noninferiority_failed"] = True
+    assert omc_task_review_pilot._evaluate_persona_decision(signals) == {
+        "status": "INCONCLUSIVE",
+        "reason": "provider_execution_absent",
+    }
+    with pytest.raises(PilotPreflightError, match="persona_decision_signals_invalid"):
+        omc_task_review_pilot._evaluate_persona_decision({})
+    with pytest.raises(PilotPreflightError, match="persona_decision_signals_invalid"):
+        omc_task_review_pilot._evaluate_persona_decision({**signals, "unknown": False})
+    changed_default = (*rules[:-1], {**rules[-1], "outcome": "STOP"})
+    monkeypatch.setattr(
+        omc_task_review_pilot, "PERSONA_DECISION_RULES", changed_default
+    )
+    no_failures = {condition: False for condition in signals}
+    assert omc_task_review_pilot._evaluate_persona_decision(no_failures) == {
+        "status": "STOP"
+    }
+
+
+def test_persona_decision_policy_rejects_invalid_rule_schema(monkeypatch) -> None:
+    rules = omc_task_review_pilot.PERSONA_DECISION_RULES
+    signals = {rule["condition"]: False for rule in rules[:-1]}
+    invalid_outcome = ({**rules[0], "outcome": "UNKNOWN"}, *rules[1:])
+    monkeypatch.setattr(
+        omc_task_review_pilot, "PERSONA_DECISION_RULES", invalid_outcome
+    )
+    with pytest.raises(PilotPreflightError, match="persona_decision_policy_invalid"):
+        omc_task_review_pilot._evaluate_persona_decision(signals)
+
+    unhashable_outcome = ({**rules[0], "outcome": []}, *rules[1:])
+    monkeypatch.setattr(
+        omc_task_review_pilot, "PERSONA_DECISION_RULES", unhashable_outcome
+    )
+    with pytest.raises(PilotPreflightError, match="persona_decision_policy_invalid"):
+        omc_task_review_pilot._evaluate_persona_decision(signals)
+
+    malformed_rule = ("invalid", *rules[1:])
+    monkeypatch.setattr(
+        omc_task_review_pilot, "PERSONA_DECISION_RULES", malformed_rule
+    )
+    with pytest.raises(PilotPreflightError, match="persona_decision_policy_invalid"):
+        omc_task_review_pilot._persona_pre_metric_decision([])
 
 
 def test_persona_collection_close_returns_signed_deadline_shortfall(
@@ -2555,6 +2662,30 @@ def test_enrolled_persona_fatal_violation_precedes_provider_absence(
 
     assert result["status"] == "STOP"
     assert result["reason"] == "fatal_violation"
+    assert result["decision_sha256"] == _sha(
+        {key: value for key, value in result.items() if key != "decision_sha256"}
+    )
+    assert result["evidence_bundle"]["registration"] == registration
+    terminals[0]["arms"]["omc"]["fatal_violation"] = False
+    absent_result = omc_task_review_pilot.build_enrolled_persona_study_decision(
+        terminals,
+        adjudication_receipt=_blind_persona_adjudication(
+            terminals, tmp_path, arm_a_events=0, arm_b_events=0
+        ),
+        arm_mapping_receipt=mapping,
+        registration_receipt=registration,
+        enrollment_receipts=enrollments,
+        artifact_root=tmp_path,
+    )
+    assert absent_result["status"] == "INCONCLUSIVE"
+    assert absent_result["reason"] == "provider_execution_absent"
+    assert absent_result["decision_sha256"] == _sha(
+        {
+            key: value
+            for key, value in absent_result.items()
+            if key != "decision_sha256"
+        }
+    )
 
 
 def test_enrolled_persona_decision_binds_all_terminals_to_enrollment_chain(
@@ -2614,6 +2745,24 @@ def test_enrolled_persona_decision_binds_all_terminals_to_enrollment_chain(
 
     assert decision["status"] == "CONTINUE"
     assert decision["enrollment_count"] == 10
+    assert omc_task_review_pilot.verify_enrolled_persona_study_decision(
+        decision, artifact_root=tmp_path
+    ) == decision
+    tampered_decision = json.loads(json.dumps(decision))
+    tampered_decision["evidence_bundle"]["registration"][
+        "minimum_relative_reduction"
+    ] = 0.29
+    tampered_decision["decision_sha256"] = _sha(
+        {
+            key: value
+            for key, value in tampered_decision.items()
+            if key != "decision_sha256"
+        }
+    )
+    with pytest.raises(PilotPreflightError, match="persona_decision_bundle_invalid"):
+        omc_task_review_pilot.verify_enrolled_persona_study_decision(
+            tampered_decision, artifact_root=tmp_path
+        )
     terminals[0]["persona_registration_sha256"] = "f" * 64
     terminals[0]["terminal_sha256"] = _sha(
         {key: value for key, value in terminals[0].items() if key != "terminal_sha256"}
@@ -2629,6 +2778,94 @@ def test_enrolled_persona_decision_binds_all_terminals_to_enrollment_chain(
             enrollment_receipts=enrollments,
             artifact_root=tmp_path,
         )
+
+
+@pytest.mark.parametrize(
+    ("kind", "builder"),
+    [
+        ("registration", lambda: _persona_registration(_persona_mapping())),
+        ("arm_mapping", _persona_mapping),
+    ],
+)
+def test_persona_signing_payload_exposes_exact_canonical_bytes(
+    kind: str, builder,
+) -> None:
+    receipt = builder()
+    if kind == "registration":
+        receipt["signature"] = ""
+        receipt["reconciliation_signature"] = ""
+        expected = omc_task_review_pilot._persona_registration_signed_bytes(receipt)
+    else:
+        receipt["signature"] = ""
+        expected = omc_task_review_pilot._persona_arm_mapping_signed_bytes(receipt)
+
+    payload = omc_task_review_pilot.build_persona_signing_payload(receipt, kind=kind)
+
+    assert base64.b64decode(payload["payload_base64"], validate=True) == expected
+    assert payload["payload_sha256"] == hashlib.sha256(expected).hexdigest()
+    with pytest.raises(PilotPreflightError, match="persona_signing_payload_kind_invalid"):
+        omc_task_review_pilot.build_persona_signing_payload(receipt, kind="unknown")
+    with pytest.raises(PilotPreflightError, match="persona_signing_payload_invalid"):
+        omc_task_review_pilot.build_persona_signing_payload(
+            {"signature": ""}, kind=kind
+        )
+    malformed = json.loads(json.dumps(receipt))
+    malformed["schema_version"] = "invalid"
+    with pytest.raises(PilotPreflightError, match="persona_signing_payload_invalid"):
+        omc_task_review_pilot.build_persona_signing_payload(malformed, kind=kind)
+    if kind == "arm_mapping":
+        for invalid_arm in ([], {}, None, True):
+            malformed = json.loads(json.dumps(receipt))
+            malformed["arm_a"] = invalid_arm
+            with pytest.raises(
+                PilotPreflightError, match="persona_signing_payload_invalid"
+            ):
+                omc_task_review_pilot.build_persona_signing_payload(
+                    malformed, kind=kind
+                )
+
+
+def test_persona_signing_payload_supports_every_documented_kind(
+    tmp_path: Path,
+) -> None:
+    mapping = _persona_mapping()
+    registration = _persona_registration(mapping)
+    enrollment = _persona_enrollments(registration, tmp_path)[0]
+    terminals = [_persona_terminal(index, "b" * 64) for index in range(10)]
+    adjudication = _blind_persona_adjudication(
+        terminals, tmp_path, arm_a_events=5, arm_b_events=3
+    )
+    collection_close = {
+        "schema_version": "omc-task-review-persona-collection-close/v1",
+        "study_id": registration["study_id"],
+        "registration_sha256": _sha(registration),
+        "enrollment_count": 1,
+        "final_enrollment_sha256": _sha(enrollment),
+        "observed_at": registration["collection_deadline"],
+        "signer_public_key": _RECONCILIATION_SIGNER_PUBLIC_KEY,
+        "signature": "",
+    }
+    documents = [
+        ("enrollment", enrollment, omc_task_review_pilot._persona_enrollment_signed_bytes),
+        (
+            "adjudication",
+            adjudication,
+            omc_task_review_pilot._persona_adjudication_signed_bytes,
+        ),
+        (
+            "collection_close",
+            collection_close,
+            omc_task_review_pilot._persona_collection_close_signed_bytes,
+        ),
+    ]
+    for kind, receipt, signed_bytes in documents:
+        receipt["signature"] = ""
+        expected = signed_bytes(receipt)
+        payload = omc_task_review_pilot.build_persona_signing_payload(
+            receipt, kind=kind
+        )
+        assert base64.b64decode(payload["payload_base64"], validate=True) == expected
+        assert payload["payload_sha256"] == hashlib.sha256(expected).hexdigest()
 
 
 def test_selection_rejects_non_chronological_inventory() -> None:
