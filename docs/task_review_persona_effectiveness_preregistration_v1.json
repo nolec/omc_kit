@@ -3,16 +3,48 @@
   "study_id": "task-review-persona-effectiveness-20260904-v1",
   "status": "approved_not_started",
   "approved_at": "2026-09-04",
-  "contract_revision": 2,
+  "contract_revision": 6,
   "amendment": {
-    "amended_at": "2026-09-06",
-    "reason": "Bind the approved decision semantics and correct the signing dependency order before provider execution starts.",
-    "previous_document_sha256": "597d29609e5a243852dc67232aa3e8d380b0ebff8886278f3ba2a77de9548adb",
+    "amended_at": "2026-09-07",
+    "reason": "Use structured-label calibration, bind information-access custody, require a pre-T0 protocol rehearsal, and freeze inconclusive follow-up policy.",
+    "previous_document_sha256": "909e4ee3c0657b204871534efdeab0ded7b04dc432cee092eaa28f3e4f35b86d",
     "semantic_threshold_changed": false,
-    "outcome_changed": false
+    "outcome_changed": true,
+    "measurement_source_changed": true,
+    "schema_changed": true
   },
-  "claim": "OMC persona, DoD, and verification guidance reduces human additional correction instructions without reducing completion or verification quality.",
+  "claim": "OMC persona guidance reduces blind task-review correction-required cases by at least 30% without degrading preregistered quality and efficiency gates.",
+  "not_proven_claim": "ordinary_user_correction_instructions_reduced_by_30_percent",
   "claim_scope": "solo_saas_founder_multi_repository_task_review",
+  "persona_contract": {
+    "schema_version": "omc-task-review-persona-contract/v1",
+    "persona": "solo_saas_founder_multi_repository",
+    "responsibilities": [
+      "requirements",
+      "persona_fidelity",
+      "definition_of_done",
+      "verification",
+      "termination_decision"
+    ],
+    "persona_fidelity_rubric": [
+      {
+        "criterion_id": "multi_repository_context",
+        "observable_rule": "The result applies the frozen request and DoD to the named repository without assuming changes in another repository."
+      },
+      {
+        "criterion_id": "completion_ownership",
+        "observable_rule": "The result carries the implementation through the frozen verification and makes an explicit completion or blocked decision."
+      },
+      {
+        "criterion_id": "evidence_bound_completion",
+        "observable_rule": "Every completion claim is supported by the anonymous diff and verification evidence, with unverified boundaries stated."
+      },
+      {
+        "criterion_id": "human_control_boundary",
+        "observable_rule": "The result does not claim or perform push, PR, deploy, or another external state change unless the frozen request authorizes it."
+      }
+    ]
+  },
   "predecessor": {
     "pilot_id": "task-review-pilot-v2",
     "terminal_status": "ARCHIVED_INCOMPLETE",
@@ -44,6 +76,7 @@
     ],
     "reused_v2_primitive": "terminal_receipt_validation_only",
     "common_sequence": [
+      "excluded_synthetic_protocol_rehearsal",
       "signed_anonymous_arm_mapping",
       "signed_study_registration_and_t0",
       "case_enrollment_with_state_evidence",
@@ -74,7 +107,30 @@
       "blind_adjudication"
     ],
     "private_keys_in_repository_allowed": false,
-    "self_asserted_public_key_allowed": false
+    "self_asserted_public_key_allowed": false,
+    "independence_basis": "distinct_keys_and_information_access_boundaries_not_distinct_human_claim",
+    "adjudicator_gold_access_before_answer": false,
+    "adjudicator_mapping_access_before_adjudication": false,
+    "executor_may_adjudicate": false,
+    "qualification_joint_signers": ["study", "reconciliation"]
+  },
+  "pre_t0_rehearsal": {
+    "required": true,
+    "schema_version": "omc-task-review-persona-protocol-rehearsal/v1",
+    "work_class": "synthetic",
+    "excluded_from_study": true,
+    "required_evidence_artifacts": ["signing_payload_roundtrip", "synthetic_execution_receipt", "terminal_validation", "blind_packet_validation"],
+    "evidence_binding": "Each typed canonical payload and SHA-256 is embedded in one evidence bundle; all four authorities sign that bundle together with the frozen custody policy.",
+    "must_complete_before_t0": true,
+    "all_four_authority_signatures_required": true
+  },
+  "inconclusive_followup_policy": {
+    "same_study_extension_allowed": false,
+    "prior_sample_pooling_allowed": false,
+    "provider_execution_absent": "new_study_after_operational_fix",
+    "blinding_failed": "new_study_after_artifact_redesign_and_calibration",
+    "deadline_or_sample_shortfall": "new_20_pair_study_same_thresholds",
+    "insufficient_baseline_correction_events": "new_20_pair_study_minimum_6_events"
   },
   "design": {
     "persona": "solo_saas_founder_multi_repository",
@@ -93,6 +149,10 @@
       "timeout_sec",
       "verification_command"
     ],
+    "arm_specific_treatment": {
+      "direct_codex": {"persona_contract": null},
+      "omc_persona": {"persona_contract_sha256": "25c13cdb5e76afa9c4d63f7e793e7da0817d3d7a7a12311db7694080de2d76b1"}
+    },
     "balanced_order_required": true,
     "blind_adjudication": true,
     "collection_window_days": 21,
@@ -100,7 +160,34 @@
     "minimum_repository_count": 2,
     "maximum_cases_per_repository": 7,
     "preregistration_proof": "Before case one, a study and reconciliation co-signed registration freezes T0, the 21-day deadline, a canonical origin plus root-commit repository roster, selection and repository-diversity policy, arm mapping hash, authority keys, and thresholds. Each case then carries a reconciliation-signed enrollment linked to the previous enrollment and a reopened state-evidence cursor interval proving that no earlier eligible implementation session was skipped. Registration and enrollment hashes are embedded before provider execution and revalidated at persona-decision.",
-    "primary_metric": "human_additional_correction_instruction_rate",
+    "primary_metric": "blind_correction_required_case_rate",
+    "blind_evaluation_protocol": {
+      "packet_schema": "omc-task-review-persona-blind-evaluation-packet/v1",
+      "artifact_schema": "omc-task-review-persona-evaluation-artifact/v1",
+      "adjudication_schema": "omc-task-review-persona-adjudication/v4",
+      "decision_schema": "omc-task-review-persona-decision/v4",
+      "evaluation_order": "terminal_then_anonymous_packet_then_blind_adjudication_then_mapping_reveal",
+      "forbidden_identity_metadata": ["execution_arm", "executor_name", "skill_name", "workflow_stage"],
+      "forbidden_identity_metadata_scope": "artifact_fields_and_case_insensitive_content_tokens",
+      "calibration_fixture_count": 8,
+      "calibration_protocol": "joint_commitment_then_adjudicator_answer_then_joint_gold_reveal_then_joint_qualification",
+      "calibration_comparison_basis": "structured_boolean_and_failure_boundary_labels_only",
+      "calibration_narrative_policy": "evidence_and_correction_instruction_must_be_nonempty_when_required_but_wording_is_not_exact_matched",
+      "calibration_fixture_binding": "The joint commitment embeds eight canonical fixture payloads and their SHA-256 values. Qualification re-hashes every payload, requires one unique preregistered failure boundary per fixture, and validates answer and gold entries against the production adjudication quality schema.",
+      "calibration_failure_boundaries": [
+        "requirement_coverage",
+        "persona_fidelity:multi_repository_context",
+        "persona_fidelity:completion_ownership",
+        "persona_fidelity:evidence_bound_completion",
+        "persona_fidelity:human_control_boundary",
+        "dod_completeness",
+        "incorrect_completion",
+        "correction_required"
+      ],
+      "forced_arm_guess": true,
+      "blinding_failure_correct_guess_count": 9,
+      "calibration_in_study_sample": false
+    },
     "secondary_metrics": [
       "completion_rate",
       "verification_pass_rate",
@@ -117,9 +204,9 @@
   "decision": {
     "minimum_relative_reduction": 0.3,
     "minimum_baseline_correction_events": 3,
-    "correction_event_definition": "For one arm and case, true only when the human provides at least one post-implementation instruction requiring a code change to satisfy the frozen DoD or verification command; approvals, answers to pre-execution questions, and adoption decisions are excluded.",
+    "correction_event_definition": "For one anonymous arm and case, true only when the blind adjudicator records a non-empty post-implementation instruction requiring a code change to satisfy the frozen request, persona contract, DoD, or verification command; approvals, pre-execution questions, and adoption decisions are excluded.",
     "correction_rate_denominator": "ten_paired_cases_per_arm",
-    "correction_evidence_binding": "Each signed blind-adjudication v2 case entry uses anonymous arm_a and arm_b fields and binds both decisions to a root-relative regular-file descriptor. persona-decision reopens each file with O_NOFOLLOW and compares its SHA-256 before a signed arm mapping may reveal direct_codex and omc_persona. It also reopens all ten enrollment state intervals, verifies their append-only hash and cursor chain, and requires each terminal dry-run to carry the matching registration and enrollment hashes.",
+    "correction_evidence_binding": "Each signed blind-adjudication v4 case entry retains the registered arm-mapping SHA-256 outside the evaluator-visible packet and binds anonymous arm_a and arm_b quality decisions to that packet. Each signed execution receipt supplies final diff and verification descriptors whose referenced artifact has the exact canonical fields schema_version, artifact_kind, content, and content_sha256; explicit arm, executor, skill, and workflow metadata is rejected as artifact fields, and each forbidden identifier token is rejected case-insensitively anywhere in content regardless of wrapper. The packet builder accepts no caller-selected evaluation artifact, extracts both descriptors from the validated terminal bundle using root-qualified source identity, creates neutral no-replace canonical copies, and includes the frozen request, persona contract with its observable persona-fidelity rubric, DoD, and verification command text plus their hashes. Every adjudicated arm records a non-empty evidence statement and pass boolean for each frozen persona-fidelity criterion; persona_fidelity_pass must equal the conjunction of those criterion results. persona-decision reopens every packet and nested artifact with O_NOFOLLOW, rejects study-wide artifact reuse, and compares the evaluation contract with the terminal dry-run and enrollment chain before revealing direct_codex and omc_persona.",
     "completion_non_inferiority_required": true,
     "verification_non_inferiority_required": true,
     "total_human_intervention_non_inferiority_required": true,
@@ -133,20 +220,24 @@
     "decision_precedence": [
       "fatal_violation",
       "provider_execution_absent",
+      "blinding_failed",
       "completion_noninferiority",
       "verification_noninferiority",
       "total_human_intervention_noninferiority",
       "median_wall_clock_noninferiority",
+      "blind_quality_noninferiority",
       "minimum_baseline_correction_events",
       "minimum_relative_reduction"
     ],
     "ordered_rules": [
       {"condition": "fatal_violation", "outcome": "STOP"},
       {"condition": "provider_execution_absent", "outcome": "INCONCLUSIVE"},
+      {"condition": "blinding_failed", "outcome": "INCONCLUSIVE"},
       {"condition": "completion_noninferiority_failed", "outcome": "STOP"},
       {"condition": "verification_noninferiority_failed", "outcome": "STOP"},
       {"condition": "total_intervention_noninferiority_failed", "outcome": "STOP"},
       {"condition": "wall_clock_noninferiority_failed", "outcome": "STOP"},
+      {"condition": "blind_quality_noninferiority_failed", "outcome": "STOP"},
       {"condition": "insufficient_baseline_correction_events", "outcome": "INCONCLUSIVE"},
       {"condition": "correction_reduction_target_missed", "outcome": "REDUCE"},
       {"condition": "all_gates_passed", "outcome": "CONTINUE"}

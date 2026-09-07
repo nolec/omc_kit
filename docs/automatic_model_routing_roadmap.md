@@ -8,7 +8,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 
 - V1–V4 routing, TDD guard, bounded scheduler와 fail-closed receipt 검증은 구현·회귀 근거가 있다. 이는 기능 존재의 근거이며, 모든 제품 효과 또는 자동 실행의 근거는 아니다.
 - task-review pilot v2는 roster와 T0는 보존됐지만 readiness·paired arm 실행·terminal·decision receipt가 없어 `ARCHIVED_INCOMPLETE`로 동결했다. reconciliation과 감사 외에 재사용하지 않는다.
-- 사용자가 승인한 fresh study `task-review-persona-effectiveness-20260904-v1`은 10건 paired case에서 direct Codex 대비 사람의 추가 수정 지시 30% 감소와 완료·검증 품질 비열화를 검증한다. external Codex executor receipt 계약은 고정됐지만 실제 provider 실행은 아직 시작하지 않았다.
+- 사용자가 승인한 fresh study `task-review-persona-effectiveness-20260904-v1`은 10건 paired case에서 direct Codex 대비 blind correction-required case 30% 감소와 완료·검증·requirement·persona·DoD 품질 비열화를 검증한다. 실제 일상 사용자의 수정 지시 30% 감소는 아직 증명하지 않는다. external Codex executor receipt 계약은 고정됐지만 실제 provider 실행은 아직 시작하지 않았다.
 - 완료 이력·중단된 실험·세부 설계는 [Roadmap History](automatic_model_routing_roadmap_history.md)에 보존한다. 과거 receipt나 테스트 통과를 현재 운영 효과로 승격하지 않는다.
 
 ## Active Decision Gate
@@ -21,10 +21,12 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 |---|---|
 | `fatal_violation` | `STOP` |
 | `provider_execution_absent` | `INCONCLUSIVE` |
+| `blinding_failed` | `INCONCLUSIVE` |
 | `completion_noninferiority_failed` | `STOP` |
 | `verification_noninferiority_failed` | `STOP` |
 | `total_intervention_noninferiority_failed` | `STOP` |
 | `wall_clock_noninferiority_failed` | `STOP` |
+| `blind_quality_noninferiority_failed` | `STOP` |
 | `insufficient_baseline_correction_events` | `INCONCLUSIVE` |
 | `correction_reduction_target_missed` | `REDUCE` |
 | `all_gates_passed` | `CONTINUE` |
@@ -48,14 +50,14 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 
 ### 단일 활성 검증 lane
 
-첫 제품 범위는 복잡한 코드 변경을 `task → review`로 안전하게 완료하는 흐름이다. 새 study는 자연 발생 implementation 10건을 `direct_codex`와 `omc_persona` arm으로 paired 실행한다. 같은 request·base commit·provider·model·reasoning·`timeout_sec`·verification command를 사용하고, order를 balanced하게 고정하며 arm identity를 숨긴 blind adjudication으로 결과를 판정한다.
+첫 제품 범위는 복잡한 코드 변경을 `task → review`로 안전하게 완료하는 흐름이다. 새 study는 자연 발생 implementation 10건을 `direct_codex`와 `omc_persona` arm으로 paired 실행한다. 같은 request·base commit·provider·model·reasoning·`timeout_sec`·verification command를 사용하고, order를 balanced하게 고정한다. terminal 뒤에는 최종 diff와 verification만 담은 anonymous evaluation packet을 만들고, blind adjudication v4가 correction-required case와 requirement coverage·persona fidelity·DoD completeness·incorrect completion 및 강제 arm 추측을 기록한 뒤에만 arm mapping을 해석한다.
 
 실행 절차 SSOT는 [Task Review Product Focus Pilot](task_review_product_focus_pilot.md), machine-readable 판정 SSOT는 [persona-effectiveness preregistration](task_review_persona_effectiveness_preregistration_v1.json)이다. 실제 실행 전에 fresh authority와 T0를 동결하고 operator custody의 trusted execution public key를 설정해야 한다. 결과가 `CONTINUE`여도 원본 저장소에 자동 반영하지 않고 사용자가 선택한 arm만 별도 작업에서 적용한다.
 
-- `CONTINUE`: baseline correction event가 최소 3건 있고, OMC persona arm의 사람 추가 수정 지시율이 30% 이상 감소하며 completion·verification pass rate·총 사람 개입 수가 비열화가 아니고 median wall-clock이 baseline의 115% 이내이며 fatal violation이 없다.
-- `INCONCLUSIVE`: fatal violation이 없는 유효한 terminal에서 provider 실행 부재가 확인되거나, 앞선 비열화 gate를 모두 통과한 유효한 10쌍에서 baseline correction event가 3건 미만이거나, 21일 deadline에 10건 미달임을 유효한 signed collection-close receipt로 봉인한 경우다. receipt·서명·hash·binding·raw output·blind adjudication 증거의 누락·위조·불일치는 결과로 승격하지 않고 `blocked`로 차단한다.
+- `CONTINUE`: baseline correction event가 최소 3건 있고, OMC persona arm의 blind correction-required case rate가 30% 이상 감소하며 completion·verification pass rate·총 사람 개입 수·blind requirement/persona/DoD 품질이 비열화가 아니고 incorrect completion이 증가하지 않으며 median wall-clock이 baseline의 115% 이내이고 fatal violation이 없다.
+- `INCONCLUSIVE`: fatal violation이 없는 유효한 terminal에서 provider 실행 부재가 확인되거나, 강제 arm 추측에서 OMC arm을 9건 이상 맞혀 blinding이 실패하거나, 앞선 비열화 gate를 모두 통과한 유효한 10쌍에서 baseline correction event가 3건 미만이거나, 21일 deadline에 10건 미달임을 유효한 signed collection-close receipt로 봉인한 경우다. receipt·서명·hash·binding·raw output·blind adjudication 증거의 누락·위조·불일치는 결과로 승격하지 않고 `blocked`로 차단한다.
 - `REDUCE/STOP`: 30% 개선에 못 미치면 범위를 축소하고, completion·verification 악화 또는 fatal violation이 있으면 정지한다.
-- 완성 표본의 판정 우선순위는 `fatal violation → provider 실행 부재 → completion → verification → 총 사람 개입 → median wall-clock → baseline correction event 수 → 30% 감소율`이다. 따라서 provider 실행 부재는 `INCONCLUSIVE`지만 fatal violation은 항상 `STOP`이며, baseline event가 부족해도 앞선 비열화가 확인되면 `STOP`이다.
+- 완성 표본의 판정 우선순위는 `fatal violation → provider 실행 부재 → blinding 실패 → completion → verification → 총 사람 개입 → median wall-clock → blind quality → baseline correction event 수 → 30% 감소율`이다. 따라서 provider 실행 부재와 blinding 실패는 `INCONCLUSIVE`지만 fatal violation은 항상 `STOP`이며, baseline event가 부족해도 앞선 비열화가 확인되면 `STOP`이다.
 - 나머지 연구 lane은 `PAUSED_NOT_CANCELLED`이며 persona-effectiveness 결과 후에만 별도 사용자 결정으로 하나를 재개한다.
 
 ### Evidence-state Scorecard
@@ -68,7 +70,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 | Bounded scheduler | `IMPLEMENTED` | v2 grant 전용 N-child scheduler·provider adapter·회귀 테스트 | 실제 3–5 child acceptance |
 | Product Value | `BLOCKED` | 기존 evidence-loss batch는 종료했으며 prospective study는 `PAUSED_NOT_CANCELLED` | 별도 사용자 결정으로 재개 |
 | Product focus v2 | `ARCHIVED_INCOMPLETE` | roster·T0는 보존, readiness·provider·terminal·decision evidence는 없음 | reconciliation과 감사만 허용; binding·case 재사용 금지 |
-| Persona effectiveness | `APPROVED_NOT_STARTED` | 10건 paired case·30% 추가 수정 지시 감소·비열화·external receipt 계약 사전 등록 | fresh authority와 T0를 동결한 뒤 actual provider execution 시작 |
+| Persona effectiveness | `APPROVED_NOT_STARTED` | 10건 paired case·blind correction-required 30% 감소·비열화·calibration·external receipt 계약 사전 등록 | calibration qualification과 fresh authority·T0를 동결한 뒤 actual provider execution 시작 |
 | Product Value independence | `NOT_REPRODUCED` | 유효한 development evidence 없음 | 신규 development evidence 검증 후 별도 선정한 holdout에서 primary metric 충족 |
 | Plan | `NOT_PROVEN` | 단일 저장소 pilot만 존재하며 현재 `PAUSED_NOT_CANCELLED` | persona-effectiveness 결과 이후 재개 여부 결정 |
 | Review | `NOT_PROVEN` | durable native provider 원문 부재이며 현재 `PAUSED_NOT_CANCELLED` | persona-effectiveness 결과 이후 재개 여부 결정 |
@@ -248,6 +250,8 @@ Task completion lineage schema v3도 구현했다. `start`, `continue`, `preserv
 Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분한다. 경쟁 제품의 문서 주장과 OMC의 구현 근거도 같은 증거 수준처럼 혼합하지 않는다.
 
 ## 실행 우선순위
+
+revision 6에서는 T0 전에 표본 제외 synthetic protocol rehearsal을 네 authority가 서명해야 한다. calibration은 구조화 판정만 비교하고 자유서술 문구는 비교하지 않으며, adjudicator의 gold·arm mapping 사전 접근 금지를 information-access custody로 봉인한다. 모든 `INCONCLUSIVE`는 현재 study를 종료하며 기존 표본을 연장·합산하지 않고 사전 등록된 사유별 새 study만 허용한다.
 
 `task-review-persona-effectiveness-20260904-v1` 하나만 현재 활성 lane으로 유지한다. 다음 행동은 외부 custody의 study registration과 anonymous arm mapping을 공동 서명해 fresh T0·21일 창·선정 정책·authority를 동결하는 것이다. OMC는 외부 executor의 provider 호출 자체를 통제하지 않으며, 이 gate와 case별 enrollment 검증 전에 수행된 실행은 유효한 Pilot evidence로 인정하지 않는다. 그 뒤 각 자연 발생 작업을 `enrollment → persona freeze → persona dry-run → external Codex signed execution → terminal` 순으로 즉시 처리해 10쌍을 수집하고, enrollment chain을 다시 대조한 blind adjudication 뒤 decision을 발행한다. 나머지 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`이다. 이 active lane 밖의 새 스킬·transport·benchmark fixture는 늘리지 않는다.
 

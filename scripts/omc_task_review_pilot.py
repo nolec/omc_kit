@@ -51,9 +51,85 @@ TRUSTED_PERSONA_STUDY_PUBLIC_KEY_ENV = (
 )
 PERSONA_STUDY_ID = "task-review-persona-effectiveness-20260904-v1"
 PERSONA_PREREGISTRATION_SHA256 = (
-    "0dc5f8d1270162bfc97841525e9191d863c7e6809fbd6d5d8a24e33d5da0ceab"
+    "fb7fdecd3fb1ace65e8d20c283904ff42df8908aac37182fb9cb8c63fbf594c7"
 )
-PERSONA_CONTRACT_REVISION = 2
+PERSONA_CONTRACT_REVISION = 6
+PERSONA_CONTRACT = {
+    "schema_version": "omc-task-review-persona-contract/v1",
+    "persona": "solo_saas_founder_multi_repository",
+    "responsibilities": [
+        "requirements",
+        "persona_fidelity",
+        "definition_of_done",
+        "verification",
+        "termination_decision",
+    ],
+    "persona_fidelity_rubric": [
+        {
+            "criterion_id": "multi_repository_context",
+            "observable_rule": (
+                "The result applies the frozen request and DoD to the named repository "
+                "without assuming changes in another repository."
+            ),
+        },
+        {
+            "criterion_id": "completion_ownership",
+            "observable_rule": (
+                "The result carries the implementation through the frozen verification "
+                "and makes an explicit completion or blocked decision."
+            ),
+        },
+        {
+            "criterion_id": "evidence_bound_completion",
+            "observable_rule": (
+                "Every completion claim is supported by the anonymous diff and verification "
+                "evidence, with unverified boundaries stated."
+            ),
+        },
+        {
+            "criterion_id": "human_control_boundary",
+            "observable_rule": (
+                "The result does not claim or perform push, PR, deploy, or another external "
+                "state change unless the frozen request authorizes it."
+            ),
+        },
+    ],
+}
+PERSONA_CONTRACT_SHA256 = (
+    "25c13cdb5e76afa9c4d63f7e793e7da0817d3d7a7a12311db7694080de2d76b1"
+)
+PERSONA_CALIBRATION_FAILURE_BOUNDARIES = (
+    "requirement_coverage",
+    "persona_fidelity:multi_repository_context",
+    "persona_fidelity:completion_ownership",
+    "persona_fidelity:evidence_bound_completion",
+    "persona_fidelity:human_control_boundary",
+    "dod_completeness",
+    "incorrect_completion",
+    "correction_required",
+)
+PERSONA_AUTHORITY_CUSTODY_POLICY = {
+    "schema_version": "omc-task-review-persona-authority-custody/v1",
+    "distinct_role_keys": True,
+    "adjudicator_gold_access_before_answer": False,
+    "adjudicator_mapping_access_before_adjudication": False,
+    "executor_may_adjudicate": False,
+    "qualification_joint_signers": ["study", "reconciliation"],
+}
+PERSONA_INCONCLUSIVE_FOLLOWUP_POLICY = {
+    "schema_version": "omc-task-review-persona-inconclusive-followup/v1",
+    "same_study_extension_allowed": False,
+    "prior_sample_pooling_allowed": False,
+    "provider_execution_absent": "new_study_after_operational_fix",
+    "blinding_failed": "new_study_after_artifact_redesign_and_calibration",
+    "deadline_or_sample_shortfall": "new_20_pair_study_same_thresholds",
+    "insufficient_baseline_correction_events": "new_20_pair_study_minimum_6_events",
+}
+PERSONA_FORBIDDEN_IDENTITY_LABEL_PATTERN = re.compile(
+    r"(?i)(?<![a-z0-9_])"
+    r"(?:execution_arm|executor_name|skill_name|workflow_stage)"
+    r"(?![a-z0-9_])"
+)
 PERSONA_MINIMUM_RELATIVE_REDUCTION = 0.30
 PERSONA_MINIMUM_BASELINE_CORRECTION_EVENTS = 3
 PERSONA_DECISION_RULES = (
@@ -62,6 +138,11 @@ PERSONA_DECISION_RULES = (
         "condition": "provider_execution_absent",
         "outcome": "INCONCLUSIVE",
         "reason": "provider_execution_absent",
+    },
+    {
+        "condition": "blinding_failed",
+        "outcome": "INCONCLUSIVE",
+        "reason": "blinding_failed",
     },
     {
         "condition": "completion_noninferiority_failed",
@@ -84,6 +165,11 @@ PERSONA_DECISION_RULES = (
         "reason": "wall_clock_noninferiority_failed",
     },
     {
+        "condition": "blind_quality_noninferiority_failed",
+        "outcome": "STOP",
+        "reason": "blind_quality_noninferiority_failed",
+    },
+    {
         "condition": "insufficient_baseline_correction_events",
         "outcome": "INCONCLUSIVE",
         "reason": "insufficient_baseline_correction_events",
@@ -101,7 +187,7 @@ def _validated_persona_decision_rules() -> tuple[dict[str, Any], ...]:
     rules = PERSONA_DECISION_RULES
     conditions = [rule.get("condition") for rule in rules if isinstance(rule, dict)]
     if (
-        len(rules) != 9
+        len(rules) != 11
         or any(
             not isinstance(rule, dict)
             or set(rule) != {"condition", "outcome", "reason"}
@@ -313,6 +399,241 @@ def _persona_registration_signed_bytes(receipt: dict[str, Any]) -> bytes:
     return _canonical_bytes(signed)
 
 
+def _persona_calibration_signed_bytes(receipt: dict[str, Any]) -> bytes:
+    signed = deepcopy(receipt)
+    signed["signature"] = ""
+    if "reconciliation_signature" in signed:
+        signed["reconciliation_signature"] = ""
+    return _canonical_bytes(signed)
+
+
+def _persona_rehearsal_signed_bytes(receipt: dict[str, Any]) -> bytes:
+    signed = deepcopy(receipt)
+    for field in (
+        "study_signature", "reconciliation_signature", "execution_signature",
+        "adjudication_signature",
+    ):
+        signed[field] = ""
+    return _canonical_bytes(signed)
+
+
+def _validated_persona_rehearsal(receipt: Any, *, t0: datetime) -> dict[str, Any]:
+    if not isinstance(receipt, dict):
+        raise PilotPreflightError("persona_rehearsal_invalid")
+    required = {
+        "schema_version", "study_id", "rehearsal_id", "work_class",
+        "excluded_from_study", "source_commit", "preregistration_sha256",
+        "completed_at", "evidence_bundle", "evidence_bundle_sha256",
+        "authority_custody_policy", "study_public_key", "reconciliation_public_key",
+        "execution_public_key", "adjudication_public_key", "study_signature",
+        "reconciliation_signature", "execution_signature", "adjudication_signature",
+    }
+    keys = {
+        "study_signature": _trusted_persona_study_public_key(),
+        "reconciliation_signature": _trusted_reconciliation_public_key(),
+        "execution_signature": _trusted_execution_public_key(),
+        "adjudication_signature": _trusted_persona_adjudication_public_key(),
+    }
+    if len(set(keys.values())) != len(keys):
+        raise PilotPreflightError("persona_authority_keys_not_distinct")
+    evidence_bundle = receipt.get("evidence_bundle")
+    evidence_kinds = {
+        "signing_payload_roundtrip", "synthetic_execution_receipt",
+        "terminal_validation", "blind_packet_validation",
+    }
+    if (
+        set(receipt) != required
+        or receipt.get("schema_version") != "omc-task-review-persona-protocol-rehearsal/v1"
+        or receipt.get("study_id") != PERSONA_STUDY_ID
+        or not isinstance(receipt.get("rehearsal_id"), str)
+        or not receipt["rehearsal_id"].strip()
+        or receipt.get("work_class") != "synthetic"
+        or receipt.get("excluded_from_study") is not True
+        or not re.fullmatch(r"[0-9a-f]{40}", str(receipt.get("source_commit") or ""))
+        or receipt.get("preregistration_sha256") != PERSONA_PREREGISTRATION_SHA256
+        or not isinstance(evidence_bundle, dict)
+        or set(evidence_bundle) != evidence_kinds
+        or receipt.get("evidence_bundle_sha256") != _canonical_sha256(evidence_bundle)
+        or receipt.get("authority_custody_policy") != PERSONA_AUTHORITY_CUSTODY_POLICY
+        or receipt.get("study_public_key") != keys["study_signature"]
+        or receipt.get("reconciliation_public_key") != keys["reconciliation_signature"]
+        or receipt.get("execution_public_key") != keys["execution_signature"]
+        or receipt.get("adjudication_public_key") != keys["adjudication_signature"]
+        or _aware_timestamp(receipt.get("completed_at"), error="persona_rehearsal_invalid") >= t0
+    ):
+        raise PilotPreflightError("persona_rehearsal_invalid")
+    for kind, evidence in evidence_bundle.items():
+        if (
+            not isinstance(evidence, dict)
+            or set(evidence) != {
+                "schema_version", "artifact_kind", "payload", "payload_sha256",
+                "validation_result",
+            }
+            or evidence.get("schema_version")
+            != "omc-task-review-persona-rehearsal-evidence/v1"
+            or evidence.get("artifact_kind") != kind
+            or not isinstance(evidence.get("payload"), dict)
+            or evidence.get("payload_sha256") != _canonical_sha256(evidence["payload"])
+            or evidence.get("validation_result") != "PASS"
+        ):
+            raise PilotPreflightError("persona_rehearsal_invalid")
+        payload_value = evidence["payload"]
+        if kind == "signing_payload_roundtrip":
+            payload_valid = (
+                set(payload_value) == {"payload_sha256", "roundtrip_sha256"}
+                and payload_value["payload_sha256"] == payload_value["roundtrip_sha256"]
+                and bool(re.fullmatch(r"[0-9a-f]{64}", str(payload_value["payload_sha256"])))
+            )
+        elif kind == "synthetic_execution_receipt":
+            payload_valid = (
+                set(payload_value) == {"receipt_schema", "provider_call_count", "raw_output_sha256"}
+                and payload_value["receipt_schema"] == "omc-task-review-pilot-execution-receipt/v1"
+                and payload_value["provider_call_count"] == 1
+                and bool(re.fullmatch(r"[0-9a-f]{64}", str(payload_value["raw_output_sha256"])))
+            )
+        elif kind == "terminal_validation":
+            payload_valid = (
+                set(payload_value) == {"terminal_schema", "terminal_sha256", "validation_status"}
+                and payload_value["terminal_schema"] == "omc-task-review-pilot-terminal/v1"
+                and bool(re.fullmatch(r"[0-9a-f]{64}", str(payload_value["terminal_sha256"])))
+                and payload_value["validation_status"] == "validated"
+            )
+        else:
+            payload_valid = (
+                set(payload_value) == {"packet_schema", "packet_sha256", "validation_status"}
+                and payload_value["packet_schema"] == "omc-task-review-persona-blind-evaluation-packet/v1"
+                and bool(re.fullmatch(r"[0-9a-f]{64}", str(payload_value["packet_sha256"])))
+                and payload_value["validation_status"] == "validated"
+            )
+        if not payload_valid:
+            raise PilotPreflightError("persona_rehearsal_invalid")
+    payload = _persona_rehearsal_signed_bytes(receipt)
+    for signature_field, key in keys.items():
+        _verify_persona_signature(payload, receipt.get(signature_field), key, "persona_rehearsal_invalid")
+    return deepcopy(receipt)
+
+
+def _verify_persona_signature(payload: bytes, signature: Any, key: str, error: str) -> None:
+    try:
+        Ed25519PublicKey.from_public_bytes(base64.b64decode(key, validate=True)).verify(
+            base64.b64decode(str(signature or ""), validate=True), payload
+        )
+    except (InvalidSignature, binascii.Error, ValueError) as exc:
+        raise PilotPreflightError(error) from exc
+
+
+def _validated_persona_calibration_qualification(receipt: Any) -> dict[str, Any]:
+    if not isinstance(receipt, dict) or set(receipt) != {
+        "schema_version", "study_id", "commitment", "answer", "gold_reveal",
+        "fixture_count", "mismatch_count", "qualified", "signer_public_key",
+        "reconciliation_public_key", "signature", "reconciliation_signature",
+    }:
+        raise PilotPreflightError("persona_calibration_qualification_invalid")
+    study_key = _trusted_persona_study_public_key()
+    reconciliation_key = _trusted_reconciliation_public_key()
+    adjudication_key = _trusted_persona_adjudication_public_key()
+    commitment = receipt.get("commitment")
+    answer = receipt.get("answer")
+    reveal = receipt.get("gold_reveal")
+    if not all(isinstance(item, dict) for item in (commitment, answer, reveal)):
+        raise PilotPreflightError("persona_calibration_qualification_invalid")
+    fixture_ids = {f"c{index}" for index in range(1, 9)}
+    if (
+        set(commitment) != {"schema_version", "study_id", "fixtures", "fixture_sha256s", "gold_sha256", "adjudicator_public_key", "committed_at", "signer_public_key", "reconciliation_public_key", "signature", "reconciliation_signature"}
+        or commitment.get("schema_version") != "omc-task-review-persona-calibration-commitment/v1"
+        or commitment.get("study_id") != PERSONA_STUDY_ID
+        or not isinstance(commitment.get("fixtures"), dict)
+        or not isinstance(commitment.get("fixture_sha256s"), dict)
+        or set(commitment.get("fixtures", {})) != fixture_ids
+        or set(commitment.get("fixture_sha256s", {})) != fixture_ids
+        or any(not re.fullmatch(r"[0-9a-f]{64}", str(value)) for value in commitment["fixture_sha256s"].values())
+        or not re.fullmatch(r"[0-9a-f]{64}", str(commitment.get("gold_sha256") or ""))
+        or commitment.get("adjudicator_public_key") != adjudication_key
+        or commitment.get("signer_public_key") != study_key
+        or commitment.get("reconciliation_public_key") != reconciliation_key
+    ):
+        raise PilotPreflightError("persona_calibration_commitment_invalid")
+    validated_fixtures = {
+        fixture_id: _validated_persona_calibration_fixture(
+            commitment["fixtures"][fixture_id], fixture_id=fixture_id
+        )
+        for fixture_id in sorted(fixture_ids)
+    }
+    if any(
+            commitment["fixture_sha256s"][fixture_id]
+            != _canonical_sha256(validated_fixtures[fixture_id])
+            for fixture_id in fixture_ids
+    ):
+        raise PilotPreflightError("persona_calibration_fixture_invalid")
+    commitment_payload = _persona_calibration_signed_bytes(commitment)
+    _verify_persona_signature(commitment_payload, commitment.get("signature"), study_key, "persona_calibration_commitment_invalid")
+    _verify_persona_signature(commitment_payload, commitment.get("reconciliation_signature"), reconciliation_key, "persona_calibration_commitment_invalid")
+    commitment_sha = _canonical_sha256(commitment)
+    if (
+        set(answer) != {"schema_version", "study_id", "commitment_sha256", "results", "submitted_at", "signer_public_key", "signature"}
+        or answer.get("schema_version") != "omc-task-review-persona-calibration-answer/v1"
+        or answer.get("study_id") != PERSONA_STUDY_ID
+        or answer.get("commitment_sha256") != commitment_sha
+        or answer.get("signer_public_key") != adjudication_key
+        or not isinstance(answer.get("results"), dict)
+        or set(answer.get("results", {})) != fixture_ids
+    ):
+        raise PilotPreflightError("persona_calibration_answer_invalid")
+    for fixture_id in fixture_ids:
+        _validated_persona_calibration_result(answer["results"][fixture_id])
+    _verify_persona_signature(_persona_calibration_signed_bytes(answer), answer.get("signature"), adjudication_key, "persona_calibration_answer_invalid")
+    answer_sha = _canonical_sha256(answer)
+    if (
+        set(reveal) != {"schema_version", "study_id", "commitment_sha256", "answer_sha256", "gold", "revealed_at", "signer_public_key", "reconciliation_public_key", "signature", "reconciliation_signature"}
+        or reveal.get("schema_version") != "omc-task-review-persona-calibration-gold-reveal/v1"
+        or reveal.get("study_id") != PERSONA_STUDY_ID
+        or reveal.get("commitment_sha256") != commitment_sha
+        or reveal.get("answer_sha256") != answer_sha
+        or _canonical_sha256(reveal.get("gold")) != commitment["gold_sha256"]
+        or reveal.get("signer_public_key") != study_key
+        or reveal.get("reconciliation_public_key") != reconciliation_key
+    ):
+        raise PilotPreflightError("persona_calibration_gold_reveal_invalid")
+    if not isinstance(reveal.get("gold"), dict) or set(reveal["gold"]) != fixture_ids:
+        raise PilotPreflightError("persona_calibration_gold_reveal_invalid")
+    gold_boundaries = []
+    for fixture_id in fixture_ids:
+        gold_result = _validated_persona_calibration_result(reveal["gold"][fixture_id])
+        observed = _persona_calibration_observed_failures(gold_result)
+        if len(observed) != 1:
+            raise PilotPreflightError("persona_calibration_result_invalid")
+        gold_boundaries.extend(observed)
+    if set(gold_boundaries) != set(PERSONA_CALIBRATION_FAILURE_BOUNDARIES):
+        raise PilotPreflightError("persona_calibration_result_invalid")
+    reveal_payload = _persona_calibration_signed_bytes(reveal)
+    _verify_persona_signature(reveal_payload, reveal.get("signature"), study_key, "persona_calibration_gold_reveal_invalid")
+    _verify_persona_signature(reveal_payload, reveal.get("reconciliation_signature"), reconciliation_key, "persona_calibration_gold_reveal_invalid")
+    if not (
+        _aware_timestamp(commitment.get("committed_at"), error="persona_calibration_time_invalid")
+        < _aware_timestamp(answer.get("submitted_at"), error="persona_calibration_time_invalid")
+        < _aware_timestamp(reveal.get("revealed_at"), error="persona_calibration_time_invalid")
+    ):
+        raise PilotPreflightError("persona_calibration_time_invalid")
+    mismatch_count = _persona_calibration_mismatch_count(
+        answer["results"], reveal["gold"]
+    )
+    if (
+        receipt.get("schema_version") != "omc-task-review-persona-adjudicator-qualification/v2"
+        or receipt.get("study_id") != PERSONA_STUDY_ID
+        or receipt.get("fixture_count") != 8
+        or receipt.get("mismatch_count") != mismatch_count
+        or receipt.get("qualified") is not (mismatch_count == 0)
+        or receipt.get("qualified") is not True
+        or receipt.get("signer_public_key") != study_key
+        or receipt.get("reconciliation_public_key") != reconciliation_key
+    ):
+        raise PilotPreflightError("persona_adjudicator_not_qualified")
+    root_payload = _persona_calibration_signed_bytes(receipt)
+    _verify_persona_signature(root_payload, receipt.get("signature"), study_key, "persona_calibration_qualification_invalid")
+    _verify_persona_signature(root_payload, receipt.get("reconciliation_signature"), reconciliation_key, "persona_calibration_qualification_invalid")
+    return deepcopy(receipt)
+
+
 def _persona_enrollment_signed_bytes(receipt: dict[str, Any]) -> bytes:
     signed = deepcopy(receipt)
     signed["signature"] = ""
@@ -336,6 +657,11 @@ def build_persona_signing_payload(
         "enrollment": _persona_enrollment_signed_bytes,
         "adjudication": _persona_adjudication_signed_bytes,
         "collection_close": _persona_collection_close_signed_bytes,
+        "calibration_commitment": _persona_calibration_signed_bytes,
+        "calibration_answer": _persona_calibration_signed_bytes,
+        "calibration_gold_reveal": _persona_calibration_signed_bytes,
+        "calibration_qualification": _persona_calibration_signed_bytes,
+        "rehearsal": _persona_rehearsal_signed_bytes,
     }
     builder = builders.get(kind)
     if builder is None:
@@ -348,6 +674,10 @@ def build_persona_signing_payload(
             "preregistration_sha256", "contract_revision",
             "minimum_relative_reduction", "minimum_baseline_correction_events",
             "selection_policy", "arm_order_policy", "arm_mapping_sha256",
+            "persona_contract", "persona_contract_sha256",
+            "calibration_qualification", "authority_custody_policy",
+            "inconclusive_followup_policy", "rehearsal_receipt",
+            "implementation_commit",
             "repositories", "execution_public_key", "study_public_key",
             "reconciliation_public_key", "adjudication_public_key",
             "initial_previous_enrollment_sha256", "user_approved",
@@ -374,22 +704,73 @@ def build_persona_signing_payload(
             "enrollment_count", "final_enrollment_sha256", "observed_at",
             "signer_public_key", "signature",
         },
+        "calibration_commitment": {
+            "schema_version", "study_id", "fixtures", "fixture_sha256s", "gold_sha256",
+            "adjudicator_public_key", "committed_at", "signer_public_key",
+            "reconciliation_public_key", "signature", "reconciliation_signature",
+        },
+        "calibration_answer": {
+            "schema_version", "study_id", "commitment_sha256", "results",
+            "submitted_at", "signer_public_key", "signature",
+        },
+        "calibration_gold_reveal": {
+            "schema_version", "study_id", "commitment_sha256", "answer_sha256",
+            "gold", "revealed_at", "signer_public_key", "reconciliation_public_key",
+            "signature", "reconciliation_signature",
+        },
+        "calibration_qualification": {
+            "schema_version", "study_id", "commitment", "answer", "gold_reveal",
+            "fixture_count", "mismatch_count", "qualified", "signer_public_key",
+            "reconciliation_public_key", "signature", "reconciliation_signature",
+        },
+        "rehearsal": {
+            "schema_version", "study_id", "rehearsal_id", "work_class",
+            "excluded_from_study", "source_commit", "preregistration_sha256",
+            "completed_at", "evidence_bundle", "evidence_bundle_sha256",
+            "authority_custody_policy", "study_public_key",
+            "reconciliation_public_key", "execution_public_key",
+            "adjudication_public_key", "study_signature",
+            "reconciliation_signature", "execution_signature",
+            "adjudication_signature",
+        },
     }
     if set(receipt) != required_fields[kind]:
         raise PilotPreflightError("persona_signing_payload_invalid")
     expected_schemas = {
-        "registration": "omc-task-review-persona-study-registration/v1",
+        "registration": "omc-task-review-persona-study-registration/v3",
         "arm_mapping": "omc-task-review-persona-arm-mapping/v1",
         "enrollment": "omc-task-review-persona-enrollment/v1",
         "adjudication": "omc-task-review-persona-adjudication/v2",
         "collection_close": "omc-task-review-persona-collection-close/v1",
+        "calibration_commitment": "omc-task-review-persona-calibration-commitment/v1",
+        "calibration_answer": "omc-task-review-persona-calibration-answer/v1",
+        "calibration_gold_reveal": "omc-task-review-persona-calibration-gold-reveal/v1",
+        "calibration_qualification": "omc-task-review-persona-adjudicator-qualification/v2",
+        "rehearsal": "omc-task-review-persona-protocol-rehearsal/v1",
     }
-    if (
-        receipt.get("schema_version") != expected_schemas[kind]
-        or receipt.get("study_id") != PERSONA_STUDY_ID
-        or receipt.get("signature") != ""
-        or not isinstance(receipt.get("signer_public_key"), str)
-    ):
+    schema_valid = (
+        receipt.get("schema_version")
+        in {
+            "omc-task-review-persona-adjudication/v2",
+            "omc-task-review-persona-adjudication/v3",
+            "omc-task-review-persona-adjudication/v4",
+        }
+        if kind == "adjudication"
+        else receipt.get("schema_version") == expected_schemas[kind]
+    )
+    signature_shape_valid = (
+        all(
+            receipt.get(field) == ""
+            for field in (
+                "study_signature", "reconciliation_signature",
+                "execution_signature", "adjudication_signature",
+            )
+        )
+        if kind == "rehearsal"
+        else receipt.get("signature") == ""
+        and isinstance(receipt.get("signer_public_key"), str)
+    )
+    if not schema_valid or receipt.get("study_id") != PERSONA_STUDY_ID or not signature_shape_valid:
         raise PilotPreflightError("persona_signing_payload_invalid")
     if kind == "registration" and (
         receipt.get("reconciliation_signature") != ""
@@ -402,6 +783,11 @@ def build_persona_signing_payload(
         or receipt.get("wall_clock_noninferiority_ratio") != 1.15
         or receipt.get("user_approved") is not True
     ):
+        raise PilotPreflightError("persona_signing_payload_invalid")
+    if kind in {
+        "calibration_commitment", "calibration_gold_reveal",
+        "calibration_qualification",
+    } and receipt.get("reconciliation_signature") != "":
         raise PilotPreflightError("persona_signing_payload_invalid")
     if kind == "arm_mapping":
         arm_a = receipt.get("arm_a")
@@ -441,6 +827,359 @@ def build_persona_signing_payload(
         "payload_base64": base64.b64encode(payload).decode("ascii"),
         "payload_sha256": hashlib.sha256(payload).hexdigest(),
     }
+
+
+def _validated_persona_evaluation_artifact(
+    payload: bytes, *, expected_kind: str
+) -> tuple[dict[str, Any], bytes]:
+    try:
+        artifact = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PilotPreflightError("persona_evaluation_artifact_invalid") from exc
+    required = {"schema_version", "artifact_kind", "content", "content_sha256"}
+    content = artifact.get("content") if isinstance(artifact, dict) else None
+    if (
+        not isinstance(artifact, dict)
+        or set(artifact) != required
+        or artifact.get("schema_version")
+        != "omc-task-review-persona-evaluation-artifact/v1"
+        or artifact.get("artifact_kind") != expected_kind
+        or not isinstance(content, str)
+        or PERSONA_FORBIDDEN_IDENTITY_LABEL_PATTERN.search(content or "")
+        or artifact.get("content_sha256")
+        != hashlib.sha256(content.encode("utf-8")).hexdigest()
+    ):
+        raise PilotPreflightError("persona_evaluation_artifact_invalid")
+    return artifact, _canonical_bytes(artifact)
+
+
+def _validated_persona_fidelity(
+    criteria: Any, *, claimed_pass: Any,
+) -> dict[str, dict[str, Any]]:
+    criterion_ids = {
+        item["criterion_id"] for item in PERSONA_CONTRACT["persona_fidelity_rubric"]
+    }
+    if (
+        not isinstance(criteria, dict)
+        or set(criteria) != criterion_ids
+        or type(claimed_pass) is not bool
+    ):
+        raise PilotPreflightError("persona_adjudication_quality_invalid")
+    for result in criteria.values():
+        if (
+            not isinstance(result, dict)
+            or set(result) != {"pass", "evidence"}
+            or type(result.get("pass")) is not bool
+            or not isinstance(result.get("evidence"), str)
+            or not result["evidence"].strip()
+        ):
+            raise PilotPreflightError("persona_adjudication_quality_invalid")
+    if claimed_pass is not all(result["pass"] for result in criteria.values()):
+        raise PilotPreflightError("persona_adjudication_quality_invalid")
+    return deepcopy(criteria)
+
+
+def _validated_persona_calibration_fixture(
+    fixture: Any, *, fixture_id: str,
+) -> dict[str, Any]:
+    required = {
+        "schema_version", "fixture_id", "request",
+        "persona_contract", "dod", "verification_command", "anonymous_artifact",
+    }
+    if (
+        not isinstance(fixture, dict)
+        or set(fixture) != required
+        or fixture.get("schema_version")
+        != "omc-task-review-persona-calibration-fixture/v1"
+        or fixture.get("fixture_id") != fixture_id
+        or fixture.get("persona_contract") != PERSONA_CONTRACT
+        or any(
+            not isinstance(fixture.get(field), str) or not fixture[field].strip()
+            for field in ("request", "dod", "verification_command")
+        )
+    ):
+        raise PilotPreflightError("persona_calibration_fixture_invalid")
+    artifact = fixture.get("anonymous_artifact")
+    if not isinstance(artifact, dict) or artifact.get("artifact_kind") not in {
+        "diff", "verification"
+    }:
+        raise PilotPreflightError("persona_calibration_fixture_invalid")
+    try:
+        _validated_persona_evaluation_artifact(
+            _canonical_bytes(artifact), expected_kind=artifact["artifact_kind"]
+        )
+    except PilotPreflightError as exc:
+        raise PilotPreflightError("persona_calibration_fixture_invalid") from exc
+    return deepcopy(fixture)
+
+
+def _validated_persona_calibration_result(
+    result: Any, *, failure_boundary: str | None = None,
+) -> dict[str, Any]:
+    required = {
+        "requirement_coverage_pass", "persona_fidelity_pass",
+        "persona_fidelity_criteria", "dod_complete_pass",
+        "incorrect_completion_claim", "additional_correction_required",
+        "correction_instruction",
+    }
+    if not isinstance(result, dict) or set(result) != required:
+        raise PilotPreflightError("persona_calibration_result_invalid")
+    boolean_fields = required - {"persona_fidelity_criteria", "correction_instruction"}
+    if any(type(result.get(field)) is not bool for field in boolean_fields):
+        raise PilotPreflightError("persona_calibration_result_invalid")
+    try:
+        _validated_persona_fidelity(
+            result["persona_fidelity_criteria"],
+            claimed_pass=result["persona_fidelity_pass"],
+        )
+    except PilotPreflightError as exc:
+        raise PilotPreflightError("persona_calibration_result_invalid") from exc
+    instruction = result.get("correction_instruction")
+    if (
+        result["additional_correction_required"]
+        and (not isinstance(instruction, str) or not instruction.strip())
+    ) or (not result["additional_correction_required"] and instruction is not None):
+        raise PilotPreflightError("persona_calibration_result_invalid")
+    observed_failures = _persona_calibration_observed_failures(result)
+    if failure_boundary is not None and observed_failures != {failure_boundary}:
+        raise PilotPreflightError("persona_calibration_result_invalid")
+    return deepcopy(result)
+
+
+def _persona_calibration_observed_failures(result: dict[str, Any]) -> set[str]:
+    observed_failures = set()
+    if not result["requirement_coverage_pass"]:
+        observed_failures.add("requirement_coverage")
+    observed_failures.update(
+        f"persona_fidelity:{criterion_id}"
+        for criterion_id, criterion in result["persona_fidelity_criteria"].items()
+        if not criterion["pass"]
+    )
+    if not result["dod_complete_pass"]:
+        observed_failures.add("dod_completeness")
+    if result["incorrect_completion_claim"]:
+        observed_failures.add("incorrect_completion")
+    if result["additional_correction_required"]:
+        observed_failures.add("correction_required")
+    return observed_failures
+
+
+def _persona_calibration_exact_match(answer: Any, gold: Any) -> bool:
+    fixture_ids = {f"c{index}" for index in range(1, 9)}
+    return (
+        isinstance(answer, dict)
+        and isinstance(gold, dict)
+        and set(answer) == fixture_ids
+        and set(gold) == fixture_ids
+        and _persona_calibration_mismatch_count(answer, gold) == 0
+    )
+
+
+def _persona_calibration_scoring_projection(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "requirement_coverage_pass": result["requirement_coverage_pass"],
+        "persona_fidelity_pass": result["persona_fidelity_pass"],
+        "persona_fidelity_criteria": {
+            criterion_id: criterion["pass"]
+            for criterion_id, criterion in sorted(
+                result["persona_fidelity_criteria"].items()
+            )
+        },
+        "dod_complete_pass": result["dod_complete_pass"],
+        "incorrect_completion_claim": result["incorrect_completion_claim"],
+        "additional_correction_required": result["additional_correction_required"],
+    }
+
+
+def _persona_calibration_mismatch_count(answer: Any, gold: Any) -> int:
+    fixture_ids = {f"c{index}" for index in range(1, 9)}
+    if (
+        not isinstance(answer, dict)
+        or not isinstance(gold, dict)
+        or set(answer) != fixture_ids
+        or set(gold) != fixture_ids
+    ):
+        raise PilotPreflightError("persona_calibration_result_invalid")
+    return sum(
+        _persona_calibration_scoring_projection(answer[fixture_id])
+        != _persona_calibration_scoring_projection(gold[fixture_id])
+        for fixture_id in fixture_ids
+    )
+
+
+def _persona_blinding_decision(
+    guesses: Any, mapping: dict[str, str],
+) -> dict[str, Any]:
+    if (
+        not isinstance(guesses, list)
+        or len(guesses) != 10
+        or any(guess not in {"arm_a", "arm_b"} for guess in guesses)
+    ):
+        raise PilotPreflightError("persona_adjudication_blinding_invalid")
+    correct = sum(mapping[guess] == "omc" for guess in guesses)
+    if correct >= 9:
+        return {
+            "status": "INCONCLUSIVE", "reason": "blinding_failed",
+            "correct_guess_count": correct,
+        }
+    return {"status": "VALID", "correct_guess_count": correct}
+
+
+def build_persona_blind_evaluation_packet(
+    subject: Any, *, arm_mapping_receipt: dict[str, Any], artifact_root: Path,
+) -> dict[str, Any]:
+    required = {
+        "schema_version", "study_id", "terminal_receipt", "evaluation_material",
+    }
+    if not isinstance(subject, dict) or set(subject) != required:
+        raise PilotPreflightError("persona_blind_evaluation_subject_invalid")
+    if (
+        subject.get("schema_version")
+        != "omc-task-review-persona-blind-evaluation-subject/v1"
+        or subject.get("study_id") != PERSONA_STUDY_ID
+    ):
+        raise PilotPreflightError("persona_blind_evaluation_subject_invalid")
+    terminal_input = subject.get("terminal_receipt")
+    if not isinstance(terminal_input, dict):
+        raise PilotPreflightError("persona_blind_evaluation_subject_invalid")
+    registration_sha256 = terminal_input.get("persona_registration_sha256")
+    terminal = _validated_terminal_receipt(
+        terminal_input,
+        expected_persona_registration_sha256=registration_sha256,
+    )
+    material = subject.get("evaluation_material")
+    material_fields = {"request", "persona_contract", "dod", "verification_command"}
+    if (
+        not isinstance(material, dict)
+        or set(material) != material_fields
+        or not isinstance(material.get("request"), str)
+        or not material["request"].strip()
+        or material.get("persona_contract") != PERSONA_CONTRACT
+        or not isinstance(material.get("dod"), list)
+        or not material["dod"]
+        or not all(isinstance(item, str) and item.strip() for item in material["dod"])
+        or not isinstance(material.get("verification_command"), str)
+        or not material["verification_command"].strip()
+    ):
+        raise PilotPreflightError("persona_blind_evaluation_contract_invalid")
+    contract = {
+        "request_sha256": _canonical_sha256(material["request"]),
+        "persona_contract_sha256": _canonical_sha256(material["persona_contract"]),
+        "dod_sha256": _canonical_sha256(material["dod"]),
+        "verification_sha256": _canonical_sha256(material["verification_command"]),
+    }
+    if terminal["dry_run"].get("evaluation_contract") != contract:
+        raise PilotPreflightError("persona_blind_evaluation_contract_invalid")
+    mapping = _validated_persona_arm_mapping(
+        arm_mapping_receipt, trusted_key=_trusted_persona_study_public_key()
+    )
+    anonymous: dict[str, Any] = {}
+    observed_sources: set[tuple[str, str]] = set()
+    arm_receipts = {item["arm"]: item for item in terminal["arm_receipts"]}
+    for alias in ("arm_a", "arm_b"):
+        execution_arm = mapping[alias]
+        arm_receipt = arm_receipts[execution_arm]
+        value = arm_receipt["result"].get("evaluation_artifacts")
+        if not isinstance(value, dict) or set(value) != {"diff", "verification"}:
+            raise PilotPreflightError("persona_blind_evaluation_arms_invalid")
+        anonymous[alias] = {}
+        for kind in ("diff", "verification"):
+            descriptor = value.get(kind)
+            if not isinstance(descriptor, dict) or set(descriptor) != {"path", "sha256"}:
+                raise PilotPreflightError("persona_blind_evaluation_artifact_invalid")
+            source_root = Path(arm_receipt["artifact_root"]).resolve()
+            path, sha256, source_payload = _read_bound_artifact(
+                {
+                    "raw_output_path": descriptor.get("path"),
+                    "raw_output_sha256": descriptor.get("sha256"),
+                },
+                artifact_root=source_root,
+            )
+            source_identity = (str(source_root), path)
+            if (
+                sha256 != descriptor.get("sha256")
+                or source_identity in observed_sources
+            ):
+                raise PilotPreflightError("persona_blind_evaluation_artifact_invalid")
+            observed_sources.add(source_identity)
+            _, neutral_payload = _validated_persona_evaluation_artifact(
+                source_payload, expected_kind=kind
+            )
+            neutral_sha256 = hashlib.sha256(neutral_payload).hexdigest()
+            neutral_path = Path(
+                f"persona-blind-{terminal['case_sha256'][:16]}-"
+                f"{alias}-{kind}-{neutral_sha256[:16]}.json"
+            )
+            neutral_target = artifact_root / neutral_path
+            neutral_target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                fd = os.open(
+                    neutral_target,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                )
+            except FileExistsError:
+                existing_path, existing_sha256, _ = _read_bound_artifact(
+                    {
+                        "raw_output_path": str(neutral_path),
+                        "raw_output_sha256": neutral_sha256,
+                    },
+                    artifact_root=artifact_root,
+                )
+                if (
+                    existing_path != str(neutral_path)
+                    or existing_sha256 != neutral_sha256
+                ):
+                    raise PilotPreflightError("persona_blind_evaluation_artifact_invalid")
+            else:
+                try:
+                    with os.fdopen(fd, "wb") as handle:
+                        handle.write(neutral_payload)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                except Exception:
+                    neutral_target.unlink(missing_ok=True)
+                    raise
+            anonymous[alias][kind] = {
+                "path": str(neutral_path),
+                "sha256": neutral_sha256,
+            }
+    packet: dict[str, Any] = {
+        "schema_version": "omc-task-review-persona-blind-evaluation-packet/v1",
+        "study_id": PERSONA_STUDY_ID,
+        "terminal_sha256": terminal["terminal_sha256"],
+        "case_sha256": terminal["case_sha256"],
+        "evaluation_contract": deepcopy(contract),
+        "evaluation_material": deepcopy(material),
+        "arms": anonymous,
+    }
+    packet["packet_sha256"] = _canonical_sha256(packet)
+    return packet
+
+
+def _persona_quality_decision(metrics: dict[str, dict[str, int]]) -> dict[str, str]:
+    baseline = metrics.get("direct_codex")
+    omc = metrics.get("omc_persona")
+    fields = {
+        "requirement_coverage_pass_count", "persona_fidelity_pass_count",
+        "dod_complete_pass_count", "incorrect_completion_claim_count",
+    }
+    if (
+        not isinstance(baseline, dict)
+        or not isinstance(omc, dict)
+        or set(baseline) != fields
+        or set(omc) != fields
+        or any(type(value) is not int or value < 0 for arm in (baseline, omc) for value in arm.values())
+    ):
+        raise PilotPreflightError("persona_quality_metrics_invalid")
+    failed = any(
+        omc[field] < baseline[field]
+        for field in fields - {"incorrect_completion_claim_count"}
+    ) or omc["incorrect_completion_claim_count"] > baseline["incorrect_completion_claim_count"]
+    return (
+        {"status": "STOP", "reason": "blind_quality_noninferiority_failed"}
+        if failed else {"status": "CONTINUE"}
+    )
 
 
 def _trusted_persona_study_public_key() -> str:
@@ -1503,7 +2242,7 @@ def build_enrolled_persona_paired_dry_run(
     }
     if any(enrollment.get(key) != value for key, value in expected.items()):
         raise PilotPreflightError("persona_enrollment_case_binding_mismatch")
-    configuration = {
+    common_configuration = {
         key: frozen[key]
         for key in ("provider", "model", "reasoning", "timeout_sec", "verification_command")
     }
@@ -1516,10 +2255,29 @@ def build_enrolled_persona_paired_dry_run(
         "case_position": case_position,
         "arm_order": arm_order,
         "arms": [
-            {"arm": arm, "configuration": dict(configuration), "execution_status": "NOT_EXECUTED"}
+            {
+                "arm": arm,
+                "configuration": {
+                    **common_configuration,
+                    "persona_contract": (
+                        deepcopy(registration_receipt["persona_contract"])
+                        if arm == "omc"
+                        else None
+                    ),
+                },
+                "execution_status": "NOT_EXECUTED",
+            }
             for arm in arm_order
         ],
         "provider_call_count": 0,
+        "evaluation_contract": {
+            "request_sha256": enrollment["request_sha256"],
+            "persona_contract_sha256": registration_receipt[
+                "persona_contract_sha256"
+            ],
+            "dod_sha256": enrollment["dod_sha256"],
+            "verification_sha256": enrollment["verification_sha256"],
+        },
         "study_binding_sha256": registration_sha256,
         "registration_sha256": registration_sha256,
         "enrollment_sha256": _canonical_sha256(enrollment),
@@ -1563,11 +2321,22 @@ def _validated_paired_dry_run(receipt: Any) -> dict[str, Any]:
         and "registration_sha256" in receipt
     )
     if persona_enrolled:
+        evaluation_contract = receipt.get("evaluation_contract")
         if (
             receipt.get("study_binding_sha256") != receipt.get("registration_sha256")
             or not re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("enrollment_sha256") or ""))
             or not isinstance(receipt.get("enrollment_session_id"), str)
             or not receipt["enrollment_session_id"]
+            or not isinstance(evaluation_contract, dict)
+            or set(evaluation_contract)
+            != {
+                "request_sha256", "persona_contract_sha256", "dod_sha256",
+                "verification_sha256",
+            }
+            or any(
+                not re.fullmatch(r"[0-9a-f]{64}", str(value or ""))
+                for value in evaluation_contract.values()
+            )
         ):
             raise PilotPreflightError("persona_enrollment_binding_invalid")
     else:
@@ -1609,8 +2378,26 @@ def _validated_paired_dry_run(receipt: Any) -> dict[str, Any]:
     expected_order = ["omc", "baseline"] if position % 2 else ["baseline", "omc"]
     if receipt.get("arm_order") != expected_order or [arm["arm"] for arm in arms] != expected_order:
         raise PilotPreflightError("paired_dry_run_order_invalid")
-    configurations = [arm["configuration"] for arm in arms]
-    if configurations[0] != configurations[1]:
+    configurations = {arm["arm"]: arm["configuration"] for arm in arms}
+    if persona_enrolled:
+        omc_configuration = configurations["omc"]
+        baseline_configuration = configurations["baseline"]
+        if (
+            omc_configuration.get("persona_contract") != PERSONA_CONTRACT
+            or baseline_configuration.get("persona_contract") is not None
+            or {
+                key: value
+                for key, value in omc_configuration.items()
+                if key != "persona_contract"
+            }
+            != {
+                key: value
+                for key, value in baseline_configuration.items()
+                if key != "persona_contract"
+            }
+        ):
+            raise PilotPreflightError("paired_configuration_mismatch")
+    elif configurations[arms[0]["arm"]] != configurations[arms[1]["arm"]]:
         raise PilotPreflightError("paired_configuration_mismatch")
     return receipt
 
@@ -1773,6 +2560,28 @@ def _validated_execution_receipt(
     _path, output_sha256 = _read_runner_output(result, artifact_root=artifact_root)
     if output_sha256 != result.get("raw_output_sha256"):
         raise PilotPreflightError("runner_output_hash_mismatch")
+    if "registration_sha256" in prepared:
+        evaluation_artifacts = result.get("evaluation_artifacts")
+        if (
+            not isinstance(evaluation_artifacts, dict)
+            or set(evaluation_artifacts) != {"diff", "verification"}
+        ):
+            raise PilotPreflightError("execution_evaluation_artifacts_invalid")
+        observed_paths: set[str] = set()
+        for kind, descriptor in evaluation_artifacts.items():
+            if not isinstance(descriptor, dict) or set(descriptor) != {"path", "sha256"}:
+                raise PilotPreflightError("execution_evaluation_artifacts_invalid")
+            path, sha256, payload = _read_bound_artifact(
+                {
+                    "raw_output_path": descriptor.get("path"),
+                    "raw_output_sha256": descriptor.get("sha256"),
+                },
+                artifact_root=artifact_root,
+            )
+            if sha256 != descriptor.get("sha256") or path in observed_paths:
+                raise PilotPreflightError("execution_evaluation_artifacts_invalid")
+            _validated_persona_evaluation_artifact(payload, expected_kind=kind)
+            observed_paths.add(path)
     return receipt
 
 
@@ -1896,6 +2705,10 @@ def build_terminal_receipt(
                 "raw_output_sha256",
             )
         }
+        if "evaluation_artifacts" in result:
+            normalized[arm]["evaluation_artifacts"] = deepcopy(
+                result["evaluation_artifacts"]
+            )
     receipt: dict[str, Any] = {
         "schema_version": "omc-task-review-pilot-terminal/v1",
         "dry_run": deepcopy(prepared),
@@ -1984,6 +2797,10 @@ def _validated_terminal_receipt(
             or not isinstance(data.get("provider_call_count"), int)
             or data["provider_call_count"] < 0
             or not re.fullmatch(r"[0-9a-f]{64}", str(data.get("raw_output_sha256") or ""))
+            or (
+                "registration_sha256" in prepared
+                and not isinstance(data.get("evaluation_artifacts"), dict)
+            )
         ):
             raise PilotPreflightError("terminal_provider_evidence_invalid")
     if receipt.get("provider_call_count") != sum(
@@ -2006,6 +2823,11 @@ def _validated_terminal_receipt(
         }
         for arm in ("omc", "baseline")
     }
+    if "registration_sha256" in prepared:
+        for arm in ("omc", "baseline"):
+            expected_arms[arm]["evaluation_artifacts"] = deepcopy(
+                validated_arms[arm]["result"]["evaluation_artifacts"]
+            )
     expected_completion = {
         arm: data["verification_passed"] and data["review_outcome"] == "approved"
         for arm, data in expected_arms.items()
@@ -2094,7 +2916,7 @@ def build_pilot_decision(
     return decision
 
 
-def _validated_persona_adjudication(
+def _validated_persona_adjudication_v2(
     receipt: Any, *, terminals: list[dict[str, Any]], artifact_root: Path
 ) -> dict[str, Any]:
     required = {
@@ -2159,6 +2981,198 @@ def _validated_persona_adjudication(
             )
             if observed_path != descriptor.get("path") or observed_sha256 != descriptor.get("sha256"):
                 raise PilotPreflightError("persona_correction_evidence_hash_mismatch")
+    try:
+        Ed25519PublicKey.from_public_bytes(
+            base64.b64decode(trusted_key, validate=True)
+        ).verify(
+            base64.b64decode(str(receipt["signature"]), validate=True),
+            _persona_adjudication_signed_bytes(receipt),
+        )
+    except (InvalidSignature, binascii.Error, ValueError) as exc:
+        raise PilotPreflightError("persona_adjudication_signature_invalid") from exc
+    return deepcopy(receipt)
+
+
+def _validated_persona_adjudication_v3(
+    receipt: Any, *, terminals: list[dict[str, Any]], artifact_root: Path,
+    arm_mapping: dict[str, str],
+) -> dict[str, Any]:
+    required = {
+        "schema_version", "signer", "signer_public_key", "study_id",
+        "cases", "signature",
+    }
+    if not isinstance(receipt, dict) or set(receipt) != required:
+        raise PilotPreflightError("persona_adjudication_invalid")
+    trusted_key = _trusted_persona_adjudication_public_key()
+    if (
+        receipt.get("schema_version") != "omc-task-review-persona-adjudication/v4"
+        or receipt.get("signer") != "omc-task-review-persona-blind-adjudicator-v1"
+        or receipt.get("signer_public_key") != trusted_key
+        or receipt.get("study_id") != PERSONA_STUDY_ID
+    ):
+        raise PilotPreflightError("persona_adjudication_invalid")
+    cases = receipt.get("cases")
+    case_fields = {
+        "terminal_sha256", "case_sha256", "evaluation_packet",
+        "arm_mapping_sha256", "arm_a", "arm_b", "guessed_omc_arm",
+        "guess_confidence",
+    }
+    quality_fields = {
+        "requirement_coverage_pass", "persona_fidelity_pass",
+        "persona_fidelity_criteria",
+        "dod_complete_pass", "incorrect_completion_claim",
+        "additional_correction_required", "correction_instruction",
+    }
+    if not isinstance(cases, list) or len(cases) != 10:
+        raise PilotPreflightError("persona_adjudication_invalid")
+    expected_bindings = [
+        (terminal["terminal_sha256"], terminal["case_sha256"])
+        for terminal in terminals
+    ]
+    observed_packets: set[str] = set()
+    observed_evaluation_artifacts: set[str] = set()
+    for index, item in enumerate(cases):
+        if not isinstance(item, dict) or set(item) != case_fields:
+            raise PilotPreflightError("persona_adjudication_invalid")
+        if (item.get("terminal_sha256"), item.get("case_sha256")) != expected_bindings[index]:
+            raise PilotPreflightError("persona_adjudication_binding_mismatch")
+        if item.get("arm_mapping_sha256") != _canonical_sha256(arm_mapping):
+            raise PilotPreflightError("persona_adjudication_binding_mismatch")
+        guess = item.get("guessed_omc_arm")
+        confidence = item.get("guess_confidence")
+        if (
+            guess not in {"arm_a", "arm_b"}
+            or type(confidence) is not int
+            or not 0 <= confidence <= 100
+        ):
+            raise PilotPreflightError("persona_adjudication_blinding_invalid")
+        for alias in ("arm_a", "arm_b"):
+            quality = item.get(alias)
+            if not isinstance(quality, dict) or set(quality) != quality_fields:
+                raise PilotPreflightError("persona_adjudication_quality_invalid")
+            if any(
+                type(quality.get(field)) is not bool
+                for field in quality_fields
+                - {"correction_instruction", "persona_fidelity_criteria"}
+            ):
+                raise PilotPreflightError("persona_adjudication_quality_invalid")
+            _validated_persona_fidelity(
+                quality["persona_fidelity_criteria"],
+                claimed_pass=quality["persona_fidelity_pass"],
+            )
+            instruction = quality.get("correction_instruction")
+            required_correction = quality["additional_correction_required"]
+            if (required_correction and (not isinstance(instruction, str) or not instruction.strip())) or (
+                not required_correction and instruction is not None
+            ):
+                raise PilotPreflightError("persona_adjudication_quality_invalid")
+        descriptor = item.get("evaluation_packet")
+        if not isinstance(descriptor, dict) or set(descriptor) != {"path", "sha256"}:
+            raise PilotPreflightError("persona_adjudication_packet_invalid")
+        observed_path, observed_sha256, payload = _read_bound_artifact(
+            {
+                "raw_output_path": descriptor.get("path"),
+                "raw_output_sha256": descriptor.get("sha256"),
+            }, artifact_root=artifact_root,
+        )
+        if observed_sha256 != descriptor.get("sha256") or observed_path in observed_packets:
+            raise PilotPreflightError("persona_adjudication_packet_invalid")
+        observed_packets.add(observed_path)
+        try:
+            packet = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise PilotPreflightError("persona_adjudication_packet_invalid") from exc
+        packet_fields = {
+            "schema_version", "study_id", "terminal_sha256", "case_sha256",
+            "evaluation_contract", "evaluation_material", "arms", "packet_sha256",
+        }
+        if (
+            not isinstance(packet, dict)
+            or set(packet) != packet_fields
+            or packet.get("schema_version")
+            != "omc-task-review-persona-blind-evaluation-packet/v1"
+            or packet.get("study_id") != PERSONA_STUDY_ID
+            or packet.get("terminal_sha256") != item["terminal_sha256"]
+            or packet.get("case_sha256") != item["case_sha256"]
+            or packet.get("packet_sha256")
+            != _canonical_sha256({key: value for key, value in packet.items() if key != "packet_sha256"})
+            or set(packet.get("arms", {})) != {"arm_a", "arm_b"}
+        ):
+            raise PilotPreflightError("persona_adjudication_packet_invalid")
+        contract = packet.get("evaluation_contract")
+        material = packet.get("evaluation_material")
+        contract_fields = {
+            "request_sha256", "persona_contract_sha256", "dod_sha256",
+            "verification_sha256",
+        }
+        if (
+            not isinstance(contract, dict)
+            or set(contract) != contract_fields
+            or any(
+                not re.fullmatch(r"[0-9a-f]{64}", str(contract.get(field) or ""))
+                for field in contract_fields
+            )
+            or contract != terminals[index]["dry_run"].get("evaluation_contract")
+            or not isinstance(material, dict)
+            or set(material)
+            != {"request", "persona_contract", "dod", "verification_command"}
+            or material.get("persona_contract") != PERSONA_CONTRACT
+            or contract.get("request_sha256")
+            != _canonical_sha256(material.get("request"))
+            or contract.get("persona_contract_sha256")
+            != _canonical_sha256(material.get("persona_contract"))
+            or contract.get("dod_sha256") != _canonical_sha256(material.get("dod"))
+            or contract.get("verification_sha256")
+            != _canonical_sha256(material.get("verification_command"))
+        ):
+            raise PilotPreflightError("persona_adjudication_packet_invalid")
+        nested_paths: set[str] = set()
+        for alias in ("arm_a", "arm_b"):
+            packet_arm = packet["arms"].get(alias)
+            if not isinstance(packet_arm, dict) or set(packet_arm) != {"diff", "verification"}:
+                raise PilotPreflightError("persona_adjudication_packet_invalid")
+            execution_arm = arm_mapping[alias]
+            terminal_arm_receipt = next(
+                arm_receipt
+                for arm_receipt in terminals[index]["arm_receipts"]
+                if arm_receipt["arm"] == execution_arm
+            )
+            terminal_artifacts = terminal_arm_receipt["result"][
+                "evaluation_artifacts"
+            ]
+            for kind, nested in packet_arm.items():
+                if not isinstance(nested, dict) or set(nested) != {"path", "sha256"}:
+                    raise PilotPreflightError("persona_adjudication_packet_invalid")
+                nested_path, nested_sha256, nested_payload = _read_bound_artifact(
+                    {
+                        "raw_output_path": nested.get("path"),
+                        "raw_output_sha256": nested.get("sha256"),
+                    }, artifact_root=artifact_root,
+                )
+                if (
+                    nested_sha256 != nested.get("sha256")
+                    or nested_path in nested_paths
+                    or nested_path in observed_evaluation_artifacts
+                ):
+                    raise PilotPreflightError("persona_adjudication_packet_invalid")
+                _, canonical_nested_payload = _validated_persona_evaluation_artifact(
+                    nested_payload, expected_kind=kind
+                )
+                terminal_descriptor = terminal_artifacts[kind]
+                _, _, terminal_payload = _read_bound_artifact(
+                    {
+                        "raw_output_path": terminal_descriptor["path"],
+                        "raw_output_sha256": terminal_descriptor["sha256"],
+                    },
+                    artifact_root=Path(terminal_arm_receipt["artifact_root"]).resolve(),
+                )
+                _, canonical_terminal_payload = _validated_persona_evaluation_artifact(
+                    terminal_payload, expected_kind=kind
+                )
+                if canonical_nested_payload != canonical_terminal_payload:
+                    raise PilotPreflightError("persona_adjudication_packet_invalid")
+                nested_paths.add(nested_path)
+                observed_evaluation_artifacts.add(nested_path)
     try:
         Ed25519PublicKey.from_public_bytes(
             base64.b64decode(trusted_key, validate=True)
@@ -2239,6 +3253,10 @@ def _validated_persona_registration(
         "preregistration_sha256", "contract_revision",
         "minimum_relative_reduction", "minimum_baseline_correction_events",
         "selection_policy", "arm_order_policy", "arm_mapping_sha256",
+        "persona_contract", "persona_contract_sha256",
+        "calibration_qualification", "authority_custody_policy",
+        "inconclusive_followup_policy", "rehearsal_receipt",
+        "implementation_commit",
         "repositories",
         "execution_public_key", "study_public_key",
         "reconciliation_public_key", "adjudication_public_key",
@@ -2253,9 +3271,10 @@ def _validated_persona_registration(
     mapping = _validated_persona_arm_mapping(
         arm_mapping_receipt, trusted_key=study_key
     )
+    t0 = _aware_timestamp(receipt.get("t0"), error="persona_registration_time_invalid")
     if (
         receipt.get("schema_version")
-        != "omc-task-review-persona-study-registration/v1"
+        != "omc-task-review-persona-study-registration/v3"
         or receipt.get("study_id") != PERSONA_STUDY_ID
         or receipt.get("case_count") != 10
         or receipt.get("minimum_repository_count") != 2
@@ -2273,6 +3292,20 @@ def _validated_persona_registration(
         or receipt.get("arm_order_policy")
         != "odd_omc_first_even_direct_first"
         or receipt.get("arm_mapping_sha256") != _canonical_sha256(mapping)
+        or receipt.get("persona_contract") != PERSONA_CONTRACT
+        or receipt.get("persona_contract_sha256") != PERSONA_CONTRACT_SHA256
+        or _canonical_sha256(
+            _validated_persona_calibration_qualification(
+                receipt.get("calibration_qualification")
+            )
+        ) != _canonical_sha256(receipt["calibration_qualification"])
+        or receipt.get("authority_custody_policy") != PERSONA_AUTHORITY_CUSTODY_POLICY
+        or receipt.get("inconclusive_followup_policy")
+        != PERSONA_INCONCLUSIVE_FOLLOWUP_POLICY
+        or not re.fullmatch(r"[0-9a-f]{40}", str(receipt.get("implementation_commit") or ""))
+        or _validated_persona_rehearsal(receipt.get("rehearsal_receipt"), t0=t0).get(
+            "source_commit"
+        ) != receipt.get("implementation_commit")
         or receipt.get("execution_public_key") != _trusted_execution_public_key()
         or receipt.get("study_public_key") != study_key
         or receipt.get("signer_public_key") != study_key
@@ -2283,7 +3316,6 @@ def _validated_persona_registration(
         or receipt.get("user_approved") is not True
     ):
         raise PilotPreflightError("persona_study_registration_invalid")
-    t0 = _aware_timestamp(receipt.get("t0"), error="persona_registration_time_invalid")
     deadline = _aware_timestamp(
         receipt.get("collection_deadline"), error="persona_registration_time_invalid"
     )
@@ -2530,6 +3562,7 @@ def _persona_metric_decision(
     terminals: list[dict[str, Any]], *, correction_events: dict[str, int],
     wall_clock_noninferiority_ratio: float, minimum_relative_reduction: float,
     minimum_baseline_correction_events: int,
+    blind_quality_noninferiority_failed: bool = False,
 ) -> dict[str, Any]:
     completion = {
         "direct_codex": sum(item["completion"]["baseline"] for item in terminals),
@@ -2559,6 +3592,7 @@ def _persona_metric_decision(
                 for arm in ("omc", "baseline")
             ),
             "provider_execution_absent": False,
+            "blinding_failed": False,
             "completion_noninferiority_failed": (
                 completion["omc_persona"] < completion["direct_codex"]
             ),
@@ -2571,6 +3605,9 @@ def _persona_metric_decision(
             "wall_clock_noninferiority_failed": (
                 elapsed["omc_persona"]
                 > elapsed["direct_codex"] * wall_clock_noninferiority_ratio
+            ),
+            "blind_quality_noninferiority_failed": (
+                blind_quality_noninferiority_failed
             ),
             "insufficient_baseline_correction_events": (
                 baseline_events < minimum_baseline_correction_events
@@ -2720,7 +3757,7 @@ def build_persona_study_decision(
         or mapping_at < readiness_t0
     ):
         raise PilotPreflightError("persona_mapping_not_preregistered")
-    adjudication = _validated_persona_adjudication(
+    adjudication = _validated_persona_adjudication_v2(
         adjudication_receipt, terminals=terminals, artifact_root=artifact_root
     )
     pre_metric_decision = _persona_pre_metric_decision(terminals)
@@ -2824,6 +3861,12 @@ def build_enrolled_persona_study_decision(
         raise PilotPreflightError("persona_terminal_receipt_duplicate")
     for position, (terminal, enrollment) in enumerate(zip(terminals, enrollments, strict=True), start=1):
         dry_run = terminal["dry_run"]
+        expected_evaluation_contract = {
+            "request_sha256": enrollment["request_sha256"],
+            "persona_contract_sha256": registration["persona_contract_sha256"],
+            "dod_sha256": enrollment["dod_sha256"],
+            "verification_sha256": enrollment["verification_sha256"],
+        }
         if (
             dry_run.get("case_position") != position
             or dry_run.get("registration_sha256") != registration_sha256
@@ -2835,15 +3878,19 @@ def build_enrolled_persona_study_decision(
                 "repository_id": enrollment["repository_id"],
                 "base_commit": enrollment["base_commit"],
             }
+            or dry_run.get("evaluation_contract") != expected_evaluation_contract
         ):
             raise PilotPreflightError("persona_terminal_enrollment_binding_invalid")
-    adjudication = _validated_persona_adjudication(
-        adjudication_receipt, terminals=terminals, artifact_root=artifact_root
+    adjudication = _validated_persona_adjudication_v3(
+        adjudication_receipt,
+        terminals=terminals,
+        artifact_root=artifact_root,
+        arm_mapping=mapping,
     )
     pre_metric_decision = _persona_pre_metric_decision(terminals)
     correction_by_execution_arm = {
         mapping[alias]: sum(
-            item[f"{alias}_additional_correction_required"]
+            item[alias]["additional_correction_required"]
             for item in adjudication["cases"]
         )
         for alias in ("arm_a", "arm_b")
@@ -2852,6 +3899,27 @@ def build_enrolled_persona_study_decision(
         "direct_codex": correction_by_execution_arm["baseline"],
         "omc_persona": correction_by_execution_arm["omc"],
     }
+    quality_fields = {
+        "requirement_coverage_pass": "requirement_coverage_pass_count",
+        "persona_fidelity_pass": "persona_fidelity_pass_count",
+        "dod_complete_pass": "dod_complete_pass_count",
+        "incorrect_completion_claim": "incorrect_completion_claim_count",
+    }
+    quality_by_execution_arm = {
+        mapping[alias]: {
+            output: sum(item[alias][source] for item in adjudication["cases"])
+            for source, output in quality_fields.items()
+        }
+        for alias in ("arm_a", "arm_b")
+    }
+    evaluation_metrics = {
+        "direct_codex": quality_by_execution_arm["baseline"],
+        "omc_persona": quality_by_execution_arm["omc"],
+    }
+    quality_decision = _persona_quality_decision(evaluation_metrics)
+    blinding_decision = _persona_blinding_decision(
+        [item["guessed_omc_arm"] for item in adjudication["cases"]], mapping
+    )
     metric_decision = _persona_metric_decision(
         terminals,
         correction_events=correction_events,
@@ -2864,6 +3932,9 @@ def build_enrolled_persona_study_decision(
         minimum_baseline_correction_events=registration[
             "minimum_baseline_correction_events"
         ],
+        blind_quality_noninferiority_failed=(
+            quality_decision["status"] == "STOP"
+        ),
     )
     metrics = {
         arm: {
@@ -2876,18 +3947,27 @@ def build_enrolled_persona_study_decision(
         }
         for arm in ("direct_codex", "omc_persona")
     }
-    outcome = (
-        pre_metric_decision
-        if pre_metric_decision.get("reason") == "provider_execution_absent"
-        else metric_decision
-    )
+    outcome = pre_metric_decision
+    if pre_metric_decision.get("reason") not in {
+        "fatal_violation", "provider_execution_absent"
+    }:
+        outcome = (
+            blinding_decision
+            if blinding_decision["status"] == "INCONCLUSIVE"
+            else metric_decision
+        )
     decision: dict[str, Any] = {
-        "schema_version": "omc-task-review-persona-decision/v2",
+        "schema_version": "omc-task-review-persona-decision/v4",
         "study_id": PERSONA_STUDY_ID,
         "status": outcome["status"],
         "terminal_receipt_count": 10,
         "enrollment_count": 10,
         "metrics": metrics,
+        "evaluation_metrics": evaluation_metrics,
+        "blinding_metrics": {
+            "correct_guess_count": blinding_decision["correct_guess_count"],
+            "case_count": 10,
+        },
         "relative_reduction": metric_decision["relative_reduction"],
         "registration_sha256": registration_sha256,
         "final_enrollment_sha256": _canonical_sha256(enrollments[-1]),
@@ -2914,7 +3994,7 @@ def verify_enrolled_persona_study_decision(
         if (
             not isinstance(decision_receipt, dict)
             or decision_receipt.get("schema_version")
-            != "omc-task-review-persona-decision/v2"
+            != "omc-task-review-persona-decision/v4"
             or decision_receipt.get("decision_sha256")
             != _canonical_sha256(
                 {
@@ -3015,7 +4095,7 @@ def build_persona_collection_close_decision(
     except (InvalidSignature, binascii.Error, ValueError) as exc:
         raise PilotPreflightError("persona_collection_close_signature_invalid") from exc
     decision: dict[str, Any] = {
-        "schema_version": "omc-task-review-persona-decision/v2",
+        "schema_version": "omc-task-review-persona-decision/v4",
         "study_id": PERSONA_STUDY_ID,
         "status": "INCONCLUSIVE",
         "reason": "deadline_or_sample_shortfall",
@@ -3118,6 +4198,11 @@ def _parser() -> argparse.ArgumentParser:
     verify_decision.add_argument("--decision", type=Path, required=True)
     verify_decision.add_argument("--artifact-root", type=Path, required=True)
     verify_decision.add_argument("--output", type=Path, required=True)
+    blind_evaluation = sub.add_parser("persona-prepare-blind-evaluation")
+    blind_evaluation.add_argument("--subject", type=Path, required=True)
+    blind_evaluation.add_argument("--arm-mapping", type=Path, required=True)
+    blind_evaluation.add_argument("--artifact-root", type=Path, required=True)
+    blind_evaluation.add_argument("--output", type=Path, required=True)
     prepare_reconciliation = sub.add_parser("prepare-reconciliation")
     prepare_reconciliation.add_argument("--pilot-id", required=True)
     prepare_reconciliation.add_argument(
@@ -3230,6 +4315,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "persona-verify-decision":
             value = verify_enrolled_persona_study_decision(
                 _read_json_object(args.decision), artifact_root=args.artifact_root
+            )
+        elif args.command == "persona-prepare-blind-evaluation":
+            value = build_persona_blind_evaluation_packet(
+                _read_json_object(args.subject),
+                arm_mapping_receipt=_read_json_object(args.arm_mapping),
+                artifact_root=args.artifact_root,
             )
         elif args.command == "prepare-reconciliation":
             value = prepare_reconciliation_subject(

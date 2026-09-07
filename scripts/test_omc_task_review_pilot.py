@@ -1181,7 +1181,7 @@ def _terminal_arm(arm: str, *, elapsed: float, intervention: int = 0) -> dict[st
 def _runner_arm_receipt(
     dry_run: dict[str, object], tmp_path: Path, arm: str, *, elapsed: float,
     intervention: int = 0, provider_calls: int = 1, model: str = "gpt-test",
-    review_outcome: str = "approved",
+    review_outcome: str = "approved", shared_evaluation_names: bool = False,
 ) -> dict[str, object]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     output = tmp_path / f"{arm}.txt"
@@ -1191,13 +1191,40 @@ def _runner_arm_receipt(
     result["review_outcome"] = review_outcome
     result["raw_output_path"] = output.name
     result["raw_output_sha256"] = hashlib.sha256(output.read_bytes()).hexdigest()
-    configuration = {
-        "provider": "codex",
-        "model": model,
-        "reasoning": "medium",
-        "timeout_sec": 600,
-        "verification_command": "pytest -q",
-    }
+    configuration = dict(
+        next(item for item in dry_run["arms"] if item["arm"] == arm)[
+            "configuration"
+        ]
+    )
+    configuration["model"] = model
+    if "registration_sha256" in dry_run:
+        prefix = "evaluation" if shared_evaluation_names else arm
+        diff = tmp_path / f"{prefix}-diff.json"
+        verification = tmp_path / f"{prefix}-verification.json"
+        for kind, path, content in (
+            ("diff", diff, "normalized code diff\n"),
+            ("verification", verification, "pass\n"),
+        ):
+            artifact = {
+                "schema_version": "omc-task-review-persona-evaluation-artifact/v1",
+                "artifact_kind": kind,
+                "content": content,
+                "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            }
+            path.write_text(
+                json.dumps(artifact, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+        result["evaluation_artifacts"] = {
+            "diff": {
+                "path": diff.name,
+                "sha256": hashlib.sha256(diff.read_bytes()).hexdigest(),
+            },
+            "verification": {
+                "path": verification.name,
+                "sha256": hashlib.sha256(verification.read_bytes()).hexdigest(),
+            },
+        }
     execution = {
         "schema_version": "omc-task-review-pilot-execution/v2",
         "signed_at": "2026-09-03T02:02:00+09:00",
@@ -1657,7 +1684,7 @@ def _persona_study_binding(
 
 def _blind_persona_adjudication(
     terminals: list[dict[str, object]], artifact_root: Path,
-    *, arm_a_events: int, arm_b_events: int,
+    *, arm_a_events: int, arm_b_events: int, version: int = 2,
 ) -> dict[str, object]:
     cases = []
     for index, terminal in enumerate(terminals):
@@ -1665,8 +1692,8 @@ def _blind_persona_adjudication(
         arm_b_path = artifact_root / f"case-{index}-b.txt"
         arm_a_path.write_text(f"anonymous correction evidence a {index}\n", encoding="utf-8")
         arm_b_path.write_text(f"anonymous correction evidence b {index}\n", encoding="utf-8")
-        cases.append(
-            {
+        if version == 2:
+            cases.append({
                 "terminal_sha256": terminal["terminal_sha256"],
                 "case_sha256": terminal["case_sha256"],
                 "arm_a_additional_correction_required": index < arm_a_events,
@@ -1679,10 +1706,63 @@ def _blind_persona_adjudication(
                     "path": arm_b_path.name,
                     "sha256": hashlib.sha256(arm_b_path.read_bytes()).hexdigest(),
                 },
+            })
+        else:
+            mapping = _persona_mapping()
+            frozen_case = _frozen_case()
+            subject = {
+                "schema_version": "omc-task-review-persona-blind-evaluation-subject/v1",
+                "study_id": "task-review-persona-effectiveness-20260904-v1",
+                "terminal_receipt": terminal,
+                "evaluation_material": {
+                    "request": frozen_case["request"],
+                    "persona_contract": dict(omc_task_review_pilot.PERSONA_CONTRACT),
+                    "dod": frozen_case["dod"],
+                    "verification_command": frozen_case["verification_command"],
+                },
             }
-        )
+            packet = omc_task_review_pilot.build_persona_blind_evaluation_packet(
+                subject, arm_mapping_receipt=mapping, artifact_root=artifact_root
+            )
+            packet_path = artifact_root / f"case-{index}-evaluation-packet.json"
+            packet_path.write_text(
+                json.dumps(packet, sort_keys=True, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            def quality(required: bool) -> dict[str, object]:
+                fidelity_criteria = {
+                    item["criterion_id"]: {
+                        "pass": True,
+                        "evidence": f"case {index} anonymous artifact satisfies criterion",
+                    }
+                    for item in omc_task_review_pilot.PERSONA_CONTRACT[
+                        "persona_fidelity_rubric"
+                    ]
+                }
+                return {
+                    "requirement_coverage_pass": True,
+                    "persona_fidelity_pass": True,
+                    "persona_fidelity_criteria": fidelity_criteria,
+                    "dod_complete_pass": True,
+                    "incorrect_completion_claim": False,
+                    "additional_correction_required": required,
+                    "correction_instruction": "fix required" if required else None,
+                }
+            cases.append({
+                "terminal_sha256": terminal["terminal_sha256"],
+                "case_sha256": terminal["case_sha256"],
+                "evaluation_packet": {
+                    "path": packet_path.name,
+                    "sha256": hashlib.sha256(packet_path.read_bytes()).hexdigest(),
+                },
+                "arm_mapping_sha256": _sha(mapping),
+                "arm_a": quality(index < arm_a_events),
+                "arm_b": quality(index < arm_b_events),
+                "guessed_omc_arm": "arm_a" if index % 2 == 0 else "arm_b",
+                "guess_confidence": 50,
+            })
     receipt: dict[str, object] = {
-        "schema_version": "omc-task-review-persona-adjudication/v2",
+        "schema_version": f"omc-task-review-persona-adjudication/v{version}",
         "signer": "omc-task-review-persona-blind-adjudicator-v1",
         "signer_public_key": _ADJUDICATION_SIGNER_PUBLIC_KEY,
         "study_id": "task-review-persona-effectiveness-20260904-v1",
@@ -2178,6 +2258,109 @@ def test_selection_uses_first_three_eligible_sessions_without_replacement() -> N
     assert [item["session_id"] for item in selected] == ["s1", "s2", "s3"]
 
 
+def _persona_calibration_qualification() -> dict[str, object]:
+    boundaries = list(omc_task_review_pilot.PERSONA_CALIBRATION_FAILURE_BOUNDARIES)
+    fixtures = {}
+    gold = {}
+    for index, boundary in enumerate(boundaries, start=1):
+        fixture_id = f"c{index}"
+        content = f"anonymous calibration artifact {fixture_id}\n"
+        fixtures[fixture_id] = {
+            "schema_version": "omc-task-review-persona-calibration-fixture/v1",
+            "fixture_id": fixture_id,
+            "request": f"Evaluate frozen calibration case {fixture_id}",
+            "persona_contract": json.loads(
+                json.dumps(omc_task_review_pilot.PERSONA_CONTRACT)
+            ),
+            "dod": "Return a complete evidence-bound decision.",
+            "verification_command": "python3 -m pytest calibration -q",
+            "anonymous_artifact": {
+                "schema_version": "omc-task-review-persona-evaluation-artifact/v1",
+                "artifact_kind": "diff",
+                "content": content,
+                "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
+            },
+        }
+        criteria = {
+            item["criterion_id"]: {"pass": True, "evidence": "observable evidence"}
+            for item in omc_task_review_pilot.PERSONA_CONTRACT["persona_fidelity_rubric"]
+        }
+        result = {
+            "requirement_coverage_pass": True,
+            "persona_fidelity_pass": True,
+            "persona_fidelity_criteria": criteria,
+            "dod_complete_pass": True,
+            "incorrect_completion_claim": False,
+            "additional_correction_required": False,
+            "correction_instruction": None,
+        }
+        if boundary == "requirement_coverage":
+            result["requirement_coverage_pass"] = False
+        elif boundary.startswith("persona_fidelity:"):
+            criterion_id = boundary.split(":", 1)[1]
+            result["persona_fidelity_pass"] = False
+            criteria[criterion_id]["pass"] = False
+        elif boundary == "dod_completeness":
+            result["dod_complete_pass"] = False
+        elif boundary == "incorrect_completion":
+            result["incorrect_completion_claim"] = True
+        else:
+            result["additional_correction_required"] = True
+            result["correction_instruction"] = "Apply the missing frozen requirement."
+        gold[fixture_id] = result
+    fixture_sha256s = {key: _sha(value) for key, value in fixtures.items()}
+    commitment: dict[str, object] = {
+        "schema_version": "omc-task-review-persona-calibration-commitment/v1",
+        "study_id": omc_task_review_pilot.PERSONA_STUDY_ID,
+        "fixtures": fixtures,
+        "fixture_sha256s": fixture_sha256s,
+        "gold_sha256": _sha(gold),
+        "adjudicator_public_key": _ADJUDICATION_SIGNER_PUBLIC_KEY,
+        "committed_at": "2026-09-03T01:58:00+09:00",
+        "signer_public_key": _STUDY_SIGNER_PUBLIC_KEY,
+        "reconciliation_public_key": _RECONCILIATION_SIGNER_PUBLIC_KEY,
+        "signature": "", "reconciliation_signature": "",
+    }
+    payload = omc_task_review_pilot._persona_calibration_signed_bytes(commitment)
+    commitment["signature"] = base64.b64encode(_STUDY_SIGNER.sign(payload)).decode()
+    commitment["reconciliation_signature"] = base64.b64encode(_RECONCILIATION_SIGNER.sign(payload)).decode()
+    answer: dict[str, object] = {
+        "schema_version": "omc-task-review-persona-calibration-answer/v1",
+        "study_id": omc_task_review_pilot.PERSONA_STUDY_ID,
+        "commitment_sha256": _sha(commitment), "results": json.loads(json.dumps(gold)),
+        "submitted_at": "2026-09-03T01:59:00+09:00",
+        "signer_public_key": _ADJUDICATION_SIGNER_PUBLIC_KEY, "signature": "",
+    }
+    payload = omc_task_review_pilot._persona_calibration_signed_bytes(answer)
+    answer["signature"] = base64.b64encode(_ADJUDICATION_SIGNER.sign(payload)).decode()
+    reveal: dict[str, object] = {
+        "schema_version": "omc-task-review-persona-calibration-gold-reveal/v1",
+        "study_id": omc_task_review_pilot.PERSONA_STUDY_ID,
+        "commitment_sha256": _sha(commitment), "answer_sha256": _sha(answer),
+        "gold": json.loads(json.dumps(gold)),
+        "revealed_at": "2026-09-03T02:00:00+09:00",
+        "signer_public_key": _STUDY_SIGNER_PUBLIC_KEY,
+        "reconciliation_public_key": _RECONCILIATION_SIGNER_PUBLIC_KEY,
+        "signature": "", "reconciliation_signature": "",
+    }
+    payload = omc_task_review_pilot._persona_calibration_signed_bytes(reveal)
+    reveal["signature"] = base64.b64encode(_STUDY_SIGNER.sign(payload)).decode()
+    reveal["reconciliation_signature"] = base64.b64encode(_RECONCILIATION_SIGNER.sign(payload)).decode()
+    qualification: dict[str, object] = {
+        "schema_version": "omc-task-review-persona-adjudicator-qualification/v2",
+        "study_id": omc_task_review_pilot.PERSONA_STUDY_ID,
+        "commitment": commitment, "answer": answer, "gold_reveal": reveal,
+        "fixture_count": 8, "mismatch_count": 0, "qualified": True,
+        "signer_public_key": _STUDY_SIGNER_PUBLIC_KEY,
+        "reconciliation_public_key": _RECONCILIATION_SIGNER_PUBLIC_KEY,
+        "signature": "", "reconciliation_signature": "",
+    }
+    payload = omc_task_review_pilot._persona_calibration_signed_bytes(qualification)
+    qualification["signature"] = base64.b64encode(_STUDY_SIGNER.sign(payload)).decode()
+    qualification["reconciliation_signature"] = base64.b64encode(_RECONCILIATION_SIGNER.sign(payload)).decode()
+    return qualification
+
+
 def _persona_registration(mapping: dict[str, object]) -> dict[str, object]:
     repositories = []
     for name, root_commit in (("repo-a", "a" * 40), ("repo-b", "b" * 40)):
@@ -2193,7 +2376,7 @@ def _persona_registration(mapping: dict[str, object]) -> dict[str, object]:
         )
     repositories.sort(key=lambda item: item["repository_id"])
     receipt: dict[str, object] = {
-        "schema_version": "omc-task-review-persona-study-registration/v1",
+        "schema_version": "omc-task-review-persona-study-registration/v3",
         "study_id": "task-review-persona-effectiveness-20260904-v1",
         "t0": "2026-09-03T02:01:00+09:00",
         "collection_deadline": "2026-09-24T02:01:00+09:00",
@@ -2202,14 +2385,24 @@ def _persona_registration(mapping: dict[str, object]) -> dict[str, object]:
         "maximum_cases_per_repository": 7,
         "wall_clock_noninferiority_ratio": 1.15,
         "preregistration_sha256": (
-            "0dc5f8d1270162bfc97841525e9191d863c7e6809fbd6d5d8a24e33d5da0ceab"
+            "fb7fdecd3fb1ace65e8d20c283904ff42df8908aac37182fb9cb8c63fbf594c7"
         ),
-        "contract_revision": 2,
+        "contract_revision": 6,
         "minimum_relative_reduction": 0.30,
         "minimum_baseline_correction_events": 3,
         "selection_policy": "chronological_first_eligible_implementation_no_replacement",
         "arm_order_policy": "odd_omc_first_even_direct_first",
         "arm_mapping_sha256": _sha(mapping),
+        "persona_contract": dict(omc_task_review_pilot.PERSONA_CONTRACT),
+        "persona_contract_sha256": omc_task_review_pilot.PERSONA_CONTRACT_SHA256,
+        "calibration_qualification": _persona_calibration_qualification(),
+        "authority_custody_policy": json.loads(json.dumps(
+            omc_task_review_pilot.PERSONA_AUTHORITY_CUSTODY_POLICY
+        )),
+        "inconclusive_followup_policy": json.loads(json.dumps(
+            omc_task_review_pilot.PERSONA_INCONCLUSIVE_FOLLOWUP_POLICY
+        )),
+        "implementation_commit": "f" * 40,
         "repositories": repositories,
         "execution_public_key": _EXECUTION_SIGNER_PUBLIC_KEY,
         "study_public_key": _STUDY_SIGNER_PUBLIC_KEY,
@@ -2222,6 +2415,49 @@ def _persona_registration(mapping: dict[str, object]) -> dict[str, object]:
         "reconciliation_signature": "",
         "signature": "",
     }
+    rehearsal = {
+        "schema_version": "omc-task-review-persona-protocol-rehearsal/v1",
+        "study_id": omc_task_review_pilot.PERSONA_STUDY_ID,
+        "rehearsal_id": "synthetic-protocol-rehearsal-1",
+        "work_class": "synthetic", "excluded_from_study": True,
+        "source_commit": receipt["implementation_commit"],
+        "preregistration_sha256": receipt["preregistration_sha256"],
+        "completed_at": "2026-09-03T02:00:30+09:00",
+        "evidence_bundle": {},
+        "evidence_bundle_sha256": "",
+        "authority_custody_policy": json.loads(json.dumps(
+            omc_task_review_pilot.PERSONA_AUTHORITY_CUSTODY_POLICY
+        )),
+        "study_public_key": _STUDY_SIGNER_PUBLIC_KEY,
+        "reconciliation_public_key": _RECONCILIATION_SIGNER_PUBLIC_KEY,
+        "execution_public_key": _EXECUTION_SIGNER_PUBLIC_KEY,
+        "adjudication_public_key": _ADJUDICATION_SIGNER_PUBLIC_KEY,
+        "study_signature": "", "reconciliation_signature": "",
+        "execution_signature": "", "adjudication_signature": "",
+    }
+    evidence_payloads = {
+        "signing_payload_roundtrip": {"payload_sha256": "1" * 64, "roundtrip_sha256": "1" * 64},
+        "synthetic_execution_receipt": {"receipt_schema": "omc-task-review-pilot-execution-receipt/v1", "provider_call_count": 1, "raw_output_sha256": "2" * 64},
+        "terminal_validation": {"terminal_schema": "omc-task-review-pilot-terminal/v1", "terminal_sha256": "3" * 64, "validation_status": "validated"},
+        "blind_packet_validation": {"packet_schema": "omc-task-review-persona-blind-evaluation-packet/v1", "packet_sha256": "4" * 64, "validation_status": "validated"},
+    }
+    rehearsal["evidence_bundle"] = {
+        kind: {
+            "schema_version": "omc-task-review-persona-rehearsal-evidence/v1",
+            "artifact_kind": kind,
+            "payload": payload,
+            "payload_sha256": _sha(payload),
+            "validation_result": "PASS",
+        }
+        for kind, payload in evidence_payloads.items()
+    }
+    rehearsal["evidence_bundle_sha256"] = _sha(rehearsal["evidence_bundle"])
+    rehearsal_payload = omc_task_review_pilot._persona_rehearsal_signed_bytes(rehearsal)
+    rehearsal["study_signature"] = base64.b64encode(_STUDY_SIGNER.sign(rehearsal_payload)).decode()
+    rehearsal["reconciliation_signature"] = base64.b64encode(_RECONCILIATION_SIGNER.sign(rehearsal_payload)).decode()
+    rehearsal["execution_signature"] = base64.b64encode(_EXECUTION_SIGNER.sign(rehearsal_payload)).decode()
+    rehearsal["adjudication_signature"] = base64.b64encode(_ADJUDICATION_SIGNER.sign(rehearsal_payload)).decode()
+    receipt["rehearsal_receipt"] = rehearsal
     signed = omc_task_review_pilot._persona_registration_signed_bytes(receipt)
     receipt["signature"] = base64.b64encode(_STUDY_SIGNER.sign(signed)).decode("ascii")
     receipt["reconciliation_signature"] = base64.b64encode(
@@ -2239,6 +2475,7 @@ def _persona_enrollments(
     enrollments: list[dict[str, object]] = []
     for index in range(10):
         case = cases[index] if cases is not None else None
+        contract_case = case if case is not None else _frozen_case()
         repository_ids = [
             item["repository_id"] for item in registration["repositories"]
         ]
@@ -2257,9 +2494,9 @@ def _persona_enrollments(
             "base_commit": case["base_commit"] if case is not None else "a" * 40,
             "work_class": "implementation",
             "eligible": True,
-            "request_sha256": _sha(case["request"]) if case is not None else f"{index + 201:064x}",
-            "dod_sha256": _sha(case["dod"]) if case is not None else f"{index + 301:064x}",
-            "verification_sha256": _sha(case["verification_command"]) if case is not None else f"{index + 401:064x}",
+            "request_sha256": _sha(contract_case["request"]),
+            "dod_sha256": _sha(contract_case["dod"]),
+            "verification_sha256": _sha(contract_case["verification_command"]),
         }
         evidence_path = artifact_root / f"enrollment-{index + 1}-state.json"
         evidence_path.write_text(
@@ -2453,7 +2690,7 @@ def test_persona_registration_rejects_noncanonical_repository_roster() -> None:
     ("field", "tampered_value"),
     [
         ("preregistration_sha256", "f" * 64),
-        ("contract_revision", 3),
+        ("contract_revision", 7),
         ("minimum_relative_reduction", 0.29),
         ("minimum_baseline_correction_events", 2),
     ],
@@ -2484,6 +2721,120 @@ def test_persona_registration_rejects_resigned_decision_contract_tampering(
             _frozen_case(),
             registration_receipt=registration,
             arm_mapping_receipt=mapping,
+        )
+
+
+def test_persona_registration_rejects_custody_policy_drift() -> None:
+    mapping = _persona_mapping()
+    registration = _persona_registration(mapping)
+    registration["authority_custody_policy"]["adjudicator_gold_access_before_answer"] = True
+    registration["signature"] = registration["reconciliation_signature"] = ""
+    signed = omc_task_review_pilot._persona_registration_signed_bytes(registration)
+    registration["signature"] = base64.b64encode(_STUDY_SIGNER.sign(signed)).decode()
+    registration["reconciliation_signature"] = base64.b64encode(_RECONCILIATION_SIGNER.sign(signed)).decode()
+
+    with pytest.raises(PilotPreflightError, match="persona_study_registration_invalid"):
+        omc_task_review_pilot._validated_persona_registration(
+            registration, arm_mapping_receipt=mapping
+        )
+
+
+def test_persona_registration_requires_rehearsal_before_t0() -> None:
+    mapping = _persona_mapping()
+    registration = _persona_registration(mapping)
+    rehearsal = registration["rehearsal_receipt"]
+    rehearsal["completed_at"] = registration["t0"]
+    for field in ("study_signature", "reconciliation_signature", "execution_signature", "adjudication_signature"):
+        rehearsal[field] = ""
+    payload = omc_task_review_pilot._persona_rehearsal_signed_bytes(rehearsal)
+    for field, signer in (("study_signature", _STUDY_SIGNER), ("reconciliation_signature", _RECONCILIATION_SIGNER), ("execution_signature", _EXECUTION_SIGNER), ("adjudication_signature", _ADJUDICATION_SIGNER)):
+        rehearsal[field] = base64.b64encode(signer.sign(payload)).decode()
+    registration["signature"] = registration["reconciliation_signature"] = ""
+    signed = omc_task_review_pilot._persona_registration_signed_bytes(registration)
+    registration["signature"] = base64.b64encode(_STUDY_SIGNER.sign(signed)).decode()
+    registration["reconciliation_signature"] = base64.b64encode(_RECONCILIATION_SIGNER.sign(signed)).decode()
+
+    with pytest.raises(PilotPreflightError, match="persona_rehearsal_invalid"):
+        omc_task_review_pilot._validated_persona_registration(
+            registration, arm_mapping_receipt=mapping
+        )
+
+
+def test_persona_rehearsal_rejects_boolean_only_success_claims() -> None:
+    registration = _persona_registration(_persona_mapping())
+    rehearsal = registration["rehearsal_receipt"]
+    rehearsal.pop("evidence_bundle")
+    rehearsal.pop("evidence_bundle_sha256")
+    rehearsal.pop("authority_custody_policy")
+    rehearsal["checks"] = {
+        "signing_payload_roundtrip": True,
+        "synthetic_execution_receipt": True,
+        "terminal_validation": True,
+        "blind_packet_validation": True,
+    }
+
+    with pytest.raises(PilotPreflightError, match="persona_rehearsal_invalid"):
+        omc_task_review_pilot._validated_persona_rehearsal(
+            registration["rehearsal_receipt"],
+            t0=omc_task_review_pilot._aware_timestamp(
+                registration["t0"], error="test"
+            ),
+        )
+
+
+def test_persona_rehearsal_requires_custody_policy_in_four_party_payload() -> None:
+    registration = _persona_registration(_persona_mapping())
+    rehearsal = registration["rehearsal_receipt"]
+    rehearsal.pop("authority_custody_policy")
+    with pytest.raises(PilotPreflightError, match="persona_rehearsal_invalid"):
+        omc_task_review_pilot._validated_persona_rehearsal(
+            rehearsal,
+            t0=omc_task_review_pilot._aware_timestamp(
+                registration["t0"], error="test"
+            ),
+        )
+
+
+def test_persona_rehearsal_blocks_non_object_receipt() -> None:
+    with pytest.raises(PilotPreflightError, match="persona_rehearsal_invalid"):
+        omc_task_review_pilot._validated_persona_rehearsal(
+            [],
+            t0=omc_task_review_pilot._aware_timestamp(
+                "2026-09-03T02:01:00+09:00", error="test"
+            ),
+        )
+
+
+def test_persona_rehearsal_rejects_duplicate_authority_keys(monkeypatch) -> None:
+    registration = _persona_registration(_persona_mapping())
+    rehearsal = registration["rehearsal_receipt"]
+    monkeypatch.setenv(
+        "OMC_TASK_REVIEW_PILOT_TRUSTED_RECONCILIATION_PUBLIC_KEY",
+        _EXECUTION_SIGNER_PUBLIC_KEY,
+    )
+    rehearsal["reconciliation_public_key"] = _EXECUTION_SIGNER_PUBLIC_KEY
+    for signature_field in (
+        "study_signature", "reconciliation_signature", "execution_signature",
+        "adjudication_signature",
+    ):
+        rehearsal[signature_field] = ""
+    payload = omc_task_review_pilot._persona_rehearsal_signed_bytes(rehearsal)
+    rehearsal["study_signature"] = base64.b64encode(
+        _STUDY_SIGNER.sign(payload)
+    ).decode()
+    duplicate_signature = base64.b64encode(_EXECUTION_SIGNER.sign(payload)).decode()
+    rehearsal["reconciliation_signature"] = duplicate_signature
+    rehearsal["execution_signature"] = duplicate_signature
+    rehearsal["adjudication_signature"] = base64.b64encode(
+        _ADJUDICATION_SIGNER.sign(payload)
+    ).decode()
+
+    with pytest.raises(PilotPreflightError, match="persona_authority_keys_not_distinct"):
+        omc_task_review_pilot._validated_persona_rehearsal(
+            rehearsal,
+            t0=omc_task_review_pilot._aware_timestamp(
+                registration["t0"], error="test"
+            ),
         )
 
 
@@ -2526,10 +2877,12 @@ def test_persona_decision_policy_is_ordered_and_fail_closed(monkeypatch) -> None
     assert [rule["condition"] for rule in rules] == [
         "fatal_violation",
         "provider_execution_absent",
+        "blinding_failed",
         "completion_noninferiority_failed",
         "verification_noninferiority_failed",
         "total_intervention_noninferiority_failed",
         "wall_clock_noninferiority_failed",
+        "blind_quality_noninferiority_failed",
         "insufficient_baseline_correction_events",
         "correction_reduction_target_missed",
         "all_gates_passed",
@@ -2627,21 +2980,52 @@ def test_enrolled_persona_fatal_violation_precedes_provider_absence(
     mapping = _persona_mapping()
     registration = _persona_registration(mapping)
     enrollments = _persona_enrollments(registration, tmp_path)
-    terminals = [_persona_terminal(index, _sha(registration)) for index in range(10)]
-    for terminal in terminals:
-        terminal["persona_registration_sha256"] = _sha(registration)
-        terminal["dry_run"]["registration_sha256"] = _sha(registration)
-        terminal["dry_run"]["enrollment_sha256"] = _sha(
-            enrollments[terminal["dry_run"]["case_position"] - 1]
+    terminals = []
+    for index, enrollment in enumerate(enrollments):
+        case = _frozen_case()
+        case["case_id"] = f"fatal-precedence-{index + 1}"
+        case["repository_id"] = enrollment["repository_id"]
+        case["base_commit"] = enrollment["base_commit"]
+        frozen = omc_task_review_pilot.freeze_persona_case(
+            case,
+            registration_receipt=registration,
+            arm_mapping_receipt=mapping,
         )
-        enrollment = enrollments[terminal["dry_run"]["case_position"] - 1]
-        terminal["dry_run"]["enrollment_session_id"] = enrollment["session_id"]
-        terminal["dry_run"]["case_source"] = {
-            "repository_id": enrollment["repository_id"],
-            "base_commit": enrollment["base_commit"],
-        }
-        terminal["arms"]["omc"]["provider_call_count"] = 0
-        terminal["arms"]["baseline"]["provider_call_count"] = 0
+        dry_run = omc_task_review_pilot.build_enrolled_persona_paired_dry_run(
+            frozen,
+            case_position=index + 1,
+            registration_receipt=registration,
+            enrollment_receipts=enrollments[: index + 1],
+            arm_mapping_receipt=mapping,
+            artifact_root=tmp_path,
+        )
+        case_root = tmp_path / f"fatal-terminal-{index + 1}"
+        terminals.append(
+            build_terminal_receipt(
+                dry_run,
+                [
+                    _runner_arm_receipt(
+                        dry_run, case_root, "omc", elapsed=80, provider_calls=0
+                    ),
+                    _runner_arm_receipt(
+                        dry_run, case_root, "baseline", elapsed=100,
+                        provider_calls=0,
+                    ),
+                ],
+            )
+        )
+    adjudication = _blind_persona_adjudication(
+        terminals, tmp_path, arm_a_events=0, arm_b_events=0, version=4
+    )
+    correct_alias = next(alias for alias, arm in mapping.items() if arm == "omc")
+    for case in adjudication["cases"]:
+        case["guessed_omc_arm"] = correct_alias
+    adjudication["signature"] = ""
+    adjudication["signature"] = base64.b64encode(
+        _ADJUDICATION_SIGNER.sign(
+            omc_task_review_pilot._persona_adjudication_signed_bytes(adjudication)
+        )
+    ).decode("ascii")
     terminals[0]["arms"]["omc"]["fatal_violation"] = True
     monkeypatch.setattr(
         omc_task_review_pilot,
@@ -2651,9 +3035,7 @@ def test_enrolled_persona_fatal_violation_precedes_provider_absence(
 
     result = omc_task_review_pilot.build_enrolled_persona_study_decision(
         terminals,
-        adjudication_receipt=_blind_persona_adjudication(
-            terminals, tmp_path, arm_a_events=0, arm_b_events=0
-        ),
+        adjudication_receipt=adjudication,
         arm_mapping_receipt=mapping,
         registration_receipt=registration,
         enrollment_receipts=enrollments,
@@ -2669,9 +3051,7 @@ def test_enrolled_persona_fatal_violation_precedes_provider_absence(
     terminals[0]["arms"]["omc"]["fatal_violation"] = False
     absent_result = omc_task_review_pilot.build_enrolled_persona_study_decision(
         terminals,
-        adjudication_receipt=_blind_persona_adjudication(
-            terminals, tmp_path, arm_a_events=0, arm_b_events=0
-        ),
+        adjudication_receipt=adjudication,
         arm_mapping_receipt=mapping,
         registration_receipt=registration,
         enrollment_receipts=enrollments,
@@ -2719,6 +3099,13 @@ def test_enrolled_persona_decision_binds_all_terminals_to_enrollment_chain(
             arm_mapping_receipt=mapping,
             artifact_root=tmp_path,
         )
+        configurations = {
+            item["arm"]: item["configuration"] for item in dry_run["arms"]
+        }
+        assert configurations["omc"]["persona_contract"] == registration[
+            "persona_contract"
+        ]
+        assert configurations["baseline"]["persona_contract"] is None
         case_root = tmp_path / f"enrolled-terminal-{index + 1}"
         terminals.append(
             build_terminal_receipt(
@@ -2732,11 +3119,12 @@ def test_enrolled_persona_decision_binds_all_terminals_to_enrollment_chain(
             )
         )
 
+    adjudication = _blind_persona_adjudication(
+        terminals, tmp_path, arm_a_events=5, arm_b_events=3, version=4
+    )
     decision = omc_task_review_pilot.build_enrolled_persona_study_decision(
         terminals,
-        adjudication_receipt=_blind_persona_adjudication(
-            terminals, tmp_path, arm_a_events=5, arm_b_events=3
-        ),
+        adjudication_receipt=adjudication,
         arm_mapping_receipt=mapping,
         registration_receipt=registration,
         enrollment_receipts=enrollments,
@@ -2748,6 +3136,142 @@ def test_enrolled_persona_decision_binds_all_terminals_to_enrollment_chain(
     assert omc_task_review_pilot.verify_enrolled_persona_study_decision(
         decision, artifact_root=tmp_path
     ) == decision
+
+    def adjudication_with_packet_mutation(
+        name: str, case_index: int, mutate,
+    ) -> dict[str, object]:
+        changed = json.loads(json.dumps(adjudication))
+        descriptor = changed["cases"][case_index]["evaluation_packet"]
+        packet = json.loads((tmp_path / descriptor["path"]).read_text(encoding="utf-8"))
+        mutate(packet, changed)
+        packet["packet_sha256"] = _sha(
+            {key: value for key, value in packet.items() if key != "packet_sha256"}
+        )
+        packet_path = tmp_path / f"{name}.json"
+        packet_path.write_text(
+            json.dumps(packet, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        descriptor["path"] = packet_path.name
+        descriptor["sha256"] = hashlib.sha256(packet_path.read_bytes()).hexdigest()
+        changed["signature"] = ""
+        changed["signature"] = base64.b64encode(
+            _ADJUDICATION_SIGNER.sign(
+                omc_task_review_pilot._persona_adjudication_signed_bytes(changed)
+            )
+        ).decode("ascii")
+        return changed
+
+    invalid_mapping = json.loads(json.dumps(adjudication))
+    invalid_mapping["cases"][0]["arm_mapping_sha256"] = "f" * 64
+    invalid_mapping["signature"] = ""
+    invalid_mapping["signature"] = base64.b64encode(
+        _ADJUDICATION_SIGNER.sign(
+            omc_task_review_pilot._persona_adjudication_signed_bytes(
+                invalid_mapping
+            )
+        )
+    ).decode("ascii")
+    with pytest.raises(PilotPreflightError, match="persona_adjudication_binding_mismatch"):
+        omc_task_review_pilot.build_enrolled_persona_study_decision(
+            terminals,
+            adjudication_receipt=invalid_mapping,
+            arm_mapping_receipt=mapping,
+            registration_receipt=registration,
+            enrollment_receipts=enrollments,
+            artifact_root=tmp_path,
+        )
+
+    invalid_contract = adjudication_with_packet_mutation(
+        "invalid-contract-packet", 0,
+        lambda packet, _: packet["evaluation_contract"].__setitem__(
+            "request_sha256", "f" * 64
+        ),
+    )
+    with pytest.raises(PilotPreflightError, match="persona_adjudication_packet_invalid"):
+        omc_task_review_pilot.build_enrolled_persona_study_decision(
+            terminals,
+            adjudication_receipt=invalid_contract,
+            arm_mapping_receipt=mapping,
+            registration_receipt=registration,
+            enrollment_receipts=enrollments,
+            artifact_root=tmp_path,
+        )
+
+    def replace_with_unbound_artifact(packet, _) -> None:
+        content = "unbound anonymous diff\n"
+        artifact = {
+            "schema_version": "omc-task-review-persona-evaluation-artifact/v1",
+            "artifact_kind": "diff",
+            "content": content,
+            "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
+        }
+        artifact_path = tmp_path / "unbound-anonymous-diff.json"
+        artifact_path.write_text(
+            json.dumps(artifact, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        packet["arms"]["arm_a"]["diff"] = {
+            "path": artifact_path.name,
+            "sha256": hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+        }
+
+    unbound_artifact = adjudication_with_packet_mutation(
+        "unbound-artifact-packet", 0, replace_with_unbound_artifact
+    )
+    with pytest.raises(PilotPreflightError, match="persona_adjudication_packet_invalid"):
+        omc_task_review_pilot.build_enrolled_persona_study_decision(
+            terminals,
+            adjudication_receipt=unbound_artifact,
+            arm_mapping_receipt=mapping,
+            registration_receipt=registration,
+            enrollment_receipts=enrollments,
+            artifact_root=tmp_path,
+        )
+
+    def reuse_first_case_artifact(packet, changed) -> None:
+        first_descriptor = changed["cases"][0]["evaluation_packet"]
+        first_packet = json.loads(
+            (tmp_path / first_descriptor["path"]).read_text(encoding="utf-8")
+        )
+        packet["arms"]["arm_a"]["diff"] = first_packet["arms"]["arm_a"]["diff"]
+
+    reused_artifact = adjudication_with_packet_mutation(
+        "reused-artifact-packet", 1, reuse_first_case_artifact
+    )
+    with pytest.raises(PilotPreflightError, match="persona_adjudication_packet_invalid"):
+        omc_task_review_pilot.build_enrolled_persona_study_decision(
+            terminals,
+            adjudication_receipt=reused_artifact,
+            arm_mapping_receipt=mapping,
+            registration_receipt=registration,
+            enrollment_receipts=enrollments,
+            artifact_root=tmp_path,
+        )
+
+    quality_failure = json.loads(json.dumps(adjudication))
+    quality_failure["cases"][0]["arm_b"]["persona_fidelity_pass"] = False
+    quality_failure["cases"][0]["arm_b"]["persona_fidelity_criteria"][
+        "completion_ownership"
+    ]["pass"] = False
+    quality_failure["signature"] = ""
+    quality_failure["signature"] = base64.b64encode(
+        _ADJUDICATION_SIGNER.sign(
+            omc_task_review_pilot._persona_adjudication_signed_bytes(
+                quality_failure
+            )
+        )
+    ).decode("ascii")
+    stopped = omc_task_review_pilot.build_enrolled_persona_study_decision(
+        terminals,
+        adjudication_receipt=quality_failure,
+        arm_mapping_receipt=mapping,
+        registration_receipt=registration,
+        enrollment_receipts=enrollments,
+        artifact_root=tmp_path,
+    )
+    assert stopped["status"] == "STOP"
+    assert stopped["reason"] == "blind_quality_noninferiority_failed"
     tampered_decision = json.loads(json.dumps(decision))
     tampered_decision["evidence_bundle"]["registration"][
         "minimum_relative_reduction"
@@ -2866,6 +3390,355 @@ def test_persona_signing_payload_supports_every_documented_kind(
         )
         assert base64.b64decode(payload["payload_base64"], validate=True) == expected
         assert payload["payload_sha256"] == hashlib.sha256(expected).hexdigest()
+
+
+def test_persona_blind_evaluation_packet_anonymizes_and_binds_artifacts(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    mapping = _persona_mapping()
+    registration = _persona_registration(mapping)
+    enrollments = _persona_enrollments(registration, tmp_path)
+    case = _frozen_case()
+    case["repository_id"] = enrollments[0]["repository_id"]
+    case["base_commit"] = enrollments[0]["base_commit"]
+    frozen = omc_task_review_pilot.freeze_persona_case(
+        case,
+        registration_receipt=registration,
+        arm_mapping_receipt=mapping,
+    )
+    dry_run = omc_task_review_pilot.build_enrolled_persona_paired_dry_run(
+        frozen,
+        case_position=1,
+        registration_receipt=registration,
+        enrollment_receipts=enrollments[:1],
+        arm_mapping_receipt=mapping,
+        artifact_root=tmp_path,
+    )
+    omc_execution_root = tmp_path / "blind-execution-omc"
+    baseline_execution_root = tmp_path / "blind-execution-baseline"
+    terminal = build_terminal_receipt(
+        dry_run,
+        [
+            _runner_arm_receipt(
+                dry_run, omc_execution_root, "omc", elapsed=80,
+                shared_evaluation_names=True,
+            ),
+            _runner_arm_receipt(
+                dry_run, baseline_execution_root, "baseline", elapsed=100,
+                shared_evaluation_names=True,
+            ),
+        ],
+    )
+    subject = {
+        "schema_version": "omc-task-review-persona-blind-evaluation-subject/v1",
+        "study_id": omc_task_review_pilot.PERSONA_STUDY_ID,
+        "terminal_receipt": terminal,
+        "evaluation_material": {
+            "request": case["request"],
+            "persona_contract": dict(omc_task_review_pilot.PERSONA_CONTRACT),
+            "dod": case["dod"],
+            "verification_command": case["verification_command"],
+        },
+    }
+
+    packet = omc_task_review_pilot.build_persona_blind_evaluation_packet(
+        subject, arm_mapping_receipt=mapping, artifact_root=tmp_path
+    )
+
+    assert set(packet["arms"]) == {"arm_a", "arm_b"}
+    assert not ({"omc", "baseline"} & set(packet["arms"]))
+    assert "arm_mapping_sha256" not in packet
+    assert packet["evaluation_material"] == subject["evaluation_material"]
+    for alias in ("arm_a", "arm_b"):
+        execution_arm = mapping[alias]
+        expected = terminal["arms"][execution_arm]["evaluation_artifacts"]
+        arm_receipt = next(
+            item for item in terminal["arm_receipts"] if item["arm"] == execution_arm
+        )
+        for kind, descriptor in packet["arms"][alias].items():
+            source = json.loads(
+                (
+                    Path(arm_receipt["artifact_root"])
+                    / expected[kind]["path"]
+                ).read_text(encoding="utf-8")
+            )
+            copied = json.loads(
+                (tmp_path / descriptor["path"]).read_text(encoding="utf-8")
+            )
+            assert copied == source
+    visible_paths = {
+        descriptor["path"]
+        for arm in packet["arms"].values()
+        for descriptor in arm.values()
+    }
+    assert all("omc" not in path and "baseline" not in path for path in visible_paths)
+    assert all((tmp_path / path).is_file() for path in visible_paths)
+    for path in visible_paths:
+        artifact = json.loads((tmp_path / path).read_text(encoding="utf-8"))
+        assert set(artifact) == {
+            "schema_version", "artifact_kind", "content", "content_sha256"
+        }
+        assert not ({"execution_arm", "executor_name", "skill_name", "workflow_stage"} & set(artifact))
+    assert packet["packet_sha256"] == _sha(
+        {key: value for key, value in packet.items() if key != "packet_sha256"}
+    )
+    forged_subject = json.loads(json.dumps(subject))
+    forged_subject["arms"] = {}
+    with pytest.raises(
+        PilotPreflightError, match="persona_blind_evaluation_subject_invalid"
+    ):
+        omc_task_review_pilot.build_persona_blind_evaluation_packet(
+            forged_subject, arm_mapping_receipt=mapping, artifact_root=tmp_path
+        )
+    wrong_material = json.loads(json.dumps(subject))
+    wrong_material["evaluation_material"]["request"] = "different request"
+    with pytest.raises(
+        PilotPreflightError, match="persona_blind_evaluation_contract_invalid"
+    ):
+        omc_task_review_pilot.build_persona_blind_evaluation_packet(
+            wrong_material, arm_mapping_receipt=mapping, artifact_root=tmp_path
+        )
+
+
+def test_persona_blind_evaluation_cli_blocks_malformed_subject_without_output(
+    tmp_path: Path,
+) -> None:
+    subject = tmp_path / "subject.json"
+    mapping = tmp_path / "mapping.json"
+    output = tmp_path / "packet.json"
+    subject.write_text("{}\n", encoding="utf-8")
+    mapping.write_text("{}\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("omc_task_review_pilot.py")),
+            "persona-prepare-blind-evaluation",
+            "--subject", str(subject),
+            "--arm-mapping", str(mapping),
+            "--artifact-root", str(tmp_path),
+            "--output", str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+
+    assert result.returncode == 2
+    assert json.loads(result.stdout) == {
+        "status": "blocked",
+        "reason": "persona_blind_evaluation_subject_invalid",
+    }
+    assert not output.exists()
+
+
+def test_persona_evaluation_artifact_rejects_identity_metadata() -> None:
+    content = "normalized diff\n"
+    artifact = {
+        "schema_version": "omc-task-review-persona-evaluation-artifact/v1",
+        "artifact_kind": "diff",
+        "content": content,
+        "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "execution_arm": "omc",
+    }
+
+    with pytest.raises(PilotPreflightError, match="persona_evaluation_artifact_invalid"):
+        omc_task_review_pilot._validated_persona_evaluation_artifact(
+            json.dumps(artifact).encode("utf-8"), expected_kind="diff"
+        )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "executor_name: codex\nnormalized diff\n",
+        '+ "execution_arm": "omc"\n',
+        "skill_name=omc-task\n",
+        "workflow_stage : review\n",
+        '{"executor_name":"codex"}\n',
+        'metadata={"execution_arm":"omc"}\n',
+        "| skill_name | omc-task |\n",
+        "**executor_name**: codex\n",
+        "`execution_arm`: omc\n",
+        "<skill_name>omc-task</skill_name>\n",
+        "prefix WORKFLOW_STAGE suffix\n",
+    ],
+)
+def test_persona_evaluation_artifact_rejects_identity_metadata_inside_content(
+    content: str,
+) -> None:
+    artifact = {
+        "schema_version": "omc-task-review-persona-evaluation-artifact/v1",
+        "artifact_kind": "diff",
+        "content": content,
+        "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    }
+
+    with pytest.raises(PilotPreflightError, match="persona_evaluation_artifact_invalid"):
+        omc_task_review_pilot._validated_persona_evaluation_artifact(
+            json.dumps(artifact).encode("utf-8"), expected_kind="diff"
+        )
+
+
+def test_persona_evaluation_artifact_allows_non_metadata_identity_words() -> None:
+    content = "normalized_executor_name = public_display_name\n"
+    artifact = {
+        "schema_version": "omc-task-review-persona-evaluation-artifact/v1",
+        "artifact_kind": "diff",
+        "content": content,
+        "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    }
+
+    validated, _ = omc_task_review_pilot._validated_persona_evaluation_artifact(
+        json.dumps(artifact).encode("utf-8"), expected_kind="diff"
+    )
+
+    assert validated == artifact
+
+
+def test_persona_fidelity_requires_frozen_criteria_and_consistent_aggregate() -> None:
+    rubric = omc_task_review_pilot.PERSONA_CONTRACT["persona_fidelity_rubric"]
+    criteria = {
+        item["criterion_id"]: {"pass": True, "evidence": "observable evidence"}
+        for item in rubric
+    }
+
+    assert omc_task_review_pilot._validated_persona_fidelity(
+        criteria, claimed_pass=True
+    ) == criteria
+    with pytest.raises(PilotPreflightError, match="persona_adjudication_quality_invalid"):
+        omc_task_review_pilot._validated_persona_fidelity(
+            criteria, claimed_pass=False
+        )
+
+
+def test_persona_blinding_requires_forced_choice_and_invalidates_nine_correct() -> None:
+    mapping = {"arm_a": "omc", "arm_b": "baseline"}
+    guesses = ["arm_a"] * 9 + ["arm_b"]
+
+    assert omc_task_review_pilot._persona_blinding_decision(guesses, mapping) == {
+        "status": "INCONCLUSIVE",
+        "reason": "blinding_failed",
+        "correct_guess_count": 9,
+    }
+    assert omc_task_review_pilot._persona_blinding_decision(
+        ["arm_a"] * 8 + ["arm_b"] * 2, mapping
+    )["status"] == "VALID"
+    with pytest.raises(PilotPreflightError, match="persona_adjudication_blinding_invalid"):
+        omc_task_review_pilot._persona_blinding_decision(
+            ["unknown"] + ["arm_a"] * 9, mapping
+        )
+
+
+def test_persona_calibration_exact_match_requires_all_eight_fixtures() -> None:
+    gold = _persona_calibration_qualification()["gold_reveal"]["gold"]
+
+    assert omc_task_review_pilot._persona_calibration_exact_match(gold, gold) is True
+    missing = dict(gold)
+    missing.pop("c8")
+    assert omc_task_review_pilot._persona_calibration_exact_match(missing, gold) is False
+    changed = json.loads(json.dumps(gold))
+    changed["c4"]["dod_complete_pass"] = not changed["c4"]["dod_complete_pass"]
+    assert omc_task_review_pilot._persona_calibration_exact_match(changed, gold) is False
+
+
+def test_persona_calibration_match_ignores_narrative_wording() -> None:
+    gold = _persona_calibration_qualification()["gold_reveal"]["gold"]
+    answer = json.loads(json.dumps(gold))
+    answer["c1"]["persona_fidelity_criteria"]["completion_ownership"][
+        "evidence"
+    ] = "same judgment expressed with different evidence wording"
+    answer["c8"]["correction_instruction"] = "Equivalent corrective wording."
+
+    assert omc_task_review_pilot._persona_calibration_mismatch_count(answer, gold) == 0
+
+
+def test_persona_calibration_counts_structured_label_mismatches() -> None:
+    gold = _persona_calibration_qualification()["gold_reveal"]["gold"]
+    answer = json.loads(json.dumps(gold))
+    answer["c1"]["requirement_coverage_pass"] = True
+    answer["c2"]["persona_fidelity_criteria"]["multi_repository_context"][
+        "pass"
+    ] = True
+    answer["c2"]["persona_fidelity_pass"] = True
+
+    assert omc_task_review_pilot._persona_calibration_mismatch_count(answer, gold) == 2
+
+
+def test_persona_calibration_rejects_fixture_content_not_bound_to_hash() -> None:
+    qualification = _persona_calibration_qualification()
+    commitment = qualification["commitment"]
+    commitment["fixtures"]["c1"]["request"] = "tampered but hash unchanged"
+
+    with pytest.raises(PilotPreflightError, match="persona_calibration_fixture_invalid"):
+        omc_task_review_pilot._validated_persona_calibration_qualification(
+            qualification
+        )
+
+
+def test_persona_calibration_rejects_meaningless_result_shape() -> None:
+    with pytest.raises(PilotPreflightError, match="persona_calibration_result_invalid"):
+        omc_task_review_pilot._validated_persona_calibration_result(
+            {"result": True}, failure_boundary="requirement_coverage"
+        )
+
+
+def test_persona_calibration_rejects_more_than_declared_failure_boundary() -> None:
+    qualification = _persona_calibration_qualification()
+    result = qualification["gold_reveal"]["gold"]["c1"]
+    result["dod_complete_pass"] = False
+
+    with pytest.raises(PilotPreflightError, match="persona_calibration_result_invalid"):
+        omc_task_review_pilot._validated_persona_calibration_result(
+            result, failure_boundary="requirement_coverage"
+        )
+
+
+def test_persona_calibration_rejects_nested_cross_study_receipt() -> None:
+    qualification = _persona_calibration_qualification()
+    qualification["commitment"]["study_id"] = "another-study"
+
+    with pytest.raises(PilotPreflightError, match="persona_calibration_commitment_invalid"):
+        omc_task_review_pilot._validated_persona_calibration_qualification(
+            qualification
+        )
+
+
+def test_persona_calibration_chain_rejects_gold_changed_after_answer() -> None:
+    qualification = _persona_calibration_qualification()
+    qualification["gold_reveal"]["gold"]["c4"]["result"] = False
+
+    with pytest.raises(
+        PilotPreflightError, match="persona_calibration_gold_reveal_invalid"
+    ):
+        omc_task_review_pilot._validated_persona_calibration_qualification(
+            qualification
+        )
+
+
+def test_persona_quality_noninferiority_is_a_stop_gate() -> None:
+    result = omc_task_review_pilot._persona_quality_decision(
+        {
+            "direct_codex": {
+                "requirement_coverage_pass_count": 10,
+                "persona_fidelity_pass_count": 9,
+                "dod_complete_pass_count": 10,
+                "incorrect_completion_claim_count": 0,
+            },
+            "omc_persona": {
+                "requirement_coverage_pass_count": 10,
+                "persona_fidelity_pass_count": 8,
+                "dod_complete_pass_count": 10,
+                "incorrect_completion_claim_count": 0,
+            },
+        }
+    )
+
+    assert result == {
+        "status": "STOP",
+        "reason": "blind_quality_noninferiority_failed",
+    }
 
 
 def test_selection_rejects_non_chronological_inventory() -> None:

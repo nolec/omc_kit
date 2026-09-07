@@ -4,6 +4,8 @@
 
 ## 시작 전
 
+study·reconciliation authority가 8개 canonical calibration fixture 본문, 각 본문의 hash와 숨긴 gold hash를 먼저 공동 서명한다. fixture에는 failure boundary 정답을 노출하지 않는다. adjudicator가 gold를 보지 않고 answer를 서명한 뒤 두 authority가 gold를 공개한다. qualification은 boolean·criterion pass·failure boundary 판정만 비교하며 evidence와 correction instruction은 필수성만 검증하고 문구는 비교하지 않는다. qualification 전체를 registration v3에 포함하며 이 순서나 한 field라도 어긋나면 T0를 열지 않는다.
+
 다음 네 공개키를 operator 환경에 설정한다.
 
 - `OMC_TASK_REVIEW_PILOT_TRUSTED_EXECUTION_PUBLIC_KEY`
@@ -22,16 +24,28 @@ python3 scripts/omc_task_review_pilot.py persona-signing-payload \
   --kind registration --receipt registration.json --output registration-payload.json
 ```
 
-`--kind`는 `registration`, `arm_mapping`, `enrollment`, `adjudication`, `collection_close` 중 하나다. 외부 custody signer는 `payload_base64`를 decode한 bytes에 Ed25519 서명하고 base64 signature를 원 receipt의 signature 필드에 기록한다. registration의 두 authority는 같은 payload bytes를 서명한다. private key와 decoded payload는 저장소에 저장하지 않는다.
+`--kind`는 `registration`, `arm_mapping`, `enrollment`, `adjudication`, `collection_close`, `calibration_commitment`, `calibration_answer`, `calibration_gold_reveal`, `calibration_qualification`, `rehearsal` 중 하나다. 외부 custody signer는 `payload_base64`를 decode한 bytes에 Ed25519 서명하고 base64 signature를 원 receipt의 signature 필드에 기록한다. registration과 calibration의 공동 서명 문서는 두 authority가 같은 payload bytes를 서명한다. private key와 decoded payload는 저장소에 저장하지 않는다.
+
+`rehearsal`도 같은 payload 생성 명령을 사용하며 네 signature 필드를 모두 빈 문자열로 둔 동일 bytes를 네 authority가 각각 서명한다.
+
+T0 전에 study 표본에서 제외되는 synthetic rehearsal을 완료해야 한다. rehearsal은 source commit·preregistration hash·네 authority와 signing payload roundtrip, synthetic execution receipt, terminal validation, blind packet validation의 typed canonical payload·개별 hash·전체 bundle hash를 결속하며 registration v3가 그 전체 receipt를 봉인한다. frozen custody policy도 같은 네 서명 payload에 포함한다. authority 독립성은 서로 다른 사람 수가 아니라 서로 다른 키와 정보 접근 경계로 주장한다. adjudicator는 calibration answer 전 gold, 최종 adjudication 전 arm mapping에 접근할 수 없고 executor는 adjudication을 겸할 수 없다.
 
 ## Case 실행 순서
 
 1. anonymous arm mapping을 먼저 서명하고, 그 receipt hash를 포함한 registration을 공동 서명해 case 1 전에 고정한다.
 2. 각 자연 발생 implementation을 먼저 enrollment하고 state-evidence cursor 구간을 결속한다.
 3. `persona-freeze-case`와 `persona-paired-dry-run`을 순서대로 실행한다.
-4. 외부 Codex 두 arm의 signed execution receipt로 `arm-receipt`와 `terminal-receipt`를 만든다.
-5. case 10 뒤 blind adjudication을 서명하고 `persona-decision`을 실행한다.
-6. 생성된 sealed decision을 즉시 다시 검증한다.
+4. 외부 Codex 두 arm은 dry-run의 arm별 configuration을 그대로 사용한다. OMC arm에는 frozen persona contract 원문이 있고 baseline에는 명시적인 `null` marker가 있어야 한다. executor는 최종 diff와 정규화된 verification을 `omc-task-review-persona-evaluation-artifact/v1` JSON으로 만든다. exact 필드는 `schema_version`, `artifact_kind`, `content`, `content_sha256`뿐이며 arm·executor·skill·workflow metadata는 허용하지 않는다. 각 descriptor를 result에 포함해 함께 서명하고, 그 receipt로 `arm-receipt`와 `terminal-receipt`를 만든다.
+5. 각 terminal 뒤 `persona-prepare-blind-evaluation`을 실행한다. subject에는 terminal receipt와 frozen request·persona contract·DoD·verification command 원문만 넣는다. packet builder가 signed terminal bundle에서 평가 artifact를 직접 추출해 중립 이름으로 봉인하며, caller가 별도 artifact를 지정할 수 없다.
+6. 실제 study에 포함되지 않는 synthetic calibration fixture 8개로 requirement coverage, persona fidelity 4개 criterion, DoD completeness, incorrect completion, correction-required 실패 경계를 각각 확인한다. blind adjudicator는 packet에 포함된 계약 원문과 anonymous artifact를 보고 requirement coverage·DoD completeness·incorrect completion·correction-required와 OMC arm 추측 및 confidence를 기록한다. Persona fidelity는 rubric의 모든 criterion ID별로 `pass`와 비어 있지 않은 `evidence`를 기록하고, 최종 `persona_fidelity_pass`는 criterion pass의 논리곱과 정확히 같아야 한다.
+7. case 10 뒤 강제 arm 추측을 포함한 `omc-task-review-persona-adjudication/v4` receipt를 서명하고 `persona-decision`을 실행한다. arm mapping은 adjudication 서명 뒤에만 해석하며 OMC arm을 9건 이상 맞히면 `INCONCLUSIVE_BLINDING_FAILED`로 종료한다.
+8. 생성된 sealed decision을 즉시 다시 검증한다.
+
+```bash
+python3 scripts/omc_task_review_pilot.py persona-prepare-blind-evaluation \
+  --subject terminal-bound-blind-subject.json --arm-mapping arm-mapping.json \
+  --artifact-root evidence --output blind-packet.json
+```
 
 ```bash
 python3 scripts/omc_task_review_pilot.py persona-verify-decision \

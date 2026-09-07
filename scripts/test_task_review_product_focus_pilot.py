@@ -172,7 +172,13 @@ def test_persona_effectiveness_metric_requires_ten_pairs_and_real_corrections() 
     assert "timeout_sec" in design["same_case_inputs"]
     assert "timeout" not in design["same_case_inputs"]
     assert design["blind_adjudication"] is True
-    assert design["primary_metric"] == "human_additional_correction_instruction_rate"
+    assert design["arm_specific_treatment"] == {
+        "direct_codex": {"persona_contract": None},
+        "omc_persona": {
+            "persona_contract_sha256": omc_task_review_pilot.PERSONA_CONTRACT_SHA256
+        },
+    }
+    assert design["primary_metric"] == "blind_correction_required_case_rate"
     assert decision["minimum_relative_reduction"] == 0.30
     assert decision["minimum_baseline_correction_events"] == 3
     assert "post-implementation instruction" in decision["correction_event_definition"]
@@ -189,10 +195,12 @@ def test_persona_effectiveness_metric_requires_ten_pairs_and_real_corrections() 
     assert decision["decision_precedence"] == [
         "fatal_violation",
         "provider_execution_absent",
+        "blinding_failed",
         "completion_noninferiority",
         "verification_noninferiority",
         "total_human_intervention_noninferiority",
         "median_wall_clock_noninferiority",
+        "blind_quality_noninferiority",
         "minimum_baseline_correction_events",
         "minimum_relative_reduction",
     ]
@@ -206,6 +214,14 @@ def test_persona_registration_contract_matches_preregistration_ssot() -> None:
         PERSONA_STUDY_PATH.read_bytes()
     ).hexdigest()
     assert omc_task_review_pilot.PERSONA_CONTRACT_REVISION == study["contract_revision"]
+    assert omc_task_review_pilot.PERSONA_CONTRACT_SHA256 == hashlib.sha256(
+        json.dumps(
+            study["persona_contract"],
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
     assert (
         omc_task_review_pilot.PERSONA_MINIMUM_RELATIVE_REDUCTION
         == study["decision"]["minimum_relative_reduction"]
@@ -214,11 +230,15 @@ def test_persona_registration_contract_matches_preregistration_ssot() -> None:
         omc_task_review_pilot.PERSONA_MINIMUM_BASELINE_CORRECTION_EVENTS
         == study["decision"]["minimum_baseline_correction_events"]
     )
-    assert study["contract_revision"] == 2
+    assert study["contract_revision"] == 6
+    assert study["pre_t0_rehearsal"]["required"] is True
+    assert study["inconclusive_followup_policy"]["same_study_extension_allowed"] is False
+    assert study["amendment"]["measurement_source_changed"] is True
+    assert study["amendment"]["schema_changed"] is True
+    assert study["amendment"]["outcome_changed"] is True
     assert study["amendment"]["semantic_threshold_changed"] is False
-    assert study["amendment"]["outcome_changed"] is False
     assert study["amendment"]["previous_document_sha256"] == (
-        "597d29609e5a243852dc67232aa3e8d380b0ebff8886278f3ba2a77de9548adb"
+        "909e4ee3c0657b204871534efdeab0ded7b04dc432cee092eaa28f3e4f35b86d"
     )
     assert decision["ordered_rules"] == [
         {"condition": rule["condition"], "outcome": rule["outcome"]}
@@ -232,10 +252,13 @@ def test_persona_operator_runbook_exposes_signing_and_reverification_surfaces() 
 
     assert "persona-signing-payload" in text
     assert "persona-verify-decision" in text
+    assert "persona-prepare-blind-evaluation" in text
+    assert "omc-task-review-persona-adjudication/v4" in text
     assert "private key와 decoded payload는 저장소에 저장하지 않는다" in text
     assert "registration, mapping, enrollment, terminal, adjudication" in text
     assert "persona-signing-payload" in help_text
     assert "persona-verify-decision" in help_text
+    assert "persona-prepare-blind-evaluation" in help_text
 
 
 def test_persona_study_preregisters_mapping_before_execution() -> None:
@@ -251,6 +274,7 @@ def test_persona_study_preregisters_mapping_before_execution() -> None:
     ]
     assert "required_sequence" not in execution
     assert common == [
+        "excluded_synthetic_protocol_rehearsal",
         "signed_anonymous_arm_mapping",
         "signed_study_registration_and_t0",
         "case_enrollment_with_state_evidence",

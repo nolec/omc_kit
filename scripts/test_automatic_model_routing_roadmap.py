@@ -102,7 +102,7 @@ def test_roadmap_promotes_the_approved_persona_study_without_reopening_v2() -> N
     for text in (roadmap, readme):
         assert "task-review-persona-effectiveness-20260904-v1" in text
         assert "10건 paired case" in text
-        assert "추가 수정 지시 30%" in text
+        assert "blind correction-required" in text
         assert "external Codex executor" in text
         assert "실제 provider 실행은 아직 시작하지 않" in text
 
@@ -128,8 +128,8 @@ def test_persona_decision_contract_matches_the_fail_closed_implementation() -> N
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
     study = json.loads(PERSONA_STUDY_PATH.read_text(encoding="utf-8"))
 
-    assert "fatal violation → provider 실행 부재 → completion" in roadmap
-    assert "provider 실행 부재는 `INCONCLUSIVE`" in roadmap
+    assert "fatal violation → provider 실행 부재 → blinding 실패 → completion" in roadmap
+    assert "provider 실행 부재와 blinding 실패는 `INCONCLUSIVE`" in roadmap
     assert "유효한 Pilot evidence로 인정하지 않는다" in roadmap
     assert "provider를 호출하지 않는다" not in roadmap
     assert "경우에만 reconciliation authority" not in roadmap
@@ -151,7 +151,7 @@ def test_product_focus_is_the_fresh_ten_case_persona_effectiveness_lane() -> Non
     for text in (roadmap, readme):
         assert "task-review-persona-effectiveness-20260904-v1" in text
         assert "10건 paired case" in text
-        assert "추가 수정 지시 30%" in text
+        assert "blind correction-required" in text
         assert "실제 provider 실행은 아직 시작하지 않" in text
 
     assert "| Product focus v2 | `ARCHIVED_INCOMPLETE` |" in roadmap

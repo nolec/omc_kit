@@ -4,6 +4,8 @@ TDD 게이트와 telemetry를 갖춘 멀티 LLM 오케스트레이션 킷입니�
 
 ## 현재 상태
 
+Persona Pilot revision 6는 T0 전 synthetic protocol rehearsal, 구조화 calibration 판정, authority information-access custody와 사전 고정된 `INCONCLUSIVE` 후속 정책을 요구합니다.
+
 2026-08-28 기준 OMC는 **승인 범위 안에서 제한 병렬 실행을 수행하는 bounded orchestration** 단계입니다.
 
 - V1 스킬 기반 라우팅: 완료
@@ -19,7 +21,9 @@ TDD 게이트와 telemetry를 갖춘 멀티 LLM 오케스트레이션 킷입니�
 
 기존 3건 task-review pilot v2는 readiness와 실행 증거가 없어 `ARCHIVED_INCOMPLETE`로 동결했습니다. v2 binding은 새 연구에 승계하지 않습니다.
 
-현재 승인된 다음 검증은 `task-review-persona-effectiveness-20260904-v1`입니다. 여러 레포를 운영하는 1인 SaaS 창업자의 자연 발생 implementation 10건 paired case에서 direct Codex와 OMC persona 경로를 비교합니다. 21일 안에 chronological first eligible 10건을 최소 2개 저장소·저장소당 최대 7건으로 무대체 수집하며, 각 case는 append-only enrollment 검증 뒤 즉시 실행합니다. 사람의 추가 수정 지시 30% 이상 감소와 완료·검증·총 사람 개입·wall-clock 비열화를 동시에 요구합니다. external Codex executor의 signed receipt를 fail-closed verifier로 검증하며, 실제 provider 실행은 아직 시작하지 않았습니다.
+현재 승인된 다음 검증은 `task-review-persona-effectiveness-20260904-v1`입니다. 여러 레포를 운영하는 1인 SaaS 창업자의 자연 발생 implementation 10건 paired case에서 direct Codex와 OMC persona 경로를 비교합니다. 21일 안에 chronological first eligible 10건을 최소 2개 저장소·저장소당 최대 7건으로 무대체 수집하며, 각 case는 append-only enrollment 검증 뒤 즉시 실행합니다. blind 평가에서 추가 수정 지시가 필요한 case 30% 이상 감소와 완료·검증·총 사람 개입·requirement·persona·DoD 품질·wall-clock 비열화를 동시에 요구합니다. external Codex executor의 signed receipt를 fail-closed verifier로 검증하며, 실제 provider 실행은 아직 시작하지 않았습니다.
+
+이번 Persona Pilot의 공식 claim은 blind correction-required case 감소이며, 실제 일상 사용자의 수정 지시 30% 감소는 후속 confirmatory study 전까지 `NOT_YET_PROVEN`입니다.
 
 Product Value 결과는 두 판정을 분리합니다.
 
