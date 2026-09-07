@@ -166,12 +166,25 @@ def test_product_focus_is_the_fresh_ten_case_persona_effectiveness_lane() -> Non
     assert "blind adjudication" in roadmap
     assert "task_review_persona_effectiveness_preregistration_v1.json" in roadmap
     assert "`WAITING_FOR_CASES`" not in roadmap.split("### Operator Experience 1차 통합안", 1)[0]
-    assert "| Setup | `OPERATIONALLY_VALIDATED` |" in roadmap
-    assert "OMC `0.2.0`을 실제 Git 사용처 8곳" in roadmap
-    assert "strict audit `8/8`" in roadmap
+    assert "| Setup | `RUNTIME_CHECK_REQUIRED` |" in roadmap
+    assert "최신 배포 상태는 strict install audit의 machine-readable 결과를 SSOT로 사용" in roadmap
     assert "현재 확인한 consumer는 최신 source 재배포 대기" not in roadmap
     assert "`PILOT_PENDING`" not in roadmap
     assert "corpus v2-r1을 schema v2 registry" not in readme
+
+
+def test_current_setup_status_uses_authoritative_install_audit_instead_of_stale_counts() -> None:
+    roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
+    current_scorecard = roadmap.split("### Evidence-state Scorecard", 1)[1].split(
+        "### Product Value P0", 1
+    )[0]
+    execution_priority = roadmap.split("## 다음 실행 순서", 1)[1]
+
+    assert "최신 배포 상태는 strict install audit의 machine-readable 결과를 SSOT로 사용" in roadmap
+    assert "`python3 scripts/omc_install_audit.py --strict --json <consumer-path> [...]`" in roadmap
+    assert "| Setup | `OPERATIONALLY_VALIDATED` |" not in current_scorecard
+    assert "OMC `0.2.0`을 실제 Git 사용처 8곳" not in current_scorecard
+    assert "OMC `0.2.0`을 실제 Git 사용처 8곳" not in execution_priority
 
 
 def test_product_value_claim_scope_and_evidence_states_are_explicit() -> None:
