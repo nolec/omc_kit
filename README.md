@@ -4,7 +4,7 @@ TDD 게이트와 telemetry를 갖춘 멀티 LLM 오케스트레이션 킷입니�
 
 ## 현재 상태
 
-Persona Pilot revision 6는 T0 전 synthetic protocol rehearsal, 구조화 calibration 판정, authority information-access custody와 사전 고정된 `INCONCLUSIVE` 후속 정책을 요구합니다.
+Persona Pilot contract revision 7은 T0 전 calibration qualification과 synthetic protocol rehearsal, 네 authority의 고유 키·information-access custody, 사전 고정된 `INCONCLUSIVE` 후속 정책을 start gate에 명시합니다.
 
 2026-08-28 기준 OMC는 **승인 범위 안에서 제한 병렬 실행을 수행하는 bounded orchestration** 단계입니다.
 
@@ -36,9 +36,9 @@ Product Value 결과는 두 판정을 분리합니다.
 
 ## Target Architecture — Approved Study, Execution Not Started
 
-OMC의 제품 방향은 여러 레포를 운영하는 SaaS 창업자가 새 제품 기능을 요구사항·검증·리뷰 기준까지 완료하도록 돕는 것이다. **persona-guided Codex Pilot v3**는 연구 계약까지 승인됐으며, OMC가 persona·DoD·검증 계약을 정하고 Codex가 실행한 뒤 OMC가 선언된 검증과 종료 판정을 제공하는 구조를 검증한다.
+OMC의 제품 방향은 여러 레포를 운영하는 SaaS 창업자가 새 제품 기능을 요구사항·검증·리뷰 기준까지 완료하도록 돕는 것이다. **Persona Pilot contract revision 7**은 연구 계약까지 승인됐으며, OMC가 persona·DoD·검증 계약을 정하고 Codex가 실행한 뒤 OMC가 선언된 검증과 종료 판정을 제공하는 구조를 검증한다.
 
-Codex adapter는 아직 구현되지 않았고 이번 범위에서 개발하지 않는다. external Codex executor 수동 receipt 프로토콜로만 실행하며, 실제 실행 전 study·reconciliation 공동 서명 registration, fresh T0와 21일 창, anonymous arm mapping, execution·reconciliation·study·blind-adjudication authority가 필요하다. OMC는 외부 executor의 provider 호출 자체를 통제하지 않으며, state evidence cursor와 직전 enrollment hash를 검증하기 전에 수행된 실행은 유효한 Pilot evidence로 인정하지 않는다.
+Codex adapter는 아직 구현되지 않았고 이번 범위에서 개발하지 않는다. external Codex executor 수동 receipt 프로토콜로만 실행하며, 실제 실행 전 calibration qualification과 synthetic protocol rehearsal을 완료한 뒤 anonymous arm mapping, study·reconciliation 공동 서명 registration, fresh T0와 21일 창, execution·reconciliation·study·blind-adjudication authority를 고정해야 한다. OMC는 외부 executor의 provider 호출 자체를 통제하지 않으며, state evidence cursor와 직전 enrollment hash를 검증하기 전에 수행된 실행은 유효한 Pilot evidence로 인정하지 않는다.
 
 ## 일반 사용 경로
 
@@ -313,9 +313,9 @@ python3 scripts/omc_tdd_check.py --staged
 
 현재 우선순위는 다음 순서입니다.
 
-1. 공동 서명 study registration으로 T0·21일 창·선정/다양성 정책·arm mapping·네 authority를 동결
+1. calibration qualification과 four-authority synthetic rehearsal을 완료한 뒤 arm mapping을 서명하고, 공동 서명 study registration으로 T0·21일 창·선정/다양성 정책·네 authority를 동결
 2. 실제 자연 발생 implementation 작업을 chronological first eligible 순서로 case별 enrollment하고, 검증 직후 동일 조건 OMC/Baseline arm을 실행해 10쌍 수집
-3. 최소 2개 저장소·저장소당 최대 7건과 무대체 chain을 확인한 뒤 수정 지시 30% 감소 및 완료·검증·총 개입·wall-clock 비열화로 `CONTINUE`, `REDUCE`, `STOP` 판정
+3. 최소 2개 저장소·저장소당 최대 7건과 무대체 chain을 확인한 뒤 blind correction-required case 30% 이상 감소, completion·verification·총 개입·requirement/persona/DoD 품질·incorrect completion·wall-clock 비열화 및 blinding 유효성으로 판정
 4. `CONTINUE`인 경우에만 사용자가 `PAUSED_NOT_CANCELLED` backlog 중 다음 lane 하나를 선택
 
 위 acceptance가 끝날 때까지 Product Value corpus, bounded N-child, Plan Batch B, native Review, Work Packet, Decision Policy를 실행하거나 새 schema·transport·benchmark fixture를 추가하지 않습니다. strict hard-token 인증도 사용자가 해당 lane을 별도로 재개한 경우에만 검토합니다.

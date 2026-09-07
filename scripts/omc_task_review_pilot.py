@@ -51,9 +51,9 @@ TRUSTED_PERSONA_STUDY_PUBLIC_KEY_ENV = (
 )
 PERSONA_STUDY_ID = "task-review-persona-effectiveness-20260904-v1"
 PERSONA_PREREGISTRATION_SHA256 = (
-    "fb7fdecd3fb1ace65e8d20c283904ff42df8908aac37182fb9cb8c63fbf594c7"
+    "88c5608734a5d283ba2094405b82fe6db4eaf43520740c041760bf3434aa7dd1"
 )
-PERSONA_CONTRACT_REVISION = 6
+PERSONA_CONTRACT_REVISION = 7
 PERSONA_CONTRACT = {
     "schema_version": "omc-task-review-persona-contract/v1",
     "persona": "solo_saas_founder_multi_repository",

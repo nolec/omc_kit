@@ -156,6 +156,7 @@ def test_fresh_persona_study_freezes_the_external_executor_and_key_custody() -> 
         "execution_authority",
         "reconciliation_authority",
         "blind_adjudication_authority",
+        "study_authority",
     ]
     assert study["key_custody"]["distinct_role_keys_required"] is True
     assert study["key_custody"]["private_keys_in_repository_allowed"] is False
@@ -230,16 +231,33 @@ def test_persona_registration_contract_matches_preregistration_ssot() -> None:
         omc_task_review_pilot.PERSONA_MINIMUM_BASELINE_CORRECTION_EVENTS
         == study["decision"]["minimum_baseline_correction_events"]
     )
-    assert study["contract_revision"] == 6
+    assert study["contract_revision"] == 7
     assert study["pre_t0_rehearsal"]["required"] is True
     assert study["inconclusive_followup_policy"]["same_study_extension_allowed"] is False
-    assert study["amendment"]["measurement_source_changed"] is True
+    assert study["amendment"]["measurement_source_changed"] is False
     assert study["amendment"]["schema_changed"] is True
-    assert study["amendment"]["outcome_changed"] is True
+    assert study["amendment"]["outcome_changed"] is False
     assert study["amendment"]["semantic_threshold_changed"] is False
     assert study["amendment"]["previous_document_sha256"] == (
-        "909e4ee3c0657b204871534efdeab0ded7b04dc432cee092eaa28f3e4f35b86d"
+        "fb7fdecd3fb1ace65e8d20c283904ff42df8908aac37182fb9cb8c63fbf594c7"
     )
+    assert study["start_gate"]["ordering_semantics"] == (
+        "unordered_prerequisite_set; execution.common_sequence_is_authoritative"
+    )
+    assert set(study["start_gate"]["required_before_start"]) == {
+        "calibration_qualification_completed_before_t0",
+        "four_authority_signed_protocol_rehearsal_completed_before_t0",
+        "study_and_reconciliation_cosigned_registration",
+        "fresh_t0_and_21_day_deadline",
+        "chronological_first_eligible_selection_policy",
+        "minimum_two_repositories_and_maximum_seven_cases_per_repository",
+        "pinned_execution_public_key",
+        "pinned_reconciliation_public_key",
+        "pinned_blind_adjudication_public_key",
+        "pinned_study_public_key",
+        "distinct_authority_role_keys",
+        "signed_anonymous_arm_mapping",
+    }
     assert decision["ordered_rules"] == [
         {"condition": rule["condition"], "outcome": rule["outcome"]}
         for rule in omc_task_review_pilot.PERSONA_DECISION_RULES
@@ -258,6 +276,25 @@ def test_persona_operator_runbook_exposes_signing_and_reverification_surfaces() 
     assert "registration, mapping, enrollment, terminal, adjudication" in text
     assert "persona-signing-payload" in help_text
     assert "persona-verify-decision" in help_text
+    assert "INCONCLUSIVE_BLINDING_FAILED" not in text
+    assert "`status=INCONCLUSIVE`, `reason=blinding_failed`" in text
+    assert text.index("8개 canonical calibration fixture") < text.index(
+        "synthetic rehearsal을 완료"
+    )
+    assert text.index("synthetic rehearsal을 완료") < text.index(
+        "anonymous arm mapping을 서명"
+    )
+    assert text.index("anonymous arm mapping을 서명") < text.index(
+        "registration을 공동 서명"
+    )
+    assert text.index("registration을 공동 서명") < text.index(
+        "## Case 실행 순서"
+    )
+    case_steps = text.split("## Case 실행 순서", 1)[1]
+    assert "synthetic calibration fixture 8개" not in case_steps
+    assert "anonymous arm mapping을 먼저 서명" not in case_steps
+    assert "registration을 공동 서명" not in case_steps
+    assert "pre-T0 registration·mapping binding을 다시 검증" in case_steps
     assert "persona-prepare-blind-evaluation" in help_text
 
 
@@ -274,6 +311,7 @@ def test_persona_study_preregisters_mapping_before_execution() -> None:
     ]
     assert "required_sequence" not in execution
     assert common == [
+        "calibration_qualification",
         "excluded_synthetic_protocol_rehearsal",
         "signed_anonymous_arm_mapping",
         "signed_study_registration_and_t0",

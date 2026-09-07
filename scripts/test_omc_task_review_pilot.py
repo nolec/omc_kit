@@ -2385,9 +2385,9 @@ def _persona_registration(mapping: dict[str, object]) -> dict[str, object]:
         "maximum_cases_per_repository": 7,
         "wall_clock_noninferiority_ratio": 1.15,
         "preregistration_sha256": (
-            "fb7fdecd3fb1ace65e8d20c283904ff42df8908aac37182fb9cb8c63fbf594c7"
+            "88c5608734a5d283ba2094405b82fe6db4eaf43520740c041760bf3434aa7dd1"
         ),
-        "contract_revision": 6,
+        "contract_revision": 7,
         "minimum_relative_reduction": 0.30,
         "minimum_baseline_correction_events": 3,
         "selection_policy": "chronological_first_eligible_implementation_no_replacement",
@@ -2690,7 +2690,7 @@ def test_persona_registration_rejects_noncanonical_repository_roster() -> None:
     ("field", "tampered_value"),
     [
         ("preregistration_sha256", "f" * 64),
-        ("contract_revision", 7),
+        ("contract_revision", 8),
         ("minimum_relative_reduction", 0.29),
         ("minimum_baseline_correction_events", 2),
     ],

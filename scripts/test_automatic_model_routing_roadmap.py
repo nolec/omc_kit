@@ -90,7 +90,7 @@ def test_current_evidence_is_separate_from_the_approved_unstarted_v3_study() -> 
     assert "`ARCHIVED_INCOMPLETE`" in first_screen
     assert "readiness·paired arm 실행·terminal·decision receipt가 없어" in first_screen
     assert "## Target Architecture — Approved Study, Execution Not Started" in first_screen
-    assert "persona-guided Codex Pilot v3" in first_screen
+    assert "Persona Pilot contract revision 7" in first_screen
     assert "연구 범위와 판정 계약은 승인" in first_screen
     assert "Codex adapter는 아직 구현되지 않았고" in first_screen
 
@@ -117,10 +117,11 @@ def test_readme_labels_persona_guided_codex_as_a_target_not_a_feature() -> None:
     assert "## Target Architecture — Approved Study, Execution Not Started" in text
     assert "여러 레포를 운영하는 SaaS 창업자" in text
     assert "선언된 검증" in text
-    assert "persona-guided Codex Pilot v3" in text
+    assert "Persona Pilot contract revision 7" in text
     assert "연구 계약까지 승인" in text
     assert "Codex adapter는 아직 구현되지 않았고" in text
     assert "유효한 Pilot evidence로 인정하지 않는다" in text
+    assert "calibration qualification과 synthetic protocol rehearsal을 완료" in text
     assert "provider를 호출할 수 없다" not in text
 
 
@@ -142,6 +143,11 @@ def test_persona_decision_contract_matches_the_fail_closed_implementation() -> N
         for rule in study["decision"]["ordered_rules"]
     ]
     assert roadmap_rules == expected_rules
+    assert "blind correction-required case 30% 이상 감소" in roadmap
+    assert "blind requirement·persona·DoD 품질" in roadmap
+    assert "다음 행동은 calibration qualification과 four-authority rehearsal" in roadmap
+    assert "blind adjudication 뒤에는 추가 수정 지시 30% 이상 감소" not in roadmap
+    assert "유효한 10쌍은 수정 지시 30% 감소" not in roadmap
 
 
 def test_product_focus_is_the_fresh_ten_case_persona_effectiveness_lane() -> None:

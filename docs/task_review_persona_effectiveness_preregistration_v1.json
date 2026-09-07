@@ -3,14 +3,14 @@
   "study_id": "task-review-persona-effectiveness-20260904-v1",
   "status": "approved_not_started",
   "approved_at": "2026-09-04",
-  "contract_revision": 6,
+  "contract_revision": 7,
   "amendment": {
     "amended_at": "2026-09-07",
-    "reason": "Use structured-label calibration, bind information-access custody, require a pre-T0 protocol rehearsal, and freeze inconclusive follow-up policy.",
-    "previous_document_sha256": "909e4ee3c0657b204871534efdeab0ded7b04dc432cee092eaa28f3e4f35b86d",
+    "reason": "Align the machine-readable start gate and operator sequence with the already frozen calibration, rehearsal, custody, and blind-evaluation contract.",
+    "previous_document_sha256": "fb7fdecd3fb1ace65e8d20c283904ff42df8908aac37182fb9cb8c63fbf594c7",
     "semantic_threshold_changed": false,
-    "outcome_changed": true,
-    "measurement_source_changed": true,
+    "outcome_changed": false,
+    "measurement_source_changed": false,
     "schema_changed": true
   },
   "claim": "OMC persona guidance reduces blind task-review correction-required cases by at least 30% without degrading preregistered quality and efficiency gates.",
@@ -58,7 +58,8 @@
     "state_evidence_cursor_chain",
     "execution_authority",
     "reconciliation_authority",
-    "blind_adjudication_authority"
+    "blind_adjudication_authority",
+    "study_authority"
   ],
   "execution": {
     "mode": "external_codex_manual_receipt",
@@ -76,6 +77,7 @@
     ],
     "reused_v2_primitive": "terminal_receipt_validation_only",
     "common_sequence": [
+      "calibration_qualification",
       "excluded_synthetic_protocol_rehearsal",
       "signed_anonymous_arm_mapping",
       "signed_study_registration_and_t0",
@@ -248,7 +250,10 @@
   },
   "start_gate": {
     "provider_execution_started": false,
+    "ordering_semantics": "unordered_prerequisite_set; execution.common_sequence_is_authoritative",
     "required_before_start": [
+      "calibration_qualification_completed_before_t0",
+      "four_authority_signed_protocol_rehearsal_completed_before_t0",
       "study_and_reconciliation_cosigned_registration",
       "fresh_t0_and_21_day_deadline",
       "chronological_first_eligible_selection_policy",
@@ -256,6 +261,8 @@
       "pinned_execution_public_key",
       "pinned_reconciliation_public_key",
       "pinned_blind_adjudication_public_key",
+      "pinned_study_public_key",
+      "distinct_authority_role_keys",
       "signed_anonymous_arm_mapping"
     ]
   }
