@@ -193,6 +193,26 @@ def test_current_product_decision_pauses_persona_for_deliverable_discovery() -> 
     assert "corpus v2-r1을 schema v2 registry" not in readme
 
 
+def test_dashboard_v0_tracks_first_forward_case_without_claiming_repeatability() -> None:
+    roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
+    readme = README_PATH.read_text(encoding="utf-8")
+
+    for text in (roadmap, readme):
+        assert "`$omc-dashboard`" in text
+        assert "`SKILL_IMPLEMENTED_NOT_FORWARD_VALIDATED`" in text
+        assert "`WORKFLOW_REPEATABILITY_OBSERVED`" in text
+        assert "Claude Artifact와 동등" in text
+        assert "주장하지 않" in text
+
+    assert "WeeklyKPI prototype은 스킬 구현 전 사례이므로 forward evidence로 재사용하지 않는다" in roadmap
+    assert "`repo-ops-20260908-v4`" in roadmap
+    assert "첫 forward case의 기술 gate와 review는 `APPROVE`" in roadmap
+    assert "사용자 수용은 `PENDING`" in roadmap
+    assert "두 번째 독립 forward case는 `NOT_STARTED`" in roadmap
+    assert "`$omc-dashboard`" in roadmap
+    assert "| Dashboard V0 | `SKILL_IMPLEMENTED_NOT_FORWARD_VALIDATED` / `USER_ACCEPTANCE_PENDING` |" in roadmap
+
+
 def test_current_setup_status_uses_authoritative_install_audit_instead_of_stale_counts() -> None:
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
     current_scorecard = roadmap.split("### Evidence-state Scorecard", 1)[1].split(
@@ -339,7 +359,7 @@ def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence()
     assert "`2026-09-03T18:45:09+09:00` 재수집에서 적격 표본은 `3/3`" not in text
     assert "task-review pilot v2는 roster와 T0는 보존됐지만 readiness" in text
     assert "`ARCHIVED_INCOMPLETE`로 동결" in text
-    assert "새 스킬·transport·benchmark fixture를 늘리지 않는다" in text
+    assert "추가 스킬·transport·benchmark fixture를 늘리지 않는다" in text
     assert "Product Value·N-child research 명령은 직접 호출 호환성을 유지" in text
     assert "새 스킬·정책·benchmark fixture 수 증가는 완료 지표로 사용하지 않는다" in text
 

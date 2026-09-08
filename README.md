@@ -23,7 +23,7 @@ Persona Pilot contract revision 7은 T0 전 calibration qualification과 synthet
 
 `task-review-persona-effectiveness-20260904-v1`은 연구 계약 `APPROVED`, 실행 `PAUSED_NOT_CANCELLED`, evidence `NOT_STARTED` 상태입니다. 여러 레포를 운영하는 1인 SaaS 창업자의 자연 발생 implementation 10건 paired case에서 direct Codex와 OMC persona 경로를 비교하는 계약과 external Codex executor의 fail-closed signed receipt 검증은 보존하지만, 별도 사용자 결정 전에는 calibration·registration·provider 실행을 시작하지 않습니다.
 
-현재 제품 결정 gate는 WeeklyKPI의 bounded local dashboard인 `LOCAL_DISCOVERY_PROTOTYPE`에 대한 `USER_ACCEPTANCE_PENDING`입니다. 데이터 일치·계약 테스트·빌드·desktop/mobile QA는 로컬에서 확인했지만 결과물은 임시 경로에 있고 사용자 수용, 반복 재사용, 수정 지시 감소 및 OMC의 제품 우위는 모두 `NOT_YET_PROVEN`입니다. 따라서 현재 상태는 `NO_ACTIVE_EXECUTION_LANE`이며, 사용자 판정 전에는 Persona Pilot이나 추가 실험을 자동 재개하지 않습니다.
+WeeklyKPI bounded local dashboard는 스킬 구현 전 `LOCAL_DISCOVERY_PROTOTYPE`으로 보존하며 forward evidence로 재사용하지 않습니다. JSON/CSV 기반 단일 페이지 로컬 대시보드만 다루는 Codex-only V0 `$omc-dashboard`를 추가했고, 첫 실제 forward case `repo-ops-20260908-v4`는 data·build·interaction·desktop/mobile render·민감정보 gate와 review를 통과했습니다. 사용자-facing gate는 `USER_ACCEPTANCE_PENDING`이며, 사용자가 결과물을 수용하기 전까지 스킬 상태는 `SKILL_IMPLEMENTED_NOT_FORWARD_VALIDATED`입니다. 수용하더라도 두 번째 독립 case 전에는 `WORKFLOW_REPEATABILITY_OBSERVED`로 승격하지 않습니다. 수정 지시 감소와 OMC의 제품 우위는 `NOT_YET_PROVEN`이고 Claude Artifact와 동등하다고 주장하지 않습니다. 현재는 `NO_ACTIVE_EXECUTION_LANE`이며 명시적 호출 없이 Persona Pilot이나 추가 forward test를 자동 시작하지 않습니다.
 
 이번 Persona Pilot의 공식 claim은 blind correction-required case 감소이며, 실제 일상 사용자의 수정 지시 30% 감소는 후속 confirmatory study 전까지 `NOT_YET_PROVEN`입니다.
 
@@ -57,6 +57,7 @@ Codex adapter는 아직 구현되지 않았고 이번 범위에서 개발하지 
 ## 주요 기능
 
 - **공통 작업 흐름**: plan, task, critique, review, ship, status, reentry 등 역할별 스킬 제공
+- **로컬 대시보드 Pilot**: `$omc-dashboard`가 JSON/CSV 입력을 격리된 단일 페이지 dashboard로 만들고 data·build·interaction·desktop/mobile render를 독립 검증하도록 안내. 첫 forward case의 사용자 gate는 `USER_ACCEPTANCE_PENDING`, 스킬은 `SKILL_IMPLEMENTED_NOT_FORWARD_VALIDATED`
 - **TDD 게이트**: CONTRACT -> RED -> GREEN -> REFACTOR -> TDD GATE 흐름 관리
 - **멀티 LLM 라우팅**: 요청 난이도·위험도·정책 profile에 따른 모델 강도와 executor 후보 추천
 - **실패 대응**: retry, plan retry, timeout, critique/review 실패, reroute 경로를 decision engine으로 정리
