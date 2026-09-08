@@ -1,0 +1,82 @@
+{
+  "schema_version": "omc-claude-incremental-value/v1",
+  "study_id": "claude-code-omc-incremental-value-20260908-v1",
+  "state": "FEASIBILITY_CONTRACT_IMPLEMENTED_NOT_STARTED",
+  "claim_scope": "claude_code_omc_incremental_value",
+  "existing_persona_evidence_reused": false,
+  "execution_authorized": false,
+  "execution_authorization": {
+    "trusted_authorization_public_key_source": "environment:OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_AUTHORIZATION_PUBLIC_KEY",
+    "receipt_required": true,
+    "receipt_subject_fields": [
+      "study_id",
+      "execution_authorized",
+      "trusted_execution_public_key",
+      "case_roster_sha256"
+    ]
+  },
+  "case_roster_state": "NOT_FROZEN",
+  "case_roster": [],
+  "arms": {
+    "raw_claude_code": {
+      "native_features": "frozen_default",
+      "omc_enabled": false
+    },
+    "claude_code_with_omc": {
+      "native_features": "same_as_raw_arm",
+      "omc_enabled": true
+    }
+  },
+  "frozen_fields": [
+    "claude_code_version",
+    "model_id",
+    "reasoning_configuration",
+    "permission_mode",
+    "timeout_sec",
+    "repository_commit",
+    "source_tree_hash",
+    "request_hash",
+    "verification_commands",
+    "native_skill_inventory",
+    "hook_inventory",
+    "plugin_inventory",
+    "mcp_inventory",
+    "environment_hash"
+  ],
+  "allowed_difference": ["omc_managed_configuration"],
+  "sample": {
+    "feasibility_pairs": 10,
+    "confirmatory_pairs": 30,
+    "minimum_repositories": 2,
+    "minimum_baseline_correction_events": 10
+  },
+  "metrics": [
+    "verified_completion",
+    "incorrect_completion",
+    "correction_required",
+    "active_human_minutes",
+    "intervention_count",
+    "approval_count",
+    "wall_clock_seconds",
+    "input_tokens",
+    "output_tokens",
+    "estimated_cost"
+  ],
+  "feasibility_claim": "NO_SUPERIORITY_CLAIM",
+  "confirmatory_thresholds": {
+    "correction_required_reduction_minimum": 0.3,
+    "median_wall_clock_ratio_maximum": 1.15,
+    "median_token_ratio_maximum": 1.25
+  },
+  "ordered_rules": [
+    "registration_invalid:BLOCKED",
+    "receipt_binding_invalid:BLOCKED",
+    "fatal_violation:STOP",
+    "provider_execution_absent:INCONCLUSIVE",
+    "arm_or_environment_mismatch:INCONCLUSIVE",
+    "blinding_failed:INCONCLUSIVE",
+    "insufficient_valid_pairs:INCONCLUSIVE",
+    "metric_capture_incomplete:FEASIBILITY_FAIL",
+    "all_feasibility_gates_passed:FEASIBILITY_PASS"
+  ]
+}
