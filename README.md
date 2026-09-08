@@ -21,7 +21,9 @@ Persona Pilot contract revision 7은 T0 전 calibration qualification과 synthet
 
 기존 3건 task-review pilot v2는 readiness와 실행 증거가 없어 `ARCHIVED_INCOMPLETE`로 동결했습니다. v2 binding은 새 연구에 승계하지 않습니다.
 
-현재 승인된 다음 검증은 `task-review-persona-effectiveness-20260904-v1`입니다. 여러 레포를 운영하는 1인 SaaS 창업자의 자연 발생 implementation 10건 paired case에서 direct Codex와 OMC persona 경로를 비교합니다. 21일 안에 chronological first eligible 10건을 최소 2개 저장소·저장소당 최대 7건으로 무대체 수집하며, 각 case는 append-only enrollment 검증 뒤 즉시 실행합니다. blind 평가에서 추가 수정 지시가 필요한 case 30% 이상 감소와 완료·검증·총 사람 개입·requirement·persona·DoD 품질·wall-clock 비열화를 동시에 요구합니다. external Codex executor의 signed receipt를 fail-closed verifier로 검증하며, 실제 provider 실행은 아직 시작하지 않았습니다.
+`task-review-persona-effectiveness-20260904-v1`은 연구 계약 `APPROVED`, 실행 `PAUSED_NOT_CANCELLED`, evidence `NOT_STARTED` 상태입니다. 여러 레포를 운영하는 1인 SaaS 창업자의 자연 발생 implementation 10건 paired case에서 direct Codex와 OMC persona 경로를 비교하는 계약과 external Codex executor의 fail-closed signed receipt 검증은 보존하지만, 별도 사용자 결정 전에는 calibration·registration·provider 실행을 시작하지 않습니다.
+
+현재 제품 결정 gate는 WeeklyKPI의 bounded local dashboard인 `LOCAL_DISCOVERY_PROTOTYPE`에 대한 `USER_ACCEPTANCE_PENDING`입니다. 데이터 일치·계약 테스트·빌드·desktop/mobile QA는 로컬에서 확인했지만 결과물은 임시 경로에 있고 사용자 수용, 반복 재사용, 수정 지시 감소 및 OMC의 제품 우위는 모두 `NOT_YET_PROVEN`입니다. 따라서 현재 상태는 `NO_ACTIVE_EXECUTION_LANE`이며, 사용자 판정 전에는 Persona Pilot이나 추가 실험을 자동 재개하지 않습니다.
 
 이번 Persona Pilot의 공식 claim은 blind correction-required case 감소이며, 실제 일상 사용자의 수정 지시 30% 감소는 후속 confirmatory study 전까지 `NOT_YET_PROVEN`입니다.
 
@@ -34,9 +36,9 @@ Product Value 결과는 두 판정을 분리합니다.
 
 상세 상태와 남은 작업은 [자동 모델 라우팅 로드맵](docs/automatic_model_routing_roadmap.md)을 참고하세요.
 
-## Target Architecture — Approved Study, Execution Not Started
+## Target Architecture — Approved Study, Execution Paused
 
-OMC의 제품 방향은 여러 레포를 운영하는 SaaS 창업자가 새 제품 기능을 요구사항·검증·리뷰 기준까지 완료하도록 돕는 것이다. **Persona Pilot contract revision 7**은 연구 계약까지 승인됐으며, OMC가 persona·DoD·검증 계약을 정하고 Codex가 실행한 뒤 OMC가 선언된 검증과 종료 판정을 제공하는 구조를 검증한다.
+OMC의 제품 방향은 여러 레포를 운영하는 SaaS 창업자가 새 제품 기능을 요구사항·검증·리뷰 기준까지 완료하도록 돕는 것이다. **Persona Pilot contract revision 7**은 연구 계약 `APPROVED`, 실행 `PAUSED_NOT_CANCELLED`, evidence `NOT_STARTED` 상태다. OMC가 persona·DoD·검증 계약을 정하고 Codex가 실행한 뒤 선언된 검증과 종료 판정을 제공하는 구조를 검증하는 계약은 유지하되, 현재 사용자 판정 대상인 `LOCAL_DISCOVERY_PROTOTYPE`과 섞지 않는다.
 
 Codex adapter는 아직 구현되지 않았고 이번 범위에서 개발하지 않는다. external Codex executor 수동 receipt 프로토콜로만 실행하며, 실제 실행 전 calibration qualification과 synthetic protocol rehearsal을 완료한 뒤 anonymous arm mapping, study·reconciliation 공동 서명 registration, fresh T0와 21일 창, execution·reconciliation·study·blind-adjudication authority를 고정해야 한다. OMC는 외부 executor의 provider 호출 자체를 통제하지 않으며, state evidence cursor와 직전 enrollment hash를 검증하기 전에 수행된 실행은 유효한 Pilot evidence로 인정하지 않는다.
 
