@@ -1,6 +1,6 @@
 # Claude Code + OMC Incremental Value Feasibility
 
-현재 active Study ID는 `claude-code-omc-incremental-value-20260908-v2`다. 상태는 `EVIDENCE_LADDER_CONTRACT_IMPLEMENTED_NOT_STARTED`이며 모든 실행은 비승인이다. 기존 `claude-code-omc-incremental-value-20260908-v1` 파일은 실행되지 않은 선행 계약으로 SHA-256에 결속해 보존하며 수정하거나 evidence를 승계하지 않는다. Stage F와 Stage D의 claim은 항상 `NO_SUPERIORITY_CLAIM`이다.
+현재 active Study ID는 `claude-code-omc-incremental-value-20260908-v3`다. 상태는 `STAGE_F_EXECUTION_CONTRACT_IMPLEMENTED_NOT_STARTED`이며 모든 실행은 비승인이다. 실행되지 않은 `claude-code-omc-incremental-value-20260908-v1`과 `claude-code-omc-incremental-value-20260908-v2`는 SHA-256 predecessor chain으로 보존하며 수정하거나 evidence를 승계하지 않는다. 모든 결과의 claim은 `NO_SUPERIORITY_CLAIM`이다.
 
 ## 비교 범위
 
@@ -15,13 +15,22 @@
 
 ```bash
 python3 scripts/omc_claude_incremental_value.py validate-registration \
-  --registration docs/claude_code_omc_incremental_value_preregistration_v2.json \
-  --previous-registration docs/claude_code_omc_incremental_value_preregistration_v1.json
+  --registration docs/claude_code_omc_incremental_value_preregistration_v3.json \
+  --previous-registration docs/claude_code_omc_incremental_value_preregistration_v2.json \
+  --root-registration docs/claude_code_omc_incremental_value_preregistration_v1.json
 ```
 
-이 검증은 v1 predecessor의 선언값만 신뢰하지 않고 실제 regular file의 경로, 원문 바이트 SHA-256, study identity와 v1 등록 계약을 다시 확인한다.
+이 검증은 predecessor 선언값만 신뢰하지 않는다. 실제 v2와 v1 regular file을 모두 다시 열어 각 경로, 원문 바이트 SHA-256, study identity와 등록 계약을 순서대로 재검증한다. v2만 단독 검증할 때도 같은 방식으로 실제 v1을 요구한다.
 
-실제 Claude Code 실행은 별도 승인 전 금지한다. 현재 v2 registration의 `execution_authorized=false`를 변경하거나 case를 소급 수집하지 않는다.
+실제 Claude Code 실행은 별도 승인 전 금지한다. 현재 v3 registration의 `execution_authorized=false`를 변경하거나 case를 소급 수집하지 않는다.
+
+## Stage F 실행 계약
+
+- T0와 T1은 각자 고정 schema version과 `schema_version`·`subject`·`signer_public_key`·`signature`만 갖는 envelope이며 unknown field를 거부한다. 저장소 밖 독립 anchor `OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_SELECTION_AUTHORITY_PUBLIC_KEY`에 일치하는 signer의 receipt로만 봉인한다. T0에서 정책·정확히 2개의 canonical repository·task type 순서·source receipt contract hash를 먼저 고정하고, quota가 충족된 T1에서 source/exclusion ledger와 10건 roster를 한 번만 고정한다.
+- source receipt는 고정 schema와 canonical subject, selection-authority signer, signature, 고정 microsecond RFC 3339 UTC `Z` timestamp를 필수로 한다. repository identity는 lowercase git remote host·owner·repository subject에서 SHA-256을 재계산한다. repository마다 feature 2건·bugfix 2건·refactor 1건을 parsed UTC instant와 `work_id` 오름차순으로 선택하고 같은 signed timestamp와 work ID를 case identity에도 결속한다. quota 대체·outcome 기반 선택·T1 이후 backfill은 금지한다.
+- 일반 incorrect completion은 metric이며 fatal이 아니다. fatal은 허용된 세 category, evidence digest와 `OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_BLIND_ADJUDICATOR_PUBLIC_KEY`에 일치하는 blind adjudicator 서명을 갖춘 독립 envelope로만 인정한다. envelope가 선언한 임의 key는 신뢰하지 않는다.
+- execution authorization은 기존 독립 anchor `OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_AUTHORIZATION_PUBLIC_KEY`로 검증하며 v3/v2·T0/T1·source/exclusion ledger·roster·trusted execution key·trusted blind adjudicator key를 canonical subject에 함께 결속한다.
+- Stage F terminal의 우선순위는 base binding 차단, 인증 fatal STOP, invalid fatal 차단, pair/roster 차단, adverse pair STOP, provider/configuration/blinding/pair-set 판단, metric fail, feasibility pass 순이다. terminal 구현 상태는 아직 `NOT_IMPLEMENTED`다.
 
 ## Evidence ladder
 

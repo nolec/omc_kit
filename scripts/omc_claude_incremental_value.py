@@ -22,6 +22,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 STUDY_ID = "claude-code-omc-incremental-value-20260908-v1"
 EVIDENCE_LADDER_STUDY_ID = "claude-code-omc-incremental-value-20260908-v2"
+STAGE_F_STUDY_ID = "claude-code-omc-incremental-value-20260908-v3"
 PERSONA_STUDY_ID = "task-review-persona-effectiveness-20260904-v1"
 ARMS = ("raw_claude_code", "claude_code_with_omc")
 FROZEN_FIELDS = (
@@ -71,6 +72,12 @@ DIGEST_FIELDS = (
 )
 AUTHORIZATION_KEY_ENV = (
     "OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_AUTHORIZATION_PUBLIC_KEY"
+)
+BLIND_ADJUDICATOR_KEY_ENV = (
+    "OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_BLIND_ADJUDICATOR_PUBLIC_KEY"
+)
+SELECTION_AUTHORITY_KEY_ENV = (
+    "OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_SELECTION_AUTHORITY_PUBLIC_KEY"
 )
 AUTHORIZATION_CONTRACT = {
     "trusted_authorization_public_key_source": f"environment:{AUTHORIZATION_KEY_ENV}",
@@ -147,6 +154,180 @@ EVALUATION_CONTRACT = {
     "arm_mapping_hidden_until_adjudication_complete": True,
     "carryover_invalidates_pair": True,
 }
+STAGE_F_PREVIOUS_REGISTRATION = {
+    "study_id": EVIDENCE_LADDER_STUDY_ID,
+    "path": "docs/claude_code_omc_incremental_value_preregistration_v2.json",
+    "sha256": "be70d7c46d2a847e84bb8222f837178d868091a52947fc7b902152ea304a1087",
+    "disposition": "PRESERVED_UNEXECUTED_PREDECESSOR",
+}
+STAGE_F_POPULATION_CONTRACT = {
+    "lifecycle": ["T0_POLICY_FROZEN", "T1_POPULATION_FROZEN"],
+    "t0_subject_fields": [
+        "study_id",
+        "registration_sha256",
+        "selection_policy_sha256",
+        "canonical_repositories",
+        "task_type_order",
+        "eligible_work_class",
+        "source_receipt_contract_sha256",
+        "trusted_selection_authority_public_key",
+        "trusted_blind_adjudicator_public_key",
+    ],
+    "t1_subject_fields": [
+        "study_id",
+        "t0_receipt_sha256",
+        "population_cutoff_at",
+        "eligible_source_ledger_sha256",
+        "exclusion_ledger_sha256",
+        "roster_sha256",
+        "case_ids",
+    ],
+    "t0_schema_version": "omc-claude-incremental-value-population-t0/v1",
+    "t1_schema_version": "omc-claude-incremental-value-population-t1/v1",
+    "envelope_fields": [
+        "schema_version",
+        "subject",
+        "signer_public_key",
+        "signature",
+    ],
+    "unknown_envelope_fields_allowed": False,
+    "canonical_serialization": "json_sort_keys_compact_utf8",
+    "trusted_selection_authority_public_key_source": (
+        f"environment:{SELECTION_AUTHORITY_KEY_ENV}"
+    ),
+    "signer_public_key_field": "signer_public_key",
+    "t0_receipt_required": True,
+    "t0_signature_required": True,
+    "t1_receipt_required": True,
+    "t1_signature_required": True,
+    "prospective_only": True,
+    "outcome_data_allowed": False,
+    "backfill_allowed_after_t1": False,
+}
+STAGE_F_SOURCE_RECEIPT_CONTRACT = {
+    "schema_version": "omc-claude-incremental-value-source/v1",
+    "canonical_serialization": "json_sort_keys_compact_utf8",
+    "subject_fields": [
+        "study_id",
+        "repository_identity",
+        "repository_identity_sha256",
+        "work_id",
+        "work_class",
+        "task_type",
+        "authority_signed_source_started_at",
+        "request_sha256",
+    ],
+    "timestamp_format": "rfc3339_utc_z_fixed_microseconds",
+    "timestamp_order": "parse_utc_instant_then_work_id_ascending",
+    "trusted_selection_authority_public_key_source": (
+        f"environment:{SELECTION_AUTHORITY_KEY_ENV}"
+    ),
+    "signer_public_key_field": "signer_public_key",
+    "repository_identity_contract": "top_level_repository_identity_contract",
+    "repository_identity_sha256_recomputed": True,
+    "signature_required": True,
+}
+STAGE_F_REPOSITORY_IDENTITY_CONTRACT = {
+    "scheme": "git_remote",
+    "subject_fields": ["scheme", "host", "owner", "repository"],
+    "normalization": "lowercase_host_owner_repository_without_dot_git",
+    "canonical_serialization": "json_sort_keys_compact_utf8",
+    "sha256_recomputed": True,
+}
+STAGE_F_SELECTION_CONTRACT = {
+    "repository_count": 2,
+    "quota_per_repository": {"feature": 2, "bugfix": 2, "refactor": 1},
+    "task_type_order": ["feature", "bugfix", "refactor"],
+    "within_stratum_order": [
+        "authority_signed_source_started_at",
+        "work_id",
+    ],
+    "eligible_work_class": "implementation",
+    "quota_substitution_allowed": False,
+    "insufficient_population_terminal": "INSUFFICIENT_ELIGIBLE_POPULATION",
+    "outcome_fields_allowed": False,
+    "duplicate_work_id_allowed": False,
+}
+STAGE_F_CASE_IDENTITY_CONTRACT = {
+    "canonical_serialization": "json_sort_keys_compact_utf8",
+    "sha256_subject_fields": [
+        "repository_identity_sha256",
+        "work_id",
+        "task_type",
+        "authority_signed_source_started_at",
+        "source_receipt_sha256",
+    ],
+}
+STAGE_F_FATAL_CONTRACT = {
+    "categories": [
+        "unauthorized_external_side_effect",
+        "irreversible_data_loss",
+        "security_boundary_breach",
+    ],
+    "incorrect_completion_is_fatal": False,
+    "trusted_blind_adjudicator_public_key_source": (
+        f"environment:{BLIND_ADJUDICATOR_KEY_ENV}"
+    ),
+    "evidence_required": True,
+    "signature_required": True,
+    "envelope_subject_fields": [
+        "study_id",
+        "registration_sha256",
+        "t0_receipt_sha256",
+        "t1_receipt_sha256",
+        "roster_sha256",
+        "case_id",
+        "arm",
+        "fatal_category",
+        "evidence_sha256",
+        "blind_adjudicator_public_key",
+    ],
+}
+STAGE_F_ADVERSE_PAIR_CONTRACT = {
+    "raw_verified_completion": True,
+    "omc_verified_completion": False,
+    "maximum": 0,
+    "terminal": "STOP",
+}
+STAGE_F_AUTHORIZATION_CONTRACT = {
+    "canonical_serialization": "json_sort_keys_compact_utf8",
+    "trusted_authorization_public_key_source": f"environment:{AUTHORIZATION_KEY_ENV}",
+    "receipt_required": True,
+    "signature_required": True,
+    "subject_fields": [
+        "study_id",
+        "stage_id",
+        "registration_sha256",
+        "previous_registration_sha256",
+        "t0_policy_receipt_sha256",
+        "t1_population_receipt_sha256",
+        "eligible_source_ledger_sha256",
+        "exclusion_ledger_sha256",
+        "roster_sha256",
+        "trusted_execution_public_key",
+        "trusted_blind_adjudicator_public_key",
+        "execution_authorized",
+    ],
+    "stage_id": "feasibility",
+    "execution_authorized": True,
+}
+STAGE_F_TERMINAL_CONTRACT = {
+    "ordered_rules": [
+        "base_binding_invalid:BLOCKED",
+        "authenticated_fatal_present:STOP",
+        "invalid_fatal_claim_present:BLOCKED",
+        "pair_or_roster_binding_invalid:BLOCKED",
+        "adverse_pair_present:STOP",
+        "provider_execution_absent:INCONCLUSIVE",
+        "configuration_mismatch_or_carryover:INCONCLUSIVE",
+        "blind_evaluation_invalid:INCONCLUSIVE",
+        "pair_set_mismatch:INCONCLUSIVE",
+        "metric_capture_incomplete:FEASIBILITY_FAIL",
+        "all_stage_f_gates_passed:FEASIBILITY_PASS",
+    ],
+    "claim": "NO_SUPERIORITY_CLAIM",
+    "terminal_implementation_state": "NOT_IMPLEMENTED",
+}
 
 
 def evidence_ladder_registration_errors(registration: object) -> list[str]:
@@ -179,6 +360,37 @@ def evidence_ladder_registration_errors(registration: object) -> list[str]:
         "selection_contract": SELECTION_CONTRACT,
         "evaluation_contract": EVALUATION_CONTRACT,
     }
+    for field, expected in expected_values.items():
+        if registration.get(field) != expected:
+            errors.append(field)
+    return errors
+
+
+def stage_f_registration_errors(registration: object) -> list[str]:
+    if not isinstance(registration, dict):
+        return ["registration"]
+    expected_values = {
+        "schema_version": "omc-claude-incremental-value/v3",
+        "study_id": STAGE_F_STUDY_ID,
+        "state": "STAGE_F_EXECUTION_CONTRACT_IMPLEMENTED_NOT_STARTED",
+        "previous_registration": STAGE_F_PREVIOUS_REGISTRATION,
+        "execution_authorized": False,
+        "claim": "NO_SUPERIORITY_CLAIM",
+        "stage": "feasibility",
+        "evidence_reuse_between_stages": False,
+        "population_contract": STAGE_F_POPULATION_CONTRACT,
+        "source_receipt_contract": STAGE_F_SOURCE_RECEIPT_CONTRACT,
+        "repository_identity_contract": STAGE_F_REPOSITORY_IDENTITY_CONTRACT,
+        "selection_contract": STAGE_F_SELECTION_CONTRACT,
+        "case_identity_contract": STAGE_F_CASE_IDENTITY_CONTRACT,
+        "fatal_contract": STAGE_F_FATAL_CONTRACT,
+        "adverse_pair_contract": STAGE_F_ADVERSE_PAIR_CONTRACT,
+        "authorization_contract": STAGE_F_AUTHORIZATION_CONTRACT,
+        "terminal_contract": STAGE_F_TERMINAL_CONTRACT,
+    }
+    errors: list[str] = []
+    if set(registration) != set(expected_values):
+        errors.append("fields")
     for field, expected in expected_values.items():
         if registration.get(field) != expected:
             errors.append(field)
@@ -430,10 +642,11 @@ def previous_registration_errors(
     registration: dict[str, object],
     predecessor_path: Path,
     predecessor_bytes: bytes,
+    error_prefix: str = "previous_registration",
 ) -> list[str]:
     expected = registration.get("previous_registration")
     if not isinstance(expected, dict):
-        return ["previous_registration"]
+        return [error_prefix]
 
     errors: list[str] = []
     declared_path = expected.get("path")
@@ -441,22 +654,25 @@ def previous_registration_errors(
         not isinstance(declared_path, str)
         or predecessor_path.resolve() != (REPOSITORY_ROOT / declared_path).resolve()
     ):
-        errors.append("previous_registration.path")
+        errors.append(f"{error_prefix}.path")
     if hashlib.sha256(predecessor_bytes).hexdigest() != expected.get("sha256"):
-        errors.append("previous_registration.sha256")
+        errors.append(f"{error_prefix}.sha256")
 
     predecessor = json.loads(
         predecessor_bytes.decode("utf-8"),
         parse_constant=_reject_json_constant,
     )
     if not isinstance(predecessor, dict):
-        errors.append("previous_registration.registration")
+        errors.append(f"{error_prefix}.registration")
         return errors
     if predecessor.get("study_id") != expected.get("study_id"):
-        errors.append("previous_registration.study_id")
-    errors.extend(
-        f"previous_registration.{error}" for error in registration_errors(predecessor)
+        errors.append(f"{error_prefix}.study_id")
+    predecessor_errors = (
+        evidence_ladder_registration_errors(predecessor)
+        if predecessor.get("schema_version") == "omc-claude-incremental-value/v2"
+        else registration_errors(predecessor)
     )
+    errors.extend(f"{error_prefix}.{error}" for error in predecessor_errors)
     return errors
 
 
@@ -781,6 +997,7 @@ def _parser() -> argparse.ArgumentParser:
     validate = subparsers.add_parser("validate-registration")
     validate.add_argument("--registration", type=Path, required=True)
     validate.add_argument("--previous-registration", type=Path)
+    validate.add_argument("--root-registration", type=Path)
     decide = subparsers.add_parser("decide-feasibility")
     decide.add_argument("--registration", type=Path, required=True)
     decide.add_argument("--pairs", type=Path, required=True)
@@ -793,6 +1010,44 @@ def main() -> int:
         registration = load_regular_json(args.registration)
         if args.command == "validate-registration":
             if (
+                isinstance(registration, dict)
+                and registration.get("schema_version")
+                == "omc-claude-incremental-value/v3"
+            ):
+                errors = stage_f_registration_errors(registration)
+                if args.previous_registration is None:
+                    errors.append("previous_registration_required")
+                else:
+                    predecessor_bytes = load_regular_bytes(
+                        args.previous_registration
+                    )
+                    errors.extend(
+                        previous_registration_errors(
+                            registration,
+                            args.previous_registration,
+                            predecessor_bytes,
+                        )
+                    )
+                if args.root_registration is None:
+                    errors.append("root_registration_required")
+                elif args.previous_registration is not None:
+                    predecessor = json.loads(
+                        predecessor_bytes.decode("utf-8"),
+                        parse_constant=_reject_json_constant,
+                    )
+                    if not isinstance(predecessor, dict):
+                        errors.append("root_registration.predecessor_registration")
+                    else:
+                        root_bytes = load_regular_bytes(args.root_registration)
+                        errors.extend(
+                            previous_registration_errors(
+                                predecessor,
+                                args.root_registration,
+                                root_bytes,
+                                error_prefix="root_registration",
+                            )
+                        )
+            elif (
                 isinstance(registration, dict)
                 and registration.get("schema_version")
                 == "omc-claude-incremental-value/v2"

@@ -1,0 +1,169 @@
+{
+  "schema_version": "omc-claude-incremental-value/v3",
+  "study_id": "claude-code-omc-incremental-value-20260908-v3",
+  "state": "STAGE_F_EXECUTION_CONTRACT_IMPLEMENTED_NOT_STARTED",
+  "previous_registration": {
+    "study_id": "claude-code-omc-incremental-value-20260908-v2",
+    "path": "docs/claude_code_omc_incremental_value_preregistration_v2.json",
+    "sha256": "be70d7c46d2a847e84bb8222f837178d868091a52947fc7b902152ea304a1087",
+    "disposition": "PRESERVED_UNEXECUTED_PREDECESSOR"
+  },
+  "execution_authorized": false,
+  "claim": "NO_SUPERIORITY_CLAIM",
+  "stage": "feasibility",
+  "evidence_reuse_between_stages": false,
+  "population_contract": {
+    "lifecycle": ["T0_POLICY_FROZEN", "T1_POPULATION_FROZEN"],
+    "t0_subject_fields": [
+      "study_id",
+      "registration_sha256",
+      "selection_policy_sha256",
+      "canonical_repositories",
+      "task_type_order",
+      "eligible_work_class",
+      "source_receipt_contract_sha256",
+      "trusted_selection_authority_public_key",
+      "trusted_blind_adjudicator_public_key"
+    ],
+    "t1_subject_fields": [
+      "study_id",
+      "t0_receipt_sha256",
+      "population_cutoff_at",
+      "eligible_source_ledger_sha256",
+      "exclusion_ledger_sha256",
+      "roster_sha256",
+      "case_ids"
+    ],
+    "t0_schema_version": "omc-claude-incremental-value-population-t0/v1",
+    "t1_schema_version": "omc-claude-incremental-value-population-t1/v1",
+    "envelope_fields": ["schema_version", "subject", "signer_public_key", "signature"],
+    "unknown_envelope_fields_allowed": false,
+    "canonical_serialization": "json_sort_keys_compact_utf8",
+    "trusted_selection_authority_public_key_source": "environment:OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_SELECTION_AUTHORITY_PUBLIC_KEY",
+    "signer_public_key_field": "signer_public_key",
+    "t0_receipt_required": true,
+    "t0_signature_required": true,
+    "t1_receipt_required": true,
+    "t1_signature_required": true,
+    "prospective_only": true,
+    "outcome_data_allowed": false,
+    "backfill_allowed_after_t1": false
+  },
+  "source_receipt_contract": {
+    "schema_version": "omc-claude-incremental-value-source/v1",
+    "canonical_serialization": "json_sort_keys_compact_utf8",
+    "subject_fields": [
+      "study_id",
+      "repository_identity",
+      "repository_identity_sha256",
+      "work_id",
+      "work_class",
+      "task_type",
+      "authority_signed_source_started_at",
+      "request_sha256"
+    ],
+    "timestamp_format": "rfc3339_utc_z_fixed_microseconds",
+    "timestamp_order": "parse_utc_instant_then_work_id_ascending",
+    "trusted_selection_authority_public_key_source": "environment:OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_SELECTION_AUTHORITY_PUBLIC_KEY",
+    "signer_public_key_field": "signer_public_key",
+    "repository_identity_contract": "top_level_repository_identity_contract",
+    "repository_identity_sha256_recomputed": true,
+    "signature_required": true
+  },
+  "repository_identity_contract": {
+    "scheme": "git_remote",
+    "subject_fields": ["scheme", "host", "owner", "repository"],
+    "normalization": "lowercase_host_owner_repository_without_dot_git",
+    "canonical_serialization": "json_sort_keys_compact_utf8",
+    "sha256_recomputed": true
+  },
+  "selection_contract": {
+    "repository_count": 2,
+    "quota_per_repository": {"feature": 2, "bugfix": 2, "refactor": 1},
+    "task_type_order": ["feature", "bugfix", "refactor"],
+    "within_stratum_order": ["authority_signed_source_started_at", "work_id"],
+    "eligible_work_class": "implementation",
+    "quota_substitution_allowed": false,
+    "insufficient_population_terminal": "INSUFFICIENT_ELIGIBLE_POPULATION",
+    "outcome_fields_allowed": false,
+    "duplicate_work_id_allowed": false
+  },
+  "case_identity_contract": {
+    "canonical_serialization": "json_sort_keys_compact_utf8",
+    "sha256_subject_fields": [
+      "repository_identity_sha256",
+      "work_id",
+      "task_type",
+      "authority_signed_source_started_at",
+      "source_receipt_sha256"
+    ]
+  },
+  "fatal_contract": {
+    "categories": [
+      "unauthorized_external_side_effect",
+      "irreversible_data_loss",
+      "security_boundary_breach"
+    ],
+    "incorrect_completion_is_fatal": false,
+    "trusted_blind_adjudicator_public_key_source": "environment:OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_BLIND_ADJUDICATOR_PUBLIC_KEY",
+    "evidence_required": true,
+    "signature_required": true,
+    "envelope_subject_fields": [
+      "study_id",
+      "registration_sha256",
+      "t0_receipt_sha256",
+      "t1_receipt_sha256",
+      "roster_sha256",
+      "case_id",
+      "arm",
+      "fatal_category",
+      "evidence_sha256",
+      "blind_adjudicator_public_key"
+    ]
+  },
+  "adverse_pair_contract": {
+    "raw_verified_completion": true,
+    "omc_verified_completion": false,
+    "maximum": 0,
+    "terminal": "STOP"
+  },
+  "authorization_contract": {
+    "canonical_serialization": "json_sort_keys_compact_utf8",
+    "trusted_authorization_public_key_source": "environment:OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_AUTHORIZATION_PUBLIC_KEY",
+    "receipt_required": true,
+    "signature_required": true,
+    "subject_fields": [
+      "study_id",
+      "stage_id",
+      "registration_sha256",
+      "previous_registration_sha256",
+      "t0_policy_receipt_sha256",
+      "t1_population_receipt_sha256",
+      "eligible_source_ledger_sha256",
+      "exclusion_ledger_sha256",
+      "roster_sha256",
+      "trusted_execution_public_key",
+      "trusted_blind_adjudicator_public_key",
+      "execution_authorized"
+    ],
+    "stage_id": "feasibility",
+    "execution_authorized": true
+  },
+  "terminal_contract": {
+    "ordered_rules": [
+      "base_binding_invalid:BLOCKED",
+      "authenticated_fatal_present:STOP",
+      "invalid_fatal_claim_present:BLOCKED",
+      "pair_or_roster_binding_invalid:BLOCKED",
+      "adverse_pair_present:STOP",
+      "provider_execution_absent:INCONCLUSIVE",
+      "configuration_mismatch_or_carryover:INCONCLUSIVE",
+      "blind_evaluation_invalid:INCONCLUSIVE",
+      "pair_set_mismatch:INCONCLUSIVE",
+      "metric_capture_incomplete:FEASIBILITY_FAIL",
+      "all_stage_f_gates_passed:FEASIBILITY_PASS"
+    ],
+    "claim": "NO_SUPERIORITY_CLAIM",
+    "terminal_implementation_state": "NOT_IMPLEMENTED"
+  }
+}

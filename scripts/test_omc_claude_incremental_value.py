@@ -21,6 +21,9 @@ REGISTRATION_PATH = (
 V2_REGISTRATION_PATH = (
     ROOT / "docs" / "claude_code_omc_incremental_value_preregistration_v2.json"
 )
+V3_REGISTRATION_PATH = (
+    ROOT / "docs" / "claude_code_omc_incremental_value_preregistration_v3.json"
+)
 RUNBOOK_PATH = ROOT / "docs" / "claude_code_omc_incremental_value_runbook.md"
 ROADMAP_PATH = ROOT / "docs" / "automatic_model_routing_roadmap.md"
 README_PATH = ROOT / "README.md"
@@ -119,6 +122,10 @@ def _registration() -> dict[str, object]:
 
 def _v2_registration() -> dict[str, object]:
     return json.loads(V2_REGISTRATION_PATH.read_text(encoding="utf-8"))
+
+
+def _v3_registration() -> dict[str, object]:
+    return json.loads(V3_REGISTRATION_PATH.read_text(encoding="utf-8"))
 
 
 def _execution_registration() -> tuple[dict[str, object], Ed25519PrivateKey]:
@@ -251,6 +258,158 @@ def test_v1_registration_is_preserved_byte_for_byte() -> None:
     assert hashlib.sha256(REGISTRATION_PATH.read_bytes()).hexdigest() == (
         "2270070314953ec5dc6faf2220d1d8c7f95e44ddae135d6876dd906643a310fe"
     )
+
+
+def test_v2_registration_is_preserved_byte_for_byte() -> None:
+    assert hashlib.sha256(V2_REGISTRATION_PATH.read_bytes()).hexdigest() == (
+        "be70d7c46d2a847e84bb8222f837178d868091a52947fc7b902152ea304a1087"
+    )
+
+
+def test_v3_registration_freezes_stage_f_execution_contract() -> None:
+    registration = _v3_registration()
+    assert subject.stage_f_registration_errors(registration) == []
+    assert registration["state"] == (
+        "STAGE_F_EXECUTION_CONTRACT_IMPLEMENTED_NOT_STARTED"
+    )
+    assert registration["execution_authorized"] is False
+    assert registration["claim"] == "NO_SUPERIORITY_CLAIM"
+    assert registration["selection_contract"]["repository_count"] == 2
+    assert registration["selection_contract"]["quota_per_repository"] == {
+        "feature": 2,
+        "bugfix": 2,
+        "refactor": 1,
+    }
+    assert registration["fatal_contract"]["incorrect_completion_is_fatal"] is False
+    assert registration["fatal_contract"][
+        "trusted_blind_adjudicator_public_key_source"
+    ] == (
+        "environment:"
+        "OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_BLIND_ADJUDICATOR_PUBLIC_KEY"
+    )
+    assert registration["authorization_contract"][
+        "trusted_authorization_public_key_source"
+    ] == f"environment:{subject.AUTHORIZATION_KEY_ENV}"
+    assert registration["authorization_contract"]["receipt_required"] is True
+    assert registration["authorization_contract"]["signature_required"] is True
+    assert registration["population_contract"][
+        "trusted_selection_authority_public_key_source"
+    ] == (
+        "environment:"
+        "OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_SELECTION_AUTHORITY_PUBLIC_KEY"
+    )
+    assert registration["population_contract"]["t0_receipt_required"] is True
+    assert registration["population_contract"]["t0_signature_required"] is True
+    assert registration["population_contract"]["t1_receipt_required"] is True
+    assert registration["population_contract"]["t1_signature_required"] is True
+    assert registration["population_contract"]["t0_schema_version"] == (
+        "omc-claude-incremental-value-population-t0/v1"
+    )
+    assert registration["population_contract"]["t1_schema_version"] == (
+        "omc-claude-incremental-value-population-t1/v1"
+    )
+    assert registration["population_contract"]["envelope_fields"] == [
+        "schema_version",
+        "subject",
+        "signer_public_key",
+        "signature",
+    ]
+    assert registration["population_contract"]["unknown_envelope_fields_allowed"] is False
+    assert registration["source_receipt_contract"] == {
+        "schema_version": "omc-claude-incremental-value-source/v1",
+        "canonical_serialization": "json_sort_keys_compact_utf8",
+        "subject_fields": [
+            "study_id",
+            "repository_identity",
+            "repository_identity_sha256",
+            "work_id",
+            "work_class",
+            "task_type",
+            "authority_signed_source_started_at",
+            "request_sha256",
+        ],
+        "timestamp_format": "rfc3339_utc_z_fixed_microseconds",
+        "timestamp_order": "parse_utc_instant_then_work_id_ascending",
+        "trusted_selection_authority_public_key_source": (
+            "environment:"
+            "OMC_CLAUDE_INCREMENTAL_VALUE_TRUSTED_SELECTION_AUTHORITY_PUBLIC_KEY"
+        ),
+        "signer_public_key_field": "signer_public_key",
+        "repository_identity_contract": "top_level_repository_identity_contract",
+        "repository_identity_sha256_recomputed": True,
+        "signature_required": True,
+    }
+    assert "source_receipt_contract_sha256" in registration[
+        "population_contract"
+    ]["t0_subject_fields"]
+    assert "source_receipt_schema" not in registration["population_contract"][
+        "t0_subject_fields"
+    ]
+    assert registration["selection_contract"]["within_stratum_order"][0] == (
+        "authority_signed_source_started_at"
+    )
+    assert "authority_signed_source_started_at" in registration[
+        "case_identity_contract"
+    ]["sha256_subject_fields"]
+    assert "source_started_at" not in registration["case_identity_contract"][
+        "sha256_subject_fields"
+    ]
+    assert registration["selection_contract"]["within_stratum_order"] == [
+        "authority_signed_source_started_at",
+        "work_id",
+    ]
+    assert registration["repository_identity_contract"] == {
+        "scheme": "git_remote",
+        "subject_fields": ["scheme", "host", "owner", "repository"],
+        "normalization": "lowercase_host_owner_repository_without_dot_git",
+        "canonical_serialization": "json_sort_keys_compact_utf8",
+        "sha256_recomputed": True,
+    }
+    assert registration["terminal_contract"]["ordered_rules"][1] == (
+        "authenticated_fatal_present:STOP"
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("execution_authorized",), True),
+        (("claim",), "SUPERIOR"),
+        (("selection_contract", "repository_count"), 3),
+        (("selection_contract", "quota_substitution_allowed"), True),
+        (("selection_contract", "outcome_fields_allowed"), True),
+        (("fatal_contract", "incorrect_completion_is_fatal"), True),
+        (
+            ("fatal_contract", "trusted_blind_adjudicator_public_key_source"),
+            "envelope:self_declared",
+        ),
+        (
+            ("authorization_contract", "trusted_authorization_public_key_source"),
+            "registration:self_declared",
+        ),
+        (
+            ("population_contract", "trusted_selection_authority_public_key_source"),
+            "t0:self_declared",
+        ),
+        (("population_contract", "t1_signature_required"), False),
+        (("population_contract", "t0_schema_version"), "unknown"),
+        (("population_contract", "unknown_envelope_fields_allowed"), True),
+        (("source_receipt_contract", "timestamp_format"), "local_time"),
+        (("source_receipt_contract", "signature_required"), False),
+        (("repository_identity_contract", "sha256_recomputed"), False),
+        (("authorization_contract", "canonical_serialization"), "ambiguous"),
+        (("terminal_contract", "claim"), "SUPERIOR"),
+    ],
+)
+def test_v3_registration_rejects_stage_f_contract_weakening(
+    path: tuple[str, ...], value: object
+) -> None:
+    registration = _v3_registration()
+    target = registration
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    assert subject.stage_f_registration_errors(registration)
 
 
 def test_v2_registration_freezes_three_stage_evidence_ladder() -> None:
@@ -704,6 +863,190 @@ def test_cli_validates_v2_ladder_outside_repository_cwd(tmp_path: Path) -> None:
     assert json.loads(result.stdout)["valid"] is True
 
 
+def test_cli_validates_v3_stage_f_contract() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_claude_incremental_value.py"),
+            "validate-registration",
+            "--registration",
+            str(V3_REGISTRATION_PATH),
+            "--previous-registration",
+            str(V2_REGISTRATION_PATH),
+            "--root-registration",
+            str(REGISTRATION_PATH),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout
+    assert json.loads(result.stdout) == {
+        "errors": [],
+        "execution_authorized": False,
+        "valid": True,
+    }
+
+
+def test_cli_v3_requires_actual_v2_predecessor() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_claude_incremental_value.py"),
+            "validate-registration",
+            "--registration",
+            str(V3_REGISTRATION_PATH),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["errors"] == [
+        "previous_registration_required",
+        "root_registration_required",
+    ]
+
+
+def test_cli_v3_requires_actual_v1_root() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_claude_incremental_value.py"),
+            "validate-registration",
+            "--registration",
+            str(V3_REGISTRATION_PATH),
+            "--previous-registration",
+            str(V2_REGISTRATION_PATH),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["errors"] == ["root_registration_required"]
+
+
+def test_cli_v3_validates_outside_repository_cwd(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_claude_incremental_value.py"),
+            "validate-registration",
+            "--registration",
+            str(V3_REGISTRATION_PATH),
+            "--previous-registration",
+            str(V2_REGISTRATION_PATH),
+            "--root-registration",
+            str(REGISTRATION_PATH),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout
+
+
+def test_cli_v3_rejects_tampered_v2_predecessor(tmp_path: Path) -> None:
+    predecessor = tmp_path / "v2.json"
+    predecessor.write_bytes(V2_REGISTRATION_PATH.read_bytes() + b"\n")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_claude_incremental_value.py"),
+            "validate-registration",
+            "--registration",
+            str(V3_REGISTRATION_PATH),
+            "--previous-registration",
+            str(predecessor),
+            "--root-registration",
+            str(REGISTRATION_PATH),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "previous_registration.sha256" in json.loads(result.stdout)["errors"]
+
+
+def test_cli_v3_rejects_symlink_v2_predecessor(tmp_path: Path) -> None:
+    predecessor = tmp_path / "v2.json"
+    predecessor.symlink_to(V2_REGISTRATION_PATH)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_claude_incremental_value.py"),
+            "validate-registration",
+            "--registration",
+            str(V3_REGISTRATION_PATH),
+            "--previous-registration",
+            str(predecessor),
+            "--root-registration",
+            str(REGISTRATION_PATH),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["reason"] == "input_not_regular_file"
+
+
+def test_cli_v3_rejects_tampered_v1_root(tmp_path: Path) -> None:
+    root_registration = tmp_path / "v1.json"
+    root_registration.write_bytes(REGISTRATION_PATH.read_bytes() + b"\n")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_claude_incremental_value.py"),
+            "validate-registration",
+            "--registration",
+            str(V3_REGISTRATION_PATH),
+            "--previous-registration",
+            str(V2_REGISTRATION_PATH),
+            "--root-registration",
+            str(root_registration),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "root_registration.sha256" in json.loads(result.stdout)["errors"]
+
+
+def test_cli_v3_rejects_symlink_v1_root(tmp_path: Path) -> None:
+    root_registration = tmp_path / "v1.json"
+    root_registration.symlink_to(REGISTRATION_PATH)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_claude_incremental_value.py"),
+            "validate-registration",
+            "--registration",
+            str(V3_REGISTRATION_PATH),
+            "--previous-registration",
+            str(V2_REGISTRATION_PATH),
+            "--root-registration",
+            str(root_registration),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["reason"] == "input_not_regular_file"
+
+
 def test_cli_v2_requires_actual_predecessor() -> None:
     result = subprocess.run(
         [
@@ -791,9 +1134,10 @@ def test_runbook_and_current_docs_preserve_claim_boundaries() -> None:
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
     readme = README_PATH.read_text(encoding="utf-8")
     for text in (runbook, roadmap, readme):
+        assert "claude-code-omc-incremental-value-20260908-v3" in text
         assert "claude-code-omc-incremental-value-20260908-v2" in text
         assert "claude-code-omc-incremental-value-20260908-v1" in text
-        assert "EVIDENCE_LADDER_CONTRACT_IMPLEMENTED_NOT_STARTED" in text
+        assert "STAGE_F_EXECUTION_CONTRACT_IMPLEMENTED_NOT_STARTED" in text
         assert "NO_SUPERIORITY_CLAIM" in text
         assert "raw_claude_code" in text
         assert "claude_code_with_omc" in text
@@ -802,6 +1146,6 @@ def test_runbook_and_current_docs_preserve_claim_boundaries() -> None:
     assert "trusted Ed25519 execution public key" in runbook
     assert "pair envelope도 별도로 서명" in runbook
     assert subject.AUTHORIZATION_KEY_ENV in runbook
-    assert "10쌍 Stage F" in roadmap
+    assert "Stage F terminal" in roadmap
     assert "30쌍 Stage D" in roadmap
     assert "별도 승인" in roadmap
