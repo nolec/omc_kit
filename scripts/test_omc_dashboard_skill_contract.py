@@ -1,6 +1,8 @@
 """Contract tests for the bounded Codex-only omc-dashboard V0 skill."""
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import subprocess
 import sys
@@ -20,7 +22,16 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _handoff_errors(handoff: dict[str, object]) -> list[str]:
+def _canonical_sha256(value: object) -> str:
+    encoded = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _handoff_errors(
+    handoff: dict[str, object], expected_question_contract_sha256: str
+) -> list[str]:
     errors: list[str] = []
     checks_passed = True
     snapshot = handoff.get("source_snapshot")
@@ -61,6 +72,134 @@ def _handoff_errors(handoff: dict[str, object]) -> list[str]:
         ):
             errors.append("source_snapshot.handoff_row_count")
             checks_passed = False
+
+    question_contract = handoff.get("question_contract")
+    contract_by_id: dict[str, dict[str, object]] = {}
+    if not isinstance(question_contract, list) or not question_contract:
+        errors.append("question_contract")
+        checks_passed = False
+    else:
+        for index, item in enumerate(question_contract):
+            prefix = f"question_contract[{index}]"
+            if not isinstance(item, dict):
+                errors.append(prefix)
+                checks_passed = False
+                continue
+            question_id = item.get("id")
+            if not isinstance(question_id, str) or not question_id.strip():
+                errors.append(f"{prefix}.id")
+                checks_passed = False
+            elif question_id in contract_by_id:
+                errors.append("question_contract.duplicate_id")
+                checks_passed = False
+            else:
+                contract_by_id[question_id] = item
+            for field in ("question", "calculation", "surface"):
+                if not isinstance(item.get(field), str) or not item[field].strip():
+                    errors.append(f"{prefix}.{field}")
+                    checks_passed = False
+            source_fields = item.get("source_fields")
+            if not isinstance(source_fields, list) or any(
+                not isinstance(field, str) or not field.strip() for field in source_fields
+            ):
+                errors.append(f"{prefix}.source_fields")
+                checks_passed = False
+            if item.get("missing_policy") not in {"BLOCK", "N/A"}:
+                errors.append(f"{prefix}.missing_policy")
+                checks_passed = False
+
+    contract_digest = handoff.get("question_contract_sha256")
+    if (
+        not isinstance(contract_digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", contract_digest) is None
+        or not isinstance(question_contract, list)
+        or contract_digest != _canonical_sha256(question_contract)
+    ):
+        errors.append("question_contract_sha256")
+        checks_passed = False
+
+    contract_snapshot = handoff.get("question_contract_snapshot")
+    if not isinstance(contract_snapshot, dict):
+        errors.append("question_contract_snapshot")
+        checks_passed = False
+    else:
+        if (
+            not isinstance(contract_snapshot.get("path"), str)
+            or not contract_snapshot["path"].strip()
+        ):
+            errors.append("question_contract_snapshot.path")
+            checks_passed = False
+        if contract_snapshot.get("sha256") != expected_question_contract_sha256:
+            errors.append("question_contract_snapshot.sha256")
+            checks_passed = False
+        if contract_snapshot.get("handoff_sha256") != expected_question_contract_sha256:
+            errors.append("question_contract_snapshot.handoff_sha256")
+            checks_passed = False
+        if contract_snapshot.get("size_bytes") != contract_snapshot.get(
+            "handoff_size_bytes"
+        ):
+            errors.append("question_contract_snapshot.handoff_size_bytes")
+            checks_passed = False
+    if contract_digest != expected_question_contract_sha256:
+        errors.append("question_contract_initial_binding")
+        checks_passed = False
+
+    question_evidence = handoff.get("question_evidence")
+    evidence_ids: list[str] = []
+    if not isinstance(question_evidence, list) or not question_evidence:
+        errors.append("question_evidence")
+        checks_passed = False
+    else:
+        for index, item in enumerate(question_evidence):
+            prefix = f"question_evidence[{index}]"
+            if not isinstance(item, dict):
+                errors.append(prefix)
+                checks_passed = False
+                continue
+            for field in ("question_id", "calculation", "result", "surface"):
+                if not isinstance(item.get(field), str) or not item[field].strip():
+                    errors.append(f"{prefix}.{field}")
+                    checks_passed = False
+            source_fields = item.get("source_fields")
+            if not isinstance(source_fields, list) or any(
+                not isinstance(field, str) or not field.strip() for field in source_fields
+            ):
+                errors.append(f"{prefix}.source_fields")
+                checks_passed = False
+            status = item.get("status")
+            if status not in {"PASS", "N/A"}:
+                errors.append(f"{prefix}.status")
+                checks_passed = False
+            if status == "PASS" and not source_fields:
+                errors.append(f"{prefix}.source_fields")
+                checks_passed = False
+            if status == "N/A" and item.get("surface") != "omitted":
+                errors.append(f"{prefix}.surface")
+                checks_passed = False
+            if status == "N/A" and item.get("missing_policy") != "N/A":
+                errors.append(f"{prefix}.status_policy")
+                checks_passed = False
+            question_id = item.get("question_id")
+            if isinstance(question_id, str):
+                evidence_ids.append(question_id)
+                contract_item = contract_by_id.get(question_id)
+                if isinstance(contract_item, dict):
+                    for field in (
+                        "source_fields",
+                        "calculation",
+                        "missing_policy",
+                        "surface",
+                    ):
+                        if item.get(field) != contract_item.get(field):
+                            errors.append(f"{prefix}.{field}_binding")
+                            checks_passed = False
+
+    if len(evidence_ids) != len(set(evidence_ids)):
+        errors.append("question_evidence.duplicate_id")
+        checks_passed = False
+    if set(evidence_ids) != set(contract_by_id):
+        errors.append("question_evidence.question_id_set")
+        checks_passed = False
 
     interaction = handoff.get("interaction")
     checks = handoff.get("verification")
@@ -151,6 +290,10 @@ def test_dashboard_skill_has_a_bounded_input_and_mutation_contract() -> None:
         "questions",
         "output_root",
         "interaction",
+        "source_fields",
+        "calculation",
+        "missing_policy: BLOCK | N/A",
+        "surface",
         "필터 최대 1개",
         "격리 디렉터리",
         "기존 저장소",
@@ -158,6 +301,31 @@ def test_dashboard_skill_has_a_bounded_input_and_mutation_contract() -> None:
         "자동 배포·push·PR·commit 금지",
     ):
         assert marker in text
+
+
+def test_dashboard_skill_requires_semantic_question_evidence() -> None:
+    text = _read(LIVE_SKILL)
+
+    for marker in (
+        "QUESTION_EVIDENCE_REQUIRED",
+        "UNSUPPORTED_INFERENCE",
+        "question_evidence",
+        "question_contract_sha256",
+        "question_contract_snapshot",
+        "handoff_sha256",
+        "read-only",
+        "initial sha256",
+        "exact set equality",
+        "duplicate question_id",
+        "tie-break",
+        "undeclared proxy",
+        "surface: omitted",
+        "OMC output inspection support",
+    ):
+        assert marker in text
+
+    assert "`source_fields`가 비어 있으면 결론·추천·순위를 렌더링하지 않는다" in text
+    assert "N/A는 추천·순위 surface를 렌더링하지 않는다" in text
 
 
 def test_dashboard_skill_requires_independent_completion_evidence() -> None:
@@ -212,6 +380,44 @@ def test_dashboard_handoff_contract_rejects_unexecuted_or_unbound_claims() -> No
     }
     valid = {
         "interaction": "없음",
+        "question_contract": [
+            {
+                "id": "repo-health",
+                "question": "Which repositories need inspection?",
+                "source_fields": ["dirty", "last_commit_at"],
+                "calculation": "dirty first, then last_commit_at ascending",
+                "missing_policy": "BLOCK",
+                "surface": "repository health",
+            },
+            {
+                "id": "business-priority",
+                "question": "Which repository matters most to the business?",
+                "source_fields": [],
+                "calculation": "not computable from source",
+                "missing_policy": "N/A",
+                "surface": "omitted",
+            },
+        ],
+        "question_evidence": [
+            {
+                "question_id": "repo-health",
+                "source_fields": ["dirty", "last_commit_at"],
+                "calculation": "dirty first, then last_commit_at ascending",
+                "missing_policy": "BLOCK",
+                "result": "2 repositories need inspection",
+                "surface": "repository health",
+                "status": "PASS",
+            },
+            {
+                "question_id": "business-priority",
+                "source_fields": [],
+                "calculation": "not computable from source",
+                "missing_policy": "N/A",
+                "result": "business priority fields are absent",
+                "surface": "omitted",
+                "status": "N/A",
+            },
+        ],
         "source_snapshot": {
             "path": "evidence/source.csv",
             "sha256": "a" * 64,
@@ -241,12 +447,32 @@ def test_dashboard_handoff_contract_rejects_unexecuted_or_unbound_claims() -> No
             "sensitive_data_check": dict(valid_check),
         },
     }
-    assert _handoff_errors(valid) == []
+    expected_contract_sha256 = _canonical_sha256(valid["question_contract"])
+    valid["question_contract_sha256"] = expected_contract_sha256
+    valid["question_contract_snapshot"] = {
+        "path": "evidence/question-contract.json",
+        "sha256": expected_contract_sha256,
+        "handoff_sha256": expected_contract_sha256,
+        "size_bytes": 512,
+        "handoff_size_bytes": 512,
+    }
+    assert _handoff_errors(valid, expected_contract_sha256) == []
 
     invalid = {
         **valid,
         "interaction": "필터 1개",
         "source_snapshot": {"path": "", "sha256": "self-reported"},
+        "question_evidence": [
+            {
+                "question_id": "business-priority",
+                "source_fields": [],
+                "calculation": "infer from churn",
+                "missing_policy": "BLOCK",
+                "result": "work here first",
+                "surface": "today priority ranking",
+                "status": "PASS",
+            }
+        ],
         "verification": {
             **valid["verification"],
             "data_verification": {
@@ -265,7 +491,7 @@ def test_dashboard_handoff_contract_rejects_unexecuted_or_unbound_claims() -> No
             },
         },
     }
-    errors = _handoff_errors(invalid)
+    errors = _handoff_errors(invalid, expected_contract_sha256)
     assert "source_snapshot.sha256" in errors
     assert "source_snapshot.handoff_sha256" in errors
     assert "source_snapshot.handoff_size_bytes" in errors
@@ -274,7 +500,86 @@ def test_dashboard_handoff_contract_rejects_unexecuted_or_unbound_claims() -> No
     assert "data_verification.evidence" in errors
     assert "interaction_verification.status" in errors
     assert "desktop_render_verification.viewport" in errors
+    assert "question_evidence[0].source_fields" in errors
+    assert "question_evidence.question_id_set" in errors
     assert "acceptance_state" in errors
+
+    omitted = {
+        **valid,
+        "question_evidence": [valid["question_evidence"][0]],
+    }
+    assert "question_evidence.question_id_set" in _handoff_errors(
+        omitted, expected_contract_sha256
+    )
+
+    duplicate = {
+        **valid,
+        "question_evidence": [
+            valid["question_evidence"][0],
+            valid["question_evidence"][0],
+        ],
+    }
+    assert "question_evidence.duplicate_id" in _handoff_errors(
+        duplicate, expected_contract_sha256
+    )
+
+    policy_tampered = {
+        **valid,
+        "question_evidence": [
+            {**valid["question_evidence"][0], "missing_policy": "N/A"},
+            valid["question_evidence"][1],
+        ],
+    }
+    assert "question_evidence[0].missing_policy_binding" in _handoff_errors(
+        policy_tampered, expected_contract_sha256
+    )
+
+    hash_tampered = {**valid, "question_contract_sha256": "b" * 64}
+    assert "question_contract_sha256" in _handoff_errors(
+        hash_tampered, expected_contract_sha256
+    )
+
+    changed_contract = [
+        {**valid["question_contract"][0], "question": "Changed after build"},
+        valid["question_contract"][1],
+    ]
+    changed_digest = _canonical_sha256(changed_contract)
+    self_rehashed = {
+        **valid,
+        "question_contract": changed_contract,
+        "question_contract_sha256": changed_digest,
+        "question_contract_snapshot": {
+            **valid["question_contract_snapshot"],
+            "sha256": changed_digest,
+            "handoff_sha256": changed_digest,
+        },
+    }
+    assert "question_contract_initial_binding" in _handoff_errors(
+        self_rehashed, expected_contract_sha256
+    )
+
+    block_contract = [
+        valid["question_contract"][0],
+        {**valid["question_contract"][1], "missing_policy": "BLOCK"},
+    ]
+    block_digest = _canonical_sha256(block_contract)
+    block_bypass = {
+        **valid,
+        "question_contract": block_contract,
+        "question_contract_sha256": block_digest,
+        "question_contract_snapshot": {
+            **valid["question_contract_snapshot"],
+            "sha256": block_digest,
+            "handoff_sha256": block_digest,
+        },
+        "question_evidence": [
+            valid["question_evidence"][0],
+            {**valid["question_evidence"][1], "missing_policy": "BLOCK"},
+        ],
+    }
+    assert "question_evidence[1].status_policy" in _handoff_errors(
+        block_bypass, block_digest
+    )
 
 
 def test_dashboard_skill_preserves_fail_closed_states_and_handoff() -> None:

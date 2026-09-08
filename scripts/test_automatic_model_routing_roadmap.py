@@ -166,9 +166,9 @@ def test_current_product_decision_pauses_persona_for_deliverable_discovery() -> 
 
     for text in (roadmap, readme):
         assert "`LOCAL_DISCOVERY_PROTOTYPE`" in text
-        assert "`USER_ACCEPTANCE_PENDING`" in text
         assert "`NO_ACTIVE_EXECUTION_LANE`" in text
         assert "`NOT_YET_PROVEN`" in text
+    assert "`USER_ACCEPTANCE_PENDING`" in roadmap
 
     stale_active_claims = (
         "현재 활성 작업은 `task-review-persona-effectiveness-20260904-v1`",
@@ -206,11 +206,15 @@ def test_dashboard_v0_tracks_first_forward_case_without_claiming_repeatability()
 
     assert "WeeklyKPI prototype은 스킬 구현 전 사례이므로 forward evidence로 재사용하지 않는다" in roadmap
     assert "`repo-ops-20260908-v4`" in roadmap
-    assert "첫 forward case의 기술 gate와 review는 `APPROVE`" in roadmap
-    assert "사용자 수용은 `PENDING`" in roadmap
+    assert "첫 forward case 판정은 `REVISION_REQUIRED`" in roadmap
+    assert "`UNSUPPORTED_PRIORITY_INFERENCE`" in roadmap
+    assert "repository health와 dirty repository inventory" in roadmap
+    assert "`오늘 먼저 볼 곳`" in roadmap
+    assert "근거 없는 priority ranking" in roadmap
     assert "두 번째 독립 forward case는 `NOT_STARTED`" in roadmap
     assert "`$omc-dashboard`" in roadmap
-    assert "| Dashboard V0 | `SKILL_IMPLEMENTED_NOT_FORWARD_VALIDATED` / `USER_ACCEPTANCE_PENDING` |" in roadmap
+    assert "| Dashboard V0 | `SKILL_IMPLEMENTED_NOT_FORWARD_VALIDATED` / `REVISION_REQUIRED` |" in roadmap
+    assert "question evidence contract" in roadmap
 
 
 def test_current_setup_status_uses_authoritative_install_audit_instead_of_stale_counts() -> None:
