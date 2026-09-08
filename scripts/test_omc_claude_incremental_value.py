@@ -18,6 +18,9 @@ ROOT = Path(__file__).resolve().parents[1]
 REGISTRATION_PATH = (
     ROOT / "docs" / "claude_code_omc_incremental_value_preregistration_v1.json"
 )
+V2_REGISTRATION_PATH = (
+    ROOT / "docs" / "claude_code_omc_incremental_value_preregistration_v2.json"
+)
 RUNBOOK_PATH = ROOT / "docs" / "claude_code_omc_incremental_value_runbook.md"
 ROADMAP_PATH = ROOT / "docs" / "automatic_model_routing_roadmap.md"
 README_PATH = ROOT / "README.md"
@@ -112,6 +115,10 @@ def _roster() -> list[dict[str, object]]:
 
 def _registration() -> dict[str, object]:
     return json.loads(REGISTRATION_PATH.read_text(encoding="utf-8"))
+
+
+def _v2_registration() -> dict[str, object]:
+    return json.loads(V2_REGISTRATION_PATH.read_text(encoding="utf-8"))
 
 
 def _execution_registration() -> tuple[dict[str, object], Ed25519PrivateKey]:
@@ -238,6 +245,53 @@ def test_registration_is_separate_and_fail_closed() -> None:
         "receipt_binding_invalid:BLOCKED",
         "fatal_violation:STOP",
     ]
+
+
+def test_v1_registration_is_preserved_byte_for_byte() -> None:
+    assert hashlib.sha256(REGISTRATION_PATH.read_bytes()).hexdigest() == (
+        "2270070314953ec5dc6faf2220d1d8c7f95e44ddae135d6876dd906643a310fe"
+    )
+
+
+def test_v2_registration_freezes_three_stage_evidence_ladder() -> None:
+    registration = _v2_registration()
+    assert subject.evidence_ladder_registration_errors(registration) == []
+    assert registration["study_id"] == (
+        "claude-code-omc-incremental-value-20260908-v2"
+    )
+    assert registration["state"] == "EVIDENCE_LADDER_CONTRACT_IMPLEMENTED_NOT_STARTED"
+    assert registration["execution_authorized"] is False
+    assert registration["claim"] == "NO_SUPERIORITY_CLAIM"
+    assert registration["evidence_reuse_between_stages"] is False
+    assert registration["stages"]["feasibility"]["pairs"] == 10
+    assert registration["stages"]["directional"]["pairs"] == 30
+    assert registration["stages"]["directional"]["claim"] == (
+        "NO_SUPERIORITY_CLAIM"
+    )
+    assert registration["stages"]["powered_confirmatory"]["execution_state"] == (
+        "SEPARATE_APPROVAL_REQUIRED"
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("evidence_reuse_between_stages",), True),
+        (("stages", "directional", "claim"), "SUPERIOR"),
+        (("stages", "powered_confirmatory", "automatic_entry"), True),
+        (("stages", "feasibility", "fatal_incorrect_completion_maximum"), 1),
+        (("stages", "directional", "adverse_completion_pairs_maximum"), 1),
+    ],
+)
+def test_v2_registration_rejects_evidence_ladder_weakening(
+    path: tuple[str, ...], value: object
+) -> None:
+    registration = _v2_registration()
+    target = registration
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    assert subject.evidence_ladder_registration_errors(registration)
 
 
 def test_registration_rejects_persona_identity_and_weak_baseline() -> None:
@@ -605,6 +659,113 @@ def test_cli_validates_registration_without_authorizing_execution() -> None:
     assert payload["execution_authorized"] is False
 
 
+def test_cli_validates_v2_ladder_without_authorizing_execution() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_claude_incremental_value.py"),
+            "validate-registration",
+            "--registration",
+            str(V2_REGISTRATION_PATH),
+            "--previous-registration",
+            str(REGISTRATION_PATH),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload == {
+        "errors": [],
+        "execution_authorized": False,
+        "valid": True,
+    }
+
+
+def test_cli_validates_v2_ladder_outside_repository_cwd(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_claude_incremental_value.py"),
+            "validate-registration",
+            "--registration",
+            str(V2_REGISTRATION_PATH),
+            "--previous-registration",
+            str(REGISTRATION_PATH),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout
+    assert json.loads(result.stdout)["valid"] is True
+
+
+def test_cli_v2_requires_actual_predecessor() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_claude_incremental_value.py"),
+            "validate-registration",
+            "--registration",
+            str(V2_REGISTRATION_PATH),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["errors"] == ["previous_registration_required"]
+
+
+def test_cli_v2_rejects_tampered_predecessor(tmp_path: Path) -> None:
+    predecessor = tmp_path / "v1.json"
+    predecessor.write_bytes(REGISTRATION_PATH.read_bytes() + b"\n")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_claude_incremental_value.py"),
+            "validate-registration",
+            "--registration",
+            str(V2_REGISTRATION_PATH),
+            "--previous-registration",
+            str(predecessor),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "previous_registration.sha256" in json.loads(result.stdout)["errors"]
+
+
+def test_cli_v2_rejects_symlink_predecessor(tmp_path: Path) -> None:
+    predecessor = tmp_path / "v1.json"
+    predecessor.symlink_to(REGISTRATION_PATH)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "omc_claude_incremental_value.py"),
+            "validate-registration",
+            "--registration",
+            str(V2_REGISTRATION_PATH),
+            "--previous-registration",
+            str(predecessor),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["reason"] == "input_not_regular_file"
+
+
 def test_cli_rejects_symlink_registration(tmp_path: Path) -> None:
     link = tmp_path / "registration.json"
     link.symlink_to(REGISTRATION_PATH)
@@ -630,8 +791,9 @@ def test_runbook_and_current_docs_preserve_claim_boundaries() -> None:
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
     readme = README_PATH.read_text(encoding="utf-8")
     for text in (runbook, roadmap, readme):
+        assert "claude-code-omc-incremental-value-20260908-v2" in text
         assert "claude-code-omc-incremental-value-20260908-v1" in text
-        assert "FEASIBILITY_CONTRACT_IMPLEMENTED_NOT_STARTED" in text
+        assert "EVIDENCE_LADDER_CONTRACT_IMPLEMENTED_NOT_STARTED" in text
         assert "NO_SUPERIORITY_CLAIM" in text
         assert "raw_claude_code" in text
         assert "claude_code_with_omc" in text
@@ -640,5 +802,6 @@ def test_runbook_and_current_docs_preserve_claim_boundaries() -> None:
     assert "trusted Ed25519 execution public key" in runbook
     assert "pair envelope도 별도로 서명" in runbook
     assert subject.AUTHORIZATION_KEY_ENV in runbook
-    assert "10쌍 feasibility" in roadmap
-    assert "30쌍 confirmatory" in roadmap
+    assert "10쌍 Stage F" in roadmap
+    assert "30쌍 Stage D" in roadmap
+    assert "별도 승인" in roadmap

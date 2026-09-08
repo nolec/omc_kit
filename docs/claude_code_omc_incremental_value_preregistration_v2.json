@@ -1,0 +1,57 @@
+{
+  "schema_version": "omc-claude-incremental-value/v2",
+  "study_id": "claude-code-omc-incremental-value-20260908-v2",
+  "state": "EVIDENCE_LADDER_CONTRACT_IMPLEMENTED_NOT_STARTED",
+  "previous_registration": {
+    "study_id": "claude-code-omc-incremental-value-20260908-v1",
+    "path": "docs/claude_code_omc_incremental_value_preregistration_v1.json",
+    "sha256": "2270070314953ec5dc6faf2220d1d8c7f95e44ddae135d6876dd906643a310fe",
+    "disposition": "PRESERVED_UNEXECUTED_PREDECESSOR"
+  },
+  "execution_authorized": false,
+  "claim": "NO_SUPERIORITY_CLAIM",
+  "evidence_reuse_between_stages": false,
+  "stages": {
+    "feasibility": {
+      "pairs": 10,
+      "purpose": "instrumentation_isolation_measurement_and_evaluation",
+      "fatal_incorrect_completion_maximum": 0,
+      "adverse_completion_pairs_maximum": 0,
+      "claim": "NO_SUPERIORITY_CLAIM",
+      "pass_terminal": "FEASIBILITY_PASS"
+    },
+    "directional": {
+      "pairs": 30,
+      "purpose": "investment_direction_signal_only",
+      "fatal_incorrect_completion_maximum": 0,
+      "adverse_completion_pairs_maximum": 0,
+      "correction_required_relative_reduction_minimum": 0.3,
+      "intervention_count_median_must_decrease": true,
+      "median_wall_clock_ratio_maximum": 1.15,
+      "median_token_ratio_maximum": 1.25,
+      "claim": "NO_SUPERIORITY_CLAIM",
+      "pass_terminal": "DIRECTIONAL_PASS"
+    },
+    "powered_confirmatory": {
+      "execution_state": "SEPARATE_APPROVAL_REQUIRED",
+      "automatic_entry": false,
+      "new_registration_required": true,
+      "prior_stage_evidence_reusable_for_effect_claim": false
+    }
+  },
+  "selection_contract": {
+    "rule": "chronological_first_n_within_repository_and_task_type",
+    "eligible_work_classes": ["implementation"],
+    "excluded_work_classes": ["synthetic", "benchmark_maintenance", "document_only"],
+    "task_types": ["feature", "bugfix", "refactor"],
+    "minimum_canonical_repositories": 2,
+    "eligibility_decided_before_outcome": true
+  },
+  "evaluation_contract": {
+    "deterministic_verification_precedes_subjective_evaluation": true,
+    "blind_rubric_required": true,
+    "anchor_cases_required": true,
+    "arm_mapping_hidden_until_adjudication_complete": true,
+    "carryover_invalidates_pair": true
+  }
+}

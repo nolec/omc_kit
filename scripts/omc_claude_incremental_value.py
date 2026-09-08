@@ -19,7 +19,9 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 STUDY_ID = "claude-code-omc-incremental-value-20260908-v1"
+EVIDENCE_LADDER_STUDY_ID = "claude-code-omc-incremental-value-20260908-v2"
 PERSONA_STUDY_ID = "task-review-persona-effectiveness-20260904-v1"
 ARMS = ("raw_claude_code", "claude_code_with_omc")
 FROZEN_FIELDS = (
@@ -96,6 +98,91 @@ ORDERED_RULES = [
     "metric_capture_incomplete:FEASIBILITY_FAIL",
     "all_feasibility_gates_passed:FEASIBILITY_PASS",
 ]
+PREVIOUS_REGISTRATION = {
+    "study_id": STUDY_ID,
+    "path": "docs/claude_code_omc_incremental_value_preregistration_v1.json",
+    "sha256": "2270070314953ec5dc6faf2220d1d8c7f95e44ddae135d6876dd906643a310fe",
+    "disposition": "PRESERVED_UNEXECUTED_PREDECESSOR",
+}
+EVIDENCE_LADDER_STAGES = {
+    "feasibility": {
+        "pairs": 10,
+        "purpose": "instrumentation_isolation_measurement_and_evaluation",
+        "fatal_incorrect_completion_maximum": 0,
+        "adverse_completion_pairs_maximum": 0,
+        "claim": "NO_SUPERIORITY_CLAIM",
+        "pass_terminal": "FEASIBILITY_PASS",
+    },
+    "directional": {
+        "pairs": 30,
+        "purpose": "investment_direction_signal_only",
+        "fatal_incorrect_completion_maximum": 0,
+        "adverse_completion_pairs_maximum": 0,
+        "correction_required_relative_reduction_minimum": 0.3,
+        "intervention_count_median_must_decrease": True,
+        "median_wall_clock_ratio_maximum": 1.15,
+        "median_token_ratio_maximum": 1.25,
+        "claim": "NO_SUPERIORITY_CLAIM",
+        "pass_terminal": "DIRECTIONAL_PASS",
+    },
+    "powered_confirmatory": {
+        "execution_state": "SEPARATE_APPROVAL_REQUIRED",
+        "automatic_entry": False,
+        "new_registration_required": True,
+        "prior_stage_evidence_reusable_for_effect_claim": False,
+    },
+}
+SELECTION_CONTRACT = {
+    "rule": "chronological_first_n_within_repository_and_task_type",
+    "eligible_work_classes": ["implementation"],
+    "excluded_work_classes": ["synthetic", "benchmark_maintenance", "document_only"],
+    "task_types": ["feature", "bugfix", "refactor"],
+    "minimum_canonical_repositories": 2,
+    "eligibility_decided_before_outcome": True,
+}
+EVALUATION_CONTRACT = {
+    "deterministic_verification_precedes_subjective_evaluation": True,
+    "blind_rubric_required": True,
+    "anchor_cases_required": True,
+    "arm_mapping_hidden_until_adjudication_complete": True,
+    "carryover_invalidates_pair": True,
+}
+
+
+def evidence_ladder_registration_errors(registration: object) -> list[str]:
+    if not isinstance(registration, dict):
+        return ["registration"]
+    expected_keys = {
+        "schema_version",
+        "study_id",
+        "state",
+        "previous_registration",
+        "execution_authorized",
+        "claim",
+        "evidence_reuse_between_stages",
+        "stages",
+        "selection_contract",
+        "evaluation_contract",
+    }
+    errors: list[str] = []
+    if set(registration) != expected_keys:
+        errors.append("fields")
+    expected_values = {
+        "schema_version": "omc-claude-incremental-value/v2",
+        "study_id": EVIDENCE_LADDER_STUDY_ID,
+        "state": "EVIDENCE_LADDER_CONTRACT_IMPLEMENTED_NOT_STARTED",
+        "previous_registration": PREVIOUS_REGISTRATION,
+        "execution_authorized": False,
+        "claim": "NO_SUPERIORITY_CLAIM",
+        "evidence_reuse_between_stages": False,
+        "stages": EVIDENCE_LADDER_STAGES,
+        "selection_contract": SELECTION_CONTRACT,
+        "evaluation_contract": EVALUATION_CONTRACT,
+    }
+    for field, expected in expected_values.items():
+        if registration.get(field) != expected:
+            errors.append(field)
+    return errors
 
 
 def _digest(value: object) -> bool:
@@ -312,6 +399,13 @@ def _reject_json_constant(_: str) -> None:
 
 
 def load_regular_json(path: Path) -> Any:
+    return json.loads(
+        load_regular_bytes(path).decode("utf-8"),
+        parse_constant=_reject_json_constant,
+    )
+
+
+def load_regular_bytes(path: Path) -> bytes:
     nofollow = getattr(os, "O_NOFOLLOW", None)
     if nofollow is None:
         raise ValueError("nofollow_unavailable")
@@ -324,12 +418,46 @@ def load_regular_json(path: Path) -> Any:
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise ValueError("input_not_regular_file")
-        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+        with os.fdopen(descriptor, "rb") as handle:
             descriptor = -1
-            return json.load(handle, parse_constant=_reject_json_constant)
+            return handle.read()
     finally:
         if descriptor >= 0:
             os.close(descriptor)
+
+
+def previous_registration_errors(
+    registration: dict[str, object],
+    predecessor_path: Path,
+    predecessor_bytes: bytes,
+) -> list[str]:
+    expected = registration.get("previous_registration")
+    if not isinstance(expected, dict):
+        return ["previous_registration"]
+
+    errors: list[str] = []
+    declared_path = expected.get("path")
+    if (
+        not isinstance(declared_path, str)
+        or predecessor_path.resolve() != (REPOSITORY_ROOT / declared_path).resolve()
+    ):
+        errors.append("previous_registration.path")
+    if hashlib.sha256(predecessor_bytes).hexdigest() != expected.get("sha256"):
+        errors.append("previous_registration.sha256")
+
+    predecessor = json.loads(
+        predecessor_bytes.decode("utf-8"),
+        parse_constant=_reject_json_constant,
+    )
+    if not isinstance(predecessor, dict):
+        errors.append("previous_registration.registration")
+        return errors
+    if predecessor.get("study_id") != expected.get("study_id"):
+        errors.append("previous_registration.study_id")
+    errors.extend(
+        f"previous_registration.{error}" for error in registration_errors(predecessor)
+    )
+    return errors
 
 
 def _case_roster_valid(registration: dict[str, object], execution_ready: bool) -> bool:
@@ -652,6 +780,7 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     validate = subparsers.add_parser("validate-registration")
     validate.add_argument("--registration", type=Path, required=True)
+    validate.add_argument("--previous-registration", type=Path)
     decide = subparsers.add_parser("decide-feasibility")
     decide.add_argument("--registration", type=Path, required=True)
     decide.add_argument("--pairs", type=Path, required=True)
@@ -663,7 +792,27 @@ def main() -> int:
     try:
         registration = load_regular_json(args.registration)
         if args.command == "validate-registration":
-            errors = registration_errors(registration)
+            if (
+                isinstance(registration, dict)
+                and registration.get("schema_version")
+                == "omc-claude-incremental-value/v2"
+            ):
+                errors = evidence_ladder_registration_errors(registration)
+                if args.previous_registration is None:
+                    errors.append("previous_registration_required")
+                else:
+                    predecessor_bytes = load_regular_bytes(
+                        args.previous_registration
+                    )
+                    errors.extend(
+                        previous_registration_errors(
+                            registration,
+                            args.previous_registration,
+                            predecessor_bytes,
+                        )
+                    )
+            else:
+                errors = registration_errors(registration)
             print(json.dumps({"valid": not errors, "errors": errors, "execution_authorized": False}, ensure_ascii=False, sort_keys=True))
             return 0 if not errors else 2
         pairs = load_regular_json(args.pairs)

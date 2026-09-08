@@ -1,6 +1,6 @@
 # Claude Code + OMC Incremental Value Feasibility
 
-Study ID는 `claude-code-omc-incremental-value-20260908-v1`이다. 현재 상태는 `FEASIBILITY_CONTRACT_IMPLEMENTED_NOT_STARTED`이며 feasibility 결과의 claim은 항상 `NO_SUPERIORITY_CLAIM`이다.
+현재 active Study ID는 `claude-code-omc-incremental-value-20260908-v2`다. 상태는 `EVIDENCE_LADDER_CONTRACT_IMPLEMENTED_NOT_STARTED`이며 모든 실행은 비승인이다. 기존 `claude-code-omc-incremental-value-20260908-v1` 파일은 실행되지 않은 선행 계약으로 SHA-256에 결속해 보존하며 수정하거나 evidence를 승계하지 않는다. Stage F와 Stage D의 claim은 항상 `NO_SUPERIORITY_CLAIM`이다.
 
 ## 비교 범위
 
@@ -15,10 +15,20 @@ Study ID는 `claude-code-omc-incremental-value-20260908-v1`이다. 현재 상태
 
 ```bash
 python3 scripts/omc_claude_incremental_value.py validate-registration \
-  --registration docs/claude_code_omc_incremental_value_preregistration_v1.json
+  --registration docs/claude_code_omc_incremental_value_preregistration_v2.json \
+  --previous-registration docs/claude_code_omc_incremental_value_preregistration_v1.json
 ```
 
-실제 Claude Code 실행은 별도 승인 전 금지한다. 현재 registration의 `execution_authorized=false`를 변경하거나 10건을 소급 수집하지 않는다.
+이 검증은 v1 predecessor의 선언값만 신뢰하지 않고 실제 regular file의 경로, 원문 바이트 SHA-256, study identity와 v1 등록 계약을 다시 확인한다.
+
+실제 Claude Code 실행은 별도 승인 전 금지한다. 현재 v2 registration의 `execution_authorized=false`를 변경하거나 case를 소급 수집하지 않는다.
+
+## Evidence ladder
+
+- Stage F는 10쌍으로 instrumentation·격리·측정·평가 가능성만 판정한다. fatal incorrect completion과 baseline만 완료한 adverse pair는 각각 0건이어야 하며 통과해도 `FEASIBILITY_PASS`와 `NO_SUPERIORITY_CLAIM`만 허용한다.
+- Stage D는 Stage F와 evidence를 공유하지 않는 별도 30쌍 directional study다. 위해 0건, correction-required 상대 감소 30%, intervention 중앙값 감소, wall-clock 비율 1.15 이하, token 비율 1.25 이하를 투자 방향 신호로만 사용하며 통과해도 `DIRECTIONAL_PASS`와 `NO_SUPERIORITY_CLAIM`이다.
+- Stage C powered confirmatory는 자동 진입할 수 없다. 별도 사용자 승인과 신규 registration이 필요하고 F/D evidence를 효과 claim 표본으로 재사용하지 않는다.
+- eligible case는 실제 implementation의 repository·task type별 chronological first-N이다. synthetic·benchmark maintenance·문서 전용 작업은 제외한다. deterministic verification을 먼저 수행하고 blind rubric·anchor case·mapping 은닉을 요구하며 carryover가 있으면 pair 전체를 무효화한다.
 
 ## 실행 전 동결 조건
 
