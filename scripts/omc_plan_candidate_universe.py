@@ -143,6 +143,12 @@ WORK_CLASS_LOCK_RECEIPT_FIELDS = {
     "signoff",
     "receipt_sha256",
 }
+WORK_CLASS_LOCK_RECEIPT_V2_FIELDS = WORK_CLASS_LOCK_RECEIPT_FIELDS | {
+    "work_id",
+    "root_session_id",
+    "previous_session_id",
+    "lineage_index",
+}
 UNIVERSE_FIELDS = {
     "schema_version",
     "status",
@@ -1148,8 +1154,16 @@ def prepare_work_class_lock_receipt(
     signed_timestamp = signed_at
     if signed_timestamp < locked_at:
         raise ValueError("work class lock signature predates session")
+    lineage_values = (
+        session.get("work_id"),
+        session.get("lineage_root_session_id"),
+        session.get("lineage_index"),
+    )
+    has_lineage = all(value is not None for value in lineage_values)
+    if any(value is not None for value in lineage_values) != has_lineage:
+        raise ValueError("work class lock source session is invalid")
     receipt = {
-        "schema_version": 1,
+        "schema_version": 2 if has_lineage else 1,
         "status": "draft",
         "session_id": session["session_id"],
         "work_class": session["work_class"],
@@ -1164,6 +1178,37 @@ def prepare_work_class_lock_receipt(
         },
         "receipt_sha256": "",
     }
+    if has_lineage:
+        if (
+            not isinstance(session["work_id"], str)
+            or not session["work_id"]
+            or not isinstance(session["lineage_root_session_id"], str)
+            or not session["lineage_root_session_id"]
+            or not isinstance(session["lineage_index"], int)
+            or isinstance(session["lineage_index"], bool)
+            or session["lineage_index"] < 0
+            or (
+                session["lineage_index"] == 0
+                and (
+                    session.get("lineage_previous_session_id") is not None
+                    or session["lineage_root_session_id"] != session["session_id"]
+                )
+            )
+            or (
+                session["lineage_index"] > 0
+                and (
+                    not isinstance(session.get("lineage_previous_session_id"), str)
+                    or not session["lineage_previous_session_id"]
+                )
+            )
+        ):
+            raise ValueError("work class lock source session is invalid")
+        receipt.update({
+            "work_id": session["work_id"],
+            "root_session_id": session["lineage_root_session_id"],
+            "previous_session_id": session.get("lineage_previous_session_id"),
+            "lineage_index": session["lineage_index"],
+        })
     receipt["receipt_sha256"] = _signed_digest(receipt, "receipt_sha256")
     return receipt
 
@@ -1173,10 +1218,14 @@ def _validate_work_class_lock_receipt_envelope(
     *,
     expected_status: str,
 ) -> None:
+    expected_fields = {
+        1: WORK_CLASS_LOCK_RECEIPT_FIELDS,
+        2: WORK_CLASS_LOCK_RECEIPT_V2_FIELDS,
+    }.get(receipt.get("schema_version")) if isinstance(receipt, dict) else None
     if (
         not isinstance(receipt, dict)
-        or set(receipt) != WORK_CLASS_LOCK_RECEIPT_FIELDS
-        or receipt.get("schema_version") != 1
+        or expected_fields is None
+        or set(receipt) != expected_fields
         or receipt.get("status") != expected_status
         or not isinstance(receipt.get("session_id"), str)
         or not receipt["session_id"].strip()
@@ -1184,6 +1233,30 @@ def _validate_work_class_lock_receipt_envelope(
         or not _is_lower_hex(receipt.get("request_sha256"), 64)
         or not _is_lower_hex(receipt.get("baseline_commit"), 40)
         or not _is_lower_hex(receipt.get("receipt_sha256"), 64)
+    ):
+        raise ValueError("work class lock receipt is invalid")
+    if receipt["schema_version"] == 2 and (
+        not isinstance(receipt.get("work_id"), str)
+        or not receipt["work_id"]
+        or not isinstance(receipt.get("root_session_id"), str)
+        or not receipt["root_session_id"]
+        or not isinstance(receipt.get("lineage_index"), int)
+        or isinstance(receipt["lineage_index"], bool)
+        or receipt["lineage_index"] < 0
+        or (
+            receipt["lineage_index"] == 0
+            and (
+                receipt.get("previous_session_id") is not None
+                or receipt["root_session_id"] != receipt["session_id"]
+            )
+        )
+        or (
+            receipt["lineage_index"] > 0
+            and (
+                not isinstance(receipt.get("previous_session_id"), str)
+                or not receipt["previous_session_id"]
+            )
+        )
     ):
         raise ValueError("work class lock receipt is invalid")
     _parse_timestamp(receipt.get("work_class_locked_at"))

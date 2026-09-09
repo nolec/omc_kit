@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 from collections.abc import Callable
 from contextlib import contextmanager
 import fcntl
@@ -9,14 +10,24 @@ import hashlib
 import json
 import os
 import re
+import selectors
 import shlex
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_utils  # noqa: E402
@@ -26,6 +37,35 @@ from omc_decision_input import (  # noqa: E402
 )
 
 _LOCK_REGISTRY: dict[str, dict[str, object]] = {}
+_CAPTURE_OUTPUT_LIMIT = 1024 * 1024
+_CAPTURE_FIELDS = {
+    "READY": {
+        "schema_version", "status", "session_id", "work_id", "request_sha256",
+        "baseline_commit", "repository_root_sha256", "verification_plan",
+        "verification_plan_sha256", "work_class_lock_sha256", "started_at",
+        "capture_sha256", "signoff",
+    },
+    "VERIFIED": {
+        "schema_version", "status", "session_id", "work_id",
+        "start_capture_sha256", "verification_passed", "verified_tree",
+        "observed_tree", "tree_unchanged", "results", "completed_at",
+        "capture_sha256", "signoff",
+    },
+    "COMPLETE": {
+        "schema_version", "status", "capture_validity", "claim", "session_id",
+        "work_id", "start_capture_sha256", "verification_capture_sha256",
+        "completion_sha256", "baseline_commit", "followup_commit", "changed_paths",
+        "verification_passed", "user_outcome", "correction_evidence", "captured_at",
+        "completion_session_id", "completion_request_sha256",
+        "completion_lineage_sha256", "root_session_id", "session_ids",
+        "rework_count", "capture_sha256", "signoff",
+    },
+}
+_CAPTURE_RESULT_FIELDS = {
+    "argv", "timeout_sec", "exit_code", "timed_out", "output_overflow",
+    "stdout_path", "stdout_size", "stdout_sha256", "stderr_path", "stderr_size",
+    "stderr_sha256", "started_at", "completed_at",
+}
 
 
 def _now() -> datetime:
@@ -510,6 +550,914 @@ def _canonical_sha256(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _capture_dir(project_root: Path, session_id: str) -> Path:
+    return _sessions_dir(project_root) / session_id / "capture"
+
+
+def _regular_bytes(path: Path) -> bytes:
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise ValueError("nofollow unavailable")
+    try:
+        descriptor = os.open(path, os.O_RDONLY | nofollow)
+    except OSError as error:
+        if error.errno == getattr(os, "ELOOP", 62):
+            raise ValueError("input not regular file") from error
+        raise ValueError("input not regular file") from error
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("input not regular file")
+        chunks: list[bytes] = []
+        while chunk := os.read(descriptor, 65536):
+            chunks.append(chunk)
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
+def _exclusive_bytes(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        offset = 0
+        while offset < len(payload):
+            offset += os.write(descriptor, payload[offset:])
+        os.fsync(descriptor)
+    except Exception:
+        os.close(descriptor)
+        path.unlink(missing_ok=True)
+        raise
+    else:
+        os.close(descriptor)
+        parent = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(parent)
+        finally:
+            os.close(parent)
+
+
+def _capture_public_key(private_key: Ed25519PrivateKey) -> str:
+    raw = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _capture_canonical(document: dict[str, object]) -> bytes:
+    return json.dumps(
+        document,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _capture_digest(document: dict[str, object]) -> str:
+    payload = json.loads(json.dumps(document))
+    payload["capture_sha256"] = ""
+    payload["signoff"]["signature"] = ""
+    return hashlib.sha256(_capture_canonical(payload)).hexdigest()
+
+
+def _seal_capture(
+    document: dict[str, object],
+    *,
+    private_key: Ed25519PrivateKey,
+) -> dict[str, object]:
+    sealed = json.loads(json.dumps(document))
+    sealed["signoff"] = {
+        "signer": "work-class-capture-v1",
+        "signer_public_key": _capture_public_key(private_key),
+        "signature": "",
+    }
+    sealed["capture_sha256"] = _capture_digest(sealed)
+    payload = json.loads(json.dumps(sealed))
+    payload["signoff"]["signature"] = ""
+    sealed["signoff"]["signature"] = base64.b64encode(
+        private_key.sign(_capture_canonical(payload))
+    ).decode("ascii")
+    return sealed
+
+
+def _verify_capture(document: object, trusted_public_key: str) -> dict[str, object]:
+    if not isinstance(document, dict):
+        raise ValueError("capture receipt invalid")
+    expected_fields = _CAPTURE_FIELDS.get(document.get("status"))
+    signoff = document.get("signoff")
+    if (
+        expected_fields is None
+        or set(document) != expected_fields
+        or document.get("schema_version") != 1
+        or not isinstance(signoff, dict)
+        or set(signoff) != {"signer", "signer_public_key", "signature"}
+        or signoff.get("signer") != "work-class-capture-v1"
+        or signoff.get("signer_public_key") != trusted_public_key
+        or document.get("capture_sha256") != _capture_digest(document)
+    ):
+        raise ValueError("capture receipt invalid")
+    if document["status"] == "READY":
+        _validate_verification_plan(document.get("verification_plan"))
+    if document["status"] == "VERIFIED":
+        results = document.get("results")
+        if (
+            not isinstance(results, list)
+            or not results
+            or any(not isinstance(item, dict) or set(item) != _CAPTURE_RESULT_FIELDS for item in results)
+        ):
+            raise ValueError("capture receipt invalid")
+    payload = json.loads(json.dumps(document))
+    payload["signoff"]["signature"] = ""
+    try:
+        Ed25519PublicKey.from_public_bytes(
+            base64.b64decode(trusted_public_key, validate=True)
+        ).verify(
+            base64.b64decode(str(signoff.get("signature")), validate=True),
+            _capture_canonical(payload),
+        )
+    except (InvalidSignature, TypeError, ValueError) as error:
+        raise ValueError("capture receipt invalid") from error
+    return document
+
+
+def _capture_keys(
+    project_root: Path,
+    *,
+    signer_private_key: Ed25519PrivateKey | None = None,
+    trusted_public_key: str | None = None,
+) -> tuple[Ed25519PrivateKey, str]:
+    if signer_private_key is None or trusted_public_key is None:
+        import omc_work_class_lock
+
+        configuration = omc_work_class_lock.resolve_configuration(project_root)
+        if configuration is None:
+            raise ValueError("capture signer unavailable")
+        trusted_public_key = configuration["trusted_public_key"]
+        signer_private_key = omc_work_class_lock.load_private_key(project_root)
+    if signer_private_key is None or _capture_public_key(signer_private_key) != trusted_public_key:
+        raise ValueError("capture signer mismatch")
+    return signer_private_key, trusted_public_key
+
+
+def _capture_trusted_key(
+    project_root: Path,
+    trusted_public_key: str | None,
+) -> str:
+    if trusted_public_key is not None:
+        return trusted_public_key
+    import omc_work_class_lock
+
+    configuration = omc_work_class_lock.resolve_configuration(project_root)
+    if configuration is None:
+        raise ValueError("capture signer unavailable")
+    return configuration["trusted_public_key"]
+
+
+def _capture_session(
+    project_root: Path,
+    *,
+    prefer_existing: bool = False,
+) -> dict[str, object]:
+    latest = _read_json(_latest_path(project_root), {})
+    pending = _read_json(_pending_completion_path(project_root), {})
+    session_ids: list[str] = []
+    if prefer_existing:
+        capture_sessions = sorted(
+            path.parent.parent.name
+            for path in _sessions_dir(project_root).glob("*/capture/start.json")
+        )
+        active_sessions = [
+            session_id
+            for session_id in capture_sessions
+            if not (_capture_dir(project_root, session_id) / "terminal.json").exists()
+        ]
+        if len(active_sessions) > 1:
+            raise ValueError("capture session ambiguous")
+        if active_sessions:
+            session_ids.extend(active_sessions)
+        elif capture_sessions:
+            session_ids.append(capture_sessions[-1])
+    pending_session_id = pending.get("session_id")
+    latest_session_id = latest.get("latest_confirmed_session_id")
+    if isinstance(pending_session_id, str):
+        session_ids.append(pending_session_id)
+    if isinstance(latest_session_id, str):
+        session_ids.append(latest_session_id)
+    session_id = next((item for item in session_ids if item), None)
+    if session_id is None:
+        raise ValueError("confirmed session required")
+    session = _read_json(_session_path(project_root, session_id), {})
+    if (
+        session.get("session_id") != session_id
+        or session.get("confirmation", {}).get("status") != "confirmed"
+        or not isinstance(session.get("work_id"), str)
+        or not session["work_id"]
+        or not isinstance(session.get("request"), str)
+    ):
+        raise ValueError("confirmed session invalid")
+    return session
+
+
+def _validate_verification_plan(document: object) -> dict[str, object]:
+    if (
+        not isinstance(document, dict)
+        or set(document) != {"schema_version", "commands"}
+        or document.get("schema_version") != 1
+        or not isinstance(document.get("commands"), list)
+        or not document["commands"]
+    ):
+        raise ValueError("verification plan invalid")
+    for command in document["commands"]:
+        if (
+            not isinstance(command, dict)
+            or set(command) != {"argv", "timeout_sec"}
+            or not isinstance(command.get("argv"), list)
+            or not command["argv"]
+            or not all(isinstance(arg, str) and arg for arg in command["argv"])
+            or not isinstance(command.get("timeout_sec"), int)
+            or isinstance(command["timeout_sec"], bool)
+            or not 1 <= command["timeout_sec"] <= 3600
+        ):
+            raise ValueError("verification plan invalid")
+    return document
+
+
+def start_capture(
+    project_root: Path,
+    verification_plan_path: Path,
+    *,
+    signer_private_key: Ed25519PrivateKey | None = None,
+    trusted_public_key: str | None = None,
+) -> dict[str, object]:
+    project_root = project_root.resolve()
+    private_key, public_key = _capture_keys(
+        project_root,
+        signer_private_key=signer_private_key,
+        trusted_public_key=trusted_public_key,
+    )
+    plan_bytes = _regular_bytes(verification_plan_path)
+    try:
+        plan = _validate_verification_plan(json.loads(plan_bytes.decode("utf-8")))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("verification plan invalid") from error
+    session = _capture_session(project_root)
+    session_id = str(session["session_id"])
+    capture_dir = _capture_dir(project_root, session_id)
+    destination = capture_dir / "start.json"
+    if destination.exists():
+        raise ValueError("capture already started")
+    active_captures = [
+        path
+        for path in _sessions_dir(project_root).glob("*/capture/start.json")
+        if not (path.parent / "terminal.json").exists()
+    ]
+    if active_captures:
+        raise ValueError("capture already active")
+    git = session.get("git")
+    baseline_prefix = git.get("head") if isinstance(git, dict) else None
+    head = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD^{commit}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    dirty = subprocess.run(
+        [
+            "git", "-C", str(project_root), "status", "--porcelain",
+            "--untracked-files=all", "--", ".", ":(exclude).omc",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if (
+        head.returncode != 0
+        or not isinstance(baseline_prefix, str)
+        or not head.stdout.strip().startswith(baseline_prefix)
+        or dirty.returncode != 0
+        or bool(dirty.stdout.strip())
+    ):
+        raise ValueError("retrospective capture forbidden")
+    lock_path = _sessions_dir(project_root) / session_id / "work_class_lock.json"
+    try:
+        import omc_plan_candidate_universe as candidate_universe
+
+        lock = json.loads(_regular_bytes(lock_path).decode("utf-8"))
+        candidate_universe._validate_work_class_lock_receipt_envelope(
+            lock, expected_status="frozen"
+        )
+        candidate_universe._verify_document(
+            lock,
+            digest_field="receipt_sha256",
+            trusted_public_keys={public_key},
+            expected_digest=str(lock.get("receipt_sha256")),
+            expected_signer="independent-work-class-lock-v1",
+            label="work class lock receipt",
+        )
+    except (OSError, TypeError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise ValueError("work class lock invalid") from error
+    if (
+        not isinstance(lock, dict)
+        or lock.get("session_id") != session_id
+        or lock.get("request_sha256") != _canonical_sha256(session["request"])
+        or lock.get("baseline_commit") != head.stdout.strip()
+        or lock.get("signoff", {}).get("signer_public_key") != public_key
+    ):
+        raise ValueError("work class lock invalid")
+    receipt = _seal_capture(
+        {
+            "schema_version": 1,
+            "status": "READY",
+            "session_id": session_id,
+            "work_id": session["work_id"],
+            "request_sha256": _canonical_sha256(session["request"]),
+            "baseline_commit": head.stdout.strip(),
+            "repository_root_sha256": hashlib.sha256(str(project_root).encode()).hexdigest(),
+            "verification_plan": plan,
+            "verification_plan_sha256": hashlib.sha256(plan_bytes).hexdigest(),
+            "work_class_lock_sha256": lock.get("receipt_sha256"),
+            "started_at": _iso_now(),
+            "capture_sha256": "",
+            "signoff": {},
+        },
+        private_key=private_key,
+    )
+    _exclusive_bytes(
+        destination,
+        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True).encode() + b"\n",
+    )
+    return receipt
+
+
+def _run_bounded_command(
+    argv: list[str],
+    *,
+    cwd: Path,
+    timeout_sec: int,
+) -> tuple[int, bytes, bytes, bool, bool]:
+    process = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    selector = selectors.DefaultSelector()
+    assert process.stdout is not None and process.stderr is not None
+    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    deadline = time.monotonic() + timeout_sec
+    overflow = False
+    timed_out = False
+
+    def terminate_group() -> None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    while selector.get_map():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
+            terminate_group()
+            break
+        events = selector.select(min(remaining, 0.1))
+        if not events and process.poll() is not None:
+            events = [(key, selectors.EVENT_READ) for key in selector.get_map().values()]
+        for key, _ in events:
+            chunk = os.read(key.fileobj.fileno(), 65536)
+            if not chunk:
+                selector.unregister(key.fileobj)
+                continue
+            buffers[key.data].extend(chunk)
+            if len(buffers[key.data]) > _CAPTURE_OUTPUT_LIMIT:
+                overflow = True
+                terminate_group()
+                break
+        if overflow:
+            break
+    if overflow or timed_out:
+        process.wait()
+    else:
+        process.wait()
+    selector.close()
+    return (
+        process.returncode,
+        bytes(buffers["stdout"][:_CAPTURE_OUTPUT_LIMIT]),
+        bytes(buffers["stderr"][:_CAPTURE_OUTPUT_LIMIT]),
+        timed_out,
+        overflow,
+    )
+
+
+def _candidate_tree(project_root: Path) -> str:
+    unstaged = subprocess.run(
+        ["git", "-C", str(project_root), "diff", "--quiet", "--"],
+        check=False,
+    )
+    untracked = subprocess.run(
+        [
+            "git", "-C", str(project_root), "ls-files", "--others",
+            "--exclude-standard", "-z", "--", ".", ":(exclude).omc",
+        ],
+        check=False,
+        capture_output=True,
+    )
+    tree = subprocess.run(
+        ["git", "-C", str(project_root), "write-tree"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if (
+        unstaged.returncode != 0
+        or untracked.returncode != 0
+        or bool(untracked.stdout)
+        or tree.returncode != 0
+        or not re.fullmatch(r"[0-9a-f]{40}", tree.stdout.strip())
+    ):
+        raise ValueError("verification tree invalid")
+    return tree.stdout.strip()
+
+
+def _validate_capture_context(
+    project_root: Path,
+    session: dict[str, object],
+    start: dict[str, object],
+    trusted_public_key: str,
+) -> None:
+    expected_request_sha256 = _canonical_sha256(session.get("request"))
+    expected_root_sha256 = hashlib.sha256(str(project_root).encode()).hexdigest()
+    session_git = session.get("git")
+    session_head = session_git.get("head") if isinstance(session_git, dict) else None
+    if (
+        start.get("session_id") != session.get("session_id")
+        or start.get("work_id") != session.get("work_id")
+        or start.get("request_sha256") != expected_request_sha256
+        or start.get("repository_root_sha256") != expected_root_sha256
+        or not isinstance(session_head, str)
+        or not str(start.get("baseline_commit", "")).startswith(session_head)
+    ):
+        raise ValueError("capture context invalid")
+
+    try:
+        import omc_plan_candidate_universe as candidate_universe
+
+        lock_path = (
+            _sessions_dir(project_root)
+            / str(session["session_id"])
+            / "work_class_lock.json"
+        )
+        lock = json.loads(_regular_bytes(lock_path).decode("utf-8"))
+        candidate_universe._validate_work_class_lock_receipt_envelope(
+            lock, expected_status="frozen"
+        )
+        candidate_universe._verify_document(
+            lock,
+            digest_field="receipt_sha256",
+            trusted_public_keys={trusted_public_key},
+            expected_digest=str(lock.get("receipt_sha256")),
+            expected_signer="independent-work-class-lock-v1",
+            label="work class lock receipt",
+        )
+    except (OSError, TypeError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise ValueError("capture context invalid") from error
+    if (
+        lock.get("session_id") != session.get("session_id")
+        or lock.get("request_sha256") != expected_request_sha256
+        or lock.get("baseline_commit") != start.get("baseline_commit")
+        or lock.get("receipt_sha256") != start.get("work_class_lock_sha256")
+    ):
+        raise ValueError("capture context invalid")
+
+
+def verify_capture(
+    project_root: Path,
+    *,
+    signer_private_key: Ed25519PrivateKey | None = None,
+    trusted_public_key: str | None = None,
+) -> dict[str, object]:
+    project_root = project_root.resolve()
+    private_key, public_key = _capture_keys(
+        project_root,
+        signer_private_key=signer_private_key,
+        trusted_public_key=trusted_public_key,
+    )
+    session = _capture_session(project_root, prefer_existing=True)
+    capture_dir = _capture_dir(project_root, str(session["session_id"]))
+    result_path = capture_dir / "verification.json"
+    if result_path.exists():
+        raise ValueError("capture verification already recorded")
+    start = _verify_capture(
+        json.loads(_regular_bytes(capture_dir / "start.json").decode("utf-8")),
+        public_key,
+    )
+    _validate_capture_context(project_root, session, start, public_key)
+    current_head = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD^{commit}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if current_head.returncode != 0 or current_head.stdout.strip() != start.get("baseline_commit"):
+        raise ValueError("capture context invalid")
+    candidate_tree_before = _candidate_tree(project_root)
+    results: list[dict[str, object]] = []
+    for index, command in enumerate(start["verification_plan"]["commands"]):
+        started_at = _iso_now()
+        try:
+            exit_code, stdout, stderr, timed_out, overflow = _run_bounded_command(
+                command["argv"], cwd=project_root, timeout_sec=command["timeout_sec"]
+            )
+        except OSError as error:
+            exit_code, stdout, stderr, timed_out, overflow = 127, b"", str(error).encode(), False, False
+        stdout_name = f"verification-{index:03d}.stdout"
+        stderr_name = f"verification-{index:03d}.stderr"
+        _exclusive_bytes(capture_dir / stdout_name, stdout)
+        _exclusive_bytes(capture_dir / stderr_name, stderr)
+        results.append({
+            "argv": command["argv"],
+            "timeout_sec": command["timeout_sec"],
+            "exit_code": exit_code,
+            "timed_out": timed_out,
+            "output_overflow": overflow,
+            "stdout_path": stdout_name,
+            "stdout_size": len(stdout),
+            "stdout_sha256": hashlib.sha256(stdout).hexdigest(),
+            "stderr_path": stderr_name,
+            "stderr_size": len(stderr),
+            "stderr_sha256": hashlib.sha256(stderr).hexdigest(),
+            "started_at": started_at,
+            "completed_at": _iso_now(),
+        })
+    commands_passed = all(
+        item["exit_code"] == 0
+        and item["timed_out"] is False
+        and item["output_overflow"] is False
+        for item in results
+    )
+    try:
+        observed_tree: str | None = _candidate_tree(project_root)
+    except ValueError:
+        observed_tree = None
+    tree_unchanged = observed_tree == candidate_tree_before
+    passed = commands_passed and tree_unchanged
+    receipt = _seal_capture(
+        {
+            "schema_version": 1,
+            "status": "VERIFIED",
+            "session_id": start["session_id"],
+            "work_id": start["work_id"],
+            "start_capture_sha256": start["capture_sha256"],
+            "verification_passed": passed,
+            "verified_tree": candidate_tree_before,
+            "observed_tree": observed_tree,
+            "tree_unchanged": tree_unchanged,
+            "results": results,
+            "completed_at": _iso_now(),
+            "capture_sha256": "",
+            "signoff": {},
+        },
+        private_key=private_key,
+    )
+    _exclusive_bytes(
+        result_path,
+        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True).encode() + b"\n",
+    )
+    return receipt
+
+
+def _validate_verification_artifacts(capture_dir: Path, result: dict[str, object]) -> None:
+    for item in result.get("results", []):
+        if not isinstance(item, dict):
+            raise ValueError("verification artifact invalid")
+        for stream in ("stdout", "stderr"):
+            path = capture_dir / str(item.get(f"{stream}_path", ""))
+            data = _regular_bytes(path)
+            if (
+                len(data) != item.get(f"{stream}_size")
+                or hashlib.sha256(data).hexdigest() != item.get(f"{stream}_sha256")
+            ):
+                raise ValueError("verification artifact invalid")
+
+
+def _completion_bundle(
+    project_root: Path,
+    start: dict[str, object],
+    trusted_public_key: str,
+) -> tuple[dict[str, object], bytes, dict[str, object], bytes, dict[str, object]]:
+    candidates: list[tuple[dict[str, object], bytes, dict[str, object], bytes, dict[str, object]]] = []
+    lineage_fields = {
+        "schema_version", "evidence_status", "session_id", "work_id",
+        "root_session_id", "session_ids", "rework_count",
+    }
+    for lineage_path in _sessions_dir(project_root).glob("*/completion-lineage.json"):
+        try:
+            lineage_bytes = _regular_bytes(lineage_path)
+            lineage = json.loads(lineage_bytes.decode("utf-8"))
+        except (OSError, TypeError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(lineage, dict) or lineage.get("work_id") != start.get("work_id"):
+            continue
+        if (
+            set(lineage) != lineage_fields
+            or lineage.get("schema_version") != 1
+            or lineage.get("evidence_status") != "informational_unverified"
+            or lineage.get("root_session_id") != start.get("session_id")
+            or not isinstance(lineage.get("session_ids"), list)
+            or not lineage["session_ids"]
+            or lineage["session_ids"][0] != start.get("session_id")
+            or lineage["session_ids"][-1] != lineage.get("session_id")
+            or any(not isinstance(item, str) or not item for item in lineage["session_ids"])
+            or len(lineage["session_ids"]) != len(set(lineage["session_ids"]))
+            or isinstance(lineage.get("rework_count"), bool)
+            or lineage.get("rework_count") != len(lineage["session_ids"]) - 1
+        ):
+            raise ValueError("completion lineage invalid")
+        completion_session = _read_json(
+            _session_path(project_root, str(lineage["session_id"])), {}
+        )
+        completion_path = lineage_path.parent / "completion.json"
+        try:
+            completion_bytes = _regular_bytes(completion_path)
+            completion = json.loads(completion_bytes.decode("utf-8"))
+        except (OSError, TypeError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+            raise ValueError("completion lineage invalid") from error
+        if (
+            not isinstance(completion, dict)
+            or completion_session.get("session_id") != lineage.get("session_id")
+            or completion_session.get("work_id") != start.get("work_id")
+            or completion.get("session_id") != completion_session.get("session_id")
+            or completion.get("request_sha256")
+            != _canonical_sha256(completion_session.get("request"))
+            or any(
+                _read_json(_session_path(project_root, item), {}).get("work_id")
+                != start.get("work_id")
+                for item in lineage["session_ids"]
+            )
+        ):
+            raise ValueError("completion lineage invalid")
+        signed_session_ids: list[str] = []
+        current_session_id: object = lineage.get("session_id")
+        expected_index = len(lineage["session_ids"]) - 1
+        while isinstance(current_session_id, str):
+            link_path = (
+                _sessions_dir(project_root)
+                / current_session_id
+                / "work_class_lock.json"
+            )
+            try:
+                link = json.loads(_regular_bytes(link_path).decode("utf-8"))
+                import omc_plan_candidate_universe as candidate_universe
+
+                candidate_universe._validate_work_class_lock_receipt_envelope(
+                    link, expected_status="frozen"
+                )
+                candidate_universe._verify_document(
+                    link,
+                    digest_field="receipt_sha256",
+                    trusted_public_keys={trusted_public_key},
+                    expected_digest=str(link.get("receipt_sha256")),
+                    expected_signer="independent-work-class-lock-v1",
+                    label="completion lineage lock",
+                )
+            except (OSError, TypeError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+                raise ValueError("completion lineage invalid") from error
+            if (
+                not isinstance(link, dict)
+                or link.get("schema_version") != 2
+                or link.get("session_id") != current_session_id
+                or link.get("work_id") != start.get("work_id")
+                or link.get("root_session_id") != start.get("session_id")
+                or link.get("lineage_index") != expected_index
+            ):
+                raise ValueError("completion lineage invalid")
+            signed_session_ids.append(current_session_id)
+            current_session_id = link.get("previous_session_id")
+            expected_index -= 1
+        signed_session_ids.reverse()
+        if expected_index != -1 or signed_session_ids != lineage["session_ids"]:
+            raise ValueError("completion lineage invalid")
+        candidates.append(
+            (completion, completion_bytes, lineage, lineage_bytes, completion_session)
+        )
+    if len(candidates) != 1:
+        raise ValueError("completion lineage invalid")
+    return candidates[0]
+
+
+def finish_capture(
+    project_root: Path,
+    *,
+    outcome: str,
+    correction_file: Path | None = None,
+    signer_private_key: Ed25519PrivateKey | None = None,
+    trusted_public_key: str | None = None,
+) -> dict[str, object]:
+    project_root = project_root.resolve()
+    private_key, public_key = _capture_keys(
+        project_root,
+        signer_private_key=signer_private_key,
+        trusted_public_key=trusted_public_key,
+    )
+    if outcome not in {"accepted", "correction_required", "abandoned"}:
+        raise ValueError("capture outcome invalid")
+    if (outcome == "correction_required") != (correction_file is not None):
+        raise ValueError("correction evidence required")
+    correction = None
+    if correction_file is not None:
+        data = _regular_bytes(correction_file)
+        if not data.strip():
+            raise ValueError("correction evidence required")
+        correction = {"present": True, "byte_length": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    session = _capture_session(project_root, prefer_existing=True)
+    capture_dir = _capture_dir(project_root, str(session["session_id"]))
+    terminal_path = capture_dir / "terminal.json"
+    if terminal_path.exists():
+        raise ValueError("capture already finalized")
+    start = _verify_capture(
+        json.loads(_regular_bytes(capture_dir / "start.json").decode("utf-8")), public_key
+    )
+    _validate_capture_context(project_root, session, start, public_key)
+    result = _verify_capture(
+        json.loads(_regular_bytes(capture_dir / "verification.json").decode("utf-8")), public_key
+    )
+    _validate_verification_artifacts(capture_dir, result)
+    completion, completion_bytes, lineage, lineage_bytes, completion_session = (
+        _completion_bundle(project_root, start, public_key)
+    )
+    baseline = completion.get("baseline_commit") if isinstance(completion, dict) else None
+    followup = completion.get("followup_commit") if isinstance(completion, dict) else None
+    changed_paths = completion.get("changed_paths") if isinstance(completion, dict) else None
+    actual = subprocess.run(
+        ["git", "-C", str(project_root), "diff", "--name-only", "-z", str(baseline), str(followup), "--"],
+        check=False,
+        capture_output=True,
+    )
+    actual_paths = sorted(part.decode() for part in actual.stdout.split(b"\0") if part)
+    current_head = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD^{commit}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    followup_parent = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", f"{followup}^"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    followup_tree = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", f"{followup}^{{tree}}"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    binding_valid = (
+        isinstance(completion, dict)
+        and completion.get("session_id") == completion_session.get("session_id")
+        and completion.get("request_sha256")
+        == _canonical_sha256(completion_session.get("request"))
+        and baseline == start["baseline_commit"]
+        and isinstance(followup, str)
+        and current_head.returncode == 0
+        and current_head.stdout.strip() == followup
+        and followup_parent.returncode == 0
+        and followup_parent.stdout.strip() == baseline
+        and followup_tree.returncode == 0
+        and followup_tree.stdout.strip() == result.get("verified_tree")
+        and actual.returncode == 0
+        and isinstance(changed_paths, list)
+        and sorted(changed_paths) == actual_paths
+        and bool(actual_paths)
+        and result.get("start_capture_sha256") == start["capture_sha256"]
+    )
+    if not binding_valid:
+        raise ValueError("completion binding invalid")
+    validity = "VALID" if result["verification_passed"] is True else "INVALID"
+    receipt = _seal_capture(
+        {
+            "schema_version": 1,
+            "status": "COMPLETE",
+            "capture_validity": validity,
+            "claim": "CAPTURE_REHEARSAL",
+            "session_id": start["session_id"],
+            "work_id": start["work_id"],
+            "start_capture_sha256": start["capture_sha256"],
+            "verification_capture_sha256": result["capture_sha256"],
+            "completion_sha256": hashlib.sha256(completion_bytes).hexdigest(),
+            "completion_session_id": completion_session["session_id"],
+            "completion_request_sha256": completion["request_sha256"],
+            "completion_lineage_sha256": hashlib.sha256(lineage_bytes).hexdigest(),
+            "root_session_id": lineage["root_session_id"],
+            "session_ids": lineage["session_ids"],
+            "rework_count": lineage["rework_count"],
+            "baseline_commit": baseline,
+            "followup_commit": followup,
+            "changed_paths": changed_paths,
+            "verification_passed": result["verification_passed"],
+            "user_outcome": outcome,
+            "correction_evidence": correction,
+            "captured_at": _iso_now(),
+            "capture_sha256": "",
+            "signoff": {},
+        },
+        private_key=private_key,
+    )
+    _exclusive_bytes(
+        terminal_path,
+        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True).encode() + b"\n",
+    )
+    return receipt
+
+
+def capture_status(
+    project_root: Path,
+    *,
+    trusted_public_key: str | None = None,
+) -> dict[str, object]:
+    project_root = project_root.resolve()
+    try:
+        public_key = _capture_trusted_key(project_root, trusted_public_key)
+        session = _capture_session(project_root, prefer_existing=True)
+        capture_dir = _capture_dir(project_root, str(session["session_id"]))
+        start_path = capture_dir / "start.json"
+        if not start_path.exists():
+            return {"status": "NOT_STARTED", "capture_validity": "INCOMPLETE", "session_id": session["session_id"], "work_id": session["work_id"], "verification_passed": None, "user_outcome": None, "reason": None, "claim": "CAPTURE_REHEARSAL"}
+        start = _verify_capture(json.loads(_regular_bytes(start_path).decode("utf-8")), public_key)
+        _validate_capture_context(project_root, session, start, public_key)
+        terminal_path = capture_dir / "terminal.json"
+        verification_path = capture_dir / "verification.json"
+        current = start
+        status = "READY"
+        validity = "INCOMPLETE"
+        verification_passed = None
+        user_outcome = None
+        if verification_path.exists():
+            current = _verify_capture(json.loads(_regular_bytes(verification_path).decode("utf-8")), public_key)
+            if (
+                current.get("session_id") != start.get("session_id")
+                or current.get("work_id") != start.get("work_id")
+                or current.get("start_capture_sha256") != start.get("capture_sha256")
+            ):
+                raise ValueError("capture receipt binding invalid")
+            _validate_verification_artifacts(capture_dir, current)
+            if (
+                not terminal_path.exists()
+                and current.get("tree_unchanged") is True
+                and _candidate_tree(project_root) != current.get("verified_tree")
+            ):
+                raise ValueError("verification tree changed")
+            status = "VERIFIED"
+            verification_passed = current["verification_passed"]
+        if terminal_path.exists():
+            verification = current
+            current = _verify_capture(json.loads(_regular_bytes(terminal_path).decode("utf-8")), public_key)
+            if (
+                status != "VERIFIED"
+                or current.get("session_id") != start.get("session_id")
+                or current.get("work_id") != start.get("work_id")
+                or current.get("start_capture_sha256") != start.get("capture_sha256")
+                or current.get("verification_capture_sha256") != verification.get("capture_sha256")
+            ):
+                raise ValueError("capture receipt binding invalid")
+            completion, completion_bytes, lineage, lineage_bytes, completion_session = (
+                _completion_bundle(project_root, start)
+            )
+            expected_validity = (
+                "VALID" if verification.get("verification_passed") is True else "INVALID"
+            )
+            if (
+                current.get("completion_sha256")
+                != hashlib.sha256(completion_bytes).hexdigest()
+                or current.get("completion_lineage_sha256")
+                != hashlib.sha256(lineage_bytes).hexdigest()
+                or current.get("completion_session_id")
+                != completion_session.get("session_id")
+                or current.get("completion_request_sha256")
+                != completion.get("request_sha256")
+                or current.get("root_session_id") != lineage.get("root_session_id")
+                or current.get("session_ids") != lineage.get("session_ids")
+                or current.get("rework_count") != lineage.get("rework_count")
+                or current.get("baseline_commit") != completion.get("baseline_commit")
+                or current.get("followup_commit") != completion.get("followup_commit")
+                or current.get("changed_paths") != completion.get("changed_paths")
+                or current.get("verification_passed")
+                != verification.get("verification_passed")
+                or current.get("capture_validity") != expected_validity
+            ):
+                raise ValueError("capture receipt binding invalid")
+            status = "COMPLETE"
+            validity = current["capture_validity"]
+            verification_passed = current["verification_passed"]
+            user_outcome = current["user_outcome"]
+        return {"status": status, "capture_validity": validity, "session_id": start["session_id"], "work_id": start["work_id"], "verification_passed": verification_passed, "user_outcome": user_outcome, "reason": None, "claim": "CAPTURE_REHEARSAL"}
+    except (AttributeError, KeyError, OSError, TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError) as error:
+        return {"status": "BLOCKED", "capture_validity": "INVALID", "session_id": None, "work_id": None, "verification_passed": None, "user_outcome": None, "reason": str(error), "claim": "CAPTURE_REHEARSAL"}
 
 
 _COMPLETION_PRESERVING_DIRECTIVE_TITLES = {
@@ -2258,6 +3206,16 @@ def record_session(
         resolved_work_id = work_id or (
             uuid.uuid4().hex if resolved_completion_action == "start" else None
         )
+        lineage_root_session_id = None
+        lineage_previous_session_id = None
+        lineage_index = None
+        if "senior_coding" in role_ids and resolved_completion_action == "start":
+            lineage_root_session_id = session_id
+            lineage_index = 0
+        elif "senior_coding" in role_ids and resolved_completion_action == "continue":
+            lineage_root_session_id = existing_completion["root_session_id"]
+            lineage_previous_session_id = existing_completion["session_id"]
+            lineage_index = len(existing_completion["session_ids"])
         entry = {
             "kind": "session",
             "session_id": session_id,
@@ -2269,6 +3227,9 @@ def record_session(
             "work_class": resolved_work_class,
             "completion_action": resolved_completion_action,
             "work_id": resolved_work_id,
+            "lineage_root_session_id": lineage_root_session_id,
+            "lineage_previous_session_id": lineage_previous_session_id,
+            "lineage_index": lineage_index,
             "prompt_path": prompt_path,
             "base_paths": list(base_paths or []),
             "team_paths": list(team_paths or []),
@@ -2754,6 +3715,25 @@ def _parser() -> argparse.ArgumentParser:
     complete = sub.add_parser("complete", help="Record a verified receipt for the latest commit.")
     complete.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
 
+    capture_start = sub.add_parser("capture-start", help="Freeze a commit capture verification plan.")
+    capture_start.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+    capture_start.add_argument("--verification-plan", type=Path, required=True)
+
+    capture_verify = sub.add_parser("capture-verify", help="Run the frozen capture verification plan.")
+    capture_verify.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+
+    capture_finish = sub.add_parser("capture-finish", help="Finalize a commit capture rehearsal.")
+    capture_finish.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+    capture_finish.add_argument(
+        "--outcome",
+        required=True,
+        choices=["accepted", "correction_required", "abandoned"],
+    )
+    capture_finish.add_argument("--correction-file", type=Path, default=None)
+
+    capture_status_cmd = sub.add_parser("capture-status", help="Show fail-closed capture status JSON.")
+    capture_status_cmd.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
+
     confirm = sub.add_parser("confirm", help="Mark the latest or a specific session as confirmed.")
     confirm.add_argument("--target", type=Path, default=Path.cwd(), help="Target repository root.")
     confirm.add_argument("--session-id", type=str, default=None, help="Specific session id to confirm.")
@@ -2886,6 +3866,38 @@ def main() -> int:
     if args.command == "complete":
         print(json.dumps(record_completion_receipt(omc_utils.project_root(args.target)), ensure_ascii=False, indent=2))
         return 0
+
+    if args.command in {"capture-start", "capture-verify", "capture-finish"}:
+        try:
+            project_root = omc_utils.project_root(args.target)
+            if args.command == "capture-start":
+                result = start_capture(project_root, args.verification_plan)
+            elif args.command == "capture-verify":
+                result = verify_capture(project_root)
+            else:
+                result = finish_capture(
+                    project_root,
+                    outcome=args.outcome,
+                    correction_file=args.correction_file,
+                )
+        except (
+            AttributeError,
+            KeyError,
+            OSError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+        ) as error:
+            print(json.dumps({"status": "BLOCKED", "reason": str(error)}, ensure_ascii=False))
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+
+    if args.command == "capture-status":
+        result = capture_status(omc_utils.project_root(args.target))
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 2 if result.get("status") == "BLOCKED" else 0
 
     if args.command == "confirm":
         session = confirm_session(omc_utils.project_root(args.target), session_id=args.session_id)
