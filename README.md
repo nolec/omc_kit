@@ -29,6 +29,8 @@ WeeklyKPI bounded local dashboard는 스킬 구현 전 `LOCAL_DISCOVERY_PROTOTYP
 
 이번 Persona Pilot의 공식 claim은 blind correction-required case 감소이며, 실제 일상 사용자의 수정 지시 30% 감소는 후속 confirmatory study 전까지 `NOT_YET_PROVEN`입니다.
 
+기존 completion lineage를 활용하는 lightweight Completion Observation V0 projection CLI를 추가했습니다. sealed terminal·completion·lineage 원문과 raw request/output을 보존하고, 저장소 키와 분리된 승인 executor trust anchor로 execution receipt를 검증합니다. population closure와 report는 등록된 저장소의 실제 `.omc/state/sessions`를 다시 전수 스캔하고 `(captured_at, repo_id, work_id)` 순서의 첫 implementation 10건·최소 2개 저장소 조건을 검사합니다. 현재 상태는 `PROJECTION_IMPLEMENTED_CAPTURE_NOT_STARTED`, 실제 표본 `0/10`입니다. 자동 candidate hook과 승인 executor receipt 발급 경로는 아직 없으므로 수정 지시 감소나 제품 효과를 증명하지 않습니다.
+
 Product Value 결과는 두 판정을 분리합니다.
 
 - **운영 대체 판정**: no-key `subscription_bounded` 경로에서도 성공률·시간·token·개입·안전 위반을 비교해 `OPERATIONALLY_REPLACEABLE` 또는 `NOT_REPLACEABLE`로 종료할 수 있습니다.

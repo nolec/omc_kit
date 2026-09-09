@@ -747,3 +747,21 @@ def test_roadmap_links_review_quality_validation_to_its_experiment_contract() ->
     assert "이 게이트 전에는" in comparison
     assert "경로를 `src/...`로 정규화한 Codex CLI 원문" in comparison
     assert "reviewer basis metadata를 붙인 수동 기록" in comparison
+
+
+def test_completion_observation_v0_is_bounded_to_capture_feasibility() -> None:
+    roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
+    readme = README_PATH.read_text(encoding="utf-8")
+
+    for text in (roadmap, readme):
+        assert "Completion Observation V0" in text
+        assert "`PROJECTION_IMPLEMENTED_CAPTURE_NOT_STARTED`" in text
+        assert "`0/10`" in text
+        assert "자동 candidate hook" in text
+        assert "제품 효과" in text
+
+    assert "별도 work ledger를 만들지 않고 기존 sealed terminal·completion·lineage" in roadmap
+    assert "`(captured_at, repo_id, work_id)` 순서의 first eligible 10건" in roadmap
+    assert "실제 `.omc/state/sessions` 전체를 각각 재스캔" in roadmap
+    assert "승인 executor trust anchor" in roadmap
+    assert "`CAPTURE_INCOMPLETE`" in roadmap
