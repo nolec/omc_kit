@@ -379,29 +379,37 @@ def test_real_use_product_observation_is_preregistered_before_n_child_acceptance
     supersession_path = Path(
         "docs/real_use_product_observation_v1_supersession.json"
     )
+    v2_supersession_path = Path(
+        "docs/real_use_product_observation_v2_supersession.json"
+    )
+    v3_path = Path(
+        "docs/real_use_product_observation_preregistration_v3.json"
+    )
     v1_bytes = v1_path.read_bytes()
     v2_bytes = v2_path.read_bytes()
     supersession_bytes = supersession_path.read_bytes()
     v1 = json.loads(v1_bytes)
     v2 = json.loads(v2_bytes)
     supersession = json.loads(supersession_bytes)
+    v2_supersession = json.loads(v2_supersession_path.read_bytes())
+    v3_bytes = v3_path.read_bytes()
+    v3 = json.loads(v3_bytes)
     v1_sha256 = hashlib.sha256(v1_bytes).hexdigest()
     v2_sha256 = hashlib.sha256(v2_bytes).hexdigest()
     supersession_sha256 = hashlib.sha256(supersession_bytes).hexdigest()
+    v2_supersession_sha256 = hashlib.sha256(
+        v2_supersession_path.read_bytes()
+    ).hexdigest()
+    v3_sha256 = hashlib.sha256(v3_bytes).hexdigest()
 
     assert "### Real-use Product Observation" in text
-    assert "`sixshop3-storefront-fe`" in text
-    assert "`market-reasoning-engine`" in text
-    assert "`research-auto`" in text
-    assert "Completion Reliability와 Operator Experience를 독립 판정 축" in text
-    assert "chronological first-N 6건" in text
-    assert "`COMPLETION_SAMPLE_READY`" in text
-    assert "`OPERATOR_EXPERIENCE_SAMPLE_READY`" in text
-    assert "`OPERATIONAL_SAMPLE_READY`" in text
-    assert "comparative baseline은 `none_by_design`" in text
-    assert "p95는 각각 `100ms 이하`" in text
-    assert "최소 24시간 buffer" in text
-    assert "exact 14일 뒤 자동 연장 없이 종료" in text
+    assert "Codex CLI 자연 implementation 작업의 절대 수용성" in text
+    assert "순서 첫 10건을 최소 2개 저장소" in text
+    assert "verified completion `10/10`" in text
+    assert "primary correction `3/10 이하`" in text
+    assert "`PRELIMINARY_ACCEPTABLE`" in text
+    assert "`LOW_NATURAL_DEMAND`" in text
+    assert "정확히 24시간 raw follow-up" in text
     assert supersession["terminal_status"] == "superseded_before_observation"
     assert supersession["observed_candidate_count"] == 0
     assert supersession["observation_allowed"] is False
@@ -413,12 +421,13 @@ def test_real_use_product_observation_is_preregistered_before_n_child_acceptance
     assert v1_sha256 in text
     assert supersession_sha256 in text
     assert v2_sha256 in text
-    assert v2["aggregation"]["single_axis_ready_allowed"] is False
-    assert v2["aggregation"]["required_inputs"] == [
-        "COMPLETION_SAMPLE_READY",
-        "OPERATOR_EXPERIENCE_SAMPLE_READY",
-        "VALID_FINAL_USER_SIGNOFF",
-    ]
+    assert v2_supersession_sha256 in text
+    assert v3_sha256 in text
+    assert v2_supersession["superseded_artifact_sha256"] == v2_sha256
+    assert v2_supersession["observed_candidate_count"] == 0
+    assert v3["study_status"] == "draft_unregistered"
+    assert v3["actual_observation"]["candidate_count"] == 0
+    assert v3["synthetic_evidence_counts_toward_observation"] is False
 
 
 def test_roadmap_history_matches_the_frozen_section_manifest() -> None:

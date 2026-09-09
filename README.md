@@ -29,7 +29,13 @@ WeeklyKPI bounded local dashboard는 스킬 구현 전 `LOCAL_DISCOVERY_PROTOTYP
 
 이번 Persona Pilot의 공식 claim은 blind correction-required case 감소이며, 실제 일상 사용자의 수정 지시 30% 감소는 후속 confirmatory study 전까지 `NOT_YET_PROVEN`입니다.
 
-기존 completion lineage를 활용하는 lightweight Completion Observation V0 projection CLI를 추가했습니다. sealed terminal·completion·lineage 원문과 raw request/output을 보존하고, 저장소 키와 분리된 승인 executor trust anchor로 execution receipt를 검증합니다. population closure와 report는 등록된 저장소의 실제 `.omc/state/sessions`를 다시 전수 스캔하고 `(captured_at, repo_id, work_id)` 순서의 첫 implementation 10건·최소 2개 저장소 조건을 검사합니다. 현재 상태는 `PROJECTION_IMPLEMENTED_CAPTURE_NOT_STARTED`, 실제 표본 `0/10`입니다. 자동 candidate hook과 승인 executor receipt 발급 경로는 아직 없으므로 수정 지시 감소나 제품 효과를 증명하지 않습니다.
+기존 completion lineage를 활용하는 lightweight Completion Observation V0 projection CLI는 `CAPTURE_FEASIBILITY_ONLY`로 유지합니다. sealed terminal·completion·lineage 원문과 raw request/output을 보존하고, 저장소 키와 분리된 승인 executor trust anchor로 execution receipt를 검증합니다. population closure와 report는 등록된 저장소의 실제 `.omc/state/sessions`를 다시 전수 스캔하고 `(captured_at, repo_id, work_id)` 순서의 첫 implementation 10건·최소 2개 저장소 조건을 검사합니다. 현재 상태는 `PROJECTION_IMPLEMENTED_CAPTURE_NOT_STARTED`, 실제 표본 `0/10`이며 자동 candidate hook은 구현하지 않았고 제품 효과 근거로 승격하지 않습니다.
+
+후속 v3 절대 수용성 Pilot은 `scripts/omc_absolute_acceptability_pilot.py`에 구현했습니다. 저장소 밖 0600 Ed25519 custody key로 실제 `codex exec --json` 원문을 성공·실패와 관계없이 봉인하고, evaluator가 등록 저장소의 모든 start capture·work-class lock·repository-signed executor-start를 다시 스캔합니다. executor 분류는 start 후 60초 안에 기록하고 그 이후에만 execution을 허용하며, execution receipt가 선택된 executor-start digest를 다시 결속합니다. 별도 source authority가 repository-persisted case stream과 순서가 고정된 completion·verification·비어 있지 않은 raw follow-up event를 봉인하며 evidence 요약과 exact equality를 확인합니다. 완료 case에는 exit code 0과 최종 `turn.completed`, `start ≤ executor-start ≤ execution ≤ completion ≤ exact 24h observation ≤ 실제 collector closure ≤ evaluation`이 필요합니다. `case-close`는 창 이전 완료 case 봉인을 거부하고, 서명된 실패 execution·verification 원문이 있는 OMC/non-OMC 귀책 미완료 case도 strict null/empty shape로 수집하며 동일 내용 재시도만 허용합니다. 14일 first-start 10건(최소 2개 저장소), 미래 시각·구간 밖 event·synthetic provenance·위조·누락 fail-close, 4-way outcome 판정을 제공합니다. v2는 관찰 0건 상태에서 종료했으며 v3도 아직 `draft_unregistered`, 실제 표본 `0/10`입니다.
+
+v3 `run-codex-sidecar`는 `--registration`이 필수이며, 등록된 실행 키·저장소·작업·요청과 repository-signed executor-start를 실행 전에 검증합니다. 모집단은 세션 디렉터리를 기준으로 대조하며 start capture가 없는 세션은 조용히 제외하지 않고 `OBSERVATION_INCONCLUSIVE`로 차단합니다. 과거 세션도 관찰 구간 밖임을 확인할 유효 start capture가 없으면 같은 제한이 적용됩니다.
+
+v3 collector·evaluator는 artifact를 한 번 읽고 크기·해시를 검증한 동일 바이트만 사용합니다. 손상된 영수증·artifact·JSON 인코딩과 잘못된 분류 타입은 구조화된 실패로 반환합니다. 현재 검증은 로컬 회귀 테스트이며 실제 Codex smoke·자연 작업 표본·제품 효과의 근거는 아닙니다. 다음 준비 항목은 [로드맵의 Real-use Product Observation](docs/automatic_model_routing_roadmap.md#real-use-product-observation)을 따릅니다.
 
 Product Value 결과는 두 판정을 분리합니다.
 

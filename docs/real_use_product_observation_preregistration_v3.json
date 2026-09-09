@@ -1,0 +1,176 @@
+{
+  "schema_version": "omc-absolute-acceptability/v3",
+  "study_id": "real-use-absolute-acceptability-v3",
+  "study_status": "draft_unregistered",
+  "claim_eligible": false,
+  "observation_allowed": false,
+  "claim_boundary": "ABSOLUTE_ACCEPTABILITY_PRELIMINARY_ONLY",
+  "product_question": "Can OMC finish natural Codex CLI implementation work at an acceptable absolute quality and completion level?",
+  "predecessor": {
+    "artifact": "docs/real_use_product_observation_preregistration_v2.json",
+    "artifact_sha256": "9d0609130881029edb129d12c9046a4e86d47cb510741cf35bf633c115ffed46",
+    "supersession_artifact": "docs/real_use_product_observation_v2_supersession.json",
+    "terminal_status": "superseded_before_observation",
+    "inherited_candidate_count": 0,
+    "sample_inheritance_allowed": false
+  },
+  "observation_window": {
+    "starts_at": null,
+    "ends_at": null,
+    "fixed_duration_days": 14,
+    "automatic_extension_allowed": false,
+    "registration_required_before_start": true
+  },
+  "cohort": {
+    "executor_surface": "codex_cli_json",
+    "work_class": "implementation",
+    "selection_policy": "chronological_first_start",
+    "selection_count": 10,
+    "minimum_repositories": 2,
+    "replacement_allowed": false,
+    "incomplete_starts_included": true
+  },
+  "inventory": {
+    "source": "sealed_omc_session_start_receipts",
+    "every_start_must_be_classified": true,
+    "complete_population_reconciliation_required": true,
+    "signed_closure_required": true,
+    "caller_asserted_validity_allowed": false,
+    "raw_source_start_receipt_required": true,
+    "repository_start_trust_anchors_required": true,
+    "independent_source_population_receipt_required": true,
+    "inventory_source_exact_equality_required": true,
+    "evaluator_repository_rescan_required": true,
+    "missing_or_invalid_policy": "OBSERVATION_INCONCLUSIVE",
+    "tie_breaker": "started_at_then_work_id_ascending"
+  },
+  "execution_evidence": {
+    "producer": "codex_cli_exec_json_sidecar",
+    "raw_request_required": true,
+    "raw_jsonl_required": true,
+    "exit_code_required": true,
+    "detached_ed25519_signature_required": true,
+    "private_key_custody": "outside_every_enrolled_repository",
+    "trusted_public_key_registration_required": true,
+    "successful_exit_code_required": true,
+    "terminal_event_type": "turn.completed",
+    "repository_signed_executor_start_required": true,
+    "executor_start_recording_max_delay_seconds": 60,
+    "retrospective_executor_classification_forbidden": true,
+    "executor_start_execution_digest_binding_required": true,
+    "executor_start_precedes_execution_required": true,
+    "signed_unsuccessful_execution_allowed_for_incomplete_case": true,
+    "tamper_or_binding_mismatch_policy": "OBSERVATION_INCONCLUSIVE"
+  },
+  "correction_window": {
+    "hours_after_first_completion": 24,
+    "early_close_on_acceptance_allowed": false,
+    "raw_followup_required": true,
+    "blank_raw_followup_forbidden": true,
+    "ambiguous_taxonomy_policy": "count_as_primary_correction",
+    "signed_case_receipt_required": true,
+    "future_timestamp_policy": "OBSERVATION_INCONCLUSIVE",
+    "outside_window_event_policy": "OBSERVATION_INCONCLUSIVE",
+    "case_closure_uses_collector_current_time": true
+  },
+  "evidence_authority": {
+    "trusted_public_key_registration_required": true,
+    "key_reuse_allowed": false,
+    "natural_provenance_required": true,
+    "signed_artifacts": [
+      "population_inventory",
+      "case_observation"
+    ],
+    "case_required_bindings": [
+      "study_id",
+      "work_id",
+      "execution_receipt_sha256",
+      "verification_raw_output",
+      "corrections"
+    ]
+  },
+  "source_authority": {
+    "trusted_public_key_registration_required": true,
+    "key_reuse_allowed": false,
+    "signed_artifacts": [
+      "source_population",
+      "source_case_observation"
+    ],
+    "repository_persisted_case_stream_required": true,
+    "ordered_raw_source_events_required": true,
+    "repository_signed_case_closure_required": true,
+    "signed_case_closed_at_required": true,
+    "repository_signed_verification_receipt_required": true,
+    "verification_artifact_digest_recheck_required": true,
+    "failed_verification_evidence_allowed_for_incomplete_case": true,
+    "evidence_summary_exact_equality_required": true
+  },
+  "primary_correction_taxonomy": [
+    "defect_correction",
+    "missing_requirement",
+    "persona_mismatch",
+    "ambiguous"
+  ],
+  "thresholds": {
+    "verified_completion_required_count": 10,
+    "primary_correction_maximum_count": 3,
+    "omc_attributable_incomplete_maximum_count": 0
+  },
+  "outcomes": [
+    "PRELIMINARY_ACCEPTABLE",
+    "NOT_ACCEPTABLE",
+    "OBSERVATION_INCONCLUSIVE",
+    "LOW_NATURAL_DEMAND"
+  ],
+  "outcome_precedence": [
+    "INVALID_OR_MISSING_EVIDENCE -> OBSERVATION_INCONCLUSIVE",
+    "COMPLETE_INVENTORY_WITH_FEWER_THAN_10_STARTS_OR_2_REPOSITORIES -> LOW_NATURAL_DEMAND",
+    "ALL_THRESHOLDS_PASS -> PRELIMINARY_ACCEPTABLE",
+    "OTHERWISE -> NOT_ACCEPTABLE"
+  ],
+  "synthetic_evidence_counts_toward_observation": false,
+  "excluded_claims": [
+    "Codex or Claude Code comparative superiority",
+    "30 percent correction reduction",
+    "Persona Pilot validation",
+    "production readiness"
+  ],
+  "excluded_execution": [
+    "Codex Desktop ordinary chat",
+    "automatic push",
+    "automatic pull request",
+    "automatic deploy"
+  ],
+  "source_freeze": {
+    "omc_kit_commit": null,
+    "evaluator_sha256": null,
+    "trusted_execution_public_key": null,
+    "trusted_evidence_public_key": null,
+    "trusted_source_public_key": null,
+    "trusted_start_public_keys_by_repository": null,
+    "trusted_repository_roots": null,
+    "registered_repository_paths": null
+  },
+  "activation_contract": {
+    "builder": "activate_preregistration",
+    "output_status": "registered",
+    "preregistration_sha256_binding_required": true,
+    "flat_runtime_registration_schema_is_deterministically_derived": true
+  },
+  "collection_contract": {
+    "commands": [
+      "executor-start",
+      "population-close",
+      "case-close"
+    ],
+    "write_policy": "exclusive_create_with_exact_match_case_retry",
+    "incomplete_case_collection_required": true,
+    "incomplete_case_shape": "completed=false; completion_at=null; correction_observed_through=null; corrections=[]; attribution=omc|non_omc",
+    "timeline_policy": "start <= executor classification within 60s <= execution <= completion <= exact_24h_observation <= collector closure <= evaluation"
+  },
+  "actual_observation": {
+    "status": "NOT_STARTED",
+    "candidate_count": 0,
+    "synthetic_validation_only": true
+  }
+}

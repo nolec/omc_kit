@@ -7,6 +7,10 @@ from pathlib import Path
 
 V1_PATH = Path("docs/real_use_product_observation_preregistration_v1.json")
 V2_PATH = Path("docs/real_use_product_observation_preregistration_v2.json")
+V3_PATH = Path("docs/real_use_product_observation_preregistration_v3.json")
+V2_SUPERSESSION_PATH = Path(
+    "docs/real_use_product_observation_v2_supersession.json"
+)
 V1_SUPERSESSION_PATH = Path(
     "docs/real_use_product_observation_v1_supersession.json"
 )
@@ -59,6 +63,114 @@ def test_v2_is_a_non_executable_contract_until_source_registration() -> None:
         "freeze exact timestamps and source hashes before immutable registry "
         "registration; enroll repositories afterward; observation starts only "
         "after final enrollment plus buffer"
+    )
+
+
+def test_v2_is_closed_without_mutation_before_v3() -> None:
+    v2_bytes = V2_PATH.read_bytes()
+    supersession = _load(V2_SUPERSESSION_PATH)
+
+    assert hashlib.sha256(v2_bytes).hexdigest() == (
+        "9d0609130881029edb129d12c9046a4e86d47cb510741cf35bf633c115ffed46"
+    )
+    assert supersession["superseded_artifact"] == V2_PATH.as_posix()
+    assert supersession["superseded_artifact_sha256"] == hashlib.sha256(
+        v2_bytes
+    ).hexdigest()
+    assert supersession["terminal_status"] == "superseded_before_observation"
+    assert supersession["observed_candidate_count"] == 0
+    assert supersession["successor_artifact"] == V3_PATH.as_posix()
+
+
+def test_v3_freezes_absolute_acceptability_and_evidence_boundaries() -> None:
+    preregistration = _load(V3_PATH)
+
+    assert preregistration["schema_version"] == "omc-absolute-acceptability/v3"
+    assert preregistration["study_status"] == "draft_unregistered"
+    assert preregistration["observation_allowed"] is False
+    assert preregistration["claim_eligible"] is False
+    assert preregistration["claim_boundary"] == (
+        "ABSOLUTE_ACCEPTABILITY_PRELIMINARY_ONLY"
+    )
+    assert preregistration["cohort"] == {
+        "executor_surface": "codex_cli_json",
+        "work_class": "implementation",
+        "selection_policy": "chronological_first_start",
+        "selection_count": 10,
+        "minimum_repositories": 2,
+        "replacement_allowed": False,
+        "incomplete_starts_included": True,
+    }
+    assert preregistration["observation_window"]["fixed_duration_days"] == 14
+    assert preregistration["correction_window"] == {
+        "hours_after_first_completion": 24,
+        "early_close_on_acceptance_allowed": False,
+        "raw_followup_required": True,
+        "blank_raw_followup_forbidden": True,
+        "ambiguous_taxonomy_policy": "count_as_primary_correction",
+        "signed_case_receipt_required": True,
+        "future_timestamp_policy": "OBSERVATION_INCONCLUSIVE",
+        "outside_window_event_policy": "OBSERVATION_INCONCLUSIVE",
+        "case_closure_uses_collector_current_time": True,
+    }
+    assert preregistration["thresholds"] == {
+        "verified_completion_required_count": 10,
+        "primary_correction_maximum_count": 3,
+        "omc_attributable_incomplete_maximum_count": 0,
+    }
+    assert preregistration["outcomes"] == [
+        "PRELIMINARY_ACCEPTABLE",
+        "NOT_ACCEPTABLE",
+        "OBSERVATION_INCONCLUSIVE",
+        "LOW_NATURAL_DEMAND",
+    ]
+    assert preregistration["synthetic_evidence_counts_toward_observation"] is False
+    assert preregistration["inventory"]["signed_closure_required"] is True
+    assert preregistration["inventory"]["caller_asserted_validity_allowed"] is False
+    assert preregistration["inventory"]["raw_source_start_receipt_required"] is True
+    assert preregistration["inventory"]["repository_start_trust_anchors_required"] is True
+    assert preregistration["inventory"]["independent_source_population_receipt_required"] is True
+    assert preregistration["inventory"]["inventory_source_exact_equality_required"] is True
+    assert preregistration["inventory"]["evaluator_repository_rescan_required"] is True
+    assert preregistration["evidence_authority"]["key_reuse_allowed"] is False
+    assert preregistration["evidence_authority"]["natural_provenance_required"] is True
+    assert preregistration["source_authority"]["signed_artifacts"] == [
+        "source_population",
+        "source_case_observation",
+    ]
+    assert preregistration["source_authority"]["repository_persisted_case_stream_required"] is True
+    assert preregistration["source_authority"]["repository_signed_case_closure_required"] is True
+    assert preregistration["source_authority"]["repository_signed_verification_receipt_required"] is True
+    assert preregistration["execution_evidence"]["successful_exit_code_required"] is True
+    assert preregistration["execution_evidence"]["terminal_event_type"] == "turn.completed"
+    assert preregistration["execution_evidence"]["repository_signed_executor_start_required"] is True
+    assert preregistration["execution_evidence"]["executor_start_recording_max_delay_seconds"] == 60
+    assert preregistration["execution_evidence"]["retrospective_executor_classification_forbidden"] is True
+    assert preregistration["execution_evidence"]["executor_start_execution_digest_binding_required"] is True
+    assert preregistration["execution_evidence"]["executor_start_precedes_execution_required"] is True
+    assert preregistration["execution_evidence"]["signed_unsuccessful_execution_allowed_for_incomplete_case"] is True
+    assert preregistration["source_authority"]["signed_case_closed_at_required"] is True
+    assert preregistration["source_authority"]["failed_verification_evidence_allowed_for_incomplete_case"] is True
+    assert preregistration["source_freeze"]["trusted_source_public_key"] is None
+    assert preregistration["source_freeze"]["trusted_repository_roots"] is None
+    assert preregistration["source_freeze"]["registered_repository_paths"] is None
+    assert preregistration["collection_contract"]["commands"] == [
+        "executor-start",
+        "population-close",
+        "case-close",
+    ]
+    assert preregistration["collection_contract"]["write_policy"] == (
+        "exclusive_create_with_exact_match_case_retry"
+    )
+    assert preregistration["collection_contract"]["incomplete_case_collection_required"] is True
+    assert preregistration["collection_contract"]["incomplete_case_shape"].startswith(
+        "completed=false"
+    )
+    assert "within 60s <= execution" in preregistration["collection_contract"][
+        "timeline_policy"
+    ]
+    assert preregistration["activation_contract"]["builder"] == (
+        "activate_preregistration"
     )
 
 
