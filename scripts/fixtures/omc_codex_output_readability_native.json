@@ -1,0 +1,92 @@
+{
+  "schema_version": "omc-codex-readability-native/v1",
+  "source": "native_codex_cli",
+  "model": "gpt-5.6-luna",
+  "execution_mode": "ephemeral_read_only",
+  "samples": [
+    {
+      "stage": "plan",
+      "outcome": "ready",
+      "captured_at": "2026-09-09T11:56:28+09:00",
+      "output": "결정: 인증 오류 매핑 구현 계획을 진행합니다.\n범위: 인증 오류를 정의된 사용자 메시지와 상태 코드로 매핑합니다.\n태스크: 오류 유형별 매핑 로직을 구현하고 테스트합니다.\n승인 요청: 계획을 승인해 주세요.\n<!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"plan\",\"outcome\":\"ready\",\"risk\":\"low\",\"next_skill\":\"omc-task\",\"user_selection_needed\":false,\"reason_code\":null} -->\nVERDICT: PROCEED",
+      "execution": {
+        "prompt": "한국어 OMC plan 단계의 최종 사용자 응답만 작성하세요. 상황: 인증 오류 매핑 구현 요청이 명확하고 계획이 준비됨. 첫 네 가시 행은 정확히 결정:, 범위:, 태스크:, 승인 요청: 순서로 시작해야 합니다. 20줄 이하, 동일 문장 반복 없음, 다음 행동은 승인 요청 한 개만 쓰세요. 내부 라우팅 상태명을 노출하지 마세요. 마지막 두 줄은 완전한 <!-- OMC_OUTPUT: JSON --> 과 VERDICT: PROCEED로 작성하세요. JSON은 schema_version omc-output/v1, stage plan, outcome ready, risk low, next_skill omc-task, user_selection_needed false, reason_code null을 포함하세요.",
+        "raw_event_jsonl": "{\"type\":\"thread.started\",\"thread_id\":\"01a08418-4a8f-7012-acae-a86fe10d8ea1\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"결정: 인증 오류 매핑 구현 계획을 진행합니다.\\n범위: 인증 오류를 정의된 사용자 메시지와 상태 코드로 매핑합니다.\\n태스크: 오류 유형별 매핑 로직을 구현하고 테스트합니다.\\n승인 요청: 계획을 승인해 주세요.\\n<!-- OMC_OUTPUT: {\\\"schema_version\\\":\\\"omc-output/v1\\\",\\\"stage\\\":\\\"plan\\\",\\\"outcome\\\":\\\"ready\\\",\\\"risk\\\":\\\"low\\\",\\\"next_skill\\\":\\\"omc-task\\\",\\\"user_selection_needed\\\":false,\\\"reason_code\\\":null} -->\\nVERDICT: PROCEED\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":12299,\"cached_input_tokens\":8960,\"cache_write_input_tokens\":0,\"output_tokens\":242,\"reasoning_output_tokens\":125}}\n",
+        "provider_session_id": "01a08418-4a8f-7012-acae-a86fe10d8ea1",
+        "prompt_sha256": "592bd60bb4a9b06925f4ca49c3d2f8c78d4e12ea0d1e84e4d913107c1a82fc75",
+        "raw_event_sha256": "6b6864f8fd78be7cecf66a75ee37ca43f60497ea864833cbd661ca2367267423",
+        "output_sha256": "d81e9c63540a1885b2ebedc127bd4a7a3ddc63a48c73a1f45a28e1acb1146571"
+      }
+    },
+    {
+      "stage": "plan",
+      "outcome": "blocked",
+      "captured_at": "2026-09-09T11:59:34+09:00",
+      "output": "결정: 인증 공급자 선택이 필요합니다.\n범위: 인증 공급자 확정 전 보류합니다.\ndecisions_required: 사용할 인증 공급자를 선택해 주세요.\n승인 요청: Google, Microsoft, Auth0 중 하나를 승인해 주세요.\n<!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"plan\",\"outcome\":\"unresolved\",\"risk\":\"high\",\"next_skill\":null,\"user_selection_needed\":true,\"reason_code\":\"scope_unresolved\"} -->\nVERDICT: HOLD",
+      "execution": {
+        "prompt": "최종 답변만 쓰세요. 첫 4행: 결정:, 범위:, decisions_required:, 승인 요청:. 인증 공급자 선택을 요청하고 내부 라우팅 상태명은 쓰지 마세요. 그 다음 다른 행 없이 정확히 다음 두 행으로 끝내세요: <!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"plan\",\"outcome\":\"unresolved\",\"risk\":\"high\",\"next_skill\":null,\"user_selection_needed\":true,\"reason_code\":\"scope_unresolved\"} --> 그리고 VERDICT: HOLD. JSON을 별도 행으로 출력하지 마세요.",
+        "raw_event_jsonl": "{\"type\":\"thread.started\",\"thread_id\":\"01a0841b-24a0-7810-8063-8590f5ae3eb5\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"결정: 인증 공급자 선택이 필요합니다.\\n범위: 인증 공급자 확정 전 보류합니다.\\ndecisions_required: 사용할 인증 공급자를 선택해 주세요.\\n승인 요청: Google, Microsoft, Auth0 중 하나를 승인해 주세요.\\n<!-- OMC_OUTPUT: {\\\"schema_version\\\":\\\"omc-output/v1\\\",\\\"stage\\\":\\\"plan\\\",\\\"outcome\\\":\\\"unresolved\\\",\\\"risk\\\":\\\"high\\\",\\\"next_skill\\\":null,\\\"user_selection_needed\\\":true,\\\"reason_code\\\":\\\"scope_unresolved\\\"} -->\\nVERDICT: HOLD\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":12267,\"cached_input_tokens\":8960,\"cache_write_input_tokens\":0,\"output_tokens\":179,\"reasoning_output_tokens\":68}}\n",
+        "provider_session_id": "01a0841b-24a0-7810-8063-8590f5ae3eb5",
+        "prompt_sha256": "51b09cab626c301b9570f8532f3779e35621c6881a5eeb50a077ccaf5a2ab822",
+        "raw_event_sha256": "e28054a47bd03b7e27680aaba98a3e394d60260314adac8416b207858757a32e",
+        "output_sha256": "3249d8855e08fc40f010f6aaa7dcaf7ffb9580e1d9d15cc1619a3309950d0cc4"
+      }
+    },
+    {
+      "stage": "task",
+      "outcome": "ready",
+      "captured_at": "2026-09-09T11:59:44+09:00",
+      "output": "결과: 인증 오류 매핑과 테스트 12개 완료\n변경: 인증 오류 매핑 반영\n검증: 테스트 12개 통과\n다음 행동: $omc-review 한 개\n<!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"task\",\"outcome\":\"done\",\"risk\":\"low\",\"next_skill\":\"omc-review\",\"user_selection_needed\":false,\"reason_code\":null} -->\nVERDICT: PROCEED",
+      "execution": {
+        "prompt": "최종 답변만 쓰세요. 첫 4행: 결과:, 변경:, 검증:, 다음 행동:. 인증 오류 매핑과 테스트 12개 완료, 다음 행동은 $omc-review 한 개, 내부 라우팅 상태명은 쓰지 마세요. 그 다음 다른 행 없이 정확히 다음 두 행으로 끝내세요: <!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"task\",\"outcome\":\"done\",\"risk\":\"low\",\"next_skill\":\"omc-review\",\"user_selection_needed\":false,\"reason_code\":null} --> 그리고 VERDICT: PROCEED. JSON을 별도 행으로 출력하지 마세요.",
+        "raw_event_jsonl": "{\"type\":\"thread.started\",\"thread_id\":\"01a0841b-456c-77d0-9162-8baeb0a1871a\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"결과: 인증 오류 매핑과 테스트 12개 완료\\n변경: 인증 오류 매핑 반영\\n검증: 테스트 12개 통과\\n다음 행동: $omc-review 한 개\\n<!-- OMC_OUTPUT: {\\\"schema_version\\\":\\\"omc-output/v1\\\",\\\"stage\\\":\\\"task\\\",\\\"outcome\\\":\\\"done\\\",\\\"risk\\\":\\\"low\\\",\\\"next_skill\\\":\\\"omc-review\\\",\\\"user_selection_needed\\\":false,\\\"reason_code\\\":null} -->\\nVERDICT: PROCEED\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":12281,\"cached_input_tokens\":8960,\"cache_write_input_tokens\":0,\"output_tokens\":193,\"reasoning_output_tokens\":89}}\n",
+        "provider_session_id": "01a0841b-456c-77d0-9162-8baeb0a1871a",
+        "prompt_sha256": "8ab4409252e1e2a168c3a4399cbf20981662d023e1e4372a469627e8b8d63d99",
+        "raw_event_sha256": "e747ecfd2192272a7a7868cb5ef734e03f6b2ea837d1621e58aaf93fe771fa3a",
+        "output_sha256": "4bd24be31a5cab7e4d0a1955096f33aea4f7530d5b9d088332485a3b200cd091"
+      }
+    },
+    {
+      "stage": "task",
+      "outcome": "blocked",
+      "captured_at": "2026-09-09T11:59:53+09:00",
+      "output": "결과: 실제 fixture가 없어 작업이 차단되었습니다.\n원인: 검증에 필요한 fixture 누락.\n영향: 수정 결과를 신뢰성 있게 확인할 수 없습니다.\n수정 방향: 실제 fixture를 제공해 주세요.\n다음 행동: 실제 fixture 제공 후 작업을 재개합니다.\n<!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"task\",\"outcome\":\"blocked\",\"risk\":\"high\",\"next_skill\":null,\"user_selection_needed\":true,\"reason_code\":\"fixture_missing\"} -->\nVERDICT: BLOCK",
+      "execution": {
+        "prompt": "최종 답변만 쓰세요. 첫 5행: 결과:, 원인:, 영향:, 수정 방향:, 다음 행동:. fixture 누락 차단, 실제 fixture 제공 요청, 내부 라우팅 상태명은 쓰지 마세요. 그 다음 다른 행 없이 정확히 다음 두 행으로 끝내세요: <!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"task\",\"outcome\":\"blocked\",\"risk\":\"high\",\"next_skill\":null,\"user_selection_needed\":true,\"reason_code\":\"fixture_missing\"} --> 그리고 VERDICT: BLOCK. JSON을 별도 행으로 출력하지 마세요.",
+        "raw_event_jsonl": "{\"type\":\"thread.started\",\"thread_id\":\"01a0841b-6b57-7972-ad4d-9d6a76132e36\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"결과: 실제 fixture가 없어 작업이 차단되었습니다.\\n원인: 검증에 필요한 fixture 누락.\\n영향: 수정 결과를 신뢰성 있게 확인할 수 없습니다.\\n수정 방향: 실제 fixture를 제공해 주세요.\\n다음 행동: 실제 fixture 제공 후 작업을 재개합니다.\\n<!-- OMC_OUTPUT: {\\\"schema_version\\\":\\\"omc-output/v1\\\",\\\"stage\\\":\\\"task\\\",\\\"outcome\\\":\\\"blocked\\\",\\\"risk\\\":\\\"high\\\",\\\"next_skill\\\":null,\\\"user_selection_needed\\\":true,\\\"reason_code\\\":\\\"fixture_missing\\\"} -->\\nVERDICT: BLOCK\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":12271,\"cached_input_tokens\":8960,\"cache_write_input_tokens\":0,\"output_tokens\":214,\"reasoning_output_tokens\":94}}\n",
+        "provider_session_id": "01a0841b-6b57-7972-ad4d-9d6a76132e36",
+        "prompt_sha256": "e1cc58e5da39cec2c6328e6f4cb1888039d092f518719cb5b440825897f336ab",
+        "raw_event_sha256": "2e0c4ec9941602e58f77b3473f78e7d74fd459a8aec578f65db1a82006632901",
+        "output_sha256": "1417423c271cc5c8aa83a328b9a96dc983df11d3c40bd1030d7df38f0a3a648c"
+      }
+    },
+    {
+      "stage": "review",
+      "outcome": "ready",
+      "captured_at": "2026-09-09T12:01:40+09:00",
+      "output": "[치명][중대][경미][제안]: 없음\n검증: 테스트 12개 통과\n판정: APPROVE\n다음 행동: 변경사항을 커밋할지 결정해 주세요.\n<!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"review\",\"outcome\":\"approved\",\"risk\":\"low\",\"next_skill\":null,\"user_selection_needed\":true,\"reason_code\":null} -->\nVERDICT: APPROVE",
+      "execution": {
+        "prompt": "최종 답변은 정확히 아래 6행만 출력하세요. 코드 펜스와 설명을 추가하지 마세요. 마지막 APPROVE 뒤에는 마침표를 붙이지 마세요.\n[치명][중대][경미][제안]: 없음\n검증: 테스트 12개 통과\n판정: APPROVE\n다음 행동: 변경사항을 커밋할지 결정해 주세요.\n<!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"review\",\"outcome\":\"approved\",\"risk\":\"low\",\"next_skill\":null,\"user_selection_needed\":true,\"reason_code\":null} -->\nVERDICT: APPROVE",
+        "raw_event_jsonl": "{\"type\":\"thread.started\",\"thread_id\":\"01a0841d-10a4-75a0-ab4d-170da455f1d6\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"[치명][중대][경미][제안]: 없음\\n검증: 테스트 12개 통과\\n판정: APPROVE\\n다음 행동: 변경사항을 커밋할지 결정해 주세요.\\n<!-- OMC_OUTPUT: {\\\"schema_version\\\":\\\"omc-output/v1\\\",\\\"stage\\\":\\\"review\\\",\\\"outcome\\\":\\\"approved\\\",\\\"risk\\\":\\\"low\\\",\\\"next_skill\\\":null,\\\"user_selection_needed\\\":true,\\\"reason_code\\\":null} -->\\nVERDICT: APPROVE\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":12282,\"cached_input_tokens\":8960,\"cache_write_input_tokens\":0,\"output_tokens\":164,\"reasoning_output_tokens\":61}}\n",
+        "provider_session_id": "01a0841d-10a4-75a0-ab4d-170da455f1d6",
+        "prompt_sha256": "c4a8d031795e8a61d176e0ba5593049b6d32b0ad5bb04240f887fa82bbb67268",
+        "raw_event_sha256": "684519450b2cc3b1d5d90f3b8f35b1afdc797477baf45ac52d9ad20be6bad1d4",
+        "output_sha256": "b3ef484084f1fc66d01ee864abf2426f855e09fcef0aab915918d5a281ac8a13"
+      }
+    },
+    {
+      "stage": "review",
+      "outcome": "blocked",
+      "captured_at": "2026-09-09T12:00:14+09:00",
+      "output": "[중대] validator 누락 수정 필요\n원인: validator가 검증 절차에 포함되지 않음\n영향: 결과 신뢰성과 검증 완결성 저하\n수정 방향: validator를 검증 흐름에 추가\n검증: validator 실행 및 누락 여부 재확인\n판정: REVISE\n다음 행동: $omc-task\n<!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"review\",\"outcome\":\"blocked\",\"risk\":\"medium\",\"next_skill\":\"omc-task\",\"user_selection_needed\":false,\"reason_code\":\"finding\"} -->\nVERDICT: REVISE",
+      "execution": {
+        "prompt": "최종 답변만 쓰세요. 첫 7행: [중대], 원인:, 영향:, 수정 방향:, 검증:, 판정:, 다음 행동:. validator 누락 수정 필요, 다음 행동은 $omc-task 한 개, 내부 라우팅 상태명은 쓰지 마세요. 그 다음 다른 행 없이 정확히 다음 두 행으로 끝내세요: <!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"review\",\"outcome\":\"blocked\",\"risk\":\"medium\",\"next_skill\":\"omc-task\",\"user_selection_needed\":false,\"reason_code\":\"finding\"} --> 그리고 VERDICT: REVISE. JSON을 별도 행으로 출력하지 마세요.",
+        "raw_event_jsonl": "{\"type\":\"thread.started\",\"thread_id\":\"01a0841b-b904-7a60-bc1b-b0ada5cdd7f8\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"[중대] validator 누락 수정 필요\\n원인: validator가 검증 절차에 포함되지 않음\\n영향: 결과 신뢰성과 검증 완결성 저하\\n수정 방향: validator를 검증 흐름에 추가\\n검증: validator 실행 및 누락 여부 재확인\\n판정: REVISE\\n다음 행동: $omc-task\\n<!-- OMC_OUTPUT: {\\\"schema_version\\\":\\\"omc-output/v1\\\",\\\"stage\\\":\\\"review\\\",\\\"outcome\\\":\\\"blocked\\\",\\\"risk\\\":\\\"medium\\\",\\\"next_skill\\\":\\\"omc-task\\\",\\\"user_selection_needed\\\":false,\\\"reason_code\\\":\\\"finding\\\"} -->\\nVERDICT: REVISE\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":12287,\"cached_input_tokens\":8960,\"cache_write_input_tokens\":0,\"output_tokens\":235,\"reasoning_output_tokens\":94}}\n",
+        "provider_session_id": "01a0841b-b904-7a60-bc1b-b0ada5cdd7f8",
+        "prompt_sha256": "0c56b2808b18f25e379b3c4512c20a0fa02eed5c0ee6205f97a5ef05c0ef67ac",
+        "raw_event_sha256": "8a6527a09dbee61e9b9f67ed841e45c96671c4fe428e377b0493d2b341a59889",
+        "output_sha256": "0f20630e96932c41d037ad7071c83bd12e36f742c0f457826ae62aedd9731290"
+      }
+    }
+  ]
+}

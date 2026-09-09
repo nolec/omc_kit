@@ -237,7 +237,8 @@ def test_task_skill_prioritizes_current_bottleneck_over_default_pipeline():
     for marker in [
         "현재 병목 > 기본 파이프라인",
         "구현 완료 + 게이트 통과면 `$omc-review`",
-        "구현 완료 + 사용자가 일단 결과만 확인하려는 상태면 사용자 선택 대기",
+        "구현 완료 + 사용자가 일단 결과만 확인하려는 상태면 내부 라우팅은 사용자 선택 대기",
+        "화면에는 `결과를 확인한 뒤 리뷰 진행 여부를 알려주세요.`",
         "실패 원인 불명 → `$omc-investigate`",
     ]:
         assert marker in text

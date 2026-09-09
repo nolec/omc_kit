@@ -15,7 +15,7 @@ find . -newer .git/index
 python3 scripts/omc.py state status --target .
 ```
 ## 필수 체크
-- 범위 확정 / 파일:라인 근거 / 검증 커맨드를 기록한다. 출력이 길어져도 마지막 `검증 커맨드 / 판정 / VERDICT / 다음 추천`은 생략하지 않습니다. | 리뷰어가 사용자에게 바로 보여줄 것: 근거 이슈·검증·판정 | 시스템이 암묵적으로 처리: 분할·요약·범위 밖 제외
+- 범위 확정 / 파일:라인 근거 / 검증 커맨드를 기록한다. 출력이 길어져도 마지막 `검증 커맨드 / 판정 / VERDICT / 다음 추천`은 생략하지 않습니다. | 리뷰어가 사용자에게 바로 보여줄 것: 근거 이슈·검증·판정 | 시스템이 암묵적으로 처리: 분할·요약·범위 밖 제외 | 정상 최종 출력: finding → 검증 → 판정, 첫 3줄 안에 결론, 24줄 이하, 같은 사실 반복 0회, 다음 행동은 정확히 1개, Machine output contract 두 줄은 줄 수·중복·다음 행동 측정에서 제외, 내부 상태인 `사용자 선택 대기` 직접 노출 금지 | 모든 severity가 비면 한 줄로 합친다. REVISE/BLOCK은 원인·영향·수정 방향을 유지한다.
 - 안전 필수 항목: 파일:라인 / VERDICT / [치명] [중대] [경미] [제안]
 리뷰 범위: `git diff HEAD` 전체와 필요한 untracked/ignored 파일을 직접 읽고, `.omc/runs` `.omc/lessons` `pipeline_run_result`는 제외한다. 200줄 이상은 파일별로 나눈다.
 ## Step 1. REVIEW CHECKLIST
@@ -53,5 +53,5 @@ decision: REVISE / APPROVE (판정 결과) | risk: HIGH / MED / LOW (리스크 �
 - 우선순위는 `현재 병목 > 기본 파이프라인`, 주추천 1개만 제시한다.
 - REVISE/BLOCK면 `$omc-task`
 - APPROVE/APPROVE WITH NOTES + 배포 준비 명시 + ship_intent_explicit=yes면 `$omc-ship`
-- APPROVE/APPROVE WITH NOTES + 배포 준비 미명시 또는 user_selection_needed=yes면 사용자 선택 대기
+- APPROVE/APPROVE WITH NOTES + 배포 준비 미명시 또는 user_selection_needed=yes면 내부 라우팅은 사용자 선택 대기, 화면에는 실제 선택(예: `변경사항을 커밋할지 결정해 주세요.`)을 요청
 - 자동으로 진행하지는 않습니다.

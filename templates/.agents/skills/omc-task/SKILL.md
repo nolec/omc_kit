@@ -25,7 +25,7 @@ Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`�
 - CONTRACT 등록: `python3 scripts/omc_pipeline_guard.py contract-done`
 - RED 등록 + TDD 게이트: FAIL 출력 첨부 + `red-done` 완료 / `python3 scripts/omc_tdd_check.py --staged` exit 0
 
-사용자에게 보여줄 단계: CONTRACT / RED / TDD GATE / Handoff | 시스템이 암묵적으로 처리: 자명한 재안내 / 중복 설명 / 단계 사이 반복 코칭
+사용자에게 보여줄 단계: CONTRACT / RED / TDD GATE / Handoff | 시스템이 암묵적으로 처리: 자명한 재안내 / 중복 설명 / 단계 사이 반복 코칭 | 정상 최종 출력: 결과 → 변경 → 검증 → 다음 행동, 첫 3줄 안에 결론, 20줄 이하, 같은 사실 반복 0회, 다음 행동은 정확히 1개, Machine output contract 두 줄은 줄 수·중복·다음 행동 측정에서 제외, 내부 상태인 `사용자 선택 대기` 직접 노출 금지 | 진행 commentary는 최대 3회(시작 / 실제 RED 결과 / 최종 TDD GATE), 최종 답변에서 단계별 진행 로그를 재서술하지 않는다.
 
 안전 필수 항목: CONTRACT / RED / TDD GATE / Handoff는 압축해도 유지 | 작은 후속 수정도 Guard, CONTRACT, RED 등록 순서는 유지 | 범위 분리: 현재 dirty 변경과 이번 구현 범위를 섞지 않음
 
@@ -75,7 +75,7 @@ python3 scripts/omc_lesson.py add -i
 
 - 우선순위는 항상 `현재 병목 > 기본 파이프라인`
 - 주추천 1개만 제시, 우선순위: 구현 완료 + 게이트 통과면 `$omc-review`
-- 구현 완료 + 사용자가 일단 결과만 확인하려는 상태면 사용자 선택 대기
+- 구현 완료 + 사용자가 일단 결과만 확인하려는 상태면 내부 라우팅은 사용자 선택 대기, 화면에는 `결과를 확인한 뒤 리뷰 진행 여부를 알려주세요.`
 - 실패 원인 불명 → `$omc-investigate`
 - 자동으로 진행하지는 않습니다.
 

@@ -339,6 +339,7 @@ def test_review_skill_prioritizes_current_bottleneck_over_default_pipeline():
         "현재 병목 > 기본 파이프라인",
         "REVISE/BLOCK면 `$omc-task`",
         "배포 준비 명시 + ship_intent_explicit=yes면 `$omc-ship`",
-        "배포 준비 미명시 또는 user_selection_needed=yes면 사용자 선택 대기",
+        "배포 준비 미명시 또는 user_selection_needed=yes면 내부 라우팅은 사용자 선택 대기",
+        "화면에는 실제 선택",
     ]:
         assert marker in text

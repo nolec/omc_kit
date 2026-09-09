@@ -8,7 +8,7 @@ python3 scripts/omc.py state sync-session --target . --mode autopilot --title "o
 AGENTS.md Tier 1 → CONTRACT 입력.
 
 ## Phase 1. CONTRACT
-목표/범위 (포함)/범위 (제외)/DoD/제약/사용자 컨펌. 사용자에게 보여줄 단계. 시스템이 암묵적으로 처리.
+목표/범위 (포함)/범위 (제외)/DoD/제약/사용자 컨펌. 사용자에게 보여줄 단계. 시스템이 암묵적으로 처리. 정상 최종 출력은 결정 → 범위 → 태스크 → 승인 요청 순서이며 첫 3줄 안에 결론, 20줄 이하, 같은 사실 반복 0회, 다음 행동은 정확히 1개로 쓴다. Machine output contract 두 줄은 줄 수·중복·다음 행동 측정에서 제외한다. 미해결 결정이 있으면 길이보다 decisions_required를 우선한다. 내부 상태인 `사용자 선택 대기` 직접 노출 금지; 화면에는 결정할 실제 범위·정보·승인을 요청한다.
 
 ## Phase 2. 설계
 입력/출력/성공 지표/실패 정책/영향받는 파일.

@@ -55,6 +55,7 @@ import omc_utils
 import omc_cost
 import omc_exec
 import omc_output_contract as omc_output
+import omc_codex_output_readability as codex_readability
 import omc_autopilot_safe as autopilot_safe
 import omc_autopilot_workspace as autopilot_workspace
 import omc_autopilot_workflow as autopilot_workflow
@@ -3844,13 +3845,27 @@ def _pilot_stage_for_step(step_name: str) -> str | None:
     return _OUTPUT_CONTRACT_PILOT_STAGES.get(str(step_name).strip().lower())
 
 
-def _normalize_pipeline_output(*, step_name: str, output: str) -> str:
+def _normalize_pipeline_output(
+    *, step_name: str, output: str, executor: str | None = None
+) -> str:
     """Normalize output-contract pilot stages without touching other steps."""
     stage = _pilot_stage_for_step(step_name)
     if stage is None:
         return output
     source = omc_output.contract_source(output, stage=stage)
     normalized = omc_output.normalize_output(output, stage=stage)
+    if executor == "codex" and stage in {"plan", "task", "review"}:
+        parsed = omc_output.parse_envelope(normalized)
+        readability_outcome = (
+            "blocked" if parsed["outcome"] in {"blocked", "unresolved"} else "ready"
+        )
+        errors = codex_readability.validate_output(
+            normalized, stage=stage, outcome=readability_outcome
+        )
+        if errors:
+            raise omc_output.OutputContractError(
+                f"readability contract failed: {', '.join(errors)}"
+            )
     marker = f"[OUTPUT_CONTRACT_SOURCE] {source}"
     return f"{marker}\n{normalized}"
 
@@ -4080,6 +4095,8 @@ def _run_pipeline_step(
     pilot_stage = _pilot_stage_for_step(step_name)
     if pilot_stage:
         prompt = f"{prompt.rstrip()}\n\n{omc_output.prompt_contract(pilot_stage)}"
+        if executor == "codex" and pilot_stage in {"plan", "task", "review"}:
+            prompt = f"{prompt}\n{codex_readability.prompt_contract(pilot_stage)}"
     if dry_run:
         print(f"  [DRY-RUN] {step_name} 시뮬레이션")
         # review 스텝은 APPROVE, 그 외는 PROCEED (verdict 일관성)
@@ -4148,7 +4165,9 @@ def _run_pipeline_step(
         return_code = int(proc.returncode)
         if return_code == 0 and pilot_stage:
             try:
-                output = _normalize_pipeline_output(step_name=step_name, output=stdout_output)
+                output = _normalize_pipeline_output(
+                    step_name=step_name, output=stdout_output, executor=executor
+                )
                 output = _attach_executor_stderr(output, stderr_output)
             except omc_output.OutputContractError as exc:
                 combined = f"{stdout_output}\n{stderr_output}".strip()

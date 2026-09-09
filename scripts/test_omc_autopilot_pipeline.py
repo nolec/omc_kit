@@ -99,7 +99,11 @@ def test_pipeline_step_forwards_read_only_sandbox(monkeypatch, tmp_path: Path):
             captured["cmd"] = cmd
 
         def communicate(self):
-            return ("VERDICT: APPROVE", "")
+                return (
+                    "[치명][중대][경미][제안]: 없음\n검증: pass\n"
+                    "판정: APPROVE\n다음 행동: 변경사항을 커밋할지 결정해 주세요\nVERDICT: APPROVE",
+                    "",
+                )
 
     monkeypatch.setattr(mod.subprocess, "Popen", FakeProc)
 
@@ -474,6 +478,60 @@ def test_pipeline_output_rejects_explicit_envelope_conflict():
         mod._normalize_pipeline_output(step_name="review", output=output)
 
 
+def test_codex_pipeline_output_rejects_unreadable_raw_contract():
+    mod = _load_autopilot()
+    output = mod.omc_output.render_envelope(
+        stage="task",
+        verdict="PROCEED",
+        risk="low",
+        next_skill="omc-review",
+        user_selection_needed=False,
+    )
+
+    with pytest.raises(mod.omc_output.OutputContractError, match="readability contract"):
+        mod._normalize_pipeline_output(step_name="task", output=output, executor="codex")
+
+
+def test_codex_pipeline_output_accepts_readable_raw_contract():
+    mod = _load_autopilot()
+    footer = mod.omc_output.render_envelope(
+        stage="task",
+        verdict="PROCEED",
+        risk="low",
+        next_skill="omc-review",
+        user_selection_needed=False,
+    )
+    output = "결과: 구현 완료\n변경: validator 연결\n검증: pass\n다음 행동: `$omc-review`\n" + footer
+
+    normalized = mod._normalize_pipeline_output(
+        step_name="task", output=output, executor="codex"
+    )
+    assert normalized.endswith("VERDICT: PROCEED")
+
+
+def test_codex_pipeline_output_rejects_unreadable_legacy_contract():
+    mod = _load_autopilot()
+    with pytest.raises(mod.omc_output.OutputContractError, match="readability contract"):
+        mod._normalize_pipeline_output(
+            step_name="task",
+            output="implementation complete\nVERDICT: PROCEED",
+            executor="codex",
+        )
+
+
+def test_codex_pipeline_output_accepts_readable_legacy_contract():
+    mod = _load_autopilot()
+    output = (
+        "결과: 구현 완료\n변경: legacy 경로 검증\n검증: pass\n"
+        "다음 행동: `$omc-review`\nVERDICT: PROCEED"
+    )
+    normalized = mod._normalize_pipeline_output(
+        step_name="task", output=output, executor="codex"
+    )
+    assert "[OUTPUT_CONTRACT_SOURCE] legacy_normalized" in normalized
+    assert normalized.endswith("VERDICT: PROCEED")
+
+
 def test_pipeline_output_normalizes_critique_as_code_stage():
     mod = _load_autopilot()
     output = "WARNING:\n- 근거: issue\n  대안: fix\nVERDICT: REVISE"
@@ -536,12 +594,16 @@ def test_pipeline_step_validates_stdout_and_preserves_stderr_before_contract(
     monkeypatch,
 ):
     mod = _load_autopilot()
-    stdout = mod.omc_output.render_envelope(
+    footer = mod.omc_output.render_envelope(
         stage="task",
         verdict="PROCEED",
         risk="low",
         next_skill="omc-review",
         user_selection_needed=False,
+    )
+    stdout = (
+        "결과: 구현 완료\n변경: 출력 계약 연결\n검증: pass\n"
+        "다음 행동: `$omc-review`\n" + footer
     )
 
     class Process:
