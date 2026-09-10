@@ -686,13 +686,17 @@ def _live_install_identity(
     receipt_path = project_root / ".omc" / "install-receipt.json"
     try:
         receipt_bytes = receipt_path.read_bytes()
-        receipt = json.loads(receipt_bytes)
-        audit = omc_install_audit.audit_target(project_root)
+        receipt = json.loads(receipt_bytes.decode("utf-8"))
+        audit = omc_install_audit.audit_target(
+            project_root, install_receipt_bytes=receipt_bytes
+        )
+        receipt_unchanged = receipt_path.read_bytes() == receipt_bytes
     except (OSError, ValueError, json.JSONDecodeError) as error:
         raise CaptureError("live_install_identity_invalid") from error
     version = audit.get("version_readiness")
     if (
         not isinstance(receipt, dict)
+        or not receipt_unchanged
         or receipt.get("schema_version") != 3
         or receipt.get("target") != str(project_root)
         or not isinstance(receipt.get("omc_version"), str)

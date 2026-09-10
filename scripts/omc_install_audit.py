@@ -257,6 +257,7 @@ def audit_target(
     target: Path,
     *,
     trusted_source_root: Path | None = None,
+    install_receipt_bytes: bytes | None = None,
 ) -> dict[str, object]:
     resolved = target.resolve()
     completion_hook = completion_hook_readiness(resolved)
@@ -281,7 +282,7 @@ def audit_target(
         except (OSError, json.JSONDecodeError):
             metadata_error = "invalid-json"
 
-    has_receipt = receipt_path.exists()
+    has_receipt = install_receipt_bytes is not None or receipt_path.exists()
     receipt_source_sha256 = None
     receipt_target = None
     receipt_schema_version = None
@@ -290,7 +291,12 @@ def audit_target(
     receipt_error = None
     if has_receipt:
         try:
-            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            raw_receipt = (
+                receipt_path.read_bytes()
+                if install_receipt_bytes is None
+                else install_receipt_bytes
+            )
+            receipt = json.loads(raw_receipt.decode("utf-8"))
             if not isinstance(receipt, dict) or not isinstance(receipt.get("entries"), dict):
                 has_receipt = False
                 receipt_error = "invalid-json-shape"
@@ -304,7 +310,7 @@ def audit_target(
                         status = entry.get("status")
                         if isinstance(status, str):
                             receipt_entry_counts[status] = receipt_entry_counts.get(status, 0) + 1
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             has_receipt = False
             receipt_error = "invalid-json"
 
@@ -461,6 +467,7 @@ def audit_target(
         resolved,
         source_path=source_path if isinstance(source_path, str) else None,
         install_integrity_status=installed_integrity_status,
+        install_receipt_bytes=install_receipt_bytes,
     )
     if version_readiness["receipt_status"] == "invalid":
         verification_errors.append("version:invalid-receipt")

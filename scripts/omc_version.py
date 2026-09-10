@@ -80,13 +80,10 @@ def _looks_like_source_kit(path: Path) -> bool:
     )
 
 
-def _read_receipt(target: Path) -> tuple[dict[str, Any] | None, str]:
-    path = target / INSTALL_RECEIPT
-    if not path.is_file():
-        return None, "missing"
+def _parse_receipt_bytes(raw: bytes) -> tuple[dict[str, Any] | None, str]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
         return None, "invalid"
     if not isinstance(payload, dict) or not isinstance(payload.get("entries"), dict):
         return None, "invalid"
@@ -103,6 +100,17 @@ def _read_receipt(target: Path) -> tuple[dict[str, Any] | None, str]:
     except VersionContractError:
         return None, "invalid"
     return payload, "current"
+
+
+def _read_receipt(target: Path) -> tuple[dict[str, Any] | None, str]:
+    path = target / INSTALL_RECEIPT
+    if not path.is_file():
+        return None, "missing"
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None, "invalid"
+    return _parse_receipt_bytes(raw)
 
 
 def _integrity_status(raw: str) -> str:
@@ -144,9 +152,14 @@ def version_readiness(
     *,
     source_path: str | None,
     install_integrity_status: str,
+    install_receipt_bytes: bytes | None = None,
 ) -> dict[str, str | None]:
     resolved = target.resolve()
-    receipt, receipt_status = _read_receipt(resolved)
+    receipt, receipt_status = (
+        _read_receipt(resolved)
+        if install_receipt_bytes is None
+        else _parse_receipt_bytes(install_receipt_bytes)
+    )
     installed_version = (
         str(receipt.get("omc_version"))
         if receipt_status == "current" and receipt is not None

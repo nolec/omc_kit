@@ -645,6 +645,52 @@ def test_live_policy_rejects_install_receipt_changed_after_enrollment(tmp_path: 
         observation.start_live_observation(root)
 
 
+def test_live_enable_audits_the_same_install_receipt_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _ = _live_repo(tmp_path)
+    policy_path = root / ".omc" / "observation-policy.json"
+    policy_path.unlink()
+    receipt_path = root / ".omc" / "install-receipt.json"
+    valid_receipt = receipt_path.read_bytes()
+    invalid_receipt = json.loads(valid_receipt)
+    invalid_receipt["entries"]["managed.txt"]["target_sha256"] = "f" * 64
+    receipt_path.write_text(json.dumps(invalid_receipt), encoding="utf-8")
+    real_audit = observation.omc_install_audit.audit_target
+
+    def replace_before_audit(target: Path, **kwargs: object) -> dict[str, object]:
+        receipt_path.write_bytes(valid_receipt)
+        return real_audit(target, **kwargs)
+
+    monkeypatch.setattr(
+        observation.omc_install_audit, "audit_target", replace_before_audit
+    )
+    with pytest.raises(observation.CaptureError, match="live_install_identity_invalid"):
+        observation.enable_live_observation(
+            root,
+            study_id="completion-quality-feasibility-02",
+            executor_surface="codex",
+        )
+    assert not policy_path.exists()
+
+
+def test_live_enable_rejects_non_utf8_install_receipt(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    policy_path = root / ".omc" / "observation-policy.json"
+    policy_path.unlink()
+    receipt_path = root / ".omc" / "install-receipt.json"
+    receipt = receipt_path.read_text(encoding="utf-8")
+    receipt_path.write_bytes(receipt.encode("utf-16"))
+
+    with pytest.raises(observation.CaptureError, match="live_install_identity_invalid"):
+        observation.enable_live_observation(
+            root,
+            study_id="completion-quality-feasibility-02",
+            executor_surface="codex",
+        )
+    assert not policy_path.exists()
+
+
 def test_live_observation_stops_after_chronological_first_five(tmp_path: Path) -> None:
     root, pending = _live_repo(tmp_path)
     starts = [observation.start_live_observation(root)]
