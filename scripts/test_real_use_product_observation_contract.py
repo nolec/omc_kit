@@ -14,10 +14,23 @@ V2_SUPERSESSION_PATH = Path(
 V1_SUPERSESSION_PATH = Path(
     "docs/real_use_product_observation_v1_supersession.json"
 )
+ROADMAP_PATH = Path("docs/automatic_model_routing_roadmap.md")
 
 
 def _load(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_roadmap_separates_live_capture_feasibility_from_product_effect() -> None:
+    roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
+    assert "Codex-first 무복사 수집 계층" in roadmap
+    assert "명시적으로 `live-enable --executor-surface codex`한 저장소" in roadmap
+    assert "Claude 입력을 Codex 표본에 섞지 않으며" in roadmap
+    assert "끝 개행까지 그대로 보존" in roadmap
+    assert "미커밋 `commit_bound=false`" in roadmap
+    assert "5건은 수집 가능성" in roadmap
+    assert "20건 paired observation" in roadmap
+    assert "제품 작업은 계속하고 표본은 `OBSERVATION_INVALID`" in roadmap
 
 
 def test_v1_remains_immutable_and_is_closed_by_a_separate_supersession() -> None:

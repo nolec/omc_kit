@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".agent-hooks/omc-prompt-inject.sh",
+            "command": ".agent-hooks/omc-prompt-inject.sh codex",
             "name": "omc-prompt-inject",
             "description": "사용자 메시지 기반 BM25 교훈 자동 주입",
             "timeout": 10

@@ -54,14 +54,14 @@ def test_generic_contract_issue_builder_follows_platform_contract_keys():
     codex = {
         "hooks": {
             "SessionStart": [{"hooks": [{"command": ".agent-hooks/omc-session-start.sh codex"}]}],
-            "UserPromptSubmit": [{"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh"}]}],
+            "UserPromptSubmit": [{"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh codex"}]}],
             "PostToolUse": [],
         }
     }
     claude = {
         "hooks": {
             "SessionStart": [{"hooks": [{"command": ".agent-hooks/omc-session-start.sh claude"}]}],
-            "UserPromptSubmit": [{"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh"}]}],
+            "UserPromptSubmit": [{"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh claude"}]}],
         }
     }
 
@@ -75,7 +75,7 @@ def test_codex_contract_reports_missing_soft_guard():
     data = {
         "hooks": {
             "SessionStart": [{"hooks": [{"command": ".agent-hooks/omc-session-start.sh codex"}]}],
-            "UserPromptSubmit": [{"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh"}]}],
+            "UserPromptSubmit": [{"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh codex"}]}],
             "PostToolUse": [],
         }
     }
@@ -89,7 +89,7 @@ def test_codex_contract_rejects_commands_in_wrong_hook_bucket():
         "hooks": {
             "SessionStart": [
                 {"hooks": [{"command": ".agent-hooks/omc-session-start.sh codex"}]},
-                {"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh"}]},
+                {"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh codex"}]},
             ],
             "UserPromptSubmit": [],
             "PostToolUse": [
@@ -106,7 +106,7 @@ def test_codex_contract_accepts_soft_guard_matcher_in_any_order():
     data = {
         "hooks": {
             "SessionStart": [{"hooks": [{"command": ".agent-hooks/omc-session-start.sh codex"}]}],
-            "UserPromptSubmit": [{"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh"}]}],
+            "UserPromptSubmit": [{"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh codex"}]}],
             "PostToolUse": [
                 {"matcher": "Write|apply_patch", "hooks": [{"command": ".agent-hooks/omc-post-file-check.sh"}]}
             ],
@@ -120,7 +120,7 @@ def test_codex_contract_requires_declared_hook_keys_to_exist():
     data = {
         "hooks": {
             "SessionStart": [{"hooks": [{"command": ".agent-hooks/omc-session-start.sh codex"}]}],
-            "UserPromptSubmit": [{"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh"}]}],
+            "UserPromptSubmit": [{"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh codex"}]}],
         }
     }
 
@@ -132,7 +132,7 @@ def test_codex_contract_follows_required_hook_metadata_for_session_context():
     data = {
         "hooks": {
             "SessionStart": [{"hooks": [{"command": ".agent-hooks/omc-session-start.sh codex"}]}],
-            "UserPromptSubmit": [{"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh"}]}],
+            "UserPromptSubmit": [{"hooks": [{"command": ".agent-hooks/omc-prompt-inject.sh codex"}]}],
         }
     }
     patched = dict(contract.CODEX_HOOK_CONTRACT)

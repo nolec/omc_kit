@@ -1915,7 +1915,7 @@ class TestHookContractMarkers(unittest.TestCase):
             hooks_path.write_text(
                 (
                     '{"hooks":{"SessionStart":[{"hooks":[{"command":".agent-hooks/omc-session-start.sh codex"}]}],'
-                    '"UserPromptSubmit":[{"hooks":[{"command":".agent-hooks/omc-prompt-inject.sh"}]}],'
+                    '"UserPromptSubmit":[{"hooks":[{"command":".agent-hooks/omc-prompt-inject.sh codex"}]}],'
                     '"PostToolUse":[]}}'
                 ),
                 encoding="utf-8",

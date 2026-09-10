@@ -18,7 +18,7 @@ CLAUDE_HOOK_CONTRACT = {
         "required_hooks": ("SessionStart", "UserPromptSubmit"),
         "commands": (
             ".agent-hooks/omc-session-start.sh claude",
-            ".agent-hooks/omc-prompt-inject.sh",
+            ".agent-hooks/omc-prompt-inject.sh claude",
         ),
     },
     "pre_mutate_guard": {
@@ -56,7 +56,7 @@ CODEX_HOOK_CONTRACT = {
         "required_hooks": ("SessionStart", "UserPromptSubmit"),
         "commands": (
             ".agent-hooks/omc-session-start.sh codex",
-            ".agent-hooks/omc-prompt-inject.sh",
+            ".agent-hooks/omc-prompt-inject.sh codex",
         ),
     },
     "pre_mutate_guard": {

@@ -4,6 +4,8 @@
 # Claude Code / Codex: stdout 평문 → 컨텍스트로 자동 주입됨
 set -u
 
+EXECUTOR_SURFACE="${1:-unknown}"
+
 PYTHON_BIN="python3"
 command -v python3 >/dev/null 2>&1 || PYTHON_BIN="python"
 command -v "${PYTHON_BIN}" >/dev/null 2>&1 || exit 0
@@ -11,23 +13,81 @@ command -v "${PYTHON_BIN}" >/dev/null 2>&1 || exit 0
 # stdin JSON에서 prompt 텍스트 추출
 # 환경변수 PROMPT가 이미 설정돼 있으면 stdin 파싱 스킵 (테스트/직접 호출 지원)
 if [[ -n "${PROMPT:-}" ]]; then
-  : # 환경변수로 이미 설정됨
+  _PROMPT_BASE64=$(PROMPT="${PROMPT}" "${PYTHON_BIN}" -c '
+import base64, os, sys
+sys.stdout.write(base64.b64encode(os.environ["PROMPT"].encode("utf-8")).decode("ascii"))
+' 2>/dev/null || echo "")
 elif [ -t 0 ]; then
   # 대화형 터미널(stdin이 실제 키보드) → 블로킹 방지를 위해 스킵
   exit 0
 else
-  PROMPT=$("${PYTHON_BIN}" -c "
-import json, sys
+  _PROMPT_BASE64=$("${PYTHON_BIN}" -c "
+import base64, json, sys
 try:
     d = json.load(sys.stdin)
-    print(d.get('prompt', ''))
+    prompt = d.get('prompt', '')
+    if not isinstance(prompt, str):
+        raise ValueError('prompt must be text')
+    sys.stdout.write(base64.b64encode(prompt.encode('utf-8')).decode('ascii'))
 except Exception:
-    print('')
+    pass
 " 2>/dev/null || echo "")
+  PROMPT=$(OMC_LIVE_PROMPT_BASE64="${_PROMPT_BASE64}" "${PYTHON_BIN}" -c '
+import base64, os, sys
+sys.stdout.write(base64.b64decode(os.environ["OMC_LIVE_PROMPT_BASE64"]).decode("utf-8"))
+' 2>/dev/null || echo "")
 fi
 
 if [[ -z "${PROMPT}" ]]; then
   exit 0
+fi
+
+# 등록된 Codex 완료 품질 관찰은 다음 일반 턴에서도 사용자 원문을 먼저 보존한다.
+# 관찰 오류는 제품 작업을 막지 않으며, 제어용 스킬 호출은 Python 경로에서 무시한다.
+_OBSERVATION_SCRIPT="${OMC_COMPLETION_OBSERVATION_SCRIPT:-}"
+if [ -z "${_OBSERVATION_SCRIPT}" ] && [ -f "scripts/omc_completion_observation.py" ]; then
+  _OBSERVATION_SCRIPT="scripts/omc_completion_observation.py"
+elif [ -z "${_OBSERVATION_SCRIPT}" ] && [ -f "omc_kit/scripts/omc_completion_observation.py" ]; then
+  _OBSERVATION_SCRIPT="omc_kit/scripts/omc_completion_observation.py"
+fi
+if [ "${EXECUTOR_SURFACE}" = "codex" ] && [ -n "${_OBSERVATION_SCRIPT}" ]; then
+  _OBSERVATION_RESULT=$(OMC_LIVE_PROMPT_BASE64="${_PROMPT_BASE64}" "${PYTHON_BIN}" "${_OBSERVATION_SCRIPT}" live-prompt --target . --executor-surface "${EXECUTOR_SURFACE}" 2>/dev/null || true)
+  _OBSERVATION_STATUS=$(printf '%s' "${_OBSERVATION_RESULT}" | "${PYTHON_BIN}" -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("status", ""))
+except Exception:
+    print("")
+' 2>/dev/null || echo "")
+  _OBSERVATION_REASON=$(printf '%s' "${_OBSERVATION_RESULT}" | "${PYTHON_BIN}" -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("reason", ""))
+except Exception:
+    print("")
+' 2>/dev/null || echo "")
+  if [ "${_OBSERVATION_STATUS}" = "OUTCOME_RECORDED" ]; then
+    echo ""
+    echo "[OMC] 완료 품질 관찰: 사용자 수용/보류 원문 기록 완료"
+  elif [ "${_OBSERVATION_STATUS}" = "FOLLOWUP_RECORDED" ]; then
+    _OBSERVATION_INDEX=$(printf '%s' "${_OBSERVATION_RESULT}" | "${PYTHON_BIN}" -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("followup_index", ""))
+except Exception:
+    print("")
+' 2>/dev/null || echo "")
+    echo ""
+    echo "[OMC] 완료 품질 관찰: 후속 원문 ${_OBSERVATION_INDEX}번 보존 완료"
+    echo "  분류는 사용자가 확정할 때까지 pending입니다: defect_correction | missing_requirement | persona_mismatch | scope_change | clarification | preference"
+  elif [ "${_OBSERVATION_STATUS}" = "CLASSIFICATION_RECORDED" ]; then
+    echo ""
+    echo "[OMC] 완료 품질 관찰: 사용자 확정 분류 기록 완료"
+  elif [ "${_OBSERVATION_STATUS}" = "OBSERVATION_INVALID" ] && [ "${_OBSERVATION_REASON}" != "pending_completion_invalid" ] && [ "${_OBSERVATION_REASON}" != "live_observation_not_enabled" ] && [ "${_OBSERVATION_REASON}" != "live_observation_not_started" ] && [ "${_OBSERVATION_REASON}" != "live_prompt_not_expected" ]; then
+    echo ""
+    echo "[OMC] OBSERVATION_INVALID: ${_OBSERVATION_REASON}"
+    echo "  제품 작업은 계속하지만 이 표본은 성공으로 집계하지 않습니다."
+  fi
 fi
 
 

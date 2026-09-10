@@ -2,6 +2,7 @@ import base64
 import copy
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -409,6 +410,394 @@ def test_candidate_rejects_execution_receipt_signed_by_repository_key() -> None:
     )
     with pytest.raises(observation.CaptureError, match="execution_receipt_invalid"):
         observation.build_candidate(registration, **source)
+
+
+def _live_repo(tmp_path: Path) -> tuple[Path, dict]:
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
+    (root / "app.py").write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "app.py"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "baseline"], check=True)
+    head = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    request = "implement live observation case"
+    pending = {
+        "schema_version": 3,
+        "session_id": "session-a",
+        "baseline_head": head,
+        "request_sha256": observation.canonical_sha256(request),
+        "work_class": "implementation",
+        "work_class_locked_at": "2026-09-10T00:00:00+00:00",
+        "work_id": "a" * 32,
+        "root_session_id": "session-a",
+        "session_ids": ["session-a"],
+        "rework_count": 0,
+    }
+    state = root / ".omc" / "state"
+    state.mkdir(parents=True)
+    (state / "pending-completion.json").write_text(json.dumps(pending), encoding="utf-8")
+    _write_live_session(root, pending, request=request)
+    observation.enable_live_observation(
+        root,
+        study_id="completion-quality-feasibility-01",
+        executor_surface="codex",
+    )
+    return root, pending
+
+
+def _write_live_session(root: Path, pending: dict, *, request: str) -> None:
+    session = {
+        "session_id": pending["session_id"],
+        "work_id": pending["work_id"],
+        "request": request,
+        "role_ids": ["senior_coding"],
+        "confirmation": {"status": "confirmed"},
+        "git": {"head": pending["baseline_head"]},
+        "work_class": pending["work_class"],
+        "created_at": pending["work_class_locked_at"],
+    }
+    directory = root / ".omc" / "state" / "sessions" / pending["session_id"]
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "session.json").write_text(json.dumps(session), encoding="utf-8")
+
+
+def test_live_observation_captures_uncommitted_first_completion(tmp_path: Path) -> None:
+    root, pending = _live_repo(tmp_path)
+    started = observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    completed = observation.capture_live_completion(
+        root,
+        raw_report=b"first completion report",
+        raw_verification=b"1 passed",
+        unrun_items=["real provider smoke"],
+    )
+    assert started["work_id"] == pending["work_id"]
+    assert completed["commit_bound"] is False
+    assert completed["status"] == "AWAITING_USER_OUTCOME"
+    assert completed["changed_paths"] == ["app.py"]
+    assert base64.b64decode(completed["raw_report_base64"]) == b"first completion report"
+    assert completed["unrun_items"] == ["real provider smoke"]
+
+
+def test_live_observation_reentry_requires_exact_work_and_baseline(tmp_path: Path) -> None:
+    root, pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    continued = {**pending, "session_id": "session-b", "session_ids": ["session-a", "session-b"], "rework_count": 1}
+    _write_live_session(root, continued, request="implement live observation case")
+    (root / ".omc" / "state" / "pending-completion.json").write_text(
+        json.dumps(continued), encoding="utf-8"
+    )
+    assert observation.live_observation_status(root)["status"] == "COLLECTING"
+    continued["work_id"] = "b" * 32
+    (root / ".omc" / "state" / "pending-completion.json").write_text(
+        json.dumps(continued), encoding="utf-8"
+    )
+    with pytest.raises(observation.CaptureError, match="pending_completion_invalid"):
+        observation.live_observation_status(root)
+
+
+def test_live_followup_preserves_raw_text_and_requires_authoritative_classification(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    with pytest.raises(observation.CaptureError, match="classification_required"):
+        observation.record_live_outcome(
+            root, outcome="correction_required", raw_followup=b"fix edge case"
+        )
+    result = observation.record_live_outcome(
+        root,
+        outcome="correction_required",
+        raw_followup=b"fix edge case",
+        classification="defect_correction",
+    )
+    assert base64.b64decode(result["raw_followup_base64"]) == b"fix edge case"
+    assert result["classification"] == "defect_correction"
+    accepted = observation.record_live_outcome(
+        root, outcome="accepted", raw_followup=b"accepted"
+    )
+    assert accepted["outcome"] == "accepted"
+    with pytest.raises(observation.CaptureError, match="outcome_already_recorded"):
+        observation.record_live_outcome(root, outcome="accepted", raw_followup=b"again")
+
+
+def test_live_cli_reports_observation_invalid_without_blocking_product_work(tmp_path: Path) -> None:
+    root = tmp_path / "missing-state"
+    root.mkdir()
+    result = subprocess.run(
+        [sys.executable, "scripts/omc_completion_observation.py", "live-status", "--target", str(root)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {
+        "claim_boundary": "OBSERVATION_ONLY",
+        "reason": "pending_completion_invalid",
+        "status": "OBSERVATION_INVALID",
+    }
+
+
+def test_live_observation_requires_explicit_repository_enrollment(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    (root / ".omc" / "observation-policy.json").unlink()
+    with pytest.raises(observation.CaptureError, match="live_observation_not_enabled"):
+        observation.start_live_observation(root)
+
+
+def test_live_status_rejects_tampered_completion_snapshot(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    completed = observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    completed["raw_report_sha256"] = "f" * 64
+    path = root / ".omc" / "observations" / "live" / ("a" * 32) / "first-completion.json"
+    path.write_text(json.dumps(completed), encoding="utf-8")
+    with pytest.raises(observation.CaptureError, match="live_observation_invalid"):
+        observation.live_observation_status(root)
+
+
+def test_codex_task_and_review_surfaces_drive_live_observation_without_user_copy() -> None:
+    task_skill = Path(".agents/skills/omc-task/SKILL.md").read_text(encoding="utf-8")
+    review_skill = Path(".agents/skills/omc-review/SKILL.md").read_text(encoding="utf-8")
+    assert "omc_completion_observation.py live-start" in task_skill
+    assert "omc_completion_observation.py live-capture" in task_skill
+    assert "관찰 실패는 구현을 차단하지" in task_skill
+    assert "omc_completion_observation.py live-status" in review_skill
+    assert "수용 / 수정 필요 / 보류" in review_skill
+    assert "사용자에게 원문 복사를 요구하지" in review_skill
+
+
+def test_live_start_rejects_path_traversal_work_id(tmp_path: Path) -> None:
+    root, pending = _live_repo(tmp_path)
+    pending["work_id"] = "../../../../escaped"
+    (root / ".omc" / "state" / "pending-completion.json").write_text(
+        json.dumps(pending), encoding="utf-8"
+    )
+    with pytest.raises(observation.CaptureError, match="pending_completion_invalid"):
+        observation.start_live_observation(root)
+    assert not (tmp_path / "escaped" / "start.json").exists()
+
+
+@pytest.mark.parametrize("classification", observation.TAXONOMY)
+def test_live_prompt_preserves_every_followup_taxonomy(
+    tmp_path: Path, classification: str
+) -> None:
+    root, _ = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    followup = observation.record_live_prompt(
+        root, raw_prompt=b"please revisit", executor_surface="codex"
+    )
+    assert followup["classification_status"] == "pending_user_confirmation"
+    classified = observation.classify_live_followup(
+        root,
+        followup_index=1,
+        classification=classification,
+        raw_confirmation=classification.encode(),
+    )
+    assert classified["classification"] == classification
+    assert classified["primary_correction"] is (
+        classification in observation.PRIMARY_CORRECTIONS
+    )
+    assert base64.b64decode(classified["raw_confirmation_base64"]) == classification.encode()
+
+
+def test_live_prompt_records_exact_acceptance_without_review_skill_reentry(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    accepted = observation.record_live_prompt(
+        root, raw_prompt="수용".encode(), executor_surface="codex"
+    )
+    assert accepted["outcome"] == "accepted"
+    assert observation.live_observation_status(root)["status"] == "CLOSED"
+    hook = Path(".agent-hooks/omc-prompt-inject.sh").read_text(encoding="utf-8")
+    assert "live-prompt" in hook
+    assert "OMC_LIVE_PROMPT" in hook
+
+
+def test_live_prompt_uses_next_taxonomy_reply_to_classify_pending_followup(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    observation.record_live_prompt(
+        root, raw_prompt=b"why was this omitted?", executor_surface="codex"
+    )
+    classified = observation.record_live_prompt(
+        root, raw_prompt="요구사항 누락".encode(), executor_surface="codex"
+    )
+    assert classified["status"] == "CLASSIFICATION_RECORDED"
+    assert classified["classification"] == "missing_requirement"
+    live_root = root / ".omc" / "observations" / "live" / ("a" * 32)
+    assert len(list(live_root.glob("followup-*.json"))) == 1
+
+
+def test_user_prompt_hook_records_acceptance_in_a_later_general_turn(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    hook = Path(".agent-hooks/omc-prompt-inject.sh").resolve()
+    script = Path("scripts/omc_completion_observation.py").resolve()
+    result = subprocess.run(
+        [str(hook), "codex"],
+        cwd=root,
+        env={**os.environ, "PROMPT": "수용", "OMC_COMPLETION_OBSERVATION_SCRIPT": str(script)},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "사용자 수용/보류 원문 기록 완료" in result.stdout
+    assert observation.live_observation_status(root)["status"] == "CLOSED"
+
+
+def test_write_once_removes_partial_file_when_serialization_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "receipt.json"
+
+    def broken_dump(*args, **kwargs):
+        args[1].write("partial")
+        raise OSError("disk failure")
+
+    monkeypatch.setattr(observation.json, "dump", broken_dump)
+    with pytest.raises(OSError, match="disk failure"):
+        observation._write_once(destination, {"value": 1})
+    assert not destination.exists()
+
+
+def test_live_pending_rejects_session_lineage_not_backed_by_session_receipts(tmp_path: Path) -> None:
+    root, pending = _live_repo(tmp_path)
+    pending.update({
+        "session_id": "missing-session",
+        "session_ids": ["session-a", "missing-session"],
+        "rework_count": 1,
+    })
+    (root / ".omc" / "state" / "pending-completion.json").write_text(
+        json.dumps(pending), encoding="utf-8"
+    )
+    with pytest.raises(observation.CaptureError, match="pending_completion_invalid"):
+        observation.start_live_observation(root)
+
+
+def test_live_acceptance_rejects_unclassified_followup(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    observation.record_live_prompt(
+        root, raw_prompt=b"please revisit", executor_surface="codex"
+    )
+    with pytest.raises(observation.CaptureError, match="classification_required"):
+        observation.record_live_prompt(
+            root, raw_prompt="수용".encode(), executor_surface="codex"
+        )
+    live_root = root / ".omc" / "observations" / "live" / ("a" * 32)
+    assert not (live_root / "terminal.json").exists()
+
+
+def test_user_prompt_hook_surfaces_active_observation_failure(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    completed = observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    completed["raw_report_sha256"] = "f" * 64
+    live_root = root / ".omc" / "observations" / "live" / ("a" * 32)
+    (live_root / "first-completion.json").write_text(json.dumps(completed), encoding="utf-8")
+    result = subprocess.run(
+        [str(Path(".agent-hooks/omc-prompt-inject.sh").resolve()), "codex"],
+        cwd=root,
+        env={
+            **os.environ,
+            "PROMPT": "수용",
+            "OMC_COMPLETION_OBSERVATION_SCRIPT": str(
+                Path("scripts/omc_completion_observation.py").resolve()
+            ),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "OBSERVATION_INVALID" in result.stdout
+    assert "live_observation_invalid" in result.stdout
+
+
+def test_user_prompt_hook_preserves_trailing_newlines_as_utf8_bytes(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    raw_prompt = "수용\n\n"
+    result = subprocess.run(
+        [str(Path(".agent-hooks/omc-prompt-inject.sh").resolve()), "codex"],
+        cwd=root,
+        env={
+            **os.environ,
+            "PROMPT": raw_prompt,
+            "OMC_COMPLETION_OBSERVATION_SCRIPT": str(
+                Path("scripts/omc_completion_observation.py").resolve()
+            ),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    terminal = json.loads(
+        (root / ".omc" / "observations" / "live" / ("a" * 32) / "terminal.json").read_text()
+    )
+    assert base64.b64decode(terminal["raw_followup_base64"]) == raw_prompt.encode()
+
+
+def test_shared_prompt_hook_does_not_collect_claude_prompt_in_codex_study(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    subprocess.run(
+        [str(Path(".agent-hooks/omc-prompt-inject.sh").resolve()), "claude"],
+        cwd=root,
+        env={
+            **os.environ,
+            "PROMPT": "수용",
+            "OMC_COMPLETION_OBSERVATION_SCRIPT": str(
+                Path("scripts/omc_completion_observation.py").resolve()
+            ),
+        },
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert observation.live_observation_status(root)["status"] == "AWAITING_USER_OUTCOME"
 
 
 def test_report_rejects_rehashed_registration_without_frozen_digest() -> None:
