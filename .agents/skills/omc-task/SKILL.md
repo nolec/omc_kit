@@ -18,13 +18,7 @@ Guard 실행 전에 작업 성격을 분류합니다. 제품 코드 변경은 `i
 새 자연 작업은 `start`, 같은 작업의 리뷰 수정은 pending receipt의 `work_id`와 함께 `continue`, 승인된 기존 변경의 문서 정리·로컬 커밋만 수행하면 `preserve`를 사용합니다. `preserve`는 기존 pending 작업이 없으면 실패합니다. 같은 baseline이라는 이유만으로 `work_id`를 추론하거나 다른 작업에 재사용하지 않습니다.
 
 실패하면 세션 확인 또는 confirm부터 처리하고 중단합니다.
-Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`으로 저장소 밖 사용자 custody를 한 번 생성하고 `preflight`로 확인합니다. Guard는 이 설정을 자동 로드해 세션 생성 즉시 lock을 봉인합니다. CI처럼 환경변수가 필요한 곳은 `OMC_REQUIRE_WORK_CLASS_LOCK=1`, 외부 `OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE`, pinned `OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY`를 함께 설정합니다.
-
-## Codex 완료 품질 관찰 (등록 저장소만)
-
-Guard 직후 `python3 scripts/omc_completion_observation.py live-start --target .`를 실행합니다. 저장소가 `live-enable`로 명시 등록되지 않았거나 관찰 기록이 실패해도 `OBSERVATION_INVALID`만 남기며 **관찰 실패는 구현을 차단하지 않습니다.**
-
-최초 완료 보고 직전 live 상태가 `COLLECTING`이면 에이전트가 저장소 밖 임시 파일에 최종 보고 원문과 검증 원출력을 직접 보존하고 `python3 scripts/omc_completion_observation.py live-capture --target . --report <임시보고> --verification-output <임시검증> [--unrun <항목>]`을 실행합니다. 사용자에게 원문 복사나 세션 간 전달을 요구하지 않습니다. `commit_bound=false` 관찰 snapshot은 기존 signed completion receipt나 Pilot 근거를 대체하지 않습니다.
+Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`으로 저장소 밖 사용자 custody를 한 번 생성하고 `preflight`로 확인합니다. Guard는 이 설정을 자동 로드해 세션 생성 즉시 lock을 봉인합니다. CI처럼 환경변수가 필요한 곳은 `OMC_REQUIRE_WORK_CLASS_LOCK=1`, 외부 `OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE`, pinned `OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY`를 함께 설정합니다. 등록 저장소에서는 Guard 직후 `python3 scripts/omc_completion_observation.py live-start --target .`를 실행하고, `COLLECTING`이면 최초 완료 보고 직전 보고·검증 원문을 외부 임시 파일에 보존해 `python3 scripts/omc_completion_observation.py live-capture --target . --report <임시보고> --verification-output <임시검증> [--unrun <항목>]`으로 기록합니다. 미등록은 `OBSERVATION_INVALID`로만 남기며, 관찰 실패는 구현을 차단하지 않고 해당 표본만 무효화합니다. 사용자에게 원문 복사를 요구하지 않고 `commit_bound=false` snapshot을 signed completion receipt나 Pilot 근거로 사용하지 않습니다.
 
 ## 필수 체크
 

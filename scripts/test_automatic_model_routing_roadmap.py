@@ -204,7 +204,8 @@ def test_dashboard_v0_tracks_first_forward_case_without_claiming_repeatability()
         assert "Claude Artifact와 동등" in text
         assert "주장하지 않" in text
 
-    assert "WeeklyKPI prototype은 스킬 구현 전 사례이므로 forward evidence로 재사용하지 않는다" in roadmap
+    assert "WeeklyKPI bounded local dashboard" in roadmap
+    assert "`LOCAL_DISCOVERY_PROTOTYPE`" in roadmap
     assert "`repo-ops-20260908-v4`" in roadmap
     assert "첫 forward case 판정은 `REVISION_REQUIRED`" in roadmap
     assert "`UNSUPPORTED_PRIORITY_INFERENCE`" in roadmap
@@ -764,12 +765,12 @@ def test_completion_observation_v0_is_bounded_to_capture_feasibility() -> None:
 
     for text in (roadmap, readme):
         assert "Completion Observation V0" in text
-        assert "`PROJECTION_IMPLEMENTED_CAPTURE_NOT_STARTED`" in text
-        assert "`0/10`" in text
-        assert "자동 candidate hook" in text
+        assert "`CAPTURE_CODE_COMPLETE_PROSPECTIVE_NOT_STARTED`" in text
+        assert "Codex-first" in text
+        assert "실제 적격 표본" in text
         assert "제품 효과" in text
 
-    assert "별도 work ledger를 만들지 않고 기존 sealed terminal·completion·lineage" in roadmap
+    assert "기존 sealed terminal·completion·lineage 원문" in roadmap
     assert "`(captured_at, repo_id, work_id)` 순서의 first eligible 10건" in roadmap
     assert "실제 `.omc/state/sessions` 전체를 각각 재스캔" in roadmap
     assert "승인 executor trust anchor" in roadmap

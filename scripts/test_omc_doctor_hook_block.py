@@ -138,7 +138,7 @@ def test_doctor_has_codex_session_context_check_label_from_contract(tmp_path):
     (codex_dir / "hooks.json").write_text(
         (
             '{"hooks":{"SessionStart":[{"hooks":[{"command":".agent-hooks/omc-session-start.sh codex"}]}],'
-            '"UserPromptSubmit":[{"hooks":[{"command":".agent-hooks/omc-prompt-inject.sh"}]}],'
+            '"UserPromptSubmit":[{"hooks":[{"command":".agent-hooks/omc-prompt-inject.sh codex"}]}],'
             '"PostToolUse":[{"matcher":"apply_patch|Write","hooks":[{"command":".agent-hooks/omc-post-file-check.sh"}]}]}}'
         ),
         encoding="utf-8",
@@ -161,7 +161,7 @@ def test_doctor_has_claude_session_context_check_label_from_contract(tmp_path):
         (
             '{"hooks":{"PreToolUse":[{"matcher":"Write|Edit|MultiEdit","hooks":[{"command":".agent-hooks/omc-pipeline-check.sh"}]}],'
             '"SessionStart":[{"hooks":[{"command":".agent-hooks/omc-session-start.sh claude"}]}],'
-            '"UserPromptSubmit":[{"hooks":[{"command":".agent-hooks/omc-prompt-inject.sh","timeout":10}]}]}}'
+            '"UserPromptSubmit":[{"hooks":[{"command":".agent-hooks/omc-prompt-inject.sh claude","timeout":10}]}]}}'
         ),
         encoding="utf-8",
     )

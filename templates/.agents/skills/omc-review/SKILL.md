@@ -14,6 +14,8 @@ git ls-files --others --exclude-standard
 find . -newer .git/index
 python3 scripts/omc.py state status --target .
 ```
+
+등록된 완료 품질 관찰이 있으면 `python3 scripts/omc_completion_observation.py live-status --target .`로 상태를 읽습니다. `AWAITING_USER_OUTCOME`이면 리뷰 판정과 별개로 마지막 행동을 **`수용 / 수정 필요 / 보류`** 중 하나로 묻습니다. 다음 일반 턴의 UserPromptSubmit hook이 원문을 자동 보존하므로 사용자에게 원문 복사를 요구하지 않습니다. 수용·보류 외 후속은 먼저 pending으로 저장하며 `defect_correction`, `missing_requirement`, `persona_mismatch`, `scope_change`, `clarification`, `preference` 중 사용자가 확정한 뒤 `live-classify`로 별도 결속합니다. 불명확하면 추정하지 않습니다. 관찰 실패는 리뷰 판정을 바꾸지 않고 `OBSERVATION_INVALID`로만 보고합니다.
 ## 필수 체크
 - 범위 확정 / 파일:라인 근거 / 검증 커맨드를 기록한다. 출력이 길어져도 마지막 `검증 커맨드 / 판정 / VERDICT / 다음 추천`은 생략하지 않습니다. | 리뷰어가 사용자에게 바로 보여줄 것: 근거 이슈·검증·판정 | 시스템이 암묵적으로 처리: 분할·요약·범위 밖 제외 | 정상 최종 출력: finding → 검증 → 판정, 첫 3줄 안에 결론, 24줄 이하, 같은 사실 반복 0회, 다음 행동은 정확히 1개, Machine output contract 두 줄은 줄 수·중복·다음 행동 측정에서 제외, 내부 상태인 `사용자 선택 대기` 직접 노출 금지 | 모든 severity가 비면 한 줄로 합친다. REVISE/BLOCK은 원인·영향·수정 방향을 유지한다.
 - 안전 필수 항목: 파일:라인 / VERDICT / [치명] [중대] [경미] [제안]

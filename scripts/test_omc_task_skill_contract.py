@@ -121,6 +121,16 @@ def test_task_skill_paths_are_identical():
     assert not mismatched, f"omc-task skill copies differ: {mismatched}"
 
 
+def test_task_skill_preserves_exact_live_capture_command():
+    """Compression must retain every required capture argument."""
+    expected = (
+        "python3 scripts/omc_completion_observation.py live-capture --target . "
+        "--report <임시보고> --verification-output <임시검증> [--unrun <항목>]"
+    )
+    for path in REQUIRED_TASK_SKILL_PATHS:
+        assert expected in _read(path), path
+
+
 def test_ignored_live_agent_skill_path_is_optional(tmp_path: Path):
     """Clean checkouts may not have the ignored .agent live mirror."""
     canonical = tmp_path / ".agents" / "skills" / "omc-task" / "SKILL.md"
