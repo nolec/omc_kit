@@ -691,16 +691,16 @@ def test_live_observation_requires_explicit_repository_enrollment(tmp_path: Path
 def test_live_policy_seals_capture_all_and_global_closure_contract(tmp_path: Path) -> None:
     root, _ = _live_repo(tmp_path)
     policy = json.loads((root / ".omc" / "observation-policy.json").read_text())
+    receipt_bytes = (root / ".omc" / "install-receipt.json").read_bytes()
+    receipt = json.loads(receipt_bytes)
     assert policy["capture_rule"] == "all_eligible_starts"
     assert policy["closure_selection_rule"] == "global_chronological_first_eligible"
     assert policy["closure_sample_target"] == 5
     assert policy["replacement_allowed"] is False
     assert policy["eligible_work_class"] == "implementation"
-    assert policy["installed_omc_version"] == "0.2.5"
+    assert policy["installed_omc_version"] == receipt["omc_version"]
     assert policy["installed_source_sha256"]
-    assert policy["install_receipt_sha256"] == hashlib.sha256(
-        (root / ".omc" / "install-receipt.json").read_bytes()
-    ).hexdigest()
+    assert policy["install_receipt_sha256"] == hashlib.sha256(receipt_bytes).hexdigest()
 
     policy["closure_sample_target"] = 6
     policy["policy_sha256"] = observation.canonical_sha256(
