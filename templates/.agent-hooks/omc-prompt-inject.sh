@@ -11,23 +11,84 @@ command -v "${PYTHON_BIN}" >/dev/null 2>&1 || exit 0
 # stdin JSON에서 prompt 텍스트 추출
 # 환경변수 PROMPT가 이미 설정돼 있으면 stdin 파싱 스킵 (테스트/직접 호출 지원)
 if [[ -n "${PROMPT:-}" ]]; then
-  : # 환경변수로 이미 설정됨
+  _PROMPT_BASE64=$(PROMPT="${PROMPT}" "${PYTHON_BIN}" -c '
+import base64, os, sys
+sys.stdout.write(base64.b64encode(os.environ["PROMPT"].encode("utf-8")).decode("ascii"))
+' 2>/dev/null || echo "")
 elif [ -t 0 ]; then
   # 대화형 터미널(stdin이 실제 키보드) → 블로킹 방지를 위해 스킵
   exit 0
 else
-  PROMPT=$("${PYTHON_BIN}" -c "
-import json, sys
+  _PROMPT_BASE64=$("${PYTHON_BIN}" -c "
+import base64, json, sys
 try:
     d = json.load(sys.stdin)
-    print(d.get('prompt', ''))
+    prompt = d.get('prompt', '')
+    if not isinstance(prompt, str):
+        raise ValueError('prompt must be text')
+    sys.stdout.write(base64.b64encode(prompt.encode('utf-8')).decode('ascii'))
 except Exception:
-    print('')
+    pass
 " 2>/dev/null || echo "")
+  PROMPT=$(OMC_LIVE_PROMPT_BASE64="${_PROMPT_BASE64}" "${PYTHON_BIN}" -c '
+import base64, os, sys
+sys.stdout.write(base64.b64decode(os.environ["OMC_LIVE_PROMPT_BASE64"]).decode("utf-8"))
+' 2>/dev/null || echo "")
 fi
 
 if [[ -z "${PROMPT}" ]]; then
   exit 0
+fi
+
+# Codex completion observation: an exact work id routes across registered repos;
+# otherwise the original prompt is quarantined for target resolution.
+_OBSERVATION_SCRIPT="${OMC_COMPLETION_OBSERVATION_SCRIPT:-}"
+if [ -z "${_OBSERVATION_SCRIPT}" ] && [ -f "scripts/omc_completion_observation.py" ]; then
+  _OBSERVATION_SCRIPT="scripts/omc_completion_observation.py"
+elif [ -z "${_OBSERVATION_SCRIPT}" ] && [ -f "omc_kit/scripts/omc_completion_observation.py" ]; then
+  _OBSERVATION_SCRIPT="omc_kit/scripts/omc_completion_observation.py"
+fi
+if [ "${1:-unknown}" = "codex" ] && [ -n "${_OBSERVATION_SCRIPT}" ]; then
+  if [ -n "${OMC_COMPLETION_OBSERVATION_REGISTRY:-}" ] && [ -n "${OMC_COMPLETION_OBSERVATION_QUARANTINE:-}" ]; then
+    _OBSERVATION_COMMAND=("${PYTHON_BIN}" "${_OBSERVATION_SCRIPT}" live-route-prompt --target . --executor-surface codex --repository-registry "${OMC_COMPLETION_OBSERVATION_REGISTRY}" --quarantine-root "${OMC_COMPLETION_OBSERVATION_QUARANTINE}")
+    if [ -n "${OMC_COMPLETION_OBSERVATION_WORK_ID:-}" ]; then
+      _OBSERVATION_COMMAND+=(--work-id "${OMC_COMPLETION_OBSERVATION_WORK_ID}")
+    fi
+  else
+    _OBSERVATION_COMMAND=("${PYTHON_BIN}" "${_OBSERVATION_SCRIPT}" live-prompt --target . --executor-surface codex)
+  fi
+  _OBSERVATION_RESULT=$(OMC_LIVE_PROMPT_BASE64="${_PROMPT_BASE64}" "${_OBSERVATION_COMMAND[@]}" 2>/dev/null || true)
+  _OBSERVATION_STATUS=$(printf '%s' "${_OBSERVATION_RESULT}" | "${PYTHON_BIN}" -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("status", ""))
+except Exception:
+    print("")
+' 2>/dev/null || echo "")
+  _OBSERVATION_REASON=$(printf '%s' "${_OBSERVATION_RESULT}" | "${PYTHON_BIN}" -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("reason", ""))
+except Exception:
+    print("")
+' 2>/dev/null || echo "")
+  if [ "${_OBSERVATION_STATUS}" = "OUTCOME_RECORDED" ]; then
+    echo ""
+    echo "[OMC] 완료 품질 관찰: 사용자 수용/보류 원문 기록 완료"
+  elif [ "${_OBSERVATION_STATUS}" = "FOLLOWUP_RECORDED" ]; then
+    echo ""
+    echo "[OMC] 완료 품질 관찰: 후속 원문 보존 완료"
+  elif [ "${_OBSERVATION_STATUS}" = "CLASSIFICATION_RECORDED" ]; then
+    echo ""
+    echo "[OMC] 완료 품질 관찰: 사용자 확정 분류 기록 완료"
+  elif [ "${_OBSERVATION_STATUS}" = "TARGET_RESOLUTION_REQUIRED" ]; then
+    echo ""
+    echo "[OMC] 완료 품질 관찰: 후속 원문 보존 완료 — 연결할 작업만 지정해 주세요."
+  elif [ "${_OBSERVATION_STATUS}" = "OBSERVATION_INVALID" ] && [ "${_OBSERVATION_REASON}" != "pending_completion_invalid" ] && [ "${_OBSERVATION_REASON}" != "live_observation_not_enabled" ] && [ "${_OBSERVATION_REASON}" != "live_observation_not_started" ] && [ "${_OBSERVATION_REASON}" != "live_prompt_not_expected" ]; then
+    echo ""
+    echo "[OMC] OBSERVATION_INVALID: ${_OBSERVATION_REASON}"
+    echo "  제품 작업은 계속하지만 이 표본은 성공으로 집계하지 않습니다."
+  fi
 fi
 
 

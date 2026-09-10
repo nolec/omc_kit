@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import omc_completion_observation as observation
 from omc_source_hash import source_sha256
 import omc_state
+
+
+@pytest.fixture(autouse=True)
+def _fixed_live_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    fixed = datetime.fromisoformat("2026-09-10T00:00:00+00:00")
+    monkeypatch.setattr(observation, "_now", lambda: fixed)
 
 
 def _key_pair() -> tuple[Ed25519PrivateKey, str]:
@@ -414,7 +421,13 @@ def test_candidate_rejects_execution_receipt_signed_by_repository_key() -> None:
         observation.build_candidate(registration, **source)
 
 
-def _live_repo(tmp_path: Path) -> tuple[Path, dict]:
+def _live_repo(
+    tmp_path: Path,
+    *,
+    repo_id: str = "repo",
+    repository_roots: dict[str, Path] | None = None,
+    registration: dict | None = None,
+) -> tuple[Path, dict]:
     root = tmp_path / "repo"
     root.mkdir()
     subprocess.run(["git", "init", "-q", str(root)], check=True)
@@ -486,10 +499,22 @@ def _live_repo(tmp_path: Path) -> tuple[Path, dict]:
     }
     (root / ".omc" / "install-source.json").write_text(json.dumps(install_source))
     (root / ".omc" / "install-receipt.json").write_text(json.dumps(install_receipt))
+    roster = repository_roots or {
+        repo_id: root,
+        "reserved-repo": tmp_path / "reserved-repo",
+    }
+    if registration is None:
+        registration = observation.build_live_registration(
+            study_id="completion-quality-feasibility-01",
+            repository_roots=roster,
+            observation_started_at=observation._now().isoformat(),
+            output=tmp_path / "registration.json",
+        )
     observation.enable_live_observation(
         root,
-        study_id="completion-quality-feasibility-01",
         executor_surface="codex",
+        repo_id=repo_id,
+        registration=registration,
     )
     return root, pending
 
@@ -528,6 +553,23 @@ def _replace_live_pending(root: Path, pending: dict, ordinal: int) -> dict:
     return updated
 
 
+def _tamper_live_completion_baseline(root: Path, work_id: str) -> None:
+    path = (
+        root
+        / ".omc"
+        / "observations"
+        / "live"
+        / work_id
+        / "first-completion.json"
+    )
+    completion = json.loads(path.read_text(encoding="utf-8"))
+    completion["baseline_commit"] = "f" * 40
+    completion["completion_snapshot_sha256"] = observation.canonical_sha256(
+        {**completion, "completion_snapshot_sha256": ""}
+    )
+    path.write_text(json.dumps(completion), encoding="utf-8")
+
+
 def test_live_observation_captures_uncommitted_first_completion(tmp_path: Path) -> None:
     root, pending = _live_repo(tmp_path)
     started = observation.start_live_observation(root)
@@ -544,6 +586,39 @@ def test_live_observation_captures_uncommitted_first_completion(tmp_path: Path) 
     assert completed["changed_paths"] == ["app.py"]
     assert base64.b64decode(completed["raw_report_base64"]) == b"first completion report"
     assert completed["unrun_items"] == ["real provider smoke"]
+
+
+def test_live_completion_uses_one_pending_snapshot_when_current_work_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, first_pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    second_pending = {**first_pending, "work_id": "b" * 32}
+    snapshots = iter((first_pending, second_pending))
+    monkeypatch.setattr(observation, "_live_pending", lambda _root: next(snapshots))
+
+    completed = observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+
+    assert completed["work_id"] == first_pending["work_id"]
+    assert (
+        root
+        / ".omc"
+        / "observations"
+        / "live"
+        / first_pending["work_id"]
+        / "first-completion.json"
+    ).is_file()
+    assert not (
+        root
+        / ".omc"
+        / "observations"
+        / "live"
+        / second_pending["work_id"]
+        / "first-completion.json"
+    ).exists()
 
 
 def test_live_observation_reentry_requires_exact_work_and_baseline(tmp_path: Path) -> None:
@@ -613,11 +688,12 @@ def test_live_observation_requires_explicit_repository_enrollment(tmp_path: Path
         observation.start_live_observation(root)
 
 
-def test_live_policy_seals_first_five_without_replacement_contract(tmp_path: Path) -> None:
+def test_live_policy_seals_capture_all_and_global_closure_contract(tmp_path: Path) -> None:
     root, _ = _live_repo(tmp_path)
     policy = json.loads((root / ".omc" / "observation-policy.json").read_text())
-    assert policy["selection_rule"] == "chronological_first_eligible"
-    assert policy["sample_target"] == 5
+    assert policy["capture_rule"] == "all_eligible_starts"
+    assert policy["closure_selection_rule"] == "global_chronological_first_eligible"
+    assert policy["closure_sample_target"] == 5
     assert policy["replacement_allowed"] is False
     assert policy["eligible_work_class"] == "implementation"
     assert policy["installed_omc_version"] == "0.2.5"
@@ -626,13 +702,33 @@ def test_live_policy_seals_first_five_without_replacement_contract(tmp_path: Pat
         (root / ".omc" / "install-receipt.json").read_bytes()
     ).hexdigest()
 
-    policy["sample_target"] = 6
+    policy["closure_sample_target"] = 6
     policy["policy_sha256"] = observation.canonical_sha256(
         {**policy, "policy_sha256": ""}
     )
     (root / ".omc" / "observation-policy.json").write_text(json.dumps(policy))
     with pytest.raises(observation.CaptureError, match="live_observation_not_enabled"):
         observation.start_live_observation(root)
+
+
+def test_live_registration_must_be_external_and_prospective(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    roster = {"repo": root, "second": tmp_path / "second"}
+    with pytest.raises(observation.CaptureError, match="live_registration_invalid"):
+        observation.build_live_registration(
+            study_id="study",
+            repository_roots=roster,
+            observation_started_at="2026-09-01T00:00:00+00:00",
+            output=tmp_path / "past-registration.json",
+        )
+    with pytest.raises(observation.CaptureError, match="live_registration_invalid"):
+        observation.build_live_registration(
+            study_id="study",
+            repository_roots=roster,
+            observation_started_at=observation._now().isoformat(),
+            output=root / "registration.json",
+        )
 
 
 def test_live_policy_rejects_install_receipt_changed_after_enrollment(tmp_path: Path) -> None:
@@ -668,8 +764,9 @@ def test_live_enable_audits_the_same_install_receipt_bytes(
     with pytest.raises(observation.CaptureError, match="live_install_identity_invalid"):
         observation.enable_live_observation(
             root,
-            study_id="completion-quality-feasibility-02",
             executor_surface="codex",
+            repo_id="repo",
+            registration=json.loads((tmp_path / "registration.json").read_text()),
         )
     assert not policy_path.exists()
 
@@ -685,28 +782,28 @@ def test_live_enable_rejects_non_utf8_install_receipt(tmp_path: Path) -> None:
     with pytest.raises(observation.CaptureError, match="live_install_identity_invalid"):
         observation.enable_live_observation(
             root,
-            study_id="completion-quality-feasibility-02",
             executor_surface="codex",
+            repo_id="repo",
+            registration=json.loads((tmp_path / "registration.json").read_text()),
         )
     assert not policy_path.exists()
 
 
-def test_live_observation_stops_after_chronological_first_five(tmp_path: Path) -> None:
+def test_live_observation_captures_every_eligible_start_before_closure(tmp_path: Path) -> None:
     root, pending = _live_repo(tmp_path)
     starts = [observation.start_live_observation(root)]
     for ordinal in range(2, 7):
         pending = _replace_live_pending(root, pending, ordinal)
         starts.append(observation.start_live_observation(root))
 
-    assert [item["selection_ordinal"] for item in starts[:5]] == [1, 2, 3, 4, 5]
-    assert starts[5]["status"] == "COHORT_FULL"
-    assert starts[5]["samples_started"] == 5
-    assert not (
+    assert [item["selection_ordinal"] for item in starts] == [1, 2, 3, 4, 5, 6]
+    assert starts[5]["status"] == "COLLECTING"
+    assert (
         root / ".omc" / "observations" / "live" / f"{6:032x}" / "start.json"
     ).exists()
 
 
-def test_live_allocation_is_atomic_at_fifth_sample(tmp_path: Path) -> None:
+def test_live_allocation_is_atomic_without_a_local_sample_cap(tmp_path: Path) -> None:
     root, pending = _live_repo(tmp_path)
     observation.start_live_observation(root)
     for ordinal in range(2, 5):
@@ -724,9 +821,448 @@ def test_live_allocation_is_atomic_at_fifth_sample(tmp_path: Path) -> None:
             )
         )
 
-    assert sorted(item["status"] for item in results) == ["COHORT_FULL", "COLLECTING"]
+    assert [item["status"] for item in results] == ["COLLECTING", "COLLECTING"]
     starts = observation._live_cohort_starts(root, policy)
-    assert [item["selection_ordinal"] for item in starts] == [1, 2, 3, 4, 5]
+    assert [item["selection_ordinal"] for item in starts] == [1, 2, 3, 4, 5, 6]
+
+
+def test_live_closure_selects_global_first_five_across_repositories(tmp_path: Path) -> None:
+    (tmp_path / "first").mkdir()
+    (tmp_path / "second").mkdir()
+    roster = {
+        "repo-a": tmp_path / "first" / "repo",
+        "repo-b": tmp_path / "second" / "repo",
+    }
+    registration = observation.build_live_registration(
+        study_id="completion-quality-feasibility-01",
+        repository_roots=roster,
+        observation_started_at=observation._now().isoformat(),
+        output=tmp_path / "registration.json",
+    )
+    first, pending = _live_repo(
+        tmp_path / "first", repo_id="repo-a", repository_roots=roster,
+        registration=registration,
+    )
+    second, second_pending = _live_repo(
+        tmp_path / "second", repo_id="repo-b", repository_roots=roster,
+        registration=registration,
+    )
+    starts = []
+    for root, current, ordinals in (
+        (first, pending, (1, 3, 5)),
+        (second, second_pending, (2, 4, 6)),
+    ):
+        for ordinal in ordinals:
+            current = _replace_live_pending(root, current, ordinal)
+            start = observation.start_live_observation(root)
+            start["started_at"] = (
+                datetime.fromisoformat(registration["observation_started_at"])
+                + timedelta(minutes=ordinal)
+            ).isoformat()
+            start["start_sha256"] = observation.canonical_sha256(
+                {**start, "start_sha256": ""}
+            )
+            (root / ".omc" / "observations" / "live" / current["work_id"] / "start.json").write_text(
+                json.dumps(start), encoding="utf-8"
+            )
+            starts.append(start)
+
+    result = observation.close_live_cohort(
+        {"repo-a": first, "repo-b": second},
+        registration=registration,
+        closed_at=registration["observation_ends_at"],
+        output=tmp_path / "closure.json",
+    )
+
+    assert result["decision"] == "INCONCLUSIVE"
+    assert [(item["repo_id"], item["work_id"]) for item in result["selected"]] == [
+        ("repo-a", f"{ordinal:032x}") if ordinal % 2 else ("repo-b", f"{ordinal:032x}")
+        for ordinal in range(1, 6)
+    ]
+    assert result["population_count"] == 6
+    assert (tmp_path / "closure.json").is_file()
+
+
+def test_cross_session_prompt_uses_exact_work_identity_or_quarantines(tmp_path: Path) -> None:
+    (tmp_path / "first").mkdir()
+    (tmp_path / "second").mkdir()
+    roster = {
+        "repo-a": tmp_path / "first" / "repo",
+        "repo-b": tmp_path / "second" / "repo",
+    }
+    registration = observation.build_live_registration(
+        study_id="completion-quality-feasibility-01",
+        repository_roots=roster,
+        observation_started_at=observation._now().isoformat(),
+        output=tmp_path / "registration.json",
+    )
+    first, first_pending = _live_repo(
+        tmp_path / "first", repo_id="repo-a", repository_roots=roster,
+        registration=registration,
+    )
+    second, second_pending = _live_repo(
+        tmp_path / "second", repo_id="repo-b", repository_roots=roster,
+        registration=registration,
+    )
+    _replace_live_pending(second, second_pending, 2)
+    for root in (first, second):
+        observation.start_live_observation(root)
+        (root / "app.py").write_text("after\n", encoding="utf-8")
+        observation.capture_live_completion(
+            root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+        )
+
+    exact = observation.route_live_prompt(
+        {"repo-a": first, "repo-b": second},
+        raw_prompt="수용".encode(),
+        executor_surface="codex",
+        work_id=first_pending["work_id"],
+        quarantine_root=tmp_path / "quarantine",
+    )
+    assert exact["status"] == "OUTCOME_RECORDED"
+    assert observation.live_observation_status(first)["status"] == "CLOSED"
+
+    ambiguous = observation.route_live_prompt(
+        {"repo-a": first, "repo-b": second},
+        raw_prompt=b"please fix this",
+        executor_surface="codex",
+        work_id="f" * 32,
+        quarantine_root=tmp_path / "quarantine",
+    )
+    assert ambiguous["status"] == "TARGET_RESOLUTION_REQUIRED"
+    quarantine = list((tmp_path / "quarantine").glob("*.json"))
+    assert len(quarantine) == 1
+    record = json.loads(quarantine[0].read_text(encoding="utf-8"))
+    assert base64.b64decode(record["raw_prompt_base64"]) == b"please fix this"
+    assert record["candidate_work_ids"] == [f"{2:032x}"]
+
+
+def test_cross_session_prompt_finds_awaiting_work_after_pending_changes(tmp_path: Path) -> None:
+    root, first_pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    second_pending = _replace_live_pending(root, first_pending, 2)
+    observation.start_live_observation(root)
+
+    result = observation.route_live_prompt(
+        {"repo": root},
+        raw_prompt="수용".encode(),
+        executor_surface="codex",
+        work_id=first_pending["work_id"],
+        quarantine_root=tmp_path / "quarantine",
+    )
+
+    assert result["status"] == "OUTCOME_RECORDED"
+    assert result["work_id"] == first_pending["work_id"]
+    assert not (tmp_path / "quarantine").exists()
+    assert observation.live_observation_status(root)["work_id"] == second_pending["work_id"]
+
+
+def test_cross_session_prompt_quarantines_self_rehashed_malformed_start(tmp_path: Path) -> None:
+    root, pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    start_path = (
+        root / ".omc" / "observations" / "live" / pending["work_id"] / "start.json"
+    )
+    start = json.loads(start_path.read_text(encoding="utf-8"))
+    start.pop("session_ids")
+    start["start_sha256"] = observation.canonical_sha256(
+        {**start, "start_sha256": ""}
+    )
+    start_path.write_text(json.dumps(start), encoding="utf-8")
+
+    result = observation.route_live_prompt(
+        {"repo": root},
+        raw_prompt="수용".encode(),
+        executor_surface="codex",
+        work_id=pending["work_id"],
+        quarantine_root=tmp_path / "quarantine",
+    )
+
+    assert result["status"] == "TARGET_RESOLUTION_REQUIRED"
+    assert len(list((tmp_path / "quarantine").glob("*.json"))) == 1
+
+
+def test_cross_session_prompt_quarantines_completion_with_wrong_start_baseline(
+    tmp_path: Path,
+) -> None:
+    root, first_pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    _tamper_live_completion_baseline(root, first_pending["work_id"])
+    second_pending = _replace_live_pending(root, first_pending, 2)
+    observation.start_live_observation(root)
+
+    result = observation.route_live_prompt(
+        {"repo": root},
+        raw_prompt="수용".encode(),
+        executor_surface="codex",
+        work_id=first_pending["work_id"],
+        quarantine_root=tmp_path / "quarantine",
+    )
+
+    assert result["status"] == "TARGET_RESOLUTION_REQUIRED"
+    assert observation.live_observation_status(root)["work_id"] == second_pending["work_id"]
+
+
+def test_cross_session_prompt_without_work_identity_does_not_quarantine(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    result = observation.route_live_prompt(
+        {"repo": root},
+        raw_prompt=b"start another task",
+        executor_surface="codex",
+        work_id=None,
+        quarantine_root=tmp_path / "quarantine",
+    )
+    assert result["status"] == "WORK_ID_REQUIRED"
+    assert not (tmp_path / "quarantine").exists()
+
+
+def test_live_prompt_uses_one_pending_snapshot_when_current_work_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, first_pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    second_pending = {**first_pending, "work_id": "b" * 32}
+    snapshots = iter((first_pending, second_pending))
+    monkeypatch.setattr(observation, "_live_pending", lambda _root: next(snapshots))
+
+    result = observation.record_live_prompt(
+        root,
+        raw_prompt=b"please explain",
+        executor_surface="codex",
+    )
+
+    assert result["work_id"] == first_pending["work_id"]
+    assert (
+        root
+        / ".omc"
+        / "observations"
+        / "live"
+        / first_pending["work_id"]
+        / "followup-001.json"
+    ).is_file()
+    assert not (
+        root
+        / ".omc"
+        / "observations"
+        / "live"
+        / second_pending["work_id"]
+        / "followup-001.json"
+    ).exists()
+
+
+def test_expected_live_prompt_state_does_not_create_capture_failure(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/omc_completion_observation.py",
+            "live-prompt",
+            "--target",
+            str(root),
+            "--executor-surface",
+            "codex",
+        ],
+        env={**os.environ, "OMC_LIVE_PROMPT_BASE64": base64.b64encode(b"hello").decode()},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["reason"] == "live_prompt_not_expected"
+    assert not (root / ".omc" / "observations" / "live-failures").exists()
+
+
+def test_live_closure_rejects_self_rehashed_raw_completion_tampering(tmp_path: Path) -> None:
+    (tmp_path / "first").mkdir()
+    (tmp_path / "second").mkdir()
+    roster = {
+        "repo-a": tmp_path / "first" / "repo",
+        "repo-b": tmp_path / "second" / "repo",
+    }
+    registration = observation.build_live_registration(
+        study_id="completion-quality-feasibility-01",
+        repository_roots=roster,
+        observation_started_at=observation._now().isoformat(),
+        output=tmp_path / "registration.json",
+    )
+    first, _ = _live_repo(
+        tmp_path / "first", repo_id="repo-a", repository_roots=roster,
+        registration=registration,
+    )
+    second, _ = _live_repo(
+        tmp_path / "second", repo_id="repo-b", repository_roots=roster,
+        registration=registration,
+    )
+    for root in (first, second):
+        observation.start_live_observation(root)
+        (root / "app.py").write_text("after\n", encoding="utf-8")
+        completion = observation.capture_live_completion(
+            root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+        )
+        path = root / ".omc" / "observations" / "live" / ("a" * 32) / "first-completion.json"
+        completion["raw_report_base64"] = base64.b64encode(b"forged").decode()
+        completion["completion_snapshot_sha256"] = observation.canonical_sha256(
+            {**completion, "completion_snapshot_sha256": ""}
+        )
+        path.write_text(json.dumps(completion), encoding="utf-8")
+    result = observation.close_live_cohort(
+        {"repo-a": first, "repo-b": second},
+        registration=registration,
+        closed_at=registration["observation_ends_at"],
+        output=tmp_path / "closure.json",
+    )
+    assert result["decision"] == "CAPTURE_FAILED"
+
+
+@pytest.mark.parametrize(
+    "malformed_snapshot",
+    [
+        "garbage",
+        {"path": "app.py", "state": "present", "byte_length": 6},
+        {"path": "app.py", "state": "unknown", "byte_length": 6, "sha256": "f" * 64},
+    ],
+)
+def test_live_closure_rejects_self_rehashed_malformed_file_snapshot(
+    tmp_path: Path, malformed_snapshot: object
+) -> None:
+    (tmp_path / "first").mkdir()
+    (tmp_path / "second").mkdir()
+    roster = {
+        "repo-a": tmp_path / "first" / "repo",
+        "repo-b": tmp_path / "second" / "repo",
+    }
+    registration = observation.build_live_registration(
+        study_id="completion-quality-feasibility-01",
+        repository_roots=roster,
+        observation_started_at=observation._now().isoformat(),
+        output=tmp_path / "registration.json",
+    )
+    for parent, repo_id in ((tmp_path / "first", "repo-a"), (tmp_path / "second", "repo-b")):
+        root, _ = _live_repo(
+            parent, repo_id=repo_id, repository_roots=roster, registration=registration
+        )
+        observation.start_live_observation(root)
+        (root / "app.py").write_text("after\n", encoding="utf-8")
+        completion = observation.capture_live_completion(
+            root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+        )
+        completion["file_snapshots"] = [malformed_snapshot]
+        completion["completion_snapshot_sha256"] = observation.canonical_sha256(
+            {**completion, "completion_snapshot_sha256": ""}
+        )
+        path = root / ".omc" / "observations" / "live" / ("a" * 32) / "first-completion.json"
+        path.write_text(json.dumps(completion), encoding="utf-8")
+
+    result = observation.close_live_cohort(
+        roster,
+        registration=registration,
+        closed_at=registration["observation_ends_at"],
+        output=tmp_path / "closure.json",
+    )
+    assert result["decision"] == "CAPTURE_FAILED"
+
+
+@pytest.mark.parametrize("mutation", ["malformed_unrun", "missing_status", "unknown_field"])
+def test_live_closure_rejects_self_rehashed_malformed_completion_schema(
+    tmp_path: Path, mutation: str
+) -> None:
+    (tmp_path / "first").mkdir()
+    (tmp_path / "second").mkdir()
+    roster = {
+        "repo-a": tmp_path / "first" / "repo",
+        "repo-b": tmp_path / "second" / "repo",
+    }
+    registration = observation.build_live_registration(
+        study_id="completion-quality-feasibility-01",
+        repository_roots=roster,
+        observation_started_at=observation._now().isoformat(),
+        output=tmp_path / "registration.json",
+    )
+    for parent, repo_id in ((tmp_path / "first", "repo-a"), (tmp_path / "second", "repo-b")):
+        root, pending = _live_repo(
+            parent, repo_id=repo_id, repository_roots=roster, registration=registration
+        )
+        observation.start_live_observation(root)
+        (root / "app.py").write_text("after\n", encoding="utf-8")
+        completion = observation.capture_live_completion(
+            root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+        )
+        if mutation == "malformed_unrun":
+            completion["unrun_items"] = [{}]
+        elif mutation == "missing_status":
+            completion.pop("status")
+        else:
+            completion["unexpected"] = True
+        completion["completion_snapshot_sha256"] = observation.canonical_sha256(
+            {**completion, "completion_snapshot_sha256": ""}
+        )
+        path = (
+            root
+            / ".omc"
+            / "observations"
+            / "live"
+            / pending["work_id"]
+            / "first-completion.json"
+        )
+        path.write_text(json.dumps(completion), encoding="utf-8")
+
+    result = observation.close_live_cohort(
+        roster,
+        registration=registration,
+        closed_at=registration["observation_ends_at"],
+        output=tmp_path / "closure.json",
+    )
+    assert result["decision"] == "CAPTURE_FAILED"
+
+
+def test_live_closure_rejects_completion_with_wrong_start_baseline(tmp_path: Path) -> None:
+    (tmp_path / "first").mkdir()
+    (tmp_path / "second").mkdir()
+    roster = {
+        "repo-a": tmp_path / "first" / "repo",
+        "repo-b": tmp_path / "second" / "repo",
+    }
+    registration = observation.build_live_registration(
+        study_id="completion-quality-feasibility-01",
+        repository_roots=roster,
+        observation_started_at=observation._now().isoformat(),
+        output=tmp_path / "registration.json",
+    )
+    for parent, repo_id in ((tmp_path / "first", "repo-a"), (tmp_path / "second", "repo-b")):
+        root, pending = _live_repo(
+            parent, repo_id=repo_id, repository_roots=roster, registration=registration
+        )
+        observation.start_live_observation(root)
+        (root / "app.py").write_text("after\n", encoding="utf-8")
+        observation.capture_live_completion(
+            root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+        )
+        _tamper_live_completion_baseline(root, pending["work_id"])
+
+    result = observation.close_live_cohort(
+        roster,
+        registration=registration,
+        closed_at=registration["observation_ends_at"],
+        output=tmp_path / "closure.json",
+    )
+    assert result["decision"] == "CAPTURE_FAILED"
 
 
 def test_live_status_rejects_tampered_completion_snapshot(tmp_path: Path) -> None:
@@ -743,6 +1279,46 @@ def test_live_status_rejects_tampered_completion_snapshot(tmp_path: Path) -> Non
         observation.live_observation_status(root)
 
 
+def test_live_status_rejects_self_rehashed_malformed_completion_schema(
+    tmp_path: Path,
+) -> None:
+    root, pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    completed = observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    completed.pop("status")
+    completed["completion_snapshot_sha256"] = observation.canonical_sha256(
+        {**completed, "completion_snapshot_sha256": ""}
+    )
+    path = (
+        root
+        / ".omc"
+        / "observations"
+        / "live"
+        / pending["work_id"]
+        / "first-completion.json"
+    )
+    path.write_text(json.dumps(completed), encoding="utf-8")
+
+    with pytest.raises(observation.CaptureError, match="live_observation_binding_mismatch"):
+        observation.live_observation_status(root)
+
+
+def test_live_status_rejects_completion_with_wrong_start_baseline(tmp_path: Path) -> None:
+    root, pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    _tamper_live_completion_baseline(root, pending["work_id"])
+
+    with pytest.raises(observation.CaptureError, match="live_observation_binding_mismatch"):
+        observation.live_observation_status(root)
+
+
 def test_codex_task_and_review_surfaces_drive_live_observation_without_user_copy() -> None:
     task_skill = Path(".agents/skills/omc-task/SKILL.md").read_text(encoding="utf-8")
     review_skill = Path(".agents/skills/omc-review/SKILL.md").read_text(encoding="utf-8")
@@ -752,6 +1328,12 @@ def test_codex_task_and_review_surfaces_drive_live_observation_without_user_copy
     assert "omc_completion_observation.py live-status" in review_skill
     assert "수용 / 수정 필요 / 보류" in review_skill
     assert "사용자에게 원문 복사를 요구하지" in review_skill
+    hook_template = Path("templates/.agent-hooks/omc-prompt-inject.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "live-route-prompt" in hook_template
+    assert "OMC_COMPLETION_OBSERVATION_REGISTRY" in hook_template
+    assert "OMC_COMPLETION_OBSERVATION_QUARANTINE" in hook_template
 
 
 def test_live_start_rejects_path_traversal_work_id(tmp_path: Path) -> None:
@@ -922,6 +1504,13 @@ def test_user_prompt_hook_surfaces_active_observation_failure(tmp_path: Path) ->
     assert result.returncode == 0
     assert "OBSERVATION_INVALID" in result.stdout
     assert "live_observation_invalid" in result.stdout
+    failures = list(
+        (root / ".omc" / "observations" / "live-failures").glob("*.json")
+    )
+    assert len(failures) == 1
+    failure = json.loads(failures[0].read_text(encoding="utf-8"))
+    assert failure["command"] == "live-prompt"
+    assert failure["reason"] == "live_observation_invalid"
 
 
 def test_user_prompt_hook_preserves_trailing_newlines_as_utf8_bytes(tmp_path: Path) -> None:

@@ -24,7 +24,7 @@ def _load(path: Path) -> dict[str, object]:
 def test_roadmap_separates_live_capture_feasibility_from_product_effect() -> None:
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
     assert "Codex-first 무복사 수집 계층" in roadmap
-    assert "명시적으로 `live-enable --executor-surface codex`한 저장소" in roadmap
+    assert "공통 study ID·미래 T0·14일/T1+24h 경계·저장소 roster·root identity" in roadmap
     assert "Claude 입력을 Codex 표본에 섞지 않으며" in roadmap
     assert "끝 개행까지 그대로 보존" in roadmap
     assert "미커밋 `commit_bound=false`" in roadmap

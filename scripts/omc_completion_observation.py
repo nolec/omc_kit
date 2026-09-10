@@ -13,7 +13,7 @@ import os
 import re
 import subprocess
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +41,10 @@ LIVE_SCHEMA = "omc-live-completion-observation/v1"
 
 class CaptureError(ValueError):
     """The observation evidence cannot support a result."""
+
+
+def _now() -> datetime:
+    return datetime.now().astimezone()
 
 
 def canonical_sha256(value: object) -> str:
@@ -727,11 +731,115 @@ def _live_install_identity(
     }
 
 
+def build_live_registration(
+    *,
+    study_id: str,
+    repository_roots: dict[str, Path],
+    observation_started_at: str,
+    output: Path,
+) -> dict[str, Any]:
+    resolved_output = output.resolve()
+    repositories = [
+        {
+            "repo_id": repo_id,
+            "repository_root_sha256": hashlib.sha256(
+                str(root.resolve()).encode()
+            ).hexdigest(),
+        }
+        for repo_id, root in sorted(repository_roots.items())
+    ]
+    registered_at = _now()
+    starts_at = _timestamp(observation_started_at)
+    if (
+        not study_id.strip()
+        or len(repositories) < 2
+        or any(_path_is_within(resolved_output, root) for root in repository_roots.values())
+        or starts_at < registered_at
+    ):
+        raise CaptureError("live_registration_invalid")
+    registration = _live_record(
+        {
+            "schema_version": LIVE_SCHEMA,
+            "artifact_type": "cohort_registration",
+            "claim_boundary": "CAPTURE_FEASIBILITY_ONLY",
+            "study_id": study_id,
+            "registered_at": registered_at.isoformat(),
+            "observation_started_at": observation_started_at,
+            "observation_ends_at": (starts_at + timedelta(days=14)).isoformat(),
+            "closure_deadline": (starts_at + timedelta(days=15)).isoformat(),
+            "capture_rule": "all_eligible_starts",
+            "closure_selection_rule": "global_chronological_first_eligible",
+            "closure_sample_target": 5,
+            "minimum_repositories": 2,
+            "repositories": repositories,
+        },
+        "registration_sha256",
+    )
+    _write_once(output, registration)
+    return registration
+
+
+def _validate_live_registration(registration: object) -> dict[str, Any]:
+    value = _validate_live_record(
+        registration,
+        artifact_type="cohort_registration",
+        hash_field="registration_sha256",
+    )
+    repositories = value.get("repositories")
+    try:
+        registered_at = _timestamp(value.get("registered_at"))
+        starts_at = _timestamp(value.get("observation_started_at"))
+        ends_at = _timestamp(value.get("observation_ends_at"))
+        deadline = _timestamp(value.get("closure_deadline"))
+    except CaptureError as error:
+        raise CaptureError("live_registration_invalid") from error
+    if (
+        value.get("claim_boundary") != "CAPTURE_FEASIBILITY_ONLY"
+        or value.get("capture_rule") != "all_eligible_starts"
+        or value.get("closure_selection_rule") != "global_chronological_first_eligible"
+        or value.get("closure_sample_target") != 5
+        or value.get("minimum_repositories") != 2
+        or not isinstance(repositories, list)
+        or len(repositories) < 2
+        or any(
+            not isinstance(item, dict)
+            or set(item) != {"repo_id", "repository_root_sha256"}
+            or not isinstance(item.get("repo_id"), str)
+            or not item["repo_id"]
+            or re.fullmatch(r"[0-9a-f]{64}", str(item.get("repository_root_sha256")))
+            is None
+            for item in repositories
+        )
+        or repositories != sorted(repositories, key=lambda item: item["repo_id"])
+        or len({item["repo_id"] for item in repositories}) != len(repositories)
+        or registered_at > starts_at
+        or ends_at != starts_at + timedelta(days=14)
+        or deadline != starts_at + timedelta(days=15)
+    ):
+        raise CaptureError("live_registration_invalid")
+    return value
+
+
 def enable_live_observation(
-    project_root: Path, *, study_id: str, executor_surface: str
+    project_root: Path,
+    *,
+    executor_surface: str,
+    repo_id: str,
+    registration: dict[str, Any],
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
-    if not study_id.strip() or executor_surface != "codex":
+    registration = _validate_live_registration(registration)
+    normalized_roster = registration["repositories"]
+    registered_repo = next(
+        (item for item in normalized_roster if item["repo_id"] == repo_id), None
+    )
+    if (
+        executor_surface != "codex"
+        or registered_repo is None
+        or registered_repo["repository_root_sha256"]
+        != hashlib.sha256(str(project_root).encode()).hexdigest()
+        or _now() > _timestamp(registration["observation_started_at"])
+    ):
         raise CaptureError("live_observation_policy_invalid")
     install_identity = _live_install_identity(
         project_root, require_fresh_source=True
@@ -742,15 +850,19 @@ def enable_live_observation(
             "artifact_type": "policy",
             "claim_boundary": "CAPTURE_FEASIBILITY_ONLY",
             "enabled": True,
-            "study_id": study_id,
+            "study_id": registration["study_id"],
+            "repo_id": repo_id,
+            "registered_repositories": normalized_roster,
+            "cohort_registration_sha256": registration["registration_sha256"],
             "executor_surface": executor_surface,
-            "selection_rule": "chronological_first_eligible",
-            "sample_target": 5,
+            "capture_rule": "all_eligible_starts",
+            "closure_selection_rule": "global_chronological_first_eligible",
+            "closure_sample_target": 5,
             "replacement_allowed": False,
             "eligible_work_class": "implementation",
             **install_identity,
             "repository_root_sha256": hashlib.sha256(str(project_root).encode()).hexdigest(),
-            "enabled_at": datetime.now().astimezone().isoformat(),
+            "enabled_at": registration["observation_started_at"],
         },
         "policy_sha256",
     )
@@ -767,14 +879,29 @@ def _live_policy(project_root: Path) -> dict[str, Any]:
         )
     except (CaptureError, OSError, ValueError, json.JSONDecodeError) as error:
         raise CaptureError("live_observation_not_enabled") from error
+    repositories = policy.get("registered_repositories")
     if (
         policy.get("enabled") is not True
         or policy.get("claim_boundary") != "CAPTURE_FEASIBILITY_ONLY"
         or policy.get("executor_surface") != "codex"
-        or policy.get("selection_rule") != "chronological_first_eligible"
-        or policy.get("sample_target") != 5
+        or policy.get("capture_rule") != "all_eligible_starts"
+        or policy.get("closure_selection_rule") != "global_chronological_first_eligible"
+        or policy.get("closure_sample_target") != 5
         or policy.get("replacement_allowed") is not False
         or policy.get("eligible_work_class") != "implementation"
+        or not isinstance(policy.get("repo_id"), str)
+        or not isinstance(repositories, list)
+        or len(repositories) < 2
+        or re.fullmatch(
+            r"[0-9a-f]{64}", str(policy.get("cohort_registration_sha256"))
+        ) is None
+        or not any(
+            isinstance(item, dict)
+            and item.get("repo_id") == policy.get("repo_id")
+            and item.get("repository_root_sha256")
+            == hashlib.sha256(str(project_root).encode()).hexdigest()
+            for item in repositories
+        )
         or policy.get("repository_root_sha256")
         != hashlib.sha256(str(project_root).encode()).hexdigest()
     ):
@@ -826,6 +953,36 @@ def _live_record(value: dict[str, Any], hash_field: str) -> dict[str, Any]:
     return _sealed({**value, hash_field: ""}, hash_field)
 
 
+def _record_live_failure(project_root: Path, *, command: str, reason: str) -> None:
+    """Best-effort local evidence that observation instrumentation failed."""
+    try:
+        policy = _live_policy(project_root.resolve())
+        pending = _read_json(
+            project_root.resolve() / ".omc" / "state" / "pending-completion.json"
+        )
+        work_id = pending.get("work_id") if isinstance(pending, dict) else None
+        record = _live_record(
+            {
+                "schema_version": LIVE_SCHEMA,
+                "artifact_type": "capture_failure",
+                "claim_boundary": "OBSERVATION_ONLY",
+                "study_id": policy["study_id"],
+                "policy_sha256": policy["policy_sha256"],
+                "repo_id": policy["repo_id"],
+                "work_id": work_id,
+                "command": command,
+                "reason": reason,
+                "recorded_at": _now().isoformat(),
+            },
+            "failure_sha256",
+        )
+        parent = project_root.resolve() / ".omc" / "observations" / "live-failures"
+        parent.mkdir(parents=True, exist_ok=True)
+        _write_once(parent / f"{record['failure_sha256']}.json", record)
+    except Exception:
+        return
+
+
 def _validate_live_record(value: object, *, artifact_type: str, hash_field: str) -> dict[str, Any]:
     if (
         not isinstance(value, dict)
@@ -835,6 +992,205 @@ def _validate_live_record(value: object, *, artifact_type: str, hash_field: str)
     ):
         raise CaptureError("live_observation_invalid")
     return value
+
+
+def _has_exact_keys(record: dict[str, Any], keys: set[str]) -> bool:
+    return set(record) == keys
+
+
+def _has_valid_timestamp(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        _timestamp(value)
+    except CaptureError:
+        return False
+    return True
+
+
+def _validated_raw(record: dict[str, Any], *, base64_field: str, sha_field: str) -> bytes:
+    try:
+        raw = base64.b64decode(record.get(base64_field), validate=True)
+    except (TypeError, ValueError, binascii.Error) as error:
+        raise CaptureError("live_observation_invalid") from error
+    if not raw.strip() or hashlib.sha256(raw).hexdigest() != record.get(sha_field):
+        raise CaptureError("live_observation_invalid")
+    return raw
+
+
+def _validate_live_work_artifacts(
+    live_root: Path, *, work_id: str, baseline_commit: str
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    completion_path = live_root / "first-completion.json"
+    terminal_path = live_root / "terminal.json"
+    completion = None
+    terminal = None
+    if completion_path.exists():
+        completion = _validate_live_record(
+            _read_json(completion_path),
+            artifact_type="first_completion",
+            hash_field="completion_snapshot_sha256",
+        )
+        _validated_raw(
+            completion,
+            base64_field="raw_report_base64",
+            sha_field="raw_report_sha256",
+        )
+        _validated_raw(
+            completion,
+            base64_field="raw_verification_base64",
+            sha_field="raw_verification_sha256",
+        )
+        snapshots = completion.get("file_snapshots")
+        changed_paths = completion.get("changed_paths")
+        completion_keys = {
+            "schema_version", "artifact_type", "claim_boundary", "status", "work_id",
+            "baseline_commit", "commit_bound", "changed_paths", "file_snapshots",
+            "raw_report_base64", "raw_report_sha256", "raw_verification_base64",
+            "raw_verification_sha256", "unrun_items", "captured_at",
+            "completion_snapshot_sha256",
+        }
+        snapshots_valid = isinstance(snapshots, list) and all(
+            isinstance(item, dict)
+            and set(item) == {"path", "state", "byte_length", "sha256"}
+            and isinstance(item.get("path"), str)
+            and bool(item["path"])
+            and not isinstance(item.get("byte_length"), bool)
+            and isinstance(item.get("byte_length"), int)
+            and item["byte_length"] >= 0
+            and (
+                (
+                    item.get("state") == "present"
+                    and re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256")))
+                    is not None
+                )
+                or (
+                    item.get("state") == "deleted"
+                    and item["byte_length"] == 0
+                    and item.get("sha256") is None
+                )
+            )
+            for item in snapshots
+        )
+        if (
+            not _has_exact_keys(completion, completion_keys)
+            or completion.get("claim_boundary") != "OBSERVATION_ONLY"
+            or completion.get("status") != "AWAITING_USER_OUTCOME"
+            or completion.get("work_id") != work_id
+            or completion.get("baseline_commit") != baseline_commit
+            or completion.get("commit_bound") is not False
+            or not isinstance(changed_paths, list)
+            or any(not isinstance(path, str) or not path for path in changed_paths)
+            or changed_paths != sorted(set(changed_paths))
+            or not snapshots_valid
+            or [item["path"] for item in snapshots] != changed_paths
+            or not isinstance(completion.get("unrun_items"), list)
+            or any(
+                not isinstance(item, str) or not item.strip()
+                for item in completion.get("unrun_items", [])
+            )
+            or not _has_valid_timestamp(completion.get("captured_at"))
+        ):
+            raise CaptureError("live_observation_binding_mismatch")
+    followups = sorted(live_root.glob("followup-*.json"))
+    classifications = sorted(live_root.glob("classification-*.json"))
+    if [item.name for item in followups] != [
+        f"followup-{index:03d}.json" for index in range(1, len(followups) + 1)
+    ] or [item.name for item in classifications] != [
+        f"classification-{index:03d}.json"
+        for index in range(1, len(classifications) + 1)
+    ]:
+        raise CaptureError("live_observation_invalid")
+    validated_followups: list[dict[str, Any]] = []
+    for index, path in enumerate(followups, 1):
+        followup = _validate_live_record(
+            _read_json(path), artifact_type="followup", hash_field="followup_sha256"
+        )
+        _validated_raw(
+            followup,
+            base64_field="raw_followup_base64",
+            sha_field="raw_followup_sha256",
+        )
+        if followup.get("work_id") != work_id or followup.get("followup_index") != index:
+            raise CaptureError("live_observation_binding_mismatch")
+        if (
+            not _has_exact_keys(
+                followup,
+                {
+                    "schema_version", "artifact_type", "claim_boundary", "work_id",
+                    "followup_index", "classification_status", "raw_followup_base64",
+                    "raw_followup_sha256", "recorded_at", "followup_sha256",
+                },
+            )
+            or followup.get("claim_boundary") != "OBSERVATION_ONLY"
+            or followup.get("classification_status") != "pending_user_confirmation"
+            or not _has_valid_timestamp(followup.get("recorded_at"))
+        ):
+            raise CaptureError("live_observation_binding_mismatch")
+        validated_followups.append(followup)
+    for index, path in enumerate(classifications, 1):
+        if index > len(validated_followups):
+            raise CaptureError("live_observation_invalid")
+        classification = _validate_live_record(
+            _read_json(path),
+            artifact_type="classification",
+            hash_field="classification_sha256",
+        )
+        _validated_raw(
+            classification,
+            base64_field="raw_confirmation_base64",
+            sha_field="raw_confirmation_sha256",
+        )
+        label = classification.get("classification")
+        if (
+            not _has_exact_keys(
+                classification,
+                {
+                    "schema_version", "artifact_type", "claim_boundary", "work_id",
+                    "followup_index", "followup_sha256", "classification",
+                    "primary_correction", "raw_confirmation_base64",
+                    "raw_confirmation_sha256", "classified_at", "classification_sha256",
+                },
+            )
+            or classification.get("claim_boundary") != "OBSERVATION_ONLY"
+            or classification.get("work_id") != work_id
+            or classification.get("followup_index") != index
+            or classification.get("followup_sha256")
+            != validated_followups[index - 1]["followup_sha256"]
+            or label not in TAXONOMY
+            or classification.get("primary_correction") is not (label in PRIMARY_CORRECTIONS)
+            or not _has_valid_timestamp(classification.get("classified_at"))
+        ):
+            raise CaptureError("live_observation_binding_mismatch")
+    if terminal_path.exists():
+        terminal = _validate_live_record(
+            _read_json(terminal_path),
+            artifact_type="outcome",
+            hash_field="outcome_sha256",
+        )
+        _validated_raw(
+            terminal,
+            base64_field="raw_followup_base64",
+            sha_field="raw_followup_sha256",
+        )
+        if (
+            not _has_exact_keys(
+                terminal,
+                {
+                    "schema_version", "artifact_type", "claim_boundary", "work_id",
+                    "outcome", "classification", "raw_followup_base64",
+                    "raw_followup_sha256", "recorded_at", "outcome_sha256",
+                },
+            )
+            or terminal.get("claim_boundary") != "OBSERVATION_ONLY"
+            or terminal.get("work_id") != work_id
+            or terminal.get("outcome") not in {"accepted", "deferred"}
+            or terminal.get("classification") is not None
+            or len(classifications) != len(followups)
+            or not _has_valid_timestamp(terminal.get("recorded_at"))
+        ):
+            raise CaptureError("live_observation_binding_mismatch")
+    return completion, terminal
 
 
 def _live_cohort_starts(
@@ -848,8 +1204,20 @@ def _live_cohort_starts(
         record = _validate_live_record(
             _read_json(path), artifact_type="start", hash_field="start_sha256"
         )
+        session_ids = record.get("session_ids")
         if (
-            record.get("work_id") != path.parent.name
+            not _has_exact_keys(
+                record,
+                {
+                    "schema_version", "artifact_type", "claim_boundary", "study_id",
+                    "policy_sha256", "executor_surface", "selection_ordinal", "status",
+                    "work_id", "root_session_id", "session_ids", "baseline_commit",
+                    "repository_root_sha256", "started_at", "start_sha256",
+                },
+            )
+            or record.get("claim_boundary") != "OBSERVATION_ONLY"
+            or record.get("status") != "COLLECTING"
+            or record.get("work_id") != path.parent.name
             or record.get("study_id") != policy["study_id"]
             or record.get("policy_sha256") != policy["policy_sha256"]
             or record.get("executor_surface") != policy["executor_surface"]
@@ -857,13 +1225,21 @@ def _live_cohort_starts(
             != hashlib.sha256(str(project_root).encode()).hexdigest()
             or isinstance(record.get("selection_ordinal"), bool)
             or not isinstance(record.get("selection_ordinal"), int)
+            or record["selection_ordinal"] < 1
+            or not isinstance(record.get("baseline_commit"), str)
+            or not isinstance(session_ids, list)
+            or not session_ids
+            or any(not isinstance(item, str) or not item for item in session_ids)
+            or len(session_ids) != len(set(session_ids))
+            or record.get("root_session_id") != session_ids[0]
+            or not _has_valid_timestamp(record.get("started_at"))
         ):
             raise CaptureError("live_observation_binding_mismatch")
         records.append(record)
     records.sort(key=lambda item: item["selection_ordinal"])
     if [item["selection_ordinal"] for item in records] != list(
         range(1, len(records) + 1)
-    ) or len(records) > policy["sample_target"]:
+    ):
         raise CaptureError("live_observation_invalid")
     return records
 
@@ -883,6 +1259,10 @@ def _allocate_live_start(
         current_policy = _live_policy(project_root)
         if current_policy["policy_sha256"] != policy["policy_sha256"]:
             raise CaptureError("live_observation_binding_mismatch")
+        now = _now()
+        observation_start = _timestamp(current_policy["enabled_at"])
+        if now < observation_start or now >= observation_start + timedelta(days=14):
+            raise CaptureError("live_observation_window_closed")
         starts = _live_cohort_starts(project_root, current_policy)
         root = _live_root(project_root, pending["work_id"])
         path = root / "start.json"
@@ -896,14 +1276,6 @@ def _allocate_live_start(
             ):
                 raise CaptureError("live_observation_binding_mismatch")
             return existing
-        if len(starts) >= current_policy["sample_target"]:
-            return {
-                "schema_version": LIVE_SCHEMA,
-                "claim_boundary": "OBSERVATION_ONLY",
-                "status": "COHORT_FULL",
-                "sample_target": current_policy["sample_target"],
-                "samples_started": len(starts),
-            }
         record = _live_record(
             {
                 "schema_version": LIVE_SCHEMA,
@@ -921,7 +1293,7 @@ def _allocate_live_start(
                 "repository_root_sha256": hashlib.sha256(
                     str(project_root).encode()
                 ).hexdigest(),
-                "started_at": datetime.now().astimezone().isoformat(),
+                "started_at": _now().isoformat(),
             },
             "start_sha256",
         )
@@ -939,9 +1311,159 @@ def start_live_observation(project_root: Path) -> dict[str, Any]:
     return _allocate_live_start(project_root, policy, pending)
 
 
-def live_observation_status(project_root: Path) -> dict[str, Any]:
+def _path_is_within(path: Path, parent: Path) -> bool:
+    try:
+        return os.path.commonpath((str(path.resolve()), str(parent.resolve()))) == str(
+            parent.resolve()
+        )
+    except ValueError:
+        return False
+
+
+def close_live_cohort(
+    repository_roots: dict[str, Path],
+    *,
+    registration: dict[str, Any],
+    closed_at: str,
+    output: Path,
+) -> dict[str, Any]:
+    """Freeze the global chronological first five from repo-local live ledgers."""
+    if len(repository_roots) < 2 or len(repository_roots) != len(set(repository_roots)):
+        raise CaptureError("live_registration_invalid")
+    registration = _validate_live_registration(registration)
+    study_id = registration["study_id"]
+    closed = _timestamp(closed_at)
+    resolved_output = output.resolve()
+    candidates: list[dict[str, Any]] = []
+    policy_hashes: dict[str, str] = {}
+    registration_hash = registration["registration_sha256"]
+    registered_repositories = registration["repositories"]
+    invalid_reasons: list[dict[str, str]] = []
+    latest_enabled: datetime | None = None
+    for repo_id, raw_root in sorted(repository_roots.items()):
+        root = raw_root.resolve()
+        if not repo_id.strip() or _path_is_within(resolved_output, root):
+            raise CaptureError("live_registration_invalid")
+        try:
+            policy = _live_policy(root)
+            if policy["study_id"] != study_id:
+                raise CaptureError("live_observation_binding_mismatch")
+            if policy["repo_id"] != repo_id:
+                raise CaptureError("live_observation_binding_mismatch")
+            if (
+                registration_hash != policy["cohort_registration_sha256"]
+                or registered_repositories != policy["registered_repositories"]
+            ):
+                raise CaptureError("live_registration_invalid")
+            enabled = _timestamp(policy["enabled_at"])
+            latest_enabled = enabled if latest_enabled is None else max(latest_enabled, enabled)
+            policy_hashes[repo_id] = policy["policy_sha256"]
+            for failure_path in sorted(
+                (root / ".omc" / "observations" / "live-failures").glob("*.json")
+            ):
+                failure = _validate_live_record(
+                    _read_json(failure_path),
+                    artifact_type="capture_failure",
+                    hash_field="failure_sha256",
+                )
+                if (
+                    failure.get("study_id") != study_id
+                    or failure.get("policy_sha256") != policy["policy_sha256"]
+                    or failure.get("repo_id") != repo_id
+                ):
+                    raise CaptureError("live_observation_binding_mismatch")
+                invalid_reasons.append(
+                    {"repo_id": repo_id, "reason": str(failure.get("reason"))}
+                )
+            for start in _live_cohort_starts(root, policy):
+                started_at = _timestamp(start["started_at"])
+                if started_at < enabled or started_at >= enabled + timedelta(days=14):
+                    raise CaptureError("live_observation_window_invalid")
+                work_id = start["work_id"]
+                live_root = _live_root(root, work_id)
+                completion, terminal = _validate_live_work_artifacts(
+                    live_root,
+                    work_id=work_id,
+                    baseline_commit=start["baseline_commit"],
+                )
+                candidates.append(
+                    {
+                        "repo_id": repo_id,
+                        "work_id": work_id,
+                        "started_at": start["started_at"],
+                        "start_sha256": start["start_sha256"],
+                        "completion_snapshot_sha256": (
+                            completion.get("completion_snapshot_sha256")
+                            if completion is not None else None
+                        ),
+                        "outcome_sha256": (
+                            terminal.get("outcome_sha256") if terminal is not None else None
+                        ),
+                    }
+                )
+        except (CaptureError, OSError, ValueError, json.JSONDecodeError) as error:
+            invalid_reasons.append({"repo_id": repo_id, "reason": str(error)})
+    if latest_enabled is None:
+        raise CaptureError("live_registration_invalid")
+    supplied_roster = [
+        {
+            "repo_id": repo_id,
+            "repository_root_sha256": hashlib.sha256(str(root.resolve()).encode()).hexdigest(),
+        }
+        for repo_id, root in sorted(repository_roots.items())
+    ]
+    if supplied_roster != registered_repositories:
+        invalid_reasons.append({"repo_id": "cohort", "reason": "live_registration_invalid"})
+    if closed < latest_enabled + timedelta(days=14) or closed > latest_enabled + timedelta(
+        days=15
+    ):
+        raise CaptureError("live_closure_window_invalid")
+    try:
+        candidates.sort(
+            key=lambda item: (_timestamp(item["started_at"]), item["repo_id"], item["work_id"])
+        )
+    except CaptureError as error:
+        invalid_reasons.append({"repo_id": "unknown", "reason": str(error)})
+    selected = candidates[:5]
+    represented = {item["repo_id"] for item in selected}
+    if invalid_reasons:
+        decision = "CAPTURE_FAILED"
+    elif len(selected) < 5 or len(represented) < 2:
+        decision = "LOW_NATURAL_DEMAND"
+    elif any(
+        item["completion_snapshot_sha256"] is None or item["outcome_sha256"] is None
+        for item in selected
+    ):
+        decision = "INCONCLUSIVE"
+    else:
+        decision = "CAPTURE_FEASIBLE"
+    result = _live_record(
+        {
+            "schema_version": LIVE_SCHEMA,
+            "artifact_type": "cohort_closure",
+            "claim_boundary": "CAPTURE_FEASIBILITY_ONLY",
+            "study_id": study_id,
+            "closed_at": closed_at,
+            "selection_rule": "global_chronological_first_eligible",
+            "sample_target": 5,
+            "minimum_repositories": 2,
+            "population_count": len(candidates),
+            "selected": selected,
+            "policy_sha256_by_repo": policy_hashes,
+            "cohort_registration_sha256": registration_hash,
+            "invalid_reasons": invalid_reasons,
+            "decision": decision,
+        },
+        "closure_sha256",
+    )
+    _write_once(output, result)
+    return result
+
+
+def _live_observation_status_for_pending(
+    project_root: Path, pending: dict[str, Any]
+) -> dict[str, Any]:
     project_root = project_root.resolve()
-    pending = _live_pending(project_root)
     policy = _live_policy(project_root)
     starts = _live_cohort_starts(project_root, policy)
     root = _live_root(project_root, pending["work_id"])
@@ -965,76 +1487,13 @@ def live_observation_status(project_root: Path) -> dict[str, Any]:
         or pending["root_session_id"] != start.get("root_session_id")
     ):
         raise CaptureError("live_observation_binding_mismatch")
-    terminal = root / "terminal.json"
-    completion = root / "first-completion.json"
-    if completion.exists():
-        completion_record = _validate_live_record(
-            _read_json(completion),
-            artifact_type="first_completion",
-            hash_field="completion_snapshot_sha256",
-        )
-        if completion_record.get("work_id") != pending["work_id"]:
-            raise CaptureError("live_observation_binding_mismatch")
-    followups = sorted(root.glob("followup-*.json"))
-    if [item.name for item in followups] != [
-        f"followup-{index:03d}.json" for index in range(1, len(followups) + 1)
-    ]:
-        raise CaptureError("live_observation_invalid")
-    for followup in followups:
-        event = _validate_live_record(
-            _read_json(followup), artifact_type="followup", hash_field="followup_sha256"
-        )
-        if event.get("work_id") != pending["work_id"]:
-            raise CaptureError("live_observation_binding_mismatch")
-    classifications = sorted(root.glob("classification-*.json"))
-    if [item.name for item in classifications] != [
-        f"classification-{index:03d}.json"
-        for index in range(1, len(classifications) + 1)
-    ]:
-        raise CaptureError("live_observation_invalid")
-    for index, classification_path in enumerate(classifications, 1):
-        classification = _validate_live_record(
-            _read_json(classification_path),
-            artifact_type="classification",
-            hash_field="classification_sha256",
-        )
-        if index > len(followups):
-            raise CaptureError("live_observation_invalid")
-        followup = _validate_live_record(
-            _read_json(followups[index - 1]),
-            artifact_type="followup",
-            hash_field="followup_sha256",
-        )
-        try:
-            raw_confirmation = base64.b64decode(
-                classification.get("raw_confirmation_base64"), validate=True
-            )
-        except (TypeError, ValueError) as error:
-            raise CaptureError("live_observation_invalid") from error
-        if (
-            classification.get("work_id") != pending["work_id"]
-            or classification.get("followup_sha256") != followup["followup_sha256"]
-            or classification.get("classification") not in TAXONOMY
-            or classification.get("primary_correction")
-            is not (classification.get("classification") in PRIMARY_CORRECTIONS)
-            or not raw_confirmation.strip()
-            or hashlib.sha256(raw_confirmation).hexdigest()
-            != classification.get("raw_confirmation_sha256")
-        ):
-            raise CaptureError("live_observation_binding_mismatch")
-    if terminal.exists():
-        event = _validate_live_record(
-            _read_json(terminal), artifact_type="outcome", hash_field="outcome_sha256"
-        )
-        if (
-            event.get("work_id") != pending["work_id"]
-            or event.get("outcome") not in {"accepted", "deferred"}
-        ):
-            raise CaptureError("live_observation_binding_mismatch")
-        if len(classifications) != len(followups):
-            raise CaptureError("classification_required")
-    status = "CLOSED" if terminal.exists() else (
-        "AWAITING_USER_OUTCOME" if completion.exists() else "COLLECTING"
+    completion, terminal = _validate_live_work_artifacts(
+        root,
+        work_id=pending["work_id"],
+        baseline_commit=start["baseline_commit"],
+    )
+    status = "CLOSED" if terminal is not None else (
+        "AWAITING_USER_OUTCOME" if completion is not None else "COLLECTING"
     )
     return {
         "schema_version": LIVE_SCHEMA,
@@ -1043,7 +1502,46 @@ def live_observation_status(project_root: Path) -> dict[str, Any]:
         "work_id": pending["work_id"],
         "session_ids": pending["session_ids"],
         "selection_ordinal": start["selection_ordinal"],
-        "sample_target": policy["sample_target"],
+        "closure_sample_target": policy["closure_sample_target"],
+        "samples_started": len(starts),
+    }
+
+
+def live_observation_status(project_root: Path) -> dict[str, Any]:
+    project_root = project_root.resolve()
+    pending = _live_pending(project_root)
+    return _live_observation_status_for_pending(project_root, pending)
+
+
+def _live_work_status(project_root: Path, *, work_id: str) -> dict[str, Any]:
+    """Read one immutable live-work ledger without depending on current pending state."""
+    project_root = project_root.resolve()
+    if re.fullmatch(r"[0-9a-f]{32}", work_id) is None:
+        raise CaptureError("live_observation_binding_mismatch")
+    policy = _live_policy(project_root)
+    starts = _live_cohort_starts(project_root, policy)
+    matching_starts = [item for item in starts if item["work_id"] == work_id]
+    if len(matching_starts) != 1:
+        raise CaptureError("live_observation_not_started")
+    start = matching_starts[0]
+    root = _live_root(project_root, work_id)
+    completion, terminal = _validate_live_work_artifacts(
+        root, work_id=work_id, baseline_commit=start["baseline_commit"]
+    )
+    return {
+        "schema_version": LIVE_SCHEMA,
+        "claim_boundary": "OBSERVATION_ONLY",
+        "status": (
+            "CLOSED"
+            if terminal is not None
+            else "AWAITING_USER_OUTCOME"
+            if completion is not None
+            else "COLLECTING"
+        ),
+        "work_id": work_id,
+        "session_ids": start["session_ids"],
+        "selection_ordinal": start["selection_ordinal"],
+        "closure_sample_target": policy["closure_sample_target"],
         "samples_started": len(starts),
     }
 
@@ -1080,14 +1578,14 @@ def capture_live_completion(
     unrun_items: list[str],
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
-    status = live_observation_status(project_root)
+    pending = _live_pending(project_root)
+    status = _live_observation_status_for_pending(project_root, pending)
     if status["status"] != "COLLECTING":
         raise CaptureError("first_completion_already_recorded")
     if not raw_report.strip() or not raw_verification.strip():
         raise CaptureError("first_completion_evidence_required")
     if any(not isinstance(item, str) or not item.strip() for item in unrun_items):
         raise CaptureError("unrun_items_invalid")
-    pending = _live_pending(project_root)
     paths = _changed_paths(project_root)
     if not paths:
         raise CaptureError("first_completion_changes_required")
@@ -1119,7 +1617,7 @@ def capture_live_completion(
             "raw_verification_base64": base64.b64encode(raw_verification).decode("ascii"),
             "raw_verification_sha256": hashlib.sha256(raw_verification).hexdigest(),
             "unrun_items": unrun_items,
-            "captured_at": datetime.now().astimezone().isoformat(),
+            "captured_at": _now().isoformat(),
         },
         "completion_snapshot_sha256",
     )
@@ -1133,9 +1631,13 @@ def record_live_outcome(
     outcome: str,
     raw_followup: bytes,
     classification: str | None = None,
+    work_id: str | None = None,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
-    status = live_observation_status(project_root)
+    pending = None if work_id is not None else _live_pending(project_root)
+    status = _live_work_status(project_root, work_id=work_id) if work_id is not None else (
+        _live_observation_status_for_pending(project_root, pending)
+    )
     if status["status"] == "COLLECTING":
         raise CaptureError("first_completion_required")
     if status["status"] == "CLOSED":
@@ -1146,15 +1648,18 @@ def record_live_outcome(
         raise CaptureError("classification_required")
     if outcome != "correction_required" and classification is not None:
         raise CaptureError("classification_invalid")
-    pending = _live_pending(project_root)
-    root = _live_root(project_root, pending["work_id"])
+    resolved_work_id = work_id or pending["work_id"]
+    root = _live_root(project_root, resolved_work_id)
     if outcome == "correction_required":
-        followup = _record_live_followup(project_root, raw_prompt=raw_followup)
+        followup = _record_live_followup(
+            project_root, raw_prompt=raw_followup, work_id=resolved_work_id
+        )
         classified = classify_live_followup(
             project_root,
             followup_index=followup["followup_index"],
             classification=str(classification),
             raw_confirmation=raw_followup,
+            work_id=resolved_work_id,
         )
         return {**followup, **classified, "outcome": outcome}
     if len(list(root.glob("classification-*.json"))) != len(
@@ -1166,12 +1671,12 @@ def record_live_outcome(
             "schema_version": LIVE_SCHEMA,
             "artifact_type": "outcome",
             "claim_boundary": "OBSERVATION_ONLY",
-            "work_id": pending["work_id"],
+            "work_id": resolved_work_id,
             "outcome": outcome,
             "classification": classification,
             "raw_followup_base64": base64.b64encode(raw_followup).decode("ascii"),
             "raw_followup_sha256": hashlib.sha256(raw_followup).hexdigest(),
-            "recorded_at": datetime.now().astimezone().isoformat(),
+            "recorded_at": _now().isoformat(),
         },
         "outcome_sha256",
     )
@@ -1179,23 +1684,25 @@ def record_live_outcome(
     return record
 
 
-def _record_live_followup(project_root: Path, *, raw_prompt: bytes) -> dict[str, Any]:
+def _record_live_followup(
+    project_root: Path, *, raw_prompt: bytes, work_id: str | None = None
+) -> dict[str, Any]:
     if not raw_prompt.strip():
         raise CaptureError("followup_invalid")
-    pending = _live_pending(project_root)
-    root = _live_root(project_root, pending["work_id"])
+    resolved_work_id = work_id or _live_pending(project_root)["work_id"]
+    root = _live_root(project_root, resolved_work_id)
     index = len(list(root.glob("followup-*.json"))) + 1
     record = _live_record(
         {
             "schema_version": LIVE_SCHEMA,
             "artifact_type": "followup",
             "claim_boundary": "OBSERVATION_ONLY",
-            "work_id": pending["work_id"],
+            "work_id": resolved_work_id,
             "followup_index": index,
             "classification_status": "pending_user_confirmation",
             "raw_followup_base64": base64.b64encode(raw_prompt).decode("ascii"),
             "raw_followup_sha256": hashlib.sha256(raw_prompt).hexdigest(),
-            "recorded_at": datetime.now().astimezone().isoformat(),
+            "recorded_at": _now().isoformat(),
         },
         "followup_sha256",
     )
@@ -1209,9 +1716,13 @@ def classify_live_followup(
     followup_index: int,
     classification: str,
     raw_confirmation: bytes,
+    work_id: str | None = None,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
-    status = live_observation_status(project_root)
+    pending = None if work_id is not None else _live_pending(project_root)
+    status = _live_work_status(project_root, work_id=work_id) if work_id is not None else (
+        _live_observation_status_for_pending(project_root, pending)
+    )
     if status["status"] == "CLOSED":
         raise CaptureError("outcome_already_recorded")
     if (
@@ -1221,8 +1732,8 @@ def classify_live_followup(
         or not raw_confirmation.strip()
     ):
         raise CaptureError("classification_invalid")
-    pending = _live_pending(project_root)
-    root = _live_root(project_root, pending["work_id"])
+    resolved_work_id = work_id or pending["work_id"]
+    root = _live_root(project_root, resolved_work_id)
     followup = _validate_live_record(
         _read_json(root / f"followup-{followup_index:03d}.json"),
         artifact_type="followup",
@@ -1233,14 +1744,14 @@ def classify_live_followup(
             "schema_version": LIVE_SCHEMA,
             "artifact_type": "classification",
             "claim_boundary": "OBSERVATION_ONLY",
-            "work_id": pending["work_id"],
+            "work_id": resolved_work_id,
             "followup_index": followup_index,
             "followup_sha256": followup["followup_sha256"],
             "classification": classification,
             "primary_correction": classification in PRIMARY_CORRECTIONS,
             "raw_confirmation_base64": base64.b64encode(raw_confirmation).decode("ascii"),
             "raw_confirmation_sha256": hashlib.sha256(raw_confirmation).hexdigest(),
-            "classified_at": datetime.now().astimezone().isoformat(),
+            "classified_at": _now().isoformat(),
         },
         "classification_sha256",
     )
@@ -1258,13 +1769,20 @@ def _is_skill_control_prompt(value: str) -> bool:
 
 
 def record_live_prompt(
-    project_root: Path, *, raw_prompt: bytes, executor_surface: str
+    project_root: Path,
+    *,
+    raw_prompt: bytes,
+    executor_surface: str,
+    work_id: str | None = None,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
     policy = _live_policy(project_root)
     if executor_surface != policy["executor_surface"]:
         raise CaptureError("live_observation_executor_mismatch")
-    status = live_observation_status(project_root)
+    pending = None if work_id is not None else _live_pending(project_root)
+    status = _live_work_status(project_root, work_id=work_id) if work_id is not None else (
+        _live_observation_status_for_pending(project_root, pending)
+    )
     if status["status"] != "AWAITING_USER_OUTCOME":
         raise CaptureError("live_prompt_not_expected")
     try:
@@ -1292,8 +1810,8 @@ def record_live_prompt(
         "preference": "preference",
         "선호 변경": "preference",
     }
-    pending = _live_pending(project_root)
-    root = _live_root(project_root, pending["work_id"])
+    resolved_work_id = work_id or pending["work_id"]
+    root = _live_root(project_root, resolved_work_id)
     unclassified_index = len(list(root.glob("classification-*.json"))) + 1
     followup_count = len(list(root.glob("followup-*.json")))
     if unclassified_index <= followup_count and normalized in classification_aliases:
@@ -1302,20 +1820,102 @@ def record_live_prompt(
             followup_index=unclassified_index,
             classification=classification_aliases[normalized],
             raw_confirmation=raw_prompt,
+            work_id=resolved_work_id,
         )
         return {**result, "status": "CLASSIFICATION_RECORDED"}
     if normalized in {"수용", "accept", "accepted"}:
         result = record_live_outcome(
-            project_root, outcome="accepted", raw_followup=raw_prompt
+            project_root,
+            outcome="accepted",
+            raw_followup=raw_prompt,
+            work_id=resolved_work_id,
         )
         return {**result, "status": "OUTCOME_RECORDED"}
     if normalized in {"보류", "defer", "deferred"}:
         result = record_live_outcome(
-            project_root, outcome="deferred", raw_followup=raw_prompt
+            project_root,
+            outcome="deferred",
+            raw_followup=raw_prompt,
+            work_id=resolved_work_id,
         )
         return {**result, "status": "OUTCOME_RECORDED"}
-    result = _record_live_followup(project_root, raw_prompt=raw_prompt)
+    result = _record_live_followup(
+        project_root, raw_prompt=raw_prompt, work_id=resolved_work_id
+    )
     return {**result, "status": "FOLLOWUP_RECORDED"}
+
+
+def route_live_prompt(
+    repository_roots: dict[str, Path],
+    *,
+    raw_prompt: bytes,
+    executor_surface: str,
+    work_id: str | None,
+    quarantine_root: Path,
+) -> dict[str, Any]:
+    """Route a prompt across repositories without guessing its work identity."""
+    if not raw_prompt.strip() or len(repository_roots) < 1:
+        raise CaptureError("followup_invalid")
+    try:
+        prompt_text = raw_prompt.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise CaptureError("followup_invalid") from error
+    if _is_skill_control_prompt(prompt_text):
+        return {
+            "schema_version": LIVE_SCHEMA,
+            "claim_boundary": "OBSERVATION_ONLY",
+            "status": "CONTROL_PROMPT_IGNORED",
+        }
+    if work_id is None:
+        return {
+            "schema_version": LIVE_SCHEMA,
+            "claim_boundary": "OBSERVATION_ONLY",
+            "status": "WORK_ID_REQUIRED",
+        }
+    quarantine = quarantine_root.resolve()
+    candidates: list[tuple[str, Path, str]] = []
+    for repo_id, raw_root in sorted(repository_roots.items()):
+        root = raw_root.resolve()
+        if not repo_id.strip() or _path_is_within(quarantine, root):
+            raise CaptureError("live_registration_invalid")
+        try:
+            policy = _live_policy(root)
+            statuses = [
+                _live_work_status(root, work_id=start["work_id"])
+                for start in _live_cohort_starts(root, policy)
+            ]
+        except (CaptureError, OSError, ValueError, json.JSONDecodeError):
+            continue
+        candidates.extend(
+            (repo_id, root, status["work_id"])
+            for status in statuses
+            if status["status"] == "AWAITING_USER_OUTCOME"
+        )
+    matches = [item for item in candidates if work_id is not None and item[2] == work_id]
+    if len(matches) == 1:
+        return record_live_prompt(
+            matches[0][1],
+            raw_prompt=raw_prompt,
+            executor_surface=executor_surface,
+            work_id=matches[0][2],
+        )
+    record = _live_record(
+        {
+            "schema_version": LIVE_SCHEMA,
+            "artifact_type": "prompt_quarantine",
+            "claim_boundary": "OBSERVATION_ONLY",
+            "status": "TARGET_RESOLUTION_REQUIRED",
+            "requested_work_id": work_id,
+            "candidate_work_ids": [item[2] for item in candidates],
+            "raw_prompt_base64": base64.b64encode(raw_prompt).decode("ascii"),
+            "raw_prompt_sha256": hashlib.sha256(raw_prompt).hexdigest(),
+            "recorded_at": _now().isoformat(),
+        },
+        "quarantine_sha256",
+    )
+    quarantine.mkdir(parents=True, exist_ok=True)
+    _write_once(quarantine / f"{record['quarantine_sha256']}.json", record)
+    return record
 
 
 def _repository_roots(values: list[str]) -> dict[str, Path]:
@@ -1328,6 +1928,23 @@ def _repository_roots(values: list[str]) -> dict[str, Path]:
         if not repo_id or not path or repo_id in roots:
             raise CaptureError("repository_roots_invalid")
         roots[repo_id] = Path(path)
+    return roots
+
+
+def _repository_registry(path: Path) -> dict[str, Path]:
+    value = _read_json(path)
+    if not isinstance(value, dict) or not value:
+        raise CaptureError("repository_roots_invalid")
+    roots: dict[str, Path] = {}
+    for repo_id, raw_path in value.items():
+        if (
+            not isinstance(repo_id, str)
+            or not repo_id
+            or not isinstance(raw_path, str)
+            or not Path(raw_path).is_absolute()
+        ):
+            raise CaptureError("repository_roots_invalid")
+        roots[repo_id] = Path(raw_path)
     return roots
 
 
@@ -1377,13 +1994,21 @@ def _parser() -> argparse.ArgumentParser:
     live_outcome = sub.add_parser("live-outcome")
     live_prompt = sub.add_parser("live-prompt")
     live_classify = sub.add_parser("live-classify")
+    live_close = sub.add_parser("live-close")
+    live_route = sub.add_parser("live-route-prompt")
+    live_register = sub.add_parser("live-register")
     for command in (
         live_enable, live_start, live_status, live_capture, live_outcome,
-        live_prompt, live_classify,
+        live_prompt, live_classify, live_close, live_route, live_register,
     ):
         command.add_argument("--target", type=Path, default=Path.cwd())
-    live_enable.add_argument("--study-id", required=True)
     live_enable.add_argument("--executor-surface", choices=["codex"], required=True)
+    live_enable.add_argument("--repo-id", required=True)
+    live_enable.add_argument("--registration", type=Path, required=True)
+    live_register.add_argument("--study-id", required=True)
+    live_register.add_argument("--repository-root", action="append", required=True)
+    live_register.add_argument("--observation-started-at", required=True)
+    live_register.add_argument("--out", type=Path, required=True)
     live_prompt.add_argument("--executor-surface", required=True)
     live_capture.add_argument("--report", type=Path, required=True)
     live_capture.add_argument("--verification-output", type=Path, required=True)
@@ -1396,6 +2021,16 @@ def _parser() -> argparse.ArgumentParser:
     live_classify.add_argument("--followup-index", type=int, required=True)
     live_classify.add_argument("--classification", choices=TAXONOMY, required=True)
     live_classify.add_argument("--confirmation", type=Path, required=True)
+    live_close.add_argument("--registration", type=Path, required=True)
+    live_close.add_argument("--closed-at", required=True)
+    live_close.add_argument("--repository-root", action="append", required=True)
+    live_close.add_argument("--out", type=Path, required=True)
+    live_route.add_argument("--executor-surface", required=True)
+    live_route_roots = live_route.add_mutually_exclusive_group(required=True)
+    live_route_roots.add_argument("--repository-root", action="append")
+    live_route_roots.add_argument("--repository-registry", type=Path)
+    live_route.add_argument("--work-id")
+    live_route.add_argument("--quarantine-root", type=Path, required=True)
     for command in (register, candidate, reconcile, population, report):
         command.add_argument("--out", type=Path, required=True)
     return parser
@@ -1408,8 +2043,16 @@ def main() -> int:
         if args.command == "live-enable":
             result = enable_live_observation(
                 args.target,
-                study_id=args.study_id,
                 executor_surface=args.executor_surface,
+                repo_id=args.repo_id,
+                registration=_read_json(args.registration),
+            )
+        elif args.command == "live-register":
+            result = build_live_registration(
+                study_id=args.study_id,
+                repository_roots=_repository_roots(args.repository_root),
+                observation_started_at=args.observation_started_at,
+                output=args.out,
             )
         elif args.command == "live-start":
             result = start_live_observation(args.target)
@@ -1448,6 +2091,32 @@ def main() -> int:
                 followup_index=args.followup_index,
                 classification=args.classification,
                 raw_confirmation=args.confirmation.read_bytes(),
+            )
+        elif args.command == "live-close":
+            result = close_live_cohort(
+                _repository_roots(args.repository_root),
+                registration=_read_json(args.registration),
+                closed_at=args.closed_at,
+                output=args.out,
+            )
+        elif args.command == "live-route-prompt":
+            encoded_prompt = os.environ.get("OMC_LIVE_PROMPT_BASE64")
+            if encoded_prompt is None:
+                raise CaptureError("followup_invalid")
+            try:
+                raw_prompt = base64.b64decode(encoded_prompt, validate=True)
+            except (ValueError, binascii.Error) as error:
+                raise CaptureError("followup_invalid") from error
+            result = route_live_prompt(
+                (
+                    _repository_registry(args.repository_registry)
+                    if args.repository_registry is not None
+                    else _repository_roots(args.repository_root)
+                ),
+                raw_prompt=raw_prompt,
+                executor_surface=args.executor_surface,
+                work_id=args.work_id,
+                quarantine_root=args.quarantine_root,
             )
         elif args.command == "register":
             result = build_registration(
@@ -1517,6 +2186,18 @@ def main() -> int:
         json.JSONDecodeError,
     ) as error:
         if live_command:
+            if args.command in {
+                "live-start", "live-capture", "live-outcome", "live-prompt",
+                "live-classify", "live-route-prompt",
+            } and str(error) not in {
+                "live_prompt_not_expected",
+                "outcome_already_recorded",
+                "classification_required",
+                "first_completion_already_recorded",
+            }:
+                _record_live_failure(
+                    args.target, command=args.command, reason=str(error)
+                )
             print(json.dumps({
                 "claim_boundary": "OBSERVATION_ONLY",
                 "reason": str(error),
@@ -1526,7 +2207,12 @@ def main() -> int:
         print(json.dumps({"status": "BLOCKED", "reason": str(error)}, ensure_ascii=False))
         return 2
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if result.get("decision") != "CAPTURE_INCOMPLETE" else 2
+    return 2 if result.get("decision") in {
+        "CAPTURE_INCOMPLETE",
+        "CAPTURE_FAILED",
+        "INCONCLUSIVE",
+        "LOW_NATURAL_DEMAND",
+    } else 0
 
 
 if __name__ == "__main__":
