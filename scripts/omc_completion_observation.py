@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import fcntl
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import omc_state
+import omc_install_audit
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
@@ -678,12 +680,58 @@ def _live_root(project_root: Path, work_id: str) -> Path:
     return project_root / ".omc" / "observations" / "live" / work_id
 
 
+def _live_install_identity(
+    project_root: Path, *, require_fresh_source: bool
+) -> dict[str, str]:
+    receipt_path = project_root / ".omc" / "install-receipt.json"
+    try:
+        receipt_bytes = receipt_path.read_bytes()
+        receipt = json.loads(receipt_bytes)
+        audit = omc_install_audit.audit_target(project_root)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise CaptureError("live_install_identity_invalid") from error
+    version = audit.get("version_readiness")
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("schema_version") != 3
+        or receipt.get("target") != str(project_root)
+        or not isinstance(receipt.get("omc_version"), str)
+        or re.fullmatch(r"\d+\.\d+\.\d+", receipt["omc_version"]) is None
+        or not isinstance(receipt.get("source_sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", receipt["source_sha256"]) is None
+        or not isinstance(receipt.get("source_revision"), str)
+        or not receipt["source_revision"].strip()
+        or audit.get("status") != "ok"
+        or audit.get("installed_integrity_status") != "ok"
+        or not isinstance(version, dict)
+        or version.get("receipt_status") != "current"
+        or version.get("installed_version") != receipt["omc_version"]
+        or audit.get("install_source_sha256") != receipt["source_sha256"]
+    ):
+        raise CaptureError("live_install_identity_invalid")
+    if require_fresh_source and (
+        audit.get("verification_status") != "ok"
+        or audit.get("core_usage_readiness") != "ready"
+        or audit.get("source_freshness_status") != "up_to_date"
+    ):
+        raise CaptureError("live_install_identity_invalid")
+    return {
+        "install_receipt_sha256": hashlib.sha256(receipt_bytes).hexdigest(),
+        "installed_omc_version": receipt["omc_version"],
+        "installed_source_sha256": receipt["source_sha256"],
+        "installed_source_revision": receipt["source_revision"],
+    }
+
+
 def enable_live_observation(
     project_root: Path, *, study_id: str, executor_surface: str
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
     if not study_id.strip() or executor_surface != "codex":
         raise CaptureError("live_observation_policy_invalid")
+    install_identity = _live_install_identity(
+        project_root, require_fresh_source=True
+    )
     policy = _live_record(
         {
             "schema_version": LIVE_SCHEMA,
@@ -692,6 +740,11 @@ def enable_live_observation(
             "enabled": True,
             "study_id": study_id,
             "executor_surface": executor_surface,
+            "selection_rule": "chronological_first_eligible",
+            "sample_target": 5,
+            "replacement_allowed": False,
+            "eligible_work_class": "implementation",
+            **install_identity,
             "repository_root_sha256": hashlib.sha256(str(project_root).encode()).hexdigest(),
             "enabled_at": datetime.now().astimezone().isoformat(),
         },
@@ -714,10 +767,19 @@ def _live_policy(project_root: Path) -> dict[str, Any]:
         policy.get("enabled") is not True
         or policy.get("claim_boundary") != "CAPTURE_FEASIBILITY_ONLY"
         or policy.get("executor_surface") != "codex"
+        or policy.get("selection_rule") != "chronological_first_eligible"
+        or policy.get("sample_target") != 5
+        or policy.get("replacement_allowed") is not False
+        or policy.get("eligible_work_class") != "implementation"
         or policy.get("repository_root_sha256")
         != hashlib.sha256(str(project_root).encode()).hexdigest()
     ):
         raise CaptureError("live_observation_not_enabled")
+    install_identity = _live_install_identity(
+        project_root, require_fresh_source=False
+    )
+    if any(policy.get(key) != value for key, value in install_identity.items()):
+        raise CaptureError("live_install_identity_invalid")
     return policy
 
 
@@ -771,45 +833,113 @@ def _validate_live_record(value: object, *, artifact_type: str, hash_field: str)
     return value
 
 
+def _live_cohort_starts(
+    project_root: Path, policy: dict[str, Any]
+) -> list[dict[str, Any]]:
+    parent = project_root / ".omc" / "observations" / "live"
+    records: list[dict[str, Any]] = []
+    for path in sorted(parent.glob("*/start.json")):
+        if re.fullmatch(r"[0-9a-f]{32}", path.parent.name) is None:
+            raise CaptureError("live_observation_invalid")
+        record = _validate_live_record(
+            _read_json(path), artifact_type="start", hash_field="start_sha256"
+        )
+        if (
+            record.get("work_id") != path.parent.name
+            or record.get("study_id") != policy["study_id"]
+            or record.get("policy_sha256") != policy["policy_sha256"]
+            or record.get("executor_surface") != policy["executor_surface"]
+            or record.get("repository_root_sha256")
+            != hashlib.sha256(str(project_root).encode()).hexdigest()
+            or isinstance(record.get("selection_ordinal"), bool)
+            or not isinstance(record.get("selection_ordinal"), int)
+        ):
+            raise CaptureError("live_observation_binding_mismatch")
+        records.append(record)
+    records.sort(key=lambda item: item["selection_ordinal"])
+    if [item["selection_ordinal"] for item in records] != list(
+        range(1, len(records) + 1)
+    ) or len(records) > policy["sample_target"]:
+        raise CaptureError("live_observation_invalid")
+    return records
+
+
+def _allocate_live_start(
+    project_root: Path, policy: dict[str, Any], pending: dict[str, Any]
+) -> dict[str, Any]:
+    parent = project_root / ".omc" / "observations" / "live"
+    parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        parent / ".allocation.lock",
+        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        current_policy = _live_policy(project_root)
+        if current_policy["policy_sha256"] != policy["policy_sha256"]:
+            raise CaptureError("live_observation_binding_mismatch")
+        starts = _live_cohort_starts(project_root, current_policy)
+        root = _live_root(project_root, pending["work_id"])
+        path = root / "start.json"
+        if path.exists():
+            existing = next(
+                (item for item in starts if item["work_id"] == pending["work_id"]), None
+            )
+            if (
+                existing is None
+                or existing.get("baseline_commit") != pending["baseline_head"]
+            ):
+                raise CaptureError("live_observation_binding_mismatch")
+            return existing
+        if len(starts) >= current_policy["sample_target"]:
+            return {
+                "schema_version": LIVE_SCHEMA,
+                "claim_boundary": "OBSERVATION_ONLY",
+                "status": "COHORT_FULL",
+                "sample_target": current_policy["sample_target"],
+                "samples_started": len(starts),
+            }
+        record = _live_record(
+            {
+                "schema_version": LIVE_SCHEMA,
+                "artifact_type": "start",
+                "claim_boundary": "OBSERVATION_ONLY",
+                "study_id": current_policy["study_id"],
+                "policy_sha256": current_policy["policy_sha256"],
+                "executor_surface": current_policy["executor_surface"],
+                "selection_ordinal": len(starts) + 1,
+                "status": "COLLECTING",
+                "work_id": pending["work_id"],
+                "root_session_id": pending["root_session_id"],
+                "session_ids": pending["session_ids"],
+                "baseline_commit": pending["baseline_head"],
+                "repository_root_sha256": hashlib.sha256(
+                    str(project_root).encode()
+                ).hexdigest(),
+                "started_at": datetime.now().astimezone().isoformat(),
+            },
+            "start_sha256",
+        )
+        _write_once(path, record)
+        return record
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
 def start_live_observation(project_root: Path) -> dict[str, Any]:
     project_root = project_root.resolve()
     policy = _live_policy(project_root)
     pending = _live_pending(project_root)
-    root = _live_root(project_root, pending["work_id"])
-    path = root / "start.json"
-    if path.exists():
-        existing = _validate_live_record(
-            _read_json(path), artifact_type="start", hash_field="start_sha256"
-        )
-        if (
-            existing.get("work_id") != pending["work_id"]
-            or existing.get("baseline_commit") != pending["baseline_head"]
-        ):
-            raise CaptureError("live_observation_binding_mismatch")
-        return existing
-    record = _live_record(
-        {
-            "schema_version": LIVE_SCHEMA,
-            "artifact_type": "start",
-            "claim_boundary": "OBSERVATION_ONLY",
-            "study_id": policy["study_id"],
-            "status": "COLLECTING",
-            "work_id": pending["work_id"],
-            "root_session_id": pending["root_session_id"],
-            "session_ids": pending["session_ids"],
-            "baseline_commit": pending["baseline_head"],
-            "repository_root_sha256": hashlib.sha256(str(project_root).encode()).hexdigest(),
-            "started_at": datetime.now().astimezone().isoformat(),
-        },
-        "start_sha256",
-    )
-    _write_once(path, record)
-    return record
+    return _allocate_live_start(project_root, policy, pending)
 
 
 def live_observation_status(project_root: Path) -> dict[str, Any]:
     project_root = project_root.resolve()
     pending = _live_pending(project_root)
+    policy = _live_policy(project_root)
+    starts = _live_cohort_starts(project_root, policy)
     root = _live_root(project_root, pending["work_id"])
     start_path = root / "start.json"
     if not start_path.is_file():
@@ -908,6 +1038,9 @@ def live_observation_status(project_root: Path) -> dict[str, Any]:
         "status": status,
         "work_id": pending["work_id"],
         "session_ids": pending["session_ids"],
+        "selection_ordinal": start["selection_ordinal"],
+        "sample_target": policy["sample_target"],
+        "samples_started": len(starts),
     }
 
 

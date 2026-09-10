@@ -6,12 +6,14 @@ import os
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import omc_completion_observation as observation
+from omc_source_hash import source_sha256
 import omc_state
 
 
@@ -419,7 +421,12 @@ def _live_repo(tmp_path: Path) -> tuple[Path, dict]:
     subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.com"], check=True)
     subprocess.run(["git", "-C", str(root), "config", "user.name", "Test"], check=True)
     (root / "app.py").write_text("before\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(root), "add", "app.py"], check=True)
+    (root / "managed.txt").write_text("managed\n", encoding="utf-8")
+    (root / ".gitignore").write_text(".omc/\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(root), "add", "app.py", "managed.txt", ".gitignore"],
+        check=True,
+    )
     subprocess.run(["git", "-C", str(root), "commit", "-qm", "baseline"], check=True)
     head = subprocess.run(
         ["git", "-C", str(root), "rev-parse", "HEAD"],
@@ -444,6 +451,41 @@ def _live_repo(tmp_path: Path) -> tuple[Path, dict]:
     state.mkdir(parents=True)
     (state / "pending-completion.json").write_text(json.dumps(pending), encoding="utf-8")
     _write_live_session(root, pending, request=request)
+    source_root = Path(__file__).resolve().parents[1]
+    source_hash = source_sha256(source_root)
+    install_source = {
+        "source_kind": "external",
+        "source_path": str(source_root),
+        "source_sha256": source_hash,
+    }
+    install_receipt = {
+        "schema_version": 3,
+        "omc_version": (source_root / "VERSION").read_text().strip(),
+        "source_sha256": source_hash,
+        "source_revision": subprocess.run(
+            ["git", "-C", str(source_root), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+        "target": str(root.resolve()),
+        "installed_at": "2026-09-10T00:00:00+00:00",
+        "updated_at": "2026-09-10T00:00:00+00:00",
+        "entries": {
+            "managed.txt": {
+                "policy": "managed_exact",
+                "status": "updated",
+                "ownership": "exclusive_managed",
+                "source_sha256": hashlib.sha256(b"managed\n").hexdigest(),
+                "target_sha256": hashlib.sha256(b"managed\n").hexdigest(),
+                "previous_target_sha256": "",
+                "registered_current_install": True,
+                "setup_created": False,
+            }
+        },
+    }
+    (root / ".omc" / "install-source.json").write_text(json.dumps(install_source))
+    (root / ".omc" / "install-receipt.json").write_text(json.dumps(install_receipt))
     observation.enable_live_observation(
         root,
         study_id="completion-quality-feasibility-01",
@@ -466,6 +508,24 @@ def _write_live_session(root: Path, pending: dict, *, request: str) -> None:
     directory = root / ".omc" / "state" / "sessions" / pending["session_id"]
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "session.json").write_text(json.dumps(session), encoding="utf-8")
+
+
+def _replace_live_pending(root: Path, pending: dict, ordinal: int) -> dict:
+    request = f"implementation sample {ordinal}"
+    updated = {
+        **pending,
+        "session_id": f"session-{ordinal}",
+        "root_session_id": f"session-{ordinal}",
+        "session_ids": [f"session-{ordinal}"],
+        "rework_count": 0,
+        "work_id": f"{ordinal:032x}",
+        "request_sha256": observation.canonical_sha256(request),
+    }
+    _write_live_session(root, updated, request=request)
+    (root / ".omc" / "state" / "pending-completion.json").write_text(
+        json.dumps(updated), encoding="utf-8"
+    )
+    return updated
 
 
 def test_live_observation_captures_uncommitted_first_completion(tmp_path: Path) -> None:
@@ -551,6 +611,76 @@ def test_live_observation_requires_explicit_repository_enrollment(tmp_path: Path
     (root / ".omc" / "observation-policy.json").unlink()
     with pytest.raises(observation.CaptureError, match="live_observation_not_enabled"):
         observation.start_live_observation(root)
+
+
+def test_live_policy_seals_first_five_without_replacement_contract(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    policy = json.loads((root / ".omc" / "observation-policy.json").read_text())
+    assert policy["selection_rule"] == "chronological_first_eligible"
+    assert policy["sample_target"] == 5
+    assert policy["replacement_allowed"] is False
+    assert policy["eligible_work_class"] == "implementation"
+    assert policy["installed_omc_version"] == "0.2.5"
+    assert policy["installed_source_sha256"]
+    assert policy["install_receipt_sha256"] == hashlib.sha256(
+        (root / ".omc" / "install-receipt.json").read_bytes()
+    ).hexdigest()
+
+    policy["sample_target"] = 6
+    policy["policy_sha256"] = observation.canonical_sha256(
+        {**policy, "policy_sha256": ""}
+    )
+    (root / ".omc" / "observation-policy.json").write_text(json.dumps(policy))
+    with pytest.raises(observation.CaptureError, match="live_observation_not_enabled"):
+        observation.start_live_observation(root)
+
+
+def test_live_policy_rejects_install_receipt_changed_after_enrollment(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    receipt_path = root / ".omc" / "install-receipt.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["omc_version"] = "9.9.9"
+    receipt_path.write_text(json.dumps(receipt))
+    with pytest.raises(observation.CaptureError, match="live_install_identity_invalid"):
+        observation.start_live_observation(root)
+
+
+def test_live_observation_stops_after_chronological_first_five(tmp_path: Path) -> None:
+    root, pending = _live_repo(tmp_path)
+    starts = [observation.start_live_observation(root)]
+    for ordinal in range(2, 7):
+        pending = _replace_live_pending(root, pending, ordinal)
+        starts.append(observation.start_live_observation(root))
+
+    assert [item["selection_ordinal"] for item in starts[:5]] == [1, 2, 3, 4, 5]
+    assert starts[5]["status"] == "COHORT_FULL"
+    assert starts[5]["samples_started"] == 5
+    assert not (
+        root / ".omc" / "observations" / "live" / f"{6:032x}" / "start.json"
+    ).exists()
+
+
+def test_live_allocation_is_atomic_at_fifth_sample(tmp_path: Path) -> None:
+    root, pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    for ordinal in range(2, 5):
+        pending = _replace_live_pending(root, pending, ordinal)
+        observation.start_live_observation(root)
+    policy = observation._live_policy(root)
+    fifth = _replace_live_pending(root, pending, 5)
+    sixth = _replace_live_pending(root, fifth, 6)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda item: observation._allocate_live_start(root, policy, item),
+                (fifth, sixth),
+            )
+        )
+
+    assert sorted(item["status"] for item in results) == ["COHORT_FULL", "COLLECTING"]
+    starts = observation._live_cohort_starts(root, policy)
+    assert [item["selection_ordinal"] for item in starts] == [1, 2, 3, 4, 5]
 
 
 def test_live_status_rejects_tampered_completion_snapshot(tmp_path: Path) -> None:
@@ -766,6 +896,36 @@ def test_user_prompt_hook_preserves_trailing_newlines_as_utf8_bytes(tmp_path: Pa
                 Path("scripts/omc_completion_observation.py").resolve()
             ),
         },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    terminal = json.loads(
+        (root / ".omc" / "observations" / "live" / ("a" * 32) / "terminal.json").read_text()
+    )
+    assert base64.b64decode(terminal["raw_followup_base64"]) == raw_prompt.encode()
+
+
+def test_user_prompt_hook_preserves_stdin_json_trailing_newlines(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    raw_prompt = "수용\n\n"
+    environment = {
+        **os.environ,
+        "OMC_COMPLETION_OBSERVATION_SCRIPT": str(
+            Path("scripts/omc_completion_observation.py").resolve()
+        ),
+    }
+    environment.pop("PROMPT", None)
+    result = subprocess.run(
+        [str(Path(".agent-hooks/omc-prompt-inject.sh").resolve()), "codex"],
+        cwd=root,
+        env=environment,
+        input=json.dumps({"prompt": raw_prompt}, ensure_ascii=False),
         capture_output=True,
         text=True,
     )
