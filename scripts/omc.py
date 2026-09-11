@@ -233,9 +233,11 @@ def main() -> int:
 
     setup_ignore = sub.add_parser(
         "setup-ignore",
-        help="Dry-run, apply, or roll back Git ignore migration for setup-owned files.",
+        help="Inspect, refresh, apply, or roll back Git ignore state for setup-owned files.",
     )
-    setup_ignore.add_argument("action", choices=["dry-run", "apply", "rollback"])
+    setup_ignore.add_argument(
+        "action", choices=["dry-run", "refresh", "apply", "rollback"]
+    )
     setup_ignore.add_argument("--target", type=Path, default=Path.cwd())
 
     hook = sub.add_parser("hook", help="Run OMC lifecycle hooks.")

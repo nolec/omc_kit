@@ -243,6 +243,7 @@ Task completion lineage schema v3와 terminal capture 결속을 구현했다. `s
 
 - 설치 receipt schema v3가 배포 파일을 `exclusive_managed`·`merged_host`·`preserved`·`manual_review`로 분류한다.
 - `setup-ignore`가 OMC 전용 파일만 literal pathspec으로 Git 추적에서 제외하고 로컬 파일을 보존하며, migration receipt 기반 rollback을 제공한다.
+- `setup-ignore refresh`는 install receipt·관찰 정책·프로젝트 `.gitignore`를 변경하지 않고 repository-local exclude만 갱신한다. OMC 전용 Python bytecode는 숨기되 프로젝트 소유 quality gate와 외부 custody 전 관찰 증거는 계속 Git 표면에 노출하며, receipt·marker 손상은 쓰기 전에 fail-close한다.
 - setup이 생성하는 OMC ignore block은 공유 `.gitignore`가 아니라 `git rev-parse --git-path info/exclude`로 찾은 repository-local exclude에 기록한다. 예약된 OMC namespace만 wildcard로 압축하고 일반 경로는 literal rule로 유지하며, linked worktree와 비 Git 대상의 동작을 분리한다.
 - 설치 SSOT는 고정된 `omc_kit/` 경로가 아니라 `.omc/install-source.json`의 `source_path`로 통일했다. 저장소에 추적되던 legacy `omc_kit/scripts` 복사본과 nested installer fallback은 제거했다.
 - active migration은 legacy schema v1/v2의 `.gitignore` 결속을 유지하고 schema v3부터 local exclude hash에 결속한다. receipt가 손상되거나 결속된 ignore surface가 달라지면 manifest 생성과 파일 변경 전에 exit code `2`로 fail-close한다.

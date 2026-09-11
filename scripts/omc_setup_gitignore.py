@@ -4,8 +4,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -23,6 +25,10 @@ _RESERVED_NAMESPACE_PATTERNS = (
     ("/.cursor/rules/omc-*", lambda path: path.startswith(".cursor/rules/omc-")),
     ("/.gemini/commands/omc-*", lambda path: path.startswith(".gemini/commands/omc-")),
     ("/docs/omc_*", lambda path: path.startswith("docs/omc_")),
+    (
+        "/scripts/__pycache__/omc_*.pyc",
+        lambda path: path == "scripts/__pycache__/omc_*.pyc",
+    ),
     (
         "/scripts/omc_*.py",
         lambda path: path.startswith("scripts/omc_") and path.endswith(".py"),
@@ -90,6 +96,7 @@ _LOCAL_RUNTIME_PATHS = {
     ".omc/state/",
     ".omc/summary.md",
     ".omc/tasks/",
+    "scripts/__pycache__/omc_*.pyc",
 }
 
 
@@ -181,7 +188,7 @@ def classify_receipt_entry_ownership(
 def classify_receipt_paths(receipt: dict[str, Any]) -> dict[str, list[str]]:
     entries = receipt.get("entries", {})
     if not isinstance(entries, dict):
-        raise ValueError("invalid install receipt entries")
+        raise MigrationStateError("invalid install receipt")
     result = {
         "exclusive_managed": [],
         "merged_host": [],
@@ -321,6 +328,35 @@ def _carry_forward_setup_created(
 def _gitignore_sha256(gitignore: Path) -> str:
     content = gitignore.read_bytes() if gitignore.is_file() else b""
     return hashlib.sha256(content).hexdigest()
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(content)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.chmod(
+            temporary_path,
+            path.stat().st_mode & 0o777 if path.is_file() else 0o644,
+        )
+        temporary_path.replace(path)
+    except (OSError, UnicodeError) as error:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise MigrationStateError("unable to update git exclude") from error
 
 
 def _without_managed_block(content: str) -> str:
@@ -510,6 +546,58 @@ def update_managed_gitignore(
     return paths
 
 
+def refresh_managed_gitignore(
+    target: Path, receipt: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Refresh local Git exclusions without changing project or receipt files."""
+    target = target.resolve()
+    receipt = load_receipt(target) if receipt is None else receipt
+    if not _is_git_repository(target):
+        raise MigrationStateError("refresh requires a Git repository")
+
+    gitignore = target / ".gitignore"
+    exclude = _git_exclude_path(target)
+    try:
+        gitignore_existing = (
+            gitignore.read_text(encoding="utf-8") if gitignore.is_file() else ""
+        )
+        exclude_existing = (
+            exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+        )
+    except (OSError, UnicodeError) as error:
+        raise MigrationStateError("invalid Git ignore file") from error
+
+    current_receipt_paths = _current_receipt_paths(receipt)
+    # Validate both possible managed-block locations before writing anything.
+    _existing_managed_literal_paths(
+        gitignore_existing,
+        current_paths=current_receipt_paths,
+    )
+    prior_managed_paths = _existing_managed_literal_paths(
+        exclude_existing,
+        current_paths=current_receipt_paths,
+    )
+    paths = sorted(set(_exclusive_paths(receipt)) | prior_managed_paths)
+    existing_without_block = _without_managed_block(exclude_existing)
+    block = _render_block(paths)
+    updated = (
+        existing_without_block.rstrip()
+        + ("\n\n" if existing_without_block.strip() else "")
+        + block
+        + "\n"
+    )
+
+    migration_path = target / MIGRATION_RECEIPT
+    if migration_path.is_file() and updated != exclude_existing:
+        validate_active_migration(target)
+        raise MigrationStateError(
+            "active migration receipt prevents receipt-invariant refresh"
+        )
+    if updated != exclude_existing:
+        _atomic_write_text(exclude, updated)
+    return {"action": "refresh", "ignored": paths, "files_preserved": True}
+
+
 def _run_git(target: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
@@ -672,12 +760,56 @@ def prune_unchanged_legacy(
 
 
 def load_receipt(target: Path) -> dict[str, Any]:
-    path = target.resolve() / ".omc" / "install-receipt.json"
+    target = target.resolve()
+    path = target / ".omc" / "install-receipt.json"
     if not path.is_file():
-        raise ValueError("install receipt not found")
-    payload = json.loads(path.read_text(encoding="utf-8"))
+        raise MigrationStateError("invalid install receipt")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise MigrationStateError("invalid install receipt") from error
     if not isinstance(payload, dict):
-        raise ValueError("invalid install receipt")
+        raise MigrationStateError("invalid install receipt")
+    schema_version = payload.get("schema_version")
+    if type(schema_version) is not int or schema_version not in {1, 2, 3}:
+        raise MigrationStateError("invalid install receipt")
+    entries = payload.get("entries")
+    if (
+        payload.get("target") != str(target)
+        or not isinstance(entries, dict)
+        or not entries
+    ):
+        raise MigrationStateError("invalid install receipt")
+    allowed_policies = {"managed_exact", "managed_generated", "preserve"}
+    allowed_ownership = {
+        "exclusive_managed",
+        "merged_host",
+        "preserved",
+        "manual_review",
+    }
+    for relative_path, entry in entries.items():
+        safe_path = _safe_relative_path(str(relative_path))
+        if safe_path is None or not isinstance(entry, dict):
+            raise MigrationStateError("invalid install receipt")
+        policy = entry.get("policy")
+        status = entry.get("status")
+        ownership = entry.get("ownership")
+        if policy not in allowed_policies:
+            raise MigrationStateError("invalid install receipt")
+        if policy == "preserve":
+            if status != "preserved" or (
+                schema_version == 3 and ownership != "preserved"
+            ):
+                raise MigrationStateError("invalid install receipt")
+        elif status not in {"updated", "blocked"}:
+            raise MigrationStateError("invalid install receipt")
+        if schema_version == 3:
+            if ownership not in allowed_ownership or (
+                policy != "preserve" and ownership == "preserved"
+            ):
+                raise MigrationStateError("invalid install receipt")
+        if "setup_created" in entry and not isinstance(entry["setup_created"], bool):
+            raise MigrationStateError("invalid install receipt")
     return payload
 
 
@@ -685,7 +817,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Manage Git ignore state for omc_kit setup outputs."
     )
-    parser.add_argument("action", choices=["dry-run", "apply", "rollback"])
+    parser.add_argument("action", choices=["dry-run", "apply", "refresh", "rollback"])
     parser.add_argument("--target", type=Path, default=Path.cwd())
     args = parser.parse_args()
     if args.action == "rollback":
@@ -696,6 +828,15 @@ def main() -> int:
         )
         return 0
     receipt = load_receipt(args.target)
+    if args.action == "refresh":
+        print(
+            json.dumps(
+                refresh_managed_gitignore(args.target, receipt),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
     if args.action == "dry-run":
         print(
             json.dumps(

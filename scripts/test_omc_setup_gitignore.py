@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from omc_setup_gitignore import (
     prune_unchanged_legacy,
     rollback_git_migration,
     dry_run_git_migration,
+    refresh_managed_gitignore,
     update_managed_gitignore,
 )
 
@@ -28,6 +30,20 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _valid_install_receipt(root: Path) -> dict[str, object]:
+    return {
+        "schema_version": 3,
+        "target": str(root.resolve()),
+        "entries": {
+            "scripts/omc.py": {
+                "policy": "managed_exact",
+                "ownership": "exclusive_managed",
+                "status": "updated",
+            }
+        },
+    }
 
 
 def test_classify_ownership_separates_exclusive_merged_and_preserved() -> None:
@@ -162,6 +178,239 @@ def test_update_managed_gitignore_hides_consumer_runtime_without_hiding_quality_
     assert "/.omc/state/" in content
     assert "/.omc/context/" in content
     assert "quality-gates.json" not in content
+
+
+def test_refresh_managed_gitignore_hides_only_omc_local_artifacts(
+    tmp_path: Path,
+) -> None:
+    assert _git(tmp_path, "init").returncode == 0
+    gitignore = tmp_path / ".gitignore"
+    gitignore.write_text("project-local.txt\n", encoding="utf-8")
+    exclude = _git_exclude_path(tmp_path)
+    exclude.write_text("# user rule\n/user-local.txt\n", encoding="utf-8")
+    omc = tmp_path / ".omc"
+    omc.mkdir()
+    receipt = omc / "install-receipt.json"
+    receipt.write_text(
+        json.dumps(_valid_install_receipt(tmp_path))
+        + "\n",
+        encoding="utf-8",
+    )
+    quality_gate = omc / "quality-gates.json"
+    quality_gate.write_text("{}\n", encoding="utf-8")
+    observation_policy = omc / "observation-policy.json"
+    observation_policy.write_text("{}\n", encoding="utf-8")
+    receipt_before = receipt.read_bytes()
+    quality_gate_before = quality_gate.read_bytes()
+    observation_policy_before = observation_policy.read_bytes()
+    gitignore_before = gitignore.read_bytes()
+
+    report = refresh_managed_gitignore(tmp_path)
+
+    assert report["action"] == "refresh"
+    assert receipt.read_bytes() == receipt_before
+    assert quality_gate.read_bytes() == quality_gate_before
+    assert observation_policy.read_bytes() == observation_policy_before
+    assert gitignore.read_bytes() == gitignore_before
+    assert "# user rule" in exclude.read_text(encoding="utf-8")
+    assert _git(tmp_path, "check-ignore", ".omc/state/session.json").returncode == 0
+    assert (
+        _git(
+            tmp_path,
+            "check-ignore",
+            "scripts/__pycache__/omc_guard.cpython-313.pyc",
+        ).returncode
+        == 0
+    )
+    assert (
+        _git(
+            tmp_path,
+            "check-ignore",
+            "scripts/__pycache__/app.cpython-313.pyc",
+        ).returncode
+        == 1
+    )
+    assert (
+        _git(tmp_path, "check-ignore", ".omc/quality-gates.json").returncode
+        == 1
+    )
+    assert (
+        _git(tmp_path, "check-ignore", ".omc/observation-policy.json").returncode
+        == 1
+    )
+
+
+def test_refresh_managed_gitignore_fails_closed_without_mutation(
+    tmp_path: Path,
+) -> None:
+    assert _git(tmp_path, "init").returncode == 0
+    omc = tmp_path / ".omc"
+    omc.mkdir()
+    receipt = omc / "install-receipt.json"
+    receipt.write_text('{"schema_version":', encoding="utf-8")
+    exclude = _git_exclude_path(tmp_path)
+    exclude.write_text("# user rule\n", encoding="utf-8")
+    before = exclude.read_bytes()
+
+    with pytest.raises(MigrationStateError, match="invalid install receipt"):
+        refresh_managed_gitignore(tmp_path)
+
+    assert exclude.read_bytes() == before
+
+    receipt.write_text(
+        json.dumps(_valid_install_receipt(tmp_path)),
+        encoding="utf-8",
+    )
+    exclude.write_text("# OMC-KIT:BEGIN\n/damaged\n", encoding="utf-8")
+    before = exclude.read_bytes()
+
+    with pytest.raises(
+        MigrationStateError, match="damaged OMC-KIT ignore marker block"
+    ):
+        refresh_managed_gitignore(tmp_path)
+
+    assert exclude.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "receipt_content",
+    [
+        None,
+        json.dumps({"schema_version": 3, "entries": []}),
+        json.dumps({"schema_version": 3, "entries": {"scripts/omc.py": []}}),
+        json.dumps({"schema_version": 999, "entries": {}}),
+    ],
+    ids=["missing", "invalid-entries", "invalid-entry", "invalid-schema"],
+)
+def test_refresh_cli_reports_invalid_receipt_without_traceback(
+    tmp_path: Path, receipt_content: str | None
+) -> None:
+    assert _git(tmp_path, "init").returncode == 0
+    if receipt_content is not None:
+        omc = tmp_path / ".omc"
+        omc.mkdir()
+        receipt_payload = json.loads(receipt_content)
+        receipt_payload.setdefault("target", str(tmp_path.resolve()))
+        (omc / "install-receipt.json").write_text(
+            json.dumps(receipt_payload),
+            encoding="utf-8",
+        )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("omc_setup_gitignore.py")),
+            "refresh",
+            "--target",
+            str(tmp_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr == "[setup-ignore] invalid install receipt\n"
+    assert "Traceback" not in result.stderr
+
+
+def test_refresh_managed_gitignore_preserves_exclude_when_publish_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _git(tmp_path, "init").returncode == 0
+    omc = tmp_path / ".omc"
+    omc.mkdir()
+    (omc / "install-receipt.json").write_text(
+        json.dumps(_valid_install_receipt(tmp_path)),
+        encoding="utf-8",
+    )
+    exclude = _git_exclude_path(tmp_path)
+    exclude.write_text("# user rule\n/user-local.txt\n", encoding="utf-8")
+    before = exclude.read_bytes()
+
+    def fail_replace(self: Path, target: Path) -> Path:
+        raise OSError("simulated publish failure")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+
+    with pytest.raises(MigrationStateError, match="unable to update git exclude"):
+        refresh_managed_gitignore(tmp_path)
+
+    assert exclude.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "receipt_payload",
+    [
+        {
+            "schema_version": 3,
+            "entries": {
+                "project.txt": {
+                    "policy": "preserve",
+                    "ownership": "exclusive_managed",
+                    "status": "preserved",
+                }
+            },
+        },
+        {
+            "schema_version": 3,
+            "target": "/different/repository",
+            "entries": _valid_install_receipt(Path("/different/repository"))[
+                "entries"
+            ],
+        },
+    ],
+    ids=["ownership-policy-conflict", "target-mismatch"],
+)
+def test_refresh_rejects_semantically_invalid_receipt_before_write(
+    tmp_path: Path, receipt_payload: dict[str, object]
+) -> None:
+    assert _git(tmp_path, "init").returncode == 0
+    omc = tmp_path / ".omc"
+    omc.mkdir()
+    receipt_payload.setdefault("target", str(tmp_path.resolve()))
+    (omc / "install-receipt.json").write_text(
+        json.dumps(receipt_payload),
+        encoding="utf-8",
+    )
+    exclude = _git_exclude_path(tmp_path)
+    exclude.write_text("# user rule\n", encoding="utf-8")
+    before = exclude.read_bytes()
+
+    with pytest.raises(MigrationStateError, match="invalid install receipt"):
+        refresh_managed_gitignore(tmp_path)
+
+    assert exclude.read_bytes() == before
+
+
+def test_refresh_preserves_primary_error_when_temp_cleanup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert _git(tmp_path, "init").returncode == 0
+    omc = tmp_path / ".omc"
+    omc.mkdir()
+    (omc / "install-receipt.json").write_text(
+        json.dumps(_valid_install_receipt(tmp_path)),
+        encoding="utf-8",
+    )
+    exclude = _git_exclude_path(tmp_path)
+    exclude.write_text("# user rule\n", encoding="utf-8")
+    before = exclude.read_bytes()
+
+    def fail_replace(self: Path, target: Path) -> Path:
+        raise OSError("simulated publish failure")
+
+    def fail_unlink(self: Path, missing_ok: bool = False) -> None:
+        raise OSError("simulated cleanup failure")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    monkeypatch.setattr(Path, "unlink", fail_unlink)
+
+    with pytest.raises(MigrationStateError, match="unable to update git exclude"):
+        refresh_managed_gitignore(tmp_path)
+
+    assert exclude.read_bytes() == before
 
 
 def test_managed_exclude_compacts_only_reserved_namespaces(tmp_path: Path) -> None:
