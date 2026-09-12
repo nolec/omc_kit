@@ -391,7 +391,7 @@ def _git_info(project_root: Path) -> dict[str, object]:
             return None
         return proc.stdout.strip() or None
 
-    head = run_git("rev-parse", "--short", "HEAD")
+    head = run_git("rev-parse", "HEAD")
     branch = run_git("branch", "--show-current")
     last_commit = run_git("log", "-1", "--pretty=%s")
     dirty_lines = run_git("status", "--short")

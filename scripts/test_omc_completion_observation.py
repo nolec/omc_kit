@@ -553,6 +553,35 @@ def _replace_live_pending(root: Path, pending: dict, ordinal: int) -> dict:
     return updated
 
 
+def test_live_start_accepts_pending_created_by_real_session_producer(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    session = omc_state.record_session(
+        root,
+        mode="autopilot",
+        title="omc-task",
+        request="implement through the real pending producer",
+        role_ids=["senior_coding"],
+        work_class="implementation",
+        completion_action="start",
+        confirmed=True,
+        confirmation_source="test",
+    )
+
+    pending = json.loads(
+        (root / ".omc" / "state" / "pending-completion.json").read_text()
+    )
+    full_head = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    assert pending["session_id"] == session["session_id"]
+    assert pending["baseline_head"] == full_head
+    assert observation.start_live_observation(root)["status"] == "COLLECTING"
+
+
 def _tamper_live_completion_baseline(root: Path, work_id: str) -> None:
     path = (
         root

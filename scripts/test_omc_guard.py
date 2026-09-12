@@ -678,7 +678,13 @@ def test_sync_require_seals_required_work_class_lock_before_completion(
     )
     lock = json.loads(lock_path.read_text())
     session = json.loads((lock_path.parent / "session.json").read_text())
-    assert len(session["git"]["head"]) == 12
+    full_head = subprocess.run(
+        ["git", "-C", str(target), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert session["git"]["head"] == full_head
     assert lock["status"] == "frozen"
     assert lock["work_class"] == "implementation"
     assert lock["signoff"]["signer_public_key"] == public_key
