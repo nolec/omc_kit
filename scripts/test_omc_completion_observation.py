@@ -710,6 +710,58 @@ def test_live_cli_reports_observation_invalid_without_blocking_product_work(tmp_
     }
 
 
+def test_live_cli_status_reads_completed_work_without_pending_snapshot(tmp_path: Path) -> None:
+    root, pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    (root / ".omc" / "state" / "pending-completion.json").unlink()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/omc_completion_observation.py",
+            "live-status",
+            "--target",
+            str(root),
+            "--work-id",
+            pending["work_id"],
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["status"] == "AWAITING_USER_OUTCOME"
+
+
+def test_live_cli_status_rejects_unknown_explicit_work_id(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/omc_completion_observation.py",
+            "live-status",
+            "--target",
+            str(root),
+            "--work-id",
+            "b" * 32,
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {
+        "claim_boundary": "OBSERVATION_ONLY",
+        "reason": "live_observation_not_started",
+        "status": "OBSERVATION_INVALID",
+    }
+
+
 def test_live_observation_requires_explicit_repository_enrollment(tmp_path: Path) -> None:
     root, _ = _live_repo(tmp_path)
     (root / ".omc" / "observation-policy.json").unlink()

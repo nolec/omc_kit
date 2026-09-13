@@ -1507,8 +1507,12 @@ def _live_observation_status_for_pending(
     }
 
 
-def live_observation_status(project_root: Path) -> dict[str, Any]:
+def live_observation_status(
+    project_root: Path, *, work_id: str | None = None
+) -> dict[str, Any]:
     project_root = project_root.resolve()
+    if work_id is not None:
+        return _live_work_status(project_root, work_id=work_id)
     pending = _live_pending(project_root)
     return _live_observation_status_for_pending(project_root, pending)
 
@@ -2006,6 +2010,7 @@ def _parser() -> argparse.ArgumentParser:
     live_enable.add_argument("--repo-id", required=True)
     live_enable.add_argument("--registration", type=Path, required=True)
     live_register.add_argument("--study-id", required=True)
+    live_status.add_argument("--work-id")
     live_register.add_argument("--repository-root", action="append", required=True)
     live_register.add_argument("--observation-started-at", required=True)
     live_register.add_argument("--out", type=Path, required=True)
@@ -2057,7 +2062,7 @@ def main() -> int:
         elif args.command == "live-start":
             result = start_live_observation(args.target)
         elif args.command == "live-status":
-            result = live_observation_status(args.target)
+            result = live_observation_status(args.target, work_id=args.work_id)
         elif args.command == "live-capture":
             result = capture_live_completion(
                 args.target,
