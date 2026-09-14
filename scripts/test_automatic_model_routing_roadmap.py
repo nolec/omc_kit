@@ -765,10 +765,14 @@ def test_completion_observation_v0_is_bounded_to_capture_feasibility() -> None:
 
     for text in (roadmap, readme):
         assert "Completion Observation V0" in text
-        assert "`CAPTURE_CODE_COMPLETE_PROSPECTIVE_NOT_STARTED`" in text
+        assert "`CAPTURE_FEASIBILITY_ACTIVE_INCOMPLETE`" in text
         assert "Codex-first" in text
         assert "실제 적격 표본" in text
         assert "제품 효과" in text
+
+    assert "completion-quality-live-20260913-v2" in roadmap
+    assert "2건은 `AWAITING_USER_OUTCOME`" in roadmap
+    assert "read-only decision context" in roadmap
 
     assert "기존 sealed terminal·completion·lineage 원문" in roadmap
     assert "`(captured_at, repo_id, work_id)` 순서의 first eligible 10건" in roadmap

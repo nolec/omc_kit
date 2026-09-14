@@ -1465,6 +1465,7 @@ _COMPLETION_PRESERVING_DIRECTIVE_TITLES = {
     "roadmap-sync-commit",
     "roadmap-and-commit",
 }
+_COMPLETION_PRESERVING_ANALYSIS_TITLES = {"omc-investigate"}
 _COMPLETION_WORK_CLASSES = {
     "implementation",
     "synthetic",
@@ -1541,9 +1542,16 @@ def _sync_pending_completion(project_root: Path, session: dict[str, object]) -> 
         else:
             _pending_completion_path(project_root).unlink(missing_ok=True)
         return
-    preserves_task_completion = "code_review" in role_ids or (
-        "directive" in role_ids
-        and session.get("title") in _COMPLETION_PRESERVING_DIRECTIVE_TITLES
+    preserves_task_completion = (
+        "code_review" in role_ids
+        or (
+            "analysis" in role_ids
+            and session.get("title") in _COMPLETION_PRESERVING_ANALYSIS_TITLES
+        )
+        or (
+            "directive" in role_ids
+            and session.get("title") in _COMPLETION_PRESERVING_DIRECTIVE_TITLES
+        )
     )
     if not preserves_task_completion:
         _pending_completion_path(project_root).unlink(missing_ok=True)

@@ -461,6 +461,39 @@ def test_state_complete_preserves_task_through_review_and_ship_sessions(tmp_path
     assert not ship_receipt.exists()
 
 
+def test_investigate_session_preserves_pending_task_completion(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    _sync_task_session(target, "task then investigate")
+    pending_path = target / ".omc" / "state" / "pending-completion.json"
+    pending_before = pending_path.read_bytes()
+
+    investigate = _run(
+        "state", "sync-session", "--target", str(target),
+        "--mode", "autopilot", "--title", "omc-investigate",
+        "--request", "investigate task failure", "--roles", "analysis",
+    )
+
+    assert investigate.returncode == 0, investigate.stderr
+    assert pending_path.read_bytes() == pending_before
+
+
+def test_unrelated_analysis_session_clears_pending_task_completion(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    _sync_task_session(target, "task then unrelated analysis")
+    pending_path = target / ".omc" / "state" / "pending-completion.json"
+
+    analysis = _run(
+        "state", "sync-session", "--target", str(target),
+        "--mode", "autopilot", "--title", "product-analysis",
+        "--request", "analyze another product", "--roles", "analysis",
+    )
+
+    assert analysis.returncode == 0, analysis.stderr
+    assert not pending_path.exists()
+
+
 def test_state_complete_preserves_task_through_roadmap_sync_commit_session(tmp_path: Path):
     target = tmp_path / "repo"
     _init_git_repo(target)

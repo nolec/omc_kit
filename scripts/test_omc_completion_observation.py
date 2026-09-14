@@ -762,6 +762,112 @@ def test_live_cli_status_rejects_unknown_explicit_work_id(tmp_path: Path) -> Non
     }
 
 
+def test_live_work_status_uses_one_validated_policy_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    original = observation._live_policy
+    reads = 0
+
+    def counting_policy(project_root: Path) -> dict[str, object]:
+        nonlocal reads
+        reads += 1
+        return original(project_root)
+
+    monkeypatch.setattr(observation, "_live_policy", counting_policy)
+
+    status = observation.live_observation_status(root, work_id=pending["work_id"])
+
+    assert status["status"] == "COLLECTING"
+    assert reads == 1
+
+
+def test_live_decision_context_projects_facts_without_mutating_ledger(tmp_path: Path) -> None:
+    root, pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    observation.capture_live_completion(
+        root,
+        raw_report=b"implemented feature",
+        raw_verification=b"pytest: passed",
+        unrun_items=["browser verification"],
+    )
+    (root / ".omc" / "state" / "pending-completion.json").unlink()
+    live_root = root / ".omc" / "observations" / "live" / pending["work_id"]
+    before = {path.name: path.read_bytes() for path in live_root.iterdir()}
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/omc_completion_observation.py",
+            "live-decision-context",
+            "--target",
+            str(root),
+            "--work-id",
+            pending["work_id"],
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    card = json.loads(result.stdout)
+    assert card["artifact_type"] == "decision_context_projection"
+    assert card["projection_persisted"] is False
+    assert card["work_id"] == pending["work_id"]
+    assert card["status"] == "AWAITING_USER_OUTCOME"
+    assert card["commit_bound"] is False
+    assert card["completion_report"]["confidence"] == "agent_reported"
+    assert card["completion_report"]["text"] == "implemented feature"
+    assert card["verification_report"]["confidence"] == "agent_reported"
+    assert card["verification_report"]["independently_reverified"] is False
+    assert card["unrun_items"] == [
+        {"blocking_classification": "unknown", "text": "browser verification"}
+    ]
+    assert card["automatic_recommendation"] == {
+        "reason": "acceptance_contract_not_registered",
+        "status": "NOT_AVAILABLE",
+    }
+    assert {path.name: path.read_bytes() for path in live_root.iterdir()} == before
+
+
+def test_live_decision_context_rejects_tampered_completion_receipt(tmp_path: Path) -> None:
+    root, pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    (root / "app.py").write_text("after\n", encoding="utf-8")
+    completion = observation.capture_live_completion(
+        root, raw_report=b"done", raw_verification=b"pass", unrun_items=[]
+    )
+    path = (
+        root
+        / ".omc"
+        / "observations"
+        / "live"
+        / pending["work_id"]
+        / "first-completion.json"
+    )
+    completion["raw_report_base64"] = base64.b64encode(b"forged").decode()
+    path.write_text(json.dumps(completion), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/omc_completion_observation.py",
+            "live-decision-context",
+            "--target",
+            str(root),
+            "--work-id",
+            pending["work_id"],
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["status"] == "OBSERVATION_INVALID"
+
+
 def test_live_observation_requires_explicit_repository_enrollment(tmp_path: Path) -> None:
     root, _ = _live_repo(tmp_path)
     (root / ".omc" / "observation-policy.json").unlink()
@@ -1407,6 +1513,10 @@ def test_codex_task_and_review_surfaces_drive_live_observation_without_user_copy
     assert "omc_completion_observation.py live-capture" in task_skill
     assert "관찰 실패는 구현을 차단하지" in task_skill
     assert "omc_completion_observation.py live-status" in review_skill
+    assert "live-decision-context" in review_skill
+    assert review_skill.index("live-decision-context") < review_skill.index(
+        "수용 / 수정 필요 / 보류"
+    )
     assert "수용 / 수정 필요 / 보류" in review_skill
     assert "사용자에게 원문 복사를 요구하지" in review_skill
     hook_template = Path("templates/.agent-hooks/omc-prompt-inject.sh").read_text(

@@ -1517,8 +1517,15 @@ def live_observation_status(
     return _live_observation_status_for_pending(project_root, pending)
 
 
-def _live_work_status(project_root: Path, *, work_id: str) -> dict[str, Any]:
-    """Read one immutable live-work ledger without depending on current pending state."""
+def _validated_live_work(
+    project_root: Path, *, work_id: str
+) -> tuple[
+    dict[str, Any],
+    list[dict[str, Any]],
+    dict[str, Any],
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+]:
     project_root = project_root.resolve()
     if re.fullmatch(r"[0-9a-f]{32}", work_id) is None:
         raise CaptureError("live_observation_binding_mismatch")
@@ -1531,6 +1538,14 @@ def _live_work_status(project_root: Path, *, work_id: str) -> dict[str, Any]:
     root = _live_root(project_root, work_id)
     completion, terminal = _validate_live_work_artifacts(
         root, work_id=work_id, baseline_commit=start["baseline_commit"]
+    )
+    return policy, starts, start, completion, terminal
+
+
+def _live_work_status(project_root: Path, *, work_id: str) -> dict[str, Any]:
+    """Read one immutable live-work ledger without depending on current pending state."""
+    policy, starts, start, completion, terminal = _validated_live_work(
+        project_root, work_id=work_id
     )
     return {
         "schema_version": LIVE_SCHEMA,
@@ -1547,6 +1562,75 @@ def _live_work_status(project_root: Path, *, work_id: str) -> dict[str, Any]:
         "selection_ordinal": start["selection_ordinal"],
         "closure_sample_target": policy["closure_sample_target"],
         "samples_started": len(starts),
+    }
+
+
+def build_live_decision_context(
+    project_root: Path, *, work_id: str
+) -> dict[str, Any]:
+    """Project an immutable completion ledger into human decision facts."""
+    project_root = project_root.resolve()
+    _policy, _starts, _start, completion, terminal = _validated_live_work(
+        project_root, work_id=work_id
+    )
+    if completion is None:
+        raise CaptureError("live_decision_context_not_available")
+
+    def reported_text(base64_field: str, sha_field: str) -> dict[str, Any]:
+        raw = _validated_raw(
+            completion, base64_field=base64_field, sha_field=sha_field
+        )
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise CaptureError("live_observation_invalid") from error
+        return {
+            "confidence": "agent_reported",
+            "independently_reverified": False,
+            "sha256": completion[sha_field],
+            "text": text,
+        }
+
+    changed_paths = completion["changed_paths"]
+    operational_noise = [
+        path for path in changed_paths if Path(path).name == ".DS_Store"
+    ]
+    return {
+        "schema_version": LIVE_SCHEMA,
+        "artifact_type": "decision_context_projection",
+        "claim_boundary": "OBSERVATION_ONLY",
+        "projection_persisted": False,
+        "work_id": work_id,
+        "status": (
+            "CLOSED"
+            if terminal is not None
+            else "AWAITING_USER_OUTCOME"
+        ),
+        "commit_bound": completion["commit_bound"],
+        "completion_snapshot_sha256": completion["completion_snapshot_sha256"],
+        "completion_report": reported_text(
+            "raw_report_base64", "raw_report_sha256"
+        ),
+        "verification_report": reported_text(
+            "raw_verification_base64", "raw_verification_sha256"
+        ),
+        "unrun_items": [
+            {"text": item, "blocking_classification": "unknown"}
+            for item in completion["unrun_items"]
+        ],
+        "changed_paths": {
+            "receipt_verified": changed_paths,
+            "review_relevant": [
+                path for path in changed_paths if path not in operational_noise
+            ],
+            "operational_noise": operational_noise,
+        },
+        "recorded_outcome": terminal.get("outcome") if terminal is not None else None,
+        "automatic_recommendation": {
+            "status": "NOT_AVAILABLE",
+            "reason": "acceptance_contract_not_registered",
+        },
+        "decision_options": ["accepted", "correction_required", "deferred"],
     }
 
 
@@ -1994,6 +2078,7 @@ def _parser() -> argparse.ArgumentParser:
     live_start = sub.add_parser("live-start")
     live_enable = sub.add_parser("live-enable")
     live_status = sub.add_parser("live-status")
+    live_decision_context = sub.add_parser("live-decision-context")
     live_capture = sub.add_parser("live-capture")
     live_outcome = sub.add_parser("live-outcome")
     live_prompt = sub.add_parser("live-prompt")
@@ -2002,7 +2087,7 @@ def _parser() -> argparse.ArgumentParser:
     live_route = sub.add_parser("live-route-prompt")
     live_register = sub.add_parser("live-register")
     for command in (
-        live_enable, live_start, live_status, live_capture, live_outcome,
+        live_enable, live_start, live_status, live_decision_context, live_capture, live_outcome,
         live_prompt, live_classify, live_close, live_route, live_register,
     ):
         command.add_argument("--target", type=Path, default=Path.cwd())
@@ -2011,6 +2096,7 @@ def _parser() -> argparse.ArgumentParser:
     live_enable.add_argument("--registration", type=Path, required=True)
     live_register.add_argument("--study-id", required=True)
     live_status.add_argument("--work-id")
+    live_decision_context.add_argument("--work-id", required=True)
     live_register.add_argument("--repository-root", action="append", required=True)
     live_register.add_argument("--observation-started-at", required=True)
     live_register.add_argument("--out", type=Path, required=True)
@@ -2063,6 +2149,8 @@ def main() -> int:
             result = start_live_observation(args.target)
         elif args.command == "live-status":
             result = live_observation_status(args.target, work_id=args.work_id)
+        elif args.command == "live-decision-context":
+            result = build_live_decision_context(args.target, work_id=args.work_id)
         elif args.command == "live-capture":
             result = capture_live_completion(
                 args.target,
