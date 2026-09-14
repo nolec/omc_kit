@@ -293,7 +293,7 @@ contract revision 7에서는 T0 전에 calibration qualification과 표본 제�
 
 현재 0번은 제품 decision gate이며 실행 단계가 아니다. Persona registration 계약과 외부 custody 절차, 최종 sealed decision 재검증은 [Persona Pilot Operator Runbook](task_review_persona_operator_runbook.md)에 보존한다.
 
-0. **SEMANTIC REVISION — `REVISION_REQUIRED` / `NO_ACTIVE_EXECUTION_LANE`** — `$omc-dashboard` 첫 forward case `repo-ops-20260908-v4`는 기술 검증과 별개로 source에 없는 priority를 추천해 `UNSUPPORTED_PRIORITY_INFERENCE`로 닫았다. question evidence contract가 질문별 source field·계산·결측 정책·surface를 결속하며, 별도 승인된 두 번째 독립 case 전에는 `WORKFLOW_REPEATABILITY_OBSERVED`로 승격하지 않는다. Claude Artifact 동등성, 제품 우위·수정 지시 감소는 계속 `NOT_YET_PROVEN`이다.
+0. **SEMANTIC REVISION — `REVISION_REQUIRED` / `DASHBOARD_LANE_CLOSED`** — `$omc-dashboard` 첫 forward case `repo-ops-20260908-v4`는 기술 검증과 별개로 source에 없는 priority를 추천해 `UNSUPPORTED_PRIORITY_INFERENCE`로 닫았다. question evidence contract가 질문별 source field·계산·결측 정책·surface를 결속하며, 별도 승인된 두 번째 독립 case 전에는 `WORKFLOW_REPEATABILITY_OBSERVED`로 승격하지 않는다. Claude Artifact 동등성, 제품 우위·수정 지시 감소는 계속 `NOT_YET_PROVEN`이다.
 
 아래 1–16번과 Persona Pilot은 모두 `PAUSED_NOT_CANCELLED` backlog다. 0번 사용자 판정 뒤에도 사용자가 명시적으로 하나를 선택하기 전에는 실행하지 않는다.
 
@@ -312,7 +312,7 @@ contract revision 7에서는 T0 전에 calibration qualification과 표본 제�
 13. **public CLI·운영 source drift·consumer 재배포 완료 / 상태 신뢰성·멀티 호스트 검증 대기** — 루트 help는 setup·task·status·review·ship 핵심 흐름과 orchestrate·autopilot·team advanced 흐름을 우선 표시한다. 모든 직접 CLI command는 core·advanced·research 중 하나로 단일 분류되며, dispatch는 이 registry를 사용해 prompt 오라우팅을 막는다. Product Value·N-child research 명령은 직접 호출 호환성을 유지한 채 루트 help에서 숨겼고 README 계약과 CLI 회귀 테스트를 고정했다. research·benchmark 실행은 교체 없이 real-use cohort에서 제외한다. `.omc` 운영 상태 변경이 source hash·version·strict audit를 오염하지 않고 실제 배포 대상 변경은 `update_available`로 탐지하는 것을 격리 consumer에서 확인했다. 현재 배포 버전·consumer 수·검증 결과는 실행 시점의 strict install audit 결과에서 확인하며, 로드맵의 과거 rollout 수치는 현재 상태 주장으로 재사용하지 않는다. 다음은 stale active session 교정과 멀티 호스트 동일 fixture 검증이다.
 14. **Autopilot 안전 실행 코드 완료 / 외부 smoke 대기** — frozen work contract, 격리 task workspace, trusted-base critique/review, immutable review packet과 candidate branch 전용 promotion을 고정했다. 다음은 고정 커밋의 격리 clone에서 실제 provider TASK→CRITIQUE→REVIEW smoke를 실행해 candidate 변경 보존, reviewer control-plane 비오염, 실패 시 promotion 차단, latency·token·사용자 개입 receipt를 함께 확인하는 것이다.
 15. **Decision Policy feasibility 계약 완료 / 실제 evidence 대기** — 실제 결과와 독립 causal-review receipt로 확인된 chronological first-N 실패 5건을 수집하고, 사전 승인된 정책과 동일 subject의 baseline/policy arm을 paired 실행한다. 완료율·불필요한 검증 왕복·사용자 개입·token을 사전 고정 기준으로 비교하며 독립 판정 전에는 효과를 주장하지 않는다.
-16. **Codex-first capture-all + global closure 코드·review 완료 / 버전·배포·실제 표본 대기** — single-host roster/T0 binding, 저장소별 capture-all, 전역 first-5 closure, cross-session exact binding과 quarantine를 로컬 계약으로 구현했고 fail-closed 코드 리뷰를 통과했다. 다음에는 버전을 올려 등록 저장소에 `setup --force`하고, 동일 roster·T0로 `live-enable`한다. 실제 14일 모집단과 T1+24h closure 전에는 수집 가능성을 주장하지 않으며, 5건 표본을 제품 효과 근거로 재사용하지 않는다.
+16. **Codex-first capture-all + global closure 실제 관찰 진행 중 / 추가 저장소의 자연 발생 implementation 표본 대기** — single-host roster/T0 binding, 저장소별 capture-all, 전역 first-5 closure, cross-session exact binding과 quarantine를 구현·배포하고 동결된 `completion-quality-live-20260913-v2`를 `live-enable`했다. 현재 ai-cs start 3건만 존재하므로 등록된 다른 저장소의 자연 발생 작업과 T1+24h 결과를 기다린다. 14일 모집단과 first-5·최소 2개 저장소 closure 전에는 수집 가능성을 주장하지 않으며, 5건 표본을 제품 효과 근거로 재사용하지 않는다.
 
 ## 한 줄 결론
 
