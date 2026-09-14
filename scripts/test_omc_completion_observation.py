@@ -14,6 +14,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import omc_completion_observation as observation
+import omc_guard
 from omc_source_hash import source_sha256
 import omc_state
 
@@ -705,9 +706,209 @@ def test_live_cli_reports_observation_invalid_without_blocking_product_work(tmp_
     assert result.returncode == 0
     assert json.loads(result.stdout) == {
         "claim_boundary": "OBSERVATION_ONLY",
-        "reason": "pending_completion_invalid",
+        "reason": "live_observation_not_enabled",
         "status": "OBSERVATION_INVALID",
     }
+
+
+def test_live_status_reports_idle_for_enabled_repo_without_pending_work(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    (root / ".omc" / "state" / "pending-completion.json").unlink()
+
+    assert observation.live_observation_status(root) == {
+        "schema_version": observation.LIVE_SCHEMA,
+        "claim_boundary": "OBSERVATION_ONLY",
+        "status": "IDLE",
+        "repo_id": "repo",
+        "closure_sample_target": 5,
+        "samples_started": 0,
+    }
+
+
+def test_live_status_does_not_treat_dangling_pending_symlink_as_idle(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    pending_path = root / ".omc" / "state" / "pending-completion.json"
+    pending_path.unlink()
+    pending_path.symlink_to(root / "missing-pending.json")
+
+    with pytest.raises(observation.CaptureError, match="pending_completion_invalid"):
+        observation.live_observation_status(root)
+
+
+def test_live_idle_snapshot_serializes_against_pending_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _ = _live_repo(tmp_path)
+    (root / ".omc" / "state" / "pending-completion.json").unlink()
+    original_starts = observation._live_cohort_starts
+    writers: list[subprocess.Popen[str]] = []
+    completed_during_snapshot: list[bool] = []
+
+    def starts_while_writer_waits(
+        project_root: Path, policy: dict[str, object]
+    ) -> list[dict[str, object]]:
+        code = (
+            "import sys; from pathlib import Path; "
+            f"sys.path.insert(0, {str(Path('scripts').resolve())!r}); "
+            "import omc_state; "
+            f"omc_state.record_session(Path({str(root)!r}), mode='autopilot', "
+            "title='omc-task', request='concurrent implementation', "
+            "role_ids=['senior_coding'], work_class='implementation', "
+            "completion_action='start', confirmed=True, confirmation_source='test')"
+        )
+        writer = subprocess.Popen(
+            [sys.executable, "-c", code], text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        writers.append(writer)
+        try:
+            writer.wait(timeout=2)
+            completed_during_snapshot.append(True)
+        except subprocess.TimeoutExpired:
+            completed_during_snapshot.append(False)
+        return original_starts(project_root, policy)
+
+    monkeypatch.setattr(observation, "_live_cohort_starts", starts_while_writer_waits)
+    status = observation.live_observation_status(root)
+    for writer in writers:
+        stdout, stderr = writer.communicate(timeout=5)
+        assert writer.returncode == 0, stdout + stderr
+
+    assert status["status"] == "IDLE"
+    assert completed_during_snapshot == [False]
+
+
+def test_guard_automatically_starts_enabled_implementation_observation(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/omc_guard.py",
+            "sync-require",
+            "--target",
+            str(root),
+            "--mode",
+            "autopilot",
+            "--title",
+            "omc-task",
+            "--request",
+            "new natural implementation",
+            "--roles",
+            "senior_coding",
+            "--work-class",
+            "implementation",
+            "--completion-action",
+            "start",
+            "--for",
+            "task",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    pending = json.loads(
+        (root / ".omc" / "state" / "pending-completion.json").read_text()
+    )
+    assert (
+        root
+        / ".omc"
+        / "observations"
+        / "live"
+        / pending["work_id"]
+        / "start.json"
+    ).is_file()
+    assert "[OMC-OBSERVATION] COLLECTING" in result.stdout
+
+
+def test_guard_observation_failure_does_not_block_work_and_records_receipt(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    policy_path = root / ".omc" / "observation-policy.json"
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    policy["enabled_at"] = "2026-08-01T00:00:00+00:00"
+    policy["policy_sha256"] = observation.canonical_sha256(
+        {**policy, "policy_sha256": ""}
+    )
+    policy_path.write_text(json.dumps(policy), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/omc_guard.py",
+            "sync-require",
+            "--target",
+            str(root),
+            "--mode",
+            "autopilot",
+            "--title",
+            "omc-task",
+            "--request",
+            "implementation outside observation window",
+            "--roles",
+            "senior_coding",
+            "--work-class",
+            "implementation",
+            "--completion-action",
+            "start",
+            "--for",
+            "task",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "[OMC-OBSERVATION] OBSERVATION_INVALID" in result.stdout
+    failures = list(
+        (root / ".omc" / "observations" / "live-failures").glob("*.json")
+    )
+    assert len(failures) == 1
+    receipt = json.loads(failures[0].read_text(encoding="utf-8"))
+    assert receipt["command"] == "live-start"
+    assert receipt["reason"] == "live_observation_window_closed"
+
+
+@pytest.mark.parametrize(
+    ("runner_behavior", "expected_reason"),
+    [
+        ("missing", "live_start_runner_unavailable"),
+        ("malformed", "live_start_runner_output_invalid"),
+        ("nonzero", "live_start_runner_exit_7"),
+    ],
+)
+def test_guard_runner_failure_is_nonblocking_and_records_fallback_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runner_behavior: str,
+    expected_reason: str,
+) -> None:
+    root, _ = _live_repo(tmp_path)
+    if runner_behavior == "missing":
+        executable = tmp_path / "missing-runner"
+    else:
+        executable = tmp_path / "fake-runner"
+        executable.write_text(
+            "#!/bin/sh\n"
+            + (
+                "printf 'not-json'\n"
+                if runner_behavior == "malformed"
+                else "printf '{}'\nexit 7\n"
+            ),
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+    monkeypatch.setattr(omc_guard.sys, "executable", str(executable))
+
+    omc_guard._start_registered_live_observation(root)
+
+    failures = list(
+        (root / ".omc" / "observations" / "live-failures").glob("*.json")
+    )
+    assert len(failures) == 1
+    receipt = json.loads(failures[0].read_text(encoding="utf-8"))
+    assert receipt["command"] == "live-start"
+    assert receipt["reason"] == expected_reason
 
 
 def test_live_cli_status_reads_completed_work_without_pending_snapshot(tmp_path: Path) -> None:
@@ -1509,9 +1710,9 @@ def test_live_status_rejects_completion_with_wrong_start_baseline(tmp_path: Path
 def test_codex_task_and_review_surfaces_drive_live_observation_without_user_copy() -> None:
     task_skill = Path(".agents/skills/omc-task/SKILL.md").read_text(encoding="utf-8")
     review_skill = Path(".agents/skills/omc-review/SKILL.md").read_text(encoding="utf-8")
-    assert "omc_completion_observation.py live-start" in task_skill
+    assert "Guard가 `live-start`를 자동 실행" in task_skill
     assert "omc_completion_observation.py live-capture" in task_skill
-    assert "관찰 실패는 구현을 차단하지" in task_skill
+    assert "자동 start 실패는 제품 작업을 차단하지 않고 failure receipt" in task_skill
     assert "omc_completion_observation.py live-status" in review_skill
     assert "live-decision-context" in review_skill
     assert review_skill.index("live-decision-context") < review_skill.index(

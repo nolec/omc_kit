@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -18,6 +19,59 @@ def _prospective_work_class_lock(project_root: Path):
     import omc_work_class_lock
 
     return omc_work_class_lock.load_private_key(project_root)
+
+
+def _report_live_start_runner_failure(project_root: Path, reason: str) -> None:
+    try:
+        import omc_completion_observation
+
+        omc_completion_observation.record_live_failure(
+            project_root, command="live-start", reason=reason
+        )
+    except Exception:
+        pass
+    print(f"[OMC-OBSERVATION] OBSERVATION_INVALID reason={reason}")
+
+
+def _start_registered_live_observation(project_root: Path) -> None:
+    """Start enrolled observation without making instrumentation task-critical."""
+    if not (project_root / ".omc" / "observation-policy.json").is_file():
+        return
+    script = Path(__file__).resolve().parent / "omc_completion_observation.py"
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "live-start", "--target", str(project_root)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        _report_live_start_runner_failure(
+            project_root, "live_start_runner_unavailable"
+        )
+        return
+    if result.returncode != 0:
+        _report_live_start_runner_failure(
+            project_root, f"live_start_runner_exit_{result.returncode}"
+        )
+        return
+    try:
+        payload = json.loads(result.stdout)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        _report_live_start_runner_failure(
+            project_root, "live_start_runner_output_invalid"
+        )
+        return
+    if not isinstance(payload, dict) or payload.get("status") not in {
+        "COLLECTING", "OBSERVATION_INVALID"
+    }:
+        _report_live_start_runner_failure(
+            project_root, "live_start_runner_output_invalid"
+        )
+        return
+    status = str(payload.get("status") or "OBSERVATION_INVALID")
+    suffix = f" reason={payload['reason']}" if payload.get("reason") else ""
+    print(f"[OMC-OBSERVATION] {status}{suffix}")
 
 MUTATING_ROLE_IDS = {"directive", "senior_coding"}
 READ_ONLY_COMMAND_HINTS = (
@@ -345,7 +399,15 @@ def main() -> int:
                 project_root,
                 session_id=str(session["session_id"]),
             )
-        return require_confirmation(project_root, command_name=args.command_name, scope=args.scope)
+        guard_result = require_confirmation(
+            project_root, command_name=args.command_name, scope=args.scope
+        )
+        if guard_result == 0 and (
+            args.work_class == "implementation"
+            and args.completion_action == "start"
+        ):
+            _start_registered_live_observation(project_root)
+        return guard_result
     if args.command == "require":
         return require_confirmation(project_root, command_name=args.command_name, scope=args.scope)
     latest = _latest(project_root)

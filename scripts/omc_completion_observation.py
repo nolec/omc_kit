@@ -953,7 +953,7 @@ def _live_record(value: dict[str, Any], hash_field: str) -> dict[str, Any]:
     return _sealed({**value, hash_field: ""}, hash_field)
 
 
-def _record_live_failure(project_root: Path, *, command: str, reason: str) -> None:
+def record_live_failure(project_root: Path, *, command: str, reason: str) -> None:
     """Best-effort local evidence that observation instrumentation failed."""
     try:
         policy = _live_policy(project_root.resolve())
@@ -1513,8 +1513,21 @@ def live_observation_status(
     project_root = project_root.resolve()
     if work_id is not None:
         return _live_work_status(project_root, work_id=work_id)
-    pending = _live_pending(project_root)
-    return _live_observation_status_for_pending(project_root, pending)
+    with omc_state._omc_lock(project_root):
+        pending_path = project_root / ".omc" / "state" / "pending-completion.json"
+        if not pending_path.exists() and not pending_path.is_symlink():
+            policy = _live_policy(project_root)
+            starts = _live_cohort_starts(project_root, policy)
+            return {
+                "schema_version": LIVE_SCHEMA,
+                "claim_boundary": "OBSERVATION_ONLY",
+                "status": "IDLE",
+                "repo_id": policy["repo_id"],
+                "closure_sample_target": policy["closure_sample_target"],
+                "samples_started": len(starts),
+            }
+        pending = _live_pending(project_root)
+        return _live_observation_status_for_pending(project_root, pending)
 
 
 def _validated_live_work(
@@ -2288,7 +2301,7 @@ def main() -> int:
                 "classification_required",
                 "first_completion_already_recorded",
             }:
-                _record_live_failure(
+                record_live_failure(
                     args.target, command=args.command, reason=str(error)
                 )
             print(json.dumps({
