@@ -295,7 +295,7 @@ contract revision 7에서는 T0 전에 calibration qualification과 표본 제�
 
 0. **SEMANTIC REVISION — `REVISION_REQUIRED` / `DASHBOARD_LANE_CLOSED`** — `$omc-dashboard` 첫 forward case `repo-ops-20260908-v4`는 기술 검증과 별개로 source에 없는 priority를 추천해 `UNSUPPORTED_PRIORITY_INFERENCE`로 닫았다. question evidence contract가 질문별 source field·계산·결측 정책·surface를 결속하며, 별도 승인된 두 번째 독립 case 전에는 `WORKFLOW_REPEATABILITY_OBSERVED`로 승격하지 않는다. Claude Artifact 동등성, 제품 우위·수정 지시 감소는 계속 `NOT_YET_PROVEN`이다.
 
-아래 1–16번과 Persona Pilot은 모두 `PAUSED_NOT_CANCELLED` backlog다. 0번 사용자 판정 뒤에도 사용자가 명시적으로 하나를 선택하기 전에는 실행하지 않는다.
+아래 1–15번과 Persona Pilot은 모두 `PAUSED_NOT_CANCELLED` backlog다. 0번 사용자 판정 뒤에도 사용자가 명시적으로 하나를 선택하기 전에는 실행하지 않는다. 16번 Completion Observation은 현재 활성 실행 lane이므로 이 backlog 범위에서 제외한다.
 
 1. **BLOCKED_EVIDENCE_LOSS** (`PAUSED_NOT_CANCELLED`) — 기존 schema v1 Product Value batch는 실행 대상에서 제외했지만 corpus v2-r1의 source commit·request·DoD·verification·environment artifact 원문과 durable registration을 현재 검증할 수 없다. hash-only record와 과거 availability 요약은 development evidence로 승계하지 않으며, 재개가 승인되면 신규 prospective study를 사전 등록해 다시 수집한다.
 2. **완료** — `bounded_n_child_execution` claim scope와 development evidence 판정 gate 구현 완료. 기존 v3–v5 manifest는 `development`로 정규화하며 통과해도 최고 `DEVELOPMENT_PASS`만 발행한다.

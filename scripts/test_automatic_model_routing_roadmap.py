@@ -778,6 +778,8 @@ def test_completion_observation_v0_is_bounded_to_capture_feasibility() -> None:
     assert "`NO_ACTIVE_EXECUTION_LANE`" not in readme
     assert "버전·배포·실제 표본 대기" not in roadmap
     assert "다음에는 버전을 올려" not in roadmap
+    assert "아래 1–15번과 Persona Pilot은 모두 `PAUSED_NOT_CANCELLED` backlog다." in roadmap
+    assert "아래 1–16번과 Persona Pilot은 모두 `PAUSED_NOT_CANCELLED` backlog다." not in roadmap
     assert "추가 저장소의 자연 발생 implementation 표본 대기" in roadmap
 
     assert "기존 sealed terminal·completion·lineage 원문" in roadmap
