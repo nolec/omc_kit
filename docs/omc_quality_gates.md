@@ -24,10 +24,10 @@
     ],
     "gates": [
       {
-        "id": "test",
-        "purpose": "test",
-        "argv": ["<executable>", "<arg>", "{changed_files}"],
-        "scope": "changed",
+        "id": "runtime",
+        "purpose": "preflight",
+        "argv": ["<portable-executable>", "<runtime-check>"],
+        "scope": "full",
         "required": true,
         "timeout_sec": 300
       }
@@ -44,6 +44,14 @@
 ```
 
 허용 placeholder는 `{changed_files}`, `{base_ref}`, `{head_ref}`뿐입니다. `full` 범위는 `full_scope_requested=true`가 있어야 후보 검증을 통과하며 실행 승인도 별도로 필요합니다.
+
+## 여러 컴퓨터에서의 실행 계약
+
+새 proposal의 `argv`는 저장소를 다른 컴퓨터에 clone해도 같은 의미여야 합니다. executable은 `pnpm`, `python3`처럼 PATH에서 찾는 이름 또는 `scripts/check-runtime` 같은 저장소 상대경로만 허용합니다. 절대 executable, 상위 경로(`..`), `env`·shell wrapper, `/Users/<사용자>/...`, `/home/<사용자>/...`, HOME·PATH token은 `config_not_portable`로 거부합니다. 명령은 shell 해석 없는 직접 argv로 선언하고, 환경 변수는 wrapper로 주입하지 않고 실행 환경이 준비해야 합니다. 기존 v1 설정은 읽고 실행할 수 있지만 host-bound 설정을 새 proposal로 재승인할 수는 없습니다.
+
+프로젝트가 특정 runtime 버전을 요구하면 가장 앞에 `purpose: "preflight"`인 required·full-scope gate를 선언합니다. 이 gate는 프로젝트가 소유한 portable 검사 명령으로 runtime 버전과 필수 도구를 확인합니다. OMC는 runtime을 자동 설치하지 않으며 PATH도 수정하지 않습니다.
+
+OMC는 모든 required gate의 실제 실행 파일과 작업 디렉터리를 먼저 탐색합니다. 상대 PATH와 executable은 실제 gate의 작업 디렉터리를 기준으로 해석합니다. 기존 v1의 `env` wrapper도 내부 command와 `-C` 변경을 확인하지만 신규 portable proposal에서는 wrapper를 허용하지 않습니다. 실행 파일이나 작업 디렉터리가 하나라도 없으면 어떤 품질 명령도 실행하지 않고 `environment_not_ready`와 누락 항목을 반환합니다. required preflight가 실패하면 뒤의 test·typecheck·lint·build는 `preflight_failed`로 건너뜁니다. optional gate의 실행 오류는 기존처럼 전체 결과를 차단하지 않습니다.
 
 ## 검증과 승인
 

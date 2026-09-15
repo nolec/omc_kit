@@ -25,7 +25,7 @@ git diff HEAD
 git ls-files --others --exclude-standard
 ```
 
-`status`가 `ready`가 아니면 실행하지 않습니다. 설정이 없거나 근거가 바뀌면 proposal을 생성·검증하고 사용자의 적용 및 실행 승인을 각각 받은 뒤 재시도합니다.
+`status`가 `ready`가 아니면 실행하지 않습니다. 설정이 없거나 근거가 바뀌면 proposal을 생성·검증하고 사용자의 적용 및 실행 승인을 각각 받은 뒤 재시도합니다. `environment_not_ready`면 누락된 실행 파일과 프로젝트의 preflight 요구사항을 보여주고 중단합니다. OMC가 runtime이나 PATH를 변경하지 않으며, 환경이 준비되기 전에는 품질 명령을 일부 실행하지 않습니다.
 - 비밀값: `SECRET`, `KEY`, `TOKEN`, `PASSWORD`, `.env`가 diff/untracked에 없는지 확인
 
 실패 시: 기존 테스트 회귀/테스트 실패 → `$omc-investigate`, 신규 테스트 누락/TDD 위반 → `$omc-task`

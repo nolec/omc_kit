@@ -43,6 +43,7 @@ python3 scripts/omc_quality_gate.py --target . run
 ```
 
 `status`가 `ready`가 아니면 배포를 중단합니다. 설정 proposal의 검증·적용과 실행 승인은 `docs/omc_quality_gates.md`를 따릅니다.
+`environment_not_ready`면 누락 실행 파일과 preflight 요구사항을 보고하고 중단하며, runtime·PATH를 자동 변경하거나 품질 명령을 일부 실행하지 않습니다.
 
 ### 4. Git 상태 확인
 ```bash

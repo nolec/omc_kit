@@ -344,6 +344,7 @@ python3 scripts/omc_lesson.py search "키워드"
 2. `python3 scripts/omc_tdd_check.py --staged` → 신규 구현의 테스트 대응 관계 확인
 3. `python3 scripts/omc_quality_gate.py --target . status` → 승인·근거 상태 확인
 4. `python3 scripts/omc_quality_gate.py --target . run` → 프로젝트가 선언한 품질 게이트 실행
+   - `environment_not_ready`면 누락 실행 파일과 preflight 요구사항을 보고하고 중단합니다. runtime·PATH 자동 변경과 품질 명령 일부 실행은 금지합니다.
 5. 전부 통과 시에만 배포 진행
 
 **배포 후 — 작업 규모 + 토큰 비용 기록 (MANDATORY)**:

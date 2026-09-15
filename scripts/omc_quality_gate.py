@@ -7,6 +7,9 @@ import fcntl
 import hashlib
 import json
 import os
+import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,10 +23,30 @@ PROPOSAL_SCHEMA = "omc-quality-gate-proposal/v1"
 RECEIPT_SCHEMA = "omc-quality-gate-approval/v1"
 CONFIG_PATH = Path(".omc/quality-gates.json")
 RECEIPT_PATH = Path(".omc/state/quality-gate-approval.json")
-_PURPOSES = {"test", "typecheck", "lint", "build"}
+_PURPOSES = {"preflight", "test", "typecheck", "lint", "build"}
 _SCOPES = {"changed", "affected", "full"}
 _PLACEHOLDERS = {"{changed_files}", "{base_ref}", "{head_ref}"}
 _SHELL_TOKENS = {"|", "||", "&&", ";", ">", ">>", "<", "<<"}
+_HOST_BOUND_PATH = re.compile(r"(?:^|[=:])(?:/Users|/home)/[^/:]+(?:/|$)")
+_HOST_BOUND_ENV = re.compile(r"^(?:HOME|PATH|USERPROFILE)=")
+_HOST_BOUND_REFERENCE = re.compile(
+    r"(?:^|[=:])(?:~[^/:=]*(?=/|$)|\$[A-Za-z_][A-Za-z0-9_]*(?=/|\\|$))"
+)
+_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=(.*)$")
+_SHELL_EXECUTABLES = {
+    "bash",
+    "cmd",
+    "cmd.exe",
+    "csh",
+    "dash",
+    "fish",
+    "ksh",
+    "powershell",
+    "pwsh",
+    "sh",
+    "tcsh",
+    "zsh",
+}
 
 
 class QualityGateError(ValueError):
@@ -85,6 +108,30 @@ def _validate_argv(argv: Any) -> list[str]:
     return list(argv)
 
 
+def _validate_portable_config(config: dict[str, Any]) -> None:
+    for gate in config["gates"]:
+        executable = gate["argv"][0]
+        executable_path = Path(executable)
+        if (
+            executable_path.is_absolute()
+            or ".." in executable_path.parts
+            or executable_path.name == "env"
+            or executable_path.name.lower() in _SHELL_EXECUTABLES
+        ):
+            raise QualityGateError(
+                f"config_not_portable: executable must use PATH or a project-relative path in gate {gate['id']}"
+            )
+        for token in gate["argv"]:
+            if (
+                _HOST_BOUND_ENV.match(token)
+                or _HOST_BOUND_PATH.search(token)
+                or _HOST_BOUND_REFERENCE.search(token)
+            ):
+                raise QualityGateError(
+                    f"config_not_portable: host-bound argv token in gate {gate['id']}"
+                )
+
+
 def _validate_config_data(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict) or data.get("schema_version") != CONFIG_SCHEMA:
         raise QualityGateError("unsupported quality gate schema")
@@ -120,6 +167,7 @@ def _validate_config_data(data: Any) -> dict[str, Any]:
     if not isinstance(gates, list) or not gates:
         raise QualityGateError("at least one quality gate is required")
     gate_ids: set[str] = set()
+    product_gate_seen = False
     for gate in gates:
         if not isinstance(gate, dict):
             raise QualityGateError("gate must be an object")
@@ -129,6 +177,13 @@ def _validate_config_data(data: Any) -> dict[str, Any]:
         gate_ids.add(gate_id)
         if gate.get("purpose") not in _PURPOSES:
             raise QualityGateError(f"unsupported gate purpose: {gate.get('purpose')}")
+        if gate.get("purpose") == "preflight":
+            if product_gate_seen:
+                raise QualityGateError("preflight gates must precede product gates")
+            if gate.get("scope") != "full" or gate.get("required") is not True:
+                raise QualityGateError("preflight gates must be required full-scope gates")
+        else:
+            product_gate_seen = True
         gate_argv = _validate_argv(gate.get("argv"))
         scope = gate.get("scope")
         if scope not in _SCOPES:
@@ -289,16 +344,185 @@ def _git_changed_files(root: Path, base_ref: str) -> list[str]:
     return list(dict.fromkeys(changed))
 
 
+def _executable_available(
+    root: Path,
+    executable: str,
+    *,
+    search_path: str | None = None,
+    working_directory: Path | None = None,
+) -> bool:
+    effective_cwd = working_directory or root
+    if "/" not in executable:
+        inherited_path = os.environ.get("PATH", os.defpath)
+        path_value = inherited_path if search_path is None else search_path
+        resolved_path = os.pathsep.join(
+            str(Path(entry) if Path(entry).is_absolute() else effective_cwd / entry)
+            for entry in path_value.split(os.pathsep)
+        )
+        return shutil.which(executable, path=resolved_path) is not None
+    path = Path(executable)
+    candidate = path if path.is_absolute() else effective_cwd / path
+    return candidate.is_file() and os.access(candidate, os.X_OK)
+
+
+def _declared_executables(
+    root: Path, argv: list[str]
+) -> tuple[list[tuple[str, str | None, Path]], list[tuple[str, Path]]]:
+    executables = [(argv[0], None, root)]
+    working_directories: list[tuple[str, Path]] = []
+    if Path(argv[0]).name != "env":
+        return executables, working_directories
+    environment_path = os.environ.get("PATH", os.defpath)
+    utility_path: str | None = None
+    effective_cwd = root
+    chdir_value: str | None = None
+    index = 1
+    option_phase = True
+    while index < len(argv):
+        token = argv[index]
+        if option_phase:
+            if token == "--":
+                option_phase = False
+                index += 1
+                continue
+            if token in {"-i", "--ignore-environment"}:
+                environment_path = os.defpath
+                index += 1
+                continue
+            if token in {"-0", "--null", "-v"}:
+                index += 1
+                continue
+            if token in {"-P", "-u", "--unset", "-C", "--chdir"}:
+                if index + 1 >= len(argv):
+                    raise QualityGateError(
+                        f"environment_not_ready: env option requires an argument: {token}"
+                    )
+                option_value = argv[index + 1]
+                if token == "-P":
+                    utility_path = option_value
+                elif token in {"-u", "--unset"} and option_value == "PATH":
+                    environment_path = os.defpath
+                elif token in {"-C", "--chdir"}:
+                    chdir_value = option_value
+                index += 2
+                continue
+            if token.startswith("--unset=") or token.startswith("--chdir="):
+                if token.endswith("="):
+                    raise QualityGateError(
+                        f"environment_not_ready: env option requires an argument: {token}"
+                    )
+                if token == "--unset=PATH":
+                    environment_path = os.defpath
+                elif token.startswith("--chdir="):
+                    chdir_value = token.removeprefix("--chdir=")
+                index += 1
+                continue
+            if token in {"-S", "--split-string"}:
+                if index + 1 >= len(argv):
+                    raise QualityGateError(
+                        f"environment_not_ready: env option requires an argument: {token}"
+                    )
+                try:
+                    split = shlex.split(argv[index + 1])
+                except ValueError as error:
+                    raise QualityGateError(
+                        f"environment_not_ready: invalid env split string: {error}"
+                    ) from error
+                argv = [*argv[:index], *split, *argv[index + 2 :]]
+                continue
+            if token.startswith("-S") and len(token) > 2:
+                try:
+                    split = shlex.split(token[2:])
+                except ValueError as error:
+                    raise QualityGateError(
+                        f"environment_not_ready: invalid env split string: {error}"
+                    ) from error
+                argv = [*argv[:index], *split, *argv[index + 1 :]]
+                continue
+            if token.startswith("-"):
+                raise QualityGateError(
+                    f"environment_not_ready: unsupported env wrapper option: {token}"
+                )
+            option_phase = False
+        assignment = _ENV_ASSIGNMENT.fullmatch(token)
+        if assignment:
+            if token.startswith("PATH="):
+                environment_path = assignment.group(1)
+            index += 1
+            continue
+        break
+    if chdir_value is not None:
+        chdir_path = Path(chdir_value)
+        effective_cwd = chdir_path if chdir_path.is_absolute() else root / chdir_path
+        working_directories.append((chdir_value, effective_cwd))
+    if index < len(argv):
+        search_path = utility_path if utility_path is not None else environment_path
+        executables.append((argv[index], search_path, effective_cwd))
+    return executables, working_directories
+
+
 def run(root: Path) -> dict[str, Any]:
     config, config_sha256 = load_config_snapshot(root)
     current = _status_for_snapshot(root, config, config_sha256)
     if current["status"] != "ready":
         raise QualityGateError(f"quality gate is not ready: {current['status']}")
     files = _git_changed_files(root, config["base_ref"])
+    required_executables: list[tuple[str, str | None, Path]] = []
+    required_working_directories: list[tuple[str, Path]] = []
+    for gate in config["gates"]:
+        if gate["required"]:
+            executables, working_directories = _declared_executables(root, gate["argv"])
+            required_executables.extend(executables)
+            required_working_directories.extend(working_directories)
+    missing_executables = sorted(
+        {
+            executable
+            for executable, search_path, working_directory in required_executables
+            if not _executable_available(
+                root,
+                executable,
+                search_path=search_path,
+                working_directory=working_directory,
+            )
+        }
+    )
+    missing_working_directories = sorted(
+        {
+            declared
+            for declared, working_directory in required_working_directories
+            if not working_directory.is_dir()
+        }
+    )
+    if missing_executables or missing_working_directories:
+        return {
+            "status": "blocked",
+            "reason": "environment_not_ready",
+            "config_sha256": current["config_sha256"],
+            "changed_files": files,
+            "missing_executables": missing_executables,
+            "missing_working_directories": missing_working_directories,
+            "gates": [],
+        }
     results: list[dict[str, Any]] = []
     blocked = False
+    preflight_failed = False
     for gate in config["gates"]:
         argv = _expand_argv(gate["argv"], base_ref=config["base_ref"], changed_files=files)
+        if preflight_failed:
+            results.append(
+                {
+                    "id": gate["id"],
+                    "purpose": gate["purpose"],
+                    "scope": gate["scope"],
+                    "argv": argv,
+                    "status": "skipped",
+                    "returncode": None,
+                    "stdout": "",
+                    "stderr": "",
+                    "reason": "preflight_failed",
+                }
+            )
+            continue
         if gate["scope"] == "changed" and not files:
             results.append(
                 {
@@ -362,6 +586,8 @@ def run(root: Path) -> dict[str, Any]:
             }
         if gate["required"] and gate_status != "passed":
             blocked = True
+            if gate["purpose"] == "preflight":
+                preflight_failed = True
         results.append(result)
     return {
         "status": "blocked" if blocked else "passed",
@@ -375,6 +601,7 @@ def validate_proposal(proposal: Any, root: Path) -> dict[str, Any]:
     if not isinstance(proposal, dict) or proposal.get("schema_version") != PROPOSAL_SCHEMA:
         raise QualityGateError("unsupported quality gate proposal schema")
     config = _validate_config_data(proposal.get("config"))
+    _validate_portable_config(config)
     rationale = proposal.get("rationale")
     if not isinstance(rationale, list):
         raise QualityGateError("proposal rationale must be an array")
