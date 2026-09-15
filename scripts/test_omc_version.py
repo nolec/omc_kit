@@ -20,10 +20,10 @@ import install
 from omc_source_hash import source_sha256
 
 
-def test_source_kit_release_version_is_0_2_7() -> None:
+def test_source_kit_release_version_is_0_3_0() -> None:
     assert (Path(__file__).resolve().parents[1] / "VERSION").read_text(
         encoding="utf-8"
-    ).strip() == "0.2.7"
+    ).strip() == "0.3.0"
 
 
 def _sha256(path: Path) -> str:
