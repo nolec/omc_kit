@@ -928,6 +928,27 @@ class TestInstallAudit(unittest.TestCase):
             self.assertNotIn("OBSERVATION_UPDATE_BLOCKED", proc.stdout)
             self.assertEqual(policy_path.read_bytes(), policy_bytes)
 
+    def test_force_setup_preserves_raw_free_observed_completion_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            target.mkdir()
+            config_path = target / ".omc" / "observed-completion-v1.json"
+            ledger_path = target / ".omc" / "observed-completion-v1.jsonl"
+            config_path.parent.mkdir(parents=True)
+            config_bytes = b'{"enabled":true,"repo_fingerprint":"a"}\n'
+            ledger_bytes = b'{"event_sha256":"b"}\n'
+            config_path.write_bytes(config_bytes)
+            ledger_path.write_bytes(ledger_bytes)
+
+            proc = subprocess.run(
+                [sys.executable, str(Path(__file__).parent / "omc.py"), "setup", "--target", str(target), "--force", "--skip-session-start"],
+                check=False, capture_output=True, text=True,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertEqual(config_path.read_bytes(), config_bytes)
+            self.assertEqual(ledger_path.read_bytes(), ledger_bytes)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

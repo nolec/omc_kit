@@ -126,6 +126,7 @@ _COMMAND_SURFACES = {
             "guard",
             "quickstart",
             "run",
+            "completion-report",
             "peer-review",
             "state",
             "prompt",
@@ -277,6 +278,18 @@ def main() -> int:
     run_cmd.add_argument("--label", required=True, help="Human-readable command label for OMC tracking.")
     run_cmd.add_argument("--summary", default=None, help="Short run summary.")
     run_cmd.add_argument("command", nargs=argparse.REMAINDER, help="Command to execute (put after --).")
+
+    completion_report = sub.add_parser(
+        "completion-report",
+        help="Aggregate raw-free completion observations from explicitly selected local repositories.",
+    )
+    completion_report.add_argument(
+        "--source",
+        type=Path,
+        action="append",
+        required=True,
+        help="Absolute opted-in repository path; repeat for each source.",
+    )
 
     orchestrate = sub.add_parser("orchestrate", help="Create a read-only orchestration plan.")
     orchestrate.add_argument("--request", required=True, help="Natural-language request to classify and decompose.")
@@ -729,6 +742,13 @@ def main() -> int:
         if args.summary:
             run_args += ["--summary", args.summary]
         return _run_script(run_script, [*run_args, "--", *command])
+
+    if args.command == "completion-report":
+        observation_script = kit / "scripts" / "omc_observed_completion.py"
+        report_args: list[str] = ["completion-report"]
+        for source in args.source:
+            report_args.extend(["--source", str(source)])
+        return _run_script(observation_script, report_args)
 
     if args.command == "peer-review":
         peer_review_script = kit / "scripts" / "omc_peer_review.py"
