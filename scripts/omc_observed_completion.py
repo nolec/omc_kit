@@ -155,7 +155,9 @@ def repository_fingerprint(project_root: Path) -> str:
     return hashlib.sha256(remote.encode("utf-8")).hexdigest()
 
 
-def _validate_config(project_root: Path) -> dict[str, Any]:
+def _validate_config(
+    project_root: Path, *, allow_legacy_read: bool = False
+) -> tuple[dict[str, Any], bool]:
     _omc_directory(project_root, create=False)
     path = config_path(project_root)
     if not path.exists() and not path.is_symlink():
@@ -178,11 +180,15 @@ def _validate_config(project_root: Path) -> dict[str, Any]:
     ):
         raise CompletionObservationError("repository_config_invalid")
     try:
-        _decode_public_key(trusted_key)
-        _decode_public_key(trusted_review_key)
+        terminal_public_key = _decode_public_key(trusted_key)
+        review_public_key = _decode_public_key(trusted_review_key)
     except CompletionObservationError as error:
         raise CompletionObservationError("repository_config_invalid") from error
-    return config
+    if terminal_public_key == review_public_key:
+        if not allow_legacy_read:
+            raise CompletionObservationError("review_trust_anchor_not_independent")
+        return config, True
+    return config, False
 
 
 def enable(
@@ -194,6 +200,8 @@ def enable(
     if project_root.is_symlink():
         raise CompletionObservationError("source_not_regular_directory")
     project_root = project_root.resolve(strict=True)
+    if _decode_public_key(trusted_terminal_public_key) == _decode_public_key(trusted_review_public_key):
+        raise CompletionObservationError("review_trust_anchor_not_independent")
     _omc_directory(project_root, create=True)
     expected = {
         "schema_version": SCHEMA_VERSION,
@@ -221,15 +229,28 @@ def _derived_terminal_state(
     return "OBSERVED_COMPLETE", None
 
 
-def _validate_event(event: object, *, expected_fingerprint: str, previous_hash: str | None) -> dict[str, Any]:
+def _validate_event(
+    event: object,
+    *,
+    expected_fingerprint: str,
+    previous_hash: str | None,
+    allow_legacy_read: bool = False,
+) -> dict[str, Any]:
     if not isinstance(event, dict):
         raise CompletionObservationError("event_not_object")
-    expected_keys = {
+    outcome_field = "terminal_reported_outcome"
+    modern_expected_keys = {
         "schema_version", "event_id", "observed_at", "repo_fingerprint", "work_id",
-        "baseline_commit", "terminal_sha256", "review_sha256", "status", "verification", "review", "user_outcome",
+        "baseline_commit", "terminal_sha256", "review_sha256", "status", "verification", "review", outcome_field,
         "incomplete_reason", "previous_event_sha256", "event_sha256",
     }
+    expected_keys = modern_expected_keys
+    if allow_legacy_read:
+        outcome_field = "user_outcome"
+        expected_keys = (modern_expected_keys - {"terminal_reported_outcome"}) | {outcome_field}
     if set(event) != expected_keys:
+        if allow_legacy_read and set(event) == modern_expected_keys:
+            raise CompletionObservationError("review_trust_anchor_not_independent")
         raise CompletionObservationError("event_schema_invalid")
     verification = event.get("verification")
     review = event.get("review")
@@ -253,7 +274,7 @@ def _validate_event(event: object, *, expected_fingerprint: str, previous_hash: 
         or not isinstance(review, dict)
         or set(review) != {"verdict"}
         or review.get("verdict") not in _REVIEW_VERDICTS
-        or event.get("user_outcome") not in _OUTCOMES
+        or event.get(outcome_field) not in _OUTCOMES
         or event.get("previous_event_sha256") != previous_hash
         or not isinstance(event.get("event_sha256"), str)
         or re.fullmatch(r"[0-9a-f]{64}", event["event_sha256"]) is None
@@ -271,8 +292,12 @@ def _validate_event(event: object, *, expected_fingerprint: str, previous_hash: 
     return event
 
 
-def _load_events(project_root: Path, *, require_ledger: bool) -> list[dict[str, Any]]:
-    config = _validate_config(project_root)
+def _load_events(
+    project_root: Path, *, require_ledger: bool, allow_legacy_read: bool = False
+) -> list[dict[str, Any]]:
+    config, legacy_config = _validate_config(
+        project_root, allow_legacy_read=allow_legacy_read
+    )
     path = ledger_path(project_root)
     if not path.exists() and not path.is_symlink():
         if require_ledger:
@@ -294,7 +319,10 @@ def _load_events(project_root: Path, *, require_ledger: bool) -> list[dict[str, 
         except json.JSONDecodeError as error:
             raise CompletionObservationError("ledger_json_invalid") from error
         checked = _validate_event(
-            event, expected_fingerprint=config["repo_fingerprint"], previous_hash=previous_hash
+            event,
+            expected_fingerprint=config["repo_fingerprint"],
+            previous_hash=previous_hash,
+            allow_legacy_read=legacy_config,
         )
         if checked["work_id"] in work_ids:
             raise CompletionObservationError("duplicate_work_id")
@@ -423,14 +451,14 @@ def _terminal_projection(path: Path, trusted_public_key: str) -> dict[str, Any]:
         or not isinstance(verified.get("captured_at"), str)
     ):
         raise CompletionObservationError("terminal_receipt_invalid")
-    _unused_review_verdict, user_outcome = review_by_outcome[outcome]
+    _unused_review_verdict, terminal_reported_outcome = review_by_outcome[outcome]
     return {
         "work_id": verified["work_id"],
         "baseline_commit": verified["baseline_commit"],
         "terminal_sha256": hashlib.sha256(terminal_bytes).hexdigest(),
         "observed_at": verified["captured_at"],
         "verification": {"id": "sealed_terminal", "passed": verified["verification_passed"]},
-        "user_outcome": user_outcome,
+        "terminal_reported_outcome": terminal_reported_outcome,
     }
 
 
@@ -470,7 +498,7 @@ def record_terminal(
         raise CompletionObservationError("source_not_regular_directory")
     project_root = project_root.resolve(strict=True)
     with omc_state._omc_lock(project_root):
-        config = _validate_config(project_root)
+        config, _legacy_config = _validate_config(project_root)
         projection = _terminal_projection(terminal, config["trusted_terminal_public_key"])
         projection.update(_review_projection(
             review,
@@ -511,7 +539,7 @@ def _source_report(source: Path) -> dict[str, Any]:
         config = config_path(root)
         if not config.exists() and not config.is_symlink():
             return {"state": "UNOBSERVED"}
-        events = _load_events(root, require_ledger=False)
+        events = _load_events(root, require_ledger=False, allow_legacy_read=True)
         if not events:
             return {"state": "UNOBSERVED"}
         latest = events[-1]

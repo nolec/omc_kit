@@ -87,6 +87,13 @@ python3 scripts/install.py --target /path/to/your-project
 
 기존 파일을 OMC 최신 템플릿으로 갱신할 때만 `--force`를 사용합니다.
 
+여러 저장소의 설치 목록을 사용자가 직접 관리하려면 한 번만 아래를 실행합니다. 이 registry는 기본 비활성이며, 이후 strict audit을 통과한 `omc.py setup` 대상만 사용자 로컬 상태에 기록합니다. Git에 쓰거나 자동 탐색·네트워크 전송을 하지 않습니다.
+
+```bash
+python3 scripts/omc.py installation-registry enable
+python3 scripts/omc.py installation-registry audit-legacy
+```
+
 ```bash
 python3 scripts/install.py --target /path/to/your-project --force
 ```

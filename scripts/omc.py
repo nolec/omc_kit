@@ -127,6 +127,7 @@ _COMMAND_SURFACES = {
             "quickstart",
             "run",
             "completion-report",
+            "installation-registry",
             "peer-review",
             "state",
             "prompt",
@@ -240,6 +241,12 @@ def main() -> int:
         "action", choices=["dry-run", "refresh", "apply", "rollback"]
     )
     setup_ignore.add_argument("--target", type=Path, default=Path.cwd())
+
+    installation_registry = sub.add_parser(
+        "installation-registry",
+        help="Manage the explicitly enabled user-local installation registry.",
+    )
+    installation_registry.add_argument("action", choices=["enable", "status", "audit-legacy"])
 
     hook = sub.add_parser("hook", help="Run OMC lifecycle hooks.")
     hook.add_argument("event", choices=["session_start", "session_end", "pre_compact", "post_compact"])
@@ -669,6 +676,13 @@ def main() -> int:
         verify_code = _run_script(audit_script, ["--strict", str(target)])
         if verify_code != 0:
             raise SystemExit(verify_code)
+        registry_script = kit / "scripts" / "omc_installation_registry.py"
+        registry_code = _run_script(
+            registry_script,
+            ["record-successful-setup", "--target", str(target), "--source-kit", str(kit)],
+        )
+        if registry_code != 0:
+            raise SystemExit(registry_code)
         if args.skip_session_start:
             return 0
         return _run_script(hook_script, ["session_start", "--target", str(target)])
@@ -679,6 +693,10 @@ def main() -> int:
             migration_script,
             [args.action, "--target", str(args.target.resolve())],
         )
+
+    if args.command == "installation-registry":
+        registry_script = kit / "scripts" / "omc_installation_registry.py"
+        return _run_script(registry_script, [args.action])
 
     if args.command == "hook":
         hook_script = kit / "scripts" / "omc_hooks.py"
