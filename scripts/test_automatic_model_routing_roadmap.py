@@ -166,7 +166,8 @@ def test_current_product_decision_pauses_persona_for_deliverable_discovery() -> 
 
     for text in (roadmap, readme):
         assert "`LOCAL_DISCOVERY_PROTOTYPE`" in text
-        assert "`CAPTURE_FEASIBILITY_ACTIVE_INCOMPLETE`" in text
+        assert "`OBSERVATION_INVALID`" in text
+        assert "`CAPTURE_FEASIBILITY_ACTIVE_INCOMPLETE`" not in text
         assert "dashboard 실행 lane" in text
         assert "`NOT_YET_PROVEN`" in text
     assert "`USER_ACCEPTANCE_PENDING`" in roadmap
@@ -766,21 +767,22 @@ def test_completion_observation_v0_is_bounded_to_capture_feasibility() -> None:
 
     for text in (roadmap, readme):
         assert "Completion Observation V0" in text
-        assert "`CAPTURE_FEASIBILITY_ACTIVE_INCOMPLETE`" in text
+        assert "`OBSERVATION_INVALID`" in text
+        assert "`CAPTURE_FEASIBILITY_ACTIVE_INCOMPLETE`" not in text
         assert "Codex-first" in text
         assert "실제 적격 표본" in text
         assert "제품 효과" in text
 
     assert "completion-quality-live-20260913-v2" in roadmap
-    assert "2건은 `AWAITING_USER_OUTCOME`" in roadmap
+    assert "installation identity mismatch" in roadmap
     assert "read-only decision context" in roadmap
-    assert "`NO_ACTIVE_EXECUTION_LANE`" not in roadmap
-    assert "`NO_ACTIVE_EXECUTION_LANE`" not in readme
+    assert "`NO_ACTIVE_EXECUTION_LANE`" in roadmap
+    assert "`NO_ACTIVE_EXECUTION_LANE`" in readme
     assert "버전·배포·실제 표본 대기" not in roadmap
     assert "다음에는 버전을 올려" not in roadmap
     assert "아래 1–15번과 Persona Pilot은 모두 `PAUSED_NOT_CANCELLED` backlog다." in roadmap
     assert "아래 1–16번과 Persona Pilot은 모두 `PAUSED_NOT_CANCELLED` backlog다." not in roadmap
-    assert "추가 저장소의 자연 발생 implementation 표본 대기" in roadmap
+    assert "새 study ID" in roadmap
 
     assert "기존 sealed terminal·completion·lineage 원문" in roadmap
     assert "`(captured_at, repo_id, work_id)` 순서의 first eligible 10건" in roadmap

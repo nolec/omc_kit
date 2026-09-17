@@ -1129,6 +1129,37 @@ def test_live_policy_rejects_install_receipt_changed_after_enrollment(tmp_path: 
         observation.start_live_observation(root)
 
 
+def test_live_status_preserves_invalid_frozen_cohort_and_names_re_registration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root, _ = _live_repo(tmp_path)
+    policy_path = root / ".omc" / "observation-policy.json"
+    frozen_policy = policy_path.read_bytes()
+    receipt_path = root / ".omc" / "install-receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["omc_version"] = "9.9.9"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "omc_completion_observation.py",
+            "live-status",
+            "--target",
+            str(root),
+        ],
+    )
+
+    assert observation.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "OBSERVATION_INVALID"
+    assert payload["cohort_state"] == "FROZEN_INVALID"
+    assert payload["next_action"] == "new_registration_required"
+    assert payload["reason"] == "live_install_identity_invalid"
+    assert policy_path.read_bytes() == frozen_policy
+
+
 def test_live_enable_audits_the_same_install_receipt_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1530,6 +1530,21 @@ def live_observation_status(
         return _live_observation_status_for_pending(project_root, pending)
 
 
+def _invalid_live_status(reason: str) -> dict[str, str]:
+    """Render an invalid cohort as immutable evidence, never as recoverable state."""
+    result = {
+        "claim_boundary": "OBSERVATION_ONLY",
+        "reason": reason,
+        "status": "OBSERVATION_INVALID",
+    }
+    if reason == "live_install_identity_invalid":
+        result.update({
+            "cohort_state": "FROZEN_INVALID",
+            "next_action": "new_registration_required",
+        })
+    return result
+
+
 def _validated_live_work(
     project_root: Path, *, work_id: str
 ) -> tuple[
@@ -2304,11 +2319,9 @@ def main() -> int:
                 record_live_failure(
                     args.target, command=args.command, reason=str(error)
                 )
-            print(json.dumps({
-                "claim_boundary": "OBSERVATION_ONLY",
-                "reason": str(error),
-                "status": "OBSERVATION_INVALID",
-            }, ensure_ascii=False, sort_keys=True))
+            print(json.dumps(
+                _invalid_live_status(str(error)), ensure_ascii=False, sort_keys=True
+            ))
             return 0
         print(json.dumps({"status": "BLOCKED", "reason": str(error)}, ensure_ascii=False))
         return 2

@@ -906,6 +906,28 @@ class TestInstallAudit(unittest.TestCase):
             self.assertEqual(config_path.read_text(encoding="utf-8"), original_config)
             self.assertIn('"scan_strategy": "bounded_manifest"', proc.stdout)
 
+    def test_force_setup_preserves_legacy_observation_policy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "project"
+            target.mkdir()
+            policy_path = target / ".omc" / "observation-policy.json"
+            policy_path.parent.mkdir(parents=True)
+            policy_bytes = (json.dumps({
+                "enabled": True,
+                "replacement_allowed": False,
+                "study_id": "completion-quality-live-20260913-v2",
+            }, sort_keys=True) + "\n").encode()
+            policy_path.write_bytes(policy_bytes)
+
+            proc = subprocess.run(
+                [sys.executable, str(Path(__file__).parent / "omc.py"), "setup", "--target", str(target), "--force", "--skip-session-start"],
+                check=False, capture_output=True, text=True,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertNotIn("OBSERVATION_UPDATE_BLOCKED", proc.stdout)
+            self.assertEqual(policy_path.read_bytes(), policy_bytes)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
