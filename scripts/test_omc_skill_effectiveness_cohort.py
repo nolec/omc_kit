@@ -215,6 +215,76 @@ def test_confirmed_core_skill_sessions_emit_candidates_without_request_text(tmp_
     assert all("secret" not in json.dumps(event) for event in events)
 
 
+def test_root_cli_sync_session_records_candidate_without_locking(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    for args in (("init", "-q"), ("config", "user.email", "cohort@example.test"), ("config", "user.name", "Cohort")):
+        subprocess.run(["git", "-C", str(root), *args], check=True)
+    (root / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "base"], check=True)
+    cohort.enable(root)
+
+    result = subprocess.run(
+        [
+            sys.executable, str(SCRIPTS / "omc.py"), "state", "sync-session",
+            "--target", str(root), "--mode", "autopilot", "--title", "omc-task",
+            "--request", "sync candidate", "--roles", "senior_coding",
+            "--work-class", "benchmark_maintenance", "--completion-action", "start",
+        ],
+        cwd=SCRIPTS.parent, text=True, capture_output=True, check=False, timeout=3,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _event_types(root) == ["candidate"]
+
+
+def test_root_cli_record_confirm_records_candidate_without_locking(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    for args in (("init", "-q"), ("config", "user.email", "cohort@example.test"), ("config", "user.name", "Cohort")):
+        subprocess.run(["git", "-C", str(root), *args], check=True)
+    (root / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "base"], check=True)
+    cohort.enable(root)
+
+    result = subprocess.run(
+        [
+            sys.executable, str(SCRIPTS / "omc.py"), "state", "record",
+            "--target", str(root), "--mode", "autopilot", "--title", "omc-task",
+            "--request", "record candidate", "--roles", "senior_coding",
+            "--work-class", "benchmark_maintenance", "--completion-action", "start", "--confirm",
+        ],
+        cwd=SCRIPTS.parent, text=True, capture_output=True, check=False, timeout=3,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _event_types(root) == ["candidate"]
+
+
+def test_confirm_session_records_candidate_after_pending_session(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    cohort.enable(root)
+    session = omc_state.record_session(
+        root, mode="autopilot", title="omc-task", request="confirm candidate",
+        role_ids=["senior_coding"], work_class="benchmark_maintenance",
+        completion_action="start", confirmed=False,
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable, str(SCRIPTS / "omc.py"), "state", "confirm",
+            "--target", str(root), "--session-id", str(session["session_id"]),
+        ],
+        cwd=SCRIPTS.parent, text=True, capture_output=True, check=False, timeout=3,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _event_types(root) == ["candidate"]
+
+
 def test_review_rejects_stale_pending_work_instead_of_reusing_its_work_id(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()

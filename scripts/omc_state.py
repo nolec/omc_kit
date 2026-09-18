@@ -3354,9 +3354,13 @@ def record_session(
         _write_json(_latest_path(project_root), latest)
         if confirmed:
             _sync_pending_completion(project_root, entry)
-            _record_skill_effectiveness_candidate(project_root, entry)
         _rewrite_notepad(project_root)
-        return entry
+    # The cohort appender acquires the same project lock.  It must run after
+    # the session transaction releases its lock because the CLI entrypoint
+    # loads this file as __main__ while the cohort imports omc_state by name.
+    if confirmed:
+        _record_skill_effectiveness_candidate(project_root, entry)
+    return entry
 
 
 def confirm_session(project_root: Path, *, session_id: str | None = None) -> dict[str, object]:
@@ -3405,7 +3409,10 @@ def confirm_session(project_root: Path, *, session_id: str | None = None) -> dic
         _write_json(_latest_path(project_root), latest)
         _sync_pending_completion(project_root, session)
         _rewrite_notepad(project_root)
-        return session
+    # Pending sessions become observable only at confirmation time.  As with
+    # record_session(), append after releasing the state lock.
+    _record_skill_effectiveness_candidate(project_root, session)
+    return session
 
 
 def set_session_status(
