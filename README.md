@@ -94,6 +94,17 @@ python3 scripts/omc.py installation-registry enable
 python3 scripts/omc.py installation-registry audit-legacy
 ```
 
+스킬 개선 가설을 위한 관찰은 installation registry와 별개로, 저장소별 명시 opt-in입니다. 활성화 뒤 confirmed `omc-plan`·`omc-task`·`omc-review` 세션은 request 원문 없이 work ID·스킬·profile·source identity와 무작위 enrollment ID만 로컬 hash-chain에 기록합니다. report는 사용자가 고른 source만 읽으며, 침묵을 성공으로 세지 않습니다. 이 결과는 workflow-level hypothesis 전용이며 개별 스킬 효과·자동 tuning·제품 효과를 주장하거나 실행하지 않습니다.
+
+```bash
+python3 scripts/omc.py skill-cohort enable --target /path/to/project
+python3 scripts/omc.py skill-cohort report --source /path/to/project
+# 현재 pending work에 사용자 후속 결과를 결속한다.
+python3 scripts/omc.py skill-cohort record-followup --target /path/to/project --outcome accepted
+```
+
+`$omc-review`는 pending work가 있고 taxonomy가 명확할 때만 raw-free review 분류를 기록합니다. taxonomy를 추정할 수 없거나 후속 반응이 없으면 각각 기록하지 않으며, report는 이를 성공으로 계산하지 않습니다.
+
 ```bash
 python3 scripts/install.py --target /path/to/your-project --force
 ```

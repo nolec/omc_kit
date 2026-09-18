@@ -127,6 +127,7 @@ _COMMAND_SURFACES = {
             "quickstart",
             "run",
             "completion-report",
+            "skill-cohort",
             "installation-registry",
             "peer-review",
             "state",
@@ -247,6 +248,23 @@ def main() -> int:
         help="Manage the explicitly enabled user-local installation registry.",
     )
     installation_registry.add_argument("action", choices=["enable", "status", "audit-legacy"])
+
+    skill_cohort = sub.add_parser(
+        "skill-cohort",
+        help="Manage or report explicitly enabled raw-free skill-effectiveness cohorts.",
+    )
+    skill_cohort_sub = skill_cohort.add_subparsers(dest="skill_cohort_command", required=True)
+    skill_cohort_enable = skill_cohort_sub.add_parser("enable")
+    skill_cohort_enable.add_argument("--target", type=Path, required=True)
+    skill_cohort_report = skill_cohort_sub.add_parser("report")
+    skill_cohort_report.add_argument("--source", type=Path, action="append", required=True)
+    skill_cohort_review = skill_cohort_sub.add_parser("record-review")
+    skill_cohort_review.add_argument("--target", type=Path, required=True)
+    skill_cohort_review.add_argument("--verdict", required=True)
+    skill_cohort_review.add_argument("--taxonomy", required=True)
+    skill_cohort_followup = skill_cohort_sub.add_parser("record-followup")
+    skill_cohort_followup.add_argument("--target", type=Path, required=True)
+    skill_cohort_followup.add_argument("--outcome", required=True)
 
     hook = sub.add_parser("hook", help="Run OMC lifecycle hooks.")
     hook.add_argument("event", choices=["session_start", "session_end", "pre_compact", "post_compact"])
@@ -484,7 +502,7 @@ def main() -> int:
         "--work-class",
         choices=["implementation", "synthetic", "document_only", "benchmark_maintenance"],
     )
-    state_record.add_argument("--completion-action", choices=["start", "continue", "preserve"])
+    state_record.add_argument("--completion-action", choices=["start", "continue", "preserve", "preserve-if-present"])
     state_record.add_argument("--work-id")
     state_record.add_argument("--prompt-path", type=str, default=None, help="Prompt output path.")
     state_record.add_argument("--confirm", action="store_true", help="Record the session as already confirmed/active.")
@@ -506,7 +524,7 @@ def main() -> int:
         "--work-class",
         choices=["implementation", "synthetic", "document_only", "benchmark_maintenance"],
     )
-    state_sync.add_argument("--completion-action", choices=["start", "continue", "preserve"])
+    state_sync.add_argument("--completion-action", choices=["start", "continue", "preserve", "preserve-if-present"])
     state_sync.add_argument("--work-id")
     state_sync.add_argument("--prompt-path", type=str, default=None, help="Prompt output path.")
     state_sync.add_argument("--keep", type=int, default=80, help="Maximum stored entries.")
@@ -697,6 +715,34 @@ def main() -> int:
     if args.command == "installation-registry":
         registry_script = kit / "scripts" / "omc_installation_registry.py"
         return _run_script(registry_script, [args.action])
+
+    if args.command == "skill-cohort":
+        cohort_script = kit / "scripts" / "omc_skill_effectiveness_cohort.py"
+        if args.skill_cohort_command == "enable":
+            return _run_script(
+                cohort_script,
+                ["enable", "--target", str(args.target)],
+            )
+        if args.skill_cohort_command == "record-review":
+            return _run_script(
+                cohort_script,
+                [
+                    "record-pending-review", "--target", str(args.target),
+                    "--verdict", args.verdict, "--taxonomy", args.taxonomy,
+                ],
+            )
+        if args.skill_cohort_command == "record-followup":
+            return _run_script(
+                cohort_script,
+                [
+                    "record-pending-followup", "--target", str(args.target),
+                    "--outcome", args.outcome,
+                ],
+            )
+        cohort_args = ["report"]
+        for source in args.source:
+            cohort_args.extend(["--source", str(source)])
+        return _run_script(cohort_script, cohort_args)
 
     if args.command == "hook":
         hook_script = kit / "scripts" / "omc_hooks.py"

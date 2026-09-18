@@ -1634,6 +1634,56 @@ def _pending_completion_matches_session(
     )
 
 
+def _record_skill_effectiveness_candidate(
+    project_root: Path, session: dict[str, object]
+) -> None:
+    """Best-effort local observation; never copies the session request into the cohort."""
+    skill_id = session.get("title")
+    work_id = session.get("work_id")
+    if skill_id not in {"omc-plan", "omc-task", "omc-review"} or not isinstance(work_id, str):
+        return
+    try:
+        import omc_skill_effectiveness_cohort as cohort
+        from omc_version import _looks_like_source_kit, capture_source_identity
+
+        if not cohort.config_path(project_root).exists():
+            return
+        routing = session.get("routing")
+        profile = routing.get("policy_profile") if isinstance(routing, dict) else None
+        try:
+            source_kit = Path(__file__).resolve().parents[1]
+            if not _looks_like_source_kit(source_kit):
+                raise ValueError("source_kit_unavailable")
+            source = capture_source_identity(source_kit)
+            source_identity = {"version": source.version, "sha256": source.sha256}
+        except Exception:
+            receipt_path = project_root / ".omc" / "install-receipt.json"
+            if receipt_path.is_symlink() or not receipt_path.is_file():
+                raise ValueError("installed_source_identity_invalid")
+            receipt = _read_json(receipt_path, {})
+            version = receipt.get("omc_version")
+            digest = receipt.get("source_sha256")
+            if (
+                not isinstance(version, str)
+                or not version
+                or not isinstance(digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            ):
+                raise ValueError("installed_source_identity_invalid")
+            source_identity = {"version": version, "sha256": digest}
+        cohort.record_candidate(
+            project_root,
+            work_id=work_id,
+            skill_id=skill_id,
+            policy_profile=profile if profile in {"lite", "full"} else "unknown",
+            source_identity=source_identity,
+        )
+    except Exception:
+        # Cohort capture is observational only. Product work remains usable and a
+        # later cohort report never upgrades absent evidence into a success.
+        return
+
+
 def _git_scope_snapshot(project_root: Path) -> dict[str, list[str]]:
     proc = subprocess.run(
         ["git", "-C", str(project_root), "status", "--porcelain"],
@@ -3175,7 +3225,7 @@ def record_session(
         resolved_completion_action = completion_action or (
             "start" if "senior_coding" in role_ids else None
         )
-        if resolved_completion_action not in {None, "start", "continue", "preserve"}:
+        if resolved_completion_action not in {None, "start", "continue", "preserve", "preserve-if-present"}:
             raise ValueError("completion action is invalid")
         if resolved_completion_action == "continue" and not work_id:
             raise ValueError("work id is required for completion continuation")
@@ -3187,7 +3237,8 @@ def record_session(
         git_snapshot = _git_info(project_root)
         current_head = git_snapshot.get("head")
         if (
-            resolved_completion_action == "preserve"
+            resolved_completion_action in {"preserve", "preserve-if-present"}
+            and existing_completion
             and not _pending_completion_matches_session(
                 project_root,
                 existing_completion,
@@ -3212,7 +3263,12 @@ def record_session(
         ):
             raise ValueError("completion continuation work class mismatch")
         resolved_work_id = work_id or (
-            uuid.uuid4().hex if resolved_completion_action == "start" else None
+            uuid.uuid4().hex
+            if resolved_completion_action == "start"
+            else existing_completion.get("work_id")
+            if resolved_completion_action in {"preserve", "preserve-if-present"}
+            and isinstance(existing_completion.get("work_id"), str)
+            else None
         )
         lineage_root_session_id = None
         lineage_previous_session_id = None
@@ -3298,6 +3354,7 @@ def record_session(
         _write_json(_latest_path(project_root), latest)
         if confirmed:
             _sync_pending_completion(project_root, entry)
+            _record_skill_effectiveness_candidate(project_root, entry)
         _rewrite_notepad(project_root)
         return entry
 
@@ -3679,7 +3736,7 @@ def _parser() -> argparse.ArgumentParser:
     record.add_argument("--request", required=True, help="Request text.")
     record.add_argument("--roles", required=True, help="Comma-separated role ids.")
     record.add_argument("--work-class", choices=sorted(_COMPLETION_WORK_CLASSES))
-    record.add_argument("--completion-action", choices=["start", "continue", "preserve"])
+    record.add_argument("--completion-action", choices=["start", "continue", "preserve", "preserve-if-present"])
     record.add_argument("--work-id")
     record.add_argument("--prompt-path", type=str, default=None, help="Prompt output path.")
     record.add_argument("--base", action="append", default=[], help="Base prompt path(s).")
@@ -3700,7 +3757,7 @@ def _parser() -> argparse.ArgumentParser:
     sync_session.add_argument("--request", required=True, help="Request text.")
     sync_session.add_argument("--roles", required=True, help="Comma-separated role ids.")
     sync_session.add_argument("--work-class", choices=sorted(_COMPLETION_WORK_CLASSES))
-    sync_session.add_argument("--completion-action", choices=["start", "continue", "preserve"])
+    sync_session.add_argument("--completion-action", choices=["start", "continue", "preserve", "preserve-if-present"])
     sync_session.add_argument("--work-id")
     sync_session.add_argument("--prompt-path", type=str, default=None, help="Prompt output path.")
     sync_session.add_argument("--base", action="append", default=[], help="Base prompt path(s).")

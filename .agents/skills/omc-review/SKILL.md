@@ -7,7 +7,7 @@ description: "코드 변경사항·diff·PR 리뷰. 치명/중대/경미/제안�
 ## Step 0. 리뷰 범위 수집
 blind/read-only 비교 평가는 state/session 명령과 변경 가능한 검증은 실행하지 않는다. `git diff HEAD`와 읽기 전용 확인만 하며 최종 계약은 유지한다.
 ```bash
-python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-review" --request "<현재 작업 한 줄 요약>" --roles code_review
+python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-review" --request "<현재 작업 한 줄 요약>" --roles code_review --completion-action preserve-if-present
 git status -sb
 git diff HEAD
 git ls-files --others --exclude-standard
@@ -49,6 +49,7 @@ decision: REVISE / APPROVE (판정 결과) | risk: HIGH / MED / LOW (리스크 �
 ```
 - 강한 finding은 `evidence_class: behavioral_direct`와 비어 있지 않은 `evidence:`가 필수다. 가설은 `[확인 필요]`로 내린다.
 - 판정 규칙: 치명=BLOCK, 중대=REVISE, 경미/제안만=APPROVE WITH NOTES, 없음=APPROVE. REVISE/BLOCK면 수정 방향 포함.
+- raw-free skill cohort가 해당 저장소에서 opt-in이고 pending work가 있으면, 최종 판정 뒤 taxonomy 하나(`requirement_gap` / `verification_gap` / `scope_gap` / `output_confusion` / `gate_friction` / `environment_blocker` / `external_dependency`)만 선택해 `python3 scripts/omc.py skill-cohort record-review --target . --verdict <VERDICT> --taxonomy <taxonomy>`를 실행한다. pending work가 없거나 taxonomy가 불명확하면 추정·기록하지 않는다.
 ## Machine output contract — 마지막 두 줄은 `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT: <VALUE>`; JSON은 `schema_version=omc-output/v1`, `stage`, `outcome`, `risk`, `next_skill`, `user_selection_needed`, `reason_code`; `next_skill`은 canonical `omc-*` 또는 null; unresolved/blocked는 `reason_code` 필수; legacy 평문 입력은 허용하되 새 출력은 숨김 형식만 사용하고 명시적 오류는 보정하지 않습니다.
 
 ## 다음 추천
