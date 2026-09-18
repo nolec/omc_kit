@@ -172,6 +172,68 @@ def test_successful_root_setup_automatically_enables_raw_free_cohort(tmp_path: P
     assert config["enrollment_source"] == "setup"
 
 
+def test_setup_enables_v2_only_with_an_explicit_shared_activation(tmp_path: Path) -> None:
+    pilot = tmp_path / "pilot"
+    non_pilot = tmp_path / "non-pilot"
+    state_dir = tmp_path / "registry-state"
+    activation_id = "6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51"
+    activation_at = "2026-09-18T05:00:00+00:00"
+    env = os.environ | {"OMC_INSTALLATION_REGISTRY_DIR": str(state_dir)}
+
+    pilot_result = subprocess.run(
+        [
+            sys.executable, str(KIT_ROOT / "scripts" / "omc.py"), "setup",
+            "--target", str(pilot), "--force", "--skip-session-start",
+            "--skill-cohort-v2-activation-id", activation_id,
+            "--skill-cohort-v2-activation-at", activation_at,
+        ], cwd=KIT_ROOT, env=env, text=True, capture_output=True, check=False,
+    )
+    non_pilot_result = subprocess.run(
+        [
+            sys.executable, str(KIT_ROOT / "scripts" / "omc.py"), "setup",
+            "--target", str(non_pilot), "--force", "--skip-session-start",
+        ], cwd=KIT_ROOT, env=env, text=True, capture_output=True, check=False,
+    )
+
+    assert pilot_result.returncode == 0, pilot_result.stderr + pilot_result.stdout
+    assert non_pilot_result.returncode == 0, non_pilot_result.stderr + non_pilot_result.stdout
+    v2 = json.loads((pilot / ".omc" / "skill-effectiveness-cohort-v2.json").read_text(encoding="utf-8"))
+    assert v2["activation_id"] == activation_id
+    assert v2["activation_at"] == activation_at
+    assert not (non_pilot / ".omc" / "skill-effectiveness-cohort-v2.json").exists()
+
+
+def test_setup_rejects_a_conflicting_v2_activation_before_install(tmp_path: Path) -> None:
+    target = tmp_path / "pilot"
+    state_dir = tmp_path / "registry-state"
+    original_id = "6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51"
+    conflicting_id = "5af93a6b-67bd-4c1d-a10e-4ea085e3fce9"
+    activation_at = "2026-09-18T05:00:00+00:00"
+    (target / ".omc").mkdir(parents=True)
+    (target / ".omc" / "skill-effectiveness-cohort-v2.json").write_text(
+        json.dumps({
+            "schema_version": 1, "generation": "v2", "enabled": True,
+            "activation_id": original_id, "activation_at": activation_at,
+            "enrollment_session_ids": [], "enrollment_source": "setup",
+        }), encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable, str(KIT_ROOT / "scripts" / "omc.py"), "setup",
+            "--target", str(target), "--force", "--skip-session-start",
+            "--skill-cohort-v2-activation-id", conflicting_id,
+            "--skill-cohort-v2-activation-at", activation_at,
+        ], cwd=KIT_ROOT,
+        env=os.environ | {"OMC_INSTALLATION_REGISTRY_DIR": str(state_dir)},
+        text=True, capture_output=True, check=False,
+    )
+
+    assert result.returncode == 2
+    assert not (target / ".omc" / "install-receipt.json").exists()
+    assert json.loads((target / ".omc" / "skill-effectiveness-cohort-v2.json").read_text(encoding="utf-8"))["activation_id"] == original_id
+
+
 def test_setup_preflights_invalid_cohort_config_before_install_or_registry_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

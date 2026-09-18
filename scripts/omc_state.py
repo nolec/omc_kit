@@ -1636,18 +1636,24 @@ def _pending_completion_matches_session(
 
 def _record_skill_effectiveness_candidate(
     project_root: Path, session: dict[str, object]
-) -> None:
+) -> str | None:
     """Best-effort local observation; never copies the session request into the cohort."""
     skill_id = session.get("title")
     work_id = session.get("work_id")
     if skill_id not in {"omc-plan", "omc-task", "omc-review"} or not isinstance(work_id, str):
-        return
+        return None
+    v2_enabled = False
+    cohort: object | None = None
     try:
-        import omc_skill_effectiveness_cohort as cohort
+        import omc_skill_effectiveness_cohort as cohort_module
         from omc_version import _looks_like_source_kit, capture_source_identity
 
-        if not cohort.config_path(project_root).exists():
-            return
+        cohort = cohort_module
+
+        v2_config = cohort_module.v2_config_path(project_root)
+        v2_enabled = v2_config.exists() or v2_config.is_symlink()
+        if not v2_enabled and not cohort_module.config_path(project_root).exists():
+            return None
         routing = session.get("routing")
         profile = routing.get("policy_profile") if isinstance(routing, dict) else None
         try:
@@ -1671,17 +1677,46 @@ def _record_skill_effectiveness_candidate(
             ):
                 raise ValueError("installed_source_identity_invalid")
             source_identity = {"version": version, "sha256": digest}
-        cohort.record_candidate(
-            project_root,
-            work_id=work_id,
-            skill_id=skill_id,
+        record = cohort_module.record_v2_candidate if v2_enabled else cohort_module.record_candidate
+        record(
+            project_root, work_id=work_id, skill_id=skill_id,
             policy_profile=profile if profile in {"lite", "full"} else "unknown",
             source_identity=source_identity,
         )
-    except Exception:
+        return "recorded" if v2_enabled else None
+    except Exception as error:
         # Cohort capture is observational only. Product work remains usable and a
         # later cohort report never upgrades absent evidence into a success.
-        return
+        if v2_enabled and isinstance(error, getattr(cohort, "SkillCohortError", ())):
+            return "integrity_invalid"
+        return "missing" if v2_enabled else None
+
+
+def _persist_v2_capture_status(
+    project_root: Path, session: dict[str, object], status: str,
+) -> dict[str, object]:
+    if status not in {"recorded", "missing", "integrity_invalid"}:
+        raise ValueError("invalid v2 cohort capture status")
+    session_id = session.get("session_id")
+    if not isinstance(session_id, str):
+        raise ValueError("v2 cohort session id missing")
+    with _omc_lock(project_root):
+        return _update_session_entry(
+            project_root,
+            session_id=session_id,
+            mutate=lambda stored: stored.update({"cohort_capture_v2": {"status": status}}),
+        )
+
+
+def _persist_v2_capture_status_best_effort(
+    project_root: Path, session: dict[str, object], status: str,
+) -> dict[str, object]:
+    try:
+        return _persist_v2_capture_status(project_root, session, status)
+    except Exception:
+        # Capture status is observational; a status-write failure must not make
+        # the user's session command fail. The ledger remains the evidence source.
+        return session
 
 
 def _git_scope_snapshot(project_root: Path) -> dict[str, list[str]]:
@@ -3359,7 +3394,9 @@ def record_session(
     # the session transaction releases its lock because the CLI entrypoint
     # loads this file as __main__ while the cohort imports omc_state by name.
     if confirmed:
-        _record_skill_effectiveness_candidate(project_root, entry)
+        capture_status = _record_skill_effectiveness_candidate(project_root, entry)
+        if capture_status is not None:
+            entry = _persist_v2_capture_status_best_effort(project_root, entry, capture_status)
     return entry
 
 
@@ -3411,7 +3448,9 @@ def confirm_session(project_root: Path, *, session_id: str | None = None) -> dic
         _rewrite_notepad(project_root)
     # Pending sessions become observable only at confirmation time.  As with
     # record_session(), append after releasing the state lock.
-    _record_skill_effectiveness_candidate(project_root, session)
+    capture_status = _record_skill_effectiveness_candidate(project_root, session)
+    if capture_status is not None:
+        session = _persist_v2_capture_status_best_effort(project_root, session, capture_status)
     return session
 
 

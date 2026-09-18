@@ -602,6 +602,213 @@ def test_local_status_marks_symlinked_config_as_integrity_invalid(tmp_path: Path
     }
 
 
+def test_v2_pilot_preserves_v1_bytes_and_only_counts_single_skill_work(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    cohort.enable_from_setup(root)
+    v1_config = cohort.config_path(root)
+    v1_ledger = cohort.ledger_path(root)
+    v1_config_before = v1_config.read_bytes()
+    v1_ledger_before = v1_ledger.read_bytes() if v1_ledger.exists() else None
+
+    activation_id = "6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51"
+    activation_at = "2026-09-18T05:00:00+00:00"
+    assert cohort.enable_v2_from_setup(root, activation_id=activation_id, activation_at=activation_at) == {
+        "activation_id": activation_id,
+        "enabled": True,
+        "generation": "v2",
+        "status": "enabled",
+    }
+    assert cohort.enable_v2_from_setup(root, activation_id=activation_id, activation_at=activation_at)["status"] == "unchanged"
+    assert v1_config.read_bytes() == v1_config_before
+    assert (v1_ledger.read_bytes() if v1_ledger.exists() else None) == v1_ledger_before
+
+    task = omc_state.record_session(
+        root, mode="autopilot", title="omc-task", request="secret v2 task",
+        role_ids=["senior_coding"], work_class="benchmark_maintenance",
+        completion_action="start", confirmed=True,
+    )
+    cohort.record_v2_candidate(
+        root, work_id=task["work_id"], skill_id="omc-review", policy_profile="unknown",
+        source_identity={"version": "0.3.1", "sha256": "a" * 64},
+    )
+
+    assert v1_config.read_bytes() == v1_config_before
+    assert (v1_ledger.read_bytes() if v1_ledger.exists() else None) == v1_ledger_before
+    v2_events = [json.loads(line) for line in cohort.v2_ledger_path(root).read_text(encoding="utf-8").splitlines()]
+    assert [(event["event_type"], event["work_id"]) for event in v2_events] == [
+        ("candidate", task["work_id"]), ("candidate", task["work_id"]),
+    ]
+    report = cohort.aggregate_v2([root])
+    assert report["aggregate"]["capture_invalid"] == 0
+    assert report["aggregate"]["eligible_candidates"] == 0
+    assert report["aggregate"]["unattributed_work_items"] == 1
+    assert "secret" not in json.dumps(report)
+
+
+def test_v2_report_distinguishes_missing_from_integrity_invalid_capture(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    cohort.enable_v2_from_setup(
+        root,
+        activation_id="6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51",
+        activation_at="2026-09-18T05:00:00+00:00",
+    )
+    session = omc_state.record_session(
+        root, mode="autopilot", title="omc-task", request="secret v2 task",
+        role_ids=["senior_coding"], work_class="benchmark_maintenance",
+        completion_action="start", confirmed=True,
+    )
+    cohort.v2_ledger_path(root).unlink()
+
+    report = cohort.aggregate_v2([root])
+
+    assert report["sources"][0]["capture_integrity_invalid"] == 1
+    assert report["sources"][0]["capture_missing"] == 0
+    assert report["aggregate"]["capture_invalid"] == 1
+    stored = json.loads((root / ".omc" / "state" / "sessions" / session["session_id"] / "session.json").read_text(encoding="utf-8"))
+    assert stored["cohort_capture_v2"] == {"status": "recorded"}
+
+
+def test_v2_records_unknown_capture_failure_as_missing_without_raw_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    cohort.enable_v2_from_setup(
+        root,
+        activation_id="6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51",
+        activation_at="2026-09-18T05:00:00+00:00",
+    )
+    monkeypatch.setattr(
+        cohort, "record_v2_candidate", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk unavailable")),
+    )
+
+    session = omc_state.record_session(
+        root, mode="autopilot", title="omc-task", request="secret v2 task",
+        role_ids=["senior_coding"], work_class="benchmark_maintenance",
+        completion_action="start", confirmed=True,
+    )
+
+    stored = json.loads((root / ".omc" / "state" / "sessions" / session["session_id"] / "session.json").read_text(encoding="utf-8"))
+    assert stored["cohort_capture_v2"] == {"status": "missing"}
+    assert "disk unavailable" not in json.dumps(stored)
+    assert cohort.aggregate_v2([root])["sources"][0]["capture_missing"] == 1
+
+
+def test_v2_capture_status_persistence_failure_does_not_block_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    cohort.enable_v2_from_setup(
+        root,
+        activation_id="6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51",
+        activation_at="2026-09-18T05:00:00+00:00",
+    )
+    monkeypatch.setattr(
+        omc_state,
+        "_persist_v2_capture_status",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("status disk unavailable")),
+    )
+
+    session = omc_state.record_session(
+        root, mode="autopilot", title="omc-task", request="secret v2 task",
+        role_ids=["senior_coding"], work_class="benchmark_maintenance",
+        completion_action="start", confirmed=True,
+    )
+
+    stored = json.loads((root / ".omc" / "state" / "sessions" / session["session_id"] / "session.json").read_text(encoding="utf-8"))
+    assert "cohort_capture_v2" not in stored
+    assert cohort.aggregate_v2([root])["sources"][0]["capture_invalid"] == 0
+
+
+def test_dangling_v2_config_cannot_fallback_to_v1_capture(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    cohort.enable_from_setup(root)
+    cohort.v2_config_path(root).symlink_to(tmp_path / "missing-v2-config.json")
+
+    session = omc_state.record_session(
+        root, mode="autopilot", title="omc-task", request="secret v2 task",
+        role_ids=["senior_coding"], work_class="benchmark_maintenance",
+        completion_action="start", confirmed=True,
+    )
+
+    assert not cohort.ledger_path(root).exists()
+    stored = json.loads((root / ".omc" / "state" / "sessions" / session["session_id"] / "session.json").read_text(encoding="utf-8"))
+    assert stored["cohort_capture_v2"] == {"status": "integrity_invalid"}
+
+
+def test_root_cli_exposes_v2_only_report_surface(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    cohort.enable_from_setup(root)
+    cohort.enable_v2_from_setup(
+        root,
+        activation_id="6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51",
+        activation_at="2026-09-18T05:00:00+00:00",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable, str(SCRIPTS / "omc.py"), "skill-cohort", "report",
+            "--generation", "v2", "--source", str(root),
+        ], cwd=SCRIPTS.parent, text=True, capture_output=True, check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["generation"] == "v2"
+    assert payload["aggregate"]["capture_invalid"] == 0
+    assert "v1" not in json.dumps(payload)
+
+
+def test_root_cli_records_v2_review_against_current_pending_work(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    for args in (("init", "-q"), ("config", "user.email", "cohort@example.test"), ("config", "user.name", "Cohort")):
+        subprocess.run(["git", "-C", str(root), *args], check=True)
+    (root / "tracked.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "base"], check=True)
+    cohort.enable_v2_from_setup(
+        root,
+        activation_id="6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51",
+        activation_at="2026-09-18T05:00:00+00:00",
+    )
+    omc_state.record_session(
+        root, mode="autopilot", title="omc-task", request="secret v2 task",
+        role_ids=["senior_coding"], work_class="benchmark_maintenance",
+        completion_action="start", confirmed=True,
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable, str(SCRIPTS / "omc.py"), "skill-cohort", "record-review",
+            "--target", str(root),
+            "--verdict", "REVISE", "--taxonomy", "scope_gap",
+        ], cwd=SCRIPTS.parent, text=True, capture_output=True, check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert [json.loads(line)["event_type"] for line in cohort.v2_ledger_path(root).read_text(encoding="utf-8").splitlines()] == ["candidate", "review"]
+
+
+def test_v2_aggregate_rejects_a_shared_id_with_different_activation_times(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    activation_id = "6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51"
+    cohort.enable_v2_from_setup(first, activation_id=activation_id, activation_at="2026-09-18T05:00:00+00:00")
+    cohort.enable_v2_from_setup(second, activation_id=activation_id, activation_at="2026-09-18T06:00:00+00:00")
+
+    report = cohort.aggregate_v2([first, second])
+
+    assert "pilot_roster_incomplete" in report["aggregate"]["tuning_readiness"]["reason_codes"]
+
+
 def test_direct_cohort_cli_cannot_inject_candidate(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()

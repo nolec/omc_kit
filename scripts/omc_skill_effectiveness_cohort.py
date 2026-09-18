@@ -18,6 +18,8 @@ import omc_state
 SCHEMA_VERSION = 1
 CONFIG_NAME = "skill-effectiveness-cohort-v1.json"
 LEDGER_NAME = "skill-effectiveness-cohort-v1.jsonl"
+V2_CONFIG_NAME = "skill-effectiveness-cohort-v2.json"
+V2_LEDGER_NAME = "skill-effectiveness-cohort-v2.jsonl"
 _WORK_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{2,127}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _SKILLS = frozenset({"omc-plan", "omc-task", "omc-review"})
@@ -86,6 +88,14 @@ def config_path(project_root: Path) -> Path:
 
 def ledger_path(project_root: Path) -> Path:
     return project_root / ".omc" / LEDGER_NAME
+
+
+def v2_config_path(project_root: Path) -> Path:
+    return project_root / ".omc" / V2_CONFIG_NAME
+
+
+def v2_ledger_path(project_root: Path) -> Path:
+    return project_root / ".omc" / V2_LEDGER_NAME
 
 
 def _session_ids_at_enrollment(project_root: Path) -> list[str]:
@@ -232,6 +242,107 @@ def preflight_from_setup(project_root: Path) -> dict[str, Any]:
     if path.exists():
         _validate_config(root)
     return {"status": "ready"}
+
+
+def _validate_v2_config(project_root: Path) -> dict[str, Any]:
+    _omc_dir(project_root, create=False)
+    config = _read_json(v2_config_path(project_root))
+    expected = {
+        "schema_version", "generation", "enabled", "activation_id", "activation_at",
+        "enrollment_session_ids", "enrollment_source",
+    }
+    try:
+        activation_uuid = uuid.UUID(config.get("activation_id", ""))
+    except (TypeError, ValueError, AttributeError) as error:
+        raise SkillCohortError("v2_config_invalid") from error
+    if (
+        set(config) != expected
+        or config.get("schema_version") != SCHEMA_VERSION
+        or config.get("generation") != "v2"
+        or config.get("enabled") is not True
+        or activation_uuid.version != 4
+        or config.get("enrollment_source") != "setup"
+    ):
+        raise SkillCohortError("v2_config_invalid")
+    _timestamp(config.get("activation_at"), reason="v2_config_invalid")
+    session_ids = config.get("enrollment_session_ids")
+    if (
+        not isinstance(session_ids, list)
+        or session_ids != sorted(set(session_ids))
+        or any(not isinstance(session_id, str) or _WORK_ID.fullmatch(session_id) is None for session_id in session_ids)
+    ):
+        raise SkillCohortError("v2_config_invalid")
+    return config
+
+
+def _validate_v2_activation(*, activation_id: str, activation_at: str) -> None:
+    try:
+        activation_uuid = uuid.UUID(activation_id)
+    except (TypeError, ValueError, AttributeError) as error:
+        raise SkillCohortError("activation_id_invalid") from error
+    if activation_uuid.version != 4:
+        raise SkillCohortError("activation_id_invalid")
+    _timestamp(activation_at, reason="activation_at_invalid")
+
+
+def preflight_v2_from_setup(
+    project_root: Path, *, activation_id: str, activation_at: str,
+) -> dict[str, Any]:
+    _validate_v2_activation(activation_id=activation_id, activation_at=activation_at)
+    if project_root.is_symlink() or (project_root.exists() and not project_root.is_dir()):
+        raise SkillCohortError("source_not_regular_directory")
+    if not project_root.exists():
+        return {"status": "ready"}
+    root = project_root.resolve(strict=True)
+    path = v2_config_path(root)
+    if path.is_symlink():
+        raise SkillCohortError("v2_config_not_regular_file")
+    if path.exists():
+        existing = _validate_v2_config(root)
+        if existing["activation_id"] != activation_id or existing["activation_at"] != activation_at:
+            raise SkillCohortError("activation_conflict")
+    return {"status": "ready"}
+
+
+def enable_v2_from_setup(
+    project_root: Path, *, activation_id: str, activation_at: str,
+) -> dict[str, Any]:
+    """Create one explicit, write-once v2 pilot enrollment for a setup target."""
+    root = _root(project_root)
+    _validate_v2_activation(activation_id=activation_id, activation_at=activation_at)
+    _omc_dir(root, create=True)
+    with omc_state._omc_lock(root):
+        path = v2_config_path(root)
+        if path.exists() or path.is_symlink():
+            existing = _validate_v2_config(root)
+            if existing["activation_id"] != activation_id or existing["activation_at"] != activation_at:
+                raise SkillCohortError("activation_conflict")
+            return {
+                "activation_id": activation_id, "enabled": True,
+                "generation": "v2", "status": "unchanged",
+            }
+        config = {
+            "schema_version": SCHEMA_VERSION,
+            "generation": "v2",
+            "enabled": True,
+            "activation_id": activation_id,
+            "activation_at": activation_at,
+            "enrollment_session_ids": _session_ids_at_enrollment(root),
+            "enrollment_source": "setup",
+        }
+        try:
+            _write_once(path, config)
+        except FileExistsError:
+            existing = _validate_v2_config(root)
+            if existing["activation_id"] != activation_id or existing["activation_at"] != activation_at:
+                raise SkillCohortError("activation_conflict")
+            status = "unchanged"
+        else:
+            status = "enabled"
+        return {
+            "activation_id": activation_id, "enabled": True,
+            "generation": "v2", "status": status,
+        }
 
 
 def local_status(project_root: Path) -> dict[str, Any]:
@@ -413,6 +524,104 @@ def record_followup(project_root: Path, *, work_id: str, outcome: str) -> dict[s
     return _record(project_root, event_type="followup", work_id=work_id, payload={"outcome": outcome})
 
 
+def _load_v2_events(project_root: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    config = _validate_v2_config(project_root)
+    path = v2_ledger_path(project_root)
+    if not path.exists() and not path.is_symlink():
+        return config, []
+    _regular_file(path)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as error:
+        raise SkillCohortError("v2_ledger_unreadable") from error
+    previous_hash: str | None = None
+    events: list[dict[str, Any]] = []
+    seen: dict[str, set[object]] = {"candidate": set(), "review": set(), "followup": set()}
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise SkillCohortError("v2_ledger_json_invalid") from error
+        checked = _validate_event(event, enrollment_id=config["activation_id"], previous_hash=previous_hash)
+        event_key: object = (
+            (checked["work_id"], checked["skill_id"])
+            if checked["event_type"] == "candidate" else checked["work_id"]
+        )
+        if event_key in seen[checked["event_type"]]:
+            raise SkillCohortError("v2_duplicate_event")
+        if checked["event_type"] != "candidate" and not any(
+            candidate_work_id == checked["work_id"]
+            for candidate_work_id, _skill_id in seen["candidate"]
+        ):
+            raise SkillCohortError("v2_candidate_required")
+        seen[checked["event_type"]].add(event_key)
+        previous_hash = checked["event_sha256"]
+        events.append(checked)
+    return config, events
+
+
+def _record_v2(project_root: Path, *, event_type: str, work_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    root = _root(project_root)
+    if not isinstance(work_id, str) or _WORK_ID.fullmatch(work_id) is None:
+        raise SkillCohortError("work_id_invalid")
+    with omc_state._omc_lock(root):
+        config, events = _load_v2_events(root)
+        if any(
+            event["event_type"] == event_type
+            and event["work_id"] == work_id
+            and (event_type != "candidate" or event.get("skill_id") == payload.get("skill_id"))
+            for event in events
+        ):
+            raise SkillCohortError("v2_duplicate_event")
+        if event_type != "candidate" and not any(
+            event["event_type"] == "candidate" and event["work_id"] == work_id
+            for event in events
+        ):
+            raise SkillCohortError("v2_candidate_required")
+        event = {
+            "schema_version": SCHEMA_VERSION,
+            "event_id": uuid.uuid4().hex,
+            "event_type": event_type,
+            "observed_at": _now(),
+            "enrollment_id": config["activation_id"],
+            "work_id": work_id,
+            "previous_event_sha256": events[-1]["event_sha256"] if events else None,
+            **payload,
+        }
+        event["event_sha256"] = _sha256(event)
+        _validate_event(event, enrollment_id=config["activation_id"], previous_hash=event["previous_event_sha256"])
+        _append(v2_ledger_path(root), event)
+        return event
+
+
+def record_v2_candidate(project_root: Path, *, work_id: str, skill_id: str, policy_profile: str, source_identity: object) -> dict[str, Any]:
+    if skill_id not in _SKILLS:
+        raise SkillCohortError("skill_id_invalid")
+    if policy_profile not in _PROFILES:
+        raise SkillCohortError("policy_profile_invalid")
+    version, digest = _validate_source_identity(source_identity)
+    return _record_v2(project_root, event_type="candidate", work_id=work_id, payload={
+        "skill_id": skill_id,
+        "policy_profile": policy_profile,
+        "source_version": version,
+        "source_sha256": digest,
+    })
+
+
+def record_v2_review(project_root: Path, *, work_id: str, verdict: str, taxonomy: str) -> dict[str, Any]:
+    if verdict not in _VERDICTS:
+        raise SkillCohortError("review_verdict_invalid")
+    if taxonomy not in _TAXONOMIES:
+        raise SkillCohortError("taxonomy_invalid")
+    return _record_v2(project_root, event_type="review", work_id=work_id, payload={"verdict": verdict, "taxonomy": taxonomy})
+
+
+def record_v2_followup(project_root: Path, *, work_id: str, outcome: str) -> dict[str, Any]:
+    if outcome not in _OUTCOMES:
+        raise SkillCohortError("followup_outcome_invalid")
+    return _record_v2(project_root, event_type="followup", work_id=work_id, payload={"outcome": outcome})
+
+
 def pending_work_id(project_root: Path) -> str:
     root = _root(project_root)
     path = root / ".omc" / "state" / "pending-completion.json"
@@ -438,6 +647,23 @@ def record_pending_review(project_root: Path, *, verdict: str, taxonomy: str) ->
 
 def record_pending_followup(project_root: Path, *, outcome: str) -> dict[str, Any]:
     return record_followup(project_root, work_id=pending_work_id(project_root), outcome=outcome)
+
+
+def record_pending_v2_review(project_root: Path, *, verdict: str, taxonomy: str) -> dict[str, Any]:
+    return record_v2_review(project_root, work_id=pending_work_id(project_root), verdict=verdict, taxonomy=taxonomy)
+
+
+def record_pending_v2_followup(project_root: Path, *, outcome: str) -> dict[str, Any]:
+    return record_v2_followup(project_root, work_id=pending_work_id(project_root), outcome=outcome)
+
+
+def _resolve_record_generation(project_root: Path, generation: str) -> str:
+    if generation not in {"auto", "v1", "v2"}:
+        raise SkillCohortError("generation_invalid")
+    if generation == "auto":
+        config = v2_config_path(project_root)
+        return "v2" if config.exists() or config.is_symlink() else "v1"
+    return generation
 
 
 def _source_report(source: Path) -> dict[str, Any]:
@@ -507,6 +733,96 @@ def _source_report(source: Path) -> dict[str, Any]:
         return {"state": "INTEGRITY_INVALID", "reason_code": str(error)}
 
 
+def _source_report_v2(source: Path) -> dict[str, Any]:
+    try:
+        if not source.is_absolute() or source.is_symlink() or not source.is_dir():
+            raise SkillCohortError("source_not_regular_directory")
+        root = source.resolve(strict=True)
+        config, events = _load_v2_events(root)
+        candidates = [event for event in events if event["event_type"] == "candidate"]
+        candidate_keys = {(event["work_id"], event["skill_id"]) for event in candidates}
+        expected: dict[tuple[str, str], str] = {}
+        activation_at = _timestamp(config["activation_at"], reason="v2_config_invalid")
+        enrollment_session_ids = set(config["enrollment_session_ids"])
+        session_root = root / ".omc" / "state" / "sessions"
+        if session_root.exists():
+            if session_root.is_symlink() or not session_root.is_dir():
+                raise SkillCohortError("session_state_invalid")
+            for session_path in session_root.glob("*/session.json"):
+                _regular_file(session_path)
+                try:
+                    session = json.loads(session_path.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+                    raise SkillCohortError("session_state_invalid") from error
+                if not (
+                    isinstance(session, dict)
+                    and session.get("title") in _SKILLS
+                    and isinstance(session.get("work_id"), str)
+                    and _WORK_ID.fullmatch(session["work_id"]) is not None
+                    and isinstance(session.get("confirmation"), dict)
+                    and session["confirmation"].get("status") == "confirmed"
+                    and session_path.parent.name not in enrollment_session_ids
+                    and _timestamp(session.get("created_at"), reason="session_state_invalid") >= activation_at
+                ):
+                    continue
+                capture = session.get("cohort_capture_v2")
+                status = capture.get("status") if isinstance(capture, dict) else "missing"
+                expected[(session["work_id"], session["title"])] = status if status in {"recorded", "missing", "integrity_invalid"} else "integrity_invalid"
+        capture_missing = 0
+        capture_integrity_invalid = 0
+        for key, status in expected.items():
+            if key in candidate_keys:
+                continue
+            if status == "integrity_invalid" or status == "recorded":
+                capture_integrity_invalid += 1
+            else:
+                capture_missing += 1
+        candidates_by_work: dict[str, list[dict[str, Any]]] = {}
+        for candidate in candidates:
+            candidates_by_work.setdefault(candidate["work_id"], []).append(candidate)
+        attributable_work_ids = {
+            work_id for work_id, work_candidates in candidates_by_work.items()
+            if len(work_candidates) == 1
+        }
+        attributable_candidates = [
+            candidate for candidate in candidates if candidate["work_id"] in attributable_work_ids
+        ]
+        reviews = {event["work_id"]: event for event in events if event["event_type"] == "review"}
+        followups = {event["work_id"]: event for event in events if event["event_type"] == "followup"}
+        outcomes = {"accepted": 0, "correction": 0, "deferred": 0}
+        taxonomy_counts: dict[str, int] = {}
+        skill_counts: dict[str, int] = {}
+        for candidate in attributable_candidates:
+            skill_counts[candidate["skill_id"]] = skill_counts.get(candidate["skill_id"], 0) + 1
+        for work_id, review in reviews.items():
+            if work_id in attributable_work_ids:
+                taxonomy = review["taxonomy"]
+                taxonomy_counts[taxonomy] = taxonomy_counts.get(taxonomy, 0) + 1
+        for work_id, followup in followups.items():
+            if work_id in attributable_work_ids:
+                outcomes[followup["outcome"]] += 1
+        return {
+            "state": "OBSERVED",
+            "activation_id": config["activation_id"],
+            "activation_at": config["activation_at"],
+            "generation": "v2",
+            "eligible_candidates": len(attributable_candidates),
+            "eligible_work_items": len(attributable_work_ids),
+            "unattributed_work_items": len(candidates_by_work) - len(attributable_work_ids),
+            "capture_missing": capture_missing,
+            "capture_integrity_invalid": capture_integrity_invalid,
+            "capture_invalid": capture_missing + capture_integrity_invalid,
+            "accepted": outcomes["accepted"],
+            "correction": outcomes["correction"],
+            "deferred": outcomes["deferred"],
+            "followup_unobserved": len(attributable_work_ids - set(followups)),
+            "taxonomy_counts": dict(sorted(taxonomy_counts.items())),
+            "skill_counts": dict(sorted(skill_counts.items())),
+        }
+    except SkillCohortError as error:
+        return {"state": "INTEGRITY_INVALID", "reason_code": str(error)}
+
+
 def aggregate(sources: list[Path], *, now: str | None = None) -> dict[str, Any]:
     del now  # A missing follow-up remains unobserved; elapsed time never promotes it to success.
     if not sources:
@@ -546,6 +862,52 @@ def aggregate(sources: list[Path], *, now: str | None = None) -> dict[str, Any]:
     }
 
 
+def aggregate_v2(sources: list[Path]) -> dict[str, Any]:
+    if not sources:
+        raise SkillCohortError("source_required")
+    reports = [_source_report_v2(source) for source in sources]
+    observed = [report for report in reports if report["state"] == "OBSERVED"]
+    count_keys = (
+        "eligible_candidates", "eligible_work_items", "unattributed_work_items",
+        "capture_missing", "capture_integrity_invalid", "capture_invalid", "accepted",
+        "correction", "deferred", "followup_unobserved",
+    )
+    aggregate_counts = {key: sum(int(report[key]) for report in observed) for key in count_keys}
+    taxonomy_counts: dict[str, int] = {}
+    skill_counts: dict[str, int] = {}
+    for report in observed:
+        for key, value in report["taxonomy_counts"].items():
+            taxonomy_counts[key] = taxonomy_counts.get(key, 0) + int(value)
+        for key, value in report["skill_counts"].items():
+            skill_counts[key] = skill_counts.get(key, 0) + int(value)
+    reason_codes: list[str] = []
+    if aggregate_counts["eligible_candidates"] < 30:
+        reason_codes.append("eligible_count_below_30")
+    if aggregate_counts["correction"] < 5:
+        reason_codes.append("correction_count_below_5")
+    if aggregate_counts["capture_invalid"]:
+        reason_codes.append("candidate_capture_invalid")
+    if len({(report["activation_id"], report["activation_at"]) for report in observed}) != 1 or len(observed) < 2:
+        reason_codes.append("pilot_roster_incomplete")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "network_used": False,
+        "generation": "v2",
+        "sources": reports,
+        "aggregate": {
+            **aggregate_counts,
+            "integrity_invalid": sum(report["state"] == "INTEGRITY_INVALID" for report in reports),
+            "taxonomy_counts": dict(sorted(taxonomy_counts.items())),
+            "skill_counts": dict(sorted(skill_counts.items())),
+            "measurement_scope": "workflow_hypothesis_only",
+            "tuning_readiness": {
+                "state": "READY" if not reason_codes else "INSUFFICIENT_SAMPLE",
+                "reason_codes": sorted(reason_codes),
+            },
+        },
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -553,31 +915,54 @@ def main(argv: list[str] | None = None) -> int:
     enable_cmd.add_argument("--target", type=Path, required=True)
     enable_setup_cmd = sub.add_parser("enable-from-setup")
     enable_setup_cmd.add_argument("--target", type=Path, required=True)
+    enable_v2_setup_cmd = sub.add_parser("enable-v2-from-setup")
+    enable_v2_setup_cmd.add_argument("--target", type=Path, required=True)
+    enable_v2_setup_cmd.add_argument("--activation-id", required=True)
+    enable_v2_setup_cmd.add_argument("--activation-at", required=True)
     preflight_setup_cmd = sub.add_parser("preflight-from-setup")
     preflight_setup_cmd.add_argument("--target", type=Path, required=True)
+    preflight_v2_setup_cmd = sub.add_parser("preflight-v2-from-setup")
+    preflight_v2_setup_cmd.add_argument("--target", type=Path, required=True)
+    preflight_v2_setup_cmd.add_argument("--activation-id", required=True)
+    preflight_v2_setup_cmd.add_argument("--activation-at", required=True)
     pending_review = sub.add_parser("record-pending-review")
     pending_review.add_argument("--target", type=Path, required=True)
     pending_review.add_argument("--verdict", required=True)
     pending_review.add_argument("--taxonomy", required=True)
+    pending_review.add_argument("--generation", choices=["auto", "v1", "v2"], default="auto")
     pending_followup = sub.add_parser("record-pending-followup")
     pending_followup.add_argument("--target", type=Path, required=True)
     pending_followup.add_argument("--outcome", required=True)
+    pending_followup.add_argument("--generation", choices=["auto", "v1", "v2"], default="auto")
     report = sub.add_parser("report")
     report.add_argument("--source", type=Path, action="append", required=True)
+    report.add_argument("--generation", choices=["v1", "v2"], default="v1")
     args = parser.parse_args(argv)
     try:
         if args.command == "enable":
             result = enable(args.target)
         elif args.command == "enable-from-setup":
             result = enable_from_setup(args.target)
+        elif args.command == "enable-v2-from-setup":
+            result = enable_v2_from_setup(
+                args.target, activation_id=args.activation_id, activation_at=args.activation_at,
+            )
         elif args.command == "preflight-from-setup":
             result = preflight_from_setup(args.target)
+        elif args.command == "preflight-v2-from-setup":
+            result = preflight_v2_from_setup(
+                args.target, activation_id=args.activation_id, activation_at=args.activation_at,
+            )
         elif args.command == "record-pending-review":
-            result = record_pending_review(args.target, verdict=args.verdict, taxonomy=args.taxonomy)
+            generation = _resolve_record_generation(args.target, args.generation)
+            record = record_pending_v2_review if generation == "v2" else record_pending_review
+            result = record(args.target, verdict=args.verdict, taxonomy=args.taxonomy)
         elif args.command == "record-pending-followup":
-            result = record_pending_followup(args.target, outcome=args.outcome)
+            generation = _resolve_record_generation(args.target, args.generation)
+            record = record_pending_v2_followup if generation == "v2" else record_pending_followup
+            result = record(args.target, outcome=args.outcome)
         else:
-            result = aggregate(args.source)
+            result = aggregate_v2(args.source) if args.generation == "v2" else aggregate(args.source)
     except SkillCohortError as error:
         print(json.dumps({"status": "blocked", "reason_code": str(error)}, ensure_ascii=False, sort_keys=True))
         return 2

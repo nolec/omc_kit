@@ -233,6 +233,8 @@ def main() -> int:
         action="store_true",
         help="Skip running the session_start lifecycle hook after setup.",
     )
+    setup.add_argument("--skill-cohort-v2-activation-id")
+    setup.add_argument("--skill-cohort-v2-activation-at")
 
     setup_ignore = sub.add_parser(
         "setup-ignore",
@@ -258,13 +260,16 @@ def main() -> int:
     skill_cohort_enable.add_argument("--target", type=Path, required=True)
     skill_cohort_report = skill_cohort_sub.add_parser("report")
     skill_cohort_report.add_argument("--source", type=Path, action="append", required=True)
+    skill_cohort_report.add_argument("--generation", choices=["v1", "v2"], default="v1")
     skill_cohort_review = skill_cohort_sub.add_parser("record-review")
     skill_cohort_review.add_argument("--target", type=Path, required=True)
     skill_cohort_review.add_argument("--verdict", required=True)
     skill_cohort_review.add_argument("--taxonomy", required=True)
+    skill_cohort_review.add_argument("--generation", choices=["auto", "v1", "v2"], default="auto")
     skill_cohort_followup = skill_cohort_sub.add_parser("record-followup")
     skill_cohort_followup.add_argument("--target", type=Path, required=True)
     skill_cohort_followup.add_argument("--outcome", required=True)
+    skill_cohort_followup.add_argument("--generation", choices=["auto", "v1", "v2"], default="auto")
 
     hook = sub.add_parser("hook", help="Run OMC lifecycle hooks.")
     hook.add_argument("event", choices=["session_start", "session_end", "pre_compact", "post_compact"])
@@ -684,6 +689,10 @@ def main() -> int:
         init_state = kit / "scripts" / "omc_state.py"
         hook_script = kit / "scripts" / "omc_hooks.py"
         target = args.target.resolve()
+        activation_id = args.skill_cohort_v2_activation_id
+        activation_at = args.skill_cohort_v2_activation_at
+        if bool(activation_id) != bool(activation_at):
+            ap.error("--skill-cohort-v2-activation-id and --skill-cohort-v2-activation-at must be supplied together")
         cohort_script = kit / "scripts" / "omc_skill_effectiveness_cohort.py"
         cohort_preflight_code = _run_script(
             cohort_script,
@@ -691,6 +700,16 @@ def main() -> int:
         )
         if cohort_preflight_code != 0:
             raise SystemExit(cohort_preflight_code)
+        if activation_id:
+            cohort_v2_preflight_code = _run_script(
+                cohort_script,
+                [
+                    "preflight-v2-from-setup", "--target", str(target),
+                    "--activation-id", activation_id, "--activation-at", activation_at,
+                ],
+            )
+            if cohort_v2_preflight_code != 0:
+                raise SystemExit(cohort_v2_preflight_code)
         install_code = _run_script(install, ["--target", str(target), *(["--force"] if args.force else [])])
         if install_code != 0:
             raise SystemExit(install_code)
@@ -714,6 +733,16 @@ def main() -> int:
         )
         if cohort_code != 0:
             raise SystemExit(cohort_code)
+        if activation_id:
+            cohort_v2_code = _run_script(
+                cohort_script,
+                [
+                    "enable-v2-from-setup", "--target", str(target),
+                    "--activation-id", activation_id, "--activation-at", activation_at,
+                ],
+            )
+            if cohort_v2_code != 0:
+                raise SystemExit(cohort_v2_code)
         if args.skip_session_start:
             return 0
         return _run_script(hook_script, ["session_start", "--target", str(target)])
@@ -742,6 +771,7 @@ def main() -> int:
                 [
                     "record-pending-review", "--target", str(args.target),
                     "--verdict", args.verdict, "--taxonomy", args.taxonomy,
+                    "--generation", args.generation,
                 ],
             )
         if args.skill_cohort_command == "record-followup":
@@ -749,10 +779,11 @@ def main() -> int:
                 cohort_script,
                 [
                     "record-pending-followup", "--target", str(args.target),
-                    "--outcome", args.outcome,
+                    "--outcome", args.outcome, "--generation", args.generation,
                 ],
             )
         cohort_args = ["report"]
+        cohort_args.extend(["--generation", args.generation])
         for source in args.source:
             cohort_args.extend(["--source", str(source)])
         return _run_script(cohort_script, cohort_args)

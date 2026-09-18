@@ -94,12 +94,19 @@ python3 scripts/omc.py installation-registry enable
 python3 scripts/omc.py installation-registry audit-legacy
 ```
 
-스킬 개선 가설을 위한 raw-free cohort는 installation registry와 별개입니다. `setup` 또는 `setup --force`가 strict audit 뒤 cohort를 자동 활성화하며, 이후 confirmed `omc-plan`·`omc-task`·`omc-review` 세션은 request 원문 없이 work ID·스킬·profile·source identity와 무작위 enrollment ID만 로컬 hash-chain에 기록합니다. 기존 유효 config는 덮어쓰지 않고, 손상 config는 setup을 차단합니다. report는 사용자가 고른 source만 읽으며, 침묵을 성공으로 세지 않습니다. 이 결과는 workflow-level hypothesis 전용이며 개별 스킬 효과·자동 tuning·제품 효과를 주장하거나 실행하지 않습니다.
+스킬 개선 가설을 위한 raw-free cohort는 installation registry와 별개입니다. v1은 `setup` 또는 `setup --force`의 strict audit 뒤 자동 활성화되며, 이후 confirmed `omc-plan`·`omc-task`·`omc-review` 세션은 request 원문 없이 work ID·스킬·profile·source identity와 무작위 enrollment ID만 로컬 hash-chain에 기록합니다. 기존 유효 config는 덮어쓰지 않고, 손상 config는 setup을 차단합니다. report는 사용자가 고른 source만 읽으며, 침묵을 성공으로 세지 않습니다.
+
+v2 prospective Pilot은 v1과 분리돼 있습니다. 선택된 target만 동일한 `activation-id`와 `activation-at`을 명시해 setup할 수 있고, 기존 v1 config·ledger는 변경하지 않습니다. 현재 CLI는 target roster 자체를 저장하지 않으므로 Pilot target 수는 사용자 승인으로 운영 통제하며, 같은 activation을 새 target에 재사용하려면 새 승인·등록이 필요합니다. v2 config가 있으면 review·followup의 기본 기록 경로와 report를 v2로 고정하며, 손상된 v2 config는 v1으로 우회하지 않습니다. 이 결과는 workflow-level hypothesis 전용이며 개별 스킬 효과·자동 tuning·제품 효과를 주장하거나 실행하지 않습니다.
 
 ```bash
-# setup이 자동 활성화한다. 수동 활성화는 setup 없이 사용할 때만 필요하다.
+# v1은 setup이 자동 활성화한다. 수동 활성화는 setup 없이 사용할 때만 필요하다.
 python3 scripts/omc.py setup --target /path/to/project --force
 python3 scripts/omc.py skill-cohort report --source /path/to/project
+# v2는 사전에 선택한 Pilot target에만 공통 activation을 명시한다.
+python3 scripts/omc.py setup --target /path/to/pilot-project --force \
+  --skill-cohort-v2-activation-id <uuid-v4> \
+  --skill-cohort-v2-activation-at <ISO-8601-with-timezone>
+python3 scripts/omc.py skill-cohort report --generation v2 --source /path/to/pilot-project
 # 현재 pending work에 사용자 후속 결과를 결속한다.
 python3 scripts/omc.py skill-cohort record-followup --target /path/to/project --outcome accepted
 ```
