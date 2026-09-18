@@ -100,6 +100,13 @@ REQUIRED_COMPLETION_MARKERS = [
     "생략하지 않습니다.",
 ]
 
+REQUIRED_RAW_FREE_OUTCOME_MARKERS = [
+    "raw-free cohort",
+    "수용 / 수정 필요 / 보류",
+    "record-followup",
+    "추정하지 않는다",
+]
+
 REQUIRED_REVISE_MARKERS = [
     "REVISE/BLOCK",
     "REVISE/BLOCK면 수정 방향 포함",
@@ -208,6 +215,13 @@ def test_review_skill_stays_short_enough_to_scan():
     assert len(non_empty_lines) <= MAX_NON_EMPTY_LINES, (
         f"omc-review has {len(non_empty_lines)} non-empty lines"
     )
+
+
+def test_review_skill_exposes_pending_bound_raw_free_outcome_prompt():
+    text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
+
+    for marker in REQUIRED_RAW_FREE_OUTCOME_MARKERS:
+        assert marker in text
 
 
 def test_review_skill_preserves_required_execution_order():

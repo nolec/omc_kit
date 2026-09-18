@@ -3695,6 +3695,25 @@ def status(project_root: Path) -> str:
     if recent_finished_runs:
         lines.append(f"- recent_runs: {_format_recent_runs_bucket(recent_finished_runs)}")
     lines.append(f"- enforce_confirm: {policy.get('enforce_confirm', True)}")
+    try:
+        import omc_skill_effectiveness_cohort as cohort
+
+        cohort_status = cohort.local_status(project_root)
+        if cohort_status["state"] == "ENABLED":
+            lines.append(
+                "- skill_cohort: ENABLED "
+                f"({cohort_status['enrollment_source']}), eligible_candidates: "
+                f"{cohort_status['eligible_candidates']}"
+            )
+        elif cohort_status["state"] == "INTEGRITY_INVALID":
+            lines.append(
+                "- skill_cohort: INTEGRITY_INVALID "
+                f"({cohort_status['reason_code']})"
+            )
+        else:
+            lines.append("- skill_cohort: DISABLED")
+    except Exception:
+        lines.append("- skill_cohort: INTEGRITY_INVALID (status_unavailable)")
     lines.append("- readiness: unverified")
     lines.append(
         "- readiness_reason: authoritative install audit is intentionally deferred"

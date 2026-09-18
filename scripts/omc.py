@@ -684,6 +684,13 @@ def main() -> int:
         init_state = kit / "scripts" / "omc_state.py"
         hook_script = kit / "scripts" / "omc_hooks.py"
         target = args.target.resolve()
+        cohort_script = kit / "scripts" / "omc_skill_effectiveness_cohort.py"
+        cohort_preflight_code = _run_script(
+            cohort_script,
+            ["preflight-from-setup", "--target", str(target)],
+        )
+        if cohort_preflight_code != 0:
+            raise SystemExit(cohort_preflight_code)
         install_code = _run_script(install, ["--target", str(target), *(["--force"] if args.force else [])])
         if install_code != 0:
             raise SystemExit(install_code)
@@ -701,6 +708,12 @@ def main() -> int:
         )
         if registry_code != 0:
             raise SystemExit(registry_code)
+        cohort_code = _run_script(
+            cohort_script,
+            ["enable-from-setup", "--target", str(target)],
+        )
+        if cohort_code != 0:
+            raise SystemExit(cohort_code)
         if args.skip_session_start:
             return 0
         return _run_script(hook_script, ["session_start", "--target", str(target)])

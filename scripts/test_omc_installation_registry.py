@@ -141,3 +141,55 @@ def test_successful_root_setup_records_only_after_strict_audit(
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert registry.status()["registered_target_count"] == 1
+
+
+def test_successful_root_setup_automatically_enables_raw_free_cohort(tmp_path: Path) -> None:
+    target = tmp_path / "consumer"
+    state_dir = tmp_path / "registry-state"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(KIT_ROOT / "scripts" / "omc.py"),
+            "setup",
+            "--target",
+            str(target),
+            "--force",
+            "--skip-session-start",
+        ],
+        cwd=KIT_ROOT,
+        env=os.environ | {"OMC_INSTALLATION_REGISTRY_DIR": str(state_dir)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    config = json.loads(
+        (target / ".omc" / "skill-effectiveness-cohort-v1.json").read_text(encoding="utf-8")
+    )
+    assert config["enabled"] is True
+    assert config["enrollment_source"] == "setup"
+
+
+def test_setup_preflights_invalid_cohort_config_before_install_or_registry_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "consumer"
+    config = target / ".omc" / "skill-effectiveness-cohort-v1.json"
+    config.parent.mkdir(parents=True)
+    config.write_text("{broken", encoding="utf-8")
+    state_dir = tmp_path / "registry-state"
+    env = os.environ | {"OMC_INSTALLATION_REGISTRY_DIR": str(state_dir)}
+    monkeypatch.setenv("OMC_INSTALLATION_REGISTRY_DIR", str(state_dir))
+    registry.enable()
+
+    result = subprocess.run(
+        [sys.executable, str(KIT_ROOT / "scripts" / "omc.py"), "setup", "--target", str(target), "--force", "--skip-session-start"],
+        cwd=KIT_ROOT, env=env, text=True, capture_output=True, check=False,
+    )
+
+    assert result.returncode == 2
+    assert config.read_text(encoding="utf-8") == "{broken"
+    assert not (target / ".omc" / "install-receipt.json").exists()
+    assert registry.status()["registered_target_count"] == 0

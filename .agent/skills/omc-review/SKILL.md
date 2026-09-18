@@ -2,12 +2,11 @@
 skill_name: omc-review
 description: "코드 변경사항·diff·PR 리뷰. 치명/중대/경미/제안으로 분류하고 파일:라인 근거를 요구한다."
 ---
-# OMC 코드 리뷰
-목적은 승인 전 버그·회귀·테스트 누락 탐지다. 이슈를 요약보다 먼저 쓴다.
+# OMC 코드 리뷰 — 승인 전 버그·회귀·테스트 누락을 이슈부터 확인한다.
 ## Step 0. 리뷰 범위 수집
 blind/read-only 비교 평가는 state/session 명령과 변경 가능한 검증은 실행하지 않는다. `git diff HEAD`와 읽기 전용 확인만 하며 최종 계약은 유지한다.
 ```bash
-python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-review" --request "<현재 작업 한 줄 요약>" --roles code_review
+python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-review" --request "<현재 작업 한 줄 요약>" --roles code_review --completion-action preserve-if-present
 git status -sb
 git diff HEAD
 git ls-files --others --exclude-standard
@@ -20,8 +19,7 @@ python3 scripts/omc.py state status --target .
 - 범위 확정 / 파일:라인 근거 / 검증 커맨드를 기록한다. 출력이 길어져도 마지막 `검증 커맨드 / 판정 / VERDICT / 다음 추천`은 생략하지 않습니다. | 리뷰어가 사용자에게 바로 보여줄 것: 근거 이슈·검증·판정 | 시스템이 암묵적으로 처리: 분할·요약·범위 밖 제외 | 정상 최종 출력: finding → 검증 → 판정, 첫 3줄 안에 결론, 24줄 이하, 같은 사실 반복 0회, 다음 행동은 정확히 1개, Machine output contract 두 줄은 줄 수·중복·다음 행동 측정에서 제외, 내부 상태인 `사용자 선택 대기` 직접 노출 금지 | 모든 severity가 비면 한 줄로 합친다. REVISE/BLOCK은 원인·영향·수정 방향을 유지한다.
 - 안전 필수 항목: 파일:라인 / VERDICT / [치명] [중대] [경미] [제안]
 리뷰 범위: `git diff HEAD` 전체와 필요한 untracked/ignored 파일을 직접 읽고, `.omc/runs` `.omc/lessons` `pipeline_run_result`는 제외한다. 200줄 이상은 파일별로 나눈다.
-## Step 1. REVIEW CHECKLIST
-C1 정확성/정합성: null·빈 배열·타임존·인덱스·정렬 / C2 조용한 실패 / C3 안전성·복구
+## Step 1. REVIEW CHECKLIST — C1 정확성/정합성: null·빈 배열·타임존·인덱스·정렬 / C2 조용한 실패 / C3 안전성·복구
 C4 API·consumer 계약 / C5 새 로직 테스트·검증 / C6 성능·메모리·불필요한 반복
 C7 유지보수·책임·이름 / C8 외부 계약: optional/null/unknown fallback과 필드·타입·순서. 모르면 `N/A — 이유`.
 ## Evidence gate
@@ -49,6 +47,7 @@ decision: REVISE / APPROVE (판정 결과) | risk: HIGH / MED / LOW (리스크 �
 ```
 - 강한 finding은 `evidence_class: behavioral_direct`와 비어 있지 않은 `evidence:`가 필수다. 가설은 `[확인 필요]`로 내린다.
 - 판정 규칙: 치명=BLOCK, 중대=REVISE, 경미/제안만=APPROVE WITH NOTES, 없음=APPROVE. REVISE/BLOCK면 수정 방향 포함.
+- raw-free cohort가 활성이고 pending work가 있으면 taxonomy 하나를 선택해 `record-review`를 실행하고, 최종에는 `수용 / 수정 필요 / 보류`를 보여준다. 다음 응답이 정확히 일치할 때만 agent가 `python3 scripts/omc.py skill-cohort record-followup --target . --outcome <accepted|correction|deferred>`를 실행하며, 불명확·다른 세션·침묵은 추정하지 않는다.
 ## Machine output contract — 마지막 두 줄은 `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT: <VALUE>`; JSON은 `schema_version=omc-output/v1`, `stage`, `outcome`, `risk`, `next_skill`, `user_selection_needed`, `reason_code`; `next_skill`은 canonical `omc-*` 또는 null; unresolved/blocked는 `reason_code` 필수; legacy 평문 입력은 허용하되 새 출력은 숨김 형식만 사용하고 명시적 오류는 보정하지 않습니다.
 
 ## 다음 추천

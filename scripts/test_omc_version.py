@@ -16,6 +16,7 @@ import omc_state
 import omc_doctor
 import omc_install_audit
 import omc
+import omc_skill_effectiveness_cohort as cohort
 import install
 from omc_source_hash import source_sha256
 
@@ -304,6 +305,19 @@ def test_state_status_readiness_command_quotes_target_path(tmp_path: Path):
     output = omc_state.status(target)
 
     assert f"- readiness_command: {_readiness_command(target)}" in output
+
+
+def test_state_status_surfaces_raw_free_cohort_enrollment_without_raw_work(tmp_path: Path):
+    target = tmp_path / "consumer"
+    target.mkdir()
+    cohort.enable_from_setup(target)
+
+    output = omc_state.status(target)
+
+    assert "- skill_cohort: ENABLED (setup), eligible_candidates: 0" in output
+    assert str(target) not in next(
+        line for line in output.splitlines() if line.startswith("- skill_cohort:")
+    )
 
 
 def test_state_status_readiness_command_runs_outside_target(tmp_path: Path):

@@ -142,17 +142,20 @@ def _validate_config(project_root: Path) -> dict[str, Any]:
     _omc_dir(project_root, create=False)
     config = _read_json(config_path(project_root))
     expected = {"schema_version", "enabled", "enrollment_id", "enrolled_at", "enrollment_session_ids"}
+    setup_expected = expected | {"enrollment_source"}
     try:
         enrollment_uuid = uuid.UUID(config.get("enrollment_id", ""))
     except (TypeError, ValueError, AttributeError) as error:
         raise SkillCohortError("config_invalid") from error
     if (
-        set(config) != expected
+        set(config) != expected and set(config) != setup_expected
         or config.get("schema_version") != SCHEMA_VERSION
         or config.get("enabled") is not True
         or not isinstance(config.get("enrollment_id"), str)
         or enrollment_uuid.version != 4
     ):
+        raise SkillCohortError("config_invalid")
+    if "enrollment_source" in config and config["enrollment_source"] != "setup":
         raise SkillCohortError("config_invalid")
     _timestamp(config["enrolled_at"], reason="config_invalid")
     session_ids = config["enrollment_session_ids"]
@@ -165,17 +168,27 @@ def _validate_config(project_root: Path) -> dict[str, Any]:
     return config
 
 
-def enable(project_root: Path, *, host_identity: str | None = None) -> dict[str, Any]:
+def enable(
+    project_root: Path,
+    *,
+    host_identity: str | None = None,
+    enrollment_source: str | None = None,
+) -> dict[str, Any]:
     root = _root(project_root)
     # Kept as an ignored keyword-only compatibility parameter for callers from
     # older installations. Host identifiers are neither needed nor retained.
     del host_identity
+    if enrollment_source not in {None, "setup"}:
+        raise SkillCohortError("enrollment_source_invalid")
     _omc_dir(root, create=True)
     with omc_state._omc_lock(root):
         path = config_path(root)
         if path.exists() or path.is_symlink():
-            _validate_config(root)
-            return {"enabled": True, "status": "unchanged"}
+            existing = _validate_config(root)
+            result: dict[str, Any] = {"enabled": True, "status": "unchanged"}
+            if enrollment_source == "setup":
+                result["enrollment_source"] = str(existing.get("enrollment_source", "manual"))
+            return result
         config = {
             "schema_version": SCHEMA_VERSION,
             "enabled": True,
@@ -183,14 +196,60 @@ def enable(project_root: Path, *, host_identity: str | None = None) -> dict[str,
             "enrolled_at": _now(),
             "enrollment_session_ids": _session_ids_at_enrollment(root),
         }
+        if enrollment_source == "setup":
+            config["enrollment_source"] = "setup"
         try:
             _write_once(path, config)
         except FileExistsError:
             # A non-cohort writer may win between the check and the atomic link.
             # Only accept that race after the published config passes validation.
-            _validate_config(root)
-            return {"enabled": True, "status": "unchanged"}
-        return {"enabled": True, "status": "enabled"}
+            published = _validate_config(root)
+            result = {"enabled": True, "status": "unchanged"}
+            if enrollment_source == "setup":
+                result["enrollment_source"] = str(published.get("enrollment_source", "manual"))
+        else:
+            result = {"enabled": True, "status": "enabled"}
+        if enrollment_source == "setup" and "enrollment_source" not in result:
+            result["enrollment_source"] = "setup"
+        return result
+
+
+def enable_from_setup(project_root: Path) -> dict[str, Any]:
+    """Enroll a setup target without rewriting any existing cohort contract."""
+    return enable(project_root, enrollment_source="setup")
+
+
+def preflight_from_setup(project_root: Path) -> dict[str, Any]:
+    """Reject an existing invalid cohort contract before setup mutates a target."""
+    if project_root.is_symlink() or (project_root.exists() and not project_root.is_dir()):
+        raise SkillCohortError("source_not_regular_directory")
+    if not project_root.exists():
+        return {"status": "ready"}
+    root = project_root.resolve(strict=True)
+    path = config_path(root)
+    if path.is_symlink():
+        raise SkillCohortError("config_not_regular_file")
+    if path.exists():
+        _validate_config(root)
+    return {"status": "ready"}
+
+
+def local_status(project_root: Path) -> dict[str, Any]:
+    """Return a raw-free, fail-closed view for the local status surface."""
+    try:
+        root = _root(project_root)
+        if config_path(root).is_symlink():
+            return {"state": "INTEGRITY_INVALID", "reason_code": "config_not_regular_file"}
+        if not config_path(root).exists():
+            return {"state": "DISABLED"}
+        config, events = _load_events(root)
+        return {
+            "state": "ENABLED",
+            "enrollment_source": str(config.get("enrollment_source", "manual")),
+            "eligible_candidates": sum(event["event_type"] == "candidate" for event in events),
+        }
+    except SkillCohortError as error:
+        return {"state": "INTEGRITY_INVALID", "reason_code": str(error)}
 
 
 def _validate_source_identity(value: object) -> tuple[str, str]:
@@ -492,6 +551,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     enable_cmd = sub.add_parser("enable")
     enable_cmd.add_argument("--target", type=Path, required=True)
+    enable_setup_cmd = sub.add_parser("enable-from-setup")
+    enable_setup_cmd.add_argument("--target", type=Path, required=True)
+    preflight_setup_cmd = sub.add_parser("preflight-from-setup")
+    preflight_setup_cmd.add_argument("--target", type=Path, required=True)
     pending_review = sub.add_parser("record-pending-review")
     pending_review.add_argument("--target", type=Path, required=True)
     pending_review.add_argument("--verdict", required=True)
@@ -505,6 +568,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "enable":
             result = enable(args.target)
+        elif args.command == "enable-from-setup":
+            result = enable_from_setup(args.target)
+        elif args.command == "preflight-from-setup":
+            result = preflight_from_setup(args.target)
         elif args.command == "record-pending-review":
             result = record_pending_review(args.target, verdict=args.verdict, taxonomy=args.taxonomy)
         elif args.command == "record-pending-followup":

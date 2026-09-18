@@ -447,6 +447,91 @@ def test_root_cli_allows_opt_in_without_host_identity(tmp_path: Path) -> None:
     assert json.loads(result.stdout)["status"] == "enabled"
 
 
+def test_setup_enrollment_is_distinct_from_manual_opt_in_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    first = cohort.enable_from_setup(root)
+    second = cohort.enable_from_setup(root)
+
+    assert first == {"enabled": True, "status": "enabled", "enrollment_source": "setup"}
+    assert second == {"enabled": True, "status": "unchanged", "enrollment_source": "setup"}
+    config = json.loads(cohort.config_path(root).read_text(encoding="utf-8"))
+    assert config["enrollment_source"] == "setup"
+
+
+def test_setup_enrollment_never_overwrites_an_invalid_existing_config(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    config_path = root / ".omc" / cohort.CONFIG_NAME
+    config_path.parent.mkdir()
+    original = b'{"enabled": false}\n'
+    config_path.write_bytes(original)
+
+    with pytest.raises(cohort.SkillCohortError, match="config_invalid"):
+        cohort.enable_from_setup(root)
+
+    assert config_path.read_bytes() == original
+
+
+def test_setup_enrollment_reports_the_published_manual_source_after_a_write_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    original_write = cohort._write_once
+
+    def manual_writer(path: Path, value: object) -> None:
+        manual = dict(value)
+        manual.pop("enrollment_source", None)
+        original_write(path, manual)
+        raise FileExistsError(path)
+
+    monkeypatch.setattr(cohort, "_write_once", manual_writer)
+
+    assert cohort.enable_from_setup(root) == {
+        "enabled": True,
+        "status": "unchanged",
+        "enrollment_source": "manual",
+    }
+
+
+def test_local_status_reports_setup_enrollment_and_invalid_config_without_reading_raw_work(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    cohort.enable_from_setup(root)
+
+    assert cohort.local_status(root) == {
+        "eligible_candidates": 0,
+        "enrollment_source": "setup",
+        "state": "ENABLED",
+    }
+
+    cohort.config_path(root).write_text("{broken", encoding="utf-8")
+    assert cohort.local_status(root) == {
+        "reason_code": "config_invalid",
+        "state": "INTEGRITY_INVALID",
+    }
+
+
+def test_local_status_marks_symlinked_config_as_integrity_invalid(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}", encoding="utf-8")
+    (root / ".omc").mkdir()
+    cohort.config_path(root).symlink_to(outside)
+
+    assert cohort.local_status(root) == {
+        "reason_code": "config_not_regular_file",
+        "state": "INTEGRITY_INVALID",
+    }
+
+
 def test_direct_cohort_cli_cannot_inject_candidate(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
