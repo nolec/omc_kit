@@ -84,6 +84,35 @@ def test_worktree_and_committed_candidate_have_same_identity(tmp_path: Path) -> 
     assert committed["candidate_scope_sha256"] == reviewed["candidate_scope_sha256"]
 
 
+def test_committed_candidate_can_be_recorded_then_validated_for_ship(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    (repo / "app.py").write_text("value = 'reviewed'\n", encoding="utf-8")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-qm", "reviewed")
+    frozen = snapshot.capture_review_snapshot(
+        repo,
+        base_commit=base,
+        candidate_commit=_git(repo, "rev-parse", "HEAD"),
+    )
+    evidence = snapshot.seal_review_output(
+        repo,
+        review_output=b"approved\n",
+        snapshot_path=Path(str(frozen["snapshot_path"])),
+        snapshot_sha256=str(frozen["snapshot_sha256"]),
+    )
+
+    snapshot.record_review_receipt_from_snapshot(
+        repo,
+        snapshot_path=Path(str(frozen["snapshot_path"])),
+        snapshot_sha256=str(frozen["snapshot_sha256"]),
+        review_evidence_path=Path(str(evidence["evidence_path"])),
+        review_evidence_sha256=str(evidence["evidence_sha256"]),
+        verdict="APPROVE",
+    )
+
+    assert snapshot.validate_ship_candidate(repo)["status"] == "READY"
+
+
 def test_repository_identity_is_stable_across_a_second_checkout(tmp_path: Path) -> None:
     repo, base = _repo(tmp_path)
     clone = tmp_path / "clone"

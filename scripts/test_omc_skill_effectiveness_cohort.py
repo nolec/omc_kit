@@ -84,6 +84,75 @@ def test_silence_is_followup_unobserved_not_success(tmp_path: Path) -> None:
     assert report["aggregate"]["accepted"] == 0
 
 
+def test_v2_report_counts_review_churn_and_correction_after_approval(tmp_path: Path) -> None:
+    root = _v2_roster_target(tmp_path / "repo", remote_name="repo")
+    cohort.enable_v2_from_setup(
+        root,
+        activation_id="6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51",
+        activation_at="2026-09-18T05:00:00+00:00",
+    )
+    cohort.record_v2_candidate(
+        root,
+        work_id="work-001",
+        skill_id="omc-task",
+        policy_profile="full",
+        source_identity={"version": "0.3.2", "sha256": "a" * 64},
+    )
+    cohort.record_v2_review(root, work_id="work-001", verdict="BLOCK", taxonomy="review_stale")
+    cohort.record_v2_review(root, work_id="work-001", verdict="APPROVE", taxonomy="verification_gap")
+    cohort.record_v2_followup(root, work_id="work-001", outcome="correction")
+
+    report = cohort.aggregate_v2([root])
+
+    assert report["aggregate"]["review_count"] == 2
+    assert report["aggregate"]["review_churn_work_items"] == 1
+    assert report["aggregate"]["review_stale_count"] == 1
+    assert report["aggregate"]["correction_after_approved_review"] == 1
+
+
+def test_v2_review_lifecycle_rejects_followup_before_review_and_review_after_followup(tmp_path: Path) -> None:
+    root = _v2_roster_target(tmp_path / "repo", remote_name="repo")
+    cohort.enable_v2_from_setup(
+        root,
+        activation_id="6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51",
+        activation_at="2026-09-18T05:00:00+00:00",
+    )
+    cohort.record_v2_candidate(
+        root,
+        work_id="work-001",
+        skill_id="omc-task",
+        policy_profile="full",
+        source_identity={"version": "0.3.2", "sha256": "a" * 64},
+    )
+
+    with pytest.raises(cohort.SkillCohortError, match="v2_review_required"):
+        cohort.record_v2_followup(root, work_id="work-001", outcome="correction")
+
+    cohort.record_v2_review(root, work_id="work-001", verdict="APPROVE", taxonomy="verification_gap")
+    cohort.record_v2_followup(root, work_id="work-001", outcome="correction")
+
+    with pytest.raises(cohort.SkillCohortError, match="v2_followup_finalized"):
+        cohort.record_v2_review(root, work_id="work-001", verdict="APPROVE", taxonomy="verification_gap")
+
+
+def test_v2_review_stale_requires_block_verdict(tmp_path: Path) -> None:
+    root = _v2_roster_target(tmp_path / "repo", remote_name="repo")
+    cohort.enable_v2_from_setup(
+        root,
+        activation_id="6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51",
+        activation_at="2026-09-18T05:00:00+00:00",
+    )
+    cohort.record_v2_candidate(
+        root,
+        work_id="work-001",
+        skill_id="omc-task",
+        policy_profile="full",
+        source_identity={"version": "0.3.2", "sha256": "a" * 64},
+    )
+
+    with pytest.raises(cohort.SkillCohortError, match="review_stale_verdict_invalid"):
+        cohort.record_v2_review(root, work_id="work-001", verdict="APPROVE", taxonomy="review_stale")
+
 def test_enrollment_ignores_confirmed_sessions_created_before_opt_in(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()

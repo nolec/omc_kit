@@ -28,7 +28,7 @@ _SKILLS = frozenset({"omc-plan", "omc-task", "omc-review"})
 _PROFILES = frozenset({"lite", "full", "unknown"})
 _TAXONOMIES = frozenset({
     "requirement_gap", "verification_gap", "scope_gap", "output_confusion",
-    "gate_friction", "environment_blocker", "external_dependency",
+    "gate_friction", "environment_blocker", "external_dependency", "review_stale",
 })
 _VERDICTS = frozenset({"APPROVE", "REVISE", "BLOCK", "NOT_RUN"})
 _OUTCOMES = frozenset({"accepted", "correction", "deferred"})
@@ -512,7 +512,13 @@ def _validate_source_identity(value: object) -> tuple[str, str]:
     return version, digest
 
 
-def _validate_event(event: object, *, enrollment_id: str, previous_hash: str | None) -> dict[str, Any]:
+def _validate_event(
+    event: object,
+    *,
+    enrollment_id: str,
+    previous_hash: str | None,
+    allow_review_index: bool = False,
+) -> dict[str, Any]:
     if not isinstance(event, dict):
         raise SkillCohortError("event_not_object")
     common = {"schema_version", "event_id", "event_type", "observed_at", "enrollment_id", "work_id", "previous_event_sha256", "event_sha256"}
@@ -522,7 +528,10 @@ def _validate_event(event: object, *, enrollment_id: str, previous_hash: str | N
         "review": {"verdict", "taxonomy"},
         "followup": {"outcome"},
     }
-    if event_type not in type_fields or set(event) != common | type_fields[event_type]:
+    allowed_fields = common | type_fields.get(event_type, set())
+    if event_type == "review" and allow_review_index:
+        allowed_fields |= {"review_index"}
+    if event_type not in type_fields or set(event) != allowed_fields:
         raise SkillCohortError("event_schema_invalid")
     if (
         event.get("schema_version") != SCHEMA_VERSION
@@ -546,6 +555,14 @@ def _validate_event(event: object, *, enrollment_id: str, previous_hash: str | N
     ):
         raise SkillCohortError("event_contract_invalid")
     if event_type == "review" and (event.get("verdict") not in _VERDICTS or event.get("taxonomy") not in _TAXONOMIES):
+        raise SkillCohortError("event_contract_invalid")
+    if event_type == "review" and event.get("taxonomy") == "review_stale" and event.get("verdict") != "BLOCK":
+        raise SkillCohortError("review_stale_verdict_invalid")
+    if event_type == "review" and "review_index" in event and (
+        isinstance(event["review_index"], bool)
+        or not isinstance(event["review_index"], int)
+        or event["review_index"] < 1
+    ):
         raise SkillCohortError("event_contract_invalid")
     if event_type == "followup" and event.get("outcome") not in _OUTCOMES:
         raise SkillCohortError("event_contract_invalid")
@@ -663,6 +680,20 @@ def record_followup(project_root: Path, *, work_id: str, outcome: str) -> dict[s
     return _record(project_root, event_type="followup", work_id=work_id, payload={"outcome": outcome})
 
 
+def _validate_v2_lifecycle(event: dict[str, Any], events: list[dict[str, Any]]) -> None:
+    work_id = event["work_id"]
+    if event["event_type"] == "followup" and not any(
+        previous["event_type"] == "review" and previous["work_id"] == work_id
+        for previous in events
+    ):
+        raise SkillCohortError("v2_review_required")
+    if event["event_type"] == "review" and any(
+        previous["event_type"] == "followup" and previous["work_id"] == work_id
+        for previous in events
+    ):
+        raise SkillCohortError("v2_followup_finalized")
+
+
 def _load_v2_events(project_root: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     config = _validate_v2_config(project_root)
     path = v2_ledger_path(project_root)
@@ -681,10 +712,19 @@ def _load_v2_events(project_root: Path) -> tuple[dict[str, Any], list[dict[str, 
             event = json.loads(line)
         except json.JSONDecodeError as error:
             raise SkillCohortError("v2_ledger_json_invalid") from error
-        checked = _validate_event(event, enrollment_id=config["activation_id"], previous_hash=previous_hash)
+        checked = _validate_event(
+            event,
+            enrollment_id=config["activation_id"],
+            previous_hash=previous_hash,
+            allow_review_index=True,
+        )
+        _validate_v2_lifecycle(checked, events)
         event_key: object = (
             (checked["work_id"], checked["skill_id"])
-            if checked["event_type"] == "candidate" else checked["work_id"]
+            if checked["event_type"] == "candidate"
+            else (checked["work_id"], checked.get("review_index", 1))
+            if checked["event_type"] == "review"
+            else checked["work_id"]
         )
         if event_key in seen[checked["event_type"]]:
             raise SkillCohortError("v2_duplicate_event")
@@ -705,7 +745,7 @@ def _record_v2(project_root: Path, *, event_type: str, work_id: str, payload: di
         raise SkillCohortError("work_id_invalid")
     with omc_state._omc_lock(root):
         config, events = _load_v2_events(root)
-        if any(
+        if event_type != "review" and any(
             event["event_type"] == event_type
             and event["work_id"] == work_id
             and (event_type != "candidate" or event.get("skill_id") == payload.get("skill_id"))
@@ -717,6 +757,18 @@ def _record_v2(project_root: Path, *, event_type: str, work_id: str, payload: di
             for event in events
         ):
             raise SkillCohortError("v2_candidate_required")
+        if event_type == "review":
+            payload = {
+                **payload,
+                "review_index": 1 + max(
+                    (
+                        int(event.get("review_index", 1))
+                        for event in events
+                        if event["event_type"] == "review" and event["work_id"] == work_id
+                    ),
+                    default=0,
+                ),
+            }
         event = {
             "schema_version": SCHEMA_VERSION,
             "event_id": uuid.uuid4().hex,
@@ -728,7 +780,13 @@ def _record_v2(project_root: Path, *, event_type: str, work_id: str, payload: di
             **payload,
         }
         event["event_sha256"] = _sha256(event)
-        _validate_event(event, enrollment_id=config["activation_id"], previous_hash=event["previous_event_sha256"])
+        _validate_v2_lifecycle(event, events)
+        _validate_event(
+            event,
+            enrollment_id=config["activation_id"],
+            previous_hash=event["previous_event_sha256"],
+            allow_review_index=True,
+        )
         _append(v2_ledger_path(root), event)
         return event
 
@@ -935,15 +993,18 @@ def _source_report_v2(
         attributable_candidates = [
             candidate for candidate in candidates if candidate["work_id"] in attributable_work_ids
         ]
-        reviews = {event["work_id"]: event for event in events if event["event_type"] == "review"}
+        reviews_by_work: dict[str, list[dict[str, Any]]] = {}
+        for event in events:
+            if event["event_type"] == "review" and event["work_id"] in attributable_work_ids:
+                reviews_by_work.setdefault(event["work_id"], []).append(event)
         followups = {event["work_id"]: event for event in events if event["event_type"] == "followup"}
         outcomes = {"accepted": 0, "correction": 0, "deferred": 0}
         taxonomy_counts: dict[str, int] = {}
         skill_counts: dict[str, int] = {}
         for candidate in attributable_candidates:
             skill_counts[candidate["skill_id"]] = skill_counts.get(candidate["skill_id"], 0) + 1
-        for work_id, review in reviews.items():
-            if work_id in attributable_work_ids:
+        for work_id, work_reviews in reviews_by_work.items():
+            for review in work_reviews:
                 taxonomy = review["taxonomy"]
                 taxonomy_counts[taxonomy] = taxonomy_counts.get(taxonomy, 0) + 1
         for work_id, followup in followups.items():
@@ -966,6 +1027,18 @@ def _source_report_v2(
             "correction": outcomes["correction"],
             "deferred": outcomes["deferred"],
             "followup_unobserved": len(attributable_work_ids - set(followups)),
+            "review_count": sum(len(items) for items in reviews_by_work.values()),
+            "review_churn_work_items": sum(len(items) > 1 for items in reviews_by_work.values()),
+            "review_stale_count": sum(
+                review["taxonomy"] == "review_stale"
+                for items in reviews_by_work.values()
+                for review in items
+            ),
+            "correction_after_approved_review": sum(
+                followups.get(work_id, {}).get("outcome") == "correction"
+                and any(review["verdict"] == "APPROVE" for review in work_reviews)
+                for work_id, work_reviews in reviews_by_work.items()
+            ),
             "taxonomy_counts": dict(sorted(taxonomy_counts.items())),
             "skill_counts": dict(sorted(skill_counts.items())),
         }
@@ -1027,7 +1100,8 @@ def aggregate_v2(sources: list[Path], *, roster_path: Path | None = None) -> dic
     count_keys = (
         "eligible_candidates", "eligible_work_items", "unattributed_work_items",
         "capture_missing", "capture_integrity_invalid", "capture_invalid", "accepted",
-        "correction", "deferred", "followup_unobserved",
+        "correction", "deferred", "followup_unobserved", "review_count",
+        "review_churn_work_items", "review_stale_count", "correction_after_approved_review",
     )
     aggregate_counts = {key: sum(int(report[key]) for report in observed) for key in count_keys}
     taxonomy_counts: dict[str, int] = {}
