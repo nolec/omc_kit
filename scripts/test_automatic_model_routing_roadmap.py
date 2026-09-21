@@ -45,19 +45,19 @@ def _history_sections(history: str) -> list[dict[str, object]]:
 
 def test_roadmap_first_screen_is_the_canonical_current_view() -> None:
     text = ROADMAP_PATH.read_text(encoding="utf-8")
-    first_screen = text.split("### Operator Experience 1차 통합안", 1)[0]
+    first_screen = text.split("## Reference Backlog and Study Details", 1)[0]
 
-    assert "## Current Roadmap" in first_screen
-    assert "### Operational P0" in first_screen
-    assert "bounded N-child scheduler" in first_screen
-    assert "### Operational Obligation" in first_screen
-    assert "Plan Batch B receipt 수집" in first_screen
-    assert "### Active Quality Validation" in first_screen
-    assert "Plan Quality Validation" in first_screen
-    assert "Review Quality Validation" in first_screen
-    assert "automatic_model_routing_roadmap_history.md" in first_screen
-    assert "실행 receipt v2는 provider·model·reasoning·paired timeout" in first_screen
-    assert "누락·위조·순서 불일치는 `INCONCLUSIVE`" in first_screen
+    assert "## Product Definition and Boundary" in first_screen
+    assert "Codex를 대체하는 도구가 아니다" in first_screen
+    assert "## Current Product State" in first_screen
+    assert "IMPLEMENTED_LOCAL_CONFORMANCE" in first_screen
+    assert "## Single Active Product Priority" in first_screen
+    assert "NO_ACTIVE_EXECUTION_LANE" in first_screen
+    assert "30 attributable candidate·5 correction" in first_screen
+    assert "first-pass acceptance rate는 아직" in first_screen
+    assert "## Deferred Product Backlog" in first_screen
+    assert "Alert-only Reframing" in first_screen
+    assert "Review Compression" in first_screen
 
 
 def test_roadmap_current_priority_is_single_and_public_anchors_remain() -> None:

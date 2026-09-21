@@ -1,8 +1,42 @@
 # Automatic Model Routing Roadmap
 
-## Current Roadmap
+## Product Definition and Boundary
 
-OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 조합하지 않아도 요청의 난이도·위험·실패 신호에 따라 안전한 실행 경로를 선택하는 도구 중립 오케스트레이터다. 현재 판단과 다음 작업은 이 문서를 기준으로 하며, 완료 이력과 과거 실험 원문은 [Roadmap History](automatic_model_routing_roadmap_history.md)에 보존한다.
+OMC는 Codex를 대체하는 도구가 아니다. 여러 저장소를 운영하는 1인 SaaS 창업자가 AI에게 맡긴 변경을 **요구사항·검증·검토·ship까지 같은 변경 집합으로 통제**하도록 돕는 control plane이다. Codex 등 executor는 코드를 만들고, OMC는 어떤 후보를 검증·리뷰했고 무엇을 ship하려는지의 provenance와 사람이 결정할 지점을 보존한다.
+
+- OMC가 주장할 수 있는 것은 receipt와 재검증으로 입증된 범위뿐이다. 테스트 통과·로컬 구현·설치 감사는 제품 효과나 자동 실행의 증거가 아니다.
+- 모델 자체 개발, executor 자동 대체, 자동 push/PR/deploy, 근거 없는 우선순위 추천은 현재 제품 범위가 아니다.
+- 사람의 검토 정확도와 검토 대상의 동일성은 다르다. P0.2는 후자만 fail-closed로 강화했다.
+
+## Current Product State
+
+| 층 | 상태 | 현재 경계 |
+|---|---|---|
+| Review–Ship Integrity Binding P0.2 | `IMPLEMENTED_LOCAL_CONFORMANCE` | 승인한 canonical candidate를 pre/post-commit representation으로 비교하고 달라지면 `review_stale`로 막는다. 실제 사용자 재작업 감소는 미입증이다. |
+| Quality Gate Evidence Contract | `IMPLEMENTED_LOCAL_CONFORMANCE` | local ship gate와 CI 보완 범위를 계약으로 고정했다. 각 사용처의 실행 환경·migration 완료를 뜻하지 않는다. |
+| Raw-free workflow cohort v2 | 코드·계측 계약 완료, 운영 관찰 미시작 | exact 2 opt-in target과 signed terminal/review receipt만 다룬다. 현재 `NO_ACTIVE_EXECUTION_LANE`이다. |
+| 제품 가치 | `NOT_PROVEN` | 사람이 덜 수정하는지, review 반복이 줄어드는지, 잘못된 ship을 실제로 막는지는 자연 작업 표본이 필요하다. |
+
+## Single Active Product Priority
+
+현재 실행 중인 제품 효과 수집 lane은 없다(`NO_ACTIVE_EXECUTION_LANE`). 다음 제품 우선순위는 새 기능 추가가 아니라, 사용자가 별도로 관찰 시작을 승인할 때 **정확히 두 개의 opt-in 저장소에서 자연 발생 작업을 raw-free cohort v2로 관찰**하는 것이다. 자동 탐색·background scan·다른 저장소 확장·표본을 위한 인위적 작업은 하지 않는다.
+
+- 현재 수집 가능한 핵심 지표는 `review_count`, `review_churn`, `review_stale_count`, `correction_after_approved_review`다. `review_stale`은 gate가 잡은 변경 빈도이지 품질 실패율이 아니다.
+- `30 attributable candidate·5 correction` 전에는 `INSUFFICIENT_SAMPLE`만 보고하고, 기능 효과·우위·튜닝 결론을 내리지 않는다.
+- first-pass acceptance rate는 아직 현재 cohort의 계산 지표가 아니다. 필요하면 정의·분모·귀속 규칙을 사전등록한 별도 관찰 계약에서만 추가한다.
+
+## Deferred Product Backlog
+
+다음 항목은 가치 관찰 전 자동으로 시작하지 않으며, 각각 별도 plan과 사람 승인이 필요하다.
+
+1. **Decision Context / closure consumer integration** — 기존 verification·review receipt를 읽기 쉬운 projection으로 연결하되, 새 진실의 원천을 만들지 않는다.
+2. **Alert-only Reframing** — 충분한 자연 표본 뒤에, 종료 안내가 사람의 다음 결정을 더 명확하게 하는지 제한된 가설로 실험한다. 자동 scope 재개방이나 강제 gate가 아니다.
+3. **Review Compression** — Human Review Surface를 줄이는 실험은 integrity와 관찰 근거 위에서만 한다.
+4. **Bounded N-child expansion** — 실제 3–5 child 운영 효과가 확인되기 전에는 scheduler 확장을 제품 우선순위로 올리지 않는다.
+
+## Reference Backlog and Study Details
+
+아래는 receipt 계약, 중단·보류 실험, 상세 설계와 과거 실행 우선순위를 보존하는 참고 영역이다. 현재 실행 지시나 제품 효과 주장으로 읽지 않는다. 완료 이력과 원문은 [Roadmap History](automatic_model_routing_roadmap_history.md)에 보존한다.
 
 ## Current Evidence
 
