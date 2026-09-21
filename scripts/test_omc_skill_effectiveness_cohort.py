@@ -23,6 +23,18 @@ def _event_types(root: Path) -> list[str]:
     ]
 
 
+def _v2_roster_target(root: Path, *, remote_name: str) -> Path:
+    root.mkdir()
+    for args in (
+        ("init", "-q"),
+        ("config", "user.email", "cohort@example.test"),
+        ("config", "user.name", "Cohort"),
+        ("remote", "add", "origin", f"https://example.test/{remote_name}.git"),
+    ):
+        subprocess.run(["git", "-C", str(root), *args], check=True)
+    return root
+
+
 def test_candidate_review_and_followup_are_raw_free_and_reported(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -646,6 +658,62 @@ def test_v2_pilot_preserves_v1_bytes_and_only_counts_single_skill_work(tmp_path:
     assert "secret" not in json.dumps(report)
 
 
+def test_v2_roster_allows_only_its_two_targets_and_binds_each_config(tmp_path: Path) -> None:
+    first = _v2_roster_target(tmp_path / "first", remote_name="first")
+    second = _v2_roster_target(tmp_path / "second", remote_name="second")
+    third = _v2_roster_target(tmp_path / "third", remote_name="third")
+    roster_path = tmp_path / "custody" / "pilot-roster.json"
+    roster_path.parent.mkdir()
+    activation_id = "6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51"
+    activation_at = "2026-09-18T05:00:00+00:00"
+
+    roster = cohort.create_v2_roster(
+        targets=[first, second], output=roster_path,
+        activation_id=activation_id, activation_at=activation_at,
+    )
+    cohort.preflight_v2_from_setup(
+        first, activation_id=activation_id, activation_at=activation_at,
+        roster_path=roster_path,
+    )
+    cohort.enable_v2_from_setup(
+        first, activation_id=activation_id, activation_at=activation_at,
+        roster_path=roster_path,
+    )
+
+    config = json.loads(cohort.v2_config_path(first).read_text(encoding="utf-8"))
+    assert config["roster_sha256"] == roster["roster_sha256"]
+    assert config["target_identity"] in roster["target_identities"]
+    with pytest.raises(cohort.SkillCohortError, match="roster_target_not_allowed"):
+        cohort.preflight_v2_from_setup(
+            third, activation_id=activation_id, activation_at=activation_at,
+            roster_path=roster_path,
+        )
+
+
+def test_v2_roster_report_requires_the_exact_two_source_set(tmp_path: Path) -> None:
+    first = _v2_roster_target(tmp_path / "first", remote_name="first")
+    second = _v2_roster_target(tmp_path / "second", remote_name="second")
+    roster_path = tmp_path / "custody" / "pilot-roster.json"
+    roster_path.parent.mkdir()
+    activation_id = "6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51"
+    activation_at = "2026-09-18T05:00:00+00:00"
+    cohort.create_v2_roster(
+        targets=[first, second], output=roster_path,
+        activation_id=activation_id, activation_at=activation_at,
+    )
+    for target in (first, second):
+        cohort.enable_v2_from_setup(
+            target, activation_id=activation_id, activation_at=activation_at,
+            roster_path=roster_path,
+        )
+
+    incomplete = cohort.aggregate_v2([first], roster_path=roster_path)
+    complete = cohort.aggregate_v2([first, second], roster_path=roster_path)
+
+    assert "pilot_roster_incomplete" in incomplete["aggregate"]["tuning_readiness"]["reason_codes"]
+    assert "pilot_roster_incomplete" not in complete["aggregate"]["tuning_readiness"]["reason_codes"]
+
+
 def test_v2_report_distinguishes_missing_from_integrity_invalid_capture(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
@@ -741,19 +809,26 @@ def test_dangling_v2_config_cannot_fallback_to_v1_capture(tmp_path: Path) -> Non
 
 
 def test_root_cli_exposes_v2_only_report_surface(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
+    root = _v2_roster_target(tmp_path / "repo", remote_name="repo")
+    second = _v2_roster_target(tmp_path / "second", remote_name="second")
+    roster_path = tmp_path / "custody" / "pilot-roster.json"
+    roster_path.parent.mkdir()
+    activation_id = "6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51"
+    activation_at = "2026-09-18T05:00:00+00:00"
+    cohort.create_v2_roster(
+        targets=[root, second], output=roster_path,
+        activation_id=activation_id, activation_at=activation_at,
+    )
     cohort.enable_from_setup(root)
     cohort.enable_v2_from_setup(
         root,
-        activation_id="6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51",
-        activation_at="2026-09-18T05:00:00+00:00",
+        activation_id=activation_id, activation_at=activation_at, roster_path=roster_path,
     )
 
     result = subprocess.run(
         [
-            sys.executable, str(SCRIPTS / "omc.py"), "skill-cohort", "report",
-            "--generation", "v2", "--source", str(root),
+                sys.executable, str(SCRIPTS / "omc.py"), "skill-cohort", "report",
+                "--generation", "v2", "--roster", str(roster_path), "--source", str(root),
         ], cwd=SCRIPTS.parent, text=True, capture_output=True, check=False,
     )
 

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ CONFIG_NAME = "skill-effectiveness-cohort-v1.json"
 LEDGER_NAME = "skill-effectiveness-cohort-v1.jsonl"
 V2_CONFIG_NAME = "skill-effectiveness-cohort-v2.json"
 V2_LEDGER_NAME = "skill-effectiveness-cohort-v2.jsonl"
+V2_ROSTER_GENERATION = "v2-roster"
 _WORK_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{2,127}")
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _SKILLS = frozenset({"omc-plan", "omc-task", "omc-review"})
@@ -148,6 +150,97 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _target_identity(project_root: Path) -> str:
+    root = _root(project_root)
+    result = subprocess.run(
+        ["git", "-C", str(root), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    remote = result.stdout.strip() if result.returncode == 0 else ""
+    if not remote:
+        raise SkillCohortError("target_identity_unavailable")
+    if "://" in remote:
+        _scheme, remainder = remote.split("://", 1)
+        authority, separator, path = remainder.partition("/")
+        if not separator:
+            raise SkillCohortError("target_identity_unavailable")
+        host = authority.rsplit("@", 1)[-1].lower()
+    else:
+        authority, separator, path = remote.rsplit("@", 1)[-1].partition(":")
+        if not separator:
+            raise SkillCohortError("target_identity_unavailable")
+        host = authority.lower()
+    normalized = f"{host}/{path.strip('/')}"
+    if not host or normalized.endswith("/"):
+        raise SkillCohortError("target_identity_unavailable")
+    if normalized.endswith(".git"):
+        normalized = normalized[:-4]
+    return hashlib.sha256(f"omc-v2-target/v1:{normalized}".encode("utf-8")).hexdigest()
+
+
+def _validate_v2_roster(path: Path) -> tuple[dict[str, Any], str]:
+    if path.is_symlink() or not path.is_file():
+        raise SkillCohortError("roster_not_regular_file")
+    try:
+        roster = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SkillCohortError("roster_invalid") from error
+    expected = {
+        "schema_version", "generation", "activation_id", "activation_at", "target_identities",
+    }
+    if not isinstance(roster, dict) or set(roster) != expected:
+        raise SkillCohortError("roster_invalid")
+    _validate_v2_activation(
+        activation_id=roster.get("activation_id"), activation_at=roster.get("activation_at"),
+    )
+    identities = roster.get("target_identities")
+    if (
+        roster.get("schema_version") != SCHEMA_VERSION
+        or roster.get("generation") != V2_ROSTER_GENERATION
+        or not isinstance(identities, list)
+        or len(identities) != 2
+        or identities != sorted(set(identities))
+        or any(not isinstance(identity, str) or _HEX64.fullmatch(identity) is None for identity in identities)
+    ):
+        raise SkillCohortError("roster_invalid")
+    return roster, hashlib.sha256(_canonical_bytes(roster)).hexdigest()
+
+
+def create_v2_roster(
+    *, targets: list[Path], output: Path, activation_id: str, activation_at: str,
+) -> dict[str, Any]:
+    _validate_v2_activation(activation_id=activation_id, activation_at=activation_at)
+    if len(targets) != 2:
+        raise SkillCohortError("roster_requires_exactly_two_targets")
+    roots = [_root(target) for target in targets]
+    output_parent = output.parent
+    if output_parent.is_symlink() or not output_parent.is_dir():
+        raise SkillCohortError("roster_parent_invalid")
+    resolved_output = output.resolve(strict=False)
+    if any(resolved_output.is_relative_to(root) for root in roots):
+        raise SkillCohortError("roster_must_be_external")
+    identities = sorted({_target_identity(root) for root in roots})
+    if len(identities) != 2:
+        raise SkillCohortError("roster_target_duplicate")
+    roster = {
+        "schema_version": SCHEMA_VERSION,
+        "generation": V2_ROSTER_GENERATION,
+        "activation_id": activation_id,
+        "activation_at": activation_at,
+        "target_identities": identities,
+    }
+    _write_once(output, roster)
+    _checked, digest = _validate_v2_roster(output)
+    return {
+        "activation_id": activation_id,
+        "activation_at": activation_at,
+        "roster_sha256": digest,
+        "target_identities": identities,
+    }
+
+
 def _validate_config(project_root: Path) -> dict[str, Any]:
     _omc_dir(project_root, create=False)
     config = _read_json(config_path(project_root))
@@ -251,12 +344,13 @@ def _validate_v2_config(project_root: Path) -> dict[str, Any]:
         "schema_version", "generation", "enabled", "activation_id", "activation_at",
         "enrollment_session_ids", "enrollment_source",
     }
+    roster_expected = expected | {"roster_sha256", "target_identity"}
     try:
         activation_uuid = uuid.UUID(config.get("activation_id", ""))
     except (TypeError, ValueError, AttributeError) as error:
         raise SkillCohortError("v2_config_invalid") from error
     if (
-        set(config) != expected
+        set(config) not in {frozenset(expected), frozenset(roster_expected)}
         or config.get("schema_version") != SCHEMA_VERSION
         or config.get("generation") != "v2"
         or config.get("enabled") is not True
@@ -272,6 +366,13 @@ def _validate_v2_config(project_root: Path) -> dict[str, Any]:
         or any(not isinstance(session_id, str) or _WORK_ID.fullmatch(session_id) is None for session_id in session_ids)
     ):
         raise SkillCohortError("v2_config_invalid")
+    if "roster_sha256" in config and (
+        not isinstance(config.get("roster_sha256"), str)
+        or _HEX64.fullmatch(config["roster_sha256"]) is None
+        or not isinstance(config.get("target_identity"), str)
+        or _HEX64.fullmatch(config["target_identity"]) is None
+    ):
+        raise SkillCohortError("v2_config_invalid")
     return config
 
 
@@ -285,15 +386,34 @@ def _validate_v2_activation(*, activation_id: str, activation_at: str) -> None:
     _timestamp(activation_at, reason="activation_at_invalid")
 
 
+def _v2_roster_binding(
+    project_root: Path, *, activation_id: str, activation_at: str, roster_path: Path | None,
+) -> dict[str, str] | None:
+    if roster_path is None:
+        return None
+    roster, roster_sha256 = _validate_v2_roster(roster_path)
+    if roster["activation_id"] != activation_id or roster["activation_at"] != activation_at:
+        raise SkillCohortError("roster_activation_mismatch")
+    target_identity = _target_identity(project_root)
+    if target_identity not in roster["target_identities"]:
+        raise SkillCohortError("roster_target_not_allowed")
+    return {"roster_sha256": roster_sha256, "target_identity": target_identity}
+
+
 def preflight_v2_from_setup(
-    project_root: Path, *, activation_id: str, activation_at: str,
+    project_root: Path, *, activation_id: str, activation_at: str, roster_path: Path | None = None,
 ) -> dict[str, Any]:
     _validate_v2_activation(activation_id=activation_id, activation_at=activation_at)
     if project_root.is_symlink() or (project_root.exists() and not project_root.is_dir()):
         raise SkillCohortError("source_not_regular_directory")
     if not project_root.exists():
+        if roster_path is not None:
+            raise SkillCohortError("target_identity_unavailable")
         return {"status": "ready"}
     root = project_root.resolve(strict=True)
+    binding = _v2_roster_binding(
+        root, activation_id=activation_id, activation_at=activation_at, roster_path=roster_path,
+    )
     path = v2_config_path(root)
     if path.is_symlink():
         raise SkillCohortError("v2_config_not_regular_file")
@@ -301,22 +421,35 @@ def preflight_v2_from_setup(
         existing = _validate_v2_config(root)
         if existing["activation_id"] != activation_id or existing["activation_at"] != activation_at:
             raise SkillCohortError("activation_conflict")
-    return {"status": "ready"}
+        if binding is not None and (
+            existing.get("roster_sha256") != binding["roster_sha256"]
+            or existing.get("target_identity") != binding["target_identity"]
+        ):
+            raise SkillCohortError("roster_binding_conflict")
+    return {"status": "ready", **({"roster_sha256": binding["roster_sha256"]} if binding else {})}
 
 
 def enable_v2_from_setup(
-    project_root: Path, *, activation_id: str, activation_at: str,
+    project_root: Path, *, activation_id: str, activation_at: str, roster_path: Path | None = None,
 ) -> dict[str, Any]:
     """Create one explicit, write-once v2 pilot enrollment for a setup target."""
     root = _root(project_root)
     _validate_v2_activation(activation_id=activation_id, activation_at=activation_at)
     _omc_dir(root, create=True)
+    binding = _v2_roster_binding(
+        root, activation_id=activation_id, activation_at=activation_at, roster_path=roster_path,
+    )
     with omc_state._omc_lock(root):
         path = v2_config_path(root)
         if path.exists() or path.is_symlink():
             existing = _validate_v2_config(root)
             if existing["activation_id"] != activation_id or existing["activation_at"] != activation_at:
                 raise SkillCohortError("activation_conflict")
+            if binding is not None and (
+                existing.get("roster_sha256") != binding["roster_sha256"]
+                or existing.get("target_identity") != binding["target_identity"]
+            ):
+                raise SkillCohortError("roster_binding_conflict")
             return {
                 "activation_id": activation_id, "enabled": True,
                 "generation": "v2", "status": "unchanged",
@@ -329,6 +462,7 @@ def enable_v2_from_setup(
             "activation_at": activation_at,
             "enrollment_session_ids": _session_ids_at_enrollment(root),
             "enrollment_source": "setup",
+            **(binding or {}),
         }
         try:
             _write_once(path, config)
@@ -336,6 +470,11 @@ def enable_v2_from_setup(
             existing = _validate_v2_config(root)
             if existing["activation_id"] != activation_id or existing["activation_at"] != activation_at:
                 raise SkillCohortError("activation_conflict")
+            if binding is not None and (
+                existing.get("roster_sha256") != binding["roster_sha256"]
+                or existing.get("target_identity") != binding["target_identity"]
+            ):
+                raise SkillCohortError("roster_binding_conflict")
             status = "unchanged"
         else:
             status = "enabled"
@@ -733,12 +872,21 @@ def _source_report(source: Path) -> dict[str, Any]:
         return {"state": "INTEGRITY_INVALID", "reason_code": str(error)}
 
 
-def _source_report_v2(source: Path) -> dict[str, Any]:
+def _source_report_v2(
+    source: Path, *, roster: dict[str, Any] | None = None, roster_sha256: str | None = None,
+) -> dict[str, Any]:
     try:
         if not source.is_absolute() or source.is_symlink() or not source.is_dir():
             raise SkillCohortError("source_not_regular_directory")
         root = source.resolve(strict=True)
         config, events = _load_v2_events(root)
+        if roster is not None:
+            if (
+                config.get("roster_sha256") != roster_sha256
+                or config.get("target_identity") not in roster["target_identities"]
+                or config.get("target_identity") != _target_identity(root)
+            ):
+                raise SkillCohortError("roster_binding_conflict")
         candidates = [event for event in events if event["event_type"] == "candidate"]
         candidate_keys = {(event["work_id"], event["skill_id"]) for event in candidates}
         expected: dict[tuple[str, str], str] = {}
@@ -805,6 +953,8 @@ def _source_report_v2(source: Path) -> dict[str, Any]:
             "state": "OBSERVED",
             "activation_id": config["activation_id"],
             "activation_at": config["activation_at"],
+            **({"target_identity": config["target_identity"]} if "target_identity" in config else {}),
+            **({"roster_sha256": config["roster_sha256"]} if "roster_sha256" in config else {}),
             "generation": "v2",
             "eligible_candidates": len(attributable_candidates),
             "eligible_work_items": len(attributable_work_ids),
@@ -862,10 +1012,17 @@ def aggregate(sources: list[Path], *, now: str | None = None) -> dict[str, Any]:
     }
 
 
-def aggregate_v2(sources: list[Path]) -> dict[str, Any]:
+def aggregate_v2(sources: list[Path], *, roster_path: Path | None = None) -> dict[str, Any]:
     if not sources:
         raise SkillCohortError("source_required")
-    reports = [_source_report_v2(source) for source in sources]
+    roster: dict[str, Any] | None = None
+    roster_sha256: str | None = None
+    if roster_path is not None:
+        roster, roster_sha256 = _validate_v2_roster(roster_path)
+    reports = [
+        _source_report_v2(source, roster=roster, roster_sha256=roster_sha256)
+        for source in sources
+    ]
     observed = [report for report in reports if report["state"] == "OBSERVED"]
     count_keys = (
         "eligible_candidates", "eligible_work_items", "unattributed_work_items",
@@ -887,7 +1044,20 @@ def aggregate_v2(sources: list[Path]) -> dict[str, Any]:
         reason_codes.append("correction_count_below_5")
     if aggregate_counts["capture_invalid"]:
         reason_codes.append("candidate_capture_invalid")
-    if len({(report["activation_id"], report["activation_at"]) for report in observed}) != 1 or len(observed) < 2:
+    roster_complete = (
+        roster is None
+        or (
+            len(reports) == 2
+            and len(observed) == 2
+            and {report.get("target_identity") for report in observed} == set(roster["target_identities"])
+            and {report.get("roster_sha256") for report in observed} == {roster_sha256}
+        )
+    )
+    if (
+        len({(report["activation_id"], report["activation_at"]) for report in observed}) != 1
+        or len(observed) < 2
+        or not roster_complete
+    ):
         reason_codes.append("pilot_roster_incomplete")
     return {
         "schema_version": SCHEMA_VERSION,
@@ -919,12 +1089,19 @@ def main(argv: list[str] | None = None) -> int:
     enable_v2_setup_cmd.add_argument("--target", type=Path, required=True)
     enable_v2_setup_cmd.add_argument("--activation-id", required=True)
     enable_v2_setup_cmd.add_argument("--activation-at", required=True)
+    enable_v2_setup_cmd.add_argument("--roster", type=Path, required=True)
     preflight_setup_cmd = sub.add_parser("preflight-from-setup")
     preflight_setup_cmd.add_argument("--target", type=Path, required=True)
     preflight_v2_setup_cmd = sub.add_parser("preflight-v2-from-setup")
     preflight_v2_setup_cmd.add_argument("--target", type=Path, required=True)
     preflight_v2_setup_cmd.add_argument("--activation-id", required=True)
     preflight_v2_setup_cmd.add_argument("--activation-at", required=True)
+    preflight_v2_setup_cmd.add_argument("--roster", type=Path, required=True)
+    create_v2_roster_cmd = sub.add_parser("create-v2-roster")
+    create_v2_roster_cmd.add_argument("--target", type=Path, action="append", required=True)
+    create_v2_roster_cmd.add_argument("--output", type=Path, required=True)
+    create_v2_roster_cmd.add_argument("--activation-id", required=True)
+    create_v2_roster_cmd.add_argument("--activation-at", required=True)
     pending_review = sub.add_parser("record-pending-review")
     pending_review.add_argument("--target", type=Path, required=True)
     pending_review.add_argument("--verdict", required=True)
@@ -937,6 +1114,7 @@ def main(argv: list[str] | None = None) -> int:
     report = sub.add_parser("report")
     report.add_argument("--source", type=Path, action="append", required=True)
     report.add_argument("--generation", choices=["v1", "v2"], default="v1")
+    report.add_argument("--roster", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.command == "enable":
@@ -946,12 +1124,19 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "enable-v2-from-setup":
             result = enable_v2_from_setup(
                 args.target, activation_id=args.activation_id, activation_at=args.activation_at,
+                roster_path=args.roster,
             )
         elif args.command == "preflight-from-setup":
             result = preflight_from_setup(args.target)
         elif args.command == "preflight-v2-from-setup":
             result = preflight_v2_from_setup(
                 args.target, activation_id=args.activation_id, activation_at=args.activation_at,
+                roster_path=args.roster,
+            )
+        elif args.command == "create-v2-roster":
+            result = create_v2_roster(
+                targets=args.target, output=args.output,
+                activation_id=args.activation_id, activation_at=args.activation_at,
             )
         elif args.command == "record-pending-review":
             generation = _resolve_record_generation(args.target, args.generation)
@@ -962,7 +1147,12 @@ def main(argv: list[str] | None = None) -> int:
             record = record_pending_v2_followup if generation == "v2" else record_pending_followup
             result = record(args.target, outcome=args.outcome)
         else:
-            result = aggregate_v2(args.source) if args.generation == "v2" else aggregate(args.source)
+            if args.generation == "v2" and args.roster is None:
+                raise SkillCohortError("v2_roster_required")
+            result = (
+                aggregate_v2(args.source, roster_path=args.roster)
+                if args.generation == "v2" else aggregate(args.source)
+            )
     except SkillCohortError as error:
         print(json.dumps({"status": "blocked", "reason_code": str(error)}, ensure_ascii=False, sort_keys=True))
         return 2

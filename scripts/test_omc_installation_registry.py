@@ -20,6 +20,18 @@ def _source_kit() -> Path:
     return KIT_ROOT
 
 
+def _v2_pilot_target(root: Path, *, remote_name: str) -> Path:
+    root.mkdir()
+    for args in (
+        ("init", "-q"),
+        ("config", "user.email", "cohort@example.test"),
+        ("config", "user.name", "Cohort"),
+        ("remote", "add", "origin", f"https://example.test/{remote_name}.git"),
+    ):
+        subprocess.run(["git", "-C", str(root), *args], check=True)
+    return root
+
+
 def test_registry_requires_explicit_consent_and_deduplicates_setup_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -173,19 +185,32 @@ def test_successful_root_setup_automatically_enables_raw_free_cohort(tmp_path: P
 
 
 def test_setup_enables_v2_only_with_an_explicit_shared_activation(tmp_path: Path) -> None:
-    pilot = tmp_path / "pilot"
+    pilot = _v2_pilot_target(tmp_path / "pilot", remote_name="pilot")
+    second_pilot = _v2_pilot_target(tmp_path / "second-pilot", remote_name="second-pilot")
+    outside_pilot = _v2_pilot_target(tmp_path / "outside-pilot", remote_name="outside-pilot")
     non_pilot = tmp_path / "non-pilot"
     state_dir = tmp_path / "registry-state"
+    roster = tmp_path / "custody" / "pilot-roster.json"
+    roster.parent.mkdir()
     activation_id = "6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51"
     activation_at = "2026-09-18T05:00:00+00:00"
     env = os.environ | {"OMC_INSTALLATION_REGISTRY_DIR": str(state_dir)}
 
+    roster_result = subprocess.run(
+        [
+            sys.executable, str(KIT_ROOT / "scripts" / "omc.py"), "skill-cohort", "create-v2-roster",
+            "--target", str(pilot), "--target", str(second_pilot), "--output", str(roster),
+            "--activation-id", activation_id, "--activation-at", activation_at,
+        ], cwd=KIT_ROOT, env=env, text=True, capture_output=True, check=False,
+    )
+
     pilot_result = subprocess.run(
         [
             sys.executable, str(KIT_ROOT / "scripts" / "omc.py"), "setup",
-            "--target", str(pilot), "--force", "--skip-session-start",
-            "--skill-cohort-v2-activation-id", activation_id,
-            "--skill-cohort-v2-activation-at", activation_at,
+                "--target", str(pilot), "--force", "--skip-session-start",
+                "--skill-cohort-v2-activation-id", activation_id,
+                "--skill-cohort-v2-activation-at", activation_at,
+                "--skill-cohort-v2-roster", str(roster),
         ], cwd=KIT_ROOT, env=env, text=True, capture_output=True, check=False,
     )
     non_pilot_result = subprocess.run(
@@ -194,12 +219,25 @@ def test_setup_enables_v2_only_with_an_explicit_shared_activation(tmp_path: Path
             "--target", str(non_pilot), "--force", "--skip-session-start",
         ], cwd=KIT_ROOT, env=env, text=True, capture_output=True, check=False,
     )
+    outside_result = subprocess.run(
+        [
+            sys.executable, str(KIT_ROOT / "scripts" / "omc.py"), "setup",
+            "--target", str(outside_pilot), "--force", "--skip-session-start",
+            "--skill-cohort-v2-activation-id", activation_id,
+            "--skill-cohort-v2-activation-at", activation_at,
+            "--skill-cohort-v2-roster", str(roster),
+        ], cwd=KIT_ROOT, env=env, text=True, capture_output=True, check=False,
+    )
 
+    assert roster_result.returncode == 0, roster_result.stderr + roster_result.stdout
     assert pilot_result.returncode == 0, pilot_result.stderr + pilot_result.stdout
     assert non_pilot_result.returncode == 0, non_pilot_result.stderr + non_pilot_result.stdout
+    assert outside_result.returncode == 2
+    assert not (outside_pilot / ".omc" / "install-receipt.json").exists()
     v2 = json.loads((pilot / ".omc" / "skill-effectiveness-cohort-v2.json").read_text(encoding="utf-8"))
     assert v2["activation_id"] == activation_id
     assert v2["activation_at"] == activation_at
+    assert "roster_sha256" in v2
     assert not (non_pilot / ".omc" / "skill-effectiveness-cohort-v2.json").exists()
 
 

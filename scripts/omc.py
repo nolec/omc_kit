@@ -235,6 +235,7 @@ def main() -> int:
     )
     setup.add_argument("--skill-cohort-v2-activation-id")
     setup.add_argument("--skill-cohort-v2-activation-at")
+    setup.add_argument("--skill-cohort-v2-roster", type=Path)
 
     setup_ignore = sub.add_parser(
         "setup-ignore",
@@ -261,6 +262,12 @@ def main() -> int:
     skill_cohort_report = skill_cohort_sub.add_parser("report")
     skill_cohort_report.add_argument("--source", type=Path, action="append", required=True)
     skill_cohort_report.add_argument("--generation", choices=["v1", "v2"], default="v1")
+    skill_cohort_report.add_argument("--roster", type=Path)
+    skill_cohort_roster = skill_cohort_sub.add_parser("create-v2-roster")
+    skill_cohort_roster.add_argument("--target", type=Path, action="append", required=True)
+    skill_cohort_roster.add_argument("--output", type=Path, required=True)
+    skill_cohort_roster.add_argument("--activation-id", required=True)
+    skill_cohort_roster.add_argument("--activation-at", required=True)
     skill_cohort_review = skill_cohort_sub.add_parser("record-review")
     skill_cohort_review.add_argument("--target", type=Path, required=True)
     skill_cohort_review.add_argument("--verdict", required=True)
@@ -691,8 +698,9 @@ def main() -> int:
         target = args.target.resolve()
         activation_id = args.skill_cohort_v2_activation_id
         activation_at = args.skill_cohort_v2_activation_at
-        if bool(activation_id) != bool(activation_at):
-            ap.error("--skill-cohort-v2-activation-id and --skill-cohort-v2-activation-at must be supplied together")
+        roster_path = args.skill_cohort_v2_roster
+        if len({bool(activation_id), bool(activation_at), roster_path is not None}) != 1:
+            ap.error("--skill-cohort-v2-activation-id, --skill-cohort-v2-activation-at, and --skill-cohort-v2-roster must be supplied together")
         cohort_script = kit / "scripts" / "omc_skill_effectiveness_cohort.py"
         cohort_preflight_code = _run_script(
             cohort_script,
@@ -706,6 +714,7 @@ def main() -> int:
                 [
                     "preflight-v2-from-setup", "--target", str(target),
                     "--activation-id", activation_id, "--activation-at", activation_at,
+                    "--roster", str(roster_path),
                 ],
             )
             if cohort_v2_preflight_code != 0:
@@ -739,6 +748,7 @@ def main() -> int:
                 [
                     "enable-v2-from-setup", "--target", str(target),
                     "--activation-id", activation_id, "--activation-at", activation_at,
+                    "--roster", str(roster_path),
                 ],
             )
             if cohort_v2_code != 0:
@@ -765,6 +775,17 @@ def main() -> int:
                 cohort_script,
                 ["enable", "--target", str(args.target)],
             )
+        if args.skill_cohort_command == "create-v2-roster":
+            return _run_script(
+                cohort_script,
+                [
+                    "create-v2-roster",
+                    *(part for target in args.target for part in ("--target", str(target))),
+                    "--output", str(args.output),
+                    "--activation-id", args.activation_id,
+                    "--activation-at", args.activation_at,
+                ],
+            )
         if args.skill_cohort_command == "record-review":
             return _run_script(
                 cohort_script,
@@ -784,6 +805,8 @@ def main() -> int:
             )
         cohort_args = ["report"]
         cohort_args.extend(["--generation", args.generation])
+        if args.roster is not None:
+            cohort_args.extend(["--roster", str(args.roster)])
         for source in args.source:
             cohort_args.extend(["--source", str(source)])
         return _run_script(cohort_script, cohort_args)
