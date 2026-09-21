@@ -55,6 +55,12 @@ def test_peer_snapshot_cannot_bind_scope_changed_after_detach(tmp_path: Path) ->
 
     frozen = peer.freeze_peer_input(repo)
     (repo / "app.py").write_text("value = 'changed after detach'\n", encoding="utf-8")
+    evidence = snapshot.seal_review_output(
+        repo,
+        snapshot_path=Path(str(frozen["snapshot_path"])),
+        snapshot_sha256=str(frozen["snapshot_sha256"]),
+        review_output=b"peer reviewed candidate only\n",
+    )
 
     with pytest.raises(snapshot.CandidateScopeError, match="review_stale"):
         snapshot.record_review_receipt_from_snapshot(
@@ -62,5 +68,6 @@ def test_peer_snapshot_cannot_bind_scope_changed_after_detach(tmp_path: Path) ->
             snapshot_path=Path(str(frozen["snapshot_path"])),
             snapshot_sha256=str(frozen["snapshot_sha256"]),
             verdict="APPROVE",
-            review_output=b"peer reviewed candidate only\n",
+            review_evidence_path=Path(str(evidence["evidence_path"])),
+            review_evidence_sha256=str(evidence["evidence_sha256"]),
         )

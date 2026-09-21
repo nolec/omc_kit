@@ -2,6 +2,10 @@
 
 프로젝트 품질 명령은 OMC 코어가 추측하지 않습니다. 설정이 없거나 근거가 바뀌면 LLM은 아래 계약으로 후보만 제안하고 멈춥니다.
 
+OMC Kit 자체의 local ship 명령과 CI 관계는 일반 README가 아니라
+[`quality_gate_contract.md`](quality_gate_contract.md)에 고정합니다. 각 사용처는
+자신의 동일한 성격의 프로젝트 전용 계약 파일을 evidence로 사용해야 합니다.
+
 ## 근거 우선순위
 
 1. 기존 `.omc/quality-gates.json`

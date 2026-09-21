@@ -8,21 +8,20 @@ blind/read-only 비교 평가는 state/session 명령과 변경 가능한 검증
 ```bash
 python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-review" --request "<현재 작업 한 줄 요약>" --roles code_review --completion-action preserve-if-present
 python3 scripts/omc_review_snapshot.py capture-review --target . --base-commit "$(git rev-parse HEAD)" && git status -sb
-git diff HEAD
+python3 scripts/omc_review_snapshot.py show-review-diff --review-snapshot <capture-path> --review-snapshot-sha256 <capture-sha256>
+git diff HEAD # scope 확인용이며 판정은 frozen diff 기준
 git ls-files --others --exclude-standard
 find . -newer .git/index
 python3 scripts/omc.py state status --target .
 ```
-capture가 반환한 immutable snapshot의 path·SHA를 보존한다. `APPROVE*` verdict 후 raw review body를 저장소 밖 regular file에 보존하고 `python3 scripts/omc_review_snapshot.py record-review --target . --review-snapshot <capture-path> --review-snapshot-sha256 <capture-sha256> --verdict APPROVE --review-output <raw-review-file>`를 실행한다. 현재 후보가 capture와 다르면 `review_stale`로 차단한다. 반환된 review receipt의 `candidate_scope_sha256`는 ship 전용 결속이며 기록 실패는 승인으로 추정하지 않는다.
-
+capture가 반환한 immutable snapshot의 path·SHA를 보존하고 frozen diff만 판정한다. `APPROVE*` verdict 후 raw review body를 저장소 밖 regular file에 보존해 `seal-review-output --review-snapshot <capture-path> --review-snapshot-sha256 <capture-sha256> --review-output <raw-review-file>`로 evidence path·SHA를 만든 뒤 `omc_review_snapshot.py record-review --target . --review-snapshot <capture-path> --review-snapshot-sha256 <capture-sha256> --review-evidence <evidence-path> --review-evidence-sha256 <evidence-sha256> --verdict APPROVE`를 실행한다. 이미 commit한 후보는 명시적 reviewed base와 `--candidate-commit HEAD`를 함께 사용한다. 현재 후보가 capture와 다르면 `review_stale`로 차단한다. review receipt의 `candidate_scope_sha256`는 ship 전용 결속이며 기록 실패는 승인으로 추정하지 않는다.
 등록된 완료 품질 관찰이 있으면 현재 pending 작업은 `python3 scripts/omc_completion_observation.py live-status --target .`로 상태를 읽습니다. 완료 후 pending이 제거된 cross-session 작업은 immutable ledger의 명시적 work ID를 확인해 `python3 scripts/omc_completion_observation.py live-status --target . --work-id <work_id>`로 조회하며 다른 작업을 추정하지 않습니다. `AWAITING_USER_OUTCOME`이면 먼저 `python3 scripts/omc_completion_observation.py live-decision-context --target . --work-id <work_id>`의 read-only projection에서 agent 보고·독립 재검증 여부·미실행 항목·commit 결속·자동 추천 불가 사유를 사용자에게 보여준 뒤, 리뷰 판정과 별개로 마지막 행동을 **`수용 / 수정 필요 / 보류`** 중 하나로 묻습니다. 다음 일반 턴의 UserPromptSubmit hook이 원문을 자동 보존하므로 사용자에게 원문 복사를 요구하지 않습니다. 수용·보류 외 후속은 먼저 pending으로 저장하며 `defect_correction`, `missing_requirement`, `persona_mismatch`, `scope_change`, `clarification`, `preference` 중 사용자가 확정한 뒤 `live-classify`로 별도 결속합니다. 불명확하면 추정하지 않습니다. 관찰 실패는 리뷰 판정을 바꾸지 않고 `OBSERVATION_INVALID`로만 보고합니다.
 ## 필수 체크
 - 범위 확정 / 파일:라인 근거 / 검증 커맨드를 기록한다. 출력이 길어져도 마지막 `검증 커맨드 / 판정 / VERDICT / 다음 추천`은 생략하지 않습니다. | 리뷰어가 사용자에게 바로 보여줄 것: 근거 이슈·검증·판정 | 시스템이 암묵적으로 처리: 분할·요약·범위 밖 제외 | 정상 최종 출력: finding → 검증 → 판정, 첫 3줄 안에 결론, 24줄 이하, 같은 사실 반복 0회, 다음 행동은 정확히 1개, Machine output contract 두 줄은 줄 수·중복·다음 행동 측정에서 제외, 내부 상태인 `사용자 선택 대기` 직접 노출 금지 | 모든 severity가 비면 한 줄로 합친다. REVISE/BLOCK은 원인·영향·수정 방향을 유지한다.
 - 안전 필수 항목: 파일:라인 / VERDICT / [치명] [중대] [경미] [제안]
 리뷰 범위: `git diff HEAD` 전체와 필요한 untracked/ignored 파일을 직접 읽고, `.omc/runs` `.omc/lessons` `pipeline_run_result`는 제외한다. 200줄 이상은 파일별로 나눈다.
 ## Step 1. REVIEW CHECKLIST — C1 정확성/정합성: null·빈 배열·타임존·인덱스·정렬 / C2 조용한 실패 / C3 안전성·복구
-C4 API·consumer 계약 / C5 새 로직 테스트·검증 / C6 성능·메모리·불필요한 반복
-C7 유지보수·책임·이름 / C8 외부 계약: optional/null/unknown fallback과 필드·타입·순서. 모르면 `N/A — 이유`.
+C4 API·consumer 계약 / C5 새 로직 테스트·검증 / C6 성능·메모리·불필요한 반복 / C7 유지보수·책임·이름 / C8 외부 계약: optional/null/unknown fallback과 필드·타입·순서. 모르면 `N/A — 이유`.
 ## Evidence gate
 - `behavioral_direct`: diff 안의 원인→분기→관찰 결과가 직접 연결될 때만 P1/P2 finding 가능.
 - `non_behavioral`: 동작 영향 없음, `context_needed`: 외부 계약 필요, `test_quality_only`: 테스트 강도만 우려, `unresolved`: 근거 상충. 이들은 P1/P2 finding으로 출력하지 않는다.

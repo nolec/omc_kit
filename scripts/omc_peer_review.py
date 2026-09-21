@@ -47,14 +47,9 @@ def freeze_peer_input(project_root: Path) -> dict[str, object]:
     )
     if not candidate["candidate_scope"]:
         raise omc_review_snapshot.PeerSnapshotError("peer_review_scope_empty")
-    diff_text = _run(["git", "diff", "HEAD", "--binary"], project_root)
-    tracked = set(
-        _run(["git", "diff", "--name-only", "-z", "HEAD", "--"], project_root).split("\0")
-    )
-    for entry in candidate["candidate_scope"]:
-        path = str(entry["path"])
-        if entry["status"] == "added" and path not in tracked:
-            diff_text += _untracked_diff(project_root, path)
+    diff_text = omc_review_snapshot.build_review_diff(
+        project_root, base_commit=base_commit
+    ).decode("utf-8")
     frozen = omc_review_snapshot.create_peer_snapshot(
         project_root,
         candidate=candidate,
@@ -189,6 +184,13 @@ def main() -> int:
         "candidate_scope_sha256": frozen.get("candidate_scope_sha256"),
     }
     if proc.returncode == 0:
+        evidence = omc_review_snapshot.seal_review_output(
+            project_root,
+            snapshot_path=Path(str(frozen["snapshot_path"])),
+            snapshot_sha256=str(frozen["snapshot_sha256"]),
+            review_output=proc.stdout.encode("utf-8"),
+        )
+        metadata.update(evidence)
         review_out_path.write_text(
             f"<!-- OMC_PEER_REVIEW: {json.dumps(metadata, sort_keys=True)} -->\n{proc.stdout}",
             encoding="utf-8",

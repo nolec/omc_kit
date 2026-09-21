@@ -229,7 +229,10 @@ def test_review_skill_records_an_immutable_candidate_receipt():
     text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
 
     for marker in (
+        "show-review-diff",
+        "seal-review-output",
         "omc_review_snapshot.py record-review",
+        "--review-evidence",
         "candidate_scope_sha256",
         "review receipt",
     ):

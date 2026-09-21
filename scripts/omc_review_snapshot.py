@@ -21,6 +21,7 @@ CANDIDATE_POLICY_VERSION = "omc-candidate-policy/v1"
 RECEIPT_SCHEMA = "omc-review-receipt/v1"
 POINTER_SCHEMA = "omc-review-current/v1"
 PEER_SNAPSHOT_SCHEMA = "omc-peer-snapshot/v1"
+REVIEW_EVIDENCE_SCHEMA = "omc-review-evidence/v1"
 _ALLOWED_VERDICTS = {"APPROVE", "APPROVE_WITH_NOTES"}
 _RUNTIME_PREFIXES = (".omc/state/", ".omc/context/", ".omc/runs/")
 _RUNTIME_FILES = {
@@ -35,6 +36,7 @@ _RUNTIME_FILES = {
     ".omc/pipeline.log",
     ".omc/pipeline_run_result.json",
     ".omc/pipeline_session.json",
+    ".omc/peer_review.md",
     ".omc/project-memory.json",
     ".omc/summary.md",
 }
@@ -88,6 +90,18 @@ def _commit(root: Path, revision: str) -> str:
     if len(rendered) != 40:
         raise CandidateScopeError("commit_invalid")
     return rendered
+
+
+def _repository_identity(root: Path, *, base_commit: str) -> str:
+    """Return a checkout-independent identity for the reviewed Git lineage."""
+    roots = sorted(
+        line
+        for line in _git(root, "rev-list", "--max-parents=0", base_commit).decode("ascii").splitlines()
+        if len(line) == 40
+    )
+    if not roots:
+        raise CandidateScopeError("repository_identity_unavailable")
+    return "git-lineage/v1:" + _sha256(_canonical_bytes({"roots": roots}))
 
 
 def _is_ancestor(root: Path, *, base_commit: str, candidate_commit: str) -> bool:
@@ -190,6 +204,7 @@ def _candidate(
     paths: list[str],
     entry_for_path: Any,
 ) -> dict[str, object]:
+    repository_identity = _repository_identity(root, base_commit=base_commit)
     entries: list[dict[str, str]] = []
     for path in sorted(set(paths)):
         if is_runtime_artifact(path):
@@ -206,12 +221,13 @@ def _candidate(
     scope_payload = {
         "schema_version": CANDIDATE_SCHEMA,
         "policy_version": CANDIDATE_POLICY_VERSION,
+        "repository_identity": repository_identity,
         "base_commit": base_commit,
         "entries": entries,
     }
     return {
         "schema_version": CANDIDATE_SCHEMA,
-        "repository_root_sha256": _sha256(str(root).encode("utf-8")),
+        "repository_identity": repository_identity,
         "base_commit": base_commit,
         "candidate_scope": entries,
         "candidate_scope_sha256": _sha256(_canonical_bytes(scope_payload)),
@@ -256,6 +272,43 @@ def build_commit_candidate(
             root, revision=candidate, path=path
         ),
     )
+
+
+def _untracked_review_diff(root: Path, path: str) -> bytes:
+    candidate = root / path
+    if candidate.is_file() or candidate.is_symlink():
+        result = subprocess.run(
+            ["git", "-C", str(root), "diff", "--no-index", "--binary", "--", "/dev/null", path],
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode not in (0, 1):
+            raise CandidateScopeError("review_diff_unavailable")
+        return result.stdout
+    if candidate.is_dir():
+        return f"Submodule candidate: {path}\n".encode("utf-8")
+    raise CandidateScopeError("review_diff_unavailable")
+
+
+def build_review_diff(
+    project_root: Path, *, base_commit: str, candidate_commit: str | None = None
+) -> bytes:
+    """Freeze the exact diff presented to a human or peer reviewer."""
+    root = _project_root(project_root)
+    base = _commit(root, base_commit)
+    if candidate_commit is not None:
+        candidate = _commit(root, candidate_commit)
+        if not _is_ancestor(root, base_commit=base, candidate_commit=candidate):
+            raise CandidateScopeError("base_commit_not_ancestor")
+        return _git(root, "diff", base, candidate, "--binary")
+    diff = _git(root, "diff", base, "--binary")
+    tracked = set(_decode_paths(_git(root, "diff", "--name-only", "-z", base, "--")))
+    candidate = build_worktree_candidate(root, base_commit=base)
+    for entry in candidate["candidate_scope"]:
+        path = str(entry["path"])
+        if entry["status"] == "added" and path not in tracked:
+            diff += _untracked_review_diff(root, path)
+    return diff
 
 
 def _snapshot_dir(root: Path) -> Path:
@@ -307,7 +360,7 @@ def _atomic_replace(path: Path, payload: bytes) -> None:
 def _validate_candidate(candidate: Any) -> dict[str, object]:
     required = {
         "schema_version",
-        "repository_root_sha256",
+        "repository_identity",
         "base_commit",
         "candidate_scope",
         "candidate_scope_sha256",
@@ -317,6 +370,10 @@ def _validate_candidate(candidate: Any) -> dict[str, object]:
         raise CandidateScopeError("candidate_invalid")
     if candidate["schema_version"] != CANDIDATE_SCHEMA:
         raise CandidateScopeError("candidate_schema_invalid")
+    if not isinstance(candidate["repository_identity"], str) or not candidate[
+        "repository_identity"
+    ].startswith("git-lineage/v1:"):
+        raise CandidateScopeError("candidate_repository_identity_invalid")
     if not isinstance(candidate["base_commit"], str) or len(candidate["base_commit"]) != 40:
         raise CandidateScopeError("candidate_base_invalid")
     entries = candidate["candidate_scope"]
@@ -330,6 +387,7 @@ def _validate_candidate(candidate: Any) -> dict[str, object]:
     payload = {
         "schema_version": CANDIDATE_SCHEMA,
         "policy_version": CANDIDATE_POLICY_VERSION,
+        "repository_identity": candidate["repository_identity"],
         "base_commit": candidate["base_commit"],
         "entries": entries,
     }
@@ -346,14 +404,27 @@ def record_review_receipt(
     candidate: dict[str, object],
     verdict: str,
     review_output: bytes,
+    review_snapshot_sha256: str,
+    review_evidence_sha256: str,
+    review_snapshot_name: str,
+    review_evidence_name: str,
     verification_receipt_sha256: str | None = None,
 ) -> dict[str, object]:
     root = _project_root(project_root)
     candidate = _validate_candidate(candidate)
-    if candidate["repository_root_sha256"] != _sha256(str(root).encode("utf-8")):
+    if candidate["repository_identity"] != _repository_identity(
+        root, base_commit=str(candidate["base_commit"])
+    ):
         raise CandidateScopeError("candidate_repository_mismatch")
     if verdict not in _ALLOWED_VERDICTS or not review_output:
         raise CandidateScopeError("review_receipt_input_invalid")
+    if any(
+        len(value) != 64 or any(char not in "0123456789abcdef" for char in value)
+        for value in (review_snapshot_sha256, review_evidence_sha256)
+    ):
+        raise CandidateScopeError("review_evidence_sha256_invalid")
+    _artifact_path(root, review_snapshot_name)
+    _artifact_path(root, review_evidence_name)
     if verification_receipt_sha256 is not None and (
         len(verification_receipt_sha256) != 64
         or any(char not in "0123456789abcdef" for char in verification_receipt_sha256)
@@ -363,11 +434,15 @@ def record_review_receipt(
     body = {
         "schema_version": RECEIPT_SCHEMA,
         "receipt_id": receipt_id,
-        "repository_root_sha256": candidate["repository_root_sha256"],
+        "repository_identity": candidate["repository_identity"],
         "base_commit": candidate["base_commit"],
         "candidate_scope": candidate["candidate_scope"],
         "candidate_scope_sha256": candidate["candidate_scope_sha256"],
         "verification_receipt_sha256": verification_receipt_sha256,
+        "review_snapshot_sha256": review_snapshot_sha256,
+        "review_evidence_sha256": review_evidence_sha256,
+        "review_snapshot_name": review_snapshot_name,
+        "review_evidence_name": review_evidence_name,
         "review_verdict": verdict,
         "review_output_sha256": _sha256(review_output),
         "reviewed_at": _now(),
@@ -379,7 +454,7 @@ def record_review_receipt(
     pointer_path = directory / "current.json"
     pointer = {
         "schema_version": POINTER_SCHEMA,
-        "repository_root_sha256": candidate["repository_root_sha256"],
+        "repository_identity": candidate["repository_identity"],
         "receipt_name": receipt_path.name,
         "receipt_sha256": receipt["receipt_sha256"],
     }
@@ -392,21 +467,126 @@ def record_review_receipt(
     }
 
 
-def capture_review_snapshot(project_root: Path, *, base_commit: str) -> dict[str, object]:
+def capture_review_snapshot(
+    project_root: Path, *, base_commit: str, candidate_commit: str | None = None
+) -> dict[str, object]:
     """Freeze the candidate before review output exists.
 
-    The empty diff is deliberate: this artifact establishes the reviewed
-    candidate identity, while the caller preserves the raw review body
-    separately. Peer review uses the same envelope with its immutable diff.
+    The diff and candidate identity are frozen together so every reviewer
+    reads the same subject even if the working tree changes later.
     """
     root = _project_root(project_root)
-    candidate = build_worktree_candidate(root, base_commit=base_commit)
-    frozen = create_peer_snapshot(root, candidate=candidate, review_diff=b"")
+    candidate = (
+        build_commit_candidate(root, base_commit=base_commit, candidate_commit=candidate_commit)
+        if candidate_commit is not None
+        else build_worktree_candidate(root, base_commit=base_commit)
+    )
+    frozen = create_peer_snapshot(
+        root,
+        candidate=candidate,
+        review_diff=build_review_diff(root, base_commit=base_commit, candidate_commit=candidate_commit),
+    )
     return {
         "snapshot_path": frozen["path"],
         "snapshot_sha256": frozen["sha256"],
         "candidate_scope_sha256": candidate["candidate_scope_sha256"],
     }
+
+
+def _review_evidence_dir(root: Path) -> Path:
+    directory = _snapshot_dir(root) / "review-evidence"
+    directory.mkdir(parents=True, exist_ok=True)
+    if directory.is_symlink() or not directory.is_dir():
+        raise CandidateScopeError("review_evidence_directory_invalid")
+    return directory
+
+
+def _artifact_name(root: Path, path: Path) -> str:
+    """Return a safe receipt-relative name for a managed review artifact."""
+    directory = _snapshot_dir(root)
+    try:
+        relative = path.resolve(strict=False).relative_to(directory.resolve())
+    except ValueError as error:
+        raise CandidateScopeError("review_artifact_outside_managed_state") from error
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise CandidateScopeError("review_artifact_name_invalid")
+    return relative.as_posix()
+
+
+def _artifact_path(root: Path, name: Any) -> Path:
+    if not isinstance(name, str) or not name:
+        raise CandidateScopeError("review_artifact_name_invalid")
+    relative = Path(name)
+    if relative.is_absolute() or any(part in {"", ".", ".."} for part in relative.parts):
+        raise CandidateScopeError("review_artifact_name_invalid")
+    return _snapshot_dir(root) / relative
+
+
+def seal_review_output(
+    project_root: Path,
+    *,
+    snapshot_path: Path,
+    snapshot_sha256: str,
+    review_output: bytes,
+) -> dict[str, object]:
+    root = _project_root(project_root)
+    loaded = load_peer_snapshot(snapshot_path, expected_sha256=snapshot_sha256)
+    candidate = loaded["candidate"]
+    if candidate["repository_identity"] != _repository_identity(
+        root, base_commit=str(candidate["base_commit"])
+    ):
+        raise CandidateScopeError("review_snapshot_repository_mismatch")
+    if not review_output:
+        raise CandidateScopeError("review_evidence_input_invalid")
+    evidence = {
+        "schema_version": REVIEW_EVIDENCE_SCHEMA,
+        "review_snapshot_sha256": snapshot_sha256,
+        "candidate_scope_sha256": candidate["candidate_scope_sha256"],
+        "review_output_base64": base64.b64encode(review_output).decode("ascii"),
+        "review_output_sha256": _sha256(review_output),
+    }
+    encoded = _canonical_bytes(evidence)
+    path = _review_evidence_dir(root) / f"{uuid.uuid4().hex}.json"
+    _write_exclusive(path, encoded)
+    return {"evidence_path": str(path), "evidence_sha256": _sha256(encoded)}
+
+
+def _load_review_evidence(
+    evidence_path: Path,
+    *,
+    expected_sha256: str,
+    expected_snapshot_sha256: str,
+    expected_candidate_scope_sha256: str,
+) -> bytes:
+    encoded = _regular_bytes(
+        evidence_path, error_type=CandidateScopeError, error_code="review_evidence_invalid"
+    )
+    if _sha256(encoded) != expected_sha256:
+        raise CandidateScopeError("review_evidence_sha256_mismatch")
+    try:
+        evidence = json.loads(encoded.decode("utf-8"))
+        review_output = base64.b64decode(evidence["review_output_base64"], validate=True)
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CandidateScopeError("review_evidence_invalid") from error
+    if (
+        not isinstance(evidence, dict)
+        or set(evidence)
+        != {
+            "schema_version",
+            "review_snapshot_sha256",
+            "candidate_scope_sha256",
+            "review_output_base64",
+            "review_output_sha256",
+        }
+        or evidence["schema_version"] != REVIEW_EVIDENCE_SCHEMA
+        or evidence["review_snapshot_sha256"] != expected_snapshot_sha256
+    ):
+        raise CandidateScopeError("review_evidence_snapshot_mismatch")
+    if evidence["candidate_scope_sha256"] != expected_candidate_scope_sha256:
+        raise CandidateScopeError("review_evidence_candidate_mismatch")
+    if _sha256(review_output) != evidence["review_output_sha256"]:
+        raise CandidateScopeError("review_evidence_invalid")
+    return review_output
 
 
 def record_review_receipt_from_snapshot(
@@ -415,23 +595,36 @@ def record_review_receipt_from_snapshot(
     snapshot_path: Path,
     snapshot_sha256: str,
     verdict: str,
-    review_output: bytes,
+    review_evidence_path: Path,
+    review_evidence_sha256: str,
     verification_receipt_sha256: str | None = None,
 ) -> dict[str, object]:
     """Persist only the exact candidate that existed when review began."""
     root = _project_root(project_root)
     loaded = load_peer_snapshot(snapshot_path, expected_sha256=snapshot_sha256)
     candidate = loaded["candidate"]
-    if candidate["repository_root_sha256"] != _sha256(str(root).encode("utf-8")):
+    if candidate["repository_identity"] != _repository_identity(
+        root, base_commit=str(candidate["base_commit"])
+    ):
         raise CandidateScopeError("review_snapshot_repository_mismatch")
     current = build_worktree_candidate(root, base_commit=str(candidate["base_commit"]))
     if current["candidate_scope_sha256"] != candidate["candidate_scope_sha256"]:
         raise CandidateScopeError("review_stale")
+    review_output = _load_review_evidence(
+        review_evidence_path,
+        expected_sha256=review_evidence_sha256,
+        expected_snapshot_sha256=snapshot_sha256,
+        expected_candidate_scope_sha256=str(candidate["candidate_scope_sha256"]),
+    )
     return record_review_receipt(
         root,
         candidate=candidate,
         verdict=verdict,
         review_output=review_output,
+        review_snapshot_sha256=snapshot_sha256,
+        review_evidence_sha256=review_evidence_sha256,
+        review_snapshot_name=_artifact_name(root, snapshot_path),
+        review_evidence_name=_artifact_name(root, review_evidence_path),
         verification_receipt_sha256=verification_receipt_sha256,
     )
 
@@ -451,7 +644,7 @@ def _current_receipt(root: Path) -> dict[str, object]:
         raise CandidateScopeError("review_pointer_invalid") from error
     expected_pointer = {
         "schema_version",
-        "repository_root_sha256",
+        "repository_identity",
         "receipt_name",
         "receipt_sha256",
     }
@@ -459,7 +652,7 @@ def _current_receipt(root: Path) -> dict[str, object]:
         raise CandidateScopeError("review_pointer_invalid")
     if (
         pointer["schema_version"] != POINTER_SCHEMA
-        or pointer["repository_root_sha256"] != _sha256(str(root).encode("utf-8"))
+        or not isinstance(pointer["repository_identity"], str)
         or not isinstance(pointer["receipt_name"], str)
         or Path(pointer["receipt_name"]).name != pointer["receipt_name"]
     ):
@@ -477,11 +670,15 @@ def _current_receipt(root: Path) -> dict[str, object]:
     expected_receipt = {
         "schema_version",
         "receipt_id",
-        "repository_root_sha256",
+        "repository_identity",
         "base_commit",
         "candidate_scope",
         "candidate_scope_sha256",
         "verification_receipt_sha256",
+        "review_snapshot_sha256",
+        "review_evidence_sha256",
+        "review_snapshot_name",
+        "review_evidence_name",
         "review_verdict",
         "review_output_sha256",
         "reviewed_at",
@@ -493,7 +690,9 @@ def _current_receipt(root: Path) -> dict[str, object]:
     if (
         receipt["schema_version"] != RECEIPT_SCHEMA
         or receipt["review_verdict"] not in _ALLOWED_VERDICTS
-        or receipt["repository_root_sha256"] != _sha256(str(root).encode("utf-8"))
+        or receipt["repository_identity"] != _repository_identity(
+            root, base_commit=str(receipt["base_commit"])
+        )
         or receipt["receipt_sha256"] != _sha256(_canonical_bytes(body))
         or receipt["receipt_sha256"] != pointer["receipt_sha256"]
     ):
@@ -501,13 +700,39 @@ def _current_receipt(root: Path) -> dict[str, object]:
     _validate_candidate(
         {
             "schema_version": CANDIDATE_SCHEMA,
-            "repository_root_sha256": receipt["repository_root_sha256"],
+            "repository_identity": receipt["repository_identity"],
             "base_commit": receipt["base_commit"],
             "candidate_scope": receipt["candidate_scope"],
             "candidate_scope_sha256": receipt["candidate_scope_sha256"],
             "changed_paths": [entry["path"] for entry in receipt["candidate_scope"]],
         }
     )
+    try:
+        loaded = load_peer_snapshot(
+            _artifact_path(root, receipt["review_snapshot_name"]),
+            expected_sha256=str(receipt["review_snapshot_sha256"]),
+        )
+    except (CandidateScopeError, PeerSnapshotError) as error:
+        raise CandidateScopeError("review_receipt_invalid") from error
+    candidate = loaded["candidate"]
+    if (
+        candidate["repository_identity"] != receipt["repository_identity"]
+        or candidate["base_commit"] != receipt["base_commit"]
+        or candidate["candidate_scope"] != receipt["candidate_scope"]
+        or candidate["candidate_scope_sha256"] != receipt["candidate_scope_sha256"]
+    ):
+        raise CandidateScopeError("review_receipt_invalid")
+    try:
+        review_output = _load_review_evidence(
+            _artifact_path(root, receipt["review_evidence_name"]),
+            expected_sha256=str(receipt["review_evidence_sha256"]),
+            expected_snapshot_sha256=str(receipt["review_snapshot_sha256"]),
+            expected_candidate_scope_sha256=str(receipt["candidate_scope_sha256"]),
+        )
+    except CandidateScopeError as error:
+        raise CandidateScopeError("review_receipt_invalid") from error
+    if _sha256(review_output) != receipt["review_output_sha256"]:
+        raise CandidateScopeError("review_receipt_invalid")
     return receipt
 
 
@@ -628,11 +853,21 @@ def main() -> int:
     record.add_argument("--review-snapshot", type=Path, required=True)
     record.add_argument("--review-snapshot-sha256", required=True)
     record.add_argument("--verdict", required=True, choices=sorted(_ALLOWED_VERDICTS))
-    record.add_argument("--review-output", type=Path, required=True)
+    record.add_argument("--review-evidence", type=Path, required=True)
+    record.add_argument("--review-evidence-sha256", required=True)
     record.add_argument("--verification-receipt-sha256")
     capture = sub.add_parser("capture-review")
     capture.add_argument("--target", type=Path, default=Path.cwd())
     capture.add_argument("--base-commit", required=True)
+    capture.add_argument("--candidate-commit")
+    seal = sub.add_parser("seal-review-output")
+    seal.add_argument("--target", type=Path, default=Path.cwd())
+    seal.add_argument("--review-snapshot", type=Path, required=True)
+    seal.add_argument("--review-snapshot-sha256", required=True)
+    seal.add_argument("--review-output", type=Path, required=True)
+    show = sub.add_parser("show-review-diff")
+    show.add_argument("--review-snapshot", type=Path, required=True)
+    show.add_argument("--review-snapshot-sha256", required=True)
     validate = sub.add_parser("validate-ship")
     validate.add_argument("--target", type=Path, default=Path.cwd())
     args = parser.parse_args()
@@ -643,18 +878,36 @@ def main() -> int:
                 snapshot_path=args.review_snapshot,
                 snapshot_sha256=args.review_snapshot_sha256,
                 verdict=args.verdict,
-                review_output=args.review_output.read_bytes(),
+                review_evidence_path=args.review_evidence,
+                review_evidence_sha256=args.review_evidence_sha256,
                 verification_receipt_sha256=args.verification_receipt_sha256,
             )
         elif args.command == "capture-review":
-            result = capture_review_snapshot(args.target, base_commit=args.base_commit)
+            result = capture_review_snapshot(
+                args.target,
+                base_commit=args.base_commit,
+                candidate_commit=args.candidate_commit,
+            )
+        elif args.command == "seal-review-output":
+            result = seal_review_output(
+                args.target,
+                snapshot_path=args.review_snapshot,
+                snapshot_sha256=args.review_snapshot_sha256,
+                review_output=args.review_output.read_bytes(),
+            )
+        elif args.command == "show-review-diff":
+            loaded = load_peer_snapshot(
+                args.review_snapshot, expected_sha256=args.review_snapshot_sha256
+            )
+            print(loaded["review_diff"].decode("utf-8"), end="")
+            return 0
         else:
             result = validate_ship_candidate(args.target)
-    except (CandidateScopeError, OSError) as error:
+    except (CandidateScopeError, PeerSnapshotError, OSError) as error:
         print(json.dumps({"status": "BLOCKED", "reason_code": str(error)}))
         return 2
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0 if args.command in {"capture-review", "record-review"} or result["status"] == "READY" else 2
+    return 0 if args.command in {"capture-review", "seal-review-output", "record-review"} or result["status"] == "READY" else 2
 
 
 if __name__ == "__main__":

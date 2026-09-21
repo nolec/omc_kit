@@ -65,6 +65,91 @@ def test_valid_config_requires_matching_approval_receipt(tmp_path: Path):
     assert module.status(tmp_path)["status"] == "approval_required"
 
 
+def test_quality_gate_contract_excludes_readme_from_evidence_but_binds_contract_and_ci(
+    tmp_path: Path,
+):
+    """A legacy README-bound config must migrate by CAS before prose can be ignored."""
+    module = _load_module()
+    contract = ROOT / "docs" / "quality_gate_contract.md"
+    ci_workflow = ROOT / ".github" / "workflows" / "omc-ci.yml"
+    assert contract.is_file()
+    assert "명시적 migration을 적용한" in contract.read_text(encoding="utf-8")
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    target_contract = tmp_path / "docs" / "quality_gate_contract.md"
+    target_ci = tmp_path / ".github" / "workflows" / "omc-ci.yml"
+    target_contract.write_bytes(contract.read_bytes())
+    target_ci.write_bytes(ci_workflow.read_bytes())
+    (tmp_path / "README.md").write_text("unrelated product prose\n", encoding="utf-8")
+
+    config_path = tmp_path / ".omc" / "quality-gates.json"
+    config_path.parent.mkdir()
+    gate = {
+        "id": "test",
+        "purpose": "test",
+        "argv": ["python3", "-m", "pytest", "scripts", "-q", "-m", "not slow"],
+        "scope": "full",
+        "required": True,
+        "timeout_sec": 3600,
+    }
+    legacy_config = {
+        "schema_version": "omc-quality-gates/v1",
+        "base_ref": "origin/main",
+        "evidence": [
+            {"path": ".github/workflows/omc-ci.yml", "sha256": module.file_sha256(target_ci)},
+            {"path": "README.md", "sha256": module.file_sha256(tmp_path / "README.md")},
+        ],
+        "gates": [gate],
+    }
+    config_path.write_text(json.dumps(legacy_config), encoding="utf-8")
+    expected_current_sha256 = module.canonical_file_sha256(config_path)
+    migrated_config = {
+        **legacy_config,
+        "evidence": [
+            {"path": "docs/quality_gate_contract.md", "sha256": module.file_sha256(target_contract)},
+            {"path": ".github/workflows/omc-ci.yml", "sha256": module.file_sha256(target_ci)},
+        ],
+    }
+    proposal_path = tmp_path / "migration.json"
+    proposal_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "omc-quality-gate-proposal/v1",
+                "full_scope_requested": True,
+                "config": migrated_config,
+                "rationale": [
+                    {
+                        "gate_id": "test",
+                        "evidence_paths": [
+                            "docs/quality_gate_contract.md",
+                            ".github/workflows/omc-ci.yml",
+                        ],
+                        "scope_reason": "the full local regression contract is explicit",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    module.apply_proposal(
+        tmp_path,
+        proposal_path,
+        expected_current_sha256=expected_current_sha256,
+    )
+    module.approve(
+        tmp_path,
+        expected_config_sha256=module.canonical_file_sha256(config_path),
+        allow_full=True,
+    )
+
+    (tmp_path / "README.md").write_text("updated unrelated prose\n", encoding="utf-8")
+    assert module.status(tmp_path)["status"] == "ready"
+
+    target_contract.write_text("changed contract\n", encoding="utf-8")
+    assert module.status(tmp_path)["stale_evidence"] == ["docs/quality_gate_contract.md"]
+
+
 def test_approved_config_expands_changed_files_without_shell(tmp_path: Path, monkeypatch):
     module = _load_module()
     config_path = _write_config(tmp_path)
