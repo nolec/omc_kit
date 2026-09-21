@@ -226,6 +226,17 @@ def test_ship_skill_avoids_duplicate_approval_wording():
     assert text.count("사용자 명시 승인") <= 2, "duplicate approval wording should be trimmed"
 
 
+def test_ship_skill_revalidates_the_reviewed_candidate_before_ready():
+    text = _read(REQUIRED_SHIP_SKILL_PATHS[0])
+
+    for marker in (
+        "omc_review_snapshot.py validate-ship",
+        "review_stale",
+        "review receipt",
+    ):
+        assert marker in text
+
+
 def test_ship_skill_preserves_required_execution_order():
     text = _read(REQUIRED_SHIP_SKILL_PATHS[0])
     cursor = -1

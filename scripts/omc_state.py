@@ -31,6 +31,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_utils  # noqa: E402
+import omc_review_snapshot  # noqa: E402
 from omc_decision_input import (  # noqa: E402
     build_status_followup_input,
     resolve_status_followup_from_input,
@@ -1762,31 +1763,7 @@ def _git_scope_snapshot(project_root: Path) -> dict[str, list[str]]:
 
 
 def _is_local_commit_runtime_artifact(path: str) -> bool:
-    runtime_prefixes = (
-        ".omc/state/",
-        ".omc/context/",
-        ".omc/runs/",
-    )
-    runtime_files = {
-        ".omc/.DS_Store",
-        ".omc/agent-hook.log",
-        ".omc/allow_log.jsonl",
-        ".omc/context.md",
-        ".omc/cost_log.jsonl",
-        ".omc/install-receipt.json",
-        ".omc/install-source.json",
-        ".omc/notepad.md",
-        ".omc/pipeline.log",
-        ".omc/pipeline_run_result.json",
-        ".omc/pipeline_session.json",
-        ".omc/project-memory.json",
-        ".omc/summary.md",
-    }
-    return (
-        path in runtime_files
-        or path.startswith(runtime_prefixes)
-        or (path.startswith(".omc/native-review-") and path.endswith(".json"))
-    )
+    return omc_review_snapshot.is_runtime_artifact(path)
 
 
 def _decode_null_delimited_paths(payload: bytes) -> list[str]:

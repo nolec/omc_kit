@@ -23,6 +23,7 @@ OPTIONAL_REVIEW_SKILL_PATHS = [
 
 REQUIRED_SEQUENCE = [
     "python3 scripts/omc.py state sync-session --target . --mode autopilot --title \"omc-review\" --request \"<현재 작업 한 줄 요약>\" --roles code_review",
+    "omc_review_snapshot.py capture-review",
     "git status -sb",
     "git diff HEAD",
     "git ls-files --others --exclude-standard",
@@ -221,6 +222,17 @@ def test_review_skill_exposes_pending_bound_raw_free_outcome_prompt():
     text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
 
     for marker in REQUIRED_RAW_FREE_OUTCOME_MARKERS:
+        assert marker in text
+
+
+def test_review_skill_records_an_immutable_candidate_receipt():
+    text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
+
+    for marker in (
+        "omc_review_snapshot.py record-review",
+        "candidate_scope_sha256",
+        "review receipt",
+    ):
         assert marker in text
 
 

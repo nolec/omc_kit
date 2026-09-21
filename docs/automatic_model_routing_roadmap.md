@@ -7,6 +7,7 @@ OMC의 제품 목표는 사용자가 모델·executor·작업 단계를 직접 �
 ## Current Evidence
 
 - V1–V4 routing, TDD guard, bounded scheduler와 fail-closed receipt 검증은 구현·회귀 근거가 있다. 이는 기능 존재의 근거이며, 모든 제품 효과 또는 자동 실행의 근거는 아니다.
+- **Review–Ship Integrity Binding P0**는 `IMPLEMENTED_LOCAL_CONFORMANCE`이다. review 시작 전에 canonical candidate snapshot을 고정하고, 승인 receipt는 그 snapshot과 동일한 현재 후보에서만 생성된다. ship은 receipt의 `candidate_scope_sha256`를 working tree 또는 후속 commit으로 다시 투영해 검증하므로 정상 `review → commit → ship`은 유지하고, 코드·테스트·untracked·mode·symlink·submodule pointer 변경은 `review_stale`로 차단한다. async peer-review도 detach 전 snapshot만 읽는다. receipt 누락·손상·다른 repository snapshot은 fail-closed다. 이는 로컬 구현·회귀·receipt 재검증 근거이며 실제 사용자 효과·원격 설치 운영 증거는 아니다. Human Verification UX, decision context 확장, semantic review compression은 P1 이후로 보류한다.
 - task-review pilot v2는 roster와 T0는 보존됐지만 readiness·paired arm 실행·terminal·decision receipt가 없어 `ARCHIVED_INCOMPLETE`로 동결했다. reconciliation과 감사 외에 재사용하지 않는다.
 - `task-review-persona-effectiveness-20260904-v1`은 연구 계약 `APPROVED`, 실행 `PAUSED_NOT_CANCELLED`, evidence `NOT_STARTED` 상태다. 10건 paired case와 external Codex executor receipt 계약은 보존하지만 별도 사용자 결정 전에는 시작하지 않는다.
 - WeeklyKPI bounded local dashboard는 `LOCAL_DISCOVERY_PROTOTYPE`이며 `USER_ACCEPTANCE_PENDING`이다. 데이터 일치·계약 테스트·빌드·desktop/mobile QA는 로컬에서 확인했지만 durable product evidence, 반복 재사용, 수정 지시 감소와 OMC의 우위는 `NOT_YET_PROVEN`이다.
