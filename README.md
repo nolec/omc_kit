@@ -1,8 +1,37 @@
 # OMC - Orchestrated Multi-agent Craft
 
-TDD 게이트와 telemetry를 갖춘 멀티 LLM 오케스트레이션 킷입니다. Codex, Claude Code, Gemini CLI, Cursor에서 같은 프로젝트 규칙과 작업 흐름을 사용할 수 있습니다.
+OMC는 Codex·Claude Code·Gemini·Cursor 같은 AI coding executor를 대체하지 않습니다. 여러 저장소를 운영하는 개발자가 AI가 만든 변경을 **요구사항 → 검증 → review → ship**까지 같은 candidate로 통제하도록 돕는 engineering control plane입니다.
 
-## 현재 상태
+executor가 코드를 만들면, OMC는 무엇을 검증·review했는지, 사람이 어디서 판단해야 하는지, 실제 ship 대상이 그 변경과 같은지를 receipt와 재검증으로 보존합니다.
+
+## 현재 보장하는 것
+
+- **Review–Ship Integrity**: review 당시 canonical candidate를 봉인하고, 정상 commit은 같은 후보로 재구성해 통과시킵니다. 코드·테스트·untracked 파일·mode·symlink·submodule·amend/rebase 변화는 `review_stale`로 fail-close합니다.
+- **Quality Gate Evidence Contract**: README 같은 일반 문서가 아닌 명시적 quality-gate contract와 CI evidence에 local ship 검증 범위를 결속합니다. 사용자 소유 `.omc/quality-gates.json`은 `setup --force`로도 자동 변경하지 않습니다.
+- **Setup safety**: non-force 재설치는 기존 파일을 덮어쓰지 않습니다. 이미 OMC가 관리한 generated·marker-merged 파일은 audit bookkeeping을 갱신하고, 프로젝트 소유 파일은 preserve합니다.
+
+이는 로컬 구현·회귀·receipt 재검증 근거입니다. 코드가 정확하거나 사람이 덜 수정한다는 제품 효과를 뜻하지는 않습니다.
+
+## 아직 증명하지 못한 것
+
+- review 이후 수정 지시와 review churn이 실제로 줄어드는지
+- `review_stale`이 실사용에서 검토하지 않은 변경의 ship을 유의미하게 막는지
+- OMC가 Codex 등 executor보다 더 나은 제품 결과를 만드는지
+
+현재 제품 효과 실행 lane은 `NO_ACTIVE_EXECUTION_LANE`입니다. 과거 연구·pilot의 구현 또는 테스트 통과를 현재 제품 가치로 승격하지 않습니다.
+
+## 다음 제품 우선순위
+
+새 기능을 더하는 것이 아니라, 사용자가 별도로 승인할 때 정확히 두 opt-in 저장소의 자연 발생 작업을 raw-free cohort v2로 관찰합니다. 핵심 지표는 `review_count`, `review_churn`, `review_stale_count`, `correction_after_approved_review`이며, `30 attributable candidate·5 correction` 전에는 `INSUFFICIENT_SAMPLE`만 보고합니다.
+
+자동 push·PR·deploy, executor 자동 대체, 모델 자체 개발, 근거 없는 우선순위 추천은 현재 범위 밖입니다. Decision Context, review compression, bounded N-child 확장은 자연 작업 관찰 근거가 쌓인 뒤에만 별도 승인으로 다룹니다.
+
+세부 연구 상태와 완료 이력은 [자동 모델 라우팅 로드맵](docs/automatic_model_routing_roadmap.md) 및 [Roadmap History](docs/automatic_model_routing_roadmap_history.md)에 보존합니다.
+
+## 역사적 연구 상세 (참고)
+
+<details>
+<summary>과거 Pilot·bounded orchestration·dashboard·provider 연구 상태</summary>
 
 Persona Pilot contract revision 7은 T0 전 calibration qualification과 synthetic protocol rehearsal, 네 authority의 고유 키·information-access custody, 사전 고정된 `INCONCLUSIVE` 후속 정책을 start gate에 명시합니다.
 
@@ -51,6 +80,8 @@ Product Value 결과는 두 판정을 분리합니다.
 OMC의 제품 방향은 여러 레포를 운영하는 SaaS 창업자가 새 제품 기능을 요구사항·검증·리뷰 기준까지 완료하도록 돕는 것이다. **Persona Pilot contract revision 7**은 연구 계약 `APPROVED`, 실행 `PAUSED_NOT_CANCELLED`, evidence `NOT_STARTED` 상태다. OMC가 persona·DoD·검증 계약을 정하고 Codex가 실행한 뒤 선언된 검증과 종료 판정을 제공하는 구조를 검증하는 계약은 유지하되, 현재 사용자 판정 대상인 `LOCAL_DISCOVERY_PROTOTYPE`과 섞지 않는다.
 
 Codex adapter는 아직 구현되지 않았고 이번 범위에서 개발하지 않는다. external Codex executor 수동 receipt 프로토콜로만 실행하며, 실제 실행 전 calibration qualification과 synthetic protocol rehearsal을 완료한 뒤 anonymous arm mapping, study·reconciliation 공동 서명 registration, fresh T0와 21일 창, execution·reconciliation·study·blind-adjudication authority를 고정해야 한다. OMC는 외부 executor의 provider 호출 자체를 통제하지 않으며, state evidence cursor와 직전 enrollment hash를 검증하기 전에 수행된 실행은 유효한 Pilot evidence로 인정하지 않는다.
+
+</details>
 
 ## 일반 사용 경로
 

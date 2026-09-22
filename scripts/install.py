@@ -430,7 +430,10 @@ def _prune_stale_managed_outputs(
 
 
 def _register_generated_output(
-    path: Path, *, previous_target_sha256: str | None = None
+    path: Path,
+    *,
+    previous_target_sha256: str | None = None,
+    require_previously_managed: bool = False,
 ) -> None:
     if _INSTALL_POLICY_ROOT is None:
         return
@@ -438,10 +441,16 @@ def _register_generated_output(
         rel = str(path.resolve().relative_to(_INSTALL_POLICY_ROOT.resolve()))
     except ValueError:
         return
-    entry = _INSTALL_POLICY_MANIFEST.setdefault(
-        rel,
-        {"policy": "managed_exact", "source_sha256": "", "target_sha256": ""},
-    )
+    entry = _INSTALL_POLICY_MANIFEST.get(rel)
+    if require_previously_managed and not (
+        entry and entry.get("previously_managed")
+    ):
+        return
+    if entry is None:
+        entry = _INSTALL_POLICY_MANIFEST.setdefault(
+            rel,
+            {"policy": "managed_exact", "source_sha256": "", "target_sha256": ""},
+        )
     entry["registered_generated"] = True
     entry["registered_current_install"] = True
     if previous_target_sha256 is not None:
@@ -575,6 +584,12 @@ def _write(dst: Path, content: str, *, force: bool) -> None:
 def _write_generated_file(dst: Path, content: str, *, force: bool) -> None:
     """Write a generated target and register it for receipt finalization."""
     if dst.exists() and not force:
+        if dst.is_file():
+            _register_generated_output(
+                dst,
+                previous_target_sha256=_sha256_file(dst),
+                require_previously_managed=True,
+            )
         return
     previous_target_sha256 = _sha256_file(dst) if dst.is_file() else ""
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -1244,10 +1259,16 @@ python3 scripts/omc_tdd_check.py --staged
             continue
         _handled.add(tgt_name)
         if tgt_file.exists() and not force:
+            previous_target_sha256 = _sha256_file(tgt_file)
             cur = tgt_file.read_text(encoding="utf-8")
             if marker not in cur:
                 block = tpl_file.read_text(encoding="utf-8")
                 tgt_file.write_text(cur.rstrip() + "\n\n" + block.rstrip() + "\n", encoding="utf-8")
+            _register_generated_output(
+                tgt_file,
+                previous_target_sha256=previous_target_sha256,
+                require_previously_managed=True,
+            )
         else:
             # ETHOS.md는 섹션 5에 실제 내용이 채워진 경우 --force여도 덮어쓰지 않는다.
             if tgt_name == "ETHOS.md" and tgt_file.exists() and force:

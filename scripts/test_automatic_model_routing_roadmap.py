@@ -188,7 +188,7 @@ def test_current_product_decision_pauses_persona_for_deliverable_discovery() -> 
     assert "blind adjudication" in roadmap
     assert "task_review_persona_effectiveness_preregistration_v1.json" in roadmap
     assert "`WAITING_FOR_CASES`" not in roadmap.split("### Operator Experience 1차 통합안", 1)[0]
-    assert "| Setup | `RUNTIME_CHECK_REQUIRED` |" in roadmap
+    assert "| Setup | `IMPLEMENTED_LOCAL_CONFORMANCE` / `RUNTIME_CHECK_REQUIRED` |" in roadmap
     assert "최신 배포 상태는 strict install audit의 machine-readable 결과를 SSOT로 사용" in roadmap
     assert "현재 확인한 consumer는 최신 source 재배포 대기" not in roadmap
     assert "`PILOT_PENDING`" not in roadmap

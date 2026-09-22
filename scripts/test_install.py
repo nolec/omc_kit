@@ -94,6 +94,73 @@ class TestSkillTemplateSsot(unittest.TestCase):
             self.assertTrue((target / ".agent" / "workflows").is_dir())
             self.assertTrue((target / ".agent" / "rules").is_dir())
 
+    def test_second_non_force_install_keeps_generated_receipt_auditable(self):
+        root = Path(__file__).parent.parent
+        installer = root / "scripts" / "install.py"
+        audit = root / "scripts" / "omc_install_audit.py"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            target.mkdir()
+            subprocess.run(["git", "init", "-q", str(target)], check=True)
+
+            for _ in range(2):
+                result = subprocess.run(
+                    [sys.executable, str(installer), "--target", str(target)],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            audit_result = subprocess.run(
+                [sys.executable, str(audit), "--strict", str(target)],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                audit_result.returncode,
+                0,
+                audit_result.stdout + audit_result.stderr,
+            )
+
+            receipt = json.loads(
+                (target / ".omc" / "install-receipt.json").read_text(encoding="utf-8")
+            )
+            for rel in ("CODEX.md", "ETHOS.md", "docs/omc_quickstart.md"):
+                entry = receipt["entries"][rel]
+                self.assertEqual(entry["policy"], "managed_generated")
+                self.assertEqual(entry["status"], "updated")
+                self.assertEqual(entry["source_sha256"], entry["target_sha256"])
+
+    def test_first_non_force_install_preserves_project_owned_generated_path(self):
+        root = Path(__file__).parent.parent
+        installer = root / "scripts" / "install.py"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            quickstart = target / "docs" / "omc_quickstart.md"
+            quickstart.parent.mkdir(parents=True)
+            quickstart.write_text("project-owned\n", encoding="utf-8")
+
+            result = subprocess.run(
+                [sys.executable, str(installer), "--target", str(target)],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(quickstart.read_text(encoding="utf-8"), "project-owned\n")
+
+            receipt = json.loads(
+                (target / ".omc" / "install-receipt.json").read_text(encoding="utf-8")
+            )
+            self.assertNotIn("docs/omc_quickstart.md", receipt["entries"])
+
 
 class TestInstallManifest(unittest.TestCase):
     def test_auto_update_status_is_up_to_date_for_matching_receipt(self):
