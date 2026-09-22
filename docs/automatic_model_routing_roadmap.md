@@ -45,11 +45,30 @@ OMC의 외부 제품 가치는 executor 수나 routing 복잡도가 아니라, A
 3. **Review Compression** — Human Review Surface를 줄이는 실험은 integrity와 관찰 근거 위에서만 한다.
 4. **Bounded N-child expansion** — 실제 3–5 child 운영 효과가 확인되기 전에는 scheduler 확장을 제품 우선순위로 올리지 않는다.
 
+## 제품 원칙과 금지선
+
+- 제품 포지션: 승인된 범위와 예산 안에서 결과를 재현 가능한 receipt로 증명하는 도구 중립 오케스트레이터
+- 사람의 명시 승인 없이 push·PR·deploy·delete·reset 권한을 확장하지 않는다.
+- 운영 evidence 없이 자동 model switch와 자동 재분배를 열지 않는다.
+- synthetic·historical pilot만으로 대체 가능성을 주장하지 않는다.
+- 특정 프레임워크·테스트 도구를 OMC 코어 정책에 하드코딩하지 않는다.
+- 실행 로그 없이 정책 규칙만 늘리거나 모델 선택을 블랙박스로 만들지 않는다.
+
+## 검증과 문서 SSOT
+
+- 현재 상태·우선순위·active validation: 이 문서의 Reference Backlog 앞 상단 섹션
+- 완료 구현·중단 실험·상세 설계 기록: [Roadmap History](automatic_model_routing_roadmap_history.md)
+- Review 판정 원문: [OMC Review Synthetic Comparison](omc_review_synthetic_comparison.md)
+- Plan runtime·gold·preregistration 원문: `scripts/fixtures/omc_plan_*`
+- 상단 현재 요약과 history가 충돌하면 전용 benchmark artifact를 확인하고 상단 요약을 교정한다.
+
 ## Reference Backlog and Study Details
 
-아래는 receipt 계약, 중단·보류 실험, 상세 설계와 과거 실행 우선순위를 보존하는 참고 영역이다. 현재 실행 지시나 제품 효과 주장으로 읽지 않는다. 완료 이력과 원문은 [Roadmap History](automatic_model_routing_roadmap_history.md)에 보존한다.
+**Historical study records — not active lanes.** 아래는 receipt 계약, 중단·보류 실험, 상세 설계와 당시 실행 우선순위를 보존하는 참고 영역이다. 각 기록의 시간·source commit 권위는 해당 항목이 연결한 receipt·manifest·Git blob에 한정되며, 이 구간의 `현재`·`다음`·`P0` 표현은 기록 당시의 상태를 뜻한다.
 
-## Current Evidence
+**Current execution authority: NONE.** 이 구간은 실행 권한·관찰 승인·T0·cohort 시작을 만들지 않는다. 현재 제품 우선순위와 실행 권위는 위 [Single Active Product Priority](#single-active-product-priority)만 따른다. 완료 이력과 원문은 [Roadmap History](automatic_model_routing_roadmap_history.md)에 보존한다.
+
+## Historical Evidence Records — Not Active Lanes
 
 - V1–V4 routing, TDD guard, bounded scheduler와 fail-closed receipt 검증은 구현·회귀 근거가 있다. 이는 기능 존재의 근거이며, 모든 제품 효과 또는 자동 실행의 근거는 아니다.
 - **Review–Ship Integrity Binding P0.2**는 `IMPLEMENTED_LOCAL_CONFORMANCE`이다. canonical candidate와 immutable diff를 함께 고정하고, raw review output은 snapshot SHA·candidate SHA가 든 evidence envelope로 봉인한 뒤에만 receipt가 된다. repository identity는 checkout 절대경로가 아닌 reviewed base의 Git lineage로 계산하며, pre-commit과 명시적 base+candidate commit review를 같은 candidate scope로 투영한다. 같은 candidate를 commit한 정상 경로는 통과하지만, commit amend·rebase처럼 reviewed base의 ancestry를 바꾸는 작업은 새 snapshot 없이는 `review_stale`이다. ship은 receipt scope를 현재 working tree에 재구성해 코드·테스트·untracked·mode·symlink·submodule pointer 변경을 `review_stale`로 차단한다. async peer-review도 detach 전 snapshot만 읽는다. receipt/evidence/snapshot 누락·손상·다른 lineage는 fail-closed다. 이는 로컬 구현·회귀·receipt 재검증 근거이며 실제 사용자 효과·원격 설치 운영 증거는 아니다. Human Decision Binding, verification receipt의 실질 재검증, semantic review compression은 P1 이후로 보류한다.
@@ -66,7 +85,7 @@ OMC의 외부 제품 가치는 executor 수나 routing 복잡도가 아니라, A
 - 절대 수용성 Pilot v3는 Codex CLI sidecar·population/case collector·4-way evaluator와 fail-closed 회귀 검증을 구현했다. v2는 관찰 시작 전 종료하며 표본을 승계하지 않는다. v3는 `draft_unregistered`, 실제 표본 `0/10`으로, 다음 단계는 아래 Real-use Product Observation의 등록·custody·실제 smoke 준비다. 구현 완료는 실행 승인이나 제품 효과 증명이 아니다.
 - 완료 이력·중단된 실험·세부 설계는 [Roadmap History](automatic_model_routing_roadmap_history.md)에 보존한다. 과거 receipt나 테스트 통과를 현재 운영 효과로 승격하지 않는다.
 
-## Active Decision Gate
+## Historical Decision Gate — No Current Authority
 
 현재 제품 효과 실행 lane은 없다(`NO_ACTIVE_EXECUTION_LANE`). `completion-quality-live-20260913-v2`는 installation identity mismatch로 `OBSERVATION_INVALID`이며, containment 기록 외에는 읽기 전용이다. Multi-repo Harness v1.1은 이 실험을 재개하지 않는 raw-free local instrumentation lane이며, 실제 outcome을 충분히 모으거나 제품 효과를 주장하려면 별도 사람 승인·사전등록이 필요하다. 다른 연구·Persona Pilot·대시보드 확장은 계속 보류한다.
 
@@ -86,11 +105,11 @@ OMC의 외부 제품 가치는 executor 수나 routing 복잡도가 아니라, A
 | `correction_reduction_target_missed` | `REDUCE` |
 | `all_gates_passed` | `CONTINUE` |
 
-## Target Architecture — Approved Study, Execution Paused
+## Historical Target Architecture — Approved Study, Execution Paused
 
 **Persona Pilot contract revision 7**의 연구 범위와 판정 계약은 `APPROVED`, 실행은 `PAUSED_NOT_CANCELLED`, evidence는 `NOT_STARTED`다. 목표는 여러 레포를 운영하는 SaaS 창업자가 새 제품 기능을 요구사항·검증·리뷰 기준까지 완료하도록, OMC가 persona·DoD·검증 계약을 정하고 Codex가 실행한 뒤 OMC가 선언된 검증과 종료 판정을 제공하는 것이다. Codex adapter는 아직 구현되지 않았고 이번 범위에서 개발하지 않는다. external Codex executor 수동 receipt 프로토콜을 사용하며, machine-readable SSOT는 [persona-effectiveness preregistration](task_review_persona_effectiveness_preregistration_v1.json)이다.
 
-### 현재 위치
+### Historical Study Position as Recorded
 
 | 트랙 | 상태 | 현재 근거 | 남은 핵심 |
 |---|---|---|---|
@@ -103,9 +122,9 @@ OMC의 외부 제품 가치는 executor 수나 routing 복잡도가 아니라, A
 
 현재 OMC는 운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증 상태다. task-review pilot v2에서 구현한 roster·repository identity·T0 decision·inventory dry-run·signed execution·terminal receipt 검증 코드는 유지하지만, v2 study 자체는 증거 미완료로 동결했다. 신규 study는 검증 코드만 재사용하고 v2 identity와 evidence는 재사용하지 않는다.
 
-### 현재 제품 결정 gate
+### Historical Product Decision Gate — Not Active
 
-`$omc-dashboard`의 첫 forward case `repo-ops-20260908-v4`는 기술 gate와 별개로 `REVISION_REQUIRED` 판정을 받았으며 제품 효과는 `NOT_YET_PROVEN`이다. 근거 없는 priority ranking을 제거하는 question evidence contract 구현 뒤에도 dashboard 실행 lane은 열지 않는다. 현재 실행 중인 유일한 lane은 Completion Observation capture feasibility다. Persona study는 재개가 별도로 승인될 때에만 자연 발생 implementation 10건을 `direct_codex`와 `omc_persona` arm으로 paired 실행한다. 같은 request·base commit·provider·model·reasoning·`timeout_sec`·verification command와 balanced order, anonymous evaluation packet, blind adjudication v4 계약은 변경하지 않는다.
+기록 당시 `$omc-dashboard`의 첫 forward case `repo-ops-20260908-v4`는 기술 gate와 별개로 `REVISION_REQUIRED` 판정을 받았으며 제품 효과는 `NOT_YET_PROVEN`이었다. 근거 없는 priority ranking을 제거하는 question evidence contract 구현 뒤에도 dashboard 실행 lane은 열지 않는다는 당시 조건이 남아 있다. 당시 유일한 lane으로 서술된 Completion Observation capture feasibility와 Persona study는 현재 실행 권한을 갖지 않으며, 현재 권위는 `NONE`이다. 같은 request·base commit·provider·model·reasoning·`timeout_sec`·verification command와 balanced order, anonymous evaluation packet, blind adjudication v4 계약은 historical study contract로만 보존한다.
 
 실행 절차 SSOT는 [Task Review Product Focus Pilot](task_review_product_focus_pilot.md), machine-readable 판정 SSOT는 [persona-effectiveness preregistration](task_review_persona_effectiveness_preregistration_v1.json)이다. 실제 실행 전에 fresh authority와 T0를 동결하고 operator custody의 trusted execution public key를 설정해야 한다. 결과가 `CONTINUE`여도 원본 저장소에 자동 반영하지 않고 사용자가 선택한 arm만 별도 작업에서 적용한다.
 
@@ -115,7 +134,7 @@ OMC의 외부 제품 가치는 executor 수나 routing 복잡도가 아니라, A
 - 완성 표본의 판정 우선순위는 `fatal violation → provider 실행 부재 → blinding 실패 → completion → verification → 총 사람 개입 → median wall-clock → blind quality → baseline correction event 수 → 30% 감소율`이다. 따라서 provider 실행 부재와 blinding 실패는 `INCONCLUSIVE`지만 fatal violation은 항상 `STOP`이며, baseline event가 부족해도 앞선 비열화가 확인되면 `STOP`이다.
 - 모든 연구 lane은 `PAUSED_NOT_CANCELLED`이며 현재 prototype 사용자 판정 후에도 별도 사용자 결정 없이는 재개하지 않는다.
 
-### Evidence-state Scorecard
+### Historical Evidence-state Scorecard
 
 완성도 백분율 대신 코드, 회귀 테스트, 운영 표본, 독립 재현의 증거 단계를 분리한다. Product Value의 claim scope는 `bounded_n_child_execution`이며 다른 스킬이나 전체 OMC의 대체 판정으로 확대하지 않는다.
 
@@ -144,13 +163,13 @@ Work Packet prospective feasibility는 **capture-only schema v2 검증 코드 �
 
 Decision Policy prospective feasibility는 **증거·실행 계약 구현 완료 / 실제 적격 표본 0/5** 상태다. failure corpus는 실제 result JSON과 별도 Ed25519 causal-review receipt를 동일 run·request·commit·source tree에 결속하고, 외부 trust root와 chronology가 일치하는 경우만 적격으로 인정한다. 정책 packet은 decision priority·tradeoff·evidence boundary·stop condition과 독립 승인 receipt를 동결하며, baseline/policy 두 arm은 같은 request·base·runner·adapter·tool contract subject를 사용해야 한다. 실행 receipt v2는 provider·model·reasoning·paired timeout·critical omission·서명 시각을 결속하고, 동결된 balanced order의 엄격한 시간 순서와 각 case 실행 후 blind adjudication을 검증한다. 누락·위조·순서 불일치는 `INCONCLUSIVE`, 유효한 품질 기준 실패는 `FEASIBILITY_FAIL`로 분리한다. artifact는 root-relative descriptor와 descriptor 기반 `openat`·`O_NOFOLLOW` 단일 읽기로 경로 이탈, 중간 symlink, digest 교체를 fail-close한다. 이는 persona가 검증 루프에 머물지 않고 명시적 종료 정책으로 작업을 완결하는지 측정하기 위한 준비 근거일 뿐이며, 실제 5건과 paired 결과 전에는 제품 효과 또는 Codex Plan 대체 근거로 사용하지 않는다.
 
-### 제품 약점 기반 개선 축
+### Historical Product Improvement Axes — Not Active
 
 기능 수가 아니라 사용자가 실제 작업을 더 잘 끝내는지를 기준으로 남은 약점을 세 핵심 축과 하나의 지원 축으로 관리한다. Product Value·Operator Experience·Evidence를 핵심 축으로, Maintainability를 이를 지속시키는 지원 축으로 둔다. 구현 완료와 제품 효과 검증을 분리하며, 새 스킬·정책·benchmark fixture 수 증가는 완료 지표로 사용하지 않는다.
 
 | 개선 축 | 우선순위 | 현재 약점 | 다음 범위 | 종료 기준 |
 |---|---|---|---|---|
-| Product Value | P0 | bounded scheduler는 완성됐지만 실제 다중 child 가치가 미검증 | 실제 3–5 child 운영 acceptance와 single-agent baseline 비교 | 중복 실행·scope·budget 위반 없이 완료하며, baseline 대비 성공률은 같거나 높고 시간·token·개입 횟수는 사전 등록된 개선 기준을 충족 |
+| Product Value | Historical P0 | bounded scheduler는 완성됐지만 실제 다중 child 가치가 미검증 | 실제 3–5 child 운영 acceptance와 single-agent baseline 비교 | 중복 실행·scope·budget 위반 없이 완료하며, baseline 대비 성공률은 같거나 높고 시간·token·개입 횟수는 사전 등록된 개선 기준을 충족 |
 | Operator Experience | P1 | 반복 승인·상태 확인·스킬 왕복이 작은 작업의 준비 시간을 키움 | Lite/Full observed 표본에서 단계별 latency·retry·개입 측정 후 안전한 자동 분기 조정 | 품질 gate를 유지하면서 p50/p95·token·사용자 개입 횟수 감소 |
 | Evidence | P1 | Plan·Review 품질 우위와 비용 절감이 독립 운영 증거로 확정되지 않음 | single-agent baseline 대비 성공률·시간·token·개입 횟수, durable raw output, blind adjudication 수집 | 사전 등록된 독립 배치의 acceptance를 통과한 지표만 대체·우월 판정에 사용 |
 | Maintainability | P2 | public/research CLI 경계와 setup 배포 SSOT는 정리됐지만 상태 수명주기와 검증 도구 규모가 여전히 사용자 신뢰를 저해. 운영 파일 기반 거짓 source drift는 격리 consumer에서 해시·version·strict audit로 교정 확인 | stale session 교정, 멀티 호스트 동일 fixture 검증, 최신 source의 consumer 재배포 | README·CLI·로드맵 상태가 일치하고 일반 사용 경로가 setup·task·autopilot·status·ship 중심으로 동작하며 완료 상태와 freshness가 실제 Git·run 상태와 일치 |
@@ -159,9 +178,9 @@ Operator Experience의 반복 커밋 확인 병목은 `2026-08-31`에 코드 계
 
 운영 증거 없는 자동화 확대 금지를 공통 원칙으로 둔다. 실제 병목을 줄이지 않는 새 추상화, 정책, 스킬 추가는 위 종료 기준보다 우선하지 않는다.
 
-### Real-use Product Observation
+### Historical Real-use Product Observation — Not Active
 
-제품 가설은 `bounded N-child` 자체가 아니라 OMC가 실제 개발 작업을 요구사항·검증·종료 기준에 맞게 완성하는지다. 현재 활성화 후보는 Codex CLI 자연 implementation 작업의 절대 수용성만 묻는 v3이며, 기존 workflow 대비 개선·우월성 delta는 주장하지 않는다.
+기록 당시 제품 가설은 `bounded N-child` 자체가 아니라 OMC가 실제 개발 작업을 요구사항·검증·종료 기준에 맞게 완성하는지였다. 당시 활성화 후보로 서술된 Codex CLI 자연 implementation 작업의 절대 수용성 v3은 현재 실행 대상이 아니며, 기존 workflow 대비 개선·우월성 delta는 주장하지 않는다.
 
 - Lightweight V0: `scripts/omc_completion_observation.py`는 기존 sealed terminal·completion·lineage 원문과 raw request/output을 candidate에 보존한다. raw digest는 저장소·collector 키와 분리된 승인 executor trust anchor의 execution receipt에 결속한다. 6종 correction reconciliation과 population closure는 collector가 서명하며, closure 생성과 report 판정은 등록 root hash를 확인한 뒤 실제 `.omc/state/sessions` 전체를 각각 재스캔한다. implementation-only, `(captured_at, repo_id, work_id)` 순서의 first eligible 10건, 최소 2개 저장소 조건에서 누락·cherry-pick·중복·순서·repo coverage·위조가 있으면 `CAPTURE_INCOMPLETE`다. claim은 `CAPTURE_FEASIBILITY_ONLY`로 고정하고 이 V0를 제품 효과나 v3 acceptability 판정의 대체 근거로 사용하지 않는다.
 - Codex-first 무복사 수집 계층: `live-register`가 저장소 밖 write-once receipt에 공통 study ID·미래 T0·14일/T1+24h 경계·저장소 roster·root identity를 먼저 봉인하고, 각 저장소의 `live-enable`은 그 exact registration digest를 결속한다. `$omc-task`는 implementation start를 저장소 로컬 write-once 원장에 모두 기록하며 로컬 5건 allocator는 제거했다. T0+14일 이후 24시간 안에 `live-close`가 registration 원문과 등록 저장소 전부를 재검증하고 `(started_at, repo_id, work_id)` 전역 순서의 첫 5건을 무대체로 고른 뒤, 저장소 밖 경로에 closure bundle을 원자적으로 한 번만 게시한다. roster·policy·record·raw digest 손상이나 계측 실패는 `CAPTURE_FAILED`, 완전한 모집단의 5건/2저장소 미달은 `LOW_NATURAL_DEMAND`, 선택 건의 완료·outcome 누락은 `INCONCLUSIVE`, 5/5가 온전하면 `CAPTURE_FEASIBLE`이다. 설치 hook은 외부 registry·quarantine 경로와 exact work identity가 모두 있을 때만 cross-session prompt를 자동 결속하고, 식별자가 있지만 대상이 없거나 모호할 때만 원문을 quarantine해 target resolution을 요구한다. 일반 입력과 정상적인 비대상 상태는 실패나 quarantine으로 기록하지 않는다. 활성화 시 strict install identity를 결속하고 Claude 입력을 Codex 표본에 섞지 않으며 UTF-8 원문과 끝 개행까지 그대로 보존한다. 최초 완료는 미커밋 `commit_bound=false` snapshot이며 signed completion receipt를 대체하지 않는다. 진짜 관찰 명령 실패만 저장소 로컬 failure receipt로 남기며 제품 작업은 계속하고 표본은 `OBSERVATION_INVALID`로 처리한다. 이 5건은 수집 가능성만 판정하고 수정 지시 30% 감소는 별도 최소 20건 paired observation 전에는 주장하지 않는다. 로컬 구현·회귀 검증·코드 리뷰는 완료했으며 대상 저장소 배포·공통 등록·실제 T0는 아직 시작하지 않았다.
@@ -175,7 +194,7 @@ Operator Experience의 반복 커밋 확인 병목은 `2026-08-31`에 코드 계
 - v3 최근 보강: collector·evaluator는 artifact를 한 번 읽어 크기·SHA-256을 검증한 동일 바이트를 원문으로 사용한다. 검증 영수증의 session/work/start 결속, 손상된 서명·artifact·비 UTF-8 JSON·잘못된 taxonomy/attribution 타입을 구조화된 실패로 반환한다. stdout·stderr 교체 회귀 테스트와 CLI의 blocked JSON·종료 코드 2·파일 미생성 검증을 포함한다.
 - v3 활성화 전 남은 일: source commit·evaluator hash·exact 미래 window·승인 authority key와 대상 저장소 경로를 확정한다. sidecar는 등록정보와 대상 저장소의 유효 start/lock/executor-start가 필요하므로 이 사전 조건을 먼저 준비하고, 별도 승인된 실제 Codex CLI no-op smoke에서 receipt를 발급·재검증한다. 합성 검증·smoke를 자연 implementation 표본으로 합산하지 않으며 실제 관찰 활성화와 표본 수집은 별도로 진행한다. 이 외부 실행은 별도 사용자 승인 전 수행하지 않는다.
 
-### Product Value P0 evidence-loss 종료 완료와 신규 prospective study
+### Historical Product Value P0 Evidence-loss Closure and Prospective Study
 
 - 상태 보고: 전체 완성도 백분율을 사용하지 않는다. 구현·검증 준비·운영 검증·독립 재현 evidence-state를 대상별로 보고한다.
 - 기존 종료 상태: `product-value-batch-20260826-v5-r1`과 preregistration `69115b41210a14b42ea9096bf3cea98c8897a2047b5bc0a322e5f7a64c2af8df`는 manifest·workload inventory·execution packet 원문을 복구하지 못해 `BLOCKED` / `evidence_loss`로 종료했다. `2026-09-02`에 승인·서명·durable failure marker 기록을 완료했으며 closure subject SHA-256은 `5b83c246de93c626c0f91b09318f20425e63292b3c39081189150f41a9229ea8`, marker file SHA-256은 `f88f1abbd31f74240f726b4c45b9150842cfcbaa80f67e351b9424f917a92967`이다. schema v1 Git registry blob, closure subject, Ed25519 authority receipt를 결속한 no-replace marker가 acceptance 재개를 차단한다. 기존 `2026-09-05` 최종 판정 기한은 연장하지 않는다.
@@ -190,7 +209,7 @@ Operator Experience의 반복 커밋 확인 병목은 `2026-08-31`에 코드 계
 - 금지 범위: development evidence 검증 전 provider 호출과 holdout 실행을 금지하며 신규 schema·transport·benchmark fixture를 추가하지 않는다.
 - claim 제한: 신규 study는 development evidence만 생성한다. 결과를 Plan·Review 또는 전체 OMC의 대체·우월 증거로 사용하지 않는다.
 
-### Operational P0
+### Historical Operational P0 — Paused
 
 **bounded N-child 실제 acceptance**는 `PAUSED_NOT_CANCELLED`다. 아래 내용은 재개 시 사용할 보존 계약이며 현재 실행 우선순위가 아니다.
 
@@ -231,7 +250,7 @@ source workspace 신뢰 루트 결속, clean clone readiness, 설치 consumer se
 - operational pilot은 등록된 `subscription_bounded` conformance를 통과하면 열 수 있다.
 - strict certification은 `provider_enforced` backend가 adversarial conformance와 disposable shadow execution receipt를 통과한 경우에만 평가한다.
 
-### Operational Obligation
+### Historical Operational Obligation
 
 **Plan Batch B receipt 수집**은 `PAUSED_NOT_CANCELLED`다.
 
@@ -249,14 +268,14 @@ source workspace 신뢰 루트 결속, clean clone readiness, 설치 consumer se
 - 다음 단계: 실제 분리 authority와 canonical source inventory를 observation 15분 전에 등록한 뒤 chronological first-N implementation 5건을 capture·publish·reload하고 수집 가능성만 판정한다.
 - 경계: Work Packet 결과를 품질 projection, Plan Batch B evidence 또는 대체 판정으로 자동 승격하지 않는다.
 
-### Active Quality Validation
+### Historical Quality Validation
 품질 대체 판정은 구현 완료와 분리한다. 같은 작업의 durable raw output과 독립 adjudication 없이는 우월성이나 완전 대체를 선언하지 않는다.
-### Plan Quality Validation
+### Historical Plan Quality Validation
 - 현재 판정: 다중 저장소 기준 `NOT_PROVEN`
 - 참고 근거: 단일 corpus Fresh Batch A의 `PROVISIONALLY_REPLACEABLE`은 repository-scoped pilot로만 보존
 - 다음 마일스톤: Operational Obligation의 Batch B 수집과 독립 confirmatory batch 완료
 - 종료 기준: 신규 disjoint Batch B 통과 후 별도 독립 confirmatory batch에서 재현해야 `REPLACEABLE`; 두 독립 배치가 primary gain·confidence gate까지 통과해야 `BENCHMARK_SUPERIOR`
-### Review Quality Validation
+### Historical Review Quality Validation
 
 - 현재 판정: durable native provider 원문 부재로 `NOT_PROVEN`
 - 현재 근거: 실사용 anonymized diff 10건의 historical same-diff batch와 gold-label sign-off는 보존했지만 durable raw provider output이 없어 참고 evidence로만 사용한다.
@@ -272,7 +291,7 @@ Task completion lineage schema v3와 terminal capture 결속을 구현했다. `s
 
 표준 오류 분석 경로인 `task → omc-investigate → task`에서도 pending completion을 유지한다. 보존 범위는 `analysis` 역할 전체가 아니라 정확한 `omc-investigate` title로 제한하며, unrelated analysis는 기존처럼 pending을 제거한다. 따라서 원인 분석 진입이 완료 후보를 소거하지 않으면서 다른 작업을 기존 lineage에 잘못 귀속시키는 경계도 유지한다.
 
-### Operator Experience 1차 통합안
+### Historical Operator Experience Integration
 
 - CLI fast-path 1차 완료: 루트 `-h`·`--help`를 prompt 옵션으로 잘못 라우팅하던 회귀를 수정하고, source freshness hash는 저장소 전체가 아니라 실제 설치 대상만 순회한다. template 탐색 오류는 불완전한 hash를 반환하지 않고 fail-close한다.
 - readiness fast-path 완료: 반복 호출되는 `state status`는 전체 설치 감사를 수행하지 않고 `unverified`와 동일 target의 권위 확인 명령만 출력한다. `version`과 `doctor`는 install audit의 `version_readiness`를 SSOT로 사용하며 drift 상태에서 정상 설치 문구를 출력하지 않는다. target과 CWD가 달라도 공백을 포함한 절대 script·target 경로의 안내 명령을 실행할 수 있게 고정했다. 관련 회귀 `88 passed`, 외부 CWD 실행, `py_compile`, diff check, staged TDD gate와 OMC review `APPROVE`를 확인했으며 단독 `state` 20회 측정은 median `194ms`, p95 `223ms`였다.
@@ -291,7 +310,7 @@ Task completion lineage schema v3와 terminal capture 결속을 구현했다. `s
 - 목표: 품질 gate를 유지하면서 반복 확인, p50/p95 지연, input/output/total token을 줄인다.
 - 현재 유효 latency 표본은 history의 운영 기록을 따르며 표본 기준 충족 전 라우팅 경계를 확정하지 않는다.
 
-### Setup Distribution Integrity
+### Historical Setup Distribution Integrity
 
 - 설치 receipt schema v3가 배포 파일을 `exclusive_managed`·`merged_host`·`preserved`·`manual_review`로 분류한다.
 - `setup-ignore`가 OMC 전용 파일만 literal pathspec으로 Git 추적에서 제외하고 로컬 파일을 보존하며, migration receipt 기반 rollback을 제공한다.
@@ -305,7 +324,7 @@ Task completion lineage schema v3와 terminal capture 결속을 구현했다. `s
 - setup-created ownership과 Git visibility 검증을 보강했다. receipt가 최초 생성 파일을 `setup_created`로 기록하고, setup-created merged host와 OMC runtime 경로만 local exclude에 포함한다. strict audit은 이 경로가 다시 untracked로 노출되거나 Git probe가 실패하면 `setup-visibility` 오류로 fail-close한다. 관련 집중 회귀 `161 passed`, staged TDD gate, diff check와 OMC review `APPROVE`를 통과했다.
 - 최신 source hash `7471392acd9bc4a02875223e864486a0694ae37c8b9e7e48f0eeb11aadce38ba` 기준 실제 사용처 9곳을 다시 `setup --force` 배포하고 strict audit `9/9`을 통과했다. 모든 대상이 `installed_integrity_status=ok`, `core_usage_readiness=ready`, `source_freshness_status=up_to_date`, `verification_status=ok`였고 설치 전후 Git 상태를 보존했다. per-target 백업과 실행 로그는 `/private/tmp/omc-setup-force-20260901-2145`에 남겼다.
 
-## 로드맵 검증 매트릭스
+## Historical Roadmap Validation Matrix
 
 | 로드맵 완료 항목 | 실제 반영 증거 | Fugu 비교에 쓰는 축 | 판정 규칙 |
 |---|---|---|---|
@@ -315,32 +334,15 @@ Task completion lineage schema v3와 terminal capture 결속을 구현했다. `s
 
 Fugu 비교 문구는 `현재 상태 참조`와 `반영 검증 완료`를 구분한다. 경쟁 제품의 문서 주장과 OMC의 구현 근거도 같은 증거 수준처럼 혼합하지 않는다.
 
-## 실행 우선순위
+## Historical Execution Priority Snapshot — Not Active
 
-contract revision 7에서는 T0 전에 calibration qualification과 표본 제외 synthetic protocol rehearsal을 완료하고 네 authority의 고유 키와 서명을 start gate에 명시해야 한다. calibration은 구조화 판정만 비교하고 자유서술 문구는 비교하지 않으며, adjudicator의 gold·arm mapping 사전 접근 금지를 information-access custody로 봉인한다. 모든 `INCONCLUSIVE`는 현재 study를 종료하며 기존 표본을 연장·합산하지 않고 사전 등록된 사유별 새 study만 허용한다.
+아래 순서는 historical conditional backlog이며 현재 실행 지시가 아니다. contract revision 7에서는 T0 전에 calibration qualification과 표본 제외 synthetic protocol rehearsal을 완료하고 네 authority의 고유 키와 서명을 start gate에 명시해야 한다는 당시 계약을 보존한다. calibration은 구조화 판정만 비교하고 자유서술 문구는 비교하지 않으며, adjudicator의 gold·arm mapping 사전 접근 금지를 information-access custody로 봉인한다. 모든 `INCONCLUSIVE`는 해당 historical study를 종료하며 기존 표본을 연장·합산하지 않고 사전 등록된 사유별 새 study만 허용한다.
 
-현재 활성 실행 lane은 없다(`NO_ACTIVE_EXECUTION_LANE`). `completion-quality-live-20260913-v2`는 `OBSERVATION_INVALID`로 보존하며 새 표본·closure·제품 효과의 근거로 사용하지 않는다. `$omc-dashboard` 첫 forward case `repo-ops-20260908-v4`는 기술적으로 통과했지만 제품 판정은 `REVISION_REQUIRED`이며 제품 가치 증거가 아니다. 다음 관찰을 시작하려면 새 study ID·외부 custody registration·fresh T0·사전등록된 installation lifecycle을 사람 승인으로 동결해야 한다. Product Value·Plan·Review·Work Packet·Decision Policy 검증은 모두 `PAUSED_NOT_CANCELLED`이며 추가 스킬·transport·benchmark fixture를 늘리지 않는다.
+기록 당시에도 활성 실행 lane은 없었다(`NO_ACTIVE_EXECUTION_LANE`). `completion-quality-live-20260913-v2`는 `OBSERVATION_INVALID`로 보존하며 새 표본·closure·제품 효과의 근거로 사용하지 않는다는 historical containment 조건을 남긴다. 당시 Product Value·Plan·Review·Work Packet·Decision Policy 검증은 `PAUSED_NOT_CANCELLED`였고 추가 스킬·transport·benchmark fixture를 늘리지 않는다. 이 문단은 새 study ID·외부 custody registration·fresh T0·사전등록된 installation lifecycle을 승인하지 않으며, 현재 실행 권위는 계속 `NONE`이다.
 
-## 제품 원칙과 금지선
+## Historical Execution Sequence — Not Active
 
-- 제품 포지션: 승인된 범위와 예산 안에서 결과를 재현 가능한 receipt로 증명하는 도구 중립 오케스트레이터
-- 사람의 명시 승인 없이 push·PR·deploy·delete·reset 권한을 확장하지 않는다.
-- 운영 evidence 없이 자동 model switch와 자동 재분배를 열지 않는다.
-- synthetic·historical pilot만으로 대체 가능성을 주장하지 않는다.
-- 특정 프레임워크·테스트 도구를 OMC 코어 정책에 하드코딩하지 않는다.
-- 실행 로그 없이 정책 규칙만 늘리거나 모델 선택을 블랙박스로 만들지 않는다.
-
-## 검증과 문서 SSOT
-
-- 현재 상태·우선순위·active validation: 이 문서
-- 완료 구현·중단 실험·상세 설계 기록: [Roadmap History](automatic_model_routing_roadmap_history.md)
-- Review 판정 원문: [OMC Review Synthetic Comparison](omc_review_synthetic_comparison.md)
-- Plan runtime·gold·preregistration 원문: `scripts/fixtures/omc_plan_*`
-- 현재 문서가 history와 충돌하면 전용 benchmark artifact를 확인하고 현재 요약을 교정한다.
-
-## 다음 실행 순서
-
-현재 0번은 제품 decision gate이며 실행 단계가 아니다. Persona registration 계약과 외부 custody 절차, 최종 sealed decision 재검증은 [Persona Pilot Operator Runbook](task_review_persona_operator_runbook.md)에 보존한다.
+0번과 아래 번호 목록은 historical backlog이지 다음 실행 지시가 아니다. Persona registration 계약과 외부 custody 절차, 최종 sealed decision 재검증은 [Persona Pilot Operator Runbook](task_review_persona_operator_runbook.md)에 보존한다.
 
 0. **SEMANTIC REVISION — `REVISION_REQUIRED` / `DASHBOARD_LANE_CLOSED`** — `$omc-dashboard` 첫 forward case `repo-ops-20260908-v4`는 기술 검증과 별개로 source에 없는 priority를 추천해 `UNSUPPORTED_PRIORITY_INFERENCE`로 닫았다. question evidence contract가 질문별 source field·계산·결측 정책·surface를 결속하며, 별도 승인된 두 번째 독립 case 전에는 `WORKFLOW_REPEATABILITY_OBSERVED`로 승격하지 않는다. Claude Artifact 동등성, 제품 우위·수정 지시 감소는 계속 `NOT_YET_PROVEN`이다.
 
@@ -365,6 +367,6 @@ contract revision 7에서는 T0 전에 calibration qualification과 표본 제�
 17. **Multi-repo Observed Completion Harness v1.1 코드 완료 / 실제 운영 표본 대기** — opt-in 설정과 서로 다른 configured trust anchor로 검증한 sealed-terminal projection, raw-free event ledger, 명시 source만 받는 local report CLI, lock-protected event hash-chain·repository fingerprint 재검증, source별 `INTEGRITY_INVALID` 격리를 고정한다. 이전 v1 equal-key·`user_outcome` ledger는 보고 전용 호환 대상이며, 독립 trust anchor 증거나 신규 기록 권한으로 승격하지 않는다. 사용자 로컬 installation registry는 기본 비활성이며, 명시적 `omc installation-registry enable` 뒤 strict `setup` 성공 target만 hash-chain에 기록한다. `audit-legacy`는 등록 target만 raw-free 상태로 확인하며 자동 탐색·background scan·원격 전송을 하지 않는다. 다음은 서로 다른 실제 저장소 두 곳에서 사용자가 명시적으로 opt-in하고 자연 발생 작업의 terminal observation을 모아 `OBSERVED_COMPLETE`·`OBSERVED_INCOMPLETE`·`UNOBSERVED` 분포와 incomplete reason만 확인하는 것이다. terminal-reported outcome은 사용자 수용이나 제품 효과 근거가 아니다. raw prompt·코드·명령·출력, 자동 설치/탐색, provider·고객 데이터, 원격 전송, 자동 개선 및 제품 효과 판정은 포함하지 않는다.
 18. **Raw-free Workflow Cohort v1 보존·v2 Pilot 코드 완료 / 운영 표본 대기** — v1은 strict audit을 통과한 `setup`·`setup --force`가 자동 활성화하는 기존 cohort로 보존하며 config·ledger를 재작성하지 않는다. v2 prospective Pilot은 사용자 custody의 write-once roster에 정확히 두 credential-free Git-origin target identity를 공통 `activation_id`·`activation_at`과 함께 봉인한 뒤에만 setup할 수 있다. setup은 roster membership을 install 전에 검증하고, v2 config에 roster SHA-256과 target identity를 결속하며, 제3 target·activation mismatch·legacy unbound config를 fail-close한다. report는 같은 roster SHA와 정확히 그 두 source가 모두 있어야 하며, missing·중복·제3 source·binding 불일치는 `pilot_roster_incomplete` 또는 integrity failure로 분리한다. v2 config가 있으면 candidate·review·followup의 기본 경로는 v2이며, missing 또는 symlink된 v2 config는 v1으로 우회하지 않고 fail-closed한다. 두 세대 모두 work ID·스킬 ID·profile·검증된 OMC source identity만 local append-only hash-chain에 남기며 raw request/path/code/command/output와 network는 기록하지 않는다. public CLI는 candidate 주입을 허용하지 않고 review taxonomy·사용자 follow-up은 현재 verified pending work에만 결속한다. v2 report는 capture missing·integrity-invalid·복수 스킬 work와 review count·review churn·review stale·승인 후 correction을 분리하고, 30 attributable candidate·5 correction 전에는 `INSUFFICIENT_SAMPLE`만 반환한다. 다음은 다른 consumer에 자동 rollout하지 않고, roster가 승인한 두 target에만 자연 발생 단일 스킬 작업을 수집하는 것이다. 이 readiness는 workflow-level holdout 설계 가능 상태일 뿐 개별 스킬 효과·자동 tuning·제품 효과 권한이 아니며, installation registry는 enrollment authority가 아니다.
 
-## 한 줄 결론
+## Historical One-line Conclusion — Not Active
 
 현재 OMC의 다음 제품 전환점은 기능 추가가 아니라, 자연 발생 작업에서 OMC가 반복 사용될 가치가 있는지 먼저 확인하고 그 gate를 통과한 뒤 bounded N-child가 성공률·시간·token·개입을 개선하는지 독립 receipt로 증명하는 것이다.

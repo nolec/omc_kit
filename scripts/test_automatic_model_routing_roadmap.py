@@ -80,12 +80,35 @@ def test_roadmap_declares_evidence_before_human_decision_and_scale() -> None:
     assert "현재 cohort에는 새 시간 지표를 추가하지 않는다" in first_screen
 
 
+def test_reference_backlog_is_historical_and_cannot_authorize_execution() -> None:
+    text = ROADMAP_PATH.read_text(encoding="utf-8")
+    current = text.split("## Reference Backlog and Study Details", 1)[0]
+    reference = text.split("## Reference Backlog and Study Details", 1)[1]
+
+    assert "## 제품 원칙과 금지선" in current
+    assert "## 검증과 문서 SSOT" in current
+    assert "Historical study records — not active lanes" in reference
+    assert "Current execution authority: NONE" in reference
+    assert "### Historical Product Decision Gate — Not Active" in reference
+    assert "### Historical Real-use Product Observation — Not Active" in reference
+    assert "### Historical Operational P0 — Paused" in reference
+    assert "## Historical Execution Priority Snapshot — Not Active" in reference
+    assert "## Historical Execution Sequence — Not Active" in reference
+    assert reference.count("## Historical Execution Sequence — Not Active") == 1
+    assert "## 제품 원칙과 금지선" not in reference
+    assert "## 검증과 문서 SSOT" not in reference
+    assert "### 현재 제품 결정 gate" not in reference
+    assert "### Real-use Product Observation" not in reference
+    assert "### Operational P0" not in reference
+    assert "## 다음 실행 순서" not in reference
+
+
 def test_roadmap_current_priority_is_single_and_public_anchors_remain() -> None:
     text = ROADMAP_PATH.read_text(encoding="utf-8")
 
-    assert text.count("### Operational P0") == 1
-    assert "### Review Quality Validation" in text
-    assert "### Operator Experience 1차 통합안" in text
+    assert text.count("### Historical Operational P0 — Paused") == 1
+    assert "### Historical Review Quality Validation" in text
+    assert "### Historical Operator Experience Integration" in text
     assert "Codex `3/8 hit, 3 FP`, OMC `6/8 hit, 6 FP`는 참고 수치" in text
     assert "운영 대체 판정은 strict hard-token 인증과 독립적으로 종료" in text
     assert "새 schema·transport·benchmark fixture 추가를 중단" in text
@@ -104,13 +127,13 @@ def test_readme_matches_the_current_bounded_execution_and_verdict_contract() -> 
 
 def test_current_evidence_is_separate_from_the_approved_unstarted_v3_study() -> None:
     text = ROADMAP_PATH.read_text(encoding="utf-8")
-    first_screen = text.split("### Operator Experience 1차 통합안", 1)[0]
+    first_screen = text.split("### Historical Operator Experience Integration", 1)[0]
 
-    assert "## Current Evidence" in first_screen
-    assert "## Active Decision Gate" in first_screen
+    assert "## Historical Evidence Records — Not Active Lanes" in first_screen
+    assert "## Historical Decision Gate — No Current Authority" in first_screen
     assert "`ARCHIVED_INCOMPLETE`" in first_screen
     assert "readiness·paired arm 실행·terminal·decision receipt가 없어" in first_screen
-    assert "## Target Architecture — Approved Study, Execution Paused" in first_screen
+    assert "## Historical Target Architecture — Approved Study, Execution Paused" in first_screen
     assert "Persona Pilot contract revision 7" in first_screen
     assert "연구 범위와 판정 계약은 `APPROVED`" in first_screen
     assert "Codex adapter는 아직 구현되지 않았고" in first_screen
@@ -157,8 +180,8 @@ def test_persona_decision_contract_matches_the_fail_closed_implementation() -> N
     assert "유효한 Pilot evidence로 인정하지 않는다" in roadmap
     assert "provider를 호출하지 않는다" not in roadmap
     assert "경우에만 reconciliation authority" not in roadmap
-    active_gate = roadmap.split("## Active Decision Gate", 1)[1].split(
-        "## Target Architecture", 1
+    active_gate = roadmap.split("## Historical Decision Gate — No Current Authority", 1)[1].split(
+        "## Historical Target Architecture", 1
     )[0]
     roadmap_rules = re.findall(r"(?m)^\| `([^`]+)` \| `([^`]+)` \|$", active_gate)
     expected_rules = [
@@ -207,7 +230,7 @@ def test_current_product_decision_pauses_persona_for_deliverable_discovery() -> 
     assert "external Codex executor" in roadmap
     assert "blind adjudication" in roadmap
     assert "task_review_persona_effectiveness_preregistration_v1.json" in roadmap
-    assert "`WAITING_FOR_CASES`" not in roadmap.split("### Operator Experience 1차 통합안", 1)[0]
+    assert "`WAITING_FOR_CASES`" not in roadmap.split("### Historical Operator Experience Integration", 1)[0]
     assert "| Setup | `IMPLEMENTED_LOCAL_CONFORMANCE` / `RUNTIME_CHECK_REQUIRED` |" in roadmap
     assert "최신 배포 상태는 strict install audit의 machine-readable 결과를 SSOT로 사용" in roadmap
     assert "현재 확인한 consumer는 최신 source 재배포 대기" not in roadmap
@@ -242,10 +265,10 @@ def test_dashboard_v0_tracks_first_forward_case_without_claiming_repeatability()
 
 def test_current_setup_status_uses_authoritative_install_audit_instead_of_stale_counts() -> None:
     roadmap = ROADMAP_PATH.read_text(encoding="utf-8")
-    current_scorecard = roadmap.split("### Evidence-state Scorecard", 1)[1].split(
-        "### Product Value P0", 1
+    current_scorecard = roadmap.split("### Historical Evidence-state Scorecard", 1)[1].split(
+        "### Historical Product Value P0", 1
     )[0]
-    execution_priority = roadmap.split("## 다음 실행 순서", 1)[1]
+    execution_priority = roadmap.split("## Historical Execution Sequence — Not Active", 1)[1]
 
     assert "최신 배포 상태는 strict install audit의 machine-readable 결과를 SSOT로 사용" in roadmap
     assert "`python3 scripts/omc_install_audit.py --strict --json <consumer-path> [...]`" in roadmap
@@ -287,7 +310,7 @@ def test_product_value_p0_tracks_completed_closure_and_starts_a_separate_prospec
 
     assert "운영 가능한 규칙 기반 코어이며, 고급 오케스트레이션의 제품 가치는 미검증" in roadmap
     assert "전체 완성도 백분율을 사용하지 않는다" in roadmap
-    assert "### Product Value P0 evidence-loss 종료 완료와 신규 prospective study" in roadmap
+    assert "### Historical Product Value P0 Evidence-loss Closure and Prospective Study" in roadmap
     assert "`product-value-batch-20260826-v5-r1`" in roadmap
     assert "`69115b41210a14b42ea9096bf3cea98c8897a2047b5bc0a322e5f7a64c2af8df`" in roadmap
     assert "`2026-09-02`에 승인·서명·durable failure marker 기록을 완료" in roadmap
@@ -332,9 +355,9 @@ def test_roadmap_tracks_work_packet_prospective_feasibility_without_overclaim() 
 def test_roadmap_organizes_product_weaknesses_by_value_experience_and_evidence() -> None:
     text = ROADMAP_PATH.read_text(encoding="utf-8")
 
-    assert "### 제품 약점 기반 개선 축" in text
+    assert "### Historical Product Improvement Axes — Not Active" in text
     assert "세 핵심 축과 하나의 지원 축" in text
-    assert "| Product Value | P0" in text
+    assert "| Product Value | Historical P0" in text
     assert "| Operator Experience | P1" in text
     assert "| Evidence | P1" in text
     assert "| Maintainability | P2" in text
@@ -425,7 +448,7 @@ def test_real_use_product_observation_is_preregistered_before_n_child_acceptance
     ).hexdigest()
     v3_sha256 = hashlib.sha256(v3_bytes).hexdigest()
 
-    assert "### Real-use Product Observation" in text
+    assert "### Historical Real-use Product Observation — Not Active" in text
     assert "Codex CLI 자연 implementation 작업의 절대 수용성" in text
     assert "순서 첫 10건을 최소 2개 저장소" in text
     assert "verified completion `10/10`" in text
@@ -749,7 +772,7 @@ def test_roadmap_includes_evidence_based_validation_matrix_for_fugu_alignment() 
     text = Path("docs/automatic_model_routing_roadmap.md").read_text(encoding="utf-8")
 
     required_markers = [
-        "## 로드맵 검증 매트릭스",
+        "## Historical Roadmap Validation Matrix",
         "로드맵 완료 항목",
         "실제 반영 증거",
         "Fugu 비교에 쓰는 축",
