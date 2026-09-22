@@ -17,6 +17,17 @@ OMC는 Codex를 대체하는 도구가 아니다. 여러 저장소를 운영하�
 | Raw-free workflow cohort v2 | 코드·계측 계약 완료, 운영 관찰 미시작 | exact 2 opt-in target과 signed terminal/review receipt만 다룬다. 현재 `NO_ACTIVE_EXECUTION_LANE`이다. |
 | 제품 가치 | `NOT_PROVEN` | 사람이 덜 수정하는지, review 반복이 줄어드는지, 잘못된 ship을 실제로 막는지는 자연 작업 표본이 필요하다. |
 
+## Product Evolution Sequence
+
+OMC의 외부 제품 가치는 executor 수나 routing 복잡도가 아니라, AI가 만든 변경을 사람이 검증 가능한 증거로 승인하고 **동일한 candidate를 ship**하게 하는 데 있다. N-child와 routing은 이 목적을 지원하는 내부 execution capability이며, 제품 전면 약속이나 현재 확장 우선순위가 아니다.
+
+1. **Integrity** — canonical candidate·verification·review·ship이 같은 변경 집합을 가리키는지 fail-closed로 보장한다. 현재 Review–Ship Integrity Binding P0.2가 이 기반을 제공한다.
+2. **Evidence** — 정확히 두 opt-in 저장소의 자연 발생 작업에서 `review_count`, `review_churn`, `review_stale_count`, `correction_after_approved_review`를 관찰한다. 이는 현재 유일한 제품 우선순위이며, 현재 cohort에는 새 시간 지표를 추가하지 않는다.
+3. **Human Decision** — 기존 candidate·verification·review receipt와 residual issue를 사람이 읽기 쉬운 read-only projection으로 연결하고, 무엇을 수용했는지 closure receipt에 결속한다. Decision Context는 새 진실의 원천이 아니다.
+4. **Reframing** — 충분한 자연 표본 뒤에, 잘못 정의된 문제를 안전하게 완성하는 frame lock-in을 줄일 수 있는지 alert-only 가설로 검증한다. 자동 scope 재개방이나 강제 gate는 아니다.
+5. **Compression** — integrity·관찰·사람 결정의 근거 위에서만 Human Review Surface를 줄이는 실험을 한다.
+6. **Scale** — review bandwidth가 검증된 뒤에만 bounded N-child와 더 높은 execution throughput을 확장한다.
+
 ## Single Active Product Priority
 
 현재 실행 중인 제품 효과 수집 lane은 없다(`NO_ACTIVE_EXECUTION_LANE`). 다음 제품 우선순위는 새 기능 추가가 아니라, 사용자가 별도로 관찰 시작을 승인할 때 **정확히 두 개의 opt-in 저장소에서 자연 발생 작업을 raw-free cohort v2로 관찰**하는 것이다. 자동 탐색·background scan·다른 저장소 확장·표본을 위한 인위적 작업은 하지 않는다.

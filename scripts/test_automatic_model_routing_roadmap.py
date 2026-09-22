@@ -60,6 +60,26 @@ def test_roadmap_first_screen_is_the_canonical_current_view() -> None:
     assert "Review Compression" in first_screen
 
 
+def test_roadmap_declares_evidence_before_human_decision_and_scale() -> None:
+    text = ROADMAP_PATH.read_text(encoding="utf-8")
+    first_screen = text.split("## Reference Backlog and Study Details", 1)[0]
+
+    headings = (
+        "1. **Integrity**",
+        "2. **Evidence**",
+        "3. **Human Decision**",
+        "4. **Reframing**",
+        "5. **Compression**",
+        "6. **Scale**",
+    )
+    positions = [first_screen.index(heading) for heading in headings]
+
+    assert "## Product Evolution Sequence" in first_screen
+    assert positions == sorted(positions)
+    assert "N-child와 routing은 이 목적을 지원하는 내부 execution capability" in first_screen
+    assert "현재 cohort에는 새 시간 지표를 추가하지 않는다" in first_screen
+
+
 def test_roadmap_current_priority_is_single_and_public_anchors_remain() -> None:
     text = ROADMAP_PATH.read_text(encoding="utf-8")
 
