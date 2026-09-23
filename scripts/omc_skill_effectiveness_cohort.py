@@ -1152,6 +1152,48 @@ def aggregate_v2(sources: list[Path], *, roster_path: Path | None = None) -> dic
     }
 
 
+def audit_v2_review_gap(sources: list[Path], *, roster_path: Path) -> dict[str, Any]:
+    """Compare verified current review receipts with v2 events without linking work by guesswork."""
+    import omc_review_snapshot
+
+    roots = [_root(source) for source in sources]
+    frozen_events = [_load_v2_events(root)[1] for root in roots]
+    report = aggregate_v2(sources, roster_path=roster_path)
+    if "pilot_roster_incomplete" in report["aggregate"]["tuning_readiness"]["reason_codes"]:
+        raise SkillCohortError("pilot_roster_incomplete")
+    if report["aggregate"]["integrity_invalid"]:
+        raise SkillCohortError("cohort_integrity_invalid")
+    findings: list[dict[str, Any]] = []
+    for root, events, source_report in zip(roots, frozen_events, report["sources"]):
+        pointer = root / ".omc" / "state" / "review-snapshots" / "current.json"
+        if pointer.is_symlink():
+            raise SkillCohortError("review_receipt_invalid")
+        receipt_state = "absent"
+        if pointer.exists():
+            try:
+                receipt = omc_review_snapshot._current_receipt(root)
+            except (omc_review_snapshot.CandidateScopeError, omc_review_snapshot.PeerSnapshotError) as error:
+                raise SkillCohortError("review_receipt_invalid") from error
+            receipt_state = "verified_" + str(receipt["review_verdict"]).lower()
+        findings.append({
+            "target_identity": source_report["target_identity"],
+            "current_review_receipt": receipt_state,
+            "cohort_review_events": sum(event["event_type"] == "review" for event in events),
+            "counted_review_events": source_report["review_count"],
+            "unattributed_work_items": source_report["unattributed_work_items"],
+            "work_link": "unproven",
+        })
+    if any(_load_v2_events(root)[1] != events for root, events in zip(roots, frozen_events)):
+        raise SkillCohortError("cohort_snapshot_changed")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "generation": "v2",
+        "diagnostic_only": True,
+        "network_used": False,
+        "sources": findings,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1189,6 +1231,9 @@ def main(argv: list[str] | None = None) -> int:
     report.add_argument("--source", type=Path, action="append", required=True)
     report.add_argument("--generation", choices=["v1", "v2"], default="v1")
     report.add_argument("--roster", type=Path)
+    audit_review_gap = sub.add_parser("audit-review-gap")
+    audit_review_gap.add_argument("--source", type=Path, action="append", required=True)
+    audit_review_gap.add_argument("--roster", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "enable":
@@ -1220,6 +1265,8 @@ def main(argv: list[str] | None = None) -> int:
             generation = _resolve_record_generation(args.target, args.generation)
             record = record_pending_v2_followup if generation == "v2" else record_pending_followup
             result = record(args.target, outcome=args.outcome)
+        elif args.command == "audit-review-gap":
+            result = audit_v2_review_gap(args.source, roster_path=args.roster)
         else:
             if args.generation == "v2" and args.roster is None:
                 raise SkillCohortError("v2_roster_required")

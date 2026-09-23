@@ -14,6 +14,7 @@ sys.path.insert(0, str(SCRIPTS))
 import omc_skill_effectiveness_cohort as cohort
 import omc_state
 import omc_version
+import omc_review_snapshot as review_snapshot
 
 
 def _event_types(root: Path) -> list[str]:
@@ -108,6 +109,124 @@ def test_v2_report_counts_review_churn_and_correction_after_approval(tmp_path: P
     assert report["aggregate"]["review_churn_work_items"] == 1
     assert report["aggregate"]["review_stale_count"] == 1
     assert report["aggregate"]["correction_after_approved_review"] == 1
+
+
+def _v2_review_gap_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
+    first = _v2_roster_target(tmp_path / "first", remote_name="first")
+    second = _v2_roster_target(tmp_path / "second", remote_name="second")
+    tracked = first / "app.py"
+    tracked.write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(first), "add", "app.py"], check=True)
+    subprocess.run(["git", "-C", str(first), "commit", "-qm", "baseline"], check=True)
+    base = subprocess.run(
+        ["git", "-C", str(first), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    roster_path = tmp_path / "roster.json"
+    activation_id = "6cf7a4aa-02cf-4bf1-a9f2-0aa6f68caf51"
+    activation_at = "2026-09-18T05:00:00+00:00"
+    cohort.create_v2_roster(
+        targets=[first, second], output=roster_path,
+        activation_id=activation_id, activation_at=activation_at,
+    )
+    for root in (first, second):
+        cohort.enable_v2_from_setup(
+            root, activation_id=activation_id, activation_at=activation_at,
+            roster_path=roster_path,
+        )
+    for skill_id in ("omc-task", "omc-review"):
+        cohort.record_v2_candidate(
+            first, work_id="work-001", skill_id=skill_id, policy_profile="full",
+            source_identity={"version": "0.3.3", "sha256": "a" * 64},
+        )
+    tracked.write_text("after\n", encoding="utf-8")
+    frozen = review_snapshot.capture_review_snapshot(first, base_commit=base)
+    evidence = review_snapshot.seal_review_output(
+        first, review_output=b"APPROVE\n",
+        snapshot_path=Path(str(frozen["snapshot_path"])),
+        snapshot_sha256=str(frozen["snapshot_sha256"]),
+    )
+    review_snapshot.record_review_receipt_from_snapshot(
+        first, snapshot_path=Path(str(frozen["snapshot_path"])),
+        snapshot_sha256=str(frozen["snapshot_sha256"]),
+        review_evidence_path=Path(str(evidence["evidence_path"])),
+        review_evidence_sha256=str(evidence["evidence_sha256"]), verdict="APPROVE",
+    )
+    return first, second, roster_path
+
+
+def test_v2_review_gap_cli_distinguishes_verified_receipt_from_cohort_events(tmp_path: Path) -> None:
+    first, second, roster_path = _v2_review_gap_fixture(tmp_path)
+    before = cohort.aggregate_v2([first, second], roster_path=roster_path)
+    ledger_before = cohort.v2_ledger_path(first).read_bytes()
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS / "omc_skill_effectiveness_cohort.py"),
+         "audit-review-gap", "--roster", str(roster_path),
+         "--source", str(first), "--source", str(second)],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["sources"][0]["current_review_receipt"] == "verified_approve"
+    assert payload["sources"][0]["cohort_review_events"] == 0
+    assert payload["sources"][0]["unattributed_work_items"] == 1
+    assert payload["sources"][0]["work_link"] == "unproven"
+    assert payload["sources"][1]["current_review_receipt"] == "absent"
+    assert cohort.aggregate_v2([first, second], roster_path=roster_path) == before
+    assert cohort.v2_ledger_path(first).read_bytes() == ledger_before
+
+
+def test_v2_review_gap_cli_separates_recorded_event_from_excluded_work(tmp_path: Path) -> None:
+    first, second, roster_path = _v2_review_gap_fixture(tmp_path)
+    cohort.record_v2_review(first, work_id="work-001", verdict="APPROVE", taxonomy="verification_gap")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS / "omc_skill_effectiveness_cohort.py"),
+         "audit-review-gap", "--roster", str(roster_path),
+         "--source", str(first), "--source", str(second)],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    source = json.loads(result.stdout)["sources"][0]
+    assert source["cohort_review_events"] == 1
+    assert source["counted_review_events"] == 0
+    assert source["unattributed_work_items"] == 1
+
+
+def test_v2_review_gap_rejects_ledger_append_between_report_and_event_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    first, second, roster_path = _v2_review_gap_fixture(tmp_path)
+    original_aggregate = cohort.aggregate_v2
+
+    def append_after_report(sources: list[Path], *, roster_path: Path) -> dict:
+        report = original_aggregate(sources, roster_path=roster_path)
+        cohort.record_v2_review(
+            first, work_id="work-001", verdict="APPROVE", taxonomy="verification_gap",
+        )
+        return report
+
+    monkeypatch.setattr(cohort, "aggregate_v2", append_after_report)
+    assert cohort.main([
+        "audit-review-gap", "--roster", str(roster_path),
+        "--source", str(first), "--source", str(second),
+    ]) == 2
+    assert json.loads(capsys.readouterr().out)["reason_code"] == "cohort_snapshot_changed"
+
+
+def test_v2_review_gap_cli_blocks_tampered_receipt(tmp_path: Path) -> None:
+    first, second, roster_path = _v2_review_gap_fixture(tmp_path)
+    receipt_path = next((first / ".omc" / "state" / "review-snapshots").glob("[0-9a-f]" * 32 + ".json"))
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["review_verdict"] = "BLOCK"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS / "omc_skill_effectiveness_cohort.py"),
+         "audit-review-gap", "--roster", str(roster_path),
+         "--source", str(first), "--source", str(second)],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["reason_code"] == "review_receipt_invalid"
 
 
 def test_v2_review_lifecycle_rejects_followup_before_review_and_review_after_followup(tmp_path: Path) -> None:
