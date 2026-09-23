@@ -22,7 +22,7 @@ OMC는 Codex를 대체하는 도구가 아니다. 여러 저장소를 운영하�
 
 OMC의 외부 제품 가치는 executor 수나 routing 복잡도가 아니라, AI가 만든 변경을 사람이 검증 가능한 증거로 승인하고 **동일한 candidate를 ship**하게 하는 데 있다. N-child와 routing은 이 목적을 지원하는 내부 execution capability이며, 제품 전면 약속이나 현재 확장 우선순위가 아니다.
 
-1. **Integrity** — canonical candidate·verification·review·ship이 같은 변경 집합을 가리키는지 fail-closed로 보장한다. 현재 Review–Ship Integrity Binding P0.2가 이 기반을 제공한다.
+1. **Integrity** — 현재 P0.2는 reviewed candidate와 ship candidate의 동일성을 fail-closed로 검증한다. verification receipt의 실질적 candidate binding 재검증과 Human Decision Binding은 후속 단계이며, 전체 승인 chain이 완성됐다는 뜻은 아니다.
 2. **Evidence** — 현재 Evidence A에서 정확히 두 opt-in 저장소의 자연 발생 작업에 대해 `review_count`, `review_churn`, `review_stale_count`, `correction_after_approved_review`를 관찰한다. 현재 cohort에는 새 시간 지표를 추가하지 않는다. Evidence B의 비교 효과·안전성 평가는 별도 계약이다.
 3. **Human Decision** — 기존 candidate·verification·review receipt와 residual issue를 사람이 읽기 쉬운 read-only projection으로 연결하고, 무엇을 수용했는지 closure receipt에 결속한다. Decision Context는 새 진실의 원천이 아니다.
 4. **Reframing** — 충분한 자연 표본 뒤에, 잘못 정의된 문제를 안전하게 완성하는 frame lock-in을 줄일 수 있는지 alert-only 가설로 검증한다. 자동 scope 재개방이나 강제 gate는 아니다.
@@ -43,19 +43,21 @@ OMC의 외부 제품 가치는 executor 수나 routing 복잡도가 아니라, A
 
 Evidence A의 측정 계약은 유지한다. 관찰을 막는 결함·안전 문제는 수정할 수 있지만, 새 실행·UX 기능은 현재 cohort와 분리된 version/experiment 경계가 필요하다. [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode) 등 외부 패턴은 구현 승인 없이 `CANDIDATE_ONLY`로 기록한다. 병목은 자연 작업 근거로 확인하고, 기존 OMC 기능으로 해결 가능한지와 candidate·verification·review·human authority·ship receipt 충돌 및 관찰 영향을 검토한 뒤 사람이 별도 실험을 승인한다. 데이터는 결정을 자동으로 내리지 않는다.
 
-| Pattern candidate | 예상 접점 | 현재 판정 |
-|---|---|---|
-| Topology-first interview | Reframing | `CANDIDATE_ONLY` — 관찰된 병목 없음 |
-| Staged handoff | Human Decision provenance | `CANDIDATE_ONLY` — 관찰된 병목 없음 |
-| Worktree isolation·immutable execution config | Scale containment | `CANDIDATE_ONLY` — 관찰된 병목 없음 |
-| Pre-flight danger scan | 실행 전 위험 신호 | `CANDIDATE_ONLY` — 관찰된 병목 없음 |
-| Bounded verify/fix loop | Verification; fix 뒤 review authority 무효화 필요 | `CANDIDATE_ONLY` — 관찰된 병목 없음 |
+| Pattern candidate | 예상 접점 | 후보 상태 | Trigger evidence |
+|---|---|---|---|
+| Topology-first interview | Reframing | `CANDIDATE_ONLY` | `NONE_OBSERVED_YET` |
+| Staged handoff | Human Decision provenance | `CANDIDATE_ONLY` | `NONE_OBSERVED_YET` |
+| Worktree isolation·immutable execution config | Scale containment | `CANDIDATE_ONLY` | `NONE_OBSERVED_YET` |
+| Pre-flight danger scan | 실행 전 위험 신호 | `CANDIDATE_ONLY` | `NONE_OBSERVED_YET` |
+| Bounded verify/fix loop | Verification; fix 뒤 review authority 무효화 필요 | `CANDIDATE_ONLY` | `NONE_OBSERVED_YET` |
+
+`NONE_OBSERVED_YET`은 현재 표본에서 후보별 도입 근거가 확인되지 않았다는 뜻이지, 병목이 존재하지 않는다는 판정이 아니다. 단일 correction도 특정 패턴의 필요성을 자동 확정하지 않는다.
 
 oh-my-claudecode를 executor로 연결하는 그림도 `POTENTIAL_INTEGRATION_HYPOTHESIS`일 뿐 현재 지원 기능이나 아키텍처 약속이 아니다. 외부 candidate·검증 결과·승인·worktree merge를 OMC identity/authority에 어떻게 결속할지는 검증되지 않았다.
 
 ## Deferred Product Backlog
 
-다음 항목은 가치 관찰 전 자동으로 시작하지 않으며, 각각 별도 plan과 사람 승인이 필요하다.
+다음 항목은 Evidence A의 충분한 자연 작업 근거와 별도 plan·사람 승인 전에는 자동으로 시작하지 않는다. 표본 기준 충족만으로 실행 권한이 생기지는 않는다.
 
 1. **Decision Context / closure consumer integration** — 기존 verification·review receipt를 읽기 쉬운 projection으로 연결하되, 새 진실의 원천을 만들지 않는다.
 2. **Alert-only Reframing** — 충분한 자연 표본 뒤에, 종료 안내가 사람의 다음 결정을 더 명확하게 하는지 제한된 가설로 실험한다. 자동 scope 재개방이나 강제 gate가 아니다.
@@ -64,7 +66,7 @@ oh-my-claudecode를 executor로 연결하는 그림도 `POTENTIAL_INTEGRATION_HY
 
 ## 제품 원칙과 금지선
 
-- 제품 포지션: 승인된 범위와 예산 안에서 결과를 재현 가능한 receipt로 증명하는 도구 중립 오케스트레이터
+- 제품 포지션: executor-neutral engineering control plane. 승인된 변경의 provenance·검증 근거·review 대상·사람 결정·ship identity를 재현 가능한 evidence로 보존한다. 구현된 결속 범위는 위 Current Product State에 한정한다.
 - 사람의 명시 승인 없이 push·PR·deploy·delete·reset 권한을 확장하지 않는다.
 - 운영 evidence 없이 자동 model switch와 자동 재분배를 열지 않는다.
 - synthetic·historical pilot만으로 대체 가능성을 주장하지 않는다.
