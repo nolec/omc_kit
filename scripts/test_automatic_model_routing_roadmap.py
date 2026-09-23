@@ -63,6 +63,8 @@ def test_roadmap_first_screen_is_the_canonical_current_view() -> None:
     assert "verification receipt의 실질적 candidate binding 재검증" in first_screen
     assert "전체 승인 chain이 완성됐다는 뜻은 아니다" in first_screen
     assert "executor-neutral engineering control plane" in first_screen
+    assert "evidence chain으로 보존하는 것이 제품 목표다" in first_screen
+    assert "현재 구현된 결속 범위는 위 Current Product State에 한정한다" in first_screen
     assert "도구 중립 오케스트레이터" not in first_screen
     assert "표본 기준 충족만으로 실행 권한이 생기지는 않는다" in first_screen
     assert "30 attributable candidate·5 correction" in first_screen

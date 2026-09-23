@@ -66,7 +66,7 @@ oh-my-claudecode를 executor로 연결하는 그림도 `POTENTIAL_INTEGRATION_HY
 
 ## 제품 원칙과 금지선
 
-- 제품 포지션: executor-neutral engineering control plane. 승인된 변경의 provenance·검증 근거·review 대상·사람 결정·ship identity를 재현 가능한 evidence로 보존한다. 구현된 결속 범위는 위 Current Product State에 한정한다.
+- 제품 포지션: executor-neutral engineering control plane. 승인된 변경의 provenance·검증 근거·review 대상·사람 결정·ship identity를 재현 가능한 evidence chain으로 보존하는 것이 제품 목표다. 현재 구현된 결속 범위는 위 Current Product State에 한정한다.
 - 사람의 명시 승인 없이 push·PR·deploy·delete·reset 권한을 확장하지 않는다.
 - 운영 evidence 없이 자동 model switch와 자동 재분배를 열지 않는다.
 - synthetic·historical pilot만으로 대체 가능성을 주장하지 않는다.
