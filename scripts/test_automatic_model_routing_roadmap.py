@@ -69,6 +69,9 @@ def test_roadmap_first_screen_is_the_canonical_current_view() -> None:
     assert "표본 기준 충족만으로 실행 권한이 생기지는 않는다" in first_screen
     assert "30 attributable candidate·5 correction" in first_screen
     assert "first-pass acceptance rate는 아직" in first_screen
+    assert "Work-lifecycle cohort v3" in first_screen
+    assert "DRAFT_SYNTHETIC" in first_screen
+    assert "asserted_work_link" in first_screen
     assert "## Deferred Product Backlog" in first_screen
     assert "Alert-only Reframing" in first_screen
     assert "Review Compression" in first_screen

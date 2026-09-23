@@ -15,6 +15,7 @@ OMC는 Codex를 대체하는 도구가 아니다. 여러 저장소를 운영하�
 | Review–Ship Integrity Binding P0.2 | `IMPLEMENTED_LOCAL_CONFORMANCE` | 승인한 canonical candidate를 pre/post-commit representation으로 비교하고 달라지면 `review_stale`로 막는다. 실제 사용자 재작업 감소는 미입증이다. |
 | Quality Gate Evidence Contract | `IMPLEMENTED_LOCAL_CONFORMANCE` | local ship gate와 CI 보완 범위를 계약으로 고정했다. 각 사용처의 실행 환경·migration 완료를 뜻하지 않는다. |
 | Evidence A — Raw-free workflow cohort v2 | `ACTIVE_NATURAL_OBSERVATION` | 승인된 정확히 두 opt-in 저장소에서 자연 작업을 관찰한다. 측정 계약은 고정하며 signed terminal/review receipt만 다룬다. |
+| Work-lifecycle cohort v3 | `DRAFT_SYNTHETIC` | v2의 복수 스킬 제외 문제를 별도 계약으로 검증하는 로컬 합성 fixture 전용 구현이다. `asserted_work_link`는 작업↔리뷰의 관찰상 연결이며 승인 권한의 증거가 아니다. 후속 결과는 `operator_reported_unverified`이고 자동 capture·운영 roster·T0·활성화는 없다. |
 | Evidence B — Comparative effect | `NOT_STARTED` | 재작업 감소와 결함 누락 비열화는 별도 비교 설계·승인 없이는 판단하지 않는다. |
 | 제품 가치 | `NOT_PROVEN` | 사람이 덜 수정하는지, review 반복이 줄어드는지, 잘못된 ship을 실제로 막는지는 자연 작업 표본이 필요하다. |
 
