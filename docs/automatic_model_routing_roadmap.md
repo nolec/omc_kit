@@ -14,7 +14,8 @@ OMC는 Codex를 대체하는 도구가 아니다. 여러 저장소를 운영하�
 |---|---|---|
 | Review–Ship Integrity Binding P0.2 | `IMPLEMENTED_LOCAL_CONFORMANCE` | 승인한 canonical candidate를 pre/post-commit representation으로 비교하고 달라지면 `review_stale`로 막는다. 실제 사용자 재작업 감소는 미입증이다. |
 | Quality Gate Evidence Contract | `IMPLEMENTED_LOCAL_CONFORMANCE` | local ship gate와 CI 보완 범위를 계약으로 고정했다. 각 사용처의 실행 환경·migration 완료를 뜻하지 않는다. |
-| Raw-free workflow cohort v2 | 코드·계측 계약 완료, 운영 관찰 미시작 | exact 2 opt-in target과 signed terminal/review receipt만 다룬다. 현재 `NO_ACTIVE_EXECUTION_LANE`이다. |
+| Evidence A — Raw-free workflow cohort v2 | `ACTIVE_NATURAL_OBSERVATION` | 승인된 정확히 두 opt-in 저장소에서 자연 작업을 관찰한다. 측정 계약은 고정하며 signed terminal/review receipt만 다룬다. |
+| Evidence B — Comparative effect | `NOT_STARTED` | 재작업 감소와 결함 누락 비열화는 별도 비교 설계·승인 없이는 판단하지 않는다. |
 | 제품 가치 | `NOT_PROVEN` | 사람이 덜 수정하는지, review 반복이 줄어드는지, 잘못된 ship을 실제로 막는지는 자연 작업 표본이 필요하다. |
 
 ## Product Evolution Sequence
@@ -22,7 +23,7 @@ OMC는 Codex를 대체하는 도구가 아니다. 여러 저장소를 운영하�
 OMC의 외부 제품 가치는 executor 수나 routing 복잡도가 아니라, AI가 만든 변경을 사람이 검증 가능한 증거로 승인하고 **동일한 candidate를 ship**하게 하는 데 있다. N-child와 routing은 이 목적을 지원하는 내부 execution capability이며, 제품 전면 약속이나 현재 확장 우선순위가 아니다.
 
 1. **Integrity** — canonical candidate·verification·review·ship이 같은 변경 집합을 가리키는지 fail-closed로 보장한다. 현재 Review–Ship Integrity Binding P0.2가 이 기반을 제공한다.
-2. **Evidence** — 정확히 두 opt-in 저장소의 자연 발생 작업에서 `review_count`, `review_churn`, `review_stale_count`, `correction_after_approved_review`를 관찰한다. 이는 현재 유일한 제품 우선순위이며, 현재 cohort에는 새 시간 지표를 추가하지 않는다.
+2. **Evidence** — 현재 Evidence A에서 정확히 두 opt-in 저장소의 자연 발생 작업에 대해 `review_count`, `review_churn`, `review_stale_count`, `correction_after_approved_review`를 관찰한다. 현재 cohort에는 새 시간 지표를 추가하지 않는다. Evidence B의 비교 효과·안전성 평가는 별도 계약이다.
 3. **Human Decision** — 기존 candidate·verification·review receipt와 residual issue를 사람이 읽기 쉬운 read-only projection으로 연결하고, 무엇을 수용했는지 closure receipt에 결속한다. Decision Context는 새 진실의 원천이 아니다.
 4. **Reframing** — 충분한 자연 표본 뒤에, 잘못 정의된 문제를 안전하게 완성하는 frame lock-in을 줄일 수 있는지 alert-only 가설로 검증한다. 자동 scope 재개방이나 강제 gate는 아니다.
 5. **Compression** — integrity·관찰·사람 결정의 근거 위에서만 Human Review Surface를 줄이는 실험을 한다.
@@ -30,11 +31,27 @@ OMC의 외부 제품 가치는 executor 수나 routing 복잡도가 아니라, A
 
 ## Single Active Product Priority
 
-현재 실행 중인 제품 효과 수집 lane은 없다(`NO_ACTIVE_EXECUTION_LANE`). 다음 제품 우선순위는 새 기능 추가가 아니라, 사용자가 별도로 관찰 시작을 승인할 때 **정확히 두 개의 opt-in 저장소에서 자연 발생 작업을 raw-free cohort v2로 관찰**하는 것이다. 자동 탐색·background scan·다른 저장소 확장·표본을 위한 인위적 작업은 하지 않는다.
+**Raw-free cohort v2 natural observation is active (`ACTIVE_NATURAL_OBSERVATION`).** 승인된 정확히 두 개의 opt-in 저장소에서 자연 발생 작업을 관찰한다. 다른 제품 효과 연구·실험 실행 lane은 승인되지 않았다. 자동 탐색·background scan·다른 저장소 확장·표본을 위한 인위적 작업은 하지 않는다.
+
+- 관측 스냅샷(2026-09-23 13:45 KST): `eligible_candidates=1`, `accepted=0`, `correction=0`, 판정 `INSUFFICIENT_SAMPLE`. 이는 당시 보고서 값이지 고정된 제품 상태나 효과 증거가 아니다. 이후 수치는 동일한 roster에 대한 새 보고서로 확인한다.
 
 - 현재 수집 가능한 핵심 지표는 `review_count`, `review_churn`, `review_stale_count`, `correction_after_approved_review`다. `review_stale`은 gate가 잡은 변경 빈도이지 품질 실패율이 아니다.
 - `30 attributable candidate·5 correction` 전에는 `INSUFFICIENT_SAMPLE`만 보고하고, 기능 효과·우위·튜닝 결론을 내리지 않는다.
 - first-pass acceptance rate는 아직 현재 cohort의 계산 지표가 아니다. 필요하면 정의·분모·귀속 규칙을 사전등록한 별도 관찰 계약에서만 추가한다.
+
+## External Pattern Absorption — Candidate Only
+
+Evidence A의 측정 계약은 유지한다. 관찰을 막는 결함·안전 문제는 수정할 수 있지만, 새 실행·UX 기능은 현재 cohort와 분리된 version/experiment 경계가 필요하다. [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode) 등 외부 패턴은 구현 승인 없이 `CANDIDATE_ONLY`로 기록한다. 병목은 자연 작업 근거로 확인하고, 기존 OMC 기능으로 해결 가능한지와 candidate·verification·review·human authority·ship receipt 충돌 및 관찰 영향을 검토한 뒤 사람이 별도 실험을 승인한다. 데이터는 결정을 자동으로 내리지 않는다.
+
+| Pattern candidate | 예상 접점 | 현재 판정 |
+|---|---|---|
+| Topology-first interview | Reframing | `CANDIDATE_ONLY` — 관찰된 병목 없음 |
+| Staged handoff | Human Decision provenance | `CANDIDATE_ONLY` — 관찰된 병목 없음 |
+| Worktree isolation·immutable execution config | Scale containment | `CANDIDATE_ONLY` — 관찰된 병목 없음 |
+| Pre-flight danger scan | 실행 전 위험 신호 | `CANDIDATE_ONLY` — 관찰된 병목 없음 |
+| Bounded verify/fix loop | Verification; fix 뒤 review authority 무효화 필요 | `CANDIDATE_ONLY` — 관찰된 병목 없음 |
+
+oh-my-claudecode를 executor로 연결하는 그림도 `POTENTIAL_INTEGRATION_HYPOTHESIS`일 뿐 현재 지원 기능이나 아키텍처 약속이 아니다. 외부 candidate·검증 결과·승인·worktree merge를 OMC identity/authority에 어떻게 결속할지는 검증되지 않았다.
 
 ## Deferred Product Backlog
 

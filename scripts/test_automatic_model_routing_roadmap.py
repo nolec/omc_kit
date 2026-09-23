@@ -52,7 +52,11 @@ def test_roadmap_first_screen_is_the_canonical_current_view() -> None:
     assert "## Current Product State" in first_screen
     assert "IMPLEMENTED_LOCAL_CONFORMANCE" in first_screen
     assert "## Single Active Product Priority" in first_screen
-    assert "NO_ACTIVE_EXECUTION_LANE" in first_screen
+    assert "ACTIVE_NATURAL_OBSERVATION" in first_screen
+    assert "NO_ACTIVE_EXECUTION_LANE" not in first_screen
+    assert "Evidence A" in first_screen
+    assert "Evidence B" in first_screen
+    assert "CANDIDATE_ONLY" in first_screen
     assert "30 attributable candidate·5 correction" in first_screen
     assert "first-pass acceptance rate는 아직" in first_screen
     assert "## Deferred Product Backlog" in first_screen
@@ -78,6 +82,25 @@ def test_roadmap_declares_evidence_before_human_decision_and_scale() -> None:
     assert positions == sorted(positions)
     assert "N-child와 routing은 이 목적을 지원하는 내부 execution capability" in first_screen
     assert "현재 cohort에는 새 시간 지표를 추가하지 않는다" in first_screen
+
+
+def test_active_cohort_status_is_not_a_product_effect_claim() -> None:
+    roadmap = ROADMAP_PATH.read_text(encoding="utf-8").split(
+        "## Reference Backlog and Study Details", 1
+    )[0]
+    readme = README_PATH.read_text(encoding="utf-8").split(
+        "## 역사적 연구 상세", 1
+    )[0]
+
+    assert "ACTIVE_NATURAL_OBSERVATION" in roadmap
+    assert "ACTIVE_NATURAL_OBSERVATION" in readme
+    assert "NO_ACTIVE_EXECUTION_LANE" not in roadmap
+    assert "NO_ACTIVE_EXECUTION_LANE" not in readme
+    assert re.search(r"관측 스냅샷\(\d{4}-\d{2}-\d{2} \d{2}:\d{2} KST\)", roadmap)
+    assert re.search(r"eligible_candidates=\d+", roadmap)
+    assert "당시 보고서 값이지 고정된 제품 상태나 효과 증거가 아니다" in roadmap
+    assert "Evidence B" in roadmap
+    assert "별도 비교 설계·승인" in readme
 
 
 def test_reference_backlog_is_historical_and_cannot_authorize_execution() -> None:
