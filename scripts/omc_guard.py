@@ -15,6 +15,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_utils
 
 
+_FROZEN_LIVE_REGISTRATIONS = frozenset({
+    (
+        "completion-quality-live-20260913-v2",
+        "67b169155db9e2afce0760fd6dd18bfd7ce76f67b2418e5df66c34e0fcdbb073",
+    ),
+})
+
+
+def _is_frozen_live_registration(policy_path: Path) -> bool:
+    """Do not restart an explicitly retired study; malformed policy still fails closed."""
+    import omc_completion_observation as observation
+
+    if policy_path.is_symlink():
+        return False
+    try:
+        policy = observation._validate_live_record(
+            json.loads(policy_path.read_text(encoding="utf-8")),
+            artifact_type="policy",
+            hash_field="policy_sha256",
+        )
+    except (OSError, UnicodeDecodeError, ValueError, observation.CaptureError):
+        return False
+    return (
+        policy.get("study_id"), policy.get("cohort_registration_sha256")
+    ) in _FROZEN_LIVE_REGISTRATIONS
+
+
 def _prospective_work_class_lock(project_root: Path):
     import omc_work_class_lock
 
@@ -35,7 +62,8 @@ def _report_live_start_runner_failure(project_root: Path, reason: str) -> None:
 
 def _start_registered_live_observation(project_root: Path) -> None:
     """Start enrolled observation without making instrumentation task-critical."""
-    if not (project_root / ".omc" / "observation-policy.json").is_file():
+    policy_path = project_root / ".omc" / "observation-policy.json"
+    if not policy_path.is_file() or _is_frozen_live_registration(policy_path):
         return
     script = Path(__file__).resolve().parent / "omc_completion_observation.py"
     try:

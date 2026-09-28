@@ -778,7 +778,12 @@ def test_live_idle_snapshot_serializes_against_pending_creation(
     assert completed_during_snapshot == [False]
 
 
-def test_guard_automatically_starts_enabled_implementation_observation(tmp_path: Path) -> None:
+def test_guard_automatically_starts_enabled_implementation_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The guard starts a real subprocess, so its observation window must include wall-clock time.
+    now = datetime.now().astimezone()
+    monkeypatch.setattr(observation, "_now", lambda: now)
     root, _ = _live_repo(tmp_path)
 
     result = subprocess.run(
@@ -820,6 +825,46 @@ def test_guard_automatically_starts_enabled_implementation_observation(tmp_path:
         / "start.json"
     ).is_file()
     assert "[OMC-OBSERVATION] COLLECTING" in result.stdout
+
+
+def test_guard_does_not_restart_frozen_historical_live_study(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    policy_path = root / ".omc" / "observation-policy.json"
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    policy["study_id"] = "completion-quality-live-20260913-v2"
+    policy["cohort_registration_sha256"] = "67b169155db9e2afce0760fd6dd18bfd7ce76f67b2418e5df66c34e0fcdbb073"
+    policy["policy_sha256"] = observation.canonical_sha256({**policy, "policy_sha256": ""})
+    policy_path.write_text(json.dumps(policy), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable, "scripts/omc_guard.py", "sync-require",
+            "--target", str(root), "--mode", "autopilot", "--title", "omc-task",
+            "--request", "new implementation after historical freeze",
+            "--roles", "senior_coding", "--work-class", "implementation",
+            "--completion-action", "start", "--for", "task",
+        ],
+        capture_output=True, text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "[OMC-OBSERVATION]" not in result.stdout
+    assert not list((root / ".omc" / "observations" / "live-failures").glob("*.json"))
+    assert not (root / ".omc" / "observations" / "live" / ("a" * 32) / "start.json").exists()
+
+
+def test_guard_frozen_study_match_requires_exact_valid_registration(tmp_path: Path) -> None:
+    root, _ = _live_repo(tmp_path)
+    policy_path = root / ".omc" / "observation-policy.json"
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    policy["study_id"] = "completion-quality-live-20260913-v2"
+    policy["policy_sha256"] = observation.canonical_sha256({**policy, "policy_sha256": ""})
+    policy_path.write_text(json.dumps(policy), encoding="utf-8")
+    assert omc_guard._is_frozen_live_registration(policy_path) is False
+
+    policy["cohort_registration_sha256"] = "67b169155db9e2afce0760fd6dd18bfd7ce76f67b2418e5df66c34e0fcdbb073"
+    policy_path.write_text(json.dumps(policy), encoding="utf-8")
+    assert omc_guard._is_frozen_live_registration(policy_path) is False
 
 
 def test_guard_observation_failure_does_not_block_work_and_records_receipt(tmp_path: Path) -> None:
