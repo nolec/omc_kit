@@ -56,6 +56,12 @@ Evidence A의 측정 계약은 유지한다. 관찰을 막는 결함·안전 문
 
 oh-my-claudecode를 executor로 연결하는 그림도 `POTENTIAL_INTEGRATION_HYPOTHESIS`일 뿐 현재 지원 기능이나 아키텍처 약속이 아니다. 외부 candidate·검증 결과·승인·worktree merge를 OMC identity/authority에 어떻게 결속할지는 검증되지 않았다.
 
+## Competitive Conformance — Separate Research
+
+[2026-09-28 OMC vs oh-my Launch review→ship identity 기록](competitive_conformance/omc_ohmy_review_ship_2026-09-28.md)은 `COMPETITIVE_CONFORMANCE_ONLY`다. 격리된 합성 fixture에서 OMC의 직접 `validate-ship`은 동일 내용의 정상 commit을 허용하고, 리뷰 후 주석·코드 변경은 `review_stale`로 차단했다. 별도 oh-my Launch closeout 경로에서는 이전 review와 현재 candidate의 exact-identity 대조가 관찰되지 않았다. 두 경로는 대칭적인 end-to-end 실행이 아니며, 이 기록만으로 제품 우위·전체 oh-my 승인 무효화 동작·사용자 효용을 판정하지 않는다. 원본 receipt와 CLI 로그도 저장소에 보존되지 않아 독립 확인에는 격리 재실행이 필요하다.
+
+이 연구는 활성 Evidence A의 cohort·지표·설치 identity·원장에 귀속하지 않는다. 경쟁 연구 결과를 제품 효과 증거로 승격하거나 외부 패턴 구현 권한으로 해석하지 않으며, 현재 단일 제품 운영 우선순위도 변경하지 않는다.
+
 ## Deferred Product Backlog
 
 다음 항목은 Evidence A의 충분한 자연 작업 근거와 별도 plan·사람 승인 전에는 자동으로 시작하지 않는다. 표본 기준 충족만으로 실행 권한이 생기지는 않는다.
