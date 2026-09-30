@@ -68,6 +68,79 @@ def _approve(repo: Path, base: str) -> dict[str, object]:
     )
 
 
+@pytest.mark.parametrize("filename", ["skill-effectiveness-cohort-v3.json", "skill-effectiveness-cohort-v3.jsonl"])
+@pytest.mark.parametrize("operation,tracked", [("add", False), ("modify", False),
+                                               ("modify", True), ("delete", False), ("delete", True)])
+def test_v3_runtime_files_preserve_review_across_worktree_and_commit(tmp_path, filename, operation, tracked):
+    repo, base = _repo(tmp_path)
+    path = repo / ".omc" / filename
+    path.parent.mkdir(exist_ok=True)
+    if operation != "add":
+        path.write_text('{}\n')
+        if tracked:
+            _git(repo, "add", str(path))
+            _git(repo, "commit", "-qm", "runtime baseline")
+            base = _git(repo, "rev-parse", "HEAD")
+    (repo / "app.py").write_text("value = 'reviewed'\n")
+    _approve(repo, base)
+    if operation == "delete":
+        path.unlink()
+    else:
+        path.write_text('{"changed":true}\n')
+    assert snapshot.validate_ship_candidate(repo)["status"] == "READY"
+    worktree = snapshot.build_worktree_candidate(repo, base_commit=base)
+    _git(repo, "add", "app.py")
+    if path.exists() or tracked:
+        _git(repo, "add", ".omc/" + filename)
+    _git(repo, "commit", "-qm", "same reviewed product")
+    committed = snapshot.build_commit_candidate(repo, base_commit=base, candidate_commit="HEAD")
+    assert committed["candidate_scope_sha256"] == worktree["candidate_scope_sha256"]
+    assert snapshot.validate_ship_candidate(repo)["status"] == "READY"
+
+
+def test_previous_candidate_policy_receipt_requires_new_review(tmp_path, monkeypatch):
+    repo, base = _repo(tmp_path)
+    current_policy = snapshot.CANDIDATE_POLICY_VERSION
+    with monkeypatch.context() as patch:
+        patch.setattr(snapshot, "CANDIDATE_POLICY_VERSION", "omc-candidate-policy/v1")
+        _approve(repo, base)
+    assert current_policy == "omc-candidate-policy/v2"
+    assert snapshot.validate_ship_candidate(repo)["status"] == "BLOCKED"
+
+
+@pytest.mark.parametrize("relative", [".omc/policy.json", "scripts/omc_review_snapshot.py",
+                                      ".omc/skill-effectiveness-cohort-v3.json.extra"])
+def test_v3_exclusion_does_not_hide_policy_implementation_or_similar_paths(tmp_path, relative):
+    repo, base = _repo(tmp_path)
+    _approve(repo, base)
+    path = repo / relative
+    path.parent.mkdir(exist_ok=True)
+    path.write_text('changed\n')
+    result = snapshot.validate_ship_candidate(repo)
+    assert result["reason_code"] == "review_stale"
+    assert relative in result["changed_paths"]
+
+
+@pytest.mark.parametrize("corrupt", ["config", "ledger"])
+def test_observation_cli_rejects_corruption_independently_of_ship_identity(tmp_path, corrupt):
+    repo, base = _repo(tmp_path)
+    _approve(repo, base)
+    v3.config_path(repo).write_text(json.dumps({
+        "generation": "v3", "enabled": True, "status": "DRAFT_SYNTHETIC",
+        "activation_id": "synthetic-only", "activation_at": "2026-09-23T00:00:00Z",
+    }))
+    if corrupt == "config":
+        v3.config_path(repo).write_text('{}')
+    else:
+        v3.ledger_path(repo).write_text('{"event_type":"forged"}\n')
+    result = subprocess.run([sys.executable, str(Path(v3.__file__)), "report", "--target", str(repo)],
+                            capture_output=True, text=True)
+    assert result.returncode == 2
+    assert json.loads(result.stdout)["state"] == "INTEGRITY_INVALID"
+    assert "work_items" not in json.loads(result.stdout)
+    assert _snapshot_cli(repo, "validate-ship", "--target", str(repo))["status"] == "READY"
+
+
 @pytest.mark.parametrize("verdict", ["APPROVE", "APPROVE_WITH_NOTES"])
 @pytest.mark.parametrize("session_id,taxonomy", [
     ("review-001", "test_quality_only"),
@@ -112,7 +185,6 @@ def test_cli_reports_observation_failure_separately(monkeypatch, capsys):
 
 def test_opt_in_v3_review_bridge_uses_issued_receipt_and_explicit_followup(tmp_path: Path) -> None:
     repo, base = _repo(tmp_path)
-    (repo / ".git" / "info" / "exclude").write_text(".omc/\n")
     v3.config_path(repo).parent.mkdir(exist_ok=True)
     v3.config_path(repo).write_text(json.dumps({
         "generation": "v3", "enabled": True, "status": "DRAFT_SYNTHETIC",
@@ -145,6 +217,7 @@ def test_opt_in_v3_review_bridge_uses_issued_receipt_and_explicit_followup(tmp_p
     assert cohort["status"] == "recorded"
     assert v3.report(repo)["review_count"] == 1
     assert v3.report(repo)["outcome_unobserved"] == 1
+    assert _snapshot_cli(repo, "validate-ship", "--target", str(repo))["status"] == "READY"
     replay = snapshot.record_review_receipt_from_snapshot(
         repo, snapshot_path=Path(str(frozen["snapshot_path"])),
         snapshot_sha256=str(frozen["snapshot_sha256"]),

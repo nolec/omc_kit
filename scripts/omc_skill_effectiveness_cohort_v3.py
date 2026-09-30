@@ -25,6 +25,9 @@ CONFIG_NAME = "skill-effectiveness-cohort-v3.json"
 LEDGER_NAME = "skill-effectiveness-cohort-v3.jsonl"
 ACTIVE = "ACTIVE_NATURAL_OBSERVATION"
 CLOSURE_NAME = "skill-effectiveness-cohort-v3-closure.json"
+TRANSITION_NAME = "skill-effectiveness-cohort-v3-transition.json"
+ACTIVATION_NAME = "skill-effectiveness-cohort-v3-activation.json"
+_TRANSITION_BARRIER = {"generation": "v3", "status": "TRANSITION_BLOCKED"}
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{2,127}")
 _HEX = re.compile(r"[0-9a-f]{64}")
 _SKILLS = {"omc-plan", "omc-task", "omc-review"}
@@ -172,13 +175,24 @@ def enroll(root: Path, *, roster_path: Path) -> dict[str, Any]:
         raise V3Error("roster_target_not_allowed")
     with omc_state._omc_lock(root):
         path = config_path(root)
-        if path.exists() or path.is_symlink():
-            existing = _config(root)
+        marker = _transition(root)
+        barrier = (marker is not None and path.exists() and
+                   _json_regular(path, reason="transition_invalid") == _TRANSITION_BARRIER)
+        if (path.exists() or path.is_symlink()) and not barrier:
+            existing = _config(root, check_transition=False)
             if existing.get("roster_sha256") != _hash(roster):
                 raise V3Error("activation_conflict")
             return {"status": "unchanged", "activation_id": existing["activation_id"]}
         if _time(roster["activation_at"]) <= _now():
             raise V3Error("fresh_t0_required")
+        marker = _transition(root)
+        if marker is not None:
+            prepared = root / ".omc/cohort-transition-previous/prepared.json"
+            if (_json_regular(prepared, reason="transition_not_prepared")
+                    != {"transition_sha256": _hash(marker)}):
+                raise V3Error("transition_not_prepared")
+        if marker is not None and roster["activation_id"] == marker["previous_activation"]:
+            raise V3Error("activation_reuse_forbidden")
         if _installation(root) != {k: v for k, v in matching[0].items() if k != "target_identity"}:
             raise V3Error("installation_binding_mismatch")
         if ledger_path(root).exists() or ledger_path(root).is_symlink():
@@ -187,7 +201,20 @@ def enroll(root: Path, *, roster_path: Path) -> dict[str, Any]:
             "activation_id": roster["activation_id"], "activation_at": roster["activation_at"],
             "roster": roster, "roster_sha256": _hash(roster), "target_identity": identity,
             "enrollment_session_ids": legacy._session_ids_at_enrollment(root)}
-        _write_once(path, config)
+        if marker is not None:
+            work_ids = set(marker["previous_work_ids"])
+            for sid in config["enrollment_session_ids"]:
+                session = _json_regular(root / ".omc/state/sessions" / sid / "session.json", reason="session_invalid")
+                work = session.get("work_id")
+                if work is not None:
+                    if not isinstance(work, str) or _ID.fullmatch(work) is None:
+                        raise V3Error("session_invalid")
+                    work_ids.add(work)
+            config["excluded_work_ids"] = sorted(work_ids)
+        if barrier:
+            _replace_transition_config(path, config)
+        else:
+            _write_once(path, config)
         return {"status": "enrolled", "activation_id": config["activation_id"],
                 "roster_sha256": config["roster_sha256"]}
 
@@ -228,6 +255,407 @@ def close(root: Path) -> dict[str, Any]:
         return {"status": "closed", **receipt}
 
 
+_ARCHIVE_SESSION_FIELDS = {
+    "session_id", "work_id", "title", "created_at", "work_class",
+    "completion_action", "lineage_root_session_id", "lineage_previous_session_id",
+    "lineage_index", "cohort_capture_v3",
+}
+
+
+def archive_closed(root: Path, *, output: Path) -> dict[str, Any]:
+    """Preserve a raw-free projection; never move or delete live evidence."""
+    root = legacy._root(root)
+    if output.resolve().is_relative_to(root) or output.parent.is_symlink():
+        raise V3Error("archive_must_be_external")
+    with omc_state._omc_lock(root):
+        config = _config(root)
+        events = _events(root, activation_id=config["activation_id"])
+        closure = _closure(root, config, events)
+        if closure is None:
+            raise V3Error("archive_requires_closed")
+        projection = _report_locked(root)
+        sessions = []
+        directory = root / ".omc/state/sessions"
+        if directory.is_symlink():
+            raise V3Error("archive_session_invalid")
+        for path in sorted(directory.glob("*/session.json")):
+            if path.parent.is_symlink():
+                raise V3Error("archive_session_invalid")
+            session = _json_regular(path, reason="archive_session_invalid")
+            if session.get("title") not in _SKILLS:
+                continue
+            item = {key: session[key] for key in _ARCHIVE_SESSION_FIELDS if key in session}
+            item["confirmed"] = session.get("confirmation", {}).get("status") == "confirmed"
+            sessions.append(item)
+        bundle = {
+            "schema": "omc-workflow-archive/v1", "config": config,
+            "events": events, "closure": closure, "sessions": sessions,
+            "projection": projection,
+            "verifier_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            "claim_boundary": "raw_free_projection_not_full_original_evidence",
+        }
+        # Pin exactly the declared raw-free fields, not arbitrary nested metadata.
+        for item in sessions:
+            _validate_archive_session(item)
+        bundle["bundle_sha256"] = _hash(bundle)
+        if output.exists() or output.is_symlink():
+            existing = _json_regular(output, reason="archive_invalid")
+            if existing != bundle:
+                raise V3Error("archive_conflict")
+        else:
+            _durable_write_once(output, bundle)
+        return verify_archive(output)
+
+
+def verify_archive(path: Path) -> dict[str, Any]:
+    """Verify preserved bytes only; never read a live installation or session."""
+    value = _json_regular(path, reason="archive_invalid")
+    required = {"schema", "config", "events", "closure", "sessions", "projection",
+                "verifier_sha256", "claim_boundary", "bundle_sha256"}
+    if (set(value) != required or value["schema"] != "omc-workflow-archive/v1"
+            or value["claim_boundary"] != "raw_free_projection_not_full_original_evidence"):
+        raise V3Error("archive_invalid")
+    body = {key: item for key, item in value.items() if key != "bundle_sha256"}
+    if _hash(body) != value["bundle_sha256"]:
+        raise V3Error("archive_hash_mismatch")
+    events, config, closure = value["events"], value["config"], value["closure"]
+    if (not isinstance(events, list) or not isinstance(config, dict)
+            or not isinstance(closure, dict) or not isinstance(value["sessions"], list)):
+        raise V3Error("archive_invalid")
+    roster = _validate_roster(config.get("roster", {}))
+    if (config.get("roster_sha256") != _hash(roster)
+            or config.get("activation_id") != roster["activation_id"]
+            or config.get("activation_at") != roster["activation_at"]
+            or config.get("target_identity") not in {t["target_identity"] for t in roster["targets"]}):
+        raise V3Error("archive_roster_invalid")
+    prior = []
+    for event in events:
+        if not isinstance(event, dict) or event.get("event_type") not in _EVENT_KEYS:
+            raise V3Error("archive_event_invalid")
+        if set(event) != _COMMON_EVENT_KEYS | _EVENT_KEYS[event["event_type"]]:
+            raise V3Error("archive_event_invalid")
+        if (event["schema_version"] != 1 or event["generation"] != "v3"
+                or any(not isinstance(event[k], str) or _ID.fullmatch(event[k]) is None
+                       for k in ("event_id", "work_id"))):
+            raise V3Error("archive_event_invalid")
+        if event["event_type"] in {"candidate", "review"}:
+            if not isinstance(event["session_id"], str) or _ID.fullmatch(event["session_id"]) is None:
+                raise V3Error("archive_event_invalid")
+        if event["event_type"] == "candidate" and event["skill_id"] not in _SKILLS:
+            raise V3Error("archive_event_invalid")
+        if event["event_type"] == "review":
+            if (event["verdict"] not in _VERDICTS or event["taxonomy"] not in _TAXONOMIES
+                    or (event["taxonomy"] == "review_stale" and event["verdict"] != "BLOCK")
+                    or event["work_link_class"] != "asserted_work_link"
+                    or ((event["verdict"] in {"APPROVE", "APPROVE_WITH_NOTES"}) != (event["review_receipt_sha256"] is not None))
+                    or (event["review_receipt_sha256"] is not None and (
+                        not isinstance(event["review_receipt_sha256"], str) or _HEX.fullmatch(event["review_receipt_sha256"]) is None))):
+                raise V3Error("archive_event_invalid")
+        if event["event_type"] == "followup" and (event["outcome"] not in _OUTCOMES or event["source"] != "operator_reported_unverified"):
+            raise V3Error("archive_event_invalid")
+        if (event.get("activation_id") != config.get("activation_id")
+                or event.get("previous_event_sha256") != (prior[-1]["event_sha256"] if prior else None)
+                or event.get("event_sha256") != _hash({k: v for k, v in event.items() if k != "event_sha256"})):
+            raise V3Error("archive_event_invalid")
+        _validate_event_link(event, prior)
+        prior.append(event)
+    if (closure.get("activation_id") != config.get("activation_id")
+            or closure.get("event_count") != len(events) or closure.get("ledger_sha256") != _hash(events)):
+        raise V3Error("archive_closure_invalid")
+    for session in value["sessions"]:
+        _validate_archive_session(session)
+    by_id = {s.get("session_id"): s for s in value["sessions"]}
+    if len(by_id) != len(value["sessions"]):
+        raise V3Error("archive_session_invalid")
+    projection = value["projection"]
+    candidates = [e for e in events if e["event_type"] == "candidate"]
+    reviews = [e for e in events if e["event_type"] == "review"]
+    follows = [e for e in events if e["event_type"] == "followup"]
+    works = {e["work_id"] for e in candidates}
+    for event in candidates:
+        session = by_id.get(event["session_id"])
+        if (session is None or not session["confirmed"] or session.get("work_id") != event["work_id"]
+                or session.get("title") != event["skill_id"]):
+            raise V3Error("archive_session_link_invalid")
+    start, end = _time(config.get("activation_at")), _time(closure.get("closed_at"))
+    if end < start:
+        raise V3Error("archive_closure_invalid")
+    if any(_time(e.get("observed_at")) < start or _time(e.get("observed_at")) > end for e in events):
+        raise V3Error("archive_event_invalid")
+    eligible = {e["session_id"] for e in candidates}
+    captures, failures = {}, {}
+    for session in value["sessions"]:
+        sid = session.get("session_id")
+        if (not session["confirmed"] or session.get("title") not in _SKILLS
+                or sid in config["enrollment_session_ids"]
+                or _time(session.get("created_at")) < start or _time(session.get("created_at")) > end):
+            continue
+        in_scope = session.get("work_class") == "implementation" or (
+            session.get("work_class") is None and session.get("title") == "omc-review"
+            and any(e["work_id"] == session.get("work_id") and e["skill_id"] == "omc-task"
+                    for e in candidates))
+        if not in_scope:
+            continue
+        eligible.add(sid)
+        capture = session.get("cohort_capture_v3")
+        if capture is None or capture.get("activation_id") != config["activation_id"]:
+            continue
+        status = capture.get("status")
+        if status == "recorded" and sid in {e["session_id"] for e in candidates}:
+            captures[sid] = status
+        elif status == "integrity_invalid" and sid not in {e["session_id"] for e in candidates}:
+            captures[sid] = status
+            reason = capture.get("reason_code")
+            failures[reason] = failures.get(reason, 0) + 1
+        else:
+            raise V3Error("archive_capture_invalid")
+    computed = {
+        "review_unobserved": len(works - {e["work_id"] for e in reviews}),
+        "outcome_unobserved": len(works - {e["work_id"] for e in follows}),
+        "review_stale_count": sum(e["taxonomy"] == "review_stale" for e in reviews),
+        "review_churn_work_items": sum(sum(e["work_id"] == w for e in reviews) > 1 for w in works),
+        "correction_after_approved_review": sum(
+            any(r["event_id"] == f["review_event_id"] and r["verdict"] in {"APPROVE", "APPROVE_WITH_NOTES"}
+                for r in reviews) for f in follows if f["outcome"] == "correction"),
+        **{o: sum(e["outcome"] == o for e in follows) for o in _OUTCOMES},
+        "capture_sessions": {"recorded": sum(s == "recorded" for s in captures.values()),
+                             "integrity_invalid": sum(s == "integrity_invalid" for s in captures.values()),
+                             "status_unobserved": len(eligible - captures.keys()),
+                             "failure_reason_counts": dict(sorted(failures.items()))},
+    }
+    if (not isinstance(projection, dict)
+            or projection.get("work_items") != len({e["work_id"] for e in candidates})
+            or projection.get("skill_exposures") != len(candidates)
+            or projection.get("review_count") != len(reviews)
+            or any(projection.get(k) != v for k, v in computed.items())):
+        raise V3Error("archive_projection_invalid")
+    return {"state": "ARCHIVE_VERIFIED", "bundle_sha256": value["bundle_sha256"],
+            "activation_id": config["activation_id"], "event_count": len(events),
+            "claim_boundary": value["claim_boundary"]}
+
+
+def _validate_archive_session(session: object) -> None:
+    if (not isinstance(session, dict) or set(session) - (_ARCHIVE_SESSION_FIELDS | {"confirmed"})
+            or type(session.get("confirmed")) is not bool):
+        raise V3Error("archive_session_invalid")
+    for key, value in session.items():
+        if key == "confirmed":
+            continue
+        if key == "cohort_capture_v3":
+            if (not isinstance(value, dict)
+                    or set(value) - {"status", "activation_id", "reason_code"}
+                    or any(not isinstance(v, str) or _ID.fullmatch(v) is None for v in value.values())):
+                raise V3Error("archive_session_invalid")
+        elif key == "lineage_index":
+            if value is not None and (type(value) is not int or value < 0):
+                raise V3Error("archive_session_invalid")
+        elif value is not None and not isinstance(value, str):
+            raise V3Error("archive_session_invalid")
+        elif value is not None:
+            allowed = {"title": _SKILLS, "work_class": {"implementation", "synthetic", "document_only", "benchmark_maintenance"},
+                       "completion_action": {"start", "continue", "preserve", "preserve-if-present"}}
+            if key in allowed and value not in allowed[key]:
+                raise V3Error("archive_session_invalid")
+            if key in {"session_id", "work_id", "lineage_root_session_id", "lineage_previous_session_id"} and _ID.fullmatch(value) is None:
+                raise V3Error("archive_session_invalid")
+            if key == "created_at":
+                _time(value)
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _durable_write_once(path: Path, value: object) -> None:
+    _write_once(path, value)
+    _fsync_directory(path.parent)
+
+
+def _replace_transition_config(path: Path, value: object) -> None:
+    """Keep the config path continuously present for predecessor consumers."""
+    temporary = path.with_name(path.name + ".transition-" + uuid.uuid4().hex)
+    try:
+        _durable_write_once(temporary, value)
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _transition(root: Path) -> dict[str, Any] | None:
+    path = root / ".omc" / TRANSITION_NAME
+    if not path.exists() and not path.is_symlink():
+        return None
+    marker = _json_regular(path, reason="transition_invalid")
+    fields = {"schema", "target_identity", "previous_activation", "archive_sha256",
+              "peer_archive_sha256", "previous_work_ids", "file_sha256"}
+    if (set(marker) != fields or marker["schema"] != "omc-cohort-transition/v1"
+            or marker["target_identity"] != _target(root)
+            or not isinstance(marker["file_sha256"], dict)
+            or set(marker["file_sha256"]) - {CONFIG_NAME, LEDGER_NAME, CLOSURE_NAME}
+            or not isinstance(marker["previous_work_ids"], list)
+            or not isinstance(marker["previous_activation"], str)
+            or not isinstance(marker["peer_archive_sha256"], list)
+            or len(marker["peer_archive_sha256"]) != 2
+            or any(not isinstance(h, str) or _HEX.fullmatch(h) is None
+                   for h in [marker["archive_sha256"], *marker["peer_archive_sha256"], *marker["file_sha256"].values()])
+            or any(not isinstance(w, str) or _ID.fullmatch(w) is None for w in marker["previous_work_ids"])):
+        raise V3Error("transition_invalid")
+    return marker
+
+
+def prepare_transition(root: Path, *, archives: list[Path], archive: Path) -> dict[str, Any]:
+    """Block capture before moving old artifacts; retry resumes exact moves."""
+    root = legacy._root(root)
+    bundles = [_json_regular(p, reason="archive_invalid") for p in archives]
+    verified = [verify_archive(p) for p in archives]
+    if (len(bundles) != 2 or len({b["config"]["target_identity"] for b in bundles}) != 2
+            or len({b["config"]["roster_sha256"] for b in bundles}) != 1):
+        raise V3Error("transition_pair_invalid")
+    own = _json_regular(archive, reason="archive_invalid")
+    own_check = verify_archive(archive)
+    if own["config"]["target_identity"] != _target(root) or own_check not in verified:
+        raise V3Error("transition_archive_mismatch")
+    with omc_state._omc_lock(root):
+        marker = _transition(root)
+        previous = root / ".omc/cohort-transition-previous"
+        if previous.is_symlink():
+            raise V3Error("transition_destination_invalid")
+        if marker is None:
+            current = _config(root)
+            events = _events(root, activation_id=current["activation_id"])
+            if (current != own["config"] or events != own["events"]
+                    or _closure(root, current, events) != own["closure"]):
+                raise V3Error("transition_archive_mismatch")
+            hashes = {}
+            for name in (CONFIG_NAME, LEDGER_NAME, CLOSURE_NAME):
+                path = root / ".omc" / name
+                if path.is_symlink():
+                    raise V3Error("transition_source_invalid")
+                if path.exists():
+                    hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            marker = {"schema": "omc-cohort-transition/v1", "target_identity": _target(root),
+                      "previous_activation": current["activation_id"],
+                      "archive_sha256": own_check["bundle_sha256"],
+                      "peer_archive_sha256": sorted(v["bundle_sha256"] for v in verified),
+                      "previous_work_ids": sorted({s["work_id"] for s in own["sessions"]
+                                                    if isinstance(s.get("work_id"), str)}),
+                      "file_sha256": hashes}
+            _durable_write_once(root / ".omc" / TRANSITION_NAME, marker)
+        if (marker["archive_sha256"] != own_check["bundle_sha256"]
+                or marker["peer_archive_sha256"] != sorted(v["bundle_sha256"] for v in verified)):
+            raise V3Error("transition_conflict")
+        previous.mkdir(exist_ok=True, mode=0o700)
+        prepared = previous / "prepared.json"
+        if prepared.exists() or prepared.is_symlink():
+            if _json_regular(prepared, reason="transition_invalid") != {"transition_sha256": _hash(marker)}:
+                raise V3Error("transition_conflict")
+            return {"state": "TRANSITION_BLOCKED", "archive_sha256": marker["archive_sha256"]}
+        for name, digest in marker["file_sha256"].items():
+            source, dest = root / ".omc" / name, previous / name
+            if dest.is_symlink() or source.is_symlink():
+                raise V3Error("transition_source_invalid")
+            if dest.exists():
+                if hashlib.sha256(dest.read_bytes()).hexdigest() != digest:
+                    raise V3Error("transition_conflict")
+                if source.exists():
+                    if name == CONFIG_NAME and _json_regular(source, reason="transition_invalid") == _TRANSITION_BARRIER:
+                        continue
+                    if hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+                        raise V3Error("transition_conflict")
+                    if name == CONFIG_NAME:
+                        _replace_transition_config(source, _TRANSITION_BARRIER)
+                    else:
+                        source.unlink()
+                    _fsync_directory(source.parent)
+                continue
+            if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+                raise V3Error("transition_source_invalid")
+            # No capture path may write while the marker has no joint activation.
+            os.link(source, dest, follow_symlinks=False)
+            _fsync_directory(previous)
+            if name == CONFIG_NAME:
+                _replace_transition_config(source, _TRANSITION_BARRIER)
+            else:
+                source.unlink()
+            _fsync_directory(source.parent)
+        _durable_write_once(prepared, {"transition_sha256": _hash(marker)})
+        return {"state": "TRANSITION_BLOCKED", "archive_sha256": marker["archive_sha256"]}
+
+
+def activate_pair(roots: list[Path], *, output: Path) -> dict[str, Any]:
+    """Publish a joint readiness fact, not a cross-repository transaction."""
+    from contextlib import ExitStack
+    roots = sorted((legacy._root(r) for r in roots), key=str)
+    if len(roots) != 2 or len(set(roots)) != 2 or any(output.resolve().is_relative_to(r) for r in roots):
+        raise V3Error("activation_pair_invalid")
+    with ExitStack() as locks:
+        for root in roots:
+            locks.enter_context(omc_state._omc_lock(root))
+        configs = [_config(r, check_transition=False) for r in roots]
+        markers = [_transition(r) for r in roots]
+        if (any(m is None for m in markers)
+                or len({c["roster_sha256"] for c in configs}) != 1
+                or len({_hash(m["peer_archive_sha256"]) for m in markers if m is not None}) != 1
+                or any(c["activation_id"] == m["previous_activation"] for c, m in zip(configs, markers))):
+            raise V3Error("activation_pair_invalid")
+        receipt = {"schema": "omc-cohort-joint-activation/v1", "roster_sha256": configs[0]["roster_sha256"],
+                   "activation_id": configs[0]["activation_id"], "activation_at": configs[0]["activation_at"],
+                   "targets": sorted([{"target_identity": _target(r), "config_sha256": _hash(c),
+                                        "transition_sha256": _hash(m)}
+                                       for r, c, m in zip(roots, configs, markers)], key=lambda t: t["target_identity"])}
+        if output.exists() or output.is_symlink():
+            if _json_regular(output, reason="activation_invalid") != receipt:
+                raise V3Error("activation_conflict")
+        else:
+            if _time(receipt["activation_at"]) <= _now():
+                raise V3Error("fresh_t0_required")
+            _durable_write_once(output, receipt)
+        pointer = {"path": str(output.resolve()), "sha256": _hash(receipt)}
+        for root in roots:
+            path = root / ".omc" / ACTIVATION_NAME
+            if path.exists() or path.is_symlink():
+                if _json_regular(path, reason="activation_invalid") != pointer:
+                    raise V3Error("activation_conflict")
+            else:
+                if _time(receipt["activation_at"]) <= _now():
+                    raise V3Error("fresh_t0_required")
+                _durable_write_once(path, pointer)
+        return {"state": "REGISTERED_NOT_STARTED", "activation_sha256": _hash(receipt)}
+
+
+def _activation_check(root: Path, config: dict[str, Any]) -> None:
+    marker = _transition(root)
+    if marker is None:
+        return
+    pointer_path = root / ".omc" / ACTIVATION_NAME
+    if not pointer_path.exists() and not pointer_path.is_symlink():
+        raise V3Error("transition_blocked")
+    pointer = _json_regular(pointer_path, reason="activation_invalid")
+    if set(pointer) != {"path", "sha256"} or not isinstance(pointer["path"], str):
+        raise V3Error("activation_invalid")
+    receipt = _json_regular(Path(pointer["path"]), reason="activation_invalid")
+    targets = receipt.get("targets")
+    expected = {"target_identity": _target(root), "config_sha256": _hash(config),
+                "transition_sha256": _hash(marker)}
+    if (set(receipt) != {"schema", "roster_sha256", "activation_id", "activation_at", "targets"}
+            or receipt.get("schema") != "omc-cohort-joint-activation/v1"
+            or _hash(receipt) != pointer["sha256"]
+            or receipt.get("roster_sha256") != config["roster_sha256"]
+            or receipt.get("activation_id") != config["activation_id"]
+            or receipt.get("activation_at") != config["activation_at"]
+            or not isinstance(targets, list) or len(targets) != 2
+            or any(not isinstance(t, dict) or set(t) != set(expected) for t in targets)
+            or expected not in targets
+            or len({t.get("target_identity") for t in targets}) != 2):
+        raise V3Error("activation_invalid")
+
+
 def _json_regular(path: Path, *, reason: str) -> dict[str, Any]:
     if path.is_symlink() or not path.is_file():
         raise V3Error(reason)
@@ -240,14 +668,25 @@ def _json_regular(path: Path, *, reason: str) -> dict[str, Any]:
     return value
 
 
-def _config(root: Path) -> dict[str, Any]:
+def _config(root: Path, *, check_transition: bool = True) -> dict[str, Any]:
     try:
         legacy._omc_dir(root, create=False)
     except legacy.SkillCohortError as error:
         raise V3Error(str(error)) from error
+    if check_transition and _transition(root) is not None and not config_path(root).exists():
+        raise V3Error("transition_blocked")
     value = _json_regular(config_path(root), reason="v3_config_invalid")
+    if _transition(root) is not None and value == _TRANSITION_BARRIER:
+        raise V3Error("transition_blocked")
     basic = {"generation", "enabled", "status", "activation_id", "activation_at"}
     operational = basic | {"roster", "roster_sha256", "target_identity", "enrollment_session_ids"}
+    marker = _transition(root)
+    if marker is not None and value.get("activation_id") != marker["previous_activation"]:
+        operational |= {"excluded_work_ids"}
+        excluded = value.get("excluded_work_ids")
+        if (not isinstance(excluded, list) or any(not isinstance(w, str) or _ID.fullmatch(w) is None for w in excluded)
+                or excluded != sorted(set(excluded))):
+            raise V3Error("v3_config_invalid")
     if set(value) != (operational if value.get("status") == ACTIVE else basic):
         raise V3Error("v3_config_invalid")
     if value["generation"] != "v3" or value["status"] not in ("DRAFT_SYNTHETIC", ACTIVE) or type(value["enabled"]) is not bool:
@@ -276,6 +715,8 @@ def _config(root: Path) -> dict[str, Any]:
         if (not isinstance(sessions, list) or any(not isinstance(s, str) or _ID.fullmatch(s) is None for s in sessions)
                 or sessions != sorted(set(sessions))):
             raise V3Error("v3_config_invalid")
+    if check_transition:
+        _activation_check(root, value)
     return value
 
 
@@ -457,6 +898,32 @@ def _candidate_in_scope(root: Path, session: dict[str, Any], prior: list[dict[st
                         config: dict[str, Any] | None = None) -> bool:
     config = config or _config(root)
     work_class = "implementation" if config["status"] == ACTIVE else "synthetic"
+    marker = _transition(root)
+    if marker is not None:
+        excluded = set(config["excluded_work_ids"])
+        if session["work_id"] in excluded:
+            return False
+        root_id = session.get("lineage_root_session_id")
+        if not isinstance(root_id, str):
+            origins = []
+            directory = root / ".omc/state/sessions"
+            if directory.is_symlink():
+                raise V3Error("session_invalid")
+            for path in directory.glob("*/session.json"):
+                if path.parent.is_symlink():
+                    raise V3Error("session_invalid")
+                candidate = _json_regular(path, reason="session_invalid")
+                if candidate.get("work_id") == session["work_id"] and candidate.get("completion_action") == "start":
+                    origins.append(candidate.get("session_id"))
+            if len(origins) != 1 or not isinstance(origins[0], str):
+                return False
+            root_id = origins[0]
+        origin = _session(root, root_id)
+        if (origin["work_id"] != session["work_id"] or origin.get("completion_action") != "start"
+                or origin.get("lineage_root_session_id") != root_id or origin.get("lineage_index") != 0
+                or _time(origin.get("created_at")) < _time(config["activation_at"])
+                or _time(origin.get("created_at")) > _now()):
+            return False
     if config["status"] == ACTIVE and (
         session["session_id"] in config["enrollment_session_ids"]
         or _time(session.get("created_at")) < _time(config["activation_at"])
@@ -641,6 +1108,13 @@ def record_followup(root: Path, *, choice_id: str, outcome: str) -> dict[str, An
 
 
 def report(root: Path) -> dict[str, Any]:
+    if _transition(root) is not None:
+        try:
+            _config(root)
+        except V3Error as error:
+            if str(error) == "transition_blocked":
+                return {"generation": "v3", "state": "TRANSITION_BLOCKED"}
+            raise
     if not config_path(root).exists() and not config_path(root).is_symlink():
         return {"generation": "v3", "state": "DISABLED"}
     with omc_state._omc_lock(root):
@@ -758,6 +1232,8 @@ def _report_locked(root: Path) -> dict[str, Any]:
 
 def prefers_v3(root: Path) -> bool:
     """Operational config takes precedence even when invalid or closed; never fall back."""
+    if _transition(root) is not None:
+        return True
     path = config_path(root)
     if not path.exists() and not path.is_symlink():
         return False
@@ -797,6 +1273,18 @@ def main(argv: list[str] | None = None) -> int:
     enroll_cmd.add_argument("--roster", required=True, type=Path)
     close_cmd = sub.add_parser("close")
     close_cmd.add_argument("--target", required=True, type=Path)
+    archive_cmd = sub.add_parser("archive-closed")
+    archive_cmd.add_argument("--target", required=True, type=Path)
+    archive_cmd.add_argument("--output", required=True, type=Path)
+    verify_cmd = sub.add_parser("verify-archive")
+    verify_cmd.add_argument("--archive", required=True, type=Path)
+    prepare_cmd = sub.add_parser("prepare-transition")
+    prepare_cmd.add_argument("--target", required=True, type=Path)
+    prepare_cmd.add_argument("--archive", required=True, type=Path)
+    prepare_cmd.add_argument("--pair-archive", required=True, type=Path, action="append")
+    activate_cmd = sub.add_parser("activate-pair")
+    activate_cmd.add_argument("--target", required=True, type=Path, action="append")
+    activate_cmd.add_argument("--output", required=True, type=Path)
     aggregate_cmd = sub.add_parser("aggregate")
     aggregate_cmd.add_argument("--source", required=True, type=Path, action="append")
     aggregate_cmd.add_argument("--roster", required=True, type=Path)
@@ -834,7 +1322,15 @@ def main(argv: list[str] | None = None) -> int:
     explicit_followup.add_argument("--outcome", required=True, choices=sorted(_OUTCOMES))
     args = parser.parse_args(argv)
     try:
-        if args.command == "create-roster":
+        if args.command == "archive-closed":
+            result = archive_closed(args.target, output=args.output)
+        elif args.command == "verify-archive":
+            result = verify_archive(args.archive)
+        elif args.command == "prepare-transition":
+            result = prepare_transition(args.target, archives=args.pair_archive, archive=args.archive)
+        elif args.command == "activate-pair":
+            result = activate_pair(args.target, output=args.output)
+        elif args.command == "create-roster":
             result = create_roster(targets=args.target, output=args.output,
                 activation_id=args.activation_id, activation_at=args.activation_at)
         elif args.command == "enroll":

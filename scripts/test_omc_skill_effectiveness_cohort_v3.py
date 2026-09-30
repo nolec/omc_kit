@@ -13,6 +13,280 @@ import omc_skill_effectiveness_cohort_v3 as v3
 import omc_state
 
 
+def test_transition_archive_is_independent_and_raw_free(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    for root in roots:
+        v3.enroll(root, roster_path=roster)
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 2, tzinfo=timezone.utc))
+    for root in roots:
+        v3.close(root)
+    output = tmp_path / "archive.json"
+    result = v3.archive_closed(roots[0], output=output)
+    assert result["state"] == "ARCHIVE_VERIFIED"
+    assert v3.verify_archive(output)["state"] == "ARCHIVE_VERIFIED"
+    assert v3.archive_closed(roots[0], output=output) == result
+    (roots[0] / ".omc/install-receipt.json").write_text("{}")
+    assert v3.verify_archive(output)["state"] == "ARCHIVE_VERIFIED"
+    data = json.loads(output.read_text())
+    data["projection"]["review_count"] = 999
+    output.write_text(json.dumps(data))
+    with pytest.raises(v3.V3Error):
+        v3.verify_archive(output)
+
+
+def test_archive_refuses_active_observation_and_preserves_bytes(tmp_path, monkeypatch):
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    v3.enroll(roots[0], roster_path=roster)
+    before = v3.config_path(roots[0]).read_bytes()
+    with pytest.raises(v3.V3Error, match="archive_requires_closed"):
+        v3.archive_closed(roots[0], output=tmp_path / "archive.json")
+    assert v3.config_path(roots[0]).read_bytes() == before
+
+
+def test_transition_blocks_until_joint_activation_and_fresh_work(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    for root in roots:
+        v3.enroll(root, roster_path=roster)
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 2, tzinfo=timezone.utc))
+    for root in roots:
+        v3.close(root)
+    archives = [tmp_path / (r.name + "-archive.json") for r in roots]
+    for root, output in zip(roots, archives):
+        v3.archive_closed(root, output=output)
+    for root, archive in zip(roots, archives):
+        v3.prepare_transition(root, archives=archives, archive=archive)
+        assert v3.prefers_v3(root)
+        assert v3.report(root)["state"] == "TRANSITION_BLOCKED"
+        v3.prepare_transition(root, archives=archives, archive=archive)
+    new_roster = tmp_path / "new-roster.json"
+    v3.create_roster(targets=roots, output=new_roster, activation_id="operational-002",
+                     activation_at="2026-10-03T00:00:00Z")
+    _session(roots[0], "before-registration", "existing-work", title="omc-task")
+    for root in roots:
+        v3.enroll(root, roster_path=new_roster)
+        assert v3.report(root)["state"] == "TRANSITION_BLOCKED"
+    joint = tmp_path / "joint.json"
+    v3.activate_pair(roots, output=joint)
+    assert v3.report(roots[0])["state"] == "REGISTERED_NOT_STARTED"
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 4, tzinfo=timezone.utc))
+    _session(roots[0], "fresh-001", "fresh-work", title="omc-task")
+    path = roots[0] / ".omc/state/sessions/fresh-001/session.json"
+    data = json.loads(path.read_text())
+    data.update(work_class="implementation", created_at="2026-10-04T00:00:00Z",
+                completion_action="start", lineage_root_session_id="fresh-001", lineage_index=0)
+    path.write_text(json.dumps(data))
+    v3.record_candidate(roots[0], session_id="fresh-001")
+    assert v3.report(roots[0])["work_items"] == 1
+    _session(roots[0], "old-continued", "existing-work", title="omc-task")
+    old_path = roots[0] / ".omc/state/sessions/old-continued/session.json"
+    old_data = json.loads(old_path.read_text())
+    old_data.update(work_class="implementation", created_at="2026-10-04T00:00:00Z",
+                    completion_action="start", lineage_root_session_id="old-continued", lineage_index=0)
+    old_path.write_text(json.dumps(old_data))
+    with pytest.raises(v3.V3Error, match="candidate_out_of_scope"):
+        v3.record_candidate(roots[0], session_id="old-continued")
+    _session(roots[0], "fresh-review", "fresh-work", title="omc-review")
+    rp = roots[0] / ".omc/state/sessions/fresh-review/session.json"
+    rd = json.loads(rp.read_text())
+    rd.update(created_at="2026-10-04T00:00:00Z", work_class=None)
+    rp.write_text(json.dumps(rd))
+    v3.record_candidate(roots[0], session_id="fresh-review")
+    assert v3.report(roots[0])["skill_exposures"] == 2
+    joint.write_text("{}")
+    with pytest.raises(v3.V3Error, match="activation_invalid"):
+        v3.report(roots[0])
+
+
+def _closed_archives(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    for root in roots:
+        v3.enroll(root, roster_path=roster)
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 2, tzinfo=timezone.utc))
+    outputs = [tmp_path / (r.name + "-archive.json") for r in roots]
+    for root, output in zip(roots, outputs):
+        v3.close(root)
+        v3.archive_closed(root, output=output)
+    return roots, outputs
+
+
+@pytest.mark.parametrize("interrupt", [False, True])
+def test_transition_keeps_previous_version_on_v3_fail_closed(tmp_path, monkeypatch, interrupt):
+    import types
+    old = types.ModuleType("previous_v3_bootstrap")
+    old.__file__ = v3.__file__
+    source = subprocess.check_output(
+        ["git", "show", "700f541:scripts/omc_skill_effectiveness_cohort_v3.py"], text=True)
+    exec(compile(source, old.__file__, "exec"), old.__dict__)
+    roots, outputs = _closed_archives(tmp_path, monkeypatch)
+    root = roots[0]
+    replace = v3.os.replace
+    if interrupt:
+        def stop_after_barrier(source, destination):
+            replace(source, destination)
+            if Path(destination) == v3.config_path(root):
+                raise OSError("interrupted after atomic barrier")
+        monkeypatch.setattr(v3.os, "replace", stop_after_barrier)
+        with pytest.raises(OSError, match="atomic barrier"):
+            v3.prepare_transition(root, archives=outputs, archive=outputs[0])
+        assert old.prefers_v3(root)
+        with pytest.raises(old.V3Error, match="v3_config_invalid"):
+            old.report(root)
+        monkeypatch.setattr(v3.os, "replace", replace)
+    v3.prepare_transition(root, archives=outputs, archive=outputs[0])
+    assert old.prefers_v3(root), "previous consumer must not select v2"
+    with pytest.raises(old.V3Error, match="v3_config_invalid"):
+        old.report(root)
+    assert v3.report(root)["state"] == "TRANSITION_BLOCKED"
+
+
+@pytest.mark.parametrize("crash_after", [1, 2])
+def test_transition_interrupted_move_resumes_without_fallback(tmp_path, monkeypatch, crash_after):
+    roots, outputs = _closed_archives(tmp_path, monkeypatch)
+    root = roots[0]
+    link = v3.os.link
+    calls = []
+    def interrupted(source, dest, **kwargs):
+        result = link(source, dest, **kwargs)
+        if Path(dest).parent.name == "cohort-transition-previous":
+            calls.append(dest)
+            if len(calls) == crash_after:
+                raise OSError("injected process interruption")
+        return result
+    monkeypatch.setattr(v3.os, "link", interrupted)
+    with pytest.raises(OSError):
+        v3.prepare_transition(root, archives=outputs, archive=outputs[0])
+    assert v3.prefers_v3(root)
+    assert v3.report(root)["state"] == "TRANSITION_BLOCKED"
+    monkeypatch.setattr(v3.os, "link", link)
+    v3.prepare_transition(root, archives=outputs, archive=outputs[0])
+    assert json.loads(v3.config_path(root).read_text()) == v3._TRANSITION_BARRIER
+    assert v3.verify_archive(outputs[0])["state"] == "ARCHIVE_VERIFIED"
+
+
+def test_transition_cli_and_session_capture_surface(tmp_path, monkeypatch, capsys):
+    roots, outputs = _closed_archives(tmp_path, monkeypatch)
+    root = roots[0]
+    assert v3.main(["prepare-transition", "--target", str(root), "--archive", str(outputs[0]),
+                    "--pair-archive", str(outputs[0]), "--pair-archive", str(outputs[1])]) == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "TRANSITION_BLOCKED"
+    assert v3.main(["report", "--target", str(root)]) == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "TRANSITION_BLOCKED"
+    (root / ".omc/skill-effectiveness-cohort-v2.json").write_text("{}")
+    result = omc_state._record_skill_effectiveness_candidate(root, {
+        "title": "omc-review", "work_id": "work-001", "session_id": "review-001",
+    })
+    assert result["status"] == "integrity_invalid"
+    assert not (root / ".omc/skill-effectiveness-cohort-v2.jsonl").exists()
+
+
+def test_archive_failed_save_leaves_live_state_and_symlink_refused(tmp_path, monkeypatch):
+    roots, outputs = _closed_archives(tmp_path, monkeypatch)
+    root = roots[0]
+    before = v3.config_path(root).read_bytes()
+    def fail(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(v3, "_durable_write_once", fail)
+    with pytest.raises(OSError):
+        v3.archive_closed(root, output=tmp_path / "failed.json")
+    assert v3.config_path(root).read_bytes() == before
+    symlink = tmp_path / "link.json"
+    symlink.symlink_to(outputs[0])
+    with pytest.raises(v3.V3Error):
+        v3.verify_archive(symlink)
+
+
+def test_transition_process_exit_resumes_exact_preserved_files(tmp_path, monkeypatch):
+    roots, outputs = _closed_archives(tmp_path, monkeypatch)
+    code = """
+import sys, os
+from pathlib import Path
+from datetime import datetime, timezone
+sys.path.insert(0, sys.argv[1])
+import omc_skill_effectiveness_cohort_v3 as v
+import omc_install_audit
+omc_install_audit.audit_target = lambda *a, **k: {'installed_integrity_status':'ok'}
+v._now = lambda: datetime(2026,10,2,tzinfo=timezone.utc)
+link = os.link
+def interrupted(source, dest, **kwargs):
+    link(source,dest,**kwargs)
+    if Path(dest).parent.name == 'cohort-transition-previous':
+        os._exit(90)
+os.link = interrupted
+v.prepare_transition(Path(sys.argv[2]), archives=[Path(sys.argv[3]),Path(sys.argv[4])],archive=Path(sys.argv[3]))
+"""
+    result = subprocess.run([sys.executable, "-c", code, str(Path(v3.__file__).parent),
+                             str(roots[0]), str(outputs[0]), str(outputs[1])])
+    assert result.returncode == 90
+    assert v3.report(roots[0])["state"] == "TRANSITION_BLOCKED"
+    v3.prepare_transition(roots[0], archives=outputs, archive=outputs[0])
+    assert v3.verify_archive(outputs[0])["state"] == "ARCHIVE_VERIFIED"
+
+
+def test_joint_activation_rejects_partial_enrollment_and_late_t0(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    roots, outputs = _closed_archives(tmp_path, monkeypatch)
+    for root, output in zip(roots, outputs):
+        v3.prepare_transition(root, archives=outputs, archive=output)
+    roster = tmp_path / "next-roster.json"
+    v3.create_roster(targets=roots, output=roster, activation_id="next-activation",
+                     activation_at="2026-10-03T00:00:00Z")
+    v3.enroll(roots[0], roster_path=roster)
+    with pytest.raises(v3.V3Error):
+        v3.activate_pair(roots, output=tmp_path / "joint.json")
+    assert not (tmp_path / "joint.json").exists()
+    v3.enroll(roots[1], roster_path=roster)
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 4, tzinfo=timezone.utc))
+    with pytest.raises(v3.V3Error, match="fresh_t0_required"):
+        v3.activate_pair(roots, output=tmp_path / "joint.json")
+    assert v3.report(roots[0])["state"] == "TRANSITION_BLOCKED"
+
+
+def test_transition_rejects_unknown_work_start(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    roots, outputs = _closed_archives(tmp_path, monkeypatch)
+    for root, output in zip(roots, outputs):
+        v3.prepare_transition(root, archives=outputs, archive=output)
+    roster = tmp_path / "next-roster.json"
+    v3.create_roster(targets=roots, output=roster, activation_id="next-activation",
+                     activation_at="2026-10-03T00:00:00Z")
+    for root in roots:
+        v3.enroll(root, roster_path=roster)
+    v3.activate_pair(roots, output=tmp_path / "joint.json")
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 4, tzinfo=timezone.utc))
+    _session(roots[0], "unknown-001", "unknown-work", title="omc-task")
+    path = roots[0] / ".omc/state/sessions/unknown-001/session.json"
+    data = json.loads(path.read_text())
+    data.update(work_class="implementation", created_at="2026-10-04T00:00:00Z")
+    path.write_text(json.dumps(data))
+    with pytest.raises(v3.V3Error, match="candidate_out_of_scope"):
+        v3.record_candidate(roots[0], session_id="unknown-001")
+
+
+def test_actual_guard_session_start_does_not_fall_back_during_transition(tmp_path, monkeypatch):
+    roots, outputs = _closed_archives(tmp_path, monkeypatch)
+    root = roots[0]
+    v3.prepare_transition(root, archives=outputs, archive=outputs[0])
+    (root / ".omc/skill-effectiveness-cohort-v2.json").write_text("{}")
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=Fixture", "-c",
+                    "user.email=fixture@example.com", "commit", "--allow-empty", "-qm", "base"], check=True)
+    command = [sys.executable, str(Path(v3.__file__).parent / "omc_guard.py"),
+               "sync-require", "--target", str(root), "--mode", "autopilot", "--title", "omc-task",
+               "--request", "synthetic transition check", "--roles", "senior_coding",
+               "--work-class", "synthetic", "--completion-action", "start", "--for", "task"]
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    hook = subprocess.run([sys.executable, str(Path(v3.__file__).parent / "omc.py"),
+                           "hook", "session_start", "--target", str(root)], capture_output=True, text=True)
+    assert hook.returncode == 0, hook.stdout + hook.stderr
+    sessions = list((root / ".omc/state/sessions").glob("*/session.json"))
+    capture = json.loads(sessions[-1].read_text())["cohort_capture_v3"]
+    assert capture["status"] == "integrity_invalid"
+    assert not (root / ".omc/skill-effectiveness-cohort-v2.jsonl").exists()
+
+
 def _operational_pair(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     import omc_install_audit

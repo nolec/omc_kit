@@ -17,7 +17,7 @@ from typing import Any
 
 
 CANDIDATE_SCHEMA = "omc-candidate-scope/v1"
-CANDIDATE_POLICY_VERSION = "omc-candidate-policy/v1"
+CANDIDATE_POLICY_VERSION = "omc-candidate-policy/v2"
 RECEIPT_SCHEMA = "omc-review-receipt/v1"
 POINTER_SCHEMA = "omc-review-current/v1"
 PEER_SNAPSHOT_SCHEMA = "omc-peer-snapshot/v1"
@@ -38,6 +38,8 @@ _RUNTIME_FILES = {
     ".omc/pipeline_session.json",
     ".omc/peer_review.md",
     ".omc/project-memory.json",
+    ".omc/skill-effectiveness-cohort-v3.json",
+    ".omc/skill-effectiveness-cohort-v3.jsonl",
     ".omc/summary.md",
 }
 
@@ -639,7 +641,9 @@ def record_review_receipt_from_snapshot(
     )
     # This is observational only. The review receipt remains valid even when
     # synthetic cohort capture cannot be attributed to an explicit session.
-    if v3.config_path(root).exists() or v3.config_path(root).is_symlink():
+    if (v3.config_path(root).exists() or v3.config_path(root).is_symlink()
+            or (root / ".omc" / v3.TRANSITION_NAME).exists()
+            or (root / ".omc" / v3.TRANSITION_NAME).is_symlink()):
         from omc_skill_effectiveness_cohort import v2_config_path
         try:
             selected_v3 = (not v2_config_path(root).exists() and not v2_config_path(root).is_symlink()) or v3.prefers_v3(root)

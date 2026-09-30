@@ -1657,7 +1657,9 @@ def _record_skill_effectiveness_candidate(
         v2_enabled = v2_config.exists() or v2_config.is_symlink()
         import omc_skill_effectiveness_cohort_v3 as v3_module
         v3_config = v3_module.config_path(project_root)
-        v3_enabled = v3_config.exists() or v3_config.is_symlink()
+        v3_enabled = (v3_config.exists() or v3_config.is_symlink()
+                      or (project_root / ".omc" / v3_module.TRANSITION_NAME).exists()
+                      or (project_root / ".omc" / v3_module.TRANSITION_NAME).is_symlink())
         if v3_enabled:
             # Select v3 before validating its operational binding; a failure must
             # not append to the preserved historical v2 ledger.
