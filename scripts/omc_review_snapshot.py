@@ -634,7 +634,12 @@ def record_review_receipt_from_snapshot(
     import omc_skill_effectiveness_cohort_v3 as v3
     if v3.config_path(root).exists() or v3.config_path(root).is_symlink():
         from omc_skill_effectiveness_cohort import v2_config_path
-        if not v2_config_path(root).exists() and not v2_config_path(root).is_symlink():
+        try:
+            selected_v3 = (not v2_config_path(root).exists() and not v2_config_path(root).is_symlink()) or v3.prefers_v3(root)
+        except v3.V3Error as error:
+            result["cohort_capture_v3"] = {"status": "unobserved", "reason_code": str(error)}
+            return result
+        if selected_v3:
             try:
                 enabled = v3._config(root)["enabled"]
             except v3.V3Error as error:

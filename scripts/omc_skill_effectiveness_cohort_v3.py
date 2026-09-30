@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Opt-in synthetic raw-free work-lifecycle observation contract.
+"""Opt-in raw-free work-lifecycle observation with separate synthetic/operational enrollment.
 
-This module has no enrollment command. Operational activation, roster, and T0
-require a separate approved change. Opt-in synthetic fixtures may auto-capture.
+Operational enrollment requires a write-once external two-target roster and fresh T0.
 The work link is observational, not a human-approval authority claim.
 """
 from __future__ import annotations
@@ -19,10 +18,13 @@ from typing import Any, Callable
 
 import omc_review_snapshot
 import omc_state
+import omc_skill_effectiveness_cohort as legacy
 
 
 CONFIG_NAME = "skill-effectiveness-cohort-v3.json"
 LEDGER_NAME = "skill-effectiveness-cohort-v3.jsonl"
+ACTIVE = "ACTIVE_NATURAL_OBSERVATION"
+CLOSURE_NAME = "skill-effectiveness-cohort-v3-closure.json"
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{2,127}")
 _HEX = re.compile(r"[0-9a-f]{64}")
 _SKILLS = {"omc-plan", "omc-task", "omc-review"}
@@ -64,6 +66,168 @@ def _hash(value: object) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _time(value: object) -> datetime:
+    try:
+        result = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError) as error:
+        raise V3Error("activation_at_invalid") from error
+    if result.tzinfo is None:
+        raise V3Error("activation_at_invalid")
+    return result
+
+
+def _write_once(path: Path, value: object) -> None:
+    try:
+        legacy._write_once(path, value)
+    except legacy.SkillCohortError as error:
+        raise V3Error(str(error)) from error
+
+
+def _target(root: Path) -> str:
+    try:
+        return legacy._target_identity(root)
+    except legacy.SkillCohortError as error:
+        raise V3Error(str(error)) from error
+
+
+def _installation(root: Path) -> dict[str, str]:
+    import omc_install_audit
+    path = root / ".omc/install-receipt.json"
+    if path.is_symlink() or not path.is_file():
+        raise V3Error("installation_invalid")
+    receipt_bytes = path.read_bytes()
+    try:
+        receipt = json.loads(receipt_bytes)
+    except (ValueError, UnicodeError) as error:
+        raise V3Error("installation_invalid") from error
+    if not isinstance(receipt, dict):
+        raise V3Error("installation_invalid")
+    digest = receipt.get("source_sha256")
+    version = receipt.get("omc_version")
+    if (not isinstance(digest, str) or _HEX.fullmatch(digest) is None
+            or not isinstance(version, str) or not version):
+        raise V3Error("installation_invalid")
+    audit = omc_install_audit.audit_target(root, install_receipt_bytes=receipt_bytes)
+    if audit.get("installed_integrity_status") != "ok":
+        raise V3Error("installation_audit_failed")
+    return {"source_sha256": digest, "source_version": version,
+            "install_receipt_sha256": hashlib.sha256(receipt_bytes).hexdigest()}
+
+
+def _validate_roster(value: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"generation", "activation_id", "activation_at", "targets"}:
+        raise V3Error("roster_invalid")
+    if (value["generation"] != "v3" or not isinstance(value["activation_id"], str)
+            or _ID.fullmatch(value["activation_id"]) is None):
+        raise V3Error("roster_invalid")
+    _time(value["activation_at"])
+    targets = value["targets"]
+    if not isinstance(targets, list) or len(targets) != 2:
+        raise V3Error("roster_requires_exactly_two_targets")
+    identities = []
+    for target in targets:
+        if (not isinstance(target, dict) or set(target) != {
+            "target_identity", "source_sha256", "source_version", "install_receipt_sha256"}
+                or any(not isinstance(target.get(key), str) or _HEX.fullmatch(target[key]) is None
+                       for key in ("target_identity", "source_sha256", "install_receipt_sha256"))
+                or not isinstance(target.get("source_version"), str) or not target["source_version"]):
+            raise V3Error("roster_invalid")
+        identities.append(target["target_identity"])
+    if identities != sorted(set(identities)):
+        raise V3Error("roster_target_duplicate")
+    return value
+
+
+def create_roster(*, targets: list[Path], output: Path, activation_id: str,
+                  activation_at: str) -> dict[str, Any]:
+    if len(targets) != 2:
+        raise V3Error("roster_requires_exactly_two_targets")
+    roots = [legacy._root(root) for root in targets]
+    if output.parent.is_symlink() or not output.parent.is_dir():
+        raise V3Error("roster_parent_invalid")
+    if any(output.resolve().is_relative_to(root) for root in roots):
+        raise V3Error("roster_must_be_external")
+    if _time(activation_at) <= _now():
+        raise V3Error("fresh_t0_required")
+    roster = _validate_roster({"generation": "v3", "activation_id": activation_id,
+        "activation_at": activation_at, "targets": sorted([
+            {"target_identity": _target(root), **_installation(root)} for root in roots
+        ], key=lambda item: item["target_identity"])})
+    _write_once(output, roster)
+    return {"status": "registered", "roster_sha256": _hash(roster), **roster}
+
+
+def enroll(root: Path, *, roster_path: Path) -> dict[str, Any]:
+    root = legacy._root(root)
+    if roster_path.resolve().is_relative_to(root):
+        raise V3Error("roster_must_be_external")
+    roster = _validate_roster(_json_regular(roster_path, reason="roster_invalid"))
+    identity = _target(root)
+    matching = [item for item in roster["targets"] if item["target_identity"] == identity]
+    if len(matching) != 1:
+        raise V3Error("roster_target_not_allowed")
+    with omc_state._omc_lock(root):
+        path = config_path(root)
+        if path.exists() or path.is_symlink():
+            existing = _config(root)
+            if existing.get("roster_sha256") != _hash(roster):
+                raise V3Error("activation_conflict")
+            return {"status": "unchanged", "activation_id": existing["activation_id"]}
+        if _time(roster["activation_at"]) <= _now():
+            raise V3Error("fresh_t0_required")
+        if _installation(root) != {k: v for k, v in matching[0].items() if k != "target_identity"}:
+            raise V3Error("installation_binding_mismatch")
+        if ledger_path(root).exists() or ledger_path(root).is_symlink():
+            raise V3Error("v3_ledger_already_exists")
+        config = {"generation": "v3", "enabled": True, "status": ACTIVE,
+            "activation_id": roster["activation_id"], "activation_at": roster["activation_at"],
+            "roster": roster, "roster_sha256": _hash(roster), "target_identity": identity,
+            "enrollment_session_ids": legacy._session_ids_at_enrollment(root)}
+        _write_once(path, config)
+        return {"status": "enrolled", "activation_id": config["activation_id"],
+                "roster_sha256": config["roster_sha256"]}
+
+
+def _closure(root: Path, config: dict[str, Any],
+             events: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
+    path = root / ".omc" / CLOSURE_NAME
+    if not path.exists() and not path.is_symlink():
+        return None
+    value = _json_regular(path, reason="v3_closure_invalid")
+    if (set(value) != {"activation_id", "closed_at", "ledger_sha256", "event_count"}
+            or value["activation_id"] != config["activation_id"]
+            or not isinstance(value["ledger_sha256"], str)
+            or _HEX.fullmatch(value["ledger_sha256"]) is None
+            or type(value["event_count"]) is not int or value["event_count"] < 0
+            or _time(value["closed_at"]) < _time(config["activation_at"])
+            or _time(value["closed_at"]) > _now()):
+        raise V3Error("v3_closure_invalid")
+    if events is None:
+        events = _events(root, activation_id=config["activation_id"])
+    if value["ledger_sha256"] != _hash(events) or value["event_count"] != len(events):
+        raise V3Error("v3_closure_invalid")
+    return value
+
+
+def close(root: Path) -> dict[str, Any]:
+    with omc_state._omc_lock(root):
+        config = _config(root)
+        if config["status"] != ACTIVE or _now() < _time(config["activation_at"]):
+            raise V3Error("v3_not_active")
+        existing = _closure(root, config)
+        if existing is not None:
+            return {"status": "unchanged", **existing}
+        events = _events(root, activation_id=config["activation_id"])
+        receipt = {"activation_id": config["activation_id"], "closed_at": _now().isoformat(),
+                   "ledger_sha256": _hash(events), "event_count": len(events)}
+        _write_once(root / ".omc" / CLOSURE_NAME, receipt)
+        return {"status": "closed", **receipt}
+
+
 def _json_regular(path: Path, *, reason: str) -> dict[str, Any]:
     if path.is_symlink() or not path.is_file():
         raise V3Error(reason)
@@ -77,10 +241,16 @@ def _json_regular(path: Path, *, reason: str) -> dict[str, Any]:
 
 
 def _config(root: Path) -> dict[str, Any]:
+    try:
+        legacy._omc_dir(root, create=False)
+    except legacy.SkillCohortError as error:
+        raise V3Error(str(error)) from error
     value = _json_regular(config_path(root), reason="v3_config_invalid")
-    if set(value) != {"generation", "enabled", "status", "activation_id", "activation_at"}:
+    basic = {"generation", "enabled", "status", "activation_id", "activation_at"}
+    operational = basic | {"roster", "roster_sha256", "target_identity", "enrollment_session_ids"}
+    if set(value) != (operational if value.get("status") == ACTIVE else basic):
         raise V3Error("v3_config_invalid")
-    if value["generation"] != "v3" or value["status"] != "DRAFT_SYNTHETIC" or type(value["enabled"]) is not bool:
+    if value["generation"] != "v3" or value["status"] not in ("DRAFT_SYNTHETIC", ACTIVE) or type(value["enabled"]) is not bool:
         raise V3Error("v3_config_invalid")
     if not isinstance(value["activation_id"], str) or not value["activation_id"]:
         raise V3Error("v3_config_invalid")
@@ -90,6 +260,22 @@ def _config(root: Path) -> dict[str, Any]:
         raise V3Error("v3_config_invalid") from error
     if timestamp.tzinfo is None:
         raise V3Error("v3_config_invalid")
+    if value["status"] == ACTIVE:
+        roster = _validate_roster(value["roster"])
+        if (value["roster_sha256"] != _hash(roster)
+                or value["activation_id"] != roster["activation_id"]
+                or value["activation_at"] != roster["activation_at"]
+                or value["target_identity"] != _target(root)):
+            raise V3Error("roster_binding_conflict")
+        targets = [target for target in roster["targets"]
+                   if target["target_identity"] == value["target_identity"]]
+        if len(targets) != 1 or _installation(root) != {
+            key: item for key, item in targets[0].items() if key != "target_identity"}:
+            raise V3Error("installation_binding_mismatch")
+        sessions = value["enrollment_session_ids"]
+        if (not isinstance(sessions, list) or any(not isinstance(s, str) or _ID.fullmatch(s) is None for s in sessions)
+                or sessions != sorted(set(sessions))):
+            raise V3Error("v3_config_invalid")
     return value
 
 
@@ -242,13 +428,18 @@ def _record(
         config = _config(root)
         if not config["enabled"]:
             raise V3Error("v3_disabled")
+        if config["status"] == ACTIVE:
+            if _closure(root, config) is not None:
+                raise V3Error("v3_closed")
+            if _now() < _time(config["activation_at"]):
+                raise V3Error("v3_not_started")
         events = _events(root, activation_id=config["activation_id"])
         check(events)
         event = {
             "schema_version": 1, "generation": "v3",
             "activation_id": config["activation_id"], "event_id": uuid.uuid4().hex,
             "event_type": event_type, "work_id": work_id,
-            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "observed_at": _now().isoformat(),
             "previous_event_sha256": events[-1]["event_sha256"] if events else None,
             **payload,
         }
@@ -262,14 +453,23 @@ def _record(
         return event
 
 
-def _candidate_in_scope(root: Path, session: dict[str, Any], prior: list[dict[str, Any]]) -> bool:
-    if session.get("work_class") == "synthetic":
+def _candidate_in_scope(root: Path, session: dict[str, Any], prior: list[dict[str, Any]],
+                        config: dict[str, Any] | None = None) -> bool:
+    config = config or _config(root)
+    work_class = "implementation" if config["status"] == ACTIVE else "synthetic"
+    if config["status"] == ACTIVE and (
+        session["session_id"] in config["enrollment_session_ids"]
+        or _time(session.get("created_at")) < _time(config["activation_at"])
+        or _time(session.get("created_at")) > _now()
+    ):
+        return False
+    if session.get("work_class") == work_class:
         return True
     return session.get("work_class") is None and session["title"] == "omc-review" and any(
         e["event_type"] == "candidate"
         and e["work_id"] == session["work_id"]
         and e["skill_id"] == "omc-task"
-        and _session(root, e["session_id"]).get("work_class") == "synthetic"
+        and _session(root, e["session_id"]).get("work_class") == work_class
         for e in prior
     )
 
@@ -443,16 +643,30 @@ def record_followup(root: Path, *, choice_id: str, outcome: str) -> dict[str, An
 def report(root: Path) -> dict[str, Any]:
     if not config_path(root).exists() and not config_path(root).is_symlink():
         return {"generation": "v3", "state": "DISABLED"}
+    with omc_state._omc_lock(root):
+        return _report_locked(root)
+
+
+def _report_locked(root: Path) -> dict[str, Any]:
+    """Count and validate one ledger snapshot while append/close are excluded."""
     config = _config(root)
     if not config["enabled"]:
         return {"generation": "v3", "state": "DISABLED"}
     events = _events(root, activation_id=config["activation_id"])
+    closure = _closure(root, config, events) if config["status"] == ACTIVE else None
+    if config["status"] == ACTIVE and any(
+        _time(event["observed_at"]) < _time(config["activation_at"])
+        or _time(event["observed_at"]) > _now()
+        or (closure is not None and _time(event["observed_at"]) > _time(closure["closed_at"]))
+        for event in events
+    ):
+        raise V3Error("event_out_of_window")
     prior_candidates: list[dict[str, Any]] = []
     for event in events:
         if event["event_type"] != "candidate":
             continue
         session = _session(root, event["session_id"])
-        if not _candidate_in_scope(root, session, prior_candidates):
+        if not _candidate_in_scope(root, session, prior_candidates, config):
             raise V3Error("candidate_out_of_scope")
         prior_candidates.append(event)
     candidates = [e for e in events if e["event_type"] == "candidate"]
@@ -475,8 +689,7 @@ def report(root: Path) -> dict[str, Any]:
             session_id = path.parent.name
             if _ID.fullmatch(session_id) is None or session.get("session_id") != session_id:
                 raise V3Error("v3_session_capture_invalid")
-            if (session_id not in candidate_session_ids
-                    and session.get("work_class") != "synthetic") or session.get("title") not in _SKILLS:
+            if session.get("title") not in _SKILLS:
                 continue
             confirmation = session.get("confirmation")
             if not isinstance(confirmation, dict) or confirmation.get("status") != "confirmed":
@@ -488,6 +701,10 @@ def report(root: Path) -> dict[str, Any]:
             if created_at.tzinfo is None:
                 raise V3Error("v3_session_capture_invalid")
             if created_at < activation_at:
+                continue
+            if not _candidate_in_scope(root, session, candidates, config):
+                continue
+            if closure is not None and created_at > _time(closure["closed_at"]):
                 continue
             eligible_session_ids.add(session_id)
             capture = session.get("cohort_capture_v3")
@@ -510,11 +727,22 @@ def report(root: Path) -> dict[str, Any]:
             else:
                 raise V3Error("v3_session_capture_invalid")
     return {
-        "generation": "v3", "state": "DRAFT_SYNTHETIC",
+        "generation": "v3", "state": (
+            "CLOSED" if closure is not None else
+            "REGISTERED_NOT_STARTED" if config["status"] == ACTIVE and _now() < activation_at else config["status"]),
+        "activation_id": config["activation_id"],
+        **({"roster_sha256": config["roster_sha256"], "target_identity": config["target_identity"]}
+           if config["status"] == ACTIVE else {}),
         "measurement_scope": "descriptive_work_lifecycle_only",
         "work_link_class": "asserted_work_link",
         "work_items": len(works), "skill_exposures": len(candidates),
         "review_count": len(reviews),
+        "review_churn_work_items": sum(sum(e["work_id"] == work for e in reviews) > 1 for work in works),
+        "correction_after_approved_review": sum(
+            any(review["event_id"] == followup["review_event_id"]
+                and review["verdict"] in {"APPROVE", "APPROVE_WITH_NOTES"} for review in reviews)
+            for followup in followups if followup["outcome"] == "correction"
+        ),
         "review_unobserved": len(works - {e["work_id"] for e in reviews}),
         "review_stale_count": sum(e["taxonomy"] == "review_stale" for e in reviews),
         "outcome_unobserved": len(works - {e["work_id"] for e in followups}),
@@ -528,11 +756,50 @@ def report(root: Path) -> dict[str, Any]:
     }
 
 
+def prefers_v3(root: Path) -> bool:
+    """Operational config takes precedence even when invalid or closed; never fall back."""
+    path = config_path(root)
+    if not path.exists() and not path.is_symlink():
+        return False
+    value = _json_regular(path, reason="v3_config_invalid")
+    return value.get("status") != "DRAFT_SYNTHETIC"
+
+
+def aggregate(roots: list[Path], *, roster_path: Path) -> dict[str, Any]:
+    roster = _validate_roster(_json_regular(roster_path, reason="roster_invalid"))
+    if len(roots) != 2 or len({root.resolve() for root in roots}) != 2:
+        raise V3Error("pilot_roster_incomplete")
+    reports = [report(root) for root in roots]
+    if (any(item.get("roster_sha256") != _hash(roster) for item in reports)
+            or sorted(item.get("target_identity", "") for item in reports) != [t["target_identity"] for t in roster["targets"]]):
+        raise V3Error("roster_binding_conflict")
+    keys = ("work_items", "skill_exposures", "review_count", "review_unobserved",
+            "review_churn_work_items", "review_stale_count", "correction_after_approved_review",
+            "outcome_unobserved", "accepted", "correction", "deferred")
+    return {"generation": "v3", "sources": reports,
+            "aggregate": {**{key: sum(item[key] for item in reports) for key in keys},
+                          "measurement_scope": "descriptive_work_lifecycle_only",
+                          "product_effect": "NOT_PROVEN"}}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     cmd = sub.add_parser("report")
     cmd.add_argument("--target", required=True, type=Path)
+    roster_cmd = sub.add_parser("create-roster")
+    roster_cmd.add_argument("--target", required=True, type=Path, action="append")
+    roster_cmd.add_argument("--output", required=True, type=Path)
+    roster_cmd.add_argument("--activation-id", required=True)
+    roster_cmd.add_argument("--activation-at", required=True)
+    enroll_cmd = sub.add_parser("enroll")
+    enroll_cmd.add_argument("--target", required=True, type=Path)
+    enroll_cmd.add_argument("--roster", required=True, type=Path)
+    close_cmd = sub.add_parser("close")
+    close_cmd.add_argument("--target", required=True, type=Path)
+    aggregate_cmd = sub.add_parser("aggregate")
+    aggregate_cmd.add_argument("--source", required=True, type=Path, action="append")
+    aggregate_cmd.add_argument("--roster", required=True, type=Path)
     candidate_cmd = sub.add_parser("fixture-candidate")
     candidate_cmd.add_argument("--target", required=True, type=Path)
     candidate_cmd.add_argument("--session-id", required=True)
@@ -567,7 +834,16 @@ def main(argv: list[str] | None = None) -> int:
     explicit_followup.add_argument("--outcome", required=True, choices=sorted(_OUTCOMES))
     args = parser.parse_args(argv)
     try:
-        if args.command == "report":
+        if args.command == "create-roster":
+            result = create_roster(targets=args.target, output=args.output,
+                activation_id=args.activation_id, activation_at=args.activation_at)
+        elif args.command == "enroll":
+            result = enroll(args.target, roster_path=args.roster)
+        elif args.command == "close":
+            result = close(args.target)
+        elif args.command == "aggregate":
+            result = aggregate(args.source, roster_path=args.roster)
+        elif args.command == "report":
             result = report(args.target)
         elif args.command == "fixture-candidate":
             result = record_candidate(args.target, session_id=args.session_id)
@@ -589,7 +865,7 @@ def main(argv: list[str] | None = None) -> int:
                 review_receipt_sha256=getattr(args, "review_receipt_sha256", None),
                 review_receipt_path=getattr(args, "review_receipt_path", None),
             )
-    except V3Error as error:
+    except (V3Error, legacy.SkillCohortError) as error:
         result = {"generation": "v3", "state": "INTEGRITY_INVALID", "reason_code": str(error)}
     except OSError:
         result = {"generation": "v3", "state": "CAPTURE_FAILED", "reason_code": "capture_io_error"}

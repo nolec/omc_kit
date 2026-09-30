@@ -1655,11 +1655,19 @@ def _record_skill_effectiveness_candidate(
 
         v2_config = cohort_module.v2_config_path(project_root)
         v2_enabled = v2_config.exists() or v2_config.is_symlink()
-        if not v2_enabled:
-            import omc_skill_effectiveness_cohort_v3 as v3_module
-            v3_config = v3_module.config_path(project_root)
-            v3_enabled = v3_config.exists() or v3_config.is_symlink()
-            if v3_enabled:
+        import omc_skill_effectiveness_cohort_v3 as v3_module
+        v3_config = v3_module.config_path(project_root)
+        v3_enabled = v3_config.exists() or v3_config.is_symlink()
+        if v3_enabled:
+            # Select v3 before validating its operational binding; a failure must
+            # not append to the preserved historical v2 ledger.
+            try:
+                selected_v3 = not v2_enabled or v3_module.prefers_v3(project_root)
+            except v3_module.V3Error:
+                v2_enabled = False
+                raise
+            if selected_v3:
+                v2_enabled = False
                 v3_settings = v3_module._config(project_root)
                 if not v3_settings["enabled"]:
                     return None
@@ -1672,6 +1680,7 @@ def _record_skill_effectiveness_candidate(
                     if str(error) != "candidate_duplicate":
                         raise
                 return {"status": "recorded", "activation_id": v3_activation_id}
+            v3_enabled = False
         if not v2_enabled and not cohort_module.config_path(project_root).exists():
             return None
         routing = session.get("routing")

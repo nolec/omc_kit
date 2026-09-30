@@ -15,7 +15,7 @@ OMC는 Codex를 대체하는 도구가 아니다. 여러 저장소를 운영하�
 | Review–Ship Integrity Binding P0.2 | `IMPLEMENTED_LOCAL_CONFORMANCE` | 승인한 canonical candidate를 pre/post-commit representation으로 비교하고 달라지면 `review_stale`로 막는다. 실제 사용자 재작업 감소는 미입증이다. |
 | Quality Gate Evidence Contract | `IMPLEMENTED_LOCAL_CONFORMANCE` | local ship gate와 CI 보완 범위를 계약으로 고정했다. 각 사용처의 실행 환경·migration 완료를 뜻하지 않는다. |
 | Evidence A — Raw-free workflow cohort v2 | `ACTIVE_NATURAL_OBSERVATION` | 승인된 정확히 두 opt-in 저장소에서 자연 작업을 관찰한다. 측정 계약은 고정하며 signed terminal/review receipt만 다룬다. |
-| Work-lifecycle cohort v3 | `DRAFT_SYNTHETIC` | v2의 복수 스킬 제외 문제를 별도 계약으로 검증하는 격리 opt-in 구현이다. 합성 fixture에서는 세션 candidate를 자동 기록하고, 승인 리뷰는 명시적 session/taxonomy가 전달된 영수증 생성 직후 연결한다. 비승인 리뷰와 후속 선택은 명시적 기록이 필요하다. `asserted_work_link`와 `operator_reported_unverified`는 승인 권한 증거가 아니며 운영 roster·T0·활성화는 없다. |
+| Work-lifecycle cohort v3 | `IMPLEMENTED_LOCAL_CONFORMANCE` / 운영 전환 미실행 | 두 target의 설치 identity를 고정한 외부 write-once roster·fresh T0 등록과 종료 경로를 구현했다. 새 등록부터 같은 work의 task·review를 함께 집계하며 v2 원장은 보존한다. 승인 리뷰는 명시적 session/taxonomy가 전달된 receipt 생성 직후 연결하고 비승인 리뷰·후속 선택은 명시적으로 기록한다. `DRAFT_SYNTHETIC` fixture는 별도 모드로 유지하며 `asserted_work_link`·`operator_reported_unverified`는 승인 권한이 아니다. 실제 두 사용처 setup·등록·T0 전환은 아직 실행하지 않았다. [전환 절차](work_lifecycle_cohort_v3_runbook.md) |
 | Evidence B — Comparative effect | `NOT_STARTED` | 재작업 감소와 결함 누락 비열화는 별도 비교 설계·승인 없이는 판단하지 않는다. |
 | 제품 가치 | `NOT_PROVEN` | 사람이 덜 수정하는지, review 반복이 줄어드는지, 잘못된 ship을 실제로 막는지는 자연 작업 표본이 필요하다. |
 

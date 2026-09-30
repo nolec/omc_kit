@@ -171,6 +171,64 @@ def test_v3_choice_io_failure_does_not_hide_valid_review_receipt(
     assert v3.report(repo)["review_count"] == 1
 
 
+def test_operational_v3_real_receipt_lifecycle_and_choice_retry(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    import omc_install_audit
+    repo, base = _repo(tmp_path)
+    other = tmp_path / "other"
+    other.mkdir()
+    _git(other, "init", "-q")
+    for root in (repo, other):
+        _git(root, "remote", "add", "origin", "https://example.com/" + root.name + ".git")
+        (root / ".omc").mkdir(exist_ok=True)
+        (root / ".omc/install-receipt.json").write_text(json.dumps({
+            "omc_version": "0.3.4", "source_sha256": "a" * 64,
+        }))
+    (repo / ".git/info/exclude").write_text(".omc/\n")
+    monkeypatch.setattr(omc_install_audit, "audit_target", lambda *a, **k: {"installed_integrity_status": "ok"})
+    start = datetime.now(timezone.utc) + timedelta(hours=1)
+    roster = tmp_path / "roster.json"
+    v3.create_roster(targets=[repo, other], output=roster, activation_id="operational-test",
+                     activation_at=start.isoformat())
+    v3.enroll(repo, roster_path=roster)
+    legacy = repo / ".omc/skill-effectiveness-cohort-v2.jsonl"
+    legacy.write_bytes(b"preserved-v2\n")
+    (repo / ".omc/skill-effectiveness-cohort-v2.json").write_text("{}")
+    now = start + timedelta(hours=1)
+    monkeypatch.setattr(v3, "_now", lambda: now)
+    monkeypatch.setattr(omc_state, "_iso_now", lambda: now.isoformat())
+    task = omc_state.record_session(repo, mode="autopilot", title="omc-task", request="natural task",
+        role_ids=["senior_coding"], work_class="implementation", completion_action="start", confirmed=True)
+    first = omc_state.record_session(repo, mode="autopilot", title="omc-review", request="first review",
+        role_ids=["code_review"], completion_action="preserve-if-present", confirmed=True)
+    v3.record_explicit_nonapproval_review(repo, session_id=first["session_id"], work_id=task["work_id"],
+                                          verdict="REVISE", taxonomy="requirement_gap")
+    omc_state.record_session(repo, mode="autopilot", title="omc-task", request="fix requirement",
+        role_ids=["senior_coding"], work_class="implementation", completion_action="continue",
+        work_id=task["work_id"], confirmed=True)
+    review = omc_state.record_session(repo, mode="autopilot", title="omc-review", request="second review",
+        role_ids=["code_review"], completion_action="preserve-if-present", confirmed=True)
+    (repo / "app.py").write_text("value = 'reviewed'\n")
+    frozen = snapshot.capture_review_snapshot(repo, base_commit=base)
+    evidence = snapshot.seal_review_output(repo, review_output=b"approved\n",
+        snapshot_path=Path(frozen["snapshot_path"]), snapshot_sha256=frozen["snapshot_sha256"])
+    original = v3.create_choice
+    monkeypatch.setattr(v3, "create_choice", lambda *a, **k: (_ for _ in ()).throw(OSError("write failed")))
+    result = snapshot.record_review_receipt_from_snapshot(repo,
+        snapshot_path=Path(frozen["snapshot_path"]), snapshot_sha256=frozen["snapshot_sha256"],
+        review_evidence_path=Path(evidence["evidence_path"]), review_evidence_sha256=evidence["evidence_sha256"],
+        verdict="APPROVE", cohort_session_id=review["session_id"], cohort_taxonomy="verification_gap")
+    assert result["cohort_capture_v3"]["status"] == "unobserved"
+    assert snapshot.load_review_receipt(repo, Path(result["receipt_path"]))["review_verdict"] == "APPROVE"
+    monkeypatch.setattr(v3, "create_choice", original)
+    choice = v3.resume_review_choice(repo, session_id=review["session_id"])
+    v3.record_followup(repo, choice_id=choice["choice_id"], outcome="accepted")
+    report = v3.report(repo)
+    assert (report["work_items"], report["review_count"], report["accepted"]) == (1, 2, 1)
+    assert report["review_churn_work_items"] == 1
+    assert legacy.read_bytes() == b"preserved-v2\n"
+
+
 def test_worktree_and_committed_candidate_have_same_identity(tmp_path: Path) -> None:
     repo, base = _repo(tmp_path)
     (repo / "app.py").write_text("value = 'reviewed'\n", encoding="utf-8")

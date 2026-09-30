@@ -744,6 +744,12 @@ def _record_v2(project_root: Path, *, event_type: str, work_id: str, payload: di
     if not isinstance(work_id, str) or _WORK_ID.fullmatch(work_id) is None:
         raise SkillCohortError("work_id_invalid")
     with omc_state._omc_lock(root):
+        import omc_skill_effectiveness_cohort_v3 as v3
+        try:
+            if v3.prefers_v3(root):
+                raise SkillCohortError("v3_generation_required")
+        except v3.V3Error as error:
+            raise SkillCohortError(str(error)) from error
         config, events = _load_v2_events(root)
         if event_type != "review" and any(
             event["event_type"] == event_type
@@ -855,6 +861,12 @@ def record_pending_v2_followup(project_root: Path, *, outcome: str) -> dict[str,
 
 
 def _resolve_record_generation(project_root: Path, generation: str) -> str:
+    import omc_skill_effectiveness_cohort_v3 as v3
+    try:
+        if v3.prefers_v3(project_root):
+            raise SkillCohortError("v3_generation_required")
+    except v3.V3Error as error:
+        raise SkillCohortError(str(error)) from error
     if generation not in {"auto", "v1", "v2"}:
         raise SkillCohortError("generation_invalid")
     if generation == "auto":

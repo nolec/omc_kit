@@ -13,6 +13,303 @@ import omc_skill_effectiveness_cohort_v3 as v3
 import omc_state
 
 
+def _operational_pair(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    import omc_install_audit
+    roots = [tmp_path / name for name in ("alpha", "beta")]
+    for root in roots:
+        root.mkdir()
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run(["git", "-C", str(root), "remote", "add", "origin",
+                        "https://example.com/" + root.name + ".git"], check=True)
+        (root / ".omc").mkdir()
+        (root / ".omc/install-receipt.json").write_text(json.dumps({
+            "omc_version": "0.3.4", "source_sha256": "a" * 64,
+        }))
+    monkeypatch.setattr(omc_install_audit, "audit_target", lambda *a, **k: {
+        "installed_integrity_status": "ok", "verification_status": "ok",
+    })
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 9, 30, tzinfo=timezone.utc), raising=False)
+    roster = tmp_path / "roster.json"
+    v3.create_roster(targets=roots, output=roster, activation_id="operational-001",
+                     activation_at="2026-10-01T00:00:00Z")
+    return roots, roster
+
+
+def test_operational_enrollment_is_write_once_and_preserves_v2(tmp_path, monkeypatch):
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    root = roots[0]
+    legacy = root / ".omc/skill-effectiveness-cohort-v2.jsonl"
+    legacy.write_bytes(b"historical-v2\n")
+    v3.enroll(root, roster_path=roster)
+    original = v3.config_path(root).read_bytes()
+    assert v3.enroll(root, roster_path=roster)["status"] == "unchanged"
+    assert v3.config_path(root).read_bytes() == original
+    assert legacy.read_bytes() == b"historical-v2\n"
+    assert v3.report(root)["state"] == "REGISTERED_NOT_STARTED"
+
+
+def test_operational_work_lifecycle_counts_task_review_together(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    root = roots[0]
+    v3.enroll(root, roster_path=roster)
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 2, tzinfo=timezone.utc))
+    for sid, title in [("task-001", "omc-task"), ("review-001", "omc-review"),
+                       ("task-002", "omc-task"), ("review-002", "omc-review")]:
+        _session(root, sid, "work-001", title=title)
+        path = root / ".omc/state/sessions" / sid / "session.json"
+        data = json.loads(path.read_text())
+        data.update(work_class="implementation" if title == "omc-task" else None,
+                    created_at="2026-10-02T00:00:00Z")
+        path.write_text(json.dumps(data))
+        v3.record_candidate(root, session_id=sid)
+    v3.record_review(root, session_id="review-001", work_id="work-001",
+                     verdict="REVISE", taxonomy="requirement_gap")
+    receipt = root / "receipt.json"
+    receipt.write_text("{}")
+    monkeypatch.setattr(v3.omc_review_snapshot, "load_review_receipt", lambda *a: {
+        "receipt_sha256": "b" * 64, "review_verdict": "APPROVE",
+    })
+    review = v3.record_review(root, session_id="review-002", work_id="work-001",
+                              verdict="APPROVE", taxonomy="verification_gap",
+                              review_receipt_path=receipt, review_receipt_sha256="b" * 64)
+    choice = v3.create_choice(root, work_id="work-001", review_event_id=review["event_id"])
+    v3.record_followup(root, choice_id=choice["choice_id"], outcome="accepted")
+    report = v3.report(root)
+    assert report["state"] == "ACTIVE_NATURAL_OBSERVATION"
+    assert (report["work_items"], report["review_count"], report["accepted"]) == (1, 2, 1)
+    assert report["review_churn_work_items"] == 1
+    assert report["outcome_unobserved"] == 0
+
+
+@pytest.mark.parametrize("mutation", ["receipt", "origin", "roster_digest"])
+def test_operational_binding_changes_fail_closed(tmp_path, monkeypatch, mutation):
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    root = roots[0]
+    v3.enroll(root, roster_path=roster)
+    if mutation == "receipt":
+        (root / ".omc/install-receipt.json").write_text("{}")
+    elif mutation == "origin":
+        subprocess.run(["git", "-C", str(root), "remote", "set-url", "origin",
+                        "https://example.com/other.git"], check=True)
+    else:
+        config = json.loads(v3.config_path(root).read_text())
+        config["roster_sha256"] = "f" * 64
+        v3.config_path(root).write_text(json.dumps(config))
+    with pytest.raises(v3.V3Error):
+        v3.report(root)
+    assert not v3.ledger_path(root).exists()
+
+
+def test_operational_enrollment_rejects_third_target_and_late_t0(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    subprocess.run(["git", "-C", str(roots[1]), "remote", "set-url", "origin",
+                    "https://example.com/third.git"], check=True)
+    with pytest.raises(v3.V3Error, match="roster_target_not_allowed"):
+        v3.enroll(roots[1], roster_path=roster)
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 2, tzinfo=timezone.utc))
+    with pytest.raises(v3.V3Error, match="fresh_t0_required"):
+        v3.enroll(roots[0], roster_path=roster)
+
+
+def test_operational_capture_takes_precedence_over_preserved_v2(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    root = roots[0]
+    v3.enroll(root, roster_path=roster)
+    (root / ".omc/skill-effectiveness-cohort-v2.json").write_bytes(b"{}")
+    legacy = root / ".omc/skill-effectiveness-cohort-v2.jsonl"
+    legacy.write_bytes(b"historical-v2\n")
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 2, tzinfo=timezone.utc))
+    # record_session uses the actual current time; set T0 just before it instead.
+    monkeypatch.setattr(omc_state, "_iso_now", lambda: "2026-10-02T00:00:00+00:00")
+    session = omc_state.record_session(root, mode="autopilot", title="omc-task",
+        request="natural implementation", role_ids=["senior_coding"],
+        work_class="implementation", completion_action="start", confirmed=True)
+    assert session["cohort_capture_v3"]["status"] == "recorded"
+    assert v3.report(root)["work_items"] == 1
+    assert legacy.read_bytes() == b"historical-v2\n"
+
+
+def test_operational_close_blocks_append_without_touching_v2(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    root = roots[0]
+    v3.enroll(root, roster_path=roster)
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 2, tzinfo=timezone.utc))
+    v3.close(root)
+    assert v3.report(root)["state"] == "CLOSED"
+    with pytest.raises(v3.V3Error, match="v3_closed"):
+        v3._record(root, event_type="candidate", work_id="work-001",
+                   payload={"session_id": "task-001", "skill_id": "omc-task"}, check=lambda e: None)
+
+
+@pytest.mark.parametrize("closed", [False, True])
+def test_operational_report_uses_one_locked_ledger_snapshot(tmp_path, monkeypatch, closed):
+    from datetime import datetime, timezone
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    root = roots[0]
+    v3.enroll(root, roster_path=roster)
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 2, tzinfo=timezone.utc))
+    _session(root, "task-001", "work-001", title="omc-task")
+    path = root / ".omc/state/sessions/task-001/session.json"
+    session = json.loads(path.read_text())
+    session.update(work_class="implementation", created_at="2026-10-02T00:00:00Z")
+    path.write_text(json.dumps(session))
+    v3.record_candidate(root, session_id="task-001")
+    if closed:
+        v3.close(root)
+    original = v3._events
+    reads = []
+    def read_locked(*args, **kwargs):
+        key = str(omc_state._lock_path(root).resolve())
+        assert key in omc_state._LOCK_REGISTRY, "report reads ledger without the writer lock"
+        events = original(*args, **kwargs)
+        reads.append(events)
+        return events
+    monkeypatch.setattr(v3, "_events", read_locked)
+    result = v3.report(root)
+    assert len(reads) == 1, "closure validation must reuse the counted ledger snapshot"
+    assert result["work_items"] == result["skill_exposures"] == 1
+    assert result["state"] == ("CLOSED" if closed else v3.ACTIVE)
+
+
+def test_operational_aggregate_requires_complete_roster(tmp_path, monkeypatch):
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    for root in roots:
+        v3.enroll(root, roster_path=roster)
+    assert v3.aggregate(roots, roster_path=roster)["aggregate"]["work_items"] == 0
+    with pytest.raises(v3.V3Error, match="pilot_roster_incomplete"):
+        v3.aggregate(roots[:1], roster_path=roster)
+
+
+def test_operational_legacy_recording_is_blocked(tmp_path, monkeypatch):
+    import omc_skill_effectiveness_cohort as legacy
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    root = roots[0]
+    v3.enroll(root, roster_path=roster)
+    ledger = root / ".omc/skill-effectiveness-cohort-v2.jsonl"
+    ledger.write_bytes(b"preserved\n")
+    with pytest.raises(legacy.SkillCohortError, match="v3_generation_required"):
+        legacy._record_v2(root, event_type="review", work_id="a" * 32,
+                          payload={"verdict": "APPROVE", "taxonomy": "scope_gap"})
+    assert ledger.read_bytes() == b"preserved\n"
+
+
+def test_operational_old_work_cannot_be_backfilled(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    root = roots[0]
+    _session(root, "task-old", "work-old", title="omc-task")
+    v3.enroll(root, roster_path=roster)
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 2, tzinfo=timezone.utc))
+    with pytest.raises(v3.V3Error, match="candidate_out_of_scope"):
+        v3.record_candidate(root, session_id="task-old")
+    assert not v3.ledger_path(root).exists()
+
+
+def test_operational_roster_rejects_failed_install_audit(tmp_path, monkeypatch):
+    import omc_install_audit
+    roots, _roster = _operational_pair(tmp_path, monkeypatch)
+    monkeypatch.setattr(omc_install_audit, "audit_target", lambda *a, **k: {
+        "installed_integrity_status": "failed",
+    })
+    with pytest.raises(v3.V3Error, match="installation_audit_failed"):
+        v3.create_roster(targets=roots, output=tmp_path / "other.json",
+            activation_id="other-001", activation_at="2026-10-01T00:00:00Z")
+    assert not (tmp_path / "other.json").exists()
+
+
+def test_operational_cli_real_install_register_enroll_report(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    monkeypatch.setenv("OMC_INSTALLATION_REGISTRY_DIR", str(tmp_path / "registry"))
+    roots = [tmp_path / name for name in ("alpha", "beta")]
+    for root in roots:
+        root.mkdir()
+        # These project-preserved prompt files are deliberately ignored by this
+        # fixture, as required by the existing installation visibility contract.
+        (root / ".gitignore").write_text("PROMPT_COMMON.md\nPROMPT_COMMON_LEAN.md\n")
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run(["git", "-C", str(root), "remote", "add", "origin",
+                        "https://example.com/" + root.name + ".git"], check=True)
+        result = subprocess.run([sys.executable, str(Path(v3.__file__).with_name("omc.py")),
+                                 "setup", "--target", str(root)], capture_output=True, text=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+    roster = tmp_path / "roster.json"
+    def cli(*args):
+        result = subprocess.run([sys.executable, str(Path(v3.__file__)), *args],
+                                capture_output=True, text=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+        return json.loads(result.stdout)
+    t0 = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    cli("create-roster", "--target", str(roots[0]), "--target", str(roots[1]),
+        "--output", str(roster), "--activation-id", "cli-operational", "--activation-at", t0)
+    for root in roots:
+        cli("enroll", "--target", str(root), "--roster", str(roster))
+        assert cli("report", "--target", str(root))["state"] == "REGISTERED_NOT_STARTED"
+    result = cli("aggregate", "--source", str(roots[0]), "--source", str(roots[1]), "--roster", str(roster))
+    assert result["aggregate"]["work_items"] == 0
+    assert result["aggregate"]["product_effect"] == "NOT_PROVEN"
+
+
+def test_operational_before_t0_rejects_append(tmp_path, monkeypatch):
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    root = roots[0]
+    v3.enroll(root, roster_path=roster)
+    with pytest.raises(v3.V3Error, match="v3_not_started"):
+        v3._record(root, event_type="candidate", work_id="work-001",
+            payload={"session_id": "task-001", "skill_id": "omc-task"}, check=lambda e: None)
+    assert not v3.ledger_path(root).exists()
+
+
+def test_operational_closure_tampering_is_visible(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    root = roots[0]
+    v3.enroll(root, roster_path=roster)
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 2, tzinfo=timezone.utc))
+    v3.close(root)
+    path = root / ".omc" / v3.CLOSURE_NAME
+    closure = json.loads(path.read_text())
+    closure["event_count"] = 1
+    path.write_text(json.dumps(closure))
+    with pytest.raises(v3.V3Error, match="v3_closure_invalid"):
+        v3.report(root)
+
+
+def test_malformed_config_status_is_structured_failure(tmp_path):
+    root = _root(tmp_path)
+    config = json.loads(v3.config_path(root).read_text())
+    config["status"] = []
+    v3.config_path(root).write_text(json.dumps(config))
+    with pytest.raises(v3.V3Error, match="v3_config_invalid"):
+        v3.report(root)
+
+
+@pytest.mark.parametrize("last_verdict,expected", [("APPROVE", 1), ("REVISE", 0)])
+def test_correction_metric_binds_to_the_selected_latest_review(tmp_path, monkeypatch, last_verdict, expected):
+    root = _root(tmp_path)
+    _session(root, "task-001", "work-001", title="omc-task")
+    v3.record_candidate(root, session_id="task-001")
+    monkeypatch.setattr(v3.omc_review_snapshot, "load_review_receipt", lambda *a: {
+        "receipt_sha256": "b" * 64, "review_verdict": "APPROVE",
+    })
+    receipt = root / "receipt.json"
+    receipt.write_text("{}")
+    for index, verdict in enumerate(["APPROVE", last_verdict]):
+        sid = "review-00" + str(index)
+        _session(root, sid, "work-001", title="omc-review")
+        v3.record_candidate(root, session_id=sid)
+        review = v3.record_review(root, session_id=sid, work_id="work-001", verdict=verdict,
+            taxonomy="verification_gap", review_receipt_path=receipt if verdict == "APPROVE" else None,
+            review_receipt_sha256="b" * 64 if verdict == "APPROVE" else None)
+    choice = v3.create_choice(root, work_id="work-001", review_event_id=review["event_id"])
+    v3.record_followup(root, choice_id=choice["choice_id"], outcome="correction")
+    assert v3.report(root)["correction_after_approved_review"] == expected
+
+
 def _root(tmp_path: Path, *, enabled: bool = True) -> Path:
     root = tmp_path / "repo"
     root.mkdir()
