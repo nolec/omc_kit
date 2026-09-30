@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 
 import omc_review_snapshot as snapshot
+import omc_skill_effectiveness_cohort_v3 as v3
+import omc_state
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -64,6 +66,109 @@ def _approve(repo: Path, base: str) -> dict[str, object]:
         review_evidence_sha256=str(evidence["evidence_sha256"]),
         verdict="APPROVE",
     )
+
+
+def test_opt_in_v3_review_bridge_uses_issued_receipt_and_explicit_followup(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    (repo / ".git" / "info" / "exclude").write_text(".omc/\n")
+    v3.config_path(repo).parent.mkdir(exist_ok=True)
+    v3.config_path(repo).write_text(json.dumps({
+        "generation": "v3", "enabled": True, "status": "DRAFT_SYNTHETIC",
+        "activation_id": "synthetic-only", "activation_at": "2026-09-23T00:00:00Z",
+    }))
+    task = omc_state.record_session(
+        repo, mode="autopilot", title="omc-task", request="fixture task",
+        role_ids=["senior_coding"], work_class="synthetic", completion_action="start", confirmed=True,
+    )
+    review = omc_state.record_session(
+        repo, mode="autopilot", title="omc-review", request="fixture review",
+        role_ids=["code_review"], completion_action="preserve-if-present", confirmed=True,
+    )
+    assert task["work_id"] == review["work_id"]
+    (repo / "app.py").write_text("value = 'reviewed'\n")
+    frozen = snapshot.capture_review_snapshot(repo, base_commit=base)
+    evidence = snapshot.seal_review_output(
+        repo, review_output=b"approved\n", snapshot_path=Path(str(frozen["snapshot_path"])),
+        snapshot_sha256=str(frozen["snapshot_sha256"]),
+    )
+    result = _snapshot_cli(
+        repo, "record-review", "--review-snapshot", str(frozen["snapshot_path"]),
+        "--review-snapshot-sha256", str(frozen["snapshot_sha256"]),
+        "--review-evidence", str(evidence["evidence_path"]),
+        "--review-evidence-sha256", str(evidence["evidence_sha256"]),
+        "--verdict", "APPROVE", "--cohort-session-id", str(review["session_id"]),
+        "--cohort-taxonomy", "verification_gap",
+    )
+    cohort = result["cohort_capture_v3"]
+    assert cohort["status"] == "recorded"
+    assert v3.report(repo)["review_count"] == 1
+    assert v3.report(repo)["outcome_unobserved"] == 1
+    replay = snapshot.record_review_receipt_from_snapshot(
+        repo, snapshot_path=Path(str(frozen["snapshot_path"])),
+        snapshot_sha256=str(frozen["snapshot_sha256"]),
+        review_evidence_path=Path(str(evidence["evidence_path"])),
+        review_evidence_sha256=str(evidence["evidence_sha256"]), verdict="APPROVE",
+        cohort_session_id=str(review["session_id"]), cohort_taxonomy="verification_gap",
+    )
+    assert replay["cohort_capture_v3"] == {
+        "status": "unobserved", "reason_code": "review_session_already_recorded",
+    }
+    assert snapshot.load_review_receipt(repo, Path(str(result["receipt_path"])))["receipt_sha256"] == result["receipt_sha256"]
+    assert v3.report(repo)["review_count"] == 1
+    followup = subprocess.run(
+        [sys.executable, str(Path(v3.__file__)), "record-explicit-followup",
+         "--target", str(repo), "--choice-id", cohort["choice_id"], "--outcome", "accepted"],
+        capture_output=True, text=True,
+    )
+    assert followup.returncode == 0, followup.stdout + followup.stderr
+    assert v3.report(repo)["accepted"] == 1
+    assert not (repo / ".omc" / "skill-effectiveness-cohort-v2.jsonl").exists()
+
+
+def test_v3_choice_io_failure_does_not_hide_valid_review_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, base = _repo(tmp_path)
+    (repo / ".git" / "info" / "exclude").write_text(".omc/\n")
+    v3.config_path(repo).parent.mkdir(exist_ok=True)
+    v3.config_path(repo).write_text(json.dumps({
+        "generation": "v3", "enabled": True, "status": "DRAFT_SYNTHETIC",
+        "activation_id": "synthetic-only", "activation_at": "2026-09-23T00:00:00Z",
+    }))
+    omc_state.record_session(
+        repo, mode="autopilot", title="omc-task", request="fixture task",
+        role_ids=["senior_coding"], work_class="synthetic", completion_action="start", confirmed=True,
+    )
+    review = omc_state.record_session(
+        repo, mode="autopilot", title="omc-review", request="fixture review",
+        role_ids=["code_review"], completion_action="preserve-if-present", confirmed=True,
+    )
+    (repo / "app.py").write_text("value = 'reviewed'\n")
+    frozen = snapshot.capture_review_snapshot(repo, base_commit=base)
+    evidence = snapshot.seal_review_output(
+        repo, review_output=b"approved\n", snapshot_path=Path(str(frozen["snapshot_path"])),
+        snapshot_sha256=str(frozen["snapshot_sha256"]),
+    )
+    original_choice = v3.create_choice
+    def fail_choice(*_args: object, **_kwargs: object) -> dict[str, str]:
+        raise OSError("simulated choice write failure")
+    monkeypatch.setattr(v3, "create_choice", fail_choice)
+    result = snapshot.record_review_receipt_from_snapshot(
+        repo, snapshot_path=Path(str(frozen["snapshot_path"])),
+        snapshot_sha256=str(frozen["snapshot_sha256"]), verdict="APPROVE",
+        review_evidence_path=Path(str(evidence["evidence_path"])),
+        review_evidence_sha256=str(evidence["evidence_sha256"]),
+        cohort_session_id=str(review["session_id"]), cohort_taxonomy="verification_gap",
+    )
+    assert result["cohort_capture_v3"] == {
+        "status": "unobserved", "reason_code": "capture_io_error",
+    }
+    assert snapshot.load_review_receipt(repo, Path(str(result["receipt_path"])))["review_verdict"] == "APPROVE"
+    assert v3.report(repo)["review_count"] == 1
+    monkeypatch.setattr(v3, "create_choice", original_choice)
+    recovered = v3.resume_review_choice(repo, session_id=str(review["session_id"]))
+    assert recovered["choice_id"]
+    assert v3.report(repo)["review_count"] == 1
 
 
 def test_worktree_and_committed_candidate_have_same_identity(tmp_path: Path) -> None:

@@ -48,11 +48,11 @@ decision: REVISE / APPROVE (판정 결과) | risk: HIGH / MED / LOW (리스크 �
 - 강한 finding은 `evidence_class: behavioral_direct`와 비어 있지 않은 `evidence:`가 필수다. 가설은 `[확인 필요]`로 내린다.
 - 판정 규칙: 치명=BLOCK, 중대=REVISE, 경미/제안만=APPROVE WITH NOTES, 없음=APPROVE. REVISE/BLOCK면 수정 방향 포함.
 - raw-free cohort가 활성이고 pending work가 있으면 taxonomy 하나를 선택해 `record-review`를 실행하고, 최종에는 `수용 / 수정 필요 / 보류`를 보여준다. ship 결속 검증이 `review_stale`로 차단된 같은 pending work는 `--verdict BLOCK --taxonomy review_stale`로 별도 review event를 기록한다. pending work 결속을 확인할 수 없으면 stale을 추정·기록하지 않고 관찰 불가로 남긴다. 다음 응답이 정확히 일치할 때만 agent가 `python3 scripts/omc.py skill-cohort record-followup --target . --outcome <accepted|correction|deferred>`를 실행하며, 불명확·다른 세션·침묵은 추정하지 않는다.
+- **격리 v3 `DRAFT_SYNTHETIC` 전용:** v2 설정이 없고 v3 opt-in이 명시된 fixture에서만 승인 receipt 생성 명령에 `--cohort-session-id <현재 review session id> --cohort-taxonomy <taxonomy>`를 함께 전달한다. `REVISE/BLOCK`처럼 승인 receipt가 없는 판정은 `python3 scripts/omc_skill_effectiveness_cohort_v3.py record-explicit-review --target . --session-id <현재 review session id> --work-id <명시적 work id> --verdict <REVISE|BLOCK> --taxonomy <taxonomy>`로 기록한다. 반환된 `cohort_capture_v3.status=recorded`(승인 경로) 또는 명시적 review event 및 `choice_id`를 확인하고 정확히 대응하는 사용자 응답이 있을 때만 `python3 scripts/omc_skill_effectiveness_cohort_v3.py record-explicit-followup --target . --choice-id <choice_id> --outcome <accepted|correction|deferred>`를 실행한다. 실패·침묵·다른 세션은 미관찰로 남긴다. 이 경로는 운영 cohort 활성화나 인간 승인 권한이 아니다.
+- v3에서 review event 기록 후 choice 저장만 실패했다면 새 review를 만들지 않고 `python3 scripts/omc_skill_effectiveness_cohort_v3.py resume-review-choice --target . --session-id <당시 review session id>`로 미완료 choice만 복구한다. 현재 confirmed review session이 아니거나 이미 choice가 있으면 거부한다.
 ## Machine output contract — 마지막 두 줄은 `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT: <VALUE>`; JSON은 `schema_version=omc-output/v1`, `stage`, `outcome`, `risk`, `next_skill`, `user_selection_needed`, `reason_code`; `next_skill`은 canonical `omc-*` 또는 null; unresolved/blocked는 `reason_code` 필수; legacy 평문 입력은 허용하되 새 출력은 숨김 형식만 사용하고 명시적 오류는 보정하지 않습니다.
 
-## 다음 추천
-- 우선순위는 `현재 병목 > 기본 파이프라인`, 주추천 1개만 제시한다.
+## 다음 추천 — 우선순위는 `현재 병목 > 기본 파이프라인`, 주추천 1개만 제시한다.
 - REVISE/BLOCK면 `$omc-task`
 - APPROVE/APPROVE WITH NOTES + 배포 준비 명시 + ship_intent_explicit=yes면 `$omc-ship`
-- APPROVE/APPROVE WITH NOTES + 배포 준비 미명시 또는 user_selection_needed=yes면 내부 라우팅은 사용자 선택 대기, 화면에는 실제 선택(예: `변경사항을 커밋할지 결정해 주세요.`)을 요청
-- 자동으로 진행하지는 않습니다.
+- APPROVE/APPROVE WITH NOTES + 배포 준비 미명시 또는 user_selection_needed=yes면 내부 라우팅은 사용자 선택 대기, 화면에는 실제 선택(예: `변경사항을 커밋할지 결정해 주세요.`)을 요청. 자동으로 진행하지는 않습니다.

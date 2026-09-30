@@ -598,6 +598,8 @@ def record_review_receipt_from_snapshot(
     review_evidence_path: Path,
     review_evidence_sha256: str,
     verification_receipt_sha256: str | None = None,
+    cohort_session_id: str | None = None,
+    cohort_taxonomy: str | None = None,
 ) -> dict[str, object]:
     """Persist only the exact candidate that existed when review began."""
     root = _project_root(project_root)
@@ -616,7 +618,7 @@ def record_review_receipt_from_snapshot(
         expected_snapshot_sha256=snapshot_sha256,
         expected_candidate_scope_sha256=str(candidate["candidate_scope_sha256"]),
     )
-    return record_review_receipt(
+    result = record_review_receipt(
         root,
         candidate=candidate,
         verdict=verdict,
@@ -627,6 +629,34 @@ def record_review_receipt_from_snapshot(
         review_evidence_name=_artifact_name(root, review_evidence_path),
         verification_receipt_sha256=verification_receipt_sha256,
     )
+    # This is observational only. The review receipt remains valid even when
+    # synthetic cohort capture cannot be attributed to an explicit session.
+    import omc_skill_effectiveness_cohort_v3 as v3
+    if v3.config_path(root).exists() or v3.config_path(root).is_symlink():
+        from omc_skill_effectiveness_cohort import v2_config_path
+        if not v2_config_path(root).exists() and not v2_config_path(root).is_symlink():
+            try:
+                enabled = v3._config(root)["enabled"]
+            except v3.V3Error as error:
+                result["cohort_capture_v3"] = {"status": "unobserved", "reason_code": str(error)}
+                return result
+            if not enabled:
+                return result
+            if cohort_session_id is None or cohort_taxonomy is None:
+                result["cohort_capture_v3"] = {"status": "unobserved", "reason_code": "explicit_review_link_required"}
+            else:
+                try:
+                    choice = v3.record_completed_review(
+                        root, session_id=cohort_session_id, taxonomy=cohort_taxonomy,
+                        verdict=verdict, review_receipt_path=Path(str(result["receipt_path"])),
+                        review_receipt_sha256=str(result["receipt_sha256"]),
+                    )
+                except (v3.V3Error, OSError) as error:
+                    reason = str(error) if isinstance(error, v3.V3Error) else "capture_io_error"
+                    result["cohort_capture_v3"] = {"status": "unobserved", "reason_code": reason}
+                else:
+                    result["cohort_capture_v3"] = {"status": "recorded", **choice}
+    return result
 
 
 def _current_receipt(root: Path) -> dict[str, object]:
@@ -657,10 +687,21 @@ def _current_receipt(root: Path) -> dict[str, object]:
         or Path(pointer["receipt_name"]).name != pointer["receipt_name"]
     ):
         raise CandidateScopeError("review_pointer_invalid")
+    receipt = load_review_receipt(root, directory / pointer["receipt_name"])
+    if receipt["receipt_sha256"] != pointer["receipt_sha256"] or receipt["repository_identity"] != pointer["repository_identity"]:
+        raise CandidateScopeError("review_receipt_invalid")
+    return receipt
+
+
+def load_review_receipt(root: Path, receipt_path: Path) -> dict[str, object]:
+    """Validate an immutable review receipt without relying on current.json."""
+    directory = _snapshot_dir(root)
+    if receipt_path.parent != directory or receipt_path.name in {"current.json", ""}:
+        raise CandidateScopeError("review_receipt_invalid")
     try:
         receipt = json.loads(
             _regular_bytes(
-                directory / pointer["receipt_name"],
+                receipt_path,
                 error_type=CandidateScopeError,
                 error_code="review_receipt_invalid",
             ).decode("utf-8")
@@ -694,7 +735,6 @@ def _current_receipt(root: Path) -> dict[str, object]:
             root, base_commit=str(receipt["base_commit"])
         )
         or receipt["receipt_sha256"] != _sha256(_canonical_bytes(body))
-        or receipt["receipt_sha256"] != pointer["receipt_sha256"]
     ):
         raise CandidateScopeError("review_receipt_invalid")
     _validate_candidate(
@@ -856,6 +896,8 @@ def main() -> int:
     record.add_argument("--review-evidence", type=Path, required=True)
     record.add_argument("--review-evidence-sha256", required=True)
     record.add_argument("--verification-receipt-sha256")
+    record.add_argument("--cohort-session-id")
+    record.add_argument("--cohort-taxonomy")
     capture = sub.add_parser("capture-review")
     capture.add_argument("--target", type=Path, default=Path.cwd())
     capture.add_argument("--base-commit", required=True)
@@ -881,6 +923,8 @@ def main() -> int:
                 review_evidence_path=args.review_evidence,
                 review_evidence_sha256=args.review_evidence_sha256,
                 verification_receipt_sha256=args.verification_receipt_sha256,
+                cohort_session_id=args.cohort_session_id,
+                cohort_taxonomy=args.cohort_taxonomy,
             )
         elif args.command == "capture-review":
             result = capture_review_snapshot(

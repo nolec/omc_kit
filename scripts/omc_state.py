@@ -1637,13 +1637,15 @@ def _pending_completion_matches_session(
 
 def _record_skill_effectiveness_candidate(
     project_root: Path, session: dict[str, object]
-) -> str | None:
+) -> str | dict[str, object] | None:
     """Best-effort local observation; never copies the session request into the cohort."""
     skill_id = session.get("title")
     work_id = session.get("work_id")
     if skill_id not in {"omc-plan", "omc-task", "omc-review"} or not isinstance(work_id, str):
         return None
     v2_enabled = False
+    v3_enabled = False
+    v3_activation_id: str | None = None
     cohort: object | None = None
     try:
         import omc_skill_effectiveness_cohort as cohort_module
@@ -1653,6 +1655,23 @@ def _record_skill_effectiveness_candidate(
 
         v2_config = cohort_module.v2_config_path(project_root)
         v2_enabled = v2_config.exists() or v2_config.is_symlink()
+        if not v2_enabled:
+            import omc_skill_effectiveness_cohort_v3 as v3_module
+            v3_config = v3_module.config_path(project_root)
+            v3_enabled = v3_config.exists() or v3_config.is_symlink()
+            if v3_enabled:
+                v3_settings = v3_module._config(project_root)
+                if not v3_settings["enabled"]:
+                    return None
+                v3_activation_id = v3_settings["activation_id"]
+                try:
+                    v3_module.record_candidate(project_root, session_id=str(session["session_id"]))
+                except v3_module.V3Error as error:
+                    if str(error) == "candidate_out_of_scope":
+                        return None
+                    if str(error) != "candidate_duplicate":
+                        raise
+                return {"status": "recorded", "activation_id": v3_activation_id}
         if not v2_enabled and not cohort_module.config_path(project_root).exists():
             return None
         routing = session.get("routing")
@@ -1690,7 +1709,28 @@ def _record_skill_effectiveness_candidate(
         # later cohort report never upgrades absent evidence into a success.
         if v2_enabled and isinstance(error, getattr(cohort, "SkillCohortError", ())):
             return "integrity_invalid"
+        if v3_enabled:
+            reason = str(error) if isinstance(error, v3_module.V3Error) else "capture_failed"
+            return {"status": "integrity_invalid", "reason_code": reason,
+                    "activation_id": v3_activation_id}
         return "missing" if v2_enabled else None
+
+
+def _persist_cohort_capture_status_best_effort(
+    project_root: Path, session: dict[str, object], status: str | dict[str, object],
+) -> dict[str, object]:
+    if isinstance(status, str) and status in {"recorded", "missing", "integrity_invalid"}:
+        return _persist_v2_capture_status_best_effort(project_root, session, status)
+    if not isinstance(status, dict):
+        return session
+    try:
+        with _omc_lock(project_root):
+            return _update_session_entry(
+                project_root, session_id=str(session["session_id"]),
+                mutate=lambda stored: stored.update({"cohort_capture_v3": status}),
+            )
+    except Exception:
+        return session
 
 
 def _persist_v2_capture_status(
@@ -3373,7 +3413,7 @@ def record_session(
     if confirmed:
         capture_status = _record_skill_effectiveness_candidate(project_root, entry)
         if capture_status is not None:
-            entry = _persist_v2_capture_status_best_effort(project_root, entry, capture_status)
+            entry = _persist_cohort_capture_status_best_effort(project_root, entry, capture_status)
     return entry
 
 
@@ -3427,7 +3467,7 @@ def confirm_session(project_root: Path, *, session_id: str | None = None) -> dic
     # record_session(), append after releasing the state lock.
     capture_status = _record_skill_effectiveness_candidate(project_root, session)
     if capture_status is not None:
-        session = _persist_v2_capture_status_best_effort(project_root, session, capture_status)
+        session = _persist_cohort_capture_status_best_effort(project_root, session, capture_status)
     return session
 
 
