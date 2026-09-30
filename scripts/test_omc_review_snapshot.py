@@ -68,6 +68,48 @@ def _approve(repo: Path, base: str) -> dict[str, object]:
     )
 
 
+@pytest.mark.parametrize("verdict", ["APPROVE", "APPROVE_WITH_NOTES"])
+@pytest.mark.parametrize("session_id,taxonomy", [
+    ("review-001", "test_quality_only"),
+    ("review-001", "review_stale"),
+    ("review-001", None),
+    (None, "verification_gap"),
+])
+def test_invalid_cohort_input_does_not_publish_receipt(tmp_path, session_id, taxonomy, verdict):
+    repo, base = _repo(tmp_path)
+    (repo / ".git/info/exclude").write_text(".omc/\n")
+    frozen = snapshot.capture_review_snapshot(repo, base_commit=base)
+    evidence = snapshot.seal_review_output(
+        repo, review_output=b"approved", snapshot_path=Path(frozen["snapshot_path"]),
+        snapshot_sha256=frozen["snapshot_sha256"],
+    )
+    with pytest.raises(snapshot.CandidateScopeError, match="cohort_review_input_invalid"):
+        snapshot.record_review_receipt_from_snapshot(
+            repo, snapshot_path=Path(frozen["snapshot_path"]),
+            snapshot_sha256=frozen["snapshot_sha256"], verdict=verdict,
+            review_evidence_path=Path(evidence["evidence_path"]),
+            review_evidence_sha256=evidence["evidence_sha256"],
+            cohort_session_id=session_id, cohort_taxonomy=taxonomy,
+        )
+    assert not (repo / ".omc/state/review-snapshots/current.json").exists()
+    assert not list((repo / ".omc/state/review-snapshots").glob("*.json"))
+
+
+def test_cli_reports_observation_failure_separately(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["snapshot", "record-review",
+        "--review-snapshot", "snapshot.json", "--review-snapshot-sha256", "a" * 64,
+        "--review-evidence", "evidence.json", "--review-evidence-sha256", "b" * 64,
+        "--verdict", "APPROVE"])
+    monkeypatch.setattr(snapshot, "record_review_receipt_from_snapshot", lambda *a, **k: {
+        "receipt_path": "valid-receipt.json",
+        "cohort_capture_v3": {"status": "unobserved", "reason_code": "capture_io_error"},
+    })
+    assert snapshot.main() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "REVIEW_RECORDED_OBSERVATION_UNOBSERVED"
+    assert result["receipt_path"] == "valid-receipt.json"
+
+
 def test_opt_in_v3_review_bridge_uses_issued_receipt_and_explicit_followup(tmp_path: Path) -> None:
     repo, base = _repo(tmp_path)
     (repo / ".git" / "info" / "exclude").write_text(".omc/\n")

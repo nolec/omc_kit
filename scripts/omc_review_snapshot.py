@@ -602,6 +602,14 @@ def record_review_receipt_from_snapshot(
     cohort_taxonomy: str | None = None,
 ) -> dict[str, object]:
     """Persist only the exact candidate that existed when review began."""
+    import omc_skill_effectiveness_cohort_v3 as v3
+    if cohort_session_id is not None or cohort_taxonomy is not None:
+        if (not isinstance(cohort_session_id, str)
+                or v3._ID.fullmatch(cohort_session_id) is None
+                or not isinstance(cohort_taxonomy, str)
+                or cohort_taxonomy not in v3._TAXONOMIES
+                or (cohort_taxonomy == "review_stale" and verdict != "BLOCK")):
+            raise CandidateScopeError("cohort_review_input_invalid")
     root = _project_root(project_root)
     loaded = load_peer_snapshot(snapshot_path, expected_sha256=snapshot_sha256)
     candidate = loaded["candidate"]
@@ -631,7 +639,6 @@ def record_review_receipt_from_snapshot(
     )
     # This is observational only. The review receipt remains valid even when
     # synthetic cohort capture cannot be attributed to an explicit session.
-    import omc_skill_effectiveness_cohort_v3 as v3
     if v3.config_path(root).exists() or v3.config_path(root).is_symlink():
         from omc_skill_effectiveness_cohort import v2_config_path
         try:
@@ -954,6 +961,10 @@ def main() -> int:
             result = validate_ship_candidate(args.target)
     except (CandidateScopeError, PeerSnapshotError, OSError) as error:
         print(json.dumps({"status": "BLOCKED", "reason_code": str(error)}))
+        return 2
+    if args.command == "record-review" and result.get("cohort_capture_v3", {}).get("status") == "unobserved":
+        result["status"] = "REVIEW_RECORDED_OBSERVATION_UNOBSERVED"
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 2
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0 if args.command in {"capture-review", "seal-review-output", "record-review"} or result["status"] == "READY" else 2
