@@ -34,6 +34,8 @@ OMC의 외부 제품 가치는 executor 수나 routing 복잡도가 아니라, A
 
 ## Single Active Product Priority
 
+**반복 전환 복구 / 로컬 구현·리뷰 완료(2026-10-01 KST):** 두 번째 이후 전환은 명시적 transition ID·외부 custody 원본 bundle·영속 journal로 재시도한다. 기존 proof를 먼저 차단하고 config barrier를 유지하며, 완료 재시도도 history 원본 SHA와 보존 디렉터리 symlink를 검증한다. 충돌·누락·손상을 덮어쓰지 않고 누적 excluded work ID를 유지한다. 관련 synthetic 테스트 `122 passed`, 최종 리뷰 실패 경로 재검증 `8 passed`, staged TDD 게이트 통과다. 전체 `3964 passed, 3 skipped, 12 deselected`는 마지막 symlink 검사 이동 이전 결과이며 최종 후보의 전체 gate 재실행 결과가 아니다. 운영 archive·10곳 setup·두 곳 재등록·새 T0·공동 활성화는 별도 실행이 남아 있으며, 이번 구현은 수집 재개나 제품 효과의 근거가 아니다. [절차와 검증 경계](work_lifecycle_cohort_v3_runbook.md)
+
 **기존 work-lifecycle cohort v3는 `CLOSED`이며 현재 우선순위는 보존·업데이트·재등록 전환이다.** 이전 `ACTIVE_NATURAL_OBSERVATION`은 역사적 상태다. 기존 사용처 10곳을 업데이트하고 ai-cs·sixshop3-storefront-fe 두 곳만 재등록한다. oh-my-claudecode는 설치 대상이 아니다. 외부 write-once archive 검증 → 전환 barrier → 고정 commit의 setup·strict audit → 새 roster·미래 T0 → 양쪽 재등록·활성화 순서를 따른다. v2/v3 원장은 소급 수정하지 않으며 새 활성화 전에는 자연 수집 재개를 주장하지 않는다. 다른 제품 효과 연구·실험 lane이나 인위적 표본은 승인하지 않는다.
 
 - 전환 스냅샷(2026-10-01 KST): activation `workflow-v3-20260930-0715`의 closure는 ai-cs 21 events·storefront 38 events다. 이는 원장 이벤트 수이지 적격 work·review·outcome 수가 아니다. 외부 archive 게시와 사용처 업데이트는 미완료다.

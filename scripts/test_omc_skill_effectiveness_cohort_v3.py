@@ -13,6 +13,269 @@ import omc_skill_effectiveness_cohort_v3 as v3
 import omc_state
 
 
+def test_prepared_retry_rejects_symlink_previous_directory(tmp_path, monkeypatch):
+    roots, archives = _repeat_ready(tmp_path, monkeypatch)
+    root = roots[0]
+    kwargs = dict(archives=archives, archive=archives[0],
+                  transition_id="cycle-three", custody=tmp_path / "custody")
+    v3.prepare_transition(root, **kwargs)
+    previous = root / ".omc/cohort-transition-previous"
+    moved = tmp_path / "moved-previous"
+    previous.rename(moved)
+    previous.symlink_to(moved, target_is_directory=True)
+    before = {str(p): p.read_bytes() for p in moved.rglob("*") if p.is_file()}
+    with pytest.raises(v3.V3Error, match="transition_destination_invalid"):
+        v3.prepare_transition(root, **kwargs)
+    assert previous.is_symlink()
+    assert {str(p): p.read_bytes() for p in moved.rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("tamper", ["content", "symlink", "missing"])
+def test_repeat_retry_rejects_changed_old_proof_without_mutation(tmp_path, monkeypatch, tamper):
+    roots, archives = _repeat_ready(tmp_path, monkeypatch)
+    root = roots[0]
+    custody = tmp_path / "custody"
+    write = v3._durable_write_once
+    def stop_after_journal(path, value):
+        write(path, value)
+        if path.name == v3.JOURNAL_NAME:
+            raise OSError("stop after journal")
+    monkeypatch.setattr(v3, "_durable_write_once", stop_after_journal)
+    with pytest.raises(OSError, match="stop after journal"):
+        v3.prepare_transition(root, archives=archives, archive=archives[0], transition_id="cycle-three", custody=custody)
+    monkeypatch.setattr(v3, "_durable_write_once", write)
+    proof = root / ".omc/cohort-transition-previous/prepared.json"
+    if tamper == "content":
+        proof.write_text("{}")
+    else:
+        proof.unlink()
+        if tamper == "symlink":
+            proof.symlink_to(archives[0])
+    before = {str(p): p.read_bytes() for p in (root / ".omc").rglob("*") if p.is_file()}
+    with pytest.raises(v3.V3Error, match="transition_conflict"):
+        v3.prepare_transition(root, archives=archives, archive=archives[0], transition_id="cycle-three", custody=custody)
+    assert {str(p): p.read_bytes() for p in (root / ".omc").rglob("*") if p.is_file()} == before
+    assert proof.is_symlink() == (tamper == "symlink")
+
+
+@pytest.mark.parametrize("tamper", ["config", "proof", "symlink", "missing"])
+def test_prepared_retry_rejects_damaged_history_without_mutation(tmp_path, monkeypatch, tamper):
+    roots, archives = _repeat_ready(tmp_path, monkeypatch)
+    root = roots[0]
+    custody = tmp_path / "custody"
+    v3.prepare_transition(root, archives=archives, archive=archives[0], transition_id="cycle-three", custody=custody)
+    history = root / ".omc/cohort-transition-history-cycle-three"
+    path = history / ("prepared.json" if tamper == "proof" else v3.CONFIG_NAME)
+    if tamper in {"config", "proof"}:
+        path.write_text("{}")
+    else:
+        path.unlink()
+        if tamper == "symlink":
+            path.symlink_to(archives[0])
+    before = {str(p): p.read_bytes() for p in (root / ".omc").rglob("*") if p.is_file()}
+    with pytest.raises(v3.V3Error, match="transition_conflict"):
+        v3.prepare_transition(root, archives=archives, archive=archives[0], transition_id="cycle-three", custody=custody)
+    assert {str(p): p.read_bytes() for p in (root / ".omc").rglob("*") if p.is_file()} == before
+
+
+def _repeat_ready(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    roots, outputs = _closed_archives(tmp_path, monkeypatch)
+    for root, archive in zip(roots, outputs):
+        v3.prepare_transition(root, archives=outputs, archive=archive)
+    roster = tmp_path / "repeat-roster.json"
+    v3.create_roster(targets=roots, output=roster, activation_id="cycle-two",
+                     activation_at="2026-10-03T00:00:00Z")
+    for root in roots:
+        v3.enroll(root, roster_path=roster)
+    v3.activate_pair(roots, output=tmp_path / "repeat-joint.json")
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 4, tzinfo=timezone.utc))
+    outputs = [tmp_path / (root.name + "-repeat-archive.json") for root in roots]
+    for root, archive in zip(roots, outputs):
+        v3.close(root)
+        v3.archive_closed(root, output=archive)
+    return roots, outputs
+
+
+def test_repeat_transition_preserves_originals_and_retries(tmp_path, monkeypatch):
+    roots, archives = _repeat_ready(tmp_path, monkeypatch)
+    root = roots[0]
+    originals = {str(p.relative_to(root / ".omc")): p.read_bytes()
+                 for p in (root / ".omc").rglob("*") if p.is_file()
+                 and (p.name in {v3.CONFIG_NAME, v3.LEDGER_NAME, v3.CLOSURE_NAME,
+                                 v3.TRANSITION_NAME, v3.ACTIVATION_NAME}
+                      or "cohort-transition-previous" in p.parts)}
+    custody = tmp_path / "original-custody"
+    result = v3.prepare_transition(root, archives=archives, archive=archives[0],
+                                   transition_id="cycle-three", custody=custody)
+    assert result["state"] == "TRANSITION_BLOCKED"
+    assert v3.prepare_transition(root, archives=archives, archive=archives[0],
+                                transition_id="cycle-three", custody=custody) == result
+    bundle = json.loads((custody / "cycle-three" / v3._target(root) / "originals.json").read_text())
+    import base64
+    for name, data in originals.items():
+        assert base64.b64decode(bundle["files"][name]["bytes_base64"]) == data
+    assert v3.report(root)["state"] == "TRANSITION_BLOCKED"
+    assert not (root / ".omc" / v3.ACTIVATION_NAME).exists()
+
+
+def test_repeat_transition_custody_failure_changes_no_original(tmp_path, monkeypatch):
+    roots, archives = _repeat_ready(tmp_path, monkeypatch)
+    root = roots[0]
+    before = {str(p): p.read_bytes() for p in (root / ".omc").rglob("*") if p.is_file()}
+    write = v3._durable_write_once
+    def fail(path, value):
+        if path.name == "originals.json":
+            raise OSError("custody unavailable")
+        return write(path, value)
+    monkeypatch.setattr(v3, "_durable_write_once", fail)
+    with pytest.raises(OSError, match="custody unavailable"):
+        v3.prepare_transition(root, archives=archives, archive=archives[0],
+                              transition_id="cycle-three", custody=tmp_path / "custody")
+    assert {str(p): p.read_bytes() for p in (root / ".omc").rglob("*") if p.is_file()} == before
+
+
+@pytest.mark.parametrize("boundary", range(1, 33))
+def test_repeat_transition_process_exit_recovers(tmp_path, monkeypatch, boundary):
+    roots, archives = _repeat_ready(tmp_path, monkeypatch)
+    root = roots[0]
+    code = '''
+import sys, os
+from pathlib import Path
+from datetime import datetime, timezone
+sys.path.insert(0, sys.argv[1])
+import omc_skill_effectiveness_cohort_v3 as v
+import omc_install_audit
+omc_install_audit.audit_target = lambda *a, **k: {"installed_integrity_status": "ok"}
+v._now = lambda: datetime(2026, 10, 4, tzinfo=timezone.utc)
+count = 0
+original = v._fsync_directory
+def kill(path):
+    global count
+    original(path)
+    count += 1
+    if count == int(sys.argv[6]):
+        os._exit(90)
+v._fsync_directory = kill
+v.prepare_transition(Path(sys.argv[2]), archives=[Path(sys.argv[3]), Path(sys.argv[4])],
+    archive=Path(sys.argv[3]), transition_id="cycle-three", custody=Path(sys.argv[5]))
+'''
+    result = subprocess.run([sys.executable, "-c", code, str(Path(v3.__file__).parent),
+                             str(root), *map(str, archives), str(tmp_path / "custody"), str(boundary)],
+                            capture_output=True, text=True)
+    assert result.returncode in {0, 90}, result.stderr
+    assert v3.prefers_v3(root)
+    assert v3.report(root)["state"] in {"CLOSED", "TRANSITION_BLOCKED"}
+    v3.prepare_transition(root, archives=archives, archive=archives[0],
+                          transition_id="cycle-three", custody=tmp_path / "custody")
+    assert v3.report(root)["state"] == "TRANSITION_BLOCKED"
+
+
+@pytest.mark.parametrize("revision", ["700f541", "6ebc72f"])
+def test_repeat_transition_legacy_writers_cannot_reopen_barrier(tmp_path, monkeypatch, revision):
+    import types
+    roots, archives = _repeat_ready(tmp_path, monkeypatch)
+    root = roots[0]
+    old = types.ModuleType("legacy_repeat_transition")
+    old.__file__ = v3.__file__
+    source = subprocess.check_output(["git", "show", revision + ":scripts/omc_skill_effectiveness_cohort_v3.py"], text=True)
+    exec(compile(source, old.__file__, "exec"), old.__dict__)
+    old._now = v3._now
+    roster = tmp_path / "legacy-next-roster.json"
+    v3.create_roster(targets=roots, output=roster, activation_id="cycle-three",
+                     activation_at="2026-10-05T00:00:00Z")
+    replace = v3._replace_transition_config
+    def stop(path, value):
+        replace(path, value)
+        if path == v3.config_path(root):
+            raise OSError("barrier reached")
+    monkeypatch.setattr(v3, "_replace_transition_config", stop)
+    with pytest.raises(OSError, match="barrier reached"):
+        v3.prepare_transition(root, archives=archives, archive=archives[0],
+                              transition_id="cycle-three", custody=tmp_path / "custody")
+    before = {str(p): p.read_bytes() for p in (root / ".omc").rglob("*") if p.is_file()}
+    assert old.prefers_v3(root)
+    with pytest.raises(old.V3Error):
+        old.enroll(root, roster_path=roster)
+    with pytest.raises(old.V3Error):
+        old.record_candidate(root, session_id="missing-session")
+    if hasattr(old, "prepare_transition"):
+        with pytest.raises(old.V3Error):
+            old.prepare_transition(root, archives=archives, archive=archives[0])
+        with pytest.raises(old.V3Error):
+            old.activate_pair(roots, output=tmp_path / "legacy-joint.json")
+    assert {str(p): p.read_bytes() for p in (root / ".omc").rglob("*") if p.is_file()} == before
+
+
+def test_repeat_transition_third_cycle_cli_and_exclusions(tmp_path, monkeypatch, capsys):
+    from datetime import datetime, timezone
+    roots, archives = _repeat_ready(tmp_path, monkeypatch)
+    # A previous enrollment's exclusion must survive subsequent generations.
+    # Existing recorded session is included in the raw-free archive as a prior work.
+    _session(roots[0], "older-session", "older-work", title="omc-task")
+    archives[0] = tmp_path / "with-session.json"
+    v3.archive_closed(roots[0], output=archives[0])
+    for cycle in (3, 4):
+        for root, archive in zip(roots, archives):
+            assert v3.main(["prepare-transition", "--target", str(root), "--archive", str(archive),
+                            "--pair-archive", str(archives[0]), "--pair-archive", str(archives[1]),
+                            "--transition-id", "cycle-" + str(cycle), "--custody", str(tmp_path / "custody")]) == 0
+            assert json.loads(capsys.readouterr().out)["state"] == "TRANSITION_BLOCKED"
+        roster = tmp_path / ("roster-" + str(cycle) + ".json")
+        v3.create_roster(targets=roots, output=roster, activation_id="generation-" + str(cycle),
+                         activation_at="2026-10-" + str(cycle * 2).zfill(2) + "T00:00:00Z")
+        for root in roots:
+            v3.enroll(root, roster_path=roster)
+        assert "older-work" in json.loads(v3.config_path(roots[0]).read_text())["excluded_work_ids"]
+        v3.activate_pair(roots, output=tmp_path / ("joint-" + str(cycle) + ".json"))
+        monkeypatch.setattr(v3, "_now", lambda day=cycle * 2 + 1: datetime(2026, 10, day, tzinfo=timezone.utc))
+        archives = [tmp_path / (root.name + "-generation-" + str(cycle) + ".json") for root in roots]
+        for root, archive in zip(roots, archives):
+            v3.close(root)
+            v3.archive_closed(root, output=archive)
+
+
+@pytest.mark.parametrize("corruption", ["custody", "prepared", "previous", "journal", "symlink"])
+def test_repeat_transition_rejects_corrupt_recovery_evidence(tmp_path, monkeypatch, corruption):
+    roots, archives = _repeat_ready(tmp_path, monkeypatch)
+    root = roots[0]
+    custody = tmp_path / "custody"
+    v3.prepare_transition(root, archives=archives, archive=archives[0], transition_id="cycle-three", custody=custody)
+    paths = {"custody": custody / "cycle-three" / v3._target(root) / "originals.json",
+             "prepared": root / ".omc/cohort-transition-previous/prepared.json",
+             "previous": root / ".omc/cohort-transition-previous" / v3.CONFIG_NAME,
+             "journal": root / ".omc" / v3.JOURNAL_NAME,
+             "symlink": root / ".omc/cohort-transition-previous" / v3.CONFIG_NAME}
+    path = paths[corruption]
+    if corruption == "symlink":
+        path.unlink()
+        path.symlink_to(archives[0])
+    else:
+        path.write_text("{}")
+    before = {str(p): p.read_bytes() for p in (root / ".omc").rglob("*") if p.is_file()}
+    with pytest.raises(v3.V3Error):
+        v3.prepare_transition(root, archives=archives, archive=archives[0], transition_id="cycle-three", custody=custody)
+    assert {str(p): p.read_bytes() for p in (root / ".omc").rglob("*") if p.is_file()} == before
+
+
+def test_repeat_transition_requires_matching_pair_id_and_external_custody(tmp_path, monkeypatch):
+    roots, archives = _repeat_ready(tmp_path, monkeypatch)
+    with pytest.raises(v3.V3Error, match="custody_must_be_external"):
+        v3.prepare_transition(roots[0], archives=archives, archive=archives[0],
+                              transition_id="cycle-three", custody=roots[1] / "custody")
+    for index, root in enumerate(roots):
+        v3.prepare_transition(root, archives=archives, archive=archives[index],
+                              transition_id="cycle-" + str(index + 3), custody=tmp_path / "custody")
+    roster = tmp_path / "mixed-roster.json"
+    v3.create_roster(targets=roots, output=roster, activation_id="mixed-generation",
+                     activation_at="2026-10-05T00:00:00Z")
+    for root in roots:
+        v3.enroll(root, roster_path=roster)
+    with pytest.raises(v3.V3Error, match="activation_pair_invalid"):
+        v3.activate_pair(roots, output=tmp_path / "mixed-joint.json")
+    assert not (tmp_path / "mixed-joint.json").exists()
+
+
 def test_archive_preserves_unbound_capture_failure(tmp_path, monkeypatch):
     roots, outputs = _closed_archives(tmp_path, monkeypatch)
     root = roots[0]

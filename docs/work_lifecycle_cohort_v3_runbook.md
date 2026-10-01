@@ -60,6 +60,25 @@ python3 scripts/omc_skill_effectiveness_cohort_v3.py close --target "$STOREFRONT
 6. `activate-pair --target <A> --target <B> --output <외부 joint.json>`으로 양쪽 등록·설치 결속을 확인하고 write-once 공동 receipt를 게시한다. 각 consumer는 자신의 결속을 다시 검증한다. 양쪽 동시 활성화나 분산 트랜잭션은 보장하지 않는다.
 7. 양쪽 `report`의 `REGISTERED_NOT_STARTED`를 확인하고 T0 이후 자연 작업만 관찰한다. confirmed start/root session/lineage의 로컬 생성 근거가 없는 work는 제외한다. review receipt·choice·follow-up의 실제 기록은 별도 확인한다.
 
-실패·재시도: archive 저장 실패는 원본을 변경하지 않는다. prepare 중단은 동일 archive 쌍으로 재실행하며, marker·보존 hash 충돌은 거부한다. activation pointer 일부 게시 실패는 같은 joint receipt로 미래 T0 전에 재시도한다. T0가 경과하거나 새로운 identity가 필요하면 자동 해제하지 않고 별도 복구 계획·승인을 요구한다. 이 도구는 같은 경로의 두 번째 전환을 자동 순환시키는 범용 migration manager가 아니다.
+실패·재시도: archive 저장 실패는 원본을 변경하지 않는다. 첫 prepare 중단은 동일 archive 쌍으로 재실행하며, marker·보존 hash 충돌은 거부한다. activation pointer 일부 게시 실패는 같은 joint receipt로 미래 T0 전에 재시도한다. T0가 경과하거나 새로운 identity가 필요하면 자동 해제하지 않고 별도 복구 계획·승인을 요구한다.
+
+### 두 번째 이후의 전환
+
+자동 순환하지 않는다. 기존 세대가 공동 활성화된 후 양쪽 `close`·archive 검증을 완료하고, 별도로 승인한 동일 transition ID와 저장소 밖 custody 경로를 사용한다.
+
+```bash
+python3 scripts/omc_skill_effectiveness_cohort_v3.py prepare-transition \
+  --target <target> --archive <해당-종료-archive.json> \
+  --pair-archive <A-종료-archive.json> --pair-archive <B-종료-archive.json> \
+  --transition-id <양쪽에-동일한-새-ID> --custody <외부-custody-절대경로>
+```
+
+- 원본 config·ledger·closure·이전 marker·activation pointer·이전 보존 디렉터리·journal과 외부 joint receipt의 bytes/경로/SHA를 `<custody>/<transition-id>/<target-identity>/originals.json`에 보존한다. base64는 암호화가 아니다. 접근 제한된 사용자 custody를 선택하고 Git 저장소 내부 또는 symlink 경로는 사용하지 않는다.
+- 이 bundle은 **원본 복구용**이며 raw-free archive와 다르다. 전체 session 원문, 전체 설치 증명, 인간 승인 권한은 포함하거나 주장하지 않는다. 원본 session과 install receipt는 그대로 유지한다.
+- 원본 bundle 검증 → 영속 journal → 구버전 enroll의 prepared proof 차단 → config barrier → 이전 디렉터리의 세대별 보존 → 새 marker/보존 파일 → journal PREPARED → prepared proof 순서다. 구버전 enroll이 proof를 소비하기 전에 journal을 봉인한다. journal 상태만으로 완료를 추정하지 않고 실제 보존 bytes와 hash를 대조하며, journal만 게시된 중단도 이 대조 후 proof 게시를 재개한다.
+- journal 이전 실패는 종료된 기존 세대를 유지한다. barrier 이후는 capture와 v2 fallback이 차단된다. 같은 ID·archive 쌍·custody로 재시도하며, 다른 입력·손상·symlink·보존 파일 충돌은 덮어쓰지 않는다. process 종료가 남긴 미게시 임시 파일은 검증된 원본으로 취급하지 않는다.
+- 이전 `.omc/cohort-transition-previous/`는 `.omc/cohort-transition-history-<transition-id>/`에 보존한다. 기존 이벤트를 새 원장에 복사하지 않으며 누적 excluded work ID를 유지한다.
+- 양쪽 prepare 이후에만 위 4–7단계의 별도 승인된 설치·새 roster·enroll·activate-pair를 실행한다. 서로 다른 transition ID 또는 한쪽 미완료 상태에서는 공동 활성화를 거부한다. 한쪽 실패 시 성공한 쪽을 자동 rollback하거나 활성화하지 않는다.
+- 구버전 호환 회귀의 기준은 `6ebc72f`와 `700f541`이다. 후자는 prepare/activate CLI가 없으므로 해당 경로는 N/A이며, 기존 capture/enroll의 차단만 검증한다. 다른 구버전의 호환성을 주장하지 않는다.
 
 검증 범위: 로컬 synthetic CLI·실패 주입 회귀는 운영 표본이 아니다. process kill·전원 손실·두 Mac 동시 실행의 실환경 복구는 별도 검증 없이는 보장하지 않는다.

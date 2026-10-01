@@ -7,6 +7,7 @@ The work link is observational, not a human-approval authority claim.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -27,6 +28,7 @@ ACTIVE = "ACTIVE_NATURAL_OBSERVATION"
 CLOSURE_NAME = "skill-effectiveness-cohort-v3-closure.json"
 TRANSITION_NAME = "skill-effectiveness-cohort-v3-transition.json"
 ACTIVATION_NAME = "skill-effectiveness-cohort-v3-activation.json"
+JOURNAL_NAME = "skill-effectiveness-cohort-v3-transition-journal.json"
 _TRANSITION_BARRIER = {"generation": "v3", "status": "TRANSITION_BLOCKED"}
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{2,127}")
 _HEX = re.compile(r"[0-9a-f]{64}")
@@ -521,7 +523,306 @@ def _transition(root: Path) -> dict[str, Any] | None:
     return marker
 
 
-def prepare_transition(root: Path, *, archives: list[Path], archive: Path) -> dict[str, Any]:
+def _external_directory(path: Path, roots: list[Path]) -> Path:
+    """Reject symlink ancestors, not just the final custody path."""
+    absolute = path.absolute()
+    if any(p.is_symlink() for p in [absolute, *absolute.parents]):
+        raise V3Error("custody_invalid")
+    if any((p / ".git").exists() for p in [absolute, *absolute.parents]):
+        raise V3Error("custody_must_be_external")
+    if any(absolute.resolve().is_relative_to(r.resolve()) for r in roots):
+        raise V3Error("custody_must_be_external")
+    absolute.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not absolute.is_dir():
+        raise V3Error("custody_invalid")
+    _fsync_directory(absolute.parent)
+    return absolute
+
+
+def _original_files(root: Path) -> dict[str, Any]:
+    omc = root / ".omc"
+    names = [CONFIG_NAME, LEDGER_NAME, CLOSURE_NAME, TRANSITION_NAME,
+             ACTIVATION_NAME, JOURNAL_NAME]
+    previous = omc / "cohort-transition-previous"
+    if previous.is_symlink() or not previous.is_dir():
+        raise V3Error("transition_destination_invalid")
+    descendants = list(previous.rglob("*"))
+    if any(p.is_symlink() for p in descendants):
+        raise V3Error("transition_source_invalid")
+    names.extend(str(p.relative_to(omc)) for p in descendants if not p.is_dir())
+    result = {}
+    for name in sorted(names):
+        path = omc / name
+        if path.is_symlink():
+            raise V3Error("transition_source_invalid")
+        if not path.exists():
+            continue
+        if not path.is_file():
+            raise V3Error("transition_source_invalid")
+        data = path.read_bytes()
+        result[name] = {"sha256": hashlib.sha256(data).hexdigest(),
+                        "bytes_base64": base64.b64encode(data).decode("ascii")}
+    return result
+
+
+def _verified_originals(path: Path, digest: str) -> dict[str, Any]:
+    bundle = _json_regular(path, reason="custody_invalid")
+    if (_hash(bundle) != digest or set(bundle) != {"schema", "transition_id", "target_identity",
+            "peer_archive_sha256", "files", "joint_receipt"}
+            or bundle["schema"] != "omc-cohort-originals/v1"
+            or not isinstance(bundle["files"], dict)):
+        raise V3Error("custody_invalid")
+    for name, entry in bundle["files"].items():
+        if (not isinstance(name, str) or Path(name).is_absolute() or ".." in Path(name).parts
+                or not isinstance(entry, dict) or set(entry) != {"sha256", "bytes_base64"}):
+            raise V3Error("custody_invalid")
+        try:
+            data = base64.b64decode(entry["bytes_base64"], validate=True)
+        except (ValueError, TypeError) as error:
+            raise V3Error("custody_invalid") from error
+        if hashlib.sha256(data).hexdigest() != entry["sha256"]:
+            raise V3Error("custody_invalid")
+    joint = bundle["joint_receipt"]
+    if not isinstance(joint, dict) or set(joint) != {"path", "sha256", "bytes_base64"}:
+        raise V3Error("custody_invalid")
+    try:
+        data = base64.b64decode(joint["bytes_base64"], validate=True)
+    except (ValueError, TypeError) as error:
+        raise V3Error("custody_invalid") from error
+    if hashlib.sha256(data).hexdigest() != joint["sha256"]:
+        raise V3Error("custody_invalid")
+    return bundle
+
+
+def _restore_original_once(path: Path, entry: dict[str, str]) -> None:
+    """An existing destination is completion evidence only when bytes match."""
+    if path.is_symlink():
+        raise V3Error("transition_conflict")
+    data = base64.b64decode(entry["bytes_base64"], validate=True)
+    if path.exists():
+        if not path.is_file() or path.read_bytes() != data:
+            raise V3Error("transition_conflict")
+        return
+    # Publish only a fully fsynced file. A killed process can leave an unused temp,
+    # never a partial destination that would be mistaken for preserved originals.
+    temporary = path.with_name("." + path.name + "." + uuid.uuid4().hex + ".tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path, follow_symlinks=False)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    _fsync_directory(path.parent)
+
+
+def _transition_journal(root: Path) -> dict[str, Any] | None:
+    path = root / ".omc" / JOURNAL_NAME
+    if not path.exists() and not path.is_symlink():
+        return None
+    value = _json_regular(path, reason="transition_journal_invalid")
+    if (set(value) != {"schema", "transition_id", "target_identity", "peer_archive_sha256",
+                       "originals_path", "originals_sha256", "state"}
+            or value["schema"] != "omc-cohort-transition-journal/v1"
+            or value["target_identity"] != _target(root)
+            or not isinstance(value["transition_id"], str) or _ID.fullmatch(value["transition_id"]) is None
+            or not isinstance(value["originals_path"], str) or not Path(value["originals_path"]).is_absolute()
+            or not isinstance(value["originals_sha256"], str) or _HEX.fullmatch(value["originals_sha256"]) is None
+            or not isinstance(value["peer_archive_sha256"], list) or len(value["peer_archive_sha256"]) != 2
+            or any(not isinstance(h, str) or _HEX.fullmatch(h) is None for h in value["peer_archive_sha256"])
+            or value["state"] not in {"PREPARING", "PREPARED"}):
+        raise V3Error("transition_journal_invalid")
+    return value
+
+
+def _verify_transition_history(history: Path, files: dict[str, Any]) -> None:
+    """Completed retries must verify preserved originals, not journal state alone."""
+    if history.is_symlink() or not history.is_dir():
+        raise V3Error("transition_conflict")
+    for name, entry in files.items():
+        if name.startswith("cohort-transition-previous/"):
+            path = history / Path(name).relative_to("cohort-transition-previous")
+            if (any(parent.is_symlink() for parent in path.parents)
+                    or path.is_symlink() or not path.is_file()
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]):
+                raise V3Error("transition_conflict")
+
+
+def _prepare_repeat(root: Path, *, own: dict[str, Any],
+                    verified: list[dict[str, Any]], transition_id: str, custody: Path) -> dict[str, Any]:
+    if not isinstance(transition_id, str) or _ID.fullmatch(transition_id) is None:
+        raise V3Error("transition_id_invalid")
+    peer_hashes = sorted(v["bundle_sha256"] for v in verified)
+    omc = root / ".omc"
+    journal_path = omc / JOURNAL_NAME
+    originals_path = custody.absolute() / transition_id / _target(root) / "originals.json"
+    journal = None
+    candidate = _transition_journal(root)
+    if candidate is not None:
+        if candidate.get("transition_id") == transition_id:
+            journal = candidate
+        elif candidate.get("state") != "PREPARED":
+            raise V3Error("transition_conflict")
+    if journal is None:
+        current = _config(root)
+        events = _events(root, activation_id=current["activation_id"])
+        closure = _closure(root, current, events)
+        if current != own["config"] or events != own["events"] or closure != own["closure"] or closure is None:
+            raise V3Error("transition_archive_mismatch")
+        _activation_check(root, current)
+        old_marker = _transition(root)
+        if old_marker is None or old_marker["previous_activation"] == current["activation_id"]:
+            raise V3Error("repeat_transition_requires_activated_generation")
+        if _json_regular(omc / "cohort-transition-previous/prepared.json", reason="transition_conflict") != {"transition_sha256": _hash(old_marker)}:
+            raise V3Error("transition_conflict")
+        pointer = _json_regular(omc / ACTIVATION_NAME, reason="activation_invalid")
+        joint_path = Path(pointer["path"])
+        joint_bytes = joint_path.read_bytes()
+        directory = _external_directory(originals_path.parent, [root])
+        bundle = {"schema": "omc-cohort-originals/v1", "transition_id": transition_id,
+                  "target_identity": _target(root), "peer_archive_sha256": peer_hashes,
+                  "files": _original_files(root), "joint_receipt": {
+                      "path": str(joint_path), "sha256": hashlib.sha256(joint_bytes).hexdigest(),
+                      "bytes_base64": base64.b64encode(joint_bytes).decode("ascii")}}
+        if originals_path.exists() or originals_path.is_symlink():
+            if _json_regular(originals_path, reason="custody_invalid") != bundle:
+                raise V3Error("custody_conflict")
+        else:
+            _durable_write_once(directory / "originals.json", bundle)
+        _verified_originals(originals_path, _hash(bundle))
+        journal = {"schema": "omc-cohort-transition-journal/v1", "transition_id": transition_id,
+                   "target_identity": _target(root), "peer_archive_sha256": peer_hashes,
+                   "originals_path": str(originals_path), "originals_sha256": _hash(bundle),
+                   "state": "PREPARING"}
+        if journal_path.exists():
+            _replace_transition_config(journal_path, journal)
+        else:
+            _durable_write_once(journal_path, journal)
+    if (set(journal) != {"schema", "transition_id", "target_identity", "peer_archive_sha256",
+                        "originals_path", "originals_sha256", "state"}
+            or journal["schema"] != "omc-cohort-transition-journal/v1"
+            or journal["target_identity"] != _target(root)
+            or journal["peer_archive_sha256"] != peer_hashes
+            or journal["originals_path"] != str(originals_path)
+            or journal["state"] not in {"PREPARING", "PREPARED"}):
+        raise V3Error("transition_conflict")
+    _external_directory(originals_path.parent, [root])
+    bundle = _verified_originals(originals_path, journal["originals_sha256"])
+    if (bundle["transition_id"] != transition_id or bundle["target_identity"] != _target(root)
+            or bundle["peer_archive_sha256"] != peer_hashes):
+        raise V3Error("custody_invalid")
+    files = bundle["files"]
+    current = own["config"]
+    marker = {"schema": "omc-cohort-transition/v1", "target_identity": _target(root),
+              "previous_activation": current["activation_id"], "archive_sha256": _hash(own),
+              "peer_archive_sha256": peer_hashes,
+              "previous_work_ids": sorted(set(current.get("excluded_work_ids", [])) |
+                  {s["work_id"] for s in own["sessions"] if isinstance(s.get("work_id"), str)}),
+              "file_sha256": {n: files[n]["sha256"] for n in (CONFIG_NAME, LEDGER_NAME, CLOSURE_NAME) if n in files}}
+    previous = omc / "cohort-transition-previous"
+    history = omc / ("cohort-transition-history-" + transition_id)
+    result = {"state": "TRANSITION_BLOCKED", "archive_sha256": marker["archive_sha256"]}
+    prepared_value = {"transition_sha256": _hash(marker)}
+    proof = previous / "prepared.json"
+    if previous.is_symlink() or history.is_symlink():
+        raise V3Error("transition_destination_invalid")
+    if journal["state"] == "PREPARED" and (proof.exists() or proof.is_symlink()):
+        _verify_transition_history(history, files)
+        if (_transition(root) != marker or _json_regular(previous / "prepared.json", reason="transition_invalid") != prepared_value):
+            raise V3Error("transition_conflict")
+        for name in marker["file_sha256"]:
+            path = previous / name
+            if path.is_symlink() or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != files[name]["sha256"]:
+                raise V3Error("transition_conflict")
+        return result
+    # Invalidate predecessor enroll's prepared proof BEFORE publishing the barrier.
+    if not history.exists():
+        if not previous.is_dir():
+            raise V3Error("transition_conflict")
+        old_proof = previous / "prepared.json"
+        proof_entry = files.get("cohort-transition-previous/prepared.json")
+        if proof_entry is None or old_proof.is_symlink() or not old_proof.is_file():
+            raise V3Error("transition_conflict")
+        old_proof_bytes = old_proof.read_bytes()
+        if (hashlib.sha256(old_proof_bytes).hexdigest() != proof_entry["sha256"]
+                and _json_regular(old_proof, reason="transition_conflict") != {"state": "TRANSITION_BLOCKED"}):
+            raise V3Error("transition_conflict")
+        for name, entry in files.items():
+            if name.startswith("cohort-transition-previous/") and name != "cohort-transition-previous/prepared.json":
+                path = omc / name
+                if path.is_symlink() or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]:
+                    raise V3Error("transition_conflict")
+        _replace_transition_config(previous / "prepared.json", {"state": "TRANSITION_BLOCKED"})
+    config = _json_regular(config_path(root), reason="transition_invalid")
+    if config != _TRANSITION_BARRIER:
+        if config_path(root).read_bytes() != base64.b64decode(files[CONFIG_NAME]["bytes_base64"]):
+            raise V3Error("transition_conflict")
+        _replace_transition_config(config_path(root), _TRANSITION_BARRIER)
+    if not history.exists():
+        os.rename(previous, history)
+        _fsync_directory(omc)
+    elif not history.is_dir():
+        raise V3Error("transition_conflict")
+    # Preserve the original prepared proof in custody; local history is intentionally blocked.
+    for name, entry in files.items():
+        if name.startswith("cohort-transition-previous/") and name != "cohort-transition-previous/prepared.json":
+            path = history / Path(name).relative_to("cohort-transition-previous")
+            if path.is_symlink() or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]:
+                raise V3Error("transition_conflict")
+    history_prepared = history / "prepared.json"
+    original_prepared = files.get("cohort-transition-previous/prepared.json")
+    if original_prepared is None:
+        raise V3Error("custody_invalid")
+    original_prepared_value = json.loads(base64.b64decode(original_prepared["bytes_base64"]))
+    history_value = _json_regular(history_prepared, reason="transition_conflict")
+    if history_value != original_prepared_value:
+        if history_value != {"state": "TRANSITION_BLOCKED"}:
+            raise V3Error("transition_conflict")
+        # Restore exact original bytes, not a reformatted JSON representation.
+        temporary = history / (".prepared-" + uuid.uuid4().hex)
+        _restore_original_once(temporary, original_prepared)
+        os.replace(temporary, history_prepared)
+        _fsync_directory(history)
+    _verify_transition_history(history, files)
+    old_marker_bytes = base64.b64decode(files[TRANSITION_NAME]["bytes_base64"])
+    marker_path = omc / TRANSITION_NAME
+    existing_marker = _json_regular(marker_path, reason="transition_invalid")
+    if existing_marker != marker:
+        if marker_path.read_bytes() != old_marker_bytes:
+            raise V3Error("transition_conflict")
+        _replace_transition_config(marker_path, marker)
+    if previous.is_symlink():
+        raise V3Error("transition_destination_invalid")
+    previous.mkdir(exist_ok=True, mode=0o700)
+    _fsync_directory(omc)
+    for name in marker["file_sha256"]:
+        _restore_original_once(previous / name, files[name])
+    for name in (LEDGER_NAME, CLOSURE_NAME, ACTIVATION_NAME):
+        path = omc / name
+        if path.is_symlink():
+            raise V3Error("transition_conflict")
+        if path.exists():
+            if name not in files or path.read_bytes() != base64.b64decode(files[name]["bytes_base64"]):
+                raise V3Error("transition_conflict")
+            path.unlink()
+            _fsync_directory(omc)
+    # Seal readiness before exposing the proof consumed by predecessor enroll.
+    # If killed between these writes, retry verifies all bytes before publishing proof.
+    _replace_transition_config(journal_path, {**journal, "state": "PREPARED"})
+    prepared = previous / "prepared.json"
+    if prepared.exists() or prepared.is_symlink():
+        if _json_regular(prepared, reason="transition_invalid") != prepared_value:
+            raise V3Error("transition_conflict")
+    else:
+        _durable_write_once(prepared, prepared_value)
+    return result
+
+
+def prepare_transition(root: Path, *, archives: list[Path], archive: Path,
+                       transition_id: str | None = None, custody: Path | None = None) -> dict[str, Any]:
     """Block capture before moving old artifacts; retry resumes exact moves."""
     root = legacy._root(root)
     bundles = [_json_regular(p, reason="archive_invalid") for p in archives]
@@ -534,6 +835,11 @@ def prepare_transition(root: Path, *, archives: list[Path], archive: Path) -> di
     if own["config"]["target_identity"] != _target(root) or own_check not in verified:
         raise V3Error("transition_archive_mismatch")
     with omc_state._omc_lock(root):
+        if transition_id is not None or custody is not None:
+            if transition_id is None or custody is None:
+                raise V3Error("repeat_transition_arguments_required")
+            return _prepare_repeat(root, own=own, verified=verified,
+                                   transition_id=transition_id, custody=custody)
         marker = _transition(root)
         previous = root / ".omc/cohort-transition-previous"
         if previous.is_symlink():
@@ -611,6 +917,15 @@ def activate_pair(roots: list[Path], *, output: Path) -> dict[str, Any]:
             locks.enter_context(omc_state._omc_lock(root))
         configs = [_config(r, check_transition=False) for r in roots]
         markers = [_transition(r) for r in roots]
+        journals = [_transition_journal(r) for r in roots]
+        if any(j is not None for j in journals):
+            if (any(j is None or j.get("state") != "PREPARED" for j in journals)
+                    or len({j["transition_id"] for j in journals if j is not None}) != 1
+                    or any(j["peer_archive_sha256"] != m["peer_archive_sha256"]
+                           for j, m in zip(journals, markers) if j is not None and m is not None)):
+                raise V3Error("activation_pair_invalid")
+            for journal in journals:
+                _verified_originals(Path(journal["originals_path"]), journal["originals_sha256"])
         if (any(m is None for m in markers)
                 or len({c["roster_sha256"] for c in configs}) != 1
                 or len({_hash(m["peer_archive_sha256"]) for m in markers if m is not None}) != 1
@@ -1294,6 +1609,8 @@ def main(argv: list[str] | None = None) -> int:
     prepare_cmd.add_argument("--target", required=True, type=Path)
     prepare_cmd.add_argument("--archive", required=True, type=Path)
     prepare_cmd.add_argument("--pair-archive", required=True, type=Path, action="append")
+    prepare_cmd.add_argument("--transition-id")
+    prepare_cmd.add_argument("--custody", type=Path)
     activate_cmd = sub.add_parser("activate-pair")
     activate_cmd.add_argument("--target", required=True, type=Path, action="append")
     activate_cmd.add_argument("--output", required=True, type=Path)
@@ -1339,7 +1656,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "verify-archive":
             result = verify_archive(args.archive)
         elif args.command == "prepare-transition":
-            result = prepare_transition(args.target, archives=args.pair_archive, archive=args.archive)
+            result = prepare_transition(args.target, archives=args.pair_archive, archive=args.archive,
+                                        transition_id=args.transition_id, custody=args.custody)
         elif args.command == "activate-pair":
             result = activate_pair(args.target, output=args.output)
         elif args.command == "create-roster":
