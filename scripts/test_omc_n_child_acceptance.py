@@ -531,6 +531,7 @@ def test_default_executor_runs_deterministic_five_case_fixture_end_to_end(tmp_pa
         " request=json.load(sys.stdin); kind, path=request['prompt'].split(':', 2)[1:]\n"
         " root=pathlib.Path(request['project_root'])\n"
         " if kind == 'timeout': time.sleep(2)\n"
+        " if kind == 'policy_violation': time.sleep(1.2)\n"
         " if kind == 'success': (root/path).write_text('changed\\n')\n"
         " if kind == 'policy_violation': (root/'outside.txt').write_text('violation\\n')\n"
         " code=1 if kind == 'failure' else 0\n"

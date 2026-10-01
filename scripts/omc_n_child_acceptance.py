@@ -78,6 +78,8 @@ def write_acceptance_fixture_packets(source_root: Path, packet_root: Path) -> No
     source_root = source_root.resolve()
     packet_root.mkdir(parents=True, exist_ok=True)
     for case in EXPECTED_CASES:
+        # Only the timeout fixture should race the wall-clock deadline.
+        fixture_elapsed_limit = 1 if case["kind"] == "timeout" else 10
         children = []
         child_grants = []
         prompts = {}
@@ -109,7 +111,7 @@ def write_acceptance_fixture_packets(source_root: Path, packet_root: Path) -> No
                 "approval_status": "validated",
                 "approval_id": f"{case['case_id']}-{child_id}",
                 "session_id": f"fixture-{case['case_id']}",
-                "timeout_sec": 1,
+                "timeout_sec": fixture_elapsed_limit,
                 "budget_usd": 0.01,
                 "retry_limit": 0,
                 "gate_status": "allowed",
@@ -117,9 +119,9 @@ def write_acceptance_fixture_packets(source_root: Path, packet_root: Path) -> No
                 "fallback_action": "parent_review",
                 "plan_fingerprint": "acceptance-fixture-v1",
                 "idempotency_key": f"{case['case_id']}-{child_id}",
-                "budget": {"max_attempts": 1, "max_total_elapsed_sec": 1, "max_output_chars": 1000},
+                "budget": {"max_attempts": 1, "max_total_elapsed_sec": fixture_elapsed_limit, "max_output_chars": 1000},
                 "max_attempts": 1,
-                "max_total_elapsed_sec": 1,
+                "max_total_elapsed_sec": fixture_elapsed_limit,
                 "max_output_chars": 1000,
                 "max_total_tokens": 100,
                 "scope_hash": scope_hash,
@@ -137,7 +139,7 @@ def write_acceptance_fixture_packets(source_root: Path, packet_root: Path) -> No
             "aggregate_budget": {
                 "max_external_calls": case["child_count"],
                 "max_parallelism": case["child_count"],
-                "max_total_elapsed_sec": 5,
+                "max_total_elapsed_sec": max(5, case["child_count"] * fixture_elapsed_limit),
                 "max_output_chars": case["child_count"] * 1000,
                 "max_total_tokens": case["child_count"] * 100,
             },

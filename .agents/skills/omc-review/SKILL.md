@@ -42,11 +42,9 @@ C4 API·consumer 계약 / C5 새 로직 테스트·검증 / C6 성능·메모리
 검증 커맨드: ...
 판정: BLOCK / REVISE / APPROVE WITH NOTES / APPROVE
 VERDICT: 판정과 동일하며 한 번만 출력
-decision: REVISE / APPROVE (판정 결과) | risk: HIGH / MED / LOW (리스크 요약) | next_action: 다음 스킬 1개
-공통 결정표: stage=review / outcome=approved|blocked / user_selection_needed=yes|no / ship_intent_explicit=yes|no
+decision: REVISE / APPROVE (판정 결과) | risk: HIGH / MED / LOW (리스크 요약) | next_action: 다음 스킬 1개 | 공통 결정표: stage=review / outcome=approved|blocked / user_selection_needed=yes|no / ship_intent_explicit=yes|no
 ```
-- 강한 finding은 `evidence_class: behavioral_direct`와 비어 있지 않은 `evidence:`가 필수다. 가설은 `[확인 필요]`로 내린다.
-- 판정 규칙: 치명=BLOCK, 중대=REVISE, 경미/제안만=APPROVE WITH NOTES, 없음=APPROVE. REVISE/BLOCK면 수정 방향 포함.
+- 강한 finding은 `evidence_class: behavioral_direct`와 비어 있지 않은 `evidence:`가 필수다. 가설은 `[확인 필요]`로 내린다. 판정 규칙: 치명=BLOCK, 중대=REVISE, 경미/제안만=APPROVE WITH NOTES, 없음=APPROVE. REVISE/BLOCK면 수정 방향 포함.
 - v1/v2 raw-free cohort가 활성이고 운영 v3 등록이 없으며 pending work가 있으면 taxonomy 하나를 선택해 `record-review`를 실행하고, 최종에는 `수용 / 수정 필요 / 보류`를 보여준다. ship 결속 검증이 `review_stale`로 차단된 같은 pending work는 `--verdict BLOCK --taxonomy review_stale`로 별도 review event를 기록한다. pending work 결속을 확인할 수 없으면 stale을 추정·기록하지 않고 관찰 불가로 남긴다. 다음 응답이 정확히 일치할 때만 agent가 `python3 scripts/omc.py skill-cohort record-followup --target . --outcome <accepted|correction|deferred>`를 실행하며, 불명확·다른 세션·침묵은 추정하지 않는다.
 - **v3 명시적 등록 경로:** `report --target .`로 `ACTIVE_NATURAL_OBSERVATION`과 현재 work/session 결속을 확인한다. 운영 v3는 보존된 v2 설정보다 우선하며, v1/v2 `record-review`·`record-followup`으로 우회하지 않는다. `DRAFT_SYNTHETIC` fixture는 v2 설정이 없을 때만 기존 격리 경로를 사용한다. 승인 receipt 생성 명령에 `--cohort-session-id <현재 review session id> --cohort-taxonomy <taxonomy>`를 함께 전달한다. `REVISE/BLOCK` 판정은 `python3 scripts/omc_skill_effectiveness_cohort_v3.py record-explicit-review --target . --session-id <현재 review session id> --work-id <명시적 work id> --verdict <REVISE|BLOCK> --taxonomy <taxonomy>`로 기록한다. 반환된 `cohort_capture_v3.status=recorded` 또는 명시적 review event와 `choice_id`를 확인한다. 해당 review의 결과를 보여주고 정확히 대응하는 사용자 응답이 있을 때만 `python3 scripts/omc_skill_effectiveness_cohort_v3.py record-explicit-followup --target . --choice-id <choice_id> --outcome <accepted|correction|deferred>`를 실행한다. 실패·침묵·다른 작업은 미관찰로 남긴다. `REGISTERED_NOT_STARTED`·`CLOSED`·binding 오류에서는 기록하지 않는다. 이 기록은 관찰상 연결이며 인간 승인 권한이 아니다.
 - v3에서 review event 기록 후 choice 저장만 실패했다면 새 review를 만들지 않고 `python3 scripts/omc_skill_effectiveness_cohort_v3.py resume-review-choice --target . --session-id <당시 review session id>`로 미완료 choice만 복구한다. 현재 confirmed review session이 아니거나 이미 choice가 있으면 거부한다.

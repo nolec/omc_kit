@@ -13,6 +13,41 @@ import omc_skill_effectiveness_cohort_v3 as v3
 import omc_state
 
 
+def test_archive_preserves_unbound_capture_failure(tmp_path, monkeypatch):
+    roots, outputs = _closed_archives(tmp_path, monkeypatch)
+    root = roots[0]
+    path = root / ".omc/state/sessions/unbound-session/session.json"
+    path.parent.mkdir(parents=True)
+    session = {"session_id": "unbound-session", "title": "omc-task",
+               "created_at": "2026-09-30T00:00:00Z",
+               "confirmation": {"status": "confirmed"},
+               "cohort_capture_v3": {"status": "integrity_invalid",
+                                     "reason_code": "installation_audit_failed",
+                                     "activation_id": None}}
+    path.write_text(json.dumps(session))
+    before = path.read_bytes()
+    output = tmp_path / "unbound-archive.json"
+    assert v3.archive_closed(root, output=output)["state"] == "ARCHIVE_VERIFIED"
+    assert v3.verify_archive(output)["state"] == "ARCHIVE_VERIFIED"
+    archived = json.loads(output.read_text())
+    assert archived["sessions"][0]["cohort_capture_v3"] == session["cohort_capture_v3"]
+    assert archived["projection"] == json.loads(outputs[0].read_text())["projection"]
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("capture", [
+    {"status": "recorded", "activation_id": None},
+    {"status": "other", "reason_code": "capture_failed", "activation_id": None},
+    {"status": "integrity_invalid", "activation_id": None},
+    {"status": "integrity_invalid", "reason_code": None, "activation_id": None},
+    {"status": "integrity_invalid", "reason_code": "capture_failed", "activation_id": None, "raw": "secret"},
+    {"status": "integrity_invalid", "reason_code": "capture_failed", "activation_id": 1},
+])
+def test_archive_rejects_invalid_unbound_capture(capture):
+    with pytest.raises(v3.V3Error, match="archive_session_invalid"):
+        v3._validate_archive_session({"confirmed": True, "cohort_capture_v3": capture})
+
+
 def test_transition_archive_is_independent_and_raw_free(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     roots, roster = _operational_pair(tmp_path, monkeypatch)

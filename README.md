@@ -18,11 +18,11 @@ executor가 코드를 만들면, OMC는 무엇을 검증·review했는지, 사�
 - `review_stale`이 실사용에서 검토하지 않은 변경의 ship을 유의미하게 막는지
 - OMC가 Codex 등 executor보다 더 나은 제품 결과를 만드는지
 
-Raw-free cohort v2의 자연 작업 관찰(`ACTIVE_NATURAL_OBSERVATION`)은 승인된 두 opt-in 저장소에서 진행 중입니다. 다른 제품 효과 연구·실험 실행 lane은 승인되지 않았으며, 과거 연구·pilot의 구현 또는 테스트 통과를 현재 제품 가치로 승격하지 않습니다.
+기존 work-lifecycle cohort v3는 두 opt-in 저장소에서 종료(`CLOSED`)됐고 보존·업데이트·재등록 전환을 기다립니다. 이전 `ACTIVE_NATURAL_OBSERVATION`은 역사적 상태이며, 새 roster·미래 T0·양쪽 활성화 전에는 수집 재개를 주장하지 않습니다. 다른 제품 효과 연구·실험 lane은 승인되지 않았으며 구현·테스트 통과를 제품 가치로 승격하지 않습니다.
 
 ## 다음 제품 우선순위
 
-현재 Evidence A에서는 측정 계약을 바꾸지 않고 정확히 두 opt-in 저장소의 자연 발생 작업을 raw-free cohort v2로 관찰합니다. 핵심 지표는 `review_count`, `review_churn`, `review_stale_count`, `correction_after_approved_review`이며, `30 attributable candidate·5 correction` 전에는 `INSUFFICIENT_SAMPLE`만 보고합니다. 재작업 감소와 안전성 비열화를 검증할 Evidence B는 별도 비교 설계·승인이 필요한 후속 단계입니다.
+Evidence A는 기존 v2/v3 원장을 보존하고 소급 연결하지 않습니다. 재등록 대상은 ai-cs·sixshop3-storefront-fe 두 곳뿐입니다. 핵심 지표는 `review_count`, `review_churn`, `review_stale_count`, `correction_after_approved_review`이며, `30 attributable candidate·5 correction` 전에는 `INSUFFICIENT_SAMPLE`만 보고합니다. 재작업 감소와 안전성 비열화를 검증할 Evidence B는 별도 비교 설계·승인이 필요한 후속 단계입니다.
 
 자동 push·PR·deploy, executor 자동 대체, 모델 자체 개발, 근거 없는 우선순위 추천은 현재 범위 밖입니다. Decision Context, review compression, bounded N-child 확장은 자연 작업 관찰 근거가 쌓인 뒤에만 별도 승인으로 다룹니다.
 

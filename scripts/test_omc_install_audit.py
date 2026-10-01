@@ -2,17 +2,36 @@
 from __future__ import annotations
 
 import json
+import os
 import hashlib
 import subprocess
 import sys
 import tempfile
 import unittest
+import pytest
 from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 import omc_install_audit as _audit
 import omc_quality_gate as _quality_gate
+
+
+@pytest.fixture(autouse=True)
+def isolate_install_audit_registry(tmp_path, monkeypatch):
+    """Setup subprocesses must not inherit the user's registry or consent."""
+    monkeypatch.setenv("OMC_INSTALLATION_REGISTRY_DIR", str(tmp_path / "registry"))
+
+
+def test_install_audit_registry_is_temporary_and_inherited(tmp_path):
+    registry = Path(os.environ["OMC_INSTALLATION_REGISTRY_DIR"])
+    assert registry.is_relative_to(tmp_path)
+    assert not registry.is_relative_to(Path.home() / ".local/share/omc")
+    output = subprocess.check_output(
+        [sys.executable, "-c", "import os; print(os.environ['OMC_INSTALLATION_REGISTRY_DIR'])"],
+        text=True,
+    )
+    assert output.strip() == str(registry)
 
 
 def _sha256(path: Path) -> str:

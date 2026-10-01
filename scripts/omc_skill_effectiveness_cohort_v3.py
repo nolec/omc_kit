@@ -442,6 +442,18 @@ def _validate_archive_session(session: object) -> None:
         if key == "confirmed":
             continue
         if key == "cohort_capture_v3":
+            # Capture can fail before installation binding resolves an activation.
+            # Preserve that failure verbatim, without attributing it to a cohort.
+            unbound_failure = (
+                isinstance(value, dict)
+                and set(value) == {"status", "activation_id", "reason_code"}
+                and value["status"] == "integrity_invalid"
+                and value["activation_id"] is None
+                and isinstance(value["reason_code"], str)
+                and _ID.fullmatch(value["reason_code"]) is not None
+            )
+            if unbound_failure:
+                continue
             if (not isinstance(value, dict)
                     or set(value) - {"status", "activation_id", "reason_code"}
                     or any(not isinstance(v, str) or _ID.fullmatch(v) is None for v in value.values())):
