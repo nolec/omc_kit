@@ -621,6 +621,67 @@ def test_sync_require_rejects_missing_work_class_for_coding_session(
     assert "work class is required" in result.stderr
 
 
+def test_preserve_guard_seals_reference_without_mutating_lineage(tmp_path: Path):
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    key_path, public_key = _work_class_lock_key(tmp_path)
+    env = {**os.environ, "OMC_REQUIRE_WORK_CLASS_LOCK": "1",
+           "OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE": str(key_path),
+           "OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY": public_key}
+    command = [sys.executable, str(GUARD), "sync-require", "--target", str(target),
+               "--mode", "autopilot", "--title", "omc-task", "--request", "synthetic test",
+               "--roles", "senior_coding", "--work-class", "implementation", "--for", "task"]
+    started = subprocess.run(command + ["--completion-action", "start"], env=env, capture_output=True, text=True)
+    assert started.returncode == 0, started.stderr
+    pending_path = target / ".omc/state/pending-completion.json"
+    pending_bytes = pending_path.read_bytes()
+    pending = json.loads(pending_bytes)
+    original_dir = target / ".omc/state/sessions" / pending["session_id"]
+    original_lock = (original_dir / "work_class_lock.json").read_bytes()
+    preserved = subprocess.run(command + ["--completion-action", "preserve"], env=env, capture_output=True, text=True)
+    assert preserved.returncode == 0, preserved.stderr
+    latest = json.loads((target / ".omc/state/latest.json").read_text())
+    directory = target / ".omc/state/sessions" / latest["latest_session_id"]
+    session = json.loads((directory / "session.json").read_text())
+    lock = json.loads((directory / "work_class_lock.json").read_text())
+    assert session["confirmation"]["status"] == "confirmed"
+    assert session["work_id"] == pending["work_id"]
+    assert session["lineage_root_session_id"] is None
+    assert session["lineage_index"] is None
+    assert lock["schema_version"] == 1
+    candidate_universe._validate_work_class_lock_receipt_envelope(lock, expected_status="frozen")
+    candidate_universe._verify_document(
+        lock, digest_field="receipt_sha256", trusted_public_keys={public_key},
+        expected_digest=lock["receipt_sha256"],
+        expected_signer="independent-work-class-lock-v1", label="preserve lock",
+    )
+    assert pending_path.read_bytes() == pending_bytes
+    assert (original_dir / "work_class_lock.json").read_bytes() == original_lock
+    assert not (directory / "completion-lineage.json").exists()
+
+
+def test_preserve_lock_rejects_partial_or_non_preserve_lineage(tmp_path: Path):
+    import pytest
+    target = tmp_path / "repo"
+    _init_git_repo(target)
+    start = omc_state.record_session(target, mode="autopilot", title="task", request="test",
+                                    role_ids=["senior_coding"], work_class="implementation",
+                                    completion_action="start", confirmed=True)
+    preserve = omc_state.record_session(target, mode="autopilot", title="task", request="test",
+                                       role_ids=["senior_coding"], work_class="implementation",
+                                       completion_action="preserve", confirmed=True)
+    draft = candidate_universe.prepare_work_class_lock_receipt(preserve)
+    assert draft["schema_version"] == 1
+    assert "work_id" not in draft
+    for action in ("start", "continue", None):
+        with pytest.raises(ValueError, match="source session is invalid"):
+            candidate_universe.prepare_work_class_lock_receipt({**preserve, "completion_action": action})
+    for field, value in (("lineage_root_session_id", start["session_id"]),
+                         ("lineage_previous_session_id", start["session_id"]), ("lineage_index", 0)):
+        with pytest.raises(ValueError, match="source session is invalid"):
+            candidate_universe.prepare_work_class_lock_receipt({**preserve, field: value})
+
+
 def test_sync_require_seals_required_work_class_lock_before_completion(
     tmp_path: Path,
 ):

@@ -1154,8 +1154,18 @@ def prepare_work_class_lock_receipt(
     signed_timestamp = signed_at
     if signed_timestamp < locked_at:
         raise ValueError("work class lock signature predates session")
+    # Preserve references pending work, but does not join its completion lineage.
+    # Seal only this session's work class using the existing non-lineage envelope.
+    preserving_reference = (
+        session.get("completion_action") == "preserve"
+        and isinstance(session.get("work_id"), str)
+        and bool(session["work_id"])
+        and all(session.get(field) is None for field in (
+            "lineage_root_session_id", "lineage_previous_session_id", "lineage_index",
+        ))
+    )
     lineage_values = (
-        session.get("work_id"),
+        None if preserving_reference else session.get("work_id"),
         session.get("lineage_root_session_id"),
         session.get("lineage_index"),
     )
