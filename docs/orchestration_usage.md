@@ -135,6 +135,16 @@ python3 scripts/omc.py orchestrate \
 
 ## 운영 메모
 
+### Hub 자동 동기화 폐기
+
+- `omc_hub_push.py`의 복사·commit·push·dry-run은 폐기되었습니다. CLI는 안내 후 exit 2로 종료하며 파일이나 Git 상태를 변경하지 않습니다.
+- `omc-hub-push.sh`는 구형 hook 호출 호환을 위한 조용한 exit 0 stub입니다. 신규 설치 템플릿에는 Hub 자동 실행 지시가 없습니다.
+- non-force 재설치는 기존 실행 파일·hook을 보존하므로 기존 사용처의 폐기 완료를 보장하지 않습니다.
+- force 업데이트도 소유권 정책을 따릅니다. 수정되었거나 프로젝트 소유인 잔여 rule은 임의 삭제하지 않고 설치 출력에 보고합니다.
+- 배포 대상에서 제거된 정확한 `.cursor/rules/omc-hub-sync.mdc`에 한해 이전 소유권·hash가 확인된 수정 regular file을 `policy=preserve`, `ownership=preserved`로 기록합니다. 반복 설치도 보존하며 source 일치를 주장하지 않습니다.
+- 이 보존 receipt의 strict audit 통과는 bookkeeping 정합성만 의미합니다. 잔여 Hub 지시의 안전성·폐기 완료를 뜻하지 않으며, 일반 managed drift와 symlink의 차단을 완화하지 않습니다.
+- 원본 구현 완료와 사용처 전환 완료는 별개입니다. rollout은 별도 승인하며 공유 `.omc/hub.path`와 skill-check 기능은 유지합니다.
+
 - 기본값은 `권장 입력`입니다.
 - Codex와 Gemini는 짧은 자연어 입력도 허용되지만, 가능하면 플랫폼별 권장 입력으로 수렴시키는 편이 안정적입니다.
 - Claude Code는 현재 문서 기준으로 slash command를 기본값으로 유지합니다.

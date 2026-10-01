@@ -22,12 +22,6 @@
       {
         "command": ".agent-hooks/omc-session-end.sh cursor"
       }
-    ],
-    "afterToolCall": [
-      {
-        "command": ".agent-hooks/omc-hub-push.sh",
-        "failClosed": false
-      }
     ]
   }
 }

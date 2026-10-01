@@ -38,6 +38,7 @@ from omc_setup_gitignore import (
 from omc_version import SourceIdentity, capture_source_identity
 
 AGENTS_OMC_BEGIN = "<!-- OMC:BEGIN -->"
+_RETIRED_HUB_RULE = ".cursor/rules/omc-hub-sync.mdc"
 AGENTS_OMC_END = "<!-- OMC:END -->"
 AGENTS_OMC_VERSION = "<!-- OMC:AGENTS:V1 -->"
 AGENTS_OMC_MARKER = "## OMC — Orchestrated Multi-agent Craft"
@@ -225,18 +226,30 @@ def _build_install_manifest(source_kit: Path, target: Path) -> dict[str, dict[st
             raise ValueError("manifest_policy_error:invalid-install-receipt")
         for rel, entry in sorted(entries.items()):
             rel_path = Path(rel)
+            preserved_retired_hub = (
+                isinstance(entry, dict)
+                and rel == _RETIRED_HUB_RULE
+                and receipt.get("schema_version") == 3
+                and entry.get("policy") == "preserve"
+                and entry.get("ownership") == "preserved"
+            )
             if (
                 not isinstance(entry, dict)
-                or entry.get("policy") not in {
+                or (entry.get("policy") not in {
                     "managed_exact",
                     "managed_generated",
-                }
+                } and not preserved_retired_hub)
                 or not _is_bounded_previous_managed_path(rel)
                 or rel_path.is_absolute()
                 or ".." in rel_path.parts
             ):
                 continue
             target_file = target / rel_path
+            if preserved_retired_hub and any(
+                (target / parent).is_symlink()
+                for parent in (rel_path, *rel_path.parents)
+            ):
+                raise ValueError("manifest_policy_error:retired-hub-rule-symlink")
             manifest[rel] = {
                 "policy": str(entry["policy"]),
                 "source_sha256": str(entry.get("source_sha256", "")),
@@ -412,6 +425,12 @@ def _prune_stale_managed_outputs(
         ):
             continue
         path = target / rel
+        if rel == _RETIRED_HUB_RULE and (
+            any((target / parent).is_symlink() for parent in (Path(rel), *Path(rel).parents))
+            or (path.exists() and not path.is_file())
+        ):
+            # An uncertain file identity is neither pruned nor promoted.
+            continue
         if path.is_file() or path.is_symlink():
             ownership = classify_receipt_entry_ownership(
                 {"schema_version": entry.get("previous_receipt_schema_version")},
@@ -422,6 +441,17 @@ def _prune_stale_managed_outputs(
                 continue
             previous_hash = str(entry.get("previous_target_sha256", ""))
             if not previous_hash or _sha256_file(path) != previous_hash:
+                if (
+                    rel == _RETIRED_HUB_RULE
+                    and len(previous_hash) == 64
+                    and all(char in "0123456789abcdef" for char in previous_hash)
+                    and path.is_file()
+                ):
+                    # Retired source, known prior ownership, changed regular file:
+                    # retain bytes without claiming source equality or ownership.
+                    entry["policy"] = "preserve"
+                    entry["ownership"] = "preserved"
+                    entry["source_sha256"] = ""
                 continue
             path.unlink()
             removed += 1
@@ -1059,7 +1089,7 @@ def _check_force_regression(kit: Path, tgt: Path) -> bool:
     if regressions:
         print(" 권장 조치 (버전 회귀):")
         print("   1. hub에서 최신 pull: cd /path/to/omc_kit && git pull")
-        print("   2. 또는 live → hub 먼저 동기화: python3 scripts/omc_hub_push.py")
+        print("   2. source kit에서 필요한 변경을 명시적으로 검토하세요 (Hub 자동 동기화는 폐기됨)")
         print("   3. 그 후 install --force 재실행")
         print()
 
@@ -1553,6 +1583,22 @@ python3 scripts/omc_tdd_check.py --staged
     removed_by_setup = _prune_stale_managed_outputs(
         tgt, _INSTALL_POLICY_MANIFEST, force=force
     )
+    # Retired hooks/rules can survive ownership-safe pruning; do not imply
+    # that a non-force installation has disabled an older executable.
+    if not force:
+        print("[install] Hub retirement: non-force preserves existing executables/hooks; retirement is not guaranteed.")
+    for retired_rel in (".cursor/rules/omc-hub-sync.mdc",):
+        if (tgt / retired_rel).exists() or (tgt / retired_rel).is_symlink():
+            print(f"[install] Hub retirement: preserved residue {retired_rel}; inspect separately.")
+    for retired_rel, stub_source in (
+        ("scripts/omc_hub_push.py", source_kit / "scripts/omc_hub_push.py"),
+        (".agent-hooks/omc-hub-push.sh", source_kit / "templates/.agent-hooks/omc-hub-push.sh"),
+    ):
+        installed = tgt / retired_rel
+        if installed.is_symlink() or (
+            installed.is_file() and _sha256_file(installed) != _sha256_file(stub_source)
+        ):
+            print(f"[install] Hub retirement: preserved non-stub {retired_rel}; retirement is not guaranteed.")
     receipt_manifest = _finalize_install_manifest(tgt, _INSTALL_POLICY_MANIFEST)
     receipt_entries = {
         rel: _receipt_entry(

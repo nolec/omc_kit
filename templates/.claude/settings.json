@@ -41,17 +41,6 @@
           }
         ]
       }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".agent-hooks/omc-hub-push.sh"
-          }
-        ]
-      }
     ]
   }
 }
