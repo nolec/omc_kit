@@ -190,6 +190,17 @@ def test_review_skill_paths_are_identical():
     assert not mismatched, f"omc-review skill copies differ: {mismatched}"
 
 
+def test_approval_recording_entrypoint_includes_observation_branch():
+    for path in REQUIRED_REVIEW_SKILL_PATHS:
+        entrypoint = _read(path).split("## 필수 체크", 1)[0]
+        assert "--cohort-session-id" in entrypoint
+        assert "--cohort-taxonomy" in entrypoint
+        assert "explicit_review_link_required" in entrypoint
+        assert "REVIEW_RECORDED_OBSERVATION_UNOBSERVED" in entrypoint
+        assert "FROZEN_INVALID" in entrypoint
+        assert "덮어쓰지" in entrypoint
+
+
 def test_ignored_live_agent_review_path_is_optional(tmp_path: Path):
     canonical = tmp_path / ".agents" / "skills" / "omc-review" / "SKILL.md"
     template_codex = tmp_path / "templates" / ".agents" / "skills" / "omc-review" / "SKILL.md"
