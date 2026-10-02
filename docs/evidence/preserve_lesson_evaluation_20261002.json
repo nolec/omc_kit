@@ -1,0 +1,568 @@
+{
+  "schema": "omc-isolated-lesson-evaluation/v1",
+  "claim": "ISOLATED_LESSON_EVAL_ONLY",
+  "adoption": "Research record only; not Evidence A, product-effect evidence, or implementation authority.",
+  "origin_directory": "/private/tmp/omc-preserve-eval.MmosGy",
+  "frozen": {
+    "claim": "ISOLATED_LESSON_EVAL_ONLY",
+    "source_hashes": {
+      "/Users/noseunglae/Downloads/dev/omc_kit/templates/.agent-hooks/omc-prompt-inject.sh": "e6c1f88062fba01fa5dd700d8f6f273b1c6fc0f405e3ad7352e66db63c56bed3",
+      "/Users/noseunglae/Downloads/dev/omc_kit/scripts/omc_lesson.py": "ba8d2966ea94fe01d3b77f472ed5cbb02834f0545142dbdef2797529dfb4cd9e",
+      "/Users/noseunglae/Downloads/dev/omc_kit/.omc/lessons/2026-10-01-preserve-작업-참조는-완료-계보-참여와-구분한다.md": "5b7bc550aab8a52e918ad7db8edfa5829dd2de6b432dd03f8de2bed7f84d91a8",
+      "/Users/noseunglae/Downloads/dev/omc_kit/scripts/omc_state.py": "f1563171483e05028e4ab606eac4f1977a4dcdb2c63a506265f0b47eaffb059f",
+      "/Users/noseunglae/Downloads/dev/omc_kit/scripts/test_omc_guard.py": "8284ab1572b442ea9e1fbcf801d68e69f174131c75a09988e7d3b7b827570577"
+    },
+    "prompt": "도구나 파일 조회 없이 아래 상황의 수정 정책을 판단하세요. 기존 pending 작업의 baseline, session, work_id는 모두 일치합니다. 명시적 preserve 세션은 기존 work_id만 참조하고 lineage_root_session_id, lineage_previous_session_id, lineage_index는 모두 비어 있습니다. 그런데 Guard가 일반 완료 계보 서명을 적용하여 이를 불완전 계보로 거부합니다. 어떤 서명 분류와 pending 처리로 수정해야 하나요? 또한 preserve 세션에 계보 필드 하나만 채워진 변형 입력은 어떻게 처리해야 하나요?\n설명 외 텍스트나 마크다운 없이 JSON 객체만 답하세요. 키는 signing, pending, partial_lineage, reason입니다. signing은 lineage/non_lineage/skip/unknown 중 하나, pending은 keep/replace/delete/unknown 중 하나, partial_lineage는 accept/reject/repair/unknown 중 하나이며 reason은 판단 근거 문자열입니다.",
+    "expected": {
+      "signing": "non_lineage",
+      "pending": "keep",
+      "partial_lineage": "reject"
+    },
+    "model": "gpt-6.1-sol",
+    "effort": "low",
+    "max_attempts": 9,
+    "order": [
+      [
+        "none",
+        "summary",
+        "rule"
+      ],
+      [
+        "rule",
+        "none",
+        "summary"
+      ],
+      [
+        "summary",
+        "rule",
+        "none"
+      ]
+    ],
+    "contexts": {
+      "none": "",
+      "summary": "<!-- OMC BM25 자동 주입: 관련 교훈 -->\n\n[LESSON] '도구나 파일 조회 없이 아래 상황의 수정 정책을 판단하세요. 기존 pending 작업의 baseline, session, work_id는 모두 일치합니다. 명시적 preserve 세션은 기존 work_id만 참조하고 lineage_root_session_id, lineage_previous_session_id, lineage_index는 모두 비어 있습니다. 그런데 Guard가 일반 완료 계보 서명을 적용하여 이를 불완전 계보로 거부합니다. 어떤 서명 분류와 pending 처리로 수정해야 하나요? 또한 preserve 세션에 계보 필드 하나만 채워진 변형 입력은 어떻게 처리해야 하나요?\n설명 외 텍스트나 마크다운 없이 JSON 객체만 답하세요. 키는 signing, pending, partial_lineage, reason입니다. signing은 lineage/non_lineage/skip/unknown 중 하나, pending은 keep/replace/delete/unknown 중 하나, partial_lineage는 accept/reject/repair/unknown 중 하나이며 reason은 판단 근거 문자열입니다.' — BM25 검색 결과 1개\n\n  1. preserve 작업 참조는 완료 계보 참여와 구분한다\n     태그: state,preserve,lineage,signature\n     ↳ 태그: state,preserve,lineage,signature\n     점수: 5.73 ██████████\n     파일: 2026-10-01-preserve-작업-참조는-완료-계보-참여와-구분한다.md\n\n상세 보기: python3 scripts/omc_lesson.py show <파일명>\n",
+      "rule": "명시적 preserve는 비계보 서명으로 처리하고 실제 Guard CLI 및 pending 불변을 함께 검증한다"
+    },
+    "oracle_evidence": {
+      "signing": "test_omc_guard.py:624-660",
+      "pending": "test_omc_guard.py:658-660",
+      "partial_lineage": "test_omc_guard.py:663-683"
+    },
+    "limits": [
+      "one diagnostic case",
+      "prompt itself may permit inference",
+      "title selection is not rule reception",
+      "no generic effect or token saving claim"
+    ]
+  },
+  "summary": {
+    "claim": "ISOLATED_LESSON_EVAL_ONLY",
+    "attempts": 9,
+    "unique_sessions": 9,
+    "all_contexts_verified": true,
+    "all_model_settings_verified": true,
+    "tool_calls": 0,
+    "arms": {
+      "none": {
+        "samples": 3,
+        "fully_correct": 3,
+        "usage": {
+          "input_tokens": 59832,
+          "cached_input_tokens": 39552,
+          "output_tokens": 409
+        }
+      },
+      "summary": {
+        "samples": 3,
+        "fully_correct": 3,
+        "usage": {
+          "input_tokens": 60852,
+          "cached_input_tokens": 39552,
+          "output_tokens": 351
+        }
+      },
+      "rule": {
+        "samples": 3,
+        "fully_correct": 3,
+        "usage": {
+          "input_tokens": 59919,
+          "cached_input_tokens": 39552,
+          "output_tokens": 373
+        }
+      }
+    },
+    "source_unchanged": true,
+    "limits": [
+      "one diagnostic prompt; no quality uplift shown",
+      "no monetary cost or general effect claim",
+      "reason fields require qualitative inspection",
+      "default user configuration loaded; only model and effort explicitly pinned"
+    ]
+  },
+  "preparation_stdout": "<!-- OMC BM25 자동 주입: 관련 교훈 -->\n\n[LESSON] '도구나 파일 조회 없이 아래 상황의 수정 정책을 판단하세요. 기존 pending 작업의 baseline, session, work_id는 모두 일치합니다. 명시적 preserve 세션은 기존 work_id만 참조하고 lineage_root_session_id, lineage_previous_session_id, lineage_index는 모두 비어 있습니다. 그런데 Guard가 일반 완료 계보 서명을 적용하여 이를 불완전 계보로 거부합니다. 어떤 서명 분류와 pending 처리로 수정해야 하나요? 또한 preserve 세션에 계보 필드 하나만 채워진 변형 입력은 어떻게 처리해야 하나요?\n설명 외 텍스트나 마크다운 없이 JSON 객체만 답하세요. 키는 signing, pending, partial_lineage, reason입니다. signing은 lineage/non_lineage/skip/unknown 중 하나, pending은 keep/replace/delete/unknown 중 하나, partial_lineage는 accept/reject/repair/unknown 중 하나이며 reason은 판단 근거 문자열입니다.' — BM25 검색 결과 1개\n\n  1. preserve 작업 참조는 완료 계보 참여와 구분한다\n     태그: state,preserve,lineage,signature\n     ↳ 태그: state,preserve,lineage,signature\n     점수: 5.73 ██████████\n     파일: 2026-10-01-preserve-작업-참조는-완료-계보-참여와-구분한다.md\n\n상세 보기: python3 scripts/omc_lesson.py show <파일명>\n",
+  "evaluator_source": "\"\"\"Preparation-only three-arm preserve lesson evaluation. No product mutation.\"\"\"\nimport hashlib\nimport json\nimport os\nimport shutil\nimport subprocess\nimport sys\nfrom pathlib import Path\n\nROOT=Path(__file__).resolve().parent\nSOURCE=Path('/Users/noseunglae/Downloads/dev/omc_kit')\nEXPECTED={'signing':'non_lineage','pending':'keep','partial_lineage':'reject'}\nPROMPT='''도구나 파일 조회 없이 아래 상황의 수정 정책을 판단하세요. 기존 pending 작업의 baseline, session, work_id는 모두 일치합니다. 명시적 preserve 세션은 기존 work_id만 참조하고 lineage_root_session_id, lineage_previous_session_id, lineage_index는 모두 비어 있습니다. 그런데 Guard가 일반 완료 계보 서명을 적용하여 이를 불완전 계보로 거부합니다. 어떤 서명 분류와 pending 처리로 수정해야 하나요? 또한 preserve 세션에 계보 필드 하나만 채워진 변형 입력은 어떻게 처리해야 하나요?\n설명 외 텍스트나 마크다운 없이 JSON 객체만 답하세요. 키는 signing, pending, partial_lineage, reason입니다. signing은 lineage/non_lineage/skip/unknown 중 하나, pending은 keep/replace/delete/unknown 중 하나, partial_lineage는 accept/reject/repair/unknown 중 하나이며 reason은 판단 근거 문자열입니다.'''\n\ndef score(answer):\n    value=json.loads(answer)\n    if not isinstance(value,dict) or set(value)!=set(EXPECTED)|{'reason'} or not isinstance(value['reason'],str) or not value['reason'].strip():\n        raise ValueError('answer shape invalid')\n    allowed={'signing':{'lineage','non_lineage','skip','unknown'},'pending':{'keep','replace','delete','unknown'},'partial_lineage':{'accept','reject','repair','unknown'}}\n    if any(not isinstance(value[k],str) or value[k] not in allowed[k] for k in EXPECTED): raise ValueError('answer enum invalid')\n    return {k:value[k]==v for k,v in EXPECTED.items()}\n\ndef context(root,arm):\n    if arm=='none': return ''\n    if arm not in ('summary','rule'): raise ValueError('unknown arm')\n    return (root/(arm+'.txt')).read_text()\n\ndef run_saved(command,prefix,timeout,*,cwd=None,env=None,input_text=None):\n    prefix.parent.mkdir(parents=True,exist_ok=True)\n    try:\n        p=subprocess.run(command,input=input_text,capture_output=True,text=True,timeout=timeout,cwd=cwd,env=env)\n        stdout,stderr=p.stdout,p.stderr\n        result={'status':'completed' if p.returncode==0 else 'failed','returncode':p.returncode}\n    except subprocess.TimeoutExpired as e:\n        stdout,stderr=e.stdout or '',e.stderr or ''\n        result={'status':'timeout','returncode':None}\n    except OSError as e:\n        stdout,stderr='',str(e)\n        result={'status':'launch_failed','returncode':None}\n    for suffix,value in (('.stdout',stdout),('.stderr',stderr)):\n        prefix.with_suffix(suffix).write_bytes(value.encode() if isinstance(value,str) else value)\n    result['usage_status']='unmeasured'\n    prefix.with_suffix('.json').write_text(json.dumps(result,indent=2))\n    return result\n\ndef prepare():\n    fixture=ROOT/'fixture'\n    fixture.mkdir(exist_ok=False)\n    (fixture/'scripts').mkdir()\n    (fixture/'.omc/lessons').mkdir(parents=True)\n    lesson=SOURCE/'.omc/lessons/2026-10-01-preserve-작업-참조는-완료-계보-참여와-구분한다.md'\n    hashes={}\n    sources=[(SOURCE/'templates/.agent-hooks/omc-prompt-inject.sh',fixture/'original-hook.sh'),(SOURCE/'scripts/omc_lesson.py',fixture/'scripts/omc_lesson.py'),(lesson,fixture/'.omc/lessons'/lesson.name)]\n    for source,dest in sources:\n        shutil.copyfile(source,dest)\n        hashes[str(source)]=hashlib.sha256(source.read_bytes()).hexdigest()\n        if hashlib.sha256(dest.read_bytes()).hexdigest()!=hashes[str(source)]: raise ValueError('snapshot mismatch')\n    for source in (SOURCE/'scripts/omc_state.py',SOURCE/'scripts/test_omc_guard.py'):\n        hashes[str(source)]=hashlib.sha256(source.read_bytes()).hexdigest()\n    rule=lesson.read_text().split('## 적용된 규칙\\n',1)[1].split('\\n## ',1)[0].strip()\n    (ROOT/'rule.txt').write_text(rule)\n    cleanenv={k:v for k,v in os.environ.items() if k!='PROMPT' and not k.startswith('OMC_')}\n    result=run_saved(['bash',str(fixture/'original-hook.sh'),'codex'],ROOT/'preparation/original-hook',10,cwd=fixture,env=cleanenv,input_text=json.dumps({'session_id':'prepare-only','prompt':PROMPT}))\n    if result['status']!='completed': raise RuntimeError('original hook failed')\n    summary=(ROOT/'preparation/original-hook.stdout').read_text()\n    if lesson.name not in summary: raise ValueError('expected lesson not selected')\n    (ROOT/'summary.txt').write_text(summary)\n    order=[['none','summary','rule'],['rule','none','summary'],['summary','rule','none']]\n    frozen={'claim':'ISOLATED_LESSON_EVAL_ONLY','source_hashes':hashes,'prompt':PROMPT,'expected':EXPECTED,'model':'gpt-6.1-sol','effort':'low','max_attempts':9,'order':order,'contexts':{a:context(ROOT,a) for a in ('none','summary','rule')},'oracle_evidence':{'signing':'test_omc_guard.py:624-660','pending':'test_omc_guard.py:658-660','partial_lineage':'test_omc_guard.py:663-683'},'limits':['one diagnostic case','prompt itself may permit inference','title selection is not rule reception','no generic effect or token saving claim']}\n    (ROOT/'frozen.json').write_text(json.dumps(frozen,ensure_ascii=False,indent=2))\n    (ROOT/'mode').write_text('none')\n    print(json.dumps({'status':'prepared','source_count':len(hashes),'rule_in_summary':rule in summary,'model_attempts':0}))\n\ndef emit_hook():\n    payload=json.load(sys.stdin)\n    if not isinstance(payload,dict): raise ValueError('invalid payload')\n    frozen=json.loads((ROOT/'frozen.json').read_text())\n    arm=(ROOT/'mode').read_text().strip()\n    if arm not in frozen['contexts']: raise ValueError('invalid arm')\n    content=frozen['contexts'][arm]\n    # No cross-session suppression and no writes: conditions differ only in context.\n    print(json.dumps({'hookSpecificOutput':{'hookEventName':'UserPromptSubmit','additionalContext':content}}) if content else '{}')\n\nif __name__=='__main__':\n    if sys.argv[1:]==['hook']: emit_hook()\n    elif sys.argv[1:]==['prepare']: prepare()\n    else: raise SystemExit('use prepare or hook; model runner not activated')\n",
+  "evaluator_tests": "import json\nimport tempfile\nimport unittest\nfrom pathlib import Path\nimport evaluation\n\nGOOD={'signing':'non_lineage','pending':'keep','partial_lineage':'reject','reason':'separate reference and participation'}\nclass Tests(unittest.TestCase):\n    def test_scores_independent_errors(self):\n        scores=evaluation.score(json.dumps({**GOOD,'pending':'replace'}))\n        self.assertEqual(scores,{'signing':True,'pending':False,'partial_lineage':True})\n    def test_extra_fields_and_missing_reason_rejected(self):\n        for value in ({**GOOD,'extra':1},{k:v for k,v in GOOD.items() if k!='reason'}):\n            with self.assertRaises(ValueError): evaluation.score(json.dumps(value))\n    def test_context_isolation(self):\n        with tempfile.TemporaryDirectory() as d:\n            p=Path(d)\n            (p/'summary.txt').write_text('original search output')\n            (p/'rule.txt').write_text('explicit rule')\n            self.assertEqual(evaluation.context(p,'none'),'')\n            self.assertEqual(evaluation.context(p,'summary'),'original search output')\n            self.assertEqual(evaluation.context(p,'rule'),'explicit rule')\n            with self.assertRaises(ValueError): evaluation.context(p,'unexpected')\n    def test_timeout_artifacts_retained(self):\n        with tempfile.TemporaryDirectory() as d:\n            p=Path(d)/'attempt'\n            r=evaluation.run_saved(['python3','-u','-c','import time;print(\"partial\");time.sleep(5)'],p,0.1)\n            self.assertEqual(r['status'],'timeout')\n            self.assertIn('partial',p.with_suffix('.stdout').read_text())\n\nif __name__=='__main__': unittest.main()\n",
+  "adoption_validation": "import json\nfrom pathlib import Path\n\nROOT = Path('/Users/noseunglae/Downloads/dev/omc_kit/docs/evidence')\n\ndef test_adopted_record():\n    report = (ROOT / 'preserve_lesson_evaluation_20261002.md').read_text()\n    evidence = json.loads((ROOT / 'preserve_lesson_evaluation_20261002.json').read_text())\n    assert 'ISOLATED_LESSON_EVAL_ONLY' in report\n    assert 'not executed yet' not in report\n    assert 'Evidence A' in report and 'no accuracy uplift' in report\n    assert len(evidence['attempts']) == 9\n    assert evidence['summary']['unique_sessions'] == 9\n    for attempt in evidence['attempts']:\n        events = [json.loads(line) for line in attempt['stdout'].splitlines()]\n        answers = [e['item']['text'] for e in events if e.get('type') == 'item.completed' and e['item'].get('type') == 'agent_message']\n        usages = [e['usage'] for e in events if e.get('type') == 'turn.completed']\n        assert answers[-1] == attempt['audit']['answer']\n        assert usages[-1] == attempt['audit']['usage']\n        assert all(json.loads(answers[-1])[k] == v for k, v in evidence['frozen']['expected'].items())\n",
+  "attempts": [
+    {
+      "audit": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured",
+        "arm": "none",
+        "session_id": "01a0faff-bcfe-7232-8250-fb6394d32a30",
+        "answer": "{\"signing\":\"non_lineage\",\"pending\":\"keep\",\"partial_lineage\":\"reject\",\"reason\":\"명시적 preserve 세션이 기존 work_id만 참조하고 모든 계보 필드가 비어 있으면 비계보 서명을 적용해야 합니다. 기존 pending의 baseline, session, work_id가 모두 일치하므로 pending을 유지합니다. 계보 필드가 하나만 채워진 입력은 완전한 비계보 입력도 유효한 계보 입력도 아니므로 불완전 계보로 거부하며 자동 보정하지 않습니다.\"}",
+        "usage": {
+          "input_tokens": 19944,
+          "cached_input_tokens": 13184,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 143,
+          "reasoning_output_tokens": 19
+        },
+        "tool_items": [],
+        "scores": {
+          "signing": true,
+          "pending": true,
+          "partial_lineage": true
+        },
+        "context_match": true,
+        "settings_match": true,
+        "rollout": "/Users/noseunglae/.codex/sessions/2026/10/02/rollout-2026-10-02T14-04-19-01a0faff-bcfe-7232-8250-fb6394d32a30.jsonl",
+        "rollout_sha256": "67b0d5959f090cbcea19c202563371d79683e68fdb8a2675cccac6f3159971c9"
+      },
+      "condition": {
+        "arm": "none",
+        "attempt": 1,
+        "frozen_sha256": "33c81e76553267a9734582de0a7a688a9c6779054dae674b331ed6a32c18ec44"
+      },
+      "process": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured"
+      },
+      "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a0faff-bcfe-7232-8250-fb6394d32a30\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/noseunglae/.codex/config.toml.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"agent_message\",\"text\":\"{\\\"signing\\\":\\\"non_lineage\\\",\\\"pending\\\":\\\"keep\\\",\\\"partial_lineage\\\":\\\"reject\\\",\\\"reason\\\":\\\"명시적 preserve 세션이 기존 work_id만 참조하고 모든 계보 필드가 비어 있으면 비계보 서명을 적용해야 합니다. 기존 pending의 baseline, session, work_id가 모두 일치하므로 pending을 유지합니다. 계보 필드가 하나만 채워진 입력은 완전한 비계보 입력도 유효한 계보 입력도 아니므로 불완전 계보로 거부하며 자동 보정하지 않습니다.\\\"}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":19944,\"cached_input_tokens\":13184,\"cache_write_input_tokens\":0,\"output_tokens\":143,\"reasoning_output_tokens\":19}}\n",
+      "stderr": "Reading additional input from stdin...\n2026-10-02T05:04:19.232312Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:19.232335Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:19.923897Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:19.923915Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:24.193583Z ERROR codex_models_manager::manager: failed to refresh available models: request timed out\n2026-10-02T05:04:29.243972Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+      "stdout_sha256": "edae0a91f0f8d628481412330478dc94e5f7cb6e618a9db50aca6e2a5f269f31",
+      "stderr_sha256": "9180b6f4dc678fae200874de27bf7a4dcc03ddb9fae594ce346712cbb64594ac",
+      "rollout_extracts": [
+        {
+          "type": "turn_context",
+          "model": "gpt-6.1-sol",
+          "effort": "low"
+        }
+      ]
+    },
+    {
+      "audit": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured",
+        "arm": "summary",
+        "session_id": "01a0faff-ed02-7642-bd45-30619cb23c25",
+        "answer": "{\"signing\":\"non_lineage\",\"pending\":\"keep\",\"partial_lineage\":\"reject\",\"reason\":\"명시적 preserve 세션의 기존 work_id 참조는 완료 계보 참여가 아니다. 계보 필드가 모두 비어 있으면 비계보 서명을 적용하고, baseline·session·work_id가 일치하는 기존 pending은 유지한다. 계보 필드 하나만 채워진 입력은 불완전 계보이므로 거부하며 자동 보정하지 않는다.\"}",
+        "usage": {
+          "input_tokens": 20284,
+          "cached_input_tokens": 13184,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 106,
+          "reasoning_output_tokens": 0
+        },
+        "tool_items": [],
+        "scores": {
+          "signing": true,
+          "pending": true,
+          "partial_lineage": true
+        },
+        "context_match": true,
+        "settings_match": true,
+        "rollout": "/Users/noseunglae/.codex/sessions/2026/10/02/rollout-2026-10-02T14-04-31-01a0faff-ed02-7642-bd45-30619cb23c25.jsonl",
+        "rollout_sha256": "c88ff3061094771f2de0e50c3e3bd1f2b152170451842fc3770f4d34a2d5d97d"
+      },
+      "condition": {
+        "arm": "summary",
+        "attempt": 2,
+        "frozen_sha256": "33c81e76553267a9734582de0a7a688a9c6779054dae674b331ed6a32c18ec44"
+      },
+      "process": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured"
+      },
+      "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a0faff-ed02-7642-bd45-30619cb23c25\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/noseunglae/.codex/config.toml.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"agent_message\",\"text\":\"{\\\"signing\\\":\\\"non_lineage\\\",\\\"pending\\\":\\\"keep\\\",\\\"partial_lineage\\\":\\\"reject\\\",\\\"reason\\\":\\\"명시적 preserve 세션의 기존 work_id 참조는 완료 계보 참여가 아니다. 계보 필드가 모두 비어 있으면 비계보 서명을 적용하고, baseline·session·work_id가 일치하는 기존 pending은 유지한다. 계보 필드 하나만 채워진 입력은 불완전 계보이므로 거부하며 자동 보정하지 않는다.\\\"}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":20284,\"cached_input_tokens\":13184,\"cache_write_input_tokens\":0,\"output_tokens\":106,\"reasoning_output_tokens\":0}}\n",
+      "stderr": "Reading additional input from stdin...\n2026-10-02T05:04:31.506514Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:31.506541Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:32.293667Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:32.293685Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:41.513713Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+      "stdout_sha256": "0557e158df636a6e37511f1d82566af4e4ccdeb1246e0609e3b34dc9a75950d3",
+      "stderr_sha256": "0924705b1c17723f5db6df6ee7350dccb47923cbbe463cbfd928bb75b22ff406",
+      "rollout_extracts": [
+        {
+          "type": "turn_context",
+          "model": "gpt-6.1-sol",
+          "effort": "low"
+        },
+        {
+          "type": "hooks.additional_context",
+          "text": "<!-- OMC BM25 자동 주입: 관련 교훈 -->\n\n[LESSON] '도구나 파일 조회 없이 아래 상황의 수정 정책을 판단하세요. 기존 pending 작업의 baseline, session, work_id는 모두 일치합니다. 명시적 preserve 세션은 기존 work_id만 참조하고 lineage_root_session_id, lineage_previous_session_id, lineage_index는 모두 비어 있습니다. 그런데 Guard가 일반 완료 계보 서명을 적용하여 이를 불완전 계보로 거부합니다. 어떤 서명 분류와 pending 처리로 수정해야 하나요? 또한 preserve 세션에 계보 필드 하나만 채워진 변형 입력은 어떻게 처리해야 하나요?\n설명 외 텍스트나 마크다운 없이 JSON 객체만 답하세요. 키는 signing, pending, partial_lineage, reason입니다. signing은 lineage/non_lineage/skip/unknown 중 하나, pending은 keep/replace/delete/unknown 중 하나, partial_lineage는 accept/reject/repair/unknown 중 하나이며 reason은 판단 근거 문자열입니다.' — BM25 검색 결과 1개\n\n  1. preserve 작업 참조는 완료 계보 참여와 구분한다\n     태그: state,preserve,lineage,signature\n     ↳ 태그: state,preserve,lineage,signature\n     점수: 5.73 ██████████\n     파일: 2026-10-01-preserve-작업-참조는-완료-계보-참여와-구분한다.md\n\n상세 보기: python3 scripts/omc_lesson.py show <파일명>\n"
+        }
+      ]
+    },
+    {
+      "audit": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured",
+        "arm": "rule",
+        "session_id": "01a0fb00-15f2-7822-86ed-9f61ed306fad",
+        "answer": "{\"signing\":\"non_lineage\",\"pending\":\"keep\",\"partial_lineage\":\"reject\",\"reason\":\"명시적 preserve 세션이 기존 work_id만 참조하고 모든 계보 필드가 비어 있으면 비계보 서명을 적용한다. baseline, session, work_id가 일치하는 기존 pending은 변경 없이 유지한다. 계보 필드가 하나만 채워진 입력은 불완전 계보이므로 거부하며 자동 보정하지 않는다. 수정 검증에는 실제 Guard CLI의 수락·거부 결과와 pending 불변 확인이 함께 필요하다.\"}",
+        "usage": {
+          "input_tokens": 19973,
+          "cached_input_tokens": 13184,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 127,
+          "reasoning_output_tokens": 0
+        },
+        "tool_items": [],
+        "scores": {
+          "signing": true,
+          "pending": true,
+          "partial_lineage": true
+        },
+        "context_match": true,
+        "settings_match": true,
+        "rollout": "/Users/noseunglae/.codex/sessions/2026/10/02/rollout-2026-10-02T14-04-41-01a0fb00-15f2-7822-86ed-9f61ed306fad.jsonl",
+        "rollout_sha256": "36f6a7d14fd6976858b90874263bc5d11419349bcc2047f5c8154448ddcfea79"
+      },
+      "condition": {
+        "arm": "rule",
+        "attempt": 3,
+        "frozen_sha256": "33c81e76553267a9734582de0a7a688a9c6779054dae674b331ed6a32c18ec44"
+      },
+      "process": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured"
+      },
+      "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a0fb00-15f2-7822-86ed-9f61ed306fad\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/noseunglae/.codex/config.toml.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"agent_message\",\"text\":\"{\\\"signing\\\":\\\"non_lineage\\\",\\\"pending\\\":\\\"keep\\\",\\\"partial_lineage\\\":\\\"reject\\\",\\\"reason\\\":\\\"명시적 preserve 세션이 기존 work_id만 참조하고 모든 계보 필드가 비어 있으면 비계보 서명을 적용한다. baseline, session, work_id가 일치하는 기존 pending은 변경 없이 유지한다. 계보 필드가 하나만 채워진 입력은 불완전 계보이므로 거부하며 자동 보정하지 않는다. 수정 검증에는 실제 Guard CLI의 수락·거부 결과와 pending 불변 확인이 함께 필요하다.\\\"}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":19973,\"cached_input_tokens\":13184,\"cache_write_input_tokens\":0,\"output_tokens\":127,\"reasoning_output_tokens\":0}}\n",
+      "stderr": "Reading additional input from stdin...\n2026-10-02T05:04:41.984449Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:41.984471Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:42.693408Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:42.693426Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:51.991327Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+      "stdout_sha256": "8e2d7d9a941644cd9264e8f5a3d064ad14457c9a66897ae69c1b133d971e7ae2",
+      "stderr_sha256": "a678c455768f39b19d35e4094b2e20f53a7f856529e57dbf669ee4ff981e5bd9",
+      "rollout_extracts": [
+        {
+          "type": "turn_context",
+          "model": "gpt-6.1-sol",
+          "effort": "low"
+        },
+        {
+          "type": "hooks.additional_context",
+          "text": "명시적 preserve는 비계보 서명으로 처리하고 실제 Guard CLI 및 pending 불변을 함께 검증한다"
+        }
+      ]
+    },
+    {
+      "audit": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured",
+        "arm": "rule",
+        "session_id": "01a0fb00-42d0-7102-a803-9e39b8c9379a",
+        "answer": "{\"signing\":\"non_lineage\",\"pending\":\"keep\",\"partial_lineage\":\"reject\",\"reason\":\"명시적 preserve가 기존 work_id만 참조하고 계보 필드가 모두 비어 있으면 일반 완료 계보 서명이 아닌 비계보 서명을 적용한다. baseline, session, work_id가 모두 일치하는 기존 pending은 변경 없이 유지한다. 계보 필드 하나만 채워진 입력은 불완전 계보이므로 거부하며 자동 보정하지 않는다. 수정 검증에는 실제 Guard CLI의 preserve 수락과 pending 불변 확인을 함께 포함해야 한다.\"}",
+        "usage": {
+          "input_tokens": 19973,
+          "cached_input_tokens": 13184,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 130,
+          "reasoning_output_tokens": 0
+        },
+        "tool_items": [],
+        "scores": {
+          "signing": true,
+          "pending": true,
+          "partial_lineage": true
+        },
+        "context_match": true,
+        "settings_match": true,
+        "rollout": "/Users/noseunglae/.codex/sessions/2026/10/02/rollout-2026-10-02T14-04-53-01a0fb00-42d0-7102-a803-9e39b8c9379a.jsonl",
+        "rollout_sha256": "8a667b6eee4cdbddded13b932ad9137b2c873c7917ae8c2d82b8f4cb4af1da44"
+      },
+      "condition": {
+        "arm": "rule",
+        "attempt": 4,
+        "frozen_sha256": "33c81e76553267a9734582de0a7a688a9c6779054dae674b331ed6a32c18ec44"
+      },
+      "process": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured"
+      },
+      "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a0fb00-42d0-7102-a803-9e39b8c9379a\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/noseunglae/.codex/config.toml.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"agent_message\",\"text\":\"{\\\"signing\\\":\\\"non_lineage\\\",\\\"pending\\\":\\\"keep\\\",\\\"partial_lineage\\\":\\\"reject\\\",\\\"reason\\\":\\\"명시적 preserve가 기존 work_id만 참조하고 계보 필드가 모두 비어 있으면 일반 완료 계보 서명이 아닌 비계보 서명을 적용한다. baseline, session, work_id가 모두 일치하는 기존 pending은 변경 없이 유지한다. 계보 필드 하나만 채워진 입력은 불완전 계보이므로 거부하며 자동 보정하지 않는다. 수정 검증에는 실제 Guard CLI의 preserve 수락과 pending 불변 확인을 함께 포함해야 한다.\\\"}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":19973,\"cached_input_tokens\":13184,\"cache_write_input_tokens\":0,\"output_tokens\":130,\"reasoning_output_tokens\":0}}\n",
+      "stderr": "Reading additional input from stdin...\n2026-10-02T05:04:53.468796Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:53.468819Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:54.116751Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:04:54.116767Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:03.473756Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+      "stdout_sha256": "7ea120e2b50c133e51d57e7b9d6c2997f334ea44e1396139b0be66bc1759db8d",
+      "stderr_sha256": "400ef0d4b7e8840a582638085bee0425e1b5558287a3245f0dd7f1741ca1376c",
+      "rollout_extracts": [
+        {
+          "type": "turn_context",
+          "model": "gpt-6.1-sol",
+          "effort": "low"
+        },
+        {
+          "type": "hooks.additional_context",
+          "text": "명시적 preserve는 비계보 서명으로 처리하고 실제 Guard CLI 및 pending 불변을 함께 검증한다"
+        }
+      ]
+    },
+    {
+      "audit": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured",
+        "arm": "none",
+        "session_id": "01a0fb00-6d84-7992-bc67-21d8b0d91702",
+        "answer": "{\"signing\":\"non_lineage\",\"pending\":\"keep\",\"partial_lineage\":\"reject\",\"reason\":\"명시적 preserve 세션이 기존 work_id만 참조하고 계보 필드가 모두 비어 있으면 비계보 서명을 적용해야 합니다. baseline, session, work_id가 일치하는 기존 pending 작업은 유지합니다. 계보 필드가 하나라도 채워졌지만 나머지가 비어 있는 입력은 불완전 계보이므로 거부하며, 비계보로 우회하거나 자동 보정하지 않습니다.\"}",
+        "usage": {
+          "input_tokens": 19944,
+          "cached_input_tokens": 13184,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 137,
+          "reasoning_output_tokens": 17
+        },
+        "tool_items": [],
+        "scores": {
+          "signing": true,
+          "pending": true,
+          "partial_lineage": true
+        },
+        "context_match": true,
+        "settings_match": true,
+        "rollout": "/Users/noseunglae/.codex/sessions/2026/10/02/rollout-2026-10-02T14-05-04-01a0fb00-6d84-7992-bc67-21d8b0d91702.jsonl",
+        "rollout_sha256": "e8464d11cabf25698c827fb4a1abca08282a772928b64245a4d421b9c670b779"
+      },
+      "condition": {
+        "arm": "none",
+        "attempt": 5,
+        "frozen_sha256": "33c81e76553267a9734582de0a7a688a9c6779054dae674b331ed6a32c18ec44"
+      },
+      "process": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured"
+      },
+      "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a0fb00-6d84-7992-bc67-21d8b0d91702\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/noseunglae/.codex/config.toml.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"agent_message\",\"text\":\"{\\\"signing\\\":\\\"non_lineage\\\",\\\"pending\\\":\\\"keep\\\",\\\"partial_lineage\\\":\\\"reject\\\",\\\"reason\\\":\\\"명시적 preserve 세션이 기존 work_id만 참조하고 계보 필드가 모두 비어 있으면 비계보 서명을 적용해야 합니다. baseline, session, work_id가 일치하는 기존 pending 작업은 유지합니다. 계보 필드가 하나라도 채워졌지만 나머지가 비어 있는 입력은 불완전 계보이므로 거부하며, 비계보로 우회하거나 자동 보정하지 않습니다.\\\"}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":19944,\"cached_input_tokens\":13184,\"cache_write_input_tokens\":0,\"output_tokens\":137,\"reasoning_output_tokens\":17}}\n",
+      "stderr": "Reading additional input from stdin...\n2026-10-02T05:05:04.403404Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:04.403426Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:05.071091Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:05.071107Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:14.409710Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+      "stdout_sha256": "e696eb258c115ba3577b4f563b9d8f38b753b82e7d8559104136d09520ce1fe4",
+      "stderr_sha256": "b35e01d81933301da0f2c1257abe85ba2e93e1cea2c5edf59fc19a1766e4402a",
+      "rollout_extracts": [
+        {
+          "type": "turn_context",
+          "model": "gpt-6.1-sol",
+          "effort": "low"
+        }
+      ]
+    },
+    {
+      "audit": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured",
+        "arm": "summary",
+        "session_id": "01a0fb00-b174-7133-8ea8-7d64e35d7ec5",
+        "answer": "{\"signing\":\"non_lineage\",\"pending\":\"keep\",\"partial_lineage\":\"reject\",\"reason\":\"명시적 preserve 세션이 기존 work_id만 참조하고 계보 필드가 모두 비어 있으면 완료 계보 참여가 아닌 비계보 서명으로 분류한다. baseline, session, work_id가 모두 일치하므로 기존 pending을 유지한다. 계보 필드 하나만 채워진 입력은 불완전 계보이므로 거부하며, preserve를 이유로 허용하거나 자동 보정하지 않는다.\"}",
+        "usage": {
+          "input_tokens": 20284,
+          "cached_input_tokens": 13184,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 118,
+          "reasoning_output_tokens": 0
+        },
+        "tool_items": [],
+        "scores": {
+          "signing": true,
+          "pending": true,
+          "partial_lineage": true
+        },
+        "context_match": true,
+        "settings_match": true,
+        "rollout": "/Users/noseunglae/.codex/sessions/2026/10/02/rollout-2026-10-02T14-05-21-01a0fb00-b174-7133-8ea8-7d64e35d7ec5.jsonl",
+        "rollout_sha256": "e081d68f36689f6ac501f892d00a82615ea624e98d932dbb47f232c5211ac85e"
+      },
+      "condition": {
+        "arm": "summary",
+        "attempt": 6,
+        "frozen_sha256": "33c81e76553267a9734582de0a7a688a9c6779054dae674b331ed6a32c18ec44"
+      },
+      "process": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured"
+      },
+      "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a0fb00-b174-7133-8ea8-7d64e35d7ec5\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/noseunglae/.codex/config.toml.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"agent_message\",\"text\":\"{\\\"signing\\\":\\\"non_lineage\\\",\\\"pending\\\":\\\"keep\\\",\\\"partial_lineage\\\":\\\"reject\\\",\\\"reason\\\":\\\"명시적 preserve 세션이 기존 work_id만 참조하고 계보 필드가 모두 비어 있으면 완료 계보 참여가 아닌 비계보 서명으로 분류한다. baseline, session, work_id가 모두 일치하므로 기존 pending을 유지한다. 계보 필드 하나만 채워진 입력은 불완전 계보이므로 거부하며, preserve를 이유로 허용하거나 자동 보정하지 않는다.\\\"}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":20284,\"cached_input_tokens\":13184,\"cache_write_input_tokens\":0,\"output_tokens\":118,\"reasoning_output_tokens\":0}}\n",
+      "stderr": "Reading additional input from stdin...\n2026-10-02T05:05:21.794914Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:21.794936Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:22.434902Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:22.434917Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:31.801670Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+      "stdout_sha256": "7509c23a4ab56b47c695ad3b96d1dc35edd311e3e3de665a22cfe99a58306279",
+      "stderr_sha256": "b7848cea31bf0724ba6d5441e26f1b785f26b561e36e053b900bac5a084b5480",
+      "rollout_extracts": [
+        {
+          "type": "turn_context",
+          "model": "gpt-6.1-sol",
+          "effort": "low"
+        },
+        {
+          "type": "hooks.additional_context",
+          "text": "<!-- OMC BM25 자동 주입: 관련 교훈 -->\n\n[LESSON] '도구나 파일 조회 없이 아래 상황의 수정 정책을 판단하세요. 기존 pending 작업의 baseline, session, work_id는 모두 일치합니다. 명시적 preserve 세션은 기존 work_id만 참조하고 lineage_root_session_id, lineage_previous_session_id, lineage_index는 모두 비어 있습니다. 그런데 Guard가 일반 완료 계보 서명을 적용하여 이를 불완전 계보로 거부합니다. 어떤 서명 분류와 pending 처리로 수정해야 하나요? 또한 preserve 세션에 계보 필드 하나만 채워진 변형 입력은 어떻게 처리해야 하나요?\n설명 외 텍스트나 마크다운 없이 JSON 객체만 답하세요. 키는 signing, pending, partial_lineage, reason입니다. signing은 lineage/non_lineage/skip/unknown 중 하나, pending은 keep/replace/delete/unknown 중 하나, partial_lineage는 accept/reject/repair/unknown 중 하나이며 reason은 판단 근거 문자열입니다.' — BM25 검색 결과 1개\n\n  1. preserve 작업 참조는 완료 계보 참여와 구분한다\n     태그: state,preserve,lineage,signature\n     ↳ 태그: state,preserve,lineage,signature\n     점수: 5.73 ██████████\n     파일: 2026-10-01-preserve-작업-참조는-완료-계보-참여와-구분한다.md\n\n상세 보기: python3 scripts/omc_lesson.py show <파일명>\n"
+        }
+      ]
+    },
+    {
+      "audit": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured",
+        "arm": "summary",
+        "session_id": "01a0fb00-dc70-7b72-9fcd-c42ca5de2672",
+        "answer": "{\"signing\":\"non_lineage\",\"pending\":\"keep\",\"partial_lineage\":\"reject\",\"reason\":\"명시적 preserve 세션이 기존 work_id만 참조하고 계보 필드가 모두 비어 있으면 완료 계보 참여가 아닌 작업 참조이므로 비계보 서명을 적용한다. 기존 pending의 baseline, session, work_id가 모두 일치하므로 그대로 유지한다. 계보 필드가 하나라도 채워졌으나 완전하지 않은 입력은 불완전 계보로 거부하며 비계보로 우회하거나 자동 보정하지 않는다.\"}",
+        "usage": {
+          "input_tokens": 20284,
+          "cached_input_tokens": 13184,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 127,
+          "reasoning_output_tokens": 0
+        },
+        "tool_items": [],
+        "scores": {
+          "signing": true,
+          "pending": true,
+          "partial_lineage": true
+        },
+        "context_match": true,
+        "settings_match": true,
+        "rollout": "/Users/noseunglae/.codex/sessions/2026/10/02/rollout-2026-10-02T14-05-32-01a0fb00-dc70-7b72-9fcd-c42ca5de2672.jsonl",
+        "rollout_sha256": "a77be44e32c79e10ccc5b0f64f13aa9ad31f2e1b86d32fe06b03e4ab17c4bda6"
+      },
+      "condition": {
+        "arm": "summary",
+        "attempt": 7,
+        "frozen_sha256": "33c81e76553267a9734582de0a7a688a9c6779054dae674b331ed6a32c18ec44"
+      },
+      "process": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured"
+      },
+      "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a0fb00-dc70-7b72-9fcd-c42ca5de2672\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/noseunglae/.codex/config.toml.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"agent_message\",\"text\":\"{\\\"signing\\\":\\\"non_lineage\\\",\\\"pending\\\":\\\"keep\\\",\\\"partial_lineage\\\":\\\"reject\\\",\\\"reason\\\":\\\"명시적 preserve 세션이 기존 work_id만 참조하고 계보 필드가 모두 비어 있으면 완료 계보 참여가 아닌 작업 참조이므로 비계보 서명을 적용한다. 기존 pending의 baseline, session, work_id가 모두 일치하므로 그대로 유지한다. 계보 필드가 하나라도 채워졌으나 완전하지 않은 입력은 불완전 계보로 거부하며 비계보로 우회하거나 자동 보정하지 않는다.\\\"}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":20284,\"cached_input_tokens\":13184,\"cache_write_input_tokens\":0,\"output_tokens\":127,\"reasoning_output_tokens\":0}}\n",
+      "stderr": "Reading additional input from stdin...\n2026-10-02T05:05:32.797262Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:32.797281Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:33.449306Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:33.449321Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:42.801834Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+      "stdout_sha256": "4a1960d18f1afae26da57a87bb177651e514715be7ab5d6e0ccaa8129e28604b",
+      "stderr_sha256": "813e577281ea938a708adaaecb98e607e9f84162361989bfcd8af8cd49b07dfe",
+      "rollout_extracts": [
+        {
+          "type": "turn_context",
+          "model": "gpt-6.1-sol",
+          "effort": "low"
+        },
+        {
+          "type": "hooks.additional_context",
+          "text": "<!-- OMC BM25 자동 주입: 관련 교훈 -->\n\n[LESSON] '도구나 파일 조회 없이 아래 상황의 수정 정책을 판단하세요. 기존 pending 작업의 baseline, session, work_id는 모두 일치합니다. 명시적 preserve 세션은 기존 work_id만 참조하고 lineage_root_session_id, lineage_previous_session_id, lineage_index는 모두 비어 있습니다. 그런데 Guard가 일반 완료 계보 서명을 적용하여 이를 불완전 계보로 거부합니다. 어떤 서명 분류와 pending 처리로 수정해야 하나요? 또한 preserve 세션에 계보 필드 하나만 채워진 변형 입력은 어떻게 처리해야 하나요?\n설명 외 텍스트나 마크다운 없이 JSON 객체만 답하세요. 키는 signing, pending, partial_lineage, reason입니다. signing은 lineage/non_lineage/skip/unknown 중 하나, pending은 keep/replace/delete/unknown 중 하나, partial_lineage는 accept/reject/repair/unknown 중 하나이며 reason은 판단 근거 문자열입니다.' — BM25 검색 결과 1개\n\n  1. preserve 작업 참조는 완료 계보 참여와 구분한다\n     태그: state,preserve,lineage,signature\n     ↳ 태그: state,preserve,lineage,signature\n     점수: 5.73 ██████████\n     파일: 2026-10-01-preserve-작업-참조는-완료-계보-참여와-구분한다.md\n\n상세 보기: python3 scripts/omc_lesson.py show <파일명>\n"
+        }
+      ]
+    },
+    {
+      "audit": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured",
+        "arm": "rule",
+        "session_id": "01a0fb01-097b-7910-be98-c62fd5af18bc",
+        "answer": "{\"signing\":\"non_lineage\",\"pending\":\"keep\",\"partial_lineage\":\"reject\",\"reason\":\"baseline, session, work_id가 일치하고 계보 필드가 모두 비어 있는 명시적 preserve는 기존 작업 참조이므로 비계보 서명을 적용하고 기존 pending을 그대로 유지해야 한다. 계보 필드 하나만 채워진 입력은 불완전 계보이므로 거부하며 자동 보정하지 않는다. 수정 검증은 실제 Guard CLI 통과와 pending 불변을 함께 확인해야 한다.\"}",
+        "usage": {
+          "input_tokens": 19973,
+          "cached_input_tokens": 13184,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 116,
+          "reasoning_output_tokens": 0
+        },
+        "tool_items": [],
+        "scores": {
+          "signing": true,
+          "pending": true,
+          "partial_lineage": true
+        },
+        "context_match": true,
+        "settings_match": true,
+        "rollout": "/Users/noseunglae/.codex/sessions/2026/10/02/rollout-2026-10-02T14-05-44-01a0fb01-097b-7910-be98-c62fd5af18bc.jsonl",
+        "rollout_sha256": "15b0ecdd695a8ae40021ef9bb15aaf02b43f6c4b04c11b7513072eb84fd3885c"
+      },
+      "condition": {
+        "arm": "rule",
+        "attempt": 8,
+        "frozen_sha256": "33c81e76553267a9734582de0a7a688a9c6779054dae674b331ed6a32c18ec44"
+      },
+      "process": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured"
+      },
+      "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a0fb01-097b-7910-be98-c62fd5af18bc\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/noseunglae/.codex/config.toml.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"agent_message\",\"text\":\"{\\\"signing\\\":\\\"non_lineage\\\",\\\"pending\\\":\\\"keep\\\",\\\"partial_lineage\\\":\\\"reject\\\",\\\"reason\\\":\\\"baseline, session, work_id가 일치하고 계보 필드가 모두 비어 있는 명시적 preserve는 기존 작업 참조이므로 비계보 서명을 적용하고 기존 pending을 그대로 유지해야 한다. 계보 필드 하나만 채워진 입력은 불완전 계보이므로 거부하며 자동 보정하지 않는다. 수정 검증은 실제 Guard CLI 통과와 pending 불변을 함께 확인해야 한다.\\\"}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":19973,\"cached_input_tokens\":13184,\"cache_write_input_tokens\":0,\"output_tokens\":116,\"reasoning_output_tokens\":0}}\n",
+      "stderr": "Reading additional input from stdin...\n2026-10-02T05:05:44.329854Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:44.329876Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:45.088829Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:45.088846Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:54.335734Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+      "stdout_sha256": "6d270c0ede34b7c4bbe77e5e872aabc0af4f493c75a07aaa348e12150479e578",
+      "stderr_sha256": "be583709fd29456681484ffdeae504bfb22314149faa95341c41d1a787dc1d85",
+      "rollout_extracts": [
+        {
+          "type": "turn_context",
+          "model": "gpt-6.1-sol",
+          "effort": "low"
+        },
+        {
+          "type": "hooks.additional_context",
+          "text": "명시적 preserve는 비계보 서명으로 처리하고 실제 Guard CLI 및 pending 불변을 함께 검증한다"
+        }
+      ]
+    },
+    {
+      "audit": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured",
+        "arm": "none",
+        "session_id": "01a0fb01-31dd-7b01-8c7a-23963bde5980",
+        "answer": "{\"signing\":\"non_lineage\",\"pending\":\"keep\",\"partial_lineage\":\"reject\",\"reason\":\"명시적 preserve 세션이 기존 work_id만 참조하고 모든 계보 필드가 비어 있으면 비계보 서명을 적용해야 합니다. baseline, session, work_id가 모두 일치하므로 기존 pending을 유지합니다. 계보 필드가 하나만 채워진 입력은 불완전 계보이므로 비계보로 우회하거나 자동 보정하지 않고 거부해야 합니다.\"}",
+        "usage": {
+          "input_tokens": 19944,
+          "cached_input_tokens": 13184,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 129,
+          "reasoning_output_tokens": 15
+        },
+        "tool_items": [],
+        "scores": {
+          "signing": true,
+          "pending": true,
+          "partial_lineage": true
+        },
+        "context_match": true,
+        "settings_match": true,
+        "rollout": "/Users/noseunglae/.codex/sessions/2026/10/02/rollout-2026-10-02T14-05-54-01a0fb01-31dd-7b01-8c7a-23963bde5980.jsonl",
+        "rollout_sha256": "805e802e5af838f1600311c0305619a3c73e84824aa429b6fceac66a9288e75a"
+      },
+      "condition": {
+        "arm": "none",
+        "attempt": 9,
+        "frozen_sha256": "33c81e76553267a9734582de0a7a688a9c6779054dae674b331ed6a32c18ec44"
+      },
+      "process": {
+        "status": "completed",
+        "returncode": 0,
+        "usage_status": "unmeasured"
+      },
+      "stdout": "{\"type\":\"thread.started\",\"thread_id\":\"01a0fb01-31dd-7b01-8c7a-23963bde5980\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/noseunglae/.codex/config.toml.\"}}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"agent_message\",\"text\":\"{\\\"signing\\\":\\\"non_lineage\\\",\\\"pending\\\":\\\"keep\\\",\\\"partial_lineage\\\":\\\"reject\\\",\\\"reason\\\":\\\"명시적 preserve 세션이 기존 work_id만 참조하고 모든 계보 필드가 비어 있으면 비계보 서명을 적용해야 합니다. baseline, session, work_id가 모두 일치하므로 기존 pending을 유지합니다. 계보 필드가 하나만 채워진 입력은 불완전 계보이므로 비계보로 우회하거나 자동 보정하지 않고 거부해야 합니다.\\\"}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":19944,\"cached_input_tokens\":13184,\"cache_write_input_tokens\":0,\"output_tokens\":129,\"reasoning_output_tokens\":15}}\n",
+      "stderr": "Reading additional input from stdin...\n2026-10-02T05:05:54.665650Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:54.665674Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:55.335530Z  WARN codex_skills::interface: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:05:55.335546Z  WARN codex_skills::interface: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/\n2026-10-02T05:06:04.670517Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for zsh: Snapshot command timed out for zsh\n",
+      "stdout_sha256": "ba9a0ffc2710a5a2a5d401d2809190a904983adeb56171c6ca712ed151f2a46f",
+      "stderr_sha256": "f1e3daccf431c9dde32f34bbcd344a2721bac40f50d197e1964813fb23fb989c",
+      "rollout_extracts": [
+        {
+          "type": "turn_context",
+          "model": "gpt-6.1-sol",
+          "effort": "low"
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Full session rollouts remain local; only relevant model settings and hook messages are archived. Original rollout hashes are provenance, not a substitute for full-rollout custody.",
+    "No new model calls or operational rollout."
+  ]
+}

@@ -74,6 +74,12 @@ oh-my-claudecode를 executor로 연결하는 그림도 `POTENTIAL_INTEGRATION_HY
 
 이 연구는 활성 Evidence A의 cohort·지표·설치 identity·원장에 귀속하지 않는다. 경쟁 연구 결과를 제품 효과 증거로 승격하거나 외부 패턴 구현 권한으로 해석하지 않으며, 현재 단일 제품 운영 우선순위도 변경하지 않는다.
 
+## Isolated Lesson Evaluation — Research Only
+
+[2026-10-02 preserve 교훈 3-arm 비교](evidence/preserve_lesson_evaluation_20261002.md)를 `ISOLATED_LESSON_EVAL_ONLY` 연구 기록으로 채택했다. 고정된 단일 진단 문제를 미주입·현재 검색 요약·명시적 적용 규칙 조건에서 각각 독립 세션 3회씩 실행했다. 실제 주입 문맥과 `gpt-6.1-sol` / `low` 설정을 확인했으며, 세 조건 모두 3/3 정답이었다. [근거 묶음](evidence/preserve_lesson_evaluation_20261002.json)에 고정 조건·9회 CLI 원출력·사용량·관련 rollout 발췌를 보존했다. 전체 session rollout은 로컬에만 남으므로 보존된 hash를 portable full-rollout custody로 해석하지 않는다.
+
+이 사례는 주입 전달을 확인했지만 정확도 개선은 확인하지 못했다. 미주입 조건도 모두 정답이므로 교훈의 필요성·일반적 무용성·규칙 추출의 우위·토큰/비용 절감·중복 제거 안전성을 입증하지 않는다. 사용자 기본 설정 전체를 고정한 실험도 아니다. Evidence A·제품 효과·경쟁 우위 증거로 승격하지 않으며 현재 제품 운영 우선순위, cohort 계약, 설치 identity, 원장을 변경하지 않는다. 새 문제·모델 호출·제품 적용은 별도 범위와 사람 승인이 필요하다.
+
 ## Deferred Product Backlog
 
 다음 항목은 Evidence A의 충분한 자연 작업 근거와 별도 plan·사람 승인 전에는 자동으로 시작하지 않는다. 표본 기준 충족만으로 실행 권한이 생기지는 않는다.
