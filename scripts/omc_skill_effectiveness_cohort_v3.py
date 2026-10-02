@@ -413,7 +413,7 @@ def verify_archive(path: Path) -> dict[str, Any]:
             raise V3Error("archive_capture_invalid")
     computed = {
         "review_unobserved": len(works - {e["work_id"] for e in reviews}),
-        "outcome_unobserved": len(works - {e["work_id"] for e in follows}),
+        "outcome_unobserved": _outcome_unobserved(works, reviews, follows),
         "review_stale_count": sum(e["taxonomy"] == "review_stale" for e in reviews),
         "review_churn_work_items": sum(sum(e["work_id"] == w for e in reviews) > 1 for w in works),
         "correction_after_approved_review": sum(
@@ -1065,6 +1065,21 @@ def _session(root: Path, session_id: str) -> dict[str, Any]:
     return session
 
 
+def _work_followup_finalized(events: list[dict[str, Any]], work_id: str) -> bool:
+    """Correction consumes one review choice; acceptance/deferral closes the work."""
+    return any(event["event_type"] == "followup" and event["work_id"] == work_id
+               and event["outcome"] != "correction" for event in events)
+
+
+def _outcome_unobserved(
+    works: set[str], reviews: list[dict[str, Any]], followups: list[dict[str, Any]],
+) -> int:
+    """An earlier correction is not an outcome for the next review round."""
+    latest_reviews = {review["work_id"]: review["event_id"] for review in reviews}
+    observed = {followup["review_event_id"] for followup in followups}
+    return sum(latest_reviews.get(work) not in observed for work in works)
+
+
 def _validate_event_link(event: dict[str, Any], prior: list[dict[str, Any]]) -> None:
     """Replay the same lifecycle constraints used when appending events."""
     event_type = event["event_type"]
@@ -1078,13 +1093,13 @@ def _validate_event_link(event: dict[str, Any], prior: list[dict[str, Any]]) -> 
         if not any(old["event_type"] == "candidate" and old["session_id"] == event["session_id"]
                    and old["work_id"] == work_id and old["skill_id"] == "omc-review" for old in prior):
             raise V3Error("v3_ledger_invalid")
-        if any(old["event_type"] == "followup" and old["work_id"] == work_id for old in prior):
+        if _work_followup_finalized(prior, work_id):
             raise V3Error("v3_ledger_invalid")
     elif event_type == "choice":
         reviews = [old for old in prior if old["event_type"] == "review" and old["work_id"] == work_id]
         if not reviews or reviews[-1]["event_id"] != event["review_event_id"]:
             raise V3Error("v3_ledger_invalid")
-        if any(old["event_type"] == "followup" and old["work_id"] == work_id for old in prior):
+        if _work_followup_finalized(prior, work_id):
             raise V3Error("v3_ledger_invalid")
         if any(old["event_type"] == "choice" and (
             old["choice_id"] == event["choice_id"] or
@@ -1308,7 +1323,7 @@ def record_review(
             raise V3Error("review_candidate_required")
         if any(e["event_type"] == "review" and e["session_id"] == session_id for e in events):
             raise V3Error("review_session_already_recorded")
-        if any(e["event_type"] == "followup" and e["work_id"] == work_id for e in events):
+        if _work_followup_finalized(events, work_id):
             raise V3Error("followup_finalized")
     return _record(root, event_type="review", work_id=work_id,
                    payload={"session_id": session_id, "verdict": verdict, "taxonomy": taxonomy,
@@ -1404,7 +1419,7 @@ def create_choice(root: Path, *, work_id: str, review_event_id: str) -> dict[str
         reviews = [e for e in events if e["event_type"] == "review" and e["work_id"] == work_id]
         if not reviews or reviews[-1]["event_id"] != review_event_id:
             raise V3Error("review_not_latest")
-        if any(e["event_type"] == "followup" and e["work_id"] == work_id for e in events):
+        if _work_followup_finalized(events, work_id):
             raise V3Error("followup_finalized")
         if any(e["event_type"] == "choice" and e["work_id"] == work_id and e["review_event_id"] == review_event_id for e in events):
             raise V3Error("choice_duplicate")
@@ -1546,7 +1561,7 @@ def _report_locked(root: Path) -> dict[str, Any]:
         ),
         "review_unobserved": len(works - {e["work_id"] for e in reviews}),
         "review_stale_count": sum(e["taxonomy"] == "review_stale" for e in reviews),
-        "outcome_unobserved": len(works - {e["work_id"] for e in followups}),
+        "outcome_unobserved": _outcome_unobserved(works, reviews, followups),
         "capture_sessions": {
             "recorded": sum(status == "recorded" for status in capture_statuses.values()),
             "integrity_invalid": sum(status == "integrity_invalid" for status in capture_statuses.values()),

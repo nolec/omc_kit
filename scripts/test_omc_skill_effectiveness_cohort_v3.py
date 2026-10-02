@@ -1018,6 +1018,126 @@ def test_choice_is_single_use_and_tied_to_latest_review(tmp_path: Path) -> None:
     assert v3.report(root)["correction"] == 1
 
 
+@pytest.mark.parametrize("corrections", [1, 2])
+def test_correction_opens_another_review_round_without_rewriting_history(tmp_path, corrections):
+    root = _root(tmp_path)
+    preserved = b""
+    choices = []
+    for index in range(corrections + 1):
+        sid = f"review-{index:03}"
+        _session(root, sid, "work-001", title="omc-review")
+        v3.record_candidate(root, session_id=sid)
+        review = v3.record_review(root, session_id=sid, work_id="work-001",
+                                  verdict="REVISE", taxonomy="requirement_gap")
+        choice = v3.create_choice(root, work_id="work-001", review_event_id=review["event_id"])
+        assert v3.ledger_path(root).read_bytes().startswith(preserved)
+        assert v3.report(root)["outcome_unobserved"] == 1
+        for old_choice in choices:
+            with pytest.raises(v3.V3Error, match="choice_consumed"):
+                v3.record_followup(root, choice_id=old_choice, outcome="accepted")
+        v3.record_followup(root, choice_id=choice["choice_id"],
+                           outcome="correction" if index < corrections else "accepted")
+        with pytest.raises(v3.V3Error, match="review_session_already_recorded"):
+            v3.record_review(root, session_id=sid, work_id="work-001",
+                             verdict="REVISE", taxonomy="requirement_gap")
+        if index < corrections:
+            with pytest.raises(v3.V3Error, match="choice_duplicate"):
+                v3.create_choice(root, work_id="work-001", review_event_id=review["event_id"])
+        preserved = v3.ledger_path(root).read_bytes()
+        choices.append(choice["choice_id"])
+    report = v3.report(root)
+    assert (report["work_items"], report["review_count"], report["correction"],
+            report["accepted"], report["outcome_unobserved"]) == (1, corrections + 1, corrections, 1, 0)
+
+
+@pytest.mark.parametrize("outcome", ["accepted", "deferred"])
+@pytest.mark.parametrize("prior_correction", [False, True])
+def test_terminal_followup_still_blocks_new_review_and_choice(tmp_path, outcome, prior_correction):
+    root = _root(tmp_path)
+    if prior_correction:
+        _session(root, "review-000", "work-001", title="omc-review")
+        v3.record_candidate(root, session_id="review-000")
+        review = v3.record_review(root, session_id="review-000", work_id="work-001",
+                                  verdict="REVISE", taxonomy="requirement_gap")
+        choice = v3.create_choice(root, work_id="work-001", review_event_id=review["event_id"])
+        v3.record_followup(root, choice_id=choice["choice_id"], outcome="correction")
+    for sid in ("review-001", "review-002"):
+        _session(root, sid, "work-001", title="omc-review")
+        v3.record_candidate(root, session_id=sid)
+    review = v3.record_review(root, session_id="review-001", work_id="work-001",
+                              verdict="REVISE", taxonomy="requirement_gap")
+    choice = v3.create_choice(root, work_id="work-001", review_event_id=review["event_id"])
+    v3.record_followup(root, choice_id=choice["choice_id"], outcome=outcome)
+    preserved = v3.ledger_path(root).read_bytes()
+    with pytest.raises(v3.V3Error, match="followup_finalized"):
+        v3.record_review(root, session_id="review-002", work_id="work-001",
+                         verdict="REVISE", taxonomy="requirement_gap")
+    with pytest.raises(v3.V3Error, match="followup_finalized"):
+        v3.create_choice(root, work_id="work-001", review_event_id=review["event_id"])
+    assert v3.ledger_path(root).read_bytes() == preserved
+    assert v3.report(root)["outcome_unobserved"] == 0
+
+
+@pytest.mark.parametrize("final_outcome", [None, "accepted", "correction"])
+def test_repeated_review_round_survives_close_and_archive(tmp_path, monkeypatch, final_outcome):
+    from datetime import datetime, timezone
+    roots, roster = _operational_pair(tmp_path, monkeypatch)
+    root = roots[0]
+    v3.enroll(root, roster_path=roster)
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 2, tzinfo=timezone.utc))
+    for sid, title in [("task-001", "omc-task"), ("review-001", "omc-review"),
+                       ("task-002", "omc-task"), ("review-002", "omc-review")]:
+        _session(root, sid, "work-001", title=title)
+        path = root / ".omc/state/sessions" / sid / "session.json"
+        session = json.loads(path.read_text())
+        session.update(work_class="implementation" if title == "omc-task" else None,
+                       created_at="2026-10-02T00:00:00Z")
+        path.write_text(json.dumps(session))
+        v3.record_candidate(root, session_id=sid)
+        if title == "omc-review":
+            review = v3.record_review(root, session_id=sid, work_id="work-001",
+                                      verdict="REVISE", taxonomy="requirement_gap")
+            choice = v3.create_choice(root, work_id="work-001", review_event_id=review["event_id"])
+            outcome = "correction" if sid == "review-001" else final_outcome
+            if outcome is not None:
+                v3.record_followup(root, choice_id=choice["choice_id"], outcome=outcome)
+    before = v3.ledger_path(root).read_bytes()
+    expected_unobserved = int(final_outcome is None)
+    assert v3.report(root)["outcome_unobserved"] == expected_unobserved
+    v3.close(root)
+    output = tmp_path / "archive.json"
+    v3.archive_closed(root, output=output)
+    assert v3.verify_archive(output)["state"] == "ARCHIVE_VERIFIED"
+    assert json.loads(output.read_text())["projection"]["outcome_unobserved"] == expected_unobserved
+    assert v3.ledger_path(root).read_bytes() == before
+
+
+@pytest.mark.parametrize("outcome", ["accepted", "deferred"])
+@pytest.mark.parametrize("event_type", ["review", "choice"])
+def test_replay_rejects_self_hashed_round_after_terminal_followup(tmp_path, outcome, event_type):
+    root = _root(tmp_path)
+    for sid in ("review-001", "review-002"):
+        _session(root, sid, "work-001", title="omc-review")
+        v3.record_candidate(root, session_id=sid)
+    review = v3.record_review(root, session_id="review-001", work_id="work-001",
+                              verdict="REVISE", taxonomy="requirement_gap")
+    choice = v3.create_choice(root, work_id="work-001", review_event_id=review["event_id"])
+    followup = v3.record_followup(root, choice_id=choice["choice_id"], outcome=outcome)
+    event = dict(review if event_type == "review" else choice)
+    event.update(event_id="forged-event", previous_event_sha256=followup["event_sha256"])
+    if event_type == "review":
+        event["session_id"] = "review-002"
+    else:
+        event["choice_id"] = "forged-choice"
+    event["event_sha256"] = v3._hash({k: value for k, value in event.items() if k != "event_sha256"})
+    with v3.ledger_path(root).open("a") as ledger:
+        ledger.write(json.dumps(event) + "\n")
+    before = v3.ledger_path(root).read_bytes()
+    with pytest.raises(v3.V3Error, match="v3_ledger_invalid"):
+        v3.report(root)
+    assert v3.ledger_path(root).read_bytes() == before
+
+
 def test_tampered_ledger_fails_closed(tmp_path: Path) -> None:
     root = _root(tmp_path)
     _session(root, "task-001", "work-001", title="omc-task")

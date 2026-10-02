@@ -17,7 +17,7 @@ OMC는 Codex를 대체하는 도구가 아니다. 여러 저장소를 운영하�
 | Review–Ship Integrity Binding P0.2 | `IMPLEMENTED_LOCAL_CONFORMANCE` | 승인한 canonical candidate를 pre/post-commit representation으로 비교하고 달라지면 `review_stale`로 막는다. 실제 사용자 재작업 감소는 미입증이다. |
 | Quality Gate Evidence Contract | `IMPLEMENTED_LOCAL_CONFORMANCE` | local ship gate와 CI 보완 범위를 계약으로 고정했다. 각 사용처의 실행 환경·migration 완료를 뜻하지 않는다. |
 | Evidence A — Raw-free workflow cohort v2 | 기존 원장 보존 / v3 등록 경로 우선 | v2 측정 계약과 과거 원장을 소급 수정하지 않는다. 운영 v3 등록이 있는 두 저장소에서는 v3 경로가 우선한다. |
-| Work-lifecycle cohort v3 | `IMPLEMENTED_LOCAL_CONFORMANCE` / `CLOSED` | ai-cs와 sixshop3-storefront-fe의 기존 activation은 종료했다. 원장·세션은 보존하며 외부 archive 검증·설치 업데이트·새 roster/T0·양쪽 재등록은 미완료다. `DRAFT_SYNTHETIC` fixture는 별도 모드이며 `asserted_work_link`·`operator_reported_unverified`는 승인 권한이 아니다. [전환 절차](work_lifecycle_cohort_v3_runbook.md) |
+| Work-lifecycle cohort v3 | `IMPLEMENTED_LOCAL_CONFORMANCE` / 현재 운영 상태 재확인 필요 | 2026-10-01 종료 기록은 역사적 스냅샷이다. 2026-10-02 재조회는 두 target 모두 `CAPTURE_FAILED(capture_io_error)`로 현재 활성화·전환 완료 여부를 확정하지 못했다. 원장·세션은 보존하며 설치·재등록·활성화 완료는 별도 증거로 확인한다. `DRAFT_SYNTHETIC` fixture는 별도 모드이며 `asserted_work_link`·`operator_reported_unverified`는 승인 권한이 아니다. [전환 절차](work_lifecycle_cohort_v3_runbook.md) |
 | Evidence B — Comparative effect | `NOT_STARTED` | 재작업 감소와 결함 누락 비열화는 별도 비교 설계·승인 없이는 판단하지 않는다. |
 | 제품 가치 | `NOT_PROVEN` | 사람이 덜 수정하는지, review 반복이 줄어드는지, 잘못된 ship을 실제로 막는지는 자연 작업 표본이 필요하다. |
 
@@ -26,7 +26,7 @@ OMC는 Codex를 대체하는 도구가 아니다. 여러 저장소를 운영하�
 OMC의 외부 제품 가치는 executor 수나 routing 복잡도가 아니라, AI가 만든 변경을 사람이 검증 가능한 증거로 승인하고 **동일한 candidate를 ship**하게 하는 데 있다. N-child와 routing은 이 목적을 지원하는 내부 execution capability이며, 제품 전면 약속이나 현재 확장 우선순위가 아니다.
 
 1. **Integrity** — 현재 P0.2는 reviewed candidate와 ship candidate의 동일성을 fail-closed로 검증한다. verification receipt의 실질적 candidate binding 재검증과 Human Decision Binding은 후속 단계이며, 전체 승인 chain이 완성됐다는 뜻은 아니다.
-2. **Evidence** — Evidence A는 현재 CLOSED 전환 중이다. 재등록 후 정확히 두 opt-in 저장소의 자연 작업에서 `review_count`, `review_churn`, `review_stale_count`, `correction_after_approved_review`를 관찰한다. 현재 cohort에는 새 시간 지표를 추가하지 않는다. Evidence B의 비교 효과·안전성 평가는 별도 계약이다.
+2. **Evidence** — Evidence A의 2026-10-01 종료·전환 기록은 보존하고 현재 운영 상태는 재확인한다. 재등록 후 정확히 두 opt-in 저장소의 자연 작업에서 `review_count`, `review_churn`, `review_stale_count`, `correction_after_approved_review`를 관찰한다. 현재 cohort에는 새 시간 지표를 추가하지 않는다. Evidence B의 비교 효과·안전성 평가는 별도 계약이다.
 3. **Human Decision** — 기존 candidate·verification·review receipt와 residual issue를 사람이 읽기 쉬운 read-only projection으로 연결하고, 무엇을 수용했는지 closure receipt에 결속한다. Decision Context는 새 진실의 원천이 아니다.
 4. **Reframing** — 충분한 자연 표본 뒤에, 잘못 정의된 문제를 안전하게 완성하는 frame lock-in을 줄일 수 있는지 alert-only 가설로 검증한다. 자동 scope 재개방이나 강제 gate는 아니다.
 5. **Compression** — integrity·관찰·사람 결정의 근거 위에서만 Human Review Surface를 줄이는 실험을 한다.
@@ -34,9 +34,11 @@ OMC의 외부 제품 가치는 executor 수나 routing 복잡도가 아니라, A
 
 ## Single Active Product Priority
 
+**수정 후 재리뷰 관찰 회차 / Kit 로컬 구현·리뷰 완료(2026-10-02 KST):** `correction`은 해당 choice만 종료하고 같은 work ID의 새 review session·event·choice를 허용한다. `accepted`·`deferred`의 작업 종료, 중복·재사용 차단은 유지한다. 최신 리뷰의 미관찰 집계를 live report와 archive 검증에 동일하게 적용하며 기존 원장·승인 receipt를 보존한다. 관련 전체 실행 `179 passed`, 최종 추가·확장 회귀 실행 `14 passed, 173 deselected`, staged TDD 게이트 통과, 리뷰 `APPROVE`를 확인했다. 두 실행의 테스트는 중복되므로 합산하지 않는다. consumer 설치본 반영과 실제 운영 재리뷰 연결은 미실행이며 다음 운영 검증은 설치 전환 절차에 따라 별도로 수행한다. [관찰 회차 정책](work_lifecycle_cohort_v3_runbook.md#자연-작업-기록)
+
 **반복 전환 복구 / 로컬 구현·리뷰 완료(2026-10-01 KST):** 두 번째 이후 전환은 명시적 transition ID·외부 custody 원본 bundle·영속 journal로 재시도한다. 기존 proof를 먼저 차단하고 config barrier를 유지하며, 완료 재시도도 history 원본 SHA와 보존 디렉터리 symlink를 검증한다. 충돌·누락·손상을 덮어쓰지 않고 누적 excluded work ID를 유지한다. 관련 synthetic 테스트 `122 passed`, 최종 리뷰 실패 경로 재검증 `8 passed`, staged TDD 게이트 통과다. 전체 `3964 passed, 3 skipped, 12 deselected`는 마지막 symlink 검사 이동 이전 결과이며 최종 후보의 전체 gate 재실행 결과가 아니다. 운영 archive·10곳 setup·두 곳 재등록·새 T0·공동 활성화는 별도 실행이 남아 있으며, 이번 구현은 수집 재개나 제품 효과의 근거가 아니다. [절차와 검증 경계](work_lifecycle_cohort_v3_runbook.md)
 
-**기존 work-lifecycle cohort v3는 `CLOSED`이며 현재 우선순위는 보존·업데이트·재등록 전환이다.** 이전 `ACTIVE_NATURAL_OBSERVATION`은 역사적 상태다. 기존 사용처 10곳을 업데이트하고 ai-cs·sixshop3-storefront-fe 두 곳만 재등록한다. oh-my-claudecode는 설치 대상이 아니다. 외부 write-once archive 검증 → 전환 barrier → 고정 commit의 setup·strict audit → 새 roster·미래 T0 → 양쪽 재등록·활성화 순서를 따른다. v2/v3 원장은 소급 수정하지 않으며 새 활성화 전에는 자연 수집 재개를 주장하지 않는다. 다른 제품 효과 연구·실험 lane이나 인위적 표본은 승인하지 않는다.
+**2026-10-01의 기존 work-lifecycle cohort v3 종료 기록은 역사적 스냅샷이며, 현재 우선순위는 보존·업데이트·재등록 전환이다.** 2026-10-02 두 target의 read-only `report` 재조회는 모두 `CAPTURE_FAILED(capture_io_error)`로 끝났으므로 현재 `CLOSED` 또는 `ACTIVE_NATURAL_OBSERVATION`을 확정하지 않는다. 기존 사용처 10곳을 업데이트하고 ai-cs·sixshop3-storefront-fe 두 곳만 재등록한다. oh-my-claudecode는 설치 대상이 아니다. 외부 write-once archive 검증 → 전환 barrier → 고정 commit의 setup·strict audit → 새 roster·미래 T0 → 양쪽 재등록·활성화 순서를 따른다. v2/v3 원장은 소급 수정하지 않으며 새 활성화 전에는 자연 수집 재개를 주장하지 않는다. 다른 제품 효과 연구·실험 lane이나 인위적 표본은 승인하지 않는다.
 
 - 전환 스냅샷(2026-10-01 KST): activation `workflow-v3-20260930-0715`의 closure는 ai-cs 21 events·storefront 38 events다. 이는 원장 이벤트 수이지 적격 work·review·outcome 수가 아니다. 외부 archive 게시와 사용처 업데이트는 미완료다.
 - **전환 안정성 수정 / 로컬 검증 완료:** archive는 activation 결속 전의 정확한 `integrity_invalid`·null activation 실패 세션을 보존하되 잘못된 shape는 거부한다. installer 감사 테스트의 registry를 임시 경로로 격리했고 review 스킬 3개 사본의 길이 계약을 유지했다. N-child 합성 fixture는 timeout 사례 1초·나머지 10초와 부모 합산 예산으로 분리하고 1.2초 지연 scope 위반 회귀를 검증했다. 실제 runner 정책과 실패 판정은 완화하지 않았다. 전체 local ship gate는 `3893 passed, 3 skipped, 12 deselected`이며 consumer rollout·archive 운영 성공·제품 효과의 근거는 아니다. 버전 표기는 `0.3.4` 유지, 새 배포 기준 commit은 이번 수정 커밋 이후 별도로 고정한다.

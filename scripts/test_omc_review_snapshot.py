@@ -240,6 +240,67 @@ def test_opt_in_v3_review_bridge_uses_issued_receipt_and_explicit_followup(tmp_p
     assert not (repo / ".omc" / "skill-effectiveness-cohort-v2.jsonl").exists()
 
 
+def test_review_receipt_bridge_records_new_round_after_correction(tmp_path: Path) -> None:
+    repo, base = _repo(tmp_path)
+    v3.config_path(repo).parent.mkdir(exist_ok=True)
+    v3.config_path(repo).write_text(json.dumps({
+        "generation": "v3", "enabled": True, "status": "DRAFT_SYNTHETIC",
+        "activation_id": "synthetic-only", "activation_at": "2026-09-23T00:00:00Z",
+    }))
+    task = omc_state.record_session(
+        repo, mode="autopilot", title="omc-task", request="fixture task",
+        role_ids=["senior_coding"], work_class="synthetic", completion_action="start", confirmed=True,
+    )
+    choices = []
+    receipts = []
+    preserved = b""
+    for index in range(2):
+        if index:
+            correction = omc_state.record_session(
+                repo, mode="autopilot", title="omc-task", request="fixture correction",
+                role_ids=["senior_coding"], work_class="synthetic", completion_action="continue",
+                work_id=task["work_id"], confirmed=True,
+            )
+            assert correction["work_id"] == task["work_id"]
+        review = omc_state.record_session(
+            repo, mode="autopilot", title="omc-review", request=f"fixture review {index}",
+            role_ids=["code_review"], completion_action="preserve-if-present", confirmed=True,
+        )
+        assert review["work_id"] == task["work_id"]
+        (repo / "app.py").write_text(f"value = {index}\n")
+        frozen = snapshot.capture_review_snapshot(repo, base_commit=base)
+        evidence = snapshot.seal_review_output(
+            repo, review_output=b"approved\n", snapshot_path=Path(frozen["snapshot_path"]),
+            snapshot_sha256=frozen["snapshot_sha256"],
+        )
+        result = _snapshot_cli(
+            repo, "record-review", "--review-snapshot", frozen["snapshot_path"],
+            "--review-snapshot-sha256", frozen["snapshot_sha256"],
+            "--review-evidence", evidence["evidence_path"],
+            "--review-evidence-sha256", evidence["evidence_sha256"],
+            "--verdict", "APPROVE", "--cohort-session-id", review["session_id"],
+            "--cohort-taxonomy", "verification_gap",
+        )
+        assert result["cohort_capture_v3"]["status"] == "recorded"
+        receipts.append((Path(result["receipt_path"]), Path(result["receipt_path"]).read_bytes()))
+        assert v3.ledger_path(repo).read_bytes().startswith(preserved)
+        assert v3.report(repo)["outcome_unobserved"] == 1
+        assert _snapshot_cli(repo, "validate-ship", "--target", str(repo))["status"] == "READY"
+        choices.append(result["cohort_capture_v3"]["choice_id"])
+        followup = subprocess.run(
+            [sys.executable, str(Path(v3.__file__)), "record-explicit-followup", "--target", str(repo),
+             "--choice-id", choices[-1], "--outcome", "correction" if index == 0 else "accepted"],
+            capture_output=True, text=True,
+        )
+        assert followup.returncode == 0, followup.stdout + followup.stderr
+        preserved = v3.ledger_path(repo).read_bytes()
+    report = v3.report(repo)
+    assert (report["work_items"], report["review_count"], report["correction_after_approved_review"],
+            report["accepted"], report["outcome_unobserved"]) == (1, 2, 1, 1, 0)
+    assert len(set(choices)) == 2
+    assert all(path.read_bytes() == data for path, data in receipts)
+
+
 def test_v3_choice_io_failure_does_not_hide_valid_review_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

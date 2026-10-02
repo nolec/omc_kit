@@ -37,6 +37,10 @@ python3 scripts/omc_skill_effectiveness_cohort_v3.py aggregate \
 
 `omc-review`는 승인 receipt 생성 시 현재 review session ID와 taxonomy를 명시한다. 승인 이벤트는 실제 receipt hash/verdict를 append 시점에 검증한다. 비승인 review는 `record-explicit-review`, 사용자의 명확한 응답은 반환된 choice ID로 `record-explicit-followup`을 실행한다. 원문 복사를 요구하지 않는다. 기록에 실패하면 그 사실을 보여준다. review 저장 후 choice만 실패하면 `resume-review-choice`로 복구하고 review를 중복 추가하지 않는다. 이미 소비한 choice는 재사용하지 않는다.
 
+`correction`은 해당 review의 choice만 종료한다. 수정과 재리뷰는 같은 work ID를 유지하고, 새 review session에서 새 review event와 choice를 생성한다. 이전 choice를 재사용하거나 과거 event·승인 receipt를 수정하지 않는다. `accepted`·`deferred`는 해당 work의 리뷰 관찰을 종료하므로 이후 같은 work의 review/choice 추가는 `followup_finalized`로 거부한다. 이 상태는 관찰 연결 결과이며 코드 리뷰 판정이나 승인 receipt 생성 결과와 별도로 보고한다.
+
+`accepted`·`correction`·`deferred`는 후속 event 수이며, 반복 회차는 작업 1건에 여러 후속으로 집계될 수 있다. `outcome_unobserved`는 최신 review에 후속이 없거나 아직 review가 없는 작업 수다. 이전 회차의 correction으로 새 review의 결과를 대신하지 않는다. 기존 원장은 보존하며 이 정책은 live report와 archive 검증에 동일하게 적용한다.
+
 기록 경로를 점검하려고 가짜 자연 작업을 만들지 않는다. 로컬 통합 fixture의 `task → REVISE → 수정 → APPROVE → accepted` 결과는 작업 1건·리뷰 2건·수용 1건이지만 운영 표본은 아니다.
 
 ## 종료와 보존
