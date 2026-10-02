@@ -542,6 +542,79 @@ def test_joint_activation_rejects_partial_enrollment_and_late_t0(tmp_path, monke
     assert v3.report(roots[0])["state"] == "TRANSITION_BLOCKED"
 
 
+def _active_transition_for_scope_test(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    roots, outputs = _closed_archives(tmp_path, monkeypatch)
+    for root, output in zip(roots, outputs):
+        v3.prepare_transition(root, archives=outputs, archive=output)
+    roster = tmp_path / "scope-roster.json"
+    v3.create_roster(targets=roots, output=roster, activation_id="scope-activation",
+                     activation_at="2026-10-03T00:00:00Z")
+    for root in roots:
+        v3.enroll(root, roster_path=roster)
+    v3.activate_pair(roots, output=tmp_path / "scope-joint.json")
+    monkeypatch.setattr(v3, "_now", lambda: datetime(2026, 10, 4, tzinfo=timezone.utc))
+    return roots[0]
+
+
+def test_transition_report_excludes_unenrolled_review_before_lineage_validation(tmp_path, monkeypatch):
+    root = _active_transition_for_scope_test(tmp_path, monkeypatch)
+    _session(root, "scope-start", "scope-work", title="panel-style-scope")
+    path = root / ".omc/state/sessions/scope-start/session.json"
+    data = json.loads(path.read_text())
+    data.update(work_class="implementation", created_at="2026-10-04T00:00:00Z",
+                completion_action="start", lineage_root_session_id="scope-start", lineage_index=0)
+    path.write_text(json.dumps(data))
+    _session(root, "scope-review", "scope-work", title="omc-review")
+    path = root / ".omc/state/sessions/scope-review/session.json"
+    data = json.loads(path.read_text())
+    data.update(work_class=None, created_at="2026-10-04T00:00:00Z",
+                cohort_capture_v3={"status": "integrity_invalid", "reason_code": "session_invalid",
+                                   "activation_id": "scope-activation"})
+    path.write_text(json.dumps(data))
+    before = {str(p): p.read_bytes() for p in (root / ".omc").rglob("*") if p.is_file()}
+    report = v3.report(root)
+    assert report["state"] == "ACTIVE_NATURAL_OBSERVATION"
+    assert (report["work_items"], report["skill_exposures"]) == (0, 0)
+    with pytest.raises(v3.V3Error, match="candidate_out_of_scope"):
+        v3.record_candidate(root, session_id="scope-review")
+    assert {str(p): p.read_bytes() for p in (root / ".omc").rglob("*") if p.is_file()} == before
+    v3.close(root)
+    archive = tmp_path / "scope-archive.json"
+    assert v3.archive_closed(root, output=archive)["state"] == "ARCHIVE_VERIFIED"
+
+
+@pytest.mark.parametrize("mutation", [None, "title", "confirmation"])
+def test_transition_scope_keeps_recorded_candidate_lineage_checks(tmp_path, monkeypatch, mutation):
+    root = _active_transition_for_scope_test(tmp_path, monkeypatch)
+    _session(root, "fresh-start", "fresh-work", title="omc-task")
+    path = root / ".omc/state/sessions/fresh-start/session.json"
+    data = json.loads(path.read_text())
+    data.update(work_class="implementation", created_at="2026-10-04T00:00:00Z",
+                completion_action="start", lineage_root_session_id="fresh-start", lineage_index=0)
+    path.write_text(json.dumps(data))
+    v3.record_candidate(root, session_id="fresh-start")
+    _session(root, "fresh-review", "fresh-work", title="omc-review")
+    review_path = root / ".omc/state/sessions/fresh-review/session.json"
+    review = json.loads(review_path.read_text())
+    review.update(work_class=None, created_at="2026-10-04T00:00:00Z")
+    review_path.write_text(json.dumps(review))
+    v3.record_candidate(root, session_id="fresh-review")
+    if mutation == "title":
+        data["title"] = "panel-style-scope"
+    elif mutation == "confirmation":
+        data["confirmation"]["status"] = "pending"
+    path.write_text(json.dumps(data))
+    before = v3.ledger_path(root).read_bytes()
+    if mutation is None:
+        report = v3.report(root)
+        assert (report["work_items"], report["skill_exposures"]) == (1, 2)
+    else:
+        with pytest.raises(v3.V3Error, match="session_invalid"):
+            v3.report(root)
+    assert v3.ledger_path(root).read_bytes() == before
+
+
 def test_transition_rejects_unknown_work_start(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     roots, outputs = _closed_archives(tmp_path, monkeypatch)

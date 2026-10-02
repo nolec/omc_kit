@@ -1240,6 +1240,25 @@ def _candidate_in_scope(root: Path, session: dict[str, Any], prior: list[dict[st
                         config: dict[str, Any] | None = None) -> bool:
     config = config or _config(root)
     work_class = "implementation" if config["status"] == ACTIVE else "synthetic"
+    if config["status"] == ACTIVE and (
+        session["session_id"] in config["enrollment_session_ids"]
+        or _time(session.get("created_at")) < _time(config["activation_at"])
+        or _time(session.get("created_at")) > _now()
+    ):
+        return False
+    # Reviews inherit eligibility only from a captured task of the same class.
+    # Do not validate an unrelated work's lineage while scanning all sessions.
+    in_scope = session.get("work_class") == work_class or (
+        session.get("work_class") is None and session["title"] == "omc-review" and any(
+            e["event_type"] == "candidate"
+            and e["work_id"] == session["work_id"]
+            and e["skill_id"] == "omc-task"
+            and _session(root, e["session_id"]).get("work_class") == work_class
+            for e in prior
+        )
+    )
+    if not in_scope:
+        return False
     marker = _transition(root)
     if marker is not None:
         excluded = set(config["excluded_work_ids"])
@@ -1266,21 +1285,7 @@ def _candidate_in_scope(root: Path, session: dict[str, Any], prior: list[dict[st
                 or _time(origin.get("created_at")) < _time(config["activation_at"])
                 or _time(origin.get("created_at")) > _now()):
             return False
-    if config["status"] == ACTIVE and (
-        session["session_id"] in config["enrollment_session_ids"]
-        or _time(session.get("created_at")) < _time(config["activation_at"])
-        or _time(session.get("created_at")) > _now()
-    ):
-        return False
-    if session.get("work_class") == work_class:
-        return True
-    return session.get("work_class") is None and session["title"] == "omc-review" and any(
-        e["event_type"] == "candidate"
-        and e["work_id"] == session["work_id"]
-        and e["skill_id"] == "omc-task"
-        and _session(root, e["session_id"]).get("work_class") == work_class
-        for e in prior
-    )
+    return True
 
 
 def record_candidate(root: Path, *, session_id: str) -> dict[str, Any]:
