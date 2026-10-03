@@ -680,8 +680,276 @@ def _git_text(project_root: Path, *args: str) -> str:
     return result.stdout
 
 
+
+# A transition is additive: the legacy policy and work bytes remain untouched.
+def _transition_read(path: Path) -> dict:
+    if any(p.is_symlink() for p in [path, *path.parents]):
+        raise CaptureError('live_transition_archive_invalid')
+    try:
+        value = _read_json(path)
+    except (OSError, ValueError) as error:
+        raise CaptureError('live_transition_archive_invalid') from error
+    if not isinstance(value, dict):
+        raise CaptureError('live_transition_archive_invalid')
+    return value
+
+TRANSITION_FILE = '.omc/observations/transition.json'
+
+
+def _transition_marker(root: Path) -> dict | None:
+    path = root / TRANSITION_FILE
+    if not path.exists() and not path.is_symlink():
+        return None
+    marker = _validate_live_record(_transition_read(path), artifact_type='transition',
+                                   hash_field='transition_sha256')
+    required = {'schema_version', 'artifact_type', 'registration', 'custody',
+                'manifest_sha256', 'excluded_work_ids', 'activation_receipt',
+                'transition_sha256', 'history_studies'}
+    if (set(marker) != required or not isinstance(marker['excluded_work_ids'], list)
+            or not isinstance(marker['custody'], str) or not Path(marker['custody']).is_absolute()
+            or not isinstance(marker['activation_receipt'], str) or not Path(marker['activation_receipt']).is_absolute()):
+        raise CaptureError('live_transition_binding_invalid')
+    _validate_live_registration(marker['registration'])
+    if (not isinstance(marker['history_studies'], dict)
+            or set(marker['history_studies']) != set(marker['excluded_work_ids'])
+            or any(re.fullmatch(r'[0-9a-f]{32}', str(w)) is None for w in marker['excluded_work_ids'])
+            or any(not isinstance(v,str) for v in marker['history_studies'].values())):
+        raise CaptureError('live_transition_binding_invalid')
+    return marker
+
+
+def _transition_archive(root: Path, marker: dict) -> dict:
+    custody = Path(marker['custody'])
+    manifest = _transition_read(custody / 'manifest.json')
+    if (set(manifest) != {'files','old_study_id','previous_registration_sha256','previous_registration_bytes_sha256'}
+            or not isinstance(manifest['files'], dict)
+            or canonical_sha256(manifest) != marker['manifest_sha256']):
+        raise CaptureError('live_transition_archive_invalid')
+    previous_path = custody / 'previous-registration.json'
+    previous_registration = _validate_live_registration(_transition_read(previous_path))
+    if hashlib.sha256(previous_path.read_bytes()).hexdigest() != manifest['previous_registration_bytes_sha256']:
+        raise CaptureError('live_transition_archive_invalid')
+    if previous_registration['registration_sha256'] != manifest['previous_registration_sha256']:
+        raise CaptureError('live_transition_archive_invalid')
+    for relative, digest in manifest['files'].items():
+        if Path(relative).is_absolute() or '..' in Path(relative).parts:
+            raise CaptureError('live_transition_archive_invalid')
+        path = custody / 'files' / relative
+        if any(p.is_symlink() for p in [path, *path.parents]):
+            raise CaptureError('live_transition_archive_invalid')
+        if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            raise CaptureError('live_transition_archive_invalid')
+    return manifest
+
+
+def prepare_live_transition(root: Path, *, registration: dict, custody: Path,
+                            activation_receipt: Path, previous_registration: Path | None = None) -> dict:
+    root = root.resolve()
+    registration = _validate_live_registration(registration)
+    custody = custody.resolve()
+    activation_receipt = activation_receipt.resolve()
+    if _path_is_within(custody, root) or _path_is_within(activation_receipt, root):
+        raise CaptureError('live_transition_custody_invalid')
+    with omc_state._omc_lock(root):
+        marker = _transition_marker(root)
+        previous = marker
+        if marker:
+            _transition_archive(root, marker)
+            if marker['registration'] == registration:
+                if marker['custody'] != str(custody) or marker['activation_receipt'] != str(activation_receipt):
+                    raise CaptureError('live_transition_conflict')
+                return marker
+            if not Path(marker['activation_receipt']).exists() and _now() < _timestamp(marker['registration']['observation_started_at']):
+                raise CaptureError('live_transition_conflict')
+        old_path = _transition_policy_path(root, marker) if marker else root / '.omc/observation-policy.json'
+        if not old_path.exists():
+            old_path = root / '.omc/observation-policy.json'
+        old = _validate_live_record(_transition_read(old_path),
+                                   artifact_type='policy', hash_field='policy_sha256')
+        old_registration_path = previous_registration or (root / '.omc/observations/registrations' / (old['cohort_registration_sha256'] + '.json'))
+        if not old_registration_path.exists():
+            raise CaptureError('live_previous_registration_required')
+        old_registration = _validate_live_registration(_transition_read(old_registration_path))
+        if (old_registration['registration_sha256'] != old['cohort_registration_sha256']
+                or old_registration['study_id'] != old['study_id']):
+            raise CaptureError('live_transition_binding_invalid')
+        preserved_registration = custody / 'previous-registration.json'
+        old_registration_bytes = old_registration_path.read_bytes()
+        if any(p.is_symlink() for p in [preserved_registration, *preserved_registration.parents]):
+            raise CaptureError('live_transition_archive_invalid')
+        if preserved_registration.exists():
+            if preserved_registration.read_bytes() != old_registration_bytes:
+                raise CaptureError('live_transition_archive_invalid')
+        else:
+            preserved_registration.parent.mkdir(parents=True, exist_ok=True)
+            with preserved_registration.open('xb') as handle:
+                os.chmod(preserved_registration, 0o600)
+                handle.write(old_registration_bytes)
+                handle.flush(); os.fsync(handle.fileno())
+        if old['study_id'] == registration['study_id']:
+            raise CaptureError('live_transition_conflict')
+        if _now() >= _timestamp(registration['observation_started_at']):
+            raise CaptureError('live_transition_t0_expired')
+        paths = [root / '.omc/observation-policy.json']
+        paths += list((root / '.omc/observations').rglob('*'))
+        pending = root / '.omc/state/pending-completion.json'
+        if pending.exists() or pending.is_symlink():
+            paths.append(pending)
+        paths += list((root / '.omc/state/sessions').glob('*/session.json'))
+        files = {}
+        excluded = set()
+        for path in sorted(set(paths)):
+            if path.is_symlink():
+                raise CaptureError('live_transition_archive_invalid')
+            if (not path.is_file() or path.name.endswith('.lock')
+                    or 'transitions' in path.relative_to(root).parts):
+                continue
+            relative = str(path.relative_to(root))
+            raw = path.read_bytes()
+            files[relative] = hashlib.sha256(raw).hexdigest()
+            destination = custody / 'files' / relative
+            if any(p.is_symlink() for p in [destination, *destination.parents]):
+                raise CaptureError('live_transition_archive_invalid')
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists():
+                if destination.is_symlink() or destination.read_bytes() != raw:
+                    raise CaptureError('live_transition_archive_invalid')
+            else:
+                with destination.open('xb') as handle:
+                    os.chmod(destination, 0o600)
+                    handle.write(raw); handle.flush(); os.fsync(handle.fileno())
+            if path.name in {'session.json', 'pending-completion.json', 'start.json'}:
+                work = json.loads(raw).get('work_id')
+                if isinstance(work, str):
+                    excluded.add(work)
+        manifest = {'files': files, 'old_study_id': old['study_id'],
+                    'previous_registration_sha256': old_registration['registration_sha256'],
+                    'previous_registration_bytes_sha256': hashlib.sha256(old_registration_bytes).hexdigest()}
+        manifest_path = custody / 'manifest.json'
+        if manifest_path.exists():
+            if _read_json(manifest_path) != manifest:
+                raise CaptureError('live_transition_archive_invalid')
+        else:
+            _write_once(manifest_path, manifest)
+        marker = _live_record({'schema_version': LIVE_SCHEMA, 'artifact_type': 'transition',
+            'registration': registration, 'custody': str(custody),
+            'manifest_sha256': canonical_sha256(manifest),
+            'excluded_work_ids': sorted(excluded), 'activation_receipt': str(activation_receipt),
+            'history_studies': {**{w:old['study_id'] for w in excluded},
+                               **(previous['history_studies'] if previous else {})}},
+            'transition_sha256')
+        _transition_archive(root, marker)
+        history = root / '.omc/observations/transitions' / (marker['transition_sha256'] + '.json')
+        if history.exists():
+            if _transition_read(history) != marker:
+                raise CaptureError('live_transition_conflict')
+        else:
+            _write_once(history, marker)
+        omc_state._write_json(root / TRANSITION_FILE, marker)
+        return marker
+
+
+def _transition_policy_path(root: Path, marker: dict) -> Path:
+    return root / '.omc/observations/studies' / marker['registration']['registration_sha256'] / 'policy.json'
+
+
+def _check_pair_activation(root: Path, marker: dict) -> None:
+    path = Path(marker['activation_receipt'])
+    if not path.exists():
+        raise CaptureError('live_transition_blocked')
+    proof = _validate_live_record(_transition_read(path), artifact_type='pair_activation',
+                                  hash_field='activation_sha256')
+    registration = marker['registration']
+    if set(proof) != {'schema_version','artifact_type','registration_sha256','targets','activation_sha256'} or not isinstance(proof.get('targets'), dict):
+        raise CaptureError('live_transition_binding_invalid')
+    if proof['registration_sha256'] != registration['registration_sha256']:
+        raise CaptureError('live_transition_binding_invalid')
+    roster = registration['repositories']
+    if sorted(proof['targets']) != sorted(x['repository_root_sha256'] for x in roster):
+        raise CaptureError('live_transition_binding_invalid')
+    for identity, item in proof['targets'].items():
+        if (not isinstance(item, dict) or set(item) != {'root','transition_sha256','policy_sha256'}
+                or not isinstance(item['root'],str) or not Path(item['root']).is_absolute()):
+            raise CaptureError('live_transition_binding_invalid')
+        peer = Path(item['root'])
+        if hashlib.sha256(str(peer.resolve()).encode()).hexdigest() != identity:
+            raise CaptureError('live_transition_binding_invalid')
+        peer_marker = _transition_marker(peer)
+        if peer_marker is None or peer_marker['transition_sha256'] != item['transition_sha256']:
+            raise CaptureError('live_transition_binding_invalid')
+        if peer_marker['registration'] != registration or peer_marker['activation_receipt'] != str(path):
+            raise CaptureError('live_transition_binding_invalid')
+        _transition_archive(peer, peer_marker)
+        policy = _validate_live_record(_transition_read(_transition_policy_path(peer, peer_marker)),
+                                      artifact_type='policy', hash_field='policy_sha256')
+        if policy['policy_sha256'] != item['policy_sha256']:
+            raise CaptureError('live_transition_binding_invalid')
+        if any(policy.get(k) != v for k,v in _live_install_identity(peer, require_fresh_source=False).items()):
+            raise CaptureError('live_install_identity_invalid')
+
+
+def activate_live_pair(repository_roots: dict[str, Path]) -> dict:
+    from contextlib import ExitStack
+    roots = {k: v.resolve() for k,v in repository_roots.items()}
+    with ExitStack() as stack:
+        for root in sorted(roots.values()):
+            stack.enter_context(omc_state._omc_lock(root))
+        markers = {k: _transition_marker(v) for k,v in roots.items()}
+        if not markers or any(v is None for v in markers.values()):
+            raise CaptureError('live_transition_blocked')
+        first = next(iter(markers.values()))
+        registration = first['registration']
+        expected = [{'repo_id': k, 'repository_root_sha256': hashlib.sha256(str(v).encode()).hexdigest()}
+                    for k,v in sorted(roots.items())]
+        if registration['repositories'] != expected or len(set(roots.values())) != len(roots) or len(roots) < 2:
+            raise CaptureError('live_transition_binding_invalid')
+        proof_path = Path(first['activation_receipt'])
+        if proof_path.exists():
+            for root in roots.values():
+                _check_pair_activation(root, _transition_marker(root))
+            return _read_json(proof_path)
+        if _now() >= _timestamp(registration['observation_started_at']):
+            raise CaptureError('live_transition_t0_expired')
+        targets = {}
+        for key, root in roots.items():
+            marker = markers[key]
+            if marker['registration'] != registration or marker['activation_receipt'] != str(proof_path):
+                raise CaptureError('live_transition_binding_invalid')
+            _transition_archive(root, marker)
+            policy_path = _transition_policy_path(root, marker)
+            policy = enable_live_observation(root, executor_surface='codex', repo_id=key,
+                                            registration=registration, _output=policy_path)
+            targets[hashlib.sha256(str(root).encode()).hexdigest()] = {
+                'root': str(root), 'transition_sha256': marker['transition_sha256'],
+                'policy_sha256': policy['policy_sha256']}
+        proof = _live_record({'schema_version': LIVE_SCHEMA, 'artifact_type': 'pair_activation',
+            'registration_sha256': registration['registration_sha256'], 'targets': targets},
+            'activation_sha256')
+        if _now() >= _timestamp(registration["observation_started_at"]):
+            raise CaptureError("live_transition_t0_expired")
+        _write_once(proof_path, proof)
+        return proof
+
+
+def historical_live_status(root: Path, *, work_id: str) -> dict:
+    marker = _transition_marker(root)
+    if marker is None or work_id not in marker['excluded_work_ids']:
+        raise CaptureError('live_observation_not_started')
+    manifest = _transition_archive(root, marker)
+    return {'claim_boundary': 'OBSERVATION_ONLY', 'status': 'HISTORICAL_WORK_UNOBSERVED',
+            'study_id': marker['history_studies'][work_id], 'work_id': work_id,
+            'reason': 'previous_study_frozen', 'custody': marker['custody']}
+
+
+def _live_data_root(root: Path) -> Path:
+    marker = _transition_marker(root)
+    if marker is None:
+        return root / '.omc/observations'
+    return _transition_policy_path(root, marker).parent
+
+
 def _live_root(project_root: Path, work_id: str) -> Path:
-    return project_root / ".omc" / "observations" / "live" / work_id
+    return _live_data_root(project_root) / "live" / work_id
 
 
 def _live_install_identity(
@@ -826,6 +1094,7 @@ def enable_live_observation(
     executor_surface: str,
     repo_id: str,
     registration: dict[str, Any],
+    _output: Path | None = None,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
     registration = _validate_live_registration(registration)
@@ -866,14 +1135,36 @@ def enable_live_observation(
         },
         "policy_sha256",
     )
-    _write_once(project_root / ".omc" / "observation-policy.json", policy)
+    if _output is not None:
+        marker = _transition_marker(project_root)
+        if marker is None or _output != _transition_policy_path(project_root, marker) or marker['registration'] != registration:
+            raise CaptureError('live_transition_binding_invalid')
+    elif _transition_marker(project_root) is not None:
+        raise CaptureError('live_transition_blocked')
+    output = _output or project_root / ".omc/observation-policy.json"
+    registration_path = project_root / ".omc/observations/registrations" / (registration["registration_sha256"] + ".json")
+    if registration_path.exists():
+        if _transition_read(registration_path) != registration:
+            raise CaptureError("live_transition_conflict")
+    else:
+        _write_once(registration_path, registration)
+    if output.exists():
+        if _read_json(output) != policy:
+            raise CaptureError("live_transition_conflict")
+    else:
+        _write_once(output, policy)
     return policy
 
 
 def _live_policy(project_root: Path) -> dict[str, Any]:
+    marker = _transition_marker(project_root)
+    path = project_root / ".omc/observation-policy.json"
+    if marker is not None:
+        _check_pair_activation(project_root, marker)
+        path = _transition_policy_path(project_root, marker)
     try:
         policy = _validate_live_record(
-            _read_json(project_root / ".omc" / "observation-policy.json"),
+            _read_json(path),
             artifact_type="policy",
             hash_field="policy_sha256",
         )
@@ -976,7 +1267,7 @@ def record_live_failure(project_root: Path, *, command: str, reason: str) -> Non
             },
             "failure_sha256",
         )
-        parent = project_root.resolve() / ".omc" / "observations" / "live-failures"
+        parent = _live_data_root(project_root.resolve()) / "live-failures"
         parent.mkdir(parents=True, exist_ok=True)
         _write_once(parent / f"{record['failure_sha256']}.json", record)
     except Exception:
@@ -1196,7 +1487,7 @@ def _validate_live_work_artifacts(
 def _live_cohort_starts(
     project_root: Path, policy: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    parent = project_root / ".omc" / "observations" / "live"
+    parent = _live_data_root(project_root) / "live"
     records: list[dict[str, Any]] = []
     for path in sorted(parent.glob("*/start.json")):
         if re.fullmatch(r"[0-9a-f]{32}", path.parent.name) is None:
@@ -1247,7 +1538,7 @@ def _live_cohort_starts(
 def _allocate_live_start(
     project_root: Path, policy: dict[str, Any], pending: dict[str, Any]
 ) -> dict[str, Any]:
-    parent = project_root / ".omc" / "observations" / "live"
+    parent = _live_data_root(project_root) / "live"
     parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(
         parent / ".allocation.lock",
@@ -1308,6 +1599,12 @@ def start_live_observation(project_root: Path) -> dict[str, Any]:
     project_root = project_root.resolve()
     policy = _live_policy(project_root)
     pending = _live_pending(project_root)
+    marker = _transition_marker(project_root)
+    if marker is not None:
+        session = _read_json(project_root / ".omc/state/sessions" / pending["root_session_id"] / "session.json")
+        if (pending["work_id"] in marker["excluded_work_ids"]
+                or _timestamp(session["created_at"]) < _timestamp(policy["enabled_at"])):
+            raise CaptureError("live_previous_work_excluded")
     return _allocate_live_start(project_root, policy, pending)
 
 
@@ -1359,7 +1656,7 @@ def close_live_cohort(
             latest_enabled = enabled if latest_enabled is None else max(latest_enabled, enabled)
             policy_hashes[repo_id] = policy["policy_sha256"]
             for failure_path in sorted(
-                (root / ".omc" / "observations" / "live-failures").glob("*.json")
+                (_live_data_root(root) / "live-failures").glob("*.json")
             ):
                 failure = _validate_live_record(
                     _read_json(failure_path),
@@ -1465,6 +1762,9 @@ def _live_observation_status_for_pending(
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
     policy = _live_policy(project_root)
+    marker = _transition_marker(project_root)
+    if marker is not None and pending["work_id"] in marker["excluded_work_ids"]:
+        return historical_live_status(project_root, work_id=pending["work_id"])
     starts = _live_cohort_starts(project_root, policy)
     root = _live_root(project_root, pending["work_id"])
     start_path = root / "start.json"
@@ -1572,6 +1872,9 @@ def _validated_live_work(
 
 def _live_work_status(project_root: Path, *, work_id: str) -> dict[str, Any]:
     """Read one immutable live-work ledger without depending on current pending state."""
+    marker = _transition_marker(project_root)
+    if marker is not None and work_id in marker["excluded_work_ids"]:
+        return historical_live_status(project_root, work_id=work_id)
     policy, starts, start, completion, terminal = _validated_live_work(
         project_root, work_id=work_id
     )
@@ -1988,6 +2291,15 @@ def route_live_prompt(
             "claim_boundary": "OBSERVATION_ONLY",
             "status": "WORK_ID_REQUIRED",
         }
+    historical = []
+    for root in repository_roots.values():
+        marker = _transition_marker(root.resolve())
+        if marker is not None and work_id in marker['excluded_work_ids']:
+            historical.append(root.resolve())
+    if len(historical) == 1:
+        return historical_live_status(historical[0], work_id=work_id)
+    if len(historical) > 1:
+        raise CaptureError('live_observation_binding_mismatch')
     quarantine = quarantine_root.resolve()
     candidates: list[tuple[str, Path, str]] = []
     for repo_id, raw_root in sorted(repository_roots.items()):
@@ -2103,6 +2415,15 @@ def _parser() -> argparse.ArgumentParser:
     report.add_argument("--population-completeness-receipt", type=Path, required=True)
     report.add_argument("--approved-registration-sha256", required=True)
     report.add_argument("--repository-root", action="append", required=True)
+    live_prepare = sub.add_parser("live-prepare-transition")
+    live_prepare.add_argument("--target", type=Path, default=Path.cwd())
+    live_prepare.add_argument("--registration", type=Path, required=True)
+    live_prepare.add_argument("--custody", type=Path, required=True)
+    live_prepare.add_argument("--activation-receipt", type=Path, required=True)
+    live_prepare.add_argument("--previous-registration", type=Path)
+    live_activate = sub.add_parser("live-activate-pair")
+    live_activate.add_argument("--target", type=Path, default=Path.cwd())
+    live_activate.add_argument("--repository-root", action="append", required=True)
     live_start = sub.add_parser("live-start")
     live_enable = sub.add_parser("live-enable")
     live_status = sub.add_parser("live-status")
@@ -2155,11 +2476,51 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+from functools import wraps
+
+def _live_locked(function):
+    @wraps(function)
+    def locked(root, *args, **kwargs):
+        # Do not re-enter the legacy context manager: its nested finally return
+        # suppresses exceptions. The outer transaction already owns this lock.
+        key = str(omc_state._lock_path(root.resolve()).resolve())
+        if key in omc_state._LOCK_REGISTRY:
+            return function(root, *args, **kwargs)
+        with omc_state._omc_lock(root.resolve()):
+            return function(root, *args, **kwargs)
+    return locked
+
+for _name in ("enable_live_observation", "start_live_observation", "capture_live_completion",
+              "record_live_outcome", "record_live_prompt", "classify_live_followup",
+              "_record_live_followup", "record_live_failure"):
+    globals()[_name] = _live_locked(globals()[_name])
+
+
+def _live_pair_locked(function):
+    @wraps(function)
+    def locked(roots, *args, **kwargs):
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for root in sorted(set(v.resolve() for v in roots.values())):
+                if str(omc_state._lock_path(root).resolve()) not in omc_state._LOCK_REGISTRY:
+                    stack.enter_context(omc_state._omc_lock(root))
+            return function(roots, *args, **kwargs)
+    return locked
+
+for _name in ("route_live_prompt", "close_live_cohort"):
+    globals()[_name] = _live_pair_locked(globals()[_name])
+
 def main() -> int:
     args = _parser().parse_args()
     live_command = args.command.startswith("live-")
     try:
-        if args.command == "live-enable":
+        if args.command == "live-prepare-transition":
+            result = prepare_live_transition(args.target, registration=_read_json(args.registration),
+                custody=args.custody, activation_receipt=args.activation_receipt,
+                previous_registration=args.previous_registration)
+        elif args.command == "live-activate-pair":
+            result = activate_live_pair(_repository_roots(args.repository_root))
+        elif args.command == "live-enable":
             result = enable_live_observation(
                 args.target,
                 executor_surface=args.executor_surface,

@@ -2344,3 +2344,244 @@ def test_report_rejects_reconciliation_after_population_close() -> None:
     )
     assert report["decision"] == "CAPTURE_INCOMPLETE"
     assert report["reason"] == "reconciliation_invalid"
+
+
+def test_live_transition_preserves_history_and_blocks_until_pair_activation(tmp_path):
+    root, pending = _live_repo(tmp_path)
+    observation.start_live_observation(root)
+    old_policy = (root / '.omc/observation-policy.json').read_bytes()
+    future = (observation._now() + timedelta(minutes=10)).isoformat()
+    registration = observation.build_live_registration(
+        study_id='new-study', repository_roots={'repo': root, 'other': tmp_path / 'other'},
+        observation_started_at=future, output=tmp_path / 'new-registration.json')
+    receipt = tmp_path / 'pair.json'
+    marker = observation.prepare_live_transition(root, registration=registration,
+        custody=tmp_path / 'custody', activation_receipt=receipt)
+    assert (root / '.omc/observation-policy.json').read_bytes() == old_policy
+    with pytest.raises(observation.CaptureError, match='live_transition_blocked'):
+        observation.start_live_observation(root)
+    replay = observation.prepare_live_transition(root, registration=registration,
+        custody=tmp_path / 'custody', activation_receipt=receipt)
+    assert replay == marker
+    status = observation.historical_live_status(root, work_id=pending['work_id'])
+    assert status['status'] == 'HISTORICAL_WORK_UNOBSERVED'
+    assert status['study_id'] != registration['study_id']
+
+
+def test_live_transition_rejects_custody_tampering(tmp_path):
+    root, _ = _live_repo(tmp_path)
+    registration = observation.build_live_registration(study_id='new-study',
+        repository_roots={'repo': root, 'other': tmp_path / 'other'},
+        observation_started_at=(observation._now()+timedelta(minutes=10)).isoformat(),
+        output=tmp_path / 'next-registration.json')
+    observation.prepare_live_transition(root, registration=registration,
+        custody=tmp_path / 'custody', activation_receipt=tmp_path / 'pair.json')
+    (tmp_path / 'custody/files/.omc/observation-policy.json').write_text('{}')
+    with pytest.raises(observation.CaptureError, match='live_transition_archive_invalid'):
+        observation.prepare_live_transition(root, registration=registration,
+            custody=tmp_path / 'custody', activation_receipt=tmp_path / 'pair.json')
+
+
+def _transition_pair(tmp_path):
+    (tmp_path / 'a').mkdir(); (tmp_path / 'b').mkdir()
+    roots = {'a': tmp_path / 'a/repo', 'b': tmp_path / 'b/repo'}
+    old = observation.build_live_registration(study_id='old', repository_roots=roots,
+        observation_started_at=observation._now().isoformat(), output=tmp_path / 'old.json')
+    pending = {}
+    for key in roots:
+        _, pending[key] = _live_repo(tmp_path / key, repo_id=key,
+            repository_roots=roots, registration=old)
+        observation.start_live_observation(roots[key])
+    future = observation._now() + timedelta(minutes=10)
+    new = observation.build_live_registration(study_id='next', repository_roots=roots,
+        observation_started_at=future.isoformat(), output=tmp_path / 'next.json')
+    for key, root in roots.items():
+        observation.prepare_live_transition(root, registration=new,
+            custody=tmp_path / f'custody-{key}', activation_receipt=tmp_path / 'pair.json')
+    return roots, pending, new, future
+
+
+def test_live_transition_pair_isolated_and_old_pending_excluded(tmp_path, monkeypatch):
+    roots, pending, registration, future = _transition_pair(tmp_path)
+    proof = observation.activate_live_pair(roots)
+    assert observation.activate_live_pair(roots) == proof
+    monkeypatch.setattr(observation, '_now', lambda: future + timedelta(seconds=1))
+    for key, root in roots.items():
+        assert observation._live_cohort_starts(root, observation._live_policy(root)) == []
+        with pytest.raises(observation.CaptureError, match='live_previous_work_excluded'):
+            observation.start_live_observation(root)
+        new = _replace_live_pending(root, pending[key], 5)
+        new['work_class_locked_at'] = observation._now().isoformat()
+        (root / '.omc/state/pending-completion.json').write_text(json.dumps(new))
+        _write_live_session(root, new, request='implementation sample 5')
+        start = observation.start_live_observation(root)
+        assert start['study_id'] == registration['study_id']
+        assert start['selection_ordinal'] == 1
+        assert observation._live_root(root, new['work_id']).is_relative_to(root / '.omc/observations/studies')
+
+
+def test_live_transition_t0_expired_and_archive_damage_block_pair(tmp_path, monkeypatch):
+    roots, _, _, future = _transition_pair(tmp_path)
+    monkeypatch.setattr(observation, '_now', lambda: future)
+    with pytest.raises(observation.CaptureError, match='live_transition_t0_expired'):
+        observation.activate_live_pair(roots)
+    assert not (tmp_path / 'pair.json').exists()
+
+
+def test_live_transition_partial_policy_publication_can_resume(tmp_path, monkeypatch):
+    roots, _, _, _ = _transition_pair(tmp_path)
+    original = observation.enable_live_observation
+    def interrupted(root, **kwargs):
+        if root == roots['b']:
+            raise OSError('interrupted')
+        return original(root, **kwargs)
+    monkeypatch.setattr(observation, 'enable_live_observation', interrupted)
+    with pytest.raises(OSError):
+        observation.activate_live_pair(roots)
+    for root in roots.values():
+        with pytest.raises(observation.CaptureError, match='live_transition_blocked'):
+            observation._live_policy(root)
+    monkeypatch.setattr(observation, 'enable_live_observation', original)
+    assert observation.activate_live_pair(roots)['artifact_type'] == 'pair_activation'
+
+
+def test_live_transition_cli_status_and_historical_routing(tmp_path, monkeypatch, capsys):
+    roots, pending, _, _ = _transition_pair(tmp_path)
+    monkeypatch.setattr(sys, 'argv', ['omc_completion_observation.py', 'live-status',
+        '--target', str(roots['a'])])
+    assert observation.main() == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output['status'] == 'OBSERVATION_INVALID'
+    assert output['reason'] == 'live_transition_blocked'
+    monkeypatch.setattr(sys, 'argv', ['omc_completion_observation.py', 'live-activate-pair',
+        '--repository-root', 'a='+str(roots['a']), '--repository-root', 'b='+str(roots['b'])])
+    assert observation.main() == 0
+    assert json.loads(capsys.readouterr().out)['artifact_type'] == 'pair_activation'
+    # No guess when the same legacy work identity exists in two repositories.
+    with pytest.raises(observation.CaptureError, match='live_observation_binding_mismatch'):
+        observation.route_live_prompt(roots, raw_prompt=b'accepted', executor_surface='codex',
+            work_id=pending['a']['work_id'], quarantine_root=tmp_path / 'quarantine')
+    historical = observation.route_live_prompt({'a':roots['a']}, raw_prompt=b'accepted',
+        executor_surface='codex', work_id=pending['a']['work_id'],
+        quarantine_root=tmp_path / 'quarantine')
+    assert historical['status'] == 'HISTORICAL_WORK_UNOBSERVED'
+    assert not list(observation._live_data_root(roots['a']).glob('live/*/terminal.json'))
+
+
+def test_live_transition_expired_registration_can_be_superseded(tmp_path, monkeypatch):
+    roots, _, _, future = _transition_pair(tmp_path)
+    monkeypatch.setattr(observation, '_now', lambda: future + timedelta(seconds=1))
+    newer = observation.build_live_registration(study_id='replacement', repository_roots=roots,
+        observation_started_at=(future+timedelta(minutes=20)).isoformat(),
+        output=tmp_path / 'replacement.json')
+    for key, root in roots.items():
+        observation.prepare_live_transition(root, registration=newer,
+            custody=tmp_path / f'replacement-{key}', activation_receipt=tmp_path / 'replacement-pair.json')
+    assert observation.activate_live_pair(roots)['registration_sha256'] == newer['registration_sha256']
+    assert not (tmp_path / 'pair.json').exists()
+
+
+def test_live_transition_rejects_symlink_custody_destination(tmp_path):
+    root, _ = _live_repo(tmp_path)
+    registration = observation.build_live_registration(study_id='new',
+        repository_roots={'a':root, 'b':tmp_path/'b'},
+        observation_started_at=(observation._now()+timedelta(minutes=10)).isoformat(),
+        output=tmp_path/'new.json')
+    custody = tmp_path/'custody'
+    custody.mkdir(); (tmp_path/'other').mkdir()
+    (custody/'files').symlink_to(tmp_path/'other', target_is_directory=True)
+    with pytest.raises(observation.CaptureError, match='live_transition_archive_invalid'):
+        observation.prepare_live_transition(root, registration=registration, custody=custody,
+            activation_receipt=tmp_path/'pair.json')
+    assert not (root / observation.TRANSITION_FILE).exists()
+
+
+def test_live_transition_marker_publish_crash_resumes(tmp_path, monkeypatch):
+    root, _ = _live_repo(tmp_path)
+    registration = observation.build_live_registration(study_id='new',
+        repository_roots={'a':root, 'b':tmp_path/'b'},
+        observation_started_at=(observation._now()+timedelta(minutes=10)).isoformat(),
+        output=tmp_path/'new.json')
+    original = observation.omc_state._write_json
+    def interrupted(path, value):
+        if str(path).endswith(observation.TRANSITION_FILE):
+            raise OSError('marker publication interrupted')
+        return original(path, value)
+    monkeypatch.setattr(observation.omc_state, '_write_json', interrupted)
+    with pytest.raises(OSError):
+        observation.prepare_live_transition(root, registration=registration,
+            custody=tmp_path/'custody', activation_receipt=tmp_path/'pair.json')
+    monkeypatch.setattr(observation.omc_state, '_write_json', original)
+    assert observation.prepare_live_transition(root, registration=registration,
+        custody=tmp_path/'custody', activation_receipt=tmp_path/'pair.json')['registration'] == registration
+
+
+def test_live_transition_writer_waits_for_prepare_lock(tmp_path):
+    root, _ = _live_repo(tmp_path)
+    registration = observation.build_live_registration(study_id='new',
+        repository_roots={'a':root, 'b':tmp_path/'b'},
+        observation_started_at=(observation._now()+timedelta(minutes=10)).isoformat(),
+        output=tmp_path/'new.json')
+    with observation.omc_state._omc_lock(root):
+        writer = subprocess.Popen([sys.executable, 'scripts/omc_completion_observation.py',
+            'live-start', '--target', str(root)], stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True)
+        try:
+            with pytest.raises(subprocess.TimeoutExpired):
+                writer.wait(timeout=0.25)
+            observation.prepare_live_transition(root, registration=registration,
+                custody=tmp_path/'custody', activation_receipt=tmp_path/'pair.json')
+        except BaseException:
+            writer.kill(); writer.communicate(); raise
+    stdout, stderr = writer.communicate(timeout=10)
+    assert writer.returncode == 0, stderr
+    assert json.loads(stdout)['reason'] == 'live_transition_blocked'
+
+
+def test_live_transition_missing_original_registration_is_not_guessed(tmp_path):
+    root, _ = _live_repo(tmp_path)
+    for path in (root/'.omc/observations/registrations').glob('*.json'):
+        path.unlink()
+    new = observation.build_live_registration(study_id='new',
+        repository_roots={'a':root, 'b':tmp_path/'b'},
+        observation_started_at=(observation._now()+timedelta(minutes=10)).isoformat(),
+        output=tmp_path/'new.json')
+    with pytest.raises(observation.CaptureError, match='live_previous_registration_required'):
+        observation.prepare_live_transition(root, registration=new,
+            custody=tmp_path/'custody', activation_receipt=tmp_path/'pair.json')
+    assert not (root/observation.TRANSITION_FILE).exists()
+
+
+def test_live_transition_preserves_registration_bytes_without_normalization(tmp_path):
+    root, _ = _live_repo(tmp_path)
+    policy = json.loads((root/'.omc/observation-policy.json').read_text())
+    path = root/'.omc/observations/registrations'/(policy['cohort_registration_sha256']+'.json')
+    original_bytes = json.dumps(json.loads(path.read_text()), separators=(',', ':')).encode() + b'\n\n'
+    path.write_bytes(original_bytes)
+    new = observation.build_live_registration(study_id='new',
+        repository_roots={'a':root, 'b':tmp_path/'b'},
+        observation_started_at=(observation._now()+timedelta(minutes=10)).isoformat(),
+        output=tmp_path/'new.json')
+    observation.prepare_live_transition(root, registration=new,
+        custody=tmp_path/'custody', activation_receipt=tmp_path/'pair.json')
+    assert (tmp_path/'custody/previous-registration.json').read_bytes() == original_bytes
+
+
+@pytest.mark.parametrize('offset', [0, 1])
+def test_live_transition_t0_crossed_during_pair_checks_never_publishes(tmp_path, monkeypatch, offset):
+    roots, _, _, future = _transition_pair(tmp_path)
+    original = observation.enable_live_observation
+    calls = []
+    def delayed(root, **kwargs):
+        result = original(root, **kwargs)
+        calls.append(root)
+        if len(calls) == 2:
+            monkeypatch.setattr(observation, '_now', lambda: future + timedelta(seconds=offset))
+        return result
+    monkeypatch.setattr(observation, 'enable_live_observation', delayed)
+    with pytest.raises(observation.CaptureError, match='live_transition_t0_expired'):
+        observation.activate_live_pair(roots)
+    assert not (tmp_path/'pair.json').exists()
+    for root in roots.values():
+        with pytest.raises(observation.CaptureError, match='live_transition_blocked'):
+            observation._live_policy(root)

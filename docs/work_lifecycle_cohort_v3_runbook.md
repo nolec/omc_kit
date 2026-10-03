@@ -86,3 +86,16 @@ python3 scripts/omc_skill_effectiveness_cohort_v3.py prepare-transition \
 - 구버전 호환 회귀의 기준은 `6ebc72f`와 `700f541`이다. 후자는 prepare/activate CLI가 없으므로 해당 경로는 N/A이며, 기존 capture/enroll의 차단만 검증한다. 다른 구버전의 호환성을 주장하지 않는다.
 
 검증 범위: 로컬 synthetic CLI·실패 주입 회귀는 운영 표본이 아니다. process kill·전원 손실·두 Mac 동시 실행의 실환경 복구는 별도 검증 없이는 보장하지 않는다.
+
+## 완료 품질 관찰의 별도 study 전환
+
+이 경로는 work-lifecycle v3 전환과 별개다. 기존 `observation-policy.json`과 `observations/live`·`live-failures`는 수정하지 않는다. 새 study는 `observations/studies/<registration SHA>/`를 사용하며 이전 work의 후속은 `HISTORICAL_WORK_UNOBSERVED`로 남긴다. 원래 study가 무효화된 상태에서 수용·수정 결과를 소급 생성하지 않는다.
+
+1. 현재 등록의 원문을 확보한다. 자동 보존된 `observations/registrations/<SHA>.json`이 없는 이전 설치는 `--previous-registration <기존 외부 등록.json>`을 제공해야 한다. 원문이 없거나 policy의 등록 digest와 다르면 전환을 차단한다.
+2. 검토된 고정 commit으로 두 대상의 v3 archive·설치 전환을 수행하고 strict install audit를 확인한다. 기존 품질 관찰은 이 단계에서도 무효 상태이며 새 표본으로 재사용하지 않는다.
+3. `live-register`로 두 대상 roster·새 study ID·충분히 미래인 T0·외부 write-once 등록을 만든다. 두 대상 각각 `live-prepare-transition --target <target> --registration <새 등록.json> --custody <대상별 외부 디렉터리> --activation-receipt <공통 외부 pair.json>`을 실행한다. 로컬 정책·원장·원문·session/pending 자료와 기존 등록을 custody에 보존·검증한다.
+4. marker 게시 후에는 해당 대상의 새 수집을 차단한다. `live-activate-pair --repository-root <repo-id>=<target> --repository-root <repo-id>=<target>`로 양쪽 보존 자료·roster·설치를 검증하고 새 정책을 준비한 뒤 공통 proof를 한 번 게시한다. 한쪽 정책 게시 후 실패하면 공통 proof가 없으므로 양쪽 수집은 차단된다. 같은 입력으로 재시도한다.
+5. T0를 놓치면 해당 등록을 활성화하지 않는다. 미래 T0의 새 등록·새 custody·새 공통 proof 경로로 양쪽 prepare부터 다시 수행한다. 기존 journal·등록·archive는 보존한다. 보존 도중 source bytes가 바뀌어 같은 custody와 충돌하면 재시도에서 덮어쓰지 않고 새 custody를 사용한다.
+6. `live-status --target <target>`와 `--work-id <기존 work>`를 각각 확인한다. 이전 pending과 T0 이전에 시작된 작업은 새 study 표본에서 제외한다. 자연 작업이 발생하기 전에는 기록 성공을 주장하지 않는다. 격리 CLI 회귀 통과와 운영 자연 review/choice·completion/outcome 관측은 각각 보고한다.
+
+전환 명령은 기존 task/prompt hook이 사용하는 동일한 consumer 함수를 변경한다. 관찰 mutation은 저장소 잠금을 통해 prepare와 직렬화한다. 전환 marker·공통 proof·설치 identity 또는 custody가 손상되면 성공 상태로 fallback하지 않는다. 역사 자료는 읽기 전용 custody에서 확인하며 무효 study에 늦게 도착한 입력은 새 study로 귀속하지 않는다.
