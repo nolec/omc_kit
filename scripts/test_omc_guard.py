@@ -6,6 +6,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -442,6 +444,33 @@ def test_continue_rejects_malformed_lineage_without_recording_session(
 
     assert json.loads(latest_path.read_text(encoding="utf-8")) == latest_before
     assert sorted(path.name for path in sessions_dir.iterdir()) == sessions_before
+
+
+@pytest.mark.parametrize('action', ['preserve', 'preserve-if-present'])
+@pytest.mark.parametrize('role', ['directive', 'analysis'])
+def test_explicit_preserve_keeps_pending_and_records_original_completion(tmp_path, action, role):
+    target = tmp_path / 'repo'
+    _init_git_repo(target)
+    started = omc_state.record_session(
+        target, mode='autopilot', title='omc-task', request='implementation',
+        role_ids=['senior_coding'], work_class='implementation',
+        completion_action='start', confirmed=True,
+    )
+    pending_path = target / '.omc/state/pending-completion.json'
+    before = pending_path.read_bytes()
+    preserved = omc_state.record_session(
+        target, mode='autopilot', title='local-commit', request='preserve original work',
+        role_ids=[role], completion_action=action, confirmed=False,
+    )
+    omc_state.confirm_session(target, session_id=preserved['session_id'])
+    assert pending_path.read_bytes() == before
+    (target / 'app.py').write_text('value = 2\n')
+    subprocess.run(['git', '-C', str(target), 'add', 'app.py'], check=True)
+    subprocess.run(['git', '-C', str(target), 'commit', '--no-verify', '-qm', 'complete'], check=True)
+    result = omc_state.record_completion_receipt(target)
+    assert result['status'] == 'ok'
+    assert (target / '.omc/state/sessions' / started['session_id'] / 'completion.json').is_file()
+    assert not (target / '.omc/state/sessions' / preserved['session_id'] / 'completion.json').exists()
 
 
 def test_preserve_rejects_stale_baseline(tmp_path: Path):

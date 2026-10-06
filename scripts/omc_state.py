@@ -1493,10 +1493,12 @@ def _sync_pending_completion(project_root: Path, session: dict[str, object]) -> 
     role_ids = session.get("role_ids")
     if not isinstance(role_ids, list):
         return
+    # record_session validates explicit preservation against the pending work.
+    # A non-lineage session must neither replace nor delete that original receipt.
+    if session.get("completion_action") in {"preserve", "preserve-if-present"}:
+        return
     if "senior_coding" in role_ids:
         completion_action = session.get("completion_action", "start")
-        if completion_action == "preserve":
-            return
         git = session.get("git")
         request = session.get("request")
         work_class = session.get("work_class")
