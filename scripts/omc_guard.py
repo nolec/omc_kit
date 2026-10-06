@@ -63,7 +63,13 @@ def _report_live_start_runner_failure(project_root: Path, reason: str) -> None:
 def _start_registered_live_observation(project_root: Path) -> None:
     """Start enrolled observation without making instrumentation task-critical."""
     policy_path = project_root / ".omc" / "observation-policy.json"
-    if not policy_path.is_file() or _is_frozen_live_registration(policy_path):
+    transition_path = project_root / ".omc" / "observations" / "transition.json"
+    # The observation runner resolves and validates the active transition policy.
+    # Even a broken transition must reach it rather than silently skip collection.
+    has_transition = transition_path.exists() or transition_path.is_symlink()
+    if not has_transition and (
+        not policy_path.is_file() or _is_frozen_live_registration(policy_path)
+    ):
         return
     script = Path(__file__).resolve().parent / "omc_completion_observation.py"
     try:

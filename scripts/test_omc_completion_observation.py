@@ -853,6 +853,44 @@ def test_guard_does_not_restart_frozen_historical_live_study(tmp_path: Path) -> 
     assert not (root / ".omc" / "observations" / "live" / ("a" * 32) / "start.json").exists()
 
 
+def test_guard_unregistered_start_does_not_import_observation_dependencies(tmp_path, monkeypatch):
+    import builtins
+
+    original_import = builtins.__import__
+    def without_crypto(name, *args, **kwargs):
+        if name == 'omc_completion_observation' or name.startswith('cryptography'):
+            raise ModuleNotFoundError('observation dependencies unavailable')
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, '__import__', without_crypto)
+    omc_guard._start_registered_live_observation(tmp_path)
+
+
+@pytest.mark.parametrize("transition_kind", ["present", "malformed", "dangling_symlink"])
+def test_guard_routes_transition_before_frozen_legacy_policy(tmp_path, monkeypatch, transition_kind):
+    root, _ = _live_repo(tmp_path)
+    policy_path = root / '.omc/observation-policy.json'
+    policy = json.loads(policy_path.read_text())
+    policy['study_id'] = 'completion-quality-live-20260913-v2'
+    policy['cohort_registration_sha256'] = '67b169155db9e2afce0760fd6dd18bfd7ce76f67b2418e5df66c34e0fcdbb073'
+    policy['policy_sha256'] = observation.canonical_sha256({**policy, 'policy_sha256': ''})
+    policy_path.write_text(json.dumps(policy))
+    marker = root / observation.TRANSITION_FILE
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    if transition_kind == 'dangling_symlink':
+        marker.symlink_to(tmp_path / 'missing')
+    else:
+        marker.write_text('{}' if transition_kind == 'present' else '{')
+    calls = []
+    def run(command, **kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, json.dumps({
+            'status': 'OBSERVATION_INVALID', 'reason': 'live_transition_invalid'}), '')
+    monkeypatch.setattr(omc_guard.subprocess, 'run', run)
+    omc_guard._start_registered_live_observation(root)
+    assert len(calls) == 1
+    assert 'live-start' in calls[0]
+
+
 def test_guard_frozen_study_match_requires_exact_valid_registration(tmp_path: Path) -> None:
     root, _ = _live_repo(tmp_path)
     policy_path = root / ".omc" / "observation-policy.json"
@@ -2418,6 +2456,41 @@ def test_live_transition_pair_isolated_and_old_pending_excluded(tmp_path, monkey
         assert start['study_id'] == registration['study_id']
         assert start['selection_ordinal'] == 1
         assert observation._live_root(root, new['work_id']).is_relative_to(root / '.omc/observations/studies')
+
+
+@pytest.mark.parametrize('damage', [None, 'marker', 'install'])
+def test_guard_transition_runner_validates_and_starts_current_study(tmp_path, monkeypatch, capsys, damage):
+    roots, pending, registration, future = _transition_pair(tmp_path)
+    observation.activate_live_pair(roots)
+    monkeypatch.setattr(observation, '_now', lambda: future + timedelta(seconds=1))
+    root = roots['a']
+    new = _replace_live_pending(root, pending['a'], 5)
+    new['work_class_locked_at'] = observation._now().isoformat()
+    (root / '.omc/state/pending-completion.json').write_text(json.dumps(new))
+    _write_live_session(root, new, request='implementation sample 5')
+    if damage == 'marker':
+        (root / observation.TRANSITION_FILE).write_text('{}')
+    elif damage == 'install':
+        (root / '.omc/install-receipt.json').write_text('{}')
+    original_run = subprocess.run
+    def run(command, **kwargs):
+        if 'live-start' not in command:
+            return original_run(command, **kwargs)
+        try:
+            result = observation.start_live_observation(root)
+        except observation.CaptureError as error:
+            result = {'status': 'OBSERVATION_INVALID', 'reason': str(error)}
+        return subprocess.CompletedProcess(command, 0, json.dumps(result), '')
+    monkeypatch.setattr(omc_guard.subprocess, 'run', run)
+    omc_guard._start_registered_live_observation(root)
+    output = capsys.readouterr().out
+    if damage is None:
+        assert 'COLLECTING' in output
+        start = json.loads((observation._live_root(root, new['work_id']) / 'start.json').read_text())
+        assert start['study_id'] == registration['study_id']
+    else:
+        assert 'OBSERVATION_INVALID' in output
+        assert not list((root / '.omc/observations/studies').glob('*/live/*/start.json'))
 
 
 def test_live_transition_t0_expired_and_archive_damage_block_pair(tmp_path, monkeypatch):
