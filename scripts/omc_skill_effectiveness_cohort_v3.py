@@ -1047,7 +1047,7 @@ def _config(root: Path, *, check_transition: bool = True) -> dict[str, Any]:
     return value
 
 
-def _session(root: Path, session_id: str) -> dict[str, Any]:
+def _work_session(root: Path, session_id: str) -> dict[str, Any]:
     if not isinstance(session_id, str) or _ID.fullmatch(session_id) is None:
         raise V3Error("session_id_invalid")
     path = root / ".omc" / "state" / "sessions" / session_id / "session.json"
@@ -1057,10 +1057,16 @@ def _session(root: Path, session_id: str) -> dict[str, Any]:
         session.get("session_id") != session_id
         or not isinstance(session.get("work_id"), str)
         or _ID.fullmatch(session["work_id"]) is None
-        or session.get("title") not in _SKILLS
         or not isinstance(confirmation, dict)
         or confirmation.get("status") != "confirmed"
     ):
+        raise V3Error("session_invalid")
+    return session
+
+
+def _session(root: Path, session_id: str) -> dict[str, Any]:
+    session = _work_session(root, session_id)
+    if session.get("title") not in _SKILLS:
         raise V3Error("session_invalid")
     return session
 
@@ -1279,8 +1285,9 @@ def _candidate_in_scope(root: Path, session: dict[str, Any], prior: list[dict[st
             if len(origins) != 1 or not isinstance(origins[0], str):
                 return False
             root_id = origins[0]
-        origin = _session(root, root_id)
-        if (origin["work_id"] != session["work_id"] or origin.get("completion_action") != "start"
+        origin = _work_session(root, root_id)
+        if (origin["work_id"] != session["work_id"] or origin.get("work_class") != work_class
+                or origin.get("completion_action") != "start"
                 or origin.get("lineage_root_session_id") != root_id or origin.get("lineage_index") != 0
                 or _time(origin.get("created_at")) < _time(config["activation_at"])
                 or _time(origin.get("created_at")) > _now()):

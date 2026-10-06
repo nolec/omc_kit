@@ -557,6 +557,71 @@ def _active_transition_for_scope_test(tmp_path, monkeypatch):
     return roots[0]
 
 
+@pytest.mark.parametrize('recorded', [False, True])
+def test_transition_general_title_origin_is_not_skill_exposure(tmp_path, monkeypatch, recorded):
+    root = _active_transition_for_scope_test(tmp_path, monkeypatch)
+    _session(root, 'general-start', 'general-work', title='ownership implementation')
+    origin_path = root / '.omc/state/sessions/general-start/session.json'
+    origin = json.loads(origin_path.read_text())
+    origin.update(work_class='implementation', created_at='2026-10-04T00:00:00Z',
+                  completion_action='start', lineage_root_session_id='general-start', lineage_index=0)
+    origin_path.write_text(json.dumps(origin))
+    _session(root, 'skill-continue', 'general-work', title='omc-task')
+    path = root / '.omc/state/sessions/skill-continue/session.json'
+    session = json.loads(path.read_text())
+    session.update(work_class='implementation', created_at='2026-10-04T00:00:00Z',
+                   completion_action='continue', lineage_root_session_id='general-start', lineage_index=1)
+    session['cohort_capture_v3'] = {'activation_id': 'scope-activation',
+        'status': 'recorded' if recorded else 'integrity_invalid'}
+    if not recorded:
+        session['cohort_capture_v3']['reason_code'] = 'session_invalid'
+    path.write_text(json.dumps(session))
+    if recorded:
+        v3.record_candidate(root, session_id='skill-continue')
+    before = origin_path.read_bytes(), path.read_bytes()
+    report = v3.report(root)
+    assert report['work_items'] == int(recorded)
+    assert report['skill_exposures'] == int(recorded)
+    assert report['capture_sessions']['integrity_invalid'] == int(not recorded)
+    assert report['capture_sessions']['recorded'] == int(recorded)
+    with pytest.raises(v3.V3Error, match='session_invalid'):
+        v3.record_candidate(root, session_id='general-start')
+    assert before == (origin_path.read_bytes(), path.read_bytes())
+    v3.close(root)
+    archive = tmp_path / 'general-archive.json'
+    assert v3.archive_closed(root, output=archive)['state'] == 'ARCHIVE_VERIFIED'
+
+
+@pytest.mark.parametrize('mutation', ['pending', 'work_id', 'work_class', 'before_t0', 'index'])
+def test_general_title_origin_still_requires_valid_work_start(tmp_path, monkeypatch, mutation):
+    root = _active_transition_for_scope_test(tmp_path, monkeypatch)
+    _session(root, 'general-start', 'general-work', title='ownership implementation')
+    path = root / '.omc/state/sessions/general-start/session.json'
+    origin = json.loads(path.read_text())
+    origin.update(work_class='implementation', created_at='2026-10-04T00:00:00Z',
+                  completion_action='start', lineage_root_session_id='general-start', lineage_index=0)
+    if mutation == 'pending':
+        origin['confirmation']['status'] = 'pending'
+    elif mutation == 'work_id':
+        origin['work_id'] = 'other-work'
+    elif mutation == 'work_class':
+        origin['work_class'] = 'synthetic'
+    elif mutation == 'before_t0':
+        origin['created_at'] = '2026-10-02T00:00:00Z'
+    else:
+        origin['lineage_index'] = 1
+    path.write_text(json.dumps(origin))
+    session = {'session_id': 'continued', 'work_id': 'general-work', 'title': 'omc-task',
+               'work_class': 'implementation', 'created_at': '2026-10-04T00:00:00Z',
+               'lineage_root_session_id': 'general-start'}
+    if mutation == 'pending':
+        with pytest.raises(v3.V3Error, match='session_invalid'):
+            v3._candidate_in_scope(root, session, [])
+    else:
+        assert not v3._candidate_in_scope(root, session, [])
+    assert not v3.ledger_path(root).exists()
+
+
 def test_transition_report_excludes_unenrolled_review_before_lineage_validation(tmp_path, monkeypatch):
     root = _active_transition_for_scope_test(tmp_path, monkeypatch)
     _session(root, "scope-start", "scope-work", title="panel-style-scope")
