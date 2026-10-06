@@ -19,6 +19,95 @@ from omc_source_hash import source_sha256
 import omc_state
 
 
+def test_live_opt_out_cli_preserves_pair_and_blocks_capture(tmp_path, monkeypatch, capsys):
+    roots, pending, _, future = _transition_pair(tmp_path)
+    observation.activate_live_pair(roots)
+    monkeypatch.setattr(observation, '_now', lambda: future + timedelta(seconds=1))
+    before = {str(p): p.read_bytes() for root in roots.values()
+              for p in (root / '.omc').rglob('*.json')}
+    monkeypatch.setattr(sys, 'argv', ['omc_completion_observation.py', 'live-disable',
+                                     '--target', str(roots['a']), '--reason', 'user opt out'])
+    assert observation.main() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['status'] == 'DISABLED_BY_USER'
+    assert observation.live_observation_status(roots['a'])['status'] == 'DISABLED_BY_USER'
+    assert observation.disable_live_observation(roots['a'], reason='user opt out') == result
+    for path, data in before.items():
+        assert Path(path).read_bytes() == data
+    observation._check_pair_activation(roots['b'], observation._transition_marker(roots['b']))
+    new = _replace_live_pending(roots['b'], pending['b'], 5)
+    new['work_class_locked_at'] = observation._now().isoformat()
+    (roots['b'] / '.omc/state/pending-completion.json').write_text(json.dumps(new))
+    _write_live_session(roots['b'], new, request='implementation sample 5')
+    assert observation.start_live_observation(roots['b'])['status'] == 'COLLECTING'
+    with pytest.raises(observation.CaptureError, match='live_observation_disabled_by_user'):
+        observation.start_live_observation(roots['a'])
+    with pytest.raises(observation.CaptureError, match='live_observation_disabled_by_user'):
+        observation.capture_live_completion(roots['a'], raw_report=b'report',
+                                            raw_verification=b'verified', unrun_items=[])
+    monkeypatch.setattr(omc_guard.subprocess, 'run', lambda *a, **k: pytest.fail('runner invoked'))
+    omc_guard._start_registered_live_observation(roots['a'])
+
+
+def test_live_opt_out_invalid_marker_still_blocks_collection(tmp_path):
+    root = tmp_path / 'repo'
+    path = root / '.omc/observations/opt-out.json'
+    path.parent.mkdir(parents=True)
+    path.write_text('{}')
+    with pytest.raises(observation.CaptureError, match='live_observation_disabled_by_user'):
+        observation.start_live_observation(root)
+    with pytest.raises(observation.CaptureError):
+        observation.live_observation_status(root)
+
+
+def test_live_opt_out_cli_start_is_disabled_without_failure_receipt(tmp_path, monkeypatch, capsys):
+    root = tmp_path / 'repo'
+    observation.disable_live_observation(root, reason='stop')
+    monkeypatch.setattr(sys, 'argv', ['observation', 'live-start', '--target', str(root)])
+    assert observation.main() == 0
+    assert json.loads(capsys.readouterr().out)['status'] == 'DISABLED_BY_USER'
+    assert not list(root.rglob('*failure*.json'))
+    quarantine = tmp_path / 'quarantine'
+    assert observation.route_live_prompt({'a': root}, raw_prompt=b'private prompt',
+        executor_surface='codex', work_id='unknown', quarantine_root=quarantine
+        )['status'] == 'DISABLED_BY_USER'
+    assert not quarantine.exists()
+    with pytest.raises(observation.CaptureError, match='disabled_by_user'):
+        observation.capture_live_completion(root, raw_report=b'x', raw_verification=b'y',
+                                            unrun_items=[])
+
+
+def test_live_opt_out_requires_reason_and_rejects_rebound_receipt(tmp_path):
+    root = tmp_path / 'repo'
+    with pytest.raises(observation.CaptureError, match='reason_required'):
+        observation.disable_live_observation(root, reason=' ')
+    assert not (root / observation.LIVE_OPT_OUT_FILE).exists()
+    observation.disable_live_observation(root, reason='stop')
+    peer = tmp_path / 'peer'
+    destination = peer / observation.LIVE_OPT_OUT_FILE
+    destination.parent.mkdir(parents=True)
+    destination.write_bytes((root / observation.LIVE_OPT_OUT_FILE).read_bytes())
+    with pytest.raises(observation.CaptureError, match='live_opt_out_invalid'):
+        observation.live_observation_status(peer)
+
+
+def test_live_opt_out_rechecked_after_waiting_for_writer_lock(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    root = tmp_path / 'repo'
+
+    @contextmanager
+    def stopped_while_waiting(_root):
+        path = root / observation.LIVE_OPT_OUT_FILE
+        path.parent.mkdir(parents=True)
+        path.write_text('{}')
+        yield
+
+    monkeypatch.setattr(omc_state, '_omc_lock', stopped_while_waiting)
+    with pytest.raises(observation.CaptureError, match='disabled_by_user'):
+        observation._record_live_followup(root, raw_prompt=b'private', work_id='a' * 32)
+    assert not list(root.rglob('followup-*.json'))
+
+
 @pytest.fixture(autouse=True)
 def _fixed_live_clock(monkeypatch: pytest.MonkeyPatch) -> None:
     fixed = datetime.fromisoformat("2026-09-10T00:00:00+00:00")

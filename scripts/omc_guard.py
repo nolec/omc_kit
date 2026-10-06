@@ -62,6 +62,9 @@ def _report_live_start_runner_failure(project_root: Path, reason: str) -> None:
 
 def _start_registered_live_observation(project_root: Path) -> None:
     """Start enrolled observation without making instrumentation task-critical."""
+    opt_out = project_root / '.omc' / 'observations' / 'opt-out.json'
+    if opt_out.exists() or opt_out.is_symlink():
+        return
     policy_path = project_root / ".omc" / "observation-policy.json"
     transition_path = project_root / ".omc" / "observations" / "transition.json"
     # The observation runner resolves and validates the active transition policy.

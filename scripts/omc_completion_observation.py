@@ -884,7 +884,9 @@ def _check_pair_activation(root: Path, marker: dict) -> None:
                                       artifact_type='policy', hash_field='policy_sha256')
         if policy['policy_sha256'] != item['policy_sha256']:
             raise CaptureError('live_transition_binding_invalid')
-        if any(policy.get(k) != v for k,v in _live_install_identity(peer, require_fresh_source=False).items()):
+        from omc_observation_install_continuity import installation_matches
+        current = _live_install_identity(peer, require_fresh_source=False)
+        if not installation_matches(peer, {k: policy.get(k) for k in current}, current):
             raise CaptureError('live_install_identity_invalid')
 
 
@@ -1156,7 +1158,44 @@ def enable_live_observation(
     return policy
 
 
+LIVE_OPT_OUT_FILE = '.omc/observations/opt-out.json'
+
+
+def _live_opted_out(root: Path) -> bool:
+    path = root / LIVE_OPT_OUT_FILE
+    return path.exists() or path.is_symlink()
+
+
+def _live_opt_out_status(root: Path) -> dict[str, Any]:
+    record = _validate_live_record(_read_json(root / LIVE_OPT_OUT_FILE),
+                                  artifact_type='opt_out', hash_field='opt_out_sha256')
+    if (record.get('repository_root_sha256') != hashlib.sha256(str(root).encode()).hexdigest()
+            or record.get('status') != 'DISABLED_BY_USER'
+            or record.get('claim_boundary') != 'OBSERVATION_ONLY'
+            or not _has_valid_timestamp(record.get('disabled_at'))
+            or not isinstance(record.get('reason'), str) or not record['reason'].strip()):
+        raise CaptureError('live_opt_out_invalid')
+    return record
+
+
+def disable_live_observation(project_root: Path, *, reason: str) -> dict[str, Any]:
+    """Stop this repository without mutating shared registration or peer proofs."""
+    root = project_root.resolve()
+    if not isinstance(reason, str) or not reason.strip():
+        raise CaptureError('live_opt_out_reason_required')
+    if _live_opted_out(root):
+        return _live_opt_out_status(root)
+    record = _live_record({'schema_version': LIVE_SCHEMA, 'artifact_type': 'opt_out',
+        'claim_boundary': 'OBSERVATION_ONLY', 'status': 'DISABLED_BY_USER',
+        'repository_root_sha256': hashlib.sha256(str(root).encode()).hexdigest(),
+        'disabled_at': _now().isoformat(), 'reason': reason}, 'opt_out_sha256')
+    _write_once(root / LIVE_OPT_OUT_FILE, record)
+    return record
+
+
 def _live_policy(project_root: Path) -> dict[str, Any]:
+    if _live_opted_out(project_root):
+        raise CaptureError('live_observation_disabled_by_user')
     marker = _transition_marker(project_root)
     path = project_root / ".omc/observation-policy.json"
     if marker is not None:
@@ -1200,7 +1239,8 @@ def _live_policy(project_root: Path) -> dict[str, Any]:
     install_identity = _live_install_identity(
         project_root, require_fresh_source=False
     )
-    if any(policy.get(key) != value for key, value in install_identity.items()):
+    from omc_observation_install_continuity import installation_matches
+    if not installation_matches(project_root, {k: policy.get(k) for k in install_identity}, install_identity):
         raise CaptureError("live_install_identity_invalid")
     return policy
 
@@ -1811,6 +1851,8 @@ def live_observation_status(
     project_root: Path, *, work_id: str | None = None
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
+    if _live_opted_out(project_root):
+        return _live_opt_out_status(project_root)
     if work_id is not None:
         return _live_work_status(project_root, work_id=work_id)
     with omc_state._omc_lock(project_root):
@@ -2293,6 +2335,8 @@ def route_live_prompt(
         }
     historical = []
     for root in repository_roots.values():
+        if _live_opted_out(root.resolve()):
+            continue
         marker = _transition_marker(root.resolve())
         if marker is not None and work_id in marker['excluded_work_ids']:
             historical.append(root.resolve())
@@ -2327,6 +2371,11 @@ def route_live_prompt(
             executor_surface=executor_surface,
             work_id=matches[0][2],
         )
+    if any(_live_opted_out(root.resolve()) for root in repository_roots.values()):
+        # An unresolved prompt may belong to an opted-out repository. Do not
+        # retain its raw text in quarantine; matched active peers still route above.
+        return {'schema_version': LIVE_SCHEMA, 'claim_boundary': 'OBSERVATION_ONLY',
+                'status': 'DISABLED_BY_USER'}
     record = _live_record(
         {
             "schema_version": LIVE_SCHEMA,
@@ -2425,6 +2474,8 @@ def _parser() -> argparse.ArgumentParser:
     live_activate.add_argument("--target", type=Path, default=Path.cwd())
     live_activate.add_argument("--repository-root", action="append", required=True)
     live_start = sub.add_parser("live-start")
+    live_disable = sub.add_parser("live-disable")
+    live_disable.add_argument('--reason', required=True)
     live_enable = sub.add_parser("live-enable")
     live_status = sub.add_parser("live-status")
     live_decision_context = sub.add_parser("live-decision-context")
@@ -2436,7 +2487,7 @@ def _parser() -> argparse.ArgumentParser:
     live_route = sub.add_parser("live-route-prompt")
     live_register = sub.add_parser("live-register")
     for command in (
-        live_enable, live_start, live_status, live_decision_context, live_capture, live_outcome,
+        live_enable, live_start, live_disable, live_status, live_decision_context, live_capture, live_outcome,
         live_prompt, live_classify, live_close, live_route, live_register,
     ):
         command.add_argument("--target", type=Path, default=Path.cwd())
@@ -2481,18 +2532,23 @@ from functools import wraps
 def _live_locked(function):
     @wraps(function)
     def locked(root, *args, **kwargs):
+        def invoke():
+            if (function.__name__ not in {'disable_live_observation', 'record_live_failure'}
+                    and _live_opted_out(root.resolve())):
+                raise CaptureError('live_observation_disabled_by_user')
+            return function(root, *args, **kwargs)
         # Do not re-enter the legacy context manager: its nested finally return
         # suppresses exceptions. The outer transaction already owns this lock.
         key = str(omc_state._lock_path(root.resolve()).resolve())
         if key in omc_state._LOCK_REGISTRY:
-            return function(root, *args, **kwargs)
+            return invoke()
         with omc_state._omc_lock(root.resolve()):
-            return function(root, *args, **kwargs)
+            return invoke()
     return locked
 
 for _name in ("enable_live_observation", "start_live_observation", "capture_live_completion",
               "record_live_outcome", "record_live_prompt", "classify_live_followup",
-              "_record_live_followup", "record_live_failure"):
+              "_record_live_followup", "record_live_failure", "disable_live_observation"):
     globals()[_name] = _live_locked(globals()[_name])
 
 
@@ -2536,6 +2592,8 @@ def main() -> int:
             )
         elif args.command == "live-start":
             result = start_live_observation(args.target)
+        elif args.command == 'live-disable':
+            result = disable_live_observation(args.target, reason=args.reason)
         elif args.command == "live-status":
             result = live_observation_status(args.target, work_id=args.work_id)
         elif args.command == "live-decision-context":
@@ -2668,6 +2726,13 @@ def main() -> int:
         json.JSONDecodeError,
     ) as error:
         if live_command:
+            if str(error) == 'live_observation_disabled_by_user':
+                try:
+                    result = _live_opt_out_status(args.target.resolve())
+                except (CaptureError, OSError, ValueError) as invalid:
+                    result = _invalid_live_status(str(invalid))
+                print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+                return 0
             if args.command in {
                 "live-start", "live-capture", "live-outcome", "live-prompt",
                 "live-classify", "live-route-prompt",

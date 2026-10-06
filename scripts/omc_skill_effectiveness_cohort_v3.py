@@ -1035,8 +1035,9 @@ def _config(root: Path, *, check_transition: bool = True) -> dict[str, Any]:
             raise V3Error("roster_binding_conflict")
         targets = [target for target in roster["targets"]
                    if target["target_identity"] == value["target_identity"]]
-        if len(targets) != 1 or _installation(root) != {
-            key: item for key, item in targets[0].items() if key != "target_identity"}:
+        from omc_observation_install_continuity import installation_matches
+        if len(targets) != 1 or not installation_matches(root, {
+            key: item for key, item in targets[0].items() if key != "target_identity"}, _installation(root)):
             raise V3Error("installation_binding_mismatch")
         sessions = value["enrollment_session_ids"]
         if (not isinstance(sessions, list) or any(not isinstance(s, str) or _ID.fullmatch(s) is None for s in sessions)

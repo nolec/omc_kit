@@ -99,3 +99,37 @@ python3 scripts/omc_skill_effectiveness_cohort_v3.py prepare-transition \
 6. `live-status --target <target>`와 `--work-id <기존 work>`를 각각 확인한다. 이전 pending과 T0 이전에 시작된 작업은 새 study 표본에서 제외한다. 자연 작업이 발생하기 전에는 기록 성공을 주장하지 않는다. 격리 CLI 회귀 통과와 운영 자연 review/choice·completion/outcome 관측은 각각 보고한다.
 
 전환 명령은 기존 task/prompt hook이 사용하는 동일한 consumer 함수를 변경한다. 관찰 mutation은 저장소 잠금을 통해 prepare와 직렬화한다. 전환 marker·공통 proof·설치 identity 또는 custody가 손상되면 성공 상태로 fallback하지 않는다. 역사 자료는 읽기 전용 custody에서 확인하며 무효 study에 늦게 도착한 입력은 새 study로 귀속하지 않는다.
+# 프로젝트별 관측 중단
+
+사용자가 특정 프로젝트의 관측을 중단하면 작업 흐름은 `close --target <프로젝트>`로
+종료하고, 완료 품질 관측은 아래 명령으로 중단한다.
+
+```bash
+python3 scripts/omc_completion_observation.py live-disable --target <프로젝트> --reason "사용자 관측 중단 요청"
+python3 scripts/omc_completion_observation.py live-status --target <프로젝트>
+```
+
+완료 품질 상태는 `DISABLED_BY_USER`가 된다. 프로젝트에 결속된 중단 기록은
+`.omc/observations/opt-out.json`에 보존한다. 중단 후 시작·완료·후속 판단 수집을
+차단하며, 공동 등록·활성화 증거·기존 표본·다른 프로젝트 설정은 변경하지 않는다.
+손상된 중단 기록도 수집을 차단하지만 상태 조회에서는 무효 증거로 표시한다.
+중단 명령을 반복해도 최초 기록을 유지하며 자동 재등록으로 관측을 재개하지 않는다.
+원래 두 프로젝트를 대상으로 한 사전 등록은 그대로 남으므로, 이후 결과는
+한 프로젝트의 관측 중단 사실을 명시하고 원래 설계가 완료됐다고 주장하지 않는다.
+
+## 기존 표본을 보존하는 설치 변경
+
+이미 관측 중인 설치를 갱신할 때 기존 config·policy·활성화 증거를 덮어쓰지 않는다.
+검토된 배포의 source SHA·revision·version을 고정한 뒤, 각 프로젝트에서 설치 전
+`omc_observation_install_continuity.py prepare --target <프로젝트>
+--expected-source-sha256 <SHA> --expected-source-revision <revision>
+--expected-version <version> --out <저장소 밖 plan.json>`으로 계획을 보존한다.
+설치 후 `seal --target <프로젝트> --plan <plan.json>`으로 실제 설치 audit와
+고정된 source identity·기존 등록 파일 보존을 확인한다.
+
+이는 한 번의 명시적 설치 변경만 결속한다. 다른 설치 변경·등록 수정·손상 증거는
+계속 차단하며, 재시도는 동일한 기록을 보존한다. 재설치 전후 소비자 실행이
+겹치지 않는 배포 구간을 확보하고 두 프로젝트의 seal이 완료된 뒤 수집을 재개한다.
+갱신 후 `live-disable`은 ai-cs에만 적용하며 두 프로젝트의 실제 상태를 확인한다.
+기존 원장과 T0를 유지하되 설치 버전 변경 경계를 별도로 남긴다. 설치 전후 표본을
+같은 버전의 효과로 합쳐 주장하거나 사용자 승인 증거로 해석하지 않는다.
