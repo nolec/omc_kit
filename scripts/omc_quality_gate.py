@@ -560,6 +560,19 @@ def run(root: Path) -> dict[str, Any]:
                 "stdout": completed.stdout,
                 "stderr": completed.stderr,
             }
+            # Python's missing entrypoint is an execution problem, not a test
+            # failure. Require the interpreter diagnostic as well as absence;
+            # exit 2 by itself is also an ordinary test or argument failure.
+            if (
+                completed.returncode == 2
+                and re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", Path(argv[0]).name, re.IGNORECASE)
+                and len(argv) > 1 and not argv[1].startswith("-")
+                and not (root / argv[1]).exists()
+                and "can't open file" in completed.stderr
+                and "[Errno 2]" in completed.stderr
+            ):
+                result["execution_status"] = "unavailable"
+                result["reason"] = "missing_verification_file"
         except subprocess.TimeoutExpired as error:
             gate_status = "timeout"
             result = {
@@ -724,6 +737,171 @@ def apply_proposal(
     return {"status": "applied", "config_sha256": proposed_sha256}
 
 
+
+BASELINE_PATH = Path(".omc/state/failure-baseline.json")
+
+
+def _diagnostic_identity(root: Path) -> dict[str, str]:
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    config, config_sha = load_config_snapshot(root)
+    executables = []
+    for gate in config["gates"]:
+        declared, _ = _declared_executables(root, gate["argv"])
+        for command, search_path, working_directory in declared:
+            effective_cwd = working_directory.resolve()
+            path_value = os.environ.get("PATH", os.defpath) if search_path is None else search_path
+            resolved_path = os.pathsep.join(
+                str(Path(entry) if Path(entry).is_absolute() else effective_cwd / entry)
+                for entry in path_value.split(os.pathsep)
+            )
+            if "/" in command:
+                candidate = Path(command)
+                if not candidate.is_absolute():
+                    candidate = effective_cwd / candidate
+                resolved = str(candidate) if candidate.is_file() and os.access(candidate, os.X_OK) else None
+            else:
+                resolved = shutil.which(command, path=resolved_path)
+            executables.append({"gate": gate["id"], "command": command,
+                                "cwd": str(effective_cwd), "path": resolved_path,
+                                "resolved": resolved,
+                                "sha256": file_sha256(Path(resolved)) if resolved else "missing"})
+    environment = _canonical_sha256({
+        "python": sys.version, "platform": sys.platform,
+        "path": os.environ.get("PATH", ""), "executables": executables,
+    })
+    return {"revision": revision, "config": config_sha, "environment": environment}
+
+
+def _failure_signature(gate: dict[str, Any]) -> str | None:
+    if gate.get("execution_status") == "unavailable":
+        return None
+    if gate.get("status") != "failed" or not isinstance(gate.get("returncode"), int):
+        return None
+    stdout, stderr = gate.get("stdout"), gate.get("stderr")
+    if not isinstance(stdout, str) or not isinstance(stderr, str):
+        return None
+    if not (stdout or stderr) or len(stdout) + len(stderr) > 1000000:
+        return None
+    # Exact output fingerprint: no inference of cause or aggressive normalization.
+    return _canonical_sha256({"stdout": stdout, "stderr": stderr, "returncode": gate["returncode"]})
+
+
+def _baseline_worktree_digest(root: Path) -> str:
+    if not (root / ".git").exists():
+        return ""
+    paths = subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], cwd=root).split(b"\0")
+    fingerprints = {}
+    for raw in paths:
+        if not raw:
+            continue
+        name = os.fsdecode(raw)
+        if name.startswith(".omc/"):
+            continue
+        p = root / name
+        fingerprints[name] = ("symlink:" + os.readlink(p)) if p.is_symlink() else (file_sha256(p) if p.is_file() else "missing")
+    return _canonical_sha256(fingerprints)
+
+
+def capture_failure_baseline(root: Path) -> dict[str, Any]:
+    path = root / BASELINE_PATH
+    if any(p.is_symlink() for p in [root / ".omc", path.parent, path]):
+        raise QualityGateError("baseline path must not be a symlink")
+    if path.exists():
+        raise QualityGateError("baseline already exists; no automatic replacement")
+    before = _diagnostic_identity(root)
+    worktree = _baseline_worktree_digest(root)
+    before_diff = subprocess.check_output(["git", "diff", "HEAD", "--"], cwd=root) if (root / ".git").exists() else b""
+    report = run(root)
+    if before != _diagnostic_identity(root):
+        raise QualityGateError("baseline identity changed during execution")
+    after_diff = subprocess.check_output(["git", "diff", "HEAD", "--"], cwd=root) if (root / ".git").exists() else b""
+    if before_diff != after_diff or worktree != _baseline_worktree_digest(root):
+        raise QualityGateError("working tree changed during baseline execution")
+    baseline = {"schema": "omc-failure-baseline/v1", "identity": before,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "working_diff_sha256": hashlib.sha256(before_diff).hexdigest(), "working_files_sha256": worktree, "report": report}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Lock readers/writers and publish atomically, without replacing an existing record.
+    lock_path = path.parent / "failure-baseline.lock"
+    if lock_path.is_symlink():
+        raise QualityGateError("baseline lock must not be a symlink")
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as tmp:
+            json.dump(baseline, tmp, ensure_ascii=False)
+            temp = Path(tmp.name)
+        try:
+            os.chmod(temp, 0o600)
+            os.link(temp, path)
+        except FileExistsError as error:
+            raise QualityGateError("baseline already exists") from error
+        finally:
+            temp.unlink(missing_ok=True)
+    return baseline
+
+
+def diagnose_failures(root: Path, report: dict[str, Any]) -> dict[str, Any]:
+    path = root / BASELINE_PATH
+    reason = None
+    baseline = None
+    baseline_revision = None
+    try:
+        if any(p.is_symlink() for p in [root / ".omc", path.parent, path]):
+            raise ValueError("symlink")
+        baseline = json.loads(path.read_text())
+        if not isinstance(baseline, dict):
+            raise ValueError("baseline type")
+        identity = _diagnostic_identity(root)
+        saved = baseline["identity"]
+        if not isinstance(saved, dict) or any(
+            not isinstance(saved.get(key), str) or not saved[key]
+            for key in ("revision", "config", "environment")
+        ):
+            raise ValueError("identity type")
+        if baseline["schema"] != "omc-failure-baseline/v1":
+            raise ValueError("schema")
+        if saved["config"] != identity["config"] or saved["environment"] != identity["environment"]:
+            raise ValueError("identity mismatch")
+        if saved["revision"] != identity["revision"]:
+            ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", saved["revision"], identity["revision"]], cwd=root, capture_output=True)
+            if ancestor.returncode != 0:
+                raise ValueError("revision mismatch")
+        saved_report = baseline["report"]
+        if not isinstance(saved_report, dict) or not isinstance(saved_report.get("gates"), list):
+            raise ValueError("report type")
+        saved_gates = saved_report["gates"]
+        if any(not isinstance(g, dict) or not isinstance(g.get("id"), str) or not g["id"]
+               for g in saved_gates):
+            raise ValueError("gate type")
+        old_gates = {g["id"]: g for g in saved_gates}
+        if len(old_gates) != len(saved_gates):
+            raise ValueError("duplicate gates")
+        baseline_revision = saved["revision"]
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, QualityGateError):
+        reason = "baseline_missing_or_invalid"
+        old_gates = {}
+    rows = []
+    for gate in report.get("gates", []):
+        if gate.get("status") == "passed":
+            continue
+        signature = _failure_signature(gate)
+        old = old_gates.get(gate.get("id"))
+        old_signature = _failure_signature(old) if isinstance(old, dict) else None
+        classification = "unknown"
+        if reason is None and signature is not None and old is not None and gate.get("argv") == old.get("argv"):
+            if old_signature is not None:
+                classification = "existing" if signature == old_signature else "new"
+            elif old.get("status") == "passed":
+                classification = "new"
+        rows.append({"id": gate.get("id"), "classification": classification,
+                     "label": {"existing": "기존 실패", "new": "신규 실패", "unknown": "구분 불가"}[classification],
+                     "reason": reason or (gate.get("reason") if gate.get("execution_status") == "unavailable" else None) or ("exact_output_comparison" if classification != "unknown" else "incomplete_or_uncomparable_output"),
+                     "raw_output_sha256": signature})
+    return {"status": "unknown" if reason else "compared", "reason": reason,
+            "baseline_revision": baseline_revision,
+            "gates": rows, "completion_policy": "unchanged_required_failure_blocks"}
+
+
 def _print_json(value: Any) -> None:
     print(json.dumps(value, ensure_ascii=False, sort_keys=True))
 
@@ -737,6 +915,7 @@ def main(argv: list[str] | None = None) -> int:
     approve_parser.add_argument("--config-sha256", required=True)
     approve_parser.add_argument("--allow-full", action="store_true")
     subparsers.add_parser("run")
+    subparsers.add_parser("baseline-capture")
     proposal_parser = subparsers.add_parser("proposal-validate")
     proposal_parser.add_argument("proposal", type=Path)
     apply_parser = subparsers.add_parser("proposal-apply")
@@ -757,6 +936,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "run":
             result = run(root)
+            result["diagnosis"] = diagnose_failures(root, result)
+        elif args.command == "baseline-capture":
+            result = capture_failure_baseline(root)
         elif args.command == "proposal-validate":
             proposal = json.loads(args.proposal.read_text(encoding="utf-8"))
             result = validate_proposal(proposal, root)
@@ -773,6 +955,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if result.get("status") == "ready" else 1
         if args.command == "run":
             return 0 if result.get("status") == "passed" else 1
+        if args.command == "baseline-capture":
+            return 0 if result["report"].get("status") == "passed" else 1
         return 0
     except (OSError, json.JSONDecodeError, QualityGateError) as error:
         _print_json({"status": "blocked", "reason": str(error)})

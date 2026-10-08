@@ -72,3 +72,30 @@ python3 scripts/omc_quality_gate.py --target . run
 기존 설정이 `invalid`이면 `status`가 표시한 `config_file_sha256`을 사용해 `proposal-apply <proposal.json> --expected-current-file-sha256 <raw-file-hash>`로만 교체합니다. 이 경로는 파싱할 수 없는 기존 파일을 위한 복구 전용이며, 교체 후에도 별도 `approve`가 필요합니다.
 
 `setup --force`는 프로젝트 소유 `.omc/quality-gates.json`을 덮어쓰거나 local exclude에 자동으로 숨기지 않습니다. 팀이 같은 품질 명령을 재현해야 한다면 이 파일을 저장소에서 명시적으로 관리합니다. 설치 검증의 `quality_gate_readiness`는 `missing / invalid / approval_required / approval_stale / ready` 중 하나이며, 설치 무결성과 별도로 보고됩니다.
+
+## 기존·신규 실패 진단
+
+승인된 품질 명령을 변경 전 상태에서 명시적으로 실행해 기준 기록을 생성합니다.
+
+```bash
+python3 scripts/omc_quality_gate.py --target . baseline-capture
+python3 scripts/omc_quality_gate.py --target . run
+```
+
+기준 실행이 실패하면 기록은 생성되지만 CLI 종료 코드는 1입니다. 성공한 기준 실행만 0을 반환합니다.
+기록 위치는 .omc/state/failure-baseline.json이며 기존 파일을 자동으로 덮어쓰지 않습니다.
+기준 revision·설정 해시·실행 환경과 실행 파일 해시, 생성 시각, 변경 diff 해시, 실행 원문을 보존합니다.
+원문에 민감정보가 있을 수 있으므로 로컬 기준 파일은 소유자 전용 권한으로 저장하며 공유·커밋하지 않습니다.
+
+run의 JSON 최종 보고에 diagnosis가 추가됩니다. 각 실패 gate에 기존 실패(existing), 신규 실패(new), 구분 불가(unknown), 근거 및 출력 지문을 표시합니다.
+전체 stdout·stderr·종료 코드의 정확한 일치를 비교합니다. 따라서 같은 원인이어도 출력이 달라지면 신규로 분류될 수 있습니다.
+혼합 출력은 gate 전체를 신규로 표시하며, 개별 실패 원인의 동일성·해결 여부를 추정하지 않습니다.
+빈 출력·타임아웃·미실행·실행 오류·1MB 초과 출력은 구분 불가입니다.
+직접 Python 스크립트 실행에서 파일 부재와 인터프리터의 `can't open file`·`[Errno 2]` 진단이 함께 확인되면 `missing_verification_file` 근거로 구분 불가 처리합니다. 종료 코드 2만으로 실행 불가를 추정하지 않습니다. 이 파일 부재 판별은 `python check.py` 형태에 적용되며, 래퍼·옵션·다른 인터프리터의 출력까지 일반화하지 않습니다.
+기준 없음·손상·설정/환경 불일치·기준 revision이 현재 revision의 조상이 아니면 진단만 구분 불가로 표시합니다.
+현재 확장 명령이 기준 명령과 다르면 해당 gate 역시 구분 불가입니다.
+
+진단은 기존 status·종료 코드·필수 실패 차단을 바꾸지 않습니다. 기준에 이미 존재한 필수 실패도 완료를 차단합니다.
+기준 실행 중 revision·설정·환경 또는 tracked diff가 변경되면 저장하지 않습니다.
+tracked와 비무시 untracked 파일은 실행 전후 대조합니다. .omc 상태·ignored 파일·외부 서비스의 동시 변화까지 원자적으로 고정하지 못하므로 기준 실행 중 작업을 변경하지 않아야 합니다.
+이 기능은 quality gate CLI 보고에 적용됩니다. 별도 autopilot 보고 형식이나 다른 실행기 전체의 분류 지원을 의미하지 않습니다.

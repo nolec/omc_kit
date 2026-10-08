@@ -1340,3 +1340,158 @@ def test_tdd_compatibility_path_does_not_invoke_framework_commands_directly():
 
     for fragment in ("npx nx", "npx jest", "pytest --"):
         assert fragment not in text
+
+def test_failure_diagnosis_baseline_and_required_block(tmp_path, monkeypatch):
+    m = _load_module()
+    config = _write_config(tmp_path, argv=["python3", "-c", "print('FAIL A');raise SystemExit(1)"], scope="full")
+    m.approve(tmp_path, expected_config_sha256=m.canonical_file_sha256(config), allow_full=True)
+    monkeypatch.setattr(m, "_git_changed_files", lambda *args: [])
+    monkeypatch.setattr(m, "_diagnostic_identity", lambda root: {"revision": "base", "config": m.canonical_file_sha256(config), "environment": "test"})
+    baseline = m.capture_failure_baseline(tmp_path)
+    report = m.run(tmp_path)
+    diagnosed = m.diagnose_failures(tmp_path, report)
+    assert baseline["report"]["status"] == report["status"] == "blocked"
+    assert diagnosed["gates"][0]["classification"] == "existing"
+    assert report["gates"][0]["returncode"] == 1
+    with pytest.raises(m.QualityGateError):
+        m.capture_failure_baseline(tmp_path)
+    report["gates"][0]["stdout"] = "FAIL B\n"
+    assert m.diagnose_failures(tmp_path, report)["gates"][0]["classification"] == "new"
+    report["gates"][0]["status"] = "timeout"
+    assert m.diagnose_failures(tmp_path, report)["gates"][0]["classification"] == "unknown"
+
+
+def test_failure_diagnosis_missing_and_corrupt(tmp_path):
+    m = _load_module()
+    report = {"gates": [{"id": "test", "status": "failed", "stdout": "FAIL", "stderr": "", "returncode": 1}]}
+    assert m.diagnose_failures(tmp_path, report)["status"] == "unknown"
+    path = tmp_path / ".omc/state/failure-baseline.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("{}")
+    assert m.diagnose_failures(tmp_path, report)["status"] == "unknown"
+
+def test_failure_diagnosis_actual_cli_and_mixed_output(tmp_path):
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True)
+    git("init", "-q")
+    git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "fixture")
+    m = _load_module()
+    gate_script = tmp_path / "check.py"
+    gate_script.write_text("print('FAIL A');raise SystemExit(1)")
+    cfg = _write_config(tmp_path, argv=["python3", "check.py"], scope="full")
+    data = json.loads(cfg.read_text()); data["base_ref"] = "HEAD"; cfg.write_text(json.dumps(data))
+    m.approve(tmp_path, expected_config_sha256=m.canonical_file_sha256(cfg), allow_full=True)
+    def cli(command):
+        result = subprocess.run(["python3", str(MODULE_PATH), "--target", str(tmp_path), command], capture_output=True, text=True)
+        return result.returncode, json.loads(result.stdout)
+    code, report = cli("run")
+    assert code == 1 and report["diagnosis"]["gates"][0]["classification"] == "unknown"
+    code, baseline = cli("baseline-capture")
+    assert code == 1 and baseline["report"]["status"] == "blocked"
+    code, report = cli("run")
+    assert code == 1 and report["diagnosis"]["gates"][0]["classification"] == "existing"
+    gate_script.write_text("print('FAIL A');print('FAIL B');raise SystemExit(1)")
+    code, report = cli("run")
+    assert code == 1 and report["diagnosis"]["gates"][0]["classification"] == "new"
+    assert "FAIL A" in report["gates"][0]["stdout"] and "FAIL B" in report["gates"][0]["stdout"]
+    saved = json.loads((tmp_path / ".omc/state/failure-baseline.json").read_text())
+    saved["identity"]["environment"] = "other"
+    (tmp_path / ".omc/state/failure-baseline.json").write_text(json.dumps(saved))
+    code, report = cli("run")
+    assert code == 1 and report["diagnosis"]["status"] == "unknown"
+
+
+def test_capture_rejects_execution_identity_change(tmp_path, monkeypatch):
+    m = _load_module()
+    identities = iter([{"revision": "a"}, {"revision": "b"}])
+    monkeypatch.setattr(m, "_diagnostic_identity", lambda root: next(identities))
+    monkeypatch.setattr(m, "run", lambda root: {"status": "blocked", "gates": []})
+    with pytest.raises(m.QualityGateError, match="identity changed"):
+        m.capture_failure_baseline(tmp_path)
+    assert not (tmp_path / m.BASELINE_PATH).exists()
+
+@pytest.mark.parametrize("identity", [None, [], "broken", {}, {"revision": [], "config": "x", "environment": "y"}, "valid"])
+@pytest.mark.parametrize("saved_report", [None, [], {"gates": None}, {"gates": [None]}, {"gates": [{"id": []}]}])
+@pytest.mark.parametrize("gate_exit", [0, 1])
+def test_malformed_baseline_keeps_actual_cli_result(tmp_path, identity, saved_report, gate_exit):
+    def git(*args):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    git("init", "-q")
+    git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "fixture")
+    m = _load_module()
+    cfg = _write_config(tmp_path, argv=["python3", "-c", f"print('RESULT');raise SystemExit({gate_exit})"], scope="full")
+    data = json.loads(cfg.read_text()); data["base_ref"] = "HEAD"; cfg.write_text(json.dumps(data))
+    m.approve(tmp_path, expected_config_sha256=m.canonical_file_sha256(cfg), allow_full=True)
+    if identity == "valid":
+        identity = m._diagnostic_identity(tmp_path)
+    path = tmp_path / m.BASELINE_PATH
+    path.write_text(json.dumps({"schema": "omc-failure-baseline/v1", "identity": identity, "report": saved_report}))
+    result = subprocess.run(["python3", str(MODULE_PATH), "--target", str(tmp_path), "run"], capture_output=True, text=True)
+    assert result.returncode == gate_exit
+    assert not result.stderr
+    report = json.loads(result.stdout)
+    assert report["status"] == ("passed" if gate_exit == 0 else "blocked")
+    assert report["diagnosis"]["status"] == "unknown"
+    assert report["diagnosis"]["baseline_revision"] is None
+    assert report["gates"][0]["returncode"] == gate_exit
+    if gate_exit:
+        assert report["diagnosis"]["gates"][0]["classification"] == "unknown"
+@pytest.mark.parametrize("command,path_entry", [
+    ("./check", "bin"), ("check", "bin"), ("check", ""),
+    (["/usr/bin/env", "PATH=bin", "check"], "bin"),
+    (["/usr/bin/env", "-C", "bin", "./check"], "bin"),
+    (["/usr/bin/env", "-P", "bin", "check"], "bin"),
+])
+def test_diagnostic_executable_uses_target_directory(tmp_path, monkeypatch, command, path_entry):
+    import os
+    import sys
+    m = _load_module()
+    caller, target = tmp_path / "caller", tmp_path / "target"
+    caller.mkdir(); target.mkdir()
+    for directory in (caller, target):
+        (directory / "bin").mkdir()
+        for relative in ("check", "bin/check"):
+            script = directory / relative
+            script.write_text("#!/bin/sh\necho FAIL\nexit 1\n")
+            script.chmod(0o700)
+    subprocess.run(["git", "init", "-q"], cwd=target, check=True)
+    subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "fixture"], cwd=target, check=True)
+    cfg = _write_config(target, argv=command if isinstance(command, list) else [command], scope="full")
+    data = json.loads(cfg.read_text()); data["base_ref"] = "HEAD"; cfg.write_text(json.dumps(data))
+    m.approve(target, expected_config_sha256=m.canonical_file_sha256(cfg), allow_full=True)
+    monkeypatch.chdir(caller)
+    monkeypatch.setenv("PATH", path_entry + os.pathsep + os.environ.get("PATH", os.defpath))
+    baseline = m.capture_failure_baseline(target)
+    report = m.run(target)
+    assert m.diagnose_failures(target, report)["gates"][0]["classification"] == "existing"
+    selected = target / ("bin/check" if isinstance(command, list) or command == "check" and path_entry else "check")
+    selected.write_text("#!/bin/sh\n# changed executable, identical failure output\necho FAIL\nexit 1\n")
+    assert m._diagnostic_identity(target) != baseline["identity"]
+    result = subprocess.run([sys.executable, str(MODULE_PATH), "--target", str(target), "run"], capture_output=True, text=True)
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "blocked"
+    assert payload["diagnosis"]["gates"][0]["classification"] == "unknown"
+@pytest.mark.parametrize("missing", [True, False])
+def test_missing_python_verification_is_unknown_but_exit_two_is_new(tmp_path, missing):
+    import sys
+    m = _load_module()
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "fixture"], cwd=tmp_path, check=True)
+    script = tmp_path / "check.py"
+    script.write_text("print('FAIL A');raise SystemExit(1)")
+    cfg = _write_config(tmp_path, argv=[sys.executable, "check.py"], scope="full")
+    data = json.loads(cfg.read_text()); data["base_ref"] = "HEAD"; cfg.write_text(json.dumps(data))
+    m.approve(tmp_path, expected_config_sha256=m.canonical_file_sha256(cfg), allow_full=True)
+    m.capture_failure_baseline(tmp_path)
+    if missing:
+        script.unlink()
+    else:
+        script.write_text("print('FAIL B');raise SystemExit(2)")
+    result = subprocess.run([sys.executable, str(MODULE_PATH), "--target", str(tmp_path), "run"], capture_output=True, text=True)
+    report = json.loads(result.stdout)
+    assert result.returncode == 1 and report["status"] == "blocked"
+    assert report["gates"][0]["returncode"] == 2
+    assert report["diagnosis"]["gates"][0]["classification"] == ("unknown" if missing else "new")
+    if missing:
+        assert report["diagnosis"]["gates"][0]["reason"] == "missing_verification_file"
