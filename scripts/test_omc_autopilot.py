@@ -3033,3 +3033,161 @@ def test_recovery_blocks_explicit_plan_retry_when_critique_budget_is_exhausted()
     )
 
     assert target is None
+
+@pytest.mark.parametrize('case,code,verification', [('pass',0,'passed'),('fail',1,'failed'),('exit2',1,'failed'),('missing',1,'unavailable'),('timeout',1,'unavailable'),('none',0,'not_configured'),('dry',0,'not_run')])
+def test_managed_report_public_cli(tmp_path, case, code, verification):
+    (tmp_path / '.omc').mkdir()
+    (tmp_path / '.omc/policy.json').write_text(json.dumps({'autopilot':{'allowed_commands':[sys.executable]}}))
+    check = tmp_path / 'check.py'
+    scripts = {'pass':'pass', 'fail':'print("OK"); raise SystemExit(1)', 'exit2':'raise SystemExit(2)', 'timeout':'import time; time.sleep(3)'}
+    if case in scripts:
+        check.write_text(scripts[case])
+    step = {'id':'s1','prompt':'controlled check','expect_only':True}
+    if case not in ['none','dry']:
+        step['expect']={'checks':[{'cmd':f'{sys.executable} {check}', 'timeout_sec':1}]}
+    task = tmp_path / 'task.json'
+    task.write_text(json.dumps({'id':'managed-report','executor':'claude','max_retries':0,'steps':[step]}))
+    argv=[sys.executable,str(Path(__file__).with_name('omc.py')),'autopilot','--task-file',str(task)]
+    if case=='dry':argv.append('--dry-run')
+    result=subprocess.run(argv,cwd=str(tmp_path),text=True,capture_output=True,timeout=20)
+    assert result.returncode==code, result.stdout+result.stderr
+    assert '[AUTOPILOT REPORT]' in result.stdout
+    state=json.loads((tmp_path/'.omc/state/autopilot/managed-report.json').read_text())
+    assert state['final_report']['steps']['s1']['verification']==verification
+    assert state['final_report']['status']==('simulated' if case=='dry' else state['status'])
+    assert f'verification={verification}' in result.stdout
+    if case=='missing':
+        assert 'missing_verification_file' in result.stdout
+        assert 'exit=2' in result.stdout
+    if case=='fail':
+        assert 'exit=1' in result.stdout
+        assert f'remaining: {sys.executable} {check}' in result.stdout
+
+
+def test_managed_report_approve_is_reference_only(tmp_path, monkeypatch, capsys):
+    task=tmp_path/'task.json'
+    task.write_text(json.dumps({'id':'managed-report','executor':'claude','max_retries':0,'steps':[{'id':'s1','prompt':'test','expect':{'files':['missing']}}]}))
+    monkeypatch.setattr(omc_autopilot,'_run_step',lambda *a,**k:(0,'VERDICT: APPROVE',None,None))
+    assert omc_autopilot.cmd_run(tmp_path,task)==1
+    out=capsys.readouterr().out
+    assert 'model_verdict=APPROVE (reference only)' in out
+    state=json.loads((tmp_path/'.omc/state/autopilot/managed-report.json').read_text())
+    assert state['final_report']['status']=='failed'
+
+
+def test_managed_report_retry_does_not_reuse_checks(tmp_path, monkeypatch):
+    task=tmp_path/'task.json'
+    task.write_text(json.dumps({'id':'managed-report','executor':'claude','max_retries':1,'steps':[{'id':'s1','prompt':'test','expect':{'files':['missing']}}]}))
+    outputs=iter([(0,'VERDICT: APPROVE',None,None),(1,'timeout',None,{'failure_category':'timeout'})])
+    monkeypatch.setattr(omc_autopilot,'_run_step',lambda *a,**k:next(outputs))
+    assert omc_autopilot.cmd_run(tmp_path,task)==1
+    state=json.loads((tmp_path/'.omc/state/autopilot/managed-report.json').read_text())
+    ss=state['steps']['s1']
+    assert ss['expect_results']==[]
+    assert ss['attempts'][0]['verification']['status']=='failed'
+    assert ss['attempts'][1]['verification']['status']=='not_run'
+    assert state['final_report']['steps']['s1']['verification']=='not_run'
+
+
+@pytest.mark.parametrize('response,verdict', [
+    (json.dumps({'type':'result','result':'review\nVERDICT: APPROVE'}), 'APPROVE'),
+    ('VERDICT: APPROVE', 'APPROVE'),
+    ('[치명]\n없음\n[중대]\n없음\nVERDICT: APPROVE', 'APPROVE'),
+    ('[제안]\n없음\nVERDICT: APPROVE WITH NOTES', 'APPROVE WITH NOTES'),
+    ('[확인 필요]\n추가 확인\nVERDICT: REVISE', 'REVISE'),
+    ('[제안]\n판정 없음', None),
+    ('[치명] 없음\nVERDICT: APPROVE', 'APPROVE'),
+    ('["unterminated\nVERDICT: APPROVE', None),
+    (json.dumps({'type':'result','result':'no decision','metadata':'VERDICT: APPROVE'}), None),
+    ('{"result": "VERDICT: APPROVE"', None),
+])
+def test_managed_report_claude_response_public_cli(tmp_path, monkeypatch, response, verdict):
+    import os
+    bin_dir=tmp_path/'bin'; bin_dir.mkdir()
+    claude=bin_dir/'claude'
+    claude.write_text(f'#!{sys.executable}\nprint({response!r})\n')
+    claude.chmod(0o755)
+    monkeypatch.setenv('PATH',str(bin_dir)+os.pathsep+os.environ['PATH'])
+    (tmp_path/'.omc').mkdir()
+    (tmp_path/'.omc/policy.json').write_text(json.dumps({'autopilot':{'allowed_commands':[sys.executable]}}))
+    (tmp_path/'check.py').write_text('raise SystemExit(1)')
+    task=tmp_path/'task.json'
+    task.write_text(json.dumps({'schema_version':'omc-autopilot-task/v2','id':'response-report','executor':'claude','max_retries':0,'steps':[{'id':'s1','prompt':'controlled response','depends_on':[],'completion':{'validator_id':'json_object_fields','output_path':'done.json','required_fields':['status']},'expect':{'checks':[{'cmd':f'{sys.executable} check.py'}]}}]}))
+    proc=subprocess.run([sys.executable,str(Path(__file__).with_name('omc.py')),'autopilot','--task-file',str(task)],cwd=tmp_path,capture_output=True,text=True,timeout=20)
+    assert proc.returncode==1, proc.stdout+proc.stderr
+    final=proc.stdout.split('[AUTOPILOT REPORT]')[-1]
+    assert 'status=failed' in final and 'exit=1' in final
+    state=json.loads((tmp_path/'.omc/state/autopilot/response-report.json').read_text())
+    assert state['final_report']['steps']['s1']['model_verdict']==verdict
+    assert ('model_verdict=' in final)==(verdict is not None)
+    if verdict: assert f'model_verdict={verdict} (reference only)' in final
+    assert 'last_output' not in state['steps']['s1']
+
+
+def test_managed_report_claude_timeout_public_cli(tmp_path, monkeypatch):
+    import os
+    bin_dir=tmp_path/'bin';bin_dir.mkdir()
+    claude=bin_dir/'claude'
+    claude.write_text(f'#!{sys.executable}\nimport time\nprint("PRIVATE_PROVIDER_RAW",flush=True)\ntime.sleep(3)\n')
+    claude.chmod(0o755)
+    monkeypatch.setenv('PATH',str(bin_dir)+os.pathsep+os.environ['PATH'])
+    task=tmp_path/'task.json'
+    task.write_text(json.dumps({'schema_version':'omc-autopilot-task/v2','id':'timeout-report','executor':'claude','max_retries':0,'steps':[{'id':'s1','prompt':'controlled timeout','timeout_sec':1,'depends_on':[],'completion':{'validator_id':'json_object_fields','output_path':'done.json','required_fields':['status']},'expect':{'files':['ready']}}]}))
+    proc=subprocess.run([sys.executable,str(Path(__file__).with_name('omc.py')),'autopilot','--task-file',str(task)],cwd=tmp_path,capture_output=True,text=True,timeout=20)
+    assert proc.returncode==1,proc.stdout+proc.stderr
+    final=proc.stdout.split('[AUTOPILOT REPORT]')[-1]
+    assert 'status=failed' in final and 'verification=not_run' in final
+    assert 'failure_category=timeout' in final and 'timeout_sec=1' in final
+    assert 'remaining: file_exists: ready' in final
+    raw=(tmp_path/'.omc/state/autopilot/timeout-report.json').read_text()
+    assert 'PRIVATE_PROVIDER_RAW' not in raw
+    step=json.loads(raw)['final_report']['steps']['s1']
+    assert step['failure_category']=='timeout' and step['timeout_sec']==1
+
+
+def test_managed_report_retry_success_and_dependency(tmp_path, monkeypatch):
+    task=tmp_path/'task.json'
+    task.write_text(json.dumps({'id':'managed-report','executor':'claude','max_retries':1,'steps':[{'id':'s1','prompt':'test','expect':{'files':['ready']}},{'id':'s2','prompt':'next','depends_on':['s1'],'expect_only':True}]}))
+    calls=[]
+    def executor(*a,**k):
+        calls.append(True)
+        if len(calls)==2:(tmp_path/'ready').write_text('ready')
+        return 0,'VERDICT: APPROVE',None,None
+    monkeypatch.setattr(omc_autopilot,'_run_step',executor)
+    assert omc_autopilot.cmd_run(tmp_path,task)==0
+    state=json.loads((tmp_path/'.omc/state/autopilot/managed-report.json').read_text())
+    assert [a['verification']['status'] for a in state['steps']['s1']['attempts']]==['failed','passed']
+    assert state['final_report']['steps']['s1']['verification']=='passed'
+    assert state['final_report']['steps']['s1']['failure_details']==[]
+
+
+def test_managed_report_blocked_step_has_no_verification(tmp_path, monkeypatch):
+    task=tmp_path/'task.json'
+    task.write_text(json.dumps({'id':'managed-report','executor':'claude','max_retries':0,'steps':[{'id':'s1','prompt':'fail'},{'id':'s2','prompt':'never','depends_on':['s1']}]}))
+    monkeypatch.setattr(omc_autopilot,'_run_step',lambda *a,**k:(1,'timeout',None,None))
+    assert omc_autopilot.cmd_run(tmp_path,task)==1
+    state=json.loads((tmp_path/'.omc/state/autopilot/managed-report.json').read_text())
+    assert state['final_report']['steps']['s2']['verification']=='not_run'
+    assert state['final_report']['steps']['s2']['blocked_by']=='s1'
+
+
+def test_managed_report_legacy_completed_state_is_unknown(tmp_path):
+    task=tmp_path/'task.json'
+    task.write_text(json.dumps({'id':'managed-report','executor':'claude','steps':[{'id':'s1','prompt':'already done'}]}))
+    p=tmp_path/'.omc/state/autopilot/managed-report.json';p.parent.mkdir(parents=True)
+    p.write_text(json.dumps({'steps':{'s1':{'status':'completed'}}}))
+    assert omc_autopilot.cmd_run(tmp_path,task)==0
+    state=json.loads(p.read_text())
+    assert state['final_report']['steps']['s1']['verification']=='unknown'
+
+
+def test_managed_report_passed_checks_then_completion_retry_timeout(tmp_path, monkeypatch):
+    task=tmp_path/'task.json'
+    task.write_text(json.dumps({'schema_version':'omc-autopilot-task/v2','id':'managed-report','executor':'claude','max_retries':1,'steps':[{'id':'s1','prompt':'test','depends_on':[],'completion':{'validator_id':'json_object_fields','output_path':'receipt.json','required_fields':['status']},'expect':{'files':['ready']}}]}))
+    (tmp_path/'ready').write_text('ready')
+    outputs=iter([(0,'VERDICT: APPROVE',None,None),(1,'timeout',None,{'failure_category':'timeout'})])
+    monkeypatch.setattr(omc_autopilot,'_run_step',lambda *a,**k:next(outputs))
+    assert omc_autopilot.cmd_run(tmp_path,task)==1
+    state=json.loads((tmp_path/'.omc/state/autopilot/managed-report.json').read_text())
+    assert [a['verification']['status'] for a in state['steps']['s1']['attempts']]==['passed','not_run']
+    assert state['final_report']['steps']['s1']['verification']=='not_run'

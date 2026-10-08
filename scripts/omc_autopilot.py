@@ -670,11 +670,24 @@ def _run_expect_checks(
             )
             ok = proc.returncode == 0
             output = ((proc.stdout or "") + (proc.stderr or "")).strip()
-            results.append({"label": label, "ok": ok, "output": output[:500]})
+            # Only classify a direct Python script entrypoint that was absent;
+            # exit 2 alone also represents ordinary test/argument failures.
+            missing_file = (
+                proc.returncode == 2
+                and re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", Path(argv[0]).name, re.IGNORECASE) is not None
+                and len(argv) > 1 and not argv[1].startswith("-")
+                and not (root / argv[1]).exists()
+                and "can't open file" in (proc.stderr or "")
+                and "[Errno 2]" in (proc.stderr or "")
+            )
+            result = {"label": label, "ok": ok, "output": output[:500], "command": cmd, "exit_code": proc.returncode, "execution_status": "unavailable" if missing_file else "executed"}
+            if missing_file:
+                result["reason_code"] = "missing_verification_file"
+            results.append(result)
         except subprocess.TimeoutExpired:
-            results.append({"label": label, "ok": False, "output": "[ERROR] 타임아웃"})
+            results.append({"label": label, "ok": False, "output": "[ERROR] 타임아웃", "command": cmd, "exit_code": None, "execution_status": "timeout"})
         except Exception as exc:
-            results.append({"label": label, "ok": False, "output": f"[ERROR] {exc}"})
+            results.append({"label": label, "ok": False, "output": f"[ERROR] {exc}", "command": cmd, "exit_code": None, "execution_status": "unavailable"})
 
     return results
 
@@ -1132,6 +1145,81 @@ def _build_task_run_result(
 # 커맨드: run
 # ---------------------------------------------------------------------------
 
+def _verification_status(results: list[dict]) -> str:
+    if any(r.get("execution_status") in {"timeout", "unavailable"} for r in results):
+        return "unavailable"
+    return "passed" if all(r.get("ok") for r in results) else "failed"
+
+
+def _model_report_verdict(output: str) -> str | None:
+    """Decode provider envelopes for reporting only, never for admission."""
+    # OMC's plain review headings are not JSON arrays. Keep malformed
+    # provider envelopes fail-closed instead of falling back for every '['.
+    if re.match(r"\[(?:치명|중대|경미|제안|확인 필요)\]", output.lstrip()):
+        return _grep_verdict(output)
+    if output.lstrip().startswith(("{", "[")):
+        try:
+            payload = json.loads(output)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict) or not isinstance(payload.get("result"), str):
+            return None
+        output = payload["result"]
+    return _grep_verdict(output)
+
+
+def _managed_final_report(state: dict, steps: list[dict]) -> dict:
+    """Project executor evidence; a model verdict is never task admission."""
+    report = {"status": "simulated" if state.get("simulated") else state.get("status", "unknown"), "steps": {}}
+    for step in steps:
+        ss = state.get("steps", {}).get(step["id"], {})
+        evidence = ss.get("verification")
+        if not isinstance(evidence, dict):
+            evidence = {"status": "unknown", "checks": []}
+            if ss.get("status") in {"blocked", "waiting_approval"} or ss.get("simulated"):
+                evidence["status"] = "not_run"
+        report["steps"][step["id"]] = {
+            "status": ss.get("status", "unknown"),
+            "attempt": ss.get("attempt"),
+            "verification": evidence["status"],
+            "checks": evidence.get("checks", []),
+            "model_verdict": ss.get("model_verdict"),
+            "failure_details": ss.get("failure_details", []),
+            "blocked_by": ss.get("blocked_by"),
+            "failure_category": ss.get("report_failure_category"),
+            "timeout_sec": ss.get("report_timeout_sec"),
+            "remaining_checks": (
+                [str(c.get("command") or c.get("label")) for c in evidence.get("checks", []) if not c.get("ok")]
+                if evidence.get("checks") else
+                [f"file_exists: {f}" for f in (step.get("expect") or {}).get("files", [])]
+                + [c.get("cmd", "") for c in (step.get("expect") or {}).get("checks", []) if c.get("cmd")]
+            ) if evidence["status"] != "passed" else [],
+        }
+    return report
+
+
+def _print_managed_report(report: dict) -> None:
+    print(f"[AUTOPILOT REPORT] status={report['status']}")
+    for sid, row in report["steps"].items():
+        print(f"  {sid}: status={row['status']} attempt={row['attempt']} verification={row['verification']}")
+        if row["model_verdict"]:
+            print(f"    model_verdict={row['model_verdict']} (reference only)")
+        if row["blocked_by"]:
+            print(f"    blocked_by={row['blocked_by']}")
+        if row["failure_category"]:
+            print(f"    failure_category={row['failure_category']} timeout_sec={row['timeout_sec']}")
+        for check in row["checks"]:
+            print(f"    {check.get('command') or check.get('label')}: exit={check.get('exit_code', 'unknown')} ok={check.get('ok')}")
+            if check.get("reason_code"):
+                print(f"      reason_code={check['reason_code']}")
+            if not check.get("ok") and check.get("output"):
+                print(f"      {check['output'][:500]}")
+        for check in row["remaining_checks"]:
+            print(f"    remaining: {check}")
+        for failure in row["failure_details"]:
+            print(f"    reason: {failure.get('label')}: {failure.get('output', '')[:300]}")
+
+
 def cmd_run(
     root: Path,
     task_file: Path,
@@ -1234,6 +1322,7 @@ def cmd_run(
     state["started_at"] = state.get("started_at") or _now()
     state["status"] = "running"
     state["simulated"] = bool(dry_run)
+    state.pop("final_report", None)
     if task_spec_hash:
         state["task_spec_sha256"] = task_spec_hash
     execution_started_monotonic = time.monotonic()
@@ -1370,6 +1459,12 @@ def cmd_run(
 
         for attempt in range(1, max_retries + 2):
             step_state["attempt"] = attempt
+            step_state["expect_results"] = []
+            step_state["model_verdict"] = None
+            step_state.pop("report_failure_category", None)
+            step_state.pop("report_timeout_sec", None)
+            configured = bool((step.get("expect") or {}).get("files") or (step.get("expect") or {}).get("checks"))
+            step_state["verification"] = {"attempt": attempt, "status": "not_run" if configured or dry_run else "not_configured", "checks": []}
 
             # 재시도 시 실패 컨텍스트를 프롬프트에 주입
             active_prompt = (
@@ -1417,6 +1512,8 @@ def cmd_run(
                     )
                     step_state.update(runtime_to_store)
 
+            if rc == 0 and not dry_run:
+                step_state["model_verdict"] = _model_report_verdict(output)
             if workflow_v2:
                 step_state["last_output_diagnostics"] = (
                     autopilot_workflow.output_diagnostics(output)
@@ -1428,6 +1525,7 @@ def cmd_run(
 
             attempt_record = {
                 "attempt": attempt,
+                "verification": step_state["verification"],
                 "status": "completed" if rc == 0 else "failed",
                 "started_at": (step_runtime or {}).get("started_at") or step_state["started_at"],
                 "finished_at": (step_runtime or {}).get("finished_at") or (step_runtime or {}).get("failed_at") or _now(),
@@ -1443,6 +1541,10 @@ def cmd_run(
 
             # LLM 실행 자체 실패
             if rc != 0:
+                # Reporting metadata must not change the existing retry policy.
+                if rc == 124 or (step_runtime or {}).get("failure_category") == "timeout":
+                    step_state["report_failure_category"] = "timeout"
+                    step_state["report_timeout_sec"] = (step_runtime or {}).get("timeout_sec", timeout_sec)
                 last_failures = [{"label": "LLM 실행 실패", "output": output[:300]}]
                 print(f"  ❌ LLM 실행 실패 (attempt {attempt}): {output[:150]}")
                 if _retry_allowed(step, step_runtime, attempt=attempt, max_retries=max_retries):
@@ -1496,6 +1598,7 @@ def cmd_run(
             if expect_cfg and not dry_run:
                 check_results = _run_expect_checks(root, expect_cfg, dry_run=dry_run)
                 step_state["expect_results"] = check_results
+                step_state["verification"].update({"status": _verification_status(check_results) if check_results else "not_configured", "checks": check_results})
                 failures = [r for r in check_results if not r["ok"]]
                 if failures:
                     last_failures = failures
@@ -1545,6 +1648,10 @@ def cmd_run(
             failed_count += 1
             print(f"  [FAIL] {sid}: {max_retries + 1}번 시도 후 실패")
 
+        step_state["failure_details"] = (
+            [{"label": f.get("label"), **autopilot_workflow.output_diagnostics(str(f.get("output", "")))} for f in last_failures]
+            if workflow_v2 and not success else last_failures if not success else []
+        )
         state["steps"][sid] = step_state
         _save_state(root, task_id, state)
 
@@ -1589,6 +1696,7 @@ def cmd_run(
                     "not ready: completion requires real observed runs but observed sample count did not increase"
                 )
                 _save_pipeline_result(root, run_result)
+    state["final_report"] = _managed_final_report(state, steps)
     _save_state(root, task_id, state)
 
     print(f"\n[AUTOPILOT] {'✅ 태스크 완료' if all_done else '❌ 태스크 실패'}: {title}")
@@ -1597,6 +1705,7 @@ def cmd_run(
         f"실패/블록={failed_count}"
     )
     print(f"           상태 저장: {_state_path(root, task_id).relative_to(root)}")
+    _print_managed_report(state["final_report"])
     return 0 if all_done else 1
 
 
