@@ -34,4 +34,17 @@
 | C2 프롬프트 관리 | 비교 검증 필요 | 동일 정책 변경의 수정량·생성 불일치 |
 | C3 중단·재개 | 비교 검증 필요 | 동일 중단·요청 변경의 중복 작업·과거 완료 재사용 |
 
-로컬 커밋과 제품 효과 검증은 별개다. C1 결과를 확인한 뒤 C2·C3 진행 여부를 사람이 결정한다. 푸시·배포는 수행하지 않았다.
+로컬 커밋과 제품 효과 검증은 별개다. C1 결과를 확인한 뒤 C2·C3 진행 여부를 사람이 결정한다. 푸시는 수행하지 않았다.
+
+## 0.4.0 버전·사용처 설치 상태
+
+원본 VERSION과 버전 테스트를 0.4.0으로 변경했다(미커밋). 버전 테스트 32개 통과. C1·autopilot 코드 개선은 기존 커밋에 포함돼 있으나 작업 보고 통합 보완은 미구현이다.
+
+- 재설치 10곳: sixshop2-landing, research-auto, sixshop3-partner-center-fe, sixshop3-storefront-fe, marketing, market-reasoning-engine, okx-maker-grid-bot-wind, ai-cs, codex-chat, sixshop2.
+- 추가 설치: sellerhub-accounts-fe-restored. 기본 사용 준비 완료. 프로젝트 품질 검증 명령은 미설정. 공통 프롬프트 2개는 Git 로컬 제외 목록으로 보조 파일 노출을 해소했다.
+- 총 11곳: 0.4.0·설치 정상·원본 기능 파일 일치 확인. 설치 완료와 사용자 효과 입증은 별개다.
+- marketing-project: AGENTS.md 프로젝트 지침 변경으로 재설치 보류. 기존 지침 보존.
+- 설치 원문은 격리 대시보드 evidence/omc-040-install-results.json 및 omc-040-install-verification.json에 보존(앞선 10곳). sellerhub는 별도 설치·검증 결과로 확인했다.
+- 대시보드 입력 v4 고정. 이전 v3 및 이전 화면을 보존했다.
+
+다음 개발 작업은 실패 분류·사유·남은 조치를 작업 최종 보고에 전달하는 통합 보완이다.
