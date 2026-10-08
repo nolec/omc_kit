@@ -242,6 +242,29 @@ def _run_quality_gates(root: Path) -> tuple[bool, str]:
         result = quality_gate.run(root)
     except quality_gate.QualityGateError as error:
         return False, f"omc_quality_gate.py run ({error})"
+    diagnosis = quality_gate.diagnose_failures(root, result)
+    results_by_id = {gate["id"]: gate for gate in result.get("gates", [])}
+    for gate in diagnosis["gates"]:
+        classification = gate["classification"]
+        reason = gate["reason"]
+        required = results_by_id[gate["id"]]["required"]
+        if not required:
+            action = "선택 검증 결과를 확인하고 필요하면 재실행하세요. 이 결과로 완료 차단하지 않습니다."
+        elif classification == "existing":
+            action = "확인된 기존 실패를 해결하고 필수 검증을 다시 실행하세요."
+        elif classification == "new":
+            action = "이번 변경과 달라진 실패를 조사·수정한 뒤 필수 검증을 다시 실행하세요."
+        elif reason == "missing_verification_file":
+            action = "검증 파일 경로·파일 존재를 확인하고 필수 검증을 다시 실행하세요."
+        elif reason == "baseline_missing_or_invalid":
+            action = "기준 기록의 유효성을 확인하세요. 현재 필수 검증 실패도 해결해야 합니다."
+        else:
+            action = "실행 환경·검증 출력·기준 기록을 확인하고 필수 검증을 다시 실행하세요."
+        print(f"[TDD] 실패 진단 · {gate['id']}: {gate['label']}")
+        print(f"       사유: {reason}")
+        print(f"       남은 조치: {action}")
+    if diagnosis["gates"]:
+        print("[TDD] 진단은 참고 정보이며 필수 검증 실패는 완료 차단합니다.")
     return result.get("status") == "passed", "omc_quality_gate.py run"
 
 

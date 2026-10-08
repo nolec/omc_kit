@@ -602,6 +602,9 @@ def run(root: Path) -> dict[str, Any]:
             if gate["purpose"] == "preflight":
                 preflight_failed = True
         results.append(result)
+    requirements = {gate["id"]: gate["required"] for gate in config["gates"]}
+    for result in results:
+        result["required"] = requirements[result["id"]]
     return {
         "status": "blocked" if blocked else "passed",
         "config_sha256": current["config_sha256"],

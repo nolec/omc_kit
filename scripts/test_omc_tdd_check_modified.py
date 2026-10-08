@@ -270,3 +270,64 @@ class TestRunTestsQualityGateShim:
         assert passed is True
         assert runner_cmd == "omc_quality_gate.py run"
         run_gate.assert_called_once_with(tmp_path)
+
+@pytest.mark.parametrize('case,label,reason', [
+    ('success', None, None),
+    ('existing', '기존 실패', 'exact_output_comparison'),
+    ('new', '신규 실패', 'exact_output_comparison'),
+    ('unavailable', '구분 불가', 'missing_verification_file'),
+    ('invalid', '구분 불가', 'baseline_missing_or_invalid'),
+    ('optional', '구분 불가', 'baseline_missing_or_invalid'),
+    ('optional_skip', '구분 불가', 'baseline_missing_or_invalid'),
+])
+def test_quality_diagnosis_reaches_actual_cli(tmp_path, case, label, reason):
+    import json
+    import hashlib
+    import os
+    root = tmp_path
+    subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+    subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                    'commit', '--allow-empty', '-qm', 'fixture'], cwd=root, check=True)
+    script = root / 'check.py'
+    script.write_text("print('FAIL A');raise SystemExit(1)" if case != 'success' else 'pass')
+    marker = root / 'manifest'
+    marker.write_text('controlled CLI regression')
+    (root / '.omc').mkdir()
+    cfg = {'schema_version': 'omc-quality-gates/v1', 'base_ref': 'HEAD',
+           'evidence': [{'path': 'manifest', 'sha256': hashlib.sha256(marker.read_bytes()).hexdigest()}],
+           'gates': [{'id': 'test', 'purpose': 'test', 'argv': ['python3', 'check.py'],
+                      'scope': 'full', 'required': not case.startswith('optional'), 'timeout_sec': 10}]}
+    if case == 'optional_skip':
+        cfg['gates'][0]['argv'] = ['omc-missing-optional-check-12345']
+    (root / '.omc/quality-gates.json').write_text(json.dumps(cfg))
+    _, sha = tdd.quality_gate.load_config_snapshot(root)
+    tdd.quality_gate.approve(root, expected_config_sha256=sha, allow_full=True)
+    core = Path(tdd.quality_gate.__file__)
+    subprocess.run([sys.executable, str(core), '--target', str(root), 'baseline-capture'],
+                   capture_output=True, check=False)
+    assert (root / tdd.quality_gate.BASELINE_PATH).is_file()
+    if case == 'new':
+        script.write_text("print('FAIL B');raise SystemExit(1)")
+    elif case == 'unavailable':
+        script.unlink()
+    elif case == 'optional_skip':
+        script.unlink()
+    if case in ('invalid', 'optional', 'optional_skip'):
+        (root / tdd.quality_gate.BASELINE_PATH).write_text('{}')
+    env = os.environ.copy()
+    env.pop('OMC_SKIP_REAL_TESTS', None)
+    result = subprocess.run([sys.executable, tdd.__file__, '--target', str(root), '--staged',
+                             '--run-tests', '--skip-review'], env=env, capture_output=True, text=True)
+    assert result.returncode == (0 if case == 'success' or case.startswith('optional') else 1)
+    if label:
+        assert f'test: {label}' in result.stdout
+        assert f'사유: {reason}' in result.stdout
+        assert '남은 조치:' in result.stdout
+        if case.startswith('optional'):
+            assert '선택 검증' in result.stdout
+            assert '완료 차단하지 않습니다' in result.stdout
+            assert '현재 필수 검증 실패' not in result.stdout
+        else:
+            assert '필수 검증 실패는 완료 차단' in result.stdout
+    else:
+        assert '실패 진단' not in result.stdout
