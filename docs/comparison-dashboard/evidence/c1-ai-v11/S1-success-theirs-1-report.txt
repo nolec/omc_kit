@@ -1,0 +1,13 @@
+**APPROVED.** `--no-deslop` specified, so deslop pass is skipped. Proceeding to terminal closeout.
+
+**Summary:**
+
+- **Change**: `cli.py` now catches `ValueError` from `int()` and prints `error: integer required` to stderr, exiting with code 2 — no traceback.
+- **Verification**: `python3 condition_verify.py` → 3 tests ran, 2 passed, 1 skipped (JSON, expected for S1). All criteria met.
+- **Reviewer**: APPROVED (static analysis confirmed all 4 acceptance criteria pass).
+
+```
+cli.py:9-11  try/except ValueError → clean error path
+```
+
+Task complete.

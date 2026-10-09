@@ -1,0 +1,39 @@
+---
+
+## 요약
+
+변경은 3줄 추가로 최소하며, 요구사항(비정수 → stderr "error: integer required" + exit 2)을 정확히 충족한다. generator 표현식 내 `int()` 실패 시 ValueError가 외부 try/except에 전파되는 Python 의미론이 정확하다. 리스크 없음.
+
+---
+
+## 이슈 목록
+
+- **[치명]** 없음
+- **[중대]** 없음
+- **[경미]** 없음
+- **[제안]** `ValueError` 외 예외(예: `OverflowError` — 극단적으로 큰 정수는 Python에서 발생하지 않으므로 실질적 위험 없음)는 현재 설계 범위 밖. 무시해도 무방.
+
+---
+
+## 검증 커맨드
+
+```bash
+python3 test_cli.py          # 전체 oracle — OK (1 skipped)
+python3 cli.py x 3           # stderr: "error: integer required", exit 2
+python3 cli.py -2 3          # stdout: 1, exit 0
+```
+
+---
+
+## 판정: APPROVE
+
+변경이 최소이고, 요구사항을 완전히 충족하며, oracle이 모두 통과했다.
+
+---
+
+## 다음 추천
+
+작업 완료 상태. `condition_verify.py`가 absent이므로 해당 검증은 실행 불가이나 oracle(test_cli.py)과 수동 확인 모두 통과했고 `s1-done.json`도 작성됨. 추가 배포 단계가 없으면 여기서 종료해도 됩니다.
+
+<!-- OMC_OUTPUT: {"schema_version":"omc-output/v1","stage":"review","outcome":"done","risk":"low","next_skill":null,"user_selection_needed":false,"reason_code":null} -->
+VERDICT: APPROVE

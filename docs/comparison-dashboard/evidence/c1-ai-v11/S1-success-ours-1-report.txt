@@ -1,0 +1,5 @@
+All checks passed. Here's the summary:
+
+**Change made:** `cli.py` now wraps the `int()` conversion in a `try/except ValueError` block. On non-integer input, it prints `error: integer required` to stderr and exits with code 2 — no traceback. Integer summation behavior is preserved.
+
+**Verification result:** `python3 condition_verify.py` — 3 tests run, 0 failures, 1 skipped (JSON mode, not required for S1). `s1-done.json` written.

@@ -1,0 +1,1 @@
+완료. `cli.py`에 `try/except ValueError` 블록을 추가해 비정수 입력 시 traceback 없이 `error: integer required`를 stderr에 출력하고 exit 2로 종료하도록 수정했습니다. `condition_verify.py` 3개 테스트 모두 통과(1개 skip).

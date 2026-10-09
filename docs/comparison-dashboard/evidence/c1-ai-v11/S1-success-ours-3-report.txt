@@ -1,0 +1,51 @@
+---
+
+## 코드 리뷰 — cli.py
+
+### 요약
+
+`sum(int(value) for value in args)` 를 `try/except ValueError` 로 감싸 비정수 입력 시 traceback 없이 `error: integer required` 를 stderr에 출력하고 exit 2로 종료하도록 수정. 변경 범위는 1파일 5줄로 최소화됨. 가장 큰 리스크는 없음 — 명세와 완전히 일치.
+
+---
+
+### 이슈 목록
+
+**[치명]** 없음
+
+**[중대]** 없음
+
+**[경미]** 없음
+
+**[제안]**
+- `cli.py:7` — generator expression 안에서 발생하는 `ValueError`를 잡는 방식은 올바르나, 두 인자 모두 비정수인 경우(`cli.py x y`)에도 동일하게 첫 번째 실패에서 즉시 종료함 — 명세상 문제없음, 단지 메시지가 복수 오류를 구분하지 않는다는 점은 인지할 것.
+
+---
+
+### 검증 커맨드
+
+```bash
+# 정상 동작 확인
+python3 cli.py 2 3    # → 5, exit 0
+python3 cli.py -2 3   # → 1, exit 0
+
+# 비정수 입력 확인
+python3 cli.py x 3 2>&1; echo "exit: $?"
+# → error: integer required (stderr), exit 2, Traceback 없음
+
+# 전체 oracle
+python3 condition_verify.py
+```
+
+---
+
+### 판정 / VERDICT
+
+**APPROVE**
+
+변경은 명세(`error: integer required` / exit 2 / traceback 없음)를 정확히 충족하며, 정수 합산 동작은 유지되고, 기존 테스트가 모두 통과함.
+
+---
+
+## 다음 추천
+
+작업이 완료되었고 `condition_verify.py` 및 `s1-done.json` 모두 정상 상태입니다. 이 벤치마크 스텝은 종료되었으며, 추가 작업은 없습니다.

@@ -1,0 +1,43 @@
+---
+
+## 코드 리뷰
+
+**요약**
+변경은 `cli.py` 단 4줄. `int()` 변환 실패 시 `ValueError`를 잡아 지정 메시지를 출력하고 exit 2로 종료한다. 정확성·안전성 모두 충족하며 리스크는 실질적으로 없다. 유일한 관찰 사항은 `ValueError` 이외 예외(예: `OverflowError`)가 전파되지 않는지 확인하는 것인데, Python `int()` + 정수 덧셈 범위에서는 `ValueError`만 발생하므로 현 구현이 충분하다.
+
+---
+
+**이슈 목록**
+
+[제안] `cli.py:7` — `except ValueError` 범위가 `sum(int(...))` 전체를 감싸고 있어, 이론상 `sum()` 내부에서 발생하는 다른 예외도 흡수할 수 있다. 실제로는 `int()` → `ValueError`, `sum()` → 없음이므로 현실적 위험 없음. 필요하다면 `int()` 변환만 분리할 수 있으나 과잉 설계이다.
+
+---
+
+**수정 제안**
+
+없음. 현재 구현이 최소·정확하다.
+
+---
+
+**검증 커맨드**
+
+```bash
+python3 test_cli.py          # 전체 통과 확인
+python3 cli.py x 3; echo "exit:$?"   # exit 2, error: integer required
+python3 cli.py 2 3; echo "exit:$?"   # exit 0, 5
+```
+
+---
+
+**판정 / VERDICT: APPROVE**
+
+변경이 요구사항을 완전히 충족하고, 테스트 3개(1 skipped) 모두 통과, TDD 게이트 통과. 블로커 없음.
+
+---
+
+## 다음 추천
+
+`condition_verify.py`가 저장소에 존재하지 않아 `s1-done.json`을 아직 작성하지 않았습니다. 태스크 완료 조건(`condition_verify.py` 통과 후 `s1-done.json` 작성)을 충족하려면 **벤치마크 운영자가 `condition_verify.py`를 배치해야** 합니다. 현재 구현 범위에서 할 수 있는 작업은 모두 완료되었습니다.
+
+<!-- OMC_OUTPUT: {"schema_version":"omc-output/v1","stage":"review","outcome":"approved","risk":"low","next_skill":null,"user_selection_needed":false,"reason_code":null} -->
+VERDICT: APPROVE

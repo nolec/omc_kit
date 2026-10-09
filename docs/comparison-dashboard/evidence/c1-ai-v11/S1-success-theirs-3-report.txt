@@ -1,0 +1,7 @@
+**Complete.** The fix is verified and reviewer-approved.
+
+**Change made:** `cli.py:7-11` — wrapped the summation in `try/except ValueError` to catch non-integer input, printing `error: integer required` to stderr and exiting with code 2 (no traceback).
+
+**Verification:** `python3 condition_verify.py` → `OK (skipped=1)` — `test_add` and `test_bad_input` both pass; `test_json` skipped as expected for S1.
+
+**Reviewer:** APPROVED (architect/Sonnet) — minimal correct fix, no issues.
