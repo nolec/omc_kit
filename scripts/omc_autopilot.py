@@ -1367,6 +1367,33 @@ def cmd_run(
             state["failure_reason"] = "stale_external_execution_requires_reconciliation"
             _save_state(root, task_id, state)
             print("[AUTOPILOT] 이전 실행이 provider 호출 중 종료됐습니다. 중복 실행 방지를 위해 수동 대조가 필요합니다.")
+            recorded_steps = state.get("steps")
+            recorded_steps = recorded_steps if isinstance(recorded_steps, dict) else {}
+            completed = []
+            uncertain = []
+            artifacts = []
+            for step in steps:
+                step_id = str(step.get("id", ""))
+                recorded = recorded_steps.get(step_id)
+                recorded = recorded if isinstance(recorded, dict) else {}
+                if recorded.get("status") == "completed":
+                    completed.append(step_id)
+                if recorded.get("status") == "running" or (
+                    recorded.get("status") == "hold" and recorded.get("stale_reason")
+                ):
+                    uncertain.append(step_id)
+                completion = step.get("completion")
+                if isinstance(completion, dict) and completion.get("output_path"):
+                    artifacts.append(f"{step_id}: {completion['output_path']}")
+            print("  기록상 완료: " + (", ".join(completed) or "확인 불가"))
+            print("  기록상 완료는 현재 재검증 완료를 뜻하지 않습니다.")
+            print("  실행 결과 불확실: " + (", ".join(uncertain) or "확인 불가"))
+            print(f"  상태 기록: {_state_path(root, task_id).relative_to(root)} (작업 루트 기준)")
+            print("  완료 산출물 위치(작업 루트 기준): " + (" / ".join(artifacts) or "확인 불가"))
+            print("  1. 상태 기록에서 단계별 상태와 이전 실행 기록을 확인하세요.")
+            print("  2. provider의 실행 기록과 외부 작업 결과를 대조해 불확실한 단계가 실행됐는지 확인하세요.")
+            print("  3. 근거 산출물을 현재 요구사항과 대조하고, 확인되지 않으면 차단을 유지하세요.")
+            print("  자동 재시도하지 않습니다. 상태 삭제나 완료 표시 수정으로 차단을 해제하지 마세요.")
             return 1
 
     print(f"\n[AUTOPILOT] ▶ 태스크 시작: {title}")

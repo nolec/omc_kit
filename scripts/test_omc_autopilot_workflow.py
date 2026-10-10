@@ -357,3 +357,116 @@ def test_product_value_six_stage_workflow_uses_receipt_chain_and_exact_approvals
         receipt = state["steps"][step_id]["completion_receipt"]
         assert receipt["predecessor_receipts"] == ([] if previous_receipt is None else [previous_receipt])
         previous_receipt = receipt["receipt_sha256"]
+
+
+@pytest.mark.parametrize("missing_metadata", [False, True])
+def test_recovery_guidance_public_cli_preserves_block_and_no_provider_calls(tmp_path, missing_metadata):
+    import os
+    import subprocess
+    import sys
+
+    task_file, task = _v2_task(tmp_path)
+    task['steps'][0].pop('approval_gate')
+    task['steps'].append({
+        'id': 'pending', 'prompt': 'uncertain operation', 'depends_on': ['external'],
+        'completion': {'validator_id': 'json_object_fields', 'output_path': 'pending.json', 'required_fields': ['status']},
+    })
+    task_file.write_text(json.dumps(task), encoding='utf-8')
+    # Persisted pre-crash input; completion is a stored claim, not fresh verification.
+    steps = {} if missing_metadata else {'external': {'status': 'completed'}, 'pending': {'status': 'running'}}
+    state_path = tmp_path / '.omc/state/autopilot/gated-workflow.json'
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({'task_id': task['id'], 'task_spec_sha256': workflow.task_spec_sha256(task), 'status': 'running', 'pid': None, 'steps': steps}), encoding='utf-8')
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    provider = bin_dir / 'codex'
+    provider.write_text('#!' + sys.executable + '\nfrom pathlib import Path\nPath("provider-called").touch()\nraise SystemExit(99)\n', encoding='utf-8')
+    provider.chmod(0o755)
+    result = subprocess.run([sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')), 'autopilot', '--task-file', str(task_file)], cwd=tmp_path, env={**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH']}, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 1
+    assert not (tmp_path / 'provider-called').exists()
+    saved = json.loads(state_path.read_text())
+    assert saved['status'] == 'manual_reconciliation_required'
+    assert saved['failure_reason'] == 'stale_external_execution_requires_reconciliation'
+    assert '기록상 완료' in result.stdout
+    assert '현재 재검증 완료를 뜻하지 않습니다' in result.stdout
+    assert '실행 결과 불확실' in result.stdout
+    assert '.omc/state/autopilot/gated-workflow.json' in result.stdout
+    assert '1. 상태 기록' in result.stdout and '2. provider' in result.stdout and '3. 근거' in result.stdout
+    assert '자동 재시도하지 않습니다' in result.stdout
+    if missing_metadata:
+        assert '기록상 완료: 확인 불가' in result.stdout
+        assert '실행 결과 불확실: 확인 불가' in result.stdout
+    else:
+        assert '기록상 완료: external' in result.stdout
+        assert '실행 결과 불확실: pending' in result.stdout
+        assert 'result.json' in result.stdout and 'pending.json' in result.stdout
+        assert saved['steps']['external']['status'] == 'completed'
+        assert saved['steps']['pending']['status'] == 'hold'
+
+
+def test_recovery_guidance_does_not_override_task_hash_guard(tmp_path, monkeypatch, capsys):
+    task_file, task = _v2_task(tmp_path)
+    state_path = tmp_path / '.omc/state/autopilot/gated-workflow.json'
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps({'status': 'running', 'pid': None, 'task_spec_sha256': 'a' * 64, 'steps': {'external': {'status': 'running'}}}))
+    monkeypatch.setattr(omc_autopilot, '_detect_executor', lambda _preferred: 'codex')
+    with patch.object(omc_autopilot, '_run_step') as provider:
+        assert omc_autopilot.cmd_run(tmp_path, task_file) == 1
+    provider.assert_not_called()
+    assert 'task spec hash mismatch' in capsys.readouterr().out
+    assert json.loads(state_path.read_text())['failure_reason'] == 'task_spec_hash_mismatch'
+
+
+def test_recovery_guidance_after_provider_process_group_interrupt_public_cli(tmp_path):
+    import os
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    task = {'schema_version': 'omc-autopilot-task/v2', 'id': 'interrupted', 'executor': 'claude', 'resume_failed': True, 'max_retries': 0, 'steps': [
+        {'id': step, 'prompt': 'DO_STAGE_TWO' if step == 's2' else 'DO_STAGE_ONE', 'depends_on': ['s1'] if step == 's2' else [], 'completion': {'validator_id': 'json_object_fields', 'output_path': step + '.json', 'required_fields': ['status']}}
+        for step in ['s1', 's2']
+    ]}
+    task_file = _write_task(tmp_path, task)
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    provider = bin_dir / 'claude'
+    provider.write_text('#!' + sys.executable + '''
+from pathlib import Path
+import sys,time
+stage='s2' if 'DO_STAGE_TWO' in ' '.join(sys.argv) else 's1'
+with Path('calls.txt').open('a') as f:f.write(stage+'\\n')
+if stage=='s2':
+ Path('s2-started').touch()
+ while True:time.sleep(.05)
+Path(stage+'.json').write_text('{"status":"done"}')
+print('VERDICT: APPROVE')
+''', encoding='utf-8')
+    provider.chmod(0o755)
+    env = {**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH']}
+    cmd = [sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')), 'autopilot', '--task-file', str(task_file)]
+    with (tmp_path / 'initial.stdout').open('w') as out, (tmp_path / 'initial.stderr').open('w') as err:
+        child = subprocess.Popen(cmd, cwd=tmp_path, env=env, stdout=out, stderr=err, start_new_session=True)
+        try:
+            deadline = time.monotonic() + 15
+            while child.poll() is None and not (tmp_path / 's2-started').exists() and time.monotonic() < deadline:
+                time.sleep(.05)
+            assert (tmp_path / 's2-started').exists(), (tmp_path / 'initial.stderr').read_text()
+            assert (tmp_path / 's1.json').exists()
+        finally:
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+            child.wait(timeout=5)
+    result = subprocess.run(cmd, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 1
+    assert '기록상 완료: s1' in result.stdout
+    assert '실행 결과 불확실: s2' in result.stdout
+    assert 's1.json' in result.stdout and 's2.json' in result.stdout
+    assert '자동 재시도하지 않습니다' in result.stdout
+    assert (tmp_path / 'calls.txt').read_text().splitlines() == ['s1', 's2']
+    state = json.loads((tmp_path / '.omc/state/autopilot/interrupted.json').read_text())
+    assert state['status'] == 'manual_reconciliation_required'
+    assert state['steps']['s1']['status'] == 'completed'
+    assert state['steps']['s2']['status'] == 'hold'
