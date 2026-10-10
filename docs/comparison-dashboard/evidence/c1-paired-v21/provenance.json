@@ -1,0 +1,46 @@
+{
+  "schema": "c1-paired-audit/v1",
+  "admitted_count": 24,
+  "shared_policy_sha256": "e1f8e20631e424cf1878fa6b2ad7ca0aa8acc56999d4f3b0224cd5b662a05e69",
+  "supplement_policy_same": true,
+  "private_results_sha256": {
+    "c1-paired-report-comparison-r3-20261010": "bb7a8ace7d0205711419c507ce9c4b6ffb029d1bad15051b2821a9e9579d8ee7",
+    "c1-paired-report-supplement-20261010": "5a4de052560f35ede0ccf76bdcdbfe204a7cc0b31e74c6864333fa5e20ce8da9"
+  },
+  "versions": {
+    "ours": "67d66f0359331ff2e5491e2ede676eedef0a095f",
+    "theirs": "454bae017356ed1d056182cd929b6eb6cf6143ad"
+  },
+  "exclusions": {
+    "excluded_artifacts": [
+      "c1-paired-report-comparison-20261010",
+      "c1-paired-report-comparison-r2-20261010"
+    ],
+    "excluded_record": "S1-existing-theirs-2 in r3",
+    "reason": "provider start race; zero providers and premature oracle capture; original unchanged",
+    "replacement_artifact": "c1-paired-report-supplement-20261010",
+    "replacement_record": "S1-existing-theirs-2",
+    "policy": "never classify AI-not-started preparation as task timeout"
+  },
+  "normalization": "Only unittest elapsed duration normalized for independent rerun; original native-to-render escaped stdout/stderr checked exactly.",
+  "claim_limits": [
+    "No pre-improvement AI control",
+    "Native permission profiles differ",
+    "Native reviewer/completion machinery differs",
+    "Rival completion state unobserved",
+    "Human diagnosis time unmeasured",
+    "No comparative effect or superiority claim"
+  ],
+  "source_snapshots": [
+    {
+      "artifact": "c1-paired-report-comparison-r3-20261010",
+      "manifest_sha256": "b96daace68d4afcd7c4df0a2ba191ec7409e30cea6c0537a9d9fdb24902fb43e",
+      "frozen_comparison_sha256": "b1a31c6cc381c128f0f7ee499ae7d39e1b2b58a81495aa9d8ae7a83d63a52ae1"
+    },
+    {
+      "artifact": "c1-paired-report-supplement-20261010",
+      "manifest_sha256": "4e0dbb75ccb1b7824e967341a7802ca711a16d35c69f2643a4ffeb07e9472e7e",
+      "frozen_comparison_sha256": "e59328ef11f17e8f1370e37738c4f7be3424d0d0828f518453e2e49e126c282e"
+    }
+  ]
+}

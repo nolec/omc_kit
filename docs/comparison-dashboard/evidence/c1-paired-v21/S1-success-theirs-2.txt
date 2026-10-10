@@ -1,0 +1,53 @@
+실행: S1-success-theirs-2
+출처: c1-paired-report-comparison-r3-20261010
+{
+  "run_id": "S1-success-theirs-2",
+  "arm": "theirs",
+  "condition": "success",
+  "repeat": 2,
+  "elapsed_sec": 32.51,
+  "timeout": false,
+  "oracle_pass": true,
+  "report_present": true,
+  "model_confirmed": true,
+  "preserved": true,
+  "isolated": true,
+  "classification": "최종 native 분류 미수집",
+  "expected_classification": "passed",
+  "executor_verified": null,
+  "native_completion": "미관측",
+  "status": "응답 수신·native 완료 미관측",
+  "ai_stream_error": false,
+  "ai_classification_error": false,
+  "ai_exit_error": false,
+  "issues": [],
+  "origin": "c1-paired-report-comparison-r3-20261010",
+  "provider_calls": 1,
+  "permission_denials": 1,
+  "completion_claim_observed": false,
+  "independent_exit": 0
+}
+
+독립 검증 대조 (작업 후 실행; native 보고와 별도)
+{
+  "command": "python3 condition_verify.py",
+  "stdout": "",
+  "stderr": "..s\n----------------------------------------------------------------------\nRan 3 tests in 0.087s\n\nOK (skipped=1)\n",
+  "exit_code": 0,
+  "collection": "independent post-run audit, not native final surface",
+  "comparison_normalization": "Only unittest elapsed duration; native state vs launcher exact escaped streams checked separately"
+}
+
+실행기 native 최종 상태
+{}
+
+실행기 표시 원문
+ralph afk launched (session a5f52125-91b2-439c-a787-dada8fdcdd20)
+cwd [local-path] verify: python3 condition_verify.py
+ralph skill materialized: [local-path] (consider gitignoring .claude/)
+
+
+AI 최종 응답 (없으면 미수집)
+Verification passed. Exit code 0, all 3 tests ran (1 skipped — the JSON test not required for S1).
+
+**Summary:** Added a `try/except ValueError` around the `int()` call in `cli.py`. Non-integer input now prints `error: integer required` to stderr and exits with code 2, with no traceback. Integer summation behavior is preserved.

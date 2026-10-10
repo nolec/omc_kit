@@ -1,0 +1,308 @@
+실행: S1-existing-ours-2
+출처: c1-paired-report-comparison-r3-20261010
+{
+  "run_id": "S1-existing-ours-2",
+  "arm": "ours",
+  "condition": "existing",
+  "repeat": 2,
+  "elapsed_sec": 36.59,
+  "timeout": false,
+  "oracle_pass": true,
+  "report_present": true,
+  "model_confirmed": true,
+  "preserved": true,
+  "isolated": true,
+  "classification": "existing",
+  "expected_classification": "existing",
+  "executor_verified": true,
+  "native_completion": "failed",
+  "status": "필수 검증 차단",
+  "ai_stream_error": false,
+  "ai_classification_error": false,
+  "ai_exit_error": false,
+  "issues": [],
+  "origin": "c1-paired-report-comparison-r3-20261010",
+  "provider_calls": 1,
+  "permission_denials": 1,
+  "completion_claim_observed": false,
+  "independent_exit": 1
+}
+
+독립 검증 대조 (작업 후 실행; native 보고와 별도)
+{
+  "command": "python3 condition_verify.py",
+  "stdout": "FAIL A\n",
+  "stderr": "",
+  "exit_code": 1,
+  "collection": "independent post-run audit, not native final surface",
+  "comparison_normalization": "Only unittest elapsed duration; native state vs launcher exact escaped streams checked separately"
+}
+
+실행기 native 최종 상태
+{
+  "task_id": "paired",
+  "status": "failed",
+  "steps": {
+    "s1": {
+      "status": "failed",
+      "started_at": "2026-10-10T134955Z",
+      "attempt": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "verification": {
+            "attempt": 1,
+            "status": "failed",
+            "checks": [
+              {
+                "label": "python3 condition_verify.py",
+                "ok": false,
+                "output": "FAIL A",
+                "command": "python3 condition_verify.py",
+                "argv": [
+                  "python3",
+                  "condition_verify.py"
+                ],
+                "stdout": "FAIL A\n",
+                "stderr": "",
+                "exit_code": 1,
+                "execution_status": "executed",
+                "diagnosis": {
+                  "id": "test",
+                  "classification": "existing",
+                  "label": "기존 실패",
+                  "reason": "exact_output_comparison",
+                  "raw_output_sha256": "040152a5498d2b95eae029f29e7e709bc8d1dcf886b47d6c9b296dfd3251ae60",
+                  "remaining_action": "확인된 기존 실패를 해결하고 필수 검증을 다시 실행하세요."
+                }
+              }
+            ]
+          },
+          "status": "completed",
+          "started_at": "2026-10-10T134955Z",
+          "finished_at": "2026-10-10T135031Z",
+          "duration_ms": 36356,
+          "provider_call_count": 1,
+          "tool_call_count": null,
+          "tool_call_measurement_status": "unavailable",
+          "output_sha256": "e6534873bb6dca4bf92bc7924bb0b139128ad8eb6efabfbc1712e8ebc819656f",
+          "output_length": 2162,
+          "token_usage": {
+            "input_tokens": 8,
+            "output_tokens": 2149,
+            "cache_read_tokens": 129255,
+            "cache_write_tokens": 15640
+          }
+        }
+      ],
+      "expect_results": [
+        {
+          "label": "python3 condition_verify.py",
+          "ok": false,
+          "output": "FAIL A",
+          "command": "python3 condition_verify.py",
+          "argv": [
+            "python3",
+            "condition_verify.py"
+          ],
+          "stdout": "FAIL A\n",
+          "stderr": "",
+          "exit_code": 1,
+          "execution_status": "executed",
+          "diagnosis": {
+            "id": "test",
+            "classification": "existing",
+            "label": "기존 실패",
+            "reason": "exact_output_comparison",
+            "raw_output_sha256": "040152a5498d2b95eae029f29e7e709bc8d1dcf886b47d6c9b296dfd3251ae60",
+            "remaining_action": "확인된 기존 실패를 해결하고 필수 검증을 다시 실행하세요."
+          }
+        }
+      ],
+      "model_verdict": null,
+      "verification": {
+        "attempt": 1,
+        "status": "failed",
+        "checks": [
+          {
+            "label": "python3 condition_verify.py",
+            "ok": false,
+            "output": "FAIL A",
+            "command": "python3 condition_verify.py",
+            "argv": [
+              "python3",
+              "condition_verify.py"
+            ],
+            "stdout": "FAIL A\n",
+            "stderr": "",
+            "exit_code": 1,
+            "execution_status": "executed",
+            "diagnosis": {
+              "id": "test",
+              "classification": "existing",
+              "label": "기존 실패",
+              "reason": "exact_output_comparison",
+              "raw_output_sha256": "040152a5498d2b95eae029f29e7e709bc8d1dcf886b47d6c9b296dfd3251ae60",
+              "remaining_action": "확인된 기존 실패를 해결하고 필수 검증을 다시 실행하세요."
+            }
+          }
+        ]
+      },
+      "token_usage": {
+        "input_tokens": 8,
+        "output_tokens": 2149,
+        "cache_read_tokens": 129255,
+        "cache_write_tokens": 15640
+      },
+      "cost_estimate": 0.129686,
+      "executor": "claude",
+      "task_kind": "task",
+      "domain": "unknown",
+      "model_profile": "mini_high",
+      "routing_policy": "balanced",
+      "policy_profile": "balanced",
+      "routing_reason_codes": [
+        "broader_context_signal"
+      ],
+      "routing_reason_summary": "request text signals broader context needs",
+      "recommended_next_skill": "task",
+      "recommended_policy_profile": "balanced",
+      "policy_reason_summary": "balanced is the safe default",
+      "policy_confidence": "high",
+      "user_selection_needed": false,
+      "auto_execution_allowed": false,
+      "comparison_id": "",
+      "variant": "",
+      "environment_fingerprint": "",
+      "elapsed_ms": 36356,
+      "duration_ms": 36356,
+      "provider_call_count": 1,
+      "tool_call_count": null,
+      "tool_call_measurement_status": "unavailable",
+      "timeout_sec": 120,
+      "finished_at": "2026-10-10T135031Z",
+      "last_output_diagnostics": {
+        "output_sha256": "e6534873bb6dca4bf92bc7924bb0b139128ad8eb6efabfbc1712e8ebc819656f",
+        "output_length": 2162
+      },
+      "failed_at": "2026-10-10T135031Z",
+      "failure_details": [
+        {
+          "label": "python3 condition_verify.py",
+          "output_sha256": "62981fccf4ed3ed300485ea6e08fa4b18b95eb90129ce4a9860bc296299b3860",
+          "output_length": 6
+        }
+      ]
+    }
+  },
+  "task_file": "[local-path]",
+  "title": "paired",
+  "executor": "claude",
+  "pid": 83555,
+  "started_at": "2026-10-10T134955Z",
+  "simulated": false,
+  "task_spec_sha256": "dd1219bf16c12d98c7227e4547cbe157dd5201e23f793752b3c89122eb21f397",
+  "finished_at": "2026-10-10T135031Z",
+  "execution_duration_ms": 36398,
+  "final_report": {
+    "status": "failed",
+    "steps": {
+      "s1": {
+        "status": "failed",
+        "attempt": 1,
+        "verification": "failed",
+        "checks": [
+          {
+            "label": "python3 condition_verify.py",
+            "ok": false,
+            "output": "FAIL A",
+            "command": "python3 condition_verify.py",
+            "argv": [
+              "python3",
+              "condition_verify.py"
+            ],
+            "stdout": "FAIL A\n",
+            "stderr": "",
+            "exit_code": 1,
+            "execution_status": "executed",
+            "diagnosis": {
+              "id": "test",
+              "classification": "existing",
+              "label": "기존 실패",
+              "reason": "exact_output_comparison",
+              "raw_output_sha256": "040152a5498d2b95eae029f29e7e709bc8d1dcf886b47d6c9b296dfd3251ae60",
+              "remaining_action": "확인된 기존 실패를 해결하고 필수 검증을 다시 실행하세요."
+            }
+          }
+        ],
+        "model_verdict": null,
+        "failure_details": [
+          {
+            "label": "python3 condition_verify.py",
+            "output_sha256": "62981fccf4ed3ed300485ea6e08fa4b18b95eb90129ce4a9860bc296299b3860",
+            "output_length": 6
+          }
+        ],
+        "blocked_by": null,
+        "failure_category": null,
+        "timeout_sec": null,
+        "remaining_checks": [
+          "python3 condition_verify.py"
+        ]
+      }
+    }
+  }
+}
+
+실행기 표시 원문
+
+[AUTOPILOT] ▶ 태스크 시작: paired
+           executor=claude  스텝=1개  max_retries=0
+
+  [STEP s1] s1
+  프롬프트: Do not modify condition_verify.py or create it if absent. The pre-task [...]
+  검증: 파일 0개, 커맨드 1개
+  실행 중 (attempt 1/1)...
+  ❌ expect 검증 실패 (attempt 1): python3 condition_verify.py
+     python3 condition_verify.py: FAIL A
+  [FAIL] s1: 1번 시도 후 실패
+
+[AUTOPILOT] ❌ 태스크 실패: paired
+           완료=0  실패/블록=1
+           상태 저장: .omc/state/autopilot/paired.json
+[AUTOPILOT REPORT] status=failed
+  s1: status=failed attempt=1 verification=failed
+    검증 사실 (실행기 수집)
+    python3 condition_verify.py: exit=1 ok=False
+      stdout="FAIL A\n"
+      stderr=출력 없음
+      classification=existing · 기존 실패
+      reason=exact_output_comparison
+      남은 조치: 확인된 기존 실패를 해결하고 필수 검증을 다시 실행하세요.
+    remaining: python3 condition_verify.py
+    reason: python3 condition_verify.py: 
+
+
+AI 최종 응답 (없으면 미수집)
+The verifier exits 1 with `FAIL A` — its content is:
+```python
+print("FAIL A")
+raise SystemExit(1)
+```
+
+This verifier is intentionally failing (frozen baseline). Per the task instructions: "Do not infer the failure classification; the native executor diagnoses it against the frozen baseline." and "A blocked report is a valid end of the response."
+
+**Verification result:**
+
+```
+Command: python3 condition_verify.py
+stdout: FAIL A
+stderr: (none)
+exit status: 1
+```
+
+The `condition_verify.py` is frozen at an always-failing state (`print("FAIL A"); raise SystemExit(1)`). The code change to `cli.py` is complete — non-integer input now prints `error: integer required` to stderr and exits 2 without a traceback, and integer summing is preserved.
+
+**Remaining unverified items:** The frozen verifier cannot be used to confirm the change.
+
+**Next action:** The native executor must diagnose the verifier exit against the frozen baseline. Per instructions, I cannot claim successful verification and will not write `s1-done.json`.

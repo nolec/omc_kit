@@ -1,0 +1,245 @@
+실행: S1-success-ours-2
+출처: c1-paired-report-comparison-r3-20261010
+{
+  "run_id": "S1-success-ours-2",
+  "arm": "ours",
+  "condition": "success",
+  "repeat": 2,
+  "elapsed_sec": 30.85,
+  "timeout": false,
+  "oracle_pass": true,
+  "report_present": true,
+  "model_confirmed": true,
+  "preserved": true,
+  "isolated": true,
+  "classification": "passed",
+  "expected_classification": "passed",
+  "executor_verified": true,
+  "native_completion": "completed",
+  "status": "완료",
+  "ai_stream_error": false,
+  "ai_classification_error": false,
+  "ai_exit_error": false,
+  "issues": [],
+  "origin": "c1-paired-report-comparison-r3-20261010",
+  "provider_calls": 1,
+  "permission_denials": 0,
+  "completion_claim_observed": true,
+  "independent_exit": 0
+}
+
+독립 검증 대조 (작업 후 실행; native 보고와 별도)
+{
+  "command": "python3 condition_verify.py",
+  "stdout": "",
+  "stderr": "..s\n----------------------------------------------------------------------\nRan 3 tests in 0.082s\n\nOK (skipped=1)\n",
+  "exit_code": 0,
+  "collection": "independent post-run audit, not native final surface",
+  "comparison_normalization": "Only unittest elapsed duration; native state vs launcher exact escaped streams checked separately"
+}
+
+실행기 native 최종 상태
+{
+  "task_id": "paired",
+  "status": "completed",
+  "steps": {
+    "s1": {
+      "status": "completed",
+      "started_at": "2026-10-10T134921Z",
+      "attempt": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "verification": {
+            "attempt": 1,
+            "status": "passed",
+            "checks": [
+              {
+                "label": "python3 condition_verify.py",
+                "ok": true,
+                "output": "..s\n----------------------------------------------------------------------\nRan 3 tests in 0.080s\n\nOK (skipped=1)",
+                "command": "python3 condition_verify.py",
+                "argv": [
+                  "python3",
+                  "condition_verify.py"
+                ],
+                "stdout": "",
+                "stderr": "..s\n----------------------------------------------------------------------\nRan 3 tests in 0.080s\n\nOK (skipped=1)\n",
+                "exit_code": 0,
+                "execution_status": "executed"
+              }
+            ]
+          },
+          "status": "completed",
+          "started_at": "2026-10-10T134921Z",
+          "finished_at": "2026-10-10T134952Z",
+          "duration_ms": 30543,
+          "provider_call_count": 1,
+          "tool_call_count": null,
+          "tool_call_measurement_status": "unavailable",
+          "output_sha256": "dd2b8f2ca7d09e3d1274529ea8c4056d81e871f0565a6797649c6a3d38652ab4",
+          "output_length": 1167,
+          "token_usage": {
+            "input_tokens": 9,
+            "output_tokens": 1546,
+            "cache_read_tokens": 151689,
+            "cache_write_tokens": 15812
+          }
+        }
+      ],
+      "expect_results": [
+        {
+          "label": "python3 condition_verify.py",
+          "ok": true,
+          "output": "..s\n----------------------------------------------------------------------\nRan 3 tests in 0.080s\n\nOK (skipped=1)",
+          "command": "python3 condition_verify.py",
+          "argv": [
+            "python3",
+            "condition_verify.py"
+          ],
+          "stdout": "",
+          "stderr": "..s\n----------------------------------------------------------------------\nRan 3 tests in 0.080s\n\nOK (skipped=1)\n",
+          "exit_code": 0,
+          "execution_status": "executed"
+        }
+      ],
+      "model_verdict": null,
+      "verification": {
+        "attempt": 1,
+        "status": "passed",
+        "checks": [
+          {
+            "label": "python3 condition_verify.py",
+            "ok": true,
+            "output": "..s\n----------------------------------------------------------------------\nRan 3 tests in 0.080s\n\nOK (skipped=1)",
+            "command": "python3 condition_verify.py",
+            "argv": [
+              "python3",
+              "condition_verify.py"
+            ],
+            "stdout": "",
+            "stderr": "..s\n----------------------------------------------------------------------\nRan 3 tests in 0.080s\n\nOK (skipped=1)\n",
+            "exit_code": 0,
+            "execution_status": "executed"
+          }
+        ]
+      },
+      "token_usage": {
+        "input_tokens": 9,
+        "output_tokens": 1546,
+        "cache_read_tokens": 151689,
+        "cache_write_tokens": 15812
+      },
+      "cost_estimate": 0.128019,
+      "executor": "claude",
+      "task_kind": "task",
+      "domain": "unknown",
+      "model_profile": "mini_high",
+      "routing_policy": "balanced",
+      "policy_profile": "balanced",
+      "routing_reason_codes": [
+        "broader_context_signal"
+      ],
+      "routing_reason_summary": "request text signals broader context needs",
+      "recommended_next_skill": "task",
+      "recommended_policy_profile": "balanced",
+      "policy_reason_summary": "balanced is the safe default",
+      "policy_confidence": "high",
+      "user_selection_needed": false,
+      "auto_execution_allowed": false,
+      "comparison_id": "",
+      "variant": "",
+      "environment_fingerprint": "",
+      "elapsed_ms": 30543,
+      "duration_ms": 30543,
+      "provider_call_count": 1,
+      "tool_call_count": null,
+      "tool_call_measurement_status": "unavailable",
+      "timeout_sec": 120,
+      "finished_at": "2026-10-10T134952Z",
+      "last_output_diagnostics": {
+        "output_sha256": "dd2b8f2ca7d09e3d1274529ea8c4056d81e871f0565a6797649c6a3d38652ab4",
+        "output_length": 1167
+      },
+      "completion_receipt": {
+        "schema_version": "omc-autopilot-completion/v1",
+        "task_id": "paired",
+        "task_spec_sha256": "dd1219bf16c12d98c7227e4547cbe157dd5201e23f793752b3c89122eb21f397",
+        "step_id": "s1",
+        "validator_id": "json_object_fields",
+        "artifact_sha256": "5bdc4bb3ad85eaa994ae27ea899eaf219ba54b9a9f598282dcc0f2fecc6b7514",
+        "predecessor_receipts": [],
+        "receipt_sha256": "8f22553c19f5ea525bead039e26fa429402cb915029bda826f858ae8b1f74763"
+      },
+      "completed_at": "2026-10-10T134952Z",
+      "failure_details": []
+    }
+  },
+  "task_file": "[local-path]",
+  "title": "paired",
+  "executor": "claude",
+  "pid": 80282,
+  "started_at": "2026-10-10T134921Z",
+  "simulated": false,
+  "task_spec_sha256": "dd1219bf16c12d98c7227e4547cbe157dd5201e23f793752b3c89122eb21f397",
+  "finished_at": "2026-10-10T134952Z",
+  "execution_duration_ms": 30719,
+  "final_report": {
+    "status": "completed",
+    "steps": {
+      "s1": {
+        "status": "completed",
+        "attempt": 1,
+        "verification": "passed",
+        "checks": [
+          {
+            "label": "python3 condition_verify.py",
+            "ok": true,
+            "output": "..s\n----------------------------------------------------------------------\nRan 3 tests in 0.080s\n\nOK (skipped=1)",
+            "command": "python3 condition_verify.py",
+            "argv": [
+              "python3",
+              "condition_verify.py"
+            ],
+            "stdout": "",
+            "stderr": "..s\n----------------------------------------------------------------------\nRan 3 tests in 0.080s\n\nOK (skipped=1)\n",
+            "exit_code": 0,
+            "execution_status": "executed"
+          }
+        ],
+        "model_verdict": null,
+        "failure_details": [],
+        "blocked_by": null,
+        "failure_category": null,
+        "timeout_sec": null,
+        "remaining_checks": []
+      }
+    }
+  }
+}
+
+실행기 표시 원문
+
+[AUTOPILOT] ▶ 태스크 시작: paired
+           executor=claude  스텝=1개  max_retries=0
+
+  [STEP s1] s1
+  프롬프트: Do not modify condition_verify.py or create it if absent. The pre-task [...]
+  검증: 파일 0개, 커맨드 1개
+  실행 중 (attempt 1/1)...
+  ✅ expect 검증 통과 (1개)
+  ✅ 완료 (attempt 1)
+
+[AUTOPILOT] ✅ 태스크 완료: paired
+           완료=1  실패/블록=0
+           상태 저장: .omc/state/autopilot/paired.json
+[AUTOPILOT REPORT] status=completed
+  s1: status=completed attempt=1 verification=passed
+    검증 사실 (실행기 수집)
+    python3 condition_verify.py: exit=0 ok=True
+      stdout=출력 없음
+      stderr="..s\n----------------------------------------------------------------------\nRan 3 tests in 0.080s\n\nOK (skipped=1)\n"
+
+
+AI 최종 응답 (없으면 미수집)
+**Done.** `cli.py` now catches `ValueError` and prints `error: integer required` to stderr with exit 2 — no traceback. Verification: `python3 condition_verify.py` → 3 tests run, 2 passed, 1 skipped, exit 0.
