@@ -3059,6 +3059,8 @@ def test_managed_report_public_cli(tmp_path, case, code, verification):
     if case=='missing':
         assert 'missing_verification_file' in result.stdout
         assert 'exit=2' in result.stdout
+        assert 'classification=unknown' in result.stdout
+        assert '남은 조치:' in result.stdout
     if case=='fail':
         assert 'exit=1' in result.stdout
         assert f'remaining: {sys.executable} {check}' in result.stdout
@@ -3191,3 +3193,51 @@ def test_managed_report_passed_checks_then_completion_retry_timeout(tmp_path, mo
     state=json.loads((tmp_path/'.omc/state/autopilot/managed-report.json').read_text())
     assert [a['verification']['status'] for a in state['steps']['s1']['attempts']]==['passed','not_run']
     assert state['final_report']['steps']['s1']['verification']=='not_run'
+
+@pytest.mark.parametrize('condition,classification', [('existing','existing'),('new','new'),('missing','unknown'),('invalid','unknown'),('pass',None)])
+def test_c1_managed_diagnosis_surface(tmp_path, monkeypatch, capsys, condition, classification):
+    import omc_quality_gate as qg
+    identity={'revision':'fixture','config':'same','environment':'same'}
+    monkeypatch.setattr(qg, '_diagnostic_identity', lambda root: identity)
+    script=tmp_path/'check.py'
+    script.write_text('print("FAIL A"); raise SystemExit(1)')
+    expect={'checks':[{'id':'verify','cmd':f'{sys.executable} {script}'}]}
+    baseline_gate={'id':'verify','argv':[sys.executable,str(script)],'status':'failed','returncode':1,'stdout':'FAIL A\n','stderr':'','execution_status':'executed'}
+    baseline=tmp_path/qg.BASELINE_PATH; baseline.parent.mkdir(parents=True)
+    baseline.write_text(json.dumps({'schema':'omc-failure-baseline/v1','identity':identity,'report':{'gates':[baseline_gate]}}))
+    (tmp_path/'.omc/policy.json').write_text(json.dumps({'autopilot':{'allowed_commands':[sys.executable]}}))
+    if condition=='new': script.write_text('print("FAIL B"); raise SystemExit(1)')
+    if condition=='missing': script.unlink()
+    if condition=='invalid': baseline.write_text('{}')
+    if condition=='pass': script.write_text('pass')
+    checks=omc_autopilot._run_expect_checks(tmp_path,expect)
+    state={'status':'completed' if condition=='pass' else 'failed','steps':{'s1':{'verification':{'status':omc_autopilot._verification_status(checks),'checks':checks}}}}
+    report=omc_autopilot._managed_final_report(state,[{'id':'s1','expect':expect}])
+    omc_autopilot._print_managed_report(report)
+    output=capsys.readouterr().out
+    if classification is None:
+        assert not report['steps']['s1']['checks'][0].get('diagnosis')
+    else:
+        diagnosis=report['steps']['s1']['checks'][0]['diagnosis']
+        assert diagnosis['classification']==classification
+        assert diagnosis['reason'] and diagnosis['remaining_action']
+        assert f'classification={classification}' in output
+        assert diagnosis['reason'] in output and diagnosis['remaining_action'] in output
+        assert report['status']=='failed'
+
+@pytest.mark.parametrize('metadata', [{'id':{'bad':'id'}}, {'id':['bad']}, {'id':42}, {'id':''}, {'label':{'bad':'label'}}])
+def test_c1_invalid_metadata_public_report(tmp_path, metadata):
+    (tmp_path/'.omc/state').mkdir(parents=True)
+    (tmp_path/'.omc/state/failure-baseline.json').write_text('{}')
+    (tmp_path/'.omc/policy.json').write_text(json.dumps({'autopilot':{'allowed_commands':[sys.executable]}}))
+    check=tmp_path/'check.py'; check.write_text('print("FAIL A"); raise SystemExit(1)')
+    task=tmp_path/'task.json'
+    task.write_text(json.dumps({'id':'invalid-id-report','executor':'claude','max_retries':0,'steps':[{'id':'s1','prompt':'check','expect_only':True,'expect':{'checks':[dict(metadata,cmd=f'{sys.executable} {check}')]}}]}))
+    result=subprocess.run([sys.executable,str(Path(__file__).with_name('omc.py')),'autopilot','--task-file',str(task)],cwd=tmp_path,text=True,capture_output=True,timeout=20)
+    assert result.returncode==1
+    assert 'Traceback' not in result.stderr
+    assert '[AUTOPILOT REPORT] status=failed' in result.stdout
+    assert 'classification=unknown' in result.stdout
+    assert 'invalid_diagnostic_metadata' in result.stdout
+    report=json.loads((tmp_path/'.omc/state/autopilot/invalid-id-report.json').read_text())['final_report']
+    assert report['steps']['s1']['checks'][0]['exit_code']==1

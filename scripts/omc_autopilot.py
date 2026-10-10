@@ -631,6 +631,8 @@ def _run_expect_checks(
     for check in expect.get("checks", []):
         cmd = check.get("cmd", "").strip()
         label = check.get("label", cmd[:40])
+        if not isinstance(label, str) or not label.strip():
+            label = cmd[:40]
         timeout = int(check.get("timeout_sec", 60))
 
         if not cmd:
@@ -680,7 +682,7 @@ def _run_expect_checks(
                 and "can't open file" in (proc.stderr or "")
                 and "[Errno 2]" in (proc.stderr or "")
             )
-            result = {"label": label, "ok": ok, "output": output[:500], "command": cmd, "exit_code": proc.returncode, "execution_status": "unavailable" if missing_file else "executed"}
+            result = {"label": label, "ok": ok, "output": output[:500], "command": cmd, "argv": argv, "stdout": proc.stdout or "", "stderr": proc.stderr or "", "exit_code": proc.returncode, "execution_status": "unavailable" if missing_file else "executed"}
             if missing_file:
                 result["reason_code"] = "missing_verification_file"
             results.append(result)
@@ -689,6 +691,45 @@ def _run_expect_checks(
         except Exception as exc:
             results.append({"label": label, "ok": False, "output": f"[ERROR] {exc}", "command": cmd, "exit_code": None, "execution_status": "unavailable"})
 
+    # Compare the original streams, never the display-truncated output.
+    if not dry_run:
+        import omc_quality_gate as quality_gate
+        configured = [c for c in expect.get("checks", []) if c.get("cmd", "").strip()]
+        command_results = results[len(expect.get("files", [])):]
+        gates = []
+        invalid_metadata = []
+        for index, (check, result) in enumerate(zip(configured, command_results)):
+            invalid = any(key in check and (not isinstance(check[key], str) or not check[key].strip())
+                          for key in ("id", "label"))
+            invalid_metadata.append(invalid)
+            gate_id = f"invalid-check-{index}" if invalid else check.get("id") or check.get("label") or check["cmd"]
+            gates.append({"id": gate_id,
+                          "argv": result.get("argv"),
+                          "status": "passed" if result["ok"] else "failed",
+                          "returncode": result.get("exit_code"),
+                          "stdout": result.get("stdout"), "stderr": result.get("stderr"),
+                          "execution_status": result.get("execution_status"),
+                          "reason": result.get("reason_code")})
+        diagnosis = quality_gate.diagnose_failures(root, {"gates": gates})
+        failed_rows = iter(diagnosis["gates"])
+        for gate, result, invalid in zip(gates, command_results, invalid_metadata):
+            if gate["status"] == "passed":
+                continue
+            row = dict(next(failed_rows))
+            if invalid:
+                row.update(classification="unknown", label="구분 불가", reason="invalid_diagnostic_metadata")
+            if row["classification"] == "existing":
+                action = "확인된 기존 실패를 해결하고 필수 검증을 다시 실행하세요."
+            elif row["classification"] == "new":
+                action = "이번 변경과 달라진 실패를 조사·수정한 뒤 필수 검증을 다시 실행하세요."
+            elif result.get("reason_code") == "missing_verification_file":
+                action = "검증 파일 경로·파일 존재를 확인하고 필수 검증을 다시 실행하세요."
+            elif invalid:
+                action = "검증 ID·label을 유효한 문자열로 수정하고 필수 검증을 다시 실행하세요."
+            else:
+                action = "기준 기록·실행 환경·검증 출력을 확인하고 필수 검증을 다시 실행하세요."
+            row["remaining_action"] = action
+            result["diagnosis"] = row
     return results
 
 
@@ -1210,6 +1251,11 @@ def _print_managed_report(report: dict) -> None:
             print(f"    failure_category={row['failure_category']} timeout_sec={row['timeout_sec']}")
         for check in row["checks"]:
             print(f"    {check.get('command') or check.get('label')}: exit={check.get('exit_code', 'unknown')} ok={check.get('ok')}")
+            if check.get("diagnosis"):
+                diagnosis = check["diagnosis"]
+                print(f"      classification={diagnosis['classification']} · {diagnosis['label']}")
+                print(f"      reason={diagnosis['reason']}")
+                print(f"      남은 조치: {diagnosis['remaining_action']}")
             if check.get("reason_code"):
                 print(f"      reason_code={check['reason_code']}")
             if not check.get("ok") and check.get("output"):
