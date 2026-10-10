@@ -1,0 +1,7 @@
+C3 제한적 정책 진단 · 실제 AI 호출 없음
+ours / resume
+exit: 1
+stdout:
+[AUTOPILOT] 이전 실행이 provider 호출 중 종료됐습니다. 중복 실행 방지를 위해 수동 대조가 필요합니다.
+
+stderr:

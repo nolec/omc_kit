@@ -1,0 +1,7 @@
+C3 제한적 정책 진단 · 실제 AI 호출 없음
+ours / changed
+exit: 1
+stdout:
+[AUTOPILOT] task spec hash mismatch — 기존 상태를 재사용할 수 없습니다.
+
+stderr:

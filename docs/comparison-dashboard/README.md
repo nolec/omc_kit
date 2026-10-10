@@ -1,5 +1,15 @@
 # 현재 상태 · 2026-10-11 · v23 · C3 진단
 
+## 최신 상태 · v24 / C3 제한적 정책 진단
+
+OMC CLI와 Ralph hook·PRD 6항목 원문을 별도로 추가했다. 양쪽 정책 차단과 최종 승인 경계, 유효 완료 fixture, 제외 시도를 분리한다. 리뷰 APPROVE WITH NOTES·캡처4테스트 PASS·6항목 audit PASS·consumer1667개 해시 일치. 실제 AI·전체 runtime 동등 비교·사용자 효과·경쟁 우열은 미검증이다.
+
+다음 계획 후보는 OMC 중단 차단 뒤 복구 안내 구체화이며 제품 구현은 아직 시작하지 않았다. 이전 graph3항목 미관측은 이력으로 보존했다. [최신 보고서](../c3_ralph_policy_diagnostic_20261011.md) · [로드맵](../automatic_model_routing_roadmap.md).
+
+v24 검증: 데이터16테스트 PASS·질문18개 결속·Chrome 1440px/390px 화면 직접 확인·가로 넘침 없음·펼침 클릭/키보드 및 신규6개 원문 해시 일치.
+
+아래 v23 이하의 현재·다음 표현은 당시 기록이다. 제품 코드·버전·설치는 변경하지 않았다.
+
 C3 통제 native CLI 진단6항목과 별도 완료 상태 근거 삭제 대조, 리뷰 APPROVE WITH NOTES까지 완료했다. OMC3항목은 차단을 관측했고 상대 graph3항목은 darwin 실행 미지원으로 미관측이다. 비교 미완료이며 상대 실패·경쟁 우위·제품 효과로 집계하지 않는다. 실제 AI 호출 없이 OMC fake provider와 상대 graph command 경로를 사용했으며 Ralph·Claude 대화 재개 동등 비교가 아니다.
 
 OMC 강제 중단 후 재개는 provider-inflight guard가 수동 대조를 요구하며 차단한다. 요청 변경은 task spec hash mismatch로 차단한다. 중단 상태의 산출물 삭제는 앞선 guard에서 차단되므로 별도 완료 상태 대조로 산출물 누락 시 receipt 불일치 차단을 확인했다. [진단 보고서](../c3_resume_diagnostic_20261011.md) · 원문6항목은 evidence/c3-diagnostic-v23/에 있으며 로컬 절대경로만 가린 표시용 사본이다.

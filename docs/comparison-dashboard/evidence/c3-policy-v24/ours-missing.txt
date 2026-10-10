@@ -1,0 +1,10 @@
+C3 제한적 정책 진단 · 실제 AI 호출 없음
+ours / missing
+exit: 1
+stdout:
+
+[AUTOPILOT] ▶ 태스크 시작: c3-policy
+           executor=claude  스텝=2개  max_retries=0
+[AUTOPILOT] s1: 완료 receipt가 없거나 현재 workflow와 일치하지 않습니다.
+
+stderr:

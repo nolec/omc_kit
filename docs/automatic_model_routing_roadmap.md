@@ -1,10 +1,18 @@
 # Automatic Model Routing Roadmap
 
-## C3 중단·재개 최신 진단 · 2026-10-11
+## C3 제한적 정책 진단·리뷰 완료 · 2026-10-11
+
+OMC native CLI와 Ralph native hook·PRD의 3조건 × 2도구 6항목을 관찰했다. OMC는 중복 실행·요청 해시 변경·완료 receipt 누락을 차단했다. Ralph는 미완료 story의 계속 수행 또는 최종 Architect 재검증을 요구하며 Stop hook을 차단했다. 완료 PRD 유지가 최종 승인이라는 뜻은 아니다. 리뷰 APPROVE WITH NOTES, 캡처 테스트4개 PASS, 6항목 audit PASS, consumer1667개 해시 일치를 확인했다.
+
+다음 계획 후보는 **OMC 중단 차단 뒤 복구 안내 구체화**다. 완료 단계·불확실 provider 단계·대조할 근거 위치·안전한 확인 절차를 설계하며 자동 재시도·차단 해제는 포함하지 않는다. 제품 구현은 아직 시작하지 않았다. OMC 실제 강제 중단과 Ralph persisted fixture는 다른 경계이며 실제 Architect·Claude 전체 실행, 사용자 효과·경쟁 우열은 미검증이다. 이전 graph 미관측·환경 불가·입력 무효 기록은 보존하고 신규 제품 실패로 집계하지 않는다.
+
+[최신 진단 보고서](c3_ralph_policy_diagnostic_20261011.md) · [대시보드](comparison-dashboard/README.md). 제품 코드·버전·사용처 설치 변경 없음.
+
+## C3 중단·재개 이전 graph 진단 이력 · 2026-10-11
 
 C3 통제 native CLI 진단6항목·별도 완료 상태 산출물 삭제 대조·리뷰 APPROVE WITH NOTES를 완료했다. OMC는 provider-inflight 재개 차단, 요청 해시 변경 차단을 관측했고 별도 정상 완료 상태에서는 산출물 누락 차단을 확인했다. 상대 graph3항목은 darwin 실행 미지원으로 미관측이며 실패로 계산하지 않는다. 실제 AI·Ralph 재개 동등 비교와 사용자 효과는 미측정이다.
 
-다음은 대응 Ralph 재개 consumer 확인 또는 graph 지원 환경 확보 후 재비교다. 재개 차단 안내 개선은 OMC 자체 사용성 후보로만 남기고 경쟁 갭 구현을 시작하지 않는다. [진단 보고서](c3_resume_diagnostic_20261011.md) · [대시보드](comparison-dashboard/README.md). C1 정리는 c369d8e에 커밋 완료했으며 기존 비교 이력은 보존한다.
+당시 다음은 대응 Ralph 재개 consumer 확인 또는 graph 지원 환경 확보 후 재비교다. 재개 차단 안내 개선은 OMC 자체 사용성 후보로만 남기고 경쟁 갭 구현을 시작하지 않는다. [진단 보고서](c3_resume_diagnostic_20261011.md) · [대시보드](comparison-dashboard/README.md). C1 정리는 c369d8e에 커밋 완료했으며 기존 비교 이력은 보존한다.
 
 ## C1 비교 개선 당시 결론 · 2026-10-11
 
