@@ -1,0 +1,50 @@
+[AUTOPILOT REPORT] status=completed
+  s1: status=completed attempt=1 verification=passed
+    model_verdict=APPROVE (reference only)
+    python3 condition_verify.py: exit=0 ok=True
+
+
+AI 응답 원문(로컬 경로 마스킹):
+## 코드 리뷰 — `cli.py`
+
+### 요약
+`ValueError`를 잡아 깔끔한 오류 메시지를 출력하는 최소한의 정확한 변경. 동작·계약·테스트 모두 일치. 리스크 없음.
+
+---
+
+### 이슈 목록
+
+이슈 없음.
+
+---
+
+### 변경 검증
+
+- `try/except ValueError`는 `int()` 실패를 정확히 포착하며 다른 예외(예: `MemoryError`)는 그대로 전파됨 — 올바른 범위.
+- `raise SystemExit(2)` 패턴은 기존 코드 스타일과 일치.
+- `sum(int(value) for value in args)` — 제너레이터 내부에서 첫 번째 비정수를 만나는 즉시 `ValueError`가 발생하고 `except`가 잡음. 정상 경로는 변경 없음.
+
+---
+
+### 검증 커맨드
+
+```bash
+python3 condition_verify.py
+```
+
+---
+
+## 판정
+
+**APPROVE**
+
+변경이 명세(`error: integer required` → stderr, exit 2, traceback 없음)를 완전히 충족하고 회귀가 없음.
+
+---
+
+## 다음 추천
+
+태스크 완료 + APPROVE. 이 벤치마크는 ship(배포) 단계가 없으므로 종료.
+
+<!-- OMC_OUTPUT: {"schema_version":"omc-output/v1","stage":"review","outcome":"done","risk":"low","next_skill":null,"user_selection_needed":false,"reason_code":null} -->
+VERDICT: APPROVE

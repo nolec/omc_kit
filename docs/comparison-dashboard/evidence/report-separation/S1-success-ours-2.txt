@@ -1,0 +1,20 @@
+[AUTOPILOT REPORT] status=completed
+  s1: status=completed attempt=1 verification=passed
+    검증 사실 (실행기 수집)
+    python3 condition_verify.py: exit=0 ok=True
+      stdout=출력 없음
+      stderr="..s\n----------------------------------------------------------------------\nRan 3 tests in 0.081s\n\nOK (skipped=1)\n"
+    AI 판정 (참고용; 검증 사실 아님)
+    model_verdict=APPROVE (reference only)
+
+
+AI 참고 응답
+**완료.**
+
+- `cli.py` +4줄: `ValueError` 캐치 → `error: integer required` stderr 출력 → exit 2
+- `python3 condition_verify.py` → `OK (skipped=1)` exit 0
+- 리뷰 판정: **APPROVE**
+- `s1-done.json` 작성 완료
+
+<!-- OMC_OUTPUT: {"schema_version":"omc-output/v1","stage":"review","outcome":"done","risk":"low","next_skill":null,"user_selection_needed":false,"reason_code":null} -->
+VERDICT: APPROVE

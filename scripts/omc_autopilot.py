@@ -1243,14 +1243,18 @@ def _print_managed_report(report: dict) -> None:
     print(f"[AUTOPILOT REPORT] status={report['status']}")
     for sid, row in report["steps"].items():
         print(f"  {sid}: status={row['status']} attempt={row['attempt']} verification={row['verification']}")
-        if row["model_verdict"]:
-            print(f"    model_verdict={row['model_verdict']} (reference only)")
+        print("    검증 사실 (실행기 수집)")
         if row["blocked_by"]:
             print(f"    blocked_by={row['blocked_by']}")
         if row["failure_category"]:
             print(f"    failure_category={row['failure_category']} timeout_sec={row['timeout_sec']}")
         for check in row["checks"]:
-            print(f"    {check.get('command') or check.get('label')}: exit={check.get('exit_code', 'unknown')} ok={check.get('ok')}")
+            exit_code = check.get("exit_code")
+            print(f"    {check.get('command') or check.get('label')}: exit={exit_code if exit_code is not None else '미수집'} ok={check.get('ok')}")
+            for stream in ("stdout", "stderr"):
+                value = check.get(stream)
+                rendered = "미수집" if value is None else "출력 없음" if value == "" else json.dumps(value, ensure_ascii=False)
+                print(f"      {stream}={rendered}")
             if check.get("diagnosis"):
                 diagnosis = check["diagnosis"]
                 print(f"      classification={diagnosis['classification']} · {diagnosis['label']}")
@@ -1258,12 +1262,22 @@ def _print_managed_report(report: dict) -> None:
                 print(f"      남은 조치: {diagnosis['remaining_action']}")
             if check.get("reason_code"):
                 print(f"      reason_code={check['reason_code']}")
-            if not check.get("ok") and check.get("output"):
-                print(f"      {check['output'][:500]}")
+            if not check.get("ok") and check.get("output") and check.get("stdout") is None and check.get("stderr") is None:
+                print(f"      실행기 메시지: {check['output'][:500]}")
         for check in row["remaining_checks"]:
             print(f"    remaining: {check}")
         for failure in row["failure_details"]:
-            print(f"    reason: {failure.get('label')}: {failure.get('output', '')[:300]}")
+            if failure.get("label") == "LLM 실행 실패":
+                print("    reason: LLM 실행 실패 (검증 미실행)")
+            else:
+                print(f"    reason: {failure.get('label')}: {failure.get('output', '')[:300]}")
+        if row["model_verdict"]:
+            print("    AI 판정 (참고용; 검증 사실 아님)")
+            print(f"    model_verdict={row['model_verdict']} (reference only)")
+        for failure in row["failure_details"]:
+            if failure.get("label") == "LLM 실행 실패" and failure.get("output"):
+                print("    AI 실행 실패 응답 (참고용; 검증 사실 아님)")
+                print(f"      response={json.dumps(failure['output'], ensure_ascii=False)}")
 
 
 def cmd_run(

@@ -1,0 +1,48 @@
+[AUTOPILOT REPORT] status=completed
+  s1: status=completed attempt=1 verification=passed
+    검증 사실 (실행기 수집)
+    python3 condition_verify.py: exit=0 ok=True
+      stdout=출력 없음
+      stderr="..s\n----------------------------------------------------------------------\nRan 3 tests in 0.080s\n\nOK (skipped=1)\n"
+    AI 판정 (참고용; 검증 사실 아님)
+    model_verdict=APPROVE (reference only)
+
+
+AI 참고 응답
+---
+
+## 리뷰 결과
+
+### 요약
+`cli.py`에 `ValueError` 처리를 추가해 비정수 입력 시 traceback 없이 `error: integer required`를 stderr에 출력하고 exit 2로 종료하도록 수정. 변경 범위가 최소화되어 있고 기존 정수 합산 동작은 유지됨. 별도 리스크 없음.
+
+---
+
+### 이슈 목록
+
+이슈 없음.
+
+---
+
+### 검증 커맨드
+
+```bash
+python3 condition_verify.py     # exit 0, 3 tests (1 skipped)
+python3 cli.py x 3 2>&1; echo $?   # stderr: error: integer required, exit 2
+python3 cli.py 2 3                  # stdout: 5, exit 0
+```
+
+---
+
+**판정: APPROVE**
+
+변경이 요구사항을 정확히 충족하며, 기존 테스트 회귀 없음. 추가 수정 불필요.
+
+---
+
+## 다음 추천
+
+이 벤치마크 태스크는 배포(ship) 단계가 없으므로 종료합니다. `s1-done.json` 작성 완료, 태스크 완결.
+
+<!-- OMC_OUTPUT: {"schema_version":"omc-output/v1","stage":"review","outcome":"done","risk":"low","next_skill":null,"user_selection_needed":false,"reason_code":null} -->
+VERDICT: APPROVE

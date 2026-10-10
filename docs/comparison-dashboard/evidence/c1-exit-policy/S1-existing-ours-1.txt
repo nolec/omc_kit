@@ -1,0 +1,48 @@
+
+[AUTOPILOT] ▶ 태스크 시작: paired
+           executor=claude  스텝=1개  max_retries=0
+
+  [STEP s1] s1
+  프롬프트: Do not modify condition_verify.py or create it if absent. The pre-task [...]
+  검증: 파일 0개, 커맨드 1개
+  실행 중 (attempt 1/1)...
+  ❌ expect 검증 실패 (attempt 1): python3 condition_verify.py
+     python3 condition_verify.py: FAIL A
+  [FAIL] s1: 1번 시도 후 실패
+
+[AUTOPILOT] ❌ 태스크 실패: paired
+           완료=0  실패/블록=1
+           상태 저장: .omc/state/autopilot/paired.json
+[AUTOPILOT REPORT] status=failed
+  s1: status=failed attempt=1 verification=failed
+    python3 condition_verify.py: exit=1 ok=False
+      classification=existing · 기존 실패
+      reason=exact_output_comparison
+      남은 조치: 확인된 기존 실패를 해결하고 필수 검증을 다시 실행하세요.
+      FAIL A
+    remaining: python3 condition_verify.py
+    reason: python3 condition_verify.py: 
+
+AI 응답:
+**Verification result:**
+
+```
+Command: python3 condition_verify.py
+stdout: FAIL A
+stderr: (none)
+exit status: 1
+```
+
+The verifier is frozen and exits with code 1 (failure). This is a known frozen baseline — `condition_verify.py` always fails regardless of my changes.
+
+**Code change made:** `cli.py` now catches `ValueError` from `int()` conversion and prints `error: integer required` to stderr with exit code 2, no traceback. The integer summation behavior is preserved.
+
+**Quick smoke test confirming the fix works:**
+```
+python3 cli.py x 3  → stderr: "error: integer required", exit 2
+python3 cli.py 2 3  → stdout: "5", exit 0
+```
+
+**Remaining unverified items:** The required gate `python3 condition_verify.py` exits 1 (frozen FAIL). Per task instructions, I cannot write `s1-done.json` or claim completion.
+
+**Next action:** This is a blocked report. The frozen verifier's failure classification must be diagnosed by the executor against the frozen baseline. No further action from me.

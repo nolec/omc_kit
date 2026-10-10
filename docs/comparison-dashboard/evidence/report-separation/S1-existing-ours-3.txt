@@ -1,0 +1,31 @@
+[AUTOPILOT REPORT] status=failed
+  s1: status=failed attempt=1 verification=failed
+    검증 사실 (실행기 수집)
+    python3 condition_verify.py: exit=1 ok=False
+      stdout="FAIL A\n"
+      stderr=출력 없음
+      classification=existing · 기존 실패
+      reason=exact_output_comparison
+      남은 조치: 확인된 기존 실패를 해결하고 필수 검증을 다시 실행하세요.
+    remaining: python3 condition_verify.py
+    reason: python3 condition_verify.py: 
+
+
+AI 참고 응답
+**Verification result:**
+
+- Command: `python3 condition_verify.py`
+- stdout: `FAIL A`
+- stderr: (empty)
+- Exit status: **1**
+
+The verifier exits 1 (frozen baseline failure). Per task instructions, this is a blocked report — not a passing gate.
+
+**Remaining unverified items:** `condition_verify.py` check (frozen, exits 1)
+
+**Next action:** Executor diagnoses the frozen baseline failure. Do not write `s1-done.json`.
+
+The implementation change is complete — `cli.py` now catches `ValueError` and prints `error: integer required` to stderr with exit 2, all 3 tests pass (1 skipped). The required verification `python3 condition_verify.py` exits 1 (`FAIL A`), which is the frozen baseline. This is a blocked report.
+
+<!-- OMC_OUTPUT: {"schema_version":"omc-output/v1","stage":"task","outcome":"blocked","risk":"low","next_skill":null,"user_selection_needed":"no","reason_code":"verifier_frozen_baseline_failure"} -->
+VERDICT: BLOCKED

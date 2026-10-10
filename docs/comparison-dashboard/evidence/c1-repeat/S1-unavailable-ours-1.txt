@@ -1,0 +1,39 @@
+
+[AUTOPILOT] ▶ 태스크 시작: paired
+           executor=claude  스텝=1개  max_retries=0
+
+  [STEP s1] s1
+  프롬프트: Do not modify condition_verify.py or create it if absent. The pre-task [...]
+  검증: 파일 0개, 커맨드 1개
+  실행 중 (attempt 1/1)...
+  ❌ expect 검증 실패 (attempt 1): python3 condition_verify.py
+     python3 condition_verify.py: [LOCAL_PATH] can't
+  [FAIL] s1: 1번 시도 후 실패
+
+[AUTOPILOT] ❌ 태스크 실패: paired
+           완료=0  실패/블록=1
+           상태 저장: .omc/state/autopilot/paired.json
+[AUTOPILOT REPORT] status=failed
+  s1: status=failed attempt=1 verification=unavailable
+    python3 condition_verify.py: exit=2 ok=False
+      classification=unknown · 구분 불가
+      reason=missing_verification_file
+      남은 조치: 검증 파일 경로·파일 존재를 확인하고 필수 검증을 다시 실행하세요.
+      reason_code=missing_verification_file
+      [LOCAL_PATH] can't open file '[LOCAL_PATH]': [Errno 2] No such file or directory
+    remaining: python3 condition_verify.py
+    reason: python3 condition_verify.py: 
+
+AI 자유 응답（출력 서술은 실행기 기록과 대조 필요）:
+**Verification result — BLOCKED**
+
+- **Command:** `python3 condition_verify.py`
+- **stdout:** (empty)
+- **stderr:** `can't open file '…/condition_verify.py': [Errno 2] No such file or directory`
+- **Exit status:** 2
+
+`condition_verify.py` does not exist in this repository. Per instructions, I do not create it.
+
+**Remaining unverified items:** The required verifier file is absent — the gate cannot be run.
+
+**Next action:** The executor must supply `condition_verify.py` or confirm that the absent verifier constitutes a passing baseline. The code change to `cli.py` is complete (non-integer input now prints `error: integer required` to stderr and exits 2 without a traceback). No `s1-done.json` is written because the required verification did not exit 0.

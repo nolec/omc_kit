@@ -1,0 +1,7 @@
+[AUTOPILOT REPORT] status=completed
+  s1: status=completed attempt=1 verification=passed
+    python3 condition_verify.py: exit=0 ok=True
+
+
+AI 응답 원문(로컬 경로 마스킹):
+All 3 tests ran (1 skipped — JSON mode, not required for S1). The fix wraps `int()` conversion in a `try/except ValueError` that prints `error: integer required` to stderr and exits with code 2 — no traceback, integer summation preserved.

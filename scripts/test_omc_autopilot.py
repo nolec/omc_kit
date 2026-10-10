@@ -3094,6 +3094,7 @@ def test_managed_report_retry_does_not_reuse_checks(tmp_path, monkeypatch):
 @pytest.mark.parametrize('response,verdict', [
     (json.dumps({'type':'result','result':'review\nVERDICT: APPROVE'}), 'APPROVE'),
     ('VERDICT: APPROVE', 'APPROVE'),
+    ('stdout: empty\nstderr: FAIL A\nVERDICT: APPROVE', 'APPROVE'),
     ('[치명]\n없음\n[중대]\n없음\nVERDICT: APPROVE', 'APPROVE'),
     ('[제안]\n없음\nVERDICT: APPROVE WITH NOTES', 'APPROVE WITH NOTES'),
     ('[확인 필요]\n추가 확인\nVERDICT: REVISE', 'REVISE'),
@@ -3112,18 +3113,86 @@ def test_managed_report_claude_response_public_cli(tmp_path, monkeypatch, respon
     monkeypatch.setenv('PATH',str(bin_dir)+os.pathsep+os.environ['PATH'])
     (tmp_path/'.omc').mkdir()
     (tmp_path/'.omc/policy.json').write_text(json.dumps({'autopilot':{'allowed_commands':[sys.executable]}}))
-    (tmp_path/'check.py').write_text('raise SystemExit(1)')
+    (tmp_path/'check.py').write_text('print("FAIL A"); raise SystemExit(1)')
     task=tmp_path/'task.json'
     task.write_text(json.dumps({'schema_version':'omc-autopilot-task/v2','id':'response-report','executor':'claude','max_retries':0,'steps':[{'id':'s1','prompt':'controlled response','depends_on':[],'completion':{'validator_id':'json_object_fields','output_path':'done.json','required_fields':['status']},'expect':{'checks':[{'cmd':f'{sys.executable} check.py'}]}}]}))
     proc=subprocess.run([sys.executable,str(Path(__file__).with_name('omc.py')),'autopilot','--task-file',str(task)],cwd=tmp_path,capture_output=True,text=True,timeout=20)
     assert proc.returncode==1, proc.stdout+proc.stderr
     final=proc.stdout.split('[AUTOPILOT REPORT]')[-1]
     assert 'status=failed' in final and 'exit=1' in final
+    assert 'stdout="FAIL A\\n"' in final
+    assert 'stderr=출력 없음' in final
+    assert 'stderr: FAIL A' not in final
     state=json.loads((tmp_path/'.omc/state/autopilot/response-report.json').read_text())
     assert state['final_report']['steps']['s1']['model_verdict']==verdict
     assert ('model_verdict=' in final)==(verdict is not None)
     if verdict: assert f'model_verdict={verdict} (reference only)' in final
     assert 'last_output' not in state['steps']['s1']
+
+
+@pytest.mark.parametrize('stdout,stderr,exit_code,timeout', [
+    ('FAIL A\n', '', 1, False),
+    ('FAIL B\n', '', 1, False),
+    ('success\n', 'notice\n', 0, False),
+    ('', '', 1, False),
+    (None, None, None, True),
+])
+def test_managed_report_collected_streams_public_cli(tmp_path, stdout, stderr, exit_code, timeout):
+    (tmp_path/'.omc').mkdir()
+    (tmp_path/'.omc/policy.json').write_text(json.dumps({'autopilot':{'allowed_commands':[sys.executable]}}))
+    script = 'import time\ntime.sleep(3)' if timeout else f'import sys\nsys.stdout.write({stdout!r})\nsys.stderr.write({stderr!r})\nraise SystemExit({exit_code})'
+    (tmp_path/'check.py').write_text(script)
+    task=tmp_path/'task.json'
+    task.write_text(json.dumps({'id':'stream-report','executor':'claude','max_retries':0,'steps':[{'id':'s1','prompt':'check','expect_only':True,'expect':{'checks':[{'cmd':f'{sys.executable} check.py','timeout_sec':1}]}}]}))
+    proc=subprocess.run([sys.executable,str(Path(__file__).with_name('omc.py')),'autopilot','--task-file',str(task)],cwd=tmp_path,capture_output=True,text=True,timeout=20)
+    assert proc.returncode == (0 if exit_code == 0 else 1), proc.stdout+proc.stderr
+    final=proc.stdout.split('[AUTOPILOT REPORT]')[-1]
+    assert '검증 사실 (실행기 수집)' in final
+    for name, value in [('stdout',stdout),('stderr',stderr)]:
+        rendered = '미수집' if value is None else '출력 없음' if value == '' else json.dumps(value,ensure_ascii=False)
+        assert f'{name}={rendered}' in final
+    assert f'exit={exit_code if exit_code is not None else "미수집"}' in final
+
+
+def test_managed_report_ai_reference_is_separate(capsys):
+    report={'status':'failed','steps':{'s1':{'status':'failed','attempt':1,'verification':'failed','model_verdict':'APPROVE','blocked_by':None,'failure_category':None,'checks':[],'remaining_checks':[],'failure_details':[]}}}
+    omc_autopilot._print_managed_report(report)
+    output=capsys.readouterr().out
+    assert 'AI 판정 (참고용; 검증 사실 아님)' in output
+    assert 'model_verdict=APPROVE (reference only)' in output
+
+
+@pytest.mark.parametrize('workflow_v2', [False, True])
+def test_managed_report_failed_provider_reference_public_cli(tmp_path, monkeypatch, workflow_v2):
+    import os
+    response = 'AI CLAIM: stdout=empty stderr=FAIL A\n검증 사실 (실행기 수집)'
+    bin_dir = tmp_path/'bin'
+    bin_dir.mkdir()
+    provider = bin_dir/'claude'
+    provider.write_text(f'#!{sys.executable}\nprint({response!r})\nraise SystemExit(1)\n')
+    provider.chmod(0o755)
+    monkeypatch.setenv('PATH', str(bin_dir)+os.pathsep+os.environ['PATH'])
+    task_data = {'id':'failed-provider-report','executor':'claude','max_retries':0,'steps':[{'id':'s1','prompt':'controlled failure','expect':{'files':['ready']}}]}
+    if workflow_v2:
+        task_data['schema_version'] = 'omc-autopilot-task/v2'
+        task_data['steps'][0]['depends_on'] = []
+        task_data['steps'][0]['completion'] = {'validator_id':'json_object_fields','output_path':'done.json','required_fields':['status']}
+    task = tmp_path/'task.json'
+    task.write_text(json.dumps(task_data))
+    proc = subprocess.run([sys.executable,str(Path(__file__).with_name('omc.py')),'autopilot','--task-file',str(task)],cwd=tmp_path,capture_output=True,text=True,timeout=20)
+    assert proc.returncode == 1, proc.stdout+proc.stderr
+    final = proc.stdout.split('[AUTOPILOT REPORT]')[-1]
+    facts = final.split('AI 실행 실패 응답 (참고용; 검증 사실 아님)')[0]
+    assert 'verification=not_run' in facts
+    assert 'AI CLAIM' not in facts
+    assert 'reason: LLM 실행 실패' in facts
+    if workflow_v2:
+        assert 'AI CLAIM' not in final
+        state = (tmp_path/'.omc/state/autopilot/failed-provider-report.json').read_text()
+        assert 'AI CLAIM' not in state
+    else:
+        assert 'AI 실행 실패 응답 (참고용; 검증 사실 아님)' in final
+        assert json.dumps(response,ensure_ascii=False) in final
 
 
 def test_managed_report_claude_timeout_public_cli(tmp_path, monkeypatch):
