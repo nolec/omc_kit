@@ -3077,7 +3077,7 @@ def test_managed_report_approve_is_reference_only(tmp_path, monkeypatch, capsys)
     assert state['final_report']['status']=='failed'
 
 
-def test_managed_report_retry_does_not_reuse_checks(tmp_path, monkeypatch):
+def test_managed_report_retry_does_not_reuse_checks(tmp_path, monkeypatch, capsys):
     task=tmp_path/'task.json'
     task.write_text(json.dumps({'id':'managed-report','executor':'claude','max_retries':1,'steps':[{'id':'s1','prompt':'test','expect':{'files':['missing']}}]}))
     outputs=iter([(0,'VERDICT: APPROVE',None,None),(1,'timeout',None,{'failure_category':'timeout'})])
@@ -3089,6 +3089,9 @@ def test_managed_report_retry_does_not_reuse_checks(tmp_path, monkeypatch):
     assert ss['attempts'][0]['verification']['status']=='failed'
     assert ss['attempts'][1]['verification']['status']=='not_run'
     assert state['final_report']['steps']['s1']['verification']=='not_run'
+    final=capsys.readouterr().out.split('[AUTOPILOT REPORT]')[-1]
+    assert 'verification=not_run' in final
+    assert 'verification=passed' not in final
 
 
 @pytest.mark.parametrize('response,verdict', [
@@ -3216,7 +3219,7 @@ def test_managed_report_claude_timeout_public_cli(tmp_path, monkeypatch):
     assert step['failure_category']=='timeout' and step['timeout_sec']==1
 
 
-def test_managed_report_retry_success_and_dependency(tmp_path, monkeypatch):
+def test_managed_report_retry_success_and_dependency(tmp_path, monkeypatch, capsys):
     task=tmp_path/'task.json'
     task.write_text(json.dumps({'id':'managed-report','executor':'claude','max_retries':1,'steps':[{'id':'s1','prompt':'test','expect':{'files':['ready']}},{'id':'s2','prompt':'next','depends_on':['s1'],'expect_only':True}]}))
     calls=[]
@@ -3230,9 +3233,12 @@ def test_managed_report_retry_success_and_dependency(tmp_path, monkeypatch):
     assert [a['verification']['status'] for a in state['steps']['s1']['attempts']]==['failed','passed']
     assert state['final_report']['steps']['s1']['verification']=='passed'
     assert state['final_report']['steps']['s1']['failure_details']==[]
+    final=capsys.readouterr().out.split('[AUTOPILOT REPORT]')[-1]
+    assert 's1: status=completed attempt=2 verification=passed' in final
+    assert 'remaining: file_exists: ready' not in final
 
 
-def test_managed_report_blocked_step_has_no_verification(tmp_path, monkeypatch):
+def test_managed_report_blocked_step_has_no_verification(tmp_path, monkeypatch, capsys):
     task=tmp_path/'task.json'
     task.write_text(json.dumps({'id':'managed-report','executor':'claude','max_retries':0,'steps':[{'id':'s1','prompt':'fail'},{'id':'s2','prompt':'never','depends_on':['s1']}]}))
     monkeypatch.setattr(omc_autopilot,'_run_step',lambda *a,**k:(1,'timeout',None,None))
@@ -3240,6 +3246,9 @@ def test_managed_report_blocked_step_has_no_verification(tmp_path, monkeypatch):
     state=json.loads((tmp_path/'.omc/state/autopilot/managed-report.json').read_text())
     assert state['final_report']['steps']['s2']['verification']=='not_run'
     assert state['final_report']['steps']['s2']['blocked_by']=='s1'
+    final=capsys.readouterr().out.split('[AUTOPILOT REPORT]')[-1]
+    assert 's2: status=blocked attempt=None verification=not_run' in final
+    assert 'blocked_by=s1' in final
 
 
 def test_managed_report_legacy_completed_state_is_unknown(tmp_path):
@@ -3252,7 +3261,7 @@ def test_managed_report_legacy_completed_state_is_unknown(tmp_path):
     assert state['final_report']['steps']['s1']['verification']=='unknown'
 
 
-def test_managed_report_passed_checks_then_completion_retry_timeout(tmp_path, monkeypatch):
+def test_managed_report_passed_checks_then_completion_retry_timeout(tmp_path, monkeypatch, capsys):
     task=tmp_path/'task.json'
     task.write_text(json.dumps({'schema_version':'omc-autopilot-task/v2','id':'managed-report','executor':'claude','max_retries':1,'steps':[{'id':'s1','prompt':'test','depends_on':[],'completion':{'validator_id':'json_object_fields','output_path':'receipt.json','required_fields':['status']},'expect':{'files':['ready']}}]}))
     (tmp_path/'ready').write_text('ready')
@@ -3262,6 +3271,9 @@ def test_managed_report_passed_checks_then_completion_retry_timeout(tmp_path, mo
     state=json.loads((tmp_path/'.omc/state/autopilot/managed-report.json').read_text())
     assert [a['verification']['status'] for a in state['steps']['s1']['attempts']]==['passed','not_run']
     assert state['final_report']['steps']['s1']['verification']=='not_run'
+    final=capsys.readouterr().out.split('[AUTOPILOT REPORT]')[-1]
+    assert 'verification=not_run' in final
+    assert 'verification=passed' not in final
 
 @pytest.mark.parametrize('condition,classification', [('existing','existing'),('new','new'),('missing','unknown'),('invalid','unknown'),('pass',None)])
 def test_c1_managed_diagnosis_surface(tmp_path, monkeypatch, capsys, condition, classification):
@@ -3280,10 +3292,12 @@ def test_c1_managed_diagnosis_surface(tmp_path, monkeypatch, capsys, condition, 
     if condition=='invalid': baseline.write_text('{}')
     if condition=='pass': script.write_text('pass')
     checks=omc_autopilot._run_expect_checks(tmp_path,expect)
-    state={'status':'completed' if condition=='pass' else 'failed','steps':{'s1':{'verification':{'status':omc_autopilot._verification_status(checks),'checks':checks}}}}
+    state={'status':'completed' if condition=='pass' else 'failed','steps':{'s1':{'model_verdict':'APPROVE','verification':{'status':omc_autopilot._verification_status(checks),'checks':checks}}}}
     report=omc_autopilot._managed_final_report(state,[{'id':'s1','expect':expect}])
     omc_autopilot._print_managed_report(report)
     output=capsys.readouterr().out
+    assert 'AI 판정 (참고용; 검증 사실 아님)' in output
+    assert 'model_verdict=APPROVE (reference only)' in output
     if classification is None:
         assert not report['steps']['s1']['checks'][0].get('diagnosis')
     else:
@@ -3310,3 +3324,32 @@ def test_c1_invalid_metadata_public_report(tmp_path, metadata):
     assert 'invalid_diagnostic_metadata' in result.stdout
     report=json.loads((tmp_path/'.omc/state/autopilot/invalid-id-report.json').read_text())['final_report']
     assert report['steps']['s1']['checks'][0]['exit_code']==1
+
+@pytest.mark.parametrize('case,script,exit_code,stdout,stderr',[
+    ('streams','print("FAIL A"); raise SystemExit(1)',1,'FAIL A\n',''),
+    ('classification','print("FAIL B"); raise SystemExit(1)',1,'FAIL B\n',''),
+    ('missing',None,2,'',None),
+])
+def test_native_report_does_not_require_model_response_contract(tmp_path, monkeypatch, case, script, exit_code, stdout, stderr):
+    """Provider receives no redundant response contract; CLI preserves native facts."""
+    import os
+    bin_dir=tmp_path/'bin';bin_dir.mkdir()
+    claude=bin_dir/'claude'
+    claude.write_text(f'#!{sys.executable}\nimport sys,json\nfrom pathlib import Path\nPath("provider-argv.json").write_text(json.dumps(sys.argv))\nprint("stderr: FAIL A; classification: existing; exit: N/A")\n')
+    claude.chmod(0o755)
+    monkeypatch.setenv('PATH',str(bin_dir)+os.pathsep+os.environ['PATH'])
+    (tmp_path/'.omc').mkdir();(tmp_path/'.omc/policy.json').write_text(json.dumps({'autopilot':{'allowed_commands':[sys.executable]}}))
+    if script is not None:(tmp_path/'check.py').write_text(script)
+    task=tmp_path/'task.json'
+    task.write_text(json.dumps({'schema_version':'omc-autopilot-task/v2','id':'response-contract','executor':'claude','max_retries':0,'steps':[{'id':'s1','prompt':'fix only','depends_on':[],'completion':{'validator_id':'json_object_fields','output_path':'done.json','required_fields':['status']},'expect':{'checks':[{'cmd':f'{sys.executable} check.py'}]}}]}))
+    p=subprocess.run([sys.executable,str(Path(__file__).with_name('omc.py')),'autopilot','--task-file',str(task)],cwd=tmp_path,capture_output=True,text=True,timeout=20)
+    assert p.returncode==1,p.stdout+p.stderr
+    argv=' '.join(json.loads((tmp_path/'provider-argv.json').read_text()))
+    assert 'OMC_VERIFICATION_RESPONSE' not in argv
+    assert 'Verification response contract' not in argv
+    final=p.stdout.split('[AUTOPILOT REPORT]')[-1]
+    assert f'exit={exit_code}' in final
+    assert 'stdout='+('출력 없음' if not stdout else json.dumps(stdout,ensure_ascii=False)) in final
+    if stderr is not None:assert 'stderr=출력 없음' in final
+    else:assert "can't open file" in final
+    assert 'stderr: FAIL A; classification: existing; exit: N/A' not in final
