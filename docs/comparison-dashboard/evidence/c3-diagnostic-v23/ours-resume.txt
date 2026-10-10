@@ -1,0 +1,28 @@
+{
+  "arm": "ours",
+  "case": "resume",
+  "status": "BLOCKED",
+  "initial_exit": -9,
+  "boundary": "s1 persisted and s2 running; process group SIGKILL",
+  "calls": [
+    "s1",
+    "s2"
+  ],
+  "artifact_s1": true,
+  "artifact_s2": false,
+  "native_completed": false,
+  "frozen_sha256": "3bd6dea4e2a8a2807617624c9093cec2c8e2011e45404998acde3858dc9960e0",
+  "resumed_sha256": "3bd6dea4e2a8a2807617624c9093cec2c8e2011e45404998acde3858dc9960e0",
+  "resume": {
+    "cmd": [
+      "<python3>",
+      "<omc-kit>/scripts/omc.py",
+      "autopilot",
+      "--task-file",
+      "<probe-root>/admitted/ours-resume/task.json"
+    ],
+    "exit_code": 1,
+    "stdout": "[AUTOPILOT] 이전 실행이 provider 호출 중 종료됐습니다. 중복 실행 방지를 위해 수동 대조가 필요합니다.\n",
+    "stderr": ""
+  }
+}

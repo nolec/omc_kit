@@ -1835,8 +1835,95 @@
     "effect": "사용자 시간·개입 감소 미측정; 효과 미입증",
     "next": "C1 후속 구현은 보류. 다음 후보 C2·C3의 사용자 문제·공통 비교 시나리오를 검토해 우선순위를 결정한다(아직 미선택)."
   },
+  "c3_diagnostic": {
+    "summary": "C3 통제 진단·리뷰 완료 · OMC 차단 확인 · 상대3항목 미관측 · 비교 미완료",
+    "mode": "실제 AI 호출 없는 통제 fixture native CLI 진단; OMC fake provider와 상대 graph command 경로. Ralph·Claude 대화 재개 동등 비교 아님.",
+    "runs": [
+      {
+        "id": "ours-resume",
+        "arm": "ours",
+        "condition": "resume",
+        "status": "BLOCKED",
+        "observed": true,
+        "calls": [
+          "s1",
+          "s2"
+        ],
+        "reason": "provider-inflight 먼저 차단",
+        "report_path": "evidence/c3-diagnostic-v23/ours-resume.txt",
+        "report_sha256": "ce225b8052ab9feb804c65dd0b0981175eaf2006e46b20af7f7cb403237fd9c0"
+      },
+      {
+        "id": "theirs-resume",
+        "arm": "theirs",
+        "condition": "resume",
+        "status": "UNOBSERVED",
+        "observed": false,
+        "calls": null,
+        "reason": "darwin graph 실행 미지원",
+        "report_path": "evidence/c3-diagnostic-v23/theirs-resume.txt",
+        "report_sha256": "cbed574e12a930542253ac81ece01130f368940006aa6300d8c6b0113215604d"
+      },
+      {
+        "id": "ours-changed",
+        "arm": "ours",
+        "condition": "changed",
+        "status": "BLOCKED",
+        "observed": true,
+        "calls": [
+          "s1",
+          "s2"
+        ],
+        "reason": "요청 해시 불일치 차단",
+        "report_path": "evidence/c3-diagnostic-v23/ours-changed.txt",
+        "report_sha256": "c763097cffa279e19ca624abd491afaeb736317679396ec6b3b5b44e70709b5c"
+      },
+      {
+        "id": "theirs-changed",
+        "arm": "theirs",
+        "condition": "changed",
+        "status": "UNOBSERVED",
+        "observed": false,
+        "calls": null,
+        "reason": "darwin graph 실행 미지원",
+        "report_path": "evidence/c3-diagnostic-v23/theirs-changed.txt",
+        "report_sha256": "64d211e0df1a92c354006dc79f09c07dde086425a4de0f2ea10ec573431adf75"
+      },
+      {
+        "id": "ours-missing",
+        "arm": "ours",
+        "condition": "missing",
+        "status": "BLOCKED",
+        "observed": true,
+        "calls": [
+          "s1",
+          "s2"
+        ],
+        "reason": "provider-inflight 먼저 차단",
+        "report_path": "evidence/c3-diagnostic-v23/ours-missing.txt",
+        "report_sha256": "39e9b2705c512b69251d874e1deca8f42d26beef69979bdbd59223fe4a16ee02"
+      },
+      {
+        "id": "theirs-missing",
+        "arm": "theirs",
+        "condition": "missing",
+        "status": "UNOBSERVED",
+        "observed": false,
+        "calls": null,
+        "reason": "darwin graph 실행 미지원",
+        "report_path": "evidence/c3-diagnostic-v23/theirs-missing.txt",
+        "report_sha256": "b0034108c5c6c3c5a63e1792f15c5d58c365dc7efcb8abd023ec6857311ebbbb"
+      }
+    ],
+    "control": "별도 완료 상태: 두 단계 exit0 완료 뒤 s1 산출물 삭제 → receipt 불일치 exit1; 단계별 실행 각1회 유지. 6항목과 합산하지 않음.",
+    "limits": "상대3항목은 실패가 아니라 미관측. 중단+근거삭제는 in-flight guard가 먼저 차단하므로 산출물 검사 근거로 대체하지 않음. 반복 안정성·사용자 효과·경쟁 우위 미입증.",
+    "review": "APPROVE WITH NOTES · 독립 원문·상태·receipt·실행 로그 대조 통과 · 측정 분류 테스트3개 통과. 중단 경계·중복 횟수 대조의 자동화는 보강 제안.",
+    "candidate": "OMC 자체 후보: 재개 차단 시 중단 단계·근거·안전한 다음 절차 표시. 경쟁 갭으로 확정하지 않음.",
+    "next": "C3의 Ralph 재개 consumer와 공통 비교 계약을 확인하거나 graph 지원 환경을 확보한 뒤 재비교한다. 현재 진단만으로 경쟁 갭 구현을 시작하지 않는다.",
+    "installation": "제품 코드·설치 변경 없음. C1 테스트·정리 커밋 c369d8e 보존; 이번 변경은 C3 문서·대시보드·로드맵 기록."
+  },
   "roadmap": {
-    "decision": "응답 지침 후보 제외; 실행기 사실 보고 재사용",
+    "decision": "C1 후보 제외·회귀 보강 마감. C3 경쟁 비교는 미완료; 비교 경로 정합성부터 확보.",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -1867,25 +1954,25 @@
         "verification": "수정 파일 수·생성 결과 불일치·검사 결과"
       },
       {
-        "completion_criterion": "근거 없는 완료 재사용·중복 작업 여부 확인",
-        "confirmed": "실행 경로 고정·재개 증거 구조 확인",
-        "effect": "미검증",
+        "completion_criterion": "지원되는 대응 native 재개 경로에서3조건을 관측하고 직접 근거로 경쟁 갭을 결정",
+        "confirmed": "별도 완료 상태: 두 단계 exit0 완료 뒤 s1 산출물 삭제 → receipt 불일치 exit1; 단계별 실행 각1회 유지. 6항목과 합산하지 않음. OMC 중단·변경 차단 및 상대 darwin 미지원 확인.",
+        "effect": "미입증",
         "id": "C3",
         "name": "중단·재개",
-        "next_work": "동일 중단·요청 변경 조건 비교",
+        "next_work": "C3의 Ralph 재개 consumer와 공통 비교 계약을 확인하거나 graph 지원 환경을 확보한 뒤 재비교한다. 현재 진단만으로 경쟁 갭 구현을 시작하지 않는다.",
         "principle": "완료 근거를 재검증하며 작업 이어가기",
-        "status": "비교 검증 필요",
+        "status": "C3 통제 진단·리뷰 완료 · OMC 차단 확인 · 상대3항목 미관측 · 비교 미완료",
         "supports": [
           "F4"
         ],
         "verification": "중복 작업·미완료 보고·요청 변경 시 과거 완료 재사용"
       }
     ],
-    "next": "C1 후속 구현은 보류. 다음 후보 C2·C3의 사용자 문제·공통 비교 시나리오를 검토해 우선순위를 결정한다(아직 미선택).",
+    "next": "C3의 Ralph 재개 consumer와 공통 비교 계약을 확인하거나 graph 지원 환경을 확보한 뒤 재비교한다. 현재 진단만으로 경쟁 갭 구현을 시작하지 않는다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선"
   },
   "decision": {
-    "candidate": "기존·신규 실패 구분",
+    "candidate": "중단·재개",
     "candidates": [
       {
         "cost": "검증·도입 부담 미확인",
@@ -1913,7 +2000,7 @@
       },
       {
         "cost": "검증·도입 부담 미확인",
-        "evidence_status": "구조 확인 · 실제 중단·재개 우열 미확인",
+        "evidence_status": "C3 통제 진단·리뷰 완료 · OMC 차단 확인 · 상대3항목 미관측 · 비교 미완료",
         "id": "C3",
         "ours": "우리: 완료 산출물과 선행 증거 재검증, 요청 식별·계획 해시는 별도 경로",
         "supports": [
@@ -1924,19 +2011,17 @@
         "value": "기대 가치 미검증"
       }
     ],
-    "completion": "332 passed, 1 skipped; 마지막 단언 보강5 passed; 리뷰 독립12 passed; APPROVE WITH NOTES",
+    "completion": "통제 진단6항목·별도 완료 근거 삭제 대조·리뷰 완료",
     "deliverables": [
-      "유효24회 조건별 두 도구 원문과 독립 대조",
-      "우리 실행기 최종 표시12/12 대조·필수 실패9/9 차단",
-      "AI 설명 오류·응답 미수집·독립 코드 검증 실패 별도 표시",
-      "준비 실패·조기 수집 제외 및 보충 실행 출처 보존",
-      "이전 측정 원문·이력 보존",
-      "응답 지침 후보 제외; 실행기 사실 보고 재사용"
+      "OMC 재개·요청 변경·근거 삭제 차단 기록",
+      "상대3항목 환경 실행 불가를 미관측으로 분리",
+      "완료 상태 산출물 삭제 별도 대조",
+      "Ralph·graph 경로 차이와 비교 한계 보존"
     ],
-    "limit": "같은 Sonnet4.6·120초 외부 한도·초기 코드·검증 조건·실패 보고 지시 사용. Native 권한·리뷰·완료 정책은 다르며 보충1회는 마지막에 실행. 개선 전 AI 대조군·사용자 진단 시간·생산성·엄밀한 동등성·제품 우월성은 미검증. 상대 native 완료 상태12회는 미관측이며 실패로 계산하지 않음. 원문은 로컬 경로만 가렸으며 private 원본 해시는 별도 보존. 사용자 효과 미측정.",
-    "not_done": "사용자 시간·개입 감소 미측정; 효과 미입증; AI 실제 재실행·사용처 재설치 없음.",
+    "limit": "상대3항목은 실패가 아니라 미관측. 중단+근거삭제는 in-flight guard가 먼저 차단하므로 산출물 검사 근거로 대체하지 않음. 반복 안정성·사용자 효과·경쟁 우위 미입증.",
+    "not_done": "상대3항목 재개 동작 미관측; 실제 AI 비교·사용자 효과 미측정.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "reason": "실행기 사실 보고는 이미 정확한 기존 기능. 추가 AI 지침은 효과 미입증으로 제외하고 기존 보고 회귀만 보강했다.",
-    "state": "C1 실행기 보고 유지 · 응답 지침 후보 제외 · 회귀 검증·리뷰 완료 · 사용자 효과 미입증"
+    "reason": "C3 OMC 차단은 확인했지만 상대 native 실행이 불가능해 비교 갭을 결정할 수 없다.",
+    "state": "C3 통제 진단·리뷰 완료 · OMC 차단 확인 · 상대3항목 미관측 · 비교 미완료"
   }
 }

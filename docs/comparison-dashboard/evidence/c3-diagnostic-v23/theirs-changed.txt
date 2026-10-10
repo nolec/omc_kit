@@ -1,0 +1,10 @@
+{
+  "arm": "theirs",
+  "case": "changed",
+  "status": "UNOBSERVED",
+  "reason": "native_initial_boundary_not_reached",
+  "initial_exit": 1,
+  "stdout": "",
+  "stderr": "Error: graph runtime is unavailable on darwin: contained directory-FD traversal is unavailable on darwin; refusing pathname fallback\n",
+  "frozen_sha256": "8a5bf0d99cb5f52ddcab56f820db0c4562ba997dbd8c785e0769865c9ccd2758"
+}
