@@ -1372,10 +1372,14 @@ def cmd_run(
             completed = []
             uncertain = []
             artifacts = []
+            diagnostics = []
             for step in steps:
                 step_id = str(step.get("id", ""))
                 recorded = recorded_steps.get(step_id)
                 recorded = recorded if isinstance(recorded, dict) else {}
+                if recorded:
+                    diagnostic_status = "수집됨" if isinstance(recorded.get("last_output_diagnostics"), dict) and recorded["last_output_diagnostics"] else "미수집"
+                    diagnostics.append(f"{step_id}: 실행 응답 진단 {diagnostic_status}")
                 if recorded.get("status") == "completed":
                     completed.append(step_id)
                 if recorded.get("status") == "running" or (
@@ -1384,16 +1388,27 @@ def cmd_run(
                     uncertain.append(step_id)
                 completion = step.get("completion")
                 if isinstance(completion, dict) and completion.get("output_path"):
-                    artifacts.append(f"{step_id}: {completion['output_path']}")
+                    artifact_path = root / str(completion['output_path'])
+                    try:
+                        artifact_status = "존재" if artifact_path.is_file() else "없음"
+                    except OSError:
+                        artifact_status = "확인 불가"
+                    artifacts.append(f"{step_id}: {completion['output_path']} [{artifact_status}]")
             print("  기록상 완료: " + (", ".join(completed) or "확인 불가"))
             print("  기록상 완료는 현재 재검증 완료를 뜻하지 않습니다.")
             print("  실행 결과 불확실: " + (", ".join(uncertain) or "확인 불가"))
             print(f"  상태 기록: {_state_path(root, task_id).relative_to(root)} (작업 루트 기준)")
             print("  완료 산출물 위치(작업 루트 기준): " + (" / ".join(artifacts) or "확인 불가"))
+            print("  산출물 존재 여부는 내용 검증이나 완료 판정이 아닙니다.")
+            print("  OMC 실행 응답 진단(상태 기록의 steps.<단계>.last_output_diagnostics): " + (" / ".join(diagnostics) or "미수집—별도 확인 필요"))
+            print("  실행 응답 진단은 provider의 원본 실행 기록이나 외부 작업 완료 증명이 아닙니다.")
+            print("  외부 provider 실행 기록: 미수집—별도 확인 필요 (사용한 provider에서 해당 작업의 실행 이력과 외부 결과 확인)")
+            print("  차단 유지 이유: 이전 provider 실행의 완료 여부를 확정하지 못했습니다.")
             print("  1. 상태 기록에서 단계별 상태와 이전 실행 기록을 확인하세요.")
             print("  2. provider의 실행 기록과 외부 작업 결과를 대조해 불확실한 단계가 실행됐는지 확인하세요.")
             print("  3. 근거 산출물을 현재 요구사항과 대조하고, 확인되지 않으면 차단을 유지하세요.")
             print("  자동 재시도하지 않습니다. 상태 삭제나 완료 표시 수정으로 차단을 해제하지 마세요.")
+            print("  지원되는 차단 해제·재개 절차: 없음. 대조 결과를 보존하고 별도 복구 절차가 마련될 때까지 차단을 유지하세요.")
             return 1
 
     print(f"\n[AUTOPILOT] ▶ 태스크 시작: {title}")

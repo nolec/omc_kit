@@ -394,6 +394,13 @@ def test_recovery_guidance_public_cli_preserves_block_and_no_provider_calls(tmp_
     assert '.omc/state/autopilot/gated-workflow.json' in result.stdout
     assert '1. 상태 기록' in result.stdout and '2. provider' in result.stdout and '3. 근거' in result.stdout
     assert '자동 재시도하지 않습니다' in result.stdout
+    assert '외부 provider 실행 기록: 미수집—별도 확인 필요' in result.stdout
+    assert '지원되는 차단 해제·재개 절차: 없음' in result.stdout
+    assert '차단 유지 이유: 이전 provider 실행의 완료 여부를 확정하지 못했습니다' in result.stdout
+    assert '산출물 존재 여부는 내용 검증이나 완료 판정이 아닙니다' in result.stdout
+    assert 'external: result.json [존재]' in result.stdout
+    assert 'pending: pending.json [없음]' in result.stdout
+    assert ('external: 실행 응답 진단 미수집' in result.stdout) == (not missing_metadata)
     if missing_metadata:
         assert '기록상 완료: 확인 불가' in result.stdout
         assert '실행 결과 불확실: 확인 불가' in result.stdout
@@ -465,6 +472,10 @@ print('VERDICT: APPROVE')
     assert '실행 결과 불확실: s2' in result.stdout
     assert 's1.json' in result.stdout and 's2.json' in result.stdout
     assert '자동 재시도하지 않습니다' in result.stdout
+    assert 's1: s1.json [존재]' in result.stdout
+    assert 's2: s2.json [없음]' in result.stdout
+    assert 's1: 실행 응답 진단 수집됨' in result.stdout
+    assert 's2: 실행 응답 진단 미수집' in result.stdout
     assert (tmp_path / 'calls.txt').read_text().splitlines() == ['s1', 's2']
     state = json.loads((tmp_path / '.omc/state/autopilot/interrupted.json').read_text())
     assert state['status'] == 'manual_reconciliation_required'
