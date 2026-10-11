@@ -1280,20 +1280,153 @@ def _print_managed_report(report: dict) -> None:
                 print(f"      response={json.dumps(failure['output'], ensure_ascii=False)}")
 
 
-def cmd_run(
+def _recovery_binding(root: Path, task: dict, state: dict, step_id: str, evidence: Path) -> dict:
+    evidence_bytes = evidence.read_bytes()
+    payload = json.loads(evidence_bytes.decode("utf-8"))
+    if not isinstance(payload, dict) or payload.get("judgment") != "not_executed" or not all(
+        isinstance(payload.get(k), str) and payload[k].strip() for k in ("execution_id", "source", "checked_at")
+    ):
+        raise ValueError("recovery_evidence_invalid")
+    from datetime import datetime
+    checked_at = datetime.fromisoformat(payload["checked_at"].replace("Z", "+00:00"))
+    if checked_at.tzinfo is None:
+        raise ValueError("recovery_evidence_time_invalid")
+    return {"root": str(root.resolve()), "task_id": task["id"], "task_sha256": autopilot_workflow.task_spec_sha256(task),
+            "state_sha256": hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest(),
+            "step_id": step_id, "evidence_path": str(evidence.resolve()),
+            "evidence_sha256": hashlib.sha256(evidence_bytes).hexdigest()}
+
+
+def _task_execution_lock(root: Path, task_id: str):
+    from contextlib import contextmanager
+    import fcntl
+    @contextmanager
+    def locked():
+        path = root / ".omc/state/autopilot/locks" / (hashlib.sha256(task_id.encode()).hexdigest() + ".lock")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise ValueError("task_execution_locked")
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+    return locked()
+
+
+def _recovery_preflight(root: Path, task: dict, state: dict, step_id: str) -> None:
+    if not isinstance(state, dict) or not isinstance(state.get("steps"), dict) or not all(isinstance(v, dict) for v in state["steps"].values()):
+        raise ValueError("recovery_state_invalid")
+    if autopilot_workflow.validate_task_spec(task):
+        raise ValueError("recovery_task_invalid")
+    if state.get("task_spec_sha256") != autopilot_workflow.task_spec_sha256(task):
+        raise ValueError("recovery_task_changed")
+    if not state.get("stale_reason") or state.get("status") != "manual_reconciliation_required":
+        raise ValueError("recovery_state_not_reconciled")
+    if state.get("recovery_intent"):
+        raise ValueError("recovery_intent_already_consumed")
+    steps = state.get("steps", {})
+    selected = next((step for step in task["steps"] if step["id"] == step_id), None)
+    if selected is None or steps.get(step_id, {}).get("status") != "hold":
+        raise ValueError("recovery_step_not_held")
+    if any(v.get("status") in {"hold", "running"} for k, v in steps.items() if k != step_id and isinstance(v, dict)):
+        raise ValueError("recovery_other_uncertain_step")
+    for step in _resolve_order(task["steps"]):
+        recorded = steps.get(step["id"], {})
+        if recorded.get("status") == "completed":
+            predecessors = [steps.get(dep, {}).get("completion_receipt", {}).get("receipt_sha256") for dep in step.get("depends_on", [])]
+            digest, error = autopilot_workflow.validate_completion_artifact(root, step)
+            receipt = recorded.get("completion_receipt")
+            if error or not all(predecessors) or not autopilot_workflow.completion_receipt_valid(receipt, task=task, step=step, predecessor_receipts=predecessors) or receipt.get("artifact_sha256") != digest:
+                raise ValueError("recovery_completed_receipt_invalid")
+    if any(steps.get(dep, {}).get("status") != "completed" for dep in selected.get("depends_on", [])):
+        raise ValueError("recovery_dependency_incomplete")
+    if not autopilot_workflow.approval_receipt_valid(root, task=task, step=selected):
+        raise ValueError("recovery_original_approval_missing")
+    if selected.get("expect_only") or selected.get("isolated"):
+        raise ValueError("recovery_step_mode_unsupported")
+
+
+def cmd_recovery_approve(root: Path, task_file: Path, step_id: str, evidence: Path, reviewer: str, confirm_not_executed: bool) -> int:
+    try:
+        task = json.loads(task_file.read_text(encoding="utf-8"))
+        with _task_execution_lock(root, str(task["id"])):
+            state = _load_state(root, str(task["id"]))
+            previous_intent = state.get("recovery_intent")
+            if previous_intent:
+                state = _recover_running_task_state_for_restart(state)
+                if state.get("steps", {}).get(step_id, {}).get("status") != "hold":
+                    raise ValueError("recovery_new_uncertain_round_required")
+                state.setdefault("recovery_history", []).append(previous_intent)
+                state.pop("recovery_intent")
+                state["status"] = "manual_reconciliation_required"
+                state["recovery_round_at"] = _now()
+            _recovery_preflight(root, task, state, step_id)
+            if not confirm_not_executed or not reviewer.strip():
+                raise ValueError("recovery_human_confirmation_required")
+            binding = _recovery_binding(root, task, state, step_id, evidence)
+            if previous_intent:
+                _save_state(root, str(task["id"]), state)
+            receipt = {"schema_version": "omc-recovery-approval/v1", "binding": binding, "reviewer": reviewer, "approved_at": _now()}
+            path = root / ".omc/state/autopilot/recovery-approvals" / (str(task["id"]) + ".json")
+            autopilot_workflow._atomic_write_json(path, receipt)
+            print(f"[RECOVERY] 미실행 확인 승인 기록: {step_id}; 원본 단계 승인도 필요합니다.")
+        return 0
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"[RECOVERY] 차단: {exc}")
+        return 1
+
+
+def cmd_run(root: Path, task_file: Path, *, dry_run: bool = False, resume_failed: bool = False, recovery_step: str | None = None) -> int:
+    try:
+        task = json.loads(task_file.read_text(encoding="utf-8"))
+        task_id = str(task.get("id") or task_file.stem)
+        with _task_execution_lock(root, task_id):
+            state = _load_state(root, task_id)
+            if recovery_step:
+                if dry_run:
+                    raise ValueError("recovery_dry_run_unsupported")
+                _recovery_preflight(root, task, state, recovery_step)
+                path = root / ".omc/state/autopilot/recovery-approvals" / (task_id + ".json")
+                receipt = json.loads(path.read_text(encoding="utf-8"))
+                binding = receipt.get("binding", {})
+                if receipt.get("schema_version") != "omc-recovery-approval/v1" or not receipt.get("reviewer") or binding != _recovery_binding(root, task, state, recovery_step, Path(binding.get("evidence_path", ""))):
+                    raise ValueError("recovery_approval_binding_invalid")
+                state["recovery_intent"] = {"consumed": True, "step_id": recovery_step, "approval": receipt, "recorded_at": _now()}
+                _save_state(root, task_id, state)
+                directory_fd = os.open(str(_state_path(root, task_id).parent), os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+                return _cmd_run_locked(root, task_file, recovery_step=recovery_step, task_snapshot=task, state_snapshot=state)
+            if state.get("recovery_intent"):
+                raise ValueError("recovery_intent_requires_manual_review")
+            return _cmd_run_locked(root, task_file, dry_run=dry_run, resume_failed=resume_failed, task_snapshot=task, state_snapshot=state)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"[AUTOPILOT] 차단: {exc}")
+        return 1
+
+
+def _cmd_run_locked(
     root: Path,
     task_file: Path,
     *,
     dry_run: bool = False,
     resume_failed: bool = False,
+    recovery_step: str | None = None,
+    task_snapshot: dict | None = None,
+    state_snapshot: dict | None = None,
 ) -> int:
     """Run an autopilot task file and persist step-by-step execution state."""
-    if not task_file.exists():
+    if task_snapshot is None and not task_file.exists():
         print(f"[AUTOPILOT] 태스크 파일 없음: {task_file}")
         return 1
 
     try:
-        task = json.loads(task_file.read_text(encoding="utf-8"))
+        task = task_snapshot if task_snapshot is not None else json.loads(task_file.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         print(f"[AUTOPILOT] 태스크 파일 파싱 오류: {exc}")
         return 1
@@ -1349,7 +1482,7 @@ def cmd_run(
             return 1
 
     try:
-        state = _recover_running_task_state_for_restart(_load_state(root, task_id))
+        state = _recover_running_task_state_for_restart(state_snapshot if state_snapshot is not None else _load_state(root, task_id))
     except RuntimeError as exc:
         print(f"[AUTOPILOT] {exc}")
         return 1
@@ -1362,7 +1495,7 @@ def cmd_run(
             _save_state(root, task_id, state)
             print("[AUTOPILOT] task spec hash mismatch — 기존 상태를 재사용할 수 없습니다.")
             return 1
-        if state.get("stale_reason"):
+        if state.get("stale_reason") and not recovery_step:
             state["status"] = "manual_reconciliation_required"
             state["failure_reason"] = "stale_external_execution_requires_reconciliation"
             _save_state(root, task_id, state)
@@ -1408,7 +1541,7 @@ def cmd_run(
             print("  2. provider의 실행 기록과 외부 작업 결과를 대조해 불확실한 단계가 실행됐는지 확인하세요.")
             print("  3. 근거 산출물을 현재 요구사항과 대조하고, 확인되지 않으면 차단을 유지하세요.")
             print("  자동 재시도하지 않습니다. 상태 삭제나 완료 표시 수정으로 차단을 해제하지 마세요.")
-            print("  지원되는 차단 해제·재개 절차: 없음. 대조 결과를 보존하고 별도 복구 절차가 마련될 때까지 차단을 유지하세요.")
+            print("  단일 단계 재개 V0: 해당 실행의 미실행 근거를 확인한 사람이 --recovery-evidence와 --confirm-not-executed로 별도 승인한 뒤 --recovery-step으로 재개하세요. 불명확하면 차단 유지.")
             return 1
 
     print(f"\n[AUTOPILOT] ▶ 태스크 시작: {title}")
@@ -1444,8 +1577,12 @@ def cmd_run(
         )
 
     failed_count = 0
+    if recovery_step:
+        max_retries = 0
 
     for step in steps:
+        if recovery_step and step["id"] != recovery_step:
+            continue
         sid = step["id"]
         step_title = step.get("title", sid)
         timeout_sec = int(step.get("timeout_sec", _DEFAULT_TIMEOUT_SEC))
@@ -1762,11 +1899,19 @@ def cmd_run(
         state["steps"].get(s["id"], {}).get("status") == "completed"
         for s in steps
     )
+    if recovery_step:
+        state["recovery_intent"]["outcome"] = state["steps"].get(recovery_step, {}).get("status")
     state["status"] = "completed" if all_done else "failed"
     state["finished_at"] = _now()
     state["execution_duration_ms"] = int(
         (time.monotonic() - execution_started_monotonic) * 1000
     )
+    if recovery_step:
+        state["status"] = "manual_reconciliation_required"
+        state["finished_at"] = _now()
+        _save_state(root, task_id, state)
+        print(f"[RECOVERY] 선택 단계 {recovery_step}: {state['recovery_intent']['outcome']}; 후속 자동 실행 없음. 새 대조 전 차단 유지.")
+        return 0 if state["recovery_intent"]["outcome"] == "completed" else 1
     if all_done and not dry_run:
         run_result = _build_task_run_result(root=root, task=task, state=state, executor=executor)
         _save_pipeline_result(root, run_result)
@@ -5887,6 +6032,7 @@ def main() -> int:
 
     p_run = sub.add_parser("run", help="태스크 파일 실행")
     p_run.add_argument("--task", type=Path, required=True, help="태스크 JSON 파일 경로")
+    p_run.add_argument("--recovery-step", help="승인한 단일 중단 단계 재개")
     p_run.add_argument("--dry-run", action="store_true", help="실제 LLM 호출 없이 계획만 출력")
     p_run.add_argument(
         "--resume-failed",
@@ -5894,6 +6040,13 @@ def main() -> int:
         default=False,
         help="이전 failed 스텝을 재실행할지 여부 (기본: 미재실행)",
     )
+
+    p_recover = sub.add_parser("recovery-approve", help="미실행 근거 확인 후 단일 단계 재개 승인")
+    p_recover.add_argument("--task", type=Path, required=True)
+    p_recover.add_argument("--step-id", required=True)
+    p_recover.add_argument("--evidence", type=Path, required=True)
+    p_recover.add_argument("--reviewer", required=True)
+    p_recover.add_argument("--confirm-not-executed", action="store_true")
 
     p_new = sub.add_parser("new", help="예시 태스크 파일 생성")
     p_new.add_argument("--id", dest="task_id", required=True, help="태스크 ID (파일명)")
@@ -5992,6 +6145,8 @@ def main() -> int:
     args = ap.parse_args()
     root = omc_utils.project_root(args.target)
 
+    if args.cmd == "recovery-approve":
+        return cmd_recovery_approve(root, args.task.resolve(), args.step_id, args.evidence.resolve(), args.reviewer, args.confirm_not_executed)
     if args.cmd == "run":
         task_file = args.task if args.task.is_absolute() else (root / args.task)
         return cmd_run(
@@ -5999,6 +6154,7 @@ def main() -> int:
             task_file,
             dry_run=args.dry_run,
             resume_failed=args.resume_failed,
+            recovery_step=args.recovery_step,
         )
     if args.cmd == "new":
         return cmd_new(root, args.task_id, args.title)

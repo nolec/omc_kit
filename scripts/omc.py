@@ -675,6 +675,10 @@ def main() -> int:
         sp.add_argument("--roles", type=str, default=None, help="Comma-separated role ids in team.json.")
         sp.add_argument("--top", type=int, default=None, help="When auto-selecting, how many roles to include.")
         if name == "autopilot":
+            sp.add_argument("--recovery-step", help="별도 승인한 중단 단계 하나 재개")
+            sp.add_argument("--recovery-evidence", type=Path, help="미실행 근거 JSON; 재개 승인 기록만 생성")
+            sp.add_argument("--recovery-reviewer", help="근거 확인자")
+            sp.add_argument("--confirm-not-executed", action="store_true")
             sp.add_argument(
                 "--task-file",
                 type=Path,
@@ -1312,6 +1316,15 @@ def main() -> int:
         if not autopilot_script.exists():
             raise SystemExit(f"[ERROR] omc_autopilot.py 없음: {autopilot_script}")
         ap_args = ["run", "--task", str(args.task_file.resolve())]
+        if args.recovery_evidence is not None:
+            if not args.recovery_step or not args.recovery_reviewer or not args.confirm_not_executed or args.dry_run:
+                ap.error("재개 승인에는 --recovery-step, --recovery-reviewer, --confirm-not-executed가 필요합니다")
+            ap_args = ["recovery-approve", "--task", str(args.task_file.resolve()), "--step-id", args.recovery_step,
+                       "--evidence", str(args.recovery_evidence.resolve()), "--reviewer", args.recovery_reviewer, "--confirm-not-executed"]
+        elif args.recovery_step:
+            ap_args += ["--recovery-step", args.recovery_step]
+        elif args.recovery_reviewer or args.confirm_not_executed:
+            ap.error("재개 승인에는 --recovery-evidence가 필요합니다")
         if getattr(args, "dry_run", False):
             ap_args.append("--dry-run")
         if hasattr(args, "target"):
