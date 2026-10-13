@@ -676,6 +676,7 @@ def main() -> int:
         sp.add_argument("--top", type=int, default=None, help="When auto-selecting, how many roles to include.")
         if name == "autopilot":
             sp.add_argument("--recovery-step", help="별도 승인한 중단 단계 하나 재개")
+            sp.add_argument("--recovery-details", action="store_true", help="중단 복구의 상세 근거·경로·차이 표시")
             sp.add_argument("--recovery-evidence", type=Path, help="미실행 근거 JSON; 재개 승인 기록만 생성")
             sp.add_argument("--recovery-reviewer", help="근거 확인자")
             sp.add_argument("--confirm-not-executed", action="store_true")
@@ -1325,6 +1326,10 @@ def main() -> int:
             ap_args += ["--recovery-step", args.recovery_step]
         elif args.recovery_reviewer or args.confirm_not_executed:
             ap.error("재개 승인에는 --recovery-evidence가 필요합니다")
+        if args.recovery_details:
+            if args.recovery_evidence is not None:
+                ap.error("--recovery-details는 실행 조회에 사용하며 재개 승인과 함께 사용할 수 없습니다")
+            ap_args.append('--recovery-details')
         if getattr(args, "dry_run", False):
             ap_args.append("--dry-run")
         if hasattr(args, "target"):

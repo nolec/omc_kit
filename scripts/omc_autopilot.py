@@ -1382,7 +1382,7 @@ def cmd_recovery_approve(root: Path, task_file: Path, step_id: str, evidence: Pa
         return 1
 
 
-def cmd_run(root: Path, task_file: Path, *, dry_run: bool = False, resume_failed: bool = False, recovery_step: str | None = None) -> int:
+def cmd_run(root: Path, task_file: Path, *, dry_run: bool = False, resume_failed: bool = False, recovery_step: str | None = None, recovery_details: bool = False) -> int:
     try:
         task = json.loads(task_file.read_text(encoding="utf-8"))
         task_id = str(task.get("id") or task_file.stem)
@@ -1404,10 +1404,10 @@ def cmd_run(root: Path, task_file: Path, *, dry_run: bool = False, resume_failed
                     os.fsync(directory_fd)
                 finally:
                     os.close(directory_fd)
-                return _cmd_run_locked(root, task_file, recovery_step=recovery_step, task_snapshot=task, state_snapshot=state)
+                return _cmd_run_locked(root, task_file, recovery_step=recovery_step, task_snapshot=task, state_snapshot=state, recovery_details=recovery_details)
             if state.get("recovery_intent"):
                 raise ValueError("recovery_intent_requires_manual_review")
-            return _cmd_run_locked(root, task_file, dry_run=dry_run, resume_failed=resume_failed, task_snapshot=task, state_snapshot=state)
+            return _cmd_run_locked(root, task_file, dry_run=dry_run, resume_failed=resume_failed, task_snapshot=task, state_snapshot=state, recovery_details=recovery_details)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"[AUTOPILOT] 차단: {exc}")
         return 1
@@ -1420,6 +1420,7 @@ def _cmd_run_locked(
     dry_run: bool = False,
     resume_failed: bool = False,
     recovery_step: str | None = None,
+    recovery_details: bool = False,
     task_snapshot: dict | None = None,
     state_snapshot: dict | None = None,
 ) -> int:
@@ -1502,7 +1503,34 @@ def _cmd_run_locked(
             state["status"] = "manual_reconciliation_required"
             state["failure_reason"] = "stale_external_execution_requires_reconciliation"
             _save_state(root, task_id, state)
-            print("[AUTOPILOT] 이전 실행이 provider 호출 중 종료됐습니다. 중복 실행 방지를 위해 수동 대조가 필요합니다.")
+            assessment = autopilot_workflow.recovery_assessment_facts(root, task, state)
+            if not recovery_details:
+                for line in autopilot_workflow.compact_recovery_summary(
+                    task, assessment, record_path=str(_state_path(root, task_id).relative_to(root))
+                ):
+                    print(line)
+                return 1
+            print("[AUTOPILOT] 이전 실행의 중단 기록이 남아 있습니다. 중복 실행 방지를 위해 차단합니다.")
+            narrative = autopilot_workflow.recovery_narrative(task, assessment)
+            for line in narrative[:-1]:
+                print("  " + line)
+            for fact in assessment:
+                target = fact['target_path'] or '미지정'
+                print(f"  비교 대상 [{fact['name']}]: 현재 파일 {fact['file_path']} → 선언된 목표 파일 {target} (작업 루트: {root})")
+                comparison = fact['target_diff']
+                if comparison['status'] == 'unavailable':
+                    print(f"    변경 요약 불가: {comparison['reason']}")
+                for line in comparison['summary_lines']:
+                    print("    " + line)
+            print("  " + narrative[-1])
+            for fact in assessment:
+                comparison = fact['target_diff']
+                print(f"  상세 차이 [{fact['name']}]—선언된 목표와의 비교: {comparison['reason']}")
+                for line in comparison['lines']:
+                    print("    " + line)
+            print("  차이 검토: 위 현재 내용 → 목표 내용을 확인하세요. 수정·재개는 별도 승인 단계이며 지금은 파일을 바꾸지 않습니다.")
+            print("  OMC 확인 결과: " + " / ".join(fact["detail"] for fact in assessment))
+            print("  차단 판단: 외부 작업 반영 여부를 확정할 수 없어 재실행을 막았습니다. 로컬 확인 결과만으로 미실행 승인을 만들지 않습니다.")
             recorded_steps = state.get("steps")
             recorded_steps = recorded_steps if isinstance(recorded_steps, dict) else {}
             completed = []
@@ -1765,6 +1793,17 @@ def _cmd_run_locked(
                     print(f"  재시도 (attempt {attempt}) — 이전 실패 컨텍스트 주입됨")
                 else:
                     print(f"  실행 중 (attempt {attempt}/{max_retries + 1})...")
+                if workflow_v2:
+                    step_state["execution_observation"] = autopilot_workflow.execution_observation(task=task, step=step, attempt=attempt)
+                    state.setdefault("execution_attempt_ids", {})[sid] = step_state["execution_observation"]["attempt_id"]
+                    step_state["execution_observation_sha256"] = autopilot_workflow.observation_digest(step_state["execution_observation"])
+                    state["steps"][sid] = dict(step_state)
+                    _save_state(root, task_id, state)
+                    directory_fd = os.open(str(_state_path(root, task_id).parent), os.O_RDONLY)
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
                 rc, output, cost_info, step_runtime = _run_step(
                     root,
                     step_with_prompt,
@@ -1772,6 +1811,11 @@ def _cmd_run_locked(
                     timeout_sec=timeout_sec,
                     isolated=bool(step.get("isolated", False)),
                 )
+                if workflow_v2:
+                    step_state["execution_observation"].update(phase="returned", returncode=rc, returned_at=datetime.now(timezone.utc).isoformat())
+                    step_state["execution_observation_sha256"] = autopilot_workflow.observation_digest(step_state["execution_observation"])
+                    state["steps"][sid] = dict(step_state)
+                    _save_state(root, task_id, state)
                 if cost_info is not None:
                     step_state["token_usage"] = cost_info["token_usage"]
                     step_state["cost_estimate"] = cost_info["cost_estimate"]
@@ -6069,6 +6113,7 @@ def main() -> int:
     p_run = sub.add_parser("run", help="태스크 파일 실행")
     p_run.add_argument("--task", type=Path, required=True, help="태스크 JSON 파일 경로")
     p_run.add_argument("--recovery-step", help="승인한 단일 중단 단계 재개")
+    p_run.add_argument("--recovery-details", action="store_true", help="중단 복구의 상세 근거·경로·차이 표시")
     p_run.add_argument("--dry-run", action="store_true", help="실제 LLM 호출 없이 계획만 출력")
     p_run.add_argument(
         "--resume-failed",
@@ -6191,6 +6236,7 @@ def main() -> int:
             dry_run=args.dry_run,
             resume_failed=args.resume_failed,
             recovery_step=args.recovery_step,
+            recovery_details=args.recovery_details,
         )
     if args.cmd == "new":
         return cmd_new(root, args.task_id, args.title)

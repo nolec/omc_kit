@@ -70,7 +70,7 @@ def test_unapproved_step_stops_before_provider_call(tmp_path):
     with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
         omc_autopilot, "_run_step"
     ) as run_step:
-        code = omc_autopilot.cmd_run(tmp_path, task_file)
+        code = omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True)
 
     assert code == workflow.APPROVAL_REQUIRED_EXIT_CODE
     run_step.assert_not_called()
@@ -105,7 +105,7 @@ def test_approved_step_records_hash_bound_completion_receipt(tmp_path):
         "_run_step",
         side_effect=replace_artifact,
     ):
-        code = omc_autopilot.cmd_run(tmp_path, task_file)
+        code = omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True)
 
     assert code == 0
     state = json.loads(
@@ -130,7 +130,7 @@ def test_v2_schema_rejects_completion_path_escape_before_provider_call(tmp_path)
     with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
         omc_autopilot, "_run_step"
     ) as run_step:
-        code = omc_autopilot.cmd_run(tmp_path, task_file)
+        code = omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True)
 
     assert code == 1
     run_step.assert_not_called()
@@ -155,7 +155,7 @@ def test_v2_completed_step_without_receipt_is_not_reused(tmp_path):
     with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
         omc_autopilot, "_run_step"
     ) as run_step:
-        code = omc_autopilot.cmd_run(tmp_path, task_file)
+        code = omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True)
 
     assert code == 1
     run_step.assert_not_called()
@@ -214,7 +214,7 @@ def test_v2_timeout_runtime_does_not_persist_partial_output_secret(tmp_path):
         "_run_step",
         return_value=(1, "[ERROR] timeout\napi_key=TOP-SECRET", None, runtime),
     ):
-        code = omc_autopilot.cmd_run(tmp_path, task_file)
+        code = omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True)
 
     assert code == 1
     state = json.loads(
@@ -249,7 +249,7 @@ def test_v2_completion_rejects_unchanged_preexisting_artifact(tmp_path):
         "_run_step",
         return_value=(0, "VERDICT: PROCEED", None, {"provider_call_count": 1}),
     ):
-        code = omc_autopilot.cmd_run(tmp_path, task_file)
+        code = omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True)
 
     assert code == 1
     state = json.loads(
@@ -279,7 +279,7 @@ def test_stale_v2_provider_execution_requires_manual_reconciliation(tmp_path, mo
     with patch.object(omc_autopilot, "_detect_executor", return_value="codex"), patch.object(
         omc_autopilot, "_run_step"
     ) as run_step:
-        code = omc_autopilot.cmd_run(tmp_path, task_file)
+        code = omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True)
 
     assert code == 1
     run_step.assert_not_called()
@@ -345,7 +345,7 @@ def test_product_value_six_stage_workflow_uses_receipt_chain_and_exact_approvals
         "_run_step",
         side_effect=create_stage_artifact,
     ) as run_step:
-        code = omc_autopilot.cmd_run(tmp_path, task_file)
+        code = omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True)
 
     assert code == 0
     assert run_step.call_count == 6
@@ -387,9 +387,15 @@ def test_recovery_guidance_public_cli_preserves_block_and_no_provider_calls(tmp_
     provider = bin_dir / 'codex'
     provider.write_text('#!' + sys.executable + '\nfrom pathlib import Path\nPath("provider-called").touch()\nraise SystemExit(99)\n', encoding='utf-8')
     provider.chmod(0o755)
-    result = subprocess.run([sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')), 'autopilot', '--task-file', str(task_file)], cwd=tmp_path, env={**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH']}, capture_output=True, text=True, timeout=20)
+    result = subprocess.run([sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')), 'autopilot', '--recovery-details', '--task-file', str(task_file)], cwd=tmp_path, env={**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH']}, capture_output=True, text=True, timeout=20)
     assert result.returncode == 1
     assert f"확인할 작업: {task_title or '제목 없음'} (작업 ID: gated-workflow)" in result.stdout
+    assert ('하려던 작업: 주문 내역 정리' if task_title else '하려던 작업: 작업 목적 정보 없음') in result.stdout
+    assert result.stdout.index('하려던 작업:') < result.stdout.index('확인된 진행:') < result.stdout.index('중단 경위:') < result.stdout.index('현재 결과:') < result.stdout.index('다음 행동:')
+    assert '다음 행동: 이번에는 다시 실행하지 않고 보류합니다' in result.stdout
+    assert '기록이 없는 단계를 미실행으로 단정하지 않습니다' not in result.stdout
+    if missing_metadata:
+        assert 'external, pending: 현재 시도의 유효한 실행 관측 기록이 없어 이전 실행 여부를 확인할 수 없습니다' in result.stdout
     assert str(state_path) in result.stdout
     assert '외부 실행 기록 위치: OMC에서 확인할 수 없음' in result.stdout
     assert '실행됨 → 다시 실행하지 마세요' in result.stdout
@@ -411,6 +417,8 @@ def test_recovery_guidance_public_cli_preserves_block_and_no_provider_calls(tmp_
     assert '자동 재시도하지 않습니다' in result.stdout
     assert '외부 provider 실행 기록: 미수집—별도 확인 필요' in result.stdout
     assert '단일 단계 재개 V0' in result.stdout
+    assert '선언된 목표 파일 미지정' in result.stdout
+    assert '변경 요약 불가: 목표 파일 미지정' in result.stdout
     assert '--recovery-evidence' in result.stdout and '--confirm-not-executed' in result.stdout
     assert '차단 유지 이유: 이전 provider 실행의 완료 여부를 확정하지 못했습니다' in result.stdout
     assert '산출물 존재 여부는 내용 검증이나 완료 판정이 아닙니다' in result.stdout
@@ -435,7 +443,7 @@ def test_recovery_guidance_does_not_override_task_hash_guard(tmp_path, monkeypat
     state_path.write_text(json.dumps({'status': 'running', 'pid': None, 'task_spec_sha256': 'a' * 64, 'steps': {'external': {'status': 'running'}}}))
     monkeypatch.setattr(omc_autopilot, '_detect_executor', lambda _preferred: 'codex')
     with patch.object(omc_autopilot, '_run_step') as provider:
-        assert omc_autopilot.cmd_run(tmp_path, task_file) == 1
+        assert omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True) == 1
     provider.assert_not_called()
     assert 'task spec hash mismatch' in capsys.readouterr().out
     assert json.loads(state_path.read_text())['failure_reason'] == 'task_spec_hash_mismatch'
@@ -448,10 +456,12 @@ def test_recovery_guidance_after_provider_process_group_interrupt_public_cli(tmp
     import sys
     import time
 
-    task = {'schema_version': 'omc-autopilot-task/v2', 'id': 'interrupted', 'executor': 'claude', 'resume_failed': True, 'max_retries': 0, 'steps': [
-        {'id': step, 'prompt': 'DO_STAGE_TWO' if step == 's2' else 'DO_STAGE_ONE', 'depends_on': ['s1'] if step == 's2' else [], 'completion': {'validator_id': 'json_object_fields', 'output_path': step + '.json', 'required_fields': ['status']}}
+    task = {'schema_version': 'omc-autopilot-task/v2', 'id': 'interrupted', 'title': '검증용 주문 저장', 'executor': 'claude', 'resume_failed': True, 'max_retries': 0, 'steps': [
+        {'id': step, 'title': '주문 저장' if step == 's2' else '주문 준비', 'prompt': 'DO_STAGE_TWO' if step == 's2' else 'DO_STAGE_ONE', 'depends_on': ['s1'] if step == 's2' else [], 'completion': {'validator_id': 'json_object_fields', 'output_path': step + '.json', 'required_fields': ['status']}}
         for step in ['s1', 's2']
     ]}
+    task['steps'].append({'id':'later','title':'후속 보고서','prompt':'DO_STAGE_LATER','depends_on':['s2'],
+        'completion':{'validator_id':'json_object_fields','output_path':'later.json','required_fields':['status']}})
     task_file = _write_task(tmp_path, task)
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
@@ -469,7 +479,7 @@ print('VERDICT: APPROVE')
 ''', encoding='utf-8')
     provider.chmod(0o755)
     env = {**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH']}
-    cmd = [sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')), 'autopilot', '--task-file', str(task_file)]
+    cmd = [sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')), 'autopilot', '--recovery-details', '--task-file', str(task_file)]
     with (tmp_path / 'initial.stdout').open('w') as out, (tmp_path / 'initial.stderr').open('w') as err:
         child = subprocess.Popen(cmd, cwd=tmp_path, env=env, stdout=out, stderr=err, start_new_session=True)
         try:
@@ -485,6 +495,19 @@ print('VERDICT: APPROVE')
     result = subprocess.run(cmd, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=20)
     assert result.returncode == 1
     assert '기록상 완료: s1' in result.stdout
+    assert 's1: 실행기 반환 기록 있음' in result.stdout
+    assert '현재 완료 검증 통과' in result.stdout
+    assert 's2: 실행 요청 중 중단됨' in result.stdout
+    assert '하려던 작업: 검증용 주문 저장' in result.stdout
+    assert '확인된 진행: 주문 준비 (s1)의 현재 산출물과 완료 기록 검증을 통과했습니다' in result.stdout
+    assert '중단 경위: 주문 저장 (s2)의 실행 요청 기록이 남은 채 이전 실행이 중단됐습니다' in result.stdout
+    assert '현재 결과: 주문 저장 (s2), 후속 보고서 (later)의 완료와 반영 여부를 확인하지 못했습니다' in result.stdout
+    assert '중단 원인은 확인할 수 없습니다' in result.stdout
+    assert '반영 여부를 확인하지 못했습니다' in result.stdout
+    assert '이번에는 다시 실행하지 않고 보류합니다' in result.stdout
+    assert '기록이 없는 단계' not in result.stdout
+    assert '후속 보고서 (later): 현재 시도의 유효한 실행 관측 기록이 없어 이전 실행 여부를 확인할 수 없습니다' in result.stdout
+    assert '중단 경위: 주문 저장 (s2)' in result.stdout
     assert '실행 결과 불확실: s2' in result.stdout
     assert 's1.json' in result.stdout and 's2.json' in result.stdout
     assert '자동 재시도하지 않습니다' in result.stdout
@@ -514,6 +537,417 @@ def _recovery_case(root):
     return task_file, task, evidence
 
 
+def test_direct_execution_observation_survives_interrupt(tmp_path, monkeypatch, capsys):
+    task_file, task = _v2_task(tmp_path)
+    task['steps'][0].pop('approval_gate')
+    task_file.write_text(json.dumps(task))
+    monkeypatch.setattr(omc_autopilot, '_detect_executor', lambda _: 'codex')
+    def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(omc_autopilot, '_run_step', interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True)
+    state = omc_autopilot._load_state(tmp_path, task['id'])
+    assert state['steps']['external']['execution_observation']['phase'] == 'requested'
+    state['pid'] = None
+    omc_autopilot._save_state(tmp_path, task['id'], state)
+    capsys.readouterr()
+    with patch.object(omc_autopilot, '_run_step') as provider:
+        assert omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True) == 1
+        provider.assert_not_called()
+    output = capsys.readouterr().out
+    assert 'OMC 확인 결과' in output
+    assert 'external: 실행 요청 중 중단됨' in output
+    assert '실제 호출·외부 반영 여부는 확인 불가' in output
+
+
+def test_direct_execution_observation_returned_and_bound(tmp_path, monkeypatch):
+    task_file, task = _v2_task(tmp_path)
+    task['steps'][0].pop('approval_gate')
+    task['steps'][0]['completion'] = {'validator_id':'json_object_fields','output_path':'result.json','required_fields':['status']}
+    task_file.write_text(json.dumps(task))
+    monkeypatch.setattr(omc_autopilot, '_detect_executor', lambda _: 'codex')
+    def run(*args, **kwargs):
+        (tmp_path/'result.json').write_text('{"status":"done"}')
+        return 0, 'VERDICT: APPROVE', None, None
+    monkeypatch.setattr(omc_autopilot, '_run_step', run)
+    assert omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True) == 0
+    state = omc_autopilot._load_state(tmp_path, task['id'])
+    observation = state['steps']['external']['execution_observation']
+    assert observation['phase'] == 'returned'
+    assert observation['task_spec_sha256'] == workflow.task_spec_sha256(task)
+    assert observation['step_id'] == 'external'
+    assert observation['returncode'] == 0
+
+
+@pytest.mark.parametrize('mutation', ['digest', 'step', 'request', 'attempt', 'replayed_id', 'missing'])
+def test_recovery_assessment_rejects_unbound_observation(tmp_path, mutation):
+    task_file, task, _ = _recovery_case(tmp_path)
+    state = omc_autopilot._load_state(tmp_path, task['id'])
+    record = state['steps']['external']
+    record['attempt'] = 1
+    observation = workflow.execution_observation(task=task, step=task['steps'][0], attempt=1)
+    state['execution_attempt_ids'] = {'external': observation['attempt_id']}
+    record['execution_observation'] = observation
+    if mutation == 'step': observation['step_id'] = 'other'
+    if mutation == 'request': observation['task_spec_sha256'] = '0' * 64
+    if mutation == 'attempt': observation['attempt'] = 2
+    if mutation == 'replayed_id': observation['attempt_id'] = 'a' * 32
+    record['execution_observation_sha256'] = workflow.observation_digest(observation)
+    if mutation == 'digest': observation['phase'] = 'returned'
+    if mutation == 'missing': record.pop('execution_observation')
+    output = ' '.join(workflow.recovery_assessment(tmp_path, task, state))
+    assert '확인 불가' in output
+    assert '실행 요청 중 중단됨' not in output
+    assert '실행기 반환 기록 있음' not in output
+
+
+def test_observation_write_failure_blocks_dispatch(tmp_path, monkeypatch):
+    task_file, task = _v2_task(tmp_path)
+    task['steps'][0].pop('approval_gate')
+    task_file.write_text(json.dumps(task))
+    monkeypatch.setattr(omc_autopilot, '_detect_executor', lambda _: 'codex')
+    save = omc_autopilot._save_state
+    def fail(root, task_id, state):
+        if state.get('steps', {}).get('external', {}).get('execution_observation'):
+            raise OSError('observation persistence failed')
+        return save(root, task_id, state)
+    monkeypatch.setattr(omc_autopilot, '_save_state', fail)
+    with patch.object(omc_autopilot, '_run_step') as provider:
+        assert omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True) == 1
+        provider.assert_not_called()
+
+
+@pytest.mark.parametrize('change', ['changed', 'missing', 'receipt'])
+def test_assessment_revalidates_current_completion(tmp_path, monkeypatch, change):
+    task_file, task = _v2_task(tmp_path)
+    task['steps'][0].pop('approval_gate')
+    task['steps'][0]['completion'] = {'validator_id':'json_object_fields','output_path':'result.json','required_fields':['status']}
+    task_file.write_text(json.dumps(task))
+    monkeypatch.setattr(omc_autopilot, '_detect_executor', lambda _: 'codex')
+    def run(*args, **kwargs):
+        (tmp_path/'result.json').write_text('{"status":"done"}')
+        return 0, 'VERDICT: APPROVE', None, None
+    monkeypatch.setattr(omc_autopilot, '_run_step', run)
+    assert omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True) == 0
+    state = omc_autopilot._load_state(tmp_path, task['id'])
+    assert '현재 완료 검증 통과' in ' '.join(workflow.recovery_assessment(tmp_path, task, state))
+    if change == 'changed': (tmp_path/'result.json').write_text('{"status":"different"}')
+    if change == 'missing': (tmp_path/'result.json').unlink()
+    if change == 'receipt': state['steps']['external']['completion_receipt']['receipt_sha256'] = '0' * 64
+    assert '현재 완료 검증 통과' not in ' '.join(workflow.recovery_assessment(tmp_path, task, state))
+    state.update(status='manual_reconciliation_required', stale_reason='test interrupted subsequent work')
+    omc_autopilot._save_state(tmp_path, task['id'], state)
+    import subprocess, sys
+    result = subprocess.run([sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')), 'autopilot', '--recovery-details', '--task-file', str(task_file)], cwd=tmp_path, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 1
+    assert '현재 완료 검증 통과' not in result.stdout
+    assert '현재 완료 확인 불가' in result.stdout
+
+
+def test_assessment_invalid_predecessor_blocks_downstream_completion(tmp_path, monkeypatch):
+    task_file, task = _v2_task(tmp_path)
+    task['steps'][0].pop('approval_gate')
+    task['steps'][0]['completion'] = {'validator_id':'json_object_fields','output_path':'external.json','required_fields':['status']}
+    task['steps'].append({'id':'later','prompt':'later','depends_on':['external'],
+        'completion':{'validator_id':'json_object_fields','output_path':'later.json','required_fields':['status']}})
+    task_file.write_text(json.dumps(task))
+    monkeypatch.setattr(omc_autopilot, '_detect_executor', lambda _: 'codex')
+    def run(root, step, **kwargs):
+        (root/step['completion']['output_path']).write_text('{"status":"done"}')
+        return 0, 'VERDICT: APPROVE', None, None
+    monkeypatch.setattr(omc_autopilot, '_run_step', run)
+    assert omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True) == 0
+    state = omc_autopilot._load_state(tmp_path, task['id'])
+    assert sum('현재 완료 검증 통과' in row for row in workflow.recovery_assessment(tmp_path, task, state)) == 2
+    (tmp_path/'external.json').unlink()
+    assert all('현재 완료 검증 통과' not in row for row in workflow.recovery_assessment(tmp_path, task, state))
+
+
+def test_recovery_public_cli_artifact_symlink_loop_is_unknown(tmp_path):
+    import subprocess, sys
+    task_file, task, _ = _recovery_case(tmp_path)
+    task['steps'].append({'id':'later','prompt':'later','depends_on':['external'],
+        'completion':{'validator_id':'json_object_fields','output_path':'later.json','required_fields':['status']}})
+    task_file.write_text(json.dumps(task))
+    state = omc_autopilot._load_state(tmp_path, task['id'])
+    state['task_spec_sha256'] = workflow.task_spec_sha256(task)
+    omc_autopilot._save_state(tmp_path, task['id'], state)
+    artifact = tmp_path/'result.json'
+    artifact.unlink()
+    artifact.symlink_to('result.json')
+    result = subprocess.run([sys.executable,str(Path(omc_autopilot.__file__).with_name('omc.py')),'autopilot','--recovery-details','--task-file',str(task_file)],cwd=tmp_path,capture_output=True,text=True,timeout=20)
+    assert result.returncode == 1
+    assert 'Traceback' not in result.stderr
+    assert '산출물 확인 불가—경로 해석 또는 읽기 실패' in result.stdout
+    assert 'later: 확인 불가' in result.stdout
+    assert '자동 재시도하지 않습니다' in result.stdout
+    assert omc_autopilot._load_state(tmp_path, task['id'])['status'] == 'manual_reconciliation_required'
+
+
+def test_recovery_assessment_artifact_read_failure_preserves_other_checks(tmp_path, monkeypatch):
+    _, task, _ = _recovery_case(tmp_path)
+    state = omc_autopilot._load_state(tmp_path, task['id'])
+    task['steps'].append({'id':'later','prompt':'later','depends_on':['external'],
+        'completion':{'validator_id':'json_object_fields','output_path':'later.json','required_fields':['status']}})
+    validate = workflow.validate_completion_artifact
+    def unreadable(root, step):
+        if step['id'] == 'external':raise PermissionError('test unreadable artifact')
+        return validate(root,step)
+    monkeypatch.setattr(workflow,'validate_completion_artifact',unreadable)
+    output = workflow.recovery_assessment(tmp_path,task,state)
+    assert len(output) == 2
+    assert '산출물 확인 불가—경로 해석 또는 읽기 실패' in output[0]
+    assert 'later: 확인 불가' in output[1]
+
+
+@pytest.mark.parametrize('file_state, expected', [
+    ('match','현재 파일이 선언된 목표 내용과 일치합니다'),
+    ('different','현재 파일이 선언된 목표 내용과 다릅니다'),
+    ('missing','현재 파일이 없습니다'),
+    ('unreadable','현재 파일을 읽거나 경로를 확인할 수 없습니다'),
+    ('json_fields','필수 항목만 확인됨—목표 내용 비교 기준 없음'),
+    ('json_missing_fields','필수 항목 확인 실패—목표 내용 비교 기준 없음'),
+    ('json_invalid','필수 항목 확인 실패—목표 내용 비교 기준 없음'),
+])
+def test_recovery_public_cli_separates_file_comparison_and_completion(tmp_path, file_state, expected):
+    import subprocess, sys, hashlib
+    task_file, task, _ = _recovery_case(tmp_path)
+    artifact = tmp_path/'result.json'
+    task['steps'][0]['completion'] = {'validator_id':'artifact_sha256','output_path':'result.json',
+        'expected_sha256':hashlib.sha256(artifact.read_bytes()).hexdigest()}
+    if file_state == 'different':artifact.write_text('different')
+    if file_state == 'missing':artifact.unlink()
+    if file_state == 'unreadable':artifact.unlink();artifact.symlink_to('result.json')
+    if file_state.startswith('json_'):
+        task['steps'][0]['completion'] = {'validator_id':'json_object_fields','output_path':'result.json','required_fields':['status']}
+    if file_state == 'json_missing_fields':artifact.write_text('{}')
+    if file_state == 'json_invalid':artifact.write_text('not json')
+    task_file.write_text(json.dumps(task))
+    state = omc_autopilot._load_state(tmp_path, task['id']);state['task_spec_sha256']=workflow.task_spec_sha256(task)
+    omc_autopilot._save_state(tmp_path, task['id'], state)
+    result = subprocess.run([sys.executable,str(Path(omc_autopilot.__file__).with_name('omc.py')),'autopilot','--recovery-details','--task-file',str(task_file)],cwd=tmp_path,capture_output=True,text=True,timeout=20)
+    assert result.returncode == 1 and 'Traceback' not in result.stderr
+    assert '파일 확인:' in result.stdout and expected in result.stdout
+    assert 'result.json' in result.stdout
+    assert '파일 상태는 이번 실행 여부나 외부 반영 증명이 아닙니다' in result.stdout
+    assert '현재 완료 검증 통과' not in result.stdout
+    assert '이번에는 다시 실행하지 않고 보류합니다' in result.stdout
+    assert omc_autopilot._load_state(tmp_path, task['id'])['status']=='manual_reconciliation_required'
+
+
+def test_verified_target_diff_public_cli(tmp_path):
+    import subprocess, sys, hashlib
+    task_file, task, _ = _recovery_case(tmp_path)
+    (tmp_path/'result.json').write_text('current\nold\n')
+    target = tmp_path/'target.txt';target.write_text('current\nnew\n')
+    task['steps'][0]['completion']={'validator_id':'artifact_sha256','output_path':'result.json',
+        'target_path':'target.txt','expected_sha256':hashlib.sha256(target.read_bytes()).hexdigest()}
+    task_file.write_text(json.dumps(task))
+    state=omc_autopilot._load_state(tmp_path,task['id']);state['task_spec_sha256']=workflow.task_spec_sha256(task)
+    omc_autopilot._save_state(tmp_path,task['id'],state)
+    r=subprocess.run([sys.executable,str(Path(omc_autopilot.__file__).with_name('omc.py')),'autopilot','--recovery-details','--task-file',str(task_file)],cwd=tmp_path,capture_output=True,text=True,timeout=20)
+    assert r.returncode==1 and not r.stderr
+    assert '--- 현재 내용' in r.stdout and '+++ 목표 내용' in r.stdout
+    assert '-old' in r.stdout and '+new' in r.stdout
+    assert '선언된 목표와의 비교' in r.stdout
+    assert '수정·재개는 별도 승인' in r.stdout
+    assert '비교 대상 [external]: 현재 파일 result.json → 선언된 목표 파일 target.txt' in r.stdout
+    assert '바꿀 내용' in r.stdout
+    assert r.stdout.index('비교 대상 [') < r.stdout.index('바꿀 내용') < r.stdout.index('다음 행동:') < r.stdout.index('--- 현재 내용')
+
+
+@pytest.mark.parametrize('current,target,label', [(b'a\n',b'a\nb\n','추가할 내용'),(b'a\nb\n',b'a\n','삭제할 내용'),(b'a\n',b'b\n','바꿀 내용'),(b'a\n',b'a\n','추가·삭제·교체할 내용 없음')])
+def test_target_diff_change_summary(tmp_path,current,target,label):
+    import hashlib
+    _,task,_=_recovery_case(tmp_path);step=task['steps'][0]
+    (tmp_path/'result.json').write_bytes(current);(tmp_path/'target.txt').write_bytes(target)
+    step['completion']={'validator_id':'artifact_sha256','output_path':'result.json','target_path':'target.txt','expected_sha256':hashlib.sha256(target).hexdigest()}
+    result=workflow.verified_target_diff(tmp_path,step)
+    assert label in '\n'.join(result['summary_lines'])
+    combined=result['summary_lines']+result['lines']
+    assert len(combined)<=40 and len('\n'.join(combined))<=4000
+
+
+def test_compact_recovery_public_cli_budget_and_details(tmp_path):
+    import subprocess,sys
+    task_file,task,_=_recovery_case(tmp_path)
+    task['title']='매우 긴 제목\x1b\n'*400
+    for index in range(4):
+        task['steps'].append({'id':f'later{index}','prompt':'later','depends_on':['external'],
+            'completion':{'validator_id':'json_object_fields','output_path':f'later{index}.json','required_fields':['status']}})
+    task_file.write_text(json.dumps(task))
+    state=omc_autopilot._load_state(tmp_path,task['id']);state['task_spec_sha256']=workflow.task_spec_sha256(task)
+    omc_autopilot._save_state(tmp_path,task['id'],state)
+    cmd=[sys.executable,str(Path(omc_autopilot.__file__).with_name('omc.py')),'autopilot','--task-file',str(task_file)]
+    compact=subprocess.run(cmd,cwd=tmp_path,capture_output=True,text=True,timeout=20)
+    assert compact.returncode==1 and not compact.stderr
+    assert len(compact.stdout.splitlines())<=8 and len(compact.stdout)<=800
+    assert '\x1b' not in compact.stdout
+    assert '--recovery-details' in compact.stdout
+    assert '일부 생략' in compact.stdout
+    assert '다시 실행하지 않고 보류' in compact.stdout
+    assert '확인 대상: external' in compact.stdout
+    assert f'.omc/state/autopilot/{task["id"]}.json' in compact.stdout
+    assert '외부 실행 기록·파일 수정 이력: 미수집' in compact.stdout
+    assert '판단 불가이면 보류 유지' in compact.stdout
+    assert '미실행이 확인돼도 별도 승인 후 재실행' in compact.stdout
+    assert '상세 차이' not in compact.stdout and '완료 산출물 위치' not in compact.stdout
+    detail=subprocess.run(cmd+['--recovery-details'],cwd=tmp_path,capture_output=True,text=True,timeout=20)
+    assert detail.returncode==1 and not detail.stderr
+    assert '완료 산출물 위치' in detail.stdout
+
+
+def test_compact_check_targets_requested_step_and_missing_evidence():
+    facts = [
+        {'step_id': 'roadmap', 'name': '로드맵', 'file_path': 'roadmap.md', 'verified': True, 'execution': 'returned',
+         'file_status': '목표와 일치', 'target_diff': {'status': 'equal', 'summary_lines': []}},
+        {'step_id': 'dashboard', 'name': '대시보드', 'file_path': 'dashboard.md', 'verified': False, 'execution': 'requested',
+         'file_status': '목표와 다름', 'target_diff': {'status': 'unavailable', 'summary_lines': []}},
+    ]
+    output = '\n'.join(workflow.compact_recovery_summary({'title': '상태 반영'}, facts))
+    assert '확인 대상: 대시보드 [dashboard.md]' in output
+    assert '로드맵: 완료 검증 통과' in output
+    assert '판독: 실행 요청 기록만 확인됨; 실제 호출·반영과 완료는 확인 불가' in output
+    assert 'OMC 기록 위치 미제공' in output
+    assert '외부 실행 기록·파일 수정 이력: 미수집' in output
+    assert '판단 불가이면 보류 유지' in output
+
+
+@pytest.mark.parametrize('execution,expected', [
+    ('requested', '실행 요청 기록만 확인됨; 실제 호출·반영과 완료는 확인 불가'),
+    ('returned', '실행기 반환 기록 확인됨; 실제 반영과 완료는 확인 불가'),
+    ('unknown', '유효 실행 기록 없음; 실행 여부와 완료는 확인 불가'),
+])
+def test_compact_explains_observed_uncertainty(execution, expected):
+    fact = {'name': '대시보드', 'file_path': 'dashboard.md', 'verified': False, 'execution': execution,
+            'file_status': '목표와 일치', 'target_diff': {'status': 'equal', 'summary_lines': []}}
+    output = '\n'.join(workflow.compact_recovery_summary({'title': '상태 반영'}, [fact]))
+    assert '판독: ' + expected in output
+    assert '완료 검증 통과' not in output
+    assert '다시 실행하지 않고 보류' in output
+
+
+def test_compact_check_long_locations_keep_budget():
+    fact = {'name': '단계' * 300, 'file_path': '파일' * 300, 'verified': False, 'execution': 'requested',
+            'file_status': '상태' * 300, 'target_diff': {'status': 'different', 'summary_lines': ['변경' * 300]}}
+    output = '\n'.join(workflow.compact_recovery_summary({'title': '제목' * 300}, [fact, fact], record_path='경로' * 300)) + '\n'
+    assert len(output.splitlines()) <= 8 and len(output) <= 800
+    assert '일부 생략' in output and '--recovery-details' in output
+
+
+def test_compact_summary_prioritizes_change_after_equal_file():
+    facts=[{'file_path':'first.md','file_status':'목표와 일치','target_diff':{'status':'equal','summary_lines':['추가·삭제·교체할 내용 없음']}},
+           {'file_path':'second.md','file_status':'목표와 다름','target_diff':{'status':'different','summary_lines':['추가할 내용: 상태 기록']}}]
+    output='\n'.join(workflow.compact_recovery_summary({'title':'문서 최신화'},facts))
+    assert '필요한 변경: second.md — 추가할 내용: 상태 기록' in output
+    assert '필요한 변경: 추가·삭제·교체할 내용 없음' not in output
+
+
+def test_compact_replace_shows_current_and_target_public_cli(tmp_path):
+    import subprocess,sys,hashlib
+    task_file,task,_=_recovery_case(tmp_path)
+    (tmp_path/'result.json').write_bytes(b'old\n')
+    (tmp_path/'target.txt').write_bytes(b'new\n')
+    task['steps'][0]['completion']={'validator_id':'artifact_sha256','output_path':'result.json','target_path':'target.txt','expected_sha256':hashlib.sha256(b'new\n').hexdigest()}
+    task_file.write_text(json.dumps(task))
+    state=omc_autopilot._load_state(tmp_path,task['id']);state['task_spec_sha256']=workflow.task_spec_sha256(task)
+    omc_autopilot._save_state(tmp_path,task['id'],state)
+    r=subprocess.run([sys.executable,str(Path(omc_autopilot.__file__).with_name('omc.py')),'autopilot','--task-file',str(task_file)],cwd=tmp_path,capture_output=True,text=True,timeout=20)
+    assert r.returncode==1 and not r.stderr
+    change=next(line for line in r.stdout.splitlines() if line.startswith('필요한 변경:'))
+    assert '현재 "old\\n" → 목표 "new\\n"' in change
+    assert len(r.stdout.splitlines())<=8 and len(r.stdout)<=800
+    assert '다시 실행하지 않고 보류' in r.stdout
+
+
+def test_public_cli_target_hash_mismatch_does_not_summarize_changes(tmp_path):
+    import subprocess,sys,hashlib
+    task_file,task,_=_recovery_case(tmp_path)
+    target=tmp_path/'target.txt';target.write_bytes(b'changed after declaration')
+    task['steps'][0]['completion']={'validator_id':'artifact_sha256','output_path':'result.json','target_path':'target.txt','expected_sha256':hashlib.sha256(b'approved target').hexdigest()}
+    task_file.write_text(json.dumps(task))
+    state=omc_autopilot._load_state(tmp_path,task['id']);state['task_spec_sha256']=workflow.task_spec_sha256(task)
+    omc_autopilot._save_state(tmp_path,task['id'],state)
+    r=subprocess.run([sys.executable,str(Path(omc_autopilot.__file__).with_name('omc.py')),'autopilot','--recovery-details','--task-file',str(task_file)],cwd=tmp_path,capture_output=True,text=True,timeout=20)
+    assert r.returncode==1 and not r.stderr
+    assert '변경 요약 불가: 목표 파일 해시 불일치' in r.stdout
+    assert '추가할 내용' not in r.stdout and '바꿀 내용' not in r.stdout
+
+
+@pytest.mark.parametrize('kind', ['hash','escape','symlink','large','binary','lines'])
+def test_target_diff_refuses_invalid_inputs(tmp_path,kind):
+    _,task,_=_recovery_case(tmp_path);step=task['steps'][0]
+    target=tmp_path/'target.txt';target.write_bytes(b'target\n')
+    import hashlib
+    step['completion']={'validator_id':'artifact_sha256','output_path':'result.json',
+        'target_path':'target.txt','expected_sha256':hashlib.sha256(target.read_bytes()).hexdigest()}
+    if kind=='hash':target.write_bytes(b'wrong')
+    if kind=='escape':step['completion']['target_path']='../outside.txt'
+    if kind=='symlink':target.unlink();target.symlink_to('result.json')
+    if kind=='large':target.write_bytes(b'x'*65537)
+    if kind=='binary':target.write_bytes(b'\xff')
+    if kind=='lines':target.write_bytes(b'x\n'*1001)
+    if kind in ['large','binary','lines']:step['completion']['expected_sha256']=hashlib.sha256(target.read_bytes()).hexdigest()
+    result=workflow.verified_target_diff(tmp_path,step)
+    assert result['status']=='unavailable'
+    assert result['lines']==[]
+
+
+def test_target_diff_limits_and_escapes_output(tmp_path):
+    import hashlib
+    _,task,_=_recovery_case(tmp_path);step=task['steps'][0]
+    (tmp_path/'result.json').write_text('old\n')
+    data=('\x1b[31m'+'x'*6000+'\n').encode();(tmp_path/'target.txt').write_bytes(data)
+    step['completion']={'validator_id':'artifact_sha256','output_path':'result.json','target_path':'target.txt','expected_sha256':hashlib.sha256(data).hexdigest()}
+    result=workflow.verified_target_diff(tmp_path,step)
+    text='\n'.join(result['summary_lines']+result['lines'])
+    assert '\x1b' not in text and '\\u001b' in text
+    assert len(result['summary_lines']+result['lines'])<=40 and len(text)<=4000
+    assert '생략' in text
+
+
+@pytest.mark.parametrize('current, target, side', [(b'same',b'same\n','현재 내용'),(b'same\n',b'same','목표 내용')])
+def test_target_diff_marks_missing_final_newline(tmp_path,current,target,side):
+    import hashlib
+    _,task,_=_recovery_case(tmp_path);step=task['steps'][0]
+    (tmp_path/'result.json').write_bytes(current);(tmp_path/'target.txt').write_bytes(target)
+    step['completion']={'validator_id':'artifact_sha256','output_path':'result.json','target_path':'target.txt','expected_sha256':hashlib.sha256(target).hexdigest()}
+    result=workflow.verified_target_diff(tmp_path,step)
+    assert result['status']=='different'
+    assert f'[{side}: 마지막 줄바꿈 없음]' in '\n'.join(result['lines'])
+    assert len(result['lines'])<=40 and len('\n'.join(result['lines']))<=4000
+
+
+def test_target_contract_invalid_validator_and_path(tmp_path):
+    _,task,_=_recovery_case(tmp_path)
+    task['steps'][0]['completion']['target_path']='../target.txt'
+    errors=workflow.validate_task_spec(task)
+    assert any('target_path_unsafe' in e for e in errors)
+    assert any('target_validator_invalid' in e for e in errors)
+
+
+def test_target_diff_special_file_is_not_opened_blocking(tmp_path):
+    import os
+    _,task,_=_recovery_case(tmp_path);step=task['steps'][0]
+    os.mkfifo(tmp_path/'fifo')
+    step['completion']={'validator_id':'artifact_sha256','output_path':'result.json','target_path':'fifo','expected_sha256':'a'*64}
+    assert workflow.verified_target_diff(tmp_path,step)['status']=='unavailable'
+
+
+def test_target_snapshot_detects_change_during_read(tmp_path,monkeypatch):
+    import os
+    (tmp_path/'target.txt').write_bytes(b'before')
+    read=os.read
+    def mutate(fd, amount):
+        data=read(fd,amount)
+        (tmp_path/'target.txt').write_bytes(b'changed-after-read')
+        return data
+    monkeypatch.setattr(os,'read',mutate)
+    with pytest.raises(ValueError,match='파일 변경'):
+        workflow._bounded_regular_file(tmp_path,'target.txt')
+
+
 @pytest.mark.parametrize('later_state, label', [
     ({'status': 'pending'}, '대기—이번 재개에서 실행하지 않음'),
     ({}, '확인 불가'),
@@ -529,7 +963,7 @@ def test_recovery_guidance_distinguishes_recorded_waiting_and_uncertainty(tmp_pa
     state['steps']['later'] = later_state
     omc_autopilot._save_state(tmp_path, task['id'], state)
     with patch.object(omc_autopilot, '_run_step') as provider:
-        assert omc_autopilot.cmd_run(tmp_path, task_file) == 1
+        assert omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True) == 1
         provider.assert_not_called()
     output = capsys.readouterr().out
     assert f'later: {label}' in output
@@ -565,7 +999,7 @@ def test_recovery_approval_binding_and_single_step(tmp_path, monkeypatch, capsys
     assert '후속 단계는 자동 실행하지 않습니다' in output
     assert calls == ['external']
     assert omc_autopilot.cmd_run(tmp_path, task_file, recovery_step='external') == 1
-    assert omc_autopilot.cmd_run(tmp_path, task_file) == 1
+    assert omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True) == 1
     assert calls == ['external']
 
 
@@ -593,7 +1027,7 @@ def test_recovery_after_intent_interrupt_blocks_reuse(tmp_path, monkeypatch):
     assert state['recovery_intent']['consumed'] is True
     with patch.object(omc_autopilot, '_run_step') as provider:
         assert omc_autopilot.cmd_run(tmp_path, task_file, recovery_step='external') == 1
-        assert omc_autopilot.cmd_run(tmp_path, task_file) == 1
+        assert omc_autopilot.cmd_run(tmp_path, task_file, recovery_details=True) == 1
         provider.assert_not_called()
 
 
@@ -699,7 +1133,7 @@ def test_recovery_real_process_kill_after_intent(tmp_path):
     provider.write_text('#!' + sys.executable + '\nimport sys,time\nfrom pathlib import Path\nif "--help" in sys.argv or "--version" in sys.argv or "features" in sys.argv: raise SystemExit(0)\nwith Path("calls").open("a") as f:f.write("call\\n")\nPath("started").touch()\nwhile True:time.sleep(.05)\n')
     provider.chmod(0o755)
     env = {**os.environ, 'PATH': str(bin_dir)+os.pathsep+os.environ['PATH']}
-    cmd = [sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')), 'autopilot', '--task-file', str(task_file), '--recovery-step', 'external']
+    cmd = [sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')), 'autopilot', '--recovery-details', '--task-file', str(task_file), '--recovery-step', 'external']
     with (tmp_path/'stdout').open('w') as out, (tmp_path/'stderr').open('w') as err:
         child = subprocess.Popen(cmd, cwd=tmp_path, env=env, stdout=out, stderr=err, start_new_session=True)
         try:
