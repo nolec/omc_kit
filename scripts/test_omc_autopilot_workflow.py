@@ -360,12 +360,17 @@ def test_product_value_six_stage_workflow_uses_receipt_chain_and_exact_approvals
 
 
 @pytest.mark.parametrize("missing_metadata", [False, True])
-def test_recovery_guidance_public_cli_preserves_block_and_no_provider_calls(tmp_path, missing_metadata):
+@pytest.mark.parametrize("task_title", ['주문 내역 정리', None])
+def test_recovery_guidance_public_cli_preserves_block_and_no_provider_calls(tmp_path, missing_metadata, task_title):
     import os
     import subprocess
     import sys
 
     task_file, task = _v2_task(tmp_path)
+    if task_title is None:
+        task.pop('title', None)
+    else:
+        task['title'] = task_title
     task['steps'][0].pop('approval_gate')
     task['steps'].append({
         'id': 'pending', 'prompt': 'uncertain operation', 'depends_on': ['external'],
@@ -384,6 +389,16 @@ def test_recovery_guidance_public_cli_preserves_block_and_no_provider_calls(tmp_
     provider.chmod(0o755)
     result = subprocess.run([sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')), 'autopilot', '--task-file', str(task_file)], cwd=tmp_path, env={**os.environ, 'PATH': str(bin_dir) + os.pathsep + os.environ['PATH']}, capture_output=True, text=True, timeout=20)
     assert result.returncode == 1
+    assert f"확인할 작업: {task_title or '제목 없음'} (작업 ID: gated-workflow)" in result.stdout
+    assert str(state_path) in result.stdout
+    assert '외부 실행 기록 위치: OMC에서 확인할 수 없음' in result.stdout
+    assert '실행됨 → 다시 실행하지 마세요' in result.stdout
+    assert '실행 안 됨 → 미실행 근거를 확인한 사람이 한 단계 재개를 별도 승인' in result.stdout
+    assert '모름 → 멈춘 상태를 유지하세요' in result.stdout
+    assert result.stdout.index('단계 상태') < result.stdout.index('지금 할 일') < result.stdout.index('승인할 실행 범위')
+    assert '후속 단계는 자동 실행하지 않습니다' in result.stdout
+    pending_label = '확인 불가' if missing_metadata else '실행 결과 불확실'
+    assert f'pending: {pending_label}' in result.stdout
     assert not (tmp_path / 'provider-called').exists()
     saved = json.loads(state_path.read_text())
     assert saved['status'] == 'manual_reconciliation_required'
@@ -499,7 +514,31 @@ def _recovery_case(root):
     return task_file, task, evidence
 
 
-def test_recovery_approval_binding_and_single_step(tmp_path, monkeypatch):
+@pytest.mark.parametrize('later_state, label', [
+    ({'status': 'pending'}, '대기—이번 재개에서 실행하지 않음'),
+    ({}, '확인 불가'),
+    ({'status': 'hold', 'stale_reason': 'dead pid'}, '실행 결과 불확실'),
+])
+def test_recovery_guidance_distinguishes_recorded_waiting_and_uncertainty(tmp_path, capsys, later_state, label):
+    task_file, task, _ = _recovery_case(tmp_path)
+    task['steps'].append({'id': 'later', 'prompt': 'later', 'depends_on': ['external'],
+        'completion': {'validator_id': 'json_object_fields', 'output_path': 'later.json', 'required_fields': ['status']}})
+    task_file.write_text(json.dumps(task))
+    state = omc_autopilot._load_state(tmp_path, task['id'])
+    state['task_spec_sha256'] = workflow.task_spec_sha256(task)
+    state['steps']['later'] = later_state
+    omc_autopilot._save_state(tmp_path, task['id'], state)
+    with patch.object(omc_autopilot, '_run_step') as provider:
+        assert omc_autopilot.cmd_run(tmp_path, task_file) == 1
+        provider.assert_not_called()
+    output = capsys.readouterr().out
+    assert f'later: {label}' in output
+    if label == '실행 결과 불확실':
+        assert '아직 한 단계를 특정할 수 없습니다' in output
+        assert 'external, later의 provider 실행 이력' in output
+
+
+def test_recovery_approval_binding_and_single_step(tmp_path, monkeypatch, capsys):
     task_file, task, evidence = _recovery_case(tmp_path)
     task['steps'].append({'id': 'later', 'prompt': 'later', 'depends_on': ['external'],
         'completion': {'validator_id': 'json_object_fields', 'output_path': 'later.json', 'required_fields': ['status']}})
@@ -509,6 +548,9 @@ def test_recovery_approval_binding_and_single_step(tmp_path, monkeypatch):
     omc_autopilot._save_state(tmp_path, task['id'], state)
     receipt = omc_autopilot.cmd_recovery_approve(tmp_path, task_file, 'external', evidence, 'human', True)
     assert receipt == 0
+    approval_output = capsys.readouterr().out
+    assert '승인된 실행 범위: external 한 단계' in approval_output
+    assert '후속 단계는 자동 실행하지 않습니다' in approval_output
     calls = []
     monkeypatch.setattr(omc_autopilot, '_detect_executor', lambda _: 'codex')
     def run(root, step, **kwargs):
@@ -517,6 +559,10 @@ def test_recovery_approval_binding_and_single_step(tmp_path, monkeypatch):
         return 0, 'VERDICT: APPROVE', None, None
     monkeypatch.setattr(omc_autopilot, '_run_step', run)
     assert omc_autopilot.cmd_run(tmp_path, task_file, recovery_step='external') == 0
+    output = capsys.readouterr().out
+    assert 'external: 이번 재개 검증 완료' in output
+    assert output.index('단계 상태') < output.index('지금 할 일') < output.index('승인된 실행 범위')
+    assert '후속 단계는 자동 실행하지 않습니다' in output
     assert calls == ['external']
     assert omc_autopilot.cmd_run(tmp_path, task_file, recovery_step='external') == 1
     assert omc_autopilot.cmd_run(tmp_path, task_file) == 1

@@ -1373,6 +1373,9 @@ def cmd_recovery_approve(root: Path, task_file: Path, step_id: str, evidence: Pa
             path = root / ".omc/state/autopilot/recovery-approvals" / (str(task["id"]) + ".json")
             autopilot_workflow._atomic_write_json(path, receipt)
             print(f"[RECOVERY] 미실행 확인 승인 기록: {step_id}; 원본 단계 승인도 필요합니다.")
+            print(f"  단계 상태: {step_id}: 재개 승인 기록됨—아직 실행하지 않음.")
+            print(f"  지금 할 일: 원본 단계 승인과 근거를 확인하고 --recovery-step {step_id}로 실행하세요.")
+            print(f"  승인된 실행 범위: {step_id} 한 단계. 후속 단계는 자동 실행하지 않습니다.")
         return 0
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"[RECOVERY] 차단: {exc}")
@@ -1506,6 +1509,7 @@ def _cmd_run_locked(
             uncertain = []
             artifacts = []
             diagnostics = []
+            stage_labels = []
             for step in steps:
                 step_id = str(step.get("id", ""))
                 recorded = recorded_steps.get(step_id)
@@ -1519,6 +1523,15 @@ def _cmd_run_locked(
                     recorded.get("status") == "hold" and recorded.get("stale_reason")
                 ):
                     uncertain.append(step_id)
+                status = recorded.get("status")
+                label = (
+                    "기록상 완료" if status == "completed" else
+                    "실행 결과 불확실" if step_id in uncertain else
+                    "대기—이번 재개에서 실행하지 않음" if status == "pending" else
+                    "기록상 실패" if status == "failed" else
+                    "확인 불가"
+                )
+                stage_labels.append(f"{step_id}: {label}")
                 completion = step.get("completion")
                 if isinstance(completion, dict) and completion.get("output_path"):
                     artifact_path = root / str(completion['output_path'])
@@ -1527,6 +1540,25 @@ def _cmd_run_locked(
                     except OSError:
                         artifact_status = "확인 불가"
                     artifacts.append(f"{step_id}: {completion['output_path']} [{artifact_status}]")
+            display_title = task.get("title")
+            display_title = display_title.strip() if isinstance(display_title, str) else ""
+            print(f"  확인할 작업: {display_title or '제목 없음'} (작업 ID: {task_id})")
+            print("  단계 상태: " + (" / ".join(stage_labels) or "확인 불가"))
+            target = ", ".join(uncertain)
+            if uncertain:
+                print(f"  지금 할 일: {target}의 provider 실행 이력과 외부 결과를 대조하세요. 미실행을 확인하지 못하면 차단 유지.")
+            else:
+                print("  지금 할 일: 상태 기록에서 확인 불가 단계와 해당 실행을 식별한 뒤 provider 실행 이력과 외부 결과를 대조하세요. 차단 유지.")
+            if len(uncertain) == 1:
+                print(f"  승인할 실행 범위: 미실행 근거 확인 후 {uncertain[0]} 한 단계만 별도 승인할 수 있습니다. 후속 단계는 자동 실행하지 않습니다.")
+            else:
+                print("  승인할 실행 범위: 아직 한 단계를 특정할 수 없습니다. 불확실한 실행을 모두 대조해야 하며, 후속 단계는 자동 실행하지 않습니다.")
+            print(f"  확인할 OMC 기록: {_state_path(root, task_id).resolve()}")
+            print("  외부 실행 기록 위치: OMC에서 확인할 수 없음. 이 작업을 실행한 AI 도구의 대화·실행 내역과 실제 변경 결과를 확인하세요.")
+            print("  확인 결과에 따른 행동:")
+            print("    실행됨 → 다시 실행하지 마세요. 실제 결과를 확인하고 멈춘 상태를 유지하세요.")
+            print("    실행 안 됨 → 미실행 근거를 확인한 사람이 한 단계 재개를 별도 승인해야 합니다. 기록·원본 승인 등 재개 조건도 충족해야 합니다.")
+            print("    모름 → 멈춘 상태를 유지하세요. 파일이 없다는 이유만으로 다시 실행하지 마세요.")
             print("  기록상 완료: " + (", ".join(completed) or "확인 불가"))
             print("  기록상 완료는 현재 재검증 완료를 뜻하지 않습니다.")
             print("  실행 결과 불확실: " + (", ".join(uncertain) or "확인 불가"))
@@ -1911,6 +1943,10 @@ def _cmd_run_locked(
         state["finished_at"] = _now()
         _save_state(root, task_id, state)
         print(f"[RECOVERY] 선택 단계 {recovery_step}: {state['recovery_intent']['outcome']}; 후속 자동 실행 없음. 새 대조 전 차단 유지.")
+        outcome_label = {"completed": "이번 재개 검증 완료", "failed": "이번 재개 실패—결과 대조 필요"}.get(state['recovery_intent']['outcome'], "확인 불가—결과 대조 필요")
+        print(f"  단계 상태: {recovery_step}: {outcome_label}")
+        print("  지금 할 일: 선택 단계의 실행 결과와 산출물을 대조하세요. 전체 작업 완료를 뜻하지 않으며 차단을 유지합니다.")
+        print(f"  승인된 실행 범위: {recovery_step} 한 단계. 후속 단계는 자동 실행하지 않습니다.")
         return 0 if state["recovery_intent"]["outcome"] == "completed" else 1
     if all_done and not dry_run:
         run_result = _build_task_run_result(root=root, task=task, state=state, executor=executor)
