@@ -1,0 +1,4 @@
+
+[AUTOPILOT] ▶ 태스크 시작: OMC 로드맵과 대시보드 복사본에 복구 상황 설명 반영
+           executor=claude  스텝=2개  max_retries=0
+[AUTOPILOT] roadmap: 완료 receipt가 없거나 현재 workflow와 일치하지 않습니다.

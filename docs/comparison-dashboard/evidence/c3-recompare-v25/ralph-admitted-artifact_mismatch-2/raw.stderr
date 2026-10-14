@@ -1,0 +1,1 @@
+[RALPH FEEDBACK GATE] Before the first story: run `omc ralph verify --write-baseline --session c3-docs` to record the feedback baseline. Every later gate (story verification, post-deslop re-verification): run `omc ralph verify --session c3-docs` — exit 0 = pass (baseline-only failures are warnings), exit 1 = new failures to fix. Never hand-roll the diff.

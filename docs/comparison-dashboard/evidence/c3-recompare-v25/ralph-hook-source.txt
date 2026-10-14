@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import {createRalphLoopHook,writeRalphState,readRalphState,getPrdCompletionStatus} from '/Users/noseunglae/Downloads/dev/oh-my-claudecode/dist/hooks/ralph/loop.js';
+import {writePrd,readPrd,getSessionPrdPath,getStoryGoverningCriteriaRevision} from '/Users/noseunglae/Downloads/dev/oh-my-claudecode/dist/hooks/ralph/prd.js';
+import {checkPersistentModes,createHookOutput} from '/Users/noseunglae/Downloads/dev/oh-my-claudecode/dist/hooks/persistent-mode/index.js';
+const dir=process.cwd(),sid='c3-docs',condition=process.argv[2],goal='OMC 로드맵과 대시보드 복사본에 복구 상황 설명 반영';
+const prd={project:'C3',branchName:'main',description:goal,userStories:['roadmap','dashboard'].map((s,i)=>({id:s,title:s==='roadmap'?'로드맵 복사본 반영':'대시보드 복사본 반영',description:goal,acceptanceCriteria:[`write ${s}.md containing OMC 복구 상황`],priority:i+1,passes:condition==='artifact_mismatch'||i===0,architectVerified:condition==='artifact_mismatch'||i===0})),reconciliation:{staleAfterMs:1,observableChecks:Object.fromEntries(['roadmap','dashboard'].map(s=>[s,[{type:'fileContains',path:s+'.md',pattern:'OMC 복구 상황'}]]))}};
+fs.writeFileSync('roadmap.md','# roadmap\nOMC 복구 상황\n');if(condition==='artifact_mismatch')fs.writeFileSync('dashboard.md','# dashboard\nOMC 복구 상황\n');
+for(const story of prd.userStories)if(story.passes){let revision=getStoryGoverningCriteriaRevision(story);story.completionCriteriaRevision=revision;story.architectVerificationCriteriaRevision=revision;}
+if(!writePrd(dir,prd,sid)||!writeRalphState(dir,{active:true,iteration:2,max_iterations:10,started_at:new Date().toISOString(),prompt:goal,session_id:sid,project_path:dir,prd_mode:true,critic_mode:'architect'},sid))throw Error('fixture failed');
+fs.writeFileSync('fixture-before.json',JSON.stringify({prd:readPrd(dir,sid),state:readRalphState(dir,sid)}));
+if(condition==='artifact_mismatch')fs.writeFileSync('roadmap.md','# roadmap\n다른 내용\n');
+const past=new Date(Date.now()-2000);fs.utimesSync(getSessionPrdPath(dir,sid),past,past);
+const startup=createRalphLoopHook(dir).startLoop(sid,goal);const persistent=await checkPersistentModes(sid,dir);
+console.log(JSON.stringify({startup,persistent,hook:createHookOutput(persistent),completion:getPrdCompletionStatus(dir,sid),prd:readPrd(dir,sid),state:readRalphState(dir,sid)}));

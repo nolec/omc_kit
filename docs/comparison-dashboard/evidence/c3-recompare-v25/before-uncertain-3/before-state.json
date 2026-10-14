@@ -1,0 +1,92 @@
+{
+  "task_id": "c3-docs",
+  "status": "running",
+  "steps": {
+    "roadmap": {
+      "status": "completed",
+      "started_at": "2026-10-14T033426Z",
+      "attempt": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "verification": {
+            "attempt": 1,
+            "status": "not_configured",
+            "checks": []
+          },
+          "status": "completed",
+          "started_at": "2026-10-14T033426Z",
+          "finished_at": "2026-10-14T033426Z",
+          "duration_ms": 183,
+          "provider_call_count": 1,
+          "tool_call_count": null,
+          "tool_call_measurement_status": "unavailable",
+          "output_sha256": "0cde9d46f35ea77000d1bf06e3458040ea21723f5931d700b65504bcfab971d3",
+          "output_length": 16
+        }
+      ],
+      "expect_results": [],
+      "model_verdict": "APPROVE",
+      "verification": {
+        "attempt": 1,
+        "status": "not_configured",
+        "checks": []
+      },
+      "executor": "claude",
+      "task_kind": "task",
+      "domain": "unknown",
+      "model_profile": "mini_default",
+      "routing_policy": "balanced",
+      "policy_profile": "balanced",
+      "routing_reason_codes": [
+        "default_lightweight"
+      ],
+      "routing_reason_summary": "default lightweight task stays on mini default",
+      "recommended_next_skill": "task",
+      "recommended_policy_profile": "balanced",
+      "policy_reason_summary": "balanced is the safe default",
+      "policy_confidence": "high",
+      "user_selection_needed": false,
+      "auto_execution_allowed": false,
+      "comparison_id": "",
+      "variant": "",
+      "environment_fingerprint": "",
+      "elapsed_ms": 183,
+      "duration_ms": 183,
+      "provider_call_count": 1,
+      "tool_call_count": null,
+      "tool_call_measurement_status": "unavailable",
+      "timeout_sec": 120,
+      "finished_at": "2026-10-14T033426Z",
+      "last_output_diagnostics": {
+        "output_sha256": "0cde9d46f35ea77000d1bf06e3458040ea21723f5931d700b65504bcfab971d3",
+        "output_length": 16
+      },
+      "completion_receipt": {
+        "schema_version": "omc-autopilot-completion/v1",
+        "task_id": "c3-docs",
+        "task_spec_sha256": "c3bb395a0689a88729fc09ce3dc280bb0c102f67e04be1cb9821600150bbfb9c",
+        "step_id": "roadmap",
+        "validator_id": "artifact_sha256",
+        "artifact_sha256": "8a3b0bfa8b96c5d330a87657fac625da9e74cdc3243f31c296dfad5c7fe147cb",
+        "predecessor_receipts": [],
+        "receipt_sha256": "70bb8b2a2b135f6b3147c71d15d216e404859cf3ff7ea2c504bd42af9c0783a2"
+      },
+      "completed_at": "2026-10-14T033426Z",
+      "failure_details": []
+    },
+    "dashboard": {
+      "status": "running",
+      "started_at": "2026-10-14T033426Z",
+      "attempt": 0,
+      "attempts": []
+    }
+  },
+  "task_file": "task.json",
+  "title": "OMC 로드맵과 대시보드 복사본에 복구 상황 설명 반영",
+  "executor": "claude",
+  "pid": 50579,
+  "started_at": "2026-10-14T033426Z",
+  "simulated": false,
+  "task_spec_sha256": "c3bb395a0689a88729fc09ce3dc280bb0c102f67e04be1cb9821600150bbfb9c"
+}

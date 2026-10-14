@@ -1,0 +1,129 @@
+{
+  "task_id": "c3-docs",
+  "status": "running",
+  "steps": {
+    "roadmap": {
+      "status": "completed",
+      "started_at": "2026-10-14T033431Z",
+      "attempt": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "verification": {
+            "attempt": 1,
+            "status": "not_configured",
+            "checks": []
+          },
+          "status": "completed",
+          "started_at": "2026-10-14T033431Z",
+          "finished_at": "2026-10-14T033431Z",
+          "duration_ms": 172,
+          "provider_call_count": 1,
+          "tool_call_count": null,
+          "tool_call_measurement_status": "unavailable",
+          "output_sha256": "0cde9d46f35ea77000d1bf06e3458040ea21723f5931d700b65504bcfab971d3",
+          "output_length": 16
+        }
+      ],
+      "expect_results": [],
+      "model_verdict": "APPROVE",
+      "verification": {
+        "attempt": 1,
+        "status": "not_configured",
+        "checks": []
+      },
+      "execution_observation": {
+        "schema_version": "omc-execution-observation/v1",
+        "attempt_id": "44493d47af574dffbfaf7f289065ac56",
+        "task_id": "c3-docs",
+        "task_spec_sha256": "c3bb395a0689a88729fc09ce3dc280bb0c102f67e04be1cb9821600150bbfb9c",
+        "step_id": "roadmap",
+        "attempt": 1,
+        "phase": "returned",
+        "source": "omc_executor",
+        "requested_at": "2026-10-14T03:34:31.410820+00:00",
+        "returncode": 0,
+        "returned_at": "2026-10-14T03:34:31.584361+00:00"
+      },
+      "execution_observation_sha256": "3489e467f99d8296844c6ba2e53eec4313f0dcb2d07d284c0e40934c94b2543f",
+      "executor": "claude",
+      "task_kind": "task",
+      "domain": "unknown",
+      "model_profile": "mini_default",
+      "routing_policy": "balanced",
+      "policy_profile": "balanced",
+      "routing_reason_codes": [
+        "default_lightweight"
+      ],
+      "routing_reason_summary": "default lightweight task stays on mini default",
+      "recommended_next_skill": "task",
+      "recommended_policy_profile": "balanced",
+      "policy_reason_summary": "balanced is the safe default",
+      "policy_confidence": "high",
+      "user_selection_needed": false,
+      "auto_execution_allowed": false,
+      "comparison_id": "",
+      "variant": "",
+      "environment_fingerprint": "",
+      "elapsed_ms": 172,
+      "duration_ms": 172,
+      "provider_call_count": 1,
+      "tool_call_count": null,
+      "tool_call_measurement_status": "unavailable",
+      "timeout_sec": 120,
+      "finished_at": "2026-10-14T033431Z",
+      "last_output_diagnostics": {
+        "output_sha256": "0cde9d46f35ea77000d1bf06e3458040ea21723f5931d700b65504bcfab971d3",
+        "output_length": 16
+      },
+      "completion_receipt": {
+        "schema_version": "omc-autopilot-completion/v1",
+        "task_id": "c3-docs",
+        "task_spec_sha256": "c3bb395a0689a88729fc09ce3dc280bb0c102f67e04be1cb9821600150bbfb9c",
+        "step_id": "roadmap",
+        "validator_id": "artifact_sha256",
+        "artifact_sha256": "8a3b0bfa8b96c5d330a87657fac625da9e74cdc3243f31c296dfad5c7fe147cb",
+        "predecessor_receipts": [],
+        "receipt_sha256": "70bb8b2a2b135f6b3147c71d15d216e404859cf3ff7ea2c504bd42af9c0783a2"
+      },
+      "completed_at": "2026-10-14T033431Z",
+      "failure_details": []
+    },
+    "dashboard": {
+      "status": "running",
+      "started_at": "2026-10-14T033431Z",
+      "attempt": 1,
+      "attempts": [],
+      "expect_results": [],
+      "model_verdict": null,
+      "verification": {
+        "attempt": 1,
+        "status": "not_configured",
+        "checks": []
+      },
+      "execution_observation": {
+        "schema_version": "omc-execution-observation/v1",
+        "attempt_id": "e03feb14404e4cc780a35b536186b978",
+        "task_id": "c3-docs",
+        "task_spec_sha256": "c3bb395a0689a88729fc09ce3dc280bb0c102f67e04be1cb9821600150bbfb9c",
+        "step_id": "dashboard",
+        "attempt": 1,
+        "phase": "requested",
+        "source": "omc_executor",
+        "requested_at": "2026-10-14T03:34:31.586622+00:00"
+      },
+      "execution_observation_sha256": "ce76c179c2d45573db007a1f8058fb22a0bc84b11b5c89a5afe0a7f6f20e60fa"
+    }
+  },
+  "task_file": "task.json",
+  "title": "OMC 로드맵과 대시보드 복사본에 복구 상황 설명 반영",
+  "executor": "claude",
+  "pid": 50673,
+  "started_at": "2026-10-14T033431Z",
+  "simulated": false,
+  "task_spec_sha256": "c3bb395a0689a88729fc09ce3dc280bb0c102f67e04be1cb9821600150bbfb9c",
+  "execution_attempt_ids": {
+    "roadmap": "44493d47af574dffbfaf7f289065ac56",
+    "dashboard": "e03feb14404e4cc780a35b536186b978"
+  }
+}

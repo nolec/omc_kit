@@ -1,0 +1,396 @@
+FFFFFFFFFFFFFF                                                           [100%]
+=================================== FAILURES ===================================
+_____________________ test_relocated_package_is_the_input ______________________
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_relocated_package_is_the_0/relocated-evidence')
+
+    def test_relocated_package_is_the_input(archived):
+>       result = checker().verify(archived)
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:37: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:18: in checker
+    spec.loader.exec_module(module)
+<frozen importlib._bootstrap_external>:936: in exec_module
+    ???
+<frozen importlib._bootstrap_external>:1073: in get_code
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_frozen_importlib_external.SourceFileLoader object at 0x10455bd50>
+path = '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+>   ???
+E   FileNotFoundError: [Errno 2] No such file or directory: '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+<frozen importlib._bootstrap_external>:1130: FileNotFoundError
+______________ test_missing_evidence_is_unavailable[results.json] ______________
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_missing_evidence_is_unava0/relocated-evidence')
+name = 'results.json'
+
+    @pytest.mark.parametrize("name", ["results.json", "current-uncertain-1/resume.stdout", "current-artifact_mismatch-1/roadmap.md"])
+    def test_missing_evidence_is_unavailable(archived, name):
+        (archived / name).unlink()
+>       result = checker().verify(archived)
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:46: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:18: in checker
+    spec.loader.exec_module(module)
+<frozen importlib._bootstrap_external>:936: in exec_module
+    ???
+<frozen importlib._bootstrap_external>:1073: in get_code
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_frozen_importlib_external.SourceFileLoader object at 0x104559110>
+path = '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+>   ???
+E   FileNotFoundError: [Errno 2] No such file or directory: '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+<frozen importlib._bootstrap_external>:1130: FileNotFoundError
+___ test_missing_evidence_is_unavailable[current-uncertain-1/resume.stdout] ____
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_missing_evidence_is_unava1/relocated-evidence')
+name = 'current-uncertain-1/resume.stdout'
+
+    @pytest.mark.parametrize("name", ["results.json", "current-uncertain-1/resume.stdout", "current-artifact_mismatch-1/roadmap.md"])
+    def test_missing_evidence_is_unavailable(archived, name):
+        (archived / name).unlink()
+>       result = checker().verify(archived)
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:46: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:18: in checker
+    spec.loader.exec_module(module)
+<frozen importlib._bootstrap_external>:936: in exec_module
+    ???
+<frozen importlib._bootstrap_external>:1073: in get_code
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_frozen_importlib_external.SourceFileLoader object at 0x1044f8110>
+path = '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+>   ???
+E   FileNotFoundError: [Errno 2] No such file or directory: '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+<frozen importlib._bootstrap_external>:1130: FileNotFoundError
+_ test_missing_evidence_is_unavailable[current-artifact_mismatch-1/roadmap.md] _
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_missing_evidence_is_unava2/relocated-evidence')
+name = 'current-artifact_mismatch-1/roadmap.md'
+
+    @pytest.mark.parametrize("name", ["results.json", "current-uncertain-1/resume.stdout", "current-artifact_mismatch-1/roadmap.md"])
+    def test_missing_evidence_is_unavailable(archived, name):
+>       (archived / name).unlink()
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:45: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_missing_evidence_is_unava2/relocated-evidence/current-artifact_mismatch-1/roadmap.md')
+missing_ok = False
+
+    def unlink(self, missing_ok=False):
+        """
+        Remove this file or link.
+        If the path is a directory, use rmdir() instead.
+        """
+        try:
+>           os.unlink(self)
+E           FileNotFoundError: [Errno 2] No such file or directory: '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_missing_evidence_is_unava2/relocated-evidence/current-artifact_mismatch-1/roadmap.md'
+
+/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/pathlib.py:1147: FileNotFoundError
+_______________________ test_corrupted_output_is_invalid _______________________
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_corrupted_output_is_inval0/relocated-evidence')
+
+    def test_corrupted_output_is_invalid(archived):
+        (archived / "current-uncertain-1/resume.stdout").write_text("corrupted output\n")
+>       assert checker().verify(archived)["status"] == "INVALID"
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:53: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:18: in checker
+    spec.loader.exec_module(module)
+<frozen importlib._bootstrap_external>:936: in exec_module
+    ???
+<frozen importlib._bootstrap_external>:1073: in get_code
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_frozen_importlib_external.SourceFileLoader object at 0x104559390>
+path = '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+>   ???
+E   FileNotFoundError: [Errno 2] No such file or directory: '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+<frozen importlib._bootstrap_external>:1130: FileNotFoundError
+________________ test_rehashed_output_still_needs_surface_proof ________________
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_rehashed_output_still_nee0/relocated-evidence')
+
+    def test_rehashed_output_still_needs_surface_proof(archived):
+        name = "current-uncertain-1/resume.stdout"
+        (archived / name).write_text("corrupted output\n")
+        rehash(archived, name)
+>       assert checker().verify(archived)["status"] == "INVALID"
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:60: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:18: in checker
+    spec.loader.exec_module(module)
+<frozen importlib._bootstrap_external>:936: in exec_module
+    ???
+<frozen importlib._bootstrap_external>:1073: in get_code
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_frozen_importlib_external.SourceFileLoader object at 0x104583510>
+path = '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+>   ???
+E   FileNotFoundError: [Errno 2] No such file or directory: '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+<frozen importlib._bootstrap_external>:1130: FileNotFoundError
+__________________ test_rehashed_summary_must_match_call_log ___________________
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_rehashed_summary_must_mat0/relocated-evidence')
+
+    def test_rehashed_summary_must_match_call_log(archived):
+        name = "results.json"
+        rows = json.loads((archived / name).read_text())
+        rows[0]["calls_after"].append("roadmap")
+        rows[0]["additional_calls"] = 1
+        (archived / name).write_text(json.dumps(rows))
+        rehash(archived, name)
+>       assert checker().verify(archived)["status"] == "INVALID"
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:18: in checker
+    spec.loader.exec_module(module)
+<frozen importlib._bootstrap_external>:936: in exec_module
+    ???
+<frozen importlib._bootstrap_external>:1073: in get_code
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_frozen_importlib_external.SourceFileLoader object at 0x10458ce90>
+path = '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+>   ???
+E   FileNotFoundError: [Errno 2] No such file or directory: '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+<frozen importlib._bootstrap_external>:1130: FileNotFoundError
+____________ test_rehashed_artifact_must_match_recorded_observation ____________
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_rehashed_artifact_must_ma0/relocated-evidence')
+
+    def test_rehashed_artifact_must_match_recorded_observation(archived):
+        name = "current-artifact_mismatch-1/roadmap.md"
+        (archived / name).write_text("corrupted artifact\n")
+        rehash(archived, name)
+>       assert checker().verify(archived)["status"] == "INVALID"
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:77: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:18: in checker
+    spec.loader.exec_module(module)
+<frozen importlib._bootstrap_external>:936: in exec_module
+    ???
+<frozen importlib._bootstrap_external>:1073: in get_code
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_frozen_importlib_external.SourceFileLoader object at 0x1044f2190>
+path = '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+>   ???
+E   FileNotFoundError: [Errno 2] No such file or directory: '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+<frozen importlib._bootstrap_external>:1130: FileNotFoundError
+_____________ test_manifest_cannot_escape_archive[../outside.txt] ______________
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_manifest_cannot_escape_ar0/relocated-evidence')
+entry = '../outside.txt'
+
+    @pytest.mark.parametrize("entry", ["../outside.txt", "/private/tmp/outside.txt"])
+    def test_manifest_cannot_escape_archive(archived, entry):
+        path = archived / "sha256.json"
+        manifest = json.loads(path.read_text())
+        manifest[entry] = "0" * 64
+        path.write_text(json.dumps(manifest))
+>       assert checker().verify(archived)["status"] == "INVALID"
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:86: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:18: in checker
+    spec.loader.exec_module(module)
+<frozen importlib._bootstrap_external>:936: in exec_module
+    ???
+<frozen importlib._bootstrap_external>:1073: in get_code
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_frozen_importlib_external.SourceFileLoader object at 0x104564710>
+path = '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+>   ???
+E   FileNotFoundError: [Errno 2] No such file or directory: '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+<frozen importlib._bootstrap_external>:1130: FileNotFoundError
+________ test_manifest_cannot_escape_archive[/private/tmp/outside.txt] _________
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_manifest_cannot_escape_ar1/relocated-evidence')
+entry = '/private/tmp/outside.txt'
+
+    @pytest.mark.parametrize("entry", ["../outside.txt", "/private/tmp/outside.txt"])
+    def test_manifest_cannot_escape_archive(archived, entry):
+        path = archived / "sha256.json"
+        manifest = json.loads(path.read_text())
+        manifest[entry] = "0" * 64
+        path.write_text(json.dumps(manifest))
+>       assert checker().verify(archived)["status"] == "INVALID"
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:86: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:18: in checker
+    spec.loader.exec_module(module)
+<frozen importlib._bootstrap_external>:936: in exec_module
+    ???
+<frozen importlib._bootstrap_external>:1073: in get_code
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_frozen_importlib_external.SourceFileLoader object at 0x104685110>
+path = '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+>   ???
+E   FileNotFoundError: [Errno 2] No such file or directory: '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+<frozen importlib._bootstrap_external>:1130: FileNotFoundError
+_______________________ test_symlink_evidence_is_invalid _______________________
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_symlink_evidence_is_inval0/relocated-evidence')
+
+    def test_symlink_evidence_is_invalid(archived):
+        path = archived / "current-uncertain-1/resume.stdout"
+        saved = path.read_bytes()
+        other = archived.parent / "external-output"
+        other.write_bytes(saved)
+        path.unlink()
+        path.symlink_to(other)
+>       assert checker().verify(archived)["status"] == "INVALID"
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:96: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:18: in checker
+    spec.loader.exec_module(module)
+<frozen importlib._bootstrap_external>:936: in exec_module
+    ???
+<frozen importlib._bootstrap_external>:1073: in get_code
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_frozen_importlib_external.SourceFileLoader object at 0x104570110>
+path = '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+>   ???
+E   FileNotFoundError: [Errno 2] No such file or directory: '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+<frozen importlib._bootstrap_external>:1130: FileNotFoundError
+________________________ test_invalid_json_is_reported _________________________
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_invalid_json_is_reported0/relocated-evidence')
+
+    def test_invalid_json_is_reported(archived):
+        path = archived / "sha256.json"
+        path.write_text("{broken")
+>       assert checker().verify(archived)["status"] == "INVALID"
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:102: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:18: in checker
+    spec.loader.exec_module(module)
+<frozen importlib._bootstrap_external>:936: in exec_module
+    ???
+<frozen importlib._bootstrap_external>:1073: in get_code
+    ???
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <_frozen_importlib_external.SourceFileLoader object at 0x104686190>
+path = '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+>   ???
+E   FileNotFoundError: [Errno 2] No such file or directory: '/Users/noseunglae/Downloads/dev/omc_kit/docs/comparison-dashboard/evidence/c3-recompare-v25/verify.py'
+
+<frozen importlib._bootstrap_external>:1130: FileNotFoundError
+________________ test_cli_uses_adjacent_package_from_other_cwd _________________
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_cli_uses_adjacent_package0/relocated-evidence')
+
+    def test_cli_uses_adjacent_package_from_other_cwd(archived):
+        result = subprocess.run([sys.executable, str(archived / "verify.py")], cwd=archived.parent, capture_output=True, text=True)
+>       assert result.returncode == 0, result.stdout + result.stderr
+E       AssertionError: /Library/Frameworks/Python.framework/Versions/3.11/Resources/Python.app/Contents/MacOS/Python: can't open file '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_cli_uses_adjacent_package0/relocated-evidence/verify.py': [Errno 2] No such file or directory
+E         
+E       assert 2 == 0
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/var/folders/_2/f71y...nglae/pytest-345/test_cli_uses_adjacent_package0/relocated-evidence/verify.py': [Errno 2] No such file or directory\n").returncode
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:107: AssertionError
+__________________ test_cli_missing_is_distinct_from_corrupt ___________________
+
+archived = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-345/test_cli_missing_is_distinct_f0/relocated-evidence')
+
+    def test_cli_missing_is_distinct_from_corrupt(archived):
+        path = archived / "current-uncertain-1/resume.stdout"
+        path.unlink()
+        result = subprocess.run([sys.executable, str(archived / "verify.py")], capture_output=True, text=True)
+        assert result.returncode == 2
+>       assert json.loads(result.stdout)["status"] == "UNAVAILABLE"
+
+docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py:116: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/json/decoder.py:337: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <json.decoder.JSONDecoder object at 0x101a99cd0>, s = '', idx = 0
+
+    def raw_decode(self, s, idx=0):
+        """Decode a JSON document from ``s`` (a ``str`` beginning with
+        a JSON document) and return a 2-tuple of the Python
+        representation and the index in ``s`` where the document ended.
+    
+        This can be used to decode a JSON document from a string that may
+        have extraneous data at the end.
+    
+        """
+        try:
+            obj, end = self.scan_once(s, idx)
+        except StopIteration as err:
+>           raise JSONDecodeError("Expecting value", s, err.value) from None
+E           json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+/Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/json/decoder.py:355: JSONDecodeError
+=========================== short test summary info ============================
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_relocated_package_is_the_input
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_missing_evidence_is_unavailable[results.json]
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_missing_evidence_is_unavailable[current-uncertain-1/resume.stdout]
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_missing_evidence_is_unavailable[current-artifact_mismatch-1/roadmap.md]
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_corrupted_output_is_invalid
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_rehashed_output_still_needs_surface_proof
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_rehashed_summary_must_match_call_log
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_rehashed_artifact_must_match_recorded_observation
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_manifest_cannot_escape_archive[../outside.txt]
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_manifest_cannot_escape_archive[/private/tmp/outside.txt]
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_symlink_evidence_is_invalid
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_invalid_json_is_reported
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_cli_uses_adjacent_package_from_other_cwd
+FAILED docs/comparison-dashboard/evidence/c3-recompare-v25/test_verify.py::test_cli_missing_is_distinct_from_corrupt
+14 failed in 0.90s

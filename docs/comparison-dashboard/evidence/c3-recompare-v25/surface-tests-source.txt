@@ -1,0 +1,28 @@
+import json
+from pathlib import Path
+import pytest
+ROOT=Path(__file__).resolve().parent
+@pytest.mark.parametrize('case,phrase',[('uncertain','실행 요청 기록만 확인됨'),('missing_record','유효 실행 기록 없음')])
+@pytest.mark.parametrize('repeat',[1,2,3])
+def test_current_public_surface(case,phrase,repeat):
+ s=(ROOT/f'current-{case}-{repeat}'/'resume.stdout').read_text()
+ for text in ['작업:', 'roadmap.md', 'dashboard.md', '확인 대상:', '판독:',phrase,'다시 실행하지 않고 보류','판단 불가이면 보류 유지']:
+  assert text in s
+ assert len(s.splitlines())<=8 and len(s)<=800
+@pytest.mark.parametrize('row',json.loads((ROOT/'results.json').read_text()))
+def test_actual_calls_do_not_repeat(row):
+ assert row['status']=='OBSERVED'
+ assert row['exit_code']!=0
+ assert row['additional_calls']==0
+ assert row['calls_before']==row['calls_after']
+@pytest.mark.parametrize('repeat',[1,2,3])
+def test_baseline_negative_control(repeat):
+ s=(ROOT/f'before-uncertain-{repeat}'/'resume.stdout').read_text()
+ assert '중복 실행 방지' in s
+ assert '확인 대상:' not in s
+@pytest.mark.parametrize('arm',['before','current'])
+@pytest.mark.parametrize('repeat',[1,2,3])
+def test_mismatch_surface_gap_preserved(arm,repeat):
+ s=(ROOT/f'{arm}-artifact_mismatch-{repeat}'/'resume.stdout').read_text()
+ assert 'receipt' in s
+ assert '다른 내용' not in s and 'roadmap.md' not in s

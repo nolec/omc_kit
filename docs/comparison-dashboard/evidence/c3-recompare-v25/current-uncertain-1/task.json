@@ -1,0 +1,36 @@
+{
+  "schema_version": "omc-autopilot-task/v2",
+  "id": "c3-docs",
+  "title": "OMC 로드맵과 대시보드 복사본에 복구 상황 설명 반영",
+  "executor": "claude",
+  "resume_failed": true,
+  "max_retries": 0,
+  "steps": [
+    {
+      "id": "roadmap",
+      "title": "로드맵 복사본 반영",
+      "prompt": "DO_STAGE_ONE",
+      "depends_on": [],
+      "completion": {
+        "validator_id": "artifact_sha256",
+        "output_path": "roadmap.md",
+        "target_path": "targets/roadmap.md",
+        "expected_sha256": "8a3b0bfa8b96c5d330a87657fac625da9e74cdc3243f31c296dfad5c7fe147cb"
+      }
+    },
+    {
+      "id": "dashboard",
+      "title": "대시보드 복사본 반영",
+      "prompt": "DO_STAGE_TWO",
+      "depends_on": [
+        "roadmap"
+      ],
+      "completion": {
+        "validator_id": "artifact_sha256",
+        "output_path": "dashboard.md",
+        "target_path": "targets/dashboard.md",
+        "expected_sha256": "0c2d12b2b84590ea324c49e7d46a6f5764cdcb266f510f0ab94f291f5a2c3d8c"
+      }
+    }
+  ]
+}

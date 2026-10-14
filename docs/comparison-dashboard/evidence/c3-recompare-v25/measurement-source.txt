@@ -1,0 +1,44 @@
+from pathlib import Path
+import os,json,subprocess,sys,time,signal,hashlib
+B=Path('/private/tmp/omc-c3-results-v2-20261014');B.mkdir(exist_ok=False)
+K=Path('/Users/noseunglae/Downloads/dev/omc_kit');OLD=Path('/private/tmp/omc-c3-recompare-20261014')
+def save(p,v):p.write_text(json.dumps(v,ensure_ascii=False,indent=2))
+def invoke(cmd,w,env):
+ try:
+  r=subprocess.run(cmd,cwd=w,env=env,capture_output=True,text=True,timeout=25);return dict(exit_code=r.returncode,stdout=r.stdout,stderr=r.stderr)
+ except subprocess.TimeoutExpired:return dict(exit_code=None,stdout='',stderr='timeout',status='UNOBSERVED')
+rows=[]
+for arm,kit in [('before',OLD),('current',K)]:
+ for case in ['uncertain','missing_record','artifact_mismatch']:
+  for n in range(1,4):
+   w=B/f'{arm}-{case}-{n}';w.mkdir();subprocess.run(['git','init','-q',str(w)],check=True);(w/'bin').mkdir();(w/'.omc').mkdir()
+   (w/'targets').mkdir()
+   for s in ['roadmap','dashboard']:(w/'targets'/f'{s}.md').write_text(f'# {s}\nOMC 복구 상황\n')
+   provider=w/'bin/claude';provider.write_text('#!'+sys.executable+'''\nimport sys,time\nfrom pathlib import Path\ns='dashboard' if 'DO_STAGE_TWO' in ' '.join(sys.argv) else 'roadmap'\nwith Path('calls.txt').open('a') as f:f.write(s+'\\n')\nif s=='dashboard':\n Path('dashboard-started').touch()\n while not Path('allow-dashboard').exists():time.sleep(.025)\nPath(s+'.md').write_bytes((Path('targets')/(s+'.md')).read_bytes())\nprint('VERDICT: APPROVE')\n''');provider.chmod(0o755)
+   env=dict(os.environ,PATH=str(w/'bin')+os.pathsep+os.environ['PATH'],PYTHONDONTWRITEBYTECODE='1',OMC_INSTALLATION_REGISTRY_DIR=str(B/'registry'))
+   task={'schema_version':'omc-autopilot-task/v2','id':'c3-docs','title':'OMC 로드맵과 대시보드 복사본에 복구 상황 설명 반영','executor':'claude','resume_failed':True,'max_retries':0,'steps':[{'id':s,'title':'로드맵 복사본 반영' if s=='roadmap' else '대시보드 복사본 반영','prompt':'DO_STAGE_ONE' if s=='roadmap' else 'DO_STAGE_TWO','depends_on':[] if s=='roadmap' else ['roadmap'],'completion':{'validator_id':'artifact_sha256','output_path':s+'.md','target_path':'targets/'+s+'.md','expected_sha256':hashlib.sha256((w/'targets'/f'{s}.md').read_bytes()).hexdigest()}} for s in ['roadmap','dashboard']]}
+   save(w/'task.json',task);save(w/'.omc/policy.json',{'autopilot':{'allowed_commands':['python3']}})
+   cmd=[sys.executable,str(kit/'scripts/omc.py'),'autopilot','--task-file',str(w/'task.json')]
+   if case=='artifact_mismatch':
+    (w/'allow-dashboard').touch();initial=invoke(cmd,w,env);boundary=initial['exit_code']==0;save(w/'initial.json',initial)
+   else:
+    with (w/'initial.stdout').open('w') as out,(w/'initial.stderr').open('w') as err:
+     child=subprocess.Popen(cmd,cwd=w,env=env,stdout=out,stderr=err,start_new_session=True);limit=time.monotonic()+15
+     while child.poll() is None and not (w/'dashboard-started').exists() and time.monotonic()<limit:time.sleep(.025)
+     boundary=(w/'roadmap.md').exists() and (w/'dashboard-started').exists()
+     if child.poll() is None:os.killpg(child.pid,signal.SIGKILL);child.wait()
+     save(w/'initial.json',{'exit_code':child.returncode,'boundary_reached':boundary})
+   if not boundary:rows.append({'arm':arm,'case':case,'repeat':n,'status':'UNOBSERVED','reason':'initial_boundary_not_reached'});continue
+   statepath=w/'.omc/state/autopilot/c3-docs.json';state=json.loads(statepath.read_text());save(w/'before-state.json',state)
+   if case=='missing_record':
+    state['steps']['dashboard'].pop('execution_observation',None)
+    for key in list(state):
+     if 'observation' in key:state.pop(key)
+    save(statepath,state)
+   if case=='artifact_mismatch':(w/'roadmap.md').write_text('# roadmap\n다른 내용\n')
+   calls_before=(w/'calls.txt').read_text().splitlines();(w/'allow-dashboard').touch();result=invoke(cmd,w,env)
+   (w/'resume.stdout').write_text(result['stdout']);(w/'resume.stderr').write_text(result['stderr']);save(w/'resume.json',result)
+   calls_after=(w/'calls.txt').read_text().splitlines();save(w/'after-state.json',json.loads(statepath.read_text()))
+   rows.append({'arm':arm,'case':case,'repeat':n,'status':'OBSERVED','exit_code':result['exit_code'],'calls_before':calls_before,'calls_after':calls_after,'additional_calls':len(calls_after)-len(calls_before),'output_lines':len(result['stdout'].splitlines()),'output_chars':len(result['stdout']),'raw_path':str(w/'resume.stdout')})
+   print(arm,case,n,result['exit_code'],len(result['stdout'].splitlines()),flush=True)
+save(B/'results.json',rows)

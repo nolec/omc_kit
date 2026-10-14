@@ -1,0 +1,5 @@
+{
+  "exit_code": 0,
+  "stdout": "\n[AUTOPILOT] ▶ 태스크 시작: OMC 로드맵과 대시보드 복사본에 복구 상황 설명 반영\n           executor=claude  스텝=2개  max_retries=0\n\n  [STEP roadmap] 로드맵 복사본 반영\n  프롬프트: DO_STAGE_ONE\n  실행 중 (attempt 1/1)...\n  ✅ 완료 (attempt 1)\n\n  [STEP dashboard] 대시보드 복사본 반영\n  프롬프트: DO_STAGE_TWO\n  실행 중 (attempt 1/1)...\n  ✅ 완료 (attempt 1)\n\n[AUTOPILOT] ✅ 태스크 완료: OMC 로드맵과 대시보드 복사본에 복구 상황 설명 반영\n           완료=2  실패/블록=0\n           상태 저장: .omc/state/autopilot/c3-docs.json\n[AUTOPILOT REPORT] status=completed\n  roadmap: status=completed attempt=1 verification=not_configured\n    검증 사실 (실행기 수집)\n    AI 판정 (참고용; 검증 사실 아님)\n    model_verdict=APPROVE (reference only)\n  dashboard: status=completed attempt=1 verification=not_configured\n    검증 사실 (실행기 수집)\n    AI 판정 (참고용; 검증 사실 아님)\n    model_verdict=APPROVE (reference only)\n",
+  "stderr": ""
+}

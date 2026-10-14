@@ -1,0 +1,56 @@
+{
+  "schema_version": "c3-recompare/v1",
+  "before_commit": "154cb4dfb42004153089a5d6cddf80a1d54af1f5",
+  "before_version": "0.4.0",
+  "current_commit": "d3f3cb7f0392881a186d414db886949ba4a6cf07",
+  "current_version": "0.5.3",
+  "rival_commit": "454bae017356ed1d056182cd929b6eb6cf6143ad",
+  "rival_package_version": "5.6.2",
+  "real_ai_calls": 0,
+  "omc_measurements": 18,
+  "ralph_hook_measurements": 9,
+  "paired_competitive_measurements": 0,
+  "capture_boundary": "consumer hashes captured after execution, no pre-execution hash freeze claim",
+  "consumer_sha256": {
+    "/Users/noseunglae/Downloads/dev/oh-my-claudecode/dist/hooks/ralph/loop.js": "311bc93da210e6a0fbd991ad52e1dda9c6fe2498faec1a1d76980691dbb1d54e",
+    "/Users/noseunglae/Downloads/dev/oh-my-claudecode/dist/hooks/ralph/prd.js": "fd30812b2a0a4f0f43263cc42a98be42437dced5e5575f5a187a8b1b70a17fe5",
+    "/Users/noseunglae/Downloads/dev/oh-my-claudecode/dist/hooks/persistent-mode/index.js": "3455f2e58f8304ba3989d73e96fa615c1f527171266c5f25aca6c0ef14893dee",
+    "/Users/noseunglae/Downloads/dev/oh-my-claudecode/dist/lib/mode-state-io.js": "69f4c43750f23cbe0f874327df3b3fd346d5b0885dcebfb4a7330f0c31dd80a1",
+    "/Users/noseunglae/Downloads/dev/oh-my-claudecode/dist/graph/runtime/contained-fd.js": "73aad537d6ba498967d4447e42af703d4c9e6502b5b1a30b14cf376a5bf846a2"
+  },
+  "limitations": [
+    "OMC deterministic provider process interruption; no actual AI",
+    "Ralph native policy fixture; does not represent provider execution uncertainty",
+    "Graph native runtime unavailable on darwin even outside sandbox",
+    "Baseline has no execution observation schema; record_missing checks are not an equivalent historical schema intervention",
+    "No real user comprehension measurement",
+    "No product source modifications; no automatic apply/install/commit"
+  ],
+  "omc_consumer_sha256": {
+    "/Users/noseunglae/Downloads/dev/omc_kit/scripts/omc.py": "a18cf32681523d4dc2b9fe27e9edca34a22144b452fd6d0772060ca7b914da3d",
+    "/Users/noseunglae/Downloads/dev/omc_kit/scripts/omc_autopilot.py": "328bbca75f715f6c1b4f2e1fbeaed93f953f2cc4bea047f320c299ef8c11d32c",
+    "/Users/noseunglae/Downloads/dev/omc_kit/scripts/omc_autopilot_workflow.py": "bf7425b2a842c6783fd9f36700d0cefb6d59fb8ac6d864823ce888e045139eb3",
+    "/private/tmp/omc-c3-recompare-20261014/scripts/omc.py": "d4dbdd3279723a9704c98a1e08e9d6e9c6596b7a72b912afa59409ad39919465",
+    "/private/tmp/omc-c3-recompare-20261014/scripts/omc_autopilot.py": "03a145965d87d9060283215e15d2d5af896ea1414af2b0392e2a4116e9928afd",
+    "/private/tmp/omc-c3-recompare-20261014/scripts/omc_autopilot_workflow.py": "420dbf1cc907130f2ee316dd45703e02c701acaa3aa6e10dd3e49e00e2bdc03a"
+  },
+  "review_correction": {
+    "archive_validation_tests": 46,
+    "archived_surface_assertions": 33,
+    "total_validation_tests": 79,
+    "measurement_rerun": false,
+    "artifact_capture_phase": "post_review_followup",
+    "temporary_measurement_root_required_for_validation": false,
+    "required_task_and_receipt_binding_validated": true
+  },
+  "review_correction_history": [
+    {
+      "archive_validation_tests": 17,
+      "archived_surface_assertions": 33,
+      "total_validation_tests": 50,
+      "measurement_rerun": false,
+      "artifact_capture_phase": "post_review_followup",
+      "temporary_measurement_root_required_for_validation": false
+    }
+  ]
+}

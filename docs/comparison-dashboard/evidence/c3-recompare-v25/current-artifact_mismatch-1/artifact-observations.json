@@ -1,0 +1,24 @@
+{
+  "capture_phase": "post_review_followup",
+  "captured_at": "2026-10-14T03:59:48.920225+00:00",
+  "execution_time_before_file_observed": false,
+  "recorded_before_sha_source": "before-state.json completion_receipt.artifact_sha256; not an observed before-file snapshot",
+  "files": [
+    {
+      "path": "roadmap.md",
+      "sha256": "2f14ebd217b087777a4080fc78e6e0ec0f5b942bf616da58ecd875c6417b6357"
+    },
+    {
+      "path": "dashboard.md",
+      "sha256": "0c2d12b2b84590ea324c49e7d46a6f5764cdcb266f510f0ab94f291f5a2c3d8c"
+    },
+    {
+      "path": "targets/roadmap.md",
+      "sha256": "8a3b0bfa8b96c5d330a87657fac625da9e74cdc3243f31c296dfad5c7fe147cb"
+    },
+    {
+      "path": "targets/dashboard.md",
+      "sha256": "0c2d12b2b84590ea324c49e7d46a6f5764cdcb266f510f0ab94f291f5a2c3d8c"
+    }
+  ]
+}

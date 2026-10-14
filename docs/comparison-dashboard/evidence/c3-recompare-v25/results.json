@@ -1,0 +1,344 @@
+[
+  {
+    "arm": "before",
+    "case": "uncertain",
+    "repeat": 1,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 1,
+    "output_chars": 68,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/before-uncertain-1/resume.stdout"
+  },
+  {
+    "arm": "before",
+    "case": "uncertain",
+    "repeat": 2,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 1,
+    "output_chars": 68,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/before-uncertain-2/resume.stdout"
+  },
+  {
+    "arm": "before",
+    "case": "uncertain",
+    "repeat": 3,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 1,
+    "output_chars": 68,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/before-uncertain-3/resume.stdout"
+  },
+  {
+    "arm": "before",
+    "case": "missing_record",
+    "repeat": 1,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 1,
+    "output_chars": 68,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/before-missing_record-1/resume.stdout"
+  },
+  {
+    "arm": "before",
+    "case": "missing_record",
+    "repeat": 2,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 1,
+    "output_chars": 68,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/before-missing_record-2/resume.stdout"
+  },
+  {
+    "arm": "before",
+    "case": "missing_record",
+    "repeat": 3,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 1,
+    "output_chars": 68,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/before-missing_record-3/resume.stdout"
+  },
+  {
+    "arm": "before",
+    "case": "artifact_mismatch",
+    "repeat": 1,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 4,
+    "output_chars": 164,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/before-artifact_mismatch-1/resume.stdout"
+  },
+  {
+    "arm": "before",
+    "case": "artifact_mismatch",
+    "repeat": 2,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 4,
+    "output_chars": 164,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/before-artifact_mismatch-2/resume.stdout"
+  },
+  {
+    "arm": "before",
+    "case": "artifact_mismatch",
+    "repeat": 3,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 4,
+    "output_chars": 164,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/before-artifact_mismatch-3/resume.stdout"
+  },
+  {
+    "arm": "current",
+    "case": "uncertain",
+    "repeat": 1,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 8,
+    "output_chars": 509,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/current-uncertain-1/resume.stdout"
+  },
+  {
+    "arm": "current",
+    "case": "uncertain",
+    "repeat": 2,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 8,
+    "output_chars": 509,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/current-uncertain-2/resume.stdout"
+  },
+  {
+    "arm": "current",
+    "case": "uncertain",
+    "repeat": 3,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 8,
+    "output_chars": 509,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/current-uncertain-3/resume.stdout"
+  },
+  {
+    "arm": "current",
+    "case": "missing_record",
+    "repeat": 1,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 8,
+    "output_chars": 504,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/current-missing_record-1/resume.stdout"
+  },
+  {
+    "arm": "current",
+    "case": "missing_record",
+    "repeat": 2,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 8,
+    "output_chars": 504,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/current-missing_record-2/resume.stdout"
+  },
+  {
+    "arm": "current",
+    "case": "missing_record",
+    "repeat": 3,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 8,
+    "output_chars": 504,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/current-missing_record-3/resume.stdout"
+  },
+  {
+    "arm": "current",
+    "case": "artifact_mismatch",
+    "repeat": 1,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 4,
+    "output_chars": 164,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/current-artifact_mismatch-1/resume.stdout"
+  },
+  {
+    "arm": "current",
+    "case": "artifact_mismatch",
+    "repeat": 2,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 4,
+    "output_chars": 164,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/current-artifact_mismatch-2/resume.stdout"
+  },
+  {
+    "arm": "current",
+    "case": "artifact_mismatch",
+    "repeat": 3,
+    "status": "OBSERVED",
+    "exit_code": 1,
+    "calls_before": [
+      "roadmap",
+      "dashboard"
+    ],
+    "calls_after": [
+      "roadmap",
+      "dashboard"
+    ],
+    "additional_calls": 0,
+    "output_lines": 4,
+    "output_chars": 164,
+    "raw_path": "/private/tmp/omc-c3-results-v2-20261014/current-artifact_mismatch-3/resume.stdout"
+  }
+]
