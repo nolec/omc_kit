@@ -285,11 +285,23 @@ def completed_reuse_summary(task: dict, step: dict, issue: dict, comparison: dic
         action = '현재 작업·단계와 완료 기록을 대조하세요. 파일만 보고 완료로 바꾸지 마세요.'
     else:
         action = '현재 파일·선언된 목표·완료 기록을 대조하세요. 파일 변경 원인·외부 반영은 확인되지 않았습니다.'
-    lines = [f'확인 대상: {name} ({sid}) [{step["completion"]["output_path"]}] / 목표: {target or "미지정"}',
-             '차단 근거: ' + issue['label'] + ' (재사용 검사 시점). 이전 완료를 현재 결과로 재사용할 수 없습니다.',
+    judgments = {
+        'file_changed': '내용 변경이 의도한 것인지 확인하고 현재/목표를 대조하세요.',
+        'file_missing': '파일 위치와 삭제 여부를 확인하고 목표와 대조하세요.',
+        'file_unreadable': '파일 경로와 읽기 권한을 확인한 뒤 대조하세요.',
+        'artifact_invalid': '현재 파일이 작업의 완료 조건을 충족하는지 대조하세요.',
+        'receipt_missing': '현재 작업의 완료 기록을 찾아 대조하세요.',
+        'receipt_invalid': '현재 작업의 완료 기록이 올바른지 대조하세요.',
+        'predecessor_invalid': '선행 단계의 완료 기록을 대조하세요.',
+    }
+    title = task.get('title')
+    title = title.strip() if isinstance(title, str) else ''
+    lines = ['하려던 일: ' + short(title or '작업 목적 정보 없음', 80) + ' 작업을 이어가려 했습니다.',
+             f'작업 위치: 작업 폴더의 {step["completion"]["output_path"]} / {name} ({sid})',
+             '중단 이유: ' + issue['label'] + '로 이 단계가 완료됐는지 확인하지 못했습니다.',
              compare,
-             f'기록: {short(record_path, 48)} / 다음: 현재 파일·목표·완료/선행 기록을 대조하세요.',
-             '현재 행동: 보류합니다. 자동 재실행·복원·승인·후속 실행 없음. 상세 확인: --recovery-details']
+             '이번 실행: 이 단계의 파일 수정과 이후 작업을 진행하지 않고 보류했습니다. 자동 재실행·복원·승인 없음. 상세: --recovery-details',
+             '다음 판단: ' + judgments.get(issue['code'], '현재 파일과 완료 기록을 대조하세요.') + ' 기록: ' + short(record_path, 48)]
     if not details:
         return [short(line) for line in lines]
     lines = [short(line, 400) for line in lines]

@@ -1611,7 +1611,8 @@ def _cmd_run_locked(
     displayed_title = title
     if reuse_context:
         displayed_title = ''.join(char if char.isprintable() else ' ' for char in str(title))[:100]
-    print(f"\n[AUTOPILOT] ▶ 태스크 시작: {displayed_title}")
+    prefix = "" if reuse_context else "\n"
+    print(f"{prefix}[AUTOPILOT] ▶ 태스크 시작: {displayed_title}")
     print(f"           executor={executor}  스텝={len(steps)}개  max_retries={max_retries}")
     if dry_run:
         print("           [DRY-RUN] 실제 실행 없이 계획만 출력합니다.\n")

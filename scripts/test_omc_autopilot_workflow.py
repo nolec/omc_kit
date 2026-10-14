@@ -180,6 +180,8 @@ def test_r3_completed_reuse_public_cli_surface(tmp_path, case, label):
         assert selected + '.md' in result.stdout
         assert '.omc/state/autopilot/r3-documents.json' in result.stdout
         assert '보류' in result.stdout and '자동' in result.stdout and '대조' in result.stdout
+        assert '하려던 일: 로드맵과 대시보드 복사본에 복구 상태 반영' in result.stdout if case != 'long_title' else '하려던 일:' in result.stdout
+        assert '작업 위치:' in result.stdout and '중단 이유:' in result.stdout and '이번 실행:' in result.stdout and '다음 판단:' in result.stdout
         assert len(result.stdout.splitlines()) <= 8 and len(result.stdout) <= 800
         assert '\x1b' not in result.stdout
         assert not (tmp_path / 'provider-calls.txt').exists()
@@ -201,6 +203,27 @@ def test_r3_completed_reuse_public_cli_surface(tmp_path, case, label):
     finally:
         if artifact.exists():
             artifact.chmod(0o644)
+
+
+@pytest.mark.parametrize('code,label,expected', [
+    ('file_changed', '파일 내용 불일치', '내용 변경이 의도한 것인지'),
+    ('file_missing', '파일 없음', '파일 위치와 삭제 여부'),
+    ('receipt_missing', '완료 기록 없음', '현재 작업의 완료 기록'),
+    ('predecessor_invalid', '선행 완료 기록 불일치', '선행 단계의 완료 기록'),
+])
+def test_completed_reuse_narrative_orders_intent_place_cause_outcome_judgment(code, label, expected):
+    task = {'title': '로드맵과 대시보드 복사본에 복구 상태 반영'}
+    step = {'id': 'roadmap', 'title': '로드맵 반영', 'depends_on': [],
+            'completion': {'output_path': 'roadmap.md', 'target_path': 'targets/roadmap.md'}}
+    lines = workflow.completed_reuse_summary(task, step, {'code': code, 'label': label},
+        {'status': 'equal', 'summary_lines': [], 'lines': []},
+        record_path='.omc/state/autopilot/r3-documents.json')
+    assert lines[0].startswith('하려던 일: ') and task['title'] in lines[0]
+    assert lines[1].startswith('작업 위치: ') and 'roadmap.md' in lines[1]
+    assert lines[2].startswith('중단 이유: ') and label in lines[2]
+    assert lines[4].startswith('이번 실행: ') and '진행하지' in lines[4] and '보류' in lines[4]
+    assert lines[5].startswith('다음 판단: ') and expected in lines[5]
+    assert len(lines) == 6 and all(len(line) <= 110 for line in lines)
 
 
 def _write_task(root: Path, task: dict) -> Path:
