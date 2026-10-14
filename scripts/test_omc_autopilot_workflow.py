@@ -179,13 +179,13 @@ def test_r3_completed_reuse_public_cli_surface(tmp_path, case, label):
         assert label in result.stdout
         assert selected + '.md' in result.stdout
         assert '.omc/state/autopilot/r3-documents.json' in result.stdout
-        assert '보류' in result.stdout and '자동' in result.stdout and '대조' in result.stdout
+        assert '보류' in result.stdout and '자동' in result.stdout and '다음 판단:' in result.stdout
         assert '하려던 일: 로드맵과 대시보드 복사본에 복구 상태 반영' in result.stdout if case != 'long_title' else '하려던 일:' in result.stdout
         assert '작업 위치:' in result.stdout and '중단 이유:' in result.stdout and '이번 실행:' in result.stdout and '다음 판단:' in result.stdout
         if case in {'changed', 'target_missing', 'binary', 'long_title'}:
-            assert '아직 모르는 점: 현재 내용을 의도적으로 바꾼 것인지 확인되지 않았습니다.' in result.stdout
-            assert '현재 내용을 유지하려던 것인지' in result.stdout
-            assert '목표로 바꾸려던 것인지' in result.stdout
+            assert '현재 근거로 누가·왜 바꿨는지는 확인할 수 없습니다.' in result.stdout
+            assert ('현재 유지→목표 미충족' if case in {'changed', 'long_title'} else '현재 정보로 선택 불가') in result.stdout
+            assert ('목표 반영→파일 변경·재검증 필요' if case in {'changed', 'long_title'} else '보류') in result.stdout
         if case == 'changed':
             difference = next(line for line in result.stdout.splitlines() if line.startswith('확인한 차이:'))
             assert '새로운 내용' in difference and '복구 구현 완료' in difference
@@ -213,9 +213,9 @@ def test_r3_completed_reuse_public_cli_surface(tmp_path, case, label):
 
 
 @pytest.mark.parametrize('code,label,expected', [
-    ('file_changed', '파일 내용 불일치', '현재 내용을 유지하려던 것인지'),
-    ('file_missing', '파일 없음', '파일 위치와 삭제 여부'),
-    ('receipt_missing', '완료 기록 없음', '현재 작업의 완료 기록'),
+    ('file_changed', '파일 내용 불일치', '파일 일치·완료 기록 확인 필요'),
+    ('file_missing', '파일 없음', '현재 정보로 선택 불가'),
+    ('receipt_missing', '완료 기록 없음', '완료 기록 없어 완료 인정 불가'),
     ('predecessor_invalid', '선행 완료 기록 불일치', '선행 단계의 완료 기록'),
 ])
 def test_completed_reuse_narrative_orders_intent_place_cause_outcome_judgment(code, label, expected):
@@ -230,7 +230,7 @@ def test_completed_reuse_narrative_orders_intent_place_cause_outcome_judgment(co
     assert lines[2].startswith('중단 이유: ') and label in lines[2]
     assert lines[4].startswith('이번 실행: ') and '진행하지' in lines[4] and '보류' in lines[4]
     assert lines[5].startswith('다음 판단: ') and expected in lines[5]
-    assert len(lines) == 6 and all(len(line) <= 110 for line in lines)
+    assert len(lines) == 8 and all(len(line) <= 95 for line in lines)
 
 
 def _write_task(root: Path, task: dict) -> Path:
@@ -1423,8 +1423,8 @@ def test_reuse_intent_does_not_invent_target_difference(status):
         {'status': status, 'reason': '목표 파일 없음', 'summary_lines': [], 'lines': []},
         record_path='record.json')
     assert ('목표와 일치' if status == 'equal' else '비교 불가') in lines[3]
-    assert '확인되지 않았습니다' in lines[2]
-    assert '현재 내용을 유지하려던 것인지' in lines[5]
+    assert '현재 근거로 누가·왜 바꿨는지는 확인할 수 없습니다.' in lines[2]
+    assert ('파일 일치·완료 기록 확인 필요' if status == 'equal' else '현재 정보로 선택 불가') in lines[5]
 
 
 @pytest.mark.parametrize('long_line', [False, True])
@@ -1465,3 +1465,49 @@ def test_reuse_public_cli_preview_includes_current_and_target_on_multiline_chang
     assert len(result.stdout.splitlines()) <= 8 and len(result.stdout) <= 800
     assert not (tmp_path / 'provider-called').exists()
     assert (tmp_path / 'roadmap.md').read_text() == current
+
+
+@pytest.mark.parametrize('case', ['changed', 'target_missing', 'receipt_missing'])
+def test_reuse_public_cli_shows_evidence_before_requesting_choices(tmp_path, case):
+    import os
+    import subprocess
+    import sys
+    task_file, task, state = _r3_completed_documents(tmp_path)
+    if case != 'receipt_missing':
+        (tmp_path / 'roadmap.md').write_text('# roadmap\n새로운 내용\n')
+    else:
+        state['steps']['roadmap'].pop('completion_receipt')
+    if case == 'target_missing':
+        (tmp_path / 'targets/roadmap.md').unlink()
+    omc_autopilot._save_state(tmp_path, task['id'], state)
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    provider = bin_dir / 'claude'
+    provider.write_text('#!' + sys.executable + '\nfrom pathlib import Path\nPath("provider-called").touch()\n')
+    provider.chmod(0o755)
+    env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
+               OMC_INSTALLATION_REGISTRY_DIR=str(tmp_path / 'registry'))
+    cmd = [sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')),
+           'autopilot', '--task-file', str(task_file)]
+    result = subprocess.run(cmd, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 1 and not result.stderr
+    assert '(요청 기록)' in result.stdout
+    assert '목표 근거:' in result.stdout and 'targets/roadmap.md' in result.stdout
+    assert '완료 근거:' in result.stdout and '.omc/state/autopilot/r3-documents.json' in result.stdout
+    assert '확인한 뒤 기록을 대조하세요' not in result.stdout
+    if case == 'changed':
+        assert '현재 근거로 누가·왜 바꿨는지는 확인할 수 없습니다.' in result.stdout
+        assert '현재 유지→목표 미충족' in result.stdout and '목표 반영→파일 변경·재검증 필요' in result.stdout
+        assert '목표 근거: 해시 검증됨' in result.stdout
+    elif case == 'target_missing':
+        assert '목표 근거: 검증 불가' in result.stdout and '현재 정보로 선택 불가' in result.stdout
+        assert '목표 반영→' not in result.stdout
+    else:
+        assert '완료 근거: 기록 없음' in result.stdout
+        assert '목표 반영→' not in result.stdout
+    assert len(result.stdout.splitlines()) <= 8 and len(result.stdout) <= 800
+    assert not (tmp_path / 'provider-called').exists()
+    details = subprocess.run(cmd + ['--recovery-details'], cwd=tmp_path, env=env,
+        capture_output=True, text=True, timeout=20)
+    assert details.returncode == 1 and '단계 요청:' in details.stdout
+    assert '완료 표시를 실제 반영 증명으로 사용하지 않습니다' in details.stdout

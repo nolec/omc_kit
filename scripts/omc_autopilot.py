@@ -1611,9 +1611,9 @@ def _cmd_run_locked(
     displayed_title = title
     if reuse_context:
         displayed_title = ''.join(char if char.isprintable() else ' ' for char in str(title))[:100]
-    prefix = "" if reuse_context else "\n"
-    print(f"{prefix}[AUTOPILOT] ▶ 태스크 시작: {displayed_title}")
-    print(f"           executor={executor}  스텝={len(steps)}개  max_retries={max_retries}")
+    if not reuse_context:
+        print(f"\n[AUTOPILOT] ▶ 태스크 시작: {displayed_title}")
+        print(f"           executor={executor}  스텝={len(steps)}개  max_retries={max_retries}")
     if dry_run:
         print("           [DRY-RUN] 실제 실행 없이 계획만 출력합니다.\n")
 
@@ -1695,7 +1695,7 @@ def _cmd_run_locked(
                     comparison = autopilot_workflow.verified_target_diff(root, step)
                     for line in autopilot_workflow.completed_reuse_summary(
                         task, step, issue, comparison,
-                        record_path=str(_state_path(root, task_id).relative_to(root)), details=recovery_details,
+                        record_path=str(_state_path(root, task_id).relative_to(root)), details=recovery_details, recorded=existing_step_state,
                     ):
                         print(line)
                     return 1

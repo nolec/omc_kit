@@ -265,8 +265,8 @@ def completed_reuse_issue(*, task: dict, step: dict, recorded: dict,
 
 
 def completed_reuse_summary(task: dict, step: dict, issue: dict, comparison: dict,
-                           *, record_path: str, details: bool = False) -> list[str]:
-    def short(text, limit=110):
+                           *, record_path: str, details: bool = False, recorded: dict | None = None) -> list[str]:
+    def short(text, limit=95):
         clean = ''.join(char if char.isprintable() else ' ' for char in str(text))
         return clean if len(clean) <= limit else clean[:limit - 7] + '…일부 생략'
     sid = step['id']
@@ -277,8 +277,8 @@ def completed_reuse_summary(task: dict, step: dict, issue: dict, comparison: dic
         current = next((line for line in summary if line.startswith('현재 내용:')), None)
         goal = next((line for line in summary if line.startswith('목표 내용:')), None)
         if current is not None or goal is not None:
-            difference = ' / '.join((short(current or '현재 내용: 요약 없음—상세 확인', 47),
-                                     short(goal or '목표 내용: 요약 없음—상세 확인', 47)))
+            difference = ' / '.join((short(current or '현재 내용: 요약 없음—상세 확인', 40),
+                                     short(goal or '목표 내용: 요약 없음—상세 확인', 40)))
         else:
             difference = ' / '.join(summary[:3])
         compare = '확인한 차이: ' + (difference or '현재 파일 내용이 선언된 목표와 다릅니다')
@@ -293,26 +293,37 @@ def completed_reuse_summary(task: dict, step: dict, issue: dict, comparison: dic
     else:
         action = '현재 파일·선언된 목표·완료 기록을 대조하세요. 파일 변경 원인·외부 반영은 확인되지 않았습니다.'
     judgments = {
-        'file_changed': '현재 내용을 유지하려던 것인지, 목표로 바꾸려던 것인지 확인한 뒤 기록을 대조하세요.',
-        'file_missing': '파일 위치와 삭제 여부를 확인하고 목표와 대조하세요.',
-        'file_unreadable': '파일 경로와 읽기 권한을 확인한 뒤 대조하세요.',
-        'artifact_invalid': '현재 파일이 작업의 완료 조건을 충족하는지 대조하세요.',
-        'receipt_missing': '현재 작업의 완료 기록을 찾아 대조하세요.',
-        'receipt_invalid': '현재 작업의 완료 기록이 올바른지 대조하세요.',
-        'predecessor_invalid': '선행 단계의 완료 기록을 대조하세요.',
+        'file_missing': '파일이 없어 현재 정보로 선택 불가·보류합니다.',
+        'file_unreadable': '파일 확인 불가·새 실행하지 않고 보류합니다.',
+        'artifact_invalid': '완료 조건 확인 실패·보류합니다.',
+        'receipt_missing': '완료 기록 없어 완료 인정 불가·보류합니다.',
+        'receipt_invalid': '완료 기록 검증 실패·보류합니다.',
+        'predecessor_invalid': '선행 단계의 완료 기록 확인 실패·보류합니다.',
     }
+    if comparison['status'] == 'different':
+        judgments['file_changed'] = '현재 유지→목표 미충족 / 목표 반영→파일 변경·재검증 필요. 자동 반영 없음.'
+    elif comparison['status'] == 'equal':
+        judgments['file_changed'] = '파일 일치·완료 기록 확인 필요. 현재 완료 인정 없이 보류합니다.'
+    else:
+        judgments['file_changed'] = '현재 정보로 선택 불가·보류합니다. 검증되지 않은 목표는 반영하지 않습니다.'
+    target_evidence = '해시 검증됨' if comparison['status'] in {'different', 'equal'} else '검증 불가'
+    receipt_evidence = ('기록 내용 미전달' if recorded is None else
+                        '기록 없음' if recorded.get('completion_receipt') is None else
+                        '완료 표시 있음·현재 완료 미인정')
     title = task.get('title')
     title = title.strip() if isinstance(title, str) else ''
     reason = '중단 이유: ' + issue['label'] + '로 이 단계가 완료됐는지 확인하지 못했습니다.'
     if issue['code'] == 'file_changed':
         reason = ('중단 이유: 파일 내용 불일치. '
-                  '아직 모르는 점: 현재 내용을 의도적으로 바꾼 것인지 확인되지 않았습니다.')
-    lines = ['하려던 일: ' + short(title or '작업 목적 정보 없음', 80) + ' 작업을 이어가려 했습니다.',
+                  '현재 근거로 누가·왜 바꿨는지는 확인할 수 없습니다.')
+    lines = ['하려던 일: ' + short(title or '작업 목적 정보 없음', 60) + ' 작업을 이어가려 했습니다. (요청 기록)',
              f'작업 위치: 작업 폴더의 {step["completion"]["output_path"]} / {name} ({sid})',
              reason,
              compare,
              '이번 실행: 이 단계의 파일 수정과 이후 작업을 진행하지 않고 보류했습니다. 자동 재실행·복원·승인 없음. 상세: --recovery-details',
-             '다음 판단: ' + judgments.get(issue['code'], '현재 파일과 완료 기록을 대조하세요.') + ' 기록: ' + short(record_path, 48)]
+             '다음 판단: ' + judgments.get(issue['code'], '확인정보 부족·보류합니다.'),
+             '목표 근거: ' + target_evidence + ' / ' + str(target or '미지정'),
+             '완료 근거: ' + receipt_evidence + ' / ' + short(record_path, 48)]
     if not details:
         return [short(line) for line in lines]
     lines = [short(line, 400) for line in lines]
@@ -323,6 +334,8 @@ def completed_reuse_summary(task: dict, step: dict, issue: dict, comparison: dic
     lines.append('OMC 기록(작업 루트 기준): ' + path_label(record_path))
     lines.append('현재 파일(작업 루트 기준): ' + path_label(step['completion']['output_path']))
     lines.append('목표 파일(작업 루트 기준): ' + (path_label(target) if target else '미지정'))
+    lines.append('단계 요청: ' + short(step.get('prompt') or '요청 내용 없음', 400))
+    lines.append('완료 근거 주의: 완료 표시를 실제 반영 증명으로 사용하지 않습니다.')
     lines.append('구체적 대조: ' + short(action, 400))
     lines.append('상세 비교는 현재 파일과 선언된 목표의 대조입니다. 과거 파일 내용 또는 실행 여부의 증명이 아닙니다.')
     lines.extend(comparison.get('summary_lines', []))
