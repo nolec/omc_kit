@@ -273,8 +273,15 @@ def completed_reuse_summary(task: dict, step: dict, issue: dict, comparison: dic
     name = step.get('title') or sid
     target = step['completion'].get('target_path')
     if comparison['status'] == 'different':
-        difference = ' / '.join(comparison.get('summary_lines', [])[:3])
-        compare = '현재/목표: ' + (difference or '현재 파일 내용이 선언된 목표와 다릅니다')
+        summary = comparison.get('summary_lines', [])
+        current = next((line for line in summary if line.startswith('현재 내용:')), None)
+        goal = next((line for line in summary if line.startswith('목표 내용:')), None)
+        if current is not None or goal is not None:
+            difference = ' / '.join((short(current or '현재 내용: 요약 없음—상세 확인', 47),
+                                     short(goal or '목표 내용: 요약 없음—상세 확인', 47)))
+        else:
+            difference = ' / '.join(summary[:3])
+        compare = '확인한 차이: ' + (difference or '현재 파일 내용이 선언된 목표와 다릅니다')
     elif comparison['status'] == 'equal':
         compare = '현재/목표: 현재 파일은 목표와 일치합니다. 파일 일치만으로 완료 기록을 대신하지 않습니다.'
     else:
@@ -286,7 +293,7 @@ def completed_reuse_summary(task: dict, step: dict, issue: dict, comparison: dic
     else:
         action = '현재 파일·선언된 목표·완료 기록을 대조하세요. 파일 변경 원인·외부 반영은 확인되지 않았습니다.'
     judgments = {
-        'file_changed': '내용 변경이 의도한 것인지 확인하고 현재/목표를 대조하세요.',
+        'file_changed': '현재 내용을 유지하려던 것인지, 목표로 바꾸려던 것인지 확인한 뒤 기록을 대조하세요.',
         'file_missing': '파일 위치와 삭제 여부를 확인하고 목표와 대조하세요.',
         'file_unreadable': '파일 경로와 읽기 권한을 확인한 뒤 대조하세요.',
         'artifact_invalid': '현재 파일이 작업의 완료 조건을 충족하는지 대조하세요.',
@@ -296,9 +303,13 @@ def completed_reuse_summary(task: dict, step: dict, issue: dict, comparison: dic
     }
     title = task.get('title')
     title = title.strip() if isinstance(title, str) else ''
+    reason = '중단 이유: ' + issue['label'] + '로 이 단계가 완료됐는지 확인하지 못했습니다.'
+    if issue['code'] == 'file_changed':
+        reason = ('중단 이유: 파일 내용 불일치. '
+                  '아직 모르는 점: 현재 내용을 의도적으로 바꾼 것인지 확인되지 않았습니다.')
     lines = ['하려던 일: ' + short(title or '작업 목적 정보 없음', 80) + ' 작업을 이어가려 했습니다.',
              f'작업 위치: 작업 폴더의 {step["completion"]["output_path"]} / {name} ({sid})',
-             '중단 이유: ' + issue['label'] + '로 이 단계가 완료됐는지 확인하지 못했습니다.',
+             reason,
              compare,
              '이번 실행: 이 단계의 파일 수정과 이후 작업을 진행하지 않고 보류했습니다. 자동 재실행·복원·승인 없음. 상세: --recovery-details',
              '다음 판단: ' + judgments.get(issue['code'], '현재 파일과 완료 기록을 대조하세요.') + ' 기록: ' + short(record_path, 48)]

@@ -182,6 +182,13 @@ def test_r3_completed_reuse_public_cli_surface(tmp_path, case, label):
         assert '보류' in result.stdout and '자동' in result.stdout and '대조' in result.stdout
         assert '하려던 일: 로드맵과 대시보드 복사본에 복구 상태 반영' in result.stdout if case != 'long_title' else '하려던 일:' in result.stdout
         assert '작업 위치:' in result.stdout and '중단 이유:' in result.stdout and '이번 실행:' in result.stdout and '다음 판단:' in result.stdout
+        if case in {'changed', 'target_missing', 'binary', 'long_title'}:
+            assert '아직 모르는 점: 현재 내용을 의도적으로 바꾼 것인지 확인되지 않았습니다.' in result.stdout
+            assert '현재 내용을 유지하려던 것인지' in result.stdout
+            assert '목표로 바꾸려던 것인지' in result.stdout
+        if case == 'changed':
+            difference = next(line for line in result.stdout.splitlines() if line.startswith('확인한 차이:'))
+            assert '새로운 내용' in difference and '복구 구현 완료' in difference
         assert len(result.stdout.splitlines()) <= 8 and len(result.stdout) <= 800
         assert '\x1b' not in result.stdout
         assert not (tmp_path / 'provider-calls.txt').exists()
@@ -206,7 +213,7 @@ def test_r3_completed_reuse_public_cli_surface(tmp_path, case, label):
 
 
 @pytest.mark.parametrize('code,label,expected', [
-    ('file_changed', '파일 내용 불일치', '내용 변경이 의도한 것인지'),
+    ('file_changed', '파일 내용 불일치', '현재 내용을 유지하려던 것인지'),
     ('file_missing', '파일 없음', '파일 위치와 삭제 여부'),
     ('receipt_missing', '완료 기록 없음', '현재 작업의 완료 기록'),
     ('predecessor_invalid', '선행 완료 기록 불일치', '선행 단계의 완료 기록'),
@@ -1406,3 +1413,55 @@ def test_recovery_uses_approved_task_when_file_changes_after_intent(tmp_path, mo
     assert calls == [task['steps'][0]['prompt']]
     assert not (tmp_path / '.omc/state/autopilot/unapproved-task.json').exists()
     assert omc_autopilot._load_state(tmp_path, task['id'])['recovery_intent']['outcome'] == 'completed'
+
+
+@pytest.mark.parametrize('status', ['equal', 'unavailable'])
+def test_reuse_intent_does_not_invent_target_difference(status):
+    step = {'id': 'roadmap', 'completion': {'output_path': 'roadmap.md', 'target_path': 'target.md'}}
+    lines = workflow.completed_reuse_summary({'title': '문서 상태 반영'}, step,
+        {'code': 'file_changed', 'label': '파일 내용 불일치'},
+        {'status': status, 'reason': '목표 파일 없음', 'summary_lines': [], 'lines': []},
+        record_path='record.json')
+    assert ('목표와 일치' if status == 'equal' else '비교 불가') in lines[3]
+    assert '확인되지 않았습니다' in lines[2]
+    assert '현재 내용을 유지하려던 것인지' in lines[5]
+
+
+@pytest.mark.parametrize('long_line', [False, True])
+def test_reuse_public_cli_preview_includes_current_and_target_on_multiline_change(tmp_path, long_line):
+    import os
+    import subprocess
+    import sys
+    task_file, task, state = _r3_completed_documents(tmp_path)
+    padding = '가' * 200 if long_line else ''
+    current = '# roadmap\n이전 첫째' + padding + '\n이전 둘째\n'
+    target = '# roadmap\n목표 첫째' + padding + '\n목표 둘째\n'
+    (tmp_path / 'roadmap.md').write_text(current)
+    (tmp_path / 'targets/roadmap.md').write_text(target)
+    task['steps'][0]['completion']['expected_sha256'] = hashlib.sha256(target.encode()).hexdigest()
+    state['task_spec_sha256'] = workflow.task_spec_sha256(task)
+    predecessors = []
+    for step in task['steps']:
+        receipt = workflow.build_completion_receipt(task=task, step=step,
+            artifact_sha256=step['completion']['expected_sha256'], predecessor_receipts=predecessors)
+        state['steps'][step['id']]['completion_receipt'] = receipt
+        predecessors = [receipt['receipt_sha256']]
+    task_file.write_text(json.dumps(task))
+    omc_autopilot._save_state(tmp_path, task['id'], state)
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    provider = bin_dir / 'claude'
+    provider.write_text('#!' + sys.executable + '\nfrom pathlib import Path\nPath("provider-called").touch()\n')
+    provider.chmod(0o755)
+    env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
+               OMC_INSTALLATION_REGISTRY_DIR=str(tmp_path / 'registry'))
+    result = subprocess.run([sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')),
+        'autopilot', '--task-file', str(task_file)], cwd=tmp_path, env=env,
+        capture_output=True, text=True, timeout=20)
+    assert result.returncode == 1 and not result.stderr
+    preview = next(line for line in result.stdout.splitlines() if line.startswith('확인한 차이:'))
+    assert '현재 내용:' in preview and '이전 첫째' in preview
+    assert '목표 내용:' in preview and '목표 첫째' in preview
+    assert len(result.stdout.splitlines()) <= 8 and len(result.stdout) <= 800
+    assert not (tmp_path / 'provider-called').exists()
+    assert (tmp_path / 'roadmap.md').read_text() == current
