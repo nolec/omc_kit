@@ -10,6 +10,199 @@ import omc_autopilot_workflow as workflow
 import pytest
 
 
+def _r3_completed_documents(root):
+    task = {'schema_version': 'omc-autopilot-task/v2', 'id': 'r3-documents',
+            'title': '로드맵과 대시보드 복사본에 복구 상태 반영', 'executor': 'claude',
+            'max_retries': 0, 'steps': []}
+    (root / 'targets').mkdir()
+    state = {'task_id': task['id'], 'status': 'completed', 'steps': {}}
+    predecessor = []
+    for sid in ['roadmap', 'dashboard']:
+        contents = ('# ' + sid + '\n복구 구현 완료\n').encode()
+        (root / (sid + '.md')).write_bytes(contents)
+        (root / 'targets' / (sid + '.md')).write_bytes(contents)
+        task['steps'].append({'id': sid, 'title': '로드맵 반영' if sid == 'roadmap' else '대시보드 반영',
+                             'prompt': sid, 'depends_on': [] if sid == 'roadmap' else ['roadmap'],
+                             'completion': {'validator_id': 'artifact_sha256', 'output_path': sid + '.md',
+                                            'target_path': 'targets/' + sid + '.md',
+                                            'expected_sha256': hashlib.sha256(contents).hexdigest()}})
+    state['task_spec_sha256'] = workflow.task_spec_sha256(task)
+    for step in task['steps']:
+        receipt = workflow.build_completion_receipt(task=task, step=step,
+            artifact_sha256=step['completion']['expected_sha256'], predecessor_receipts=predecessor)
+        state['steps'][step['id']] = {'status': 'completed', 'completion_receipt': receipt}
+        predecessor = [receipt['receipt_sha256']]
+    task_file = _write_task(root, task)
+    return task_file, task, state
+
+
+@pytest.mark.parametrize('error,receipt_change,expected', [
+    ('completion_artifact_hash_mismatch', None, 'file_changed'),
+    ('completion_artifact_missing', None, 'file_missing'),
+    ('completion_artifact_unreadable', None, 'file_unreadable'),
+    ('completion_artifact_path_escape', None, 'file_unreadable'),
+    (None, 'missing', 'receipt_missing'),
+    (None, 'invalid', 'receipt_invalid'),
+    (None, 'predecessor', 'predecessor_invalid'),
+])
+def test_r3_completed_reuse_issue_data_path(tmp_path, error, receipt_change, expected):
+    _, task, state = _r3_completed_documents(tmp_path)
+    step = task['steps'][1]
+    recorded = state['steps']['dashboard']
+    predecessors = [state['steps']['roadmap']['completion_receipt']['receipt_sha256']]
+    if receipt_change == 'missing':
+        recorded.pop('completion_receipt')
+    elif receipt_change == 'invalid':
+        recorded['completion_receipt']['step_id'] = 'other'
+    elif receipt_change == 'predecessor':
+        recorded['completion_receipt'] = workflow.build_completion_receipt(task=task, step=step,
+            artifact_sha256=step['completion']['expected_sha256'], predecessor_receipts=['0' * 64])
+    issue = workflow.completed_reuse_issue(task=task, step=step, recorded=recorded,
+        predecessor_receipts=predecessors, artifact_hash=step['completion']['expected_sha256'], artifact_error=error)
+    assert issue['code'] == expected
+
+
+def test_r3_valid_completed_record_has_no_issue(tmp_path):
+    _, task, state = _r3_completed_documents(tmp_path)
+    step = task['steps'][1]
+    assert workflow.completed_reuse_issue(task=task, step=step, recorded=state['steps']['dashboard'],
+        predecessor_receipts=[state['steps']['roadmap']['completion_receipt']['receipt_sha256']],
+        artifact_hash=step['completion']['expected_sha256'], artifact_error=None) is None
+
+
+@pytest.mark.parametrize('task_id_size', [32, 100])
+def test_r3_long_task_id_public_details_preserves_record_path(tmp_path, task_id_size):
+    import os
+    import subprocess
+    import sys
+    _, task, state = _r3_completed_documents(tmp_path)
+    task['id'] = 'r3-' + 'a' * task_id_size
+    state['task_id'] = task['id']
+    state['task_spec_sha256'] = workflow.task_spec_sha256(task)
+    predecessor = []
+    for step in task['steps']:
+        receipt = workflow.build_completion_receipt(task=task, step=step,
+            artifact_sha256=step['completion']['expected_sha256'], predecessor_receipts=predecessor)
+        state['steps'][step['id']]['completion_receipt'] = receipt
+        predecessor = [receipt['receipt_sha256']]
+    task_file = _write_task(tmp_path, task)
+    (tmp_path / 'roadmap.md').write_text('changed\n')
+    omc_autopilot._save_state(tmp_path, task['id'], state)
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    provider = bin_dir / 'claude'
+    provider.write_text('#!' + sys.executable + '\nfrom pathlib import Path\nPath("provider-called").touch()\nraise RuntimeError("must not execute")\n')
+    provider.chmod(0o755)
+    env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
+               PYTHONDONTWRITEBYTECODE='1', OMC_INSTALLATION_REGISTRY_DIR=str(tmp_path / 'registry'))
+    cmd = [sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')), 'autopilot', '--task-file', str(task_file)]
+    compact = subprocess.run(cmd, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=20)
+    details = subprocess.run(cmd + ['--recovery-details'], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=20)
+    assert compact.returncode == details.returncode == 1
+    assert not compact.stderr and not details.stderr
+    assert len(compact.stdout.splitlines()) <= 8 and len(compact.stdout) <= 800
+    record = str(omc_autopilot._state_path(tmp_path, task['id']).relative_to(tmp_path))
+    assert 'OMC 기록(작업 루트 기준): ' + record in details.stdout
+    assert not (tmp_path / 'provider-called').exists()
+    assert omc_autopilot._load_state(tmp_path, task['id'])['steps'] == state['steps']
+
+
+def test_r3_details_preserves_paths_with_long_step_title():
+    path = 'docs/' + 'a' * 180 + '.md'
+    step = {'id': 'roadmap', 'title': '긴 단계 제목' * 100,
+            'completion': {'output_path': path, 'target_path': 'targets/' + path}}
+    record = '.omc/state/autopilot/' + 'b' * 200 + '.json'
+    comparison = {'status': 'unavailable', 'reason': '목표 파일 없음', 'summary_lines': [], 'lines': []}
+    output = '\n'.join(workflow.completed_reuse_summary({}, step,
+        {'code': 'file_changed', 'label': '파일 내용 불일치'}, comparison, record_path=record, details=True))
+    assert 'OMC 기록(작업 루트 기준): ' + record in output
+    assert '현재 파일(작업 루트 기준): ' + path in output
+    assert '목표 파일(작업 루트 기준): targets/' + path in output
+
+
+@pytest.mark.parametrize('case,label', [
+    ('changed', '파일 내용 불일치'), ('missing', '파일 없음'),
+    ('unreadable', '파일 읽기 또는 경로 확인 불가'),
+    ('receipt_missing', '완료 기록 없음'), ('receipt_invalid', '완료 기록 손상 또는 작업 불일치'),
+    ('predecessor', '선행 완료 기록 불일치'), ('target_missing', '파일 내용 불일치'),
+    ('binary', '파일 내용 불일치'), ('long_title', '파일 내용 불일치'),
+])
+def test_r3_completed_reuse_public_cli_surface(tmp_path, case, label):
+    import os
+    import subprocess
+    import sys
+    task_file, task, state = _r3_completed_documents(tmp_path)
+    selected = 'dashboard' if case == 'predecessor' else 'roadmap'
+    step = next(item for item in task['steps'] if item['id'] == selected)
+    artifact = tmp_path / (selected + '.md')
+    if case in {'changed', 'target_missing', 'long_title'}:
+        artifact.write_text('# roadmap\n새로운 내용\n')
+    elif case == 'binary':
+        artifact.write_bytes(b'\x00changed')
+    elif case == 'missing':
+        artifact.unlink()
+    elif case == 'unreadable':
+        artifact.chmod(0)
+    elif case == 'receipt_missing':
+        state['steps'][selected].pop('completion_receipt')
+    elif case == 'receipt_invalid':
+        state['steps'][selected]['completion_receipt']['task_id'] = 'other-task'
+    else:
+        state['steps'][selected]['completion_receipt'] = workflow.build_completion_receipt(task=task, step=step,
+            artifact_sha256=step['completion']['expected_sha256'], predecessor_receipts=['0' * 64])
+    if case == 'target_missing':
+        (tmp_path / 'targets/roadmap.md').unlink()
+    if case == 'long_title':
+        task['title'] = '긴 작업 제목\x1b\n' * 300
+        state['task_spec_sha256'] = workflow.task_spec_sha256(task)
+        predecessor = []
+        for item in task['steps']:
+            receipt = workflow.build_completion_receipt(task=task, step=item,
+                artifact_sha256=item['completion']['expected_sha256'], predecessor_receipts=predecessor)
+            state['steps'][item['id']]['completion_receipt'] = receipt
+            predecessor = [receipt['receipt_sha256']]
+        task_file.write_text(json.dumps(task))
+    omc_autopilot._save_state(tmp_path, task['id'], state)
+    original_bytes = artifact.read_bytes() if artifact.exists() and case != 'unreadable' else None
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    provider = bin_dir / 'claude'
+    provider.write_text('#!' + sys.executable + '\nfrom pathlib import Path\nimport sys\nPath("provider-calls.txt").touch()\nsys.exit(91)\n')
+    provider.chmod(0o755)
+    env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
+               PYTHONDONTWRITEBYTECODE='1', OMC_INSTALLATION_REGISTRY_DIR=str(tmp_path / 'registry'))
+    cmd = [sys.executable, str(Path(omc_autopilot.__file__).with_name('omc.py')),
+           'autopilot', '--task-file', str(task_file)]
+    try:
+        result = subprocess.run(cmd, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=20)
+        assert result.returncode == 1 and not result.stderr, result.stdout + result.stderr
+        assert label in result.stdout
+        assert selected + '.md' in result.stdout
+        assert '.omc/state/autopilot/r3-documents.json' in result.stdout
+        assert '보류' in result.stdout and '자동' in result.stdout and '대조' in result.stdout
+        assert len(result.stdout.splitlines()) <= 8 and len(result.stdout) <= 800
+        assert '\x1b' not in result.stdout
+        assert not (tmp_path / 'provider-calls.txt').exists()
+        saved = omc_autopilot._load_state(tmp_path, task['id'])
+        assert saved['status'] == 'failed'
+        assert saved['failure_reason'] == 'completion_receipt_missing_or_invalid'
+        assert saved['steps'] == state['steps']
+        if original_bytes is not None:
+            assert artifact.read_bytes() == original_bytes
+        detail = subprocess.run(cmd + ['--recovery-details'], cwd=tmp_path, env=env,
+                                capture_output=True, text=True, timeout=20)
+        assert detail.returncode == 1 and label in detail.stdout
+        assert not (tmp_path / 'provider-calls.txt').exists()
+        if case in {'target_missing', 'binary'}:
+            assert '비교 불가' in result.stdout and '비교 불가' in detail.stdout
+        elif case == 'changed':
+            assert '현재' in result.stdout and '목표' in result.stdout
+            assert '새로운 내용' in detail.stdout and '복구 구현 완료' in detail.stdout
+    finally:
+        if artifact.exists():
+            artifact.chmod(0o644)
+
+
 def _write_task(root: Path, task: dict) -> Path:
     path = root / ".omc" / "tasks" / f"{task['id']}.json"
     path.parent.mkdir(parents=True, exist_ok=True)

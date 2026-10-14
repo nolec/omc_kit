@@ -1604,7 +1604,14 @@ def _cmd_run_locked(
             print("  단일 단계 재개 V0: 해당 실행의 미실행 근거를 확인한 사람이 --recovery-evidence와 --confirm-not-executed로 별도 승인한 뒤 --recovery-step으로 재개하세요. 불명확하면 차단 유지.")
             return 1
 
-    print(f"\n[AUTOPILOT] ▶ 태스크 시작: {title}")
+    reuse_context = workflow_v2 and not dry_run and any(
+        isinstance(value, dict) and value.get("status") == "completed"
+        for value in state.get("steps", {}).values()
+    )
+    displayed_title = title
+    if reuse_context:
+        displayed_title = ''.join(char if char.isprintable() else ' ' for char in str(title))[:100]
+    print(f"\n[AUTOPILOT] ▶ 태스크 시작: {displayed_title}")
     print(f"           executor={executor}  스텝={len(steps)}개  max_retries={max_retries}")
     if dry_run:
         print("           [DRY-RUN] 실제 실행 없이 계획만 출력합니다.\n")
@@ -1657,9 +1664,12 @@ def _cmd_run_locked(
                     if isinstance(state["steps"].get(dep), dict)
                     and isinstance(state["steps"][dep].get("completion_receipt"), dict)
                 ]
-                current_artifact_hash, current_artifact_error = (
-                    autopilot_workflow.validate_completion_artifact(root, step)
-                )
+                try:
+                    current_artifact_hash, current_artifact_error = (
+                        autopilot_workflow.validate_completion_artifact(root, step)
+                    )
+                except (OSError, RuntimeError):
+                    current_artifact_hash, current_artifact_error = None, "completion_artifact_unreadable"
                 receipt = existing_step_state.get("completion_receipt")
                 if (
                     len(predecessor_receipts) != len(step.get("depends_on", []))
@@ -1676,10 +1686,21 @@ def _cmd_run_locked(
                     state["status"] = "failed"
                     state["failure_reason"] = "completion_receipt_missing_or_invalid"
                     _save_state(root, task_id, state)
-                    print(f"[AUTOPILOT] {sid}: 완료 receipt가 없거나 현재 workflow와 일치하지 않습니다.")
+                    issue = autopilot_workflow.completed_reuse_issue(
+                        task=task, step=step, recorded=existing_step_state,
+                        predecessor_receipts=predecessor_receipts,
+                        artifact_hash=current_artifact_hash, artifact_error=current_artifact_error,
+                    ) or {'code': 'receipt_invalid', 'label': '완료 기록 손상 또는 작업 불일치'}
+                    comparison = autopilot_workflow.verified_target_diff(root, step)
+                    for line in autopilot_workflow.completed_reuse_summary(
+                        task, step, issue, comparison,
+                        record_path=str(_state_path(root, task_id).relative_to(root)), details=recovery_details,
+                    ):
+                        print(line)
                     return 1
             if dry_run or not _step_state_is_simulated(existing_step_state):
-                print(f"  [SKIP] {sid}: {step_title} (이미 완료)")
+                if not workflow_v2 or dry_run or recovery_details:
+                    print(f"  [SKIP] {sid}: {step_title} (이미 완료)")
                 continue
             print(f"  [REPLAY] {sid}: {step_title} (dry-run 완료 상태라 실제 실행)")
 

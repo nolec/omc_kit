@@ -226,6 +226,87 @@ def recovery_assessment(root: Path, task: dict, state: dict) -> list[str]:
     return [fact["detail"] for fact in recovery_assessment_facts(root, task, state)]
 
 
+def completed_reuse_issue(*, task: dict, step: dict, recorded: dict,
+                         predecessor_receipts: list[str], artifact_hash: str | None,
+                         artifact_error: str | None) -> dict | None:
+    """Explain a reuse block; this does not grant approval or prove an external action."""
+    labels = {
+        'file_changed': '파일 내용 불일치',
+        'file_missing': '파일 없음',
+        'file_unreadable': '파일 읽기 또는 경로 확인 불가',
+        'artifact_invalid': '산출물 검증 실패',
+        'receipt_missing': '완료 기록 없음',
+        'receipt_invalid': '완료 기록 손상 또는 작업 불일치',
+        'predecessor_invalid': '선행 완료 기록 불일치',
+    }
+    if artifact_error:
+        code = {'completion_artifact_hash_mismatch': 'file_changed',
+                'completion_artifact_missing': 'file_missing',
+                'completion_artifact_unreadable': 'file_unreadable',
+                'completion_artifact_path_escape': 'file_unreadable'}.get(artifact_error, 'artifact_invalid')
+    else:
+        receipt = recorded.get('completion_receipt')
+        stored_predecessors = receipt.get('predecessor_receipts') if isinstance(receipt, dict) else None
+        if receipt is None:
+            code = 'receipt_missing'
+        elif (not isinstance(stored_predecessors, list)
+              or not all(isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value)
+                         for value in stored_predecessors)
+              or not completion_receipt_valid(receipt, task=task, step=step,
+                                              predecessor_receipts=stored_predecessors)):
+            code = 'receipt_invalid'
+        elif len(predecessor_receipts) != len(step.get('depends_on', [])) or stored_predecessors != predecessor_receipts:
+            code = 'predecessor_invalid'
+        elif receipt.get('artifact_sha256') != artifact_hash:
+            code = 'file_changed'
+        else:
+            return None
+    return {'code': code, 'label': labels[code]}
+
+
+def completed_reuse_summary(task: dict, step: dict, issue: dict, comparison: dict,
+                           *, record_path: str, details: bool = False) -> list[str]:
+    def short(text, limit=110):
+        clean = ''.join(char if char.isprintable() else ' ' for char in str(text))
+        return clean if len(clean) <= limit else clean[:limit - 7] + '…일부 생략'
+    sid = step['id']
+    name = step.get('title') or sid
+    target = step['completion'].get('target_path')
+    if comparison['status'] == 'different':
+        difference = ' / '.join(comparison.get('summary_lines', [])[:3])
+        compare = '현재/목표: ' + (difference or '현재 파일 내용이 선언된 목표와 다릅니다')
+    elif comparison['status'] == 'equal':
+        compare = '현재/목표: 현재 파일은 목표와 일치합니다. 파일 일치만으로 완료 기록을 대신하지 않습니다.'
+    else:
+        compare = '현재/목표: 비교 불가 — ' + comparison['reason']
+    if issue['code'] == 'predecessor_invalid':
+        action = '선행 단계 ' + ', '.join(step.get('depends_on', [])) + '의 완료 기록과 이 단계의 선행 결속을 대조하세요.'
+    elif issue['code'] in {'receipt_missing', 'receipt_invalid'}:
+        action = '현재 작업·단계와 완료 기록을 대조하세요. 파일만 보고 완료로 바꾸지 마세요.'
+    else:
+        action = '현재 파일·선언된 목표·완료 기록을 대조하세요. 파일 변경 원인·외부 반영은 확인되지 않았습니다.'
+    lines = [f'확인 대상: {name} ({sid}) [{step["completion"]["output_path"]}] / 목표: {target or "미지정"}',
+             '차단 근거: ' + issue['label'] + ' (재사용 검사 시점). 이전 완료를 현재 결과로 재사용할 수 없습니다.',
+             compare,
+             f'기록: {short(record_path, 48)} / 다음: 현재 파일·목표·완료/선행 기록을 대조하세요.',
+             '현재 행동: 보류합니다. 자동 재실행·복원·승인·후속 실행 없음. 상세 확인: --recovery-details']
+    if not details:
+        return [short(line) for line in lines]
+    lines = [short(line, 400) for line in lines]
+    def path_label(value):
+        value = str(value)
+        return value if value.isprintable() else json.dumps(value, ensure_ascii=False)
+    # Critical lookup paths must remain complete even when the prose is abbreviated.
+    lines.append('OMC 기록(작업 루트 기준): ' + path_label(record_path))
+    lines.append('현재 파일(작업 루트 기준): ' + path_label(step['completion']['output_path']))
+    lines.append('목표 파일(작업 루트 기준): ' + (path_label(target) if target else '미지정'))
+    lines.append('구체적 대조: ' + short(action, 400))
+    lines.append('상세 비교는 현재 파일과 선언된 목표의 대조입니다. 과거 파일 내용 또는 실행 여부의 증명이 아닙니다.')
+    lines.extend(comparison.get('summary_lines', []))
+    lines.extend(comparison.get('lines', []))
+    return lines
+
+
 def compact_recovery_summary(task: dict, facts: list[dict], *, record_path: str | None = None) -> list[str]:
     def short(value, limit=105):
         text = ''.join(c if c.isprintable() else ' ' for c in str(value))
