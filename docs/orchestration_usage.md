@@ -1,5 +1,102 @@
 # OMC Orchestration Usage
 
+## 기존 코드 변경이 있는 문서 작업: 독립 clone V0
+
+`document_only` 시작이 무관한 코드 변경으로 차단되면 원래 저장소의 가드를 수정하지 않습니다.
+사용자가 승인한 문서만 독립 clone으로 가져가 작업합니다. 새 범위 옵션이나 자동 교체 기능은 없습니다.
+단일 작업용 절차이며, 동시 작업이 있거나 입력 문서가 달라지면 중단하고 다시 확인합니다.
+
+1. 원본의 HEAD, 스테이징 diff, 선택 문서 내용, 설치 receipt를 저장소 밖에 보관합니다.
+   현재 커밋에 같은 경로로 존재하는 일반 Markdown 파일만 선택합니다. 절대·상위 경로, 심볼릭 링크, 새·미추적 문서 및 이름 변경한 문서는 선택하지 않습니다.
+2. 승인된 별도 위치로 `git clone --no-hardlinks -- "원본 절대 경로" "격리 절대 경로"`를 실행합니다.
+   원본 작업 파일이나 인덱스를 공유하지 않습니다. clone에는 원본의 미커밋 변경이 없으므로
+   선택 문서의 기존 미커밋 내용을 별도로 확인하여 가져옵니다. 기존 OMC 상태·receipt는 복사하지 않습니다.
+3. 새 clone의 설치 파일을 먼저 확인하고, 원본 OMC로 clone에만 setup을 실행합니다.
+   disposable clone에만 `--force --skip-session-start`를 사용할 수 있으며 설치 감사가 실패하면 중단합니다.
+   기존 프로젝트/OKX에 이 옵션을 적용하는 절차가 아닙니다.
+4. 원본 OMC의 `scripts/omc_guard.py sync-require`에 clone을 `--target`으로 지정하고
+   `--mode autopilot --title 문서작업 --request "확정한 문서 작업" --roles senior_coding
+   --work-class document_only --for task`로 실제 세션을 시작합니다.
+   `directive` 단독 역할에는 work_class를 지정할 수 없습니다. 작업 중 코드를 추가/변경하면 문서 작업을 계속하지 않습니다.
+5. 선택 문서만 검증하고 정확한 경로로 스테이징합니다. 범위 밖 파일이 스테이징돼 있으면 커밋하지 않습니다.
+   Git diff, 설치된 커밋 훅의 확인, 커밋 후 변경 경로와 `completion.json`의 document_only 결속을 확인합니다.
+   원본의 HEAD·인덱스·코드·기존 문서·receipt가 시작 때와 같은지도 확인합니다.
+6. 결과는 격리 clone의 커밋과 문서 diff로 제시합니다. 원본 반영은 별도 승인 후 수행하며
+   원본 문서가 시작 때와 달라졌거나 충돌이 있으면 반영하지 않습니다. 자동 cherry-pick·덮어쓰기·정리는 하지 않습니다.
+
+### 입력과 원본 변경 확인
+
+아래 코드를 저장소 밖 임시 파일에 보관하고 `python3 <확인파일> <원본 저장소 절대 경로>
+<문서 상대 경로> [시작 때 출력된 SHA-256]`으로 실행합니다. 문서를 가져오기 전에 해시를
+보관하고, 원본 반영 직전에 동일 경로와 그 해시로 다시 확인합니다. 각 문서를 개별 확인합니다.
+종료 상태가 1이면 중단합니다. 정상 출력은 해당 시점의 내용 확인만 뜻하며 반영 승인이 아닙니다.
+동시 수정 가능성이 있으면 이 확인만으로 반영하지 않습니다. 이 코드는 파일을 쓰거나 복사하지 않습니다.
+V0는 기존 문서의 내용 수정만 다룹니다. 새 문서는 스테이징해도 허용하지 않으며,
+새 문서 생성·문서 이름 변경은 별도로 출처와 작업 범위를 확정해야 합니다.
+
+<!-- OMC:document-isolation-check -->
+```python
+import hashlib
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+try:
+    if len(sys.argv) not in (3, 4):
+        raise ValueError('인자: 원본 저장소, 문서 상대 경로, 선택적 시작 해시')
+    root = Path(sys.argv[1]).resolve(strict=True)
+    path = Path(sys.argv[2])
+    if path.is_absolute() or not path.parts or '..' in path.parts or path.suffix.lower() != '.md' or any(p in {'.git', '.omc'} for p in path.parts):
+        raise ValueError('허용되지 않은 문서 경로')
+    top = subprocess.check_output(['git', '--no-optional-locks', '-C', str(root), 'rev-parse', '--show-toplevel'], text=True).strip()
+    if Path(top).resolve() != root:
+        raise ValueError('저장소 루트가 아님')
+    committed_type = subprocess.check_output(['git', '--no-optional-locks', '-C', str(root), 'cat-file', '-t', 'HEAD:' + path.as_posix()], text=True).strip()
+    if committed_type != 'blob':
+        raise ValueError('현재 커밋의 일반 문서가 아님')
+    committed_entry = subprocess.check_output(['git', '--no-optional-locks', '-C', str(root), 'ls-tree', '-z', 'HEAD', '--', path.as_posix()])
+    records = [entry for entry in committed_entry.split(b'\0') if entry]
+    if len(records) != 1:
+        raise ValueError('현재 커밋에서 경로를 특정할 수 없음')
+    metadata, committed_path = records[0].split(b'\t', 1)
+    if metadata.split()[0] not in (b'100644', b'100755') or committed_path.decode('utf-8', errors='surrogateescape') != path.as_posix():
+        raise ValueError('현재 커밋의 일반 문서 경로가 아님')
+    for i in range(1, len(path.parts) + 1):
+        if root.joinpath(*path.parts[:i]).is_symlink():
+            raise ValueError('심볼릭 링크 경로')
+    entries = subprocess.check_output(['git', '--no-optional-locks', '-C', str(root), 'status', '--porcelain', '-z']).split(b'\0')
+    index = 0
+    while index < len(entries) and entries[index]:
+        entry = entries[index].decode('utf-8', errors='surrogateescape')
+        if 'R' in entry[:2] or 'C' in entry[:2]:
+            index += 1
+            other = entries[index].decode('utf-8', errors='surrogateescape')
+            pair = [entry[3:], other]
+            if path.as_posix() in pair and any(Path(p).suffix.lower() != '.md' for p in pair):
+                raise ValueError('문서가 아닌 파일에서 이름 변경됨')
+        index += 1
+    target = root / path
+    before = target.stat()
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError('일반 파일이 아님')
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    after = target.stat()
+    identity = lambda s: (s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+    if identity(before) != identity(after):
+        raise ValueError('확인 도중 문서 변경됨')
+    if len(sys.argv) == 4 and digest != sys.argv[3]:
+        raise ValueError('원본 문서가 시작 때와 다름: 반영 중단')
+    print('확인 통과:', digest)
+except (OSError, ValueError, subprocess.CalledProcessError, IndexError) as exc:
+    print('확인 실패:', exc, file=sys.stderr)
+    raise SystemExit(1)
+```
+
+회귀 검증: `python3 -m pytest scripts/test_omc_guard.py -q -k document_isolation`.
+이 시험은 임시 저장소에서 기존 코드 스테이징·문서 미커밋 변경·receipt 보존과
+실제 setup→세션 저장→커밋 훅→완료 기록을 검증합니다. 실제 OKX 문서 이동·반영 및 재설치는 수행하지 않습니다.
+
 ## 중단된 workflow-v2의 복구 판단
 
 기본 중단 안내는 최대 8줄·800자의 핵심 요약만 표시합니다. 긴 제목·다수 단계·변경은

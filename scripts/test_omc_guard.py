@@ -22,6 +22,123 @@ OMC = ROOT / "scripts" / "omc.py"
 CANDIDATE_UNIVERSE = ROOT / "scripts" / "omc_plan_candidate_universe.py"
 
 
+def test_document_isolation_contract_is_published():
+    contract = (ROOT / 'docs/orchestration_usage.md').read_text()
+    assert '## 기존 코드 변경이 있는 문서 작업: 독립 clone V0' in contract
+    assert '범위 밖 파일이 스테이징돼 있으면 커밋하지 않습니다' in contract
+
+
+@pytest.mark.parametrize('case', ['valid', 'changed', 'absolute', 'parent', 'source', 'missing', 'symlink', 'symlink_parent', 'renamed_source', 'unstaged_rename', 'new_document', 'staged_new_document'])
+def test_document_isolation_published_input_check(tmp_path, case):
+    original = tmp_path / 'original'
+    _init_git_repo(original)
+    (original / 'docs').mkdir()
+    doc = original / 'docs/plan.md'
+    doc.write_text('before\n')
+    subprocess.run(['git', '-C', str(original), 'add', 'docs/plan.md'], check=True)
+    subprocess.run(['git', '-C', str(original), 'commit', '-qm', 'document baseline'], check=True)
+    import hashlib
+    expected = hashlib.sha256(doc.read_bytes()).hexdigest()
+    relative = 'docs/plan.md'
+    if case == 'changed': doc.write_text('changed\n')
+    elif case == 'absolute': relative = str(doc)
+    elif case == 'parent': relative = '../outside.md'
+    elif case == 'source': relative = 'app.py'
+    elif case == 'missing': relative = 'docs/missing.md'
+    elif case == 'symlink':
+        doc.unlink(); doc.symlink_to(original / 'app.py')
+    elif case == 'symlink_parent':
+        (original / 'docs').rename(original / 'docs-actual')
+        (original / 'docs').symlink_to(original / 'docs-actual', target_is_directory=True)
+    elif case == 'renamed_source':
+        subprocess.run(['git', '-C', str(original), 'mv', 'app.py', 'docs/code.md'], check=True); relative = 'docs/code.md'
+    elif case == 'unstaged_rename':
+        (original / 'app.py').rename(original / 'docs/code.md'); relative = 'docs/code.md'
+    elif case in ('new_document', 'staged_new_document'):
+        (original / 'docs/new.md').write_text('new document\n'); relative = 'docs/new.md'
+        if case == 'staged_new_document':
+            subprocess.run(['git', '-C', str(original), 'add', relative], check=True)
+    contract = (ROOT / 'docs/orchestration_usage.md').read_text()
+    program = contract.split('<!-- OMC:document-isolation-check -->\n```python\n', 1)[1].split('\n```', 1)[0]
+    before_index = (original / '.git/index').read_bytes()
+    before_doc = doc.read_bytes()
+    if case == 'valid':
+        initial = subprocess.run([sys.executable, '-c', program, str(original), relative], capture_output=True, text=True)
+        assert initial.returncode == 0 and initial.stdout.strip() == '확인 통과: ' + expected
+    if case not in ('valid', 'changed'):
+        initial = subprocess.run([sys.executable, '-c', program, str(original), relative], capture_output=True, text=True)
+        assert initial.returncode == 1 and '확인 통과' not in initial.stdout
+    result = subprocess.run([sys.executable, '-c', program, str(original), relative, expected], capture_output=True, text=True)
+    assert result.returncode == (0 if case == 'valid' else 1), result.stdout + result.stderr
+    assert doc.read_bytes() == before_doc
+    assert ('확인 통과' in result.stdout) == (case == 'valid')
+    assert (original / '.git/index').read_bytes() == before_index
+
+
+def test_document_isolation_real_cli_preserves_original(tmp_path, monkeypatch):
+    monkeypatch.setenv('OMC_INSTALLATION_REGISTRY_DIR', str(tmp_path / 'local-data'))
+    original = tmp_path / 'original'
+    _init_git_repo(original)
+    (original / 'docs').mkdir()
+    doc = original / 'docs/plan.md'
+    doc.write_text('old\n')
+    subprocess.run(['git', '-C', str(original), 'add', 'docs/plan.md'], check=True)
+    subprocess.run(['git', '-C', str(original), 'commit', '-qm', 'document baseline'], check=True)
+    (original / 'app.py').write_text('value = 2\n')
+    subprocess.run(['git', '-C', str(original), 'add', 'app.py'], check=True)
+    doc.write_text('existing document edits\n')
+    before_index = (original / '.git/index').read_bytes()
+    before_code, before_doc = (original / 'app.py').read_bytes(), doc.read_bytes()
+    before_head = subprocess.check_output(['git', '-C', str(original), 'rev-parse', 'HEAD'])
+    (original / '.omc').mkdir()
+    receipt = original / '.omc/install-receipt.json'
+    receipt.write_bytes(b'{"preserve":true}\n')
+    args = [sys.executable, str(GUARD), 'sync-require', '--mode', 'autopilot', '--title', 'docs',
+            '--request', 'document only', '--roles', 'senior_coding', '--work-class', 'document_only', '--for', 'task']
+    blocked = subprocess.run(args + ['--target', str(original)], capture_output=True, text=True)
+    assert blocked.returncode != 0 and 'work_class_scope_conflict' in blocked.stderr
+    isolated = tmp_path / 'isolated'
+    subprocess.run(['git', 'clone', '--no-hardlinks', '--', str(original), str(isolated)], check=True, capture_output=True)
+    for key, value in [('user.name', 'OMC'), ('user.email', 'omc@example.com')]:
+        subprocess.run(['git', '-C', str(isolated), 'config', key, value], check=True)
+    installed = subprocess.run([sys.executable, str(OMC), 'setup', '--target', str(isolated), '--force', '--skip-session-start'], capture_output=True, text=True)
+    assert installed.returncode == 0, installed.stdout + installed.stderr
+    deployed = (isolated / 'docs/omc_workflow.md').read_text()
+    original_guide = (ROOT / 'docs/orchestration_usage.md').read_text().split('## 기존 코드 변경이 있는 문서 작업: 독립 clone V0', 1)[1].split('## 중단된 workflow-v2의 복구 판단', 1)[0]
+    assert '## 기존 코드 변경이 있는 문서 작업: 독립 clone V0' + original_guide in deployed
+    (isolated / 'docs/plan.md').write_bytes(before_doc)
+    started = subprocess.run(args + ['--target', str(isolated)], capture_output=True, text=True)
+    assert started.returncode == 0, started.stdout + started.stderr
+    state = omc_state.read_latest(isolated)
+    session = json.loads((isolated / '.omc/state/sessions' / state['latest_session_id'] / 'session.json').read_text())
+    assert session['work_class'] == 'document_only'
+    (isolated / 'docs/plan.md').write_text('existing document edits\nnew document edits\n')
+    subprocess.run(['git', '-C', str(isolated), 'add', 'docs/plan.md'], check=True)
+    assert subprocess.check_output(['git', '-C', str(isolated), 'diff', '--cached', '--name-only']).strip() == b'docs/plan.md'
+    subprocess.run(['git', '-C', str(isolated), 'commit', '-qm', 'document only'], check=True, capture_output=True)
+    assert subprocess.check_output(['git', '-C', str(isolated), 'diff-tree', '--no-commit-id', '--name-only', '-r', 'HEAD']).strip() == b'docs/plan.md'
+    completion = json.loads((isolated / '.omc/state/sessions' / state['latest_session_id'] / 'completion.json').read_text())
+    assert completion['work_class'] == 'document_only' and completion['changed_paths'] == ['docs/plan.md']
+    assert (original / '.git/index').read_bytes() == before_index
+    assert (original / 'app.py').read_bytes() == before_code and doc.read_bytes() == before_doc
+    assert subprocess.check_output(['git', '-C', str(original), 'rev-parse', 'HEAD']) == before_head
+    assert receipt.read_bytes() == b'{"preserve":true}\n'
+
+
+@pytest.mark.parametrize('change', ['new_source', 'source_rename'])
+def test_document_isolation_source_changes_still_block_start(tmp_path, change):
+    isolated = tmp_path / 'isolated'
+    _init_git_repo(isolated)
+    if change == 'new_source':
+        (isolated / 'new.py').write_text('pass\n')
+    else:
+        subprocess.run(['git', '-C', str(isolated), 'mv', 'app.py', 'notes.md'], check=True)
+    result = subprocess.run([sys.executable, str(GUARD), 'sync-require', '--target', str(isolated),
+        '--mode', 'autopilot', '--title', 'docs', '--request', 'document only', '--roles', 'senior_coding',
+        '--work-class', 'document_only', '--for', 'task'], capture_output=True, text=True)
+    assert result.returncode != 0 and 'work_class_scope_conflict' in result.stderr
+
+
 def _init_git_repo(target: Path) -> None:
     target.mkdir()
     subprocess.run(["git", "-C", str(target), "init", "-q"], check=True)
