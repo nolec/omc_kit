@@ -487,6 +487,7 @@ def capture_review_snapshot(
         root,
         candidate=candidate,
         review_diff=build_review_diff(root, base_commit=base_commit, candidate_commit=candidate_commit),
+        candidate_commit=_commit(root, candidate_commit) if candidate_commit is not None else None,
     )
     return {
         "snapshot_path": frozen["path"],
@@ -591,6 +592,27 @@ def _load_review_evidence(
     return review_output
 
 
+def _current_snapshot_candidate(root: Path, loaded: dict[str, object]) -> dict[str, object]:
+    candidate = loaded["candidate"]
+    base = str(candidate["base_commit"])
+    commit = loaded.get("candidate_commit")
+    if commit is None:
+        return build_worktree_candidate(root, base_commit=base)
+    if _commit(root, "HEAD") != commit:
+        raise CandidateScopeError("review_stale")
+    index_paths = _decode_paths(_git(root, "diff", "--cached", "--name-only", "-z", str(commit), "--"))
+    if any(not is_runtime_artifact(path) for path in index_paths):
+        raise CandidateScopeError("review_stale")
+    committed = build_commit_candidate(root, base_commit=base, candidate_commit=str(commit))
+    if committed["candidate_scope_sha256"] != candidate["candidate_scope_sha256"]:
+        raise CandidateScopeError("review_stale")
+    # A committed artifact excludes untracked work, but tracked/index changes
+    # still invalidate it. The optional commit binding is frozen and hashed.
+    paths = _decode_paths(_git(root, "diff", "--name-only", "-z", base, "--"))
+    return _candidate(root, base_commit=base, paths=paths,
+        entry_for_path=lambda path, base_entry: _working_entry(root, path=path, base_entry=base_entry))
+
+
 def record_review_receipt_from_snapshot(
     project_root: Path,
     *,
@@ -619,7 +641,7 @@ def record_review_receipt_from_snapshot(
         root, base_commit=str(candidate["base_commit"])
     ):
         raise CandidateScopeError("review_snapshot_repository_mismatch")
-    current = build_worktree_candidate(root, base_commit=str(candidate["base_commit"]))
+    current = _current_snapshot_candidate(root, loaded)
     if current["candidate_scope_sha256"] != candidate["candidate_scope_sha256"]:
         raise CandidateScopeError("review_stale")
     review_output = _load_review_evidence(
@@ -810,8 +832,12 @@ def validate_ship_candidate(project_root: Path) -> dict[str, object]:
         return {"status": "BLOCKED", "reason_code": "review_receipt_invalid", "changed_paths": []}
     base = str(receipt["base_commit"])
     try:
-        current = build_worktree_candidate(root, base_commit=base)
-    except CandidateScopeError as error:
+        loaded = load_peer_snapshot(
+            _artifact_path(root, receipt["review_snapshot_name"]),
+            expected_sha256=str(receipt["review_snapshot_sha256"]),
+        )
+        current = _current_snapshot_candidate(root, loaded)
+    except (CandidateScopeError, PeerSnapshotError) as error:
         return {
             "status": "BLOCKED",
             "reason_code": "review_stale",
@@ -834,7 +860,8 @@ def validate_ship_candidate(project_root: Path) -> dict[str, object]:
 
 
 def create_peer_snapshot(
-    project_root: Path, *, candidate: dict[str, object], review_diff: bytes
+    project_root: Path, *, candidate: dict[str, object], review_diff: bytes,
+    candidate_commit: str | None = None,
 ) -> dict[str, object]:
     root = _project_root(project_root)
     candidate = _validate_candidate(candidate)
@@ -845,6 +872,8 @@ def create_peer_snapshot(
         "review_diff_base64": base64.b64encode(review_diff).decode("ascii"),
         "review_diff_sha256": _sha256(review_diff),
     }
+    if candidate_commit is not None:
+        payload["candidate_commit"] = _commit(root, candidate_commit)
     encoded = _canonical_bytes(payload)
     directory = _snapshot_dir(root) / "peer-inputs"
     directory.mkdir(parents=True, exist_ok=True)
@@ -875,7 +904,7 @@ def load_peer_snapshot(path: Path, *, expected_sha256: str) -> dict[str, object]
         raise PeerSnapshotError("peer_snapshot_invalid") from error
     if (
         not isinstance(payload, dict)
-        or set(payload)
+        or set(payload) - {"candidate_commit"}
         != {
             "schema_version",
             "candidate",
@@ -898,7 +927,14 @@ def load_peer_snapshot(path: Path, *, expected_sha256: str) -> dict[str, object]
         raise PeerSnapshotError("peer_snapshot_invalid") from error
     if _sha256(review_diff) != payload["review_diff_sha256"]:
         raise PeerSnapshotError("peer_snapshot_invalid")
-    return {"candidate": candidate, "review_diff": review_diff}
+    candidate_commit = payload.get("candidate_commit")
+    if "candidate_commit" in payload and (
+        not isinstance(candidate_commit, str)
+        or len(candidate_commit) not in {40, 64}
+        or any(char not in "0123456789abcdef" for char in candidate_commit)
+    ):
+        raise PeerSnapshotError("peer_snapshot_invalid")
+    return {"candidate": candidate, "review_diff": review_diff, "candidate_commit": candidate_commit}
 
 
 def main() -> int:

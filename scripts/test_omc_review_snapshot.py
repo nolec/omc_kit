@@ -837,3 +837,99 @@ def test_async_peer_snapshot_retains_parent_diff_after_worktree_changes(
 
     assert loaded["review_diff"] == b"diff from parent\n"
     assert loaded["candidate"]["candidate_scope_sha256"] == candidate["candidate_scope_sha256"]
+
+
+@pytest.mark.parametrize("change", ["none", "tracked", "head", "staged_new"])
+def test_committed_review_cli_preserves_unrelated_untracked_and_blocks_real_changes(tmp_path, change):
+    repo, base = _repo(tmp_path)
+    (repo / "app.py").write_text("value = 'reviewed'\n")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-qm", "reviewed")
+    unrelated = repo / "local-notes.md"
+    unrelated.write_text("preserve this local note\n")
+    frozen = _snapshot_cli(repo, "capture-review", "--target", str(repo),
+        "--base-commit", base, "--candidate-commit", "HEAD")
+    raw = tmp_path / "review.txt"
+    raw.write_text("APPROVE\n")
+    evidence = _snapshot_cli(repo, "seal-review-output", "--target", str(repo),
+        "--review-snapshot", frozen["snapshot_path"], "--review-snapshot-sha256", frozen["snapshot_sha256"],
+        "--review-output", str(raw))
+    if change == "tracked":
+        (repo / "app.py").write_text("value = 'not reviewed'\n")
+    elif change == "head":
+        _git(repo, "commit", "--allow-empty", "-qm", "new HEAD")
+    elif change == "staged_new":
+        (repo / "extra.py").write_text("new_code = True\n")
+        _git(repo, "add", "extra.py")
+    args = [sys.executable, str(Path(snapshot.__file__)), "record-review", "--target", str(repo),
+        "--review-snapshot", frozen["snapshot_path"], "--review-snapshot-sha256", frozen["snapshot_sha256"],
+        "--review-evidence", evidence["evidence_path"], "--review-evidence-sha256", evidence["evidence_sha256"],
+        "--verdict", "APPROVE"]
+    result = subprocess.run(args, cwd=repo, capture_output=True, text=True)
+    report = json.loads(result.stdout)
+    assert unrelated.read_text() == "preserve this local note\n"
+    if change != "none":
+        assert result.returncode == 2 and report["reason_code"] == "review_stale"
+        return
+    assert result.returncode == 0, report
+    assert _snapshot_cli(repo, "validate-ship", "--target", str(repo))["status"] == "READY"
+    (repo / "app.py").write_text("value = 'changed after review'\n")
+    blocked = subprocess.run([sys.executable, str(Path(snapshot.__file__)), "validate-ship", "--target", str(repo)],
+        cwd=repo, capture_output=True, text=True)
+    assert blocked.returncode == 2 and json.loads(blocked.stdout)["reason_code"] == "review_stale"
+
+
+def test_worktree_review_still_blocks_new_untracked_file(tmp_path):
+    repo, base = _repo(tmp_path)
+    (repo / "app.py").write_text("value = 'reviewed'\n")
+    _approve(repo, base)
+    (repo / "extra.py").write_text("unreviewed = True\n")
+    assert snapshot.validate_ship_candidate(repo)["reason_code"] == "review_stale"
+
+
+def test_commit_binding_does_not_approve_uncommitted_scope(tmp_path):
+    repo, base = _repo(tmp_path)
+    (repo / "app.py").write_text("value = 'uncommitted'\n")
+    candidate = snapshot.build_worktree_candidate(repo, base_commit=base)
+    frozen = snapshot.create_peer_snapshot(repo, candidate=candidate, review_diff=b"diff\n", candidate_commit=base)
+    evidence = snapshot.seal_review_output(repo, snapshot_path=Path(frozen["path"]),
+        snapshot_sha256=frozen["sha256"], review_output=b"APPROVE\n")
+    with pytest.raises(snapshot.CandidateScopeError, match="review_stale"):
+        snapshot.record_review_receipt_from_snapshot(repo, snapshot_path=Path(frozen["path"]),
+            snapshot_sha256=frozen["sha256"], review_evidence_path=Path(evidence["evidence_path"]),
+            review_evidence_sha256=evidence["evidence_sha256"], verdict="APPROVE")
+
+
+@pytest.mark.parametrize("phase", ["record", "ship"])
+@pytest.mark.parametrize("mutation", ["modify", "delete"])
+def test_committed_review_blocks_index_change_when_worktree_restored(tmp_path, phase, mutation):
+    repo, base = _repo(tmp_path)
+    reviewed = "value = 'reviewed'\n"
+    (repo / "app.py").write_text(reviewed)
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-qm", "reviewed")
+    frozen = _snapshot_cli(repo, "capture-review", "--target", str(repo),
+        "--base-commit", base, "--candidate-commit", "HEAD")
+    raw = tmp_path / "review.txt"
+    raw.write_text("APPROVE\n")
+    evidence = _snapshot_cli(repo, "seal-review-output", "--target", str(repo),
+        "--review-snapshot", frozen["snapshot_path"], "--review-snapshot-sha256", frozen["snapshot_sha256"],
+        "--review-output", str(raw))
+    args = [sys.executable, str(Path(snapshot.__file__)), "record-review", "--target", str(repo),
+        "--review-snapshot", frozen["snapshot_path"], "--review-snapshot-sha256", frozen["snapshot_sha256"],
+        "--review-evidence", evidence["evidence_path"], "--review-evidence-sha256", evidence["evidence_sha256"],
+        "--verdict", "APPROVE"]
+    if phase == "ship":
+        subprocess.run(args, cwd=repo, check=True, capture_output=True, text=True)
+    if mutation == "modify":
+        (repo / "app.py").write_text("value = 'unreviewed'\n")
+        _git(repo, "add", "app.py")
+    else:
+        _git(repo, "rm", "-q", "app.py")
+    (repo / "app.py").write_text(reviewed)
+    assert _git(repo, "diff", "--cached", "--name-only") == "app.py"
+    if phase == "ship":
+        args = [sys.executable, str(Path(snapshot.__file__)), "validate-ship", "--target", str(repo)]
+    result = subprocess.run(args, cwd=repo, capture_output=True, text=True)
+    assert result.returncode == 2 and json.loads(result.stdout)["reason_code"] == "review_stale"
+    assert (repo / "app.py").read_text() == reviewed
