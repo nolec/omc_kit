@@ -324,6 +324,13 @@ def completed_reuse_summary(task: dict, step: dict, issue: dict, comparison: dic
              '다음 판단: ' + judgments.get(issue['code'], '확인정보 부족·보류합니다.'),
              '목표 근거: ' + target_evidence + ' / ' + str(target or '미지정'),
              '완료 근거: ' + receipt_evidence + ' / ' + short(record_path, 48)]
+    if issue['code'] == 'file_changed' and comparison['status'] == 'different':
+        lines.extend([
+            '변경 이유: 현재 내용이 검증된 목표와 달라 요청한 결과를 충족하지 못합니다.',
+            '요청 근거(원문·사실 검증 아님): ' + short(step.get('prompt') or '요청 내용 없음—업무 이유 확인 불가', 65),
+            '수정 제안: ' + short(step['completion']['output_path'], 25)
+            + '를 ' + short(target, 25) + '의 목표 내용에 맞춰 수정 후 재검증. 승인 전 보류.',
+        ])
     if not details:
         return [short(line) for line in lines]
     lines = [short(line, 400) for line in lines]
@@ -334,6 +341,10 @@ def completed_reuse_summary(task: dict, step: dict, issue: dict, comparison: dic
     lines.append('OMC 기록(작업 루트 기준): ' + path_label(record_path))
     lines.append('현재 파일(작업 루트 기준): ' + path_label(step['completion']['output_path']))
     lines.append('목표 파일(작업 루트 기준): ' + (path_label(target) if target else '미지정'))
+    if issue['code'] == 'file_changed' and comparison['status'] == 'different':
+        lines.append('수정 제안 상세: ' + path_label(step['completion']['output_path'])
+                     + '를 검증된 ' + path_label(target)
+                     + '의 목표 내용에 맞춰 수정 후 재검증. 승인 전 보류. 요약은 전체 파일 교체 지시가 아닙니다.')
     lines.append('단계 요청: ' + short(step.get('prompt') or '요청 내용 없음', 400))
     lines.append('완료 근거 주의: 완료 표시를 실제 반영 증명으로 사용하지 않습니다.')
     lines.append('구체적 대조: ' + short(action, 400))

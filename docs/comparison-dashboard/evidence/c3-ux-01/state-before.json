@@ -1,0 +1,35 @@
+{
+  "task_id": "c3-ux-01",
+  "status": "completed",
+  "steps": {
+    "check": {
+      "status": "completed",
+      "completion_receipt": {
+        "schema_version": "omc-autopilot-completion/v1",
+        "task_id": "c3-ux-01",
+        "task_spec_sha256": "c022d56664491068775393f08746b1be943c9261fcc7d53569bf18b4765ed440",
+        "step_id": "check",
+        "validator_id": "artifact_sha256",
+        "artifact_sha256": "319e839f7cfa1cbb7a1ab8d38c0cf09e1a1055adc5f12f6caf6326d6a2e3c74f",
+        "predecessor_receipts": [],
+        "receipt_sha256": "603ecae6039f7bda4b2df9e4e7161ec362e1eb009fa776e6c6e2c5d13bef343f"
+      }
+    },
+    "summary": {
+      "status": "completed",
+      "completion_receipt": {
+        "schema_version": "omc-autopilot-completion/v1",
+        "task_id": "c3-ux-01",
+        "task_spec_sha256": "c022d56664491068775393f08746b1be943c9261fcc7d53569bf18b4765ed440",
+        "step_id": "summary",
+        "validator_id": "artifact_sha256",
+        "artifact_sha256": "319e839f7cfa1cbb7a1ab8d38c0cf09e1a1055adc5f12f6caf6326d6a2e3c74f",
+        "predecessor_receipts": [
+          "603ecae6039f7bda4b2df9e4e7161ec362e1eb009fa776e6c6e2c5d13bef343f"
+        ],
+        "receipt_sha256": "e29dba5c7170a85a0e963823fce303e49f19e986da7ab2497ad6e3e2727e056e"
+      }
+    }
+  },
+  "task_spec_sha256": "c022d56664491068775393f08746b1be943c9261fcc7d53569bf18b4765ed440"
+}

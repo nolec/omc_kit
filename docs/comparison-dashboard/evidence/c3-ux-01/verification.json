@@ -1,0 +1,18 @@
+{
+  "installed_cli": "/Users/noseunglae/Downloads/dev/ai-cs/scripts/omc.py",
+  "version": {
+    "install_integrity": "clean",
+    "installed_version": "0.5.6",
+    "overall_status": "up_to_date",
+    "receipt_status": "current",
+    "release_status": "up_to_date",
+    "source_status": "unchanged",
+    "source_version": "0.5.6"
+  },
+  "exit_code": 1,
+  "stderr_empty": true,
+  "files_unchanged": true,
+  "provider_called": false,
+  "step_records_unchanged": true,
+  "comprehension": "사용자 응답 대기 · 미검증"
+}

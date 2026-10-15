@@ -100,7 +100,7 @@ def test_r3_long_task_id_public_details_preserves_record_path(tmp_path, task_id_
     details = subprocess.run(cmd + ['--recovery-details'], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=20)
     assert compact.returncode == details.returncode == 1
     assert not compact.stderr and not details.stderr
-    assert len(compact.stdout.splitlines()) <= 8 and len(compact.stdout) <= 800
+    assert len(compact.stdout.splitlines()) <= 11 and len(compact.stdout) <= 1100
     record = str(omc_autopilot._state_path(tmp_path, task['id']).relative_to(tmp_path))
     assert 'OMC 기록(작업 루트 기준): ' + record in details.stdout
     assert not (tmp_path / 'provider-called').exists()
@@ -187,9 +187,12 @@ def test_r3_completed_reuse_public_cli_surface(tmp_path, case, label):
             assert ('현재 유지→목표 미충족' if case in {'changed', 'long_title'} else '현재 정보로 선택 불가') in result.stdout
             assert ('목표 반영→파일 변경·재검증 필요' if case in {'changed', 'long_title'} else '보류') in result.stdout
         if case == 'changed':
+            assert '변경 이유:' in result.stdout and '요청 근거(원문·사실 검증 아님):' in result.stdout
+            assert '수정 제안: roadmap.md를 targets/roadmap.md의 목표 내용에 맞춰 수정 후 재검증' in result.stdout
+            assert '승인 전 보류' in result.stdout
             difference = next(line for line in result.stdout.splitlines() if line.startswith('확인한 차이:'))
             assert '새로운 내용' in difference and '복구 구현 완료' in difference
-        assert len(result.stdout.splitlines()) <= 8 and len(result.stdout) <= 800
+        assert len(result.stdout.splitlines()) <= 11 and len(result.stdout) <= 1100
         assert '\x1b' not in result.stdout
         assert not (tmp_path / 'provider-calls.txt').exists()
         saved = omc_autopilot._load_state(tmp_path, task['id'])
@@ -1462,7 +1465,7 @@ def test_reuse_public_cli_preview_includes_current_and_target_on_multiline_chang
     preview = next(line for line in result.stdout.splitlines() if line.startswith('확인한 차이:'))
     assert '현재 내용:' in preview and '이전 첫째' in preview
     assert '목표 내용:' in preview and '목표 첫째' in preview
-    assert len(result.stdout.splitlines()) <= 8 and len(result.stdout) <= 800
+    assert len(result.stdout.splitlines()) <= 11 and len(result.stdout) <= 1100
     assert not (tmp_path / 'provider-called').exists()
     assert (tmp_path / 'roadmap.md').read_text() == current
 
@@ -1505,9 +1508,29 @@ def test_reuse_public_cli_shows_evidence_before_requesting_choices(tmp_path, cas
     else:
         assert '완료 근거: 기록 없음' in result.stdout
         assert '목표 반영→' not in result.stdout
-    assert len(result.stdout.splitlines()) <= 8 and len(result.stdout) <= 800
+    assert len(result.stdout.splitlines()) <= 11 and len(result.stdout) <= 1100
     assert not (tmp_path / 'provider-called').exists()
     details = subprocess.run(cmd + ['--recovery-details'], cwd=tmp_path, env=env,
         capture_output=True, text=True, timeout=20)
     assert details.returncode == 1 and '단계 요청:' in details.stdout
     assert '완료 표시를 실제 반영 증명으로 사용하지 않습니다' in details.stdout
+
+
+@pytest.mark.parametrize('prompt', ['미해결 항목이 남아 재점검 필요로 기록한다', '', '긴 요청 ' * 200])
+def test_recovery_reason_and_concrete_proposal(prompt):
+    step = {'id': 'check', 'prompt': prompt, 'completion': {'output_path': 'check.md', 'target_path': 'targets/check.md'}}
+    comparison = {'status': 'different', 'summary_lines': ['현재 내용: 조치 완료', '목표 내용: 재점검 필요'], 'lines': []}
+    lines = workflow.completed_reuse_summary({'title': '점검 기록'}, step,
+        {'code': 'file_changed', 'label': '파일 내용 불일치'}, comparison, record_path='state.json')
+    text = '\n'.join(lines)
+    assert '변경 이유: 현재 내용이 검증된 목표와 달라 요청한 결과를 충족하지 못합니다.' in text
+    assert '요청 근거(원문·사실 검증 아님):' in text
+    assert ('요청 내용 없음' if not prompt else prompt[:10]) in text
+    assert '수정 제안: check.md를 targets/check.md의 목표 내용에 맞춰 수정 후 재검증' in text
+    assert '승인 전 보류' in text
+    if len(prompt) > 95:
+        assert '일부 생략' in text
+    unavailable = dict(comparison, status='unavailable', reason='목표 없음')
+    text = '\n'.join(workflow.completed_reuse_summary({}, step,
+        {'code': 'file_changed', 'label': '파일 내용 불일치'}, unavailable, record_path='state.json'))
+    assert '수정 제안:' not in text and '검증되지 않은 목표는 반영하지 않습니다' in text
