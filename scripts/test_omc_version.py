@@ -24,7 +24,7 @@ from omc_source_hash import source_sha256
 def test_source_kit_release_version_is_0_5_1() -> None:
     assert (Path(__file__).resolve().parents[1] / "VERSION").read_text(
         encoding="utf-8"
-    ).strip() == "0.5.7"
+    ).strip() == "0.5.8"
 
 
 def _sha256(path: Path) -> str:
