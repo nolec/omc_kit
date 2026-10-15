@@ -1,0 +1,12 @@
+{
+  "task_body_conflict": {
+    "source_case": "after-unrun-1",
+    "sha256": "217a5ff020ed8611f4c41fe7daa1b66d9c80580afb989b6708a14f561487d5d6",
+    "response": "TASK_REPORT\n\n작업 완료(코드·단위테스트·린트 PASS). 단, CONTRACT 필수 검증(R2 실제 홈 화면 테두리/클릭/3초 전환 직접 확인)을 브라우저 미실행으로 충족하지 못했다.\n\n<!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"task\",\"outcome\":\"blocked\",\"risk\":\"medium\",\"next_skill\":null,\"user_selection_needed\":true,\"reason_code\":\"verification_incomplete\"} -->\nVERDICT: BLOCK\n\n---\n\nREVIEW_REPORT\n\n코드 결함 없음. 필수 검증(R2 실제 홈 화면 테두리/클릭/3초 전환) 미실행으로 전체 완료 불가.\n\n[치명] 없음\n[중대] 없음\n[경미] 없음\n[제안] 없음\n[확인 필요] R2 실제 홈 화면 — 브라우저 미실행으로 테두리/클릭/3초 전환 동작 미검증\n\n검증 커맨드: R2 환경에서 홈 화면 직접 브라우저 확인\n판정: APPROVE WITH NOTES (코드 승인) / 전체 완료: 검증 미충족\n\n<!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"review\",\"outcome\":\"approved\",\"risk\":\"medium\",\"next_skill\":null,\"user_selection_needed\":true,\"reason_code\":\"verification_incomplete\"} -->\nVERDICT: APPROVE WITH NOTES"
+  },
+  "review_route_conflict": {
+    "source_case": "after-failed-0",
+    "sha256": "c085d80bffacfa7590965d8a39d73e972272633f777fdfe955500ed3731ea75b",
+    "response": "TASK_REPORT\n구현됨·검증 미완료. 스타일 값 테스트는 PASS했으나 필수 검증(R2 실제 홈 브라우저)이 FAIL — 불투명 자식 이미지가 부모 inset box-shadow를 덮어 테두리 미노출. DoD 미충족으로 완료 불가.\n<!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"task\",\"outcome\":\"blocked\",\"risk\":\"high\",\"next_skill\":null,\"user_selection_needed\":true,\"reason_code\":\"verification_incomplete\"} -->\nVERDICT: BLOCK\n\nREVIEW_REPORT\n**요약:** 부모에 inset box-shadow를 추가했으나 불투명 자식 이미지가 stacking context상 위에 렌더링되어 테두리가 실제 화면에서 보이지 않음. 스타일 단위 테스트만으로는 이 계층 관계를 검증할 수 없음.\n[치명] `parent inset box-shadow`가 불투명 `img` 자식에 가려짐 — R2 브라우저 FAIL로 직접 확인됨.\n[제안] 테두리를 이미지 위 레이어(예: `::after` 오버레이 또는 `outline`)로 변경해 stacking 문제 우회.\n**검증 커맨드:** R2 실제 홈 브라우저에서 광고 이미지 테두리 노출 육안 확인.\n**판정:** BLOCK — 코드 결함이 실사용 화면에서 재현됨.\n## 다음 추천\n테두리 구현 방식을 수정 후 `/task` 재실행.\n<!-- OMC_OUTPUT: {\"schema_version\":\"omc-output/v1\",\"stage\":\"review\",\"outcome\":\"blocked\",\"risk\":\"high\",\"next_skill\":\"omc-task\",\"user_selection_needed\":false,\"reason_code\":\"visual_stacking_defect_confirmed\"} -->\nVERDICT: BLOCK"
+  }
+}

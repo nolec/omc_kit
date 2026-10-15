@@ -1995,7 +1995,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "C3 다섯 항목 복구 안내 0.5.8 릴리스·정상11개 사용처 설치 완료 · 형식 동의와 이해 효과 구분 · 새 안내 이해 재검증 전",
+    "decision": "완료 보고 안내 구현·리뷰 승인 / 상태 문구 검증 미완료",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2083,7 +2083,7 @@
         "value": "기대 가치 미검증"
       }
     ],
-    "completion": "명시적 승인 범위 대조·기존 차단 유지. 격리 구현 리뷰146개 통과. 전체 품질 게이트: 4324 passed, 3 skipped, 12 deselected in 550.36s (0:09:10). 첫 실행의0.5.8 기대값 고정 테스트1개 실패는 기록 보존 후0.5.9로 수정했고 관련32개 및 전체 게이트 재검증 통과.",
+    "completion": "필수 검증이 남으면 전체 완료를 주장하지 않도록 안내를 보완했다. 관련 테스트 131개 통과, 리뷰 APPROVE WITH NOTES. 후속 응답의 기계 계약 12/12 통과, 첫 문장 정확 일치 5/12(마침표 차이 4개·상태 구분 차이 3개). 기존 두 오류는 이번 표본에서 재현되지 않았으나 일반 업무 재발 방지 효과는 미입증이다.",
     "deliverables": [
       "기록상 완료와 실행 결과 불확실 단계의 구분",
       "상태·산출물 위치와 안전한 대조 순서",
@@ -2091,20 +2091,20 @@
       "exit1·기존 차단·추가 호출 없음 유지"
     ],
     "limit": "OMC 실제 강제 중단과 Ralph persisted fixture는 경계가 다름. Ralph 선행 완료·review 표시는 입력 fixture. hook 차단은 최종 완료 승인과 별개. 실제 Architect·Claude 전체 경로, 사용자 효과·경쟁 우열 미검증.",
-    "not_done": "다섯 항목 안내의 CLI 단독 사용자 이해 재검증·실무/다중 사례 효과·동등 경쟁 비교는 미완료.",
+    "not_done": "이번 안내 릴리스·재설치, 상태 첫 문장 준수, 실무 효과·C3 사용자 이해·경쟁 우열은 미검증이다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
     "reason": "미실행 근거와 승인을 현재 요청·상태에 결속해 단일 단계만 재개하고 재중단은 차단한다.",
-    "state": "리뷰 승인 범위 대조 0.5.9 릴리스·정상11개 사용처 재설치·엄격 감사 완료 · 효과 비교 미실행",
-    "next": "대표 업무의 비교 기준·완료 조건을 정해 실제 효과 평가를 준비한다. C3 사용자 이해 재검증은 별도 미완료이며 관측 자동 재등록·재개는 하지 않는다."
+    "state": "완료 보고 안내 구현·리뷰 승인 / 상태 문구 검증 미완료",
+    "next": "실패·증거 불일치 사례의 첫 문장 구분을 재검증한다. 실제 업무 효과·경쟁 우열·C3 이해 효과는 미입증이며 관측 자동 재개는 하지 않는다."
   },
   "current_update": {
-    "status": "리뷰 승인 범위 대조 0.5.9 릴리스·정상11개 사용처 재설치·엄격 감사 완료 · 효과 비교 미실행",
-    "verification": "명시적 승인 범위 대조·기존 차단 유지. 격리 구현 리뷰146개 통과. 전체 품질 게이트: 4324 passed, 3 skipped, 12 deselected in 550.36s (0:09:10). 첫 실행의0.5.8 기대값 고정 테스트1개 실패는 기록 보존 후0.5.9로 수정했고 관련32개 및 전체 게이트 재검증 통과.",
+    "status": "완료 보고 안내 구현·리뷰 승인 / 상태 문구 검증 미완료",
+    "verification": "필수 검증이 남으면 전체 완료를 주장하지 않도록 안내를 보완했다. 관련 테스트 131개 통과, 리뷰 APPROVE WITH NOTES. 후속 응답의 기계 계약 12/12 통과, 첫 문장 정확 일치 5/12(마침표 차이 4개·상태 구분 차이 3개). 기존 두 오류는 이번 표본에서 재현되지 않았으나 일반 업무 재발 방지 효과는 미입증이다.",
     "installation": "0.5.9 로컬 패치 릴리스 6acbf14. 정상11개 사용처 installed_version0.5.9·clean·source unchanged·엄격 감사 통과. 업데이트 직전 대비 업무 파일34023개·관측 파일114개 변경0. 최초 백업 이후 업데이트 전 변경 관측0개는 별도 기록하고 보존. marketing-project는 기존 제외 유지. 원격 push·tag·GitHub release 없음.",
-    "next": "대표 업무의 비교 기준·완료 조건을 정해 실제 효과 평가를 준비한다. C3 사용자 이해 재검증은 별도 미완료이며 관측 자동 재등록·재개는 하지 않는다.",
+    "next": "실패·증거 불일치 사례의 첫 문장 구분을 재검증한다. 실제 업무 효과·경쟁 우열·C3 이해 효과는 미입증이며 관측 자동 재개는 하지 않는다.",
     "observation": "ai-cs·storefront 0.5.8 설치 무결성은 정상이나 v3 관측은 installation_binding_mismatch. ai-cs 완료 관측은 DISABLED_BY_USER 유지, storefront는 live_install_identity_invalid. 관련112개 파일 전후 해시 동일. 과거 표본별 유효성·자동 관측 재개는 미검증.",
     "display_observation": "두 프로젝트 모두 설치는 정상이다. 기존 관측 기록은 현재 설치와 연결되지 않으며, ai-cs의 사용자 중단 요청은 유지한다.",
-    "display_next": "대표 업무의 비교 기준과 완료 조건 정하기"
+    "display_next": "실패·증거 불일치 첫 문장 재검증"
   },
   "current_update_history": [
     {
@@ -2147,6 +2147,15 @@
         "display_observation": "두 프로젝트 모두 설치는 정상이다. 기존 관측 기록은 현재 설치와 연결되지 않으며, ai-cs의 사용자 중단 요청은 유지한다.",
         "display_next": "패치 릴리스와 재설치 필요성을 판단한다."
       }
+    },
+    {
+      "status": "리뷰 승인 범위 대조 0.5.9 릴리스·정상11개 사용처 재설치·엄격 감사 완료 · 효과 비교 미실행",
+      "verification": "명시적 승인 범위 대조·기존 차단 유지. 격리 구현 리뷰146개 통과. 전체 품질 게이트: 4324 passed, 3 skipped, 12 deselected in 550.36s (0:09:10). 첫 실행의0.5.8 기대값 고정 테스트1개 실패는 기록 보존 후0.5.9로 수정했고 관련32개 및 전체 게이트 재검증 통과.",
+      "installation": "0.5.9 로컬 패치 릴리스 6acbf14. 정상11개 사용처 installed_version0.5.9·clean·source unchanged·엄격 감사 통과. 업데이트 직전 대비 업무 파일34023개·관측 파일114개 변경0. 최초 백업 이후 업데이트 전 변경 관측0개는 별도 기록하고 보존. marketing-project는 기존 제외 유지. 원격 push·tag·GitHub release 없음.",
+      "next": "대표 업무의 비교 기준·완료 조건을 정해 실제 효과 평가를 준비한다. C3 사용자 이해 재검증은 별도 미완료이며 관측 자동 재등록·재개는 하지 않는다.",
+      "observation": "ai-cs·storefront 0.5.8 설치 무결성은 정상이나 v3 관측은 installation_binding_mismatch. ai-cs 완료 관측은 DISABLED_BY_USER 유지, storefront는 live_install_identity_invalid. 관련112개 파일 전후 해시 동일. 과거 표본별 유효성·자동 관측 재개는 미검증.",
+      "display_observation": "두 프로젝트 모두 설치는 정상이다. 기존 관측 기록은 현재 설치와 연결되지 않으며, ai-cs의 사용자 중단 요청은 유지한다.",
+      "display_next": "대표 업무의 비교 기준과 완료 조건 정하기"
     }
   ],
   "c3_validation_plan": {
@@ -2269,5 +2278,23 @@
     "installation": "0.5.9 로컬 패치 릴리스 6acbf14. 정상11개 사용처 installed_version0.5.9·clean·source unchanged·엄격 감사 통과. 업데이트 직전 대비 업무 파일34023개·관측 파일114개 변경0. 최초 백업 이후 업데이트 전 변경 관측0개는 별도 기록하고 보존. marketing-project는 기존 제외 유지. 원격 push·tag·GitHub release 없음.",
     "full_quality_gate": "4324 passed, 3 skipped, 12 deselected in 550.36s (0:09:10)",
     "release_commit": "6acbf14509fead78f047b46b6038455b123f2128"
+  },
+  "completion_reporting_update": {
+    "status": "완료 보고 안내 구현·리뷰 승인 / 상태 문구 검증 미완료",
+    "tests_passed": 131,
+    "machine_contract": {
+      "passed": 12,
+      "total": 12
+    },
+    "first_line_exact": {
+      "passed": 5,
+      "total": 12
+    },
+    "punctuation_differences": 4,
+    "status_selection_differences": 3,
+    "review_verdict": "APPROVE WITH NOTES",
+    "installation": "이번 변경 미릴리스·미설치; 기존 0.5.9 설치 이력과 별개",
+    "next": "실패·증거 불일치 사례의 첫 문장 구분을 재검증한다. 실제 업무 효과·경쟁 우열·C3 이해 효과는 미입증이며 관측 자동 재개는 하지 않는다.",
+    "evidence": "../completion-reporting-pilot-20261015.md"
   }
 }

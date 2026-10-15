@@ -30,7 +30,7 @@ Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`�
 안전 필수 항목: CONTRACT / RED / TDD GATE / Handoff는 압축해도 유지 | 작은 후속 수정도 Guard, CONTRACT, RED 등록 순서는 유지 | 범위 분리: 현재 dirty 변경과 이번 구현 범위를 섞지 않음
 
 ## PHASE 1 ▸ CONTRACT — 목표 / 범위 / DoD / 제약 / 사용자 컨펌:
-- 컨펌 전 구현 파일을 수정하지 않습니다.
+- 컨펌 전 구현 파일을 수정하지 않습니다. 완료 판정 계약: CONTRACT에서 필수 검증의 대상·방법·통과 조건을 확정한다. 통제된 컴포넌트 검증과 실제 서비스 검증은 별개이며 필수 대상 대신 다른 화면·버전의 증거를 쓰면 증거 불일치다. 필수 검증 통과일 때만 전체 완료를 보고한다. 미실행·확인 불가는 구현됨·검증 미완료, 실패는 수정 필요, 증거 불일치는 재검증 필요로 보고한다. 브라우저 불필요가 계약상 명확하면 브라우저 미실행만으로 보류하지 않는다. 기존 실패는 동일 기준의 비교 근거가 있을 때만 신규 실패와 구분한다. 코드 승인과 전체 완료를 구분하며 미충족 검증·사유·다음 행동 한 가지를 명시한다. 이 안내는 물리적 차단을 보장하지 않는다. task의 필수 검증이 미충족이면 본문 완료 주장 금지, outcome=blocked 및 reason_code=verification_incomplete로 보고하고 충족한 경우에만 outcome=done을 사용한다. 검증을 수행할 수 없으면 통과로 추정하거나 필수 조건을 임의로 낮추지 않는다. 기존 기계 계약: VERDICT는 PROCEED 또는 BLOCK만 사용한다. PROCEED=>done,omc-review,false; BLOCK=>blocked,null,true (순서: outcome,next_skill,user_selection_needed). risk는 low/medium/high이고 user_selection_needed는 boolean으로 출력한다. 검증 상태 첫 문장: 최종 task 보고 첫 줄은 정확히 다음 상태 문장 하나다: 통과=필수 검증 통과·작업 완료; 미실행/확인 불가=구현됨·검증 미완료; 실패=검증 실패·수정 필요; 증거 불일치=증거 불일치·재검증 필요. 실패 > 증거 불일치 > 미실행 > 통과 순으로 판정한다. 구현 반영이 확인되지 않았으면 구현 여부 확인 불가·검증 미완료를 사용한다. 첫 줄에 괄호나 부분 완료 주장을 붙이지 않는다. blocked 보고에는 작업 완료/전체 완료/구현 완료라는 부분 완료 제목을 쓰지 말고 확인된 반영 사실은 별도 줄의 구현 상태: 반영됨으로 쓴다.
 
 ## PHASE 2 ▸ DESIGN — 입력/출력 계약 / 실패·에러 정책 / 영향받는 파일:
 - decision / risk / next_action: 구현 상태 / 변경 위험도 / 다음 스킬 1개
