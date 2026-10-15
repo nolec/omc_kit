@@ -34,3 +34,28 @@ RED 원문: /private/tmp/omc-scope-red.txt — 8 failed, 62 deselected.
 ## 최종 확인
 
 관련 4개 파일 통합 실행은 145 passed와 지침 길이 제한 1 failed였다. 지침의 내용은 유지하며 형식을 줄이고 저장소 복사본을 동기화한 뒤, 지침 계약 테스트를 다시 실행해 통과했다. 최종 지침 테스트 원문은 /private/tmp/omc-scope-skill-final.txt에 있다. 제품 코드 최종 변경을 포함한 새 직접 테스트 12개는 /private/tmp/omc-scope-final-new-tests.txt에서 통과했다. 전체 프로젝트 회귀는 실행하지 않았다. staged 및 HEAD 기준 TDD 게이트와 diff 공백 검사도 통과했다.
+
+
+## 0.5.9 릴리스·설치 결과 — 2026-10-15
+
+명시적 승인 범위 대조·기존 차단 유지. 격리 구현 리뷰146개 통과. 전체 품질 게이트: 4324 passed, 3 skipped, 12 deselected in 550.36s (0:09:10). 첫 실행의0.5.8 기대값 고정 테스트1개 실패는 기록 보존 후0.5.9로 수정했고 관련32개 및 전체 게이트 재검증 통과.
+
+0.5.9 로컬 패치 릴리스 6acbf14. 정상11개 사용처 installed_version0.5.9·clean·source unchanged·엄격 감사 통과. 업데이트 직전 대비 업무 파일34023개·관측 파일114개 변경0. 최초 백업 이후 업데이트 전 변경 관측0개는 별도 기록하고 보존. marketing-project는 기존 제외 유지. 원격 push·tag·GitHub release 없음.
+
+source SHA-256: `992f4f7279e9e9eed1b9bac7e84f65c8f7e378f941dd59692112c27539be8333`.
+
+| 사용처 | 설치·감사 |
+| --- | --- |
+| ai-cs | 0.5.9 / clean / strict PASS |
+| codex-chat | 0.5.9 / clean / strict PASS |
+| marketing | 0.5.9 / clean / strict PASS |
+| research-auto | 0.5.9 / clean / strict PASS |
+| market-reasoning-engine | 0.5.9 / clean / strict PASS |
+| okx-maker-grid-bot-wind | 0.5.9 / clean / strict PASS |
+| sixshop3-storefront-fe | 0.5.9 / clean / strict PASS |
+| sixshop2 | 0.5.9 / clean / strict PASS |
+| sixshop2-landing | 0.5.9 / clean / strict PASS |
+| sixshop3-partner-center-fe | 0.5.9 / clean / strict PASS |
+| sellerhub-accounts-fe-restored | 0.5.9 / clean / strict PASS |
+
+백업·검증 원문: /private/tmp/omc-059-install-backups 및 /private/tmp/omc-059-install-results. ai-cs 사용자 중단과 기존 관측 설정·장부는 유지한다.
