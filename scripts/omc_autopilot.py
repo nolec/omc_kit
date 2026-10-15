@@ -1515,6 +1515,8 @@ def _cmd_run_locked(
             for line in narrative[:-1]:
                 print("  " + line)
             for fact in assessment:
+                requested_step = next(item for item in task['steps'] if item['id'] == fact['step_id'])
+                print('  단계 요청 원문: ' + json.dumps(requested_step.get('prompt') or '요청 내용 없음', ensure_ascii=False))
                 target = fact['target_path'] or '미지정'
                 print(f"  비교 대상 [{fact['name']}]: 현재 파일 {fact['file_path']} → 선언된 목표 파일 {target} (작업 루트: {root})")
                 comparison = fact['target_diff']

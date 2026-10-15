@@ -1,0 +1,9 @@
+{
+  "executor": "source CLI; not installed",
+  "exit_code": 1,
+  "files_unchanged": true,
+  "additional_calls": 0,
+  "default_fields": 5,
+  "fixture": "prepared synthetic completion records; not proof of actual earlier execution",
+  "user_comprehension": "unverified"
+}

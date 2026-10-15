@@ -266,147 +266,123 @@ def completed_reuse_issue(*, task: dict, step: dict, recorded: dict,
 
 def completed_reuse_summary(task: dict, step: dict, issue: dict, comparison: dict,
                            *, record_path: str, details: bool = False, recorded: dict | None = None) -> list[str]:
-    def short(text, limit=95):
-        clean = ''.join(char if char.isprintable() else ' ' for char in str(text))
+    """Five user-facing fields; stored requests are evidence, not verified intent."""
+    def short(value, limit=95):
+        clean = ''.join(char if char.isprintable() else ' ' for char in str(value))
         return clean if len(clean) <= limit else clean[:limit - 7] + '…일부 생략'
+
+    def path_label(value):
+        value = str(value)
+        return value if value.isprintable() else json.dumps(value, ensure_ascii=False)
+
     sid = step['id']
-    name = step.get('title') or sid
+    output = step['completion']['output_path']
     target = step['completion'].get('target_path')
-    if comparison['status'] == 'different':
-        summary = comparison.get('summary_lines', [])
-        current = next((line for line in summary if line.startswith('현재 내용:')), None)
-        goal = next((line for line in summary if line.startswith('목표 내용:')), None)
-        if current is not None or goal is not None:
-            difference = ' / '.join((short(current or '현재 내용: 요약 없음—상세 확인', 40),
-                                     short(goal or '목표 내용: 요약 없음—상세 확인', 40)))
+    title = task.get('title')
+    title = title.strip() if isinstance(title, str) else ''
+    prompt = step.get('prompt')
+    prompt = prompt if isinstance(prompt, str) else ''
+    name = step.get('title')
+    name = name.strip() if isinstance(name, str) else ''
+    followers = [item for item in task.get('steps', []) if sid in item.get('depends_on', [])]
+    request = short(title, 70) + ' (저장된 작업명)' if title else '작업명 정보 없음'
+    request += ' / 단계 요청 원문: ' + short(prompt or '요청 내용 없음—의도 확인 필요', 150)
+    intention = short(name or sid, 60) + ' 단계를 이어가려 했습니다.'
+    if followers:
+        intention += ' 완료 확인 뒤 ' + short(', '.join(item.get('title') or item['id'] for item in followers), 65) + ' 단계를 진행하려 했습니다.'
+    location = short(output, 85)
+    if followers:
+        location += ' / 관련 파일: ' + short(', '.join(item['completion']['output_path'] for item in followers), 85)
+
+    summary = comparison.get('summary_lines', [])
+    current = next((line[len('현재 내용: '):] for line in summary if line.startswith('현재 내용: ')), None)
+    goal = next((line[len('목표 내용: '):] for line in summary if line.startswith('목표 내용: ')), None)
+    reason = issue['label'] + '로 이 단계의 완료를 확인하지 못해 중단했습니다.'
+    proposal = '완료 여부를 확인할 근거를 먼저 확인한 뒤 다시 요청해 주세요.'
+    if issue['code'] == 'file_changed':
+        if comparison['status'] == 'different':
+            reason = '파일 내용 불일치. '
+            if current is not None and goal is not None:
+                reason += '현재 내용: ' + short(current, 45) + ' / 선언된 목표: ' + short(goal, 45) + '. '
+            else:
+                reason += '현재 파일이 작업에 선언된 목표와 다릅니다. 구체적 차이는 상세에서 확인하세요. '
+            reason += '목표와 사용자 요청의 일치 여부·변경 경위는 이 비교로 확정할 수 없습니다.'
+            proposal = ('선언된 목표와 요청이 일치하는지 먼저 확인하세요. 맞다면 '
+                        + short(output, 70) + '의 차이를 수정 요청하고 반영 후 재검증하세요. 생략된 요약을 전체 파일 교체 지시로 사용하지 마세요.')
+        elif comparison['status'] == 'equal':
+            reason = '파일 내용 불일치가 감지됐지만 현재 파일은 목표와 일치합니다. 완료 기록과 현재 결과가 맞는지 확인하지 못했습니다.'
+            proposal = '파일 일치만으로 완료로 바꾸지 말고, 이 단계의 완료 기록을 확인한 뒤 다시 요청해 주세요.'
         else:
-            difference = ' / '.join(summary[:3])
-        compare = '확인한 차이: ' + (difference or '현재 파일 내용이 선언된 목표와 다릅니다')
-    elif comparison['status'] == 'equal':
-        compare = '현재/목표: 현재 파일은 목표와 일치합니다. 파일 일치만으로 완료 기록을 대신하지 않습니다.'
-    else:
-        compare = '현재/목표: 비교 불가 — ' + comparison['reason']
-    if issue['code'] == 'predecessor_invalid':
-        action = '선행 단계 ' + ', '.join(step.get('depends_on', [])) + '의 완료 기록과 이 단계의 선행 결속을 대조하세요.'
+            reason = '파일 내용 불일치가 감지됐지만 목표와의 비교 불가: ' + short(comparison.get('reason', '확인정보 부족'), 75)
+            proposal = '현재 파일과 목표 내용을 먼저 확인해 주세요. 검증되지 않은 목표는 반영하지 않습니다. 보류합니다.'
+    elif issue['code'] == 'execution_uncertain':
+        reason = issue['label'] + ' 실행 여부가 불확실해 중단했습니다. 파일 일치만으로 과거 실행을 증명할 수 없습니다.'
+        if comparison['status'] == 'different':
+            if current is not None and goal is not None:
+                reason += ' 현재 내용: ' + short(current, 35) + ' / 선언된 목표: ' + short(goal, 35) + '.'
+            elif summary:
+                reason += ' 확인한 차이: ' + short(summary[0], 65)
+        proposal = '외부 실행 기록과 실제 반영 결과를 먼저 확인하세요. 미실행이 확인된 경우에만 별도 승인 후 재실행을 요청하고, 불명확하면 보류하세요.'
+    elif issue['code'] == 'predecessor_invalid':
+        proposal = '선행 단계 ' + short(', '.join(step.get('depends_on', [])), 60) + '의 완료 기록을 먼저 확인한 뒤 다시 요청해 주세요.'
     elif issue['code'] in {'receipt_missing', 'receipt_invalid'}:
-        action = '현재 작업·단계와 완료 기록을 대조하세요. 파일만 보고 완료로 바꾸지 마세요.'
-    else:
-        action = '현재 파일·선언된 목표·완료 기록을 대조하세요. 파일 변경 원인·외부 반영은 확인되지 않았습니다.'
-    judgments = {
-        'file_missing': '파일이 없어 현재 정보로 선택 불가·보류합니다.',
-        'file_unreadable': '파일 확인 불가·새 실행하지 않고 보류합니다.',
-        'artifact_invalid': '완료 조건 확인 실패·보류합니다.',
-        'receipt_missing': '완료 기록 없어 완료 인정 불가·보류합니다.',
-        'receipt_invalid': '완료 기록 검증 실패·보류합니다.',
-        'predecessor_invalid': '선행 단계의 완료 기록 확인 실패·보류합니다.',
-    }
-    if comparison['status'] == 'different':
-        judgments['file_changed'] = '현재 유지→목표 미충족 / 목표 반영→파일 변경·재검증 필요. 자동 반영 없음.'
-    elif comparison['status'] == 'equal':
-        judgments['file_changed'] = '파일 일치·완료 기록 확인 필요. 현재 완료 인정 없이 보류합니다.'
-    else:
-        judgments['file_changed'] = '현재 정보로 선택 불가·보류합니다. 검증되지 않은 목표는 반영하지 않습니다.'
+        proposal = '이 단계의 실제 완료를 확인할 기록을 먼저 확인한 뒤 다시 요청해 주세요. 파일만 보고 완료로 바꾸지 않습니다.'
+    elif issue['code'] in {'file_missing', 'file_unreadable'}:
+        proposal = '현재 파일과 경로를 먼저 확인해 주세요. 현재 정보로 선택 불가하므로 보류하며 새 실행은 하지 않습니다.'
+
+    lines = ['요청받은 작업: ' + request,
+             '하려던 일: ' + intention,
+             '작업 위치: ' + location,
+             '중단 이유: ' + reason,
+             '중단된 문제를 해결하기 위한 제안: ' + proposal
+             + ' 현재 수정·후속 실행 없이 보류 중이며 자동 재실행·복원·승인 없음. 상세: --recovery-details']
+    if not details:
+        return lines
+
+    # Preserve full lookup paths and request text only in explicitly requested details.
     target_evidence = '해시 검증됨' if comparison['status'] in {'different', 'equal'} else '검증 불가'
     receipt_evidence = ('기록 내용 미전달' if recorded is None else
                         '기록 없음' if recorded.get('completion_receipt') is None else
                         '완료 표시 있음·현재 완료 미인정')
-    title = task.get('title')
-    title = title.strip() if isinstance(title, str) else ''
-    reason = '중단 이유: ' + issue['label'] + '로 이 단계가 완료됐는지 확인하지 못했습니다.'
-    if issue['code'] == 'file_changed':
-        reason = ('중단 이유: 파일 내용 불일치. '
-                  '현재 근거로 누가·왜 바꿨는지는 확인할 수 없습니다.')
-    lines = ['하려던 일: ' + short(title or '작업 목적 정보 없음', 60) + ' 작업을 이어가려 했습니다. (요청 기록)',
-             f'작업 위치: 작업 폴더의 {step["completion"]["output_path"]} / {name} ({sid})',
-             reason,
-             compare,
-             '이번 실행: 이 단계의 파일 수정과 이후 작업을 진행하지 않고 보류했습니다. 자동 재실행·복원·승인 없음. 상세: --recovery-details',
-             '다음 판단: ' + judgments.get(issue['code'], '확인정보 부족·보류합니다.'),
-             '목표 근거: ' + target_evidence + ' / ' + str(target or '미지정'),
-             '완료 근거: ' + receipt_evidence + ' / ' + short(record_path, 48)]
+    lines.extend(['목표 근거: ' + target_evidence + ' / ' + path_label(target or '미지정'),
+                  '완료 근거: ' + receipt_evidence,
+                  'OMC 기록(작업 루트 기준): ' + path_label(record_path),
+                  '현재 파일(작업 루트 기준): ' + path_label(output),
+                  '목표 파일(작업 루트 기준): ' + path_label(target or '미지정'),
+                  '단계 요청: ' + path_label(prompt or '요청 내용 없음'),
+                  '작업명 원문: ' + path_label(title or '작업명 정보 없음'),
+                  '완료 근거 주의: 완료 표시를 실제 반영 증명으로 사용하지 않습니다.',
+                  '선언된 목표의 해시 일치는 사용자 요청과의 의미상 일치 증명이 아닙니다.',
+                  '구체적 대조: ' + proposal])
+    for item in followers:
+        lines.append('관련 파일(작업 루트 기준): ' + path_label(item['completion']['output_path']))
     if issue['code'] == 'file_changed' and comparison['status'] == 'different':
-        lines.extend([
-            '변경 이유: 현재 내용이 검증된 목표와 달라 요청한 결과를 충족하지 못합니다.',
-            '요청 근거(원문·사실 검증 아님): ' + short(step.get('prompt') or '요청 내용 없음—업무 이유 확인 불가', 65),
-            '수정 제안: ' + short(step['completion']['output_path'], 25)
-            + '를 ' + short(target, 25) + '의 목표 내용에 맞춰 수정 후 재검증. 승인 전 보류.',
-        ])
-    if not details:
-        return [short(line) for line in lines]
-    lines = [short(line, 400) for line in lines]
-    def path_label(value):
-        value = str(value)
-        return value if value.isprintable() else json.dumps(value, ensure_ascii=False)
-    # Critical lookup paths must remain complete even when the prose is abbreviated.
-    lines.append('OMC 기록(작업 루트 기준): ' + path_label(record_path))
-    lines.append('현재 파일(작업 루트 기준): ' + path_label(step['completion']['output_path']))
-    lines.append('목표 파일(작업 루트 기준): ' + (path_label(target) if target else '미지정'))
-    if issue['code'] == 'file_changed' and comparison['status'] == 'different':
-        lines.append('수정 제안 상세: ' + path_label(step['completion']['output_path'])
-                     + '를 검증된 ' + path_label(target)
-                     + '의 목표 내용에 맞춰 수정 후 재검증. 승인 전 보류. 요약은 전체 파일 교체 지시가 아닙니다.')
-    lines.append('단계 요청: ' + short(step.get('prompt') or '요청 내용 없음', 400))
-    lines.append('완료 근거 주의: 완료 표시를 실제 반영 증명으로 사용하지 않습니다.')
-    lines.append('구체적 대조: ' + short(action, 400))
+        lines.append('수정 제안 상세: 요청과 선언된 목표가 일치하는지 먼저 확인한 뒤 '
+                     + path_label(output) + '와 ' + path_label(target or '미지정')
+                     + '의 차이에 대한 수정을 요청하세요. 승인 전 보류. 요약은 전체 파일 교체 지시가 아닙니다.')
     lines.append('상세 비교는 현재 파일과 선언된 목표의 대조입니다. 과거 파일 내용 또는 실행 여부의 증명이 아닙니다.')
-    lines.extend(comparison.get('summary_lines', []))
+    lines.extend(summary)
     lines.extend(comparison.get('lines', []))
     return lines
 
 
 def compact_recovery_summary(task: dict, facts: list[dict], *, record_path: str | None = None) -> list[str]:
-    def short(value, limit=105):
-        text = ''.join(c if c.isprintable() else ' ' for c in str(value))
-        return text if len(text) <= limit else text[:limit - 9] + '…일부 생략'
-    title = task.get('title')
-    title = title.strip() if isinstance(title, str) else ''
-    lines = ['작업: ' + short(title or '작업 목적 정보 없음')]
-    for fact in facts[:2]:
-        progress = '완료 검증 통과' if fact.get('verified', False) else '완료 확인 불가'
-        name = fact.get('name', fact.get('step_id', fact['file_path']))
-        lines.append(short(f"진행: {name}: {progress} / {fact['file_path']} — {fact['file_status']}"))
-    summaries = [(fact['file_path'], line) for fact in facts if fact['target_diff']['status'] == 'different' for line in fact['target_diff']['summary_lines']]
-    if summaries:
-        change = f"{summaries[0][0]} — {summaries[0][1]}"
-        if summaries[0][1].startswith('바꿀 내용'):
-            group = next(fact['target_diff']['summary_lines'] for fact in facts
-                         if fact['file_path'] == summaries[0][0] and fact['target_diff']['status'] == 'different')
-            current = None
-            target = None
-            for line in group[1:]:
-                if line.startswith(('추가할 내용', '삭제할 내용', '바꿀 내용')):
-                    break
-                if line.startswith('현재 내용: ') and current is None:
-                    current = line[len('현재 내용: '):]
-                if line.startswith('목표 내용: ') and target is None:
-                    target = line[len('목표 내용: '):]
-            if current is not None and target is not None:
-                change = f"{short(summaries[0][0], 25)} — 바꿀 내용: 현재 {short(current, 25)} → 목표 {short(target, 25)}"
-            else:
-                change = f"{short(summaries[0][0], 25)} — 교체 내용 일부 생략; --recovery-details에서 확인"
-    elif facts and all(fact['target_diff']['status'] == 'equal' for fact in facts):
-        change = '추가·삭제·교체할 내용 없음—선언된 목표와 일치'
-    else:
-        change = '목표 파일 미지정 또는 비교 불가—상세 근거 확인 필요'
-    lines.append('필요한 변경: ' + short(change))
     uncertain = [fact for fact in facts if not fact.get('verified', False)]
     requested = [fact for fact in uncertain if fact.get('execution') == 'requested']
-    selected = (requested or uncertain)[:1]
-    target = (short(selected[0].get('name', selected[0].get('step_id', '단계 미상')), 25)
-              + ' [' + short(selected[0]['file_path'], 35) + ']' if selected else '불확실 단계 특정 불가')
-    location = short(record_path, 80) if record_path else 'OMC 기록 위치 미제공'
-    lines.append(f'확인 대상: {target} / OMC 기록(작업 루트 기준): {location}')
-    if selected:
-        execution = selected[0].get('execution')
-        reason = {'requested': '실행 요청 기록만 확인됨; 실제 호출·반영과 완료는 확인 불가',
-                  'returned': '실행기 반환 기록 확인됨; 실제 반영과 완료는 확인 불가'}.get(
-                      execution, '유효 실행 기록 없음; 실행 여부와 완료는 확인 불가')
-    else:
-        reason = '로컬 완료 검증 통과; 외부 반영은 확인 불가' if facts else '판독할 단계 기록 없음'
-    lines.append('판독: ' + reason + '. 외부 실행 기록·파일 수정 이력: 미수집; 판단 불가이면 보류 유지. 파일 일치만으로 실행 증명 불가.')
-    lines.append('현재 행동: 다시 실행하지 않고 보류합니다. 미실행이 확인돼도 별도 승인 후 재실행합니다. 자동 승인·수정·후속 실행 없음.')
-    lines.append('상세 확인: --recovery-details' + (' (단계·변경 일부 생략)' if len(facts) > 2 or len(summaries) > 1 else ''))
-    return lines
+    differing = [fact for fact in uncertain if fact['target_diff']['status'] == 'different']
+    selected = next(iter(requested or differing or uncertain or facts), None)
+    selected_id = selected.get('step_id') if selected else None
+    step = next((item for item in task.get('steps', []) if item['id'] == selected_id), None)
+    if step is None:
+        step = {'id': selected_id or 'unknown', 'title': selected.get('name', selected_id) if selected else '단계 정보 없음',
+                'completion': {'output_path': selected['file_path'] if selected else '파일 정보 없음'}}
+    phase = selected.get('execution') if selected else None
+    label = {'requested': '이전 실행 요청 기록은 있지만 실제 호출·반영과 완료를 확인하지 못했습니다.',
+             'returned': '실행기 반환 기록은 있지만 실제 반영과 완료를 확인하지 못했습니다.'}.get(
+                 phase, '현재 시도의 유효한 실행 관측 기록이 없어 실행·완료 여부를 확인하지 못했습니다.')
+    comparison = selected['target_diff'] if selected else {'status': 'unavailable', 'reason': '단계 정보 없음'}
+    return completed_reuse_summary(task, step, {'code': 'execution_uncertain', 'label': label},
+                                   comparison, record_path=record_path or '기록 위치 미제공')
 
 
 def recovery_narrative(task: dict, facts: list[dict]) -> list[str]:
