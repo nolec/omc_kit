@@ -151,6 +151,7 @@ def _v2_review_gap_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
         snapshot_sha256=str(frozen["snapshot_sha256"]),
         review_evidence_path=Path(str(evidence["evidence_path"])),
         review_evidence_sha256=str(evidence["evidence_sha256"]), verdict="APPROVE",
+        expected_paths=["app.py", ".omc/skill-effectiveness-cohort-v2.json", ".omc/skill-effectiveness-cohort-v2.jsonl"],
     )
     return first, second, roster_path
 

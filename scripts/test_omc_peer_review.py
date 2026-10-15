@@ -70,4 +70,5 @@ def test_peer_snapshot_cannot_bind_scope_changed_after_detach(tmp_path: Path) ->
             verdict="APPROVE",
             review_evidence_path=Path(str(evidence["evidence_path"])),
             review_evidence_sha256=str(evidence["evidence_sha256"]),
+            expected_paths=["app.py"],
         )

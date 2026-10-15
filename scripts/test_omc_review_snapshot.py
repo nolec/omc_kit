@@ -50,7 +50,7 @@ def _repo(tmp_path: Path) -> tuple[Path, str]:
     return repo, _git(repo, "rev-parse", "HEAD")
 
 
-def _approve(repo: Path, base: str) -> dict[str, object]:
+def _approve(repo: Path, base: str, expected_paths=None) -> dict[str, object]:
     frozen = snapshot.capture_review_snapshot(repo, base_commit=base)
     evidence = snapshot.seal_review_output(
         repo,
@@ -65,6 +65,7 @@ def _approve(repo: Path, base: str) -> dict[str, object]:
         review_evidence_path=Path(str(evidence["evidence_path"])),
         review_evidence_sha256=str(evidence["evidence_sha256"]),
         verdict="APPROVE",
+        expected_paths=["app.py"] if expected_paths is None else expected_paths,
     )
 
 
@@ -103,7 +104,7 @@ def test_previous_candidate_policy_receipt_requires_new_review(tmp_path, monkeyp
     current_policy = snapshot.CANDIDATE_POLICY_VERSION
     with monkeypatch.context() as patch:
         patch.setattr(snapshot, "CANDIDATE_POLICY_VERSION", "omc-candidate-policy/v1")
-        _approve(repo, base)
+        _approve(repo, base, expected_paths=[])
     assert current_policy == "omc-candidate-policy/v2"
     assert snapshot.validate_ship_candidate(repo)["status"] == "BLOCKED"
 
@@ -112,7 +113,7 @@ def test_previous_candidate_policy_receipt_requires_new_review(tmp_path, monkeyp
                                       ".omc/skill-effectiveness-cohort-v3.json.extra"])
 def test_v3_exclusion_does_not_hide_policy_implementation_or_similar_paths(tmp_path, relative):
     repo, base = _repo(tmp_path)
-    _approve(repo, base)
+    _approve(repo, base, expected_paths=[])
     path = repo / relative
     path.parent.mkdir(exist_ok=True)
     path.write_text('changed\n')
@@ -124,7 +125,7 @@ def test_v3_exclusion_does_not_hide_policy_implementation_or_similar_paths(tmp_p
 @pytest.mark.parametrize("corrupt", ["config", "ledger"])
 def test_observation_cli_rejects_corruption_independently_of_ship_identity(tmp_path, corrupt):
     repo, base = _repo(tmp_path)
-    _approve(repo, base)
+    _approve(repo, base, expected_paths=[])
     v3.config_path(repo).write_text(json.dumps({
         "generation": "v3", "enabled": True, "status": "DRAFT_SYNTHETIC",
         "activation_id": "synthetic-only", "activation_at": "2026-09-23T00:00:00Z",
@@ -163,13 +164,14 @@ def test_invalid_cohort_input_does_not_publish_receipt(tmp_path, session_id, tax
             review_evidence_path=Path(evidence["evidence_path"]),
             review_evidence_sha256=evidence["evidence_sha256"],
             cohort_session_id=session_id, cohort_taxonomy=taxonomy,
+            expected_paths=["app.py"],
         )
     assert not (repo / ".omc/state/review-snapshots/current.json").exists()
     assert not list((repo / ".omc/state/review-snapshots").glob("*.json"))
 
 
 def test_cli_reports_observation_failure_separately(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["snapshot", "record-review",
+    monkeypatch.setattr(sys, "argv", ["snapshot", "record-review", "--expected-path", "app.py",
         "--review-snapshot", "snapshot.json", "--review-snapshot-sha256", "a" * 64,
         "--review-evidence", "evidence.json", "--review-evidence-sha256", "b" * 64,
         "--verdict", "APPROVE"])
@@ -206,7 +208,7 @@ def test_opt_in_v3_review_bridge_uses_issued_receipt_and_explicit_followup(tmp_p
         snapshot_sha256=str(frozen["snapshot_sha256"]),
     )
     result = _snapshot_cli(
-        repo, "record-review", "--review-snapshot", str(frozen["snapshot_path"]),
+        repo, "record-review", "--expected-path", "app.py", "--expected-path", ".omc/hooks.json", "--expected-path", ".omc/policy.json", "--review-snapshot", str(frozen["snapshot_path"]),
         "--review-snapshot-sha256", str(frozen["snapshot_sha256"]),
         "--review-evidence", str(evidence["evidence_path"]),
         "--review-evidence-sha256", str(evidence["evidence_sha256"]),
@@ -224,6 +226,7 @@ def test_opt_in_v3_review_bridge_uses_issued_receipt_and_explicit_followup(tmp_p
         review_evidence_path=Path(str(evidence["evidence_path"])),
         review_evidence_sha256=str(evidence["evidence_sha256"]), verdict="APPROVE",
         cohort_session_id=str(review["session_id"]), cohort_taxonomy="verification_gap",
+        expected_paths=["app.py", ".omc/hooks.json", ".omc/policy.json"],
     )
     assert replay["cohort_capture_v3"] == {
         "status": "unobserved", "reason_code": "review_session_already_recorded",
@@ -274,7 +277,7 @@ def test_review_receipt_bridge_records_new_round_after_correction(tmp_path: Path
             snapshot_sha256=frozen["snapshot_sha256"],
         )
         result = _snapshot_cli(
-            repo, "record-review", "--review-snapshot", frozen["snapshot_path"],
+            repo, "record-review", "--expected-path", "app.py", "--expected-path", ".omc/hooks.json", "--expected-path", ".omc/policy.json", "--review-snapshot", frozen["snapshot_path"],
             "--review-snapshot-sha256", frozen["snapshot_sha256"],
             "--review-evidence", evidence["evidence_path"],
             "--review-evidence-sha256", evidence["evidence_sha256"],
@@ -335,6 +338,7 @@ def test_v3_choice_io_failure_does_not_hide_valid_review_receipt(
         review_evidence_path=Path(str(evidence["evidence_path"])),
         review_evidence_sha256=str(evidence["evidence_sha256"]),
         cohort_session_id=str(review["session_id"]), cohort_taxonomy="verification_gap",
+        expected_paths=["app.py"],
     )
     assert result["cohort_capture_v3"] == {
         "status": "unobserved", "reason_code": "capture_io_error",
@@ -393,7 +397,7 @@ def test_operational_v3_real_receipt_lifecycle_and_choice_retry(tmp_path, monkey
     result = snapshot.record_review_receipt_from_snapshot(repo,
         snapshot_path=Path(frozen["snapshot_path"]), snapshot_sha256=frozen["snapshot_sha256"],
         review_evidence_path=Path(evidence["evidence_path"]), review_evidence_sha256=evidence["evidence_sha256"],
-        verdict="APPROVE", cohort_session_id=review["session_id"], cohort_taxonomy="verification_gap")
+        verdict="APPROVE", cohort_session_id=review["session_id"], cohort_taxonomy="verification_gap", expected_paths=["app.py"])
     assert result["cohort_capture_v3"]["status"] == "unobserved"
     assert snapshot.load_review_receipt(repo, Path(result["receipt_path"]))["review_verdict"] == "APPROVE"
     monkeypatch.setattr(v3, "create_choice", original)
@@ -447,6 +451,7 @@ def test_committed_candidate_can_be_recorded_then_validated_for_ship(tmp_path: P
         review_evidence_path=Path(str(evidence["evidence_path"])),
         review_evidence_sha256=str(evidence["evidence_sha256"]),
         verdict="APPROVE",
+        expected_paths=["app.py"],
     )
 
     assert snapshot.validate_ship_candidate(repo)["status"] == "READY"
@@ -479,6 +484,7 @@ def test_review_receipt_rejects_scope_changed_after_capture(tmp_path: Path) -> N
             verdict="APPROVE",
             review_evidence_path=Path("/missing/evidence.json"),
             review_evidence_sha256="0" * 64,
+            expected_paths=["app.py"],
         )
 
 
@@ -503,6 +509,7 @@ def test_review_receipt_rejects_evidence_sealed_for_another_snapshot(tmp_path: P
             review_evidence_path=Path(str(evidence["evidence_path"])),
             review_evidence_sha256=str(evidence["evidence_sha256"]),
             verdict="APPROVE",
+            expected_paths=["app.py"],
         )
 
 
@@ -528,6 +535,7 @@ def test_post_commit_capture_records_and_ships_the_committed_candidate(tmp_path:
         review_evidence_path=Path(str(evidence["evidence_path"])),
         review_evidence_sha256=str(evidence["evidence_sha256"]),
         verdict="APPROVE",
+        expected_paths=["app.py"],
     )
 
     assert snapshot.validate_ship_candidate(repo)["status"] == "READY"
@@ -565,7 +573,7 @@ def test_cli_supports_post_commit_review_evidence_and_ship_validation(tmp_path: 
     )
     _snapshot_cli(
         repo,
-        "record-review",
+        "record-review", "--expected-path", "app.py",
         "--target",
         ".",
         "--review-snapshot",
@@ -640,7 +648,7 @@ def test_ship_blocks_code_test_and_untracked_scope_drift(
 def test_ship_blocks_untracked_mutation_and_deletion(tmp_path: Path) -> None:
     repo, base = _repo(tmp_path)
     (repo / "generated.py").write_text("version = 1\n", encoding="utf-8")
-    _approve(repo, base)
+    _approve(repo, base, expected_paths=["generated.py"])
 
     (repo / "generated.py").write_text("version = 2\n", encoding="utf-8")
     changed = snapshot.validate_ship_candidate(repo)
@@ -656,7 +664,7 @@ def test_ship_blocks_executable_mode_and_symlink_identity_drift(tmp_path: Path) 
     repo, base = _repo(tmp_path)
     (repo / "run.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     (repo / "link").symlink_to("app.py")
-    _approve(repo, base)
+    _approve(repo, base, expected_paths=["link", "run.sh"])
 
     os.chmod(repo / "run.sh", 0o755)
     (repo / "link").unlink()
@@ -689,7 +697,7 @@ def test_ship_blocks_submodule_identity_drift(tmp_path: Path) -> None:
     reviewed_child = _git(child, "rev-parse", "HEAD")
     _git(repo / "deps" / "child", "fetch", "origin")
     _git(repo / "deps" / "child", "checkout", "-q", reviewed_child)
-    _approve(repo, base)
+    _approve(repo, base, expected_paths=["deps/child"])
 
     (child / "child.py").write_text("value = 3\n", encoding="utf-8")
     _git(child, "add", "child.py")
@@ -861,7 +869,7 @@ def test_committed_review_cli_preserves_unrelated_untracked_and_blocks_real_chan
     elif change == "staged_new":
         (repo / "extra.py").write_text("new_code = True\n")
         _git(repo, "add", "extra.py")
-    args = [sys.executable, str(Path(snapshot.__file__)), "record-review", "--target", str(repo),
+    args = [sys.executable, str(Path(snapshot.__file__)), "record-review", "--expected-path", "app.py", "--target", str(repo),
         "--review-snapshot", frozen["snapshot_path"], "--review-snapshot-sha256", frozen["snapshot_sha256"],
         "--review-evidence", evidence["evidence_path"], "--review-evidence-sha256", evidence["evidence_sha256"],
         "--verdict", "APPROVE"]
@@ -897,7 +905,7 @@ def test_commit_binding_does_not_approve_uncommitted_scope(tmp_path):
     with pytest.raises(snapshot.CandidateScopeError, match="review_stale"):
         snapshot.record_review_receipt_from_snapshot(repo, snapshot_path=Path(frozen["path"]),
             snapshot_sha256=frozen["sha256"], review_evidence_path=Path(evidence["evidence_path"]),
-            review_evidence_sha256=evidence["evidence_sha256"], verdict="APPROVE")
+            review_evidence_sha256=evidence["evidence_sha256"], verdict="APPROVE", expected_paths=["app.py"])
 
 
 @pytest.mark.parametrize("phase", ["record", "ship"])
@@ -915,7 +923,7 @@ def test_committed_review_blocks_index_change_when_worktree_restored(tmp_path, p
     evidence = _snapshot_cli(repo, "seal-review-output", "--target", str(repo),
         "--review-snapshot", frozen["snapshot_path"], "--review-snapshot-sha256", frozen["snapshot_sha256"],
         "--review-output", str(raw))
-    args = [sys.executable, str(Path(snapshot.__file__)), "record-review", "--target", str(repo),
+    args = [sys.executable, str(Path(snapshot.__file__)), "record-review", "--expected-path", "app.py", "--target", str(repo),
         "--review-snapshot", frozen["snapshot_path"], "--review-snapshot-sha256", frozen["snapshot_sha256"],
         "--review-evidence", evidence["evidence_path"], "--review-evidence-sha256", evidence["evidence_sha256"],
         "--verdict", "APPROVE"]
@@ -933,3 +941,116 @@ def test_committed_review_blocks_index_change_when_worktree_restored(tmp_path, p
     result = subprocess.run(args, cwd=repo, capture_output=True, text=True)
     assert result.returncode == 2 and json.loads(result.stdout)["reason_code"] == "review_stale"
     assert (repo / "app.py").read_text() == reviewed
+
+
+def _scope_fixture(tmp_path):
+    repo, base = _repo(tmp_path)
+    (repo / 'app.py').write_text('changed\n')
+    frozen = snapshot.capture_review_snapshot(repo, base_commit=base)
+    raw = tmp_path / 'review.txt'
+    raw.write_text('approved app.py only\n')
+    evidence = _snapshot_cli(repo, 'seal-review-output', '--target', str(repo),
+        '--review-snapshot', frozen['snapshot_path'],
+        '--review-snapshot-sha256', frozen['snapshot_sha256'], '--review-output', str(raw))
+    args = ['record-review', '--target', str(repo), '--review-snapshot', frozen['snapshot_path'],
+        '--review-snapshot-sha256', frozen['snapshot_sha256'],
+        '--review-evidence', evidence['evidence_path'], '--review-evidence-sha256', evidence['evidence_sha256'],
+        '--verdict', 'APPROVE']
+    return repo, base, frozen, evidence, args
+
+
+@pytest.mark.parametrize('paths,reason', [
+    ([], 'review_scope_required'),
+    (['other.md'], 'review_scope_mismatch'),
+    (['app.py', 'app.py'], 'review_scope_invalid'),
+    (['../app.py'], 'review_scope_invalid'),
+    (['/app.py'], 'review_scope_invalid'),
+    (['./app.py'], 'review_scope_invalid'),
+])
+def test_explicit_scope_cli_rejects_without_publishing(tmp_path, paths, reason):
+    repo, _, _, _, args = _scope_fixture(tmp_path)
+    for path in paths:
+        args += ['--expected-path', path]
+    result = subprocess.run([sys.executable, snapshot.__file__, *args], capture_output=True, text=True)
+    assert result.returncode == 2
+    value = json.loads(result.stdout)
+    assert value['reason_code'] == reason
+    if reason == 'review_scope_mismatch':
+        assert value['unexpected_paths'] == ['app.py']
+        assert value['missing_paths'] == ['other.md']
+        assert value['next_action']
+    assert not (repo / '.omc/state/review-snapshots/current.json').exists()
+
+
+def test_explicit_scope_cli_success_then_mismatch_preserves_pointer(tmp_path):
+    repo, _, _, _, args = _scope_fixture(tmp_path)
+    approved = _snapshot_cli(repo, *args, '--expected-path', 'app.py')
+    assert approved['expected_paths'] == approved['actual_paths'] == ['app.py']
+    pointer = repo / '.omc/state/review-snapshots/current.json'
+    before = pointer.read_bytes()
+    result = subprocess.run([sys.executable, snapshot.__file__, *args, '--expected-path', 'other.md'],
+                            capture_output=True, text=True)
+    assert result.returncode == 2
+    assert pointer.read_bytes() == before
+
+
+def test_explicit_scope_internal_entry_cannot_omit(tmp_path):
+    repo, _, frozen, evidence, _ = _scope_fixture(tmp_path)
+    with pytest.raises(snapshot.CandidateScopeError, match='review_scope_required'):
+        snapshot.record_review_receipt_from_snapshot(repo,
+            snapshot_path=Path(frozen['snapshot_path']), snapshot_sha256=frozen['snapshot_sha256'],
+            review_evidence_path=Path(evidence['evidence_path']),
+            review_evidence_sha256=evidence['evidence_sha256'], verdict='APPROVE')
+
+
+def test_explicit_scope_lower_level_cannot_omit(tmp_path):
+    repo, base = _repo(tmp_path)
+    (repo / 'app.py').write_text('changed\n')
+    candidate = snapshot.build_worktree_candidate(repo, base_commit=base)
+    with pytest.raises(snapshot.CandidateScopeError, match='review_scope_required'):
+        snapshot.record_review_receipt(repo, candidate=candidate, verdict='APPROVE',
+            review_output=b'approved', review_snapshot_sha256='a'*64,
+            review_evidence_sha256='b'*64, review_snapshot_name='unused', review_evidence_name='unused')
+    assert not (repo / '.omc/state/review-snapshots/current.json').exists()
+
+
+@pytest.mark.parametrize('operation', ['delete', 'rename'])
+def test_explicit_scope_cli_deleted_and_renamed_paths(tmp_path, operation):
+    repo, base = _repo(tmp_path)
+    _git(repo, 'rm', 'app.py')
+    paths = ['app.py']
+    if operation == 'rename':
+        (repo / 'renamed.py').write_text("value = 'base'\n")
+        paths.append('renamed.py')
+    frozen = snapshot.capture_review_snapshot(repo, base_commit=base)
+    raw = tmp_path / 'review.txt'; raw.write_text('reviewed deletion/rename\n')
+    evidence = _snapshot_cli(repo, 'seal-review-output', '--target', str(repo),
+        '--review-snapshot', frozen['snapshot_path'], '--review-snapshot-sha256', frozen['snapshot_sha256'],
+        '--review-output', str(raw))
+    args = ['record-review', '--target', str(repo), '--review-snapshot', frozen['snapshot_path'],
+        '--review-snapshot-sha256', frozen['snapshot_sha256'], '--review-evidence', evidence['evidence_path'],
+        '--review-evidence-sha256', evidence['evidence_sha256'], '--verdict', 'APPROVE']
+    for path in paths: args.extend(['--expected-path', path])
+    result = _snapshot_cli(repo, *args)
+    receipt = json.loads(Path(result['receipt_path']).read_text())
+    assert sorted(e['path'] for e in receipt['candidate_scope']) == sorted(paths)
+
+
+def test_explicit_scope_cli_does_not_silently_drop_unrelated_lesson(tmp_path):
+    repo, base = _repo(tmp_path)
+    (repo / 'app.py').write_text('changed\n')
+    lesson = repo / '.omc/lessons/existing.md'
+    lesson.parent.mkdir(parents=True); lesson.write_text('preserve\n')
+    frozen = snapshot.capture_review_snapshot(repo, base_commit=base)
+    raw = tmp_path / 'review.txt'; raw.write_text('app.py only\n')
+    evidence = _snapshot_cli(repo, 'seal-review-output', '--target', str(repo),
+        '--review-snapshot', frozen['snapshot_path'], '--review-snapshot-sha256', frozen['snapshot_sha256'],
+        '--review-output', str(raw))
+    result = subprocess.run([sys.executable, snapshot.__file__, 'record-review', '--target', str(repo),
+        '--review-snapshot', frozen['snapshot_path'], '--review-snapshot-sha256', frozen['snapshot_sha256'],
+        '--review-evidence', evidence['evidence_path'], '--review-evidence-sha256', evidence['evidence_sha256'],
+        '--verdict', 'APPROVE', '--expected-path', 'app.py'], capture_output=True, text=True)
+    assert result.returncode == 2
+    assert json.loads(result.stdout)['unexpected_paths'] == ['.omc/lessons/existing.md']
+    assert lesson.read_text() == 'preserve\n'
+    assert not (repo / '.omc/state/review-snapshots/current.json').exists()

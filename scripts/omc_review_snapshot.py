@@ -400,6 +400,31 @@ def _validate_candidate(candidate: Any) -> dict[str, object]:
     return candidate
 
 
+class ReviewScopeError(CandidateScopeError):
+    def __init__(self, expected: list[str], actual: list[str]):
+        super().__init__("review_scope_mismatch")
+        self.details = {
+            "expected_paths": sorted(expected), "actual_paths": sorted(actual),
+            "missing_paths": sorted(set(expected) - set(actual)),
+            "unexpected_paths": sorted(set(actual) - set(expected)),
+            "next_action": "요청 범위를 확인하고, 의도한 변경만 격리한 후보에서 다시 리뷰하세요.",
+        }
+
+
+def _check_expected_paths(candidate: dict[str, object], expected_paths: list[str] | None) -> None:
+    if expected_paths is None:
+        raise CandidateScopeError("review_scope_required")
+    if (not isinstance(expected_paths, list)
+            or any(not isinstance(p, str) or not p or "\\" in p
+                   or Path(p).is_absolute() or ".." in Path(p).parts
+                   or Path(p).as_posix() != p or p == "." for p in expected_paths)
+            or len(set(expected_paths)) != len(expected_paths)):
+        raise CandidateScopeError("review_scope_invalid")
+    actual = [entry["path"] for entry in candidate["candidate_scope"]]
+    if sorted(expected_paths) != sorted(actual):
+        raise ReviewScopeError(expected_paths, actual)
+
+
 def record_review_receipt(
     project_root: Path,
     *,
@@ -410,10 +435,12 @@ def record_review_receipt(
     review_evidence_sha256: str,
     review_snapshot_name: str,
     review_evidence_name: str,
+    expected_paths: list[str] | None = None,
     verification_receipt_sha256: str | None = None,
 ) -> dict[str, object]:
     root = _project_root(project_root)
     candidate = _validate_candidate(candidate)
+    _check_expected_paths(candidate, expected_paths)
     if candidate["repository_identity"] != _repository_identity(
         root, base_commit=str(candidate["base_commit"])
     ):
@@ -464,6 +491,8 @@ def record_review_receipt(
     return {
         "receipt_path": str(receipt_path),
         "pointer_path": str(pointer_path),
+        "expected_paths": sorted(expected_paths),
+        "actual_paths": sorted(entry["path"] for entry in candidate["candidate_scope"]),
         "receipt_sha256": receipt["receipt_sha256"],
         "candidate_scope_sha256": candidate["candidate_scope_sha256"],
     }
@@ -621,6 +650,7 @@ def record_review_receipt_from_snapshot(
     verdict: str,
     review_evidence_path: Path,
     review_evidence_sha256: str,
+    expected_paths: list[str] | None = None,
     verification_receipt_sha256: str | None = None,
     cohort_session_id: str | None = None,
     cohort_taxonomy: str | None = None,
@@ -637,6 +667,7 @@ def record_review_receipt_from_snapshot(
     root = _project_root(project_root)
     loaded = load_peer_snapshot(snapshot_path, expected_sha256=snapshot_sha256)
     candidate = loaded["candidate"]
+    _check_expected_paths(candidate, expected_paths)
     if candidate["repository_identity"] != _repository_identity(
         root, base_commit=str(candidate["base_commit"])
     ):
@@ -653,6 +684,7 @@ def record_review_receipt_from_snapshot(
     result = record_review_receipt(
         root,
         candidate=candidate,
+        expected_paths=expected_paths,
         verdict=verdict,
         review_output=review_output,
         review_snapshot_sha256=snapshot_sha256,
@@ -947,6 +979,7 @@ def main() -> int:
     record.add_argument("--verdict", required=True, choices=sorted(_ALLOWED_VERDICTS))
     record.add_argument("--review-evidence", type=Path, required=True)
     record.add_argument("--review-evidence-sha256", required=True)
+    record.add_argument("--expected-path", action="append", help="요청에서 정한 저장소 상대 파일 경로; 반복 지정")
     record.add_argument("--verification-receipt-sha256")
     record.add_argument("--cohort-session-id")
     record.add_argument("--cohort-taxonomy")
@@ -972,6 +1005,7 @@ def main() -> int:
                 snapshot_path=args.review_snapshot,
                 snapshot_sha256=args.review_snapshot_sha256,
                 verdict=args.verdict,
+                expected_paths=args.expected_path,
                 review_evidence_path=args.review_evidence,
                 review_evidence_sha256=args.review_evidence_sha256,
                 verification_receipt_sha256=args.verification_receipt_sha256,
@@ -1000,7 +1034,8 @@ def main() -> int:
         else:
             result = validate_ship_candidate(args.target)
     except (CandidateScopeError, PeerSnapshotError, OSError) as error:
-        print(json.dumps({"status": "BLOCKED", "reason_code": str(error)}))
+        print(json.dumps({"status": "BLOCKED", "reason_code": str(error),
+                          **(error.details if isinstance(error, ReviewScopeError) else {})}, ensure_ascii=False))
         return 2
     if args.command == "record-review" and result.get("cohort_capture_v3", {}).get("status") == "unobserved":
         result["status"] = "REVIEW_RECORDED_OBSERVATION_UNOBSERVED"
