@@ -110,3 +110,14 @@ def test_retained_failure_responses_are_not_accepted_as_success():
     review = records["review_route_conflict"]["response"].split("REVIEW_REPORT", 1)[1].strip()
     with pytest.raises(OutputContractError, match="next_skill conflicts"):
         parse_envelope(review)
+
+
+@pytest.mark.parametrize('relative', ['templates/.agents/skills/omc-task/SKILL.md', 'templates/.claude/commands/task.md'])
+def test_task_final_contract_preserves_gate_footer_and_separates_phase_record(relative):
+    text = (ROOT/relative).read_text()
+    assert '## Machine output contract' in text
+    assert '마지막 두 줄' in text
+    assert '<!-- OMC_OUTPUT: {JSON} -->' in text
+    assert 'VERDICT: <VALUE>' in text
+    assert 'PHASE 7 기록은 최종 답변에 붙이지 않습니다' in text
+    assert 'complete-task의 기계 판정 두 줄을 최종 답변 끝에 그대로 복사' in text

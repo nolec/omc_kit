@@ -1,0 +1,12 @@
+{
+  "evidence_sha256": {
+    "assessment.json": "82efb852fd0a69cd9d69f9e967d130d760e41fb7fe72cedbb4098c451eced516",
+    "native-events.jsonl": "82ba3826f15cad33c604d9a73269f560e3cbb982f93d3071992a2b303ed39376",
+    "final.txt": "f0927ca37806331fbed1d8c8ac5c7866056d5ceef899b5c950bb37769171befb",
+    "preregistration.json": "daa4f0b57a829d69a5b376e486ab6d89237dfdfca509c39768f5716ed0c220be",
+    "request.md": "cac53d74b1f374076076d02db425108e93421111e40bbdd117bef4ee769456a9",
+    "execution.json": "dcc7fdacc8f73f53eb39f7fbc6dd9550a1a3a05b4d5f96224131e34671755449"
+  },
+  "raw_root": "/private/tmp/omc-workflow-boundary-20261015-222236",
+  "report_sha256": "5af35f77805094ce5c7b41f182308df6b1287eb68e8cf0a8788e1bcab0ee3d54"
+}

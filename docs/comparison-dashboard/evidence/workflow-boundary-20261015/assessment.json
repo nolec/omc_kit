@@ -1,0 +1,30 @@
+{
+  "schema_version": "omc-workflow-validation/v1",
+  "final_sha256": "f0927ca37806331fbed1d8c8ac5c7866056d5ceef899b5c950bb37769171befb",
+  "events_sha256": "82ba3826f15cad33c604d9a73269f560e3cbb982f93d3071992a2b303ed39376",
+  "required": {
+    "registration": "passed",
+    "procedure_calls": "passed",
+    "truthful_final": "unknown",
+    "verification_scope": "passed",
+    "native_exit": "passed"
+  },
+  "format_quality": {
+    "first_line": false,
+    "unique_status": true,
+    "single_next_action": false
+  },
+  "recompare_entry": "hold",
+  "issues": [
+    "output must contain exactly one OMC_OUTPUT envelope"
+  ],
+  "observed_verification_paths": [
+    "/private/tmp/omc-workflow-boundary-20261015-222236/candidate/.omc/verification/20261015T222237-d4f6bcf5.json"
+  ],
+  "observed_direct_write_paths": [
+    "/private/tmp/omc-workflow-boundary-20261015-222236/candidate/test_app.js",
+    "/private/tmp/omc-workflow-boundary-20261015-222236/candidate/app.js",
+    "/private/tmp/omc-workflow-boundary-20261015-222236/candidate/.omc/verification/20261015T222237-d4f6bcf5.json"
+  ],
+  "boundary": "Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication."
+}
