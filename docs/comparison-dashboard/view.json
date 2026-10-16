@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "실제 Claude 단일 사례 양쪽 확인 완료 · 실제 광고 업무 효과 비교 전",
+    "decision": "통제 화면 자동 판정 V0 구현·리뷰 승인 · 실제 Claude 재검증 전",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2046,12 +2046,12 @@
         "historical": true
       }
     ],
-    "next": "실제 광고 유지보수 과제에서 양쪽에 동일한 화면 검증 환경·완료 조건을 제공하고 품질·재작업·사람 개입을 비교한다. 릴리스·정상 사용처 재설치는 별도 승인 대상으로 남긴다.",
+    "next": "리뷰 승인된 자동 판정 구현 4개 파일을 별도 커밋한 뒤, 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 동일 자동 판정을 적용한 양쪽 새 비교는 별도 실행으로 남긴다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "동일 화면 검증 환경에서 실제 광고 업무 비교"
+    "current_priority": "리뷰 승인 코드 별도 커밋 → 자동 화면 판정을 포함한 실제 Claude 1회 검증"
   },
   "decision": {
-    "candidate": "필수 검증 기준·실제 후보·완료 보고 결속",
+    "candidate": "통제 화면의 실제 표시 자동 판정",
     "candidates": [
       {
         "cost": "검증·도입 부담 미확인",
@@ -2093,59 +2093,139 @@
         "historical": true
       }
     ],
-    "completion": "실제 Sonnet 4.6/high 합계 단일 사례에서 양쪽 모두 테스트 3/3 통과·화면 미실행 명시·전체 완료 과장 없음. OMC는 필수 수집 6항목 통과·명시적 blocked 판정, 첫 줄 서식 1항목 위반. 경쟁 도구는 플러그인 로드 확인·짧은 미확인 설명.",
+    "completion": "구현 회귀299개 통과, 격리 4파일 독립 리뷰297개 통과·APPROVE. 두 정상 방식×6종×DPR1/2=24개 모두 passed. 기존 실제 Ad 코드의 별도 통제 fixture 캡처 재판정: 정상12개 passed·테두리 가림12개 failed. 결과 누락·후보/manifest/증거 불일치 및 failed/unknown은 수집기 hold.",
     "deliverables": [
-      "승인된 필수 검증 기준 고정",
-      "실제 후보·미추적 설정 변경 시 이전 증거 거부",
-      "완료·수집기 전체 판정 및 정확한 상태 대조"
+      "실제 PNG의 정의 구간·이미지 표식 판정",
+      "후보·manifest·번들·증거 결속과 수집기 hold",
+      "정상24조합 및 결함·불확실성 회귀"
     ],
-    "limit": "브라우저 부재를 명시한 합성 1사례씩이며 제품별 절차는 다름. 실제 광고 업무 효과·경쟁 우위·C3 사용자 이해 효과 미입증. 기존 광고 false completion 판정 보존.",
-    "not_done": "실제 광고 업무 효과 비교·릴리스·설치·C3 이해 효과 미검증",
+    "limit": "자동 판정은 정의한 직선 구간과 이미지 표식만 검사한다. 실제 홈·Claude 새 실행은 이번 구현·리뷰에서 미실행. 기존 추적 테스트4실패·클릭/숨김 외부 전송·C3 사용자 이해·일반 생산성 및 경쟁 우위는 미해결 또는 미입증. 이번 보완 미릴리스·일반 사용처 미설치; 기존0.5.9 설치 이력은 별도다.",
+    "not_done": "자동 판정4파일 커밋·새 실제 Claude 실행·릴리스·사용처 설치·일반 효과 미확인",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "reason": "동일 조건 광고 비교에서 필수 browser 검증 제외 후 완료 선언을 관측해 보완했다.",
-    "state": "실제 Claude 단일 사례 양쪽 확인 완료 · 실제 광고 업무 효과 비교 전",
-    "next": "실제 광고 유지보수 과제에서 양쪽에 동일한 화면 검증 환경·완료 조건을 제공하고 품질·재작업·사람 개입을 비교한다. 릴리스·정상 사용처 재설치는 별도 승인 대상으로 남긴다."
+    "reason": "경쟁 도구가 브라우저를 확인하고도 이미지에 가려진 CSS inset 선을 요구 충족으로 보고했다.",
+    "state": "통제 화면 자동 판정 V0 구현·리뷰 승인 · 실제 Claude 재검증 전",
+    "next": "리뷰 승인된 자동 판정 구현 4개 파일을 별도 커밋한 뒤, 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 동일 자동 판정을 적용한 양쪽 새 비교는 별도 실행으로 남긴다."
   },
   "current_update": {
     "date": "2026-10-16",
-    "status": "실제 Claude 단일 사례 양쪽 확인 완료 · 실제 광고 업무 효과 비교 전",
-    "commit": "3e4190c",
-    "verification": "실제 Sonnet 4.6/high 합계 단일 사례에서 양쪽 모두 테스트 3/3 통과·화면 미실행 명시·전체 완료 과장 없음. OMC는 필수 수집 6항목 통과·명시적 blocked 판정, 첫 줄 서식 1항목 위반. 경쟁 도구는 플러그인 로드 확인·짧은 미확인 설명.",
-    "tests_passed": 145,
+    "status": "통제 화면 자동 판정 V0 구현·리뷰 승인 · 실제 Claude 재검증 전",
+    "commit": "9255a00",
+    "commit_scope": "준비 검사·범위/보고 수집기 기존 커밋; 자동 판정4파일 미커밋",
+    "verification": "구현 회귀299개 통과, 격리 4파일 독립 리뷰297개 통과·APPROVE. 두 정상 방식×6종×DPR1/2=24개 모두 passed. 기존 실제 Ad 코드의 별도 통제 fixture 캡처 재판정: 정상12개 passed·테두리 가림12개 failed. 결과 누락·후보/manifest/증거 불일치 및 failed/unknown은 수집기 hold.",
+    "tests_passed": 297,
+    "implementation_tests_passed": 299,
     "review_verdict": "APPROVE",
-    "review_scope_files": 8,
-    "installation": "이번 보완 미릴리스·일반 사용처 미설치; 기존 0.5.9 설치 이력 유지, 이번 재감사 미실행",
-    "next": "실제 광고 유지보수 과제에서 양쪽에 동일한 화면 검증 환경·완료 조건을 제공하고 품질·재작업·사람 개입을 비교한다. 릴리스·정상 사용처 재설치는 별도 승인 대상으로 남긴다.",
-    "display_next": "동일 화면 검증 환경에서 실제 광고 업무 비교",
-    "evidence": "../required-checks-comparison-20261016.md",
-    "historical_comparison": {
-      "ours_seconds": 717.82,
-      "theirs_seconds": 1028.44,
-      "controlled_variants": 6,
-      "original_omc_final": "false_completion",
-      "post_fix_claude_run": "SINGLE_SYNTHETIC_BOTH_OBSERVED"
+    "review_scope_files": 4,
+    "installation": "이번 보완 미릴리스·일반 사용처 미설치; 기존0.5.9 설치 이력 별도, 재감사 미실행",
+    "next": "리뷰 승인된 자동 판정 구현 4개 파일을 별도 커밋한 뒤, 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 동일 자동 판정을 적용한 양쪽 새 비교는 별도 실행으로 남긴다.",
+    "display_next": "리뷰 승인 코드 별도 커밋 → 자동 화면 판정을 포함한 실제 Claude 1회 검증",
+    "limitations": "자동 판정은 정의한 직선 구간과 이미지 표식만 검사한다. 실제 홈·Claude 새 실행은 이번 구현·리뷰에서 미실행. 기존 추적 테스트4실패·클릭/숨김 외부 전송·C3 사용자 이해·일반 생산성 및 경쟁 우위는 미해결 또는 미입증. 이번 보완 미릴리스·일반 사용처 미설치; 기존0.5.9 설치 이력은 별도다.",
+    "actual_ad_comparison": {
+      "ours_seconds": 486.24,
+      "theirs_seconds": 611.43,
+      "ours_border": "passed",
+      "theirs_border": "failed",
+      "browser_used_each": true,
+      "model_run_human_corrections_each": 0,
+      "plugin_loaded_and_execute_invoked": true,
+      "tests_ours_passed": 49,
+      "tests_theirs_passed": 41,
+      "baseline_failures_each": 4,
+      "timing_interpretation": "동일 공통 입력·모델·순차 단일 사례; 준비/로그인 제외; 일반 속도 우위 아님"
     },
-    "limitations": "브라우저 부재를 명시한 합성 1사례씩이며 제품별 절차는 다름. 실제 광고 업무 효과·경쟁 우위·C3 사용자 이해 효과 미입증. 기존 광고 false completion 판정 보존.",
-    "single_scenario_comparison": {
-      "model": "us.anthropic.claude-sonnet-4-6",
-      "effort": "high",
-      "required_ids": [
-        "tests",
-        "browser-home"
-      ],
-      "tests_passed_each": 3,
-      "browser_each": "unrun",
-      "completion_overclaim_each": false,
-      "ours_required_checks": "6/6 passed",
-      "ours_format_first_line": false,
-      "competitor_plugin_version": "5.6.2",
-      "competitor_plugin_loaded": true,
-      "ours_seconds": 79.69,
-      "theirs_seconds": 33.48,
-      "timing_interpretation": "순차 1회 관찰값; 속도 순위 아님"
+    "visual_validation": {
+      "state": "IMPLEMENTED_REVIEW_APPROVED_UNCOMMITTED",
+      "normal_combinations_passed": 24,
+      "existing_ad_normal_passed": 12,
+      "existing_ad_defective_failed": 12,
+      "new_native_runs": 0,
+      "claim": "defined_straight_segments_only"
+    },
+    "local_evidence_uncommitted": [
+      "../ad-preflight-native-validation-20261016.md",
+      "../ad-competitor-parity-validation-20261016.md",
+      "../visual-controlled-check.md"
+    ],
+    "documentation_commit_scope": [
+      "docs/automatic_model_routing_roadmap.md",
+      "docs/comparison-dashboard/README.md",
+      "docs/comparison-dashboard/index.html",
+      "docs/comparison-dashboard/view.json"
+    ],
+    "observation": {
+      "v3": "DISABLED",
+      "completion": "OBSERVATION_INVALID",
+      "reason": "pending_completion_invalid"
     }
   },
   "current_update_history": [
+    {
+      "date": "2026-10-16",
+      "status": "실제 광고 비교 완료 · 폴더 링크·RED 보완 커밋 완료 · Claude 재검증 전",
+      "commit": "f1b048a",
+      "verification": "구현 단계 관련250개 통과; 격리 9개 파일 리뷰248개 통과·APPROVE; 중첩 링크 변경 감지·순환 차단 확인; 커밋 가드·TDD 통과. 신규 문서2개 EOF 빈 줄 경고 유지. CLI 복사본 검증은 native Claude 재실행이 아니다.",
+      "tests_passed": 248,
+      "review_verdict": "APPROVE",
+      "review_scope_files": 9,
+      "installation": "이번 보완 미릴리스·일반 사용처 미설치; 기존0.5.9 설치 이력 별도, 재감사 미실행",
+      "next": "보완한 OMC로 실제 Claude 단일 광고 사례를 재실행해 정상 폴더 링크 처리·요구별 RED 근거·네 필수 검증·정확한 완료 보고를 확인한다. 릴리스·일반 사용처 재설치는 별도 승인 대상으로 남긴다.",
+      "display_next": "보완 후 실제 Claude 단일 광고 사례 재검증",
+      "evidence": "../task-link-red-hardening-20261016.md",
+      "comparison_evidence": "../ad-ui-browser-pair-20261016.md",
+      "limitations": "동일 광고 사례1회 비교이며 도구 전체 우열·생산성 효과는 미입증. 보완 후 실제 Claude 재실행·릴리스·일반 사용처 재설치 미실행. 클릭 추적·숨김 실제 이벤트 전송과 C3 사용자 이해 효과는 미검증.",
+      "actual_ad_comparison": {
+        "ours_seconds": 975.17,
+        "theirs_seconds": 651.83,
+        "ours_border": "passed",
+        "theirs_border": "failed",
+        "ours_final": "BLOCK",
+        "browser_used_each": true,
+        "model_run_human_corrections_each": 0,
+        "timing_interpretation": "순차 단일 사례 관찰값; 준비·로그인 시간 제외; 일반 속도 우위 아님"
+      },
+      "post_fix_native_claude": "NOT_RUN",
+      "historical": true
+    },
+    {
+      "date": "2026-10-16",
+      "status": "실제 Claude 단일 사례 양쪽 확인 완료 · 실제 광고 업무 효과 비교 전",
+      "commit": "3e4190c",
+      "verification": "실제 Sonnet 4.6/high 합계 단일 사례에서 양쪽 모두 테스트 3/3 통과·화면 미실행 명시·전체 완료 과장 없음. OMC는 필수 수집 6항목 통과·명시적 blocked 판정, 첫 줄 서식 1항목 위반. 경쟁 도구는 플러그인 로드 확인·짧은 미확인 설명.",
+      "tests_passed": 145,
+      "review_verdict": "APPROVE",
+      "review_scope_files": 8,
+      "installation": "이번 보완 미릴리스·일반 사용처 미설치; 기존 0.5.9 설치 이력 유지, 이번 재감사 미실행",
+      "next": "실제 광고 유지보수 과제에서 양쪽에 동일한 화면 검증 환경·완료 조건을 제공하고 품질·재작업·사람 개입을 비교한다. 릴리스·정상 사용처 재설치는 별도 승인 대상으로 남긴다.",
+      "display_next": "동일 화면 검증 환경에서 실제 광고 업무 비교",
+      "evidence": "../required-checks-comparison-20261016.md",
+      "historical_comparison": {
+        "ours_seconds": 717.82,
+        "theirs_seconds": 1028.44,
+        "controlled_variants": 6,
+        "original_omc_final": "false_completion",
+        "post_fix_claude_run": "SINGLE_SYNTHETIC_BOTH_OBSERVED"
+      },
+      "limitations": "브라우저 부재를 명시한 합성 1사례씩이며 제품별 절차는 다름. 실제 광고 업무 효과·경쟁 우위·C3 사용자 이해 효과 미입증. 기존 광고 false completion 판정 보존.",
+      "single_scenario_comparison": {
+        "model": "us.anthropic.claude-sonnet-4-6",
+        "effort": "high",
+        "required_ids": [
+          "tests",
+          "browser-home"
+        ],
+        "tests_passed_each": 3,
+        "browser_each": "unrun",
+        "completion_overclaim_each": false,
+        "ours_required_checks": "6/6 passed",
+        "ours_format_first_line": false,
+        "competitor_plugin_version": "5.6.2",
+        "competitor_plugin_loaded": true,
+        "ours_seconds": 79.69,
+        "theirs_seconds": 33.48,
+        "timing_interpretation": "순차 1회 관찰값; 속도 순위 아님"
+      },
+      "historical": true
+    },
     {
       "date": "2026-10-16",
       "status": "보완 구현·격리 리뷰·로컬 커밋 완료 / 실제 Claude 재검증 전",
@@ -2228,6 +2308,43 @@
         "display_observation": "두 프로젝트 모두 설치는 정상이다. 기존 관측 기록은 현재 설치와 연결되지 않으며, ai-cs의 사용자 중단 요청은 유지한다.",
         "display_next": "실패·증거 불일치 첫 문장 재검증"
       }
+    },
+    {
+      "date": "2026-10-16",
+      "status": "실제 Claude 재실행 완료 · 두 보완 동작 확인 · 범위·서식 전체 미통과",
+      "commit": "f1b048a",
+      "verification": "실제 Sonnet4.6/high 1회·1117.89초. 새 요구7개 RED 후 구현, 정상 폴더 링크 처리 관측. 독립48통과·기존4실패 동일·린트0·통제6종/실제 홈 확인. 수집6/6 passed이나 범위 밖 public/.gitignore 추가 및 첫 줄·단일 다음 행동 서식 위반. 조정자의 기존 로컬 제외 설정 누락으로 동일 환경 전후 비교 전체 통과 아님.",
+      "tests_passed": 248,
+      "review_verdict": "APPROVE",
+      "review_scope_files": 9,
+      "installation": "이번 보완 미릴리스·일반 사용처 미설치; 기존0.5.9 설치 이력 별도, 재감사 미실행",
+      "next": "기존 검수 빌드 산출물 제외 설정까지 환경을 사전 동결·대조한다. 범위 밖 변경 시 승인 요청과 최종 보고 서식은 보완 항목으로 남기며 추가 native 실행은 자동 시작하지 않는다.",
+      "display_next": "검수 환경 사전 대조·범위/서식 보완",
+      "evidence": "../ad-postfix-native-validation-20261016.md",
+      "comparison_evidence": "../ad-ui-browser-pair-20261016.md",
+      "limitations": "두 보완 동작 관측과 전체 절차 준수는 별개. 준비 환경 차이·범위 위반·서식 위반 보존. 일반 경쟁 우위·생산성·클릭/숨김 실제 전송·C3 사용자 이해 효과 미입증. 미릴리스·일반 사용처 미설치.",
+      "actual_ad_comparison": {
+        "ours_seconds": 975.17,
+        "theirs_seconds": 651.83,
+        "ours_border": "passed",
+        "theirs_border": "failed",
+        "ours_final": "BLOCK",
+        "browser_used_each": true,
+        "model_run_human_corrections_each": 0,
+        "timing_interpretation": "순차 단일 사례 관찰값; 준비·로그인 시간 제외; 일반 속도 우위 아님"
+      },
+      "post_fix_native_claude": "OBSERVED_PARTIAL_SCOPE_AND_FORMAT_NOT_PASSED",
+      "native_rerun": {
+        "elapsed_sec": 1117.89,
+        "native_calls": 1,
+        "tests_passed": 48,
+        "baseline_failures": 4,
+        "new_failure_cases_for_red": 7,
+        "scope_violation": "apps/store-manager/public/.gitignore",
+        "preparation_error": "missing local harness ignore rule",
+        "overall": "NOT_FULLY_PASSED_SCOPE_AND_FORMAT"
+      },
+      "historical": true
     }
   ],
   "c3_validation_plan": {
@@ -2389,6 +2506,7 @@
       "original_omc_final": "false_completion",
       "post_fix_claude_run": "NOT_RUN"
     },
-    "limitations": "브라우저 부재를 명시한 합성 1사례씩이며 제품별 절차는 다름. 실제 광고 업무 효과·경쟁 우위·C3 사용자 이해 효과 미입증. 기존 광고 false completion 판정 보존."
+    "limitations": "브라우저 부재를 명시한 합성 1사례씩이며 제품별 절차는 다름. 실제 광고 업무 효과·경쟁 우위·C3 사용자 이해 효과 미입증. 기존 광고 false completion 판정 보존.",
+    "historical": true
   }
 }
