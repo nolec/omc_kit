@@ -25,10 +25,9 @@ def register(root, doc):
 
 
 def record(root, doc):
+    from test_omc_pipeline_link_red import red_proof
     stored=guard._load_approved_basis(root,'s')
-    state=guard._load_state(root)
-    state.update(red_session_id='s',red_done_tests=['test_app.py'])
-    guard._save_state(root,state)
+    assert guard.cmd_red_done(root, 'test_app.py', red_proof(root, stored)) == 0
     checks={c['id']:{'status':'passed','evidence':'observed output','definition_sha256':guard._check_digest(c),
                      'code_snapshot_sha256':guard._code_snapshot_digest(root)} for c in doc['checks']}
     p=root/'.omc/verification/result.json';p.parent.mkdir(exist_ok=True)

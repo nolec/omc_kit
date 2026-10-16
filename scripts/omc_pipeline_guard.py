@@ -241,15 +241,93 @@ def cmd_check(root: Path, file_path: str, bypass: bool = False) -> int:
     print("===========================================================")
     return 1
 
-def cmd_red_done(root: Path, test_file: str) -> int:
+def _red_evidence(root: Path, test_file: str, evidence_file: Path, state: dict,
+                  historical: bool = False) -> dict:
+    """Validate caller-recorded case identity, not semantic relevance or execution truth."""
+    evidence_file = evidence_file.resolve()
+    evidence_file.relative_to(root.resolve())
+    raw = evidence_file.read_bytes()
+    doc = json.loads(raw)
+    basis = _load_approved_basis(root, state.get("session_id", ""))
+    if (doc.get("session_id") != state.get("session_id") or doc.get("basis_sha256") != _basis_digest(basis)
+            or state.get("basis_sha256") != _basis_digest(basis)):
+        raise ValueError("RED 근거의 세션·승인 기준 불일치")
+    path = (root / test_file).resolve()
+    path.relative_to(root.resolve())
+    if not _is_test_file(test_file) or doc.get("test_file") != test_file:
+        raise ValueError("RED 테스트 파일 불일치")
+    if not historical and doc.get("test_sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
+        raise ValueError("RED 실행 당시 테스트 내용 불일치")
+    if doc.get("check_id") not in {c["id"] for c in basis["checks"]}:
+        raise ValueError("RED 근거에 승인된 검증 ID가 필요합니다")
+    for key in ("expected_failure", "command", "case_id"):
+        if not isinstance(doc.get(key), str) or not doc[key].strip():
+            raise ValueError("RED 요구·실패 케이스·명령 기록이 필요합니다")
+    for key in ("baseline_failed_cases", "failed_cases"):
+        if not isinstance(doc.get(key), list) or any(not isinstance(x, str) or not x.strip() for x in doc[key]):
+            raise ValueError("RED의 기존·현재 실패 케이스 목록이 필요합니다")
+    if doc["case_id"] not in set(doc["failed_cases"]) - set(doc["baseline_failed_cases"]):
+        raise ValueError("기존 실패만으로 이번 요구의 RED를 등록할 수 없습니다")
+    if type(doc.get("exit_code")) is not int or doc["exit_code"] != 1:
+        raise ValueError("RED는 테스트 실패 종료 코드 1이 필요합니다; 실행 불가는 실패 근거가 아닙니다")
+    output = (root / doc["output_file"]).resolve()
+    output.relative_to(root.resolve())
+    data = output.read_bytes()
+    if not data.strip() or hashlib.sha256(data).hexdigest() != doc.get("output_sha256"):
+        raise ValueError("RED 실제 출력 기록 불일치")
+    return {"file": str(evidence_file.relative_to(root.resolve())), "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def _red_evidence_problems(root: Path, state: dict) -> list:
+    if not state.get("red_evidence_required"):
+        return []  # Historical sessions keep their original registration semantics.
+    receipts = state.get("red_evidence", {})
+    if not isinstance(receipts, dict) or not receipts:
+        return ["현재 요구에 연결된 RED 근거 등록이 없습니다"]
+    try:
+        # Every registered test must have an intact receipt. Refactored test bytes
+        # may change later; this preserves the historical RED, not a current FAIL.
+        for name in state.get("red_done_tests", []):
+            receipt = receipts[name]
+            current = _red_evidence(root, name, root / receipt["file"], state, historical=True)
+            if current != receipt:
+                raise ValueError("RED 등록 근거 불일치")
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return ["RED 등록 근거 또는 승인 개정 불일치; 요구별 실패 근거를 다시 확인하세요"]
+    return []
+
+
+def cmd_red_done(root: Path, test_file: str, evidence_file: Path | None = None) -> int:
     """RED 단계 완료 등록."""
     if not _is_test_file(test_file):
         # 테스트 파일이 아니어도 수동 등록 허용 (사용자가 직접 호출)
         print(f"[PIPELINE] ⚠️  테스트 파일 패턴 아님: {test_file} — 그래도 등록합니다.")
 
     state = _load_state(root)
+    if state.get("basis_sha256") or state.get("red_evidence_required"):
+        if evidence_file is None:
+            print("[PIPELINE] 승인된 작업의 RED는 --evidence-file <근거 JSON>이 필요합니다.")
+            return 1
+        try:
+            if not state.get("contract_confirmed"):
+                raise ValueError("현재 CONTRACT가 필요합니다")
+            receipt = _red_evidence(root, test_file, evidence_file, state)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            print(f"[PIPELINE] RED 근거 거부: {exc}")
+            return 1
+        if state.get("red_session_id") != state.get("session_id"):
+            state["red_done_tests"] = []
+            state["red_evidence"] = {}
+        state.setdefault("red_evidence", {})[test_file] = receipt
+        state["red_evidence_required"] = True
+        # Legacy file-name lists are not evidence for this requirement. Only
+        # tests with a typed receipt may become current RED registrations.
+        state["red_done_tests"] = list(state["red_evidence"])
     state["red_session_id"] = state.get("session_id", "")
     _save_state(root, state)
+    if evidence_file is not None and state.get("red_evidence_required"):
+        print(f"[PIPELINE] ✅ RED 완료 등록: {test_file} — 요구별 근거 확인·갱신")
+        return 0
     if test_file not in state["red_done_tests"]:
         state["red_done_tests"].append(test_file)
         _save_state(root, state)
@@ -363,6 +441,36 @@ def _check_digest(check: dict) -> str:
     return _basis_digest(check)
 
 
+def _snapshot_resolve(root: Path, path: Path) -> Path:
+    """Resolve inside the root at each hop, including external links returning inside."""
+    import os
+    root = root.resolve()
+    pending = list(path.absolute().relative_to(root).parts)
+    current, hops = root, 0
+    while pending:
+        part = pending.pop(0)
+        if part == ".":
+            continue
+        if part == "..":
+            current = current.parent
+            current.relative_to(root)
+            continue
+        current = current / part
+        if current.is_symlink():
+            hops += 1
+            if hops > 64:
+                raise ValueError("코드 스냅샷 링크 순환 또는 과도한 링크 깊이")
+            dest = Path(os.readlink(current))
+            if dest.is_absolute():
+                dest = dest.relative_to(root)
+                current = root
+            else:
+                current = current.parent
+            pending = list(dest.parts) + pending
+    current.relative_to(root)
+    return current
+
+
 def _code_snapshot_digest(root: Path, verification_file: Path | None = None) -> str:
     """Hash candidate bytes and modes, independently of staged/unstaged location.
 
@@ -372,10 +480,12 @@ def _code_snapshot_digest(root: Path, verification_file: Path | None = None) -> 
     This is content binding, not proof
     that the caller actually ran the declared verification.
     """
+    root = root.resolve()
     try:
         top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root,
                              capture_output=True, text=True)
-        if top.returncode == 0 and Path(top.stdout.strip()).resolve() == root.resolve():
+        git_candidate = top.returncode == 0 and Path(top.stdout.strip()).resolve() == root.resolve()
+        if git_candidate:
             tracked = subprocess.run(["git", "ls-files", "-z"], cwd=root,
                                      capture_output=True, text=True, check=True).stdout
             others = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"],
@@ -388,29 +498,49 @@ def _code_snapshot_digest(root: Path, verification_file: Path | None = None) -> 
             names = {str(p.relative_to(root)) for p in root.rglob("*")
                      if (p.is_file() or p.is_symlink())
                      and not set(p.relative_to(root).parts) & {".omc", ".git", "node_modules", "__pycache__", ".pytest_cache"}}
-        entries = {}
-        for name in sorted(names):
-            if Path(name).parts[0] in {".omc", ".git"}:
-                continue
-            path = root / name
-            if verification_file is not None and path.absolute() == verification_file.absolute():
-                continue
+        names = {name for name in names if Path(name).parts[0] not in {".omc", ".git"}
+                 and (verification_file is None or (root / name).absolute() != verification_file.absolute())}
+
+        def payload_for(path: Path, active: frozenset) -> bytes:
             if path.is_symlink():
                 import os
                 payload = b"symlink:" + os.fsencode(os.readlink(path))
-                target = path.resolve()
-                target.relative_to(root.resolve())
+                target = _snapshot_resolve(root, path)
+                relative = target.relative_to(root.resolve())
+                if relative.parts and relative.parts[0] in {".omc", ".git"}:
+                    raise ValueError("코드 스냅샷 검사 제외 경로를 링크로 참조할 수 없습니다")
+                if git_candidate:
+                    ignored = subprocess.run(["git", "check-ignore", "-q", "--", str(relative)], cwd=root)
+                    if ignored.returncode not in {0, 1}:
+                        raise ValueError("코드 스냅샷 링크 대상의 Git 범위를 확인할 수 없습니다")
+                    if ignored.returncode == 0:
+                        raise ValueError("코드 스냅샷 링크 대상이 Git 검사 제외 경로입니다")
+                elif set(relative.parts) & {"node_modules", "__pycache__", ".pytest_cache", ".omc", ".git"}:
+                    raise ValueError("코드 스냅샷 링크 대상이 검사 제외 경로입니다")
+                if target.is_dir():
+                    if target in active:
+                        raise ValueError("코드 스냅샷 폴더 링크 순환")
+                    children = {}
+                    for child_name in sorted(names):
+                        child = root / child_name
+                        if child != target and target in child.parents:
+                            children[child_name] = hashlib.sha256(payload_for(child, active | {target})).hexdigest()
+                    return payload + b":dir:" + str(relative).encode() + b":" + str(target.stat().st_mode & 0o777).encode() + b":" + _basis_digest(children).encode()
                 if not target.is_file():
-                    raise ValueError(f"코드 스냅샷 링크 대상 파일을 확인할 수 없습니다: {name}")
-                payload += b":" + str(target.stat().st_mode & 0o777).encode() + b":" + target.read_bytes()
-            elif not path.exists():
-                continue
+                    raise ValueError(f"코드 스냅샷 링크 대상이 없습니다: {path.relative_to(root)}")
+                return payload + b":" + str(target.stat().st_mode & 0o777).encode() + b":" + target.read_bytes()
             else:
                 if not path.is_file():
-                    raise ValueError(f"코드 스냅샷 파일이 아닙니다: {name}")
-                path.resolve().relative_to(root.resolve())
-                payload = str(path.stat().st_mode & 0o777).encode() + b":" + path.read_bytes()
-            entries[name] = hashlib.sha256(payload).hexdigest()
+                    raise ValueError(f"코드 스냅샷 파일이 아닙니다: {path.relative_to(root)}")
+                target = _snapshot_resolve(root, path)
+                return str(target.stat().st_mode & 0o777).encode() + b":" + target.read_bytes()
+
+        entries = {}
+        for name in sorted(names):
+            path = root / name
+            if not path.exists() and not path.is_symlink():
+                continue
+            entries[name] = hashlib.sha256(payload_for(path, frozenset())).hexdigest()
         return _basis_digest(entries)
     except (OSError, subprocess.CalledProcessError) as exc:
         raise ValueError("코드 스냅샷을 읽을 수 없습니다") from exc
@@ -586,6 +716,7 @@ def cmd_contract_done(root: Path, content: str = "", required_checks: str = "") 
             if set(requested_checks) != expected:
                 raise ValueError("승인된 필수 검증 목록을 사용하세요: " + ",".join(sorted(expected)))
             state["basis_sha256"] = _basis_digest(basis)
+            state["red_evidence_required"] = True
     except (OSError, ValueError, TypeError, AttributeError) as exc:
         # Legacy sessions without a session id keep edit compatibility only.
         if state.get("session_id"):
@@ -677,6 +808,9 @@ def evaluate_task_completion(root: Path, verification_file: Path, expected_sessi
         problems.append("현재 작업의 CONTRACT 등록이 없습니다")
     if not state.get("red_done_tests") or state.get("red_session_id") != sid or not sid:
         problems.append("현재 작업의 RED 등록이 없습니다")
+    red_problems = _red_evidence_problems(root, state)
+    problems.extend(red_problems)
+    mismatch = mismatch or any("불일치" in problem for problem in red_problems)
     if record_read and (record.get("session_id") != sid or not sid):
         problems.append("검증 기록의 작업 식별자가 다릅니다")
         mismatch = True
@@ -726,7 +860,7 @@ def evaluate_task_completion(root: Path, verification_file: Path, expected_sessi
     first = ("검증 실패·수정 필요" if failed else "증거 불일치·재검증 필요" if mismatch
              else "구현됨·검증 미완료" if applied else "구현 여부 확인 불가·검증 미완료") if blocked else "필수 검증 통과·작업 완료"
     registered = (bool(sid) and state.get("contract_confirmed") is True and state.get("session_id") == sid
-                  and state.get("red_session_id") == sid and bool(state.get("red_done_tests")))
+                  and state.get("red_session_id") == sid and bool(state.get("red_done_tests")) and not red_problems)
     return {"outcome": "blocked" if blocked else "done", "first": first,
             "problems": problems, "registered": registered}
 
@@ -924,6 +1058,7 @@ def main() -> int:
 
     p_red = sub.add_parser("red-done", help="RED 단계 완료 등록")
     p_red.add_argument("test_file", help="RED 완료된 테스트 파일 경로")
+    p_red.add_argument("--evidence-file", type=Path, help="승인 항목·새 실패 케이스·기존 실패·실제 출력의 RED JSON")
 
     p_allow = sub.add_parser("allow", help="특정 파일 RED 없이 예외 허용 (사용자 명시 + 이유 기록)")
     p_allow.add_argument("file", help="예외 허용할 구현 파일 경로")
@@ -959,7 +1094,7 @@ def main() -> int:
     if args.cmd == "check":
         return cmd_check(root, args.file, bypass=args.autopilot)
     if args.cmd == "red-done":
-        return cmd_red_done(root, args.test_file)
+        return cmd_red_done(root, args.test_file, args.evidence_file)
     if args.cmd == "allow":
         reason = getattr(args, "reason", "")
         return cmd_allow(root, args.file, reason)

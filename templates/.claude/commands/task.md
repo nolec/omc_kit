@@ -54,7 +54,7 @@ PHASE 3 ▸ RED  🔴  (구현 파일 생성 전 반드시)
 
 ☐ 실제 FAIL 출력 첨부 완료
 
-  python3 scripts/omc_pipeline_guard.py red-done <테스트파일>
+  python3 scripts/omc_pipeline_guard.py red-done <테스트파일> --evidence-file <RED근거JSON>
 
 ☐ RED 등록 완료
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -123,7 +123,7 @@ PHASE 7 ▸ COMPOUND ENGINEERING (작업 기록)
 
 CONTRACT 등록 시 이번 작업의 필수 검증 ID를 고정합니다:
 `python3 scripts/omc_pipeline_guard.py contract-done --required-checks tests,lint,browser`
-브라우저가 불필요한 작업은 계약에서 제외하고 그 이유를 설명합니다. 이후 현재 작업에서 실제 FAIL을 확인하고 `red-done <테스트파일>`을 등록합니다.
+브라우저가 불필요한 작업은 계약에서 제외하고 그 이유를 설명합니다. 이후 현재 작업에서 실제 FAIL을 확인하고 `red-done <테스트파일> --evidence-file <RED근거JSON>`을 등록합니다.
 검증 JSON은 먼저 `python3 scripts/omc_pipeline_guard.py verification-path`로 현재 작업 폴더 내부 경로를 받아 그 경로에만 작성합니다. /tmp 등 외부 경로나 외부를 가리키는 심볼릭 링크를 사용하지 않습니다. 최종 보고 직전 `python3 scripts/omc_pipeline_guard.py complete-task --verification-file <제공받은 내부 경로>`를 실행하고 첫 상태 문장과 기계 판정을 그대로 사용합니다.
 검증 JSON 형식: `{"session_id":"현재 confirmed session ID","implementation":{"status":"applied","evidence":"구현 반영 확인 근거"},"checks":{"tests":{"status":"passed","evidence":"검증 출력 위치"},"lint":{"status":"passed","evidence":"검증 출력 위치"},"browser":{"status":"unrun","evidence":"미실행 이유"}}}`.
 허용 상태는 passed/failed/mismatch/unrun이며 누락·알 수 없는 상태·빈 근거는 미완료입니다. 필수 검증은 계약에 고정된 전체 목록을 확인합니다. 구현의 반영 상태·근거가 없으면 `구현 여부 확인 불가·검증 미완료`로 보고합니다. 현재 작업의 CONTRACT·RED 등록이 없거나 계약 최초 등록 이후 새로 생기거나 내용·권한이 달라진 미스테이징 구현 변경이 남으면 완료로 출력하지 않습니다. 계약 최초 등록에 보존한 기존 변경은 그대로면 제외하고, 같은 세션에서 계약을 다시 등록해도 기준을 갱신하지 않습니다. `--staged`의 신규 구현 없음은 전체 완료 증거가 아닙니다.
@@ -155,6 +155,18 @@ CONTRACT 목록을 모델이 새로 정하지 않습니다. 사용자에게 제�
 범위 변경은 변경할 항목을 사용자에게 제시해 승인받은 새 개정으로만 추가합니다. 이전 파일을 덮어쓰거나 환경 부족을 이유로 임의 축소하지 않습니다. CONTRACT를 새 개정에 다시 연결하고 이전 개정 증거는 자동 재사용하지 않습니다. 변경되지 않은 항목도 대상·통과 조건·버전 일치와 실제 증거를 확인한 뒤 새 개정 기록에 연결합니다. 기준이 없는 기존 세션은 작업물을 유지하고 편집은 허용하되 전체 완료 확정만 보류합니다.
 
 완료 명령과 수집기는 동일한 읽기 전용 전체 판정 함수를 사용해 세션·등록·승인 기준·코드 스냅샷·미스테이징 차단을 함께 확인합니다. 최종 수집기는 호출자가 지정한 expected-outcome만 신뢰하지 않고 승인 기준·개정·개별 대상과 원문 보고를 다시 대조합니다. blocked 여부만이 아니라 실패·증거 불일치·미실행·구현 확인 불가의 정확한 상태 문장을 도구 출력과 최종 보고 모두에서 대조하며 다른 상태로 완화하거나 과장하면 통과시키지 않습니다. 기준이 없거나 완료 명령을 생략하면 비교 진입을 보류합니다. 로컬 파일 직접 변조 방지는 이 기능의 보장 범위가 아닙니다.
+
+### 요구별 RED 근거
+
+승인 기준이 있는 작업은 `red-done <테스트파일> --evidence-file <작업 내부 JSON>`을 사용합니다. JSON 필드는 `session_id`, `basis_sha256`, `test_file`(작업 루트 상대 경로), `test_sha256`(RED 실행 당시 테스트 파일의 SHA-256), `check_id`(승인 검증 ID), `case_id`(이번 요구를 실패시키는 케이스), `expected_failure`, `command`, `exit_code`, `baseline_failed_cases`, `failed_cases`, `output_file`(실제 FAIL 출력의 내부 경로), `output_sha256`입니다. SHA-256은 해당 원본 바이트로 계산하고 실제 출력은 수정하지 않습니다.
+
+먼저 변경 전 기준의 실패 케이스를 기록하고, 이번 요구를 검증하는 테스트를 작성해 실제 실패를 실행합니다. 종료 코드1과 새 실패 케이스가 필요하며, 기존 실패 목록에 있던 케이스만으로 등록하지 않습니다. 실행 불가·수집 오류를 RED로 처리하지 않습니다. 예: baseline_failed_cases=["기존 추적 실패"], failed_cases=["기존 추적 실패","새 테두리 요구 실패"], case_id="새 테두리 요구 실패". 의미 연결과 baseline·실행 기록은 호출자가 제공하므로 가드는 실행 진위·요구사항 관련성을 인증하지 않습니다. 리뷰는 실제 출력과 이번 요청의 관계를 확인합니다. 키워드 일치나 등록 성공을 TDD 준수 증명으로 사용하지 않습니다.
+
+등록한 JSON·출력은 보존합니다. 이후 리팩터링한 테스트 내용이 달라져도 과거 RED 기록 자체를 다시 쓰지 않습니다. 승인 개정이 바뀌면 새 근거가 필요합니다. 승인 기준 없는 legacy 편집 등록은 유지하지만 새 승인 CONTRACT의 완료 판정은 근거 없는 등록으로 통과하지 않습니다. 이전 완료·비교 기록을 소급 수정하지 않습니다.
+
+### 폴더 링크의 스냅샷 경계
+
+저장소 내부의 정상 폴더 링크는 링크 문자열·해석된 내부 대상·폴더 권한·검사 대상 파일 목록과 내용·권한을 함께 연결합니다. 외부 경로를 거쳐 내부로 돌아오는 링크도 거부합니다. 끊김·순환·64회를 넘는 링크 해석·Git ignored 대상·.omc/.git 실행 기록 대상 링크는 보류하며, 링크를 지우거나 검사 제외로 우회하지 않습니다. 대상 폴더 안의 일반 Git ignored 파일은 기존 정책대로 검사 대상이 아닙니다. Git 없는 환경의 의존성·캐시 제외도 유지합니다. 스냅샷은 실행 진위 인증이나 동시 파일 변경에 대한 보안 샌드박스가 아닙니다.
 
 ## Machine output contract — 마지막 두 줄은 `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT: <VALUE>`; JSON은 `schema_version=omc-output/v1`, `stage`, `outcome`, `risk`, `next_skill`, `user_selection_needed`, `reason_code`; `next_skill`은 canonical `omc-*` 또는 null; unresolved/blocked는 `reason_code` 필수; legacy 평문 입력은 허용하되 새 출력은 숨김 형식만 사용하고 명시적 오류는 보정하지 않습니다.
 

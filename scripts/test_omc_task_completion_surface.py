@@ -31,7 +31,9 @@ def prepare(root):
         assert run(root,'approve-checks','--file',str(proposal)).returncode == 0
     result = run(root, 'contract-done', '--required-checks', 'tests,browser')
     assert result.returncode == 0, result.stderr
-    assert run(root, 'red-done', 'test_feature.py').returncode == 0
+    from test_omc_pipeline_link_red import red_proof
+    proof = red_proof(root, json.loads(proposal.read_text()))
+    assert run(root, 'red-done', 'test_app.py', '--evidence-file', str(proof)).returncode == 0
 
 
 def finish(root, checks, implementation="applied"):
