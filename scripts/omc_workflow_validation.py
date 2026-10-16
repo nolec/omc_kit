@@ -15,6 +15,7 @@ from pathlib import Path
 
 from omc_output_contract import OutputContractError, parse_envelope
 from omc_workflow_preflight import assess_scope
+from omc_visual_check import CHECK_ID as VISUAL_ID, assess_report as assess_visual
 from omc_pipeline_guard import _load_approved_basis, evaluate_task_completion
 
 STATUSES = {
@@ -25,7 +26,8 @@ STATUSES = {
 
 def collect(root: Path, events_file: Path, sid: str, verification: Path,
             expected: str, output: Path, scope_report: Path | None = None,
-            scope_report_sha256: str | None = None) -> dict:
+            scope_report_sha256: str | None = None, visual_report: Path | None = None,
+            visual_report_sha256: str | None = None) -> dict:
     source = events_file.read_bytes()
     rows = [json.loads(line) for line in source.decode('utf-8').splitlines() if line.strip()]
     for row in rows:
@@ -201,6 +203,20 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
         required['report_format'] = 'passed' if all(format_quality.values()) else 'failed'
         if scope_assessment['reason']:
             issues.append(scope_assessment['reason'])
+    visual_assessment = None
+    try:
+        basis = _load_approved_basis(root, sid)
+        visual_check = next((c for c in basis['checks'] if c['id'] == VISUAL_ID), None)
+        if visual_check is not None or visual_report is not None or visual_report_sha256 is not None:
+            visual_assessment = assess_visual(root, visual_report, visual_report_sha256,
+                visual_check.get('visual_manifest_sha256', '') if visual_check else '')
+            required['visual_controlled'] = visual_assessment['status']
+            if visual_assessment['reason']:
+                issues.append(visual_assessment['reason'])
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        if visual_report is not None or visual_report_sha256 is not None:
+            required['visual_controlled'] = 'unknown'
+        issues.append(str(exc))
     assessment = {
         'schema_version': 'omc-workflow-validation/v1',
         'final_sha256': hashlib.sha256(final.encode('utf-8')).hexdigest(),
@@ -208,6 +224,7 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
         'required': required, 'format_quality': format_quality,
         'recompare_entry': 'allow' if all(value == 'passed' for value in required.values()) else 'hold',
         'scope_assessment': scope_assessment,
+        'visual_assessment': visual_assessment,
         'issues': issues, 'observed_verification_paths': observed, 'observed_direct_write_paths': known_writes,
         'boundary': 'Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication.',
     }
@@ -225,11 +242,14 @@ def main() -> int:
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--scope-report', type=Path)
     parser.add_argument('--scope-report-sha256')
+    parser.add_argument('--visual-report', type=Path)
+    parser.add_argument('--visual-report-sha256')
     args = parser.parse_args()
     try:
         result = collect(args.target.resolve(), args.events_file, args.session_id,
                          args.verification_file, args.expected_outcome, args.output_dir,
-                         args.scope_report, args.scope_report_sha256)
+                         args.scope_report, args.scope_report_sha256,
+                         args.visual_report, args.visual_report_sha256)
     except (OSError, ValueError, TypeError) as exc:
         failure = {'schema_version': 'omc-workflow-validation/v1', 'recompare_entry': 'hold', 'error': str(exc)}
         args.output_dir.mkdir(parents=True, exist_ok=True)

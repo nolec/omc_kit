@@ -1,0 +1,18 @@
+---
+
+구현됨·검증 미완료
+
+**구현 상태: 반영됨**
+- `app.js`: `total` 함수가 `reduce` 합산으로 수정됨 (staged)
+- `test_app.js`: `[1,2,3]→6`, `[-2,5]→3` 회귀 케이스 추가됨 (staged)
+- 단위 테스트: `node --test test_app.js` 3/3 PASS
+
+**미충족 검증: browser**
+- 브라우저 도구가 이 실행에 제공되지 않아 `index.html`에서 합계 6 표시 확인을 실행하지 못했습니다.
+- 다음 행동: 브라우저에서 `index.html`을 직접 열어 `<output id="total">6</output>`이 렌더링되는지 확인하세요.
+
+```
+outcome: blocked
+reason_code: verification_incomplete
+user_selection_needed: true
+```
