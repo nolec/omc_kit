@@ -1,0 +1,31 @@
+{
+  "argv": [
+    "claude",
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--model",
+    "us.anthropic.claude-sonnet-4-6",
+    "--effort",
+    "high",
+    "--permission-mode",
+    "acceptEdits",
+    "--allowedTools",
+    "Bash,Read,Write,Edit,Glob,Grep,Skill",
+    "--disallowedTools",
+    "Task,Agent,EnterWorktree,ExitWorktree,CronCreate,CronDelete,ScheduleWakeup",
+    "--setting-sources",
+    "project",
+    "--settings",
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/../run-settings.json",
+    "--strict-mcp-config",
+    "--mcp-config",
+    "{\"mcpServers\":{}}",
+    "--no-session-persistence",
+    "--add-dir",
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/.."
+  ],
+  "cwd": "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/../omc-kit",
+  "prompt_file_sha256": "bb1b264327288cd9c0d6b5940d5dbb6c9ff96f7954d4a65027ce2a21109db43c"
+}

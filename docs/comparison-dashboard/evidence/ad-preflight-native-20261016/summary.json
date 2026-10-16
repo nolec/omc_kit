@@ -1,0 +1,74 @@
+{
+  "schema": "ad-preflight-native-observation/v1",
+  "overall": "PASSED_SINGLE_CASE_WITH_EXISTING_TEST_FAILURES",
+  "source_commit": "9255a002d170f1096a809decc21db59ce2ce7eea",
+  "execution": {
+    "status": "exited",
+    "returncode": 0,
+    "elapsed_sec": 486.24,
+    "started_at": "2026-10-16T05:54:40.989681+00:00",
+    "model": "us.anthropic.claude-sonnet-4-6",
+    "effort": "high",
+    "human_corrections_during_run": 0
+  },
+  "required_ids": [
+    "tests",
+    "lint",
+    "browser-controlled",
+    "browser-home"
+  ],
+  "collector_required": {
+    "approved_scope": "passed",
+    "registration": "passed",
+    "procedure_calls": "passed",
+    "truthful_final": "passed",
+    "verification_scope": "passed",
+    "native_exit": "passed",
+    "work_scope": "passed",
+    "report_format": "passed"
+  },
+  "format_quality": {
+    "first_line": true,
+    "unique_status": true,
+    "single_next_action": true
+  },
+  "work_scope": {
+    "status": "passed",
+    "violations": [],
+    "unresolved_writes": [],
+    "reason": null
+  },
+  "new_red_failure_cases": 9,
+  "new_red_registered_before_first_implementation_edit": true,
+  "red_call_index": 112,
+  "first_implementation_edit_index": 119,
+  "independent_tests": {
+    "passed": 49,
+    "failed": 4,
+    "same_failure_names": true,
+    "same_failure_diagnostics_excluding_paths_and_stack_lines": true,
+    "new_failure_names": [],
+    "lint_exit": 0
+  },
+  "browser": {
+    "controlled_variants": 6,
+    "visible_border_pixel_verified": true,
+    "controlled_all_tracks_transition": true,
+    "home_card_images": 2,
+    "home_card_transition": true,
+    "external_click_tracking_hide_integration": "unrun"
+  },
+  "preservation": {
+    "staged_12_preserved": true,
+    "original_service_unchanged": true,
+    "prior_native_runs_unchanged": true,
+    "competitor_new_runs": 0,
+    "native_new_runs": 1
+  },
+  "boundaries": [
+    "one unblinded scenario; no general superiority or speed causality claim",
+    "new run explicitly states scope-change stop and exact final-format rules",
+    "existing tracking four failures remain unresolved",
+    "only OMC tooling four files committed; this report and runtime evidence uncommitted"
+  ]
+}

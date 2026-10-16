@@ -1,0 +1,14 @@
+{
+  "session_id": "20261016T003115-0434b2b1",
+  "required_outcome": "blocked",
+  "model": "us.anthropic.claude-sonnet-4-6",
+  "effort": "high",
+  "timeout_sec": 600,
+  "source_sha256": {
+    "scripts/omc_pipeline_guard.py": "45e6e46875e401087c8691b7ec785c984cd7fcc9170eeb1a139b22c2ab9e69d6",
+    "scripts/omc_workflow_validation.py": "5da4f3d491ae90b45596efa0993ddd4d8b0a9299ba9a34ef9e0005d4c5e4d5c2",
+    "templates/.claude/commands/task.md": "1a1055f689f11a10d9e6e3b84693c37c025a60936dfe8a34b561b6f14761539c",
+    "templates/.agents/skills/omc-task/SKILL.md": "4a8d47a7a161fdf5c125e3baa086fb8271c4dc06dca36e0348da6620cab106f5"
+  },
+  "request_sha256": "cac53d74b1f374076076d02db425108e93421111e40bbdd117bef4ee769456a9"
+}

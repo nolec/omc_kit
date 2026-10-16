@@ -1,0 +1,18 @@
+{
+  "case": "Ad maintenance same-baseline paired exploratory run",
+  "baseline": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
+  "model": "us.anthropic.claude-sonnet-4-6",
+  "omc_seconds": 717.82,
+  "competitor_seconds": 1028.44,
+  "time_difference_seconds": 310.62,
+  "omc_tests_passed": 47,
+  "competitor_tests_passed": 41,
+  "retained_baseline_failures_each": 4,
+  "new_failures_each": 0,
+  "controlled_ui": "both meet border shadow arrow removal auto transition in six variants",
+  "actual_service_home": "unverified login required; not implementation failure",
+  "omc_final_correctness": "failed: mandatory browser excluded before contract then done claimed",
+  "competitor_final_correctness": "browser unrun disclosed; report still titled completion",
+  "human_blind_rating": "not conducted",
+  "priority": "bind user-required checks before model chooses contract; missing runtime capability must not remove requirement"
+}

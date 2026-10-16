@@ -1,0 +1,25 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_typed_red_does_not_promote_inherited_legacy_test_names __________
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-549/test_typed_red_does_not_promot0')
+
+    def test_typed_red_does_not_promote_inherited_legacy_test_names(tmp_path):
+        doc = prepared(tmp_path)
+        state = guard._load_state(tmp_path)
+        state.update(red_session_id='s', red_done_tests=['test_old_unrelated.py'])
+        guard._save_state(tmp_path, state)
+        proof = red_proof(tmp_path, doc)
+        assert cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof)).returncode == 0
+>       assert guard._load_state(tmp_path)['red_done_tests'] == ['test_app.py']
+E       AssertionError: assert ['test_old_un...'test_app.py'] == ['test_app.py']
+E         At index 0 diff: 'test_old_unrelated.py' != 'test_app.py'
+E         Left contains one more item: 'test_app.py'
+E         Use -v to get more diff
+
+scripts/test_omc_pipeline_link_red.py:228: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+=========================== short test summary info ============================
+FAILED scripts/test_omc_pipeline_link_red.py::test_typed_red_does_not_promote_inherited_legacy_test_names
+1 failed in 0.25s

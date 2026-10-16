@@ -1,0 +1,47 @@
+[
+  {
+    "target": "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit",
+    "completion_hook": {
+      "backend": "native",
+      "configured_hooks_path": null,
+      "effective_hooks_dir": "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/.git/hooks",
+      "installed_hook_path": "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/.git/hooks/post-commit",
+      "dispatch_reachable": true,
+      "readiness": "ready"
+    },
+    "has_legacy_embedded_omc_kit": false,
+    "has_install_source": true,
+    "source_kind": "external",
+    "source_path": "/private/tmp/omc-ad-preflight-native-fuwp8qy1/kit-source",
+    "metadata_source_sha256": "6a2703b180968d2deb7acd154857b5f8b0c45169546c48ef89a39b26519bf84d",
+    "metadata_error": null,
+    "has_install_receipt": true,
+    "install_source_sha256": "6a2703b180968d2deb7acd154857b5f8b0c45169546c48ef89a39b26519bf84d",
+    "install_entry_counts": {
+      "updated": 244
+    },
+    "receipt_error": null,
+    "status": "ok",
+    "installed_integrity_status": "ok",
+    "core_usage_readiness": "ready",
+    "source_freshness_status": "up_to_date",
+    "quality_gate_readiness": "missing",
+    "quality_gate_scope": "delivery_validation",
+    "quality_gate_core_impact": "does_not_block_core_usage",
+    "version_readiness": {
+      "installed_version": "0.5.9",
+      "source_version": "0.5.9",
+      "receipt_status": "current",
+      "release_status": "up_to_date",
+      "source_status": "unchanged",
+      "install_integrity": "clean",
+      "overall_status": "up_to_date"
+    },
+    "source_freshness_reason": null,
+    "current_source_sha256": "6a2703b180968d2deb7acd154857b5f8b0c45169546c48ef89a39b26519bf84d",
+    "verification_status": "ok",
+    "verification_errors": [],
+    "verification_notices": [],
+    "verification_issue_counts": {}
+  }
+]

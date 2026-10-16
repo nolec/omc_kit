@@ -1,0 +1,31 @@
+{
+  "argv": [
+    "claude",
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--model",
+    "us.anthropic.claude-sonnet-4-6",
+    "--effort",
+    "high",
+    "--permission-mode",
+    "acceptEdits",
+    "--allowedTools",
+    "Bash,Read,Write,Edit,Glob,Grep,Skill",
+    "--disallowedTools",
+    "Task,Agent,EnterWorktree,ExitWorktree,CronCreate,CronDelete,ScheduleWakeup",
+    "--setting-sources",
+    "project",
+    "--settings",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/run-settings.json",
+    "--strict-mcp-config",
+    "--mcp-config",
+    "{\"mcpServers\":{}}",
+    "--no-session-persistence",
+    "--add-dir",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5"
+  ],
+  "cwd": "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit",
+  "prompt_file_sha256": "f4e73f56ebd519345dc3179c5db9d6b675791312c93dc397f0e43d0880fee62e"
+}

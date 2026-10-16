@@ -1,0 +1,17 @@
+{
+  "session_id": "20261016T124058-d01f549c",
+  "basis_sha256": "6a59885fbe6b171627b99c9e1c73c879d19649dd959f080abeaf716752da0e9f",
+  "test_file": ".omc/red/link-pilot/test_link_completion.py",
+  "test_sha256": "0242ad05a19bb75c2fa80902d144da38690d262dc041060a364de9a6e7c5f258",
+  "check_id": "tests",
+  "case_id": "test_normal_folder_link_allows_template",
+  "expected_failure": "정상 내부 폴더 링크에서 스냅샷 생성이 거부됨",
+  "command": "PILOT_GUARD=/private/tmp/omc-link-red-pilot-9s5z2je9/prechange_guard.py python3 -m pytest -q /private/tmp/omc-link-red-pilot-9s5z2je9/candidate/.omc/red/link-pilot/test_link_completion.py",
+  "exit_code": 1,
+  "baseline_failed_cases": [],
+  "failed_cases": [
+    "test_normal_folder_link_allows_template"
+  ],
+  "output_file": ".omc/red/link-pilot/fail.txt",
+  "output_sha256": "664a94cd6c0b620465d2880fd5d2622aea402499701ee1d8c07b3b3901aa6cc8"
+}

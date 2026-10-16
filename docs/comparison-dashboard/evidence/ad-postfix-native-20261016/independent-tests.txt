@@ -1,0 +1,162 @@
+ts-jest[versions] (WARN) Version 5.5.4 of typescript installed has not been tested with ts-jest. If you're experiencing issues, consider using a supported version (>=4.3.0 <5.0.0-0). Please do not report issues in ts-jest if you are using unsupported versions.
+FAIL sellerhub-store libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx
+  Ad
+    ✓ loads Catalog slides when slug is provided (24 ms)
+    ✕ tracks each Catalog creative impression once after the route store identity is ready (9 ms)
+    ✕ tracks the same Catalog creative again when the store identity changes (5 ms)
+    ✕ tracks linked Catalog slide clicks but not indicator clicks (29 ms)
+    ✕ tracks each active Catalog creative impression only once (12 ms)
+    ✓ renders the banner-small variant with the Figma height (5 ms)
+    ✓ renders the banner-large variant with the Figma height (3 ms)
+    ✓ renders the banner-landing variant with the Figma height (2 ms)
+    ✓ renders the card-large variant with the Figma height (5 ms)
+    ✓ renders the card-medium variant with the Figma height (2 ms)
+    ✓ renders the card-small variant with the Figma height (2 ms)
+    ✓ centers a banner image and crops its horizontal overflow (8 ms)
+    ✓ renders the card-large card as a linked bordered area (10 ms)
+    ✓ renders the card-medium card as a linked bordered area (7 ms)
+    ✓ renders the card-small card as a linked bordered area (8 ms)
+    ✓ renders a card image without card text content (6 ms)
+    ✓ uses the card-specific title and summary content area (3 ms)
+    ✓ renders card slides without the carousel arrow navigation pill (2 ms)
+    ✓ auto-advances card slides every 3 seconds without carousel arrows (4 ms)
+    ✓ opens a linked banner slide in a new tab (3 ms)
+    ✓ renders every item in the slide track (4 ms)
+    ✓ renders clickable Figma indicators for up to 20 banner-small items (66 ms)
+    ✓ renders clickable Figma indicators for up to 20 banner-large items (63 ms)
+    ✓ renders clickable Figma indicators for up to 20 banner-landing items (62 ms)
+    ✓ hides banner indicators for one item (1 ms)
+    ✓ uses the active image brightness color for banner indicators (9 ms)
+    ✓ samples the active image at the visible indicator bar instead of the hit area (2 ms)
+    ✓ uses the active background brightness color when a banner has no image (6 ms)
+    ✓ includes the small-banner overlay when selecting a background indicator color (8 ms)
+    ✓ includes background alpha when selecting an indicator color (7 ms)
+    ✓ keeps the text color fallback when image brightness analysis fails (10 ms)
+    ✓ ignores a stale image brightness result after moving to another slide (9 ms)
+    ✓ shows the today dismissal button only when a Catalog banner opts in (14 ms)
+    ✓ uses the close button area image brightness color for a single dismissible banner (4 ms)
+    ✓ dismisses only the active Catalog slide for today and moves to the next slide (8 ms)
+    ✓ does not support dismissal for cards or directly supplied items (2 ms)
+    ✓ restores a dismissed Catalog slide when local midnight passes while mounted (3 ms)
+    ✓ matches the Figma small banner content layout (3 ms)
+    ✓ moves infinitely and resumes rolling five seconds after indicator click (12 ms)
+    ✓ ignores a stale rolling callback after a manual move (8 ms)
+    ✓ ignores a stale resume callback after a newer manual move (11 ms)
+    ✓ slides landing banners with indicators and hides them when only one item remains (13 ms)
+    ✓ cancels a pending resume when the item count no longer supports a slider (7 ms)
+    ✓ does not render an empty advertisement slot (1 ms)
+    ✓ reports whether an ad is visible (1 ms)
+    ✓ applies Figma border and shadow to the banner-small ad wrapper (1 ms)
+    ✓ applies Figma border and shadow to the banner-large ad wrapper (2 ms)
+    ✓ applies Figma border and shadow to the banner-landing ad wrapper (1 ms)
+    ✓ applies Figma border and shadow to the card-large ad wrapper (2 ms)
+    ✓ applies Figma border and shadow to the card-medium ad wrapper (2 ms)
+    ✓ applies Figma border and shadow to the card-small ad wrapper (2 ms)
+    ✓ removes the card carousel arrows from card variants (2 ms)
+
+  ● Ad › tracks each Catalog creative impression once after the route store identity is ready
+
+    expect(jest.fn()).toHaveBeenCalledTimes(expected)
+
+    Expected number of calls: 1
+    Received number of calls: 0
+
+      85 |     rerender(<Ad slug='catalog-slug' variant='banner-small' />);
+      86 |
+    > 87 |     expect(mockedSendAdTrackingEvent).toHaveBeenCalledTimes(1);
+         |                                       ^
+      88 |     expect(mockedSendAdTrackingEvent).toHaveBeenCalledWith({
+      89 |       event: 'catalog-slug',
+      90 |       user: 'sixshoptest01',
+
+      at Object.<anonymous> (src/lib/components/Ad/Ad.test.tsx:87:39)
+
+  ● Ad › tracks the same Catalog creative again when the store identity changes
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 12
+    + Received  +  1
+
+    - Array [
+    -   Array [
+    -     ObjectContaining {
+    -       "user": "first-store",
+    -     },
+    -   ],
+    -   Array [
+    -     ObjectContaining {
+    -       "user": "second-store",
+    -     },
+    -   ],
+    - ]
+    + Array []
+
+      108 |     expect(
+      109 |       mockedSendAdTrackingEvent.mock.calls.filter(([event]) => event.event === 'catalog-slug')
+    > 110 |     ).toEqual([
+          |       ^
+      111 |       [expect.objectContaining({ user: 'first-store' })],
+      112 |       [expect.objectContaining({ user: 'second-store' })],
+      113 |     ]);
+
+      at Object.<anonymous> (src/lib/components/Ad/Ad.test.tsx:110:7)
+
+  ● Ad › tracks linked Catalog slide clicks but not indicator clicks
+
+    expect(jest.fn()).toHaveBeenCalledTimes(expected)
+
+    Expected number of calls: 1
+    Received number of calls: 0
+
+      132 |     act(() => screen.getByRole('button', { name: '2번째 광고' }).click());
+      133 |
+    > 134 |     expect(mockedSendAdTrackingEvent).toHaveBeenCalledTimes(1);
+          |                                       ^
+      135 |
+      136 |     act(() => screen.getByRole('link', { name: '두 번째 광고' }).click());
+      137 |
+
+      at Object.<anonymous> (src/lib/components/Ad/Ad.test.tsx:134:39)
+
+  ● Ad › tracks each active Catalog creative impression only once
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 16
+    + Received  +  1
+
+    - Array [
+    -   Array [
+    -     ObjectContaining {
+    -       "event": "catalog-slug",
+    -       "user": "sixshoptest01",
+    -       "value": "첫 광고",
+    -     },
+    -   ],
+    -   Array [
+    -     ObjectContaining {
+    -       "event": "catalog-slug",
+    -       "user": "sixshoptest01",
+    -       "value": "두 번째 광고",
+    -     },
+    -   ],
+    - ]
+    + Array []
+
+      163 |     expect(
+      164 |       mockedSendAdTrackingEvent.mock.calls.filter(([event]) => event.event === 'catalog-slug')
+    > 165 |     ).toEqual([
+          |       ^
+      166 |       [
+      167 |         expect.objectContaining({
+      168 |           event: 'catalog-slug',
+
+      at Object.<anonymous> (src/lib/components/Ad/Ad.test.tsx:165:7)
+
+Test Suites: 1 failed, 1 total
+Tests:       4 failed, 48 passed, 52 total
+Snapshots:   0 total
+Time:        5.356 s, estimated 7 s
+Ran all test suites within paths "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx".
+Test results written to: ../independent-tests.json

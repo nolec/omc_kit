@@ -1,0 +1,58 @@
+{
+  "schema_version": "omc-workflow-preflight/v1",
+  "inputs": {
+    "task.md": "d48b738f79ff9981601f23df227c9a3e0d645e3254d61221493073584eb3110b",
+    "design-reference.md": "43477fe1d5f5996c5ddda23a8110ff045954336d2c66ac5a584a592653097e19",
+    "design-section.png": "70e49fd0b91b365efba85fb100a24b86247f77f31b98cd68350cf558bfcef203",
+    "libs/store-manager/components/src/lib/home/Home.tsx": "cea906960f5e49420c64ce759d9dfc3f7db3f784f379de4f6cfffade7cf58faf",
+    ".git/info/exclude": "e4fd2c471756e1b83d82350c5bf322ed947a4b0e37ea947ba4945525957d5ab6",
+    "../browser.cjs": "d93fd17aac72bceb02c8f06bd3a30e0e5205fa992c00021ecfb87f0f8f35e466",
+    "../build-controlled.cjs": "b09b68ff59cde07c73572f2f9d856be6e3f823910b9d5e13c028175269b99ef7",
+    "../serve.cjs": "87774b20b1c0cd6e4000f339176b4228df3b0b41182b692c815d23ce21a864b4",
+    "../runtime.json": "9e474dc3256e685cd51de411796bd4d4a9a3a564509f6d4b237290b19c45a715",
+    "../run-settings.json": "8547af54cecb7a13ad9840d1cda698582c0fa6094359c1002516f43bc2a59772",
+    "../run-native.py": "c432d5c430138faaa97784950e11e66bdc27176b31b13db0b032bc0b823a6a1f",
+    "../execution-request.md": "fd7705d47d7012cf200a6469a0b58b9d8e51925959b6d32b32ea9653988ca53a",
+    "../competitor-adapter.txt": "29f25e3e053546305a7f3c61b6608d0654d0a1db0955960eca2418a3be86f75e",
+    "../common-required-checks.json": "8028f29b4c348a98aedcd540a6f2f12055fc9a7ebd5a111920707c92bb043c7b",
+    "../baseline-failures.json": "18ae18ef9c5f6bba2dcf646bd62336d169fca2d929e4c6f14f1ff7241a60d573",
+    "tools/scripts/mf-remotes-config.js": "6c78dca7ae747f30777e5931975d24bff0dc7c15e76de0387fd3f91254816766",
+    "libs/sellerhub-store/src/lib/components/Ad/Ad.types.spec.ts": "cf7be8ad492893eaea4b5034428514fd074af50effeb8267fe1f23c7a7ea7196",
+    "libs/sellerhub-store/src/lib/components/Ad/Ad.tsx": "2175d7f479f4ae500b3503669d00b681248a036833705eaca1d34eb78882d90f",
+    "libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts": "92866fc6afaa785e4ce21820b9efb3e4893f2dcd2cc1ac142bc37468c8b5eb7b",
+    "libs/sellerhub-store/src/lib/components/Ad/adTracking.ts": "738b008b2a34aada24a178221fc5f0a3b298a7be76cb551bd9d95e29b6c0f637",
+    "libs/sellerhub-store/src/lib/components/Ad/useStrapiCatalog.spec.ts": "7cf2f1adac3d4fa83523db676b3c0ba003b7dd284d39d2ee8977e29311fa4f60",
+    "libs/sellerhub-store/src/lib/components/Ad/adTracking.test.ts": "ad8f3963f82ec9a7f2ee41a11496ae9cea14c3fe0736f27e7d96a420d2d0eab8",
+    "libs/sellerhub-store/src/lib/components/Ad/Ad.types.ts": "b025cbea73ad0f13c64b077f544bb4cc25d3956de1617de286468966a34513e4",
+    "libs/sellerhub-store/src/lib/components/Ad/adDismissal.ts": "3ceb6f83b79a347a3e67a7fa407ca70f6afdc6f07f041529e3f0d177d0d9f563",
+    "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx": "f09156373adf06bed3b6b177e0b562c273f0f07db271c9632b187256211f78ff",
+    "libs/sellerhub-store/src/lib/components/Ad/getAdIndicatorColor.test.ts": "487252f77667920fef07f3c4b484d76dedf601c0a565a62fc1d0876ba12b14d0",
+    "libs/sellerhub-store/src/lib/components/Ad/index.ts": "e6e27956bae1f4e62e9eb60e72ee9955690c8f13f5bbd94920d8eb262773d1e3",
+    "libs/sellerhub-store/src/lib/components/Ad/useStrapiCatalog.tsx": "b7de76b01595bceb30bacab96189aab2042c6edbc01850de844644e47fdb6ddf",
+    "libs/sellerhub-store/src/lib/components/Ad/getAdIndicatorColor.ts": "12929b3fcc9250730f6bb335ca31747a4edd960aeb6d8660d7d41c91699383ad",
+    "libs/sellerhub-store/src/lib/components/Ad/adDismissal.test.ts": "2c0e97ab4d249f854b133fc72af3e100a61a759a3ddb6f4a32534af6dab7ea8c"
+  },
+  "required_checks_file": "../common-required-checks.json",
+  "required_check_ids": [
+    "tests",
+    "lint",
+    "browser-controlled",
+    "browser-home"
+  ],
+  "ignored_artifacts": [
+    {
+      "path": "apps/store-manager/public/omc-ad-validation/index.html",
+      "source": ".git/info/exclude",
+      "pattern": "/apps/store-manager/public/omc-ad-validation/"
+    }
+  ],
+  "work_paths": [
+    "libs/sellerhub-store/src/lib/components/Ad/"
+  ],
+  "browser": {
+    "control_url": "http://127.0.0.1:9426/command",
+    "origin": "http://localhost:3025",
+    "home_path": "/sixshoptest01",
+    "min_images": 2
+  }
+}

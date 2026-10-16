@@ -1,0 +1,32 @@
+{
+  "session_id": "20261016T122815-19e557ec",
+  "basis_sha256": "fbc5d095d52d51abfd62a0677e2cdad568e6d2840fd0c6b882e0587050d174d1",
+  "test_file": "scripts/test_omc_pipeline_link_red.py",
+  "test_sha256": "813422eae3a5cf17e9dfdac13d65be4947fc549856a91b7a18ae93c067e0d000",
+  "check_id": "tests",
+  "case_id": "test_public_template_accepts_real_project_directory_link",
+  "expected_failure": "R1 정상 내부 폴더 링크 거부 및 R3 요구별 RED 근거 미연결 재현",
+  "command": "python3 -m pytest -q /private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py",
+  "exit_code": 1,
+  "baseline_failed_cases": [],
+  "failed_cases": [
+    "test_public_template_accepts_real_project_directory_link",
+    "test_directory_target_mutations_block_old_cli_completion[content]",
+    "test_directory_target_mutations_block_old_cli_completion[add]",
+    "test_directory_target_mutations_block_old_cli_completion[delete]",
+    "test_directory_target_mutations_block_old_cli_completion[rename]",
+    "test_directory_target_mutations_block_old_cli_completion[mode]",
+    "test_directory_target_mutations_block_old_cli_completion[retarget]",
+    "test_approved_red_without_case_evidence_is_rejected",
+    "test_public_red_rejects_invalid_or_unrelated_failure_evidence[baseline-only]",
+    "test_public_red_rejects_invalid_or_unrelated_failure_evidence[unknown-check]",
+    "test_public_red_rejects_invalid_or_unrelated_failure_evidence[wrong-session]",
+    "test_public_red_rejects_invalid_or_unrelated_failure_evidence[wrong-basis]",
+    "test_public_red_rejects_invalid_or_unrelated_failure_evidence[success-exit]",
+    "test_public_red_rejects_invalid_or_unrelated_failure_evidence[test-changed]",
+    "test_public_red_rejects_invalid_or_unrelated_failure_evidence[output-changed]",
+    "test_red_receipt_tampering_and_revision_block_completion"
+  ],
+  "output_file": ".omc/red/link-red/output.txt",
+  "output_sha256": "e4b570c2d81956964b3702c2a4194c19a23f8c754d50434b8021ffc1af4c681b"
+}

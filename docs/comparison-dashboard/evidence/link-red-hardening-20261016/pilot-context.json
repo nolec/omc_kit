@@ -1,0 +1,6 @@
+{
+  "source": "/private/tmp/omc-ad-browser-pair-aikw_6zd/omc-kit",
+  "target": "/private/tmp/omc-link-red-pilot-9s5z2je9/candidate",
+  "guard": "/Users/noseunglae/Downloads/dev/omc_kit/scripts/omc_pipeline_guard.py",
+  "validation_mode": "existing-session compatibility; prior unrelated RED is not retroactively certified"
+}

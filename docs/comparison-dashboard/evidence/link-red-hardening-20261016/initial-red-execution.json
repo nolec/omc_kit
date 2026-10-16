@@ -1,0 +1,6 @@
+{
+  "exit_code": 1,
+  "test_sha256": "813422eae3a5cf17e9dfdac13d65be4947fc549856a91b7a18ae93c067e0d000",
+  "guard_source": "HEAD:71ea905",
+  "command": "python3 -m pytest -q /private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py"
+}

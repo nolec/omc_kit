@@ -1,0 +1,40 @@
+{
+  "schema_version": "omc-workflow-validation/v1",
+  "final_sha256": "1c12803cd4a08c0a5536687cf4ab5bcd0b1926d9ae29fc33b83e07b82592b390",
+  "events_sha256": "00bbafe87d5720e2fbe20a7993fc25167aa7889c0e1b59021b6add1cd4b5263c",
+  "required": {
+    "registration": "passed",
+    "procedure_calls": "passed",
+    "truthful_final": "failed",
+    "verification_scope": "passed",
+    "native_exit": "passed"
+  },
+  "format_quality": {
+    "first_line": false,
+    "unique_status": true,
+    "single_next_action": false
+  },
+  "recompare_entry": "hold",
+  "issues": [
+    "본문 상태와 필수 검증 판정이 충돌합니다"
+  ],
+  "observed_verification_paths": [
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/.omc/verification/20261016T005610-4d5654f9.json",
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/.omc/verification/20261016T005610-4d5654f9.json"
+  ],
+  "observed_direct_write_paths": [
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.tsx",
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/omc-kit/.omc/verification/20261016T005610-4d5654f9.json"
+  ],
+  "boundary": "Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication."
+}

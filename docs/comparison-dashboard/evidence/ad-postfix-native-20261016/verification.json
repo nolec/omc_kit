@@ -1,0 +1,34 @@
+{
+  "session_id": "20261016T130541-62f1a8a7",
+  "basis_sha256": "600d10a6edaea4f839f838998329b235469778dd09a5a163e6dfd98d7dde2d68",
+  "implementation": {
+    "status": "applied",
+    "evidence": "Ad.styled.ts: bannerStyle/cardStyle에 border 1px solid rgba(0,0,0,0.1) + BOX_SHADOW.HOME_CARD 추가, cardStyle 기존 inset box-shadow 제거, CardCarouselNav/CardArrowButton 스타일 컴포넌트 제거. Ad.tsx: 카드 화살표 렌더링 블록 제거. Ad.test.tsx: 새 border+shadow 테스트 7개 추가, 기존 card bordered/arrow 테스트 갱신"
+  },
+  "checks": {
+    "tests": {
+      "status": "passed",
+      "evidence": "NX_DAEMON=false jest Ad.test.tsx: 48passed 4failed. 신규 실패0. 기존 추적4실패(tracks each Catalog creative impression once after the route store identity is ready / tracks the same Catalog creative again when the store identity changes / tracks linked Catalog slide clicks but not indicator clicks / tracks each active Catalog creative impression only once) — baseline과 이름·진단 동일, 미해결",
+      "definition_sha256": "e9b22ebf3f78256f893b9d2600a9436ab843732f96088c271acc6b679599adf3",
+      "code_snapshot_sha256": "8b42d85ecb3ab4fa492d83a8de18f7c7904ab61fcede4e6831d7efec5f8d25b9"
+    },
+    "lint": {
+      "status": "passed",
+      "evidence": "eslint Ad.styled.ts Ad.tsx Ad.test.tsx: exit0, 오류0 경고0",
+      "definition_sha256": "55245c597a2932c1afbf0eb26c57760e2fb5cc994e523a274330af1bb43ad429",
+      "code_snapshot_sha256": "8b42d85ecb3ab4fa492d83a8de18f7c7904ab61fcede4e6831d7efec5f8d25b9"
+    },
+    "browser-controlled": {
+      "status": "passed",
+      "evidence": "node ../build-controlled.cjs 성공 후 /omc-ad-validation/index.html 방문. 6개 variant DOM: border=1px solid rgba(0,0,0,0.1), boxShadow=rgba(0,0,0,0.05) 0px 1px 2px 0px 확인(DOM evaluate 직접 조회). arrows=0. 3.7초 후 자동 전환: banner-small translateX(-100%), card-large translateX(-100%) 확인. 스크린샷: .omc/browser/1792124800365.png",
+      "definition_sha256": "c2d398b293657ea359de5617491c3dc3d4192975e9bcb96c3f26d170ab8b64e5",
+      "code_snapshot_sha256": "8b42d85ecb3ab4fa492d83a8de18f7c7904ab61fcede4e6831d7efec5f8d25b9"
+    },
+    "browser-home": {
+      "status": "passed",
+      "evidence": "로그인된 /sixshoptest01 홈 방문. ad-banner-small, ad-card-large 두 광고 로드 확인(banner-small 이미지 complete=true naturalWidth=3240, card-large 슬라이드 2개). border=1px solid rgba(0,0,0,0.1) boxShadow=rgba(0,0,0,0.05) 0px 1px 2px 0px DOM 직접 확인. arrows=0. 3.7초 후 card-large translateX(-100%) 자동 전환 확인. 스크린샷: .omc/browser/1792124847702.png. 한계: 클릭 추적·오늘 하루 숨김 통합 확인은 실제 클릭 없이 관찰만 수행",
+      "definition_sha256": "cccb1a207d2f25d058eb40e3c663834366aab59e25a2ec9f72febb2b3a3cb5a2",
+      "code_snapshot_sha256": "8b42d85ecb3ab4fa492d83a8de18f7c7904ab61fcede4e6831d7efec5f8d25b9"
+    }
+  }
+}

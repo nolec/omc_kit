@@ -1,0 +1,54 @@
+{
+  "root": "/private/tmp/omc-ad-browser-pair-aikw_6zd",
+  "baseline": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
+  "kit_commit": "71ea905ac4714bc2d7dfde34b4377b75089f69dc",
+  "model": "us.anthropic.claude-sonnet-4-6",
+  "effort": "high",
+  "plugin": "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/competitor-plugin",
+  "arms": {
+    "omc-kit": {
+      "port": 3022,
+      "debug_port": 9322
+    },
+    "oh-my-claudecode": {
+      "port": 3021,
+      "debug_port": 9321
+    }
+  },
+  "status": "preflight_ready",
+  "browser_method": "same installed Playwright via separate headed persistent contexts; shared command interface",
+  "omc_session_id": "20261016T114731-bc4b7857",
+  "required_ids": [
+    "tests",
+    "lint",
+    "browser-controlled",
+    "browser-home"
+  ],
+  "basis_file_sha256": "b8987e362ef5b61c4a4d1277fcd37d3914fe773afdcc529899349b2827aa2c83",
+  "timeout_sec_each": 1200,
+  "order": [
+    "oh-my-claudecode",
+    "omc-kit"
+  ],
+  "request_sha256": "75b03ceb9b48fae15985a0afc433d4574f6a7279cc9a15796d2cc353446f48be",
+  "browser_helper_sha256": "d93fd17aac72bceb02c8f06bd3a30e0e5205fa992c00021ecfb87f0f8f35e466",
+  "controlled_builder_sha256": "b09b68ff59cde07c73572f2f9d856be6e3f823910b9d5e13c028175269b99ef7",
+  "initial_source_sha256": {
+    "omc-kit": {
+      "libs/sellerhub-store/src/lib/components/Ad/Ad.tsx": "2175d7f479f4ae500b3503669d00b681248a036833705eaca1d34eb78882d90f",
+      "libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts": "92866fc6afaa785e4ce21820b9efb3e4893f2dcd2cc1ac142bc37468c8b5eb7b",
+      "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx": "f09156373adf06bed3b6b177e0b562c273f0f07db271c9632b187256211f78ff",
+      "libs/store-manager/components/src/lib/home/Home.tsx": "cea906960f5e49420c64ce759d9dfc3f7db3f784f379de4f6cfffade7cf58faf"
+    },
+    "oh-my-claudecode": {
+      "libs/sellerhub-store/src/lib/components/Ad/Ad.tsx": "2175d7f479f4ae500b3503669d00b681248a036833705eaca1d34eb78882d90f",
+      "libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts": "92866fc6afaa785e4ce21820b9efb3e4893f2dcd2cc1ac142bc37468c8b5eb7b",
+      "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx": "f09156373adf06bed3b6b177e0b562c273f0f07db271c9632b187256211f78ff",
+      "libs/store-manager/components/src/lib/home/Home.tsx": "cea906960f5e49420c64ce759d9dfc3f7db3f784f379de4f6cfffade7cf58faf"
+    }
+  },
+  "browser_home_images_loaded_each": true,
+  "browser_home_transition_each": true,
+  "user_login_confirmation": "완료",
+  "preflight_boundary": "실제 홈 광고 영역 준비 확인. editor 원격 메뉴 일부 로드 실패는 별도 관측. 광고 업무 범위의 준비 판단이며 전체 서비스 정상 선언 아님."
+}

@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-16",
+  "kind": "independent_post_run_home_followup",
+  "oh-my-claudecode": {
+    "port": 3011,
+    "home_loaded": true,
+    "ad_card_present": true,
+    "loaded_mock_images": 2,
+    "arrows": 0,
+    "border": "1px solid rgba(0, 0, 0, 0.1)",
+    "shadow": "rgba(0, 0, 0, 0.05) 0px 1px 2px 0px",
+    "track_sample": "translateX(-100%)"
+  },
+  "omc-kit": {
+    "port": 3012,
+    "home_loaded": true,
+    "ad_card_present": true,
+    "loaded_mock_images": 2,
+    "arrows": 0,
+    "border": "1px solid rgba(0, 0, 0, 0.1)",
+    "shadow": "rgba(0, 0, 0, 0.05) 0px 1px 2px 0px",
+    "track_samples": [
+      "translateX(0%)",
+      "translateX(-100%)"
+    ],
+    "automatic_transition_observed": true,
+    "visual_full_page_inspected": true
+  },
+  "limits": [
+    "Mock advertisement input on actual home; not production CMS verification.",
+    "OMC actual-home automatic transition observed; competitor actual-home has only one temporal sample. Both passed controlled-harness transition checks.",
+    "Click tracking and hide integration not verified.",
+    "Later independent verification does not validate original model completion claim."
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "passed": 47,
+  "failed": 4,
+  "new_failures": [],
+  "retained_baseline_failures": [
+    "Ad tracks each Catalog creative impression once after the route store identity is ready",
+    "Ad tracks each active Catalog creative impression only once",
+    "Ad tracks linked Catalog slide clicks but not indicator clicks",
+    "Ad tracks the same Catalog creative again when the store identity changes"
+  ],
+  "missing_baseline_failures": []
+}

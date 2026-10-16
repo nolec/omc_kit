@@ -1,0 +1,8 @@
+{
+  "arm": "oh-my-claudecode",
+  "status": "exited",
+  "returncode": 0,
+  "elapsed_sec": 651.83,
+  "started_at": "2026-10-16T02:51:42.346643+00:00",
+  "model": "us.anthropic.claude-sonnet-4-6"
+}

@@ -1,0 +1,13 @@
+{
+  "baseline": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
+  "model": "us.anthropic.claude-sonnet-4-6",
+  "effort": "high",
+  "timeout_sec_each": 1200,
+  "order": [
+    "oh-my-claudecode",
+    "omc-kit"
+  ],
+  "request_sha256": "06823beac47e10c31941d8648e81fda3ebcf36736422cf06acb9cc4ebedb61e2",
+  "task_sha256": "d48b738f79ff9981601f23df227c9a3e0d645e3254d61221493073584eb3110b",
+  "purpose": "single paired exploratory UI comparison; implementation and procedure assessed separately"
+}

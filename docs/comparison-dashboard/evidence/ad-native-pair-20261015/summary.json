@@ -1,0 +1,92 @@
+{
+  "case_id": "omc-ad-native-pair-20261015-182101",
+  "status": "comparison_recorded_with_integration_limits",
+  "model": "us.anthropic.claude-sonnet-4-6",
+  "order": [
+    "oh-my-claudecode",
+    "omc-kit"
+  ],
+  "single_pair_only": true,
+  "baseline": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
+  "sandbox_attempt": "zero model tokens; environment access failure; excluded from implementation metrics",
+  "baseline_tests": {
+    "total": 72,
+    "passed": 68,
+    "failed": 4
+  },
+  "arms": {
+    "omc-kit": {
+      "execution": {
+        "arm": "omc-kit",
+        "status": "exited",
+        "returncode": 0,
+        "started_at": "2026-10-15T18:42:17.260806+09:00",
+        "finished_at": "2026-10-15T18:52:39.053905+09:00",
+        "elapsed_sec": 621.79,
+        "model": "us.anthropic.claude-sonnet-4-6",
+        "product_completion": "unverified"
+      },
+      "tests": {
+        "numTotalTests": 72,
+        "numPassedTests": 68,
+        "numFailedTests": 4
+      },
+      "new_failure_names": [],
+      "scoped_lint_exit": 0,
+      "arrows": 0,
+      "controlled_auto_transition": "all six variants moved between 500ms and 3700ms observations",
+      "border": "visible actual border",
+      "pipeline_registration": {
+        "contract_confirmed": false,
+        "red_done_tests": []
+      },
+      "completion_report": "claimed all required verification passed despite browser unrun; inconsistent",
+      "actual_home": "observed card and banner, images loaded, 0 arrows, actual 1px border and shadow visible, card transitioned",
+      "fixture_unchanged": true,
+      "model_phase_user_interventions": 0,
+      "rework_cycles": "not normalized: retained tool sequence for audit"
+    },
+    "oh-my-claudecode": {
+      "execution": {
+        "arm": "oh-my-claudecode",
+        "status": "timeout",
+        "returncode": 143,
+        "started_at": "2026-10-15T18:22:16.584297+09:00",
+        "finished_at": "2026-10-15T18:42:16.670337+09:00",
+        "elapsed_sec": 1200.08,
+        "model": "us.anthropic.claude-sonnet-4-6",
+        "product_completion": "unverified"
+      },
+      "tests": {
+        "numTotalTests": 75,
+        "numPassedTests": 71,
+        "numFailedTests": 4
+      },
+      "new_failure_names": [],
+      "scoped_lint_exit": 0,
+      "arrows": 0,
+      "controlled_auto_transition": "all six variants moved between 500ms and 3700ms observations",
+      "border": "inset shadow covered by opaque image; needs changes",
+      "pipeline_registration": "not OMC internal requirements",
+      "completion_report": "absent at timeout",
+      "actual_home": "observed card and banner, images loaded, 0 arrows, card transitioned; inset border covered by image",
+      "fixture_unchanged": true,
+      "model_phase_user_interventions": 0,
+      "rework_cycles": "not normalized: retained tool sequence for audit"
+    }
+  },
+  "runtime_credentials": "never copied into model prompts or evidence",
+  "actual_home_data": "temporary 2-item props in real Home component; not production CMS card integration",
+  "actual_click": "local link new tab observed in setup; authentication destination not verified; excluded equally",
+  "global_tool_superiority": "not established",
+  "next_priority": "OMC contract/RED registration and honest completion reporting; do not promote staged-no-change check to full gate",
+  "real_home_reauthentication": "one user login during independent verification; outside model phase",
+  "limits": [
+    "one exploratory pair; no causal or general superiority claim",
+    "actual card uses same synthetic items; production CMS and tracking not established",
+    "local click authentication redirect remains outside validated UI scope",
+    "native entry strings and registered commands recorded; command consumption itself not independently established",
+    "test counts differ because candidate tests were edited; shared external six-variant harness and baseline failure names also used",
+    "no signed completion receipt or real-user usability score"
+  ]
+}

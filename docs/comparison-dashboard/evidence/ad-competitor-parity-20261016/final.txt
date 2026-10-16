@@ -1,0 +1,28 @@
+모든 검증이 완료됐습니다. 최종 보고를 작성합니다.
+
+---
+
+**구현 완료. 신규 실패 없음.**
+
+## 변경 파일
+
+- `libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts` — `bannerStyle`, `cardStyle` 모두 `box-shadow: inset 0 0 0 1px ${TRANSPARENT.GRAY[100]}, ${BOX_SHADOW.HOME_CARD}`로 변경; `CardCarouselNav`, `CardArrowButton` 삭제
+- `libs/sellerhub-store/src/lib/components/Ad/Ad.tsx` — 카드 화살표 렌더 블록 제거
+- `libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx` — box-shadow 기댓값 업데이트, 화살표 관련 테스트 2개를 "화살표 없음 + 자동 전환" 검증으로 교체
+
+## 수행 검증
+
+| 항목 | 결과 |
+|------|------|
+| **tests** | 41 통과 / 4 실패 — baseline(41통과·4실패)과 동일 |
+| **lint** | exit 0, 신규 오류 없음 (기존 warning 146개 유지) |
+| **browser-controlled** | 6개 variant 모두 `inset rgba(0,0,0,0.1)` + `0px 1px 2px 0px rgba(0,0,0,0.05)` 확인; 화살표 버튼 0개; 3.7초 후 자동 전환(`translateX(-100%)`) 확인 |
+| **browser-home** | 실제 홈 `card-large` box-shadow 동일 값; 이미지 로드(naturalWidth 1020); 화살표 0개; 3.7초 후 자동 전환(`0%`→`-100%`) 확인 |
+
+## 미검증 및 기존 실패
+
+- **기존 4 실패 (미해결)**: 추적 이벤트 관련 테스트 4개 — "tracks each Catalog creative impression once after the route store identity is ready", "tracks the same Catalog creative again when the store identity changes", "tracks linked Catalog slide clicks but not indicator clicks", "tracks each active Catalog creative impression only once". 이번 변경 범위 외이며 baseline과 이름·진단 동일.
+- **클릭 추적·오늘 하루 숨김** 브라우저 직접 클릭 검증 미수행: 실제 광고 클릭·숨김 버튼 조작은 실제 추적 이벤트 발송 우려로 관찰 범위에서 제외. 동작 보존은 41개 통과 테스트(관련 테스트명: "dismisses only the active Catalog slide for today", "hides banner indicators for one item" 등 포함)로 근거함.
+- **실제 홈 banner-small** 단일 슬라이드(1개)라 자동 전환 없음 — 정상 동작.
+
+다음 행동: PR 생성 전 코드오너 리뷰를 받으세요.

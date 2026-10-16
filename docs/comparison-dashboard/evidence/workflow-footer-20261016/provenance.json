@@ -1,0 +1,11 @@
+{
+  "raw_root": "/private/tmp/omc-footer-native-20261016-wo69ltpg",
+  "evidence_sha256": {
+    "assessment.json": "b5b8b7fbf530f01b22c332cb32dcdc2bfe0727752f03cc97a8170b5c30ed2fce",
+    "native-events.jsonl": "e084929ccc4fab200119106773529f3e14cf0640b364fe4d441ce3ac9ef041ea",
+    "final.txt": "349c47048324cc2c2d81f03fbeba6be170446ba1e5a057bab7a04886c28ca41c",
+    "preregistration.json": "4fd636dece60452a7199ec0ba770385a5d9fbdba3204945b86e40b9be72d1306",
+    "request.md": "cac53d74b1f374076076d02db425108e93421111e40bbdd117bef4ee769456a9",
+    "execution.json": "973c5e918af9e747417675012e8cc05d426c24eddff4b8fc7c28ff87f59a9308"
+  }
+}

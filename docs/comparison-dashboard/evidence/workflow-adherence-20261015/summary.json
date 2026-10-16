@@ -1,0 +1,156 @@
+{
+  "purpose": "controlled synthetic native execution, one sample each; no general adherence rate or performance ranking",
+  "model": "us.anthropic.claude-sonnet-4-6",
+  "baseline_commit": "5c88b8e11c3e6158afafd9c45f34d89634d74310",
+  "arms": {
+    "before": {
+      "execution": {
+        "arm": "before",
+        "status": "exited",
+        "returncode": 0,
+        "elapsed_sec": 60.06,
+        "started_at": "2026-10-15T22:00:48.902119+09:00",
+        "finished_at": "2026-10-15T22:01:48.957556+09:00"
+      },
+      "init": {
+        "plugins": [],
+        "execute_registered": false
+      },
+      "pipeline": {
+        "started_at": 1792069250.622764,
+        "red_done_tests": [
+          "test_app.js"
+        ],
+        "allowed_impl_files": [],
+        "blocked_count": 0,
+        "contract_confirmed": false,
+        "contract_hash": "",
+        "session_id": ""
+      },
+      "independent_function_checks": {
+        "returncode": 0,
+        "stdout": "3 independent cases passed\n",
+        "stderr": ""
+      },
+      "final_machine_envelope": null,
+      "first_nonempty_line": "게이트 통과 (반환값 0).",
+      "browser_unrun_disclosed": true,
+      "contract_registration_called": false,
+      "complete_task_called": false,
+      "stage_sequence_evidence": "selected-traces.json"
+    },
+    "after": {
+      "execution": {
+        "arm": "after",
+        "status": "exited",
+        "returncode": 0,
+        "elapsed_sec": 59.96,
+        "started_at": "2026-10-15T22:01:48.959055+09:00",
+        "finished_at": "2026-10-15T22:02:48.914338+09:00"
+      },
+      "init": {
+        "plugins": [],
+        "execute_registered": false
+      },
+      "pipeline": {
+        "started_at": 1792069309.606925,
+        "red_done_tests": [
+          "test_app.js"
+        ],
+        "allowed_impl_files": [],
+        "blocked_count": 0,
+        "contract_confirmed": true,
+        "contract_hash": "5a4c40724fc302e84227b5b54f0c04fc3c5ea62907119ce214fa8e9cadc5ef0c",
+        "session_id": "20261015T220000-07e08cb9",
+        "required_checks": [
+          "tests",
+          "browser"
+        ],
+        "worktree_baseline": {},
+        "red_session_id": "20261015T220000-07e08cb9"
+      },
+      "independent_function_checks": {
+        "returncode": 0,
+        "stdout": "3 independent cases passed\n",
+        "stderr": ""
+      },
+      "final_machine_envelope": {
+        "schema_version": "omc-output/v1",
+        "stage": "task",
+        "outcome": "blocked",
+        "risk": "medium",
+        "next_skill": null,
+        "user_selection_needed": true,
+        "reason_code": "verification_incomplete",
+        "verdict": "BLOCK"
+      },
+      "first_nonempty_line": "---",
+      "browser_unrun_disclosed": true,
+      "contract_registration_called": true,
+      "complete_task_called": true,
+      "stage_sequence_evidence": "selected-traces.json"
+    },
+    "competitor-probe": {
+      "execution": {
+        "arm": "competitor-probe",
+        "status": "exited",
+        "returncode": 0,
+        "elapsed_sec": 33.93,
+        "started_at": "2026-10-15T22:02:48.915821+09:00",
+        "finished_at": "2026-10-15T22:03:22.847246+09:00"
+      },
+      "init": {
+        "plugins": [
+          {
+            "name": "oh-my-claudecode",
+            "path": "/private/tmp/omc-workflow-validation-20261015-215958/competitor-plugin",
+            "source": "oh-my-claudecode@inline"
+          }
+        ],
+        "execute_registered": true
+      },
+      "pipeline": null,
+      "independent_function_checks": {
+        "returncode": 0,
+        "stdout": "3 independent cases passed\n",
+        "stderr": ""
+      },
+      "final_machine_envelope": null,
+      "first_nonempty_line": "테스트 3개 모두 통과했습니다.",
+      "browser_unrun_disclosed": true,
+      "contract_registration_called": false,
+      "complete_task_called": false,
+      "stage_sequence_evidence": "selected-traces.json"
+    }
+  },
+  "claude_plugin": {
+    "previous_ad_run": {
+      "inline_loaded": true,
+      "execute_registered": true,
+      "explicit_Skill_call_in_retained_top_level_trace": false,
+      "instruction_consumption": "not independently established by that trace"
+    },
+    "current_probe": {
+      "inline_loaded": true,
+      "execute_registered": true,
+      "Skill_call": "oh-my-claudecode:execute",
+      "skill_content_returned": true,
+      "implementation_and_tests_followed": true
+    },
+    "default_settings_checked": [
+      "~/.claude/settings.json",
+      ".claude/settings.json"
+    ],
+    "default_enabledPlugins": {},
+    "ordinary_sessions": "automatic activation not established; inline execution and custom profiles are separate"
+  },
+  "remaining_issues": [
+    "after final response begins with --- instead of exact status line and repeats status",
+    "after wrote verification JSON to /tmp/verify_task.json despite the workspace-only instruction",
+    "first missing verification JSON produced misleading missing-registration messages because session id was cleared on record read failure"
+  ],
+  "browser": "deliberately unavailable; must remain required and unrun",
+  "preregistration": "validation-contract.json written before model calls",
+  "normal_consumers_reinstalled": false,
+  "product_code_changed_by_this_validation": false
+}

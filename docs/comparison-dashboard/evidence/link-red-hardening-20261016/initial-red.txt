@@ -1,0 +1,377 @@
+FFFFFFF......FFFFFFFFF                                                   [100%]
+=================================== FAILURES ===================================
+___________ test_public_template_accepts_real_project_directory_link ___________
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_template_accepts_r0')
+
+    def test_public_template_accepts_real_project_directory_link(tmp_path):
+        prepared(tmp_path)
+        directory_link(tmp_path)
+        result = cli(tmp_path, 'verification-template')
+>       assert result.returncode == 0, result.stdout + result.stderr
+E       AssertionError: [PIPELINE] 코드 스냅샷 링크 대상 파일을 확인할 수 없습니다: .agents/skills/tracking
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...cation-template'], returncode=1, stdout='[PIPELINE] 코드 스냅샷 링크 대상 파일을 확인할 수 없습니다: .agents/skills/tracking\n', stderr='').returncode
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:74: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+______ test_directory_target_mutations_block_old_cli_completion[content] _______
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation0')
+change = 'content'
+
+    @pytest.mark.parametrize('change', ['content', 'add', 'delete', 'rename', 'mode', 'retarget'])
+    def test_directory_target_mutations_block_old_cli_completion(tmp_path, change):
+        doc = prepared(tmp_path)
+        target, link = directory_link(tmp_path)
+        proof = red_proof(tmp_path, doc)
+>       assert cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof)).returncode == 0
+E       AssertionError: assert 2 == 0
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation0/.omc/red/proof.json\n').returncode
+E        +    where CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation0/.omc/red/proof.json\n') = cli(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation0'), 'red-done', 'test_app.py', '--evidence-file', '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation0/.omc/red/proof.json')
+E        +      where '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation0/.omc/red/proof.json' = str(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation0/.omc/red/proof.json'))
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:84: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+________ test_directory_target_mutations_block_old_cli_completion[add] _________
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation1')
+change = 'add'
+
+    @pytest.mark.parametrize('change', ['content', 'add', 'delete', 'rename', 'mode', 'retarget'])
+    def test_directory_target_mutations_block_old_cli_completion(tmp_path, change):
+        doc = prepared(tmp_path)
+        target, link = directory_link(tmp_path)
+        proof = red_proof(tmp_path, doc)
+>       assert cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof)).returncode == 0
+E       AssertionError: assert 2 == 0
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation1/.omc/red/proof.json\n').returncode
+E        +    where CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation1/.omc/red/proof.json\n') = cli(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation1'), 'red-done', 'test_app.py', '--evidence-file', '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation1/.omc/red/proof.json')
+E        +      where '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation1/.omc/red/proof.json' = str(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation1/.omc/red/proof.json'))
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:84: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+_______ test_directory_target_mutations_block_old_cli_completion[delete] _______
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation2')
+change = 'delete'
+
+    @pytest.mark.parametrize('change', ['content', 'add', 'delete', 'rename', 'mode', 'retarget'])
+    def test_directory_target_mutations_block_old_cli_completion(tmp_path, change):
+        doc = prepared(tmp_path)
+        target, link = directory_link(tmp_path)
+        proof = red_proof(tmp_path, doc)
+>       assert cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof)).returncode == 0
+E       AssertionError: assert 2 == 0
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation2/.omc/red/proof.json\n').returncode
+E        +    where CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation2/.omc/red/proof.json\n') = cli(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation2'), 'red-done', 'test_app.py', '--evidence-file', '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation2/.omc/red/proof.json')
+E        +      where '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation2/.omc/red/proof.json' = str(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation2/.omc/red/proof.json'))
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:84: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+_______ test_directory_target_mutations_block_old_cli_completion[rename] _______
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation3')
+change = 'rename'
+
+    @pytest.mark.parametrize('change', ['content', 'add', 'delete', 'rename', 'mode', 'retarget'])
+    def test_directory_target_mutations_block_old_cli_completion(tmp_path, change):
+        doc = prepared(tmp_path)
+        target, link = directory_link(tmp_path)
+        proof = red_proof(tmp_path, doc)
+>       assert cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof)).returncode == 0
+E       AssertionError: assert 2 == 0
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation3/.omc/red/proof.json\n').returncode
+E        +    where CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation3/.omc/red/proof.json\n') = cli(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation3'), 'red-done', 'test_app.py', '--evidence-file', '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation3/.omc/red/proof.json')
+E        +      where '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation3/.omc/red/proof.json' = str(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation3/.omc/red/proof.json'))
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:84: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+________ test_directory_target_mutations_block_old_cli_completion[mode] ________
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation4')
+change = 'mode'
+
+    @pytest.mark.parametrize('change', ['content', 'add', 'delete', 'rename', 'mode', 'retarget'])
+    def test_directory_target_mutations_block_old_cli_completion(tmp_path, change):
+        doc = prepared(tmp_path)
+        target, link = directory_link(tmp_path)
+        proof = red_proof(tmp_path, doc)
+>       assert cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof)).returncode == 0
+E       AssertionError: assert 2 == 0
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation4/.omc/red/proof.json\n').returncode
+E        +    where CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation4/.omc/red/proof.json\n') = cli(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation4'), 'red-done', 'test_app.py', '--evidence-file', '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation4/.omc/red/proof.json')
+E        +      where '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation4/.omc/red/proof.json' = str(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation4/.omc/red/proof.json'))
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:84: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+______ test_directory_target_mutations_block_old_cli_completion[retarget] ______
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation5')
+change = 'retarget'
+
+    @pytest.mark.parametrize('change', ['content', 'add', 'delete', 'rename', 'mode', 'retarget'])
+    def test_directory_target_mutations_block_old_cli_completion(tmp_path, change):
+        doc = prepared(tmp_path)
+        target, link = directory_link(tmp_path)
+        proof = red_proof(tmp_path, doc)
+>       assert cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof)).returncode == 0
+E       AssertionError: assert 2 == 0
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation5/.omc/red/proof.json\n').returncode
+E        +    where CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation5/.omc/red/proof.json\n') = cli(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation5'), 'red-done', 'test_app.py', '--evidence-file', '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation5/.omc/red/proof.json')
+E        +      where '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation5/.omc/red/proof.json' = str(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_directory_target_mutation5/.omc/red/proof.json'))
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:84: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+_____________ test_approved_red_without_case_evidence_is_rejected ______________
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_approved_red_without_case0')
+
+    def test_approved_red_without_case_evidence_is_rejected(tmp_path):
+        prepared(tmp_path)
+        result = cli(tmp_path, 'red-done', 'test_app.py')
+>       assert result.returncode == 1
+E       AssertionError: assert 0 == 1
+E        +  where 0 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...app.py'], returncode=0, stdout='[PIPELINE] ✅ RED 완료 등록: test_app.py\n           이제 대응 구현 파일을 생성할 수 있습니다.\n', stderr='').returncode
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:148: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+_ test_public_red_rejects_invalid_or_unrelated_failure_evidence[baseline-only] _
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali0')
+defect = 'baseline-only'
+
+    @pytest.mark.parametrize('defect', ['baseline-only', 'unknown-check', 'wrong-session', 'wrong-basis',
+                                      'success-exit', 'test-changed', 'output-changed'])
+    def test_public_red_rejects_invalid_or_unrelated_failure_evidence(tmp_path, defect):
+        doc = prepared(tmp_path)
+        proof = red_proof(tmp_path, doc)
+        value = json.loads(proof.read_text())
+        if defect == 'baseline-only': value.update(case_id='test_old', failed_cases=['test_old'])
+        elif defect == 'unknown-check': value['check_id'] = 'unapproved'
+        elif defect == 'wrong-session': value['session_id'] = 'old'
+        elif defect == 'wrong-basis': value['basis_sha256'] = 'old'
+        elif defect == 'success-exit': value['exit_code'] = 0
+        elif defect == 'test-changed': (tmp_path / 'test_app.py').write_text('changed')
+        else: (tmp_path / '.omc/red/output.txt').write_text('different result')
+        proof.write_text(json.dumps(value))
+        result = cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof))
+>       assert result.returncode == 1, result.stdout
+E       AssertionError: 
+E       assert 2 == 1
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali0/.omc/red/proof.json\n').returncode
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:167: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+_ test_public_red_rejects_invalid_or_unrelated_failure_evidence[unknown-check] _
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali1')
+defect = 'unknown-check'
+
+    @pytest.mark.parametrize('defect', ['baseline-only', 'unknown-check', 'wrong-session', 'wrong-basis',
+                                      'success-exit', 'test-changed', 'output-changed'])
+    def test_public_red_rejects_invalid_or_unrelated_failure_evidence(tmp_path, defect):
+        doc = prepared(tmp_path)
+        proof = red_proof(tmp_path, doc)
+        value = json.loads(proof.read_text())
+        if defect == 'baseline-only': value.update(case_id='test_old', failed_cases=['test_old'])
+        elif defect == 'unknown-check': value['check_id'] = 'unapproved'
+        elif defect == 'wrong-session': value['session_id'] = 'old'
+        elif defect == 'wrong-basis': value['basis_sha256'] = 'old'
+        elif defect == 'success-exit': value['exit_code'] = 0
+        elif defect == 'test-changed': (tmp_path / 'test_app.py').write_text('changed')
+        else: (tmp_path / '.omc/red/output.txt').write_text('different result')
+        proof.write_text(json.dumps(value))
+        result = cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof))
+>       assert result.returncode == 1, result.stdout
+E       AssertionError: 
+E       assert 2 == 1
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali1/.omc/red/proof.json\n').returncode
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:167: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+_ test_public_red_rejects_invalid_or_unrelated_failure_evidence[wrong-session] _
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali2')
+defect = 'wrong-session'
+
+    @pytest.mark.parametrize('defect', ['baseline-only', 'unknown-check', 'wrong-session', 'wrong-basis',
+                                      'success-exit', 'test-changed', 'output-changed'])
+    def test_public_red_rejects_invalid_or_unrelated_failure_evidence(tmp_path, defect):
+        doc = prepared(tmp_path)
+        proof = red_proof(tmp_path, doc)
+        value = json.loads(proof.read_text())
+        if defect == 'baseline-only': value.update(case_id='test_old', failed_cases=['test_old'])
+        elif defect == 'unknown-check': value['check_id'] = 'unapproved'
+        elif defect == 'wrong-session': value['session_id'] = 'old'
+        elif defect == 'wrong-basis': value['basis_sha256'] = 'old'
+        elif defect == 'success-exit': value['exit_code'] = 0
+        elif defect == 'test-changed': (tmp_path / 'test_app.py').write_text('changed')
+        else: (tmp_path / '.omc/red/output.txt').write_text('different result')
+        proof.write_text(json.dumps(value))
+        result = cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof))
+>       assert result.returncode == 1, result.stdout
+E       AssertionError: 
+E       assert 2 == 1
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali2/.omc/red/proof.json\n').returncode
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:167: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+__ test_public_red_rejects_invalid_or_unrelated_failure_evidence[wrong-basis] __
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali3')
+defect = 'wrong-basis'
+
+    @pytest.mark.parametrize('defect', ['baseline-only', 'unknown-check', 'wrong-session', 'wrong-basis',
+                                      'success-exit', 'test-changed', 'output-changed'])
+    def test_public_red_rejects_invalid_or_unrelated_failure_evidence(tmp_path, defect):
+        doc = prepared(tmp_path)
+        proof = red_proof(tmp_path, doc)
+        value = json.loads(proof.read_text())
+        if defect == 'baseline-only': value.update(case_id='test_old', failed_cases=['test_old'])
+        elif defect == 'unknown-check': value['check_id'] = 'unapproved'
+        elif defect == 'wrong-session': value['session_id'] = 'old'
+        elif defect == 'wrong-basis': value['basis_sha256'] = 'old'
+        elif defect == 'success-exit': value['exit_code'] = 0
+        elif defect == 'test-changed': (tmp_path / 'test_app.py').write_text('changed')
+        else: (tmp_path / '.omc/red/output.txt').write_text('different result')
+        proof.write_text(json.dumps(value))
+        result = cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof))
+>       assert result.returncode == 1, result.stdout
+E       AssertionError: 
+E       assert 2 == 1
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali3/.omc/red/proof.json\n').returncode
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:167: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+_ test_public_red_rejects_invalid_or_unrelated_failure_evidence[success-exit] __
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali4')
+defect = 'success-exit'
+
+    @pytest.mark.parametrize('defect', ['baseline-only', 'unknown-check', 'wrong-session', 'wrong-basis',
+                                      'success-exit', 'test-changed', 'output-changed'])
+    def test_public_red_rejects_invalid_or_unrelated_failure_evidence(tmp_path, defect):
+        doc = prepared(tmp_path)
+        proof = red_proof(tmp_path, doc)
+        value = json.loads(proof.read_text())
+        if defect == 'baseline-only': value.update(case_id='test_old', failed_cases=['test_old'])
+        elif defect == 'unknown-check': value['check_id'] = 'unapproved'
+        elif defect == 'wrong-session': value['session_id'] = 'old'
+        elif defect == 'wrong-basis': value['basis_sha256'] = 'old'
+        elif defect == 'success-exit': value['exit_code'] = 0
+        elif defect == 'test-changed': (tmp_path / 'test_app.py').write_text('changed')
+        else: (tmp_path / '.omc/red/output.txt').write_text('different result')
+        proof.write_text(json.dumps(value))
+        result = cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof))
+>       assert result.returncode == 1, result.stdout
+E       AssertionError: 
+E       assert 2 == 1
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali4/.omc/red/proof.json\n').returncode
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:167: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+_ test_public_red_rejects_invalid_or_unrelated_failure_evidence[test-changed] __
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali5')
+defect = 'test-changed'
+
+    @pytest.mark.parametrize('defect', ['baseline-only', 'unknown-check', 'wrong-session', 'wrong-basis',
+                                      'success-exit', 'test-changed', 'output-changed'])
+    def test_public_red_rejects_invalid_or_unrelated_failure_evidence(tmp_path, defect):
+        doc = prepared(tmp_path)
+        proof = red_proof(tmp_path, doc)
+        value = json.loads(proof.read_text())
+        if defect == 'baseline-only': value.update(case_id='test_old', failed_cases=['test_old'])
+        elif defect == 'unknown-check': value['check_id'] = 'unapproved'
+        elif defect == 'wrong-session': value['session_id'] = 'old'
+        elif defect == 'wrong-basis': value['basis_sha256'] = 'old'
+        elif defect == 'success-exit': value['exit_code'] = 0
+        elif defect == 'test-changed': (tmp_path / 'test_app.py').write_text('changed')
+        else: (tmp_path / '.omc/red/output.txt').write_text('different result')
+        proof.write_text(json.dumps(value))
+        result = cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof))
+>       assert result.returncode == 1, result.stdout
+E       AssertionError: 
+E       assert 2 == 1
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali5/.omc/red/proof.json\n').returncode
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:167: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+_ test_public_red_rejects_invalid_or_unrelated_failure_evidence[output-changed] _
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali6')
+defect = 'output-changed'
+
+    @pytest.mark.parametrize('defect', ['baseline-only', 'unknown-check', 'wrong-session', 'wrong-basis',
+                                      'success-exit', 'test-changed', 'output-changed'])
+    def test_public_red_rejects_invalid_or_unrelated_failure_evidence(tmp_path, defect):
+        doc = prepared(tmp_path)
+        proof = red_proof(tmp_path, doc)
+        value = json.loads(proof.read_text())
+        if defect == 'baseline-only': value.update(case_id='test_old', failed_cases=['test_old'])
+        elif defect == 'unknown-check': value['check_id'] = 'unapproved'
+        elif defect == 'wrong-session': value['session_id'] = 'old'
+        elif defect == 'wrong-basis': value['basis_sha256'] = 'old'
+        elif defect == 'success-exit': value['exit_code'] = 0
+        elif defect == 'test-changed': (tmp_path / 'test_app.py').write_text('changed')
+        else: (tmp_path / '.omc/red/output.txt').write_text('different result')
+        proof.write_text(json.dumps(value))
+        result = cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof))
+>       assert result.returncode == 1, result.stdout
+E       AssertionError: 
+E       assert 2 == 1
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_public_red_rejects_invali6/.omc/red/proof.json\n').returncode
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:167: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+___________ test_red_receipt_tampering_and_revision_block_completion ___________
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_red_receipt_tampering_and0')
+
+    def test_red_receipt_tampering_and_revision_block_completion(tmp_path):
+        doc = prepared(tmp_path)
+        proof = red_proof(tmp_path, doc)
+>       assert cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof)).returncode == 0
+E       AssertionError: assert 2 == 0
+E        +  where 2 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_red_receipt_tampering_and0/.omc/red/proof.json\n').returncode
+E        +    where CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-re...71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_red_receipt_tampering_and0/.omc/red/proof.json\n') = cli(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_red_receipt_tampering_and0'), 'red-done', 'test_app.py', '--evidence-file', '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_red_receipt_tampering_and0/.omc/red/proof.json')
+E        +      where '/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_red_receipt_tampering_and0/.omc/red/proof.json' = str(PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-536/test_red_receipt_tampering_and0/.omc/red/proof.json'))
+
+/private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py:174: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+=========================== short test summary info ============================
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_public_template_accepts_real_project_directory_link
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_directory_target_mutations_block_old_cli_completion[content]
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_directory_target_mutations_block_old_cli_completion[add]
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_directory_target_mutations_block_old_cli_completion[delete]
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_directory_target_mutations_block_old_cli_completion[rename]
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_directory_target_mutations_block_old_cli_completion[mode]
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_directory_target_mutations_block_old_cli_completion[retarget]
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_approved_red_without_case_evidence_is_rejected
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_public_red_rejects_invalid_or_unrelated_failure_evidence[baseline-only]
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_public_red_rejects_invalid_or_unrelated_failure_evidence[unknown-check]
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_public_red_rejects_invalid_or_unrelated_failure_evidence[wrong-session]
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_public_red_rejects_invalid_or_unrelated_failure_evidence[wrong-basis]
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_public_red_rejects_invalid_or_unrelated_failure_evidence[success-exit]
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_public_red_rejects_invalid_or_unrelated_failure_evidence[test-changed]
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_public_red_rejects_invalid_or_unrelated_failure_evidence[output-changed]
+FAILED ../../../../../private/tmp/omc-link-red-red-replay-shejwust/scripts/test_omc_pipeline_link_red.py::test_red_receipt_tampering_and_revision_block_completion
+16 failed, 6 passed in 4.98s

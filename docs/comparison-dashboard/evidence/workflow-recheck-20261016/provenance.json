@@ -1,0 +1,11 @@
+{
+  "raw_root": "/private/tmp/omc-native-recheck-20261016-zhotvstr",
+  "evidence_sha256": {
+    "assessment.json": "0681b042c3631e5645cbea3e37e1eec4bbdcd409d1600bd094b932b94641914d",
+    "native-events.jsonl": "45eb7a3526a29b9627badac94e008429cd757d85a4348ec0c767733373ae7f93",
+    "final.txt": "2990e0f3c56025fbdf4f42d18c725e64b940b78f02737ee6d608b09e02d3cda0",
+    "preregistration.json": "d028e1737f2910c324b127ae4dbf257ee840d2359372a399d0767873700220e4",
+    "request.md": "cac53d74b1f374076076d02db425108e93421111e40bbdd117bef4ee769456a9",
+    "execution.json": "5cb43fd50a66c86e7b7a2b4228ede92f0ddc1d7403834a0de4d6e8662644210c"
+  }
+}

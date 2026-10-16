@@ -1,0 +1,17 @@
+{
+  "session_id": "20261016T122815-19e557ec",
+  "basis_sha256": "fbc5d095d52d51abfd62a0677e2cdad568e6d2840fd0c6b882e0587050d174d1",
+  "test_file": "scripts/test_omc_pipeline_link_red.py",
+  "test_sha256": "eccb6c46733581de4bc8f2fdafe45daf030b6e406f0a8ed584a8a32d98810ac6",
+  "check_id": "tests",
+  "case_id": "test_typed_red_does_not_promote_inherited_legacy_test_names",
+  "expected_failure": "R3: 요구별 RED 등록이 무관한 과거 테스트 목록을 현재 근거로 승격하지 않아야 한다",
+  "command": "python3 -m pytest -q scripts/test_omc_pipeline_link_red.py::test_typed_red_does_not_promote_inherited_legacy_test_names",
+  "exit_code": 1,
+  "baseline_failed_cases": [],
+  "failed_cases": [
+    "test_typed_red_does_not_promote_inherited_legacy_test_names"
+  ],
+  "output_file": ".omc/red/link-red/inherited-output.txt",
+  "output_sha256": "a75ccb51ea9e516e31d2cd2e909de24ef1b564fbfe33e921e4ab807ad7938ef2"
+}

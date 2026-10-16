@@ -1,0 +1,86 @@
+[
+  {
+    "id": "card-large",
+    "left_edge_rgb": [
+      229,
+      229,
+      229
+    ],
+    "inside_rgb": [
+      255,
+      255,
+      255
+    ],
+    "auto_transition": true
+  },
+  {
+    "id": "card-medium",
+    "left_edge_rgb": [
+      229,
+      229,
+      229
+    ],
+    "inside_rgb": [
+      255,
+      255,
+      255
+    ],
+    "auto_transition": true
+  },
+  {
+    "id": "card-small",
+    "left_edge_rgb": [
+      229,
+      229,
+      229
+    ],
+    "inside_rgb": [
+      255,
+      255,
+      255
+    ],
+    "auto_transition": true
+  },
+  {
+    "id": "banner-small",
+    "left_edge_rgb": [
+      229,
+      229,
+      229
+    ],
+    "inside_rgb": [
+      255,
+      255,
+      255
+    ],
+    "auto_transition": true
+  },
+  {
+    "id": "banner-large",
+    "left_edge_rgb": [
+      229,
+      229,
+      229
+    ],
+    "inside_rgb": [
+      255,
+      255,
+      255
+    ],
+    "auto_transition": true
+  },
+  {
+    "id": "banner-landing",
+    "left_edge_rgb": [
+      229,
+      229,
+      229
+    ],
+    "inside_rgb": [
+      255,
+      255,
+      255
+    ],
+    "auto_transition": true
+  }
+]

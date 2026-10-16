@@ -1,0 +1,10 @@
+{
+  "schema_version": "omc-workflow-preflight/v1",
+  "target": "/private/tmp/omc-ad-competitor-parity-xxqqjadc/oh-my-claudecode",
+  "status": "blocked",
+  "provider_call_count": 0,
+  "reason_codes": [
+    "<urlopen error [Errno 61] Connection refused>"
+  ],
+  "manifest_sha256": "2436e0b413225dbf6608c4af57784eef0f6b0eaa09af2a8e212d3c30f67170de"
+}

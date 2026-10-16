@@ -1,0 +1,33 @@
+{
+  "raw_root": "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5",
+  "sha256": {
+    "summary.json": "ffc35b8553a91927ee487e67c478bd48cf88d59021f4f4b8370ca8abb013cc26",
+    "omc-kit-patch.diff": "d08cdd371ea21e2c7e7ac03735bd8f5ada23930e74dd8b4ebcca29be298df2aa",
+    "oh-my-claudecode-independent-summary.json": "9c55bb8a9041213fd8201a0b603bbcad2f16fb3442739598b149e7fe195cdb68",
+    "omc-pipeline-state.json": "d239ac87e574aa68d593b8e421aab2045ca57909f4c9359fb92c7b15f43cc1ff",
+    "omc-kit-execution.json": "e11cdd240e1633da79f6e99e13cdad0d4bd4a215bdf45fd2b5d6a2bcd4e3d9fe",
+    "oh-my-claudecode-execution.json": "d9cf8ef69149c72e7454f8e0710f312b249bc6e6e68ec56786d9f77df00e890a",
+    "omc-kit-independent-summary.json": "927ba6c25ebfa84ad8897c6abd89cdd03f7227d220fc4ad5a1dff6f9febfd398",
+    "design-section.png": "70e49fd0b91b365efba85fb100a24b86247f77f31b98cd68350cf558bfcef203",
+    "design-reference.md": "43477fe1d5f5996c5ddda23a8110ff045954336d2c66ac5a584a592653097e19",
+    "omc-kit-independent-tests.json": "cca92ed3eb8f62a3f55794a466a727d1e1a28ec5efa95b23ee6e847c6bbc85f9",
+    "oh-my-claudecode-independent-tests.json": "0881f24314862b8a23d5a54b7845b4e0cf4afa1a86ed15e6b945f5fd8f9715f5",
+    "build-visual-check.cjs": "393ed479467e754416f88ff48d3ed3554f23bd0790ac34fab115aa91cef62156",
+    "oh-my-claudecode-browser-observation.json": "c9c0b108b89f8bb31b5998aee0c04345106f5deed6c2506247f6abb2534e6e06",
+    "omc-procedure-assessment.json": "5fbfa1d96fc19d51c2f775a8909848d57b0474e3afe3c6113e7176fd290f582d",
+    "oh-my-claudecode-final.txt": "1ea79ee9501fc97e92c2a24356081b83ed62c78f3081433749b07c7e6227f0ce",
+    "omc-kit-events.jsonl": "00bbafe87d5720e2fbe20a7993fc25167aa7889c0e1b59021b6add1cd4b5263c",
+    "omc-kit-final.txt": "1c12803cd4a08c0a5536687cf4ab5bcd0b1926d9ae29fc33b83e07b82592b390",
+    "omc-kit-independent-lint.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "oh-my-claudecode-events.jsonl": "9bb4fd47d57c2f1233bd2f37523e80da9031a2fed379b74f7e9ff1a1aa0f3016",
+    "task.md": "d48b738f79ff9981601f23df227c9a3e0d645e3254d61221493073584eb3110b",
+    "baseline-tests.json": "9ee7c1a6b699eeb7c5d2d53b21d73f4e5b37b2e2b740e4d44ac13836de30174d",
+    "omc-kit-browser-observation.json": "07af9383d7c1eca18767de07979685565578744ca68e46320476c45e6f6e8b65",
+    "preregistration.json": "a12bbbe50840d72717779b2be9b6d803a0825cfd4bf7aa75eaf3e4b1242ae669",
+    "execution-results.json": "29697d66a60982e59abe8fba9ffe8c3906e2d3ec8e68ef19fe16a85d851b3f5e",
+    "baseline-failure-names.json": "24d8df846565045a04b74dc349c90f3a5f1de24fbfae45cbdeee9191f66607ec",
+    "execution-request.md": "06823beac47e10c31941d8648e81fda3ebcf36736422cf06acb9cc4ebedb61e2",
+    "oh-my-claudecode-independent-lint.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "oh-my-claudecode-patch.diff": "9a2e5fbfe3d48b14147976de65385ad3a8ba7cfe2bbf2bc2bc03f2df0daeb635"
+  }
+}

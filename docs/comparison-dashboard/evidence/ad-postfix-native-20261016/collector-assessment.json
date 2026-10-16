@@ -1,0 +1,40 @@
+{
+  "schema_version": "omc-workflow-validation/v1",
+  "final_sha256": "0b5ce2684adb97f986a22828ded7590a393e9045650cb2d266e81e2bb5ac4bc3",
+  "events_sha256": "86a1ec630331e2b158fa08cfcebde34bec8bc9aa493fb0d930020ff88c4ac7bf",
+  "required": {
+    "approved_scope": "passed",
+    "registration": "passed",
+    "procedure_calls": "passed",
+    "truthful_final": "passed",
+    "verification_scope": "passed",
+    "native_exit": "passed"
+  },
+  "format_quality": {
+    "first_line": false,
+    "unique_status": true,
+    "single_next_action": false
+  },
+  "recompare_entry": "allow",
+  "issues": [],
+  "observed_verification_paths": [
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/.omc/verification/20261016T130541-62f1a8a7.json",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/.omc/verification/20261016T130541-62f1a8a7.json",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/.omc/verification/20261016T130541-62f1a8a7.json"
+  ],
+  "observed_direct_write_paths": [
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/.omc/red-evidence-border-arrow.json",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/.omc/red-evidence-border-arrow.json",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.tsx",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/.omc/verification/20261016T130541-62f1a8a7.json",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/apps/store-manager/public/.gitignore",
+    "/private/tmp/omc-ad-postfix-native-zgai8bw5/omc-kit/.omc/verification/20261016T130541-62f1a8a7.json"
+  ],
+  "boundary": "Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication."
+}

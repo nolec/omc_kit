@@ -1,0 +1,9 @@
+{
+  "source_commit": "f1b048ab86a6dc358a00f3515de1147549672e7c",
+  "previous_fixture_commit": "3655c8cc",
+  "root": "/private/tmp/omc-ad-postfix-native-zgai8bw5",
+  "model": "us.anthropic.claude-sonnet-4-6",
+  "effort": "high",
+  "timeout_sec": 1200,
+  "new_native_runs_planned": 1
+}

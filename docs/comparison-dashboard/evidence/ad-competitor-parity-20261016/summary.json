@@ -1,0 +1,140 @@
+{
+  "schema": "ad-competitor-parity-observation/v1",
+  "overall": "REQUIREMENT_FAILED_VISIBLE_BORDER",
+  "execution": {
+    "status": "exited",
+    "returncode": 0,
+    "elapsed_sec": 611.43,
+    "started_at": "2026-10-16T06:18:57.933289+00:00",
+    "model": "us.anthropic.claude-sonnet-4-6",
+    "effort": "high",
+    "human_corrections_during_run": 0
+  },
+  "plugin": {
+    "name": "oh-my-claudecode",
+    "version": "5.6.2",
+    "loaded": true,
+    "execute_invoked": true
+  },
+  "parity": {
+    "common_request_equal": true,
+    "common_checks_equal": true,
+    "initial_ad_and_home_hashes_matched_before_run": true,
+    "non_work_frozen_inputs_unchanged": {
+      "task.md": true,
+      "design-reference.md": true,
+      "design-section.png": true,
+      "libs/store-manager/components/src/lib/home/Home.tsx": true,
+      ".git/info/exclude": true,
+      "../browser.cjs": true,
+      "../build-controlled.cjs": true,
+      "../serve.cjs": true,
+      "../runtime.json": true,
+      "../run-settings.json": true,
+      "../run-native.py": true,
+      "../execution-request.md": true,
+      "../competitor-adapter.txt": true,
+      "../common-required-checks.json": true,
+      "../baseline-failures.json": true,
+      "tools/scripts/mf-remotes-config.js": true
+    },
+    "plugin_metadata_and_execute_skill_unchanged": true,
+    "tool_specific_completion_gate_exempt": true
+  },
+  "independent_tests": {
+    "passed": 41,
+    "failed": 4,
+    "same_failure_names": true,
+    "same_failure_diagnostics_excluding_stack": true,
+    "lint_exit": 0
+  },
+  "assessment": {
+    "tests": "passed_with_four_existing_failures",
+    "lint": "passed",
+    "browser-controlled": "failed_visible_border_occluded",
+    "browser-home": "failed_visible_border_occluded",
+    "scope": "passed",
+    "card_arrow_removal": "passed",
+    "auto_transition": "passed",
+    "browser_checks_performed_by_native": true,
+    "reported_completion_supported": false,
+    "reason": "computed inset shadow exists, but opaque child images cover the line; independent edge pixels equal image interior"
+  },
+  "scope": {
+    "status": "passed",
+    "violations": [],
+    "unresolved_writes": [],
+    "reason": null
+  },
+  "controlled_edge_rgb_each": [
+    [
+      255,
+      255,
+      255
+    ],
+    [
+      255,
+      255,
+      255
+    ],
+    [
+      255,
+      255,
+      255
+    ],
+    [
+      255,
+      255,
+      255
+    ],
+    [
+      255,
+      255,
+      255
+    ],
+    [
+      255,
+      255,
+      255
+    ]
+  ],
+  "home_card_pixels": {
+    "left_edge_rgb": [
+      238,
+      242,
+      255
+    ],
+    "inside_rgb": [
+      238,
+      242,
+      255
+    ]
+  },
+  "preparation": {
+    "initial_connection_failure_provider_calls": 0,
+    "successful_model_launches": 1,
+    "login_and_server_restart_outside_model_runtime": true
+  },
+  "omc_reference": {
+    "source_commit": "9255a002d170f1096a809decc21db59ce2ce7eea",
+    "elapsed_sec": 486.24,
+    "scope": "passed",
+    "controlled_and_home_visible_border": "passed",
+    "controlled_edge_rgb_each": [
+      229,
+      229,
+      229
+    ],
+    "independent_tests": {
+      "passed": 49,
+      "existing_failed": 4
+    }
+  },
+  "boundaries": [
+    "one sequential unblinded scenario; no general superiority or speed causality",
+    "OMC-only gate/envelope not required of competitor",
+    "browser actions performed is separate from actual visual requirement success",
+    "external ad clicks/tracking/hide transmission unrun for both",
+    "no source service change, commit, push, release or install rollout this turn"
+  ]
+}

@@ -1,0 +1,108 @@
+diff --git a/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts b/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts
+index 32219bc3..f5948002 100644
+--- a/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts
++++ b/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts
+@@ -1,6 +1,6 @@
+ import styled, { css } from 'styled-components';
+ 
+-import { COLOR, TRANSPARENT, TYPOGRAPHY } from '../../foundation';
++import { BOX_SHADOW, COLOR, TRANSPARENT, TYPOGRAPHY } from '../../foundation';
+ 
+ import type { AdVariant } from './Ad.types';
+ 
+@@ -11,7 +11,9 @@ const bannerStyle = css`
+   align-items: center;
+   justify-content: center;
+   overflow: hidden;
++  border: 1px solid ${TRANSPARENT.GRAY[100]};
+   border-radius: 12px;
++  box-shadow: ${BOX_SHADOW.HOME_CARD};
+ `;
+ 
+ const cardStyle = css`
+@@ -20,8 +22,9 @@ const cardStyle = css`
+   flex-direction: column;
+   align-items: flex-start;
+   overflow: hidden;
++  border: 1px solid ${TRANSPARENT.GRAY[100]};
+   border-radius: 12px;
+-  box-shadow: inset 0 0 0 1px ${TRANSPARENT.GRAY[200]};
++  box-shadow: ${BOX_SHADOW.HOME_CARD};
+   color: inherit;
+   text-decoration: none;
+ `;
+diff --git a/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx b/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx
+index 205ce38a..aa81c7c9 100644
+--- a/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx
++++ b/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx
+@@ -232,8 +232,8 @@ describe('Ad', () => {
+       expect(link.getAttribute('href')).toBe('/landing');
+       expect(link.getAttribute('target')).toBe('_blank');
+       expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+-      expect(getComputedStyle(ad).border).toBe('');
+-      expect(getComputedStyle(ad).boxShadow).toBe('inset 0 0 0 1px rgba(0,0,0,0.2)');
++      expect(getComputedStyle(ad).border).toBe('1px solid rgba(0,0,0,0.1)');
++      expect(getComputedStyle(ad).boxShadow).toBe('0px 1px 2px 0px rgba(0,0,0,0.05)');
+       expect(getComputedStyle(ad).borderRadius).toBe('12px');
+       expect(getComputedStyle(link).border).toBe('');
+     }
+@@ -269,24 +269,22 @@ describe('Ad', () => {
+     expect(getComputedStyle(body).lineHeight).toBe('1.5');
+   });
+ 
+-  it('renders card slides with the Figma carousel navigation pill', () => {
++  it('renders card slides without carousel navigation arrows', () => {
+     render(<Ad variant='card-large' items={[{ title: '첫 카드' }, { title: '두 번째 카드' }]} />);
+ 
+     expect(getComputedStyle(screen.getByTestId('ad-card-large')).position).toBe('relative');
+-    expect(screen.queryByTestId('ad-card-nav-card-large')).not.toBeNull();
+-    expect(screen.queryByRole('button', { name: '이전 광고' })).not.toBeNull();
+-    expect(screen.queryByRole('button', { name: '다음 광고' })).not.toBeNull();
++    expect(screen.queryByTestId('ad-card-nav-card-large')).toBeNull();
++    expect(screen.queryByRole('button', { name: '이전 광고' })).toBeNull();
++    expect(screen.queryByRole('button', { name: '다음 광고' })).toBeNull();
+   });
+ 
+-  it('moves card slides with the card carousel arrows', () => {
++  it('auto-advances card slides every three seconds', () => {
+     render(<Ad variant='card-large' items={[{ title: '첫 카드' }, { title: '두 번째 카드' }]} />);
+ 
+     const track = screen.getByTestId('ad-track-card-large');
+     expect(track.getAttribute('style')).toContain('translateX(-0%)');
+ 
+-    act(() => {
+-      screen.getByRole('button', { name: '다음 광고' }).click();
+-    });
++    act(() => jest.advanceTimersByTime(3000));
+ 
+     expect(track.getAttribute('style')).toContain('translateX(-100%)');
+   });
+diff --git a/libs/sellerhub-store/src/lib/components/Ad/Ad.tsx b/libs/sellerhub-store/src/lib/components/Ad/Ad.tsx
+index 1dd0c1c6..ed0e70f5 100644
+--- a/libs/sellerhub-store/src/lib/components/Ad/Ad.tsx
++++ b/libs/sellerhub-store/src/lib/components/Ad/Ad.tsx
+@@ -441,24 +441,6 @@ const Ad = ({ className, dismissible, items = [], onVisibilityChange, slug, vari
+           );
+         })}
+       </S.Track>
+-      {hasControls && variant.startsWith('card') && (
+-        <S.CardCarouselNav data-testid={`ad-card-nav-${variant}`}>
+-          <S.CardArrowButton
+-            aria-label='이전 광고'
+-            type='button'
+-            onClick={() => handleManualMove(activeIndex - 1)}
+-          >
+-            <Icon name='chevron' size={20} color='white' direction='left' />
+-          </S.CardArrowButton>
+-          <S.CardArrowButton
+-            aria-label='다음 광고'
+-            type='button'
+-            onClick={() => handleManualMove(activeIndex + 1)}
+-          >
+-            <Icon name='chevron' size={20} color='white' direction='right' />
+-          </S.CardArrowButton>
+-        </S.CardCarouselNav>
+-      )}
+       {hasBannerIndicators && (
+         <S.IndicatorGroup
+           ref={indicatorGroupRef}

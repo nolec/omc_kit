@@ -1,0 +1,180 @@
+"""Public regression surfaces for directory links and requirement-linked RED."""
+import hashlib
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+import omc_pipeline_guard as guard
+from test_omc_verification_basis import basis, register
+
+SCRIPT = Path(guard.__file__)
+
+
+def cli(root, *args):
+    return subprocess.run([sys.executable, str(SCRIPT), '--target', str(root), *args],
+                          text=True, capture_output=True)
+
+
+def prepared(root):
+    subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+    doc = basis(root)
+    assert register(root, doc) == 0
+    assert cli(root, 'contract-done', '--required-checks', 'tests,browser-home').returncode == 0
+    return doc
+
+
+def directory_link(root):
+    target = root / '.claude/skills/tracking'
+    target.mkdir(parents=True)
+    (target / 'SKILL.md').write_text('initial skill\n')
+    link = root / '.agents/skills/tracking'
+    link.parent.mkdir(parents=True)
+    link.symlink_to('../../.claude/skills/tracking', target_is_directory=True)
+    return target, link
+
+
+def red_proof(root, doc, case='test_new', baseline=None):
+    test = root / 'test_app.py'
+    test.write_text('def test_new():\n    assert False\n')
+    output = root / '.omc/red/output.txt'
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text('FAILED test_new - expected newly requested behavior\n')
+    proof = {'session_id': doc['session_id'], 'basis_sha256': guard._basis_digest(doc),
+             'test_file': 'test_app.py', 'test_sha256': hashlib.sha256(test.read_bytes()).hexdigest(),
+             'check_id': doc['checks'][0]['id'], 'case_id': case,
+             'expected_failure': 'new requirement is not implemented',
+             'command': 'python3 -m pytest test_app.py::test_new', 'exit_code': 1,
+             'baseline_failed_cases': ['test_old'] if baseline is None else baseline,
+             'failed_cases': ['test_old', case], 'output_file': '.omc/red/output.txt',
+             'output_sha256': hashlib.sha256(output.read_bytes()).hexdigest()}
+    path = root / '.omc/red/proof.json'
+    path.write_text(json.dumps(proof))
+    return path
+
+
+def passed_record(root):
+    result = cli(root, 'verification-template')
+    assert result.returncode == 0, result.stdout + result.stderr
+    value = json.loads(result.stdout)
+    value['implementation'] = {'status': 'applied', 'evidence': 'fixture patch'}
+    for item in value['checks'].values():
+        item.update(status='passed', evidence='fixture observed output')
+    path = root / '.omc/verification/result.json'
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(value))
+    return path
+
+
+def test_public_template_accepts_real_project_directory_link(tmp_path):
+    prepared(tmp_path)
+    directory_link(tmp_path)
+    result = cli(tmp_path, 'verification-template')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)['checks']['tests']['code_snapshot_sha256']
+    assert result.stdout == cli(tmp_path, 'verification-template').stdout
+
+
+@pytest.mark.parametrize('change', ['content', 'add', 'delete', 'rename', 'mode', 'retarget'])
+def test_directory_target_mutations_block_old_cli_completion(tmp_path, change):
+    doc = prepared(tmp_path)
+    target, link = directory_link(tmp_path)
+    proof = red_proof(tmp_path, doc)
+    assert cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof)).returncode == 0
+    record = passed_record(tmp_path)
+    assert cli(tmp_path, 'complete-task', '--verification-file', str(record)).returncode == 0
+    file = target / 'SKILL.md'
+    if change == 'content': file.write_text('changed\n')
+    elif change == 'add': (target / 'other.txt').write_text('new')
+    elif change == 'delete': file.unlink()
+    elif change == 'rename': file.rename(target / 'renamed.md')
+    elif change == 'mode': file.chmod(0o755)
+    else:
+        other = target.parent / 'other'
+        other.mkdir()
+        (other / 'SKILL.md').write_text('initial skill\n')
+        link.unlink()
+        link.symlink_to('../../.claude/skills/other', target_is_directory=True)
+    result = cli(tmp_path, 'complete-task', '--verification-file', str(record))
+    assert result.returncode == 1
+    assert result.stdout.startswith('증거 불일치·재검증 필요\n')
+    assert 'VERDICT: BLOCK' in result.stdout
+
+
+@pytest.mark.parametrize('kind', ['external', 'dangling', 'cycle', 'ignored', 'outside-hop'])
+def test_public_template_rejects_unsafe_directory_links(tmp_path, kind):
+    prepared(tmp_path)
+    target = tmp_path / 'payload'
+    target.mkdir()
+    (target / 'x.txt').write_text('inside')
+    link = tmp_path / 'alias'
+    if kind == 'external': link.symlink_to(tmp_path.parent, target_is_directory=True)
+    elif kind == 'dangling': link.symlink_to('missing', target_is_directory=True)
+    elif kind == 'cycle':
+        link.symlink_to('payload', target_is_directory=True)
+        (target / 'back').symlink_to('..', target_is_directory=True)
+    elif kind == 'ignored':
+        (tmp_path / '.gitignore').write_text('payload/\n')
+        link.symlink_to('payload', target_is_directory=True)
+    else:
+        outside = tmp_path.parent / (tmp_path.name + '-outside-link')
+        outside.symlink_to(target, target_is_directory=True)
+        link.symlink_to(outside, target_is_directory=True)
+    result = cli(tmp_path, 'verification-template')
+    assert result.returncode == 1, result.stdout
+    assert '[PIPELINE]' in result.stdout
+    assert not result.stderr
+
+
+def test_external_target_contents_are_never_read(tmp_path, monkeypatch):
+    prepared(tmp_path)
+    outside = tmp_path.parent / (tmp_path.name + '-external.txt')
+    outside.write_text('outside secret')
+    (tmp_path / 'alias').symlink_to(outside)
+    original = Path.read_bytes
+    reads = []
+    def read(path):
+        reads.append(path)
+        return original(path)
+    monkeypatch.setattr(Path, 'read_bytes', read)
+    with pytest.raises(ValueError): guard._code_snapshot_digest(tmp_path)
+    assert outside not in reads
+
+
+def test_approved_red_without_case_evidence_is_rejected(tmp_path):
+    prepared(tmp_path)
+    result = cli(tmp_path, 'red-done', 'test_app.py')
+    assert result.returncode == 1
+    assert '--evidence-file' in result.stdout
+
+
+@pytest.mark.parametrize('defect', ['baseline-only', 'unknown-check', 'wrong-session', 'wrong-basis',
+                                  'success-exit', 'test-changed', 'output-changed'])
+def test_public_red_rejects_invalid_or_unrelated_failure_evidence(tmp_path, defect):
+    doc = prepared(tmp_path)
+    proof = red_proof(tmp_path, doc)
+    value = json.loads(proof.read_text())
+    if defect == 'baseline-only': value.update(case_id='test_old', failed_cases=['test_old'])
+    elif defect == 'unknown-check': value['check_id'] = 'unapproved'
+    elif defect == 'wrong-session': value['session_id'] = 'old'
+    elif defect == 'wrong-basis': value['basis_sha256'] = 'old'
+    elif defect == 'success-exit': value['exit_code'] = 0
+    elif defect == 'test-changed': (tmp_path / 'test_app.py').write_text('changed')
+    else: (tmp_path / '.omc/red/output.txt').write_text('different result')
+    proof.write_text(json.dumps(value))
+    result = cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof))
+    assert result.returncode == 1, result.stdout
+    assert not guard._load_state(tmp_path)['red_done_tests']
+
+
+def test_red_receipt_tampering_and_revision_block_completion(tmp_path):
+    doc = prepared(tmp_path)
+    proof = red_proof(tmp_path, doc)
+    assert cli(tmp_path, 'red-done', 'test_app.py', '--evidence-file', str(proof)).returncode == 0
+    record = passed_record(tmp_path)
+    assert cli(tmp_path, 'complete-task', '--verification-file', str(record)).returncode == 0
+    proof.write_text('{}')
+    result = cli(tmp_path, 'complete-task', '--verification-file', str(record))
+    assert result.returncode == 1
+    assert 'RED' in result.stdout

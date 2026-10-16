@@ -1,0 +1,34 @@
+{
+  "session_id": "20261016T145220-3d39add9",
+  "basis_sha256": "e13ccfe2ff544b08f89656534099a9b31d17d7ecfb02eb74224ddc051996e6ea",
+  "test_file": "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+  "test_sha256": "2e537a19582cdd100f44f8915272abeb38c8c04983e8ef5e3afc3e2676e0f439",
+  "check_id": "tests",
+  "case_id": "Ad renders the banner-small variant with Figma border and drop shadow",
+  "expected_failure": "border: 1px solid rgba(0,0,0,0.1) and box-shadow: 0px 1px 2px 0px rgba(0,0,0,0.05) are not applied to any variant yet",
+  "command": "NX_DAEMON=false ./node_modules/.bin/jest --config libs/sellerhub-store/jest.config.ts --runInBand --runTestsByPath libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+  "exit_code": 1,
+  "baseline_failed_cases": [
+    "Ad tracks each Catalog creative impression once after the route store identity is ready",
+    "Ad tracks the same Catalog creative again when the store identity changes",
+    "Ad tracks linked Catalog slide clicks but not indicator clicks",
+    "Ad tracks each active Catalog creative impression only once"
+  ],
+  "failed_cases": [
+    "Ad tracks each Catalog creative impression once after the route store identity is ready",
+    "Ad tracks the same Catalog creative again when the store identity changes",
+    "Ad tracks linked Catalog slide clicks but not indicator clicks",
+    "Ad tracks each active Catalog creative impression only once",
+    "Ad renders the banner-small variant with Figma border and drop shadow",
+    "Ad renders the banner-large variant with Figma border and drop shadow",
+    "Ad renders the banner-landing variant with Figma border and drop shadow",
+    "Ad renders the card-large variant with Figma border and drop shadow",
+    "Ad renders the card-medium variant with Figma border and drop shadow",
+    "Ad renders the card-small variant with Figma border and drop shadow",
+    "Ad removes the card carousel arrow buttons for card-large",
+    "Ad removes the card carousel arrow buttons for card-medium",
+    "Ad removes the card carousel arrow buttons for card-small"
+  ],
+  "output_file": ".omc/red-output-20261016.txt",
+  "output_sha256": "36f52c4a5658cf205a918e7de782ffba26e05ed29e66270b8a76bfdad5553b58"
+}

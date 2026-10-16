@@ -1,0 +1,198 @@
+[
+  {
+    "arm": "omc-kit",
+    "selected_tool_sequence": [
+      {
+        "event_line": 138,
+        "tool": "Bash",
+        "file": "",
+        "command": "NX_DAEMON=false npx nx test sellerhub-store --testFile=libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx --no-coverage 2>&1 | tail -60"
+      },
+      {
+        "event_line": 143,
+        "tool": "Bash",
+        "file": "",
+        "command": "NX_DAEMON=false npx nx test sellerhub-store --testFile=libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx --no-coverage 2>&1 | grep -E \"✓|✗|●|FAIL|PASS|×|✕\" | head -60"
+      },
+      {
+        "event_line": 148,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+        "command": ""
+      },
+      {
+        "event_line": 150,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+        "command": ""
+      },
+      {
+        "event_line": 156,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+        "command": ""
+      },
+      {
+        "event_line": 162,
+        "tool": "Bash",
+        "file": "",
+        "command": "NX_DAEMON=false npx nx test sellerhub-store --testFile=libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx --no-coverage 2>&1 | grep -E \"✓|✕|FAIL|PASS|Tests:\" | head -60"
+      },
+      {
+        "event_line": 170,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+        "command": ""
+      },
+      {
+        "event_line": 175,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.tsx",
+        "command": ""
+      },
+      {
+        "event_line": 178,
+        "tool": "Bash",
+        "file": "",
+        "command": "NX_DAEMON=false npx nx test sellerhub-store --testFile=libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx --no-coverage 2>&1 | grep -E \"✓|✕|FAIL|PASS|Tests:\" | head -60"
+      },
+      {
+        "event_line": 186,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+        "command": ""
+      },
+      {
+        "event_line": 192,
+        "tool": "Bash",
+        "file": "",
+        "command": "NX_DAEMON=false npx nx test sellerhub-store --testFile=libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx --no-coverage 2>&1 | grep -E \"Tests:\" | head -5"
+      },
+      {
+        "event_line": 199,
+        "tool": "Bash",
+        "file": "",
+        "command": "python3 scripts/omc_tdd_check.py --staged 2>&1"
+      }
+    ]
+  },
+  {
+    "arm": "oh-my-claudecode",
+    "selected_tool_sequence": [
+      {
+        "event_line": 150,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+        "command": ""
+      },
+      {
+        "event_line": 154,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+        "command": ""
+      },
+      {
+        "event_line": 158,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+        "command": ""
+      },
+      {
+        "event_line": 164,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.tsx",
+        "command": ""
+      },
+      {
+        "event_line": 172,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+        "command": ""
+      },
+      {
+        "event_line": 176,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+        "command": ""
+      },
+      {
+        "event_line": 179,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+        "command": ""
+      },
+      {
+        "event_line": 183,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+        "command": ""
+      },
+      {
+        "event_line": 190,
+        "tool": "Bash",
+        "file": "",
+        "command": "NX_DAEMON=false yarn nx test sellerhub-store --testPathPattern=\"Ad.test\" --no-coverage 2>&1 | tail -60"
+      },
+      {
+        "event_line": 196,
+        "tool": "Bash",
+        "file": "",
+        "command": "NX_DAEMON=false yarn nx test sellerhub-store --testPathPattern=\"Ad.test\" --no-coverage 2>&1 | grep -E \"●|FAIL|PASS|✓|✗|×\" | head -40"
+      },
+      {
+        "event_line": 202,
+        "tool": "Bash",
+        "file": "",
+        "command": "NX_DAEMON=false yarn nx test sellerhub-store --testPathPattern=\"Ad.test\" --no-coverage 2>&1 | grep \"●\" | head -20"
+      },
+      {
+        "event_line": 208,
+        "tool": "Bash",
+        "file": "",
+        "command": "NX_DAEMON=false yarn nx test sellerhub-store --testPathPattern=\"Ad.test\" --no-coverage 2>&1 | grep -A 15 \"tracks each Catalog creative impression once\" | head -20"
+      },
+      {
+        "event_line": 213,
+        "tool": "Bash",
+        "file": "",
+        "command": "NX_DAEMON=false yarn nx test sellerhub-store --testPathPattern=\"Ad.test\" --no-coverage 2>&1 | grep -A 20 \"● Ad › tracks each Catalog creative impression once after\" | head -25"
+      },
+      {
+        "event_line": 219,
+        "tool": "Bash",
+        "file": "",
+        "command": "git stash && NX_DAEMON=false yarn nx test sellerhub-store --testPathPattern=\"Ad.test\" --no-coverage 2>&1 | grep -E \"✕|✓|Tests:\" | tail -15"
+      },
+      {
+        "event_line": 228,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+        "command": ""
+      },
+      {
+        "event_line": 234,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+        "command": ""
+      },
+      {
+        "event_line": 237,
+        "tool": "Bash",
+        "file": "",
+        "command": "NX_DAEMON=false yarn nx test sellerhub-store --testPathPattern=\"Ad.test\" --no-coverage 2>&1 | grep -E \"✕|Tests:|Failed\" | head -20"
+      },
+      {
+        "event_line": 259,
+        "tool": "Edit",
+        "file": "libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+        "command": ""
+      },
+      {
+        "event_line": 271,
+        "tool": "Bash",
+        "file": "",
+        "command": "NX_DAEMON=false yarn nx test sellerhub-store --testPathPattern=\"Ad.test\" --no-coverage 2>&1 | grep -E \"Tests:|✕\" | head -10"
+      }
+    ]
+  }
+]

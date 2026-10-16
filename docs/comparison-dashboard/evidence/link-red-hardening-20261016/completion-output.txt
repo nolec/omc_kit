@@ -1,0 +1,4 @@
+필수 검증 통과·작업 완료
+다음 행동: omc-review로 변경사항을 검토합니다.
+<!-- OMC_OUTPUT: {"schema_version": "omc-output/v1", "stage": "task", "outcome": "done", "risk": "low", "next_skill": "omc-review", "user_selection_needed": false, "reason_code": null} -->
+VERDICT: PROCEED

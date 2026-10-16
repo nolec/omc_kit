@@ -1,0 +1,19 @@
+{
+  "started_at": 1792080808.823686,
+  "red_done_tests": [
+    "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx"
+  ],
+  "allowed_impl_files": [],
+  "blocked_count": 0,
+  "contract_confirmed": true,
+  "contract_hash": "ab5408d09c01a0441807d2659dcdf4b59a8365e03e1ecbbe495ee177d446bb07",
+  "session_id": "20261016T005610-4d5654f9",
+  "required_checks": [
+    "tests",
+    "lint"
+  ],
+  "worktree_baseline": {
+    "libs/store-manager/components/src/lib/home/Home.tsx": "1da067a9c660f8cfc535b1e64700a9a3dac242591801873d3f72eea57e7da3ec"
+  },
+  "red_session_id": "20261016T005610-4d5654f9"
+}

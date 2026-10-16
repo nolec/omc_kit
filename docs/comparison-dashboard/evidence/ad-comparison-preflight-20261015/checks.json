@@ -1,0 +1,88 @@
+{
+  "scope": "preflight_only",
+  "model_calls_started": 0,
+  "implementation_rerun_started": false,
+  "product_or_guard_changes": false,
+  "R1": {
+    "status": "partial_blocked",
+    "server_compile": "passed",
+    "session_configuration_error": "resolved using existing local configuration without printing or copying values",
+    "user_login": "completed",
+    "home_shell": "observed",
+    "home_ad_card_count": 0,
+    "home_ad_banner_count": 1,
+    "console_http_statuses_observed": [
+      400,
+      404
+    ],
+    "root_cause": "previous blank body has resolved; reason not established. Current card absence reason not established.",
+    "required": "actual home content and ads must render before implementation comparison",
+    "home_body": "observed",
+    "home_banner_image_loaded": true
+  },
+  "R2": {
+    "status": "static_prepared_runtime_unverified",
+    "OMC_command": "/task",
+    "competitor_command": "/oh-my-claudecode:execute",
+    "discovery_evidence": "previous native init command registries and installed command/skill files",
+    "dispatch_not_executed": true
+  },
+  "R3": {
+    "status": "specified",
+    "binding": [
+      "pair_id",
+      "arm_run_id",
+      "request_sha256",
+      "baseline_commit",
+      "source_tree",
+      "tool_revision",
+      "instruction_sha256",
+      "native_session_id",
+      "event_order"
+    ]
+  },
+  "R4": {
+    "status": "specified_not_executed",
+    "actual_candidate_service_checks_required": true,
+    "controlled_fixture_cannot_substitute": true
+  },
+  "R5": {
+    "status": "specified",
+    "metrics": [
+      "setup_elapsed_sec",
+      "model_elapsed_sec",
+      "verification_elapsed_sec",
+      "self_rework_cycles",
+      "user_interventions",
+      "final_usability",
+      "report_accuracy"
+    ]
+  },
+  "overall": "NOT_READY",
+  "reason": "home card absent; actual card validation not yet possible",
+  "temporary_evidence_root": "/private/tmp/omc-ad-preflight-20261015-175457",
+  "secret_values_in_evidence": false,
+  "recheck_history": [
+    {
+      "checked_at": "2026-10-15T18:07:10.447586+09:00",
+      "prior_R1": {
+        "status": "partial_blocked",
+        "server_compile": "passed",
+        "session_configuration_error": "resolved using existing local configuration without printing or copying values",
+        "user_login": "completed",
+        "home_shell": "observed",
+        "home_ad_card_count": 0,
+        "home_ad_banner_count": 1,
+        "console_http_statuses_observed": [
+          400,
+          404
+        ],
+        "root_cause": "previous blank body has resolved; reason not established. Current card absence reason not established.",
+        "required": "actual home content and ads must render before implementation comparison",
+        "home_body": "observed",
+        "home_banner_image_loaded": true
+      },
+      "observation": "home body and loaded top banner observed; card still absent"
+    }
+  ]
+}

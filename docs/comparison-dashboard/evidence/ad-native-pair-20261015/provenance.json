@@ -1,0 +1,29 @@
+{
+  "schema": "ad-comparison-evidence/v1",
+  "case_id": "omc-ad-native-pair-20261015-182101",
+  "evidence_sha256": {
+    "summary.json": "99b8f24a2e4ad97763e187e84b8241f721d623497b74476240104f4f50961bd7",
+    "omc-kit-patch.diff": "715c0173ff66bd0b227abdc7c6e65a0b90161d597b143cc9e3e6ed7b5fe5eb6b",
+    "competitor-controlled.jpg": "14fa426175d2d9211fcbfa567f86e1e5189497e0a824e20a60b6c20c80e13bfa",
+    "frozen-inputs.json": "ecd7f23228a395e705ade7771eec22d272fd561218e65a43d79f3d7c438e1294",
+    "design-section.png": "70e49fd0b91b365efba85fb100a24b86247f77f31b98cd68350cf558bfcef203",
+    "design-reference.md": "43477fe1d5f5996c5ddda23a8110ff045954336d2c66ac5a584a592653097e19",
+    "omc-home-check.json": "596128ccab83acfcb3963fdbe564e40cf06a88d169f5b54f33a69206f4cb849a",
+    "build-visual-check.cjs": "393ed479467e754416f88ff48d3ed3554f23bd0790ac34fab115aa91cef62156",
+    "competitor-controlled-checks.json": "c13f5898e57c9ea0d7ed496ab839a0d4da30a992de7eab772a979727cf1ed60a",
+    "task.md": "d48b738f79ff9981601f23df227c9a3e0d645e3254d61221493073584eb3110b",
+    "baseline-failure-names.json": "24d8df846565045a04b74dc349c90f3a5f1de24fbfae45cbdeee9191f66607ec",
+    "competitor-home-check.json": "bb2008209ad741742dd3d674baae1e602bc6709bb2715da518794081af09c716",
+    "selected-workflow-trace.json": "a4bf9eb4266b291067a308dcd4a5b018b75160172a0680db7ec6bb2ccef6205b",
+    "omc-controlled-checks.json": "dc4e246d90952b4a57133d9ebe0dc6454919ec7f106d293ba583013a0db1aa9d",
+    "omc-controlled.jpg": "08cad6a778d759f093ce1b9b82f5694f7a45d368d92de515522336ca6a660fe3",
+    "oh-my-claudecode-patch.diff": "e372f5997619cf3b4dc248aed4692fc52c412a978d96134e479177fd1cec132e"
+  },
+  "raw_local_root": "/private/tmp/omc-ad-native-pair-20261015-182101",
+  "raw_execution_log_sha256": {
+    "omc-kit": "5d8ba902030175c801a0c1f4102245579069f0ac50b2d35af3c8e6aa88f24ecb",
+    "oh-my-claudecode": "6ec4b0288f7c7a97950e5788cea30ac181987dff13b8998f3265e8399355b3bf"
+  },
+  "report_sha256": "1718c466371168032710636e6d455abc1bc0bc2db3f07c5dbaeaa5f085d62650",
+  "credentials_copied": false
+}

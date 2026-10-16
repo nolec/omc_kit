@@ -1,0 +1,8 @@
+{
+  "passed": 49,
+  "failed": 4,
+  "same_failure_names": true,
+  "same_failure_diagnostics_excluding_paths_and_stack_lines": true,
+  "new_failure_names": [],
+  "lint_exit": 0
+}

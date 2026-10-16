@@ -1,0 +1,27 @@
+{
+  "started_at": 1792123890.2283268,
+  "red_done_tests": [
+    "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx"
+  ],
+  "allowed_impl_files": [],
+  "blocked_count": 0,
+  "contract_confirmed": true,
+  "contract_hash": "c7d4dc78838beab39f70e204aadbed7f15ea205887acdd822809af679c9af264",
+  "session_id": "20261016T130541-62f1a8a7",
+  "basis_sha256": "600d10a6edaea4f839f838998329b235469778dd09a5a163e6dfd98d7dde2d68",
+  "red_evidence_required": true,
+  "required_checks": [
+    "tests",
+    "lint",
+    "browser-controlled",
+    "browser-home"
+  ],
+  "worktree_baseline": {},
+  "red_evidence": {
+    "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx": {
+      "file": ".omc/red-evidence-border-arrow.json",
+      "sha256": "6f273ad80b577d2e0f93d2dfa29819d314dbe73fb2e5952cf613d79def89ef24"
+    }
+  },
+  "red_session_id": "20261016T130541-62f1a8a7"
+}

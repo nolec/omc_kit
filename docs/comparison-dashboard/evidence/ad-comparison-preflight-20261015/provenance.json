@@ -1,0 +1,11 @@
+{
+  "generated_at": "2026-10-15T18:02:11.328738+09:00",
+  "temporary_evidence_root": "/private/tmp/omc-ad-preflight-20261015-175457",
+  "runtime_check_sha256": "7c0a2e3f93dff7011c964b8ab705c3f86a65abe997df97994f59c759a5b40666",
+  "artifacts_sha256": {
+    "execution-spec.json": "10723f6b71cdf10de05266d3b95bc23706c8270b9bde4ccf7b73e405cfdf48a6",
+    "checks.json": "7236c98d7b4462c63635862df2eced2538c31864c9c857336701efc5820c181e"
+  },
+  "privacy": "No environment values, cookies, passwords, tokens or raw request payloads retained.",
+  "runtime_recheck_sha256": "7713b3b30a5478dce5cbe8dad79eba0291e09458b8e8042a5a77e5c28499cd9c"
+}

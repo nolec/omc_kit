@@ -1,0 +1,32 @@
+---
+
+## 최종 보고
+
+### 구현 상태
+
+| 항목 | 결과 |
+|---|---|
+| 테두리 `inset 0 0 0 1px rgba(0,0,0,0.1)` | 6개 variant 모두 적용 (`bannerStyle`, `cardStyle` 공통) |
+| 그림자 `0px 1px 2px 0px rgba(0,0,0,0.05)` | 6개 variant 모두 적용 (`BOX_SHADOW.HOME_CARD` 토큰 사용) |
+| 카드 화살표 제거 | `CardCarouselNav`, `CardArrowButton` styled 컴포넌트 삭제, JSX 블록 제거 |
+| 3초 자동전환 유지 | 기존 `startRolling` 로직 무수정 |
+
+### 변경 파일
+
+- `libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts` — 테두리+그림자 추가, `CardCarouselNav`/`CardArrowButton` 삭제
+- `libs/sellerhub-store/src/lib/components/Ad/Ad.tsx` — 화살표 JSX 블록 제거
+- `libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx` — boxShadow 기대값 및 화살표 테스트 2건 수정
+
+### 실제 수행 검증
+
+| 항목 | 결과 |
+|---|---|
+| **tests** | 41통과 4실패. 4실패는 baseline과 이름·진단 동일(추적 테스트) |
+| **lint** | exit 0, 오류 없음 |
+| **browser-controlled** | 6개 variant DOM에서 `rgba(0,0,0,0.1) inset + rgba(0,0,0,0.05) drop` 확인, 화살표 0개, 약 3초 자동전환 관측 |
+| **browser-home** | 실제 홈 `/sixshoptest01` — `banner-small`(실제 이미지 로드), `card-large`(검수용 placeholder 2개) 테두리·그림자·화살표 없음·자동전환 DOM 확인 |
+
+### 미검증 및 기존 실패
+
+- **클릭 추적·오늘 하루 숨김 통합**: 실제 외부 광고 클릭 금지 조건으로 읽기 전용 관찰에 그침. 테스트 코드는 변경 없이 41통과로 보존됨.
+- **기존 4실패(미해결)**: `tracks each Catalog creative impression once…`, `tracks the same Catalog creative again…`, `tracks linked Catalog slide clicks…`, `tracks each active Catalog creative impression only once` — baseline과 동일 이름·진단이며 이번 구현과 무관.

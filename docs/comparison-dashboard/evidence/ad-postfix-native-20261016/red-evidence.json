@@ -1,0 +1,32 @@
+{
+  "session_id": "20261016T130541-62f1a8a7",
+  "basis_sha256": "600d10a6edaea4f839f838998329b235469778dd09a5a163e6dfd98d7dde2d68",
+  "test_file": "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+  "test_sha256": "2e1b1b6ec0089f6f2a4324eaf5d844fd88ad1414ba9e2ffb2030b2cd9a256724",
+  "check_id": "tests",
+  "case_id": "Ad applies Figma border and shadow to the banner-small ad wrapper",
+  "expected_failure": "border 1px solid rgba(0,0,0,0.1) 및 boxShadow 0px 1px 2px 0px rgba(0,0,0,0.05) 미적용, 카드 화살표 미제거",
+  "command": "NX_DAEMON=false ./node_modules/.bin/jest --config libs/sellerhub-store/jest.config.ts --runInBand --runTestsByPath libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx --testNamePattern=\"applies Figma border|removes the card carousel\"",
+  "exit_code": 1,
+  "baseline_failed_cases": [
+    "Ad tracks each Catalog creative impression once after the route store identity is ready",
+    "Ad tracks the same Catalog creative again when the store identity changes",
+    "Ad tracks linked Catalog slide clicks but not indicator clicks",
+    "Ad tracks each active Catalog creative impression only once"
+  ],
+  "failed_cases": [
+    "Ad tracks each Catalog creative impression once after the route store identity is ready",
+    "Ad tracks the same Catalog creative again when the store identity changes",
+    "Ad tracks linked Catalog slide clicks but not indicator clicks",
+    "Ad tracks each active Catalog creative impression only once",
+    "Ad applies Figma border and shadow to the banner-small ad wrapper",
+    "Ad applies Figma border and shadow to the banner-large ad wrapper",
+    "Ad applies Figma border and shadow to the banner-landing ad wrapper",
+    "Ad applies Figma border and shadow to the card-large ad wrapper",
+    "Ad applies Figma border and shadow to the card-medium ad wrapper",
+    "Ad applies Figma border and shadow to the card-small ad wrapper",
+    "Ad removes the card carousel arrows from card variants"
+  ],
+  "output_file": ".omc/red-output-border-arrow.txt",
+  "output_sha256": "acb4fa586c0f58fad04e0e1e2119ed6b17a92e4bc9b91532d4382513a684c662"
+}

@@ -1,0 +1,19 @@
+{
+  "status": "frozen_before_model",
+  "baseline": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
+  "order": [
+    "oh-my-claudecode",
+    "omc-kit"
+  ],
+  "data": "same temporary Home.tsx items in actual home; CMS bypassed for card only",
+  "actual_click": "local target new tab; authentication redirect remains unverified, excluded equally from UI completion",
+  "cms_tracking": "outside controlled-data UI comparison; no production integration claim",
+  "setup_registry": "installation files integrity verified; central registry write denied; isolated temporary installs only",
+  "inputs": {
+    "task.md": "d48b738f79ff9981601f23df227c9a3e0d645e3254d61221493073584eb3110b",
+    "execution-request.md": "288589dec3bad43a97ff631b2870610b3bb1fb2a53ef1e1cb53592851bb1ec7d",
+    "design-reference.md": "43477fe1d5f5996c5ddda23a8110ff045954336d2c66ac5a584a592653097e19",
+    "design-section.png": "70e49fd0b91b365efba85fb100a24b86247f77f31b98cd68350cf558bfcef203"
+  },
+  "home_sha256": "cea906960f5e49420c64ce759d9dfc3f7db3f784f379de4f6cfffade7cf58faf"
+}

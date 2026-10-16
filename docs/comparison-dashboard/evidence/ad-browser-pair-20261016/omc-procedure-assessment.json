@@ -1,0 +1,37 @@
+{
+  "schema_version": "omc-workflow-validation/v1",
+  "final_sha256": "717ff220deb928944fc0c9940bc9554b9c936dd3515e200b54d620e619236b91",
+  "events_sha256": "bea843a8efc459ad392150624d04f10d1d95da29f2bcad6f546b6f40918f7690",
+  "required": {
+    "approved_scope": "passed",
+    "registration": "passed",
+    "procedure_calls": "passed",
+    "truthful_final": "passed",
+    "verification_scope": "passed",
+    "native_exit": "passed"
+  },
+  "format_quality": {
+    "first_line": false,
+    "unique_status": true,
+    "single_next_action": true
+  },
+  "recompare_entry": "allow",
+  "issues": [
+    "코드 스냅샷 링크 대상 파일을 확인할 수 없습니다: .agents/skills/feature-tracking",
+    "검증 후 코드 스냅샷 증거 불일치: tests",
+    "검증 후 코드 스냅샷 증거 불일치: lint",
+    "검증 후 코드 스냅샷 증거 불일치: browser-controlled",
+    "검증 후 코드 스냅샷 증거 불일치: browser-home"
+  ],
+  "observed_verification_paths": [
+    "/private/tmp/omc-ad-browser-pair-aikw_6zd/omc-kit/.omc/verification/20261016T114731-bc4b7857.json"
+  ],
+  "observed_direct_write_paths": [
+    "/private/tmp/omc-ad-browser-pair-aikw_6zd/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+    "/private/tmp/omc-ad-browser-pair-aikw_6zd/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.tsx",
+    "/private/tmp/omc-ad-browser-pair-aikw_6zd/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-browser-pair-aikw_6zd/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-browser-pair-aikw_6zd/omc-kit/.omc/verification/20261016T114731-bc4b7857.json"
+  ],
+  "boundary": "Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication."
+}

@@ -1,0 +1,27 @@
+{
+  "temporary_artifact_root": "/private/tmp/omc-ad-recompare-20261015-171141",
+  "artifacts_sha256": {
+    "manifest.json": "d183a7d59b402d55faf806b72cbd68b7e2f1d2b18fc78144c906c7579b7cd32f",
+    "execution-request.md": "19e349a321d736747f254034aa4028e1b9388876c58cb900550a676cfd1c3ea6",
+    "task.md": "d48b738f79ff9981601f23df227c9a3e0d645e3254d61221493073584eb3110b",
+    "design-reference.md": "43477fe1d5f5996c5ddda23a8110ff045954336d2c66ac5a584a592653097e19",
+    "design-section.png": "70e49fd0b91b365efba85fb100a24b86247f77f31b98cd68350cf558bfcef203",
+    "omc-kit-events.jsonl": "e006004fc69fcc7c94475890bd4929a37cc6f9cdb9e0c13ac03a4951ce8352c5",
+    "oh-my-claudecode-events.jsonl": "98619ea6d982ec7ee7c7c8100865dd553f223a67943a518ccc8d971e73c92faa",
+    "omc-kit-final.json": "164f9bd04778c5afdcbf0289ad74354316fe68da865a161bf4f047d53b0b289e",
+    "oh-my-claudecode-final.json": "96ee9092b29fff31b8d8ad5288474285a161dd983bb91bddcd5f5cbd8879b52e",
+    "baseline-ad-suite.json": "be96ef3ee9fb29db637fe3fd0ca166836bb188e3baf40a638f2767fe30aadb40",
+    "omc-kit-independent-tests.json": "e4a1008c9e63033287db98f37b13c8e05310536582c12c8ad5c8fc105f83e26d",
+    "oh-my-claudecode-independent-tests.json": "a50bd0ee97d536e734e19f011d1fa9ff2e4846537793fdf9f83cbebefd947d4c",
+    "omc-kit-product.patch": "914b669ecf5c83a399427b27cb6d5ba60ba0d0eeeabfd25de9b1b3c4d51bc66d",
+    "oh-my-claudecode-product.patch": "c78a6d2000bca9443fd4123bc63d02678623bbea7e6ad4e14873bd401ac97cad",
+    "SUMMARY.json": "c4efadaaca0af339344258349ce79da85b0ba39aa0b5bf01cd3c478198e749ee"
+  },
+  "retention": "raw logs and product patches remain in temporary storage; hashes do not guarantee future availability",
+  "copied_files_sha256": {
+    "summary.json": "c4efadaaca0af339344258349ce79da85b0ba39aa0b5bf01cd3c478198e749ee",
+    "omc.jpg": "e89961c683c4386e431558868b3477bd53c2795a51ec3126e6297d55a60d3f89",
+    "competitor.jpg": "3148496b3488dcc827abfc5e0840df22fdd9d2d5510f7c70c5a7a4ffb53a6bde"
+  },
+  "screenshot_format": "JPEG bytes retained without conversion; output extensions corrected after signature validation"
+}

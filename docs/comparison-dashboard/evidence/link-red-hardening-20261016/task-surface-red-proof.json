@@ -1,0 +1,17 @@
+{
+  "session_id": "20261016T122815-19e557ec",
+  "basis_sha256": "fbc5d095d52d51abfd62a0677e2cdad568e6d2840fd0c6b882e0587050d174d1",
+  "test_file": "scripts/test_omc_pipeline_link_red.py",
+  "test_sha256": "834d68e9542364df1871dc56c50b641a089eac4a4f7777690f8eb3be392536aa",
+  "check_id": "surface",
+  "case_id": "test_collector_rechecks_red_receipt_instead_of_trusting_native_done",
+  "expected_failure": "정상 근거 등록 성공을 공개 수집기가 인식하고 변조된 근거는 거부해야 함",
+  "command": "python3 -m pytest -q scripts/test_omc_pipeline_link_red.py::test_collector_rechecks_red_receipt_instead_of_trusting_native_done",
+  "exit_code": 1,
+  "baseline_failed_cases": [],
+  "failed_cases": [
+    "test_collector_rechecks_red_receipt_instead_of_trusting_native_done"
+  ],
+  "output_file": ".omc/red/link-red/surface-output.txt",
+  "output_sha256": "0b50bea4cc3f6e08fe2616ea4eb0be3d385c7c40a0e835406f7fdd355f3fe9cc"
+}

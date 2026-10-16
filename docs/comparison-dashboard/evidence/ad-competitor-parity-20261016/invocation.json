@@ -1,0 +1,33 @@
+{
+  "argv": [
+    "claude",
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--model",
+    "us.anthropic.claude-sonnet-4-6",
+    "--effort",
+    "high",
+    "--permission-mode",
+    "acceptEdits",
+    "--allowedTools",
+    "Bash,Read,Write,Edit,Glob,Grep,Skill",
+    "--disallowedTools",
+    "Task,Agent,EnterWorktree,ExitWorktree,CronCreate,CronDelete,ScheduleWakeup",
+    "--setting-sources",
+    "project",
+    "--settings",
+    "/private/tmp/omc-ad-competitor-parity-xxqqjadc/oh-my-claudecode/../run-settings.json",
+    "--strict-mcp-config",
+    "--mcp-config",
+    "{\"mcpServers\":{}}",
+    "--no-session-persistence",
+    "--add-dir",
+    "/private/tmp/omc-ad-competitor-parity-xxqqjadc/oh-my-claudecode/..",
+    "--plugin-dir",
+    "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/competitor-plugin"
+  ],
+  "cwd": "/private/tmp/omc-ad-competitor-parity-xxqqjadc/oh-my-claudecode/../oh-my-claudecode",
+  "prompt_file_sha256": "4d086c6d69dc4951d30b9926b0e4c939659442087a522675c0e073f8b9c698a0"
+}

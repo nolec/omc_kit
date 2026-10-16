@@ -1,0 +1,8 @@
+{
+  "arm": "omc-kit",
+  "status": "exited",
+  "returncode": 0,
+  "elapsed_sec": 975.17,
+  "started_at": "2026-10-16T03:02:34.203831+00:00",
+  "model": "us.anthropic.claude-sonnet-4-6"
+}

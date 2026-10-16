@@ -1,0 +1,1 @@
+조정자가 PHASE0 Guard와 사전 승인 기준을 등록했습니다. 현재 confirmed session 20261016T130541-62f1a8a7와 .omc/verification-bases/20261016T130541-62f1a8a7/1.json을 유지하고 PHASE1부터 이어가세요. 이번 요청의 네 필수 검증을 CONTRACT에 그대로 연결하고 실제 RED·검증 템플릿·complete-task 절차와 원문 최종 보고를 수행하세요. 실행 전 .claude/commands/task.md의 요구별 RED 근거 규칙을 읽고 이번 변경을 실패시키는 새 테스트의 실제 실패를 먼저 기록하세요. 기존 실패를 새 RED로 재사용하지 마세요.

@@ -1,0 +1,28 @@
+{
+  "schema_version": "omc-workflow-validation/v1",
+  "final_sha256": "349c47048324cc2c2d81f03fbeba6be170446ba1e5a057bab7a04886c28ca41c",
+  "events_sha256": "e084929ccc4fab200119106773529f3e14cf0640b364fe4d441ce3ac9ef041ea",
+  "required": {
+    "registration": "passed",
+    "procedure_calls": "passed",
+    "truthful_final": "passed",
+    "verification_scope": "passed",
+    "native_exit": "passed"
+  },
+  "format_quality": {
+    "first_line": true,
+    "unique_status": true,
+    "single_next_action": false
+  },
+  "recompare_entry": "allow",
+  "issues": [],
+  "observed_verification_paths": [
+    "/private/tmp/omc-footer-native-20261016-wo69ltpg/candidate/.omc/verification/20261016T003115-0434b2b1.json"
+  ],
+  "observed_direct_write_paths": [
+    "/private/tmp/omc-footer-native-20261016-wo69ltpg/candidate/test_app.js",
+    "/private/tmp/omc-footer-native-20261016-wo69ltpg/candidate/app.js",
+    "/private/tmp/omc-footer-native-20261016-wo69ltpg/candidate/.omc/verification/20261016T003115-0434b2b1.json"
+  ],
+  "boundary": "Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication."
+}

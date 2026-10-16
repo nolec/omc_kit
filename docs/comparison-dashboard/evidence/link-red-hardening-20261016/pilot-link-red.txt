@@ -1,0 +1,16 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________________ test_normal_folder_link_allows_template ____________________
+
+    def test_normal_folder_link_allows_template():
+        p=subprocess.run([sys.executable,os.environ["PILOT_GUARD"],"--target",str(Path(__file__).parents[3]),"verification-template"],capture_output=True,text=True)
+>       assert p.returncode==0,p.stdout+p.stderr
+E       AssertionError: [PIPELINE] 코드 스냅샷 링크 대상 파일을 확인할 수 없습니다: .agents/skills/feature-tracking
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/private/tmp/omc-link-red-pi...emplate'], returncode=1, stdout='[PIPELINE] 코드 스냅샷 링크 대상 파일을 확인할 수 없습니다: .agents/skills/feature-tracking\n', stderr='').returncode
+
+.omc/red/link-pilot/test_link_completion.py:5: AssertionError
+=========================== short test summary info ============================
+FAILED .omc/red/link-pilot/test_link_completion.py::test_normal_folder_link_allows_template
+1 failed in 0.42s

@@ -1,0 +1,1 @@
+조정자가 PHASE0 Guard와 사전 승인 기준을 등록했습니다. 현재 confirmed session 20261016T145220-3d39add9와 .omc/approved-proposal.json 승인 기준을 유지하고 PHASE1부터 이어가세요. tests,lint,browser-controlled,browser-home 네 필수 검증을 CONTRACT에 그대로 연결하고 새 RED·verification-template·complete-task와 원문 최종 보고를 수행하세요. 먼저 .claude/commands/task.md를 읽고 새 요구의 실패를 기록하세요. 기존 추적4실패를 새 RED로 쓰지 마세요.

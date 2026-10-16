@@ -1,0 +1,12 @@
+{
+  "passed": 41,
+  "failed": 4,
+  "same_failure_names": true,
+  "same_matcher_actual_expected": true,
+  "failure_diagnostics": {
+    "Ad tracks each Catalog creative impression once after the route store identity is ready": [],
+    "Ad tracks the same Catalog creative again when the store identity changes": [],
+    "Ad tracks linked Catalog slide clicks but not indicator clicks": [],
+    "Ad tracks each active Catalog creative impression only once": []
+  }
+}

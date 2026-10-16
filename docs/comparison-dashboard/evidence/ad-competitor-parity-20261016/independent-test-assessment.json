@@ -1,0 +1,7 @@
+{
+  "passed": 41,
+  "failed": 4,
+  "same_failure_names": true,
+  "same_failure_diagnostics_excluding_stack": true,
+  "lint_exit": 0
+}

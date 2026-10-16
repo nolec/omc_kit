@@ -1,0 +1,80 @@
+[
+  {
+    "id": "ad-card-large",
+    "edge": [
+      229,
+      229,
+      229
+    ],
+    "interior": [
+      255,
+      255,
+      255
+    ]
+  },
+  {
+    "id": "ad-card-medium",
+    "edge": [
+      229,
+      229,
+      229
+    ],
+    "interior": [
+      255,
+      255,
+      255
+    ]
+  },
+  {
+    "id": "ad-card-small",
+    "edge": [
+      229,
+      229,
+      229
+    ],
+    "interior": [
+      255,
+      255,
+      255
+    ]
+  },
+  {
+    "id": "ad-banner-small",
+    "edge": [
+      229,
+      229,
+      229
+    ],
+    "interior": [
+      255,
+      255,
+      255
+    ]
+  },
+  {
+    "id": "ad-banner-large",
+    "edge": [
+      229,
+      229,
+      229
+    ],
+    "interior": [
+      255,
+      255,
+      255
+    ]
+  },
+  {
+    "id": "ad-banner-landing",
+    "edge": [
+      229,
+      229,
+      229
+    ],
+    "interior": [
+      255,
+      255,
+      255
+    ]
+  }
+]

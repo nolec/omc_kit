@@ -1,0 +1,49 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____ test_collector_rechecks_red_receipt_instead_of_trusting_native_done ______
+
+tmp_path = PosixPath('/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-551/test_collector_rechecks_red_re0')
+
+    def test_collector_rechecks_red_receipt_instead_of_trusting_native_done(tmp_path):
+        root = tmp_path / 'candidate'
+        root.mkdir()
+        doc = prepared(root)
+        proof = red_proof(root, doc)
+        calls = []
+        for args in [('contract-done', '--required-checks', 'tests,browser-home'),
+                     ('red-done', 'test_app.py', '--evidence-file', str(proof))]:
+            result = cli(root, *args)
+            assert result.returncode == 0
+            calls.append((args, result.stdout))
+        record = passed_record(root)
+        args = ('complete-task', '--verification-file', str(record))
+        result = cli(root, *args)
+        assert result.returncode == 0
+        calls.append((args, result.stdout))
+        events = []
+        for index, (args, output) in enumerate(calls):
+            events.extend([
+                {'type': 'assistant', 'message': {'content': [{'type': 'tool_use', 'id': str(index),
+                 'name': 'Bash', 'input': {'command': 'python3 scripts/omc_pipeline_guard.py ' + ' '.join(args)}}]}},
+                {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'tool_use_id': str(index), 'content': output}]}}
+            ])
+        events.append({'type': 'result', 'subtype': 'success', 'is_error': False, 'result': result.stdout})
+        event_file = tmp_path / 'events.jsonl'
+        event_file.write_text('\n'.join(json.dumps(x) for x in events))
+        clean = tmp_path / 'collected-before-tamper'
+        valid = subprocess.run([sys.executable, str(SCRIPT.with_name('omc_workflow_validation.py')),
+            '--target', str(root), '--events-file', str(event_file), '--session-id', 's',
+            '--verification-file', str(record), '--expected-outcome', 'done', '--output-dir', str(clean)],
+            text=True, capture_output=True)
+>       assert valid.returncode == 0, valid.stdout + valid.stderr
+E       AssertionError: {"schema_version": "omc-workflow-validation/v1", "final_sha256": "f7e6293585a6e5dc5edc5d7c0d1fe6407736494fe10a00b963aef5fa9548c4f6", "events_sha256": "5c8cd67fbec821e38f98e0746030e42c8b64dd1f3a1476f468782d67d401bce5", "required": {"approved_scope": "passed", "registration": "passed", "procedure_calls": "unknown", "truthful_final": "passed", "verification_scope": "passed", "native_exit": "passed"}, "format_quality": {"first_line": true, "unique_status": true, "single_next_action": true}, "recompare_entry": "hold", "issues": [], "observed_verification_paths": ["/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/pytest-of-noseunglae/pytest-551/test_collector_rechecks_red_re0/candidate/.omc/verification/result.json"], "observed_direct_write_paths": [], "boundary": "Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication."}
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', '/Users/noseunglae/Downloads/..."Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication."}\n', stderr='').returncode
+
+scripts/test_omc_pipeline_link_red.py:214: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[PIPELINE] 사용자 승인 기준 기록: 개정 1 / eef0361f800d448e15437f5b840d25655002090ca7078540dc37f62259de6c43
+=========================== short test summary info ============================
+FAILED scripts/test_omc_pipeline_link_red.py::test_collector_rechecks_red_receipt_instead_of_trusting_native_done
+1 failed in 0.59s

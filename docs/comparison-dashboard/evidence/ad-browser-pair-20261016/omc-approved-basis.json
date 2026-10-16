@@ -1,0 +1,36 @@
+{
+  "session_id": "20261016T114731-bc4b7857",
+  "revision": 1,
+  "request": "사용자: 실제 광고 작업에서 양쪽에 같은 화면 검증 환경을 제공하는 비교 진행",
+  "approval_reference": "이 대화의 사용자 실행 요청 및 앞서 확정한 task.md 범위·완료 기준",
+  "checks": [
+    {
+      "id": "tests",
+      "target": "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+      "method": "NX_DAEMON=false ./node_modules/.bin/jest --config libs/sellerhub-store/jest.config.ts --runInBand --runTestsByPath libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+      "pass_condition": "회귀 테스트 실제 실행, 공통 baseline 41통과·기존 추적4실패와 이름·진단 비교. 신규 실패0; 기존 실패는 구체적으로 미해결 보고. 0/1/여러광고·자동전환·정리·클릭·숨김 보존 근거 명시",
+      "target_version": "공통 광고 baseline34078b6 기반 이번 실행의 현재 후보; 최종 확인 시 snapshot 결속"
+    },
+    {
+      "id": "lint",
+      "target": "변경한 Ad 구현·테스트 파일",
+      "method": "프로젝트 eslint로 변경 파일 검사",
+      "pass_condition": "검사 exit0; 기존 경고와 신규 오류 구분",
+      "target_version": "공통 광고 baseline34078b6 기반 이번 실행의 현재 후보; 최종 확인 시 snapshot 결속"
+    },
+    {
+      "id": "browser-controlled",
+      "target": "본인 로컬 서버 /omc-ad-validation/index.html",
+      "method": "node ../build-controlled.cjs로 현재 Ad 빌드 후 node ../browser.cjs로 실제 브라우저 DOM·스크린샷·시간차 확인",
+      "pass_condition": "6개 variant border 1px rgba(0,0,0,0.1), 그림자 0px 1px 2px rgba(0,0,0,0.05), 불투명 이미지 위 테두리·그림자 표시, 카드 화살표 제거, 약3초 자동전환 관측. 실제 홈 증거로 대체 불가",
+      "target_version": "공통 광고 baseline34078b6 기반 이번 실행의 현재 후보; 최종 확인 시 snapshot 결속"
+    },
+    {
+      "id": "browser-home",
+      "target": "본인 실제 서비스 /sixshoptest01 홈",
+      "method": "같은 브라우저 도구로 실제 홈을 열고 현재 Ad DOM·스크린샷·시간차를 직접 확인",
+      "pass_condition": "로그인된 실제 홈·검수용 광고2개 이미지 로드, 테두리·그림자·카드 화살표 제거·자동전환 확인. 통제 harness 대체 불가. 클릭 추적·숨김 통합까지 확인하지 않았으면 한계로 명시",
+      "target_version": "공통 광고 baseline34078b6 기반 이번 실행의 현재 후보; 최종 확인 시 snapshot 결속"
+    }
+  ]
+}

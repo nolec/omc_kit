@@ -1,0 +1,92 @@
+{
+  "status": "DRAFT_NOT_RUN",
+  "readiness_gate": "R1 must pass and command/config hashes must be refreshed and frozen before any model call",
+  "baseline_commit": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
+  "input_artifacts_sha256": {
+    "task.md": "d48b738f79ff9981601f23df227c9a3e0d645e3254d61221493073584eb3110b",
+    "design-reference.md": "43477fe1d5f5996c5ddda23a8110ff045954336d2c66ac5a584a592653097e19",
+    "design-section.png": "70e49fd0b91b365efba85fb100a24b86247f77f31b98cd68350cf558bfcef203"
+  },
+  "arms": {
+    "omc-kit": {
+      "entry": "claude -p \"/task <approved common request>\"",
+      "command_file": "templates/.claude/commands/task.md",
+      "setup_session": "register exact approved request mechanically before timed run; setup time is separate",
+      "required_evidence": [
+        "native command expansion or exact instruction consumption bound to current task",
+        "current request contract before product edits",
+        "actual failing regression before fix where task requires RED",
+        "same regression passes after fix",
+        "stage gate output",
+        "final report with unrun items"
+      ]
+    },
+    "oh-my-claudecode": {
+      "entry": "claude -p \"/oh-my-claudecode:execute <approved common request>\" with same frozen plugin dir",
+      "required_evidence": [
+        "native execute instruction consumption",
+        "current request implementation edits",
+        "same acceptance validation as OMC",
+        "final report with unrun items"
+      ]
+    }
+  },
+  "timing_and_order": {
+    "model_timeout_sec_each": 1200,
+    "effort": "high",
+    "model": "us.anthropic.claude-sonnet-4-6",
+    "order": "reverse previous order: competitor then OMC",
+    "parallel_implementation": false,
+    "incomplete_start_or_environment_error": "inconclusive; exclude from product failure metrics",
+    "new_retry": "new arm_run_id; no silent replacement"
+  },
+  "setup_rules": [
+    "fresh workspaces and fresh pipeline state for each arm; same product baseline",
+    "do not reuse previous contract or RED registrations",
+    "do not pre-mark model stages complete to pass checks",
+    "no guard policy changes",
+    "no original server/config changes or package installs",
+    "local runtime credentials stay outside model prompts and evidence; server configuration loaded only after freezing candidate and stopping model process"
+  ],
+  "acceptance": [
+    {
+      "id": "A1",
+      "surface": "controlled fixtures for six variants plus actual candidate home card-large and banner-small",
+      "oracle": "1px rgba(0,0,0,0.1) border visible over opaque image and intended shadow visible; retain variant-specific radius and dimensions"
+    },
+    {
+      "id": "A2",
+      "surface": "actual candidate home card",
+      "oracle": "unit fake clock: no advance at 2999ms, advance at 3000ms; controlled foreground browser: observe advance between 3.0 and 4.0 seconds, record timing tolerance; real home observation is separate and requires multiple actual items"
+    },
+    {
+      "id": "A3",
+      "surface": "candidate controlled multi-item cases",
+      "oracle": "0/1/multiple items, unmount cleanup, links, tracking and dismiss behavior tested; label browser vs automated proof separately"
+    },
+    {
+      "id": "A4",
+      "surface": "actual service click and hide",
+      "oracle": "actual service link destination, target and hide control must be identified before freezing browser interactions; controlled local links do not substitute for actual service click evidence; any unrun actual action remains unrun"
+    },
+    {
+      "id": "A5",
+      "surface": "final report",
+      "oracle": "compare completion claim with independent candidate validation; wrong revision or fixture-only evidence cannot satisfy actual service check"
+    }
+  ],
+  "measurement_rules": {
+    "setup_elapsed_sec": "workspace/config/command preparation start until ready; separate user login wait",
+    "model_elapsed_sec": "native model process launch to exit",
+    "verification_elapsed_sec": "independent verification start to end",
+    "self_rework_cycles": "a failed accepted check followed by a corrective edit and rerun; no inference from tool count",
+    "user_interventions": "explicit user decision or clarification during task; setup/login and post-review recorded separately",
+    "final_usability": "ready / needs_changes / failed; inconclusive environment remains unclassified",
+    "report_accuracy": "completion claim consistent / inconsistent / insufficient evidence"
+  },
+  "evidence_storage": [
+    "retain normalized facts, fixtures, browser results and source/bundle hashes without secrets",
+    "raw detailed logs retained locally; hash alone is not durable source retention"
+  ],
+  "model_and_workflow_boundary": "static dispatch preparation is not proof of native invocation or successful workflow; actual runtime validation deferred"
+}

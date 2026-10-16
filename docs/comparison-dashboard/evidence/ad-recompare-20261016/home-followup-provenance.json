@@ -1,0 +1,7 @@
+{
+  "scope": "post-run independent home followup only; original provenance preserved",
+  "sha256": {
+    "docs/comparison-dashboard/evidence/ad-recompare-20261016/home-followup-20261016.json": "c2a73a0f902299e1ad5eb024b7bcf83fa2d3589bd53b0356ab6563fc479a18f9",
+    "docs/ad-ui-recompare-20261016.md": "3b97c5c8156fd1caaa17f5a381aeb7b0f08b70a38800ff10fce30bf2921007aa"
+  }
+}

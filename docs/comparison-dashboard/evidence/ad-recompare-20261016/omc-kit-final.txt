@@ -1,0 +1,33 @@
+---
+
+필수 검증 통과·작업 완료
+
+**변경 파일**
+
+| 파일 | 변경 내용 |
+|---|---|
+| `libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts` | `bannerStyle`/`cardStyle`에 `border: 1px solid ${TRANSPARENT.GRAY[100]}` + `box-shadow: ${BOX_SHADOW.HOME_CARD}` 추가, 기존 `inset` shadow 제거; 사용 안 된 `CardCarouselNav`, `CardArrowButton` 삭제 |
+| `libs/sellerhub-store/src/lib/components/Ad/Ad.tsx` | `CardCarouselNav` 렌더링 블록(화살표 이전/다음) 제거 |
+| `libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx` | border/shadow 검증 6개 variant 테스트 추가, 화살표 미노출 + 카드 자동전환 테스트로 교체 |
+
+**6개 variant 적용 범위**
+
+- `banner-small`, `banner-large`, `banner-landing` — `bannerStyle` 통해 border+shadow 동일 적용 (`banner-landing`은 `border-radius: 0` 유지, border는 포함)
+- `card-large`, `card-medium`, `card-small` — `cardStyle` 통해 border+shadow 동일 적용, 화살표 제거
+
+**실제 사용처** (5곳 모두 동일 컴포넌트 사용, 이번 변경 자동 적용)
+
+1. `HomeView.tsx` — `banner-small` / `s3_sm_home_top_banner`
+2. `Home.tsx` — `card-large` (검수용 임시 데이터)
+3. `SidePanelBody.tsx` — `banner-large` / `s3_sm_product_detail_center_banner`
+4. `NoticeBanner.tsx` — `banner-large` / `s3_editor_marketplace_top_banner`
+5. `ThemeTemplateList.tsx` — `card-small` / `s3_sm_website_design_navigation_bottom_card`
+
+**검증 결과**
+
+- tests: 47 passed / 4 failed(사전 실패 동일, tracking 관련 기존 버그)
+- lint: 통과
+- browser: 미실행 (CONTRACT에서 제외, 검수자 브라우저 확인 필요)
+
+<!-- OMC_OUTPUT: {"schema_version": "omc-output/v1", "stage": "task", "outcome": "done", "risk": "low", "next_skill": "omc-review", "user_selection_needed": false, "reason_code": null} -->
+VERDICT: PROCEED

@@ -1,0 +1,25 @@
+{
+  "common_request_equal": true,
+  "common_checks_equal": true,
+  "initial_ad_and_home_hashes_matched_before_run": true,
+  "non_work_frozen_inputs_unchanged": {
+    "task.md": true,
+    "design-reference.md": true,
+    "design-section.png": true,
+    "libs/store-manager/components/src/lib/home/Home.tsx": true,
+    ".git/info/exclude": true,
+    "../browser.cjs": true,
+    "../build-controlled.cjs": true,
+    "../serve.cjs": true,
+    "../runtime.json": true,
+    "../run-settings.json": true,
+    "../run-native.py": true,
+    "../execution-request.md": true,
+    "../competitor-adapter.txt": true,
+    "../common-required-checks.json": true,
+    "../baseline-failures.json": true,
+    "tools/scripts/mf-remotes-config.js": true
+  },
+  "plugin_metadata_and_execute_skill_unchanged": true,
+  "tool_specific_completion_gate_exempt": true
+}

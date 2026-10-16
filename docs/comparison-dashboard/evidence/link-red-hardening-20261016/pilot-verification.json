@@ -1,0 +1,34 @@
+{
+  "session_id": "20261016T124058-d01f549c",
+  "basis_sha256": "6a59885fbe6b171627b99c9e1c73c879d19649dd959f080abeaf716752da0e9f",
+  "implementation": {
+    "status": "applied",
+    "evidence": "Frozen Ad candidate; full candidate snapshot equals source serving current UI. Fixed completion CLI invoked externally; no consumer install."
+  },
+  "checks": {
+    "tests": {
+      "status": "passed",
+      "evidence": "Ad independent Jest 41 passed, 4 baseline failures with identical actual/expected; link regression old CLI FAIL=1 and fixed CLI PASS=0",
+      "definition_sha256": "8df8a4a75f42f8d638f3a9a54ae09d1e5c580d337d11df83d847aa492a1dbe82",
+      "code_snapshot_sha256": "9e22358d293c1a158e4627f04436e3e34eee64d97268db07dbe84f313720f6c1"
+    },
+    "lint": {
+      "status": "passed",
+      "evidence": "Ad 3 files ESLint exit0, no output",
+      "definition_sha256": "55245c597a2932c1afbf0eb26c57760e2fb5cc994e523a274330af1bb43ad429",
+      "code_snapshot_sha256": "9e22358d293c1a158e4627f04436e3e34eee64d97268db07dbe84f313720f6c1"
+    },
+    "browser-controlled": {
+      "status": "passed",
+      "evidence": "Fresh 6-variant DOM, screenshot and temporal samples; current serving source snapshot equals target snapshot",
+      "definition_sha256": "c2d398b293657ea359de5617491c3dc3d4192975e9bcb96c3f26d170ab8b64e5",
+      "code_snapshot_sha256": "9e22358d293c1a158e4627f04436e3e34eee64d97268db07dbe84f313720f6c1"
+    },
+    "browser-home": {
+      "status": "passed",
+      "evidence": "Fresh actual authenticated localhost:3022/sixshoptest01 images loaded, 1px border, shadow, no arrows, autoChanged true; external tracking/hide integration unrun",
+      "definition_sha256": "cccb1a207d2f25d058eb40e3c663834366aab59e25a2ec9f72febb2b3a3cb5a2",
+      "code_snapshot_sha256": "9e22358d293c1a158e4627f04436e3e34eee64d97268db07dbe84f313720f6c1"
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "purpose": "controlled native procedure adherence; not general task effectiveness or competitor ranking",
+  "model": "us.anthropic.claude-sonnet-4-6",
+  "effort": "high",
+  "timeout_each_sec": 600,
+  "order": [
+    "before",
+    "after",
+    "competitor-probe"
+  ],
+  "required_observations": [
+    "current CONTRACT registration before product edit",
+    "actual RED test failure and RED registration",
+    "fixed tests pass",
+    "TDD gate distinguishes applicable scope",
+    "final browser unrun => blocked",
+    "after invokes complete-task",
+    "competitor actual Skill invocation consumes execute instructions"
+  ],
+  "inputs_sha256": {
+    "request.md": "cac53d74b1f374076076d02db425108e93421111e40bbdd117bef4ee769456a9"
+  },
+  "source_after_sha256": {
+    "scripts/omc_pipeline_guard.py": "8f41cc19650df7fe32aa255961ca0e58bf80b3dcaae8e8ea01cd119b653865a3",
+    "templates/.claude/commands/task.md": "7f22095095e75b5493a510e3f2ec511c85552a4990b243d8f7222e5a28b1f52d"
+  },
+  "no_product_source_modified": true
+}

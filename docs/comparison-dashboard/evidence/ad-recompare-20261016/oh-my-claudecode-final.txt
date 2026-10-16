@@ -1,0 +1,31 @@
+---
+
+## 완료 보고
+
+### 변경 파일
+
+| 파일 | 변경 내용 |
+|---|---|
+| `libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts` | `BOX_SHADOW` import 추가; `bannerStyle`에 `border: 1px solid TRANSPARENT.GRAY[100]` + `box-shadow: BOX_SHADOW.HOME_CARD` 추가; `cardStyle`에서 `inset box-shadow(TRANSPARENT.GRAY[200])` 제거 후 동일 border+box-shadow 추가; `CardCarouselNav`·`CardArrowButton` styled 컴포넌트 삭제 |
+| `libs/sellerhub-store/src/lib/components/Ad/Ad.tsx` | `hasControls && variant.startsWith('card')` 화살표 JSX 블록 전체 삭제 |
+| `libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx` | card bordered area 테스트 box-shadow 단언 업데이트 (inset → HOME_CARD); 화살표 pill 테스트 2개를 "화살표 없음 확인" + "3초 자동 롤링 확인"으로 교체 |
+
+### 6개 variant 적용 범위
+
+모든 variant에 동일하게 테두리+그림자 적용:
+- **banner-small / banner-large / banner-landing**: `bannerStyle`에 적용. `banner-landing`은 기존 `border-radius: 0` 재정의가 유지됨
+- **card-large / card-medium / card-small**: `cardStyle`에 적용. 화살표 제거는 `card-*` 전체 대상
+
+실제 사용처 (slug 기준):
+- `card-large`: Home.tsx (검수용 임시 데이터)
+- `card-small`: ThemeTemplateList (editor-lib)
+- `banner-large`: CreateProductSidePanel, ProductDetailSidePanel, VisitorView (CRM)
+
+### 실행한 검증
+
+- **lint**: 에러 0개 (기존 warnings 146개는 사전 존재, 신규 없음)
+- **테스트**: `45개 중 41 pass` — 신규 실패 0개. 실패 4개(`tracks each Catalog creative impression…` 등)는 기준 커밋(34078b6f)에서도 동일하게 실패하는 **사전 실패**임을 git stash로 확인
+
+### 미검증
+
+- **브라우저 직접 확인 미실행**: 이미지 위 테두리/그림자 가시성, 자동 전환 3초 동작, 오늘 하루 숨김, 클릭 추적을 실제 브라우저에서 확인하지 않았음. 별도 검수자가 Home.tsx 임시 데이터로 확인 필요

@@ -1,0 +1,45 @@
+{
+  "schema_version": "omc-workflow-validation/v1",
+  "final_sha256": "5c2f462220d0527ba81d3a4e79bfbce7502d70480dd68e306df638e041c87659",
+  "events_sha256": "3aab59841fdd826706bfcf653bf817cb85603c5652df9c140fbd9ddf1cdbb134",
+  "required": {
+    "approved_scope": "passed",
+    "registration": "passed",
+    "procedure_calls": "passed",
+    "truthful_final": "passed",
+    "verification_scope": "passed",
+    "native_exit": "passed",
+    "work_scope": "passed",
+    "report_format": "passed"
+  },
+  "format_quality": {
+    "first_line": true,
+    "unique_status": true,
+    "single_next_action": true
+  },
+  "recompare_entry": "allow",
+  "scope_assessment": {
+    "status": "passed",
+    "violations": [],
+    "unresolved_writes": [],
+    "reason": null
+  },
+  "issues": [],
+  "observed_verification_paths": [
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/.omc/verification/20261016T145220-3d39add9.json"
+  ],
+  "observed_direct_write_paths": [
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/.omc/red-evidence-20261016.json",
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/.omc/red-evidence-20261016.json",
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.tsx",
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+    "/private/tmp/omc-ad-preflight-native-fuwp8qy1/omc-kit/.omc/verification/20261016T145220-3d39add9.json"
+  ],
+  "boundary": "Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication."
+}

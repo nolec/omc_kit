@@ -1,0 +1,86 @@
+{
+  "schema": "ad-browser-pair-observation/v1",
+  "baseline": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
+  "kit_commit": "71ea905ac4714bc2d7dfde34b4377b75089f69dc",
+  "model": "us.anthropic.claude-sonnet-4-6",
+  "effort": "high",
+  "order": [
+    "oh-my-claudecode",
+    "omc-kit"
+  ],
+  "human_corrections_during_model_runs": 0,
+  "auth_preparation": "two manual logins before model execution; separate from intervention count",
+  "arms": {
+    "omc-kit": {
+      "execution": {
+        "arm": "omc-kit",
+        "status": "exited",
+        "returncode": 0,
+        "elapsed_sec": 975.17,
+        "started_at": "2026-10-16T03:02:34.203831+00:00",
+        "model": "us.anthropic.claude-sonnet-4-6"
+      },
+      "independent_tests": {
+        "passed": 41,
+        "failed": 4,
+        "same_failure_names": true,
+        "same_matcher_actual_expected": true
+      },
+      "lint_exit": 0,
+      "visible_border_six_variants": "passed",
+      "shadow_six_variants": "observed",
+      "arrows_removed": true,
+      "actual_home_images_loaded": true,
+      "actual_home_auto_transition": true,
+      "controlled_browser_calls": 24,
+      "source_changes": [
+        "libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+        "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+        "libs/sellerhub-store/src/lib/components/Ad/Ad.tsx"
+      ],
+      "native_overall": "blocked_snapshot_incompatibility"
+    },
+    "oh-my-claudecode": {
+      "execution": {
+        "arm": "oh-my-claudecode",
+        "status": "exited",
+        "returncode": 0,
+        "elapsed_sec": 651.83,
+        "started_at": "2026-10-16T02:51:42.346643+00:00",
+        "model": "us.anthropic.claude-sonnet-4-6"
+      },
+      "independent_tests": {
+        "passed": 41,
+        "failed": 4,
+        "same_failure_names": true,
+        "same_matcher_actual_expected": true
+      },
+      "lint_exit": 0,
+      "visible_border_six_variants": "failed_image_covers_inset_shadow",
+      "shadow_six_variants": "observed",
+      "arrows_removed": true,
+      "actual_home_images_loaded": true,
+      "actual_home_auto_transition": true,
+      "controlled_browser_calls": 17,
+      "source_changes": [
+        "libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+        "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+        "libs/sellerhub-store/src/lib/components/Ad/Ad.tsx"
+      ],
+      "native_overall": "border_confirmed_claim_not_supported_by_independent_pixels"
+    }
+  },
+  "omc_limitations": [
+    "directory symlink rejected by snapshot digest; manual verification lacks code snapshot digest; final BLOCK",
+    "existing unrelated tracking failures used as RED registration evidence; no new-requirement failing test observed before implementation",
+    "final first line preceded by markdown separator"
+  ],
+  "comparison_boundary": "one sequential reconstruction of known advertising maintenance task; common fixture and tools, different native procedures; not blind rating or general productivity/speed superiority",
+  "preservation": {
+    "home_fixture_each_unchanged": true,
+    "approved_basis_unchanged": true,
+    "omc_snapshot_code_unchanged": true,
+    "browser_helper_unchanged": true,
+    "original_service_not_modified_by_comparison": true
+  }
+}

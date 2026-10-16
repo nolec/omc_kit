@@ -1,0 +1,46 @@
+{
+  "schema": "ad-competitor-parity/v1",
+  "omc_reference_run": "/private/tmp/omc-ad-preflight-native-fuwp8qy1",
+  "baseline_commit": "3655c8ccbe89d492047a825e96604d46b96daebf",
+  "initial_ad_sha256": {
+    "Ad.types.spec.ts": "cf7be8ad492893eaea4b5034428514fd074af50effeb8267fe1f23c7a7ea7196",
+    "Ad.tsx": "2175d7f479f4ae500b3503669d00b681248a036833705eaca1d34eb78882d90f",
+    "Ad.styled.ts": "92866fc6afaa785e4ce21820b9efb3e4893f2dcd2cc1ac142bc37468c8b5eb7b",
+    "adTracking.ts": "738b008b2a34aada24a178221fc5f0a3b298a7be76cb551bd9d95e29b6c0f637",
+    "useStrapiCatalog.spec.ts": "7cf2f1adac3d4fa83523db676b3c0ba003b7dd284d39d2ee8977e29311fa4f60",
+    "adTracking.test.ts": "ad8f3963f82ec9a7f2ee41a11496ae9cea14c3fe0736f27e7d96a420d2d0eab8",
+    "Ad.types.ts": "b025cbea73ad0f13c64b077f544bb4cc25d3956de1617de286468966a34513e4",
+    "adDismissal.ts": "3ceb6f83b79a347a3e67a7fa407ca70f6afdc6f07f041529e3f0d177d0d9f563",
+    "Ad.test.tsx": "f09156373adf06bed3b6b177e0b562c273f0f07db271c9632b187256211f78ff",
+    "getAdIndicatorColor.test.ts": "487252f77667920fef07f3c4b484d76dedf601c0a565a62fc1d0876ba12b14d0",
+    "index.ts": "e6e27956bae1f4e62e9eb60e72ee9955690c8f13f5bbd94920d8eb262773d1e3",
+    "useStrapiCatalog.tsx": "b7de76b01595bceb30bacab96189aab2042c6edbc01850de844644e47fdb6ddf",
+    "getAdIndicatorColor.ts": "12929b3fcc9250730f6bb335ca31747a4edd960aeb6d8660d7d41c91699383ad",
+    "adDismissal.test.ts": "2c0e97ab4d249f854b133fc72af3e100a61a759a3ddb6f4a32534af6dab7ea8c"
+  },
+  "home_fixture_sha256": "cea906960f5e49420c64ce759d9dfc3f7db3f784f379de4f6cfffade7cf58faf",
+  "model": "us.anthropic.claude-sonnet-4-6",
+  "effort": "high",
+  "timeout_sec": 1200,
+  "native_runs_planned": 1,
+  "plugin_path": "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/competitor-plugin",
+  "plugin_version": "5.6.2",
+  "plugin_metadata_sha256": "9aca51fc3053a90bb5c314eee575a5d5aa1789d04fb79d1f733dc0973eb68f41",
+  "execute_skill_sha256": "7d7fdc3be106267882eaba73c4a8250012633a753cf14921d66c51aa1ddcf768",
+  "common_request_sha256": "fd7705d47d7012cf200a6469a0b58b9d8e51925959b6d32b32ea9653988ca53a",
+  "common_checks_sha256": "8028f29b4c348a98aedcd540a6f2f12055fc9a7ebd5a111920707c92bb043c7b",
+  "required_ids": [
+    "tests",
+    "lint",
+    "browser-controlled",
+    "browser-home"
+  ],
+  "parity": "identical common request and checks; different tool adapters; separate same viewport headed browser and auth; same exclusion source/pattern",
+  "evaluation": "product required four plus work scope and common reporting; OMC-only gate/envelope not scored for competitor; original result preserved",
+  "boundaries": [
+    "one scenario, sequential not blinded",
+    "no general superiority or time causality",
+    "no external ad clicks or business writes",
+    "no submodels or new dependencies"
+  ]
+}

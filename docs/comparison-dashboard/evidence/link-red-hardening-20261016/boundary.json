@@ -1,0 +1,12 @@
+{
+  "capture_type": "coordinator actual CLI calls, not native Claude rerun",
+  "cli_exit_code": 0,
+  "browser_server": "/private/tmp/omc-ad-browser-pair-aikw_6zd/omc-kit",
+  "candidate_copy": "/private/tmp/omc-link-red-pilot-9s5z2je9/candidate",
+  "same_candidate_snapshot": true,
+  "cli_version_sha256": "45fbec7514e3c1762424a43ce4d2e68a18d39894bb9de871461ff5b8e7316279",
+  "old_evidence_modified": false,
+  "legacy_Ad_RED_repaired": false,
+  "new_RED_case": "normal folder-link completion regression",
+  "first_adapter_capture": "exit metadata missing; original hold assessment retained"
+}

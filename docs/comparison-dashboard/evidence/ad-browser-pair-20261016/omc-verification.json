@@ -1,0 +1,30 @@
+{
+  "session_id": "20261016T114731-bc4b7857",
+  "basis_sha256": "3e87154a8b97debaba1dea9a0d09099b2775b14d19ac0f894809d57ef52de54b",
+  "implementation": {
+    "status": "applied",
+    "evidence": "Ad.styled.ts: bannerStyle/cardStyle에 border 1px solid rgba(0,0,0,0.1) + BOX_SHADOW.HOME_CARD 추가, inset shadow 제거. Ad.tsx: CardCarouselNav JSX 블록 제거. git status: M libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts M libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx M libs/sellerhub-store/src/lib/components/Ad/Ad.tsx"
+  },
+  "checks": {
+    "tests": {
+      "status": "passed",
+      "evidence": "NX_DAEMON=false ./node_modules/.bin/jest --config libs/sellerhub-store/jest.config.ts --runInBand --runTestsByPath libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx 결과: Tests 4 failed(기존 추적), 41 passed — 신규 실패 0. 기존 추적4실패: tracks each Catalog creative impression once(line87), tracks the same Catalog creative again(line110), tracks linked Catalog slide clicks(line134), tracks each active Catalog creative impression only once(line165). 이름·진단 동일 — 미해결.",
+      "definition_sha256": "e9b22ebf3f78256f893b9d2600a9436ab843732f96088c271acc6b679599adf3"
+    },
+    "lint": {
+      "status": "passed",
+      "evidence": "NX lint sellerhub-store exit0 (warnings 146개 모두 Ad 외 기존 파일). eslint Ad.tsx Ad.styled.ts Ad.test.tsx 직접 실행: 오류/경고 없음(empty output).",
+      "definition_sha256": "55245c597a2932c1afbf0eb26c57760e2fb5cc994e523a274330af1bb43ad429"
+    },
+    "browser-controlled": {
+      "status": "passed",
+      "evidence": "node ../build-controlled.cjs 빌드 성공. node ../browser.cjs goto /omc-ad-validation/index.html 후 DOM 확인: 6개 variant(ad-card-large, ad-card-medium, ad-card-small, ad-banner-small, ad-banner-large, ad-banner-landing) 모두 border:1px solid rgba(0,0,0,0.1) boxShadow:rgba(0,0,0,0.05) 0px 1px 2px 0px. 화살표(이전/다음 광고) 0개. banner-small 3.7초 후 translateX(-100%) 자동전환 확인. screenshot: .omc/browser/1792120255825.png",
+      "definition_sha256": "c2d398b293657ea359de5617491c3dc3d4192975e9bcb96c3f26d170ab8b64e5"
+    },
+    "browser-home": {
+      "status": "passed",
+      "evidence": "node ../browser.cjs goto /sixshoptest01 → 로그인된 홈 로드 확인(title: 홈 | 식스샵테스트01). ad-banner-small, ad-card-large 두 광고 DOM 확인: border:1px solid rgba(0,0,0,0.1) boxShadow:rgba(0,0,0,0.05) 0px 1px 2px 0px. 화살표 0개. card-large 이미지 2개 로드됨(svg data). 자동전환: card-large translateX(-100%)→translateX(0%) 순환 확인. 한계: 클릭 추적·오늘 하루 숨김 실제 이벤트 전송은 테스트 기반 검증만 수행(브라우저 read-only). screenshot: .omc/browser/1792120430258.png",
+      "definition_sha256": "cccb1a207d2f25d058eb40e3c663834366aab59e25a2ec9f72febb2b3a3cb5a2"
+    }
+  }
+}

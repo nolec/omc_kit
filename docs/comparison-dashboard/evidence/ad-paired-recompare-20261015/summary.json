@@ -1,0 +1,93 @@
+{
+  "baseline": {
+    "total": 72,
+    "passed": 68,
+    "failed_names": [
+      "Ad tracks each Catalog creative impression once after the route store identity is ready",
+      "Ad tracks each active Catalog creative impression only once",
+      "Ad tracks linked Catalog slide clicks but not indicator clicks",
+      "Ad tracks the same Catalog creative again when the store identity changes"
+    ]
+  },
+  "arms": {
+    "omc-kit": {
+      "elapsed_sec": 805.46,
+      "tests_passed": 68,
+      "tests_total": 72,
+      "new_failed_names": [],
+      "lint_errors": 0,
+      "lint_warnings": 0,
+      "controlled_browser": {
+        "variants": 6,
+        "border_and_shadow": "observed",
+        "arrow_count": 0,
+        "auto_transition": "6/6 observed at 0.5s vs 3.7s; not exact timer precision",
+        "click_new_tab": "observed"
+      },
+      "browser_unrun_disclosed": true,
+      "user_interventions_during_run": 0,
+      "workflow_observation": {
+        "tool_counts": {
+          "Read": 27,
+          "Agent": 1,
+          "Glob": 7,
+          "Grep": 5,
+          "ToolSearch": 1,
+          "TodoWrite": 5,
+          "Edit": 6,
+          "Bash": 6
+        },
+        "workflow_paths": [],
+        "workflow_commands": [],
+        "session_context_hook_observed": true,
+        "execute_skill_observed": false,
+        "boundary": "top-level retained trace only; absence is not proof of every child action"
+      }
+    },
+    "oh-my-claudecode": {
+      "elapsed_sec": 838.57,
+      "tests_passed": 68,
+      "tests_total": 72,
+      "new_failed_names": [],
+      "lint_errors": 0,
+      "lint_warnings": 0,
+      "controlled_browser": {
+        "variants": 6,
+        "border_and_shadow": "observed",
+        "arrow_count": 0,
+        "auto_transition": "6/6 observed at 0.5s vs 3.7s; not exact timer precision",
+        "click_new_tab": "observed"
+      },
+      "browser_unrun_disclosed": true,
+      "user_interventions_during_run": 0,
+      "workflow_observation": {
+        "tool_counts": {
+          "Skill": 1,
+          "Read": 17,
+          "Agent": 1,
+          "Glob": 8,
+          "Grep": 6,
+          "ToolSearch": 1,
+          "TodoWrite": 6,
+          "Edit": 8,
+          "Bash": 9
+        },
+        "workflow_paths": [],
+        "workflow_commands": [],
+        "session_context_hook_observed": false,
+        "execute_skill_observed": true,
+        "boundary": "top-level retained trace only; absence is not proof of every child action"
+      }
+    }
+  },
+  "actual_service_verification": "unavailable_session_configuration",
+  "comparison_verdict": "no_superiority_claim",
+  "limits": [
+    "single sequential exploratory pair",
+    "shared dependency input, not OS sandbox",
+    "no human blind outcome judgment",
+    "OMC task command and guard invocation not observed",
+    "actual service verification unavailable",
+    "new reporting guidance effect not tested by native invocation"
+  ]
+}

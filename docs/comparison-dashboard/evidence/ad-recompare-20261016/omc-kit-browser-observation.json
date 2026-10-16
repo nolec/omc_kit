@@ -1,0 +1,10 @@
+{
+  "method": "CUA browser DOM and screenshot inspection",
+  "url": "http://127.0.0.1:8890/omc-kit/",
+  "scope": "six actual Ad variants rendered with controlled opaque white images; service home not verified",
+  "arrows": 0,
+  "border_all_six": "1px solid rgba(0, 0, 0, 0.1)",
+  "shadow_all_six": "rgba(0, 0, 0, 0.05) 0px 1px 2px 0px",
+  "automatic_transition": "six tracks changed from translate 0 to nonzero at sampled 0.5/3.7 seconds",
+  "home_status": "not_verified_login_pending"
+}

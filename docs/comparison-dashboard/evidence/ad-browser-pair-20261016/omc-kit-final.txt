@@ -1,0 +1,28 @@
+---
+
+증거 불일치·재검증 필요
+
+**구현 상태: 반영됨**
+
+- `Ad.styled.ts`: `bannerStyle`·`cardStyle` 모두 `border: 1px solid rgba(0,0,0,0.1)` + `BOX_SHADOW.HOME_CARD` 추가, 기존 inset shadow 제거
+- `Ad.tsx`: `CardCarouselNav` JSX 블록(이전/다음 화살표) 제거
+- `Ad.test.tsx`: 카드 화살표 관련 테스트 2개 수정(화살표 없음 확인, 자동전환 3초 확인), 카드 border/shadow 기대값 수정
+
+**변경 파일:**
+- `libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts`
+- `libs/sellerhub-store/src/lib/components/Ad/Ad.tsx`
+- `libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx`
+
+**실제 수행 검증:**
+- `tests`: passed — 41통과, 신규 실패 0. 기존 추적4실패(Catalog impression tracking 3건 + identity 변경 1건) 동일 이름·진단으로 미해결 유지
+- `lint`: passed — Ad 파일 직접 ESLint exit0, nx lint exit0(경고146 모두 기존 타 파일)
+- `browser-controlled`: passed — 6개 variant 모두 DOM border/shadow 수치 일치, 화살표 0개, 자동전환(3.7초 후 translateX 변경) 확인
+- `browser-home`: passed — 실제 /sixshoptest01 홈 ad-banner-small·ad-card-large 모두 border/shadow 확인, 화살표 0개, card-large 자동순환 확인. **한계**: 클릭 추적·오늘 하루 숨김 실제 이벤트 전송은 테스트 기반 검증만 수행
+
+**complete-task 판정 실패 원인:**
+`.agents/skills/feature-tracking`(디렉토리를 가리키는 symlink)가 git tracked 파일로 존재하여 `_code_snapshot_digest` 계산 실패 → `code_snapshot_sha256` 없는 검증 JSON과 불일치 판정. 이 symlink는 기존 환경 설정 파일이며 이번 작업 범위 외.
+
+**다음 행동:** 조정자가 `.agents/skills/feature-tracking` symlink 환경 이슈를 확인하거나 해소한 뒤 `complete-task`를 재실행해야 합니다.
+
+<!-- OMC_OUTPUT: {"schema_version": "omc-output/v1", "stage": "task", "outcome": "blocked", "risk": "medium", "next_skill": null, "user_selection_needed": true, "reason_code": "verification_incomplete"} -->
+VERDICT: BLOCK

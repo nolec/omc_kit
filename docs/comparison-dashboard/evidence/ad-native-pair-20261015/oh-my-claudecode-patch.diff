@@ -1,0 +1,194 @@
+diff --git a/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts b/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts
+index 32219bc357..a3cb1c50cc 100644
+--- a/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts
++++ b/libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts
+@@ -1,6 +1,6 @@
+ import styled, { css } from 'styled-components';
+ 
+-import { COLOR, TRANSPARENT, TYPOGRAPHY } from '../../foundation';
++import { BOX_SHADOW, COLOR, TRANSPARENT, TYPOGRAPHY } from '../../foundation';
+ 
+ import type { AdVariant } from './Ad.types';
+ 
+@@ -12,6 +12,7 @@ const bannerStyle = css`
+   justify-content: center;
+   overflow: hidden;
+   border-radius: 12px;
++  box-shadow: inset 0 0 0 1px ${TRANSPARENT.GRAY[100]}, ${BOX_SHADOW.HOME_CARD};
+ `;
+ 
+ const cardStyle = css`
+@@ -21,7 +22,7 @@ const cardStyle = css`
+   align-items: flex-start;
+   overflow: hidden;
+   border-radius: 12px;
+-  box-shadow: inset 0 0 0 1px ${TRANSPARENT.GRAY[200]};
++  box-shadow: inset 0 0 0 1px ${TRANSPARENT.GRAY[100]}, ${BOX_SHADOW.HOME_CARD};
+   color: inherit;
+   text-decoration: none;
+ `;
+@@ -79,30 +80,6 @@ export const Track = styled.div`
+   transition: transform 200ms ease;
+ `;
+ 
+-export const CardCarouselNav = styled.div`
+-  position: absolute;
+-  right: 8px;
+-  bottom: 8px;
+-  z-index: 2;
+-  display: flex;
+-  align-items: center;
+-  padding: 2px 3px;
+-  border-radius: 20px;
+-  background: rgba(0, 0, 0, 0.4);
+-`;
+-
+-export const CardArrowButton = styled.button`
+-  display: flex;
+-  align-items: center;
+-  justify-content: center;
+-  width: 20px;
+-  height: 20px;
+-  padding: 0;
+-  border: 0;
+-  background: transparent;
+-  cursor: pointer;
+-`;
+-
+ export const IndicatorGroup = styled.div<{ $variant: AdVariant }>`
+   position: absolute;
+   bottom: 0;
+diff --git a/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx b/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx
+index 205ce38a49..aafed7869b 100644
+--- a/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx
++++ b/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx
+@@ -233,12 +233,27 @@ describe('Ad', () => {
+       expect(link.getAttribute('target')).toBe('_blank');
+       expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+       expect(getComputedStyle(ad).border).toBe('');
+-      expect(getComputedStyle(ad).boxShadow).toBe('inset 0 0 0 1px rgba(0,0,0,0.2)');
++      expect(getComputedStyle(ad).boxShadow).toBe(
++        'inset 0 0 0 1px rgba(0,0,0,0.1),0px 1px 2px 0px rgba(0,0,0,0.05)'
++      );
+       expect(getComputedStyle(ad).borderRadius).toBe('12px');
+       expect(getComputedStyle(link).border).toBe('');
+     }
+   );
+ 
++  it.each(['banner-small', 'banner-large', 'banner-landing'] as const)(
++    'renders the %s banner with a 1px border and drop shadow visible over images',
++    (variant) => {
++      render(<Ad variant={variant} items={[{ title: 'title' }]} />);
++
++      const ad = screen.getByTestId(`ad-${variant}`);
++
++      expect(getComputedStyle(ad).boxShadow).toBe(
++        'inset 0 0 0 1px rgba(0,0,0,0.1),0px 1px 2px 0px rgba(0,0,0,0.05)'
++      );
++    }
++  );
++
+   it('renders a card image without card text content', () => {
+     render(
+       <Ad
+@@ -269,26 +284,26 @@ describe('Ad', () => {
+     expect(getComputedStyle(body).lineHeight).toBe('1.5');
+   });
+ 
+-  it('renders card slides with the Figma carousel navigation pill', () => {
++  it('renders card slides without arrow navigation', () => {
+     render(<Ad variant='card-large' items={[{ title: '첫 카드' }, { title: '두 번째 카드' }]} />);
+ 
+     expect(getComputedStyle(screen.getByTestId('ad-card-large')).position).toBe('relative');
+-    expect(screen.queryByTestId('ad-card-nav-card-large')).not.toBeNull();
+-    expect(screen.queryByRole('button', { name: '이전 광고' })).not.toBeNull();
+-    expect(screen.queryByRole('button', { name: '다음 광고' })).not.toBeNull();
++    expect(screen.queryByTestId('ad-card-nav-card-large')).toBeNull();
++    expect(screen.queryByRole('button', { name: '이전 광고' })).toBeNull();
++    expect(screen.queryByRole('button', { name: '다음 광고' })).toBeNull();
+   });
+ 
+-  it('moves card slides with the card carousel arrows', () => {
++  it('auto-rolls card slides every 3 seconds without arrow buttons', () => {
+     render(<Ad variant='card-large' items={[{ title: '첫 카드' }, { title: '두 번째 카드' }]} />);
+ 
+     const track = screen.getByTestId('ad-track-card-large');
+     expect(track.getAttribute('style')).toContain('translateX(-0%)');
+ 
+-    act(() => {
+-      screen.getByRole('button', { name: '다음 광고' }).click();
+-    });
+-
++    act(() => jest.advanceTimersByTime(3000));
+     expect(track.getAttribute('style')).toContain('translateX(-100%)');
++
++    expect(screen.queryByRole('button', { name: '이전 광고' })).toBeNull();
++    expect(screen.queryByRole('button', { name: '다음 광고' })).toBeNull();
+   });
+ 
+   it('opens a linked banner slide in a new tab', () => {
+diff --git a/libs/sellerhub-store/src/lib/components/Ad/Ad.tsx b/libs/sellerhub-store/src/lib/components/Ad/Ad.tsx
+index 1dd0c1c609..ed0e70f526 100644
+--- a/libs/sellerhub-store/src/lib/components/Ad/Ad.tsx
++++ b/libs/sellerhub-store/src/lib/components/Ad/Ad.tsx
+@@ -441,24 +441,6 @@ const Ad = ({ className, dismissible, items = [], onVisibilityChange, slug, vari
+           );
+         })}
+       </S.Track>
+-      {hasControls && variant.startsWith('card') && (
+-        <S.CardCarouselNav data-testid={`ad-card-nav-${variant}`}>
+-          <S.CardArrowButton
+-            aria-label='이전 광고'
+-            type='button'
+-            onClick={() => handleManualMove(activeIndex - 1)}
+-          >
+-            <Icon name='chevron' size={20} color='white' direction='left' />
+-          </S.CardArrowButton>
+-          <S.CardArrowButton
+-            aria-label='다음 광고'
+-            type='button'
+-            onClick={() => handleManualMove(activeIndex + 1)}
+-          >
+-            <Icon name='chevron' size={20} color='white' direction='right' />
+-          </S.CardArrowButton>
+-        </S.CardCarouselNav>
+-      )}
+       {hasBannerIndicators && (
+         <S.IndicatorGroup
+           ref={indicatorGroupRef}
+diff --git a/libs/store-manager/components/src/lib/home/Home.tsx b/libs/store-manager/components/src/lib/home/Home.tsx
+index dfec9e7275..d48d0b9cb7 100644
+--- a/libs/store-manager/components/src/lib/home/Home.tsx
++++ b/libs/store-manager/components/src/lib/home/Home.tsx
+@@ -90,7 +90,30 @@ const Home = ({ dashboardType, onboardingResume }: HomeProps) => {
+           <Suspense fallback={<PlanHomeBannerSkeleton />}>
+             <PlanHomeBanner onboardingResume={onboardingResume} />
+           </Suspense>
+-          <Ad variant='card-large' slug='s3_sm_home_right_card' />
++          {/* OMC_TEMPORARY_AD_FIXTURE: 검수 복사본 전용. 운영 CMS 데이터가 아닙니다. */}
++          <Ad
++            variant='card-large'
++            items={[
++              {
++                id: 'omc-temporary-1',
++                title: '검수용 광고 1',
++                href: '#omc-temporary-ad-1',
++                image: {
++                  alt: '검수용 광고 1 · 흰 배경 테두리 확인',
++                  src: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="600"><rect width="1020" height="600" fill="white"/><text x="80" y="290" font-size="54" fill="#333">TEMPORARY AD 1</text><text x="80" y="370" font-size="30" fill="#666">Local inspection only</text></svg>'),
++                },
++              },
++              {
++                id: 'omc-temporary-2',
++                title: '검수용 광고 2',
++                href: '#omc-temporary-ad-2',
++                image: {
++                  alt: '검수용 광고 2 · 자동 전환 확인',
++                  src: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="600"><rect width="1020" height="600" fill="#eef2ff"/><text x="80" y="290" font-size="54" fill="#333">TEMPORARY AD 2</text><text x="80" y="370" font-size="30" fill="#666">Local inspection only</text></svg>'),
++                },
++              },
++            ]}
++          />
+           <ArticleSection />
+           <Suspense fallback={<AnnouncementsSectionSkeleton />}>
+             <AnnouncementsSection />
