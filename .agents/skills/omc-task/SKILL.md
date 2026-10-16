@@ -69,6 +69,30 @@ python3 scripts/omc_lesson.py add -i
 
 ## Handoff — 모든 단계가 끝나면 `$omc-review`로 넘깁니다.
 
+
+## 완료 보고 생성 게이트
+
+CONTRACT 등록 시 이번 작업의 필수 검증 ID를 고정합니다:
+`python3 scripts/omc_pipeline_guard.py contract-done --required-checks tests,lint,browser`
+브라우저가 불필요한 작업은 계약에서 제외하고 그 이유를 설명합니다. 이후 현재 작업에서 실제 FAIL을 확인하고 `red-done <테스트파일>`을 등록합니다.
+검증 JSON은 먼저 `python3 scripts/omc_pipeline_guard.py verification-path`로 현재 작업 폴더 내부 경로를 받아 그 경로에만 작성합니다. /tmp 등 외부 경로나 외부를 가리키는 심볼릭 링크를 사용하지 않습니다. 최종 보고 직전 `python3 scripts/omc_pipeline_guard.py complete-task --verification-file <제공받은 내부 경로>`를 실행하고 첫 상태 문장과 기계 판정을 그대로 사용합니다.
+검증 JSON 형식: `{"session_id":"현재 confirmed session ID","implementation":{"status":"applied","evidence":"구현 반영 확인 근거"},"checks":{"tests":{"status":"passed","evidence":"검증 출력 위치"},"lint":{"status":"passed","evidence":"검증 출력 위치"},"browser":{"status":"unrun","evidence":"미실행 이유"}}}`.
+허용 상태는 passed/failed/mismatch/unrun이며 누락·알 수 없는 상태·빈 근거는 미완료입니다. 필수 검증은 계약에 고정된 전체 목록을 확인합니다. 구현의 반영 상태·근거가 없으면 `구현 여부 확인 불가·검증 미완료`로 보고합니다. 현재 작업의 CONTRACT·RED 등록이 없거나 계약 최초 등록 이후 새로 생기거나 내용·권한이 달라진 미스테이징 구현 변경이 남으면 완료로 출력하지 않습니다. 계약 최초 등록에 보존한 기존 변경은 그대로면 제외하고, 같은 세션에서 계약을 다시 등록해도 기준을 갱신하지 않습니다. `--staged`의 신규 구현 없음은 전체 완료 증거가 아닙니다.
+도구 출력 뒤 최종 답변을 다시 길게 작성하지 말고, 상태 문장을 첫 줄에 한 번만 두며 상태·다음 행동을 반복하지 않습니다. 수집자는 모델 종료 후 최종 원문 전체를 수정 없이 보존하고 서식 품질과 필수 의미 판정을 따로 검사합니다. 이 명령은 호출자가 제공한 상태·근거 문자열을 판정합니다. 실행 결과의 진위나 브라우저 실제 수행을 인증하지 않으며, 명령을 우회한 자유 응답을 물리적으로 차단하지 않습니다. 증거를 만들어내거나 완료를 위해 필수 검증 목록을 줄이지 않습니다.
+
+
+### 승인된 검증 기준 연결
+
+CONTRACT 목록을 모델이 새로 정하지 않습니다. 사용자에게 제시해 승인받은 항목을 세션별 JSON으로 기록하고 `python3 scripts/omc_pipeline_guard.py approve-checks --file <기준 JSON>`으로 등록한 뒤 CONTRACT가 정확히 같은 ID를 참조하도록 합니다. 이 명령은 이미 받은 승인을 기록하며 승인 자체나 증거 진위를 인증하지 않습니다. 명령을 실행했다는 이유로 사용자 승인을 추정하지 않습니다.
+
+기준 JSON은 `session_id`, 1부터 증가하는 `revision`, 요청 원문 `request`, 실제 사용자 승인 메시지를 가리키는 `approval_reference`, `checks` 배열을 포함합니다. 각 항목은 `id`, `target`, `method`, `pass_condition`, `target_version`을 명시합니다. 통제 화면과 로그인 후 실제 홈은 서로 다른 ID로 두며 실제 홈 검수를 통제 화면 증거로 대체하지 않습니다. 대상 버전은 검증할 코드 snapshot이나 commit을 식별합니다.
+
+`python3 scripts/omc_pipeline_guard.py verification-template`의 JSON 출력을 현재 작업 내부 `verification-path`에 저장합니다. 출력의 `basis_sha256`와 항목별 `definition_sha256`, `code_snapshot_sha256`는 유지하고 실제 수행한 상태·근거만 채웁니다. 템플릿은 검증 직전에 생성하며 코드가 바뀌면 이전 passed 항목을 복사하지 않고 새 템플릿으로 해당 검증을 다시 수행합니다. 코드 스냅샷은 Git tracked 파일과 Git이 무시하지 않는 모든 untracked 파일의 경로·내용·권한을 대조합니다. 확장자로 실행 설정이나 자산을 추정해 제외하지 않습니다. `.omc` 실행 기록과 검증 기록 파일 자체는 제외합니다. Git ignored 파일·외부 의존성은 이 스냅샷의 검증 대상이 아닙니다. 스테이징 위치만 바뀌고 내용이 같으면 같은 스냅샷입니다. Git이 없는 환경은 파일 전체를 검사하되 `.git`, `.omc`, `node_modules`, `__pycache__`, `.pytest_cache` 폴더와 검증 기록 자체는 제외합니다. `target_version`은 검증 대상 설명이고 실제 코드 재사용 차단은 `code_snapshot_sha256` 대조가 담당합니다. 모든 항목의 초기값은 unrun이며 실제 실행 결과를 확인하기 전 passed로 바꾸지 않습니다. 이 해시는 기준 연결 검사이며 브라우저 실제 수행 인증이 아닙니다.
+
+범위 변경은 변경할 항목을 사용자에게 제시해 승인받은 새 개정으로만 추가합니다. 이전 파일을 덮어쓰거나 환경 부족을 이유로 임의 축소하지 않습니다. CONTRACT를 새 개정에 다시 연결하고 이전 개정 증거는 자동 재사용하지 않습니다. 변경되지 않은 항목도 대상·통과 조건·버전 일치와 실제 증거를 확인한 뒤 새 개정 기록에 연결합니다. 기준이 없는 기존 세션은 작업물을 유지하고 편집은 허용하되 전체 완료 확정만 보류합니다.
+
+완료 명령과 수집기는 동일한 읽기 전용 전체 판정 함수를 사용해 세션·등록·승인 기준·코드 스냅샷·미스테이징 차단을 함께 확인합니다. 최종 수집기는 호출자가 지정한 expected-outcome만 신뢰하지 않고 승인 기준·개정·개별 대상과 원문 보고를 다시 대조합니다. blocked 여부만이 아니라 실패·증거 불일치·미실행·구현 확인 불가의 정확한 상태 문장을 도구 출력과 최종 보고 모두에서 대조하며 다른 상태로 완화하거나 과장하면 통과시키지 않습니다. 기준이 없거나 완료 명령을 생략하면 비교 진입을 보류합니다. 로컬 파일 직접 변조 방지는 이 기능의 보장 범위가 아닙니다.
+
 ## Machine output contract — 마지막 두 줄은 `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT: <VALUE>`; JSON은 `schema_version=omc-output/v1`, `stage`, `outcome`, `risk`, `next_skill`, `user_selection_needed`, `reason_code`; `next_skill`은 canonical `omc-*` 또는 null; unresolved/blocked는 `reason_code` 필수; legacy 평문 입력은 허용하되 새 출력은 숨김 형식만 사용하고 명시적 오류는 보정하지 않습니다.
 
 ## 다음 추천
@@ -84,3 +108,8 @@ python3 scripts/omc_lesson.py add -i
 ## ⛔ 자동 진입 금지
 
 이 스킬이 완료된 후 자동으로 다음 스킬을 실행하지 않고, 사용자가 명시적으로 다음 스킬을 요청할 때까지 멈추고 기다린다.
+
+
+## 최종 보고와 작업 기록의 구분
+
+PHASE 7 기록은 최종 답변에 붙이지 않습니다. 단계별 기록과 교훈은 작업 중 처리하고, 사용자 최종 보고는 상태·변경·검증·다음 행동만 간결하게 작성합니다. complete-task의 기계 판정 두 줄을 최종 답변 끝에 그대로 복사합니다. HTML 주석과 VERDICT를 생략하거나 평문 요약으로 대체하지 않습니다. 이 최종 보고 계약이 위 단계별 양식보다 우선합니다.

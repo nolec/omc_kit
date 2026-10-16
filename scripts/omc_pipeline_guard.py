@@ -21,6 +21,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -247,6 +248,8 @@ def cmd_red_done(root: Path, test_file: str) -> int:
         print(f"[PIPELINE] ⚠️  테스트 파일 패턴 아님: {test_file} — 그래도 등록합니다.")
 
     state = _load_state(root)
+    state["red_session_id"] = state.get("session_id", "")
+    _save_state(root, state)
     if test_file not in state["red_done_tests"]:
         state["red_done_tests"].append(test_file)
         _save_state(root, state)
@@ -323,7 +326,229 @@ def cmd_status(root: Path) -> int:
                 print(f"    ... 외 {len(entries)-5}건 → {log_path.relative_to(root)}")
     return 0
 
-def cmd_contract_done(root: Path, content: str = "") -> int:
+def _unstaged_impl_fingerprints(root: Path) -> dict | None:
+    """Snapshot only unstaged implementation content; never modify the checkout."""
+    try:
+        dirty = subprocess.run(["git", "diff", "--name-only", "-z"], cwd=root,
+                               capture_output=True, text=True, check=True).stdout
+        untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"],
+                                   cwd=root, capture_output=True, text=True, check=True).stdout
+        result = {}
+        for name in set((dirty + untracked).split("\0")):
+            if not name or not _is_impl_file(name):
+                continue
+            path = root / name
+            if path.is_symlink():
+                import os
+                payload = ("symlink:" + os.readlink(path)).encode("utf-8")
+                result[name] = hashlib.sha256(payload).hexdigest()
+            elif path.exists():
+                mode = str(path.stat().st_mode & 0o777).encode("ascii")
+                result[name] = hashlib.sha256(b"file:" + mode + b":" + path.read_bytes()).hexdigest()
+            else:
+                result[name] = "deleted"
+        return result
+    except (OSError, subprocess.CalledProcessError):
+        if (root / ".git").exists():
+            raise ValueError("변경 범위를 확인할 수 없습니다")
+        return None
+
+
+def _basis_digest(value: dict) -> str:
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
+def _check_digest(check: dict) -> str:
+    return _basis_digest(check)
+
+
+def _code_snapshot_digest(root: Path, verification_file: Path | None = None) -> str:
+    """Hash candidate bytes and modes, independently of staged/unstaged location.
+
+    Git candidates include tracked and non-ignored untracked files without
+    extension guessing. Runtime .omc records and the verification record itself
+    are excluded. Non-Git fixtures exclude dependency/cache directories only.
+    This is content binding, not proof
+    that the caller actually ran the declared verification.
+    """
+    try:
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=root,
+                             capture_output=True, text=True)
+        if top.returncode == 0 and Path(top.stdout.strip()).resolve() == root.resolve():
+            tracked = subprocess.run(["git", "ls-files", "-z"], cwd=root,
+                                     capture_output=True, text=True, check=True).stdout
+            others = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"],
+                                    cwd=root, capture_output=True, text=True, check=True).stdout
+            names = set(filter(None, tracked.split("\0")))
+            names.update(filter(None, others.split("\0")))
+        elif (root / ".git").exists():
+            raise ValueError("코드 스냅샷의 Git 범위를 확인할 수 없습니다")
+        else:
+            names = {str(p.relative_to(root)) for p in root.rglob("*")
+                     if (p.is_file() or p.is_symlink())
+                     and not set(p.relative_to(root).parts) & {".omc", ".git", "node_modules", "__pycache__", ".pytest_cache"}}
+        entries = {}
+        for name in sorted(names):
+            if Path(name).parts[0] in {".omc", ".git"}:
+                continue
+            path = root / name
+            if verification_file is not None and path.absolute() == verification_file.absolute():
+                continue
+            if path.is_symlink():
+                import os
+                payload = b"symlink:" + os.fsencode(os.readlink(path))
+                target = path.resolve()
+                target.relative_to(root.resolve())
+                if not target.is_file():
+                    raise ValueError(f"코드 스냅샷 링크 대상 파일을 확인할 수 없습니다: {name}")
+                payload += b":" + str(target.stat().st_mode & 0o777).encode() + b":" + target.read_bytes()
+            elif not path.exists():
+                continue
+            else:
+                if not path.is_file():
+                    raise ValueError(f"코드 스냅샷 파일이 아닙니다: {name}")
+                path.resolve().relative_to(root.resolve())
+                payload = str(path.stat().st_mode & 0o777).encode() + b":" + path.read_bytes()
+            entries[name] = hashlib.sha256(payload).hexdigest()
+        return _basis_digest(entries)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError("코드 스냅샷을 읽을 수 없습니다") from exc
+
+
+def _basis_path(root: Path, sid: str) -> Path:
+    if not isinstance(sid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", sid):
+        raise ValueError("현재 작업 식별자를 확인할 수 없습니다")
+    path = root / ".omc" / "verification-bases" / sid
+    path.resolve().relative_to(root.resolve())
+    return path
+
+
+def _validate_basis(value: dict, sid: str) -> dict:
+    if not isinstance(value, dict) or value.get("session_id") != sid:
+        raise ValueError("승인된 검증 기준의 세션이 다릅니다")
+    if type(value.get("revision")) is not int or value["revision"] < 1:
+        raise ValueError("검증 기준 개정 번호가 올바르지 않습니다")
+    for key in ("request", "approval_reference"):
+        if not isinstance(value.get(key), str) or not value[key].strip():
+            raise ValueError("요청 원문과 사용자 승인 참조가 필요합니다")
+    checks = value.get("checks")
+    if not isinstance(checks, list) or not checks:
+        raise ValueError("승인된 필수 검증 항목이 필요합니다")
+    ids = []
+    for check in checks:
+        if not isinstance(check, dict):
+            raise ValueError("검증 항목 형식이 올바르지 않습니다")
+        for key in ("id", "target", "method", "pass_condition", "target_version"):
+            if not isinstance(check.get(key), str) or not check[key].strip():
+                raise ValueError(f"검증 항목에 {key}가 필요합니다")
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", check["id"]):
+            raise ValueError("검증 ID가 올바르지 않습니다")
+        ids.append(check["id"])
+    if len(set(ids)) != len(ids):
+        raise ValueError("검증 ID가 중복됐습니다")
+    return value
+
+
+def _load_approved_basis(root: Path, sid: str) -> dict:
+    directory = _basis_path(root, sid)
+    revisions = sorted(int(p.stem) for p in directory.glob("*.json") if p.stem.isdigit())
+    if not revisions:
+        raise ValueError("승인된 검증 기준이 없습니다. 기준을 제시하고 승인을 기록하세요")
+    path = directory / f"{revisions[-1]}.json"
+    path.resolve().relative_to(root.resolve())
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value = _validate_basis(value, sid)
+    if value["revision"] != revisions[-1]:
+        raise ValueError("검증 기준 개정 번호가 일치하지 않습니다")
+    return value
+
+
+def cmd_approve_checks(root: Path, proposal: Path) -> int:
+    """Record an already obtained human approval, not authenticate its author.
+
+    Local files and approval references are caller-controlled. This prevents
+    accidental scope loss; it is not an adversarial tamper-proof trust boundary.
+    """
+    try:
+        latest = json.loads((root / ".omc/state/latest.json").read_text(encoding="utf-8"))
+        sid = latest.get("latest_confirmed_session_id")
+        if latest.get("latest_session_id") != sid:
+            raise ValueError("현재 작업 승인을 먼저 확인하세요")
+        value = _validate_basis(json.loads(proposal.read_text(encoding="utf-8")), sid)
+        directory = _basis_path(root, sid)
+        revisions = [int(p.stem) for p in directory.glob("*.json") if p.stem.isdigit()]
+        if value["revision"] != max(revisions, default=0) + 1:
+            raise ValueError("승인된 새 개정만 추가할 수 있습니다. 기존 기록은 보존합니다")
+        directory.mkdir(parents=True, exist_ok=True)
+        with (directory / f"{value['revision']}.json").open("x", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False, indent=2)
+        print(f"[PIPELINE] 사용자 승인 기준 기록: 개정 {value['revision']} / {_basis_digest(value)}")
+        return 0
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        print(f"[PIPELINE] {exc}")
+        return 1
+
+
+def approved_verification_problems(root: Path, sid: str, state: dict, record: dict,
+                                   verification_file: Path | None = None) -> list:
+    """Shared completion/collector check, deliberately independent of final prose."""
+    try:
+        basis = _load_approved_basis(root, sid)
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        return [str(exc)]
+    problems = []
+    digest = _basis_digest(basis)
+    if state.get("basis_sha256") != digest or record.get("basis_sha256") != digest:
+        problems.append("승인된 검증 기준 개정과 CONTRACT 또는 증거 불일치")
+    expected = {c["id"] for c in basis["checks"]}
+    declared = state.get("required_checks", [])
+    if not isinstance(declared, list) or any(not isinstance(x, str) for x in declared) or set(declared) != expected:
+        problems.append("승인된 필수 검증 목록과 CONTRACT 불일치")
+    checks = record.get("checks", {})
+    if not isinstance(checks, dict):
+        checks = {}
+    try:
+        current_snapshot = _code_snapshot_digest(root, verification_file)
+    except ValueError as exc:
+        problems.append(str(exc))
+        current_snapshot = None
+    for check in basis["checks"]:
+        item = checks.get(check["id"], {})
+        if not isinstance(item, dict):
+            item = {}
+        if item and item.get("definition_sha256") != _check_digest(check):
+            problems.append(f"검증 대상·방법·버전 증거 불일치: {check['id']}")
+        if item.get("status") == "passed" and (current_snapshot is None or item.get("code_snapshot_sha256") != current_snapshot):
+            problems.append(f"검증 후 코드 스냅샷 증거 불일치: {check['id']}")
+        if item.get("status") != "passed" or not isinstance(item.get("evidence"), str) or not item["evidence"].strip():
+            problems.append(f"승인된 필수 검증 미충족: {check['id']}")
+    return problems
+
+
+def cmd_verification_template(root: Path) -> int:
+    """Emit the exact approved scope; never default an observation to success."""
+    try:
+        latest = json.loads((root / ".omc/state/latest.json").read_text(encoding="utf-8"))
+        sid = latest.get("latest_confirmed_session_id")
+        if latest.get("latest_session_id", sid) != sid:
+            raise ValueError("현재 작업 승인을 먼저 확인하세요")
+        basis = _load_approved_basis(root, sid)
+        snapshot = _code_snapshot_digest(root)
+        record = {"session_id": sid, "basis_sha256": _basis_digest(basis),
+                  "implementation": {"status": "unverified", "evidence": ""},
+                  "checks": {check["id"]: {"status": "unrun", "evidence": "",
+                                           "definition_sha256": _check_digest(check),
+                                           "code_snapshot_sha256": snapshot}
+                             for check in basis["checks"]}}
+        print(json.dumps(record, ensure_ascii=False, indent=2))
+        return 0
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        print(f"[PIPELINE] {exc}")
+        return 1
+
+
+def cmd_contract_done(root: Path, content: str = "", required_checks: str = "") -> int:
     """CONTRACT 양식 작성 + 사용자 컨펌 완료 등록.
 
     content가 주어지면 SHA-256 해시를 저장해 우발적 위조를 방지한다.
@@ -335,7 +560,9 @@ def cmd_contract_done(root: Path, content: str = "") -> int:
     session_id로 기록한다 — 훅이 세션 간 오염 여부를 판별하는 데 사용한다.
     """
     state = _load_state(root)
+    previous_sid = state.get("session_id", "")
     state["contract_confirmed"] = True
+    requested_checks = list(dict.fromkeys(c.strip() for c in required_checks.split(",") if c.strip()))
     hash_source = content if content else f"confirmed_at:{time.time()}"
     state["contract_hash"] = _make_contract_hash(hash_source)
     state["session_id"] = ""
@@ -351,9 +578,175 @@ def cmd_contract_done(root: Path, content: str = "") -> int:
         except Exception:
             pass
 
+    try:
+        directory = _basis_path(root, state.get("session_id"))
+        if directory.exists():
+            basis = _load_approved_basis(root, state["session_id"])
+            expected = {check["id"] for check in basis["checks"]}
+            if set(requested_checks) != expected:
+                raise ValueError("승인된 필수 검증 목록을 사용하세요: " + ",".join(sorted(expected)))
+            state["basis_sha256"] = _basis_digest(basis)
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        # Legacy sessions without a session id keep edit compatibility only.
+        if state.get("session_id"):
+            print(f"[PIPELINE] {exc}")
+            return 1
+    if (previous_sid and previous_sid == state.get("session_id")
+            and "required_checks" in state
+            and set(state["required_checks"]) != set(requested_checks)
+            and state.get("basis_sha256") == _load_state(root).get("basis_sha256")):
+        print("[PIPELINE] 현재 작업의 필수 검증 목록은 변경할 수 없습니다.")
+        return 1
+    state["required_checks"] = requested_checks
+    if previous_sid != state.get("session_id") or "worktree_baseline" not in state:
+        try:
+            state["worktree_baseline"] = _unstaged_impl_fingerprints(root)
+        except ValueError as exc:
+            print(f"[PIPELINE] {exc}")
+            return 1
     _save_state(root, state)
     print("[PIPELINE] ✅ CONTRACT 확인 완료 — 기존 파일 수정이 허용됩니다.")
     return 0
+
+def _internal_verification_path(root: Path, path: Path) -> Path:
+    resolved = (path if path.is_absolute() else root / path).resolve()
+    try:
+        resolved.relative_to(root.resolve())
+    except ValueError:
+        raise ValueError("검증 경로가 작업 폴더 밖을 가리킵니다")
+    return resolved
+
+
+def cmd_verification_path(root: Path) -> int:
+    """Provide a safe per-session path without creating the verification record."""
+    try:
+        latest = json.loads((root / ".omc/state/latest.json").read_text(encoding="utf-8"))
+        sid = latest.get("latest_confirmed_session_id", "")
+        if not isinstance(sid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", sid):
+            raise ValueError("현재 작업 식별자를 확인할 수 없습니다")
+        if latest.get("latest_session_id", sid) != sid:
+            raise ValueError("현재 작업 식별자가 일치하지 않습니다")
+        path = _internal_verification_path(root, Path(".omc") / "verification" / (sid + ".json"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        print(path)
+        return 0
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        print(str(exc))
+        return 1
+
+
+def evaluate_task_completion(root: Path, verification_file: Path, expected_session_id: str | None = None) -> dict:
+    """One read-only decision used by both the completion CLI and collector.
+
+    Evidence is supplied by the caller, not independently attested by this command.
+    This gate cannot prevent an agent from writing an unrelated free-form response.
+    """
+    state = _load_state(root)
+    problems = []
+    failed = False
+    mismatch = False
+    try:
+        latest = json.loads((root / ".omc/state/latest.json").read_text(encoding="utf-8"))
+        if not isinstance(latest, dict):
+            raise ValueError("session object required")
+        sid = latest.get("latest_confirmed_session_id", "")
+        if latest.get("latest_session_id", sid) != sid:
+            sid = ""
+    except (OSError, ValueError, TypeError):
+        sid = ""
+        problems.append("현재 세션 상태를 읽을 수 없습니다")
+    if expected_session_id is not None and sid != expected_session_id:
+        problems.append("수집 대상과 현재 작업 식별자가 다릅니다")
+        mismatch = True
+    record = {}
+    record_read = False
+    try:
+        verification_file = _internal_verification_path(root, verification_file)
+    except (OSError, ValueError) as exc:
+        problems.append(str(exc))
+    else:
+        try:
+            record = json.loads(verification_file.read_text(encoding="utf-8"))
+            if not isinstance(record, dict):
+                raise ValueError("verification object required")
+            record_read = True
+        except (OSError, ValueError, TypeError):
+            record = {}
+            problems.append("검증 기록을 읽을 수 없습니다")
+    if not sid or not state.get("contract_confirmed") or state.get("session_id") != sid:
+        problems.append("현재 작업의 CONTRACT 등록이 없습니다")
+    if not state.get("red_done_tests") or state.get("red_session_id") != sid or not sid:
+        problems.append("현재 작업의 RED 등록이 없습니다")
+    if record_read and (record.get("session_id") != sid or not sid):
+        problems.append("검증 기록의 작업 식별자가 다릅니다")
+        mismatch = True
+    required = state.get("required_checks", [])
+    if not isinstance(required, list) or any(not isinstance(name, str) for name in required):
+        required = []
+        problems.append("필수 검증 목록 형식이 올바르지 않습니다")
+    basis_problems = approved_verification_problems(root, sid, state, record, verification_file)
+    problems.extend(basis_problems)
+    mismatch = mismatch or any("불일치" in problem for problem in basis_problems)
+    if not required:
+        problems.append("CONTRACT에 필수 검증 목록이 없습니다")
+    checks = record.get("checks", {})
+    if not isinstance(checks, dict):
+        checks = {}
+    for name in required:
+        item = checks.get(name, {})
+        if not isinstance(item, dict):
+            item = {}
+        status = item.get("status")
+        failed = failed or status == "failed"
+        mismatch = mismatch or status == "mismatch"
+        evidence = item.get("evidence")
+        if status != "passed" or not isinstance(evidence, str) or not evidence.strip():
+            problems.append(f"필수 검증 미충족: {name}")
+    implementation = record.get("implementation", {})
+    if not isinstance(implementation, dict):
+        implementation = {}
+    implementation_evidence = implementation.get("evidence")
+    applied = (bool(sid) and record.get("session_id") == sid
+               and implementation.get("status") == "applied"
+               and isinstance(implementation_evidence, str) and bool(implementation_evidence.strip()))
+    if not applied:
+        problems.append("구현 반영을 확인할 근거가 없습니다")
+    # Existing unrelated changes are preserved, but further edits to them still block.
+    try:
+        current_changes = _unstaged_impl_fingerprints(root)
+        baseline = state.get("worktree_baseline")
+        if current_changes is not None:
+            if not isinstance(baseline, dict):
+                problems.append("작업 시작 시점의 변경 기준이 없습니다. CONTRACT를 확인하세요")
+            elif any(baseline.get(name) != fingerprint for name, fingerprint in current_changes.items()):
+                problems.append("현재 작업의 미스테이징 구현 변경이 남아 있어 staged 검사로 완료를 확정할 수 없습니다")
+    except ValueError as exc:
+        problems.append(str(exc))
+    blocked = bool(problems)
+    first = ("검증 실패·수정 필요" if failed else "증거 불일치·재검증 필요" if mismatch
+             else "구현됨·검증 미완료" if applied else "구현 여부 확인 불가·검증 미완료") if blocked else "필수 검증 통과·작업 완료"
+    registered = (bool(sid) and state.get("contract_confirmed") is True and state.get("session_id") == sid
+                  and state.get("red_session_id") == sid and bool(state.get("red_done_tests")))
+    return {"outcome": "blocked" if blocked else "done", "first": first,
+            "problems": problems, "registered": registered}
+
+
+def cmd_complete_task(root: Path, verification_file: Path) -> int:
+    evaluation = evaluate_task_completion(root, verification_file)
+    blocked = evaluation["outcome"] == "blocked"
+    print(evaluation["first"])
+    for problem in evaluation["problems"]:
+        print(f"- {problem}")
+    print("다음 행동: 미충족 항목을 확인한 뒤 다시 검증합니다." if blocked
+          else "다음 행동: omc-review로 변경사항을 검토합니다.")
+    envelope = {"schema_version": "omc-output/v1", "stage": "task",
+                "outcome": "blocked" if blocked else "done", "risk": "medium" if blocked else "low",
+                "next_skill": None if blocked else "omc-review", "user_selection_needed": blocked,
+                "reason_code": "verification_incomplete" if blocked else None}
+    print("<!-- OMC_OUTPUT: " + json.dumps(envelope, ensure_ascii=False) + " -->")
+    print("VERDICT: " + ("BLOCK" if blocked else "PROCEED"))
+    return 1 if blocked else 0
+
 
 def cmd_check_edit(root: Path, file_path: str, bypass: bool = False) -> int:
     """기존 파일 수정(edit_file) 전 CONTRACT 확인 여부 체크. 0=허용, 1=차단.
@@ -537,6 +930,11 @@ def main() -> int:
     p_allow.add_argument("--reason", "-r", default="", help="예외 허용 이유 (감사 로그에 기록됩니다)")
 
     p_contract = sub.add_parser("contract-done", help="CONTRACT 양식 작성 + 사용자 컨펌 완료 등록 (이후 edit_file 허용)")
+    p_contract.add_argument("--required-checks", default="", help="고정할 필수 검증 ID 목록 (쉼표 구분)")
+    p_approval = sub.add_parser("approve-checks", help="이미 받은 사용자 검증 기준 승인을 개정별 기록 (진위 인증 아님)")
+    p_approval.add_argument("--file", type=Path, required=True)
+    p_complete = sub.add_parser("complete-task", help="현재 작업 등록과 필수 검증에 따른 최종 보고")
+    p_complete.add_argument("--verification-file", type=Path, required=True)
     p_contract.add_argument("--content", default="", help="CONTRACT 내용 (해시 저장용, 우발적 위조 방지)")
 
     p_check_edit = sub.add_parser("check-edit", help="기존 파일 수정 전 CONTRACT 확인 여부 체크")
@@ -548,6 +946,8 @@ def main() -> int:
         help="자동화 파이프라인 모드 — CONTRACT 차단 우회 (opt-in)",
     )
 
+    sub.add_parser("verification-path", help="현재 작업의 내부 검증 기록 경로 제공")
+    sub.add_parser("verification-template", help="승인된 검증 ID·개정·대상 해시를 담은 미실행 기록 출력")
     sub.add_parser("status", help="현재 세션 파이프라인 상태 출력")
     sub.add_parser("reset", help="세션 파이프라인 상태 초기화")
     sub.add_parser("session-start", help="새 세션 시작 — contract_confirmed 초기화 (red_done_files 보존)")
@@ -564,9 +964,17 @@ def main() -> int:
         reason = getattr(args, "reason", "")
         return cmd_allow(root, args.file, reason)
     if args.cmd == "contract-done":
-        return cmd_contract_done(root, getattr(args, "content", ""))
+        return cmd_contract_done(root, getattr(args, "content", ""), args.required_checks)
+    if args.cmd == "approve-checks":
+        return cmd_approve_checks(root, args.file)
+    if args.cmd == "complete-task":
+        return cmd_complete_task(root, args.verification_file)
     if args.cmd == "check-edit":
         return cmd_check_edit(root, args.file, bypass=getattr(args, "autopilot", False))
+    if args.cmd == "verification-path":
+        return cmd_verification_path(root)
+    if args.cmd == "verification-template":
+        return cmd_verification_template(root)
     if args.cmd == "status":
         return cmd_status(root)
     if args.cmd == "reset":
