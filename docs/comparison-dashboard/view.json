@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "통제 화면 자동 판정 V0 구현·리뷰 승인 · 실제 Claude 재검증 전",
+    "decision": "통제 화면 자동 판정 V0 · 6개 파일 커밋·전체 품질 통과 · main 반영 완료",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2046,9 +2046,9 @@
         "historical": true
       }
     ],
-    "next": "리뷰 승인된 자동 판정 구현 4개 파일을 별도 커밋한 뒤, 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 동일 자동 판정을 적용한 양쪽 새 비교는 별도 실행으로 남긴다.",
+    "next": "커밋9160448을 기준으로 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 같은 자동 판정을 적용한 양쪽 새 비교는 후속으로 남긴다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "리뷰 승인 코드 별도 커밋 → 자동 화면 판정을 포함한 실제 Claude 1회 검증"
+    "current_priority": "자동 화면 판정을 포함한 실제 Claude 광고 사례1회 재검증"
   },
   "decision": {
     "candidate": "통제 화면의 실제 표시 자동 판정",
@@ -2093,33 +2093,33 @@
         "historical": true
       }
     ],
-    "completion": "구현 회귀299개 통과, 격리 4파일 독립 리뷰297개 통과·APPROVE. 두 정상 방식×6종×DPR1/2=24개 모두 passed. 기존 실제 Ad 코드의 별도 통제 fixture 캡처 재판정: 정상12개 passed·테두리 가림12개 failed. 결과 누락·후보/manifest/증거 불일치 및 failed/unknown은 수집기 hold.",
+    "completion": "승인된6파일 후보 독립 리뷰295개 통과·APPROVE. 설치 생성물 준비 후 전체 품질4497개 통과·3개 생략·12개 제외(606.55초), 누락됐던3검사 재확인 통과. TDD·문법·변경 형식·비밀값 검사 및 커밋 후 리뷰 결속READY. 정상2방식×6종×DPR1/2=24조합 통과, 기존 실제 Ad의 통제 캡처 정상12개 통과·테두리 가림12개 실패 이력 유지.",
     "deliverables": [
-      "실제 PNG의 정의 구간·이미지 표식 판정",
-      "후보·manifest·번들·증거 결속과 수집기 hold",
-      "정상24조합 및 결함·불확실성 회귀"
+      "실제 캡처의 정의 구간·이미지 표식 자동 판정",
+      "증거·후보 결속 및 필수 결과 누락 차단",
+      "독립6파일 후보 커밋9160448·전체 품질4497개 통과"
     ],
-    "limit": "자동 판정은 정의한 직선 구간과 이미지 표식만 검사한다. 실제 홈·Claude 새 실행은 이번 구현·리뷰에서 미실행. 기존 추적 테스트4실패·클릭/숨김 외부 전송·C3 사용자 이해·일반 생산성 및 경쟁 우위는 미해결 또는 미입증. 이번 보완 미릴리스·일반 사용처 미설치; 기존0.5.9 설치 이력은 별도다.",
-    "not_done": "자동 판정4파일 커밋·새 실제 Claude 실행·릴리스·사용처 설치·일반 효과 미확인",
+    "limit": "자동 판정은 정의한 직선 구간과 이미지 표식에 한정된다. 자동 판정을 적용한 실제 Claude 광고 재실행·새 양쪽 비교는 미실행이며, 기존 광고 추적4실패·클릭/숨김 외부 전송·C3 사용자 이해·일반 생산성 및 경쟁 우위는 미해결 또는 미입증이다. main 반영은 완료됐으며 push·버전 변경·릴리스·일반 사용처 재설치 전이다. 기존0.5.9 설치 이력과 구분한다.",
+    "not_done": "자동 판정 적용 실제Claude 재실행·새 양쪽 비교·릴리스·사용처 설치·일반 효과 미확인",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "reason": "경쟁 도구가 브라우저를 확인하고도 이미지에 가려진 CSS inset 선을 요구 충족으로 보고했다.",
-    "state": "통제 화면 자동 판정 V0 구현·리뷰 승인 · 실제 Claude 재검증 전",
-    "next": "리뷰 승인된 자동 판정 구현 4개 파일을 별도 커밋한 뒤, 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 동일 자동 판정을 적용한 양쪽 새 비교는 별도 실행으로 남긴다."
+    "reason": "실제 화면을 확인하고도 가려진 선을 성공으로 판단한 문제를 줄이기 위해 픽셀 판정과 누락 차단을 구현·검증하고6파일로 커밋했다.",
+    "state": "통제 화면 자동 판정 V0 · 6개 파일 커밋·전체 품질 통과 · main 반영 완료",
+    "next": "커밋9160448을 기준으로 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 같은 자동 판정을 적용한 양쪽 새 비교는 후속으로 남긴다."
   },
   "current_update": {
     "date": "2026-10-16",
-    "status": "통제 화면 자동 판정 V0 구현·리뷰 승인 · 실제 Claude 재검증 전",
-    "commit": "9255a00",
-    "commit_scope": "준비 검사·범위/보고 수집기 기존 커밋; 자동 판정4파일 미커밋",
-    "verification": "구현 회귀299개 통과, 격리 4파일 독립 리뷰297개 통과·APPROVE. 두 정상 방식×6종×DPR1/2=24개 모두 passed. 기존 실제 Ad 코드의 별도 통제 fixture 캡처 재판정: 정상12개 passed·테두리 가림12개 failed. 결과 누락·후보/manifest/증거 불일치 및 failed/unknown은 수집기 hold.",
-    "tests_passed": 297,
+    "status": "통제 화면 자동 판정 V0 · 6개 파일 커밋·전체 품질 통과 · main 반영 완료",
+    "commit": "9160448",
+    "commit_scope": "자동 판정4파일+기존 테스트자료2파일 총6개;9160448 커밋을main에fast-forward반영",
+    "verification": "승인된6파일 후보 독립 리뷰295개 통과·APPROVE. 설치 생성물 준비 후 전체 품질4497개 통과·3개 생략·12개 제외(606.55초), 누락됐던3검사 재확인 통과. TDD·문법·변경 형식·비밀값 검사 및 커밋 후 리뷰 결속READY. 정상2방식×6종×DPR1/2=24조합 통과, 기존 실제 Ad의 통제 캡처 정상12개 통과·테두리 가림12개 실패 이력 유지.",
+    "tests_passed": 4497,
     "implementation_tests_passed": 299,
     "review_verdict": "APPROVE",
-    "review_scope_files": 4,
-    "installation": "이번 보완 미릴리스·일반 사용처 미설치; 기존0.5.9 설치 이력 별도, 재감사 미실행",
-    "next": "리뷰 승인된 자동 판정 구현 4개 파일을 별도 커밋한 뒤, 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 동일 자동 판정을 적용한 양쪽 새 비교는 별도 실행으로 남긴다.",
-    "display_next": "리뷰 승인 코드 별도 커밋 → 자동 화면 판정을 포함한 실제 Claude 1회 검증",
-    "limitations": "자동 판정은 정의한 직선 구간과 이미지 표식만 검사한다. 실제 홈·Claude 새 실행은 이번 구현·리뷰에서 미실행. 기존 추적 테스트4실패·클릭/숨김 외부 전송·C3 사용자 이해·일반 생산성 및 경쟁 우위는 미해결 또는 미입증. 이번 보완 미릴리스·일반 사용처 미설치; 기존0.5.9 설치 이력은 별도다.",
+    "review_scope_files": 6,
+    "installation": "main9160448 반영 완료; push·버전 변경·릴리스·일반 사용처 재설치 전; 기존0.5.9 설치 이력 별도",
+    "next": "커밋9160448을 기준으로 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 같은 자동 판정을 적용한 양쪽 새 비교는 후속으로 남긴다.",
+    "display_next": "자동 화면 판정을 포함한 실제 Claude 광고 사례1회 재검증",
+    "limitations": "자동 판정은 정의한 직선 구간과 이미지 표식에 한정된다. 자동 판정을 적용한 실제 Claude 광고 재실행·새 양쪽 비교는 미실행이며, 기존 광고 추적4실패·클릭/숨김 외부 전송·C3 사용자 이해·일반 생산성 및 경쟁 우위는 미해결 또는 미입증이다. main 반영은 완료됐으며 push·버전 변경·릴리스·일반 사용처 재설치 전이다. 기존0.5.9 설치 이력과 구분한다.",
     "actual_ad_comparison": {
       "ours_seconds": 486.24,
       "theirs_seconds": 611.43,
@@ -2134,18 +2134,14 @@
       "timing_interpretation": "동일 공통 입력·모델·순차 단일 사례; 준비/로그인 제외; 일반 속도 우위 아님"
     },
     "visual_validation": {
-      "state": "IMPLEMENTED_REVIEW_APPROVED_UNCOMMITTED",
+      "state": "COMMITTED_LOCAL_BRANCH_FULL_QUALITY_PASSED",
       "normal_combinations_passed": 24,
       "existing_ad_normal_passed": 12,
       "existing_ad_defective_failed": 12,
       "new_native_runs": 0,
       "claim": "defined_straight_segments_only"
     },
-    "local_evidence_uncommitted": [
-      "../ad-preflight-native-validation-20261016.md",
-      "../ad-competitor-parity-validation-20261016.md",
-      "../visual-controlled-check.md"
-    ],
+    "local_evidence_uncommitted": [],
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
       "docs/comparison-dashboard/README.md",
@@ -2156,7 +2152,43 @@
       "v3": "DISABLED",
       "completion": "OBSERVATION_INVALID",
       "reason": "pending_completion_invalid"
-    }
+    },
+    "branch": "codex/visual-release-candidate",
+    "tests_skipped": 3,
+    "tests_deselected": 12,
+    "quality_elapsed_sec": 606.55,
+    "preparation_recovery": "초기 전체 검사의3건은 Git에서 제외된 Claude 명령·스킬 설치 파일 부재로 실행 불가였다. 변경 전 기준본에서도 재현했고, 후보 자체 templates에서 기존 설치기를 비강제로 실행한 뒤 전체 검사를 통과했다. 제품6파일·승인·품질 설정은 바뀌지 않았으며 이전 실패 기록은 보존했다.",
+    "preservation": "자동 화면 판정6개 파일은9160448로 main에 반영됐다. 기존 대기10개는 f2cc2ef로, 비교 보고서·근거286개는3d96423으로 별도 커밋했다. 업무 파일·로컬 실행 기록·설정·별도 교훈은 보존했다.",
+    "commit_full": "9160448f07f09c0904a566828aa0d4f9985cb4c2",
+    "earlier_four_file_review_tests_passed": 297,
+    "six_file_review_tests_passed": 295,
+    "release_state": {
+      "main_included": true,
+      "pushed": false,
+      "version_bumped": false,
+      "released": false,
+      "consumer_reinstalled": false,
+      "candidate_review_binding": "READY",
+      "main_implementation_commit": "9160448"
+    },
+    "committed_branch_document": "docs/visual-controlled-check.md @9160448",
+    "local_runtime_evidence": [
+      ".omc/release-candidate-six/commit-result.json",
+      ".omc/release-candidate-six/environment-task/environment-full-quality.txt",
+      ".omc/release-candidate-six/environment-task/review-result.json"
+    ],
+    "main_integration": {
+      "method": "fast-forward",
+      "worktree_files_preserved": true,
+      "remaining_staged_files": 0,
+      "incorporated_staged_fixture_files": 2,
+      "documentation_changes_uncommitted": true,
+      "remaining_staged_committed_as": "f2cc2ef"
+    },
+    "archived_evidence_commit": "3d96423",
+    "reporting_regression_commit": "f2cc2ef",
+    "archive_boundary": "과거 provenance의 로컬 보관 파일265개 해시 일치. ad-paired-recompare-20261015의14개 원문은 임시 경로 참조이며 이 저장소에 복사되지 않았다. 전체 실행 원문 보관을 뜻하지 않는다.",
+    "cleanup_verification": "문서·보고 계약 회귀80개 및 보관된 합성 Node 테스트9개 통과. 과거 app.js3개만 사용자 승인 파일명 인식 예외."
   },
   "current_update_history": [
     {
@@ -2343,6 +2375,59 @@
         "scope_violation": "apps/store-manager/public/.gitignore",
         "preparation_error": "missing local harness ignore rule",
         "overall": "NOT_FULLY_PASSED_SCOPE_AND_FORMAT"
+      },
+      "historical": true
+    },
+    {
+      "date": "2026-10-16",
+      "status": "통제 화면 자동 판정 V0 구현·리뷰 승인 · 실제 Claude 재검증 전",
+      "commit": "9255a00",
+      "commit_scope": "준비 검사·범위/보고 수집기 기존 커밋; 자동 판정4파일 미커밋",
+      "verification": "구현 회귀299개 통과, 격리 4파일 독립 리뷰297개 통과·APPROVE. 두 정상 방식×6종×DPR1/2=24개 모두 passed. 기존 실제 Ad 코드의 별도 통제 fixture 캡처 재판정: 정상12개 passed·테두리 가림12개 failed. 결과 누락·후보/manifest/증거 불일치 및 failed/unknown은 수집기 hold.",
+      "tests_passed": 297,
+      "implementation_tests_passed": 299,
+      "review_verdict": "APPROVE",
+      "review_scope_files": 4,
+      "installation": "이번 보완 미릴리스·일반 사용처 미설치; 기존0.5.9 설치 이력 별도, 재감사 미실행",
+      "next": "리뷰 승인된 자동 판정 구현 4개 파일을 별도 커밋한 뒤, 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 동일 자동 판정을 적용한 양쪽 새 비교는 별도 실행으로 남긴다.",
+      "display_next": "리뷰 승인 코드 별도 커밋 → 자동 화면 판정을 포함한 실제 Claude 1회 검증",
+      "limitations": "자동 판정은 정의한 직선 구간과 이미지 표식만 검사한다. 실제 홈·Claude 새 실행은 이번 구현·리뷰에서 미실행. 기존 추적 테스트4실패·클릭/숨김 외부 전송·C3 사용자 이해·일반 생산성 및 경쟁 우위는 미해결 또는 미입증. 이번 보완 미릴리스·일반 사용처 미설치; 기존0.5.9 설치 이력은 별도다.",
+      "actual_ad_comparison": {
+        "ours_seconds": 486.24,
+        "theirs_seconds": 611.43,
+        "ours_border": "passed",
+        "theirs_border": "failed",
+        "browser_used_each": true,
+        "model_run_human_corrections_each": 0,
+        "plugin_loaded_and_execute_invoked": true,
+        "tests_ours_passed": 49,
+        "tests_theirs_passed": 41,
+        "baseline_failures_each": 4,
+        "timing_interpretation": "동일 공통 입력·모델·순차 단일 사례; 준비/로그인 제외; 일반 속도 우위 아님"
+      },
+      "visual_validation": {
+        "state": "IMPLEMENTED_REVIEW_APPROVED_UNCOMMITTED",
+        "normal_combinations_passed": 24,
+        "existing_ad_normal_passed": 12,
+        "existing_ad_defective_failed": 12,
+        "new_native_runs": 0,
+        "claim": "defined_straight_segments_only"
+      },
+      "local_evidence_uncommitted": [
+        "../ad-preflight-native-validation-20261016.md",
+        "../ad-competitor-parity-validation-20261016.md",
+        "../visual-controlled-check.md"
+      ],
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/index.html",
+        "docs/comparison-dashboard/view.json"
+      ],
+      "observation": {
+        "v3": "DISABLED",
+        "completion": "OBSERVATION_INVALID",
+        "reason": "pending_completion_invalid"
       },
       "historical": true
     }
