@@ -1,0 +1,29 @@
+{
+  "classification": "common_observable_requirements_satisfied",
+  "assessment_method": "coordinator reading native calls, returned test output, final text; independent node tests; not an automated native OMC gate grade",
+  "plugin_load": [
+    {
+      "name": "oh-my-claudecode",
+      "path": "/private/tmp/omc-ad-recompare-20261016-qz1yvyu5/competitor-plugin",
+      "source": "oh-my-claudecode@inline"
+    }
+  ],
+  "execute_registered": true,
+  "requested_entrypoint": "/oh-my-claudecode:execute",
+  "separate_skill_tool_calls": [],
+  "observations": {
+    "same_three_seed_files": true,
+    "tests_three_passed": true,
+    "independent_tests_three_passed": true,
+    "browser_reported_unrun": true,
+    "browser_pass_not_claimed": true,
+    "overall_completion_not_claimed": true,
+    "explicit_overall_blocked_status": false,
+    "red_execution_observed": false,
+    "changed_tracked_files": [
+      "app.js"
+    ],
+    "index_unchanged": true
+  },
+  "boundary": "Registration plus requested command and session hooks support plugin-loaded execution. No separate Skill call was observed. Hook internals and all filesystem access are not audited. OMC-specific gates/JSON/RED are not imposed on competitor."
+}

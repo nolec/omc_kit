@@ -1,0 +1,13 @@
+{
+  "source_root": "/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-competitor-required-checks-z8n2j9io",
+  "sha256": {
+    "assessment.json": "b72f1e8ccd9e33f1449dc9ab988f65b140877db74aef68f0e6916d0a5cf89b1d",
+    "native-events.jsonl": "61c76a34d62088f8de803672cfa4a29403e0d7d5c120b6f034e4d0084c2691fa",
+    "final.txt": "0749cae78bc2e778454bf3fc47587d000f41bd9ad49a333724059d3803f4563d",
+    "candidate.diff": "3cf5cb91145836629c8ec920a33ffedcac3cbe4bcfc91dabb7e9188705b55bd0",
+    "preregistration.json": "6a448b91eafb24166e67836391679fdeefabc83417747c25872abe515cd489c4",
+    "request.md": "25c52a3478ba3365214f762b09c8252adf4f27a420275d8b808cde5f033dc196",
+    "independent-tests.txt": "0bab71158b2e8e98c25a64d56e7625d2de6103226256961a961c1991bcbbe80d",
+    "execution.json": "139254606af32c02aee4f1ef85e45542bfe844362b2bfd352f3fc80e5f4e9b56"
+  }
+}

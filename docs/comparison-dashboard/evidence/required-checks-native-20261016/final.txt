@@ -1,0 +1,15 @@
+---
+
+구현됨·검증 미완료
+
+**구현 상태:** 반영됨
+- `app.js`: `total` 함수를 `values.reduce((s,v)=>s+v,0)`으로 수정 완료
+- `node --test test_app.js`: 3/3 PASS (empty=0, sum=6, negative=3)
+
+**미충족 검증:**
+- `browser-home`: 이번 실행에 브라우저 도구·세션이 제공되지 않아 실제 브라우저에서 index.html의 합계6 표시를 확인하지 못함
+
+**다음 행동:** 브라우저 도구·세션이 제공되는 환경에서 index.html을 열어 합계6 표시를 직접 확인해야 합니다.
+
+<!-- OMC_OUTPUT: {"schema_version": "omc-output/v1", "stage": "task", "outcome": "blocked", "risk": "medium", "next_skill": null, "user_selection_needed": true, "reason_code": "verification_incomplete"} -->
+VERDICT: BLOCK

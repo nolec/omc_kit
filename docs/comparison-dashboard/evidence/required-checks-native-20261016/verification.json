@@ -1,0 +1,22 @@
+{
+  "session_id": "20261016T112453-5804cb9e",
+  "basis_sha256": "b0d791da0e9d06df0b010aa9ef5817f369a60e8636044236ebb2751a4064728a",
+  "implementation": {
+    "status": "applied",
+    "evidence": "app.js: total 함수를 values.reduce((s,v)=>s+v,0)으로 수정, git staged 확인"
+  },
+  "checks": {
+    "tests": {
+      "status": "passed",
+      "evidence": "node --test test_app.js: 3/3 PASS (empty=0, sum=6, negative=3)",
+      "definition_sha256": "237371c9b2bb10ba983fa7c2ce4580488f05db7b3241b6b6a3a97182d506bed2",
+      "code_snapshot_sha256": "34f09bd41c96457bbfb68bca428ed77d57f410c13f0a504b6553266c3ef8ed4a"
+    },
+    "browser-home": {
+      "status": "unrun",
+      "evidence": "이번 실행에 브라우저 도구/세션이 제공되지 않아 실제 브라우저 렌더 확인 불가",
+      "definition_sha256": "d483e20fd23c2aa50564df2a18dd2ccf3ef9327f0fb471cf206e44e6fa6a1ffb",
+      "code_snapshot_sha256": "34f09bd41c96457bbfb68bca428ed77d57f410c13f0a504b6553266c3ef8ed4a"
+    }
+  }
+}

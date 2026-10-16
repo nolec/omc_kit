@@ -1,0 +1,9 @@
+{
+  "status": "BLOCKED_ENVIRONMENT",
+  "reason": "aws_session_expired",
+  "provider_response_observed": false,
+  "task_outcome": "NOT_RUN",
+  "new_product_failure": false,
+  "authentication_probe": "AWS CLI reports session expired; reauthenticate using aws login",
+  "terminated_model_processes": 1
+}

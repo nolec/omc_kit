@@ -1,0 +1,18 @@
+{
+  "root": "/private/tmp/omc-claude-checks-auth-ready-vm18nlcp",
+  "work": "/private/tmp/omc-claude-checks-auth-ready-vm18nlcp/work",
+  "session_id": "20261016T112453-5804cb9e",
+  "kit_commit": "9e0982fb0401640bbdcc2c8724473b010efd792d",
+  "model": "us.anthropic.claude-sonnet-4-6",
+  "effort": "high",
+  "timeout_sec": 600,
+  "expected_outcome": "blocked",
+  "browser_available": false,
+  "required_ids": [
+    "tests",
+    "browser-home"
+  ],
+  "basis_file_sha256": "1bf7f984a5596ce91fac5904ea10476e40f185205b0c4ac87b0cb12102a7a593",
+  "request_sha256": "9324b8080166c14d9b7666f4370cc2b2cf7b7c4cc396bece39e22e033def1b71",
+  "previous_environment_attempt": "/private/tmp/omc-claude-checks-ready-yro6lux0"
+}

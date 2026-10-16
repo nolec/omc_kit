@@ -1,0 +1,18 @@
+{
+  "source_root": "/private/tmp/omc-claude-checks-auth-ready-vm18nlcp",
+  "sha256": {
+    "assessment.json": "aa670b8d9dfa30e3c60582e7b23908dc2f9ffbcd59d67dc50bfb90c66b7954a0",
+    "native-events.jsonl": "1b8f9b4f3a37d62ac4fad667cb0fdc7701b2eebf4df8bb91236ce3307ebfe6f1",
+    "final.txt": "83ec1082f7e67f96f9243504f1a04bb7f0cf6cd7d5d00cab5b811fdf0017d727",
+    "independent-checks.json": "1146055e13a2850e1756a03501924f52478114a04d9e5d577f9c84a61dc02a80",
+    "previous-execution.json": "78cc399e871583344f2ec7bbdbb8b0cbdf48452204bf45842fc2d9444ecd0492",
+    "previous-environment-assessment.json": "0263000933ea4b41fed3acb46bed1ebae0bb004d0d0c0d72941e38d802ebc749",
+    "approved-basis.json": "1bf7f984a5596ce91fac5904ea10476e40f185205b0c4ac87b0cb12102a7a593",
+    "candidate.diff": "3cf5cb91145836629c8ec920a33ffedcac3cbe4bcfc91dabb7e9188705b55bd0",
+    "verification.json": "72bd2469e03ac2f0d4b6eaabf501ae8dc7480ba1b9b116efb6709fb89fb4385a",
+    "preregistration.json": "03033664940c76bc68b108a0cf266a4addf061fb6a4186fdd86cb74a269b0e45",
+    "request.md": "9324b8080166c14d9b7666f4370cc2b2cf7b7c4cc396bece39e22e033def1b71",
+    "independent-tests.txt": "c7401dbf996e6c8d657f8862d06098588455d94d7777cbdf2f0824ea1641cdfb",
+    "execution.json": "d2ac4313e965eb861f3670f241ec2a465b6cfc2dc5ed8048eb735e1b9e772664"
+  }
+}

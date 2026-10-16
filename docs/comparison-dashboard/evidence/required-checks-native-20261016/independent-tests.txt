@@ -1,0 +1,28 @@
+TAP version 13
+# Subtest: empty
+ok 1 - empty
+  ---
+  duration_ms: 0.776792
+  type: 'test'
+  ...
+# Subtest: sum
+ok 2 - sum
+  ---
+  duration_ms: 0.064833
+  type: 'test'
+  ...
+# Subtest: negative
+ok 3 - negative
+  ---
+  duration_ms: 0.0505
+  type: 'test'
+  ...
+1..3
+# tests 3
+# suites 0
+# pass 3
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 187.951083

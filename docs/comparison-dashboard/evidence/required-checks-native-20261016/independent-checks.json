@@ -1,0 +1,8 @@
+{
+  "approved_basis_unchanged": true,
+  "independent_tests_exit": 0,
+  "tracked_changes": [
+    "app.js"
+  ],
+  "boundary": "Collector checks native tool calls and supplied evidence; it does not attest actual browser execution or filesystem containment."
+}

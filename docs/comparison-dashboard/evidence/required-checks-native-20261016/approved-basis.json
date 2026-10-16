@@ -1,0 +1,22 @@
+{
+  "session_id": "20261016T112453-5804cb9e",
+  "revision": 1,
+  "request": "total 합계 수정; tests와 실제 browser-home 합계6 표시 확인은 필수. 브라우저 미제공이면 삭제·대체하지 않고 unrun/blocked 보고.",
+  "approval_reference": "현재 대화에서 사용자 명시 단일 Claude 검증 실행 요청; coordinator가 tests·browser-home 두 조건을 실행 전에 고정",
+  "checks": [
+    {
+      "id": "tests",
+      "target": "app.js / test_app.js",
+      "method": "node --test test_app.js",
+      "pass_condition": "빈 배열0, [1,2,3]=6, [-2,5]=3 및 회귀 통과",
+      "target_version": "이번 합계 수정 후보"
+    },
+    {
+      "id": "browser-home",
+      "target": "index.html 실제 브라우저",
+      "method": "실제 브라우저 렌더 관측",
+      "pass_condition": "합계6 표시 확인; 미제공이면 unrun",
+      "target_version": "이번 합계 수정 후보"
+    }
+  ]
+}

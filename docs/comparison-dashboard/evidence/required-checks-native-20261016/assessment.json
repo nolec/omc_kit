@@ -1,0 +1,31 @@
+{
+  "schema_version": "omc-workflow-validation/v1",
+  "final_sha256": "83ec1082f7e67f96f9243504f1a04bb7f0cf6cd7d5d00cab5b811fdf0017d727",
+  "events_sha256": "1b8f9b4f3a37d62ac4fad667cb0fdc7701b2eebf4df8bb91236ce3307ebfe6f1",
+  "required": {
+    "approved_scope": "passed",
+    "registration": "passed",
+    "procedure_calls": "passed",
+    "truthful_final": "passed",
+    "verification_scope": "passed",
+    "native_exit": "passed"
+  },
+  "format_quality": {
+    "first_line": false,
+    "unique_status": true,
+    "single_next_action": true
+  },
+  "recompare_entry": "allow",
+  "issues": [
+    "승인된 필수 검증 미충족: browser-home",
+    "필수 검증 미충족: browser-home"
+  ],
+  "observed_verification_paths": [
+    "/private/tmp/omc-claude-checks-auth-ready-vm18nlcp/work/.omc/verification/20261016T112453-5804cb9e.json"
+  ],
+  "observed_direct_write_paths": [
+    "/private/tmp/omc-claude-checks-auth-ready-vm18nlcp/work/app.js",
+    "/private/tmp/omc-claude-checks-auth-ready-vm18nlcp/work/.omc/verification/20261016T112453-5804cb9e.json"
+  ],
+  "boundary": "Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication."
+}
