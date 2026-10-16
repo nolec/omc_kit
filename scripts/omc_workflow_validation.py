@@ -14,6 +14,7 @@ import shlex
 from pathlib import Path
 
 from omc_output_contract import OutputContractError, parse_envelope
+from omc_workflow_preflight import assess_scope
 from omc_pipeline_guard import _load_approved_basis, evaluate_task_completion
 
 STATUSES = {
@@ -23,7 +24,8 @@ STATUSES = {
 
 
 def collect(root: Path, events_file: Path, sid: str, verification: Path,
-            expected: str, output: Path) -> dict:
+            expected: str, output: Path, scope_report: Path | None = None,
+            scope_report_sha256: str | None = None) -> dict:
     source = events_file.read_bytes()
     rows = [json.loads(line) for line in source.decode('utf-8').splitlines() if line.strip()]
     for row in rows:
@@ -87,6 +89,7 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
     }
     registered = evaluation['registered']
     calls = {}
+    write_results = {}
     evidence = []
     verification_paths = []
     known_writes = []
@@ -114,6 +117,8 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
                             verification_paths.append('UNPARSEABLE')
             elif block.get('type') == 'tool_result' and block.get('tool_use_id') in calls:
                 call_index, call = calls[block['tool_use_id']]
+                if call.get('name') in {'Write', 'Edit'}:
+                    write_results[block['tool_use_id']] = not block.get('is_error', False)
                 command = call.get('input', {}).get('command', '')
                 text = block.get('content', '')
                 if not isinstance(text, str):
@@ -173,12 +178,36 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
         'verification_scope': path_state,
         'native_exit': 'passed' if finals[0].get('subtype') == 'success' and not finals[0].get('is_error') else 'failed',
     }
+    scope_assessment = None
+    if scope_report is not None or scope_report_sha256 is not None:
+        try:
+            if scope_report is None or not scope_report_sha256:
+                raise ValueError('scope_report_and_digest_required')
+            basis = _load_approved_basis(root, sid)
+            confirmed, unresolved = [], []
+            for call_id, (_, call) in calls.items():
+                if call.get('name') in {'Write', 'Edit'}:
+                    value = call.get('input', {}).get('file_path')
+                    if isinstance(value, str):
+                        if call_id not in write_results:
+                            unresolved.append(str((root / value).resolve()))
+                        elif write_results[call_id]:
+                            confirmed.append(str((root / value).resolve()))
+            scope_assessment = assess_scope(root, scope_report, scope_report_sha256, confirmed,
+                                            {item['id'] for item in basis['checks']}, unresolved)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            scope_assessment = {'status': 'unknown', 'violations': [], 'reason': str(exc)}
+        required['work_scope'] = scope_assessment['status']
+        required['report_format'] = 'passed' if all(format_quality.values()) else 'failed'
+        if scope_assessment['reason']:
+            issues.append(scope_assessment['reason'])
     assessment = {
         'schema_version': 'omc-workflow-validation/v1',
         'final_sha256': hashlib.sha256(final.encode('utf-8')).hexdigest(),
         'events_sha256': hashlib.sha256(source).hexdigest(),
         'required': required, 'format_quality': format_quality,
         'recompare_entry': 'allow' if all(value == 'passed' for value in required.values()) else 'hold',
+        'scope_assessment': scope_assessment,
         'issues': issues, 'observed_verification_paths': observed, 'observed_direct_write_paths': known_writes,
         'boundary': 'Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication.',
     }
@@ -194,10 +223,13 @@ def main() -> int:
     parser.add_argument('--verification-file', type=Path, required=True)
     parser.add_argument('--expected-outcome', choices=['done', 'blocked'], required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
+    parser.add_argument('--scope-report', type=Path)
+    parser.add_argument('--scope-report-sha256')
     args = parser.parse_args()
     try:
         result = collect(args.target.resolve(), args.events_file, args.session_id,
-                         args.verification_file, args.expected_outcome, args.output_dir)
+                         args.verification_file, args.expected_outcome, args.output_dir,
+                         args.scope_report, args.scope_report_sha256)
     except (OSError, ValueError, TypeError) as exc:
         failure = {'schema_version': 'omc-workflow-validation/v1', 'recompare_entry': 'hold', 'error': str(exc)}
         args.output_dir.mkdir(parents=True, exist_ok=True)
