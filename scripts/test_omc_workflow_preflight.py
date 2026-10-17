@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -16,6 +17,24 @@ SCRIPT = Path(__file__).with_name('omc_workflow_preflight.py')
 COLLECTOR = SCRIPT.with_name('omc_workflow_validation.py')
 
 
+def start_bound_server(root, processes, *, directory=None, port=0):
+    if not shutil.which('lsof') or not shutil.which('ps'):
+        pytest.skip('server identity integration requires lsof and ps')
+    code = '''import functools,sys
+from http.server import ThreadingHTTPServer,SimpleHTTPRequestHandler
+handler=functools.partial(SimpleHTTPRequestHandler,directory=sys.argv[1])
+server=ThreadingHTTPServer(('127.0.0.1',int(sys.argv[2])),handler)
+print(server.server_port,flush=True)
+server.serve_forever()
+'''
+    proc = subprocess.Popen([sys.executable, '-u', '-c', code, str(directory or root), str(port)],
+                            cwd=root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    processes.append(proc)
+    actual_port = int(proc.stdout.readline())
+    started = subprocess.check_output(['ps', '-p', str(proc.pid), '-o', 'lstart='], text=True).strip()
+    return f'http://127.0.0.1:{actual_port}', proc, ' '.join(started.split())
+
+
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -25,6 +44,7 @@ def browser_service():
     payload = {'url': 'http://localhost:3023/sixshoptest01', 'images_loaded': 2,
                'auto_transition': True}
     payload_hook = []
+    processes = []
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
@@ -39,10 +59,15 @@ def browser_service():
     server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    yield f'http://127.0.0.1:{server.server_port}/command', payload, payload_hook
+    yield f'http://127.0.0.1:{server.server_port}/command', payload, payload_hook, processes
     server.shutdown()
     server.server_close()
     thread.join()
+    for proc in processes:
+        if proc.poll() is None:
+            proc.terminate()
+        proc.wait(timeout=10)
+        proc.stdout.close()
 
 
 def manifest(root, parent, browser_service, *, checks=None):
@@ -58,14 +83,20 @@ def manifest(root, parent, browser_service, *, checks=None):
     checks = checks or ['tests', 'lint', 'browser-controlled', 'browser-home']
     definitions = parent/'checks.json'
     definitions.write_text(json.dumps([{'id': k} for k in checks]))
+    origin, proc, started = start_bound_server(root, browser_service[3])
+    bundle_path = '/public/inspection/bundle.js'
+    browser_service[1].update(url=origin+'/sixshoptest01', script_urls=[origin+bundle_path])
     value = {'schema_version': 'omc-workflow-preflight/v1',
              'inputs': {'src/input.txt': digest(source), '../checks.json': digest(definitions)},
              'required_checks_file': '../checks.json', 'required_check_ids': checks,
              'ignored_artifacts': [{'path': 'public/inspection/bundle.js',
                                     'source': '.git/info/exclude', 'pattern': '/public/inspection/'}],
              'work_paths': ['src/'],
-             'browser': {'control_url': browser_service[0], 'origin': 'http://localhost:3023',
-                         'home_path': '/sixshoptest01', 'min_images': 2}}
+             'browser': {'control_url': browser_service[0], 'origin': origin,
+                         'home_path': '/sixshoptest01', 'min_images': 2},
+             'server_binding': {'launcher_pid': proc.pid, 'launcher_started_at': started,
+                                'bundles': [{'file': 'public/inspection/bundle.js',
+                                             'url_path': bundle_path, 'sha256': digest(artifact)}]}}
     path = parent/'manifest.json'
     path.write_text(json.dumps(value))
     return path

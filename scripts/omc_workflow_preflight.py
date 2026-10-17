@@ -30,7 +30,7 @@ BROWSER_QUERY = """(async()=>{
   await new Promise(r=>setTimeout(r,800));
  }
  const auto_transition=tracks.some(({ad,track,states})=>ad.isConnected&&ad.contains(track)&&states.size>1&&[...ad.querySelectorAll('img')].filter(loaded).length>=2);
- return {url:location.href,images_loaded:images.filter(loaded).length,auto_transition};
+ return {url:location.href,images_loaded:images.filter(loaded).length,auto_transition,script_urls:[...document.scripts].map(s=>s.src).filter(Boolean)};
 })()"""
 
 
@@ -87,7 +87,7 @@ def baseline(root: Path) -> dict:
     return result
 
 
-def browser_readiness(config: dict) -> dict:
+def validate_browser_config(config: dict) -> None:
     control = urllib.parse.urlparse(config['control_url'])
     origin = urllib.parse.urlparse(config['origin'])
     if (control.scheme != 'http' or control.hostname not in {'localhost', '127.0.0.1'}
@@ -98,6 +98,13 @@ def browser_readiness(config: dict) -> dict:
             or not isinstance(config['home_path'], str) or not config['home_path'].startswith('/')
             or type(config['min_images']) is not int or config['min_images'] < 2):
         raise ValueError('browser_config_invalid')
+    # Force validation of malformed port syntax before any network operation.
+    control.port
+    origin.port
+
+
+def browser_readiness(config: dict) -> dict:
+    validate_browser_config(config)
     request = urllib.request.Request(config['control_url'], data=json.dumps(
         {'op': 'evaluate', 'args': [BROWSER_QUERY]}).encode(), headers={'Content-Type': 'application/json'})
     # Local control endpoints must not redirect to another host.
@@ -111,6 +118,115 @@ def browser_readiness(config: dict) -> dict:
             or value.get('auto_transition') is not True):
         raise ValueError('browser_not_ready')
     return value
+
+
+def identity_command(argv: list[str]) -> str:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, check=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError('server_identity_unavailable') from exc
+
+
+def process_identity(pid: int) -> dict:
+    if type(pid) is not int or pid <= 0:
+        raise ValueError('server_identity_unavailable')
+    fields = identity_command(['ps', '-p', str(pid), '-o', 'pid=,ppid=,lstart=']).split()
+    if len(fields) != 7 or fields[0] != str(pid) or not fields[1].isdigit():
+        raise ValueError('server_identity_unavailable')
+    directories = [line[1:] for line in identity_command(
+        ['lsof', '-a', '-p', str(pid), '-d', 'cwd', '-Fn']).splitlines() if line.startswith('n')]
+    if len(directories) != 1:
+        raise ValueError('server_identity_unavailable')
+    return {'pid': pid, 'ppid': int(fields[1]), 'started_at': ' '.join(fields[2:]),
+            'cwd': str(Path(directories[0]).resolve())}
+
+
+def listener_pid(port: int) -> int:
+    lines = identity_command(['lsof', '-nP', '-iTCP:' + str(port),
+                              '-sTCP:LISTEN', '-Fpcn']).splitlines()
+    pids = {int(line[1:]) for line in lines if line.startswith('p') and line[1:].isdigit()}
+    if len(pids) != 1:
+        raise ValueError('server_listener_ambiguous')
+    return pids.pop()
+
+
+def server_binding(root: Path, config: dict, browser: dict, *, observed: dict | None = None,
+                   previous: dict | None = None, initial: bool = True) -> dict:
+    """Bind the local listener and loaded bundle bytes; not full build provenance."""
+    if not isinstance(config, dict):
+        raise ValueError('server_binding_required')
+    validate_browser_config(browser)
+    launcher = process_identity(config.get('launcher_pid'))
+    if launcher['started_at'] != config.get('launcher_started_at'):
+        raise ValueError('server_launcher_changed')
+    origin = urllib.parse.urlparse(browser['origin'])
+    listener = process_identity(listener_pid(origin.port or 80))
+    if listener['cwd'] != str(root.resolve()):
+        raise ValueError('server_candidate_root_mismatch')
+    cursor, seen = listener, set()
+    while cursor['pid'] != launcher['pid']:
+        if cursor['pid'] in seen or len(seen) >= 64 or cursor['ppid'] <= 1:
+            raise ValueError('server_listener_not_owned')
+        seen.add(cursor['pid'])
+        cursor = process_identity(cursor['ppid'])
+    if cursor != launcher:
+        raise ValueError('server_launcher_changed')
+    identity = {'launcher': launcher, 'listener_pid': listener['pid'],
+                'started_at': listener['started_at'], 'cwd': listener['cwd']}
+    if previous and any(previous.get(k) != v for k, v in identity.items()):
+        raise ValueError('server_listener_changed')
+    bundles = config.get('bundles')
+    if not isinstance(bundles, list) or not bundles:
+        raise ValueError('server_bundle_required')
+    evidence = []
+    for bundle in bundles:
+        try:
+            name = relative_path(bundle['file'])
+            path = root / name
+            path.resolve().relative_to(root.resolve())
+            url_path = bundle['url_path']
+            parsed = urllib.parse.urlparse(url_path)
+            if (not url_path.startswith('/') or url_path.startswith('//') or parsed.netloc
+                    or parsed.scheme or parsed.query or parsed.fragment or '\\' in url_path
+                    or '..' in PurePosixPath(urllib.parse.unquote(parsed.path)).parts
+                    or path.is_symlink() or not path.is_file()):
+                raise ValueError('invalid bundle')
+        except (KeyError, TypeError, AttributeError, ValueError, OSError) as exc:
+            raise ValueError('server_bundle_path_invalid') from exc
+        url = browser['origin'] + url_path
+        served_urls = [url]
+        if observed is not None:
+            scripts = observed.get('script_urls')
+            if not isinstance(scripts, list):
+                raise ValueError('server_bundle_not_loaded')
+            # Match the configured origin/path, but fetch every observed revision.
+            # Query strings can select different bytes; fragments are not sent over HTTP.
+            served_urls = sorted({urllib.parse.urlparse(s)._replace(fragment='').geturl()
+                for s in scripts if isinstance(s, str)
+                and urllib.parse.urlparse(s)._replace(query='', fragment='').geturl() == url})
+            if not served_urls:
+                raise ValueError('server_bundle_not_loaded')
+        local_sha = sha(path.read_bytes())
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *_args, **_kwargs):
+                return None
+        for served_url in served_urls:
+            try:
+                with urllib.request.build_opener(NoRedirect).open(served_url, timeout=15) as response:
+                    served_sha = sha(response.read())
+            except OSError as exc:
+                raise ValueError('server_bundle_unavailable') from exc
+            if local_sha != served_sha:
+                raise ValueError('server_bundle_mismatch')
+        if (sha(path.read_bytes()) != local_sha or (initial and local_sha != bundle.get('sha256'))):
+            raise ValueError('server_bundle_mismatch')
+        evidence.append({'file': name, 'url_path': url_path, 'sha256': local_sha,
+                         'script_urls': served_urls})
+    # Reject listener replacement while reading its responses.
+    if (listener_pid(origin.port or 80) != listener['pid']
+            or process_identity(listener['pid']) != listener or process_identity(launcher['pid']) != launcher):
+        raise ValueError('server_listener_changed')
+    return {**identity, 'bundles': evidence}
 
 
 def prepare(root: Path, manifest: Path, manifest_sha256: str) -> dict:
@@ -161,14 +277,18 @@ def prepare(root: Path, manifest: Path, manifest_sha256: str) -> dict:
                 if source != item['source'] or pattern != item['pattern'] or matched != name:
                     raise ValueError('ignore_rule_mismatch:' + name)
         check_artifacts()
+        binding = doc.get('server_binding')
+        identity = server_binding(root, binding, doc['browser'])
         browser = browser_readiness(doc['browser'])
         scope_baseline = baseline(root)
         check_artifacts()  # Browser observation must not hide preparation drift.
         check_inputs()  # Reject input changes during browser observation.
         if sha(manifest.read_bytes()) != manifest_sha256:
             raise ValueError('manifest_digest_mismatch')
+        identity = server_binding(root, binding, doc['browser'], observed=browser, previous=identity)
         report.update(status='ready', work_paths=paths, required_check_ids=ids,
-                      browser=browser, baseline=scope_baseline)
+                      browser=browser, baseline=scope_baseline,
+                      server_binding={'config': binding, 'browser': doc['browser'], 'evidence': identity})
     except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError) as exc:
         report['reason_codes'].append(str(exc))
     return report
@@ -192,6 +312,18 @@ def assess_scope(root: Path, report_file: Path, report_sha256: str, writes: list
         before = report['baseline']
         if not isinstance(before, dict):
             raise ValueError('scope_baseline_invalid')
+        binding_result = None
+        if 'server_binding' in report:
+            try:
+                binding = report['server_binding']
+                server_binding(root, binding['config'], binding['browser'],
+                               observed=browser_readiness(binding['browser']),
+                               previous=binding['evidence'], initial=False)
+                binding_result = {'status': 'passed', 'reason': None}
+            except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError) as exc:
+                binding_result = {'status': 'unknown', 'reason': str(exc)}
+        # Even a failed server observation must not skip scope checks. Read the
+        # working state afterwards so changes made during observation are included.
         after = baseline(root)
         changed = {name for name in before.keys() | after.keys() if before.get(name) != after.get(name)}
         for name in writes:
@@ -208,9 +340,13 @@ def assess_scope(root: Path, report_file: Path, report_sha256: str, writes: list
                 relative = name
             if not allowed(relative, paths):
                 unresolved.append(relative)
-        return {'status': 'failed' if violations else 'unknown' if unresolved else 'passed',
+        binding_reason = binding_result['reason'] if binding_result else None
+        result = {'status': 'failed' if violations else 'unknown' if unresolved or binding_reason else 'passed',
                 'violations': violations, 'unresolved_writes': unresolved,
-                'reason': 'out_of_scope_change' if violations else 'unconfirmed_out_of_scope_write' if unresolved else None}
+                'reason': 'out_of_scope_change' if violations else 'unconfirmed_out_of_scope_write' if unresolved else binding_reason}
+        if binding_result is not None:
+            result['server_binding'] = binding_result
+        return result
     except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError) as exc:
         return {'status': 'unknown', 'violations': [], 'reason': str(exc)}
 
