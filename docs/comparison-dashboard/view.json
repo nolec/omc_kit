@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "통제 화면 자동 판정 V0 · 0.6.0 로컬 릴리스·정상11개 재설치 완료",
+    "decision": "서버·후보 결속 보완 커밋·리뷰 승인 · 보완 후 실제 재실행 전",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2046,9 +2046,9 @@
         "historical": true
       }
     ],
-    "next": "0.6.0 릴리스2f0f521을 기준으로 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 같은 자동 판정을 적용한 양쪽 새 비교는 후속으로 남긴다.",
+    "next": "91c8d4e 후보와 새 manifest를 고정하고, 가용 포트·실제 수신 프로세스·작업 폴더·홈 번들 일치를 확인한 뒤 실제 Claude 광고 사례 1회를 재검증한다. 통과 후 동일 조건의 oh-my-claudecode 비교를 별도로 진행한다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "자동 화면 판정을 포함한 실제 Claude 광고 사례1회 재검증"
+    "current_priority": "올바른 후보 서버에서 보완 후 실제 Claude 광고 사례1회 재검증"
   },
   "decision": {
     "candidate": "통제 화면의 실제 표시 자동 판정",
@@ -2093,117 +2093,179 @@
         "historical": true
       }
     ],
-    "completion": "0.6.0 전체 품질4474개 통과·28개 생략·12개 제외(595.24초). 별도 실제 Chromium 화면·준비 검사49개 통과(61.95초), 버전32개 통과. main 후보352파일 리뷰249개 통과·APPROVE 후 릴리스 메타데이터3파일 검토·355파일 승인 결속READY. 설치11개 엄격 감사·0.6.0·clean·source unchanged; 설치 직전 업무 파일34224개·관찰 기록114개 변경0.",
+    "completion": "서버 결속 관련 회귀117개 통과(103.12초), 독립 리뷰 재검증28개 통과(23.12초), TDD·문법 검사 통과·격리4개 파일 APPROVE. 승인본과 원본의 바이트 일치 확인 후91c8d4e로 로컬 커밋했다.",
     "deliverables": [
       "실제 캡처의 정의 구간·이미지 표식 자동 판정",
       "증거·후보 결속 및 필수 결과 누락 차단",
       "독립6파일 후보 커밋9160448·전체 품질4497개 통과"
     ],
-    "limit": "자동 판정은 정의한 직선 구간과 이미지 표식에 한정된다. 자동 판정을 적용한 실제 Claude 광고 재실행·새 양쪽 비교는 미실행이며, 기존 광고 추적4실패·클릭/숨김 외부 전송·C3 사용자 이해·일반 생산성 및 경쟁 우위는 미해결 또는 미입증이다. 0.6.0 로컬 릴리스·정상11개 설치는 완료했으며 원격 push·태그·GitHub release는 하지 않았다.",
-    "not_done": "자동 판정 적용 실제Claude 재실행·새 양쪽 비교·릴리스·사용처 설치·일반 효과 미확인",
+    "limit": "보완 후 실제 Claude 재실행·최신 양쪽 비교·일반 생산성 및 경쟁 우위는 미입증. C1 사용자 효과·C2 유지보수 이점·C3 사용자 이해·광고 추적 기존4실패와 클릭/숨김 외부 전송은 미검증 또는 미해결이다. 이번 보완은 미릴리스·사용처 미설치이며, 기존0.6.0 정상11개 설치 이력과 구분한다.",
+    "not_done": [
+      "보완 후 실제 Claude 광고 재실행",
+      "최신 양쪽 비교",
+      "사용자 이해·일반 생산성 효과",
+      "이번 보완 릴리스·재설치"
+    ],
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
     "reason": "실제 화면을 확인하고도 가려진 선을 성공으로 판단한 문제를 줄이기 위해 픽셀 판정과 누락 차단을 구현·검증하고6파일로 커밋했다.",
-    "state": "통제 화면 자동 판정 V0 · 0.6.0 로컬 릴리스·정상11개 재설치 완료",
-    "next": "0.6.0 릴리스2f0f521을 기준으로 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 같은 자동 판정을 적용한 양쪽 새 비교는 후속으로 남긴다."
+    "state": "서버·후보 결속 보완 커밋·리뷰 승인 · 보완 후 실제 재실행 전",
+    "next": "91c8d4e 후보와 새 manifest를 고정하고, 가용 포트·실제 수신 프로세스·작업 폴더·홈 번들 일치를 확인한 뒤 실제 Claude 광고 사례 1회를 재검증한다. 통과 후 동일 조건의 oh-my-claudecode 비교를 별도로 진행한다."
   },
   "current_update": {
-    "date": "2026-10-16",
-    "status": "통제 화면 자동 판정 V0 · 0.6.0 로컬 릴리스·정상11개 재설치 완료",
-    "commit": "9160448",
-    "commit_scope": "자동 판정4파일+기존 테스트자료2파일 총6개;9160448 커밋을main에fast-forward반영",
-    "verification": "0.6.0 전체 품질4474개 통과·28개 생략·12개 제외(595.24초). 별도 실제 Chromium 화면·준비 검사49개 통과(61.95초), 버전32개 통과. main 후보352파일 리뷰249개 통과·APPROVE 후 릴리스 메타데이터3파일 검토·355파일 승인 결속READY. 설치11개 엄격 감사·0.6.0·clean·source unchanged; 설치 직전 업무 파일34224개·관찰 기록114개 변경0.",
-    "tests_passed": 4474,
-    "implementation_tests_passed": 299,
+    "date": "2026-10-18",
+    "status": "서버·후보 결속 보완 커밋·리뷰 승인 · 보완 후 실제 재실행 전",
+    "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+    "goal_progress": "기반 구현 진전 · 실제 업무 효과 입증 미완료",
+    "commit": "91c8d4e",
+    "commit_scope": "서버 결속 코드·회귀·사용법4파일; 기존 실행 자료 보존",
+    "verification": "서버 결속 관련 회귀117개 통과(103.12초), 독립 리뷰 재검증28개 통과(23.12초), TDD·문법 검사 통과·격리4개 파일 APPROVE. 승인본과 원본의 바이트 일치 확인 후91c8d4e로 로컬 커밋했다.",
+    "tests_passed": 117,
+    "review_tests_passed": 28,
     "review_verdict": "APPROVE",
-    "review_scope_files": 6,
-    "installation": "0.6.0 로컬 릴리스2f0f521·정상11개 사용처 재설치·엄격 감사 완료; marketing-project 제외 유지; 원격 push·태그·GitHub release 없음",
-    "next": "0.6.0 릴리스2f0f521을 기준으로 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 같은 자동 판정을 적용한 양쪽 새 비교는 후속으로 남긴다.",
-    "display_next": "자동 화면 판정을 포함한 실제 Claude 광고 사례1회 재검증",
-    "limitations": "자동 판정은 정의한 직선 구간과 이미지 표식에 한정된다. 자동 판정을 적용한 실제 Claude 광고 재실행·새 양쪽 비교는 미실행이며, 기존 광고 추적4실패·클릭/숨김 외부 전송·C3 사용자 이해·일반 생산성 및 경쟁 우위는 미해결 또는 미입증이다. 0.6.0 로컬 릴리스·정상11개 설치는 완료했으며 원격 push·태그·GitHub release는 하지 않았다.",
-    "actual_ad_comparison": {
-      "ours_seconds": 486.24,
-      "theirs_seconds": 611.43,
-      "ours_border": "passed",
-      "theirs_border": "failed",
-      "browser_used_each": true,
-      "model_run_human_corrections_each": 0,
-      "plugin_loaded_and_execute_invoked": true,
-      "tests_ours_passed": 49,
-      "tests_theirs_passed": 41,
-      "baseline_failures_each": 4,
-      "timing_interpretation": "동일 공통 입력·모델·순차 단일 사례; 준비/로그인 제외; 일반 속도 우위 아님"
+    "review_scope_files": 4,
+    "next": "91c8d4e 후보와 새 manifest를 고정하고, 가용 포트·실제 수신 프로세스·작업 폴더·홈 번들 일치를 확인한 뒤 실제 Claude 광고 사례 1회를 재검증한다. 통과 후 동일 조건의 oh-my-claudecode 비교를 별도로 진행한다.",
+    "display_next": "올바른 후보 서버에서 보완 후 실제 Claude 광고 사례1회 재검증",
+    "limitations": "보완 후 실제 Claude 재실행·최신 양쪽 비교·일반 생산성 및 경쟁 우위는 미입증. C1 사용자 효과·C2 유지보수 이점·C3 사용자 이해·광고 추적 기존4실패와 클릭/숨김 외부 전송은 미검증 또는 미해결이다. 이번 보완은 미릴리스·사용처 미설치이며, 기존0.6.0 정상11개 설치 이력과 구분한다.",
+    "native_validation": {
+      "executed": true,
+      "elapsed_seconds": 968.44,
+      "overall": "blocked",
+      "home_validation": "invalid_environment_binding",
+      "report_format": "failed",
+      "reason": "occupied port3025 served previous competitor candidate",
+      "post_binding_fix_runs": 0
     },
-    "visual_validation": {
-      "state": "COMMITTED_LOCAL_BRANCH_FULL_QUALITY_PASSED",
-      "normal_combinations_passed": 24,
-      "existing_ad_normal_passed": 12,
-      "existing_ad_defective_failed": 12,
-      "new_native_runs": 0,
-      "claim": "defined_straight_segments_only"
+    "server_binding": {
+      "state": "COMMITTED_REVIEW_APPROVED",
+      "commit": "91c8d4e",
+      "release_installed": false,
+      "query_responses_verified": true,
+      "independent_scope_outcomes": true
     },
-    "local_evidence_uncommitted": [],
+    "installation": "이번 보완 미릴리스·사용처 미설치. 기존0.6.0 정상11개 설치 이력은 유지하며 재감사하지 않았다.",
+    "release_state": {
+      "release_version": "0.6.0",
+      "release_commit": "2f0f521",
+      "consumer_count": 11,
+      "binding_fix_released": false,
+      "binding_fix_reinstalled": false,
+      "pushed": false
+    },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
       "docs/comparison-dashboard/README.md",
       "docs/comparison-dashboard/index.html",
       "docs/comparison-dashboard/view.json"
     ],
+    "local_runtime_evidence": [
+      ".omc/release-060/native-validation-summary.json",
+      ".omc/release-060/home-mismatch-investigation.md",
+      ".omc/server-binding-fixes/regression.txt",
+      ".omc/server-binding-fixes/approval-record.txt"
+    ],
     "observation": {
       "v3": "DISABLED",
-      "completion": "OBSERVATION_INVALID",
-      "reason": "pending_completion_invalid"
-    },
-    "branch": "codex/visual-release-candidate",
-    "tests_skipped": 28,
-    "tests_deselected": 12,
-    "quality_elapsed_sec": 595.24,
-    "preparation_recovery": "초기 전체 검사의3건은 Git에서 제외된 Claude 명령·스킬 설치 파일 부재로 실행 불가였다. 변경 전 기준본에서도 재현했고, 후보 자체 templates에서 기존 설치기를 비강제로 실행한 뒤 전체 검사를 통과했다. 제품6파일·승인·품질 설정은 바뀌지 않았으며 이전 실패 기록은 보존했다.",
-    "preservation": "OMC 설치본·receipt를 백업하고 충돌 없는 auto-update만 적용했다. 설치 직전 대비 업무 파일34224개·관찰 기록114개 변경0. 기존 사용자 중단·관찰 정책·별도 교훈·설정 보존.",
-    "commit_full": "9160448f07f09c0904a566828aa0d4f9985cb4c2",
-    "earlier_four_file_review_tests_passed": 297,
-    "six_file_review_tests_passed": 295,
-    "release_state": {
-      "main_included": true,
-      "pushed": false,
-      "version_bumped": true,
-      "released": true,
-      "consumer_reinstalled": true,
-      "candidate_review_binding": "READY",
-      "main_implementation_commit": "9160448",
-      "release_version": "0.6.0",
-      "release_commit": "2f0f521",
-      "consumer_count": 11
-    },
-    "committed_branch_document": "docs/visual-controlled-check.md @9160448",
-    "local_runtime_evidence": [
-      ".omc/release-candidate-six/commit-result.json",
-      ".omc/release-candidate-six/environment-task/environment-full-quality.txt",
-      ".omc/release-candidate-six/environment-task/review-result.json"
-    ],
-    "main_integration": {
-      "method": "fast-forward",
-      "worktree_files_preserved": true,
-      "remaining_staged_files": 0,
-      "incorporated_staged_fixture_files": 2,
-      "documentation_changes_uncommitted": true,
-      "remaining_staged_committed_as": "f2cc2ef"
-    },
-    "archived_evidence_commit": "3d96423",
-    "reporting_regression_commit": "f2cc2ef",
-    "archive_boundary": "과거 provenance의 로컬 보관 파일265개 해시 일치. ad-paired-recompare-20261015의14개 원문은 임시 경로 참조이며 이 저장소에 복사되지 않았다. 전체 실행 원문 보관을 뜻하지 않는다.",
-    "cleanup_verification": "문서·보고 계약 회귀80개 및 보관된 합성 Node 테스트9개 통과. 과거 app.js3개만 사용자 승인 파일명 인식 예외.",
-    "release_version": "0.6.0",
-    "release_commit": "2f0f521",
-    "browser_regression_passed": 49,
-    "rollout": {
-      "backups": "/private/tmp/omc-060-install-backups-v2/manifest.json",
-      "results": "/private/tmp/omc-060-install-results/verified.json",
-      "source_sha256": "81d8b307c9120717a2bb00a6d7abb397fa67aeb2626e212c360bd0713db61d7e",
-      "business_changed": 0,
-      "observations_changed": 0
+      "completion": "not_registered"
     }
   },
   "current_update_history": [
+    {
+      "date": "2026-10-16",
+      "status": "통제 화면 자동 판정 V0 · 0.6.0 로컬 릴리스·정상11개 재설치 완료",
+      "commit": "9160448",
+      "commit_scope": "자동 판정4파일+기존 테스트자료2파일 총6개;9160448 커밋을main에fast-forward반영",
+      "verification": "0.6.0 전체 품질4474개 통과·28개 생략·12개 제외(595.24초). 별도 실제 Chromium 화면·준비 검사49개 통과(61.95초), 버전32개 통과. main 후보352파일 리뷰249개 통과·APPROVE 후 릴리스 메타데이터3파일 검토·355파일 승인 결속READY. 설치11개 엄격 감사·0.6.0·clean·source unchanged; 설치 직전 업무 파일34224개·관찰 기록114개 변경0.",
+      "tests_passed": 4474,
+      "implementation_tests_passed": 299,
+      "review_verdict": "APPROVE",
+      "review_scope_files": 6,
+      "installation": "0.6.0 로컬 릴리스2f0f521·정상11개 사용처 재설치·엄격 감사 완료; marketing-project 제외 유지; 원격 push·태그·GitHub release 없음",
+      "next": "0.6.0 릴리스2f0f521을 기준으로 고정 manifest·후보·화면 검사 기준을 승인 조건에 포함해 실제 Claude 광고 사례 1회를 재검증한다. 같은 자동 판정을 적용한 양쪽 새 비교는 후속으로 남긴다.",
+      "display_next": "자동 화면 판정을 포함한 실제 Claude 광고 사례1회 재검증",
+      "limitations": "자동 판정은 정의한 직선 구간과 이미지 표식에 한정된다. 자동 판정을 적용한 실제 Claude 광고 재실행·새 양쪽 비교는 미실행이며, 기존 광고 추적4실패·클릭/숨김 외부 전송·C3 사용자 이해·일반 생산성 및 경쟁 우위는 미해결 또는 미입증이다. 0.6.0 로컬 릴리스·정상11개 설치는 완료했으며 원격 push·태그·GitHub release는 하지 않았다.",
+      "actual_ad_comparison": {
+        "ours_seconds": 486.24,
+        "theirs_seconds": 611.43,
+        "ours_border": "passed",
+        "theirs_border": "failed",
+        "browser_used_each": true,
+        "model_run_human_corrections_each": 0,
+        "plugin_loaded_and_execute_invoked": true,
+        "tests_ours_passed": 49,
+        "tests_theirs_passed": 41,
+        "baseline_failures_each": 4,
+        "timing_interpretation": "동일 공통 입력·모델·순차 단일 사례; 준비/로그인 제외; 일반 속도 우위 아님"
+      },
+      "visual_validation": {
+        "state": "COMMITTED_LOCAL_BRANCH_FULL_QUALITY_PASSED",
+        "normal_combinations_passed": 24,
+        "existing_ad_normal_passed": 12,
+        "existing_ad_defective_failed": 12,
+        "new_native_runs": 0,
+        "claim": "defined_straight_segments_only"
+      },
+      "local_evidence_uncommitted": [],
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/index.html",
+        "docs/comparison-dashboard/view.json"
+      ],
+      "observation": {
+        "v3": "DISABLED",
+        "completion": "OBSERVATION_INVALID",
+        "reason": "pending_completion_invalid"
+      },
+      "branch": "codex/visual-release-candidate",
+      "tests_skipped": 28,
+      "tests_deselected": 12,
+      "quality_elapsed_sec": 595.24,
+      "preparation_recovery": "초기 전체 검사의3건은 Git에서 제외된 Claude 명령·스킬 설치 파일 부재로 실행 불가였다. 변경 전 기준본에서도 재현했고, 후보 자체 templates에서 기존 설치기를 비강제로 실행한 뒤 전체 검사를 통과했다. 제품6파일·승인·품질 설정은 바뀌지 않았으며 이전 실패 기록은 보존했다.",
+      "preservation": "OMC 설치본·receipt를 백업하고 충돌 없는 auto-update만 적용했다. 설치 직전 대비 업무 파일34224개·관찰 기록114개 변경0. 기존 사용자 중단·관찰 정책·별도 교훈·설정 보존.",
+      "commit_full": "9160448f07f09c0904a566828aa0d4f9985cb4c2",
+      "earlier_four_file_review_tests_passed": 297,
+      "six_file_review_tests_passed": 295,
+      "release_state": {
+        "main_included": true,
+        "pushed": false,
+        "version_bumped": true,
+        "released": true,
+        "consumer_reinstalled": true,
+        "candidate_review_binding": "READY",
+        "main_implementation_commit": "9160448",
+        "release_version": "0.6.0",
+        "release_commit": "2f0f521",
+        "consumer_count": 11
+      },
+      "committed_branch_document": "docs/visual-controlled-check.md @9160448",
+      "local_runtime_evidence": [
+        ".omc/release-candidate-six/commit-result.json",
+        ".omc/release-candidate-six/environment-task/environment-full-quality.txt",
+        ".omc/release-candidate-six/environment-task/review-result.json"
+      ],
+      "main_integration": {
+        "method": "fast-forward",
+        "worktree_files_preserved": true,
+        "remaining_staged_files": 0,
+        "incorporated_staged_fixture_files": 2,
+        "documentation_changes_uncommitted": true,
+        "remaining_staged_committed_as": "f2cc2ef"
+      },
+      "archived_evidence_commit": "3d96423",
+      "reporting_regression_commit": "f2cc2ef",
+      "archive_boundary": "과거 provenance의 로컬 보관 파일265개 해시 일치. ad-paired-recompare-20261015의14개 원문은 임시 경로 참조이며 이 저장소에 복사되지 않았다. 전체 실행 원문 보관을 뜻하지 않는다.",
+      "cleanup_verification": "문서·보고 계약 회귀80개 및 보관된 합성 Node 테스트9개 통과. 과거 app.js3개만 사용자 승인 파일명 인식 예외.",
+      "release_version": "0.6.0",
+      "release_commit": "2f0f521",
+      "browser_regression_passed": 49,
+      "rollout": {
+        "backups": "/private/tmp/omc-060-install-backups-v2/manifest.json",
+        "results": "/private/tmp/omc-060-install-results/verified.json",
+        "source_sha256": "81d8b307c9120717a2bb00a6d7abb397fa67aeb2626e212c360bd0713db61d7e",
+        "business_changed": 0,
+        "observations_changed": 0
+      }
+    },
     {
       "date": "2026-10-16",
       "status": "통제 화면 자동 판정 V0 · 6개 파일 커밋·전체 품질 통과 · main 반영 완료",
