@@ -203,11 +203,16 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
         required['report_format'] = 'passed' if all(format_quality.values()) else 'failed'
         if scope_assessment['reason']:
             issues.append(scope_assessment['reason'])
-    visual_assessment = None
+    visual_assessment = evaluation.get('visual_assessment')
     try:
         basis = _load_approved_basis(root, sid)
         visual_check = next((c for c in basis['checks'] if c['id'] == VISUAL_ID), None)
-        if visual_check is not None or visual_report is not None or visual_report_sha256 is not None:
+        if basis.get('task_profile') == 'advertising-visual/v1' or (root/'.omc/visual-requirement.json').exists():
+            visual_assessment = visual_assessment or {'status': 'unknown', 'reason': 'required_visual_result_missing'}
+            required['visual_controlled'] = visual_assessment['status']
+            if visual_assessment['reason']:
+                issues.append(visual_assessment['reason'])
+        elif visual_check is not None or visual_report is not None or visual_report_sha256 is not None:
             visual_assessment = assess_visual(root, visual_report, visual_report_sha256,
                 visual_check.get('visual_manifest_sha256', '') if visual_check else '')
             required['visual_controlled'] = visual_assessment['status']

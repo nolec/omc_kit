@@ -606,8 +606,20 @@ def cmd_approve_checks(root: Path, proposal: Path) -> int:
         if latest.get("latest_session_id") != sid:
             raise ValueError("현재 작업 승인을 먼저 확인하세요")
         value = _validate_basis(json.loads(proposal.read_text(encoding="utf-8")), sid)
+        from omc_visual_check import enforce_requirement, AD_PROFILE
+        enforce_requirement(root, value)
         directory = _basis_path(root, sid)
         revisions = [int(p.stem) for p in directory.glob("*.json") if p.stem.isdigit()]
+        if revisions:
+            previous = _load_approved_basis(root, sid)
+            if previous.get('task_profile') == AD_PROFILE:
+                for key in ('task_profile', 'run_id'):
+                    if value.get(key) != previous.get(key):
+                        raise ValueError('visual_requirement_downgrade_or_policy_mismatch')
+                old = next(c for c in previous['checks'] if c['id'] == 'browser-visual-controlled')
+                new = next((c for c in value['checks'] if c['id'] == old['id']), {})
+                if new != old:
+                    raise ValueError('visual_approved_definition_immutable')
         if value["revision"] != max(revisions, default=0) + 1:
             raise ValueError("승인된 새 개정만 추가할 수 있습니다. 기존 기록은 보존합니다")
         directory.mkdir(parents=True, exist_ok=True)
@@ -821,6 +833,16 @@ def evaluate_task_completion(root: Path, verification_file: Path, expected_sessi
     basis_problems = approved_verification_problems(root, sid, state, record, verification_file)
     problems.extend(basis_problems)
     mismatch = mismatch or any("불일치" in problem for problem in basis_problems)
+    visual_assessment = None
+    try:
+        from omc_visual_check import assess_completion_visual
+        visual_assessment = assess_completion_visual(root, _load_approved_basis(root, sid), record)
+        if visual_assessment and visual_assessment['status'] != 'passed':
+            problems.append('visual: ' + str(visual_assessment['reason']))
+            failed = failed or visual_assessment['status'] == 'failed'
+            mismatch = mismatch or visual_assessment['status'] == 'mismatch'
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        problems.append('visual: ' + str(exc))
     if not required:
         problems.append("CONTRACT에 필수 검증 목록이 없습니다")
     checks = record.get("checks", {})
@@ -862,7 +884,7 @@ def evaluate_task_completion(root: Path, verification_file: Path, expected_sessi
     registered = (bool(sid) and state.get("contract_confirmed") is True and state.get("session_id") == sid
                   and state.get("red_session_id") == sid and bool(state.get("red_done_tests")) and not red_problems)
     return {"outcome": "blocked" if blocked else "done", "first": first,
-            "problems": problems, "registered": registered}
+            "problems": problems, "registered": registered, "visual_assessment": visual_assessment}
 
 
 def cmd_complete_task(root: Path, verification_file: Path) -> int:

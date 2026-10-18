@@ -229,7 +229,7 @@ def server_binding(root: Path, config: dict, browser: dict, *, observed: dict | 
     return {**identity, 'bundles': evidence}
 
 
-def prepare(root: Path, manifest: Path, manifest_sha256: str) -> dict:
+def prepare(root: Path, manifest: Path, manifest_sha256: str, task_profile: str | None = None) -> dict:
     report = {'schema_version': SCHEMA, 'target': str(root), 'status': 'blocked',
               'provider_call_count': 0, 'reason_codes': [], 'manifest_sha256': manifest_sha256}
     try:
@@ -260,6 +260,24 @@ def prepare(root: Path, manifest: Path, manifest_sha256: str) -> dict:
                 or len(set(ids)) != len(ids) or not isinstance(checks, list)
                 or [c['id'] for c in checks] != ids):
             raise ValueError('required_checks_mismatch')
+        from omc_visual_check import AD_PROFILE, CHECK_ID, validate_requirement, requirement_path
+        visual_requirement = None
+        if ((task_profile is not None and task_profile != AD_PROFILE)
+                or (doc.get('task_profile') is not None and doc['task_profile'] != AD_PROFILE)):
+            raise ValueError('unsupported_task_profile')
+        if (task_profile == AD_PROFILE or doc.get('task_profile') == AD_PROFILE
+                or 'visual_requirement' in doc or requirement_path(root).exists()
+                or any('visual_policy' in c for c in checks)):
+            visual_requirement = doc.get('visual_requirement')
+            validate_requirement(root, visual_requirement)
+            definition = next((c for c in checks if c['id'] == CHECK_ID), {})
+            if doc.get('task_profile') != AD_PROFILE or definition.get('visual_policy') != visual_requirement['policy']:
+                raise ValueError('visual_required_check_missing_or_policy_mismatch')
+            if any(inputs.get(n) != p for n, p in visual_requirement['policy']['builder_inputs'].items()):
+                raise ValueError('visual_builder_not_frozen')
+            seal = requirement_path(root)
+            if seal.exists() and (seal.is_symlink() or json.loads(seal.read_text()) != visual_requirement):
+                raise ValueError('visual_requirement_downgrade_or_policy_mismatch')
         artifacts = doc['ignored_artifacts']
         if not isinstance(artifacts, list) or not artifacts:
             raise ValueError('ignored_artifacts_required')
@@ -286,6 +304,15 @@ def prepare(root: Path, manifest: Path, manifest_sha256: str) -> dict:
         if sha(manifest.read_bytes()) != manifest_sha256:
             raise ValueError('manifest_digest_mismatch')
         identity = server_binding(root, binding, doc['browser'], observed=browser, previous=identity)
+        if visual_requirement is not None:
+            validate_requirement(root, visual_requirement)
+            # Write once before any executor can run; repeated preparation must agree.
+            seal = requirement_path(root)
+            seal.parent.mkdir(parents=True, exist_ok=True)
+            if not seal.exists():
+                with seal.open('x') as stream:
+                    json.dump(visual_requirement, stream, sort_keys=True)
+            report['visual_requirement'] = visual_requirement
         report.update(status='ready', work_paths=paths, required_check_ids=ids,
                       browser=browser, baseline=scope_baseline,
                       server_binding={'config': binding, 'browser': doc['browser'], 'evidence': identity})
@@ -357,6 +384,7 @@ def main(argv=None) -> int:
     parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--manifest-sha256', required=True)
     parser.add_argument('--report', type=Path, required=True)
+    parser.add_argument('--task-profile', choices=['advertising-visual/v1'])
     parser.add_argument('--launch', nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     root = args.target.resolve()
@@ -372,7 +400,7 @@ def main(argv=None) -> int:
             raise ValueError('report_must_be_external_or_runtime')
         if args.launch is not None and not args.launch:
             raise ValueError('explicit_launch_argv_required')
-        report = prepare(root, args.manifest, args.manifest_sha256)
+        report = prepare(root, args.manifest, args.manifest_sha256, args.task_profile)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         # A second attempt must use a new path, never overwrite old preparation.
         with report_path.open('x') as output:

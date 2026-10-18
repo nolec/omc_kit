@@ -64,7 +64,71 @@ failed, 로딩 실패·비정렬·불안정·다른 번들은 unknown이다. 기
 해시를 비교한다. 이 연결은 운영자가 제출한 빌드 명세의 결속이며 올바른 빌드 수행,
 전체 의존성 추적 또는 악의적인 로컬 파일 작성자를 인증하는 장치는 아니다.
 
-## 필수 검사 연결
+## 새 광고 작업: 정책 고정과 완료 판정 연결
+
+격리된 광고 후보의 준비 명령에 `--task-profile advertising-visual/v1`을 지정한다.
+준비 manifest에도 같은 `task_profile`과 아래 `visual_requirement`를 넣는다.
+이 플래그는 운영자가 정한 작업 유형이며 자연어에서 광고 여부를 추측하지 않는다.
+
+```json
+{
+  "profile": "advertising-visual/v1",
+  "run_id": "이번 실행의 고유 ID",
+  "policy": {
+    "schema_version": "omc-visual-policy/v1",
+    "criteria": "omc_visual_check.CRITERIA 객체 전체",
+    "variants": ["card-large", "card-medium", "card-small", "banner-small", "banner-large", "banner-landing"],
+    "dprs": [1, 2],
+    "images_per_variant": 2,
+    "builder_inputs": {"tools/build-controlled.py": "실제 builder SHA256"}
+  }
+}
+```
+
+위 criteria 설명 문자열은 실제 JSON 객체로 치환한다. builder 입력은 준비 manifest의
+`inputs`에도 동일한 해시로 포함한다. 승인할 checks의 `browser-visual-controlled` 항목에
+같은 `visual_policy` 객체를 넣는다. 준비 단계는 누락·불일치 시 실행자를 호출하지 않으며,
+ready가 되면 후보 내부 `.omc/visual-requirement.json`에 실행·정책을 한 번 기록한다.
+이 파일은 로컬 작업 범위 축소 감지용이며 악의적인 직접 파일 수정을 막는 인증이 아니다.
+격리 후보는 실행별로 새로 준비하며 이전 실행의 seal이나 승인 기록을 지워 재사용하지 않는다.
+
+`approve-checks` 기준 JSON에는 `task_profile`, `run_id`, 위 checks를 넣고 CONTRACT에
+동일한 ID 목록을 등록한다. 이후 필수 여부·정책·해당 검증 정의를 낮추거나 제거한 승인
+개정은 거부한다. 기존 일반 작업과 과거 단일 manifest 승인에는 새 profile을 소급 적용하지 않는다.
+
+수정 전에는 **정책과 builder**만 고정하고, 수정 후 현재 입력으로 번들을 만든다.
+각 DPR manifest는 현재 빌드 입력·번들 해시와 `run_id`, `policy_sha256`을 포함한다.
+`policy_sha256`은 `sha256(json.dumps(policy, sort_keys=True, separators=(',', ':')).encode())`다.
+따라서 소스가 정상 수정되어도 승인 정책을 다시 작성할 필요가 없다.
+앞 절의 manifest 실행 명령을 DPR1·2 각각 수행하고 결과·원본 캡처를 보존한다.
+
+`verification-template`으로 생성한 기록에 다음 결과 묶음을 추가한다. 결과 경로는 후보
+안의 일반 파일이어야 하며 `.omc/` 하위에 두어 후보 코드 snapshot에 섞이지 않게 한다.
+
+```json
+{
+  "visual_result_set": {
+    "schema_version": "omc-visual-result-set/v1",
+    "run_id": "준비 단계와 같은 실행 ID",
+    "policy_sha256": "고정 정책 해시",
+    "code_snapshot_sha256": "검증 시점 후보 snapshot 해시",
+    "reports": [
+      {"path": ".omc/capture-1/report.json", "sha256": "DPR1 보고서 원본 해시"},
+      {"path": ".omc/capture-2/report.json", "sha256": "DPR2 보고서 원본 해시"}
+    ]
+  }
+}
+```
+
+`complete-task --verification-file <기록>`은 제출한 `passed` 문자열 대신 캡처 해시와
+실제 픽셀을 재검사한다. 수집기도 같은 함수를 사용하므로 새 profile에서는 별도
+`--visual-report`로 다른 결과를 끼워 넣을 수 없다. 같은 실행·정책·현재 후보의
+6종×DPR1/2가 중복 없이 모두 통과하고 기존 필수 검사도 통과해야 완료·수집을 허용한다.
+확인된 화면 실패 > 증거 불일치 > 미실행 순으로 보고하며, 결과 누락·환경 실행 불가는
+새 UI 실패로 세지 않는다. 실제 홈, 자동 전환, 그림자·모서리 등은 이 테두리 검사로
+대체하지 않는다. 모델의 자유 응답 자체를 막는 전역 실행 샌드박스는 아니다.
+
+## 기존 단일 manifest 승인과 수집
 
 새 비교의 승인 기준 checks에 `id: browser-visual-controlled`를 추가하고 같은 항목에
 `visual_manifest_sha256`으로 승인한 manifest 해시를 고정한다. 이는 기존 browser-home과
@@ -78,6 +142,9 @@ python3 scripts/omc_workflow_validation.py <기존 필수 인자> \
 ```
 
 승인 기준에 해당 ID가 있으면 인자를 생략해도 visual_controlled=unknown, 전체 hold다.
+완료 명령에서도 같은 원본을 검사할 수 있도록 검증 기록의 해당 check 항목에
+`report_file`(후보 내부 상대 경로)과 `report_sha256`을 기록한다. 수집기의 단일 보고서
+인자만 지정한 것은 완료 명령의 증거 제출을 대체하지 않는다.
 수집기는 후보·manifest·고정 기준·PNG/관측 해시를 대조하고 픽셀 판정을 다시 실행한다.
 모델의 완료 주장과 관계없이 failed/unknown은 전체 통과를 막는다. 기존 범위/서식 검사와
 실제 홈 검사도 유지한다. 해당 ID가 없는 과거 호출은 기존 의미를 유지한다. 이 선택형

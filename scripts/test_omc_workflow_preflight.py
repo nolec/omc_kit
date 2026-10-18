@@ -108,6 +108,44 @@ def run(root, path, report, *extra):
         *extra], capture_output=True, text=True)
 
 
+def test_ad_profile_missing_visual_never_calls_executor(tmp_path, browser_service):
+    root = tmp_path/'candidate'; root.mkdir()
+    path = manifest(root, tmp_path, browser_service)
+    marker = tmp_path/'called'
+    result = run(root, path, tmp_path/'report.json', '--task-profile', 'advertising-visual/v1',
+                 '--launch', sys.executable, '-c', f'open({str(marker)!r},"w").write("called")')
+    assert result.returncode == 2
+    assert not marker.exists()
+    assert 'visual_requirement_missing' in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('defect', ['missing-id', 'policy', 'builder-unfrozen'])
+def test_ad_policy_errors_block_before_launch(tmp_path, browser_service, defect):
+    from omc_visual_check import AD_PROFILE, CHECK_ID, CRITERIA, VARIANTS
+    root = tmp_path/'candidate'; root.mkdir()
+    path = manifest(root, tmp_path, browser_service)
+    builder = root/'builder.py'; builder.write_text('# frozen builder')
+    policy = {'schema_version':'omc-visual-policy/v1', 'criteria':CRITERIA,
+              'variants':VARIANTS, 'dprs':[1,2], 'images_per_variant':2,
+              'builder_inputs':{'builder.py':digest(builder)}}
+    checks = [{'id':'tests'}]
+    if defect != 'missing-id': checks.append({'id':CHECK_ID, 'visual_policy':policy})
+    definitions = tmp_path/'checks.json'; definitions.write_text(json.dumps(checks))
+    doc = json.loads(path.read_text())
+    doc.update(task_profile=AD_PROFILE, visual_requirement={'profile':AD_PROFILE, 'run_id':'r', 'policy':policy},
+               required_check_ids=[c['id'] for c in checks])
+    doc['inputs']['../checks.json'] = digest(definitions)
+    if defect != 'builder-unfrozen': doc['inputs']['builder.py'] = digest(builder)
+    if defect == 'policy': doc['visual_requirement']['policy']['dprs'] = [1]
+    path.write_text(json.dumps(doc))
+    marker = tmp_path/'called'
+    result = run(root, path, tmp_path/'blocked.json', '--task-profile', AD_PROFILE,
+                 '--launch', sys.executable, '-c', f'open({str(marker)!r},"w").write("called")')
+    assert result.returncode == 2, result.stdout+result.stderr
+    assert not marker.exists()
+    assert json.loads((tmp_path/'blocked.json').read_text())['provider_call_count'] == 0
+
+
 @pytest.mark.parametrize('defect', ['missing-ignore', 'replacement-ignore', 'input-change',
                                   'missing-images', 'no-transition', 'missing-check'])
 def test_invalid_preparation_never_invokes_executor(tmp_path, browser_service, defect):

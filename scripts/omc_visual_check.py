@@ -16,11 +16,145 @@ import urllib.parse
 from omc_pipeline_guard import _code_snapshot_digest
 
 CHECK_ID = 'browser-visual-controlled'
+AD_PROFILE = 'advertising-visual/v1'
 VARIANTS = ['card-large', 'card-medium', 'card-small', 'banner-small', 'banner-large', 'banner-landing']
 CRITERIA = {'viewport': [1440, 1000], 'alignment_device_px': 0.01, 'segment': [0.2, 0.8],
             'edge_rgb_range': [226, 233], 'inside_rgb_min': 252, 'coverage': 0.95,
             'marker_rgb': [200, 20, 80], 'marker_tolerance': 3,
             'claim': 'defined_straight_segments_only', 'ancestor_transforms': 'unsupported'}
+
+
+def validate_policy(root: Path, policy: dict) -> None:
+    """Freeze the oracle and builder, not the source that the task must edit."""
+    if (not isinstance(policy, dict) or policy.get('schema_version') != 'omc-visual-policy/v1'
+            or policy.get('criteria') != CRITERIA or policy.get('variants') != VARIANTS
+            or policy.get('dprs') != [1, 2] or any(type(x) is not int for x in policy['dprs'])
+            or type(policy.get('images_per_variant')) is not int or policy['images_per_variant'] != 2
+            or not isinstance(policy.get('builder_inputs'), dict) or not policy['builder_inputs']):
+        raise ValueError('visual_policy_invalid')
+    for name, pin in policy['builder_inputs'].items():
+        if sha(local_file(root, name).read_bytes()) != pin:
+            raise ValueError('visual_builder_mismatch')
+
+
+def requirement_path(root: Path) -> Path:
+    return root/'.omc/visual-requirement.json'
+
+
+def validate_requirement(root: Path, value: dict) -> None:
+    if (not isinstance(value, dict) or value.get('profile') != AD_PROFILE
+            or not isinstance(value.get('run_id'), str) or not value['run_id'].strip()):
+        raise ValueError('visual_requirement_missing')
+    validate_policy(root, value.get('policy'))
+
+
+def enforce_requirement(root: Path, basis: dict) -> dict | None:
+    """Caller-controlled local seal: detects accidental downgrade, not hostile edits."""
+    path = requirement_path(root)
+    if basis.get('task_profile') not in (None, AD_PROFILE):
+        raise ValueError('unsupported_task_profile')
+    required = path.exists() or basis.get('task_profile') == AD_PROFILE
+    if not required:
+        return None  # Explicit compatibility for historical, non-profile sessions.
+    if not path.is_file() or path.is_symlink():
+        raise ValueError('visual_requirement_missing')
+    requirement = json.loads(path.read_text())
+    validate_requirement(root, requirement)
+    check = next((c for c in basis['checks'] if c['id'] == CHECK_ID), None)
+    if (basis.get('task_profile') != AD_PROFILE or basis.get('run_id') != requirement['run_id']
+            or check is None or check.get('visual_policy') != requirement['policy']):
+        raise ValueError('visual_requirement_downgrade_or_policy_mismatch')
+    return requirement
+
+
+def assess_result_set(root: Path, requirement: dict, submission: dict | None) -> dict:
+    """Replay both DPR reports; all twelve unique cells must share one candidate."""
+    if not submission:
+        return {'status': 'unknown', 'reason': 'required_visual_result_missing'}
+    results = []
+    try:
+        policy = requirement['policy']
+        validate_requirement(root, requirement)
+        snapshot = _code_snapshot_digest(root)
+        policy_pin = sha(json.dumps(policy, sort_keys=True, separators=(',', ':')).encode())
+        if (submission['schema_version'] != 'omc-visual-result-set/v1'
+                or submission['run_id'] != requirement['run_id']
+                or submission['policy_sha256'] != policy_pin
+                or submission['code_snapshot_sha256'] != snapshot):
+            raise ValueError('visual_result_set_binding_mismatch')
+        reports = submission['reports']
+        if not isinstance(reports, list):
+            raise ValueError('visual_report_list_invalid')
+        if not reports:
+            return {'status': 'unknown', 'reason': 'visual_dpr_result_missing'}
+        seen = set()
+        for entry in reports:
+            try:
+                candidate_path = root/entry['path']
+                if not candidate_path.exists() and not candidate_path.is_symlink():
+                    candidate_path.resolve().relative_to(root.resolve())
+                    results.append({'status': 'unknown', 'reason': 'required_visual_report_missing'})
+                    continue
+                path = local_file(root, entry['path'])
+                raw = path.read_bytes()
+                if sha(raw) != entry['sha256']:
+                    raise ValueError('visual_report_digest_mismatch')
+                report = json.loads(raw)
+                # An unavailable capture is missing evidence, never a new UI failure.
+                if 'manifest_raw' not in report:
+                    results.append({'status': 'unknown', 'reason': 'visual_capture_unavailable'})
+                    continue
+                manifest = json.loads(report['manifest_raw'])
+                dpr = manifest['dpr']
+                if type(dpr) is not int or dpr not in policy['dprs']:
+                    raise ValueError('visual_dpr_duplicate_or_invalid')
+                duplicate = dpr in seen
+                if (manifest.get('run_id') != requirement['run_id']
+                        or manifest.get('policy_sha256') != policy_pin
+                        or manifest['images_per_variant'] != policy['images_per_variant']
+                        or any(manifest['build_inputs'].get(n) != p for n, p in policy['builder_inputs'].items())):
+                    raise ValueError('visual_manifest_policy_mismatch')
+                seen.add(dpr)
+                result = assess_report(root, path, entry['sha256'], sha(report['manifest_raw'].encode()))
+                binding_errors = {'visual_report_digest_mismatch', 'visual_report_binding_mismatch',
+                    'visual_manifest_digest_mismatch', 'bundle_file_mismatch', 'visual_evidence_mismatch',
+                    'served_surface_mismatch', 'visual_result_not_reproducible'}
+                if result['status'] == 'unknown' and (result['reason'] in binding_errors
+                        or str(result['reason']).startswith('build_input_mismatch:')):
+                    result = dict(result, status='mismatch')
+                if result['status'] != 'unknown' and [v['id'] for v in report['variants']] != policy['variants']:
+                    raise ValueError('visual_variant_set_mismatch')
+                if duplicate and result['status'] != 'failed':
+                    result = {'status': 'mismatch', 'reason': 'visual_dpr_duplicate_or_invalid'}
+                results.append(result)
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                results.append({'status': 'mismatch', 'reason': str(exc)})
+        status = ('failed' if any(r['status'] == 'failed' for r in results) else
+                  'mismatch' if any(r['status'] == 'mismatch' for r in results) else overall(results))
+        if (seen != {1, 2} or len(reports) != 2) and status not in ('failed', 'mismatch'):
+            status = 'unknown'
+        return {'status': status, 'reason': None if status == 'passed' else 'visual_surface_'+status,
+                'reports': results}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        return {'status': 'failed' if any(r['status'] == 'failed' for r in results) else 'mismatch',
+                'reason': str(exc)}
+
+
+def assess_completion_visual(root: Path, basis: dict, record: dict) -> dict | None:
+    """Shared decision for completion and collection, independent of prose/status."""
+    try:
+        requirement = enforce_requirement(root, basis)
+        if requirement is not None:
+            return assess_result_set(root, requirement, record.get('visual_result_set'))
+        if any(c['id'] == CHECK_ID for c in basis['checks']):
+            # Legacy single-DPR approvals keep their original manifest contract.
+            item = record.get('checks', {}).get(CHECK_ID, {})
+            definition = next(c for c in basis['checks'] if c['id'] == CHECK_ID)
+            path = local_file(root, item['report_file']) if item.get('report_file') else None
+            return assess_report(root, path, item.get('report_sha256'), definition.get('visual_manifest_sha256', ''))
+        return None
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        return {'status': 'mismatch', 'reason': str(exc)}
 
 CAPTURE_JS = r'''
 const fs=require('fs'),crypto=require('crypto');
