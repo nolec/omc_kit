@@ -2046,12 +2046,12 @@
         "historical": true
       }
     ],
-    "next": "91c8d4e 후보와 새 manifest를 고정하고, 가용 포트·실제 수신 프로세스·작업 폴더·홈 번들 일치를 확인한 뒤 실제 Claude 광고 사례 1회를 재검증한다. 통과 후 동일 조건의 oh-my-claudecode 비교를 별도로 진행한다.",
+    "next": "1a3585f 보완을 포함한 새 격리 후보에서 advertising-visual/v1 필수 유형·고정 정책·기존 필수 검증과 12개 화면 결과를 승인 계약에 연결한다. 실제 홈·광고·자동 전환·서버·후보 결속을 확인한 뒤 실제 Claude 광고 사례를 1회 재검증한다. 이 검증 통과 후 동일 조건의 oh-my-claudecode 비교를 별도로 진행한다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "올바른 후보 서버에서 보완 후 실제 Claude 광고 사례1회 재검증"
+    "current_priority": "필수 화면 검증 계약을 포함한 실제 Claude 광고 사례1회 재검증"
   },
   "decision": {
-    "candidate": "통제 화면의 실제 표시 자동 판정",
+    "candidate": "필수 화면 검증과 완료 판정의 직접 결속",
     "candidates": [
       {
         "cost": "검증·도입 부담 미확인",
@@ -2093,47 +2093,58 @@
         "historical": true
       }
     ],
-    "completion": "서버 결속 관련 회귀117개 통과(103.12초), 독립 리뷰 재검증28개 통과(23.12초), TDD·문법 검사 통과·격리4개 파일 APPROVE. 승인본과 원본의 바이트 일치 확인 후91c8d4e로 로컬 커밋했다.",
+    "completion": "화면·완료·수집 회귀118개 통과, 가드 회귀101개 통과, 고정7파일 독립 리뷰의 실제 Chromium 정·역순·중복·정상 화면12개 통과·APPROVE. 문법·변경 형식·TDD 게이트 통과. 승인본과 동일한7파일만1a3585f로 로컬 커밋했다. 전체 저장소 품질 게이트·실제 Claude 새 실행의 통과를 뜻하지 않는다.",
     "deliverables": [
-      "실제 캡처의 정의 구간·이미지 표식 자동 판정",
-      "증거·후보 결속 및 필수 결과 누락 차단",
-      "독립6파일 후보 커밋9160448·전체 품질4497개 통과"
+      "화면 검증 필수 유형·정책의 실행 전 고정",
+      "동일 실행·정책·현재 후보의12개 결과와 완료·수집 결속",
+      "보고서 오류 수집·순서와 무관한 실패 우선 판정",
+      "7파일 승인·1a3585f 로컬 커밋"
     ],
-    "limit": "보완 후 실제 Claude 재실행·최신 양쪽 비교·일반 생산성 및 경쟁 우위는 미입증. C1 사용자 효과·C2 유지보수 이점·C3 사용자 이해·광고 추적 기존4실패와 클릭/숨김 외부 전송은 미검증 또는 미해결이다. 이번 보완은 미릴리스·사용처 미설치이며, 기존0.6.0 정상11개 설치 이력과 구분한다.",
+    "limit": "1a3585f 보완 후 실제 Claude 재실행·최신 양쪽 비교·일반 생산성 및 경쟁 우위는 미입증. 이번 자동 검사는 정의한 테두리 직선 구간과 이미지 표식에 한정된다. C1 사용자 효과·C2 유지보수 이점·C3 사용자 이해·기존 광고 추적4실패와 클릭/숨김 외부 전송은 미검증 또는 미해결이다. 이번 보완은 미릴리스·사용처 미설치이며 기존0.6.0 정상11개 설치 이력과 구분한다.",
     "not_done": [
-      "보완 후 실제 Claude 광고 재실행",
+      "1a3585f 보완 후 실제 Claude 광고 재실행",
       "최신 양쪽 비교",
       "사용자 이해·일반 생산성 효과",
       "이번 보완 릴리스·재설치"
     ],
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "reason": "실제 화면을 확인하고도 가려진 선을 성공으로 판단한 문제를 줄이기 위해 픽셀 판정과 누락 차단을 구현·검증하고6파일로 커밋했다.",
-    "state": "서버·후보 결속 보완 커밋·리뷰 승인 · 보완 후 실제 재실행 전",
-    "next": "91c8d4e 후보와 새 manifest를 고정하고, 가용 포트·실제 수신 프로세스·작업 폴더·홈 번들 일치를 확인한 뒤 실제 Claude 광고 사례 1회를 재검증한다. 통과 후 동일 조건의 oh-my-claudecode 비교를 별도로 진행한다."
+    "reason": "서버 결속 후 실제 실행에서 절차·서식 통과와 픽셀12개 실패가 함께 관측되어 독립 화면 결과를 native 완료 계약에 직접 연결했다.",
+    "state": "필수 화면 검증·완료 판정 결속 보완 커밋·리뷰 승인 · 새 보완 후 Claude 재실행 전",
+    "next": "1a3585f 보완을 포함한 새 격리 후보에서 advertising-visual/v1 필수 유형·고정 정책·기존 필수 검증과 12개 화면 결과를 승인 계약에 연결한다. 실제 홈·광고·자동 전환·서버·후보 결속을 확인한 뒤 실제 Claude 광고 사례를 1회 재검증한다. 이 검증 통과 후 동일 조건의 oh-my-claudecode 비교를 별도로 진행한다."
   },
   "current_update": {
-    "date": "2026-10-18",
-    "status": "서버·후보 결속 보완 커밋·리뷰 승인 · 보완 후 실제 재실행 전",
+    "date": "2026-10-19",
+    "status": "필수 화면 검증·완료 판정 결속 보완 커밋·리뷰 승인 · 새 보완 후 Claude 재실행 전",
     "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
     "goal_progress": "기반 구현 진전 · 실제 업무 효과 입증 미완료",
-    "commit": "91c8d4e",
-    "commit_scope": "서버 결속 코드·회귀·사용법4파일; 기존 실행 자료 보존",
-    "verification": "서버 결속 관련 회귀117개 통과(103.12초), 독립 리뷰 재검증28개 통과(23.12초), TDD·문법 검사 통과·격리4개 파일 APPROVE. 승인본과 원본의 바이트 일치 확인 후91c8d4e로 로컬 커밋했다.",
-    "tests_passed": 117,
-    "review_tests_passed": 28,
+    "commit": "1a3585f",
+    "commit_scope": "화면 검증 계약·준비 검사·완료 판정·수집·회귀·사용법7파일",
+    "verification": "화면·완료·수집 회귀118개 통과, 가드 회귀101개 통과, 고정7파일 독립 리뷰의 실제 Chromium 정·역순·중복·정상 화면12개 통과·APPROVE. 문법·변경 형식·TDD 게이트 통과. 승인본과 동일한7파일만1a3585f로 로컬 커밋했다. 전체 저장소 품질 게이트·실제 Claude 새 실행의 통과를 뜻하지 않는다.",
+    "tests_passed": 118,
+    "review_tests_passed": 12,
     "review_verdict": "APPROVE",
-    "review_scope_files": 4,
-    "next": "91c8d4e 후보와 새 manifest를 고정하고, 가용 포트·실제 수신 프로세스·작업 폴더·홈 번들 일치를 확인한 뒤 실제 Claude 광고 사례 1회를 재검증한다. 통과 후 동일 조건의 oh-my-claudecode 비교를 별도로 진행한다.",
-    "display_next": "올바른 후보 서버에서 보완 후 실제 Claude 광고 사례1회 재검증",
-    "limitations": "보완 후 실제 Claude 재실행·최신 양쪽 비교·일반 생산성 및 경쟁 우위는 미입증. C1 사용자 효과·C2 유지보수 이점·C3 사용자 이해·광고 추적 기존4실패와 클릭/숨김 외부 전송은 미검증 또는 미해결이다. 이번 보완은 미릴리스·사용처 미설치이며, 기존0.6.0 정상11개 설치 이력과 구분한다.",
+    "review_scope_files": 7,
+    "next": "1a3585f 보완을 포함한 새 격리 후보에서 advertising-visual/v1 필수 유형·고정 정책·기존 필수 검증과 12개 화면 결과를 승인 계약에 연결한다. 실제 홈·광고·자동 전환·서버·후보 결속을 확인한 뒤 실제 Claude 광고 사례를 1회 재검증한다. 이 검증 통과 후 동일 조건의 oh-my-claudecode 비교를 별도로 진행한다.",
+    "display_next": "필수 화면 검증 계약을 포함한 실제 Claude 광고 사례1회 재검증",
+    "limitations": "1a3585f 보완 후 실제 Claude 재실행·최신 양쪽 비교·일반 생산성 및 경쟁 우위는 미입증. 이번 자동 검사는 정의한 테두리 직선 구간과 이미지 표식에 한정된다. C1 사용자 효과·C2 유지보수 이점·C3 사용자 이해·기존 광고 추적4실패와 클릭/숨김 외부 전송은 미검증 또는 미해결이다. 이번 보완은 미릴리스·사용처 미설치이며 기존0.6.0 정상11개 설치 이력과 구분한다.",
     "native_validation": {
       "executed": true,
-      "elapsed_seconds": 968.44,
-      "overall": "blocked",
-      "home_validation": "invalid_environment_binding",
-      "report_format": "failed",
-      "reason": "occupied port3025 served previous competitor candidate",
-      "post_binding_fix_runs": 0
+      "elapsed_seconds": 612.04,
+      "overall": "failed",
+      "recompare_entry": "hold",
+      "home_validation": "passed",
+      "server_binding": "passed",
+      "report_format": "passed",
+      "native_collector_passed": 8,
+      "native_collector_required": 8,
+      "pixel_passed": 0,
+      "pixel_failed": 12,
+      "native_reported_completion": true,
+      "native_approved_check_count": 4,
+      "visual_was_in_native_completion_contract": false,
+      "post_binding_fix_runs": 1,
+      "post_visual_completion_fix_runs": 0,
+      "reason": "native completion contract did not include independent required pixel verification"
     },
     "server_binding": {
       "state": "COMMITTED_REVIEW_APPROVED",
@@ -2149,7 +2160,9 @@
       "consumer_count": 11,
       "binding_fix_released": false,
       "binding_fix_reinstalled": false,
-      "pushed": false
+      "pushed": false,
+      "visual_completion_fix_released": false,
+      "visual_completion_fix_reinstalled": false
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2158,17 +2171,90 @@
       "docs/comparison-dashboard/view.json"
     ],
     "local_runtime_evidence": [
-      ".omc/release-060/native-validation-summary.json",
-      ".omc/release-060/home-mismatch-investigation.md",
-      ".omc/server-binding-fixes/regression.txt",
-      ".omc/server-binding-fixes/approval-record.txt"
+      ".omc/bound-native-20261018/native-validation-report-20261019.md",
+      ".omc/bound-native-20261018/summary-20261019.json",
+      ".omc/visual-order-fix/summary-final.json",
+      ".omc/visual-order-fix/review-summary.json"
     ],
     "observation": {
       "v3": "DISABLED",
       "completion": "not_registered"
+    },
+    "guard_tests_passed": 101,
+    "visual_completion_binding": {
+      "state": "COMMITTED_REVIEW_APPROVED",
+      "commit": "1a3585f",
+      "task_profile": "advertising-visual/v1",
+      "required_variants": 6,
+      "required_dprs": [
+        1,
+        2
+      ],
+      "required_cells": 12,
+      "approval_downgrade_blocked": true,
+      "per_report_errors_aggregated": true,
+      "same_completion_collector_verifier": true,
+      "release_installed": false
     }
   },
   "current_update_history": [
+    {
+      "date": "2026-10-18",
+      "status": "서버·후보 결속 보완 커밋·리뷰 승인 · 보완 후 실제 재실행 전",
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "goal_progress": "기반 구현 진전 · 실제 업무 효과 입증 미완료",
+      "commit": "91c8d4e",
+      "commit_scope": "서버 결속 코드·회귀·사용법4파일; 기존 실행 자료 보존",
+      "verification": "서버 결속 관련 회귀117개 통과(103.12초), 독립 리뷰 재검증28개 통과(23.12초), TDD·문법 검사 통과·격리4개 파일 APPROVE. 승인본과 원본의 바이트 일치 확인 후91c8d4e로 로컬 커밋했다.",
+      "tests_passed": 117,
+      "review_tests_passed": 28,
+      "review_verdict": "APPROVE",
+      "review_scope_files": 4,
+      "next": "91c8d4e 후보와 새 manifest를 고정하고, 가용 포트·실제 수신 프로세스·작업 폴더·홈 번들 일치를 확인한 뒤 실제 Claude 광고 사례 1회를 재검증한다. 통과 후 동일 조건의 oh-my-claudecode 비교를 별도로 진행한다.",
+      "display_next": "올바른 후보 서버에서 보완 후 실제 Claude 광고 사례1회 재검증",
+      "limitations": "보완 후 실제 Claude 재실행·최신 양쪽 비교·일반 생산성 및 경쟁 우위는 미입증. C1 사용자 효과·C2 유지보수 이점·C3 사용자 이해·광고 추적 기존4실패와 클릭/숨김 외부 전송은 미검증 또는 미해결이다. 이번 보완은 미릴리스·사용처 미설치이며, 기존0.6.0 정상11개 설치 이력과 구분한다.",
+      "native_validation": {
+        "executed": true,
+        "elapsed_seconds": 968.44,
+        "overall": "blocked",
+        "home_validation": "invalid_environment_binding",
+        "report_format": "failed",
+        "reason": "occupied port3025 served previous competitor candidate",
+        "post_binding_fix_runs": 0
+      },
+      "server_binding": {
+        "state": "COMMITTED_REVIEW_APPROVED",
+        "commit": "91c8d4e",
+        "release_installed": false,
+        "query_responses_verified": true,
+        "independent_scope_outcomes": true
+      },
+      "installation": "이번 보완 미릴리스·사용처 미설치. 기존0.6.0 정상11개 설치 이력은 유지하며 재감사하지 않았다.",
+      "release_state": {
+        "release_version": "0.6.0",
+        "release_commit": "2f0f521",
+        "consumer_count": 11,
+        "binding_fix_released": false,
+        "binding_fix_reinstalled": false,
+        "pushed": false
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/index.html",
+        "docs/comparison-dashboard/view.json"
+      ],
+      "local_runtime_evidence": [
+        ".omc/release-060/native-validation-summary.json",
+        ".omc/release-060/home-mismatch-investigation.md",
+        ".omc/server-binding-fixes/regression.txt",
+        ".omc/server-binding-fixes/approval-record.txt"
+      ],
+      "observation": {
+        "v3": "DISABLED",
+        "completion": "not_registered"
+      }
+    },
     {
       "date": "2026-10-16",
       "status": "통제 화면 자동 판정 V0 · 0.6.0 로컬 릴리스·정상11개 재설치 완료",
