@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "홈 관측 보완 커밋·검수 입력 복구 완료 · 실제 Claude 재검증 전",
+    "decision": "절차·RED 근거 보완 커밋 완료 · 보완 후 실제 Claude 재검증 전",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2046,12 +2046,12 @@
         "historical": true
       }
     ],
-    "next": "복구한 고정 입력으로 새 격리 후보를 준비하고 서버·로그인·광고·후보 결속을 확인한 뒤 실제 Claude 광고 사례를 최대1회 재검증한다. 기존 필수5검증·픽셀12조건·관측 증거 명시 선택·최종 완료 기록 일치를 유지한다. 이번 문서 커밋은 모델 호출을 시작하지 않는다.",
+    "next": "df4adbb를 포함한 새 격리 후보에서 고정 baseline·모델·필수5검증·픽셀12조건을 유지하고 native RED 실행·영수증 선택·등록 성공 반환 후 제품 수정을 확인한다. 보고 형식·최종 실제 홈 결속의 미해결 조건도 사전에 고정한 뒤 최대1회 실행한다. 이번 최신화로 모델 호출을 시작하지 않는다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "복구 입력으로 새 후보 준비 후 실제 Claude 광고 사례1회 재검증"
+    "current_priority": "df4adbb 후보로 실제 Claude 광고 사례1회 재검증"
   },
   "decision": {
-    "candidate": "기존 홈 시간 관측과 명시 선택한 호출 증거를 완료 판정에 연결",
+    "candidate": "실제 신규 실패·호출 영수증·성공 반환 순서에 연결된 native RED 가드",
     "candidates": [
       {
         "cost": "검증·도입 부담 미확인",
@@ -2093,44 +2093,44 @@
         "historical": true
       }
     ],
-    "completion": "홈 관측 보완과 검수 입력 복구는 로컬 커밋 완료다. 실제 Claude 새 호출0회이며 이전 단일 사례 결과와 최신 경쟁 실행 항목별 채택은 별도로 유지한다.",
+    "completion": "절차·RED 가드 구현·리뷰·커밋 완료. 보완 후 실제 Claude 재검증은 미실행이다.",
     "deliverables": [
-      "광고 필수5검증·화면12조건 실제 실행",
-      "최종 snapshot·완료 기록·최종 원문 연결",
-      "독립 수집9항목·후보 서버 결속 통과",
-      "광고3파일 리뷰 APPROVE WITH NOTES"
+      "native RED 실제 Jest 실패·baseline·원문 해시 대조",
+      "등록 성공 반환 이전 제품 수정 탐지",
+      "복합 셸 unknown·Tier0 허용 및 명시 RED 차단 유지",
+      "11파일 APPROVE·df4adbb 커밋"
     ],
-    "limit": "최신 경쟁 실행은 execute 호출·성공 반환 후 수정이 확인됐고 항목별 결과를 채택했다. native 홈 자동 전환의 두 표본은 같아 확인 불가이며 UI 실패로 단정하지 않는다. 운영자 사후 관측으로 대체하지 않는다. 최신 양쪽 동시 비교·속도 우열·일반 생산성·C1/C2/C3 효과는 미입증이며 기존 광고 추적4실패는 유지한다.",
+    "limit": "홈 관측·픽셀 통과와 전체 절차 준수는 별개다. 보완 후 실제 Claude 실행0회. 보고 첫 줄/길이와 최종 실제 홈 결속 문제는 별도 미해결이다. 최신 양쪽 동등 비교·속도 우열·일반 생산성·C1/C2/C3 효과는 미입증이며 기존 광고 추적4실패는 유지한다. 로컬 근거 일관성 검사이며 테스트 의미·악의적 동일 계정 변조·Codex 물리 훅을 인증하지 않는다.",
     "not_done": [
-      "유효한 최신 동일 조건 oh-my-claudecode 비교",
-      "실제 execute 진입을 확인할 재실행 방식·횟수 확정",
-      "공통5개 품질 검증의 별도 증거 평가",
-      "일반 생산성·경쟁 우위 입증",
-      "7e417dc 릴리스·사용처 설치"
+      "df4adbb 보완 후 실제 Claude 단일 사례 재검증",
+      "보고 형식·최종 실제 홈 결속 미해결 조건 확인",
+      "동일 조건 oh-my-claudecode 최신 비교",
+      "df4adbb 릴리스·사용처 재설치",
+      "일반 생산성·경쟁 우위·C1/C2/C3 효과 입증"
     ],
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "reason": "검수 입력 누락으로 준비 단계에서 차단한 뒤 원본 해시가 같은 입력을 복구·보존했다. 새 관측 선택 보완이 실제 Claude에서도 통과하는지는 아직 확인 전이다.",
-    "state": "홈 관측 보완 커밋·검수 입력 복구 완료 · 실제 Claude 재검증 전",
-    "next": "복구한 고정 입력으로 새 격리 후보를 준비하고 서버·로그인·광고·후보 결속을 확인한 뒤 실제 Claude 광고 사례를 최대1회 재검증한다. 기존 필수5검증·픽셀12조건·관측 증거 명시 선택·최종 완료 기록 일치를 유지한다. 이번 문서 커밋은 모델 호출을 시작하지 않는다."
+    "reason": "검수 입력 복구 후 Sonnet4.6/high 실제 Claude1회·851.18초·정상 종료·자동 재시도0회. 호출별 홈 관측 영수증 명시 선택과 픽셀12/12는 통과했다. 제품 편집이 CONTRACT·RED 등록보다 먼저였고 실제 통과한 케이스가 RED 실패로 등록됐다. 보고 형식 failed·최종 실제 홈 결속 unknown으로 전체 판정 hold를 유지한다.",
+    "state": "절차·RED 근거 보완 커밋 완료 · 보완 후 실제 Claude 재검증 전",
+    "next": "df4adbb를 포함한 새 격리 후보에서 고정 baseline·모델·필수5검증·픽셀12조건을 유지하고 native RED 실행·영수증 선택·등록 성공 반환 후 제품 수정을 확인한다. 보고 형식·최종 실제 홈 결속의 미해결 조건도 사전에 고정한 뒤 최대1회 실행한다. 이번 최신화로 모델 호출을 시작하지 않는다."
   },
   "current_update": {
     "date": "2026-10-19",
-    "status": "홈 관측 보완 커밋·검수 입력 복구 완료 · 실제 Claude 재검증 전",
+    "status": "절차·RED 근거 보완 커밋 완료 · 보완 후 실제 Claude 재검증 전",
     "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
-    "goal_progress": "필수 검증의 실제 관측·후보·완료 보고 연결을 로컬에서 보완 · 실제 업무 효과·경쟁 우위 미입증",
-    "commit": "cf38f24",
-    "implementation_commit": "d4496e8",
-    "commit_scope": "d4496e8 홈 관측 구현5파일, cf38f24 검수 입력 복구5파일 로컬 커밋 완료. 이번 로드맵·대시보드4파일은 별도 문서 커밋.",
-    "verification": "검수 입력 복구 격리 후보 리뷰 APPROVE·12개 검사 통과. 원본 해시2개·과거 픽셀 정책 일치, 새 폴더 복원·손상/누락·덮어쓰기/외부 링크 거부·실제 baseline Ad 빌드 확인. 홈 관측 보완의 기존182개/92개 회귀 결과는 별도 이력(중복 포함). 실제 Claude 새 호출0회.",
-    "tests_passed": 12,
+    "goal_progress": "실제 실행에서 드러난 절차 누락·RED 오등록을 로컬 가드·수집기로 보완 · 실제 업무 효과·경쟁 우위 미입증",
+    "commit": "df4adbb",
+    "implementation_commit": "df4adbb",
+    "commit_scope": "절차·native RED 실행기·수집기·공용 훅·테스트11개 파일 로컬 커밋. 이번 문서 최신화4파일은 별도 미커밋.",
+    "verification": "구현 보완 회귀321개 통과(핵심115·홈/픽셀/설치206), skip0. 격리 후보 전체11개 재리뷰 APPROVE·핵심115개 재실행 통과(321과 중복). 실제 Git 훅·TDD·구문·템플릿/배포본 일치 확인. 승인된11개 파일만 df4adbb로 로컬 커밋.",
+    "tests_passed": 321,
     "tests_skipped": 0,
     "surface_tests_passed": null,
     "review_verdict": "APPROVE",
-    "review_scope_files": 5,
-    "next": "복구한 고정 입력으로 새 격리 후보를 준비하고 서버·로그인·광고·후보 결속을 확인한 뒤 실제 Claude 광고 사례를 최대1회 재검증한다. 기존 필수5검증·픽셀12조건·관측 증거 명시 선택·최종 완료 기록 일치를 유지한다. 이번 문서 커밋은 모델 호출을 시작하지 않는다.",
-    "display_next": "복구 입력으로 새 후보 준비 후 실제 Claude 광고 사례1회 재검증",
-    "limitations": "최신 경쟁 실행은 execute 호출·성공 반환 후 수정이 확인됐고 항목별 결과를 채택했다. native 홈 자동 전환의 두 표본은 같아 확인 불가이며 UI 실패로 단정하지 않는다. 운영자 사후 관측으로 대체하지 않는다. 최신 양쪽 동시 비교·속도 우열·일반 생산성·C1/C2/C3 효과는 미입증이며 기존 광고 추적4실패는 유지한다.",
-    "installation": "d4496e8 홈 관측 보완과 cf38f24 검수 입력 복구는 로컬 커밋 완료·미릴리스·일반 사용처 미설치. 기존0.6.0 정상11개 설치는 과거 이력이며 이번에 재감사하지 않았다.",
+    "review_scope_files": 11,
+    "next": "df4adbb를 포함한 새 격리 후보에서 고정 baseline·모델·필수5검증·픽셀12조건을 유지하고 native RED 실행·영수증 선택·등록 성공 반환 후 제품 수정을 확인한다. 보고 형식·최종 실제 홈 결속의 미해결 조건도 사전에 고정한 뒤 최대1회 실행한다. 이번 최신화로 모델 호출을 시작하지 않는다.",
+    "display_next": "df4adbb 후보로 실제 Claude 광고 사례1회 재검증",
+    "limitations": "홈 관측·픽셀 통과와 전체 절차 준수는 별개다. 보완 후 실제 Claude 실행0회. 보고 첫 줄/길이와 최종 실제 홈 결속 문제는 별도 미해결이다. 최신 양쪽 동등 비교·속도 우열·일반 생산성·C1/C2/C3 효과는 미입증이며 기존 광고 추적4실패는 유지한다. 로컬 근거 일관성 검사이며 테스트 의미·악의적 동일 계정 변조·Codex 물리 훅을 인증하지 않는다.",
+    "installation": "df4adbb 절차·RED 보완11파일은 로컬 커밋 완료·미릴리스·일반 사용처 미설치·원격 push 전. d4496e8·cf38f24 역시 미릴리스 이력 유지. 기존0.6.0 정상11개 설치는 과거 이력이며 이번에 재감사하지 않았다.",
     "release_state": {
       "release_version": "0.6.0",
       "release_commit": "2f0f521",
@@ -2143,7 +2143,9 @@
       "peer_trace_released": false,
       "peer_trace_reinstalled": false,
       "home_observation_released": false,
-      "home_observation_reinstalled": false
+      "home_observation_reinstalled": false,
+      "native_red_fix_released": false,
+      "native_red_fix_reinstalled": false
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2152,19 +2154,16 @@
       "docs/comparison-dashboard/view.json"
     ],
     "local_runtime_evidence": [
-      ".omc/peer-entry-first-20261019/correction-003/REPORT.md",
-      ".omc/home-observation-analysis-20261019/REPORT.md",
-      ".omc/home-motion-review-fix/REPORT.md",
-      ".omc/home-motion-review-fix/review/REVIEW.md",
-      ".omc/home-motion-review-fix/review/approval-receipt.json",
-      ".omc/home-motion-native-20261019/REPORT.md",
-      ".omc/ad-input-recovery-20261019/review/REVIEW.md",
-      ".omc/ad-input-recovery-20261019/review/approval-result.json"
+      ".omc/home-native-rerun-20261019/REPORT.md",
+      ".omc/home-native-rerun-20261019/procedure-audit.json",
+      ".omc/native-red-review-fix/REPORT.md",
+      ".omc/native-red-review-fix/review/REPORT.md",
+      ".omc/native-red-review-fix/review/approval.json"
     ],
     "observation": {
       "v3": "DISABLED",
       "completion": "OBSERVATION_INVALID",
-      "reason": "pending_completion_invalid"
+      "reason": "live_observation_not_enabled"
     },
     "peer_trace": {
       "state": "COMMITTED_REVIEW_APPROVED",
@@ -2212,16 +2211,17 @@
       "collector_passed": 9,
       "evidence": ".omc/final-native-20261019/REPORT.md"
     },
-    "related_regression_passed": 182,
+    "related_regression_passed": 115,
     "home_observation": {
       "state": "COMMITTED_REVIEW_APPROVED",
       "scope_files": 5,
       "explicit_receipt_selection": true,
       "prior_observations_preserved": true,
       "legacy_readiness_preserved": true,
-      "actual_claude_rerun": false,
+      "actual_claude_rerun": true,
       "review_receipt_scope": "isolated_candidate_only",
-      "commit": "d4496e8"
+      "commit": "d4496e8",
+      "actual_claude_rerun_overall_passed": false
     },
     "input_recovery": {
       "state": "COMMITTED_REVIEW_APPROVED",
@@ -2234,10 +2234,166 @@
       "service_ready": false,
       "previous_preparation_status": "blocked_missing_frozen_inputs",
       "classification": "preparation_unavailable_not_new_failure",
+      "review_receipt_scope": "isolated_candidate_only",
+      "historical": true
+    },
+    "latest_omc_attempt": {
+      "provider_calls": 1,
+      "elapsed_seconds": 851.18,
+      "retry_count": 0,
+      "model": "Sonnet4.6/high",
+      "native_exit": 0,
+      "home_motion": "passed",
+      "pixel_passed": 12,
+      "procedure": "failed_observed_product_edit_before_registration",
+      "red_case_truth": "failed_passed_case_registered_as_failure",
+      "report_format": "failed",
+      "final_home_binding": "unknown",
+      "overall": "hold",
+      "tests_passed": 41,
+      "existing_tests_failed": 4,
+      "new_tests_failed": 0,
+      "historical_before_fix": true
+    },
+    "native_red_fix": {
+      "state": "COMMITTED_REVIEW_APPROVED",
+      "commit": "df4adbb",
+      "files": 11,
+      "post_fix_provider_calls": 0,
+      "contract_before_edit": true,
+      "fixed_jest_execution": true,
+      "immutable_call_receipts": true,
+      "registration_return_order_checked": true,
+      "unsupported_bash": "unknown",
+      "tier0_preserved": true,
       "review_receipt_scope": "isolated_candidate_only"
     }
   },
   "current_update_history": [
+    {
+      "date": "2026-10-19",
+      "status": "홈 관측 보완 커밋·검수 입력 복구 완료 · 실제 Claude 재검증 전",
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "goal_progress": "필수 검증의 실제 관측·후보·완료 보고 연결을 로컬에서 보완 · 실제 업무 효과·경쟁 우위 미입증",
+      "commit": "cf38f24",
+      "implementation_commit": "d4496e8",
+      "commit_scope": "d4496e8 홈 관측 구현5파일, cf38f24 검수 입력 복구5파일 로컬 커밋 완료. 이번 로드맵·대시보드4파일은 별도 문서 커밋.",
+      "verification": "검수 입력 복구 격리 후보 리뷰 APPROVE·12개 검사 통과. 원본 해시2개·과거 픽셀 정책 일치, 새 폴더 복원·손상/누락·덮어쓰기/외부 링크 거부·실제 baseline Ad 빌드 확인. 홈 관측 보완의 기존182개/92개 회귀 결과는 별도 이력(중복 포함). 실제 Claude 새 호출0회.",
+      "tests_passed": 12,
+      "tests_skipped": 0,
+      "surface_tests_passed": null,
+      "review_verdict": "APPROVE",
+      "review_scope_files": 5,
+      "next": "복구한 고정 입력으로 새 격리 후보를 준비하고 서버·로그인·광고·후보 결속을 확인한 뒤 실제 Claude 광고 사례를 최대1회 재검증한다. 기존 필수5검증·픽셀12조건·관측 증거 명시 선택·최종 완료 기록 일치를 유지한다. 이번 문서 커밋은 모델 호출을 시작하지 않는다.",
+      "display_next": "복구 입력으로 새 후보 준비 후 실제 Claude 광고 사례1회 재검증",
+      "limitations": "최신 경쟁 실행은 execute 호출·성공 반환 후 수정이 확인됐고 항목별 결과를 채택했다. native 홈 자동 전환의 두 표본은 같아 확인 불가이며 UI 실패로 단정하지 않는다. 운영자 사후 관측으로 대체하지 않는다. 최신 양쪽 동시 비교·속도 우열·일반 생산성·C1/C2/C3 효과는 미입증이며 기존 광고 추적4실패는 유지한다.",
+      "installation": "d4496e8 홈 관측 보완과 cf38f24 검수 입력 복구는 로컬 커밋 완료·미릴리스·일반 사용처 미설치. 기존0.6.0 정상11개 설치는 과거 이력이며 이번에 재감사하지 않았다.",
+      "release_state": {
+        "release_version": "0.6.0",
+        "release_commit": "2f0f521",
+        "consumer_count": 11,
+        "binding_fix_released": false,
+        "binding_fix_reinstalled": false,
+        "pushed": false,
+        "visual_completion_fix_released": false,
+        "visual_completion_fix_reinstalled": false,
+        "peer_trace_released": false,
+        "peer_trace_reinstalled": false,
+        "home_observation_released": false,
+        "home_observation_reinstalled": false
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/index.html",
+        "docs/comparison-dashboard/view.json"
+      ],
+      "local_runtime_evidence": [
+        ".omc/peer-entry-first-20261019/correction-003/REPORT.md",
+        ".omc/home-observation-analysis-20261019/REPORT.md",
+        ".omc/home-motion-review-fix/REPORT.md",
+        ".omc/home-motion-review-fix/review/REVIEW.md",
+        ".omc/home-motion-review-fix/review/approval-receipt.json",
+        ".omc/home-motion-native-20261019/REPORT.md",
+        ".omc/ad-input-recovery-20261019/review/REVIEW.md",
+        ".omc/ad-input-recovery-20261019/review/approval-result.json"
+      ],
+      "observation": {
+        "v3": "DISABLED",
+        "completion": "OBSERVATION_INVALID",
+        "reason": "pending_completion_invalid"
+      },
+      "peer_trace": {
+        "state": "COMMITTED_REVIEW_APPROVED",
+        "commit": "7e417dc",
+        "read_only": true,
+        "prevents_writes": false,
+        "entry": "failed",
+        "execute_calls": 0,
+        "write_order": "failed",
+        "native_quality_checks": "unknown",
+        "comparison_eligible": false,
+        "provenance": "native",
+        "synthetic_tests_are_native_success": false,
+        "review_receipt_scope": "isolated_candidate_only",
+        "historical": true
+      },
+      "peer_attempt": {
+        "executed": true,
+        "provider_calls": 1,
+        "elapsed_seconds": 686.72,
+        "plugin_version": "5.6.2",
+        "plugin_loaded": true,
+        "execute_calls": 1,
+        "entry": "passed",
+        "write_order": "passed",
+        "entry_event": 13,
+        "return_event": 14,
+        "first_code_write_event": 58,
+        "eligible": false,
+        "acceptance": "itemwise_accepted",
+        "native_home_motion": "unknown_samples_equal",
+        "native_pixel_status": "passed_12_of_12_bound_to_candidate",
+        "operator_pixel_passed": 12,
+        "tests_passed": 41,
+        "existing_tests_failed": 4,
+        "new_tests_failed": 0,
+        "retry_count": 0,
+        "historical_previous_attempt_seconds": 740.57
+      },
+      "omc_reference": {
+        "historical": true,
+        "elapsed_seconds": 1070.8,
+        "required_checks_passed": 5,
+        "pixel_passed": 12,
+        "collector_passed": 9,
+        "evidence": ".omc/final-native-20261019/REPORT.md"
+      },
+      "related_regression_passed": 182,
+      "home_observation": {
+        "state": "COMMITTED_REVIEW_APPROVED",
+        "scope_files": 5,
+        "explicit_receipt_selection": true,
+        "prior_observations_preserved": true,
+        "legacy_readiness_preserved": true,
+        "actual_claude_rerun": false,
+        "review_receipt_scope": "isolated_candidate_only",
+        "commit": "d4496e8"
+      },
+      "input_recovery": {
+        "state": "COMMITTED_REVIEW_APPROVED",
+        "commit": "cf38f24",
+        "files": 5,
+        "tests_passed": 12,
+        "historical_hashes_matched": 2,
+        "archive": "evidence/ad-validation-inputs-v1/README.md",
+        "provider_calls": 0,
+        "service_ready": false,
+        "previous_preparation_status": "blocked_missing_frozen_inputs",
+        "classification": "preparation_unavailable_not_new_failure",
+        "review_receipt_scope": "isolated_candidate_only"
+      }
+    },
     {
       "date": "2026-10-19",
       "status": "홈 관측 증거 연결 구현·리뷰 승인 · 실제 Claude 재검증 전",
