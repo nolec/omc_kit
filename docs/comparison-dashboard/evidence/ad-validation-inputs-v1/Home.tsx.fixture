@@ -1,0 +1,137 @@
+import { Ad, DynamicRemoteComponent, flexStyles as FS } from '@sixshop3-fe/sellerhub-store';
+import { Suspense, SwitchCase } from '@sixshop3-fe/shared/components';
+import { useBooleanState } from '@sixshop3-fe/shared/hooks';
+import { ErrorBoundary } from '@sixshop3-fe/store-manager/shared';
+import { DashboardType } from '@sixshop3-fe/store-manager/types';
+
+import { PlanHomeBanner, PlanHomeBannerOnboardingResume, PlanHomeBannerSkeleton } from '../common';
+
+import { NoticesDialog } from './dialogs';
+import {
+  AnnouncementsSection,
+  AnnouncementsSectionSkeleton,
+  OrderCancelStatisticsSection,
+  OrderFulfillmentSection,
+  OrderFulfillmentSectionSkeleton,
+  OrderStatisticsSection,
+  PostingSection,
+  PostingSectionSkeleton,
+  StockSection,
+  StockSectionSkeleton,
+} from './sections';
+import { ArticleSection } from './sections/ArticleSection';
+import { WidgetSkeleton } from './sections/common';
+import { VisitorDeviceSection } from './sections/VisitorDeviceSection';
+import { VisitorDomainSection } from './sections/VisitorDomainSection';
+import { VisitorPageSection } from './sections/VisitorPageSection';
+import { VisitorTrendSection } from './sections/VisitorTrendSection';
+import * as S from './styled';
+
+interface HomeProps {
+  dashboardType: DashboardType;
+  onboardingResume?: PlanHomeBannerOnboardingResume;
+}
+
+const Home = ({ dashboardType, onboardingResume }: HomeProps) => {
+  const [isOpenNoticeDialog, openNoticeDialog, closeNoticeDialog] = useBooleanState(false);
+
+  return (
+    <>
+      <S.HomeWrapper>
+        <SwitchCase
+          value={dashboardType}
+          caseBy={{
+            SHOP: (
+              <S.SectionWrapper gridColumn={1}>
+                <Suspense fallback={<OrderFulfillmentSectionSkeleton />}>
+                  <OrderFulfillmentSection />
+                </Suspense>
+                <Suspense
+                  fallback={
+                    <S.GridContainer>
+                      <StockSectionSkeleton />
+                      <StockSectionSkeleton />
+                    </S.GridContainer>
+                  }
+                >
+                  <S.GridContainer>
+                    <StockSection />
+                    <DynamicRemoteComponent
+                      importFn={() => import('qna/QnaStatistics')}
+                      remoteName='qna'
+                      moduleName='QnaStatistics'
+                      loadingUI={() => <StockSectionSkeleton />}
+                    />
+                  </S.GridContainer>
+                </Suspense>
+                <FS.FlexRow $isFullWidth>
+                  <Suspense fallback={<WidgetSkeleton />}>
+                    <OrderStatisticsSection />
+                  </Suspense>
+                </FS.FlexRow>
+                <FS.FlexRow $isFullWidth>
+                  <Suspense fallback={<WidgetSkeleton />}>
+                    <OrderCancelStatisticsSection />
+                  </Suspense>
+                </FS.FlexRow>
+              </S.SectionWrapper>
+            ),
+            HOMEPAGE: (
+              <S.SectionWrapper gridColumn={1}>
+                <VisitorTrendSection />
+                <VisitorDomainSection />
+                <VisitorPageSection />
+                <VisitorDeviceSection />
+              </S.SectionWrapper>
+            ),
+          }}
+        />
+        <S.SectionWrapper gridColumn={2}>
+          <Suspense fallback={<PlanHomeBannerSkeleton />}>
+            <PlanHomeBanner onboardingResume={onboardingResume} />
+          </Suspense>
+          {/* OMC_TEMPORARY_AD_FIXTURE: 검수 복사본 전용. 운영 CMS 데이터가 아닙니다. */}
+          <Ad
+            variant='card-large'
+            items={[
+              {
+                id: 'omc-temporary-1',
+                title: '검수용 광고 1',
+                href: '#omc-temporary-ad-1',
+                image: {
+                  alt: '검수용 광고 1 · 흰 배경 테두리 확인',
+                  src: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="600"><rect width="1020" height="600" fill="white"/><text x="80" y="290" font-size="54" fill="#333">TEMPORARY AD 1</text><text x="80" y="370" font-size="30" fill="#666">Local inspection only</text></svg>'),
+                },
+              },
+              {
+                id: 'omc-temporary-2',
+                title: '검수용 광고 2',
+                href: '#omc-temporary-ad-2',
+                image: {
+                  alt: '검수용 광고 2 · 자동 전환 확인',
+                  src: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1020" height="600"><rect width="1020" height="600" fill="#eef2ff"/><text x="80" y="290" font-size="54" fill="#333">TEMPORARY AD 2</text><text x="80" y="370" font-size="30" fill="#666">Local inspection only</text></svg>'),
+                },
+              },
+            ]}
+          />
+          <ArticleSection />
+          <Suspense fallback={<AnnouncementsSectionSkeleton />}>
+            <AnnouncementsSection />
+          </Suspense>
+          <Suspense fallback={<PostingSectionSkeleton />}>
+            <PostingSection />
+          </Suspense>
+        </S.SectionWrapper>
+      </S.HomeWrapper>
+      <ErrorBoundary fallback={() => <></>}>
+        <NoticesDialog
+          isOpen={isOpenNoticeDialog}
+          onOpen={openNoticeDialog}
+          onClose={closeNoticeDialog}
+        />
+      </ErrorBoundary>
+    </>
+  );
+};
+
+export default Home;

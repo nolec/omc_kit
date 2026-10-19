@@ -1,0 +1,79 @@
+{
+  "schema_version": "omc-ad-validation-input-archive/v1",
+  "baseline_commit": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
+  "historical_fixture_commit": "3655c8ccbe89d492047a825e96604d46b96daebf",
+  "historical_fixture_commit_available": false,
+  "files": {
+    "build-pixels.cjs": {
+      "sha256": "dfb994a6020f70eae41bf35dea2a0c638024e6cea8652e5a7f93aa10315cacc9",
+      "destination": ".omc/visual-input/build-pixels.cjs"
+    },
+    "Home.tsx.fixture": {
+      "sha256": "cea906960f5e49420c64ce759d9dfc3f7db3f784f379de4f6cfffade7cf58faf",
+      "destination": "libs/store-manager/components/src/lib/home/Home.tsx"
+    }
+  },
+  "visual_policy": {
+    "schema_version": "omc-visual-policy/v1",
+    "criteria": {
+      "viewport": [
+        1440,
+        1000
+      ],
+      "alignment_device_px": 0.01,
+      "segment": [
+        0.2,
+        0.8
+      ],
+      "edge_rgb_range": [
+        226,
+        233
+      ],
+      "inside_rgb_min": 252,
+      "coverage": 0.95,
+      "marker_rgb": [
+        200,
+        20,
+        80
+      ],
+      "marker_tolerance": 3,
+      "claim": "defined_straight_segments_only",
+      "ancestor_transforms": "unsupported"
+    },
+    "variants": [
+      "card-large",
+      "card-medium",
+      "card-small",
+      "banner-small",
+      "banner-large",
+      "banner-landing"
+    ],
+    "dprs": [
+      1,
+      2
+    ],
+    "images_per_variant": 2,
+    "builder_inputs": {
+      ".omc/visual-input/build-pixels.cjs": "dfb994a6020f70eae41bf35dea2a0c638024e6cea8652e5a7f93aa10315cacc9"
+    }
+  },
+  "recovery": {
+    "builder": "Preserved real-ad-aligned builder plus the historically recorded output-path and candidate-root substitutions; original frozen SHA256 matched.",
+    "home": "Common baseline Home.tsx plus the recorded temporary two-item substitution; original frozen SHA256 matched.",
+    "source_records": [
+      "local Codex history 2026-10-14 temporary Home replacement",
+      "local Codex history 2026-10-16 pixel output replacement",
+      "local Codex history 2026-10-19 candidate-root replacement"
+    ],
+    "execution_of_history": false,
+    "method": "Literal strings were extracted and applied; historical shell instructions were not executed."
+  },
+  "boundary": {
+    "provider_calls": 0,
+    "production_cms_changed": false,
+    "runtime_login_preserved": false,
+    "environment_values_included": false,
+    "restored_files_are_runtime_proof": false,
+    "old_reports_modified": false
+  }
+}
