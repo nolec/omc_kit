@@ -17,7 +17,7 @@
 #   "tool_input": { "file_path": "...", ... }
 # }
 # write / write_file / create_file → 모든 경로 세션 검사
-# edit / replace                   → 민감 경로(scripts/, .agent-hooks/ 등)만 검사
+# edit / replace                   → 일반 앱 경로도 동일하게 검사
 
 PYTHON_BIN="python3"
 if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
@@ -44,20 +44,6 @@ print(data.get("tool_name", data.get("tool", "")))
 ' 2>/dev/null
 )"
 
-# ── 민감 경로 판별 함수 ──────────────────────────────────────────────────
-# OMC 시스템 파일(scripts/, .agent-hooks/ 등)은 Edit도 세션 검사 대상
-_is_sensitive_path() {
-  case "$1" in
-    omc_kit/*|scripts/*|.omc/*|\
-    .agent-hooks/*|.agent/*|.agents/*|\
-    .cursor/hooks/*|.cursor/rules/*|.cursor/hooks.json|\
-    .claude/*|.gemini/*|.codex/*|\
-    AGENTS.md|CLAUDE.md|GEMINI.md)
-      return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 # 도구 종류별 처리
 # Claude Code: Write, create_file, Edit, MultiEdit
 # Gemini CLI:  write_file, replace, overwrite_file, edit
@@ -67,24 +53,36 @@ case "${TOOL_NAME}" in
     # 신규/덮어쓰기 파일 생성: 경로 무관 항상 세션 검사
     ;;
   Edit|MultiEdit|replace|edit|str_replace)
-    # 기존 파일 수정: 민감 경로일 때만 세션 검사
-    EARLY_PATH="$(
-      printf '%s' "${INPUT_JSON}" | "${PYTHON_BIN}" -c '
+    # General app edits need the same current-session check as Write.
+    ;;
+  *) exit 0 ;;
+esac
+
+# 파일 경로 추출 (Claude Code: tool_input.file_path / Cursor: params.target_file)
+FILE_PATH="$(
+  printf '%s' "${INPUT_JSON}" | "${PYTHON_BIN}" -c '
 import json, sys
 try:
     data = json.load(sys.stdin)
 except Exception:
-    print(""); raise SystemExit(0)
-inp = data.get("tool_input") or data.get("params") or data.get("input") or {}
-print(inp.get("file_path") or inp.get("target_file") or inp.get("path") or "")
+    print("")
+    raise SystemExit(0)
+params = (data.get("tool_input")
+          or data.get("params")
+          or data.get("input")
+          or {})
+path = (params.get("file_path")
+        or params.get("target_file")
+        or params.get("path")
+        or "")
+print(path)
 ' 2>/dev/null
-    )"
-    if ! _is_sensitive_path "${EARLY_PATH}"; then
-      exit 0
-    fi
-    ;;
-  *) exit 0 ;;
-esac
+)"
+
+if [ -z "${FILE_PATH}" ]; then
+  echo "[OMC BLOCK] 편집 경로를 확인할 수 없습니다"
+  exit "${OMC_BLOCK_EXIT:-2}"
+fi
 
 # ── OMC 세션 동기화 검사 ──────────────────────────────────────────────────
 # 인라인 -c "..." 는 Python 코드 내 따옴표 충돌 위험 → 임시 .py 파일 방식 사용
@@ -93,6 +91,24 @@ _OMC_OUT="$(mktemp -t omc_out_XXXXXX)"
 cat > "${_OMC_PY}" << 'OMCPYEOF'
 import json, sys
 from pathlib import Path
+
+# Tier0 keeps its legacy CONTRACT exemption. The public guard below still
+# applies an explicitly approved native RED policy to these product files.
+path = sys.argv[1].replace("\\", "/")
+sys.path.insert(0, str(Path("scripts").resolve()))
+try:
+    from omc_pipeline_guard import _is_tier0_file
+except (ImportError, SystemExit):
+    # An older guard cannot grant a new exemption. The public check still runs.
+    tier0 = False
+else:
+    try:
+        relative = str(Path(path).resolve().relative_to(Path.cwd().resolve()))
+        tier0 = _is_tier0_file(relative)
+    except (OSError, ValueError):
+        tier0 = False
+if tier0:
+    sys.exit(0)
 
 policy_path = Path(".omc/policy.json")
 latest_path = Path(".omc/state/latest.json")
@@ -139,10 +155,9 @@ if status == "pending":
     sys.exit(0)
 
 # confirmed + contract_confirmed + session_id 일치 = 현재 파이프라인 작업 진행 중 → 통과
-# session_id 가 비어있는 경우(기존 install, 이전 버전 호환)는 일치로 간주
-# 단, latest_session_id 자체가 없으면 현재 세션 연계를 확인할 수 없으므로 통과시키지 않음
+# 현재 세션과 정확히 일치해야 하며 빈 pipeline_session_id는 현재 CONTRACT가 아님
 if status == "confirmed" and contract_confirmed:
-    if latest_session_id and (not pipeline_session_id or pipeline_session_id == latest_session_id):
+    if latest_session_id and pipeline_session_id == latest_session_id:
         sys.exit(0)
     # latest_session_id 없음 또는 session_id 불일치 = 세션 연계 불명확/이전 잔재 → 차단
     msg = f"[OMC BLOCK] 세션 불일치 — pipeline_session={pipeline_session_id[:8]} latest={latest_session_id[:8]}. contract-done 재실행 필요"
@@ -157,7 +172,7 @@ if status == "confirmed":
 # 그 외(빈 문자열, "none", 첫 설치 등) → 세션 미설정 상태로 간주, 통과
 sys.exit(0)
 OMCPYEOF
-"${PYTHON_BIN}" "${_OMC_PY}" > "${_OMC_OUT}" 2>/dev/null
+"${PYTHON_BIN}" "${_OMC_PY}" "${FILE_PATH}" > "${_OMC_OUT}" 2>/dev/null
 OMC_SYNC_EXIT=$?
 rm -f "${_OMC_PY}"
 
@@ -168,31 +183,6 @@ if [ "${OMC_SYNC_EXIT}" -ne 0 ]; then
   exit "${_BLOCK_EXIT}"
 fi
 rm -f "${_OMC_OUT}"
-
-# 파일 경로 추출 (Claude Code: tool_input.file_path / Cursor: params.target_file)
-FILE_PATH="$(
-  printf '%s' "${INPUT_JSON}" | "${PYTHON_BIN}" -c '
-import json, sys
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    print("")
-    raise SystemExit(0)
-params = (data.get("tool_input")
-          or data.get("params")
-          or data.get("input")
-          or {})
-path = (params.get("file_path")
-        or params.get("target_file")
-        or params.get("path")
-        or "")
-print(path)
-' 2>/dev/null
-)"
-
-if [ -z "${FILE_PATH}" ]; then
-  exit 0
-fi
 
 # pipeline guard 실행
 GUARD_OUTPUT="$("${PYTHON_BIN}" "${GUARD}" check "${FILE_PATH}" 2>&1)"

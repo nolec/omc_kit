@@ -121,6 +121,12 @@ def _is_test_file(path_str: str) -> bool:
     normalized = path_str.replace("\\", "/")
     return any(re.search(pat, normalized) for pat in _TEST_PATTERNS)
 
+def _is_tier0_file(path_str: str) -> bool:
+    """Share the existing non-test file exemptions with the pre-edit hook."""
+    return (Path(path_str).suffix in _IMPL_EXTENSIONS
+            and not _is_impl_file(path_str) and not _is_test_file(path_str))
+
+
 def _infer_impl_stem(test_file: str) -> str:
     """테스트 파일 경로에서 구현 파일의 stem을 추론한다."""
     p = Path(test_file)
@@ -185,8 +191,43 @@ def cmd_check(root: Path, file_path: str, bypass: bool = False) -> int:
 
     bypass=True(--autopilot) 이면 신규 파일 생성 차단을 건너뛴다.
     """
+    # Current-session checks also cover existing app files and test edits.
+    latest_path = root / '.omc/state/latest.json'
+    try:
+        latest_record = json.loads(latest_path.read_bytes()) if latest_path.exists() else {}
+        latest = latest_record.get('latest_confirmed_session_id') or latest_record.get('latest_session_id')
+        if latest_record.get('latest_session_id', latest) != latest:
+            print('[PIPELINE] 현재 세션이 확정되지 않았습니다')
+            return 1
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 1
+    state = _load_state(root)
+    try:
+        normalized = Path(_normalize_path(root, file_path))
+        file_path = str(normalized.relative_to(root.resolve()))
+    except (ValueError, OSError):
+        print('[PIPELINE] 외부 또는 해석 불가 편집 경로')
+        return 1
+    if latest and (normalized.suffix in _IMPL_EXTENSIONS):
+        from omc_native_red_evidence import policy
+        try:
+            pin = policy(root) if state.get('basis_sha256') or _basis_path(root, latest).exists() else None
+            tier1 = _is_impl_file(file_path) or _is_test_file(file_path) or pin is not None
+            if tier1 and (not state.get('contract_confirmed') or state.get('session_id') != latest):
+                print('[PIPELINE] 현재 세션 CONTRACT가 필요합니다')
+                return 1
+            if pin and not _is_test_file(file_path):
+                relative = str(normalized.relative_to(root.resolve()))
+                if not any(relative == name or relative.startswith(name.rstrip('/') + '/') for name in pin['product_paths']):
+                    raise ValueError('native_red_product_scope_mismatch')
+                if _red_evidence_problems(root, state) or not state.get('red_evidence'):
+                    raise ValueError('native_red_registration_required')
+                return 0
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            print(f'[PIPELINE] native RED 편집 차단: {exc}')
+            return 1
     if bypass:
-        return 0  # autopilot 모드 → 신규 파일 차단 없음
+        return 0  # legacy mode only; cannot bypass current CONTRACT/native RED
 
     if not _is_impl_file(file_path):
         return 0  # 구현 파일 아님 → 통과
@@ -243,7 +284,10 @@ def cmd_check(root: Path, file_path: str, bypass: bool = False) -> int:
 
 def _red_evidence(root: Path, test_file: str, evidence_file: Path, state: dict,
                   historical: bool = False) -> dict:
-    """Validate caller-recorded case identity, not semantic relevance or execution truth."""
+    """Legacy declarations; opt-in native RED also requires runner/stream custody.
+
+    Neither route authenticates semantic test relevance or hostile local edits.
+    """
     evidence_file = evidence_file.resolve()
     evidence_file.relative_to(root.resolve())
     raw = evidence_file.read_bytes()
@@ -275,6 +319,9 @@ def _red_evidence(root: Path, test_file: str, evidence_file: Path, state: dict,
     data = output.read_bytes()
     if not data.strip() or hashlib.sha256(data).hexdigest() != doc.get("output_sha256"):
         raise ValueError("RED 실제 출력 기록 불일치")
+    if any('native_red' in c for c in basis['checks']):
+        from omc_native_red_evidence import validate_evidence
+        validate_evidence(root, doc, historical=historical)
     return {"file": str(evidence_file.relative_to(root.resolve())), "sha256": hashlib.sha256(raw).hexdigest()}
 
 
@@ -614,6 +661,11 @@ def cmd_approve_checks(root: Path, proposal: Path) -> int:
         revisions = [int(p.stem) for p in directory.glob("*.json") if p.stem.isdigit()]
         if revisions:
             previous = _load_approved_basis(root, sid)
+            old_native = next((c for c in previous['checks'] if 'native_red' in c), None)
+            if old_native is not None:
+                new_native = next((c for c in value['checks'] if c['id'] == old_native['id']), None)
+                if new_native != old_native or value.get('run_id') != previous.get('run_id'):
+                    raise ValueError('native_red_approved_definition_immutable')
             old_home = next((c for c in previous['checks'] if 'home_motion_sha256' in c), None)
             if old_home is not None:
                 new_home = next((c for c in value['checks'] if c['id'] == old_home['id']), None)
@@ -930,6 +982,10 @@ def cmd_check_edit(root: Path, file_path: str, bypass: bool = False) -> int:
     - bypass=True (--autopilot) 이면 무조건 통과
     - 그 외 차단
     """
+    # Public edit CLI must not bypass opt-in native RED for existing files.
+    if (root / '.omc/state/latest.json').is_file():
+        return cmd_check(root, file_path, bypass=bypass)
+
     if bypass:
         return 0  # autopilot 모드 → 통과
 

@@ -24,6 +24,154 @@ STATUSES = {
 }
 
 
+def _single_bash_argv(command: str) -> list[str]:
+    """Recognize a single literal invocation; never interpret composite shell code.
+
+    Conservative V0: substitutions and multiline arguments remain unsupported,
+    even when quoted. Quoted literal punctuation is allowed without evaluation.
+    """
+    if not isinstance(command, str):
+        return []
+    command = command.strip()
+    if any(char in command for char in ('\n', '\r', '$', '`')):
+        return []
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|<>()')
+        lexer.whitespace_split = True
+        lexer.commenters = ''
+        args = list(lexer)
+    except ValueError:
+        return []
+    if any(token and all(char in ';&|<>()' for char in token) for token in args):
+        return []
+    return args
+
+
+def assess_native_procedure(root: Path, rows: list, basis: dict, events_file: Path | None = None) -> dict:
+    """Opt-in result-order audit. Rejected writes are not successful edits.
+
+    Only fixed public commands and documented read-only inspection commands are
+    understood. Arbitrary Bash is unknown; this is not shell containment.
+    """
+    from omc_pipeline_guard import _is_test_file
+    pins = [c['native_red'] for c in basis.get('checks', []) if 'native_red' in c]
+    if not pins:
+        return {'status': 'unknown', 'reason': 'native_red_not_selected'}
+    calls, returned = {}, set()
+    contract_at = red_at = observed_at = None
+    failures, unknown = [], []
+    for index, row in enumerate(rows):
+        for block in row.get('message', {}).get('content', []):
+            if block.get('type') == 'tool_use':
+                ident = block.get('id')
+                if not ident or ident in calls or row.get('type') != 'assistant':
+                    unknown.append('ambiguous_tool_call')
+                    continue
+                calls[ident] = (index, block, contract_at, red_at, observed_at, bool(unknown))
+            elif block.get('type') == 'tool_result':
+                ident = block.get('tool_use_id')
+                if ident not in calls or ident in returned or row.get('type') != 'user':
+                    unknown.append('unlinked_tool_result')
+                    continue
+                returned.add(ident)
+                start, call, prior_contract, prior_red, prior_observation, prior_unresolved = calls[ident]
+                if block.get('is_error'):
+                    continue
+                name, inp = call.get('name'), call.get('input', {})
+                if name in {'Write', 'Edit', 'MultiEdit'}:
+                    path = inp.get('file_path')
+                    if not isinstance(path, str):
+                        unknown.append('edit_path_unknown')
+                        continue
+                    try:
+                        relative = str((root/path).resolve().relative_to(root.resolve()))
+                    except ValueError:
+                        failures.append('edit_outside_candidate')
+                        continue
+                    if relative.startswith('.omc/'):
+                        continue
+                    if prior_contract is None:
+                        (unknown if prior_unresolved else failures).append('edit_before_contract_success')
+                    if not _is_test_file(relative):
+                        if prior_red is None:
+                            (unknown if prior_unresolved else failures).append('product_edit_before_red_success')
+                        if not any(relative == p or relative.startswith(p.rstrip('/')+'/') for p in pins[0]['product_paths']):
+                            failures.append('product_edit_outside_approved_scope')
+                elif name == 'Bash':
+                    args = _single_bash_argv(inp.get('command', ''))
+                    text = block.get('content', '')
+                    if isinstance(text, list):
+                        text = ''.join(c.get('text', '') for c in text if c.get('type') == 'text')
+                    if (len(args) >= 3 and args[:2] == ['python3', 'scripts/omc_pipeline_guard.py']
+                            and not any(a in {';', '&&', '||', '|', '>'} for a in args)):
+                        action = args[2]
+                        if action == 'contract-done' and 'CONTRACT 확인 완료' in text:
+                            contract_at = index
+                        elif action == 'red-done' and 'RED 완료 등록' in text:
+                            if prior_contract is None or prior_observation is None:
+                                (unknown if prior_unresolved else failures).append('red_registration_before_execution_success')
+                            try:
+                                from omc_native_red_evidence import local, validate_evidence
+                                pos = args.index('--evidence-file')
+                                doc = json.loads(local(root, args[pos+1]).read_bytes())
+                                validate_evidence(root, doc, historical=True, events_file=events_file)
+                                if events_file is not None:
+                                    from omc_native_red_evidence import selected
+                                    custody = selected(root, doc['native_receipt'])
+                                    before_request = sum(len(line) for line in events_file.read_bytes().splitlines(keepends=True)[:start])
+                                    if custody['prefix_bytes'] > before_request:
+                                        raise ValueError('native_red_receipt_after_registration_request')
+                                if args[3] != doc['test_file']:
+                                    raise ValueError('native_red_test_mismatch')
+                                red_at = index
+                            except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError) as exc:
+                                failures.append('invalid_native_red_registration:'+str(exc))
+                        elif action not in {'status','check','check-edit','verification-path','verification-template','complete-task','approve-checks','contract-done','red-done'}:
+                            unknown.append('unsupported_guard_command')
+                    elif args == ['python3','scripts/omc_native_red_evidence.py','observe','--target','.']:
+                        if prior_contract is None:
+                            (unknown if prior_unresolved else failures).append('red_execution_before_contract_success')
+                        try:
+                            value = json.loads(text)
+                            if value.get('schema_version') != 'omc-native-red-result/v1':
+                                raise ValueError('observation_unknown')
+                            from omc_native_red_evidence import validate_execution
+                            record = validate_execution(root, value['execution'])
+                            if record['test_exit_code'] != 1 or value.get('failed_cases') != record['failed_cases']:
+                                raise ValueError('observation_mismatch')
+                            observed_at = index
+                        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                            unknown.append('native_red_execution_unknown')
+                    elif args[:2] == ['python3','scripts/omc_native_red_evidence.py'] and len(args) > 2 and args[2] in {'receipts','evidence'}:
+                        pass
+                    elif args in [
+                            ['python3','scripts/omc_home_observation.py','observe','--target','.'],
+                            ['python3','scripts/omc_home_observation.py','receipts','--target','.'],
+                            ['pwd'], ['git','status','--short'], ['git','diff'], ['git','diff','--stat'],
+                            ['git','diff','--cached'], ['git','diff','--name-only']]:
+                        pass  # Fixed observation/inspection commands; no shell expansion.
+                    elif len(args) > 3 and args[:3] == ['git','add','--']:
+                        try:
+                            names = [str((root/name).resolve().relative_to(root.resolve())) for name in args[3:]]
+                            if any('*' in name or not any(name == p or name.startswith(p.rstrip('/')+'/') for p in pins[0]['product_paths']) for name in names):
+                                raise ValueError('unapproved_staging_path')
+                        except ValueError:
+                            unknown.append('unsupported_staging_command')
+                    else:
+                        unknown.append('unsupported_bash_command')
+                elif name not in {'Read','Glob','Grep'}:
+                    unknown.append('unsupported_native_tool')
+    if set(calls)-returned:
+        unknown.append('missing_tool_return')
+    if not any(r.get('type') == 'result' for r in rows):
+        unknown.append('native_stream_incomplete')
+    if contract_at is None or red_at is None or observed_at is None:
+        unknown.append('required_success_return_missing')
+    return {'status': 'failed' if failures else 'unknown' if unknown else 'passed',
+            'reason': ';'.join(dict.fromkeys(failures+unknown)),
+            'contract_return': contract_at, 'observation_return': observed_at, 'red_return': red_at}
+
+
 def collect(root: Path, events_file: Path, sid: str, verification: Path,
             expected: str, output: Path, scope_report: Path | None = None,
             scope_report_sha256: str | None = None, visual_report: Path | None = None,
@@ -235,13 +383,24 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         required['home_motion'] = 'unknown'
         issues.append(str(exc))
+    native_procedure = None
+    try:
+        native_basis = _load_approved_basis(root, sid)
+        if any('native_red' in c for c in native_basis['checks']):
+            native_procedure = assess_native_procedure(root, rows, native_basis, events_file)
+            required['native_procedure'] = native_procedure['status']
+            if native_procedure['reason']:
+                issues.append(native_procedure['reason'])
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        required['native_procedure'] = 'unknown'
+        issues.append(str(exc))
     assessment = {
         'schema_version': 'omc-workflow-validation/v1',
         'final_sha256': hashlib.sha256(final.encode('utf-8')).hexdigest(),
         'events_sha256': hashlib.sha256(source).hexdigest(),
         'required': required, 'format_quality': format_quality,
         'recompare_entry': 'allow' if all(value == 'passed' for value in required.values()) else 'hold',
-        'scope_assessment': scope_assessment,
+        'scope_assessment': scope_assessment, 'native_procedure': native_procedure,
         'visual_assessment': visual_assessment, 'home_assessment': home_assessment,
         'issues': issues, 'observed_verification_paths': observed, 'observed_direct_write_paths': known_writes,
         'boundary': 'Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication.',

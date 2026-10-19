@@ -343,6 +343,19 @@ def run_native(root: Path, argv: list[str]) -> int:
     events.parent.mkdir(parents=True, exist_ok=True)
     if receipt_references(root):
         raise ValueError('home_receipt_already_exists')
+    from omc_native_red_evidence import policy, publish as publish_red
+    pin = policy(root)
+    if pin is not None and local(root, pin['events_path']) != events:
+        raise ValueError('native_red_home_stream_mismatch')
+    publishers = [lambda: publish(root)]
+    if pin is not None:
+        publishers.append(lambda: publish_red(root))
+    return tee_native(root, argv, events, publishers)
+
+
+def tee_native(root: Path, argv: list[str], events: Path, publishers: list) -> int:
+    """Shared complete-line custody for explicitly selected native publishers."""
+    events.parent.mkdir(parents=True, exist_ok=True)
     with events.open('xb') as output:
         with subprocess.Popen(argv, cwd=root, stdout=subprocess.PIPE) as proc:
             try:
@@ -350,7 +363,8 @@ def run_native(root: Path, argv: list[str]) -> int:
                     output.write(line)
                     output.flush()
                     if line.endswith(b'\n'):
-                        publish(root)
+                        for publisher in publishers:
+                            publisher()
                     sys.stdout.buffer.write(line)
                     sys.stdout.buffer.flush()
             except BaseException:

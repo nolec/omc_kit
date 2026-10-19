@@ -254,3 +254,54 @@ def test_missing_or_multiple_actions_remain_format_failure(tmp_path, actions):
     result, dest = collect(tmp_path, raw)
     assert result.returncode == 0
     assert json.loads((dest/'assessment.json').read_text())['format_quality']['single_next_action'] is False
+
+
+def native_call(ident, command=None, file=None):
+    return {'type':'assistant','message':{'content':[{'type':'tool_use','id':ident,'name':'Bash' if command else 'Edit','input':{'command':command} if command else {'file_path':file}}]}}
+
+
+def native_return(ident, text='', error=False):
+    return {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':ident,'content':text,'is_error':error}]}}
+
+
+@pytest.mark.parametrize('kind,expected', [('late','failed'),('parallel','failed'),('rejected','unknown'),('missing','unknown'),('shell','unknown'),('substitution','unknown')])
+def test_native_procedure_uses_success_returns_and_never_erases_early_edits(tmp_path,kind,expected):
+    import omc_workflow_validation as collector
+    contract=native_call('c','python3 scripts/omc_pipeline_guard.py contract-done')
+    returned=native_return('c','CONTRACT 확인 완료')
+    edit=native_call('e',file='libs/Ad.tsx');done=native_return('e')
+    if kind=='late': rows=[edit,done,contract,returned]
+    elif kind=='parallel': rows=[contract,edit,returned,done]
+    elif kind=='rejected': rows=[edit,native_return('e',error=True),contract,returned]
+    elif kind=='substitution': rows=[contract,returned,native_call('b','cat <(touch libs/Ad.tsx)'),native_return('b')]
+    elif kind=='shell': rows=[contract,returned,native_call('b',"python3 -c 'open(\"libs/Ad.tsx\",\"w\").write(\"x\")'"),native_return('b')]
+    else: rows=[contract,returned,edit]
+    result=collector.assess_native_procedure(tmp_path,rows,{'checks':[{'id':'tests','native_red':{'product_paths':['libs']}}]})
+    assert result['status']==expected
+
+
+def test_public_collector_preserves_observed_late_edit_failure(tmp_path):
+    result,dest=collect(tmp_path,response())
+    root=tmp_path/'work';events=tmp_path/'events.jsonl'
+    rows=[json.loads(line) for line in events.read_text().splitlines()]
+    rows=[native_call('early',file='libs/Ad.tsx'),native_return('early')]+rows
+    # Opt in by approving a new definition; existing verdict remains blocked.
+    basis=guard._load_approved_basis(root,'s');basis['revision']=2
+    basis['checks'][0]['native_red']={'product_paths':['libs']}
+    proposal=root/'new-basis.json';proposal.write_text(json.dumps(basis));assert guard.cmd_approve_checks(root,proposal)==0
+    events.write_text('\n'.join(json.dumps(r) for r in rows))
+    subprocess.run([sys.executable,str(SCRIPT),'--target',str(root),'--events-file',str(events),'--session-id','s','--verification-file',str(root/'.omc/verification/s.json'),'--expected-outcome','blocked','--output-dir',str(dest)],capture_output=True)
+    assessment=json.loads((dest/'assessment.json').read_text())
+    assert assessment['required']['native_procedure']=='failed'
+    assert assessment['recompare_entry']=='hold'
+
+
+@pytest.mark.parametrize('suffix', ['\npython3 -c "print(1)"',';python3 -c "print(1)"',' --content "$(touch libs/Ad.tsx)"',' --content "`touch libs/Ad.tsx`"','>libs/Ad.tsx',' #comment\npython3 -c "print(1)"'])
+def test_compound_guard_command_does_not_register_contract_success(tmp_path,suffix):
+    import omc_workflow_validation as v
+    command='python3 scripts/omc_pipeline_guard.py contract-done'+suffix
+    rows=[native_call('c',command),native_return('c','CONTRACT 확인 완료'),{'type':'result'}]
+    assessment=v.assess_native_procedure(tmp_path,rows,{'checks':[{'id':'tests','native_red':{'product_paths':['libs']}}]})
+    assert assessment['contract_return'] is None
+    assert assessment['status']=='unknown'
+    assert 'unsupported_bash_command' in assessment['reason']

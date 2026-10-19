@@ -375,3 +375,30 @@ class TestBlockExitCode(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+class TestGeneralAppEdit(unittest.TestCase):
+    def test_general_app_edit_reaches_guard(self):
+        for path in ['libs/app/Ad.tsx', '/tmp/candidate/libs/app/Ad.tsx']:
+            with self.subTest(path=path):
+                self.assertEqual(_run_check({'tool_name':'Edit','tool_input':{'file_path':path}}, _FAKE_GUARD_BLOCK), 2)
+
+    def test_missing_edit_path_is_not_silently_allowed(self):
+        self.assertEqual(_run_check({'tool_name':'Edit','tool_input':{}}, _FAKE_GUARD_ALLOW), 2)
+
+
+def test_real_hook_preserves_guard_tier0_exemptions(tmp_path):
+    import shutil
+    root=tmp_path
+    (root/'scripts').mkdir();(root/'.omc/state').mkdir(parents=True)
+    for name in ['omc_pipeline_guard.py','omc_native_red_evidence.py']:
+        shutil.copy2(Path(__file__).parent/name,root/'scripts'/name)
+    (root/'.omc/policy.json').write_text(json.dumps({'enforce_confirm':True}))
+    (root/'.omc/state/latest.json').write_text(json.dumps({'latest_session_id':'s','latest_confirmed_session_id':'s','latest_confirmation':{'status':'confirmed'}}))
+    (root/'.omc/pipeline_session.json').write_text(json.dumps({'contract_confirmed':False,'session_id':'s'}))
+    for name in ['src/constants/colors.ts','src/types/model.ts','src/queryKey.ts','src/Ad.styled.ts','vite.config.ts']:
+        p=root/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text('export const value=1;')
+        direct=subprocess.run([sys.executable,'scripts/omc_pipeline_guard.py','check',name],cwd=root,capture_output=True,text=True)
+        hook=subprocess.run(['sh',SCRIPT],cwd=root,input=json.dumps({'tool_name':'Edit','tool_input':{'file_path':name}}),capture_output=True,text=True)
+        assert direct.returncode==0
+        assert hook.returncode==0,(name,hook.stdout,hook.stderr)
+        assert p.read_text()=='export const value=1;'

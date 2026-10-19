@@ -142,3 +142,24 @@ class TestExistingCheckNotBroken:
         guard.cmd_red_done(tmp_root, "src/NewComponent.spec.tsx")
         result = guard.cmd_check(tmp_root, "src/NewComponent.tsx")
         assert result == 0, "RED 등록 후 신규 파일 생성은 허용돼야 함"
+
+@pytest.mark.parametrize('name', ['src/Button.tsx', 'src/Button.spec.tsx'])
+def test_active_session_check_requires_current_contract(tmp_root, name):
+    directory=tmp_root/'.omc/state';directory.mkdir()
+    (directory/'latest.json').write_text(json.dumps({'latest_confirmed_session_id':'current'}))
+    (tmp_root/name).write_text('unchanged')
+    assert guard.cmd_check(tmp_root, str(tmp_root/name)) == 1
+    assert (tmp_root/name).read_text() == 'unchanged'
+    state=guard._empty_state();state.update(contract_confirmed=True,session_id='old')
+    guard._save_state(tmp_root,state)
+    assert guard.cmd_check(tmp_root,name) == 1
+
+
+def test_active_session_test_edit_allowed_after_contract(tmp_root):
+    directory=tmp_root/'.omc/state';directory.mkdir()
+    (directory/'latest.json').write_text(json.dumps({'latest_confirmed_session_id':'current'}))
+    state=guard._empty_state();state.update(contract_confirmed=True,session_id='current')
+    guard._save_state(tmp_root,state)
+    assert guard.cmd_check(tmp_root,'src/Button.spec.tsx') == 0
+    assert guard.cmd_check(tmp_root,'src/Button.styled.ts') == 0
+    assert guard.cmd_check(tmp_root,str(tmp_root.parent/'outside.ts')) == 1

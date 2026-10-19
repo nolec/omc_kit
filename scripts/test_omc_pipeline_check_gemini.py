@@ -78,10 +78,10 @@ class TestGeminiBeforeTool(unittest.TestCase):
         code = _run(_gemini_payload("replace", "scripts/omc_context.py"), _FAKE_GUARD_BLOCK)
         self.assertEqual(code, 2, f"scripts/ replace는 차단돼야 함, 실제: {code}")
 
-    def test_replace_non_sensitive_path_is_allowed(self):
-        """Gemini replace on non-sensitive path(src/) → 허용(exit 0)."""
+    def test_replace_non_sensitive_path_is_checked(self):
+        """Gemini replace on app path(src/) also reaches the blocking guard."""
         code = _run(_gemini_payload("replace", "src/components/Button.tsx"), _FAKE_GUARD_BLOCK)
-        self.assertEqual(code, 0, f"src/ replace는 허용돼야 함, 실제: {code}")
+        self.assertEqual(code, 2, f"src/ replace도 가드 차단을 따라야 함, 실제: {code}")
 
     def test_read_file_is_allowed(self):
         """Gemini read_file 호출 → 허용(exit 0) (읽기 전용)."""
