@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "서버·후보 결속 보완 커밋·리뷰 승인 · 보완 후 실제 재실행 전",
+    "decision": "실행 기록 판정 도구 구현·리뷰·커밋 완료 · 경쟁 비교 표본 부적격",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2046,12 +2046,12 @@
         "historical": true
       }
     ],
-    "next": "동일 광고 baseline·모델·예산·필수 화면12조건·실제 홈 환경을 제공하는 oh-my-claudecode 비교를 준비한다. OMC 전용 명령·기계 출력 형식을 상대에 강요하지 않고 품질·재작업·사람 개입을 독립 평가한다. 실제 실행은 별도 요청 후 진행한다.",
+    "next": "7e417dc 분석 결과를 기준으로 실제 execute 호출·성공 반환을 확인할 재실행 방식과 횟수를 별도 계획에서 확정한다. 현재 분석기는 읽기 전용 관찰이며 실행 생략을 예방하지 않는다. 추가 모델 호출은 별도 승인 전 시작하지 않는다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "동일 화면 검증 계약으로 oh-my-claudecode 비교 준비"
+    "current_priority": "실제 execute 진입을 확인할 재실행 방식·횟수 확정"
   },
   "decision": {
-    "candidate": "필수 화면 검증·완료 기록 연결의 실제 단일 사례 확인",
+    "candidate": "실제 도구 진입·수정 순서·검증을 분리하는 읽기 전용 분석기",
     "candidates": [
       {
         "cost": "검증·도입 부담 미확인",
@@ -2102,62 +2102,35 @@
     ],
     "limit": "단일 사례에서 필수 검증과 최종 완료 기록의 연결을 확인했으며 최신 양쪽 비교·일반 생산성·경쟁 우위는 미입증이다. 픽셀 검사는 정의한 직선 테두리와 이미지 표식에 한정된다. 기존 광고 추적4실패·클릭/숨김 외부 전송·C1 사용자 효과·C2 유지보수 이점·C3 사용자 이해는 미해결 또는 미검증이다. 원문은 기계 계약 제외22물리행으로20행 제한을2행 초과했고 수집기의 report_format은 길이를 검사하지 않는다. 이번 보완은 미릴리스·일반 사용처 미설치이며 기존0.6.0 정상11개 설치 이력은 재감사하지 않았다.",
     "not_done": [
-      "최신 동일 조건 oh-my-claudecode 비교",
-      "사용자 이해·일반 생산성 효과",
-      "보고 길이 제한 준수·자동 검사 보완",
-      "이번 보완 릴리스·재설치"
+      "유효한 최신 동일 조건 oh-my-claudecode 비교",
+      "실제 execute 진입을 확인할 재실행 방식·횟수 확정",
+      "공통5개 품질 검증의 별도 증거 평가",
+      "일반 생산성·경쟁 우위 입증",
+      "7e417dc 릴리스·사용처 설치"
     ],
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "reason": "서버 결속 후 실제 실행에서 절차·서식 통과와 픽셀12개 실패가 함께 관측되어 독립 화면 결과를 native 완료 계약에 직접 연결했다.",
-    "state": "실제 Claude 광고 단일 사례 필수 검증·완료 기록 연결 통과 · 리뷰 APPROVE WITH NOTES",
-    "next": "동일 광고 baseline·모델·예산·필수 화면12조건·실제 홈 환경을 제공하는 oh-my-claudecode 비교를 준비한다. OMC 전용 명령·기계 출력 형식을 상대에 강요하지 않고 품질·재작업·사람 개입을 독립 평가한다. 실제 실행은 별도 요청 후 진행한다."
+    "reason": "동일권한 경쟁 실행에서 플러그인은 로드됐지만 execute 호출 없이 코드가 수정됐다. 사후 화면 통과만으로 도구 활용을 인정하지 않도록 관찰을 분리했다.",
+    "state": "실행 기록 판정 도구 구현·리뷰·커밋 완료 · 경쟁 비교 표본 부적격",
+    "next": "7e417dc 분석 결과를 기준으로 실제 execute 호출·성공 반환을 확인할 재실행 방식과 횟수를 별도 계획에서 확정한다. 현재 분석기는 읽기 전용 관찰이며 실행 생략을 예방하지 않는다. 추가 모델 호출은 별도 승인 전 시작하지 않는다."
   },
   "current_update": {
     "date": "2026-10-19",
-    "status": "실제 Claude 광고 단일 사례 필수 검증·완료 기록 연결 통과 · 리뷰 APPROVE WITH NOTES",
+    "status": "실행 기록 판정 도구 구현·리뷰·커밋 완료 · 경쟁 비교 표본 부적격",
     "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
-    "goal_progress": "필수 검증·완료 기록 연결의 실제 단일 사례 확인 · 효과·경쟁 우위 미입증",
-    "commit": "b67f092",
-    "commit_scope": "실행 기준 b67f092(필수 화면 검증 보완1a3585f 포함); 이번 실행·리뷰는 새 제품 커밋 아님",
-    "verification": "Sonnet4.6/high 실제 Claude1회·1070.8초 정상 종료. 필수5검증·화면12/12·독립 수집9/9 통과, 최종 코드 snapshot·verification·complete-task·원문 일치. 테스트48통과·기존 추적4실패 이름/진단 동일·신규0, 린트0·실제 홈·광고2이미지·자동 전환·후보 서버 결속 통과. 광고3파일 고정 리뷰 APPROVE WITH NOTES.",
-    "tests_passed": 48,
-    "review_verdict": "APPROVE WITH NOTES",
-    "review_scope_files": 3,
-    "next": "동일 광고 baseline·모델·예산·필수 화면12조건·실제 홈 환경을 제공하는 oh-my-claudecode 비교를 준비한다. OMC 전용 명령·기계 출력 형식을 상대에 강요하지 않고 품질·재작업·사람 개입을 독립 평가한다. 실제 실행은 별도 요청 후 진행한다.",
-    "display_next": "동일 화면 검증 계약으로 oh-my-claudecode 비교 준비",
-    "limitations": "단일 사례에서 필수 검증과 최종 완료 기록의 연결을 확인했으며 최신 양쪽 비교·일반 생산성·경쟁 우위는 미입증이다. 픽셀 검사는 정의한 직선 테두리와 이미지 표식에 한정된다. 기존 광고 추적4실패·클릭/숨김 외부 전송·C1 사용자 효과·C2 유지보수 이점·C3 사용자 이해는 미해결 또는 미검증이다. 원문은 기계 계약 제외22물리행으로20행 제한을2행 초과했고 수집기의 report_format은 길이를 검사하지 않는다. 이번 보완은 미릴리스·일반 사용처 미설치이며 기존0.6.0 정상11개 설치 이력은 재감사하지 않았다.",
-    "native_validation": {
-      "executed": true,
-      "elapsed_seconds": 1070.8,
-      "overall": "passed_single_case",
-      "recompare_entry": "allow",
-      "home_validation": "passed",
-      "server_binding": "passed",
-      "report_format": "passed",
-      "native_collector_passed": 9,
-      "native_collector_required": 9,
-      "pixel_passed": 12,
-      "pixel_failed": 0,
-      "native_reported_completion": true,
-      "native_approved_check_count": 5,
-      "visual_was_in_native_completion_contract": true,
-      "post_binding_fix_runs": 3,
-      "post_visual_completion_fix_runs": 2,
-      "reason": "same final candidate bound to five checks, twelve visual cells, complete-task, native final and independent collection",
-      "post_visual_completion_fix_successes": 1,
-      "exit_code": 0,
-      "final_record_matches_candidate": true,
-      "strict_report_line_limit_passed": false,
-      "report_human_physical_lines": 22
-    },
-    "server_binding": {
-      "state": "COMMITTED_REVIEW_APPROVED",
-      "commit": "91c8d4e",
-      "release_installed": false,
-      "query_responses_verified": true,
-      "independent_scope_outcomes": true
-    },
-    "installation": "이번 보완 미릴리스·사용처 미설치. 기존0.6.0 정상11개 설치 이력은 유지하며 재감사하지 않았다.",
+    "goal_progress": "플러그인 로드·실제 진입·수정 순서·품질 검증을 구분하는 관찰 기반 확보 · 실제 비교 효과 미입증",
+    "commit": "7e417dc",
+    "implementation_commit": "7e417dc",
+    "commit_scope": "scripts/omc_peer_trace.py, scripts/test_omc_peer_trace.py 두 파일만 로컬 커밋; 광고 코드 수정 없음",
+    "verification": "신규 CLI 보고 회귀15개 재검증 통과. 인접 회귀 포함81개 통과·2개 건너뜀, TDD 게이트 통과. 원문246개 이벤트에서 execute 호출0회와 성공 반환 없는 코드 수정을 관찰했다. 원문·보존56개 해시 불변.",
+    "tests_passed": 81,
+    "tests_skipped": 2,
+    "surface_tests_passed": 15,
+    "review_verdict": "APPROVE",
+    "review_scope_files": 2,
+    "next": "7e417dc 분석 결과를 기준으로 실제 execute 호출·성공 반환을 확인할 재실행 방식과 횟수를 별도 계획에서 확정한다. 현재 분석기는 읽기 전용 관찰이며 실행 생략을 예방하지 않는다. 추가 모델 호출은 별도 승인 전 시작하지 않는다.",
+    "display_next": "실제 execute 진입을 확인할 재실행 방식·횟수 확정",
+    "limitations": "공통5개 검증은 분석기에서 자동 평가하지 않고 unknown으로 남긴다. Skill 성공 반환은 절차 준수나 품질 통과가 아니다. 이번 경쟁 실행의 플러그인 로드는 확인됐지만 execute 호출0회로 비교 표본 부적격이다. 사후 운영자 픽셀12/12 통과는 실행 중 픽셀unknown을 대체하지 않는다. 도구 우열·속도·일반 생산성 효과는 미입증이다. 기존 광고 추적4실패와 C1/C2/C3 효과 미검증은 유지한다.",
+    "installation": "7e417dc 분석기와 앞선1a3585f 보완은 미릴리스·일반 사용처 미설치. 기존0.6.0 정상11개 설치는 과거 이력이며 재감사하지 않았다.",
     "release_state": {
       "release_version": "0.6.0",
       "release_commit": "2f0f521",
@@ -2166,7 +2139,9 @@
       "binding_fix_reinstalled": false,
       "pushed": false,
       "visual_completion_fix_released": false,
-      "visual_completion_fix_reinstalled": false
+      "visual_completion_fix_reinstalled": false,
+      "peer_trace_released": false,
+      "peer_trace_reinstalled": false
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2175,61 +2150,174 @@
       "docs/comparison-dashboard/view.json"
     ],
     "local_runtime_evidence": [
-      ".omc/final-native-20261019/REPORT.md",
-      ".omc/final-native-20261019/summary.json",
-      ".omc/final-native-20261019/collected/assessment.json",
-      ".omc/final-native-20261019/verification.json",
-      ".omc/final-native-20261019/review/summary.json",
-      ".omc/visual-native-20261019/REPORT.md"
+      ".omc/peer-native-20261019/REPORT.md",
+      ".omc/peer-native-20261019/summary.json",
+      ".omc/peer-trace-analysis/REPORT.md",
+      ".omc/peer-trace-analysis/historical-analysis.json",
+      ".omc/peer-trace-analysis/review/approval-receipt.json"
     ],
     "observation": {
       "v3": "DISABLED",
       "completion": "OBSERVATION_INVALID",
       "reason": "pending_completion_invalid"
     },
-    "visual_completion_binding": {
+    "peer_trace": {
       "state": "COMMITTED_REVIEW_APPROVED",
-      "commit": "1a3585f",
-      "task_profile": "advertising-visual/v1",
-      "required_variants": 6,
-      "required_dprs": [
-        1,
-        2
-      ],
-      "required_cells": 12,
-      "approval_downgrade_blocked": true,
-      "per_report_errors_aggregated": true,
-      "same_completion_collector_verifier": true,
-      "release_installed": false,
-      "native_single_case_verified": true
+      "commit": "7e417dc",
+      "read_only": true,
+      "prevents_writes": false,
+      "entry": "failed",
+      "execute_calls": 0,
+      "write_order": "failed",
+      "native_quality_checks": "unknown",
+      "comparison_eligible": false,
+      "provenance": "native",
+      "synthetic_tests_are_native_success": false,
+      "review_receipt_scope": "isolated_candidate_only"
     },
-    "implementation_commit": "1a3585f",
-    "native_run_history": [
-      {
-        "run_id": "omc-visual-native-20261019-gwyu6kln",
-        "elapsed_seconds": 1201.21,
-        "status": "timeout",
-        "overall": "hold",
-        "pixel_passed": 12,
-        "native_final_present": false,
-        "final_record_matches_candidate": false,
-        "reason": "module path corrected during run; timeout before final record refresh",
-        "evidence": ".omc/visual-native-20261019/REPORT.md"
-      },
-      {
-        "run_id": "omc-final-native-20261019-ozzkk67t",
-        "elapsed_seconds": 1070.8,
-        "status": "exited",
-        "overall": "passed_single_case",
-        "pixel_passed": 12,
-        "native_final_present": true,
-        "final_record_matches_candidate": true,
-        "evidence": ".omc/final-native-20261019/REPORT.md"
-      }
-    ],
-    "review_note": "광고3파일 승인. 최종 원문22물리행으로2행 초과는 경미한 보완점으로 보존."
+    "peer_attempt": {
+      "executed": true,
+      "provider_calls": 1,
+      "elapsed_seconds": 740.57,
+      "plugin_version": "5.6.2",
+      "plugin_loaded": true,
+      "execute_calls": 0,
+      "eligible": false,
+      "native_pixel_status": "unknown_module_not_found",
+      "operator_pixel_passed": 12,
+      "tests_passed": 41,
+      "existing_tests_failed": 4,
+      "new_tests_failed": 0,
+      "retry_count": 0
+    },
+    "omc_reference": {
+      "historical": true,
+      "elapsed_seconds": 1070.8,
+      "required_checks_passed": 5,
+      "pixel_passed": 12,
+      "collector_passed": 9,
+      "evidence": ".omc/final-native-20261019/REPORT.md"
+    }
   },
   "current_update_history": [
+    {
+      "date": "2026-10-19",
+      "status": "실제 Claude 광고 단일 사례 필수 검증·완료 기록 연결 통과 · 리뷰 APPROVE WITH NOTES",
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "goal_progress": "필수 검증·완료 기록 연결의 실제 단일 사례 확인 · 효과·경쟁 우위 미입증",
+      "commit": "b67f092",
+      "commit_scope": "실행 기준 b67f092(필수 화면 검증 보완1a3585f 포함); 이번 실행·리뷰는 새 제품 커밋 아님",
+      "verification": "Sonnet4.6/high 실제 Claude1회·1070.8초 정상 종료. 필수5검증·화면12/12·독립 수집9/9 통과, 최종 코드 snapshot·verification·complete-task·원문 일치. 테스트48통과·기존 추적4실패 이름/진단 동일·신규0, 린트0·실제 홈·광고2이미지·자동 전환·후보 서버 결속 통과. 광고3파일 고정 리뷰 APPROVE WITH NOTES.",
+      "tests_passed": 48,
+      "review_verdict": "APPROVE WITH NOTES",
+      "review_scope_files": 3,
+      "next": "동일 광고 baseline·모델·예산·필수 화면12조건·실제 홈 환경을 제공하는 oh-my-claudecode 비교를 준비한다. OMC 전용 명령·기계 출력 형식을 상대에 강요하지 않고 품질·재작업·사람 개입을 독립 평가한다. 실제 실행은 별도 요청 후 진행한다.",
+      "display_next": "동일 화면 검증 계약으로 oh-my-claudecode 비교 준비",
+      "limitations": "단일 사례에서 필수 검증과 최종 완료 기록의 연결을 확인했으며 최신 양쪽 비교·일반 생산성·경쟁 우위는 미입증이다. 픽셀 검사는 정의한 직선 테두리와 이미지 표식에 한정된다. 기존 광고 추적4실패·클릭/숨김 외부 전송·C1 사용자 효과·C2 유지보수 이점·C3 사용자 이해는 미해결 또는 미검증이다. 원문은 기계 계약 제외22물리행으로20행 제한을2행 초과했고 수집기의 report_format은 길이를 검사하지 않는다. 이번 보완은 미릴리스·일반 사용처 미설치이며 기존0.6.0 정상11개 설치 이력은 재감사하지 않았다.",
+      "native_validation": {
+        "executed": true,
+        "elapsed_seconds": 1070.8,
+        "overall": "passed_single_case",
+        "recompare_entry": "allow",
+        "home_validation": "passed",
+        "server_binding": "passed",
+        "report_format": "passed",
+        "native_collector_passed": 9,
+        "native_collector_required": 9,
+        "pixel_passed": 12,
+        "pixel_failed": 0,
+        "native_reported_completion": true,
+        "native_approved_check_count": 5,
+        "visual_was_in_native_completion_contract": true,
+        "post_binding_fix_runs": 3,
+        "post_visual_completion_fix_runs": 2,
+        "reason": "same final candidate bound to five checks, twelve visual cells, complete-task, native final and independent collection",
+        "post_visual_completion_fix_successes": 1,
+        "exit_code": 0,
+        "final_record_matches_candidate": true,
+        "strict_report_line_limit_passed": false,
+        "report_human_physical_lines": 22
+      },
+      "server_binding": {
+        "state": "COMMITTED_REVIEW_APPROVED",
+        "commit": "91c8d4e",
+        "release_installed": false,
+        "query_responses_verified": true,
+        "independent_scope_outcomes": true
+      },
+      "installation": "이번 보완 미릴리스·사용처 미설치. 기존0.6.0 정상11개 설치 이력은 유지하며 재감사하지 않았다.",
+      "release_state": {
+        "release_version": "0.6.0",
+        "release_commit": "2f0f521",
+        "consumer_count": 11,
+        "binding_fix_released": false,
+        "binding_fix_reinstalled": false,
+        "pushed": false,
+        "visual_completion_fix_released": false,
+        "visual_completion_fix_reinstalled": false
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/index.html",
+        "docs/comparison-dashboard/view.json"
+      ],
+      "local_runtime_evidence": [
+        ".omc/final-native-20261019/REPORT.md",
+        ".omc/final-native-20261019/summary.json",
+        ".omc/final-native-20261019/collected/assessment.json",
+        ".omc/final-native-20261019/verification.json",
+        ".omc/final-native-20261019/review/summary.json",
+        ".omc/visual-native-20261019/REPORT.md"
+      ],
+      "observation": {
+        "v3": "DISABLED",
+        "completion": "OBSERVATION_INVALID",
+        "reason": "pending_completion_invalid"
+      },
+      "visual_completion_binding": {
+        "state": "COMMITTED_REVIEW_APPROVED",
+        "commit": "1a3585f",
+        "task_profile": "advertising-visual/v1",
+        "required_variants": 6,
+        "required_dprs": [
+          1,
+          2
+        ],
+        "required_cells": 12,
+        "approval_downgrade_blocked": true,
+        "per_report_errors_aggregated": true,
+        "same_completion_collector_verifier": true,
+        "release_installed": false,
+        "native_single_case_verified": true
+      },
+      "implementation_commit": "1a3585f",
+      "native_run_history": [
+        {
+          "run_id": "omc-visual-native-20261019-gwyu6kln",
+          "elapsed_seconds": 1201.21,
+          "status": "timeout",
+          "overall": "hold",
+          "pixel_passed": 12,
+          "native_final_present": false,
+          "final_record_matches_candidate": false,
+          "reason": "module path corrected during run; timeout before final record refresh",
+          "evidence": ".omc/visual-native-20261019/REPORT.md"
+        },
+        {
+          "run_id": "omc-final-native-20261019-ozzkk67t",
+          "elapsed_seconds": 1070.8,
+          "status": "exited",
+          "overall": "passed_single_case",
+          "pixel_passed": 12,
+          "native_final_present": true,
+          "final_record_matches_candidate": true,
+          "evidence": ".omc/final-native-20261019/REPORT.md"
+        }
+      ],
+      "review_note": "광고3파일 승인. 최종 원문22물리행으로2행 초과는 경미한 보완점으로 보존.",
+      "historical": true
+    },
     {
       "date": "2026-10-19",
       "status": "필수 화면 검증·완료 판정 결속 보완 커밋·리뷰 승인 · 새 보완 후 Claude 재실행 전",
