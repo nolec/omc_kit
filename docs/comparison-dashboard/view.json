@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "실행 기록 판정 도구 구현·리뷰·커밋 완료 · 경쟁 비교 표본 부적격",
+    "decision": "홈 관측 증거 연결 구현·리뷰 승인 · 실제 Claude 재검증 전",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2046,12 +2046,12 @@
         "historical": true
       }
     ],
-    "next": "7e417dc 분석 결과를 기준으로 실제 execute 호출·성공 반환을 확인할 재실행 방식과 횟수를 별도 계획에서 확정한다. 현재 분석기는 읽기 전용 관찰이며 실행 생략을 예방하지 않는다. 추가 모델 호출은 별도 승인 전 시작하지 않는다.",
+    "next": "리뷰 승인된 구현5파일을 커밋한 뒤 보완된 OMC로 실제 Claude 광고 사례를1회 재검증한다. 새 관측 선택·후보 결속·완료 기록 일치를 확인하며, 이 문서 커밋으로 모델 호출을 시작하지 않는다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "실제 execute 진입을 확인할 재실행 방식·횟수 확정"
+    "current_priority": "구현5파일 커밋 후 실제 Claude 광고 사례1회 재검증"
   },
   "decision": {
-    "candidate": "실제 도구 진입·수정 순서·검증을 분리하는 읽기 전용 분석기",
+    "candidate": "기존 홈 시간 관측과 명시 선택한 호출 증거를 완료 판정에 연결",
     "candidates": [
       {
         "cost": "검증·도입 부담 미확인",
@@ -2093,14 +2093,14 @@
         "historical": true
       }
     ],
-    "completion": "Sonnet4.6/high 실제 Claude1회·1070.8초 정상 종료. 필수5검증·화면12/12·독립 수집9/9 통과, 최종 코드 snapshot·verification·complete-task·원문 일치. 테스트48통과·기존 추적4실패 이름/진단 동일·신규0, 린트0·실제 홈·광고2이미지·자동 전환·후보 서버 결속 통과. 광고3파일 고정 리뷰 APPROVE WITH NOTES.",
+    "completion": "기존 OMC 단일 사례 통과와 최신 경쟁 실행 항목별 채택을 구분한다. 이번 홈 관측 보완은 로컬 구현·리뷰 승인 상태이며 실제 Claude 재실행 전이다.",
     "deliverables": [
       "광고 필수5검증·화면12조건 실제 실행",
       "최종 snapshot·완료 기록·최종 원문 연결",
       "독립 수집9항목·후보 서버 결속 통과",
       "광고3파일 리뷰 APPROVE WITH NOTES"
     ],
-    "limit": "단일 사례에서 필수 검증과 최종 완료 기록의 연결을 확인했으며 최신 양쪽 비교·일반 생산성·경쟁 우위는 미입증이다. 픽셀 검사는 정의한 직선 테두리와 이미지 표식에 한정된다. 기존 광고 추적4실패·클릭/숨김 외부 전송·C1 사용자 효과·C2 유지보수 이점·C3 사용자 이해는 미해결 또는 미검증이다. 원문은 기계 계약 제외22물리행으로20행 제한을2행 초과했고 수집기의 report_format은 길이를 검사하지 않는다. 이번 보완은 미릴리스·일반 사용처 미설치이며 기존0.6.0 정상11개 설치 이력은 재감사하지 않았다.",
+    "limit": "최신 경쟁 실행은 execute 호출·성공 반환 후 수정이 확인됐고 항목별 결과를 채택했다. native 홈 자동 전환의 두 표본은 같아 확인 불가이며 UI 실패로 단정하지 않는다. 운영자 사후 관측으로 대체하지 않는다. 최신 양쪽 동시 비교·속도 우열·일반 생산성·C1/C2/C3 효과는 미입증이며 기존 광고 추적4실패는 유지한다.",
     "not_done": [
       "유효한 최신 동일 조건 oh-my-claudecode 비교",
       "실제 execute 진입을 확인할 재실행 방식·횟수 확정",
@@ -2109,28 +2109,28 @@
       "7e417dc 릴리스·사용처 설치"
     ],
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "reason": "동일권한 경쟁 실행에서 플러그인은 로드됐지만 execute 호출 없이 코드가 수정됐다. 사후 화면 통과만으로 도구 활용을 인정하지 않도록 관찰을 분리했다.",
-    "state": "실행 기록 판정 도구 구현·리뷰·커밋 완료 · 경쟁 비교 표본 부적격",
-    "next": "7e417dc 분석 결과를 기준으로 실제 execute 호출·성공 반환을 확인할 재실행 방식과 횟수를 별도 계획에서 확정한다. 현재 분석기는 읽기 전용 관찰이며 실행 생략을 예방하지 않는다. 추가 모델 호출은 별도 승인 전 시작하지 않는다."
+    "reason": "실제 홈 이동 확인 주장과 원문 관측의 연결을 보완했다. 기존 준비 판정은 유지하고 재관측 증거는 호출별로 보존해 명시적으로 선택한다.",
+    "state": "홈 관측 증거 연결 구현·리뷰 승인 · 실제 Claude 재검증 전",
+    "next": "리뷰 승인된 구현5파일을 커밋한 뒤 보완된 OMC로 실제 Claude 광고 사례를1회 재검증한다. 새 관측 선택·후보 결속·완료 기록 일치를 확인하며, 이 문서 커밋으로 모델 호출을 시작하지 않는다."
   },
   "current_update": {
     "date": "2026-10-19",
-    "status": "실행 기록 판정 도구 구현·리뷰·커밋 완료 · 경쟁 비교 표본 부적격",
+    "status": "홈 관측 증거 연결 구현·리뷰 승인 · 실제 Claude 재검증 전",
     "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
-    "goal_progress": "플러그인 로드·실제 진입·수정 순서·품질 검증을 구분하는 관찰 기반 확보 · 실제 비교 효과 미입증",
-    "commit": "7e417dc",
-    "implementation_commit": "7e417dc",
-    "commit_scope": "scripts/omc_peer_trace.py, scripts/test_omc_peer_trace.py 두 파일만 로컬 커밋; 광고 코드 수정 없음",
-    "verification": "신규 CLI 보고 회귀15개 재검증 통과. 인접 회귀 포함81개 통과·2개 건너뜀, TDD 게이트 통과. 원문246개 이벤트에서 execute 호출0회와 성공 반환 없는 코드 수정을 관찰했다. 원문·보존56개 해시 불변.",
-    "tests_passed": 81,
-    "tests_skipped": 2,
-    "surface_tests_passed": 15,
+    "goal_progress": "필수 검증의 실제 관측·후보·완료 보고 연결을 로컬에서 보완 · 실제 업무 효과·경쟁 우위 미입증",
+    "commit": null,
+    "implementation_commit": null,
+    "commit_scope": "홈 관측 구현5파일은 리뷰 승인·스테이징 상태로 미커밋. 이번 문서 정리는 로드맵·대시보드4파일만 커밋한다.",
+    "verification": "리뷰 보완 회귀182개 통과. 마지막 호출별 분리 경계 및 격리 후보 재리뷰에서 홈·완료92개 통과(묶음 간 중복). 실제 격리 브라우저·문법·TDD 게이트 통과. 실제 Claude 재실행은 미수행.",
+    "tests_passed": 92,
+    "tests_skipped": 0,
+    "surface_tests_passed": null,
     "review_verdict": "APPROVE",
-    "review_scope_files": 2,
-    "next": "7e417dc 분석 결과를 기준으로 실제 execute 호출·성공 반환을 확인할 재실행 방식과 횟수를 별도 계획에서 확정한다. 현재 분석기는 읽기 전용 관찰이며 실행 생략을 예방하지 않는다. 추가 모델 호출은 별도 승인 전 시작하지 않는다.",
-    "display_next": "실제 execute 진입을 확인할 재실행 방식·횟수 확정",
-    "limitations": "공통5개 검증은 분석기에서 자동 평가하지 않고 unknown으로 남긴다. Skill 성공 반환은 절차 준수나 품질 통과가 아니다. 이번 경쟁 실행의 플러그인 로드는 확인됐지만 execute 호출0회로 비교 표본 부적격이다. 사후 운영자 픽셀12/12 통과는 실행 중 픽셀unknown을 대체하지 않는다. 도구 우열·속도·일반 생산성 효과는 미입증이다. 기존 광고 추적4실패와 C1/C2/C3 효과 미검증은 유지한다.",
-    "installation": "7e417dc 분석기와 앞선1a3585f 보완은 미릴리스·일반 사용처 미설치. 기존0.6.0 정상11개 설치는 과거 이력이며 재감사하지 않았다.",
+    "review_scope_files": 5,
+    "next": "리뷰 승인된 구현5파일을 커밋한 뒤 보완된 OMC로 실제 Claude 광고 사례를1회 재검증한다. 새 관측 선택·후보 결속·완료 기록 일치를 확인하며, 이 문서 커밋으로 모델 호출을 시작하지 않는다.",
+    "display_next": "구현5파일 커밋 후 실제 Claude 광고 사례1회 재검증",
+    "limitations": "최신 경쟁 실행은 execute 호출·성공 반환 후 수정이 확인됐고 항목별 결과를 채택했다. native 홈 자동 전환의 두 표본은 같아 확인 불가이며 UI 실패로 단정하지 않는다. 운영자 사후 관측으로 대체하지 않는다. 최신 양쪽 동시 비교·속도 우열·일반 생산성·C1/C2/C3 효과는 미입증이며 기존 광고 추적4실패는 유지한다.",
+    "installation": "이번 홈 관측 보완은 미커밋·미릴리스·일반 사용처 미설치. 앞선7e417dc·1a3585f도 미릴리스 이력 유지. 기존0.6.0 정상11개 설치는 과거 이력이며 재감사하지 않았다.",
     "release_state": {
       "release_version": "0.6.0",
       "release_commit": "2f0f521",
@@ -2141,7 +2141,9 @@
       "visual_completion_fix_released": false,
       "visual_completion_fix_reinstalled": false,
       "peer_trace_released": false,
-      "peer_trace_reinstalled": false
+      "peer_trace_reinstalled": false,
+      "home_observation_released": false,
+      "home_observation_reinstalled": false
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2150,16 +2152,16 @@
       "docs/comparison-dashboard/view.json"
     ],
     "local_runtime_evidence": [
-      ".omc/peer-native-20261019/REPORT.md",
-      ".omc/peer-native-20261019/summary.json",
-      ".omc/peer-trace-analysis/REPORT.md",
-      ".omc/peer-trace-analysis/historical-analysis.json",
-      ".omc/peer-trace-analysis/review/approval-receipt.json"
+      ".omc/peer-entry-first-20261019/correction-003/REPORT.md",
+      ".omc/home-observation-analysis-20261019/REPORT.md",
+      ".omc/home-motion-review-fix/REPORT.md",
+      ".omc/home-motion-review-fix/review/REVIEW.md",
+      ".omc/home-motion-review-fix/review/approval-receipt.json"
     ],
     "observation": {
       "v3": "DISABLED",
       "completion": "OBSERVATION_INVALID",
-      "reason": "pending_completion_invalid"
+      "reason": "live_observation_not_enabled"
     },
     "peer_trace": {
       "state": "COMMITTED_REVIEW_APPROVED",
@@ -2173,22 +2175,31 @@
       "comparison_eligible": false,
       "provenance": "native",
       "synthetic_tests_are_native_success": false,
-      "review_receipt_scope": "isolated_candidate_only"
+      "review_receipt_scope": "isolated_candidate_only",
+      "historical": true
     },
     "peer_attempt": {
       "executed": true,
       "provider_calls": 1,
-      "elapsed_seconds": 740.57,
+      "elapsed_seconds": 686.72,
       "plugin_version": "5.6.2",
       "plugin_loaded": true,
-      "execute_calls": 0,
+      "execute_calls": 1,
+      "entry": "passed",
+      "write_order": "passed",
+      "entry_event": 13,
+      "return_event": 14,
+      "first_code_write_event": 58,
       "eligible": false,
-      "native_pixel_status": "unknown_module_not_found",
+      "acceptance": "itemwise_accepted",
+      "native_home_motion": "unknown_samples_equal",
+      "native_pixel_status": "passed_12_of_12_bound_to_candidate",
       "operator_pixel_passed": 12,
       "tests_passed": 41,
       "existing_tests_failed": 4,
       "new_tests_failed": 0,
-      "retry_count": 0
+      "retry_count": 0,
+      "historical_previous_attempt_seconds": 740.57
     },
     "omc_reference": {
       "historical": true,
@@ -2197,9 +2208,106 @@
       "pixel_passed": 12,
       "collector_passed": 9,
       "evidence": ".omc/final-native-20261019/REPORT.md"
+    },
+    "related_regression_passed": 182,
+    "home_observation": {
+      "state": "IMPLEMENTED_REVIEW_APPROVED_NOT_COMMITTED",
+      "scope_files": 5,
+      "explicit_receipt_selection": true,
+      "prior_observations_preserved": true,
+      "legacy_readiness_preserved": true,
+      "actual_claude_rerun": false,
+      "review_receipt_scope": "isolated_candidate_only"
     }
   },
   "current_update_history": [
+    {
+      "date": "2026-10-19",
+      "status": "실행 기록 판정 도구 구현·리뷰·커밋 완료 · 경쟁 비교 표본 부적격",
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "goal_progress": "플러그인 로드·실제 진입·수정 순서·품질 검증을 구분하는 관찰 기반 확보 · 실제 비교 효과 미입증",
+      "commit": "7e417dc",
+      "implementation_commit": "7e417dc",
+      "commit_scope": "scripts/omc_peer_trace.py, scripts/test_omc_peer_trace.py 두 파일만 로컬 커밋; 광고 코드 수정 없음",
+      "verification": "신규 CLI 보고 회귀15개 재검증 통과. 인접 회귀 포함81개 통과·2개 건너뜀, TDD 게이트 통과. 원문246개 이벤트에서 execute 호출0회와 성공 반환 없는 코드 수정을 관찰했다. 원문·보존56개 해시 불변.",
+      "tests_passed": 81,
+      "tests_skipped": 2,
+      "surface_tests_passed": 15,
+      "review_verdict": "APPROVE",
+      "review_scope_files": 2,
+      "next": "7e417dc 분석 결과를 기준으로 실제 execute 호출·성공 반환을 확인할 재실행 방식과 횟수를 별도 계획에서 확정한다. 현재 분석기는 읽기 전용 관찰이며 실행 생략을 예방하지 않는다. 추가 모델 호출은 별도 승인 전 시작하지 않는다.",
+      "display_next": "실제 execute 진입을 확인할 재실행 방식·횟수 확정",
+      "limitations": "공통5개 검증은 분석기에서 자동 평가하지 않고 unknown으로 남긴다. Skill 성공 반환은 절차 준수나 품질 통과가 아니다. 이번 경쟁 실행의 플러그인 로드는 확인됐지만 execute 호출0회로 비교 표본 부적격이다. 사후 운영자 픽셀12/12 통과는 실행 중 픽셀unknown을 대체하지 않는다. 도구 우열·속도·일반 생산성 효과는 미입증이다. 기존 광고 추적4실패와 C1/C2/C3 효과 미검증은 유지한다.",
+      "installation": "7e417dc 분석기와 앞선1a3585f 보완은 미릴리스·일반 사용처 미설치. 기존0.6.0 정상11개 설치는 과거 이력이며 재감사하지 않았다.",
+      "release_state": {
+        "release_version": "0.6.0",
+        "release_commit": "2f0f521",
+        "consumer_count": 11,
+        "binding_fix_released": false,
+        "binding_fix_reinstalled": false,
+        "pushed": false,
+        "visual_completion_fix_released": false,
+        "visual_completion_fix_reinstalled": false,
+        "peer_trace_released": false,
+        "peer_trace_reinstalled": false
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/index.html",
+        "docs/comparison-dashboard/view.json"
+      ],
+      "local_runtime_evidence": [
+        ".omc/peer-native-20261019/REPORT.md",
+        ".omc/peer-native-20261019/summary.json",
+        ".omc/peer-trace-analysis/REPORT.md",
+        ".omc/peer-trace-analysis/historical-analysis.json",
+        ".omc/peer-trace-analysis/review/approval-receipt.json"
+      ],
+      "observation": {
+        "v3": "DISABLED",
+        "completion": "OBSERVATION_INVALID",
+        "reason": "pending_completion_invalid"
+      },
+      "peer_trace": {
+        "state": "COMMITTED_REVIEW_APPROVED",
+        "commit": "7e417dc",
+        "read_only": true,
+        "prevents_writes": false,
+        "entry": "failed",
+        "execute_calls": 0,
+        "write_order": "failed",
+        "native_quality_checks": "unknown",
+        "comparison_eligible": false,
+        "provenance": "native",
+        "synthetic_tests_are_native_success": false,
+        "review_receipt_scope": "isolated_candidate_only"
+      },
+      "peer_attempt": {
+        "executed": true,
+        "provider_calls": 1,
+        "elapsed_seconds": 740.57,
+        "plugin_version": "5.6.2",
+        "plugin_loaded": true,
+        "execute_calls": 0,
+        "eligible": false,
+        "native_pixel_status": "unknown_module_not_found",
+        "operator_pixel_passed": 12,
+        "tests_passed": 41,
+        "existing_tests_failed": 4,
+        "new_tests_failed": 0,
+        "retry_count": 0
+      },
+      "omc_reference": {
+        "historical": true,
+        "elapsed_seconds": 1070.8,
+        "required_checks_passed": 5,
+        "pixel_passed": 12,
+        "collector_passed": 9,
+        "evidence": ".omc/final-native-20261019/REPORT.md"
+      },
+      "historical": true
+    },
     {
       "date": "2026-10-19",
       "status": "실제 Claude 광고 단일 사례 필수 검증·완료 기록 연결 통과 · 리뷰 APPROVE WITH NOTES",
