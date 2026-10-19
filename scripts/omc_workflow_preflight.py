@@ -22,15 +22,23 @@ BROWSER_QUERY = """(async()=>{
  const ads=[...document.querySelectorAll('[data-testid=ad-card-large]')];
  const images=ads.flatMap(e=>[...e.querySelectorAll('img')]);
  const loaded=i=>i.complete&&i.naturalWidth>0;
- const tracks=ads.flatMap(ad=>[...ad.querySelectorAll('[data-testid^=ad-track]')].map(track=>({ad,track,states:new Set()})));
+ const start=performance.now();
+ const tracks=ads.flatMap((ad,a)=>[...ad.querySelectorAll('[data-testid^=ad-track]')].map((track,t)=>({ad,track,card_id:String(a),track_id:a+':'+t,samples:[]})));
  for(let i=0;i<6;i++){
-  for(const {ad,track,states} of tracks){
-   if(ad.isConnected&&ad.contains(track))states.add(getComputedStyle(track).transform);
+  for(const item of tracks){
+   const connected=item.ad.isConnected&&item.track.isConnected&&item.ad.contains(item.track);
+   item.samples.push({elapsed_ms:performance.now()-start,connected,
+    images_loaded:[...item.ad.querySelectorAll('img')].filter(loaded).length,
+    transform:connected?getComputedStyle(item.track).transform:''});
   }
-  await new Promise(r=>setTimeout(r,800));
+  const until=performance.now()+800;
+  while(performance.now()<until)await new Promise(r=>setTimeout(r,Math.ceil(until-performance.now())));
  }
- const auto_transition=tracks.some(({ad,track,states})=>ad.isConnected&&ad.contains(track)&&states.size>1&&[...ad.querySelectorAll('img')].filter(loaded).length>=2);
- return {url:location.href,images_loaded:images.filter(loaded).length,auto_transition,script_urls:[...document.scripts].map(s=>s.src).filter(Boolean)};
+ // Preserve operator readiness: final image load and a change while connected.
+ // The opt-in completion evaluator separately requires six fully valid samples.
+ const auto_transition=tracks.some(({ad,track,samples})=>ad.isConnected&&ad.contains(track)&&[...ad.querySelectorAll('img')].filter(loaded).length>=2&&new Set(samples.filter(s=>s.connected).map(s=>s.transform)).size>1);
+ return {url:location.href,images_loaded:images.filter(loaded).length,auto_transition,script_urls:[...document.scripts].map(s=>s.src).filter(Boolean),
+  tracks:tracks.map(({card_id,track_id,samples})=>({card_id,track_id,samples}))};
 })()"""
 
 
@@ -103,7 +111,7 @@ def validate_browser_config(config: dict) -> None:
     origin.port
 
 
-def browser_readiness(config: dict) -> dict:
+def browser_observation(config: dict) -> dict:
     validate_browser_config(config)
     request = urllib.request.Request(config['control_url'], data=json.dumps(
         {'op': 'evaluate', 'args': [BROWSER_QUERY]}).encode(), headers={'Content-Type': 'application/json'})
@@ -113,6 +121,11 @@ def browser_readiness(config: dict) -> dict:
             return None
     with urllib.request.build_opener(NoRedirect).open(request, timeout=15) as response:
         value = json.load(response)
+    return value
+
+
+def browser_readiness(config: dict) -> dict:
+    value = browser_observation(config)
     if (not isinstance(value, dict) or value.get('url') != config['origin'] + config['home_path']
             or type(value.get('images_loaded')) is not int or value['images_loaded'] < config['min_images']
             or value.get('auto_transition') is not True):
@@ -411,6 +424,9 @@ def main(argv=None) -> int:
         if report['status'] != 'ready':
             return 2
         if args.launch:
+            if (root/'.omc/home-motion-requirement.json').exists():
+                from omc_home_observation import run_native
+                return run_native(root, args.launch)
             return subprocess.run(args.launch, cwd=root).returncode
         return 0
     except (OSError, ValueError, TypeError) as exc:

@@ -222,6 +222,19 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
         if visual_report is not None or visual_report_sha256 is not None:
             required['visual_controlled'] = 'unknown'
         issues.append(str(exc))
+    home_assessment = None
+    try:
+        from omc_home_observation import assess_completion_home
+        home_record = json.loads(verification.read_bytes())
+        home_assessment = assess_completion_home(root, _load_approved_basis(root, sid), events_file=events_file,
+                                                 submission=home_record.get('home_motion_result'))
+        if home_assessment is not None:
+            required['home_motion'] = home_assessment['status']
+            if home_assessment['reason']:
+                issues.append(home_assessment['reason'])
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        required['home_motion'] = 'unknown'
+        issues.append(str(exc))
     assessment = {
         'schema_version': 'omc-workflow-validation/v1',
         'final_sha256': hashlib.sha256(final.encode('utf-8')).hexdigest(),
@@ -229,7 +242,7 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
         'required': required, 'format_quality': format_quality,
         'recompare_entry': 'allow' if all(value == 'passed' for value in required.values()) else 'hold',
         'scope_assessment': scope_assessment,
-        'visual_assessment': visual_assessment,
+        'visual_assessment': visual_assessment, 'home_assessment': home_assessment,
         'issues': issues, 'observed_verification_paths': observed, 'observed_direct_write_paths': known_writes,
         'boundary': 'Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication.',
     }

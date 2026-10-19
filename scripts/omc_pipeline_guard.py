@@ -608,10 +608,17 @@ def cmd_approve_checks(root: Path, proposal: Path) -> int:
         value = _validate_basis(json.loads(proposal.read_text(encoding="utf-8")), sid)
         from omc_visual_check import enforce_requirement, AD_PROFILE
         enforce_requirement(root, value)
+        from omc_home_observation import enforce_requirement as enforce_home
+        enforce_home(root, value)
         directory = _basis_path(root, sid)
         revisions = [int(p.stem) for p in directory.glob("*.json") if p.stem.isdigit()]
         if revisions:
             previous = _load_approved_basis(root, sid)
+            old_home = next((c for c in previous['checks'] if 'home_motion_sha256' in c), None)
+            if old_home is not None:
+                new_home = next((c for c in value['checks'] if c['id'] == old_home['id']), None)
+                if new_home != old_home or value.get('run_id') != previous.get('run_id'):
+                    raise ValueError('home_approved_definition_immutable')
             if previous.get('task_profile') == AD_PROFILE:
                 for key in ('task_profile', 'run_id'):
                     if value.get(key) != previous.get(key):
@@ -843,6 +850,16 @@ def evaluate_task_completion(root: Path, verification_file: Path, expected_sessi
             mismatch = mismatch or visual_assessment['status'] == 'mismatch'
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         problems.append('visual: ' + str(exc))
+    home_assessment = None
+    try:
+        from omc_home_observation import assess_completion_home
+        home_assessment = assess_completion_home(root, _load_approved_basis(root, sid),
+                                                 submission=record.get('home_motion_result'))
+        if home_assessment and home_assessment['status'] != 'passed':
+            problems.append('home: ' + str(home_assessment['reason']))
+            mismatch = mismatch or home_assessment['status'] == 'mismatch'
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        problems.append('home: ' + str(exc))
     if not required:
         problems.append("CONTRACT에 필수 검증 목록이 없습니다")
     checks = record.get("checks", {})
@@ -884,7 +901,7 @@ def evaluate_task_completion(root: Path, verification_file: Path, expected_sessi
     registered = (bool(sid) and state.get("contract_confirmed") is True and state.get("session_id") == sid
                   and state.get("red_session_id") == sid and bool(state.get("red_done_tests")) and not red_problems)
     return {"outcome": "blocked" if blocked else "done", "first": first,
-            "problems": problems, "registered": registered, "visual_assessment": visual_assessment}
+            "problems": problems, "registered": registered, "visual_assessment": visual_assessment, "home_assessment": home_assessment}
 
 
 def cmd_complete_task(root: Path, verification_file: Path) -> int:
