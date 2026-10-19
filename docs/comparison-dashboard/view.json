@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "절차·RED 근거 보완 커밋 완료 · 보완 후 실제 Claude 재검증 전",
+    "decision": "명령·진단·판정 보완 커밋 완료 · 새 보완 후 실제 Claude 재검증 전",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2046,12 +2046,12 @@
         "historical": true
       }
     ],
-    "next": "df4adbb를 포함한 새 격리 후보에서 고정 baseline·모델·필수5검증·픽셀12조건을 유지하고 native RED 실행·영수증 선택·등록 성공 반환 후 제품 수정을 확인한다. 보고 형식·최종 실제 홈 결속의 미해결 조건도 사전에 고정한 뒤 최대1회 실행한다. 이번 최신화로 모델 호출을 시작하지 않는다.",
+    "next": "9e21b70을 포함한 새 격리 후보에서 고정 baseline·Sonnet4.6/high·필수5검증·픽셀12조건을 유지하고 실제 Claude를 최대1회·자동 재시도0으로 실행한다. 실제 RED 실행→호출 영수증→등록 성공→제품 수정, 최종 실제 홈과 완료 기록·모델 보고 일치를 확인한다. 이번 문서 최신화로 모델 호출을 시작하지 않는다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "df4adbb 후보로 실제 Claude 광고 사례1회 재검증"
+    "current_priority": "9e21b70 후보로 실제 Claude 광고 사례 1회 재검증"
   },
   "decision": {
-    "candidate": "실제 신규 실패·호출 영수증·성공 반환 순서에 연결된 native RED 가드",
+    "candidate": "단일 관측 명령 인식·증거 진단·공식 판정과 모델 보고 구분",
     "candidates": [
       {
         "cost": "검증·도입 부담 미확인",
@@ -2093,44 +2093,44 @@
         "historical": true
       }
     ],
-    "completion": "절차·RED 가드 구현·리뷰·커밋 완료. 보완 후 실제 Claude 재검증은 미실행이다.",
+    "completion": "명령·진단·보고 보완8파일 구현·리뷰·9e21b70 커밋 완료. 새 보완 후 실제 Claude 재검증은 미실행이다.",
     "deliverables": [
-      "native RED 실제 Jest 실패·baseline·원문 해시 대조",
-      "등록 성공 반환 이전 제품 수정 탐지",
-      "복합 셸 unknown·Tier0 허용 및 명시 RED 차단 유지",
-      "11파일 APPROVE·df4adbb 커밋"
+      "단일 명령 끝 2>&1 인식과 복합 명령 거부",
+      "읽기 전용 진단·반환 대기 우선 안내",
+      "공식 판정과 모델 원문 구분·불일치 보류 유지",
+      "8파일 최종 APPROVE·9e21b70 로컬 커밋"
     ],
-    "limit": "홈 관측·픽셀 통과와 전체 절차 준수는 별개다. 보완 후 실제 Claude 실행0회. 보고 첫 줄/길이와 최종 실제 홈 결속 문제는 별도 미해결이다. 최신 양쪽 동등 비교·속도 우열·일반 생산성·C1/C2/C3 효과는 미입증이며 기존 광고 추적4실패는 유지한다. 로컬 근거 일관성 검사이며 테스트 의미·악의적 동일 계정 변조·Codex 물리 훅을 인증하지 않는다.",
+    "limit": "확인된 개선은 유효한 RED가 없을 때 제품 편집을 차단한 것이다. 421.02초 실행은 새 가드 df4adbb 이후지만 명령·진단 보완9e21b70 이전이다. 9e21b70 이후 실제 Claude 호출0회이며 정상 완료 경로의 실제 모델 성공은 미검증이다. 보고 형식은 통과했지만 모델 상태 문장은 공식 판정과 달랐다. native_procedure는 unknown이며 실제 제품 선행 편집으로 단정하지 않는다. 최신 동등 경쟁 비교·속도 우열·일반 생산성·C1/C2/C3 효과는 미입증, 기존 광고 추적4실패 유지. 로컬 해시·수집 검사는 의미 적합성이나 악의적 변조 방어를 인증하지 않는다.",
     "not_done": [
-      "df4adbb 보완 후 실제 Claude 단일 사례 재검증",
-      "보고 형식·최종 실제 홈 결속 미해결 조건 확인",
+      "9e21b70 보완 후 실제 Claude 단일 사례 재검증",
+      "모델 실행의 정상 RED 등록·필수5검증·픽셀12·최종 홈·정확한 보고 연결 확인",
       "동일 조건 oh-my-claudecode 최신 비교",
-      "df4adbb 릴리스·사용처 재설치",
+      "9e21b70 릴리스·일반 사용처 재설치",
       "일반 생산성·경쟁 우위·C1/C2/C3 효과 입증"
     ],
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "reason": "검수 입력 복구 후 Sonnet4.6/high 실제 Claude1회·851.18초·정상 종료·자동 재시도0회. 호출별 홈 관측 영수증 명시 선택과 픽셀12/12는 통과했다. 제품 편집이 CONTRACT·RED 등록보다 먼저였고 실제 통과한 케이스가 RED 실패로 등록됐다. 보고 형식 failed·최종 실제 홈 결속 unknown으로 전체 판정 hold를 유지한다.",
-    "state": "절차·RED 근거 보완 커밋 완료 · 보완 후 실제 Claude 재검증 전",
-    "next": "df4adbb를 포함한 새 격리 후보에서 고정 baseline·모델·필수5검증·픽셀12조건을 유지하고 native RED 실행·영수증 선택·등록 성공 반환 후 제품 수정을 확인한다. 보고 형식·최종 실제 홈 결속의 미해결 조건도 사전에 고정한 뒤 최대1회 실행한다. 이번 최신화로 모델 호출을 시작하지 않는다."
+    "reason": "광고 Ad의 테두리·그림자와 카드 화살표를 고치려던 실제 Claude1회는 421.02초·정상 종료·자동 재시도0회였다. 테스트 신규7실패를 실행했지만 observe 명령의 2>&1이 고정 명령과 달라 호출 영수증이 생성되지 않았다. RED 등록과 제품 편집이 차단돼 전체 hold로 종료했다. 최종 필수5검증·픽셀12조건·native 홈 관측은 미실행이다.",
+    "state": "명령·진단·판정 보완 커밋 완료 · 새 보완 후 실제 Claude 재검증 전",
+    "next": "9e21b70을 포함한 새 격리 후보에서 고정 baseline·Sonnet4.6/high·필수5검증·픽셀12조건을 유지하고 실제 Claude를 최대1회·자동 재시도0으로 실행한다. 실제 RED 실행→호출 영수증→등록 성공→제품 수정, 최종 실제 홈과 완료 기록·모델 보고 일치를 확인한다. 이번 문서 최신화로 모델 호출을 시작하지 않는다."
   },
   "current_update": {
     "date": "2026-10-19",
-    "status": "절차·RED 근거 보완 커밋 완료 · 보완 후 실제 Claude 재검증 전",
+    "status": "명령·진단·판정 보완 커밋 완료 · 새 보완 후 실제 Claude 재검증 전",
     "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
-    "goal_progress": "실제 실행에서 드러난 절차 누락·RED 오등록을 로컬 가드·수집기로 보완 · 실제 업무 효과·경쟁 우위 미입증",
-    "commit": "df4adbb",
-    "implementation_commit": "df4adbb",
-    "commit_scope": "절차·native RED 실행기·수집기·공용 훅·테스트11개 파일 로컬 커밋. 이번 문서 최신화4파일은 별도 미커밋.",
-    "verification": "구현 보완 회귀321개 통과(핵심115·홈/픽셀/설치206), skip0. 격리 후보 전체11개 재리뷰 APPROVE·핵심115개 재실행 통과(321과 중복). 실제 Git 훅·TDD·구문·템플릿/배포본 일치 확인. 승인된11개 파일만 df4adbb로 로컬 커밋.",
-    "tests_passed": 321,
+    "goal_progress": "잘못된 RED의 제품 편집 차단을 실제 실행에서 확인 · 명령·진단·보고 보완은 구현·리뷰·커밋 완료 · 정상 모델 완료와 업무 효과 미입증",
+    "commit": "9e21b70",
+    "implementation_commit": "9e21b70",
+    "commit_scope": "명령·진단·보고·테스트·안내8파일 로컬 커밋. 이번 문서 최신화4파일은 별도 미커밋.",
+    "verification": "명령·진단 보완 당시 관련240개 통과·skip0. 반환 대기 안내 후속 보완 후 관련118개 통과·skip0, 최종 격리 후보 독립 재리뷰44개 통과·APPROVE. 묶음은 중복되므로 합산하지 않는다. 실제 임시 설치본·구문·TDD·커밋 훅 확인. 최종8파일을 9e21b70에 로컬 커밋했다.",
+    "tests_passed": 118,
     "tests_skipped": 0,
-    "surface_tests_passed": null,
+    "surface_tests_passed": 44,
     "review_verdict": "APPROVE",
-    "review_scope_files": 11,
-    "next": "df4adbb를 포함한 새 격리 후보에서 고정 baseline·모델·필수5검증·픽셀12조건을 유지하고 native RED 실행·영수증 선택·등록 성공 반환 후 제품 수정을 확인한다. 보고 형식·최종 실제 홈 결속의 미해결 조건도 사전에 고정한 뒤 최대1회 실행한다. 이번 최신화로 모델 호출을 시작하지 않는다.",
-    "display_next": "df4adbb 후보로 실제 Claude 광고 사례1회 재검증",
-    "limitations": "홈 관측·픽셀 통과와 전체 절차 준수는 별개다. 보완 후 실제 Claude 실행0회. 보고 첫 줄/길이와 최종 실제 홈 결속 문제는 별도 미해결이다. 최신 양쪽 동등 비교·속도 우열·일반 생산성·C1/C2/C3 효과는 미입증이며 기존 광고 추적4실패는 유지한다. 로컬 근거 일관성 검사이며 테스트 의미·악의적 동일 계정 변조·Codex 물리 훅을 인증하지 않는다.",
-    "installation": "df4adbb 절차·RED 보완11파일은 로컬 커밋 완료·미릴리스·일반 사용처 미설치·원격 push 전. d4496e8·cf38f24 역시 미릴리스 이력 유지. 기존0.6.0 정상11개 설치는 과거 이력이며 이번에 재감사하지 않았다.",
+    "review_scope_files": 8,
+    "next": "9e21b70을 포함한 새 격리 후보에서 고정 baseline·Sonnet4.6/high·필수5검증·픽셀12조건을 유지하고 실제 Claude를 최대1회·자동 재시도0으로 실행한다. 실제 RED 실행→호출 영수증→등록 성공→제품 수정, 최종 실제 홈과 완료 기록·모델 보고 일치를 확인한다. 이번 문서 최신화로 모델 호출을 시작하지 않는다.",
+    "display_next": "9e21b70 후보로 실제 Claude 광고 사례 1회 재검증",
+    "limitations": "확인된 개선은 유효한 RED가 없을 때 제품 편집을 차단한 것이다. 421.02초 실행은 새 가드 df4adbb 이후지만 명령·진단 보완9e21b70 이전이다. 9e21b70 이후 실제 Claude 호출0회이며 정상 완료 경로의 실제 모델 성공은 미검증이다. 보고 형식은 통과했지만 모델 상태 문장은 공식 판정과 달랐다. native_procedure는 unknown이며 실제 제품 선행 편집으로 단정하지 않는다. 최신 동등 경쟁 비교·속도 우열·일반 생산성·C1/C2/C3 효과는 미입증, 기존 광고 추적4실패 유지. 로컬 해시·수집 검사는 의미 적합성이나 악의적 변조 방어를 인증하지 않는다.",
+    "installation": "9e21b70 보완8파일은 로컬 커밋 완료·미릴리스·일반 사용처 미설치·원격 push 전이다. 앞선 df4adbb 등도 미릴리스 이력을 유지한다. 기존0.6.0 정상11개 설치는 과거 이력이며 이번에 재설치·재감사하지 않았다.",
     "release_state": {
       "release_version": "0.6.0",
       "release_commit": "2f0f521",
@@ -2145,7 +2145,9 @@
       "home_observation_released": false,
       "home_observation_reinstalled": false,
       "native_red_fix_released": false,
-      "native_red_fix_reinstalled": false
+      "native_red_fix_reinstalled": false,
+      "native_command_fix_released": false,
+      "native_command_fix_reinstalled": false
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2154,16 +2156,17 @@
       "docs/comparison-dashboard/view.json"
     ],
     "local_runtime_evidence": [
-      ".omc/home-native-rerun-20261019/REPORT.md",
-      ".omc/home-native-rerun-20261019/procedure-audit.json",
-      ".omc/native-red-review-fix/REPORT.md",
-      ".omc/native-red-review-fix/review/REPORT.md",
-      ".omc/native-red-review-fix/review/approval.json"
+      ".omc/postfix-native-rerun-20261019/REPORT.md",
+      ".omc/postfix-native-rerun-20261019/procedure-audit.json",
+      ".omc/native-command-fix/REPORT.md",
+      ".omc/native-command-pending-fix/REPORT.md",
+      ".omc/native-command-pending-fix/review/REPORT.md",
+      ".omc/native-command-pending-fix/review/approval.json"
     ],
     "observation": {
       "v3": "DISABLED",
       "completion": "OBSERVATION_INVALID",
-      "reason": "live_observation_not_enabled"
+      "reason": "pending_completion_invalid"
     },
     "peer_trace": {
       "state": "COMMITTED_REVIEW_APPROVED",
@@ -2211,7 +2214,7 @@
       "collector_passed": 9,
       "evidence": ".omc/final-native-20261019/REPORT.md"
     },
-    "related_regression_passed": 115,
+    "related_regression_passed": 118,
     "home_observation": {
       "state": "COMMITTED_REVIEW_APPROVED",
       "scope_files": 5,
@@ -2238,38 +2241,220 @@
       "historical": true
     },
     "latest_omc_attempt": {
+      "source_commit": "7fbd1ac",
       "provider_calls": 1,
-      "elapsed_seconds": 851.18,
+      "elapsed_seconds": 421.02,
       "retry_count": 0,
       "model": "Sonnet4.6/high",
       "native_exit": 0,
-      "home_motion": "passed",
-      "pixel_passed": 12,
-      "procedure": "failed_observed_product_edit_before_registration",
-      "red_case_truth": "failed_passed_case_registered_as_failure",
-      "report_format": "failed",
-      "final_home_binding": "unknown",
       "overall": "hold",
-      "tests_passed": 41,
+      "contract_before_test_edit": true,
+      "new_red_failures": 7,
       "existing_tests_failed": 4,
-      "new_tests_failed": 0,
-      "historical_before_fix": true
+      "same_existing_diagnostics": true,
+      "native_receipts": 0,
+      "red_registration": "failed",
+      "product_files_modified": false,
+      "report_format": "passed",
+      "report_state_matches_gate": false,
+      "final_home_binding": "passed_scope_only_not_native_home_verification",
+      "native_home_motion": "unrun",
+      "pixel_passed": null,
+      "pixel_status": "unrun",
+      "final_required_checks": "unrun_5_of_5",
+      "native_procedure": "unknown",
+      "historical_before_command_fix": true
     },
     "native_red_fix": {
       "state": "COMMITTED_REVIEW_APPROVED",
       "commit": "df4adbb",
       "files": 11,
-      "post_fix_provider_calls": 0,
+      "post_fix_provider_calls": 1,
       "contract_before_edit": true,
       "fixed_jest_execution": true,
       "immutable_call_receipts": true,
       "registration_return_order_checked": true,
       "unsupported_bash": "unknown",
       "tier0_preserved": true,
+      "review_receipt_scope": "isolated_candidate_only",
+      "latest_attempt_overall": "hold",
+      "historical_before_command_fix": true
+    },
+    "documentation_last_commit": "7fbd1ac",
+    "native_command_fix": {
+      "state": "COMMITTED_REVIEW_APPROVED",
+      "commit": "9e21b70",
+      "files": 8,
+      "post_fix_provider_calls": 0,
+      "terminal_stderr_redirect_supported": true,
+      "composite_shell_rejected": true,
+      "readonly_diagnose": true,
+      "pending_return_takes_priority": true,
+      "official_and_model_reports_separate": true,
+      "receipts_array_preserved": true,
+      "final_related_tests_passed": 118,
+      "final_review_tests_passed": 44,
+      "test_groups_overlap": true,
       "review_receipt_scope": "isolated_candidate_only"
     }
   },
   "current_update_history": [
+    {
+      "date": "2026-10-19",
+      "status": "절차·RED 근거 보완 커밋 완료 · 보완 후 실제 Claude 재검증 전",
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "goal_progress": "실제 실행에서 드러난 절차 누락·RED 오등록을 로컬 가드·수집기로 보완 · 실제 업무 효과·경쟁 우위 미입증",
+      "commit": "df4adbb",
+      "implementation_commit": "df4adbb",
+      "commit_scope": "절차·native RED 실행기·수집기·공용 훅·테스트11개 파일 로컬 커밋. 이번 문서 최신화4파일은 별도 미커밋.",
+      "verification": "구현 보완 회귀321개 통과(핵심115·홈/픽셀/설치206), skip0. 격리 후보 전체11개 재리뷰 APPROVE·핵심115개 재실행 통과(321과 중복). 실제 Git 훅·TDD·구문·템플릿/배포본 일치 확인. 승인된11개 파일만 df4adbb로 로컬 커밋.",
+      "tests_passed": 321,
+      "tests_skipped": 0,
+      "surface_tests_passed": null,
+      "review_verdict": "APPROVE",
+      "review_scope_files": 11,
+      "next": "df4adbb를 포함한 새 격리 후보에서 고정 baseline·모델·필수5검증·픽셀12조건을 유지하고 native RED 실행·영수증 선택·등록 성공 반환 후 제품 수정을 확인한다. 보고 형식·최종 실제 홈 결속의 미해결 조건도 사전에 고정한 뒤 최대1회 실행한다. 이번 최신화로 모델 호출을 시작하지 않는다.",
+      "display_next": "df4adbb 후보로 실제 Claude 광고 사례1회 재검증",
+      "limitations": "홈 관측·픽셀 통과와 전체 절차 준수는 별개다. 보완 후 실제 Claude 실행0회. 보고 첫 줄/길이와 최종 실제 홈 결속 문제는 별도 미해결이다. 최신 양쪽 동등 비교·속도 우열·일반 생산성·C1/C2/C3 효과는 미입증이며 기존 광고 추적4실패는 유지한다. 로컬 근거 일관성 검사이며 테스트 의미·악의적 동일 계정 변조·Codex 물리 훅을 인증하지 않는다.",
+      "installation": "df4adbb 절차·RED 보완11파일은 로컬 커밋 완료·미릴리스·일반 사용처 미설치·원격 push 전. d4496e8·cf38f24 역시 미릴리스 이력 유지. 기존0.6.0 정상11개 설치는 과거 이력이며 이번에 재감사하지 않았다.",
+      "release_state": {
+        "release_version": "0.6.0",
+        "release_commit": "2f0f521",
+        "consumer_count": 11,
+        "binding_fix_released": false,
+        "binding_fix_reinstalled": false,
+        "pushed": false,
+        "visual_completion_fix_released": false,
+        "visual_completion_fix_reinstalled": false,
+        "peer_trace_released": false,
+        "peer_trace_reinstalled": false,
+        "home_observation_released": false,
+        "home_observation_reinstalled": false,
+        "native_red_fix_released": false,
+        "native_red_fix_reinstalled": false
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/index.html",
+        "docs/comparison-dashboard/view.json"
+      ],
+      "local_runtime_evidence": [
+        ".omc/home-native-rerun-20261019/REPORT.md",
+        ".omc/home-native-rerun-20261019/procedure-audit.json",
+        ".omc/native-red-review-fix/REPORT.md",
+        ".omc/native-red-review-fix/review/REPORT.md",
+        ".omc/native-red-review-fix/review/approval.json"
+      ],
+      "observation": {
+        "v3": "DISABLED",
+        "completion": "OBSERVATION_INVALID",
+        "reason": "live_observation_not_enabled"
+      },
+      "peer_trace": {
+        "state": "COMMITTED_REVIEW_APPROVED",
+        "commit": "7e417dc",
+        "read_only": true,
+        "prevents_writes": false,
+        "entry": "failed",
+        "execute_calls": 0,
+        "write_order": "failed",
+        "native_quality_checks": "unknown",
+        "comparison_eligible": false,
+        "provenance": "native",
+        "synthetic_tests_are_native_success": false,
+        "review_receipt_scope": "isolated_candidate_only",
+        "historical": true
+      },
+      "peer_attempt": {
+        "executed": true,
+        "provider_calls": 1,
+        "elapsed_seconds": 686.72,
+        "plugin_version": "5.6.2",
+        "plugin_loaded": true,
+        "execute_calls": 1,
+        "entry": "passed",
+        "write_order": "passed",
+        "entry_event": 13,
+        "return_event": 14,
+        "first_code_write_event": 58,
+        "eligible": false,
+        "acceptance": "itemwise_accepted",
+        "native_home_motion": "unknown_samples_equal",
+        "native_pixel_status": "passed_12_of_12_bound_to_candidate",
+        "operator_pixel_passed": 12,
+        "tests_passed": 41,
+        "existing_tests_failed": 4,
+        "new_tests_failed": 0,
+        "retry_count": 0,
+        "historical_previous_attempt_seconds": 740.57
+      },
+      "omc_reference": {
+        "historical": true,
+        "elapsed_seconds": 1070.8,
+        "required_checks_passed": 5,
+        "pixel_passed": 12,
+        "collector_passed": 9,
+        "evidence": ".omc/final-native-20261019/REPORT.md"
+      },
+      "related_regression_passed": 115,
+      "home_observation": {
+        "state": "COMMITTED_REVIEW_APPROVED",
+        "scope_files": 5,
+        "explicit_receipt_selection": true,
+        "prior_observations_preserved": true,
+        "legacy_readiness_preserved": true,
+        "actual_claude_rerun": true,
+        "review_receipt_scope": "isolated_candidate_only",
+        "commit": "d4496e8",
+        "actual_claude_rerun_overall_passed": false
+      },
+      "input_recovery": {
+        "state": "COMMITTED_REVIEW_APPROVED",
+        "commit": "cf38f24",
+        "files": 5,
+        "tests_passed": 12,
+        "historical_hashes_matched": 2,
+        "archive": "evidence/ad-validation-inputs-v1/README.md",
+        "provider_calls": 0,
+        "service_ready": false,
+        "previous_preparation_status": "blocked_missing_frozen_inputs",
+        "classification": "preparation_unavailable_not_new_failure",
+        "review_receipt_scope": "isolated_candidate_only",
+        "historical": true
+      },
+      "latest_omc_attempt": {
+        "provider_calls": 1,
+        "elapsed_seconds": 851.18,
+        "retry_count": 0,
+        "model": "Sonnet4.6/high",
+        "native_exit": 0,
+        "home_motion": "passed",
+        "pixel_passed": 12,
+        "procedure": "failed_observed_product_edit_before_registration",
+        "red_case_truth": "failed_passed_case_registered_as_failure",
+        "report_format": "failed",
+        "final_home_binding": "unknown",
+        "overall": "hold",
+        "tests_passed": 41,
+        "existing_tests_failed": 4,
+        "new_tests_failed": 0,
+        "historical_before_fix": true
+      },
+      "native_red_fix": {
+        "state": "COMMITTED_REVIEW_APPROVED",
+        "commit": "df4adbb",
+        "files": 11,
+        "post_fix_provider_calls": 0,
+        "contract_before_edit": true,
+        "fixed_jest_execution": true,
+        "immutable_call_receipts": true,
+        "registration_return_order_checked": true,
+        "unsupported_bash": "unknown",
+        "tier0_preserved": true,
+        "review_receipt_scope": "isolated_candidate_only"
+      }
+    },
     {
       "date": "2026-10-19",
       "status": "홈 관측 보완 커밋·검수 입력 복구 완료 · 실제 Claude 재검증 전",
