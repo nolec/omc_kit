@@ -121,6 +121,9 @@ PHASE 7 ▸ COMPOUND ENGINEERING (작업 기록)
 
 ## 완료 보고 생성 게이트
 
+실행 기록과 native 호출 영수증은 별개입니다. 영수증이 없으면 `python3 scripts/omc_native_red_evidence.py diagnose --target .`로 읽기 전용 진단을 확인합니다. `receipts`의 배열 형식은 유지합니다. 명령은 한 줄로 단독 실행하며 끝의 `2>&1` 한 개만 허용합니다. 기록 삭제·덮어쓰기나 runner 중첩 재실행은 하지 않습니다. 최종 공식 상태는 `complete-task` 출력 그대로 사용하고, 수집 결과의 `report-comparison.txt`에서 공식 판정과 모델 원문의 상태 불일치를 별도로 확인합니다. 이 안내는 모델 준수나 실제 실행 성공을 보장하지 않습니다.
+
+
 CONTRACT 등록 시 이번 작업의 필수 검증 ID를 고정합니다:
 `python3 scripts/omc_pipeline_guard.py contract-done --required-checks tests,lint,browser`
 브라우저가 불필요한 작업은 계약에서 제외하고 그 이유를 설명합니다. 이후 현재 작업에서 실제 FAIL을 확인하고 `red-done <테스트파일> --evidence-file <RED근거JSON>`을 등록합니다.

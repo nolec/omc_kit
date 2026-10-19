@@ -30,21 +30,8 @@ def _single_bash_argv(command: str) -> list[str]:
     Conservative V0: substitutions and multiline arguments remain unsupported,
     even when quoted. Quoted literal punctuation is allowed without evaluation.
     """
-    if not isinstance(command, str):
-        return []
-    command = command.strip()
-    if any(char in command for char in ('\n', '\r', '$', '`')):
-        return []
-    try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|<>()')
-        lexer.whitespace_split = True
-        lexer.commenters = ''
-        args = list(lexer)
-    except ValueError:
-        return []
-    if any(token and all(char in ';&|<>()' for char in token) for token in args):
-        return []
-    return args
+    from omc_native_command import single_argv
+    return single_argv(command)
 
 
 def assess_native_procedure(root: Path, rows: list, basis: dict, events_file: Path | None = None) -> dict:
@@ -142,7 +129,7 @@ def assess_native_procedure(root: Path, rows: list, basis: dict, events_file: Pa
                             observed_at = index
                         except (OSError, ValueError, TypeError, KeyError, AttributeError):
                             unknown.append('native_red_execution_unknown')
-                    elif args[:2] == ['python3','scripts/omc_native_red_evidence.py'] and len(args) > 2 and args[2] in {'receipts','evidence'}:
+                    elif args[:2] == ['python3','scripts/omc_native_red_evidence.py'] and len(args) > 2 and args[2] in {'receipts','evidence','diagnose'}:
                         pass
                     elif args in [
                             ['python3','scripts/omc_home_observation.py','observe','--target','.'],
@@ -405,6 +392,19 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
         'issues': issues, 'observed_verification_paths': observed, 'observed_direct_write_paths': known_writes,
         'boundary': 'Known CLI arguments and returned outputs only; not filesystem containment or evidence authentication.',
     }
+    # Separate semantic state from existing format-only quality checks.
+    model_state = substantive[0] if substantive and substantive[0] in STATUSES else None
+    comparison = {'official_state': evaluation['first'], 'official_outcome': evaluation['outcome'],
+                  'model_state': model_state, 'state_match': model_state == evaluation['first'],
+                  'model_first_line': final.splitlines()[0] if final.splitlines() else '',
+                  'first_line_exact': bool(final.splitlines()) and final.splitlines()[0] == evaluation['first'],
+                  'overall_decision': assessment['recompare_entry'], 'model_original': 'final.txt',
+                  'boundary': '공식 판정은 현재 검증 평가이며 모델 원문을 교정하거나 대체하지 않습니다.'}
+    (output / 'report-comparison.json').write_text(json.dumps(comparison, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    (output / 'report-comparison.txt').write_text(
+        '공식 판정: ' + evaluation['first'] + '\n모델 보고 상태: ' + (model_state or '확인 불가')
+        + '\n상태 일치: ' + ('일치' if comparison['state_match'] else '불일치')
+        + '\n전체 판정: ' + assessment['recompare_entry'] + '\n', encoding='utf-8')
     (output / 'assessment.json').write_text(json.dumps(assessment, ensure_ascii=False, indent=2) + '\n')
     return assessment
 

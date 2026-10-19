@@ -198,10 +198,8 @@ def validate_execution(root, ref):
 
 
 def exact_observe(command):
-    try:
-        return shlex.split(command) == shlex.split(COMMAND)
-    except (ValueError, TypeError):
-        return False
+    from omc_native_command import single_argv
+    return single_argv(command) == shlex.split(COMMAND)
 
 
 def extract(root, raw):
@@ -270,6 +268,62 @@ def references(root):
             for p in sorted(directory.glob('*.json'))]
 
 
+def diagnose(root):
+    """Read-only facts about this selected stream; never repair or rerun it."""
+    pin = policy(root)
+    reasons, facts, uncertainty = [], {}, []
+    if pin is None:
+        reasons.append('native_red_not_selected')
+    else:
+        events = local(root, pin['events_path'])
+        facts['stream_exists'] = events.is_file()
+        if not events.is_file():
+            reasons.append('stream_missing')
+        else:
+            raw = events.read_bytes()
+            calls, returned, mismatches = set(), set(), 0
+            try:
+                for line in raw.splitlines(keepends=True):
+                    if not line.endswith(b'\n'):
+                        uncertainty.append('incomplete_event_line')
+                        break
+                    row = json.loads(line)
+                    for block in row.get('message', {}).get('content', []):
+                        if block.get('type') == 'tool_use' and block.get('name') == 'Bash':
+                            command = block.get('input', {}).get('command', '')
+                            if 'omc_native_red_evidence.py' in command and 'observe' in command:
+                                if exact_observe(command):
+                                    calls.add(block.get('id'))
+                                else:
+                                    mismatches += 1
+                        elif block.get('type') == 'tool_result':
+                            returned.add(block.get('tool_use_id'))
+                facts.update(supported_calls=len(calls), completed_calls=len(calls & returned),
+                             mismatched_commands=mismatches)
+                if mismatches:
+                    reasons.append('command_mismatch')
+                if calls - returned:
+                    reasons.append('call_return_missing')
+            except (ValueError, TypeError, AttributeError, KeyError):
+                uncertainty.append('stream_unreadable')
+    refs = references(root)
+    facts['receipt_count'] = len(refs)
+    if not refs:
+        reasons.append('receipt_missing')
+    else:
+        try:
+            for ref in refs:
+                validate_receipt(root, ref, historical=True)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            uncertainty.append('receipt_unverified')
+    return {'status': 'diagnostic', 'read_only': True, 'reason_codes': reasons,
+            'observed': facts, 'unknown': uncertainty, 'receipts': refs,
+            'next_action': ('기존 관측 호출의 상태·반환을 먼저 확인하세요. 반환 여부를 확정하기 전에는 새 observe 호출·runner 재실행·기록 삭제를 하지 마세요.'
+                            if 'call_return_missing' in reasons else
+                            '지원되는 observe 명령을 단독 호출하고 반환 뒤 receipts를 확인하세요. runner 재실행이나 기록 삭제는 하지 마세요.'
+                            if not refs else '선택한 영수증의 경로·해시와 이번 신규 실패를 대조하세요. 진단 결과는 완료 승인이 아닙니다.')}
+
+
 def validate_receipt(root, ref, historical=False, events_file=None):
     from omc_pipeline_guard import _code_snapshot_digest, _basis_digest, _load_approved_basis
     pin = policy(root)
@@ -325,8 +379,9 @@ def validate_evidence(root, doc, historical=False, events_file=None):
 
 
 def main():
+    from omc_native_command import NativeStreamAlreadyExists
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['baseline', 'observe', 'receipts', 'evidence', 'run'])
+    parser.add_argument('action', choices=['baseline', 'observe', 'receipts', 'diagnose', 'evidence', 'run'])
     parser.add_argument('--target', type=Path, default=Path.cwd())
     parser.add_argument('--run-id')
     parser.add_argument('--receipt')
@@ -349,10 +404,16 @@ def main():
             result = execute(root, args.action, args.run_id)
         elif args.action == 'receipts':
             result = references(root)
+        elif args.action == 'diagnose':
+            result = diagnose(root)
         else:
             result = make_evidence(root, {'path': args.receipt, 'sha256': args.receipt_sha256}, args.case_id)
         print(json.dumps(result, ensure_ascii=False))
         return 0
+    except NativeStreamAlreadyExists:
+        print(json.dumps({'status': 'unknown', 'reason': 'native_stream_already_exists',
+                          'next_action': '기존 스트림은 보존하세요. runner 재실행·기록 삭제 없이 diagnose로 명령과 영수증을 확인하세요.'}, ensure_ascii=False))
+        return 1
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         print(json.dumps({'status': 'unknown', 'reason': str(exc)}, ensure_ascii=False))
         return 1

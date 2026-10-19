@@ -139,10 +139,8 @@ def observe(root: Path) -> dict:
 
 
 def _is_observe(command: str, root: Path) -> bool:
-    try:
-        tokens = shlex.split(command)
-    except (ValueError, TypeError):
-        return False
+    from omc_native_command import single_argv
+    tokens = single_argv(command)
     if len(tokens) != 5 or Path(tokens[0]).name not in {'python', 'python3', Path(sys.executable).name}:
         return False
     return (tokens[2:4] == ['observe', '--target']
@@ -356,7 +354,12 @@ def run_native(root: Path, argv: list[str]) -> int:
 def tee_native(root: Path, argv: list[str], events: Path, publishers: list) -> int:
     """Shared complete-line custody for explicitly selected native publishers."""
     events.parent.mkdir(parents=True, exist_ok=True)
-    with events.open('xb') as output:
+    from omc_native_command import NativeStreamAlreadyExists
+    try:
+        stream = events.open('xb')
+    except FileExistsError as exc:
+        raise NativeStreamAlreadyExists('native_stream_already_exists') from exc
+    with stream as output:
         with subprocess.Popen(argv, cwd=root, stdout=subprocess.PIPE) as proc:
             try:
                 for line in proc.stdout:
@@ -410,6 +413,11 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False))
         return code
     except (OSError, ValueError, KeyError, TypeError) as exc:
+        from omc_native_command import NativeStreamAlreadyExists
+        if isinstance(exc, NativeStreamAlreadyExists):
+            print(json.dumps({'status': 'unknown', 'reason': 'native_stream_already_exists',
+                              'next_action': '기존 스트림은 보존하세요. runner 재실행·기록 삭제 없이 native RED diagnose로 확인하세요.'}, ensure_ascii=False))
+            return 1
         print(json.dumps({'status': 'unknown', 'reason': str(exc)}))
         return 1
 
