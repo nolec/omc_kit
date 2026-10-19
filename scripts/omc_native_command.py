@@ -4,6 +4,8 @@ Only one unquoted terminal stderr-to-stdout redirect is optional. This is a
 bounded recognizer, not a shell parser, interpreter, or containment boundary.
 """
 import shlex
+import stat
+from pathlib import Path
 
 
 class NativeStreamAlreadyExists(FileExistsError):
@@ -44,3 +46,40 @@ def single_argv(command):
         return shlex.split(text)
     except ValueError:
         return []
+
+
+def read_command_reason(root: Path, command: str, *, historical: bool = False) -> str | None:
+    """Recognize bounded inspection, without running a command or reading contents.
+
+    None means a supported invocation, not attested execution, content accuracy,
+    or shell containment. Historical calls require evidence of the path state at
+    that time; this V0 has no such evidence format and must not inspect today's
+    filesystem as a substitute. Root/cwd and tool identity are caller assumptions.
+    """
+    args = single_argv(command)
+    if not args:
+        return 'syntax_unsupported'
+    if (args[0] not in {'cat', 'sha256sum'} or len(args) < 2
+            or any(name.startswith('-') for name in args[1:])):
+        return 'command_unsupported'
+    if historical:
+        return 'historical_path_unverified'
+    try:
+        base = root.resolve(strict=True)
+        for name in args[1:]:
+            path = Path(name)
+            path = path if path.is_absolute() else base/path
+            # Do not normalize away a symlink followed by '..'. Check each
+            # original component before resolving and reject excursions outside.
+            relative = path.relative_to(base)
+            current = base
+            for part in relative.parts:
+                current = current/part
+                if stat.S_ISLNK(current.lstat().st_mode):
+                    return 'path_unverified'
+                current.resolve(strict=True).relative_to(base)
+            if not stat.S_ISREG(current.lstat().st_mode):
+                return 'path_unverified'
+    except (OSError, ValueError, RuntimeError):
+        return 'path_unverified'
+    return None

@@ -46,7 +46,7 @@ def assess_native_procedure(root: Path, rows: list, basis: dict, events_file: Pa
         return {'status': 'unknown', 'reason': 'native_red_not_selected'}
     calls, returned = {}, set()
     contract_at = red_at = observed_at = None
-    failures, unknown = [], []
+    failures, unknown, unsupported_commands = [], [], []
     for index, row in enumerate(rows):
         for block in row.get('message', {}).get('content', []):
             if block.get('type') == 'tool_use':
@@ -145,7 +145,13 @@ def assess_native_procedure(root: Path, rows: list, basis: dict, events_file: Pa
                         except ValueError:
                             unknown.append('unsupported_staging_command')
                     else:
-                        unknown.append('unsupported_bash_command')
+                        from omc_native_command import read_command_reason
+                        reason = read_command_reason(root, inp.get('command', ''),
+                                                     historical=events_file is not None)
+                        if reason is not None:
+                            unknown.append('unsupported_bash_command')
+                            unsupported_commands.append({'tool_use_id': ident,
+                                'request_line': start+1, 'return_line': index+1, 'reason': reason})
                 elif name not in {'Read','Glob','Grep'}:
                     unknown.append('unsupported_native_tool')
     if set(calls)-returned:
@@ -156,7 +162,8 @@ def assess_native_procedure(root: Path, rows: list, basis: dict, events_file: Pa
         unknown.append('required_success_return_missing')
     return {'status': 'failed' if failures else 'unknown' if unknown else 'passed',
             'reason': ';'.join(dict.fromkeys(failures+unknown)),
-            'contract_return': contract_at, 'observation_return': observed_at, 'red_return': red_at}
+            'contract_return': contract_at, 'observation_return': observed_at, 'red_return': red_at,
+            'unsupported_commands': unsupported_commands}
 
 
 def collect(root: Path, events_file: Path, sid: str, verification: Path,
@@ -401,10 +408,21 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
                   'overall_decision': assessment['recompare_entry'], 'model_original': 'final.txt',
                   'boundary': '공식 판정은 현재 검증 평가이며 모델 원문을 교정하거나 대체하지 않습니다.'}
     (output / 'report-comparison.json').write_text(json.dumps(comparison, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    procedure_note = ''
+    diagnostics = (native_procedure or {}).get('unsupported_commands', [])
+    if diagnostics:
+        labels = {'syntax_unsupported': '구문 미지원', 'command_unsupported': '명령 미지원',
+                  'path_unverified': '경로 확인 불가',
+                  'historical_path_unverified': '당시 경로 증거 없음'}
+        procedure_note = '\n절차 확인: 일부 Bash 명령의 효과를 확인하지 못했습니다.'
+        for diagnostic in diagnostics:
+            procedure_note += ('\n호출 ' + str(diagnostic['request_line']) + '행 / 반환 '
+                + str(diagnostic['return_line']) + '행: ' + labels[diagnostic['reason']])
+        procedure_note += '\n미확인 명령을 통과나 위반으로 간주하지 않으며 전체 비교는 보류합니다.\n'
     (output / 'report-comparison.txt').write_text(
         '공식 판정: ' + evaluation['first'] + '\n모델 보고 상태: ' + (model_state or '확인 불가')
         + '\n상태 일치: ' + ('일치' if comparison['state_match'] else '불일치')
-        + '\n전체 판정: ' + assessment['recompare_entry'] + '\n', encoding='utf-8')
+        + '\n전체 판정: ' + assessment['recompare_entry'] + '\n' + procedure_note, encoding='utf-8')
     (output / 'assessment.json').write_text(json.dumps(assessment, ensure_ascii=False, indent=2) + '\n')
     return assessment
 

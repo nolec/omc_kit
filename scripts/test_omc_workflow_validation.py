@@ -264,6 +264,62 @@ def native_return(ident, text='', error=False):
     return {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':ident,'content':text,'is_error':error}]}}
 
 
+@pytest.mark.parametrize('command,reason', [
+    ('cat missing.md', 'path_unverified'),
+    ('cat missing.md | head -1', 'syntax_unsupported'),
+    ('node builder.cjs', 'command_unsupported'),
+])
+def test_native_audit_explains_each_unsupported_call(tmp_path, command, reason):
+    import omc_workflow_validation as v
+    rows=[native_call('x',command),native_return('x'),{'type':'result'}]
+    result=v.assess_native_procedure(tmp_path,rows,{'checks':[{'native_red':{'product_paths':['libs']}}]})
+    assert result['status']=='unknown'
+    assert result['unsupported_commands']==[{'tool_use_id':'x','request_line':1,'return_line':2,'reason':reason}]
+
+
+def test_supported_read_does_not_hide_earlier_edit_failure(tmp_path):
+    import omc_workflow_validation as v
+    (tmp_path/'one.md').write_text('one')
+    rows=[native_call('e',file='libs/Ad.tsx'),native_return('e'),
+          native_call('r','cat one.md'),native_return('r'),{'type':'result'}]
+    result=v.assess_native_procedure(tmp_path,rows,{'checks':[{'native_red':{'product_paths':['libs']}}]})
+    assert result['status']=='failed'
+    assert result['unsupported_commands']==[]
+    assert 'edit_before_contract_success' in result['reason']
+
+
+@pytest.mark.parametrize('command,label', [
+    ('node builder.cjs', '명령 미지원'),
+    ('cat current.md', '당시 경로 증거 없음'),
+    ('cat current.md | head -1', '구문 미지원'),
+])
+def test_public_report_explains_hold_without_changing_native_final(tmp_path, command, label):
+    result,dest=collect(tmp_path,response())
+    root=tmp_path/'work';source=tmp_path/'events.jsonl'
+    rows=[json.loads(line) for line in source.read_bytes().splitlines()]
+    rows=rows[:-1]+[native_call('unsupported',command),native_return('unsupported'),rows[-1]]
+    (root/'current.md').write_text('current filesystem cannot attest past paths')
+    source.write_text('\n'.join(json.dumps(r) for r in rows))
+    frozen=source.read_bytes()
+    basis=guard._load_approved_basis(root,'s');basis['revision']=2
+    basis['checks'][0]['native_red']={'product_paths':['libs']}
+    proposal=root/'new-basis.json';proposal.write_text(json.dumps(basis))
+    assert guard.cmd_approve_checks(root,proposal)==0
+    new_dest=tmp_path/'reassessment'
+    rerun=subprocess.run([sys.executable,str(SCRIPT),'--target',str(root),'--events-file',str(source),
+        '--session-id','s','--verification-file',str(root/'.omc/verification/s.json'),
+        '--expected-outcome','blocked','--output-dir',str(new_dest)],capture_output=True)
+    assert rerun.returncode==1, rerun.stderr
+    assessment=json.loads((new_dest/'assessment.json').read_text())
+    report=(new_dest/'report-comparison.txt').read_text()
+    assert assessment['recompare_entry']=='hold'
+    assert '절차 확인: 일부 Bash 명령의 효과를 확인하지 못했습니다.' in report
+    assert label in report and '호출' in report
+    assert (new_dest/'final.txt').read_text()==response()
+    assert source.read_bytes()==frozen
+    assert (dest/'final.txt').read_text()==response()
+
+
 @pytest.mark.parametrize('kind,expected', [('late','failed'),('parallel','failed'),('rejected','unknown'),('missing','unknown'),('shell','unknown'),('substitution','unknown')])
 def test_native_procedure_uses_success_returns_and_never_erases_early_edits(tmp_path,kind,expected):
     import omc_workflow_validation as collector

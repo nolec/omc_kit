@@ -17,6 +17,49 @@ def command_module():
     return importlib.import_module('omc_native_command')
 
 
+@pytest.mark.parametrize('tool', ['cat', 'sha256sum'])
+@pytest.mark.parametrize('suffix', ['', ' 2>&1'])
+def test_bounded_read_recognizes_regular_candidate_files(tmp_path, tool, suffix):
+    (tmp_path/'one.md').write_text('one')
+    (tmp_path/'two words.md').write_text('two')
+    assert command_module().read_command_reason(tmp_path, f'{tool} one.md "two words.md"'+suffix) is None
+
+
+@pytest.mark.parametrize('command,reason', [
+    ('cat one.md | head -1', 'syntax_unsupported'),
+    ('cat $(pwd)', 'syntax_unsupported'),
+    ('cat *.md', 'syntax_unsupported'),
+    ('cat -n one.md', 'command_unsupported'),
+    ('cat', 'command_unsupported'),
+    ('cat -', 'command_unsupported'),
+    ('ls one.md', 'command_unsupported'),
+    ('python3 -c "print(1)"', 'command_unsupported'),
+    ('cat missing.md', 'path_unverified'),
+    ('cat .', 'path_unverified'),
+    ('cat ../outside.md', 'path_unverified'),
+])
+def test_bounded_read_rejects_unapproved_forms(tmp_path, command, reason):
+    (tmp_path/'one.md').write_text('one')
+    assert command_module().read_command_reason(tmp_path, command) == reason
+
+
+@pytest.mark.parametrize('operand', ['link.md', 'linked/file.md', 'linked/../one.md'])
+def test_bounded_read_rejects_symlink_components(tmp_path, operand):
+    (tmp_path/'one.md').write_text('one')
+    folder=tmp_path/'dir';folder.mkdir();(folder/'file.md').write_text('file')
+    (tmp_path/'link.md').symlink_to('one.md')
+    (tmp_path/'linked').symlink_to('dir', target_is_directory=True)
+    assert command_module().read_command_reason(tmp_path, 'cat '+operand) == 'path_unverified'
+
+
+def test_historical_read_never_uses_current_files(tmp_path, monkeypatch):
+    (tmp_path/'one.md').write_text('current content is not historical evidence')
+    def forbidden(*args, **kwargs):
+        raise AssertionError('historical audit must not consult present paths')
+    monkeypatch.setattr(Path, 'lstat', forbidden)
+    assert command_module().read_command_reason(tmp_path, 'cat one.md', historical=True) == 'historical_path_unverified'
+
+
 @pytest.mark.parametrize('suffix',['',' 2>&1','\t2>&1  '])
 def test_fixed_red_suffix_is_recognized(suffix):
     import omc_native_red_evidence as red
