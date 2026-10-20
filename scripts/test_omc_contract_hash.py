@@ -1,33 +1,44 @@
-"""
-N3 — CONTRACT 해시 RED 테스트
-아직 해시 기능이 없으므로 관련 테스트는 FAIL 예상
-"""
+"""CONTRACT 해시를 각 테스트의 임시 작업 상태에서 검증한다."""
 import json
 import hashlib
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).parent.parent
 GUARD_SCRIPT = ROOT / "scripts" / "omc_pipeline_guard.py"
 
 
+@pytest.fixture(autouse=True)
+def isolated_contract_root(tmp_path, monkeypatch):
+    """가드 소스 경로는 유지하고 읽고 쓰는 작업 상태만 격리한다."""
+    monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path)
+
+
 def _run(*args, env_extra=None):
-    import os
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
-    return subprocess.run(
-        [sys.executable, str(GUARD_SCRIPT), *args],
-        capture_output=True, text=True, cwd=str(ROOT), env=env,
+    result = subprocess.run(
+        [sys.executable, str(GUARD_SCRIPT), "--target", str(ROOT), *args],
+        capture_output=True, text=True, cwd=str(ROOT), env=env, timeout=30,
     )
+    assert result.returncode == 0, (
+        f"가드 명령 실패 ({result.returncode}): "
+        f"stdout={result.stdout!r}; stderr={result.stderr!r}"
+    )
+    return result
 
 
-def _state_path(root=ROOT):
+def _state_path(root=None):
+    root = ROOT if root is None else root
     return root / ".omc" / "pipeline_session.json"
 
 
-def _load_state(root=ROOT):
+def _load_state(root=None):
     p = _state_path(root)
     if p.exists():
         return json.loads(p.read_text(encoding="utf-8"))
@@ -69,7 +80,7 @@ class TestContractHashWithContent:
         result = _run("contract-done", "--content", content)
         assert result.returncode == 0, f"오류: {result.stderr}"
         state = _load_state()
-        assert "contract_hash" in state
+        assert state["contract_hash"] == hashlib.sha256(content.encode()).hexdigest()
 
     def test_same_content_produces_same_hash(self):
         """동일한 content는 항상 같은 해시를 생성해야 한다"""
