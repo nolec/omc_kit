@@ -1,6 +1,23 @@
-# OMC 비교 대시보드 · 최신 기준 2026-10-19
+# OMC 비교 대시보드 · 최신 기준 2026-10-20
 
-## 현재 · 실제 Claude 검증 결과와 진단 보완 · 2026-10-19
+## 현재 · 고정 검증 실행 경로 구현·리뷰 승인 · 2026-10-20
+
+- 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
+- 현재 판정: 고정 검증 경로 6파일 구현·리뷰 승인 · 미커밋 · 실제 비교 HOLD 유지
+- 이번 보완: 고정8개 공통 검증 프로필의 실행·종료 코드·출력·후보·산출물을 결속하고, 공통 업무·도구 내부 절차·비교 진입을 분리했다. 신규 RED 실패 케이스가 최종 결과에 같은 이름으로 모두 남아 통과해야 비교 진입을 허용한다. 삭제·이름 변경·미해결은 HOLD이며 실제 실패 failed와 실행 불가 unknown을 구분해 필수5개 결과를 보존한다.
+- 코드·리뷰: scripts/omc_validation_command.py, scripts/test_omc_validation_command.py, scripts/omc_native_command.py, scripts/test_omc_native_command.py, scripts/omc_workflow_validation.py, scripts/test_omc_workflow_validation.py 총6파일. 원본과 바이트가 같은 격리 후보 APPROVE·요청/실제 승인 범위6개 일치. 미커밋 상태이며 기존 fb57afa 진단 보완 커밋과 구분한다.
+- 검증: 최종 보완 후보의 실행기·수집기 회귀88개 통과·skip0, 독립 리뷰 정상/실패/실행 불가3개 통과. 동일 후보 해시 확인·TDD exit0·실제 index 보존. 앞선 RED 결속 보완 후보의286개 통과는 이전 후보 이력이며88개·3개와 합산하지 않는다. 홈/DOM bridge는 합성 입력으로 실제 서비스 검수나 provider 실행 성공이 아니다.
+- 실제 비교: 새 계약 실행0회. 기존9e21b70 실제 Claude 필수5검증·픽셀12조건·실제 홈 통과와 절차 unknown·전체 HOLD는 당시 결과로 보존한다.
+- 다음: 고정 검증 준비 보완은 종료한다. 승인된 코드6파일과 이번 문서4파일의 커밋 범위를 구분해 결정한다. 이후 새 advertising-comparison/v2 계약·동일 baseline/모델/입력·경쟁 플러그인·후보 서버·실제 홈 준비를 확인하고, 양쪽 각 최대1회·자동 재시도0회의 실제 비교는 별도 승인 후 진행한다. 기존 비교 HOLD와 원본 증거를 소급 변경하지 않는다.
+- 다음 작업: 리뷰 승인 코드 6파일 커밋 여부 결정
+- 배포: 고정 검증 경로6파일은 미커밋·미릴리스·일반 사용처 미설치다. 기존 fb57afa 진단 보완은 로컬 커밋 완료·미릴리스·미설치 이력으로 유지한다. 기존0.6.0 정상11개 설치는 과거 이력이며 이번에 push·재설치·재감사하지 않았다.
+- 경계: 이번 고정 검증 경로로 실제 Claude·oh-my-claudecode를 실행한 횟수는0회다. 새 계약의 로컬 allow는 단일 arm의 로컬 증거 판정이며 실제 동등 비교 성공·전체 임의 Bash 효과·경쟁 우위·일반 생산성을 입증하지 않는다. 과거9e21b70 단일 실행464.48초의 native_procedure unknown·전체 HOLD, 기존 광고 추적4실패와 클릭 추적·오늘 하루 숨김 통합 미검증을 유지한다.
+- 관찰: v3 DISABLED, 완료 품질 OBSERVATION_INVALID / pending_completion_invalid. 코드 승인과 별도이며 자동 재등록하지 않는다.
+- 근거: 로컬 `.omc/failure-state-task/REPORT.md`, `green-result.json`, `review/REPORT.md`, `review/record-result.txt`; 이전 후보는 `.omc/red-case-binding-task/REPORT.md`. 로컬 미추적 자료로 다른 checkout에 자동 제공되지 않는다.
+
+아래 이전 이력의 ‘현재·다음’과 수치는 기록 당시의 상태이며, 이번 현행 상태나 실행 승인으로 재사용하지 않는다.
+
+## 이전 이력 · 실제 Claude 검증 결과와 진단 보완 · 2026-10-19
 
 - 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
 - 현재 판정: 실제 Claude 필수 검증 통과 · 절차 비교 HOLD · 진단 보완 커밋 완료

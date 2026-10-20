@@ -8,6 +8,14 @@ import stat
 from pathlib import Path
 
 
+def validation_profile(command):
+    """One fixed runner invocation; its effect still needs a verified receipt."""
+    args = single_argv(command)
+    if len(args) == 7 and args[:6] == ['python3','scripts/omc_validation_command.py','run','--target','.','--profile']:
+        return args[6]
+    return None
+
+
 class NativeStreamAlreadyExists(FileExistsError):
     """Only a collision opening the selected native stream, not other files."""
 

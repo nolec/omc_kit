@@ -17,6 +17,26 @@ def response(first='구현됨·검증 미완료', outcome='blocked'):
     return first + '\n<!-- OMC_OUTPUT: ' + json.dumps({'schema_version':'omc-output/v1','stage':'task','outcome':outcome,'risk':'medium','next_skill':None if outcome=='blocked' else 'omc-review','user_selection_needed':outcome=='blocked','reason_code':'verification_incomplete' if outcome=='blocked' else None}) + ' -->\nVERDICT: ' + ('BLOCK' if outcome=='blocked' else 'PROCEED')
 
 
+def test_common_comparison_requires_new_explicit_policy_and_keeps_old_gate(tmp_path):
+    import omc_workflow_validation as v
+    assert v.assess_common_validation(tmp_path, [], {}, '0'*64)['comparison_entry']=='hold'
+    result,dest=collect(tmp_path,response())
+    assert 'common_validation' not in json.loads((dest/'assessment.json').read_text())
+
+
+def test_public_common_cli_renders_three_distinct_statuses(tmp_path):
+    events=tmp_path/'events.jsonl';events.write_text(json.dumps({'type':'result','result':'필수 검증 통과·작업 완료'})+'\n')
+    selection=tmp_path/'selection.json';selection.write_text('{}')
+    dest=tmp_path/'common'
+    result=subprocess.run([sys.executable,str(SCRIPT),'compare-entry','--target',str(tmp_path),
+        '--events-file',str(events),'--selection-file',str(selection),'--policy-sha256','0'*64,
+        '--output-dir',str(dest)],capture_output=True,text=True)
+    assert result.returncode==1
+    text=(dest/'report.txt').read_text()
+    assert '공통 업무 검증:' in text and '도구 내부 절차:' in text and '비교 진입:' in text
+    assert (dest/'final.txt').read_text()=='필수 검증 통과·작업 완료'
+
+
 def collect(tmp_path, text, registered=True, external=False, expected="blocked", scope_defect=None):
     root=tmp_path/'work';root.mkdir(exist_ok=True)
     state=root/'.omc';state.mkdir(exist_ok=True)

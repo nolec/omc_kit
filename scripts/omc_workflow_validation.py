@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import shlex
+import sys
 from pathlib import Path
 
 from omc_output_contract import OutputContractError, parse_envelope
@@ -89,7 +90,19 @@ def assess_native_procedure(root: Path, rows: list, basis: dict, events_file: Pa
                     text = block.get('content', '')
                     if isinstance(text, list):
                         text = ''.join(c.get('text', '') for c in text if c.get('type') == 'text')
-                    if (len(args) >= 3 and args[:2] == ['python3', 'scripts/omc_pipeline_guard.py']
+                    from omc_native_command import validation_profile
+                    profile = validation_profile(inp.get('command', ''))
+                    if profile is not None:
+                        try:
+                            from omc_validation_command import validate_receipt
+                            pin = basis['validation_commands_policy_sha256']
+                            value = json.loads(text)
+                            doc = validate_receipt(root,value['receipt'],pin,profile,historical=True)
+                            if doc['status'] != 'passed' or value['status'] != doc['status']:
+                                raise ValueError('validation_command_not_passed')
+                        except (OSError,ValueError,KeyError,TypeError) as exc:
+                            unknown.append('validation_command_unknown:'+str(exc))
+                    elif (len(args) >= 3 and args[:2] == ['python3', 'scripts/omc_pipeline_guard.py']
                             and not any(a in {';', '&&', '||', '|', '>'} for a in args)):
                         action = args[2]
                         if action == 'contract-done' and 'CONTRACT 확인 완료' in text:
@@ -427,7 +440,192 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
     return assessment
 
 
+def assess_common_validation(root: Path, rows: list, selection: dict, policy_pin: str) -> dict:
+    """New opt-in comparison contract; never rewrites the legacy overall gate.
+
+    Common observations are distinct from OMC internal protocol compliance.
+    Local custody and source scope are not adversarial effect containment.
+    """
+    from omc_validation_command import load_policy, validate_receipt, REQUIRED, CONTRACT, _scope, _raw
+    from omc_native_command import validation_profile
+    result = {'schema_version':'omc-common-validation/v2','contract_id':CONTRACT,
+        'common_work':'unknown','internal_procedure':'unknown','comparison_entry':'hold',
+        'claim_boundary':'SINGLE_ARM_LOCAL_EVIDENCE_ONLY','checks':{},'issues':[]}
+    try:
+        policy,_ = load_policy(root,policy_pin)
+        if (selection.get('schema_version') != 'omc-common-selection/v2'
+                or selection.get('contract_id') != CONTRACT or selection.get('run_id') != policy['run_id']
+                or set(selection.get('receipts',{})) != set(REQUIRED)):
+            raise ValueError('explicit_new_comparison_selection_required')
+        result['internal_procedure'] = 'not_applicable' if policy['arm']=='oh-my-claudecode' else 'unknown'
+        if policy['arm']=='omc-kit' and isinstance(policy.get('session_id'),str):
+            try:
+                internal_basis=_load_approved_basis(root,policy['session_id'])
+                if internal_basis.get('validation_commands_policy_sha256')==policy_pin:
+                    result['internal_procedure']=assess_native_procedure(root,rows,internal_basis)['status']
+            except (OSError,ValueError,KeyError,TypeError):
+                pass  # Missing internal evidence is not a common-work pass.
+        _scope(root,policy)
+        calls,returned,observed,ids,writes,product_writes = {},set(),{},set(),set(),set()
+        red_at = None
+        red_cases = set()
+        selected_red = selection.get('red_receipt')
+        for index,row in enumerate(rows):
+            for block in row.get('message',{}).get('content',[]):
+                if block.get('type')=='tool_use':
+                    ident=block.get('id')
+                    if row.get('type')!='assistant' or not ident or ident in calls:
+                        raise ValueError('ambiguous_common_call')
+                    calls[ident]=(index,block,red_at)
+                elif block.get('type')=='tool_result':
+                    ident=block.get('tool_use_id')
+                    if row.get('type')!='user' or ident not in calls or ident in returned:
+                        raise ValueError('unlinked_common_return')
+                    returned.add(ident)
+                    start,call,prior_red=calls[ident];name=call.get('name');inp=call.get('input',{})
+                    if name=='Bash':
+                        command=inp.get('command','');profile=validation_profile(command)
+                        if profile is not None:
+                            text=block.get('content','')
+                            if isinstance(text,list):text=''.join(c.get('text','') for c in text if c.get('type')=='text')
+                            value=json.loads(text)
+                            ref=value['receipt']
+                            is_red=ref==selected_red and profile=='tests'
+                            is_selected=ref==selection['receipts'].get(profile)
+                            doc=validate_receipt(root,ref,policy_pin,profile,historical=not is_selected)
+                            if doc['call_id'] in ids or value['status']!=doc['status']:
+                                raise ValueError('reused_or_mismatched_common_receipt')
+                            ids.add(doc['call_id'])
+                            if is_red:
+                                if doc['exit_code']!=1 or not doc['judgment'].get('new_failed_cases'):
+                                    raise ValueError('genuine_new_red_required')
+                                from omc_pipeline_guard import _is_test_file
+                                for path,item in doc['scope_before'].items():
+                                    if path.startswith('libs/sellerhub-store/src/lib/components/Ad/') and not _is_test_file(path):
+                                        if item.get('working') != policy['baseline_scope'].get(path,{}).get('working'):
+                                            raise ValueError('product_changed_before_red_execution')
+                                red_at=index
+                                red_cases=set(doc['judgment']['new_failed_cases'])
+                            elif ref==selection['receipts'].get(profile):
+                                if block.get('is_error') and doc['status']=='passed':
+                                    raise ValueError('failed_call_claimed_passed')
+                                observed[profile]=doc
+                        else:
+                            args=_single_bash_argv(command)
+                            # Internal protocol commands are audited separately. No
+                            # general shell exemption, free Python or tool calls.
+                            internal=(policy['arm']=='omc-kit' and len(args)>2
+                                and args[:2]==['python3','scripts/omc_pipeline_guard.py']
+                                and args[2] in {'contract-done','red-done','verification-path',
+                                    'verification-template','complete-task','status','check-edit'})
+                            internal_observation=(policy['arm']=='omc-kit' and len(args)>2 and (
+                                (args[:2]==['python3','scripts/omc_native_red_evidence.py']
+                                    and args[2] in {'observe','receipts','evidence','diagnose'})
+                                or args in [['python3','scripts/omc_home_observation.py',action,'--target','.']
+                                            for action in ['observe','receipts']]))
+                            if internal or internal_observation:
+                                if any(i+1>=len(args) or args[i+1] not in {'.',str(root)}
+                                       for i,arg in enumerate(args) if arg=='--target'):
+                                    raise ValueError('internal_target_mismatch')
+                                if any(arg.startswith('--target=') for arg in args):
+                                    raise ValueError('internal_target_form_unsupported')
+                                script=(root/args[1]).resolve()
+                                from omc_validation_command import sha
+                                if policy['oracle_pins'].get(str(script))!=sha(script.read_bytes()):
+                                    raise ValueError('internal_observation_tool_unpinned')
+                            inspection=args in [['pwd'],['git','status','--short'],['git','diff'],
+                                ['git','diff','--cached'],['git','diff','--stat'],['git','diff','--name-only']]
+                            staging=(len(args)>3 and args[:3]==['git','add','--']
+                                and all(p.startswith('libs/sellerhub-store/src/lib/components/Ad/')
+                                        and '..' not in Path(p).parts for p in args[3:]))
+                            if not (internal or internal_observation or inspection or staging):
+                                raise ValueError('unsupported_common_command')
+                    elif name in {'Edit','Write','MultiEdit'} and not block.get('is_error'):
+                        path=(root/inp['file_path']).resolve().relative_to(root.resolve())
+                        if path.parts[0]=='.omc':continue
+                        from omc_pipeline_guard import _is_test_file
+                        if not str(path).startswith('libs/sellerhub-store/src/lib/components/Ad/'):
+                            raise ValueError('common_edit_outside_scope')
+                        writes.add(str(path))
+                        if not _is_test_file(str(path)) and prior_red is None:
+                            raise ValueError('common_product_edit_before_red_return')
+                        if not _is_test_file(str(path)):
+                            product_writes.add(str(path))
+                    elif name not in {'Read','Glob','Grep','Edit','Write','MultiEdit'}:
+                        raise ValueError('unsupported_common_tool')
+        if set(calls)!=returned or red_at is None:
+            raise ValueError('common_returns_or_red_missing')
+        from omc_workflow_preflight import baseline
+        current=baseline(root)
+        changed={n for n in set(current)|set(policy['baseline_scope'])
+            if current.get(n,{}).get('working')!=policy['baseline_scope'].get(n,{}).get('working')}
+        if not product_writes or not changed <= writes:
+            raise ValueError('common_product_change_trace_missing')
+        if set(observed)!=set(REQUIRED):
+            raise ValueError('common_validation_receipts_missing')
+        result['profiles']={key:doc['status'] for key,doc in observed.items()}
+        final_tests=json.loads(_raw(root,observed['tests']['artifacts']['jest']))
+        passed_cases={case['fullName'] for suite in final_tests['testResults']
+                      for case in suite['assertionResults'] if case['status']=='passed'}
+        def combined(*profiles):
+            statuses=[observed[key]['status'] for key in profiles]
+            return 'failed' if 'failed' in statuses else 'passed' if set(statuses)=={'passed'} else 'unknown'
+        result['checks']={'tests':combined('tests'),'lint':combined('lint'),
+            'browser-controlled':combined('build-controlled','controlled'),
+            'browser-home':combined('home'),
+            'browser-visual-controlled':combined('build-pixels','pixels-dpr1','pixels-dpr2')}
+        result['common_work']=('failed' if 'failed' in result['checks'].values() else
+                               'passed' if set(result['checks'].values())=={'passed'} else 'unknown')
+        if not red_cases <= passed_cases:
+            raise ValueError('red_cases_not_passed')
+        finals=[r for r in rows if r.get('type')=='result']
+        if len(finals)!=1 or not isinstance(finals[0].get('result'),str):
+            raise ValueError('common_final_missing')
+        first=finals[0]['result'].splitlines()[0] if finals[0]['result'].splitlines() else ''
+        failures=len(observed['tests']['judgment']['existing_failed_cases'])
+        result['existing_failures']=failures
+        if failures and policy['report_contract']['existing_failures'].format(count=failures) not in finals[0]['result']:
+            raise ValueError('existing_failures_not_disclosed')
+        body_states={line.strip().strip('#*` ').strip() for line in finals[0]['result'].splitlines()} & STATUSES
+        if result['common_work']=='passed' and body_states-{'필수 검증 통과·작업 완료'}:
+            raise ValueError('common_report_conflicting_state')
+        if result['common_work']=='passed' and first=='필수 검증 통과·작업 완료':
+            result['comparison_entry']='allow'
+        else:
+            result['issues'].append('common_checks_or_report_not_passed')
+    except (OSError,ValueError,KeyError,TypeError,AttributeError,IndexError) as exc:
+        result['issues'].append(str(exc))
+    return result
+
+
+def common_main(argv):
+    parser=argparse.ArgumentParser(description='New common comparison contract; no legacy reclassification')
+    parser.add_argument('--target',type=Path,required=True)
+    parser.add_argument('--events-file',type=Path,required=True)
+    parser.add_argument('--selection-file',type=Path,required=True)
+    parser.add_argument('--policy-sha256',required=True)
+    parser.add_argument('--output-dir',type=Path,required=True)
+    args=parser.parse_args(argv)
+    try:
+        rows=[json.loads(line) for line in args.events_file.read_text().splitlines() if line.strip()]
+        selection=json.loads(args.selection_file.read_bytes())
+        result=assess_common_validation(args.target.resolve(),rows,selection,args.policy_sha256)
+        finals=[r['result'] for r in rows if r.get('type')=='result' and isinstance(r.get('result'),str)]
+        args.output_dir.mkdir(parents=True,exist_ok=False)
+        (args.output_dir/'assessment.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
+        (args.output_dir/'final.txt').write_text(finals[0] if len(finals)==1 else '')
+        (args.output_dir/'report.txt').write_text('공통 업무 검증: '+result['common_work']
+            +'\n도구 내부 절차: '+result['internal_procedure']+'\n비교 진입: '+result['comparison_entry']
+            +'\n근거: '+'; '.join(result['issues'])+'\n기존 비교 판정은 변경하지 않습니다.\n')
+        print(json.dumps(result,ensure_ascii=False))
+        return 0 if result['comparison_entry']=='allow' else 1
+    except (OSError,ValueError,KeyError,TypeError) as exc:
+        print(json.dumps({'comparison_entry':'hold','reason':str(exc)}));return 1
+
+
 def main() -> int:
+    if sys.argv[1:2]==['compare-entry']:
+        return common_main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--target', type=Path, required=True)
     parser.add_argument('--events-file', type=Path, required=True)

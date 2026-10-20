@@ -17,6 +17,16 @@ def command_module():
     return importlib.import_module('omc_native_command')
 
 
+@pytest.mark.parametrize('suffix', ['', ' 2>&1'])
+def test_fixed_validation_profile_call_is_literal(suffix):
+    assert command_module().validation_profile('python3 scripts/omc_validation_command.py run --target . --profile tests'+suffix)=='tests'
+
+
+@pytest.mark.parametrize('tail',['; true',' --command x','\ntrue',' --profile lint',' $(pwd)'])
+def test_fixed_validation_profile_call_rejects_extra_input(tail):
+    assert command_module().validation_profile('python3 scripts/omc_validation_command.py run --target . --profile tests'+tail) is None
+
+
 @pytest.mark.parametrize('tool', ['cat', 'sha256sum'])
 @pytest.mark.parametrize('suffix', ['', ' 2>&1'])
 def test_bounded_read_recognizes_regular_candidate_files(tmp_path, tool, suffix):
