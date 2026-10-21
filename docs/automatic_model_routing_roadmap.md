@@ -1,6 +1,21 @@
 # Automatic Model Routing Roadmap
 
-## 현재 · 출하 재검증 준비와 검증 정책 정리 · 2026-10-20
+## 현재 · 0.6.1 릴리스·11개 재설치 완료 · 2026-10-21
+
+- 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
+- 현재 판정: 0.6.1 로컬 패치 릴리스·정상11개 재설치 완료 · 전체 출하 검증 통과 · 실제 비교 HOLD 유지
+- 코드·커밋: 고정 검증68411f7·계약 테스트 격리edae3c9·계약 문서e41c03e·설치 검사 격리d844457·인덱스 증거 보존904c58d를 포함해 e618fca로0.6.1 메타데이터3개를 커밋했다.
+- 검증: 최종0.6.1 후보e618fca 전체 출하 검사1회: 4790 passed·0 failed·0 error·승인된3 skipped·slow12 제외, 1063.28초. 실제 광고 baseline 빌드·산출물 보존 통과. 내부 인덱스 기록5건 전후 raw 동일. 버전 회귀32개는 별도 범위로 통과했으며 전체 수치와 합산하지 않는다.
+- 생략 경계: 외부 과거 입력 검증2개·의도적 RED표식1개만 최종 후보1개·전체 검사1회에 명시 승인했다. 이 승인은 소비됐으며 다음 실행에 자동 승계하지 않는다. 과거 원본 자료 미확보·재현성 미검증 상태는 유지한다.
+- 보존: 원본 HEAD·파일 내용/권한·인덱스 원문 보존. 실행 clone의 스테이징 정보·플래그 보존, raw 차이는 .omc/wip/latest.json 시간 캐시뿐이다. 대표 재현의 플러그인 원인과 과거 원인UNKNOWN을 구분한다.
+- 배포: 0.6.1 로컬 패치 릴리스e618fca·정상11개 재설치·엄격 감사 완료. 모두 installed_version0.6.1·install_integrity clean·source_status unchanged·source_revision e618fca. 설치 직전 업무 파일34912개·관찰/설정163개 변경0. 설치본·receipt 백업 보존. marketing-project 기존 제외, 원격 push·태그·GitHub release 없음.
+- 다음: 출하 준비 보완은 종료했다. 0.6.1을 기준으로 advertising-comparison/v2 계약·동일 baseline/모델/입력·경쟁 플러그인·후보 서버·실제 홈 준비를 고정한 뒤, 양쪽 각 최대1회·자동 재시도0회의 실제 비교를 별도 승인 후 진행한다. 기존 HOLD·원본 증거를 소급 변경하거나 릴리스·설치 결과로 비교 성공을 대신하지 않는다.
+- 다음 작업: 0.6.1 동일 광고 사례의 실제 비교 재실행 여부 결정
+- 경계: 현재 보완 후 실제 Claude·oh-my-claudecode 새 실행0회. 기존9e21b70 단일 실행464.48초의 필수5검증·픽셀12조건·실제 홈 통과와 native_procedure unknown·전체 HOLD는 당시 결과로 보존한다. 기존 광고 추적4실패와 클릭 추적·오늘 하루 숨김 통합 미검증, 동등 비교·생산성 효과 미입증을 유지한다. Chromium 로컬 렌더 성공은 실제 광고 화면 통과가 아니다. OMC Kit 전체 회귀 통과와 광고 업무의 기존 추적4실패는 서로 다른 검증 범위다. 0.6.1 릴리스·설치는 실제 Claude 재비교나 생산성 효과의 증거가 아니다.
+- 관찰: v3 DISABLED · OBSERVATION_INVALID / pending_completion_invalid. 관찰 설정·기록은 보존하며 재개·재등록하지 않았다.
+- 근거: [0.6.1 릴리스 노트](releases/0.6.1.md). 로컬 .omc/release-061/REPORT.md, rollout-summary.json, install-results.json, final-quality-summary.json 및 .omc/ship-final-e618fca/assessment.json. 로컬 자료는 다른 checkout에 자동 제공되지 않는다.
+
+## 이전 이력 · 출하 재검증 준비와 검증 정책 정리 · 2026-10-20
 
 - 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
 - 현재 판정: 출하 재검증 준비 · 코드 커밋 완료 · 계약 문서 승인·미커밋 · 실제 비교 HOLD 유지

@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "출하 재검증 준비 · 코드 커밋 완료 · 계약 문서 승인·미커밋 · 실제 비교 HOLD 유지",
+    "decision": "0.6.1 로컬 패치 릴리스·정상11개 재설치 완료 · 전체 출하 검증 통과 · 실제 비교 HOLD 유지",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2006,7 +2006,7 @@
         "effect": "미검증",
         "id": "C1",
         "name": "기존·신규 실패 구분",
-        "next_work": "현재 우선순위는 계약 문서 커밋·최종 후보 고정·출하 재검증이다. C1 후속 효과 비교는 출하 검증 후 별도 결정한다.",
+        "next_work": "0.6.1 릴리스·11개 설치는 완료했다. 실제 비교 재실행은 별도 승인 후 진행하며 C1/C2/C3 사용자 효과·경쟁 우위 미입증 상태는 유지한다.",
         "principle": "기존 실패와 이번 변경의 실패를 분리하되 필수 검증 실패는 완료 차단",
         "status": "C1 실행기 보고 유지 · 응답 지침 후보 제외 · 회귀 검증·리뷰 완료 · 사용자 효과 미입증",
         "supports": [
@@ -2022,7 +2022,7 @@
         "effect": "미검증",
         "id": "C2",
         "name": "프롬프트 관리",
-        "next_work": "현재 우선순위는 계약 문서 커밋·최종 후보 고정·출하 재검증이다. 기존 과제와 사용자 효과 미검증 상태는 유지하며, 출하 검증 후 다음 우선순위를 다시 정한다.",
+        "next_work": "0.6.1 릴리스·11개 설치는 완료했다. 실제 비교 재실행은 별도 승인 후 진행하며 C1/C2/C3 사용자 효과·경쟁 우위 미입증 상태는 유지한다.",
         "principle": "정책 변경의 일관된 반영",
         "status": "비교 검증 필요",
         "supports": [
@@ -2038,9 +2038,9 @@
         "effect": "미입증",
         "id": "C3",
         "name": "중단·재개",
-        "next_work": "현재 우선순위는 계약 문서 커밋·최종 후보 고정·출하 재검증이다. 기존 과제와 사용자 효과 미검증 상태는 유지하며, 출하 검증 후 다음 우선순위를 다시 정한다.",
+        "next_work": "0.6.1 릴리스·11개 설치는 완료했다. 실제 비교 재실행은 별도 승인 후 진행하며 C1/C2/C3 사용자 효과·경쟁 우위 미입증 상태는 유지한다.",
         "principle": "완료 근거를 재검증하며 작업 이어가기",
-        "status": "다섯 항목 안내 구현 이력0.5.8 · 현재 설치0.5.9 · 사용자 이해 재검증 전",
+        "status": "다섯 항목 안내0.5.8 구현 이력 보존 · 현재 설치0.6.1 · 사용자 이해 재검증 전",
         "supports": [
           "F4"
         ],
@@ -2049,12 +2049,12 @@
         "historical_next_work": "설치된0.5.9의 기본 다섯 항목 안내만 제공한 새 격리 사례에서 사용자 이해를 확인한다. 형식 동의·코드 검증·설치를 실제 이해 효과로 집계하지 않으며 실무·다중 사례 효과·경쟁 우열은 미검증으로 유지한다."
       }
     ],
-    "next": "리뷰 승인된 계약 문서 1개를 별도 커밋하고 이번 로드맵·대시보드 변경까지 포함한 최종 후보를 고정한다. 최종 범위 리뷰·실제 범위 TDD·품질 설정 근거 갱신과 정식 승인·권한 허용 환경을 확인한 뒤 별도 omc-ship 요청으로 전체 검사를 최대1회·60분·재시도0회 수행한다. 이번 최신화는 출하 검사나 모델 비교 실행이 아니다.",
+    "next": "출하 준비 보완은 종료했다. 0.6.1을 기준으로 advertising-comparison/v2 계약·동일 baseline/모델/입력·경쟁 플러그인·후보 서버·실제 홈 준비를 고정한 뒤, 양쪽 각 최대1회·자동 재시도0회의 실제 비교를 별도 승인 후 진행한다. 기존 HOLD·원본 증거를 소급 변경하거나 릴리스·설치 결과로 비교 성공을 대신하지 않는다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "계약 문서 1개 커밋 후 최종 후보 고정"
+    "current_priority": "0.6.1 동일 광고 사례의 실제 비교 재실행 여부 결정"
   },
   "decision": {
-    "candidate": "고정 검증 보완 커밋과 출하 검증 준비",
+    "candidate": "0.6.1 출하·도입 완료 후 실제 업무 비교",
     "candidates": [
       {
         "cost": "검증·도입 부담 미확인",
@@ -2096,67 +2096,66 @@
         "historical": true
       }
     ],
-    "completion": "68411f7 고정 검증 보완과 edae3c9 테스트 격리 보완은 로컬 커밋 완료. 계약 문서·실행 기준 JSON 2개 리뷰 APPROVE, 계약 문서 미커밋·설정 stale·최종 전체 후보 미고정. 전체 검사 재실행0·실제 비교 HOLD 유지.",
+    "completion": "고정 검증·테스트 격리·인덱스 증거 보존 보완을0.6.1로 릴리스하고 정상11개에 재설치·엄격 감사했다. 최종 출하4790통과·승인된3생략. 실제 양쪽 비교 HOLD와 업무 효과 미입증 상태 유지.",
     "deliverables": [
-      "고정 검증 코드 커밋68411f7",
-      "계약 해시 테스트 격리 커밋edae3c9",
-      "생략4개 진단과 index 대표 재현·원문 보존",
-      "진단/출하준비 및 격리/원본 TDD 증거 구분 정정본",
-      "후보한정 생략3개·광고빌드필수·후보고정후보존의 승인된 정책 문서"
+      "고정 검증 코드68411f7 및 계약 해시 테스트 격리edae3c9",
+      "계약 문서e41c03e 커밋·후보별 생략3개 승인",
+      "설치 검사 격리d844457·플러그인 차단/증거 보존904c58d",
+      "0.6.1 릴리스e618fca·최종 전체 출하4790통과",
+      "정상11개 재설치·엄격 감사·업무/관찰 기록 보존"
     ],
     "limit": "이번 고정 검증 경로로 실제 Claude·oh-my-claudecode를 실행한 횟수는0회다. 새 계약의 로컬 allow는 단일 arm의 로컬 증거 판정이며 실제 동등 비교 성공·전체 임의 Bash 효과·경쟁 우위·일반 생산성을 입증하지 않는다. 과거9e21b70 단일 실행464.48초의 native_procedure unknown·전체 HOLD, 기존 광고 추적4실패와 클릭 추적·오늘 하루 숨김 통합 미검증을 유지한다.",
     "not_done": [
-      "계약 문서1개 커밋 및 최종 후보 고정",
-      "최종 범위 리뷰·품질 설정 갱신과 정식 승인",
-      "권한 허용 환경에서 실제 광고 빌드를 포함한 전체 검사1회",
-      "새 계약의 동일 조건 실제 Claude·oh-my-claudecode 비교",
-      "릴리스·일반 사용처 재설치 및 사용자 개입·재작업·시간 효과 입증"
+      "새 계약의 동일 조건 실제 Claude·oh-my-claudecode 광고 비교",
+      "사용자 개입·재작업·시간 효과 입증",
+      "C3 사용자 이해 재검증·일반 경쟁 우위 입증"
     ],
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
     "reason": "고정8개 공통 검증 프로필의 실행·종료 코드·출력·후보·산출물을 결속하고, 공통 업무·도구 내부 절차·비교 진입을 분리했다. 신규 RED 실패 케이스가 최종 결과에 같은 이름으로 모두 남아 통과해야 비교 진입을 허용한다. 삭제·이름 변경·미해결은 HOLD이며 실제 실패 failed와 실행 불가 unknown을 구분해 필수5개 결과를 보존한다.",
-    "state": "출하 재검증 대기 · 실제 비교 HOLD",
-    "next": "리뷰 승인된 계약 문서 1개를 별도 커밋하고 이번 로드맵·대시보드 변경까지 포함한 최종 후보를 고정한다. 최종 범위 리뷰·실제 범위 TDD·품질 설정 근거 갱신과 정식 승인·권한 허용 환경을 확인한 뒤 별도 omc-ship 요청으로 전체 검사를 최대1회·60분·재시도0회 수행한다. 이번 최신화는 출하 검사나 모델 비교 실행이 아니다."
+    "state": "출하·11개 도입 완료 · 실제 비교 HOLD",
+    "next": "출하 준비 보완은 종료했다. 0.6.1을 기준으로 advertising-comparison/v2 계약·동일 baseline/모델/입력·경쟁 플러그인·후보 서버·실제 홈 준비를 고정한 뒤, 양쪽 각 최대1회·자동 재시도0회의 실제 비교를 별도 승인 후 진행한다. 기존 HOLD·원본 증거를 소급 변경하거나 릴리스·설치 결과로 비교 성공을 대신하지 않는다."
   },
   "current_update": {
-    "date": "2026-10-20",
-    "status": "출하 재검증 준비 · 코드 커밋 완료 · 계약 문서 승인·미커밋 · 실제 비교 HOLD 유지",
+    "date": "2026-10-21",
+    "status": "0.6.1 로컬 패치 릴리스·정상11개 재설치 완료 · 전체 출하 검증 통과 · 실제 비교 HOLD 유지",
     "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
-    "goal_progress": "고정 검증 실행·RED 최종 통과 연결·상태 구분은 커밋됐고, 출하 준비의 환경·자료 의존성과 기록 경계를 확인했다. 실제 양쪽 비교 HOLD 해소·업무 효과는 미입증.",
-    "commit": "edae3c9",
+    "goal_progress": "필수 검증 실행·증거 연결과 출하 검사 격리 보완을0.6.1로 릴리스하고 정상11개 사용처에 설치·엄격 감사했다. 실제 양쪽 비교 HOLD 해소·사용자 개입/재작업/시간 효과는 미입증.",
+    "commit": "e618fca",
     "implementation_commit": "68411f7",
-    "commit_scope": "68411f7은 승인 코드6개와 문서4개, edae3c9는 계약 해시 테스트2개. 이번 최신화는 로드맵·대시보드4파일만; 계약 문서1개는 별도 보존.",
-    "verification": "68411f7 전체 품질 검사 이력: 4777 passed·2 failed·4 skipped·slow12 제외, 17분24초. 계약 해시 테스트의 실제 작업 상태 간섭은 기준 버전과 후보에서 동일 재현됐고 edae3c9로 격리 보완했다. 관련56개와 독립10개는 별도 범위 통과이며 합산하거나 전체 검사 재통과로 취급하지 않는다. 생략 후보4개 진단1회는4skipped이며 통과가 아니다. 고정 검증 경로의88개·독립3개는 이전 후보 이력이다.",
-    "tests_passed": 56,
-    "tests_skipped": 0,
+    "commit_scope": "e618fca는 VERSION·버전 고정 테스트·릴리스 노트3개. 이번 최신화는 로드맵·대시보드4개 문서만이며 미커밋이다.",
+    "verification": "최종0.6.1 후보e618fca 전체 출하 검사1회: 4790 passed·0 failed·0 error·승인된3 skipped·slow12 제외, 1063.28초. 실제 광고 baseline 빌드·산출물 보존 통과. 내부 인덱스 기록5건 전후 raw 동일. 버전 회귀32개는 별도 범위로 통과했으며 전체 수치와 합산하지 않는다.",
+    "tests_passed": 4790,
+    "tests_skipped": 3,
     "surface_tests_passed": null,
     "review_verdict": "APPROVE",
-    "review_scope_files": 2,
-    "review_scope_description": "직전 승인 범위는 계약 문서와 실행 기준 JSON 2개; 최종 전체 후보 리뷰는 미실행",
-    "next": "리뷰 승인된 계약 문서 1개를 별도 커밋하고 이번 로드맵·대시보드 변경까지 포함한 최종 후보를 고정한다. 최종 범위 리뷰·실제 범위 TDD·품질 설정 근거 갱신과 정식 승인·권한 허용 환경을 확인한 뒤 별도 omc-ship 요청으로 전체 검사를 최대1회·60분·재시도0회 수행한다. 이번 최신화는 출하 검사나 모델 비교 실행이 아니다.",
-    "display_next": "계약 문서 1개 커밋 후 최종 후보 고정",
-    "limitations": "현재 보완 후 실제 Claude·oh-my-claudecode 새 실행0회. 기존9e21b70 단일 실행464.48초의 필수5검증·픽셀12조건·실제 홈 통과와 native_procedure unknown·전체 HOLD는 당시 결과로 보존한다. 기존 광고 추적4실패와 클릭 추적·오늘 하루 숨김 통합 미검증, 동등 비교·생산성 효과 미입증을 유지한다. Chromium 로컬 렌더 성공은 실제 광고 화면 통과가 아니다.",
-    "installation": "68411f7 고정 검증 경로와 edae3c9 테스트 격리 보완은 로컬 커밋 완료·미릴리스·일반 사용처 미설치다. 계약 문서는 리뷰 승인·미커밋이며 이번 문서4파일 커밋 범위에서는 제외한다. 기존0.6.0 정상11개 설치는 과거 이력이고 새 push·설치·재감사는 수행하지 않았다.",
+    "review_scope_files": 3,
+    "review_scope_description": "최종 릴리스 메타데이터3개와 기준904c58d 단일 변경의 승인·동결 diff를 각각 결속. 기존 기반 코드 리뷰는 별도 이력으로 보존.",
+    "next": "출하 준비 보완은 종료했다. 0.6.1을 기준으로 advertising-comparison/v2 계약·동일 baseline/모델/입력·경쟁 플러그인·후보 서버·실제 홈 준비를 고정한 뒤, 양쪽 각 최대1회·자동 재시도0회의 실제 비교를 별도 승인 후 진행한다. 기존 HOLD·원본 증거를 소급 변경하거나 릴리스·설치 결과로 비교 성공을 대신하지 않는다.",
+    "display_next": "0.6.1 동일 광고 사례의 실제 비교 재실행 여부 결정",
+    "limitations": "현재 보완 후 실제 Claude·oh-my-claudecode 새 실행0회. 기존9e21b70 단일 실행464.48초의 필수5검증·픽셀12조건·실제 홈 통과와 native_procedure unknown·전체 HOLD는 당시 결과로 보존한다. 기존 광고 추적4실패와 클릭 추적·오늘 하루 숨김 통합 미검증, 동등 비교·생산성 효과 미입증을 유지한다. Chromium 로컬 렌더 성공은 실제 광고 화면 통과가 아니다. OMC Kit 전체 회귀 통과와 광고 업무의 기존 추적4실패는 서로 다른 검증 범위다. 0.6.1 릴리스·설치는 실제 Claude 재비교나 생산성 효과의 증거가 아니다.",
+    "installation": "0.6.1 로컬 패치 릴리스e618fca·정상11개 재설치·엄격 감사 완료. 모두 installed_version0.6.1·install_integrity clean·source_status unchanged·source_revision e618fca. 설치 직전 업무 파일34912개·관찰/설정163개 변경0. 설치본·receipt 백업 보존. marketing-project 기존 제외, 원격 push·태그·GitHub release 없음.",
     "release_state": {
-      "release_version": "0.6.0",
-      "release_commit": "2f0f521",
+      "release_version": "0.6.1",
+      "release_commit": "e618fcaf693f4b20519eb6dab6bce64da9c662f6",
       "consumer_count": 11,
-      "binding_fix_released": false,
-      "binding_fix_reinstalled": false,
+      "binding_fix_released": true,
+      "binding_fix_reinstalled": true,
       "pushed": false,
-      "visual_completion_fix_released": false,
-      "visual_completion_fix_reinstalled": false,
-      "peer_trace_released": false,
-      "peer_trace_reinstalled": false,
-      "home_observation_released": false,
-      "home_observation_reinstalled": false,
-      "native_red_fix_released": false,
-      "native_red_fix_reinstalled": false,
-      "native_command_fix_released": false,
-      "native_command_fix_reinstalled": false,
-      "bounded_read_fix_released": false,
-      "bounded_read_fix_reinstalled": false,
-      "fixed_validation_released": false,
-      "fixed_validation_reinstalled": false
+      "visual_completion_fix_released": true,
+      "visual_completion_fix_reinstalled": true,
+      "peer_trace_released": true,
+      "peer_trace_reinstalled": true,
+      "home_observation_released": true,
+      "home_observation_reinstalled": true,
+      "native_red_fix_released": true,
+      "native_red_fix_reinstalled": true,
+      "native_command_fix_released": true,
+      "native_command_fix_reinstalled": true,
+      "bounded_read_fix_released": true,
+      "bounded_read_fix_reinstalled": true,
+      "fixed_validation_released": true,
+      "fixed_validation_reinstalled": true,
+      "source_sha256": "7b1ecaa729ffb04780437c309f0dcba76aff507c604d441e297485482fac2a2a"
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2165,56 +2164,55 @@
       "docs/comparison-dashboard/view.json"
     ],
     "local_runtime_evidence": [
-      ".omc/committed-ship-check-68411f7/REPORT.md",
-      ".omc/contract-hash-isolation-task/REPORT.md",
-      ".omc/ship-diagnostic-edae3c9/REPORT.md",
-      ".omc/ship-diagnostic-edae3c9/correction-v2/REPORT.md",
-      ".omc/external-input-browser-investigation/REPORT.json",
-      ".omc/ship-contract-document-task/REPORT.md",
-      ".omc/ship-contract-document-task/review/review.json"
+      ".omc/release-061/REPORT.md",
+      ".omc/release-061/rollout-summary.json",
+      ".omc/release-061/install-results.json",
+      ".omc/release-061/final-quality-summary.json",
+      ".omc/ship-final-e618fca/assessment.json",
+      ".omc/ship-final-904c58d/assessment.json",
+      ".omc/plugin-index-isolation-task/review-report.md"
     ],
     "observation": {
       "v3": "DISABLED",
       "completion": "OBSERVATION_INVALID",
-      "reason": "pending_completion_invalid"
+      "reason": "pending_completion_invalid",
+      "automatic_resume": false
     },
-    "ship_state": "BLOCKED_NOT_RERUN",
+    "ship_state": "PASSED_RELEASED_LOCAL_INSTALLED_11",
     "comparison_state": "HOLD",
     "full_quality": {
-      "candidate": "68411f7",
-      "passed": 4777,
-      "failed": 2,
-      "skipped": 4,
+      "candidate": "e618fcaf693f4b20519eb6dab6bce64da9c662f6",
+      "passed": 4790,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 3,
       "slow_deselected": 12,
-      "elapsed_seconds": 1044.06,
-      "rerun_after_edae3c9": 0
+      "elapsed_seconds": 1063.28,
+      "attempts": 1,
+      "automatic_retries": 0,
+      "allowed_skip_count": 3,
+      "mandatory_ad_build": "passed"
     },
     "verification_groups": [
       {
-        "name": "계약 해시 격리 관련",
-        "passed": 56,
-        "skipped": 0,
-        "historical": true
+        "name": "최종0.6.1 전체 출하 검사",
+        "passed": 4790,
+        "skipped": 3,
+        "scope": "OMC Kit local ship contract"
       },
       {
-        "name": "독립 리뷰",
-        "passed": 10,
+        "name": "버전 회귀",
+        "passed": 32,
         "skipped": 0,
-        "historical": true
-      },
-      {
-        "name": "생략 사유 진단",
-        "passed": 0,
-        "skipped": 4,
-        "historical": true
+        "scope": "별도 묶음; 전체 결과와 중복 합산하지 않음"
       }
     ],
     "ship_contract": {
       "policy_selected": true,
       "review": "APPROVE",
-      "document_committed": false,
-      "candidate_bound": false,
-      "quality_status": "stale",
+      "document_committed": true,
+      "candidate_bound": true,
+      "quality_status": "passed",
       "exceptions": {
         "historical_inputs": 2,
         "intentional_red_sentinel": 1,
@@ -2222,10 +2220,13 @@
         "max_full_runs": 1
       },
       "ad_baseline_build_required": true,
-      "preservation_start": "최종 문서 커밋 후 최종 후보 고정 시점",
+      "preservation_start": "e618fca 고정 직후 원본 기준과 실행 직전 clone 기준 각각 보존",
       "original_index_raw_unchanged": true,
       "isolated_explained_cache_differences_only": true,
-      "execution_authorized": false
+      "execution_authorized": false,
+      "candidate": "e618fcaf693f4b20519eb6dab6bce64da9c662f6",
+      "execution_authorization_status": "CONSUMED_ONE_RUN",
+      "full_runs": 1
     },
     "input_and_environment": {
       "observed_originals_expected": 7,
@@ -2233,12 +2234,35 @@
       "historical_reproducibility": "unverified",
       "browser_render": "local_html_passed_outside_sandbox",
       "actual_ad_screen_verified_this_update": false,
-      "historical_index_cause": "UNKNOWN"
+      "historical_index_cause": "UNKNOWN",
+      "actual_ad_build_passed": true,
+      "nested_index_raw_unchanged_count": 5,
+      "representative_index_cause": "pytest-benchmark git describe --dirty stat cache refresh; historical cause UNKNOWN remains"
     },
     "task_gate": {
-      "state": "BLOCKED",
-      "reason": "현재 RED 등록과 근거 요건 미충족",
-      "document_review_approval_is_not_task_or_ship_completion": true
+      "state": "NOT_APPLICABLE_DOCUMENT_ONLY",
+      "reason": "이번 최신화는 문서만 변경하며 제품 동작·모델 실행·출하 검사 재실행이 아님; 이전 task 차단은 이력 보존"
+    },
+    "install_preservation": {
+      "business_files": 34912,
+      "observation_files": 163,
+      "business_changes": 0,
+      "observation_changes": 0,
+      "backup": "/private/tmp/omc-061-install-preinstall-77a1wh1z",
+      "source_sha256": "7b1ecaa729ffb04780437c309f0dcba76aff507c604d441e297485482fac2a2a",
+      "targets": [
+        "ai-cs",
+        "codex-chat",
+        "marketing",
+        "research-auto",
+        "market-reasoning-engine",
+        "okx-maker-grid-bot-wind",
+        "sixshop3-storefront-fe",
+        "sixshop2",
+        "sixshop2-landing",
+        "sixshop3-partner-center-fe",
+        "sellerhub-accounts-fe-restored"
+      ]
     }
   },
   "current_update_history": [
@@ -4058,6 +4082,131 @@
         "reason": "pending_completion_invalid"
       },
       "historical": true
+    },
+    {
+      "date": "2026-10-20",
+      "status": "출하 재검증 준비 · 코드 커밋 완료 · 계약 문서 승인·미커밋 · 실제 비교 HOLD 유지",
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "goal_progress": "고정 검증 실행·RED 최종 통과 연결·상태 구분은 커밋됐고, 출하 준비의 환경·자료 의존성과 기록 경계를 확인했다. 실제 양쪽 비교 HOLD 해소·업무 효과는 미입증.",
+      "commit": "edae3c9",
+      "implementation_commit": "68411f7",
+      "commit_scope": "68411f7은 승인 코드6개와 문서4개, edae3c9는 계약 해시 테스트2개. 이번 최신화는 로드맵·대시보드4파일만; 계약 문서1개는 별도 보존.",
+      "verification": "68411f7 전체 품질 검사 이력: 4777 passed·2 failed·4 skipped·slow12 제외, 17분24초. 계약 해시 테스트의 실제 작업 상태 간섭은 기준 버전과 후보에서 동일 재현됐고 edae3c9로 격리 보완했다. 관련56개와 독립10개는 별도 범위 통과이며 합산하거나 전체 검사 재통과로 취급하지 않는다. 생략 후보4개 진단1회는4skipped이며 통과가 아니다. 고정 검증 경로의88개·독립3개는 이전 후보 이력이다.",
+      "tests_passed": 56,
+      "tests_skipped": 0,
+      "surface_tests_passed": null,
+      "review_verdict": "APPROVE",
+      "review_scope_files": 2,
+      "review_scope_description": "직전 승인 범위는 계약 문서와 실행 기준 JSON 2개; 최종 전체 후보 리뷰는 미실행",
+      "next": "리뷰 승인된 계약 문서 1개를 별도 커밋하고 이번 로드맵·대시보드 변경까지 포함한 최종 후보를 고정한다. 최종 범위 리뷰·실제 범위 TDD·품질 설정 근거 갱신과 정식 승인·권한 허용 환경을 확인한 뒤 별도 omc-ship 요청으로 전체 검사를 최대1회·60분·재시도0회 수행한다. 이번 최신화는 출하 검사나 모델 비교 실행이 아니다.",
+      "display_next": "계약 문서 1개 커밋 후 최종 후보 고정",
+      "limitations": "현재 보완 후 실제 Claude·oh-my-claudecode 새 실행0회. 기존9e21b70 단일 실행464.48초의 필수5검증·픽셀12조건·실제 홈 통과와 native_procedure unknown·전체 HOLD는 당시 결과로 보존한다. 기존 광고 추적4실패와 클릭 추적·오늘 하루 숨김 통합 미검증, 동등 비교·생산성 효과 미입증을 유지한다. Chromium 로컬 렌더 성공은 실제 광고 화면 통과가 아니다.",
+      "installation": "68411f7 고정 검증 경로와 edae3c9 테스트 격리 보완은 로컬 커밋 완료·미릴리스·일반 사용처 미설치다. 계약 문서는 리뷰 승인·미커밋이며 이번 문서4파일 커밋 범위에서는 제외한다. 기존0.6.0 정상11개 설치는 과거 이력이고 새 push·설치·재감사는 수행하지 않았다.",
+      "release_state": {
+        "release_version": "0.6.0",
+        "release_commit": "2f0f521",
+        "consumer_count": 11,
+        "binding_fix_released": false,
+        "binding_fix_reinstalled": false,
+        "pushed": false,
+        "visual_completion_fix_released": false,
+        "visual_completion_fix_reinstalled": false,
+        "peer_trace_released": false,
+        "peer_trace_reinstalled": false,
+        "home_observation_released": false,
+        "home_observation_reinstalled": false,
+        "native_red_fix_released": false,
+        "native_red_fix_reinstalled": false,
+        "native_command_fix_released": false,
+        "native_command_fix_reinstalled": false,
+        "bounded_read_fix_released": false,
+        "bounded_read_fix_reinstalled": false,
+        "fixed_validation_released": false,
+        "fixed_validation_reinstalled": false
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/index.html",
+        "docs/comparison-dashboard/view.json"
+      ],
+      "local_runtime_evidence": [
+        ".omc/committed-ship-check-68411f7/REPORT.md",
+        ".omc/contract-hash-isolation-task/REPORT.md",
+        ".omc/ship-diagnostic-edae3c9/REPORT.md",
+        ".omc/ship-diagnostic-edae3c9/correction-v2/REPORT.md",
+        ".omc/external-input-browser-investigation/REPORT.json",
+        ".omc/ship-contract-document-task/REPORT.md",
+        ".omc/ship-contract-document-task/review/review.json"
+      ],
+      "observation": {
+        "v3": "DISABLED",
+        "completion": "OBSERVATION_INVALID",
+        "reason": "pending_completion_invalid"
+      },
+      "ship_state": "BLOCKED_NOT_RERUN",
+      "comparison_state": "HOLD",
+      "full_quality": {
+        "candidate": "68411f7",
+        "passed": 4777,
+        "failed": 2,
+        "skipped": 4,
+        "slow_deselected": 12,
+        "elapsed_seconds": 1044.06,
+        "rerun_after_edae3c9": 0
+      },
+      "verification_groups": [
+        {
+          "name": "계약 해시 격리 관련",
+          "passed": 56,
+          "skipped": 0,
+          "historical": true
+        },
+        {
+          "name": "독립 리뷰",
+          "passed": 10,
+          "skipped": 0,
+          "historical": true
+        },
+        {
+          "name": "생략 사유 진단",
+          "passed": 0,
+          "skipped": 4,
+          "historical": true
+        }
+      ],
+      "ship_contract": {
+        "policy_selected": true,
+        "review": "APPROVE",
+        "document_committed": false,
+        "candidate_bound": false,
+        "quality_status": "stale",
+        "exceptions": {
+          "historical_inputs": 2,
+          "intentional_red_sentinel": 1,
+          "max_candidate_count": 1,
+          "max_full_runs": 1
+        },
+        "ad_baseline_build_required": true,
+        "preservation_start": "최종 문서 커밋 후 최종 후보 고정 시점",
+        "original_index_raw_unchanged": true,
+        "isolated_explained_cache_differences_only": true,
+        "execution_authorized": false
+      },
+      "input_and_environment": {
+        "observed_originals_expected": 7,
+        "exact_recovery_matches": 0,
+        "historical_reproducibility": "unverified",
+        "browser_render": "local_html_passed_outside_sandbox",
+        "actual_ad_screen_verified_this_update": false,
+        "historical_index_cause": "UNKNOWN"
+      },
+      "task_gate": {
+        "state": "BLOCKED",
+        "reason": "현재 RED 등록과 근거 요건 미충족",
+        "document_review_approval_is_not_task_or_ship_completion": true
+      },
+      "history_note": "0.6.1 릴리스 이전 2026-10-20 출하 준비 당시 상태 보존"
     }
   ],
   "c3_validation_plan": {
