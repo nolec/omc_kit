@@ -1685,9 +1685,9 @@ def test_status_matches_latest_after_sequential_sync_session_role_change(tmp_pat
     assert "second coding session" in status.stdout, status.stdout
 
 
-def test_core_omc_skills_document_use_session_sync_step():
+def test_core_omc_skills_document_use_session_sync_step(installed_omc_target):
     expected_markers = {}
-    for skills_root in (ROOT / ".agent" / "skills", ROOT / ".agents" / "skills"):
+    for skills_root in (installed_omc_target / ".agent" / "skills", installed_omc_target / ".agents" / "skills"):
         plan_skill = skills_root / "omc-plan" / "SKILL.md"
         plan_workflow = skills_root / "omc-plan" / "references" / "workflow.md"
         plan_skill_text = plan_skill.read_text(encoding="utf-8")
@@ -1710,7 +1710,7 @@ def test_core_omc_skills_document_use_session_sync_step():
         assert needle in text, f"{path.name} missing session sync step"
 
 
-def test_core_omc_skill_mirrors_stay_in_sync():
+def test_core_omc_skill_mirrors_stay_in_sync(installed_omc_target):
     skill_names = [
         "omc-ceo-review",
         "omc-office-hours",
@@ -1722,8 +1722,8 @@ def test_core_omc_skill_mirrors_stay_in_sync():
     ]
 
     for skill_name in skill_names:
-        agent_text = (ROOT / ".agent" / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
-        agents_text = (ROOT / ".agents" / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+        agent_text = (installed_omc_target / ".agent" / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+        agents_text = (installed_omc_target / ".agents" / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
         assert agent_text == agents_text, f"{skill_name} mirror files diverged"
 
 

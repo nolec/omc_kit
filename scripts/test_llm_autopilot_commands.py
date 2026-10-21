@@ -107,9 +107,9 @@ def test_claude_plan_contains_contract_markers():
     assert "python3 scripts/omc.py state status --target ." not in text
 
 
-def test_deployed_claude_plan_matches_template():
+def test_deployed_claude_plan_matches_template(installed_omc_target):
     template = _read(TEMPLATES / ".claude" / "commands" / "plan.md")
-    deployed = _read(ROOT / ".claude" / "commands" / "plan.md")
+    deployed = _read(installed_omc_target / ".claude" / "commands" / "plan.md")
     assert deployed == template, "deployed .claude/commands/plan.md가 template와 다름"
 
 

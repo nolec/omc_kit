@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -33,3 +35,21 @@ def isolated_result_path(tmp_path: Path, monkeypatch):
     isolated = tmp_path / "pipeline_run_result.json"
     monkeypatch.setenv("OmC_PIPELINE_RESULT_PATH", str(isolated))
     return isolated
+
+
+@pytest.fixture()
+def installed_omc_target(tmp_path: Path):
+    """Install this candidate into an empty target, leaving the checkout alone."""
+    source = Path(__file__).resolve().parent.parent
+    target = tmp_path / "installed-omc"
+    target.mkdir()
+    result = subprocess.run(
+        [sys.executable, str(source / "scripts/install.py"), "--target", str(target)],
+        cwd=source, env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"OMC installation failed ({result.returncode}): "
+        f"stdout={result.stdout!r}; stderr={result.stderr!r}"
+    )
+    return target

@@ -250,13 +250,13 @@ def test_install_manifest_includes_shared_recognizer():
     assert 'omc_native_command.py' in install._deployed_script_names(SCRIPTS.parent)
 
 
-def test_task_templates_describe_diagnostics_and_official_report():
+def test_task_templates_describe_diagnostics_and_official_report(installed_omc_target):
     root=SCRIPTS.parent
     pairs=[('templates/.agents/skills/omc-task/SKILL.md','.agents/skills/omc-task/SKILL.md'),
            ('templates/.claude/commands/task.md','.claude/commands/task.md')]
     for template,deployed in pairs:
         content=(root/template).read_bytes()
-        assert content==(root/deployed).read_bytes()
+        assert content==(installed_omc_target/deployed).read_bytes()
         assert b'report-comparison.txt' in content and b'diagnose --target .' in content
 
 
