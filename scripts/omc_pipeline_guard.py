@@ -837,6 +837,50 @@ def cmd_verification_path(root: Path) -> int:
         return 1
 
 
+def _completion_owner(root: Path, latest: dict, state: dict) -> str:
+    """Resolve only explicitly preserved pending work, never an arbitrary old SID."""
+    sid = latest.get("latest_confirmed_session_id", "")
+    if not sid or latest.get("latest_session_id", sid) != sid:
+        return ""
+    if not isinstance(sid, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", sid):
+        raise ValueError("completion_owner_session_invalid")
+    if not state.get("session_id") or state.get("session_id") == sid:
+        return sid
+    # Legacy same-session verification remains unchanged. Cross-session reuse
+    # requires the actual session ledger and validated v3 pending lineage.
+    from omc_state import _pending_completion_matches_session
+    observer_path = root / ".omc/state/sessions" / sid / "session.json"
+    observer = json.loads(observer_path.read_text(encoding="utf-8"))
+    pending = json.loads((root / ".omc/state/pending-completion.json").read_text(encoding="utf-8"))
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    if (
+        observer.get("session_id") != sid
+        or observer.get("confirmation", {}).get("status") != "confirmed"
+        or observer.get("completion_action") not in {"preserve", "preserve-if-present"}
+        or not isinstance(observer.get("role_ids"), list)
+        or "senior_coding" in observer["role_ids"]
+        or observer.get("git", {}).get("head") != head
+        or pending.get("schema_version") != 3
+        or not observer.get("work_id")
+        or observer.get("work_id") != pending.get("work_id")
+        or state.get("session_id") != pending.get("session_id")
+        or not _pending_completion_matches_session(root, pending, current_head=head)
+    ):
+        raise ValueError("completion_owner_binding_invalid")
+    for index, member in enumerate(pending["session_ids"]):
+        entry = json.loads((root / ".omc/state/sessions" / member / "session.json").read_text(encoding="utf-8"))
+        if (
+            entry.get("lineage_root_session_id") != pending["root_session_id"]
+            or entry.get("lineage_index") != index
+            or entry.get("lineage_previous_session_id") != (pending["session_ids"][index-1] if index else None)
+            or entry.get("confirmation", {}).get("status") != "confirmed"
+            or "senior_coding" not in entry.get("role_ids", [])
+            or entry.get("git", {}).get("head") != head
+        ):
+            raise ValueError("completion_owner_lineage_invalid")
+    return pending["session_id"]
+
+
 def evaluate_task_completion(root: Path, verification_file: Path, expected_session_id: str | None = None) -> dict:
     """One read-only decision used by both the completion CLI and collector.
 
@@ -851,12 +895,10 @@ def evaluate_task_completion(root: Path, verification_file: Path, expected_sessi
         latest = json.loads((root / ".omc/state/latest.json").read_text(encoding="utf-8"))
         if not isinstance(latest, dict):
             raise ValueError("session object required")
-        sid = latest.get("latest_confirmed_session_id", "")
-        if latest.get("latest_session_id", sid) != sid:
-            sid = ""
-    except (OSError, ValueError, TypeError):
+        sid = _completion_owner(root, latest, state)
+    except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
         sid = ""
-        problems.append("현재 세션 상태를 읽을 수 없습니다")
+        problems.append("완료 대상 작업의 세션 연결을 확인할 수 없습니다: " + str(exc))
     if expected_session_id is not None and sid != expected_session_id:
         problems.append("수집 대상과 현재 작업 식별자가 다릅니다")
         mismatch = True

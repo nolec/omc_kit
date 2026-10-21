@@ -58,6 +58,87 @@ def check(status='passed'):
     return {'status': status, 'evidence': 'local verification output'}
 
 
+def preserved_work(root, role='code_review', title='omc-review'):
+    """Real pending schema and role transition; no approval/session mocks."""
+    import omc_state as state
+    subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+    (root/'app.py').write_text('value = 1\n')
+    subprocess.run(['git', 'add', 'app.py'], cwd=root, check=True)
+    subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'user.name=Fixture',
+                    '-c', 'user.email=fixture@localhost', 'commit', '-qm', 'base'], cwd=root, check=True)
+    head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root).decode().strip()
+    task = {'session_id':'current', 'role_ids':['senior_coding'], 'request':'feature',
+            'confirmation':{'status':'confirmed'}, 'git':{'head':head},
+            'work_id':'work', 'work_class':'implementation', 'created_at':'fixture-time',
+            'lineage_root_session_id':'current', 'lineage_index':0,
+            'lineage_previous_session_id':None}
+    folder = root/'.omc/state/sessions/current'; folder.mkdir(parents=True)
+    (folder/'session.json').write_text(json.dumps(task))
+    pending = {'schema_version':3, 'session_id':'current', 'baseline_head':head,
+               'request_sha256':state._canonical_sha256('feature'), 'work_id':'work',
+               'work_class':'implementation', 'work_class_locked_at':'fixture-time',
+               'root_session_id':'current', 'session_ids':['current'], 'rework_count':0}
+    (root/'.omc/state/pending-completion.json').write_text(json.dumps(pending))
+    prepare(root)
+    assert finish(root, {'tests':check(), 'browser':check()}).returncode == 0
+    observer = state.record_session(root, mode='autopilot', title=title,
+                                    request='inspect same work', role_ids=[role], confirmed=True)
+    return observer
+
+
+@pytest.mark.parametrize('role,title', [('code_review','omc-review'),
+                         ('analysis','omc-investigate'), ('directive','omc-ship')])
+def test_completion_uses_pending_owner_after_preserving_role(project, role, title):
+    observer = preserved_work(project, role, title)
+    assert observer['work_id'] == 'work'
+    assert observer['completion_action'] == 'preserve-if-present'
+    result = run(project, 'complete-task', '--verification-file', str(project/'verification.json'))
+    assert result.returncode == 0, result.stdout + result.stderr
+    # Collector pins the evidence owner, not the latest observer.
+    assert guard.evaluate_task_completion(project, project/'verification.json',
+                                         expected_session_id='current')['outcome'] == 'done'
+    assert guard.evaluate_task_completion(project, project/'verification.json',
+                                         expected_session_id=observer['session_id'])['outcome'] == 'blocked'
+
+
+@pytest.mark.parametrize('defect', ['work', 'lineage', 'baseline', 'request',
+                                   'unconfirmed', 'code', 'pipeline-owner', 'foreign-evidence',
+                                   'observer-work', 'lineage-link', 'missing-pending'])
+def test_completion_preserving_role_cannot_reuse_other_evidence(project, defect):
+    observer = preserved_work(project)
+    pending_path = project/'.omc/state/pending-completion.json'
+    pending = json.loads(pending_path.read_text())
+    if defect in {'work','lineage','baseline','request'}:
+        key = {'work':'work_id','lineage':'session_ids','baseline':'baseline_head',
+               'request':'request_sha256'}[defect]
+        pending[key] = ['foreign','current'] if defect == 'lineage' else 'foreign'
+        pending_path.write_text(json.dumps(pending))
+    elif defect == 'unconfirmed':
+        path = project/'.omc/state/latest.json'; latest = json.loads(path.read_text())
+        latest['latest_confirmed_session_id'] = 'current'; path.write_text(json.dumps(latest))
+    elif defect == 'observer-work':
+        path = project/'.omc/state/sessions'/observer['session_id']/'session.json'
+        data = json.loads(path.read_text()); data['work_id'] = 'foreign'
+        path.write_text(json.dumps(data))
+    elif defect == 'lineage-link':
+        path = project/'.omc/state/sessions/current/session.json'
+        data = json.loads(path.read_text()); data['lineage_previous_session_id'] = 'foreign'
+        path.write_text(json.dumps(data))
+    elif defect == 'missing-pending':
+        pending_path.unlink()
+    elif defect == 'code':
+        (project/'app.py').write_text('value = 2\n')
+    elif defect == 'pipeline-owner':
+        path = project/'.omc/pipeline_session.json'; data = json.loads(path.read_text())
+        data['session_id'] = 'foreign'; path.write_text(json.dumps(data))
+    else:
+        path = project/'verification.json'; data = json.loads(path.read_text())
+        data['session_id'] = 'foreign'; path.write_text(json.dumps(data))
+    result = run(project, 'complete-task', '--verification-file', str(project/'verification.json'))
+    assert result.returncode == 1, result.stdout
+    assert 'VERDICT: BLOCK' in result.stdout
+
+
 def test_missing_registration_cannot_report_done(project):
     result = finish(project, {'tests': check(), 'browser': check()}, implementation=None)
     assert result.returncode == 1

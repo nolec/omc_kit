@@ -102,6 +102,17 @@ def assess_native_procedure(root: Path, rows: list, basis: dict, events_file: Pa
                                 raise ValueError('validation_command_not_passed')
                         except (OSError,ValueError,KeyError,TypeError) as exc:
                             unknown.append('validation_command_unknown:'+str(exc))
+                    elif args[:3] in [
+                            ['python3','scripts/omc_validation_command.py',a]
+                            for a in ('task-context','selection-path')]:
+                        try:
+                            from omc_validation_command import load_policy, runtime_command_result
+                            frozen, pin = load_policy(root, basis['validation_commands_policy_sha256'])
+                            expected = runtime_command_result(root, inp.get('command', ''), frozen, pin)
+                            if expected is None or json.loads(text) != expected:
+                                raise ValueError('runtime_query_return_mismatch')
+                        except (OSError,ValueError,KeyError,TypeError) as exc:
+                            unknown.append('runtime_query_unknown:'+str(exc))
                     elif (len(args) >= 3 and args[:2] == ['python3', 'scripts/omc_pipeline_guard.py']
                             and not any(a in {';', '&&', '||', '|', '>'} for a in args)):
                         action = args[2]
@@ -512,6 +523,15 @@ def assess_common_validation(root: Path, rows: list, selection: dict, policy_pin
                                 observed[profile]=doc
                         else:
                             args=_single_bash_argv(command)
+                            from omc_validation_command import runtime_command_result
+                            expected = runtime_command_result(root, command, policy, policy_pin)
+                            if expected is not None:
+                                text = block.get('content', '')
+                                if isinstance(text, list):
+                                    text = ''.join(c.get('text','') for c in text if c.get('type')=='text')
+                                if block.get('is_error') or json.loads(text) != expected:
+                                    raise ValueError('runtime_query_return_mismatch')
+                                continue
                             # Internal protocol commands are audited separately. No
                             # general shell exemption, free Python or tool calls.
                             internal=(policy['arm']=='omc-kit' and len(args)>2
@@ -602,16 +622,37 @@ def common_main(argv):
     parser=argparse.ArgumentParser(description='New common comparison contract; no legacy reclassification')
     parser.add_argument('--target',type=Path,required=True)
     parser.add_argument('--events-file',type=Path,required=True)
-    parser.add_argument('--selection-file',type=Path,required=True)
+    parser.add_argument('--selection-file',type=Path)
     parser.add_argument('--policy-sha256',required=True)
     parser.add_argument('--output-dir',type=Path,required=True)
     args=parser.parse_args(argv)
     try:
-        rows=[json.loads(line) for line in args.events_file.read_text().splitlines() if line.strip()]
-        selection=json.loads(args.selection_file.read_bytes())
-        result=assess_common_validation(args.target.resolve(),rows,selection,args.policy_sha256)
-        finals=[r['result'] for r in rows if r.get('type')=='result' and isinstance(r.get('result'),str)]
+        from omc_home_observation import local
+        root = args.target.resolve()
+        local(root, str(args.output_dir.absolute().relative_to(root)))
+        if args.selection_file is not None:
+            selection_name = str(args.selection_file.absolute().relative_to(root))
+            local(root, selection_name)
+        raw = args.events_file.read_bytes()
+        rows = []
+        try:
+            rows=[json.loads(line) for line in raw.splitlines() if line.strip()]
+            if any(not isinstance(row, dict) for row in rows):
+                raise ValueError('native_event_object_required')
+            from omc_validation_command import load_policy, selection_path
+            policy, _ = load_policy(root, args.policy_sha256)
+            canonical = selection_path(root, policy)
+            selected = args.selection_file.absolute() if args.selection_file is not None else canonical
+            if 'selection_path' in policy and selected != canonical:
+                raise ValueError('selection_path_mismatch')
+            selection=json.loads(selected.read_bytes())
+            result=assess_common_validation(root,rows,selection,args.policy_sha256)
+        except (OSError,ValueError,KeyError,TypeError,AttributeError,IndexError) as exc:
+            result={'schema_version':'omc-common-validation/v2','common_work':'unknown',
+                    'internal_procedure':'unknown','comparison_entry':'hold','issues':[str(exc)]}
+        finals=[r['result'] for r in rows if isinstance(r,dict) and r.get('type')=='result' and isinstance(r.get('result'),str)]
         args.output_dir.mkdir(parents=True,exist_ok=False)
+        (args.output_dir/'native-events.jsonl').write_bytes(raw)
         (args.output_dir/'assessment.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
         (args.output_dir/'final.txt').write_text(finals[0] if len(finals)==1 else '')
         (args.output_dir/'report.txt').write_text('공통 업무 검증: '+result['common_work']

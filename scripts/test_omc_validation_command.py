@@ -25,6 +25,113 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+@pytest.mark.parametrize('drift', [None, 'session', 'run', 'basis', 'contract'])
+def test_prebound_task_context_checks_exact_approved_execution(project, drift):
+    from test_omc_native_red_evidence import configured, guard
+    root = project
+    basis = configured(root)
+    policy = {'arm': 'omc-kit', 'session_id': 's', 'run_id': 'run'}
+    policy_pin = 'a'*64
+    basis['validation_commands_policy_sha256'] = policy_pin
+    basis['revision'] = 2
+    proposal = root/'.omc/prebound.json'; proposal.write_text(json.dumps(basis))
+    assert guard.cmd_approve_checks(root, proposal) == 0
+    assert guard.cmd_contract_done(root, required_checks='tests') == 0
+    if drift == 'session': policy['session_id'] = 'other'
+    elif drift == 'run': policy['run_id'] = 'other'
+    elif drift == 'basis': policy_pin = 'b'*64
+    elif drift == 'contract':
+        state = guard._load_state(root); state['contract_confirmed'] = False
+        guard._save_state(root, state)
+    before = (root/'.omc/state/latest.json').read_bytes()
+    if drift:
+        with pytest.raises(ValueError, match='prebound_task_context_mismatch'):
+            module().prebound_task_context(root, policy, policy_pin)
+    else:
+        context = module().prebound_task_context(root, policy, policy_pin)
+        assert context['session_id'] == 's' and context['run_id'] == 'run'
+    assert (root/'.omc/state/latest.json').read_bytes() == before
+
+
+def test_selection_path_is_canonical_runtime_and_does_not_change_candidate(project):
+    from omc_pipeline_guard import _code_snapshot_digest
+    root = project
+    before = _code_snapshot_digest(root)
+    policy = {'run_id': 'same-run'}
+    path = module().selection_path(root, policy)
+    assert path == root/'.omc/comparisons/same-run/final-selection.json'
+    path.parent.mkdir(parents=True); path.write_text('{}')
+    assert _code_snapshot_digest(root) == before
+    policy['selection_path'] = 'final-selection.json'
+    with pytest.raises(ValueError, match='selection_path_mismatch'):
+        module().selection_path(root, policy)
+    (root/'final-selection.json').write_text('{}')
+    assert _code_snapshot_digest(root) != before
+
+
+def test_collector_rejects_root_selection_before_reading_events(project, capsys):
+    from omc_workflow_validation import common_main
+    root = project
+    output = root/'.omc/assessment'
+    code = common_main(['--target', str(root), '--events-file', str(root/'missing'),
+        '--selection-file', str(root/'final-selection.json'), '--policy-sha256', 'a'*64,
+        '--output-dir', str(output)])
+    assert code == 1
+    assert 'home_path_must_be_runtime' in capsys.readouterr().out
+
+
+def test_runtime_command_recognition_is_exact_and_not_a_shell_exemption(project):
+    root = project
+    policy = {'run_id': 'same-run'}
+    expected = {'selection_path': '.omc/comparisons/same-run/final-selection.json'}
+    cmd = 'python3 scripts/omc_validation_command.py selection-path --target .'
+    assert module().runtime_command_result(root, cmd, policy, 'a'*64) == expected
+    assert module().runtime_command_result(root, cmd+'; true', policy, 'a'*64) is None
+    assert module().runtime_command_result(root, cmd+' --target /tmp', policy, 'a'*64) is None
+    assert module().runtime_command_result(root, cmd.replace('selection-path', 'freeze'), policy, 'a'*64) is None
+
+
+def test_prebound_public_cli_reuses_guard_without_creating_session(validation):
+    from test_omc_native_red_evidence import configured, guard
+    root, proposal = validation
+    basis = configured(root)
+    proposal.update(session_id='s', run_id='run', internal_tools={
+        'omc-guard-task': {'path': str(root/'scripts/omc_guard.py'), 'sha256': digest(root/'scripts/omc_guard.py')}})
+    latest = root/'.omc/state/latest.json'
+    value = json.loads(latest.read_bytes()); value['latest_confirmed_roles'] = ['senior_coding']
+    latest.write_text(json.dumps(value))
+    root, policy_ref = freeze(validation)
+    basis.update(revision=2, validation_commands_policy_sha256=policy_ref['sha256'])
+    path = root/'.omc/approved-context.json'; path.write_text(json.dumps(basis))
+    assert guard.cmd_approve_checks(root, path) == 0
+    assert guard.cmd_contract_done(root, required_checks='tests') == 0
+    before = latest.read_bytes()
+    args = ['task-context', '--sha256', policy_ref['sha256'], '--session-id', 's', '--run-id', 'run',
+        '--basis-sha256', guard._basis_digest(basis)]
+    context_call = cli(root, *args)
+    assert context_call.returncode == 0, context_call.stdout+context_call.stderr
+    command = ('python3 scripts/omc_validation_command.py task-context --target . --sha256 '
+        +policy_ref['sha256']+' --session-id s --run-id run --basis-sha256 '+guard._basis_digest(basis))
+    assert module().runtime_command_result(root, command, proposal, policy_ref['sha256']) == json.loads(context_call.stdout)
+    wrong = cli(root, *args[:-1], '0'*64)
+    assert wrong.returncode == 2 and 'prebound_task_context_mismatch' in wrong.stdout
+    result = cli(root, 'run', '--profile', 'omc-guard-task')
+    assert result.returncode == 0, result.stdout+result.stderr
+    receipt = json.loads((root/json.loads(result.stdout)['receipt']['path']).read_bytes())
+    assert receipt['invocations'][0]['argv'][2:] == ['require','--for','task','--target','.']
+    assert receipt['execution_context'] == json.loads(context_call.stdout)
+    assert latest.read_bytes() == before
+    selected = cli(root, 'selection-path')
+    assert json.loads(selected.stdout)['selection_path'] == '.omc/comparisons/run/final-selection.json'
+    value['latest_session_id'] = value['latest_confirmed_session_id'] = 'new'
+    latest.write_text(json.dumps(value))
+    blocked = cli(root, 'run', '--profile', 'omc-guard-task')
+    assert blocked.returncode == 2
+    receipt = json.loads((root/json.loads(blocked.stdout)['receipt']['path']).read_bytes())
+    assert receipt['judgment']['reason'] == 'prebound_task_context_mismatch'
+    assert receipt['invocations'] == []
+
+
 def cli(root, *args):
     installed=root/'scripts'/SCRIPT.name
     return subprocess.run([sys.executable, str(installed), *args, '--target', str(root)],
@@ -144,6 +251,11 @@ def test_public_cli_complete_local_chain_and_fail_closed_variants(validation, tm
                     'package_sha256':digest(playwright/'package.json')})
         root,pin=freeze(validation)
         rows=[]
+        query = 'python3 scripts/omc_validation_command.py selection-path --target .'
+        rows.extend([{'type':'assistant','message':{'content':[{'type':'tool_use','id':'selection-query',
+            'name':'Bash','input':{'command':query}}]}},
+            {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'selection-query',
+                'content':json.dumps(module().runtime_command_result(root, query, proposal, pin['sha256']))}]}}])
         def edited(path,text):
             path.write_text(text)
             ident=uuid.uuid4().hex
@@ -178,14 +290,16 @@ def test_public_cli_complete_local_chain_and_fail_closed_variants(validation, tm
         events=root/'.omc/common-events.jsonl';events.write_text(''.join(json.dumps(r)+'\n' for r in rows))
         selection={'schema_version':'omc-common-selection/v2','contract_id':module().CONTRACT,
                    'run_id':proposal['run_id'],'receipts':refs,'red_receipt':red}
-        chosen=root/'.omc/common-selection.json';chosen.write_text(json.dumps(selection))
+        chosen=module().selection_path(root, proposal)
+        chosen.parent.mkdir(parents=True);chosen.write_text(json.dumps(selection))
         collector=root/'scripts/omc_workflow_validation.py'
         def assess(name,values=rows,selected=selection):
             event=root/'.omc'/('events-'+name+'.jsonl');event.write_text(''.join(json.dumps(r)+'\n' for r in values))
-            choose=root/'.omc'/('selected-'+name+'.json');choose.write_text(json.dumps(selected))
+            choose=chosen;choose.write_text(json.dumps(selected))
             output=root/'.omc'/('common-'+name)
+            selection_args = [] if name == 'valid' else ['--selection-file', str(choose)]
             result=subprocess.run([sys.executable,str(collector),'compare-entry','--target',str(root),
-                '--events-file',str(event),'--selection-file',str(choose),'--policy-sha256',pin['sha256'],
+                '--events-file',str(event),*selection_args,'--policy-sha256',pin['sha256'],
                 '--output-dir',str(output)],capture_output=True,text=True)
             report=json.loads((output/'assessment.json').read_text())
             assert (output/'final.txt').read_text()==next(r['result'] for r in values if r['type']=='result')
@@ -223,7 +337,7 @@ def test_public_cli_complete_local_chain_and_fail_closed_variants(validation, tm
         assert assess('unsupported',values=unknown)[1]['comparison_entry']=='hold'
         unmatched=copy.deepcopy(rows);del unmatched[-2]
         assert assess('missing-return',values=unmatched)[1]['comparison_entry']=='hold'
-        late=copy.deepcopy(rows);late[2:4],late[4:6]=late[4:6],late[2:4]
+        late=copy.deepcopy(rows);late[4:6],late[6:8]=late[6:8],late[4:6]
         assert assess('late-red',values=late)[1]['comparison_entry']=='hold'
         omitted=copy.deepcopy(rows);omitted[-1]['result']='필수 검증 통과·작업 완료'
         assert assess('hidden-existing-failure',values=omitted)[1]['comparison_entry']=='hold'
@@ -231,6 +345,12 @@ def test_public_cli_complete_local_chain_and_fail_closed_variants(validation, tm
         assert assess('conflicting-report',values=conflicting)[1]['comparison_entry']=='hold'
         bad_ref=copy.deepcopy(selection);bad_ref['receipts']['lint']['sha256']='0'*64
         assert assess('bad-receipt',selected=bad_ref)[1]['comparison_entry']=='hold'
+        product = root/Path(TEST).parent/'Ad.tsx'
+        original_product = product.read_bytes()
+        product.write_bytes(original_product+b'\n// changed after receipts')
+        with pytest.raises(ValueError, match='receipt_candidate_stale'):
+            module().validate_receipt(root, refs['lint'], pin['sha256'], 'lint')
+        product.write_bytes(original_product)
         (root/'outside-scope.txt').write_text('unexpected')
         assert assess('outside')[1]['comparison_entry']=='hold'
         (root/'outside-scope.txt').unlink()

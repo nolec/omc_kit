@@ -7,6 +7,16 @@
 
 ## 전제 조건
 
+준비 담당이 policy 해시·session_id·run_id·basis_sha256을 고정한 비교 작업은 다음 두 명령이 모두 통과해야 기존 승인·CONTRACT로 진입합니다:
+
+```bash
+python3 scripts/omc_validation_command.py task-context --target . --sha256 <policy_sha256> --session-id <session_id> --run-id <run_id> --basis-sha256 <basis_sha256>
+python3 scripts/omc_validation_command.py run --target . --profile omc-guard-task
+```
+
+불일치·누락·실패는 중단하며 세션 교체·승인 복사·기준 축소로 복구하지 않습니다. 일반 작업은 아래 Guard를 사용합니다.
+비교 기록은 `.omc/comparisons/<run_id>/final-selection.json`에 씁니다. `python3 scripts/omc_validation_command.py selection-path --target .`의 반환 경로와 수집기 `compare-entry`의 기본 경로는 같습니다. 루트 기록 파일을 생성·스테이징하지 않습니다. 수집 오류는 `.omc/native-stream-errors/`에 원인과 원문 해시를 별도 보존하며 native stdout은 그대로 유지합니다. 오류 후 자동 재실행은 하지 않습니다.
+
 ```bash
 python3 scripts/omc_guard.py require --for "task" --target .
 ```

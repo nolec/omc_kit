@@ -258,6 +258,9 @@ def test_task_templates_describe_diagnostics_and_official_report(installed_omc_t
         content=(root/template).read_bytes()
         assert content==(installed_omc_target/deployed).read_bytes()
         assert b'report-comparison.txt' in content and b'diagnose --target .' in content
+        assert b'--profile omc-guard-task' in content
+        assert b'--run-id' in content and b'--basis-sha256' in content
+        assert b'.omc/comparisons/<run_id>/final-selection.json' in content
 
 
 @pytest.mark.parametrize('earlier_receipt',[False,True])

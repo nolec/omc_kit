@@ -75,6 +75,115 @@ def test_native_prefix_passes_before_any_final_result(home):
     assert assess(home)['status'] == 'passed'
 
 
+def test_publisher_error_preserves_both_raw_streams_and_separate_diagnostic(tmp_path):
+    root = tmp_path
+    # One write includes a complete event and a partial tail. Neither may vanish.
+    raw = b'{"type":"system","subtype":"init"}\npartial-tail'
+    driver = """
+import sys
+from pathlib import Path
+from omc_home_observation import tee_native
+root=Path(sys.argv[1])
+def fail(): raise ValueError('publisher-test-failure')
+try:
+    tee_native(root,[sys.executable,'-c',sys.argv[2]],root/'.omc/events.jsonl',[fail])
+except ValueError as exc:
+    print(exc, file=sys.stderr)
+    raise SystemExit(1)
+"""
+    import os
+    child = f"import os,time;os.write(1,{raw!r});time.sleep(30)"
+    result = subprocess.run([sys.executable, '-c', driver, str(root), child],
+        env={**os.environ, 'PYTHONPATH': str(CLI.parent)}, capture_output=True, timeout=15)
+    assert result.returncode == 1, result.stderr
+    assert result.stdout == raw
+    assert (root/'.omc/events.jsonl').read_bytes() == raw
+    diagnostics = list((root/'.omc/native-stream-errors').glob('*.json'))
+    assert len(diagnostics) == 1
+    diagnostic = json.loads(diagnostics[0].read_bytes())
+    assert diagnostic['reason'] == 'publisher-test-failure'
+    assert diagnostic['stream_sha256'] == hashlib.sha256(raw).hexdigest()
+    assert diagnostic['child_returncode'] != 0
+    assert b'native_publisher_failed' in result.stderr
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='POSIX process-group regression')
+@pytest.mark.parametrize('mode', ['publisher', 'ignore-term', 'outer-termination', 'launch-termination', 'escaped-descendant'])
+def test_native_failure_cleanup_is_bounded_with_inherited_stdout(tmp_path, mode):
+    import os
+    import signal
+    raw = b'{"type":"system","subtype":"init"}\n'
+    child = """import os,pathlib,signal,sys,time
+root=pathlib.Path(sys.argv[1])
+if sys.argv[2]=='ignore-term': signal.signal(signal.SIGTERM,signal.SIG_IGN)
+pid=os.fork()
+if pid==0:
+ if sys.argv[2]=='escaped-descendant': os.setsid()
+ time.sleep(60)
+ os._exit(0)
+(root/'child.pid').write_text(str(os.getpid()))
+(root/'descendant.pid').write_text(str(pid))
+os.write(1,bytes.fromhex(sys.argv[3]))
+time.sleep(60)
+"""
+    driver = """import os,pathlib,signal,subprocess,sys
+sys.path.insert(0,sys.argv[1])
+from omc_home_observation import tee_native
+root=pathlib.Path(sys.argv[2])
+if sys.argv[3]=='launch-termination':
+ original=subprocess.Popen
+ def launch(*args,**kwargs):
+  process=original(*args,**kwargs)
+  (root/'child.pid').write_text(str(process.pid))
+  os.kill(os.getpid(),signal.SIGTERM)
+  return process
+ subprocess.Popen=launch
+def publisher():
+ (root/'publisher-entered').write_text('entered')
+ if sys.argv[3]!='outer-termination': raise ValueError('bounded-cleanup-fixture')
+try:tee_native(root,[sys.executable,'-c',sys.argv[4],str(root),sys.argv[3],sys.argv[5]],root/'.omc/events.jsonl',[publisher])
+except ValueError as exc:print(exc,file=sys.stderr);sys.exit(1)
+"""
+    stderr = (tmp_path/'driver-stderr.txt').open('wb')
+    process = subprocess.Popen([sys.executable, '-c', driver, str(CLI.parent), str(tmp_path), mode,
+        child, raw.hex()], stdout=subprocess.PIPE, stderr=stderr, start_new_session=True)
+    started = time.monotonic()
+    try:
+        if mode == 'outer-termination':
+            deadline = started+5
+            while not (tmp_path/'publisher-entered').exists() and time.monotonic()<deadline:
+                time.sleep(.01)
+            assert (tmp_path/'publisher-entered').exists()
+            process.terminate()
+        try:
+            forwarded, _ = process.communicate(timeout=13)
+        except subprocess.TimeoutExpired:
+            pytest.fail('native runner did not finish bounded cleanup')
+        assert process.returncode != 0
+        expected = b'' if mode == 'launch-termination' else raw
+        assert forwarded == expected == (tmp_path/'.omc/events.jsonl').read_bytes()
+        records = list((tmp_path/'.omc/native-stream-errors').glob('*.json'))
+        assert len(records) == 1, (tmp_path/'driver-stderr.txt').read_text()
+        record = json.loads(records[0].read_bytes())
+        assert record['stream_sha256'] == hashlib.sha256(expected).hexdigest()
+        assert record['drain_complete'] is (mode != 'escaped-descendant')
+        assert record['child_returncode'] is not None
+        assert time.monotonic()-started < 13
+        # An inherited pipe cannot remain open after process-group cleanup.
+        assert record['termination_scope'] == 'process_group'
+    finally:
+        # Clean only process groups created by this fixture, including RED runs.
+        for pid in [process.pid, int((tmp_path/'child.pid').read_text()) if (tmp_path/'child.pid').exists() else None]:
+            if pid is not None:
+                try: os.killpg(pid, signal.SIGKILL)
+                except ProcessLookupError: pass
+        if mode == 'escaped-descendant' and (tmp_path/'descendant.pid').exists():
+            try: os.kill(int((tmp_path/'descendant.pid').read_text()), signal.SIGKILL)
+            except ProcessLookupError: pass
+        process.communicate(timeout=3)
+        stderr.close()
+
+
 def test_h02_six_valid_identical_samples_are_unknown_not_ui_failure(home):
     for sample in home[2]['tracks'][0]['samples']:
         sample['transform'] = 'matrix(1,0,0,1,-100,0)'

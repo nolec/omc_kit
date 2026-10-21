@@ -74,6 +74,36 @@ def session(root):
     return sid
 
 
+def execution_context(root):
+    """Freeze approved identity at launch; never inherit a later session's basis."""
+    from omc_pipeline_guard import _load_approved_basis, _basis_digest
+    sid = session(root)
+    basis = _load_approved_basis(root, sid)
+    run_id = basis.get('run_id')
+    if not isinstance(run_id, str) or not run_id:
+        raise ValueError('native_execution_run_required')
+    context = {'session_id': sid, 'run_id': run_id, 'basis_sha256': _basis_digest(basis)}
+    record = local(root, '.omc/state/sessions/'+sid+'/session.json')
+    if record.exists():
+        value = json.loads(record.read_bytes())
+        if value.get('session_id') != sid:
+            raise ValueError('native_execution_work_mismatch')
+        context['work_id'] = value.get('work_id')
+    # These contracts are runtime files outside the product snapshot.
+    context['contracts'] = {name: sha(local(root, name).read_bytes())
+        for name in ('.omc/home-motion-requirement.json', '.omc/validation-commands/policy.json')
+        if local(root, name).exists()}
+    return context
+
+
+def verify_execution_context(root, expected):
+    try:
+        if execution_context(root) != expected:
+            raise ValueError('changed')
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError('native_execution_context_mismatch') from exc
+
+
 def policy(root, basis=None):
     from omc_pipeline_guard import _load_approved_basis
     basis = basis or _load_approved_basis(root, session(root))
@@ -249,8 +279,14 @@ def receipt_name(value):
     return f"{PREFIX}/receipts/{sha(json.dumps([value['call_id'], value['prefix_sha256']]).encode())}.json"
 
 
-def publish(root):
-    pin = policy(root)
+def publish(root, context=None):
+    if context is not None:
+        verify_execution_context(root, context)
+        from omc_pipeline_guard import _load_approved_basis
+        basis = _load_approved_basis(root, context['session_id'])
+    else:
+        basis = None
+    pin = policy(root, basis)
     if pin is None:
         return False
     changed = False
@@ -399,7 +435,9 @@ def main():
             from omc_home_observation import REQUIREMENT, run_native
             if (root / REQUIREMENT).exists():
                 return run_native(root, args.launch)  # Publish both selected contracts.
-            return tee_native(root, args.launch, local(root, pin['events_path']), [lambda: publish(root)])
+            context = execution_context(root)
+            return tee_native(root, args.launch, local(root, pin['events_path']),
+                              [lambda: publish(root, context)], context=context)
         if args.action in {'baseline', 'observe'}:
             result = execute(root, args.action, args.run_id)
         elif args.action == 'receipts':
@@ -415,7 +453,9 @@ def main():
                           'next_action': '기존 스트림은 보존하세요. runner 재실행·기록 삭제 없이 diagnose로 명령과 영수증을 확인하세요.'}, ensure_ascii=False))
         return 1
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
-        print(json.dumps({'status': 'unknown', 'reason': str(exc)}, ensure_ascii=False))
+        from omc_home_observation import NativePublisherFailure
+        print(json.dumps({'status': 'unknown', 'reason': str(exc)}, ensure_ascii=False),
+              file=sys.stderr if isinstance(exc, NativePublisherFailure) else sys.stdout)
         return 1
 
 

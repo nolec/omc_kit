@@ -9,6 +9,21 @@ description: "7단계 TDD 파이프라인으로 구현 실행. 트리거: 구현
 
 ## 0. Guard
 
+### 사전 승인된 비교 실행의 진입
+
+준비 담당이 고정한 policy 해시·session_id·run_id·basis_sha256을 모두 명시한 비교 작업은 아래 두 명령으로 진입합니다. 일반 새 작업용 `sync-require`로 세션을 교체하지 않습니다.
+
+```bash
+python3 scripts/omc_validation_command.py task-context --target . --sha256 <policy_sha256> --session-id <session_id> --run-id <run_id> --basis-sha256 <basis_sha256>
+python3 scripts/omc_validation_command.py run --target . --profile omc-guard-task
+```
+
+두 명령 모두 통과한 경우에만 기존 CONTRACT·승인 기준으로 진행합니다. 미지정·불일치·실패는 중단하고 원문을 보존합니다. 새 세션 생성, 승인 복사, 기준 축소로 복구하지 않습니다. 일반 작업은 아래 Guard를 그대로 사용합니다.
+
+비교 결과 선택 파일은 `.omc/comparisons/<run_id>/final-selection.json`입니다. 고정 전에 runtime 경로를 검사하고, 고정 후 `python3 scripts/omc_validation_command.py selection-path --target .`가 반환한 경로에 기록합니다. 수집기의 `compare-entry`는 같은 경로를 기본으로 읽습니다. 루트 `final-selection.json` 작성·스테이징으로 검증 증거를 무효화하지 않습니다. 수집 오류 원인은 `.omc/native-stream-errors/`에 별도 보존하며 native stdout에 섞지 않습니다. 오류는 성공이나 재실행 승인이 아닙니다.
+
+### 일반 작업의 진입
+
 ```bash
 python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title "omc-task" --request "<현재 작업 한 줄 요약>" --roles senior_coding --work-class "<implementation|synthetic|document_only|benchmark_maintenance>" --completion-action "<start|continue|preserve>" --for "task"
 ```

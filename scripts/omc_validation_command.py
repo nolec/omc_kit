@@ -98,6 +98,7 @@ def freeze(root, proposal, pin):
     if sha(raw) != pin:
         raise ValueError('proposal_digest_mismatch')
     policy = json.loads(raw)
+    policy['selection_path'] = str(selection_path(root, policy).relative_to(root))
     policy['report_contract'] = REPORT_CONTRACT
     import omc_workflow_validation
     policy['oracle_pins'] = {str(Path(m.__file__).resolve()): sha(Path(m.__file__).read_bytes())
@@ -118,10 +119,59 @@ def load_policy(root, pin=None):
         raise ValueError('policy_digest_mismatch')
     policy = json.loads(raw)
     _validate_policy(root, policy)
+    selection_path(root, policy)
     if (policy.get('required_profiles') != list(REQUIRED) or not policy.get('baseline_scope')
             or policy.get('report_contract') != REPORT_CONTRACT):
         raise ValueError('required_profiles_changed')
     return policy, sha(raw)
+
+
+def selection_path(root, policy):
+    from omc_home_observation import local
+    run_id = policy.get('run_id')
+    if not isinstance(run_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', run_id):
+        raise ValueError('selection_run_id_invalid')
+    name = '.omc/comparisons/'+run_id+'/final-selection.json'
+    if policy.get('selection_path', name) != name:
+        raise ValueError('selection_path_mismatch')
+    return local(root, name)
+
+
+def prebound_task_context(root, policy, policy_pin):
+    """A read-only entry, only for a previously approved OMC comparison task."""
+    from omc_native_red_evidence import execution_context
+    from omc_pipeline_guard import _load_approved_basis, _load_state
+    try:
+        context = execution_context(root)
+        basis = _load_approved_basis(root, context['session_id'])
+        state = _load_state(root)
+        if (policy.get('arm') != 'omc-kit' or policy.get('session_id') != context['session_id']
+                or policy.get('run_id') != context['run_id']
+                or basis.get('validation_commands_policy_sha256') != policy_pin
+                or state.get('session_id') != context['session_id']
+                or state.get('basis_sha256') != context['basis_sha256']
+                or state.get('contract_confirmed') is not True):
+            raise ValueError('changed')
+        return context
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError('prebound_task_context_mismatch') from exc
+
+
+def runtime_command_result(root, command, policy, policy_pin):
+    """Only the two literal, read-only runtime queries; no generic runner bypass."""
+    from omc_native_command import single_argv
+    args = single_argv(command)
+    prefix = ['python3', 'scripts/omc_validation_command.py']
+    if args == prefix+['selection-path', '--target', '.']:
+        return {'selection_path': str(selection_path(root, policy).relative_to(root))}
+    if args[:3] == prefix+['task-context']:
+        context = prebound_task_context(root, policy, policy_pin)
+        expected = prefix+['task-context', '--target', '.', '--sha256', policy_pin,
+            '--session-id', context['session_id'], '--run-id', context['run_id'],
+            '--basis-sha256', context['basis_sha256']]
+        if args == expected:
+            return context
+    return None
 
 
 def _scope(root, policy):
@@ -288,6 +338,9 @@ def run_profile(root, profile):
         'profile':profile, 'before':_code_snapshot_digest(root), 'artifacts':{}, 'invocations':[],
         'scope_before':baseline(root), 'exit_code':0}
     try:
+        context = prebound_task_context(root, policy, pin) if profile.startswith('omc-') else None
+        if context is not None:
+            receipt['execution_context'] = context
         if profile == 'tests':
             output = folder+'/jest.json'
         elif profile in {'controlled','home'}:
@@ -340,6 +393,9 @@ def run_profile(root, profile):
             path = source(root,folder+'/visual/report.json')
             receipt['artifacts']['report'] = {'path':str(path.relative_to(root)),'sha256':sha(path.read_bytes())}
         receipt['after'] = _code_snapshot_digest(root)
+        if context is not None:
+            from omc_native_red_evidence import verify_execution_context
+            verify_execution_context(root, context)
         _scope(root,policy)
         _validate_policy(root,policy)
         receipt['judgment'] = _judge(root,policy,receipt)
@@ -364,6 +420,9 @@ def validate_receipt(root, ref, policy_pin, profile=None, *, historical=False):
         raise ValueError('receipt_path_mismatch')
     if not historical and receipt['after'] != _code_snapshot_digest(root):
         raise ValueError('receipt_candidate_stale')
+    if receipt['profile'].startswith('omc-') and not historical:
+        if receipt.get('execution_context') != prebound_task_context(root, policy, pin):
+            raise ValueError('prebound_task_context_mismatch')
     _raw(root,receipt['stdout']); _raw(root,receipt['stderr'])
     folder = str(Path(ref['path']).parent)
     expected = _command(root,policy,folder,receipt['profile'])
@@ -395,14 +454,30 @@ def validate_receipt(root, ref, policy_pin, profile=None, *, historical=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=['freeze','run'])
+    parser.add_argument('action',choices=['freeze','run','task-context','selection-path'])
     parser.add_argument('--target',type=Path,required=True)
     parser.add_argument('--file',type=Path)
     parser.add_argument('--sha256')
     parser.add_argument('--profile',choices=PROFILES)
+    parser.add_argument('--session-id')
+    parser.add_argument('--run-id')
+    parser.add_argument('--basis-sha256')
     args = parser.parse_args(); root = args.target.resolve()
     try:
-        if args.action == 'freeze':
+        if args.action in {'task-context', 'selection-path'}:
+            if args.file is not None or args.profile is not None:
+                raise ValueError('context_arguments_invalid')
+            policy, pin = load_policy(root, args.sha256)
+            if args.action == 'task-context':
+                if not all((args.sha256, args.session_id, args.run_id, args.basis_sha256)):
+                    raise ValueError('explicit_task_context_required')
+                result = prebound_task_context(root, policy, pin)
+                if any(result[k] != getattr(args, k) for k in ('session_id','run_id','basis_sha256')):
+                    raise ValueError('prebound_task_context_mismatch')
+            else:
+                result = {'selection_path': str(selection_path(root, policy).relative_to(root))}
+            code = 0
+        elif args.action == 'freeze':
             if args.file is None or not args.sha256 or args.profile is not None:
                 raise ValueError('freeze_arguments_invalid')
             result = freeze(root,args.file,args.sha256)

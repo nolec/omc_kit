@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 import os
+import signal
+import threading
 
 REQUIREMENT = '.omc/home-motion-requirement.json'
 SCHEMA = 'omc-home-motion-observation/v1'
@@ -332,6 +334,54 @@ def initialize(root: Path, preflight: str, run_id: str, session_id: str) -> dict
             'verification_field': 'home_motion_result'}
 
 
+class NativePublisherFailure(ValueError):
+    """The native stream remains raw; diagnostics have their own immutable file."""
+
+
+class NativeRunInterrupted(BaseException):
+    def __init__(self, signum):
+        self.signum = signum
+        super().__init__('native_interrupted:'+str(signum))
+
+
+def _stop_native(proc, *, immediate=False):
+    """Bound both grace and final drain, even if an escaped process holds stdout."""
+    errors = []
+    def stop(hard):
+        try:
+            if os.name == 'posix':
+                # Popen created this session; never signal the caller's group.
+                os.killpg(proc.pid, signal.SIGKILL if hard else signal.SIGTERM)
+            elif hard:
+                proc.kill()
+            else:
+                proc.terminate()
+        except ProcessLookupError:
+            pass
+        except OSError as exc:
+            errors.append(type(exc).__name__+': '+str(exc))
+
+    stop(immediate)
+    complete = True
+    try:
+        tail, _ = proc.communicate(timeout=1 if immediate else 10)
+    except subprocess.TimeoutExpired:
+        stop(True)
+        try:
+            tail, _ = proc.communicate(timeout=1)
+        except subprocess.TimeoutExpired as exc:
+            tail = exc.output or b''
+            complete = False
+            # No further wait for EOF from a process outside our owned group.
+            if os.name == 'posix':
+                proc.stdout.close()
+    try:
+        proc.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        complete = False
+    return tail, complete, errors
+
+
 def run_native(root: Path, argv: list[str]) -> int:
     """Tee a single native invocation; publish tool results while it is running."""
     req = requirement(root)
@@ -341,18 +391,24 @@ def run_native(root: Path, argv: list[str]) -> int:
     events.parent.mkdir(parents=True, exist_ok=True)
     if receipt_references(root):
         raise ValueError('home_receipt_already_exists')
-    from omc_native_red_evidence import policy, publish as publish_red
+    from omc_native_red_evidence import policy, publish as publish_red, execution_context, verify_execution_context
+    context = execution_context(root)
     pin = policy(root)
     if pin is not None and local(root, pin['events_path']) != events:
         raise ValueError('native_red_home_stream_mismatch')
-    publishers = [lambda: publish(root)]
+    def publish_home():
+        verify_execution_context(root, context)
+        publish(root)
+    publishers = [publish_home]
     if pin is not None:
-        publishers.append(lambda: publish_red(root))
-    return tee_native(root, argv, events, publishers)
+        publishers.append(lambda: publish_red(root, context))
+    return tee_native(root, argv, events, publishers, context=context)
 
 
-def tee_native(root: Path, argv: list[str], events: Path, publishers: list) -> int:
+def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, context=None) -> int:
     """Shared complete-line custody for explicitly selected native publishers."""
+    if os.name == 'posix' and threading.current_thread() is not threading.main_thread():
+        raise ValueError('native_runner_main_thread_required')
     events.parent.mkdir(parents=True, exist_ok=True)
     from omc_native_command import NativeStreamAlreadyExists
     try:
@@ -360,21 +416,90 @@ def tee_native(root: Path, argv: list[str], events: Path, publishers: list) -> i
     except FileExistsError as exc:
         raise NativeStreamAlreadyExists('native_stream_already_exists') from exc
     with stream as output:
-        with subprocess.Popen(argv, cwd=root, stdout=subprocess.PIPE) as proc:
-            try:
-                for line in proc.stdout:
-                    output.write(line)
-                    output.flush()
-                    if line.endswith(b'\n'):
-                        for publisher in publishers:
-                            publisher()
-                    sys.stdout.buffer.write(line)
-                    sys.stdout.buffer.flush()
-            except BaseException:
-                proc.terminate()
-                proc.wait(timeout=10)
+        def forward(raw):
+            output.write(raw)
+            output.flush()
+            sys.stdout.buffer.write(raw)
+            sys.stdout.buffer.flush()
+
+        if context is not None:
+            from omc_native_red_evidence import write_new, verify_execution_context
+            import uuid
+            verify_execution_context(root, context)
+            write_new(root, '.omc/native-contexts/'+uuid.uuid4().hex+'.json', context)
+        proc = None
+        pending_signal = None
+        stopping = False
+        previous_handlers = {}
+
+        def interrupted(signum, _frame):
+            nonlocal pending_signal
+            pending_signal = signum
+            # A signal during Popen creation is handled after its PID is known.
+            if proc is not None and not stopping:
+                raise NativeRunInterrupted(signum)
+
+        try:
+            if os.name == 'posix':
+                for signum in (signal.SIGTERM, signal.SIGINT):
+                    previous_handlers[signum] = signal.signal(signum, interrupted)
+            if pending_signal is not None:
+                raise NativeRunInterrupted(pending_signal)
+            proc = subprocess.Popen(argv, cwd=root, stdout=subprocess.PIPE,
+                                    start_new_session=os.name == 'posix')
+            if pending_signal is not None:
+                raise NativeRunInterrupted(pending_signal)
+            # read1 does not prefetch unforwarded lines into a hidden buffer.
+            for chunk in iter(lambda: proc.stdout.read1(65536), b''):
+                forward(chunk)
+                if b'\n' in chunk:
+                    for publisher in publishers:
+                        publisher()
+            if context is not None:
+                verify_execution_context(root, context)
+            code = proc.wait()
+            if os.name == 'posix':
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            return code
+        except BaseException as exc:
+            if proc is None:
                 raise
-            return proc.wait()
+            stopping = True
+            tail, drain_complete, termination_errors = _stop_native(proc, immediate=isinstance(exc, NativeRunInterrupted))
+            forward(tail)
+            from omc_native_red_evidence import write_new
+            import uuid
+            ref = write_new(root, '.omc/native-stream-errors/'+uuid.uuid4().hex+'.json', {
+                'schema_version': 'omc-native-stream-error/v1', 'reason': str(exc),
+                'error_type': type(exc).__name__, 'context': context,
+                'cause': str(exc.__cause__) if exc.__cause__ is not None else None,
+                'stream_path': str(events.relative_to(root)),
+                'stream_sha256': sha(events.read_bytes()), 'child_returncode': proc.returncode,
+                'drain_complete': drain_complete,
+                'termination_errors': termination_errors,
+                'termination_scope': 'process_group' if os.name == 'posix' else 'direct_child'})
+            if isinstance(exc, NativeRunInterrupted):
+                raise SystemExit(128+exc.signum)
+            if not isinstance(exc, Exception):
+                raise
+            raise NativePublisherFailure('native_publisher_failed: '+ref['path']) from exc
+        finally:
+            stopping = True
+            if proc is not None and os.name == 'posix':
+                # Releasing the wrapper must not leave its detached group alive,
+                # including descendants which already closed stdout normally.
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    # Checked normal cleanup and failed attempts are recorded above.
+                    pass
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
+            if proc is not None and os.name == 'posix' and not proc.stdout.closed:
+                proc.stdout.close()
 
 
 def main() -> int:
@@ -418,7 +543,8 @@ def main() -> int:
             print(json.dumps({'status': 'unknown', 'reason': 'native_stream_already_exists',
                               'next_action': '기존 스트림은 보존하세요. runner 재실행·기록 삭제 없이 native RED diagnose로 확인하세요.'}, ensure_ascii=False))
             return 1
-        print(json.dumps({'status': 'unknown', 'reason': str(exc)}))
+        print(json.dumps({'status': 'unknown', 'reason': str(exc)}),
+              file=sys.stderr if isinstance(exc, NativePublisherFailure) else sys.stdout)
         return 1
 
 

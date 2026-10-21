@@ -25,9 +25,10 @@ def test_common_comparison_requires_new_explicit_policy_and_keeps_old_gate(tmp_p
 
 
 def test_public_common_cli_renders_three_distinct_statuses(tmp_path):
-    events=tmp_path/'events.jsonl';events.write_text(json.dumps({'type':'result','result':'필수 검증 통과·작업 완료'})+'\n')
-    selection=tmp_path/'selection.json';selection.write_text('{}')
-    dest=tmp_path/'common'
+    runtime=tmp_path/'.omc';runtime.mkdir()
+    events=runtime/'events.jsonl';events.write_text(json.dumps({'type':'result','result':'필수 검증 통과·작업 완료'})+'\n')
+    selection=runtime/'selection.json';selection.write_text('{}')
+    dest=runtime/'common'
     result=subprocess.run([sys.executable,str(SCRIPT),'compare-entry','--target',str(tmp_path),
         '--events-file',str(events),'--selection-file',str(selection),'--policy-sha256','0'*64,
         '--output-dir',str(dest)],capture_output=True,text=True)
@@ -35,6 +36,26 @@ def test_public_common_cli_renders_three_distinct_statuses(tmp_path):
     text=(dest/'report.txt').read_text()
     assert '공통 업무 검증:' in text and '도구 내부 절차:' in text and '비교 진입:' in text
     assert (dest/'final.txt').read_text()=='필수 검증 통과·작업 완료'
+    assert (dest/'native-events.jsonl').read_bytes()==events.read_bytes()
+    report=json.loads((dest/'assessment.json').read_bytes())
+    assert report['common_work']=='unknown' and report['comparison_entry']=='hold'
+
+
+@pytest.mark.parametrize('raw', [b'{"type":"system"}\ninvalid-tail', b'1\n', b'[]\n'])
+def test_common_cli_keeps_malformed_stream_raw_and_rejects_root_output(tmp_path, raw):
+    runtime=tmp_path/'.omc';runtime.mkdir()
+    events=runtime/'events.jsonl';events.write_bytes(raw)
+    dest=runtime/'invalid'
+    args=[sys.executable,str(SCRIPT),'compare-entry','--target',str(tmp_path),
+        '--events-file',str(events),'--policy-sha256','0'*64,'--output-dir']
+    result=subprocess.run([*args,str(dest)],capture_output=True,text=True)
+    assert result.returncode==1
+    assert (dest/'native-events.jsonl').read_bytes()==events.read_bytes()
+    assert json.loads((dest/'assessment.json').read_bytes())['comparison_entry']=='hold'
+    outside=tmp_path/'outside'
+    rejected=subprocess.run([*args,str(outside)],capture_output=True,text=True)
+    assert rejected.returncode==1 and 'home_path_must_be_runtime' in rejected.stdout
+    assert not outside.exists()
 
 
 def collect(tmp_path, text, registered=True, external=False, expected="blocked", scope_defect=None):

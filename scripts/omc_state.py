@@ -3287,8 +3287,14 @@ def record_session(
             decision_history.append(superseded_decision)
         session_id = f"{_slug_now()}-{uuid.uuid4().hex[:8]}"
         resolved_work_class = _resolve_work_class(work_class, role_ids)
+        preserves_completion = (
+            "code_review" in role_ids
+            or ("analysis" in role_ids and title in _COMPLETION_PRESERVING_ANALYSIS_TITLES)
+            or ("directive" in role_ids and title in _COMPLETION_PRESERVING_DIRECTIVE_TITLES)
+        )
         resolved_completion_action = completion_action or (
-            "start" if "senior_coding" in role_ids else None
+            "start" if "senior_coding" in role_ids
+            else "preserve-if-present" if preserves_completion else None
         )
         if resolved_completion_action not in {None, "start", "continue", "preserve", "preserve-if-present"}:
             raise ValueError("completion action is invalid")

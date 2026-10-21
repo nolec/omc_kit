@@ -59,6 +59,71 @@ def configured(root):
     return basis
 
 
+@pytest.mark.parametrize('drift', ['session', 'missing-policy', 'revision'])
+def test_native_execution_context_rejects_drift_without_approval_inheritance(project, drift):
+    root = project
+    configured(root)
+    context = module().execution_context(root)
+    before = (root/'.omc/verification-bases/s/1.json').read_bytes()
+    assert context['session_id'] == 's' and context['run_id'] == 'run'
+    module().verify_execution_context(root, context)
+    if drift in {'session', 'missing-policy'}:
+        (root/'.omc/state/latest.json').write_text(json.dumps(
+            {'latest_session_id': 'new', 'latest_confirmed_session_id': 'new'}))
+        if drift == 'missing-policy':
+            value = json.loads(before)
+            value['session_id'] = 'new'
+            value['checks'][0].pop('native_red')
+            path = root/'.omc/verification-bases/new/1.json'
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(value))
+    else:
+        value = json.loads(before); value['revision'] = 2
+        (root/'.omc/verification-bases/s/2.json').write_text(json.dumps(value))
+    with pytest.raises(ValueError, match='native_execution_context_mismatch'):
+        module().verify_execution_context(root, context)
+    assert (root/'.omc/verification-bases/s/1.json').read_bytes() == before
+
+
+@pytest.mark.parametrize('with_home', [False, True])
+def test_running_wrapper_stops_on_session_drift_preserving_native_bytes(project, with_home):
+    root = project; basis = configured(root)
+    if with_home:
+        import omc_home_observation as home
+        req = {'schema_version':'omc-home-motion-requirement/v1','session_id':'s','run_id':'run',
+            'url':'http://localhost:3035/shop','events_path':basis['checks'][0]['native_red']['events_path'],
+            'receipt_path':'.omc/home/receipt.json','preflight_path':'.omc/home/ready.json',
+            'preflight_sha256':'a'*64}
+        path = root/home.REQUIREMENT; path.write_text(json.dumps(req))
+        basis['revision'] = 2
+        basis['checks'].append({'id':'browser-home','target':'home','method':'observe',
+            'pass_condition':'six samples','target_version':'candidate','home_motion_sha256':module().sha(path.read_bytes())})
+        proposal = root/'.omc/both.json'; proposal.write_text(json.dumps(basis))
+        assert guard.cmd_approve_checks(root, proposal) == 0
+        assert guard.cmd_contract_done(root, required_checks='tests,browser-home') == 0
+    raw = b'{"type":"system","subtype":"init"}\n{"type":"user","message":{"content":[]}}\n'
+    child = """import json,os,pathlib,sys,time
+p=pathlib.Path('.omc/state/latest.json')
+p.write_text(json.dumps({'latest_session_id':'new','latest_confirmed_session_id':'new'}))
+os.write(1,bytes.fromhex(sys.argv[1]))
+time.sleep(30)
+pathlib.Path('.omc/should-not-finish').write_text('finished')
+"""
+    before = (root/'.omc/verification-bases/s/1.json').read_bytes()
+    result = subprocess.run([sys.executable, str(SCRIPTS/'omc_native_red_evidence.py'), 'run',
+        '--target', str(root), '--launch', sys.executable, '-c', child, raw.hex()],
+        capture_output=True, timeout=15)
+    assert result.returncode == 1
+    assert result.stdout == raw
+    assert (root/'.omc/native-red/events.jsonl').read_bytes() == raw
+    assert b'native_publisher_failed' in result.stderr
+    error = json.loads(next((root/'.omc/native-stream-errors').glob('*.json')).read_bytes())
+    assert error['reason'] == 'native_execution_context_mismatch'
+    assert error['context']['session_id'] == 's' and error['context']['run_id'] == 'run'
+    assert not (root/'.omc/should-not-finish').exists()
+    assert (root/'.omc/verification-bases/s/1.json').read_bytes() == before
+
+
 def observed(root):
     result=cli(root,'observe')
     assert result.returncode==0,result.stdout+result.stderr
