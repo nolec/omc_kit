@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "세션·원문 보완14개 커밋 · 완료 가드 통과 · 실제 비교 HOLD",
+    "decision": "시작·compact 승인 연결 보완8개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2006,7 +2006,7 @@
         "effect": "미검증",
         "id": "C1",
         "name": "기존·신규 실패 구분",
-        "next_work": "771976c 후보의 실제 Claude 광고 사례 1회 재검증 계획·승인 · 비교 HOLD·효과 미입증 유지",
+        "next_work": "c4864a3 후보의 실제 Claude 광고 사례 최대1회 재검증 계획·승인 · 비교 HOLD·효과 미입증 유지",
         "principle": "기존 실패와 이번 변경의 실패를 분리하되 필수 검증 실패는 완료 차단",
         "status": "C1 실행기 보고 유지 · 응답 지침 후보 제외 · 회귀 검증·리뷰 완료 · 사용자 효과 미입증",
         "supports": [
@@ -2022,7 +2022,7 @@
         "effect": "미검증",
         "id": "C2",
         "name": "프롬프트 관리",
-        "next_work": "771976c 후보의 실제 Claude 광고 사례 1회 재검증 계획·승인 · 비교 HOLD·효과 미입증 유지",
+        "next_work": "c4864a3 후보의 실제 Claude 광고 사례 최대1회 재검증 계획·승인 · 비교 HOLD·효과 미입증 유지",
         "principle": "정책 변경의 일관된 반영",
         "status": "비교 검증 필요",
         "supports": [
@@ -2038,7 +2038,7 @@
         "effect": "미입증",
         "id": "C3",
         "name": "중단·재개",
-        "next_work": "771976c 후보의 실제 Claude 광고 사례 1회 재검증 계획·승인 · 비교 HOLD·효과 미입증 유지",
+        "next_work": "c4864a3 후보의 실제 Claude 광고 사례 최대1회 재검증 계획·승인 · 비교 HOLD·효과 미입증 유지",
         "principle": "완료 근거를 재검증하며 작업 이어가기",
         "status": "다섯 항목 안내0.5.8 구현 이력 보존 · 현재 설치0.6.1 · 사용자 이해 재검증 전",
         "supports": [
@@ -2049,9 +2049,9 @@
         "historical_next_work": "설치된0.5.9의 기본 다섯 항목 안내만 제공한 새 격리 사례에서 사용자 이해를 확인한다. 형식 동의·코드 검증·설치를 실제 이해 효과로 집계하지 않으며 실무·다중 사례 효과·경쟁 우열은 미검증으로 유지한다."
       }
     ],
-    "next": "준비 보완은 이번 범위에서 종료한다. 771976c 후보를 격리 설치하고 동일 광고 계약·입력·후보 서버·실제 홈 준비를 확인하는 단일 OMC 재검증을 별도로 계획·승인한다. 실제 Claude 호출은 최대1회·자동 재시도0회로 제한하고, 준비가 충족되지 않으면 실행하지 않고 원인을 기록한다. 기존 양쪽 비교 호출 한도는 소비됐으며 이전 승인·예외를 자동 승계하지 않는다.",
+    "next": "이번 시작·compact 보완은 종료한다. c4864a3를 격리 설치해 동일 광고 계약·입력·후보 서버·실제 홈 준비를 확인하는 단일 OMC 재검증을 별도로 계획·승인한다. 실제 Claude 최대1회·자동 재시도0회, 준비 미충족 시 호출 없이 종료한다. 최초 명령의 승인 연결부터 필수 검증·화면 자동 판정·최종 완료 기록·정상 종료까지 확인한다. 이전 실행 한도·예외 승인은 자동 승계하지 않는다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "771976c 후보의 실제 Claude 광고 사례 1회 재검증 계획·승인"
+    "current_priority": "c4864a3 후보의 실제 Claude 광고 사례 최대1회 재검증 계획·승인"
   },
   "decision": {
     "candidate": "실제 비교 차단 원인 보완 후 업무 재검증",
@@ -2096,44 +2096,43 @@
         "historical": true
       }
     ],
-    "completion": "771976c 14개 파일 커밋·원본 TDD 및 완료 가드 통과. 보완 후 실제 Claude 재검증·새 릴리스·사용처 설치는 미실행.",
+    "completion": "c4864a3 시작·compact 보완8개 구현·리뷰·커밋 완료. 새 후보 실제 Claude·릴리스·설치 미실행.",
     "deliverables": [
-      "세션·승인·실행 문맥 결속",
-      "native 오류 원문·진단 분리와 유한 종료",
-      "결과 선택 기록의 .omc 내부 경로 고정",
-      "보존 역할과 구현 완료 증거 소유 작업 분리",
-      "771976c 14개 파일 로컬 커밋·완료 가드 통과"
+      "최초 시작의 일회용 승인 인계",
+      "같은 세션 compact의 현재 승인·진행 보존",
+      "다른 실행·승인 변경·만료 시 차단",
+      "c4864a3 리뷰 승인8개 로컬 커밋"
     ],
-    "limit": "광고 비교는 양쪽 각1회 실행했으나 모두 HOLD다. OMC는 세션 전환·승인 연결 문제로 제품 수정 전 종료(exit1·159.98초), 경쟁은 execute 호출·성공 반환과 제품 수정 뒤 테스트명 누락·실제 홈 unknown·선택 receipt8개 stale로 HOLD(exit0·784.93초)다. 진행 단계가 달라 속도 우열을 매기지 않는다. 771976c 보완 후 실제 Claude 호출0회이며 경쟁 우위·시간/개입/재작업 효과는 미입증이다. 기존 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증을 유지한다.",
+    "limit": "771976c 실제 Claude 단일 재검증은1회·33.00초·child/wrapper exit0·재시도0회였지만 시작 훅이 CONTRACT와 pipeline session ID를 초기화해 첫 task-context exit2로 중단했다. 제품 수정0·최종8프로필검증0·업무 및 비교 HOLD다. c4864a3 보완 후 실제 Claude 호출0회다. 과거 양쪽 비교 HOLD·광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증·생산성 및 경쟁 우위 미입증을 유지한다.",
     "not_done": [
-      "771976c 보완 후 실제 Claude 광고 사례 재검증",
+      "c4864a3 실제 Claude 광고 사례 재검증",
       "새 후보 릴리스·사용처 재설치",
       "동일 조건 유효 경쟁 비교와 업무 효과 입증"
     ],
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "reason": "사전 결속 비교의 세션·승인 기준을 유지하고 native 실행 중 문맥 변경을 감지한다. 오류·중단 때 원문과 진단을 분리 보존하고 하위 프로세스 종료·출력 회수에 시간제한을 둔다. 새 결과 선택 경로는 .omc/comparisons/<run_id>/final-selection.json으로 고정한다. 리뷰·조사 뒤에는 작업 ID·계보·기준 커밋을 대조해 같은 구현의 완료 증거만 연결한다.",
-    "state": "세션·원문 보완14개 커밋 · 완료 가드 통과 · 실제 비교 HOLD",
-    "next": "준비 보완은 이번 범위에서 종료한다. 771976c 후보를 격리 설치하고 동일 광고 계약·입력·후보 서버·실제 홈 준비를 확인하는 단일 OMC 재검증을 별도로 계획·승인한다. 실제 Claude 호출은 최대1회·자동 재시도0회로 제한하고, 준비가 충족되지 않으면 실행하지 않고 원인을 기록한다. 기존 양쪽 비교 호출 한도는 소비됐으며 이전 승인·예외를 자동 승계하지 않는다."
+    "reason": "최초 startup은 승인·작업·검증 기준·후보를 결속한 일회용 인계만 유지한다. 같은 native session의 compact는 현재 승인과 진행을 보존하되 유효기간을 연장하거나 과거 승인을 복원하지 않는다. 다른 세션·변경/만료 승인·손상 기록은 거부한다. 컨텍스트 생성의 중복 초기화를 제거하고 공개 훅은 현재 source/session_id만 전달한다.",
+    "state": "시작·compact 승인 연결 보완8개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD",
+    "next": "이번 시작·compact 보완은 종료한다. c4864a3를 격리 설치해 동일 광고 계약·입력·후보 서버·실제 홈 준비를 확인하는 단일 OMC 재검증을 별도로 계획·승인한다. 실제 Claude 최대1회·자동 재시도0회, 준비 미충족 시 호출 없이 종료한다. 최초 명령의 승인 연결부터 필수 검증·화면 자동 판정·최종 완료 기록·정상 종료까지 확인한다. 이전 실행 한도·예외 승인은 자동 승계하지 않는다."
   },
   "current_update": {
     "date": "2026-10-22",
-    "status": "세션·원문 보완14개 커밋 · 완료 가드 통과 · 실제 비교 HOLD",
+    "status": "시작·compact 승인 연결 보완8개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD",
     "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
-    "goal_progress": "비교를 멈추게 한 세션·승인 단절과 결과 기록 경로를 보완하고, 오류 종료·역할 전환 뒤 완료 증거 연결을 로컬 검증했다. 실제 업무 효과 확인 단계는 남아 있다.",
-    "commit": "771976c",
-    "implementation_commit": "771976c",
-    "commit_scope": "리뷰 지적 보완 및 연결 수정 포함14개 파일만 로컬 커밋. 이번 로드맵·대시보드4파일은 별도 미커밋.",
-    "improvement": "사전 결속 비교의 세션·승인 기준을 유지하고 native 실행 중 문맥 변경을 감지한다. 오류·중단 때 원문과 진단을 분리 보존하고 하위 프로세스 종료·출력 회수에 시간제한을 둔다. 새 결과 선택 경로는 .omc/comparisons/<run_id>/final-selection.json으로 고정한다. 리뷰·조사 뒤에는 작업 ID·계보·기준 커밋을 대조해 같은 구현의 완료 증거만 연결한다.",
-    "verification": "초기 세션·경로 보완249개, 종료 처리 보완154개, 최종 완료 소유 작업 연결226개가 각각 통과했다. 독립 리뷰 종료5개·연결14개 통과. 서로 다른 후보·중복 범위이므로 합산하지 않는다. main 최종 TDD·complete-task 및 커밋 훅 통과, 14개 경로·내용 대조 완료.",
-    "tests_passed": 226,
+    "goal_progress": "771976c 실제 Claude 1회에서 시작 훅의 승인 초기화를 확인했다. c4864a3로 최초 시작 인계와 같은 세션 compact의 승인·진행 보존을 구현·리뷰·커밋했다. 새 후보의 실제 업무 완료와 동등 경쟁 비교는 아직 확인하지 않았다.",
+    "commit": "c4864a3",
+    "implementation_commit": "c4864a3",
+    "commit_scope": "리뷰 승인된8개 파일만 main에 로컬 커밋. 이번 로드맵·대시보드4파일은 별도 미커밋.",
+    "improvement": "최초 startup은 승인·작업·검증 기준·후보를 결속한 일회용 인계만 유지한다. 같은 native session의 compact는 현재 승인과 진행을 보존하되 유효기간을 연장하거나 과거 승인을 복원하지 않는다. 다른 세션·변경/만료 승인·손상 기록은 거부한다. 컨텍스트 생성의 중복 초기화를 제거하고 공개 훅은 현재 source/session_id만 전달한다.",
+    "verification": "최종 관련 회귀303개 통과·UI query2개 제외. 독립 리뷰134개 통과·동일 UI query2개 제외. 공개 shell startup→제품 수정/진행→반복 compact 및 승인 변경 차단 확인. 두 묶음은 중복되므로 합산하지 않는다. Python·shell 문법, TDD·완료 가드·커밋 훅 통과. 실제 Claude 실행 검증과는 구분한다.",
+    "tests_passed": 303,
     "tests_skipped": 0,
     "review_verdict": "APPROVE",
-    "review_scope_files": 3,
-    "review_scope_description": "초기11개 검토의 REVISE 지적은 종료 처리2개 후속 APPROVE로 보완. 완료 소유 작업 연결3개는 별도 APPROVE. 두 receipt는 격리 부분 후보에 한정하며 원본 전체 후보 승인으로 확대하지 않는다.",
-    "next": "준비 보완은 이번 범위에서 종료한다. 771976c 후보를 격리 설치하고 동일 광고 계약·입력·후보 서버·실제 홈 준비를 확인하는 단일 OMC 재검증을 별도로 계획·승인한다. 실제 Claude 호출은 최대1회·자동 재시도0회로 제한하고, 준비가 충족되지 않으면 실행하지 않고 원인을 기록한다. 기존 양쪽 비교 호출 한도는 소비됐으며 이전 승인·예외를 자동 승계하지 않는다.",
-    "display_next": "771976c 후보의 실제 Claude 광고 사례 1회 재검증 계획·승인",
-    "limitations": "광고 비교는 양쪽 각1회 실행했으나 모두 HOLD다. OMC는 세션 전환·승인 연결 문제로 제품 수정 전 종료(exit1·159.98초), 경쟁은 execute 호출·성공 반환과 제품 수정 뒤 테스트명 누락·실제 홈 unknown·선택 receipt8개 stale로 HOLD(exit0·784.93초)다. 진행 단계가 달라 속도 우열을 매기지 않는다. 771976c 보완 후 실제 Claude 호출0회이며 경쟁 우위·시간/개입/재작업 효과는 미입증이다. 기존 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증을 유지한다.",
-    "installation": "이번 771976c는 로컬 main 커밋 완료·미릴리스·일반 사용처 미설치다. 기존 정상11개는 e618fca/0.6.1 설치·감사 당시 결과로 보존하며 현재 재감사했다고 주장하지 않는다. 이번 작업에서 push·태그·릴리스·재설치 없음.",
+    "review_scope_files": 8,
+    "review_scope_description": "원본과 동일 내용의 격리8개 후보 전체 APPROVE·승인 receipt 기록. main 커밋8개 경로·내용 일치 확인. 원본 전체 ship 승인으로 확대하지 않는다.",
+    "next": "이번 시작·compact 보완은 종료한다. c4864a3를 격리 설치해 동일 광고 계약·입력·후보 서버·실제 홈 준비를 확인하는 단일 OMC 재검증을 별도로 계획·승인한다. 실제 Claude 최대1회·자동 재시도0회, 준비 미충족 시 호출 없이 종료한다. 최초 명령의 승인 연결부터 필수 검증·화면 자동 판정·최종 완료 기록·정상 종료까지 확인한다. 이전 실행 한도·예외 승인은 자동 승계하지 않는다.",
+    "display_next": "c4864a3 후보의 실제 Claude 광고 사례 최대1회 재검증 계획·승인",
+    "limitations": "771976c 실제 Claude 단일 재검증은1회·33.00초·child/wrapper exit0·재시도0회였지만 시작 훅이 CONTRACT와 pipeline session ID를 초기화해 첫 task-context exit2로 중단했다. 제품 수정0·최종8프로필검증0·업무 및 비교 HOLD다. c4864a3 보완 후 실제 Claude 호출0회다. 과거 양쪽 비교 HOLD·광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증·생산성 및 경쟁 우위 미입증을 유지한다.",
+    "installation": "c4864a3는 로컬 main 커밋 완료·미릴리스·일반 사용처 미설치다. 정상11개 사용처의 e618fca/0.6.1 설치·엄격 감사는 당시 결과이며 이번에 재감사하지 않았다. push·태그·릴리스·재설치 없음.",
     "release_state": {
       "release_version": "0.6.1",
       "release_commit": "e618fcaf693f4b20519eb6dab6bce64da9c662f6",
@@ -2159,7 +2158,9 @@
       "session_custody_fix_released": false,
       "session_custody_fix_reinstalled": false,
       "completion_owner_fix_released": false,
-      "completion_owner_fix_reinstalled": false
+      "completion_owner_fix_reinstalled": false,
+      "session_start_handoff_released": false,
+      "session_start_handoff_reinstalled": false
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2172,8 +2173,8 @@
     "ship_state": "NEW_FIX_COMMITTED_UNRELEASED_NOT_INSTALLED",
     "task_gate": {
       "state": "PASSED",
-      "evidence": ".omc/completion-owner-fix/complete-final.txt",
-      "scope": "771976c 제품 변경 완료 판정; 이번 문서 편집의 완료 증거와 구분"
+      "evidence": ".omc/tasks/session-start-compact/complete-task-final.txt",
+      "scope": "c4864a3 구현 완료 판정; 이번 문서 편집의 완료 증거와 구분"
     },
     "observation": {
       "v3": "DISABLED",
@@ -2182,38 +2183,24 @@
       "automatic_resume": false
     },
     "local_runtime_evidence": [
-      ".omc/ad-pair-061-20261021/REPORT.md",
-      ".omc/ad-pair-061-20261021/comparison-summary.json",
-      ".omc/session-custody-fix/REPORT.md",
-      ".omc/native-drain-review-fix/REPORT.md",
-      ".omc/native-drain-followup-review/REPORT.md",
-      ".omc/completion-owner-fix/REPORT.md",
-      ".omc/completion-owner-fix/complete-final.txt",
-      ".omc/completion-owner-review/REPORT.md"
+      ".omc/ad-single-771976c-20261021T160747Z/REPORT.md",
+      ".omc/ad-single-771976c-20261021T160747Z/summary.json",
+      ".omc/tasks/session-start-handoff/REPORT.md",
+      ".omc/tasks/session-start-handoff/review/REPORT.md",
+      ".omc/tasks/session-start-compact/REPORT.md",
+      ".omc/tasks/session-start-compact/review/REPORT.md",
+      ".omc/tasks/session-start-compact/review/record-result.txt"
     ],
     "verification_groups": [
       {
-        "name": "초기 세션·기록 경로 보완",
-        "passed": 249,
-        "historical_candidate": true
+        "name": "최종 관련 회귀",
+        "passed": 303,
+        "deselected": 2
       },
       {
-        "name": "종료 처리 보완",
-        "passed": 154,
-        "historical_candidate": true
-      },
-      {
-        "name": "최종 완료 소유 작업 연결",
-        "passed": 226
-      },
-      {
-        "name": "종료 처리 독립 리뷰",
-        "passed": 5,
-        "overlapping": true
-      },
-      {
-        "name": "완료 연결 독립 리뷰",
-        "passed": 14,
+        "name": "독립 리뷰",
+        "passed": 134,
+        "deselected": 2,
         "overlapping": true
       }
     ],
@@ -2230,9 +2217,138 @@
       "competitor_execute_success_return": true,
       "competitor_stale_selected_receipts": 8,
       "evidence": ".omc/ad-pair-061-20261021/REPORT.md"
+    },
+    "tests_deselected": 2,
+    "latest_single_attempt": {
+      "candidate": "771976c",
+      "calls": 1,
+      "elapsed_seconds": 33.0,
+      "outcome": "HOLD",
+      "normal_exit": true,
+      "product_modified": false,
+      "final_profiles_executed": 0,
+      "cause": "SessionStart reset prebound CONTRACT and pipeline session ID",
+      "budget_consumed": true
     }
   },
   "current_update_history": [
+    {
+      "date": "2026-10-22",
+      "status": "세션·원문 보완14개 커밋 · 완료 가드 통과 · 실제 비교 HOLD",
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "goal_progress": "비교를 멈추게 한 세션·승인 단절과 결과 기록 경로를 보완하고, 오류 종료·역할 전환 뒤 완료 증거 연결을 로컬 검증했다. 실제 업무 효과 확인 단계는 남아 있다.",
+      "commit": "771976c",
+      "implementation_commit": "771976c",
+      "commit_scope": "리뷰 지적 보완 및 연결 수정 포함14개 파일만 로컬 커밋. 이번 로드맵·대시보드4파일은 별도 미커밋.",
+      "improvement": "사전 결속 비교의 세션·승인 기준을 유지하고 native 실행 중 문맥 변경을 감지한다. 오류·중단 때 원문과 진단을 분리 보존하고 하위 프로세스 종료·출력 회수에 시간제한을 둔다. 새 결과 선택 경로는 .omc/comparisons/<run_id>/final-selection.json으로 고정한다. 리뷰·조사 뒤에는 작업 ID·계보·기준 커밋을 대조해 같은 구현의 완료 증거만 연결한다.",
+      "verification": "초기 세션·경로 보완249개, 종료 처리 보완154개, 최종 완료 소유 작업 연결226개가 각각 통과했다. 독립 리뷰 종료5개·연결14개 통과. 서로 다른 후보·중복 범위이므로 합산하지 않는다. main 최종 TDD·complete-task 및 커밋 훅 통과, 14개 경로·내용 대조 완료.",
+      "tests_passed": 226,
+      "tests_skipped": 0,
+      "review_verdict": "APPROVE",
+      "review_scope_files": 3,
+      "review_scope_description": "초기11개 검토의 REVISE 지적은 종료 처리2개 후속 APPROVE로 보완. 완료 소유 작업 연결3개는 별도 APPROVE. 두 receipt는 격리 부분 후보에 한정하며 원본 전체 후보 승인으로 확대하지 않는다.",
+      "next": "준비 보완은 이번 범위에서 종료한다. 771976c 후보를 격리 설치하고 동일 광고 계약·입력·후보 서버·실제 홈 준비를 확인하는 단일 OMC 재검증을 별도로 계획·승인한다. 실제 Claude 호출은 최대1회·자동 재시도0회로 제한하고, 준비가 충족되지 않으면 실행하지 않고 원인을 기록한다. 기존 양쪽 비교 호출 한도는 소비됐으며 이전 승인·예외를 자동 승계하지 않는다.",
+      "display_next": "771976c 후보의 실제 Claude 광고 사례 1회 재검증 계획·승인",
+      "limitations": "광고 비교는 양쪽 각1회 실행했으나 모두 HOLD다. OMC는 세션 전환·승인 연결 문제로 제품 수정 전 종료(exit1·159.98초), 경쟁은 execute 호출·성공 반환과 제품 수정 뒤 테스트명 누락·실제 홈 unknown·선택 receipt8개 stale로 HOLD(exit0·784.93초)다. 진행 단계가 달라 속도 우열을 매기지 않는다. 771976c 보완 후 실제 Claude 호출0회이며 경쟁 우위·시간/개입/재작업 효과는 미입증이다. 기존 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증을 유지한다.",
+      "installation": "이번 771976c는 로컬 main 커밋 완료·미릴리스·일반 사용처 미설치다. 기존 정상11개는 e618fca/0.6.1 설치·감사 당시 결과로 보존하며 현재 재감사했다고 주장하지 않는다. 이번 작업에서 push·태그·릴리스·재설치 없음.",
+      "release_state": {
+        "release_version": "0.6.1",
+        "release_commit": "e618fcaf693f4b20519eb6dab6bce64da9c662f6",
+        "consumer_count": 11,
+        "binding_fix_released": true,
+        "binding_fix_reinstalled": true,
+        "pushed": false,
+        "visual_completion_fix_released": true,
+        "visual_completion_fix_reinstalled": true,
+        "peer_trace_released": true,
+        "peer_trace_reinstalled": true,
+        "home_observation_released": true,
+        "home_observation_reinstalled": true,
+        "native_red_fix_released": true,
+        "native_red_fix_reinstalled": true,
+        "native_command_fix_released": true,
+        "native_command_fix_reinstalled": true,
+        "bounded_read_fix_released": true,
+        "bounded_read_fix_reinstalled": true,
+        "fixed_validation_released": true,
+        "fixed_validation_reinstalled": true,
+        "source_sha256": "7b1ecaa729ffb04780437c309f0dcba76aff507c604d441e297485482fac2a2a",
+        "session_custody_fix_released": false,
+        "session_custody_fix_reinstalled": false,
+        "completion_owner_fix_released": false,
+        "completion_owner_fix_reinstalled": false
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/index.html",
+        "docs/comparison-dashboard/view.json"
+      ],
+      "comparison_state": "HOLD",
+      "post_fix_provider_calls": 0,
+      "ship_state": "NEW_FIX_COMMITTED_UNRELEASED_NOT_INSTALLED",
+      "task_gate": {
+        "state": "PASSED",
+        "evidence": ".omc/completion-owner-fix/complete-final.txt",
+        "scope": "771976c 제품 변경 완료 판정; 이번 문서 편집의 완료 증거와 구분"
+      },
+      "observation": {
+        "v3": "DISABLED",
+        "completion": "OBSERVATION_INVALID",
+        "reason": "live_observation_not_enabled",
+        "automatic_resume": false
+      },
+      "local_runtime_evidence": [
+        ".omc/ad-pair-061-20261021/REPORT.md",
+        ".omc/ad-pair-061-20261021/comparison-summary.json",
+        ".omc/session-custody-fix/REPORT.md",
+        ".omc/native-drain-review-fix/REPORT.md",
+        ".omc/native-drain-followup-review/REPORT.md",
+        ".omc/completion-owner-fix/REPORT.md",
+        ".omc/completion-owner-fix/complete-final.txt",
+        ".omc/completion-owner-review/REPORT.md"
+      ],
+      "verification_groups": [
+        {
+          "name": "초기 세션·기록 경로 보완",
+          "passed": 249,
+          "historical_candidate": true
+        },
+        {
+          "name": "종료 처리 보완",
+          "passed": 154,
+          "historical_candidate": true
+        },
+        {
+          "name": "최종 완료 소유 작업 연결",
+          "passed": 226
+        },
+        {
+          "name": "종료 처리 독립 리뷰",
+          "passed": 5,
+          "overlapping": true
+        },
+        {
+          "name": "완료 연결 독립 리뷰",
+          "passed": 14,
+          "overlapping": true
+        }
+      ],
+      "latest_paired_attempt": {
+        "source_commit": "e618fca",
+        "omc_provider_calls": 1,
+        "competitor_provider_calls": 1,
+        "automatic_retries": 0,
+        "omc_exit": 1,
+        "competitor_exit": 0,
+        "omc_elapsed_seconds": 159.98,
+        "competitor_elapsed_seconds": 784.93,
+        "comparison_entry": "HOLD",
+        "competitor_execute_success_return": true,
+        "competitor_stale_selected_receipts": 8,
+        "evidence": ".omc/ad-pair-061-20261021/REPORT.md"
+      }
+    },
     {
       "date": "2026-10-21",
       "status": "0.6.1 로컬 패치 릴리스·정상11개 재설치 완료 · 전체 출하 검증 통과 · 실제 비교 HOLD 유지",

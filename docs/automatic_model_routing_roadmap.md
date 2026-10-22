@@ -1,6 +1,22 @@
 # Automatic Model Routing Roadmap
 
-## 현재 · 세션·원문·완료 증거 연결 보완 커밋 · 2026-10-22
+## 현재 · Claude 시작·compact 승인 연결 보완 커밋 · 2026-10-22
+
+- 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
+- 현재 판정: 시작·compact 승인 연결 보완8개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD
+- 목표 대비 진행: 771976c 실제 Claude 1회에서 시작 훅의 승인 초기화를 확인했다. c4864a3로 최초 시작 인계와 같은 세션 compact의 승인·진행 보존을 구현·리뷰·커밋했다. 새 후보의 실제 업무 완료와 동등 경쟁 비교는 아직 확인하지 않았다.
+- 실제 재검증: 771976c 실제 Claude 단일 재검증은1회·33.00초·child/wrapper exit0·재시도0회였지만 시작 훅이 CONTRACT와 pipeline session ID를 초기화해 첫 task-context exit2로 중단했다. 제품 수정0·최종8프로필검증0·업무 및 비교 HOLD다. c4864a3 보완 후 실제 Claude 호출0회다. 과거 양쪽 비교 HOLD·광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증·생산성 및 경쟁 우위 미입증을 유지한다.
+- 이번 개선: 최초 startup은 승인·작업·검증 기준·후보를 결속한 일회용 인계만 유지한다. 같은 native session의 compact는 현재 승인과 진행을 보존하되 유효기간을 연장하거나 과거 승인을 복원하지 않는다. 다른 세션·변경/만료 승인·손상 기록은 거부한다. 컨텍스트 생성의 중복 초기화를 제거하고 공개 훅은 현재 source/session_id만 전달한다.
+- 코드·범위: 리뷰 승인된8개 파일만 main에 로컬 커밋. 이번 로드맵·대시보드4파일은 별도 미커밋.
+- 검증: 최종 관련 회귀303개 통과·UI query2개 제외. 독립 리뷰134개 통과·동일 UI query2개 제외. 공개 shell startup→제품 수정/진행→반복 compact 및 승인 변경 차단 확인. 두 묶음은 중복되므로 합산하지 않는다. Python·shell 문법, TDD·완료 가드·커밋 훅 통과. 실제 Claude 실행 검증과는 구분한다.
+- 리뷰: 원본과 동일 내용의 격리8개 후보 전체 APPROVE·승인 receipt 기록. main 커밋8개 경로·내용 일치 확인. 원본 전체 ship 승인으로 확대하지 않는다.
+- 다음 작업: c4864a3 후보의 실제 Claude 광고 사례 최대1회 재검증 계획·승인
+- 다음: 이번 시작·compact 보완은 종료한다. c4864a3를 격리 설치해 동일 광고 계약·입력·후보 서버·실제 홈 준비를 확인하는 단일 OMC 재검증을 별도로 계획·승인한다. 실제 Claude 최대1회·자동 재시도0회, 준비 미충족 시 호출 없이 종료한다. 최초 명령의 승인 연결부터 필수 검증·화면 자동 판정·최종 완료 기록·정상 종료까지 확인한다. 이전 실행 한도·예외 승인은 자동 승계하지 않는다.
+- 배포: c4864a3는 로컬 main 커밋 완료·미릴리스·일반 사용처 미설치다. 정상11개 사용처의 e618fca/0.6.1 설치·엄격 감사는 당시 결과이며 이번에 재감사하지 않았다. push·태그·릴리스·재설치 없음.
+- 관찰: v3 DISABLED · OBSERVATION_INVALID / live_observation_not_enabled. 자동 재등록·재개 없음.
+- 근거: 로컬 .omc/ad-single-771976c-20261021T160747Z/REPORT.md, .omc/ad-single-771976c-20261021T160747Z/summary.json, .omc/tasks/session-start-handoff/REPORT.md, .omc/tasks/session-start-handoff/review/REPORT.md, .omc/tasks/session-start-compact/REPORT.md, .omc/tasks/session-start-compact/review/REPORT.md, .omc/tasks/session-start-compact/review/record-result.txt; 다른 checkout에 자동 제공되지 않는 자료다.
+
+## 이전 이력 · 세션·원문·완료 증거 연결 보완 커밋 · 2026-10-22
 
 - 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
 - 현재 판정: 세션·원문 보완14개 커밋 · 완료 가드 통과 · 실제 비교 HOLD
