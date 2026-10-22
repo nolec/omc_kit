@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "광고 준비·표본 수집 보완3개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD",
+    "decision": "검수 실행기 복원5개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2006,7 +2006,7 @@
         "effect": "미검증",
         "id": "C1",
         "name": "기존·신규 실패 구분",
-        "next_work": "637a965 후보의 실제 Claude 광고 사례 최대1회 재검증 계획·승인 · 비교 HOLD·효과 미입증 유지",
+        "next_work": "637a965 core + 8e65e9f8 검수 실행기로 실제 Claude 최대1회 재검증 계획·승인 · 비교 HOLD·효과 미입증 유지",
         "principle": "기존 실패와 이번 변경의 실패를 분리하되 필수 검증 실패는 완료 차단",
         "status": "C1 실행기 보고 유지 · 응답 지침 후보 제외 · 회귀 검증·리뷰 완료 · 사용자 효과 미입증",
         "supports": [
@@ -2022,7 +2022,7 @@
         "effect": "미검증",
         "id": "C2",
         "name": "프롬프트 관리",
-        "next_work": "637a965 후보의 실제 Claude 광고 사례 최대1회 재검증 계획·승인 · 비교 HOLD·효과 미입증 유지",
+        "next_work": "637a965 core + 8e65e9f8 검수 실행기로 실제 Claude 최대1회 재검증 계획·승인 · 비교 HOLD·효과 미입증 유지",
         "principle": "정책 변경의 일관된 반영",
         "status": "비교 검증 필요",
         "supports": [
@@ -2038,7 +2038,7 @@
         "effect": "미입증",
         "id": "C3",
         "name": "중단·재개",
-        "next_work": "637a965 후보의 실제 Claude 광고 사례 최대1회 재검증 계획·승인 · 비교 HOLD·효과 미입증 유지",
+        "next_work": "637a965 core + 8e65e9f8 검수 실행기로 실제 Claude 최대1회 재검증 계획·승인 · 비교 HOLD·효과 미입증 유지",
         "principle": "완료 근거를 재검증하며 작업 이어가기",
         "status": "다섯 항목 안내0.5.8 구현 이력 보존 · 현재 설치0.6.1 · 사용자 이해 재검증 전",
         "supports": [
@@ -2049,9 +2049,9 @@
         "historical_next_work": "설치된0.5.9의 기본 다섯 항목 안내만 제공한 새 격리 사례에서 사용자 이해를 확인한다. 형식 동의·코드 검증·설치를 실제 이해 효과로 집계하지 않으며 실무·다중 사례 효과·경쟁 우열은 미검증으로 유지한다."
       }
     ],
-    "next": "이번 관측 보완은 종료한다. 637a965를 격리 설치해 동일 광고 계약·입력·후보 서버·실제 홈 준비를 점검하는 단일 OMC 재검증을 별도로 계획·승인한다. 실제 Claude 최대1회·자동 재시도0회이며 준비 미충족 시 호출 없이 종료한다. 기존 테스트 이름 보존, 현재 후보의 필수8프로필·결과 선택·최종 완료 기록·정상 종료를 확인한다. 기존 실행 한도와 예외 승인은 자동 승계하지 않는다. OMC 단일 사례가 유효해진 뒤 동일 조건 경쟁 비교를 결정한다.",
+    "next": "복원 구현 보완은 종료한다. core637a965와 별도 operator runtime8e65e9f8·manifest·query 해시를 고정한 새 계획을 검토·승인한 뒤 준비를 점검한다. 실제 홈 로그인·광고2개·자동 전환·후보 bundle 결속과 예산을 확인해야 실제 Claude 최대1회·자동 재시도0회에 진입한다. 준비 미충족 시 호출 없이 종료한다. 기존 테스트 이름, 필수8프로필·결과 선택·최종 완료 기록·정상 종료를 확인한다. 이전 승인·예외·시간 한도는 자동 승계하지 않는다. OMC 단일 사례가 유효해진 뒤 동등 경쟁 비교를 결정한다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "637a965 후보의 실제 Claude 광고 사례 최대1회 재검증 계획·승인"
+    "current_priority": "637a965 core + 8e65e9f8 검수 실행기로 실제 Claude 최대1회 재검증 계획·승인"
   },
   "decision": {
     "candidate": "실제 비교 차단 원인 보완 후 업무 재검증",
@@ -2084,7 +2084,7 @@
       },
       {
         "cost": "검증·도입 부담 미확인",
-        "evidence_status": "다섯 항목 안내 구현 이력0.5.8 · 현재 설치0.5.9 · 사용자 이해 재검증 전",
+        "evidence_status": "다섯 항목 안내 구현 이력0.5.8 · 설치 이력0.6.1 · 사용자 이해 재검증 전",
         "id": "C3",
         "ours": "우리: 요청·검증된 목표·완료 표시의 근거를 먼저 설명하고 변경 경위의 확인 한계 및 선택 결과를 안내한다. 자동 실행 차단 유지, 신규 보완 최종 리뷰 완료.",
         "supports": [
@@ -2096,44 +2096,44 @@
         "historical": true
       }
     ],
-    "completion": "637a965 광고 관측 보완3개 구현·리뷰·커밋 완료. 보완 후 실제 Claude·릴리스·설치 미실행.",
+    "completion": "검수 실행기 복원5개 구현·리뷰·커밋 완료. 실제 Claude 재검증·릴리스·설치 미실행.",
     "deliverables": [
-      "광고 준비 대기와6개 표본 수집 분리",
-      "준비 기한 우선 판정과 지연 타이머 경계 검사",
-      "요소 교체 표본 합치기 차단",
-      "637a965 리뷰 승인3개 로컬 커밋"
+      "해시 고정 입력에서 새 검수 폴더 복원",
+      "source·query 검증 바이트와 최종 실행 버퍼 결속",
+      "실제 파일 교체4개 및 A/B 판정 회귀",
+      "8e65e9f8 리뷰 승인5개 로컬 커밋"
     ],
-    "limit": "c4864a3 실제 Claude1회·1800.17초·재시도0회. 시작 승인 연결과 RED 이후 수정은 확인됐지만 실행 FAIL_TIMEOUT·비교 HOLD다. tests는 baseline_test_removed와 최종 후보 불일치, home은 최초 timeout·후속2회 home_samples_missing, final-selection·verification·완료 성공·정상 terminal은 없었다. 실제 compact0회로 UNOBSERVED다. 637a965 보완 후 실제 Claude 호출0회. 기존 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증·생산성 및 경쟁 우위 미입증을 유지한다.",
+    "limit": "637a965 개정2 준비는 검수 browser.cjs·manifest의 임시 경로 소실로 NOT_STARTED, Claude0회·wrapper0회·시도예산 소비0회다. 제품 결함이나 신규 테스트 실패로 집계하지 않는다. 이후 복원 작업과 리뷰에서도 Claude0회다. 기존 c4864a3의1회·1800.17초·FAIL_TIMEOUT, 테스트 이름 누락·홈 표본 부족·최종 기록 및 정상 종료 미완료와 비교 HOLD는 그대로 유지한다. 실제 compact는 UNOBSERVED, 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증·생산성 및 경쟁 우위 미입증이다.",
     "not_done": [
-      "637a965 실제 Claude 광고 사례의 최종 검증·기록·정상 종료",
+      "637a965 core와 복원 runtime의 실제 Claude 광고 사례 최종 검증·기록·정상 종료",
       "새 후보 릴리스·사용처 재설치",
       "실제 compact 승인 보존 관측",
       "동일 조건 유효 경쟁 비교와 업무 효과 입증"
     ],
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "reason": "광고 DOM·트랙 연결과 이미지2개 로드를 최대5초 미만 동안 재탐색한 뒤 새 측정 창을 시작한다. 준비 경과가5000ms 이상이면 광고 발견보다 먼저 timeout으로 판정하고 표본을 수집하지 않는다. 동일 트랙6개 표본·800ms 이상 간격·4초 이상·연결 유지·이미지2개·변환 변화 기준은 유지한다. 준비 실패와 측정 중 요소 교체를 구분하며 서로 다른 요소의 표본을 합치지 않는다.",
-    "state": "광고 준비·표본 수집 보완3개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD",
-    "next": "이번 관측 보완은 종료한다. 637a965를 격리 설치해 동일 광고 계약·입력·후보 서버·실제 홈 준비를 점검하는 단일 OMC 재검증을 별도로 계획·승인한다. 실제 Claude 최대1회·자동 재시도0회이며 준비 미충족 시 호출 없이 종료한다. 기존 테스트 이름 보존, 현재 후보의 필수8프로필·결과 선택·최종 완료 기록·정상 종료를 확인한다. 기존 실행 한도와 예외 승인은 자동 승계하지 않는다. OMC 단일 사례가 유효해진 뒤 동일 조건 경쟁 비교를 결정한다."
+    "reason": "해시 고정 입력에서 새 검수 폴더를 복원해 과거 임시 경로 의존을 제거했다. source·query는 검증한 바이트로 기록하고, 브라우저도 같은 query 버퍼를 검증·실행한다. 검사 중 파일이 교체되면 변조를 거부하거나 이미 검증한 원래 버퍼만 실행한다. 기본 CI와 실제 통합 환경을 구분하며 실제 검사를 요청했는데 필수 환경이 없으면 실패한다. 기존6개 홈 표본·픽셀 판정 기준은 유지한다.",
+    "state": "검수 실행기 복원5개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD",
+    "next": "복원 구현 보완은 종료한다. core637a965와 별도 operator runtime8e65e9f8·manifest·query 해시를 고정한 새 계획을 검토·승인한 뒤 준비를 점검한다. 실제 홈 로그인·광고2개·자동 전환·후보 bundle 결속과 예산을 확인해야 실제 Claude 최대1회·자동 재시도0회에 진입한다. 준비 미충족 시 호출 없이 종료한다. 기존 테스트 이름, 필수8프로필·결과 선택·최종 완료 기록·정상 종료를 확인한다. 이전 승인·예외·시간 한도는 자동 승계하지 않는다. OMC 단일 사례가 유효해진 뒤 동등 경쟁 비교를 결정한다."
   },
   "current_update": {
     "date": "2026-10-22",
-    "status": "광고 준비·표본 수집 보완3개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD",
+    "status": "검수 실행기 복원5개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD",
     "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
-    "goal_progress": "c4864a3 실제 Claude 1회에서 시작 승인·세션 연결과 RED 등록 이후 제품 수정을 확인했다. 업무는 테스트 이름 누락·홈 표본 부족·최종 기록 누락 및 시간 초과로 완료하지 못했다. 이후 637a965에서 홈 관측의 준비 대기·표본 수집과 기한 판정을 보완해 구현·리뷰·커밋했다. 새 후보의 실제 업무 완료·생산성 및 경쟁 우위는 미입증이다.",
-    "commit": "637a965",
-    "implementation_commit": "637a965",
-    "commit_scope": "리뷰 승인된3개 파일만 main에 로컬 커밋637a965. 이번 로드맵·대시보드4파일은 별도 미커밋.",
-    "improvement": "광고 DOM·트랙 연결과 이미지2개 로드를 최대5초 미만 동안 재탐색한 뒤 새 측정 창을 시작한다. 준비 경과가5000ms 이상이면 광고 발견보다 먼저 timeout으로 판정하고 표본을 수집하지 않는다. 동일 트랙6개 표본·800ms 이상 간격·4초 이상·연결 유지·이미지2개·변환 변화 기준은 유지한다. 준비 실패와 측정 중 요소 교체를 구분하며 서로 다른 요소의 표본을 합치지 않는다.",
-    "verification": "최종 홈 관측·준비 회귀113개 통과·생략0(격리 Chromium 포함). 경계·표본 독립 리뷰23개 통과. 이전 보완 단계140개 통과 기록과 중복되므로 합산하지 않는다. 변경 없는 고정 명령 CLI 체인12개는 이번 재실행 범위에서 제외했다. Python 문법·TDD·완료 가드·커밋 훅 통과. 합성 브라우저 검사는 실제 로그인 홈·Claude 완료 증거가 아니다.",
-    "tests_passed": 113,
+    "goal_progress": "시작 승인·세션 연결과 홈 관측을 보완했고, 사라진 임시 경로 때문에 막힌 광고 재검증의 실행기·입력을 복원했다. 복원 CLI·빌드·통제 화면 판정과 파일 교체 회귀를 확인해 8e65e9f8에 커밋했다. 실제 Claude 업무 완료·생산성 및 경쟁 우위는 아직 미입증이다.",
+    "commit": "8e65e9f8",
+    "implementation_commit": "8e65e9f8",
+    "commit_scope": "리뷰 승인된 검수 실행기5개 파일만 main에 로컬 커밋8e65e9f8. 이번 로드맵·대시보드4파일은 별도 미커밋.",
+    "improvement": "해시 고정 입력에서 새 검수 폴더를 복원해 과거 임시 경로 의존을 제거했다. source·query는 검증한 바이트로 기록하고, 브라우저도 같은 query 버퍼를 검증·실행한다. 검사 중 파일이 교체되면 변조를 거부하거나 이미 검증한 원래 버퍼만 실행한다. 기본 CI와 실제 통합 환경을 구분하며 실제 검사를 요청했는데 필수 환경이 없으면 실패한다. 기존6개 홈 표본·픽셀 판정 기준은 유지한다.",
+    "verification": "최종 실제 환경 회귀171개 통과·생략0. 새 위치 A/B 각각72셀과 B1/B2 결속·실제 baseline 빌드·홈 표본 회귀를 포함한다. 독립 리뷰는 기본 환경30개 통과·미요청 통합16개 생략, 실제 Chromium 파일 교체4개와 경로1개 총5개 통과다. 묶음은 중복되므로 합산하지 않는다. 독립 리뷰 시171개를 다시 실행한 것은 아니며 실행 당시 코드와 현재 후보 일치를 확인했다. 문법·TDD·완료 가드·커밋 훅 통과. 통제 화면 검사는 실제 로그인 홈·Claude 완료 증거가 아니다.",
+    "tests_passed": 171,
     "tests_skipped": 0,
     "review_verdict": "APPROVE",
-    "review_scope_files": 3,
-    "review_scope_description": "원본과 동일 diff의 격리3개 후보 전체 APPROVE·승인 receipt 기록. main 커밋3개 경로·내용 일치 확인. 원본 전체 ship 승인으로 확대하지 않는다.",
-    "next": "이번 관측 보완은 종료한다. 637a965를 격리 설치해 동일 광고 계약·입력·후보 서버·실제 홈 준비를 점검하는 단일 OMC 재검증을 별도로 계획·승인한다. 실제 Claude 최대1회·자동 재시도0회이며 준비 미충족 시 호출 없이 종료한다. 기존 테스트 이름 보존, 현재 후보의 필수8프로필·결과 선택·최종 완료 기록·정상 종료를 확인한다. 기존 실행 한도와 예외 승인은 자동 승계하지 않는다. OMC 단일 사례가 유효해진 뒤 동일 조건 경쟁 비교를 결정한다.",
-    "display_next": "637a965 후보의 실제 Claude 광고 사례 최대1회 재검증 계획·승인",
-    "limitations": "c4864a3 실제 Claude1회·1800.17초·재시도0회. 시작 승인 연결과 RED 이후 수정은 확인됐지만 실행 FAIL_TIMEOUT·비교 HOLD다. tests는 baseline_test_removed와 최종 후보 불일치, home은 최초 timeout·후속2회 home_samples_missing, final-selection·verification·완료 성공·정상 terminal은 없었다. 실제 compact0회로 UNOBSERVED다. 637a965 보완 후 실제 Claude 호출0회. 기존 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증·생산성 및 경쟁 우위 미입증을 유지한다.",
-    "installation": "637a965는 로컬 main 커밋 완료·미릴리스·일반 사용처 미설치다. 정상11개 사용처의 e618fca/0.6.1 설치·엄격 감사는 당시 결과이며 이번에 재감사하지 않았다. push·태그·릴리스·재설치 없음.",
+    "review_scope_files": 5,
+    "review_scope_description": "원본 스테이징과 동일한 격리5개 후보 전체 APPROVE·승인 receipt 기록. main 커밋5개 경로·Git 객체·권한 일치 확인. 원본 전체 작업트리의 ship 승인으로 확대하지 않는다.",
+    "next": "복원 구현 보완은 종료한다. core637a965와 별도 operator runtime8e65e9f8·manifest·query 해시를 고정한 새 계획을 검토·승인한 뒤 준비를 점검한다. 실제 홈 로그인·광고2개·자동 전환·후보 bundle 결속과 예산을 확인해야 실제 Claude 최대1회·자동 재시도0회에 진입한다. 준비 미충족 시 호출 없이 종료한다. 기존 테스트 이름, 필수8프로필·결과 선택·최종 완료 기록·정상 종료를 확인한다. 이전 승인·예외·시간 한도는 자동 승계하지 않는다. OMC 단일 사례가 유효해진 뒤 동등 경쟁 비교를 결정한다.",
+    "display_next": "637a965 core + 8e65e9f8 검수 실행기로 실제 Claude 최대1회 재검증 계획·승인",
+    "limitations": "637a965 개정2 준비는 검수 browser.cjs·manifest의 임시 경로 소실로 NOT_STARTED, Claude0회·wrapper0회·시도예산 소비0회다. 제품 결함이나 신규 테스트 실패로 집계하지 않는다. 이후 복원 작업과 리뷰에서도 Claude0회다. 기존 c4864a3의1회·1800.17초·FAIL_TIMEOUT, 테스트 이름 누락·홈 표본 부족·최종 기록 및 정상 종료 미완료와 비교 HOLD는 그대로 유지한다. 실제 compact는 UNOBSERVED, 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증·생산성 및 경쟁 우위 미입증이다.",
+    "installation": "검수 실행기8e65e9f8은 로컬 main 커밋 완료·미릴리스·일반 사용처 미설치다. 검증 대상 core는637a965로 유지하며 복원 실행기와 구분한다. 정상11개 사용처의 e618fca/0.6.1 설치·엄격 감사는 당시 결과이며 이번에 재감사하지 않았다. push·태그·릴리스·재설치 없음.",
     "release_state": {
       "release_version": "0.6.1",
       "release_commit": "e618fcaf693f4b20519eb6dab6bce64da9c662f6",
@@ -2163,7 +2163,9 @@
       "session_start_handoff_released": false,
       "session_start_handoff_reinstalled": false,
       "readiness_sampling_fix_released": false,
-      "readiness_sampling_fix_reinstalled": false
+      "readiness_sampling_fix_reinstalled": false,
+      "ad_validation_runtime_released": false,
+      "ad_validation_runtime_reinstalled": false
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2176,8 +2178,8 @@
     "ship_state": "NEW_FIX_COMMITTED_UNRELEASED_NOT_INSTALLED",
     "task_gate": {
       "state": "PASSED",
-      "evidence": ".omc/home-readiness-deadline-task/completion-final.txt",
-      "scope": "637a965 구현 작업 완료 판정; 이번 문서 편집 또는 실제 업무 성공 증거와 구분"
+      "evidence": ".omc/runtime-query-consumer-fix/complete-task.txt",
+      "scope": "검수 실행기 복원 구현 완료; 이번 문서 편집·실제 업무 성공과 구분"
     },
     "observation": {
       "v3": "DISABLED",
@@ -2186,30 +2188,31 @@
       "automatic_resume": false
     },
     "local_runtime_evidence": [
-      ".omc/ad-single-c4864a3-20261022T011613Z/REPORT.md",
-      ".omc/ad-single-c4864a3-20261022T011613Z/summary.json",
-      ".omc/investigate-home-samples-20261022/REPORT.md",
-      ".omc/home-readiness-task/REPORT.md",
-      ".omc/home-readiness-deadline-task/REPORT.md",
-      ".omc/home-readiness-deadline-review/REPORT.md",
-      ".omc/home-readiness-deadline-review/receipt-result.json"
+      ".omc/ad-single-637a965-20261022T054829Z/REPORT.md",
+      ".omc/runtime-query-consumer-fix/REPORT.md",
+      ".omc/runtime-query-consumer-fix/final-strict.txt",
+      ".omc/runtime-query-consumer-fix/complete-task.txt",
+      ".omc/state/review-20261022T165148-e5b64dc5/raw-review.md",
+      ".omc/state/review-20261022T165148-e5b64dc5/approval-receipt.json"
     ],
     "verification_groups": [
       {
-        "name": "최종 홈 관측·준비 회귀",
-        "passed": 113,
+        "name": "최종 실제 환경 회귀",
+        "passed": 171,
         "skipped": 0,
         "browser_fixture_included": true
       },
       {
-        "name": "독립 리뷰 경계·표본",
-        "passed": 23,
+        "name": "독립 리뷰 기본 환경",
+        "passed": 30,
+        "skipped": 16,
+        "skip_reason": "명시적으로 요청하지 않은 실제 통합 검사",
         "overlapping": true
       },
       {
-        "name": "이전 보완 단계 전체 관련 회귀",
-        "passed": 140,
-        "historical": true,
+        "name": "독립 리뷰 실제 Chromium 파일 교체·경로",
+        "passed": 5,
+        "deselected": 41,
         "overlapping": true
       }
     ],
@@ -2245,9 +2248,152 @@
       "terminal_results": 0,
       "actual_compact": "UNOBSERVED",
       "budget_consumed": true
+    },
+    "core_commit": "637a9653759cfca9e070450139dfa56cdd67c5d1",
+    "operator_runtime_commit": "8e65e9f8b5646f2089511fd1e8845ef3bfc36e3a",
+    "latest_preparation_attempt": {
+      "candidate": "637a965",
+      "outcome": "NOT_STARTED",
+      "provider_calls": 0,
+      "wrapper_starts": 0,
+      "attempt_budget_consumed": false,
+      "reason": "temporary_runtime_inputs_missing",
+      "evidence": ".omc/ad-single-637a965-20261022T054829Z/REPORT.md"
     }
   },
   "current_update_history": [
+    {
+      "date": "2026-10-22",
+      "status": "광고 준비·표본 수집 보완3개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD",
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "goal_progress": "c4864a3 실제 Claude 1회에서 시작 승인·세션 연결과 RED 등록 이후 제품 수정을 확인했다. 업무는 테스트 이름 누락·홈 표본 부족·최종 기록 누락 및 시간 초과로 완료하지 못했다. 이후 637a965에서 홈 관측의 준비 대기·표본 수집과 기한 판정을 보완해 구현·리뷰·커밋했다. 새 후보의 실제 업무 완료·생산성 및 경쟁 우위는 미입증이다.",
+      "commit": "637a965",
+      "implementation_commit": "637a965",
+      "commit_scope": "리뷰 승인된3개 파일만 main에 로컬 커밋637a965. 이번 로드맵·대시보드4파일은 별도 미커밋.",
+      "improvement": "광고 DOM·트랙 연결과 이미지2개 로드를 최대5초 미만 동안 재탐색한 뒤 새 측정 창을 시작한다. 준비 경과가5000ms 이상이면 광고 발견보다 먼저 timeout으로 판정하고 표본을 수집하지 않는다. 동일 트랙6개 표본·800ms 이상 간격·4초 이상·연결 유지·이미지2개·변환 변화 기준은 유지한다. 준비 실패와 측정 중 요소 교체를 구분하며 서로 다른 요소의 표본을 합치지 않는다.",
+      "verification": "최종 홈 관측·준비 회귀113개 통과·생략0(격리 Chromium 포함). 경계·표본 독립 리뷰23개 통과. 이전 보완 단계140개 통과 기록과 중복되므로 합산하지 않는다. 변경 없는 고정 명령 CLI 체인12개는 이번 재실행 범위에서 제외했다. Python 문법·TDD·완료 가드·커밋 훅 통과. 합성 브라우저 검사는 실제 로그인 홈·Claude 완료 증거가 아니다.",
+      "tests_passed": 113,
+      "tests_skipped": 0,
+      "review_verdict": "APPROVE",
+      "review_scope_files": 3,
+      "review_scope_description": "원본과 동일 diff의 격리3개 후보 전체 APPROVE·승인 receipt 기록. main 커밋3개 경로·내용 일치 확인. 원본 전체 ship 승인으로 확대하지 않는다.",
+      "next": "이번 관측 보완은 종료한다. 637a965를 격리 설치해 동일 광고 계약·입력·후보 서버·실제 홈 준비를 점검하는 단일 OMC 재검증을 별도로 계획·승인한다. 실제 Claude 최대1회·자동 재시도0회이며 준비 미충족 시 호출 없이 종료한다. 기존 테스트 이름 보존, 현재 후보의 필수8프로필·결과 선택·최종 완료 기록·정상 종료를 확인한다. 기존 실행 한도와 예외 승인은 자동 승계하지 않는다. OMC 단일 사례가 유효해진 뒤 동일 조건 경쟁 비교를 결정한다.",
+      "display_next": "637a965 후보의 실제 Claude 광고 사례 최대1회 재검증 계획·승인",
+      "limitations": "c4864a3 실제 Claude1회·1800.17초·재시도0회. 시작 승인 연결과 RED 이후 수정은 확인됐지만 실행 FAIL_TIMEOUT·비교 HOLD다. tests는 baseline_test_removed와 최종 후보 불일치, home은 최초 timeout·후속2회 home_samples_missing, final-selection·verification·완료 성공·정상 terminal은 없었다. 실제 compact0회로 UNOBSERVED다. 637a965 보완 후 실제 Claude 호출0회. 기존 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증·생산성 및 경쟁 우위 미입증을 유지한다.",
+      "installation": "637a965는 로컬 main 커밋 완료·미릴리스·일반 사용처 미설치다. 정상11개 사용처의 e618fca/0.6.1 설치·엄격 감사는 당시 결과이며 이번에 재감사하지 않았다. push·태그·릴리스·재설치 없음.",
+      "release_state": {
+        "release_version": "0.6.1",
+        "release_commit": "e618fcaf693f4b20519eb6dab6bce64da9c662f6",
+        "consumer_count": 11,
+        "binding_fix_released": true,
+        "binding_fix_reinstalled": true,
+        "pushed": false,
+        "visual_completion_fix_released": true,
+        "visual_completion_fix_reinstalled": true,
+        "peer_trace_released": true,
+        "peer_trace_reinstalled": true,
+        "home_observation_released": true,
+        "home_observation_reinstalled": true,
+        "native_red_fix_released": true,
+        "native_red_fix_reinstalled": true,
+        "native_command_fix_released": true,
+        "native_command_fix_reinstalled": true,
+        "bounded_read_fix_released": true,
+        "bounded_read_fix_reinstalled": true,
+        "fixed_validation_released": true,
+        "fixed_validation_reinstalled": true,
+        "source_sha256": "7b1ecaa729ffb04780437c309f0dcba76aff507c604d441e297485482fac2a2a",
+        "session_custody_fix_released": false,
+        "session_custody_fix_reinstalled": false,
+        "completion_owner_fix_released": false,
+        "completion_owner_fix_reinstalled": false,
+        "session_start_handoff_released": false,
+        "session_start_handoff_reinstalled": false,
+        "readiness_sampling_fix_released": false,
+        "readiness_sampling_fix_reinstalled": false
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/index.html",
+        "docs/comparison-dashboard/view.json"
+      ],
+      "comparison_state": "HOLD",
+      "post_fix_provider_calls": 0,
+      "ship_state": "NEW_FIX_COMMITTED_UNRELEASED_NOT_INSTALLED",
+      "task_gate": {
+        "state": "PASSED",
+        "evidence": ".omc/home-readiness-deadline-task/completion-final.txt",
+        "scope": "637a965 구현 작업 완료 판정; 이번 문서 편집 또는 실제 업무 성공 증거와 구분"
+      },
+      "observation": {
+        "v3": "DISABLED",
+        "completion": "OBSERVATION_INVALID",
+        "reason": "pending_completion_invalid",
+        "automatic_resume": false
+      },
+      "local_runtime_evidence": [
+        ".omc/ad-single-c4864a3-20261022T011613Z/REPORT.md",
+        ".omc/ad-single-c4864a3-20261022T011613Z/summary.json",
+        ".omc/investigate-home-samples-20261022/REPORT.md",
+        ".omc/home-readiness-task/REPORT.md",
+        ".omc/home-readiness-deadline-task/REPORT.md",
+        ".omc/home-readiness-deadline-review/REPORT.md",
+        ".omc/home-readiness-deadline-review/receipt-result.json"
+      ],
+      "verification_groups": [
+        {
+          "name": "최종 홈 관측·준비 회귀",
+          "passed": 113,
+          "skipped": 0,
+          "browser_fixture_included": true
+        },
+        {
+          "name": "독립 리뷰 경계·표본",
+          "passed": 23,
+          "overlapping": true
+        },
+        {
+          "name": "이전 보완 단계 전체 관련 회귀",
+          "passed": 140,
+          "historical": true,
+          "overlapping": true
+        }
+      ],
+      "latest_paired_attempt": {
+        "source_commit": "e618fca",
+        "omc_provider_calls": 1,
+        "competitor_provider_calls": 1,
+        "automatic_retries": 0,
+        "omc_exit": 1,
+        "competitor_exit": 0,
+        "omc_elapsed_seconds": 159.98,
+        "competitor_elapsed_seconds": 784.93,
+        "comparison_entry": "HOLD",
+        "competitor_execute_success_return": true,
+        "competitor_stale_selected_receipts": 8,
+        "evidence": ".omc/ad-pair-061-20261021/REPORT.md"
+      },
+      "tests_deselected": 0,
+      "latest_single_attempt": {
+        "candidate": "c4864a3",
+        "calls": 1,
+        "elapsed_seconds": 1800.17,
+        "outcome": "FAIL_TIMEOUT",
+        "comparison_entry": "HOLD",
+        "normal_exit": false,
+        "wrapper_exit": 143,
+        "child_exit": null,
+        "product_modified": true,
+        "startup_handoff": "PASSED",
+        "red_before_edit": true,
+        "final_selection_available": false,
+        "verification_available": false,
+        "terminal_results": 0,
+        "actual_compact": "UNOBSERVED",
+        "budget_consumed": true
+      }
+    },
     {
       "date": "2026-10-22",
       "status": "시작·compact 승인 연결 보완8개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD",
