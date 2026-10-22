@@ -1,0 +1,282 @@
+{
+  "schema_version": "omc-ad-runtime-archive/v1",
+  "core_commit": "637a9653759cfca9e070450139dfa56cdd67c5d1",
+  "baseline_commit": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
+  "sources": {
+    "docs/comparison-dashboard/evidence/ad-validation-inputs-v1/Home.tsx.fixture": {
+      "sha256": "cea906960f5e49420c64ce759d9dfc3f7db3f784f379de4f6cfffade7cf58faf",
+      "scope": "candidate",
+      "destination": "libs/store-manager/components/src/lib/home/Home.tsx"
+    },
+    "docs/comparison-dashboard/evidence/ad-validation-inputs-v1/build-pixels.cjs": {
+      "sha256": "dfb994a6020f70eae41bf35dea2a0c638024e6cea8652e5a7f93aa10315cacc9",
+      "scope": "candidate",
+      "destination": ".omc/visual-input/build-pixels.cjs"
+    },
+    "docs/comparison-dashboard/evidence/ad-browser-pair-20261016/build-controlled.cjs": {
+      "sha256": "b09b68ff59cde07c73572f2f9d856be6e3f823910b9d5e13c028175269b99ef7",
+      "scope": "run",
+      "destination": "build-controlled.cjs"
+    },
+    "docs/comparison-dashboard/evidence/ad-browser-pair-20261016/serve.cjs": {
+      "sha256": "87774b20b1c0cd6e4000f339176b4228df3b0b41182b692c815d23ce21a864b4",
+      "scope": "run",
+      "destination": "serve.cjs"
+    },
+    "scripts/omc_ad_validation_browser.cjs": {
+      "sha256": "65e08d4d490373097e894211fbc6f985077e97fd67fe2cd331c067292d348de3",
+      "scope": "run",
+      "destination": "browser.cjs"
+    },
+    "docs/comparison-dashboard/evidence/ad-browser-pair-20261016/execution-request.md": {
+      "sha256": "75b03ceb9b48fae15985a0afc433d4574f6a7279cc9a15796d2cc353446f48be"
+    },
+    "docs/comparison-dashboard/evidence/ad-browser-pair-20261016/common-required-checks.json": {
+      "sha256": "8028f29b4c348a98aedcd540a6f2f12055fc9a7ebd5a111920707c92bb043c7b"
+    },
+    "docs/comparison-dashboard/evidence/ad-browser-pair-20261016/baseline-failures.json": {
+      "sha256": "18ae18ef9c5f6bba2dcf646bd62336d169fca2d929e4c6f14f1ff7241a60d573"
+    },
+    "docs/comparison-dashboard/evidence/ad-browser-pair-20261016/preregistration.json": {
+      "sha256": "28735ac6e30f6b0e348f02d077ef424c8eaf2c3b3dea5e18245d27b1a8946c89"
+    },
+    "docs/comparison-dashboard/evidence/ad-browser-pair-20261016/provenance.json": {
+      "sha256": "303006a3aca7930cf9817b436ac06500f1c804e667f3fb6244aaa96b949f515d"
+    },
+    "scripts/omc_visual_check.py": {
+      "sha256": "f61b78850fe9a6db9ff028cda4f6e89548e5a2b91aca7306b611b17e54f46a3a"
+    },
+    "scripts/test_omc_visual_check.py": {
+      "sha256": "5109395c7e75fed8c33b68a47fb864b1d4a9d8c1e72f7fb7297c7be7bca0a4cd"
+    },
+    "scripts/omc_workflow_preflight.py": {
+      "sha256": "eccff82256955a986291e8e7eb78f7fb4adcfd5fa47754a8c3e49aea5e2d357e"
+    },
+    "scripts/omc_home_observation.py": {
+      "sha256": "8fc5f150ed9caaf10dc57a76665b60861e3efda2e9343020a661372cb109f64b"
+    },
+    "docs/comparison-dashboard/evidence/ad-recompare-20261016/task.md": {
+      "sha256": "d48b738f79ff9981601f23df227c9a3e0d645e3254d61221493073584eb3110b",
+      "scope": "candidate",
+      "destination": "task.md"
+    },
+    "docs/comparison-dashboard/evidence/ad-recompare-20261016/design-reference.md": {
+      "sha256": "43477fe1d5f5996c5ddda23a8110ff045954336d2c66ac5a584a592653097e19",
+      "scope": "candidate",
+      "destination": "design-reference.md"
+    },
+    "docs/comparison-dashboard/evidence/ad-recompare-20261016/design-section.png": {
+      "sha256": "70e49fd0b91b365efba85fb100a24b86247f77f31b98cd68350cf558bfcef203",
+      "scope": "candidate",
+      "destination": "design-section.png"
+    }
+  },
+  "queries": {
+    "home": "6b6c3ab4e82beefd0c1b48f49087d6ded68f24e88dfd0e4c4e76ec9b25ea03da"
+  },
+  "acceptance_matrix": {
+    "version": "runtime-surface-acceptance/v2",
+    "oracle_commit": "637a9653759cfca9e070450139dfa56cdd67c5d1",
+    "fixture_source": "scripts/test_omc_visual_check.py:build_site/test_real_normal_24_combinations/test_real_defects_and_uncertainty",
+    "oracle_source": "scripts/omc_visual_check.py:judge/assess_report",
+    "cases": [
+      {
+        "id": "V1",
+        "surface": "visual-pixels",
+        "fixture_mode": "border",
+        "expected_status": "passed",
+        "expected_reason": null,
+        "expected_exit_code": 0,
+        "variants": [
+          "card-large",
+          "card-medium",
+          "card-small",
+          "banner-small",
+          "banner-large",
+          "banner-landing"
+        ],
+        "dprs": [
+          1,
+          2
+        ],
+        "expected_cells": 12,
+        "cell_reason_field": "report.variants[].reason",
+        "aggregate_reason": null,
+        "aggregate_reason_field": "omc_visual_check.assess_report.reason (report.variants[].reason와 구분)"
+      },
+      {
+        "id": "V2",
+        "surface": "visual-pixels",
+        "fixture_mode": "inset",
+        "expected_status": "failed",
+        "expected_reason": "border_segment_or_thickness_mismatch",
+        "expected_exit_code": 1,
+        "variants": [
+          "card-large",
+          "card-medium",
+          "card-small",
+          "banner-small",
+          "banner-large",
+          "banner-landing"
+        ],
+        "dprs": [
+          1,
+          2
+        ],
+        "expected_cells": 12,
+        "cell_reason_field": "report.variants[].reason",
+        "aggregate_reason": "visual_surface_failed",
+        "aggregate_reason_field": "omc_visual_check.assess_report.reason (report.variants[].reason와 구분)"
+      },
+      {
+        "id": "V3",
+        "surface": "visual-pixels",
+        "fixture_mode": "covered",
+        "expected_status": "failed",
+        "expected_reason": "image_marker_not_visible",
+        "expected_exit_code": 1,
+        "variants": [
+          "card-large",
+          "card-medium",
+          "card-small",
+          "banner-small",
+          "banner-large",
+          "banner-landing"
+        ],
+        "dprs": [
+          1,
+          2
+        ],
+        "expected_cells": 12,
+        "cell_reason_field": "report.variants[].reason",
+        "aggregate_reason": "visual_surface_failed",
+        "aggregate_reason_field": "omc_visual_check.assess_report.reason (report.variants[].reason와 구분)"
+      },
+      {
+        "id": "V4",
+        "surface": "visual-pixels",
+        "fixture_mode": "removed",
+        "expected_status": "failed",
+        "expected_reason": "expected_image_missing",
+        "expected_exit_code": 1,
+        "variants": [
+          "card-large",
+          "card-medium",
+          "card-small",
+          "banner-small",
+          "banner-large",
+          "banner-landing"
+        ],
+        "dprs": [
+          1,
+          2
+        ],
+        "expected_cells": 12,
+        "cell_reason_field": "report.variants[].reason",
+        "aggregate_reason": "visual_surface_failed",
+        "aggregate_reason_field": "omc_visual_check.assess_report.reason (report.variants[].reason와 구분)"
+      },
+      {
+        "id": "V5",
+        "surface": "visual-pixels",
+        "fixture_mode": "loading",
+        "expected_status": "unknown",
+        "expected_reason": "image_not_loaded",
+        "expected_exit_code": 2,
+        "variants": [
+          "card-large",
+          "card-medium",
+          "card-small",
+          "banner-small",
+          "banner-large",
+          "banner-landing"
+        ],
+        "dprs": [
+          1,
+          2
+        ],
+        "expected_cells": 12,
+        "cell_reason_field": "report.variants[].reason",
+        "aggregate_reason": "visual_surface_unknown",
+        "aggregate_reason_field": "omc_visual_check.assess_report.reason (report.variants[].reason와 구분)"
+      },
+      {
+        "id": "V6",
+        "surface": "visual-pixels",
+        "fixture_mode": "unaligned",
+        "expected_status": "unknown",
+        "expected_reason": "unsupported_ancestor_transform",
+        "expected_exit_code": 2,
+        "variants": [
+          "card-large",
+          "card-medium",
+          "card-small",
+          "banner-small",
+          "banner-large",
+          "banner-landing"
+        ],
+        "dprs": [
+          1,
+          2
+        ],
+        "expected_cells": 12,
+        "cell_reason_field": "report.variants[].reason",
+        "aggregate_reason": "visual_surface_unknown",
+        "aggregate_reason_field": "omc_visual_check.assess_report.reason (report.variants[].reason와 구분)",
+        "description": "대상 자체에 translateY(.25px)를 적용한 기존 unaligned fixture. 고정 판정기는 대상과 조상의 transform을 좌표 정렬보다 먼저 검사하므로 unknown/unsupported_ancestor_transform을 기대한다. unaligned_geometry 분기 검증으로 주장하지 않는다."
+      },
+      {
+        "id": "B1",
+        "surface": "evidence-binding",
+        "mutation": "생성된 정상 report를 다른 candidate root에 재평가",
+        "expected_status": "unknown",
+        "expected_reason": "visual_report_binding_mismatch",
+        "expected_exit_code": "assess_report의기존반환계약; standalone캡처exit와혼동금지"
+      },
+      {
+        "id": "B2",
+        "surface": "evidence-binding",
+        "mutation": "정상 report의해시pin만다르게전달",
+        "expected_status": "unknown",
+        "expected_reason": "visual_report_digest_mismatch",
+        "expected_exit_code": "assess_report의기존반환계약; standalone캡처exit와혼동금지"
+      }
+    ],
+    "execution_contract": "고정fixture원문·입력manifest·정책·예상값hash를검사실행전에동결한다. 신규복원CLI가생성한run/config와실제localhost서버/Chromium표면을사용한다. command endpoint의URL/이미지/스크린샷을실제로확인하고같은후보URL/bundle에기존픽셀CLI를연결한다. 기존테스트를별도로통과시킨결과나저장JSON리플레이만으로새runtime surface통과를대신하지않는다.",
+    "surface_boundaries": "픽셀용fixture는화면픽셀판정만보정한다. 정지된픽셀fixture에home모션통과를요구하지않고, 픽셀정상12/12를실제홈/실제Ad업무통과로세지않는다. home모션·기한·교체는기존R6/T3의별도고정query fixture로검증한다.",
+    "rules": [
+      "각V행은6종×DPR1/2의정확한12개고유셀·status·행별reason·aggregate결과·실제CLIexit를모두대조한다. 셀누락/중복/엉뚱한variant/DPR은matrix불일치다.",
+      "이미지 요소가 제거된 V4는 failed, 이미지 미로드 V5는 unknown/image_not_loaded, 대상·조상 transform을 지원하지 않는 V6는 unknown/unsupported_ancestor_transform이다. 증거 결속 불일치 B1/B2의 unknown과 각각 구분한다.",
+      "선언한fixture의예상failed/unknown이정확히관측되면그회귀검사는passed다. 실제실행불가/환경생략/예상과다른reason은회귀통과가아니다.",
+      "예상결과는실행후관측에맞춰바꾸지않는다. 불일치면복원runtime의원인을확인하고원문보존. fixture/oracle자체변경이필요하면그부분은보류·별도승인.",
+      "builder정상실행·baseline기존실패·양성fixture통과·음성/불확실fixture정확분류를독립항목으로기록한다.",
+      "추가일반기능/새평가기/새시각기준을개발하지않고기존fixture/637a965oracle를재사용한다.",
+      "standalone capture CLI의exit0/1/2,report의status,각variant의reason,assess_report의aggregate reason을각각대조한다. 서로다른계층의reason필드를같다고추정하지않는다."
+    ],
+    "evidence_fields": [
+      "matrix_sha256",
+      "runtime_commit_or_snapshot_sha256",
+      "config_sha256",
+      "fixture_source_sha256",
+      "oracle_source_sha256",
+      "candidate_root_and_snapshot",
+      "actual_url",
+      "served_bundle_sha256",
+      "per_case_stdout_stderr_exit",
+      "per_variant_dpr_status_reason",
+      "screenshots_and_capture_hashes",
+      "expected_vs_actual_match"
+    ]
+  },
+  "historical_missing": [
+    "과거 실행의 runtime.json·절대경로·인증·포트 상태는 새 실행별 설정으로 생성한다. 과거 모델 launch 설정은 이 복원의 실행 권한으로 재사용하지 않고 phase B 계획에서 다시 동결한다."
+  ],
+  "claims": "복원 및 합성 surface 교정만. 실제 홈·로그인·업무 완료·provider 실행 증거 아님.",
+  "baseline_paths": [
+    "libs/sellerhub-store/src/lib/components/Ad",
+    "libs/sellerhub-store/src/lib/foundation",
+    "libs/store-manager/components/src/lib/home/Home.tsx",
+    "tsconfig.base.json",
+    "libs/sellerhub-store/tsconfig.json"
+  ]
+}

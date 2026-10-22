@@ -1,0 +1,87 @@
+# 광고 검수 실행기 복원 v1
+
+삭제된 실행 폴더를 source로 사용하지 않고, 이 묶음의 해시 고정 입력에서 새 검수 run을 만든다. OMC core는 `637a9653759cfca9e070450139dfa56cdd67c5d1`, 업무 기준은 `34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc`다. 이 실행기는 별도 operator runtime이며 원본 OMC의 모델 검증 성공이나 실제 홈 준비를 증명하지 않는다.
+
+## 입력과 보존
+
+`manifest.json`은 기존 Home·픽셀 빌더·통제 빌더·serve 원문, 과거 업무 요청·승인 기준·baseline 실패·등록·출처 기록의 경로와 SHA-256을 보존한다. 원본을 수정하지 않는다. 기존 browser.cjs의 절대 경로 의존 부분은 새 `scripts/omc_ad_validation_browser.cjs`로 대체한다. 과거 runtime.json·인증·사용자 데이터·환경변수는 복사하거나 영구 보관하지 않는다.
+
+새 run은 **이미 준비한 새 baseline 후보의 바로 위 폴더**여야 하며 후보 외 기존 파일이 없어야 한다. baseline 후보의 Ad·foundation·Home 및 JSX 설정(`tsconfig.base.json`, `libs/sellerhub-store/tsconfig.json`) 바이트를 원본 Git 기준과 대조한다. Git 후보는 baseline HEAD와 clean 상태가 필요하고, 최소 추출 후보는 검증한 파일과 명시적 node_modules 의존성 링크만 허용한다. Home의 고정 fixture 복사만 baseline 바이트 교체를 허용한다. 사용 중인 원본 저장소·기존 runtime·추가 작업·폴더 링크·덮어쓰기는 거부한다.
+
+## 새 run 준비
+
+개인 경로를 source에 넣지 말고 다음 JSON을 **실행별 외부 설정 파일**로 작성한다. 모든 경로는 절대 경로다. 두 포트는 서로 다르고 사용 중이지 않아야 한다.
+
+```json
+{
+  "schema_version": "omc-ad-runtime-config/v1",
+  "run_root": "/absolute/new-run",
+  "candidate": "/absolute/new-run/fresh-candidate",
+  "baseline_repo": "/absolute/local-storefront-with-baseline-git",
+  "baseline_commit": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
+  "core_commit": "637a9653759cfca9e070450139dfa56cdd67c5d1",
+  "port": 3050,
+  "control_port": 3150,
+  "headless": false,
+  "playwright_module": "/absolute/node_modules/playwright",
+  "playwright_package_sha256": "SHA256_OF_PACKAGE_JSON",
+  "queries": {
+    "home": {"path": "/absolute/home-query.js", "sha256": "SHA256_OF_QUERY"}
+  }
+}
+```
+
+home-query.js는 고정 core의 `omc_workflow_preflight.BROWSER_QUERY` 문자열을 UTF-8로 그대로 저장한다. manifest의 query SHA와 다르면 거부한다. Playwright package 해시는 의존성 식별이며 설치 전체의 무결성 증명은 아니다. Node·Playwright·Chromium 및 storefront 빌드 의존성은 별도 제공한다.
+
+저장소 루트에서:
+
+```bash
+python3 scripts/omc_ad_validation_runtime.py restore --config /absolute/config.json
+```
+
+생성되는 파일:
+
+- `<run>/runtime.json`, `restore-receipt.json`, `browser.cjs`, `queries/home.js`
+- `<run>/build-controlled.cjs`, `serve.cjs`
+- `<candidate>/.omc/visual-input/build-pixels.cjs`
+- `<candidate>/libs/store-manager/components/src/lib/home/Home.tsx`
+
+복원은 모든 입력·출력 경로를 먼저 검사한다. source·query·설정·manifest는 검사한 바이트와 해시를 고정한다. 기록할 때 입력 경로를 다시 읽지 않으며, 복원 파일도 고정 기대 해시와 대조한 뒤 runtime을 기록한다. 검사 후 입력이 교체되어도 새 바이트를 허용값으로 재계산하지 않는다. 쓰기 중 OS 오류는 부분 산출물을 남길 수 있으며 자동 삭제·재시도하지 않는다. 원문 오류를 보존하고 새 run을 준비한다. receipt는 해시 연결 기록이며 외부 인증이나 서명된 실행 증거가 아니다.
+
+후보 디렉터리에서 두 빌더를 실행한다:
+
+```bash
+node ../build-controlled.cjs
+node .omc/visual-input/build-pixels.cjs
+```
+
+실제 서비스 서버는 별도 준비한다. `node <run>/serve.cjs <candidate-directory-name>`는 기존 서버 원문이며 로컬 환경·의존성·인증이 필요하다. 이 명령을 성공한 빌드만으로 실행 준비 완료로 표시하지 않는다.
+
+브라우저를 별도 프로세스로 실행하고 명령을 전달한다:
+
+```bash
+node /absolute/new-run/browser.cjs launch --config /absolute/new-run/runtime.json
+python3 scripts/omc_ad_validation_runtime.py command --runtime /absolute/new-run/runtime.json --op goto --args-json '["/sixshoptest01"]'
+python3 scripts/omc_ad_validation_runtime.py command --runtime /absolute/new-run/runtime.json --op snapshot
+python3 scripts/omc_ad_validation_runtime.py command --runtime /absolute/new-run/runtime.json --op evaluate --args-json '["home"]'
+```
+
+명령은 localhost의 해당 origin으로 제한한다. evaluate는 고정 query ID 또는 그와 바이트·해시가 일치하는 원문만 허용한다. 후자는 기존 637a965 준비 검사와의 호환 경로이며 임의 JavaScript·click은 허용하지 않는다. 최종 실행에서도 query 파일을 한 번 읽고 그 버퍼의 해시를 확인한 뒤 같은 버퍼를 평가한다. 검사 후 파일이 교체돼도 새 경로 내용을 재독해 실행하지 않는다. 예전 `node ../browser.cjs snapshot` 호출은 위 Python command 형식으로 대체한다. snapshot은 URL·후보·스크린샷 해시·관측 JS 응답 해시를 기록한다. 서버/후보 결속은 별도 요구사항의 bundle 해시와 대조해야 하며 URL만으로 확정하지 않는다. 프로세스는 호출자가 소유·정리하고 다른 서버를 종료하지 않는다.
+
+## 검증 및 종료 조건
+
+일반 CI의 `python3 -m pytest scripts/ -q`에서는 로컬 합성 Git baseline·패키지로 입력/경로/해시/오류의 단위 회귀를 수행한다. 외부 storefront·Chromium이 필요한 실제 검사는 요청이 없을 때만 명시적으로 생략하며, 이 일반 회귀 결과를 복원 완료 근거로 사용하지 않는다. 단위 fixture의 합성 commit을 실제 업무 baseline으로 주장하지 않는다.
+
+복원 완료를 위한 실제 검사는 아래처럼 명시 실행한다. `OMC_AD_RUNTIME_INTEGRATION=1` 또는 외부 경로 환경변수 중 하나라도 지정하면 실제 검사 모드다. 필수 경로가 빠졌거나 잘못됐으면 오류로 실패하며 생략으로 통과시키지 않는다:
+
+```bash
+OMC_AD_RUNTIME_INTEGRATION=1 \
+OMC_AD_RESTORE_STOREFRONT=/absolute/local-storefront \
+OMC_PREFLIGHT_PLAYWRIGHT_MODULE=/absolute/node_modules/playwright \
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+python3 -m pytest scripts/test_omc_ad_validation_runtime.py scripts/test_omc_ad_fixture_archive.py scripts/test_omc_home_observation.py -q
+```
+
+새 위치 A/B에서 생성 CLI → config → localhost HTTP → Chromium → 고정 판정기를 검사한다. matrix/v2는 각 위치에서 V1~V6의 72셀과 B1/B2 결속을 대조한다. V6의 기존 unaligned fixture는 대상 자체 transform 때문에 `unknown/unsupported_ancestor_transform`, CLI 2, aggregate `visual_surface_unknown`을 기대한다. 이것을 `unaligned_geometry` 분기 검사로 세지 않는다. 정상 12셀·알려진 결함·불확실성을 정확히 구분한 회귀 통과와 실제 업무 통과는 별개다.
+
+복원 종료는 필수 matrix 일치·누락/생략 0·경로/원본 보존·빌드/홈 표본 회귀·리뷰 및 provider_calls=0이다. 실제 Claude 재개는 이 runtime과 matrix 근거의 동일 해시, 새 실행 계획 검토·명시 승인·실제 홈 로그인/광고 2개/자동 전환/후보 bundle 결속/예산 준비가 필요하다. 새 runtime/fixture/oracle 변경 시 영향 검증과 리뷰를 다시 수행한다. 과거 NOT_STARTED·FAIL_TIMEOUT·HOLD는 변경하지 않는다.
