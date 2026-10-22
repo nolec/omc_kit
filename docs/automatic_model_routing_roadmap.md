@@ -1,6 +1,22 @@
 # Automatic Model Routing Roadmap
 
-## 현재 · Claude 시작·compact 승인 연결 보완 커밋 · 2026-10-22
+## 현재 · 실제 광고 재검증 결과·홈 관측 보완 커밋 · 2026-10-22
+
+- 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
+- 현재 판정: 광고 준비·표본 수집 보완3개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD
+- 목표 대비 진행: c4864a3 실제 Claude 1회에서 시작 승인·세션 연결과 RED 등록 이후 제품 수정을 확인했다. 업무는 테스트 이름 누락·홈 표본 부족·최종 기록 누락 및 시간 초과로 완료하지 못했다. 이후 637a965에서 홈 관측의 준비 대기·표본 수집과 기한 판정을 보완해 구현·리뷰·커밋했다. 새 후보의 실제 업무 완료·생산성 및 경쟁 우위는 미입증이다.
+- 실제 재검증: c4864a3 실제 Claude1회·1800.17초·재시도0회. 시작 승인 연결과 RED 이후 수정은 확인됐지만 실행 FAIL_TIMEOUT·비교 HOLD다. tests는 baseline_test_removed와 최종 후보 불일치, home은 최초 timeout·후속2회 home_samples_missing, final-selection·verification·완료 성공·정상 terminal은 없었다. 실제 compact0회로 UNOBSERVED다. 637a965 보완 후 실제 Claude 호출0회. 기존 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증·생산성 및 경쟁 우위 미입증을 유지한다.
+- 이번 개선: 광고 DOM·트랙 연결과 이미지2개 로드를 최대5초 미만 동안 재탐색한 뒤 새 측정 창을 시작한다. 준비 경과가5000ms 이상이면 광고 발견보다 먼저 timeout으로 판정하고 표본을 수집하지 않는다. 동일 트랙6개 표본·800ms 이상 간격·4초 이상·연결 유지·이미지2개·변환 변화 기준은 유지한다. 준비 실패와 측정 중 요소 교체를 구분하며 서로 다른 요소의 표본을 합치지 않는다.
+- 코드·범위: 리뷰 승인된3개 파일만 main에 로컬 커밋637a965. 이번 로드맵·대시보드4파일은 별도 미커밋.
+- 검증: 최종 홈 관측·준비 회귀113개 통과·생략0(격리 Chromium 포함). 경계·표본 독립 리뷰23개 통과. 이전 보완 단계140개 통과 기록과 중복되므로 합산하지 않는다. 변경 없는 고정 명령 CLI 체인12개는 이번 재실행 범위에서 제외했다. Python 문법·TDD·완료 가드·커밋 훅 통과. 합성 브라우저 검사는 실제 로그인 홈·Claude 완료 증거가 아니다.
+- 리뷰: 원본과 동일 diff의 격리3개 후보 전체 APPROVE·승인 receipt 기록. main 커밋3개 경로·내용 일치 확인. 원본 전체 ship 승인으로 확대하지 않는다.
+- 다음 작업: 637a965 후보의 실제 Claude 광고 사례 최대1회 재검증 계획·승인
+- 다음: 이번 관측 보완은 종료한다. 637a965를 격리 설치해 동일 광고 계약·입력·후보 서버·실제 홈 준비를 점검하는 단일 OMC 재검증을 별도로 계획·승인한다. 실제 Claude 최대1회·자동 재시도0회이며 준비 미충족 시 호출 없이 종료한다. 기존 테스트 이름 보존, 현재 후보의 필수8프로필·결과 선택·최종 완료 기록·정상 종료를 확인한다. 기존 실행 한도와 예외 승인은 자동 승계하지 않는다. OMC 단일 사례가 유효해진 뒤 동일 조건 경쟁 비교를 결정한다.
+- 배포: 637a965는 로컬 main 커밋 완료·미릴리스·일반 사용처 미설치다. 정상11개 사용처의 e618fca/0.6.1 설치·엄격 감사는 당시 결과이며 이번에 재감사하지 않았다. push·태그·릴리스·재설치 없음.
+- 관찰: v3 DISABLED · OBSERVATION_INVALID / pending_completion_invalid. 자동 재등록·재개 없음.
+- 근거: 로컬 .omc/ad-single-c4864a3-20261022T011613Z/REPORT.md, .omc/ad-single-c4864a3-20261022T011613Z/summary.json, .omc/investigate-home-samples-20261022/REPORT.md, .omc/home-readiness-task/REPORT.md, .omc/home-readiness-deadline-task/REPORT.md, .omc/home-readiness-deadline-review/REPORT.md, .omc/home-readiness-deadline-review/receipt-result.json; 다른 checkout에 자동 제공되지 않는 자료다.
+
+## 이전 이력 · Claude 시작·compact 승인 연결 보완 커밋 · 2026-10-22
 
 - 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
 - 현재 판정: 시작·compact 승인 연결 보완8개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD
