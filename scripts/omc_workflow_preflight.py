@@ -19,25 +19,44 @@ import urllib.request
 
 SCHEMA = 'omc-workflow-preflight/v1'
 BROWSER_QUERY = """(async()=>{
- const ads=[...document.querySelectorAll('[data-testid=ad-card-large]')];
- const images=ads.flatMap(e=>[...e.querySelectorAll('img')]);
  const loaded=i=>i.complete&&i.naturalWidth>0;
+ const sleep=async(ms)=>{
+  const until=performance.now()+ms;
+  while(performance.now()<until)await new Promise(r=>setTimeout(r,Math.ceil(until-performance.now())));
+ };
+ const preparationStart=performance.now();
+ let tracks=[],ads=[],polls=0;
+ const readiness={status:'timeout',elapsed_ms:0,polls:0,cards:0,tracks:0,images_loaded:0};
+ // DOMContentLoaded does not imply that the async home has mounted its ads.
+ // Readiness time never counts as motion samples and discovery is bounded.
+ while(true){
+  ads=[...document.querySelectorAll('[data-testid=ad-card-large]')];
+  const discovered=ads.flatMap((ad,a)=>[...ad.querySelectorAll('[data-testid^=ad-track]')].map((track,t)=>({ad,track,card_id:String(a),track_id:a+':'+t,samples:[]})));
+  tracks=discovered.filter(({ad,track})=>ad.isConnected&&track.isConnected&&ad.contains(track)&&[...ad.querySelectorAll('img')].filter(loaded).length>=2);
+  Object.assign(readiness,{elapsed_ms:performance.now()-preparationStart,polls:++polls,cards:ads.length,tracks:discovered.length,images_loaded:ads.flatMap(ad=>[...ad.querySelectorAll('img')]).filter(loaded).length});
+  // A late timer cannot turn an expired preparation window into success.
+  if(readiness.elapsed_ms>=5000){tracks=[];break;}
+  if(tracks.length){readiness.status='ready';break;}
+  await sleep(Math.min(100,5000-readiness.elapsed_ms));
+ }
+ const collection={status:readiness.status==='ready'?'complete':'unrun',reason:null};
  const start=performance.now();
- const tracks=ads.flatMap((ad,a)=>[...ad.querySelectorAll('[data-testid^=ad-track]')].map((track,t)=>({ad,track,card_id:String(a),track_id:a+':'+t,samples:[]})));
  for(let i=0;i<6;i++){
+  if(!tracks.length)break;
+  // Never rediscover here: replacement nodes cannot inherit earlier samples.
+  if(tracks.some(({ad,track})=>!ad.isConnected||!track.isConnected||!ad.contains(track))){
+   collection.status='interrupted';collection.reason='home_track_replaced';break;
+  }
   for(const item of tracks){
    const connected=item.ad.isConnected&&item.track.isConnected&&item.ad.contains(item.track);
    item.samples.push({elapsed_ms:performance.now()-start,connected,
     images_loaded:[...item.ad.querySelectorAll('img')].filter(loaded).length,
     transform:connected?getComputedStyle(item.track).transform:''});
   }
-  const until=performance.now()+800;
-  while(performance.now()<until)await new Promise(r=>setTimeout(r,Math.ceil(until-performance.now())));
+  if(i<5)await sleep(800);
  }
- // Preserve operator readiness: final image load and a change while connected.
- // The opt-in completion evaluator separately requires six fully valid samples.
- const auto_transition=tracks.some(({ad,track,samples})=>ad.isConnected&&ad.contains(track)&&[...ad.querySelectorAll('img')].filter(loaded).length>=2&&new Set(samples.filter(s=>s.connected).map(s=>s.transform)).size>1);
- return {url:location.href,images_loaded:images.filter(loaded).length,auto_transition,script_urls:[...document.scripts].map(s=>s.src).filter(Boolean),
+ const auto_transition=collection.status==='complete'&&tracks.some(({ad,track,samples})=>ad.isConnected&&track.isConnected&&ad.contains(track)&&[...ad.querySelectorAll('img')].filter(loaded).length>=2&&new Set(samples.filter(s=>s.connected).map(s=>s.transform)).size>1);
+ return {url:location.href,readiness,collection,images_loaded:ads.flatMap(ad=>[...ad.querySelectorAll('img')]).filter(loaded).length,auto_transition,script_urls:[...document.scripts].map(s=>s.src).filter(Boolean),
   tracks:tracks.map(({card_id,track_id,samples})=>({card_id,track_id,samples}))};
 })()"""
 

@@ -438,6 +438,99 @@ eval(process.argv[1]).then(value=>console.log(JSON.stringify(value)));
     assert module().sample_assessment(observed)['status']=='passed'
 
 
+@pytest.mark.parametrize('scenario,reason', [
+    ('delayed-dom', None), ('delayed-images', None),
+    ('absent', 'home_ad_not_ready'), ('one-image', 'home_ad_not_ready'),
+    ('detached', 'home_ad_not_ready'),
+    ('replaced', 'home_track_replaced'), ('stationary', 'home_motion_not_observed'),
+])
+def test_browser_query_separates_readiness_and_six_samples(scenario, reason):
+    from omc_workflow_preflight import BROWSER_QUERY
+    js=r"""
+let t=0;global.performance={now:()=>t};global.setTimeout=(f,d)=>{t+=d;f()};
+const scenario=process.argv[2];
+const image={get complete(){return scenario!=='delayed-images'||t>=1200},naturalWidth:100};
+const track={get isConnected(){return scenario!=='detached'&&(scenario!=='replaced'||t<1600)}};
+const ad={isConnected:true,contains:x=>x===track&&track.isConnected,
+ querySelectorAll:s=>s==='img'?(scenario==='one-image'?[image]:[image,image]):[track]};
+global.document={querySelectorAll:()=>scenario==='absent'||(scenario==='delayed-dom'&&t<1200)?[]:[ad],scripts:[]};
+global.location={href:'http://localhost/shop'};
+global.getComputedStyle=()=>({transform:scenario==='stationary'?'A':(Math.floor(t/800)%2?'A':'B')});
+eval(process.argv[1]).then(v=>console.log(JSON.stringify({...v,total_elapsed_ms:t})));
+"""
+    proc=subprocess.run(['node','-e',js,BROWSER_QUERY,scenario],capture_output=True,text=True,check=True,timeout=15)
+    observed=json.loads(proc.stdout)
+    assessed=module().sample_assessment(observed)
+    assert assessed=={'status':'unknown' if reason else 'passed','reason':reason}
+    readiness=observed['readiness']
+    if scenario in {'absent','one-image','detached'}:
+        assert readiness['status']=='timeout'
+        assert 5000<=observed['total_elapsed_ms']<5200
+        assert observed['tracks']==[]
+        assert readiness['polls']>1
+    else:
+        assert readiness['status']=='ready'
+        if scenario.startswith('delayed'):
+            assert readiness['elapsed_ms']==1200
+        if scenario=='replaced':
+            assert observed['collection']['status']=='interrupted'
+        else:
+            samples=observed['tracks'][0]['samples']
+            assert [s['elapsed_ms'] for s in samples]==[0,800,1600,2400,3200,4000]
+            assert all(s['connected'] and s['images_loaded']>=2 for s in samples)
+
+
+@pytest.mark.parametrize('defect',['gap','duration','disconnected','images','count','stationary'])
+def test_readiness_metadata_never_relaxes_sample_requirements(home,defect):
+    observed=home[2]
+    observed['readiness']={'status':'ready'}
+    observed['collection']={'status':'complete'}
+    samples=observed['tracks'][0]['samples']
+    if defect=='gap': samples[1]['elapsed_ms']=100
+    elif defect=='duration':
+        for i,s in enumerate(samples): s['elapsed_ms']=i*799
+    elif defect=='disconnected': samples[2]['connected']=False
+    elif defect=='images': samples[2]['images_loaded']=1
+    elif defect=='count': samples.pop()
+    else:
+        for s in samples: s['transform']='same'
+    assert module().sample_assessment(observed)['status']=='unknown'
+
+
+@pytest.mark.parametrize('ready_at,wake_at,expected', [
+    (0,0,'passed'), (4999,4999,'passed'), (1200,4900,'passed'),
+    (5000,5000,'unknown'), (5001,5100,'unknown'),
+    (5050,5100,'unknown'), (1200,5100,'unknown'), (6000,5100,'unknown'),
+])
+def test_readiness_deadline_precedes_ready_even_when_timer_wakes_late(ready_at,wake_at,expected):
+    from omc_workflow_preflight import BROWSER_QUERY
+    js=r"""
+let t=0,firstWait=true;global.performance={now:()=>t};
+global.setTimeout=(f,d)=>{if(firstWait){t=Number(process.argv[3]);firstWait=false;}else t+=d;f()};
+const image={complete:true,naturalWidth:100};const track={isConnected:true};
+const ad={isConnected:true,contains:x=>x===track,querySelectorAll:s=>s==='img'?[image,image]:[track]};
+global.document={querySelectorAll:()=>t>=Number(process.argv[2])?[ad]:[],scripts:[]};
+global.location={href:'http://localhost/shop'};
+global.getComputedStyle=()=>({transform:Math.floor(t/800)%2?'A':'B'});
+eval(process.argv[1]).then(v=>console.log(JSON.stringify({...v,total_elapsed_ms:t})));
+"""
+    proc=subprocess.run(['node','-e',js,BROWSER_QUERY,str(ready_at),str(wake_at)],capture_output=True,text=True,check=True,timeout=10)
+    observed=json.loads(proc.stdout)
+    assert module().sample_assessment(observed)=={
+        'status':expected,'reason':'home_ad_not_ready' if expected=='unknown' else None}
+    if expected=='unknown':
+        assert observed['readiness']['status']=='timeout'
+        assert observed['readiness']['elapsed_ms']==wake_at
+        assert observed['collection']['status']=='unrun'
+        assert observed['tracks']==[]
+        assert observed['auto_transition'] is False
+        assert observed['total_elapsed_ms']==wake_at
+    else:
+        assert observed['readiness']['status']=='ready'
+        assert observed['readiness']['elapsed_ms']<5000
+        assert len(observed['tracks'][0]['samples'])==6
+
+
 def test_observe_uses_current_server_binding_and_detects_candidate_race(home,monkeypatch):
     import omc_workflow_preflight as preflight
     root,req,obs,basis=home
@@ -532,19 +625,61 @@ const {chromium}=require(process.argv[1]);
 
 
 @pytest.mark.parametrize('loaded_at',[800,4400])
-def test_delayed_images_preserve_legacy_readiness_but_strict_samples_are_unknown(loaded_at):
+def test_delayed_images_start_a_fresh_full_sampling_window(loaded_at):
     from omc_workflow_preflight import BROWSER_QUERY
     js=r"""let t=0;global.performance={now:()=>t};global.setTimeout=(f,d)=>{t+=d;f()};
 const image={get complete(){return t>=Number(process.argv[2])},get naturalWidth(){return t>=Number(process.argv[2])?100:0}};
 const track={isConnected:true};const ad={isConnected:true,contains:x=>x===track,querySelectorAll:s=>s==='img'?[image,image]:[track]};
 global.document={querySelectorAll:()=>[ad],scripts:[]};global.location={href:'http://localhost/shop'};
-global.getComputedStyle=()=>({transform:t<2400?'A':'B'});
+global.getComputedStyle=()=>({transform:t<Number(process.argv[2])+2400?'A':'B'});
 eval(process.argv[1]).then(v=>console.log(JSON.stringify(v)));"""
     proc=subprocess.run(['node','-e',js,BROWSER_QUERY,str(loaded_at)],capture_output=True,text=True,check=True)
     observed=json.loads(proc.stdout)
     assert observed['images_loaded']==2
     assert observed['auto_transition'] is True
-    assert module().sample_assessment(observed)['status']=='unknown'
+    assert observed['readiness']['elapsed_ms']==loaded_at
+    assert module().sample_assessment(observed)['status']=='passed'
+
+
+@pytest.mark.parametrize('scenario,reason', [
+    ('delayed-dom',None), ('delayed-images',None),
+    ('replaced','home_track_replaced'), ('absent','home_ad_not_ready'),
+])
+def test_readiness_in_real_isolated_browser(scenario,reason):
+    """A local fixture, never an attestation of the logged-in service home."""
+    import os
+    playwright=os.environ.get('OMC_PREFLIGHT_PLAYWRIGHT_MODULE')
+    if not playwright: pytest.skip('explicit local Playwright module required')
+    from omc_workflow_preflight import BROWSER_QUERY
+    js=r"""
+const {chromium}=require(process.argv[1]);
+(async()=>{const browser=await chromium.launch({headless:true});try{
+ const page=await browser.newPage();await page.setContent('<main></main>');
+ await page.evaluate(scenario=>{
+  const svg='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
+  const insert=()=>{
+   document.querySelector('main').innerHTML='<div data-testid="ad-card-large"><div data-testid="ad-track-card-large" style="transform:translateX(0px)"><img><img></div></div>';
+   const load=()=>document.querySelectorAll('img').forEach(i=>i.src=svg);
+   if(scenario==='delayed-images')setTimeout(load,350);else load();
+  };
+  if(scenario==='delayed-dom')setTimeout(insert,350);
+  else if(scenario!=='absent')insert();
+  let n=0;setInterval(()=>{const t=document.querySelector('[data-testid=ad-track-card-large]');if(t)t.style.transform='translateX('+((++n%2)*-100)+'px)'},900);
+  if(scenario==='replaced')setTimeout(insert,1000);
+ },process.argv[3]);
+ const observed=await page.evaluate(process.argv[2]);console.log(JSON.stringify(observed));
+}finally{await browser.close()}})().catch(e=>{console.error(e);process.exit(1)});
+"""
+    proc=subprocess.run(['node','-e',js,playwright,BROWSER_QUERY,scenario],capture_output=True,text=True,timeout=25)
+    assert proc.returncode==0,proc.stderr
+    observed=json.loads(proc.stdout)
+    assert module().sample_assessment(observed)=={'status':'unknown' if reason else 'passed','reason':reason}
+    if scenario.startswith('delayed'):
+        assert observed['readiness']['elapsed_ms']>=300
+        samples=observed['tracks'][0]['samples']
+        assert len(samples)==6
+        assert all(b['elapsed_ms']-a['elapsed_ms']>=800 for a,b in zip(samples,samples[1:]))
+        assert samples[-1]['elapsed_ms']-samples[0]['elapsed_ms']>=4000
 
 
 def append_observation(home,ident='h2'):

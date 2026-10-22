@@ -79,6 +79,13 @@ def finite_number(value) -> bool:
 
 
 def sample_assessment(value: dict) -> dict:
+    # Legacy observations omit these fields; their six-sample checks still apply.
+    readiness = value.get('readiness')
+    if isinstance(readiness, dict) and readiness.get('status') == 'timeout':
+        return {'status': 'unknown', 'reason': 'home_ad_not_ready'}
+    collection = value.get('collection')
+    if isinstance(collection, dict) and collection.get('status') == 'interrupted':
+        return {'status': 'unknown', 'reason': 'home_track_replaced'}
     tracks = value.get('tracks')
     if not isinstance(tracks, list) or not tracks:
         return {'status': 'unknown', 'reason': 'home_samples_missing'}
