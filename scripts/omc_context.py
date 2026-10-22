@@ -432,12 +432,8 @@ def main():
     _print_lessons_to_console(root, git_info=g)
     write_lessons_inject(root, top_n=3)
 
-    # ── 새 세션 시작: contract_confirmed 초기화 ───────────────────────────────
-    try:
-        import omc_pipeline_guard as _guard
-        _guard.cmd_session_start(root)
-    except Exception:
-        pass
+    # Lifecycle is owned by omc_hooks.session_start. Generating context must not
+    # clear a CONTRACT a second time, including an explicitly preserved handoff.
 
     # ── 자동 confirm ─────────────────────────────────────────────────────────
     # 직전 세션이 이미 confirmed 이거나 세션이 없는 경우에만 자동 처리합니다.

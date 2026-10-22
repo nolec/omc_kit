@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import time
@@ -1160,20 +1161,144 @@ def cmd_reset(root: Path) -> int:
     print("[PIPELINE] 세션 상태 초기화 완료")
     return 0
 
+SESSION_START_HANDOFF_ENV = 'OMC_SESSION_START_HANDOFF'
+SESSION_START_INPUT_ENV = 'OMC_SESSION_START_INPUT'
+_START_HANDOFF_TTL_SECONDS = 300
+
+
+def _session_start_binding(root: Path, expected_context: dict) -> dict:
+    """Validate current approval and work before preserving a process handoff.
+
+    This is local custody, not authentication against a hostile local writer.
+    Never restore a CONTRACT from the descriptor: it must still be valid now.
+    """
+    from omc_home_observation import local
+    from omc_validation_command import load_policy, prebound_task_context
+    from omc_state import _pending_completion_matches_session
+    policy, pin = load_policy(root)
+    context = prebound_task_context(root, policy, pin)
+    if context != expected_context or not context.get('work_id'):
+        raise ValueError('session_start_work_mismatch')
+    state = _load_state(root)
+    if (not state.get('contract_hash')
+            or set(state.get('required_checks', [])) !=
+            {c['id'] for c in _load_approved_basis(root, context['session_id'])['checks']}):
+        raise ValueError('session_start_contract_invalid')
+    session_path = local(root, '.omc/state/sessions/'+context['session_id']+'/session.json')
+    session = json.loads(session_path.read_bytes())
+    pending_path = local(root, '.omc/state/pending-completion.json')
+    pending = json.loads(pending_path.read_bytes())
+    head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root,
+                                   text=True, stderr=subprocess.PIPE).strip()
+    if (session.get('confirmation', {}).get('status') != 'confirmed'
+            or session.get('lifecycle', {}).get('status') != 'active'
+            or 'senior_coding' not in session.get('role_ids', [])
+            or session.get('work_class') != 'implementation'
+            or session.get('git', {}).get('head') != head
+            or pending.get('session_id') != context['session_id']
+            or pending.get('work_id') != context['work_id']
+            or not _pending_completion_matches_session(root, pending, current_head=head)):
+        raise ValueError('session_start_work_mismatch')
+    approval = {key: state[key] for key in
+        ('session_id', 'contract_hash', 'basis_sha256', 'started_at')}
+    approval['required_checks'] = sorted(state['required_checks'])
+    return {'target': str(root.resolve()), 'execution_context': context, 'head': head,
+        'approval': approval,
+        'code_snapshot_sha256': _code_snapshot_digest(root),
+        'pipeline_sha256': hashlib.sha256(local(root, '.omc/pipeline_session.json').read_bytes()).hexdigest(),
+        'session_sha256': hashlib.sha256(session_path.read_bytes()).hexdigest(),
+        'pending_sha256': hashlib.sha256(pending_path.read_bytes()).hexdigest()}
+
+
+def create_session_start_handoff(root: Path, context: dict) -> dict | None:
+    """Freeze a single approved comparison launch; ordinary launches get none."""
+    from omc_home_observation import local
+    from omc_native_red_evidence import write_new
+    import uuid
+    path = local(root, '.omc/validation-commands/policy.json')
+    if not path.exists() and not path.is_symlink():
+        if '.omc/validation-commands/policy.json' in context.get('contracts', {}):
+            raise ValueError('session_start_policy_missing')
+        return None
+    policy = json.loads(path.read_bytes())
+    if policy.get('arm') == 'oh-my-claudecode':
+        return None
+    binding = _session_start_binding(root, context)
+    return write_new(root, '.omc/session-start-handoffs/'+uuid.uuid4().hex+'.json', {
+        'schema_version': 'omc-session-start-handoff/v1',
+        'created_at': time.time(), 'binding': binding})
+
+
+def _consume_session_start_handoff(root: Path, raw: str) -> None:
+    from omc_home_observation import local
+    from omc_native_red_evidence import selected, write_new
+    ref = json.loads(raw)
+    if (not isinstance(ref, dict) or not isinstance(ref.get('path'), str)
+            or not re.fullmatch(r'\.omc/session-start-handoffs/[0-9a-f]{32}\.json', ref['path'])):
+        raise ValueError('session_start_handoff_reference_invalid')
+    record = selected(root, ref)
+    now = time.time()
+    if (not isinstance(record, dict) or record.get('schema_version') != 'omc-session-start-handoff/v1'
+            or type(record.get('created_at')) not in (int, float)
+            or not 0 <= record['created_at'] <= now):
+        raise ValueError('session_start_handoff_expired_or_invalid')
+    event = json.loads(os.environ.get(SESSION_START_INPUT_ENV, '{}'))
+    if (not isinstance(event, dict) or not isinstance(event.get('session_id'), str)
+            or not event['session_id'].strip() or event.get('source') not in {'startup', 'compact'}):
+        raise ValueError('session_start_execution_identity_required')
+    binding = record.get('binding')
+    if not isinstance(binding, dict):
+        raise ValueError('session_start_handoff_binding_mismatch')
+    current = _session_start_binding(root, binding.get('execution_context'))
+    consumed_path = ref['path'][:-5]+'.consumed.json'
+    if event['source'] == 'compact':
+        consumed = json.loads(local(root, consumed_path).read_bytes())
+        if (not isinstance(consumed, dict)
+                or consumed.get('schema_version') != 'omc-session-start-consumed/v2'
+                or consumed.get('handoff') != ref
+                or consumed.get('native_session_id') != event['session_id']):
+            raise ValueError('session_start_active_execution_mismatch')
+        # Compaction continues the already-bound work, not its initial snapshot.
+        # Product edits and RED/progress registrations are expected in that work;
+        # its approval, work ledger, HEAD and requirements must still be current.
+        stable = ('target', 'execution_context', 'head', 'approval',
+                  'session_sha256', 'pending_sha256')
+        if any(binding[key] != current[key] for key in stable):
+            raise ValueError('session_start_active_approval_mismatch')
+        return
+    if now-record['created_at'] > _START_HANDOFF_TTL_SECONDS or binding != current:
+        raise ValueError('session_start_handoff_expired_or_changed')
+    # Only the first startup consumes the descriptor. Another startup, clear,
+    # resume or fork cannot reuse it even if its reported native ID is the same.
+    write_new(root, consumed_path, {
+        'schema_version': 'omc-session-start-consumed/v2', 'handoff': ref,
+        'native_session_id': event['session_id'], 'consumed_at': now})
+
+
 def cmd_session_start(root: Path) -> int:
-    """새 세션 시작 시 contract_confirmed와 contract_hash를 초기화한다.
+    """검증된 일회용 인계만 유지하고 나머지 시작은 CONTRACT를 초기화한다.
 
     red_done_files·allowed_impl_files 등 작업 진행 상태는 유지하되,
-    CONTRACT 확인 플래그와 해시만 리셋해 세션마다 CONTRACT를 새로 받도록 강제한다.
+    CONTRACT 확인 플래그·해시·세션 ID를 리셋해 새 작업의 확인을 강제한다.
     TTL 기반 자동 만료와 달리 명시적 세션 경계를 선언한다.
     """
+    handoff = os.environ.get(SESSION_START_HANDOFF_ENV)
+    rejected = False
+    if handoff is not None:
+        try:
+            _consume_session_start_handoff(root, handoff)
+            print('[PIPELINE] 승인된 동일 작업의 시작 인계 유지')
+            return 0
+        except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
+            rejected = True
+            print('[PIPELINE] 시작 인계 불일치·재검증 필요: '+str(exc))
     state = _load_state(root)
     state["contract_confirmed"] = False
     state["contract_hash"] = ""
     state["session_id"] = ""
     _save_state(root, state)
     print("[PIPELINE] 🔄 새 세션 시작 — CONTRACT 플래그 초기화")
-    return 0
+    return 1 if rejected else 0
 
 # ---------------------------------------------------------------------------
 # CLI

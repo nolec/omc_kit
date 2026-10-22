@@ -15,6 +15,17 @@ ROOT = Path(__file__).resolve().parents[1]
 SESSION_HOOK = ROOT / "templates" / ".agent-hooks" / "omc-session-start.sh"
 
 
+def test_context_generation_has_no_hidden_pipeline_lifecycle(tmp_path):
+    from test_omc_pipeline_guard_session_reset import prebound_project
+    import omc_pipeline_guard as guard
+    prebound_project(tmp_path)
+    before = guard._state_path(tmp_path).read_bytes()
+    result = subprocess.run([sys.executable, 'scripts/omc_context.py', '--target', '.',
+                             '--no-auto-confirm'], cwd=tmp_path, text=True, capture_output=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert guard._state_path(tmp_path).read_bytes() == before
+
+
 def _session_root(tmp_path: Path) -> Path:
     scripts = tmp_path / "scripts"
     scripts.mkdir()
@@ -57,6 +68,21 @@ def _run_session_hook(root: Path, payload: dict, **extra_env: str) -> subprocess
         env={**os.environ, **extra_env},
         check=False,
     )
+
+
+def test_session_hook_forwards_only_current_source_and_native_session(tmp_path):
+    root = _session_root(tmp_path)
+    fake = root / 'scripts/omc.py'
+    fake.write_text(fake.read_text() + '''
+if is_session_hook:
+    (root / '.omc/start-input.json').write_text(os.environ.get('OMC_SESSION_START_INPUT', 'missing'))
+''')
+    result = _run_session_hook(root, {'session_id': 'native-current', 'source': 'compact',
+        'transcript_path': 'private-value-must-not-be-forwarded'},
+        OMC_SESSION_START_INPUT='{"session_id":"inherited","source":"startup"}')
+    assert result.returncode == 0
+    assert json.loads((root / '.omc/start-input.json').read_text()) == {
+        'session_id': 'native-current', 'source': 'compact'}
 
 
 def test_constitution_ignores_executor_overlays(tmp_path: Path) -> None:

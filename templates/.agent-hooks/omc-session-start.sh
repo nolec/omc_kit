@@ -135,7 +135,20 @@ printf '%s [%s] sessionStart -> omc state init + hook session_start (cwd=%s)\n' 
   >>.omc/agent-hook.log 2>/dev/null || true
 
 "${PYTHON_BIN}" "${OMC_SCRIPT}" state init --target "${ROOT}" --force >/dev/null 2>&1 || exit 0
-OMC_EXECUTOR="${EXECUTOR}" "${PYTHON_BIN}" "${OMC_SCRIPT}" hook session_start --target "${ROOT}" >/dev/null 2>&1 || exit 0
+# Forward only this hook's lifecycle identity, never an inherited payload or
+# private transcript paths. SessionStart also runs during same-session compact.
+SESSION_START_INPUT=$(printf '%s' "${HOOK_INPUT}" | "${PYTHON_BIN}" -c '
+import json, sys
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    payload = {}
+if not isinstance(payload, dict):
+    payload = {}
+print(json.dumps({key: payload.get(key, "") if isinstance(payload.get(key, ""), str) else ""
+                  for key in ("source", "session_id")}))
+' 2>/dev/null || true)
+OMC_SESSION_START_INPUT="${SESSION_START_INPUT}" OMC_EXECUTOR="${EXECUTOR}" "${PYTHON_BIN}" "${OMC_SCRIPT}" hook session_start --target "${ROOT}" >/dev/null 2>&1 || exit 0
 
 # SessionStart stdout → Claude/Codex: 평문, Gemini: JSON (Gemini는 순수 JSON 필수)
 SUMMARY_FILE="${ROOT}/.omc/summary.md"

@@ -422,11 +422,18 @@ def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, c
             sys.stdout.buffer.write(raw)
             sys.stdout.buffer.flush()
 
+        from omc_pipeline_guard import SESSION_START_HANDOFF_ENV, create_session_start_handoff
+        child_env = dict(os.environ)
+        # An unrelated nested launch must never inherit another launch's approval.
+        child_env.pop(SESSION_START_HANDOFF_ENV, None)
         if context is not None:
             from omc_native_red_evidence import write_new, verify_execution_context
             import uuid
             verify_execution_context(root, context)
             write_new(root, '.omc/native-contexts/'+uuid.uuid4().hex+'.json', context)
+            handoff = create_session_start_handoff(root, context)
+            if handoff is not None:
+                child_env[SESSION_START_HANDOFF_ENV] = json.dumps(handoff)
         proc = None
         pending_signal = None
         stopping = False
@@ -445,7 +452,7 @@ def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, c
                     previous_handlers[signum] = signal.signal(signum, interrupted)
             if pending_signal is not None:
                 raise NativeRunInterrupted(pending_signal)
-            proc = subprocess.Popen(argv, cwd=root, stdout=subprocess.PIPE,
+            proc = subprocess.Popen(argv, cwd=root, stdout=subprocess.PIPE, env=child_env,
                                     start_new_session=os.name == 'posix')
             if pending_signal is not None:
                 raise NativeRunInterrupted(pending_signal)

@@ -97,7 +97,8 @@ def _reset_pipeline_guard_session(project_root: Path) -> dict[str, object]:
         _mod = _ilu.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
         rc = _mod.cmd_session_start(project_root)
-        return {"status": "ok", "type": "builtin", "name": "pipeline_guard.session-start", "rc": rc}
+        return {"status": "ok" if rc == 0 else "error", "type": "builtin",
+                "name": "pipeline_guard.session-start", "rc": rc}
     except Exception as exc:
         return {"status": "error", "type": "builtin", "name": "pipeline_guard.session-start", "error": str(exc)}
 

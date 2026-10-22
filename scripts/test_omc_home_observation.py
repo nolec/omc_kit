@@ -13,6 +13,49 @@ import omc_pipeline_guard as guard
 CLI = Path(__file__).with_name('omc_home_observation.py')
 
 
+def test_native_launch_hands_off_approved_work_through_public_claude_start(tmp_path):
+    from test_omc_pipeline_guard_session_reset import prebound_project
+    context, args = prebound_project(tmp_path)
+    # Actual shell + actual hook/context modules; the child is local Python, not Claude.
+    before = guard._state_path(tmp_path).read_bytes()
+    hook = CLI.parent.parent / 'templates/.agent-hooks/omc-session-start.sh'
+    child = '''import json,subprocess,sys,uuid
+hook, args, expected = sys.argv[1], json.loads(sys.argv[2]), json.loads(sys.argv[3])
+payload = json.dumps({'event_id':str(uuid.uuid4()),'session_id':'native-fixture','source':'startup'})
+result = subprocess.run(['bash',hook,'claude'],input=payload,text=True,capture_output=True)
+assert result.returncode == 0, result.stderr
+duplicate = subprocess.run(['bash',hook,'claude'],input=payload,text=True,capture_output=True)
+assert duplicate.returncode == 0 and duplicate.stdout == '', duplicate.stderr
+check = subprocess.run(args,text=True,capture_output=True)
+if check.returncode: print(check.stdout, file=sys.stderr); raise SystemExit(3)
+assert json.loads(check.stdout) == expected
+print(json.dumps({'type':'result','subtype':'success'}))
+'''
+    driver = '''import json,sys
+from pathlib import Path
+from omc_home_observation import tee_native
+root=Path(sys.argv[1]); context=json.loads(sys.argv[2])
+raise SystemExit(tee_native(root,sys.argv[3:],root/'.omc/native.jsonl',[],context=context))
+'''
+    import os
+    result = subprocess.run([sys.executable, '-c', driver, str(tmp_path), json.dumps(context),
+        sys.executable, '-c', child, str(hook), json.dumps(args), json.dumps(context)],
+        cwd=tmp_path, env={**os.environ, 'PYTHONPATH': str(CLI.parent)},
+        capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert guard._state_path(tmp_path).read_bytes() == before
+    assert (tmp_path / '.omc/native.jsonl').read_bytes() == result.stdout
+
+
+def test_native_launch_drops_inherited_handoff_without_explicit_context(tmp_path, monkeypatch, capfd):
+    monkeypatch.setenv('OMC_SESSION_START_HANDOFF', '{"inherited":"must not reuse"}')
+    code = module().tee_native(tmp_path, [sys.executable, '-c',
+        "import os; print(os.environ.get('OMC_SESSION_START_HANDOFF','absent'))"],
+        tmp_path / '.omc/events.jsonl', [])
+    assert code == 0
+    assert (tmp_path / '.omc/events.jsonl').read_bytes() == b'absent\n'
+
+
 def module():
     return importlib.import_module('omc_home_observation')
 
