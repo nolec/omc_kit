@@ -1,6 +1,23 @@
 # Automatic Model Routing Roadmap
 
-## 현재 · 최소 감독 실행기 구현·커밋 · 2026-10-23
+## 현재 · 테스트 영수증·공통 시각 정책 보완 커밋 · 2026-10-23
+
+- 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
+- 현재 판정: 테스트 영수증·공통 시각 정책7개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD
+- 목표 대비 진행: 실제 광고 사례는 1778.16초에 정상 종료했지만 테스트 원문이 unknown인데 완료 가드가 통과하고 고정 픽셀 manifest 계약이 맞지 않아 전체 FAIL·비교 HOLD였다. 이 두 연결 문제와 경쟁 도구 호환성을 보완해 99773380에 커밋했다. 로컬 검증·리뷰는 완료했으며 보완 후 실제 Claude의 필수 검증·업무 완료와 경쟁 우위는 아직 미입증이다.
+- 실제 재검증: 보완 전 실제1회는 정상 종료1778.16초이나 전체 FAIL·비교 HOLD다. 테스트 unknown(baseline_test_removed)을 passed로 기록한 충돌과 고정 픽셀 계약 불일치, 수정·최종 작업의 시간 경계 위반이 관측됐다. 원래4개 실패 이름은 동일해 신규 테스트 실패로 확정하지 않는다. 실제 compact 경계1회는 관측됐으나 전체 성공을 뜻하지 않는다. 99773380 보완 후 실제 Claude/provider 호출0회, 업무 효과·경쟁 우위 미입증이다.
+- 이번 개선: 고정 테스트 정책에서 실제 영수증의 경로·해시·후보·실행·세션·판정을 완료 가드에 연결했다. unknown·실패·불일치를 passed로 적어도 완료로 통과시키지 않는다. 양쪽은 동일한 visual-requirement.json과 공통 시각 정책 해시를 사용한다. 요구 파일 변경·삭제·뒤늦은 추가를 거부하며 OMC에만 세션·승인 기준 결속을 추가 적용한다. 경쟁 도구에는 OMC 승인 파일을 요구하지 않는다. 기존 비고정 정책 계약은 유지한다.
+- 코드·범위: 리뷰 승인된 실행기·가드·테스트·템플릿7개 파일만 main에 로컬 커밋99773380. 승인된 frozen 후보와 커밋 패치가 일치하며 TDD·커밋 가드 통과. 이번 로드맵·대시보드4파일은 별도 미커밋.
+- 검증: 구현 회귀267개 통과·생략0(공개CLI·로컬 Jest/격리 Chromium·완료106개와 인접161개). 독립 리뷰73개 통과(영수증·완료·공통정책71개와 양쪽 실제 로컬 Jest/Chromium2개). 문법·diff·staged TDD·완료 가드·커밋 훅 통과. 267개와73개는 겹치므로 고유 검사 수나 개선율로 합산하지 않는다. 로컬 fixture 회귀는 실제 Claude 광고 업무 성공 증거가 아니다.
+- 리뷰: 원본 스테이징과 동일한 격리7파일 frozen 후보 전체 APPROVE·승인 receipt 기록. 이후 main 커밋99773380의7개 경로·패치 일치 확인. 격리 승인 receipt를 전체 main 출하 승인으로 확대하지 않는다.
+- 보존 경계: 원본 storefront·이전 실행·stdout/stderr·전체/staged/unstaged diff·인덱스 원문 및 .omc 교훈 보존. 보완 커밋은 승인7개만 포함. 이번 문서4개와 분리.
+- 다음 작업: 99773380 보완 후보의 실제 Claude 광고 최대1회 재검증 계획·진입 조건 확정
+- 다음: 99773380을 새 core 후보로 고정하고 runtimef7566cc2·감독e4557dd와의 결합 및 준비 경로를 확인하는 계획을 개정·검토·승인한다. 양쪽 동일 시각 요구 파일과 테스트 영수증 판정, 필수8프로필·selection/verification/complete-task·정상 종료·시간 조건을 성공 기준에 연결한다. 이전637a965 실행 승인·예산은 자동 승계하지 않는다. 새 계획 승인 뒤 준비 조건을 확인해 Claude 최대1회·자동 재시도0회만 수행한다. 유효 OMC 사례가 확인돼야 동등 경쟁 비교 진입을 판단한다.
+- 배포: 99773380 보완은 로컬 main 커밋 완료·미릴리스·일반 사용처 미설치다. runtimef7566cc2·감독e4557dd도 별도 미릴리스 도구다. 정상11개 사용처의 e618fca/0.6.1 설치·엄격 감사는 당시 이력이며 이번에 재감사하지 않았다. push·태그·릴리스·재설치 없음.
+- 관찰: v3 DISABLED · OBSERVATION_INVALID / live_observation_not_enabled. 코드 승인과 별개.
+- 근거: .omc/ad-single-absolute-records-20261023T041331Z/REPORT.md, .omc/ad-single-absolute-records-20261023T041331Z/summary.json, .omc/state/receipt-pixel-common-fix/REPORT.md, .omc/state/receipt-pixel-common-fix/final-command-completion.txt, .omc/state/receipt-pixel-common-fix/final-adjacent.txt, .omc/state/receipt-pixel-common-fix/completion.txt, .omc/state/receipt-pixel-common-review/REVIEW.md, .omc/state/receipt-pixel-common-review/record-review.json, .omc/state/receipt-pixel-common-review/independent-validation.txt, .omc/state/receipt-pixel-common-review/independent-both-arms.txt; 로컬 자료는 다른 checkout에 자동 제공되지 않는다.
+
+## 이전 이력 · 최소 감독 실행기 구현·커밋 · 2026-10-23
 
 - 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
 - 현재 판정: 최소 감독3개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD
