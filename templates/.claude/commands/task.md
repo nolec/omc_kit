@@ -171,6 +171,8 @@ CONTRACT 목록을 모델이 새로 정하지 않습니다. 사용자에게 제�
 
 ### 요구별 RED 근거
 
+고정 검증 정책을 사용하는 작업은 승인 기준의 `validation_commands_policy_sha256`와 `checks.tests.validation_receipt: {"path":".omc/validation-commands/calls/<id>/receipt.json","sha256":"<실제 해시>"}`를 연결합니다. `verification-template`의 초기값은 null이며 tests 실행 반환의 receipt를 그대로 채웁니다. 완료 가드는 정책·세션·run·후보·실행 원문을 대조하고 실제 테스트 판정을 다시 계산합니다. unknown은 신규 실패로 바꾸지 않으며 passed로 승격하지 않습니다. 원문과 선언 상태가 다르면 증거 불일치입니다. 고정 정책이 없는 일반 작업은 기존 형식을 유지합니다. 픽셀 결과는 고정 실행기가 만든 manifest와 report를 그대로 사용하며 모델이 영수증을 대신 작성하지 않습니다. 해시 연결은 로컬 작성자의 정직성 인증이나 변조 방지 샌드박스가 아닙니다.
+
 승인 기준이 있는 작업은 `red-done <테스트파일> --evidence-file <작업 내부 JSON>`을 사용합니다. JSON 필드는 `session_id`, `basis_sha256`, `test_file`(작업 루트 상대 경로), `test_sha256`(RED 실행 당시 테스트 파일의 SHA-256), `check_id`(승인 검증 ID), `case_id`(이번 요구를 실패시키는 케이스), `expected_failure`, `command`, `exit_code`, `baseline_failed_cases`, `failed_cases`, `output_file`(실제 FAIL 출력의 내부 경로), `output_sha256`입니다. SHA-256은 해당 원본 바이트로 계산하고 실제 출력은 수정하지 않습니다.
 
 먼저 변경 전 기준의 실패 케이스를 기록하고, 이번 요구를 검증하는 테스트를 작성해 실제 실패를 실행합니다. 종료 코드1과 새 실패 케이스가 필요하며, 기존 실패 목록에 있던 케이스만으로 등록하지 않습니다. 실행 불가·수집 오류를 RED로 처리하지 않습니다. 예: baseline_failed_cases=["기존 추적 실패"], failed_cases=["기존 추적 실패","새 테두리 요구 실패"], case_id="새 테두리 요구 실패". 의미 연결과 baseline·실행 기록은 호출자가 제공하므로 가드는 실행 진위·요구사항 관련성을 인증하지 않습니다. 리뷰는 실제 출력과 이번 요청의 관계를 확인합니다. 키워드 일치나 등록 성공을 TDD 준수 증명으로 사용하지 않습니다.

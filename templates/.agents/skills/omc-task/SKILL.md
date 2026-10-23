@@ -80,6 +80,7 @@ Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`�
 실행 기록과 native 호출 영수증은 별개입니다. 영수증이 없으면 `python3 scripts/omc_native_red_evidence.py diagnose --target .`로 읽기 전용 진단을 확인합니다. `receipts`의 배열 형식은 유지합니다. 명령은 한 줄로 단독 실행하며 끝의 `2>&1` 한 개만 허용합니다. 기록 삭제·덮어쓰기나 runner 중첩 재실행은 하지 않습니다. 최종 공식 상태는 `complete-task` 출력 그대로 사용하고, 수집 결과의 `report-comparison.txt`에서 공식 판정과 모델 원문의 상태 불일치를 별도로 확인합니다. 이 안내는 모델 준수나 실제 실행 성공을 보장하지 않습니다.
 
 승인된 기준을 `approve-checks --file <JSON>`으로 등록하고 CONTRACT에 같은 검증 ID를 고정합니다. RED는 기존 실패와 구분한 실제 새 실패를 `red-done <테스트파일> --evidence-file <RED근거JSON>`으로 등록합니다. 검증 직전 `verification-template`을 생성해 실행 결과를 기록하고 `complete-task --verification-file <내부 경로>`의 상태·기계 판정을 그대로 사용합니다. 필수 검증을 임의 제외하지 않습니다.
+승인 기준에 `validation_commands_policy_sha256`가 있으면 `checks.tests.validation_receipt`에 고정 tests 실행이 반환한 `{path, sha256}`를 연결합니다. 설명문이나 `status=passed`로 원문 판정을 바꾸지 않습니다. 누락·구분 불가·대상/해시/상태 불일치는 완료로 인정하지 않습니다. 이 연결이 없는 일반 작업은 기존 형식을 유지합니다.
 실행 전 필수 상세: [승인 기준·RED JSON·스냅샷·폴더 링크 정책](references/verification.md)을 읽습니다. 기록은 실행 진위·요구의 의미 관련성 인증이 아니며, 정상 내부 폴더 링크는 결속하고 외부·순환·검사 제외 링크는 거부합니다.
 
 ## Machine output contract — 마지막 두 줄은 `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT: <VALUE>`; JSON은 `schema_version=omc-output/v1`, `stage`, `outcome`, `risk`, `next_skill`, `user_selection_needed`, `reason_code`; `next_skill`은 canonical `omc-*` 또는 null; unresolved/blocked는 `reason_code` 필수; legacy 평문 입력은 허용하되 새 출력은 숨김 형식만 사용하고 명시적 오류는 보정하지 않습니다.

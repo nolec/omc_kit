@@ -179,6 +179,28 @@ def test_all_required_checks_render_done(project):
     assert result.stdout.rstrip().endswith('VERDICT: PROCEED')
 
 
+def test_fixed_validation_template_requires_structured_test_receipt(project):
+    prepare(project)
+    proposal = json.loads((project/'approved-checks.json').read_text())
+    proposal.update(revision=2, run_id='run', validation_commands_policy_sha256='a'*64)
+    path = project/'.omc/fixed-proposal.json'; path.write_text(json.dumps(proposal))
+    assert run(project,'approve-checks','--file',str(path)).returncode == 0
+    assert run(project,'contract-done','--required-checks','tests,browser').returncode == 0
+    template = run(project,'verification-template')
+    assert template.returncode == 0, template.stdout
+    item = json.loads(template.stdout)['checks']['tests']
+    assert 'validation_receipt' in item and item['validation_receipt'] is None
+
+
+@pytest.mark.parametrize('name', ['templates/.agents/skills/omc-task/SKILL.md',
+    'templates/.agents/skills/omc-task/references/verification.md',
+    'templates/.claude/commands/task.md'])
+def test_fixed_test_receipt_instructions_match_template_schema(name):
+    text = (SCRIPT.parent.parent/name).read_text()
+    assert 'validation_commands_policy_sha256' in text
+    assert 'validation_receipt' in text
+
+
 def test_unstaged_implementation_does_not_use_empty_staged_gate(project):
     subprocess.run(['git', 'init', '-q'], cwd=project, check=True)
     source = project / 'feature.py'

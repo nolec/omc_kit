@@ -22,7 +22,8 @@ from omc_pipeline_guard import _code_snapshot_digest
 from omc_native_red_evidence import jest_cases, source, write_new
 from omc_workflow_preflight import baseline, browser_observation, server_binding, validate_browser_config
 from omc_home_observation import sample_assessment
-from omc_visual_check import VARIANTS, assess_report
+from omc_visual_check import (VARIANTS, assess_report, enforce_requirement,
+                              requirement_path, validate_requirement)
 
 POLICY = '.omc/validation-commands/policy.json'
 CONTRACT = 'advertising-comparison/v2'
@@ -69,6 +70,23 @@ def _tool(policy, name):
     return str(path)
 
 
+def _common_visual_requirement(root, policy):
+    """Same frozen visual input for both arms; no OMC session is required."""
+    path = requirement_path(root)
+    if 'visual_requirement' not in policy:
+        if path.exists() or path.is_symlink():
+            raise ValueError('visual_requirement_not_frozen')
+        return None  # Explicit legacy contract without a visual requirement.
+    ref = policy['visual_requirement']
+    if not isinstance(ref, dict) or ref.get('path') != str(path.relative_to(root)):
+        raise ValueError('visual_requirement_reference_mismatch')
+    requirement = json.loads(_raw(root, ref))
+    validate_requirement(root, requirement)
+    if requirement['run_id'] != policy['run_id']:
+        raise ValueError('visual_requirement_run_mismatch')
+    return requirement
+
+
 def _validate_policy(root, policy):
     if (policy.get('schema_version') != 'omc-validation-policy/v1'
             or policy.get('contract_id') != CONTRACT or policy.get('target') != str(root.resolve())
@@ -91,6 +109,7 @@ def _validate_policy(root, policy):
         package=Path(policy['visual']['playwright_module'])/'package.json'
         if sha(package.read_bytes()) != policy['visual']['package_sha256']:
             raise ValueError('playwright_module_changed')
+    _common_visual_requirement(root, policy)
 
 
 def freeze(root, proposal, pin):
@@ -100,6 +119,10 @@ def freeze(root, proposal, pin):
     policy = json.loads(raw)
     policy['selection_path'] = str(selection_path(root, policy).relative_to(root))
     policy['report_contract'] = REPORT_CONTRACT
+    path = requirement_path(root)
+    if path.exists() or path.is_symlink():
+        name = str(path.relative_to(root))
+        policy['visual_requirement'] = {'path':name,'sha256':sha(source(root,name).read_bytes())}
     import omc_workflow_validation
     policy['oracle_pins'] = {str(Path(m.__file__).resolve()): sha(Path(m.__file__).read_bytes())
         for m in (sys.modules[__name__], sys.modules['omc_pipeline_guard'],
@@ -245,7 +268,7 @@ def _tests(root, policy, raw, exit_code):
     old_names = {c['fullName'] for s in base['testResults'] for c in s['assertionResults']}
     names = {c['fullName'] for s in value['testResults'] for c in s['assertionResults']}
     if not old_names <= names:
-        raise ValueError('baseline_test_removed')
+        return {'status':'unknown', 'reason':'baseline_test_removed'}
     return {'status':'passed' if not new_failed and same else 'failed',
             'new_failed_cases':new_failed, 'baseline_failed_cases':old_failed,
             'existing_failed_cases':sorted(set(failed)&set(old_failed)),
@@ -365,6 +388,20 @@ def run_profile(root, profile):
                 'bundle_path':bundle,'bundle_sha256':sha(source(root,bundle).read_bytes()),
                 'build_inputs':{n:sha(source(root,n).read_bytes()) for n in inputs},
                 'dpr':dpr,'images_per_variant':2}
+            # The fixed runner must produce the manifest consumed by completion,
+            # without asking the model to rebuild it or author replacement receipts.
+            requirement = _common_visual_requirement(root, policy)
+            if requirement is not None:
+                if policy['arm'] == 'omc-kit':
+                    from omc_pipeline_guard import _load_approved_basis
+                    basis = _load_approved_basis(root, policy['session_id'])
+                    if (basis.get('session_id') != policy['session_id']
+                            or basis.get('run_id') != policy['run_id']
+                            or basis.get('validation_commands_policy_sha256') != pin
+                            or enforce_requirement(root, basis) != requirement):
+                        raise ValueError('visual_validation_policy_mismatch')
+                manifest['policy_sha256'] = sha(json.dumps(requirement['policy'],
+                    sort_keys=True, separators=(',', ':')).encode())
             ref = _save_bytes(root,folder,'manifest.json',json.dumps(manifest).encode())
             receipt['artifacts']['manifest'] = ref
         argv = _command(root,policy,folder,profile)
@@ -450,6 +487,42 @@ def validate_receipt(root, ref, policy_pin, profile=None, *, historical=False):
                 raise ValueError('build_output_changed')
         _scope(root,policy)
     return receipt
+
+
+def assess_completion_tests(root, basis, record, sid):
+    """Bind fixed tests to their raw receipt; hashes do not attest authorship.
+
+    Ordinary non-fixed tasks retain their existing evidence contract. A fixed
+    policy in the approved basis makes the structured reference mandatory.
+    """
+    if ('validation_commands_policy_sha256' not in basis
+            or not any(c['id'] == 'tests' for c in basis['checks'])):
+        return None
+    try:
+        pin = basis['validation_commands_policy_sha256']
+        if not isinstance(pin, str) or not re.fullmatch(r'[a-f0-9]{64}', pin):
+            raise ValueError('validation_policy_pin_invalid')
+        policy, _ = load_policy(root, pin)
+        if (policy.get('arm') != 'omc-kit' or policy.get('session_id') != sid
+                or policy.get('run_id') != basis.get('run_id')):
+            raise ValueError('test_receipt_task_mismatch')
+        item = record.get('checks', {}).get('tests', {})
+        if not isinstance(item, dict):
+            raise ValueError('test_verification_invalid')
+        ref = item.get('validation_receipt')
+        if not isinstance(ref, dict):
+            return {'status':'unknown', 'reason':'test_validation_receipt_missing'}
+        receipt = validate_receipt(root, ref, pin, 'tests')
+        status = receipt['status']
+        if status == 'failed':
+            return {'status':'failed', 'reason':'fixed_tests_failed'}
+        if status not in {'passed','unknown'}:
+            raise ValueError('test_receipt_status_invalid')
+        if item.get('status') != status:
+            raise ValueError('test_receipt_status_mismatch')
+        return {'status':status, 'reason':receipt['judgment'].get('reason')}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        return {'status':'mismatch', 'reason':str(exc)}
 
 
 def main():

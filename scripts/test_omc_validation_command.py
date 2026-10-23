@@ -182,6 +182,142 @@ def freeze(validation):
     return root,json.loads(result.stdout)
 
 
+@pytest.mark.parametrize('arm',['omc-kit','oh-my-claudecode'])
+@pytest.mark.parametrize('drift',['none','changed','removed','late','builder'])
+def test_common_visual_requirement_is_frozen_for_both_arms(validation,arm,drift):
+    import omc_visual_check as visual
+    root,proposal=validation;proposal['arm']=arm
+    builder='.omc/visual-input/build-pixels.cjs'
+    requirement={'profile':visual.AD_PROFILE,'run_id':proposal['run_id'],'policy':{
+        'schema_version':'omc-visual-policy/v1','criteria':visual.CRITERIA,
+        'variants':visual.VARIANTS,'dprs':[1,2],'images_per_variant':2,
+        'builder_inputs':{builder:digest(root/builder)}}}
+    path=root/'.omc/visual-requirement.json'
+    raw=json.dumps(requirement,sort_keys=True).encode()
+    if drift!='late':path.write_bytes(raw)
+    root,pin=freeze(validation)
+    if drift=='none':
+        policy,_=module().load_policy(root,pin['sha256'])
+        assert policy['visual_requirement']=={'path':str(path.relative_to(root)),'sha256':digest(path)}
+        assert path.read_bytes()==raw
+    else:
+        if drift=='changed':path.write_bytes(raw+b'\n')
+        elif drift=='removed':path.unlink()
+        elif drift=='late':path.write_bytes(raw)
+        elif drift=='builder':(root/builder).write_text('changed builder')
+        with pytest.raises((ValueError,OSError)):
+            module().load_policy(root,pin['sha256'])
+
+
+@pytest.mark.parametrize('approval',['missing','wrong-pin'])
+def test_common_visual_policy_keeps_omc_approval_required(validation,approval):
+    import omc_visual_check as visual
+    import omc_pipeline_guard as guard
+    root,proposal=validation
+    builder='.omc/visual-input/build-pixels.cjs'
+    visual_policy={'schema_version':'omc-visual-policy/v1','criteria':visual.CRITERIA,
+        'variants':visual.VARIANTS,'dprs':[1,2],'images_per_variant':2,
+        'builder_inputs':{builder:digest(root/builder)}}
+    (root/'.omc/visual-requirement.json').write_text(json.dumps({
+        'profile':visual.AD_PROFILE,'run_id':proposal['run_id'],'policy':visual_policy}))
+    playwright=DEPENDENCIES/'playwright'
+    proposal.update(session_id='s',visual={'origin':'http://localhost:9',
+        'playwright_module':str(playwright),'package_sha256':digest(playwright/'package.json')})
+    root,pin=freeze(validation)
+    assert cli(root,'run','--profile','build-pixels').returncode==0
+    if approval=='wrong-pin':
+        basis={'session_id':'s','run_id':proposal['run_id'],'revision':1,
+            'request':'fixture visual','approval_reference':'fixture approval',
+            'task_profile':visual.AD_PROFILE,'validation_commands_policy_sha256':'0'*64,
+            'checks':[dict(id=visual.CHECK_ID,target='fixture',method='fixed pixels',
+                pass_condition='passed',target_version='candidate',visual_policy=visual_policy)]}
+        path=root/'.omc/checks.json';path.write_text(json.dumps(basis))
+        assert guard.cmd_approve_checks(root,path)==0
+    result=cli(root,'run','--profile','pixels-dpr1')
+    value=json.loads(result.stdout)
+    receipt=json.loads((root/value['receipt']['path']).read_text())
+    assert result.returncode==2 and receipt['status']=='unknown'
+    assert receipt['invocations']==[]
+    if approval=='wrong-pin':assert receipt['judgment']['reason']=='visual_validation_policy_mismatch'
+
+
+@pytest.mark.parametrize('defect', ['none', 'unknown', 'unknown-honest', 'forged-status', 'failed', 'missing', 'hash',
+                                   'target', 'run', 'session', 'arm', 'profile', 'stale',
+                                   'declared-status', 'policy', 'outside'])
+def test_completion_requires_actual_frozen_test_receipt(validation, defect):
+    """Real Jest receipt and completion CLI; prose cannot override the verdict."""
+    from test_omc_pipeline_link_red import red_proof
+    from test_omc_task_completion_surface import run as complete_cli
+    import omc_pipeline_guard as guard
+    root, proposal = validation
+    proposal.update(session_id='s', run_id='run')
+    # Lifecycle fixture is part of the frozen baseline, not an out-of-scope edit.
+    (root/'test_app.py').write_text('def test_new():\n    assert False\n')
+    subprocess.run(['git','add','--','test_app.py'],cwd=root,check=True)
+    root, pin = freeze(validation)
+    basis = {'session_id':'s', 'run_id':'run', 'revision':1, 'request':'receipt binding',
+             'approval_reference':'fixture approval',
+             'validation_commands_policy_sha256':pin['sha256'], 'checks':[
+                 {'id':'tests','target':TEST,'method':'fixed Jest','pass_condition':'passed',
+                  'target_version':'candidate'}]}
+    path = root/'.omc/checks.json'; path.write_text(json.dumps(basis))
+    assert complete_cli(root, 'approve-checks', '--file', str(path)).returncode == 0
+    assert complete_cli(root, 'contract-done', '--required-checks', 'tests').returncode == 0
+    proof = red_proof(root, basis)
+    assert complete_cli(root, 'red-done', 'test_app.py', '--evidence-file', str(proof)).returncode == 0
+    if defect in {'unknown','unknown-honest','forged-status'}:
+        (root/TEST).write_text((root/TEST).read_text().replace("test('passed case'", "test('renamed case'"))
+    elif defect == 'failed':
+        (root/TEST).write_text((root/TEST).read_text()+"test('new failing case',()=>expect(3).toBe(4));\n")
+    # The actual CLI writes the receipt; the ordinary baseline failure is allowed.
+    result = cli(root, 'run', '--profile', 'tests')
+    ref = json.loads(result.stdout)['receipt']
+    receipt_path = root/ref['path']; receipt = json.loads(receipt_path.read_text())
+    if defect == 'forged-status':
+        receipt['status'] = 'passed'; receipt['judgment'] = {'status':'passed'}
+        receipt_path.write_text(json.dumps(receipt)); ref['sha256'] = digest(receipt_path)
+    elif defect in {'target','run','arm','profile'}:
+        receipt[{'run':'run_id'}.get(defect, defect)] = {
+            'target':str(root.parent), 'run':'other', 'arm':'oh-my-claudecode', 'profile':'lint'}[defect]
+        receipt_path.write_text(json.dumps(receipt)); ref['sha256'] = digest(receipt_path)
+    elif defect == 'hash': ref['sha256'] = '0'*64
+    elif defect == 'outside':
+        outside = root.parent/'receipt.json'; outside.write_bytes(receipt_path.read_bytes())
+        ref = {'path':str(outside), 'sha256':digest(outside)}
+    elif defect == 'session':
+        # Same task/run-shaped receipt under a different frozen session is invalid.
+        policy_path = root/module().POLICY; policy = json.loads(policy_path.read_text())
+        policy['session_id'] = 'foreign'; policy_path.write_text(json.dumps(policy))
+    elif defect == 'policy':
+        policy_path = root/module().POLICY; policy = json.loads(policy_path.read_text())
+        policy['timeout_sec'] = 29; policy_path.write_text(json.dumps(policy))
+    elif defect == 'stale': (root/Path(TEST).parent/'Ad.tsx').write_text('changed after receipt')
+    subprocess.run(['git','add','--','libs','test_app.py'],cwd=root,check=True)
+    template = complete_cli(root, 'verification-template')
+    assert template.returncode == 0, template.stdout+template.stderr
+    record = json.loads(template.stdout)
+    record['implementation'] = {'status':'applied','evidence':'fixture current source'}
+    item = record['checks']['tests']
+    item.update(status='unknown' if defect == 'unknown-honest' else 'unrun' if defect == 'declared-status' else 'passed',
+                evidence='caller says passed, even if the actual test is unknown')
+    if defect != 'missing': item['validation_receipt'] = ref
+    path = root/'.omc/verification/final.json'; path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(record))
+    completed = complete_cli(root, 'complete-task', '--verification-file', str(path))
+    if defect == 'none':
+        assert receipt['status'] == 'passed'
+        assert completed.returncode == 0, completed.stdout+completed.stderr
+    else:
+        assert completed.returncode == 1, completed.stdout+completed.stderr
+        assert 'VERDICT: BLOCK' in completed.stdout
+        if defect == 'unknown':
+            assert receipt['status'] == 'unknown'
+            assert completed.stdout.startswith('증거 불일치·재검증 필요')
+        elif defect == 'unknown-honest':
+            assert receipt['status'] == 'unknown'
+            assert completed.stdout.startswith('구현됨·검증 미완료')
+
+
 @pytest.mark.parametrize('arm', ['omc-kit', 'oh-my-claudecode'])
 @pytest.mark.parametrize('lint_failure,red_final', [
     (False,'passed'), (True,'passed'), ('unavailable','passed'),
@@ -249,7 +385,35 @@ def test_public_cli_complete_local_chain_and_fail_closed_variants(validation, tm
         proposal.update(browser=browser,preflight={'path':str(ready.relative_to(root)),'sha256':digest(ready)},
             visual={'origin':origin,'playwright_module':str(playwright),
                     'package_sha256':digest(playwright/'package.json')})
+        # Both arms receive the same common visual contract; only OMC has an
+        # internal approval session. The canonical OMC case also completes it.
+        omc_case = arm == 'omc-kit'
+        completion_case = omc_case and not lint_failure and red_final == 'passed'
+        import omc_visual_check as visual
+        visual_policy = {'schema_version':'omc-visual-policy/v1', 'criteria':visual.CRITERIA,
+            'variants':visual.VARIANTS, 'dprs':[1,2], 'images_per_variant':2,
+            'builder_inputs':{'.omc/visual-input/build-pixels.cjs':digest(Path(proposal['tools']['pixel_builder']['path']))}}
+        requirement = {'profile':visual.AD_PROFILE,'run_id':proposal['run_id'],'policy':visual_policy}
+        requirement_path = root/'.omc/visual-requirement.json'
+        requirement_path.write_text(json.dumps(requirement,sort_keys=True))
+        if omc_case:
+            proposal['session_id'] = 's'
         root,pin=freeze(validation)
+        frozen_policy=json.loads((root/module().POLICY).read_text())
+        assert frozen_policy['visual_requirement'] == {
+            'path':'.omc/visual-requirement.json','sha256':digest(requirement_path)}
+        if omc_case:
+            import omc_pipeline_guard as guard
+            from test_omc_task_completion_surface import run as complete_cli
+            basis = {'session_id':'s','run_id':proposal['run_id'],'revision':1,
+                'request':'fixed pixel completion','approval_reference':'fixture approval',
+                'task_profile':visual.AD_PROFILE,'validation_commands_policy_sha256':pin['sha256'],
+                'checks':[dict(id=n,target='fixture',method='fixed command',pass_condition='passed',
+                    target_version='candidate',**({'visual_policy':visual_policy} if n==visual.CHECK_ID else {}))
+                    for n in ['tests',visual.CHECK_ID]]}
+            checks = root/'.omc/completion-checks.json'; checks.write_text(json.dumps(basis))
+            assert complete_cli(root,'approve-checks','--file',str(checks)).returncode == 0
+            assert complete_cli(root,'contract-done','--required-checks','tests,'+visual.CHECK_ID).returncode == 0
         rows=[]
         query = 'python3 scripts/omc_validation_command.py selection-path --target .'
         rows.extend([{'type':'assistant','message':{'content':[{'type':'tool_use','id':'selection-query',
@@ -274,6 +438,19 @@ def test_public_cli_complete_local_chain_and_fail_closed_variants(validation, tm
         edited(root/TEST,(root/TEST).read_text()+"\ntest('new RED',()=>expect(require('fs').readFileSync(__dirname+'/Ad.tsx','utf8')).toContain('green'));\n"
             +"test('second RED',()=>expect(require('fs').readFileSync(__dirname+'/Ad.tsx','utf8')).toContain('green'));\n")
         red=executed('tests')
+        if completion_case:
+            red_receipt=json.loads((root/red['path']).read_text())
+            red_output = root/'.omc/completion-red.txt'
+            red_output.write_bytes(module()._raw(root,red_receipt['stdout'])+module()._raw(root,red_receipt['stderr']))
+            proof = {'session_id':'s','basis_sha256':guard._basis_digest(basis),'test_file':TEST,
+                'test_sha256':digest(root/TEST),'check_id':'tests','case_id':'new RED',
+                'expected_failure':'product baseline lacks green','command':'fixed tests profile',
+                'exit_code':1,'baseline_failed_cases':['old failure'],
+                'failed_cases':['old failure','new RED','second RED'],
+                'output_file':'.omc/completion-red.txt','output_sha256':digest(red_output)}
+            proof_path=root/'.omc/completion-red.json';proof_path.write_text(json.dumps(proof))
+            registered=complete_cli(root,'red-done',TEST,'--evidence-file',str(proof_path))
+            assert registered.returncode==0,registered.stdout+registered.stderr
         edited(root/Path(TEST).parent/'Ad.tsx','green')
         if red_final!='passed':
             text=(root/TEST).read_text()
@@ -285,6 +462,36 @@ def test_public_cli_complete_local_chain_and_fail_closed_variants(validation, tm
                 text=text.replace(".toContain('green')", ".toContain('unresolved')")
             edited(root/TEST,text)
         refs={profile:executed(profile) for profile in module().REQUIRED}
+        # Common fixed receipts must carry identical visual policy binding even
+        # when the competitor has no OMC approval/session files at all.
+        for name in ['pixels-dpr1','pixels-dpr2']:
+            pixel_receipt=module().validate_receipt(root,refs[name],pin['sha256'],name)
+            assert pixel_receipt['status']=='passed',pixel_receipt.get('judgment')
+            manifest=json.loads(module()._raw(root,pixel_receipt['artifacts']['manifest']))
+            assert manifest['policy_sha256']==module().sha(json.dumps(
+                visual_policy,sort_keys=True,separators=(',',':')).encode())
+        if not omc_case:
+            assert 'session_id' not in frozen_policy
+            assert not (root/'.omc/verification-bases').exists()
+        if completion_case:
+            reports=[]
+            for name in ['pixels-dpr1','pixels-dpr2']:
+                receipt=module().validate_receipt(root,refs[name],pin['sha256'],name)
+                manifest=json.loads(module()._raw(root,receipt['artifacts']['manifest']))
+                assert manifest['policy_sha256'] == guard._basis_digest(visual_policy)
+                reports.append(receipt['artifacts']['report'])
+            subprocess.run(['git','add','--','libs'],cwd=root,check=True)
+            template=complete_cli(root,'verification-template');assert template.returncode==0,template.stdout
+            value=json.loads(template.stdout);value['implementation']={'status':'applied','evidence':'fixture source edits'}
+            for item in value['checks'].values():item.update(status='passed',evidence='fixed validation output')
+            value['checks']['tests']['validation_receipt']=refs['tests']
+            value['visual_result_set']={'schema_version':'omc-visual-result-set/v1','run_id':proposal['run_id'],
+                'policy_sha256':guard._basis_digest(visual_policy),
+                'code_snapshot_sha256':guard._code_snapshot_digest(root),'reports':reports}
+            record_path=root/'.omc/verification/final.json';record_path.parent.mkdir(exist_ok=True)
+            record_path.write_text(json.dumps(value))
+            completed=complete_cli(root,'complete-task','--verification-file',str(record_path))
+            assert completed.returncode==0,completed.stdout+completed.stderr
         final='필수 검증 통과·작업 완료\n기존 실패: 1개(미해결)\n로컬 합성 증거 경로 검증; 실제 업무 검증 아님.'
         rows.append({'type':'result','result':final})
         events=root/'.omc/common-events.jsonl';events.write_text(''.join(json.dumps(r)+'\n' for r in rows))

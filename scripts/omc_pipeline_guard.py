@@ -743,6 +743,8 @@ def cmd_verification_template(root: Path) -> int:
                                            "definition_sha256": _check_digest(check),
                                            "code_snapshot_sha256": snapshot}
                              for check in basis["checks"]}}
+        if 'validation_commands_policy_sha256' in basis and 'tests' in record['checks']:
+            record['checks']['tests']['validation_receipt'] = None
         print(json.dumps(record, ensure_ascii=False, indent=2))
         return 0
     except (OSError, ValueError, TypeError, AttributeError) as exc:
@@ -935,6 +937,18 @@ def evaluate_task_completion(root: Path, verification_file: Path, expected_sessi
     basis_problems = approved_verification_problems(root, sid, state, record, verification_file)
     problems.extend(basis_problems)
     mismatch = mismatch or any("불일치" in problem for problem in basis_problems)
+    test_assessment = None
+    try:
+        basis = _load_approved_basis(root, sid)
+        if 'validation_commands_policy_sha256' in basis:
+            from omc_validation_command import assess_completion_tests
+            test_assessment = assess_completion_tests(root, basis, record, sid)
+        if test_assessment and test_assessment['status'] != 'passed':
+            problems.append('tests: ' + str(test_assessment['reason']))
+            failed = failed or test_assessment['status'] == 'failed'
+            mismatch = mismatch or test_assessment['status'] == 'mismatch'
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, ImportError) as exc:
+        problems.append('tests: ' + str(exc))
     visual_assessment = None
     try:
         from omc_visual_check import assess_completion_visual
@@ -996,7 +1010,8 @@ def evaluate_task_completion(root: Path, verification_file: Path, expected_sessi
     registered = (bool(sid) and state.get("contract_confirmed") is True and state.get("session_id") == sid
                   and state.get("red_session_id") == sid and bool(state.get("red_done_tests")) and not red_problems)
     return {"outcome": "blocked" if blocked else "done", "first": first,
-            "problems": problems, "registered": registered, "visual_assessment": visual_assessment, "home_assessment": home_assessment}
+            "problems": problems, "registered": registered, "test_assessment": test_assessment,
+            "visual_assessment": visual_assessment, "home_assessment": home_assessment}
 
 
 def cmd_complete_task(root: Path, verification_file: Path) -> int:
