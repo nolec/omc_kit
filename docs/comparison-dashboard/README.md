@@ -1,6 +1,23 @@
 # OMC 비교 대시보드 · 최신 기준 2026-10-22
 
-## 현재 · controlled query 호환성 보완 커밋 · 2026-10-23
+## 현재 · 최소 감독 실행기 구현·커밋 · 2026-10-23
+
+- 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
+- 현재 판정: 최소 감독3개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD
+- 목표 대비 진행: 637a965 core와 f7566cc2 검수 실행기로 실제 광고 재검증을 준비했지만 외부 감독의 실행 소스·명령 연결과 시간 근거를 확보하지 못해 호출 없이 중단했다. 이후 별도 최소 감독을 구현하고 입력 전체 전달·실행 파일 결속·PATH 실패 처리를 보완해 e4557dd에 커밋했다. 실행 기반의 구현·회귀·리뷰는 확인했지만 실제 Claude의 필수 검증 수행·업무 완료·생산성 및 경쟁 우위는 미입증이다.
+- 실제 재검증: 이번 감독 구현·리뷰·커밋의 실제 Claude/provider 호출은0회다. f7566cc2 반영 준비는 감독 경로·시간 근거 미확인으로 NOT_STARTED(모델0·wrapper0·시도소비0)였고 기존 감독 탐색도 진입 불가로 종료했다. 감독 합성 회귀를 실제 광고 재검증으로 세지 않는다. 과거 임시 입력 소실 NOT_STARTED, c4864a3 실제1회·1800.17초·FAIL_TIMEOUT 및 비교 HOLD를 유지한다. 실제 compact UNOBSERVED, 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합·업무 효과 및 경쟁 우위는 미검증이다.
+- 이번 개선: 단일 시도 감독 CLI에 실행 마감·최대12초 별도 회수·stdout/stderr 원문 저장·JSON 판독 제한을 연결했다. 프롬프트 고정 바이트의 전체 pipe 전달·해시·EOF를 확인하며 미전달은 정상 판정을 금지한다. 실행 파일은 후보 기준의 같은 절대경로로 해시 계산·실행하고 PATH 검색 실패는 후보 동명 파일을 실행하지 않은 채 종료2·시도 미소비로 기록한다. 자식 정리 미확인·원문 불완전·최종 JSON 누락도 정상으로 처리하지 않는다.
+- 코드·범위: 리뷰 승인된 감독 CLI·테스트·README3개 파일만 main에 로컬 커밋e4557dd. 커밋3개 경로·Git blob이 승인 후보와 동일하다. core637a965와 runtimef7566cc2는 수정하지 않았다. 이번 로드맵·대시보드4파일은 별도 미커밋.
+- 검증: 최종 공개 CLI 회귀38개 통과·생략0(10.69초), 동일 후보의 독립 리뷰 회귀38개 통과·생략0(12.11초). 고정 core637a965 공개 run 경유 정상 JSON·내부124·외부 timeout·최종 JSON 없음의4사례와 B1~B6 종료/원문 경계, 입력 전달·교체·경로 결속·PATH 실패를 포함한다. Python2파일 문법·TDD·완료 가드·커밋 훅 통과. 두38개는 겹치는 같은 범위이므로 합산하지 않으며 과거158개·13개와도 합산하거나 개선율로 비교하지 않는다. 합성 자식 회귀는 실제 광고8프로필·로그인 홈·Claude 업무 완료 증거가 아니다.
+- 리뷰: 원본 스테이징과 동일한 격리3파일 후보 전체 APPROVE·승인 receipt 기록. e4557dd의3개 경로·Git blob과 승인 후보의 일치를 확인했다. 승인 범위는 해당3파일이며 전체 main 릴리스 승인으로 확대하지 않는다.
+- 보존 경계: 구현·리뷰·커밋에서 승인된3파일만 변경·커밋하고 .omc 근거·교훈과 과거 실행 기록은 보존했다. 감독 회귀와 고정 core 원문 보존을 확인했으며 실제 storefront·인증·브라우저 실행은 하지 않았다. 이번 문서4파일은 구현 커밋과 분리한다.
+- 다음 작업: 637a965 core + f7566cc2 검수 실행기 + e4557dd 감독의 단일 재검증 계획·시간 배치 확정
+- 다음: 감독 구현 보완은 종료한다. 새 감독e4557dd·core637a965·runtimef7566cc2를 별도 고정하고 기존 실제 Claude 최대1회 계획을 개정·검토·명시 승인한다. 설정된 제한·합성 실측·실제 모델 미관측 시간을 분리하고 최종8프로필·selection/verification/complete-task·정상 보고/종료의 경로와 시간 배치를 확정한다. 기존 준비60분·실행30분·사후30분 및600/960/120/120초 배치를 자동 승인으로 취급하지 않는다. 새 계획 승인 뒤에만 실제 홈 로그인·광고2개·자동 전환·후보 bundle 결속과 실행 진입 조건을 점검한다. 조건 미충족은 호출0·NOT_STARTED로 종료하고 자동 재시도하지 않는다. 유효 OMC 단일 사례 확인 뒤 동등 경쟁 비교를 결정한다.
+- 배포: 새 감독e4557dd와 검수 실행기f7566cc2는 로컬 main 커밋 완료·미릴리스·일반 사용처 미설치다. 고정 core637a965와 별도 operator 도구를 구분한다. 정상11개 사용처의 e618fca/0.6.1 설치·엄격 감사는 당시 결과이며 이번에 재감사하지 않았다. push·태그·릴리스·재설치 없음.
+- 관찰: v3 DISABLED · OBSERVATION_INVALID / pending_completion_invalid. 자동 재등록·재개 없음.
+- 근거: 추적 문서 docs/comparison-dashboard/evidence/ad-native-supervisor-v1/README.md; 로컬 .omc/state/ad-supervisor-path-fix/REPORT.md, .omc/state/ad-supervisor-path-fix/final.txt, .omc/state/ad-supervisor-path-fix/complete-task.txt, .omc/state/ad-supervisor-review-3/raw-review.md, .omc/state/ad-supervisor-review-3/independent-tests.txt, .omc/state/ad-supervisor-review-3/approval-receipt.json, .omc/state/ad-supervisor-review-3/commit-receipt.json, .omc/ad-single-637a965-f7566cc2-20261023T013221Z/REPORT.md, .omc/state/supervision-readiness-20261023T014707Z/REPORT.md; 로컬 자료는 다른 checkout에 자동 제공되지 않는다.
+
+## 이전 이력 · controlled query 호환성 보완 커밋 · 2026-10-23
 
 - 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
 - 현재 판정: controlled query 호환성3개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD
