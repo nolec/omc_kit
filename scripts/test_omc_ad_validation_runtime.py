@@ -1,4 +1,5 @@
 """Portable runtime public surfaces; never invokes a model or logs in."""
+import ast
 import contextlib
 import hashlib
 import io
@@ -10,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tarfile
 from types import SimpleNamespace
 import urllib.error
 import urllib.request
@@ -32,7 +34,7 @@ real_surface = pytest.mark.skipif(not _REAL_REQUESTED,
     reason='external Ad integration not requested; not evidence of recovery completion')
 
 
-@pytest.mark.parametrize('changed',['query','source'])
+@pytest.mark.parametrize('changed',['query','controlled-query','source'])
 def test_restore_uses_validated_bytes_even_if_input_changes(config,tmp_path,monkeypatch,changed):
     import omc_ad_validation_runtime as runtime
     path,cfg,candidate=config
@@ -45,10 +47,11 @@ def test_restore_uses_validated_bytes_even_if_input_changes(config,tmp_path,monk
     archive.parent.mkdir(parents=True,exist_ok=True);archive.write_text(json.dumps(manifest))
     monkeypatch.setattr(runtime,'ROOT',kit)
     monkeypatch.setattr(runtime,'MANIFEST',archive)
-    original_query=Path(cfg['queries']['home']['path']).read_bytes()
+    query_name='controlled' if changed=='controlled-query' else 'home'
+    original_query=Path(cfg['queries'][query_name]['path']).read_bytes()
     original_home=(kit/'docs/comparison-dashboard/evidence/ad-validation-inputs-v1/Home.tsx.fixture').read_bytes()
     probes=0
-    target=Path(cfg['queries']['home']['path']) if changed=='query' else kit/'docs/comparison-dashboard/evidence/ad-validation-inputs-v1/Home.tsx.fixture'
+    target=Path(cfg['queries'][query_name]['path']) if changed in {'query','controlled-query'} else kit/'docs/comparison-dashboard/evidence/ad-validation-inputs-v1/Home.tsx.fixture'
     class Probe:
         def __enter__(self):return self
         def __exit__(self,*args):pass
@@ -60,8 +63,8 @@ def test_restore_uses_validated_bytes_even_if_input_changes(config,tmp_path,monk
     result=runtime.restore(path)
     assert probes==2 and b'changed after validation' in target.read_bytes()
     doc=json.loads(Path(result['runtime']).read_text())
-    assert Path(doc['queries']['home']['path']).read_bytes()==original_query
-    assert doc['queries']['home']['sha256']==manifest['queries']['home']
+    assert Path(doc['queries'][query_name]['path']).read_bytes()==original_query
+    assert doc['queries'][query_name]['sha256']==manifest['queries'][query_name]
     assert (candidate/HOME).read_bytes()==original_home
 
 
@@ -119,13 +122,15 @@ def make_config(tmp_path,store,module,baseline,ports):
         dest=candidate/name;dest.parent.mkdir(parents=True,exist_ok=True)
         dest.write_bytes(subprocess.check_output(['git','-C',str(store),'show',f'{baseline}:{name}']))
     (candidate/'node_modules').symlink_to((store/'node_modules').resolve(),target_is_directory=True)
-    from omc_workflow_preflight import BROWSER_QUERY
-    query=tmp_path/'home-query.js';query.write_text(BROWSER_QUERY)
+    queries={}
+    for name in ['home','controlled']:
+        query=tmp_path/(name+'-query.js');query.write_bytes(frozen_query(name).encode('utf8'))
+        queries[name]={'path':str(query),'sha256':sha(query)}
     value={'schema_version':'omc-ad-runtime-config/v1','run_root':str(candidate.parent),
         'candidate':str(candidate),'baseline_repo':str(store),'baseline_commit':baseline,
         'core_commit':CORE,'port':ports[0],'control_port':ports[1],'headless':True,
         'playwright_module':str(module),'playwright_package_sha256':sha(module/'package.json'),
-        'queries':{'home':{'path':str(query),'sha256':sha(query)}}}
+        'queries':queries}
     path=tmp_path/'config.json';path.write_text(json.dumps(value))
     return path,value,candidate
 
@@ -319,9 +324,10 @@ def test_real_endpoint_navigation_snapshot_query_and_errors(real_config,tmp_path
 
 
 @real_surface
+@pytest.mark.parametrize('query_name',['home','controlled'])
 @pytest.mark.parametrize('query_selector',['id','frozen-text'])
 @pytest.mark.parametrize('replace_at',[1,2])
-def test_browser_evaluates_only_the_validated_query_buffer(real_config,tmp_path,query_selector,replace_at):
+def test_browser_evaluates_only_the_validated_query_buffer(real_config,tmp_path,query_name,query_selector,replace_at):
     """Replace the owned file at a deterministic real read boundary, not the driver."""
     from omc_workflow_preflight import BROWSER_QUERY
     from omc_home_observation import sample_assessment
@@ -329,15 +335,17 @@ def test_browser_evaluates_only_the_validated_query_buffer(real_config,tmp_path,
     (surface/'index.html').write_text('''<body><div data-testid="ad-card-large"><div data-testid="ad-track-card-large"><img><img></div></div>
 <script>document.querySelectorAll('img').forEach(i=>i.src='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'));
 let n=0;setInterval(()=>{document.querySelector('[data-testid=ad-track-card-large]').style.transform='translateX('+((++n%2)*-100)+'px)'},900);</script>''')
-    candidate=real_config[2];query=candidate.parent/'queries/home.js'
+    if query_name=='controlled':
+        controlled_surface(surface,'normal')
+    candidate=real_config[2];query=candidate.parent/'queries'/(query_name+'.js')
     armed=tmp_path/'armed';replaced=tmp_path/'replaced.json';preload=tmp_path/'concurrent-query-replacement.cjs'
     payload='(()=>{document.body.textContent="UNVALIDATED_QUERY_EXECUTED";return {unvalidated_query_executed:true}})()'
     preload.write_text("const fs=require('fs');const read=fs.readFileSync;let reads=0;fs.readFileSync=function(file,...args){const data=read.call(this,file,...args);if(String(file)==="+json.dumps(str(query))+"&&fs.existsSync("+json.dumps(str(armed))+")){if(++reads==="+str(replace_at)+"){fs.writeFileSync(file,"+json.dumps(payload)+");fs.writeFileSync("+json.dumps(str(replaced))+",JSON.stringify({reads}));}}return data;};")
     with browser(real_config,surface,preload=preload):
-        assert command(candidate,'goto','/index.html').returncode==0
-        pinned=json.loads((candidate.parent/'runtime.json').read_text())['queries']['home']['sha256']
+        assert command(candidate,'goto','/omc-ad-validation/index.html' if query_name=='controlled' else '/index.html').returncode==0
+        pinned=json.loads((candidate.parent/'runtime.json').read_text())['queries'][query_name]['sha256']
         armed.write_text('replace after the selected query read returns its old bytes')
-        result=command(candidate,'evaluate','home' if query_selector=='id' else BROWSER_QUERY)
+        result=command(candidate,'evaluate',query_name if query_selector=='id' else frozen_query(query_name))
         assert json.loads(replaced.read_text())['reads']==replace_at
         assert sha(query)!=pinned  # The replacement really occurred in both branches.
         if replace_at==1:
@@ -346,7 +354,11 @@ let n=0;setInterval(()=>{document.querySelector('[data-testid=ad-track-card-larg
             assert result.returncode==0,result.stdout+result.stderr
             observed=json.loads(result.stdout)
             assert observed.get('unvalidated_query_executed') is not True
-            assert sample_assessment(observed)=={'status':'passed','reason':None}
+            if query_name=='home':
+                assert sample_assessment(observed)=={'status':'passed','reason':None}
+            else:
+                assert len(observed['variants'])==6 and observed['transitioned'] is True
+                assert observed['arrows']==0 and all(r['images']==2 for r in observed['variants'])
         (tmp_path/'query-execution-result.json').write_text(json.dumps({
             'replace_at':replace_at,'query_selector':query_selector,'query_expected_sha256':pinned,
             'replaced_query_sha256':sha(query),'exit_code':result.returncode,
@@ -467,3 +479,162 @@ def test_restored_builders_use_real_baseline_ad(real_config,place):
             report=json.loads((output/'report.json').read_text())
             assert len(report['variants'])==6,proc.stdout+proc.stderr
             assert proc.returncode==1 and report['status']=='failed',report
+
+
+QUERY_PINS = {
+    'home': '6b6c3ab4e82beefd0c1b48f49087d6ded68f24e88dfd0e4c4e76ec9b25ea03da',
+    'controlled': '78dd0132daeeaa51302f701e87801c84dabfee6df813d5b44dd79d5774fd5d09',
+}
+
+
+def frozen_query(name):
+    file,symbol = {'home':('omc_workflow_preflight.py','BROWSER_QUERY'),
+                   'controlled':('omc_validation_command.py','CONTROLLED_QUERY')}[name]
+    raw=subprocess.check_output(['git','-C',str(ROOT),'show',CORE+':scripts/'+file])
+    tree=ast.parse(raw)
+    node=next(n for n in tree.body if isinstance(n,ast.Assign) and any(
+        isinstance(t,ast.Name) and t.id==symbol for t in n.targets))
+    value=ast.literal_eval(node.value)
+    assert hashlib.sha256(value.encode('utf8')).hexdigest()==QUERY_PINS[name]
+    return value
+
+
+def add_controlled(config):
+    path,cfg,candidate=config
+    query=path.parent/'controlled-query.js';query.write_bytes(frozen_query('controlled').encode('utf8'))
+    cfg['queries']['controlled']={'path':str(query),'sha256':sha(query)}
+    path.write_text(json.dumps(cfg))
+    return config
+
+
+def test_frozen_two_query_allowlist_restores_original_bytes(config):
+    path,cfg,candidate=add_controlled(config)
+    manifest=json.loads((ROOT/'docs/comparison-dashboard/evidence/ad-validation-runtime-v1/manifest.json').read_text())
+    assert manifest['queries']==QUERY_PINS
+    result=invoke('restore','--config',path)
+    assert result.returncode==0,result.stdout+result.stderr
+    runtime=json.loads((candidate.parent/'runtime.json').read_text())
+    assert set(runtime['queries'])==set(QUERY_PINS)
+    for name,pin in QUERY_PINS.items():
+        assert Path(runtime['queries'][name]['path']).read_bytes()==frozen_query(name).encode('utf8')
+        assert runtime['queries'][name]['sha256']==pin
+
+
+@pytest.mark.parametrize('defect',['missing-controlled','extra-query','wrong-pin','changed-bytes'])
+def test_two_query_allowlist_rejects_missing_extra_or_changed(config,defect):
+    path,cfg,candidate=add_controlled(config)
+    if defect=='missing-controlled':del cfg['queries']['controlled']
+    elif defect=='extra-query':cfg['queries']['arbitrary']=dict(cfg['queries']['controlled'])
+    elif defect=='wrong-pin':cfg['queries']['controlled']['sha256']='0'*64
+    else:Path(cfg['queries']['controlled']['path']).write_text('document.body.remove()')
+    path.write_text(json.dumps(cfg))
+    result=invoke('restore','--config',path)
+    assert result.returncode==1,result.stdout+result.stderr
+    assert not (candidate.parent/'runtime.json').exists()
+    assert not (candidate.parent/'browser.cjs').exists()
+
+
+def controlled_surface(directory,scenario):
+    page=directory/'omc-ad-validation';page.mkdir(parents=True)
+    # Test-owned observable surfaces, not production Ad or a saved oracle response.
+    js="""const scenario=SCENARIO;
+const variants=['card-large','card-medium','card-small','banner-small','banner-large','banner-landing'];
+for(const v of variants){const e=document.createElement('div');e.dataset.testid='ad-'+v;
+e.style.border='1px solid rgba(0,0,0,.1)';e.style.boxShadow='0px 1px 2px 0px rgba(0,0,0,.05)';
+const track=document.createElement('div');track.dataset.testid='ad-track-'+v;
+for(let i=0;i<2;i++){const img=document.createElement('img');if(!(scenario==='missing-image'&&v==='card-large'&&i===1))
+img.src='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');track.append(img);}
+e.append(track);document.body.append(e);}
+if(scenario==='border')document.querySelector('[data-testid="ad-card-large"]').style.border='3px solid red';
+if(scenario==='arrows'){const a=document.createElement('button');a.setAttribute('aria-label','다음 광고');document.body.append(a);}
+let n=0;setInterval(()=>{if(scenario==='stationary')return;document.querySelectorAll('[data-testid^="ad-track"]').forEach(t=>t.style.transform='translateX('+((++n)*-10)+'px)');},800);
+""".replace('SCENARIO',json.dumps(scenario))
+    (page/'bundle.js').write_text(js)
+    (page/'index.html').write_text('<meta charset="utf-8"><body><script src="bundle.js"></script>')
+    return page
+
+
+@pytest.fixture(scope='session')
+def fixed_core(tmp_path_factory):
+    core=tmp_path_factory.mktemp('controlled-core')
+    archive=subprocess.check_output(['git','-C',str(ROOT),'archive',CORE])
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        for member in tar.getmembers():
+            name=Path(member.name)
+            assert not name.is_absolute() and '..' not in name.parts
+            assert member.isfile() or member.isdir(), 'fixed core archive must not contain links'
+            if member.isfile():
+                dest=core/name;dest.parent.mkdir(parents=True,exist_ok=True)
+                dest.write_bytes(tar.extractfile(member).read())
+                dest.chmod(member.mode)
+    expected=subprocess.check_output(['git','-C',str(ROOT),'show',CORE+':scripts/omc_validation_command.py'])
+    assert (core/'scripts/omc_validation_command.py').read_bytes()==expected
+    return core
+
+
+def controlled_cli(core,candidate,*args):
+    result=subprocess.run([sys.executable,str(core/'scripts/omc_validation_command.py'),*args,
+        '--target',str(candidate)],capture_output=True,text=True,timeout=40,
+        env={**os.environ,'PYTHONPATH':str(core/'scripts'),'PYTHONDONTWRITEBYTECODE':'1'})
+    return result
+
+
+def freeze_controlled_policy(core,cfg,candidate):
+    subprocess.run(['git','-c','init.templateDir=','init','-q',str(candidate)],check=True)
+    (candidate/'.gitignore').write_text('.omc/\nnode_modules\n__pycache__/\napps/store-manager/public/omc-ad-*\n')
+    subprocess.run(['git','-C',str(candidate),'add','.'],check=True)
+    local=candidate/'.omc/controlled-test';local.mkdir(parents=True)
+    baseline=local/'baseline.json';baseline.write_text('{"numFailedTests":0,"testResults":[]}')
+    deps=Path(cfg['baseline_repo'])/'node_modules'
+    paths={'node':Path(shutil.which('node')).resolve(),'python':Path(sys.executable).resolve(),
+        'jest':(deps/'jest/bin/jest.js').resolve(),'eslint':(deps/'eslint/bin/eslint.js').resolve(),
+        'baseline_tests':baseline,'runner':core/'scripts/omc_validation_command.py',
+        'visual_checker':core/'scripts/omc_visual_check.py',
+        'controlled_builder':candidate.parent/'build-controlled.cjs',
+        'pixel_builder':candidate/'.omc/visual-input/build-pixels.cjs'}
+    assert all(p.is_file() for p in paths.values()),paths
+    proposal={'schema_version':'omc-validation-policy/v1','contract_id':'advertising-comparison/v2',
+        'run_id':'controlled-surface','arm':'omc-kit','target':str(candidate),'timeout_sec':30,
+        'tools':{name:{'path':str(path),'sha256':sha(path)} for name,path in paths.items()},
+        'browser':{'control_url':f"http://127.0.0.1:{cfg['control_port']}/command",
+            'origin':f"http://localhost:{cfg['port']}",'home_path':'/sixshoptest01','min_images':2}}
+    path=local/'proposal.json';path.write_text(json.dumps(proposal))
+    result=controlled_cli(core,candidate,'freeze','--file',str(path),'--sha256',sha(path))
+    assert result.returncode==0,result.stdout+result.stderr
+    return candidate/'.omc/validation-commands/policy.json'
+
+
+@real_surface
+@pytest.mark.parametrize('scenario,expected,code',[
+    ('normal','passed',0),('border','failed',1),('arrows','failed',1),
+    ('missing-image','unknown',2),('stationary','unknown',2)])
+def test_fixed_core_controlled_public_cli_observes_real_surface(real_config,tmp_path,fixed_core,scenario,expected,code):
+    surface=tmp_path/'controlled';page=controlled_surface(surface,scenario)
+    with browser(real_config,surface) as (cfg,candidate):
+        policy=freeze_controlled_policy(fixed_core,cfg,candidate)
+        result=controlled_cli(fixed_core,candidate,'run','--profile','controlled')
+        (candidate.parent/'controlled-native-result.json').write_text(json.dumps({
+            'scenario':scenario,'core_commit':CORE,'policy_sha256':sha(policy),
+            'query_sha256':QUERY_PINS['controlled'],'exit_code':result.returncode,
+            'stdout':result.stdout,'stderr':result.stderr},ensure_ascii=False,indent=2))
+        assert result.returncode==code,result.stdout+result.stderr
+        value=json.loads(result.stdout)
+        assert value['status']==expected,value
+        ref=value['receipt'];receipt_file=candidate/ref['path'];assert sha(receipt_file)==ref['sha256']
+        receipt=json.loads(receipt_file.read_text())
+        assert receipt['profile']=='controlled' and receipt['policy_sha256']==sha(policy)
+        assert receipt['before']==receipt['after']
+        assert receipt['judgment']==({'status':'unknown','reason':'controlled_surface_not_observed'}
+            if expected=='unknown' else {'status':expected}),receipt
+        obs_ref=receipt['artifacts']['observation'];obs_file=candidate/obs_ref['path']
+        assert sha(obs_file)==obs_ref['sha256']
+        obs=json.loads(obs_file.read_text());assert obs['url']==f"http://localhost:{cfg['port']}/omc-ad-validation/index.html"
+        assert len(obs['variants'])==6 and len({x['variant'] for x in obs['variants']})==6
+        assert obs['transitioned']==(scenario!='stationary')
+        assert obs['arrows']==(1 if scenario=='arrows' else 0)
+        assert all(r['images']==(1 if scenario=='missing-image' and r['variant']=='card-large' else 2) for r in obs['variants'])
+        screen=receipt['artifacts']['screen'];assert sha(candidate/screen['path'])==screen['sha256']
+        snap=json.loads(command(candidate,'snapshot').stdout)
+        assert snap['bundle_hashes'][f"http://localhost:{cfg['port']}/omc-ad-validation/bundle.js"]==sha(page/'bundle.js')
+        assert snap['url']==obs['url'] and snap['candidate']==str(candidate)
+        (candidate.parent/'controlled-final-snapshot.json').write_text(json.dumps(snap,ensure_ascii=False))

@@ -72,7 +72,8 @@
     }
   },
   "queries": {
-    "home": "6b6c3ab4e82beefd0c1b48f49087d6ded68f24e88dfd0e4c4e76ec9b25ea03da"
+    "home": "6b6c3ab4e82beefd0c1b48f49087d6ded68f24e88dfd0e4c4e76ec9b25ea03da",
+    "controlled": "78dd0132daeeaa51302f701e87801c84dabfee6df813d5b44dd79d5774fd5d09"
   },
   "acceptance_matrix": {
     "version": "runtime-surface-acceptance/v2",

@@ -8,6 +8,22 @@
 
 새 run은 **이미 준비한 새 baseline 후보의 바로 위 폴더**여야 하며 후보 외 기존 파일이 없어야 한다. baseline 후보의 Ad·foundation·Home 및 JSX 설정(`tsconfig.base.json`, `libs/sellerhub-store/tsconfig.json`) 바이트를 원본 Git 기준과 대조한다. Git 후보는 baseline HEAD와 clean 상태가 필요하고, 최소 추출 후보는 검증한 파일과 명시적 node_modules 의존성 링크만 허용한다. Home의 고정 fixture 복사만 baseline 바이트 교체를 허용한다. 사용 중인 원본 저장소·기존 runtime·추가 작업·폴더 링크·덮어쓰기는 거부한다.
 
+## 고정 query 호환성
+
+허용 목록은 `home`과 `controlled` 두 개다. 누락·추가 query나 해시 불일치는 복원 전에 거부한다. 복원된 브라우저는 query ID 또는 고정 원문의 해시가 일치하는 호출만 허용한다. `637a965`의 실제 `run --profile controlled`는 CONTROLLED_QUERY 원문을 전송하며, 새 wrapper ID 호출만 검증해서 이 경로를 대신하지 않는다. 각각 검증한 동일 바이트로 복원하고 최종 브라우저 소비 지점도 같은 버퍼를 해시 검증·실행한다. 입력 경로를 재독해 바뀐 파일을 실행하거나 허용 해시를 재계산하지 않는다.
+
+통합 회귀는 고정 core의 공개 `freeze`로 테스트 전용 정책을 등록한 뒤 실제 `run --target <owned-candidate> --profile controlled`를 subprocess로 호출한다. 이 명령과 `_browser`·`_judge`·HTTP 반환은 대체하지 않는다. 테스트 소유 정적 화면을 복원 runtime의 실제 HTTP/Chromium에서 읽어 observation·screenshot·policy/candidate/receipt pin과 제공 bundle을 대조한다. Jest·lint 등 실행하지 않은 프로필의 도구 pin은 정책 형식에 필요할 뿐 해당 검사의 실행 증거가 아니다.
+
+| 통제 화면 | 고정 core status | CLI exit |
+| --- | --- | --- |
+| S1: 6종·각 이미지2개·전환·화살표0·정상 border/shadow | passed | 0 |
+| S2: S1에서 border만 오류 | failed | 1 |
+| S3: S1에서 화살표만 추가 | failed | 1 |
+| S4: S1에서 이미지1개 미로드 | unknown / controlled_surface_not_observed | 2 |
+| S5: S1에서 전환만 정지 | unknown / controlled_surface_not_observed | 2 |
+
+두 query 각각 ID/고정 원문과 읽기 교체 시점 두 개를 조합해 회귀한다. 검사 전 교체는 거부하고, 최종 읽기 뒤 교체는 검증한 기존 버퍼만 실행해야 한다. query 교체가 실제 발생했는지 파일 해시·시점 기록도 남긴다. 위 HTML은 테스트 fixture이며 실제 baseline Ad 빌드·픽셀 matrix, 로그인 실제 홈, 실제 Claude 업무 성공과 구분한다.
+
 ## 새 run 준비
 
 개인 경로를 source에 넣지 말고 다음 JSON을 **실행별 외부 설정 파일**로 작성한다. 모든 경로는 절대 경로다. 두 포트는 서로 다르고 사용 중이지 않아야 한다.
@@ -26,12 +42,13 @@
   "playwright_module": "/absolute/node_modules/playwright",
   "playwright_package_sha256": "SHA256_OF_PACKAGE_JSON",
   "queries": {
-    "home": {"path": "/absolute/home-query.js", "sha256": "SHA256_OF_QUERY"}
+    "home": {"path": "/absolute/home-query.js", "sha256": "6b6c3ab4e82beefd0c1b48f49087d6ded68f24e88dfd0e4c4e76ec9b25ea03da"},
+    "controlled": {"path": "/absolute/controlled-query.js", "sha256": "78dd0132daeeaa51302f701e87801c84dabfee6df813d5b44dd79d5774fd5d09"}
   }
 }
 ```
 
-home-query.js는 고정 core의 `omc_workflow_preflight.BROWSER_QUERY` 문자열을 UTF-8로 그대로 저장한다. manifest의 query SHA와 다르면 거부한다. Playwright package 해시는 의존성 식별이며 설치 전체의 무결성 증명은 아니다. Node·Playwright·Chromium 및 storefront 빌드 의존성은 별도 제공한다.
+home-query.js는 고정 core의 `omc_workflow_preflight.BROWSER_QUERY`, controlled-query.js는 같은 core의 `omc_validation_command.CONTROLLED_QUERY` 문자열을 UTF-8 바이트 그대로 저장한다. 최신 main을 대신 가져오지 않는다. manifest의 query SHA와 다르면 거부한다. Playwright package 해시는 의존성 식별이며 설치 전체의 무결성 증명은 아니다. Node·Playwright·Chromium 및 storefront 빌드 의존성은 별도 제공한다.
 
 저장소 루트에서:
 
@@ -41,7 +58,7 @@ python3 scripts/omc_ad_validation_runtime.py restore --config /absolute/config.j
 
 생성되는 파일:
 
-- `<run>/runtime.json`, `restore-receipt.json`, `browser.cjs`, `queries/home.js`
+- `<run>/runtime.json`, `restore-receipt.json`, `browser.cjs`, `queries/home.js`, `queries/controlled.js`
 - `<run>/build-controlled.cjs`, `serve.cjs`
 - `<candidate>/.omc/visual-input/build-pixels.cjs`
 - `<candidate>/libs/store-manager/components/src/lib/home/Home.tsx`
