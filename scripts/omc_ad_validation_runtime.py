@@ -15,7 +15,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT/'docs/comparison-dashboard/evidence/ad-validation-runtime-v1/manifest.json'
 BASELINE = '34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc'
-CORE = '637a9653759cfca9e070450139dfa56cdd67c5d1'
+CORE = '99773380d11a1e71ea49f2c80318227756d8d56e'
 HOME = 'libs/store-manager/components/src/lib/home/Home.tsx'
 AD = 'libs/sellerhub-store/src/lib/components/Ad'
 
@@ -90,6 +90,8 @@ def restore(config):
         raise ValueError('fresh_run_required')
     manifest_raw = MANIFEST.read_bytes()
     manifest = json.loads(manifest_raw)
+    if manifest.get('core_commit') != CORE:
+        raise ValueError('manifest_core_mismatch')
     manifest_pin = hashlib.sha256(manifest_raw).hexdigest()
     sources = []
     for name, entry in manifest['sources'].items():

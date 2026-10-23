@@ -1,6 +1,6 @@
 # 광고 검수 실행기 복원 v1
 
-삭제된 실행 폴더를 source로 사용하지 않고, 이 묶음의 해시 고정 입력에서 새 검수 run을 만든다. OMC core는 `637a9653759cfca9e070450139dfa56cdd67c5d1`, 업무 기준은 `34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc`다. 이 실행기는 별도 operator runtime이며 원본 OMC의 모델 검증 성공이나 실제 홈 준비를 증명하지 않는다.
+삭제된 실행 폴더를 source로 사용하지 않고, 이 묶음의 해시 고정 입력에서 새 검수 run을 만든다. OMC core는 `99773380d11a1e71ea49f2c80318227756d8d56e`, 업무 기준은 `34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc`다. 이 실행기는 별도 operator runtime이며 원본 OMC의 모델 검증 성공이나 실제 홈 준비를 증명하지 않는다.
 
 ## 입력과 보존
 
@@ -35,7 +35,7 @@
   "candidate": "/absolute/new-run/fresh-candidate",
   "baseline_repo": "/absolute/local-storefront-with-baseline-git",
   "baseline_commit": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
-  "core_commit": "637a9653759cfca9e070450139dfa56cdd67c5d1",
+  "core_commit": "99773380d11a1e71ea49f2c80318227756d8d56e",
   "port": 3050,
   "control_port": 3150,
   "headless": false,
@@ -83,7 +83,7 @@ python3 scripts/omc_ad_validation_runtime.py command --runtime /absolute/new-run
 python3 scripts/omc_ad_validation_runtime.py command --runtime /absolute/new-run/runtime.json --op evaluate --args-json '["home"]'
 ```
 
-명령은 localhost의 해당 origin으로 제한한다. evaluate는 고정 query ID 또는 그와 바이트·해시가 일치하는 원문만 허용한다. 후자는 기존 637a965 준비 검사와의 호환 경로이며 임의 JavaScript·click은 허용하지 않는다. 최종 실행에서도 query 파일을 한 번 읽고 그 버퍼의 해시를 확인한 뒤 같은 버퍼를 평가한다. 검사 후 파일이 교체돼도 새 경로 내용을 재독해 실행하지 않는다. 예전 `node ../browser.cjs snapshot` 호출은 위 Python command 형식으로 대체한다. snapshot은 URL·후보·스크린샷 해시·관측 JS 응답 해시를 기록한다. 서버/후보 결속은 별도 요구사항의 bundle 해시와 대조해야 하며 URL만으로 확정하지 않는다. 프로세스는 호출자가 소유·정리하고 다른 서버를 종료하지 않는다.
+명령은 localhost의 해당 origin으로 제한한다. evaluate는 고정 query ID 또는 그와 바이트·해시가 일치하는 원문만 허용한다. 후자는 고정 99773380 준비 검사의 원문 호출과 호환되는 경로이며 임의 JavaScript·click은 허용하지 않는다. 최종 실행에서도 query 파일을 한 번 읽고 그 버퍼의 해시를 확인한 뒤 같은 버퍼를 평가한다. 검사 후 파일이 교체돼도 새 경로 내용을 재독해 실행하지 않는다. 예전 `node ../browser.cjs snapshot` 호출은 위 Python command 형식으로 대체한다. snapshot은 URL·후보·스크린샷 해시·관측 JS 응답 해시를 기록한다. 서버/후보 결속은 별도 요구사항의 bundle 해시와 대조해야 하며 URL만으로 확정하지 않는다. 프로세스는 호출자가 소유·정리하고 다른 서버를 종료하지 않는다.
 
 ## 검증 및 종료 조건
 
@@ -102,3 +102,30 @@ python3 -m pytest scripts/test_omc_ad_validation_runtime.py scripts/test_omc_ad_
 새 위치 A/B에서 생성 CLI → config → localhost HTTP → Chromium → 고정 판정기를 검사한다. matrix/v2는 각 위치에서 V1~V6의 72셀과 B1/B2 결속을 대조한다. V6의 기존 unaligned fixture는 대상 자체 transform 때문에 `unknown/unsupported_ancestor_transform`, CLI 2, aggregate `visual_surface_unknown`을 기대한다. 이것을 `unaligned_geometry` 분기 검사로 세지 않는다. 정상 12셀·알려진 결함·불확실성을 정확히 구분한 회귀 통과와 실제 업무 통과는 별개다.
 
 복원 종료는 필수 matrix 일치·누락/생략 0·경로/원본 보존·빌드/홈 표본 회귀·리뷰 및 provider_calls=0이다. 실제 Claude 재개는 이 runtime과 matrix 근거의 동일 해시, 새 실행 계획 검토·명시 승인·실제 홈 로그인/광고 2개/자동 전환/후보 bundle 결속/예산 준비가 필요하다. 새 runtime/fixture/oracle 변경 시 영향 검증과 리뷰를 다시 수행한다. 과거 NOT_STARTED·FAIL_TIMEOUT·HOLD는 변경하지 않는다.
+
+
+## 99773380 후보 호환성 · A단계
+
+현재 실행기는 단일 core `99773380d11a1e71ea49f2c80318227756d8d56e`만 지원한다.
+config의 core와 실행기 CORE를 먼저 대조하고, manifest.core_commit도 출력 쓰기 전에 대조한다.
+이전 core·임의 core는 `candidate_version_mismatch`, manifest core의 누락·불일치는
+`manifest_core_mismatch`로 종료1이며 기존 후보와 입력을 보존한다.
+과거 core637a965 재현은 당시 runtime 커밋 `f7566cc2`와 당시 설정을 함께 사용하며,
+새 실행기에 과거 core를 지정하거나 새 후보를 과거 버전으로 표시하지 않는다.
+
+복원 순서는 clean 업무 baseline → restore → 고정 core99773380 설치 → 설치 관리 소스의
+Git blob/해시 대조 → 서비스 준비다. restore는 clean baseline을 검사하므로 설치 순서를 뒤집지 않는다.
+복원 receipt의 config/runtime/manifest 해시와 runtime.json의 core를 함께 보존한다.
+home/controlled query 원문 해시, 입력 원문, acceptance_matrix와 픽셀·6표본 기준은 변경하지 않는다.
+
+검증은 공개 restore subprocess의 성공·거부·무쓰기, 고정 core99773380 archive의 공개 검증 명령,
+실제 로컬 HTTP/Chromium controlled/home·DPR 픽셀·baseline Ad 빌드 및 파일 교체 회귀를 포함한다.
+통제 화면의 정상은 passed, 테두리·화살표 결함은 failed, 이미지 미로드·전환 정지는 unknown이며
+각 실제 종료 상태도 따로 대조한다. 기존 baseline Ad 픽셀 결함을 성공으로 바꾸지 않는다.
+외부 통합을 요청하지 않은 기본 CI 검사와 명시적으로 수행한 통합 결과는 별도 보고한다.
+명시 통합의 환경 누락은 실패이며, 미요청 통합의 생략을 완료 근거에 합산하지 않는다.
+
+A단계는 실제 Claude·AWS 로그인·실제 홈 계정 로그인 없이 호환성을 검증한다.
+리뷰·별도 승인 커밋 후 새 runtime의 전체 커밋 SHA와 manifest/CLI/browser/query 해시를
+후행 계획에 고정하기 전까지 실제 Claude 재검증 B단계는 차단한다.
+A의 로컬 회귀·리뷰·커밋은 실제 업무 성공·릴리스·사용처 설치 또는 B 실행 승인이 아니다.

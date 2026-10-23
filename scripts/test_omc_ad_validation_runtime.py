@@ -21,7 +21,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT/'scripts/omc_ad_validation_runtime.py'
 BASE = '34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc'
-CORE = '637a9653759cfca9e070450139dfa56cdd67c5d1'
+CORE = '99773380d11a1e71ea49f2c80318227756d8d56e'
 HOME = 'libs/store-manager/components/src/lib/home/Home.tsx'
 AD = 'libs/sellerhub-store/src/lib/components/Ad'
 BASELINE_PATHS = [AD,'libs/sellerhub-store/src/lib/foundation',HOME,
@@ -168,6 +168,94 @@ def real_config(tmp_path):
     if missing:pytest.fail('explicit Ad integration requires: '+', '.join(missing),pytrace=False)
     return make_config(tmp_path,Path(os.environ['OMC_AD_RESTORE_STOREFRONT']),
         Path(os.environ['OMC_PREFLIGHT_PLAYWRIGHT_MODULE']),BASE,(port(),port()))
+
+
+CANDIDATE_CORE = '99773380d11a1e71ea49f2c80318227756d8d56e'
+PREVIOUS_CORE = '637a9653759cfca9e070450139dfa56cdd67c5d1'
+
+
+def test_restore_accepts_exact_99773380_candidate(config):
+    path,cfg,candidate=config
+    cfg['core_commit']=CANDIDATE_CORE
+    path.write_text(json.dumps(cfg))
+    result=invoke('restore','--config',path)
+    assert result.returncode==0,result.stdout+result.stderr
+    doc=json.loads((candidate.parent/'runtime.json').read_text())
+    receipt=json.loads((candidate.parent/'restore-receipt.json').read_text())
+    assert doc['core_commit']==CANDIDATE_CORE
+    assert receipt['config_sha256']==sha(path)
+    assert receipt['runtime_sha256']==sha(candidate.parent/'runtime.json')
+
+
+@pytest.mark.parametrize('defect',['previous-core','unknown-core','previous-manifest',
+                                 'unknown-manifest','missing-manifest-core'])
+def test_restore_core_contract_refuses_before_writing(config,tmp_path,monkeypatch,defect):
+    import omc_ad_validation_runtime as runtime
+    path,cfg,candidate=config
+    cfg['core_commit']=CANDIDATE_CORE
+    manifest=json.loads(runtime.MANIFEST.read_text())
+    manifest['core_commit']=CANDIDATE_CORE
+    if defect=='previous-core':cfg['core_commit']=PREVIOUS_CORE
+    elif defect=='unknown-core':cfg['core_commit']='0'*40
+    elif defect=='previous-manifest':manifest['core_commit']=PREVIOUS_CORE
+    elif defect=='unknown-manifest':manifest['core_commit']='0'*40
+    else:del manifest['core_commit']
+    archive=tmp_path/'core-contract-manifest.json';archive.write_text(json.dumps(manifest))
+    monkeypatch.setattr(runtime,'MANIFEST',archive)
+    path.write_text(json.dumps(cfg))
+    before={p.relative_to(candidate).as_posix():sha(p) for p in candidate.rglob('*') if p.is_file()}
+    result=invoke('restore','--config',path)
+    assert result.returncode==1,result.stdout+result.stderr
+    error=json.loads(result.stderr)['error']
+    assert error==('candidate_version_mismatch' if defect in {'previous-core','unknown-core'} else 'manifest_core_mismatch')
+    assert not (candidate.parent/'runtime.json').exists()
+    assert not (candidate.parent/'restore-receipt.json').exists()
+    assert not (candidate.parent/'browser.cjs').exists()
+    assert before=={p.relative_to(candidate).as_posix():sha(p) for p in candidate.rglob('*') if p.is_file()}
+
+
+@real_surface
+@pytest.mark.parametrize('defect',[None,'previous-core','unknown-core','previous-manifest',
+                                 'unknown-manifest','missing-manifest-core'])
+def test_real_public_restore_core_contract(real_config,tmp_path,defect):
+    path,cfg,candidate=real_config
+    kit=tmp_path/'public-cli-kit';kit.mkdir()
+    archive=ROOT/'docs/comparison-dashboard/evidence/ad-validation-runtime-v1/manifest.json'
+    manifest=json.loads(archive.read_text())
+    for name in [str(CLI.relative_to(ROOT)),*manifest['sources']]:
+        dest=kit/name;dest.parent.mkdir(parents=True,exist_ok=True)
+        dest.write_bytes((ROOT/name).read_bytes())
+    if defect=='previous-core':cfg['core_commit']=PREVIOUS_CORE
+    elif defect=='unknown-core':cfg['core_commit']='0'*40
+    elif defect=='previous-manifest':manifest['core_commit']=PREVIOUS_CORE
+    elif defect=='unknown-manifest':manifest['core_commit']='0'*40
+    elif defect=='missing-manifest-core':del manifest['core_commit']
+    doc=kit/archive.relative_to(ROOT);doc.parent.mkdir(parents=True,exist_ok=True)
+    doc.write_text(json.dumps(manifest))
+    path.write_text(json.dumps(cfg))
+    before={p.relative_to(candidate).as_posix():sha(p) for p in candidate.rglob('*') if p.is_file()}
+    result=subprocess.run([sys.executable,str(kit/CLI.relative_to(ROOT)),
+        'restore','--config',str(path)],capture_output=True,text=True,timeout=40)
+    if defect is None:
+        assert result.returncode==0,result.stdout+result.stderr
+        runtime=json.loads((candidate.parent/'runtime.json').read_text())
+        receipt=json.loads((candidate.parent/'restore-receipt.json').read_text())
+        assert runtime['core_commit']==CANDIDATE_CORE
+        assert receipt['config_sha256']==sha(path)
+        assert receipt['runtime_sha256']==sha(candidate.parent/'runtime.json')
+        assert receipt['manifest_sha256']==sha(doc)
+        saved=sha(candidate.parent/'runtime.json')
+        again=subprocess.run([sys.executable,str(kit/CLI.relative_to(ROOT)),
+            'restore','--config',str(path)],capture_output=True,text=True,timeout=40)
+        assert again.returncode==1 and sha(candidate.parent/'runtime.json')==saved
+    else:
+        assert result.returncode==1,result.stdout+result.stderr
+        assert json.loads(result.stderr)['error']==('candidate_version_mismatch'
+            if defect in {'previous-core','unknown-core'} else 'manifest_core_mismatch')
+        assert before=={p.relative_to(candidate).as_posix():sha(p) for p in candidate.rglob('*') if p.is_file()}
+        assert not (candidate.parent/'runtime.json').exists()
+        assert not (candidate.parent/'restore-receipt.json').exists()
+        assert not (candidate.parent/'browser.cjs').exists()
 
 
 def test_restore_cli_and_overwrite_refusal(config):

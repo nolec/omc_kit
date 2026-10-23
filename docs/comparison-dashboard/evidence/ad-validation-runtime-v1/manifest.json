@@ -1,6 +1,6 @@
 {
   "schema_version": "omc-ad-runtime-archive/v1",
-  "core_commit": "637a9653759cfca9e070450139dfa56cdd67c5d1",
+  "core_commit": "99773380d11a1e71ea49f2c80318227756d8d56e",
   "baseline_commit": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
   "sources": {
     "docs/comparison-dashboard/evidence/ad-validation-inputs-v1/Home.tsx.fixture": {
