@@ -1,6 +1,23 @@
 # OMC 비교 대시보드 · 최신 기준 2026-10-22
 
-## 현재 · 검수 실행기 복원·파일 교체 방어 커밋 · 2026-10-22
+## 현재 · controlled query 호환성 보완 커밋 · 2026-10-23
+
+- 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
+- 현재 판정: controlled query 호환성3개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD
+- 목표 대비 진행: 임시 경로와 파일 교체 방어를 복원한 뒤, 필수 controlled 검증이 home 전용 허용 목록 때문에 막히는 호환성 누락을 확인했다. 두 query 해시를 고정하고 실제 core 명령→HTTP→Chromium→화면·receipt 판정 경로를 보완해 f7566cc2에 커밋했다. 실제 Claude가 필수 검증을 수행하고 업무를 정상 완료하는지와 생산성·경쟁 우위는 아직 미입증이다.
+- 실제 재검증: 이번호환성 구현·리뷰·커밋 후 실제 Claude/provider 호출0회다. 기존637a965 준비 NOT_STARTED(임시 입력 소실,wrapper0회·예산소비0)와 c4864a3 실제1회·1800.17초·FAIL_TIMEOUT 및 비교 HOLD를 유지한다. 8e65e9f8 실행 계획은 controlled query 미허용으로 HOLD였으며 새 runtime으로 자동 재개하지 않는다. 실제 compact는 UNOBSERVED, 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증·업무 효과와 경쟁 우위 미입증이다.
+- 이번 개선: 허용 목록에 고정 core637a965의 CONTROLLED_QUERY 해시를 추가해 home·controlled 두 query만 복원한다. 실제 공개 freeze/run 명령으로 정상 passed·테두리/화살표 결함 failed·이미지 미로드/전환 정지 unknown을 확인한다. ID/고정 원문·두 읽기 시점의 파일 교체8개 회귀로 같은 버퍼 검증·실행과 변조 거부를 유지한다. 기존6개 홈 표본·픽셀 판정 기준은 바꾸지 않았다.
+- 코드·범위: 리뷰 승인된 manifest·테스트·README3개 파일만 main에 로컬 커밋f7566cc2. Python 복원 CLI·Node 브라우저·core는 변경하지 않았다. 이번 로드맵·대시보드4파일은 별도 미커밋.
+- 검증: 최종 관련 회귀3모듈158개 통과·생략0(226.60초): runtime·고정 입력·홈 관측, A/B각72셀/B1B2와 실제 baseline Ad 빌드 포함. 독립 리뷰13개 통과(통제 화면5개·파일 교체8개,48개 제외). 기본 환경 독립36개 통과·미요청 통합25개 생략은 실제 통합 완료 근거에서 제외한다. 독립 리뷰에서158개 전체를 다시 실행한 것은 아니며 리뷰 당시 실행 스냅샷과 해당3개 파일의 일치를 확인했다. 과거171개 및 중복 묶음과 합산하거나 개선율로 비교하지 않는다. 문법·TDD·완료 가드·커밋 훅 통과. 통제 fixture 검사는 실제 로그인 홈·전체8프로필·Claude 업무 완료 증거가 아니다.
+- 리뷰: 원본 스테이징과 동일한 격리3개 후보 전체 APPROVE·승인 receipt 기록. main 커밋3개 경로·Git 객체·권한 일치 확인. 원본 전체 작업트리의 ship 승인으로 확대하지 않는다.
+- 보존 경계: 원본 storefront의 외부 checkout/rebase로 HEAD·인덱스가 바뀌어 사용자 승인에 따라 읽기 전용 접근과 외부 변경 근거를 분리 보존했다. 원본 전체 동일성을 주장하지 않고 자동 복원하지 않았다. 증거용 소스 복사본은 표준 .omc/state 위치로 옮겨 해시를 재검증했으며 삭제·ignore 정책 변경은 없었다.
+- 다음 작업: 637a965 core + f7566cc2 검수 실행기의 실제 Claude 최대1회 계획 개정·재검토·승인
+- 다음: 호환성 보완 구현은 종료한다. 8e65e9f8에 고정됐던 실행 계획의 HOLD 이력은 보존하고, core637a965와 새 operator runtimef7566cc2·두 query·manifest 해시 및 검증 근거로 계획을 개정해 critique와 별도 실행 승인을 받는다. 준비60분·실행30분·사후30분과 수정600초/최종검증960초/기록120초/정상보고·종료120초 배치의 소요 근거를 재확인한다. 실제 홈 로그인·광고2개·자동 전환·후보 bundle 결속·필수8프로필 경로가 준비돼야 Claude 최대1회·자동 재시도0회에 진입한다. 준비 미충족은 호출0회로 종료하며 이전 승인·예외·예산은 승계하지 않는다. 최종 결과 선택·완료 기록·정상 종료를 확인한 유효 OMC 단일 사례 뒤 동등 경쟁 비교를 결정한다.
+- 배포: 검수 실행기f7566cc2는 로컬 main 커밋 완료·미릴리스·일반 사용처 미설치다. 검증 대상 core는637a965이며 runtime과 구분한다. 정상11개 사용처의 e618fca/0.6.1 설치·엄격 감사는 당시 결과이며 이번에 재감사하지 않았다. push·태그·릴리스·재설치 없음.
+- 관찰: v3 DISABLED · OBSERVATION_INVALID / pending_completion_invalid. 자동 재등록·재개 없음.
+- 근거: 추적 문서 docs/comparison-dashboard/evidence/ad-validation-runtime-v1/README.md 및 manifest.json; 로컬 .omc/controlled-query-compat-task/REPORT.md, .omc/controlled-query-compat-task/final-strict-revision-2.txt, .omc/controlled-query-compat-task/complete-task-final.txt, .omc/controlled-query-compat-task/preservation-final.json, .omc/controlled-query-compat-task/storefront-external-reflog.txt, .omc/state/controlled-query-review-20261023/raw-review.md, .omc/state/controlled-query-review-20261023/approval-receipt.json, .omc/state/controlled-query-review-20261023/independent-browser.txt, .omc/plans/claude-ad-rerun-637a965-runtime-8e65e9f8-critique.json; 로컬 자료는 다른 checkout에 자동 제공되지 않는다.
+
+## 이전 이력 · 검수 실행기 복원·파일 교체 방어 커밋 · 2026-10-22
 
 - 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
 - 현재 판정: 검수 실행기 복원5개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD
