@@ -1,6 +1,6 @@
 # 광고 검수 실행기 복원 v1
 
-삭제된 실행 폴더를 source로 사용하지 않고, 이 묶음의 해시 고정 입력에서 새 검수 run을 만든다. OMC core는 `99773380d11a1e71ea49f2c80318227756d8d56e`, 업무 기준은 `34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc`다. 이 실행기는 별도 operator runtime이며 원본 OMC의 모델 검증 성공이나 실제 홈 준비를 증명하지 않는다.
+삭제된 실행 폴더를 source로 사용하지 않고, 이 묶음의 해시 고정 입력에서 새 검수 run을 만든다. OMC core는 `996d80d539d7245443f3a539f1a9fa333b450770`, 업무 기준은 `34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc`다. 이 실행기는 별도 operator runtime이며 원본 OMC의 모델 검증 성공이나 실제 홈 준비를 증명하지 않는다.
 
 ## 입력과 보존
 
@@ -10,7 +10,7 @@
 
 ## 고정 query 호환성
 
-허용 목록은 `home`과 `controlled` 두 개다. 누락·추가 query나 해시 불일치는 복원 전에 거부한다. 복원된 브라우저는 query ID 또는 고정 원문의 해시가 일치하는 호출만 허용한다. `637a965`의 실제 `run --profile controlled`는 CONTROLLED_QUERY 원문을 전송하며, 새 wrapper ID 호출만 검증해서 이 경로를 대신하지 않는다. 각각 검증한 동일 바이트로 복원하고 최종 브라우저 소비 지점도 같은 버퍼를 해시 검증·실행한다. 입력 경로를 재독해 바뀐 파일을 실행하거나 허용 해시를 재계산하지 않는다.
+허용 목록은 `home`과 `controlled` 두 개다. 누락·추가 query나 해시 불일치는 복원 전에 거부한다. 복원된 브라우저는 query ID 또는 고정 원문의 해시가 일치하는 호출만 허용한다. `996d80d`의 실제 `run --profile controlled`는 CONTROLLED_QUERY 원문을 전송하며, 새 wrapper ID 호출만 검증해서 이 경로를 대신하지 않는다. 각각 검증한 동일 바이트로 복원하고 최종 브라우저 소비 지점도 같은 버퍼를 해시 검증·실행한다. 입력 경로를 재독해 바뀐 파일을 실행하거나 허용 해시를 재계산하지 않는다.
 
 통합 회귀는 고정 core의 공개 `freeze`로 테스트 전용 정책을 등록한 뒤 실제 `run --target <owned-candidate> --profile controlled`를 subprocess로 호출한다. 이 명령과 `_browser`·`_judge`·HTTP 반환은 대체하지 않는다. 테스트 소유 정적 화면을 복원 runtime의 실제 HTTP/Chromium에서 읽어 observation·screenshot·policy/candidate/receipt pin과 제공 bundle을 대조한다. Jest·lint 등 실행하지 않은 프로필의 도구 pin은 정책 형식에 필요할 뿐 해당 검사의 실행 증거가 아니다.
 
@@ -35,7 +35,7 @@
   "candidate": "/absolute/new-run/fresh-candidate",
   "baseline_repo": "/absolute/local-storefront-with-baseline-git",
   "baseline_commit": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
-  "core_commit": "99773380d11a1e71ea49f2c80318227756d8d56e",
+  "core_commit": "996d80d539d7245443f3a539f1a9fa333b450770",
   "port": 3050,
   "control_port": 3150,
   "headless": false,
@@ -83,7 +83,7 @@ python3 scripts/omc_ad_validation_runtime.py command --runtime /absolute/new-run
 python3 scripts/omc_ad_validation_runtime.py command --runtime /absolute/new-run/runtime.json --op evaluate --args-json '["home"]'
 ```
 
-명령은 localhost의 해당 origin으로 제한한다. evaluate는 고정 query ID 또는 그와 바이트·해시가 일치하는 원문만 허용한다. 후자는 고정 99773380 준비 검사의 원문 호출과 호환되는 경로이며 임의 JavaScript·click은 허용하지 않는다. 최종 실행에서도 query 파일을 한 번 읽고 그 버퍼의 해시를 확인한 뒤 같은 버퍼를 평가한다. 검사 후 파일이 교체돼도 새 경로 내용을 재독해 실행하지 않는다. 예전 `node ../browser.cjs snapshot` 호출은 위 Python command 형식으로 대체한다. snapshot은 URL·후보·스크린샷 해시·관측 JS 응답 해시를 기록한다. 서버/후보 결속은 별도 요구사항의 bundle 해시와 대조해야 하며 URL만으로 확정하지 않는다. 프로세스는 호출자가 소유·정리하고 다른 서버를 종료하지 않는다.
+명령은 localhost의 해당 origin으로 제한한다. evaluate는 고정 query ID 또는 그와 바이트·해시가 일치하는 원문만 허용한다. 후자는 고정 996d80d 준비 검사의 원문 호출과 호환되는 경로이며 임의 JavaScript·click은 허용하지 않는다. 최종 실행에서도 query 파일을 한 번 읽고 그 버퍼의 해시를 확인한 뒤 같은 버퍼를 평가한다. 검사 후 파일이 교체돼도 새 경로 내용을 재독해 실행하지 않는다. 예전 `node ../browser.cjs snapshot` 호출은 위 Python command 형식으로 대체한다. snapshot은 URL·후보·스크린샷 해시·관측 JS 응답 해시를 기록한다. 서버/후보 결속은 별도 요구사항의 bundle 해시와 대조해야 하며 URL만으로 확정하지 않는다. 프로세스는 호출자가 소유·정리하고 다른 서버를 종료하지 않는다.
 
 ## 검증 및 종료 조건
 
@@ -104,21 +104,21 @@ python3 -m pytest scripts/test_omc_ad_validation_runtime.py scripts/test_omc_ad_
 복원 종료는 필수 matrix 일치·누락/생략 0·경로/원본 보존·빌드/홈 표본 회귀·리뷰 및 provider_calls=0이다. 실제 Claude 재개는 이 runtime과 matrix 근거의 동일 해시, 새 실행 계획 검토·명시 승인·실제 홈 로그인/광고 2개/자동 전환/후보 bundle 결속/예산 준비가 필요하다. 새 runtime/fixture/oracle 변경 시 영향 검증과 리뷰를 다시 수행한다. 과거 NOT_STARTED·FAIL_TIMEOUT·HOLD는 변경하지 않는다.
 
 
-## 99773380 후보 호환성 · A단계
+## 996d80d 후보 호환성 · A단계
 
-현재 실행기는 단일 core `99773380d11a1e71ea49f2c80318227756d8d56e`만 지원한다.
+현재 실행기는 단일 core `996d80d539d7245443f3a539f1a9fa333b450770`만 지원한다.
 config의 core와 실행기 CORE를 먼저 대조하고, manifest.core_commit도 출력 쓰기 전에 대조한다.
-이전 core·임의 core는 `candidate_version_mismatch`, manifest core의 누락·불일치는
+이전 core99773380·637a965 및 임의 core는 `candidate_version_mismatch`, manifest core의 누락·불일치는
 `manifest_core_mismatch`로 종료1이며 기존 후보와 입력을 보존한다.
 과거 core637a965 재현은 당시 runtime 커밋 `f7566cc2`와 당시 설정을 함께 사용하며,
 새 실행기에 과거 core를 지정하거나 새 후보를 과거 버전으로 표시하지 않는다.
 
-복원 순서는 clean 업무 baseline → restore → 고정 core99773380 설치 → 설치 관리 소스의
+복원 순서는 clean 업무 baseline → restore → 고정 core996d80d 설치 → 설치 관리 소스의
 Git blob/해시 대조 → 서비스 준비다. restore는 clean baseline을 검사하므로 설치 순서를 뒤집지 않는다.
 복원 receipt의 config/runtime/manifest 해시와 runtime.json의 core를 함께 보존한다.
 home/controlled query 원문 해시, 입력 원문, acceptance_matrix와 픽셀·6표본 기준은 변경하지 않는다.
 
-검증은 공개 restore subprocess의 성공·거부·무쓰기, 고정 core99773380 archive의 공개 검증 명령,
+검증은 공개 restore subprocess의 성공·거부·무쓰기, 고정 core996d80d archive의 공개 검증 명령,
 실제 로컬 HTTP/Chromium controlled/home·DPR 픽셀·baseline Ad 빌드 및 파일 교체 회귀를 포함한다.
 통제 화면의 정상은 passed, 테두리·화살표 결함은 failed, 이미지 미로드·전환 정지는 unknown이며
 각 실제 종료 상태도 따로 대조한다. 기존 baseline Ad 픽셀 결함을 성공으로 바꾸지 않는다.
@@ -170,3 +170,19 @@ unknown으로 남기고 원문 보존·종료 확인 경로로 연결한다.
 이 보완과 로컬 합성 회귀는 지난 실제 홈의 지연 자원을 확정하거나 실제
 Claude 광고 사례의 성공을 입증하지 않는다. 새 실행 전에는 변경한 core와
 runtime의 버전·파일 해시를 별도 고정해야 한다.
+
+## A단계 공유 검증·감독 연결
+
+996d80d core의 공개 restore·고정 명령·HTTP·Chromium·영수증 경로를 검증한다.
+감독 제품 소스는 e4557dd로 보존하며, 테스트는 637a965와 996d80d를 각각 Git archive로
+복원해 선택된 소스·승인 target_version·실행 경로 해시를 대조한다. 두 core 모두
+정상 종료·내부 124·외부 시간 초과·최종 result 누락의 4개 공개 실행 사례를 유지한다.
+이 자식은 합성 프로세스이며 Claude나 내부 모델/API를 호출하지 않는다.
+
+개정 2의 A-FULL 명령은 runtime·supervisor·validation_command·home_observation
+4개 테스트 파일의 공유 전체 실행이다. A01~A05는 같은 최종 실행 ID·소스 snapshot·
+원문 로그·각 nodeid 결과를 참조하며 테스트 수를 중복 합산하지 않는다.
+모든 GREEN 뒤 최종 1회, 확인된 동일 5파일 보정 뒤에만 추가 1회로 제한한다.
+실패·시간 초과·생략·중단도 실행 횟수를 소비하고 첫 통과 후 확인용 재실행은 하지 않는다.
+대상별 RED/GREEN은 별도 기록하지만 모두 A의 3600초 안에서 수행한다.
+A 통과는 B 실행 승인이 아니며 실제 Claude 횟수·내부 API 수의 관측은 후행 B 계약을 따른다.

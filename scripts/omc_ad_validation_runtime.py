@@ -16,7 +16,7 @@ from omc_workflow_preflight import BROWSER_CONTRACT, browser_contract
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT/'docs/comparison-dashboard/evidence/ad-validation-runtime-v1/manifest.json'
 BASELINE = '34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc'
-CORE = '99773380d11a1e71ea49f2c80318227756d8d56e'
+CORE = '996d80d539d7245443f3a539f1a9fa333b450770'
 HOME = 'libs/store-manager/components/src/lib/home/Home.tsx'
 AD = 'libs/sellerhub-store/src/lib/components/Ad'
 

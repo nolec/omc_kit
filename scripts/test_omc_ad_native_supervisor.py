@@ -130,23 +130,29 @@ def test_path_miss_never_falls_back_to_candidate_file(tmp_path,local_file):
     assert not (tmp_path/'child.pid').exists() and not (tmp_path/'child.exit').exists()
 
 
+@pytest.fixture(scope='module', params=[CORE, '996d80d539d7245443f3a539f1a9fa333b450770'],
+                ids=['core637a965', 'core996d80d'])
+def core_commit(request):
+    return request.param
+
+
 @pytest.fixture(scope='module')
-def frozen_core(tmp_path_factory):
+def frozen_core(tmp_path_factory, core_commit):
     root = tmp_path_factory.mktemp('supervisor-core')
     archive = root/'core.tar'
     with archive.open('wb') as stream:
-        subprocess.run(['git', 'archive', CORE, 'scripts'], cwd=ROOT, stdout=stream, check=True)
+        subprocess.run(['git', 'archive', core_commit, 'scripts'], cwd=ROOT, stdout=stream, check=True)
     with tarfile.open(archive) as stream:
         for member in stream.getmembers():
             assert (member.name == 'scripts' or member.name.startswith('scripts/')) and '..' not in Path(member.name).parts
             assert member.isdir() or member.isfile()
         stream.extractall(root)
-    expected = subprocess.check_output(['git', 'show', CORE+':scripts/omc_home_observation.py'], cwd=ROOT)
+    expected = subprocess.check_output(['git', 'show', core_commit+':scripts/omc_home_observation.py'], cwd=ROOT)
     assert (root/'scripts/omc_home_observation.py').read_bytes() == expected
     return root
 
 
-def core_candidate(tmp_path, frozen_core):
+def core_candidate(tmp_path, frozen_core, core_commit):
     # Real frozen state, home requirement, basis and CONTRACT; no fake core guard.
     setup = '''import sys,json
 from pathlib import Path
@@ -157,19 +163,19 @@ s=omc_state.record_session(root,mode='autopilot',title='synthetic supervisor',re
 ready=root/'.omc/ready.json'
 ready.write_text(json.dumps({'status':'ready','target':str(root),'required_check_ids':['browser-home'],'server_binding':{'browser':{'origin':'http://localhost:3999','home_path':'/sixshoptest01'}}}))
 req=home.initialize(root,'.omc/ready.json','supervisor-fixture',s['session_id'])
-basis={'session_id':s['session_id'],'run_id':'supervisor-fixture','revision':1,'request':s['request'],'approval_reference':'synthetic local CLI fixture','checks':[{'id':'browser-home','target':'synthetic stream only','method':'local child','pass_condition':'stream custody only','target_version':'core637a965','home_motion_sha256':req['home_motion_sha256']}]}
+basis={'session_id':s['session_id'],'run_id':'supervisor-fixture','revision':1,'request':s['request'],'approval_reference':'synthetic local CLI fixture','checks':[{'id':'browser-home','target':'synthetic stream only','method':'local child','pass_condition':'stream custody only','target_version':'core'+sys.argv[3][:7],'home_motion_sha256':req['home_motion_sha256']}]}
 p=root/'.omc/proposal.json';p.write_text(json.dumps(basis))
 assert guard.cmd_approve_checks(root,p)==0
 assert guard.cmd_contract_done(root,required_checks='browser-home')==0
 '''
-    p = subprocess.run([sys.executable, '-c', setup, str(frozen_core/'scripts'), str(tmp_path)], capture_output=True, timeout=20)
+    p = subprocess.run([sys.executable, '-c', setup, str(frozen_core/'scripts'), str(tmp_path), core_commit], capture_output=True, timeout=20)
     assert p.returncode == 0, p.stdout+p.stderr
     return [sys.executable, str(frozen_core/'scripts/omc_home_observation.py'), 'run', '--target', str(tmp_path), '--launch']
 
 
 @pytest.mark.parametrize('case', ['normal', 'internal124', 'timeout', 'missing'])
-def test_fixed_core_public_four_surfaces(tmp_path, frozen_core, case):
-    prefix = core_candidate(tmp_path, frozen_core)
+def test_fixed_core_public_four_surfaces(tmp_path, frozen_core, core_commit, case):
+    prefix = core_candidate(tmp_path, frozen_core, core_commit)
     code = {'normal': f'print({SUCCESS!r},end="")', 'internal124': 'import sys;sys.stderr.write("internal124");sys.exit(124)',
             'timeout': 'import time;print("{\\"type\\":\\"system\\"}",flush=True);time.sleep(30)', 'missing': 'pass'}[case]
     p, r, elapsed, _ = invoke(tmp_path, code, wrapper=prefix+['/bin/sh','-c',RECORDER,'native-launch',sys.executable,'-c',code], timeout=.7 if case=='timeout' else 5, drain=2)
@@ -247,9 +253,9 @@ def test_nonregular_child_record_does_not_block_supervisor(tmp_path):
     assert p.returncode==1 and r['child_cleanup_status']=='unconfirmed' and elapsed<2
 
 
-def test_core_sources_preserved_after_surfaces(frozen_core):
+def test_core_sources_preserved_after_surfaces(frozen_core, core_commit):
     for name in ['omc_home_observation.py','omc_pipeline_guard.py','omc_native_red_evidence.py']:
-        raw=subprocess.check_output(['git','show',CORE+':scripts/'+name],cwd=ROOT)
+        raw=subprocess.check_output(['git','show',core_commit+':scripts/'+name],cwd=ROOT)
         assert (frozen_core/'scripts'/name).read_bytes()==raw
 
 
@@ -323,3 +329,12 @@ signal.signal(signal.SIGTERM,signal.SIG_IGN)
             # Test cleanup is separate from supervisor result.
             try:os.killpg(int((tmp_path/'child.pid').read_text()),signal.SIGKILL)
             except ProcessLookupError:pass
+
+
+def test_selected_core_identity_reaches_public_basis(tmp_path, frozen_core, core_commit):
+    core_candidate(tmp_path, frozen_core, core_commit)
+    expected = subprocess.check_output(
+        ['git', 'show', core_commit+':scripts/omc_home_observation.py'], cwd=ROOT)
+    assert (frozen_core/'scripts/omc_home_observation.py').read_bytes() == expected
+    proposal = json.loads((tmp_path/'.omc/proposal.json').read_bytes())
+    assert proposal['checks'][0]['target_version'] == 'core'+core_commit[:7]
