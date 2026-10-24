@@ -17,11 +17,14 @@ import subprocess
 import sys
 import urllib.request
 import uuid
+import time
 
 from omc_pipeline_guard import _code_snapshot_digest
 from omc_native_red_evidence import jest_cases, source, write_new
 from omc_workflow_preflight import baseline, browser_observation, server_binding, validate_browser_config
 from omc_home_observation import sample_assessment
+from omc_workflow_preflight import (BROWSER_CONTRACT, BrowserExecution, browser_deadline,
+                                    browser_contract, browser_work_deadline, read_browser_execution)
 from omc_visual_check import (VARIANTS, assess_report, enforce_requirement,
                               requirement_path, validate_requirement)
 
@@ -103,6 +106,8 @@ def _validate_policy(root, policy):
             raise ValueError('oracle_digest_mismatch')
     if 'browser' in policy:
         validate_browser_config(policy['browser'])
+        if 'browser_evidence_contract' in policy:
+            browser_contract(policy['browser_evidence_contract'])
         if policy['browser']['home_path'] != '/sixshoptest01':
             raise ValueError('frozen_home_path_required')
     if 'visual' in policy:
@@ -117,6 +122,8 @@ def freeze(root, proposal, pin):
     if sha(raw) != pin:
         raise ValueError('proposal_digest_mismatch')
     policy = json.loads(raw)
+    if 'browser' in policy:
+        policy['browser_evidence_contract'] = BROWSER_CONTRACT
     policy['selection_path'] = str(selection_path(root, policy).relative_to(root))
     policy['report_contract'] = REPORT_CONTRACT
     path = requirement_path(root)
@@ -277,6 +284,9 @@ def _tests(root, policy, raw, exit_code):
 
 def _judge(root, policy, receipt):
     profile = receipt['profile']
+    if profile in {'home','controlled'} and 'browser_evidence_contract' in policy:
+        read_browser_execution(root,receipt.get('browser_execution'),expected_ops=['goto','reload','evaluate','snapshot'],
+                               observation=json.loads(_raw(root,receipt['artifacts']['observation'])))
     if receipt['before'] != receipt['after']:
         return {'status':'unknown', 'reason':'candidate_changed_during_validation'}
     if any(call.get('timed_out') for call in receipt['invocations']):
@@ -347,19 +357,31 @@ def _command(root, policy, folder, profile):
 
 
 def run_profile(root, profile):
-    if profile not in PROFILES:
-        raise ValueError('unsupported_validation_profile')
-    policy, pin = load_policy(root)
-    if profile.startswith('omc-') and policy['arm'] != 'omc-kit':
-        raise ValueError('internal_profile_not_applicable')
-    _scope(root, policy)
-    ident = uuid.uuid4().hex
-    folder = '.omc/validation-commands/calls/'+ident
-    source(root, folder).mkdir(parents=True, exist_ok=False)
-    receipt = {'schema_version':'omc-validation-receipt/v1', 'call_id':ident,
-        'run_id':policy['run_id'], 'arm':policy['arm'], 'target':str(root), 'policy_sha256':pin,
-        'profile':profile, 'before':_code_snapshot_digest(root), 'artifacts':{}, 'invocations':[],
-        'scope_before':baseline(root), 'exit_code':0}
+    if profile not in {'home','controlled'}:
+        return _run_profile(root,profile)
+    started=time.monotonic()
+    with browser_deadline(started+120):
+        return _run_profile(root,profile,started)
+
+
+def _run_profile(root, profile, started=None):
+    with browser_work_deadline(started):
+        if profile not in PROFILES:
+            raise ValueError('unsupported_validation_profile')
+        policy, pin = load_policy(root)
+        if profile in {'home','controlled'}:
+            browser_contract(policy.get('browser_evidence_contract'))
+        if profile.startswith('omc-') and policy['arm'] != 'omc-kit':
+            raise ValueError('internal_profile_not_applicable')
+        _scope(root, policy)
+        ident = uuid.uuid4().hex
+        folder = '.omc/validation-commands/calls/'+ident
+        source(root, folder).mkdir(parents=True, exist_ok=False)
+        receipt = {'schema_version':'omc-validation-receipt/v1', 'call_id':ident,
+            'run_id':policy['run_id'], 'arm':policy['arm'], 'target':str(root), 'policy_sha256':pin,
+            'profile':profile, 'before':_code_snapshot_digest(root), 'artifacts':{}, 'invocations':[],
+            'scope_before':baseline(root), 'exit_code':0}
+    execution = None
     try:
         context = prebound_task_context(root, policy, pin) if profile.startswith('omc-') else None
         if context is not None:
@@ -367,16 +389,22 @@ def run_profile(root, profile):
         if profile == 'tests':
             output = folder+'/jest.json'
         elif profile in {'controlled','home'}:
-            _browser(policy, 'goto', ['/omc-ad-validation/index.html' if profile=='controlled' else policy['browser']['home_path']])
-            _browser(policy, 'reload', [])
-            obs = (_browser(policy,'evaluate',[CONTROLLED_QUERY]) if profile=='controlled'
-                   else browser_observation(policy['browser']))
-            receipt['artifacts']['observation'] = _save_bytes(root,folder,'observation.json',json.dumps(obs).encode())
-            snap = _browser(policy, 'snapshot', [])
-            path = source(root, str(Path(snap['screenshot']).relative_to(root)))
-            if not str(path.relative_to(root)).startswith('.omc/browser/'):
-                raise ValueError('browser_snapshot_path_invalid')
-            receipt['artifacts']['screen'] = {'path':str(path.relative_to(root)), 'sha256':sha(path.read_bytes())}
+            execution=BrowserExecution(root,policy['browser'],['goto','reload','evaluate','snapshot'],
+                                       folder+'/browser',started)
+            try:
+                execution.call('goto', ['/omc-ad-validation/index.html' if profile=='controlled' else policy['browser']['home_path']])
+                execution.call('reload', [])
+                obs = (execution.call('evaluate',[CONTROLLED_QUERY]) if profile=='controlled'
+                       else browser_observation(policy['browser'],execution=execution))
+                receipt['artifacts']['observation'] = _save_bytes(root,folder,'observation.json',json.dumps(obs).encode())
+                snap = execution.call('snapshot', [])
+            finally:
+                receipt['browser_execution']=execution.seal()
+            with browser_work_deadline(started):
+                path = source(root, str(Path(snap['screenshot']).relative_to(root)))
+                if not str(path.relative_to(root)).startswith('.omc/browser/'):
+                    raise ValueError('browser_snapshot_path_invalid')
+                receipt['artifacts']['screen'] = {'path':str(path.relative_to(root)), 'sha256':sha(path.read_bytes())}
         elif profile.startswith('pixels-dpr'):
             dpr = int(profile[-1]); visual = policy['visual']
             bundle = 'apps/store-manager/public/omc-ad-pixels/bundle.js'
@@ -404,41 +432,44 @@ def run_profile(root, profile):
                     sort_keys=True, separators=(',', ':')).encode())
             ref = _save_bytes(root,folder,'manifest.json',json.dumps(manifest).encode())
             receipt['artifacts']['manifest'] = ref
-        argv = _command(root,policy,folder,profile)
-        if argv is not None:
-            invocation = _invoke(root,policy,folder,argv,0)
-            receipt['invocations'].append(invocation)
-            receipt.update(exit_code=invocation['exit_code'],stdout=invocation['stdout'],stderr=invocation['stderr'])
-            if invocation['timed_out']:
-                receipt['after']=_code_snapshot_digest(root)
-                receipt['judgment']=_judge(root,policy,receipt)
-                receipt['status']=receipt['judgment']['status']
-                ref=write_new(root,folder+'/receipt.json',receipt)
-                return {'schema_version':'omc-validation-result/v1','status':receipt['status'],'receipt':ref}
-        else:
-            receipt['stdout'] = receipt['artifacts']['observation']
-            receipt['stderr'] = _save_bytes(root,folder,'stderr.txt',b'')
-        if profile == 'tests':
-            path = source(root,output)
-            receipt['artifacts']['jest'] = {'path':output,'sha256':sha(path.read_bytes())}
-        if profile in {'build-controlled','build-pixels'}:
-            base = 'apps/store-manager/public/'+('omc-ad-validation' if profile=='build-controlled' else 'omc-ad-pixels')
-            receipt['outputs'] = {base+'/'+n:sha(source(root,base+'/'+n).read_bytes()) for n in ['index.html','bundle.js']}
-            receipt['artifacts'] = {n:_save_bytes(root,folder,n,source(root,base+'/'+n).read_bytes())
-                                    for n in ['index.html','bundle.js']}
-        if profile.startswith('pixels-dpr'):
-            path = source(root,folder+'/visual/report.json')
-            receipt['artifacts']['report'] = {'path':str(path.relative_to(root)),'sha256':sha(path.read_bytes())}
-        receipt['after'] = _code_snapshot_digest(root)
-        if context is not None:
-            from omc_native_red_evidence import verify_execution_context
-            verify_execution_context(root, context)
-        _scope(root,policy)
-        _validate_policy(root,policy)
-        receipt['judgment'] = _judge(root,policy,receipt)
+        with browser_work_deadline(started):
+            argv = _command(root,policy,folder,profile)
+            if argv is not None:
+                invocation = _invoke(root,policy,folder,argv,0)
+                receipt['invocations'].append(invocation)
+                receipt.update(exit_code=invocation['exit_code'],stdout=invocation['stdout'],stderr=invocation['stderr'])
+                if invocation['timed_out']:
+                    receipt['after']=_code_snapshot_digest(root)
+                    receipt['judgment']=_judge(root,policy,receipt)
+                    receipt['status']=receipt['judgment']['status']
+                    ref=write_new(root,folder+'/receipt.json',receipt)
+                    return {'schema_version':'omc-validation-result/v1','status':receipt['status'],'receipt':ref}
+            else:
+                receipt['stdout'] = receipt['artifacts']['observation']
+                receipt['stderr'] = _save_bytes(root,folder,'stderr.txt',b'')
+            if profile == 'tests':
+                path = source(root,output)
+                receipt['artifacts']['jest'] = {'path':output,'sha256':sha(path.read_bytes())}
+            if profile in {'build-controlled','build-pixels'}:
+                base = 'apps/store-manager/public/'+('omc-ad-validation' if profile=='build-controlled' else 'omc-ad-pixels')
+                receipt['outputs'] = {base+'/'+n:sha(source(root,base+'/'+n).read_bytes()) for n in ['index.html','bundle.js']}
+                receipt['artifacts'] = {n:_save_bytes(root,folder,n,source(root,base+'/'+n).read_bytes())
+                                        for n in ['index.html','bundle.js']}
+            if profile.startswith('pixels-dpr'):
+                path = source(root,folder+'/visual/report.json')
+                receipt['artifacts']['report'] = {'path':str(path.relative_to(root)),'sha256':sha(path.read_bytes())}
+            receipt['after'] = _code_snapshot_digest(root)
+            if context is not None:
+                from omc_native_red_evidence import verify_execution_context
+                verify_execution_context(root, context)
+            _scope(root,policy)
+            _validate_policy(root,policy)
+            receipt['judgment'] = _judge(root,policy,receipt)
     except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError) as exc:
         receipt['after'] = _code_snapshot_digest(root)
         receipt['judgment'] = {'status':'unknown','reason':str(exc)}
+        receipt.setdefault('stdout',_save_bytes(root,folder,'error-stdout.txt',b''))
+        receipt.setdefault('stderr',_save_bytes(root,folder,'error-stderr.txt',str(exc).encode()))
     receipt['status'] = receipt['judgment']['status']
     ref = write_new(root,folder+'/receipt.json',receipt)
     return {'schema_version':'omc-validation-result/v1','status':receipt['status'],'receipt':ref}
@@ -447,6 +478,9 @@ def run_profile(root, profile):
 def validate_receipt(root, ref, policy_pin, profile=None, *, historical=False):
     policy, pin = load_policy(root,policy_pin)
     receipt = json.loads(_raw(root,ref))
+    if receipt.get('profile') in {'home','controlled'} and 'browser_evidence_contract' in policy:
+        read_browser_execution(root,receipt.get('browser_execution'),require_passed=receipt.get('status')=='passed',
+                               expected_ops=['goto','reload','evaluate','snapshot'])
     if (receipt['schema_version'] != 'omc-validation-receipt/v1' or receipt['policy_sha256'] != pin
             or receipt['run_id'] != policy['run_id'] or receipt['arm'] != policy['arm']
             or receipt['target'] != str(root) or receipt['profile'] not in PROFILES
@@ -472,6 +506,14 @@ def validate_receipt(root, ref, policy_pin, profile=None, *, historical=False):
         _raw(root,call['stdout']); _raw(root,call['stderr'])
     for artifact in receipt['artifacts'].values():
         _raw(root,artifact)
+    if ('browser_evidence_contract' in policy and receipt['profile'] in {'home','controlled'}
+            and receipt.get('status')=='unknown'):
+        if receipt.get('judgment',{}).get('status')!='unknown' or not receipt['judgment'].get('reason'):
+            raise ValueError('browser_unknown_judgment_missing')
+        # The raw failure trace has already been checked above. Never run the
+        # successful-observation oracle against an operation that did not finish.
+        if not historical: _scope(root,policy)
+        return receipt
     if historical and receipt['profile'] in {'controlled','home','pixels-dpr1','pixels-dpr2'}:
         # An intermediate oracle observation is not reused as current quality.
         # Only its fixed invocation, raw bytes and stable before/after are read.

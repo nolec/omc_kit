@@ -3,6 +3,10 @@
 const fs=require('fs'),path=require('path'),crypto=require('crypto'),http=require('http');
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const pin=p=>sha(fs.readFileSync(p));
+const CONTRACT={schema_version:'omc-browser-execution/v2',profile_seconds:120,
+ inner_seconds:15,outer_seconds:20,cleanup_seconds:12,seal_seconds:5,
+ response_bytes:1048576,profile_bytes:8388608};
+const sameContract=v=>v&&Object.keys(v).length===Object.keys(CONTRACT).length&&Object.entries(CONTRACT).every(([k,x])=>v[k]===x);
 function noLinks(file){for(let p=file;;p=path.dirname(p)){
  if(fs.existsSync(p)&&fs.lstatSync(p).isSymbolicLink())throw Error('path_link_refused');
  if(path.dirname(p)===p)break;
@@ -14,6 +18,7 @@ function load(file){
  if(file!==path.join(run,'runtime.json')||pin(file)!==receipt.runtime_sha256||
     pin(__filename)!==cfg.browser_sha256||path.dirname(cfg.candidate)!==run)throw Error('runtime_binding_mismatch');
  if(cfg.schema_version!=='omc-ad-runtime/v1'||pin(path.join(cfg.playwright_module,'package.json'))!==cfg.playwright_package_sha256)throw Error('dependency_binding_mismatch');
+ if(!sameContract(cfg.browser_evidence_contract))throw Error('browser_contract_mismatch');
  for(const [name,p] of Object.entries(receipt.restored_files)){noLinks(path.join(run,name));if(pin(path.join(run,name))!==p)throw Error('restored_file_mismatch');}
  for(const q of Object.values(cfg.queries)){noLinks(q.path);if(pin(q.path)!==q.sha256)throw Error('query_digest_mismatch');}
  return cfg;
@@ -63,16 +68,62 @@ function load(file){
   }
   throw Error('unsupported_command');
  }
- let busy=false;
+ let busy=false,poisoned=false,closePromise=null;
+ const browserId=crypto.randomUUID(),operations=new Map();
+ async function closeOwned(){
+  poisoned=true;
+  if(!closePromise)closePromise=context.close().then(()=>true,()=>false);
+  let timer;
+  try{return await Promise.race([closePromise,new Promise(r=>{timer=setTimeout(()=>r(false),3000);})]);}
+  finally{clearTimeout(timer);}
+ }
+ async function bounded(request){
+  const ident=request.operation_id;
+  if(!sameContract(request.contract)||!/^\w{32}$/.test(ident||'')||operations.has(ident)||operations.size>=128||
+     !Number.isInteger(request.work_timeout_ms)||request.work_timeout_ms<1||request.work_timeout_ms>15000)
+   throw Error('browser_request_contract_invalid');
+  const operation={operation_id:ident,op:request.op,browser_id:browserId,
+   state:'running',termination:'running',started_ms:performance.now()};
+  operations.set(ident,operation);let timer;
+  try{
+   const result=await Promise.race([command(request),new Promise((_,reject)=>{
+    timer=setTimeout(()=>{const e=Error('browser_operation_deadline');e.name='TimeoutError';reject(e);},request.work_timeout_ms);
+   })]);
+   if(performance.now()-operation.started_ms>request.work_timeout_ms){
+    const e=Error('browser_operation_deadline');e.name='TimeoutError';throw e;
+   }
+   operation.state='passed';operation.termination='stopped_confirmed';
+   return {code:200,body:{operation,result}};
+  }catch(e){
+   operation.state='unknown';operation.termination=await closeOwned()?'stopped_confirmed':'cleanup_unconfirmed';
+   return {code:400,body:{operation,error_type:e.name,error:e.message}};
+  }finally{clearTimeout(timer);operation.ended_ms=performance.now();}
+ }
  const server=http.createServer(async(req,res)=>{
   if(req.method!=='POST'||req.url!=='/command'){res.writeHead(404);res.end();return;}
-  if(busy){res.writeHead(409);res.end(JSON.stringify({error:'command_in_progress'}));return;}
-  busy=true;
+  let ownsBusy=false;
   try{
-   let body='';for await(const c of req){body+=c;if(body.length>65536)throw Error('request_too_large');}
-   const value=await command(JSON.parse(body));res.setHeader('Content-Type','application/json');res.end(JSON.stringify(value));
+   let body='';req.setTimeout(5000,()=>req.destroy());
+   for await(const c of req){body+=c;if(Buffer.byteLength(body)>65536)throw Error('request_too_large');}
+   req.setTimeout(0);
+   const request=JSON.parse(body);
+   if(request.op==='operation-status'&&request.args?.length===1){
+    const value=operations.get(request.args[0]);res.setHeader('Content-Type','application/json');
+    res.end(JSON.stringify(value||{error:'unknown_operation'}));return;
+   }
+   if(request.op==='close-context'&&request.args?.length===1){
+    const value=operations.get(request.args[0]);
+    if(!value)throw Error('unknown_operation');
+    value.termination=await closeOwned()?'stopped_confirmed':'cleanup_unconfirmed';
+    res.end(JSON.stringify(value));return;
+   }
+   if(busy||poisoned){res.writeHead(409);res.end(JSON.stringify({error:poisoned?'browser_channel_poisoned':'command_in_progress'}));return;}
+   busy=true;ownsBusy=true;
+   res.on('close',()=>{if(!res.writableEnded)void closeOwned();});
+   if(request.operation_id){const value=await bounded(request);res.writeHead(value.code,{'Content-Type':'application/json'});res.end(JSON.stringify(value.body));}
+   else{const value=await command(request);res.setHeader('Content-Type','application/json');res.end(JSON.stringify(value));}
   }catch(e){res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({error_type:e.name,error:e.message}));}
-  finally{busy=false;}
+  finally{if(ownsBusy)busy=false;}
  });
  async function stop(){server.close();await context.close();process.exit(0);}
  process.on('SIGTERM',stop);process.on('SIGINT',stop);

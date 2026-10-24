@@ -18,6 +18,7 @@ import tempfile
 import os
 import signal
 import threading
+import time
 
 REQUIREMENT = '.omc/home-motion-requirement.json'
 SCHEMA = 'omc-home-motion-observation/v1'
@@ -123,26 +124,40 @@ def sample_assessment(value: dict) -> dict:
 
 
 def observe(root: Path) -> dict:
+    from omc_workflow_preflight import browser_deadline
+    started=time.monotonic()
+    with browser_deadline(started+120):
+        return _observe(root,started)
+
+
+def _observe(root,started):
     """Same query and server-binding machinery as operator preparation, new output."""
     from omc_pipeline_guard import _code_snapshot_digest
-    from omc_workflow_preflight import browser_observation, server_binding
-    req = requirement(root)
-    raw = local(root, req['preflight_path']).read_bytes()
-    if sha(raw) != req['preflight_sha256']:
-        raise ValueError('home_preflight_digest_mismatch')
-    ready = json.loads(raw)
-    if ready.get('status') != 'ready' or ready.get('target') != str(root):
-        raise ValueError('home_preflight_binding_mismatch')
-    binding = ready['server_binding']
-    browser = binding['browser']
-    if browser['origin']+browser['home_path'] != req['url']:
-        raise ValueError('home_preflight_url_mismatch')
-    snapshot = _code_snapshot_digest(root)
-    observed = browser_observation(browser)
-    server_binding(root, binding['config'], browser, observed=observed,
-                   previous=binding['evidence'], initial=False)
-    if snapshot != _code_snapshot_digest(root):
-        raise ValueError('home_candidate_changed_during_observation')
+    from omc_workflow_preflight import browser_observation, browser_work_deadline, server_binding
+    with browser_work_deadline(started):
+        req = requirement(root)
+        raw = local(root, req['preflight_path']).read_bytes()
+        if sha(raw) != req['preflight_sha256']:
+            raise ValueError('home_preflight_digest_mismatch')
+        ready = json.loads(raw)
+        if ready.get('status') != 'ready' or ready.get('target') != str(root):
+            raise ValueError('home_preflight_binding_mismatch')
+        binding = ready['server_binding']
+        browser = binding['browser']
+        if browser['origin']+browser['home_path'] != req['url']:
+            raise ValueError('home_preflight_url_mismatch')
+        snapshot = _code_snapshot_digest(root)
+    if 'browser_evidence_contract' in req:
+        from omc_workflow_preflight import browser_contract
+        browser_contract(req['browser_evidence_contract'])
+        observed=browser_observation(browser,root=root,started=started)
+    else:
+        observed=browser_observation(browser)
+    with browser_work_deadline(started):
+        server_binding(root, binding['config'], browser, observed=observed,
+                       previous=binding['evidence'], initial=False)
+        if snapshot != _code_snapshot_digest(root):
+            raise ValueError('home_candidate_changed_during_observation')
     return {**observed, 'schema_version': SCHEMA, 'session_id': req['session_id'],
             'run_id': req['run_id'], 'code_snapshot_sha256': snapshot, 'server_binding': 'passed'}
 
@@ -307,6 +322,10 @@ def assess_completion_home(root: Path, basis: dict, events_file: Path | None = N
             raise ValueError('home_observation_binding_mismatch')
         if value.get('server_binding') != 'passed':
             return {'status': 'unknown', 'reason': 'home_server_binding_unverified'}
+        if 'browser_evidence_contract' in req:
+            from omc_workflow_preflight import browser_contract, read_browser_execution
+            browser_contract(req['browser_evidence_contract'])
+            read_browser_execution(root,value.get('browser_execution'),expected_ops=['evaluate'],observation=value)
         return sample_assessment(value)
     except FileNotFoundError:
         return {'status': 'unknown', 'reason': 'home_evidence_missing'}
@@ -329,6 +348,8 @@ def initialize(root: Path, preflight: str, run_id: str, session_id: str) -> dict
            'preflight_path': preflight, 'preflight_sha256': sha(raw),
            'events_path': '.omc/home-motion/events.jsonl',
            'receipt_path': '.omc/home-motion/receipt.json'}
+    from omc_workflow_preflight import BROWSER_CONTRACT
+    req['browser_evidence_contract'] = BROWSER_CONTRACT
     path = local(root, REQUIREMENT)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('x') as stream:

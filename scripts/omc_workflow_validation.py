@@ -464,6 +464,8 @@ def assess_common_validation(root: Path, rows: list, selection: dict, policy_pin
         'claim_boundary':'SINGLE_ARM_LOCAL_EVIDENCE_ONLY','checks':{},'issues':[]}
     try:
         policy,_ = load_policy(root,policy_pin)
+        if 'browser_evidence_contract' in policy:
+            result['browser_evidence_contract'] = policy['browser_evidence_contract']
         if (selection.get('schema_version') != 'omc-common-selection/v2'
                 or selection.get('contract_id') != CONTRACT or selection.get('run_id') != policy['run_id']
                 or set(selection.get('receipts',{})) != set(REQUIRED)):

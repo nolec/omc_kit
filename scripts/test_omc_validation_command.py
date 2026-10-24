@@ -25,6 +25,189 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+@pytest.mark.parametrize('body',[[],None,{'operation':None},{'operation':[]},
+    {'result':None},{'result':[]},{}])
+def test_home_public_cli_classifies_malformed_response_and_confirms_stop(validation,body):
+    root,proposal=validation
+    class Endpoint(BaseHTTPRequestHandler):
+        def log_message(self,*_):pass
+        def do_POST(self):
+            request=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            if request['op']=='operation-status':
+                value={'operation_id':request['args'][0],'browser_id':'fixture-browser',
+                       'termination':'stopped_confirmed'}
+            else:
+                value=body
+                if isinstance(body,dict) and 'operation' not in body:
+                    value={**body,'operation':{'operation_id':request['operation_id'],'op':request['op'],
+                        'browser_id':'fixture-browser','state':'passed','termination':'stopped_confirmed'}}
+            self.send_response(200);self.end_headers();self.wfile.write(json.dumps(value).encode())
+    server=ThreadingHTTPServer(('127.0.0.1',0),Endpoint)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        proposal['browser']={'control_url':f'http://127.0.0.1:{server.server_port}/command',
+            'origin':'http://localhost:32000','home_path':'/sixshoptest01','min_images':2}
+        root,pin=freeze(validation)
+        proc=cli(root,'run','--profile','home')
+        assert proc.returncode==2,proc.stdout+proc.stderr
+        result=json.loads(proc.stdout)
+        assert result['status']=='unknown'
+        receipt=module().validate_receipt(root,result['receipt'],pin['sha256'],'home')
+        from omc_workflow_preflight import read_browser_execution
+        trace=read_browser_execution(root,receipt['browser_execution'],require_passed=False)
+        row=trace['stages'][0]
+        assert row['state']=='unknown' and row['termination']=='stopped_confirmed'
+        assert row['exception_type']=='ValueError' and row['error'].startswith('browser_response_')
+        assert all(r['state']=='unentered' for r in trace['stages'][1:])
+        assert (root/row['raw']['path']).read_bytes()
+    finally:
+        server.shutdown();server.server_close();thread.join(timeout=2)
+
+
+@pytest.mark.parametrize('entry',['fixed','native','prepare'])
+def test_browser_cleanup_reserve_is_outside_work_deadline(tmp_path,monkeypatch,entry):
+    import io
+    import omc_workflow_preflight as p
+    import omc_home_observation as home
+    import omc_validation_command as fixed
+    config={'control_url':'http://127.0.0.1:32000/command','origin':'http://localhost:32000',
+            'home_path':'/sixshoptest01','min_images':2}
+    class Response(io.BytesIO):code=200
+    active=[]
+    class Opener:
+        def open(self,request,**kwargs):
+            value=json.loads(request.data)
+            if value['op']!='operation-status':raise TimeoutError('synthetic outer timeout')
+            active.extend(p._BROWSER_DEADLINES)
+            return Response(json.dumps({'operation_id':value['args'][0],
+                'browser_id':'fixture-browser','termination':'stopped_confirmed'}).encode())
+    monkeypatch.setattr(p.urllib.request,'build_opener',lambda *_:Opener())
+    started=[]
+    def work(root,*args):
+        begin=args[-1];started.append(begin)
+        run=p.BrowserExecution(root,config,['goto'],started=begin)
+        with pytest.raises(TimeoutError,match='synthetic outer timeout'):run.call('goto',['/'])
+        assert run.stages[0]['termination']=='stopped_confirmed'
+    if entry=='fixed':
+        monkeypatch.setattr(fixed,'_run_profile',work);fixed.run_profile(tmp_path,'home')
+    elif entry=='native':
+        monkeypatch.setattr(home,'_observe',work);home.observe(tmp_path)
+    else:
+        monkeypatch.setattr(p,'_prepare',work);p.prepare(tmp_path,tmp_path/'manifest.json','pin')
+    # Hard profile and cleanup deadlines remain; the 103s work deadline must
+    # not be an ancestor of termination verification, even late in a profile.
+    assert active and all(abs(deadline-(started[0]+103))>.001 for deadline in active)
+
+
+def test_browser_cleanup_still_obeys_total_deadline_and_preserves_raw(tmp_path,monkeypatch):
+    import io
+    import omc_workflow_preflight as p
+    class Response(io.BytesIO):code=200
+    class Opener:
+        def open(self,request,**kwargs):
+            if json.loads(request.data)['op']=='operation-status':time.sleep(.5)
+            raise TimeoutError('synthetic response timeout')
+    monkeypatch.setattr(p.urllib.request,'build_opener',lambda *_:Opener())
+    config={'control_url':'http://127.0.0.1:32000/command','origin':'http://localhost:32000',
+            'home_path':'/sixshoptest01','min_images':2}
+    run=p.BrowserExecution(tmp_path,config,['goto'])
+    begin=time.monotonic()
+    with pytest.raises(TimeoutError,match='synthetic response timeout'):
+        with p.browser_deadline(begin+.2):run.call('goto',['/'])
+    assert time.monotonic()-begin<.5
+    row=run.stages[0]
+    assert row['state']=='unknown' and row['termination']=='cleanup_unconfirmed'
+    assert (tmp_path/row['raw']['path']).read_bytes()==b''
+    with pytest.raises(TimeoutError,match='browser_absolute_deadline'):
+        with p.browser_work_deadline(time.monotonic()-104):pytest.fail('expired work entered')
+
+
+@pytest.mark.parametrize('failed_op',['goto','reload','evaluate','snapshot'])
+def test_home_public_cli_preserves_failed_stage_and_raw_body(validation,failed_op):
+    root, proposal = validation
+    body = b'{"error_type":"TimeoutError","error":"page.goto: Timeout 15000ms exceeded"}'
+    class Endpoint(BaseHTTPRequestHandler):
+        def log_message(self, *_): pass
+        def do_POST(self):
+            request=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            if request['op']==failed_op:
+                self.send_response(400); self.end_headers(); self.wfile.write(body)
+            else:
+                operation={'operation_id':request['operation_id'],'op':request['op'],
+                    'browser_id':'fixture-browser','state':'passed','termination':'stopped_confirmed'}
+                self.send_response(200); self.end_headers()
+                self.wfile.write(json.dumps({'operation':operation,'result':{}}).encode())
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Endpoint)
+    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+    try:
+        proposal['browser'] = {'control_url': f'http://127.0.0.1:{server.server_port}/command',
+            'origin': 'http://localhost:32000', 'home_path': '/sixshoptest01', 'min_images': 2}
+        root, pin = freeze(validation)
+        result = cli(root, 'run', '--profile', 'home')
+        assert result.returncode == 2
+        receipt = json.loads((root/json.loads(result.stdout)['receipt']['path']).read_bytes())
+        assert 'browser_execution' in receipt, 'failed browser phase and raw response are lost'
+        from omc_workflow_preflight import read_browser_execution
+        execution = read_browser_execution(root, receipt['browser_execution'], require_passed=False)
+        index=['goto','reload','evaluate','snapshot'].index(failed_op)
+        assert execution['stages'][index]['op'] == failed_op
+        assert execution['stages'][index]['http_status'] == 400
+        assert (root/execution['stages'][index]['raw']['path']).read_bytes() == body
+        assert all(x['state'] == 'passed' for x in execution['stages'][:index])
+        assert all(x['state'] == 'unentered' for x in execution['stages'][index+1:])
+        verified=module().validate_receipt(root,json.loads(result.stdout)['receipt'],pin['sha256'],'home')
+        assert verified['status']=='unknown' and verified['judgment']['reason']
+    finally:
+        server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+
+@pytest.mark.parametrize('mode',['drip','oversize','storage'])
+def test_browser_transport_bounds_partial_data_and_storage(tmp_path,monkeypatch,mode):
+    from omc_workflow_preflight import BrowserExecution,browser_deadline,read_browser_execution
+    class Endpoint(BaseHTTPRequestHandler):
+        def log_message(self,*_):pass
+        def do_POST(self):
+            self.rfile.read(int(self.headers['Content-Length']))
+            self.send_response(200);self.end_headers()
+            try:
+                if mode=='drip':
+                    for _ in range(100):self.wfile.write(b' ');self.wfile.flush();time.sleep(.02)
+                else:self.wfile.write(b'x'*(1048576+1))
+            except (BrokenPipeError,ConnectionResetError):pass
+    server=ThreadingHTTPServer(('127.0.0.1',0),Endpoint)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        config={'control_url':f'http://127.0.0.1:{server.server_port}/command',
+            'origin':'http://localhost:32000','home_path':'/sixshoptest01','min_images':2}
+        run=BrowserExecution(tmp_path,config,['goto'])
+        if mode=='storage':
+            def disk_full(*_):raise OSError('synthetic disk full')
+            monkeypatch.setattr(run,'save',disk_full)
+        begin=time.monotonic()
+        with pytest.raises((OSError,ValueError)):
+            with browser_deadline(begin+.2 if mode=='drip' else begin+5):run.call('goto',['/'])
+        assert time.monotonic()-begin<(1 if mode=='drip' else 6)
+        if mode=='storage':
+            assert not list(tmp_path.rglob('execution.json'))
+        else:
+            ref=run.seal();doc=read_browser_execution(tmp_path,ref,require_passed=False)
+            assert doc['stages'][0]['state']=='unknown'
+            assert doc['stages'][0]['complete'] is False
+            assert doc['stages'][0]['bytes']<=1048576
+    finally:
+        server.shutdown();server.server_close();thread.join(timeout=2)
+
+
+def test_browser_does_not_enter_stage_without_reserved_budget(tmp_path,monkeypatch):
+    import omc_workflow_preflight as p
+    config={'control_url':'http://127.0.0.1:32001/command','origin':'http://localhost:32000',
+        'home_path':'/sixshoptest01','min_images':2}
+    run=p.BrowserExecution(tmp_path,config,['goto'])
+    run.deadline=p.time.monotonic()+36
+    with pytest.raises(TimeoutError,match='budget_insufficient'):run.call('goto',['/'])
+    assert run.stages==[{'op':'goto','state':'unentered'}]
+
+
 @pytest.mark.parametrize('drift', [None, 'session', 'run', 'basis', 'contract'])
 def test_prebound_task_context_checks_exact_approved_execution(project, drift):
     from test_omc_native_red_evidence import configured, guard
@@ -365,6 +548,9 @@ def test_public_cli_complete_local_chain_and_fail_closed_variants(validation, tm
                      'shadow':'rgba(0, 0, 0, 0.05) 0px 1px 2px 0px','images':2}
                     for v in module().VARIANTS]}
             else:value={'url':state['url'],**home}
+            if request.get('operation_id'):
+                value={'operation':{'operation_id':request['operation_id'],'op':op,
+                    'browser_id':'synthetic-control','state':'passed','termination':'stopped_confirmed'},'result':value}
             self.send_response(200);self.end_headers();self.wfile.write(json.dumps(value).encode())
     server=ThreadingHTTPServer(('127.0.0.1',0),Control)
     thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()

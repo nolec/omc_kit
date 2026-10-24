@@ -370,6 +370,70 @@ def command(candidate,op,*args):
     return invoke('command','--runtime',candidate.parent/'runtime.json','--op',op,'--args-json',json.dumps(args))
 
 
+@real_surface
+def test_v2_actual_browser_keeps_six_samples_and_raw_execution(real_config,tmp_path):
+    from omc_workflow_preflight import browser_observation,read_browser_execution
+    surface=tmp_path/'v2-home';surface.mkdir()
+    image='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22/%3E'
+    (surface/'index.html').write_text('<body><div data-testid="ad-card-large"><div data-testid="ad-track-card-large">'
+        +f'<img src="{image}"><img src="{image}"></div></div>'
+        +'<script>let n=0;setInterval(()=>document.querySelector("[data-testid^=ad-track]").style.transform="translateX("+((++n%2)*-100)+"px)",900)</script>')
+    with browser(real_config,surface) as (cfg,candidate):
+        assert command(candidate,'goto','/index.html').returncode==0
+        config={'control_url':f"http://127.0.0.1:{cfg['control_port']}/command",
+            'origin':f"http://localhost:{cfg['port']}",'home_path':'/index.html','min_images':2}
+        result=browser_observation(config,root=candidate)
+        doc=read_browser_execution(candidate,result['browser_execution'],expected_ops=['evaluate'],observation=result)
+        assert len(result['tracks'][0]['samples'])==6 and result['auto_transition'] is True
+        assert doc['stages'][0]['termination']=='stopped_confirmed'
+
+
+@pytest.mark.parametrize('ack_lost',[False,True])
+@real_surface
+def test_v2_actual_browser_timeout_closes_and_poisoned_channel_cannot_run(real_config,tmp_path,ack_lost):
+    from omc_workflow_preflight import BrowserExecution,read_browser_execution
+    surface=tmp_path/'slow-navigation';surface.mkdir()
+    (surface/'index.html').write_text('<body><script>const end=performance.now()+22000;while(performance.now()<end){}</script>')
+    preload=None
+    if ack_lost:
+        preload=tmp_path/'lost-close-ack.cjs'
+        preload.write_text("const M=require('module'),load=M._load;M._load=function(name,...args){const v=load.call(this,name,...args);if(name==="
+            +json.dumps(real_config[1]['playwright_module'])+") {const launch=v.chromium.launchPersistentContext.bind(v.chromium);v.chromium.launchPersistentContext=async(...a)=>{const c=await launch(...a),close=c.close.bind(c);c.close=()=>close().then(()=>new Promise(()=>{}));return c;};}return v;};")
+    with browser(real_config,surface,preload=preload) as (cfg,candidate):
+        config={'control_url':f"http://127.0.0.1:{cfg['control_port']}/command",
+            'origin':f"http://localhost:{cfg['port']}",'home_path':'/index.html','min_images':2}
+        run=BrowserExecution(candidate,config,['goto','reload'])
+        start=time.monotonic()
+        with pytest.raises((OSError,ValueError)):
+            run.call('goto',['/index.html'])
+        ref=run.seal();doc=read_browser_execution(candidate,ref,require_passed=False)
+        assert time.monotonic()-start<33
+        failed=doc['stages'][0]
+        assert failed['state']=='unknown' and doc['stages'][1]['state']=='unentered'
+        assert failed['termination']==('cleanup_unconfirmed' if ack_lost else 'stopped_confirmed')
+        refused=command(candidate,'goto','/index.html')
+        assert refused.returncode==1 and 'browser_channel_poisoned' in refused.stderr
+
+
+@real_surface
+def test_v2_driver_rejects_late_success_when_event_loop_blocks(real_config,tmp_path):
+    from omc_workflow_preflight import BROWSER_CONTRACT
+    surface=tmp_path/'late';surface.mkdir();(surface/'index.html').write_text('<body>fixture</body>')
+    preload=tmp_path/'busy-event-loop.cjs'
+    runtime=str(real_config[2].parent/'runtime.json')
+    preload.write_text("const fs=require('fs'),read=fs.readFileSync;fs.readFileSync=function(p,...a){if(String(p)==="
+        +json.dumps(runtime)+"){const end=performance.now()+40;while(performance.now()<end){}}return read.call(this,p,...a);};")
+    with browser(real_config,surface,preload=preload) as (cfg,candidate):
+        payload={'op':'status','args':[],'operation_id':'a'*32,'contract':BROWSER_CONTRACT,'work_timeout_ms':10}
+        req=urllib.request.Request(f"http://127.0.0.1:{cfg['control_port']}/command",
+            data=json.dumps(payload).encode(),headers={'Content-Type':'application/json'})
+        with pytest.raises(urllib.error.HTTPError) as caught:urllib.request.urlopen(req,timeout=20)
+        body=json.loads(caught.value.read())
+        assert body['error_type']=='TimeoutError'
+        assert body['operation']['state']=='unknown'
+        assert body['operation']['termination']=='stopped_confirmed'
+
+
 def assert_cells(case, cells):
     expected={(name,dpr) for name in case['variants'] for dpr in case['dprs']}
     assert len(cells)==case['expected_cells']==len(expected)

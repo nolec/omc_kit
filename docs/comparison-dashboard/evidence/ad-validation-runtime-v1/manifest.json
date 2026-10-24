@@ -24,7 +24,7 @@
       "destination": "serve.cjs"
     },
     "scripts/omc_ad_validation_browser.cjs": {
-      "sha256": "65e08d4d490373097e894211fbc6f985077e97fd67fe2cd331c067292d348de3",
+      "sha256": "c3e59c45e043615e18665e66ba75141b51f6903839c7655adacf76ce851a2e30",
       "scope": "run",
       "destination": "browser.cjs"
     },
@@ -50,10 +50,10 @@
       "sha256": "5109395c7e75fed8c33b68a47fb864b1d4a9d8c1e72f7fb7297c7be7bca0a4cd"
     },
     "scripts/omc_workflow_preflight.py": {
-      "sha256": "eccff82256955a986291e8e7eb78f7fb4adcfd5fa47754a8c3e49aea5e2d357e"
+      "sha256": "06185beb13d1be1bf272906758b1589cbd45759e818ba5f602f4c847752bcb30"
     },
     "scripts/omc_home_observation.py": {
-      "sha256": "8fc5f150ed9caaf10dc57a76665b60861e3efda2e9343020a661372cb109f64b"
+      "sha256": "88cb94c299da1ff330c5262235837719e48ef3d3808d821e3af30e33a4126b63"
     },
     "docs/comparison-dashboard/evidence/ad-recompare-20261016/task.md": {
       "sha256": "d48b738f79ff9981601f23df227c9a3e0d645e3254d61221493073584eb3110b",
@@ -279,5 +279,15 @@
     "libs/store-manager/components/src/lib/home/Home.tsx",
     "tsconfig.base.json",
     "libs/sellerhub-store/tsconfig.json"
-  ]
+  ],
+  "browser_evidence_contract": {
+    "schema_version": "omc-browser-execution/v2",
+    "profile_seconds": 120,
+    "inner_seconds": 15,
+    "outer_seconds": 20,
+    "cleanup_seconds": 12,
+    "seal_seconds": 5,
+    "response_bytes": 1048576,
+    "profile_bytes": 8388608
+  }
 }

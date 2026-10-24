@@ -16,6 +16,233 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
+import urllib.error
+import time
+import uuid
+import signal
+import threading
+import math
+from contextlib import contextmanager, nullcontext
+
+BROWSER_CONTRACT = {'schema_version': 'omc-browser-execution/v2', 'profile_seconds': 120,
+    'inner_seconds': 15, 'outer_seconds': 20, 'cleanup_seconds': 12, 'seal_seconds': 5,
+    'response_bytes': 1048576, 'profile_bytes': 8388608}
+_BROWSER_DEADLINES = []
+
+
+@contextmanager
+def browser_deadline(deadline):
+    """One wall-clock deadline, including slow bodies and local snapshot work."""
+    if threading.current_thread() is not threading.main_thread():
+        raise ValueError('browser_deadline_requires_main_thread')
+    deadline=min([deadline,*_BROWSER_DEADLINES])
+    start = time.monotonic()
+    if deadline <= start:
+        raise TimeoutError('browser_absolute_deadline')
+    previous = signal.getsignal(signal.SIGALRM)
+    timer = signal.getitimer(signal.ITIMER_REAL)
+    def expired(*_):
+        raise TimeoutError('browser_absolute_deadline')
+    signal.signal(signal.SIGALRM, expired)
+    _BROWSER_DEADLINES.append(deadline)
+    signal.setitimer(signal.ITIMER_REAL, min(deadline-start, timer[0]) if timer[0] else deadline-start)
+    try:
+        yield
+    finally:
+        _BROWSER_DEADLINES.pop()
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+        if timer[0]:
+            remaining=timer[0]-(time.monotonic()-start)
+            if remaining>0:
+                signal.setitimer(signal.ITIMER_REAL, remaining, timer[1])
+
+
+def browser_contract(value):
+    if value != BROWSER_CONTRACT:
+        raise ValueError('browser_contract_mismatch')
+    return value
+
+
+def browser_work_deadline(started):
+    """Only active work uses 103s; cleanup/sealing stay under the 120s owner."""
+    return browser_deadline(started+103) if started is not None else nullcontext()
+
+
+class BrowserExecution:
+    """Bounded local custody. A timeout never authenticates task termination."""
+    def __init__(self, root, config, ops, folder=None, started=None):
+        from omc_home_observation import local
+        self.root, self.config = root, config
+        validate_browser_config(config)
+        self.folder = folder or '.omc/browser-executions/'+uuid.uuid4().hex
+        local(root, self.folder).mkdir(parents=True, exist_ok=True)
+        self.started = started if started is not None else time.monotonic()
+        self.deadline = self.started+BROWSER_CONTRACT['profile_seconds']
+        self.total = 0
+        self.stages = [{'op': op, 'state': 'unentered'} for op in ops]
+
+    def save(self, name, raw):
+        from omc_home_observation import local
+        path = self.folder+'/'+name
+        with local(self.root, path).open('xb') as stream:
+            stream.write(raw)
+        return {'path': path, 'sha256': sha(raw)}
+
+    def call(self, op, args):
+        row = next((r for r in self.stages if r['state'] == 'unentered'), None)
+        if row is None or row['op'] != op or any(r['state'] not in {'passed','unentered'} for r in self.stages):
+            raise ValueError('browser_channel_reuse_refused')
+        begin = time.monotonic()
+        if self.deadline-begin < 37:
+            raise TimeoutError('browser_stage_budget_insufficient')
+        end = min(begin+20, self.deadline-17)
+        ident = uuid.uuid4().hex
+        row.update(state='running', operation_id=ident, started=begin, stage_deadline=end,
+                   inner_deadline=min(begin+15, end-5), termination='running', complete=False)
+        raw = bytearray()
+        response = None
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *_): return None
+        try:
+            row['start_record']=self.save(ident+'-start.json',json.dumps(row).encode())
+            request = urllib.request.Request(self.config['control_url'], data=json.dumps({
+                'op': op, 'args': args, 'operation_id': ident, 'contract': BROWSER_CONTRACT,
+                'work_timeout_ms': max(1, int((row['inner_deadline']-time.monotonic())*1000))}).encode(),
+                headers={'Content-Type':'application/json'})
+            with browser_deadline(end):
+                try:
+                    response = urllib.request.build_opener(NoRedirect).open(request, timeout=max(.001,end-time.monotonic()))
+                except urllib.error.HTTPError as exc:
+                    response = exc
+                row['http_status'] = response.code
+                read = getattr(response, 'read1', response.read)
+                while True:
+                    chunk = read(min(65536, BROWSER_CONTRACT['response_bytes']-len(raw)+1))
+                    if not chunk:
+                        row['complete'] = True
+                        break
+                    room = min(BROWSER_CONTRACT['response_bytes']-len(raw), BROWSER_CONTRACT['profile_bytes']-self.total)
+                    raw.extend(chunk[:room]); self.total += min(len(chunk), room)
+                    if len(chunk) > room:
+                        raise ValueError('browser_response_limit')
+                row['raw']=self.save(ident+'.raw',bytes(raw))
+                value = json.loads(raw)
+                if not isinstance(value,dict):
+                    raise ValueError('browser_response_object_required')
+                operation = value.get('operation', {})
+                if not isinstance(operation,dict):
+                    raise ValueError('browser_response_operation_required')
+                if operation.get('operation_id') != ident or operation.get('op') != op:
+                    raise ValueError('browser_operation_binding_mismatch')
+                row['browser_id'] = operation.get('browser_id')
+                row['termination'] = operation.get('termination', 'cleanup_unconfirmed')
+                if response.code != 200 or operation.get('state') != 'passed':
+                    raise ValueError('browser_operation_error')
+                if not row['browser_id'] or row['termination'] != 'stopped_confirmed':
+                    raise ValueError('browser_termination_unconfirmed')
+                if not isinstance(value.get('result'),dict):
+                    raise ValueError('browser_response_result_required')
+                row['state'] = 'passed'
+                return value['result']
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            row.update(state='unknown', exception_type=type(exc).__name__, error=str(exc))
+            # The driver owns cancellation. Observe its exact operation; never
+            # create a new browser task or assume a dropped connection stopped it.
+            if row['termination'] != 'stopped_confirmed':
+                row['termination'] = 'cleanup_unconfirmed'
+                try:
+                    with browser_deadline(min(time.monotonic()+12, self.deadline-5)):
+                        req = urllib.request.Request(self.config['control_url'],
+                            data=json.dumps({'op':'operation-status','args':[ident]}).encode(),
+                            headers={'Content-Type':'application/json'})
+                        with urllib.request.build_opener(NoRedirect).open(req,timeout=2) as res:
+                            cap=min(BROWSER_CONTRACT['response_bytes'],BROWSER_CONTRACT['profile_bytes']-self.total)
+                            status_raw=res.read(cap+1)
+                            if len(status_raw)>cap: raise ValueError('browser_cleanup_response_limit')
+                            self.total+=len(status_raw)
+                            row['cleanup_raw']=self.save(ident+'-cleanup.raw',status_raw)
+                            status=json.loads(status_raw)
+                        if not isinstance(status,dict):
+                            raise ValueError('browser_response_cleanup_object_required')
+                        if status.get('operation_id') == ident and status.get('termination') == 'stopped_confirmed':
+                            row.update(termination='stopped_confirmed', browser_id=status.get('browser_id'))
+                except (OSError, ValueError, TypeError):
+                    pass
+            raise
+        finally:
+            if response is not None: response.close()
+            row.update(ended=time.monotonic(), bytes=len(raw))
+            row['elapsed'] = row['ended']-begin
+            if 'raw' not in row:
+                row['raw'] = self.save(ident+'.raw', bytes(raw))
+            row['end_record']=self.save(ident+'-end.json',json.dumps(row).encode())
+
+    def seal(self):
+        value = {'schema_version':BROWSER_CONTRACT['schema_version'], 'contract':BROWSER_CONTRACT,
+                 'started':self.started, 'ended':time.monotonic(), 'profile_deadline':self.deadline,
+                 'stages':self.stages}
+        return self.save('execution.json', json.dumps(value,ensure_ascii=False).encode())
+
+
+def read_browser_execution(root, ref, require_passed=True, expected_ops=None, observation=None):
+    from omc_home_observation import local
+    def read(item):
+        if not isinstance(item,dict): raise ValueError('browser_evidence_missing')
+        raw=local(root,item['path']).read_bytes()
+        if sha(raw)!=item.get('sha256'): raise ValueError('browser_evidence_digest_mismatch')
+        return raw
+    doc=json.loads(read(ref)); browser_contract(doc.get('contract'))
+    if doc.get('schema_version')!=BROWSER_CONTRACT['schema_version'] or not isinstance(doc.get('stages'),list):
+        raise ValueError('browser_execution_invalid')
+    if expected_ops is not None and [r.get('op') for r in doc['stages']]!=expected_ops:
+        raise ValueError('browser_stages_missing')
+    total=0; previous=doc['started']; ids=set()
+    browser_ids=set()
+    for name in ['started','ended','profile_deadline']:
+        if type(doc.get(name)) not in (int,float) or not math.isfinite(doc[name]):
+            raise ValueError('browser_clock_invalid')
+    for row in doc['stages']:
+        if row.get('state')=='unentered':
+            if require_passed: raise ValueError('browser_stage_unentered')
+            continue
+        raw=read(row.get('raw')); total+=len(raw)
+        if 'cleanup_raw' in row: total+=len(read(row['cleanup_raw']))
+        if len(raw)!=row.get('bytes') or len(raw)>BROWSER_CONTRACT['response_bytes'] or total>BROWSER_CONTRACT['profile_bytes']:
+            raise ValueError('browser_evidence_size_mismatch')
+        if row['started']<previous or row['ended']<row['started'] or row['operation_id'] in ids:
+            raise ValueError('browser_stage_order_invalid')
+        ids.add(row['operation_id']); previous=row['ended']
+        if require_passed:
+            start_record=json.loads(read(row.get('start_record')))
+            end_record=json.loads(read(row.get('end_record')))
+            if (any(start_record.get(k)!=row.get(k) for k in ('op','operation_id','started','inner_deadline','stage_deadline'))
+                    or end_record!={k:v for k,v in row.items() if k!='end_record'}):
+                raise ValueError('browser_stage_record_mismatch')
+            for name in ['started','ended','stage_deadline','inner_deadline']:
+                if type(row.get(name)) not in (int,float) or not math.isfinite(row[name]):
+                    raise ValueError('browser_clock_invalid')
+            if (row['state']!='passed' or row.get('http_status')!=200 or row.get('complete') is not True
+                    or row.get('termination')!='stopped_confirmed' or not row.get('browser_id')
+                    or row['stage_deadline']<=row['started'] or row['inner_deadline']<=row['started']
+                    or abs(row.get('elapsed',-1)-(row['ended']-row['started']))>.001
+                    or doc['profile_deadline']-row['started']<37
+                    or row['ended']>row['stage_deadline'] or row['stage_deadline']>min(row['started']+20,doc['profile_deadline']-17)
+                    or row['inner_deadline']>min(row['started']+15,row['stage_deadline']-5)):
+                raise ValueError('browser_execution_incomplete')
+            response=json.loads(raw); operation=response.get('operation',{})
+            if any(operation.get(k)!=row.get(k) for k in ('operation_id','op','browser_id','termination')) or operation.get('state')!='passed':
+                raise ValueError('browser_response_binding_mismatch')
+            browser_ids.add(row['browser_id'])
+            if row['op']=='evaluate' and observation is not None:
+                result=response.get('result')
+                if not isinstance(result,dict) or any(observation.get(k)!=v for k,v in result.items()):
+                    raise ValueError('browser_observation_binding_mismatch')
+    if require_passed and (not doc['stages'] or doc['ended']<previous or doc['ended']>doc['profile_deadline'] or doc['profile_deadline']!=doc['started']+120):
+        raise ValueError('browser_profile_deadline')
+    if require_passed and len(browser_ids)!=1:
+        raise ValueError('browser_identity_mismatch')
+    return doc
 
 SCHEMA = 'omc-workflow-preflight/v1'
 BROWSER_QUERY = """(async()=>{
@@ -130,7 +357,16 @@ def validate_browser_config(config: dict) -> None:
     origin.port
 
 
-def browser_observation(config: dict) -> dict:
+def browser_observation(config: dict, root=None, execution=None, started=None) -> dict:
+    if execution is not None:
+        return execution.call('evaluate', [BROWSER_QUERY])
+    if root is not None:
+        run=BrowserExecution(root,config,['evaluate'],started=started)
+        try:
+            value=run.call('evaluate',[BROWSER_QUERY])
+        finally:
+            ref=run.seal()
+        return {**value,'browser_execution':ref}
     validate_browser_config(config)
     request = urllib.request.Request(config['control_url'], data=json.dumps(
         {'op': 'evaluate', 'args': [BROWSER_QUERY]}).encode(), headers={'Content-Type': 'application/json'})
@@ -143,8 +379,8 @@ def browser_observation(config: dict) -> dict:
     return value
 
 
-def browser_readiness(config: dict) -> dict:
-    value = browser_observation(config)
+def browser_readiness(config: dict, root=None, started=None) -> dict:
+    value = browser_observation(config,root=root,started=started) if root is not None else browser_observation(config)
     if (not isinstance(value, dict) or value.get('url') != config['origin'] + config['home_path']
             or type(value.get('images_loaded')) is not int or value['images_loaded'] < config['min_images']
             or value.get('auto_transition') is not True):
@@ -262,92 +498,104 @@ def server_binding(root: Path, config: dict, browser: dict, *, observed: dict | 
 
 
 def prepare(root: Path, manifest: Path, manifest_sha256: str, task_profile: str | None = None) -> dict:
+    started=time.monotonic()
+    with browser_deadline(started+120):
+        return _prepare(root,manifest,manifest_sha256,task_profile,started)
+
+
+def _prepare(root, manifest, manifest_sha256, task_profile, started):
     report = {'schema_version': SCHEMA, 'target': str(root), 'status': 'blocked',
               'provider_call_count': 0, 'reason_codes': [], 'manifest_sha256': manifest_sha256}
     try:
-        raw = manifest.read_bytes()
-        if sha(raw) != manifest_sha256:
-            raise ValueError('manifest_digest_mismatch')
-        doc = json.loads(raw)
-        if doc['schema_version'] != SCHEMA:
-            raise ValueError('manifest_schema_invalid')
-        paths = doc['work_paths']
-        if not isinstance(paths, list) or not paths:
-            raise ValueError('work_scope_required')
-        paths = [relative_path(p, prefix=True) for p in paths]
-        inputs = doc['inputs']
-        if not isinstance(inputs, dict) or not inputs:
-            raise ValueError('inputs_required')
-        def check_inputs():
-            for name, expected in inputs.items():
-                if not isinstance(name, str) or not isinstance(expected, str) or sha((root/name).read_bytes()) != expected:
-                    raise ValueError('input_mismatch:' + str(name))
-        check_inputs()
-        checks_path = doc['required_checks_file']
-        if checks_path not in inputs:
-            raise ValueError('checks_file_not_frozen')
-        checks = json.loads((root/checks_path).read_text())
-        ids = doc['required_check_ids']
-        if (not isinstance(ids, list) or not ids or any(not isinstance(i, str) or not i for i in ids)
-                or len(set(ids)) != len(ids) or not isinstance(checks, list)
-                or [c['id'] for c in checks] != ids):
-            raise ValueError('required_checks_mismatch')
-        from omc_visual_check import AD_PROFILE, CHECK_ID, validate_requirement, requirement_path
-        visual_requirement = None
-        if ((task_profile is not None and task_profile != AD_PROFILE)
-                or (doc.get('task_profile') is not None and doc['task_profile'] != AD_PROFILE)):
-            raise ValueError('unsupported_task_profile')
-        if (task_profile == AD_PROFILE or doc.get('task_profile') == AD_PROFILE
-                or 'visual_requirement' in doc or requirement_path(root).exists()
-                or any('visual_policy' in c for c in checks)):
-            visual_requirement = doc.get('visual_requirement')
-            validate_requirement(root, visual_requirement)
-            definition = next((c for c in checks if c['id'] == CHECK_ID), {})
-            if doc.get('task_profile') != AD_PROFILE or definition.get('visual_policy') != visual_requirement['policy']:
-                raise ValueError('visual_required_check_missing_or_policy_mismatch')
-            if any(inputs.get(n) != p for n, p in visual_requirement['policy']['builder_inputs'].items()):
-                raise ValueError('visual_builder_not_frozen')
-            seal = requirement_path(root)
-            if seal.exists() and (seal.is_symlink() or json.loads(seal.read_text()) != visual_requirement):
-                raise ValueError('visual_requirement_downgrade_or_policy_mismatch')
-        artifacts = doc['ignored_artifacts']
-        if not isinstance(artifacts, list) or not artifacts:
-            raise ValueError('ignored_artifacts_required')
-        def check_artifacts():
-            for item in artifacts:
-                name = relative_path(item['path'])
-                path = root/name
-                if not path.is_file() or path.is_symlink():
-                    raise ValueError('artifact_missing:' + name)
-                try:
-                    match = git(root, 'check-ignore', '-v', '-z', '--stdin', input_data=name+'\0').split('\0')
-                except subprocess.CalledProcessError:
-                    raise ValueError('artifact_not_ignored:' + name)
-                source, _line, pattern, matched, *_ = match
-                if source != item['source'] or pattern != item['pattern'] or matched != name:
-                    raise ValueError('ignore_rule_mismatch:' + name)
-        check_artifacts()
-        binding = doc.get('server_binding')
-        identity = server_binding(root, binding, doc['browser'])
-        browser = browser_readiness(doc['browser'])
-        scope_baseline = baseline(root)
-        check_artifacts()  # Browser observation must not hide preparation drift.
-        check_inputs()  # Reject input changes during browser observation.
-        if sha(manifest.read_bytes()) != manifest_sha256:
-            raise ValueError('manifest_digest_mismatch')
-        identity = server_binding(root, binding, doc['browser'], observed=browser, previous=identity)
-        if visual_requirement is not None:
-            validate_requirement(root, visual_requirement)
-            # Write once before any executor can run; repeated preparation must agree.
-            seal = requirement_path(root)
-            seal.parent.mkdir(parents=True, exist_ok=True)
-            if not seal.exists():
-                with seal.open('x') as stream:
-                    json.dump(visual_requirement, stream, sort_keys=True)
-            report['visual_requirement'] = visual_requirement
-        report.update(status='ready', work_paths=paths, required_check_ids=ids,
-                      browser=browser, baseline=scope_baseline,
-                      server_binding={'config': binding, 'browser': doc['browser'], 'evidence': identity})
+        with browser_work_deadline(started):
+            raw = manifest.read_bytes()
+            if sha(raw) != manifest_sha256:
+                raise ValueError('manifest_digest_mismatch')
+            doc = json.loads(raw)
+            if 'browser_evidence_contract' in doc:
+                browser_contract(doc['browser_evidence_contract'])
+                report['browser_evidence_contract']=doc['browser_evidence_contract']
+            if doc['schema_version'] != SCHEMA:
+                raise ValueError('manifest_schema_invalid')
+            paths = doc['work_paths']
+            if not isinstance(paths, list) or not paths:
+                raise ValueError('work_scope_required')
+            paths = [relative_path(p, prefix=True) for p in paths]
+            inputs = doc['inputs']
+            if not isinstance(inputs, dict) or not inputs:
+                raise ValueError('inputs_required')
+            def check_inputs():
+                for name, expected in inputs.items():
+                    if not isinstance(name, str) or not isinstance(expected, str) or sha((root/name).read_bytes()) != expected:
+                        raise ValueError('input_mismatch:' + str(name))
+            check_inputs()
+            checks_path = doc['required_checks_file']
+            if checks_path not in inputs:
+                raise ValueError('checks_file_not_frozen')
+            checks = json.loads((root/checks_path).read_text())
+            ids = doc['required_check_ids']
+            if (not isinstance(ids, list) or not ids or any(not isinstance(i, str) or not i for i in ids)
+                    or len(set(ids)) != len(ids) or not isinstance(checks, list)
+                    or [c['id'] for c in checks] != ids):
+                raise ValueError('required_checks_mismatch')
+            from omc_visual_check import AD_PROFILE, CHECK_ID, validate_requirement, requirement_path
+            visual_requirement = None
+            if ((task_profile is not None and task_profile != AD_PROFILE)
+                    or (doc.get('task_profile') is not None and doc['task_profile'] != AD_PROFILE)):
+                raise ValueError('unsupported_task_profile')
+            if (task_profile == AD_PROFILE or doc.get('task_profile') == AD_PROFILE
+                    or 'visual_requirement' in doc or requirement_path(root).exists()
+                    or any('visual_policy' in c for c in checks)):
+                visual_requirement = doc.get('visual_requirement')
+                validate_requirement(root, visual_requirement)
+                definition = next((c for c in checks if c['id'] == CHECK_ID), {})
+                if doc.get('task_profile') != AD_PROFILE or definition.get('visual_policy') != visual_requirement['policy']:
+                    raise ValueError('visual_required_check_missing_or_policy_mismatch')
+                if any(inputs.get(n) != p for n, p in visual_requirement['policy']['builder_inputs'].items()):
+                    raise ValueError('visual_builder_not_frozen')
+                seal = requirement_path(root)
+                if seal.exists() and (seal.is_symlink() or json.loads(seal.read_text()) != visual_requirement):
+                    raise ValueError('visual_requirement_downgrade_or_policy_mismatch')
+            artifacts = doc['ignored_artifacts']
+            if not isinstance(artifacts, list) or not artifacts:
+                raise ValueError('ignored_artifacts_required')
+            def check_artifacts():
+                for item in artifacts:
+                    name = relative_path(item['path'])
+                    path = root/name
+                    if not path.is_file() or path.is_symlink():
+                        raise ValueError('artifact_missing:' + name)
+                    try:
+                        match = git(root, 'check-ignore', '-v', '-z', '--stdin', input_data=name+'\0').split('\0')
+                    except subprocess.CalledProcessError:
+                        raise ValueError('artifact_not_ignored:' + name)
+                    source, _line, pattern, matched, *_ = match
+                    if source != item['source'] or pattern != item['pattern'] or matched != name:
+                        raise ValueError('ignore_rule_mismatch:' + name)
+            check_artifacts()
+            binding = doc.get('server_binding')
+            identity = server_binding(root, binding, doc['browser'])
+        browser = (browser_readiness(doc['browser'],root=root,started=started)
+                   if 'browser_evidence_contract' in doc else browser_readiness(doc['browser']))
+        with browser_work_deadline(started):
+            scope_baseline = baseline(root)
+            check_artifacts()  # Browser observation must not hide preparation drift.
+            check_inputs()  # Reject input changes during browser observation.
+            if sha(manifest.read_bytes()) != manifest_sha256:
+                raise ValueError('manifest_digest_mismatch')
+            identity = server_binding(root, binding, doc['browser'], observed=browser, previous=identity)
+            if visual_requirement is not None:
+                validate_requirement(root, visual_requirement)
+                # Write once before any executor can run; repeated preparation must agree.
+                seal = requirement_path(root)
+                seal.parent.mkdir(parents=True, exist_ok=True)
+                if not seal.exists():
+                    with seal.open('x') as stream:
+                        json.dump(visual_requirement, stream, sort_keys=True)
+                report['visual_requirement'] = visual_requirement
+            report.update(status='ready', work_paths=paths, required_check_ids=ids,
+                          browser=browser, baseline=scope_baseline,
+                          server_binding={'config': binding, 'browser': doc['browser'], 'evidence': identity})
     except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError) as exc:
         report['reason_codes'].append(str(exc))
     return report

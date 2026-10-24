@@ -11,6 +11,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from omc_workflow_preflight import BROWSER_CONTRACT, browser_contract
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT/'docs/comparison-dashboard/evidence/ad-validation-runtime-v1/manifest.json'
@@ -90,6 +91,7 @@ def restore(config):
         raise ValueError('fresh_run_required')
     manifest_raw = MANIFEST.read_bytes()
     manifest = json.loads(manifest_raw)
+    browser_contract(manifest.get('browser_evidence_contract'))
     if manifest.get('core_commit') != CORE:
         raise ValueError('manifest_core_mismatch')
     manifest_pin = hashlib.sha256(manifest_raw).hexdigest()
@@ -164,6 +166,7 @@ def restore(config):
         runtime['queries'][name] = {'path':str(dest),'sha256':query['sha256']}
     runtime.update(schema_version='omc-ad-runtime/v1', arms={candidate.name:{'port':cfg['port']}},
                    operator_manifest_sha256=manifest_pin, browser_sha256=digest(run/'browser.cjs'))
+    runtime['browser_evidence_contract'] = BROWSER_CONTRACT
     write_json(run/'runtime.json',runtime)
     write_json(run/'restore-receipt.json',{
         'schema_version':'omc-ad-restore-receipt/v1','provider_calls':0,
@@ -179,6 +182,7 @@ def restore(config):
 def runtime_config(path):
     path = no_links(path).resolve(strict=True)
     cfg = json.loads(path.read_text())
+    browser_contract(cfg.get('browser_evidence_contract'))
     run = Path(cfg['run_root'])
     receipt = json.loads(child(run,'restore-receipt.json').read_text())
     if (path != run/'runtime.json' or receipt['runtime_sha256'] != digest(path)

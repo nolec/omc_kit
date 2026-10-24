@@ -326,7 +326,8 @@ def gate_fixture(home):
     put(root/'.omc/verification-bases/s/1.json',basis)
     put(root/'.omc/state/latest.json', {'latest_session_id':'s','latest_confirmed_session_id':'s'})
     put(root/'.omc/pipeline_session.json',{'started_at':time.time(),'contract_confirmed':True,'session_id':'s','red_session_id':'s',
-        'red_done_tests':['test_app.py'],'required_checks':['browser-home'], 'basis_sha256':guard._basis_digest(basis)})
+        'red_done_tests':['test_app.py'],'required_checks':['browser-home'], 'basis_sha256':guard._basis_digest(basis),
+        'worktree_baseline': guard._unstaged_impl_fingerprints(root) or {}})
     verification={'session_id':'s','basis_sha256':guard._basis_digest(basis),
         'home_motion_result': selected(root),
         'implementation':{'status':'applied','evidence':'synthetic patch'},'checks':{'browser-home':{
@@ -346,6 +347,72 @@ def test_complete_cli_blocks_six_identical_states_despite_passed_claim(home):
     assert proc.stdout.startswith('구현됨·검증 미완료\n')
     assert 'home_motion_not_observed' in proc.stdout
     assert 'VERDICT: BLOCK' in proc.stdout
+
+
+def test_complete_cli_rejects_missing_v2_browser_execution(home):
+    from omc_workflow_preflight import BROWSER_CONTRACT
+    root, req, observation, basis = home
+    req['browser_evidence_contract'] = BROWSER_CONTRACT
+    put(root/'.omc/home-motion-requirement.json', req)
+    basis['checks'][0]['home_motion_sha256'] = hashlib.sha256((root/'.omc/home-motion-requirement.json').read_bytes()).hexdigest()
+    assess(home)
+    verification = gate_fixture(home)
+    result = subprocess.run([sys.executable, str(CLI.with_name('omc_pipeline_guard.py')),
+        '--target', str(root), 'complete-task', '--verification-file', str(verification)],
+        capture_output=True, text=True)
+    assert result.returncode == 1, 'v2 home claim without execution evidence passed completion'
+    assert 'browser_' in result.stdout
+
+
+@pytest.mark.parametrize('defect',[None,'missing','partial','termination','deadline','hash','session','snapshot'])
+def test_v2_home_execution_is_consumed_by_actual_complete_cli(home,defect):
+    """Synthetic bridge data, real transport/prefix publication/completion CLI."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+    from omc_workflow_preflight import BROWSER_CONTRACT, BrowserExecution
+    root,req,obs,basis=home
+    req['browser_evidence_contract']=BROWSER_CONTRACT
+    put(root/'.omc/home-motion-requirement.json',req)
+    basis['checks'][0]['home_motion_sha256']=hashlib.sha256((root/'.omc/home-motion-requirement.json').read_bytes()).hexdigest()
+    result=dict(obs)
+    class Endpoint(BaseHTTPRequestHandler):
+        def log_message(self,*_):pass
+        def do_POST(self):
+            request=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            operation={'operation_id':request['operation_id'],'op':request['op'],
+                'browser_id':'synthetic-browser','state':'passed','termination':'stopped_confirmed'}
+            self.send_response(200);self.end_headers()
+            self.wfile.write(json.dumps({'operation':operation,'result':result}).encode())
+    server=ThreadingHTTPServer(('127.0.0.1',0),Endpoint)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        config={'control_url':f'http://127.0.0.1:{server.server_port}/command',
+                'origin':'http://localhost:3034','home_path':'/shop','min_images':2}
+        execution=BrowserExecution(root,config,['evaluate'])
+        execution.call('evaluate',['synthetic result'])
+        ref=execution.seal();obs['browser_execution']=ref
+        if defect in {'partial','termination','deadline'}:
+            doc=json.loads((root/ref['path']).read_bytes())
+            if defect=='partial':doc['stages'][0]['complete']=False
+            if defect=='termination':doc['stages'][0]['termination']='cleanup_unconfirmed'
+            if defect=='deadline':doc['stages'][0]['ended']=doc['stages'][0]['stage_deadline']+1
+            put(root/ref['path'],doc)
+            ref['sha256']=hashlib.sha256((root/ref['path']).read_bytes()).hexdigest()
+        elif defect=='hash':
+            doc=json.loads((root/ref['path']).read_bytes())
+            path=root/doc['stages'][0]['raw']['path'];path.write_bytes(path.read_bytes()+b'corrupt')
+        elif defect=='missing':obs.pop('browser_execution')
+        elif defect=='session':obs['session_id']='other'
+        elif defect=='snapshot':obs['code_snapshot_sha256']='0'*64
+        assess(home)
+        verification=gate_fixture(home)
+        proc=subprocess.run([sys.executable,str(CLI.with_name('omc_pipeline_guard.py')),
+            '--target',str(root),'complete-task','--verification-file',str(verification)],capture_output=True,text=True)
+        assert proc.returncode==(0 if defect is None else 1),proc.stdout
+        assert ('VERDICT: PROCEED' if defect is None else 'VERDICT: BLOCK') in proc.stdout
+        if defect in {'missing','partial','termination','deadline','hash'}:assert 'browser_' in proc.stdout
+    finally:
+        server.shutdown();server.server_close();thread.join(timeout=2)
 
 
 def test_complete_before_final_and_collector_recheck_same_prefix(home):
