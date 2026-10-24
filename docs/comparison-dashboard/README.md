@@ -1,6 +1,23 @@
-# OMC 비교 대시보드 · 최신 기준 2026-10-23
+# OMC 비교 대시보드 · 최신 기준 2026-10-24
 
-## 현재 · 테스트 영수증·공통 시각 정책 보완 커밋 · 2026-10-23
+## 현재 · 고정 home 증거·시간 경계 보완 및 원본 리뷰 재결속 · 2026-10-24
+
+- 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
+- 현재 판정: 고정 home 증거·시간·종료 연결11개 커밋 · 원본 리뷰 APPROVE·결속 READY · 실제 비교 HOLD
+- 목표 대비 진행: 최근 준비는 고정 home 시간 초과로 NOT_STARTED·Claude0회였다. 원인을 조사해 단계별 시간·응답 원문·종료 상태를 기록하는 v2 계약과 실제 완료 가드 연결을 보완하고 996d80d의11파일로 커밋했다. 잘못된 JSON 응답과 정리 시간 경계도 수정했으며 원본 커밋 후보의 리뷰 결속을 확인했다. 보완 후 실제 Claude 업무 완료·생산성·경쟁 우위는 아직 미입증이다.
+- 실제 재검증: 996d80d 보완 후 실제 Claude/provider 새 호출0회·비교 HOLD다. 최근 준비는 NOT_STARTED(준비 home unknown/시간 초과, controlled failed, wrapper0·시도소비0)이며 모델 실행의 신규 실패로 집계하지 않는다. 이전 실제1회1778.16초 정상 종료·전체FAIL·비교HOLD와 compact 경계1회, 기존 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증은 당시 이력으로 유지한다. 이번 로컬 검사나 리뷰 결속으로 업무 효과·경쟁 우위를 입증하지 않는다.
+- 이번 개선: 고정 home/controlled와 새 native 홈 관측에 단계 시작/종료·마감·HTTP 응답 원문·해시·완전성·작업/브라우저 ID·종료 상태를 연결했다. 내부15초·외부20초·전체120초, 정리12초·봉인5초를 적용하며 103초 작업 구간과 종료 확인을 분리한다. 본문·operation·result의 잘못된 JSON 구조는 unknown으로 처리하고 원문을 보존한다. 종료 미확인 채널은 재사용하지 않으며 고정 영수증·별도 native 홈 소비자·실제 완료 가드가 같은 증거를 확인한다. 기존 준비5초·동일 track6표본·800ms 간격·이미지2개·자동 전환과 세션/후보/서버 결속 기준은 유지한다.
+- 코드·범위: 리뷰된 core·검수 실행기·테스트·문서11파일만 main에 로컬 커밋996d80d. 검토 snapshot·스테이징·커밋 blob/권한 및 frozen diff가 일치한다. 이번 로드맵·대시보드4파일은 구현 커밋과 분리된 별도 문서 범위다.
+- 검증: 최종 관련 통합253개 통과·생략0(521.59초), 추가 호환136개 통과·생략0(58.05초), 독립 리뷰28개 통과(27.66초·148개 제외). 독립28개는 기존 범위와 겹치므로 합산하지 않는다. Python8파일·JS1파일 문법·manifest source 해시·diff·TDD·완료 가드·커밋 훅을 확인했다. 과거 기존 실패4개 기록은 소급 수정하지 않고 이번136개 통과와 구분한다. 합성/로컬 Chromium 회귀는 실제 Claude 광고 업무 성공 증거가 아니다.
+- 리뷰: 격리11파일 리뷰 APPROVE 뒤 원본 worktree의 candidate_directory_unsupported를 조사했다. 과거 검사용 미커밋 Git 폴더가 전체 작업트리 후보에 포함된 것이 원인이었다. 996d80d 커밋을 base82010a1과 명시적으로 고정해 원본 snapshot·승인 receipt를 새로 생성했고 후보 범위 해시와 frozen diff가 기존 검토와 동일했다. 결속 검사 READY는 해당11파일 커밋 후보에 한정한다. 이번 문서4파일이나 전체 출하 검증·릴리스 승인을 뜻하지 않는다.
+- 보존 경계: 원본 storefront·과거 실행/오류/리뷰·.omc 교훈을 보존했다. 리뷰 재결속을 위해 미추적 자료를 삭제·이동·자동 제외하지 않았으며 기존 커밋 단위 후보 수집 기능을 사용했다. 커밋은 승인11파일만 포함했고 이번 문서4파일과 분리한다.
+- 다음 작업: 996d80d core·검수 실행기 호환성 확인을 포함한 실제 Claude 최대1회 재검증 계획·진입 조건 확정
+- 다음: 검수 복원 CLI와 manifest의 현재 CORE 기준은 99773380이다. 새 후보996d80d의 core·검수 실행기·고정 query/manifest 해시와 감독e4557dd의 호환성을 먼저 확인하는 계획을 개정·검토·승인한다. 호환성 보완이 필요하면 별도 범위로 확정한다. 실제 홈·광고2개·자동 전환·서버/후보 결속·필수8프로필·selection/verification/complete-task·정상 종료와 최종 검증/기록 시간을 진입 조건으로 둔다. 조건 충족 및 새 실행 승인 뒤 Claude 최대1회·자동 재시도0회로 검증하며, 이전 실행 승인·예산은 자동 승계하지 않는다. 유효 OMC 사례가 확인된 뒤 동등 경쟁 비교 진입을 판단한다.
+- 배포: 996d80d core·검수 실행기 보완은 로컬 커밋 완료·미릴리스·일반 사용처 미설치다. 감독e4557dd도 별도 미릴리스 도구다. 정상11개 사용처의 e618fca/0.6.1 설치·엄격 감사는 당시 이력이며 이번에 재감사하지 않았다. 이번 변경의 push·태그·릴리스·재설치는 수행하지 않았다.
+- 관찰: v3 DISABLED · OBSERVATION_INVALID / pending_completion_invalid. 코드 승인과 별개.
+- 근거: .omc/home-evidence-review-fix-20261024/REPORT.md, .omc/home-evidence-review-fix-20261024/integration.txt, .omc/home-evidence-review-fix-20261024/compatibility.txt, .omc/home-evidence-review-fix-20261024/completion.txt, .omc/home-evidence-review-20261024/REVIEW.md, .omc/home-evidence-review-20261024/independent.txt, .omc/review-candidate-investigate-20261024/REPORT.md, .omc/review-commit-rebinding-996d80d/binding-result.json, .omc/review-commit-rebinding-996d80d/final-check.json, .omc/state/review-snapshots/27d7b7557e554e3fbdaed5cfae1814db.json; 로컬 자료는 다른 checkout에 자동 제공되지 않는다.
+
+## 이전 이력 · 테스트 영수증·공통 시각 정책 보완 커밋 · 2026-10-23
 
 - 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
 - 현재 판정: 테스트 영수증·공통 시각 정책7개 커밋 · 리뷰 APPROVE · 실제 비교 HOLD
