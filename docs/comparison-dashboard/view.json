@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "996d80d 검수 실행기 호환성5개 커밋 · 원본 리뷰 APPROVE·결속 READY · 실제 비교 HOLD",
+    "decision": "7bdbcb8 보완10개 커밋 · 원본 리뷰 APPROVE·결속 READY · 설치 기존 실패1개·비교 HOLD",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2006,7 +2006,7 @@
         "effect": "미검증",
         "id": "C1",
         "name": "기존·신규 실패 구분",
-        "next_work": "996d80d core·03d6a70 검수 실행기·e4557dd 감독을 고정한 실제 Claude 최대1회 재검증 계획 개정·검토 · 비교 HOLD·효과 미입증 유지",
+        "next_work": "7bdbcb8 보완 후보의 출하·비교 재실행 여부와 고정 버전·시간 배치를 별도 결정 · 비교 HOLD·효과 미입증 유지",
         "principle": "기존 실패와 이번 변경의 실패를 분리하되 필수 검증 실패는 완료 차단",
         "status": "C1 실행기 보고 유지 · 응답 지침 후보 제외 · 회귀 검증·리뷰 완료 · 사용자 효과 미입증",
         "supports": [
@@ -2022,7 +2022,7 @@
         "effect": "미검증",
         "id": "C2",
         "name": "프롬프트 관리",
-        "next_work": "996d80d core·03d6a70 검수 실행기·e4557dd 감독을 고정한 실제 Claude 최대1회 재검증 계획 개정·검토 · 비교 HOLD·효과 미입증 유지",
+        "next_work": "7bdbcb8 보완 후보의 출하·비교 재실행 여부와 고정 버전·시간 배치를 별도 결정 · 비교 HOLD·효과 미입증 유지",
         "principle": "정책 변경의 일관된 반영",
         "status": "비교 검증 필요",
         "supports": [
@@ -2038,7 +2038,7 @@
         "effect": "미입증",
         "id": "C3",
         "name": "중단·재개",
-        "next_work": "996d80d core·03d6a70 검수 실행기·e4557dd 감독을 고정한 실제 Claude 최대1회 재검증 계획 개정·검토 · 비교 HOLD·효과 미입증 유지",
+        "next_work": "7bdbcb8 보완 후보의 출하·비교 재실행 여부와 고정 버전·시간 배치를 별도 결정 · 비교 HOLD·효과 미입증 유지",
         "principle": "완료 근거를 재검증하며 작업 이어가기",
         "status": "다섯 항목 안내0.5.8 구현 이력 보존 · 현재 설치0.6.1 · 사용자 이해 재검증 전",
         "supports": [
@@ -2049,9 +2049,9 @@
         "historical_next_work": "설치된0.5.9의 기본 다섯 항목 안내만 제공한 새 격리 사례에서 사용자 이해를 확인한다. 형식 동의·코드 검증·설치를 실제 이해 효과로 집계하지 않으며 실무·다중 사례 효과·경쟁 우열은 미검증으로 유지한다."
       }
     ],
-    "next": "A단계 호환성 구현·검증·리뷰·커밋은 종료한다. 996d80d core·03d6a70 검수 실행기·e4557dd 감독의 전체 SHA와 manifest/query 해시를 B계획에 고정하고 진입 조건·시간 배치·정상 종료 기준을 개정·검토한다. 별도 실행 승인 후에만 새 준비를 시작하며 실제 홈·광고2개·자동 전환·서버/후보 결속·필수8프로필·selection/verification/complete-task를 확인한다. 감독 호출·Claude native 실행은 각각 최대1회, 자동 재시도0회다. 내부 모델/API 요청 수는 별도 관측하고 미관측은 미확인으로 남긴다. 이전 승인·예산은 자동 승계하지 않는다. 유효 OMC 사례 이후 동등 경쟁 비교 진입을 판단한다.",
+    "next": "현재 구현·리뷰·커밋 단계는 종료했다. 후속 출하·재설치와 로그인 없는 실제 Ad 비교 재실행 여부는 별도로 결정한다. 재실행을 선택하면 새 core·검수 실행기·감독 버전과 입력 해시, 실행/기록/정리 시간 및 두 실행 사이 정리 조건을 다시 고정·검토·승인한다. 이전 승인·예산을 자동 승계하지 않고 이번 문서 최신화에서 준비·모델 호출·비교를 실행하지 않는다. 실제 홈 연동은 NOT_VERIFIED로 남긴다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "996d80d core·03d6a70 검수 실행기·e4557dd 감독을 고정한 실제 Claude 최대1회 재검증 계획 개정·검토"
+    "current_priority": "7bdbcb8 보완 후보의 출하·비교 재실행 여부와 고정 버전·시간 배치를 별도 결정"
   },
   "decision": {
     "candidate": "실제 비교 차단 원인 보완 후 업무 재검증",
@@ -2096,44 +2096,45 @@
         "historical": true
       }
     ],
-    "completion": "03d6a70의 A단계5파일 구현·302개 회귀·리뷰·커밋·원본 승인 재결속 완료. B계획 개정과 실제 Claude·경쟁 비교·릴리스·설치는 미실행.",
+    "completion": "7bdbcb8 보완10개 커밋 · 원본 리뷰 APPROVE·결속 READY · 설치 기존 실패1개·비교 HOLD",
     "deliverables": [
-      "996d80d core·검수 실행기 버전 통일 및 이전 core 거부",
-      "기존 시각·6표본 기준 유지와 두 core 감독4사례 회귀",
-      "03d6a70 승인5파일 로컬 커밋",
-      "원본 커밋 리뷰 APPROVE·결속 READY"
+      "7bdbcb8 승인10파일 로컬 커밋",
+      "요구 파일 경로·시간표 명확화와 셸/Claude 종료 근거 분리",
+      "고정 core 원문 fixture 분리·OverflowError 회귀",
+      "원본 리뷰 APPROVE·결속 READY"
     ],
-    "limit": "03d6a70 호환성 보완 후 실제 Claude native 실행0회·새 B준비0회·비교 HOLD다. 과거 준비 NOT_STARTED(home unknown/시간 초과, controlled failed, wrapper0·시도소비0)와 이전 실제1회1778.16초 정상 종료·전체FAIL·compact 경계1회는 당시 이력으로 유지한다. 이번 A단계 통합의 환경 권한 실패는 제품 신규 실패와 구분하며2회차 통과로 과거 원문을 고치지 않는다. 기존 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증·업무 효과 및 경쟁 우위 미입증을 유지한다.",
+    "limit": "비교 HOLD: 7bdbcb8 이전 로그인 없는 실제 Ad 비교에서 경쟁 도구1회·OMC0회. 경쟁 플러그인 활성화와 execute 호출·반환은 관측했지만 RED·코드 수정·최종7검증을 완료하지 못하고337.60초에 중단됐다. 당시 자식 종료 판정 unconfirmed 원문을 보존하며 이후 물리적 정리 확인을 정상 완료로 바꾸지 않는다. 7bdbcb8 이후 실제 Claude native0회·새 준비0회. 기존 설치 실패1개, 실제 홈 NOT_VERIFIED, 광고 추적4개 기존 실패·클릭/숨김 통합 미검증을 유지한다. 유효한 양쪽 비교 표본·업무 효과·경쟁 우위는 없다.",
     "not_done": [
-      "996d80d core와 현재99773380 기준 검수 복원기의 호환성 점검·고정 버전·계획 승인",
-      "보완 후 실제 Claude의 필수8프로필·최종 기록·시간 조건·정상 종료 확인",
-      "동등 경쟁 비교·업무 효과·경쟁 우위 입증",
-      "이번 보완 릴리스·일반 사용처 설치"
+      "기존 설치 실패1개 해결",
+      "실제 Claude 보완 후 재검증·유효한 양쪽 비교",
+      "실제 홈 연동 검증",
+      "업무 효과·경쟁 우위 입증",
+      "이번 보완 출하·일반 사용처 설치"
     ],
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "reason": "검수 복원 CLI·config·manifest의 지원 core를 996d80d 전체 SHA로 통일했다. 이전99773380·637a965·임의 core와 충돌 manifest는 출력 쓰기 전에 거부한다. home/controlled query·입력 해시·같은 버퍼 실행·기존6표본·픽셀 기준은 유지했다. 감독 제품e4557dd는 변경하지 않고 테스트가637a965와996d80d를 각각 복원해 정상·내부124·외부 시간 초과·최종result 누락의4사례와 실제 소스·승인 버전을 대조하도록 보완했다.",
-    "state": "996d80d 검수 실행기 호환성5개 커밋 · 원본 리뷰 APPROVE·결속 READY · 실제 비교 HOLD",
-    "next": "A단계 호환성 구현·검증·리뷰·커밋은 종료한다. 996d80d core·03d6a70 검수 실행기·e4557dd 감독의 전체 SHA와 manifest/query 해시를 B계획에 고정하고 진입 조건·시간 배치·정상 종료 기준을 개정·검토한다. 별도 실행 승인 후에만 새 준비를 시작하며 실제 홈·광고2개·자동 전환·서버/후보 결속·필수8프로필·selection/verification/complete-task를 확인한다. 감독 호출·Claude native 실행은 각각 최대1회, 자동 재시도0회다. 내부 모델/API 요청 수는 별도 관측하고 미관측은 미확인으로 남긴다. 이전 승인·예산은 자동 승계하지 않는다. 유효 OMC 사례 이후 동등 경쟁 비교 진입을 판단한다."
+    "reason": "비교 HOLD: 7bdbcb8 이전 로그인 없는 실제 Ad 비교에서 경쟁 도구1회·OMC0회. 경쟁 플러그인 활성화와 execute 호출·반환은 관측했지만 RED·코드 수정·최종7검증을 완료하지 못하고337.60초에 중단됐다. 당시 자식 종료 판정 unconfirmed 원문을 보존하며 이후 물리적 정리 확인을 정상 완료로 바꾸지 않는다. 7bdbcb8 이후 실제 Claude native0회·새 준비0회. 기존 설치 실패1개, 실제 홈 NOT_VERIFIED, 광고 추적4개 기존 실패·클릭/숨김 통합 미검증을 유지한다. 유효한 양쪽 비교 표본·업무 효과·경쟁 우위는 없다.",
+    "state": "HOLD",
+    "next": "현재 구현·리뷰·커밋 단계는 종료했다. 후속 출하·재설치와 로그인 없는 실제 Ad 비교 재실행 여부는 별도로 결정한다. 재실행을 선택하면 새 core·검수 실행기·감독 버전과 입력 해시, 실행/기록/정리 시간 및 두 실행 사이 정리 조건을 다시 고정·검토·승인한다. 이전 승인·예산을 자동 승계하지 않고 이번 문서 최신화에서 준비·모델 호출·비교를 실행하지 않는다. 실제 홈 연동은 NOT_VERIFIED로 남긴다."
   },
   "current_update": {
     "date": "2026-10-25",
-    "status": "996d80d 검수 실행기 호환성5개 커밋 · 원본 리뷰 APPROVE·결속 READY · 실제 비교 HOLD",
+    "status": "7bdbcb8 보완10개 커밋 · 원본 리뷰 APPROVE·결속 READY · 설치 기존 실패1개·비교 HOLD",
     "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
-    "commit": "03d6a70",
-    "implementation_commit": "03d6a70",
-    "goal_progress": "996d80d의 home 증거·시간·종료 보완 뒤 남아 있던 검수 실행기의 이전 core 고정 문제를 해결했다. 03d6a70에서 실행기·manifest·테스트를 996d80d에 맞추고 공개 restore·고정 명령·HTTP·Chromium·영수증 및 감독 연결 회귀를 확인했다. 원본 커밋 리뷰 재결속도 완료했다. 실제 Claude 업무 완료·생산성·경쟁 우위는 아직 미입증이다.",
-    "commit_scope": "리뷰 승인된 실행기·테스트·manifest·README 5개 파일만 main에 로컬 커밋03d6a70. base79e209a에서 검토한 frozen diff·스테이징·커밋 blob과 내용이 일치한다. 이번 로드맵·대시보드4파일은 별도 문서 범위다.",
-    "improvement": "검수 복원 CLI·config·manifest의 지원 core를 996d80d 전체 SHA로 통일했다. 이전99773380·637a965·임의 core와 충돌 manifest는 출력 쓰기 전에 거부한다. home/controlled query·입력 해시·같은 버퍼 실행·기존6표본·픽셀 기준은 유지했다. 감독 제품e4557dd는 변경하지 않고 테스트가637a965와996d80d를 각각 복원해 정상·내부124·외부 시간 초과·최종result 누락의4사례와 실제 소스·승인 버전을 대조하도록 보완했다.",
-    "verification": "최종 공유 통합 A-FULL-2는302개 통과·생략0(534.16초). 1회차는 로컬 포트·Chromium 실행 권한 제한으로225개 통과·40개 실패·37개 설정 오류였고 원문을 보존했다. 동일 소스의 실행 환경 보정 후2회차로 통과했으며 전체 통합 시작은 총2회다. 대상별 GREEN13개·45개는302개와 중복돼 합산하지 않는다. Python3파일 문법·원본 보존·TDD·공식 완료 가드·커밋 훅을 확인했다. 로컬/합성 회귀이며 실제 로그인 홈이나 Claude 업무 성공 증거가 아니다.",
-    "tests_passed": 302,
+    "commit": "7bdbcb8",
+    "implementation_commit": "7bdbcb8",
+    "goal_progress": "로그인 없는 실제 Ad 독립 화면의 비교는 경쟁 도구1회·OMC0회에서 중단됐다. 요구 파일 경로 혼동과 300초 제한, 셸·Claude 종료 근거 혼동을 보완하고 고정 core 원문을 분리해 7bdbcb8로 커밋했다. 구현·로컬 회귀·원본 리뷰 재결속까지 완료했으며 실제 업무 완료·생산성·경쟁 우위는 아직 미입증이다.",
+    "commit_scope": "base26753b7d에서 리뷰 승인된 입력 템플릿·시간표·종료 관측·감독·테스트·고정 원문 fixture 등10개 파일만 main에 로컬 커밋7bdbcb8. 검토 후보와 커밋의 경로·내용·권한이 일치한다. 이번 문서4개는 별도 범위다.",
+    "improvement": "요구 파일을 .omc/visual-requirement.json의 절대 경로·해시에 연결했다. 300초는 중단 기준에서 진행 점검으로 변경하고 900/1500/1680/1788/1800초와 전체7200초 시간표를 문서화했다. 시간표는 강제 집행이나 실제 성공 시간의 보장이 아니다. 직접 자식인 셸의 PID·종료 코드·signal·wait·그룹 소멸·출력 회수 기록을 보존하고 Claude PID·종료 코드는 미관측이면 null로 구분한다. 시각값 OverflowError 등 잘못된 기록은 unknown으로 보존한다. 996d80d 원문은 실행하지 않는 .fixture로 분리해 고정 해시와 현재 소스를 구분하며 query·6표본·픽셀 기준은 유지했다.",
+    "verification": "최종 통합 리뷰162개 통과·실패0·생략0(91.80초, Git 밖 임시 검사 경로). 종료 기록 회귀77개는162개와 겹쳐 합산하지 않는다. 원본의 중첩 Git 검사 경로에서는151개 통과·설치 검사1개 기존 실패·생략0이며 변경 전후 동일 단계·정규화 원문 일치를 확인했다. 별도 공개 restore4개 통과. Git 밖 성공은 기존 설치 실패 해결을 뜻하지 않는다. 문법·diff·TDD·커밋 훅 확인은 실제 Claude 업무 성공·전체 출하 검증과 구분한다.",
+    "tests_passed": 162,
     "tests_skipped": 0,
     "review_verdict": "APPROVE",
-    "review_scope_files": 5,
-    "review_scope_description": "원본 worktree capture는 candidate_directory_unsupported로 차단돼 기존 기록을 보존하고 동일5개 변경만 별도 후보에 구성해 APPROVE했다. 사용자 승인 커밋03d6a70을 reviewed base79e209a와 고정해 원본 snapshot·APPROVE receipt를 생성했다. 격리/원본 frozen diff와 후보 범위 해시가 일치하며 결속 검사 READY다. 이5개 파일 커밋 승인과 이번 문서4개·전체 출하 승인은 구분한다.",
-    "display_next": "996d80d core·03d6a70 검수 실행기·e4557dd 감독을 고정한 실제 Claude 최대1회 재검증 계획 개정·검토",
-    "next": "A단계 호환성 구현·검증·리뷰·커밋은 종료한다. 996d80d core·03d6a70 검수 실행기·e4557dd 감독의 전체 SHA와 manifest/query 해시를 B계획에 고정하고 진입 조건·시간 배치·정상 종료 기준을 개정·검토한다. 별도 실행 승인 후에만 새 준비를 시작하며 실제 홈·광고2개·자동 전환·서버/후보 결속·필수8프로필·selection/verification/complete-task를 확인한다. 감독 호출·Claude native 실행은 각각 최대1회, 자동 재시도0회다. 내부 모델/API 요청 수는 별도 관측하고 미관측은 미확인으로 남긴다. 이전 승인·예산은 자동 승계하지 않는다. 유효 OMC 사례 이후 동등 경쟁 비교 진입을 판단한다.",
-    "limitations": "03d6a70 호환성 보완 후 실제 Claude native 실행0회·새 B준비0회·비교 HOLD다. 과거 준비 NOT_STARTED(home unknown/시간 초과, controlled failed, wrapper0·시도소비0)와 이전 실제1회1778.16초 정상 종료·전체FAIL·compact 경계1회는 당시 이력으로 유지한다. 이번 A단계 통합의 환경 권한 실패는 제품 신규 실패와 구분하며2회차 통과로 과거 원문을 고치지 않는다. 기존 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증·업무 효과 및 경쟁 우위 미입증을 유지한다.",
-    "installation": "996d80d core·03d6a70 검수 실행기·e4557dd 감독은 로컬 커밋 상태이며 미릴리스·일반 사용처 미설치다. 정상11개 사용처의 e618fca/0.6.1 설치·엄격 감사는 당시 이력이고 이번에 재감사하지 않았다. push·태그·릴리스·재설치 없음.",
+    "review_scope_files": 10,
+    "review_scope_description": "전체10개 격리 리뷰 APPROVE 뒤 커밋7bdbcb8을 base26753b7d와 고정해 원본 승인 기록을 재결속했다. 후보 범위 해시·frozen diff·커밋 blob/권한이 일치하고 결속 검사 READY다. 이는10개 구현 커밋의 승인 연결이며 이번 문서4개나 전체 출하·릴리스 승인이 아니다.",
+    "display_next": "7bdbcb8 보완 후보의 출하·비교 재실행 여부와 고정 버전·시간 배치를 별도 결정",
+    "next": "현재 구현·리뷰·커밋 단계는 종료했다. 후속 출하·재설치와 로그인 없는 실제 Ad 비교 재실행 여부는 별도로 결정한다. 재실행을 선택하면 새 core·검수 실행기·감독 버전과 입력 해시, 실행/기록/정리 시간 및 두 실행 사이 정리 조건을 다시 고정·검토·승인한다. 이전 승인·예산을 자동 승계하지 않고 이번 문서 최신화에서 준비·모델 호출·비교를 실행하지 않는다. 실제 홈 연동은 NOT_VERIFIED로 남긴다.",
+    "limitations": "비교 HOLD: 7bdbcb8 이전 로그인 없는 실제 Ad 비교에서 경쟁 도구1회·OMC0회. 경쟁 플러그인 활성화와 execute 호출·반환은 관측했지만 RED·코드 수정·최종7검증을 완료하지 못하고337.60초에 중단됐다. 당시 자식 종료 판정 unconfirmed 원문을 보존하며 이후 물리적 정리 확인을 정상 완료로 바꾸지 않는다. 7bdbcb8 이후 실제 Claude native0회·새 준비0회. 기존 설치 실패1개, 실제 홈 NOT_VERIFIED, 광고 추적4개 기존 실패·클릭/숨김 통합 미검증을 유지한다. 유효한 양쪽 비교 표본·업무 효과·경쟁 우위는 없다.",
+    "installation": "7bdbcb8 보완은 로컬 커밋 완료·미릴리스·일반 사용처 미설치다. 정상11개 사용처의 e618fca/0.6.1 설치·엄격 감사는 당시 이력이며 이번에 재감사하지 않았다. push·태그·릴리스·재설치 없음.",
     "release_state": {
       "release_version": "0.6.1",
       "release_commit": "e618fcaf693f4b20519eb6dab6bce64da9c662f6",
@@ -2175,7 +2176,9 @@
       "home_evidence_fix_released": false,
       "home_evidence_fix_reinstalled": false,
       "runtime_996d80d_compatibility_released": false,
-      "runtime_996d80d_compatibility_reinstalled": false
+      "runtime_996d80d_compatibility_reinstalled": false,
+      "termination_contract_fix_released": false,
+      "termination_contract_fix_reinstalled": false
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2188,8 +2191,7 @@
     "ship_state": "NEW_FIX_COMMITTED_UNRELEASED_NOT_INSTALLED",
     "task_gate": {
       "state": "PASSED",
-      "evidence": ".omc/state/compat-996d80d-A/complete-after-staging.txt",
-      "scope": "A단계5파일 구현 검증. 실제 Claude 성공·이번 문서4파일·전체 출하 승인은 아님"
+      "scope": "리뷰 승인10개 구현 범위. 문서4개·실제 비교·전체 출하 승인 아님"
     },
     "observation": {
       "v3": "DISABLED",
@@ -2199,158 +2201,312 @@
     },
     "verification_groups": [
       {
-        "name": "최종 공유 통합 A-FULL-2",
-        "passed": 302,
+        "name": "최종 통합 리뷰(Git 밖 경로)",
+        "passed": 162,
+        "failed": 0,
         "skipped": 0,
-        "seconds": 534.16,
+        "seconds": 91.8,
         "real_provider_run": false
       },
       {
-        "name": "1회차 환경 권한 실패",
-        "passed": 225,
-        "failed": 40,
-        "errors": 37,
-        "seconds": 159.68,
-        "status": "ENVIRONMENT_BLOCKED",
-        "product_regression_established": false,
+        "name": "중첩 Git 경로·기존 설치 실패 대조",
+        "passed": 151,
+        "failed": 1,
+        "skipped": 0,
+        "status": "EXISTING_FAILURE_UNRESOLVED",
         "real_provider_run": false
       },
       {
-        "name": "대상별 GREEN",
-        "runtime_passed": 13,
-        "supervisor_passed": 45,
+        "name": "종료 기록 회귀",
+        "passed": 77,
+        "skipped": 0,
         "overlapping": true,
+        "real_provider_run": false
+      },
+      {
+        "name": "공개 restore",
+        "passed": 4,
         "real_provider_run": false
       }
     ],
-    "latest_single_attempt": {
-      "schema_version": "omc-ad-single-operator-result/v1",
-      "run_id": "ad-single-absolute-records-20261023T041331Z",
-      "overall": "FAIL",
-      "comparison_entry": "HOLD",
-      "implementation_observed": true,
-      "native_calls": 1,
-      "automatic_retry": 0,
-      "native_normal_exit": true,
-      "duration_sec": 1778.1574035420053,
-      "child_cleanup": "confirmed",
-      "child_record_paths": "candidate-internal absolute; preflight passed",
-      "native_complete_task": "done",
-      "independent_plan_success": false,
-      "test_status": "unknown",
-      "test_reason": "baseline_test_removed",
-      "tests_missing_baseline_names": [
-        "Ad moves card slides with the card carousel arrows"
-      ],
-      "test_new_failures": "not established; original four failing names remain identical",
-      "test_declared_pass_conflict": true,
-      "visual_fixed_path_contract_mismatch_observed": true,
-      "native_direct_visual_checker_and_handwritten_receipts_observed": true,
-      "edit_cutoff_sec": 300,
-      "product_edit_observed_sec": [
-        344.98407459259033,
-        351.4375457763672
-      ],
-      "final_validation_cutoff_sec": 1380,
-      "completion_record_cutoff_sec": 1620,
-      "after_cutoff_work_observed": true,
-      "actual_compact_boundaries": 1,
-      "collector_authoritative": "independent-assessment-absolute-done",
-      "collector_limits": [
-        "prebound CONTRACT not recognized by literal-call recognizer",
-        "unsupported auxiliary Bash does not establish essential omission",
-        "truthful_final analyzer unknown; direct selected tests unknown vs declared passed is independently confirmed"
-      ],
-      "protected_core_bytes_match": true,
-      "model_product_scope": [
-        "Ad.styled.ts",
-        "Ad.test.tsx",
-        "Ad.tsx"
-      ],
-      "original_omc_storefront_preserved": true,
-      "main_staging_commit": false,
-      "operator_cleanup": "120 second original window missed; no late signal; separate approval pending",
-      "operator_errors": [
-        "missed cleanup deadline",
-        "initial collector expected_outcome parameter corrected without overwriting original",
-        "relative-path collector replay replaced by absolute-path authoritative replay"
-      ],
-      "next_action": "Review native completion accepting tests status=passed despite the linked fixed receipt status=unknown; review visual fixed-path/completion integration before considering another run."
-    },
-    "core_commit": "996d80d",
-    "prior_execution_core_commit": "637a965",
-    "operator_runtime_commit": "03d6a70",
-    "operator_supervisor_commit": "e4557dd",
-    "preservation": "원본 storefront HEAD·변경 내용·Git 인덱스, 과거 실행/오류/리뷰·교훈을 보존했다. 리뷰 재결속을 위해 기존 미추적 자료를 삭제·이동·자동 제외하지 않았다. 커밋은 승인5개만 포함하며 이번 문서4개와 분리한다.",
+    "preservation": "기존10개 변경·과거 실행/중단 원문·설치 실패 전후 로그·리뷰·교훈을 보존했다. 셸 종료를 Claude 종료로 소급 기록하거나 과거 HOLD를 성공으로 변경하지 않는다.",
     "local_runtime_evidence": [
-      ".omc/state/compat-996d80d-A/REPORT.md",
-      ".omc/state/compat-996d80d-A/full-1.log",
-      ".omc/state/compat-996d80d-A/full-2.log",
-      ".omc/state/compat-996d80d-A/full-2.json",
-      ".omc/state/compat-996d80d-A/requirement-evidence.json",
-      ".omc/state/compat-996d80d-A/complete-after-staging.txt",
-      ".omc/state/compat-996d80d-review/REPORT.md",
-      ".omc/state/compat-996d80d-review/original-record-result.json",
-      ".omc/state/compat-996d80d-review/original-binding-result.json",
-      ".omc/state/review-snapshots/2957506e817541bab4a11c0dab540132.json"
+      ".omc/state/termination-contract-v3-20261025/REPORT.md",
+      ".omc/state/termination-timestamp-fix-20261025/REPORT.md",
+      ".omc/state/termination-integrated-review.json",
+      ".omc/state/termination-commit-rebind-20261025/commit-check.json",
+      ".omc/state/termination-commit-rebind-20261025/installer-evidence/installer-comparison.json",
+      ".omc/state/review-snapshots/8663afcd0e554aafa6b6ff2ae898ac6d.json"
     ],
-    "operator_runtime_base_commit": "79e209a",
     "review_binding": {
       "status": "READY",
-      "candidate_commit": "03d6a70ed9b591c0116f74d00c2025d7210ad197",
-      "reviewed_base": "79e209a185b19fa6c7ff4fa57f94f23af5173152",
-      "candidate_scope_sha256": "f36df752e375468d048d7be44ea891f0d1dd263e02b5da73a69746d98d432060",
-      "receipt_path": ".omc/state/review-snapshots/2957506e817541bab4a11c0dab540132.json",
-      "receipt_sha256": "c5b09938142711ceebd95161d6c329d6cf1ed4b3584597235e7651da82fc0ad5",
-      "scope_files": 5,
+      "candidate_commit": "7bdbcb81882ef8ce515e48cf9b4fac07fd273176",
+      "reviewed_base": "26753b7dad05660d4154172e33ed1838116a77cc",
+      "candidate_scope_sha256": "f04c98f56864f84d6637cdf6adb0f02865b4ac038e476528e604cec41401d2f2",
+      "receipt_path": ".omc/state/review-snapshots/8663afcd0e554aafa6b6ff2ae898ac6d.json",
+      "receipt_sha256": "d17c1d9c16d69686bb070642aa29aade347fada56c6c500f8d6eea2a281f319d",
+      "scope_files": 10,
       "checked_before_document_update": true,
-      "current_dirty_worktree_ship_approved": false
+      "current_dirty_worktree_ship_approved": false,
+      "receipt_file_sha256": "073c53f3fce4a0416ea5a12e7914d0c060eaf788fde25a9deb6c8842013ca03e"
     },
-    "runtime_compatibility_reference": {
-      "restore_declared_core": "996d80d539d7245443f3a539f1a9fa333b450770",
-      "proposed_core": "996d80d539d7245443f3a539f1a9fa333b450770",
-      "runtime_commit": "03d6a70ed9b591c0116f74d00c2025d7210ad197",
-      "supervisor_commit": "e4557ddf7ec1ead006a505a8a6aac6549c6a2a84",
-      "status": "A_VALIDATED_COMMITTED_REVIEW_BOUND_B_NOT_STARTED",
-      "execution_authorized": false
+    "runtime_compatibility_reference": "996d80d 고정 원문 fixture 보존. 7bdbcb8을 사용한 새로운 core/runtime 실제 실행 조합은 검증하지 않았다.",
+    "latest_comparison_attempt": {
+      "status": "HOLD",
+      "scope": "login-free actual Ad standalone",
+      "peer_native_calls": 1,
+      "ours_native_calls": 0,
+      "duration_sec": 337.6,
+      "normal_exit": false,
+      "child_cleanup": "unconfirmed",
+      "post_fix_native_calls": 0,
+      "actual_home": "NOT_VERIFIED",
+      "evidence_pointer": ".omc/state/standalone-authorized-current.json"
     },
-    "latest_preparation_attempt": {
-      "status": "NOT_STARTED",
-      "verdict": "HOLD",
-      "reason": "preparation_home_unknown_timed_out",
-      "provider_calls": 0,
-      "wrapper_starts": 0,
-      "attempts_consumed": 0,
-      "policy_frozen_after_exact_ignore_verified": true,
-      "exclude_unchanged_after_freeze": true,
-      "public_preflight_tests": {
-        "passed": 40,
-        "skipped": 0
-      },
-      "native_baseline": {
-        "passed": 41,
-        "existing_failed": 4,
-        "new_failed": 0
-      },
-      "profile_statuses": {
-        "tests": "passed",
-        "lint": "passed",
-        "build-controlled": "passed",
-        "build-pixels": "passed",
-        "controlled": "failed",
-        "home": "unknown",
-        "pixels-dpr1": "unrun",
-        "pixels-dpr2": "unrun"
-      },
-      "cleanup_seconds": 46.956996667002386,
-      "cleanup_within120": true,
-      "main_tracked_preserved": true,
-      "storefront_unstaged_changed_actor_unknown": true,
-      "overall_model_effectiveness_not_evaluated": true,
-      "evidence": ".omc/ad-single-ignore-first-20261023T084219Z/summary.json"
-    }
+    "historical_core_commit": "996d80d",
+    "historical_prior_execution_core_commit": "637a965",
+    "historical_operator_runtime_commit": "03d6a70",
+    "historical_operator_supervisor_commit": "e4557dd",
+    "historical_operator_runtime_base_commit": "79e209a",
+    "implementation_base_commit": "26753b7dad05660d4154172e33ed1838116a77cc",
+    "next_execution_versions": "NOT_SELECTED"
   },
   "current_update_history": [
+    {
+      "date": "2026-10-25",
+      "status": "996d80d 검수 실행기 호환성5개 커밋 · 원본 리뷰 APPROVE·결속 READY · 실제 비교 HOLD",
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "commit": "03d6a70",
+      "implementation_commit": "03d6a70",
+      "goal_progress": "996d80d의 home 증거·시간·종료 보완 뒤 남아 있던 검수 실행기의 이전 core 고정 문제를 해결했다. 03d6a70에서 실행기·manifest·테스트를 996d80d에 맞추고 공개 restore·고정 명령·HTTP·Chromium·영수증 및 감독 연결 회귀를 확인했다. 원본 커밋 리뷰 재결속도 완료했다. 실제 Claude 업무 완료·생산성·경쟁 우위는 아직 미입증이다.",
+      "commit_scope": "리뷰 승인된 실행기·테스트·manifest·README 5개 파일만 main에 로컬 커밋03d6a70. base79e209a에서 검토한 frozen diff·스테이징·커밋 blob과 내용이 일치한다. 이번 로드맵·대시보드4파일은 별도 문서 범위다.",
+      "improvement": "검수 복원 CLI·config·manifest의 지원 core를 996d80d 전체 SHA로 통일했다. 이전99773380·637a965·임의 core와 충돌 manifest는 출력 쓰기 전에 거부한다. home/controlled query·입력 해시·같은 버퍼 실행·기존6표본·픽셀 기준은 유지했다. 감독 제품e4557dd는 변경하지 않고 테스트가637a965와996d80d를 각각 복원해 정상·내부124·외부 시간 초과·최종result 누락의4사례와 실제 소스·승인 버전을 대조하도록 보완했다.",
+      "verification": "최종 공유 통합 A-FULL-2는302개 통과·생략0(534.16초). 1회차는 로컬 포트·Chromium 실행 권한 제한으로225개 통과·40개 실패·37개 설정 오류였고 원문을 보존했다. 동일 소스의 실행 환경 보정 후2회차로 통과했으며 전체 통합 시작은 총2회다. 대상별 GREEN13개·45개는302개와 중복돼 합산하지 않는다. Python3파일 문법·원본 보존·TDD·공식 완료 가드·커밋 훅을 확인했다. 로컬/합성 회귀이며 실제 로그인 홈이나 Claude 업무 성공 증거가 아니다.",
+      "tests_passed": 302,
+      "tests_skipped": 0,
+      "review_verdict": "APPROVE",
+      "review_scope_files": 5,
+      "review_scope_description": "원본 worktree capture는 candidate_directory_unsupported로 차단돼 기존 기록을 보존하고 동일5개 변경만 별도 후보에 구성해 APPROVE했다. 사용자 승인 커밋03d6a70을 reviewed base79e209a와 고정해 원본 snapshot·APPROVE receipt를 생성했다. 격리/원본 frozen diff와 후보 범위 해시가 일치하며 결속 검사 READY다. 이5개 파일 커밋 승인과 이번 문서4개·전체 출하 승인은 구분한다.",
+      "display_next": "996d80d core·03d6a70 검수 실행기·e4557dd 감독을 고정한 실제 Claude 최대1회 재검증 계획 개정·검토",
+      "next": "A단계 호환성 구현·검증·리뷰·커밋은 종료한다. 996d80d core·03d6a70 검수 실행기·e4557dd 감독의 전체 SHA와 manifest/query 해시를 B계획에 고정하고 진입 조건·시간 배치·정상 종료 기준을 개정·검토한다. 별도 실행 승인 후에만 새 준비를 시작하며 실제 홈·광고2개·자동 전환·서버/후보 결속·필수8프로필·selection/verification/complete-task를 확인한다. 감독 호출·Claude native 실행은 각각 최대1회, 자동 재시도0회다. 내부 모델/API 요청 수는 별도 관측하고 미관측은 미확인으로 남긴다. 이전 승인·예산은 자동 승계하지 않는다. 유효 OMC 사례 이후 동등 경쟁 비교 진입을 판단한다.",
+      "limitations": "03d6a70 호환성 보완 후 실제 Claude native 실행0회·새 B준비0회·비교 HOLD다. 과거 준비 NOT_STARTED(home unknown/시간 초과, controlled failed, wrapper0·시도소비0)와 이전 실제1회1778.16초 정상 종료·전체FAIL·compact 경계1회는 당시 이력으로 유지한다. 이번 A단계 통합의 환경 권한 실패는 제품 신규 실패와 구분하며2회차 통과로 과거 원문을 고치지 않는다. 기존 광고 추적4실패·클릭 추적/오늘 하루 숨김 통합 미검증·업무 효과 및 경쟁 우위 미입증을 유지한다.",
+      "installation": "996d80d core·03d6a70 검수 실행기·e4557dd 감독은 로컬 커밋 상태이며 미릴리스·일반 사용처 미설치다. 정상11개 사용처의 e618fca/0.6.1 설치·엄격 감사는 당시 이력이고 이번에 재감사하지 않았다. push·태그·릴리스·재설치 없음.",
+      "release_state": {
+        "release_version": "0.6.1",
+        "release_commit": "e618fcaf693f4b20519eb6dab6bce64da9c662f6",
+        "consumer_count": 11,
+        "binding_fix_released": true,
+        "binding_fix_reinstalled": true,
+        "pushed": false,
+        "visual_completion_fix_released": true,
+        "visual_completion_fix_reinstalled": true,
+        "peer_trace_released": true,
+        "peer_trace_reinstalled": true,
+        "home_observation_released": true,
+        "home_observation_reinstalled": true,
+        "native_red_fix_released": true,
+        "native_red_fix_reinstalled": true,
+        "native_command_fix_released": true,
+        "native_command_fix_reinstalled": true,
+        "bounded_read_fix_released": true,
+        "bounded_read_fix_reinstalled": true,
+        "fixed_validation_released": true,
+        "fixed_validation_reinstalled": true,
+        "source_sha256": "7b1ecaa729ffb04780437c309f0dcba76aff507c604d441e297485482fac2a2a",
+        "session_custody_fix_released": false,
+        "session_custody_fix_reinstalled": false,
+        "completion_owner_fix_released": false,
+        "completion_owner_fix_reinstalled": false,
+        "session_start_handoff_released": false,
+        "session_start_handoff_reinstalled": false,
+        "readiness_sampling_fix_released": false,
+        "readiness_sampling_fix_reinstalled": false,
+        "ad_validation_runtime_released": false,
+        "ad_validation_runtime_reinstalled": false,
+        "controlled_query_compatibility_released": false,
+        "controlled_query_compatibility_reinstalled": false,
+        "native_supervisor_released": false,
+        "native_supervisor_reinstalled": false,
+        "receipt_visual_policy_fix_released": false,
+        "receipt_visual_policy_fix_reinstalled": false,
+        "home_evidence_fix_released": false,
+        "home_evidence_fix_reinstalled": false,
+        "runtime_996d80d_compatibility_released": false,
+        "runtime_996d80d_compatibility_reinstalled": false
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/index.html",
+        "docs/comparison-dashboard/view.json"
+      ],
+      "comparison_state": "HOLD",
+      "post_fix_provider_calls": 0,
+      "ship_state": "NEW_FIX_COMMITTED_UNRELEASED_NOT_INSTALLED",
+      "task_gate": {
+        "state": "PASSED",
+        "evidence": ".omc/state/compat-996d80d-A/complete-after-staging.txt",
+        "scope": "A단계5파일 구현 검증. 실제 Claude 성공·이번 문서4파일·전체 출하 승인은 아님"
+      },
+      "observation": {
+        "v3": "DISABLED",
+        "completion": "OBSERVATION_INVALID",
+        "reason": "pending_completion_invalid",
+        "automatic_resume": false
+      },
+      "verification_groups": [
+        {
+          "name": "최종 공유 통합 A-FULL-2",
+          "passed": 302,
+          "skipped": 0,
+          "seconds": 534.16,
+          "real_provider_run": false
+        },
+        {
+          "name": "1회차 환경 권한 실패",
+          "passed": 225,
+          "failed": 40,
+          "errors": 37,
+          "seconds": 159.68,
+          "status": "ENVIRONMENT_BLOCKED",
+          "product_regression_established": false,
+          "real_provider_run": false
+        },
+        {
+          "name": "대상별 GREEN",
+          "runtime_passed": 13,
+          "supervisor_passed": 45,
+          "overlapping": true,
+          "real_provider_run": false
+        }
+      ],
+      "latest_single_attempt": {
+        "schema_version": "omc-ad-single-operator-result/v1",
+        "run_id": "ad-single-absolute-records-20261023T041331Z",
+        "overall": "FAIL",
+        "comparison_entry": "HOLD",
+        "implementation_observed": true,
+        "native_calls": 1,
+        "automatic_retry": 0,
+        "native_normal_exit": true,
+        "duration_sec": 1778.1574035420053,
+        "child_cleanup": "confirmed",
+        "child_record_paths": "candidate-internal absolute; preflight passed",
+        "native_complete_task": "done",
+        "independent_plan_success": false,
+        "test_status": "unknown",
+        "test_reason": "baseline_test_removed",
+        "tests_missing_baseline_names": [
+          "Ad moves card slides with the card carousel arrows"
+        ],
+        "test_new_failures": "not established; original four failing names remain identical",
+        "test_declared_pass_conflict": true,
+        "visual_fixed_path_contract_mismatch_observed": true,
+        "native_direct_visual_checker_and_handwritten_receipts_observed": true,
+        "edit_cutoff_sec": 300,
+        "product_edit_observed_sec": [
+          344.98407459259033,
+          351.4375457763672
+        ],
+        "final_validation_cutoff_sec": 1380,
+        "completion_record_cutoff_sec": 1620,
+        "after_cutoff_work_observed": true,
+        "actual_compact_boundaries": 1,
+        "collector_authoritative": "independent-assessment-absolute-done",
+        "collector_limits": [
+          "prebound CONTRACT not recognized by literal-call recognizer",
+          "unsupported auxiliary Bash does not establish essential omission",
+          "truthful_final analyzer unknown; direct selected tests unknown vs declared passed is independently confirmed"
+        ],
+        "protected_core_bytes_match": true,
+        "model_product_scope": [
+          "Ad.styled.ts",
+          "Ad.test.tsx",
+          "Ad.tsx"
+        ],
+        "original_omc_storefront_preserved": true,
+        "main_staging_commit": false,
+        "operator_cleanup": "120 second original window missed; no late signal; separate approval pending",
+        "operator_errors": [
+          "missed cleanup deadline",
+          "initial collector expected_outcome parameter corrected without overwriting original",
+          "relative-path collector replay replaced by absolute-path authoritative replay"
+        ],
+        "next_action": "Review native completion accepting tests status=passed despite the linked fixed receipt status=unknown; review visual fixed-path/completion integration before considering another run."
+      },
+      "core_commit": "996d80d",
+      "prior_execution_core_commit": "637a965",
+      "operator_runtime_commit": "03d6a70",
+      "operator_supervisor_commit": "e4557dd",
+      "preservation": "원본 storefront HEAD·변경 내용·Git 인덱스, 과거 실행/오류/리뷰·교훈을 보존했다. 리뷰 재결속을 위해 기존 미추적 자료를 삭제·이동·자동 제외하지 않았다. 커밋은 승인5개만 포함하며 이번 문서4개와 분리한다.",
+      "local_runtime_evidence": [
+        ".omc/state/compat-996d80d-A/REPORT.md",
+        ".omc/state/compat-996d80d-A/full-1.log",
+        ".omc/state/compat-996d80d-A/full-2.log",
+        ".omc/state/compat-996d80d-A/full-2.json",
+        ".omc/state/compat-996d80d-A/requirement-evidence.json",
+        ".omc/state/compat-996d80d-A/complete-after-staging.txt",
+        ".omc/state/compat-996d80d-review/REPORT.md",
+        ".omc/state/compat-996d80d-review/original-record-result.json",
+        ".omc/state/compat-996d80d-review/original-binding-result.json",
+        ".omc/state/review-snapshots/2957506e817541bab4a11c0dab540132.json"
+      ],
+      "operator_runtime_base_commit": "79e209a",
+      "review_binding": {
+        "status": "READY",
+        "candidate_commit": "03d6a70ed9b591c0116f74d00c2025d7210ad197",
+        "reviewed_base": "79e209a185b19fa6c7ff4fa57f94f23af5173152",
+        "candidate_scope_sha256": "f36df752e375468d048d7be44ea891f0d1dd263e02b5da73a69746d98d432060",
+        "receipt_path": ".omc/state/review-snapshots/2957506e817541bab4a11c0dab540132.json",
+        "receipt_sha256": "c5b09938142711ceebd95161d6c329d6cf1ed4b3584597235e7651da82fc0ad5",
+        "scope_files": 5,
+        "checked_before_document_update": true,
+        "current_dirty_worktree_ship_approved": false
+      },
+      "runtime_compatibility_reference": {
+        "restore_declared_core": "996d80d539d7245443f3a539f1a9fa333b450770",
+        "proposed_core": "996d80d539d7245443f3a539f1a9fa333b450770",
+        "runtime_commit": "03d6a70ed9b591c0116f74d00c2025d7210ad197",
+        "supervisor_commit": "e4557ddf7ec1ead006a505a8a6aac6549c6a2a84",
+        "status": "A_VALIDATED_COMMITTED_REVIEW_BOUND_B_NOT_STARTED",
+        "execution_authorized": false
+      },
+      "latest_preparation_attempt": {
+        "status": "NOT_STARTED",
+        "verdict": "HOLD",
+        "reason": "preparation_home_unknown_timed_out",
+        "provider_calls": 0,
+        "wrapper_starts": 0,
+        "attempts_consumed": 0,
+        "policy_frozen_after_exact_ignore_verified": true,
+        "exclude_unchanged_after_freeze": true,
+        "public_preflight_tests": {
+          "passed": 40,
+          "skipped": 0
+        },
+        "native_baseline": {
+          "passed": 41,
+          "existing_failed": 4,
+          "new_failed": 0
+        },
+        "profile_statuses": {
+          "tests": "passed",
+          "lint": "passed",
+          "build-controlled": "passed",
+          "build-pixels": "passed",
+          "controlled": "failed",
+          "home": "unknown",
+          "pixels-dpr1": "unrun",
+          "pixels-dpr2": "unrun"
+        },
+        "cleanup_seconds": 46.956996667002386,
+        "cleanup_within120": true,
+        "main_tracked_preserved": true,
+        "storefront_unstaged_changed_actor_unknown": true,
+        "overall_model_effectiveness_not_evaluated": true,
+        "evidence": ".omc/ad-single-ignore-first-20261023T084219Z/summary.json"
+      }
+    },
     {
       "date": "2026-10-24",
       "status": "고정 home 증거·시간·종료 연결11개 커밋 · 원본 리뷰 APPROVE·결속 READY · 실제 비교 HOLD",
