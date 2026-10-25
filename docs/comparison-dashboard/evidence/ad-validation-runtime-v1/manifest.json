@@ -52,7 +52,7 @@
     "scripts/omc_workflow_preflight.py": {
       "sha256": "06185beb13d1be1bf272906758b1589cbd45759e818ba5f602f4c847752bcb30"
     },
-    "scripts/omc_home_observation.py": {
+    "docs/comparison-dashboard/evidence/ad-validation-runtime-v1/core-996d80d/omc_home_observation.py.fixture": {
       "sha256": "88cb94c299da1ff330c5262235837719e48ef3d3808d821e3af30e33a4126b63"
     },
     "docs/comparison-dashboard/evidence/ad-recompare-20261016/task.md": {

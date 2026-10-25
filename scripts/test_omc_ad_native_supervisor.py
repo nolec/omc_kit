@@ -338,3 +338,147 @@ def test_selected_core_identity_reaches_public_basis(tmp_path, frozen_core, core
     assert (frozen_core/'scripts/omc_home_observation.py').read_bytes() == expected
     proposal = json.loads((tmp_path/'.omc/proposal.json').read_bytes())
     assert proposal['checks'][0]['target_version'] == 'core'+core_commit[:7]
+
+
+def termination_surface(tmp_path, code, *, mode='normal', tamper=None):
+    """Current public supervisor -> real tee -> recorder shell -> synthetic child."""
+    runtime = tmp_path/'.omc'; runtime.mkdir(exist_ok=True)
+    prompt = tmp_path/'prompt.txt'; prompt.write_text('synthetic input')
+    record = runtime/'termination.json'
+    pid, exit_file = runtime/'child.pid', runtime/'child.exit'
+    runner = ('import sys,os,json;from pathlib import Path;'
+              'sys.path.insert(0,sys.argv[1]);from omc_home_observation import tee_native;'
+              'os.environ["TEST_WRITER_PID"]=str(os.getpid());'
+              'root=Path(sys.argv[2]);'
+              'code=tee_native(root,sys.argv[3:],root/".omc/events.jsonl",[], '
+              'termination_record=".omc/termination.json",termination_run_id="surface-v2");')
+    if tamper == 'missing':
+        runner += '(root/".omc/termination.json").unlink();'
+    elif tamper == 'invalid-json':
+        runner += '(root/".omc/termination.json").write_text("{broken");'
+    elif tamper:
+        runner += ('p=root/".omc/termination.json";d=json.loads(p.read_text());'
+                   f'd.update(json.loads({json.dumps(tamper)!r}));p.write_text(json.dumps(d));')
+    runner += 'raise SystemExit(code)'
+    launch = [sys.executable,'-c',runner,str(ROOT/'scripts'),str(tmp_path),
+              '/bin/sh','-c',RECORDER,'native-launch',sys.executable,'-c',code]
+    argv = [sys.executable,str(CLI),'--cwd',str(tmp_path),'--output',str(tmp_path/'out'),
+            '--prompt',str(prompt),'--child-pid-file',str(pid),'--child-exit-file',str(exit_file),
+            '--termination-record',str(record),'--termination-run-id','surface-v2',
+            '--timeout','2','--drain','1','--',*launch]
+    env = {**os.environ,'OMC_CHILD_PID_RECORD':str(pid),'OMC_CHILD_EXIT_RECORD':str(exit_file)}
+    proc = subprocess.Popen(argv,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env)
+    try:
+        if mode == 'signal':
+            deadline=time.monotonic()+5
+            while not pid.exists() and proc.poll() is None and time.monotonic()<deadline:time.sleep(.01)
+            if proc.poll() is None:proc.send_signal(signal.SIGTERM)
+        stdout,stderr=proc.communicate(timeout=8)
+        assert (tmp_path/'out/result.json').exists(),stderr.decode()
+        result=json.loads((tmp_path/'out/result.json').read_text())
+        observed=(json.loads(record.read_text()) if record.is_file() and tamper!='invalid-json' else None)
+        return proc.returncode,result,observed,stderr
+    finally:
+        if proc.poll() is None:proc.kill();proc.wait()
+        if pid.exists():
+            try:os.killpg(int(pid.read_text()),signal.SIGKILL)
+            except ProcessLookupError:pass
+
+
+@pytest.mark.parametrize('code,expected',[(f'print({SUCCESS!r},end="")',0),('import sys;sys.exit(23)',23)])
+def test_termination_public_normal_and_nonzero(tmp_path,code,expected):
+    status,result,record,_=termination_surface(tmp_path,code)
+    assert record['direct_child_returncode']==expected
+    assert record['claude_pid'] is None and record['claude_returncode'] is None
+    assert record['wait_completed'] and record['process_group_absent']
+    assert result['termination_observation']['status']=='verified'
+    assert result['child_cleanup_status']=='confirmed'
+    assert status==(0 if expected==0 else 1)
+
+
+def test_termination_public_signal_preserves_shell_without_exit_file(tmp_path):
+    status,result,record,_=termination_surface(tmp_path,'import time;time.sleep(30)',mode='signal')
+    assert status==1 and result['status']=='incomplete_or_failed'
+    assert result['interrupted']==signal.SIGTERM and result['child_exit_code'] is None
+    assert record['direct_child_returncode']==-signal.SIGKILL
+    assert record['direct_child_signal']==signal.SIGKILL
+    assert record['claude_returncode'] is None
+    assert not (tmp_path/'.omc/child.exit').exists()
+    assert result['child_cleanup_status']=='confirmed'
+    assert result['termination_observation']['status']=='verified'
+
+
+@pytest.mark.parametrize('tamper',[
+    {'run_id':'another-run'}, {'writer_pid':1}, {'direct_child_pid':1},
+    {'direct_child_returncode':17}, {'wait_completed':False}, {'process_group_absent':False},
+    {'claude_returncode':0}, {'direct_child_returncode':True}, {'drain_complete':False},
+    {'signals_sent':['not-a-signal-record']},
+])
+def test_termination_public_rejects_mismatch_or_incomplete(tmp_path,tamper):
+    status,result,_,_=termination_surface(tmp_path,f'print({SUCCESS!r},end="")',tamper=tamper)
+    assert status==1 and result['status']!='normal'
+    assert result['child_cleanup_status']!='confirmed'
+
+
+def test_termination_public_writer_killed_leaves_unknown(tmp_path):
+    code='import os,signal,time;os.kill(int(os.environ["TEST_WRITER_PID"]),signal.SIGKILL);time.sleep(30)'
+    status,result,record,_=termination_surface(tmp_path,code)
+    assert status==1 and record is None
+    assert result['termination_observation']['status']=='unknown'
+    assert result['child_cleanup_status']!='confirmed'
+
+
+def test_termination_public_storage_failure_not_hidden(tmp_path,monkeypatch):
+    code='import os;os.mkdir(os.environ["TEST_TERMINATION_PATH"]);print('+repr(SUCCESS)+',end="")'
+    monkeypatch.setenv('TEST_TERMINATION_PATH',str(tmp_path/'.omc/termination.json'))
+    status,result,_,stderr=termination_surface(tmp_path,code)
+    assert status==1 and b'termination_record_failed' in (tmp_path/'out/stderr.raw').read_bytes()
+    assert result['termination_observation']['status']=='unknown'
+
+
+@pytest.mark.parametrize('tamper',['missing','invalid-json'])
+def test_termination_public_missing_or_broken_record_blocks(tmp_path,tamper):
+    status,result,_,_=termination_surface(tmp_path,f'print({SUCCESS!r},end="")',tamper=tamper)
+    assert status==1 and result['termination_observation']['status']=='unknown'
+    assert result['child_cleanup_status']!='confirmed'
+
+
+@pytest.mark.parametrize('timestamp',[
+    10**400, -(10**400), float('inf'), float('-inf'), float('nan'), True, None, 'invalid',
+],ids=['huge-integer','huge-negative-integer','infinity','negative-infinity','nan','bool','null','string'])
+def test_termination_public_invalid_timestamp_still_records_result(tmp_path,timestamp):
+    status,result,_,stderr=termination_surface(tmp_path,f'print({SUCCESS!r},end="")',
+                                              tamper={'recorded_at':timestamp})
+    assert status==1 and result['status']=='incomplete_or_failed'
+    assert result['termination_observation']['status']=='unknown'
+    assert result['termination_observation']['reason']
+    assert result['child_cleanup_status']=='unconfirmed'
+    assert result['normal_terminal_result_count']==1 and result['raw_capture_complete']
+    assert (tmp_path/'out/stdout.raw').read_text()==SUCCESS
+    assert b'Traceback' not in stderr
+
+
+@pytest.mark.parametrize('timestamp',[0,1234567890.5],ids=['integer','float'])
+def test_termination_public_finite_timestamp_keeps_normal_result(tmp_path,timestamp):
+    status,result,record,_=termination_surface(tmp_path,f'print({SUCCESS!r},end="")',
+                                              tamper={'recorded_at':timestamp})
+    assert status==0 and result['status']=='normal'
+    assert result['termination_observation']['status']=='verified'
+    assert record['recorded_at']==timestamp
+
+
+@pytest.mark.parametrize('defect',['existing','symlink','outside','exit-alias','missing-id'])
+def test_termination_public_invalid_record_does_not_spawn(tmp_path,defect):
+    runtime=tmp_path/'.omc';runtime.mkdir();record=runtime/'termination.json'
+    prompt=tmp_path/'prompt';prompt.write_text('x');marker=tmp_path/'spawned'
+    if defect=='existing':record.write_text('preserved')
+    elif defect=='symlink':record.symlink_to(prompt)
+    elif defect=='outside':record=tmp_path/'outside.json'
+    elif defect=='exit-alias':record=runtime/'child.exit'
+    argv=[sys.executable,str(CLI),'--cwd',str(tmp_path),'--output',str(tmp_path/'out'),
+          '--prompt',str(prompt),'--child-pid-file',str(runtime/'child.pid'),
+          '--child-exit-file',str(runtime/'child.exit'),'--termination-record',str(record)]
+    if defect!='missing-id':argv+=['--termination-run-id','surface-v2']
+    p=subprocess.run([*argv,'--',sys.executable,'-c',f'open({str(marker)!r},"w").write("x")'],capture_output=True,timeout=5)
+    assert p.returncode==2 and not marker.exists()
+    if defect=='existing':assert record.read_text()=='preserved'

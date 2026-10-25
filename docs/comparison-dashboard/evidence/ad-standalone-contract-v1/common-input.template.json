@@ -1,0 +1,25 @@
+{
+  "schema_version": "standalone-ad-input/v1",
+  "requirement_file": {
+    "relative_path": ".omc/visual-requirement.json",
+    "absolute_path": "{{CANDIDATE_ROOT}}/.omc/visual-requirement.json",
+    "sha256": "{{REQUIREMENT_SHA256}}"
+  },
+  "time_budget": {
+    "per_arm_total_seconds": 1800,
+    "progress_checkpoint_seconds": 300,
+    "checkpoint_action": "record_progress_only",
+    "cumulative_targets_seconds": {
+      "inspection_red_and_source_freeze": 900,
+      "final_seven_checks": 1500,
+      "completion_and_report": 1680,
+      "normal_exit_target": 1788,
+      "collection_target": 1800
+    },
+    "physical_edit_enforcement": false,
+    "success_time_guaranteed": false,
+    "overall_experiment_limit_seconds": 7200
+  },
+  "comparison_execution_authorized": false,
+  "actual_home": "NOT_VERIFIED"
+}

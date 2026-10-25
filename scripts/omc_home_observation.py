@@ -372,10 +372,12 @@ class NativeRunInterrupted(BaseException):
         super().__init__('native_interrupted:'+str(signum))
 
 
-def _stop_native(proc, *, immediate=False):
+def _stop_native(proc, *, immediate=False, signals_sent=None):
     """Bound both grace and final drain, even if an escaped process holds stdout."""
     errors = []
     def stop(hard):
+        event = {'signal': int(signal.SIGKILL if hard else signal.SIGTERM),
+                 'scope': 'process_group' if os.name == 'posix' else 'direct_child'}
         try:
             if os.name == 'posix':
                 # Popen created this session; never signal the caller's group.
@@ -384,10 +386,14 @@ def _stop_native(proc, *, immediate=False):
                 proc.kill()
             else:
                 proc.terminate()
+            event['outcome'] = 'sent'
         except ProcessLookupError:
-            pass
+            event['outcome'] = 'absent'
         except OSError as exc:
+            event['outcome'] = 'error'
             errors.append(type(exc).__name__+': '+str(exc))
+        if signals_sent is not None:
+            signals_sent.append(event)
 
     stop(immediate)
     complete = True
@@ -433,10 +439,23 @@ def run_native(root: Path, argv: list[str]) -> int:
     return tee_native(root, argv, events, publishers, context=context)
 
 
-def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, context=None) -> int:
+def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, context=None,
+               termination_record=None, termination_run_id=None) -> int:
     """Shared complete-line custody for explicitly selected native publishers."""
     if os.name == 'posix' and threading.current_thread() is not threading.main_thread():
         raise ValueError('native_runner_main_thread_required')
+    termination = None
+    if termination_record is not None or termination_run_id is not None:
+        if (not isinstance(termination_run_id, str) or not termination_run_id.strip()
+                or not isinstance(termination_record, str)):
+            raise ValueError('termination_record_and_run_id_required')
+        termination = local(root, termination_record)
+        reserved = [events.absolute()]
+        reserved += [Path(os.environ[k]).absolute() for k in
+                     ('OMC_CHILD_PID_RECORD', 'OMC_CHILD_EXIT_RECORD') if os.environ.get(k)]
+        if termination in reserved or termination.exists():
+            raise ValueError('termination_record_must_be_distinct_and_new')
+        termination.parent.mkdir(parents=True, exist_ok=True)
     events.parent.mkdir(parents=True, exist_ok=True)
     from omc_native_command import NativeStreamAlreadyExists
     try:
@@ -463,6 +482,7 @@ def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, c
             if handoff is not None:
                 child_env[SESSION_START_HANDOFF_ENV] = json.dumps(handoff)
         proc = None
+        termination_state = {'stop_reason': 'normal', 'signals_sent': [], 'drain_complete': True}
         pending_signal = None
         stopping = False
         previous_handlers = {}
@@ -503,7 +523,12 @@ def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, c
             if proc is None:
                 raise
             stopping = True
-            tail, drain_complete, termination_errors = _stop_native(proc, immediate=isinstance(exc, NativeRunInterrupted))
+            termination_state['stop_reason'] = ('signal:'+str(exc.signum)
+                if isinstance(exc, NativeRunInterrupted) else type(exc).__name__)
+            tail, drain_complete, termination_errors = _stop_native(proc,
+                immediate=isinstance(exc, NativeRunInterrupted),
+                signals_sent=termination_state['signals_sent'])
+            termination_state['drain_complete'] = drain_complete
             forward(tail)
             from omc_native_red_evidence import write_new
             import uuid
@@ -528,6 +553,8 @@ def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, c
                 # including descendants which already closed stdout normally.
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
+                    termination_state['signals_sent'].append(
+                        {'signal': int(signal.SIGKILL), 'scope': 'process_group', 'outcome': 'sent'})
                 except OSError:
                     # Checked normal cleanup and failed attempts are recorded above.
                     pass
@@ -535,6 +562,33 @@ def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, c
                 signal.signal(signum, handler)
             if proc is not None and os.name == 'posix' and not proc.stdout.closed:
                 proc.stdout.close()
+            if termination is not None:
+                code = proc.poll() if proc is not None else None
+                absent = False
+                if proc is not None:
+                    try:
+                        os.killpg(proc.pid, 0)
+                    except ProcessLookupError:
+                        absent = True
+                    except OSError:
+                        pass
+                observed = {'schema_version': 'omc-native-termination/v1',
+                    'run_id': termination_run_id, 'writer_pid': os.getpid(),
+                    'direct_child_pid': proc.pid if proc is not None else None,
+                    'direct_child_pgid': proc.pid if proc is not None and os.name == 'posix' else None,
+                    **termination_state, 'direct_child_returncode': code,
+                    'direct_child_signal': -code if code is not None and code < 0 else None,
+                    'wait_completed': code is not None, 'process_group_absent': absent,
+                    'claude_pid': None, 'claude_returncode': None, 'recorded_at': time.time()}
+                try:
+                    # Recheck link boundaries after execution; never replace a historical record.
+                    local(root, termination_record)
+                    with termination.open('x') as stream:
+                        json.dump(observed, stream, ensure_ascii=False, indent=2)
+                        stream.write('\n')
+                except (OSError, ValueError) as exc:
+                    print('termination_record_failed: '+str(exc), file=sys.stderr)
+                    raise NativePublisherFailure('termination_record_failed') from exc
 
 
 def main() -> int:

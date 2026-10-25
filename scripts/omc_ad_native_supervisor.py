@@ -122,6 +122,51 @@ def resolve_executable(token, cwd):
     return None
 
 
+def termination_observation(path, run_id, wrapper_pid, child_pid, shell_code):
+    """Local identity binding, not authentication against a hostile producer."""
+    result = {'status': 'unknown', 'reason': 'termination_record_missing'}
+    try:
+        if not path.is_file() or path.is_symlink() or path.stat().st_size > 65536:
+            return result
+        raw = path.read_bytes()
+        row = json.loads(raw)
+        if (row['schema_version'] != 'omc-native-termination/v1' or row['run_id'] != run_id
+                or type(row['writer_pid']) is not int or row['writer_pid'] != wrapper_pid
+                or type(row['direct_child_pid']) is not int or child_pid is None
+                or row['direct_child_pid'] != child_pid
+                or type(row['direct_child_pgid']) is not int or row['direct_child_pgid'] != child_pid
+                or row['claude_pid'] is not None or row['claude_returncode'] is not None):
+            raise ValueError('termination_record_identity_mismatch')
+        code = row['direct_child_returncode']
+        if (type(code) is not int or not -64 <= code <= 255
+                or row['direct_child_signal'] != (-code if code < 0 else None)
+                or (code < 0 and type(row['direct_child_signal']) is not int)
+                or any(type(row[k]) is not bool for k in
+                       ('wait_completed', 'process_group_absent', 'drain_complete'))
+                or not isinstance(row['stop_reason'], str) or not row['stop_reason']
+                or not isinstance(row['signals_sent'], list)
+                or type(row['recorded_at']) not in (int, float)
+                or not math.isfinite(row['recorded_at'])):
+            raise ValueError('termination_record_invalid')
+        for event in row['signals_sent']:
+            if (not isinstance(event, dict) or type(event.get('signal')) is not int
+                    or event['signal'] not in (int(signal.SIGTERM), int(signal.SIGKILL))
+                    or event.get('scope') not in ('process_group', 'direct_child')
+                    or event.get('outcome') not in ('sent', 'absent', 'error')):
+                raise ValueError('termination_signal_record_invalid')
+        if shell_code is not None and shell_code != (128-code if code < 0 else code):
+            raise ValueError('termination_record_exit_mismatch')
+        if not row['wait_completed'] or not row['process_group_absent'] or not row['drain_complete']:
+            raise ValueError('termination_record_incomplete')
+        if not group_gone(child_pid):
+            raise ValueError('termination_group_present_or_unknown')
+        return {'status': 'verified', 'reason': None, 'record': row,
+                'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest()}
+    except (OSError, OverflowError, ValueError, KeyError, TypeError, RecursionError) as exc:
+        result['reason'] = str(exc)
+        return result
+
+
 def supervise(args, resources):
     if os.name != 'posix':
         raise ValueError('POSIX required')
@@ -137,6 +182,15 @@ def supervise(args, resources):
         raise ValueError('child records must be distinct and new')
     if not pid_path.parent.is_dir() or not exit_path.parent.is_dir():
         raise ValueError('record parents must exist')
+    termination_path = None
+    if args.termination_record is not None or args.termination_run_id is not None:
+        if not args.termination_record or not args.termination_run_id or not args.termination_run_id.strip():
+            raise ValueError('termination_record_and_run_id_required')
+        termination_path = owned_path(cwd, args.termination_record)
+        if (termination_path.relative_to(cwd).parts[0] != '.omc'
+                or termination_path in (pid_path, exit_path)
+                or termination_path.exists() or not termination_path.parent.is_dir()):
+            raise ValueError('termination_record_must_be_runtime_distinct_and_new')
     prompt = args.prompt.resolve(strict=True)
     if not prompt.is_file():
         raise ValueError('prompt must be a file')
@@ -146,7 +200,9 @@ def supervise(args, resources):
     output = Path(os.path.abspath(args.output))
     if any(p.is_symlink() for p in (output, *output.parents)):
         raise ValueError('output symlink')
-    if output in (pid_path, exit_path, prompt) or any(output in p.parents for p in (pid_path, exit_path, prompt)):
+    inputs = (pid_path, exit_path, prompt, *([termination_path] if termination_path else []))
+    if (output in inputs or any(output in p.parents for p in inputs)
+            or termination_path == prompt):
         raise ValueError('output/input collision')
     # Claim once before opening logs; even spawn failures consume this output.
     output.mkdir(mode=0o700)
@@ -172,6 +228,8 @@ def supervise(args, resources):
                   'prompt_bytes': prompt_bytes,
                   'timeout_seconds': args.timeout, 'drain_seconds': args.drain,
                   'child_pid_file': str(pid_path), 'child_exit_file': str(exit_path)}
+    if termination_path is not None:
+        invocation.update(termination_record=str(termination_path), termination_run_id=args.termination_run_id)
     launch_files = {}
     if argv and Path(argv[0]).is_file():
         launch_files[argv[0]] = digest(Path(argv[0]))
@@ -374,12 +432,23 @@ def supervise(args, resources):
     cleanup = ('confirmed' if wrapper_code is not None and child_code is not None
                and group_gone(pid or read_integer(pid_path))
                else 'incomplete' if pid is not None and not group_gone(pid) else 'unconfirmed')
+    observed = None
+    effective_child_code = child_code
+    if termination_path is not None:
+        observed = termination_observation(termination_path, args.termination_run_id,
+            proc.pid if proc is not None else None, pid or read_integer(pid_path), child_code)
+        cleanup = ('confirmed' if wrapper_code is not None and observed['status'] == 'verified'
+                   else 'incomplete' if pid is not None and not group_gone(pid) else 'unconfirmed')
+        effective_child_code = (observed['record']['direct_child_returncode']
+                                if observed['status'] == 'verified' else None)
     capture_complete = capture_complete and not storage_errors and all(s['eof'] for s in streams.values())
     input_complete = (input_eof and input_sent == prompt_bytes
                       and input_hash.hexdigest() == prompt_hash.hexdigest() and not input_errors)
-    normal = (wrapper_code == child_code == 0 and not timed_out and not interrupted and not forced
+    normal = (wrapper_code == effective_child_code == 0 and not timed_out and not interrupted and not forced
               and parser.normal == parser.results == 1 and parser.complete
               and capture_complete and input_complete and cleanup == 'confirmed' and not termination_errors)
+    if observed is not None and observed['status'] == 'verified':
+        normal = normal and observed['record']['stop_reason'] == 'normal'
     result = {'schema_version': 'omc-ad-supervisor-result/v1', 'status': 'normal' if normal else 'incomplete_or_failed',
               'wrapper_started': wrapper_started, 'attempt_consumed': wrapper_started,
               'launch_error': launch_error,
@@ -400,6 +469,8 @@ def supervise(args, resources):
               'collection_deadline_monotonic': collection_end,
               'streams': {n: {'bytes': s['bytes'], 'sha256': s['hash'].hexdigest(), 'eof': s['eof']}
                           for n, s in streams.items()}}
+    if observed is not None:
+        result['termination_observation'] = observed
     try:
         with (output/'result.json').open('x') as stream:
             json.dump(result, stream, ensure_ascii=False, indent=2)
@@ -419,6 +490,8 @@ def main():
     parser.add_argument('--child-exit-file', type=Path, required=True)
     parser.add_argument('--timeout', type=float, default=1800)
     parser.add_argument('--drain', type=float, default=12)
+    parser.add_argument('--termination-record', type=Path)
+    parser.add_argument('--termination-run-id')
     parser.add_argument('launch', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     try:

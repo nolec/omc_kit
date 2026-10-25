@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT/'scripts/omc_ad_validation_runtime.py'
 BASE = '34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc'
 CORE = '996d80d539d7245443f3a539f1a9fa333b450770'
+FROZEN_HOME_INPUT = ('docs/comparison-dashboard/evidence/ad-validation-runtime-v1/'
+                     'core-996d80d/omc_home_observation.py.fixture')
 HOME = 'libs/store-manager/components/src/lib/home/Home.tsx'
 AD = 'libs/sellerhub-store/src/lib/components/Ad'
 BASELINE_PATHS = [AD,'libs/sellerhub-store/src/lib/foundation',HOME,
@@ -32,6 +34,96 @@ _REAL_REQUESTED = bool(os.environ.get('OMC_AD_RUNTIME_INTEGRATION') == '1' or
     os.environ.get('OMC_AD_RESTORE_STOREFRONT') or os.environ.get('OMC_PREFLIGHT_PLAYWRIGHT_MODULE'))
 real_surface = pytest.mark.skipif(not _REAL_REQUESTED,
     reason='external Ad integration not requested; not evidence of recovery completion')
+
+
+@pytest.mark.parametrize('location',['first','second'])
+def test_standalone_templates_render_actual_requirement_path(tmp_path,location):
+    folder=ROOT/'docs/comparison-dashboard/evidence/ad-standalone-contract-v1'
+    candidate=tmp_path/location; requirement=candidate/'.omc/visual-requirement.json'
+    requirement.parent.mkdir(parents=True);requirement.write_text('{"policy":"synthetic"}')
+    values={'CANDIDATE_ROOT':str(candidate),'REQUIREMENT_SHA256':sha(requirement)}
+    def render(name):
+        text=(folder/name).read_text()
+        for key,value in values.items():text=text.replace('{{'+key+'}}',value)
+        assert '{{' not in text
+        return text
+    contract=json.loads(render('common-input.template.json'));prompt=render('prompt.template.md')
+    ref=contract['requirement_file']
+    assert ref['relative_path']=='.omc/visual-requirement.json'
+    assert Path(ref['absolute_path'])==requirement and ref['sha256']==sha(requirement)
+    assert all(value in prompt for value in ref.values())
+    assert '.omc/visual-input/visual-requirement.json' not in prompt
+    assert 'session_id' not in contract and 'approval' not in contract
+    budget=contract['time_budget']
+    assert budget['progress_checkpoint_seconds']==300
+    assert budget['checkpoint_action']=='record_progress_only'
+    assert budget['per_arm_total_seconds']==1800
+    assert '300초 경과만으로 중단하지 않습니다' in prompt
+    assert (folder/'README.md').is_file()
+
+
+@pytest.mark.parametrize('defect',['missing','hash','path','placeholder'])
+def test_standalone_rendered_documents_reject_bad_requirement(tmp_path,defect):
+    folder=ROOT/'docs/comparison-dashboard/evidence/ad-standalone-contract-v1'
+    requirement=tmp_path/'.omc/visual-requirement.json';requirement.parent.mkdir();requirement.write_text('{}')
+    contract=(folder/'common-input.template.json').read_text().replace('{{CANDIDATE_ROOT}}',str(tmp_path)).replace('{{REQUIREMENT_SHA256}}',sha(requirement))
+    prompt=(folder/'prompt.template.md').read_text().replace('{{CANDIDATE_ROOT}}',str(tmp_path)).replace('{{REQUIREMENT_SHA256}}',sha(requirement))
+    value=json.loads(contract)
+    if defect=='missing':requirement.unlink()
+    elif defect=='hash':requirement.write_text('{"changed":true}')
+    elif defect=='path':prompt=prompt.replace(str(requirement),str(tmp_path/'wrong.json'))
+    else:prompt+=' {{UNFILLED}}'
+    # Document acceptance only: this is not a production generator or model compliance test.
+    accepted=(requirement.is_file() and value['requirement_file']['sha256']==sha(requirement)
+              and value['requirement_file']['absolute_path'] in prompt and '{{' not in prompt)
+    assert not accepted
+
+
+def test_frozen_home_manifest_matches_original_git_object():
+    manifest=json.loads((ROOT/'docs/comparison-dashboard/evidence/ad-validation-runtime-v1/manifest.json').read_text())
+    assert 'scripts/omc_home_observation.py' not in manifest['sources']
+    entry=manifest['sources'][FROZEN_HOME_INPUT]
+    expected=subprocess.check_output(['git','-C',str(ROOT),'show',CORE+':scripts/omc_home_observation.py'])
+    assert (ROOT/FROZEN_HOME_INPUT).read_bytes()==expected
+    assert entry['sha256']==hashlib.sha256(expected).hexdigest()
+    assert 'destination' not in entry
+
+
+@real_surface
+@pytest.mark.parametrize('defect',[None,'changed','missing','digest'])
+def test_frozen_home_public_restore_consumes_archive(real_config,tmp_path,defect):
+    path,cfg,candidate=real_config
+    manifest_path=ROOT/'docs/comparison-dashboard/evidence/ad-validation-runtime-v1/manifest.json'
+    manifest=json.loads(manifest_path.read_text())
+    assert FROZEN_HOME_INPUT in manifest['sources']
+    kit=tmp_path/'operator-kit';kit.mkdir()
+    for name in [str(CLI.relative_to(ROOT)),*manifest['sources']]:
+        dest=kit/name;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes((ROOT/name).read_bytes())
+    # A mutable host source must not substitute for the frozen core input.
+    host=kit/'scripts/omc_home_observation.py';host.write_text('changed host; not a frozen core')
+    frozen=kit/FROZEN_HOME_INPUT
+    if defect=='changed':frozen.write_bytes(b'changed frozen input')
+    elif defect=='missing':frozen.unlink()
+    elif defect=='digest':manifest['sources'][FROZEN_HOME_INPUT]['sha256']='0'*64
+    archive=kit/manifest_path.relative_to(ROOT);archive.parent.mkdir(parents=True,exist_ok=True)
+    archive.write_text(json.dumps(manifest))
+    before={p.relative_to(candidate).as_posix():sha(p) for p in candidate.rglob('*')
+            if p.is_file() and 'node_modules' not in p.relative_to(candidate).parts}
+    proc=subprocess.run([sys.executable,str(kit/CLI.relative_to(ROOT)),'restore','--config',str(path)],
+                        capture_output=True,text=True,timeout=40)
+    if defect is None:
+        assert proc.returncode==0,proc.stdout+proc.stderr
+        assert json.loads((candidate.parent/'runtime.json').read_text())['core_commit']==CORE
+        assert (candidate.parent/'restore-receipt.json').is_file()
+        assert not (candidate/'scripts/omc_home_observation.py').exists()
+    else:
+        assert proc.returncode==1,proc.stdout+proc.stderr
+        assert not (candidate.parent/'runtime.json').exists()
+        assert not (candidate.parent/'restore-receipt.json').exists()
+        after={p.relative_to(candidate).as_posix():sha(p) for p in candidate.rglob('*')
+               if p.is_file() and 'node_modules' not in p.relative_to(candidate).parts}
+        assert after==before
+    assert host.read_text()=='changed host; not a frozen core'
 
 
 @pytest.mark.parametrize('changed',['query','controlled-query','source'])

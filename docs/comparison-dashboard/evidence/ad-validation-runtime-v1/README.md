@@ -1,5 +1,19 @@
 # 광고 검수 실행기 복원 v1
 
+## 고정 core 원문과 현재 실행 부모의 분리
+
+manifest의 기존 `scripts/omc_home_observation.py` 입력은 복원 목적지가 없는
+원문 검증용 항목이다. 이제 같은 SHA256을 유지한
+`core-996d80d/omc_home_observation.py.fixture`를 소비한다. fixture는 Git 객체
+`996d80d539d7245443f3a539f1a9fa333b450770:scripts/omc_home_observation.py`의
+원본 바이트이며 실행하거나 후보의 Python 소스로 복사하지 않는다.
+
+현재 작업 트리의 실행 부모가 변경돼도 고정 core 원문을 대신하지 않는다.
+fixture 손상·누락·해시 불일치는 공개 restore의 기존 검사에서 거부된다.
+core_commit·query·판정 기준과 해시 검사는 유지한다. 이 분리로 통과한 복원은
+고정 core 패키지의 입력 호환성 근거이며 현재 수정 core 전체의 호환성이나
+실제 모델 비교 성공을 입증하지 않는다. 새 비교의 버전 고정과 실행은 별도 결정한다.
+
 삭제된 실행 폴더를 source로 사용하지 않고, 이 묶음의 해시 고정 입력에서 새 검수 run을 만든다. OMC core는 `996d80d539d7245443f3a539f1a9fa333b450770`, 업무 기준은 `34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc`다. 이 실행기는 별도 operator runtime이며 원본 OMC의 모델 검증 성공이나 실제 홈 준비를 증명하지 않는다.
 
 ## 입력과 보존
