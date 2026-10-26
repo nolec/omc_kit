@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """POSIX single-attempt operator supervisor; not an advertising task evaluator.
 
-Local records bind evidence, not hostile-tamper resistance. Never signals the
-detached core child group: that group is observed and cleaned by the core.
+Local records bind evidence, not hostile-tamper resistance. Legacy mode leaves
+the detached core child group to core. Absolute mode has explicit ownership handoff.
 """
 from __future__ import annotations
 
@@ -23,6 +23,315 @@ import time
 
 LIMIT = 1048576
 CHUNK = 65536
+CHECK_IDS = ['tests','lint','build-controlled','build-pixels','controlled','pixels-dpr1','pixels-dpr2']
+
+
+def phase_status(observed, deadline):
+    if type(observed) not in (int, float):return 'unknown'
+    try:
+        if not math.isfinite(observed):return 'unknown'
+    except OverflowError:return 'unknown'
+    return 'passed' if observed <= deadline else 'failed'
+
+
+def cleanup_deadline(stop, origin, span=1800):
+    return min(stop+12*span/1800, origin+1772*span/1800)
+
+
+
+def assess_preparation(path, run_id, worker_pid, origin, deadline, observed):
+    """Check the worker's completion observation, not marker presence alone."""
+    if path.is_symlink():
+        return {'status':'invalid','reason':'prepared_symlink'}
+    if not path.exists():
+        return {'status':'pending' if observed < deadline else 'late',
+                'reason':'prepared_record_missing'}
+    try:
+        if not path.is_file() or path.stat().st_size > LIMIT:
+            raise ValueError('prepared_record_invalid')
+        value=json.loads(path.read_bytes())
+        # Publication can occur after the caller's sample but before this read.
+        # Compare completion against one observation taken after the record.
+        observed=time.monotonic()
+        if (not isinstance(value,dict) or value.get('run_id')!=run_id
+                or type(value.get('worker_pid')) is not int or value['worker_pid']!=worker_pid):
+            raise ValueError('prepared_identity_mismatch')
+        completed=value.get('monotonic')
+        if (type(completed) not in (int,float) or not math.isfinite(completed)
+                or not origin<=completed<=observed):
+            raise ValueError('prepared_timestamp_invalid')
+        return {'status':'passed' if completed<=deadline else 'late',
+                'completed_monotonic':completed,'observed_monotonic':observed}
+    except (OSError,ValueError,TypeError,OverflowError):
+        return {'status':'invalid','reason':'prepared_record_invalid'}
+
+
+def read_absolute_result(path, run_id):
+    """External read-only projection; EOF or an old file cannot mean success."""
+    try:
+        if path.is_symlink() or path.stat().st_size > LIMIT:raise ValueError('invalid result')
+        value=json.loads(path.read_bytes())
+        if value.get('schema_version')!='omc-ad-absolute-result/v1' or value.get('run_id')!=run_id:
+            raise ValueError('result identity mismatch')
+        seal_path=path.with_name('seal.json')
+        if seal_path.is_symlink():raise ValueError('seal symlink')
+        seal=json.loads(seal_path.read_bytes())
+        if (seal['run_id']!=run_id or seal['result_sha256']!=digest(path)
+                or phase_status(seal['completed_monotonic'],value['deadline_monotonic'])!='passed'):
+            raise ValueError('final seal missing or late')
+        return value
+    except (OSError, ValueError, TypeError, AttributeError, KeyError):
+        return {'status':'unknown','reason':'final_record_missing_or_invalid'}
+
+
+def process_identity(pid, leader=True):
+    """Local POSIX lifetime token; never authorizes a PID from a file alone."""
+    if type(pid) is not int or pid<=1:return None
+    try:
+        fields=subprocess.check_output(['/bin/ps','-p',str(pid),'-o','pgid=','-o','lstart='],
+                                       stderr=subprocess.DEVNULL,timeout=.25).decode().split()
+        if len(fields)<6 or (leader and int(fields[0])!=pid):return None
+        return {'pid':pid,'pgid':int(fields[0]),'started':' '.join(fields[1:])}
+    except (OSError, ValueError, subprocess.SubprocessError):return None
+
+
+def group_members(pgid):
+    try:
+        rows=subprocess.check_output(['/bin/ps','-axo','pid=,pgid=,lstart='],
+                                     stderr=subprocess.DEVNULL,timeout=.25).decode().splitlines()
+        return [{'pid':int(f[0]),'pgid':pgid,'started':' '.join(f[2:])}
+                for line in rows if len(f:=line.split())>=7 and int(f[1])==pgid]
+    except (OSError,ValueError,subprocess.SubprocessError):return []
+
+
+def publish_ownership(args, pid):
+    path=getattr(args,'ownership_file',None)
+    if path is None:return
+    row=process_identity(pid)
+    if row is None:return
+    value={'run_id':args.run_id,'worker_pid':os.getpid(),'groups':[]}
+    if path.exists():value=json.loads(path.read_bytes())
+    if row not in value['groups']:value['groups'].append(row)
+    temp=path.with_suffix('.tmp');temp.write_text(json.dumps(value));os.replace(temp,path)
+
+
+def assess_phase_evidence(args, origin, span):
+    """Validate local observations and raw receipts, not an adversarial signature."""
+    statuses={k:'unknown' for k in ('edits','checks','completion')}
+    try:
+        path=owned_path(args.cwd.resolve(),args.phase_evidence)
+        if path.is_symlink() or path.stat().st_size>LIMIT:raise ValueError('invalid phase evidence')
+        value=json.loads(path.read_bytes())
+        if (value['schema_version']!='omc-ad-phase-evidence/v1' or value['run_id']!=args.run_id
+                or value['candidate']!=str(args.cwd.resolve()) or value['origin_monotonic']!=origin):
+            raise ValueError('phase identity mismatch')
+        sources=value['source_sha256']
+        if not sources or not isinstance(sources,dict):raise ValueError('source snapshot missing')
+        scope=args.cwd.resolve()/'libs/sellerhub-store/src/lib/components/Ad'
+        if set(sources)!={str(p.relative_to(args.cwd.resolve())) for p in scope.rglob('*') if p.is_file()}:
+            raise ValueError('source snapshot scope incomplete')
+        for name,pin in sources.items():
+            source=owned_path(args.cwd.resolve(),args.cwd.resolve()/name)
+            if not name.startswith('libs/sellerhub-store/src/lib/components/Ad/') or digest(source)!=pin:
+                raise ValueError('source snapshot mismatch')
+        snapshot=hashlib.sha256(json.dumps(sources,sort_keys=True).encode()).hexdigest()
+        edit=value['last_edit_monotonic']
+        if type(edit) not in (int,float) or not origin<=edit:raise ValueError('edit observation missing')
+        statuses['edits']=phase_status(edit,origin+900*span/1800)
+        rows=value['checks']
+        if [r['id'] for r in rows]!=CHECK_IDS:raise ValueError('seven receipts missing or duplicate')
+        end=edit
+        for row in rows:
+            if (row['source_snapshot_sha256']!=snapshot or row['run_id']!=args.run_id
+                    or type(row['start']) not in (int,float) or type(row['end']) not in (int,float)
+                    or not end<=row['start']<=row['end']<=time.monotonic()):raise ValueError('receipt binding or order mismatch')
+            limits=dict(zip(CHECK_IDS,[180,120,90,90,90,90,90]))
+            if row['end']-row['start']>limits[row['id']]:raise ValueError('command limit exceeded')
+            for stream in ('stdout','stderr','result'):
+                evidence=owned_path(args.cwd.resolve(),args.cwd.resolve()/row[stream])
+                if digest(evidence)!=row[stream+'_sha256']:raise ValueError('raw receipt digest mismatch')
+            assessment=json.loads(evidence.read_bytes())
+            # An exit or caller's passed label alone is never semantic verification.
+            if (assessment.get('run_id')!=args.run_id or assessment.get('check_id')!=row['id']
+                    or assessment.get('source_snapshot_sha256')!=snapshot
+                    or assessment.get('assessment')!='passed'
+                    or assessment.get('stdout_sha256')!=row['stdout_sha256']
+                    or assessment.get('stderr_sha256')!=row['stderr_sha256']):
+                raise ValueError('semantic assessment missing or mismatched')
+            from omc_ad_validation_runtime import assess_common_result
+            assess_common_result(args.cwd.resolve(),row['id'],assessment)
+            end=row['end']
+        statuses['checks']=phase_status(end,origin+1680*span/1800)
+        completed=value['completion_monotonic']
+        if type(completed) not in (int,float) or not end<=completed<=time.monotonic():raise ValueError('completion order mismatch')
+        auxiliary=value['auxiliary']
+        if [r['id'] for r in auxiliary]!=['reload-controlled','generate-manifests','bind-results']:
+            raise ValueError('auxiliary observations missing')
+        if (any(type(r['start']) not in (int,float) or type(r['end']) not in (int,float)
+                or not origin<=r['start']<=r['end']<=completed for r in auxiliary)
+                or sum(r['end']-r['start'] for r in auxiliary)>30):
+            raise ValueError('auxiliary budget or timestamp invalid')
+        by_id={r['id']:r for r in rows}
+        if (not by_id['build-controlled']['end']<=auxiliary[0]['start']<=auxiliary[0]['end']<=by_id['controlled']['start']
+                or not max(by_id[k]['end'] for k in ('build-controlled','build-pixels'))<=auxiliary[1]['start']<=auxiliary[1]['end']<=by_id['pixels-dpr1']['start']
+                or not end<=auxiliary[2]['start']):raise ValueError('auxiliary dependency order invalid')
+        statuses['completion']=phase_status(completed,origin+1740*span/1800)
+        return statuses, 'passed' if all(x=='passed' for x in statuses.values()) else 'failed', None
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError, StopIteration) as exc:
+        return statuses,'unknown',str(exc)
+
+
+def supervise_absolute(args):
+    """Parent watchdog covers worker setup, legacy execution, custody and seal."""
+    origin=args.origin_monotonic; deadline=args.deadline_monotonic
+    try:
+        span=deadline-origin
+        now=time.monotonic()
+        if (not all(math.isfinite(v) for v in (origin,deadline,span)) or not 0<span<=1800
+                or not args.run_id or not args.run_id.strip() or origin>now or deadline<=now):raise ValueError('invalid absolute deadline')
+    except (TypeError,OverflowError):raise ValueError('invalid absolute deadline')
+    cwd=args.cwd.resolve(strict=True); output=Path(os.path.abspath(args.output))
+    if any(p.is_symlink() for p in [output,*output.parents]):raise ValueError('output symlink')
+    for record in (args.child_pid_file,args.child_exit_file):owned_path(cwd,record)
+    inputs=[args.prompt.absolute(),args.child_pid_file.absolute(),args.child_exit_file.absolute()]
+    if args.termination_record:inputs.append(args.termination_record.absolute())
+    if output in inputs or any(output in p.parents for p in inputs):raise ValueError('output/input collision')
+    output.mkdir(mode=0o700)
+    worker_dir=output/'worker';worker_dir.mkdir()
+    ownership=worker_dir/'ownership.json'; prepared=worker_dir/'prepared.json'
+    interrupted=[None]; previous={}
+    def interrupted_by(signum,_frame):interrupted[0]=signum
+    for signum in (signal.SIGINT,signal.SIGTERM):
+        previous[signum]=signal.signal(signum,interrupted_by)
+    worker=os.fork()
+    if worker==0:
+        try:
+            os.setsid()
+            args.output=worker_dir/'capture';args.ownership_file=ownership;args.prepared_file=prepared
+            args.timeout=max(.001,origin+1760*span/1800-time.monotonic())
+            args.drain=min(12,12*span/1800)
+            with ExitStack() as resources:code=supervise(args,resources)
+            phases,evidence,error=assess_phase_evidence(args,origin,span)
+            (worker_dir/'phase.json').write_text(json.dumps({'worker_pid':os.getpid(),'run_id':args.run_id,
+                'phases':phases,'evidence':evidence,'error':error}))
+            os._exit(code)
+        except BaseException as exc:
+            try:(worker_dir/'setup-error.json').write_text(json.dumps({'error':str(exc)}))
+            finally:os._exit(2)
+    code=None; stop=None; reason=None; cleanup_end=None; groups={}; signals=[]; reap_at=None
+    worker_identity=None; registration_valid=True; owned_unknown=False
+    def observe_groups():
+        nonlocal registration_valid
+        if not ownership.exists():return
+        try:
+            if ownership.is_symlink() or ownership.stat().st_size>65536:raise ValueError('invalid ownership')
+            record=json.loads(ownership.read_bytes())
+            if record['worker_pid']!=worker or record['run_id']!=args.run_id:raise ValueError('ownership identity mismatch')
+            for row in record['groups']:
+                if set(row)!={'pid','pgid','started'} or row['pid']!=row['pgid'] or type(row['pid']) is not int:
+                    raise ValueError('invalid owned group')
+                if row['pid'] not in groups:
+                    if process_identity(row['pid'])==row:groups[row['pid']]={**row,'members':group_members(row['pid'])}
+                    elif not group_gone(row['pid']):registration_valid=False
+                elif process_identity(row['pid'])==row:
+                    groups[row['pid']]['members']=group_members(row['pid'])
+        except (OSError,ValueError,KeyError,TypeError):registration_valid=False
+    def send_owned(signum):
+        for pid,row in list(groups.items()):
+            identity={k:row[k] for k in ('pid','pgid','started')}
+            if (process_identity(pid)==identity or any(process_identity(m['pid'],False)==m for m in row['members'])):
+                try:os.killpg(pid,signum);signals.append({'pid':pid,'signal':int(signum),'outcome':'sent'})
+                except ProcessLookupError:pass
+    killed=False
+    preparation={'status':'pending'}
+    try:
+        while True:
+            now=time.monotonic()
+            if worker_identity is None and code is None:worker_identity=process_identity(worker)
+            observe_groups()
+            if code is None:
+                pid,status=os.waitpid(worker,os.WNOHANG)
+                if pid:code=os.waitstatus_to_exitcode(status);reap_at=time.monotonic()
+            # Identity queries and wait observations can cross a stage boundary.
+            now=time.monotonic()
+            preparation=assess_preparation(prepared,args.run_id,worker,origin,
+                                           origin+30*span/1800,now)
+            now=time.monotonic()  # Record reads also consume the absolute budget.
+            if stop is None:
+                if interrupted[0]:reason='supervisor_signal'
+                elif preparation['status']=='late':reason='preprocessing_deadline'
+                elif preparation['status']=='invalid':reason='preprocessing_invalid'
+                elif now>=origin+1760*span/1800:reason='normal_exit_deadline'
+                elif code is not None:reason='worker_exited'
+                if reason:
+                    stop=now;cleanup_end=cleanup_deadline(stop,origin,span)
+                    send_owned(signal.SIGTERM)
+                    if code is None:
+                        try:os.kill(worker,signal.SIGTERM)
+                        except ProcessLookupError:pass
+            gone=all(group_gone(pid) for pid in groups)
+            if stop is not None:
+                if code is not None and gone:break
+                remaining=max(0,cleanup_end-stop)
+                if now>=stop+remaining*.6 and not killed:
+                    killed=True;send_owned(signal.SIGKILL)
+                    if code is None:
+                        try:os.kill(worker,signal.SIGKILL)
+                        except ProcessLookupError:pass
+                if now>=cleanup_end:break
+            time.sleep(.005)
+    finally:
+        for signum,handler in previous.items():signal.signal(signum,handler)
+    if code is None:
+        pid,status=os.waitpid(worker,os.WNOHANG)
+        if pid:code=os.waitstatus_to_exitcode(status);reap_at=time.monotonic()
+    worker_result_path=worker_dir/'capture/result.json'; worker_result={}
+    try:
+        if not worker_result_path.is_file() or worker_result_path.stat().st_size>LIMIT:raise ValueError('invalid worker result')
+        worker_result=json.loads(worker_result_path.read_bytes())
+        if not isinstance(worker_result,dict):worker_result={}
+    except (OSError,ValueError):pass
+    # A prepared worker can die in the spawn/registration gap: never infer custody.
+    owned_unknown=prepared.exists() and not groups and worker_result.get('child_cleanup_status')!='confirmed'
+    cleanup=('confirmed' if code is not None and registration_valid and not owned_unknown
+             and all(group_gone(pid) for pid in groups) else 'unconfirmed')
+    observed_cleanup=time.monotonic()
+    if phase_status(observed_cleanup,cleanup_end)!='passed':cleanup='unconfirmed'
+    phases={k:'unknown' for k in ('edits','checks','completion')};evidence='unknown';error='phase evidence missing'
+    try:
+        phase_path=worker_dir/'phase.json'
+        if not phase_path.is_file() or phase_path.stat().st_size>65536:raise ValueError('invalid phase result')
+        assessment=json.loads(phase_path.read_bytes())
+        if assessment['worker_pid']!=worker or assessment['run_id']!=args.run_id:raise ValueError('phase worker mismatch')
+        phases,evidence,error=assessment['phases'],assessment['evidence'],assessment['error']
+    except (OSError,ValueError,KeyError,TypeError):pass
+    process_normal=(preparation['status']=='passed'
+                    and worker_result.get('status')=='normal' and code==0 and reason=='worker_exited'
+                    and phase_status(reap_at,origin+1760*span/1800)=='passed' and cleanup=='confirmed')
+    result={'schema_version':'omc-ad-absolute-result/v1','run_id':args.run_id,
+            'status':'normal' if process_normal else 'incomplete_or_failed',
+            'process_result':'normal' if process_normal else 'incomplete_or_failed',
+            'cleanup_result':cleanup,'capture_result':worker_result.get('raw_capture_complete',False),
+            'preprocessing':preparation,
+            'phase_timing':phases,'task_evidence':evidence,'evidence_error':error,
+            'full_contract_pass':process_normal and evidence=='passed',
+            'origin_monotonic':origin,'deadline_monotonic':deadline,'span_seconds':span,
+            'stop_monotonic':stop,'stop_reason':reason,'cleanup_deadline_monotonic':cleanup_end,
+            'cleanup_observed_monotonic':observed_cleanup,'worker_pid':worker,'worker_identity':worker_identity,
+            'worker_returncode':code,'owned_groups':list(groups.values()),'signals_sent':signals,
+            'worker_result':str(worker_result_path),'actual_home':'NOT_VERIFIED','comparison':'HOLD',
+            'claude_pid':None,'claude_returncode':None,'final_record_status':'unknown'}
+    # Late storage or parent death cannot manufacture a successful seal.
+    result['final_record_status']=phase_status(time.monotonic(),deadline)
+    if result['final_record_status']!='passed':result['full_contract_pass']=False
+    with (output/'result.json').open('x') as stream:json.dump(result,stream,indent=2)
+    if time.monotonic()>deadline:
+        result['final_record_status']='failed';result['full_contract_pass']=False
+        (output/'result.json').write_text(json.dumps(result,indent=2))
+    seal={'run_id':args.run_id,'result_sha256':digest(output/'result.json'),
+          'completed_monotonic':time.monotonic()}
+    with (output/'seal.json').open('x') as stream:json.dump(seal,stream)
+    return 0 if process_normal and result['final_record_status']=='passed' else 1
 
 
 def stamp():
@@ -32,6 +341,7 @@ def stamp():
 
 
 def digest(path):
+    if not Path(path).is_file():raise ValueError('regular file required')
     h = hashlib.sha256()
     with path.open('rb') as stream:
         for chunk in iter(lambda: stream.read(CHUNK), b''):
@@ -239,6 +549,12 @@ def supervise(args, resources):
             launch_files[str(script.resolve())] = digest(script)
     invocation['launch_file_sha256'] = launch_files
     (output/'invocation.json').write_text(json.dumps(invocation, ensure_ascii=False, indent=2)+'\n')
+    if getattr(args,'prepared_file',None) is not None:
+        temporary=args.prepared_file.with_suffix('.tmp')
+        with temporary.open('x') as stream:
+            json.dump({'run_id':args.run_id,'worker_pid':os.getpid(),
+                       'monotonic':time.monotonic()},stream)
+        os.replace(temporary,args.prepared_file)
     streams = {}
     parser = TerminalParser()
     proc = None
@@ -302,6 +618,7 @@ def supervise(args, resources):
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 start_new_session=True)
         wrapper_started = True
+        publish_ownership(args,proc.pid)
         for pipe, name in ((proc.stdout, 'stdout'), (proc.stderr, 'stderr')):
             os.set_blocking(pipe.fileno(), False)
             selector.register(pipe, selectors.EVENT_READ, name)
@@ -315,6 +632,7 @@ def supervise(args, resources):
                     pid = candidate
                     try:
                         pid_observed_live_group = os.getpgid(pid) == pid
+                        if pid_observed_live_group:publish_ownership(args,pid)
                     except OSError:
                         pass
             if interrupted:
@@ -492,9 +810,17 @@ def main():
     parser.add_argument('--drain', type=float, default=12)
     parser.add_argument('--termination-record', type=Path)
     parser.add_argument('--termination-run-id')
+    parser.add_argument('--origin-monotonic', type=float)
+    parser.add_argument('--deadline-monotonic', type=float)
+    parser.add_argument('--run-id')
+    parser.add_argument('--phase-evidence', type=Path)
     parser.add_argument('launch', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     try:
+        if args.origin_monotonic is not None or args.deadline_monotonic is not None:
+            if args.origin_monotonic is None or args.deadline_monotonic is None:
+                raise ValueError('origin_and_deadline_required')
+            return supervise_absolute(args)
         with ExitStack() as resources:
             return supervise(args, resources)
     except (ValueError, OSError) as exc:

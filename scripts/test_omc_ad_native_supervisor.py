@@ -54,6 +54,119 @@ def test_public_normal_execution_and_raw_bytes(tmp_path):
     assert r['streams']['stdout']['sha256'] == hashlib.sha256(SUCCESS.encode()).hexdigest()
 
 
+def test_v3_cleanup_deadline_shares_budget_and_preserves_late_unknown():
+    import omc_ad_native_supervisor as supervisor
+    assert supervisor.cleanup_deadline(30, 0) == 42
+    assert supervisor.cleanup_deadline(1760, 0) == 1772
+    assert supervisor.cleanup_deadline(1775, 0) == 1772
+    assert supervisor.phase_status(42, 42) == 'passed'
+    assert supervisor.phase_status(42.001, 42) == 'failed'
+    assert supervisor.phase_status(None, 42) == 'unknown'
+
+
+def absolute_invoke(tmp_path, *, fifo=False, code=None, evidence=None, interrupt=False):
+    prompt=tmp_path/'prompt'; runtime=tmp_path/'.omc';runtime.mkdir(exist_ok=True)
+    prompt.write_text('synthetic input')
+    origin=time.monotonic(); deadline=origin+18
+    argv=[sys.executable,str(CLI),'--cwd',str(tmp_path),'--output',str(tmp_path/'out'),
+          '--prompt',str(prompt),'--child-pid-file',str(runtime/'child.pid'),
+          '--child-exit-file',str(runtime/'child.exit'),
+          '--origin-monotonic',str(origin),'--deadline-monotonic',str(deadline),
+          '--run-id','v3-synthetic']
+    if evidence:argv+=['--phase-evidence',str(evidence)]
+    argv+=['--','/bin/sh','-c',RECORDER,'native-launch',sys.executable,'-c',
+           code or f'import sys;sys.stdin.read();print({SUCCESS!r},end="")']
+    if fifo:
+        # Fault injection into public main, inherited by its real fork worker.
+        shim=('import sys,time,os;sys.path.insert(0,'+repr(str(ROOT/'scripts'))+');'
+              'import omc_ad_native_supervisor as m;old=m.digest;parent=os.getpid();'
+              'm.digest=lambda p:(time.sleep(5) if os.getpid()!=parent else None,old(p))[1];'
+              'raise SystemExit(m.main())')
+        argv=[sys.executable,'-c',shim,*argv[2:]]
+    if interrupt:
+        proc=subprocess.Popen(argv,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        try:
+            until=time.monotonic()+3
+            ownership=tmp_path/'out/worker/ownership.json'
+            while time.monotonic()<until:
+                if ownership.exists() and len(json.loads(ownership.read_bytes())['groups'])>=1:
+                    time.sleep(.15);break
+                time.sleep(.01)
+            proc.send_signal(signal.SIGTERM)
+            out,err=proc.communicate(timeout=5)
+            p=subprocess.CompletedProcess(argv,proc.returncode,out,err)
+        finally:
+            if proc.poll() is None:proc.kill();proc.wait()
+    else:p=subprocess.run(argv,capture_output=True,timeout=22)
+    result=tmp_path/'out/result.json'
+    return p,json.loads(result.read_bytes()) if result.exists() else None, time.monotonic()-origin
+
+
+def test_v3_public_absolute_normal_without_phase_evidence_is_not_full_pass(tmp_path):
+    p,r,elapsed=absolute_invoke(tmp_path)
+    assert r is not None,p.stderr
+    assert r['process_result']=='normal',r
+    assert r['full_contract_pass'] is False and r['task_evidence']=='unknown'
+    assert r['actual_home']=='NOT_VERIFIED' and r['comparison']=='HOLD'
+    assert r['cleanup_result']=='confirmed' and elapsed<5
+
+
+def test_v3_public_absolute_preprocessing_hang_is_bounded(tmp_path):
+    p,r,elapsed=absolute_invoke(tmp_path,fifo=True)
+    assert r is not None,p.stderr
+    assert r['stop_reason']=='preprocessing_deadline'
+    assert r['full_contract_pass'] is False
+    assert elapsed<4
+    assert r['cleanup_deadline_monotonic']<=r['stop_monotonic']+.121
+
+
+def test_v3_missing_parent_final_record_is_unknown(tmp_path):
+    import omc_ad_native_supervisor as supervisor
+    assert supervisor.read_absolute_result(tmp_path/'missing','r')['status']=='unknown'
+
+
+@pytest.mark.parametrize('value,expected',[(1759.999,'passed'),(1760,'passed'),(1760.001,'failed'),
+                                         (None,'unknown'),(True,'unknown'),(float('nan'),'unknown')])
+def test_v3_deterministic_boundary_clock(value,expected):
+    import omc_ad_native_supervisor as supervisor
+    assert supervisor.phase_status(value,1760)==expected
+
+
+def test_v3_public_worker_stop_reclaims_owned_detached_group(tmp_path):
+    code='import sys,signal,time;sys.stdin.read();signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(30)'
+    p,r,elapsed=absolute_invoke(tmp_path,code=code,interrupt=True)
+    assert p.returncode==1 and elapsed<5
+    assert r['stop_reason']=='supervisor_signal' and not r['full_contract_pass']
+    assert r['signals_sent'],r
+    # A late observation cannot replace the sealed cleanup verdict.
+    original=r['cleanup_result']
+    for row in r['owned_groups']:
+        try:os.killpg(row['pid'],signal.SIGKILL)
+        except ProcessLookupError:pass
+    assert json.loads((tmp_path/'out/result.json').read_bytes())['cleanup_result']==original
+    assert any(x['signal']==int(signal.SIGKILL) for x in r['signals_sent'])
+
+
+def test_v3_final_seal_required_even_with_normal_result(tmp_path):
+    import omc_ad_native_supervisor as supervisor
+    p,r,_=absolute_invoke(tmp_path)
+    assert supervisor.read_absolute_result(tmp_path/'out/result.json','v3-synthetic')['process_result']=='normal'
+    (tmp_path/'out/seal.json').unlink()
+    assert supervisor.read_absolute_result(tmp_path/'out/result.json','v3-synthetic')['status']=='unknown'
+
+
+@pytest.mark.parametrize('origin,deadline',[('nan','1'),('1','inf'),('1','0')])
+def test_v3_public_absolute_invalid_clock_never_spawns(tmp_path,origin,deadline):
+    marker=tmp_path/'unexpected'
+    args=[sys.executable,str(CLI),'--cwd',str(tmp_path),'--output',str(tmp_path/'out'),
+          '--prompt',str(tmp_path/'missing'),'--child-pid-file',str(tmp_path/'pid'),
+          '--child-exit-file',str(tmp_path/'exit'),'--origin-monotonic',origin,
+          '--deadline-monotonic',deadline,'--run-id','invalid','--',sys.executable,'-c',
+          f'open({str(marker)!r},"w").write("bad")']
+    p=subprocess.run(args,capture_output=True,timeout=3)
+    assert p.returncode==2 and not marker.exists() and not (tmp_path/'out').exists()
+
+
 def test_partial_prompt_delivery_cannot_be_normal(tmp_path):
     (tmp_path/'prompt.txt').write_bytes(b'x'*4000000)
     code=f'import sys;sys.stdin.buffer.read(1);print({SUCCESS!r},end="")'
@@ -482,3 +595,126 @@ def test_termination_public_invalid_record_does_not_spawn(tmp_path,defect):
     p=subprocess.run([*argv,'--',sys.executable,'-c',f'open({str(marker)!r},"w").write("x")'],capture_output=True,timeout=5)
     assert p.returncode==2 and not marker.exists()
     if defect=='existing':assert record.read_text()=='preserved'
+
+
+@pytest.mark.parametrize('case,reason',[
+    ('late','preprocessing_deadline'),
+    ('wrong-run','preprocessing_invalid'),
+    ('wrong-worker','preprocessing_invalid'),
+    ('invalid-time','preprocessing_invalid'),
+    ('normal-exit-late','normal_exit_deadline'),
+])
+def test_review_public_main_rechecks_preparation_and_observed_clock(tmp_path,monkeypatch,case,reason):
+    """Real parser and parent loop; deterministic child observations, no provider."""
+    import omc_ad_native_supervisor as supervisor
+    from types import SimpleNamespace
+    origin=100.0;worker=123456
+    clock=[1859.0 if case=='normal-exit-late' else 129.5]
+    observed=1861.0 if case=='normal-exit-late' else 131.0
+    output=tmp_path/'absolute';prompt=tmp_path/'prompt';prompt.write_text('synthetic')
+    prepared={'run_id':'review-run','worker_pid':worker,
+              'monotonic':130.5 if case=='late' else 110.0}
+    if case=='wrong-run':prepared['run_id']='another-run'
+    if case=='wrong-worker':prepared['worker_pid']+=1
+    if case=='invalid-time':prepared['monotonic']=True
+    def fake_fork():
+        folder=output/'worker';capture=folder/'capture';capture.mkdir()
+        (folder/'prepared.json').write_text(json.dumps(prepared))
+        (capture/'result.json').write_text(json.dumps({'status':'normal','child_cleanup_status':'confirmed','raw_capture_complete':True}))
+        return worker
+    def observe(pid,leader=True):
+        clock[0]=observed
+        return {'pid':pid,'pgid':pid,'started':'synthetic-owned-worker'}
+    monkeypatch.setattr(supervisor.os,'fork',fake_fork)
+    monkeypatch.setattr(supervisor.os,'waitpid',lambda *_:(worker,0))
+    monkeypatch.setattr(supervisor,'process_identity',observe)
+    monkeypatch.setattr(supervisor,'time',SimpleNamespace(monotonic=lambda:clock[0],sleep=lambda _:None))
+    monkeypatch.setattr(sys,'argv',['omc_ad_native_supervisor.py','--cwd',str(tmp_path),
+        '--output',str(output),'--prompt',str(prompt),'--child-pid-file',str(tmp_path/'pid'),
+        '--child-exit-file',str(tmp_path/'exit'),'--origin-monotonic',str(origin),
+        '--deadline-monotonic','1900','--run-id','review-run','--','/bin/true'])
+    assert supervisor.main()==1
+    result=json.loads((output/'result.json').read_text())
+    assert result['stop_reason']==reason
+    assert result['process_result']!='normal' and result['full_contract_pass'] is False
+
+
+@pytest.mark.parametrize('offset,expected',[(-.001,'passed'),(0,'passed'),(.001,'late')])
+def test_review_preparation_timestamp_exact_boundary(tmp_path,offset,expected):
+    import omc_ad_native_supervisor as supervisor
+    path=tmp_path/'prepared.json'
+    path.write_text(json.dumps({'run_id':'r','worker_pid':42,'monotonic':130+offset}))
+    result=supervisor.assess_preparation(path,'r',42,100,130,131)
+    assert result['status']==expected
+
+
+@pytest.mark.parametrize('bad',[None,True,float('nan'),float('inf'),10**1000])
+def test_review_preparation_invalid_timestamp_is_unknown(tmp_path,bad):
+    import omc_ad_native_supervisor as supervisor
+    path=tmp_path/'prepared.json'
+    path.write_text(json.dumps({'run_id':'r','worker_pid':42,'monotonic':bad}))
+    assert supervisor.assess_preparation(path,'r',42,100,130,131)['status']=='invalid'
+
+
+@pytest.mark.parametrize('publication,expected_reason,expected_code',[
+    ('before-read','worker_exited',0),
+    ('during-read','worker_exited',0),
+    ('late','preprocessing_deadline',1),
+    ('future','preprocessing_invalid',1),
+])
+def test_public_preparation_marker_publication_uses_read_end_clock(tmp_path,monkeypatch,publication,expected_reason,expected_code):
+    """Real public parser/parent loop with deterministic worker and publication."""
+    import omc_ad_native_supervisor as supervisor
+    from types import SimpleNamespace
+    output=tmp_path/'absolute';marker=output/'worker/prepared.json'
+    prompt=tmp_path/'prompt';prompt.write_text('synthetic')
+    worker=123456;clock=[129.99];waits=[0];real_exists=Path.exists
+    completed={'before-read':129.98,'during-read':129.995,'late':130.01,'future':130.02}[publication]
+    published={'before-read':129.99,'during-read':129.999,'late':130.02,'future':129.999}[publication]
+    def write_marker():
+        marker.write_text(json.dumps({'run_id':'publication-run','worker_pid':worker,'monotonic':completed}))
+    def fork():
+        (output/'worker/capture').mkdir()
+        if publication=='before-read':write_marker()
+        return worker
+    def wait(*_):
+        waits[0]+=1
+        if waits[0]==1:return 0,0
+        (output/'worker/capture/result.json').write_text(json.dumps({
+            'status':'normal','child_cleanup_status':'confirmed','raw_capture_complete':True}))
+        return worker,0
+    def exists(path):
+        if path==marker and not real_exists(marker):
+            write_marker();clock[0]=published
+        return real_exists(path)
+    monkeypatch.setattr(supervisor.os,'fork',fork)
+    monkeypatch.setattr(supervisor.os,'waitpid',wait)
+    monkeypatch.setattr(supervisor.os,'kill',lambda *_:None)
+    monkeypatch.setattr(supervisor,'process_identity',lambda pid,leader=True:{'pid':pid,'pgid':pid,'started':'synthetic'})
+    monkeypatch.setattr(supervisor,'time',SimpleNamespace(monotonic=lambda:clock[0],sleep=lambda _:None))
+    monkeypatch.setattr(Path,'exists',exists)
+    monkeypatch.setattr(sys,'argv',['supervisor','--cwd',str(tmp_path),'--output',str(output),
+        '--prompt',str(prompt),'--child-pid-file',str(tmp_path/'pid'),'--child-exit-file',str(tmp_path/'exit'),
+        '--origin-monotonic','100','--deadline-monotonic','1900','--run-id','publication-run','--','/bin/true'])
+    assert supervisor.main()==expected_code
+    result=json.loads((output/'result.json').read_text())
+    assert result['stop_reason']==expected_reason
+    assert result['process_result']==('normal' if expected_code==0 else 'incomplete_or_failed')
+    assert result['full_contract_pass'] is False  # No task-evidence fixture is supplied.
+
+
+@pytest.mark.parametrize('completed,expected',[(129.995,'passed'),(130,'passed'),(130.001,'late'),(131.001,'invalid')])
+def test_preparation_clock_is_sampled_after_record_bytes(tmp_path,monkeypatch,completed,expected):
+    import omc_ad_native_supervisor as supervisor
+    from types import SimpleNamespace
+    marker=tmp_path/'prepared.json'
+    marker.write_text(json.dumps({'run_id':'r','worker_pid':42,'monotonic':completed}))
+    clock=[129.99];read=Path.read_bytes
+    def finish_read(path):
+        raw=read(path)
+        if path==marker:clock[0]=131.0
+        return raw
+    monkeypatch.setattr(Path,'read_bytes',finish_read)
+    monkeypatch.setattr(supervisor,'time',SimpleNamespace(monotonic=lambda:clock[0]))
+    result=supervisor.assess_preparation(marker,'r',42,100,130,129.99)
+    assert result['status']==expected

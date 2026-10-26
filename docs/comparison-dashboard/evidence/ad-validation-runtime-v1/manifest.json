@@ -289,5 +289,14 @@
     "seal_seconds": 5,
     "response_bytes": 1048576,
     "profile_bytes": 8388608
+  },
+  "supported_core_commits": [
+    "996d80d539d7245443f3a539f1a9fa333b450770",
+    "7bdbcb81882ef8ce515e48cf9b4fac07fd273176"
+  ],
+  "archive_core_commit": "996d80d539d7245443f3a539f1a9fa333b450770",
+  "common_contract": {
+    "path": "docs/comparison-dashboard/evidence/ad-standalone-contract-v1/common-input.template.json",
+    "sha256": "5c456a8b592eda3a775508ca928ccdf64b816e78b582f2047f4231e716d796b8"
   }
 }

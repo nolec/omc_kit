@@ -199,6 +199,101 @@ def test_public_runtime_entrypoint_exists():
     assert CLI.is_file(), 'portable restore CLI is absent; archived driver depends on a deleted temporary path'
 
 
+def test_v3_accepts_new_core_without_relabeling_historical_fixture(config):
+    path,cfg,candidate=config
+    cfg['core_commit']='7bdbcb81882ef8ce515e48cf9b4fac07fd273176'
+    path.write_text(json.dumps(cfg))
+    result=invoke('restore','--config',path)
+    assert result.returncode==0,result.stdout+result.stderr
+    runtime=json.loads((candidate.parent/'runtime.json').read_text())
+    receipt=json.loads((candidate.parent/'restore-receipt.json').read_text())
+    assert runtime['core_commit']==cfg['core_commit']
+    assert receipt['execution_core_commit']==cfg['core_commit']
+    assert receipt['archive_core_commit']==CORE
+    assert not (candidate/'scripts/omc_home_observation.py').exists()
+
+
+def test_v3_durable_seven_contract_and_shared_budget():
+    import omc_ad_validation_runtime as runtime
+    contract=runtime.common_contract()
+    assert [r['id'] for r in contract['checks']]==[
+        'tests','lint','build-controlled','build-pixels','controlled','pixels-dpr1','pixels-dpr2']
+    assert sum(r['timeout_seconds'] for r in contract['checks'])==750
+    assert contract['auxiliary_seconds']==30
+    assert contract['time_budget']['cumulative_targets_seconds']['final_seven_checks']==1680
+    assert contract['manifest_generation_python']
+    assert contract['checks'][0]['expected_final_exit']==1
+
+
+@pytest.mark.parametrize('mutation',['missing','duplicate','changed-limit','changed-command'])
+def test_v3_common_contract_rejects_drift(tmp_path,monkeypatch,mutation):
+    import omc_ad_validation_runtime as runtime
+    source=ROOT/'docs/comparison-dashboard/evidence/ad-standalone-contract-v1/common-input.template.json'
+    value=json.loads(source.read_text())
+    assert 'checks' in value
+    if mutation=='missing':value['checks'].pop()
+    elif mutation=='duplicate':value['checks'][-1]=value['checks'][0]
+    elif mutation=='changed-limit':value['checks'][0]['timeout_seconds']=1
+    else:value['checks'][0]['argv']=['true']
+    p=tmp_path/'contract.json';p.write_text(json.dumps(value))
+    with pytest.raises(ValueError):runtime.common_contract(p)
+
+
+@pytest.mark.parametrize('location',['one','two'])
+def test_v3_public_contract_render_has_no_temporary_dependency(tmp_path,location):
+    candidate=tmp_path/location;requirement=candidate/'.omc/visual-requirement.json'
+    requirement.parent.mkdir(parents=True);requirement.write_text('{}')
+    bindings={'CANDIDATE_ROOT':str(candidate),'ARM_ROOT':str(candidate.parent),
+              'OPERATOR_ROOT':str(ROOT),'CORE_ROOT':str(ROOT),'NODE':str(Path(sys.executable).resolve()),
+              'PYTHON':str(Path(sys.executable).resolve()),'PORT':3999}
+    path=tmp_path/'bindings.json';path.write_text(json.dumps(bindings));output=tmp_path/'contract.json'
+    p=subprocess.run([sys.executable,str(CLI),'contract','--bindings',str(path),'--output',str(output)],
+                     capture_output=True,text=True,timeout=5)
+    assert p.returncode==0,p.stderr
+    value=json.loads(output.read_bytes())
+    assert value['requirement_file']['absolute_path']==str(requirement)
+    assert value['requirement_file']['sha256']==sha(requirement)
+    assert value['checks'][0]['cwd']==str(candidate)
+    assert '/private/tmp/omc-ad-standalone-20261024T184725Z' not in output.read_text()
+    assert value['checks'][-1]['argv'][7]=='@MANIFEST_2_SHA256@'
+
+
+def test_v3_forged_passed_label_is_not_semantic_evidence(tmp_path):
+    import omc_ad_validation_runtime as runtime
+    with pytest.raises((KeyError,ValueError)):
+        runtime.assess_common_result(tmp_path,'controlled',{'assessment':'passed','timed_out':False})
+
+
+@real_surface
+@pytest.mark.parametrize('selected',[CORE,'7bdbcb81882ef8ce515e48cf9b4fac07fd273176'])
+def test_v3_real_restore_then_selected_core_install(real_config,tmp_path,selected):
+    path,cfg,candidate=real_config
+    cfg['core_commit']=selected;path.write_text(json.dumps(cfg))
+    result=subprocess.run([sys.executable,str(CLI),'restore','--config',str(path)],
+                          capture_output=True,text=True,timeout=40)
+    assert result.returncode==0,result.stdout+result.stderr
+    kit=tmp_path/'selected-source';kit.mkdir()
+    raw=subprocess.check_output(['git','-C',str(ROOT),'archive',selected])
+    with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+        for member in archive.getmembers():
+            name=Path(member.name)
+            assert not name.is_absolute() and '..' not in name.parts
+            assert member.isdir() or member.isfile()
+            if member.isfile():
+                dest=kit/name;dest.parent.mkdir(parents=True,exist_ok=True)
+                dest.write_bytes(archive.extractfile(member).read());dest.chmod(member.mode)
+    subprocess.run(['git','-c','init.templateDir=','init','-q',str(candidate)],check=True)
+    installed=subprocess.run([sys.executable,str(kit/'scripts/install.py'),'--target',str(candidate)],
+        capture_output=True,text=True,timeout=60,env={**os.environ,'GIT_OPTIONAL_LOCKS':'0'})
+    (tmp_path/'selected-install.log').write_text(installed.stdout+installed.stderr)
+    assert installed.returncode==0,installed.stdout+installed.stderr
+    for name in ['omc_home_observation.py','omc_validation_command.py','omc_pipeline_guard.py']:
+        expected=subprocess.check_output(['git','-C',str(ROOT),'show',selected+':scripts/'+name])
+        assert (candidate/'scripts'/name).read_bytes()==expected
+    receipt=json.loads((candidate.parent/'restore-receipt.json').read_bytes())
+    assert receipt['execution_core_commit']==selected and receipt['archive_core_commit']==CORE
+
+
 def port():
     with socket.socket() as s:
         s.bind(('127.0.0.1', 0))
@@ -803,10 +898,12 @@ let n=0;setInterval(()=>{if(scenario==='stationary')return;document.querySelecto
     return page
 
 
-@pytest.fixture(scope='session')
-def fixed_core(tmp_path_factory):
+@pytest.fixture(scope='session',params=[CORE,'7bdbcb81882ef8ce515e48cf9b4fac07fd273176'],
+                ids=['core996d80d','core7bdbcb8'])
+def fixed_core(tmp_path_factory,request):
+    selected=request.param
     core=tmp_path_factory.mktemp('controlled-core')
-    archive=subprocess.check_output(['git','-C',str(ROOT),'archive',CORE])
+    archive=subprocess.check_output(['git','-C',str(ROOT),'archive',selected])
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         for member in tar.getmembers():
             name=Path(member.name)
@@ -816,8 +913,9 @@ def fixed_core(tmp_path_factory):
                 dest=core/name;dest.parent.mkdir(parents=True,exist_ok=True)
                 dest.write_bytes(tar.extractfile(member).read())
                 dest.chmod(member.mode)
-    expected=subprocess.check_output(['git','-C',str(ROOT),'show',CORE+':scripts/omc_validation_command.py'])
+    expected=subprocess.check_output(['git','-C',str(ROOT),'show',selected+':scripts/omc_validation_command.py'])
     assert (core/'scripts/omc_validation_command.py').read_bytes()==expected
+    core.with_suffix('.selected-core').write_text(selected)
     return core
 
 
@@ -858,12 +956,14 @@ def freeze_controlled_policy(core,cfg,candidate):
     ('normal','passed',0),('border','failed',1),('arrows','failed',1),
     ('missing-image','unknown',2),('stationary','unknown',2)])
 def test_fixed_core_controlled_public_cli_observes_real_surface(real_config,tmp_path,fixed_core,scenario,expected,code):
+    selected=fixed_core.with_suffix('.selected-core').read_text()
+    config,cfg,candidate=real_config;cfg['core_commit']=selected;config.write_text(json.dumps(cfg))
     surface=tmp_path/'controlled';page=controlled_surface(surface,scenario)
     with browser(real_config,surface) as (cfg,candidate):
         policy=freeze_controlled_policy(fixed_core,cfg,candidate)
         result=controlled_cli(fixed_core,candidate,'run','--profile','controlled')
         (candidate.parent/'controlled-native-result.json').write_text(json.dumps({
-            'scenario':scenario,'core_commit':CORE,'policy_sha256':sha(policy),
+            'scenario':scenario,'core_commit':selected,'policy_sha256':sha(policy),
             'query_sha256':QUERY_PINS['controlled'],'exit_code':result.returncode,
             'stdout':result.stdout,'stderr':result.stderr},ensure_ascii=False,indent=2))
         assert result.returncode==code,result.stdout+result.stderr
@@ -887,3 +987,37 @@ def test_fixed_core_controlled_public_cli_observes_real_surface(real_config,tmp_
         assert snap['bundle_hashes'][f"http://localhost:{cfg['port']}/omc-ad-validation/bundle.js"]==sha(page/'bundle.js')
         assert snap['url']==obs['url'] and snap['candidate']==str(candidate)
         (candidate.parent/'controlled-final-snapshot.json').write_text(json.dumps(snap,ensure_ascii=False))
+
+
+@pytest.mark.parametrize('defect',['wrong-cwd','missing-cwd','relative-cwd','missing-environment',
+    'wrong-ci','missing-cache','invalid-environment'])
+@pytest.mark.parametrize('check_id',['tests','lint','build-controlled','build-pixels','controlled','pixels-dpr1','pixels-dpr2'])
+def test_review_common_result_rejects_execution_context_drift(tmp_path,monkeypatch,defect,check_id):
+    import omc_ad_validation_runtime as runtime
+    definition={'id':check_id,'argv':['/fixed/node','lint'],
+                'cwd':str(tmp_path.resolve()),'environment':{'CI':'1','NX_DAEMON':'false','NX_SKIP_NX_CACHE':'true'}}
+    # Fixture only replaces unrelated pinned inputs; call the real shared consumer.
+    monkeypatch.setattr(runtime,'render_common_contract',lambda _: {'checks':[definition],'fixed_files':{}})
+    record={'timed_out':False,'bindings':{'CANDIDATE_ROOT':str(tmp_path.resolve())},
+            'argv':definition['argv'],'cwd':definition['cwd'],'environment':dict(definition['environment']),
+            'exit_code':0,'artifacts':{}}
+    if defect=='wrong-cwd':record['cwd']=str(tmp_path/'other-candidate')
+    elif defect=='missing-cwd':record.pop('cwd')
+    elif defect=='relative-cwd':record['cwd']='.'
+    elif defect=='missing-environment':record.pop('environment')
+    elif defect=='wrong-ci':record['environment']['CI']='0'
+    elif defect=='missing-cache':record['environment'].pop('NX_SKIP_NX_CACHE')
+    else:record['environment']=[]
+    with pytest.raises(ValueError,match='common_execution_context_mismatch'):
+        runtime.assess_common_result(tmp_path,check_id,record)
+
+
+def test_review_common_result_accepts_exact_context_with_extra_environment(tmp_path,monkeypatch):
+    import omc_ad_validation_runtime as runtime
+    definition={'id':'lint','argv':['/fixed/node','lint'],'cwd':str(tmp_path.resolve()),
+                'environment':{'CI':'1','NX_DAEMON':'false','NX_SKIP_NX_CACHE':'true'}}
+    monkeypatch.setattr(runtime,'render_common_contract',lambda _: {'checks':[definition],'fixed_files':{}})
+    record={'timed_out':False,'bindings':{'CANDIDATE_ROOT':str(tmp_path.resolve())},
+            'argv':definition['argv'],'cwd':definition['cwd'],
+            'environment':{**definition['environment'],'PATH':'/synthetic/bin'},'exit_code':0,'artifacts':{}}
+    assert runtime.assess_common_result(tmp_path,'lint',record)=='passed'

@@ -120,14 +120,14 @@ python3 -m pytest scripts/test_omc_ad_validation_runtime.py scripts/test_omc_ad_
 
 ## 996d80d 후보 호환성 · A단계
 
-현재 실행기는 단일 core `996d80d539d7245443f3a539f1a9fa333b450770`만 지원한다.
-config의 core와 실행기 CORE를 먼저 대조하고, manifest.core_commit도 출력 쓰기 전에 대조한다.
+현재 실행기는 실행 core `996d80d539d7245443f3a539f1a9fa333b450770`와 `7bdbcb81882ef8ce515e48cf9b4fac07fd273176`를 명시적으로 지원한다. archive core는996d80d로 유지하며 현재 실행 core와 구분한다.
+config의 실행 core를 허용 목록과 대조하고 manifest의 archive core·지원 목록도 출력 전에 대조한다. 복원 영수증에는 execution_core_commit과 archive_core_commit을 각각 보존한다.
 이전 core99773380·637a965 및 임의 core는 `candidate_version_mismatch`, manifest core의 누락·불일치는
 `manifest_core_mismatch`로 종료1이며 기존 후보와 입력을 보존한다.
 과거 core637a965 재현은 당시 runtime 커밋 `f7566cc2`와 당시 설정을 함께 사용하며,
 새 실행기에 과거 core를 지정하거나 새 후보를 과거 버전으로 표시하지 않는다.
 
-복원 순서는 clean 업무 baseline → restore → 고정 core996d80d 설치 → 설치 관리 소스의
+복원 순서는 clean 업무 baseline → restore → 선택한 실행 core 설치 → 설치 관리 소스의
 Git blob/해시 대조 → 서비스 준비다. restore는 clean baseline을 검사하므로 설치 순서를 뒤집지 않는다.
 복원 receipt의 config/runtime/manifest 해시와 runtime.json의 core를 함께 보존한다.
 home/controlled query 원문 해시, 입력 원문, acceptance_matrix와 픽셀·6표본 기준은 변경하지 않는다.
@@ -200,3 +200,13 @@ runtime의 버전·파일 해시를 별도 고정해야 한다.
 실패·시간 초과·생략·중단도 실행 횟수를 소비하고 첫 통과 후 확인용 재실행은 하지 않는다.
 대상별 RED/GREEN은 별도 기록하지만 모두 A의 3600초 안에서 수행한다.
 A 통과는 B 실행 승인이 아니며 실제 Claude 횟수·내부 API 수의 관측은 후행 B 계약을 따른다.
+
+## 개정 3: core7bdbcb8·공통 독립 화면 계약
+
+manifest의 supported_core_commits는 두 실행 core를 명시한다. 역사 home 원문 fixture의 해시와 core996d80d는 그대로 보존하며 fixture를 후보 실행 소스로 설치하지 않는다. restore는 clean baseline만 검사하고 도구를 설치하지 않으므로 복원→선택 core 설치→Git blob 대조 순서를 지킨다. 새 실행기 commit은 검토·커밋 후 별도로 고정한다.
+
+`contract --bindings <일반 JSON> --output <새 JSON>`은 영구 common-input.template.json의 manifest 고정 해시를 확인하고 후보·arm·core/operator·실행 파일·포트만 치환한다. bindings의 키는 CANDIDATE_ROOT, ARM_ROOT, OPERATOR_ROOT, CORE_ROOT, NODE, PYTHON, PORT다. 경로는 절대 경로이고 요구 파일은 후보 .omc/visual-requirement.json 일반 파일이다. 다른 출력이나 과거 결과를 덮어쓰지 않는다. 두 픽셀 manifest 해시 슬롯은 빌드 이후 생성한 실제 SHA만 넣는다.
+
+7개는 tests/lint/build-controlled/build-pixels/controlled/pixels-dpr1/pixels-dpr2다. tests exit1은 이름·정규화 진단이 같은 기존4실패만 남는 과거 비교 조건이며 절대PASS가 아니다. controlled 전송exit0은 화면 합격이 아니고 두 픽셀 보고서는 DPR별6개 셀·policy/run/candidate/bundle을 함께 대조한다. assess_common_result는 passed 선언만 신뢰하지 않고 원본 artifact와 명령·고정 입력·기존 테스트·화면 판정을 재평가한다. 이 파일들은 로컬 증거 연결이지 악의적 조작에 대한 인증은 아니다.
+
+이 보완·합성/로컬 검증은 실제 Claude 업무 성공이 아니다. 실제 홈 NOT_VERIFIED·비교 HOLD·기존 설치 검사 실패 이력은 유지하며 재실행·릴리스·재설치 권한을 생성하지 않는다.

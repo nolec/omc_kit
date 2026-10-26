@@ -11,15 +11,324 @@
     "checkpoint_action": "record_progress_only",
     "cumulative_targets_seconds": {
       "inspection_red_and_source_freeze": 900,
-      "final_seven_checks": 1500,
-      "completion_and_report": 1680,
-      "normal_exit_target": 1788,
-      "collection_target": 1800
+      "final_seven_checks": 1680,
+      "completion_and_report": 1740,
+      "normal_exit_target": 1760,
+      "collection_target": 1800,
+      "child_cleanup_latest": 1772,
+      "preprocessing": 30
     },
     "physical_edit_enforcement": false,
     "success_time_guaranteed": false,
-    "overall_experiment_limit_seconds": 7200
+    "overall_experiment_limit_seconds": 7200,
+    "cleanup_formula": "min(stop_monotonic + 12, origin_monotonic + 1772)",
+    "auxiliary_reserve_seconds": 30
   },
   "comparison_execution_authorized": false,
-  "actual_home": "NOT_VERIFIED"
+  "actual_home": "NOT_VERIFIED",
+  "checks": [
+    {
+      "id": "tests",
+      "argv": [
+        "@NODE@",
+        "@CANDIDATE_ROOT@/node_modules/jest/bin/jest.js",
+        "--config",
+        "libs/sellerhub-store/jest.config.ts",
+        "--runInBand",
+        "--runTestsByPath",
+        "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+        "--json",
+        "--outputFile",
+        "@CANDIDATE_ROOT@/.omc/standalone-final/tests.json"
+      ],
+      "cwd": "@CANDIDATE_ROOT@",
+      "environment": {
+        "CI": "1",
+        "NX_DAEMON": "false",
+        "NX_SKIP_NX_CACHE": "true"
+      },
+      "timeout_seconds": 180,
+      "stdout": "@CANDIDATE_ROOT@/.omc/standalone-final/tests.stdout",
+      "stderr": "@CANDIDATE_ROOT@/.omc/standalone-final/tests.stderr",
+      "result": "@CANDIDATE_ROOT@/.omc/standalone-final/tests.execution.json",
+      "consumer": "common test name+normalized diagnostics and OMC tests",
+      "expected_final_exit": 1,
+      "unavailable": "unknown; no false PASS"
+    },
+    {
+      "id": "lint",
+      "argv": [
+        "@NODE@",
+        "@CANDIDATE_ROOT@/node_modules/eslint/bin/eslint.js",
+        "libs/sellerhub-store/src/lib/components/Ad/Ad.tsx",
+        "libs/sellerhub-store/src/lib/components/Ad/Ad.styled.ts",
+        "libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx",
+        "--max-warnings=0"
+      ],
+      "cwd": "@CANDIDATE_ROOT@",
+      "environment": {
+        "CI": "1",
+        "NX_DAEMON": "false",
+        "NX_SKIP_NX_CACHE": "true"
+      },
+      "timeout_seconds": 120,
+      "stdout": "@CANDIDATE_ROOT@/.omc/standalone-final/lint.stdout",
+      "stderr": "@CANDIDATE_ROOT@/.omc/standalone-final/lint.stderr",
+      "result": "@CANDIDATE_ROOT@/.omc/standalone-final/lint.execution.json",
+      "consumer": "common lint and OMC lint",
+      "expected_final_exit": 0,
+      "unavailable": "unknown; no false PASS"
+    },
+    {
+      "id": "build-controlled",
+      "argv": [
+        "@NODE@",
+        "@ARM_ROOT@/build-controlled.cjs"
+      ],
+      "cwd": "@CANDIDATE_ROOT@",
+      "environment": {
+        "CI": "1",
+        "NX_DAEMON": "false",
+        "NX_SKIP_NX_CACHE": "true"
+      },
+      "timeout_seconds": 90,
+      "stdout": "@CANDIDATE_ROOT@/.omc/standalone-final/build-controlled.stdout",
+      "stderr": "@CANDIDATE_ROOT@/.omc/standalone-final/build-controlled.stderr",
+      "result": "@CANDIDATE_ROOT@/.omc/standalone-final/build-controlled.execution.json",
+      "consumer": "candidate/build/served bundle binding",
+      "expected_final_exit": 0,
+      "unavailable": "unknown; no false PASS"
+    },
+    {
+      "id": "build-pixels",
+      "argv": [
+        "@NODE@",
+        "@CANDIDATE_ROOT@/.omc/visual-input/build-pixels.cjs"
+      ],
+      "cwd": "@CANDIDATE_ROOT@",
+      "environment": {
+        "CI": "1",
+        "NX_DAEMON": "false",
+        "NX_SKIP_NX_CACHE": "true"
+      },
+      "timeout_seconds": 90,
+      "stdout": "@CANDIDATE_ROOT@/.omc/standalone-final/build-pixels.stdout",
+      "stderr": "@CANDIDATE_ROOT@/.omc/standalone-final/build-pixels.stderr",
+      "result": "@CANDIDATE_ROOT@/.omc/standalone-final/build-pixels.execution.json",
+      "consumer": "candidate/build/served bundle binding",
+      "expected_final_exit": 0,
+      "unavailable": "unknown; no false PASS"
+    },
+    {
+      "id": "controlled",
+      "argv": [
+        "@PYTHON@",
+        "@OPERATOR_ROOT@/scripts/omc_ad_validation_runtime.py",
+        "command",
+        "--runtime",
+        "@ARM_ROOT@/runtime.json",
+        "--op",
+        "evaluate",
+        "--args-json",
+        "[\"controlled\"]"
+      ],
+      "cwd": "@CANDIDATE_ROOT@",
+      "environment": {
+        "CI": "1",
+        "NX_DAEMON": "false",
+        "NX_SKIP_NX_CACHE": "true"
+      },
+      "timeout_seconds": 90,
+      "stdout": "@CANDIDATE_ROOT@/.omc/standalone-final/controlled.stdout",
+      "stderr": "@CANDIDATE_ROOT@/.omc/standalone-final/controlled.stderr",
+      "result": "@CANDIDATE_ROOT@/.omc/standalone-final/controlled.execution.json",
+      "consumer": "controlled border/shadow/arrows/transition and OMC browser-controlled",
+      "expected_final_exit": 0,
+      "unavailable": "unknown; no false PASS"
+    },
+    {
+      "id": "pixels-dpr1",
+      "argv": [
+        "@PYTHON@",
+        "@CORE_ROOT@/scripts/omc_visual_check.py",
+        "--target",
+        "@CANDIDATE_ROOT@",
+        "--manifest",
+        "@CANDIDATE_ROOT@/.omc/standalone-final/manifest-1.json",
+        "--manifest-sha256",
+        "@MANIFEST_1_SHA256@",
+        "--output-dir",
+        "@CANDIDATE_ROOT@/.omc/standalone-final/pixels-1",
+        "--playwright-module",
+        "@CANDIDATE_ROOT@/node_modules/playwright"
+      ],
+      "cwd": "@CANDIDATE_ROOT@",
+      "environment": {
+        "CI": "1",
+        "NX_DAEMON": "false",
+        "NX_SKIP_NX_CACHE": "true"
+      },
+      "timeout_seconds": 90,
+      "stdout": "@CANDIDATE_ROOT@/.omc/standalone-final/pixels-dpr1.stdout",
+      "stderr": "@CANDIDATE_ROOT@/.omc/standalone-final/pixels-dpr1.stderr",
+      "result": "@CANDIDATE_ROOT@/.omc/standalone-final/pixels-dpr1.execution.json",
+      "consumer": "six cells plus paired DPR aggregate/OMC visual_result_set",
+      "expected_final_exit": 0,
+      "unavailable": "unknown; no false PASS"
+    },
+    {
+      "id": "pixels-dpr2",
+      "argv": [
+        "@PYTHON@",
+        "@CORE_ROOT@/scripts/omc_visual_check.py",
+        "--target",
+        "@CANDIDATE_ROOT@",
+        "--manifest",
+        "@CANDIDATE_ROOT@/.omc/standalone-final/manifest-2.json",
+        "--manifest-sha256",
+        "@MANIFEST_2_SHA256@",
+        "--output-dir",
+        "@CANDIDATE_ROOT@/.omc/standalone-final/pixels-2",
+        "--playwright-module",
+        "@CANDIDATE_ROOT@/node_modules/playwright"
+      ],
+      "cwd": "@CANDIDATE_ROOT@",
+      "environment": {
+        "CI": "1",
+        "NX_DAEMON": "false",
+        "NX_SKIP_NX_CACHE": "true"
+      },
+      "timeout_seconds": 90,
+      "stdout": "@CANDIDATE_ROOT@/.omc/standalone-final/pixels-dpr2.stdout",
+      "stderr": "@CANDIDATE_ROOT@/.omc/standalone-final/pixels-dpr2.stderr",
+      "result": "@CANDIDATE_ROOT@/.omc/standalone-final/pixels-dpr2.execution.json",
+      "consumer": "six cells plus paired DPR aggregate/OMC visual_result_set",
+      "expected_final_exit": 0,
+      "unavailable": "unknown; no false PASS"
+    }
+  ],
+  "manifest_generation_python": "import json,hashlib\nfrom pathlib import Path\nc=Path.cwd(); h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest(); req=json.loads((c/'.omc/visual-requirement.json').read_text()); policy_pin=hashlib.sha256(json.dumps(req['policy'],sort_keys=True,separators=(',',':')).encode()).hexdigest(); out=c/'.omc/standalone-final'; b=c/'apps/store-manager/public/omc-ad-pixels/bundle.js'\nfor d in [1,2]:\n m={'schema_version':'omc-visual-manifest/v1','url':'http://localhost:@PORT@/omc-ad-pixels/index.html','bundle_url':'http://localhost:@PORT@/omc-ad-pixels/bundle.js','bundle_path':str(b.relative_to(c)),'bundle_sha256':h(b),'build_inputs':req['policy']['builder_inputs'],'dpr':d,'images_per_variant':2,'run_id':req['run_id'],'policy_sha256':policy_pin}; p=out/f'manifest-{d}.json'; p.write_text(json.dumps(m,indent=2)); print(d,h(p))\n",
+  "auxiliary_seconds": 30,
+  "auxiliary_operations": [
+    "goto controlled URL",
+    "generate both manifests and resolve SHA placeholders",
+    "bind final candidate and results"
+  ],
+  "acceptance": {
+    "tests": "baseline41pass4samefail names+normalizeddiagnostics; no newly failing or removed tests; exit1 not absolutePASS",
+    "controlled": "transport0 alone insufficient; variants6 images2 transitioned true arrows0 required border+shadow",
+    "pixels": "six unique cells perDPR;12total with policy/run/candidate/bundle binding;unknown notPASS"
+  },
+  "provenance": {
+    "source": "historical frozen-common-contracts.json",
+    "source_sha256": "8b3cf4be58565dc8dc185c45c15f11c01d7553b7d45ca0486fad8a0eddc84da4",
+    "original_pins": {
+      "core": "996d80d539d7245443f3a539f1a9fa333b450770",
+      "runtime": "03d6a70ed9b591c0116f74d00c2025d7210ad197",
+      "supervisor": "e4557ddf7ec1ead006a505a8a6aac6549c6a2a84",
+      "peer": "05dd2d0a9faeccd1ababd2886b7bc877fe3421b7",
+      "peer_version": "5.7.6",
+      "baseline": "34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc",
+      "planning_head": "26753b7dad05660d4154172e33ed1838116a77cc"
+    },
+    "binding_placeholders": [
+      "@CANDIDATE_ROOT@",
+      "@ARM_ROOT@",
+      "@OPERATOR_ROOT@",
+      "@CORE_ROOT@",
+      "@NODE@",
+      "@PYTHON@",
+      "localhost:@PORT@",
+      "@MANIFEST_1_SHA256@",
+      "@MANIFEST_2_SHA256@"
+    ],
+    "historical_result_reused": false
+  },
+  "phase_evidence_contract": {
+    "schema_version": "omc-ad-phase-evidence/v1",
+    "required_phases": [
+      "edits",
+      "checks",
+      "completion"
+    ],
+    "statuses": [
+      "passed",
+      "failed",
+      "unknown",
+      "mismatch"
+    ],
+    "required_fields": [
+      "run_id",
+      "candidate",
+      "origin_monotonic",
+      "source_sha256",
+      "last_edit_monotonic",
+      "checks",
+      "completion_monotonic"
+    ],
+    "limitations": "local observations not hostile-tamper proof; mtime alone insufficient"
+  },
+  "baseline_jest": {
+    "names": [
+      "Ad cancels a pending resume when the item count no longer supports a slider",
+      "Ad centers a banner image and crops its horizontal overflow",
+      "Ad dismisses only the active Catalog slide for today and moves to the next slide",
+      "Ad does not render an empty advertisement slot",
+      "Ad does not support dismissal for cards or directly supplied items",
+      "Ad hides banner indicators for one item",
+      "Ad ignores a stale image brightness result after moving to another slide",
+      "Ad ignores a stale resume callback after a newer manual move",
+      "Ad ignores a stale rolling callback after a manual move",
+      "Ad includes background alpha when selecting an indicator color",
+      "Ad includes the small-banner overlay when selecting a background indicator color",
+      "Ad keeps the text color fallback when image brightness analysis fails",
+      "Ad loads Catalog slides when slug is provided",
+      "Ad matches the Figma small banner content layout",
+      "Ad moves card slides with the card carousel arrows",
+      "Ad moves infinitely and resumes rolling five seconds after indicator click",
+      "Ad opens a linked banner slide in a new tab",
+      "Ad renders a card image without card text content",
+      "Ad renders card slides with the Figma carousel navigation pill",
+      "Ad renders clickable Figma indicators for up to 20 banner-landing items",
+      "Ad renders clickable Figma indicators for up to 20 banner-large items",
+      "Ad renders clickable Figma indicators for up to 20 banner-small items",
+      "Ad renders every item in the slide track",
+      "Ad renders the banner-landing variant with the Figma height",
+      "Ad renders the banner-large variant with the Figma height",
+      "Ad renders the banner-small variant with the Figma height",
+      "Ad renders the card-large card as a linked bordered area",
+      "Ad renders the card-large variant with the Figma height",
+      "Ad renders the card-medium card as a linked bordered area",
+      "Ad renders the card-medium variant with the Figma height",
+      "Ad renders the card-small card as a linked bordered area",
+      "Ad renders the card-small variant with the Figma height",
+      "Ad reports whether an ad is visible",
+      "Ad restores a dismissed Catalog slide when local midnight passes while mounted",
+      "Ad samples the active image at the visible indicator bar instead of the hit area",
+      "Ad shows the today dismissal button only when a Catalog banner opts in",
+      "Ad slides landing banners with indicators and hides them when only one item remains",
+      "Ad tracks each Catalog creative impression once after the route store identity is ready",
+      "Ad tracks each active Catalog creative impression only once",
+      "Ad tracks linked Catalog slide clicks but not indicator clicks",
+      "Ad tracks the same Catalog creative again when the store identity changes",
+      "Ad uses the active background brightness color when a banner has no image",
+      "Ad uses the active image brightness color for banner indicators",
+      "Ad uses the card-specific title and summary content area",
+      "Ad uses the close button area image brightness color for a single dismissible banner"
+    ],
+    "failed_diagnostics": {
+      "Ad tracks each Catalog creative impression once after the route store identity is ready": "Error: expect(jest.fn()).toHaveBeenCalledTimes(expected)\n\nExpected number of calls: 1\nReceived number of calls: 0\n    at Object.<anonymous> (<candidate>/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx:LINE:COL)\n    at Promise.then.completed (<deps>/jest-circus/build/utils.js:LINE:COL)\n    at new Promise (<anonymous>)\n    at callAsyncCircusFn (<deps>/jest-circus/build/utils.js:LINE:COL)\n    at _callCircusTest (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async _runTest (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async _runTestsForDescribeBlock (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async _runTestsForDescribeBlock (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async run (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async runAndTransformResultsToJestFormat (<deps>/jest-circus/build/legacy-code-todo-rewrite/jestAdapterInit.js:LINE:COL)\n    at async jestAdapter (<deps>/jest-circus/build/legacy-code-todo-rewrite/jestAdapter.js:LINE:COL)\n    at async runTestInternal (<deps>/jest-runner/build/runTest.js:LINE:COL)\n    at async runTest (<deps>/jest-runner/build/runTest.js:LINE:COL)",
+      "Ad tracks the same Catalog creative again when the store identity changes": "Error: expect(received).toEqual(expected) // deep equality\n\n- Expected  - 12\n+ Received  +  1\n\n- Array [\n-   Array [\n-     ObjectContaining {\n-       \"user\": \"first-store\",\n-     },\n-   ],\n-   Array [\n-     ObjectContaining {\n-       \"user\": \"second-store\",\n-     },\n-   ],\n- ]\n+ Array []\n    at Object.<anonymous> (<candidate>/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx:LINE:COL)\n    at Promise.then.completed (<deps>/jest-circus/build/utils.js:LINE:COL)\n    at new Promise (<anonymous>)\n    at callAsyncCircusFn (<deps>/jest-circus/build/utils.js:LINE:COL)\n    at _callCircusTest (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async _runTest (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async _runTestsForDescribeBlock (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async _runTestsForDescribeBlock (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async run (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async runAndTransformResultsToJestFormat (<deps>/jest-circus/build/legacy-code-todo-rewrite/jestAdapterInit.js:LINE:COL)\n    at async jestAdapter (<deps>/jest-circus/build/legacy-code-todo-rewrite/jestAdapter.js:LINE:COL)\n    at async runTestInternal (<deps>/jest-runner/build/runTest.js:LINE:COL)\n    at async runTest (<deps>/jest-runner/build/runTest.js:LINE:COL)",
+      "Ad tracks linked Catalog slide clicks but not indicator clicks": "Error: expect(jest.fn()).toHaveBeenCalledTimes(expected)\n\nExpected number of calls: 1\nReceived number of calls: 0\n    at Object.<anonymous> (<candidate>/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx:LINE:COL)\n    at Promise.then.completed (<deps>/jest-circus/build/utils.js:LINE:COL)\n    at new Promise (<anonymous>)\n    at callAsyncCircusFn (<deps>/jest-circus/build/utils.js:LINE:COL)\n    at _callCircusTest (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async _runTest (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async _runTestsForDescribeBlock (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async _runTestsForDescribeBlock (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async run (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async runAndTransformResultsToJestFormat (<deps>/jest-circus/build/legacy-code-todo-rewrite/jestAdapterInit.js:LINE:COL)\n    at async jestAdapter (<deps>/jest-circus/build/legacy-code-todo-rewrite/jestAdapter.js:LINE:COL)\n    at async runTestInternal (<deps>/jest-runner/build/runTest.js:LINE:COL)\n    at async runTest (<deps>/jest-runner/build/runTest.js:LINE:COL)",
+      "Ad tracks each active Catalog creative impression only once": "Error: expect(received).toEqual(expected) // deep equality\n\n- Expected  - 16\n+ Received  +  1\n\n- Array [\n-   Array [\n-     ObjectContaining {\n-       \"event\": \"catalog-slug\",\n-       \"user\": \"sixshoptest01\",\n-       \"value\": \"첫 광고\",\n-     },\n-   ],\n-   Array [\n-     ObjectContaining {\n-       \"event\": \"catalog-slug\",\n-       \"user\": \"sixshoptest01\",\n-       \"value\": \"두 번째 광고\",\n-     },\n-   ],\n- ]\n+ Array []\n    at Object.<anonymous> (<candidate>/libs/sellerhub-store/src/lib/components/Ad/Ad.test.tsx:LINE:COL)\n    at Promise.then.completed (<deps>/jest-circus/build/utils.js:LINE:COL)\n    at new Promise (<anonymous>)\n    at callAsyncCircusFn (<deps>/jest-circus/build/utils.js:LINE:COL)\n    at _callCircusTest (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async _runTest (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async _runTestsForDescribeBlock (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async _runTestsForDescribeBlock (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async run (<deps>/jest-circus/build/run.js:LINE:COL)\n    at async runAndTransformResultsToJestFormat (<deps>/jest-circus/build/legacy-code-todo-rewrite/jestAdapterInit.js:LINE:COL)\n    at async jestAdapter (<deps>/jest-circus/build/legacy-code-todo-rewrite/jestAdapter.js:LINE:COL)\n    at async runTestInternal (<deps>/jest-runner/build/runTest.js:LINE:COL)\n    at async runTest (<deps>/jest-runner/build/runTest.js:LINE:COL)"
+    },
+    "passed": 41,
+    "failed": 4,
+    "normalization": "candidate root -> <candidate>; dependency prefix -> <deps>; line:column/codeframe -> LINE:COL/LINE"
+  },
+  "fixed_files": {
+    "@ARM_ROOT@/build-controlled.cjs": "b09b68ff59cde07c73572f2f9d856be6e3f823910b9d5e13c028175269b99ef7",
+    "@CANDIDATE_ROOT@/.omc/visual-input/build-pixels.cjs": "dfb994a6020f70eae41bf35dea2a0c638024e6cea8652e5a7f93aa10315cacc9",
+    "@ARM_ROOT@/queries/controlled.js": "78dd0132daeeaa51302f701e87801c84dabfee6df813d5b44dd79d5774fd5d09"
+  }
 }
