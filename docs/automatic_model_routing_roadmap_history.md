@@ -3,6 +3,31 @@
 > 이 문서는 2026-08-23 로드맵 재구성 직전의 상세 구현·실험·검증 기록을 원문 그대로 보존합니다.
 > 현재 상태와 다음 우선순위는 [Current Roadmap](automatic_model_routing_roadmap.md)을 기준으로 판단합니다.
 > 아래 snapshot은 immutable evidence archive이며 의미를 바꾸는 수정 대신 새 current 기록을 추가합니다.
+## 2026-10-27 추가 기록 · 2abc549 원본 반영·보존 검토
+
+- 현재 판정: 2abc549의 승인된 9개 main 반영 완료 · 원본 반영 리뷰 APPROVE · 기존 코드 승인 READY · 실제 비교 HOLD
+- 원본과 별도 후보: 최신 구현 기준은 2abc549b16a2ca0c40484bd95828861c5cd432b5이며 원본 main에 fast-forward로 반영됐다. 기존 9개 스테이징은 해당 커밋에 포함돼 해소됐고 이전 내용과 인덱스 원문은 별도 보관했다. 새 구현 커밋은 만들지 않았다. 문서4개는 구현9개와 별도 범위로 관리한다.
+- 검증: 원본 반영의 격리 예행연습·직접 수용 검사1개·TDD·완료 가드를 통과했다. 독립 반영 리뷰에서 고정 diff와 실제 커밋,9개 내용·권한·승인 범위,이전 인덱스9개 항목,문서4개·잔존 기록·다른 인덱스를 재확인했다. 과거 감독113개·직접 경계8개,관련215개/미요청 외부 통합48개 생략,통합212개,18bea62 통합293개는 각각 당시 범위의 근거이며 중복 합산하지 않는다. 이번 반영·리뷰·문서 작업은 제품 회귀·브라우저 실제 홈·Claude 업무 성공의 재검증이 아니다.
+- 리뷰와 승인 범위: 별도 고정 후보의 기존9개 코드 승인 연결 READY를 재확인했고 원본9개와 내용·권한이 일치한다. 이번 원본 반영 검토는 읽기 전용 APPROVE이며 기존 코드 승인 receipt를 덮어쓰거나 새로 발급하지 않았다. 승인 범위를 원본 전체·문서4개·출하/릴리스로 확대하지 않는다.
+- 보존 경계: 원본 인덱스 원문·이전9개 파일·문서4개 보관본과 현재 잔존 기록·다른 인덱스는 대조했다. 이전 임시 폴더2곳의 원문은 각각13개·16개가 미확인으로 남는다. 최신9개 코드와 RED·회귀·TDD·완료 출력은 해시 일치 보관본 및 현재 승인 연결로 확인했다. 따라서 모든 과거 기록·임시 스테이징을 현재까지 완전히 보존했다는 주장은 하지 않으며 누락 상태를 소급 복원·발급하지 않는다.
+- 실제 재검증: 이번 반영·리뷰·문서 작업의 실제 복구 발급0회·Claude 호출0회·광고 비교 재실행0회다. 실제 홈 NOT_VERIFIED와 비교 HOLD를 유지한다. 과거 로그인 없는 실제 Ad 비교의 경쟁 도구1회·OMC0회,337.60초 중단·당시 자식 종료 unconfirmed,기존 설치 실패1개·광고 추적4개 기존 실패·클릭/숨김 통합 미검증은 당시 이력으로 남긴다.
+- 다음 작업: 통합된 후보로 로그인 없는 실제 Ad 동일 조건 비교를 재개할 범위와 종료 조건 확정
+- 배포: 최신 보완은 미릴리스·일반 사용처 미설치다. 정상11개 사용처의0.6.1 설치·엄격 감사는 과거 이력이며 이번에 재감사하지 않았다. push·태그·릴리스·재설치 없음.
+- 근거: /Users/noseunglae/Downloads/dev/omc_kit/.omc/state/main-apply-2abc549-20261027/final-result.json; /Users/noseunglae/Downloads/dev/omc_kit/.omc/state/main-apply-2abc549-20261027/review-main-transfer.json; /Users/noseunglae/Downloads/dev/omc_kit/.omc/state/main-apply-2abc549-20261027/archive-custody.json; /Users/noseunglae/.codex/worktrees/seven-file-integration-r1r2/omc_kit/.omc/state/nine-final-review-18bea62-20261026/post-commit-result.json; 로컬 보관 자료이며 다른 checkout에 자동 제공되지 않는다.
+
+## 2026-10-26 추가 기록 · 원본과 별도 후보 상태 구분
+
+- 현재 판정: 원본 main 18bea62 반영 완료 · 별도 후보 2abc549의 9개 커밋·리뷰 승인 READY · 최신 9개 원본 미반영 · 비교 HOLD
+- 원본과 별도 후보: 원본 main은 18bea620dbcfc6e5638d483f6a0f4c4581df4859다. 별도 브랜치 codex/ad-contract-reviewed-nine의 2abc549b16a2ca0c40484bd95828861c5cd432b5는 base 18bea62의 9개 변경이며 승인 결속 READY다. 원본 스테이징 9개는 보존된 이전 내용으로, 최신 보완을 아직 포함하지 않는다. 이번 문서4개는 두 구현 커밋과 별도 범위이며 미스테이징·미커밋이다.
+- 검증: 18bea62의 상태 등록 포함 통합293개 통과는 해당 7개 후보의 근거다. 2abc549의 최신 감독 회귀113개 통과·생략0, 직접 경계8개 통과와 TDD·완료 가드 통과를 확인했다. 이전 관련215개 통과·외부 통합 미요청48개 생략, 과거 통합212개 통과·생략0은 당시 범위의 별도 기록으로 유지한다. 겹치는 검사 수를 합산하거나 최신9개 전체 외부 통합·실제 Claude 업무 성공으로 확대하지 않는다. 이번 문서 작업에서는 모델·비교·외부 통합 검사를 실행하지 않는다.
+- 보존 경계: 원본 인덱스 원문은 별도 보존했고 18bea62 반영 후 스테이징9개의 내용·권한을 유지했다. 기존 격리 스테이징4개·2개, 보호 기록193개와 추가 작업 기록·앞서 변경된 상태를 보존했다. 과거 승인·RED·검증을 덮어쓰거나 복구 영수증을 소급 발급하지 않았다.
+- 실제 재검증: 이번 보완·원본 반영·커밋 과정의 실제 복구 발급0회·Claude 호출0회·광고 비교 재실행0회다. 실제 홈 NOT_VERIFIED와 비교 HOLD를 유지한다. 과거 로그인 없는 실제 Ad 비교의 경쟁 도구1회·OMC0회, 337.60초 중단·당시 자식 종료 unconfirmed는 당시 원문으로 보존한다. 기존 설치 실패1개, 광고 추적4개 기존 실패와 클릭/숨김 통합 미검증도 해결된 것으로 바꾸지 않는다.
+- 다음 작업: 원본 스테이징9개와 겹치는 2abc549의 원본 반영 방식·보존 기준·승인 범위를 먼저 확정
+- 근거: /Users/noseunglae/.codex/worktrees/seven-file-integration-r1r2/omc_kit/.omc/state/main-apply-18bea62-20261026/review-main-apply.json; /Users/noseunglae/.codex/worktrees/seven-file-integration-r1r2/omc_kit/.omc/state/nine-final-review-18bea62-20261026/post-commit-result.json; /Users/noseunglae/.codex/worktrees/seven-file-integration-r1r2/omc_kit/.omc/state/preparation-publication-fix-18bea62-20261026/final-result.json; /Users/noseunglae/.codex/worktrees/seven-file-integration-r1r2/omc_kit/.omc/state/r1r2-resume/integration-summary.json; 로컬 별도 작업 폴더의 자료이며 다른 checkout에 자동 제공되지 않는다.
+
+아래 기존 archive 원문은 변경하지 않았다. 현재 우선순위는 Current Roadmap을 따른다.
+
+
 
 **Autopilot Phase A mission gate 완료(2026-09-01):** 사용자 요청과 base commit을 mission packet으로 동결하고 명시적 `mission_accept` receipt를 work contract v2에 결속했다. safe runner는 provider 호출 전에 packet·approval·session·request·base를 재검증해 mission briefing을 주입하며, 출력 receipt가 없는 실행은 완료로 인정하지 않는다. receipt는 같은 디렉터리의 임시 파일을 완전히 쓰고 `fsync`한 뒤 no-replace hard-link로 원자 게시하며, 부분 쓰기와 상태 저장 사이 실패는 exact receipt 재시도로만 복구한다. 관련 회귀 `194 passed`, staged TDD gate, diff check와 OMC review `APPROVE`를 확인했다. 다음 단계는 고정 커밋의 격리 clone에서 외부 provider TASK→REVIEW smoke를 수행하고 latency·token·개입 acceptance를 축적하는 것이다.
 
