@@ -371,3 +371,163 @@ def test_same_checks_are_idempotent_but_new_session_can_set_new_checks(project):
     assert run(project, 'contract-done', '--required-checks', 'tests').returncode == 0
     state = json.loads((project/'.omc/pipeline_session.json').read_text())
     assert state['required_checks'] == ['tests']
+
+
+def test_expired_completion_reports_ttl_not_missing_evidence(project):
+    import time
+    prepare(project)
+    assert finish(project,{'tests':check(),'browser':check()}).returncode==0
+    path=guard._state_path(project);state=json.loads(path.read_bytes())
+    state['started_at']=time.time()-guard._SESSION_TTL_SECONDS-1;path.write_text(json.dumps(state))
+    before=path.read_bytes();basis=project/'.omc/verification-bases/current/1.json';basis_raw=basis.read_bytes()
+    result=run(project,'complete-task','--verification-file',str(project/'verification.json'))
+    assert result.returncode==1
+    assert 'pipeline_ttl_expired' in result.stdout
+    assert '등록이 없습니다' not in result.stdout and '증거 불일치' not in result.stdout
+    assert '"reason_code": "pipeline_ttl_expired"' in result.stdout
+    assert path.read_bytes()==before and basis.read_bytes()==basis_raw
+
+
+# Completion-only reapproval: every issuance below belongs to a disposable fixture.
+def reapproval_project(root):
+    import time, hashlib
+    state_dir=root/'.omc/state';state_dir.mkdir(parents=True,exist_ok=True)
+    (state_dir/'latest.json').write_text(json.dumps({'latest_session_id':'current','latest_confirmed_session_id':'current'}))
+    preserved_work(root)
+    record_path=root/'verification.json'
+    record=json.loads(record_path.read_bytes())
+    for name,item in record['checks'].items():
+        evidence=root/'.omc'/('observed-'+name+'.txt')
+        evidence.write_text('fixture observation: '+name)
+        item['evidence_files']=[{'path':str(evidence.relative_to(root)),
+                                'sha256':hashlib.sha256(evidence.read_bytes()).hexdigest()}]
+    record_path.write_text(json.dumps(record))
+    pipeline=guard._state_path(root); state=json.loads(pipeline.read_bytes())
+    state['started_at']=time.time()-guard._SESSION_TTL_SECONDS-10
+    pipeline.write_text(json.dumps(state))
+    proposal={'schema_version':'omc-completion-reapproval-request/v1','session_id':'current',
+        'work_id':'work','approval_reference':'fixture explicit completion-only reapproval',
+        'pipeline_sha256':hashlib.sha256(pipeline.read_bytes()).hexdigest(),
+        'basis_sha256':state['basis_sha256'],
+        'verification_file':'verification.json',
+        'verification_sha256':hashlib.sha256(record_path.read_bytes()).hexdigest(),
+        'code_snapshot_sha256':guard._code_snapshot_digest(root,record_path)}
+    path=root/'.omc/reapproval-request.json';path.write_text(json.dumps(proposal))
+    return path,record_path
+
+
+def test_completion_reapproval_public_issue_and_completion_preserve_originals(project):
+    path,verification=reapproval_project(project)
+    originals={p:p.read_bytes() for p in (project/'.omc').rglob('*') if p.is_file()}
+    blocked=run(project,'complete-task','--verification-file',str(verification))
+    assert 'pipeline_ttl_expired' in blocked.stdout
+    result=run(project,'reapprove-completion','--file',str(path))
+    assert result.returncode==0,result.stdout+result.stderr
+    assert all(p.read_bytes()==raw for p,raw in originals.items())
+    assert run(project,'complete-task','--verification-file',str(verification)).returncode==0
+    # No execution/edit permission and no second issuance, even via another proposal.
+    assert run(project,'contract-done').returncode==1
+    assert run(project,'check-edit','app.py').returncode==1
+    assert run(project,'reapprove-completion','--file',str(path)).returncode==1
+
+
+@pytest.mark.parametrize('defect',['raw','missing','code','verification','approval','red','unrun','failed','unstaged'])
+def test_completion_reapproval_never_bypasses_other_checks(project,defect):
+    path,verification=reapproval_project(project)
+    assert run(project,'reapprove-completion','--file',str(path)).returncode==0
+    if defect=='raw': (project/'.omc/observed-tests.txt').write_text('changed output')
+    elif defect=='missing': (project/'.omc/observed-tests.txt').unlink()
+    elif defect=='code': (project/'app.py').write_text('changed code')
+    elif defect=='approval': (project/'.omc/verification-bases/current/1.json').write_text('{}')
+    elif defect=='red': (project/'.omc/red/output.txt').write_text('changed RED')
+    elif defect=='unstaged': (project/'new_impl.py').write_text('value=2')
+    else:
+        value=json.loads(verification.read_bytes())
+        if defect in ('failed','unrun'):value['checks']['tests']['status']=defect
+        else:value['implementation']['evidence']='changed'
+        verification.write_text(json.dumps(value))
+    result=run(project,'complete-task','--verification-file',str(verification))
+    assert result.returncode==1 and '작업 완료' not in result.stdout
+
+
+@pytest.mark.parametrize('defect',['string-only','external','symlink','work','session','future-request','extra-field'])
+def test_completion_reapproval_rejects_unbound_inputs_without_issuing(project,defect):
+    import hashlib
+    path,verification=reapproval_project(project);request=json.loads(path.read_bytes())
+    if defect in ('string-only','external','symlink'):
+        record=json.loads(verification.read_bytes())
+        if defect=='string-only':record['checks']['tests'].pop('evidence_files')
+        elif defect=='external':record['checks']['tests']['evidence_files'][0]['path']='/etc/hosts'
+        else:
+            link=project/'.omc/link.txt';link.symlink_to(project/'.omc/observed-tests.txt')
+            record['checks']['tests']['evidence_files'][0]['path']='.omc/link.txt'
+        verification.write_text(json.dumps(record));request['verification_sha256']=hashlib.sha256(verification.read_bytes()).hexdigest()
+    elif defect=='work':request['work_id']='foreign'
+    elif defect=='session':request['session_id']='foreign'
+    elif defect=='future-request':request['issued_at']=999999999999
+    else:request['unexpected']=True
+    path.write_text(json.dumps(request))
+    assert run(project,'reapprove-completion','--file',str(path)).returncode==1
+    assert not list((project/'.omc/completion-reapprovals').glob('*.json'))
+
+
+@pytest.mark.parametrize('status',['failed','unrun','mismatch'])
+def test_reapproval_issue_does_not_make_failed_or_unrun_evidence_pass(project,status):
+    import hashlib
+    path,verification=reapproval_project(project)
+    value=json.loads(verification.read_bytes());value['checks']['tests']['status']=status
+    verification.write_text(json.dumps(value));request=json.loads(path.read_bytes())
+    request['verification_sha256']=hashlib.sha256(verification.read_bytes()).hexdigest();path.write_text(json.dumps(request))
+    result=run(project,'reapprove-completion','--file',str(path))
+    assert result.returncode==1 and 'completion_checks_blocked' in result.stdout
+    assert not list((project/'.omc/completion-reapprovals').glob('*.json'))
+
+
+@pytest.mark.parametrize('digest',[None,'','0'*63,True,{'sha256':'0'*64},'g'*64])
+def test_reapproval_rejects_explicit_invalid_raw_digest_on_public_cli(project,digest):
+    import hashlib
+    request,verification=reapproval_project(project)
+    value=json.loads(verification.read_bytes())
+    value['checks']['tests']['evidence_files'][0]['sha256']=digest
+    verification.write_text(json.dumps(value))
+    proposal=json.loads(request.read_bytes())
+    proposal['verification_sha256']=hashlib.sha256(verification.read_bytes()).hexdigest()
+    request.write_text(json.dumps(proposal))
+    originals={p:p.read_bytes() for p in (project/'.omc').rglob('*') if p.is_file()}
+    result=run(project,'reapprove-completion','--file',str(request))
+    assert result.returncode==1,result.stdout+result.stderr
+    assert 'reapproval_evidence_digest_invalid' in result.stdout
+    assert not list((project/'.omc/completion-reapprovals').glob('*.json'))
+    assert all(p.read_bytes()==raw for p,raw in originals.items())
+
+
+@pytest.mark.parametrize('phase',['binding','checks'])
+def test_reapproval_expiry_during_validation_blocks_real_cli(project,phase):
+    request,verification=reapproval_project(project)
+    assert run(project,'reapprove-completion','--file',str(request)).returncode==0
+    receipt=next((project/'.omc/completion-reapprovals').glob('*.json'))
+    before=receipt.read_bytes();pipeline=guard._state_path(project).read_bytes()
+    # Run the real argument parser/CLI; only elapsed time is controlled.
+    source = """
+import sys,json,types
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+import omc_pipeline_guard as g
+root,verification,phase=Path(sys.argv[2]),Path(sys.argv[3]),sys.argv[4]
+record=json.loads(next((root/'.omc/completion-reapprovals').glob('*.json')).read_bytes())
+clock=[record['expires_at']-0.001]
+g.time=types.SimpleNamespace(time=lambda:clock[0])
+name='_reapproval_binding' if phase=='binding' else '_evaluate_completion_checks'
+original=getattr(g,name)
+def delayed(*args,**kwargs):
+    value=original(*args,**kwargs)
+    clock[0]=record['expires_at']
+    return value
+setattr(g,name,delayed)
+sys.argv=['omc_pipeline_guard.py','--target',str(root),'complete-task','--verification-file',str(verification)]
+sys.exit(g.main())
+"""
+    result=subprocess.run([sys.executable,'-c',source,str(SCRIPT.parent),str(project),str(verification),phase],capture_output=True,text=True)
+    assert result.returncode==1,result.stdout+result.stderr
+    assert 'pipeline_ttl_expired' in result.stdout and 'VERDICT: BLOCK' in result.stdout
+    assert receipt.read_bytes()==before and guard._state_path(project).read_bytes()==pipeline

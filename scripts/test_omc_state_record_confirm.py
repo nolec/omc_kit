@@ -2141,3 +2141,81 @@ def test_failed_run_summary_uses_shared_status_followup_input():
     )
 
     assert (reason, next_step) == expected
+
+
+def test_pipeline_ttl_new_work_starts_fresh_and_archives_old_bytes(tmp_path):
+    import time
+    repo=tmp_path/'repo';_init_git_repo(repo)
+    assert _run('state','init','--target',str(repo)).returncode==0
+    pipeline=repo/'.omc/pipeline_session.json'
+    old={'started_at':time.time()-7*3600,'session_id':'previous-work','contract_confirmed':True,
+         'contract_hash':'previous','red_done_tests':['old-test'],'red_session_id':'previous-work'}
+    raw=json.dumps(old,indent=2).encode();pipeline.write_bytes(raw)
+    before=time.time()
+    result=subprocess.run([sys.executable,str(GUARD),'sync-require','--target',str(repo),
+        '--mode','autopilot','--title','omc-task','--request','new independent work',
+        '--roles','senior_coding','--work-class','implementation','--completion-action','start','--for','task'],
+        capture_output=True,text=True)
+    assert result.returncode==0,result.stdout+result.stderr
+    now=_read_json(pipeline);sid=_read_json(repo/'.omc/state/latest.json')['latest_confirmed_session_id']
+    session=_read_json(repo/'.omc/state/sessions'/sid/'session.json')
+    assert before<=now['started_at']<=time.time()
+    assert now['owner_work_id']==session['work_id'] and now['owner_session_id']==sid
+    assert now['contract_confirmed'] is False and now['red_done_tests']==[]
+    saved=repo/'.omc/state/pipeline-history'/(hashlib.sha256(raw).hexdigest()+'.json')
+    assert saved.read_bytes()==raw
+
+
+def test_pipeline_ttl_same_work_review_continue_and_confirm_do_not_extend(tmp_path):
+    repo=tmp_path/'repo';_init_git_repo(repo)
+    sid=_sync_task_session(repo)
+    pipeline=repo/'.omc/pipeline_session.json'
+    first=_read_json(pipeline);work=_read_json(repo/'.omc/state/sessions'/sid/'session.json')['work_id']
+    assert first['owner_work_id']==work
+    before=pipeline.read_bytes()
+    result=_run('state','confirm','--target',str(repo),'--session-id',sid)
+    assert result.returncode==0,result.stderr
+    assert pipeline.read_bytes()==before
+    _sync_review_session(repo)
+    assert pipeline.read_bytes()==before
+    continued=_run('state','sync-session','--target',str(repo),'--mode','autopilot','--title','omc-task',
+        '--request','same work correction','--roles','senior_coding','--work-class','implementation',
+        '--completion-action','continue','--work-id',work)
+    assert continued.returncode==0,continued.stdout+continued.stderr
+    assert _read_json(pipeline)['started_at']==first['started_at']
+    assert _read_json(pipeline)['owner_work_id']==work
+
+
+def test_pipeline_ttl_expired_independent_start_preserves_prior_evidence(tmp_path):
+    import time
+    repo=tmp_path/'repo';_init_git_repo(repo)
+    _sync_task_session(repo)
+    pipeline=repo/'.omc/pipeline_session.json';old=_read_json(pipeline)
+    old['started_at']=time.time()-9*3600;pipeline.write_text(json.dumps(old))
+    raw=pipeline.read_bytes()
+    markers=[]
+    for name in ['approval','red','verification']:
+        path=repo/'.omc/state'/('old-'+name+'.json');path.write_text(json.dumps({'fixture':name}));markers.append((path,path.read_bytes()))
+    start=time.time();sid=_sync_task_session(repo,'new independent task')
+    state=_read_json(pipeline)
+    assert state['owner_session_id']==sid and state['started_at']>=start
+    saved=repo/'.omc/state/pipeline-history'/(hashlib.sha256(raw).hexdigest()+'.json')
+    assert saved.read_bytes()==raw and all(p.read_bytes()==b for p,b in markers)
+
+
+def test_pipeline_ttl_pending_confirmation_and_legacy_reconfirm_do_not_revive(tmp_path):
+    import omc_state as state
+    import omc_pipeline_guard as pipeline
+    import time
+    repo=tmp_path/'repo';_init_git_repo(repo)
+    task=state.record_session(repo,mode='autopilot',title='omc-task',request='pending task',
+        role_ids=['senior_coding'],work_class='implementation',completion_action='start',confirmed=False)
+    assert not (repo/'.omc/pipeline_session.json').exists()
+    state.confirm_session(repo,session_id=task['session_id'])
+    path=repo/'.omc/pipeline_session.json';value=_read_json(path)
+    assert value['owner_session_id']==task['session_id']
+    # A pre-upgrade current SID is not a newly authorized independent start.
+    value.pop('owner_work_id');value.pop('owner_session_id');old=time.time()-9*3600
+    value['started_at']=old;path.write_text(json.dumps(value));before=path.read_bytes()
+    state.confirm_session(repo,session_id=task['session_id'])
+    assert path.read_bytes()==before and not pipeline._load_state(repo)['contract_confirmed']

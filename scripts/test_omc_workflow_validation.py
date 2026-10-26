@@ -402,3 +402,44 @@ def test_compound_guard_command_does_not_register_contract_success(tmp_path,suff
     assert assessment['contract_return'] is None
     assert assessment['status']=='unknown'
     assert 'unsupported_bash_command' in assessment['reason']
+
+
+def test_collector_uses_same_reapproval_completion_and_rejects_changed_evidence(tmp_path):
+    from test_omc_task_completion_surface import reapproval_project,run
+    import omc_workflow_validation as workflow
+    state=tmp_path/'.omc/state';state.mkdir(parents=True)
+    (state/'latest.json').write_text(json.dumps({'latest_session_id':'current','latest_confirmed_session_id':'current'}))
+    path,verification=reapproval_project(tmp_path)
+    assert run(tmp_path,'reapprove-completion','--file',str(path)).returncode==0
+    events=tmp_path/'.omc/fixture-events.jsonl'
+    events.write_text(json.dumps({'type':'result','result':response('필수 검증 통과·작업 완료','done')})+'\n')
+    first=workflow.collect(tmp_path,events,'current',verification,'done',tmp_path/'.omc/collected-ok')
+    assert first['required']['truthful_final']=='passed'
+    (tmp_path/'.omc/observed-tests.txt').unlink()
+    second=workflow.collect(tmp_path,events,'current',verification,'done',tmp_path/'.omc/collected-bad')
+    assert second['required']['truthful_final']!='passed'
+
+
+@pytest.mark.parametrize('phase',['binding','checks'])
+def test_collector_blocks_reapproval_that_expires_during_validation(tmp_path,monkeypatch,phase):
+    import types
+    from test_omc_task_completion_surface import reapproval_project,run
+    import omc_workflow_validation as workflow
+    request,verification=reapproval_project(tmp_path)
+    assert run(tmp_path,'reapprove-completion','--file',str(request)).returncode==0
+    path=next((tmp_path/'.omc/completion-reapprovals').glob('*.json'))
+    before=path.read_bytes();record=json.loads(before);clock=[record['expires_at']-0.001]
+    monkeypatch.setattr(guard,'time',types.SimpleNamespace(time=lambda:clock[0]))
+    name='_reapproval_binding' if phase=='binding' else '_evaluate_completion_checks'
+    original=getattr(guard,name)
+    def delayed(*args,**kwargs):
+        result=original(*args,**kwargs);clock[0]=record['expires_at'];return result
+    monkeypatch.setattr(guard,name,delayed)
+    events=tmp_path/'.omc/review-fixture-events.jsonl'
+    events.write_text(json.dumps({'type':'result','result':response('필수 검증 통과·작업 완료','done')})+'\n')
+    output=tmp_path/'.omc/expiry-collection'
+    result=workflow.collect(tmp_path,events,'current',verification,'done',output)
+    comparison=json.loads((output/'report-comparison.json').read_bytes())
+    assert comparison['official_outcome']=='blocked'
+    assert result['required']['truthful_final']=='failed' and result['recompare_entry']=='hold'
+    assert path.read_bytes()==before

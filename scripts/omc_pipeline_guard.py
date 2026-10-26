@@ -20,6 +20,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+import tempfile
 import os
 import re
 import subprocess
@@ -73,18 +75,71 @@ _SESSION_TTL_SECONDS = 8 * 60 * 60  # 8시간 이상 지나면 세션 만료
 def _state_path(root: Path) -> Path:
     return root / ".omc" / "pipeline_session.json"
 
-def _load_state(root: Path) -> dict:
-    p = _state_path(root)
-    if not p.exists():
-        return _empty_state()
+def _read_pipeline(root: Path) -> tuple[dict, dict | None]:
+    """Read once; expiry is not deletion or evidence-content mismatch."""
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-        # TTL 체크
-        if time.time() - data.get("started_at", 0) > _SESSION_TTL_SECONDS:
-            return _empty_state()
-        return data
-    except Exception:
-        return _empty_state()
+        raw = _state_path(root).read_bytes()
+        data = json.loads(raw)
+        age = time.time() - data.get("started_at", 0)
+        if age > _SESSION_TTL_SECONDS:
+            return data, {"reason_code": "pipeline_ttl_expired",
+                          "started_at": data.get("started_at"),
+                          "ttl_seconds": _SESSION_TTL_SECONDS,
+                          "state_sha256": hashlib.sha256(raw).hexdigest()}
+        return data, None
+    except (OSError, ValueError, TypeError, AttributeError):
+        return _empty_state(), None
+
+
+def _load_state(root: Path) -> dict:
+    state, expiration = _read_pipeline(root)
+    return _empty_state() if expiration is not None else state
+
+
+def _archive_pipeline(root: Path, raw: bytes) -> None:
+    directory = root / ".omc/state/pipeline-history"
+    if any(p.is_symlink() for p in (directory, *directory.parents)):
+        raise ValueError("pipeline_history_symlink")
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / (hashlib.sha256(raw).hexdigest() + ".json")
+    try:
+        with path.open("xb") as stream:
+            stream.write(raw)
+    except FileExistsError:
+        if path.is_symlink() or path.read_bytes() != raw:
+            raise ValueError("pipeline_history_conflict")
+
+
+def begin_work(root: Path, session: dict) -> None:
+    """Only a confirmed independent natural work starts a new pipeline clock.
+
+    Called by the state lifecycle, not by arbitrary CONTRACT re-registration.
+    Same work confirmation/role switches never renew its eight-hour lifetime.
+    """
+    confirmation = session.get("confirmation")
+    if (session.get("completion_action") != "start"
+            or not isinstance(session.get("role_ids"), list)
+            or "senior_coding" not in session["role_ids"]
+            or not isinstance(confirmation, dict)
+            or confirmation.get("status") != "confirmed"):
+        return
+    sid, work = session.get("session_id"), session.get("work_id")
+    if not isinstance(sid, str) or not sid or not isinstance(work, str) or not work:
+        return  # Legacy sessions are not implicitly migrated or re-authorized.
+    path = _state_path(root)
+    raw = path.read_bytes() if path.exists() else None
+    previous, _ = _read_pipeline(root)
+    if previous.get("owner_work_id") == work:
+        if previous.get("owner_session_id") != sid:
+            raise ValueError("pipeline_work_owner_mismatch")
+        return
+    if sid in (previous.get("session_id"), previous.get("owner_session_id")) and not previous.get("owner_work_id"):
+        return  # Upgrading code cannot revive this already-existing approval.
+    if raw is not None:
+        _archive_pipeline(root, raw)
+    state = _empty_state()
+    state.update(session_id=sid, owner_session_id=sid, owner_work_id=work)
+    _save_state(root, state)
 
 def _save_state(root: Path, state: dict) -> None:
     p = _state_path(root)
@@ -202,7 +257,10 @@ def cmd_check(root: Path, file_path: str, bypass: bool = False) -> int:
             return 1
     except (OSError, ValueError, TypeError, AttributeError):
         return 1
-    state = _load_state(root)
+    state, expiration = _read_pipeline(root)
+    if expiration is not None:
+        print("[PIPELINE] pipeline_ttl_expired: 승인 유효기간이 만료됐습니다. 원본 기록을 유지합니다.")
+        return 1
     try:
         normalized = Path(_normalize_path(root, file_path))
         file_path = str(normalized.relative_to(root.resolve()))
@@ -233,7 +291,10 @@ def cmd_check(root: Path, file_path: str, bypass: bool = False) -> int:
     if not _is_impl_file(file_path):
         return 0  # 구현 파일 아님 → 통과
 
-    state = _load_state(root)
+    state, expiration = _read_pipeline(root)
+    if expiration is not None:
+        print("[PIPELINE] pipeline_ttl_expired: 승인 유효기간이 만료됐습니다. 원본 기록을 유지합니다.")
+        return 1
 
     # 명시 예외 파일 — 상대/절대 경로 혼용을 방지하기 위해 정규화 후 비교
     norm_file = _normalize_path(root, file_path)
@@ -351,7 +412,10 @@ def cmd_red_done(root: Path, test_file: str, evidence_file: Path | None = None) 
         # 테스트 파일이 아니어도 수동 등록 허용 (사용자가 직접 호출)
         print(f"[PIPELINE] ⚠️  테스트 파일 패턴 아님: {test_file} — 그래도 등록합니다.")
 
-    state = _load_state(root)
+    state, expiration = _read_pipeline(root)
+    if expiration is not None:
+        print("[PIPELINE] pipeline_ttl_expired: 승인 유효기간이 만료됐습니다. 원본 기록을 유지합니다.")
+        return 1
     if state.get("basis_sha256") or state.get("red_evidence_required"):
         if evidence_file is None:
             print("[PIPELINE] 승인된 작업의 RED는 --evidence-file <근거 JSON>이 필요합니다.")
@@ -413,7 +477,10 @@ def cmd_allow(root: Path, impl_file: str, reason: str = "") -> int:
     # 상대/절대경로 혼용으로 인한 중복 등록 및 비교 불일치를 방지하기 위해 정규화
     norm_file = _normalize_path(root, impl_file)
 
-    state = _load_state(root)
+    state, expiration = _read_pipeline(root)
+    if expiration is not None:
+        print("[PIPELINE] pipeline_ttl_expired: 승인 유효기간이 만료됐습니다. 원본 기록을 유지합니다.")
+        return 1
     norm_allowed = [_normalize_path(root, f) for f in state["allowed_impl_files"]]
     if norm_file not in norm_allowed:
         state["allowed_impl_files"].append(norm_file)
@@ -427,7 +494,10 @@ def cmd_allow(root: Path, impl_file: str, reason: str = "") -> int:
 
 def cmd_status(root: Path) -> int:
     """현재 세션 파이프라인 상태 출력."""
-    state = _load_state(root)
+    state, expiration = _read_pipeline(root)
+    if expiration is not None:
+        print("[PIPELINE] pipeline_ttl_expired: 승인 유효기간이 만료됐습니다. 원본 기록을 유지합니다.")
+        return 1
     contract_ok = state.get("contract_confirmed", False)
     contract_icon = "✅" if contract_ok else "❌"
     print(f"[PIPELINE] 세션 상태")
@@ -763,7 +833,10 @@ def cmd_contract_done(root: Path, content: str = "", required_checks: str = "") 
     latest.json에서 latest_confirmed_session_id를 읽어 pipeline_session.json에
     session_id로 기록한다 — 훅이 세션 간 오염 여부를 판별하는 데 사용한다.
     """
-    state = _load_state(root)
+    state, expiration = _read_pipeline(root)
+    if expiration is not None:
+        print("[PIPELINE] pipeline_ttl_expired: 승인 유효기간(8시간)이 만료됐습니다. 원본 기록을 유지합니다.")
+        return 1
     previous_sid = state.get("session_id", "")
     state["contract_confirmed"] = True
     requested_checks = list(dict.fromkeys(c.strip() for c in required_checks.split(",") if c.strip()))
@@ -884,13 +957,225 @@ def _completion_owner(root: Path, latest: dict, state: dict) -> str:
     return pending["session_id"]
 
 
-def evaluate_task_completion(root: Path, verification_file: Path, expected_session_id: str | None = None) -> dict:
-    """One read-only decision used by both the completion CLI and collector.
+_REAPPROVAL_TTL = 8 * 60 * 60
 
-    Evidence is supplied by the caller, not independently attested by this command.
-    This gate cannot prevent an agent from writing an unrelated free-form response.
-    """
-    state = _load_state(root)
+
+def _reapproval_local(root: Path, relative: str) -> Path:
+    if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
+        raise ValueError("reapproval_relative_path_required")
+    if ".." in Path(relative).parts:
+        raise ValueError("reapproval_path_escape")
+    path = root / relative
+    if any(part.is_symlink() for part in (path, *path.parents)):
+        raise ValueError("reapproval_symlink_unsupported")
+    path.resolve().relative_to(root.resolve())
+    return path
+
+
+def _reapproval_identity(root: Path, state: dict) -> tuple[str, str]:
+    from omc_state import _pending_completion_matches_session
+    latest = json.loads((root / '.omc/state/latest.json').read_bytes())
+    sid = _completion_owner(root, latest, state)
+    pending = json.loads((root / '.omc/state/pending-completion.json').read_bytes())
+    head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip()
+    if (pending.get('schema_version') != 3 or pending.get('session_id') != sid
+            or not isinstance(pending.get('work_id'), str) or not pending['work_id']
+            or not _pending_completion_matches_session(root, pending, current_head=head)):
+        raise ValueError('reapproval_work_binding_invalid')
+    return sid, pending['work_id']
+
+
+def _reapproval_path(root: Path, work_id: str) -> Path:
+    # Session, HEAD and mutable pipeline hashes never determine the issuance slot.
+    key = hashlib.sha256(work_id.encode('utf-8')).hexdigest()
+    return _reapproval_local(root, '.omc/completion-reapprovals/' + key + '.json')
+
+
+def _reapproval_binding(root: Path, state: dict, verification: Path) -> dict:
+    sid, work_id = _reapproval_identity(root, state)
+    verification = _internal_verification_path(root, verification)
+    relative = str(verification.relative_to(root))
+    verification = _reapproval_local(root, relative)
+    raw = verification.read_bytes()
+    record = json.loads(raw)
+    basis = _load_approved_basis(root, sid)
+    artifacts = {}
+    queue = []
+
+    unbound = object()  # Only internal inventory entries may omit a prior digest.
+
+    def add(relative, expected=unbound):
+        if expected is not unbound and (not isinstance(expected, str)
+                                       or not re.fullmatch(r'[0-9a-f]{64}', expected)):
+            raise ValueError('reapproval_evidence_digest_invalid')
+        path = _reapproval_local(root, relative)
+        value = path.read_bytes()
+        digest = hashlib.sha256(value).hexdigest()
+        if expected is not unbound and digest != expected:
+            raise ValueError('reapproval_evidence_digest_mismatch')
+        if relative not in artifacts:
+            if len(artifacts) >= 1000:
+                raise ValueError('reapproval_evidence_inventory_too_large')
+            artifacts[relative] = digest
+            if path.suffix == '.json':
+                queue.append(value)
+
+    # Bind the original ledger as well as evidence; no ledger is rewritten.
+    add('.omc/pipeline_session.json')
+    add('.omc/state/pending-completion.json')
+    pending = json.loads((root / '.omc/state/pending-completion.json').read_bytes())
+    for member in pending['session_ids']:
+        add('.omc/state/sessions/' + member + '/session.json')
+    add('.omc/verification-bases/' + sid + '/' + str(basis['revision']) + '.json')
+    add(relative)
+    checks = record.get('checks', {})
+    for check in basis['checks']:
+        item = checks.get(check['id'], {})
+        refs = item.get('evidence_files')
+        if not isinstance(refs, list) or not refs:
+            raise ValueError('reapproval_explicit_evidence_files_required:' + check['id'])
+        for ref in refs:
+            if not isinstance(ref, dict) or set(ref) != {'path', 'sha256'}:
+                raise ValueError('reapproval_evidence_reference_invalid')
+            add(ref['path'], ref['sha256'])
+    for ref in state.get('red_evidence', {}).values():
+        add(ref['file'], ref['sha256'])
+
+    def references(value):
+        # Only explicit typed references are followed; prose is never a path.
+        if isinstance(value, dict):
+            for pk, hk in [('path', 'sha256'), ('file', 'sha256'),
+                           ('output_file', 'output_sha256'), ('report_file', 'report_sha256')]:
+                if pk in value and hk in value:
+                    add(value[pk], value[hk])
+            for child in value.values():
+                references(child)
+        elif isinstance(value, list):
+            for child in value:
+                references(child)
+    while queue:
+        references(json.loads(queue.pop()))
+    return {'target': str(root.resolve()), 'session_id': sid, 'work_id': work_id,
+            'pipeline_sha256': artifacts['.omc/pipeline_session.json'],
+            'basis_sha256': _basis_digest(basis),
+            'code_snapshot_sha256': _code_snapshot_digest(root, verification),
+            'verification_file': relative, 'verification_sha256': hashlib.sha256(raw).hexdigest(),
+            'artifacts': artifacts}
+
+
+def _valid_completion_reapproval(root: Path, state: dict, verification: Path) -> bool:
+    try:
+        _, work = _reapproval_identity(root, state)
+        record = json.loads(_reapproval_path(root, work).read_bytes())
+        if (set(record) != {'schema_version', 'approval_reference', 'issued_at', 'expires_at', 'binding'}
+                or record['schema_version'] != 'omc-completion-reapproval/v1'
+                or not isinstance(record['approval_reference'], str) or not record['approval_reference'].strip()):
+            return False
+        issued, expires, now = record['issued_at'], record['expires_at'], time.time()
+        if (type(issued) not in (int, float) or type(expires) not in (int, float)
+                or not all(math.isfinite(t) for t in (issued, expires, now))
+                or issued < 0 or expires != issued + _REAPPROVAL_TTL
+                or not issued <= now < expires):
+            return False
+        bound = record['binding'] == _reapproval_binding(root, state, verification)
+        # Evidence traversal can cross the deadline even when entry was valid.
+        finished = time.time()
+        return bound and math.isfinite(finished) and issued <= finished < expires
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, OverflowError, subprocess.SubprocessError):
+        return False
+
+
+def cmd_reapprove_completion(root: Path, proposal: Path) -> int:
+    """Record an explicit approval for completion only; not authenticate a person."""
+    temporary = None
+    try:
+        state, expiration = _read_pipeline(root)
+        if expiration is None:
+            raise ValueError('reapproval_requires_expired_work')
+        relative = str(proposal.relative_to(root)) if proposal.is_absolute() else str(proposal)
+        value = json.loads(_reapproval_local(root, relative).read_bytes())
+        required = {'schema_version', 'session_id', 'work_id', 'approval_reference',
+                    'pipeline_sha256', 'basis_sha256', 'verification_file',
+                    'verification_sha256', 'code_snapshot_sha256'}
+        if (not isinstance(value, dict) or set(value) != required
+                or value['schema_version'] != 'omc-completion-reapproval-request/v1'
+                or not isinstance(value['approval_reference'], str) or not value['approval_reference'].strip()):
+            raise ValueError('reapproval_request_invalid')
+        verification = _reapproval_local(root, value['verification_file'])
+        binding = _reapproval_binding(root, state, verification)
+        if any(value[k] != binding[k] for k in required - {'schema_version', 'approval_reference'}):
+            raise ValueError('reapproval_request_binding_mismatch')
+        path = _reapproval_path(root, binding['work_id'])
+        # Read-only ordinary completion checks still apply; do not make TTL fresh.
+        evaluation = _evaluate_completion_checks(root, verification, state)
+        if evaluation['outcome'] != 'done':
+            raise ValueError('reapproval_completion_checks_blocked:' + ';'.join(evaluation['problems']))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        issued = time.time()
+        if type(issued) not in (int, float) or not math.isfinite(issued) or issued < 0:
+            raise ValueError('reapproval_clock_invalid')
+        record = {'schema_version': 'omc-completion-reapproval/v1',
+                  'approval_reference': value['approval_reference'], 'issued_at': issued,
+                  'expires_at': issued + _REAPPROVAL_TTL, 'binding': binding}
+        # Publish a complete, fsynced file atomically and never replace an issuance.
+        fd, name = tempfile.mkstemp(prefix='.pending-', dir=path.parent)
+        temporary = Path(name)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write((json.dumps(record, ensure_ascii=False, sort_keys=True) + '\n').encode('utf-8'))
+            stream.flush()
+            os.fsync(stream.fileno())
+        current, expired = _read_pipeline(root)
+        if (expired is None or _reapproval_binding(root, current, verification) != binding
+                or _evaluate_completion_checks(root, verification, current)['outcome'] != 'done'
+                or not issued <= time.time() < issued + _REAPPROVAL_TTL):
+            raise ValueError('reapproval_changed_before_publish')
+        os.link(temporary, path)  # EEXIST leaves the first record intact.
+        print('[PIPELINE] 완료 판정 전용 재승인 기록: ' + str(path))
+        return 0
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, OverflowError, subprocess.SubprocessError) as exc:
+        print('[PIPELINE] 재승인 차단: ' + str(exc))
+        return 1
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _expired_completion_evaluation(root: Path, verification_file: Path, state: dict,
+                                  expiration: dict, expected_session_id: str | None) -> dict:
+    applied = False
+    try:
+        path = _internal_verification_path(root, verification_file)
+        record = json.loads(path.read_bytes())
+        applied = (record.get("session_id") == state.get("session_id")
+                   and record.get("implementation", {}).get("status") == "applied"
+                   and expected_session_id in (None, state.get("session_id")))
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return {"outcome": "blocked",
+            "first": "구현됨·검증 미완료" if applied else "구현 여부 확인 불가·검증 미완료",
+            "problems": ["pipeline_ttl_expired: 파이프라인 승인 유효기간(8시간)이 만료됐습니다. "
+                         "등록 누락 판정과 구분하며 원본 기록을 삭제하거나 재사용하지 않습니다."],
+            "reason_code": "pipeline_ttl_expired", "expiration": expiration,
+            "registered": None, "test_assessment": None,
+            "visual_assessment": None, "home_assessment": None}
+
+
+def evaluate_task_completion(root: Path, verification_file: Path, expected_session_id: str | None = None) -> dict:
+    """Shared read-only completion/collector decision; local evidence is not attestation."""
+    state, expiration = _read_pipeline(root)
+    if expiration is not None and not _valid_completion_reapproval(root, state, verification_file):
+        return _expired_completion_evaluation(root, verification_file, state, expiration, expected_session_id)
+    evaluation = _evaluate_completion_checks(root, verification_file, state, expected_session_id)
+    if (expiration is not None and evaluation['outcome'] == 'done'
+            and not _valid_completion_reapproval(root, state, verification_file)):
+        # Ordinary validators may be slow: never return success on an old time check.
+        return _expired_completion_evaluation(root, verification_file, state, expiration, expected_session_id)
+    return evaluation
+
+
+
+def _evaluate_completion_checks(root: Path, verification_file: Path, state: dict,
+                                expected_session_id: str | None = None) -> dict:
     problems = []
     failed = False
     mismatch = False
@@ -1020,12 +1305,15 @@ def cmd_complete_task(root: Path, verification_file: Path) -> int:
     print(evaluation["first"])
     for problem in evaluation["problems"]:
         print(f"- {problem}")
-    print("다음 행동: 미충족 항목을 확인한 뒤 다시 검증합니다." if blocked
-          else "다음 행동: omc-review로 변경사항을 검토합니다.")
+    if evaluation.get("reason_code") == "pipeline_ttl_expired":
+        print("다음 행동: 원문과 코드가 일치하는 경우에만 reapprove-completion의 명시적 재승인을 검토합니다. 자동 발급·재실행은 하지 않습니다.")
+    else:
+        print("다음 행동: 미충족 항목을 확인한 뒤 다시 검증합니다." if blocked
+              else "다음 행동: omc-review로 변경사항을 검토합니다.")
     envelope = {"schema_version": "omc-output/v1", "stage": "task",
                 "outcome": "blocked" if blocked else "done", "risk": "medium" if blocked else "low",
                 "next_skill": None if blocked else "omc-review", "user_selection_needed": blocked,
-                "reason_code": "verification_incomplete" if blocked else None}
+                "reason_code": evaluation.get("reason_code", "verification_incomplete") if blocked else None}
     print("<!-- OMC_OUTPUT: " + json.dumps(envelope, ensure_ascii=False) + " -->")
     print("VERDICT: " + ("BLOCK" if blocked else "PROCEED"))
     return 1 if blocked else 0
@@ -1050,7 +1338,10 @@ def cmd_check_edit(root: Path, file_path: str, bypass: bool = False) -> int:
     if not _is_impl_file(file_path):
         return 0  # 구현 파일 아님 → 통과
 
-    state = _load_state(root)
+    state, expiration = _read_pipeline(root)
+    if expiration is not None:
+        print("[PIPELINE] pipeline_ttl_expired: 승인 유효기간이 만료됐습니다. 원본 기록을 유지합니다.")
+        return 1
 
     if state.get("contract_confirmed", False):
         return 0  # CONTRACT 확인됨 → 통과
@@ -1172,7 +1463,17 @@ def cmd_scope_check(root: Path) -> int:
 
 def cmd_reset(root: Path) -> int:
     """세션 파이프라인 상태 초기화."""
-    _save_state(root, _empty_state())
+    state, _ = _read_pipeline(root)
+    path = _state_path(root)
+    if path.exists():
+        _archive_pipeline(root, path.read_bytes())
+    cleared = _empty_state()
+    cleared["started_at"] = state.get("started_at", 0)
+    # Reset revokes flags, but is neither an independent work nor a TTL renewal.
+    cleared["owner_session_id"] = state.get("owner_session_id") or state.get("session_id")
+    if state.get("owner_work_id"):
+        cleared["owner_work_id"] = state["owner_work_id"]
+    _save_state(root, cleared)
     print("[PIPELINE] 세션 상태 초기화 완료")
     return 0
 
@@ -1307,7 +1608,8 @@ def cmd_session_start(root: Path) -> int:
         except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
             rejected = True
             print('[PIPELINE] 시작 인계 불일치·재검증 필요: '+str(exc))
-    state = _load_state(root)
+    # A process/role boundary is not permission to renew an expired work clock.
+    state, _ = _read_pipeline(root)
     state["contract_confirmed"] = False
     state["contract_hash"] = ""
     state["session_id"] = ""
@@ -1345,6 +1647,8 @@ def main() -> int:
     p_contract.add_argument("--required-checks", default="", help="고정할 필수 검증 ID 목록 (쉼표 구분)")
     p_approval = sub.add_parser("approve-checks", help="이미 받은 사용자 검증 기준 승인을 개정별 기록 (진위 인증 아님)")
     p_approval.add_argument("--file", type=Path, required=True)
+    p_reapprove = sub.add_parser("reapprove-completion", help="명시적 재승인을 작업별 1회 기록; 완료 판정에만 적용")
+    p_reapprove.add_argument("--file", type=Path, required=True)
     p_complete = sub.add_parser("complete-task", help="현재 작업 등록과 필수 검증에 따른 최종 보고")
     p_complete.add_argument("--verification-file", type=Path, required=True)
     p_contract.add_argument("--content", default="", help="CONTRACT 내용 (해시 저장용, 우발적 위조 방지)")
@@ -1379,6 +1683,8 @@ def main() -> int:
         return cmd_contract_done(root, getattr(args, "content", ""), args.required_checks)
     if args.cmd == "approve-checks":
         return cmd_approve_checks(root, args.file)
+    if args.cmd == "reapprove-completion":
+        return cmd_reapprove_completion(root, args.file)
     if args.cmd == "complete-task":
         return cmd_complete_task(root, args.verification_file)
     if args.cmd == "check-edit":
