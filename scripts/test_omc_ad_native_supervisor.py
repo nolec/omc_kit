@@ -14,6 +14,7 @@ import pytest
 CLI = Path(__file__).with_name('omc_ad_native_supervisor.py')
 ROOT = CLI.parent.parent
 CORE = '637a9653759cfca9e070450139dfa56cdd67c5d1'
+CURRENT_CORE = '2abc549b16a2ca0c40484bd95828861c5cd432b5'
 SUCCESS = '{"type":"result","subtype":"success","is_error":false}\n'
 RECORDER = ('printf "%s\\n" "$$" > "$OMC_CHILD_PID_RECORD"; '
             '"$@"; child_status=$?; printf "%s\\n" "$child_status" '
@@ -243,14 +244,13 @@ def test_path_miss_never_falls_back_to_candidate_file(tmp_path,local_file):
     assert not (tmp_path/'child.pid').exists() and not (tmp_path/'child.exit').exists()
 
 
-@pytest.fixture(scope='module', params=[CORE, '996d80d539d7245443f3a539f1a9fa333b450770'],
-                ids=['core637a965', 'core996d80d'])
+@pytest.fixture(scope='module', params=[CORE, '996d80d539d7245443f3a539f1a9fa333b450770',CURRENT_CORE],
+                ids=['core637a965', 'core996d80d','core2abc549'])
 def core_commit(request):
     return request.param
 
 
-@pytest.fixture(scope='module')
-def frozen_core(tmp_path_factory, core_commit):
+def archive_supervisor_core(tmp_path_factory,core_commit):
     root = tmp_path_factory.mktemp('supervisor-core')
     archive = root/'core.tar'
     with archive.open('wb') as stream:
@@ -263,6 +263,16 @@ def frozen_core(tmp_path_factory, core_commit):
     expected = subprocess.check_output(['git', 'show', core_commit+':scripts/omc_home_observation.py'], cwd=ROOT)
     assert (root/'scripts/omc_home_observation.py').read_bytes() == expected
     return root
+
+
+@pytest.fixture(scope='module')
+def frozen_core(tmp_path_factory,core_commit):
+    return archive_supervisor_core(tmp_path_factory,core_commit)
+
+
+@pytest.fixture(scope='module')
+def current_frozen_core(tmp_path_factory):
+    return archive_supervisor_core(tmp_path_factory,CURRENT_CORE)
 
 
 def core_candidate(tmp_path, frozen_core, core_commit):
@@ -718,3 +728,297 @@ def test_preparation_clock_is_sampled_after_record_bytes(tmp_path,monkeypatch,co
     monkeypatch.setattr(supervisor,'time',SimpleNamespace(monotonic=lambda:clock[0]))
     result=supervisor.assess_preparation(marker,'r',42,100,130,129.99)
     assert result['status']==expected
+
+
+
+@pytest.mark.parametrize('case',['normal','internal124','timeout','missing'])
+def test_current_core_absolute_public_four_surfaces(tmp_path,current_frozen_core,case):
+    """R4: real current-core wrapper under the absolute-mode parent and worker."""
+    import omc_ad_native_supervisor as supervisor
+    prefix=core_candidate(tmp_path,current_frozen_core,CURRENT_CORE)
+    code={'normal':f'print({SUCCESS!r},end="")',
+          'internal124':'import sys;sys.stderr.write("internal124");sys.exit(124)',
+          'timeout':'import time;print("waiting",flush=True);time.sleep(30)',
+          'missing':'pass'}[case]
+    prompt=tmp_path/'absolute-prompt';prompt.write_text('synthetic no-provider input')
+    origin=time.monotonic();deadline=origin+18;run_id='current-core-'+case
+    args=[sys.executable,str(CLI),'--cwd',str(tmp_path),'--output',str(tmp_path/'absolute'),
+          '--prompt',str(prompt),'--child-pid-file',str(tmp_path/'.omc/absolute.pid'),
+          '--child-exit-file',str(tmp_path/'.omc/absolute.exit'),
+          '--origin-monotonic',str(origin),'--deadline-monotonic',str(deadline),'--run-id',run_id,
+          '--',*prefix,'/bin/sh','-c',RECORDER,'native-launch',sys.executable,'-c',code]
+    result=subprocess.run(args,capture_output=True,timeout=22)
+    path=tmp_path/'absolute/result.json';assert path.is_file(),result.stderr
+    sealed=supervisor.read_absolute_result(path,run_id);assert sealed['status']!='unknown',sealed
+    assert sealed['run_id']==run_id and (path.parent/'seal.json').is_file()
+    assert sealed['preprocessing']['status']=='passed',sealed
+    assert sealed['full_contract_pass'] is False and sealed['task_evidence']=='unknown'
+    capture=path.parent/'worker/capture';assert (capture/'stdout.raw').is_file()
+    assert (capture/'stderr.raw').is_file()
+    native=tmp_path/'.omc/home-motion/events.jsonl'
+    assert (capture/'stdout.raw').read_bytes()==native.read_bytes()
+    if case=='normal':
+        assert result.returncode==0 and sealed['process_result']=='normal',sealed
+        assert sealed['cleanup_result']=='confirmed'
+    else:
+        assert result.returncode==1 and sealed['process_result']!='normal',sealed
+    if case=='internal124':
+        legacy=json.loads((capture/'result.json').read_text())
+        assert legacy['internal_124'] and legacy['child_exit_code']==124 and not legacy['external_timeout']
+    elif case=='timeout':
+        assert sealed['stop_reason'] in {'normal_exit_deadline','worker_exited'}
+        assert time.monotonic()>=origin+1760*18/1800
+    elif case=='missing':
+        legacy=json.loads((capture/'result.json').read_text())
+        assert legacy['normal_terminal_result_count']==0 and legacy['wrapper_exit_code']==0
+
+
+def absolute_fault_invoke(tmp_path, fault):
+    """Real public main/fork/recording; replace only the failing OS operation."""
+    runtime=tmp_path/'.omc';runtime.mkdir(exist_ok=True)
+    prompt=tmp_path/'fault-prompt';prompt.write_text('no provider')
+    output=tmp_path/'fault-output'
+    origin=time.monotonic()
+    argv=['--cwd',str(tmp_path),'--output',str(output),'--prompt',str(prompt),
+          '--child-pid-file',str(runtime/'pid'),'--child-exit-file',str(runtime/'exit'),
+          '--origin-monotonic',str(origin),'--deadline-monotonic',str(origin+18),
+          '--run-id','fault-'+fault,'--','/bin/sh','-c',RECORDER,'native-launch',
+          sys.executable,'-c',
+          (f'import signal,time;from pathlib import Path;signal.signal(signal.SIGTERM,signal.SIG_IGN);Path({str(runtime/"ready")!r}).write_text("ready");time.sleep(30)'
+           if fault.startswith('kill') else f'import sys;sys.stdin.read();print({SUCCESS!r},end="")')]
+    shim=r'''
+import sys,os,signal,errno,json,time
+from pathlib import Path
+sys.path.insert(0,sys.argv.pop(1))
+import omc_ad_native_supervisor as m
+fault=sys.argv.pop(1); parent=os.getpid(); fired=False; interrupted=False
+output=Path(sys.argv[sys.argv.index('--output')+1]); oldwait=os.waitpid
+oldkill=os.kill; oldkillpg=os.killpg; oldopen=Path.open; oldfork=os.fork; oldunlink=os.unlink; worker=None
+
+def fork():
+    global worker
+    pid=oldfork()
+    if pid:worker=pid
+    return pid
+
+def denied(operation,target):
+    global fired
+    fired=True
+    raise PermissionError(errno.EPERM,'injected '+operation,str(target))
+
+def wait(pid,flags):
+    global interrupted
+    if os.getpid()==parent:
+        if fault in ('waitpid','waitpid-seal') and pid==worker and not fired:denied('waitpid',pid)
+        if fault.startswith('kill') and not interrupted:
+            marker=output/'worker/ownership.json'
+            try: ready=len(json.loads(marker.read_bytes())['groups'])>=1
+            except (OSError,ValueError,KeyError):ready=False
+            if ready and (output.parent/'.omc/ready').is_file():
+                interrupted=True
+                oldkill(parent,signal.SIGTERM)
+    return oldwait(pid,flags)
+
+def kill(pid,sig):
+    if os.getpid()==parent and fault=='kill' and sig==signal.SIGTERM:denied('kill',pid)
+    return oldkill(pid,sig)
+
+def killpg(pid,sig):
+    if os.getpid()==parent and fault in ('killpg-term','killpg-kill') and sig==(
+            signal.SIGTERM if fault=='killpg-term' else signal.SIGKILL):denied('killpg',pid)
+    return oldkillpg(pid,sig)
+
+class ClosedFault:
+    def __init__(self,stream,path):self.stream=stream;self.path=path
+    def __enter__(self):return self.stream.__enter__()
+    def __exit__(self,*exc):
+        # Original context manager really flushes/closes first. Do not fake the
+        # supervisor, record bytes, or reader; only the OS-facing close outcome.
+        answer=self.stream.__exit__(*exc)
+        if fault.endswith('-close-error'):denied('close',self.path)
+        elif fault.endswith('-close-late'):
+            oldclock=time.monotonic
+            time.monotonic=lambda:oldclock()+19
+        return answer
+
+def opened(path,*args,**kwargs):
+    if os.getpid()==parent:
+        if fault=='pending-open-error' and path==output/'finalization.pending':denied('open',path)
+        storage='seal' if fault=='waitpid-seal' else fault
+        if storage in ('result','seal') and path==output/(storage+'.json'):
+            denied('open',path)
+        if fault=='result-late' and path==output/'result.json':
+            # Simulate a write operation returning after the absolute deadline.
+            oldclock=time.monotonic
+            time.monotonic=lambda:oldclock()+19
+
+    stream=oldopen(path,*args,**kwargs)
+    if os.getpid()==parent and any(c in str(args[0] if args else kwargs.get('mode','r')) for c in 'wax'):
+        target='seal.json' if fault.startswith('seal-close-') else 'finalized.json' if fault.startswith('finalized-close-') else None
+        if target and path==output/target:return ClosedFault(stream,path)
+    return stream
+
+def unlink(path,*args,**kwargs):
+    if os.getpid()==parent and fault=='publish-error' and Path(path)==output/'finalization.pending':
+        denied('unlink',path)
+    return oldunlink(path,*args,**kwargs)
+
+os.fork=fork;os.waitpid=wait;os.kill=kill;os.killpg=killpg;os.unlink=unlink;Path.open=opened
+try: raise SystemExit(m.main())
+finally:
+    # Test-owned cleanup only, after the immutable result; never changes its verdict.
+    if os.getpid()==parent:
+        try: rows=json.loads((output/'worker/ownership.json').read_bytes())['groups']
+        except (OSError,ValueError,KeyError):rows=[]
+        for row in rows:
+            try:oldkillpg(row['pgid'],signal.SIGKILL)
+            except ProcessLookupError:pass
+'''
+    p=subprocess.run([sys.executable,'-c',shim,str(ROOT/'scripts'),fault,*argv],
+                     capture_output=True,timeout=23)
+    return p,output,origin
+
+
+@pytest.mark.parametrize('fault,operation,target_kind',[
+    ('waitpid','waitpid','pid'),('kill','kill','pid'),
+    ('killpg-term','killpg','pgid'),('killpg-kill','killpg','pgid')])
+def test_absolute_runtime_permission_error_public_result(tmp_path,fault,operation,target_kind):
+    import omc_ad_native_supervisor as supervisor
+    p,output,origin=absolute_fault_invoke(tmp_path,fault)
+    assert p.returncode==1,p.stderr
+    assert b'supervisor_input_or_setup_error' not in p.stderr
+    result=supervisor.read_absolute_result(output/'result.json','fault-'+fault)
+    assert result['status']=='incomplete_or_failed',result
+    assert result['full_contract_pass'] is False and result['process_result']!='normal'
+    assert result['cleanup_result']=='unconfirmed'
+    row=next(r for r in result['runtime_errors'] if r['operation']==operation)
+    assert row['errno']==1 and row['target_kind']==target_kind and row['target']>1
+    assert row['stage'] in ('termination','reap') and 'injected' in row['message']
+    if target_kind=='pid':assert row['target']==result['worker_pid']
+    else:assert row['target'] in [g['pgid'] for g in result['owned_groups']]
+    assert row['exception_type']=='PermissionError' and row['monotonic']>=origin
+    if fault.startswith('kill'):assert row['signal']==int(signal.SIGKILL if fault=='killpg-kill' else signal.SIGTERM)
+    assert result['cleanup_deadline_monotonic']<=min(result['stop_monotonic']+.12,origin+17.72)
+    assert time.monotonic()<origin+19
+    assert b'supervisor_runtime_error:' in p.stderr
+    assert (output/'seal.json').is_file()
+
+
+@pytest.mark.parametrize('fault',['result','seal'])
+def test_absolute_final_storage_permission_error_public_reader(tmp_path,fault):
+    import omc_ad_native_supervisor as supervisor
+    p,output,_=absolute_fault_invoke(tmp_path,fault)
+    assert p.returncode==1,p.stderr
+    assert b'supervisor_input_or_setup_error' not in p.stderr
+    errors=[json.loads(line.split(b':',1)[1]) for line in p.stderr.splitlines()
+            if line.startswith(b'supervisor_runtime_error:')]
+    assert any(e['stage']=='final_record' and e['operation']=='write_'+fault
+               and e['errno']==1 and e['target']==str(output/(fault+'.json')) for e in errors),p.stderr
+    assert not (output/'seal.json').exists()
+    assert (output/'result.json').exists()==(fault=='seal')
+    assert supervisor.read_absolute_result(output/'result.json','fault-'+fault)['status']=='unknown'
+
+
+def test_absolute_primary_error_survives_seal_error_public(tmp_path):
+    p,output,_=absolute_fault_invoke(tmp_path,'waitpid-seal')
+    assert p.returncode==1,p.stderr
+    rows=[json.loads(line.split(b':',1)[1]) for line in p.stderr.splitlines()
+          if line.startswith(b'supervisor_runtime_error:')]
+    assert rows[0]['operation']=='waitpid' and rows[0]['errno']==1
+    assert rows[-1]['operation']=='write_seal' and rows[-1]['errno']==1
+    result=json.loads((output/'result.json').read_bytes())
+    assert result['runtime_errors'][0]['operation']=='waitpid'
+    assert not (output/'seal.json').exists()
+
+
+def test_absolute_no_seal_after_storage_crosses_deadline_public(tmp_path):
+    import omc_ad_native_supervisor as supervisor
+    p,output,_=absolute_fault_invoke(tmp_path,'result-late')
+    assert p.returncode==1,p.stderr
+    assert (output/'result.json').exists() and not (output/'seal.json').exists()
+    assert b'absolute final-record deadline exhausted' in p.stderr
+    assert supervisor.read_absolute_result(output/'result.json','fault-result-late')['status']=='unknown'
+
+
+@pytest.mark.parametrize('fault',['seal-close-error','seal-close-late',
+                                  'finalized-close-error','finalized-close-late'])
+def test_absolute_post_seal_failure_is_not_consumable_public(tmp_path,fault):
+    import omc_ad_native_supervisor as supervisor
+    p,output,_=absolute_fault_invoke(tmp_path,fault)
+    assert p.returncode==1,p.stderr
+    # Valid, fully written JSON is deliberately left on disk; presence/hash alone
+    # must not promote the failed finalization into a normal process result.
+    assert json.loads((output/'result.json').read_bytes())['process_result']=='normal'
+    assert json.loads((output/'seal.json').read_bytes())['run_id']=='fault-'+fault
+    assert supervisor.read_absolute_result(output/'result.json','fault-'+fault)['status']=='unknown'
+    assert b'supervisor_runtime_error:' in p.stderr
+
+
+@pytest.mark.parametrize('fault',['pending-open-error','publish-error'])
+def test_absolute_finalization_barrier_errors_public(tmp_path,fault):
+    import omc_ad_native_supervisor as supervisor
+    p,output,_=absolute_fault_invoke(tmp_path,fault)
+    assert p.returncode==1,p.stderr
+    assert supervisor.read_absolute_result(output/'result.json','fault-'+fault)['status']=='unknown'
+    errors=[json.loads(line.split(b':',1)[1]) for line in p.stderr.splitlines()
+            if line.startswith(b'supervisor_runtime_error:')]
+    assert errors[-1]['operation']==('write_pending' if fault=='pending-open-error' else 'publish_finalized')
+    assert errors[-1]['errno']==1
+    if fault=='pending-open-error':
+        assert not (output/'result.json').exists() and not (output/'seal.json').exists()
+    else:
+        assert (output/'finalization.pending').exists() and (output/'finalized.json').exists()
+
+
+def test_absolute_new_publication_and_legacy_consumer(tmp_path,current_frozen_core):
+    import omc_ad_native_supervisor as supervisor
+    import importlib.util
+    p,output,_=absolute_fault_invoke(tmp_path,'none')
+    assert p.returncode==0,p.stderr
+    result=supervisor.read_absolute_result(output/'result.json','fault-none')
+    assert result['process_result']=='normal' and result['finalization_protocol']=='pending-publication/v2'
+    assert not (output/'finalization.pending').exists()
+    finalized=json.loads((output/'finalized.json').read_bytes())
+    seal_raw=(output/'seal.json').read_bytes()
+    assert finalized['seal_sha256']==hashlib.sha256(seal_raw).hexdigest()
+    assert finalized['result_sha256']==hashlib.sha256((output/'result.json').read_bytes()).hexdigest()
+    assert result['origin_monotonic']<=finalized['completed_monotonic']<=result['deadline_monotonic']
+    legacy_path=current_frozen_core/'scripts/omc_ad_native_supervisor.py'
+    spec=importlib.util.spec_from_file_location('frozen_supervisor_v1',legacy_path)
+    legacy=importlib.util.module_from_spec(spec);spec.loader.exec_module(legacy)
+    assert legacy.read_absolute_result(output/'result.json','fault-none')['status']=='unknown'
+
+
+@pytest.mark.parametrize('damage',['missing','partial','late','result-hash','seal-hash','run-id',
+                                   'pending','pending-link','finalized-link'])
+def test_absolute_finalization_reader_fail_closed(tmp_path,damage):
+    import omc_ad_native_supervisor as supervisor
+    p,output,_=absolute_fault_invoke(tmp_path,'none')
+    assert p.returncode==0,p.stderr
+    target=output/'finalized.json';value=json.loads(target.read_bytes())
+    if damage=='missing':target.unlink()
+    elif damage=='partial':target.write_bytes(b'{"status":')
+    elif damage=='pending':(output/'finalization.pending').write_text('incomplete')
+    elif damage=='pending-link':(output/'finalization.pending').symlink_to(output/'absent')
+    elif damage=='finalized-link':
+        raw=target.read_bytes();target.unlink();(output/'other.json').write_bytes(raw)
+        target.symlink_to(output/'other.json')
+    else:
+        if damage=='late':
+            result=json.loads((output/'result.json').read_bytes())
+            value['completed_monotonic']=result['deadline_monotonic']+.001
+        elif damage=='run-id':value['run_id']='other-run'
+        else:value[damage.replace('-','_').replace('_hash','_sha256')]='0'*64
+        target.write_text(json.dumps(value))
+    assert supervisor.read_absolute_result(output/'result.json','fault-none')['status']=='unknown'
+
+
+def test_absolute_legacy_v1_receipt_still_readable(tmp_path):
+    import omc_ad_native_supervisor as supervisor
+    result={'schema_version':'omc-ad-absolute-result/v1','run_id':'legacy',
+            'status':'incomplete_or_failed','origin_monotonic':100,'deadline_monotonic':200,
+            'full_contract_pass':False}
+    raw=json.dumps(result).encode();path=tmp_path/'result.json';path.write_bytes(raw)
+    (tmp_path/'seal.json').write_text(json.dumps({'run_id':'legacy',
+        'result_sha256':hashlib.sha256(raw).hexdigest(),'completed_monotonic':150}))
+    assert supervisor.read_absolute_result(path,'legacy')==result

@@ -67,17 +67,40 @@ def assess_preparation(path, run_id, worker_pid, origin, deadline, observed):
 
 
 def read_absolute_result(path, run_id):
-    """External read-only projection; EOF or an old file cannot mean success."""
+    """External read-only projection; a written seal is not publication proof."""
+    def read_record(record_path):
+        if record_path.is_symlink() or not record_path.is_file() or record_path.stat().st_size>LIMIT:
+            raise ValueError('invalid final record')
+        raw=record_path.read_bytes()
+        if len(raw)>LIMIT:raise ValueError('oversized final record')
+        return json.loads(raw),hashlib.sha256(raw).hexdigest()
     try:
-        if path.is_symlink() or path.stat().st_size > LIMIT:raise ValueError('invalid result')
-        value=json.loads(path.read_bytes())
+        value,result_hash=read_record(path)
         if value.get('schema_version')!='omc-ad-absolute-result/v1' or value.get('run_id')!=run_id:
             raise ValueError('result identity mismatch')
-        seal_path=path.with_name('seal.json')
-        if seal_path.is_symlink():raise ValueError('seal symlink')
-        seal=json.loads(seal_path.read_bytes())
-        if (seal['run_id']!=run_id or seal['result_sha256']!=digest(path)
-                or phase_status(seal['completed_monotonic'],value['deadline_monotonic'])!='passed'):
+        seal,seal_hash=read_record(path.with_name('seal.json'))
+        if seal['run_id']!=run_id or seal['result_sha256']!=result_hash:
+            raise ValueError('result seal mismatch')
+        protocol=value.get('finalization_protocol')
+        if protocol is not None:
+            pending=path.with_name('finalization.pending')
+            if (protocol!='pending-publication/v2'
+                    or seal.get('schema_version')!='omc-ad-absolute-seal/v2'
+                    or seal.get('completed_monotonic') is not None
+                    or pending.is_symlink() or pending.exists()):
+                raise ValueError('finalization incomplete')
+            finalized,_=read_record(path.with_name('finalized.json'))
+            if (finalized.get('schema_version')!='omc-ad-finalization/v1'
+                    or finalized.get('status')!='stored' or finalized.get('run_id')!=run_id
+                    or finalized.get('result_sha256')!=result_hash
+                    or finalized.get('seal_sha256')!=seal_hash
+                    or phase_status(finalized.get('completed_monotonic'),value['deadline_monotonic'])!='passed'
+                    or finalized['completed_monotonic']<value['origin_monotonic']
+                    or pending.is_symlink() or pending.exists()):
+                raise ValueError('finalization missing or invalid')
+        elif phase_status(seal['completed_monotonic'],value['deadline_monotonic'])!='passed':
+            # Preserve old immutable v1 receipts. New v2 seals intentionally carry
+            # no v1 completion timestamp, so old consumers also fail closed.
             raise ValueError('final seal missing or late')
         return value
     except (OSError, ValueError, TypeError, AttributeError, KeyError):
@@ -220,6 +243,32 @@ def supervise_absolute(args):
             finally:os._exit(2)
     code=None; stop=None; reason=None; cleanup_end=None; groups={}; signals=[]; reap_at=None
     worker_identity=None; registration_valid=True; owned_unknown=False
+    runtime_errors=[]; errors_by_key={}
+    def record_error(stage,operation,target_kind,target,exc,signum=None):
+        row={'stage':stage,'operation':operation,'target_kind':target_kind,'target':target,
+             'exception_type':type(exc).__name__,'errno':getattr(exc,'errno',None),
+             'message':str(exc),'signal':int(signum) if signum is not None else None,**stamp()}
+        key=(stage,operation,target_kind,target,row['errno'],row['exception_type'],row['signal'])
+        if key in errors_by_key:
+            errors_by_key[key]['occurrences']+=1
+            return
+        row['occurrences']=1;errors_by_key[key]=row
+        runtime_errors.append(row)
+        # Keep the first failure even if final storage also fails.
+        try:print('supervisor_runtime_error: '+json.dumps(row,ensure_ascii=True),file=sys.stderr,flush=True)
+        except OSError:pass  # A failed stderr cannot certify durable storage.
+    def reap_worker():
+        nonlocal code,reap_at
+        if code is not None:return
+        try:
+            pid,status=os.waitpid(worker,os.WNOHANG)
+            if pid:code=os.waitstatus_to_exitcode(status);reap_at=time.monotonic()
+        except OSError as exc:record_error('reap','waitpid','pid',worker,exc)
+    def signal_worker(signum):
+        if code is not None or cleanup_end is None or time.monotonic()>=cleanup_end:return
+        try:os.kill(worker,signum)
+        except ProcessLookupError:pass
+        except OSError as exc:record_error('termination','kill','pid',worker,exc,signum)
     def observe_groups():
         nonlocal registration_valid
         if not ownership.exists():return
@@ -235,13 +284,18 @@ def supervise_absolute(args):
                     elif not group_gone(row['pid']):registration_valid=False
                 elif process_identity(row['pid'])==row:
                     groups[row['pid']]['members']=group_members(row['pid'])
-        except (OSError,ValueError,KeyError,TypeError):registration_valid=False
+        except (OSError,ValueError,KeyError,TypeError) as exc:
+            registration_valid=False
+            if isinstance(exc,OSError):record_error('observation','read_ownership','path',str(ownership),exc)
     def send_owned(signum):
         for pid,row in list(groups.items()):
+            if cleanup_end is None or time.monotonic()>=cleanup_end:break
             identity={k:row[k] for k in ('pid','pgid','started')}
             if (process_identity(pid)==identity or any(process_identity(m['pid'],False)==m for m in row['members'])):
+                if time.monotonic()>=cleanup_end:break
                 try:os.killpg(pid,signum);signals.append({'pid':pid,'signal':int(signum),'outcome':'sent'})
                 except ProcessLookupError:pass
+                except OSError as exc:record_error('termination','killpg','pgid',pid,exc,signum)
     killed=False
     preparation={'status':'pending'}
     try:
@@ -249,16 +303,15 @@ def supervise_absolute(args):
             now=time.monotonic()
             if worker_identity is None and code is None:worker_identity=process_identity(worker)
             observe_groups()
-            if code is None:
-                pid,status=os.waitpid(worker,os.WNOHANG)
-                if pid:code=os.waitstatus_to_exitcode(status);reap_at=time.monotonic()
+            reap_worker()
             # Identity queries and wait observations can cross a stage boundary.
             now=time.monotonic()
             preparation=assess_preparation(prepared,args.run_id,worker,origin,
                                            origin+30*span/1800,now)
             now=time.monotonic()  # Record reads also consume the absolute budget.
             if stop is None:
-                if interrupted[0]:reason='supervisor_signal'
+                if runtime_errors:reason='supervisor_runtime_error'
+                elif interrupted[0]:reason='supervisor_signal'
                 elif preparation['status']=='late':reason='preprocessing_deadline'
                 elif preparation['status']=='invalid':reason='preprocessing_invalid'
                 elif now>=origin+1760*span/1800:reason='normal_exit_deadline'
@@ -266,37 +319,47 @@ def supervise_absolute(args):
                 if reason:
                     stop=now;cleanup_end=cleanup_deadline(stop,origin,span)
                     send_owned(signal.SIGTERM)
-                    if code is None:
-                        try:os.kill(worker,signal.SIGTERM)
-                        except ProcessLookupError:pass
+                    signal_worker(signal.SIGTERM)
             gone=all(group_gone(pid) for pid in groups)
             if stop is not None:
+                now=time.monotonic()
+                if now>=cleanup_end:break
                 if code is not None and gone:break
                 remaining=max(0,cleanup_end-stop)
                 if now>=stop+remaining*.6 and not killed:
                     killed=True;send_owned(signal.SIGKILL)
-                    if code is None:
-                        try:os.kill(worker,signal.SIGKILL)
-                        except ProcessLookupError:pass
+                    signal_worker(signal.SIGKILL)
                 if now>=cleanup_end:break
-            time.sleep(.005)
+            time.sleep(min(.005,max(0,(cleanup_end if stop is not None else origin+1760*span/1800)-time.monotonic())))
+    except OSError as exc:
+        record_error('supervision','parent_loop','pid',worker,exc)
+        if stop is None:
+            stop=time.monotonic();reason='supervisor_runtime_error'
+            cleanup_end=cleanup_deadline(stop,origin,span)
+        # Do not renew the cleanup budget or signal after its absolute deadline.
+        if time.monotonic()<cleanup_end:
+            send_owned(signal.SIGTERM);signal_worker(signal.SIGTERM)
     finally:
-        for signum,handler in previous.items():signal.signal(signum,handler)
-    if code is None:
-        pid,status=os.waitpid(worker,os.WNOHANG)
-        if pid:code=os.waitstatus_to_exitcode(status);reap_at=time.monotonic()
+        for signum,handler in previous.items():
+            try:signal.signal(signum,handler)
+            except OSError as exc:record_error('termination','restore_handler','signal',int(signum),exc)
+    reap_worker()
     worker_result_path=worker_dir/'capture/result.json'; worker_result={}
     try:
         if not worker_result_path.is_file() or worker_result_path.stat().st_size>LIMIT:raise ValueError('invalid worker result')
         worker_result=json.loads(worker_result_path.read_bytes())
         if not isinstance(worker_result,dict):worker_result={}
-    except (OSError,ValueError):pass
+    except (OSError,ValueError) as exc:
+        if isinstance(exc,OSError) and not isinstance(exc,FileNotFoundError):record_error('observation','read_worker_result','path',str(worker_result_path),exc)
     # A prepared worker can die in the spawn/registration gap: never infer custody.
-    owned_unknown=prepared.exists() and not groups and worker_result.get('child_cleanup_status')!='confirmed'
+    try:owned_unknown=prepared.exists() and not groups and worker_result.get('child_cleanup_status')!='confirmed'
+    except OSError as exc:
+        owned_unknown=True
+        record_error('observation','read_prepared','path',str(prepared),exc)
     cleanup=('confirmed' if code is not None and registration_valid and not owned_unknown
              and all(group_gone(pid) for pid in groups) else 'unconfirmed')
     observed_cleanup=time.monotonic()
-    if phase_status(observed_cleanup,cleanup_end)!='passed':cleanup='unconfirmed'
+    if runtime_errors or phase_status(observed_cleanup,cleanup_end)!='passed':cleanup='unconfirmed'
     phases={k:'unknown' for k in ('edits','checks','completion')};evidence='unknown';error='phase evidence missing'
     try:
         phase_path=worker_dir/'phase.json'
@@ -304,8 +367,9 @@ def supervise_absolute(args):
         assessment=json.loads(phase_path.read_bytes())
         if assessment['worker_pid']!=worker or assessment['run_id']!=args.run_id:raise ValueError('phase worker mismatch')
         phases,evidence,error=assessment['phases'],assessment['evidence'],assessment['error']
-    except (OSError,ValueError,KeyError,TypeError):pass
-    process_normal=(preparation['status']=='passed'
+    except (OSError,ValueError,KeyError,TypeError) as exc:
+        if isinstance(exc,OSError) and not isinstance(exc,FileNotFoundError):record_error('observation','read_phase_result','path',str(phase_path),exc)
+    process_normal=(not runtime_errors and preparation['status']=='passed'
                     and worker_result.get('status')=='normal' and code==0 and reason=='worker_exited'
                     and phase_status(reap_at,origin+1760*span/1800)=='passed' and cleanup=='confirmed')
     result={'schema_version':'omc-ad-absolute-result/v1','run_id':args.run_id,
@@ -319,19 +383,75 @@ def supervise_absolute(args):
             'stop_monotonic':stop,'stop_reason':reason,'cleanup_deadline_monotonic':cleanup_end,
             'cleanup_observed_monotonic':observed_cleanup,'worker_pid':worker,'worker_identity':worker_identity,
             'worker_returncode':code,'owned_groups':list(groups.values()),'signals_sent':signals,
+            'runtime_errors':runtime_errors,
             'worker_result':str(worker_result_path),'actual_home':'NOT_VERIFIED','comparison':'HOLD',
-            'claude_pid':None,'claude_returncode':None,'final_record_status':'unknown'}
-    # Late storage or parent death cannot manufacture a successful seal.
+            'claude_pid':None,'claude_returncode':None,'final_record_status':'unknown',
+            'finalization_protocol':'pending-publication/v2'}
+    # No storage retry or renewed time allowance. Result/seal names are exclusive
+    # inside this invocation's fresh directory; an old seal can never be reused.
     result['final_record_status']=phase_status(time.monotonic(),deadline)
-    if result['final_record_status']!='passed':result['full_contract_pass']=False
-    with (output/'result.json').open('x') as stream:json.dump(result,stream,indent=2)
+    if result['final_record_status']!='passed':
+        record_error('final_record','write_result','path',str(output/'result.json'),
+                     TimeoutError('absolute final-record deadline exhausted'))
+        return 1
+    pending=output/'finalization.pending'
+    try:
+        with pending.open('x') as stream:
+            json.dump({'run_id':args.run_id,'status':'pending'},stream)
+    except OSError as exc:
+        record_error('final_record','write_pending','path',str(pending),exc)
+        return 1
     if time.monotonic()>deadline:
-        result['final_record_status']='failed';result['full_contract_pass']=False
-        (output/'result.json').write_text(json.dumps(result,indent=2))
-    seal={'run_id':args.run_id,'result_sha256':digest(output/'result.json'),
-          'completed_monotonic':time.monotonic()}
-    with (output/'seal.json').open('x') as stream:json.dump(seal,stream)
-    return 0 if process_normal and result['final_record_status']=='passed' else 1
+        record_error('final_record','write_result','path',str(output/'result.json'),
+                     TimeoutError('absolute final-record deadline exhausted'))
+        return 1
+    raw=json.dumps(result,indent=2).encode('utf-8')
+    try:
+        with (output/'result.json').open('xb') as stream:stream.write(raw)
+    except OSError as exc:
+        record_error('final_record','write_result','path',str(output/'result.json'),exc)
+        return 1
+    if time.monotonic()>deadline:
+        record_error('final_record','write_seal','path',str(output/'seal.json'),
+                     TimeoutError('absolute final-record deadline exhausted'))
+        return 1
+    # Hash the actual stored bytes, not the pre-serialization object.
+    try:
+        result_hash=digest(output/'result.json')
+        completed=time.monotonic()
+        if completed>deadline:raise TimeoutError('absolute final-record deadline exhausted')
+        seal={'schema_version':'omc-ad-absolute-seal/v2','run_id':args.run_id,
+              'result_sha256':result_hash,'completed_monotonic':None,
+              'storage_started_monotonic':completed}
+        with (output/'seal.json').open('x') as stream:json.dump(seal,stream)
+    except OSError as exc:
+        record_error('final_record','write_seal','path',str(output/'seal.json'),exc)
+        return 1
+    seal_closed=time.monotonic()
+    if seal_closed>deadline:
+        record_error('final_record','finish_seal','path',str(output/'seal.json'),
+                     TimeoutError('absolute final-record deadline exhausted'))
+        return 1
+    finalized_path=output/'finalized.json'
+    try:
+        finalized={'schema_version':'omc-ad-finalization/v1','status':'stored',
+                   'run_id':args.run_id,'result_sha256':result_hash,
+                   'seal_sha256':digest(output/'seal.json'),'completed_monotonic':seal_closed}
+        if time.monotonic()>deadline:raise TimeoutError('absolute final-record deadline exhausted')
+        with finalized_path.open('x') as stream:json.dump(finalized,stream)
+    except OSError as exc:
+        record_error('final_record','write_finalized','path',str(finalized_path),exc)
+        return 1
+    # The pending barrier remains on any write/flush/close error or detected late
+    # storage. Remove it once, only after all storage has returned successfully.
+    # The final atomic OS unlink itself cannot have a hard real-time guarantee.
+    try:
+        if time.monotonic()>deadline:raise TimeoutError('absolute final-record deadline exhausted')
+        pending.unlink()
+    except OSError as exc:
+        record_error('final_record','publish_finalized','path',str(pending),exc)
+        return 1
+    return 0 if process_normal else 1
 
 
 def stamp():
