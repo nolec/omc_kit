@@ -695,6 +695,11 @@ def _validate_basis(value: dict, sid: str) -> dict:
         ids.append(check["id"])
     if len(set(ids)) != len(ids):
         raise ValueError("검증 ID가 중복됐습니다")
+    kind = _completion_kind(value)
+    if kind == TRANSFER_KIND:
+        _validate_transfer_policy(value)
+    elif 'transfer' in value:
+        raise ValueError('transfer_policy_on_implementation')
     return value
 
 
@@ -724,14 +729,33 @@ def cmd_approve_checks(root: Path, proposal: Path) -> int:
         if latest.get("latest_session_id") != sid:
             raise ValueError("현재 작업 승인을 먼저 확인하세요")
         value = _validate_basis(json.loads(proposal.read_text(encoding="utf-8")), sid)
-        from omc_visual_check import enforce_requirement, AD_PROFILE
-        enforce_requirement(root, value)
-        from omc_home_observation import enforce_requirement as enforce_home
-        enforce_home(root, value)
+        # Same-work kind cannot be downgraded through a preserving new session.
+        session_file=root/'.omc/state/sessions'/sid/'session.json'
+        if session_file.is_file():
+            session=json.loads(session_file.read_text());work=session.get('work_id')
+            pending_file=root/'.omc/state/pending-completion.json'
+            if work and pending_file.is_file():
+                pending=json.loads(pending_file.read_text())
+                if pending.get('work_id')==work:
+                    for member in pending.get('session_ids',[]):
+                        if member!=sid and _basis_path(root,member).exists():
+                            older=_load_approved_basis(root,member)
+                            if (_completion_kind(older)!=_completion_kind(value)
+                                    or older.get('transfer')!=value.get('transfer')):
+                                raise ValueError('completion_kind_immutable')
+        from omc_visual_check import AD_PROFILE
+        if _completion_kind(value) == 'implementation':
+            from omc_visual_check import enforce_requirement
+            enforce_requirement(root, value)
+            from omc_home_observation import enforce_requirement as enforce_home
+            enforce_home(root, value)
         directory = _basis_path(root, sid)
         revisions = [int(p.stem) for p in directory.glob("*.json") if p.stem.isdigit()]
         if revisions:
             previous = _load_approved_basis(root, sid)
+            if (_completion_kind(previous) != _completion_kind(value)
+                    or previous.get('transfer') != value.get('transfer')):
+                raise ValueError('completion_kind_immutable')
             old_native = next((c for c in previous['checks'] if 'native_red' in c), None)
             if old_native is not None:
                 new_native = next((c for c in value['checks'] if c['id'] == old_native['id']), None)
@@ -863,7 +887,9 @@ def cmd_contract_done(root: Path, content: str = "", required_checks: str = "") 
             if set(requested_checks) != expected:
                 raise ValueError("승인된 필수 검증 목록을 사용하세요: " + ",".join(sorted(expected)))
             state["basis_sha256"] = _basis_digest(basis)
-            state["red_evidence_required"] = True
+            state["red_evidence_required"] = _completion_kind(basis) == "implementation"
+            if _completion_kind(basis)==TRANSFER_KIND:
+                state.setdefault('transfer_operator_snapshot',_code_snapshot_digest(root))
     except (OSError, ValueError, TypeError, AttributeError) as exc:
         # Legacy sessions without a session id keep edit compatibility only.
         if state.get("session_id"):
@@ -1160,7 +1186,432 @@ def _expired_completion_evaluation(root: Path, verification_file: Path, state: d
             "visual_assessment": None, "home_assessment": None}
 
 
-def evaluate_task_completion(root: Path, verification_file: Path, expected_session_id: str | None = None) -> dict:
+# A separate completion route; legacy implementation never enters this path.
+TRANSFER_KIND = 'verified_commit_transfer'
+
+
+def _completion_kind(basis: dict) -> str:
+    kind = basis.get('completion_kind', 'implementation')
+    if kind not in ('implementation', TRANSFER_KIND):
+        raise ValueError('completion_kind_invalid')
+    return kind
+
+
+def _validate_transfer_policy(value: dict) -> dict:
+    policy = value.get('transfer')
+    keys = {'source_root','target_root','base_commit','target_commit','expected_paths',
+            'source_session_id','source_verification','protected_paths','allow_review_pointer_update'}
+    if not isinstance(policy, dict) or set(policy) != keys:
+        raise ValueError('transfer_policy_invalid')
+    for key in ['source_root','target_root','source_session_id','source_verification']:
+        if not isinstance(policy[key], str) or not policy[key].strip():
+            raise ValueError('transfer_policy_invalid:'+key)
+    for key in ['source_root','target_root']:
+        if not Path(policy[key]).is_absolute():
+            raise ValueError('transfer_root_must_be_absolute')
+    for key in ['base_commit','target_commit']:
+        if not isinstance(policy[key],str) or not re.fullmatch('[0-9a-f]{40}',policy[key]):
+            raise ValueError('transfer_commit_id_invalid')
+    if policy['base_commit']==policy['target_commit']:
+        raise ValueError('transfer_commit_must_change')
+    paths=policy['expected_paths']
+    if (not isinstance(paths,list) or not paths or len(paths)!=len(set(paths))
+            or any(not isinstance(p,str) or not p or Path(p).is_absolute()
+                   or '..' in Path(p).parts or p.startswith(('.git/','.omc/')) for p in paths)):
+        raise ValueError('transfer_expected_paths_invalid')
+    protected=policy['protected_paths']
+    if not isinstance(protected,list) or any(not isinstance(p,str) or not Path(p).is_absolute() for p in protected):
+        raise ValueError('transfer_protected_paths_invalid')
+    if type(policy['allow_review_pointer_update']) is not bool:
+        raise ValueError('transfer_pointer_policy_invalid')
+    return policy
+
+
+def _transfer_read(path: Path) -> bytes:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError('transfer_evidence_missing_or_linked:'+str(path))
+    with path.open('rb') as stream:
+        raw=stream.read(8*1024*1024+1)
+    if len(raw)>8*1024*1024:
+        raise ValueError('transfer_evidence_size_unsupported')
+    return raw
+
+
+def _transfer_local(root: Path, name: str) -> Path:
+    path=root/name
+    if not path.resolve().is_relative_to(root):
+        raise ValueError('transfer_evidence_outside_root')
+    for part in (path,*path.parents):
+        if part==root:break
+        if part.is_symlink():raise ValueError('transfer_evidence_linked')
+    _transfer_read(path)
+    return path
+
+
+def _transfer_git(root: Path, *args: str) -> bytes:
+    return subprocess.check_output(['git','--no-optional-locks',*args],cwd=root,
+                                   env={**os.environ,'GIT_OPTIONAL_LOCKS':'0'},stderr=subprocess.PIPE)
+
+
+def _transfer_identity(root: Path) -> dict:
+    root=root.resolve(strict=True)
+    if not (root/'.git').is_dir() or (root/'.git').is_symlink():
+        raise ValueError('transfer_independent_git_required')
+    common=Path(_transfer_git(root,'rev-parse','--path-format=absolute','--git-common-dir').decode().strip()).resolve()
+    index=Path(_transfer_git(root,'rev-parse','--path-format=absolute','--git-path','index').decode().strip()).resolve()
+    if common!=root/'.git' or index!=root/'.git/index':
+        raise ValueError('transfer_git_identity_unsupported')
+    if list(common.glob('sharedindex.*')):
+        raise ValueError('transfer_split_index_unsupported')
+    return {'root':str(root),'common':str(common),'index':str(index)}
+
+
+def _transfer_index(root: Path) -> dict:
+    entries={}
+    for row in _transfer_git(root,'ls-files','--stage','-z').split(b'\0'):
+        if not row:continue
+        header,path=row.split(b'\t',1);mode,oid,stage=header.decode().split()
+        if stage!='0' or mode=='040000':raise ValueError('transfer_index_unsupported')
+        entries[os.fsdecode(path)]={'mode':mode,'oid':oid,'stage':stage}
+    raw=_transfer_git(root,'ls-files','--debug','-z');pos=0
+    while pos<len(raw):
+        end=raw.index(b'\0',pos);name=os.fsdecode(raw[pos:end])
+        match=re.match(br'  ctime: [^\n]*\n  mtime: [^\n]*\n  dev: [^\n]*\n  uid: [^\n]*\n  size: [^\n]*\tflags: ([0-9a-fA-F]+)\n',raw[end+1:])
+        if match is None:raise ValueError('transfer_index_flags_unsupported')
+        entries[name]['flags']=int(match.group(1),16);pos=end+1+match.end()
+    return entries
+
+
+def _transfer_file_row(path: Path) -> dict:
+    data=_transfer_read(path)
+    return {'kind':'file','sha256':hashlib.sha256(data).hexdigest(),'mode':path.stat().st_mode&0o777,'size':len(data)}
+
+
+def _transfer_inventory(root: Path) -> dict:
+    rows={};total=0
+    def failed_walk(error):raise error
+    for folder,dirs,files in os.walk(root,followlinks=False,onerror=failed_walk):
+        rows[str(Path(folder).relative_to(root))]={'kind':'directory','mode':Path(folder).stat().st_mode&0o777}
+        dirs[:]=[d for d in dirs if not (Path(folder)==root and d=='.git')]
+        for name in dirs:
+            if (Path(folder)/name).is_symlink():raise ValueError('transfer_directory_link_unsupported')
+        for name in files:
+            path=Path(folder)/name;row=_transfer_file_row(path);total+=row['size']
+            if len(rows)>=20000 or total>256*1024*1024:raise ValueError('transfer_inventory_budget_exceeded')
+            rows[str(path.relative_to(root))]=row
+    return rows
+
+
+def _transfer_review(root: Path, policy: dict, *, preserved_target: bool = False) -> dict:
+    # Import only inside the explicitly registered transfer path.
+    from omc_review_snapshot import (validate_ship_candidate, load_review_receipt,
+                                     _current_receipt, load_peer_snapshot, build_commit_candidate)
+    if preserved_target:
+        # Generic ship deliberately rejects unrelated staged work. This route
+        # binds the immutable reviewed commit; the caller checks every preserved
+        # index entry, flag, working byte and mode against the pre-transfer record.
+        receipt=_current_receipt(root)
+        snapshot=load_peer_snapshot(root/'.omc/state/review-snapshots'/receipt['review_snapshot_name'],
+                                    expected_sha256=receipt['review_snapshot_sha256'])
+        if (_transfer_git(root,'rev-parse','HEAD').decode().strip()!=policy['target_commit']
+                or snapshot.get('candidate_commit')!=policy['target_commit']
+                or build_commit_candidate(root,base_commit=policy['base_commit'],
+                    candidate_commit=policy['target_commit'])['candidate_scope_sha256']!=receipt['candidate_scope_sha256']):
+            raise ValueError('transfer_review_commit_mismatch')
+        ready={'status':'READY','receipt_sha256':receipt['receipt_sha256'],
+               'claim_boundary':'TRANSFER_COMMIT_ONLY'}
+    else:
+        ready=validate_ship_candidate(root)
+        if ready.get('status')!='READY':raise ValueError('transfer_review_not_ready')
+    pointer=_transfer_local(root,'.omc/state/review-snapshots/current.json')
+    obj=json.loads(_transfer_read(pointer));name=obj['receipt_name']
+    if not isinstance(name,str) or Path(name).name!=name:raise ValueError('transfer_receipt_name_invalid')
+    path=pointer.parent/name;receipt=load_review_receipt(root,path)
+    if (receipt['base_commit']!=policy['base_commit']
+            or sorted(x['path'] for x in receipt['candidate_scope'])!=sorted(policy['expected_paths'])):
+        raise ValueError('transfer_review_scope_mismatch')
+    return {'ready':ready,'receipt':receipt,'pointer':str(pointer),'receipt_path':str(path)}
+
+
+def _transfer_tree_matches(root: Path,commit: str) -> None:
+    for row in _transfer_git(root,'ls-tree','-r','-z',commit).split(b'\0'):
+        if not row:continue
+        header,name=row.split(b'\t',1);mode,kind,oid=header.decode().split()
+        if kind!='blob' or mode not in ('100644','100755'):raise ValueError('transfer_source_tree_unsupported')
+        path=_transfer_local(root,os.fsdecode(name));data=_transfer_read(path)
+        if (hashlib.sha1(('blob '+str(len(data))+'\0').encode()+data).hexdigest()!=oid
+                or path.stat().st_mode&0o777!=(0o755 if mode=='100755' else 0o644)):
+            raise ValueError('transfer_source_tree_mismatch')
+
+
+def _transfer_source_proof(policy: dict) -> dict:
+    source=Path(policy['source_root']).resolve(strict=True);identity=_transfer_identity(source)
+    if _transfer_git(source,'rev-parse','HEAD').decode().strip()!=policy['target_commit']:
+        raise ValueError('transfer_source_commit_mismatch')
+    if _transfer_git(source,'status','--porcelain','--untracked-files=all').strip():
+        raise ValueError('transfer_source_code_changed')
+    _transfer_tree_matches(source,policy['target_commit'])
+    sid=policy['source_session_id'];basis=_load_approved_basis(source,sid)
+    session_file=_transfer_local(source,f'.omc/state/sessions/{sid}/session.json')
+    session=json.loads(_transfer_read(session_file))
+    if (session.get('session_id')!=sid or not session.get('work_id')
+            or session.get('confirmation',{}).get('status')!='confirmed'):
+        raise ValueError('transfer_source_work_invalid')
+    if _completion_kind(basis)!='implementation':raise ValueError('transfer_source_must_be_implementation')
+    verification=_transfer_local(source,policy['source_verification']);raw=_transfer_read(verification)
+    state,expiration=_read_pipeline(source)
+    if expiration is not None:raise ValueError('transfer_source_verification_expired')
+    assessment=_evaluate_implementation_completion(source,verification,expected_session_id=sid)
+    if assessment['outcome']!='done' or not assessment['registered']:
+        raise ValueError('transfer_source_verification_not_passed')
+    review=_transfer_review(source,policy);record=json.loads(raw)
+    files={str(verification):_transfer_file_row(verification),str(session_file):_transfer_file_row(session_file)}
+    for item in record['checks'].values():
+        path=_transfer_local(source,item['evidence']);row=_transfer_file_row(path)
+        if item.get('evidence_sha256')!=row['sha256']:
+            raise ValueError('transfer_source_evidence_digest_missing_or_mismatch')
+        files[str(path)]=row
+    files[str(_basis_path(source,sid)/f"{basis['revision']}.json")]=_transfer_file_row(_basis_path(source,sid)/f"{basis['revision']}.json")
+    for receipt in state.get('red_evidence',{}).values():
+        path=_transfer_local(source,receipt['file']);files[str(path)]=_transfer_file_row(path)
+        proof=json.loads(_transfer_read(path));output=_transfer_local(source,proof['output_file']);files[str(output)]=_transfer_file_row(output)
+    prefix=source/'.omc/state/review-snapshots'
+    for path in [Path(review['pointer']),Path(review['receipt_path']),
+                 prefix/review['receipt']['review_snapshot_name'],prefix/review['receipt']['review_evidence_name']]:
+        files[str(path)]=_transfer_file_row(path)
+    if _transfer_read(verification)!=raw or _transfer_git(source,'status','--porcelain','--untracked-files=all').strip():
+        raise ValueError('transfer_source_changed_during_capture')
+    return {'identity':identity,'session_id':sid,'work_id':session['work_id'],'basis_sha256':_basis_digest(basis),
+            'code_snapshot_sha256':_code_snapshot_digest(source,verification),'files':files,
+            'review_receipt_sha256':review['ready']['receipt_sha256'],'captured_pass':True}
+
+
+def _transfer_context(root: Path):
+    state,expiration=_read_pipeline(root)
+    if expiration is not None:raise ValueError('pipeline_ttl_expired')
+    latest=json.loads((root/'.omc/state/latest.json').read_text());sid=_completion_owner(root,latest,state)
+    basis=_load_approved_basis(root,sid)
+    if _completion_kind(basis)!=TRANSFER_KIND:raise ValueError('completion_kind_entry_mismatch')
+    session=json.loads((root/'.omc/state/sessions'/sid/'session.json').read_text())
+    if (session.get('session_id')!=sid or session.get('confirmation',{}).get('status')!='confirmed'
+            or not isinstance(session.get('work_id'),str) or not session['work_id']):
+        raise ValueError('transfer_work_binding_invalid')
+    if (not state.get('contract_confirmed') or state.get('session_id')!=sid
+            or state.get('basis_sha256')!=_basis_digest(basis)):
+        raise ValueError('transfer_contract_binding_invalid')
+    if state.get('transfer_operator_snapshot')!=_code_snapshot_digest(root):
+        raise ValueError('transfer_operator_code_changed')
+    return state,sid,basis,session['work_id']
+
+
+def _transfer_baseline_path(root: Path,sid: str) -> Path:
+    path=root/'.omc/state/transfer-baselines'/f'{sid}.json'
+    for part in (path,*path.parents):
+        if part==root:break
+        if part.is_symlink():raise ValueError('transfer_baseline_linked')
+    return path
+
+
+def cmd_register_transfer_baseline(root: Path) -> int:
+    try:
+        state,sid,basis,work=_transfer_context(root);policy=_validate_transfer_policy(basis)
+        target=Path(policy['target_root']).resolve(strict=True);source=Path(policy['source_root']).resolve(strict=True)
+        if any(a==b or a.is_relative_to(b) or b.is_relative_to(a)
+               for a,b in [(target,source),(target,root),(source,root)]):
+            raise ValueError('transfer_roots_not_independent')
+        identity=_transfer_identity(target);head=_transfer_git(target,'rev-parse','HEAD').decode().strip()
+        if head==policy['target_commit']:raise ValueError('transfer_already_applied')
+        if head!=policy['base_commit']:raise ValueError('transfer_baseline_head_mismatch')
+        parents=_transfer_git(target,'rev-list','--parents','-n','1',policy['target_commit']).decode().split()
+        if parents!=[policy['target_commit'],policy['base_commit']]:raise ValueError('transfer_parent_mismatch')
+        paths=_transfer_git(target,'diff-tree','--no-commit-id','--name-only','-r',policy['target_commit']).decode().splitlines()
+        if sorted(paths)!=sorted(policy['expected_paths']):raise ValueError('transfer_commit_scope_mismatch')
+        path=_transfer_baseline_path(root,sid)
+        if path.exists():raise ValueError('transfer_baseline_write_once')
+        index_path=Path(identity['index']);index_raw=_transfer_read(index_path);index=_transfer_index(target)
+        before=_transfer_inventory(target)
+        # Unrelated pre-existing staging/worktree changes are captured unchanged.
+        # Only paths that this commit will overwrite must match the base tree.
+        base_tree={}
+        for row in _transfer_git(target,'ls-tree','-r','-z',policy['base_commit']).split(b'\0'):
+            if not row:continue
+            header,name=row.split(b'\t',1);mode,kind,oid=header.decode().split()
+            base_tree[os.fsdecode(name)]={'mode':mode,'oid':oid,'stage':'0'}
+        for name in policy['expected_paths']:
+            entry=base_tree.get(name)
+            if entry is None:
+                if name in index or name in before:raise ValueError('transfer_scope_conflict:'+name)
+            else:
+                if (name not in index or any(index[name][k]!=v for k,v in entry.items())
+                        or entry['mode'] not in ('100644','100755')):
+                    raise ValueError('transfer_scope_index_conflict:'+name)
+                data=_transfer_read(target/name)
+                if (hashlib.sha1(('blob '+str(len(data))+'\0').encode()+data).hexdigest()!=entry['oid']
+                        or before[name]['mode']!=(0o755 if entry['mode']=='100755' else 0o644)):
+                    raise ValueError('transfer_scope_worktree_conflict:'+name)
+        pointer=target/'.omc/state/review-snapshots/current.json'
+        pointer_raw=_transfer_read(pointer) if pointer.exists() else None
+        if pointer_raw is not None and hashlib.sha256(pointer_raw).hexdigest()!=before[str(pointer.relative_to(target))]['sha256']:
+            raise ValueError('transfer_pointer_changed_during_capture')
+        protected={str(Path(p).resolve()):_transfer_file_row(Path(p)) for p in policy['protected_paths']}
+        for protected_path in protected:
+            pp=Path(protected_path)
+            if pp==index_path or (pp==pointer and policy['allow_review_pointer_update']) or (pp.is_relative_to(target) and str(pp.relative_to(target)) in policy['expected_paths']):
+                raise ValueError('transfer_protection_policy_conflict')
+        proof=_transfer_source_proof(policy)
+        # No split-time baseline: register only if the observed target is stable.
+        if (_transfer_git(target,'rev-parse','HEAD').decode().strip()!=head
+                or _transfer_read(index_path)!=index_raw or _transfer_index(target)!=index
+                or _transfer_inventory(target)!=before
+                or any(_transfer_file_row(Path(p))!=row for p,row in protected.items())):
+            raise ValueError('transfer_changed_during_registration')
+        current,owner,new_basis,new_work=_transfer_context(root)
+        if owner!=sid or new_work!=work or _basis_digest(new_basis)!=_basis_digest(basis):
+            raise ValueError('transfer_approval_changed_during_registration')
+        value={'schema_version':'omc-transfer-baseline/v1','session_id':sid,'work_id':work,
+               'basis_sha256':_basis_digest(basis),'policy':policy,'identity':identity,'index':index,
+               'index_raw_hex':index_raw.hex(),'files':before,'protected':protected,'source_proof':proof,
+               'old_pointer_hex':None,'registered_at':time.time()}
+        if pointer_raw is not None:value['old_pointer_hex']=pointer_raw.hex()
+        path.parent.mkdir(parents=True,exist_ok=True)
+        with path.open('x',encoding='utf-8') as stream:json.dump(value,stream,ensure_ascii=False,indent=2)
+        current['transfer_baseline_sha256']=_basis_digest(value);_save_state(root,current)
+        print(json.dumps({'status':'registered','baseline_file':str(path),'baseline_sha256':_basis_digest(value)},ensure_ascii=False))
+        return 0
+    except (OSError,ValueError,TypeError,KeyError,AttributeError,subprocess.SubprocessError) as exc:
+        print('[PIPELINE] '+str(exc));return 1
+
+
+def _transfer_current_check(baseline: dict,policy: dict):
+    target=Path(policy['target_root']).resolve(strict=True)
+    if _transfer_identity(target)!=baseline['identity']:raise ValueError('transfer_target_identity_mismatch')
+    if _transfer_git(target,'rev-parse','HEAD').decode().strip()!=policy['target_commit']:
+        raise ValueError('transfer_target_head_mismatch')
+    before=baseline['files'];after=_transfer_inventory(target);expected=set(policy['expected_paths'])
+    tree={}
+    for row in _transfer_git(target,'ls-tree','-r','-z',policy['target_commit']).split(b'\0'):
+        if not row:continue
+        head,path=row.split(b'\t',1);mode,kind,oid=head.decode().split();tree[os.fsdecode(path)]={'mode':mode,'oid':oid,'stage':'0'}
+    current=_transfer_index(target);old=baseline['index']
+    for name in set(old)|set(current):
+        if name in expected:
+            want=tree.get(name)
+            if want is None:
+                if name in current:raise ValueError('transfer_index_deleted_entry_present')
+            elif (name not in current or any(current[name][k]!=v for k,v in want.items())
+                  or current[name]['flags']!=old.get(name,{'flags':0})['flags']):
+                raise ValueError('transfer_index_expected_entry_mismatch')
+        elif current.get(name)!=old.get(name):raise ValueError('transfer_index_preservation_mismatch')
+    pointer='.omc/state/review-snapshots/current.json'
+    review=_transfer_review(target,policy,preserved_target=True)
+    required_parents={str(parent) for name in expected if name in tree
+                      for parent in Path(name).parents if str(parent)!='.'}
+    deleted_paths={name for name in expected if name in old and name not in tree}
+    deletion_parents={str(parent) for name in deleted_paths
+                      for parent in Path(name).parents if str(parent)!='.'}
+    removable_parents=set(deletion_parents)
+    # Git can remove parents emptied by an approved deletion. A pre-existing
+    # unrelated file or even an empty directory prevents removing its ancestors.
+    for name,row in before.items():
+        if name in deleted_paths or (name in deletion_parents and row.get('kind')=='directory'):
+            continue
+        removable_parents.difference_update(str(parent) for parent in Path(name).parents
+                                            if str(parent)!='.')
+    for name in set(before)|set(after):
+        if name in expected:
+            if name not in tree:
+                if name in after:raise ValueError('transfer_worktree_delete_mismatch')
+            else:
+                data=_transfer_read(target/name);row=after.get(name)
+                if (row is None or hashlib.sha1(('blob '+str(len(data))+'\0').encode()+data).hexdigest()!=tree[name]['oid']
+                        or row['mode']!=(0o755 if tree[name]['mode']=='100755' else 0o644)):
+                    raise ValueError('transfer_worktree_blob_mode_mismatch')
+        elif name==pointer and policy['allow_review_pointer_update']:
+            if name not in after or (name in before and after[name]['mode']!=before[name]['mode']):
+                raise ValueError('transfer_pointer_preservation_mismatch')
+        elif name in before:
+            if after.get(name)!=before[name]:
+                if (name not in removable_parents or name in after
+                        or before[name].get('kind')!='directory'):
+                    raise ValueError('transfer_file_preservation_mismatch:'+name)
+        elif name in required_parents and after[name].get('kind')=='directory':
+            pass
+        elif after[name].get('kind')=='directory' and name in {'.omc/state','.omc/state/review-snapshots','.omc/state/review-snapshots/peer-inputs','.omc/state/review-snapshots/review-evidence'}:
+            pass
+        elif (not name.startswith('.omc/state/review-snapshots/') or not name.endswith('.json')
+              or Path(name).name=='current.json'):
+            raise ValueError('transfer_unapproved_added_path:'+name)
+    for p,row in baseline['protected'].items():
+        if _transfer_file_row(Path(p))!=row:raise ValueError('transfer_protected_file_changed')
+    proof=baseline['source_proof'];source=Path(policy['source_root']).resolve(strict=True)
+    if (_transfer_identity(source)!=proof['identity'] or _transfer_git(source,'rev-parse','HEAD').decode().strip()!=policy['target_commit']
+            or _transfer_git(source,'status','--porcelain','--untracked-files=all').strip()):
+        raise ValueError('transfer_source_changed')
+    _transfer_tree_matches(source,policy['target_commit'])
+    if _code_snapshot_digest(source,source/policy['source_verification'])!=proof['code_snapshot_sha256']:
+        raise ValueError('transfer_source_snapshot_changed')
+    for p,row in proof['files'].items():
+        if _transfer_file_row(Path(p))!=row:raise ValueError('transfer_source_proof_changed')
+    return review
+
+
+def _transfer_block(reason: str, status: str='unrun') -> dict:
+    mismatch=status=='mismatch' or any(token in reason for token in ('mismatch','changed','stale'))
+    first='검증 실패·수정 필요' if status=='failed' else '증거 불일치·재검증 필요' if mismatch else '구현됨·검증 미완료'
+    return {'outcome':'blocked','first':first,'registered':False,
+            'problems':[reason],'reason_code':'verification_incomplete','completion_kind':TRANSFER_KIND}
+
+
+def evaluate_transfer_completion(root: Path,verification_file: Path,expected_session_id: str|None=None) -> dict:
+    try:
+        state,sid,basis,work=_transfer_context(root)
+        if expected_session_id is not None and expected_session_id!=sid:raise ValueError('transfer_session_mismatch')
+        policy=_validate_transfer_policy(basis);path=_transfer_baseline_path(root,sid)
+        baseline=json.loads(_transfer_read(path))
+        if (baseline.get('schema_version')!='omc-transfer-baseline/v1' or baseline.get('session_id')!=sid
+                or baseline.get('work_id')!=work or baseline.get('basis_sha256')!=_basis_digest(basis)
+                or baseline.get('policy')!=policy or state.get('transfer_baseline_sha256')!=_basis_digest(baseline)):
+            raise ValueError('transfer_baseline_binding_mismatch')
+        verification_file=_internal_verification_path(root,verification_file);record=json.loads(_transfer_read(verification_file))
+        if record.get('session_id')!=sid:raise ValueError('transfer_verification_session_mismatch')
+        problems=approved_verification_problems(root,sid,state,record,verification_file)
+        if problems:
+            statuses=[row.get('status') for row in record.get('checks',{}).values() if isinstance(row,dict)]
+            return _transfer_block('; '.join(problems),'failed' if 'failed' in statuses else 'mismatch' if 'mismatch' in statuses else 'unrun')
+        review=_transfer_current_check(baseline,policy)
+        # Recheck after all evidence reads; validation cannot renew the work TTL.
+        end,owner,end_basis,end_work=_transfer_context(root)
+        if (owner!=sid or end_work!=work or _basis_digest(end_basis)!=_basis_digest(basis)
+                or end.get('transfer_baseline_sha256')!=_basis_digest(baseline)):
+            raise ValueError('transfer_changed_during_validation')
+        return {'outcome':'done','first':'필수 검증 통과·작업 완료','registered':True,'problems':[],
+                'completion_kind':TRANSFER_KIND,'transfer_review':review['ready']}
+    except (OSError,ValueError,TypeError,KeyError,AttributeError,subprocess.SubprocessError) as exc:
+        return _transfer_block(str(exc))
+
+
+def evaluate_task_completion(root: Path,verification_file: Path,expected_session_id: str|None=None) -> dict:
+    # Legacy entry does no transfer capture, import or write.
+    try:
+        state,_=_read_pipeline(root);latest=json.loads((root/'.omc/state/latest.json').read_text())
+        sid=_completion_owner(root,latest,state);basis=_load_approved_basis(root,sid)
+        if _completion_kind(basis)==TRANSFER_KIND:
+            return evaluate_transfer_completion(root,verification_file,expected_session_id)
+    except (OSError,ValueError,TypeError,KeyError,AttributeError):
+        pass  # Existing implementation evaluator reports its original failures.
+    return _evaluate_implementation_completion(root,verification_file,expected_session_id)
+
+
+def completion_command(root: Path,sid: str) -> str:
+    return 'complete-transfer' if _completion_kind(_load_approved_basis(root,sid))==TRANSFER_KIND else 'complete-task'
+
+
+def cmd_complete_transfer(root: Path,verification_file: Path) -> int:
+    return _print_completion(evaluate_transfer_completion(root,verification_file))
+
+
+
+def _evaluate_implementation_completion(root: Path, verification_file: Path, expected_session_id: str | None = None) -> dict:
     """Shared read-only completion/collector decision; local evidence is not attestation."""
     state, expiration = _read_pipeline(root)
     if expiration is not None and not _valid_completion_reapproval(root, state, verification_file):
@@ -1300,7 +1751,17 @@ def _evaluate_completion_checks(root: Path, verification_file: Path, state: dict
 
 
 def cmd_complete_task(root: Path, verification_file: Path) -> int:
-    evaluation = evaluate_task_completion(root, verification_file)
+    try:
+        latest=json.loads((root/'.omc/state/latest.json').read_text())
+        state,_=_read_pipeline(root);sid=_completion_owner(root,latest,state)
+        if _completion_kind(_load_approved_basis(root,sid))==TRANSFER_KIND:
+            return _print_completion(_transfer_block('completion_kind_entry_mismatch'))
+    except (OSError,ValueError,TypeError,KeyError,AttributeError):
+        pass
+    return _print_completion(_evaluate_implementation_completion(root, verification_file))
+
+
+def _print_completion(evaluation: dict) -> int:
     blocked = evaluation["outcome"] == "blocked"
     print(evaluation["first"])
     for problem in evaluation["problems"]:
@@ -1649,6 +2110,9 @@ def main() -> int:
     p_approval.add_argument("--file", type=Path, required=True)
     p_reapprove = sub.add_parser("reapprove-completion", help="명시적 재승인을 작업별 1회 기록; 완료 판정에만 적용")
     p_reapprove.add_argument("--file", type=Path, required=True)
+    sub.add_parser("register-transfer-baseline", help="승인된 이관 전 기준 1회 등록")
+    p_transfer = sub.add_parser("complete-transfer", help="검증된 동일 커밋 이관 완료 판정")
+    p_transfer.add_argument("--verification-file", type=Path, required=True)
     p_complete = sub.add_parser("complete-task", help="현재 작업 등록과 필수 검증에 따른 최종 보고")
     p_complete.add_argument("--verification-file", type=Path, required=True)
     p_contract.add_argument("--content", default="", help="CONTRACT 내용 (해시 저장용, 우발적 위조 방지)")
@@ -1685,6 +2149,10 @@ def main() -> int:
         return cmd_approve_checks(root, args.file)
     if args.cmd == "reapprove-completion":
         return cmd_reapprove_completion(root, args.file)
+    if args.cmd == "register-transfer-baseline":
+        return cmd_register_transfer_baseline(root)
+    if args.cmd == "complete-transfer":
+        return cmd_complete_transfer(root, args.verification_file)
     if args.cmd == "complete-task":
         return cmd_complete_task(root, args.verification_file)
     if args.cmd == "check-edit":

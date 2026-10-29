@@ -37,3 +37,88 @@ CONTRACT 목록을 모델이 새로 정하지 않습니다. 사용자에게 제�
 
 저장소 내부의 정상 폴더 링크는 링크 문자열·해석된 내부 대상·폴더 권한·검사 대상 파일 목록과 내용·권한을 함께 연결합니다. 외부 경로를 거쳐 내부로 돌아오는 링크도 거부합니다. 끊김·순환·64회를 넘는 링크 해석·Git ignored 대상·.omc/.git 실행 기록 대상 링크는 보류하며, 링크를 지우거나 검사 제외로 우회하지 않습니다. 대상 폴더 안의 일반 Git ignored 파일은 기존 정책대로 검사 대상이 아닙니다. Git 없는 환경의 의존성·캐시 제외도 유지합니다. 스냅샷은 실행 진위 인증이나 동시 파일 변경에 대한 보안 샌드박스가 아닙니다.
 
+
+
+## 검증된 동일 커밋 이관의 별도 완료 경로
+
+이 스킬의 구현 작업과 종류가 없는 기존 승인 기준은 계속 `complete-task`와 현재 작업 RED를 요구합니다.
+`benchmark_maintenance` 같은 work_class나 호출자의 RED 생략 선언으로 예외를 선택하지 않습니다.
+이 기능 자체를 구현·수정하는 작업도 기존 구현 경로로 검증합니다.
+
+새 동일 커밋 이관은 최초 승인 기준에 `completion_kind=verified_commit_transfer`와 `transfer` 정책을 고정한 경우에만 별도 판정합니다.
+같은 작업의 개정·보존 역할 전환으로 종류나 이관 정책을 바꾸지 않습니다.
+
+승인 후 순서(명령의 `--target`은 격리 운영 작업 폴더이며 실제 대상은 승인된 정책에서만 읽음):
+
+```bash
+python3 scripts/omc_pipeline_guard.py --target <운영폴더> contract-done --required-checks <승인ID>
+python3 scripts/omc_pipeline_guard.py --target <운영폴더> register-transfer-baseline
+# 등록 성공을 확인한 뒤 별도 승인된 실제 이관 절차 수행
+python3 scripts/omc_pipeline_guard.py --target <운영폴더> complete-transfer --verification-file <운영폴더내검증JSON>
+```
+
+기준 등록은 대상 HEAD가 아직 승인된 기준 커밋일 때만 1회 수행합니다. 이미 대상 커밋이면 사후 등록을 거부합니다.
+이관 전후 Git 상태·원래 구현의 검증 통과·리뷰 READY·요청 범위·원본/대상 내용·권한·보존 증거를 확인합니다.
+등록 중 HEAD·인덱스·보존 대상이 바뀌면 기준을 게시하지 않습니다.
+정확한 대상 커밋과 단일 부모, 승인된 전체 경로, 작업 ID·대상 Git/인덱스 경로를 결속합니다.
+검증 근거 없음·failed·unrun·mismatch·현재 기준 만료·범위 불일치는 RED 제외 자격이 아닙니다.
+원래 구현은 기존 판정기로 통과를 확인하며 이관의 새 RED만 제외합니다.
+
+보존 예외는 승인된 커밋 diff의 정확한 파일·인덱스 전환과, 명시적으로 승인한
+`.omc/state/review-snapshots/current.json`의 유효한 새 receipt 참조뿐입니다.
+기존 receipt·snapshot·검증 원문은 불변이며 새 리뷰 JSON 기록만 정해진 영역에 추가할 수 있습니다.
+다른 변경·플래그 차이·넓은 임의 제외 목록·다른 작업 기준 재사용은 차단합니다.
+
+CLI와 수집기는 동일 승인 종류·공용 판정과 실제 반환 경로를 확인합니다.
+이관 절차는 CONTRACT → 기준 등록 성공 → complete-transfer 반환이며 구현 절차의 RED를 대신 실행한 것으로 기록하지 않습니다.
+이관 완료는 기능·배포·실제 서비스 검증 성공을 의미하지 않습니다.
+기존 BLOCK 원문은 보존하며 과거 이관을 새 사전 기준으로 소급 완료하지 않습니다.
+지원하지 않는 증거·분할/희소 인덱스·링크·등록 예산 초과는 통과로 추정하지 않습니다.
+로컬 해시·Git·기록은 악의적 로컬 변조나 인간 승인·실행 진위의 인증이 아닙니다.
+
+
+### 이관 기준 JSON과 증거 경계
+
+7개 파일 구현 범위에서 새 명령과 아래 계약을 사용합니다. 실제 이관 실행 자체는 별도 승인입니다.
+
+```json
+{
+  "completion_kind": "verified_commit_transfer",
+  "transfer": {
+    "source_root": "/absolute/verified-source",
+    "target_root": "/absolute/target",
+    "base_commit": "기준커밋의40자리전체ID",
+    "target_commit": "검증된대상커밋의40자리전체ID",
+    "expected_paths": ["승인된커밋의전체변경경로"],
+    "source_session_id": "원래구현세션",
+    "source_verification": ".omc/verification/source.json",
+    "protected_paths": ["/absolute/preserved-file"],
+    "allow_review_pointer_update": true
+  }
+}
+```
+
+이는 기존 session_id·revision·request·approval_reference·checks 필드에 추가되는 승인 정책입니다.
+expected_paths는 snapshot을 자동 복사해 승인으로 삼지 않고 사용자가 승인한 목록을 명시합니다.
+정책·종류는 같은 작업에서 변경할 수 없으며 등록한 기준은 session/work/basis 해시와 실제 Git 디렉터리에 결속합니다.
+독립 Git 디렉터리만 지원합니다. 공유 worktree·분할/희소 인덱스·파일/폴더 링크는 지원되지 않으면 차단합니다.
+검증 원문과 보호 경로는 일반 파일만 지원하고 외부로 나가는 증거 링크는 허용하지 않습니다.
+보호 파일 목록은 최초 승인에서 정하며 등록 뒤 넓히거나 줄여 통과시키지 않습니다.
+대상 기존 파일 목록은 자동 수집하며 개별 파일 8MiB·총 256MiB·20,000개 제한을 넘으면 자격 보류합니다.
+
+원래 구현은 기존 완료 판정의 done/registered, 필수 검증 통과, 코드 snapshot과 source HEAD의 일치를 확인합니다.
+각 필수 항목 evidence는 지원되는 내부 원문 파일로 연결돼야 하며, 임의의 passed 문자열만으로 대체하지 않습니다.
+기준 등록 시 검증·승인·RED 원문과 참조 파일 해시를 결속합니다. 원래 검증이 만료·무효하면 자동 복구하지 않습니다.
+등록 시 유효하게 확인한 과거 통과는 고정 증거로 유지하되 현재 이관 작업의 8시간 유효기간을 연장하지 않습니다.
+완료 시 source 증거의 내용, 현재 대상 HEAD·파일·인덱스·승인 READY·보존 상태를 다시 읽어 대조합니다.
+
+`current.json`이 있으면 원문 바이트를 기준 기록에 별도 보존하고 허용된 포인터 갱신만 대조합니다.
+기존 리뷰 파일은 덮어쓰지 않으며 정해진 리뷰 영역의 새 JSON 기록과 검증된 receipt 참조만 허용합니다.
+예외 확대·관련 없는 파일 추가·기존 기록 변경·검증 근거 손상은 차단합니다.
+CLI의 상태·기계 판정·종료 코드와 수집기 판정은 같은 공용 평가를 사용합니다.
+실제 이관·기존 main·기존 BLOCK의 소급 재판정 없이 독립 fixture에서 공개 CLI와 수집기를 직접 회귀합니다.
+
+원래 검증 각 항목은 evidence 원문 경로와 evidence_sha256을 함께 제공해야 합니다.
+기존 검증기가 통과했더라도 원문 해시 연결이 없으면 이관 자격은 보류하며 자동으로 보충하지 않습니다.
+운영 작업의 코드 snapshot은 CONTRACT 최초 등록에 고정합니다. 등록 전후 운영 폴더에 코드를 추가해
+이관 종류로 구현 RED를 우회할 수 없습니다. 대상 파일·폴더 권한도 보존 목록에 포함합니다.

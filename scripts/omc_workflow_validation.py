@@ -17,7 +17,7 @@ from pathlib import Path
 from omc_output_contract import OutputContractError, parse_envelope
 from omc_workflow_preflight import assess_scope
 from omc_visual_check import CHECK_ID as VISUAL_ID, assess_report as assess_visual
-from omc_pipeline_guard import _load_approved_basis, evaluate_task_completion
+from omc_pipeline_guard import _load_approved_basis, evaluate_task_completion, completion_command
 
 STATUSES = {
     '필수 검증 통과·작업 완료', '구현됨·검증 미완료',
@@ -216,6 +216,11 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
     final = finals[0]['result']
     # Preserve the complete response; never normalize or repair explicit output.
     evaluation = evaluate_task_completion(root, verification, expected_session_id=sid)
+    try:
+        gate_command = completion_command(root,sid)
+    except (OSError,ValueError,KeyError,TypeError):
+        gate_command = 'complete-task'
+    transfer_mode = gate_command == 'complete-transfer'
     output.mkdir(parents=True, exist_ok=True)
     (output / 'final.txt').write_text(final, encoding='utf-8')
     issues = []
@@ -276,7 +281,7 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
                         known_writes.append(str((root / value).resolve()))
                 if block.get('name') == 'Bash':
                     command = block.get('input', {}).get('command', '')
-                    if 'complete-task' in command:
+                    if gate_command in command:
                         try:
                             args = shlex.split(command)
                             positions = [i for i, arg in enumerate(args) if arg == '--verification-file']
@@ -294,18 +299,28 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
                 for token, marker in [('contract-done', 'CONTRACT 확인 완료'), ('red-done', 'RED 완료 등록')]:
                     if call.get('name') == 'Bash' and token in command and marker in text and not block.get('is_error'):
                         evidence.append((token, call_index))
-                if call.get('name') == 'Bash' and 'complete-task' in command:
+                if transfer_mode and call.get('name') == 'Bash':
+                    literal_guard=False;args=[]
+                    try:
+                        args = _single_bash_argv(command)
+                        literal_guard = len(args)>2 and Path(args[1]).name=='omc_pipeline_guard.py'
+                        if literal_guard and 'register-transfer-baseline' in args and not block.get('is_error') and json.loads(text).get('status')=='registered':
+                            evidence.append(('register-transfer-baseline',call_index))
+                    except (ValueError,TypeError,AttributeError):
+                        pass
+                if call.get('name') == 'Bash' and gate_command in command:
                     try:
                         gate = parse_envelope(text)
                         gate_states = [line.strip().strip('#*` ').strip() for line in text.splitlines()
                                        if line.strip().strip('#*` ').strip() in STATUSES]
                         if (gate['stage'] == 'task' and gate['outcome'] == expected == evaluation['outcome']
                                 and gate_states and all(state == evaluation['first'] for state in gate_states)):
-                            evidence.append(('complete-task', call_index))
+                            if not transfer_mode or (literal_guard and gate_command in args and not block.get('is_error')):
+                                evidence.append((gate_command, call_index))
                     except OutputContractError:
                         pass
     order = [next((i for name, i in evidence if name == token), None)
-             for token in ['contract-done', 'red-done', 'complete-task']]
+             for token in (['contract-done','register-transfer-baseline','complete-transfer'] if transfer_mode else ['contract-done','red-done','complete-task'])]
     procedure = all(i is not None for i in order) and order == sorted(order, key=lambda x: -1 if x is None else x)
     path_state = 'unknown'
     observed = []
@@ -414,6 +429,7 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
         issues.append(str(exc))
     assessment = {
         'schema_version': 'omc-workflow-validation/v1',
+        'completion_command': gate_command,
         'final_sha256': hashlib.sha256(final.encode('utf-8')).hexdigest(),
         'events_sha256': hashlib.sha256(source).hexdigest(),
         'required': required, 'format_quality': format_quality,
