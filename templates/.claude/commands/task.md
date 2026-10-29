@@ -189,3 +189,41 @@ CONTRACT 목록을 모델이 새로 정하지 않습니다. 사용자에게 제�
 ## 최종 보고와 작업 기록의 구분
 
 PHASE 7 기록은 최종 답변에 붙이지 않습니다. 단계별 기록과 교훈은 작업 중 처리하고, 사용자 최종 보고는 상태·변경·검증·다음 행동만 간결하게 작성합니다. complete-task의 기계 판정 두 줄을 최종 답변 끝에 그대로 복사합니다. HTML 주석과 VERDICT를 생략하거나 평문 요약으로 대체하지 않습니다. 이 최종 보고 계약이 위 단계별 양식보다 우선합니다.
+
+
+## 검증된 동일 커밋 이관의 별도 완료 경로
+
+이 스킬의 구현 작업과 종류가 없는 기존 승인 기준은 계속 `complete-task`와 현재 작업 RED를 요구합니다.
+`benchmark_maintenance` 같은 work_class나 호출자의 RED 생략 선언으로 예외를 선택하지 않습니다.
+이 기능 자체를 구현·수정하는 작업도 기존 구현 경로로 검증합니다.
+
+새 동일 커밋 이관은 최초 승인 기준에 `completion_kind=verified_commit_transfer`와 `transfer` 정책을 고정한 경우에만 별도 판정합니다.
+같은 작업의 개정·보존 역할 전환으로 종류나 이관 정책을 바꾸지 않습니다.
+
+승인 후 순서(명령의 `--target`은 격리 운영 작업 폴더이며 실제 대상은 승인된 정책에서만 읽음):
+
+```bash
+python3 scripts/omc_pipeline_guard.py --target <운영폴더> contract-done --required-checks <승인ID>
+python3 scripts/omc_pipeline_guard.py --target <운영폴더> register-transfer-baseline
+# 등록 성공을 확인한 뒤 별도 승인된 실제 이관 절차 수행
+python3 scripts/omc_pipeline_guard.py --target <운영폴더> complete-transfer --verification-file <운영폴더내검증JSON>
+```
+
+기준 등록은 대상 HEAD가 아직 승인된 기준 커밋일 때만 1회 수행합니다. 이미 대상 커밋이면 사후 등록을 거부합니다.
+이관 전후 Git 상태·원래 구현의 검증 통과·리뷰 READY·요청 범위·원본/대상 내용·권한·보존 증거를 확인합니다.
+등록 중 HEAD·인덱스·보존 대상이 바뀌면 기준을 게시하지 않습니다.
+정확한 대상 커밋과 단일 부모, 승인된 전체 경로, 작업 ID·대상 Git/인덱스 경로를 결속합니다.
+검증 근거 없음·failed·unrun·mismatch·현재 기준 만료·범위 불일치는 RED 제외 자격이 아닙니다.
+원래 구현은 기존 판정기로 통과를 확인하며 이관의 새 RED만 제외합니다.
+
+보존 예외는 승인된 커밋 diff의 정확한 파일·인덱스 전환과, 명시적으로 승인한
+`.omc/state/review-snapshots/current.json`의 유효한 새 receipt 참조뿐입니다.
+기존 receipt·snapshot·검증 원문은 불변이며 새 리뷰 JSON 기록만 정해진 영역에 추가할 수 있습니다.
+다른 변경·플래그 차이·넓은 임의 제외 목록·다른 작업 기준 재사용은 차단합니다.
+
+CLI와 수집기는 동일 승인 종류·공용 판정과 실제 반환 경로를 확인합니다.
+이관 절차는 CONTRACT → 기준 등록 성공 → complete-transfer 반환이며 구현 절차의 RED를 대신 실행한 것으로 기록하지 않습니다.
+이관 완료는 기능·배포·실제 서비스 검증 성공을 의미하지 않습니다.
+기존 BLOCK 원문은 보존하며 과거 이관을 새 사전 기준으로 소급 완료하지 않습니다.
+지원하지 않는 증거·분할/희소 인덱스·링크·등록 예산 초과는 통과로 추정하지 않습니다.
+로컬 해시·Git·기록은 악의적 로컬 변조나 인간 승인·실행 진위의 인증이 아닙니다.

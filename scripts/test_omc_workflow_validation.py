@@ -443,3 +443,50 @@ def test_collector_blocks_reapproval_that_expires_during_validation(tmp_path,mon
     assert comparison['official_outcome']=='blocked'
     assert result['required']['truthful_final']=='failed' and result['recompare_entry']=='hold'
     assert path.read_bytes()==before
+
+
+# Shared fixtures are defined in the other approved test file; no production helper added.
+from test_omc_task_completion_surface import transfer_case, transfer_register, transfer_apply, transfer_finish
+
+
+def collect_transfer_case(c,missing=None,defect=None):
+    root=c['operator'];registered=transfer_register(c);assert registered.returncode==0,registered.stdout
+    transfer_apply(c);completed,path=transfer_finish(c);assert completed.returncode==0,completed.stdout
+    final=completed.stdout
+    if defect=='protected':(c['target']/'.omc/keep.json').write_text('changed before collection')
+    rows=[]
+    steps=[('contract-done',c['contract_stdout']),('register-transfer-baseline',registered.stdout),('complete-transfer',completed.stdout)]
+    for i,(token,text) in enumerate(steps):
+        if token==missing:continue
+        command=sys.executable+' '+str(guard.__file__)+' --target '+str(root)+' '+token
+        if token=='complete-transfer':command+=' --verification-file '+str(path)
+        rows.extend([{'type':'assistant','message':{'content':[{'type':'tool_use','id':str(i),'name':'Bash','input':{'command':command}}]}},
+                     {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':str(i),'content':text}]}}])
+    rows.append({'type':'result','subtype':'success','result':final})
+    events=root/'.omc/transfer-events.jsonl';events.write_text('\n'.join(json.dumps(x,ensure_ascii=False) for x in rows))
+    out=root/'.omc/transfer-collected'
+    p=subprocess.run([sys.executable,str(SCRIPT),'--target',str(root),'--events-file',str(events),
+       '--session-id','transfer','--verification-file',str(path),'--expected-outcome','done','--output-dir',str(out)],capture_output=True,text=True)
+    return p,json.loads((out/'assessment.json').read_text()),out
+
+
+def test_transfer_collector_and_public_cli_agree(transfer_case):
+    p,assessment,out=collect_transfer_case(transfer_case)
+    assert p.returncode==0,p.stdout+p.stderr
+    assert assessment['completion_command']=='complete-transfer'
+    assert assessment['required']['registration']=='passed' and assessment['required']['procedure_calls']=='passed'
+    assert json.loads((out/'report-comparison.json').read_text())['official_outcome']=='done'
+
+
+@pytest.mark.parametrize('missing',['register-transfer-baseline','complete-transfer'])
+def test_transfer_collector_requires_actual_success_path(transfer_case,missing):
+    p,assessment,_=collect_transfer_case(transfer_case,missing=missing)
+    assert p.returncode==1 and assessment['required']['procedure_calls']=='unknown'
+
+
+def test_transfer_collector_rechecks_preservation_not_expected_outcome(transfer_case):
+    p,assessment,out=collect_transfer_case(transfer_case,defect='protected')
+    assert p.returncode==1
+    report=json.loads((out/'report-comparison.json').read_text())
+    assert report['official_outcome']=='blocked' and not report['state_match']
+    assert assessment['required']['truthful_final']=='failed'
