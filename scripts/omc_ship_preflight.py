@@ -66,6 +66,134 @@ class Owned:
     def close(self):
         os.close(self.fd)
 
+class ClonedMetadata(Owned):
+    """Pin only a directory restored inside this prepare's exclusively owned clone."""
+    @classmethod
+    def pin(cls, owner, run):
+        run.work()
+        owner.verify()
+        try:
+            first = os.stat('.omc', dir_fd=owner.fd, follow_symlinks=False)
+        except FileNotFoundError:
+            owner.verify()
+            return None
+        if stat.S_ISLNK(first.st_mode):
+            raise Blocked('symlink_path', str(owner.path/'.omc'))
+        if not stat.S_ISDIR(first.st_mode):
+            raise Blocked('reservation_conflict', str(owner.path/'.omc'))
+        fd = os.open('.omc', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=owner.fd)
+        directory = cls.__new__(cls)
+        directory.path, directory.parent = owner.path/'.omc', owner.token
+        directory.fd, directory.token, directory.owner = fd, [first.st_dev, first.st_ino], owner
+        try:
+            directory.verify()
+            run.work()
+        except BaseException:
+            directory.close()
+            raise
+        return directory
+
+    def verify(self):
+        self.owner.verify()
+        try:
+            super().verify()
+        except FileNotFoundError as ex:
+            raise Blocked('directory_identity_changed', str(self.path)) from ex
+
+    def file(self, name):
+        try:
+            return super().file(name)
+        except FileExistsError as ex:
+            raise Blocked('reservation_conflict', str(self.path/name)) from ex
+
+
+def metadata_inventory(run, directory):
+    """Walk through pinned directory fds, never following metadata links."""
+    found = set()
+    def walk(fd, prefix):
+        run.work()
+        before = os.fstat(fd)
+        with os.scandir(fd) as entries:
+            for entry in entries:
+                run.work()
+                relative = prefix+'/'+entry.name
+                item = entry.stat(follow_symlinks=False)
+                found.add(relative)
+                if stat.S_ISLNK(item.st_mode):
+                    raise Blocked('symlink_path', relative)
+                if stat.S_ISDIR(item.st_mode):
+                    child = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                    try:
+                        opened = os.fstat(child)
+                        if (opened.st_dev, opened.st_ino) != (item.st_dev, item.st_ino):
+                            raise Blocked('directory_identity_changed', relative)
+                        walk(child, relative)
+                        after = os.stat(entry.name, dir_fd=fd, follow_symlinks=False)
+                        if (after.st_dev, after.st_ino) != (item.st_dev, item.st_ino):
+                            raise Blocked('directory_identity_changed', relative)
+                    finally:
+                        os.close(child)
+                elif not stat.S_ISREG(item.st_mode):
+                    raise Blocked('unsupported_tracked_type', relative)
+        after = os.fstat(fd)
+        if (before.st_mtime_ns, before.st_ctime_ns) != (after.st_mtime_ns, after.st_ctime_ns):
+            raise Blocked('directory_identity_changed', prefix)
+    directory.verify()
+    walk(directory.fd, '.omc')
+    directory.verify()
+    run.work()
+    return found
+
+
+def verify_cloned_metadata(run, target, directory, head, config_created=False):
+    """Strict clone inventory; NOT reused by check after fresh approval issuance."""
+    run.work()
+    rows = run.git(target, 'ls-tree', '-r', '-z', '--full-tree', head, '--', '.omc')
+    expected = set()
+    for row in rows.split(b'\0'):
+        if not row:
+            continue
+        run.work()
+        name = os.fsdecode(row.split(b'\t', 1)[1])
+        if name == '.omc' or not name.startswith('.omc/') or '..' in Path(name).parts:
+            raise Blocked('unsafe_tracked_path', name)
+        if name == '.omc/pipeline_session.json' or any(
+                name == prefix or name.startswith(prefix+'/') for prefix in
+                ('.omc/state', '.omc/verification', '.omc/verification-bases')):
+            raise Blocked('cloned_runtime_metadata_conflict', name)
+        expected.add(name)
+        expected.update(str(parent) for parent in Path(name).parents if str(parent) not in ('.', '.omc'))
+    if directory is None:
+        if expected:
+            raise Blocked('tracked_file_missing', '.omc')
+        directory = Owned(target/'.omc')
+    try:
+        directory.verify()
+        if not config_created and os.path.lexists(directory.path/'quality-gates.json'):
+            raise Blocked('reservation_conflict', str(directory.path/'quality-gates.json'))
+        actual = metadata_inventory(run, directory)
+        if not expected and actual and not config_created:
+            raise Blocked('cloned_metadata_untracked', '.omc')
+        if config_created:
+            expected.add('.omc/quality-gates.json')
+        if actual != expected:
+            raise Blocked('cloned_metadata_inventory_mismatch', repr(sorted(actual ^ expected)))
+        verify_head_files(run, target, head)
+        # HEAD checks run subprocesses after the first scan. Recheck the actual
+        # inventory before returning permission to create the configuration.
+        actual = metadata_inventory(run, directory)
+        if actual != expected:
+            raise Blocked('cloned_metadata_inventory_mismatch', repr(sorted(actual ^ expected)))
+        directory.verify()
+        run.work()
+        return directory
+    except BaseException:
+        # The caller owns an already pinned fd. Only close a newly created one here.
+        if not isinstance(directory, ClonedMetadata) and not config_created:
+            directory.close()
+        raise
+
+
 class Run:
     def __init__(self, command, started):
         self.started = started
@@ -338,11 +466,13 @@ def execute(run, args, result):
         config_bytes(run, source, doc, ref)
         run.phase = 'reservation'
         owned = Owned(target)
+        directory = None
         try:
             run.phase = 'clone'
             owned.verify()
             run.git(source.parent, 'clone', '--no-hardlinks', '--template=', '--origin', 'omc-source', '--', source, target, cap=120)
             owned.verify()
+            directory = ClonedMetadata.pin(owned, run)
             independent(run, target)
             if run.git(target, 'rev-parse', 'HEAD').decode().strip() != doc['expected_head_oid']:
                 raise Blocked('candidate_mismatch')
@@ -357,12 +487,12 @@ def execute(run, args, result):
                 run.git(target, 'update-ref', ref, doc['expected_base_oid'], '0'*40)
             owned.verify()
             run.phase = 'config'
-            directory = Owned(target/'.omc')
-            try:
-                owned.verify()
-                directory.write('quality-gates.json', config)
-            finally:
-                directory.close()
+            if directory is not None and not run.git(target, 'ls-tree', '-r', '--name-only', doc['expected_head_oid'], '--', '.omc').strip():
+                raise Blocked('cloned_metadata_untracked', '.omc')
+            directory = verify_cloned_metadata(run, target, directory, doc['expected_head_oid'])
+            owned.verify()
+            directory.write('quality-gates.json', config)
+            verify_cloned_metadata(run, target, directory, doc['expected_head_oid'], config_created=True)
             if freeze(run, source) != before:
                 raise Blocked('source_preservation_mismatch')
             changed(run, source, doc, ref)
@@ -374,6 +504,8 @@ def execute(run, args, result):
             config_bytes(run, target, doc, ref)
             owned.verify()
         finally:
+            if directory is not None:
+                directory.close()
             owned.close()
     else:
         run.phase = 'check'

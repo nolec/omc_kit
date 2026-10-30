@@ -584,3 +584,308 @@ def test_tracked_symlink_is_checked_as_head_blob_without_following_it(fixture, f
     else:
         assert_blocked(result)
     assert (target/'.git/index').read_bytes() == before
+
+
+@pytest.fixture
+def tracked_metadata(fixture):
+    """Metadata belongs to both Git revisions, never to the changed-path scope."""
+    source, contract, target = fixture
+    base = json.loads(contract.read_text())['expected_base_oid']
+    git(source, 'reset', '--hard', base)
+    metadata = source/'.omc'
+    (metadata/'lessons').mkdir(parents=True, exist_ok=True)
+    (metadata/'hooks.json').write_text('{"fixture":true}\n')
+    leaf = metadata/'lessons/kept.md'
+    leaf.write_text('tracked metadata\n')
+    leaf.chmod(0o755)
+    git(source, 'add', '-f', '.omc/hooks.json', '.omc/lessons/kept.md')
+    git(source, 'commit', '--amend', '--no-edit')
+    base = git(source, 'rev-parse', 'HEAD')
+    (source/'VERSION').write_text('2\n')
+    git(source, 'add', 'VERSION')
+    git(source, 'commit', '-m', 'candidate with tracked metadata baseline')
+    git(source, 'update-ref', 'refs/remotes/origin/main', base)
+    replace_contract(fixture, expected_base_oid=base, expected_head_oid=git(source, 'rev-parse', 'HEAD'))
+    return fixture
+
+
+def test_public_prepare_reuses_tracked_metadata_and_read_only_check(tracked_metadata):
+    source, contract, target = tracked_metadata
+    protected = {p: p.read_bytes() for p in [source/'.git/index', source/'.git/config',
+        source/'.omc/hooks.json', source/'.omc/lessons/kept.md', source/'.omc/quality-gates.json']}
+    prepared = invoke(tracked_metadata)
+    assert prepared.returncode == 0, prepared.stdout + prepared.stderr
+    payload = json.loads(prepared.stdout)
+    assert payload['status'] == 'baseline_verified' and payload['source_preserved']
+    assert payload['cleanup_confirmed'] and payload['evidence_complete']
+    assert (target/'.omc/lessons/kept.md').read_bytes() == protected[source/'.omc/lessons/kept.md']
+    assert (target/'.omc/lessons/kept.md').stat().st_mode & 0o111
+    assert not (target/'.omc/state').exists()
+    checked = invoke(tracked_metadata, 'check')
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert json.loads(checked.stdout)['target_preserved']
+    assert all(path.read_bytes() == raw for path, raw in protected.items())
+
+
+def metadata_clone_injection(fixture, tmp_path, body):
+    """Run mutation only after the real clone, before the first metadata observation."""
+    return shim_env(tmp_path, """
+if args[6]=='clone':
+    cloned=subprocess.run([real,*args]); assert cloned.returncode==0
+    metadata=Path(%r)/'.omc'
+%s
+    sys.exit(0)
+""" % (str(fixture[2]), '\n'.join('    '+line for line in body.splitlines())))
+
+
+@pytest.mark.parametrize('kind', ['same-config', 'other-config', 'config-link', 'config-broken-link',
+    'config-directory', 'extra-file', 'extra-directory', 'content', 'deleted', 'mode',
+    'root-file', 'root-link', 'nested-link'])
+def test_tracked_metadata_clone_conflicts_are_not_adopted(tracked_metadata, tmp_path, kind):
+    source, contract, target = tracked_metadata
+    outside = tmp_path/'outside'
+    outside.write_text('external preserved')
+    scripts = {
+        'same-config': "(metadata/'quality-gates.json').write_bytes(Path(%r).read_bytes())" % str(source/'.omc/quality-gates.json'),
+        'other-config': "(metadata/'quality-gates.json').write_text('different')",
+        'config-link': "(metadata/'quality-gates.json').symlink_to(%r)" % str(outside),
+        'config-broken-link': "(metadata/'quality-gates.json').symlink_to('absent')",
+        'config-directory': "(metadata/'quality-gates.json').mkdir()",
+        'extra-file': "(metadata/'injected').write_text('keep')",
+        'extra-directory': "(metadata/'injected').mkdir()",
+        'content': "(metadata/'hooks.json').write_text('modified')",
+        'deleted': "(metadata/'hooks.json').unlink()",
+        'mode': "(metadata/'lessons/kept.md').chmod(0o644)",
+        'root-file': "metadata.rename(metadata.with_name('original-metadata'))\nmetadata.write_text('keep')",
+        'root-link': "metadata.rename(metadata.with_name('original-metadata'))\nmetadata.symlink_to('original-metadata', target_is_directory=True)",
+        'nested-link': "(metadata/'lessons/kept.md').unlink()\n(metadata/'lessons/kept.md').symlink_to(%r)" % str(outside),
+    }
+    doc = assert_blocked(invoke(tracked_metadata,
+        env=metadata_clone_injection(tracked_metadata, tmp_path, scripts[kind])))
+    if kind.startswith('config-') or kind in ('same-config', 'other-config'):
+        assert doc['reason_code'] == 'reservation_conflict' and doc['phase'] == 'config'
+    elif kind in ('root-link', 'nested-link'):
+        assert doc['reason_code'] == 'symlink_path'
+        assert doc['phase'] == ('clone' if kind == 'root-link' else 'config')
+    elif kind == 'root-file':
+        assert doc['reason_code'] == 'reservation_conflict' and doc['phase'] == 'clone'
+    elif kind in ('extra-file', 'extra-directory', 'deleted'):
+        assert doc['reason_code'] == 'cloned_metadata_inventory_mismatch' and doc['phase'] == 'config'
+    else:
+        assert doc['reason_code'] == ('tracked_content_mismatch' if kind == 'content' else 'tracked_mode_mismatch')
+        assert doc['phase'] == 'config'
+    assert doc['cleanup_confirmed'] and doc['evidence_complete']
+    assert outside.read_text() == 'external preserved'
+    if kind == 'same-config':
+        assert (target/'.omc/quality-gates.json').read_bytes() == (source/'.omc/quality-gates.json').read_bytes()
+    elif kind == 'other-config': assert (target/'.omc/quality-gates.json').read_text() == 'different'
+    elif not kind.startswith('config-') and kind != 'root-link':
+        assert not (target/'.omc/quality-gates.json').exists()
+
+
+def test_untracked_empty_metadata_directory_is_not_adopted(fixture, tmp_path):
+    env = metadata_clone_injection(fixture, tmp_path, 'metadata.mkdir()')
+    doc = assert_blocked(invoke(fixture, env=env), 'cloned_metadata_untracked')
+    assert doc['phase'] == 'config'
+    assert list((fixture[2]/'.omc').iterdir()) == []
+
+
+@pytest.mark.parametrize('point', ['before-observation', 'between-lstat-open', 'after-pin', 'before-write'])
+def test_tracked_metadata_identical_replacement_observation_boundary(tracked_metadata, tmp_path, point):
+    target = tracked_metadata[2]
+    mutation = "import shutil\nmetadata.rename(metadata.with_name('original-metadata'))\nshutil.copytree(metadata.with_name('original-metadata'),metadata)"
+    if point == 'before-observation':
+        before = mutation.replace("metadata.with_name('original-metadata')", "metadata.parent.parent/'original-metadata'")
+        result = invoke(tracked_metadata, env=metadata_clone_injection(tracked_metadata, tmp_path, before))
+        # No pre-observation inode exists: identical replacement is outside the guarantee.
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert (target/'.omc/hooks.json').read_bytes() == (target.parent/'original-metadata/hooks.json').read_bytes()
+        return
+    if point == 'after-pin':
+        env = shim_env(tmp_path, """
+if args[6]=='for-each-ref' and os.getcwd()==%r:
+    import shutil
+    metadata=Path(%r)/'.omc'
+    metadata.rename(metadata.with_name('original-metadata'))
+    shutil.copytree(metadata.with_name('original-metadata'),metadata)
+""" % (str(target), str(target)))
+    else:
+        env = site_env(tmp_path, """
+import os,shutil
+from pathlib import Path
+original=os.open
+state={'fired':False}
+def opened(path,flags,*a,**k):
+    hit=(path=='.omc' and 'dir_fd' in k) if %r=='between-lstat-open' else (path=='quality-gates.json' and 'dir_fd' in k)
+    if hit and not state['fired']:
+        state['fired']=True
+        metadata=Path(%r)/'.omc'
+        metadata.rename(metadata.with_name('original-metadata'))
+        shutil.copytree(metadata.with_name('original-metadata'),metadata)
+    return original(path,flags,*a,**k)
+os.open=opened
+""" % (point, str(target)))
+    doc = assert_blocked(invoke(tracked_metadata, env=env), 'directory_identity_changed')
+    assert doc['phase'] == ('clone' if point == 'between-lstat-open' else 'config')
+    assert not (target/'.omc/quality-gates.json').exists(), 'substitute must not receive configuration'
+    assert doc['cleanup_confirmed'] and doc['evidence_complete']
+
+
+@pytest.mark.parametrize('relative', ['.omc/state/current.json', '.omc/verification/receipt.json',
+    '.omc/verification-bases/checks.json', '.omc/pipeline_session.json'])
+def test_git_tracked_runtime_state_is_not_inherited(tracked_metadata, relative):
+    source, contract, target = tracked_metadata
+    base = json.loads(contract.read_text())['expected_base_oid']
+    git(source, 'reset', '--hard', base)
+    runtime = source/relative
+    runtime.parent.mkdir(parents=True, exist_ok=True)
+    runtime.write_text('{"old":"must not authorize"}')
+    git(source, 'add', '-f', relative)
+    git(source, 'commit', '--amend', '--no-edit')
+    base = git(source, 'rev-parse', 'HEAD')
+    (source/'VERSION').write_text('2\n')
+    git(source, 'add', 'VERSION'); git(source, 'commit', '-m', 'candidate')
+    git(source, 'update-ref', 'refs/remotes/origin/main', base)
+    replace_contract(tracked_metadata, expected_base_oid=base, expected_head_oid=git(source, 'rev-parse', 'HEAD'))
+    result = assert_blocked(invoke(tracked_metadata), 'cloned_runtime_metadata_conflict')
+    assert result['phase'] == 'config' and runtime.read_text() == '{"old":"must not authorize"}'
+    assert (target/relative).read_bytes() == runtime.read_bytes()
+    assert not (target/'.omc/quality-gates.json').exists()
+
+
+def metadata_public(script, args, codes=(0,)):
+    result = subprocess.run([sys.executable, str(ROOT/'scripts'/script), *args],
+        cwd=ROOT, capture_output=True, text=True, timeout=30)
+    assert result.returncode in codes, result.stdout + result.stderr
+    return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize('approval_defect', [None, 'missing', 'tampered'])
+def test_tracked_metadata_fresh_approval_then_check_separates_consumers(tracked_metadata, tmp_path, approval_defect):
+    source, contract, target = tracked_metadata
+    source_state = source/'.omc/state'
+    source_state.mkdir()
+    (source_state/'original.json').write_text('{"protected":"source"}')
+    source_index = (source/'.git/index').read_bytes()
+    result = invoke(tracked_metadata)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not (target/'.omc/state').exists()
+    assert (source_state/'original.json').read_text() == '{"protected":"source"}'
+    doc = json.loads(contract.read_text())
+    status = metadata_public('omc_quality_gate.py', ['--target', str(target), 'status'], (1,))
+    if approval_defect != 'missing':
+        metadata_public('omc_quality_gate.py', ['--target', str(target), 'approve',
+            '--config-sha256', status['config_sha256'], '--allow-full'])
+        review = tmp_path/'synthetic-review.txt'
+        review.write_text('APPROVE: disposable fixture VERSION only; not a real ship approval.')
+        snap = metadata_public('omc_review_snapshot.py', ['capture-review', '--target', str(target),
+            '--base-commit', doc['expected_base_oid'], '--candidate-commit', doc['expected_head_oid']])
+        sealed = metadata_public('omc_review_snapshot.py', ['seal-review-output', '--target', str(target),
+            '--review-snapshot', snap['snapshot_path'], '--review-snapshot-sha256', snap['snapshot_sha256'],
+            '--review-output', str(review)])
+        metadata_public('omc_review_snapshot.py', ['record-review', '--target', str(target),
+            '--review-snapshot', snap['snapshot_path'], '--review-snapshot-sha256', snap['snapshot_sha256'],
+            '--review-evidence', sealed['evidence_path'], '--review-evidence-sha256', sealed['evidence_sha256'],
+            '--verdict', 'APPROVE', '--expected-path', 'VERSION'])
+        if approval_defect == 'tampered':
+            (target/'.omc/state/review-snapshots/current.json').write_text('{}')
+    before = {p: p.read_bytes() for p in (target/'.omc').rglob('*') if p.is_file()}
+    checked = invoke(tracked_metadata, 'check')
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert json.loads(checked.stdout)['status'] == 'baseline_verified'
+    assert all(p.read_bytes() == raw for p, raw in before.items())
+    review_status = metadata_public('omc_review_snapshot.py', ['validate-ship', '--target', str(target)],
+        (0,) if approval_defect is None else (2,))
+    assert (review_status['status'] == 'READY') == (approval_defect is None)
+    quality_status = metadata_public('omc_quality_gate.py', ['--target', str(target), 'status'],
+        (1,) if approval_defect == 'missing' else (0,))
+    assert (quality_status['status'] == 'ready') == (approval_defect != 'missing')
+    assert (source/'.git/index').read_bytes() == source_index
+    assert (source_state/'original.json').read_text() == '{"protected":"source"}'
+
+
+@pytest.mark.parametrize('kind', ['config-race', 'scan-deadline', 'scan-read-error', 'late-final'])
+def test_tracked_metadata_new_boundaries_keep_fail_closed_evidence(tracked_metadata, tmp_path, kind):
+    target = tracked_metadata[2]
+    env = site_env(tmp_path, """
+import os,time
+from pathlib import Path
+original_open=os.open
+original_scan=os.scandir
+original_fdopen=os.fdopen
+clock=time.monotonic
+state={'offset':0,'fired':False}
+time.monotonic=lambda:clock()+state['offset']
+def opened(path,flags,*a,**k):
+    if %r=='config-race' and path=='quality-gates.json' and 'dir_fd' in k and not state['fired']:
+        state['fired']=True
+        Path(%r).write_text('raced configuration must remain')
+    return original_open(path,flags,*a,**k)
+def scanned(path):
+    if isinstance(path,int) and %r in ('scan-deadline','scan-read-error') and not state['fired']:
+        state['fired']=True
+        if %r=='scan-read-error':raise PermissionError(13,'metadata scan original failure')
+        state['offset']=211
+    return original_scan(path)
+class Proxy:
+    def __init__(self,f):self.f=f
+    def __getattr__(self,n):return getattr(self.f,n)
+    def __enter__(self):return self
+    def __exit__(self,*a):return self.f.__exit__(*a)
+    def write(self,raw):
+        n=self.f.write(raw)
+        if %r=='late-final' and b'record_kind' in raw:state['offset']=10000
+        return n
+def fdopened(*a,**k):return Proxy(original_fdopen(*a,**k))
+os.open=opened
+os.scandir=scanned
+os.fdopen=fdopened
+""" % (kind, str(target/'.omc/quality-gates.json'), kind, kind, kind))
+    doc = assert_blocked(invoke(tracked_metadata, env=env))
+    expected = {'config-race': 'reservation_conflict', 'scan-deadline': 'work_deadline_exceeded',
+                'scan-read-error': 'input_or_operation_error', 'late-final': 'evidence_incomplete'}
+    assert doc['reason_code'] == expected[kind] and doc['phase'] == ('verify' if kind == 'late-final' else 'config')
+    if kind == 'config-race':
+        assert (target/'.omc/quality-gates.json').read_text() == 'raced configuration must remain'
+    elif kind in ('scan-deadline','scan-read-error'):
+        assert not (target/'.omc/quality-gates.json').exists()
+    if kind == 'late-final':
+        assert not doc['evidence_complete']
+        disk = json.loads((tracked_metadata[1].parent/'records-prepare/final.json').read_text())
+        assert disk['record_kind'] == 'evidence_only' and disk['status'] == 'blocked'
+    assert doc['cleanup_confirmed']
+
+
+def test_tracked_metadata_missing_directory_is_not_recreated(tracked_metadata, tmp_path):
+    env = metadata_clone_injection(tracked_metadata, tmp_path, 'import shutil\nshutil.rmtree(metadata)')
+    doc = assert_blocked(invoke(tracked_metadata, env=env), 'tracked_file_missing')
+    assert doc['phase'] == 'config' and not (tracked_metadata[2]/'.omc').exists()
+
+
+def test_tracked_metadata_directory_permissions_are_preserved(tracked_metadata, tmp_path):
+    env = metadata_clone_injection(tracked_metadata, tmp_path,
+        "metadata.chmod(0o750)\n(metadata/'lessons').chmod(0o700)")
+    result = invoke(tracked_metadata, env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    target = tracked_metadata[2]
+    assert (target/'.omc').stat().st_mode & 0o777 == 0o750
+    assert (target/'.omc/lessons').stat().st_mode & 0o777 == 0o700
+    assert (target/'.omc/quality-gates.json').stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize('kind', ['file', 'directory'])
+def test_metadata_added_during_head_verification_is_not_accepted(tracked_metadata, tmp_path, kind):
+    target = tracked_metadata[2]
+    env = shim_env(tmp_path, """
+if args[6:] == ['rev-parse','--show-object-format'] and os.getcwd()==%r:
+    injected=Path(%r)/'.omc/injected-after-scan'
+    if %r=='directory':injected.mkdir(exist_ok=True)
+    else:injected.write_text('injected content stays preserved')
+""" % (str(target), str(target), kind))
+    doc = assert_blocked(invoke(tracked_metadata, env=env), 'cloned_metadata_inventory_mismatch')
+    assert doc['phase'] == 'config'
+    injected = target/'.omc/injected-after-scan'
+    if kind == 'directory':assert injected.is_dir()
+    else:assert injected.read_text() == 'injected content stays preserved'
+    assert not (target/'.omc/quality-gates.json').exists()
+    assert doc['cleanup_confirmed'] and doc['evidence_complete']
