@@ -1,6 +1,41 @@
 # Automatic Model Routing Roadmap
 
-## 현재 · 8572ce8 main 반영·2개 파일 승인 재결속 및 반영 리뷰 완료 · 2026-10-30
+## 현재 · 6cf129e 별도 후보 27개 커밋·승인 재결속 완료 · 원본 main 통합 전 · 2026-10-30
+
+- 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
+- 현재 판정: 원본 main의 구현 기준은 ca4daeb이다. 별도 후보 6cf129e의 27개 파일은 커밋·리뷰 승인 재결속 READY이며 원본 main 통합은 미실행이다. 실제 홈 NOT_VERIFIED·비교 HOLD를 유지한다.
+- 개선 내용: 사용자에게 보이던 OMC_OUTPUT·VERDICT를 별도 불변 기록으로 분리하고 한글 판정을 표시하는 detached_v1 경로를 구현했다. 본문 판정과 기계 판정 충돌 시 발행을 차단하고, provider stdout·stderr·실제 종료 코드를 원문 바이트로 보존하도록 보완했다. 기존 legacy_inline 동작은 유지하며 신형 실패를 구형 성공으로 우회하지 않는다.
+- 후보 범위: 6cf129e07580293783f5e5f0b41716ddc2fd9b6e는 ca4daeb5ec84a35e2c5d800132ab241ca31a6356 기준의 정확한 27개 파일 커밋이다. 출력 분리·완료 가드·수집기·자동 실행기·12개 스킬/명령 안내와 테스트, 상속한 출하 진입 계약을 포함한다. 마지막 보완4개와 상속23개를 함께 검토했으며 4개만의 독립 승인이 아니다.
+- 검증: 고정된 후보 소스의 전체 회귀474개 통과·실패0·생략0 원문과 해시를 확인했고, 리뷰 중 직접 회귀86개를 재실행해 통과했다. 86개는 관련 검사 재실행이므로 474개에 더하지 않는다. 이후 별도 후보 커밋은 검증한 내용·권한을 유지했고 스테이징 TDD 게이트를 통과했다. 이번 문서 작업에서 테스트 스위트·브라우저 렌더·실제 모델은 실행하지 않았다.
+- 승인 경계: 27개 고정 snapshot 리뷰는 APPROVE WITH NOTES이며 앞선 두 중대 문제는 보완됐다. 마지막 준비 명령 직후 마감 초과의 ship 테스트 경계 사례는 test_quality_only 제안으로 남아 있다. 별도 후보 커밋 후 새 snapshot·봉인·27개 expected-path로 재결속했고 scope 7766ab51e2eb0e527789606d8c384dc7703eff189fb9be8bf88139bb1372a9e3, 영수증 f691adb4b0a94b07bd44f19e75715b8f, 영수증 해시 7fab69d76b009482eb3d27dad489d293d370a586676ce57e9a982d4512a529d0, validate-ship READY를 확인했다. 이는 별도 후보의 코드 승인 결속이며 원본 main·출하 승인이 아니다.
+- 문서 작업 경계: 기존 ca4daeb 반영 기록의 문서4개는 별도 고정 snapshot에서 APPROVE를 받았지만, 그 승인은 이번 추가 최신화 내용에 자동 승계하지 않는다. 이번 4개 최신화의 내용·이력·수치·근거·정합성을 다시 확인하고 문서만 커밋한다. 이 문서 커밋의 OID는 커밋 후 별도 실행 기록에 고정하며 문서 본문에 자기 커밋 해시를 미리 확정하지 않는다.
+- main 반영 계획: 개정2 계획은 문서4개 커밋 D를 먼저 고정한 뒤 별도 후보에서 D와6cf129e를 병합해 M을 구성한다. D..M의 정확한27개 경로·내용·권한을 기존 승인 후보와 대조하고 새 기준의27개 전체 리뷰를 받는다. 새 scope 해시는 기준D를 포함하므로 기존 해시와 같다고 요구하지 않는다. 이 단계와 원본 반영은 이번 문서 요청에 포함하지 않는다.
+- 예행연습·보존: 후속 실행에서는 문서가D에 커밋된 실제 상태와 기존 승인 포인터·receipt를 재현해 D→M fast-forward·27개 승인 재결속·READY까지 예행한다. 인덱스·승인 포인터·ORIG_HEAD 원문을 별도 보관하고 대상27개의 승인된 변경만 허용하며 범위 밖 엔트리·플래그·기존 스테이징·검증 원문은 보존한다. 실패 시 자동 복원 없이 중단하며 main 반영과 승인 READY를 따로 보고한다.
+- 종료 판정 경계: 별도 후보의 출력 분리 보완 작업은 필수 검증·TDD·완료 가드를 통과했다. 이는 원본 main 통합·문서 커밋·전체 출하의 파이프라인 완료를 의미하지 않는다. 원본 main 반영·새27개 승인 재결속·실제 이관 기능 실행은 미실행이고 이번 문서 작업에서 일반 완료 가드를 호출하지 않는다.
+- 실제 검증·기존 실패: 실제 모델의 자유 응답 준수·실제 홈 연동·업무 효과·경쟁 우위는 미검증이다. 실제 홈 NOT_VERIFIED·비교 HOLD, 설치 기존 실패1개·광고 추적4개 기존 실패와 과거 임시 원문13개·16개 미확인 이력을 유지한다. ca4daeb 실제 사전 점검 재실행과 출하 성공도 아직 미확인이다. 과거 실패·중단·자식 종료 unconfirmed를 소급 성공으로 바꾸지 않는다.
+- 배포·관찰: 6cf129e 후보의 출하·릴리스·일반 사용처 재설치·모델 호출·비교는 이번 작업에서 실행하지 않는다. 과거0.6.1 정상11개 설치·0.6.2 후보 이력과 별개다. 이번 문서 리뷰 시 원본 v3는 DISABLED이고 완료 품질 관찰은 OBSERVATION_INVALID/pending_completion_invalid였다. 이를 코드 결함·사용자 수용·효과 관측으로 집계하지 않는다.
+- 다음 작업: 문서 커밋D 고정 후, 별도 실행 요청으로 D와6cf129e의 격리 병합M 및27개 새 리뷰를 준비한다. 원본D→M 반영·승인 재결속은 예행연습과 명시적 실행 승인 뒤 수행한다. 출하·재설치·실제 모델·비교 실행 승인은 자동 승계하지 않는다.
+- 근거: /private/tmp/omc-output-review-fixes-cih0wvj1/review-result.json; /private/tmp/omc-output-review-fixes-cih0wvj1/candidate/.omc/review-fixes/final.xml; /private/tmp/omc-output-review-fixes-cih0wvj1/review-direct.xml; /private/tmp/omc-output27-commit-mjfqg3kc/result.json; /private/tmp/omc-main27-plan-v2-lfr2rxc3/plan.json; /private/tmp/omc-main27-critique-v2-htbptsu4/critique.json; /private/tmp/omc-doc4-review-9_2w_ral/result.json. 로컬 임시 보관 자료이며 다른 checkout에 자동 제공되지 않는다. 장기 보존·다른 위치로의 이관 여부는 이 문서만으로 보장하지 않는다.
+
+## 이전 이력 · ca4daeb main 반영·2개 파일 승인 재결속 및 반영 리뷰 완료 · 2026-10-30
+
+- 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
+- 현재 판정: ca4daeb main 반영 완료 · 구현2개 승인 재결속 READY·반영 결과 리뷰 APPROVE · 파이프라인 완료 NOT_ASSESSED · 실제 홈 NOT_VERIFIED · 비교 HOLD
+- 목표 대비 진행: 사전 점검 도구의 복제용 원격과 계약 기준 참조를 분리했다. 원본 브랜치가 main이어도 복제본의 omc-source/main은 후보를, 계약 origin/main은 고정 기준을 가리키도록 연결한다. 구현·로컬 회귀·리뷰·커밋·main 반영까지 확인했으며 실제 사전 점검 성공·출하 성공·업무 효과·경쟁 우위는 아직 미입증이다.
+- main·문서 기준: 기준11b1ce161feed817d234df58ea081335d6599f52에서ca4daeb5ec84a35e2c5d800132ab241ca31a6356으로 fast-forward 반영했다. 기존 문서11b1ce1과 구현8572ce8 계보를 유지했다. 이번 문서4개 최신화·향후 커밋은 구현2개 승인과 별도 범위이며 출하 판정을 확대하지 않는다.
+- 반영한 구현: scripts/omc_ship_preflight.py와 scripts/test_omc_ship_preflight.py 정확히2개다. clone의 원격 이름을 omc-source로 고정했고 계약의 origin 기준 참조·기준 OID·품질 설정 원문은 유지한다. 기존 계약 참조가 다른 OID이면 existing_base_ref_mismatch로 차단하며 강제 덮어쓰지 않는다. 입력 형식·시간 예산·성공 판정 계약은 변경하지 않았다.
+- 검증: 최종 회귀94개 통과·실패0·생략0이다. 새 공개 CLI6사례는94개에 포함되므로 합산하지 않는다. main/feature와 기준 표기2개의 prepare·check 성공, clone 직후 잘못된 참조 주입2사례의 정확한 차단·미덮어쓰기·원본 보존을 검증했다. 이번 main 반영·반영 리뷰에서는 테스트를 재실행하지 않고 승인 당시 frozen diff·현재 코드·영수증·내용/권한·보존 자료를 대조했다.
+- 승인과 반영 리뷰: 기존 원격 참조·설정·인덱스·승인 포인터·영수증을 포함한 격리 예행연습 후 원본 main의2개 승인 재결속 READY를 확인했다. scope 2638859197be187c1ba6fc3ae6b85527e3ae3ccf8de05b5c0e9652d94b5a0538, 원본 영수증5343b9765f7b4f2da44968ecdfa2f8ae, 영수증 해시f7dfc7288c1cef026b51260b02a6927d60c197cd12896f8533eb26366b6b2f0a다. 후속 반영 결과 리뷰는 읽기 전용 APPROVE이며 원본 포인터·인덱스를 변경하거나 새 코드 영수증을 발급하지 않았다. READY는ca4daeb 고정 구현 후보의 확인 결과이며 이번 문서4개·향후 문서 커밋을 포함한 HEAD 전체의 출하 승인이 아니다.
+- 보존 경계: 반영 전 인덱스·승인 포인터 원문을 별도 보관했다. 허용한 구현2개·인덱스·현재 승인 포인터 갱신4개를 제외한 보호 대상2907개 내용·권한은 불변이다. 기존 원격 참조의 OID·symbolic target, 원격 설정 원문, 기존 인덱스 엔트리·플래그·untracked 목록을 유지했다. 이는 명시한 보호 대상의 대조이며 전체 과거 자료의 완전 보존 주장이 아니다. 과거 임시 원문13개·16개 미확인, 설치 기존 실패1개·광고 추적4개 기존 실패는 유지한다.
+- 이전 사전 점검 실패: 11b1ce1 대상 prepare1회는 existing_base_ref_mismatch·종료 코드1로 중단됐고 check0회였다. 원본 origin/main은 기준8b94515였지만 기본 clone이 만든 복제본 origin/main은 후보11b1ce1을 가리킨 것이 원인이다. 당시 prepare 약28.15초·최종 보관까지 약124.59초, 정리 확인·원문 보관 결과를 유지한다. 이번 보완 뒤 실제 원본 대상 prepare·check는 재실행하지 않았으며 이전 실패를 소급 통과로 바꾸지 않는다.
+- 종료 판정 경계: main 반영·2개 승인 재결속·반영 결과 리뷰는 완료다. 파이프라인 완료 NOT_ASSESSED는 별도이며 완료 가드·실제 이관 기능·복구 발급을 호출하지 않았다. 로컬 테스트에서 임시 저장소의 CLI를 실행한 결과는 실제 원본 대상 사전 점검 성공이나 출하 승인과 구분한다.
+- 실제 검증 경계: 실제 홈 NOT_VERIFIED·비교 HOLD를 유지한다. 이번 main 반영·반영 리뷰·문서 작업의 완료 가드0회·실제 사전 점검 재실행0회·출하 검사0회·재설치0회·Claude0회·비교 재실행0회다. 과거 경쟁 도구1회·OMC0회,337.60초 중단·당시 자식 종료 unconfirmed와 클릭/숨김 통합 미검증은 당시 이력으로 남긴다.
+- 다음 작업: 보완된 후보의 실제 사전 점검 적용 여부와 고정 후보·기준 참조·품질 설정 해시·승인 변경 목록·시간 예산·종료 조건을 새 계획에서 확정
+- 후속 경계: 구현2개 커밋·main 반영·승인 재결속 단계는 종료했다. 이번 문서 작업에서 실제 사전 점검·전체 출하 검사·재설치·비교를 실행하지 않는다. 이후 실제 준비·출하·광고 비교는 각각 새 범위와 조건을 계획·검토·승인한 뒤 결정하며 이전 실행 승인·생략 예외·시간 예산을 자동 승계하지 않는다. 별도 호환성4개·사용 문서는 자동 채택하지 않는다.
+- 배포·관찰: ca4daeb 보완은 미릴리스·일반 사용처 미설치다. 0.6.2 릴리스 후보·출하 판정은 별도 범위다. 정상11개 사용처의0.6.1 설치·엄격 감사는 과거 이력이며 이번 재감사는 없다. 구현 리뷰 당시 v3 DISABLED·OBSERVATION_INVALID/live_observation_not_enabled였으며 업무 효과 관찰로 집계하지 않는다. push·태그·릴리스·재설치 없음.
+- 근거: /Users/noseunglae/Downloads/dev/omc_kit/.omc/state/omc-clone-remote-commit-kjl74ngj/result.json; /Users/noseunglae/Downloads/dev/omc_kit/.omc/state/omc-main-ca4-transfer-1t4c1r3v/result.json; /Users/noseunglae/Downloads/dev/omc_kit/.omc/state/omc-preflight-11b1-once-je_dj7z9/result.json; /Users/noseunglae/Downloads/dev/omc_kit/.omc/state/docs-ca4-sync-20261030/transfer-review/REVIEW.md. 로컬 보관 자료이며 다른 checkout에 자동 제공되지 않는다.
+
+## 이전 이력 · 8572ce8 main 반영·2개 파일 승인 재결속 및 반영 리뷰 완료 · 2026-10-30
 
 - 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
 - 현재 판정: 8572ce8 main 반영 완료 · 구현2개 승인 재결속 READY·반영 결과 리뷰 APPROVE · 파이프라인 완료 NOT_ASSESSED · 실제 홈 NOT_VERIFIED · 비교 HOLD
