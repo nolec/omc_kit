@@ -341,7 +341,7 @@ def execute(run, args, result):
         try:
             run.phase = 'clone'
             owned.verify()
-            run.git(source.parent, 'clone', '--no-hardlinks', '--template=', '--', source, target, cap=120)
+            run.git(source.parent, 'clone', '--no-hardlinks', '--template=', '--origin', 'omc-source', '--', source, target, cap=120)
             owned.verify()
             independent(run, target)
             if run.git(target, 'rev-parse', 'HEAD').decode().strip() != doc['expected_head_oid']:

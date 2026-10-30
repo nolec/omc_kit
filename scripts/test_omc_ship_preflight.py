@@ -21,6 +21,71 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+@pytest.mark.parametrize('branch', ['main', 'feature'])
+@pytest.mark.parametrize('ref', ['origin/main', 'refs/remotes/origin/main'])
+def test_public_prepare_separates_clone_remote_from_contract_ref(fixture, branch, ref):
+    source, contract, target = fixture
+    if branch != 'feature':
+        git(source, 'branch', '-m', branch)
+    doc = replace_contract(fixture, base_ref=ref)
+    source_refs = git(source, 'for-each-ref', '--format=%(refname) %(objectname)')
+    source_config = (source / '.git/config').read_bytes()
+    source_index = (source / '.git/index').read_bytes()
+    quality = (source / '.omc/quality-gates.json').read_bytes()
+
+    prepared = invoke(fixture)
+    assert prepared.returncode == 0, prepared.stdout + prepared.stderr
+    result = json.loads(prepared.stdout)
+    assert result['operation'] == 'prepare'
+    assert result['status'] == 'baseline_verified'
+    assert result['source_preserved'] and result['cleanup_confirmed'] and result['evidence_complete']
+    assert git(target, 'remote').splitlines() == ['omc-source']
+    assert git(target, 'config', 'remote.omc-source.url') == str(source)
+    assert git(target, 'rev-parse', 'refs/remotes/omc-source/' + branch) == doc['expected_head_oid']
+    assert git(target, 'rev-parse', 'refs/remotes/origin/main') == doc['expected_base_oid']
+    assert git(target, 'rev-parse', 'HEAD') == doc['expected_head_oid']
+    assert (target / '.omc/quality-gates.json').read_bytes() == quality
+
+    target_index = (target / '.git/index').read_bytes()
+    checked = invoke(fixture, 'check')
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    result = json.loads(checked.stdout)
+    assert result['operation'] == 'check' and result['status'] == 'baseline_verified'
+    assert result['target_preserved'] and result['cleanup_confirmed'] and result['evidence_complete']
+    assert (target / '.git/index').read_bytes() == target_index
+    assert git(source, 'for-each-ref', '--format=%(refname) %(objectname)') == source_refs
+    assert (source / '.git/config').read_bytes() == source_config
+    assert (source / '.git/index').read_bytes() == source_index
+    assert (source / '.omc/quality-gates.json').read_bytes() == quality
+
+
+@pytest.mark.parametrize('ref', ['origin/main', 'refs/remotes/origin/main'])
+def test_prepare_rejects_post_clone_contract_ref_mismatch_without_overwrite(fixture, tmp_path, ref):
+    source, contract, target = fixture
+    git(source, 'branch', '-m', 'main')
+    doc = replace_contract(fixture, base_ref=ref)
+    source_refs = git(source, 'for-each-ref', '--format=%(refname) %(objectname)')
+    source_config = (source / '.git/config').read_bytes()
+    source_index = (source / '.git/index').read_bytes()
+    env = shim_env(tmp_path, """
+if args[6] == 'clone':
+    cloned=subprocess.run([real,*args])
+    if cloned.returncode:
+        sys.exit(cloned.returncode)
+    subprocess.run([real,'-C',%r,'update-ref','refs/remotes/origin/main',%r],check=True)
+    sys.exit(0)
+""" % (str(target), doc['expected_head_oid']))
+
+    result = assert_blocked(invoke(fixture, env=env), 'existing_base_ref_mismatch')
+    assert result['phase'] == 'bind_ref'
+    assert result['cleanup_confirmed'] and result['evidence_complete']
+    assert git(target, 'rev-parse', 'refs/remotes/origin/main') == doc['expected_head_oid']
+    assert not (target / '.omc/quality-gates.json').exists()
+    assert git(source, 'for-each-ref', '--format=%(refname) %(objectname)') == source_refs
+    assert (source / '.git/config').read_bytes() == source_config
+    assert (source / '.git/index').read_bytes() == source_index
+
+
 @pytest.fixture
 def fixture(tmp_path):
     source = tmp_path / 'source'
