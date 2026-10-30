@@ -378,3 +378,313 @@ def prompt_contract(stage: str) -> str:
         f"라우팅(outcome,next_skill,user_selection_needed): {_PROMPT_ROUTING[normalized_stage]}; "
         "unresolved/blocked는 reason_code가 필수입니다."
     )
+
+# Detached delivery is opt-in. The v1 machine payload and legacy parser above
+# remain unchanged; a record is local custody, not evidence authentication.
+import argparse
+import hashlib
+import os
+from pathlib import Path
+import sys
+import time
+
+RECORD_SCHEMA = 'omc-output-record/v1'
+_GATE_AUTHORITY = object()
+_VERDICT_KO = {'PROCEED':'진행 가능','HOLD':'보류','REVISE':'수정 필요',
+               'BLOCK':'보류','APPROVE':'승인','APPROVE WITH NOTES':'승인·보완 제안 있음'}
+
+
+def capabilities():
+    return {'schema_version':RECORD_SCHEMA,'output_modes':['legacy_inline','detached_v1']}
+
+
+def _sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def _json_bytes(value):
+    return (json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n').encode('utf-8')
+
+
+def _local_file(root, path, *, must_exist=True):
+    root=Path(root).resolve(); path=Path(path)
+    if not path.is_absolute():path=root/path
+    try: rel=path.relative_to(root)
+    except ValueError:raise OutputContractError('record_path_outside_work')
+    if '..' in rel.parts:raise OutputContractError('record_path_escape')
+    current=root
+    for part in rel.parts:
+        current=current/part
+        if current.is_symlink():raise OutputContractError('record_symlink_not_allowed')
+    if must_exist and not path.is_file():raise OutputContractError('record_file_missing')
+    return path
+
+
+def _read_pinned(root, path, pin):
+    file=_local_file(root,path);raw=file.read_bytes()
+    if not isinstance(pin,str) or not re.fullmatch('[0-9a-f]{64}',pin) or _sha(raw)!=pin:
+        raise OutputContractError('record_hash_mismatch')
+    return raw
+
+
+def _work_identity(root, sid):
+    root=Path(root).resolve();session=root/'.omc/state/sessions'/sid/'session.json'
+    session_work=json.loads(_local_file(root,session).read_bytes()).get('work_id') if session.exists() else None
+    pending=root/'.omc/state/pending-completion.json'
+    pending_work=json.loads(_local_file(root,pending).read_bytes()).get('work_id') if pending.exists() else None
+    if session_work and pending_work and session_work!=pending_work:raise OutputContractError('record_work_lineage_mismatch')
+    return pending_work or session_work or sid
+
+
+def _context(root, value, *, live_deadline=True):
+    root=Path(root).resolve()
+    if not isinstance(value,dict) or value.get('output_mode')!='detached_v1':
+        raise OutputContractError('detached_mode_required')
+    for key in ('session_id','work_id','report_id'):
+        if not isinstance(value.get(key),str) or not re.fullmatch('[A-Za-z0-9_-]{1,120}',value[key]):
+            raise OutputContractError('invalid_record_identity')
+    if value.get('stage') not in _STAGE_VERDICTS:raise OutputContractError('invalid_record_stage')
+    deadline=value.get('deadline_epoch')
+    if isinstance(deadline,bool) or not isinstance(deadline,(int,float)) or not 0 < deadline < float('inf'):
+        raise OutputContractError('record_deadline_required')
+    if live_deadline and time.time()>=deadline:raise OutputContractError('record_deadline_expired')
+    latest=json.loads(_local_file(root,'.omc/state/latest.json').read_bytes())
+    if latest.get('latest_confirmed_session_id')!=value['session_id']:
+        raise OutputContractError('record_session_mismatch')
+    expected_work=_work_identity(root,value['session_id'])
+    if value['work_id']!=expected_work:raise OutputContractError('record_work_mismatch')
+    call=value.get('native_call_reference')
+    if not isinstance(call,dict) or not isinstance(call.get('invocation_id'),str) or not call['invocation_id']:
+        raise OutputContractError('record_call_reference_required')
+    refs=value.get('references')
+    if not isinstance(refs,list):raise OutputContractError('record_references_required')
+    for ref in refs:
+        if not isinstance(ref,dict) or not isinstance(ref.get('purpose'),str):raise OutputContractError('invalid_record_reference')
+        _read_pinned(root,ref['path'],ref['sha256'])
+    return value
+
+
+def load_output_context(root, path, pin, *, live_deadline=True):
+    return _context(root,json.loads(_read_pinned(root,path,pin)),live_deadline=live_deadline)
+
+
+def record_path(root, context):
+    return Path(root).resolve()/'.omc/state/output-records'/context['work_id']/context['report_id']/'manifest.json'
+
+
+def human_output(raw):
+    payload=parse_envelope(raw)
+    # Only remove the validated terminal envelope; keep quoted/code examples.
+    lines=str(raw).splitlines()
+    while lines and not lines[-1].strip():lines.pop()
+    body=lines[:-2];fence=None;has_judgment=False
+    known_values=set(_VERDICT_KO)|set(_VERDICT_KO.values())|{'차단','보완 필요'}
+    expected_values={payload['verdict'],_VERDICT_KO[payload['verdict']]}
+    if payload['verdict']=='BLOCK':expected_values.add('차단')
+    if payload['verdict']=='REVISE':expected_values.add('보완 필요')
+    for i,line in enumerate(body):
+        if line.startswith(('    ','\t')):continue
+        stripped=line.lstrip()
+        marker=re.match(r'^(`{3,}|~{3,})(.*)$',stripped)
+        if marker:
+            run,tail=marker.groups()
+            if fence is None:fence=(run[0],len(run))
+            elif run[0]==fence[0] and len(run)>=fence[1] and not tail.strip():fence=None
+            continue
+        if fence is not None or stripped.startswith('>'):continue
+        if stripped.startswith('`') and stripped.endswith('`'):continue
+        visible=re.sub(r'^#{1,6}\s+','',stripped)
+        visible=re.sub(r'^(?:[-*+]|[0-9]+[.)])\s+','',visible).replace('**','').replace('__','').strip('*_` ')
+        match=re.fullmatch(r'(판정|결정)\s*:\s*(.*?)',visible)
+        if not match:continue
+        label,value=match.groups();value=value.strip('*_` ')
+        if value not in known_values:
+            if label=='판정':raise OutputContractError('unrecognized_body_judgment')
+            continue  # free-form plan decisions still get a canonical judgment
+        if value not in expected_values:raise OutputContractError('body_verdict_conflict')
+        body[i]=label+': '+_VERDICT_KO[payload['verdict']]
+        has_judgment=True
+    if fence is not None:raise OutputContractError('unclosed_body_code_fence')
+    if not has_judgment:body.append('판정: '+_VERDICT_KO[payload['verdict']])
+    return '\n'.join(body).rstrip()+'\n'
+
+
+def _write_record_file(path, data):
+    fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+    with os.fdopen(fd,'wb') as stream:
+        stream.write(data);stream.flush();os.fsync(stream.fileno())
+
+
+def _current_binding(root):
+    from omc_pipeline_guard import _code_snapshot_digest
+    root=Path(root).resolve()
+    binding={'code_snapshot_sha256':_code_snapshot_digest(root)}
+    for name in ('latest.json','pending-completion.json'):
+        f=root/'.omc/state'/name
+        binding[name]=_sha(_local_file(root,f).read_bytes()) if f.exists() else None
+    return binding
+
+
+def _gate_binding(root, verification):
+    root=Path(root).resolve();files={}
+    def pin(name):
+        try:
+            path=_local_file(root,name,must_exist=False)
+            files[str(path)]={'sha256':_sha(path.read_bytes())} if path.is_file() else {'status':'missing'}
+        except (OutputContractError,OSError):
+            files[str(name)]={'status':'rejected_path'}
+    verification=Path(verification)
+    if not verification.is_absolute():verification=root/verification
+    pin(verification)
+    pipeline=root/'.omc/pipeline_session.json';pin(pipeline)
+    try:state=json.loads(pipeline.read_bytes()) if pipeline.is_file() and not pipeline.is_symlink() else {}
+    except (OSError,ValueError):state={}
+    latest=json.loads(_local_file(root,'.omc/state/latest.json').read_bytes())
+    sid=state.get('owner_session_id') or state.get('session_id') or latest['latest_confirmed_session_id']
+    if not isinstance(sid,str) or not re.fullmatch('[A-Za-z0-9_-]{1,120}',sid):raise OutputContractError('invalid_gate_owner')
+    folder=root/'.omc/verification-bases'/sid
+    if folder.exists():
+        _local_file(root,folder/'placeholder',must_exist=False)
+        for file in sorted(folder.glob('*.json')):pin(file)
+    session=root/'.omc/state/sessions'/latest['latest_confirmed_session_id']/'session.json'
+    pin(session)
+    try:
+        record=json.loads(_local_file(root,verification).read_bytes())
+        for check in record.get('checks',{}).values():
+            for ref in check.get('evidence_files',[]):pin(ref['path'])
+    except (OSError,ValueError,TypeError,KeyError,AttributeError):pass
+    return {'verification_file':str(verification),'files':files}
+
+
+def _publish(root, context_path, context_pin, raw, *, source_kind, authority=None, gate_verification=None):
+    root=Path(root).resolve();context=load_output_context(root,context_path,context_pin)
+    if source_kind not in {'model_declared','legacy_normalized','completion_gate'}:
+        raise OutputContractError('record_source_kind_invalid')
+    if source_kind=='completion_gate' and authority is not _GATE_AUTHORITY:
+        raise OutputContractError('gate_authority_not_from_publisher')
+    if source_kind=='completion_gate' and gate_verification is None:raise OutputContractError('gate_verification_required')
+    if not isinstance(raw,str):raise OutputContractError('raw_text_required')
+    parsed=parse_envelope(raw)
+    if parsed['stage']!=context['stage']:raise OutputContractError('record_stage_mismatch')
+    display=human_output(raw);manifest=record_path(root,context)
+    _local_file(root,manifest,must_exist=False)
+    manifest.parent.parent.mkdir(parents=True,exist_ok=True)
+    manifest.parent.mkdir(mode=0o700)  # exclusive report reservation; never overwrite
+    source=raw.encode('utf-8');shown=display.encode('utf-8')
+    _write_record_file(manifest.parent/'source.txt',source)
+    _write_record_file(manifest.parent/'display.txt',shown)
+    value={'schema_version':RECORD_SCHEMA,'context':context,'context_sha256':context_pin,
+           'source_kind':source_kind,'machine_payload':{k:parsed[k] for k in _REQUIRED_FIELDS},
+           'verdict':parsed['verdict'],'raw_source_sha256':_sha(source),'display_utf8_sha256':_sha(shown),
+           'files':{'source.txt':_sha(source),'display.txt':_sha(shown)},
+           'binding':_current_binding(root),'publication':'published','claim_boundary':'LOCAL_CUSTODY_NOT_AUTHENTICATION'}
+    if source_kind=='completion_gate':value['gate_binding']=_gate_binding(root,gate_verification)
+    for name,pin in value['files'].items():_read_pinned(root,manifest.parent/name,pin)
+    _context(root,context)  # references and deadline must still hold before publication
+    data=_json_bytes(value);temp=manifest.parent/'manifest.tmp';_write_record_file(temp,data)
+    _context(root,context)
+    _read_pinned(root,temp,_sha(data))
+    for name,pin in value['files'].items():_read_pinned(root,manifest.parent/name,pin)
+    os.link(temp,manifest)  # atomic publish, fails if the final name already exists
+    return {'path':str(manifest),'sha256':_sha(data)}
+
+
+def publish_record(root, context_path, context_pin, raw, *, source_kind='model_declared'):
+    return _publish(root,context_path,context_pin,raw,source_kind=source_kind)
+
+
+def read_record(root, path, pin, expected_context, *, display=None):
+    # Historical consumption checks identity/references, not today's wall clock.
+    context=_context(root,expected_context,live_deadline=False)
+    file=_local_file(root,path)
+    if file!=record_path(root,context):raise OutputContractError('record_location_mismatch')
+    value=json.loads(_read_pinned(root,file,pin))
+    if value.get('schema_version')!=RECORD_SCHEMA or value.get('context')!=context or value.get('publication')!='published':
+        raise OutputContractError('record_context_mismatch')
+    if value.get('source_kind') not in {'completion_gate','model_declared','legacy_normalized'}:
+        raise OutputContractError('record_source_kind_invalid')
+    if value.get('binding')!=_current_binding(root):raise OutputContractError('record_live_binding_mismatch')
+    raw=_read_pinned(root,file.parent/'source.txt',value['raw_source_sha256']).decode('utf-8')
+    shown=_read_pinned(root,file.parent/'display.txt',value['display_utf8_sha256']).decode('utf-8')
+    parsed=parse_envelope(raw)
+    if ({k:parsed[k] for k in _REQUIRED_FIELDS}!=value['machine_payload'] or parsed['verdict']!=value['verdict']
+            or parsed['stage']!=context['stage'] or human_output(raw)!=shown):
+        raise OutputContractError('record_payload_mismatch')
+    if value['source_kind']=='completion_gate':
+        binding=value.get('gate_binding')
+        if not isinstance(binding,dict) or binding!=_gate_binding(root,binding.get('verification_file','')):
+            raise OutputContractError('record_gate_evidence_mismatch')
+    if display is not None and display!=shown:raise OutputContractError('record_display_mismatch')
+    return {**value,'raw_source':raw,'display':shown}
+
+
+def _write_display(display):
+    count=sys.stdout.write(display)
+    if count!=len(display):raise OSError('short output write')
+    sys.stdout.flush()
+
+
+def emit_record(root, context_path, context_pin, raw, *, source_kind='model_declared', _authority=None, _gate_verification=None):
+    try:
+        ref=_publish(root,context_path,context_pin,raw,source_kind=source_kind,authority=_authority,gate_verification=_gate_verification)
+        context=load_output_context(root,context_path,context_pin)
+        doc=read_record(root,ref['path'],ref['sha256'],context)
+        _context(root,context)
+        _write_display(doc['display'])
+        # A valid model declaration is a successful publication even for REVISE.
+        # Only the completion gate owns the legacy business 0/1 exit contract.
+        return 1 if source_kind=='completion_gate' and doc['machine_payload']['outcome']=='blocked' else 0
+    except (OSError,ValueError,TypeError,KeyError,UnicodeError) as exc:
+        # Publication may already have succeeded. Never rewrite its verdict/status.
+        try:print('기록 전달을 확인하지 못했습니다. 원문을 보존하고 후속 진행을 보류합니다.',file=sys.stderr)
+        except OSError:pass
+        return 2
+
+
+def output_cli(argv=None):
+    parser=argparse.ArgumentParser(description='OMC 별도 기록과 한글 판정')
+    sub=parser.add_subparsers(dest='command',required=True)
+    sub.add_parser('capabilities')
+    prep=sub.add_parser('prepare')
+    prep.add_argument('--target',type=Path,required=True)
+    prep.add_argument('--stage',choices=list(_STAGE_VERDICTS),required=True)
+    prep.add_argument('--report-id',required=True)
+    prep.add_argument('--budget-sec',type=float,required=True)
+    prep.add_argument('--reference',action='append',default=[])
+    pub=sub.add_parser('publish')
+    pub.add_argument('--target',type=Path,required=True)
+    pub.add_argument('--output-context',type=Path,required=True)
+    pub.add_argument('--output-context-sha256',required=True)
+    pub.add_argument('--source-file',type=Path,required=True)
+    pub.add_argument('--source-sha256',required=True)
+    args=parser.parse_args(argv)
+    if args.command=='capabilities':
+        print(json.dumps(capabilities()));return 0
+    if args.command=='prepare':
+        try:
+            root=args.target.resolve()
+            if not 0 < args.budget_sec <= 480:raise OutputContractError('bounded_budget_required')
+            latest=json.loads(_local_file(root,'.omc/state/latest.json').read_bytes())
+            sid=latest['latest_confirmed_session_id'];pending=root/'.omc/state/pending-completion.json'
+            work=_work_identity(root,sid)
+            created=time.time()
+            context={'output_mode':'detached_v1','stage':args.stage,'session_id':sid,'work_id':work,
+                     'report_id':args.report_id,'created_epoch':created,'budget_sec':args.budget_sec,'deadline_epoch':created+args.budget_sec,
+                     'native_call_reference':{'invocation_id':args.report_id},
+                     'references':[{'path':str(_local_file(root,p)),'sha256':_sha(_local_file(root,p).read_bytes()),'purpose':'explicit_evidence'} for p in args.reference]}
+            _context(root,context)
+            file=record_path(root,context).parent.parent/(context['report_id']+'.context.json')
+            _local_file(root,file,must_exist=False);file.parent.mkdir(parents=True,exist_ok=True)
+            data=_json_bytes(context);_write_record_file(file,data)
+            print(json.dumps({'output_context':str(file),'output_context_sha256':_sha(data),
+                              'record_path':str(record_path(root,context))},ensure_ascii=False));return 0
+        except (OSError,ValueError,KeyError,TypeError):
+            print('출력 기록의 새 실행 문맥을 고정하지 못했습니다.',file=sys.stderr);return 2
+    try:raw=_read_pinned(args.target,args.source_file,args.source_sha256).decode('utf-8')
+    except (OSError,ValueError,UnicodeError):
+        print('판정 원문을 확인하지 못했습니다. 후속 진행을 보류합니다.',file=sys.stderr);return 2
+    return emit_record(args.target,args.output_context,args.output_context_sha256,raw)
+
+
+if __name__=='__main__':
+    raise SystemExit(output_cli())

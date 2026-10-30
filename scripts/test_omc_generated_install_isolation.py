@@ -20,14 +20,29 @@ SUBJECTS = [
     'scripts/test_omc_state_record_confirm.py::test_core_omc_skills_document_use_session_sync_step',
     'scripts/test_omc_state_record_confirm.py::test_core_omc_skill_mirrors_stay_in_sync',
 ]
+SHIP_INPUTS = [
+    'templates/.agents/skills/omc-ship/SKILL.md',
+    'templates/.claude/commands/ship.md',
+    'docs/omc_quality_gates.md',
+    'scripts/test_omc_ship_entry_contract.py',
+    'scripts/test_omc_generated_install_isolation.py',
+]
 
+OUTPUT_INPUTS = ['docs/omc_quality_gates.md', 'docs/orchestration_usage.md', 'scripts/omc_autopilot.py', 'scripts/omc_output_contract.py', 'scripts/omc_pipeline_guard.py', 'scripts/omc_workflow_validation.py', 'scripts/test_llm_autopilot_commands.py', 'scripts/test_omc_codex_output_readability.py', 'scripts/test_omc_completion_reporting_contract.py', 'scripts/test_omc_generated_install_isolation.py', 'scripts/test_omc_output_contract.py', 'scripts/test_omc_ship_entry_contract.py', 'scripts/test_omc_task_completion_surface.py', 'scripts/test_omc_workflow_validation.py', 'templates/.agents/skills/omc-critique/SKILL.md', 'templates/.agents/skills/omc-investigate/SKILL.md', 'templates/.agents/skills/omc-plan/references/workflow.md', 'templates/.agents/skills/omc-review/SKILL.md', 'templates/.agents/skills/omc-ship/SKILL.md', 'templates/.agents/skills/omc-task/SKILL.md', 'templates/.agents/skills/omc-task/references/verification.md', 'templates/.claude/commands/critique.md', 'templates/.claude/commands/investigate.md', 'templates/.claude/commands/plan.md', 'templates/.claude/commands/review.md', 'templates/.claude/commands/ship.md', 'templates/.claude/commands/task.md']
 
 def uninstalled_checkout(tmp_path):
     target = tmp_path / 'checkout'
     subprocess.run(['git', 'clone', '--shared', '--quiet', str(ROOT), str(target)],
                    check=True, capture_output=True, timeout=30)
-    for name in ['scripts/conftest.py', *dict.fromkeys(n.split('::')[0] for n in SUBJECTS)]:
-        shutil.copy2(ROOT / name, target / name)
+    names = dict.fromkeys(['scripts/conftest.py',
+                          *(n.split('::')[0] for n in SUBJECTS), *SHIP_INPUTS, *OUTPUT_INPUTS])
+    for name in names:
+        source = ROOT / name
+        destination = target / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        assert source.read_bytes() == destination.read_bytes(), name
+        assert source.stat().st_mode & 0o777 == destination.stat().st_mode & 0o777, name
     assert not (target / '.claude/commands/plan.md').exists()
     assert not (target / '.agent/skills/omc-plan/SKILL.md').exists()
     return target
@@ -76,6 +91,48 @@ def protected_bytes(root):
               for p in (root / base).rglob('*') if p.is_file()]
     return {n: hashlib.sha256((root / n).read_bytes()).hexdigest()
             if (root / n).is_file() else None for n in names}
+
+
+def test_uninstalled_checkout_copies_exact_ship_candidate_inputs(tmp_path, monkeypatch):
+    source = tmp_path / 'source'
+    subprocess.run(['git', 'clone', '--no-hardlinks', '--quiet', str(ROOT), str(source)],
+                   check=True, capture_output=True, timeout=30)
+    inputs = ['templates/.agents/skills/omc-ship/SKILL.md',
+              'templates/.claude/commands/ship.md', 'docs/omc_quality_gates.md',
+              'scripts/test_omc_ship_entry_contract.py',
+              'scripts/test_omc_generated_install_isolation.py']
+    for name in OUTPUT_INPUTS:
+        (source/name).parent.mkdir(parents=True,exist_ok=True)
+        shutil.copy2(ROOT / name, source / name)
+    template = source / inputs[0]
+    template.write_text(template.read_text() + '\n<!-- uncommitted candidate sentinel -->\n')
+    before = {n: (hashlib.sha256((source / n).read_bytes()).hexdigest(),
+                  (source / n).stat().st_mode & 0o777) for n in inputs}
+    index = (source / '.git/index').read_bytes()
+    monkeypatch.setattr(sys.modules[__name__], 'ROOT', source)
+    generation = tmp_path / 'generation'
+    generation.mkdir()
+    copied = uninstalled_checkout(generation)
+    for name, expected in before.items():
+        assert (hashlib.sha256((copied / name).read_bytes()).hexdigest(),
+                (copied / name).stat().st_mode & 0o777) == expected, name
+    assert (source / '.git/index').read_bytes() == index
+
+
+@pytest.mark.parametrize('defect', ['missing', 'drift'])
+def test_generated_ship_contract_rejects_corrupt_install(tmp_path, defect):
+    root = uninstalled_checkout(tmp_path)
+    node = 'scripts/test_omc_ship_entry_contract.py::test_installed_ship_entry_contract_matches_templates'
+    plugin = f'''def pytest_runtest_call(item):
+    target = item.funcargs.get('installed_omc_target')
+    assert target is not None
+    path = target / '.agents/skills/omc-ship/SKILL.md'
+    path.unlink() if {defect!r} == 'missing' else path.write_text('corrupted ship contract')
+'''
+    result = run_checks(root, [node], plugin=plugin)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert ('ship generated output mismatch' in result.stdout
+            or 'FileNotFoundError' in result.stdout)
 
 
 def test_generated_checks_pass_without_installing_the_checkout(tmp_path):
@@ -216,3 +273,12 @@ def test_run_checks_evidence_survives_checkout_removal(tmp_path, monkeypatch):
     metadata = json.loads((records[0] / 'index.json').read_text())
     assert metadata['target'] == str(root.resolve())
     assert 'scripts/test_probe.py' in metadata['command']
+
+
+def test_generated_output_separation_uses_all_uncommitted_inputs(tmp_path):
+    root=uninstalled_checkout(tmp_path)
+    for name in OUTPUT_INPUTS:
+        assert (root/name).read_bytes()==(ROOT/name).read_bytes(),name
+        assert (root/name).stat().st_mode & 0o777 == (ROOT/name).stat().st_mode & 0o777,name
+    result=run_checks(root,['scripts/test_omc_completion_reporting_contract.py::test_twelve_installed_surfaces_use_detached_output'])
+    assert result.returncode==0,result.stdout+result.stderr

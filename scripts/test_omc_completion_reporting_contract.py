@@ -54,11 +54,11 @@ def test_review_approval_does_not_emit_a_blocked_machine_outcome():
 
 
 @pytest.mark.parametrize("stage", ["task", "review"])
-def test_installed_skill_copies_match_completion_reporting_source(stage):
+def test_installed_skill_copies_match_completion_reporting_source(stage, installed_omc_target):
     expected = (ROOT / f"templates/.agents/skills/omc-{stage}/SKILL.md").read_bytes()
-    required = ROOT / f".agents/skills/omc-{stage}/SKILL.md"
+    required = installed_omc_target / f".agents/skills/omc-{stage}/SKILL.md"
     assert required.read_bytes() == expected
-    legacy = ROOT / f".agent/skills/omc-{stage}/SKILL.md"
+    legacy = installed_omc_target / f".agent/skills/omc-{stage}/SKILL.md"
     if legacy.exists():
         assert legacy.read_bytes() == expected
 
@@ -113,11 +113,25 @@ def test_retained_failure_responses_are_not_accepted_as_success():
 
 
 @pytest.mark.parametrize('relative', ['templates/.agents/skills/omc-task/SKILL.md', 'templates/.claude/commands/task.md'])
-def test_task_final_contract_preserves_gate_footer_and_separates_phase_record(relative):
-    text = (ROOT/relative).read_text()
+def test_task_final_contract_preserves_gate_record_and_separates_phase_record(relative):
+    text=(ROOT/relative).read_text()
     assert '## Machine output contract' in text
-    assert '마지막 두 줄' in text
-    assert '<!-- OMC_OUTPUT: {JSON} -->' in text
-    assert 'VERDICT: <VALUE>' in text
-    assert 'PHASE 7 기록은 최종 답변에 붙이지 않습니다' in text
-    assert 'complete-task의 기계 판정 두 줄을 최종 답변 끝에 그대로 복사' in text
+    for token in ('detached_v1','<!-- OMC_OUTPUT: {JSON} -->','사용자 최종 답변에 붙이지 않는다',
+                  'PHASE 7 기록은 최종 답변에 붙이지 않습니다','봉인 후 표시 실패'):
+        assert token in text
+    assert '기계 판정 두 줄을 최종 답변 끝에 그대로 복사' not in text
+
+
+def test_twelve_installed_surfaces_use_detached_output(installed_omc_target):
+    skills=['plan','task','review','ship','critique','investigate']
+    for kind in ['codex','claude']:
+        for skill in skills:
+            name=(f'.agents/skills/omc-{skill}/'+('references/workflow.md' if skill=='plan' else 'SKILL.md')
+                  if kind=='codex' else f'.claude/commands/{skill}.md')
+            expected=(ROOT/'templates'/name).read_bytes();actual=(installed_omc_target/name).read_bytes()
+            assert expected==actual,name
+            text=actual.decode()
+            for marker in ['detached_v1','capabilities','output-context-sha256','사용자 최종 답변에 붙이지 않는다',
+                           '모델 선언','종료 코드1','전달 실패 코드2','manifest','구형으로 우회하지 않는다']:
+                assert marker in text,(name,marker)
+            assert '기계 판정 두 줄을 최종 답변 끝에 그대로 복사' not in text

@@ -919,3 +919,53 @@ def test_transfer_kept_parent_permissions_are_still_required(transfer_case):
     transfer_apply(c);(target/'old').chmod(0o700)
     result,_=transfer_finish(c)
     assert result.returncode==1 and 'transfer_file_preservation_mismatch' in result.stdout
+
+
+def test_detached_public_block_is_korean_and_preserves_business_exit(project):
+    import time, hashlib
+    context = {'output_mode':'detached_v1','stage':'task','work_id':'current','session_id':'current',
+               'report_id':'blocked-report','deadline_epoch':time.time()+60,'references':[], 'native_call_reference':{'invocation_id':'blocked-call'}}
+    file=project/'.omc/context.json'; file.write_text(json.dumps(context))
+    pin=hashlib.sha256(file.read_bytes()).hexdigest()
+    result=run(project,'complete-task','--verification-file',str(project/'missing.json'),
+               '--output-mode','detached_v1','--output-context',str(file),'--output-context-sha256',pin)
+    assert result.returncode == 1, result.stderr
+    assert result.stdout.startswith('구현 여부 확인 불가·검증 미완료')
+    assert 'OMC_OUTPUT:' not in result.stdout and 'VERDICT:' not in result.stdout
+
+
+@pytest.mark.parametrize('action',['complete-task','complete-transfer'])
+def test_detached_missing_link_is_delivery_failure_not_business_block(project,action):
+    r=run(project,action,'--verification-file',str(project/'missing.json'),'--output-mode','detached_v1')
+    assert r.returncode==2 and not r.stdout and '연결 정보가 없습니다' in r.stderr
+
+
+def test_detached_real_transfer_success_publishes_immutable_gate_record(transfer_case):
+    import hashlib,time
+    from omc_output_contract import read_record,record_path
+    c=transfer_case;assert transfer_register(c).returncode==0;transfer_apply(c)
+    old,verification=transfer_finish(c);assert old.returncode==0
+    root=c['operator'];ctx={'output_mode':'detached_v1','stage':'task','work_id':'transfer-work','session_id':'transfer','report_id':'transferred',
+        'deadline_epoch':time.time()+60,'references':[{'path':str(verification),'sha256':hashlib.sha256(verification.read_bytes()).hexdigest(),'purpose':'verification'}],
+        'native_call_reference':{'invocation_id':'transfer-call'}}
+    file=root/'.omc/output-context.json';file.write_text(json.dumps(ctx));pin=hashlib.sha256(file.read_bytes()).hexdigest()
+    r=run(root,'complete-transfer','--verification-file',str(verification),'--output-mode','detached_v1','--output-context',str(file),'--output-context-sha256',pin)
+    assert r.returncode==0,r.stdout+r.stderr
+    mp=record_path(root,ctx);doc=read_record(root,mp,hashlib.sha256(mp.read_bytes()).hexdigest(),ctx,display=r.stdout)
+    assert doc['source_kind']=='completion_gate' and doc['machine_payload']['outcome']=='done'
+    assert r.stdout.startswith('필수 검증 통과·작업 완료') and 'OMC_OUTPUT:' not in r.stdout
+
+
+def test_detached_gate_pins_verification_and_approval_files(project):
+    import hashlib,time
+    from omc_output_contract import record_path,read_record,OutputContractError
+    verification=project/'.omc/verification/missing.json'
+    context={'output_mode':'detached_v1','stage':'task','work_id':'current','session_id':'current',
+        'report_id':'pin-proof','deadline_epoch':time.time()+60,'references':[], 'native_call_reference':{'invocation_id':'proof'}}
+    file=project/'.omc/context.json';file.write_text(json.dumps(context));pin=hashlib.sha256(file.read_bytes()).hexdigest()
+    r=run(project,'complete-task','--verification-file',str(verification),'--output-mode','detached_v1','--output-context',str(file),'--output-context-sha256',pin)
+    assert r.returncode==1,r.stderr
+    mp=record_path(project,context);mh=hashlib.sha256(mp.read_bytes()).hexdigest()
+    read_record(project,mp,mh,context,display=r.stdout)
+    verification.parent.mkdir();verification.write_text('{}')
+    with pytest.raises(OutputContractError):read_record(project,mp,mh,context)

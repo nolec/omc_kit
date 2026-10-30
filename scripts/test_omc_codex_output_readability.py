@@ -78,14 +78,14 @@ def test_plan_preserves_blocking_decisions_in_compact_output():
     assert "미해결 결정이 있으면 길이보다 decisions_required를 우선" in text
 
 
-def test_readability_contract_is_mirrored_to_install_templates():
+def test_readability_contract_is_mirrored_to_install_templates(installed_omc_target):
     mirrors = {
         "plan": ROOT / "templates/.agents/skills/omc-plan/references/workflow.md",
         "task": ROOT / "templates/.agents/skills/omc-task/SKILL.md",
         "review": ROOT / "templates/.agents/skills/omc-review/SKILL.md",
     }
     for stage, source in SURFACES.items():
-        assert _read(source) == _read(mirrors[stage]), f"{stage} template drift"
+        assert _read(installed_omc_target / source.relative_to(ROOT)) == _read(mirrors[stage]), f"{stage} template drift"
 
 
 SYNTHETIC_CONTRACT_SAMPLES = [
@@ -201,3 +201,12 @@ def test_native_codex_forward_samples_bind_each_output_to_fresh_execution_eviden
         assert events[-1]["type"] == "turn.completed"
         session_ids.add(execution["provider_session_id"])
     assert len(session_ids) == len(fixture["samples"])
+
+
+def test_human_projection_has_no_terminal_machine_footer_and_keeps_body_example():
+    from omc_output_contract import render_envelope,human_output
+    raw='결과: 구현 완료\n변경: 코드 예시 next_skill은 본문 설명입니다\n검증: 통과\n다음 행동: 리뷰\n'+render_envelope(stage='task',verdict='PROCEED',risk='low',next_skill='omc-review',user_selection_needed=False)
+    display=human_output(raw)
+    assert 'OMC_OUTPUT:' not in display and 'VERDICT:' not in display
+    assert 'next_skill은 본문 설명입니다' in display
+    assert display.startswith('결과: 구현 완료')

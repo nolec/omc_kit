@@ -354,3 +354,13 @@ python3 scripts/omc.py orchestrate \
 TTL 차단만 해제하고 기존 CONTRACT·RED·검증·미스테이징 검사를 그대로 수행한다.
 판정은 유효기간 안에 반복 조회할 수 있으나 발급은 한 번이다. 만료 뒤 재발급은 하지 않는다.
 구현 테스트는 폐기 가능한 임시 fixture에서만 발급하며 실제 만료 작업 복구 발급은 별도 요청으로 분리한다.
+
+## 별도 판정 기록과 사용자 안내
+신규 안내의 mode는 detached_v1, 기존 입력 mode는 legacy_inline이다. 실행 전 capabilities와 작업·세션·stage·report_id·절대마감을 고정한다. 기계 payload/VERDICT는 omc-output/v1 의미를 유지하고 .omc/state/output-records/<work>/<report>/manifest.json에 원문·표시·현재 코드/세션·증거 해시를 결속한다. 일반 모델 선언과 완료 가드 평가는 서로 대체하지 않는다.
+`python3 scripts/omc_output_contract.py prepare --target . --stage review --report-id <새ID> --budget-sec <승인된남은초>`의 내부 JSON 메타데이터를 호출자가 보존한다. 원문을 고정한 후 publish에 source-file/source-sha256와 output-context/output-context-sha256를 전달한다. task/transfer는 원래 완료CLI에 output-mode detached_v1 및 같은 context 경로/해시를 전달한다. 최종 사용자 답변은 한글 stdout만이며 메타데이터를 꼬리표로 붙이지 않는다.
+발행은 원문·표시 파일을 독점 예약 폴더에 쓰고 readback·참조 검증 후 manifest를 마지막에 원자 발행한다. 중간 파일은 미발행이다. 발행 후 stdout 실패는 전달 미확인이며 기존 평가·manifest를 고치지 않는다. 기록 실패를 다시 기록할 수 없어도 원래 호출의 stderr·종료를 남긴다. 전달오류2는 업무0/1과 다르고 구형 parse로 승격하지 않는다.
+collector에는 output-mode, output-context 및 해시, output-record 및 해시를 명시한다. 경로는 .omc/state/output-records의 예정 보고 ID에서만 읽고 native 호출 인자/반환·최종 답변·현재 evaluate 결과를 별도 대조한다. 신형에서 누락/손상/혼합은 차단한다. 구형으로 시작한 원문만 기존 parse/normalize를 적용한다. 해시와 로컬 기록은 진위 인증·동시 공격 방지·실제 모델 화면 숨김 보장이 아니다.
+autopilot pipeline은 --output-execution <내부JSON> --output-execution-sha256 <해시>로 명시 사용한다. omc-output-execution/v1은 output_mode=detached_v1과 entries 배열(step_name/context/context_sha256)을 실행 순서대로 고정한다. 계획한 시도 수보다 더 호출하거나 순서가 바뀌면 모델 호출 전 중단한다. 감독은 원래 진단을 별도 보존하고 마지막 검증된 한글 표시만 출력한다. 구형 기본 동작은 바꾸지 않는다.
+검증 범위는 공개CLI·합성native event·임시설치이며 실제 모델의 자유응답 준수·실제 홈·업무 효과는 미검증이다.
+
+종료 계층을 구분한다. 일반 모델 선언 publish는 판정이 보류/수정 필요여도 발행이 정상적이면0이며, 자동 실행기의 바깥 provider 정상 반환도0을 유지한다. 내부 완료 가드의 업무 차단1과 혼동하지 않는다. 수집기는 완료 CLI의0/1·실행기의 provider0·전달오류2를 각 호출 계층별로 대조한다.

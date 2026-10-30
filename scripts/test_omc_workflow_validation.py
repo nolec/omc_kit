@@ -58,7 +58,7 @@ def test_common_cli_keeps_malformed_stream_raw_and_rejects_root_output(tmp_path,
     assert not outside.exists()
 
 
-def collect(tmp_path, text, registered=True, external=False, expected="blocked", scope_defect=None):
+def collect(tmp_path, text, registered=True, external=False, expected="blocked", scope_defect=None, detached=False, detached_defect=None):
     root=tmp_path/'work';root.mkdir(exist_ok=True)
     state=root/'.omc';state.mkdir(exist_ok=True)
     (state/'pipeline_session.json').write_text(json.dumps({'contract_confirmed':registered,'session_id':'s','red_session_id':'s','red_done_tests':['test_app.js']}))
@@ -109,20 +109,50 @@ def collect(tmp_path, text, registered=True, external=False, expected="blocked",
         actual_gate_output=buffer.getvalue()
         text=actual_gate_output
     path=str(tmp_path/'outside.json') if external else str(verification)
+    detached_meta=None
+    if detached:
+        import hashlib
+        ctx={'output_mode':'detached_v1','stage':'task','work_id':'s','session_id':'s','report_id':'final',
+             'deadline_epoch':time.time()+60,'references':[], 'native_call_reference':{'invocation_id':'scheduled-final'}}
+        cp=root/'.omc/output-context.json';cp.write_text(json.dumps(ctx));pin=hashlib.sha256(cp.read_bytes()).hexdigest()
+        command='python3 scripts/omc_pipeline_guard.py complete-task --verification-file '+str(verification)+' --output-mode detached_v1 --output-context '+str(cp)+' --output-context-sha256 '+pin
+        actual=subprocess.run([sys.executable,str(SCRIPT.with_name('omc_pipeline_guard.py')),'--target',str(root),
+            'complete-task','--verification-file',str(verification),'--output-mode','detached_v1',
+            '--output-context',str(cp),'--output-context-sha256',pin],capture_output=True,text=True)
+        assert actual.returncode==1,actual.stderr
+        from omc_output_contract import record_path
+        mp=record_path(root,ctx);mh=hashlib.sha256(mp.read_bytes()).hexdigest()
+        detached_meta=(cp,pin,mp,mh,command,actual.stdout)
+        text=actual.stdout
+        if detached_defect=='display':text+='다른 결과\n'
+        if detached_defect=='missing_record':mp.unlink()
+        if detached_defect=='model_source':
+            doc=json.loads(mp.read_bytes());doc['source_kind']='model_declared';mp.write_text(json.dumps(doc));mh=hashlib.sha256(mp.read_bytes()).hexdigest()
+            detached_meta=(cp,pin,mp,mh,command,actual.stdout)
     events=[]
     for i,(cmd,output) in enumerate([
         ('python3 scripts/omc_pipeline_guard.py contract-done','CONTRACT 확인 완료'),
         ('python3 scripts/omc_pipeline_guard.py red-done test_app.js','RED 완료 등록'),
         ('python3 scripts/omc_pipeline_guard.py complete-task --verification-file '+path,response(first=guard.evaluate_task_completion(root,verification,expected_session_id='s')['first'], outcome=expected))]):
+        if detached and 'complete-task' in cmd:
+            cmd,output=detached_meta[-2:]
+            if detached_defect=='missing_call':continue
         if scope_defect=='skip-complete' and 'complete-task' in cmd:
             continue
         if actual_gate_output and 'complete-task' in cmd:
             output=actual_gate_output
         events += [{'type':'assistant','message':{'content':[{'type':'tool_use','id':str(i),'name':'Bash','input':{'command':cmd}}]}}, {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':str(i),'content':output}]}}]
+    if detached:
+        events[-1]['message']['content'][0]['exit_code']=2 if detached_defect=='delivery_exit' else 1
+        events[-1]['message']['content'][0]['is_error']=True
     events += [{'type':'result','subtype':'success','result':text}]
     source=tmp_path/'events.jsonl';source.write_text('\n'.join(json.dumps(e) for e in events))
     dest=tmp_path/'collected'
-    result=subprocess.run([sys.executable,str(SCRIPT),'--target',str(root),'--events-file',str(source),'--session-id','s','--verification-file',str(verification),'--expected-outcome',expected,'--output-dir',str(dest)],capture_output=True,text=True)
+    extra=[]
+    if detached:
+        cp,pin,mp,mh,_,_=detached_meta
+        extra=['--output-mode','detached_v1','--output-context',str(cp),'--output-context-sha256',pin,'--output-record',str(mp),'--output-record-sha256',mh]
+    result=subprocess.run([sys.executable,str(SCRIPT),'--target',str(root),'--events-file',str(source),'--session-id','s','--verification-file',str(verification),'--expected-outcome',expected,'--output-dir',str(dest),*extra],capture_output=True,text=True)
     return result,dest
 
 
@@ -490,3 +520,57 @@ def test_transfer_collector_rechecks_preservation_not_expected_outcome(transfer_
     report=json.loads((out/'report-comparison.json').read_text())
     assert report['official_outcome']=='blocked' and not report['state_match']
     assert assessment['required']['truthful_final']=='failed'
+
+
+def test_detached_collector_links_real_blocked_cli_with_exit_one(tmp_path):
+    result,dest=collect(tmp_path,'unused',detached=True)
+    doc=json.loads((dest/'assessment.json').read_bytes())
+    assert doc['required']['truthful_final']=='passed',doc
+    assert doc['required']['procedure_calls']=='passed',doc
+    assert doc['output_mode']=='detached_v1'
+    assert 'OMC_OUTPUT:' not in (dest/'final.txt').read_text()
+
+
+@pytest.mark.parametrize('defect',['display','missing_record','model_source','missing_call','delivery_exit'])
+def test_detached_collector_never_falls_back_for_bad_new_record(tmp_path,defect):
+    result,dest=collect(tmp_path,'unused',detached=True,detached_defect=defect)
+    doc=json.loads((dest/'assessment.json').read_bytes())
+    assert result.returncode==1 and doc['required']['truthful_final']!='passed',doc
+    assert doc['recompare_entry']=='hold'
+
+
+def test_detached_consumer_capabilities_are_public_before_any_run(tmp_path):
+    r=subprocess.run([sys.executable,str(SCRIPT),'capabilities'],capture_output=True,text=True)
+    assert r.returncode==0 and 'detached_v1' in json.loads(r.stdout)['output_modes']
+
+
+@pytest.mark.parametrize('bad',[False,True])
+def test_detached_protocol_classification_is_opt_in_and_strict(tmp_path,bad):
+    import omc_workflow_validation as v,omc_output_contract as m
+    context={'output_mode':'detached_v1'}
+    command='python3 scripts/omc_output_contract.py capabilities'
+    value=json.dumps({} if bad else m.capabilities())
+    rows=[{'type':'assistant','message':{'content':[{'type':'tool_use','id':'cap','name':'Bash','input':{'command':command}}]}},
+          {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'cap','content':value}]}},
+          {'type':'result','subtype':'success','result':'synthetic'}]
+    basis={'checks':[{'native_red':{'product_paths':['libs']}}]}
+    old=v.assess_native_procedure(tmp_path,rows,basis)
+    new=v.assess_native_procedure(tmp_path,rows,basis,output_context=context)
+    assert 'unsupported_bash_command' in old['reason']
+    assert ('unsupported_output_protocol' in new['reason']) is bad
+    assert not new['unsupported_commands']
+    assert new['status']=='unknown'  # protocol alone never proves the required work
+
+
+def test_detached_prepare_protocol_checks_actual_request_and_return(tmp_path):
+    import omc_workflow_validation as v,omc_output_contract as m
+    state=tmp_path/'.omc/state';state.mkdir(parents=True);(state/'latest.json').write_text(json.dumps({'latest_confirmed_session_id':'s'}))
+    args=['python3','scripts/omc_output_contract.py','prepare','--target',str(tmp_path),'--stage','task','--report-id','new','--budget-sec','30']
+    real=[sys.executable,str(SCRIPT.with_name('omc_output_contract.py')),*args[2:]]
+    result=subprocess.run(real,capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    meta=json.loads(result.stdout);ctx=m.load_output_context(tmp_path,meta['output_context'],meta['output_context_sha256'])
+    assert v._output_protocol_return(tmp_path,args,result.stdout,ctx)
+    altered=list(args);altered[-1]='480'
+    assert not v._output_protocol_return(tmp_path,altered,result.stdout,ctx)
+    assert not v._output_protocol_return(tmp_path,args+['--reference','outside.txt'],result.stdout,ctx)

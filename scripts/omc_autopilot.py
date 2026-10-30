@@ -4535,6 +4535,153 @@ def _get_critique_context(root: Path, max_diff_lines: int = 200) -> str:
     )
 
 
+
+# Explicit detached execution context. No ambient mode switch or latest-file lookup.
+_DETACHED_EXECUTION = None
+
+
+def _provider_record_dir(root, context):
+    return Path(root).resolve()/'.omc/state/output-provider-records'/context['work_id']/context['report_id']
+
+
+def _reserve_provider_capture(root, entry, context, argv):
+    directory=_provider_record_dir(root,context)
+    omc_output._local_file(root,directory/'request.json',must_exist=False)
+    directory.parent.mkdir(parents=True,exist_ok=True);directory.mkdir(mode=0o700)
+    request={'schema_version':'omc-provider-request/v1','context':context,
+             'context_reference':{'path':str(entry['context']),'sha256':entry['context_sha256']},
+             'argv':list(argv),'cwd':str(Path(root).resolve()),'started_epoch':time.time()}
+    raw=omc_output._json_bytes(request)
+    omc_output._write_record_file(directory/'request.json',raw)
+    omc_output._read_pinned(root,directory/'request.json',hashlib.sha256(raw).hexdigest())
+    return {'directory':directory,'request_sha256':hashlib.sha256(raw).hexdigest()}
+
+
+def _finish_provider_capture(root, capture, stdout, stderr, return_code, timed_out, *, capture_error=None):
+    directory=capture['directory'];streams={}
+    for name,raw in [('stdout',stdout),('stderr',stderr)]:
+        # A missing capture is unknown, never certified as an empty stream.
+        captured=isinstance(raw,bytes)
+        if raw is not None and not captured:raise omc_output.OutputContractError('provider_bytes_required')
+        data=raw if captured else b''
+        file=directory/(name+'.bin');omc_output._write_record_file(file,data)
+        pin=hashlib.sha256(data).hexdigest();omc_output._read_pinned(root,file,pin)
+        streams[name]={'file':file.name,'sha256':pin,'size':len(data),'captured':captured}
+    value={'schema_version':'omc-provider-capture/v1','request_sha256':capture['request_sha256'],
+           'return_code':return_code,'timed_out':timed_out,'streams':streams,
+           'capture_complete':all(v['captured'] for v in streams.values()) and isinstance(return_code,int),
+           'capture_error':capture_error,'finished_epoch':time.time(),
+           'claim_boundary':'RAW_PROVIDER_RETURN_NOT_BUSINESS_VERDICT'}
+    raw=omc_output._json_bytes(value);temp=directory/'result.tmp';final=directory/'result.json'
+    omc_output._write_record_file(temp,raw)
+    omc_output._read_pinned(root,temp,hashlib.sha256(raw).hexdigest())
+    for v in streams.values():omc_output._read_pinned(root,directory/v['file'],v['sha256'])
+    os.link(temp,final)
+    return {'path':str(final),'sha256':hashlib.sha256(raw).hexdigest()}
+
+
+def _verify_provider_capture(root, reference, context):
+    directory=_provider_record_dir(root,context)
+    file=omc_output._local_file(root,reference['path'])
+    if file!=directory/'result.json':raise omc_output.OutputContractError('provider_record_location_mismatch')
+    result=json.loads(omc_output._read_pinned(root,file,reference['sha256']))
+    request=json.loads(omc_output._read_pinned(root,directory/'request.json',result['request_sha256']))
+    if (result.get('schema_version')!='omc-provider-capture/v1' or request.get('context')!=context
+            or request.get('cwd')!=str(Path(root).resolve()) or set(result['streams'])!={'stdout','stderr'}):
+        raise omc_output.OutputContractError('provider_record_context_mismatch')
+    for name,stream in result['streams'].items():
+        if stream['file']!=name+'.bin':raise omc_output.OutputContractError('provider_stream_path_mismatch')
+        data=omc_output._read_pinned(root,directory/stream['file'],stream['sha256'])
+        if len(data)!=stream['size']:raise omc_output.OutputContractError('provider_stream_size_mismatch')
+    return result
+
+
+def _detached_step_context(root, step_name):
+    execution=_DETACHED_EXECUTION
+    if execution is None:return None
+    if Path(root).resolve()!=execution['root']:raise omc_output.OutputContractError('execution_root_mismatch')
+    if not execution['entries']:raise omc_output.OutputContractError('no_approved_output_attempt')
+    entry=execution['entries'].pop(0)
+    if entry['step_name']!=step_name:raise omc_output.OutputContractError('output_step_order_mismatch')
+    ctx=omc_output.load_output_context(root,entry['context'],entry['context_sha256'])
+    if ctx['stage']!=_pilot_stage_for_step(step_name):raise omc_output.OutputContractError('output_stage_mismatch')
+    return entry,ctx
+
+
+def consume_detached_step(root, entry, context, display, *, native_exit):
+    manifest=omc_output.record_path(root,context)
+    raw=omc_output._local_file(root,manifest).read_bytes()
+    doc=omc_output.read_record(root,manifest,hashlib.sha256(raw).hexdigest(),context,display=display)
+    # This is the outer provider's exit, not a nested completion CLI's exit.
+    if native_exit!=0:raise omc_output.OutputContractError('output_delivery_exit_mismatch')
+    if context['stage']=='task':
+        if doc['source_kind']!='completion_gate':raise omc_output.OutputContractError('task_requires_completion_gate')
+        from omc_pipeline_guard import evaluate_task_completion
+        evaluation=evaluate_task_completion(Path(root),Path(doc['gate_binding']['verification_file']),expected_session_id=context['session_id'])
+        if doc['machine_payload']['outcome']!=evaluation['outcome'] or not display.startswith(evaluation['first']+'\n'):
+            raise omc_output.OutputContractError('task_evaluation_mismatch')
+    return {**doc,'record_reference':{'path':str(manifest),'sha256':hashlib.sha256(raw).hexdigest()}}
+
+
+def detached_pipeline_cli(root, execution_file, execution_pin, callback):
+    """Capture program diagnostics separately; only the last confirmed view is shown.
+
+    This opt-in API is also used by the public pipeline --output-execution flags.
+    Captured diagnostics/records do not prove a native model obeyed the prompt.
+    """
+    import contextlib, io
+    global _DETACHED_EXECUTION
+    if _DETACHED_EXECUTION is not None:raise omc_output.OutputContractError('nested_detached_execution')
+    raw=omc_output._read_pinned(root,execution_file,execution_pin)
+    spec=json.loads(raw)
+    if (spec.get('schema_version')!='omc-output-execution/v1' or spec.get('output_mode')!='detached_v1'
+            or not isinstance(spec.get('entries'),list) or not spec['entries']):
+        raise omc_output.OutputContractError('explicit_output_execution_required')
+    try:
+        from omc_workflow_validation import output_capabilities
+        consumer_modes=output_capabilities()['output_modes']
+    except (ImportError,AttributeError,KeyError):
+        raise omc_output.OutputContractError('output_consumer_unsupported')
+    if 'detached_v1' not in consumer_modes or 'detached_v1' not in omc_output.capabilities()['output_modes']:
+        raise omc_output.OutputContractError('output_capability_unsupported')
+    seen=set()
+    for entry in spec['entries']:
+        context=omc_output.load_output_context(root,entry['context'],entry['context_sha256'])
+        key=(context['work_id'],context['report_id'])
+        if key in seen or context['stage']!=_pilot_stage_for_step(entry['step_name']):
+            raise omc_output.OutputContractError('ambiguous_output_execution')
+        seen.add(key)
+    first=spec['entries'][0];context=omc_output.load_output_context(root,first['context'],first['context_sha256'])
+    # Exclusive diagnostics reservation happens before any provider call.
+    dest=omc_output.record_path(root,context).parent.parent/(context['report_id']+'-diagnostics')
+    omc_output._local_file(root,dest,must_exist=False);dest.mkdir(parents=True)
+    stdout=io.StringIO();stderr=io.StringIO()
+    _DETACHED_EXECUTION={'root':Path(root).resolve(),'entries':list(spec['entries']),'last':None,'delivery_failed':False,'transport_errors':[]}
+    try:
+        with contextlib.redirect_stdout(stdout),contextlib.redirect_stderr(stderr):
+            result=callback()
+        last=_DETACHED_EXECUTION['last'];delivery_failed=_DETACHED_EXECUTION['delivery_failed']
+    finally:
+        errors=_DETACHED_EXECUTION['transport_errors']
+        _DETACHED_EXECUTION=None
+        if errors:omc_output._write_record_file(dest/'errors.json',omc_output._json_bytes(errors))
+        omc_output._write_record_file(dest/'stdout.txt',stdout.getvalue().encode('utf-8'))
+        omc_output._write_record_file(dest/'stderr.txt',stderr.getvalue().encode('utf-8'))
+    if delivery_failed or last is None or result not in (0,1):
+        print('판정: 진행 보류\n기록 전달 또는 실행 종료를 확인하지 못했습니다.',file=sys.stderr)
+        return 2 if delivery_failed or last is None else result
+    # Recheck the last record/context before the final presentation boundary.
+    omc_output._context(root,last['context'])
+    ref=last['record_reference']
+    omc_output.read_record(root,ref['path'],ref['sha256'],last['context'],display=last['display'])
+    captured=_verify_provider_capture(root,last['provider_capture'],last['context'])
+    if (captured['return_code']!=0 or captured['timed_out'] or not captured['capture_complete']):
+        raise omc_output.OutputContractError('provider_delivery_unconfirmed')
+    if result==0:omc_output._write_display(last['display'])
+    else:print('판정: 진행 보류\n실행 원문을 별도 보존했습니다. 미충족 항목을 확인해 주세요.')
+    return result
+
+
 def _run_pipeline_step(
     root: Path,
     step_name: str,
@@ -4553,11 +4700,21 @@ def _run_pipeline_step(
     critique/review 스텝에 사용해 task 대화 이력과 격리한다.
     """
     pilot_stage = _pilot_stage_for_step(step_name)
-    if pilot_stage:
+    try:detached=_detached_step_context(root,step_name)
+    except (OSError,ValueError,KeyError,TypeError):
+        return 2, '판정 기록의 실행 조건을 확인하지 못했습니다. 후속 진행을 보류합니다.'
+    if detached:
+        entry,context=detached
+        prompt=(f"{prompt.rstrip()}\n\n별도 기록 모드 detached_v1. 사용자 최종 답변은 발행 CLI의 한글 stdout 바이트와 정확히 같아야 합니다. "
+                f"실행 문맥: {entry['context']} / SHA-256: {entry['context_sha256']}. "
+                "scripts/omc_output_contract.py publish(일반 선언) 또는 완료 가드의 --output-mode detached_v1 경로로 원문과 기계판정을 먼저 발행하세요. "
+                "OMC_OUTPUT·VERDICT·기록 경로/해시는 최종 사용자 답변에 붙이지 마세요. 발행 실패 시 완료/승인을 주장하지 마세요.")
+    if pilot_stage and not detached:
         prompt = f"{prompt.rstrip()}\n\n{omc_output.prompt_contract(pilot_stage)}"
         if executor == "codex" and pilot_stage in {"plan", "task", "review"}:
             prompt = f"{prompt}\n{codex_readability.prompt_contract(pilot_stage)}"
     if dry_run:
+        if detached:return 2, "모의 실행은 실제 기록 발행으로 간주하지 않습니다."
         print(f"  [DRY-RUN] {step_name} 시뮬레이션")
         # review 스텝은 APPROVE, 그 외는 PROCEED (verdict 일관성)
         dry_verdict = "APPROVE" if step_name == "review" else "PROCEED"
@@ -4569,6 +4726,8 @@ def _run_pipeline_step(
         return 1, f"[ERROR] omc_exec.py 없음"
 
     prompt_file = None
+    provider_capture = None
+    proc = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="w",
@@ -4596,9 +4755,17 @@ def _run_pipeline_step(
             cmd += ["--task-kind", "review"]
         else:
             cmd += ["--task-kind", "task"]
+        if detached:
+            # Reserve against the frozen deadline; do not extend it to a minimum.
+            remaining=int(context['deadline_epoch']-time.time())
+            if remaining<=0:return 2, '기록 발행 마감 전에 실행을 마칠 예산이 없습니다.'
+            timeout_sec=min(timeout_sec,remaining)
+            cmd[cmd.index('--timeout-sec')+1]=str(timeout_sec)
+        provider_capture=_reserve_provider_capture(root,entry,context,cmd) if detached else None
+        if detached:omc_output._context(root,context)
         proc = subprocess.Popen(
             cmd, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, start_new_session=True,
+            text=not bool(detached), start_new_session=True,
         )
         timed_out = False
 
@@ -4610,19 +4777,36 @@ def _run_pipeline_step(
             except (ProcessLookupError, PermissionError):
                 pass
 
-        timer = threading.Timer(timeout_sec, _kill_proc_group)
+        timer_seconds=min(timeout_sec,max(0,context['deadline_epoch']-time.time())) if detached else timeout_sec
+        timer = threading.Timer(timer_seconds, _kill_proc_group)
         try:
             timer.start()
             stdout, stderr = proc.communicate()
         finally:
             timer.cancel()
 
+        provider_reference=None
+        if detached:
+            provider_reference=_finish_provider_capture(root,provider_capture,stdout,stderr,proc.returncode,timed_out)
         if timed_out:
+            if detached:_DETACHED_EXECUTION['delivery_failed']=True
             return 124, f"[ERROR] 타임아웃 ({timeout_sec}s) — 프로세스 그룹 종료"
 
-        stdout_output = (stdout or "").strip()
-        stderr_output = (stderr or "").strip()
+        stdout_output = stdout.decode('utf-8') if detached else (stdout or "").strip()
+        stderr_output = stderr.decode('utf-8',errors='replace') if detached else (stderr or "").strip()
         return_code = int(proc.returncode)
+        if detached:
+            try:
+                omc_output._context(root,context)
+                doc=consume_detached_step(root,entry,context,stdout_output,native_exit=return_code)
+                captured=_verify_provider_capture(root,provider_reference,context)
+                if not captured['capture_complete']:raise omc_output.OutputContractError('provider_capture_incomplete')
+                _DETACHED_EXECUTION['last']={**doc,'context':context,'provider_capture':provider_reference}
+                return return_code, doc['raw_source']
+            except (OSError,ValueError,KeyError,TypeError) as exc:
+                _DETACHED_EXECUTION['transport_errors'].append({'step':step_name,'exception_type':type(exc).__name__,'message':str(exc)})
+                _DETACHED_EXECUTION['delivery_failed']=True
+                return 2, '판정 기록과 실행 원문이 일치하지 않아 후속 진행을 보류합니다.'
         if return_code == 0 and pilot_stage:
             try:
                 output = _normalize_pipeline_output(
@@ -4636,6 +4820,15 @@ def _run_pipeline_step(
             output = f"{stdout_output}\n{stderr_output}".strip()
         return return_code, output
     except Exception as exc:
+        if detached:
+            _DETACHED_EXECUTION['transport_errors'].append({'step':step_name,'exception_type':type(exc).__name__,'message':str(exc)})
+            _DETACHED_EXECUTION['delivery_failed']=True
+            if provider_capture is not None:
+                failure={'exception_type':type(exc).__name__,'message':str(exc),
+                         'provider_return_code':getattr(proc,'returncode',None),'capture_may_be_partial':True}
+                try:omc_output._write_record_file(provider_capture['directory']/'error.json',omc_output._json_bytes(failure))
+                except (OSError,ValueError):pass  # storage itself may be unavailable
+            return 2, '실행 원문 보존 또는 기록 전달을 확인하지 못했습니다. 후속 진행을 보류합니다.'
         return 1, f"[ERROR] {exc}"
     finally:
         if prompt_file:
@@ -6166,6 +6359,8 @@ def main() -> int:
     p_status.add_argument("--task-id", default=None, help="특정 태스크 ID 조회")
 
     p_pipeline = sub.add_parser("pipeline", help="full-pipeline 자동화 (plan→task→conditional critique→review→PR)")
+    p_pipeline.add_argument("--output-execution",type=Path)
+    p_pipeline.add_argument("--output-execution-sha256")
     p_pipeline.add_argument("--instruction", required=True, help="작업 지시문")
     p_pipeline.add_argument("--branch", default="feat/autopilot", help="생성할 feature 브랜치 이름")
     p_pipeline.add_argument("--executor", default="auto", help="LLM 실행기 (auto|codex|gemini|claude)")
@@ -6248,6 +6443,21 @@ def main() -> int:
     p_overview.add_argument("--limit", type=int, default=10, help="표시할 최대 run 개수 (기본: 10)")
 
     args = ap.parse_args()
+    if args.cmd == "pipeline" and (args.output_execution or args.output_execution_sha256):
+        if not args.output_execution or not args.output_execution_sha256:
+            print("출력 기록 실행 문맥과 해시가 모두 필요합니다.",file=sys.stderr);return 2
+        original=list(sys.argv)
+        def invoke():
+            argv=list(original)
+            for flag in ("--output-execution","--output-execution-sha256"):
+                i=argv.index(flag);del argv[i:i+2]
+            sys.argv=argv
+            try:return main()
+            finally:sys.argv=original
+        try:return detached_pipeline_cli(omc_utils.project_root(args.target),args.output_execution,args.output_execution_sha256,invoke)
+        except (OSError,ValueError,TypeError,KeyError):
+            print("기록 전달을 확인하지 못했습니다. 후속 진행을 보류합니다.",file=sys.stderr);return 2
+
     root = omc_utils.project_root(args.target)
 
     if args.cmd == "recovery-approve":

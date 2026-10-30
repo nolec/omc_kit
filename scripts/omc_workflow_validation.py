@@ -35,7 +35,34 @@ def _single_bash_argv(command: str) -> list[str]:
     return single_argv(command)
 
 
-def assess_native_procedure(root: Path, rows: list, basis: dict, events_file: Path | None = None) -> dict:
+def _output_protocol_return(root, args, text, expected_context):
+    """Only explicit detached runs recognize these narrow local protocol effects."""
+    if not expected_context or expected_context.get('output_mode')!='detached_v1':return False
+    from omc_output_contract import capabilities,load_output_context,record_path
+    if args==['python3','scripts/omc_output_contract.py','capabilities']:
+        return json.loads(text)==capabilities()
+    if args==['python3','scripts/omc_workflow_validation.py','capabilities']:
+        return json.loads(text)==output_capabilities()
+    if args[:3]!=['python3','scripts/omc_output_contract.py','prepare']:return False
+    tail=args[3:]
+    if len(tail)%2:return False
+    opts={};refs=[]
+    for flag,value in zip(tail[::2],tail[1::2]):
+        if flag=='--reference':refs.append(value)
+        elif flag in {'--target','--stage','--report-id','--budget-sec'} and flag not in opts:opts[flag]=value
+        else:return False
+    if set(opts)!={'--target','--stage','--report-id','--budget-sec'}:return False
+    if (Path(opts['--target']).resolve()!=root.resolve() and (root/opts['--target']).resolve()!=root.resolve()):return False
+    if (opts['--stage']!=expected_context['stage'] or opts['--report-id']!=expected_context['report_id']
+            or not 0<float(opts['--budget-sec'])<=480):return False
+    meta=json.loads(text)
+    actual=load_output_context(root,meta['output_context'],meta['output_context_sha256'],live_deadline=False)
+    if actual.get('budget_sec')!=float(opts['--budget-sec']):return False
+    if [(root/p).resolve() for p in refs]!=[(root/r['path']).resolve() for r in actual['references']]:return False
+    return actual==expected_context and meta['record_path']==str(record_path(root,expected_context))
+
+
+def assess_native_procedure(root: Path, rows: list, basis: dict, events_file: Path | None = None, output_context: dict | None = None) -> dict:
     """Opt-in result-order audit. Rejected writes are not successful edits.
 
     Only fixed public commands and documented read-only inspection commands are
@@ -92,7 +119,12 @@ def assess_native_procedure(root: Path, rows: list, basis: dict, events_file: Pa
                         text = ''.join(c.get('text', '') for c in text if c.get('type') == 'text')
                     from omc_native_command import validation_profile
                     profile = validation_profile(inp.get('command', ''))
-                    if profile is not None:
+                    if output_context and args[:2] in [['python3','scripts/omc_output_contract.py'],['python3','scripts/omc_workflow_validation.py']]:
+                        try:
+                            if not _output_protocol_return(root,args,text,output_context):raise ValueError('output_protocol_return_mismatch')
+                        except (OSError,ValueError,TypeError,KeyError) as exc:
+                            unknown.append('unsupported_output_protocol:'+str(exc))
+                    elif profile is not None:
                         try:
                             from omc_validation_command import validate_receipt
                             pin = basis['validation_commands_policy_sha256']
@@ -190,10 +222,53 @@ def assess_native_procedure(root: Path, rows: list, basis: dict, events_file: Pa
             'unsupported_commands': unsupported_commands}
 
 
+def _detached_evidence(root, rows, final, sid, evaluation, command, context_file, context_pin, record_file, record_pin):
+    from omc_output_contract import load_output_context, read_record, _local_file
+    context=load_output_context(root,context_file,context_pin,live_deadline=False)
+    if context['session_id']!=sid or context['stage']!='task':raise ValueError('output_context_session_or_stage_mismatch')
+    doc=read_record(root,record_file,record_pin,context,display=final)
+    if doc['source_kind']!='completion_gate':raise ValueError('model_declaration_is_not_completion_evidence')
+    if doc['machine_payload']['outcome']!=evaluation['outcome'] or not final.startswith(evaluation['first']+'\n'):
+        raise ValueError('output_evaluation_mismatch')
+    from omc_native_command import single_argv
+    calls={}; found=[]
+    for row in rows:
+        for block in row.get('message',{}).get('content',[]):
+            if block.get('type')=='tool_use' and row.get('type')=='assistant':
+                ident=block.get('id')
+                if ident in calls:raise ValueError('duplicate_output_call')
+                calls[ident]=block
+            elif block.get('type')=='tool_result' and row.get('type')=='user':
+                call=calls.get(block.get('tool_use_id'),{})
+                if call.get('name')!='Bash':continue
+                args=single_argv(call.get('input',{}).get('command',''))
+                if len(args)<3 or args[:2]!=['python3','scripts/omc_pipeline_guard.py'] or args[2]!=command:continue
+                options=args[3:]; allowed={'--verification-file','--output-mode','--output-context','--output-context-sha256'}
+                if len(options)%2 or len(options)!=8 or set(options[::2])!=allowed:raise ValueError('unsupported_detached_command_options')
+                opts=dict(zip(options[::2],options[1::2]))
+                if (opts['--output-mode']!='detached_v1' or opts['--output-context-sha256']!=context_pin
+                        or _local_file(root,opts['--output-context'])!=_local_file(root,context_file)
+                        or not context['native_call_reference']['invocation_id']):
+                    raise ValueError('output_call_context_mismatch')
+                # exit 1 is the expected business block, not a delivery failure.
+                exit_code=block.get('exit_code')
+                if (exit_code not in (0,1) or isinstance(exit_code,bool)
+                        or exit_code!=(1 if evaluation['outcome']=='blocked' else 0)
+                        or (exit_code==0 and block.get('is_error') is True)):
+                    raise ValueError('output_delivery_return_unconfirmed')
+                if doc['gate_binding']['verification_file']!=str(_local_file(root,opts['--verification-file'])):
+                    raise ValueError('gate_verification_reference_mismatch')
+                if block.get('content')!=doc['display']:raise ValueError('output_return_body_mismatch')
+                found.append(({**doc,'observed_native_call_id':block.get('tool_use_id')},opts['--verification-file']))
+    if len(found)!=1:raise ValueError('output_call_return_missing_or_ambiguous')
+    return found[0]
+
+
 def collect(root: Path, events_file: Path, sid: str, verification: Path,
             expected: str, output: Path, scope_report: Path | None = None,
             scope_report_sha256: str | None = None, visual_report: Path | None = None,
-            visual_report_sha256: str | None = None) -> dict:
+            visual_report_sha256: str | None = None, *, output_mode='legacy_inline',
+            output_context=None, output_context_sha256=None, output_record=None, output_record_sha256=None) -> dict:
     source = events_file.read_bytes()
     rows = [json.loads(line) for line in source.decode('utf-8').splitlines() if line.strip()]
     for row in rows:
@@ -224,10 +299,22 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
     output.mkdir(parents=True, exist_ok=True)
     (output / 'final.txt').write_text(final, encoding='utf-8')
     issues = []
+    detached=None
     try:
-        envelope = parse_envelope(final)
+        if output_mode=='detached_v1':
+            if not all((output_context,output_context_sha256,output_record,output_record_sha256)):
+                raise OutputContractError('detached_reference_required')
+            detached,detached_verification=_detached_evidence(root,rows,final,sid,evaluation,gate_command,
+                output_context,output_context_sha256,output_record,output_record_sha256)
+            if (root/detached_verification).resolve()!=verification.resolve():raise OutputContractError('output_verification_mismatch')
+            envelope={**detached['machine_payload'],'verdict':detached['verdict']}
+        elif output_mode=='legacy_inline':
+            if any((output_context,output_context_sha256,output_record,output_record_sha256)):
+                raise OutputContractError('mixed_output_mode')
+            envelope = parse_envelope(final)
+        else:raise OutputContractError('unsupported_output_mode')
         semantic = 'passed' if envelope['stage'] == 'task' and envelope['outcome'] == expected else 'failed'
-    except OutputContractError as exc:
+    except (OutputContractError,OSError,ValueError,TypeError,KeyError) as exc:
         envelope = None
         semantic = 'unknown'
         issues.append(str(exc))
@@ -310,12 +397,12 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
                         pass
                 if call.get('name') == 'Bash' and gate_command in command:
                     try:
-                        gate = parse_envelope(text)
+                        gate = ({**detached['machine_payload'],'verdict':detached['verdict']} if detached and text==detached['display'] else parse_envelope(text))
                         gate_states = [line.strip().strip('#*` ').strip() for line in text.splitlines()
                                        if line.strip().strip('#*` ').strip() in STATUSES]
                         if (gate['stage'] == 'task' and gate['outcome'] == expected == evaluation['outcome']
                                 and gate_states and all(state == evaluation['first'] for state in gate_states)):
-                            if not transfer_mode or (literal_guard and gate_command in args and not block.get('is_error')):
+                            if detached or not transfer_mode or (literal_guard and gate_command in args and not block.get('is_error')):
                                 evidence.append((gate_command, call_index))
                     except OutputContractError:
                         pass
@@ -420,7 +507,8 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
     try:
         native_basis = _load_approved_basis(root, sid)
         if any('native_red' in c for c in native_basis['checks']):
-            native_procedure = assess_native_procedure(root, rows, native_basis, events_file)
+            native_procedure = assess_native_procedure(root, rows, native_basis, events_file,
+                output_context=detached['context'] if detached else None)
             required['native_procedure'] = native_procedure['status']
             if native_procedure['reason']:
                 issues.append(native_procedure['reason'])
@@ -429,6 +517,7 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
         issues.append(str(exc))
     assessment = {
         'schema_version': 'omc-workflow-validation/v1',
+        'output_mode': output_mode, 'output_record': str(output_record) if detached else None,
         'completion_command': gate_command,
         'final_sha256': hashlib.sha256(final.encode('utf-8')).hexdigest(),
         'events_sha256': hashlib.sha256(source).hexdigest(),
@@ -682,7 +771,14 @@ def common_main(argv):
         print(json.dumps({'comparison_entry':'hold','reason':str(exc)}));return 1
 
 
+def output_capabilities():
+    return {'schema_version':'omc-output-record/v1','output_modes':['legacy_inline','detached_v1'],
+            'consumer':'workflow_validation','requires_explicit_native_exit':True}
+
+
 def main() -> int:
+    if sys.argv[1:]==['capabilities']:
+        print(json.dumps(output_capabilities()));return 0
     if sys.argv[1:2]==['compare-entry']:
         return common_main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__)
@@ -696,12 +792,19 @@ def main() -> int:
     parser.add_argument('--scope-report-sha256')
     parser.add_argument('--visual-report', type=Path)
     parser.add_argument('--visual-report-sha256')
+    parser.add_argument('--output-mode',choices=['legacy_inline','detached_v1'],default='legacy_inline')
+    parser.add_argument('--output-context',type=Path)
+    parser.add_argument('--output-context-sha256')
+    parser.add_argument('--output-record',type=Path)
+    parser.add_argument('--output-record-sha256')
     args = parser.parse_args()
     try:
         result = collect(args.target.resolve(), args.events_file, args.session_id,
                          args.verification_file, args.expected_outcome, args.output_dir,
                          args.scope_report, args.scope_report_sha256,
-                         args.visual_report, args.visual_report_sha256)
+                         args.visual_report, args.visual_report_sha256, output_mode=args.output_mode,
+                         output_context=args.output_context,output_context_sha256=args.output_context_sha256,
+                         output_record=args.output_record,output_record_sha256=args.output_record_sha256)
     except (OSError, ValueError, TypeError) as exc:
         failure = {'schema_version': 'omc-workflow-validation/v1', 'recompare_entry': 'hold', 'error': str(exc)}
         args.output_dir.mkdir(parents=True, exist_ok=True)
