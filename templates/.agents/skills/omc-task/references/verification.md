@@ -5,7 +5,7 @@
 CONTRACT 등록 시 이번 작업의 필수 검증 ID를 고정합니다:
 `python3 scripts/omc_pipeline_guard.py contract-done --required-checks tests,lint,browser`
 브라우저가 불필요한 작업은 계약에서 제외하고 그 이유를 설명합니다. 이후 현재 작업에서 실제 FAIL을 확인하고 `red-done <테스트파일> --evidence-file <RED근거JSON>`을 등록합니다.
-검증 JSON은 먼저 `python3 scripts/omc_pipeline_guard.py verification-path`로 현재 작업 폴더 내부 경로를 받아 그 경로에만 작성합니다. /tmp 등 외부 경로나 외부를 가리키는 심볼릭 링크를 사용하지 않습니다. 최종 보고 직전 `python3 scripts/omc_pipeline_guard.py complete-task --verification-file <제공받은 내부 경로>`를 실행하고 첫 상태 문장과 기계 판정을 그대로 사용합니다.
+검증 JSON은 먼저 `python3 scripts/omc_pipeline_guard.py verification-path`로 현재 작업 폴더 내부 경로를 받아 그 경로에만 작성합니다. /tmp 등 외부 경로나 외부를 가리키는 심볼릭 링크를 사용하지 않습니다. 최종 보고 직전 `python3 scripts/omc_pipeline_guard.py complete-task --verification-file <제공받은 내부 경로>`를 실행하고 첫 상태 문장과 별도 기계 기록을 사용하고 사용자에게는 한글 stdout만 제공합니다.
 검증 JSON 형식: `{"session_id":"현재 confirmed session ID","implementation":{"status":"applied","evidence":"구현 반영 확인 근거"},"checks":{"tests":{"status":"passed","evidence":"검증 출력 위치"},"lint":{"status":"passed","evidence":"검증 출력 위치"},"browser":{"status":"unrun","evidence":"미실행 이유"}}}`.
 허용 상태는 passed/failed/mismatch/unrun이며 누락·알 수 없는 상태·빈 근거는 미완료입니다. 필수 검증은 계약에 고정된 전체 목록을 확인합니다. 구현의 반영 상태·근거가 없으면 `구현 여부 확인 불가·검증 미완료`로 보고합니다. 현재 작업의 CONTRACT·RED 등록이 없거나 계약 최초 등록 이후 새로 생기거나 내용·권한이 달라진 미스테이징 구현 변경이 남으면 완료로 출력하지 않습니다. 계약 최초 등록에 보존한 기존 변경은 그대로면 제외하고, 같은 세션에서 계약을 다시 등록해도 기준을 갱신하지 않습니다. `--staged`의 신규 구현 없음은 전체 완료 증거가 아닙니다.
 도구 출력 뒤 최종 답변을 다시 길게 작성하지 말고, 상태 문장을 첫 줄에 한 번만 두며 상태·다음 행동을 반복하지 않습니다. 수집자는 모델 종료 후 최종 원문 전체를 수정 없이 보존하고 서식 품질과 필수 의미 판정을 따로 검사합니다. 이 명령은 호출자가 제공한 상태·근거 문자열을 판정합니다. 실행 결과의 진위나 브라우저 실제 수행을 인증하지 않으며, 명령을 우회한 자유 응답을 물리적으로 차단하지 않습니다. 증거를 만들어내거나 완료를 위해 필수 검증 목록을 줄이지 않습니다.
@@ -122,3 +122,6 @@ CLI의 상태·기계 판정·종료 코드와 수집기 판정은 같은 공용
 기존 검증기가 통과했더라도 원문 해시 연결이 없으면 이관 자격은 보류하며 자동으로 보충하지 않습니다.
 운영 작업의 코드 snapshot은 CONTRACT 최초 등록에 고정합니다. 등록 전후 운영 폴더에 코드를 추가해
 이관 종류로 구현 RED를 우회할 수 없습니다. 대상 파일·폴더 권한도 보존 목록에 포함합니다.
+
+## 별도 기록의 완료·수집 연결
+완료 가드의 기존 legacy_inline 기본값은 구형 호환용이다. 새 스킬은 detached_v1을 명시하며 문맥·manifest를 먼저 고정한다. completion_gate 기록은 실제 완료 가드만 발행하고 수집기는 현재 evaluate 결과와 독립 비교한다. 발행 성공은 사용자 화면 전달 성공이 아니다. 원래 종료0/1과 전달오류2를 구분한다. 봉인 기록은 수정하지 않고 전달 실패는 실행 원문으로 보존한다. 실제 CLI stdout·stderr 직접 검사와 native event fixture 소비를 검증하며, 실제 모델 화면 준수는 따로 확인한다.

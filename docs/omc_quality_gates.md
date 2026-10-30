@@ -111,3 +111,24 @@ Autopilot `expect.checks` 실행 결과는 실패 시 기존 C1 진단 함수를
 성공에는 실패 진단을 붙이지 않고 dry-run은 진단하지 않는다. 파일 존재 검사에는 명령 실패 분류를 적용하지 않는다. 직접 Python 검증 파일 부재는 실행 불가로 유지하며 경로·파일 확인을 안내한다. 진단은 참고 정보다. 기존 실패라도 expect 검증 실패는 완료를 차단하며, 모델 자유 응답의 완료 선언은 실행기 최종 상태를 대체하지 않는다. 이 연결은 실행기 보고에 대한 것으로 모델 응답 문구를 보장하지 않는다.
 
 check의 ID·label이 문자열이 아니거나 비어 있으면 `unknown / invalid_diagnostic_metadata`로 안내한다. 표시 label은 명령 요약으로 대체하며 원래 검증 종료 상태와 완료 차단을 유지한다.
+
+
+## Ship 진입 계약 v1 — 설정 승인과 실행 준비 분리
+
+원본 SSOT는 templates/.agents/skills/omc-ship/SKILL.md와 templates/.claude/commands/ship.md의 동일 omc-ship-entry/v1 정형 블록이다. 스킬의 명령·입력·중단 조건과 직접 CLI 회귀는 같은 블록을 사용한다. 별도 실행기 추가나 모델 절차 준수 보장이 아니다.
+
+최종 구현·문서·버전 커밋을 먼저 고정하고, 원본 리뷰·설정·명시적 실행 승인을 확인한다. 원본은 읽기 전용, control은 새 제어/기록 폴더, candidate는 prepare가 소유한 새 복제본이다. 기존 변경·인덱스·검증 원문은 보존한다.
+
+순서는 control 초기화/가드 → 원본 리뷰·품질 승인 확인 → prepare → 격리 리뷰 capture/seal/record·품질 승인 연결 → check → 격리 리뷰·품질·TDD 재확인 → 별도 승인된 run이다. prepare 성공만으로 quality status가 ready가 되지 않는다. 원본 영수증이나 승인 범위를 자동 복사하지 않는다.
+
+preflight의 quality_config_sha256는 설정 파일 원문 해시이고 quality approve의 config_sha256는 정규화된 설정 해시다. --allow-full은 동일 후보·설정의 명시적 full 실행 승인이 있을 때만 전달한다. 리뷰 원문 해시와 전체 expected-path 목록, 기준·후보 커밋을 고정한다. 후보나 설정이 달라지면 중단한다.
+
+준비 총480초(입력40·prepare240·승인 연결40·check90·정리/보관70), prepare/check 내부 예산 포함. 새 명령은 남은 구간과 최종 보관 예산이 확보될 때만 호출한다. 조기 중단 마감은 min(중단+70초,T0+480초)다. 전체 품질 검사는 별도의 승인된 실행 횟수·총마감·정리/보관 예산이 필요하며 미지정 시 실행하지 않는다.
+
+prepare/check의 종료 코드0·stdout baseline_verified·operation·계약/대상·cleanup_confirmed·evidence_complete·외부 시간 확인을 함께 소비한다. evidence_only final.json의 requires_cli_completion만으로 성공을 주장하지 않는다. stdout/stderr/종료 코드·디스크 원문·해시를 보관한다. 종료 미확인은 부분 증거로 남기고 원문을 덮어쓰지 않는다.
+
+기존 ready는 설정 승인 의미를 유지한다. 설정 승인됨·실행 준비됨·검사 통과·배포 완료는 스킬 보고에서 구분하고 기존 CLI status와 종료 코드를 바꾸지 않는다. 준비 불가·승인 불일치·코드 실패·증거/종료 미확인은 별도로 보고한다.
+
+회귀는 템플릿의 정형 블록을 읽어 임시 저장소 공개 CLI를 실행한다. 순서/prepare 누락·원본 쓰기 명령·승인 누락·후보 변경을 주입해 품질 실행0회를 확인한다. 실제 합성 검사 실패와 원문/시간 미확인을 구분한다. 설치 검사는 미커밋 후보5개 파일을 해시·권한 그대로 복제한 source kit에서 새 임시 사용처를 생성하고 task/ship 생성 결과를 확인한다. 원본 checkout·실제 사용처는 설치하지 않는다.
+
+이 회귀 통과는 실제 프로젝트 출하·사용처 스킬 동기화·업무 효과의 증거가 아니다. 실제 홈 NOT_VERIFIED·비교 HOLD는 별도 검증 전까지 유지한다.

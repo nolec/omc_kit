@@ -18,6 +18,7 @@ Cursor beforeToolCall 훅에서 호출됩니다:
 from __future__ import annotations
 
 import argparse
+import sys
 import hashlib
 import json
 import math
@@ -1761,7 +1762,15 @@ def cmd_complete_task(root: Path, verification_file: Path) -> int:
     return _print_completion(_evaluate_implementation_completion(root, verification_file))
 
 
-def _print_completion(evaluation: dict) -> int:
+def _print_completion(evaluation: dict, output_context=None, *, root=None, verification_file=None) -> int:
+    if output_context is not None:
+        import contextlib, io
+        from omc_output_contract import emit_record, _GATE_AUTHORITY
+        buffer=io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            _print_completion(evaluation)
+        return emit_record(root, output_context[0], output_context[1], buffer.getvalue(),
+                           source_kind="completion_gate", _authority=_GATE_AUTHORITY, _gate_verification=verification_file)
     blocked = evaluation["outcome"] == "blocked"
     print(evaluation["first"])
     for problem in evaluation["problems"]:
@@ -2133,6 +2142,10 @@ def main() -> int:
     sub.add_parser("session-start", help="새 세션 시작 — contract_confirmed 초기화 (red_done_files 보존)")
     sub.add_parser("scope-check", help="staged 변경 범위 경고 출력 (차단 없음)")
 
+    for completion_parser in (p_complete,p_transfer):
+        completion_parser.add_argument("--output-mode", choices=["legacy_inline","detached_v1"], default="legacy_inline")
+        completion_parser.add_argument("--output-context", type=Path)
+        completion_parser.add_argument("--output-context-sha256")
     args = ap.parse_args()
     root = Path(args.target).resolve()
 
@@ -2151,6 +2164,16 @@ def main() -> int:
         return cmd_reapprove_completion(root, args.file)
     if args.cmd == "register-transfer-baseline":
         return cmd_register_transfer_baseline(root)
+    if args.cmd in {"complete-task","complete-transfer"} and args.output_mode=="detached_v1":
+        if not args.output_context or not args.output_context_sha256:
+            print("판정 기록의 연결 정보가 없습니다. 후속 진행을 보류합니다.",file=sys.stderr);return 2
+        evaluation=evaluate_transfer_completion(root,args.verification_file) if args.cmd=="complete-transfer" else _evaluate_implementation_completion(root,args.verification_file)
+        if args.cmd=="complete-task":
+            try:
+                latest=json.loads((root/".omc/state/latest.json").read_bytes());state,_=_read_pipeline(root);sid=_completion_owner(root,latest,state)
+                if _completion_kind(_load_approved_basis(root,sid))==TRANSFER_KIND:evaluation=_transfer_block("completion_kind_entry_mismatch")
+            except (OSError,ValueError,TypeError,KeyError,AttributeError):pass
+        return _print_completion(evaluation,(args.output_context,args.output_context_sha256),root=root,verification_file=args.verification_file)
     if args.cmd == "complete-transfer":
         return cmd_complete_transfer(root, args.verification_file)
     if args.cmd == "complete-task":
