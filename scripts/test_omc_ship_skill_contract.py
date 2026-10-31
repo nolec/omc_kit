@@ -328,7 +328,7 @@ def test_install_check_preserves_resolved_index_in_git_layouts(tmp_path, monkeyp
         assert (candidate / '.git').is_file()
     else:
         assert (candidate / '.git').is_dir()
-    changed = subprocess.check_output(['git', 'diff', '--name-only', '--diff-filter=ACMRT', 'HEAD'],
+    changed = subprocess.check_output(['git', '-c', 'diff.autoRefreshIndex=false', 'diff', '--name-only', '--diff-filter=ACMRT', 'HEAD'],
                                       cwd=original, env=env, text=True).splitlines()
     for name in changed:
         if Path(name).parts[0] == '.omc':
@@ -356,3 +356,33 @@ def test_install_check_preserves_resolved_index_in_git_layouts(tmp_path, monkeyp
         assert index.stat().st_mode & 0o777 == mode
     assert original_index.read_bytes() == original_bytes
     assert original_index.stat().st_mode & 0o777 == original_mode
+
+
+@pytest.mark.parametrize('layout', ['clone', 'linked-worktree'])
+def test_install_check_preserves_stale_source_index_in_git_layouts(tmp_path, monkeypatch, layout):
+    """Preparation must not refresh a source index, even when its stat cache is stale."""
+    import os
+    import subprocess
+    env = {**os.environ, 'GIT_OPTIONAL_LOCKS': '0', 'OMC_AUTO_UPDATE': '0'}
+    source = tmp_path / 'stale-source'
+    subprocess.run(['git', 'clone', '--template=', '--quiet', '--no-hardlinks',
+                    str(ROOT), str(source)], env=env, check=True, capture_output=True, timeout=30)
+    # Force the hazardous default locally so global Git settings cannot hide the RED.
+    subprocess.run(['git', '-C', str(source), 'config', 'diff.autoRefreshIndex', 'true'],
+                   env=env, check=True, capture_output=True, timeout=30)
+    tracked = source / '.omc/wip/latest.json'
+    content = tracked.read_bytes()
+    metadata = tracked.stat()
+    os.utime(tracked, ns=(metadata.st_atime_ns, metadata.st_mtime_ns - 2_000_000_000))
+    index = Path(subprocess.check_output(
+        ['git', 'rev-parse', '--path-format=absolute', '--git-path', 'index'],
+        cwd=source, env=env, text=True).strip())
+    before = index.read_bytes()
+    before_mode = index.stat().st_mode & 0o777
+    exercise = tmp_path / 'exercise'
+    exercise.mkdir()
+    monkeypatch.setitem(globals(), 'ROOT', source)
+    test_install_check_preserves_resolved_index_in_git_layouts(exercise, monkeypatch, layout)
+    assert tracked.read_bytes() == content
+    assert index.read_bytes() == before
+    assert index.stat().st_mode & 0o777 == before_mode
