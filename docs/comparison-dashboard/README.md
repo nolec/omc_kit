@@ -1,6 +1,22 @@
 # OMC 비교 대시보드 · 최신 기준 2026-11-01
 
-## 현재 · main 6642086d·0.6.2 준비 / 별도 후보 6개·3개 리뷰 승인·미커밋 · 2026-11-01
+## 현재 · 76ad59a 출하1건 실패 / 34dfce8 보완1개 커밋·승인 READY·전체 재검증 전 · 2026-11-01
+
+- 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
+- 현재 판정: 원본 main은 d10f928c13616eab70ee890097fd46ec514fa148이며 VERSION은 0.6.2 준비 상태다. 별도 후보 34dfce8ee30501bb156050332fb8d6939b769e46의 보완 1개 파일은 커밋·리뷰 승인 재결속 READY다. 이전 76ad59a 전체 출하는 1건 실패로 BLOCKED이며 34dfce8의 전체 출하는 미실행이다. main 반영·릴리스·일반 사용처 재설치 완료로 해석하지 않는다. 실제 홈 NOT_VERIFIED·비교 HOLD를 유지한다.
+- 커밋·승인 범위: 76ad59ad3f7105d8a24c1d810a4d6905b8823558은 49fc3f6 기준 최신 출하 기준6개·ship 동기화3개, 정확한9개 커밋이며 승인 scope는 51e76029dd81691e2e1df464ffde1c4349a6b2b8e72feb69234cb208926cf403이다. 34dfce8은 76ad59a 위의 scripts/test_omc_ship_skill_contract.py 1개 커밋이며 scope a54042ab41ca1d76d937874b739fce7ea473f84b128421bb9a81d28c12ad327e, 커밋 후 READY를 확인했다. 각각의 승인 범위를 누적 후보 전체 승인으로 자동 확대하지 않는다.
+- main과 후보 차이: 선행 0077c59·49fc3f6과 76ad59a·34dfce8은 아직 main에 반영하지 않았다. 구현 기준6642086d 대비 누적 변경은14개다. 문서 커밋d10f928을 가진 현재 main과의 실제 트리 차이는18개이며, 그중4개는 후보 브랜치에 빠진 최신 로드맵·대시보드 문서다. 향후 main 반영 시 최신 문서4개를 보존해야 하며 후보 트리를 통째로 덮어쓰지 않는다. 이번 작업은 그 문서4개 최신화만 수행하고 스테이징·커밋하지 않는다.
+- 실제 출하 실행: 사용자 승인에 따라 76ad59a의 새 별도 source에 기준49fc3f6·현행 품질 설정을 적용·승인했다. prepare/check 각1회는 실제 종료0·baseline_verified·종료/증거 확인을 통과했다. 전체 검사도 최대1회 중1회 실행했으며, 75분 예산 내 최초 검사·정리 기록2200.15초(약36분40초), 후속 결과 보관은 검사 종료 뒤92.70초로120초 이내였다. 최초 제어기의 승인 응답 필드 오해로 중단한 원문도 보존했고, 설정·승인을 반복하지 않고 공식 ready 확인 후 같은 마감 안에서 미실행 단계만 이어갔다.
+- 전체 검사 결과: 76ad59a의 전체 검사 결과는5755개 통과·1개 실패·오류0·생략0,15개 deselected다. 제외15개는 기존slow12개와 과거 입력2개·RED 표식1개이며, 과거3개를 통과에 합산하지 않는다. 실제 광고 빌드 test_recovered_builder_bundles_actual_baseline_ad는 통과했다. 실패는 test_install_check_preserves_resolved_index_in_git_layouts[clone]의 인덱스 원문 불일치다. 실제 광고 빌드 성공을 전체 출하 성공·실제 홈 검수·비교 성능 증명으로 확대하지 않는다.
+- 원인과 보완: 설치 전후 원문 비교는 통과했지만 준비 전 원문과의 마지막 비교가 실패했다. 조사에서 준비용 git diff의 기본 autoRefreshIndex가 같은 내용의 .omc/wip/latest.json stat 캐시를 갱신하는 것을 재현했다. GIT_OPTIONAL_LOCKS=0만으로는 차단되지 않았다. 34dfce8은 해당 diff 한 곳에 -c diff.autoRefreshIndex=false를 명시했고 인덱스 원문·권한 assertion은 유지했다. 캐시가 오래된 상태가 된 선행 테스트 자체는 특정하지 않았다.
+- 보완 검증: 새 회귀는 clone·linked-worktree 양쪽에 오래된 stat 캐시와 명시적 autoRefreshIndex=true 조건을 만들어 수정 전2개 실제 실패를 확인했다. 수정 후 해당 파일 전체20개 통과·실패/생략0이며 별도 고정 리뷰 후보에서도20개 통과를 확인했다. 두20개는 중복이므로40개로 합산하지 않는다. TDD·완료 가드 통과와 리뷰 APPROVE는 이1개 파일의 보완 근거이며 전체 출하 재검증을 대신하지 않는다.
+- 보존 결과: 기존 후보·스테이징·검증 원문을 보존했다. 보완1개 커밋 후10375개 보존 대조 불일치0이며 과거 출하 실패도 그대로다. 출하 당시 외부 원본 인덱스는 불변이었다. 실행 복제본의 캐시1개 변화는 raw 원문·동일 OID/mode/flags·동일 확장 데이터와 ctime/mtime 차이 근거를 별도 보존했으며 테스트 실패를 면제하지 않았다. 기존 로컬 제외 설정은 유지하고 자동 복원·덮어쓰기는 하지 않았다.
+- 배포·사용처 경계: 0.6.2는 준비 버전이며 이번 후보의 릴리스·재설치는 미실행이다. 과거0.6.1 정상11개 사용처 설치·엄격 감사는 당시 이력이다. codex-chat·market-reasoning-engine·storefront의 로컬 불일치는 보존했고 수정 없는8곳도 새로 재설치하지 않았다. main 반영·push·태그·GitHub 릴리스는 이번 작업에서 실행하지 않았다.
+- 미검증과 다음 작업: 실제 홈 연동·Claude 비교·업무 효과·경쟁 우위는 미검증이며 기존 설치 실패1개·광고 추적4개 기존 실패와 과거 실행/정리 불확실성을 소급 해결하지 않는다. 다음은 34dfce8 고정 후보의 전체 출하 재검증 여부·검토 기준과 정확한 범위·새 source/기준 참조·품질 설정·실행 횟수와 시간 예산을 별도 확정하는 것이다. 76ad59a에 대한1회 실행 승인을 자동 승계하지 않는다. 이번 문서 작업은 전체 검사·브라우저·모델 호출을 실행하지 않는다.
+- 관찰 경계: 보완1개 고정 리뷰의 v3는 DISABLED, 완료 품질 관찰은 OBSERVATION_INVALID/live_observation_not_enabled였다. 코드 승인과 사용자 수용·효과 관찰은 구분한다. 기존 원장·정책·원본 main의 관찰 설정은 변경하지 않는다.
+- 근거: /private/tmp/omc-reviewed-nine-commit-knyq28g3/result.json; /private/tmp/omc-76ad-approved-ship-bx7jmnjw/continuation/independent-result-consumption.json; /private/tmp/omc-76ad-approved-ship-bx7jmnjw/continuation/archive-complete.json; /private/tmp/omc-clone-index-investigate-3s1qwshf/micro-probe.json; /private/tmp/omc-clone-stat-cache-fix-d90gjhrt/candidate/.omc/state/clone-stat-cache-fix/tests.xml; /private/tmp/omc-clone-stat-review-8dsfm7_4/record.stdout; /private/tmp/omc-clone-stat-commit-ynnzzp64/result.json. 로컬 임시 경로의 실제 실행 근거이며 다른 checkout 자동 제공·장기 보존을 보장하지 않는다.
+
+## 이전 이력 · main 6642086d·0.6.2 준비 / 별도 후보 6개·3개 리뷰 승인·미커밋 · 2026-11-01
 
 - 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
 - 현재 판정: 문서 최신화 직전 원본 main은 6642086d358c13073766e419e6dcaff8931fefa4이며 VERSION은 0.6.2 준비 상태다. 최근 최신 출하 기준 6개와 ship 동기화 3개는 각각 고정 snapshot 리뷰 APPROVE·승인 결속 READY지만 별도 후보의 미커밋 변경이다. main 반영·전체 출하·릴리스·재설치 완료로 해석하지 않는다. 실제 홈 NOT_VERIFIED·비교 HOLD를 유지한다.
