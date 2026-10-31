@@ -427,11 +427,18 @@ def _read_pinned(root, path, pin):
     return raw
 
 
+def _identity_object(root, path):
+    value = json.loads(_local_file(root, path).read_bytes())
+    if not isinstance(value, dict):
+        raise OutputContractError('record_identity_object_required')
+    return value
+
+
 def _work_identity(root, sid):
     root=Path(root).resolve();session=root/'.omc/state/sessions'/sid/'session.json'
-    session_work=json.loads(_local_file(root,session).read_bytes()).get('work_id') if session.exists() else None
+    session_work=_identity_object(root,session).get('work_id') if session.exists() else None
     pending=root/'.omc/state/pending-completion.json'
-    pending_work=json.loads(_local_file(root,pending).read_bytes()).get('work_id') if pending.exists() else None
+    pending_work=_identity_object(root,pending).get('work_id') if pending.exists() else None
     if session_work and pending_work and session_work!=pending_work:raise OutputContractError('record_work_lineage_mismatch')
     return pending_work or session_work or sid
 
@@ -599,6 +606,7 @@ def read_record(root, path, pin, expected_context, *, display=None):
     file=_local_file(root,path)
     if file!=record_path(root,context):raise OutputContractError('record_location_mismatch')
     value=json.loads(_read_pinned(root,file,pin))
+    if not isinstance(value,dict):raise OutputContractError('record_manifest_object_required')
     if value.get('schema_version')!=RECORD_SCHEMA or value.get('context')!=context or value.get('publication')!='published':
         raise OutputContractError('record_context_mismatch')
     if value.get('source_kind') not in {'completion_gate','model_declared','legacy_normalized'}:

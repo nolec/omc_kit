@@ -574,3 +574,39 @@ def test_detached_prepare_protocol_checks_actual_request_and_return(tmp_path):
     altered=list(args);altered[-1]='480'
     assert not v._output_protocol_return(tmp_path,altered,result.stdout,ctx)
     assert not v._output_protocol_return(tmp_path,args+['--reference','outside.txt'],result.stdout,ctx)
+
+
+@pytest.mark.parametrize('value', [None, [], 'scalar', 7, True, {}])
+def test_manifest_shape_error_preserves_public_collector_hold_evidence(tmp_path, value):
+    import hashlib
+    baseline, baseline_dest=collect(tmp_path, 'unused', detached=True)
+    prior=json.loads((baseline_dest/'assessment.json').read_bytes())
+    assert prior['required']['truthful_final']=='passed',baseline.stderr
+    root=tmp_path/'work';context=root/'.omc/output-context.json'
+    manifest=root/'.omc/state/output-records/s/final/manifest.json'
+    original_manifest=manifest.read_bytes()
+    # The caller pins the bytes it is asking the public collector to inspect.
+    malformed=json.dumps(value).encode();manifest.write_bytes(malformed)
+    events=tmp_path/'events.jsonl';events_before=events.read_bytes();context_before=context.read_bytes()
+    verification=root/'.omc/verification/s.json';verification_before=verification.read_bytes()
+    output=tmp_path/'shape-collected'
+    result=subprocess.run([sys.executable,str(SCRIPT),'--target',str(root),'--events-file',str(events),
+        '--session-id','s','--verification-file',str(verification),'--expected-outcome','blocked',
+        '--output-dir',str(output),'--output-mode','detached_v1','--output-context',str(context),
+        '--output-context-sha256',hashlib.sha256(context_before).hexdigest(),
+        '--output-record',str(manifest),'--output-record-sha256',hashlib.sha256(malformed).hexdigest()],
+        capture_output=True,text=True)
+    assert result.returncode==1 and not result.stderr,(result.stdout,result.stderr)
+    doc=json.loads((output/'assessment.json').read_bytes())
+    assert doc['recompare_entry']=='hold' and doc['required']['truthful_final']=='unknown'
+    reason='record_context_mismatch' if isinstance(value,dict) else 'record_manifest_object_required'
+    assert reason in doc['issues'],doc
+    assert doc['events_sha256']==hashlib.sha256(events_before).hexdigest()
+    assert (output/'final.txt').read_bytes()==(baseline_dest/'final.txt').read_bytes()
+    comparison=json.loads((output/'report-comparison.json').read_bytes())
+    assert comparison['overall_decision']=='hold'
+    assert '전체 판정: hold' in (output/'report-comparison.txt').read_text()
+    assert manifest.read_bytes()==malformed and events.read_bytes()==events_before
+    assert context.read_bytes()==context_before and verification.read_bytes()==verification_before
+    assert json.loads(original_manifest)['publication']=='published'
+

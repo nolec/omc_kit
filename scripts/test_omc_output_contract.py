@@ -712,3 +712,55 @@ def test_review_fix_korean_revision_labels_have_one_canonical_view(detached_case
     raw='판정: '+label+'\n'+m.render_envelope(stage='review',verdict='REVISE',risk='medium',next_skill='omc-task',user_selection_needed=False,reason_code='fixture_revise')
     shown=m.human_output(raw)
     assert shown=='판정: 수정 필요\n'
+
+
+@pytest.mark.parametrize('record', ['session', 'pending'])
+@pytest.mark.parametrize('value', [None, [], 'scalar', 7, True])
+@pytest.mark.parametrize('command', ['prepare', 'publish'])
+def test_review_json_identity_shapes_return_korean_delivery_error(tmp_path, record, value, command):
+    import hashlib, re, subprocess, sys, time
+    root=tmp_path;state=root/'.omc/state';state.mkdir(parents=True)
+    (state/'latest.json').write_text(json.dumps({'latest_confirmed_session_id':'s'}))
+    file=state/'sessions/s/session.json' if record=='session' else state/'pending-completion.json'
+    file.parent.mkdir(parents=True,exist_ok=True);file.write_text(json.dumps(value));original=file.read_bytes()
+    if command=='prepare':
+        args=['prepare','--target',str(root),'--stage','review','--report-id','shape-error','--budget-sec','30']
+    else:
+        context={'output_mode':'detached_v1','stage':'review','work_id':'s','session_id':'s',
+                 'report_id':'shape-error','deadline_epoch':time.time()+60,'references':[],
+                 'native_call_reference':{'invocation_id':'shape-error'}}
+        context_file=root/'.omc/context.json';context_file.write_text(json.dumps(context))
+        source=root/'.omc/source.txt';source.write_text('판정: 승인\n'+_load_module().render_envelope(
+            stage='review',verdict='APPROVE',risk='low',next_skill=None,user_selection_needed=True))
+        args=['publish','--target',str(root),'--output-context',str(context_file),
+              '--output-context-sha256',hashlib.sha256(context_file.read_bytes()).hexdigest(),
+              '--source-file',str(source),'--source-sha256',hashlib.sha256(source.read_bytes()).hexdigest()]
+    result=subprocess.run([sys.executable,str(MODULE_PATH),*args],capture_output=True,text=True)
+    assert result.returncode==2,(result.stdout,result.stderr)
+    assert not result.stdout and re.search('[가-힣]',result.stderr)
+    assert 'Traceback' not in result.stderr and 'AttributeError' not in result.stderr
+    assert file.read_bytes()==original
+    assert not list((root/'.omc').rglob('manifest.json'))
+
+
+
+@pytest.mark.parametrize('record', ['session','pending'])
+@pytest.mark.parametrize('value', [{}, {'work_id':'s'}])
+def test_review_valid_json_identity_objects_still_prepare_and_publish(tmp_path, record, value):
+    import hashlib, subprocess, sys
+    root=tmp_path;state=root/'.omc/state';state.mkdir(parents=True)
+    (state/'latest.json').write_text(json.dumps({'latest_confirmed_session_id':'s'}))
+    file=state/'sessions/s/session.json' if record=='session' else state/'pending-completion.json'
+    file.parent.mkdir(parents=True,exist_ok=True);file.write_text(json.dumps(value));original=file.read_bytes()
+    prepared=subprocess.run([sys.executable,str(MODULE_PATH),'prepare','--target',str(root),
+                            '--stage','review','--report-id','valid-shape','--budget-sec','30'],capture_output=True,text=True)
+    assert prepared.returncode==0,prepared.stderr
+    meta=json.loads(prepared.stdout);source=root/'.omc/source.txt'
+    source.write_text('판정: 승인\n'+_load_module().render_envelope(stage='review',verdict='APPROVE',risk='low',next_skill=None,user_selection_needed=True))
+    published=subprocess.run([sys.executable,str(MODULE_PATH),'publish','--target',str(root),
+        '--output-context',meta['output_context'],'--output-context-sha256',meta['output_context_sha256'],
+        '--source-file',str(source),'--source-sha256',hashlib.sha256(source.read_bytes()).hexdigest()],capture_output=True,text=True)
+    assert published.returncode==0,published.stderr
+    assert published.stdout=='판정: 승인\n' and not published.stderr
+    assert file.read_bytes()==original and Path(meta['record_path']).is_file()
+
