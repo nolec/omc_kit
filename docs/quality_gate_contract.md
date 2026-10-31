@@ -7,7 +7,7 @@
 ## Local ship gate
 
 ```text
-python3 -m pytest scripts -q -m "not slow"
+python3 -m pytest scripts -q -m "not slow and not historical_evidence and not red_scaffold"
 ```
 
 - 목적: OMC Python 기능의 빠른 회귀 검증
@@ -16,6 +16,23 @@ python3 -m pytest scripts -q -m "not slow"
 - timeout: 3,600초
 - 제외: `slow` marker가 붙은 health 검증. 이는 일상 ship gate가 아니라
   별도 장시간 검증으로 실행한다.
+
+## 현행 기준 — current_delivery_v1
+
+- 현재 기능·안전성·설치 회귀를 검증하는 현행 출하 기준이다. 기존 `slow` health 제외에 더해 아래 정확한 3개만 별도 검증 범주로 분리한다. 나머지 모든 non-slow 검사는 유지한다.
+- `historical_evidence`: 외부 과거 입력의 해시 일치/불일치 검사 2개다. 원본 manifest·기대 해시·기존 보고는 보존한다. 입력이 없으면 **과거 자료 미확보·미검증**이며 현행 통과나 과거 재현 성공으로 바꾸지 않는다.
+- `red_scaffold`: `test_module_missing` 1개를 과거 RED 표식으로 보존한다. 현행 `test_current_delivery_requires_real_modules`는 실제 모듈 import를 요구하며 모듈 누락은 계속 출하를 차단한다.
+- 이 3개의 분리는 marker selection에 따른 `deselected`로 기록하며 passed/skipped에 합산하지 않는다. 현행 선택에서 실패·오류·예상하지 못한 생략·xfail·시간 초과가 발생하면 차단한다. 별도 근거 없이 다른 검사를 이 marker로 옮길 수 없다.
+- 실제 광고 빌드 `test_recovered_builder_bundles_actual_baseline_ad`는 현행 필수 검사다. 의존성과 원본이 준비되지 않았거나 생략되면 차단하며 합성 자료로 대체하지 않는다.
+- 기존 후보의 예외/설정 승인을 이 기준에 자동 승계하지 않는다. **새 설정·리뷰·고정 후보**를 연결해 전체 검사를 최대 1회 수행한다. 설정 승인·검사 실행·릴리스·재설치 권한은 계속 구분한다.
+- JUnit과 실제 선택 nodeid를 보존해 현행 결과, 위 3개의 분리, 별도 과거 미검증을 각각 보고한다. 수집 회귀는 이전 non-slow 목록과 현행 목록의 차이가 정확히 이 3개인지 확인한다.
+
+과거 입력은 원본이 확보된 경우에만 아래 별도 명령으로 검증한다. 입력 미확보 시 CLI의 종료 코드 0만으로 성공을 주장하지 않고 개별 skipped를 미검증으로 기록한다.
+
+```text
+python3 -m pytest scripts/test_omc_review_compare.py -q -m historical_evidence
+python3 -m pytest scripts/test_omc_autopilot.py -q -m red_scaffold
+```
 
 ## CI 관계
 
@@ -56,7 +73,9 @@ proposal·approval 이전에는 기존 설정을 삭제하거나 README evidence
 않는다. 손상되었거나 parse할 수 없는 config의 복구는
 `docs/omc_quality_gates.md`의 raw-file-hash 절차를 따른다.
 
-## 이번 최종 후보에 한정한 생략 예외
+## 과거 후보의 생략 예외 계약 — 기록 보존
+
+아래는 당시 후보에만 적용된 과거 계약이다. 현행 `current_delivery_v1`에 자동 적용하지 않는다. 당시 결과·미검증·예외 범위를 소급 변경하지 않는다.
 
 2026-10-20 사용자는 아래 3개 테스트의 생략 예외와 다음 절의 보존 기준을
 선택했다. 적용 대상은 기준 `edae3c9`에 이 계약 문서 변경을 반영하고 리뷰·커밋한
@@ -82,7 +101,7 @@ proposal·approval 이전에는 기존 설정을 삭제하거나 README evidence
   과거 결과를 소급 성공 처리하지 않는다. 원본을 확보하면 기대 해시를 확인한 뒤
   별도 역사적 입력 검증으로 수행한다.
 
-### 실제 광고 빌드는 필수
+## 실제 광고 빌드는 필수
 
 `scripts/test_omc_ad_fixture_archive.py::test_recovered_builder_bundles_actual_baseline_ad`
 는 생략 예외가 아니다. `OMC_AD_RESTORE_STOREFRONT`에 실제 의존성이 있는 저장소를
@@ -92,7 +111,7 @@ proposal·approval 이전에는 기존 설정을 삭제하거나 README evidence
 별도 광고 해소 검사를 반복하지 않으며, 빌드 통과를 실제 홈·광고 화면 검수나
 Claude 비교 성능 검증으로 확대 해석하지 않는다.
 
-### 최종 후보 고정 전후의 보존 구간
+## 최종 후보 고정 전후의 보존 구간
 
 1. **고정 전 준비:** 명시적으로 요청된 문서 수정·리뷰·커밋을 수행하고 변경 내역을
    기록한다. 이때 승인된 HEAD·문서·index 변경을 검증 중 보존 위반으로 취급하지 않는다.
@@ -109,7 +128,7 @@ Claude 비교 성능 검증으로 확대 해석하지 않는다.
 과거 index 변경 원인은 `UNKNOWN`으로 유지한다. 대표 재현을 당시 인과의 증명으로
 사용하지 않으며, 실행 결과를 본 뒤 보존 기준을 완화하지 않는다.
 
-### 실행 진입과 종료
+## 실행 진입과 종료
 
 - 최종 후보 리뷰, 실제 변경 범위 TDD, 비밀값 검사, 품질 설정의 근거 해시와
   정식 승인을 확인한다. 이 문서가 바뀌면 기존 설정의 근거는 stale이므로 위의
@@ -118,6 +137,6 @@ Claude 비교 성능 검증으로 확대 해석하지 않는다.
   성공을 확인한 권한 허용 환경에서 실행한다. 누락된 준비를 통과로 추정하지 않는다.
 - 별도 출하 검증 요청 후 전체 게이트를 최대 1회, 3,600초 한도로 실행한다.
   자동 수정·재시도는 0회다. 실패·오류·예상 밖 생략·시간 초과·보존 위반이면 중단한다.
-- 보고는 실제 통과, 위의 허용된 생략, 미실행·실패를 구분한다. 진단 작업의 RED
+- 현행 보고는 실제 통과, 정확히 분리한 과거 검증/RED 표식, 미실행·실패를 구분한다. 과거의 생략 예외를 현행 통과로 재사용하지 않는다. 진단 작업의 RED
   차단 기록은 보존하고 이번 출하 결과로 성공 처리하지 않는다.
   push·릴리스·재설치는 이 검증 범위에 포함하지 않는다.

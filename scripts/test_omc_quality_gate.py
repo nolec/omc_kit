@@ -1503,3 +1503,69 @@ def test_missing_python_verification_is_unknown_but_exit_two_is_new(tmp_path, mi
     assert report["diagnosis"]["gates"][0]["classification"] == ("unknown" if missing else "new")
     if missing:
         assert report["diagnosis"]["gates"][0]["reason"] == "missing_verification_file"
+
+
+_CURRENT_DELIVERY_SELECTOR = 'not slow and not historical_evidence and not red_scaffold'
+_HISTORICAL_DELIVERY_NODES = {
+    'scripts/test_omc_review_compare.py::test_observed_candidate_hashes_match_recorded_manifest',
+    'scripts/test_omc_review_compare.py::test_observed_candidate_hash_verification_reports_manifest_mismatch',
+}
+_RED_SCAFFOLD_NODE = 'scripts/test_omc_autopilot.py::test_module_missing'
+
+
+def _delivery_collection(selector):
+    import os, sys
+    env = {**os.environ, 'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1',
+           'PYTHONDONTWRITEBYTECODE': '1', 'GIT_OPTIONAL_LOCKS': '0'}
+    env.pop('PYTEST_ADDOPTS', None)
+    result = subprocess.run([sys.executable, '-m', 'pytest', 'scripts', '--collect-only',
+        '-q', '-p', 'no:cacheprovider', '-m', selector], cwd=ROOT, env=env,
+        capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return {line.strip() for line in result.stdout.splitlines()
+            if line.startswith('scripts/') and '::' in line}
+
+
+def test_current_delivery_collection_separates_exactly_three_legacy_nodes():
+    current = _delivery_collection(_CURRENT_DELIVERY_SELECTOR)
+    legacy = _HISTORICAL_DELIVERY_NODES | {_RED_SCAFFOLD_NODE}
+    assert current.isdisjoint(legacy), 'current gate must not select historical inputs or the RED scaffold'
+    all_non_slow = _delivery_collection('not slow')
+    assert all_non_slow - current == legacy
+    assert current <= all_non_slow
+    assert 'scripts/test_omc_ad_fixture_archive.py::test_recovered_builder_bundles_actual_baseline_ad' in current
+    assert 'scripts/test_omc_autopilot.py::test_current_delivery_requires_real_modules' in current
+    assert _delivery_collection('historical_evidence') == _HISTORICAL_DELIVERY_NODES
+    assert _delivery_collection('red_scaffold') == {_RED_SCAFFOLD_NODE}
+
+
+def test_current_delivery_contract_requires_fresh_config_and_keeps_history_unverified():
+    text = (ROOT / 'docs/quality_gate_contract.md').read_text(encoding='utf-8')
+    assert 'current_delivery_v1' in text and _CURRENT_DELIVERY_SELECTOR in text
+    assert '과거 자료 미확보·미검증' in text
+    assert '예상하지 못한 생략' in text
+    assert '새 설정·리뷰·고정 후보' in text
+    assert 'test_recovered_builder_bundles_actual_baseline_ad' in text
+    assert '과거 후보의 생략 예외 계약' in text
+    release = (ROOT / 'docs/releases/0.6.2.md').read_text(encoding='utf-8')
+    assert 'current_delivery_v1' in release
+
+
+def test_historical_missing_inputs_remain_skipped_not_current_success(tmp_path):
+    import os, sys, xml.etree.ElementTree as ET
+    output = tmp_path / 'history.xml'
+    env = {**os.environ, 'OMC_REVIEW_OBSERVED_INPUT_ROOT': str(tmp_path / 'missing-original-inputs'),
+           'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1', 'PYTHONDONTWRITEBYTECODE': '1',
+           'GIT_OPTIONAL_LOCKS': '0'}
+    env.pop('PYTEST_ADDOPTS', None)
+    result = subprocess.run([sys.executable, '-m', 'pytest', 'scripts/test_omc_review_compare.py',
+        '-q', '-p', 'no:cacheprovider', '-m', 'historical_evidence', '--junitxml=' + str(output)],
+        cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    cases = list(ET.parse(output).getroot().iter('testcase'))
+    assert len(cases) == 2
+    assert {case.attrib['name'] for case in cases} == {node.split('::')[-1] for node in _HISTORICAL_DELIVERY_NODES}
+    for case in cases:
+        assert case.find('skipped') is not None
+        assert 'observed candidate inputs are external' in case.find('skipped').attrib['message']
+        assert case.find('failure') is None and case.find('error') is None

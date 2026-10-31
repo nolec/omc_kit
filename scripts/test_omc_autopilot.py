@@ -1067,6 +1067,13 @@ def test_extract_complexity_class_falls_back_to_ambiguous(output):
     assert result["complexity_reason"]
 
 
+def test_current_delivery_requires_real_modules():
+    """The current gate requires real modules even when historical RED is separate."""
+    assert _MODULE_PRESENT, "omc_autopilot.py must import for current delivery"
+    assert _EXEC_MODULE_PRESENT, "omc_exec.py must import for current delivery"
+
+
+@pytest.mark.red_scaffold
 @pytest.mark.skipif(_MODULE_PRESENT, reason="모듈 없음 — RED 단계 확인용")
 def test_module_missing():
     """omc_autopilot.py 가 없으면 이 테스트가 실패해야 합니다."""

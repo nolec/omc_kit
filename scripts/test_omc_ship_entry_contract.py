@@ -47,9 +47,9 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def read_contract(path):
+def read_contract(path, *, raw=None):
     matches = re.findall(r'<!-- OMC_SHIP_ENTRY_CONTRACT:BEGIN -->\s*```json\s*(.*?)\s*```\s*<!-- OMC_SHIP_ENTRY_CONTRACT:END -->',
-                         path.read_text(), re.S)
+                         path.read_text() if raw is None else raw.decode('utf-8'), re.S)
     assert len(matches) == 1, 'ship entry contract missing or duplicated'
     data = json.loads(matches[0])
     assert data['schema_version'] == 'omc-ship-entry/v1'
@@ -155,7 +155,10 @@ def expand(value, context):
 
 
 def preserve(root):
-    files = [root / '.git/index', root / '.git/config', root / '.omc/pipeline_session.json']
+    files = [root / '.git/index', root / '.git/config', root / '.git/HEAD',
+             root / '.omc/pipeline_session.json', root / 'probe.txt', root / 'result.md']
+    files += list((root / '.git/refs').rglob('*'))
+    files = [f for f in files if f.is_file()]
     files += list((root / '.omc/state').rglob('*.json'))
     return {str(f): (digest(f), f.stat().st_mode & 0o777) for f in files if f.is_file()}
 
@@ -185,11 +188,21 @@ def verify_preflight(result, operation, context, elapsed):
     assert disk['reason_code'] == 'requires_cli_completion'
 
 
-def execute_flow(path, context, *, mutate=None, fault=None, clock=None):
+def expanded_invocation(step, context):
+    argv = []
+    for token in step['argv']:
+        value = expand(token, context)
+        argv.extend(str(item) for item in value) if isinstance(value, list) else argv.append(str(value))
+    return tuple(argv), str(expand(step['cwd'], context))
+
+
+def execute_flow(path, context, *, mutate=None, fault=None, clock=None, mutate_invocation=None):
     """Consume the template block with argv arrays; never a shell or real project."""
     clock = clock or time.monotonic
     start = clock()
-    data = read_contract(path)
+    contract_raw = path.read_bytes()
+    contract_sha256 = hashlib.sha256(contract_raw).hexdigest()
+    data = read_contract(path, raw=contract_raw)
     if mutate:
         data = mutate(copy.deepcopy(data))
         # Validate a mutated document through the same loader, not an alternate flow.
@@ -199,8 +212,14 @@ def execute_flow(path, context, *, mutate=None, fault=None, clock=None):
         data = read_contract(temp)
     source = Path(context['source'])
     before = preserve(source)
-    logs = []
-    report = {'status': 'passed', 'category': None, 'calls': logs}
+    logs, audits = [], []
+    expected_context = copy.deepcopy(context)
+    binding = tuple((role, str(expected_context[role]))
+                    for role in ('source', 'candidate', 'control', 'kit'))
+    report_id = 'ship-entry-' + hashlib.sha256(str(context['control']).encode()).hexdigest()[:16]
+    report = {'status': 'passed', 'category': None, 'calls': logs,
+              'invocation_audits': audits, 'binding_context': binding,
+              'contract_path': str(path), 'contract_sha256': contract_sha256}
     stage_start = start
     last_stage = None
     try:
@@ -208,6 +227,9 @@ def execute_flow(path, context, *, mutate=None, fault=None, clock=None):
                 or context.get('run_timeout', 0) <= 0 or context.get('run_finalize_seconds', 0) <= 0):
             report.update(status='blocked', category='approval_mismatch')
             return report
+        assert all(Path(value).is_absolute() for _, value in binding)
+        assert len({value for _, value in binding}) == len(binding)
+        assert not (Path(expected_context['control']) / '.git').exists()
         assert context['quality_scope_args'] in ([], ['--allow-full'])
         assert digest(Path(context['review_output'])) == context['review_output_sha256']
         for step in data['steps']:
@@ -227,11 +249,22 @@ def execute_flow(path, context, *, mutate=None, fault=None, clock=None):
                 stage_remaining = data['budget_seconds'][stage] - (clock() - stage_start)
                 assert remaining >= stage_remaining > 0, 'preparation deadline exceeded'
                 timeout = stage_remaining
-            argv = []
-            for token in step['argv']:
-                value = expand(token, context)
-                argv.extend(value if isinstance(value, list) else [str(value)])
-            cwd = expand(step['cwd'], context)
+            # Expected values use the separately frozen binding, not mutated actual argv.
+            expected_argv, expected_cwd = expanded_invocation(step, expected_context)
+            argv, cwd = expanded_invocation(step, context)
+            if mutate_invocation:
+                argv, cwd = mutate_invocation(ident, list(argv), cwd)
+            argv = tuple(argv)
+            matched = argv == expected_argv and cwd == expected_cwd
+            audits.append({'report_id': report_id, 'step_id': ident,
+                'contract_sha256': contract_sha256,
+                'expected_argv': list(expected_argv), 'actual_argv': list(argv),
+                'expected_cwd': expected_cwd, 'actual_cwd': cwd,
+                'decision': 'matched' if matched else 'blocked'})
+            if not matched:
+                report.update(status='blocked', category='invocation_mismatch')
+                break
+            # Dispatch exactly the immutable values just checked, without rebuilding them.
             stamp = clock()
             result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
             row = {'id': ident, 'argv': argv, 'returncode': result.returncode,
@@ -262,6 +295,7 @@ def execute_flow(path, context, *, mutate=None, fault=None, clock=None):
                 assert payload['config_sha256'] == context['config_sha256']
             if ident in ['capture', 'seal']:
                 context[ident] = json.loads(result.stdout)
+                expected_context[ident] = copy.deepcopy(context[ident])
             row['passed'] = True
     except (AssertionError, ValueError, KeyError, subprocess.TimeoutExpired):
         report.update(status='blocked', category='evidence_unconfirmed')
@@ -428,3 +462,139 @@ def test_installed_ship_entry_contract_matches_templates(installed_omc_target):
         assert generated.read_bytes() == (ROOT / template).read_bytes(), 'ship generated output mismatch'
         assert read_contract(generated) == read_contract(ROOT / template)
     assert (installed_omc_target / '.agents/skills/omc-task/SKILL.md').read_bytes() == (ROOT / 'templates/.agents/skills/omc-task/SKILL.md').read_bytes()
+
+
+@pytest.mark.parametrize('template', TEMPLATES)
+def test_control_seal_dispatch_is_audited_against_frozen_contract(subject, template, monkeypatch):
+    # Fixture setup is deliberately outside the dispatched-call counter.
+    source = Path(subject['source'])
+    control = Path(subject['control'])
+    before, raw_review = preserve(source), Path(subject['review_output']).read_bytes()
+    actual_calls = []
+    original_run = subprocess.run
+    def observed(argv, **kwargs):
+        actual_calls.append((tuple(argv), str(kwargs['cwd'])))
+        return original_run(argv, **kwargs)
+    monkeypatch.setattr(subprocess, 'run', observed)
+    report = execute_flow(ROOT / template, subject)
+    assert report['status'] == 'passed', report
+    assert 'invocation_audits' in report, 'actual dispatch argv/cwd must have independent frozen-contract evidence'
+    assert len(report['invocation_audits']) == len(actual_calls) == len(ORDER)
+    assert control.is_absolute() and not (control / '.git').exists()
+    for audit, call in zip(report['invocation_audits'], actual_calls):
+        assert audit['decision'] == 'matched'
+        assert tuple(audit['expected_argv']) == tuple(audit['actual_argv']) == call[0]
+        assert audit['expected_cwd'] == audit['actual_cwd'] == call[1] == str(control)
+        assert audit['contract_sha256'] == digest(ROOT / template)
+        assert audit['report_id'] and audit['step_id'] in ORDER
+    seal = next(row for row in report['calls'] if row['id'] == 'seal')
+    target = Path(subject['candidate'])
+    assert seal['argv'].count('--target') == 1
+    assert seal['argv'][seal['argv'].index('--target') + 1] == str(target)
+    payload = json.loads(seal['stdout'])
+    evidence = Path(payload['evidence_path'])
+    assert evidence.is_relative_to(target) and digest(evidence) == payload['evidence_sha256']
+    assert next(row for row in report['calls'] if row['id'] == 'candidate_review')['passed']
+    assert preserve(source) == before and Path(subject['review_output']).read_bytes() == raw_review
+    archived = json.loads((control / 'calls.json').read_bytes())
+    assert archived['invocation_audits'] == report['invocation_audits']
+
+
+@pytest.mark.parametrize('template', TEMPLATES)
+@pytest.mark.parametrize('defect', ['missing', 'duplicate', 'source', 'control'])
+def test_seal_document_target_defects_dispatch_no_children(subject, template, defect, monkeypatch):
+    source, before = Path(subject['source']), preserve(Path(subject['source']))
+    calls = []
+    def unexpected(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError('invalid contract reached child dispatch')
+    monkeypatch.setattr(subprocess, 'run', unexpected)
+    def mutate(data):
+        argv = next(s for s in data['steps'] if s['id'] == 'seal')['argv']
+        index = argv.index('--target')
+        if defect == 'missing': del argv[index:index + 2]
+        elif defect == 'duplicate': argv.extend(['--target', '{candidate}'])
+        else: argv[index + 1] = '{' + defect + '}'
+        return data
+    with pytest.raises(AssertionError):
+        execute_flow(ROOT / template, subject, mutate=mutate)
+    assert calls == [] and not Path(subject['marker']).exists()
+    assert not Path(subject['candidate']).exists() and preserve(source) == before
+
+
+@pytest.mark.parametrize('template', TEMPLATES)
+@pytest.mark.parametrize('defect', ['missing', 'duplicate', 'source', 'control', 'cwd', 'context'])
+def test_post_expansion_seal_drift_is_rejected_before_spawn(subject, template, defect, monkeypatch):
+    original_candidate = subject['candidate']
+    original_control = subject['control']
+    source = Path(subject['source'])
+    before = preserve(source)
+    dispatched = []
+    original_run = subprocess.run
+    def observed(argv, **kwargs):
+        dispatched.append(tuple(argv))
+        return original_run(argv, **kwargs)
+    monkeypatch.setattr(subprocess, 'run', observed)
+    def mutate(ident, argv, cwd):
+        if ident != 'seal': return argv, cwd
+        index = argv.index('--target')
+        if defect == 'missing': del argv[index:index + 2]
+        elif defect == 'duplicate': argv.extend(['--target', original_candidate])
+        elif defect in ('source', 'control'): argv[index + 1] = subject[defect]
+        elif defect == 'cwd': cwd = subject['source']
+        else:
+            # Poisoning mutable context must not redefine the expected target.
+            subject['candidate'] = subject['source']
+            argv[index + 1] = subject['source']
+        return argv, cwd
+    report = execute_flow(ROOT / template, subject, mutate_invocation=mutate)
+    assert report['status'] == 'blocked' and report['category'] == 'invocation_mismatch', report
+    assert [row['id'] for row in report['calls']] == ORDER[:ORDER.index('seal')]
+    assert len(dispatched) == ORDER.index('seal')
+    assert not any('seal-review-output' in argv or 'record-review' in argv or argv[-1:] == ('run',)
+                   for argv in dispatched)
+    audit = report['invocation_audits'][-1]
+    assert audit['step_id'] == 'seal' and audit['decision'] == 'blocked'
+    assert audit['expected_argv'][audit['expected_argv'].index('--target') + 1] == original_candidate
+    assert audit['expected_cwd'] == original_control
+    assert not Path(subject['marker']).exists() and preserve(source) == before
+    target = Path(original_candidate)
+    assert not (target / '.omc/state/review-snapshots/current.json').exists()
+    assert not list((target / '.omc/state/review-snapshots/review-evidence').glob('*'))
+    archived = json.loads((Path(original_control) / 'calls.json').read_bytes())
+    assert archived['invocation_audits'][-1] == audit
+
+
+@pytest.mark.parametrize('template', TEMPLATES)
+def test_missing_seal_target_public_cli_fails_from_non_git_control(subject, template):
+    # Intentional CLI failure reproduction, not a product RED or ship invocation.
+    source, control, target = map(Path, (subject['source'], subject['control'], subject['candidate']))
+    before = preserve(source)
+    subprocess.run(['git', 'clone', '--no-hardlinks', str(source), str(target)],
+                   check=True, capture_output=True, timeout=30)
+    snap = public('omc_review_snapshot.py', ['capture-review', '--target', str(target),
+        '--base-commit', subject['base'], '--candidate-commit', subject['head']], cwd=control)
+    context = {**subject, 'capture': snap}
+    step = next(s for s in read_contract(ROOT / template)['steps'] if s['id'] == 'seal')
+    argv = [str(expand(token, context)) for token in step['argv']]
+    index = argv.index('--target')
+    del argv[index:index + 2]
+    result = subprocess.run(argv, cwd=control, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2 and json.loads(result.stdout)['reason_code'] == 'git_command_failed:rev-parse'
+    assert not result.stderr and not (control / '.git').exists()
+    assert not (target / '.omc/state/review-snapshots/current.json').exists()
+    assert not list((target / '.omc/state/review-snapshots/review-evidence').glob('*'))
+    assert not Path(subject['marker']).exists() and preserve(source) == before
+
+
+@pytest.mark.parametrize('defect', ['missing', 'stale'])
+def test_source_not_ready_never_gets_resealed_or_copied(subject, defect):
+    source = Path(subject['source'])
+    if defect == 'missing': (source / '.omc/state/review-snapshots/current.json').unlink()
+    else: (source / 'result.md').write_text('unapproved fixture drift\n')
+    before = preserve(source)
+    report = execute_flow(ROOT / TEMPLATES[0], subject)
+    assert report['status'] == 'blocked'
+    assert [row['id'] for row in report['calls']] == ORDER[:3]
+    assert not Path(subject['candidate']).exists() and not Path(subject['marker']).exists()
+    assert preserve(source) == before

@@ -1078,6 +1078,7 @@ def test_observed_candidate_path_prefers_environment_root(monkeypatch):
     assert resolved.parent == Path("/private/tmp/override-root")
 
 
+@pytest.mark.historical_evidence
 def test_observed_candidate_hashes_match_recorded_manifest():
     payload = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
 
@@ -1087,6 +1088,7 @@ def test_observed_candidate_hashes_match_recorded_manifest():
     ) == []
 
 
+@pytest.mark.historical_evidence
 def test_observed_candidate_hash_verification_reports_manifest_mismatch():
     payload = json.loads(OBSERVED_CANDIDATE_MANIFEST_PATH.read_text(encoding="utf-8"))
     payload["candidates"][0]["diff_sha256"] = "0" * 64
