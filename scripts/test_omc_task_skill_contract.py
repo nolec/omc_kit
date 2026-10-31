@@ -153,12 +153,19 @@ def test_ignored_live_agent_skill_path_is_optional(tmp_path: Path):
 
 
 def test_task_skill_stays_short_enough_to_scan():
-    """The executable skill should fit in a single quick reading pass."""
-    text = _read(REQUIRED_TASK_SKILL_PATHS[0])
-    non_empty_lines = [line for line in text.splitlines() if line.strip()]
-    assert len(non_empty_lines) <= MAX_NON_EMPTY_LINES, (
-        f"omc-task has {len(non_empty_lines)} non-empty lines"
-    )
+    text = _workflow_without_output_protocol(_read(REQUIRED_TASK_SKILL_PATHS[0]))
+    core, separator, transfer = text.partition('\n## 검증된 동일 커밋 이관의 별도 완료 경로')
+    assert separator and len([line for line in transfer.splitlines() if line.strip()]) <= 36
+    for marker in ('complete-transfer', 'register-transfer', 'RED', '보존'):
+        assert marker in transfer
+    comparison, separator, general = core.partition('### 일반 작업의 진입')
+    intro, separator2, prebound = comparison.partition('### 사전 승인된 비교 실행의 진입')
+    assert separator and separator2
+    assert len([line for line in prebound.splitlines() if line.strip()]) <= 12
+    for marker in ('task-context', 'policy_sha256', 'basis_sha256', '실패는 중단'):
+        assert marker in prebound
+    workflow = intro + general
+    assert len([line for line in workflow.splitlines() if line.strip()]) <= MAX_NON_EMPTY_LINES
 
 
 def test_task_skill_preserves_required_execution_order():
@@ -252,3 +259,19 @@ def test_task_skill_prioritizes_current_bottleneck_over_default_pipeline():
         "실패 원인 불명 → `$omc-investigate`",
     ]:
         assert marker in text
+
+
+def _workflow_without_output_protocol(text):
+    body, separator, protocol = text.partition('\n## Machine output contract\n')
+    assert separator and text.count('\n## Machine output contract\n') == 1
+    assert len([line for line in protocol.splitlines() if line.strip()]) <= 9
+    for marker in ('detached_v1', 'omc-output/v1', 'publish', 'complete-task',
+                   '사용자 최종 답변에 붙이지 않는다', 'legacy_inline',
+                   '출력 실패', '구형으로 우회하지 않는다'):
+        assert marker in protocol, marker
+    return '\n'.join(line for line in body.splitlines() if not line.startswith('기계 기록의 단계:'))
+
+
+def test_task_copies_require_detached_output_contract():
+    for path in REQUIRED_TASK_SKILL_PATHS:
+        _workflow_without_output_protocol(_read(path))

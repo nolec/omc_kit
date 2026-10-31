@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+
+import pytest
 from pathlib import Path
 
 
@@ -526,7 +528,7 @@ def test_roadmap_history_matches_the_frozen_section_manifest() -> None:
     assert "source_path" not in manifest
     assert "source_sha256" not in manifest
     assert manifest["sections"]
-    assert manifest["sections"] == _history_sections(history)
+    assert manifest["sections"] == _history_sections(archived_source)
 
 
 def test_roadmap_tracks_post_benchmark_product_gaps() -> None:
@@ -868,3 +870,33 @@ def test_completion_observation_v0_is_bounded_to_capture_feasibility() -> None:
     assert "실제 `.omc/state/sessions` 전체를 각각 재스캔" in roadmap
     assert "승인 executor trust anchor" in roadmap
     assert "`CAPTURE_INCOMPLETE`" in roadmap
+
+
+def test_frozen_history_manifest_accepts_current_preamble(tmp_path, monkeypatch):
+    history = HISTORY_PATH.read_text(encoding='utf-8')
+    manifest = HISTORY_MANIFEST_PATH.read_text(encoding='utf-8')
+    preamble, archived = history.split('---\n\n', 1)
+    monkeypatch.chdir(tmp_path)
+    HISTORY_PATH.parent.mkdir(parents=True)
+    HISTORY_MANIFEST_PATH.parent.mkdir(parents=True)
+    HISTORY_PATH.write_text(preamble + '\n## 추가 운영 이력\n과거 원문은 유지한다.\n\n---\n\n' + archived, encoding='utf-8')
+    HISTORY_MANIFEST_PATH.write_text(manifest, encoding='utf-8')
+    test_roadmap_history_matches_the_frozen_section_manifest()
+
+
+@pytest.mark.parametrize('defect', ['archive', 'section'])
+def test_frozen_history_manifest_rejects_original_mutation(tmp_path, monkeypatch, defect):
+    history = HISTORY_PATH.read_text(encoding='utf-8')
+    manifest = json.loads(HISTORY_MANIFEST_PATH.read_text(encoding='utf-8'))
+    if defect == 'archive':
+        preamble, archived = history.split('---\n\n', 1)
+        history = preamble + '---\n\n' + archived.replace('## 목표', '## 변조된 목표', 1)
+    else:
+        manifest['sections'][0]['sha256'] = '0' * 64
+    monkeypatch.chdir(tmp_path)
+    HISTORY_PATH.parent.mkdir(parents=True)
+    HISTORY_MANIFEST_PATH.parent.mkdir(parents=True)
+    HISTORY_PATH.write_text(history, encoding='utf-8')
+    HISTORY_MANIFEST_PATH.write_text(json.dumps(manifest), encoding='utf-8')
+    with pytest.raises(AssertionError):
+        test_roadmap_history_matches_the_frozen_section_manifest()

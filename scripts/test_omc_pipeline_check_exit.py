@@ -12,6 +12,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import time
+
+import pytest
 from pathlib import Path
 
 SCRIPT = str(Path(__file__).parent.parent / ".agent-hooks" / "omc-pipeline-check.sh")
@@ -394,7 +397,7 @@ def test_real_hook_preserves_guard_tier0_exemptions(tmp_path):
         shutil.copy2(Path(__file__).parent/name,root/'scripts'/name)
     (root/'.omc/policy.json').write_text(json.dumps({'enforce_confirm':True}))
     (root/'.omc/state/latest.json').write_text(json.dumps({'latest_session_id':'s','latest_confirmed_session_id':'s','latest_confirmation':{'status':'confirmed'}}))
-    (root/'.omc/pipeline_session.json').write_text(json.dumps({'contract_confirmed':False,'session_id':'s'}))
+    (root/'.omc/pipeline_session.json').write_text(json.dumps({'contract_confirmed':False,'session_id':'s','started_at':time.time()}))
     for name in ['src/constants/colors.ts','src/types/model.ts','src/queryKey.ts','src/Ad.styled.ts','vite.config.ts']:
         p=root/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text('export const value=1;')
         direct=subprocess.run([sys.executable,'scripts/omc_pipeline_guard.py','check',name],cwd=root,capture_output=True,text=True)
@@ -402,3 +405,32 @@ def test_real_hook_preserves_guard_tier0_exemptions(tmp_path):
         assert direct.returncode==0
         assert hook.returncode==0,(name,hook.stdout,hook.stderr)
         assert p.read_text()=='export const value=1;'
+
+
+@pytest.mark.parametrize('clock', ['expired', 'missing'])
+def test_tier0_invalid_clock_blocks_without_rewriting_state(tmp_path, clock):
+    import shutil
+    (tmp_path / 'scripts').mkdir()
+    (tmp_path / '.omc/state').mkdir(parents=True)
+    for name in ['omc_pipeline_guard.py', 'omc_native_red_evidence.py']:
+        shutil.copy2(Path(__file__).parent / name, tmp_path / 'scripts' / name)
+    (tmp_path / '.omc/state/latest.json').write_text(json.dumps({
+        'latest_session_id': 's', 'latest_confirmed_session_id': 's',
+        'latest_confirmation': {'status': 'confirmed'}}))
+    state = {'contract_confirmed': False, 'session_id': 's'}
+    if clock == 'expired':
+        state['started_at'] = time.time() - 8 * 3600 - 1
+    path = tmp_path / '.omc/pipeline_session.json'
+    path.write_text(json.dumps(state))
+    before = path.read_bytes()
+    file = tmp_path / 'src/constants/colors.ts'
+    file.parent.mkdir(parents=True)
+    file.write_text('export const value=1;')
+    payload = json.dumps({'tool_name': 'Edit', 'tool_input': {'file_path': 'src/constants/colors.ts'}})
+    for argv, data in [([sys.executable, 'scripts/omc_pipeline_guard.py', 'check', 'src/constants/colors.ts'], None),
+                       (['sh', SCRIPT], payload)]:
+        result = subprocess.run(argv, cwd=tmp_path, input=data, capture_output=True, text=True)
+        assert result.returncode != 0
+        assert 'pipeline_ttl_expired' in result.stdout
+        assert path.read_bytes() == before
+        assert file.read_text() == 'export const value=1;'

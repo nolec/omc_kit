@@ -222,11 +222,9 @@ def test_ignored_live_agent_review_path_is_optional(tmp_path: Path):
 
 
 def test_review_skill_stays_short_enough_to_scan():
-    text = _read(REQUIRED_REVIEW_SKILL_PATHS[0])
+    text = _workflow_without_output_protocol(_read(REQUIRED_REVIEW_SKILL_PATHS[0]))
     non_empty_lines = [line for line in text.splitlines() if line.strip()]
-    assert len(non_empty_lines) <= MAX_NON_EMPTY_LINES, (
-        f"omc-review has {len(non_empty_lines)} non-empty lines"
-    )
+    assert len(non_empty_lines) <= MAX_NON_EMPTY_LINES
 
 
 def test_review_skill_exposes_pending_bound_raw_free_outcome_prompt():
@@ -383,3 +381,26 @@ def test_review_skill_prioritizes_current_bottleneck_over_default_pipeline():
         "화면에는 실제 선택",
     ]:
         assert marker in text
+
+
+def _workflow_without_output_protocol(text):
+    body, separator, protocol = text.partition('\n## Machine output contract\n')
+    assert separator and text.count('\n## Machine output contract\n') == 1
+    assert len([line for line in protocol.splitlines() if line.strip()]) <= 9
+    for marker in ('detached_v1', 'omc-output/v1', 'publish', 'complete-task',
+                   '사용자 최종 답변에 붙이지 않는다', 'legacy_inline',
+                   '출력 실패', '구형으로 우회하지 않는다'):
+        assert marker in protocol, marker
+    return '\n'.join(line for line in body.splitlines() if not line.startswith('기계 기록의 단계:'))
+
+
+def test_review_copies_require_detached_output_contract():
+    for path in REQUIRED_REVIEW_SKILL_PATHS:
+        _workflow_without_output_protocol(_read(path))
+
+
+def test_tracked_antigravity_review_matches_current_template():
+    deployed = ROOT / '.agent/skills/omc-review/SKILL.md'
+    template = ROOT / 'templates/.agents/skills/omc-review/SKILL.md'
+    assert deployed.read_bytes() == template.read_bytes()
+    assert deployed.stat().st_mode & 0o777 == template.stat().st_mode & 0o777

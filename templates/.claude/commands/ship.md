@@ -47,6 +47,7 @@ prepare는 승인 영수증을 복사하지 않는다. 격리 후보에서 아�
 <!-- OMC_SHIP_ENTRY_CONTRACT:END -->
 
 ## 시간·증거와 중단
+- `environment_not_ready`이면 누락된 실행 파일·의존성과 preflight 요구를 한글로 알리고 품질 명령0회로 중단한다. runtime/PATH를 자동 변경하거나 준비되지 않은 일부 검사로 대체하지 않는다.
 - 준비 총480초: 입력40·prepare240·승인 연결40·check 및 최종 준비 확인90·외부 정리/보관70. prepare/check 내부 정리·기록은 각각240/90초에 포함한다. 남은 단계 전체 한도와 마지막70초를 확보하지 못하면 진입하지 않는다. 자동 재시도·예산 연장 없음.
 - 외부에서 T0와 단계 시작/종료·보관 완료를 기록한다. 조기 중단의 정리/보관 마감은 min(중단 시각+70초,T0+480초)다. 이번 소유 프로세스만 종료 확인하며 미확인이면 부분 증거만 보존한다.
 - prepare/check는 실제 종료 코드0·해당 operation의 stdout baseline_verified·cleanup_confirmed=true·evidence_complete=true·계약/후보/기준/경로 일치·시간 준수를 모두 요구한다. stdout/stderr/종료 코드와 디스크 원문·해시를 호출별 보존한다. final.json의 requires_cli_completion·observed_check_status나 파일 존재만으로 성공을 판단하지 않는다.
@@ -65,6 +66,14 @@ prepare는 승인 영수증을 복사하지 않는다. 격리 후보에서 아�
 ## 배포 후 기록
 실제 배포가 완료된 경우에만 기존 작업 규모 기록을 유지한다: `python3 scripts/omc_cost.py record --executor claude-code --task "$ARGUMENTS"`. 토큰 원문이 있으면 실제 모델과 `--llm-json` 경로를 함께 지정하며 추정값을 실측으로 쓰지 않는다. `python3 scripts/omc_cost.py report`로 기록을 확인한다.
 배포에서 놓친 요구나 반복 방지 규칙이 있으면 기존 교훈 절차로 남긴다. 준비·검사만 수행한 경우 배포 후 기록을 실행하지 않는다.
+
+## 다음 추천
+- 주추천 1개만 제시한다. 우선순위는 현재 차단 원인이다.
+- BLOCKED + 테스트·회귀 실패면 `$omc-investigate` 한 가지를 제안한다.
+- BLOCKED + 신규 테스트·TDD 누락이면 `$omc-task` 한 가지를 제안한다.
+- SHIP READY이면 승인된 다음 행동의 선택을 기다린다.
+- 실제 배포 후에는 `$omc-retro` 한 가지를 제안한다.
+- 자동으로 진행하지는 않습니다. 사용자가 다음 스킬을 명시하기 전에는 진입하지 않는다.
 
 기계 기록의 단계: stage=ship. 아래 별도 기록 규칙이 이전 출력 예시보다 우선한다.
 

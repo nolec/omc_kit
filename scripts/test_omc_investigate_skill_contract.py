@@ -183,11 +183,9 @@ def test_ignored_live_agent_investigate_path_is_optional(tmp_path: Path):
 
 
 def test_investigate_skill_stays_short_enough_to_scan():
-    text = _read(REQUIRED_INVESTIGATE_SKILL_PATHS[0])
+    text = _workflow_without_output_protocol(_read(REQUIRED_INVESTIGATE_SKILL_PATHS[0]))
     non_empty_lines = [line for line in text.splitlines() if line.strip()]
-    assert len(non_empty_lines) <= MAX_NON_EMPTY_LINES, (
-        f"omc-investigate has {len(non_empty_lines)} non-empty lines"
-    )
+    assert len(non_empty_lines) <= MAX_NON_EMPTY_LINES
 
 
 def test_investigate_skill_preserves_required_execution_order():
@@ -232,3 +230,19 @@ def test_invalid_investigate_output_fixture_exposes_weak_root_cause_gate():
     assert {"repro", "expected", "hypothesis", "root_cause", "task_handoff"}.issubset(
         set(failures)
     )
+
+
+def _workflow_without_output_protocol(text):
+    body, separator, protocol = text.partition('\n## Machine output contract\n')
+    assert separator and text.count('\n## Machine output contract\n') == 1
+    assert len([line for line in protocol.splitlines() if line.strip()]) <= 9
+    for marker in ('detached_v1', 'omc-output/v1', 'publish', 'complete-task',
+                   '사용자 최종 답변에 붙이지 않는다', 'legacy_inline',
+                   '출력 실패', '구형으로 우회하지 않는다'):
+        assert marker in protocol, marker
+    return '\n'.join(line for line in body.splitlines() if not line.startswith('기계 기록의 단계:'))
+
+
+def test_investigate_copies_require_detached_output_contract():
+    for path in REQUIRED_INVESTIGATE_SKILL_PATHS:
+        _workflow_without_output_protocol(_read(path))

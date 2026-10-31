@@ -7,6 +7,8 @@ push/deploy execution behind explicit user approval.
 from __future__ import annotations
 
 import re
+
+import pytest
 from pathlib import Path
 
 
@@ -21,68 +23,11 @@ OPTIONAL_SHIP_SKILL_PATHS = [
     ROOT / ".agent" / "skills" / "omc-ship" / "SKILL.md",
 ]
 
-REQUIRED_SEQUENCE = [
-    "$omc-review",
-    "치명/중대",
-    "필수 체크",
-    "게이트 통과",
-    "비밀값 검사",
-    "python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title \"omc-ship\" --request \"<현재 작업 한 줄 요약>\" --roles directive --for \"ship\"",
-    "python3 scripts/omc_tdd_check.py --staged",
-    "python3 scripts/omc_quality_gate.py --target . status",
-    "python3 scripts/omc_quality_gate.py --target . run",
-    "git status -sb",
-    "git diff HEAD",
-    "git ls-files --others --exclude-standard",
-    "`ready`",
-    "SECRET",
-    "KEY",
-    "TOKEN",
-    "PASSWORD",
-    "모든 게이트 통과 전",
-    "사용자 승인",
-    "사용자 명시 승인 전",
-    "git push",
-    "deploy",
-    "실제 배포 후",
-    "다음 추천",
-    "주추천 1개",
-    "자동으로 진행하지는 않습니다.",
-]
+REQUIRED_SEQUENCE = ['## 입력과 실행 범위', '## 승인 연결', '## 공통 명령 계약', '## 시간·증거와 중단', '## 보고와 권한 경계', '## 다음 추천', '## Machine output contract']
 
-REQUIRED_BEHAVIOR_MARKERS = [
-    "배포 차단",
-    "프로젝트 품질 명령은 추측하지 않고",
-    "승인 전 실행하지 않습니다",
-    "필수 체크",
-    "현재 ship 대상 범위",
-    "범위 밖 dirty 변경",
-    "$omc-investigate",
-    "$omc-task",
-    "$pr-create",
-    "$omc-retro",
-    "교훈",
-    "SHIP READY",
-    "BLOCKED",
-    "omc-output/v1",
-    "stage=ship",
-    "all_gates_passed",
-    "test_or_regression_failure",
-    "tdd_or_test_missing",
-    "approval_missing",
-    "next_skill",
-    "user_selection_needed",
-    "reason_code",
-    "<!-- OMC_OUTPUT: {JSON} -->",
-    "PROCEED+all_gates_passed→ready,null,true",
-    "BLOCK+test_or_regression_failure→blocked,omc-investigate,false",
-    "BLOCK+approval_missing→blocked,null,true",
-]
+REQUIRED_BEHAVIOR_MARKERS = ['읽기 전용', '원문을 보존', '자동 재시도', 'cleanup_confirmed=true', 'evidence_complete=true', '품질 명령0회', '비밀값 검사', '명시적 승인', '실패·불확실성을 성공으로 완화하지 않는다', 'detached_v1', '사용자 최종 답변에 붙이지 않는다']
 
-REQUIRED_FOCUS_MARKERS = [
-    "사용자에게 보여줄 것",
-    "시스템이 암묵적으로 처리",
-]
+REQUIRED_FOCUS_MARKERS = ['설정 승인됨', '실행 준비됨', '검사 통과', '배포 완료']
 
 VALID_SHIP_SAMPLE = """
 OMC 가드: PASS
@@ -214,11 +159,12 @@ def test_ignored_live_agent_ship_path_is_optional(tmp_path: Path):
 
 
 def test_ship_skill_stays_short_enough_to_scan():
-    text = _read(REQUIRED_SHIP_SKILL_PATHS[0])
-    non_empty_lines = [line for line in text.splitlines() if line.strip()]
-    assert len(non_empty_lines) <= MAX_NON_EMPTY_LINES, (
-        f"omc-ship has {len(non_empty_lines)} non-empty lines"
-    )
+    text = _workflow_without_output_protocol(_read(REQUIRED_SHIP_SKILL_PATHS[0]))
+    body, marker, remainder = text.partition('<!-- OMC_SHIP_ENTRY_CONTRACT:BEGIN -->')
+    contract, marker2, tail = remainder.partition('<!-- OMC_SHIP_ENTRY_CONTRACT:END -->')
+    assert marker and marker2
+    assert len([line for line in contract.splitlines() if line.strip()]) <= 27
+    assert len([line for line in (body + tail).splitlines() if line.strip()]) <= MAX_NON_EMPTY_LINES
 
 
 def test_ship_skill_avoids_duplicate_approval_wording():
@@ -227,29 +173,21 @@ def test_ship_skill_avoids_duplicate_approval_wording():
 
 
 def test_ship_skill_revalidates_the_reviewed_candidate_before_ready():
-    text = _read(REQUIRED_SHIP_SKILL_PATHS[0])
-
-    for marker in (
-        "omc_review_snapshot.py validate-ship",
-        "review_stale",
-        "review receipt",
-    ):
-        assert marker in text
+    from test_omc_ship_entry_contract import read_contract
+    data = read_contract(REQUIRED_SHIP_SKILL_PATHS[0])
+    ids = [step['id'] for step in data['steps']]
+    assert ids.index('candidate_review') < ids.index('run')
+    step = next(step for step in data['steps'] if step['id'] == 'candidate_review')
+    assert 'validate-ship' in step['argv'] and step['json_status'] == 'READY'
 
 
 def test_ship_skill_preserves_required_execution_order():
+    from test_omc_ship_entry_contract import read_contract
+    for path in REQUIRED_SHIP_SKILL_PATHS:
+        data = read_contract(path)
+        assert data['steps'][-1]['id'] == 'run'
     text = _read(REQUIRED_SHIP_SKILL_PATHS[0])
-    cursor = -1
-    missing_or_reordered: list[str] = []
-
-    for marker in REQUIRED_SEQUENCE:
-        next_pos = text.find(marker, cursor + 1)
-        if next_pos == -1:
-            missing_or_reordered.append(marker)
-        else:
-            cursor = next_pos
-
-    assert not missing_or_reordered, f"missing or reordered markers: {missing_or_reordered}"
+    assert [text.index(marker) for marker in REQUIRED_SEQUENCE] == sorted(text.index(marker) for marker in REQUIRED_SEQUENCE)
 
 
 def test_ship_skill_preserves_required_behavior_markers():
@@ -266,20 +204,10 @@ def test_ship_skill_explains_visible_vs_implicit_work():
 
 def test_ship_skill_recommendations_match_blocked_and_post_deploy_states():
     text = _read(REQUIRED_SHIP_SKILL_PATHS[0])
-    required_markers = [
-        "다음 추천",
-        "우선순위",
-        "SHIP READY",
-        "사용자 선택 대기",
-        "실제 배포 후",
-        "$omc-retro",
-        "BLOCKED",
-        "$omc-investigate",
-        "$omc-task",
-        "자동으로 진행하지는 않습니다.",
-    ]
-    missing = [marker for marker in required_markers if marker not in text]
-    assert not missing, f"missing ship recommendation markers: {missing}"
+    for marker in ('다음 추천', '주추천 1개', '우선순위', 'BLOCKED', '$omc-investigate',
+                   '$omc-task', 'SHIP READY', '승인된 다음 행동', '실제 배포 후',
+                   '$omc-retro', '자동으로 진행하지는 않습니다.'):
+        assert marker in text
 
 
 def test_ship_recommendation_fixture_holds_on_ready_state():
@@ -288,7 +216,8 @@ def test_ship_recommendation_fixture_holds_on_ready_state():
 
 def test_ship_skill_has_single_required_check_section():
     text = _read(REQUIRED_SHIP_SKILL_PATHS[0])
-    assert text.count("## 필수 체크") == 1, "omc-ship must keep a single 필수 체크 section"
+    assert text.count('<!-- OMC_SHIP_ENTRY_CONTRACT:BEGIN -->') == 1
+    assert text.count('<!-- OMC_SHIP_ENTRY_CONTRACT:END -->') == 1
 
 
 def test_valid_ship_output_fixture_has_required_structure():
@@ -298,3 +227,132 @@ def test_valid_ship_output_fixture_has_required_structure():
 def test_invalid_ship_output_fixture_exposes_weak_release_gate():
     failures = _validate_ship_output(INVALID_SHIP_SAMPLE)
     assert {"tdd", "types", "lint", "secrets", "approval"}.issubset(set(failures))
+
+
+def test_ship_template_declares_one_next_action_and_environment_stop():
+    for path in (ROOT / 'templates/.agents/skills/omc-ship/SKILL.md',
+                 ROOT / 'templates/.claude/commands/ship.md'):
+        text = path.read_text()
+        assert '주추천 1개' in text
+        assert 'environment_not_ready' in text
+        assert '품질 명령0회' in text
+        assert '자동으로 진행하지는 않습니다.' in text
+
+
+def _workflow_without_output_protocol(text):
+    body, separator, protocol = text.partition('\n## Machine output contract\n')
+    assert separator and text.count('\n## Machine output contract\n') == 1
+    assert len([line for line in protocol.splitlines() if line.strip()]) <= 9
+    for marker in ('detached_v1', 'omc-output/v1', 'publish', 'complete-task',
+                   '사용자 최종 답변에 붙이지 않는다', 'legacy_inline',
+                   '출력 실패', '구형으로 우회하지 않는다'):
+        assert marker in protocol, marker
+    return '\n'.join(line for line in body.splitlines() if not line.startswith('기계 기록의 단계:'))
+
+
+def test_fresh_install_uses_uncommitted_ship_and_skill_templates(tmp_path):
+    import os
+    import subprocess
+    import sys
+    env = {**os.environ, 'GIT_OPTIONAL_LOCKS': '0', 'OMC_AUTO_UPDATE': '0'}
+    index = Path(subprocess.check_output(
+        ['git', 'rev-parse', '--path-format=absolute', '--git-path', 'index'],
+        cwd=ROOT, env=env, text=True).strip())
+    assert index.is_absolute() and index.is_file()
+    before = index.read_bytes()
+    before_mode = index.stat().st_mode & 0o777
+    target = tmp_path / 'installed'
+    target.mkdir()
+    result = subprocess.run([sys.executable, str(ROOT / 'scripts/install.py'), '--target', str(target)],
+        cwd=ROOT, env=env,
+        capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    pairs = [('critique', 'SKILL.md'), ('investigate', 'SKILL.md'),
+             ('plan', 'references/workflow.md'), ('review', 'SKILL.md'),
+             ('ship', 'SKILL.md'), ('task', 'SKILL.md')]
+    for name, file in pairs:
+        rel = Path('.agents/skills') / ('omc-' + name) / file
+        template = ROOT / 'templates' / rel
+        for prefix in ('.agents', '.agent'):
+            generated = target / prefix / 'skills' / ('omc-' + name) / file
+            assert generated.read_bytes() == template.read_bytes(), generated
+            assert generated.stat().st_mode & 0o777 == template.stat().st_mode & 0o777, generated
+    audit = [sys.executable, str(ROOT / 'scripts/omc_install_audit.py'), '--json', '--strict', str(target)]
+    clean = subprocess.run(audit, cwd=ROOT, env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'},
+                           capture_output=True, text=True, timeout=60)
+    assert clean.returncode == 0, clean.stdout + clean.stderr
+    corrupted = target / '.agent/skills/omc-review/SKILL.md'
+    corrupted.write_text(corrupted.read_text() + '\nlocal corruption\n')
+    bad = subprocess.run(audit, cwd=ROOT, env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'},
+                         capture_output=True, text=True, timeout=60)
+    assert bad.returncode != 0
+    assert 'omc-review/SKILL.md' in bad.stdout
+    assert index.read_bytes() == before
+    assert index.stat().st_mode & 0o777 == before_mode
+
+
+def test_skill_shared_record_protocol_is_identical_and_fail_closed():
+    import pytest
+    shared = _read(ROOT / 'templates/.agents/skills/omc-ship/SKILL.md').split('\n## Machine output contract\n', 1)[1]
+    for name, file in [('critique', 'SKILL.md'), ('investigate', 'SKILL.md'),
+                       ('plan', 'references/workflow.md'), ('review', 'SKILL.md'),
+                       ('task', 'SKILL.md'), ('ship', 'SKILL.md')]:
+        text = _read(ROOT / 'templates/.agents/skills' / ('omc-' + name) / file)
+        assert text.split('\n## Machine output contract\n', 1)[1] == shared
+        _workflow_without_output_protocol(text)
+        for marker in ('detached_v1', 'publish', 'legacy_inline', '구형으로 우회하지 않는다'):
+            with pytest.raises(AssertionError):
+                _workflow_without_output_protocol(text.replace(marker, 'MISSING'))
+
+
+@pytest.mark.parametrize('layout', ['clone', 'linked-worktree'])
+def test_install_check_preserves_resolved_index_in_git_layouts(tmp_path, monkeypatch, layout):
+    import os
+    import shutil
+    import subprocess
+    env = {**os.environ, 'GIT_OPTIONAL_LOCKS': '0', 'OMC_AUTO_UPDATE': '0'}
+    original = ROOT
+    original_index = Path(subprocess.check_output(
+        ['git', 'rev-parse', '--path-format=absolute', '--git-path', 'index'],
+        cwd=original, env=env, text=True).strip())
+    original_bytes = original_index.read_bytes()
+    original_mode = original_index.stat().st_mode & 0o777
+    seed = tmp_path / 'seed'
+    subprocess.run(['git', 'clone', '--template=', '--quiet', '--no-hardlinks', str(original), str(seed)],
+                   env=env, check=True, capture_output=True, timeout=30)
+    candidate = seed
+    if layout == 'linked-worktree':
+        candidate = tmp_path / 'linked'
+        subprocess.run(['git', '-C', str(seed), 'worktree', 'add', '--detach', str(candidate), 'HEAD'],
+                       env=env, check=True, capture_output=True, timeout=30)
+        assert (candidate / '.git').is_file()
+    else:
+        assert (candidate / '.git').is_dir()
+    changed = subprocess.check_output(['git', 'diff', '--name-only', '--diff-filter=ACMRT', 'HEAD'],
+                                      cwd=original, env=env, text=True).splitlines()
+    for name in changed:
+        if Path(name).parts[0] == '.omc':
+            continue
+        destination = candidate / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(original / name, destination)
+    actual_index = Path(subprocess.check_output(
+        ['git', 'rev-parse', '--path-format=absolute', '--git-path', 'index'],
+        cwd=candidate, env=env, text=True).strip())
+    donor_index = Path(subprocess.check_output(
+        ['git', 'rev-parse', '--path-format=absolute', '--git-path', 'index'],
+        cwd=seed, env=env, text=True).strip())
+    assert actual_index.is_absolute() and actual_index.is_file()
+    if layout == 'linked-worktree':
+        assert actual_index != donor_index
+    pins = {p: (p.read_bytes(), p.stat().st_mode & 0o777)
+            for p in {actual_index, donor_index, original_index}}
+    monkeypatch.setitem(globals(), 'ROOT', candidate)
+    exercise = tmp_path / 'exercise'
+    exercise.mkdir()
+    test_fresh_install_uses_uncommitted_ship_and_skill_templates(exercise)
+    for index, (content, mode) in pins.items():
+        assert index.read_bytes() == content
+        assert index.stat().st_mode & 0o777 == mode
+    assert original_index.read_bytes() == original_bytes
+    assert original_index.stat().st_mode & 0o777 == original_mode

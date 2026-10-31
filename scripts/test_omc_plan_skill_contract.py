@@ -705,3 +705,19 @@ def test_invalid_plan_output_fixture_exposes_missing_structure():
 
 def test_invalid_lite_plan_fixture_rejects_more_than_two_tasks():
     assert _extract_task_count(INVALID_LITE_PLAN_SAMPLE) > 2
+
+
+def _workflow_without_output_protocol(text):
+    body, separator, protocol = text.partition('\n## Machine output contract\n')
+    assert separator and text.count('\n## Machine output contract\n') == 1
+    assert len([line for line in protocol.splitlines() if line.strip()]) <= 9
+    for marker in ('detached_v1', 'omc-output/v1', 'publish', 'complete-task',
+                   '사용자 최종 답변에 붙이지 않는다', 'legacy_inline',
+                   '출력 실패', '구형으로 우회하지 않는다'):
+        assert marker in protocol, marker
+    return '\n'.join(line for line in body.splitlines() if not line.startswith('기계 기록의 단계:'))
+
+
+def test_plan_workflow_copies_require_detached_output_contract():
+    for path in REQUIRED_PLAN_WORKFLOW_PATHS:
+        _workflow_without_output_protocol(_read(path))

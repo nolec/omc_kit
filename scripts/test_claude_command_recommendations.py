@@ -80,3 +80,10 @@ def test_gemini_critique_keeps_change_cost_checkpoint() -> None:
     assert "변경 비용 추정" in text
     assert "실질 효과 LOW + MINOR만" in text
     assert "실질 효과 MED/HIGH" in text
+
+
+def test_ship_recommendation_does_not_authorize_followup_execution():
+    text = _read(TEMPLATES / '.claude/commands/ship.md')
+    assert '주추천 1개' in text
+    assert '사용자가 다음 스킬을 명시하기 전에는 진입하지 않는다' in text
+    assert 'environment_not_ready' in text and '품질 명령0회' in text

@@ -1298,8 +1298,16 @@ def test_all_llm_ship_surfaces_reference_shared_proposal_contract():
     for path in paths:
         text = path.read_text(encoding="utf-8")
         assert "docs/omc_quality_gates.md" in text, path
-        assert "omc_quality_gate.py --target . status" in text, path
-        assert "omc_quality_gate.py --target . run" in text, path
+        if 'OMC_SHIP_ENTRY_CONTRACT:BEGIN' in text:
+            from test_omc_ship_entry_contract import read_contract
+            data = read_contract(path)
+            for action in ('status', 'run'):
+                assert any(step['argv'][:2] == ['{python}', '{kit}/scripts/omc_quality_gate.py']
+                           and step['argv'][2:] == ['--target', '{candidate}', action]
+                           for step in data['steps']), (path, action)
+        else:
+            assert "omc_quality_gate.py --target . status" in text, path
+            assert "omc_quality_gate.py --target . run" in text, path
         assert "omc_tdd_check.py --run-tests" not in text, path
 
 
