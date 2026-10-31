@@ -18,6 +18,8 @@ import pytest
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "slow: tests that run external health checks")
+    config.addinivalue_line("markers", "historical_evidence: opt-in verification of externally retained historical inputs")
+    config.addinivalue_line("markers", "red_scaffold: retained historical RED scaffold, separate from current delivery")
 
 
 @pytest.fixture(autouse=True)
