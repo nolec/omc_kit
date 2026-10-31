@@ -1,6 +1,20 @@
-# OMC 비교 대시보드 · 최신 기준 2026-10-30
+# OMC 비교 대시보드 · 최신 기준 2026-11-01
 
-## 현재 · b9a7204 main 반영·3개 승인 READY·반영 결과 검토 완료 · 2026-10-31
+## 현재 · main 6642086d·0.6.2 준비 / 별도 후보 6개·3개 리뷰 승인·미커밋 · 2026-11-01
+
+- 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
+- 현재 판정: 문서 최신화 직전 원본 main은 6642086d358c13073766e419e6dcaff8931fefa4이며 VERSION은 0.6.2 준비 상태다. 최근 최신 출하 기준 6개와 ship 동기화 3개는 각각 고정 snapshot 리뷰 APPROVE·승인 결속 READY지만 별도 후보의 미커밋 변경이다. main 반영·전체 출하·릴리스·재설치 완료로 해석하지 않는다. 실제 홈 NOT_VERIFIED·비교 HOLD를 유지한다.
+- 개선 내용: current_delivery_v1은 과거 외부 입력 검사 2개와 RED 표식 1개만 별도 범주로 분리하고, 실제 모듈 import와 실제 광고 빌드를 현행 필수 목록에 유지한다. 과거 자료 미확보는 미검증이며 성공·통과 개수로 바꾸지 않는다. ship 활성 복사본과 템플릿을 동기화하고 명령 JSON·시간 예산·봉인 대상을 유지한 채 두 곳의 줄바꿈만 정리해 49줄 계약을 지켰다.
+- main과 후보 범위: main의 14a2866은 0.6.2 준비 3개, 6642086d는 선행 보완 19개를 포함한 커밋이다. 이후 0077c59(JSON 객체형 검증 3개)와 49fc3f6(ship 계약 대조 3개)는 별도 후보 커밋이며 main에는 없다. 이번 최근 9개 변경은 49fc3f6 위의 6개·3개 승인 그룹이다. 원본 main 대비 누적 후보 차이는 중복 경로를 합쳐 13개이므로 9개 승인만으로 누적 13개 전체 승인·반영을 주장하지 않는다. 이번 커밋은 로드맵·대시보드 4개 문서만 포함한다.
+- 검증 근거: 최신 출하 기준 6개는 별도 리뷰 후보에서 관련 회귀 479개 통과·3개 deselected를 재확인했다. 전체 수집 대조는 이전 non-slow 5,759개와 현행 5,756개의 차이가 정확히 과거 입력 2개·RED 표식 1개임을 확인했다. 이는 전체 5,756개 실행 통과가 아니다. ship 3개 관련 회귀는 70개 통과·생략 0개이며 리뷰 중 별도 스킬 계약 검사 18개를 통과했다. 18개는 70개와 겹치므로 합산하지 않는다. 실제 광고 빌드는 선택 목록에 남아 있지만 이번 관련 회귀에서 실행하지 않았다.
+- 승인과 완료 경계: 6개 승인 scope는 0e710b4a61267d656399eee5537fff8b8188b34a45dccb978282764447c46543, 3개 승인 scope는 b883a658eeb2d7efc0f82cb108161505289db05b22065530c0e7e59b45776f53이다. 각각의 별도 검토 후보 validate-ship READY이며 합친 9개·main 누적 13개의 단일 승인이 아니다. 선행 6개 작업은 미스테이징 구현 때문에 완료 보류됐고, 후속 ship 3개 작업의 완료 가드 통과는 보존된 6개 작업의 완료를 소급 확정하지 않는다.
+- 원인과 보존: 49fc3f6은 ship 템플릿을 갱신하면서 활성 복사본 동기화를 놓쳤다. 직전 커밋은 동일했고 기존·새 후보에서 같은 불일치 실패를 확인했다. 새 프로필 때문에 생긴 실패가 아니며 후속 3개 동기화가 보완한다. 기존 6개 변경과 원본·인덱스·기록 4,368개 보존 대조는 차이 0개다. 기록 원문·과거 실패·로컬 제외 설정은 보존하며 원본으로 자동 덮어쓰지 않는다.
+- 배포와 사용처: 0.6.2는 준비 버전이며 현재 후보의 실제 로컬 릴리스·재설치는 아직 미실행이다. 과거 0.6.1 정상 11개 설치·감사는 당시 이력이다. 최근 읽기 전용 점검에서 codex-chat·market-reasoning-engine의 Python 관리 파일, storefront의 AGENTS.md 등 3개 사용처의 로컬 불일치를 확인해 덮어쓰지 않았다. 수정 없는 8곳도 이번에 재설치한 것은 아니다. 원격 push·태그·GitHub 릴리스는 실행하지 않았다.
+- 미검증과 다음 작업: 이번 문서 작업은 상태 정리·정합성 검증·문서 커밋이다. 실제 홈 연동·Claude 비교·업무 효과·경쟁 우위는 미검증이며 기존 설치 실패 1개·광고 추적 4개 기존 실패를 소급 해결하지 않는다. 다음은 선행 후보 의존성을 포함한 커밋 범위 확정이다. 최종 후보·리뷰·새 품질 설정·실행 횟수와 시간 예산을 연결한 별도 요청 전에는 prepare/check·전체 출하 검사를 재실행하지 않는다. 과거 예외 승인은 새 후보에 자동 승계하지 않는다.
+- 관찰 경계: 최근 두 격리 리뷰에서 v3는 DISABLED, 완료 품질 관찰은 OBSERVATION_INVALID/live_observation_not_enabled였다. 코드 승인과 사용자 수용·효과 관찰은 구분한다. 원본 main의 관찰 등록을 이번 문서 작업에서 변경하지 않는다.
+- 근거: /private/tmp/omc-current-delivery-v1-6n9ali86/candidate/.omc/state/current-delivery-v1/selection-audit.json; /private/tmp/omc-ship-sync-final-ivi95x3d/candidate/.omc/state/ship-sync/scope.json; /private/tmp/omc-ship-sync-final-ivi95x3d/candidate/.omc/state/ship-sync/tests.xml; /private/tmp/omc-ship-sync-review-ca0t49nj/record.stdout; /private/tmp/omc-current-six-review-ts5gbxsc/record.stdout; /private/tmp/omc-current-six-review-ts5gbxsc/candidate/.omc/state/six-review-tests.xml. 로컬 임시 경로이며 다른 checkout에 자동 제공되거나 장기 보존됨을 보장하지 않는다.
+
+## 이전 이력 · b9a7204 main 반영·3개 승인 READY·반영 결과 검토 완료 · 2026-10-31
 
 - 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
 - 현재 판정: 원본 main은 b9a7204b81739774fa66584848762948a895e0d9이다. 실제 29개 파일 반영·최종 3개 승인 재결속 READY·반영 결과 리뷰 APPROVE WITH NOTES를 확인했다. 이번 main 반영의 일반 파이프라인 완료 NOT_ASSESSED, 실제 홈 NOT_VERIFIED·비교 HOLD를 유지한다.
