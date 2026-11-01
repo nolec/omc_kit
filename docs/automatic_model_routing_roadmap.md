@@ -1,6 +1,20 @@
 # Automatic Model Routing Roadmap
 
-## 현재 · 76ad59a 출하1건 실패 / 34dfce8 보완1개 커밋·승인 READY·전체 재검증 전 · 2026-11-01
+## 현재 · 문서 작업 후보 9개·후속 보완 6개 / 통합 검증 보류·Git 격리 원인 확인 · 2026-11-01
+
+- 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
+- 현재 판정: 원본 main은 0379b12214d917146e2410a66672ff5726ac05e2이고 VERSION은 0.6.2다. 문서 범위·완료 판정 기능은 별도 9개 파일 후보이며, 후속 보완은 그중 6개 파일이다. 후보는 미스테이징·미커밋·미리뷰 상태이며 main에 반영하지 않았다. 통합 검증은 보류한다. 실제 홈 NOT_VERIFIED·비교 HOLD를 유지한다.
+- 개선 내용: 문서 작업의 baseline·선언 경로·검증 영수증을 완료 가드와 수집기에 연결한 후보를 준비했다. 후속 보완은 baseline 재사용 차단 사유의 검사 순서, 역할 보존 전환 후 승인 소유 세션 선택, 수집기 예외 처리 import와 stdout·stderr·종료 코드 원문 보관이다. 코드 후보가 존재한다는 사실과 전체 검증 통과를 구분한다.
+- 범위와 보존: 기존 9개 후보를 상속해 제품 3개·테스트 3개, 정확히 6개만 보완했다. 상속 전용 3개는 불변이다. 구현 후 보존 대조 22,450개·조사 후 23,981개에서 차이가 없었다. 두 대조는 겹치므로 합산하지 않는다. 기존 후보·스테이징·검증 원문과 로컬 제외 설정을 보존하고 자동 복원·삭제·덮어쓰기를 하지 않는다.
+- 검증 결과: 새 직접 회귀 RED 3개 실제 실패·등록 후 문서 범위 GREEN 60개 통과·222개 deselected, Python 구문 검사를 통과했다. 최종 지정 5개 테스트 파일 통합은 337개 통과·1개 실패·fixture setup 오류 2개, exit 1이며 327.55초로 종료했다. 60개는 통합과 겹치므로 합산하지 않는다. 실패 뒤 수정·자동 재실행은 0회다. 미스테이징 상태라 최종 TDD·작업 완료 가드는 호출하지 않았다.
+- 확인한 원인: 테스트 --basetemp를 기존 워크트리 내부 .omc에 놓아 자체 .git이 없는 세 fixture가 상위 워크트리 Git을 발견했다. 일반 완료 테스트는 수동 fixture에 없는 worktree_baseline을 요구받아 완료 주장 충돌로 실패했다. 설치 테스트 2개는 원본 .git/info/exclude를 쓰려다 PermissionError로 중단됐고 본문은 실행하지 못했다. 권한 오류는 이 실행의 쓰기 차단 결과이며 Git 격리 대신 권한을 확대할 근거가 아니다.
+- 원인 판정 경계: 보존 로그·fixture·읽기 전용 Git top-level/인덱스/exclude 경로와 코드 대조로 원인을 확인했다. 관련 함수·설치 파일은 기준 0379b12와 동일하다. 변경 전 동일 조건 테스트는 재실행하지 않았으므로 기존 실패를 실행 대조했다고 주장하거나 실패 3개를 면제하지 않는다. 조사 중 코드 수정·테스트 재실행은 0회다.
+- 배포와 사용처: 현재 문서 후보 9개와 후속 6개는 릴리스·사용처 설치 대상에 반영하지 않았다. 앞선 0.6.2 출하 통과·수정 없는 8곳 재설치와 로컬 수정 3곳 보존 보고는 이전 작업의 배포 이력으로 구분한다. 이번 문서 작업에서 과거 배포 영수증을 재감사하거나 재설치하지 않았다. codex-chat·market-reasoning-engine·storefront의 로컬 수정 보존 상태를 임의 해제하지 않는다.
+- 다음 작업: Git 식별을 격리한 새 검증 준비를 먼저 확정한다. 검증 입력·출력 원문은 보존하고, 테스트 폴더는 저장소 밖 또는 명시적 Git 탐색 상한으로 분리한다. 비Git fixture는 상위 Git을 발견하지 않고, Git fixture는 자기 top-level·인덱스·exclude만 가리키는지 실행 전에 확인한다. 이후 별도 범위·횟수·시간 한도 승인으로 검증하며 지금 재실행하지 않는다.
+- 미검증과 금지: 문서 작업 후보의 전체 완료·리뷰 승인·main 반영·새 출하·재설치는 미실행이다. 실제 홈 연동·Claude 대표 업무 비교·사용자 개입 감소·경쟁 우위는 미검증이며 비교 HOLD를 유지한다. 현재 정리에서 제품 코드·Git 인덱스·커밋·모델 호출·브라우저 검수는 변경하거나 실행하지 않는다.
+- 근거: /Users/noseunglae/.codex/worktrees/seven-file-integration-r1r2/omc_kit/.omc/implementation-candidates/document-scope-three-fixes-20261101-161413/result.json; /Users/noseunglae/.codex/worktrees/seven-file-integration-r1r2/omc_kit/.omc/implementation-candidates/document-scope-three-fixes-20261101-161413/scope-snapshot.json; /Users/noseunglae/.codex/worktrees/seven-file-integration-r1r2/omc_kit/.omc/implementation-candidates/document-scope-three-fixes-20261101-161413/integration.stdout; /Users/noseunglae/.codex/worktrees/seven-file-integration-r1r2/omc_kit/.omc/investigations/document-scope-integration-20261101-162443/report.json; /Users/noseunglae/.codex/worktrees/seven-file-integration-r1r2/omc_kit/.omc/investigations/document-scope-integration-20261101-162443/git-identity-evidence.json; /Users/noseunglae/.codex/worktrees/seven-file-integration-r1r2/omc_kit/.omc/investigations/document-scope-integration-20261101-162443/base-code-comparison.json; /Users/noseunglae/.codex/worktrees/seven-file-integration-r1r2/omc_kit/.omc/investigations/document-scope-integration-20261101-162443/preservation.json. 로컬 보존 경로이며 다른 checkout의 자동 접근·장기 보존을 보장하지 않는다.
+
+## 이전 이력 · 76ad59a 출하1건 실패 / 34dfce8 보완1개 커밋·승인 READY·전체 재검증 전 · 2026-11-01
 
 - 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
 - 현재 판정: 원본 main은 d10f928c13616eab70ee890097fd46ec514fa148이며 VERSION은 0.6.2 준비 상태다. 별도 후보 34dfce8ee30501bb156050332fb8d6939b769e46의 보완 1개 파일은 커밋·리뷰 승인 재결속 READY다. 이전 76ad59a 전체 출하는 1건 실패로 BLOCKED이며 34dfce8의 전체 출하는 미실행이다. main 반영·릴리스·일반 사용처 재설치 완료로 해석하지 않는다. 실제 홈 NOT_VERIFIED·비교 HOLD를 유지한다.
