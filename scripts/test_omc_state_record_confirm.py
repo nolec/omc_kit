@@ -2315,3 +2315,25 @@ def test_guidance_tracked_and_installed_copies_match_source(guidance_surface):
         # Repository's ignored task copy is not part of this change; both installed surfaces are.
         if guidance_surface!=ROOT or skill=='omc-review':
             assert mirror.read_bytes()==expected
+
+
+def test_guidance_preserves_existing_task_and_review_contracts():
+    """New instruction assertions must also satisfy the existing safety contract."""
+    import test_omc_task_skill_contract as task_contract
+    import test_omc_review_skill_contract as review_contract
+    checks = [
+        task_contract.test_task_skill_stays_short_enough_to_scan,
+        task_contract.test_task_skill_preserves_required_execution_order,
+        review_contract.test_review_skill_stays_short_enough_to_scan,
+        review_contract.test_review_skill_preserves_required_execution_order,
+        review_contract.test_review_skill_recommendations_match_verdict_buckets,
+        review_contract.test_review_skill_next_recommendation_lines_each_resolve_to_one_action,
+        review_contract.test_review_skill_prioritizes_current_bottleneck_over_default_pipeline,
+    ]
+    failures = []
+    for check in checks:
+        try:
+            check()
+        except AssertionError as error:
+            failures.append(f"{check.__name__}: {error}")
+    assert not failures, "\n".join(failures)
