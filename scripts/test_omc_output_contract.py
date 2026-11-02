@@ -454,6 +454,8 @@ def test_pilot_skills_share_the_same_machine_contract_block(installed_omc_target
         marker = "## Machine output contract"
         assert text.count(marker) == 1, f"{path.relative_to(ROOT)} contract block count"
         block = text.split(marker, 1)[1].split("\n## ", 1)[0].strip()
+        assert "detached_v1" in block and "사용자 최종 답변에 붙이지 않는다" in block
+        assert "— 마지막 두 줄은" not in block
         blocks.append(block)
 
     assert len(set(blocks)) == 1

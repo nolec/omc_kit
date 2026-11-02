@@ -1,6 +1,7 @@
 # OMC Plan Workflow
 
 ## Phase 0
+일반 채팅 최종 답변에 JSON을 출력하지 않는다. schema 전용 응답은 격리 평가 runner가 frozen context와 출력 schema를 명시한 호출에만 적용한다. 일반 채팅은 내부 기록과 사용자 보고를 분리하고 한글 판정·이유·검증·다음 행동만 표시한다. 기계 판정은 detached_v1 별도 기록 규칙을 따른다.
 주입된 OMC 세션 문맥 우선. 동기화되어 있으면 상태 명령을 실행하지 않습니다. `scripts/omc.py`가 제공된 정확한 context path 밖은 탐색 생략. 문맥 없거나 오래되면:
 ```bash
 python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-plan" --request "<현재 작업 한 줄 요약>" --roles analysis
@@ -22,7 +23,7 @@ dirty 변경과 계획 범위 분리.
 - 압축 전에 원자 requirement ledger를 고정하고 이후 ID를 다시 정의하거나 병합하지 않는다. 데이터 공급, 소비자 동작, 회귀 검증처럼 증거가 다른 항목은 검증 경계별 독립 ID로 유지한다.
 - 출력 전 모든 requirement ID가 task.supports와 VERIFY에 연결됐는지 확인한다. request/response 계약, member/guest 분기, filter query처럼 독립적으로 실패할 수 있는 경계를 포괄 표현에 흡수하지 않는다.
 - 요청·문맥에서 별도 증거로 확인되는 회귀 테스트 산출물도 독립 requirement ID로 보존하고 구현 requirement의 VERIFY로 흡수하지 않는다. 구현과 테스트가 task를 공유해도 공유 task의 supports에 각 ID를 모두 유지한다.
-- 구조화 출력은 schema 필드만 사용하고 요구사항·scope·task 중복 금지, todo_list·planning tool 생성 금지. 반복 설명 금지, 항목별 한 문장.
+- 내부 구조화 출력은 schema 필드만 사용하고 요구사항·scope·task 중복 금지, todo_list·planning tool 생성 금지. 반복 설명 금지, 항목별 한 문장.
 - 근거 파일은 한 번의 명령으로 직접 읽고 진행 메시지·pwd·재탐색 금지. 코드 symbol·사용자 관찰 동작·실패 경로 근거 매핑 완료 전 lite 금지.
 - 선택된 객체: ID·수신자 → 상태·payload → supports·VERIFY. 요구사항은 짧은 ID; supports에는 ID만.
 - 직접 인접 사용자 관찰 가능 동작은 surface당 1개. 포괄 표현 금지·확인하지 않은 예시 명령 금지. 같은 target과 검증 목적이고 의존성 경계를 넘지 않을 때만 병합.

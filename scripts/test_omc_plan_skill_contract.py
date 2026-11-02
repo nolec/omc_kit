@@ -13,7 +13,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MAX_NON_EMPTY_LINES = 40
 MAX_SKILL_BYTES = 3700
-MAX_ROUTER_BYTES = 322
+# Budget includes the explicit isolated-runner condition and Korean chat route.
+MAX_ROUTER_BYTES = 420
 
 REQUIRED_PLAN_SKILL_PATHS = [
     ROOT / ".agents" / "skills" / "omc-plan" / "SKILL.md",
@@ -452,7 +453,7 @@ def test_minimal_activation_control_preserves_plan_activation_surface():
     control = _read(ROOT / "scripts/fixtures/omc_plan_minimal_activation_control.md")
 
     assert router.split("---", 2)[1] == control.split("---", 2)[1]
-    assert len(router.encode("utf-8")) - len(control.encode("utf-8")) <= 200
+    assert len(router.encode("utf-8")) - len(control.encode("utf-8")) <= 300
 
 
 def test_plan_skill_preserves_executable_tdd_task_specificity():
@@ -504,6 +505,23 @@ def test_plan_skill_frontmatter_preserves_natural_language_triggers():
     frontmatter = text.split("---", 2)[1]
     missing = [marker for marker in REQUIRED_NATURAL_TRIGGER_MARKERS if marker not in frontmatter]
     assert not missing, f"missing natural trigger markers: {missing}"
+
+
+def test_plan_router_requires_explicit_runner_contract_for_schema_only():
+    for path in REQUIRED_PLAN_SKILL_PATHS:
+        router = _read(path)
+        assert "runner가 frozen context+출력 schema를 명시한 경우만" in router
+        general = router.split("일반 요청:", 1)[1]
+        assert "반드시 읽고" in general
+        assert "한글 보고(JSON 금지)" in general
+
+
+def test_plan_workflow_keeps_schema_in_internal_record_not_chat_response():
+    for path in REQUIRED_PLAN_WORKFLOW_PATHS:
+        text = _read(path)
+        assert "내부 구조화 출력은 schema 필드만" in text
+        assert "일반 채팅 최종 답변에 JSON을 출력하지 않는다" in text
+        assert "한글 판정·이유·검증·다음 행동만 표시한다" in text
 
 
 def test_plan_skill_preserves_required_execution_order():
