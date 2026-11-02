@@ -369,3 +369,138 @@ class TestLineLengthWarning:
         with contextlib.redirect_stdout(buf):
             result = guard.cmd_check(tmp_root, str(rel_path))
         assert result == 0
+
+
+def test_expired_pipeline_contract_cannot_reopen_old_clock(tmp_path,monkeypatch):
+    original=guard._empty_state()
+    original.update(started_at=time.time()-guard._SESSION_TTL_SECONDS-1,
+                    contract_confirmed=True,session_id='old',contract_hash='old')
+    guard._save_state(tmp_path,original)
+    latest=tmp_path/'.omc/state/latest.json';latest.parent.mkdir(exist_ok=True)
+    latest.write_text(json.dumps({'latest_confirmed_session_id':'new-role'}))
+    before=guard._state_path(tmp_path).read_bytes()
+    output=io.StringIO()
+    with contextlib.redirect_stdout(output):code=guard.cmd_contract_done(tmp_path)
+    assert code==1 and 'pipeline_ttl_expired' in output.getvalue()
+    assert guard._state_path(tmp_path).read_bytes()==before
+
+
+def test_session_start_does_not_renew_expired_work_clock(tmp_path,monkeypatch):
+    monkeypatch.delenv(HANDOFF_ENV,raising=False)
+    original=guard._empty_state();old=time.time()-guard._SESSION_TTL_SECONDS-1
+    original.update(started_at=old,session_id='old',contract_confirmed=True)
+    guard._save_state(tmp_path,original)
+    assert guard.cmd_session_start(tmp_path)==0
+    raw=json.loads(guard._state_path(tmp_path).read_bytes())
+    assert raw['started_at']==old
+    assert not guard._load_state(tmp_path)['contract_confirmed']
+
+
+@pytest.mark.parametrize('offset,expired',[(-.001,False),(0,False),(.001,True)])
+def test_pipeline_ttl_exact_boundary_preserves_raw_state(tmp_path,monkeypatch,offset,expired):
+    from types import SimpleNamespace
+    started=100000.0;now=started+guard._SESSION_TTL_SECONDS+offset
+    monkeypatch.setattr(guard,'time',SimpleNamespace(time=lambda:now))
+    state=guard._empty_state();state.update(started_at=started,contract_confirmed=True,session_id='owner')
+    guard._save_state(tmp_path,state);before=guard._state_path(tmp_path).read_bytes()
+    visible=guard._load_state(tmp_path)
+    assert visible['contract_confirmed'] is (not expired)
+    raw,reason=guard._read_pipeline(tmp_path)
+    assert raw['session_id']=='owner'
+    assert (reason is not None)==expired
+    assert guard._state_path(tmp_path).read_bytes()==before
+
+
+@pytest.mark.parametrize('command',[
+    ['red-done','test_app.py'],['allow','app.py','--reason','fixture'],
+    ['check','app.py'],['check-edit','app.py'],['status']])
+def test_expired_non_start_commands_cannot_renew_or_overwrite(tmp_path,command):
+    state=guard._empty_state();state.update(started_at=time.time()-guard._SESSION_TTL_SECONDS-1,
+                                           contract_confirmed=True,session_id='expired-owner')
+    guard._save_state(tmp_path,state);before=guard._state_path(tmp_path).read_bytes()
+    result=subprocess.run([sys.executable,str(Path(guard.__file__)),'--target',str(tmp_path),*command],
+                          capture_output=True,text=True)
+    assert result.returncode==1 and 'pipeline_ttl_expired' in result.stdout
+    assert guard._state_path(tmp_path).read_bytes()==before
+
+
+def test_explicit_reset_revokes_flags_but_never_renews_work_clock(tmp_path):
+    state=guard._empty_state();state.update(started_at=time.time()-600,session_id='legacy-owner',
+                                          contract_confirmed=True,red_done_tests=['old-test'])
+    guard._save_state(tmp_path,state);before=guard._state_path(tmp_path).read_bytes()
+    assert guard.cmd_reset(tmp_path)==0
+    after=json.loads(guard._state_path(tmp_path).read_bytes())
+    assert after['started_at']==state['started_at'] and not after['contract_confirmed']
+    archive=tmp_path/'.omc/state/pipeline-history'/(hashlib.sha256(before).hexdigest()+'.json')
+    assert archive.read_bytes()==before
+
+
+@pytest.mark.parametrize('offset,valid',[(-0.001,True),(0,False),(0.001,False)])
+def test_reapproval_eight_hour_boundary_is_read_only(tmp_path,monkeypatch,offset,valid):
+    from test_omc_task_completion_surface import reapproval_project,run
+    path,verification=reapproval_project(tmp_path)
+    assert run(tmp_path,'reapprove-completion','--file',str(path)).returncode==0
+    receipt=next((tmp_path/'.omc/completion-reapprovals').glob('*.json'))
+    issued=json.loads(receipt.read_bytes())['issued_at']; before=receipt.read_bytes()
+    monkeypatch.setattr(guard.time,'time',lambda:issued+28800+offset)
+    result=guard.evaluate_task_completion(tmp_path,verification)
+    assert (result['outcome']=='done') is valid
+    assert receipt.read_bytes()==before
+
+
+def test_reapproval_concurrent_issue_publishes_one_complete_record(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from test_omc_task_completion_surface import reapproval_project,run
+    path,verification=reapproval_project(tmp_path)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results=list(pool.map(lambda _:run(tmp_path,'reapprove-completion','--file',str(path)),range(2)))
+    assert sorted(r.returncode for r in results)==[0,1]
+    receipts=list((tmp_path/'.omc/completion-reapprovals').glob('*.json'))
+    assert len(receipts)==1 and json.loads(receipts[0].read_bytes())['binding']['work_id']=='work'
+    assert guard.evaluate_task_completion(tmp_path,verification)['outcome']=='done'
+
+
+@pytest.mark.parametrize('defect',['future','nan','infinity','bool','extra','extended','huge'])
+def test_reapproval_invalid_receipt_time_or_schema_is_blocked(tmp_path,defect):
+    from test_omc_task_completion_surface import reapproval_project,run
+    path,verification=reapproval_project(tmp_path)
+    assert run(tmp_path,'reapprove-completion','--file',str(path)).returncode==0
+    receipt=next((tmp_path/'.omc/completion-reapprovals').glob('*.json'))
+    value=json.loads(receipt.read_bytes())
+    if defect=='future':value['issued_at']=time.time()+100;value['expires_at']=value['issued_at']+28800
+    elif defect=='nan':value['issued_at']=float('nan')
+    elif defect=='infinity':value['expires_at']=float('inf')
+    elif defect=='bool':value['issued_at']=True
+    elif defect=='huge':value['issued_at']=10**1000
+    elif defect=='extra':value['extra']=True
+    else:value['expires_at']+=1
+    receipt.write_text(json.dumps(value))
+    before=receipt.read_bytes()
+    assert guard.evaluate_task_completion(tmp_path,verification)['outcome']=='blocked'
+    assert run(tmp_path,'reapprove-completion','--file',str(path)).returncode==1
+    assert receipt.read_bytes()==before
+
+
+def test_reapproval_publish_failure_does_not_consume_slot(tmp_path,monkeypatch):
+    from test_omc_task_completion_surface import reapproval_project
+    path,verification=reapproval_project(tmp_path)
+    link=guard.os.link
+    def fail(*args):raise OSError('fixture publish denied')
+    monkeypatch.setattr(guard.os,'link',fail)
+    assert guard.cmd_reapprove_completion(tmp_path,path)==1
+    directory=tmp_path/'.omc/completion-reapprovals'
+    assert list(directory.iterdir())==[]
+    monkeypatch.setattr(guard.os,'link',link)
+    assert guard.cmd_reapprove_completion(tmp_path,path)==0
+
+
+def test_reapproval_cannot_reissue_with_changed_pipeline_hash(tmp_path):
+    from test_omc_task_completion_surface import reapproval_project,run
+    path,verification=reapproval_project(tmp_path)
+    assert run(tmp_path,'reapprove-completion','--file',str(path)).returncode==0
+    receipt=next((tmp_path/'.omc/completion-reapprovals').glob('*.json'));before=receipt.read_bytes()
+    pipeline=guard._state_path(tmp_path);value=json.loads(pipeline.read_bytes());value['blocked_count']=2
+    pipeline.write_text(json.dumps(value));request=json.loads(path.read_bytes())
+    request['pipeline_sha256']=hashlib.sha256(pipeline.read_bytes()).hexdigest();path.write_text(json.dumps(request))
+    assert run(tmp_path,'reapprove-completion','--file',str(path)).returncode==1
+    assert receipt.read_bytes()==before

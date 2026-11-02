@@ -1499,6 +1499,9 @@ def _sync_pending_completion(project_root: Path, session: dict[str, object]) -> 
         return
     if "senior_coding" in role_ids:
         completion_action = session.get("completion_action", "start")
+        if completion_action == "start":
+            from omc_pipeline_guard import begin_work
+            begin_work(project_root, session)
         git = session.get("git")
         request = session.get("request")
         work_class = session.get("work_class")

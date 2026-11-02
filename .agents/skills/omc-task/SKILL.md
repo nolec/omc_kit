@@ -9,6 +9,21 @@ description: "7단계 TDD 파이프라인으로 구현 실행. 트리거: 구현
 
 ## 0. Guard
 
+### 사전 승인된 비교 실행의 진입
+
+준비 담당이 고정한 policy 해시·session_id·run_id·basis_sha256을 모두 명시한 비교 작업은 아래 두 명령으로 진입합니다. 일반 새 작업용 `sync-require`로 세션을 교체하지 않습니다.
+
+```bash
+python3 scripts/omc_validation_command.py task-context --target . --sha256 <policy_sha256> --session-id <session_id> --run-id <run_id> --basis-sha256 <basis_sha256>
+python3 scripts/omc_validation_command.py run --target . --profile omc-guard-task
+```
+
+두 명령 모두 통과한 경우에만 기존 CONTRACT·승인 기준으로 진행합니다. 미지정·불일치·실패는 중단하고 원문을 보존합니다. 새 세션 생성, 승인 복사, 기준 축소로 복구하지 않습니다. 일반 작업은 아래 Guard를 그대로 사용합니다.
+
+비교 결과 선택 파일은 `.omc/comparisons/<run_id>/final-selection.json`입니다. 고정 전에 runtime 경로를 검사하고, 고정 후 `python3 scripts/omc_validation_command.py selection-path --target .`가 반환한 경로에 기록합니다. 수집기의 `compare-entry`는 같은 경로를 기본으로 읽습니다. 루트 `final-selection.json` 작성·스테이징으로 검증 증거를 무효화하지 않습니다. 수집 오류 원인은 `.omc/native-stream-errors/`에 별도 보존하며 native stdout에 섞지 않습니다. 오류는 성공이나 재실행 승인이 아닙니다.
+
+### 일반 작업의 진입
+
 ```bash
 python3 scripts/omc_guard.py sync-require --target . --mode autopilot --title "omc-task" --request "<현재 작업 한 줄 요약>" --roles senior_coding --work-class "<implementation|synthetic|document_only|benchmark_maintenance>" --completion-action "<start|continue|preserve>" --for "task"
 ```
@@ -65,9 +80,8 @@ Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`�
 실행 기록과 native 호출 영수증은 별개입니다. 영수증이 없으면 `python3 scripts/omc_native_red_evidence.py diagnose --target .`로 읽기 전용 진단을 확인합니다. `receipts`의 배열 형식은 유지합니다. 명령은 한 줄로 단독 실행하며 끝의 `2>&1` 한 개만 허용합니다. 기록 삭제·덮어쓰기나 runner 중첩 재실행은 하지 않습니다. 최종 공식 상태는 `complete-task` 출력 그대로 사용하고, 수집 결과의 `report-comparison.txt`에서 공식 판정과 모델 원문의 상태 불일치를 별도로 확인합니다. 이 안내는 모델 준수나 실제 실행 성공을 보장하지 않습니다.
 
 승인된 기준을 `approve-checks --file <JSON>`으로 등록하고 CONTRACT에 같은 검증 ID를 고정합니다. RED는 기존 실패와 구분한 실제 새 실패를 `red-done <테스트파일> --evidence-file <RED근거JSON>`으로 등록합니다. 검증 직전 `verification-template`을 생성해 실행 결과를 기록하고 `complete-task --verification-file <내부 경로>`의 상태·기계 판정을 그대로 사용합니다. 필수 검증을 임의 제외하지 않습니다.
+승인 기준에 `validation_commands_policy_sha256`가 있으면 `checks.tests.validation_receipt`에 고정 tests 실행이 반환한 `{path, sha256}`를 연결합니다. 설명문이나 `status=passed`로 원문 판정을 바꾸지 않습니다. 누락·구분 불가·대상/해시/상태 불일치는 완료로 인정하지 않습니다. 이 연결이 없는 일반 작업은 기존 형식을 유지합니다.
 실행 전 필수 상세: [승인 기준·RED JSON·스냅샷·폴더 링크 정책](references/verification.md)을 읽습니다. 기록은 실행 진위·요구의 의미 관련성 인증이 아니며, 정상 내부 폴더 링크는 결속하고 외부·순환·검사 제외 링크는 거부합니다.
-
-## Machine output contract — 마지막 두 줄은 `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT: <VALUE>`; JSON은 `schema_version=omc-output/v1`, `stage`, `outcome`, `risk`, `next_skill`, `user_selection_needed`, `reason_code`; `next_skill`은 canonical `omc-*` 또는 null; unresolved/blocked는 `reason_code` 필수; legacy 평문 입력은 허용하되 새 출력은 숨김 형식만 사용하고 명시적 오류는 보정하지 않습니다.
 
 ## 다음 추천
 
@@ -86,4 +100,53 @@ Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`�
 
 ## 최종 보고와 작업 기록의 구분
 
-PHASE 7 기록은 최종 답변에 붙이지 않습니다. 단계별 기록과 교훈은 작업 중 처리하고, 사용자 최종 보고는 상태·변경·검증·다음 행동만 간결하게 작성합니다. complete-task의 기계 판정 두 줄을 최종 답변 끝에 그대로 복사합니다. HTML 주석과 VERDICT를 생략하거나 평문 요약으로 대체하지 않습니다. 이 최종 보고 계약이 위 단계별 양식보다 우선합니다.
+PHASE 7 기록은 최종 답변에 붙이지 않습니다. 단계별 기록과 교훈은 작업 중 처리하고, 사용자 최종 보고는 상태·변경·검증·다음 행동만 간결하게 작성합니다. complete-task의 별도 기록을 먼저 검증하고 한글 stdout만 최종 답변에 제공합니다. 기계 판정은 불변 기록으로 보존합니다. 이 최종 보고 계약이 위 단계별 양식보다 우선합니다.
+
+
+## 검증된 동일 커밋 이관의 별도 완료 경로
+
+이 스킬의 구현 작업과 종류가 없는 기존 승인 기준은 계속 `complete-task`와 현재 작업 RED를 요구합니다.
+`benchmark_maintenance` 같은 work_class나 호출자의 RED 생략 선언으로 예외를 선택하지 않습니다.
+이 기능 자체를 구현·수정하는 작업도 기존 구현 경로로 검증합니다.
+
+새 동일 커밋 이관은 최초 승인 기준에 `completion_kind=verified_commit_transfer`와 `transfer` 정책을 고정한 경우에만 별도 판정합니다.
+같은 작업의 개정·보존 역할 전환으로 종류나 이관 정책을 바꾸지 않습니다.
+
+승인 후 순서(명령의 `--target`은 격리 운영 작업 폴더이며 실제 대상은 승인된 정책에서만 읽음):
+
+```bash
+python3 scripts/omc_pipeline_guard.py --target <운영폴더> contract-done --required-checks <승인ID>
+python3 scripts/omc_pipeline_guard.py --target <운영폴더> register-transfer-baseline
+# 등록 성공을 확인한 뒤 별도 승인된 실제 이관 절차 수행
+python3 scripts/omc_pipeline_guard.py --target <운영폴더> complete-transfer --verification-file <운영폴더내검증JSON>
+```
+
+기준 등록은 대상 HEAD가 아직 승인된 기준 커밋일 때만 1회 수행합니다. 이미 대상 커밋이면 사후 등록을 거부합니다.
+이관 전후 Git 상태·원래 구현의 검증 통과·리뷰 READY·요청 범위·원본/대상 내용·권한·보존 증거를 확인합니다.
+등록 중 HEAD·인덱스·보존 대상이 바뀌면 기준을 게시하지 않습니다.
+정확한 대상 커밋과 단일 부모, 승인된 전체 경로, 작업 ID·대상 Git/인덱스 경로를 결속합니다.
+검증 근거 없음·failed·unrun·mismatch·현재 기준 만료·범위 불일치는 RED 제외 자격이 아닙니다.
+원래 구현은 기존 판정기로 통과를 확인하며 이관의 새 RED만 제외합니다.
+
+보존 예외는 승인된 커밋 diff의 정확한 파일·인덱스 전환과, 명시적으로 승인한
+`.omc/state/review-snapshots/current.json`의 유효한 새 receipt 참조뿐입니다.
+기존 receipt·snapshot·검증 원문은 불변이며 새 리뷰 JSON 기록만 정해진 영역에 추가할 수 있습니다.
+다른 변경·플래그 차이·넓은 임의 제외 목록·다른 작업 기준 재사용은 차단합니다.
+
+CLI와 수집기는 동일 승인 종류·공용 판정과 실제 반환 경로를 확인합니다.
+이관 절차는 CONTRACT → 기준 등록 성공 → complete-transfer 반환이며 구현 절차의 RED를 대신 실행한 것으로 기록하지 않습니다.
+이관 완료는 기능·배포·실제 서비스 검증 성공을 의미하지 않습니다.
+기존 BLOCK 원문은 보존하며 과거 이관을 새 사전 기준으로 소급 완료하지 않습니다.
+지원하지 않는 증거·분할/희소 인덱스·링크·등록 예산 초과는 통과로 추정하지 않습니다.
+로컬 해시·Git·기록은 악의적 로컬 변조나 인간 승인·실행 진위의 인증이 아닙니다.
+
+기계 기록의 단계: stage=task. 아래 별도 기록 규칙이 이전 출력 예시보다 우선한다.
+
+## Machine output contract
+별도 기록 모드 `detached_v1`을 명시적으로 사용한다. `omc-output/v1`의 stage/outcome/risk/next_skill/user_selection_needed/reason_code·VERDICT·기존 라우팅 의미는 바꾸지 않는다. `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT`는 내부 판정 원문에만 두고 사용자 최종 답변에 붙이지 않는다. 한글 판정·이유·검증·다음 행동만 표시한다.
+먼저 `python3 scripts/omc_output_contract.py capabilities`와 `python3 scripts/omc_workflow_validation.py capabilities`로 발행자·소비자의 지원을 각각 확인한다. 실행 전에 모드·현재 작업/세션·단계·보고 ID·마감과 명시 기록 경로를 고정한다. 문맥이 없으면 `prepare --target . --stage <단계> --report-id <새ID> --budget-sec <승인된남은초>`로 현재 상태에서 새 문맥을 만들고 반환된 context/path·SHA를 호출자 실행 메타데이터에 보존한다. 숫자 예산을 임의 연장하거나 이전 보고 ID를 재사용하지 않는다.
+일반 plan/review/critique/investigate/ship 선언은 내부 원문을 작업의 .omc 안에 저장한 뒤 `python3 scripts/omc_output_contract.py publish --target . --output-context <문맥경로> --output-context-sha256 <해시> --source-file <내부원문> --source-sha256 <해시>`로 발행한다. 이는 모델 선언이며 해시 일치가 검증 통과나 사용자 승인 진위를 인증하지 않는다.
+실제 task 완료는 기존 `complete-task --verification-file <내부검증>`에 `--output-mode detached_v1 --output-context <문맥경로> --output-context-sha256 <해시>`를 추가한다. 이관은 승인된 complete-transfer 경로를 유지한다. 일반 publish로 완료 가드의 발행 주체를 지정할 수 없다.
+사용자 최종 답변은 발행 CLI의 한글 stdout과 같은 바이트로 제공한다. 경로/해시는 사용자 답변 꼬리표 대신 호출 인자와 실행 메타데이터로 전달한다. 수집기는 명시 manifest 경로/해시·현재 상태·native 호출/반환·실제 최종 원문을 독립 대조한다. CLI 표시 검사·수집기 fixture·실제 모델의 자유 응답 준수는 별도 증거다.
+업무 차단 종료 코드1도 정상 판정으로 기록한다. 전달 실패 코드2는 업무 실패와 다르다. 저장·봉인·출력 실패 시 한글 오류만 알리고 완료/승인·자동 후속·구형 fallback을 금지한다. 실패 기록도 저장할 수 없으면 stderr·종료 원문만 보존한다. 봉인 후 표시 실패를 이유로 기존 manifest나 verdict를 수정하지 않는다.
+구형 legacy_inline으로 시작한 입력만 기존 parser로 읽는다. 신형 기록 누락·변조·다른 세션·모드 혼합·표시 불일치는 보류하며 구형으로 우회하지 않는다. 구형 도구에서 신형 안내를 실행할 수 없으면 호출 전에 한글 지원 불가를 알린다. 이 안내는 플랫폼 화면 숨김이나 모델 준수를 물리적으로 보장하지 않는다.
