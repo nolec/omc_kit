@@ -292,7 +292,8 @@
   },
   "supported_core_commits": [
     "996d80d539d7245443f3a539f1a9fa333b450770",
-    "7bdbcb81882ef8ce515e48cf9b4fac07fd273176"
+    "7bdbcb81882ef8ce515e48cf9b4fac07fd273176",
+    "3d716da4a4f51d06e9fc90735598d2bba822f445"
   ],
   "archive_core_commit": "996d80d539d7245443f3a539f1a9fa333b450770",
   "common_contract": {

@@ -213,6 +213,22 @@ def test_v3_accepts_new_core_without_relabeling_historical_fixture(config):
     assert not (candidate/'scripts/omc_home_observation.py').exists()
 
 
+CURRENT_CORE = '3d716da4a4f51d06e9fc90735598d2bba822f445'
+
+
+def test_v4_accepts_063_without_relabeling_historical_fixture(config):
+    path,cfg,candidate=config
+    cfg['core_commit']=CURRENT_CORE;path.write_text(json.dumps(cfg))
+    result=invoke('restore','--config',path)
+    assert result.returncode==0,result.stdout+result.stderr
+    restored=json.loads((candidate.parent/'runtime.json').read_text())
+    receipt=json.loads((candidate.parent/'restore-receipt.json').read_text())
+    assert restored['core_commit']==CURRENT_CORE
+    assert receipt['execution_core_commit']==CURRENT_CORE
+    assert receipt['archive_core_commit']==CORE
+    assert not (candidate/'scripts/omc_home_observation.py').exists()
+
+
 def test_v3_durable_seven_contract_and_shared_budget():
     import omc_ad_validation_runtime as runtime
     contract=runtime.common_contract()
@@ -265,7 +281,7 @@ def test_v3_forged_passed_label_is_not_semantic_evidence(tmp_path):
 
 
 @real_surface
-@pytest.mark.parametrize('selected',[CORE,'7bdbcb81882ef8ce515e48cf9b4fac07fd273176'])
+@pytest.mark.parametrize('selected',[CORE,'7bdbcb81882ef8ce515e48cf9b4fac07fd273176',CURRENT_CORE])
 def test_v3_real_restore_then_selected_core_install(real_config,tmp_path,selected):
     path,cfg,candidate=real_config
     cfg['core_commit']=selected;path.write_text(json.dumps(cfg))
@@ -898,8 +914,8 @@ let n=0;setInterval(()=>{if(scenario==='stationary')return;document.querySelecto
     return page
 
 
-@pytest.fixture(scope='session',params=[CORE,'7bdbcb81882ef8ce515e48cf9b4fac07fd273176'],
-                ids=['core996d80d','core7bdbcb8'])
+@pytest.fixture(scope='session',params=[CORE,'7bdbcb81882ef8ce515e48cf9b4fac07fd273176',CURRENT_CORE],
+                ids=['core996d80d','core7bdbcb8','core063'])
 def fixed_core(tmp_path_factory,request):
     selected=request.param
     core=tmp_path_factory.mktemp('controlled-core')
@@ -1021,3 +1037,266 @@ def test_review_common_result_accepts_exact_context_with_extra_environment(tmp_p
             'argv':definition['argv'],'cwd':definition['cwd'],
             'environment':{**definition['environment'],'PATH':'/synthetic/bin'},'exit_code':0,'artifacts':{}}
     assert runtime.assess_common_result(tmp_path,'lint',record)=='passed'
+
+
+@real_surface
+def test_v4_063_seven_real_checks_and_reassessment(real_config,tmp_path):
+    """Execute all seven against unchanged real baseline; defects stay failures."""
+    import omc_ad_validation_runtime as runtime
+    path,cfg,candidate=real_config
+    cfg['core_commit']=CURRENT_CORE;path.write_text(json.dumps(cfg))
+    core=tmp_path/'current-product';core.mkdir()
+    for repo,commit,dest,prefix in [(ROOT,CURRENT_CORE,core,'scripts')]:
+        raw=subprocess.check_output(['git','-C',str(repo),'archive',commit,prefix])
+        with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+            for member in archive.getmembers():
+                name=Path(member.name)
+                assert not name.is_absolute() and '..' not in name.parts
+                if member.isfile():
+                    file=dest/name;file.parent.mkdir(parents=True,exist_ok=True)
+                    file.write_bytes(archive.extractfile(member).read());file.chmod(member.mode)
+    assert sha(core/'scripts/omc_visual_check.py')==hashlib.sha256(subprocess.check_output(
+        ['git','-C',str(ROOT),'show',CURRENT_CORE+':scripts/omc_visual_check.py'])).hexdigest()
+    results=[]
+    with browser(real_config,candidate/'apps/store-manager/public') as (cfg,candidate):
+        # Supply existing baseline configs/dependencies, never copy current dirty work.
+        raw=subprocess.check_output(['git','-C',cfg['baseline_repo'],'archive',BASE])
+        with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+            for member in archive.getmembers():
+                name=Path(member.name)
+                assert not name.is_absolute() and '..' not in name.parts
+                file=candidate/name
+                if member.isfile() and not file.exists():
+                    file.parent.mkdir(parents=True,exist_ok=True)
+                    file.write_bytes(archive.extractfile(member).read());file.chmod(member.mode)
+        output=candidate/'.omc/standalone-final';output.mkdir(parents=True)
+        policy=json.loads((ROOT/'docs/comparison-dashboard/evidence/ad-validation-inputs-v1/manifest.json').read_bytes())['visual_policy']
+        requirement={'profile':'advertising-visual/v1','run_id':'compat-063-seven','policy':policy}
+        (candidate/'.omc/visual-requirement.json').write_text(json.dumps(requirement))
+        bindings={'CANDIDATE_ROOT':str(candidate),'ARM_ROOT':str(candidate.parent),
+            'OPERATOR_ROOT':str(ROOT),'CORE_ROOT':str(core),'NODE':str(Path(shutil.which('node')).resolve()),
+            'PYTHON':str(Path(sys.executable).resolve()),'PORT':cfg['port']}
+        contract=runtime.render_common_contract(bindings)
+        (output/'contract.json').write_text(json.dumps(contract,indent=2))
+        source_pins={str(f.relative_to(candidate)):sha(f) for f in (candidate/AD).rglob('*') if f.is_file()}
+        def ref(file):
+            return {'path':str(file.relative_to(candidate)),'sha256':sha(file)}
+        for definition in contract['checks']:
+            check=definition['id'];argv=list(definition['argv']);artifacts={}
+            if check=='controlled':
+                navigation=command(candidate,'goto','/omc-ad-validation/index.html')
+                (output/'controlled-navigation.stdout').write_text(navigation.stdout)
+                (output/'controlled-navigation.stderr').write_text(navigation.stderr)
+            if check.startswith('pixels-dpr'):
+                dpr=int(check[-1]);bundle=candidate/'apps/store-manager/public/omc-ad-pixels/bundle.js'
+                manifest={'schema_version':'omc-visual-manifest/v1',
+                    'url':f"http://localhost:{cfg['port']}/omc-ad-pixels/index.html",
+                    'bundle_url':f"http://localhost:{cfg['port']}/omc-ad-pixels/bundle.js",
+                    'bundle_path':str(bundle.relative_to(candidate)),'bundle_sha256':sha(bundle),
+                    'build_inputs':policy['builder_inputs'],'dpr':dpr,'images_per_variant':2,
+                    'run_id':requirement['run_id'],
+                    'policy_sha256':hashlib.sha256(json.dumps(policy,sort_keys=True,separators=(',',':')).encode()).hexdigest()}
+                file=output/f'manifest-{dpr}.json';file.write_text(json.dumps(manifest,indent=2))
+                argv=[v.replace(f'@MANIFEST_{dpr}_SHA256@',sha(file)) for v in argv]
+                artifacts['manifest']=ref(file)
+            start=time.monotonic();timed_out=False
+            try:
+                proc=subprocess.run(argv,cwd=candidate,env={**os.environ,**definition['environment']},
+                    capture_output=True,text=True,timeout=definition['timeout_seconds'])
+                stdout,stderr,code=proc.stdout,proc.stderr,proc.returncode
+            except subprocess.TimeoutExpired as exc:
+                timed_out=True;stdout=(exc.stdout or b'');stderr=(exc.stderr or b'');code=None
+                stdout=stdout.decode(errors='replace') if isinstance(stdout,bytes) else stdout
+                stderr=stderr.decode(errors='replace') if isinstance(stderr,bytes) else stderr
+            Path(definition['stdout']).write_text(stdout);Path(definition['stderr']).write_text(stderr)
+            artifacts['stdout']=ref(Path(definition['stdout']));artifacts['stderr']=ref(Path(definition['stderr']))
+            if check=='tests' and (output/'tests.json').exists():artifacts['jest']=ref(output/'tests.json')
+            if check.startswith('build-'):
+                folder='omc-ad-validation' if check=='build-controlled' else 'omc-ad-pixels'
+                bundle=candidate/f'apps/store-manager/public/{folder}/bundle.js'
+                if bundle.exists():artifacts['bundle']=ref(bundle)
+            if check=='controlled' and code==0:
+                observed=json.loads(stdout)
+                if 'operation' in observed:observed=observed['result']
+                file=output/'controlled-observation.json';file.write_text(json.dumps(observed))
+                artifacts['observation']=ref(file)
+                snap=command(candidate,'snapshot');(output/'controlled-snapshot.json').write_text(snap.stdout)
+                if snap.returncode==0:artifacts['screen']=ref(Path(json.loads(snap.stdout)['screenshot']))
+            if check.startswith('pixels-dpr'):
+                file=output/f'pixels-{check[-1]}/report.json'
+                if file.exists():artifacts['report']=ref(file)
+            record={'check_id':check,'core_commit':CURRENT_CORE,'source_sha256':source_pins,
+                'bindings':bindings,'cwd':str(candidate),'environment':definition['environment'],
+                'argv':argv,'exit_code':code,'timed_out':timed_out,'started_monotonic':start,
+                'ended_monotonic':time.monotonic(),'artifacts':artifacts}
+            file=Path(definition['result']);file.write_text(json.dumps(record,indent=2))
+            # Reload saved native evidence; no declared success can substitute for it.
+            assessment=_assert_required_common_evidence(candidate,check,json.loads(file.read_bytes()))
+            expected=('controlled_surface_not_passed' if check=='controlled' else
+                'common_command_failed' if check.startswith('pixels-dpr') else 'passed')
+            row={'id':check,'record':ref(file),'assessment':assessment,'expected':expected,
+                 'matched':assessment==expected,'native_exit':code}
+            results.append(row)
+            (output/'reassessment.json').write_text(json.dumps(results,indent=2))
+        assert [r['id'] for r in results]==[r['id'] for r in contract['checks']]
+        assert all(r['matched'] for r in results),results
+        assert source_pins=={str(f.relative_to(candidate)):sha(f) for f in (candidate/AD).rglob('*') if f.is_file()}
+        for row in results:
+            saved=json.loads((candidate/row['record']['path']).read_bytes())
+            assert sha(candidate/row['record']['path'])==row['record']['sha256']
+            for item in saved['artifacts'].values():assert sha(candidate/item['path'])==item['sha256']
+
+
+_REQUIRED_COMMON_ARTIFACTS = {
+    'tests': {'stdout','stderr','jest'},
+    'lint': {'stdout','stderr'},
+    'build-controlled': {'stdout','stderr','bundle'},
+    'build-pixels': {'stdout','stderr','bundle'},
+    'controlled': {'stdout','stderr','observation','screen'},
+    'pixels-dpr1': {'stdout','stderr','manifest','report'},
+    'pixels-dpr2': {'stdout','stderr','manifest','report'},
+}
+
+
+def _assert_required_common_evidence(candidate,check,record):
+    """Test-only complete evidence gate, including expected baseline failures."""
+    import omc_ad_validation_runtime as runtime
+    import omc_visual_check as visual
+    candidate=candidate.resolve()
+    assert record['timed_out'] is False
+    assert type(record['exit_code']) is int
+    assert record['core_commit']==CURRENT_CORE
+    assert record['cwd']==str(candidate)
+    assert record['bindings']['CANDIDATE_ROOT']==str(candidate)
+    assert record['source_sha256']=={str(f.relative_to(candidate)):sha(f)
+        for f in (candidate/AD).rglob('*') if f.is_file()}
+    artifacts=record['artifacts']
+    assert _REQUIRED_COMMON_ARTIFACTS[check]<=artifacts.keys(), 'required_artifact_missing'
+    for item in artifacts.values():
+        file=runtime.child(candidate,item['path'])
+        assert file.is_file() and sha(file)==item['sha256'], 'required_artifact_invalid'
+    if check.startswith('pixels-dpr'):
+        report_ref=artifacts['report'];manifest_ref=artifacts['manifest']
+        report_file=runtime.child(candidate,report_ref['path'])
+        manifest_file=runtime.child(candidate,manifest_ref['path'])
+        report=json.loads(report_file.read_bytes());manifest=json.loads(manifest_file.read_bytes())
+        requirement=json.loads((candidate/'.omc/visual-requirement.json').read_bytes())
+        policy=requirement['policy']
+        assert record['exit_code']==1, 'baseline_failure_exit_required'
+        assert report['schema_version']=='omc-visual-report/v1'
+        assert report['target']==str(candidate), 'pixel_candidate_mismatch'
+        assert report['code_snapshot_sha256']==visual._code_snapshot_digest(candidate), 'pixel_snapshot_mismatch'
+        assert report['manifest_sha256']==manifest_ref['sha256']
+        assert report['manifest_raw'].encode()==manifest_file.read_bytes()
+        assert type(manifest['dpr']) is int and manifest['dpr']==int(check[-1])
+        assert manifest['run_id']==requirement['run_id']
+        assert manifest['policy_sha256']==hashlib.sha256(json.dumps(policy,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        assert manifest['images_per_variant']==policy['images_per_variant']==2
+        assert manifest['build_inputs']==policy['builder_inputs']
+        for name,pin in manifest['build_inputs'].items():assert sha(runtime.child(candidate,name))==pin
+        assert sha(runtime.child(candidate,manifest['bundle_path']))==manifest['bundle_sha256']
+        rows=report['variants']
+        assert len(rows)==6 and [r['id'] for r in rows]==list(visual.VARIANTS), 'six_unique_cells_required'
+        assert all(r['status'] in {'passed','failed'} for r in rows)
+        assert report['status']=='failed' and any(r['status']=='failed' for r in rows)
+        assert set(report['evidence_hashes'])=={'screen.png','capture.json'}
+        for name,pin in report['evidence_hashes'].items():
+            file=report_file.parent/name
+            assert file.is_file() and sha(file)==pin, 'pixel_capture_missing_or_changed'
+        judged=visual.assess_report(candidate,report_file,report_ref['sha256'],manifest_ref['sha256'])
+        assert judged=={'status':'failed','reason':'visual_surface_failed'}, judged
+    try:assessment=runtime.assess_common_result(candidate,check,record)
+    except (ValueError,KeyError,OSError) as exc:assessment=str(exc)
+    expected=('controlled_surface_not_passed' if check=='controlled' else
+        'common_command_failed' if check.startswith('pixels-dpr') else 'passed')
+    assert assessment==expected
+    return assessment
+
+
+@pytest.fixture
+def common_evidence_record(tmp_path,monkeypatch):
+    import omc_ad_validation_runtime as runtime
+    import omc_visual_check as visual
+    candidate=tmp_path/'candidate';candidate.mkdir()
+    source=candidate/AD/'Ad.tsx';source.parent.mkdir(parents=True);source.write_text('baseline')
+    folder=candidate/'.omc/required';folder.mkdir(parents=True)
+    builder=folder/'builder';builder.write_text('fixed builder')
+    bundle=candidate/'bundle';bundle.write_text('fixed bundle')
+    policy={'schema_version':'omc-visual-policy/v1','criteria':visual.CRITERIA,
+        'variants':list(visual.VARIANTS),'dprs':[1,2],'images_per_variant':2,
+        'builder_inputs':{str(builder.relative_to(candidate)):sha(builder)}}
+    requirement={'profile':visual.AD_PROFILE,'run_id':'synthetic-unit','policy':policy}
+    (candidate/'.omc/visual-requirement.json').write_text(json.dumps(requirement))
+    manifest={'dpr':1,'run_id':requirement['run_id'],
+        'policy_sha256':hashlib.sha256(json.dumps(policy,sort_keys=True,separators=(',',':')).encode()).hexdigest(),
+        'images_per_variant':2,'build_inputs':policy['builder_inputs'],
+        'bundle_path':str(bundle.relative_to(candidate)),'bundle_sha256':sha(bundle)}
+    manifest_file=folder/'manifest.json';manifest_file.write_text(json.dumps(manifest))
+    for name in ['screen.png','capture.json']:(folder/name).write_text('synthetic; real judge is separately exercised')
+    report={'schema_version':'omc-visual-report/v1','target':str(candidate),
+        'code_snapshot_sha256':visual._code_snapshot_digest(candidate),'criteria':visual.CRITERIA,
+        'manifest_sha256':sha(manifest_file),'manifest_raw':manifest_file.read_text(),
+        'evidence_hashes':{n:sha(folder/n) for n in ['screen.png','capture.json']},
+        'status':'failed','variants':[{'id':n,'status':'failed'} for n in visual.VARIANTS]}
+    report_file=folder/'report.json';report_file.write_text(json.dumps(report))
+    paths={'manifest':manifest_file,'report':report_file,'bundle':bundle,'screen':folder/'screen.png'}
+    for name in ['stdout','stderr','jest','observation']:
+        paths[name]=folder/name;paths[name].write_text('{}')
+    refs={n:{'path':str(f.relative_to(candidate)),'sha256':sha(f)} for n,f in paths.items()}
+    record={'artifacts':refs,'exit_code':1,'timed_out':False,'core_commit':CURRENT_CORE,
+        'cwd':str(candidate),'bindings':{'CANDIDATE_ROOT':str(candidate)},
+        'source_sha256':{str(source.relative_to(candidate)):sha(source)}}
+    def assess(root,check,value):
+        if check=='controlled':raise ValueError('controlled_surface_not_passed')
+        if check.startswith('pixels-dpr'):raise ValueError('common_command_failed')
+        return 'passed'
+    monkeypatch.setattr(runtime,'assess_common_result',assess)
+    monkeypatch.setattr(visual,'assess_report',lambda *args: {'status':'failed','reason':'visual_surface_failed'})
+    return candidate,record
+
+
+@pytest.mark.parametrize('check,missing',[(c,n) for c,keys in _REQUIRED_COMMON_ARTIFACTS.items() for n in sorted(keys)])
+def test_required_common_evidence_rejects_missing_artifact(common_evidence_record,check,missing):
+    candidate,record=common_evidence_record
+    record['artifacts'].pop(missing)
+    with pytest.raises(AssertionError):_assert_required_common_evidence(candidate,check,record)
+
+
+@pytest.mark.parametrize('check',list(_REQUIRED_COMMON_ARTIFACTS))
+def test_required_common_evidence_accepts_complete_record(common_evidence_record,check):
+    candidate,record=common_evidence_record
+    record['exit_code']=1 if check=='tests' or check.startswith('pixels-dpr') else 0
+    if check=='pixels-dpr2':
+        file=candidate/record['artifacts']['manifest']['path'];manifest=json.loads(file.read_text())
+        manifest['dpr']=2;file.write_text(json.dumps(manifest))
+        record['artifacts']['manifest']['sha256']=sha(file)
+        file=candidate/record['artifacts']['report']['path'];report=json.loads(file.read_text())
+        report['manifest_raw']=json.dumps(manifest);report['manifest_sha256']=record['artifacts']['manifest']['sha256']
+        file.write_text(json.dumps(report));record['artifacts']['report']['sha256']=sha(file)
+    _assert_required_common_evidence(candidate,check,record)
+
+
+@pytest.mark.parametrize('defect',['missing-file','wrong-hash','five-cells','duplicate-cell','wrong-target',
+    'wrong-snapshot','wrong-dpr','wrong-run','wrong-policy','missing-pixel-screen','unknown-judge','passed-judge'])
+def test_required_pixel_evidence_rejects_incomplete_or_unbound(common_evidence_record,monkeypatch,defect):
+    import omc_visual_check as visual
+    candidate,record=common_evidence_record
+    file=candidate/record['artifacts']['report']['path'];report=json.loads(file.read_text())
+    if defect=='missing-file':file.unlink()
+    elif defect=='wrong-hash':record['artifacts']['report']['sha256']='0'*64
+    elif defect=='five-cells':report['variants'].pop()
+    elif defect=='duplicate-cell':report['variants'][-1]=report['variants'][0]
+    elif defect=='wrong-target':report['target']=str(candidate/'other')
+    elif defect=='wrong-snapshot':report['code_snapshot_sha256']='0'*64
+    elif defect in ['wrong-dpr','wrong-run','wrong-policy']:
+        manifest=json.loads(report['manifest_raw'])
+        key={'wrong-dpr':'dpr','wrong-run':'run_id','wrong-policy':'policy_sha256'}[defect]
+        manifest[key]=2 if key=='dpr' else 'wrong';report['manifest_raw']=json.dumps(manifest)
+        manifest_file=candidate/record['artifacts']['manifest']['path'];manifest_file.write_text(report['manifest_raw'])
+        record['artifacts']['manifest']['sha256']=sha(manifest_file);report['manifest_sha256']=sha(manifest_file)
+    elif defect=='missing-pixel-screen':(file.parent/'screen.png').unlink()
+    elif defect in ['unknown-judge','passed-judge']:
+        monkeypatch.setattr(visual,'assess_report',lambda *args: {'status':'unknown' if defect=='unknown-judge' else 'passed'})
+    if defect not in ['missing-file','wrong-hash']:
+        file.write_text(json.dumps(report));record['artifacts']['report']['sha256']=sha(file)
+    with pytest.raises(AssertionError):_assert_required_common_evidence(candidate,'pixels-dpr1',record)
