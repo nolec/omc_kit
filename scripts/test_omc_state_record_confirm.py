@@ -6,6 +6,8 @@ import importlib.util
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 import auto_prompt
 
 
@@ -1725,6 +1727,25 @@ def test_core_omc_skill_mirrors_stay_in_sync(installed_omc_target):
         agent_text = (installed_omc_target / ".agent" / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
         agents_text = (installed_omc_target / ".agents" / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
         assert agent_text == agents_text, f"{skill_name} mirror files diverged"
+
+
+@pytest.mark.parametrize('guidance_source', ['installed', 'repository'])
+def test_generated_plan_guidance_pins_review_route_and_render_contract(
+    installed_omc_target, guidance_source
+):
+    paths = ['.agents/skills/omc-plan/references/workflow.md',
+             '.agent/skills/omc-plan/references/workflow.md', '.claude/commands/plan.md']
+    target = installed_omc_target
+    if guidance_source == 'repository':
+        target = ROOT
+        paths = ['.agents/skills/omc-plan/references/workflow.md']
+    for relative in paths:
+        text = (target/relative).read_text()
+        for marker in ['HOLD + review_required', 'unresolved,omc-critique,true',
+                       'render_envelope', 'read_record', 'completion_gate', '판정: 보류']:
+            assert marker in text, (relative, marker)
+        source = ROOT/'templates'/relative.replace('.agent/', '.agents/', 1)
+        assert (target/relative).read_bytes() == source.read_bytes()
 
 
 def test_omc_guard_sync_require_records_confirmed_session(tmp_path: Path):

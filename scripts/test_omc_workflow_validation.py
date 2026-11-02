@@ -119,7 +119,7 @@ def collect(tmp_path, text, registered=True, external=False, expected="blocked",
         actual=subprocess.run([sys.executable,str(SCRIPT.with_name('omc_pipeline_guard.py')),'--target',str(root),
             'complete-task','--verification-file',str(verification),'--output-mode','detached_v1',
             '--output-context',str(cp),'--output-context-sha256',pin],capture_output=True,text=True)
-        assert actual.returncode==1,actual.stderr
+        assert actual.returncode == (0 if expected == 'done' else 1), actual.stdout + actual.stderr
         from omc_output_contract import record_path
         mp=record_path(root,ctx);mh=hashlib.sha256(mp.read_bytes()).hexdigest()
         detached_meta=(cp,pin,mp,mh,command,actual.stdout)
@@ -129,6 +129,26 @@ def collect(tmp_path, text, registered=True, external=False, expected="blocked",
         if detached_defect=='model_source':
             doc=json.loads(mp.read_bytes());doc['source_kind']='model_declared';mp.write_text(json.dumps(doc));mh=hashlib.sha256(mp.read_bytes()).hexdigest()
             detached_meta=(cp,pin,mp,mh,command,actual.stdout)
+        if detached_defect == 'plan_record':
+            from omc_output_contract import render_envelope
+            ctx.update(stage='plan', report_id='plan-declaration')
+            cp = root/'.omc/plan-context.json'; cp.write_text(json.dumps(ctx))
+            pin = hashlib.sha256(cp.read_bytes()).hexdigest()
+            source = root/'.omc/plan-source.txt'
+            source.write_text('계획 검토 요청\n' + render_envelope(
+                stage='plan', verdict='HOLD', risk='high', next_skill='omc-critique',
+                user_selection_needed=True, reason_code='review_required'))
+            source_pin = hashlib.sha256(source.read_bytes()).hexdigest()
+            args = ['publish', '--target', str(root), '--output-context', str(cp),
+                    '--output-context-sha256', pin, '--source-file', str(source),
+                    '--source-sha256', source_pin]
+            published = subprocess.run([sys.executable, str(SCRIPT.with_name('omc_output_contract.py')), *args],
+                                       capture_output=True, text=True)
+            assert published.returncode == 0, published.stderr
+            mp = record_path(root, ctx); mh = hashlib.sha256(mp.read_bytes()).hexdigest()
+            command = 'python3 scripts/omc_output_contract.py ' + ' '.join(args)
+            text = published.stdout
+            detached_meta = (cp, pin, mp, mh, command, text)
     events=[]
     for i,(cmd,output) in enumerate([
         ('python3 scripts/omc_pipeline_guard.py contract-done','CONTRACT 확인 완료'),
@@ -143,8 +163,9 @@ def collect(tmp_path, text, registered=True, external=False, expected="blocked",
             output=actual_gate_output
         events += [{'type':'assistant','message':{'content':[{'type':'tool_use','id':str(i),'name':'Bash','input':{'command':cmd}}]}}, {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':str(i),'content':output}]}}]
     if detached:
-        events[-1]['message']['content'][0]['exit_code']=2 if detached_defect=='delivery_exit' else 1
-        events[-1]['message']['content'][0]['is_error']=True
+        events[-1]['message']['content'][0]['exit_code'] = (2 if detached_defect == 'delivery_exit'
+            else 0 if expected == 'done' or detached_defect == 'plan_record' else 1)
+        events[-1]['message']['content'][0]['is_error'] = events[-1]['message']['content'][0]['exit_code'] != 0
     events += [{'type':'result','subtype':'success','result':text}]
     source=tmp_path/'events.jsonl';source.write_text('\n'.join(json.dumps(e) for e in events))
     dest=tmp_path/'collected'
@@ -529,6 +550,23 @@ def test_detached_collector_links_real_blocked_cli_with_exit_one(tmp_path):
     assert doc['required']['procedure_calls']=='passed',doc
     assert doc['output_mode']=='detached_v1'
     assert 'OMC_OUTPUT:' not in (dest/'final.txt').read_text()
+
+
+def test_detached_collector_accepts_real_successful_task_gate(tmp_path):
+    result, dest = collect(tmp_path, 'unused', expected='done', detached=True)
+    assessment = json.loads((dest/'assessment.json').read_bytes())
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert assessment['required']['truthful_final'] == 'passed'
+    assert assessment['required']['procedure_calls'] == 'passed'
+
+
+def test_detached_collector_refuses_valid_plan_as_task_completion(tmp_path):
+    result, dest = collect(tmp_path, 'unused', detached=True, detached_defect='plan_record')
+    assessment = json.loads((dest/'assessment.json').read_bytes())
+    assert result.returncode == 1
+    assert assessment['required']['truthful_final'] != 'passed'
+    assert assessment['recompare_entry'] == 'hold'
+    assert (dest/'final.txt').read_text().startswith('계획 검토 요청')
 
 
 @pytest.mark.parametrize('defect',['display','missing_record','model_source','missing_call','delivery_exit'])

@@ -460,6 +460,197 @@ def test_pilot_skills_share_the_same_machine_contract_block(installed_omc_target
 
 
 # Detached-output regressions use disposable roots only.
+def _routing_publish_case(case, *, reason='review_required', next_skill='omc-critique'):
+    import hashlib
+    root, context, _, ctx, _ = case
+    ctx.update(stage='plan')
+    context.write_text(json.dumps(ctx))
+    payload = dict(schema_version='omc-output/v1', stage='plan', outcome='unresolved',
+                   risk='high', next_skill=next_skill, user_selection_needed=True,
+                   reason_code=reason)
+    raw = '계획 검토 요청\n<!-- OMC_OUTPUT: ' + json.dumps(payload) + ' -->\nVERDICT: HOLD\n'
+    source = root/'.omc/routing-source.txt'
+    source.write_text(raw)
+    argv = ['publish', '--target', str(root), '--output-context', str(context),
+            '--output-context-sha256', hashlib.sha256(context.read_bytes()).hexdigest(),
+            '--source-file', str(source), '--source-sha256', hashlib.sha256(source.read_bytes()).hexdigest()]
+    return root, context, ctx, source, argv
+
+
+def test_plan_review_required_public_cli_roundtrip(detached_case):
+    import subprocess, sys, hashlib
+    root, context, ctx, source, argv = _routing_publish_case(detached_case)
+    result = subprocess.run([sys.executable, str(MODULE_PATH), *argv], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    m = _load_module(); manifest = m.record_path(root, ctx)
+    doc = m.read_record(root, manifest, hashlib.sha256(manifest.read_bytes()).hexdigest(), ctx,
+                        display=result.stdout)
+    assert doc['source_kind'] == 'model_declared'
+    assert doc['machine_payload']['next_skill'] == 'omc-critique'
+    assert '판정: 보류' in result.stdout and not result.stderr
+
+
+def test_invalid_route_cli_records_safe_failure(detached_case):
+    import subprocess, sys, hashlib
+    root, _, _, source, argv = _routing_publish_case(detached_case, reason='scope_unclear')
+    result = subprocess.run([sys.executable, str(MODULE_PATH), *argv], capture_output=True, text=True)
+    assert result.returncode == 2 and not result.stdout
+    assert 'next_skill_conflict' in result.stderr
+    records = list((root/'.omc/state/output-failures').glob('*.json'))
+    assert len(records) == 1
+    record = json.loads(records[0].read_bytes())
+    assert record['error_code'] == 'next_skill_conflict'
+    assert record['source_sha256'] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert record['context_status'] == 'verified'
+    assert record['kind'] == 'failure_diagnostic'
+    assert not list((root/'.omc/state/output-records').glob('**/manifest.json'))
+
+
+@pytest.mark.parametrize('reason,next_skill,code', [
+    ('scope_unclear', 'omc-plan', 0), ('unknown_existing_reason', 'omc-plan', 0),
+    ('review_required', 'omc-plan', 2), ('scope_unclear', 'omc-critique', 2),
+])
+def test_plan_default_and_explicit_routes_public_cli(detached_case, reason, next_skill, code):
+    import subprocess, sys
+    _, _, _, _, argv = _routing_publish_case(detached_case, reason=reason, next_skill=next_skill)
+    result = subprocess.run([sys.executable, str(MODULE_PATH), *argv], capture_output=True, text=True)
+    assert result.returncode == code, result.stderr
+    assert bool(result.stdout) == (code == 0)
+
+
+@pytest.mark.parametrize('defect,diagnostic', [
+    ('duplicate_verdict', True), ('body_judgment', True), ('context_hash', False),
+    ('malformed_json', False), ('nonobject_json', False), ('unsafe_identity', False),
+    ('unreadable_source', True), ('expired', False), ('unknown_deadline', False),
+    ('unsafe_target', False),
+])
+def test_public_failure_identity_and_storage_boundaries(detached_case, defect, diagnostic):
+    import hashlib, subprocess, sys, time
+    root, context, ctx, source, argv = _routing_publish_case(detached_case, reason='scope_unclear')
+    if defect == 'duplicate_verdict': source.write_text(source.read_text()+'VERDICT: HOLD\n')
+    elif defect == 'body_judgment': source.write_text('판정: 보류 — 설명\n'+source.read_text())
+    elif defect == 'malformed_json': context.write_text('{not JSON')
+    elif defect == 'nonobject_json': context.write_text('[]')
+    elif defect in {'unsafe_identity', 'expired', 'unknown_deadline'}:
+        if defect == 'unsafe_identity': ctx['report_id'] = '../../outside-SENSITIVE'
+        elif defect == 'expired': ctx['deadline_epoch'] = time.time()-1
+        else: ctx.pop('deadline_epoch')
+        context.write_text(json.dumps(ctx))
+    elif defect == 'unsafe_target':
+        alias = root.parent/(root.name+'-link'); alias.symlink_to(root, target_is_directory=True)
+        argv[argv.index('--target')+1] = str(alias)
+    argv[argv.index('--output-context-sha256')+1] = hashlib.sha256(context.read_bytes()).hexdigest()
+    argv[argv.index('--source-sha256')+1] = hashlib.sha256(source.read_bytes()).hexdigest()
+    if defect == 'context_hash': argv[argv.index('--output-context-sha256')+1] = '0'*64
+    if defect == 'unreadable_source': source.unlink()
+    result = subprocess.run([sys.executable, str(MODULE_PATH), *argv], capture_output=True, text=True)
+    assert result.returncode == 2 and not result.stdout
+    assert '오류 코드:' in result.stderr and 'Traceback' not in result.stderr
+    assert 'SENSITIVE' not in result.stderr
+    records = list((root/'.omc/state/output-failures').glob('*.json'))
+    assert bool(records) is diagnostic
+    if diagnostic:
+        doc = json.loads(records[0].read_bytes())
+        assert doc['context_status'] == 'verified'
+        if defect == 'unreadable_source':
+            assert doc['source_sha256'] is None and doc['source_status'] == 'unavailable'
+        else: assert len(doc['source_sha256']) == 64
+    assert not (root/'outside-SENSITIVE').exists()
+    assert not list((root/'.omc/state/output-records').glob('**/manifest.json'))
+
+
+@pytest.mark.parametrize('fault', ['data_write', 'diagnostic_write', 'post_seal_display', 'late_storage'])
+def test_public_cli_injected_io_failures_keep_native_evidence(detached_case, fault):
+    import hashlib, subprocess, sys
+    root, _, ctx, _, argv = _routing_publish_case(detached_case)
+    # Faults are injected only in a disposable process invoking the public CLI;
+    # no product flag, runtime environment mutation or actual service is used.
+    patches = {
+        'data_write': "real=m._write_record_file\ndef write(p,b):\n if p.name=='display.txt': raise OSError('SENSITIVE disk error')\n return real(p,b)\nm._write_record_file=write\n",
+        'diagnostic_write': "def bad(*a,**kw): raise OSError('SENSITIVE diagnostic error')\nm._write_failure_diagnostic=bad\nm._write_display=bad\n",
+        'post_seal_display': "def bad(*a,**kw): raise BrokenPipeError('SENSITIVE pipe')\nm._write_display=bad\n",
+        'late_storage': "real=m._write_record_file\ndef write(p,b):\n real(p,b)\n if p.name=='manifest.tmp': m.time.time=lambda:1e20\nm._write_record_file=write\n",
+    }
+    wrapper = ('import sys\nsys.path.insert(0,'+repr(str(MODULE_PATH.parent))+')\n'
+               'import omc_output_contract as m\n'+patches[fault]+'sys.exit(m.output_cli(sys.argv[1:]))')
+    result = subprocess.run([sys.executable, '-B', '-c', wrapper, *argv], capture_output=True, text=True)
+    assert result.returncode == 2 and not result.stdout
+    assert '오류 코드:' in result.stderr and 'SENSITIVE' not in result.stderr
+    m = _load_module(); manifest = m.record_path(root, ctx)
+    if fault in {'post_seal_display', 'diagnostic_write'}:
+        before = manifest.read_bytes()
+        doc = m.read_record(root, manifest, hashlib.sha256(before).hexdigest(), ctx)
+        assert doc['machine_payload']['next_skill'] == 'omc-critique'
+        assert manifest.read_bytes() == before
+    else: assert not manifest.exists()
+    diagnostics = list((root/'.omc/state/output-failures').glob('*.json'))
+    assert bool(diagnostics) == (fault in {'data_write', 'post_seal_display'})
+
+
+def test_error_directory_symlink_is_not_followed(detached_case):
+    import subprocess, sys
+    root, _, _, _, argv = _routing_publish_case(detached_case, reason='scope_unclear')
+    outside = root.parent/(root.name+'-external'); outside.mkdir()
+    (root/'.omc/state/output-failures').symlink_to(outside, target_is_directory=True)
+    result = subprocess.run([sys.executable, str(MODULE_PATH), *argv], capture_output=True, text=True)
+    assert result.returncode == 2 and not result.stdout
+    assert not list(outside.iterdir())
+
+
+@pytest.mark.parametrize('phase', ['before_write', 'after_write', 'final_context'])
+@pytest.mark.parametrize('replacement', ['directory', 'parent_directory', 'symlink'])
+def test_public_cli_never_confirms_relocated_diagnostics(detached_case, phase, replacement):
+    import subprocess, sys
+    root, _, _, _, argv = _routing_publish_case(detached_case, reason='scope_unclear')
+    # A deterministic filesystem change in this disposable CLI process, not a
+    # change to the product source or to any original candidate's evidence.
+    wrapper = '''import sys,pathlib,shutil
+sys.path.insert(0,SCRIPTS)
+import omc_output_contract as m
+root=pathlib.Path(ROOT)
+phase=PHASE
+replacement=REPLACEMENT
+changed=False
+calls=0
+def replace_directory():
+ global changed
+ if changed: return
+ changed=True
+ original=root/'.omc/state/output-failures'
+ if replacement=='parent_directory': original=original.parent
+ moved=root.parent/(root.name+'-relocated')
+ original.rename(moved)
+ if replacement=='parent_directory': shutil.copytree(moved,original)
+ elif replacement=='symlink': original.symlink_to(moved,target_is_directory=True)
+ else: original.mkdir()
+real_context=m._context
+def context(*a,**kw):
+ global calls
+ calls+=1
+ if (phase=='before_write' and calls==3) or (phase=='final_context' and calls==4):
+  replace_directory()
+ return real_context(*a,**kw)
+m._context=context
+real_fsync=m.os.fsync
+def fsync(fd):
+ real_fsync(fd)
+ if phase=='after_write': replace_directory()
+m.os.fsync=fsync
+sys.exit(m.output_cli(sys.argv[1:]))
+'''
+    for name, value in [('SCRIPTS', str(MODULE_PATH.parent)), ('ROOT', str(root)),
+                        ('PHASE', phase), ('REPLACEMENT', replacement)]:
+        wrapper = wrapper.replace(name, repr(value))
+    result = subprocess.run([sys.executable, '-B', '-c', wrapper, *argv], capture_output=True, text=True)
+    assert result.returncode == 2 and not result.stdout
+    assert '별도 오류 기록: 확인 불가' in result.stderr, result.stderr
+    moved = root.parent/(root.name+'-relocated')
+    diagnostic_dir = moved/'output-failures' if replacement == 'parent_directory' else moved
+    if phase == 'before_write': assert not list(diagnostic_dir.glob('*.json'))
+    else: assert list(diagnostic_dir.glob('*.json'))  # Preserve partial evidence; never delete it.
+    assert not list((root/'.omc/state/output-records').glob('**/manifest.json'))
+
+
 def test_detached_public_capabilities_support_separate_record():
     import subprocess, sys, json
     result = subprocess.run([sys.executable, str(MODULE_PATH), 'capabilities'], capture_output=True, text=True)

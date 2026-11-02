@@ -202,6 +202,9 @@ def _routing_for(
     verdict: str,
     reason_code: str | None,
 ) -> tuple[str | None, bool | None]:
+    # Only an explicit review request changes the existing replanning route.
+    if (stage, verdict, reason_code) == ("plan", "HOLD", "review_required"):
+        return "omc-critique", True
     reason_routes = _REASON_ROUTING_POLICY.get((stage, verdict))
     if reason_routes is not None:
         if reason_code not in reason_routes:
@@ -377,6 +380,9 @@ def prompt_contract(stage: str) -> str:
         "next_skill(canonical omc-* 또는 null), user_selection_needed(boolean), reason_code를 포함하세요. "
         f"라우팅(outcome,next_skill,user_selection_needed): {_PROMPT_ROUTING[normalized_stage]}; "
         "unresolved/blocked는 reason_code가 필수입니다."
+        + (" plan HOLD+review_required만 unresolved,omc-critique,true; "
+           "그 외 HOLD/REVISE는 기존 재계획 경로를 유지합니다."
+           if normalized_stage == 'plan' else '')
     )
 
 # Detached delivery is opt-in. The v1 machine payload and legacy parser above
@@ -387,6 +393,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import uuid
 
 RECORD_SCHEMA = 'omc-output-record/v1'
 _GATE_AUTHORITY = object()
@@ -632,6 +639,121 @@ def _write_display(display):
     sys.stdout.flush()
 
 
+def _failure_code(exc, phase):
+    """Never put arbitrary exception text (paths, secrets) in diagnostics."""
+    messages = {
+        'next_skill conflicts with stage routing policy': 'next_skill_conflict',
+        'user_selection_needed conflicts with stage routing policy': 'selection_conflict',
+        'outcome conflicts with stage verdict mapping': 'outcome_conflict',
+        'unrecognized_body_judgment': 'body_judgment_invalid',
+        'body_verdict_conflict': 'body_verdict_conflict',
+    }
+    text = str(exc)
+    if text in messages:
+        return messages[text]
+    if text in {'record_deadline_expired', 'record_hash_mismatch',
+                'record_session_mismatch', 'record_stage_mismatch',
+                'record_work_mismatch', 'record_identity_object_required',
+                'detached_mode_required', 'record_file_missing',
+                'record_path_outside_work', 'record_path_escape',
+                'record_symlink_not_allowed'}:
+        return text
+    if isinstance(exc, json.JSONDecodeError):
+        return 'invalid_json'
+    if isinstance(exc, BrokenPipeError):
+        return 'display_write_failed'
+    if isinstance(exc, OSError):
+        return 'source_unreadable' if phase == 'source_read' else 'record_io_failed'
+    if 'verdict' in text.lower() and ('multiple' in text or 'one' in text):
+        return 'verdict_count_invalid'
+    return 'invalid_output_contract'
+
+
+def _assert_failure_directory(root, directory):
+    """Reopen the managed path without following links and compare identity.
+
+    A directory descriptor remains writable after its directory is moved. It
+    does not, by itself, prove the file still lives under the managed root.
+    These observations detect replacement; they are not a namespace lock.
+    """
+    root = Path(root).absolute()
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    current = os.open(root.anchor, flags)
+    try:
+        for part in (*root.parts[1:], '.omc', 'state', 'output-failures'):
+            child = os.open(part, flags, dir_fd=current)
+            os.close(current); current = child
+        observed = os.fstat(current)
+        held = os.fstat(directory)
+        if (observed.st_dev, observed.st_ino) != (held.st_dev, held.st_ino):
+            raise OutputContractError('record_diagnostic_directory_changed')
+    finally:
+        os.close(current)
+
+
+def _write_failure_diagnostic(root, context, context_pin, raw, phase, code):
+    """Use directory descriptors: input identities never select a write path."""
+    root = Path(root).absolute()
+    if '..' in root.parts:
+        raise OutputContractError('record_path_escape')
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory = os.open(root.anchor, flags)
+    try:
+        for part in root.parts[1:]:
+            child = os.open(part, flags, dir_fd=directory)
+            os.close(directory); directory = child
+        for part in ('.omc', 'state', 'output-failures'):
+            try: os.mkdir(part, mode=0o700, dir_fd=directory)
+            except FileExistsError: pass
+            child = os.open(part, flags, dir_fd=directory)
+            os.close(directory); directory = child
+        # A diagnostic is not a publication or completion receipt. A failed or
+        # unverified context never gets here; its only evidence is native stderr.
+        _context(root, context)
+        _assert_failure_directory(root, directory)
+        data = _json_bytes({
+            'schema_version': 'omc-output-failure/v1', 'kind': 'failure_diagnostic',
+            'phase': phase, 'error_code': code, 'context_status': 'verified',
+            'report_id': context['report_id'], 'stage': context['stage'],
+            'context_sha256': context_pin,
+            'source_sha256': _sha(raw.encode('utf-8')) if isinstance(raw, str) else None,
+            'source_status': 'observed' if isinstance(raw, str) else 'unavailable',
+        })
+        name = uuid.uuid4().hex + '.json'
+        _assert_failure_directory(root, directory)
+        fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=directory)
+        with os.fdopen(fd, 'wb') as stream:
+            _assert_failure_directory(root, directory)
+            stream.write(data); stream.flush(); os.fsync(stream.fileno())
+        _assert_failure_directory(root, directory)
+        # If storage crossed the deadline, do not claim diagnostic delivery.
+        _context(root, context)
+        _assert_failure_directory(root, directory)
+    finally:
+        os.close(directory)
+
+
+def _emit_failure(root, context_path, context_pin, raw, phase, exc):
+    code = _failure_code(exc, phase)
+    saved = False
+    try:
+        context = load_output_context(root, context_path, context_pin)
+        _write_failure_diagnostic(root, context, context_pin, raw, phase, code)
+        saved = True
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+        # Invalid JSON/hash/session/deadline, unsafe target or a storage error:
+        # never invent identity, renew the deadline or replace a sealed record.
+        pass
+    try:
+        print('기록 전달을 확인하지 못했습니다. 원문을 보존하고 후속 진행을 보류합니다. '
+              f'[오류 코드: {code}; 별도 오류 기록: {"보존됨" if saved else "확인 불가"}]',
+              file=sys.stderr)
+    except OSError:
+        pass
+    return 2
+
+
 def emit_record(root, context_path, context_pin, raw, *, source_kind='model_declared', _authority=None, _gate_verification=None):
     try:
         ref=_publish(root,context_path,context_pin,raw,source_kind=source_kind,authority=_authority,gate_verification=_gate_verification)
@@ -644,9 +766,7 @@ def emit_record(root, context_path, context_pin, raw, *, source_kind='model_decl
         return 1 if source_kind=='completion_gate' and doc['machine_payload']['outcome']=='blocked' else 0
     except (OSError,ValueError,TypeError,KeyError,UnicodeError) as exc:
         # Publication may already have succeeded. Never rewrite its verdict/status.
-        try:print('기록 전달을 확인하지 못했습니다. 원문을 보존하고 후속 진행을 보류합니다.',file=sys.stderr)
-        except OSError:pass
-        return 2
+        return _emit_failure(root, context_path, context_pin, raw, 'publication_or_delivery', exc)
 
 
 def output_cli(argv=None):
@@ -689,8 +809,9 @@ def output_cli(argv=None):
         except (OSError,ValueError,KeyError,TypeError):
             print('출력 기록의 새 실행 문맥을 고정하지 못했습니다.',file=sys.stderr);return 2
     try:raw=_read_pinned(args.target,args.source_file,args.source_sha256).decode('utf-8')
-    except (OSError,ValueError,UnicodeError):
-        print('판정 원문을 확인하지 못했습니다. 후속 진행을 보류합니다.',file=sys.stderr);return 2
+    except (OSError,ValueError,UnicodeError) as exc:
+        return _emit_failure(args.target, args.output_context, args.output_context_sha256,
+                             None, 'source_read', exc)
     return emit_record(args.target,args.output_context,args.output_context_sha256,raw)
 
 

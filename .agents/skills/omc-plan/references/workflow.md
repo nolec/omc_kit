@@ -37,6 +37,13 @@ dirty 변경과 계획 범위 분리.
 사용자 컨펌 완료 전 `python3 scripts/omc.py state confirm --target .` 금지. confirm 후 `$omc-task`.
 
 ## 다음 추천
+### 판정과 다음 단계의 연결
+- 범위 미확정은 `HOLD + scope_unclear → unresolved,omc-plan,true`다. 기존 HOLD/REVISE·구형 및 알 수 없는 기존 사유의 재계획 경로는 유지한다.
+- 계획의 비판 검토 요청은 `HOLD + review_required → unresolved,omc-critique,true`로만 구분한다. 구현 승인이나 자동 역할 전환이 아니다.
+- 내부 마지막 두 줄은 `render_envelope` 반환값을 한 번만 사용한다. 반환값에 이미 있는 VERDICT를 다시 붙이지 않는다. 본문의 판정 줄에는 설명을 합치지 않고 `판정: 보류`처럼 정해진 값만 쓰며 설명은 다음 줄에 둔다.
+- 계획은 공개 publish CLI의 실제 종료·표시와 `read_record`로 확인한다. model_declared 계획을 task completion_gate 증거로 제출하거나 작업 완료로 집계하지 않는다.
+- 발행자·소비자·설치한 스킬의 경로와 버전을 함께 고정한다. 계약이 다른 오래된 설치본을 섞지 않는다. 별도 오류 기록은 실패 원인 자료이며 성공 manifest나 완료 증거가 아니다.
+
 - 주추천 1개; 우선순위: 현재 병목 > 기본 파이프라인.
 - 새 파일/API 변경/3개 이상 파일 같은 고위험이면 먼저 `$omc-critique`.
 - outcome=ready + user_selection_needed=no + 범위 고정 + 컨펌 완료면 `$omc-task`.
