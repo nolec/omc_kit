@@ -2240,3 +2240,78 @@ def test_pipeline_ttl_pending_confirmation_and_legacy_reconfirm_do_not_revive(tm
     value['started_at']=old;path.write_text(json.dumps(value));before=path.read_bytes()
     state.confirm_session(repo,session_id=task['session_id'])
     assert path.read_bytes()==before and not pipeline._load_state(repo)['contract_confirmed']
+
+
+@pytest.fixture(params=['repository','installed'])
+def guidance_surface(request,installed_omc_target):
+    """Inspect the distributed instruction surface, not model compliance."""
+    return ROOT if request.param=='repository' else installed_omc_target
+
+
+def _guidance_section(root,skill,heading):
+    text=(root/'.agents/skills'/skill/'SKILL.md').read_text(encoding='utf-8')
+    assert text.count(heading)==1, 'missing or duplicated instruction section'
+    return text.split(heading,1)[1].split('\n## ',1)[0]
+
+
+def test_guidance_tier_rules_apply_without_unconditional_red(guidance_surface):
+    section=_guidance_section(guidance_surface,'omc-task','## Tier별 필수 체크')
+    rows=[line for line in section.splitlines() if line.startswith('| Tier')]
+    assert len(rows)==3
+    assert all(x in rows[0] for x in ['Tier0','동작·API·새 파일 없음','CONTRACT·RED 생략 가능','화면 검수'])
+    assert all(x in rows[1] for x in ['Tier1 기존 파일','CONTRACT 필수','버그 재현','새 함수','기존 RED 의무 유지'])
+    assert all(x in rows[2] for x in ['Tier1 신규 파일','CONTRACT + 실제 실패 테스트·RED 등록 필수'])
+    assert '파일명만으로 Tier0을 판정하지 않는다' in section
+    assert '새로운 생략 권한을 추가하지 않는다' in section
+    text=(guidance_surface/'.agents/skills/omc-task/SKILL.md').read_text()
+    assert '작은 후속 수정도 Guard, CONTRACT, RED 등록 순서는 유지' not in text
+    assert 'Tier별 허용 생략 외에는 단계를 건너뛰지 않습니다' in text
+
+
+def test_guidance_preparation_has_scoped_actions_and_preservation(guidance_surface):
+    section=_guidance_section(guidance_surface,'omc-task','## 작업별 검증과 준비 확인')
+    rows={line.split('|')[1].strip():line for line in section.splitlines()
+          if line.startswith('| ') and line.count('|')>=4}
+    assert all(x in rows['과거 품질 설정 불일치'] for x in
+               ['해당 설정 실행만 보류','승인된 독립 검수','자동 덮어쓰기 금지'])
+    assert all(x in rows['숨겨진 로컬 변경'] for x in
+               ['파일·Git 플래그·원문 보존','영향받는 격리 준비만 중단','자동 해제·폐기·커밋 포함 금지'])
+    assert all(x in rows['실제 화면 접근 불가'] for x in
+               ['필수 화면은 미검증','승인된 안전한 구현·정적 검수','Draft PR은 별도 승인','출하 준비 완료 주장 금지'])
+    assert '범위·안전·입력 무결성에 영향이 없다고 확인한 독립 작업만' in section
+    assert '초기 HEAD 또는 명시된 기준 스냅샷' in section
+    assert '최종 커밋을 먼저 만들라는 요구가 아니다' in section
+    assert '지정 검사 파일이 해당 기준에 존재하는지' in section
+    assert '수정 후 실제 화면 검수를 대체하지 않는다' in section
+
+
+def test_guidance_state_and_authorization_do_not_add_new_permissions(guidance_surface):
+    section=_guidance_section(guidance_surface,'omc-task','## 작업별 검증과 준비 확인')
+    for state in ['설정 승인됨','코드 리뷰 승인됨','검사 통과','실제 화면 확인']:
+        assert state in section
+    assert 'ready만으로 이번 작업 적합성이나 검사 통과를 주장하지 않는다' in section
+    assert '설정 적용·검사 대상·횟수·시간·중단 조건을 한 번에 제시' in section
+    assert '이미 승인된 범위는 재확인하지 않는다' in section
+    assert '실행 오류를 자동 재시도 승인으로 해석하지 않는다' in section
+    assert '실제 모델 준수나 사용자 개입 감소의 증거가 아니다' in section
+
+
+def test_guidance_review_next_action_requires_frozen_source(guidance_surface):
+    section=_guidance_section(guidance_surface,'omc-review','## 다음 추천')
+    assert '최종 커밋·리뷰 결속·작업에 맞는 품질 설정을 먼저 확인' in section
+    assert '하나라도 없으면 곧바로 omc-ship을 추천하지 않는다' in section
+    assert '동일 파일·내용·권한이면 기존 승인 원문을 공식 절차로 재결속' in section
+    assert '커밋했다는 이유만으로 내용 재리뷰를 반복하지 않는다' in section
+    assert '필수 화면 검수 미완료는 출하 준비 완료가 아니다' in section
+    assert '설정 승인과 실행 승인을 구분' in section
+    assert 'APPROVE/APPROVE WITH NOTES + 배포 준비 명시 + ship_intent_explicit=yes면 `$omc-ship`' not in section
+
+
+def test_guidance_tracked_and_installed_copies_match_source(guidance_surface):
+    for skill in ['omc-task','omc-review']:
+        expected=(ROOT/'templates/.agents/skills'/skill/'SKILL.md').read_bytes()
+        assert (guidance_surface/'.agents/skills'/skill/'SKILL.md').read_bytes()==expected
+        mirror=guidance_surface/'.agent/skills'/skill/'SKILL.md'
+        # Repository's ignored task copy is not part of this change; both installed surfaces are.
+        if guidance_surface!=ROOT or skill=='omc-review':
+            assert mirror.read_bytes()==expected
