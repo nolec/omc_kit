@@ -957,3 +957,104 @@ def test_review_valid_json_identity_objects_still_prepare_and_publish(tmp_path, 
     assert published.stdout=='판정: 승인\n' and not published.stderr
     assert file.read_bytes()==original and Path(meta['record_path']).is_file()
 
+
+
+def _choice_source(case, reason='approval_missing', verdict='BLOCK'):
+    import hashlib
+    root, context, _, ctx, _ = case
+    ctx['stage'] = 'ship'
+    context.write_text(json.dumps(ctx))
+    payload = dict(schema_version='omc-output/v1', stage='ship', outcome='blocked',
+                   risk='low', next_skill=None, user_selection_needed=True, reason_code=reason)
+    raw = '판정: 보류\n<!-- OMC_OUTPUT: ' + json.dumps(payload) + ' -->\nVERDICT: ' + verdict + '\n'
+    source = root/'.omc/choice-source.txt'
+    source.write_text(raw)
+    args = ['--target', str(root), '--output-context', str(context),
+            '--output-context-sha256', hashlib.sha256(context.read_bytes()).hexdigest(),
+            '--source-file', str(source), '--source-sha256', hashlib.sha256(source.read_bytes()).hexdigest()]
+    return root, context, ctx, source, raw, args
+
+
+@pytest.mark.parametrize('reason,verdict,code,hint', [
+    ('quality_unconfigured-SENSITIVE', 'BLOCK', 'reason_code_invalid', 'approval_missing'),
+    ('approval_missing', 'BLOCKED', 'verdict_invalid', 'BLOCK'),
+    ('approval_missing', 'APPROVE', 'verdict_invalid', 'PROCEED'),
+])
+@pytest.mark.parametrize('command', ['validate', 'publish'])
+def test_preflight_invalid_choices_have_precise_safe_public_errors(detached_case, reason, verdict, code, hint, command):
+    import subprocess, sys, hashlib
+    root, context, ctx, source, raw, args = _choice_source(detached_case, reason, verdict)
+    before = {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    result = subprocess.run([sys.executable, str(MODULE_PATH), command, *args], capture_output=True, text=True)
+    assert result.returncode == 2 and not result.stdout
+    assert code in result.stderr and hint in result.stderr and '허용값' in result.stderr
+    assert 'SENSITIVE' not in result.stderr and 'Traceback' not in result.stderr
+    assert all(Path(p).read_bytes() == data for p, data in before.items())
+    assert not (root/'.omc/state/output-records').exists()
+    diagnostics = list((root/'.omc/state/output-failures').glob('*.json'))
+    assert len(diagnostics) == (1 if command == 'publish' else 0)
+    if diagnostics:
+        doc = json.loads(diagnostics[0].read_bytes())
+        assert doc['error_code'] == code and doc['source_sha256'] == hashlib.sha256(source.read_bytes()).hexdigest()
+
+
+def test_preflight_validate_is_read_only_and_publish_reuses_the_same_contract(detached_case):
+    import subprocess, sys, hashlib
+    root, context, ctx, source, raw, args = _choice_source(detached_case)
+    before = {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    validated = subprocess.run([sys.executable, str(MODULE_PATH), 'validate', *args], capture_output=True, text=True)
+    assert validated.returncode == 0 and not validated.stderr
+    doc = json.loads(validated.stdout)
+    assert doc == {'status':'valid', 'stage':'ship', 'verdict':'BLOCK', 'reason_code':'approval_missing', 'publication':'not_performed'}
+    assert before == {str(p): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    published = subprocess.run([sys.executable, str(MODULE_PATH), 'publish', *args], capture_output=True, text=True)
+    assert published.returncode == 0 and published.stdout == '판정: 보류\n'
+    module = _load_module(); manifest = module.record_path(root, ctx)
+    assert (manifest.parent/'source.txt').read_bytes() == raw.encode()
+    sealed = manifest.read_bytes()
+    source.write_text(raw.replace('approval_missing', 'quality_unconfigured'))
+    args[args.index('--source-sha256')+1] = hashlib.sha256(source.read_bytes()).hexdigest()
+    rejected = subprocess.run([sys.executable, str(MODULE_PATH), 'publish', *args], capture_output=True, text=True)
+    assert rejected.returncode == 2 and 'reason_code_invalid' in rejected.stderr
+    assert manifest.read_bytes() == sealed
+
+
+def test_preflight_publish_cannot_bypass_shared_validation(detached_case, monkeypatch):
+    module = _load_module()
+    root, context, pin, ctx, raw = detached_case
+    seen = []
+    def reject(*args):
+        seen.append(args)
+        raise module.OutputContractError('test preflight rejection')
+    monkeypatch.setattr(module, 'preflight_record', reject)
+    with pytest.raises(module.OutputContractError):
+        module.publish_record(root, context, pin, raw)
+    assert len(seen) == 1 and not (root/'.omc/state/output-records').exists()
+
+
+@pytest.mark.parametrize('defect', ['source_hash', 'context_hash'])
+def test_preflight_validate_keeps_existing_pin_protection(detached_case, defect):
+    import subprocess, sys
+    root, _, _, source, raw, args = _choice_source(detached_case)
+    flag = '--source-sha256' if defect == 'source_hash' else '--output-context-sha256'
+    args[args.index(flag)+1] = '0'*64
+    result = subprocess.run([sys.executable, str(MODULE_PATH), 'validate', *args], capture_output=True, text=True)
+    assert result.returncode == 2 and 'record_hash_mismatch' in result.stderr
+    assert not (root/'.omc/state/output-records').exists()
+    assert not (root/'.omc/state/output-failures').exists()
+    assert source.read_text() == raw
+
+
+@pytest.mark.parametrize('command', ['validate', 'publish'])
+def test_preflight_unknown_stage_is_not_misreported_as_bad_verdict(detached_case, command):
+    import subprocess, sys, hashlib
+    root, _, _, source, raw, args = _choice_source(detached_case)
+    raw = raw.replace('"stage": "ship"', '"stage": "SENSITIVE-stage"')
+    source.write_text(raw)
+    args[args.index('--source-sha256')+1] = hashlib.sha256(source.read_bytes()).hexdigest()
+    result = subprocess.run([sys.executable, str(MODULE_PATH), command, *args], capture_output=True, text=True)
+    assert result.returncode == 2 and not result.stdout
+    assert 'stage_invalid' in result.stderr and '지원하지 않는 단계' in result.stderr
+    assert '허용값' in result.stderr and 'ship' in result.stderr
+    assert 'SENSITIVE' not in result.stderr
+    assert not (root/'.omc/state/output-records').exists()

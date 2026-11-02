@@ -162,6 +162,15 @@ class OutputContractError(ValueError):
     """Raised when an OMC output envelope is missing or inconsistent."""
 
 
+class ContractChoiceError(OutputContractError):
+    """Closed-schema hints; rejected user values are never echoed to stderr."""
+
+    def __init__(self, message, *, code, allowed):
+        super().__init__(message)
+        self.code = code
+        self.allowed = tuple(sorted(allowed))
+
+
 def _envelope_payload_from_line(line: str) -> str | None:
     stripped = str(line).strip()
     if stripped.startswith(_ENVELOPE_PREFIX):
@@ -181,11 +190,14 @@ def _html_comment_safe_payload(serialized: str) -> str:
 def outcome_for(stage: str, verdict: str) -> str:
     normalized_stage = str(stage).strip().lower()
     normalized_verdict = str(verdict).strip().upper()
+    if normalized_stage not in _STAGE_VERDICTS:
+        raise ContractChoiceError('unsupported stage', code='stage_invalid', allowed=_STAGE_VERDICTS)
     try:
         return _STAGE_VERDICTS[normalized_stage][normalized_verdict]
     except KeyError as exc:
-        raise OutputContractError(
-            f"verdict {normalized_verdict!r} is not valid for stage {normalized_stage!r}"
+        raise ContractChoiceError(
+            f"verdict {normalized_verdict!r} is not valid for stage {normalized_stage!r}",
+            code="verdict_invalid", allowed=_STAGE_VERDICTS.get(normalized_stage, {})
         ) from exc
 
 
@@ -208,7 +220,8 @@ def _routing_for(
     reason_routes = _REASON_ROUTING_POLICY.get((stage, verdict))
     if reason_routes is not None:
         if reason_code not in reason_routes:
-            raise OutputContractError("reason_code is not valid for stage verdict routing")
+            raise ContractChoiceError("reason_code is not valid for stage verdict routing",
+                                      code="reason_code_invalid", allowed=reason_routes)
         return reason_routes[reason_code]
     return _ROUTING_POLICY[(stage, verdict)]
 
@@ -296,6 +309,18 @@ def parse_envelope(output: str) -> dict[str, Any]:
     if len(marker_lines) != 1:
         raise OutputContractError("output must contain exactly one OMC_OUTPUT envelope")
     nonempty_lines = [line for line in output_lines if line.strip()]
+    if (nonempty_lines and re.fullmatch(r"VERDICT\s*:.*", nonempty_lines[-1], re.IGNORECASE)
+            and _VERDICT_RE.fullmatch(nonempty_lines[-1]) is None):
+        allowed = {value for values in _STAGE_VERDICTS.values() for value in values}
+        if len(nonempty_lines) >= 2:
+            try:
+                candidate = json.loads(_envelope_payload_from_line(nonempty_lines[-2]) or '{}')
+                if isinstance(candidate, dict):
+                    stage = str(candidate.get('stage') or '').strip().lower()
+                    allowed = _STAGE_VERDICTS.get(stage, allowed)
+            except ValueError:
+                pass
+        raise ContractChoiceError('unsupported VERDICT value', code='verdict_invalid', allowed=allowed)
     if (
         len(nonempty_lines) < 2
         or _envelope_payload_from_line(nonempty_lines[-2]) is None
@@ -570,17 +595,26 @@ def _gate_binding(root, verification):
     return {'verification_file':str(verification),'files':files}
 
 
+def preflight_record(root, context_path, context_pin, raw):
+    """Validate without reserving a report ID or writing any record."""
+    context = load_output_context(root, context_path, context_pin)
+    if not isinstance(raw, str):
+        raise OutputContractError('raw_text_required')
+    parsed = parse_envelope(raw)
+    if parsed['stage'] != context['stage']:
+        raise OutputContractError('record_stage_mismatch')
+    return context, parsed, human_output(raw)
+
+
 def _publish(root, context_path, context_pin, raw, *, source_kind, authority=None, gate_verification=None):
-    root=Path(root).resolve();context=load_output_context(root,context_path,context_pin)
+    root=Path(root).resolve()
+    context, parsed, display = preflight_record(root, context_path, context_pin, raw)
     if source_kind not in {'model_declared','legacy_normalized','completion_gate'}:
         raise OutputContractError('record_source_kind_invalid')
     if source_kind=='completion_gate' and authority is not _GATE_AUTHORITY:
         raise OutputContractError('gate_authority_not_from_publisher')
     if source_kind=='completion_gate' and gate_verification is None:raise OutputContractError('gate_verification_required')
-    if not isinstance(raw,str):raise OutputContractError('raw_text_required')
-    parsed=parse_envelope(raw)
-    if parsed['stage']!=context['stage']:raise OutputContractError('record_stage_mismatch')
-    display=human_output(raw);manifest=record_path(root,context)
+    manifest=record_path(root,context)
     _local_file(root,manifest,must_exist=False)
     manifest.parent.parent.mkdir(parents=True,exist_ok=True)
     manifest.parent.mkdir(mode=0o700)  # exclusive report reservation; never overwrite
@@ -648,6 +682,8 @@ def _failure_code(exc, phase):
         'unrecognized_body_judgment': 'body_judgment_invalid',
         'body_verdict_conflict': 'body_verdict_conflict',
     }
+    if isinstance(exc, ContractChoiceError) and exc.code in {'reason_code_invalid', 'verdict_invalid', 'stage_invalid'}:
+        return exc.code
     text = str(exc)
     if text in messages:
         return messages[text]
@@ -734,6 +770,25 @@ def _write_failure_diagnostic(root, context, context_pin, raw, phase, code):
         os.close(directory)
 
 
+def _choice_guidance(exc):
+    if not isinstance(exc, ContractChoiceError):
+        return ''
+    if exc.code == 'stage_invalid':
+        label = '지원하지 않는 단계입니다.'
+        choices = set(_STAGE_VERDICTS)
+    elif exc.code == 'reason_code_invalid':
+        label = '허용되지 않은 reason_code입니다.'
+        choices = {reason for routes in _REASON_ROUTING_POLICY.values() for reason in routes}
+    elif exc.code == 'verdict_invalid':
+        label = '지원하지 않는 판정값입니다.'
+        choices = {verdict for values in _STAGE_VERDICTS.values() for verdict in values}
+    else:
+        return ''
+    # Only built-in schema values may reach the user-facing hint.
+    allowed = [value for value in exc.allowed if value in choices]
+    return label + (' 허용값: ' + ', '.join(allowed) + '.' if allowed else '')
+
+
 def _emit_failure(root, context_path, context_pin, raw, phase, exc):
     code = _failure_code(exc, phase)
     saved = False
@@ -746,8 +801,10 @@ def _emit_failure(root, context_path, context_pin, raw, phase, exc):
         # never invent identity, renew the deadline or replace a sealed record.
         pass
     try:
-        print('기록 전달을 확인하지 못했습니다. 원문을 보존하고 후속 진행을 보류합니다. '
-              f'[오류 코드: {code}; 별도 오류 기록: {"보존됨" if saved else "확인 불가"}]',
+        guidance = _choice_guidance(exc)
+        message = ('기록 발행 전 형식 검증에서 거부됐습니다. ' + guidance + ' 원문을 보존하고 후속 진행을 보류합니다. '
+                   if guidance else '기록 전달을 확인하지 못했습니다. 원문을 보존하고 후속 진행을 보류합니다. ')
+        print(message + f'[오류 코드: {code}; 별도 오류 기록: {"보존됨" if saved else "확인 불가"}]',
               file=sys.stderr)
     except OSError:
         pass
@@ -779,12 +836,13 @@ def output_cli(argv=None):
     prep.add_argument('--report-id',required=True)
     prep.add_argument('--budget-sec',type=float,required=True)
     prep.add_argument('--reference',action='append',default=[])
-    pub=sub.add_parser('publish')
-    pub.add_argument('--target',type=Path,required=True)
-    pub.add_argument('--output-context',type=Path,required=True)
-    pub.add_argument('--output-context-sha256',required=True)
-    pub.add_argument('--source-file',type=Path,required=True)
-    pub.add_argument('--source-sha256',required=True)
+    for command in ('validate', 'publish'):
+        entry = sub.add_parser(command, help='읽기 전용 발행 사전 검증' if command == 'validate' else '검증 후 기록 발행')
+        entry.add_argument('--target',type=Path,required=True)
+        entry.add_argument('--output-context',type=Path,required=True)
+        entry.add_argument('--output-context-sha256',required=True)
+        entry.add_argument('--source-file',type=Path,required=True)
+        entry.add_argument('--source-sha256',required=True)
     args=parser.parse_args(argv)
     if args.command=='capabilities':
         print(json.dumps(capabilities()));return 0
@@ -808,6 +866,17 @@ def output_cli(argv=None):
                               'record_path':str(record_path(root,context))},ensure_ascii=False));return 0
         except (OSError,ValueError,KeyError,TypeError):
             print('출력 기록의 새 실행 문맥을 고정하지 못했습니다.',file=sys.stderr);return 2
+    if args.command == 'validate':
+        try:
+            raw = _read_pinned(args.target, args.source_file, args.source_sha256).decode('utf-8')
+            _, parsed, _ = preflight_record(args.target, args.output_context, args.output_context_sha256, raw)
+            print(json.dumps({'status':'valid', 'stage':parsed['stage'], 'verdict':parsed['verdict'],
+                              'reason_code':parsed['reason_code'], 'publication':'not_performed'}))
+            return 0
+        except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
+            print('기록 사전 검증 실패. ' + _choice_guidance(exc) +
+                  f' [오류 코드: {_failure_code(exc, "source_read")}]', file=sys.stderr)
+            return 2
     try:raw=_read_pinned(args.target,args.source_file,args.source_sha256).decode('utf-8')
     except (OSError,ValueError,UnicodeError) as exc:
         return _emit_failure(args.target, args.output_context, args.output_context_sha256,
