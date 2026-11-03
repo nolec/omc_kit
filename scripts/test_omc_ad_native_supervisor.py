@@ -1022,3 +1022,164 @@ def test_absolute_legacy_v1_receipt_still_readable(tmp_path):
     (tmp_path/'seal.json').write_text(json.dumps({'run_id':'legacy',
         'result_sha256':hashlib.sha256(raw).hexdigest(),'completed_monotonic':150}))
     assert supervisor.read_absolute_result(path,'legacy')==result
+
+
+def dialogue_surface(tmp_path, *, defect=None, absolute=False, timeout=2):
+    """Pinned CLI 2.1.138 user/isReplay/uuid contract, no provider process."""
+    session = '11111111-1111-4111-8111-111111111111'
+    run = 'dialogue-fixture'
+    prompt = tmp_path/'prompt.jsonl'
+    prompt.write_text(json.dumps({'type':'user','uuid':'initial','session_id':session,
+        'parent_tool_use_id':None,'message':{'role':'user','content':'initial'}})+'\n')
+    inbox=tmp_path/'responses.jsonl';inbox.touch()
+    code = r'''
+import json,sys,time,hashlib,os
+from pathlib import Path
+inbox=Path(sys.argv[1]);session=sys.argv[2];defect=sys.argv[3]
+def emit(x): print(json.dumps(x),flush=True)
+def append(x):
+ with inbox.open('a') as f:f.write(json.dumps(x)+'\n')
+def replay(m):
+ if defect=='wrong-session':m=dict(m,session_id='other')
+ emit(dict(m,isReplay=True))
+def result():emit({'type':'result','subtype':'success','is_error':False,'session_id':session})
+m=json.loads(sys.stdin.readline());replay(m)
+for turn in range(2):
+ content=[{'type':'text','text':'question '+str(turn)}]
+ emit({'type':'assistant','uuid':'q'+str(turn),'session_id':session,'parent_tool_use_id':None,'message':{'role':'assistant','content':content}})
+ result()
+ text=('x'*60000 if defect=='large' else 'answer '+str(turn))
+ row={'type':'response','run_id':'dialogue-fixture','session_id':session,'sequence':turn+1,
+      'question_id':'q'+str(turn),'question_sha256':hashlib.sha256(json.dumps(content,sort_keys=True,separators=(',',':')).encode()).hexdigest(),
+      'response_id':'response-'+str(turn),'text':text,'sha256':hashlib.sha256(text.encode()).hexdigest()}
+ if defect in ('active','cost-partial','cost-overlap','cost-backward','cost-before-question','cost-multi') and not (defect=='cost-partial' and turn==1):
+  journal=inbox.parent/'out/dialogue.jsonl';until=time.monotonic()+1
+  while True:
+   rows=[json.loads(line) for line in journal.read_text().splitlines(keepends=True) if line.endswith('\n')] if journal.exists() else []
+   shown=[r for r in rows if r.get('event')=='message_displayed' and r.get('question_id')=='q'+str(turn)]
+   if shown:break
+   assert time.monotonic()<until
+   time.sleep(.005)
+  at=rows[0]['monotonic'] if defect=='cost-before-question' else time.monotonic()
+  def mark(kind,when):append({'type':kind,'run_id':'dialogue-fixture','session_id':session,'question_id':'q'+str(turn),'at_monotonic':when})
+  mark('active_start',at);time.sleep(.01);end=time.monotonic();mark('active_end',end)
+  if defect in ('cost-overlap','cost-backward'):
+   mark('active_start',at if defect=='cost-overlap' else at-.0001);mark('active_end',end)
+  if defect=='cost-multi':
+   at=time.monotonic();mark('active_start',at);time.sleep(.01);mark('active_end',time.monotonic())
+ if turn==0 and defect=='partial':
+  inbox.write_text('{');time.sleep(10)
+ if turn==0 and defect=='replace':
+  other=inbox.with_suffix('.new');other.write_text(json.dumps(row)+'\n');other.replace(inbox)
+ elif turn==1 and defect=='truncate':inbox.write_text('')
+ elif turn==0 and defect=='deep':inbox.write_text('['*1200+']'*1200+'\n')
+ elif turn==0 and defect=='oversize':inbox.write_text('x'*65537+'\n')
+ else:
+  if turn==0 and defect=='wrong-question':row['question_id']='other'
+  if turn==0 and defect=='bad-hash':row['sha256']='0'*64
+  append(row)
+ line=sys.stdin.readline()
+ if not line:sys.exit(3)
+ m=json.loads(line)
+ if defect=='wrong-ack' and turn==0:m['message']['content']='other'
+ if defect=='missing-ack' and turn==0:time.sleep(10)
+ replay(m)
+ if defect=='duplicate' and turn==0:append(row)
+result()
+append({'type':'close','run_id':'dialogue-fixture','session_id':session})
+if defect=='after-close':append({'type':'active_start','run_id':'dialogue-fixture','session_id':session,'question_id':'q1','at_monotonic':time.monotonic()})
+assert sys.stdin.read()==''
+'''
+    launch=['/bin/sh','-c',RECORDER,'native-launch',sys.executable,'-c',code,str(inbox),session,defect or 'none']
+    argv=[sys.executable,str(CLI),'--cwd',str(tmp_path),'--output',str(tmp_path/'out'),
+          '--prompt',str(prompt),'--child-pid-file',str(tmp_path/'child.pid'),
+          '--child-exit-file',str(tmp_path/'child.exit'),'--timeout',str(timeout),'--drain','1',
+          '--responses-file',str(inbox),'--dialogue-session-id',session,'--run-id',run]
+    if absolute:
+        origin=time.monotonic();argv+=['--origin-monotonic',str(origin),'--deadline-monotonic',str(origin+30)]
+    proc=subprocess.run([*argv,'--',*launch],capture_output=True,timeout=15)
+    file=tmp_path/'out/worker/capture/result.json' if absolute else tmp_path/'out/result.json'
+    return proc,json.loads(file.read_bytes()) if file.exists() else None
+
+
+def test_dialogue_public_multiple_turns_and_explicit_close(tmp_path):
+    p,r=dialogue_surface(tmp_path)
+    assert p.returncode==0,p.stderr
+    assert r['status']=='normal' and r['dialogue']['complete']
+    assert r['dialogue']['responses_confirmed']==2
+    assert r['terminal_result_count']==3 and r['input']['eof_sent']
+    assert r['child_cleanup_status']=='confirmed'
+    assert r['dialogue']['user_active_seconds'] is None
+    assert r['dialogue']['initial_sha256']==hashlib.sha256((tmp_path/'prompt.jsonl').read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize('defect',['wrong-question','bad-hash','wrong-ack','duplicate','replace','oversize','after-close','wrong-session','truncate','deep'])
+def test_dialogue_public_rejects_bad_channel_without_retry(tmp_path,defect):
+    p,r=dialogue_surface(tmp_path,defect=defect)
+    assert p.returncode==1,p.stderr
+    assert not r['dialogue']['complete'] and r['dialogue']['error']
+    assert r['raw_capture_complete']
+
+
+@pytest.mark.parametrize('defect',['partial','missing-ack'])
+def test_dialogue_public_wait_does_not_extend_deadline(tmp_path,defect):
+    start=time.monotonic();p,r=dialogue_surface(tmp_path,defect=defect)
+    assert p.returncode==1,p.stderr
+    assert r['external_timeout'] and time.monotonic()-start<6
+    assert not r['dialogue']['complete']
+
+
+@pytest.mark.parametrize('scenario',['active','large'])
+def test_dialogue_public_cost_marks_and_large_partial_delivery(tmp_path,scenario):
+    p,r=dialogue_surface(tmp_path,defect=scenario)
+    assert p.returncode==0,p.stderr
+    assert r['dialogue']['complete'] and r['dialogue']['responses_confirmed']==2
+    if scenario=='active': assert r['dialogue']['user_active_seconds']>=.02
+    else: assert r['dialogue']['user_active_seconds'] is None
+    assert r['dialogue']['responses_raw_sha256']==hashlib.sha256((tmp_path/'out/responses.raw').read_bytes()).hexdigest()
+    events=[json.loads(line)['event'] for line in (tmp_path/'out/dialogue.jsonl').read_text().splitlines()]
+    assert events.count('write_completed')==3 and events.count('replay_confirmed')==3
+
+
+def test_dialogue_absolute_watchdog_keeps_phase_verdict_separate(tmp_path):
+    p,r=dialogue_surface(tmp_path,absolute=True)
+    assert r is not None and r['dialogue']['complete'] and r['status']=='normal'
+    outer=json.loads((tmp_path/'out/result.json').read_bytes())
+    assert outer['process_result']=='normal'
+    assert p.returncode==0
+    assert outer['full_contract_pass'] is False and outer['task_evidence']=='unknown'
+    assert outer['comparison']=='HOLD' and outer['actual_home']=='NOT_VERIFIED'
+
+
+@pytest.mark.parametrize('defect,timeout,reason',[('partial',7,'partial_line'),('missing-ack',12,'replay')])
+def test_dialogue_public_internal_wait_limits_do_not_renew_clock(tmp_path,defect,timeout,reason):
+    start=time.monotonic();p,r=dialogue_surface(tmp_path,defect=defect,timeout=timeout)
+    assert p.returncode==1 and not r['external_timeout']
+    assert reason in r['dialogue']['error']
+    assert time.monotonic()-start<timeout+1
+
+
+def test_dialogue_cost_partial_measurement_stays_unknown(tmp_path):
+    p,r=dialogue_surface(tmp_path,defect='cost-partial')
+    assert p.returncode==0,p.stderr
+    assert r['dialogue']['responses_confirmed']==2
+    assert r['dialogue']['user_active_seconds'] is None
+    assert r['dialogue']['user_active_observed_seconds']>=.01
+    assert r['dialogue']['user_active_measurement_complete'] is False
+
+
+@pytest.mark.parametrize('case',['cost-overlap','cost-backward','cost-before-question'])
+def test_dialogue_cost_rejects_invalid_time_order(tmp_path,case):
+    p,r=dialogue_surface(tmp_path,defect=case)
+    assert p.returncode==1,p.stderr
+    assert r['dialogue']['error']=='dialogue_active_marker_out_of_order'
+    assert r['dialogue']['user_active_seconds'] is None
+    assert r['dialogue']['user_active_measurement_complete'] is False
+
+
+def test_dialogue_cost_accepts_multiple_nonoverlapping_intervals(tmp_path):
+    p,r=dialogue_surface(tmp_path,defect='cost-multi')
+    assert p.returncode==0,p.stderr
+    assert r['dialogue']['user_active_measurement_complete'] is True
+    assert r['dialogue']['user_active_seconds']>=.04
+    assert r['dialogue']['user_active_seconds']==r['dialogue']['user_active_observed_seconds']

@@ -469,6 +469,198 @@ def digest(path):
     return h.hexdigest()
 
 
+class Dialogue:
+    """Opt-in serialized CLI 2.1.138 user/replay/result protocol, not task success."""
+    def __init__(self, args, resources, output, initial):
+        import stat
+        self.session, self.run = args.dialogue_session_id, args.run_id
+        if not self.session or not self.run:
+            raise ValueError('dialogue identity required')
+        self.path = owned_path(args.cwd.resolve(), args.responses_file)
+        if self.path.is_symlink() or not stat.S_ISREG(self.path.stat().st_mode) or self.path.stat().st_size:
+            raise ValueError('dialogue inbox must be an empty regular file')
+        self.file = resources.enter_context(os.fdopen(os.open(self.path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW), 'rb'))
+        self.identity = os.fstat(self.file.fileno())
+        if not stat.S_ISREG(self.identity.st_mode) or self.identity.st_size:
+            raise ValueError('dialogue inbox identity changed')
+        self.log = resources.enter_context((output/'dialogue.jsonl').open('xb'))
+        self.raw = resources.enter_context((output/'responses.raw').open('xb'))
+        self.raw_hash = hashlib.sha256(); self.write_chunks = 0
+        self.buffer = b''; self.stdout = b''; self.offset = 0; self.queue = []
+        self.partial_since = None; self.error = None; self.closed = False
+        try:
+            self.pending = self.message(json.loads(initial))
+        except (ValueError, RecursionError):
+            raise ValueError('dialogue initial message invalid')
+        self.initial_sha = hashlib.sha256(initial).hexdigest()
+        self.ack_deadline = None; self.busy = True; self.last_question = None
+        self.responses = 0; self.results = 0; self.last_success = False
+        self.ids = {self.pending['uuid']}
+        self.active = {}; self.active_seconds = 0; self.active_pairs = 0
+        self.measured_questions = set(); self.measured_responses = 0
+        self.origin = time.monotonic()
+        self.last_activity = self.origin; self.question_displayed_at = self.origin
+        self.record('initial', uuid=self.pending['uuid'], sha256=self.initial_sha)
+
+    def message(self, value):
+        if (not isinstance(value, dict) or value.get('type') != 'user'
+                or value.get('session_id') != self.session or not isinstance(value.get('uuid'), str)
+                or not value['uuid'] or value.get('parent_tool_use_id') is not None
+                or not isinstance(value.get('message'), dict) or value['message'].get('role') != 'user'
+                or not isinstance(value['message'].get('content'), str)):
+            raise ValueError('dialogue user message invalid')
+        return value
+
+    def record(self, event, **values):
+        self.log.write((json.dumps(dict(event=event, run_id=self.run, session_id=self.session, monotonic=time.monotonic(), **values))+'\n').encode())
+        self.log.flush()
+
+    def fail(self, reason):
+        if not self.error:
+            self.error = reason; self.record('channel_failure', reason=reason)
+
+    def written(self, now):
+        self.ack_deadline = now+10
+        self.record('write_completed', response_id=self.pending['uuid'])
+
+    def feed(self, raw):
+        self.stdout += raw
+        if len(self.stdout) > LIMIT and b'\n' not in self.stdout:
+            self.fail('dialogue_output_overflow'); self.stdout = b''; return
+        while b'\n' in self.stdout:
+            line, self.stdout = self.stdout.split(b'\n', 1)
+            if len(line) > LIMIT:
+                self.fail('dialogue_output_overflow'); continue
+            try:
+                value = json.loads(line)
+                if not isinstance(value, dict): raise ValueError()
+                if value.get('parent_tool_use_id') is not None: continue
+                kind = value.get('type')
+                if kind not in ('user', 'assistant', 'result'): continue
+                if value.get('session_id') != self.session:
+                    self.fail('dialogue_session_mismatch'); continue
+                if kind == 'user' and self.pending and value.get('uuid') == self.pending['uuid']:
+                    if value.get('isReplay') is not True or value.get('message') != self.pending['message']:
+                        self.fail('dialogue_replay_mismatch'); continue
+                    if self.ack_deadline is None or time.monotonic() > self.ack_deadline:
+                        self.fail('dialogue_replay_late'); continue
+                    self.record('replay_confirmed', response_id=value['uuid'])
+                    self.pending = None; self.ack_deadline = None
+                elif kind == 'assistant':
+                    content = value.get('message', {}).get('content')
+                    if not isinstance(value.get('uuid'), str) or content is None: raise ValueError()
+                    self.last_question = (value['uuid'], hashlib.sha256(json.dumps(content, sort_keys=True, separators=(',', ':')).encode()).hexdigest())
+                    self.question_displayed_at = time.monotonic()
+                    self.record('message_displayed', question_id=value['uuid'], sha256=self.last_question[1])
+                elif kind == 'result':
+                    if not self.busy or self.pending:
+                        self.fail('dialogue_turn_result_unbound'); continue
+                    self.results += 1; self.busy = False
+                    self.last_success = value.get('subtype') == 'success' and value.get('is_error') is False
+                    self.record('turn_result', turn=self.results, success=self.last_success)
+                    if not self.last_success: self.fail('dialogue_turn_failed')
+            except (ValueError, TypeError, AttributeError, RecursionError):
+                self.fail('dialogue_event_invalid')
+
+    def poll(self, now):
+        try:
+            st = self.path.stat()
+            if self.path.is_symlink() or (st.st_dev, st.st_ino) != (self.identity.st_dev, self.identity.st_ino):
+                raise ValueError('dialogue_file_replaced')
+            if st.st_size < self.offset: raise ValueError('dialogue_file_truncated')
+            if st.st_size > 8*LIMIT: raise ValueError('dialogue_file_limit')
+            raw = self.file.read(CHUNK)
+            if raw:
+                self.raw.write(raw); self.raw.flush(); self.raw_hash.update(raw)
+                self.offset += len(raw); self.buffer += raw
+                if self.closed: raise ValueError('dialogue_input_after_close')
+            while b'\n' in self.buffer:
+                line, self.buffer = self.buffer.split(b'\n', 1)
+                if len(line) > CHUNK: raise ValueError('dialogue_line_limit')
+                self.queue.append(json.loads(line))
+                if len(self.queue) > 256: raise ValueError('dialogue_queue_limit')
+            if len(self.buffer) > CHUNK: raise ValueError('dialogue_line_limit')
+            if self.buffer:
+                if self.partial_since is None: self.partial_since = now
+                if now-self.partial_since >= 5: raise ValueError('dialogue_partial_line_timeout')
+            else: self.partial_since = None
+            if self.ack_deadline is not None and now >= self.ack_deadline:
+                raise ValueError('dialogue_replay_unconfirmed')
+            if self.busy or self.pending or not self.queue or self.error: return None
+            row = self.queue.pop(0)
+            if not isinstance(row, dict) or row.get('run_id') != self.run or row.get('session_id') != self.session:
+                raise ValueError('dialogue_record_identity')
+            if self.closed: raise ValueError('dialogue_input_after_close')
+            kind = row.get('type')
+            if kind == 'close':
+                if self.queue or self.buffer: raise ValueError('dialogue_input_after_close')
+                self.closed = True; self.record('input_close_requested'); return b''
+            if kind in ('active_start', 'active_end'):
+                q = row.get('question_id'); at = row.get('at_monotonic')
+                if (not self.last_question or q != self.last_question[0] or type(at) not in (int, float)
+                        or not math.isfinite(at) or not self.origin <= at <= time.monotonic()):
+                    raise ValueError('dialogue_active_marker_invalid')
+                if at < max(self.question_displayed_at, self.last_activity):
+                    raise ValueError('dialogue_active_marker_out_of_order')
+                if kind == 'active_start':
+                    if q in self.active: raise ValueError('dialogue_active_marker_duplicate')
+                    self.active[q] = at
+                else:
+                    start = self.active.pop(q, None)
+                    if start is None or at < start: raise ValueError('dialogue_active_marker_unpaired')
+                    self.active_seconds += at-start; self.active_pairs += 1
+                    self.measured_questions.add(q)
+                self.last_activity = at
+                self.record(kind, question_id=q, user_marked_monotonic=at); return None
+            if (kind != 'response' or self.responses >= 128 or type(row.get('sequence')) is not int
+                    or row['sequence'] != self.responses+1 or not self.last_question
+                    or (row.get('question_id'), row.get('question_sha256')) != self.last_question):
+                raise ValueError('dialogue_response_order')
+            text, rid = row.get('text'), row.get('response_id')
+            if (not isinstance(text, str) or not isinstance(rid, str) or not rid or rid in self.ids
+                    or hashlib.sha256(text.encode()).hexdigest() != row.get('sha256')):
+                raise ValueError('dialogue_response_invalid')
+            question_id = self.last_question[0]
+            measured = question_id in self.measured_questions and question_id not in self.active
+            if measured: self.measured_responses += 1
+            self.measured_questions.discard(question_id)
+            self.ids.add(rid); self.responses += 1; self.busy = True
+            self.pending = {'type':'user','uuid':rid,'session_id':self.session,
+                            'parent_tool_use_id':None,'message':{'role':'user','content':text}}
+            self.record('response_submitted', response_id=rid, question_id=self.last_question[0], sha256=row['sha256'])
+            return (json.dumps(self.pending)+'\n').encode()
+        except (ValueError, OSError, TypeError, RecursionError) as exc:
+            self.fail(str(exc) if isinstance(exc, ValueError) else 'dialogue_file_io')
+            return None
+
+    def report(self):
+        try:
+            st = self.path.stat()
+            if self.path.is_symlink() or (st.st_dev, st.st_ino) != (self.identity.st_dev, self.identity.st_ino):
+                self.fail('dialogue_file_replaced')
+            elif st.st_size != self.offset:
+                self.fail('dialogue_final_input_changed')
+            else:
+                h = hashlib.sha256()
+                for offset in range(0, self.offset, CHUNK):
+                    h.update(os.pread(self.file.fileno(), min(CHUNK, self.offset-offset), offset))
+                if h.hexdigest() != self.raw_hash.hexdigest(): self.fail('dialogue_prior_input_changed')
+        except OSError:
+            self.fail('dialogue_final_input_unavailable')
+        complete = bool(self.closed and not self.error and not self.pending and not self.busy
+                        and not self.queue and not self.buffer and not self.stdout and self.last_success
+                        and self.results == self.responses+1)
+        measurement_complete = bool(self.responses and self.measured_responses == self.responses
+                                    and not self.active and not self.measured_questions and not self.error)
+        return {'complete':complete,'error':self.error,'responses_confirmed':self.responses-(bool(self.pending) and self.responses>0),
+                'run_id':self.run,'session_id':self.session,'turns':self.results,'initial_sha256':self.initial_sha,
+                'user_active_seconds':self.active_seconds if measurement_complete else None,
+                'user_active_observed_seconds':self.active_seconds if self.active_pairs else None,
+                'user_active_measurement_complete':measurement_complete,
+                'active_markers_are_self_reported':True,'responses_raw_sha256':self.raw_hash.hexdigest(),
+                'write_chunks':self.write_chunks}
+
+
 class TerminalParser:
     """Bound one JSON line; continue raw custody even after parser overflow."""
     def __init__(self):
@@ -647,6 +839,14 @@ def supervise(args, resources):
             prompt_hash.update(raw)
             prompt_bytes += len(raw)
     input_file.seek(0)
+    dialogue = None
+    if getattr(args, 'responses_file', None) is not None:
+        if prompt_bytes > LIMIT: raise ValueError('dialogue initial input limit')
+        initial = input_file.read(); input_file.seek(0)
+        dialogue = Dialogue(args, resources, output, initial)
+    elif getattr(args, 'dialogue_session_id', None):
+        raise ValueError('dialogue inbox required')
+    initial_delivered = False
     requested_argv = list(argv)
     executable = resolve_executable(argv[0], cwd)
     launch_error = None if executable is not None else 'executable_not_on_path'
@@ -713,7 +913,10 @@ def supervise(args, resources):
             kill_at = stop['monotonic']+min(10, args.drain*.6)
             if proc is not None and proc.poll() is None:
                 try:
-                    proc.terminate()  # Only the direct wrapper, core owns its children.
+                    if dialogue and os.getpgid(proc.pid) == proc.pid:
+                        os.killpg(proc.pid, signal.SIGTERM)  # This live group was created by this supervisor.
+                    else:
+                        proc.terminate()  # Legacy: core owns its children.
                 except OSError as exc:
                     termination_errors.append(str(exc))
 
@@ -746,6 +949,16 @@ def supervise(args, resources):
         selector.register(proc.stdin, selectors.EVENT_WRITE, 'stdin')
         while True:
             now = time.monotonic()
+            if dialogue and initial_delivered and stop is None:
+                wire = dialogue.poll(now)
+                if dialogue.error:
+                    request_stop('dialogue_channel_failure')
+                elif wire is not None:
+                    if wire == b'':
+                        input_eof = True; close_pipe(proc.stdin)
+                    else:
+                        input_buffer = wire
+                        selector.register(proc.stdin, selectors.EVENT_WRITE, 'stdin')
             if pid is None:
                 candidate = read_integer(pid_path)
                 if candidate is not None and candidate > 1:
@@ -768,7 +981,10 @@ def supervise(args, resources):
             if stop is not None and now >= kill_at and code is None and not forced:
                 forced = True
                 try:
-                    proc.kill()
+                    if dialogue and os.getpgid(proc.pid) == proc.pid:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    else:
+                        proc.kill()
                 except OSError as exc:
                     termination_errors.append(str(exc))
             if stop is not None and now >= collection_end:
@@ -781,17 +997,22 @@ def supervise(args, resources):
                         close_pipe(key.fileobj)
                         continue
                     try:
-                        if not input_buffer and not input_eof:
+                        if not input_buffer and not input_eof and not initial_delivered:
                             input_buffer = input_file.read(CHUNK)
                             input_eof = not input_buffer
                         if input_buffer:
                             written = os.write(key.fd, input_buffer)
-                            input_hash.update(input_buffer[:written])
-                            input_sent += written
+                            if dialogue: dialogue.write_chunks += 1
+                            if not initial_delivered:
+                                input_hash.update(input_buffer[:written])
+                                input_sent += written
                             input_buffer = input_buffer[written:]
-                            if input_sent == prompt_bytes and not input_buffer:
-                                input_eof = True
-                                close_pipe(key.fileobj)
+                            if not input_buffer and input_sent == prompt_bytes:
+                                if dialogue:
+                                    initial_delivered = True; input_eof = False
+                                    dialogue.written(time.monotonic()); selector.unregister(key.fileobj)
+                                else:
+                                    input_eof = True; close_pipe(key.fileobj)
                         elif input_eof:
                             close_pipe(key.fileobj)
                     except BlockingIOError:
@@ -829,6 +1050,7 @@ def supervise(args, resources):
                         request_stop('storage_error')
                 if key.data == 'stdout':
                     parser.feed(raw)
+                    if dialogue: dialogue.feed(raw)
     except OSError as exc:
         if wrapper_started:
             storage_errors.append(str(exc))
@@ -882,8 +1104,10 @@ def supervise(args, resources):
     capture_complete = capture_complete and not storage_errors and all(s['eof'] for s in streams.values())
     input_complete = (input_eof and input_sent == prompt_bytes
                       and input_hash.hexdigest() == prompt_hash.hexdigest() and not input_errors)
+    dialogue_result = dialogue.report() if dialogue else None
+    terminal_ok = (dialogue_result['complete'] if dialogue else parser.normal == parser.results == 1)
     normal = (wrapper_code == effective_child_code == 0 and not timed_out and not interrupted and not forced
-              and parser.normal == parser.results == 1 and parser.complete
+              and terminal_ok and parser.complete
               and capture_complete and input_complete and cleanup == 'confirmed' and not termination_errors)
     if observed is not None and observed['status'] == 'verified':
         normal = normal and observed['record']['stop_reason'] == 'normal'
@@ -907,6 +1131,8 @@ def supervise(args, resources):
               'collection_deadline_monotonic': collection_end,
               'streams': {n: {'bytes': s['bytes'], 'sha256': s['hash'].hexdigest(), 'eof': s['eof']}
                           for n, s in streams.items()}}
+    if dialogue_result is not None:
+        result['dialogue'] = dialogue_result
     if observed is not None:
         result['termination_observation'] = observed
     try:
@@ -924,6 +1150,8 @@ def main():
     parser.add_argument('--cwd', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--prompt', type=Path, required=True)
+    parser.add_argument('--responses-file', type=Path)
+    parser.add_argument('--dialogue-session-id')
     parser.add_argument('--child-pid-file', type=Path, required=True)
     parser.add_argument('--child-exit-file', type=Path, required=True)
     parser.add_argument('--timeout', type=float, default=1800)
