@@ -24,7 +24,7 @@
       "destination": "serve.cjs"
     },
     "scripts/omc_ad_validation_browser.cjs": {
-      "sha256": "c3e59c45e043615e18665e66ba75141b51f6903839c7655adacf76ce851a2e30",
+      "sha256": "e2226f1e7fb1d8e374040030328a563c35c9ea2b870face40fb86fce6e7299d8",
       "scope": "run",
       "destination": "browser.cjs"
     },

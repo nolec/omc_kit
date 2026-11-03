@@ -31,7 +31,28 @@ function load(file){
  noLinks(path.join(run,'browser-profile'));
  const context=await chromium.launchPersistentContext(path.join(run,'browser-profile'),{
   headless:cfg.headless,viewport:{width:1440,height:1000}});
- const page=context.pages()[0]||await context.newPage(),bundles=new Map();
+ const browser=context.browser();
+ let contextClosed=false,disconnected=false,invalidReason=null;
+ context.on('close',()=>{contextClosed=true;invalidReason=invalidReason||'context_closed';});
+ if(browser)browser.on('disconnected',()=>{disconnected=true;invalidReason=invalidReason||'browser_disconnected';});
+ const live=context.pages().filter(p=>!p.isClosed());
+ const ownPages=live.filter(p=>{try{return new URL(p.url()).origin===base;}catch{return false;}});
+ // Bind once to an unambiguous page in this candidate's context, never another
+ // context or an automatically created replacement after a failed command.
+ const eligible=ownPages.length?ownPages:live.filter(p=>p.url()==='about:blank');
+ if(eligible.length!==1){
+  await context.close();
+  throw Error(eligible.length?'page_binding_ambiguous':'page_binding_missing');
+ }
+ const page=eligible[0],bundles=new Map();
+ page.on('close',()=>{invalidReason=invalidReason||'page_closed';});
+ const unavailable=()=>{
+  if(browser&&!browser.isConnected())disconnected=true;
+  if(disconnected)invalidReason=invalidReason||'browser_disconnected';
+  if(contextClosed)invalidReason=invalidReason||'context_closed';
+  if(page.isClosed())invalidReason=invalidReason||'page_closed';
+  return invalidReason;
+ };
  await page.route('**/*',route=>{
   const request=route.request();
   if(request.isNavigationRequest()&&request.frame()===page.mainFrame()&&new URL(request.url()).origin!==base)return route.abort();
@@ -43,7 +64,16 @@ function load(file){
  async function command({op,args=[]}){
   load(file);
   if(!Array.isArray(args)||!args.every(x=>typeof x==='string'))throw Error('invalid_arguments');
-  if(op==='status'&&args.length===0)return {ready:true,url:page.url(),candidate:cfg.candidate};
+  if(op==='status'&&args.length===0){
+   let reason=unavailable();
+   if(!reason){
+    try{await page.evaluate(()=>true);}catch{invalidReason=unavailable()||'target_closed_or_unavailable';}
+    reason=unavailable();
+   }
+   return {ready:!reason,url:page.url(),candidate:cfg.candidate,...(reason?{reason}:{})};
+  }
+  const reason=unavailable();
+  if(reason)throw Error(reason);
   if(op==='goto'&&args.length===1){
    const url=new URL(args[0],base);
    if(url.origin!==base||url.username||url.password)throw Error('only_own_origin');

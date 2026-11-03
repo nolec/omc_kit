@@ -578,6 +578,129 @@ def command(candidate,op,*args):
     return invoke('command','--runtime',candidate.parent/'runtime.json','--op',op,'--args-json',json.dumps(args))
 
 
+@contextlib.contextmanager
+def lifecycle_driver(config, tmp_path, mode='single'):
+    """Run the public HTTP driver with a deterministic Playwright lifecycle double."""
+    path,cfg,candidate=config
+    assert invoke('restore','--config',path).returncode==0
+    cfg=json.loads((candidate.parent/'runtime.json').read_text())
+    state=tmp_path/'lifecycle-state.json';state.write_text('{}')
+    module=Path(cfg['playwright_module'])
+    (module/'index.js').write_text("""
+const {EventEmitter}=require('events'),fs=require('fs');
+const state=()=>JSON.parse(fs.readFileSync(process.env.OMC_TEST_STATE,'utf8'));
+const base=process.env.OMC_TEST_ORIGIN,mode=process.env.OMC_TEST_MODE;
+const context=new EventEmitter(),browser=new EventEmitter();
+let currentClosed=false,contextClosed=false,disconnected=false,created=0;
+function sync(){const s=state();
+ if(s.pageClosed&&!currentClosed){currentClosed=true;first.emit('close');}
+ if(s.contextClosed&&!contextClosed){contextClosed=true;context.emit('close');}
+ if(s.disconnected&&!disconnected){disconnected=true;browser.emit('disconnected');}}
+function page(name,url,closed=false){const p=new EventEmitter();
+ p.isClosed=()=>{sync();return closed||(p===first&&currentClosed);};
+ p.url=()=>{sync();return url;};p.route=async()=>{};
+ p.goto=async()=>{sync();if(closed||currentClosed||contextClosed||disconnected)throw Error('closed target');};
+ p.evaluate=async()=>{sync();if(closed||currentClosed||contextClosed||disconnected)throw Error('closed target');return true;};
+ p.mainFrame=()=>p;p.name=name;return p;}
+const first=page('first',mode==='closed-first'?'about:blank':base+'/sixshoptest01',mode==='closed-first'||mode==='none');
+const second=page('second',base+'/sixshoptest01');
+context.pages=()=>{sync();return mode==='closed-first'||mode==='ambiguous'?[first,second]:[first];};
+context.newPage=async()=>{created++;throw Error('unexpected automatic page creation');};
+context.browser=()=>{sync();return browser;};browser.isConnected=()=>{sync();return !disconnected;};
+context.close=async()=>{contextClosed=true;context.emit('close');};
+module.exports={chromium:{launchPersistentContext:async()=>context}};
+""")
+    log=tmp_path/'lifecycle-driver.log'
+    with log.open('w') as stream:
+        proc=subprocess.Popen(['node',str(candidate.parent/'browser.cjs'),'launch','--config',
+            str(candidate.parent/'runtime.json')],stdout=stream,stderr=stream,
+            env={**os.environ,'OMC_TEST_STATE':str(state),'OMC_TEST_MODE':mode,
+                 'OMC_TEST_ORIGIN':'http://localhost:'+str(cfg['port'])})
+        try:
+            end=time.monotonic()+5
+            while proc.poll() is None and 'control_ready' not in log.read_text() and time.monotonic()<end:
+                time.sleep(.01)
+            assert proc.poll() is not None or 'control_ready' in log.read_text(),log.read_text()
+            yield proc,state,log,candidate,cfg
+        finally:
+            if proc.poll() is None:proc.terminate()
+            try:proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:proc.kill();proc.wait(timeout=5)
+
+
+def lifecycle_request(cfg, op='status', args=None):
+    request=urllib.request.Request('http://127.0.0.1:'+str(cfg['control_port'])+'/command',
+        data=json.dumps({'op':op,'args':args or []}).encode(),headers={'Content-Type':'application/json'})
+    try:
+        with urllib.request.urlopen(request,timeout=5) as response:return response.status,json.load(response)
+    except urllib.error.HTTPError as error:return error.code,json.loads(error.read())
+
+
+@pytest.mark.parametrize('state_key',['pageClosed','contextClosed','disconnected'])
+def test_lifecycle_status_rejects_closed_target_and_never_recreates(config,tmp_path,state_key):
+    with lifecycle_driver(config,tmp_path) as (proc,state,log,candidate,cfg):
+        assert lifecycle_request(cfg)[1]['ready'] is True
+        state.write_text(json.dumps({state_key:True}))
+        code,value=lifecycle_request(cfg)
+        assert value.get('ready') is False,(code,value)
+        assert value.get('reason'),value
+        code,value=lifecycle_request(cfg,'goto',['http://localhost:'+str(cfg['port'])+'/sixshoptest01'])
+        assert code>=400 and 'closed' in value.get('error','') or code>=400 and 'disconnected' in value.get('error','')
+        assert 'unexpected automatic page creation' not in log.read_text()
+
+
+def test_lifecycle_binds_unique_live_page_instead_of_closed_first(config,tmp_path):
+    with lifecycle_driver(config,tmp_path,'closed-first') as (proc,state,log,candidate,cfg):
+        code,value=lifecycle_request(cfg)
+        assert code==200 and value.get('ready') is True
+        assert value['url']=='http://localhost:'+str(cfg['port'])+'/sixshoptest01'
+        assert lifecycle_request(cfg,'goto',[value['url']])[0]==200
+
+
+@pytest.mark.parametrize('mode',['ambiguous','none'])
+def test_lifecycle_refuses_ambiguous_or_missing_live_page(config,tmp_path,mode):
+    with lifecycle_driver(config,tmp_path,mode) as (proc,state,log,candidate,cfg):
+        assert proc.poll() is not None,log.read_text()
+        assert 'page_binding_' in log.read_text()
+
+
+def test_lifecycle_live_status_preserves_origin_and_query_guards(config,tmp_path):
+    with lifecycle_driver(config,tmp_path) as (proc,state,log,candidate,cfg):
+        assert lifecycle_request(cfg)[1]['ready'] is True
+        code,value=lifecycle_request(cfg,'goto',['https://outside.invalid'])
+        assert code==400 and value['error']=='only_own_origin'
+        code,value=lifecycle_request(cfg,'evaluate',['not-an-allowlisted-query'])
+        assert code==400 and value['error']=='query_not_allowlisted'
+
+
+@pytest.mark.parametrize('closed_target',['page','context'])
+@real_surface
+def test_lifecycle_real_chromium_closed_target_is_not_ready(real_config,tmp_path,closed_target):
+    surface=tmp_path/'lifecycle-surface';surface.mkdir()
+    (surface/'index.html').write_text('<h1>lifecycle fixture</h1>')
+    armed=tmp_path/'close-target';closed=tmp_path/'closed-target'
+    preload=tmp_path/'lifecycle-close-preload.cjs'
+    preload.write_text("const fs=require('fs'),M=require('module'),load=M._load;M._load=function(name,...args){"
+        "const value=load.call(this,name,...args);if(name==="+json.dumps(real_config[1]['playwright_module'])+") {"
+        "const launch=value.chromium.launchPersistentContext.bind(value.chromium);"
+        "value.chromium.launchPersistentContext=async(...a)=>{const c=await launch(...a);"
+        "const timer=setInterval(()=>{if(!fs.existsSync("+json.dumps(str(armed))+"))return;clearInterval(timer);"
+        "Promise.resolve("+("c.pages()[0].close()" if closed_target=='page' else "c.close()")+")"
+        ".then(()=>fs.writeFileSync("+json.dumps(str(closed))+",'closed'));},10);return c;};}return value;};")
+    with browser(real_config,surface,preload=preload) as (cfg,candidate):
+        assert command(candidate,'goto','/index.html').returncode==0
+        armed.write_text('close once')
+        end=time.monotonic()+5
+        while not closed.exists() and time.monotonic()<end:time.sleep(.01)
+        assert closed.exists(),'fixture did not close the selected target'
+        result=command(candidate,'status')
+        assert result.returncode==0,result.stdout+result.stderr
+        value=json.loads(result.stdout)
+        assert value['ready'] is False and 'closed' in value['reason']
+        refused=command(candidate,'goto','/index.html')
+        assert refused.returncode==1 and 'closed' in refused.stderr
+
+
 @real_surface
 def test_v2_actual_browser_keeps_six_samples_and_raw_execution(real_config,tmp_path):
     from omc_workflow_preflight import browser_observation,read_browser_execution
