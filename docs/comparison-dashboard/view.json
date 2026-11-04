@@ -2130,159 +2130,47 @@
     }
   },
   "current_update": {
-    "date": "2026-11-02",
-    "status": "현재 · 0.6.3 릴리스·12곳 재설치 완료 / 실제 홈 미검증·비교 HOLD · 2026-11-02",
+    "date": "2026-11-04",
+    "status": "현재 · main ef87d295 반영·푸시 / ACK 계측 검수 통과·실제 비교 HOLD · 2026-11-04",
     "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
-    "main_commit": "3d716da4a4f51d06e9fc90735598d2bba822f445",
-    "main_commit_role": "0.6.3 릴리스 제품 커밋; 이번 문서 커밋 OID는 실행 기록에 별도 보존",
+    "main_commit": "ef87d29528c779a6561a5427c8d0d86dc1667a8a",
+    "main_commit_role": "문서 최신화 직전 제품 main; 문서 커밋은 별도",
     "version": "0.6.3",
-    "implementation_base_commit": "67a70a1750cc232f8c4cbd1da0cedee48a3a0fd3",
-    "candidate": "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/candidate",
-    "candidate_scope_files": 10,
+    "candidate_scope_files": 4,
     "reviewed_paths": [
-      "scripts/omc_output_contract.py",
-      "scripts/test_omc_output_contract.py",
-      "scripts/test_omc_workflow_validation.py",
-      "scripts/test_omc_state_record_confirm.py",
-      "templates/.agents/skills/omc-plan/references/workflow.md",
-      "templates/.claude/commands/plan.md",
-      ".agents/skills/omc-plan/references/workflow.md",
-      "VERSION",
-      "scripts/test_omc_version.py",
-      "docs/releases/0.6.3.md"
+      "scripts/omc_home_observation.py",
+      "scripts/omc_ad_native_supervisor.py",
+      "scripts/test_omc_home_observation.py",
+      "scripts/test_omc_ad_native_supervisor.py"
     ],
-    "candidate_state": "RELEASED_AND_INSTALLED",
+    "candidate_state": "MAIN_INTEGRATED_AND_PUSHED",
     "main_applied": true,
     "comparison_state": "HOLD",
     "actual_home": "NOT_VERIFIED",
-    "release_performed": true,
-    "reinstall_performed": true,
+    "release_performed": false,
+    "reinstall_performed": false,
     "validation": {
-      "whole_quality": {
-        "candidate": "3d716da4a4f51d06e9fc90735598d2bba822f445",
-        "status": "PASSED",
-        "native_exit": 0,
-        "prepare_calls": 1,
-        "check_calls": 1,
-        "whole_calls": 1,
-        "passed": 5792,
-        "failed": 0,
-        "errors": 0,
-        "skipped": 0,
-        "deselected": 15,
-        "actual_ad_build": "PASSED",
-        "whole_seconds": 2139.6145668029785,
-        "operation_seconds": 2384.5460662841797
+      "relay_regressions": {
+        "passed": 20,
+        "seconds": 100.91
       },
-      "archive": {
-        "status": "partial_originals_retained",
-        "bytes": 175962653,
-        "limit_bytes": 67108864
-      }
+      "main_integration": {
+        "passed": 20,
+        "seconds": 90.99
+      },
+      "whole_quality": "NOT_RUN_FOR_CURRENT_MAIN"
     },
-    "installation": {
-      "target_count": 12,
-      "strict_audits_passed": 12,
-      "version": "0.6.3",
-      "source_revision": "3d716da4a4f51d06e9fc90735598d2bba822f445",
-      "targets": [
-        {
-          "target": "/Users/noseunglae/Downloads/dev/ai-cs",
-          "version": "0.6.3",
-          "strict_audit": "ok",
-          "local_changes_backed_up": false
-        },
-        {
-          "target": "/Users/noseunglae/Downloads/dev/codex-chat",
-          "version": "0.6.3",
-          "strict_audit": "ok",
-          "local_changes_backed_up": true
-        },
-        {
-          "target": "/Users/noseunglae/Downloads/dev/marketing",
-          "version": "0.6.3",
-          "strict_audit": "ok",
-          "local_changes_backed_up": false
-        },
-        {
-          "target": "/Users/noseunglae/Downloads/dev/marketing-project",
-          "version": "0.6.3",
-          "strict_audit": "ok",
-          "local_changes_backed_up": true
-        },
-        {
-          "target": "/Users/noseunglae/Downloads/dev/research-auto",
-          "version": "0.6.3",
-          "strict_audit": "ok",
-          "local_changes_backed_up": false
-        },
-        {
-          "target": "/Users/noseunglae/Downloads/dev/sellerhub-accounts-fe-restored",
-          "version": "0.6.3",
-          "strict_audit": "ok",
-          "local_changes_backed_up": false
-        },
-        {
-          "target": "/Users/noseunglae/Downloads/dev/sixshop/market-reasoning-engine",
-          "version": "0.6.3",
-          "strict_audit": "ok",
-          "local_changes_backed_up": true
-        },
-        {
-          "target": "/Users/noseunglae/Downloads/dev/sixshop/okx-maker-grid-bot-wind",
-          "version": "0.6.3",
-          "strict_audit": "ok",
-          "local_changes_backed_up": false
-        },
-        {
-          "target": "/Users/noseunglae/Downloads/dev/sixshop/sixshop3-storefront-fe",
-          "version": "0.6.3",
-          "strict_audit": "ok",
-          "local_changes_backed_up": true
-        },
-        {
-          "target": "/Users/noseunglae/Downloads/dev/sixshop2",
-          "version": "0.6.3",
-          "strict_audit": "ok",
-          "local_changes_backed_up": false
-        },
-        {
-          "target": "/Users/noseunglae/Downloads/dev/sixshop2-landing",
-          "version": "0.6.3",
-          "strict_audit": "ok",
-          "local_changes_backed_up": false
-        },
-        {
-          "target": "/Users/noseunglae/Downloads/dev/sixshop3-partner-center-fe",
-          "version": "0.6.3",
-          "strict_audit": "ok",
-          "local_changes_backed_up": false
-        }
-      ],
-      "temporary_targets_excluded": 18,
-      "custom_python_replaced_after_backup": [
-        "codex-chat",
-        "market-reasoning-engine"
-      ],
-      "project_agents_merged": [
-        "marketing-project",
-        "sixshop3-storefront-fe"
-      ],
-      "backup_root": "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/consumers",
-      "indexes_and_prior_records_preserved": true
-    },
-    "display_next": "릴리스·재설치 단계는 종료했다. 다음은 동일 조건 대표 업무 비교의 재개 여부와 고정 입력·필수 검증·실행 횟수·시간·종료 조건을 별도 결정한다. 실제 홈 연동은 별도 미검증이며, 비교 HOLD를 자동 해제하거나 모델·비교를 재실행하지 않는다.",
+    "display_next": "실제 비교의 새 실행 승인·인증·로그인 현재성·후보 격리·공통 검수·입력 및 시간 계약·원문 보관을 확인한 뒤 재개 여부를 결정한다. 이번 문서 최신화는 모델 호출·서버·비교 재개·설치·배포·푸시를 수행하지 않는다.",
     "latest_fields": {
       "목표": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
-      "현재 판정": "0.6.3 제품 릴리스 커밋은 3d716da4a4f51d06e9fc90735598d2bba822f445이며 원본 main에 fast-forward 반영했다. 제품 보완 7개·버전/릴리스 3개, 총 10개 변경의 커밋 후 리뷰 승인 재결속 READY와 전체 출하 통과를 확인하고 실사용처 12곳 재설치를 완료했다. 이 OID는 릴리스 제품 기준이며 이번 문서 커밋 OID는 별도 기록한다. 실제 홈 NOT_VERIFIED·비교 HOLD는 유지한다.",
-      "개선 내용": "ffd52da의 지침 복사본 동기화·installed/repository 회귀를 포함한 제품 7개와 VERSION·버전 테스트·0.6.3 릴리스 노트 3개를 반영했다. 계획의 범위 미확정과 검토 요청을 구분하고, 중복 판정 출력을 방지하며, 출력 발행 오류의 안전한 사유와 별도 근거를 보존한다. 파일 경로 교체가 관측되면 기록 보존을 확정하지 않는다. 현재 채팅 워크트리의 별도 출력 지침 5개와 미완료 문서 범위 후보 9개·후속 보완 6개는 이번 제품 범위에 포함하지 않았다.",
-      "실제 출하 결과": "3d716da 최종 후보에서 prepare/check 각 1회가 native exit 0·baseline_verified·cleanup_confirmed=true·evidence_complete=true로 통과했다. 전체 검사도 최대 1회 승인 범위에서 1회 실행해 native exit 0, 5,792개 통과·실패 0·오류 0·건너뜀 0·선택 제외 15개를 확인했다. 선택 제외는 기존 slow 12개와 승인된 외부 과거 입력 2개·의도적 RED 1개이며 통과 개수에 넣지 않는다. 실제 광고 빌드 test_recovered_builder_bundles_actual_baseline_ad도 통과했다. 전체 검사 2,139.61초, 실행·정리 결과 기록까지 2,384.55초로 승인한 90분 안에 종료했고 자동 재시도는 0회다. 선행 ffd52da의 5,792개·메타데이터 72개·과거 394개는 별도 범위이며 합산하지 않는다.",
-      "설치 결과": "실제 프로젝트 12곳 모두 installed_version 0.6.3·source_revision 3d716da4a4f51d06e9fc90735598d2bba822f445와 엄격 감사 verification_status=ok를 확인했다. 대상: ai-cs · codex-chat · marketing · marketing-project · research-auto · sellerhub-accounts-fe-restored · market-reasoning-engine · okx-maker-grid-bot-wind · sixshop3-storefront-fe · sixshop2 · sixshop2-landing · sixshop3-partner-center-fe. 기존 제외였던 marketing-project도 포함했다. 설치 원장의 임시 검증 대상 18곳과 개발용 워크트리는 재설치 대상에서 구분했다. 원격 push·태그·GitHub release는 실행하지 않았다.",
-      "로컬 변경과 보존": "사용자의 표준판 강제 적용 지시에 따라 codex-chat·market-reasoning-engine의 omc_guard.py·omc_pipeline_guard.py 로컬 수정은 원문·권한과 이전 receipt를 백업한 뒤 표준판으로 교체했다. 로컬 문서 작업 보호 기능을 표준판이 모두 대체한다고 주장하지 않는다. storefront·marketing-project의 AGENTS.md는 OMC 블록만 병합하고 프로젝트 지침을 보존했다. 12곳의 Git 인덱스 원문·엔트리·플래그, 기존 기록과 업무 파일의 보존을 확인했다. 기존 원본 작업·별도 후보·스테이징·검증 원문·로컬 제외 설정을 정리하거나 삭제하지 않았다. 설치 백업: /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/consumers.",
-      "입력 격리와 보관": "광고 입력은 34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc의 독립 Git 복제본이고 node_modules도 설치·다운로드 없이 독립 복제했다. 격리 입력·의존성과 OMC source/candidate의 보존 및 소유 프로세스 종료를 확인했다. 원본 storefront Git 변화는 별도 관측이며 전역 원문 불변이나 변경 주체 확정으로 해석하지 않는다. 명시 보관 입력 175,962,653바이트가 64MiB를 넘어 partial_originals_retained로 남겼고 원문은 보존했다. 완전한 묶음 보관으로 표시하지 않는다.",
-      "기존 실패와 미검증": "4ef0e26의 5,790개 통과·1개 실패 이력은 당시 실패로 유지하고, 보완 후 ffd52da와 최종 3d716da의 통과를 별도 실행으로 기록한다. 문서 범위 후보의 기존 통합 337개 통과·1개 실패·설치 준비 오류 2개를 이번 출하 통과로 면제하지 않는다. 실제 홈 연동, 동일 조건의 유효한 양쪽 Claude 대표 업무 비교, C3 사용자 이해, 사용자 개입 감소·생산성·경쟁 우위는 미검증이다. 과거 광고 추적 4개 실패·클릭/숨김 통합 미검증과 자식 종료 unconfirmed 원문도 소급 변경하지 않는다. 설치 감사는 기존 관찰 정책의 재활성화나 관찰 유효성 복구가 아니다.",
-      "다음 작업": "릴리스·재설치 단계는 종료했다. 다음은 동일 조건 대표 업무 비교의 재개 여부와 고정 입력·필수 검증·실행 횟수·시간·종료 조건을 별도 결정한다. 실제 홈 연동은 별도 미검증이며, 비교 HOLD를 자동 해제하거나 모델·비교를 재실행하지 않는다.",
-      "근거": "/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/result.json; /var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/quality-run.return.json; /var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/independent-consumption.json; /var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/archive.json; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/local-release.json; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/result.json; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/main-ready.stdout; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/final-independent-verification.json; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/user-execution-approval.json. 로컬 임시 경로의 원문과 백업이며 다른 checkout 자동 접근이나 장기 보존을 보장하지 않는다."
+      "현재 판정": "문서 최신화 기준 main과 origin/main은 ef87d29528c779a6561a5427c8d0d86dc1667a8a다. 승인된 ACK 계측 4개 파일을 fast-forward 통합·푸시했다. 코드·관련 회귀 통과와 실제 업무 효과를 구분하며 실제 홈 NOT_VERIFIED·비교 HOLD·비용 비교 미판정을 유지한다.",
+      "개선 내용": "0.6.3 복원기 호환성과 Tier별 검증 지침 이후, d313ab50의 발행 전 출력 계약 검사, ea91906b의 동일 CLI 세션 양방향 입력, 9375b452의 살아 있는 브라우저 페이지 결속, ef87d295의 초기 ACK 계측을 main에 반영했다. ACK 뒤 종료 쓰기는 전달과 분리하고 EOF 뒤 최대 0.1초 결속 대기 후 미완료를 실패로 남긴다. 필수 header·native_stream 각각 1개와 원문 경로·해시를 요구한다. 기존 초기 ACK 10초·전체 마감·보호를 유지한다.",
+      "검증 결과": "ef87d295의 직접 회귀 RED 3개 실패 원문을 보존했고 후속 검수는 기존 17개와 직접 회귀 3개를 합친 정확히 20개 통과·100.91초다. 별도 main 통합 후보에서도 같은 20개가 90.99초에 통과했다. 두 실행은 같은 검수의 반복이므로 40개로 합산하지 않는다. 문법·공백·파일 해시와 승인 receipt 결속 READY를 확인했다. 전체 제품 검사·실제 모델 비교 통과를 뜻하지 않는다.",
+      "실제 비교와 비용": "기존 r11 비교는 CLI 2회 소비, 준비 264.54초·결과 기록까지 888.53초이며 comparison_unjudged_required_evidence_and_runtime_failure다. 기본 후보는 필수 검수·종료 근거 및 단계 시각 연결이 불완전했고 OMC 후보는 초기 입력 replay 수신 확인에 실패했다. 계측 보완으로 과거 지연 원인을 확정하지 않으며 완수 가능성·사용자 개입 감소·복구 비용·경쟁 우열은 미판정이다. 로그인·사용자 능동 시간 미측정과 기존 소비 예산을 소급 0으로 바꾸지 않는다.",
+      "릴리스와 설치 경계": "VERSION 0.6.3은 유지한다. 3d716da의 12곳 설치·5,792개 전체 검사 통과는 11월 2일의 이전 릴리스 근거다. ef87d295에 대한 재릴리스·사용처 재설치·전체 검사는 수행하지 않았다. 설치본이 현재 main과 같다고 주장하지 않는다.",
+      "보존": "main 통합에서 기존 근거 1,446개와 소스 파일·Git 인덱스 원문·플래그 및 소비 예산 보존을 확인했다. 기존 4개 스테이징 변경은 동일 바이트로 통합 커밋에 표현되며 tracked 작업 공간은 깨끗하다. 비교 실패·검증 원문은 별도 실행 기록으로 유지한다.",
+      "다음 작업": "실제 비교의 새 실행 승인·인증·로그인 현재성·후보 격리·공통 검수·입력 및 시간 계약·원문 보관을 확인한 뒤 재개 여부를 결정한다. 이번 문서 최신화는 모델 호출·서버·비교 재개·설치·배포·푸시를 수행하지 않는다.",
+      "근거": ".omc/relay-main-integration-20261104/result.json; .omc/relay-main-integration-20261104/tests-execution.json; .omc/relay-main-integration-20261104/results.xml; .omc/relay-review-fix-20261104/gate/result-check.json; .omc/relay-local-commit-20261104/result.json; .omc/comparisons/ad-pair-main-r11-20261104/result.json. 로컬 보존 원문이므로 다른 checkout의 자동 접근이나 영구 보관을 보장하지 않는다."
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2291,18 +2179,188 @@
       "docs/comparison-dashboard/index.html"
     ],
     "evidence": [
-      "/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/result.json",
-      "/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/quality-run.return.json",
-      "/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/independent-consumption.json",
-      "/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/archive.json",
-      "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/local-release.json",
-      "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/result.json",
-      "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/main-ready.stdout",
-      "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/final-independent-verification.json",
-      "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/user-execution-approval.json"
+      ".omc/relay-main-integration-20261104/result.json",
+      ".omc/relay-main-integration-20261104/tests-execution.json",
+      ".omc/relay-main-integration-20261104/results.xml",
+      ".omc/relay-review-fix-20261104/gate/result-check.json",
+      ".omc/relay-local-commit-20261104/result.json",
+      ".omc/comparisons/ad-pair-main-r11-20261104/result.json. 로컬 보존 원문이므로 다른 checkout의 자동 접근이나 영구 보관을 보장하지 않는다."
     ]
   },
   "current_update_history": [
+    {
+      "date": "2026-11-02",
+      "status": "현재 · 0.6.3 릴리스·12곳 재설치 완료 / 실제 홈 미검증·비교 HOLD · 2026-11-02",
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "main_commit": "3d716da4a4f51d06e9fc90735598d2bba822f445",
+      "main_commit_role": "0.6.3 릴리스 제품 커밋; 이번 문서 커밋 OID는 실행 기록에 별도 보존",
+      "version": "0.6.3",
+      "implementation_base_commit": "67a70a1750cc232f8c4cbd1da0cedee48a3a0fd3",
+      "candidate": "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/candidate",
+      "candidate_scope_files": 10,
+      "reviewed_paths": [
+        "scripts/omc_output_contract.py",
+        "scripts/test_omc_output_contract.py",
+        "scripts/test_omc_workflow_validation.py",
+        "scripts/test_omc_state_record_confirm.py",
+        "templates/.agents/skills/omc-plan/references/workflow.md",
+        "templates/.claude/commands/plan.md",
+        ".agents/skills/omc-plan/references/workflow.md",
+        "VERSION",
+        "scripts/test_omc_version.py",
+        "docs/releases/0.6.3.md"
+      ],
+      "candidate_state": "RELEASED_AND_INSTALLED",
+      "main_applied": true,
+      "comparison_state": "HOLD",
+      "actual_home": "NOT_VERIFIED",
+      "release_performed": true,
+      "reinstall_performed": true,
+      "validation": {
+        "whole_quality": {
+          "candidate": "3d716da4a4f51d06e9fc90735598d2bba822f445",
+          "status": "PASSED",
+          "native_exit": 0,
+          "prepare_calls": 1,
+          "check_calls": 1,
+          "whole_calls": 1,
+          "passed": 5792,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "deselected": 15,
+          "actual_ad_build": "PASSED",
+          "whole_seconds": 2139.6145668029785,
+          "operation_seconds": 2384.5460662841797
+        },
+        "archive": {
+          "status": "partial_originals_retained",
+          "bytes": 175962653,
+          "limit_bytes": 67108864
+        }
+      },
+      "installation": {
+        "target_count": 12,
+        "strict_audits_passed": 12,
+        "version": "0.6.3",
+        "source_revision": "3d716da4a4f51d06e9fc90735598d2bba822f445",
+        "targets": [
+          {
+            "target": "/Users/noseunglae/Downloads/dev/ai-cs",
+            "version": "0.6.3",
+            "strict_audit": "ok",
+            "local_changes_backed_up": false
+          },
+          {
+            "target": "/Users/noseunglae/Downloads/dev/codex-chat",
+            "version": "0.6.3",
+            "strict_audit": "ok",
+            "local_changes_backed_up": true
+          },
+          {
+            "target": "/Users/noseunglae/Downloads/dev/marketing",
+            "version": "0.6.3",
+            "strict_audit": "ok",
+            "local_changes_backed_up": false
+          },
+          {
+            "target": "/Users/noseunglae/Downloads/dev/marketing-project",
+            "version": "0.6.3",
+            "strict_audit": "ok",
+            "local_changes_backed_up": true
+          },
+          {
+            "target": "/Users/noseunglae/Downloads/dev/research-auto",
+            "version": "0.6.3",
+            "strict_audit": "ok",
+            "local_changes_backed_up": false
+          },
+          {
+            "target": "/Users/noseunglae/Downloads/dev/sellerhub-accounts-fe-restored",
+            "version": "0.6.3",
+            "strict_audit": "ok",
+            "local_changes_backed_up": false
+          },
+          {
+            "target": "/Users/noseunglae/Downloads/dev/sixshop/market-reasoning-engine",
+            "version": "0.6.3",
+            "strict_audit": "ok",
+            "local_changes_backed_up": true
+          },
+          {
+            "target": "/Users/noseunglae/Downloads/dev/sixshop/okx-maker-grid-bot-wind",
+            "version": "0.6.3",
+            "strict_audit": "ok",
+            "local_changes_backed_up": false
+          },
+          {
+            "target": "/Users/noseunglae/Downloads/dev/sixshop/sixshop3-storefront-fe",
+            "version": "0.6.3",
+            "strict_audit": "ok",
+            "local_changes_backed_up": true
+          },
+          {
+            "target": "/Users/noseunglae/Downloads/dev/sixshop2",
+            "version": "0.6.3",
+            "strict_audit": "ok",
+            "local_changes_backed_up": false
+          },
+          {
+            "target": "/Users/noseunglae/Downloads/dev/sixshop2-landing",
+            "version": "0.6.3",
+            "strict_audit": "ok",
+            "local_changes_backed_up": false
+          },
+          {
+            "target": "/Users/noseunglae/Downloads/dev/sixshop3-partner-center-fe",
+            "version": "0.6.3",
+            "strict_audit": "ok",
+            "local_changes_backed_up": false
+          }
+        ],
+        "temporary_targets_excluded": 18,
+        "custom_python_replaced_after_backup": [
+          "codex-chat",
+          "market-reasoning-engine"
+        ],
+        "project_agents_merged": [
+          "marketing-project",
+          "sixshop3-storefront-fe"
+        ],
+        "backup_root": "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/consumers",
+        "indexes_and_prior_records_preserved": true
+      },
+      "display_next": "릴리스·재설치 단계는 종료했다. 다음은 동일 조건 대표 업무 비교의 재개 여부와 고정 입력·필수 검증·실행 횟수·시간·종료 조건을 별도 결정한다. 실제 홈 연동은 별도 미검증이며, 비교 HOLD를 자동 해제하거나 모델·비교를 재실행하지 않는다.",
+      "latest_fields": {
+        "목표": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+        "현재 판정": "0.6.3 제품 릴리스 커밋은 3d716da4a4f51d06e9fc90735598d2bba822f445이며 원본 main에 fast-forward 반영했다. 제품 보완 7개·버전/릴리스 3개, 총 10개 변경의 커밋 후 리뷰 승인 재결속 READY와 전체 출하 통과를 확인하고 실사용처 12곳 재설치를 완료했다. 이 OID는 릴리스 제품 기준이며 이번 문서 커밋 OID는 별도 기록한다. 실제 홈 NOT_VERIFIED·비교 HOLD는 유지한다.",
+        "개선 내용": "ffd52da의 지침 복사본 동기화·installed/repository 회귀를 포함한 제품 7개와 VERSION·버전 테스트·0.6.3 릴리스 노트 3개를 반영했다. 계획의 범위 미확정과 검토 요청을 구분하고, 중복 판정 출력을 방지하며, 출력 발행 오류의 안전한 사유와 별도 근거를 보존한다. 파일 경로 교체가 관측되면 기록 보존을 확정하지 않는다. 현재 채팅 워크트리의 별도 출력 지침 5개와 미완료 문서 범위 후보 9개·후속 보완 6개는 이번 제품 범위에 포함하지 않았다.",
+        "실제 출하 결과": "3d716da 최종 후보에서 prepare/check 각 1회가 native exit 0·baseline_verified·cleanup_confirmed=true·evidence_complete=true로 통과했다. 전체 검사도 최대 1회 승인 범위에서 1회 실행해 native exit 0, 5,792개 통과·실패 0·오류 0·건너뜀 0·선택 제외 15개를 확인했다. 선택 제외는 기존 slow 12개와 승인된 외부 과거 입력 2개·의도적 RED 1개이며 통과 개수에 넣지 않는다. 실제 광고 빌드 test_recovered_builder_bundles_actual_baseline_ad도 통과했다. 전체 검사 2,139.61초, 실행·정리 결과 기록까지 2,384.55초로 승인한 90분 안에 종료했고 자동 재시도는 0회다. 선행 ffd52da의 5,792개·메타데이터 72개·과거 394개는 별도 범위이며 합산하지 않는다.",
+        "설치 결과": "실제 프로젝트 12곳 모두 installed_version 0.6.3·source_revision 3d716da4a4f51d06e9fc90735598d2bba822f445와 엄격 감사 verification_status=ok를 확인했다. 대상: ai-cs · codex-chat · marketing · marketing-project · research-auto · sellerhub-accounts-fe-restored · market-reasoning-engine · okx-maker-grid-bot-wind · sixshop3-storefront-fe · sixshop2 · sixshop2-landing · sixshop3-partner-center-fe. 기존 제외였던 marketing-project도 포함했다. 설치 원장의 임시 검증 대상 18곳과 개발용 워크트리는 재설치 대상에서 구분했다. 원격 push·태그·GitHub release는 실행하지 않았다.",
+        "로컬 변경과 보존": "사용자의 표준판 강제 적용 지시에 따라 codex-chat·market-reasoning-engine의 omc_guard.py·omc_pipeline_guard.py 로컬 수정은 원문·권한과 이전 receipt를 백업한 뒤 표준판으로 교체했다. 로컬 문서 작업 보호 기능을 표준판이 모두 대체한다고 주장하지 않는다. storefront·marketing-project의 AGENTS.md는 OMC 블록만 병합하고 프로젝트 지침을 보존했다. 12곳의 Git 인덱스 원문·엔트리·플래그, 기존 기록과 업무 파일의 보존을 확인했다. 기존 원본 작업·별도 후보·스테이징·검증 원문·로컬 제외 설정을 정리하거나 삭제하지 않았다. 설치 백업: /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/consumers.",
+        "입력 격리와 보관": "광고 입력은 34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc의 독립 Git 복제본이고 node_modules도 설치·다운로드 없이 독립 복제했다. 격리 입력·의존성과 OMC source/candidate의 보존 및 소유 프로세스 종료를 확인했다. 원본 storefront Git 변화는 별도 관측이며 전역 원문 불변이나 변경 주체 확정으로 해석하지 않는다. 명시 보관 입력 175,962,653바이트가 64MiB를 넘어 partial_originals_retained로 남겼고 원문은 보존했다. 완전한 묶음 보관으로 표시하지 않는다.",
+        "기존 실패와 미검증": "4ef0e26의 5,790개 통과·1개 실패 이력은 당시 실패로 유지하고, 보완 후 ffd52da와 최종 3d716da의 통과를 별도 실행으로 기록한다. 문서 범위 후보의 기존 통합 337개 통과·1개 실패·설치 준비 오류 2개를 이번 출하 통과로 면제하지 않는다. 실제 홈 연동, 동일 조건의 유효한 양쪽 Claude 대표 업무 비교, C3 사용자 이해, 사용자 개입 감소·생산성·경쟁 우위는 미검증이다. 과거 광고 추적 4개 실패·클릭/숨김 통합 미검증과 자식 종료 unconfirmed 원문도 소급 변경하지 않는다. 설치 감사는 기존 관찰 정책의 재활성화나 관찰 유효성 복구가 아니다.",
+        "다음 작업": "릴리스·재설치 단계는 종료했다. 다음은 동일 조건 대표 업무 비교의 재개 여부와 고정 입력·필수 검증·실행 횟수·시간·종료 조건을 별도 결정한다. 실제 홈 연동은 별도 미검증이며, 비교 HOLD를 자동 해제하거나 모델·비교를 재실행하지 않는다.",
+        "근거": "/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/result.json; /var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/quality-run.return.json; /var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/independent-consumption.json; /var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/archive.json; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/local-release.json; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/result.json; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/main-ready.stdout; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/final-independent-verification.json; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/user-execution-approval.json. 로컬 임시 경로의 원문과 백업이며 다른 checkout 자동 접근이나 장기 보존을 보장하지 않는다."
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/view.json",
+        "docs/comparison-dashboard/index.html"
+      ],
+      "evidence": [
+        "/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/result.json",
+        "/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/quality-run.return.json",
+        "/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/independent-consumption.json",
+        "/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/archive.json",
+        "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/local-release.json",
+        "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/result.json",
+        "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/main-ready.stdout",
+        "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/final-independent-verification.json",
+        "/private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/user-execution-approval.json"
+      ]
+    },
     {
       "date": "2026-11-02",
       "status": "현재 · 4ef0e26 출하 1개 실패 / 지침 동기화·회귀 2개 리뷰 승인·미커밋 · 2026-11-02",
