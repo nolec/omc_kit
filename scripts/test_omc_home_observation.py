@@ -847,3 +847,108 @@ def test_parallel_observation_returns_have_distinct_selectable_receipts(home):
     refs=module().receipt_references(root)
     assert {r['call_id'] for r in refs}=={'h','h2'}
     for ref in refs:assert module().assess_completion_home(root,basis,submission=ref)['status']=='passed'
+
+
+# Initial-ACK relay diagnostics; metadata only, never a provider or service.
+def relay_descriptor(root):
+    message = {'role': 'user', 'content': 'probe'}
+    return {'path': str(root/'.omc/relay.jsonl'), 'trace_id': 'trace-fixture',
+            'run_id': 'start-fixture', 'session_id': 'native-fixture',
+            'message_uuid': 'initial-fixture',
+            'message_sha256': hashlib.sha256(json.dumps(message, sort_keys=True,
+                separators=(',', ':')).encode()).hexdigest(),
+            'initial_sha256': 'a'*64, 'origin_monotonic': time.monotonic(),
+            'supervisor_sha256': 'b'*64}
+
+
+def relay_initial_replay(**updates):
+    value = {'type': 'user', 'isReplay': True, 'uuid': 'initial-fixture',
+             'session_id': 'native-fixture', 'parent_tool_use_id': None,
+             'message': {'role': 'user', 'content': 'probe'}}
+    value.update(updates)
+    return json.dumps(value).encode()+b'\n'
+
+
+def test_relay_trace_chunk_boundaries_and_raw_identity(tmp_path):
+    m = module()
+    assert hasattr(m, 'RelayTrace'), 'initial ACK trace implementation is absent'
+    (tmp_path/'.omc').mkdir()
+    descriptor = relay_descriptor(tmp_path)
+    trace = m.RelayTrace(tmp_path, descriptor)
+    raw = (json.dumps({'type': 'system', 'subtype': 'hook_started',
+                      'hook_id': 'h', 'note': '한글'}).encode()+b'\n'+
+           b'{"type":"system","subtype":"init"}\n'+relay_initial_replay())
+    chunks = [raw[:9], raw[9:42], raw[42:]]
+    forwarded = bytearray()
+    for chunk in chunks:
+        trace.received(chunk)
+        forwarded.extend(chunk)
+        trace.forwarded()
+    trace.settle()
+    assert bytes(forwarded) == raw
+    rows = [json.loads(line) for line in Path(descriptor['path']).read_text().splitlines()]
+    assert [r['sequence'] for r in rows] == list(range(1, len(rows)+1))
+    assert all(a['monotonic'] <= b['monotonic'] for a,b in zip(rows, rows[1:]))
+    received = [r for r in rows if r['event'] == 'raw_received']
+    assert [r['sha256'] for r in received] == [hashlib.sha256(c).hexdigest() for c in chunks]
+    events = [r for r in rows if r['event'] == 'native_event']
+    assert [(r['type'],r.get('subtype')) for r in events] == [
+        ('system','hook_started'),('system','init'),('user',None)]
+    assert all(hashlib.sha256(raw[r['offset_start']:r['offset_end']]).hexdigest()==r['sha256']
+               for r in events)
+    assert 'probe' not in Path(descriptor['path']).read_text()
+    assert '한글' not in Path(descriptor['path']).read_text()
+
+
+def test_relay_trace_initial_replay_lifetime(tmp_path):
+    m = module()
+    assert hasattr(m, 'RelayTrace'), 'initial ACK trace implementation is absent'
+    (tmp_path/'.omc').mkdir()
+    descriptor = relay_descriptor(tmp_path)
+    trace = m.RelayTrace(tmp_path, descriptor)
+    trace.received(relay_initial_replay(session_id='wrong-session'))
+    trace.forwarded()
+    assert trace.active
+    trace.received(relay_initial_replay()+b'{"type":"assistant","message":{"content":"tail"}}\n')
+    trace.forwarded()
+    assert not trace.active
+    trace.settle()
+    before = Path(descriptor['path']).read_bytes()
+    trace.received(b'{"type":"assistant"}\n')
+    trace.record('publisher_begin')
+    trace.stop('late-stop')
+    assert Path(descriptor['path']).read_bytes() == before
+    rows = [json.loads(line) for line in before.splitlines()]
+    assert not any(r.get('type')=='assistant' for r in rows)
+    assert any(r['event']=='trace_closed' and r['reason']=='initial_replay_forwarded' for r in rows)
+
+
+def test_relay_trace_ack_close_does_not_block_forwarding(tmp_path, monkeypatch):
+    import threading
+    m = module()
+    (tmp_path/'.omc').mkdir()
+    trace = m.RelayTrace(tmp_path, relay_descriptor(tmp_path))
+    entered, release = threading.Event(), threading.Event()
+    original = trace._write_payload
+    def delayed(raw):
+        if json.loads(raw)['event'] == 'trace_closed':
+            entered.set()
+            release.wait(timeout=2)
+        return original(raw)
+    monkeypatch.setattr(trace, '_write_payload', delayed)
+    trace.received(relay_initial_replay())
+    started = time.monotonic()
+    try:
+        trace.forwarded()
+        assert time.monotonic()-started < .2, 'ACK close write blocked native forwarding'
+        assert entered.wait(timeout=1)
+        assert not trace.active
+        with pytest.raises(ValueError, match='relay_trace_close_pending'):
+            trace.settle()
+    finally:
+        release.set()
+        if hasattr(trace, 'settle'):
+            trace.settle()
+    rows = [json.loads(x) for x in Path(trace.descriptor['path']).read_text().splitlines()]
+    assert rows[-2]['event'] == 'trace_closed'
+    assert rows[-2]['observed_monotonic'] < rows[-2]['monotonic']

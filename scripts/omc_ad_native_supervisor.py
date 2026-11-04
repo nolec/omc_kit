@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 LIMIT = 1048576
 CHUNK = 65536
@@ -789,6 +790,100 @@ def termination_observation(path, run_id, wrapper_pid, child_pid, shell_code):
         return result
 
 
+def relay_assessment(path, descriptor, raw_file, dialogue):
+    """Diagnose only persisted observations; no inferred child read/ACK times."""
+    result = {'status': 'unknown', 'blocker': None, 'reason': 'relay_trace_incomplete'}
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > LIMIT:
+            raise ValueError('relay_trace_file_invalid')
+        raw = path.read_bytes()
+        rows = [json.loads(line) for line in raw.splitlines()]
+        if not rows or not raw.endswith(b'\n'):
+            raise ValueError('relay_trace_empty_or_partial')
+        headers = [r for r in rows if r.get('event') == 'header']
+        if len(headers) != 1:
+            raise ValueError('relay_trace_header_required')
+        previous = descriptor['origin_monotonic']
+        writer = rows[0].get('writer_pid')
+        if type(writer) is not int or writer <= 0:
+            raise ValueError('relay_trace_writer_invalid')
+        pending_io, pending_spans = {}, set()
+        delayed_io = False
+        seen_replay = closed = header = False
+        interrupted = None
+        with raw_file.open('rb') as stream:
+            native = stream.read(LIMIT)
+        stream_refs = [r['path'] for r in rows if r.get('event') == 'native_stream']
+        if len(stream_refs) != 1:
+            raise ValueError('relay_trace_stream_required')
+        from omc_home_observation import local, requirement
+        root = Path(descriptor['candidate'])
+        if stream_refs[0] != requirement(root)['events_path']:
+            raise ValueError('relay_trace_stream_mismatch')
+        with local(root, stream_refs[0]).open('rb') as stream:
+            native = stream.read(LIMIT)
+        for sequence, row in enumerate(rows, 1):
+            if (row.get('schema_version') != 'omc-relay-trace/v1'
+                    or row.get('sequence') != sequence
+                    or row.get('writer_pid') != writer
+                    or any(row.get(k) != descriptor[k] for k in
+                           ('trace_id', 'run_id', 'session_id', 'message_uuid'))
+                    or type(row.get('monotonic')) not in (int, float)
+                    or not math.isfinite(row['monotonic'])
+                    or not previous <= row['monotonic'] <= time.monotonic()):
+                raise ValueError('relay_trace_binding_mismatch')
+            previous = row['monotonic']
+            event = row['event']
+            if event == 'header':
+                if any(row.get(k) != descriptor[k] for k in
+                       ('initial_sha256', 'message_sha256', 'supervisor_sha256', 'origin_monotonic',
+                        'relay_source_sha256')):
+                    raise ValueError('relay_trace_header_mismatch')
+                if row.get('clock_implementation') != time.get_clock_info('monotonic').implementation:
+                    raise ValueError('relay_trace_clock_mismatch')
+                header = True
+            elif event == 'trace_io_begin':
+                pending_io[row['write_id']] = row['monotonic']
+            elif event == 'trace_io_end':
+                if row['write_id'] not in pending_io:
+                    raise ValueError('relay_trace_io_unpaired')
+                begin = pending_io.pop(row['write_id'])
+                cutoff = dialogue.ack_deadline if dialogue else None
+                delayed_io |= (cutoff is not None and begin <= cutoff <= row['monotonic'])
+            elif event in ('raw_received', 'native_event'):
+                begin, end = row['offset_start'], row['offset_end']
+                if (type(begin) is not int or type(end) is not int or not 0 <= begin < end
+                        or end > len(native) or digest_bytes(native[begin:end]) != row['sha256']):
+                    raise ValueError('relay_trace_raw_binding_mismatch')
+                seen_replay |= event == 'native_event' and row.get('initial_replay') is True
+            elif event.endswith('_begin'):
+                pending_spans.add(event[:-6])
+            elif event.endswith('_end'):
+                pending_spans.discard(event[:-4])
+                if row.get('status') == 'interrupted':
+                    interrupted = event[:-4]
+            elif event == 'trace_closed':
+                closed = row.get('reason') == 'initial_replay_forwarded'
+        if pending_io or delayed_io:
+            result['blocker'] = 'trace_io'
+        elif interrupted or pending_spans:
+            result['blocker'] = interrupted or sorted(pending_spans)[0]
+        elif not seen_replay:
+            result['blocker'] = 'upstream_wait' if header else None
+        elif not header or not stream_refs or not closed or not dialogue or dialogue.error or dialogue.pending is not None:
+            result['blocker'] = 'supervisor_observation'
+        else:
+            result.update(status='confirmed', reason=None)
+        result.update(path=str(path), sha256=digest_bytes(raw), rows=len(rows))
+    except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
+        result['reason'] = str(exc)
+    return result
+
+
+def digest_bytes(raw):
+    return hashlib.sha256(raw).hexdigest()
+
+
 def supervise(args, resources):
     if os.name != 'posix':
         raise ValueError('POSIX required')
@@ -826,6 +921,15 @@ def supervise(args, resources):
     if (output in inputs or any(output in p.parents for p in inputs)
             or termination_path == prompt):
         raise ValueError('output/input collision')
+    relay_path = None
+    if getattr(args, 'relay_trace', None) is not None:
+        relay_path = owned_path(cwd, args.relay_trace)
+        if (relay_path.relative_to(cwd).parts[0] != '.omc'
+                or not args.run_id or not args.responses_file or not args.dialogue_session_id
+                or relay_path in inputs or relay_path == args.responses_file.absolute()
+                or relay_path.exists() or relay_path.is_symlink()
+                or not relay_path.parent.is_dir() or output in relay_path.parents):
+            raise ValueError('relay_trace_path_or_dialogue_invalid')
     # Claim once before opening logs; even spawn failures consume this output.
     output.mkdir(mode=0o700)
     # Read the original once. The bounded-memory private spool is both hashed and
@@ -889,6 +993,7 @@ def supervise(args, resources):
     storage_errors = []
     termination_errors = []
     wrapper_started = False
+    relay_descriptor = None
     capture_complete = True
     previous = {}
     selector = selectors.DefaultSelector()
@@ -937,6 +1042,22 @@ def supervise(args, resources):
             raise FileNotFoundError(launch_error)
         environment = {**os.environ, 'OMC_CHILD_EXIT_RECORD': str(exit_path),
                        'OMC_CHILD_PID_RECORD': str(pid_path)}
+        environment.pop('OMC_RELAY_TRACE', None)
+        environment.pop('OMC_RELAY_TRACE_ID', None)
+        if relay_path is not None:
+            relay_descriptor = {
+                'path': str(relay_path), 'trace_id': uuid.uuid4().hex,
+                'candidate': str(cwd),
+                'run_id': args.run_id, 'session_id': args.dialogue_session_id,
+                'message_uuid': dialogue.pending['uuid'],
+                'message_sha256': digest_bytes(json.dumps(dialogue.pending['message'],
+                    sort_keys=True, separators=(',', ':')).encode()),
+                'initial_sha256': prompt_hash.hexdigest(),
+                'origin_monotonic': (args.origin_monotonic if args.origin_monotonic is not None
+                                     else started['monotonic']),
+                'supervisor_sha256': digest(Path(__file__))}
+            relay_descriptor['relay_source_sha256'] = digest(Path(__file__).with_name('omc_home_observation.py'))
+            environment['OMC_RELAY_TRACE'] = json.dumps(relay_descriptor)
         proc = subprocess.Popen(argv, cwd=cwd, env=environment, stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 start_new_session=True)
@@ -1133,6 +1254,12 @@ def supervise(args, resources):
                           for n, s in streams.items()}}
     if dialogue_result is not None:
         result['dialogue'] = dialogue_result
+    if relay_path is not None:
+        result['relay_trace'] = relay_assessment(relay_path, relay_descriptor,
+                                                 output/'stdout.raw', dialogue)
+        if result['relay_trace']['status'] != 'confirmed':
+            result['status'] = 'incomplete_or_failed'
+            normal = False
     if observed is not None:
         result['termination_observation'] = observed
     try:
@@ -1162,6 +1289,7 @@ def main():
     parser.add_argument('--deadline-monotonic', type=float)
     parser.add_argument('--run-id')
     parser.add_argument('--phase-evidence', type=Path)
+    parser.add_argument('--relay-trace', type=Path)
     parser.add_argument('launch', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     try:

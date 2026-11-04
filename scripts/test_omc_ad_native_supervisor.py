@@ -1183,3 +1183,335 @@ def test_dialogue_cost_accepts_multiple_nonoverlapping_intervals(tmp_path):
     assert r['dialogue']['user_active_measurement_complete'] is True
     assert r['dialogue']['user_active_seconds']>=.04
     assert r['dialogue']['user_active_seconds']==r['dialogue']['user_active_observed_seconds']
+
+
+# Explicit model-free relay surfaces; no server, browser, install, or real hook.
+def relay_public_case(root, *, enabled=True, mode='fast', direct=False):
+    from test_omc_pipeline_guard_session_reset import prebound_project
+    import omc_pipeline_guard as guard
+    import omc_native_red_evidence as red
+    root.mkdir(parents=True, exist_ok=True)
+    print('RELAY_FIXTURE_ROOT='+str(root))
+    context, _ = prebound_project(root)
+    req = {'schema_version':'omc-home-motion-requirement/v1',
+        'session_id':context['session_id'],'run_id':context['run_id'],
+        'url':'http://localhost:3999/never-requested','events_path':'.omc/native.jsonl',
+        'receipt_path':'.omc/home-receipt.json','preflight_path':'.omc/ready.json',
+        'preflight_sha256':'a'*64}
+    requirement=root/'.omc/home-motion-requirement.json'
+    requirement.write_text(json.dumps(req))
+    basis=guard._load_approved_basis(root,context['session_id'])
+    basis['revision']=2
+    basis['checks'].append({'id':'browser-home','target':'synthetic only',
+        'method':'no network','pass_condition':'fixture binding','target_version':'fixture',
+        'home_motion_sha256':hashlib.sha256(requirement.read_bytes()).hexdigest()})
+    proposal=root/'.omc/proposal2.json';proposal.write_text(json.dumps(basis))
+    assert guard.cmd_approve_checks(root,proposal)==0
+    assert guard.cmd_contract_done(root,required_checks='tests,browser-home')==0
+    context=red.execution_context(root)
+    state_before=guard._state_path(root).read_bytes()
+    basis_file=guard._basis_path(root,context['session_id'])/'2.json'
+    basis_before=basis_file.read_bytes()
+    inbox=root/'.omc/responses.jsonl';inbox.write_text('')
+    prompt=root/'.omc/prompt.jsonl'
+    initial={'type':'user','uuid':'initial-fixture','session_id':'native-fixture',
+        'parent_tool_use_id':None,'message':{'role':'user','content':'probe'}}
+    prompt.write_text(json.dumps(initial)+'\n')
+    trace=root/'.omc/relay.jsonl';side=root/'.omc/oracle.jsonl'
+    if mode=='collision':trace.write_text('preserve this original')
+    if mode=='symlink':trace.symlink_to(prompt)
+    child=r'''
+import sys,json,time,os,hashlib
+from pathlib import Path
+root=Path(sys.argv[1]);mode=sys.argv[2];direct=sys.argv[3]=='1'
+def record(event):
+ with (root/'.omc/oracle.jsonl').open('a') as f:f.write(json.dumps({'event':event,'monotonic':time.monotonic(),'trace_id':os.environ.get('OMC_RELAY_TRACE_ID')})+'\n')
+def emit(value):print(json.dumps(value),flush=True)
+if not direct:
+ ref=json.loads(os.environ['OMC_SESSION_START_HANDOFF']);raw=(root/ref['path']).read_bytes()
+ assert hashlib.sha256(raw).hexdigest()==ref['sha256']
+ binding=json.loads(raw)['binding']['execution_context']
+ assert binding['run_id']=='start-fixture' and binding['basis_sha256']
+ assert 'OMC_RELAY_TRACE' not in os.environ
+ record('approved_handoff_received')
+emit({'type':'system','subtype':'hook_started','hook_id':'h'});time.sleep(.15)
+if mode=='hook':time.sleep(11)
+emit({'type':'system','subtype':'hook_response','hook_id':'h'})
+emit({'type':'system','subtype':'init','session_id':'native-fixture'})
+line=sys.stdin.readline();record('input_received');message=json.loads(line)
+if mode=='six':time.sleep(6)
+record('replay_emitted');emit({**message,'isReplay':True})
+if mode=='close-write':time.sleep(.2)
+content=[{'type':'text','text':'fixture output'}]
+emit({'type':'assistant','session_id':'native-fixture','uuid':'q1','parent_tool_use_id':None,'message':{'content':content}})
+emit({'type':'result','subtype':'success','is_error':False,'session_id':'native-fixture'})
+line=sys.stdin.readline()
+if line:
+ second=json.loads(line);emit({**second,'isReplay':True})
+ emit({'type':'result','subtype':'success','is_error':False,'session_id':'native-fixture'})
+ assert sys.stdin.read()==''
+'''
+    child_argv=[sys.executable,'-u','-c',child,str(root),mode,str(int(direct))]
+    # Faults affect the named I/O component only; public main/run_native stay real.
+    driver=r'''
+import sys,os,json,time,runpy
+from pathlib import Path
+root=Path(sys.argv[1]);mode=sys.argv[2]
+sys.path.insert(0,str(root/'scripts'))
+import omc_home_observation as module
+def pause(event):
+ with (root/'.omc/oracle.jsonl').open('a') as f:f.write(json.dumps({'event':event,'monotonic':time.monotonic()})+'\n')
+ time.sleep(11)
+if mode=='publisher':
+ original=module.publish;done=False
+ def slow(root):
+  global done
+  if not done:done=True;pause('publisher_enter')
+  return original(root)
+ module.publish=slow
+if mode in ('trace-write','trace-first-write','close-write'):
+ method='_write_raw' if mode=='trace-first-write' else '_write_payload'
+ original=getattr(module.RelayTrace,method);done=False
+ def slow(self,raw):
+  global done
+  if not done and (mode=='trace-first-write' or json.loads(raw)['event']==('trace_closed' if mode=='close-write' else 'raw_received')):
+   done=True;pause('trace_write_enter')
+   if mode=='trace-first-write':raise OSError('trace first record remains unavailable')
+  return original(self,raw)
+ setattr(module.RelayTrace,method,slow)
+if mode=='bad-binding':
+ value=json.loads(os.environ['OMC_RELAY_TRACE']);value['run_id']='wrong'
+ os.environ['OMC_RELAY_TRACE']=json.dumps(value)
+if mode=='trace-limit':
+ module.RelayTrace.MAX_BYTES=1
+if mode in ('raw-flush','stdout-write'):
+ class Proxy:
+  def __init__(self,stream):self.stream=stream;self.done=False
+  def __getattr__(self,name):return getattr(self.stream,name)
+  def __enter__(self):return self
+  def __exit__(self,*args):return self.stream.__exit__(*args)
+  def write(self,raw):
+   if mode=='stdout-write' and not self.done:self.done=True;pause('stdout_write_enter')
+   return self.stream.write(raw)
+  def flush(self):
+   if mode=='raw-flush' and not self.done:self.done=True;pause('raw_flush_enter')
+   return self.stream.flush()
+ if mode=='raw-flush':
+  original_open=Path.open
+  def changed(path,*args,**kwargs):
+   stream=original_open(path,*args,**kwargs)
+   return Proxy(stream) if path==root/'.omc/native.jsonl' and args and args[0]=='xb' else stream
+  Path.open=changed
+ else:
+  class Output:
+   buffer=Proxy(sys.stdout.buffer)
+   def __getattr__(self,name):return getattr(sys.__stdout__,name)
+  sys.stdout=Output()
+sys.argv=[str(root/'scripts/omc_home_observation.py'),'run','--target',str(root),'--launch',*json.loads(sys.argv[3])]
+raise SystemExit(module.main())
+'''
+    launch=child_argv if direct else [sys.executable,'-u','-c',driver,str(root),mode,json.dumps(child_argv)]
+    launch=['/bin/sh','-c',RECORDER,'relay-recorder',*launch]
+    origin=time.monotonic()
+    argv=[sys.executable,str(CLI),'--cwd',str(root),'--output',str(root/'out'),
+        '--prompt',str(prompt),'--responses-file',str(inbox),'--dialogue-session-id','native-fixture',
+        '--child-pid-file',str(root/'.omc/child.pid'),'--child-exit-file',str(root/'.omc/child.exit'),
+        '--timeout','1800','--drain','12','--origin-monotonic',str(origin),
+        '--deadline-monotonic',str(origin+1800),'--run-id','start-fixture',
+        '--phase-evidence',str(root/'.omc/unrun-phase.json')]
+    if enabled and not direct:argv+=['--relay-trace',str(trace)]
+    proc=subprocess.Popen([*argv,'--',*launch],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    sent=0;closed=False;capture=root/'out/worker/capture';started=time.monotonic()
+    while proc.poll() is None:
+        raw=capture/'stdout.raw'
+        text=raw.read_text(errors='replace') if raw.exists() else ''
+        terminal=sum(1 for line in text.splitlines() if '"type": "result"' in line)
+        if terminal and not closed:
+            if mode=='followup' and sent==0:
+                content=[{'type':'text','text':'fixture output'}]
+                row={'type':'response','run_id':'start-fixture','session_id':'native-fixture',
+                    'sequence':1,'question_id':'q1','question_sha256':hashlib.sha256(json.dumps(content,sort_keys=True,separators=(',',':')).encode()).hexdigest(),
+                    'response_id':'second-fixture','text':'next','sha256':hashlib.sha256(b'next').hexdigest()}
+                with inbox.open('a') as f:f.write(json.dumps(row)+'\n')
+                sent=1
+            elif mode!='followup' or terminal==2:
+                with inbox.open('a') as f:f.write(json.dumps({'type':'close','run_id':'start-fixture','session_id':'native-fixture'})+'\n')
+                closed=True
+        if time.monotonic()-started>35:
+            proc.terminate();proc.wait(timeout=14)
+            raise AssertionError('model-free harness deadline; no retry')
+        time.sleep(.025)
+    stdout,stderr=proc.communicate()
+    result_file=capture/'result.json'
+    assert result_file.exists(), (stdout,stderr)
+    result=json.loads(result_file.read_bytes())
+    rows=[json.loads(line) for line in trace.read_text().splitlines()] if trace.is_file() and mode not in ('collision','symlink') else []
+    oracle=[json.loads(line) for line in side.read_text().splitlines()] if side.exists() else []
+    assert guard._state_path(root).read_bytes()==state_before
+    assert basis_file.read_bytes()==basis_before
+    if enabled and not direct and oracle and oracle[0]['event']=='approved_handoff_received':
+        assert oracle[0]['trace_id']==rows[0]['trace_id']
+    if oracle and not direct:assert oracle[0]['event']=='approved_handoff_received' or mode in ('trace-write','trace-first-write','bad-binding','trace-limit')
+    return proc,result,rows,oracle,capture
+
+
+def assert_relay_ok(case):
+    proc,result,rows,oracle,capture=case
+    assert proc.returncode==0, (capture/'stderr.raw').read_text()
+    assert result['dialogue']['complete']
+    assert result['relay_trace']['status']=='confirmed'
+    assert result['relay_trace']['blocker'] is None
+    assert result['raw_capture_complete']
+    assert rows and any(r['event']=='trace_closed' for r in rows)
+    return result
+
+
+def test_relay_trace_public_run_native_fast_pair(tmp_path):
+    off=relay_public_case(tmp_path/'off',enabled=False)
+    on=relay_public_case(tmp_path/'on')
+    assert off[0].returncode==0 and off[1]['dialogue']['complete']
+    assert 'relay_trace' not in off[1]
+    assert_relay_ok(on)
+    for stream in ['stdout.raw','stderr.raw']:
+        assert (off[4]/stream).read_bytes()==(on[4]/stream).read_bytes()
+    def ack(case):
+        rows=[json.loads(l) for l in (case[4]/'dialogue.jsonl').read_text().splitlines()]
+        return next(r['monotonic'] for r in rows if r['event']=='replay_confirmed')-next(r['monotonic'] for r in rows if r['event']=='write_completed')
+    assert ack(on)<10 and abs(ack(on)-ack(off))<=1
+
+
+def test_relay_trace_public_run_native_six_second_pair(tmp_path):
+    off=relay_public_case(tmp_path/'off',enabled=False,mode='six')
+    on=relay_public_case(tmp_path/'on',mode='six')
+    assert_relay_ok(on)
+    assert off[0].returncode==0
+    assert (off[4]/'stdout.raw').read_bytes()==(on[4]/'stdout.raw').read_bytes()
+    def ack(case):
+        r=[json.loads(l) for l in (case[4]/'dialogue.jsonl').read_text().splitlines()]
+        return next(x['monotonic'] for x in r if x['event']=='replay_confirmed')-next(x['monotonic'] for x in r if x['event']=='write_completed')
+    assert 6<=ack(on)<10 and abs(ack(on)-ack(off))<=1
+
+
+def test_relay_trace_public_hook_delay(tmp_path):
+    case=relay_public_case(tmp_path,mode='hook')
+    assert case[1]['dialogue']['error']=='dialogue_replay_unconfirmed'
+    assert case[1]['relay_trace']['blocker']=='upstream_wait'
+    assert not any(x['event']=='replay_emitted' for x in case[3])
+
+
+def test_relay_trace_public_publisher_delay(tmp_path):
+    case=relay_public_case(tmp_path,mode='publisher')
+    assert case[1]['dialogue']['error']=='dialogue_replay_unconfirmed'
+    assert case[1]['relay_trace']['blocker']=='publisher'
+    assert any(x['event']=='replay_emitted' for x in case[3])
+
+
+def test_relay_trace_public_raw_and_stdout_delay(tmp_path):
+    for mode,blocker in [('raw-flush','raw_store'),('stdout-write','stdout')]:
+        case=relay_public_case(tmp_path/mode,mode=mode)
+        assert case[1]['dialogue']['error']=='dialogue_replay_unconfirmed'
+        assert case[1]['relay_trace']['blocker']==blocker
+
+
+def test_relay_trace_public_trace_write_delay_and_unknown(tmp_path):
+    for mode,blocker in [('trace-write','trace_io'),('trace-first-write',None)]:
+        case=relay_public_case(tmp_path/mode,mode=mode)
+        assert case[1]['dialogue']['error']=='dialogue_replay_unconfirmed'
+        assert case[1]['relay_trace']['status']=='unknown'
+        assert case[1]['relay_trace']['blocker']==blocker
+        assert any(r['event']=='trace_write_enter' for r in case[3])
+        assert case[1]['raw_capture_complete']
+        if mode=='trace-write':
+            native=(tmp_path/mode/'.omc/native.jsonl').read_bytes()
+            assert native==(case[4]/'stdout.raw').read_bytes()
+
+
+def test_relay_trace_public_initial_ack_lifetime(tmp_path):
+    case=relay_public_case(tmp_path,mode='followup')
+    assert_relay_ok(case)
+    assert case[1]['dialogue']['responses_confirmed']==1
+    assert sum(r['event']=='native_event' and r.get('type')=='user' for r in case[2])==1
+    assert case[2][-2]['event']=='trace_closed' or any(r['event']=='trace_closed' for r in case[2])
+
+
+def test_relay_trace_public_binding_and_storage_failures(tmp_path):
+    for mode in ['bad-binding','trace-limit']:
+        case=relay_public_case(tmp_path/mode,mode=mode)
+        assert case[0].returncode!=0
+        assert case[1]['relay_trace']['status']=='unknown'
+    for mode in ['collision','symlink']:
+        root=tmp_path/mode
+        try:
+            relay_public_case(root,mode=mode)
+        except AssertionError as exc:
+            assert 'relay' in str(exc).lower() or 'exists' in str(exc).lower()
+        else:
+            raise AssertionError('unsafe trace path must reject before capture')
+        assert (root/'.omc/relay.jsonl').exists()
+        if mode=='collision':assert (root/'.omc/relay.jsonl').read_text()=='preserve this original'
+        else:assert (root/'.omc/relay.jsonl').is_symlink()
+    case=relay_public_case(tmp_path/'reader')
+    assert_relay_ok(case)
+    import omc_ad_native_supervisor as supervisor
+    from types import SimpleNamespace
+    path=tmp_path/'reader/.omc/relay.jsonl'
+    original=path.read_bytes()
+    header=next(row for row in case[2] if row['event']=='header')
+    descriptor=dict(header,candidate=str(tmp_path/'reader'))
+    for field,value in [('clock_implementation','wrong-clock'),('relay_source_sha256','0'*64),('writer_pid',-1)]:
+        rows=[dict(row) for row in case[2]]
+        next(row for row in rows if row['event']=='header')[field]=value
+        path.write_text(''.join(json.dumps(row)+'\n' for row in rows))
+        result=supervisor.relay_assessment(path,descriptor,case[4]/'stdout.raw',
+            SimpleNamespace(ack_deadline=None,pending=None,error=None))
+        assert result['status']=='unknown'
+        path.write_bytes(original)
+    from test_omc_home_observation import relay_descriptor
+    import omc_home_observation as home
+    root=tmp_path/'cap';(root/'.omc').mkdir(parents=True)
+    trace=home.RelayTrace(root,relay_descriptor(root))
+    with pytest.raises(ValueError):trace.record('oversized',metadata='x'*65537)
+    trace.close()
+
+
+def test_relay_trace_direct_path_is_not_applicable(tmp_path):
+    case=relay_public_case(tmp_path,direct=True)
+    assert case[0].returncode==0
+    assert case[1]['dialogue']['complete'] and 'relay_trace' not in case[1]
+    assert not (tmp_path/'.omc/relay.jsonl').exists()
+
+
+def test_relay_trace_public_close_write_delay(tmp_path):
+    started = time.monotonic()
+    case = relay_public_case(tmp_path, mode='close-write')
+    assert time.monotonic()-started < 5, 'post-ACK trace close held the native runner'
+    assert case[0].returncode != 0
+    assert case[1]['relay_trace']['status'] == 'unknown'
+    assert case[1]['dialogue']['error'] is None
+    assert case[1]['raw_capture_complete']
+    assert b'fixture output' in (case[4]/'stdout.raw').read_bytes()
+    assert (tmp_path/'.omc/native.jsonl').read_bytes() == (case[4]/'stdout.raw').read_bytes()
+    assert any(r['event']=='trace_write_enter' for r in case[3])
+
+
+def test_relay_trace_required_header_and_native_stream(tmp_path):
+    case = relay_public_case(tmp_path)
+    assert_relay_ok(case)
+    import omc_ad_native_supervisor as supervisor
+    from types import SimpleNamespace
+    path=tmp_path/'.omc/relay.jsonl'
+    original=path.read_bytes()
+    descriptor=dict(next(r for r in case[2] if r['event']=='header'),candidate=str(tmp_path))
+    for event in ('header', 'native_stream'):
+        for change in ('missing','renamed','duplicate'):
+            rows=[dict(r) for r in case[2]]
+            index=next(i for i,r in enumerate(rows) if r['event']==event)
+            if change=='missing':rows.pop(index)
+            elif change=='renamed':rows[index]['event']='unrecognized_metadata'
+            else:rows.insert(index,dict(rows[index]))
+            for i,row in enumerate(rows,1):row['sequence']=i
+            path.write_text(''.join(json.dumps(row)+'\n' for row in rows))
+            result=supervisor.relay_assessment(path,descriptor,case[4]/'stdout.raw',
+                SimpleNamespace(ack_deadline=None,pending=None,error=None))
+            assert result['status']=='unknown', (event,change,result)
+    path.write_bytes(original)

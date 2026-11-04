@@ -22,6 +22,186 @@ import time
 
 REQUIREMENT = '.omc/home-motion-requirement.json'
 SCHEMA = 'omc-home-motion-observation/v1'
+RELAY_TRACE_ENV = 'OMC_RELAY_TRACE'
+
+
+class RelayTrace:
+    """One initial replay window; never a replacement for native custody/ACK.
+
+    I/O markers do not recursively trace themselves. A stalled first marker is
+    deliberately unknown; an unmatched persisted marker identifies trace I/O.
+    """
+    MAX_BYTES = 1048576
+    MAX_ROW = 65536
+
+    def __init__(self, root, descriptor):
+        self.fd = None
+        self.active = False
+        self.sequence = self.written = self.chunk = self.offset = self.write_id = 0
+        self.buffer = b''
+        self.buffer_start = 0
+        self.pending_replay = False
+        self.close_worker = None
+        self.close_error = None
+        self.descriptor = descriptor
+        for key in ('trace_id', 'run_id', 'session_id', 'message_uuid',
+                    'message_sha256', 'initial_sha256', 'supervisor_sha256'):
+            if not isinstance(descriptor.get(key), str) or not descriptor[key]:
+                raise ValueError('relay_trace_identity_invalid')
+        origin = descriptor.get('origin_monotonic')
+        if not finite_number(origin) or not 0 <= origin <= time.monotonic():
+            raise ValueError('relay_trace_clock_invalid')
+        path = Path(descriptor['path'])
+        name = str(path.relative_to(root.resolve()))
+        path = local(root.resolve(), name)
+        self.fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        self.active = True
+        try:
+            self.record('header', origin_monotonic=origin,
+                        initial_sha256=descriptor['initial_sha256'],
+                        message_sha256=descriptor['message_sha256'],
+                        supervisor_sha256=descriptor['supervisor_sha256'],
+                        relay_source_sha256=sha(Path(__file__).read_bytes()),
+                        clock_implementation=time.get_clock_info('monotonic').implementation)
+        except BaseException:
+            self.close()
+            raise
+
+    @classmethod
+    def from_environment(cls, root, context, events):
+        raw = os.environ.get(RELAY_TRACE_ENV)
+        if raw is None:
+            return None
+        value = json.loads(raw)
+        if not isinstance(value, dict) or context is None or value.get('run_id') != context['run_id']:
+            raise ValueError('relay_trace_context_mismatch')
+        trace = cls(root, value)
+        try:
+            trace.record('native_stream', path=str(events.relative_to(root)))
+        except BaseException:
+            trace.close()
+            raise
+        return trace
+
+    def _write_raw(self, raw):
+        view = memoryview(raw)
+        while view:
+            count = os.write(self.fd, view)
+            if not count:
+                raise OSError('relay_trace_short_write')
+            view = view[count:]
+
+    def _write_payload(self, raw):
+        self._write_raw(raw)
+
+    def _emit(self, event, values, *, payload=False):
+        row = dict(schema_version='omc-relay-trace/v1', sequence=self.sequence+1,
+                   trace_id=self.descriptor['trace_id'], run_id=self.descriptor['run_id'],
+                   session_id=self.descriptor['session_id'], writer_pid=os.getpid(),
+                   message_uuid=self.descriptor['message_uuid'], monotonic=time.monotonic(),
+                   event=event, **values)
+        raw = (json.dumps(row, separators=(',', ':'))+'\n').encode()
+        if len(raw) > self.MAX_ROW or self.written+len(raw) > self.MAX_BYTES:
+            raise ValueError('relay_trace_limit')
+        (self._write_payload if payload else self._write_raw)(raw)
+        self.sequence += 1
+        self.written += len(raw)
+
+    def record(self, event, **values):
+        if not self.active:
+            return
+        self._record(event, **values)
+
+    def _record(self, event, **values):
+        observed = values.pop('observed_monotonic', time.monotonic())
+        self.write_id += 1
+        ident = self.write_id
+        self._emit('trace_io_begin', {'write_id': ident})
+        self._emit(event, dict(observed_monotonic=observed, **values), payload=True)
+        self._emit('trace_io_end', {'write_id': ident})
+
+    def received(self, raw):
+        if not self.active:
+            return
+        start = self.offset
+        self.offset += len(raw)
+        self.chunk += 1
+        self.record('raw_received', chunk=self.chunk, offset_start=start,
+                    offset_end=self.offset, length=len(raw), sha256=sha(raw))
+        if self.pending_replay:
+            return
+        self.buffer += raw
+        if len(self.buffer) > self.MAX_BYTES:
+            raise ValueError('relay_trace_line_limit')
+        while b'\n' in self.buffer:
+            line, self.buffer = self.buffer.split(b'\n', 1)
+            begin = self.buffer_start
+            self.buffer_start += len(line)+1
+            try:
+                value = json.loads(line)
+            except (ValueError, RecursionError):
+                value = {}
+            if not isinstance(value, dict):
+                value = {}
+            kind = value.get('type')
+            metadata = {'type': kind if isinstance(kind, str) else 'unknown'}
+            for key in ('subtype', 'hook_id', 'uuid'):
+                if isinstance(value.get(key), str):
+                    metadata[key] = value[key]
+            replay = (kind == 'user' and value.get('isReplay') is True
+                      and value.get('uuid') == self.descriptor['message_uuid']
+                      and value.get('session_id') == self.descriptor['session_id']
+                      and value.get('parent_tool_use_id') is None
+                      and sha(json.dumps(value.get('message'), sort_keys=True,
+                                         separators=(',', ':')).encode()) == self.descriptor['message_sha256'])
+            self.record('native_event', offset_start=begin, offset_end=self.buffer_start,
+                        sha256=sha(line+b'\n'), initial_replay=replay, **metadata)
+            if replay:
+                self.pending_replay = True
+                self.buffer = b''
+                break
+
+    def forwarded(self, *, stdout_status=None):
+        if self.active and self.pending_replay:
+            # Freeze the initial window immediately. Disk I/O after native flush
+            # belongs to this daemon only; forwarding never waits for that I/O.
+            self.active = False
+            forwarded_at = time.monotonic()
+            def finish():
+                try:
+                    if stdout_status is not None:
+                        self._record('stdout_end', status=stdout_status, observed_monotonic=forwarded_at)
+                    self._record('trace_closed', reason='initial_replay_forwarded',
+                                 observed_monotonic=forwarded_at)
+                except BaseException as exc:
+                    self.close_error = exc
+                finally:
+                    self.close()
+            self.close_worker = threading.Thread(target=finish, daemon=True)
+            self.close_worker.start()
+
+    def settle(self):
+        # Only after native EOF/wait: a stalled trace can fail diagnostics, never
+        # extend native delivery or hold process cleanup until the whole deadline.
+        if self.close_worker is not None:
+            self.close_worker.join(timeout=.1)
+            if self.close_worker.is_alive():
+                raise ValueError('relay_trace_close_pending')
+            if self.close_error is not None:
+                raise ValueError('relay_trace_close_failed: '+str(self.close_error))
+
+    def stop(self, reason):
+        if self.active:
+            try:
+                self.record('trace_closed', reason=reason)
+            finally:
+                self.close()
+
+    def close(self):
+        self.active = False
+        if self.fd is not None:
+            fd, self.fd = self.fd, None
+            os.close(fd)
 
 
 def sha(raw: bytes) -> str:
@@ -463,11 +643,56 @@ def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, c
     except FileExistsError as exc:
         raise NativeStreamAlreadyExists('native_stream_already_exists') from exc
     with stream as output:
-        def forward(raw):
-            output.write(raw)
-            output.flush()
-            sys.stdout.buffer.write(raw)
-            sys.stdout.buffer.flush()
+        relay = None
+        trace_error = None
+
+        def tap(method, *args, **kwargs):
+            nonlocal trace_error
+            if relay is not None and relay.active and trace_error is None:
+                try:
+                    getattr(relay, method)(*args, **kwargs)
+                except (Exception, NativeRunInterrupted) as exc:
+                    trace_error = exc
+                    relay.close()
+
+        def note(event, **values):
+            tap('record', event, **values)
+
+        def check_trace():
+            if trace_error is not None:
+                if isinstance(trace_error, NativeRunInterrupted):
+                    raise trace_error
+                raise NativePublisherFailure('relay_trace_failed: '+str(trace_error)) from trace_error
+
+        def forward(raw, *, diagnostic=True):
+            if diagnostic:
+                tap('received', raw)
+                note('raw_store_begin')
+            stored = False
+            try:
+                output.write(raw)
+                output.flush()
+                stored = True
+            finally:
+                if diagnostic:
+                    note('raw_store_end', status='completed' if stored else 'interrupted')
+            if diagnostic:
+                note('stdout_begin')
+            forwarded = False
+            try:
+                sys.stdout.buffer.write(raw)
+                sys.stdout.buffer.flush()
+                forwarded = True
+            finally:
+                if diagnostic:
+                    if forwarded and relay is not None and relay.active and relay.pending_replay:
+                        tap('forwarded', stdout_status='completed')
+                    else:
+                        note('stdout_end', status='completed' if forwarded else 'interrupted')
+            if diagnostic:
+                tap('forwarded')
+                # A trace error must never discard the native bytes just read.
+                check_trace()
 
         from omc_pipeline_guard import SESSION_START_HANDOFF_ENV, create_session_start_handoff
         child_env = dict(os.environ)
@@ -498,21 +723,46 @@ def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, c
             if os.name == 'posix':
                 for signum in (signal.SIGTERM, signal.SIGINT):
                     previous_handlers[signum] = signal.signal(signum, interrupted)
+            try:
+                relay = RelayTrace.from_environment(root, context, events)
+            except Exception as exc:
+                raise NativePublisherFailure('relay_trace_failed: '+str(exc)) from exc
+            # Only the selected wrapper may write this trace. Nested native
+            # invocations get a correlation ID, never the writer descriptor.
+            child_env.pop(RELAY_TRACE_ENV, None)
+            child_env.pop('OMC_RELAY_TRACE_ID', None)
+            if relay is not None:
+                child_env['OMC_RELAY_TRACE_ID'] = relay.descriptor['trace_id']
             if pending_signal is not None:
                 raise NativeRunInterrupted(pending_signal)
+            note('spawn_begin')
+            check_trace()
             proc = subprocess.Popen(argv, cwd=root, stdout=subprocess.PIPE, env=child_env,
                                     start_new_session=os.name == 'posix')
+            note('spawn_end', child_pid=proc.pid)
+            check_trace()
             if pending_signal is not None:
                 raise NativeRunInterrupted(pending_signal)
             # read1 does not prefetch unforwarded lines into a hidden buffer.
             for chunk in iter(lambda: proc.stdout.read1(65536), b''):
                 forward(chunk)
                 if b'\n' in chunk:
-                    for publisher in publishers:
-                        publisher()
+                    for index, publisher in enumerate(publishers):
+                        note('publisher_begin', publisher=index)
+                        check_trace()
+                        published = False
+                        try:
+                            publisher()
+                            published = True
+                        finally:
+                            note('publisher_end', publisher=index,
+                                 status='completed' if published else 'interrupted')
+                        check_trace()
             if context is not None:
                 verify_execution_context(root, context)
             code = proc.wait()
+            if relay is not None:
+                relay.settle()
             if os.name == 'posix':
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
@@ -529,7 +779,7 @@ def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, c
                 immediate=isinstance(exc, NativeRunInterrupted),
                 signals_sent=termination_state['signals_sent'])
             termination_state['drain_complete'] = drain_complete
-            forward(tail)
+            forward(tail, diagnostic=False)
             from omc_native_red_evidence import write_new
             import uuid
             ref = write_new(root, '.omc/native-stream-errors/'+uuid.uuid4().hex+'.json', {
@@ -548,6 +798,13 @@ def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, c
             raise NativePublisherFailure('native_publisher_failed: '+ref['path']) from exc
         finally:
             stopping = True
+            if relay is not None and relay.active:
+                try:
+                    relay.stop('process_exit_or_interruption')
+                except Exception as exc:
+                    # stderr is independent of both native and relay streams.
+                    print('relay_trace_close_failed: '+str(exc), file=sys.stderr)
+                    trace_error = trace_error or exc
             if proc is not None and os.name == 'posix':
                 # Releasing the wrapper must not leave its detached group alive,
                 # including descendants which already closed stdout normally.
