@@ -1,6 +1,15 @@
 # Automatic Model Routing Roadmap
 
-## 현재 · main ef87d295 반영·푸시 / ACK 계측 검수 통과·실제 비교 HOLD · 2026-11-04
+## 현재 · 편집 재개 지원 원본 반영·검증 실패 / 원인 미확정·공식 보류 · 2026-11-08
+
+- **상태:** 기준 main 648e990b0c3082242fd04e4c761f9bc4f1cbf021. 승인 코드·테스트 5개는 원본 작업 공간에 반영·스테이징됐으나 미커밋이다. 격리 합성 284개 통과와 원본 검증 실패를 구분한다.
+- **원본 검증:** 전체 실행 두 번 각각 283개 통과·1개 실패(116.28초, 144.10초). test_supervisor_stops_actual_process_before_expiry에서 supervised_execution_timeout 대신 termination_unconfirmed. 단독 실행 통과는 전체 실패를 해소하지 않는다. 원인 미확정이며 실제 시계 확인 불가를 유지한다.
+- **발행 상태:** 원본 작업 보고 봉인은 record_deadline_expired로 실패했다. 검증 실패와 보고 봉인 실패는 별개다. 만료 문맥·기존 원장·실패 원문을 보존하며 새 문서 커밋으로 과거 완료를 소급 인정하지 않는다.
+- **보존·경계:** 과거 보존 재검증 UNKNOWN·기존 공식 보류 유지. 실제 발급/재개·설치·모델 호출·비교·push 미실행. 기존 스테이징 5개는 이번 문서 커밋에서 제외한다.
+- **다음 결정:** 원인 미확정을 유지하고 별도 승인된 관측 결과만 검토한다. 실제 재개·설치·전체 비교로 자동 진행하지 않는다.
+- **근거:** .omc/edit-resume-original-apply-20261107-01/green-output.txt; full-standard-context-recheck.txt; termination-readonly-investigation.txt. 로컬 원문이며 영구 보존·다른 checkout 접근을 보장하지 않는다.
+
+## 이전 이력 · main ef87d295 반영·푸시 / ACK 계측 검수 통과·실제 비교 HOLD · 2026-11-04
 
 - 목표: oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.
 - 현재 판정: 문서 최신화 기준 main과 origin/main은 ef87d29528c779a6561a5427c8d0d86dc1667a8a다. 승인된 ACK 계측 4개 파일을 fast-forward 통합·푸시했다. 코드·관련 회귀 통과와 실제 업무 효과를 구분하며 실제 홈 NOT_VERIFIED·비교 HOLD·비용 비교 미판정을 유지한다.
