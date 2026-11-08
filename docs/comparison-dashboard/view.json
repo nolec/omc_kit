@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "현재 · 관측 도구 격리 검증·원본 반영 완료 / 원본 9개 통과·운영 게이트 통과 · 2026-11-08",
+    "decision": "현재 · GREEN 감사 원문138바이트 별도 확보·해시 일치 / RED·baseline 복구 미확인·공식 보류 · 2026-11-08",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2049,9 +2049,9 @@
         "historical_next_work": "설치된0.5.9의 기본 다섯 항목 안내만 제공한 새 격리 사례에서 사용자 이해를 확인한다. 형식 동의·코드 검증·설치를 실제 이해 효과로 집계하지 않으며 실무·다중 사례 효과·경쟁 우열은 미검증으로 유지한다."
       }
     ],
-    "next": "이번 원본 반영·문서 커밋 결과를 별도로 검토한다. 실제 비교·설치·재개는 별도 지시 없이 진행하지 않는다. 현재 승인·테스트를 고객 가치·실제 모델 성능·경쟁 우열로 해석하지 않는다.",
+    "next": "현재의 부분 증거 확보와 보류를 유지한다. 추가 복구·도구 수정·재검증·실제 비교는 별도 지시 전 진행하지 않는다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "현재 · 관측 도구 격리 검증·원본 반영 완료 / 원본 9개 통과·운영 게이트 통과 · 2026-11-08"
+    "current_priority": "현재 · GREEN 감사 원문138바이트 별도 확보·해시 일치 / RED·baseline 복구 미확인·공식 보류 · 2026-11-08"
   },
   "decision": {
     "candidate": "실제 비교 차단 원인 보완 후 업무 재검증",
@@ -2131,22 +2131,22 @@
   },
   "current_update": {
     "date": "2026-11-08",
-    "status": "현재 · 관측 도구 격리 검증·원본 반영 완료 / 원본 9개 통과·운영 게이트 통과 · 2026-11-08",
+    "status": "현재 · GREEN 감사 원문138바이트 별도 확보·해시 일치 / RED·baseline 복구 미확인·공식 보류 · 2026-11-08",
     "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
-    "main_commit": "a7d921fc8615125e34fbab1e539ef459787c6da5",
-    "main_commit_role": "이번 코드2개·문서4개 커밋 전 기준; 이번 커밋 OID는 Git 이력으로 확인",
+    "main_commit": "d1a88c9636d5d1cb3e5877d6c711f1ff864ee2d8",
+    "main_commit_role": "문서 최신화 전 코드 기준; 후속 문서 커밋은 Git 이력으로 확인",
     "comparison_state": "HOLD",
     "actual_home": "NOT_VERIFIED",
     "historical_preservation_revalidation": "UNKNOWN",
     "existing_formal_holds": "PRESERVED",
     "latest_fields": {
-      "상태": "승인 관측 도구·테스트 2개를 원본에 바이트·권한 동일하게 반영했다. 격리 검증 완료와 원본 반영 완료를 구분한다. 이번 로컬 커밋 범위는 승인 코드·테스트 2개와 문서 4개이며 기존 스테이징 5개는 제외한다.",
-      "검증 구분": "기존 격리 검증은 9개 통과·2.81초다. 원본 지정 테스트는 별도 1회 실행해 9개 통과·2.86초를 확인했다. TDD·완료 게이트는 별도 운영 공간에서 통과·published됐으며 원본 만료 문맥의 갱신이나 원본 기존 실패의 해소가 아니다.",
-      "운영 기록": "운영 기준선6통과→승인 테스트로 실제 RED3실패·기존6통과→현 작업 RED 등록→승인본 적용. 초기 RED 설명의 누락1건은 red-corrected.json으로 바로잡고 최초 원문을 보존했다. 첫 보고 준비는 허용 상한 초과로 실패했고 문맥은 미생성; 새 ID observer-original-apply-20261108-02에서 정상 봉인했다. 구현·원본 테스트 실패와 보고 준비 실패를 혼동하지 않는다.",
-      "보존": "원본 HEAD·기존 인덱스 바이트·스테이징5개 패치와 보호 파일15,011개는 원본 반영 검증 시 동일했다. 승인2개·동일 ABI 검증 근거만 새로 추가했다. 이번 커밋에서는 승인2개를 추적하되 기존5개 스테이징·원문·만료 기록을 보존한다. 과거 보존 재검증 UNKNOWN·기존 공식 보류 유지.",
-      "한계·미실행": "자손 전체 종료 미검증·비교0/4회 NOT_RUN·실제 시계 확인 불가를 유지한다. 오류·지연 회귀는 합성 의존성 주입이며 실제 OS 거부 재현이 아니다. 실제 비교·설치·발급/재개·모델 호출·push 미실행. 편집 재개 지원 기존 원본283통과·1실패와 원인 미확정·보고 봉인 실패는 그대로다.",
-      "다음 결정": "이번 원본 반영·문서 커밋 결과를 별도로 검토한다. 실제 비교·설치·재개는 별도 지시 없이 진행하지 않는다. 현재 승인·테스트를 고객 가치·실제 모델 성능·경쟁 우열로 해석하지 않는다.",
-      "근거": "원본 반영 운영 기록: /private/tmp/omc-observer-original-apply-rh2_8h7t/work/.omc/state/observer-original-apply/ (original-green-output.txt, tdd-output.txt, preservation.json). 완료 보고: 같은 work의 .omc/state/output-records/a63c1d6f72a94d6ca305b2030bec0295/observer-original-apply-20261108-02/manifest.json. 이전 격리 검증·승인 원문은 이전 최신화 기록으로 보존한다. 로컬 임시 자료이며 영구 보존·다른 checkout 접근을 보장하지 않는다."
+      "현재 판정": "GREEN 감사 원문138바이트를 실행 로그에서 별도 파일로 확보하고 이전 SHA-256과 완전히 일치함을 확인했다. 덮어쓴 경로에 복원하거나 값을 재생성하지 않았다. GREEN 일부 증거 확보와 감사3개 전체 복구·보존 검증 통과는 별개다.",
+      "복구 구분": "GREEN은 원본 바이트 별도 확보·해시 일치다. RED는 당시 값의 Python 딕셔너리 표시만 확인했고 동일한 원본 JSON 바이트는 미확보다. baseline은 이전 해시만 확보했고 동일 원본 바이트는 미확보다. RED·baseline 복구 미확인을 복구 불가능이나 원본 부재로 단정하지 않는다.",
+      "손상·공식 상태": "플러그인 등록 보완용 실행기의 감사 경로 분리 오류로 이전 baseline·RED·GREEN 감사 JSON3개가 덮어써졌다. 보존 목록28개 중3개 불일치·나머지25개 일치다. 표준 합성 진입14개 통과·의도한 본문 예외1xfail·실제 프로세스 검사6개 제외와 별개로 필수 preservation 검증 실패, complete-task 보류·blocked 보고는 published다. GREEN 확보·사용자 수용·문서 커밋으로 이 공식 보류를 해제하지 않는다.",
+      "이전 검증과 범위": "d1a88c96의 원본 관측 도구·테스트2개와 원본9개 통과·별도 운영 공간 TDD/완료 게이트 통과는 이전 범위의 결과다. 이후 합성 pytest 확장·플러그인 보완은 독립 복제본에만 있고 원본 미반영이다. 실제 종료·자손 전체 종료·독립 감시 미검증, 비교0/4회 NOT_RUN과 기존283통과·1실패의 원인 미확정은 유지한다.",
+      "보존": "별도 확보 검토에서 덮어쓴3개 파일의 현재 바이트·나머지25개 기록을 그대로 확인했다. 원본 보호 파일15,013개·기존 스테이징5개·만료 기록은 일치했다. 과거 보존 재검증 UNKNOWN·기존 공식 보류를 유지한다. 이번 변경은 문서4개뿐이며 테스트·재생성·코드 반영·push·모델 호출은 하지 않는다.",
+      "근거": "별도 GREEN: /private/tmp/omc-synthetic-trace-o690gsdu/work/.omc/state/green-audit-recovered-from-log-20261108-01.json; SHA256 76810fb032ab587ad99eb760fd00a0188b20c391032aafead2ae3e12da2257f9. 실행 로그: /Users/noseunglae/.codex/sessions/2026/11/02/rollout-2026-11-02T12-55-09-01a19a65-8df2-7372-80fe-387d9188d980.jsonl:10935. 손상 기준·현재 대조: 같은 work의 .omc/state/synthetic-trace-registration-fix/custody.json 및 preservation-result.json. 보류 보고: 같은 work의 .omc/state/output-records/866dd90221bd43ff9936b5c27ce85f5d/synthetic-trace-registration-fix-20261108-01/manifest.json. 로컬 임시 원문이며 장기 보존·다른 checkout 접근을 보장하지 않는다.",
+      "다음 결정": "현재의 부분 증거 확보와 보류를 유지한다. 추가 복구·도구 수정·재검증·실제 비교는 별도 지시 전 진행하지 않는다."
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2154,44 +2154,113 @@
       "docs/comparison-dashboard/view.json",
       "docs/comparison-dashboard/index.html"
     ],
-    "candidate_state": "ORIGINAL_APPLIED_AND_VERIFIED",
-    "main_applied": true,
-    "original_worktree_applied": true,
+    "candidate_state": "PARTIAL_EVIDENCE_RECOVERED_FORMAL_HOLD",
+    "main_applied": false,
+    "original_worktree_applied": false,
     "comparison_runs": 0,
     "comparison_status": "NOT_RUN",
     "descendant_termination": "NOT_VERIFIED",
     "consumer_count_on_query_failure": null,
     "validation": {
-      "isolated": {
-        "passed": 9,
-        "seconds": 2.81
+      "synthetic_plugin_fix": {
+        "passed": 14,
+        "strict_xfailed": 1,
+        "deselected": 6
       },
-      "original": {
-        "passed": 9,
-        "failed": 0,
-        "seconds": 2.86,
-        "runs": 1
-      },
-      "operating_workspace": {
-        "red_failed": 3,
-        "baseline_passed": 6,
-        "tdd_gate": "PASS",
-        "completion_gate": "DONE_PUBLISHED",
-        "work_id": "a63c1d6f72a94d6ca305b2030bec0295"
-      },
+      "preservation": "FAILED_3_OF_28",
+      "formal_completion": "BLOCKED_PUBLISHED",
       "tests_rerun_for_documentation": false
     },
-    "review_status": "PRIOR_ISOLATED_APPROVAL_AND_READONLY_ORIGINAL_REVIEW",
-    "report_seal": "OPERATING_WORKSPACE_PUBLISHED",
+    "review_status": "READONLY_GREEN_EXTRACTION_ACCEPTED_NOT_FULL_RECOVERY",
+    "report_seal": "PLUGIN_FIX_BLOCKED_REPORT_PUBLISHED",
     "review_receipt": "51e84174a9d245bc953f01306e530a9d",
     "approved_hashes": {
       "scripts/omc_termination_observer.py": "d4f39aea7a11913929697ffd0462bd7c8ebff1dfe533cf4daa213c8fe5f741af",
       "scripts/test_omc_termination_observer.py": "a2ebb961c631471561663de5bc7ada28ec5e0245612f38051b05a06231c59a90"
     },
-    "main_applied_meaning": "이번 로컬 커밋 반영 상태; push·설치·원본 만료 문맥의 완료 승인과 별개",
-    "original_expired_context": "UNCHANGED"
+    "main_applied_meaning": "후속 합성 확장·보완은 원본 미반영; 이전 관측 도구 반영 이력은 별도 유지",
+    "original_expired_context": "UNCHANGED",
+    "recovery": {
+      "green": {
+        "status": "SEPARATE_ORIGINAL_BYTES_VERIFIED",
+        "bytes": 138,
+        "sha256": "76810fb032ab587ad99eb760fd00a0188b20c391032aafead2ae3e12da2257f9",
+        "restored_over_old_path": false
+      },
+      "red": {
+        "original_bytes": "UNCONFIRMED",
+        "semantic_record": "PYTHON_DICT_REPR"
+      },
+      "baseline": {
+        "original_bytes": "UNCONFIRMED",
+        "previous_hash_available": true
+      }
+    },
+    "formal_hold_reason": "PRESERVATION_FAILED"
   },
   "current_update_history": [
+    {
+      "date": "2026-11-08",
+      "status": "현재 · 관측 도구 격리 검증·원본 반영 완료 / 원본 9개 통과·운영 게이트 통과 · 2026-11-08",
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "main_commit": "a7d921fc8615125e34fbab1e539ef459787c6da5",
+      "main_commit_role": "이번 코드2개·문서4개 커밋 전 기준; 이번 커밋 OID는 Git 이력으로 확인",
+      "comparison_state": "HOLD",
+      "actual_home": "NOT_VERIFIED",
+      "historical_preservation_revalidation": "UNKNOWN",
+      "existing_formal_holds": "PRESERVED",
+      "latest_fields": {
+        "상태": "승인 관측 도구·테스트 2개를 원본에 바이트·권한 동일하게 반영했다. 격리 검증 완료와 원본 반영 완료를 구분한다. 이번 로컬 커밋 범위는 승인 코드·테스트 2개와 문서 4개이며 기존 스테이징 5개는 제외한다.",
+        "검증 구분": "기존 격리 검증은 9개 통과·2.81초다. 원본 지정 테스트는 별도 1회 실행해 9개 통과·2.86초를 확인했다. TDD·완료 게이트는 별도 운영 공간에서 통과·published됐으며 원본 만료 문맥의 갱신이나 원본 기존 실패의 해소가 아니다.",
+        "운영 기록": "운영 기준선6통과→승인 테스트로 실제 RED3실패·기존6통과→현 작업 RED 등록→승인본 적용. 초기 RED 설명의 누락1건은 red-corrected.json으로 바로잡고 최초 원문을 보존했다. 첫 보고 준비는 허용 상한 초과로 실패했고 문맥은 미생성; 새 ID observer-original-apply-20261108-02에서 정상 봉인했다. 구현·원본 테스트 실패와 보고 준비 실패를 혼동하지 않는다.",
+        "보존": "원본 HEAD·기존 인덱스 바이트·스테이징5개 패치와 보호 파일15,011개는 원본 반영 검증 시 동일했다. 승인2개·동일 ABI 검증 근거만 새로 추가했다. 이번 커밋에서는 승인2개를 추적하되 기존5개 스테이징·원문·만료 기록을 보존한다. 과거 보존 재검증 UNKNOWN·기존 공식 보류 유지.",
+        "한계·미실행": "자손 전체 종료 미검증·비교0/4회 NOT_RUN·실제 시계 확인 불가를 유지한다. 오류·지연 회귀는 합성 의존성 주입이며 실제 OS 거부 재현이 아니다. 실제 비교·설치·발급/재개·모델 호출·push 미실행. 편집 재개 지원 기존 원본283통과·1실패와 원인 미확정·보고 봉인 실패는 그대로다.",
+        "다음 결정": "이번 원본 반영·문서 커밋 결과를 별도로 검토한다. 실제 비교·설치·재개는 별도 지시 없이 진행하지 않는다. 현재 승인·테스트를 고객 가치·실제 모델 성능·경쟁 우열로 해석하지 않는다.",
+        "근거": "원본 반영 운영 기록: /private/tmp/omc-observer-original-apply-rh2_8h7t/work/.omc/state/observer-original-apply/ (original-green-output.txt, tdd-output.txt, preservation.json). 완료 보고: 같은 work의 .omc/state/output-records/a63c1d6f72a94d6ca305b2030bec0295/observer-original-apply-20261108-02/manifest.json. 이전 격리 검증·승인 원문은 이전 최신화 기록으로 보존한다. 로컬 임시 자료이며 영구 보존·다른 checkout 접근을 보장하지 않는다."
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/view.json",
+        "docs/comparison-dashboard/index.html"
+      ],
+      "candidate_state": "ORIGINAL_APPLIED_AND_VERIFIED",
+      "main_applied": true,
+      "original_worktree_applied": true,
+      "comparison_runs": 0,
+      "comparison_status": "NOT_RUN",
+      "descendant_termination": "NOT_VERIFIED",
+      "consumer_count_on_query_failure": null,
+      "validation": {
+        "isolated": {
+          "passed": 9,
+          "seconds": 2.81
+        },
+        "original": {
+          "passed": 9,
+          "failed": 0,
+          "seconds": 2.86,
+          "runs": 1
+        },
+        "operating_workspace": {
+          "red_failed": 3,
+          "baseline_passed": 6,
+          "tdd_gate": "PASS",
+          "completion_gate": "DONE_PUBLISHED",
+          "work_id": "a63c1d6f72a94d6ca305b2030bec0295"
+        },
+        "tests_rerun_for_documentation": false
+      },
+      "review_status": "PRIOR_ISOLATED_APPROVAL_AND_READONLY_ORIGINAL_REVIEW",
+      "report_seal": "OPERATING_WORKSPACE_PUBLISHED",
+      "review_receipt": "51e84174a9d245bc953f01306e530a9d",
+      "approved_hashes": {
+        "scripts/omc_termination_observer.py": "d4f39aea7a11913929697ffd0462bd7c8ebff1dfe533cf4daa213c8fe5f741af",
+        "scripts/test_omc_termination_observer.py": "a2ebb961c631471561663de5bc7ada28ec5e0245612f38051b05a06231c59a90"
+      },
+      "main_applied_meaning": "이번 로컬 커밋 반영 상태; push·설치·원본 만료 문맥의 완료 승인과 별개",
+      "original_expired_context": "UNCHANGED"
+    },
     {
       "date": "2026-11-08",
       "status": "현재 · 파일 등록 관측 도구 격리 검증·리뷰 승인 / 원본 미반영·비교 NOT_RUN · 2026-11-08",
