@@ -446,4 +446,135 @@ def run_audit_entry(base, phase, trial, *, run_id=None):
     return AuditRun(base, run_id=run_id).run_phase(phase, trial)
 
 
+class SyntheticOwnershipContract:
+    """Pure fake-clock state transitions; never grants real process creation."""
+    def __init__(self, clock, *, work_start=0.):
+        self.clock = clock
+        self.work_deadline = self._finite(work_start) + 1800
+        self.last_now = None
+        self.state, self.status, self.reason = 'NEW', 'UNKNOWN', None
+        self.t0 = self.registration_deadline = self.trial_deadline = None
+        self.cleanup_started = self.cleanup_deadline = None
+        self.reap_deadlines = {}
+        self.monitor_alive, self.identity_confirmed = True, False
+        self.monitor_faulted = False
+        self.target_status = self.monitor_status = 'UNKNOWN'
+
+    @staticmethod
+    def _finite(value):
+        import math
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError('finite_fake_clock_required')
+        return value
+
+    def _now(self):
+        now = self._finite(self.clock())
+        if self.last_now is not None and now < self.last_now:
+            raise ValueError('fake_clock_went_backwards')
+        self.last_now = now
+        return now
+
+    def snapshot(self):
+        owner = 'monitor' if self.monitor_alive else None
+        return {'state': self.state, 'status': self.status, 'reason': self.reason,
+                't0': self.t0, 'registration_deadline': self.registration_deadline,
+                'trial_deadline': self.trial_deadline, 'cleanup_started': self.cleanup_started,
+                'cleanup_deadline': self.cleanup_deadline, 'reap_deadlines': dict(self.reap_deadlines),
+                'cleanup_owner': owner, 'target_reap_owner': owner, 'monitor_reap_owner': 'manager',
+                'target_status': self.target_status, 'monitor_status': self.monitor_status,
+                'synthetic': True, 'real_creation_allowed': False, 'test_children_created': 0,
+                'actual_monitor': 'NOT_RUN', 'actual_termination': 'NOT_RUN',
+                'next_execution': 'NOT_RUN'}
+
+    def _cleanup(self, now, reason):
+        if self.state != 'CLEANUP':
+            self.cleanup_started = now
+            self.cleanup_deadline = min(now + 120, self.work_deadline)
+            deadline = min(now + 20, self.cleanup_deadline)
+            self.reap_deadlines = {'target': deadline, 'monitor': deadline}
+        self.state, self.status, self.reason = 'CLEANUP', 'UNKNOWN', reason
+        if now >= self.cleanup_deadline:
+            self.state = 'TERMINAL'
+
+    def begin_creation(self):
+        if self.state != 'NEW':
+            raise ValueError('synthetic_creation_already_started')
+        # Captured immediately before the simulated creation, never after a delay.
+        self.t0 = self._now()
+        self.registration_deadline = self.t0 + 1
+        self.trial_deadline = self.t0 + 2
+        self.state = 'REGISTERING'
+        if self.t0 >= self.work_deadline:
+            self._cleanup(self.t0, 'work_deadline')
+        return self.snapshot()
+
+    def step(self, event, *, identity_matches=False, reaped=False, returncode=None):
+        allowed = ('identity_confirmed', 'identity_mismatch', 'identity_unconfirmed', 'ack',
+                   'monitor_failed', 'manager_disconnected', 'tick', 'reap_target', 'reap_monitor')
+        if event not in allowed:
+            raise ValueError('unknown_synthetic_event')
+        now = self._now()
+        if self.state == 'TERMINAL':
+            return self.snapshot()
+        # The whole-work bound precedes registration, ACK and trial transitions.
+        if now >= self.work_deadline:
+            if event == 'monitor_failed':
+                self.monitor_alive, self.identity_confirmed = False, False
+                self.monitor_faulted = True
+            self._cleanup(now, 'work_deadline')
+            self.state, self.status = 'TERMINAL', 'UNKNOWN'
+            return self.snapshot()
+        if event == 'monitor_failed':
+            self.monitor_alive, self.identity_confirmed = False, False
+            self.monitor_faulted = True
+            self._cleanup(now, 'monitor_unavailable')
+            return self.snapshot()
+        if self.state == 'NEW':
+            raise ValueError('synthetic_creation_not_started')
+        if self.state == 'REGISTERING' and now >= self.registration_deadline:
+            self._cleanup(now, 'registration_deadline')
+            return self.snapshot()
+        if self.state == 'REGISTERED' and now >= self.trial_deadline:
+            self._cleanup(now, 'trial_deadline')
+            return self.snapshot()
+        if self.state == 'CLEANUP':
+            pending = [self.reap_deadlines[role] for role in ('target', 'monitor')
+                       if getattr(self, role + '_status') != 'REAPED']
+            if now >= self.cleanup_deadline or any(now >= deadline for deadline in pending):
+                self.state, self.status, self.reason = 'TERMINAL', 'UNKNOWN', 'cleanup_deadline'
+                return self.snapshot()
+            if event in ('reap_target', 'reap_monitor'):
+                role = event.removeprefix('reap_')
+                confirmed = (identity_matches is True and reaped is True
+                             and type(returncode) is int and (role == 'monitor' or self.monitor_alive))
+                if not confirmed:
+                    self.state, self.status = 'TERMINAL', 'UNKNOWN'
+                    return self.snapshot()
+                setattr(self, role + '_status', 'REAPED')
+                if role == 'monitor':
+                    self.monitor_alive = False
+                    if self.target_status != 'REAPED':
+                        # A reaped parent cannot subsequently reap its child.
+                        self.monitor_faulted = True
+                        self.state, self.status, self.reason = 'TERMINAL', 'UNKNOWN', 'monitor_reaped_before_target'
+                        return self.snapshot()
+                if self.target_status == self.monitor_status == 'REAPED':
+                    self.state = 'TERMINAL'
+                    self.status = 'UNKNOWN' if self.monitor_faulted else 'SYNTHETIC_COMPLETE'
+            # Identity/ACK events cannot reopen registration or extend cleanup.
+            return self.snapshot()
+        if event in ('identity_mismatch', 'identity_unconfirmed'):
+            self._cleanup(now, event)
+        elif event == 'identity_confirmed' and self.state == 'REGISTERING':
+            self.identity_confirmed = True
+        elif event == 'ack' and self.state == 'REGISTERING':
+            if self.identity_confirmed and self.monitor_alive:
+                self.state, self.status = 'REGISTERED', 'SYNTHETIC_REGISTERED'
+            else:
+                self._cleanup(now, 'identity_unconfirmed')
+        elif event == 'manager_disconnected':
+            self._cleanup(now, 'manager_disconnected')
+        return self.snapshot()
+
+
 if __name__=='__main__':raise SystemExit(main())

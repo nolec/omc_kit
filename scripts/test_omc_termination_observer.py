@@ -350,3 +350,138 @@ def test_exclusive_audit_entry_invalid_path_components_block_trial(tmp_path):
     run=m.AuditRun(tmp_path)
     with pytest.raises(ValueError):run.run_phase('../old',lambda:calls.append(1))
     assert calls==[]
+
+
+def _synthetic_clock_contract(start=10.,work_start=0.):
+    import omc_termination_observer as m
+    assert hasattr(m,'SyntheticOwnershipContract'), 'approved synthetic ownership/clock contract is missing'
+    clock=[start]
+    contract=m.SyntheticOwnershipContract(lambda:clock[0],work_start=work_start)
+    return contract,clock
+
+
+def _register_synthetic_clock_contract():
+    c,t=_synthetic_clock_contract();c.begin_creation();t[0]=10.1;c.step('identity_confirmed');t[0]=10.2;c.step('ack')
+    assert c.snapshot()['state']=='REGISTERED'
+    return c,t
+
+
+@pytest.mark.parametrize('registered',[False,True])
+def test_synthetic_clock_contract_monitor_failure_never_grants_real_execution(registered):
+    if registered:c,t=_register_synthetic_clock_contract()
+    else:c,t=_synthetic_clock_contract();c.begin_creation()
+    t[0]=10.3;v=c.step('monitor_failed')
+    assert v['status']=='UNKNOWN' and v['cleanup_owner'] is None
+    assert v['target_reap_owner'] is None and v['monitor_reap_owner']=='manager'
+    assert v['real_creation_allowed'] is False and v['actual_termination']=='NOT_RUN'
+    t[0]=10.4;c.step('identity_confirmed');v=c.step('ack')
+    assert v['state']!='REGISTERED' and v['status']=='UNKNOWN'
+    v=c.step('reap_target',identity_matches=True,reaped=True,returncode=0)
+    assert v['target_status']=='UNKNOWN'
+
+
+@pytest.mark.parametrize('offset,accepted',[(.999,True),(1.,False),(1.001,False)])
+def test_synthetic_clock_contract_one_second_ack_boundary(offset,accepted):
+    c,t=_synthetic_clock_contract();v=c.begin_creation();assert v['t0']==10. and v['registration_deadline']==11.
+    t[0]=10.05;c.step('identity_confirmed');t[0]=10.+offset;v=c.step('ack')
+    assert (v['state']=='REGISTERED') is accepted
+    assert v['real_creation_allowed'] is False and v['test_children_created']==0
+    if not accepted:assert v['cleanup_started']==t[0] and v['reason']=='registration_deadline'
+
+
+def test_synthetic_clock_contract_creation_delay_does_not_reset_t0():
+    c,t=_synthetic_clock_contract();c.begin_creation()
+    t[0]=10.8;c.step('identity_confirmed');t[0]=11.1;v=c.step('ack')
+    assert v['t0']==10. and v['registration_deadline']==11. and v['status']=='UNKNOWN'
+
+
+def test_synthetic_clock_contract_late_ack_cannot_revive_terminal_registration():
+    c,t=_synthetic_clock_contract();c.begin_creation();t[0]=11.;first=c.step('tick')
+    t[0]=11.2;c.step('identity_confirmed');v=c.step('ack')
+    assert v['state']=='CLEANUP' and v['cleanup_started']==first['cleanup_started']
+    assert v['cleanup_deadline']==first['cleanup_deadline'] and v['status']=='UNKNOWN'
+
+
+@pytest.mark.parametrize('event',['identity_mismatch','identity_unconfirmed','ack'])
+def test_synthetic_clock_contract_unverified_identity_blocks_registration(event):
+    c,t=_synthetic_clock_contract();c.begin_creation();t[0]=10.1;v=c.step(event)
+    assert v['status']=='UNKNOWN' and v['state']=='CLEANUP' and not v['real_creation_allowed']
+
+
+def test_synthetic_clock_contract_manager_disconnect_assigns_monitor_only_synthetically():
+    c,t=_register_synthetic_clock_contract();t[0]=10.3;v=c.step('manager_disconnected')
+    assert v['cleanup_owner']=='monitor' and v['target_reap_owner']=='monitor'
+    assert v['monitor_reap_owner']=='manager' and v['cleanup_deadline']==130.3
+    t[0]=10.4;v=c.step('reap_target',identity_matches=True,reaped=True,returncode=0)
+    assert v['target_status']=='REAPED'
+    t[0]=10.5;v=c.step('reap_monitor',identity_matches=True,reaped=True,returncode=0)
+    assert v['status']=='SYNTHETIC_COMPLETE' and not v['real_creation_allowed']
+    assert v['actual_monitor']=='NOT_RUN' and v['actual_termination']=='NOT_RUN'
+
+
+def test_synthetic_clock_contract_shared_deadline_capped_by_work_budget():
+    c,t=_synthetic_clock_contract(start=1799.);c.begin_creation();t[0]=1799.1;c.step('identity_confirmed');t[0]=1799.2;c.step('ack')
+    t[0]=1799.5;v=c.step('manager_disconnected')
+    assert v['cleanup_deadline']==1800. and all(x<=1800 for x in v['reap_deadlines'].values())
+    t[0]=1800.;v=c.step('reap_target',identity_matches=True,reaped=True,returncode=0)
+    assert v['status']=='UNKNOWN' and v['state']=='TERMINAL'
+
+
+def test_synthetic_clock_contract_each_reap_deadline_has_twenty_second_limit():
+    c,t=_synthetic_clock_contract();c.begin_creation();t[0]=11.;v=c.step('tick')
+    assert v['cleanup_deadline']==131. and v['reap_deadlines']=={'target':31.,'monitor':31.}
+    t[0]=31.;v=c.step('reap_target',identity_matches=True,reaped=True,returncode=0)
+    assert v['status']=='UNKNOWN' and v['target_status']=='UNKNOWN'
+
+
+def test_synthetic_clock_contract_runtime_cap_enters_cleanup():
+    c,t=_register_synthetic_clock_contract();t[0]=12.;v=c.step('tick')
+    assert v['state']=='CLEANUP' and v['cleanup_started']==12. and v['reason']=='trial_deadline'
+
+
+@pytest.mark.parametrize('returncode',[None,True])
+def test_synthetic_clock_contract_unconfirmed_reap_cannot_complete(returncode):
+    c,t=_register_synthetic_clock_contract();t[0]=10.3;c.step('manager_disconnected')
+    t[0]=10.4;v=c.step('reap_target',identity_matches=True,reaped=True,returncode=returncode)
+    assert v['target_status']=='UNKNOWN' and v['status']=='UNKNOWN'
+
+
+@pytest.mark.parametrize('state',['REGISTERING','REGISTERED'])
+@pytest.mark.parametrize('now',[1799.999,1800.,1800.001])
+def test_synthetic_clock_fix_work_deadline_precedes_registration_and_trial(state,now):
+    c,t=_synthetic_clock_contract(start=1799.5);c.begin_creation();t[0]=1799.6;c.step('identity_confirmed')
+    if state=='REGISTERED':t[0]=1799.7;c.step('ack')
+    t[0]=now;v=c.step('ack' if state=='REGISTERING' else 'tick')
+    if now<1800.:
+        assert v['state']=='REGISTERED'
+    else:
+        assert v['state']=='TERMINAL' and v['status']=='UNKNOWN'
+        assert v['reason']=='work_deadline' and v['cleanup_deadline']==1800.
+        assert not v['real_creation_allowed']
+
+
+def test_synthetic_clock_fix_monitor_reaped_first_freezes_unknown():
+    c,t=_register_synthetic_clock_contract();t[0]=10.3;c.step('manager_disconnected')
+    t[0]=10.4;v=c.step('reap_monitor',identity_matches=True,reaped=True,returncode=0)
+    assert v['monitor_status']=='REAPED' and v['target_status']=='UNKNOWN'
+    assert v['state']=='TERMINAL' and v['status']=='UNKNOWN'
+    assert v['target_reap_owner'] is None and v['cleanup_owner'] is None
+    t[0]=10.5;v=c.step('reap_target',identity_matches=True,reaped=True,returncode=0)
+    assert v['status']=='UNKNOWN' and v['target_status']=='UNKNOWN'
+
+
+def test_synthetic_clock_fix_normal_reap_order_stays_complete_without_live_owner():
+    c,t=_register_synthetic_clock_contract();t[0]=10.3;c.step('manager_disconnected')
+    t[0]=10.4;c.step('reap_target',identity_matches=True,reaped=True,returncode=0)
+    t[0]=10.5;v=c.step('reap_monitor',identity_matches=True,reaped=True,returncode=0)
+    assert v['status']=='SYNTHETIC_COMPLETE' and v['state']=='TERMINAL'
+    assert v['target_reap_owner'] is None and v['cleanup_owner'] is None
+    assert not v['real_creation_allowed'] and v['actual_termination']=='NOT_RUN'
+
+
+def test_synthetic_clock_fix_monitor_fault_remains_unknown_after_target_reaped():
+    c,t=_register_synthetic_clock_contract();t[0]=10.3;c.step('manager_disconnected')
+    t[0]=10.4;c.step('reap_target',identity_matches=True,reaped=True,returncode=0)
+    t[0]=10.5;c.step('monitor_failed')
+    t[0]=10.6;v=c.step('reap_monitor',identity_matches=True,reaped=True,returncode=0)
+    assert v['status']=='UNKNOWN' and v['target_reap_owner'] is None
