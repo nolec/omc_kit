@@ -6,6 +6,9 @@ import sys
 
 import pytest
 
+# The standard pytest collector loads the synthetic hook; no external -p required.
+pytest_plugins = ['omc_termination_observer']
+
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPT=ROOT/'scripts/omc_termination_observer.py'
 BASIS=ROOT/'.omc/file-link/abi-basis.json'
@@ -153,3 +156,197 @@ def test_actual_manager_expired_request_cannot_publish_ack_or_revive(tmp_path):
     (out/'ack.json').write_text('{"late":true}')
     assert (out/'result.json').read_bytes()==before
     assert json.loads(before)['status']=='failed' and d['next_execution']=='NOT_RUN'
+
+
+@pytest.fixture
+def synthetic_trace_case(request):
+    """The outer pytest call is the only surface; no nested pytest/process."""
+    from types import SimpleNamespace
+    import omc_termination_observer as observer
+    state={'events':[],'calls':[],'sink_fails':False,'answer':object(),'error':None}
+    def original(*args,**kwargs):
+        state['calls'].append((args,kwargs))
+        if state['error'] is not None:raise state['error']
+        return state['answer']
+    namespace=SimpleNamespace(**{name:original for name in ('supervise','_stop_group','_wait_group_exit','_group_exists')})
+    def sink(event):
+        if state['sink_fails']:raise OSError(28,'injected record failure')
+        state['events'].append(event)
+    originals={name:getattr(namespace,name) for name in vars(namespace)}
+    request.node._omc_synthetic_trace={'namespace':namespace,'sink':sink,'clock':lambda:10.,'state':state,'worker':'synthetic-worker'}
+    yield observer,namespace,state,originals
+    if 'binding' in state:
+        assert all(getattr(namespace,name) is value for name,value in originals.items())
+        assert not hasattr(namespace,'_omc_trace_owner')
+        assert not state['binding'].active
+
+
+@pytest.mark.parametrize('name',['supervise','_stop_group','_wait_group_exit','_group_exists'])
+def test_synthetic_trace_surface_returns_same_object_once(synthetic_trace_case,name):
+    m,ns,state,originals=synthetic_trace_case
+    assert hasattr(m,'TraceBinding'),'synthetic pytest installation capability missing'
+    value=object();assert getattr(ns,name) is not originals[name]
+    assert getattr(ns,name)(value,flag=value) is state['answer']
+    assert state['calls']==[((value,),{'flag':value})]
+    assert [e['phase'] for e in state['events']]==['enter','return']
+    assert all(e['worker']=='synthetic-worker' and e['synthetic'] for e in state['events'])
+
+
+def test_synthetic_trace_surface_exception_identity_and_errno(synthetic_trace_case):
+    m,ns,state,_=synthetic_trace_case
+    assert hasattr(m,'TraceBinding'),'synthetic pytest installation capability missing'
+    error=PermissionError(13,'injected');state['error']=error
+    with pytest.raises(PermissionError) as caught:ns.supervise('input')
+    assert caught.value is error and len(state['calls'])==1
+    assert state['events'][-1]['phase']=='raise' and state['events'][-1]['errno']==13
+
+
+def test_synthetic_trace_surface_record_failure_is_separate(synthetic_trace_case):
+    m,ns,state,_=synthetic_trace_case
+    assert hasattr(m,'TraceBinding'),'synthetic pytest installation capability missing'
+    state['sink_fails']=True
+    assert ns.supervise() is state['answer']
+    assert len(state['calls'])==1 and len(state['binding'].record_errors)==2
+    assert state['binding'].record_errors[0]['errno']==28
+
+
+@pytest.mark.xfail(raises=RuntimeError,strict=True,reason='intentional test body exception; fixture teardown checks hook finally restoration')
+def test_synthetic_trace_surface_restores_after_body_exception(synthetic_trace_case):
+    m,ns,state,_=synthetic_trace_case
+    assert hasattr(m,'TraceBinding'),'synthetic pytest installation capability missing'
+    assert state['binding'].active
+    raise RuntimeError('intentional body failure')
+
+
+def test_synthetic_trace_surface_duplicate_install_rejected(synthetic_trace_case):
+    m,ns,state,_=synthetic_trace_case
+    assert hasattr(m,'TraceBinding'),'synthetic pytest installation capability missing'
+    with pytest.raises(ValueError,match='already_installed'):state['binding'].install()
+    other=m.TraceBinding(ns,state['events'].append,lambda:10.,'other')
+    with pytest.raises(ValueError,match='already_installed'):other.install()
+    assert ns.supervise() is state['answer'] and len(state['calls'])==1
+
+
+def test_synthetic_trace_worker_missing_is_unknown():
+    import omc_termination_observer as m
+    assert hasattr(m,'summarize_synthetic_workers'),'worker trace completeness capability missing'
+    value=m.summarize_synthetic_workers(['a','b'],{'a':{'events':2,'record_errors':[]}})
+    assert value['status']=='UNKNOWN' and value['workers']['b'] is None and value['missing']==['b']
+
+
+def test_synthetic_trace_fake_handles_share_deadline_and_identity():
+    import omc_termination_observer as m
+    assert hasattr(m,'inspect_fake_cleanup'),'fake cleanup contract capability missing'
+    rows=[{'pid':11,'start_id':1,'expected_start_id':1,'owned':True,'reaped':True,'returncode':0},
+          {'pid':12,'start_id':2,'expected_start_id':3,'owned':True,'reaped':False,'returncode':None}]
+    value=m.inspect_fake_cleanup(rows,now=105.,cleanup_start=100.,overall_deadline=115.)
+    assert value['shared_deadline']==115 and value['status']=='UNKNOWN'
+    assert value['handles'][0]['status']=='REAPED' and value['handles'][1]['status']=='UNKNOWN'
+    assert all(h['deadline']<=115 for h in value['handles'])
+    assert value['actual_termination']=='NOT_RUN' and value['test_children_created']==0
+
+
+def test_synthetic_trace_fake_handles_expiry_and_takeover():
+    import omc_termination_observer as m
+    assert hasattr(m,'inspect_fake_cleanup'),'fake cleanup contract capability missing'
+    row={'pid':1,'start_id':1,'expected_start_id':1,'owned':True,'reaped':False,'returncode':None}
+    value=m.inspect_fake_cleanup([row],now=131.,cleanup_start=0.,overall_deadline=1800.,manager_alive=False)
+    assert value['shared_deadline']==120 and value['handles'][0]['status']=='UNKNOWN'
+    assert value['cleanup_owner']=='fake-independent-monitor' and value['deadline_reached']
+    assert value['actual_monitor']=='NOT_RUN' and value['actual_termination']=='NOT_RUN'
+
+
+def test_synthetic_trace_standard_collection_registers_plugin(synthetic_trace_case,request):
+    """Plain pytest collection must register the hook without a -p CLI flag."""
+    m,ns,state,originals=synthetic_trace_case
+    assert request.config.pluginmanager.hasplugin('omc_termination_observer'), 'standard pytest collection must register the tracing plugin'
+    assert ns.supervise is not originals['supervise'] and state['binding'].active
+    assert ns.supervise() is state['answer'] and len(state['calls'])==1
+
+
+def _exclusive_audit_api():
+    import omc_termination_observer as m
+    assert hasattr(m,'AuditRun') and hasattr(m,'run_audit_entry'), 'exclusive audit runner contract is missing'
+    return m
+
+
+def test_exclusive_audit_entry_creates_distinct_runs_and_shared_phase_paths(tmp_path):
+    m=_exclusive_audit_api();calls=[]
+    first=m.AuditRun(tmp_path);second=m.AuditRun(tmp_path)
+    assert first.path!=second.path
+    for phase in ['baseline','red','green']:
+        result=first.run_phase(phase,lambda:calls.append(phase) or 0)
+        assert result['status']=='complete' and result['audit_status']=='saved'
+        path=Path(result['audit_path']);assert path.parent==first.path
+        assert json.loads(path.read_bytes())['phase']==phase
+    assert calls==['baseline','red','green']
+
+
+def test_exclusive_audit_entry_run_collision_blocks_trial(tmp_path):
+    m=_exclusive_audit_api();calls=[];rid='a'*32
+    m.AuditRun(tmp_path,run_id=rid)
+    with pytest.raises(FileExistsError):m.run_audit_entry(tmp_path,'green',lambda:calls.append(1),run_id=rid)
+    assert calls==[] and len(list(tmp_path.iterdir()))==1
+
+
+def test_exclusive_audit_entry_existing_file_blocks_trial_and_keeps_bytes(tmp_path):
+    m=_exclusive_audit_api();run=m.AuditRun(tmp_path);p=run.path/'green-audit.json';p.write_bytes(b'prior')
+    calls=[]
+    with pytest.raises(FileExistsError):run.run_phase('green',lambda:calls.append(1))
+    assert calls==[] and p.read_bytes()==b'prior'
+
+
+@pytest.mark.parametrize('stage',['write','flush','fsync','close'])
+def test_exclusive_audit_entry_storage_failure_is_incomplete(tmp_path,monkeypatch,stage):
+    import os
+    from types import SimpleNamespace
+    m=_exclusive_audit_api();calls=[];real_open=m._open_reserved_audit;handles=[]
+    class Failing:
+        def __init__(self,raw):self.raw=raw
+        def write(self,data):
+            if stage=='write':self.raw.write(data[:4]);raise OSError(28,'injected write')
+            return self.raw.write(data)
+        def flush(self):
+            if stage=='flush':raise OSError(28,'injected flush')
+            return self.raw.flush()
+        def fileno(self):return self.raw.fileno()
+        def close(self):
+            self.raw.close()
+            if stage=='close':raise OSError(28,'injected close')
+    def opening(path):
+        f=real_open(path);handles.append(f);return Failing(f)
+    monkeypatch.setattr(m,'_open_reserved_audit',opening)
+    if stage=='fsync':
+        def fail_sync(fd):raise OSError(28,'injected fsync')
+        monkeypatch.setattr(m,'os',SimpleNamespace(**{**vars(os),'fsync':fail_sync}))
+    result=m.run_audit_entry(tmp_path,'green',lambda:calls.append(1) or 0)
+    assert result['status']=='incomplete' and result['audit_status']=='failed'
+    assert result['trial_status']=='passed' and calls==[1]
+    assert result['storage_error']['errno']==28 and all(f.closed for f in handles)
+    p=Path(result['audit_path']);before=p.read_bytes();calls.clear()
+    with pytest.raises(FileExistsError):m.AuditRun(tmp_path,run_id=result['run_id'])
+    assert p.read_bytes()==before and calls==[]
+
+
+def test_exclusive_audit_entry_open_failure_blocks_trial(tmp_path,monkeypatch):
+    m=_exclusive_audit_api();calls=[]
+    def failed_open(path):raise PermissionError(13,'injected open')
+    monkeypatch.setattr(m,'_open_reserved_audit',failed_open)
+    with pytest.raises(PermissionError):m.run_audit_entry(tmp_path,'green',lambda:calls.append(1))
+    assert calls==[]
+
+
+def test_exclusive_audit_entry_trial_error_does_not_retry(tmp_path):
+    m=_exclusive_audit_api();calls=[]
+    def trial():calls.append(1);raise PermissionError(13,'injected trial')
+    result=m.run_audit_entry(tmp_path,'red',trial)
+    assert calls==[1] and result['status']=='failed' and result['audit_status']=='saved'
+    assert result['trial_error']['errno']==13
+
+
+def test_exclusive_audit_entry_invalid_path_components_block_trial(tmp_path):
+    m=_exclusive_audit_api();calls=[]
+    with pytest.raises(ValueError):m.run_audit_entry(tmp_path,'green',lambda:calls.append(1),run_id='../old')
+    run=m.AuditRun(tmp_path)
+    with pytest.raises(ValueError):run.run_phase('../old',lambda:calls.append(1))
+    assert calls==[]

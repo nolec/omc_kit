@@ -276,4 +276,174 @@ def main():
     if not a.abi_basis:p.error('--abi-basis required')
     return creator(a) if a.creator else file_register(a)
 
+# Synthetic preparation surface only: no process, signal or native query APIs.
+class TraceBinding:
+    names = ('supervise', '_stop_group', '_wait_group_exit', '_group_exists')
+
+    def __init__(self, namespace, sink, clock, worker):
+        from types import SimpleNamespace
+        if type(namespace) is not SimpleNamespace:
+            raise ValueError('synthetic_namespace_required')
+        self.namespace, self.sink, self.clock, self.worker = namespace, sink, clock, worker
+        self.active = False
+        self.originals = {}
+        self.record_errors = []
+
+    def _record(self, name, phase, error=None):
+        try:
+            self.sink({'function': name, 'phase': phase, 'worker': self.worker,
+                       'monotonic': self.clock(), 'errno': getattr(error, 'errno', None),
+                       'pid': None, 'pgid': None, 'synthetic': True})
+        except Exception as exc:
+            self.record_errors.append({'type': type(exc).__name__, 'errno': getattr(exc, 'errno', None)})
+
+    def _wrapper(self, name, original):
+        def wrapped(*args, **kwargs):
+            self._record(name, 'enter')
+            try:
+                result = original(*args, **kwargs)
+            except BaseException as exc:
+                self._record(name, 'raise', exc)
+                raise
+            self._record(name, 'return')
+            return result
+        return wrapped
+
+    def install(self):
+        if self.active or hasattr(self.namespace, '_omc_trace_owner'):
+            raise ValueError('already_installed')
+        originals = {name: getattr(self.namespace, name) for name in self.names}
+        if not all(callable(fn) for fn in originals.values()):
+            raise ValueError('synthetic_callable_required')
+        self.originals = originals
+        self.namespace._omc_trace_owner = self
+        self.active = True
+        try:
+            for name, original in originals.items():
+                setattr(self.namespace, name, self._wrapper(name, original))
+        except BaseException:
+            self.restore()
+            raise
+        return self
+
+    def restore(self):
+        if not self.active:
+            return
+        for name in reversed(self.names):
+            setattr(self.namespace, name, self.originals[name])
+        del self.namespace._omc_trace_owner
+        self.active = False
+
+
+def pytest_runtest_call(item):
+    # Opt-in synthetic items in the existing test file only. No global patching.
+    spec = getattr(item, '_omc_synthetic_trace', None)
+    if (spec is None or item.path.name != 'test_omc_termination_observer.py'
+            or not item.name.startswith('test_synthetic_trace_')):
+        yield
+        return
+    binding = TraceBinding(spec['namespace'], spec['sink'], spec['clock'], spec['worker'])
+    binding.install()
+    spec['state']['binding'] = binding
+    try:
+        yield
+    finally:
+        binding.restore()
+
+
+# Keep the standalone registration CLI free of a new pytest import dependency.
+if __name__ != '__main__':
+    import pytest as _pytest
+    pytest_runtest_call = _pytest.hookimpl(hookwrapper=True, tryfirst=True)(pytest_runtest_call)
+
+
+def summarize_synthetic_workers(expected, reports):
+    workers = {name: reports.get(name) for name in expected}
+    missing = [name for name, report in workers.items() if report is None]
+    incomplete = [name for name, report in workers.items()
+                  if report is not None and (report.get('record_errors') or report.get('events') is None)]
+    return {'status': 'UNKNOWN' if missing or incomplete else 'COMPLETE',
+            'workers': workers, 'missing': missing, 'incomplete': incomplete,
+            'synthetic': True, 'actual_worker_validation': 'NOT_RUN'}
+
+
+def inspect_fake_cleanup(handles, *, now, cleanup_start, overall_deadline, manager_alive=True):
+    # A pure contract calculation, never an OS ownership/termination observation.
+    import math
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+               for v in (now, cleanup_start, overall_deadline)):
+        raise ValueError('finite_fake_clock_required')
+    if len(handles) > 8:
+        raise ValueError('fake_handle_limit')
+    shared = min(cleanup_start + 120, overall_deadline)
+    rows = []
+    for handle in handles:
+        identity_ok = (handle.get('owned') is True and handle.get('start_id') is not None
+                       and handle.get('start_id') == handle.get('expected_start_id'))
+        reaped = identity_ok and handle.get('reaped') is True and handle.get('returncode') is not None
+        rows.append({'pid': handle.get('pid'), 'status': 'REAPED' if reaped else 'UNKNOWN',
+                     'returncode': handle.get('returncode') if reaped else None,
+                     'deadline': min(now + 20, shared)})
+    return {'status': 'COMPLETE' if all(h['status'] == 'REAPED' for h in rows) else 'UNKNOWN',
+            'handles': rows, 'shared_deadline': shared, 'deadline_reached': now >= shared,
+            'cleanup_owner': 'fake-creator' if manager_alive else 'fake-independent-monitor',
+            'synthetic': True, 'actual_monitor': 'NOT_RUN', 'actual_termination': 'NOT_RUN',
+            'test_children_created': 0}
+
+
+def _open_reserved_audit(path):
+    return path.open('xb')
+
+
+class AuditRun:
+    """A single reserved run; collisions never create alternate IDs or paths."""
+    def __init__(self, base, *, run_id=None):
+        import re
+        self.run_id = uuid.uuid4().hex if run_id is None else run_id
+        if not isinstance(self.run_id, str) or not re.fullmatch('[0-9a-f]{32}', self.run_id):
+            raise ValueError('invalid_audit_run_id')
+        base = Path(base)
+        base.mkdir(parents=True, exist_ok=True)
+        self.path = base / self.run_id
+        self.path.mkdir(exist_ok=False)
+
+    def run_phase(self, phase, trial):
+        if phase not in ('baseline', 'red', 'green'):
+            raise ValueError('invalid_audit_phase')
+        path = self.path / (phase + '-audit.json')
+        # This may fail; do not call the trial until exclusive reservation succeeds.
+        stream = _open_reserved_audit(path)
+        result = {'run_id': self.run_id, 'phase': phase, 'audit_path': str(path),
+                  'status': 'incomplete', 'audit_status': 'failed', 'trial_status': 'unrun'}
+        try:
+            try:
+                value = trial()
+                result['trial_status'] = 'failed' if isinstance(value, int) and value != 0 else 'passed'
+                result['trial_result'] = value
+            except Exception as exc:
+                result['trial_status'] = 'failed'
+                result['trial_error'] = {'type': type(exc).__name__, 'errno': getattr(exc, 'errno', None)}
+            # The file is evidence payload, not a persisted publication/success receipt.
+            payload = {k: v for k, v in result.items() if k not in ('status', 'audit_status')}
+            stream.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
+            stream.flush()
+            os.fsync(stream.fileno())
+        except Exception as exc:
+            result['storage_error'] = {'type': type(exc).__name__, 'errno': getattr(exc, 'errno', None)}
+        finally:
+            try:
+                stream.close()
+            except Exception as exc:
+                result.setdefault('storage_error', {'type': type(exc).__name__, 'errno': getattr(exc, 'errno', None)})
+        if 'storage_error' not in result:
+            result['audit_status'] = 'saved'
+            result['status'] = 'complete' if result['trial_status'] == 'passed' else 'failed'
+        return result
+
+
+def run_audit_entry(base, phase, trial, *, run_id=None):
+    """New-run entry point; caller receives the sole reserved path and outcome."""
+    return AuditRun(base, run_id=run_id).run_phase(phase, trial)
+
+
 if __name__=='__main__':raise SystemExit(main())
