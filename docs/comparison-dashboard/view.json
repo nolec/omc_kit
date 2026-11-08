@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "현재 · 0.6.3 릴리스·12곳 재설치 완료 / 실제 홈 미검증·비교 HOLD · 2026-11-02",
+    "decision": "현재 · 관측 도구 격리 검증·원본 반영 완료 / 원본 9개 통과·운영 게이트 통과 · 2026-11-08",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2049,9 +2049,9 @@
         "historical_next_work": "설치된0.5.9의 기본 다섯 항목 안내만 제공한 새 격리 사례에서 사용자 이해를 확인한다. 형식 동의·코드 검증·설치를 실제 이해 효과로 집계하지 않으며 실무·다중 사례 효과·경쟁 우열은 미검증으로 유지한다."
       }
     ],
-    "next": "과거 보존 재검증 UNKNOWN·기존 공식 보류·실제 홈 NOT_VERIFIED·비교 HOLD 유지. 원본 반영·비교·설치는 별도 지시 전 미실행. 이번 범위는 문서 4개뿐이며 실제 모델 성능·고객 가치·경쟁 우열의 증거가 아니다.",
+    "next": "이번 원본 반영·문서 커밋 결과를 별도로 검토한다. 실제 비교·설치·재개는 별도 지시 없이 진행하지 않는다. 현재 승인·테스트를 고객 가치·실제 모델 성능·경쟁 우열로 해석하지 않는다.",
     "purpose": "oh-my-claudecode의 유용한 강점을 흡수해 OMC의 부족한 부분을 개선",
-    "current_priority": "파일 등록 관측 도구 격리 검증·리뷰 승인 / 원본 미반영·비교 NOT_RUN"
+    "current_priority": "현재 · 관측 도구 격리 검증·원본 반영 완료 / 원본 9개 통과·운영 게이트 통과 · 2026-11-08"
   },
   "decision": {
     "candidate": "실제 비교 차단 원인 보완 후 업무 재검증",
@@ -2131,22 +2131,22 @@
   },
   "current_update": {
     "date": "2026-11-08",
-    "status": "현재 · 파일 등록 관측 도구 격리 검증·리뷰 승인 / 원본 미반영·비교 NOT_RUN · 2026-11-08",
+    "status": "현재 · 관측 도구 격리 검증·원본 반영 완료 / 원본 9개 통과·운영 게이트 통과 · 2026-11-08",
     "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
-    "main_commit": "648e990b0c3082242fd04e4c761f9bc4f1cbf021",
-    "main_commit_role": "최신화 전 기준; 후속 문서 커밋은 별도",
+    "main_commit": "a7d921fc8615125e34fbab1e539ef459787c6da5",
+    "main_commit_role": "이번 코드2개·문서4개 커밋 전 기준; 이번 커밋 OID는 Git 이력으로 확인",
     "comparison_state": "HOLD",
     "actual_home": "NOT_VERIFIED",
     "historical_preservation_revalidation": "UNKNOWN",
     "existing_formal_holds": "PRESERVED",
     "latest_fields": {
-      "상태": "직접 조회를 연결한 관측 도구·테스트 2개는 독립 복제본에서만 검증·승인됐다. 원본 반영·설치·실제 발급/재개·비교는 수행하지 않았다. 편집 재개 지원 원본 5개의 283통과·1실패와 원인 미확정은 그대로다.",
-      "검증": "Job.poll의 종료 직후 잔여 출력 회수와 조회 실패 시 consumer_count=null/UNKNOWN 보존을 보완했다. 실제 RED 2실패→현 작업 등록→9개 통과(2.81초)·TDD GATE 통과·작업 보고 봉인 성공. 이 문서 최신화에서는 테스트·API를 재실행하지 않았다.",
-      "관측 한계": "실제 직접 자식 1건 파일 등록 약 0.10282초, 등록 1초·I/O 작업자 회수·늦은 게시 무효화를 확인했다. 오류·지연 회귀는 실제 처리 경로에 대한 합성 주입이며 실제 OS 거부 재현이 아니다. 자손 전체 종료 미검증, 비교 0/4회 NOT_RUN, 실제 시계 확인 불가를 유지한다.",
-      "이전 실패": "소켓 권한 거부·/bin/ps 조회 차단은 보존하고 특정 정책 원인은 미확정이다. 이전 자체 검증 실패/비교 NOT_RUN/봉인 성공과 직접 조회 전제 관측 통과/RED 미등록 공식 완료 보류를 구분한다.",
-      "리뷰·발행": "기존 만료 문맥의 리뷰 발행 실패와 첫 별도 리뷰의 review_stale을 보존했다. 새 리뷰 전용 작업 fixed-two-file-review-20261108-03은 고정 2개 해시·증거를 대조해 APPROVE·approved·published, 정식 승인 receipt 51e84174a9d245bc953f01306e530a9d를 생성했다. 옛 승인 만료를 갱신하거나 기존 공식 보류를 해제하지 않는다.",
-      "보존·다음 결정": "과거 보존 재검증 UNKNOWN·기존 공식 보류·실제 홈 NOT_VERIFIED·비교 HOLD 유지. 원본 반영·비교·설치는 별도 지시 전 미실행. 이번 범위는 문서 4개뿐이며 실제 모델 성능·고객 가치·경쟁 우열의 증거가 아니다.",
-      "근거": "격리 원문: /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-file-link-x58pwimj/work/.omc/file-link-fix-20261108-01/. 리뷰: /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-two-file-review-final-ye4v37nm/work/.omc/state/output-records/20261108T134414-bc252eda/fixed-two-file-review-20261108-03/manifest.json. 로컬 임시 자료이며 영구 보존·다른 checkout 접근을 보장하지 않는다."
+      "상태": "승인 관측 도구·테스트 2개를 원본에 바이트·권한 동일하게 반영했다. 격리 검증 완료와 원본 반영 완료를 구분한다. 이번 로컬 커밋 범위는 승인 코드·테스트 2개와 문서 4개이며 기존 스테이징 5개는 제외한다.",
+      "검증 구분": "기존 격리 검증은 9개 통과·2.81초다. 원본 지정 테스트는 별도 1회 실행해 9개 통과·2.86초를 확인했다. TDD·완료 게이트는 별도 운영 공간에서 통과·published됐으며 원본 만료 문맥의 갱신이나 원본 기존 실패의 해소가 아니다.",
+      "운영 기록": "운영 기준선6통과→승인 테스트로 실제 RED3실패·기존6통과→현 작업 RED 등록→승인본 적용. 초기 RED 설명의 누락1건은 red-corrected.json으로 바로잡고 최초 원문을 보존했다. 첫 보고 준비는 허용 상한 초과로 실패했고 문맥은 미생성; 새 ID observer-original-apply-20261108-02에서 정상 봉인했다. 구현·원본 테스트 실패와 보고 준비 실패를 혼동하지 않는다.",
+      "보존": "원본 HEAD·기존 인덱스 바이트·스테이징5개 패치와 보호 파일15,011개는 원본 반영 검증 시 동일했다. 승인2개·동일 ABI 검증 근거만 새로 추가했다. 이번 커밋에서는 승인2개를 추적하되 기존5개 스테이징·원문·만료 기록을 보존한다. 과거 보존 재검증 UNKNOWN·기존 공식 보류 유지.",
+      "한계·미실행": "자손 전체 종료 미검증·비교0/4회 NOT_RUN·실제 시계 확인 불가를 유지한다. 오류·지연 회귀는 합성 의존성 주입이며 실제 OS 거부 재현이 아니다. 실제 비교·설치·발급/재개·모델 호출·push 미실행. 편집 재개 지원 기존 원본283통과·1실패와 원인 미확정·보고 봉인 실패는 그대로다.",
+      "다음 결정": "이번 원본 반영·문서 커밋 결과를 별도로 검토한다. 실제 비교·설치·재개는 별도 지시 없이 진행하지 않는다. 현재 승인·테스트를 고객 가치·실제 모델 성능·경쟁 우열로 해석하지 않는다.",
+      "근거": "원본 반영 운영 기록: /private/tmp/omc-observer-original-apply-rh2_8h7t/work/.omc/state/observer-original-apply/ (original-green-output.txt, tdd-output.txt, preservation.json). 완료 보고: 같은 work의 .omc/state/output-records/a63c1d6f72a94d6ca305b2030bec0295/observer-original-apply-20261108-02/manifest.json. 이전 격리 검증·승인 원문은 이전 최신화 기록으로 보존한다. 로컬 임시 자료이며 영구 보존·다른 checkout 접근을 보장하지 않는다."
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2154,29 +2154,91 @@
       "docs/comparison-dashboard/view.json",
       "docs/comparison-dashboard/index.html"
     ],
-    "candidate_state": "ISOLATED_VERIFIED_AND_APPROVED",
-    "main_applied": false,
-    "original_worktree_applied": false,
+    "candidate_state": "ORIGINAL_APPLIED_AND_VERIFIED",
+    "main_applied": true,
+    "original_worktree_applied": true,
     "comparison_runs": 0,
     "comparison_status": "NOT_RUN",
     "descendant_termination": "NOT_VERIFIED",
     "consumer_count_on_query_failure": null,
     "validation": {
-      "red_failed": 2,
-      "passed": 9,
-      "seconds": 2.81,
-      "tdd_gate": "PASS",
-      "injected_regressions": "SYNTHETIC"
+      "isolated": {
+        "passed": 9,
+        "seconds": 2.81
+      },
+      "original": {
+        "passed": 9,
+        "failed": 0,
+        "seconds": 2.86,
+        "runs": 1
+      },
+      "operating_workspace": {
+        "red_failed": 3,
+        "baseline_passed": 6,
+        "tdd_gate": "PASS",
+        "completion_gate": "DONE_PUBLISHED",
+        "work_id": "a63c1d6f72a94d6ca305b2030bec0295"
+      },
+      "tests_rerun_for_documentation": false
     },
-    "review_status": "APPROVE",
-    "report_seal": "PUBLISHED",
+    "review_status": "PRIOR_ISOLATED_APPROVAL_AND_READONLY_ORIGINAL_REVIEW",
+    "report_seal": "OPERATING_WORKSPACE_PUBLISHED",
     "review_receipt": "51e84174a9d245bc953f01306e530a9d",
     "approved_hashes": {
       "scripts/omc_termination_observer.py": "d4f39aea7a11913929697ffd0462bd7c8ebff1dfe533cf4daa213c8fe5f741af",
       "scripts/test_omc_termination_observer.py": "a2ebb961c631471561663de5bc7ada28ec5e0245612f38051b05a06231c59a90"
-    }
+    },
+    "main_applied_meaning": "이번 로컬 커밋 반영 상태; push·설치·원본 만료 문맥의 완료 승인과 별개",
+    "original_expired_context": "UNCHANGED"
   },
   "current_update_history": [
+    {
+      "date": "2026-11-08",
+      "status": "현재 · 파일 등록 관측 도구 격리 검증·리뷰 승인 / 원본 미반영·비교 NOT_RUN · 2026-11-08",
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "main_commit": "648e990b0c3082242fd04e4c761f9bc4f1cbf021",
+      "main_commit_role": "최신화 전 기준; 후속 문서 커밋은 별도",
+      "comparison_state": "HOLD",
+      "actual_home": "NOT_VERIFIED",
+      "historical_preservation_revalidation": "UNKNOWN",
+      "existing_formal_holds": "PRESERVED",
+      "latest_fields": {
+        "상태": "직접 조회를 연결한 관측 도구·테스트 2개는 독립 복제본에서만 검증·승인됐다. 원본 반영·설치·실제 발급/재개·비교는 수행하지 않았다. 편집 재개 지원 원본 5개의 283통과·1실패와 원인 미확정은 그대로다.",
+        "검증": "Job.poll의 종료 직후 잔여 출력 회수와 조회 실패 시 consumer_count=null/UNKNOWN 보존을 보완했다. 실제 RED 2실패→현 작업 등록→9개 통과(2.81초)·TDD GATE 통과·작업 보고 봉인 성공. 이 문서 최신화에서는 테스트·API를 재실행하지 않았다.",
+        "관측 한계": "실제 직접 자식 1건 파일 등록 약 0.10282초, 등록 1초·I/O 작업자 회수·늦은 게시 무효화를 확인했다. 오류·지연 회귀는 실제 처리 경로에 대한 합성 주입이며 실제 OS 거부 재현이 아니다. 자손 전체 종료 미검증, 비교 0/4회 NOT_RUN, 실제 시계 확인 불가를 유지한다.",
+        "이전 실패": "소켓 권한 거부·/bin/ps 조회 차단은 보존하고 특정 정책 원인은 미확정이다. 이전 자체 검증 실패/비교 NOT_RUN/봉인 성공과 직접 조회 전제 관측 통과/RED 미등록 공식 완료 보류를 구분한다.",
+        "리뷰·발행": "기존 만료 문맥의 리뷰 발행 실패와 첫 별도 리뷰의 review_stale을 보존했다. 새 리뷰 전용 작업 fixed-two-file-review-20261108-03은 고정 2개 해시·증거를 대조해 APPROVE·approved·published, 정식 승인 receipt 51e84174a9d245bc953f01306e530a9d를 생성했다. 옛 승인 만료를 갱신하거나 기존 공식 보류를 해제하지 않는다.",
+        "보존·다음 결정": "과거 보존 재검증 UNKNOWN·기존 공식 보류·실제 홈 NOT_VERIFIED·비교 HOLD 유지. 원본 반영·비교·설치는 별도 지시 전 미실행. 이번 범위는 문서 4개뿐이며 실제 모델 성능·고객 가치·경쟁 우열의 증거가 아니다.",
+        "근거": "격리 원문: /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-file-link-x58pwimj/work/.omc/file-link-fix-20261108-01/. 리뷰: /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-two-file-review-final-ye4v37nm/work/.omc/state/output-records/20261108T134414-bc252eda/fixed-two-file-review-20261108-03/manifest.json. 로컬 임시 자료이며 영구 보존·다른 checkout 접근을 보장하지 않는다."
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/view.json",
+        "docs/comparison-dashboard/index.html"
+      ],
+      "candidate_state": "ISOLATED_VERIFIED_AND_APPROVED",
+      "main_applied": false,
+      "original_worktree_applied": false,
+      "comparison_runs": 0,
+      "comparison_status": "NOT_RUN",
+      "descendant_termination": "NOT_VERIFIED",
+      "consumer_count_on_query_failure": null,
+      "validation": {
+        "red_failed": 2,
+        "passed": 9,
+        "seconds": 2.81,
+        "tdd_gate": "PASS",
+        "injected_regressions": "SYNTHETIC"
+      },
+      "review_status": "APPROVE",
+      "report_seal": "PUBLISHED",
+      "review_receipt": "51e84174a9d245bc953f01306e530a9d",
+      "approved_hashes": {
+        "scripts/omc_termination_observer.py": "d4f39aea7a11913929697ffd0462bd7c8ebff1dfe533cf4daa213c8fe5f741af",
+        "scripts/test_omc_termination_observer.py": "a2ebb961c631471561663de5bc7ada28ec5e0245612f38051b05a06231c59a90"
+      }
+    },
     {
       "date": "2026-11-08",
       "status": "현재 · 편집 재개 지원 원본 반영·검증 실패 / 원인 미확정·공식 보류 · 2026-11-08",
