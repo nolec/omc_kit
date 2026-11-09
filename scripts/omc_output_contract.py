@@ -601,6 +601,14 @@ def _gate_binding(root, verification):
     pin(session)
     try:
         record=json.loads(_local_file(root,verification).read_bytes())
+        baseline=state.get('maintenance_baseline_ref')
+        if baseline:pin(baseline['path'])
+        operation_ref=record.get('maintenance_operation_ref')
+        if operation_ref:
+            pin(operation_ref['path'])
+            operation=json.loads(_local_file(root,operation_ref['path']).read_bytes())
+            pin(operation['baseline_ref']['path'])
+            pin(operation['native_prefix_ref']['path'])
         for check in record.get('checks',{}).values():
             for ref in check.get('evidence_files',[]):pin(ref['path'])
     except (OSError,ValueError,TypeError,KeyError,AttributeError):pass

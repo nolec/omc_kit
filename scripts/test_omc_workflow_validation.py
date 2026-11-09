@@ -648,3 +648,144 @@ def test_manifest_shape_error_preserves_public_collector_hold_evidence(tmp_path,
     assert context.read_bytes()==context_before and verification.read_bytes()==verification_before
     assert json.loads(original_manifest)['publication']=='published'
 
+
+
+from test_omc_task_completion_surface import maintenance_case,maintenance_proof,maintenance_finish,maintenance_prepend_approval
+
+
+@pytest.mark.parametrize('maintenance_case',['default','visible-evidence'],indirect=True)
+def test_maintenance_collector_requires_prefix_from_actual_full_stream(maintenance_case):
+    import shlex,hashlib
+    import omc_workflow_validation as validation
+    root,_,_,_=maintenance_case;path,rows=maintenance_proof(maintenance_case)
+    maintenance_prepend_approval(maintenance_case,path,rows)
+    result,context,args=maintenance_finish(root,path)
+    assert result.returncode==0,result.stdout+result.stderr
+    rows.extend([{'type':'assistant','message':{'content':[{'type':'tool_use','id':'complete','name':'Bash',
+        'input':{'command':shlex.join(['python3','scripts/omc_pipeline_guard.py',*args]),'cwd':str(root)}}]}},
+        {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'complete',
+            'content':result.stdout,'exit_code':0,'is_error':False}]}},
+        {'type':'result','subtype':'success','result':result.stdout,'is_error':False}])
+    events=root/'.omc/full.jsonl';events.write_text('\n'.join(json.dumps(r,ensure_ascii=False) for r in rows)+'\n')
+    manifest=Path(context['record_path']);pin=hashlib.sha256(manifest.read_bytes()).hexdigest()
+    def collect_to(name):
+        return validation.collect(root,events,'current',path,'done',root/'.omc'/name,output_mode='detached_v1',
+            output_context=Path(context['output_context']),output_context_sha256=context['output_context_sha256'],
+            output_record=manifest,output_record_sha256=pin)
+    report=collect_to('collected')
+    assert report['required']['procedure_calls']=='passed',report
+    rows[3]['message']['content'][0]['input']['cwd']='/tmp'
+    events.write_text('\n'.join(json.dumps(r,ensure_ascii=False) for r in rows)+'\n')
+    report=collect_to('mismatch')
+    assert report['required']['procedure_calls']!='passed',report
+
+
+def test_maintenance_live_tee_supplies_prefix_before_completion_call(maintenance_case,capfd):
+    import hashlib,shlex
+    from omc_home_observation import tee_native
+    import omc_workflow_validation as validation
+    root,_,_,_=maintenance_case;verification,rows=maintenance_proof(maintenance_case)
+    prefix=root/'.omc/evidence/prefix.jsonl';prefix.unlink()
+    initial=root/'.omc/adapter-input.json';initial.write_text(json.dumps(rows))
+    adapter=root/'.omc/controlled-adapter.py'
+    adapter.write_text('''import sys,json,time,shlex
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+from test_omc_task_completion_surface import maintenance_finish
+root=Path.cwd()
+for row in json.loads((root/'.omc/adapter-input.json').read_text()):print(json.dumps(row,ensure_ascii=False),flush=True)
+end=time.monotonic()+10
+while not (root/'.omc/prefix-ready').exists():
+    if time.monotonic()>end:raise SystemExit(3)
+    time.sleep(0.01)
+assert (root/'.omc/evidence/prefix.jsonl').is_file()
+result,context,args=maintenance_finish(root,root/'.omc/verification.json','stream')
+(root/'.omc/stream-context.json').write_text(json.dumps(context))
+rows=[{'type':'assistant','message':{'content':[{'type':'tool_use','id':'complete','name':'Bash','input':{'command':shlex.join(['python3','scripts/omc_pipeline_guard.py',*args]),'cwd':str(root)}}]}},
+{'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'complete','content':result.stdout,'exit_code':result.returncode,'is_error':result.returncode!=0}]}},
+{'type':'result','subtype':'success','result':result.stdout,'is_error':False}]
+for row in rows:print(json.dumps(row,ensure_ascii=False),flush=True)
+raise SystemExit(result.returncode)
+''')
+    events=root/'.omc/live.jsonl';published=[]
+    def publish_prefix():
+        if published:return
+        raw=events.read_bytes()
+        if not raw.endswith(b'\n'):return
+        observed=[json.loads(line) for line in raw.splitlines()]
+        if len(observed)!=len(rows):return
+        with prefix.open('xb') as stream:stream.write(raw)
+        operation=json.loads((root/'.omc/evidence/operation.json').read_bytes())
+        assert operation['native_prefix_ref']['sha256']==hashlib.sha256(raw).hexdigest()
+        guard.maintenance_operation(root,json.loads(verification.read_bytes()),full_native=raw)
+        (root/'.omc/prefix-ready').write_text('prefix validated before child calls completion')
+        published.append(True)
+    assert tee_native(root,[sys.executable,str(adapter),str(SCRIPT.parent)],events,[publish_prefix])==0
+    assert published==[True]
+    context=json.loads((root/'.omc/stream-context.json').read_bytes());manifest=Path(context['record_path'])
+    result=validation.collect(root,events,'current',verification,'done',root/'.omc/live-collected',
+        output_mode='detached_v1',output_context=Path(context['output_context']),
+        output_context_sha256=context['output_context_sha256'],output_record=manifest,
+        output_record_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest())
+    assert all(result['required'][name]=='passed' for name in ('procedure_calls','truthful_final','registration')),result
+
+
+from test_omc_task_completion_surface import maintenance_unregistered, maintenance_recovered_proof
+
+
+def test_maintenance_r4_actual_parent_child_ready_handshake(maintenance_case,capfd):
+    """Real processes and CLI; controlled native adapter, not a live provider."""
+    from omc_home_observation import tee_native
+    root,_=maintenance_unregistered(maintenance_case)
+    original=guard._state_path(root).read_bytes()
+    inject=root/'.omc/inject';inject.mkdir()
+    (inject/'sitecustomize.py').write_text("import os\nf=os.replace\ndef replace(a,b):\n    if str(b)==os.environ.get('FAULT_STATE'):raise OSError('controlled failure')\n    return f(a,b)\nos.replace=replace\n")
+    child=root/'.omc/child.py'
+    child.write_text('''import os,sys,json,subprocess,shlex
+from pathlib import Path
+root=Path.cwd();script=sys.argv[1]
+def emit(row):print(json.dumps(row),flush=True)
+emit({'type':'system','subtype':'init','cwd':str(root)})
+def call(ident,args,env=None):
+    emit({'type':'assistant','message':{'content':[{'type':'tool_use','id':ident,'name':'Bash','input':{'cwd':str(root),'command':shlex.join(['python3','scripts/omc_pipeline_guard.py',*args])}}]}})
+    result=subprocess.run([sys.executable,script,'--target',str(root),*args],capture_output=True,text=True,env=env)
+    emit({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':ident,'content':result.stdout,'exit_code':result.returncode,'is_error':result.returncode!=0}]}})
+    return result
+failed=call('failed',['contract-done','--required-checks','preservation'],{**os.environ,'PYTHONPATH':str(root/'.omc/inject'),'FAULT_STATE':str(root/'.omc/pipeline_session.json')})
+assert failed.returncode==1,failed.stdout
+failure=json.loads(failed.stdout.splitlines()[-1])
+info=call('info',['maintenance-recovery-info','--ready-file',failure['ready_file']])
+assert info.returncode==0,info.stdout
+ref=json.loads(info.stdout)['prefix_ref']
+recovered=call('recovered',['contract-done','--required-checks','preservation','--maintenance-recovery-file',ref['path'],'--maintenance-recovery-sha256',ref['sha256']])
+assert recovered.returncode==0,recovered.stdout
+(root/'.omc/child-result.json').write_text(json.dumps({'returncode':recovered.returncode,'prefix_ref':ref}))
+''')
+    events=root/'.omc/live.jsonl'
+    assert tee_native(root,[sys.executable,str(child),str(SCRIPT.parent/'omc_pipeline_guard.py')],events,[])==0
+    result=json.loads((root/'.omc/child-result.json').read_bytes())
+    state=json.loads(guard._state_path(root).read_bytes())
+    assert state['maintenance_recovery']['prefix_ref']==result['prefix_ref']
+    assert state['started_at']==json.loads(original)['started_at']
+    assert events.read_bytes().startswith((root/result['prefix_ref']['path']).read_bytes())
+
+
+def test_maintenance_r4_collector_accepts_recovery_and_rejects_foreign_stream(maintenance_case,monkeypatch):
+    import shlex,hashlib
+    import omc_workflow_validation as validation
+    root,path,rows,_=maintenance_recovered_proof(maintenance_case,monkeypatch)
+    result,context,args=maintenance_finish(root,path)
+    assert result.returncode==0,result.stdout+result.stderr
+    rows.extend([{'type':'assistant','message':{'content':[{'type':'tool_use','id':'complete','name':'Bash',
+        'input':{'command':shlex.join(['python3','scripts/omc_pipeline_guard.py',*args]),'cwd':str(root)}}]}},
+        {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'complete','content':result.stdout,'exit_code':0,'is_error':False}]}},
+        {'type':'result','subtype':'success','result':result.stdout,'is_error':False}])
+    events=root/'.omc/full.jsonl';events.write_text(''.join(json.dumps(row)+'\n' for row in rows))
+    manifest=Path(context['record_path']);pin=hashlib.sha256(manifest.read_bytes()).hexdigest()
+    kwargs=dict(output_mode='detached_v1',output_context=Path(context['output_context']),
+        output_context_sha256=context['output_context_sha256'],output_record=manifest,output_record_sha256=pin)
+    report=validation.collect(root,events,'current',path,'done',root/'.omc/recovered-collected',**kwargs)
+    assert report['required']['procedure_calls']=='passed',report
+    events.write_bytes(b'{}\n'+events.read_bytes())
+    report=validation.collect(root,events,'current',path,'done',root/'.omc/foreign-collected',**kwargs)
+    assert report['required']['procedure_calls']!='passed',report

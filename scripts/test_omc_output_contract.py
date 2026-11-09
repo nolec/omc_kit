@@ -1058,3 +1058,39 @@ def test_preflight_unknown_stage_is_not_misreported_as_bad_verdict(detached_case
     assert '허용값' in result.stderr and 'ship' in result.stderr
     assert 'SENSITIVE' not in result.stderr
     assert not (root/'.omc/state/output-records').exists()
+
+
+from test_omc_task_completion_surface import maintenance_case,maintenance_proof,maintenance_finish
+
+
+@pytest.mark.parametrize('evidence',['baseline','operation','prefix'])
+def test_maintenance_detached_gate_pins_all_custody_files(maintenance_case,evidence):
+    import hashlib
+    import omc_output_contract as output
+    root,_,baseline,_=maintenance_case
+    path,_=maintenance_proof(maintenance_case)
+    result,context,_=maintenance_finish(root,path)
+    assert result.returncode==0,result.stdout+result.stderr
+    ctx=output.load_output_context(root,context['output_context'],context['output_context_sha256'])
+    manifest=Path(context['record_path']);pin=hashlib.sha256(manifest.read_bytes()).hexdigest()
+    assert output.read_record(root,manifest,pin,ctx,display=result.stdout)['source_kind']=='completion_gate'
+    target={'baseline':Path(baseline['baseline_file']),'operation':root/'.omc/evidence/operation.json',
+            'prefix':root/'.omc/evidence/prefix.jsonl'}[evidence]
+    target.write_bytes(target.read_bytes()+b' ')
+    with pytest.raises(output.OutputContractError):output.read_record(root,manifest,pin,ctx,display=result.stdout)
+
+
+from test_omc_task_completion_surface import maintenance_recovered_proof
+
+
+def test_maintenance_r4_detached_record_pins_failed_prefix(maintenance_case,monkeypatch):
+    import hashlib
+    import omc_output_contract as output
+    root,path,_,ref=maintenance_recovered_proof(maintenance_case,monkeypatch)
+    result,context,_=maintenance_finish(root,path)
+    assert result.returncode==0,result.stdout+result.stderr
+    ctx=output.load_output_context(root,context['output_context'],context['output_context_sha256'])
+    manifest=Path(context['record_path']);pin=hashlib.sha256(manifest.read_bytes()).hexdigest()
+    output.read_record(root,manifest,pin,ctx,display=result.stdout)
+    target=root/ref['path'];target.write_bytes(target.read_bytes()+b' ')
+    with pytest.raises(output.OutputContractError):output.read_record(root,manifest,pin,ctx,display=result.stdout)

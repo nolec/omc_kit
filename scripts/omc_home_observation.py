@@ -696,6 +696,12 @@ def tee_native(root: Path, argv: list[str], events: Path, publishers: list, *, c
 
         from omc_pipeline_guard import SESSION_START_HANDOFF_ENV, create_session_start_handoff
         child_env = dict(os.environ)
+        from omc_pipeline_guard import maintenance_launch, maintenance_publisher, MAINTENANCE_READY_ENV
+        child_env.pop(MAINTENANCE_READY_ENV, None)
+        control = maintenance_launch(root)
+        if control is not None:
+            child_env[MAINTENANCE_READY_ENV] = control['ready_file']
+            publishers = [*publishers, maintenance_publisher(root, events, control)]
         # An unrelated nested launch must never inherit another launch's approval.
         child_env.pop(SESSION_START_HANDOFF_ENV, None)
         if context is not None:

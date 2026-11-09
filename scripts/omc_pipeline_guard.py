@@ -723,6 +723,10 @@ def _validate_basis(value: dict, sid: str) -> dict:
     if len(set(ids)) != len(ids):
         raise ValueError("검증 ID가 중복됐습니다")
     kind = _completion_kind(value)
+    if kind == MAINTENANCE_KIND:
+        _validate_maintenance_policy(value)
+    if kind != MAINTENANCE_KIND and 'maintenance' in value:
+        raise ValueError('maintenance_policy_on_other_kind')
     if kind == TRANSFER_KIND:
         _validate_transfer_policy(value)
     elif 'transfer' in value:
@@ -768,7 +772,8 @@ def cmd_approve_checks(root: Path, proposal: Path) -> int:
                         if member!=sid and _basis_path(root,member).exists():
                             older=_load_approved_basis(root,member)
                             if (_completion_kind(older)!=_completion_kind(value)
-                                    or older.get('transfer')!=value.get('transfer')):
+                                    or older.get('transfer')!=value.get('transfer')
+                                    or older.get('maintenance')!=value.get('maintenance')):
                                 raise ValueError('completion_kind_immutable')
         from omc_visual_check import AD_PROFILE
         if _completion_kind(value) == 'implementation':
@@ -781,7 +786,8 @@ def cmd_approve_checks(root: Path, proposal: Path) -> int:
         if revisions:
             previous = _load_approved_basis(root, sid)
             if (_completion_kind(previous) != _completion_kind(value)
-                    or previous.get('transfer') != value.get('transfer')):
+                    or previous.get('transfer') != value.get('transfer')
+                    or previous.get('maintenance') != value.get('maintenance')):
                 raise ValueError('completion_kind_immutable')
             old_native = next((c for c in previous['checks'] if 'native_red' in c), None)
             if old_native is not None:
@@ -882,7 +888,7 @@ def cmd_verification_template(root: Path) -> int:
         return 1
 
 
-def cmd_contract_done(root: Path, content: str = "", required_checks: str = "") -> int:
+def _legacy_contract_done(root: Path, content: str = "", required_checks: str = "") -> int:
     """CONTRACT 양식 작성 + 사용자 컨펌 완료 등록.
 
     content가 주어지면 SHA-256 해시를 저장해 우발적 위조를 방지한다.
@@ -897,6 +903,7 @@ def cmd_contract_done(root: Path, content: str = "", required_checks: str = "") 
     if expiration is not None:
         print("[PIPELINE] pipeline_ttl_expired: 승인 유효기간(8시간)이 만료됐습니다. 원본 기록을 유지합니다.")
         return 1
+    basis=None
     previous_sid = state.get("session_id", "")
     state["contract_confirmed"] = True
     requested_checks = list(dict.fromkeys(c.strip() for c in required_checks.split(",") if c.strip()))
@@ -944,8 +951,15 @@ def cmd_contract_done(root: Path, content: str = "", required_checks: str = "") 
         except ValueError as exc:
             print(f"[PIPELINE] {exc}")
             return 1
+    maintenance_receipt=None
+    try:
+        if basis is not None and _completion_kind(basis)==MAINTENANCE_KIND:
+            maintenance_receipt=_maintenance_register(root,state,basis)
+    except (OSError,ValueError,TypeError,KeyError,AttributeError,subprocess.SubprocessError) as exc:
+        print('[PIPELINE] '+str(exc));return 1
     _save_state(root, state)
     print("[PIPELINE] ✅ CONTRACT 확인 완료 — 기존 파일 수정이 허용됩니다.")
+    if maintenance_receipt:print(json.dumps(maintenance_receipt,ensure_ascii=False))
     return 0
 
 def _internal_verification_path(root: Path, path: Path) -> Path:
@@ -1232,10 +1246,727 @@ def _expired_completion_evaluation(root: Path, verification_file: Path, state: d
 # A separate completion route; legacy implementation never enters this path.
 TRANSFER_KIND = 'verified_commit_transfer'
 
+# Maintenance evidence is local custody, not authentication of a local writer.
+MAINTENANCE_KIND = 'verified_nonimplementation'
+MAINTENANCE_POSTCHECK = '''import os,sys
+def missing(p):
+    try:
+        os.lstat(p)
+    except FileNotFoundError:
+        return True
+    return False
+try:
+    absent=all(missing(p) for p in sys.argv[1:])
+except OSError:
+    raise SystemExit(2)
+raise SystemExit(0 if absent else 1)'''
+
+
+def _validate_maintenance_policy(basis):
+    policy=basis.get('maintenance')
+    if not isinstance(policy,dict) or set(policy)!={'profile','allowed_paths','protected_files','evidence_root'}:
+        raise ValueError('maintenance_policy_invalid')
+    if policy['profile']!='cache_cleanup':raise ValueError('maintenance_profile_unsupported')
+    paths=policy['allowed_paths']
+    if (not isinstance(paths,list) or not paths or any(p not in ('.pytest_cache','scripts/__pycache__') for p in paths)
+            or len(set(paths))!=len(paths)):
+        raise ValueError('maintenance_paths_invalid')
+    protected=policy['protected_files']
+    if not isinstance(protected,list) or any(not isinstance(p,str) or not p for p in protected):
+        raise ValueError('maintenance_protected_invalid')
+    for name in [*protected,policy['evidence_root']]:
+        if (not isinstance(name,str) or not name or Path(name).is_absolute()
+                or '..' in Path(name).parts or str(Path(name))!=name):
+            raise ValueError('maintenance_path_not_canonical')
+    if not policy['evidence_root'].startswith('.omc/'):
+        raise ValueError('maintenance_evidence_root_invalid')
+    if any(p==a or p.startswith(a+'/') for p in protected for a in paths):
+        raise ValueError('maintenance_protected_overlap')
+    return policy
+
+
+def _maintenance_path(root,name):
+    if '..' in Path(name).parts:raise ValueError('maintenance_path_alias_unsupported')
+    path=root/name
+    if not path.resolve().is_relative_to(root):raise ValueError('maintenance_path_escape')
+    for part in (path,*path.parents):
+        if part==root:break
+        if part.is_symlink():raise ValueError('maintenance_path_linked')
+    return path
+
+
+def _maintenance_runtime():
+    import shutil
+    python=shutil.which('python3')
+    if python is None:raise ValueError('maintenance_python_missing')
+    runtime={name:{'path':str(Path(path).resolve(strict=True)),
+                  'sha256':hashlib.sha256(Path(path).resolve(strict=True).read_bytes()).hexdigest()}
+            for name,path in [('rm','/bin/rm'),('python3',python)]}
+    runtime['path_environment']=os.environ.get('PATH','')
+    return runtime
+
+
+def _maintenance_snapshot(root,policy,status_exclusions=()):
+    identity=_transfer_identity(root)
+    _transfer_index(root)  # reject split/sparse/unmerged index representations
+    for name in policy['allowed_paths']:
+        path=_maintenance_path(root,name)
+        if path.exists() and not path.is_dir():raise ValueError('maintenance_target_not_directory')
+        if _transfer_git(root,'ls-files','-z','--',name):raise ValueError('maintenance_tracked_cache')
+        ignored=subprocess.run(['git','--no-optional-locks','check-ignore','-q','--',name+'/'],cwd=root,
+            env={**os.environ,'GIT_OPTIONAL_LOCKS':'0'})
+        if ignored.returncode!=0:raise ValueError('maintenance_cache_not_ignored')
+        # Later cache regeneration is allowed, links and special files are not.
+        if path.exists():
+            for parent,dirs,files in os.walk(path,followlinks=False,onerror=lambda e: (_ for _ in ()).throw(e)):
+                for item in dirs+files:
+                    child=Path(parent)/item
+                    if child.is_symlink() or not (child.is_file() or child.is_dir()):
+                        raise ValueError('maintenance_cache_type_unsupported')
+    protected={name:_transfer_file_row(_maintenance_path(root,name)) for name in policy['protected_files']}
+    _maintenance_path(root,policy['evidence_root'])
+    return {'identity':identity,'head':_transfer_git(root,'rev-parse','HEAD').decode().strip(),
+        'index_sha256':hashlib.sha256(_transfer_read(Path(identity['index']))).hexdigest(),
+        'source_sha256':_code_snapshot_digest(root),'status':_transfer_git(root,'status','--porcelain=v1','-z','--untracked-files=all',
+            '--','.',*(':(literal,exclude)'+name for name in sorted(status_exclusions))).hex(),
+        'protected':protected,'runtime':_maintenance_runtime()}
+
+
+def _maintenance_inventory(root,policy):
+    files={}
+    for name in policy['allowed_paths']:
+        path=_maintenance_path(root,name)
+        if not path.exists():continue
+        for parent,dirs,names in os.walk(path,followlinks=False,onerror=lambda e: (_ for _ in ()).throw(e)):
+            for item in names:
+                child=Path(parent)/item;row=_transfer_file_row(child)
+                row['allocated_bytes']=child.stat().st_blocks*512
+                files[str(child.relative_to(root))]=row
+                if len(files)>100000:raise ValueError('maintenance_inventory_budget')
+    return files
+
+
+def _maintenance_evidence_inventory(root,policy):
+    directory=_maintenance_path(root,policy['evidence_root']);rows={}
+    if not directory.exists():return rows
+    if not directory.is_dir():raise ValueError('maintenance_evidence_not_directory')
+    for parent,dirs,files in os.walk(directory,followlinks=False,onerror=lambda e: (_ for _ in ()).throw(e)):
+        folder=Path(parent)
+        rows[str(folder.relative_to(root))]={'kind':'directory','mode':folder.stat().st_mode&0o777}
+        for name in dirs+files:
+            path=_maintenance_path(root,str((folder/name).relative_to(root)))
+            if name in files:rows[str(path.relative_to(root))]=_transfer_file_row(path)
+        if len(rows)>100000:raise ValueError('maintenance_evidence_inventory_budget')
+    return rows
+
+
+def _maintenance_preserved_snapshot(root,policy,baseline,record,operation):
+    before=baseline.get('evidence_inventory')
+    if not isinstance(before,dict):raise ValueError('maintenance_evidence_baseline_missing')
+    current=_maintenance_evidence_inventory(root,policy)
+    if any(current.get(name)!=row for name,row in before.items()):
+        raise ValueError('maintenance_existing_evidence_changed')
+    refs=[record['maintenance_operation_ref'],operation['native_prefix_ref']]
+    for check in record['checks'].values():refs.extend(check.get('evidence_files',[]))
+    referenced=set()
+    for ref in refs:
+        _maintenance_read_ref(root,ref)
+        path=_maintenance_path(root,ref['path'])
+        if path.is_relative_to(root/policy['evidence_root']):referenced.add(ref['path'])
+    additions=set(current)-set(before)
+    allowed=set(referenced)
+    for name in referenced:
+        path=root/name
+        for parent in path.parents:
+            if not parent.is_relative_to(root/policy['evidence_root']):break
+            allowed.add(str(parent.relative_to(root)))
+    if additions-allowed:raise ValueError('maintenance_unbound_evidence_added')
+    new_files={name for name in additions if current[name]['kind']=='file'}
+    return _maintenance_snapshot(root,policy,status_exclusions=new_files)
+
+
+def _maintenance_context(root):
+    from omc_edit_resume import ENV, frozen, load
+    if os.environ.get(ENV):load(root)
+    elif frozen(root):raise ValueError('expired_work_lifecycle_frozen')
+    state,expiration=_read_pipeline(root)
+    if expiration is not None:raise ValueError('pipeline_ttl_expired')
+    latest=json.loads((root/'.omc/state/latest.json').read_bytes())
+    sid=_completion_owner(root,latest,state);basis=_load_approved_basis(root,sid)
+    if _completion_kind(basis)!=MAINTENANCE_KIND:raise ValueError('completion_kind_entry_mismatch')
+    if state.get('session_id')!=sid or not state.get('contract_confirmed'):raise ValueError('maintenance_contract_missing')
+    session=json.loads(_transfer_local(root,'.omc/state/sessions/'+sid+'/session.json').read_bytes())
+    work=session.get('work_id')
+    if (session.get('session_id')!=sid or session.get('confirmation',{}).get('status')!='confirmed'
+            or not isinstance(work,str) or not work):raise ValueError('maintenance_work_binding_invalid')
+    if state.get('basis_sha256')!=_basis_digest(basis):raise ValueError('maintenance_contract_binding_mismatch')
+    return state,sid,basis,work
+
+
+def _maintenance_register(root,state,basis,origin_raw=None,control=None):
+    sid=state['session_id'];policy=_validate_maintenance_policy(basis)
+    path=_maintenance_path(root,'.omc/state/maintenance-baselines/'+sid+'.json')
+    if path.exists() or state.get('maintenance_baseline_ref'):
+        raise ValueError('maintenance_baseline_already_registered')
+    session=json.loads(_transfer_local(root,'.omc/state/sessions/'+sid+'/session.json').read_bytes())
+    if (session.get('session_id')!=sid or session.get('confirmation',{}).get('status')!='confirmed'
+            or not isinstance(session.get('work_id'),str) or not session['work_id']):
+        raise ValueError('maintenance_work_binding_invalid')
+    for old in path.parent.glob('*.json'):
+        if json.loads(_transfer_read(old)).get('work_id')==session['work_id']:
+            raise ValueError('maintenance_work_baseline_already_registered')
+    before=_maintenance_snapshot(root,policy);inventory=_maintenance_inventory(root,policy)
+    evidence_inventory=_maintenance_evidence_inventory(root,policy)
+    value={'schema_version':'omc-maintenance-baseline/v2','session_id':sid,'work_id':session['work_id'],
+           'basis_sha256':_basis_digest(basis),'policy':policy,'snapshot':before,'inventory':inventory,
+           'evidence_inventory':evidence_inventory,'origin_state_sha256':hashlib.sha256(origin_raw or b'').hexdigest(),
+           'origin_started_at':state['started_at'],'contract_hash':state['contract_hash'],'control':control}
+    if (before!=_maintenance_snapshot(root,policy) or inventory!=_maintenance_inventory(root,policy)
+            or evidence_inventory!=_maintenance_evidence_inventory(root,policy)):
+        raise ValueError('maintenance_changed_during_registration')
+    path.parent.mkdir(parents=True,exist_ok=True)
+    raw=_maintenance_baseline_bytes(value)
+    _maintenance_atomic(path,raw,exclusive=True)
+    state['maintenance_baseline_ref']={'path':str(path.relative_to(root)),'sha256':hashlib.sha256(raw).hexdigest()}
+    return {'status':'maintenance_baseline_registered','work_id':session['work_id'],
+            'basis_sha256':_basis_digest(basis),'baseline_file':str(path),'baseline_sha256':hashlib.sha256(raw).hexdigest()}
+
+
+def _maintenance_read_ref(root,ref):
+    if not isinstance(ref,dict) or set(ref)!={'path','sha256'}:raise ValueError('maintenance_ref_invalid')
+    raw=_transfer_read(_maintenance_path(root,ref['path']))
+    if hashlib.sha256(raw).hexdigest()!=ref['sha256']:raise ValueError('maintenance_ref_hash_mismatch')
+    return raw
+
+
+# The failed attempt is evidence, never a new approval or a renewed clock.
+EVIDENCE_READ_LIMIT = 8 * 1024 * 1024
+MAINTENANCE_LIMIT = EVIDENCE_READ_LIMIT
+MAINTENANCE_READY_ENV = 'OMC_MAINTENANCE_READY_FILE'
+
+
+def _maintenance_baseline_bytes(value):
+    raw=json.dumps(value,ensure_ascii=False,indent=2).encode()
+    if len(raw)>MAINTENANCE_LIMIT:raise ValueError('maintenance_baseline_size_unsupported')
+    return raw
+
+
+def _maintenance_atomic(path, raw, *, exclusive=False):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix='.pending-', dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+        if exclusive: os.link(temporary, path)
+        else: os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try: os.fsync(directory)
+        finally: os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _maintenance_approved(root):
+    latest = json.loads(_transfer_read(root/'.omc/state/latest.json'))
+    sid = latest['latest_confirmed_session_id']
+    if latest.get('latest_session_id', sid) != sid: raise ValueError('maintenance_session_unconfirmed')
+    basis = _load_approved_basis(root, sid)
+    session = json.loads(_transfer_read(root/'.omc/state/sessions'/sid/'session.json'))
+    if session.get('confirmation', {}).get('status') != 'confirmed' or not session.get('work_id'):
+        raise ValueError('maintenance_work_binding_invalid')
+    return sid, basis, session['work_id']
+
+
+def _maintenance_origin(root):
+    raw = _transfer_read(_state_path(root))
+    state = json.loads(raw)
+    started = state.get('started_at')
+    if type(started) not in (int, float) or not math.isfinite(started) or started > time.time():
+        raise ValueError('maintenance_clock_invalid')
+    if time.time()-started >= _SESSION_TTL_SECONDS: raise ValueError('pipeline_ttl_expired')
+    from omc_edit_resume import frozen
+    if frozen(root): raise ValueError('expired_work_lifecycle_frozen')
+    return raw, state
+
+
+def maintenance_launch(root):
+    """Reserve a control directory before a selected native child starts."""
+    import uuid
+    root = root.resolve()
+    try: sid, basis, work = _maintenance_approved(root)
+    except (OSError, ValueError, KeyError): return None
+    if _completion_kind(basis) != MAINTENANCE_KIND: return None
+    _maintenance_origin(root)
+    ident = uuid.uuid4().hex
+    folder = _maintenance_path(root, '.omc/state/maintenance-control/'+ident)
+    ignored = subprocess.run(['git','check-ignore','-q','--',str(folder)], cwd=root)
+    if ignored.returncode != 0: raise ValueError('maintenance_control_not_ignored')
+    folder.mkdir(parents=True, exist_ok=False)
+    control = {'schema_version':'omc-maintenance-control/v1','root':str(root),
+               'launch_id':ident,'ready_file':str(folder/'ready.json'),
+               'session_id':sid,'work_id':work,'basis_sha256':_basis_digest(basis)}
+    _maintenance_atomic(folder/'launch.json', json.dumps(control).encode(), exclusive=True)
+    return control
+
+
+def _maintenance_control(root, ready, sid, basis, work):
+    path = _maintenance_path(root, ready)
+    if path.name != 'ready.json' or path.parent.parent != root/'.omc/state/maintenance-control':
+        raise ValueError('maintenance_control_scope_mismatch')
+    if not re.fullmatch('[0-9a-f]{32}', path.parent.name): raise ValueError('maintenance_launch_invalid')
+    control = json.loads(_transfer_read(path.parent/'launch.json'))
+    expected = {'schema_version':'omc-maintenance-control/v1','root':str(root),
+                'launch_id':path.parent.name,'ready_file':str(path),'session_id':sid,
+                'work_id':work,'basis_sha256':_basis_digest(basis)}
+    if control != expected: raise ValueError('maintenance_control_binding_mismatch')
+    return control
+
+
+def _maintenance_native(raw):
+    """Parse complete native rows without manufacturing tool returns."""
+    if not raw.endswith(b'\n'): raise ValueError('maintenance_native_prefix_incomplete')
+    rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
+    calls, returns = {}, {}
+    for i, row in enumerate(rows):
+        content = row.get('message', {}).get('content', [])
+        if not isinstance(content, list): raise ValueError('maintenance_native_provider_unsupported')
+        for block in content:
+            if block.get('type') == 'tool_use':
+                ident = block.get('id')
+                if row.get('type') != 'assistant' or not isinstance(ident, str) or ident in calls:
+                    raise ValueError('maintenance_native_duplicate_call')
+                calls[ident] = (i, block)
+            elif block.get('type') == 'tool_result':
+                ident = block.get('tool_use_id')
+                if row.get('type') != 'user' or ident not in calls or ident in returns:
+                    raise ValueError('maintenance_native_return_mismatch')
+                returns[ident] = (i, block)
+    return rows, calls, returns
+
+
+def maintenance_recovery(root, ref, basis, baseline, origin_raw=None):
+    """Shared immutable predicate for retry CLI, info CLI and final collector."""
+    import shlex
+    raw = _maintenance_read_ref(root, ref)
+    rows, calls, returns = _maintenance_native(raw)
+    last = [(ident, block) for ident, (i, block) in returns.items() if i == len(rows)-1]
+    if len(last) != 1: raise ValueError('maintenance_recovery_return_missing')
+    ident, result = last[0]
+    _, call = calls[ident]
+    args = ['python3','scripts/omc_pipeline_guard.py','contract-done','--required-checks',
+            ','.join(c['id'] for c in basis['checks'])]
+    inp = call.get('input', {})
+    cwd = inp.get('cwd') or next((r.get('cwd') for r in rows if r.get('subtype')=='init'), None)
+    if (call.get('name') != 'Bash' or inp.get('command') != shlex.join(args) or cwd != str(root)
+            or any(k in inp for k in ('env','shell','executable')) or inp.get('run_in_background')
+            or type(result.get('exit_code')) is not int or result['exit_code'] == 0 or result.get('is_error') is not True):
+        raise ValueError('maintenance_recovery_call_invalid')
+    failures = []
+    for line in result.get('content', '').splitlines():
+        try: value = json.loads(line)
+        except ValueError: continue
+        if isinstance(value, dict) and value.get('status') == 'maintenance_registration_failed': failures.append(value)
+    if len(failures) != 1: raise ValueError('maintenance_recovery_failure_missing')
+    # Permit the same bounded pre-CONTRACT preparation as the final collector.
+    from omc_native_command import read_command_reason
+    approvals = {}
+    for other, (index, block) in calls.items():
+        if other == ident: continue
+        if other not in returns: raise ValueError('maintenance_recovery_return_missing')
+        j, returned = returns[other]
+        command = block.get('input', {}).get('command', '')
+        argv = shlex.split(command) if isinstance(command, str) else []
+        if (block.get('name') == 'Bash' and len(argv) == 5
+                and argv[:4] == ['python3','scripts/omc_pipeline_guard.py','approve-checks','--file']):
+            proposal = _maintenance_path(root, argv[4])
+            expected = f"[PIPELINE] 사용자 승인 기준 기록: 개정 {basis['revision']} / {_basis_digest(basis)}"
+            if (not proposal.is_relative_to(root/'.omc') or json.loads(_transfer_read(proposal)) != basis
+                    or returned.get('exit_code') != 0 or returned.get('is_error') is not False
+                    or returned.get('content', '').strip() != expected or not index < j < calls[ident][0]):
+                raise ValueError('maintenance_recovery_approval_invalid')
+            approvals[other] = (index, proposal)
+    for other, (index, block) in calls.items():
+        if other == ident or other in approvals: continue
+        name = block.get('name'); inp = block.get('input', {})
+        if name in {'Read','Glob','Grep'}: continue
+        if name == 'Bash' and read_command_reason(root, inp.get('command', '')) is None: continue
+        if name == 'Write' and other in returns:
+            j, returned = returns[other]
+            path = _maintenance_path(root, inp.get('file_path', ''))
+            if (returned.get('is_error') is False and index < j
+                    and any(path == proposal and j < ai for ai, proposal in approvals.values())
+                    and json.loads(inp.get('content', '')) == basis): continue
+        raise ValueError('maintenance_recovery_operation_unsupported')
+    failure = failures[0]
+    control = baseline.get('control')
+    if baseline.get('schema_version') != 'omc-maintenance-baseline/v2' or not control:
+        raise ValueError('maintenance_recovery_baseline_unsupported')
+    sid, work = baseline['session_id'], baseline['work_id']
+    bp = root/'.omc/state/maintenance-baselines'/ (sid+'.json')
+    digest = hashlib.sha256(_transfer_read(bp)).hexdigest()
+    expected = {'status':'maintenance_registration_failed','failure_stage':'state_save',
+                'session_id':sid,'work_id':work,'basis_sha256':_basis_digest(basis),
+                'baseline_sha256':digest,'origin_state_sha256':baseline['origin_state_sha256'],
+                'origin_started_at':baseline['origin_started_at'],
+                'launch_id':control['launch_id'],'ready_file':control['ready_file']}
+    if failure != expected: raise ValueError('maintenance_recovery_binding_mismatch')
+    name = str(Path(basis['maintenance']['evidence_root'])/'recovery'/(hashlib.sha256(ident.encode()).hexdigest()+'.jsonl'))
+    if ref['path'] != name: raise ValueError('maintenance_recovery_scope_mismatch')
+    if origin_raw is not None:
+        if hashlib.sha256(origin_raw).hexdigest() != baseline['origin_state_sha256']:
+            raise ValueError('maintenance_recovery_origin_changed')
+    return {'prefix_ref':ref,'failed_call_id':ident,'origin_state_sha256':baseline['origin_state_sha256'],
+            'baseline_sha256':digest,'launch_id':control['launch_id']}
+
+
+def maintenance_publisher(root, events, control):
+    """Publish prefix first, ready second; never rewrite native event bytes."""
+    published = False
+    def publish():
+        nonlocal published
+        if published: return
+        raw = events.read_bytes()
+        offset = 0
+        for line in raw.splitlines(keepends=True):
+            offset += len(line)
+            if not line.endswith(b'\n'): break
+            row = json.loads(line)
+            for block in row.get('message', {}).get('content', []):
+                if block.get('type') != 'tool_result': continue
+                for output_line in block.get('content', '').splitlines():
+                    try: failure = json.loads(output_line)
+                    except ValueError: continue
+                    if not isinstance(failure, dict) or failure.get('status') != 'maintenance_registration_failed': continue
+                    if failure.get('launch_id') != control['launch_id']: continue
+                    sid, basis, _ = _maintenance_approved(root)
+                    baseline = json.loads(_transfer_read(root/'.omc/state/maintenance-baselines'/(sid+'.json')))
+                    ident = block['tool_use_id']
+                    name = str(Path(basis['maintenance']['evidence_root'])/'recovery'/(hashlib.sha256(ident.encode()).hexdigest()+'.jsonl'))
+                    prefix = raw[:offset]
+                    if len(prefix) > MAINTENANCE_LIMIT: raise ValueError('maintenance_prefix_size_unsupported')
+                    path = _maintenance_path(root, name)
+                    if path.exists():
+                        if _transfer_read(path) != prefix: raise ValueError('maintenance_prefix_conflict')
+                    else: _maintenance_atomic(path, prefix, exclusive=True)
+                    ref = {'path':name,'sha256':hashlib.sha256(prefix).hexdigest()}
+                    desc = maintenance_recovery(root, ref, basis, baseline)
+                    ready = {'schema_version':'omc-maintenance-ready/v1','session_id':sid,
+                             'work_id':baseline['work_id'],'basis_sha256':_basis_digest(basis),
+                             'baseline_sha256':desc['baseline_sha256'],'launch_id':control['launch_id'],
+                             'failed_call_id':ident,'prefix_ref':ref}
+                    target = _maintenance_path(root, control['ready_file'])
+                    value = json.dumps(ready).encode()
+                    if target.exists():
+                        if _transfer_read(target) != value: raise ValueError('maintenance_ready_conflict')
+                    else: _maintenance_atomic(target, value, exclusive=True)
+                    published = True
+                    return
+    return publish
+
+
+def maintenance_recovery_info(root, ready_file):
+    sid, basis, work = _maintenance_approved(root)
+    if _completion_kind(basis) != MAINTENANCE_KIND: raise ValueError('completion_kind_entry_mismatch')
+    origin, state = _maintenance_origin(root)
+    if state.get('maintenance_baseline_ref'): raise ValueError('maintenance_baseline_already_registered')
+    baseline = json.loads(_transfer_read(root/'.omc/state/maintenance-baselines'/(sid+'.json')))
+    control = _maintenance_control(root, ready_file, sid, basis, work)
+    if baseline.get('control') != control: raise ValueError('maintenance_control_binding_mismatch')
+    deadline = time.monotonic()+min(10, _SESSION_TTL_SECONDS-(time.time()-state['started_at']))
+    path = _maintenance_path(root, ready_file)
+    while not path.exists():
+        if time.monotonic() >= deadline: raise ValueError('maintenance_ready_timeout')
+        time.sleep(0.05)
+    raw = _transfer_read(path)
+    if len(raw)>16384: raise ValueError('maintenance_ready_size_unsupported')
+    ready = json.loads(raw)
+    desc = maintenance_recovery(root, ready['prefix_ref'], basis, baseline, origin)
+    expected = {'schema_version':'omc-maintenance-ready/v1','session_id':sid,'work_id':work,
+                'basis_sha256':_basis_digest(basis),'baseline_sha256':desc['baseline_sha256'],
+                'launch_id':control['launch_id'],'failed_call_id':desc['failed_call_id'],'prefix_ref':desc['prefix_ref']}
+    if ready != expected: raise ValueError('maintenance_ready_binding_mismatch')
+    current, _ = _maintenance_origin(root)
+    if current != origin or _maintenance_approved(root) != (sid,basis,work):
+        raise ValueError('maintenance_changed_during_validation')
+    return {'schema_version':'omc-maintenance-recovery-info/v1','launch_id':desc['launch_id'],
+            'failed_call_id':desc['failed_call_id'],'prefix_ref':desc['prefix_ref']}
+
+
+def cmd_contract_done(root, content='', required_checks='', recovery_file=None, recovery_sha256=None):
+    try:
+        sid, basis, work = _maintenance_approved(root)
+    except (OSError, ValueError, KeyError, TypeError):
+        if recovery_file or recovery_sha256:
+            print('[PIPELINE] maintenance_recovery_basis_missing'); return 1
+        return _legacy_contract_done(root, content, required_checks)
+    if _completion_kind(basis) != MAINTENANCE_KIND:
+        if recovery_file or recovery_sha256:
+            print('[PIPELINE] completion_kind_entry_mismatch'); return 1
+        return _legacy_contract_done(root, content, required_checks)
+    from omc_state import _omc_lock
+    from omc_edit_resume import lock
+    try:
+        with _omc_lock(root), lock(root, work):
+            if _maintenance_approved(root) != (sid,basis,work): raise ValueError('maintenance_work_changed')
+            origin, state = _maintenance_origin(root)
+            if state.get('owner_work_id',work)!=work or state.get('owner_session_id',sid)!=sid:
+                raise ValueError('maintenance_work_changed')
+            if state.get('maintenance_baseline_ref'): raise ValueError('maintenance_baseline_already_registered')
+            if set(required_checks.split(',')) != {c['id'] for c in basis['checks']}:
+                raise ValueError('maintenance_required_checks_mismatch')
+            state.update(session_id=sid, contract_confirmed=True, basis_sha256=_basis_digest(basis),
+                         required_checks=required_checks.split(','), red_evidence_required=False)
+            state.setdefault('worktree_baseline', _unstaged_impl_fingerprints(root))
+            bp = root/'.omc/state/maintenance-baselines'/(sid+'.json')
+            if recovery_file is not None or recovery_sha256 is not None:
+                if not recovery_file or not recovery_sha256: raise ValueError('maintenance_recovery_pair_required')
+                baseline = json.loads(_transfer_read(bp))
+                contract_hash = baseline.get('contract_hash')
+                if not isinstance(contract_hash,str) or not re.fullmatch('[0-9a-f]{64}',contract_hash):
+                    raise ValueError('maintenance_contract_hash_missing')
+                if content and _make_contract_hash(content)!=contract_hash:
+                    raise ValueError('maintenance_contract_content_mismatch')
+                state['contract_hash']=contract_hash
+                ref = {'path':recovery_file,'sha256':recovery_sha256}
+                desc = maintenance_recovery(root, ref, basis, baseline, origin)
+                if baseline['policy'] != basis['maintenance'] or baseline['session_id'] != sid or baseline['work_id'] != work:
+                    raise ValueError('maintenance_baseline_binding_mismatch')
+                current = _maintenance_preserved_snapshot(root, basis['maintenance'], baseline,
+                    {'maintenance_operation_ref':ref,'checks':{}}, {'native_prefix_ref':ref})
+                if current != baseline['snapshot'] or _maintenance_inventory(root, basis['maintenance']) != baseline['inventory']:
+                    raise ValueError('maintenance_preservation_changed')
+                state['maintenance_baseline_ref']={'path':str(bp.relative_to(root)),'sha256':desc['baseline_sha256']}
+                state['maintenance_recovery']=desc
+                receipt={'status':'maintenance_baseline_registered','work_id':work,'basis_sha256':_basis_digest(basis),
+                         'baseline_file':str(bp),'baseline_sha256':desc['baseline_sha256'],'recovery':desc}
+            else:
+                ready = os.environ.get(MAINTENANCE_READY_ENV)
+                control = _maintenance_control(root,ready,sid,basis,work) if ready else None
+                state['contract_hash']=_make_contract_hash(content if content else f'confirmed_at:{time.time()}')
+                receipt = _maintenance_register(root,state,basis,origin_raw=origin,control=control)
+            if _maintenance_origin(root)[0] != origin or _maintenance_approved(root) != (sid,basis,work):
+                raise ValueError('maintenance_changed_before_save')
+            try:
+                _maintenance_atomic(_state_path(root), (json.dumps(state,ensure_ascii=False,indent=2)+'\n').encode())
+            except OSError:
+                baseline = json.loads(_transfer_read(bp)); control = baseline.get('control')
+                if control:
+                    failure={'status':'maintenance_registration_failed','failure_stage':'state_save',
+                             'session_id':sid,'work_id':work,'basis_sha256':_basis_digest(basis),
+                             'baseline_sha256':hashlib.sha256(_transfer_read(bp)).hexdigest(),
+                             'origin_state_sha256':baseline['origin_state_sha256'],'origin_started_at':baseline['origin_started_at'],
+                             'launch_id':control['launch_id'],'ready_file':control['ready_file']}
+                    print(json.dumps(failure,ensure_ascii=False))
+                    return 1
+                raise
+            print('[PIPELINE] ✅ CONTRACT 확인 완료 — 기존 파일 수정이 허용됩니다.')
+            print(json.dumps(receipt,ensure_ascii=False)); return 0
+    except (OSError,ValueError,TypeError,KeyError,AttributeError,subprocess.SubprocessError) as exc:
+        print('[PIPELINE] '+str(exc)); return 1
+
+
+def maintenance_operation(root,record,full_native=None):
+    """One read-only predicate for CLI and collector, exact supported Bash protocol."""
+    import shlex
+    state,sid,basis,work=_maintenance_context(root);policy=_validate_maintenance_policy(basis)
+    baseline_ref=state.get('maintenance_baseline_ref');baseline=json.loads(_maintenance_read_ref(root,baseline_ref))
+    if (baseline.get('schema_version') not in {'omc-maintenance-baseline/v1','omc-maintenance-baseline/v2'} or baseline.get('session_id')!=sid
+            or baseline.get('work_id')!=work or baseline.get('basis_sha256')!=_basis_digest(basis)
+            or baseline.get('policy')!=policy):raise ValueError('maintenance_baseline_binding_mismatch')
+    opref=record.get('maintenance_operation_ref')
+    if not isinstance(opref,dict):raise ValueError('maintenance_operation_missing')
+    for ref in [opref]:
+        if not _maintenance_path(root,ref['path']).is_relative_to(root/policy['evidence_root']):
+            raise ValueError('maintenance_evidence_scope_mismatch')
+    operation=json.loads(_maintenance_read_ref(root,opref))
+    required={'schema_version','operation_id','session_id','work_id','basis_sha256','baseline_ref',
+              'native_prefix_ref','delete_call_id','postcheck_call_id'}
+    recovery=state.get('maintenance_recovery')
+    version='omc-maintenance-operation/v2' if recovery else 'omc-maintenance-operation/v1'
+    if recovery:required|={'recovery','recovered_contract_call_id'}
+    if set(operation)!=required or operation.get('schema_version')!=version:
+        raise ValueError('maintenance_operation_schema_invalid')
+    if not isinstance(operation['operation_id'],str) or not operation['operation_id']:
+        raise ValueError('maintenance_operation_id_missing')
+    if (operation['session_id']!=sid or operation['work_id']!=work or operation['basis_sha256']!=_basis_digest(basis)
+            or operation['baseline_ref']!=baseline_ref):raise ValueError('maintenance_operation_binding_mismatch')
+    if not _maintenance_path(root,operation['native_prefix_ref']['path']).is_relative_to(root/policy['evidence_root']):
+        raise ValueError('maintenance_evidence_scope_mismatch')
+    prefix=_maintenance_read_ref(root,operation['native_prefix_ref'])
+    if recovery:
+        if operation['recovery']!=recovery or maintenance_recovery(root,recovery['prefix_ref'],basis,baseline)!=recovery:
+            raise ValueError('maintenance_recovery_binding_mismatch')
+        if not prefix.startswith(_maintenance_read_ref(root,recovery['prefix_ref'])):
+            raise ValueError('maintenance_recovery_prefix_mismatch')
+        refs=[ref for check in record['checks'].values() for ref in check.get('evidence_files',[])]
+        if recovery['prefix_ref'] not in refs:raise ValueError('maintenance_recovery_check_ref_missing')
+    if not prefix.endswith(b'\n'):raise ValueError('maintenance_native_prefix_incomplete')
+    if full_native is not None and not full_native.startswith(prefix):raise ValueError('maintenance_native_prefix_mismatch')
+    rows=[json.loads(line) for line in prefix.decode().splitlines() if line.strip()]
+    calls={};returns={};cwd=None
+    for index,row in enumerate(rows):
+        if row.get('type')=='system' and row.get('subtype')=='init':
+            if cwd is not None and cwd!=row.get('cwd'):raise ValueError('maintenance_native_cwd_mismatch')
+            cwd=row.get('cwd')
+        for block in row.get('message',{}).get('content',[]):
+            kind=block.get('type')
+            if kind=='tool_use':
+                if row.get('type')!='assistant':raise ValueError('maintenance_native_provider_unsupported')
+                call_id=block.get('id')
+                if not isinstance(call_id,str) or call_id in calls:raise ValueError('maintenance_native_duplicate_call')
+                calls[call_id]=(index,block)
+            elif kind=='tool_result':
+                if row.get('type')!='user':raise ValueError('maintenance_native_provider_unsupported')
+                call_id=block.get('tool_use_id')
+                if call_id not in calls or call_id in returns:raise ValueError('maintenance_native_return_mismatch')
+                returns[call_id]=(index,block)
+    def call(call_id):
+        if call_id not in calls or call_id not in returns:raise ValueError('maintenance_native_return_unknown')
+        i,b=calls[call_id];j,result=returns[call_id];inp=b.get('input',{})
+        if b.get('name')!='Bash' or not isinstance(inp.get('command'),str):raise ValueError('maintenance_native_provider_unsupported')
+        if any(key in inp for key in ('env','shell','executable')) or inp.get('run_in_background'):
+            raise ValueError('maintenance_native_environment_unsupported')
+        actual_cwd=inp.get('cwd',cwd)
+        if actual_cwd!=str(root) or (cwd is not None and cwd!=actual_cwd):raise ValueError('maintenance_native_cwd_mismatch')
+        # shlex is not a shell parser: explicitly reject control operators and substitutions.
+        command=inp['command'];args=shlex.split(command)
+        if any(a in {';','&&','||','|','>','2>&1'} for a in args) or any(t in command for t in ('`','$(')):
+            raise ValueError('maintenance_native_command_unsupported')
+        if type(result.get('exit_code')) is not int or type(result.get('is_error')) is not bool:
+            raise ValueError('maintenance_native_exit_unknown')
+        if j<=i:raise ValueError('maintenance_native_order_mismatch')
+        return i,j,args,result
+    di,dr,delete,dresult=call(operation['delete_call_id']);pi,pr,post,presult=call(operation['postcheck_call_id'])
+    paths=[str(root/name) for name in sorted(policy['allowed_paths'])]
+    if (calls[operation['delete_call_id']][1]['input']['command']!=shlex.join(delete)
+            or calls[operation['postcheck_call_id']][1]['input']['command']!=shlex.join(post)):
+        raise ValueError('maintenance_native_command_unsupported')
+    if delete!=['/bin/rm','-rf','--',*paths] or post!=['python3','-c',MAINTENANCE_POSTCHECK,*paths]:
+        raise ValueError('maintenance_native_argv_mismatch')
+    if not di<dr<pi<pr:raise ValueError('maintenance_native_order_mismatch')
+    contracts=[]
+    for call_id in calls:
+        if call_id not in returns:continue
+        try:
+            ci,cr,args,res=call(call_id)
+        except ValueError:continue
+        if (len(args)>=3 and args[:3]==['python3','scripts/omc_pipeline_guard.py','contract-done']
+                and calls[call_id][1]['input']['command']==shlex.join(args)
+                and args[3:]==['--required-checks',','.join(c['id'] for c in basis['checks']),
+                    *(['--maintenance-recovery-file',recovery['prefix_ref']['path'],'--maintenance-recovery-sha256',recovery['prefix_ref']['sha256']] if recovery else [])]
+                and cr<di and res['exit_code']==0 and not res['is_error']):
+            text=res.get('content','')
+            if isinstance(text,str):
+                for line in text.splitlines():
+                    try:receipt=json.loads(line)
+                    except ValueError:continue
+                    expected={'status':'maintenance_baseline_registered','work_id':work,
+                        'basis_sha256':_basis_digest(basis),'baseline_file':str(root/baseline_ref['path']),
+                        'baseline_sha256':baseline_ref['sha256']}
+                    if recovery:expected['recovery']=recovery
+                    if receipt==expected:contracts.append(ci)
+    if len(contracts)!=1:raise ValueError('maintenance_native_contract_mismatch')
+    recovery_calls=set()
+    if recovery:
+        failed=recovery['failed_call_id'];fi,fr,_,_=call(failed)
+        if fr>=contracts[0]:raise ValueError('maintenance_recovery_order_mismatch')
+        infos=[]
+        control=baseline['control']
+        for ident in calls:
+            if ident not in returns:continue
+            try:ii,ir,args,res=call(ident)
+            except ValueError:continue
+            if args==['python3','scripts/omc_pipeline_guard.py','maintenance-recovery-info','--ready-file',control['ready_file']]:
+                expected={'schema_version':'omc-maintenance-recovery-info/v1','launch_id':recovery['launch_id'],
+                    'failed_call_id':failed,'prefix_ref':recovery['prefix_ref']}
+                if (not fr<ii<ir<contracts[0] or res['exit_code']!=0 or res['is_error']
+                        or json.loads(res.get('content',''))!=expected):raise ValueError('maintenance_recovery_info_mismatch')
+                infos.append(ident)
+        chosen=operation['recovered_contract_call_id']
+        if len(infos)!=1 or chosen not in calls or calls[chosen][0]!=contracts[0]:
+            raise ValueError('maintenance_recovery_info_missing')
+        recovery_calls={failed,infos[0]}
+    if pr!=len(rows)-1:raise ValueError('maintenance_prefix_must_end_at_postcheck')
+    # Accept only successful pre-CONTRACT approval of this exact immutable basis.
+    approvals={}
+    for ident in calls:
+        if ident not in returns:continue
+        try:ai,ar,args,res=call(ident)
+        except ValueError:continue
+        if (len(args)!=5 or args[:4]!=['python3','scripts/omc_pipeline_guard.py','approve-checks','--file']
+                or ar>=contracts[0] or res['exit_code']!=0 or res['is_error']
+                or calls[ident][1]['input']['command']!=shlex.join(args)):
+            continue
+        proposal=_maintenance_path(root,args[4])
+        # Policy files belong to the internal records, never arbitrary source paths.
+        if not proposal.is_relative_to(root/'.omc'):raise ValueError('maintenance_approval_scope_mismatch')
+        if json.loads(_transfer_read(proposal))!=basis:raise ValueError('maintenance_approval_basis_mismatch')
+        expected=f"[PIPELINE] 사용자 승인 기준 기록: 개정 {basis['revision']} / {_basis_digest(basis)}"
+        if not isinstance(res.get('content'),str) or res['content'].strip()!=expected:
+            raise ValueError('maintenance_approval_return_mismatch')
+        approvals[ident]=(ai,proposal)
+    from omc_native_command import read_command_reason
+    for ident,(index,block) in calls.items():
+        if ident in approvals or ident in recovery_calls:continue
+        if block.get('name')=='Write' and ident in returns:
+            inp=block.get('input',{});j,result=returns[ident]
+            if (index<j<contracts[0] and result.get('is_error') is False
+                    and isinstance(inp.get('file_path'),str) and isinstance(inp.get('content'),str)):
+                path=_maintenance_path(root,inp['file_path'])
+                if any(path==proposal and j<ai for ai,proposal in approvals.values()):
+                    if json.loads(inp['content'])==basis:continue
+            raise ValueError('maintenance_native_operation_unsupported')
+        if ident in (operation['delete_call_id'],operation['postcheck_call_id']) or index==contracts[0]:continue
+        if block.get('name') in {'Read','Glob','Grep'}:continue
+        if block.get('name')=='Bash' and read_command_reason(root,block.get('input',{}).get('command','')) is None:continue
+        raise ValueError('maintenance_native_operation_unsupported')
+    if dresult['exit_code']!=0 or dresult['is_error']:raise ValueError('FAILED_OR_PARTIAL')
+    if presult['exit_code']!=0 or presult['is_error']:raise ValueError('UNKNOWN_POST_STATE')
+    if baseline['snapshot']!=_maintenance_preserved_snapshot(root,policy,baseline,record,operation):
+        raise ValueError('maintenance_preservation_changed')
+    inventory=baseline['inventory'];later=any((root/name).exists() for name in policy['allowed_paths'])
+    return {'state':'LATER_REGENERATION' if later else 'VERIFIED_REMOVAL' if inventory else 'VERIFIED_NO_OP',
+            'removed_files':len(inventory),'candidate_allocated_bytes':sum(v['allocated_bytes'] for v in inventory.values()),
+            'contract_index':contracts[0],'delete_index':di,'postcheck_index':pi,'postcheck_return_index':pr}
+
+
+def evaluate_maintenance_completion(root,verification_file,expected_session_id=None):
+    try:
+        state,sid,basis,work=_maintenance_context(root)
+        if expected_session_id not in (None,sid):raise ValueError('maintenance_session_mismatch')
+        record=json.loads(_transfer_read(_internal_verification_path(root,verification_file)))
+        if record.get('session_id')!=sid:raise ValueError('maintenance_verification_session_mismatch')
+        problems=approved_verification_problems(root,sid,state,record,verification_file)
+        if problems:
+            statuses=[row.get('status') for row in record.get('checks',{}).values() if isinstance(row,dict)]
+            status='failed' if 'failed' in statuses else 'mismatch' if 'mismatch' in statuses or any('불일치' in p for p in problems) else 'unrun'
+            result=_transfer_block('; '.join(problems),status)
+            result['completion_kind']=MAINTENANCE_KIND
+            return result
+        for check in basis['checks']:
+            refs=record['checks'][check['id']].get('evidence_files')
+            if not isinstance(refs,list) or not refs:raise ValueError('maintenance_check_file_evidence_missing')
+            for ref in refs:_maintenance_read_ref(root,ref)
+        operation=maintenance_operation(root,record)
+        end,owner,end_basis,end_work=_maintenance_context(root)
+        if (owner!=sid or end_work!=work or _basis_digest(end_basis)!=_basis_digest(basis)
+                or end.get('maintenance_baseline_ref')!=state.get('maintenance_baseline_ref')):
+            raise ValueError('maintenance_changed_during_validation')
+        return {'outcome':'done','first':'필수 검증 통과·작업 완료','registered':True,'problems':[],
+                'completion_kind':MAINTENANCE_KIND,'maintenance':operation}
+    except (OSError,ValueError,TypeError,KeyError,AttributeError,subprocess.SubprocessError) as exc:
+        result=_transfer_block(str(exc),'failed' if str(exc)=='FAILED_OR_PARTIAL' else 'unrun')
+        result['completion_kind']=MAINTENANCE_KIND
+        return result
+
+
+
+
 
 def _completion_kind(basis: dict) -> str:
     kind = basis.get('completion_kind', 'implementation')
-    if kind not in ('implementation', TRANSFER_KIND):
+    if kind not in ('implementation', TRANSFER_KIND, MAINTENANCE_KIND):
         raise ValueError('completion_kind_invalid')
     return kind
 
@@ -1274,8 +2005,8 @@ def _transfer_read(path: Path) -> bytes:
     if path.is_symlink() or not path.is_file():
         raise ValueError('transfer_evidence_missing_or_linked:'+str(path))
     with path.open('rb') as stream:
-        raw=stream.read(8*1024*1024+1)
-    if len(raw)>8*1024*1024:
+        raw=stream.read(EVIDENCE_READ_LIMIT+1)
+    if len(raw)>EVIDENCE_READ_LIMIT:
         raise ValueError('transfer_evidence_size_unsupported')
     return raw
 
@@ -1638,6 +2369,8 @@ def evaluate_task_completion(root: Path,verification_file: Path,expected_session
     try:
         state,_=_read_pipeline(root);latest=json.loads((root/'.omc/state/latest.json').read_text())
         sid=_completion_owner(root,latest,state);basis=_load_approved_basis(root,sid)
+        if _completion_kind(basis)==MAINTENANCE_KIND:
+            return evaluate_maintenance_completion(root,verification_file,expected_session_id)
         if _completion_kind(basis)==TRANSFER_KIND:
             return evaluate_transfer_completion(root,verification_file,expected_session_id)
     except (OSError,ValueError,TypeError,KeyError,AttributeError):
@@ -1646,7 +2379,7 @@ def evaluate_task_completion(root: Path,verification_file: Path,expected_session
 
 
 def completion_command(root: Path,sid: str) -> str:
-    return 'complete-transfer' if _completion_kind(_load_approved_basis(root,sid))==TRANSFER_KIND else 'complete-task'
+    return {'implementation':'complete-task',TRANSFER_KIND:'complete-transfer',MAINTENANCE_KIND:'complete-maintenance'}[_completion_kind(_load_approved_basis(root,sid))]
 
 
 def cmd_complete_transfer(root: Path,verification_file: Path) -> int:
@@ -1804,7 +2537,7 @@ def cmd_complete_task(root: Path, verification_file: Path) -> int:
     try:
         latest=json.loads((root/'.omc/state/latest.json').read_text())
         state,_=_read_pipeline(root);sid=_completion_owner(root,latest,state)
-        if _completion_kind(_load_approved_basis(root,sid))==TRANSFER_KIND:
+        if _completion_kind(_load_approved_basis(root,sid))!='implementation':
             return _print_completion(_transfer_block('completion_kind_entry_mismatch'))
     except (OSError,ValueError,TypeError,KeyError,AttributeError):
         pass
@@ -1822,6 +2555,9 @@ def _print_completion(evaluation: dict, output_context=None, *, root=None, verif
                            source_kind="completion_gate", _authority=_GATE_AUTHORITY, _gate_verification=verification_file)
     blocked = evaluation["outcome"] == "blocked"
     print(evaluation["first"])
+    if evaluation.get('completion_kind')==MAINTENANCE_KIND and not blocked:
+        op=evaluation['maintenance']
+        print(f"캐시 정리 범위 검증: {op['state']} / 제거 {op['removed_files']}개. 기존 변경의 구현·출하 승인은 별개입니다.")
     for problem in evaluation["problems"]:
         print(f"- {problem}")
     if evaluation.get("reason_code") == "pipeline_ttl_expired":
@@ -2199,6 +2935,10 @@ def main() -> int:
 
     p_contract = sub.add_parser("contract-done", help="CONTRACT 양식 작성 + 사용자 컨펌 완료 등록 (이후 edit_file 허용)")
     p_contract.add_argument("--required-checks", default="", help="고정할 필수 검증 ID 목록 (쉼표 구분)")
+    p_contract.add_argument("--maintenance-recovery-file")
+    p_contract.add_argument("--maintenance-recovery-sha256")
+    p_info=sub.add_parser("maintenance-recovery-info",help="등록 실패의 ready 참조 읽기")
+    p_info.add_argument("--ready-file",required=True)
     p_approval = sub.add_parser("approve-checks", help="이미 받은 사용자 검증 기준 승인을 개정별 기록 (진위 인증 아님)")
     p_approval.add_argument("--file", type=Path, required=True)
     p_reapprove = sub.add_parser("reapprove-completion", help="명시적 재승인을 작업별 1회 기록; 완료 판정에만 적용")
@@ -2206,6 +2946,8 @@ def main() -> int:
     sub.add_parser("register-transfer-baseline", help="승인된 이관 전 기준 1회 등록")
     p_transfer = sub.add_parser("complete-transfer", help="검증된 동일 커밋 이관 완료 판정")
     p_transfer.add_argument("--verification-file", type=Path, required=True)
+    p_maintenance=sub.add_parser("complete-maintenance",help="승인된 캐시 정리 전용 완료 판정")
+    p_maintenance.add_argument("--verification-file",type=Path,required=True)
     p_complete = sub.add_parser("complete-task", help="현재 작업 등록과 필수 검증에 따른 최종 보고")
     p_complete.add_argument("--verification-file", type=Path, required=True)
     p_contract.add_argument("--content", default="", help="CONTRACT 내용 (해시 저장용, 우발적 위조 방지)")
@@ -2226,7 +2968,7 @@ def main() -> int:
     sub.add_parser("session-start", help="새 세션 시작 — contract_confirmed 초기화 (red_done_files 보존)")
     sub.add_parser("scope-check", help="staged 변경 범위 경고 출력 (차단 없음)")
 
-    for completion_parser in (p_complete,p_transfer):
+    for completion_parser in (p_complete,p_transfer,p_maintenance):
         completion_parser.add_argument("--output-mode", choices=["legacy_inline","detached_v1"], default="legacy_inline")
         completion_parser.add_argument("--output-context", type=Path)
         completion_parser.add_argument("--output-context-sha256")
@@ -2241,23 +2983,31 @@ def main() -> int:
         reason = getattr(args, "reason", "")
         return cmd_allow(root, args.file, reason)
     if args.cmd == "contract-done":
-        return cmd_contract_done(root, getattr(args, "content", ""), args.required_checks)
+        return cmd_contract_done(root, getattr(args, "content", ""), args.required_checks,
+            args.maintenance_recovery_file,args.maintenance_recovery_sha256)
+    if args.cmd=="maintenance-recovery-info":
+        try:
+            print(json.dumps(maintenance_recovery_info(root,args.ready_file),ensure_ascii=False));return 0
+        except (OSError,ValueError,TypeError,KeyError,AttributeError) as exc:
+            print("[PIPELINE] "+str(exc));return 1
     if args.cmd == "approve-checks":
         return cmd_approve_checks(root, args.file)
     if args.cmd == "reapprove-completion":
         return cmd_reapprove_completion(root, args.file)
     if args.cmd == "register-transfer-baseline":
         return cmd_register_transfer_baseline(root)
-    if args.cmd in {"complete-task","complete-transfer"} and args.output_mode=="detached_v1":
+    if args.cmd in {"complete-task","complete-transfer","complete-maintenance"} and args.output_mode=="detached_v1":
         if not args.output_context or not args.output_context_sha256:
             print("판정 기록의 연결 정보가 없습니다. 후속 진행을 보류합니다.",file=sys.stderr);return 2
-        evaluation=evaluate_transfer_completion(root,args.verification_file) if args.cmd=="complete-transfer" else _evaluate_implementation_completion(root,args.verification_file)
+        evaluation=({"complete-transfer":evaluate_transfer_completion,"complete-maintenance":evaluate_maintenance_completion,"complete-task":_evaluate_implementation_completion}[args.cmd])(root,args.verification_file)
         if args.cmd=="complete-task":
             try:
                 latest=json.loads((root/".omc/state/latest.json").read_bytes());state,_=_read_pipeline(root);sid=_completion_owner(root,latest,state)
-                if _completion_kind(_load_approved_basis(root,sid))==TRANSFER_KIND:evaluation=_transfer_block("completion_kind_entry_mismatch")
+                if _completion_kind(_load_approved_basis(root,sid))!='implementation':evaluation=_transfer_block("completion_kind_entry_mismatch")
             except (OSError,ValueError,TypeError,KeyError,AttributeError):pass
         return _print_completion(evaluation,(args.output_context,args.output_context_sha256),root=root,verification_file=args.verification_file)
+    if args.cmd == "complete-maintenance":
+        print("판정 기록은 detached_v1 문맥이 필요합니다.",file=sys.stderr);return 2
     if args.cmd == "complete-transfer":
         return cmd_complete_transfer(root, args.verification_file)
     if args.cmd == "complete-task":

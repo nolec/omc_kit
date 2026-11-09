@@ -969,3 +969,508 @@ def test_detached_gate_pins_verification_and_approval_files(project):
     read_record(project,mp,mh,context,display=r.stdout)
     verification.parent.mkdir();verification.write_text('{}')
     with pytest.raises(OutputContractError):read_record(project,mp,mh,context)
+
+
+@pytest.fixture
+def maintenance_case(tmp_path,request):
+    root=tmp_path/'maintenance'; root.mkdir(); transfer_git(root,'init','-q')
+    transfer_git(root,'config','user.name','Fixture');transfer_git(root,'config','user.email','fixture@localhost')
+    (root/'.gitignore').write_text(('.omc/*\n!.omc/evidence/\n' if getattr(request,'param',None)=='visible-evidence' else '.omc/\n')+'.pytest_cache/\nscripts/__pycache__/\n')
+    (root/'app.py').write_text('original\n'); transfer_git(root,'add','.');transfer_git(root,'commit','-qm','base')
+    (root/'app.py').write_text('existing dirty content\n')
+    state=root/'.omc/state';state.mkdir(parents=True)
+    (state/'latest.json').write_text(json.dumps({'latest_session_id':'current','latest_confirmed_session_id':'current'}))
+    session=state/'sessions/current/session.json';session.parent.mkdir(parents=True)
+    session.write_text(json.dumps({'session_id':'current','work_id':'maintenance-work','confirmation':{'status':'confirmed'}}))
+    if getattr(request,'param',None)!='noop':
+        (root/'.pytest_cache').mkdir();(root/'.pytest_cache/old').write_text('cache')
+    basis={'session_id':'current','revision':1,'request':'approved cache cleanup; preserve existing dirty code',
+        'approval_reference':'controlled fixture approval','completion_kind':'verified_nonimplementation',
+        'maintenance':{'profile':'cache_cleanup','allowed_paths':['.pytest_cache'],
+                       'protected_files':['app.py'],'evidence_root':'.omc/evidence'},
+        'checks':[{'id':'preservation','target':'source','method':'compare','pass_condition':'unchanged','target_version':'baseline'}]}
+    if getattr(request,'param',None)=='visible-evidence':
+        evidence=root/'.omc/evidence';evidence.mkdir()
+        (evidence/'existing.txt').write_text('preserve original evidence')
+    initial=guard._empty_state();initial.update(session_id='current',owner_work_id='maintenance-work')
+    guard._state_path(root).write_text(json.dumps(initial))
+    proposal=root/'.omc/proposal.json';proposal.write_text(json.dumps(basis))
+    approval=run(root,'approve-checks','--file',str(proposal));assert approval.returncode==0,approval.stdout
+    result=run(root,'contract-done','--required-checks','preservation');assert result.returncode==0,result.stdout
+    baseline=json.loads(result.stdout.splitlines()[-1]);baseline['approval_output']=approval.stdout
+    return root,basis,baseline,result.stdout
+
+
+def test_maintenance_contract_freezes_dirty_baseline_once(maintenance_case):
+    root,basis,baseline,_=maintenance_case
+    path=Path(baseline['baseline_file']);before=path.read_bytes()
+    assert baseline['status']=='maintenance_baseline_registered'
+    (root/'app.py').write_text('changed after contract')
+    result=run(root,'contract-done','--required-checks','preservation')
+    assert result.returncode==1
+    assert path.read_bytes()==before
+
+
+def test_maintenance_policy_is_immutable(maintenance_case):
+    root,basis,_,_=maintenance_case
+    basis['revision']=2;basis['maintenance']['allowed_paths']=['scripts/__pycache__']
+    proposal=root/'.omc/revision.json';proposal.write_text(json.dumps(basis))
+    assert run(root,'approve-checks','--file',str(proposal)).returncode==1
+
+
+def test_maintenance_default_implementation_keeps_red_requirement(project):
+    result=finish(project,{'tests':check()})
+    assert result.returncode==1
+    assert 'RED' in result.stdout
+
+
+def test_maintenance_kind_accepts_explicit_policy():
+    basis={'session_id':'current','revision':1,'request':'cache cleanup','approval_reference':'explicit fixture',
+        'completion_kind':'verified_nonimplementation','maintenance':{'profile':'cache_cleanup',
+        'allowed_paths':['.pytest_cache'],'protected_files':['app.py'],'evidence_root':'.omc/evidence'},
+        'checks':[{'id':'preservation','target':'source','method':'compare','pass_condition':'unchanged','target_version':'baseline'}]}
+    assert guard._validate_basis(basis,'current')==basis
+
+
+def maintenance_proof(case, *, noop=False, defect=None):
+    """Controlled adapter over real subprocess returns; not a production provider."""
+    import hashlib,shlex
+    root,basis,baseline,contract=case
+    directory=root/'.omc/evidence';directory.mkdir(exist_ok=True)
+    rows=[{'type':'system','subtype':'init','cwd':str(root)}]
+    def add(ident,args,result):
+        rows.extend([{'type':'assistant','message':{'content':[{'type':'tool_use','id':ident,'name':'Bash',
+            'input':{'command':shlex.join(args),'cwd':str(root)}}]}},
+            {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':ident,'content':result.stdout,
+                'exit_code':result.returncode,'is_error':result.returncode!=0}]}}])
+    add('contract',['python3','scripts/omc_pipeline_guard.py','contract-done','--required-checks','preservation'],
+        subprocess.CompletedProcess([],0,stdout=contract))
+    delete=['/bin/rm','-rf','--',str(root/'.pytest_cache')]
+    result=subprocess.run(delete,cwd=root,capture_output=True,text=True);add('delete',delete,result)
+    post=['python3','-c',guard.MAINTENANCE_POSTCHECK,str(root/'.pytest_cache')]
+    result=subprocess.run(post,cwd=root,capture_output=True,text=True);add('postcheck',post,result)
+    if defect=='exit':rows[4]['message']['content'][0]['exit_code']=1
+    if defect=='postcheck':rows[6]['message']['content'][0]['exit_code']=2
+    if defect=='cwd':rows[3]['message']['content'][0]['input']['cwd']='/tmp'
+    if defect=='argv':rows[3]['message']['content'][0]['input']['command']+=' extra'
+    if defect=='missing-exit':del rows[4]['message']['content'][0]['exit_code']
+    if defect=='bool-exit':rows[4]['message']['content'][0]['exit_code']=False
+    if defect=='duplicate':rows.insert(5,rows[3])
+    if defect=='unlinked':rows[4]['message']['content'][0]['tool_use_id']='foreign'
+    raw=('\n'.join(json.dumps(row,ensure_ascii=False) for row in rows)+'\n').encode()
+    prefix=directory/'prefix.jsonl';prefix.write_bytes(raw)
+    ref=lambda path:{'path':str(path.relative_to(root)),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
+    operation={'schema_version':'omc-maintenance-operation/v1','operation_id':'controlled-operation','session_id':'current',
+        'work_id':'maintenance-work','basis_sha256':guard._basis_digest(basis),'baseline_ref':ref(Path(baseline['baseline_file'])),
+        'native_prefix_ref':ref(prefix),'delete_call_id':'delete','postcheck_call_id':'postcheck'}
+    op=directory/'operation.json';op.write_text(json.dumps(operation))
+    result=run(root,'verification-template');assert result.returncode==0,result.stdout
+    verification=json.loads(result.stdout)
+    verification['maintenance_operation_ref']=ref(op)
+    verification['implementation']={'status':'applied','evidence':'controlled cache procedure'}
+    evidence=directory/'preservation.txt';evidence.write_text('controlled fixture source/index/protected comparison; no production assertion')
+    for row in verification['checks'].values():row.update(status='passed',evidence='controlled preservation comparison',evidence_files=[ref(evidence)])
+    path=root/'.omc/verification.json';path.write_text(json.dumps(verification))
+    return path,rows
+
+
+def maintenance_finish(root,path,report='maintenance'):
+    import hashlib
+    output=SCRIPT.with_name('omc_output_contract.py')
+    p=subprocess.run(['python3',str(output),'prepare','--target',str(root),'--stage','task','--report-id',report,
+        '--budget-sec','120'],capture_output=True,text=True);assert p.returncode==0,p.stderr
+    context=json.loads(p.stdout)
+    args=['complete-maintenance','--verification-file',str(path),'--output-mode','detached_v1',
+        '--output-context',context['output_context'],'--output-context-sha256',context['output_context_sha256']]
+    return run(root,*args),context,args
+
+
+def test_maintenance_real_cli_dirty_success_and_later_regeneration(maintenance_case):
+    root,_,_,_=maintenance_case;path,_=maintenance_proof(maintenance_case)
+    result,_,_=maintenance_finish(root,path)
+    assert result.returncode==0,result.stdout+result.stderr
+    assert 'VERIFIED_REMOVAL' in result.stdout and '제거 1개' in result.stdout
+    (root/'.pytest_cache').mkdir();(root/'.pytest_cache/new').write_text('regenerated')
+    result,_,_=maintenance_finish(root,path,'regenerated')
+    assert result.returncode==0,result.stdout+result.stderr
+    assert 'LATER_REGENERATION' in result.stdout and '제거 1개' in result.stdout
+    assert (root/'app.py').read_text()=='existing dirty content\n'
+
+
+@pytest.mark.parametrize('defect',['exit','postcheck','cwd','argv','missing-exit','bool-exit','duplicate','unlinked','source','index','prefix','wrong-kind'])
+def test_maintenance_blocks_bad_evidence_and_new_mutation(maintenance_case,defect):
+    root,_,_,_=maintenance_case
+    path,_=maintenance_proof(maintenance_case,defect=defect)
+    if defect=='source':(root/'app.py').write_text('new mutation')
+    if defect=='index':transfer_git(root,'update-index','--assume-unchanged','app.py')
+    if defect=='prefix':(root/'.omc/evidence/prefix.jsonl').write_text('tampered')
+    if defect=='wrong-kind':
+        result=run(root,'complete-task','--verification-file',str(path))
+        assert result.returncode==1 and 'entry_mismatch' in result.stdout;return
+    result,_,_=maintenance_finish(root,path)
+    assert result.returncode==1,result.stdout+result.stderr
+
+
+def test_maintenance_requires_detached_context(maintenance_case):
+    root,_,_,_=maintenance_case;path,_=maintenance_proof(maintenance_case)
+    result=run(root,'complete-maintenance','--verification-file',str(path))
+    assert result.returncode==2
+
+
+@pytest.mark.parametrize('maintenance_case',['noop'],indirect=True)
+def test_maintenance_noop_counts_zero(maintenance_case):
+    root,_,_,_=maintenance_case;path,_=maintenance_proof(maintenance_case)
+    result,_,_=maintenance_finish(root,path)
+    assert result.returncode==0,result.stdout+result.stderr
+    assert 'VERIFIED_NO_OP' in result.stdout and '제거 0개' in result.stdout
+
+
+@pytest.mark.parametrize('defect',['expiry','cache-link','protected-link','missing-file-proof','failed-check','work','baseline'])
+def test_maintenance_rejects_expiry_scope_and_check_defects(maintenance_case,defect):
+    import time
+    root,_,baseline,_=maintenance_case;path,_=maintenance_proof(maintenance_case)
+    if defect=='expiry':
+        statefile=guard._state_path(root);state=json.loads(statefile.read_text())
+        state['started_at']=time.time()-40000
+        statefile.write_text(json.dumps(state))
+    if defect=='cache-link':(root/'.pytest_cache').symlink_to(root/'app.py')
+    if defect=='protected-link':(root/'app.py').unlink();(root/'app.py').symlink_to(root/'.gitignore')
+    if defect in ('missing-file-proof','failed-check'):
+        record=json.loads(path.read_text());check=record['checks']['preservation']
+        if defect=='missing-file-proof':del check['evidence_files']
+        else:check['status']='failed'
+        path.write_text(json.dumps(record))
+    if defect=='work':
+        session=root/'.omc/state/sessions/current/session.json';v=json.loads(session.read_text());v['work_id']='foreign';session.write_text(json.dumps(v))
+    if defect=='baseline':Path(baseline['baseline_file']).write_text('{}')
+    if defect=='expiry':
+        assert guard.evaluate_maintenance_completion(root,path)['outcome']=='blocked';return
+    result,_,_=maintenance_finish(root,path)
+    assert result.returncode==1,result.stdout+result.stderr
+
+
+@pytest.mark.parametrize('bad',['../.pytest_cache','node_modules','.pytest_cache/child','/tmp/cache'])
+def test_maintenance_does_not_expand_approved_paths(bad):
+    basis={'maintenance':{'profile':'cache_cleanup','allowed_paths':[bad],'protected_files':[],
+                          'evidence_root':'.omc/evidence'}}
+    with pytest.raises(ValueError):guard._validate_maintenance_policy(basis)
+
+
+def test_maintenance_contract_rejects_tracked_cache_and_symlink_before_registration(maintenance_case):
+    root,basis,baseline,_=maintenance_case
+    # Fresh work must fail before publishing a baseline for unsupported targets.
+    transfer_git(root,'add','-f','.pytest_cache/old')
+    with pytest.raises(ValueError,match='tracked_cache'):guard._maintenance_snapshot(root,basis['maintenance'])
+
+
+def test_maintenance_failed_check_keeps_failure_status(maintenance_case):
+    root,_,_,_=maintenance_case;path,_=maintenance_proof(maintenance_case)
+    record=json.loads(path.read_text());record['checks']['preservation']['status']='failed';path.write_text(json.dumps(record))
+    assert guard.evaluate_maintenance_completion(root,path)['first']=='검증 실패·수정 필요'
+
+
+def test_maintenance_hidden_dirty_bytes_and_flags_are_preserved(maintenance_case):
+    root,basis,_,_=maintenance_case
+    transfer_git(root,'update-index','--skip-worktree','app.py')
+    before=guard._maintenance_snapshot(root,basis['maintenance'])
+    (root/'app.py').write_text('hidden further change')
+    after=guard._maintenance_snapshot(root,basis['maintenance'])
+    assert before['status']==after['status']
+    assert before['source_sha256']!=after['source_sha256']
+
+
+def maintenance_prepend_approval(case, verification, rows, defect=None):
+    """Controlled full-prefix fixture including policy creation and approval."""
+    import hashlib, shlex
+    root, basis, _, _ = case
+    proposal = root/'.omc/proposal.json'
+    approval = {'type':'assistant','message':{'content':[{'type':'tool_use','id':'approval','name':'Bash',
+        'input':{'command':shlex.join(['python3','scripts/omc_pipeline_guard.py','approve-checks','--file',str(proposal)]),'cwd':str(root)}}]}}
+    returned = {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'approval',
+        'content':case[2]['approval_output'],
+        'exit_code':0,'is_error':False}]}}
+    write = {'type':'assistant','message':{'content':[{'type':'tool_use','id':'proposal','name':'Write',
+        'input':{'file_path':str(proposal),'content':proposal.read_text()}}]}}
+    written = {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'proposal','content':'written','is_error':False}]}}
+    if defect=='failed':returned['message']['content'][0].update(exit_code=1,is_error=True)
+    if defect=='digest':returned['message']['content'][0]['content']='approved wrong digest'
+    if defect=='proposal':
+        value=json.loads(proposal.read_text());value['request']='unapproved request';proposal.write_text(json.dumps(value))
+    if defect=='write':write['message']['content'][0]['input']['content']='{}'
+    index=3 if defect=='late' else 1
+    rows[index:index]=[write,written,approval,returned]
+    prefix=root/'.omc/evidence/prefix.jsonl';prefix.write_text('\n'.join(json.dumps(r,ensure_ascii=False) for r in rows)+'\n')
+    operation=root/'.omc/evidence/operation.json';value=json.loads(operation.read_text())
+    value['native_prefix_ref']['sha256']=hashlib.sha256(prefix.read_bytes()).hexdigest();operation.write_text(json.dumps(value))
+    record=json.loads(verification.read_text());record['maintenance_operation_ref']['sha256']=hashlib.sha256(operation.read_bytes()).hexdigest()
+    verification.write_text(json.dumps(record))
+    return rows
+
+
+@pytest.mark.parametrize('defect',[None,'failed','digest','proposal','write','late'])
+def test_maintenance_full_prefix_validates_precontract_approval(maintenance_case,defect):
+    root=maintenance_case[0];path,rows=maintenance_proof(maintenance_case)
+    maintenance_prepend_approval(maintenance_case,path,rows,defect)
+    result,_,_=maintenance_finish(root,path)
+    assert result.returncode==(0 if defect is None else 1),result.stdout+result.stderr
+
+
+@pytest.mark.parametrize('maintenance_case',['visible-evidence'],indirect=True)
+@pytest.mark.parametrize('defect',[None,'old-content','old-delete','old-mode','unreferenced','outside'])
+def test_maintenance_allows_only_bound_evidence_additions(maintenance_case,defect):
+    root=maintenance_case[0];path,_=maintenance_proof(maintenance_case)
+    existing=root/'.omc/evidence/existing.txt'
+    if defect=='old-content':existing.write_text('altered')
+    if defect=='old-delete':existing.unlink()
+    if defect=='old-mode':existing.chmod(existing.stat().st_mode ^ 0o100)
+    if defect=='unreferenced':(root/'.omc/evidence/extra.txt').write_text('not linked')
+    if defect=='outside':(root/'unrelated.txt').write_text('outside approved evidence')
+    result,_,_=maintenance_finish(root,path)
+    assert result.returncode==(0 if defect is None else 1),result.stdout+result.stderr
+
+
+# Revision 4: controlled custody tests, never production-provider evidence.
+def maintenance_unregistered(case):
+    root,basis,baseline,_=case
+    root=root.resolve()
+    Path(baseline['baseline_file']).unlink()
+    state=json.loads(guard._state_path(root).read_bytes())
+    state.pop('maintenance_baseline_ref',None)
+    state['contract_confirmed']=False
+    guard._state_path(root).write_text(json.dumps(state))
+    return root,basis
+
+
+def test_maintenance_r4_rejects_oversize_before_publication(maintenance_case,monkeypatch):
+    root,basis=maintenance_unregistered(maintenance_case)
+    state=json.loads(guard._state_path(root).read_bytes())
+    before=guard._state_path(root).read_bytes()
+    monkeypatch.setattr(guard,'MAINTENANCE_LIMIT',100)
+    with pytest.raises(ValueError,match='size'):
+        guard._maintenance_register(root,state,basis,origin_raw=before)
+    assert not (root/'.omc/state/maintenance-baselines/current.json').exists()
+    assert guard._state_path(root).read_bytes()==before
+
+
+def test_maintenance_r4_atomic_publication_leaves_original(maintenance_case):
+    root=maintenance_case[0].resolve()
+    path=root/'.omc/exclusive.json';path.write_bytes(b'original')
+    with pytest.raises(FileExistsError):guard._maintenance_atomic(path,b'new',exclusive=True)
+    assert path.read_bytes()==b'original'
+
+
+def test_maintenance_r4_launch_reserves_unique_ignored_control(maintenance_case):
+    root,_=maintenance_unregistered(maintenance_case)
+    a=guard.maintenance_launch(root);b=guard.maintenance_launch(root)
+    assert a['launch_id']!=b['launch_id']
+    assert not Path(a['ready_file']).exists()
+    assert Path(a['ready_file']).parent.is_dir()
+
+
+def test_maintenance_r4_info_rejects_missing_ready_without_mutation(maintenance_case):
+    root,_=maintenance_unregistered(maintenance_case)
+    before=guard._state_path(root).read_bytes()
+    result=run(root,'maintenance-recovery-info','--ready-file',str(root/'.omc/unknown/ready.json'))
+    assert result.returncode==1
+    assert guard._state_path(root).read_bytes()==before
+
+
+def maintenance_recovered_case(maintenance_case,monkeypatch,stop_before_retry=False):
+    import os,shlex,hashlib
+    root,basis=maintenance_unregistered(maintenance_case)
+    control=guard.maintenance_launch(root)
+    monkeypatch.setenv('OMC_MAINTENANCE_READY_FILE',control['ready_file'])
+    origin=guard._state_path(root).read_bytes()
+    inject=root/'.omc/fault-injection';inject.mkdir()
+    (inject/'sitecustomize.py').write_text("import os\n_original=os.replace\ndef fail(src,dst):\n    if str(dst)==os.environ.get('OMC_TEST_STATE_PATH'):raise OSError('controlled state-save failure')\n    return _original(src,dst)\nos.replace=fail\n")
+    env={**os.environ,'PYTHONPATH':str(inject),'OMC_TEST_STATE_PATH':str(guard._state_path(root))}
+    failed=subprocess.run([sys.executable,str(SCRIPT),'--target',str(root),'contract-done','--required-checks','preservation'],capture_output=True,text=True,env=env)
+    assert failed.returncode==1,failed.stdout+failed.stderr
+    import io
+    stdout=io.StringIO(failed.stdout)
+    assert guard._state_path(root).read_bytes()==origin
+    failure=json.loads(stdout.getvalue().splitlines()[-1])
+    rows=[{'type':'system','subtype':'init','cwd':str(root)},
+        {'type':'assistant','message':{'content':[{'type':'tool_use','id':'failed-contract','name':'Bash','input':{
+            'cwd':str(root),'command':shlex.join(['python3','scripts/omc_pipeline_guard.py','contract-done','--required-checks','preservation'])}}]}},
+        {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'failed-contract','content':stdout.getvalue(),'exit_code':1,'is_error':True}]}}]
+    events=root/'.omc/live.jsonl';events.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+    callback=guard.maintenance_publisher(root,events,control);callback()
+    ready=json.loads(Path(control['ready_file']).read_bytes())
+    assert ready['failed_call_id']=='failed-contract'
+    ref=ready['prefix_ref']
+    if stop_before_retry:return root,basis,control,origin,ready,rows
+    info=run(root,'maintenance-recovery-info','--ready-file',control['ready_file'])
+    assert info.returncode==0,info.stdout+info.stderr
+    result=run(root,'contract-done','--required-checks','preservation',
+        '--maintenance-recovery-file',ref['path'],'--maintenance-recovery-sha256',ref['sha256'])
+    assert result.returncode==0,result.stdout+result.stderr
+    state=json.loads(guard._state_path(root).read_bytes())
+    assert state['maintenance_recovery']['prefix_ref']==ref
+    assert state['started_at']==json.loads(origin)['started_at']
+    assert run(root,'contract-done','--required-checks','preservation',
+        '--maintenance-recovery-file',ref['path'],'--maintenance-recovery-sha256',ref['sha256']).returncode==1
+    return root,ref,rows,result,info
+
+
+def test_maintenance_r4_failure_prefix_recovery_roundtrip(maintenance_case,monkeypatch):
+    maintenance_recovered_case(maintenance_case,monkeypatch)
+
+
+def maintenance_recovered_proof(case,monkeypatch):
+    import hashlib,shlex
+    root,ref,failed,result,info=maintenance_recovered_case(case,monkeypatch)
+    baseline=json.loads(result.stdout.splitlines()[-1])
+    path,rows=maintenance_proof((root,case[1],baseline,result.stdout))
+    rows[1]['message']['content'][0]['input']['command']=shlex.join([
+        'python3','scripts/omc_pipeline_guard.py','contract-done','--required-checks','preservation',
+        '--maintenance-recovery-file',ref['path'],'--maintenance-recovery-sha256',ref['sha256']])
+    control=json.loads((root/'.omc/state/maintenance-baselines/current.json').read_bytes())['control']
+    ready=control['ready_file']
+    infocall={'type':'assistant','message':{'content':[{'type':'tool_use','id':'info','name':'Bash',
+        'input':{'cwd':str(root),'command':shlex.join(['python3','scripts/omc_pipeline_guard.py','maintenance-recovery-info','--ready-file',ready])}}]}}
+    inforeturn={'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'info','content':info.stdout,'exit_code':0,'is_error':False}]}}
+    rows=failed+[infocall,inforeturn]+rows[1:]
+    prefix=root/'.omc/evidence/prefix.jsonl';prefix.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+    op=root/'.omc/evidence/operation.json';operation=json.loads(op.read_bytes())
+    operation.update(schema_version='omc-maintenance-operation/v2',recovery=baseline['recovery'],recovered_contract_call_id='contract')
+    operation['native_prefix_ref']['sha256']=hashlib.sha256(prefix.read_bytes()).hexdigest();op.write_text(json.dumps(operation))
+    record=json.loads(path.read_bytes());record['maintenance_operation_ref']['sha256']=hashlib.sha256(op.read_bytes()).hexdigest()
+    record['checks']['preservation']['evidence_files'].append(ref)
+    path.write_text(json.dumps(record))
+    return root,path,rows,ref
+
+
+def test_maintenance_r4_recovered_completion_consumes_full_prefix(maintenance_case,monkeypatch):
+    root,path,_,_=maintenance_recovered_proof(maintenance_case,monkeypatch)
+    result,_,_=maintenance_finish(root,path)
+    assert result.returncode==0,result.stdout+result.stderr
+
+
+@pytest.mark.parametrize('defect',['work','launch','hash','partial','link','timeout','source','origin','expired'])
+def test_maintenance_r4_rejects_bad_ready_or_changed_origin(maintenance_case,monkeypatch,defect):
+    root,basis,control,origin,ready,_=maintenance_recovered_case(maintenance_case,monkeypatch,True)
+    path=Path(control['ready_file'])
+    if defect in ('work','launch','hash'):
+        if defect=='work':ready['work_id']='foreign'
+        elif defect=='launch':ready['launch_id']='0'*32
+        else:ready['prefix_ref']['sha256']='0'*64
+        path.write_text(json.dumps(ready))
+    if defect=='partial':path.write_text('{')
+    if defect=='link':path.unlink();path.symlink_to(root/'app.py')
+    if defect=='timeout':
+        path.unlink();ticks=iter([0,20]);monkeypatch.setattr(guard.time,'monotonic',lambda:next(ticks))
+        with pytest.raises(ValueError,match='timeout'):guard.maintenance_recovery_info(root,control['ready_file'])
+        assert guard._state_path(root).read_bytes()==origin
+        return
+    if defect=='source':(root/'app.py').write_text('unauthorized further mutation')
+    if defect in ('origin','expired'):
+        state=json.loads(origin)
+        if defect=='origin':state['contract_hash']='new mutation'
+        else:state['started_at']-=40000
+        guard._state_path(root).write_text(json.dumps(state))
+    if defect=='source':
+        ref=ready['prefix_ref']
+        result=run(root,'contract-done','--required-checks','preservation',
+            '--maintenance-recovery-file',ref['path'],'--maintenance-recovery-sha256',ref['sha256'])
+    else:result=run(root,'maintenance-recovery-info','--ready-file',control['ready_file'])
+    assert result.returncode==1,result.stdout+result.stderr
+    if defect not in ('origin','expired'):assert guard._state_path(root).read_bytes()==origin
+
+
+def test_maintenance_r4_concurrent_registration_publishes_only_one(maintenance_case):
+    root,_=maintenance_unregistered(maintenance_case)
+    args=[sys.executable,str(SCRIPT),'--target',str(root),'contract-done','--required-checks','preservation']
+    a=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    b=subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    ao,ae=a.communicate(timeout=20);bo,be=b.communicate(timeout=20)
+    assert sorted([a.returncode,b.returncode])==[0,1],(ao,ae,bo,be)
+    state=json.loads(guard._state_path(root).read_bytes())
+    assert state['maintenance_baseline_ref']['path']=='.omc/state/maintenance-baselines/current.json'
+
+
+def test_maintenance_r4_missing_failed_prefix_check_blocks_completion(maintenance_case,monkeypatch):
+    root,path,_,ref=maintenance_recovered_proof(maintenance_case,monkeypatch)
+    value=json.loads(path.read_bytes())
+    value['checks']['preservation']['evidence_files']=[r for r in value['checks']['preservation']['evidence_files'] if r!=ref]
+    path.write_text(json.dumps(value))
+    result,_,_=maintenance_finish(root,path)
+    assert result.returncode==1,result.stdout+result.stderr
+    assert 'maintenance_recovery_check_ref_missing' in result.stdout
+
+
+@pytest.mark.parametrize('delta',[-1,0,1])
+def test_maintenance_r4_exact_eight_mib_serialization_boundary(delta):
+    overhead=len(json.dumps({'payload':''},ensure_ascii=False,indent=2).encode())
+    value={'payload':'x'*(guard.EVIDENCE_READ_LIMIT-overhead+delta)}
+    if delta>0:
+        with pytest.raises(ValueError,match='baseline_size'):guard._maintenance_baseline_bytes(value)
+    else:
+        assert len(guard._maintenance_baseline_bytes(value))==guard.EVIDENCE_READ_LIMIT+delta
+
+
+def test_maintenance_r4_session_transition_waits_for_registration_lock(maintenance_case,monkeypatch):
+    import time
+    root,basis=maintenance_unregistered(maintenance_case)
+    marker=root/'.omc/transition-requested';child=[]
+    module_root=str(SCRIPT.parent)
+    api=str(SCRIPT.parent/'omc.py')
+    real=guard._maintenance_register
+    def register(*args,**kwargs):
+        code="import pathlib,os,sys;pathlib.Path(sys.argv[1]).write_text('requested');os.execv(sys.executable,[sys.executable,sys.argv[2],'state','sync-session','--target',sys.argv[3],'--mode','autopilot','--title','new-work','--request','new independent implementation','--roles','senior_coding','--completion-action','start'])"
+        proc=subprocess.Popen([sys.executable,'-c',code,str(marker),api,str(root)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        child.append(proc)
+        deadline=time.monotonic()+5
+        while not marker.exists():
+            assert time.monotonic()<deadline
+            time.sleep(.01)
+        assert proc.poll() is None
+        assert json.loads((root/'.omc/state/latest.json').read_bytes())['latest_confirmed_session_id']=='current'
+        return real(*args,**kwargs)
+    monkeypatch.setattr(guard,'_maintenance_register',register)
+    assert guard.cmd_contract_done(root,required_checks='preservation')==0
+    out,err=child[0].communicate(timeout=15)
+    assert child[0].returncode==0,out+err
+    latest=json.loads((root/'.omc/state/latest.json').read_bytes())
+    state=json.loads(guard._state_path(root).read_bytes())
+    assert latest['latest_confirmed_session_id']!='current'
+    assert state['owner_session_id']==latest['latest_confirmed_session_id']
+
+
+@pytest.mark.parametrize('content',['approved maintenance scope','승인한 범위\n원문'])
+def test_maintenance_content_hash_is_stored(maintenance_case,content):
+    import hashlib
+    root,_=maintenance_unregistered(maintenance_case)
+    result=run(root,'contract-done','--required-checks','preservation','--content',content)
+    assert result.returncode==0,result.stdout+result.stderr
+    state=json.loads(guard._state_path(root).read_bytes())
+    baseline=json.loads((root/state['maintenance_baseline_ref']['path']).read_bytes())
+    expected=hashlib.sha256(content.encode()).hexdigest()
+    assert state['contract_hash']==expected
+    assert baseline['contract_hash']==expected
+
+
+def test_maintenance_content_default_has_nonempty_hash(maintenance_case):
+    root,_=maintenance_unregistered(maintenance_case)
+    result=run(root,'contract-done','--required-checks','preservation')
+    assert result.returncode==0,result.stdout+result.stderr
+    state=json.loads(guard._state_path(root).read_bytes())
+    assert len(state['contract_hash'])==64
+
+
+def test_maintenance_content_hash_survives_recovery(maintenance_case,monkeypatch):
+    root,_,_,_,_=maintenance_recovered_case(maintenance_case,monkeypatch)
+    state=json.loads(guard._state_path(root).read_bytes())
+    baseline=json.loads((root/state['maintenance_baseline_ref']['path']).read_bytes())
+    assert len(state['contract_hash'])==64
+    assert state['contract_hash']==baseline['contract_hash']
+
+
+def test_maintenance_content_change_on_recovery_is_rejected(maintenance_case,monkeypatch):
+    root,_,_,origin,ready,_=maintenance_recovered_case(maintenance_case,monkeypatch,True)
+    ref=ready['prefix_ref']
+    result=run(root,'contract-done','--required-checks','preservation','--content','different contract',
+        '--maintenance-recovery-file',ref['path'],'--maintenance-recovery-sha256',ref['sha256'])
+    assert result.returncode==1
+    assert 'maintenance_contract_content_mismatch' in result.stdout
+    assert guard._state_path(root).read_bytes()==origin

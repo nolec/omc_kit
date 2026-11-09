@@ -296,6 +296,7 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
     except (OSError,ValueError,KeyError,TypeError):
         gate_command = 'complete-task'
     transfer_mode = gate_command == 'complete-transfer'
+    maintenance_mode = gate_command == 'complete-maintenance'
     output.mkdir(parents=True, exist_ok=True)
     (output / 'final.txt').write_text(final, encoding='utf-8')
     issues = []
@@ -409,6 +410,16 @@ def collect(root: Path, events_file: Path, sid: str, verification: Path,
     order = [next((i for name, i in evidence if name == token), None)
              for token in (['contract-done','register-transfer-baseline','complete-transfer'] if transfer_mode else ['contract-done','red-done','complete-task'])]
     procedure = all(i is not None for i in order) and order == sorted(order, key=lambda x: -1 if x is None else x)
+    if maintenance_mode:
+        try:
+            from omc_pipeline_guard import maintenance_operation
+            if output_mode!='detached_v1':raise ValueError('maintenance_detached_required')
+            operation=maintenance_operation(root,json.loads(verification.read_bytes()),full_native=source)
+            gate_indices=[i for name,i in evidence if name==gate_command]
+            procedure=(len(gate_indices)==1 and operation['postcheck_return_index']<gate_indices[0])
+        except (OSError,ValueError,TypeError,KeyError,AttributeError) as exc:
+            procedure=False
+            issues.append(str(exc))
     path_state = 'unknown'
     observed = []
     if verification_paths:

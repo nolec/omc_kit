@@ -235,3 +235,27 @@ CLI와 수집기는 동일 승인 종류·공용 판정과 실제 반환 경로�
 사용자 최종 답변은 발행 CLI의 한글 stdout과 같은 바이트로 제공한다. 경로/해시는 사용자 답변 꼬리표 대신 호출 인자와 실행 메타데이터로 전달한다. 수집기는 명시 manifest 경로/해시·현재 상태·native 호출/반환·실제 최종 원문을 독립 대조한다. CLI 표시 검사·수집기 fixture·실제 모델의 자유 응답 준수는 별도 증거다.
 업무 차단 종료 코드1도 정상 판정으로 기록한다. 전달 실패 코드2는 업무 실패와 다르다. 저장·봉인·출력 실패 시 한글 오류만 알리고 완료/승인·자동 후속·구형 fallback을 금지한다. 실패 기록도 저장할 수 없으면 stderr·종료 원문만 보존한다. 봉인 후 표시 실패를 이유로 기존 manifest나 verdict를 수정하지 않는다.
 구형 legacy_inline으로 시작한 입력만 기존 parser로 읽는다. 신형 기록 누락·변조·다른 세션·모드 혼합·표시 불일치는 보류하며 구형으로 우회하지 않는다. 구형 도구에서 신형 안내를 실행할 수 없으면 호출 전에 한글 지원 불가를 알린다. 이 안내는 플랫폼 화면 숨김이나 모델 준수를 물리적으로 보장하지 않는다.
+
+## 승인된 비구현 캐시 정리의 완료 경로
+
+최초 승인 기준에 `completion_kind=verified_nonimplementation`과 `maintenance` 정책을 고정한 캐시 정리만 `complete-maintenance`를 사용합니다. 종류 생략·구현 작업은 계속 `complete-task`와 실제 RED를 요구합니다. work_class로 면제를 선택하지 않습니다. 이 기능 자체의 수정도 구현 경로를 따릅니다.
+
+정책은 `profile=cache_cleanup`, `.pytest_cache`·`scripts/__pycache__`의 승인된 부분집합 `allowed_paths`, 보존 파일 `protected_files`, 내부 `.omc/`의 `evidence_root`입니다. 같은 작업의 개정·역할 전환으로 종류·정책을 바꾸거나 기준을 갱신하지 않습니다. 최초 `contract-done --required-checks <승인ID>`가 기준을 한 번 고정하며, 성공 안내 뒤 `maintenance_baseline_registered` JSON을 반환합니다. 별도 기준 등록·삭제 실행기는 없습니다.
+
+기존 dirty 파일은 실제 내용·권한·HEAD·원본 인덱스로 보존하고 그 이후 변경은 차단합니다. 삭제는 승인 절대경로를 정렬한 단일 `/bin/rm -rf -- <경로...>` 호출만 지원하며, 직후 `python3 -c <omc_pipeline_guard.MAINTENANCE_POSTCHECK> <동일 경로...>`의 lstat 부재 확인이 필요합니다. 호출 전에 임의 Python 본문·wrapper·명령 연결로 바꾸지 않습니다.
+
+실제 Bash JSONL의 CONTRACT 반환→삭제 호출/반환→직후 확인 호출/반환 prefix를 완료 호출 전에 내부 일반 파일로 공급합니다. `omc-maintenance-operation/v1`은 작업·세션·승인 해시, 기준·prefix 참조와 해시, 삭제·확인 call ID를 결속합니다. 검증 JSON의 `maintenance_operation_ref: {path, sha256}`와 각 필수 검사 `evidence_files: [{path, sha256}]`를 연결한 뒤 `complete-maintenance --verification-file <내부 JSON> --output-mode detached_v1 --output-context <문맥> --output-context-sha256 <해시>`로 판정합니다. 일반 publish의 모델 선언은 완료 근거가 아닙니다.
+
+직후 부재 확인이 성공해야 제거 또는 NO_OP로 인정합니다. 삭제 실패·부분 실패, 확인 누락·권한 오류, 지원하지 않는 provider·메타데이터는 차단합니다. 이후 캐시 재생성은 기존 제거량에 더하지 않습니다. 수집기는 같은 판정과 실제 전체 로그의 prefix를 대조합니다. 로컬 기록 대조는 악의적 로컬 작성자나 커널 수준 실행 진위를 인증하지 않습니다. 캐시 정리 완료를 기존 dirty 구현·리뷰·출하 승인으로 전용하거나 과거 BLOCK에 소급 적용하지 않습니다.
+
+### 등록 실패의 제한된 복구 · baseline/v2와 operation/v2
+
+실행기가 `OMC_MAINTENANCE_READY_FILE`과 launch별 control을 준비한 경우에만 이 복구 경로를 사용합니다. 최초 `contract-done`이 기준 게시 후 state 저장에 실패하고, 실제 반환에 `status=maintenance_registration_failed`, `failure_stage=state_save`, `ready_file`이 있어야 합니다. 호출·반환 유실, state 훼손·만료, 이미 저장된 기준 참조, 삭제 이후는 자동 복구하지 않습니다.
+
+1. 부모 수집기가 실패 반환까지의 원본 prefix를 불변 게시한 뒤 ready를 게시합니다. 에이전트가 원본 로그·종료 코드·ready를 직접 작성하거나 덮어쓰지 않습니다.
+2. `python3 scripts/omc_pipeline_guard.py maintenance-recovery-info --ready-file <실패 반환의 ready_file>`을 한 번 호출합니다. 최대10초와 원래 TTL 남은 시간 중 짧은 시간만 기다립니다. 실패·시간 초과·다른 작업/launch/기준이면 멈추고 재시도·삭제를 하지 않습니다.
+3. info가 종료0으로 반환한 `prefix_ref.path`와 `prefix_ref.sha256`을 그대로 사용해 `python3 scripts/omc_pipeline_guard.py contract-done --required-checks <같은 승인ID목록> --maintenance-recovery-file <prefix_ref.path> --maintenance-recovery-sha256 <prefix_ref.sha256>`을 한 번 호출합니다. 성공 receipt를 확인한 뒤에만 승인된 정리 절차를 진행합니다.
+4. 복구는 원본 state·기준·TTL과 최초 CONTRACT 해시를 보존합니다. 새 baseline/v2에는 원본 state 해시·시작 시점·계약 해시·launch control을 고정하며 다른 계약 본문으로 복구하지 않습니다. 해시가 없는 과거 기준을 자동 변환하거나 새 TTL로 보정하지 않습니다.
+5. 복구 작업은 `omc-maintenance-operation/v2`에 동일한 recovery descriptor와 `recovered_contract_call_id`를 연결합니다. 실패 prefix를 필수 preservation 검증의 `evidence_files`에도 연결해야 합니다. CLI와 수집기는 실패 CONTRACT→info→복구 CONTRACT→삭제·직후 확인의 실제 전체 로그와 파일 해시를 대조합니다. 복구 없는 작업의 operation/v1과 구형 기준의 기존 완료 검증은 유지합니다.
+
+ready는 전달용 metadata이며 승인·완료 증거가 아닙니다. 코드 보완 A의 통제된 테스트와 실제 실행기 운용 검증 B를 구분하며, 실제 provider의 필수 로그·종료 정보·ready 왕복 확인 전에는 B 보류를 유지합니다.

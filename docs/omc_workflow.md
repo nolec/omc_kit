@@ -200,3 +200,25 @@ except (OSError, ValueError, subprocess.CalledProcessError, IndexError) as exc:
 실제 setup→세션 저장→커밋 훅→완료 기록을 검증합니다. 실제 OKX 문서 이동·반영 및 재설치는 수행하지 않습니다.
 
 <!-- OMC:DOCUMENT-ISOLATION:END -->
+
+## 승인된 비구현 캐시 정리의 완료 경로
+
+최초 승인 기준에 `completion_kind=verified_nonimplementation`과 `maintenance` 정책을 고정한 캐시 정리만 `complete-maintenance`를 사용합니다. 종류 생략·구현 작업은 계속 `complete-task`와 실제 RED를 요구합니다. work_class로 면제를 선택하지 않습니다. 이 기능 자체의 수정도 구현 경로를 따릅니다.
+
+정책은 `profile=cache_cleanup`, `.pytest_cache`·`scripts/__pycache__`의 승인된 부분집합 `allowed_paths`, 보존 파일 `protected_files`, 내부 `.omc/`의 `evidence_root`입니다. 같은 작업의 개정·역할 전환으로 종류·정책을 바꾸거나 기준을 갱신하지 않습니다. 최초 `contract-done --required-checks <승인ID>`가 기준을 한 번 고정하며, 성공 안내 뒤 `maintenance_baseline_registered` JSON을 반환합니다. 별도 기준 등록·삭제 실행기는 없습니다.
+
+기존 dirty 파일은 실제 내용·권한·HEAD·원본 인덱스로 보존하고 그 이후 변경은 차단합니다. 삭제는 승인 절대경로를 정렬한 단일 `/bin/rm -rf -- <경로...>` 호출만 지원하며, 직후 `python3 -c <omc_pipeline_guard.MAINTENANCE_POSTCHECK> <동일 경로...>`의 lstat 부재 확인이 필요합니다. 호출 전에 임의 Python 본문·wrapper·명령 연결로 바꾸지 않습니다.
+
+실제 Bash JSONL의 CONTRACT 반환→삭제 호출/반환→직후 확인 호출/반환 prefix를 완료 호출 전에 내부 일반 파일로 공급합니다. `omc-maintenance-operation/v1`은 작업·세션·승인 해시, 기준·prefix 참조와 해시, 삭제·확인 call ID를 결속합니다. 검증 JSON의 `maintenance_operation_ref: {path, sha256}`와 각 필수 검사 `evidence_files: [{path, sha256}]`를 연결한 뒤 `complete-maintenance --verification-file <내부 JSON> --output-mode detached_v1 --output-context <문맥> --output-context-sha256 <해시>`로 판정합니다. 일반 publish의 모델 선언은 완료 근거가 아닙니다.
+
+직후 부재 확인이 성공해야 제거 또는 NO_OP로 인정합니다. 삭제 실패·부분 실패, 확인 누락·권한 오류, 지원하지 않는 provider·메타데이터는 차단합니다. 이후 캐시 재생성은 기존 제거량에 더하지 않습니다. 수집기는 같은 판정과 실제 전체 로그의 prefix를 대조합니다. 로컬 기록 대조는 악의적 로컬 작성자나 커널 수준 실행 진위를 인증하지 않습니다. 캐시 정리 완료를 기존 dirty 구현·리뷰·출하 승인으로 전용하거나 과거 BLOCK에 소급 적용하지 않습니다.
+
+### 캐시 정리 등록의 제한된 복구와 ready 전달
+
+새 등록은 원본 state 해시·시작 시점을 고정한 baseline/v2를 배타적으로 게시합니다. 전체 UTF-8 직렬화 크기는 읽기와 같은 8MiB 이하여야 합니다. 기존 v1은 완료 검증을 유지하며 복구 가능한 v2로 변환하지 않습니다. 등록과 state 저장에는 세션 공유 잠금→작업 잠금 순서를 사용하고, 원래 TTL과 소유권을 다시 확인합니다.
+
+실행기는 launch별 ignored 내부 control 디렉터리와 `OMC_MAINTENANCE_READY_FILE`을 준비합니다. 최초 CONTRACT가 기준 게시 후 state 저장에 실패하고 정상 이전 state가 남아 있으면 비성공 반환에 ready 경로를 제공합니다. 수집기는 실패 반환까지의 원본 prefix를 먼저 불변 게시한 뒤 `omc-maintenance-ready/v1`을 원자적으로 게시합니다. 이 기능의 통제된 어댑터 검증은 실제 provider 지원 증거가 아닙니다.
+
+에이전트는 `maintenance-recovery-info --ready-file <실패 반환의 경로>`를 한 번 호출합니다. 최대 10초와 원래 TTL 남은 시간 중 짧은 시간만 기다리며, 성공 시 검증된 prefix 참조를 반환합니다. 그 결과로 `contract-done --required-checks <승인ID> --maintenance-recovery-file <상대경로> --maintenance-recovery-sha256 <SHA256>`을 한 번 호출합니다. 작업·launch·승인·기준·원본 state가 불일치하거나 반환 유실·이미 저장된 참조·삭제 이후·준비 시간 초과이면 자동 복구하지 않습니다. 기존 증거 삭제·덮어쓰기나 새 TTL로 재시작하는 절차는 없습니다.
+
+복구 완료는 operation/v2, state, 성공 반환과 같은 recovery descriptor를 사용합니다. 실패 prefix를 필수 preservation 검증의 `evidence_files`에도 연결하며, CLI와 수집기는 공통 판정과 실제 전체 로그의 prefix를 대조합니다. ready는 전달용 metadata이며 승인 증거가 아닙니다. 코드 보완 A의 통제된 회귀와 실제 실행기 운용 검증 B는 별도입니다. 현재 실제 provider의 종료 정보와 ready 왕복은 미확인이므로 운용 검증 B는 보류 상태입니다.
