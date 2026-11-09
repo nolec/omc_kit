@@ -1,6 +1,17 @@
 # Automatic Model Routing Roadmap
 
-## 현재 · ship 시계 경계 보완 / 격리 설치 검증80개 통과 / 릴리스 검사·12개 재설치 대기 · 2026-11-09
+## 현재 · diagnose·prepare ref 검증 통일 / 관련214개 통과 / 릴리스 입력 보정·재시도 승인 대기 · 2026-11-09
+
+- **현재 상태:** 소스 버전0.6.5이며 기준 HEAD는799f14d6이다. diagnose와 prepare의 ref 검증 통일2개 파일을 구현·격리 리뷰 승인했고 이번 문서4개와 함께 로컬 커밋한다. 릴리스 품질 전체 검사0회·12개 사용처 재설치0개이며 push·태그·외부 릴리스는 수행하지 않았다.
+- **보완 내용:** 진단 snapshot에서 prepare와 같은 canonical 검증으로 origin ref 형식·정규화 이름을 확인하고 기존 고정 OID 비교를 유지한다. 커밋 OID 직접 입력과 같은 커밋의 서로 다른 origin ref는 사전 차단하며 origin/main과 refs/remotes/origin/main 별칭은 허용한다. 차단 사유를 오류 코드로 표시한다. 일반 quality 설정 허용 범위와 prepare 안전 조건은 완화하지 않았다.
+- **검증:** 수정 전 신규 회귀4개 실제 실패 후 관련2개 모듈 전체214개 통과(254.29초). 격리 리뷰에서 신규8개 독립 재실행 통과(12.00초). 8개는214개와 중복이므로 합산하지 않는다. 진단의 파일·디렉터리 무변경, 잘못된 ref의 clone 전 차단과 정상 별칭의 prepare 통과를 확인했다. 브라우저가 불필요한 Python CLI 검증이며 실제 릴리스 전체 검사 통과로 확대하지 않는다.
+- **Git·리뷰 범위:** 갱신 전 HEAD는799f14d60da28eb8961df409aecb989b6b1e2731이다. 요청한 scripts/omc_ship_preflight.py와 scripts/test_omc_ship_preflight.py 두 파일이 격리 후보와 일치하며 APPROVE receipt를 기록했다. 이번6개 파일 커밋의 ID는 Git 이력에서 확인한다. 문서4개를 코드 승인 범위로 자동 확대하지 않으며 최종 전체 출하 후보 결속은 별도다.
+- **중단·설정:** 799f14d6의103개 경로를 결속한 이전 릴리스 시도는 prepare의 invalid_base_ref로 중단했다. 수동 입력이 OID를 전달한 문제와 diagnose가 이를 ready로 표시한 검증 누락을 격리 재현했다. 현재 quality status는ready지만 base_ref가 직접 OID인 기존 설정은 보존돼 prepare에 사용할 수 없다. 같은 기준6cc02d4를 가리키는 origin/omc-release-065-base와 설정 수정안은 준비·proposal 검증만 했으며 아직 적용하지 않았다. 준비 재시도·설정 적용 승인은 미확정이고 과거 실패·deadline을 변경하지 않는다.
+- **이력·보류:** ship 시계 경계 수정7a6023a1과 생성물 동기화799f14d6을 보존한다. 이전80개 격리 설치 검증·원본77개 통과/3개 실패와 시간 배분 중단은 당시 이력이다. 운용 B·과거 보존 재검증 UNKNOWN·RED 및 baseline 원본 복구 미확인·실제 자손 종료와 홈 연동 미검증·비교0/4회 NOT_RUN·HOLD는 유지한다. Kit v3 DISABLED·완료 관찰 미등록이며 소비 저장소는 재조회하지 않았다.
+- **근거:** .omc/base-ref-contract-task-20261109/의 red.stdout·red.json·full-tests.stdout·scope-preservation.json·completion.stdout, .omc/base-ref-contract-review-20261109/의 capture.json·frozen.diff·independent-tests.stdout·receipt.json, .omc/investigate-base-ref-20261109/resolved-paths/reproduction-matrix.json와 .omc/release-065-final-799f14d6/release-stop.json. 로컬·격리 근거이며 원본 전체의 출하 승인이나 영구 보존을 보장하지 않는다.
+- **다음 작업:** 로컬 커밋 결과 확인 후 릴리스 재개에 필요한 수정안 적용·준비480초1회 재시도 승인과 최종 후보·리뷰 결속을 확인한다. 기존 전체 검사1회·최대3600초와12개 사용처 설치 승인 범위는 유지하며 자동 재시도하지 않는다.
+
+## 이전 이력 · ship 시계 경계 보완 / 격리 설치 검증80개 통과 / 릴리스 검사·12개 재설치 대기 · 2026-11-09
 
 - **현재 상태:** 소스 버전0.6.5와 로컬 릴리스 준비 커밋 a2c834a3는 존재한다. ship 시계 경계 수정3개는 구현·격리 리뷰 승인 상태이며 이번 로컬 커밋에 문서4개와 함께 포함한다. 릴리스 품질 전체 검사·12개 사용처 재설치는 미실행이며 push·태그·외부 릴리스도 이번 작업에서 실행하지 않는다.
 - **보완 내용:** 별도 승인된 source 준비와 ship480초를 분리한다. source READY 확인 뒤 control_init 직전에 monotonic T0를 한 번 기록하며 같은 시도의 기존 T0·만료·중단 기록을 덮어쓰지 않는다. 두 템플릿과 검수용 실행기 회귀를 보완했으며 실제 모델 준수를 강제하는 runtime 변경은 아니다.

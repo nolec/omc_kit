@@ -2170,50 +2170,45 @@
       "docs/comparison-dashboard/index.html"
     ],
     "date": "2026-11-09",
-    "status": "현재 · ship 시계 경계 보완 / 격리 설치 검증80개 통과 / 릴리스 검사·12개 재설치 대기 · 2026-11-09",
-    "main_commit": "a2c834a3977b72b6f1fd43b447017b3e775616c5",
+    "status": "현재 · diagnose·prepare ref 검증 통일 / 관련214개 통과 / 릴리스 입력 보정·재시도 승인 대기 · 2026-11-09",
+    "main_commit": "799f14d60da28eb8961df409aecb989b6b1e2731",
     "main_commit_role": "현재 갱신 이전 기준 HEAD; 본 커밋 ID는 Git 이력으로 확인",
     "latest_fields": {
-      "현재 상태": "소스 버전0.6.5와 로컬 릴리스 준비 커밋 a2c834a3는 존재한다. ship 시계 경계 수정3개는 구현·격리 리뷰 승인 상태이며 이번 로컬 커밋에 문서4개와 함께 포함한다. 릴리스 품질 전체 검사·12개 사용처 재설치는 미실행이며 push·태그·외부 릴리스도 이번 작업에서 실행하지 않는다.",
-      "보완 내용": "별도 승인된 source 준비와 ship480초를 분리한다. source READY 확인 뒤 control_init 직전에 monotonic T0를 한 번 기록하며 같은 시도의 기존 T0·만료·중단 기록을 덮어쓰지 않는다. 두 템플릿과 검수용 실행기 회귀를 보완했으며 실제 모델 준수를 강제하는 runtime 변경은 아니다.",
-      "검증": "동일한3개 소스를 복사해 격리 재설치한 환경에서 관련2개 모듈80개 통과(99.25초). 리뷰에서 신규 회귀8개 재실행 통과이며80개와 중복돼 합산하지 않는다. 원본 설치본은 이전 상태여서 최초 실행77개 통과·3개 실패했고 그 기록을 보존한다. 실제 사용처 설치 성공이나 릴리스 전체 검사 통과로 해석하지 않는다.",
-      "Git·리뷰 범위": "갱신 전 HEAD는 a2c834a3977b72b6f1fd43b447017b3e775616c5이다. 요청한 템플릿2개·테스트1개와 격리 후보3개가 일치하며 APPROVE receipt를 기록했다. 문서4개는 표시 정합성 갱신으로 코드 승인 범위에 자동 포함하지 않는다. 이번7개 파일의 커밋 ID는 Git 이력으로 확인하며 최종 전체 후보 리뷰 결속은 별도다.",
-      "중단·설정": "이전 시도는 source 준비 시작을 ship T0로 잘못 사용해 남은183.739초와 후속 한도440초를 비교한 뒤 중단했다. OMC prepare/check 오류가 아니라 수동 시간 배분·판정 문제였으며 품질 명령0회·재설치0개다. 현재 품질 status 조회는 ready이고 config hash는 bc4709cce807a5956b996a24840406dc35a12ac1ae37606c9cafcde0d9a86bc9이다. 이 설정 상태가 새 전체 후보의 리뷰·실행 준비 완료를 뜻하지 않는다.",
-      "이력·보류": "기존 중단·승인 원문과 누적 .omc 근거·교훈을 보존하며 이번 커밋에서 제외한다. 운용 B·과거 보존 재검증 UNKNOWN·RED 및 baseline 원본 복구 미확인·실제 자손 종료와 홈 연동 미검증·비교0/4회 NOT_RUN·HOLD를 유지한다. Kit v3 DISABLED·완료 관찰 미등록이며 소비 저장소 재조회는 하지 않았다.",
-      "근거": ".omc/ship-clock-boundary-task-20261109/의 red.stdout·full-tests.stdout·installed-full-tests.stdout·isolated-validation.json·review-focused.stdout·review-capture.stdout·review-receipt.stdout, .omc/release-budget-investigation-20261109/source.txt와 .omc/release-065-proposal-20261109-ff705030/release-stop.json. 로컬·격리 근거이며 원본 전체의 출하 승인이나 영구 보존 보장이 아니다.",
-      "다음 작업": "로컬 커밋 결과 확인 후 릴리스 재개 시 최종 전체 후보·리뷰 결속·설정 적합성과 새 시도에 필요한 시간 승인을 확인한다. 과거 deadline을 소급 연장하거나 이번 문서 최신화로 출하·설치 성공을 선언하지 않는다."
+      "현재 상태": "소스 버전0.6.5이며 기준 HEAD는799f14d6이다. diagnose와 prepare의 ref 검증 통일2개 파일을 구현·격리 리뷰 승인했고 이번 문서4개와 함께 로컬 커밋한다. 릴리스 품질 전체 검사0회·12개 사용처 재설치0개이며 push·태그·외부 릴리스는 수행하지 않았다.",
+      "보완 내용": "진단 snapshot에서 prepare와 같은 canonical 검증으로 origin ref 형식·정규화 이름을 확인하고 기존 고정 OID 비교를 유지한다. 커밋 OID 직접 입력과 같은 커밋의 서로 다른 origin ref는 사전 차단하며 origin/main과 refs/remotes/origin/main 별칭은 허용한다. 차단 사유를 오류 코드로 표시한다. 일반 quality 설정 허용 범위와 prepare 안전 조건은 완화하지 않았다.",
+      "검증": "수정 전 신규 회귀4개 실제 실패 후 관련2개 모듈 전체214개 통과(254.29초). 격리 리뷰에서 신규8개 독립 재실행 통과(12.00초). 8개는214개와 중복이므로 합산하지 않는다. 진단의 파일·디렉터리 무변경, 잘못된 ref의 clone 전 차단과 정상 별칭의 prepare 통과를 확인했다. 브라우저가 불필요한 Python CLI 검증이며 실제 릴리스 전체 검사 통과로 확대하지 않는다.",
+      "Git·리뷰 범위": "갱신 전 HEAD는799f14d60da28eb8961df409aecb989b6b1e2731이다. 요청한 scripts/omc_ship_preflight.py와 scripts/test_omc_ship_preflight.py 두 파일이 격리 후보와 일치하며 APPROVE receipt를 기록했다. 이번6개 파일 커밋의 ID는 Git 이력에서 확인한다. 문서4개를 코드 승인 범위로 자동 확대하지 않으며 최종 전체 출하 후보 결속은 별도다.",
+      "중단·설정": "799f14d6의103개 경로를 결속한 이전 릴리스 시도는 prepare의 invalid_base_ref로 중단했다. 수동 입력이 OID를 전달한 문제와 diagnose가 이를 ready로 표시한 검증 누락을 격리 재현했다. 현재 quality status는ready지만 base_ref가 직접 OID인 기존 설정은 보존돼 prepare에 사용할 수 없다. 같은 기준6cc02d4를 가리키는 origin/omc-release-065-base와 설정 수정안은 준비·proposal 검증만 했으며 아직 적용하지 않았다. 준비 재시도·설정 적용 승인은 미확정이고 과거 실패·deadline을 변경하지 않는다.",
+      "이력·보류": "ship 시계 경계 수정7a6023a1과 생성물 동기화799f14d6을 보존한다. 이전80개 격리 설치 검증·원본77개 통과/3개 실패와 시간 배분 중단은 당시 이력이다. 운용 B·과거 보존 재검증 UNKNOWN·RED 및 baseline 원본 복구 미확인·실제 자손 종료와 홈 연동 미검증·비교0/4회 NOT_RUN·HOLD는 유지한다. Kit v3 DISABLED·완료 관찰 미등록이며 소비 저장소는 재조회하지 않았다.",
+      "근거": ".omc/base-ref-contract-task-20261109/의 red.stdout·red.json·full-tests.stdout·scope-preservation.json·completion.stdout, .omc/base-ref-contract-review-20261109/의 capture.json·frozen.diff·independent-tests.stdout·receipt.json, .omc/investigate-base-ref-20261109/resolved-paths/reproduction-matrix.json와 .omc/release-065-final-799f14d6/release-stop.json. 로컬·격리 근거이며 원본 전체의 출하 승인이나 영구 보존을 보장하지 않는다.",
+      "다음 작업": "로컬 커밋 결과 확인 후 릴리스 재개에 필요한 수정안 적용·준비480초1회 재시도 승인과 최종 후보·리뷰 결속을 확인한다. 기존 전체 검사1회·최대3600초와12개 사용처 설치 승인 범위는 유지하며 자동 재시도하지 않는다."
     },
-    "candidate_state": "SHIP_CLOCK_BOUNDARY_REVIEWED_RELEASE_PENDING",
+    "candidate_state": "REF_VALIDATION_REVIEWED_RELEASE_RETRY_PENDING",
     "main_applied": true,
     "original_worktree_applied": true,
-    "main_applied_meaning": "소스0.6.5 로컬 커밋 및 시간 경계 수정 반영; 실제 사용처 미설치",
-    "review_status": "ISOLATED_THREE_PATHS_APPROVED",
+    "main_applied_meaning": "ref 검증 수정 로컬 반영; 실제 릴리스 검사·사용처 재설치 미실행",
+    "review_status": "ISOLATED_TWO_PATHS_APPROVED",
     "review_scope": [
-      "scripts/test_omc_ship_entry_contract.py",
-      "templates/.agents/skills/omc-ship/SKILL.md",
-      "templates/.claude/commands/ship.md"
+      "scripts/omc_ship_preflight.py",
+      "scripts/test_omc_ship_preflight.py"
     ],
     "original_source_changed_paths": [
-      "scripts/test_omc_ship_entry_contract.py",
-      "templates/.agents/skills/omc-ship/SKILL.md",
-      "templates/.claude/commands/ship.md"
+      "scripts/omc_ship_preflight.py",
+      "scripts/test_omc_ship_preflight.py"
     ],
-    "original_source_changed_count": 3,
+    "original_source_changed_count": 2,
     "report_seal": "CODE_REVIEW_APPROVED_RELEASE_PENDING",
     "validation": {
-      "isolated_installed_suite": {
-        "passed": 80,
-        "seconds": 99.25
-      },
-      "original_initial_suite": {
-        "passed": 77,
-        "failed": 3,
-        "reason": "installed copies predate templates"
+      "final_suite": {
+        "passed": 214,
+        "seconds": 254.29
       },
       "independent_review": {
         "passed": 8,
+        "seconds": 12.0,
         "overlaps_final_suite": true
       },
+      "red_cases_failed": 4,
       "release_quality_full_run": "NOT_RUN",
       "consumer_reinstallation": "NOT_RUN"
     },
@@ -2223,7 +2218,7 @@
       "evidence_boundary": "Data and HTML current-section consistency; no release execution"
     },
     "commit_status": {
-      "scope": "REVIEWED_THREE_FILES_AND_FOUR_ROADMAP_DOCUMENTATION_FILES",
+      "scope": "REVIEWED_TWO_FILES_AND_FOUR_ROADMAP_DOCUMENTATION_FILES",
       "commit_id_authority": "git log -- docs/automatic_model_routing_roadmap.md",
       "push": "NOT_REQUESTED"
     },
@@ -2236,10 +2231,127 @@
       "final_candidate_binding": "PENDING_AFTER_NEW_CHANGES",
       "quality_command_runs": 0,
       "reinstalled_targets": 0,
-      "target_count": 12
+      "target_count": 12,
+      "ship_status": "BLOCKED",
+      "reason_code": "invalid_base_ref",
+      "existing_base_ref": "6cc02d4fad25220a1366224af39c958cf34fca2b",
+      "proposed_base_ref": "origin/omc-release-065-base",
+      "proposal_applied": false,
+      "prepare_retry_authorized": false
     }
   },
   "current_update_history": [
+    {
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "comparison_state": "HOLD",
+      "actual_home": "NOT_VERIFIED",
+      "historical_preservation_revalidation": "UNKNOWN",
+      "existing_formal_holds": "PRESERVED",
+      "comparison_runs": 0,
+      "comparison_status": "NOT_RUN",
+      "descendant_termination": "NOT_VERIFIED",
+      "consumer_count_on_query_failure": null,
+      "recovery": {
+        "green": {
+          "status": "SEPARATE_ORIGINAL_BYTES_VERIFIED",
+          "bytes": 138,
+          "sha256": "76810fb032ab587ad99eb760fd00a0188b20c391032aafead2ae3e12da2257f9",
+          "restored_over_old_path": false
+        },
+        "red": {
+          "original_bytes": "UNCONFIRMED",
+          "semantic_record": "PYTHON_DICT_REPR"
+        },
+        "baseline": {
+          "original_bytes": "UNCONFIRMED",
+          "previous_hash_available": true
+        }
+      },
+      "formal_hold_reason": "PRIOR_PRESERVATION_FAILED",
+      "local_observation": {
+        "cohort_v3": "DISABLED",
+        "completion_observation": "OBSERVATION_INVALID",
+        "reason": "live_observation_not_enabled",
+        "consumers_requeried": false
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/view.json",
+        "docs/comparison-dashboard/index.html"
+      ],
+      "date": "2026-11-09",
+      "status": "현재 · ship 시계 경계 보완 / 격리 설치 검증80개 통과 / 릴리스 검사·12개 재설치 대기 · 2026-11-09",
+      "main_commit": "a2c834a3977b72b6f1fd43b447017b3e775616c5",
+      "main_commit_role": "현재 갱신 이전 기준 HEAD; 본 커밋 ID는 Git 이력으로 확인",
+      "latest_fields": {
+        "현재 상태": "소스 버전0.6.5와 로컬 릴리스 준비 커밋 a2c834a3는 존재한다. ship 시계 경계 수정3개는 구현·격리 리뷰 승인 상태이며 이번 로컬 커밋에 문서4개와 함께 포함한다. 릴리스 품질 전체 검사·12개 사용처 재설치는 미실행이며 push·태그·외부 릴리스도 이번 작업에서 실행하지 않는다.",
+        "보완 내용": "별도 승인된 source 준비와 ship480초를 분리한다. source READY 확인 뒤 control_init 직전에 monotonic T0를 한 번 기록하며 같은 시도의 기존 T0·만료·중단 기록을 덮어쓰지 않는다. 두 템플릿과 검수용 실행기 회귀를 보완했으며 실제 모델 준수를 강제하는 runtime 변경은 아니다.",
+        "검증": "동일한3개 소스를 복사해 격리 재설치한 환경에서 관련2개 모듈80개 통과(99.25초). 리뷰에서 신규 회귀8개 재실행 통과이며80개와 중복돼 합산하지 않는다. 원본 설치본은 이전 상태여서 최초 실행77개 통과·3개 실패했고 그 기록을 보존한다. 실제 사용처 설치 성공이나 릴리스 전체 검사 통과로 해석하지 않는다.",
+        "Git·리뷰 범위": "갱신 전 HEAD는 a2c834a3977b72b6f1fd43b447017b3e775616c5이다. 요청한 템플릿2개·테스트1개와 격리 후보3개가 일치하며 APPROVE receipt를 기록했다. 문서4개는 표시 정합성 갱신으로 코드 승인 범위에 자동 포함하지 않는다. 이번7개 파일의 커밋 ID는 Git 이력으로 확인하며 최종 전체 후보 리뷰 결속은 별도다.",
+        "중단·설정": "이전 시도는 source 준비 시작을 ship T0로 잘못 사용해 남은183.739초와 후속 한도440초를 비교한 뒤 중단했다. OMC prepare/check 오류가 아니라 수동 시간 배분·판정 문제였으며 품질 명령0회·재설치0개다. 현재 품질 status 조회는 ready이고 config hash는 bc4709cce807a5956b996a24840406dc35a12ac1ae37606c9cafcde0d9a86bc9이다. 이 설정 상태가 새 전체 후보의 리뷰·실행 준비 완료를 뜻하지 않는다.",
+        "이력·보류": "기존 중단·승인 원문과 누적 .omc 근거·교훈을 보존하며 이번 커밋에서 제외한다. 운용 B·과거 보존 재검증 UNKNOWN·RED 및 baseline 원본 복구 미확인·실제 자손 종료와 홈 연동 미검증·비교0/4회 NOT_RUN·HOLD를 유지한다. Kit v3 DISABLED·완료 관찰 미등록이며 소비 저장소 재조회는 하지 않았다.",
+        "근거": ".omc/ship-clock-boundary-task-20261109/의 red.stdout·full-tests.stdout·installed-full-tests.stdout·isolated-validation.json·review-focused.stdout·review-capture.stdout·review-receipt.stdout, .omc/release-budget-investigation-20261109/source.txt와 .omc/release-065-proposal-20261109-ff705030/release-stop.json. 로컬·격리 근거이며 원본 전체의 출하 승인이나 영구 보존 보장이 아니다.",
+        "다음 작업": "로컬 커밋 결과 확인 후 릴리스 재개 시 최종 전체 후보·리뷰 결속·설정 적합성과 새 시도에 필요한 시간 승인을 확인한다. 과거 deadline을 소급 연장하거나 이번 문서 최신화로 출하·설치 성공을 선언하지 않는다."
+      },
+      "candidate_state": "SHIP_CLOCK_BOUNDARY_REVIEWED_RELEASE_PENDING",
+      "main_applied": true,
+      "original_worktree_applied": true,
+      "main_applied_meaning": "소스0.6.5 로컬 커밋 및 시간 경계 수정 반영; 실제 사용처 미설치",
+      "review_status": "ISOLATED_THREE_PATHS_APPROVED",
+      "review_scope": [
+        "scripts/test_omc_ship_entry_contract.py",
+        "templates/.agents/skills/omc-ship/SKILL.md",
+        "templates/.claude/commands/ship.md"
+      ],
+      "original_source_changed_paths": [
+        "scripts/test_omc_ship_entry_contract.py",
+        "templates/.agents/skills/omc-ship/SKILL.md",
+        "templates/.claude/commands/ship.md"
+      ],
+      "original_source_changed_count": 3,
+      "report_seal": "CODE_REVIEW_APPROVED_RELEASE_PENDING",
+      "validation": {
+        "isolated_installed_suite": {
+          "passed": 80,
+          "seconds": 99.25
+        },
+        "original_initial_suite": {
+          "passed": 77,
+          "failed": 3,
+          "reason": "installed copies predate templates"
+        },
+        "independent_review": {
+          "passed": 8,
+          "overlaps_final_suite": true
+        },
+        "release_quality_full_run": "NOT_RUN",
+        "consumer_reinstallation": "NOT_RUN"
+      },
+      "documentation_validation": {
+        "scope": "four roadmap and dashboard documentation files",
+        "roadmap_test_file": "scripts/test_automatic_model_routing_roadmap.py",
+        "evidence_boundary": "Data and HTML current-section consistency; no release execution"
+      },
+      "commit_status": {
+        "scope": "REVIEWED_THREE_FILES_AND_FOUR_ROADMAP_DOCUMENTATION_FILES",
+        "commit_id_authority": "git log -- docs/automatic_model_routing_roadmap.md",
+        "push": "NOT_REQUESTED"
+      },
+      "release_preparation": {
+        "version": "0.6.5",
+        "requested_version": "0.6.5",
+        "local_version_commit": "a2c834a3",
+        "quality_status": "ready",
+        "config_sha256": "bc4709cce807a5956b996a24840406dc35a12ac1ae37606c9cafcde0d9a86bc9",
+        "final_candidate_binding": "PENDING_AFTER_NEW_CHANGES",
+        "quality_command_runs": 0,
+        "reinstalled_targets": 0,
+        "target_count": 12
+      },
+      "historical": true,
+      "superseded_by": "current_update"
+    },
     {
       "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
       "comparison_state": "HOLD",

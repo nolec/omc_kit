@@ -1062,3 +1062,58 @@ quality.status=mutate
     assert contract.read_bytes() == before_contract
     assert (source/'.omc/quality-gates.json').read_bytes() == before_config
     assert not target.exists()
+
+
+@pytest.mark.parametrize('defect', ['contract-oid', 'both-oid', 'quality-oid', 'different-origin'])
+def test_diagnose_rejects_refs_that_prepare_cannot_consume(fixture, tmp_path, defect):
+    source, contract, target = fixture
+    doc = json.loads(contract.read_text())
+    config_path = source/'.omc/quality-gates.json'
+    config = json.loads(config_path.read_text())
+    base = doc['expected_base_oid']
+    if defect in ('contract-oid', 'both-oid'):
+        doc['base_ref'] = base
+    if defect in ('quality-oid', 'both-oid'):
+        config['base_ref'] = base
+    if defect == 'different-origin':
+        git(source, 'update-ref', 'refs/remotes/origin/other', base)
+        config['base_ref'] = 'origin/other'
+    config_path.write_text(json.dumps(config))
+    doc['quality_config_sha256'] = digest(config_path)
+    contract.write_text(json.dumps(doc))
+    _prepare_approved_diagnosis(fixture, tmp_path)
+    before = {str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()}
+    directories = {str(p.relative_to(source)) for p in source.rglob('*') if p.is_dir()}
+    result = subprocess.run([sys.executable,str(CLI),'diagnose','--target',str(source),
+        '--contract',str(contract)],capture_output=True,text=True)
+    observed = json.loads(result.stdout)
+    assert result.returncode == 1 and observed['status'] == 'blocked', observed
+    reason = 'config_base_ref_mismatch' if defect == 'different-origin' else 'invalid_base_ref'
+    assert any(reason in problem for problem in observed['problems']), observed
+    assert {str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()} == before
+    assert {str(p.relative_to(source)) for p in source.rglob('*') if p.is_dir()} == directories
+    assert not target.exists()
+    prepared = assert_blocked(invoke(fixture), reason)
+    assert prepared['cleanup_confirmed'] and prepared['evidence_complete']
+    assert not target.exists()
+
+
+@pytest.mark.parametrize('contract_ref', ['origin/main', 'refs/remotes/origin/main'])
+@pytest.mark.parametrize('quality_ref', ['origin/main', 'refs/remotes/origin/main'])
+def test_diagnose_and_prepare_accept_equivalent_canonical_refs(fixture, tmp_path, contract_ref, quality_ref):
+    source, contract, target = fixture
+    config_path = source/'.omc/quality-gates.json'
+    config = json.loads(config_path.read_text()); config['base_ref'] = quality_ref
+    config_path.write_text(json.dumps(config))
+    replace_contract(fixture, base_ref=contract_ref, quality_config_sha256=digest(config_path))
+    _prepare_approved_diagnosis(fixture, tmp_path)
+    before = {str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()}
+    result = subprocess.run([sys.executable,str(CLI),'diagnose','--target',str(source),
+        '--contract',str(contract)],capture_output=True,text=True)
+    assert result.returncode == 0, result.stdout+result.stderr
+    assert json.loads(result.stdout)['status'] == 'ready'
+    assert {str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()} == before
+    assert not target.exists()
+    prepared = invoke(fixture)
+    assert prepared.returncode == 0, prepared.stdout+prepared.stderr
+    assert json.loads(prepared.stdout)['status'] == 'baseline_verified'

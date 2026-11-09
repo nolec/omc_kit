@@ -297,7 +297,14 @@ def canonical(run, ref, root):
         value = ref
     else:
         raise Blocked('invalid_base_ref', ref)
-    run.git(root, 'check-ref-format', value)
+    if run is None:
+        # Diagnose shares prepare's syntax check without creating runtime records.
+        checked = subprocess.run(['git', '--no-optional-locks', '-C', str(root),
+            'check-ref-format', value], capture_output=True)
+        if checked.returncode:
+            raise Blocked('invalid_base_ref', ref)
+    else:
+        run.git(root, 'check-ref-format', value)
     return value
 
 def independent(run, root):
@@ -592,12 +599,17 @@ def _readiness_snapshot(root, doc, review_target=None):
         return review._current_receipt(target)
 
     config, config_sha = quality.load_config_snapshot(root)
+    base_ref = canonical(None, doc['base_ref'], root)
+    quality_ref = canonical(None, config['base_ref'], root)
+    if quality_ref != base_ref:
+        raise Blocked('config_base_ref_mismatch')
     working = review._candidate(root, base_commit=doc['expected_base_oid'],
         paths=doc['expected_changed_paths'], entry_for_path=lambda path, base:
         review._working_entry(root, path=path, base_entry=base))
     snapshot = {'head': review._commit(root, 'HEAD'),
-        'base': review._commit(root, doc['base_ref']),
-        'quality_base': review._commit(root, config['base_ref']),
+        'base_ref': base_ref, 'quality_base_ref': quality_ref,
+        'base': review._commit(root, base_ref),
+        'quality_base': review._commit(root, quality_ref),
         'working': working['candidate_scope_sha256'],
         'dirty_paths': review._git(root, 'diff', 'HEAD', '--name-only').decode(),
         'review': review_receipt(root),
@@ -633,7 +645,7 @@ def diagnose(args):
     try:
         initial_readiness = _readiness_snapshot(root, doc, args.review_target)
     except (OSError, ValueError, KeyError, TypeError, Blocked) as exc:
-        problems.append('readiness_snapshot_unavailable: ' + str(exc))
+        problems.append('readiness_snapshot_unavailable: ' + getattr(exc, 'reason', str(exc)))
     candidate = None
     try:
         candidate = review.build_commit_candidate(root, base_commit=doc['expected_base_oid'],
