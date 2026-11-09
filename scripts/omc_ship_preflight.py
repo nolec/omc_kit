@@ -577,14 +577,184 @@ def finish(run, result, error):
             run.record.close()
     return result['exit_code']
 
+def _readiness_snapshot(root, doc, review_target=None):
+    """Observe candidate and approval inputs without refreshing state or running gates.
+
+    Before/after equality detects drift; it is not a lock or an execution grant.
+    """
+    import omc_review_snapshot as review
+    import omc_quality_gate as quality
+
+    def review_receipt(target):
+        pointer = target / '.omc/state/review-snapshots/current.json'
+        if not pointer.exists():
+            return None
+        return review._current_receipt(target)
+
+    config, config_sha = quality.load_config_snapshot(root)
+    working = review._candidate(root, base_commit=doc['expected_base_oid'],
+        paths=doc['expected_changed_paths'], entry_for_path=lambda path, base:
+        review._working_entry(root, path=path, base_entry=base))
+    snapshot = {'head': review._commit(root, 'HEAD'),
+        'base': review._commit(root, doc['base_ref']),
+        'quality_base': review._commit(root, config['base_ref']),
+        'working': working['candidate_scope_sha256'],
+        'dirty_paths': review._git(root, 'diff', 'HEAD', '--name-only').decode(),
+        'review': review_receipt(root),
+        'config_sha256': config_sha,
+        'quality_approval': quality._load_receipt(root),
+        'evidence': [(item['path'], quality.file_sha256(root/item['path']))
+                     for item in config['evidence']]}
+    if review_target:
+        external = absolute(review_target).resolve()
+        snapshot['external_head'] = review._commit(external, 'HEAD')
+        snapshot['external_review'] = review_receipt(external)
+    return snapshot
+
+
+def diagnose(args):
+    """Read-only source readiness. This report is neither approval nor a run token."""
+    import omc_review_snapshot as review
+    import omc_quality_gate as quality
+    result = {"status": "blocked", "scope": "preparation_only_not_test_or_install",
+              "candidate": {"status": "blocked"}, "review": {"status": "BLOCKED"},
+              "quality": {"status": "unknown"}, "proposal": {"status": "not_supplied"},
+              "problems": [], "next_actions": []}
+    problems, actions = result["problems"], result["next_actions"]
+    try:
+        doc, contract_raw = load_contract(Path(args.contract))
+        root = absolute(args.target).resolve()
+        if root != absolute(doc['source_root']).resolve():
+            raise Blocked('diagnose_target_must_be_source')
+    except (Blocked, OSError, ValueError, TypeError, KeyError) as exc:
+        problems.append(getattr(exc, 'reason', str(exc)))
+        return result
+    initial_readiness = None
+    try:
+        initial_readiness = _readiness_snapshot(root, doc, args.review_target)
+    except (OSError, ValueError, KeyError, TypeError, Blocked) as exc:
+        problems.append('readiness_snapshot_unavailable: ' + str(exc))
+    candidate = None
+    try:
+        candidate = review.build_commit_candidate(root, base_commit=doc['expected_base_oid'],
+                                                  candidate_commit=doc['expected_head_oid'])
+        if review._commit(root, 'HEAD') != doc['expected_head_oid']:
+            raise ValueError('head_changed')
+        if review._commit(root, doc['base_ref']) != doc['expected_base_oid']:
+            raise ValueError('base_changed')
+        if set(candidate['changed_paths']) != set(doc['expected_changed_paths']):
+            raise ValueError('candidate_scope_mismatch')
+        if review._git(root, 'diff', 'HEAD', '--name-only').strip():
+            raise ValueError('candidate_worktree_changed')
+        working = review._candidate(root, base_commit=doc['expected_base_oid'],
+            paths=candidate['changed_paths'], entry_for_path=lambda path, base:
+            review._working_entry(root, path=path, base_entry=base))
+        if working['candidate_scope_sha256'] != candidate['candidate_scope_sha256']:
+            raise ValueError('candidate_bytes_changed')
+        result['candidate'] = {'status': 'ready', 'base': doc['expected_base_oid'],
+            'head': doc['expected_head_oid'], 'paths': candidate['changed_paths'],
+            'candidate_scope_sha256': candidate['candidate_scope_sha256']}
+    except (OSError, ValueError, KeyError, TypeError, review.CandidateScopeError) as exc:
+        problems.append('candidate: ' + str(exc))
+        actions.append('버전·문서 포함 최종 커밋·base·전체 경로를 다시 고정합니다')
+    try:
+        if not (root/'.omc/state/review-snapshots/current.json').exists():
+            raise ValueError('review_pointer_invalid')
+        result['review'] = review.validate_ship_candidate(root)
+        receipt = review._current_receipt(root)
+        if candidate is None or receipt['candidate_scope_sha256'] != candidate['candidate_scope_sha256']:
+            result['review'] = {'status': 'BLOCKED', 'reason_code': 'review_candidate_mismatch'}
+    except (OSError, ValueError, KeyError, TypeError, review.CandidateScopeError) as exc:
+        result['review'] = {'status': 'BLOCKED', 'reason_code': str(exc)}
+    if result['review']['status'] != 'READY':
+        problems.append('review: ' + str(result['review'].get('reason_code')))
+        actions.append('전체 후보 리뷰 또는 동일성 확인 후 원래 승인 원문으로 capture→seal→record를 연결합니다')
+    if args.review_target:
+        try:
+            external = absolute(args.review_target).resolve()
+            if not (external/'.omc/state/review-snapshots/current.json').exists():
+                raise ValueError('review_pointer_invalid')
+            observed = review.validate_ship_candidate(external)
+            receipt = review._current_receipt(external)
+            frozen = review.load_peer_snapshot(review._artifact_path(external, receipt['review_snapshot_name']),
+                expected_sha256=receipt['review_snapshot_sha256'])
+            pinned_commit = frozen.get('candidate_commit')
+            same = bool(candidate and receipt['candidate_scope_sha256'] == candidate['candidate_scope_sha256']
+                        and (pinned_commit is None or pinned_commit == doc['expected_head_oid']))
+            result['external_review'] = {'status': observed['status'], 'same_candidate': same,
+                'target': str(external), 'source_rebinding_required': True}
+            if not same or observed['status'] != 'READY':
+                problems.append('external_review_candidate_mismatch')
+        except (OSError, ValueError, KeyError, TypeError, Blocked) as exc:
+            result['external_review'] = {'status': 'BLOCKED', 'reason': str(exc)}
+            problems.append('external_review_unreadable')
+    config_path = root / '.omc/quality-gates.json'
+    config_raw = None
+    try:
+        config_raw = config_path.read_bytes()
+        result['quality'] = quality.status(root)
+        config, _ = quality.load_config_snapshot(root)
+        if review._commit(root, config['base_ref']) != doc['expected_base_oid']:
+            problems.append('quality_base_ref_mismatch')
+        if sha(config_raw) != doc['quality_config_sha256']:
+            problems.append('quality_config_pin_changed')
+        if result['quality']['status'] != 'ready':
+            problems.append('quality: ' + result['quality']['status'])
+            actions.append('명시적 proposal 비교와 사용자 설정 승인 후 validate→apply→approve로 연결합니다')
+    except (OSError, ValueError, quality.QualityGateError) as exc:
+        result['quality'] = {'status': 'invalid', 'reason': str(exc)}
+        problems.append('quality: ' + str(exc))
+    if args.proposal or args.proposal_sha256:
+        try:
+            if not args.proposal or not args.proposal_sha256:
+                raise ValueError('proposal_path_and_sha256_required')
+            proposal_raw = Path(args.proposal).read_bytes()
+            if sha(proposal_raw) != args.proposal_sha256:
+                raise ValueError('proposal_pin_changed')
+            result['proposal'] = quality.compare_proposal(root, json.loads(proposal_raw))
+            if result['proposal']['status'] == 'approval_required':
+                problems.append('proposal_changes_require_user_approval')
+            if Path(args.proposal).read_bytes() != proposal_raw:
+                problems.append('proposal_changed_during_diagnosis')
+        except (OSError, ValueError, KeyError, TypeError, quality.QualityGateError) as exc:
+            result['proposal'] = {'status': 'invalid', 'reason': str(exc)}
+            problems.append('proposal: ' + str(exc))
+    try:
+        if Path(args.contract).read_bytes() != contract_raw or config_path.read_bytes() != config_raw:
+            problems.append('inputs_changed_during_diagnosis')
+    except OSError as exc:
+        problems.append('inputs_unreadable: ' + str(exc))
+    if initial_readiness is not None:
+        try:
+            final_readiness = _readiness_snapshot(root, doc, args.review_target)
+        except (OSError, ValueError, KeyError, TypeError, Blocked):
+            final_readiness = None
+        if initial_readiness != final_readiness:
+            problems.append('readiness_changed_during_diagnosis')
+            actions.append('진단 중 후보·승인·근거가 변경됐습니다. 최종 입력을 다시 고정하고 확인합니다')
+    result['status'] = 'blocked' if problems else 'ready'
+    return result
+
+
 def main():
     started = time.monotonic()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['prepare', 'check'])
+    parser.add_argument('command', choices=['prepare', 'check', 'diagnose'])
     parser.add_argument('--contract', required=True)
     parser.add_argument('--target', required=True)
-    parser.add_argument('--record-dir', required=True)
+    parser.add_argument('--record-dir')
+    parser.add_argument('--proposal')
+    parser.add_argument('--proposal-sha256')
+    parser.add_argument('--review-target')
     args = parser.parse_args()
+    if args.command == 'diagnose':
+        result = diagnose(args)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0 if result['status'] == 'ready' else 1
+    if not args.record_dir:
+        parser.error('--record-dir is required for prepare/check')
+    if args.proposal or args.proposal_sha256 or args.review_target:
+        parser.error('--proposal options are only valid for diagnose')
     run = Run(args.command, started)
     result = {'status': 'blocked', 'reason_code': 'not_started', 'operation': args.command,
               'scope': 'baseline_only_not_ship_approval', 'started_monotonic': started}

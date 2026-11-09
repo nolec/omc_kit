@@ -889,3 +889,176 @@ if args[6:] == ['rev-parse','--show-object-format'] and os.getcwd()==%r:
     else:assert injected.read_text() == 'injected content stays preserved'
     assert not (target/'.omc/quality-gates.json').exists()
     assert doc['cleanup_confirmed'] and doc['evidence_complete']
+
+
+@pytest.mark.parametrize('defect', ['missing-review', 'scope', 'head', 'evidence', 'dirty'])
+def test_public_diagnose_aggregates_without_writing_or_running(fixture, defect):
+    source, contract, target = fixture
+    doc = json.loads(contract.read_text())
+    if defect == 'scope': doc['expected_changed_paths'] = ['VERSION', 'commands.md']
+    elif defect == 'head': doc['expected_head_oid'] = doc['expected_base_oid']
+    elif defect == 'evidence': (source/'commands.md').write_text('changed evidence')
+    elif defect == 'dirty': (source/'VERSION').write_text('uncommitted version')
+    contract.write_text(json.dumps(doc))
+    before_dirs = {p.relative_to(source) for p in source.rglob('*') if p.is_dir()}
+    before = {str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()}
+    r = subprocess.run([sys.executable,str(CLI),'diagnose','--contract',str(contract),
+                        '--target',str(source)],capture_output=True,text=True)
+    assert r.returncode == 1, r.stdout + r.stderr
+    result = json.loads(r.stdout)
+    assert result['scope'] == 'preparation_only_not_test_or_install'
+    assert result['review']['status'] == 'BLOCKED'
+    assert result['quality']['status'] != 'ready'
+    if defect != 'missing-review': assert result['candidate']['status'] == 'blocked'
+    assert {str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()} == before
+    assert {p.relative_to(source) for p in source.rglob('*') if p.is_dir()} == before_dirs
+    assert not target.exists()
+
+
+def _prepare_approved_diagnosis(fixture, tmp_path):
+    import omc_review_snapshot as review
+    import omc_quality_gate as quality
+    source, contract, target = fixture
+    doc = json.loads(contract.read_text())
+    cap = review.capture_review_snapshot(source, base_commit=doc['expected_base_oid'],
+                                        candidate_commit=doc['expected_head_oid'])
+    output = tmp_path/'approved-review.txt'; output.write_text('APPROVE: controlled fixture')
+    seal = review.seal_review_output(source, snapshot_path=Path(cap['snapshot_path']),
+        snapshot_sha256=cap['snapshot_sha256'], review_output=output.read_bytes())
+    # Use the public CLI to preserve the exact expected-path contract.
+    r = subprocess.run([sys.executable,str(ROOT/'scripts/omc_review_snapshot.py'),
+        'record-review','--target',str(source),'--review-snapshot',cap['snapshot_path'],
+        '--review-snapshot-sha256',cap['snapshot_sha256'],'--review-evidence',seal['evidence_path'],
+        '--review-evidence-sha256',seal['evidence_sha256'],'--verdict','APPROVE',
+        '--expected-path','VERSION'],capture_output=True,text=True)
+    assert r.returncode == 0, r.stdout+r.stderr
+    quality.approve(source, expected_config_sha256=quality.load_config_snapshot(source)[1], allow_full=True)
+    return source, contract, target
+
+
+def test_public_diagnose_ready_requires_exact_committed_review_and_quality(fixture, tmp_path):
+    source, contract, target = _prepare_approved_diagnosis(fixture, tmp_path)
+    command = [sys.executable,str(CLI),'diagnose','--target',str(source),'--contract',str(contract)]
+    r = subprocess.run(command,capture_output=True,text=True)
+    assert r.returncode == 0, r.stdout+r.stderr
+    assert json.loads(r.stdout)['status'] == 'ready'
+    (source/'VERSION').write_text('changed after readiness')
+    r = subprocess.run(command,capture_output=True,text=True)
+    assert r.returncode == 1
+    assert json.loads(r.stdout)['status'] == 'blocked'
+    assert not target.exists()
+
+
+@pytest.mark.parametrize('pin_ok', [True, False])
+def test_public_diagnose_compares_pinned_proposal_without_applying(fixture, pin_ok):
+    source, contract, target = fixture
+    config = json.loads((source/'.omc/quality-gates.json').read_text())
+    config['gates'][0]['timeout_sec'] = 2
+    proposal = {'schema_version':'omc-quality-gate-proposal/v1','config':config,
+        'full_scope_requested':True,'rationale':[{'gate_id':'test','evidence_paths':['commands.md'],
+        'scope_reason':'explicit timeout proposal'}]}
+    path = contract.parent/'proposal.json';path.write_text(json.dumps(proposal))
+    before = (source/'.omc/quality-gates.json').read_bytes()
+    r = subprocess.run([sys.executable,str(CLI),'diagnose','--contract',str(contract),
+        '--target',str(source),'--proposal',str(path),'--proposal-sha256',digest(path) if pin_ok else '0'*64],
+        capture_output=True,text=True)
+    assert r.returncode == 1
+    result = json.loads(r.stdout)
+    assert result['proposal']['status'] == ('approval_required' if pin_ok else 'invalid')
+    if pin_ok: assert result['proposal']['changes'][0]['field'] == 'timeout_sec'
+    assert (source/'.omc/quality-gates.json').read_bytes() == before
+    assert not target.exists()
+
+
+@pytest.mark.parametrize('extra_file', ['same', 'extra', 'amend'])
+def test_public_diagnose_isolated_approval_never_substitutes_source_binding(fixture, tmp_path, extra_file):
+    import omc_review_snapshot as review
+    source, contract, target = fixture
+    doc = json.loads(contract.read_text())
+    external = tmp_path/'reviewed-clone'
+    git(source,'clone','--shared',str(source),str(external))
+    cap = review.capture_review_snapshot(external, base_commit=doc['expected_base_oid'],
+                                        candidate_commit=doc['expected_head_oid'])
+    seal = review.seal_review_output(external, snapshot_path=Path(cap['snapshot_path']),
+        snapshot_sha256=cap['snapshot_sha256'], review_output=b'APPROVE controlled candidate')
+    r = subprocess.run([sys.executable,str(ROOT/'scripts/omc_review_snapshot.py'),'record-review',
+        '--target',str(external),'--review-snapshot',cap['snapshot_path'],
+        '--review-snapshot-sha256',cap['snapshot_sha256'],'--review-evidence',seal['evidence_path'],
+        '--review-evidence-sha256',seal['evidence_sha256'],'--verdict','APPROVE',
+        '--expected-path','VERSION'],capture_output=True,text=True)
+    assert r.returncode == 0, r.stdout+r.stderr
+    if extra_file == 'extra':
+        (source/'extra.txt').write_text('not reviewed')
+        git(source,'add','extra.txt');git(source,'commit','-m','new scope')
+        doc['expected_head_oid'] = git(source,'rev-parse','HEAD')
+        doc['expected_changed_paths'].append('extra.txt')
+        contract.write_text(json.dumps(doc))
+    elif extra_file == 'amend':
+        git(source,'commit','--amend','-m','amended identical tree')
+        doc['expected_head_oid'] = git(source,'rev-parse','HEAD')
+        contract.write_text(json.dumps(doc))
+    r = subprocess.run([sys.executable,str(CLI),'diagnose','--contract',str(contract),
+        '--target',str(source),'--review-target',str(external)],capture_output=True,text=True)
+    assert r.returncode == 1, r.stdout+r.stderr
+    result = json.loads(r.stdout)
+    assert result['external_review']['status'] == 'READY'
+    assert result['external_review']['same_candidate'] is (extra_file == 'same')
+    assert result['external_review']['source_rebinding_required'] is True
+    assert result['review']['status'] == 'BLOCKED'
+    assert not (source/'.omc/state/review-snapshots/current.json').exists()
+
+
+def test_public_diagnose_rejects_quality_base_different_from_fixed_candidate(fixture):
+    source, contract, target = fixture
+    path = source/'.omc/quality-gates.json'
+    config = json.loads(path.read_text());config['base_ref'] = 'HEAD'
+    path.write_text(json.dumps(config))
+    doc = json.loads(contract.read_text());doc['quality_config_sha256'] = digest(path)
+    contract.write_text(json.dumps(doc))
+    r = subprocess.run([sys.executable,str(CLI),'diagnose','--target',str(source),
+                        '--contract',str(contract)],capture_output=True,text=True)
+    assert r.returncode == 1
+    assert 'quality_base_ref_mismatch' in json.loads(r.stdout)['problems']
+
+
+@pytest.mark.parametrize('change', ['version', 'head', 'base', 'review', 'evidence', 'approval'])
+def test_public_diagnose_rejects_changes_during_quality_lookup(fixture, tmp_path, change):
+    source, contract, target = _prepare_approved_diagnosis(fixture, tmp_path)
+    injected = tmp_path/'injection'; injected.mkdir()
+    code = """
+import sys
+from pathlib import Path
+sys.path.insert(0, %r)
+import omc_quality_gate as quality
+original=quality.status
+def mutate(root):
+    result=original(root)
+    source=Path(%r)
+    change=%r
+    if change=='version': (source/'VERSION').write_text('late candidate change')
+    elif change=='head':
+        import subprocess
+        subprocess.run(['git','commit','--allow-empty','-m','late head'],cwd=source,check=True,capture_output=True)
+    elif change=='base':
+        import subprocess
+        subprocess.run(['git','update-ref','refs/remotes/origin/main','HEAD'],cwd=source,check=True,capture_output=True)
+    elif change=='review': (source/'.omc/state/review-snapshots/current.json').unlink()
+    elif change=='evidence': (source/'commands.md').write_text('late evidence change')
+    elif change=='approval':
+        (source/quality.RECEIPT_PATH).unlink()
+    return result
+quality.status=mutate
+""" % (str(ROOT/'scripts'),str(source),change)
+    (injected/'sitecustomize.py').write_text(code)
+    before_contract = contract.read_bytes()
+    before_config = (source/'.omc/quality-gates.json').read_bytes()
+    r = subprocess.run([sys.executable,str(CLI),'diagnose','--target',str(source),
+        '--contract',str(contract)],capture_output=True,text=True,
+        env={**os.environ,'PYTHONPATH':str(injected)})
+    assert r.returncode == 1, r.stdout+r.stderr
+    result = json.loads(r.stdout)
+    assert result['status'] == 'blocked'
+    assert 'readiness_changed_during_diagnosis' in result['problems']
+    assert contract.read_bytes() == before_contract
+    assert (source/'.omc/quality-gates.json').read_bytes() == before_config
+    assert not target.exists()

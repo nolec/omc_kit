@@ -646,6 +646,37 @@ def validate_proposal(proposal: Any, root: Path) -> dict[str, Any]:
     return proposal
 
 
+def compare_proposal(root: Path, proposal: Any) -> dict[str, Any]:
+    """Compare explicit inputs without applying configuration or granting approval.
+
+    Old evidence hashes cannot establish semantic equivalence of document text.
+    """
+    current, current_sha = load_config_snapshot(root)
+    proposed = validate_proposal(proposal, root)["config"]
+    changes = []
+    for field in ("base_ref", "evidence"):
+        if current[field] != proposed[field]:
+            changes.append({"field": field, "before": current[field], "after": proposed[field]})
+    old_order = [gate["id"] for gate in current["gates"]]
+    new_order = [gate["id"] for gate in proposed["gates"]]
+    if old_order != new_order:
+        changes.append({"field": "gate_order", "before": old_order, "after": new_order})
+    before = {gate["id"]: gate for gate in current["gates"]}
+    after = {gate["id"]: gate for gate in proposed["gates"]}
+    for ident in sorted(before.keys() | after.keys()):
+        for field in ("argv", "scope", "required", "timeout_sec", "purpose"):
+            old = before.get(ident, {}).get(field)
+            new = after.get(ident, {}).get(field)
+            if old != new:
+                changes.append({"gate_id": ident, "field": field, "before": old, "after": new})
+    proposed_sha = _canonical_sha256(proposed)
+    if current_sha != proposed_sha and not changes:
+        changes.append({"field": "config", "before": current_sha, "after": proposed_sha})
+    return {"status": "approval_required" if changes else "unchanged", "changes": changes,
+            "current_config_sha256": current_sha, "proposed_config_sha256": proposed_sha,
+            "evidence_semantics": "UNKNOWN", "applied": False}
+
+
 def _atomic_write_config(root: Path, config: dict[str, Any]) -> None:
     config_path = root / CONFIG_PATH
     if config_path.parent.is_symlink():

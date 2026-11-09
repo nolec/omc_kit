@@ -598,3 +598,21 @@ def test_source_not_ready_never_gets_resealed_or_copied(subject, defect):
     assert [row['id'] for row in report['calls']] == ORDER[:3]
     assert not Path(subject['candidate']).exists() and not Path(subject['marker']).exists()
     assert preserve(source) == before
+
+
+def test_installed_preparation_diagnosis_and_guidance_are_read_only(installed_omc_target, tmp_path):
+    from test_omc_ship_preflight import fixture as preflight_fixture
+    folder = tmp_path/'diagnosis-fixture'; folder.mkdir()
+    source, contract, candidate = preflight_fixture.__wrapped__(folder)
+    before = preserve(source)
+    for name in ['omc-task','omc-review','omc-ship']:
+        text = (installed_omc_target/f'.agents/skills/{name}/SKILL.md').read_text()
+        assert '최종 후보 준비' in text
+        assert 'diagnose' in text
+    r = subprocess.run([sys.executable,str(installed_omc_target/'scripts/omc_ship_preflight.py'),
+        'diagnose','--target',str(source),'--contract',str(contract)],capture_output=True,text=True)
+    assert r.returncode == 1, r.stdout+r.stderr
+    report = json.loads(r.stdout)
+    assert report['review']['status'] == 'BLOCKED'
+    assert report['quality']['status'] == 'approval_required'
+    assert preserve(source) == before and not candidate.exists()

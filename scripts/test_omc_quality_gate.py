@@ -1569,3 +1569,61 @@ def test_historical_missing_inputs_remain_skipped_not_current_success(tmp_path):
         assert case.find('skipped') is not None
         assert 'observed candidate inputs are external' in case.find('skipped').attrib['message']
         assert case.find('failure') is None and case.find('error') is None
+
+
+@pytest.mark.parametrize('change', ['evidence', 'argv', 'scope', 'required', 'timeout_sec', 'base_ref'])
+def test_compare_proposal_is_read_only_and_reports_explicit_changes(tmp_path, change):
+    import copy
+    module = _load_module()
+    path = _write_config(tmp_path)
+    before = path.read_bytes()
+    config = json.loads(before)
+    proposed = copy.deepcopy(config)
+    if change == 'evidence':
+        (tmp_path/'project-manifest').write_text('updated command documentation')
+        proposed['evidence'][0]['sha256'] = module.file_sha256(tmp_path/'project-manifest')
+    elif change == 'base_ref': proposed['base_ref'] = 'HEAD'
+    else:
+        proposed['gates'][0][change] = {'argv':['python3','-m','pytest','{changed_files}'],
+            'scope':'full','required':False,'timeout_sec':60}[change]
+    proposal = {'schema_version':'omc-quality-gate-proposal/v1','config':proposed,
+        'full_scope_requested':True,'rationale':[{'gate_id':'test','evidence_paths':['project-manifest'],
+        'scope_reason':'explicit fixture proposal'}]}
+    result = module.compare_proposal(tmp_path, proposal)
+    assert result['status'] == 'approval_required'
+    assert result['evidence_semantics'] == 'UNKNOWN'
+    assert change in {item['field'] for item in result['changes']}
+    assert path.read_bytes() == before
+    assert not (tmp_path/'.omc/state/quality-gate-approval.json').exists()
+
+
+def test_compare_proposal_detects_gate_order_without_writing(tmp_path):
+    import copy
+    module = _load_module()
+    path = _write_config(tmp_path)
+    current = json.loads(path.read_text())
+    second = copy.deepcopy(current['gates'][0]); second['id'] = 'second'
+    current['gates'].append(second); path.write_text(json.dumps(current))
+    before = path.read_bytes()
+    proposed = copy.deepcopy(current); proposed['gates'].reverse()
+    proposal = {'schema_version':'omc-quality-gate-proposal/v1','config':proposed,
+        'rationale':[{'gate_id':g['id'],'evidence_paths':['project-manifest'],
+        'scope_reason':'explicit gate ordering'} for g in proposed['gates']]}
+    result = module.compare_proposal(tmp_path, proposal)
+    assert result['current_config_sha256'] != result['proposed_config_sha256']
+    assert result['status'] == 'approval_required'
+    assert 'gate_order' in {c['field'] for c in result['changes']}
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('metadata_change', [False, True])
+def test_compare_proposal_only_reports_unchanged_for_identical_config(tmp_path, metadata_change):
+    module = _load_module(); path = _write_config(tmp_path)
+    proposed = json.loads(path.read_text())
+    if metadata_change: proposed['note'] = 'new configuration annotation'
+    proposal = {'schema_version':'omc-quality-gate-proposal/v1','config':proposed,
+        'rationale':[{'gate_id':'test','evidence_paths':['project-manifest'],
+        'scope_reason':'explicit pinned configuration'}]}
+    result = module.compare_proposal(tmp_path, proposal)
+    assert result['status'] == ('approval_required' if metadata_change else 'unchanged')
+    assert (result['current_config_sha256'] == result['proposed_config_sha256']) is (not metadata_change)
