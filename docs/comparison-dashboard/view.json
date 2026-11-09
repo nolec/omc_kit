@@ -2158,18 +2158,18 @@
     },
     "formal_hold_reason": "PRIOR_PRESERVATION_FAILED",
     "date": "2026-11-09",
-    "status": "현재 · 캐시 정리 A 로컬 보완·계약 해시 회귀 승인 / 운용 B 보류 / 문서 최신화 · 2026-11-09",
-    "main_commit": "6cc02d4fad25220a1366224af39c958cf34fca2b",
-    "main_commit_role": "문서 최신화 시작 기준 HEAD; 이 문서 자체 커밋 ID는 Git 이력으로 확인",
+    "status": "현재 · 캐시 정리13개·스킬 메타데이터74개 분리 커밋 / 관련527개 통과 / 운용 B 보류 · 2026-11-09",
+    "main_commit": "79f78aa3698fd74bfa8830797095ea3973ee2f2e",
+    "main_commit_role": "기능·메타데이터 두 커밋 반영 기준; 후속 문서 커밋 ID는 Git 이력으로 확인",
     "latest_fields": {
-      "현재 상태": "문서 최신화 시작 기준 main은 6cc02d4f(OMC 0.6.4)이다. 수명주기 보완11개는 16e264b4에 이미 커밋됐다. 캐시 정리와 계약 해시 후속 수정은 원본 작업트리에 반영됐고 아직 소스 커밋에는 포함되지 않았다.",
-      "보완 내용": "코드 보완 A는 삭제 전 등록 실패의 제한된 복구, 8MiB 기준 크기 제한, 공유 잠금, 부모 수집기→ready→읽기 CLI→복구 호출을 추가했다. 후속 수정은 CONTRACT 본문 해시의 최초 저장·복구 보존과 다른 본문 재시도 차단을 보완했다.",
-      "검증": "A 관련3개 모듈 전체517개 통과. 이후 maintenance·계약 해시 관련87개 통과, 리뷰에서 새 해시 회귀5개 독립 통과를 확인했다. 87개와5개는 앞선 검증과 겹치므로 합산하지 않는다. TDD·공백 검사와 원본 인덱스·범위 밖 변경 보존을 확인했다. 실제 실행기 운용 검증 B와 제품 효과 검증은 미실행이다. 로드맵 정합성 테스트28개도 별도로 통과했다.",
-      "Git·리뷰 범위": "A의6개 파일은 기존 변경을 기준으로 격리 검토했고, 해시 후속2개 파일은 별도 격리 후보로 APPROVE를 기록했다. 원본의 전체 미커밋 변경 승인으로 확대하지 않는다. 이번 커밋 범위는 로드맵·대시보드 문서4개이며 기존 소스·스킬 변경은 보존한다. 실제 커밋 ID는 이 문서의 Git 이력에서 확인한다.",
-      "이력·보존": "기존 수명주기 변경의 미커밋·Git 쓰기 차단 안내는 당시 이력으로 보존한다. 현재 Git 기록에는 16e264b4와 0.6.4 릴리스6cc02d4f가 존재한다. 코드 검증·격리 리뷰·실제 운용 검증·로컬 커밋·배포를 구분한다.",
+      "현재 상태": "캐시 정리 기능13개는 5551a56a, 스킬 메타데이터74개는 79f78aa3로 분리 로컬 커밋했다. 공유 SKILL.md 2개가 겹치므로 고유 변경 경로는85개다. OMC 버전은0.6.4이며 push·재설치·배포는 수행하지 않았다.",
+      "보완 내용": "코드 보완 A는 삭제 전 등록 실패의 제한된 복구, 8MiB 기준 크기 제한, 공유 잠금, 부모 수집기→ready→읽기 CLI→복구 호출을 추가했다. 후속 수정은 CONTRACT 본문 해시의 최초 저장·복구 보존과 다른 본문 재시도 차단을 보완했다. 설치본·템플릿 등 안내5곳에 ready 읽기와 제한된 복구 순서를 동기화했다. 스킬 frontmatter38개와 openai.yaml36개는 기능 변경과 분리했다.",
+      "검증": "분리된 기능 전체 후보에서 completion/output/collector·기존 계약 해시4개 테스트 모듈527개 통과(313.26초). 메타데이터 frontmatter38개·YAML36개·템플릿 대조 및 기존 테스트2개 통과. 두 커밋 모두 기존 Guard·TDD 훅을 통과했다. 이전517개·87개·5개와 중복되므로 합산하지 않는다. 운용 B와 제품 효과 검증은 미실행이다.",
+      "Git·리뷰 범위": "45a6e397 대비 기능13개 전체 후보를 검토하고 커밋5551a56a의 정확한13개 경로로 APPROVE를 기록했다. 메타데이터74개는 별도 검증·커밋79f78aa3이며 기능 승인으로 확대하지 않는다. 후속 문서4개는 이 결과의 현재 표시만 갱신한다.",
+      "이력·보존": "기존 미커밋 안내와 제한된 부분 리뷰는 당시 이력으로 보존한다. .omc 실행 근거·교훈은 정리 커밋에 포함하거나 삭제하지 않는다. 코드 검증·리뷰·실제 운용·커밋·배포를 구분한다.",
       "기존 보류": "T0에서 Claude Code 2.1.138 설치는 확인했지만 실제 Bash call/result·종료 코드·ready 왕복의 원본 근거를 확보하지 못했다. 사용자 선택에 따라 A만 구현하고 B는 보류한다. 과거 감사 보존 실패 공식 보류, RED·baseline 원본 복구 미확인, 과거 보존 재검증 UNKNOWN, 실제 자손 전체 종료·홈 연동 미검증, 비교0/4회 NOT_RUN·HOLD는 유지한다. Kit 로컬 v3 DISABLED·완료 관찰 미등록 상태를 확인했으며 소비 저장소는 재조회하지 않았다.",
-      "근거": ".omc/tasks/cache-cleanup-r4-20261109/의 full-tests.txt·retirement-probe.txt·preservation-result.json·완료 기록, .omc/tasks/cache-contract-hash-20261109/의 tests.txt·완료 기록, .omc/reviews/cache-cleanup-r4-A-20261109/ 및 cache-contract-hash-20261109/의 고정 후보·승인 기록을 대조했다. 로컬·격리 근거이며 영구 보존이나 다른 checkout에서의 접근을 보장하지 않는다.",
-      "다음 작업": "이번 문서4개 커밋 결과를 확인하고, 소스·스킬 변경은 별도 커밋 범위로 정리한다. 운용 B는 실제 실행기의 필수 로그와 ready 왕복을 확인한 뒤 별도 재개한다. 과거 보류와 제품 효과 미입증 상태를 자동 해제하지 않는다."
+      "근거": ".omc/split-changes-20261109/의 feature-tests.txt·feature-test-result.json·feature-preflight.json·feature-review-receipt.json·metadata-final-validation.json 및 두 commit 기록. 과거 A·해시 회귀 근거도 유지한다. 로컬·격리 근거이며 영구 보존이나 다른 checkout 접근을 보장하지 않는다.",
+      "다음 작업": "운용 B는 실제 실행기의 Bash call/result·종료 코드·ready 왕복 원본을 확보할 수 있을 때 별도 재개한다. 과거 보류와 제품 효과 미입증 상태를 자동 해제하지 않는다."
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2177,18 +2177,25 @@
       "docs/comparison-dashboard/view.json",
       "docs/comparison-dashboard/index.html"
     ],
-    "candidate_state": "A_LOCAL_VALIDATED_B_DEFERRED_DOCUMENTATION_ONLY_COMMIT",
-    "main_applied": false,
+    "candidate_state": "FEATURE_AND_METADATA_COMMITTED_B_DEFERRED",
+    "main_applied": true,
     "original_worktree_applied": true,
-    "main_applied_meaning": "캐시 정리·해시 후속 소스는 원본 작업트리에 반영됐으나 아직 미커밋; 수명주기 보완16e264b4는 이미 커밋",
-    "review_status": "A_ISOLATED_REVIEW_AND_HASH_FOLLOWUP_APPROVED",
+    "main_applied_meaning": "기능13개·메타데이터74개를 별도 로컬 커밋으로 반영; 운용 B 보류",
+    "review_status": "FULL_FEATURE_13_PATHS_APPROVED",
     "review_scope": [
+      ".agents/skills/omc-task/SKILL.md",
+      ".agents/skills/omc-task/references/verification.md",
       "docs/omc_workflow.md",
       "scripts/omc_home_observation.py",
+      "scripts/omc_output_contract.py",
       "scripts/omc_pipeline_guard.py",
+      "scripts/omc_workflow_validation.py",
       "scripts/test_omc_output_contract.py",
       "scripts/test_omc_task_completion_surface.py",
-      "scripts/test_omc_workflow_validation.py"
+      "scripts/test_omc_workflow_validation.py",
+      "templates/.agents/skills/omc-task/SKILL.md",
+      "templates/.agents/skills/omc-task/references/verification.md",
+      "templates/.claude/commands/task.md"
     ],
     "hash_followup_review_scope": [
       "scripts/omc_pipeline_guard.py",
@@ -2203,7 +2210,7 @@
       "scripts/test_omc_task_completion_surface.py",
       "scripts/test_omc_workflow_validation.py"
     ],
-    "report_seal": "A_COMPLETION_GATE_VERIFIED_B_DEFERRED",
+    "report_seal": "FEATURE_REVIEW_APPROVED_B_DEFERRED",
     "validation": {
       "A": {
         "passed": 517,
@@ -2222,10 +2229,21 @@
         "overlaps_hash_followup": true,
         "artifact": ".omc/reviews/cache-contract-hash-20261109/independent-tests.txt"
       },
-      "tdd_gate": "PASS_ISOLATED_INDEX",
+      "tdd_gate": "PASS_COMMIT_HOOKS",
       "completion_gate": "A_VERIFIED_B_DEFERRED",
       "actual_provider_B": "DEFERRED_T0_UNKNOWN",
-      "source_tests_reexecuted_for_documentation": false
+      "source_tests_reexecuted_for_documentation": false,
+      "assembled_feature": {
+        "passed": 527,
+        "modules": 4,
+        "seconds": 313.26,
+        "artifact": ".omc/split-changes-20261109/feature-tests.txt"
+      },
+      "metadata": {
+        "frontmatters": 38,
+        "yamls": 36,
+        "existing_tests_passed": 2
+      }
     },
     "local_observation": {
       "cohort_v3": "DISABLED",
@@ -2250,9 +2268,133 @@
       ".omc/tasks/cache-cleanup-r4-20261109/full-tests.txt": "dfc3244e3d1a00258669d2cbe9a438b7b3d659bf1059db31c77f5e0a90f494ac",
       ".omc/tasks/cache-contract-hash-20261109/tests.txt": "dc9ca94629af5e6705297f8e9b65a340e56a51f8297dd5076bae64b576f74a6e",
       ".omc/reviews/cache-contract-hash-20261109/independent-tests.txt": "7c34f52f11d6cc110988f9b3dc0180db6a44be8341b884f48a9a1326f8216456"
-    }
+    },
+    "feature_commit": "5551a56aaed08cdfd63adccff08222abcca1d3e9",
+    "metadata_commit": "79f78aa3698fd74bfa8830797095ea3973ee2f2e"
   },
   "current_update_history": [
+    {
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "comparison_state": "HOLD",
+      "actual_home": "NOT_VERIFIED",
+      "historical_preservation_revalidation": "UNKNOWN",
+      "existing_formal_holds": "PRESERVED",
+      "comparison_runs": 0,
+      "comparison_status": "NOT_RUN",
+      "descendant_termination": "NOT_VERIFIED",
+      "consumer_count_on_query_failure": null,
+      "recovery": {
+        "green": {
+          "status": "SEPARATE_ORIGINAL_BYTES_VERIFIED",
+          "bytes": 138,
+          "sha256": "76810fb032ab587ad99eb760fd00a0188b20c391032aafead2ae3e12da2257f9",
+          "restored_over_old_path": false
+        },
+        "red": {
+          "original_bytes": "UNCONFIRMED",
+          "semantic_record": "PYTHON_DICT_REPR"
+        },
+        "baseline": {
+          "original_bytes": "UNCONFIRMED",
+          "previous_hash_available": true
+        }
+      },
+      "formal_hold_reason": "PRIOR_PRESERVATION_FAILED",
+      "date": "2026-11-09",
+      "status": "이전 이력 · 캐시 정리 A 로컬 보완·계약 해시 회귀 승인 / 운용 B 보류 / 문서 최신화 · 2026-11-09",
+      "main_commit": "6cc02d4fad25220a1366224af39c958cf34fca2b",
+      "main_commit_role": "문서 최신화 시작 기준 HEAD; 이 문서 자체 커밋 ID는 Git 이력으로 확인",
+      "latest_fields": {
+        "현재 상태": "문서 최신화 시작 기준 main은 6cc02d4f(OMC 0.6.4)이다. 수명주기 보완11개는 16e264b4에 이미 커밋됐다. 캐시 정리와 계약 해시 후속 수정은 원본 작업트리에 반영됐고 아직 소스 커밋에는 포함되지 않았다.",
+        "보완 내용": "코드 보완 A는 삭제 전 등록 실패의 제한된 복구, 8MiB 기준 크기 제한, 공유 잠금, 부모 수집기→ready→읽기 CLI→복구 호출을 추가했다. 후속 수정은 CONTRACT 본문 해시의 최초 저장·복구 보존과 다른 본문 재시도 차단을 보완했다.",
+        "검증": "A 관련3개 모듈 전체517개 통과. 이후 maintenance·계약 해시 관련87개 통과, 리뷰에서 새 해시 회귀5개 독립 통과를 확인했다. 87개와5개는 앞선 검증과 겹치므로 합산하지 않는다. TDD·공백 검사와 원본 인덱스·범위 밖 변경 보존을 확인했다. 실제 실행기 운용 검증 B와 제품 효과 검증은 미실행이다. 로드맵 정합성 테스트28개도 별도로 통과했다.",
+        "Git·리뷰 범위": "A의6개 파일은 기존 변경을 기준으로 격리 검토했고, 해시 후속2개 파일은 별도 격리 후보로 APPROVE를 기록했다. 원본의 전체 미커밋 변경 승인으로 확대하지 않는다. 이번 커밋 범위는 로드맵·대시보드 문서4개이며 기존 소스·스킬 변경은 보존한다. 실제 커밋 ID는 이 문서의 Git 이력에서 확인한다.",
+        "이력·보존": "기존 수명주기 변경의 미커밋·Git 쓰기 차단 안내는 당시 이력으로 보존한다. 현재 Git 기록에는 16e264b4와 0.6.4 릴리스6cc02d4f가 존재한다. 코드 검증·격리 리뷰·실제 운용 검증·로컬 커밋·배포를 구분한다.",
+        "기존 보류": "T0에서 Claude Code 2.1.138 설치는 확인했지만 실제 Bash call/result·종료 코드·ready 왕복의 원본 근거를 확보하지 못했다. 사용자 선택에 따라 A만 구현하고 B는 보류한다. 과거 감사 보존 실패 공식 보류, RED·baseline 원본 복구 미확인, 과거 보존 재검증 UNKNOWN, 실제 자손 전체 종료·홈 연동 미검증, 비교0/4회 NOT_RUN·HOLD는 유지한다. Kit 로컬 v3 DISABLED·완료 관찰 미등록 상태를 확인했으며 소비 저장소는 재조회하지 않았다.",
+        "근거": ".omc/tasks/cache-cleanup-r4-20261109/의 full-tests.txt·retirement-probe.txt·preservation-result.json·완료 기록, .omc/tasks/cache-contract-hash-20261109/의 tests.txt·완료 기록, .omc/reviews/cache-cleanup-r4-A-20261109/ 및 cache-contract-hash-20261109/의 고정 후보·승인 기록을 대조했다. 로컬·격리 근거이며 영구 보존이나 다른 checkout에서의 접근을 보장하지 않는다.",
+        "다음 작업": "이번 문서4개 커밋 결과를 확인하고, 소스·스킬 변경은 별도 커밋 범위로 정리한다. 운용 B는 실제 실행기의 필수 로그와 ready 왕복을 확인한 뒤 별도 재개한다. 과거 보류와 제품 효과 미입증 상태를 자동 해제하지 않는다."
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/view.json",
+        "docs/comparison-dashboard/index.html"
+      ],
+      "candidate_state": "A_LOCAL_VALIDATED_B_DEFERRED_DOCUMENTATION_ONLY_COMMIT",
+      "main_applied": false,
+      "original_worktree_applied": true,
+      "main_applied_meaning": "캐시 정리·해시 후속 소스는 원본 작업트리에 반영됐으나 아직 미커밋; 수명주기 보완16e264b4는 이미 커밋",
+      "review_status": "A_ISOLATED_REVIEW_AND_HASH_FOLLOWUP_APPROVED",
+      "review_scope": [
+        "docs/omc_workflow.md",
+        "scripts/omc_home_observation.py",
+        "scripts/omc_pipeline_guard.py",
+        "scripts/test_omc_output_contract.py",
+        "scripts/test_omc_task_completion_surface.py",
+        "scripts/test_omc_workflow_validation.py"
+      ],
+      "hash_followup_review_scope": [
+        "scripts/omc_pipeline_guard.py",
+        "scripts/test_omc_task_completion_surface.py"
+      ],
+      "original_source_changed_paths": [
+        "scripts/omc_home_observation.py",
+        "scripts/omc_output_contract.py",
+        "scripts/omc_pipeline_guard.py",
+        "scripts/omc_workflow_validation.py",
+        "scripts/test_omc_output_contract.py",
+        "scripts/test_omc_task_completion_surface.py",
+        "scripts/test_omc_workflow_validation.py"
+      ],
+      "report_seal": "A_COMPLETION_GATE_VERIFIED_B_DEFERRED",
+      "validation": {
+        "A": {
+          "passed": 517,
+          "modules": 3,
+          "artifact": ".omc/tasks/cache-cleanup-r4-20261109/full-tests.txt"
+        },
+        "hash_followup": {
+          "passed": 87,
+          "modules": 4,
+          "selected_only": true,
+          "overlaps_A": true,
+          "artifact": ".omc/tasks/cache-contract-hash-20261109/tests.txt"
+        },
+        "independent_review": {
+          "passed": 5,
+          "overlaps_hash_followup": true,
+          "artifact": ".omc/reviews/cache-contract-hash-20261109/independent-tests.txt"
+        },
+        "tdd_gate": "PASS_ISOLATED_INDEX",
+        "completion_gate": "A_VERIFIED_B_DEFERRED",
+        "actual_provider_B": "DEFERRED_T0_UNKNOWN",
+        "source_tests_reexecuted_for_documentation": false
+      },
+      "local_observation": {
+        "cohort_v3": "DISABLED",
+        "completion_observation": "OBSERVATION_INVALID",
+        "reason": "live_observation_not_enabled",
+        "consumers_requeried": false
+      },
+      "documentation_validation": {
+        "scope": "four documentation files",
+        "roadmap_test_file": "scripts/test_automatic_model_routing_roadmap.py",
+        "evidence_boundary": "Data and DOM consistency checks; source runtime B not executed",
+        "roadmap_passed": 28
+      },
+      "commit_status": {
+        "scope": "DOCUMENTATION_FOUR_FILES_ONLY",
+        "source_changes": "UNCOMMITTED_PRESERVED",
+        "commit_id_authority": "git log -- docs/automatic_model_routing_roadmap.md",
+        "push": "NOT_REQUESTED"
+      },
+      "original_source_changed_count": 7,
+      "evidence_sha256": {
+        ".omc/tasks/cache-cleanup-r4-20261109/full-tests.txt": "dfc3244e3d1a00258669d2cbe9a438b7b3d659bf1059db31c77f5e0a90f494ac",
+        ".omc/tasks/cache-contract-hash-20261109/tests.txt": "dc9ca94629af5e6705297f8e9b65a340e56a51f8297dd5076bae64b576f74a6e",
+        ".omc/reviews/cache-contract-hash-20261109/independent-tests.txt": "7c34f52f11d6cc110988f9b3dc0180db6a44be8341b884f48a9a1326f8216456"
+      }
+    },
     {
       "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
       "comparison_state": "HOLD",
