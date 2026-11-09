@@ -40,6 +40,18 @@ Guard 실행 전에 작업 성격을 분류합니다. 제품 코드 변경은 `i
 
 새 자연 작업은 `start`, 같은 작업의 리뷰 수정은 pending receipt의 `work_id`와 함께 `continue`, 승인된 기존 변경의 문서 정리·로컬 커밋만 수행하면 `preserve`를 사용합니다. `preserve`는 기존 pending 작업이 없으면 실패합니다. 같은 baseline이라는 이유만으로 `work_id`를 추론하거나 다른 작업에 재사용하지 않습니다.
 
+### 코드 변경 없는 검증·완료 기록 재개
+
+위 `senior_coding` 명령은 구현 진입용입니다. 기존 승인·RED를 사용해 남은 검증이나 완료 기록만 이어갈 때는 `senior_coding + preserve`를 사용하지 않습니다. 읽기 검토는 기존 보존 역할을 사용하고, 검증 실행·완료 발행은 비구현 역할로 명시적으로 연결합니다:
+
+`python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-task" --request "<승인된 같은 작업의 남은 검증·완료 기록 재개>" --roles directive --completion-action preserve`
+
+기존 pending 작업·work_id·baseline·승인 기준·코드 상태가 일치하는지 확인한 뒤 원래 소유 세션의 검증 기록을 사용합니다. 역할 전환 자체가 승인·검증 성공을 뜻하지 않습니다. 코드 수정이 필요하면 이 경로를 중단하고 기존 work_id를 명시한 구현 `continue`로 별도 진입합니다.
+
+인계 없는 session_start는 CONTRACT 연결을 초기화합니다. `preserve`만으로 초기화된 승인을 복원할 수 없습니다. 인계는 기존 승인된 실행 경로에서 발급·소비하고, 지원되지 않는 일반 재개에서는 원본을 보존한 채 차단 사유를 보고합니다. 새 세션에 승인·RED를 복사하거나 재등록해 통과시키지 않습니다.
+
+8시간 만료는 역할 변경으로 연장하지 않습니다. 기존 명시적 완료 재승인 경로의 조건과 사용자 승인을 확인하며, 실패·미실행 검증은 재승인으로 통과하지 않습니다. 기능 검증 결과와 완료 기록 처리 결과를 구분해 보고합니다.
+
 실패하면 세션 확인 또는 confirm부터 처리하고 중단합니다.
 Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`으로 저장소 밖 사용자 custody를 한 번 생성하고 `preflight`로 확인합니다. Guard는 이 설정을 자동 로드해 세션 생성 즉시 lock을 봉인합니다. CI처럼 환경변수가 필요한 곳은 `OMC_REQUIRE_WORK_CLASS_LOCK=1`, 외부 `OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE`, pinned `OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY`를 함께 설정합니다. 등록 저장소의 새 implementation session은 Guard가 `live-start`를 자동 실행합니다. `COLLECTING`이면 최초 완료 보고 직전 보고·검증 원문을 외부 임시 파일에 보존해 `python3 scripts/omc_completion_observation.py live-capture --target . --report <임시보고> --verification-output <임시검증> [--unrun <항목>]`으로 기록합니다. 자동 start 실패는 제품 작업을 차단하지 않고 failure receipt를 남기며 해당 표본만 무효화합니다. 미등록 저장소는 관찰을 시작하지 않습니다. 사용자에게 원문 복사를 요구하지 않고 `commit_bound=false` snapshot을 signed completion receipt나 Pilot 근거로 사용하지 않습니다.
 
@@ -169,6 +181,19 @@ CLI와 수집기는 동일 승인 종류·공용 판정과 실제 반환 경로�
 
 ready는 전달용 metadata이며 승인·완료 증거가 아닙니다. 코드 보완 A의 통제된 테스트와 실제 실행기 운용 검증 B를 구분하며, 실제 provider의 필수 로그·종료 정보·ready 왕복 확인 전에는 B 보류를 유지합니다.
 
+
+
+## 최종 후보 준비 — 릴리스 의도가 있을 때
+
+릴리스 요청은 준비 담당 `directive`가 버전·문서 변경을 마친 최종 커밋·명시적 base·전체 경로를 고정하는 단계부터 시작합니다. `code_review`는 그 전체 후보를 검토하고, 준비 담당은 기존 `capture-review` → `seal-review-output` → `record-review`를 원래 승인 원문과 정확한 expected-path로 연결한 뒤 `validate-ship=READY`를 확인합니다. 같은 내용의 정상 커밋은 공식 동일성 검증을 사용하며, 추가 파일·amend·base 변경은 기존 승인을 임의 재사용하지 않습니다.
+
+품질 설정은 명시적 새 proposal과 현재 설정을 비교합니다. 사용자 설정 승인을 받은 뒤 준비 담당이 `proposal-validate` → `proposal-apply` → `approve`를 연결하고 `status=ready`를 확인합니다. 설정 승인은 검사 실행 승인이 아니며 실행 횟수·마감도 확인합니다. 해시만으로 과거 문서의 의미를 추론하지 않고 원문이 없으면 UNKNOWN으로 남깁니다.
+
+통합 읽기 전용 확인: `python3 scripts/omc_ship_preflight.py diagnose --target <source절대경로> --contract <고정preflight계약>`; 새 설정 제안은 `--proposal <명시적JSON> --proposal-sha256 <원문해시>`로 고정합니다. 격리 리뷰를 대조할 때만 `--review-target <격리저장소절대경로>`를 명시합니다. 이 명령은 후보·리뷰·품질 문제를 함께 표시하며 설정·승인·소스에 쓰거나 검사를 실행하지 않습니다. 격리 승인 일치는 원본의 READY를 대신하지 않습니다.
+
+준비 담당은 두 readiness를 모두 확인한 뒤에만 기존 ship 절차에 인계합니다. ship의 `prepare/check` 안에서 source를 다시 봉인하거나 설정을 고치지 않습니다. 고정 후 코드·버전·문서·base·설정·근거가 바뀌면 관련 준비 결과를 무효화하고 해당 검토부터 다시 확인합니다. 과거 receipt·원문을 삭제하거나 포인터를 복사하지 않습니다. 준비 진단은 실행 토큰이 아니며 실제 실행 단계에서도 기존 결속 검사를 유지합니다.
+
+작업 완료·커밋 완료·릴리스 준비 완료·검사 통과·설치 완료를 구분해 보고합니다. 준비가 남았으면 그 항목을 명시하고, 코드 완료를 출하 준비로 보고하지 않습니다. 실제 모델의 안내 준수와 사용자 개입 감소는 이 지침·fixture만으로 입증되지 않습니다.
 
 ## Machine output contract
 별도 기록 모드 `detached_v1`을 명시적으로 사용한다. `omc-output/v1`의 stage/outcome/risk/next_skill/user_selection_needed/reason_code·VERDICT·기존 라우팅 의미는 바꾸지 않는다. `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT`는 내부 판정 원문에만 두고 사용자 최종 답변에 붙이지 않는다. 한글 판정·이유·검증·다음 행동만 표시한다.

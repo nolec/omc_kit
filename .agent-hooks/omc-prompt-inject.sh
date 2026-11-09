@@ -4,8 +4,6 @@
 # Claude Code / Codex: stdout 평문 → 컨텍스트로 자동 주입됨
 set -u
 
-EXECUTOR_SURFACE="${1:-unknown}"
-
 PYTHON_BIN="python3"
 command -v python3 >/dev/null 2>&1 || PYTHON_BIN="python"
 command -v "${PYTHON_BIN}" >/dev/null 2>&1 || exit 0
@@ -42,16 +40,24 @@ if [[ -z "${PROMPT}" ]]; then
   exit 0
 fi
 
-# 등록된 Codex 완료 품질 관찰은 다음 일반 턴에서도 사용자 원문을 먼저 보존한다.
-# 관찰 오류는 제품 작업을 막지 않으며, 제어용 스킬 호출은 Python 경로에서 무시한다.
+# Codex completion observation: an exact work id routes across registered repos;
+# otherwise the original prompt is quarantined for target resolution.
 _OBSERVATION_SCRIPT="${OMC_COMPLETION_OBSERVATION_SCRIPT:-}"
 if [ -z "${_OBSERVATION_SCRIPT}" ] && [ -f "scripts/omc_completion_observation.py" ]; then
   _OBSERVATION_SCRIPT="scripts/omc_completion_observation.py"
 elif [ -z "${_OBSERVATION_SCRIPT}" ] && [ -f "omc_kit/scripts/omc_completion_observation.py" ]; then
   _OBSERVATION_SCRIPT="omc_kit/scripts/omc_completion_observation.py"
 fi
-if [ "${EXECUTOR_SURFACE}" = "codex" ] && [ -n "${_OBSERVATION_SCRIPT}" ]; then
-  _OBSERVATION_RESULT=$(OMC_LIVE_PROMPT_BASE64="${_PROMPT_BASE64}" "${PYTHON_BIN}" "${_OBSERVATION_SCRIPT}" live-prompt --target . --executor-surface "${EXECUTOR_SURFACE}" 2>/dev/null || true)
+if [ "${1:-unknown}" = "codex" ] && [ -n "${_OBSERVATION_SCRIPT}" ]; then
+  if [ -n "${OMC_COMPLETION_OBSERVATION_REGISTRY:-}" ] && [ -n "${OMC_COMPLETION_OBSERVATION_QUARANTINE:-}" ]; then
+    _OBSERVATION_COMMAND=("${PYTHON_BIN}" "${_OBSERVATION_SCRIPT}" live-route-prompt --target . --executor-surface codex --repository-registry "${OMC_COMPLETION_OBSERVATION_REGISTRY}" --quarantine-root "${OMC_COMPLETION_OBSERVATION_QUARANTINE}")
+    if [ -n "${OMC_COMPLETION_OBSERVATION_WORK_ID:-}" ]; then
+      _OBSERVATION_COMMAND+=(--work-id "${OMC_COMPLETION_OBSERVATION_WORK_ID}")
+    fi
+  else
+    _OBSERVATION_COMMAND=("${PYTHON_BIN}" "${_OBSERVATION_SCRIPT}" live-prompt --target . --executor-surface codex)
+  fi
+  _OBSERVATION_RESULT=$(OMC_LIVE_PROMPT_BASE64="${_PROMPT_BASE64}" "${_OBSERVATION_COMMAND[@]}" 2>/dev/null || true)
   _OBSERVATION_STATUS=$(printf '%s' "${_OBSERVATION_RESULT}" | "${PYTHON_BIN}" -c '
 import json, sys
 try:
@@ -70,19 +76,14 @@ except Exception:
     echo ""
     echo "[OMC] 완료 품질 관찰: 사용자 수용/보류 원문 기록 완료"
   elif [ "${_OBSERVATION_STATUS}" = "FOLLOWUP_RECORDED" ]; then
-    _OBSERVATION_INDEX=$(printf '%s' "${_OBSERVATION_RESULT}" | "${PYTHON_BIN}" -c '
-import json, sys
-try:
-    print(json.load(sys.stdin).get("followup_index", ""))
-except Exception:
-    print("")
-' 2>/dev/null || echo "")
     echo ""
-    echo "[OMC] 완료 품질 관찰: 후속 원문 ${_OBSERVATION_INDEX}번 보존 완료"
-    echo "  분류는 사용자가 확정할 때까지 pending입니다: defect_correction | missing_requirement | persona_mismatch | scope_change | clarification | preference"
+    echo "[OMC] 완료 품질 관찰: 후속 원문 보존 완료"
   elif [ "${_OBSERVATION_STATUS}" = "CLASSIFICATION_RECORDED" ]; then
     echo ""
     echo "[OMC] 완료 품질 관찰: 사용자 확정 분류 기록 완료"
+  elif [ "${_OBSERVATION_STATUS}" = "TARGET_RESOLUTION_REQUIRED" ]; then
+    echo ""
+    echo "[OMC] 완료 품질 관찰: 후속 원문 보존 완료 — 연결할 작업만 지정해 주세요."
   elif [ "${_OBSERVATION_STATUS}" = "OBSERVATION_INVALID" ] && [ "${_OBSERVATION_REASON}" != "pending_completion_invalid" ] && [ "${_OBSERVATION_REASON}" != "live_observation_not_enabled" ] && [ "${_OBSERVATION_REASON}" != "live_observation_not_started" ] && [ "${_OBSERVATION_REASON}" != "live_prompt_not_expected" ]; then
     echo ""
     echo "[OMC] OBSERVATION_INVALID: ${_OBSERVATION_REASON}"
