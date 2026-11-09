@@ -1474,3 +1474,69 @@ def test_maintenance_content_change_on_recovery_is_rejected(maintenance_case,mon
     assert result.returncode==1
     assert 'maintenance_contract_content_mismatch' in result.stdout
     assert guard._state_path(root).read_bytes()==origin
+
+
+@pytest.mark.parametrize('role', ['senior_coding', 'directive'])
+def test_completion_resume_role_reports_cause_without_rewriting_evidence(project, role):
+    import omc_state
+    preserved_work(project)
+    omc_state.record_session(project, mode='autopilot', title='omc-task',
+        request='publish existing completion only', role_ids=[role], confirmed=True,
+        completion_action='preserve')
+    paths = [project/'.omc/pipeline_session.json', project/'verification.json',
+             *sorted((project/'.omc/verification-bases').rglob('*.json'))]
+    before = {p: p.read_bytes() for p in paths}
+    result = run(project, 'complete-task', '--verification-file', str(project/'verification.json'))
+    if role == 'senior_coding':
+        assert result.returncode == 1
+        assert '완료 재개 역할 불일치' in result.stdout
+        assert '비구현 역할과 명시적 preserve' in result.stdout
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+    assert {p: p.read_bytes() for p in paths} == before
+
+
+def test_completion_after_unrequested_start_reports_reset_not_lost_evidence(project):
+    preserved_work(project)
+    paths = [project/'verification.json', *sorted((project/'.omc/verification-bases').rglob('*.json'))]
+    before = {p: p.read_bytes() for p in paths}
+    assert guard.cmd_session_start(project) == 0
+    result = run(project, 'complete-task', '--verification-file', str(project/'verification.json'))
+    assert result.returncode == 1
+    assert '시작 훅에서 현재 CONTRACT 연결이 초기화됐습니다' in result.stdout
+    assert {p: p.read_bytes() for p in paths} == before
+
+
+def test_task_template_separates_implementation_from_completion_resume():
+    text = (SCRIPT.parent.parent/'templates/.agents/skills/omc-task/SKILL.md').read_text()
+    assert '--roles directive --completion-action preserve' in text
+    assert 'senior_coding + preserve' in text
+    assert '인계 없는 session_start' in text
+
+
+def test_remaining_browser_verification_can_be_added_in_preserving_role(project):
+    import omc_state
+    preserved_work(project)
+    omc_state.record_session(project, mode='autopilot', title='omc-task',
+        request='run remaining browser verification', role_ids=['directive'], confirmed=True,
+        completion_action='preserve')
+    original = project/'verification.json'
+    paths = [original, project/'.omc/pipeline_session.json',
+             *sorted((project/'.omc/verification-bases').rglob('*.json'))]
+    before = {p: p.read_bytes() for p in paths}
+    record = json.loads(original.read_text())
+    pending = project/'.omc/remaining-browser.json'
+    for item in record['checks'].values():
+        item['code_snapshot_sha256'] = guard._code_snapshot_digest(project, pending)
+    record['checks']['browser'] = {**record['checks']['browser'], 'status':'unrun',
+                                   'evidence':'browser fixture pending'}
+    pending.write_text(json.dumps(record))
+    blocked = run(project, 'complete-task', '--verification-file', str(pending))
+    assert blocked.returncode == 1
+    assert 'browser' in blocked.stdout
+    record['checks']['browser'].update(status='passed', evidence='controlled browser fixture passed')
+    completed = project/'.omc/completed-browser.json'
+    completed.write_text(json.dumps(record))
+    result = run(project, 'complete-task', '--verification-file', str(completed))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert {p: p.read_bytes() for p in paths} == before

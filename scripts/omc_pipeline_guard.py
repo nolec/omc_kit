@@ -906,6 +906,7 @@ def _legacy_contract_done(root: Path, content: str = "", required_checks: str = 
     basis=None
     previous_sid = state.get("session_id", "")
     state["contract_confirmed"] = True
+    state.pop("contract_reset_reason", None)
     requested_checks = list(dict.fromkeys(c.strip() for c in required_checks.split(",") if c.strip()))
     hash_source = content if content else f"confirmed_at:{time.time()}"
     state["contract_hash"] = _make_contract_hash(hash_source)
@@ -1017,7 +1018,6 @@ def _completion_owner(root: Path, latest: dict, state: dict) -> str:
         or observer.get("confirmation", {}).get("status") != "confirmed"
         or observer.get("completion_action") not in {"preserve", "preserve-if-present"}
         or not isinstance(observer.get("role_ids"), list)
-        or "senior_coding" in observer["role_ids"]
         or observer.get("git", {}).get("head") != head
         or pending.get("schema_version") != 3
         or not observer.get("work_id")
@@ -1026,6 +1026,8 @@ def _completion_owner(root: Path, latest: dict, state: dict) -> str:
         or not _pending_completion_matches_session(root, pending, current_head=head)
     ):
         raise ValueError("completion_owner_binding_invalid")
+    if "senior_coding" in observer["role_ids"]:
+        raise ValueError("completion_owner_role_invalid")
     for index, member in enumerate(pending["session_ids"]):
         entry = json.loads((root / ".omc/state/sessions" / member / "session.json").read_text(encoding="utf-8"))
         if (
@@ -2421,6 +2423,14 @@ def _evaluate_completion_checks(root: Path, verification_file: Path, state: dict
     except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
         sid = ""
         problems.append("완료 대상 작업의 세션 연결을 확인할 수 없습니다: " + str(exc))
+        if str(exc) == "completion_owner_role_invalid":
+            problems.append("완료 재개 역할 불일치: senior_coding + preserve는 완료 증거를 이어받을 수 없습니다. "
+                            "코드 변경 없는 완료 재개는 비구현 역할과 명시적 preserve로 기존 작업 연결을 확인하세요. "
+                            "승인·RED를 복사하거나 재등록하지 마세요")
+    if (state.get("contract_reset_reason") == "session_start"
+            and not state.get("contract_confirmed") and not state.get("session_id")):
+        problems.append("시작 훅에서 현재 CONTRACT 연결이 초기화됐습니다. 원본 증거 소실을 뜻하지 않습니다. "
+                        "승인된 인계 유무와 작업 연결을 확인하세요; 자동 복원하지 않습니다")
     if expected_session_id is not None and sid != expected_session_id:
         problems.append("수집 대상과 현재 작업 식별자가 다릅니다")
         mismatch = True
@@ -2868,6 +2878,7 @@ def cmd_session_start(root: Path) -> int:
     state["contract_confirmed"] = False
     state["contract_hash"] = ""
     state["session_id"] = ""
+    state["contract_reset_reason"] = "session_start"
     _save_state(root, state)
     print("[PIPELINE] 🔄 새 세션 시작 — CONTRACT 플래그 초기화")
     return 1 if rejected else 0

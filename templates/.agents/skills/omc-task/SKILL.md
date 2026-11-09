@@ -40,6 +40,18 @@ Guard 실행 전에 작업 성격을 분류합니다. 제품 코드 변경은 `i
 
 새 자연 작업은 `start`, 같은 작업의 리뷰 수정은 pending receipt의 `work_id`와 함께 `continue`, 승인된 기존 변경의 문서 정리·로컬 커밋만 수행하면 `preserve`를 사용합니다. `preserve`는 기존 pending 작업이 없으면 실패합니다. 같은 baseline이라는 이유만으로 `work_id`를 추론하거나 다른 작업에 재사용하지 않습니다.
 
+### 코드 변경 없는 검증·완료 기록 재개
+
+위 `senior_coding` 명령은 구현 진입용입니다. 기존 승인·RED를 사용해 남은 검증이나 완료 기록만 이어갈 때는 `senior_coding + preserve`를 사용하지 않습니다. 읽기 검토는 기존 보존 역할을 사용하고, 검증 실행·완료 발행은 비구현 역할로 명시적으로 연결합니다:
+
+`python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-task" --request "<승인된 같은 작업의 남은 검증·완료 기록 재개>" --roles directive --completion-action preserve`
+
+기존 pending 작업·work_id·baseline·승인 기준·코드 상태가 일치하는지 확인한 뒤 원래 소유 세션의 검증 기록을 사용합니다. 역할 전환 자체가 승인·검증 성공을 뜻하지 않습니다. 코드 수정이 필요하면 이 경로를 중단하고 기존 work_id를 명시한 구현 `continue`로 별도 진입합니다.
+
+인계 없는 session_start는 CONTRACT 연결을 초기화합니다. `preserve`만으로 초기화된 승인을 복원할 수 없습니다. 인계는 기존 승인된 실행 경로에서 발급·소비하고, 지원되지 않는 일반 재개에서는 원본을 보존한 채 차단 사유를 보고합니다. 새 세션에 승인·RED를 복사하거나 재등록해 통과시키지 않습니다.
+
+8시간 만료는 역할 변경으로 연장하지 않습니다. 기존 명시적 완료 재승인 경로의 조건과 사용자 승인을 확인하며, 실패·미실행 검증은 재승인으로 통과하지 않습니다. 기능 검증 결과와 완료 기록 처리 결과를 구분해 보고합니다.
+
 실패하면 세션 확인 또는 confirm부터 처리하고 중단합니다.
 Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`으로 저장소 밖 사용자 custody를 한 번 생성하고 `preflight`로 확인합니다. Guard는 이 설정을 자동 로드해 세션 생성 즉시 lock을 봉인합니다. CI처럼 환경변수가 필요한 곳은 `OMC_REQUIRE_WORK_CLASS_LOCK=1`, 외부 `OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE`, pinned `OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY`를 함께 설정합니다. 등록 저장소의 새 implementation session은 Guard가 `live-start`를 자동 실행합니다. `COLLECTING`이면 최초 완료 보고 직전 보고·검증 원문을 외부 임시 파일에 보존해 `python3 scripts/omc_completion_observation.py live-capture --target . --report <임시보고> --verification-output <임시검증> [--unrun <항목>]`으로 기록합니다. 자동 start 실패는 제품 작업을 차단하지 않고 failure receipt를 남기며 해당 표본만 무효화합니다. 미등록 저장소는 관찰을 시작하지 않습니다. 사용자에게 원문 복사를 요구하지 않고 `commit_bound=false` snapshot을 signed completion receipt나 Pilot 근거로 사용하지 않습니다.
 

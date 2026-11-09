@@ -2157,19 +2157,11 @@
       }
     },
     "formal_hold_reason": "PRIOR_PRESERVATION_FAILED",
-    "date": "2026-11-09",
-    "status": "현재 · 캐시 정리13개·스킬 메타데이터74개 분리 커밋 / 관련527개 통과 / 운용 B 보류 · 2026-11-09",
-    "main_commit": "79f78aa3698fd74bfa8830797095ea3973ee2f2e",
-    "main_commit_role": "기능·메타데이터 두 커밋 반영 기준; 후속 문서 커밋 ID는 Git 이력으로 확인",
-    "latest_fields": {
-      "현재 상태": "캐시 정리 기능13개는 5551a56a, 스킬 메타데이터74개는 79f78aa3로 분리 로컬 커밋했다. 공유 SKILL.md 2개가 겹치므로 고유 변경 경로는85개다. OMC 버전은0.6.4이며 push·재설치·배포는 수행하지 않았다.",
-      "보완 내용": "코드 보완 A는 삭제 전 등록 실패의 제한된 복구, 8MiB 기준 크기 제한, 공유 잠금, 부모 수집기→ready→읽기 CLI→복구 호출을 추가했다. 후속 수정은 CONTRACT 본문 해시의 최초 저장·복구 보존과 다른 본문 재시도 차단을 보완했다. 설치본·템플릿 등 안내5곳에 ready 읽기와 제한된 복구 순서를 동기화했다. 스킬 frontmatter38개와 openai.yaml36개는 기능 변경과 분리했다.",
-      "검증": "분리된 기능 전체 후보에서 completion/output/collector·기존 계약 해시4개 테스트 모듈527개 통과(313.26초). 메타데이터 frontmatter38개·YAML36개·템플릿 대조 및 기존 테스트2개 통과. 두 커밋 모두 기존 Guard·TDD 훅을 통과했다. 이전517개·87개·5개와 중복되므로 합산하지 않는다. 운용 B와 제품 효과 검증은 미실행이다.",
-      "Git·리뷰 범위": "45a6e397 대비 기능13개 전체 후보를 검토하고 커밋5551a56a의 정확한13개 경로로 APPROVE를 기록했다. 메타데이터74개는 별도 검증·커밋79f78aa3이며 기능 승인으로 확대하지 않는다. 후속 문서4개는 이 결과의 현재 표시만 갱신한다.",
-      "이력·보존": "기존 미커밋 안내와 제한된 부분 리뷰는 당시 이력으로 보존한다. .omc 실행 근거·교훈은 정리 커밋에 포함하거나 삭제하지 않는다. 코드 검증·리뷰·실제 운용·커밋·배포를 구분한다.",
-      "기존 보류": "T0에서 Claude Code 2.1.138 설치는 확인했지만 실제 Bash call/result·종료 코드·ready 왕복의 원본 근거를 확보하지 못했다. 사용자 선택에 따라 A만 구현하고 B는 보류한다. 과거 감사 보존 실패 공식 보류, RED·baseline 원본 복구 미확인, 과거 보존 재검증 UNKNOWN, 실제 자손 전체 종료·홈 연동 미검증, 비교0/4회 NOT_RUN·HOLD는 유지한다. Kit 로컬 v3 DISABLED·완료 관찰 미등록 상태를 확인했으며 소비 저장소는 재조회하지 않았다.",
-      "근거": ".omc/split-changes-20261109/의 feature-tests.txt·feature-test-result.json·feature-preflight.json·feature-review-receipt.json·metadata-final-validation.json 및 두 commit 기록. 과거 A·해시 회귀 근거도 유지한다. 로컬·격리 근거이며 영구 보존이나 다른 checkout 접근을 보장하지 않는다.",
-      "다음 작업": "운용 B는 실제 실행기의 Bash call/result·종료 코드·ready 왕복 원본을 확보할 수 있을 때 별도 재개한다. 과거 보류와 제품 효과 미입증 상태를 자동 해제하지 않는다."
+    "local_observation": {
+      "cohort_v3": "DISABLED",
+      "completion_observation": "OBSERVATION_INVALID",
+      "reason": "live_observation_not_enabled",
+      "consumers_requeried": false
     },
     "documentation_commit_scope": [
       "docs/automatic_model_routing_roadmap.md",
@@ -2177,102 +2169,213 @@
       "docs/comparison-dashboard/view.json",
       "docs/comparison-dashboard/index.html"
     ],
-    "candidate_state": "FEATURE_AND_METADATA_COMMITTED_B_DEFERRED",
+    "date": "2026-11-09",
+    "status": "현재 · 완료 재개 역할·초기화 진단 보완 / 코드4개 승인 / 실제 설치 미반영 · 2026-11-09",
+    "main_commit": "b3c6c7f05626b0da55cdca81159ed2e92c094d94",
+    "main_commit_role": "이번 갱신 전 기준 HEAD; 본 커밋 ID는 Git 이력으로 확인",
+    "latest_fields": {
+      "현재 상태": "완료 재개 역할 선택 안내와 시작 훅 초기화 진단을 로컬 반영했다. 이번 로컬 커밋은 리뷰된 코드·테스트·템플릿4개와 로드맵·대시보드 문서4개를 포함한다. OMC 0.6.4이며 실제 사용처 재설치·push·배포는 수행하지 않았다.",
+      "보완 내용": "senior_coding + preserve의 완료 소유자 거부와 인계 없는 session_start의 CONTRACT 초기화를 구분해 안내한다. 검증·완료 기록만 재개할 때 directive + preserve를 사용하도록 템플릿을 보완했다. 승인·RED 복사, 가드 완화, 자동 승인 복원·만료 연장은 추가하지 않았다.",
+      "검증": "관련 전체 실행은299개 통과·설치 fixture 1개 실패였다. 실행 중 이미 로드된 수정 전 fixture의 캐시 스냅샷 문제를 보완한 뒤 설치 회귀18개와 최종 재개 회귀5개가 통과했다. 서로 중복되므로 합산하거나 단일 전체 실행 통과로 표시하지 않는다. TDD·공백 검사 통과, 리뷰 역할 전환 후 완료 가드 독립 재평가 done·미충족 항목 없음. 실제 브라우저 검수가 아닌 통제된 CLI fixture 검증이다.",
+      "Git·리뷰 범위": "기준 HEAD는 b3c6c7f0이다. 리뷰된 정확한4개 경로의 동일 내용 격리 후보에 APPROVE receipt를 기록했다. 문서4개는 현재 표시 정합성 갱신이며 해당 코드 승인 범위에 자동 포함하지 않는다. 본 커밋 ID는 Git 이력에서 확인한다.",
+      "이력·보존": "이전 캐시 정리 기능5551a56a·메타데이터79f78aa3 및 문서b3c6c7f0 이력은 유지한다. 누적 .omc 실행 기록·교훈은 이번 커밋에서 제외하며 삭제하지 않는다. 11월6일 역할 불일치 사례는 확인했지만 최초 인용 사례와 같은 원인인지는 미확정이다.",
+      "기존 보류": "T0에서 Claude Code 2.1.138 설치는 확인했지만 실제 Bash call/result·종료 코드·ready 왕복의 원본 근거를 확보하지 못했다. 사용자 선택에 따라 A만 구현하고 B는 보류한다. 과거 감사 보존 실패 공식 보류, RED·baseline 원본 복구 미확인, 과거 보존 재검증 UNKNOWN, 실제 자손 전체 종료·홈 연동 미검증, 비교0/4회 NOT_RUN·HOLD는 유지한다. Kit 로컬 v3 DISABLED·완료 관찰 미등록 상태를 확인했으며 소비 저장소는 재조회하지 않았다.",
+      "근거": ".omc/continuity-task-20261109/의 red.stdout·red.json·full-initial.stdout·install-final.stdout·resume-final.stdout·completion.stdout·review-isolation.json·review-receipt.stdout. 승인 receipt는 임시 격리 후보에 결속돼 있으며 원본 main 전체의 출하 승인으로 확대하지 않는다.",
+      "다음 작업": "실제 사용처 설치 반영은 별도 요청 범위다. 기존 운용 B·보존 검증·제품 효과 보류는 유지하고, 이번 로컬 회귀·리뷰 성공으로 해제하지 않는다."
+    },
+    "candidate_state": "LOCAL_ROLE_GUIDANCE_DIAGNOSTICS_NOT_INSTALLED",
     "main_applied": true,
     "original_worktree_applied": true,
-    "main_applied_meaning": "기능13개·메타데이터74개를 별도 로컬 커밋으로 반영; 운용 B 보류",
-    "review_status": "FULL_FEATURE_13_PATHS_APPROVED",
+    "main_applied_meaning": "본 커밋의 로컬 코드·안내 반영; 실제 사용처 설치 미반영",
+    "review_status": "ISOLATED_FOUR_PATHS_APPROVED",
     "review_scope": [
-      ".agents/skills/omc-task/SKILL.md",
-      ".agents/skills/omc-task/references/verification.md",
-      "docs/omc_workflow.md",
-      "scripts/omc_home_observation.py",
-      "scripts/omc_output_contract.py",
       "scripts/omc_pipeline_guard.py",
-      "scripts/omc_workflow_validation.py",
-      "scripts/test_omc_output_contract.py",
       "scripts/test_omc_task_completion_surface.py",
-      "scripts/test_omc_workflow_validation.py",
-      "templates/.agents/skills/omc-task/SKILL.md",
-      "templates/.agents/skills/omc-task/references/verification.md",
-      "templates/.claude/commands/task.md"
-    ],
-    "hash_followup_review_scope": [
-      "scripts/omc_pipeline_guard.py",
-      "scripts/test_omc_task_completion_surface.py"
+      "scripts/test_omc_generated_install_isolation.py",
+      "templates/.agents/skills/omc-task/SKILL.md"
     ],
     "original_source_changed_paths": [
-      "scripts/omc_home_observation.py",
-      "scripts/omc_output_contract.py",
       "scripts/omc_pipeline_guard.py",
-      "scripts/omc_workflow_validation.py",
-      "scripts/test_omc_output_contract.py",
       "scripts/test_omc_task_completion_surface.py",
-      "scripts/test_omc_workflow_validation.py"
+      "scripts/test_omc_generated_install_isolation.py",
+      "templates/.agents/skills/omc-task/SKILL.md"
     ],
-    "report_seal": "FEATURE_REVIEW_APPROVED_B_DEFERRED",
+    "original_source_changed_count": 4,
+    "report_seal": "CODE_REVIEW_APPROVED_DEPLOYMENT_NOT_REQUESTED",
     "validation": {
-      "A": {
-        "passed": 517,
-        "modules": 3,
-        "artifact": ".omc/tasks/cache-cleanup-r4-20261109/full-tests.txt"
+      "initial_suite": {
+        "passed": 299,
+        "failed": 1,
+        "artifact": ".omc/continuity-task-20261109/full-initial.stdout",
+        "failure": "pre-fix installed fixture bytecode snapshot"
       },
-      "hash_followup": {
-        "passed": 87,
-        "modules": 4,
-        "selected_only": true,
-        "overlaps_A": true,
-        "artifact": ".omc/tasks/cache-contract-hash-20261109/tests.txt"
+      "final_install": {
+        "passed": 18,
+        "artifact": ".omc/continuity-task-20261109/install-final.stdout"
       },
-      "independent_review": {
+      "final_resume": {
         "passed": 5,
-        "overlaps_hash_followup": true,
-        "artifact": ".omc/reviews/cache-contract-hash-20261109/independent-tests.txt"
+        "artifact": ".omc/continuity-task-20261109/resume-final.stdout"
       },
-      "tdd_gate": "PASS_COMMIT_HOOKS",
-      "completion_gate": "A_VERIFIED_B_DEFERRED",
-      "actual_provider_B": "DEFERRED_T0_UNKNOWN",
-      "source_tests_reexecuted_for_documentation": false,
-      "assembled_feature": {
-        "passed": 527,
-        "modules": 4,
-        "seconds": 313.26,
-        "artifact": ".omc/split-changes-20261109/feature-tests.txt"
-      },
-      "metadata": {
-        "frontmatters": 38,
-        "yamls": 36,
-        "existing_tests_passed": 2
-      }
-    },
-    "local_observation": {
-      "cohort_v3": "DISABLED",
-      "completion_observation": "OBSERVATION_INVALID",
-      "reason": "live_observation_not_enabled",
-      "consumers_requeried": false
+      "overlap": "DO_NOT_SUM",
+      "tdd_gate": "PASS",
+      "completion_gate": "done",
+      "actual_browser": "NOT_RUN_CONTROLLED_FIXTURE_ONLY"
     },
     "documentation_validation": {
       "scope": "four documentation files",
       "roadmap_test_file": "scripts/test_automatic_model_routing_roadmap.py",
-      "evidence_boundary": "Data and DOM consistency checks; source runtime B not executed",
-      "roadmap_passed": 28
+      "evidence_boundary": "Data and HTML current-section consistency; no real consumer installation"
     },
     "commit_status": {
-      "scope": "DOCUMENTATION_FOUR_FILES_ONLY",
-      "source_changes": "UNCOMMITTED_PRESERVED",
+      "scope": "REVIEWED_FOUR_CODE_AND_FOUR_DOCUMENTATION_FILES",
       "commit_id_authority": "git log -- docs/automatic_model_routing_roadmap.md",
       "push": "NOT_REQUESTED"
-    },
-    "original_source_changed_count": 7,
-    "evidence_sha256": {
-      ".omc/tasks/cache-cleanup-r4-20261109/full-tests.txt": "dfc3244e3d1a00258669d2cbe9a438b7b3d659bf1059db31c77f5e0a90f494ac",
-      ".omc/tasks/cache-contract-hash-20261109/tests.txt": "dc9ca94629af5e6705297f8e9b65a340e56a51f8297dd5076bae64b576f74a6e",
-      ".omc/reviews/cache-contract-hash-20261109/independent-tests.txt": "7c34f52f11d6cc110988f9b3dc0180db6a44be8341b884f48a9a1326f8216456"
-    },
-    "feature_commit": "5551a56aaed08cdfd63adccff08222abcca1d3e9",
-    "metadata_commit": "79f78aa3698fd74bfa8830797095ea3973ee2f2e"
+    }
   },
   "current_update_history": [
+    {
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "comparison_state": "HOLD",
+      "actual_home": "NOT_VERIFIED",
+      "historical_preservation_revalidation": "UNKNOWN",
+      "existing_formal_holds": "PRESERVED",
+      "comparison_runs": 0,
+      "comparison_status": "NOT_RUN",
+      "descendant_termination": "NOT_VERIFIED",
+      "consumer_count_on_query_failure": null,
+      "recovery": {
+        "green": {
+          "status": "SEPARATE_ORIGINAL_BYTES_VERIFIED",
+          "bytes": 138,
+          "sha256": "76810fb032ab587ad99eb760fd00a0188b20c391032aafead2ae3e12da2257f9",
+          "restored_over_old_path": false
+        },
+        "red": {
+          "original_bytes": "UNCONFIRMED",
+          "semantic_record": "PYTHON_DICT_REPR"
+        },
+        "baseline": {
+          "original_bytes": "UNCONFIRMED",
+          "previous_hash_available": true
+        }
+      },
+      "formal_hold_reason": "PRIOR_PRESERVATION_FAILED",
+      "date": "2026-11-09",
+      "status": "이전 이력 · 캐시 정리13개·스킬 메타데이터74개 분리 커밋 / 관련527개 통과 / 운용 B 보류 · 2026-11-09",
+      "main_commit": "79f78aa3698fd74bfa8830797095ea3973ee2f2e",
+      "main_commit_role": "기능·메타데이터 두 커밋 반영 기준; 후속 문서 커밋 ID는 Git 이력으로 확인",
+      "latest_fields": {
+        "현재 상태": "캐시 정리 기능13개는 5551a56a, 스킬 메타데이터74개는 79f78aa3로 분리 로컬 커밋했다. 공유 SKILL.md 2개가 겹치므로 고유 변경 경로는85개다. OMC 버전은0.6.4이며 push·재설치·배포는 수행하지 않았다.",
+        "보완 내용": "코드 보완 A는 삭제 전 등록 실패의 제한된 복구, 8MiB 기준 크기 제한, 공유 잠금, 부모 수집기→ready→읽기 CLI→복구 호출을 추가했다. 후속 수정은 CONTRACT 본문 해시의 최초 저장·복구 보존과 다른 본문 재시도 차단을 보완했다. 설치본·템플릿 등 안내5곳에 ready 읽기와 제한된 복구 순서를 동기화했다. 스킬 frontmatter38개와 openai.yaml36개는 기능 변경과 분리했다.",
+        "검증": "분리된 기능 전체 후보에서 completion/output/collector·기존 계약 해시4개 테스트 모듈527개 통과(313.26초). 메타데이터 frontmatter38개·YAML36개·템플릿 대조 및 기존 테스트2개 통과. 두 커밋 모두 기존 Guard·TDD 훅을 통과했다. 이전517개·87개·5개와 중복되므로 합산하지 않는다. 운용 B와 제품 효과 검증은 미실행이다.",
+        "Git·리뷰 범위": "45a6e397 대비 기능13개 전체 후보를 검토하고 커밋5551a56a의 정확한13개 경로로 APPROVE를 기록했다. 메타데이터74개는 별도 검증·커밋79f78aa3이며 기능 승인으로 확대하지 않는다. 후속 문서4개는 이 결과의 현재 표시만 갱신한다.",
+        "이력·보존": "기존 미커밋 안내와 제한된 부분 리뷰는 당시 이력으로 보존한다. .omc 실행 근거·교훈은 정리 커밋에 포함하거나 삭제하지 않는다. 코드 검증·리뷰·실제 운용·커밋·배포를 구분한다.",
+        "기존 보류": "T0에서 Claude Code 2.1.138 설치는 확인했지만 실제 Bash call/result·종료 코드·ready 왕복의 원본 근거를 확보하지 못했다. 사용자 선택에 따라 A만 구현하고 B는 보류한다. 과거 감사 보존 실패 공식 보류, RED·baseline 원본 복구 미확인, 과거 보존 재검증 UNKNOWN, 실제 자손 전체 종료·홈 연동 미검증, 비교0/4회 NOT_RUN·HOLD는 유지한다. Kit 로컬 v3 DISABLED·완료 관찰 미등록 상태를 확인했으며 소비 저장소는 재조회하지 않았다.",
+        "근거": ".omc/split-changes-20261109/의 feature-tests.txt·feature-test-result.json·feature-preflight.json·feature-review-receipt.json·metadata-final-validation.json 및 두 commit 기록. 과거 A·해시 회귀 근거도 유지한다. 로컬·격리 근거이며 영구 보존이나 다른 checkout 접근을 보장하지 않는다.",
+        "다음 작업": "운용 B는 실제 실행기의 Bash call/result·종료 코드·ready 왕복 원본을 확보할 수 있을 때 별도 재개한다. 과거 보류와 제품 효과 미입증 상태를 자동 해제하지 않는다."
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/view.json",
+        "docs/comparison-dashboard/index.html"
+      ],
+      "candidate_state": "FEATURE_AND_METADATA_COMMITTED_B_DEFERRED",
+      "main_applied": true,
+      "original_worktree_applied": true,
+      "main_applied_meaning": "기능13개·메타데이터74개를 별도 로컬 커밋으로 반영; 운용 B 보류",
+      "review_status": "FULL_FEATURE_13_PATHS_APPROVED",
+      "review_scope": [
+        ".agents/skills/omc-task/SKILL.md",
+        ".agents/skills/omc-task/references/verification.md",
+        "docs/omc_workflow.md",
+        "scripts/omc_home_observation.py",
+        "scripts/omc_output_contract.py",
+        "scripts/omc_pipeline_guard.py",
+        "scripts/omc_workflow_validation.py",
+        "scripts/test_omc_output_contract.py",
+        "scripts/test_omc_task_completion_surface.py",
+        "scripts/test_omc_workflow_validation.py",
+        "templates/.agents/skills/omc-task/SKILL.md",
+        "templates/.agents/skills/omc-task/references/verification.md",
+        "templates/.claude/commands/task.md"
+      ],
+      "hash_followup_review_scope": [
+        "scripts/omc_pipeline_guard.py",
+        "scripts/test_omc_task_completion_surface.py"
+      ],
+      "original_source_changed_paths": [
+        "scripts/omc_home_observation.py",
+        "scripts/omc_output_contract.py",
+        "scripts/omc_pipeline_guard.py",
+        "scripts/omc_workflow_validation.py",
+        "scripts/test_omc_output_contract.py",
+        "scripts/test_omc_task_completion_surface.py",
+        "scripts/test_omc_workflow_validation.py"
+      ],
+      "report_seal": "FEATURE_REVIEW_APPROVED_B_DEFERRED",
+      "validation": {
+        "A": {
+          "passed": 517,
+          "modules": 3,
+          "artifact": ".omc/tasks/cache-cleanup-r4-20261109/full-tests.txt"
+        },
+        "hash_followup": {
+          "passed": 87,
+          "modules": 4,
+          "selected_only": true,
+          "overlaps_A": true,
+          "artifact": ".omc/tasks/cache-contract-hash-20261109/tests.txt"
+        },
+        "independent_review": {
+          "passed": 5,
+          "overlaps_hash_followup": true,
+          "artifact": ".omc/reviews/cache-contract-hash-20261109/independent-tests.txt"
+        },
+        "tdd_gate": "PASS_COMMIT_HOOKS",
+        "completion_gate": "A_VERIFIED_B_DEFERRED",
+        "actual_provider_B": "DEFERRED_T0_UNKNOWN",
+        "source_tests_reexecuted_for_documentation": false,
+        "assembled_feature": {
+          "passed": 527,
+          "modules": 4,
+          "seconds": 313.26,
+          "artifact": ".omc/split-changes-20261109/feature-tests.txt"
+        },
+        "metadata": {
+          "frontmatters": 38,
+          "yamls": 36,
+          "existing_tests_passed": 2
+        }
+      },
+      "local_observation": {
+        "cohort_v3": "DISABLED",
+        "completion_observation": "OBSERVATION_INVALID",
+        "reason": "live_observation_not_enabled",
+        "consumers_requeried": false
+      },
+      "documentation_validation": {
+        "scope": "four documentation files",
+        "roadmap_test_file": "scripts/test_automatic_model_routing_roadmap.py",
+        "evidence_boundary": "Data and DOM consistency checks; source runtime B not executed",
+        "roadmap_passed": 28
+      },
+      "commit_status": {
+        "scope": "DOCUMENTATION_FOUR_FILES_ONLY",
+        "source_changes": "UNCOMMITTED_PRESERVED",
+        "commit_id_authority": "git log -- docs/automatic_model_routing_roadmap.md",
+        "push": "NOT_REQUESTED"
+      },
+      "original_source_changed_count": 7,
+      "evidence_sha256": {
+        ".omc/tasks/cache-cleanup-r4-20261109/full-tests.txt": "dfc3244e3d1a00258669d2cbe9a438b7b3d659bf1059db31c77f5e0a90f494ac",
+        ".omc/tasks/cache-contract-hash-20261109/tests.txt": "dc9ca94629af5e6705297f8e9b65a340e56a51f8297dd5076bae64b576f74a6e",
+        ".omc/reviews/cache-contract-hash-20261109/independent-tests.txt": "7c34f52f11d6cc110988f9b3dc0180db6a44be8341b884f48a9a1326f8216456"
+      },
+      "feature_commit": "5551a56aaed08cdfd63adccff08222abcca1d3e9",
+      "metadata_commit": "79f78aa3698fd74bfa8830797095ea3973ee2f2e"
+    },
     {
       "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
       "comparison_state": "HOLD",

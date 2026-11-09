@@ -282,3 +282,35 @@ def test_generated_output_separation_uses_all_uncommitted_inputs(tmp_path):
         assert (root/name).stat().st_mode & 0o777 == (ROOT/name).stat().st_mode & 0o777,name
     result=run_checks(root,['scripts/test_omc_completion_reporting_contract.py::test_twelve_installed_surfaces_use_detached_output'])
     assert result.returncode==0,result.stdout+result.stderr
+
+
+def test_installed_completion_resume_keeps_evidence_and_reset_boundary(installed_omc_target):
+    import json
+    from test_omc_task_completion_surface import preserved_work
+    import omc_state
+    target = installed_omc_target
+    # Git fixtures must ignore runtime bytecode before binding candidate bytes.
+    (target/'.gitignore').write_text('.omc/\n__pycache__/\n')
+    latest = target/'.omc/state/latest.json'
+    latest.parent.mkdir(parents=True, exist_ok=True)
+    latest.write_text(json.dumps({'latest_session_id':'current', 'latest_confirmed_session_id':'current'}))
+    preserved_work(target)
+    omc_state.record_session(target, mode='autopilot', title='omc-task',
+        request='resume approved completion', role_ids=['directive'], confirmed=True,
+        completion_action='preserve')
+    text = (target/'.agents/skills/omc-task/SKILL.md').read_text()
+    assert '--roles directive --completion-action preserve' in text
+    assert '인계 없는 session_start' in text
+    paths = [target/'verification.json', *sorted((target/'.omc/verification-bases').rglob('*.json'))]
+    before = {p: p.read_bytes() for p in paths}
+    command = [sys.executable, str(target/'scripts/omc_pipeline_guard.py'), '--target', str(target),
+               'complete-task', '--verification-file', str(target/'verification.json')]
+    result = subprocess.run(command, cwd=target, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    hook = subprocess.run([sys.executable, str(target/'scripts/omc.py'), 'hook', 'session_start',
+                           '--target', str(target)], cwd=target, capture_output=True, text=True)
+    assert hook.returncode == 0, hook.stdout + hook.stderr
+    result = subprocess.run(command, cwd=target, capture_output=True, text=True)
+    assert result.returncode == 1
+    assert '시작 훅에서 현재 CONTRACT 연결이 초기화됐습니다' in result.stdout
+    assert {p: p.read_bytes() for p in paths} == before
