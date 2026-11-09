@@ -167,6 +167,13 @@ def _read_json(path: Path, default: dict) -> dict:
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
+    # Freeze the prior lifecycle before any session/pending/owner write.
+    for ancestor in path.parents:
+        if ancestor.name == '.omc':
+            from omc_edit_resume import frozen
+            if frozen(ancestor.parent):
+                raise ValueError('expired_work_lifecycle_frozen')
+            break
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     tmp.write_text(text, encoding="utf-8")
@@ -1782,6 +1789,7 @@ def _git_scope_snapshot(project_root: Path) -> dict[str, list[str]]:
         check=False,
         capture_output=True,
         text=True,
+        env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'},
     )
     if proc.returncode != 0:
         return {"staged": [], "unstaged": [], "omc_artifacts": [], "untracked": []}
@@ -3726,9 +3734,12 @@ def compact_state(project_root: Path, *, keep_entries: int = 25) -> dict[str, ob
 
 
 def status(project_root: Path) -> str:
-    _ensure_tree(project_root)
-    # status 조회 시점에 notepad/summary를 강제 재생성해 stale 상태를 줄입니다.
-    _rewrite_notepad(project_root)
+    from omc_edit_resume import frozen
+    lifecycle_frozen = frozen(project_root)
+    if not lifecycle_frozen:
+        _ensure_tree(project_root)
+        # Frozen status must not renew, repair, or rewrite historical records.
+        _rewrite_notepad(project_root)
     memory = _read_json(
         _memory_path(project_root),
         {"version": 1, "created_at": _iso_now(), "updated_at": _iso_now(), "entries": []},
@@ -3753,6 +3764,9 @@ def status(project_root: Path) -> str:
     pipeline_history_run_count = _pipeline_history_run_count(project_root)
     display_run_count = _display_run_count(project_root, runs)
     lines = [f"OMC state: {project_root}"]
+    if lifecycle_frozen:
+        lines.append('- lifecycle: FROZEN (읽기 전용; 만료 작업 기록 보존)')
+        lines.append('- recovery: 명시적 retire-expired-work 후 별도 새 작업 등록; 이전 작업 완료·승인 아님')
     lines.append(f"- memory entries: {len(entries)}")
     lines.append(f"- sessions: {len(sessions)}")
     lines.append(f"- runs: {display_run_count}")

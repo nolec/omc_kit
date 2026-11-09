@@ -25,6 +25,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import omc_pipeline_guard as guard
 
 
+def test_review_completion_scope_excludes_omc_backups_only(tmp_path):
+    import subprocess
+    subprocess.run(['git', 'init', '-q', str(tmp_path)], check=True)
+    backup = tmp_path / '.omc/backup/source.py'
+    backup.parent.mkdir(parents=True)
+    backup.write_text('historical = True\n')
+    outside = tmp_path / '.omc-source/real.py'
+    outside.parent.mkdir()
+    outside.write_text('real = True\n')
+    app = tmp_path / 'app.py'
+    app.write_text('value = 1\n')
+    before = guard._unstaged_impl_fingerprints(tmp_path)
+    assert set(before) == {'app.py', '.omc-source/real.py'}
+    backup.write_text('another_historical_copy = True\n')
+    assert guard._unstaged_impl_fingerprints(tmp_path) == before
+    app.write_text('value = 2\n')
+    assert guard._unstaged_impl_fingerprints(tmp_path)['app.py'] != before['app.py']
+
+
 @pytest.fixture()
 def tmp_root(tmp_path: Path) -> Path:
     """격리된 임시 프로젝트 루트 픽스처."""

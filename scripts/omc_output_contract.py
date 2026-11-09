@@ -479,6 +479,11 @@ def _context(root, value, *, live_deadline=True):
     root=Path(root).resolve()
     if not isinstance(value,dict) or value.get('output_mode')!='detached_v1':
         raise OutputContractError('detached_mode_required')
+    from omc_edit_resume import frozen, load
+    if frozen(root):
+        resume = load(root)
+        if value.get('edit_resume') != {'grant_id': resume['grant_id'], 'generation': resume['generation']}:
+            raise OutputContractError('resume_output_generation_mismatch')
     for key in ('session_id','work_id','report_id'):
         if not isinstance(value.get(key),str) or not re.fullmatch('[A-Za-z0-9_-]{1,120}',value[key]):
             raise OutputContractError('invalid_record_identity')
@@ -508,6 +513,9 @@ def load_output_context(root, path, pin, *, live_deadline=True):
 
 
 def record_path(root, context):
+    from omc_edit_resume import frozen, load
+    if frozen(root):
+        return Path(root).resolve()/load(root)['generation']/'output-records'/context['report_id']/'manifest.json'
     return Path(root).resolve()/'.omc/state/output-records'/context['work_id']/context['report_id']/'manifest.json'
 
 
@@ -575,7 +583,11 @@ def _gate_binding(root, verification):
     verification=Path(verification)
     if not verification.is_absolute():verification=root/verification
     pin(verification)
-    pipeline=root/'.omc/pipeline_session.json';pin(pipeline)
+    from omc_pipeline_guard import _state_path
+    pipeline=_state_path(root);pin(pipeline)
+    from omc_edit_resume import ENV
+    if os.environ.get(ENV):
+        ref=json.loads(os.environ[ENV]);pin(ref['path'])
     try:state=json.loads(pipeline.read_bytes()) if pipeline.is_file() and not pipeline.is_symlink() else {}
     except (OSError,ValueError):state={}
     latest=json.loads(_local_file(root,'.omc/state/latest.json').read_bytes())
@@ -858,6 +870,9 @@ def output_cli(argv=None):
                      'report_id':args.report_id,'created_epoch':created,'budget_sec':args.budget_sec,'deadline_epoch':created+args.budget_sec,
                      'native_call_reference':{'invocation_id':args.report_id},
                      'references':[{'path':str(_local_file(root,p)),'sha256':_sha(_local_file(root,p).read_bytes()),'purpose':'explicit_evidence'} for p in args.reference]}
+            from omc_edit_resume import frozen, load
+            if frozen(root):
+                resume=load(root);context['edit_resume']={'grant_id':resume['grant_id'],'generation':resume['generation']}
             _context(root,context)
             file=record_path(root,context).parent.parent/(context['report_id']+'.context.json')
             _local_file(root,file,must_exist=False);file.parent.mkdir(parents=True,exist_ok=True)

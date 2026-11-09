@@ -2209,6 +2209,7 @@ def test_pipeline_ttl_same_work_review_continue_and_confirm_do_not_extend(tmp_pa
 
 def test_pipeline_ttl_expired_independent_start_preserves_prior_evidence(tmp_path):
     import time
+    import omc_edit_resume as resume
     repo=tmp_path/'repo';_init_git_repo(repo)
     _sync_task_session(repo)
     pipeline=repo/'.omc/pipeline_session.json';old=_read_json(pipeline)
@@ -2217,10 +2218,16 @@ def test_pipeline_ttl_expired_independent_start_preserves_prior_evidence(tmp_pat
     markers=[]
     for name in ['approval','red','verification']:
         path=repo/'.omc/state'/('old-'+name+'.json');path.write_text(json.dumps({'fixture':name}));markers.append((path,path.read_bytes()))
+    with pytest.raises(ValueError, match='lifecycle_frozen'):
+        import omc_state
+        omc_state.record_session(repo, mode='autopilot', title='attempt', request='implicit new work',
+                                 role_ids=['senior_coding'], confirmed=True, completion_action='start')
+    receipt = resume.retire_expired_work(repo, old['owner_work_id'],
+                                        approval_reference='fixture explicit independent work transition')
     start=time.time();sid=_sync_task_session(repo,'new independent task')
     state=_read_json(pipeline)
     assert state['owner_session_id']==sid and state['started_at']>=start
-    saved=repo/'.omc/state/pipeline-history'/(hashlib.sha256(raw).hexdigest()+'.json')
+    saved=repo/receipt['archive']/'originals/.omc/pipeline_session.json'
     assert saved.read_bytes()==raw and all(p.read_bytes()==b for p,b in markers)
 
 
@@ -2238,7 +2245,8 @@ def test_pipeline_ttl_pending_confirmation_and_legacy_reconfirm_do_not_revive(tm
     # A pre-upgrade current SID is not a newly authorized independent start.
     value.pop('owner_work_id');value.pop('owner_session_id');old=time.time()-9*3600
     value['started_at']=old;path.write_text(json.dumps(value));before=path.read_bytes()
-    state.confirm_session(repo,session_id=task['session_id'])
+    with pytest.raises(ValueError, match='lifecycle_frozen'):
+        state.confirm_session(repo,session_id=task['session_id'])
     assert path.read_bytes()==before and not pipeline._load_state(repo)['contract_confirmed']
 
 

@@ -74,10 +74,18 @@ _SESSION_TTL_SECONDS = 8 * 60 * 60  # 8시간 이상 지나면 세션 만료
 # ---------------------------------------------------------------------------
 
 def _state_path(root: Path) -> Path:
+    from omc_edit_resume import ENV, pipeline_path
+    if os.environ.get(ENV):
+        return pipeline_path(root)
     return root / ".omc" / "pipeline_session.json"
 
 def _read_pipeline(root: Path) -> tuple[dict, dict | None]:
     """Read once; expiry is not deletion or evidence-content mismatch."""
+    from omc_edit_resume import ENV
+    if os.environ.get(ENV):
+        # Invalid context must never become the empty-state/default-path fallback.
+        path = _state_path(root)
+        return json.loads(path.read_bytes()), None
     try:
         raw = _state_path(root).read_bytes()
         data = json.loads(raw)
@@ -143,6 +151,9 @@ def begin_work(root: Path, session: dict) -> None:
     _save_state(root, state)
 
 def _save_state(root: Path, state: dict) -> None:
+    from omc_edit_resume import ENV, frozen
+    if frozen(root) and not os.environ.get(ENV):
+        raise ValueError('explicit_resume_context_required')
     p = _state_path(root)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -355,6 +366,14 @@ def _red_evidence(root: Path, test_file: str, evidence_file: Path, state: dict,
     evidence_file.relative_to(root.resolve())
     raw = evidence_file.read_bytes()
     doc = json.loads(raw)
+    from omc_edit_resume import ENV, load
+    if os.environ.get(ENV):
+        value = load(root)
+        marker = {'grant_id':value['grant_id'], 'generation':value['generation']}
+        if doc.get('edit_resume') != marker:
+            raise ValueError('new_generation_red_required')
+        evidence_file.relative_to(root / value['generation'])
+        (root / doc['output_file']).resolve().relative_to(root / value['generation'])
     basis = _load_approved_basis(root, state.get("session_id", ""))
     if (doc.get("session_id") != state.get("session_id") or doc.get("basis_sha256") != _basis_digest(basis)
             or state.get("basis_sha256") != _basis_digest(basis)):
@@ -499,6 +518,11 @@ def cmd_status(root: Path) -> int:
     if expiration is not None:
         print("[PIPELINE] pipeline_ttl_expired: 승인 유효기간이 만료됐습니다. 원본 기록을 유지합니다.")
         return 1
+    from omc_edit_resume import ENV, load
+    if os.environ.get(ENV):
+        value = load(root)
+        print('[PIPELINE] 과거 원장: 만료 유지 / 편집 재개 세대: ' + value['generation'])
+        print('  고정 재개 만료값: ' + str(value['deadline']))
     contract_ok = state.get("contract_confirmed", False)
     contract_icon = "✅" if contract_ok else "❌"
     print(f"[PIPELINE] 세션 상태")
@@ -532,7 +556,9 @@ def _unstaged_impl_fingerprints(root: Path) -> dict | None:
                                    cwd=root, capture_output=True, text=True, check=True).stdout
         result = {}
         for name in set((dirty + untracked).split("\0")):
-            if not name or not _is_impl_file(name):
+            # Match the code snapshot boundary: OMC records and preserved
+            # source copies are evidence, not unstaged product implementation.
+            if not name or name.startswith('.omc/') or not _is_impl_file(name):
                 continue
             path = root / name
             if path.is_symlink():
@@ -795,6 +821,11 @@ def approved_verification_problems(root: Path, sid: str, state: dict, record: di
     except (OSError, ValueError, TypeError, AttributeError) as exc:
         return [str(exc)]
     problems = []
+    from omc_edit_resume import ENV, load
+    if os.environ.get(ENV):
+        value = load(root)
+        if record.get('edit_resume') != {'grant_id':value['grant_id'], 'generation':value['generation']}:
+            problems.append('new_generation_verification_required')
     digest = _basis_digest(basis)
     if state.get("basis_sha256") != digest or record.get("basis_sha256") != digest:
         problems.append("승인된 검증 기준 개정과 CONTRACT 또는 증거 불일치")
@@ -838,6 +869,10 @@ def cmd_verification_template(root: Path) -> int:
                                            "definition_sha256": _check_digest(check),
                                            "code_snapshot_sha256": snapshot}
                              for check in basis["checks"]}}
+        from omc_edit_resume import ENV, load
+        if os.environ.get(ENV):
+            value = load(root)
+            record['edit_resume'] = {'grant_id':value['grant_id'], 'generation':value['generation']}
         if 'validation_commands_policy_sha256' in basis and 'tests' in record['checks']:
             record['checks']['tests']['validation_receipt'] = None
         print(json.dumps(record, ensure_ascii=False, indent=2))
@@ -919,6 +954,9 @@ def _internal_verification_path(root: Path, path: Path) -> Path:
         resolved.relative_to(root.resolve())
     except ValueError:
         raise ValueError("검증 경로가 작업 폴더 밖을 가리킵니다")
+    from omc_edit_resume import ENV, load
+    if os.environ.get(ENV):
+        resolved.relative_to(root.resolve() / load(root)['generation'])
     return resolved
 
 
@@ -931,7 +969,11 @@ def cmd_verification_path(root: Path) -> int:
             raise ValueError("현재 작업 식별자를 확인할 수 없습니다")
         if latest.get("latest_session_id", sid) != sid:
             raise ValueError("현재 작업 식별자가 일치하지 않습니다")
-        path = _internal_verification_path(root, Path(".omc") / "verification" / (sid + ".json"))
+        from omc_edit_resume import ENV, load
+        if os.environ.get(ENV):
+            path = _internal_verification_path(root, Path(load(root)['generation']) / 'verification.json')
+        else:
+            path = _internal_verification_path(root, Path(".omc") / "verification" / (sid + ".json"))
         path.parent.mkdir(parents=True, exist_ok=True)
         print(path)
         return 0
@@ -1613,16 +1655,23 @@ def cmd_complete_transfer(root: Path,verification_file: Path) -> int:
 
 
 def _evaluate_implementation_completion(root: Path, verification_file: Path, expected_session_id: str | None = None) -> dict:
-    """Shared read-only completion/collector decision; local evidence is not attestation."""
-    state, expiration = _read_pipeline(root)
-    if expiration is not None and not _valid_completion_reapproval(root, state, verification_file):
-        return _expired_completion_evaluation(root, verification_file, state, expiration, expected_session_id)
-    evaluation = _evaluate_completion_checks(root, verification_file, state, expected_session_id)
-    if (expiration is not None and evaluation['outcome'] == 'done'
-            and not _valid_completion_reapproval(root, state, verification_file)):
-        # Ordinary validators may be slow: never return success on an old time check.
-        return _expired_completion_evaluation(root, verification_file, state, expiration, expected_session_id)
-    return evaluation
+    """Same shared completion decision for CLI and collectors, including resume."""
+    from omc_edit_resume import ENV, load
+    try:
+        state, expiration = _read_pipeline(root)
+        if expiration is not None and not _valid_completion_reapproval(root, state, verification_file):
+            return _expired_completion_evaluation(root, verification_file, state, expiration, expected_session_id)
+        evaluation = _evaluate_completion_checks(root, verification_file, state, expected_session_id)
+        if os.environ.get(ENV):
+            load(root)
+        if (expiration is not None and evaluation['outcome'] == 'done'
+                and not _valid_completion_reapproval(root, state, verification_file)):
+            return _expired_completion_evaluation(root, verification_file, state, expiration, expected_session_id)
+        return evaluation
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError) as exc:
+        return {'outcome':'blocked', 'first':'구현 여부 확인 불가·검증 미완료',
+                'problems':['edit_resume_blocked: '+str(exc)], 'reason_code':'verification_incomplete',
+                'registered':None, 'test_assessment':None, 'visual_assessment':None, 'home_assessment':None}
 
 
 
@@ -2086,6 +2135,41 @@ def cmd_session_start(root: Path) -> int:
     _save_state(root, state)
     print("[PIPELINE] 🔄 새 세션 시작 — CONTRACT 플래그 초기화")
     return 1 if rejected else 0
+
+def _resume_guard(function, *, lifecycle=False, edit=False):
+    from functools import wraps
+    @wraps(function)
+    def guarded(root, *args, **kwargs):
+        from omc_edit_resume import ENV, frozen, load, local, read
+        try:
+            if frozen(root) and not (function.__name__ == 'cmd_status' and not os.environ.get(ENV)):
+                if lifecycle:
+                    raise ValueError('expired_work_lifecycle_frozen')
+                value = load(root)
+                if edit:
+                    name = str(local(root, args[0]).relative_to(Path(root).resolve()))
+                    if name not in value['allowed_files']:
+                        raise ValueError('edit_scope_not_approved')
+                    state = read(root, Path(value['generation']) / 'pipeline.json')
+                    if not state.get('contract_confirmed'):
+                        raise ValueError('new_contract_required')
+                    if not _is_test_file(name) and (_red_evidence_problems(root, state) or not state.get('red_evidence')):
+                        raise ValueError('new_red_required')
+            elif os.environ.get(ENV):
+                load(root)
+            return function(root, *args, **kwargs)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError) as exc:
+            print('[PIPELINE] edit_resume_blocked: ' + str(exc))
+            return 1
+    return guarded
+
+
+for _name in ('cmd_contract_done', 'cmd_red_done', 'cmd_verification_template', 'cmd_verification_path', 'cmd_status'):
+    globals()[_name] = _resume_guard(globals()[_name])
+for _name in ('cmd_check', 'cmd_check_edit'):
+    globals()[_name] = _resume_guard(globals()[_name], edit=True)
+for _name in ('cmd_reset', 'cmd_session_start', 'cmd_approve_checks', 'cmd_allow', 'cmd_register_transfer_baseline'):
+    globals()[_name] = _resume_guard(globals()[_name], lifecycle=True)
 
 # ---------------------------------------------------------------------------
 # CLI
