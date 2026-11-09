@@ -55,6 +55,8 @@ def read_contract(path, *, raw=None):
     assert data['schema_version'] == 'omc-ship-entry/v1'
     assert data['budget_seconds'] == {'input': 40, 'prepare': 240, 'bind': 40, 'check': 90, 'finalize': 70}
     assert data['total_prepare_seconds'] == 480
+    assert data['clock_contract'] == {'domain':'monotonic','source_preparation':'separate',
+        'ship_t0':'after_source_ready_before_control_init','reset_same_attempt':False}
     assert [s['id'] for s in data['steps']] == ORDER, 'missing or reordered ship step'
     assert [s['stage'] for s in data['steps']] == (
         ['input'] * 4 + ['prepare'] + ['bind'] * 4 + ['check'] * 4 + ['run'])
@@ -199,7 +201,8 @@ def expanded_invocation(step, context):
 def execute_flow(path, context, *, mutate=None, fault=None, clock=None, mutate_invocation=None):
     """Consume the template block with argv arrays; never a shell or real project."""
     clock = clock or time.monotonic
-    start = clock()
+    observed_now = clock()
+    start = context.setdefault('ship_t0_monotonic', observed_now)
     contract_raw = path.read_bytes()
     contract_sha256 = hashlib.sha256(contract_raw).hexdigest()
     data = read_contract(path, raw=contract_raw)
@@ -219,10 +222,17 @@ def execute_flow(path, context, *, mutate=None, fault=None, clock=None, mutate_i
     report_id = 'ship-entry-' + hashlib.sha256(str(context['control']).encode()).hexdigest()[:16]
     report = {'status': 'passed', 'category': None, 'calls': logs,
               'invocation_audits': audits, 'binding_context': binding,
-              'contract_path': str(path), 'contract_sha256': contract_sha256}
+              'contract_path': str(path), 'contract_sha256': contract_sha256,
+              'timing': {'source_prepare_started_monotonic': context.get('source_prepare_started_monotonic', start),
+                         'source_ready_monotonic': context.get('source_ready_monotonic', start),
+                         'ship_t0_monotonic': start,
+                         'ship_deadline_monotonic': start + data['total_prepare_seconds']}}
     stage_start = start
     last_stage = None
     try:
+        timing = report['timing']
+        assert (timing['source_prepare_started_monotonic'] <= timing['source_ready_monotonic']
+                <= start <= observed_now), 'ship T0 must follow source readiness and stay unchanged'
         if (not context['authorized'] or context['max_attempts'] != 1
                 or context.get('run_timeout', 0) <= 0 or context.get('run_finalize_seconds', 0) <= 0):
             report.update(status='blocked', category='approval_mismatch')
@@ -616,3 +626,39 @@ def test_installed_preparation_diagnosis_and_guidance_are_read_only(installed_om
     assert report['review']['status'] == 'BLOCKED'
     assert report['quality']['status'] == 'approval_required'
     assert preserve(source) == before and not candidate.exists()
+
+
+@pytest.mark.parametrize('template', TEMPLATES)
+def test_ship_clock_contract_separates_source_preparation(template):
+    timing = read_contract(ROOT/template)['clock_contract']
+    assert timing == {'domain':'monotonic','source_preparation':'separate',
+        'ship_t0':'after_source_ready_before_control_init','reset_same_attempt':False}
+
+
+@pytest.mark.parametrize('template', TEMPLATES)
+def test_long_source_preparation_does_not_consume_ship_budget(subject, template):
+    subject['source_prepare_started_monotonic'] = 0
+    subject['source_ready_monotonic'] = 296
+    clock = SimpleClock(); clock.value = 296
+    report = execute_flow(ROOT/template, subject, clock=clock)
+    assert report['status'] == 'passed', report
+    assert report['timing']['source_prepare_started_monotonic'] == 0
+    assert report['timing']['source_ready_monotonic'] == 296
+    assert report['timing']['ship_t0_monotonic'] == 296
+    assert report['timing']['ship_deadline_monotonic'] == 776
+    assert [row['id'] for row in report['calls']] == ORDER
+
+
+@pytest.mark.parametrize('template', TEMPLATES)
+@pytest.mark.parametrize('defect', ['early_start', 'expired_attempt'])
+def test_supplied_ship_clock_is_not_reset_to_pass(subject, template, defect):
+    subject['source_prepare_started_monotonic'] = 0
+    subject['source_ready_monotonic'] = 296 if defect == 'early_start' else 0
+    subject['ship_t0_monotonic'] = 0
+    clock = SimpleClock(); clock.value = 296 if defect == 'early_start' else 500
+    report = execute_flow(ROOT/template, subject, clock=clock)
+    assert report['status'] == 'blocked'
+    assert report['calls'] == []
+    assert subject['ship_t0_monotonic'] == 0
+    assert not Path(subject['candidate']).exists()
+    assert not Path(subject['marker']).exists()

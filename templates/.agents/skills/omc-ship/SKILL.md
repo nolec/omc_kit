@@ -7,11 +7,8 @@ description: "고정 후보의 승인·격리 준비·품질 검사·배포 경�
 
 ## 입력과 실행 범위
 - 구현·문서·버전을 포함한 최종 커밋, 기준 OID, 정확한 전체 변경 목록을 먼저 고정한다. 후보가 바뀌면 이전 승인을 재사용하지 않는다.
-- `source`: 원본 후보. 읽기 전용이며 세션 초기화·설정 변경·승인 포인터 쓰기를 하지 않는다.
-- `control`: 저장소 밖의 이번 작업 전용 제어 폴더. 세션 생성·실행 원문·외부 시각은 여기에 기록한다.
-- `candidate`: prepare가 새로 만드는 격리 후보. 원본과 경로가 겹치면 중단한다. prepare 전에 생성·설치·세션 초기화하지 않는다.
-- `prepare_record`와 `check_record`: 원본·후보 밖의 서로 다른 새 경로. `preflight`는 omc-ship-preflight/v1의 8개 필드를 고정한 파일이다.
-- `kit`: 승인한 OMC 스크립트가 있는 절대 경로. 아래 argv는 셸 문자열로 합치지 않고 인자 배열로 사용한다. 경로·명령·중복 인자·알 수 없는 placeholder를 검증한다.
+- `source`: 원본 후보. 읽기 전용이며 세션 초기화·설정 변경·승인 포인터 쓰기를 하지 않는다. `control`: 저장소 밖의 이번 작업 전용 제어 폴더. 세션 생성·실행 원문·외부 시각은 여기에 기록한다. `candidate`: prepare가 새로 만드는 격리 후보. 원본과 경로가 겹치면 중단한다. prepare 전에 생성·설치·세션 초기화하지 않는다.
+- `prepare_record`와 `check_record`: 원본·후보 밖의 서로 다른 새 경로. `preflight`는 omc-ship-preflight/v1의 8개 필드를 고정한 파일이다. `kit`: 승인한 OMC 스크립트가 있는 절대 경로. 아래 argv는 셸 문자열로 합치지 않고 인자 배열로 사용한다. 경로·명령·중복 인자·알 수 없는 placeholder를 검증한다.
 - source의 리뷰 READY, 품질 설정 및 사용자 실행 승인(후보·범위·횟수·마감)을 확인한 뒤만 진행한다. 누락 시 원문을 보존하고 중단한다. 기록 생성은 인간 승인 자체를 인증하지 않는다.
 
 ## 승인 연결
@@ -30,6 +27,7 @@ prepare는 승인 영수증을 복사하지 않는다. 격리 후보에서 아�
 {
   "schema_version": "omc-ship-entry/v1",
   "total_prepare_seconds": 480,
+  "clock_contract": {"domain":"monotonic","source_preparation":"separate","ship_t0":"after_source_ready_before_control_init","reset_same_attempt":false},
   "budget_seconds": {"input":40,"prepare":240,"bind":40,"check":90,"finalize":70},
   "steps": [
     {"id": "control_init", "stage": "input", "cwd": "{control}", "argv": ["{python}", "{kit}/scripts/omc.py", "state", "init", "--target", "{control}"]},
@@ -57,6 +55,7 @@ prepare는 승인 영수증을 복사하지 않는다. 격리 후보에서 아�
 - 직접 회귀는 두 템플릿의 실제 봉인 CLI를 Git 없는 control에서 실행하고, 전개 후 대상 누락·중복·source/control 오지정·cwd 변경을 확인한다. 호출 0회는 fixture 준비와 사전 단계 호출을 구분해 집계한다. 안내와 검수용 회귀가 임의의 별도 실행기나 모델의 무시까지 물리적으로 차단하지는 않는다.
 
 ## 시간·증거와 중단
+- **시계 시작점:** source 버전·문서 확정, 최종 리뷰 결속, 품질 설정 승인 등 별도 승인된 source 준비는 ship의480초에 포함하지 않습니다. 준비 담당이 두 READY와 고정 후보·실행 승인을 확인한 뒤, 첫 `control_init` 직전에 ship T0를 한 번 기록합니다. 입력 단계의 source_review/source_quality는 같은 후보의 READY를 다시 확인하는 단계이며 source를 준비·수정하는 단계가 아닙니다. **분리 기록:** `source_prepare_started_monotonic`, `source_ready_monotonic`, `ship_t0_monotonic`, `ship_deadline_monotonic=ship_t0_monotonic+480`을 서로 구분합니다. 실제 경과 판정은 동일한 monotonic 시계로 하고 벽시각은 별도 참고 기록으로 남깁니다. 기존 source 준비 deadline을 ship deadline으로 승계하지 않으며, source 준비 자체의 승인·시간 제한은 그대로 준수합니다. **재시작 금지:** 이미 ship T0가 있는 같은 시도는 그 값을 유지합니다. source READY 이전에 시작한 T0, 만료된 T0 또는 시계 문맥 불일치는 새 시계로 덮어 통과시키지 않습니다. 시작점 오류도 원문을 보존해 보고하고, 새 시도·시간 승인이 필요한 경우만 요청합니다. 과거 deadline·중단 기록을 소급 수정하거나 실제 실패·마감 초과를 숨기지 않습니다. 이 계약과 fixture 검증은 실제 모델 준수를 물리적으로 보장하지 않습니다.
 - `environment_not_ready`이면 누락된 실행 파일·의존성과 preflight 요구를 한글로 알리고 품질 명령0회로 중단한다. runtime/PATH를 자동 변경하거나 준비되지 않은 일부 검사로 대체하지 않는다.
 - 준비 총480초: 입력40·prepare240·승인 연결40·check 및 최종 준비 확인90·외부 정리/보관70. prepare/check 내부 정리·기록은 각각240/90초에 포함한다. 남은 단계 전체 한도와 마지막70초를 확보하지 못하면 진입하지 않는다. 자동 재시도·예산 연장 없음.
 - 외부에서 T0와 단계 시작/종료·보관 완료를 기록한다. 조기 중단의 정리/보관 마감은 min(중단 시각+70초,T0+480초)다. 이번 소유 프로세스만 종료 확인하며 미확인이면 부분 증거만 보존한다.
@@ -71,7 +70,6 @@ prepare는 승인 영수증을 복사하지 않는다. 격리 후보에서 아�
 기존 CLI status·종료 코드는 수정하지 않고 보고용 판정을 별도 표시한다. 준비 불가 / 승인 불일치 / 코드 실패 / 증거·종료 미확인을 구분한다.
 비밀값 검사는 고정 후보의 diff·untracked에서 실제 비밀값 노출을 확인한다. 범위 밖 기존 작업을 이번 커밋에 섞지 않는다.
 원문상 실패·불확실성을 성공으로 완화하지 않는다. push·PR·태그·릴리스·사용처 설치는 각각 명시적 승인이 필요하며 ship 준비·검사 승인에서 추정하지 않는다.
-완료 후 다음 스킬로 자동 진입하지 않는다. SHIP READY이면 승인된 다음 행동의 선택을 기다리고, 실제 실패 원인이 확인된 경우에만 해당 조사·수정 경로를 제안한다.
 
 ## 다음 추천
 - 주추천 1개만 제시한다. 우선순위는 현재 차단 원인이다.
@@ -86,15 +84,9 @@ prepare는 승인 영수증을 복사하지 않는다. 격리 후보에서 아�
 
 ## 최종 후보 준비 — 릴리스 의도가 있을 때
 
-릴리스 요청은 준비 담당 `directive`가 버전·문서 변경을 마친 최종 커밋·명시적 base·전체 경로를 고정하는 단계부터 시작합니다. `code_review`는 그 전체 후보를 검토하고, 준비 담당은 기존 `capture-review` → `seal-review-output` → `record-review`를 원래 승인 원문과 정확한 expected-path로 연결한 뒤 `validate-ship=READY`를 확인합니다. 같은 내용의 정상 커밋은 공식 동일성 검증을 사용하며, 추가 파일·amend·base 변경은 기존 승인을 임의 재사용하지 않습니다.
+준비 담당 `directive`는 버전·문서 확정→최종 커밋·base·전체 경로 고정→`code_review`의 전체 후보 검토→원래 승인 원문·정확한 expected-path로 `capture-review`→`seal-review-output`→`record-review`를 연결해 `validate-ship=READY`를 확인합니다. 같은 내용의 정상 커밋은 공식 동일성 검사로 연결하고 추가 파일·amend·base 변경은 임의 재사용하지 않습니다. 명시적 새 품질 proposal과 현재 설정을 비교해 사용자 설정 승인 후 `proposal-validate`→`proposal-apply`→`approve`, `status=ready`를 확인합니다. 과거 근거 원문이 없으면 의미 비교는 UNKNOWN입니다. 설정 승인과 검사 실행 횟수·마감 승인은 별개이며, 두 readiness 확인 후에만 ship에 인계합니다.
 
-품질 설정은 명시적 새 proposal과 현재 설정을 비교합니다. 사용자 설정 승인을 받은 뒤 준비 담당이 `proposal-validate` → `proposal-apply` → `approve`를 연결하고 `status=ready`를 확인합니다. 설정 승인은 검사 실행 승인이 아니며 실행 횟수·마감도 확인합니다. 해시만으로 과거 문서의 의미를 추론하지 않고 원문이 없으면 UNKNOWN으로 남깁니다.
-
-통합 읽기 전용 확인: `python3 scripts/omc_ship_preflight.py diagnose --target <source절대경로> --contract <고정preflight계약>`; 새 설정 제안은 `--proposal <명시적JSON> --proposal-sha256 <원문해시>`로 고정합니다. 격리 리뷰를 대조할 때만 `--review-target <격리저장소절대경로>`를 명시합니다. 이 명령은 후보·리뷰·품질 문제를 함께 표시하며 설정·승인·소스에 쓰거나 검사를 실행하지 않습니다. 격리 승인 일치는 원본의 READY를 대신하지 않습니다.
-
-준비 담당은 두 readiness를 모두 확인한 뒤에만 기존 ship 절차에 인계합니다. ship의 `prepare/check` 안에서 source를 다시 봉인하거나 설정을 고치지 않습니다. 고정 후 코드·버전·문서·base·설정·근거가 바뀌면 관련 준비 결과를 무효화하고 해당 검토부터 다시 확인합니다. 과거 receipt·원문을 삭제하거나 포인터를 복사하지 않습니다. 준비 진단은 실행 토큰이 아니며 실제 실행 단계에서도 기존 결속 검사를 유지합니다.
-
-작업 완료·커밋 완료·릴리스 준비 완료·검사 통과·설치 완료를 구분해 보고합니다. 준비가 남았으면 그 항목을 명시하고, 코드 완료를 출하 준비로 보고하지 않습니다. 실제 모델의 안내 준수와 사용자 개입 감소는 이 지침·fixture만으로 입증되지 않습니다.
+읽기 전용 진단은 `python3 scripts/omc_ship_preflight.py diagnose --target <source절대경로> --contract <고정preflight계약>`입니다. 제안은 `--proposal <명시적JSON> --proposal-sha256 <원문해시>`, 격리 리뷰 대조는 `--review-target <격리저장소절대경로>`로 고정합니다. 진단은 쓰기·검사를 수행하거나 실행 토큰을 발급하지 않으며 격리 승인 일치는 원본 READY를 대신하지 않습니다. prepare/check 안에서 source를 봉인·수정하지 않습니다. 고정 뒤 코드·버전·문서·base·설정·근거 변경은 관련 준비를 무효화하고 해당 검토부터 확인합니다. 과거 receipt·원문 삭제·포인터 복사는 금지합니다. 작업·커밋·릴리스 준비·검사·설치 완료를 구분하고 남은 준비를 보고합니다. 지침·fixture만으로 실제 모델 준수·개입 감소를 주장하지 않습니다.
 
 ## Machine output contract
 별도 기록 모드 `detached_v1`을 명시적으로 사용한다. `omc-output/v1`의 stage/outcome/risk/next_skill/user_selection_needed/reason_code·VERDICT·기존 라우팅 의미는 바꾸지 않는다. `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT`는 내부 판정 원문에만 두고 사용자 최종 답변에 붙이지 않는다. 한글 판정·이유·검증·다음 행동만 표시한다.
