@@ -1,0 +1,4 @@
+interface:
+  display_name: "OMC 코드 리뷰"
+  short_description: "현재 코드 변경의 오류와 회귀 위험을 파일 근거로 검토합니다"
+  default_prompt: "$omc-review 스킬로 현재 변경사항의 오류와 회귀 위험을 코드 근거로 검토해줘."

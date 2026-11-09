@@ -1,0 +1,4 @@
+interface:
+  display_name: "OMC 프로젝트 복귀"
+  short_description: "프로젝트 구조와 이전 작업 문맥을 확인하고 재개 지점을 찾습니다"
+  default_prompt: "$omc-reentry 스킬로 현재 프로젝트 구조와 작업을 재개할 지점을 정리해줘."

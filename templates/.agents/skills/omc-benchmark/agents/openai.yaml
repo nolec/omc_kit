@@ -1,0 +1,4 @@
+interface:
+  display_name: "OMC 벤치마크"
+  short_description: "지정한 비교 제품과 현재 기능의 차이와 개선점을 분석합니다"
+  default_prompt: "$omc-benchmark 스킬로 현재 기능을 지정한 비교 제품과 대조해 개선점을 찾아줘."

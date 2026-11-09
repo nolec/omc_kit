@@ -1,5 +1,5 @@
 ---
-skill_name: omc-autopilot
+name: omc-autopilot
 description: "지시문 하나로 plan→task→review→PR 파이프라인을 실행. 트리거: 자동으로 해줘, 자동화, autopilot, 잘 때 돌려줘, pipeline 실행. 상태·계획 조회는 현재 문맥으로 답한다."
 ---
 

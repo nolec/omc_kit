@@ -1,0 +1,4 @@
+interface:
+  display_name: "OMC 원인 조사"
+  short_description: "오류를 재현하고 증거를 모아 문제의 근본 원인을 조사합니다"
+  default_prompt: "$omc-investigate 스킬로 현재 오류의 재현 조건과 근본 원인을 조사해줘."

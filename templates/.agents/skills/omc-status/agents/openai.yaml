@@ -1,0 +1,4 @@
+interface:
+  display_name: "OMC 작업 상태"
+  short_description: "현재 작업의 진행 상태와 보류 항목 및 다음 행동을 확인합니다"
+  default_prompt: "$omc-status 스킬로 현재 작업의 진행 상태와 남은 항목을 정리해줘."

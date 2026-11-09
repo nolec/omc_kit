@@ -1,0 +1,4 @@
+interface:
+  display_name: "OMC PR 생성"
+  short_description: "프로젝트 규칙에 맞게 변경 설명과 검증 근거를 담은 PR을 만듭니다"
+  default_prompt: "$pr-create 스킬로 현재 변경사항과 검증 근거를 정리해 프로젝트 규칙에 맞는 PR을 만들어줘."

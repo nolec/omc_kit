@@ -1,5 +1,5 @@
 ---
-skill_name: omc-ship
+name: omc-ship
 description: "고정 후보의 승인·격리 준비·품질 검사·배포 경계를 확인한다."
 ---
 

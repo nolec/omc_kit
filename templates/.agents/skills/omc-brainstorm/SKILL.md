@@ -1,5 +1,5 @@
 ---
-skill_name: omc-brainstorm
+name: omc-brainstorm
 description: "코딩 전 모호한 요구사항을 소크라테스식 질문으로 탐색. 트리거: 브레인스토밍, 아이디어 탐색, 뭘 만들지 모르겠어, 요구사항 정리, 막막해. Phase 4 전 코드 작성 금지."
 ---
 

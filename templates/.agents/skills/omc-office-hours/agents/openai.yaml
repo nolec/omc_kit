@@ -1,0 +1,4 @@
+interface:
+  display_name: "OMC 문제 정의"
+  short_description: "제품 구현 전에 사용자 문제와 해결 방향을 질문으로 확인합니다"
+  default_prompt: "$omc-office-hours 스킬로 구현에 앞서 사용자 문제와 해결 방향을 질문으로 확인해줘."

@@ -1,5 +1,5 @@
 ---
-skill_name: omc-office-hours
+name: omc-office-hours
 description: "코딩 전 제품 사고 강제. 6개 질문 필수 답변. 트리거: 기능 추가하려고, 만들어볼게, 제품 사고, 사용자 입장에서, 뭘 만들어야 해. 6개 답변 완료 전 코드 작성 금지."
 ---
 

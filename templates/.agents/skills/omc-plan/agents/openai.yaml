@@ -1,0 +1,4 @@
+interface:
+  display_name: "OMC 계획"
+  short_description: "요구사항을 실행 가능한 작업 단계와 검증 기준으로 정리합니다"
+  default_prompt: "$omc-plan 스킬로 현재 요청의 실행 계획과 검증 기준을 정리해줘."

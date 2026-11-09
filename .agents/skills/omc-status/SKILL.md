@@ -1,5 +1,5 @@
 ---
-skill_name: omc-status
+name: omc-status
 description: "현재 세션 상태·작업 컨텍스트 출력. 트리거: 지금 상태, 뭐하고 있었어, 현재 작업, 어디까지 했어, 상태 보여줘. confirmed 태스크·pending 항목·다음 액션 요약."
 ---
 

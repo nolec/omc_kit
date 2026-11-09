@@ -1,0 +1,4 @@
+interface:
+  display_name: "OMC 교훈 기록"
+  short_description: "반복된 실수와 해결 과정을 다음 작업에 쓸 교훈으로 기록합니다"
+  default_prompt: "$omc-lesson 스킬로 현재 작업에서 배운 재사용 가능한 교훈을 기록해줘."

@@ -1,5 +1,5 @@
 ---
-skill_name: omc-task
+name: omc-task
 description: "7단계 TDD 파이프라인으로 구현 실행. 트리거: 구현해줘, 만들어줘, 코딩해줘, 개발해줘, 이거 짜줘. CONTRACT→RED→GREEN→REFACTOR→GATE→REVIEW 순서. Tier별 허용 생략 외 단계 건너뜀 금지. omc-plan 이후 사용."
 ---
 

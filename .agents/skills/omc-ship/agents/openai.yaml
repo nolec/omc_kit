@@ -1,0 +1,4 @@
+interface:
+  display_name: "OMC 출하 검사"
+  short_description: "고정된 변경 후보의 승인과 품질 검사 및 출하 조건을 확인합니다"
+  default_prompt: "$omc-ship 스킬로 현재 변경 후보의 승인 근거와 품질 검사 및 출하 조건을 확인해줘."

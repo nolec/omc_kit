@@ -1,0 +1,4 @@
+interface:
+  display_name: "OMC 제품 방향 검토"
+  short_description: "제품 관점에서 기능의 필요성과 범위 및 우선순위를 검토합니다"
+  default_prompt: "$omc-ceo-review 스킬로 현재 기능의 필요성과 구현 범위를 제품 관점에서 검토해줘."

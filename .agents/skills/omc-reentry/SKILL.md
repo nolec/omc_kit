@@ -1,5 +1,5 @@
 ---
-skill_name: omc-reentry
+name: omc-reentry
 description: "오랜만에 돌아온 프로젝트를 빠르게 파악하는 복귀용 맵. 트리거: 이 프로젝트 뭐였지, 오랜만에 왔어, 구조 파악, 빠르게 컨텍스트 복원, 어디부터 봐야 해."
 ---
 

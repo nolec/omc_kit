@@ -1,5 +1,5 @@
 ---
-skill_name: omc-retro
+name: omc-retro
 description: "세션 히스토리 분석 후 주간 회고 실행. 트리거: 회고, 이번 주 리뷰, 돌아보기, 주간 정리, 회고해줘. 완료·실패 세션 분석 후 교훈 캡처."
 ---
 

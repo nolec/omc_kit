@@ -1,5 +1,5 @@
 ---
-skill_name: omc-lesson
+name: omc-lesson
 description: "교훈을 .omc/lessons/에 기록해 BM25 자동 주입에 활용. 트리거: 교훈 기록, 배운 거 저장, 다음에 주의할 것, 교훈 남기자, 실수 기록. 파일 하나 = 교훈 하나."
 ---
 

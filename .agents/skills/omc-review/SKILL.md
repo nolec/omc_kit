@@ -1,5 +1,5 @@
 ---
-skill_name: omc-review
+name: omc-review
 description: "코드 변경사항·diff·PR 리뷰. 치명/중대/경미/제안으로 분류하고 파일:라인 근거를 요구한다."
 ---
 # OMC 코드 리뷰 — 승인 전 버그·회귀·테스트 누락을 이슈부터 확인한다.

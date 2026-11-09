@@ -1,5 +1,5 @@
 ---
-skill_name: pr-create
+name: pr-create
 description: "GitHub PR 생성 — 프로젝트 표준 템플릿·라벨·Assignee 자동 적용. 트리거: PR 올려줘, PR 생성, pull request 만들어줘, PR 열어줘."
 ---
 

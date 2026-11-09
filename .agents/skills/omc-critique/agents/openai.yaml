@@ -1,0 +1,4 @@
+interface:
+  display_name: "OMC 비판 검토"
+  short_description: "계획의 가정과 위험 및 빠진 조건을 근거와 함께 검토합니다"
+  default_prompt: "$omc-critique 스킬로 현재 계획의 가정과 위험 및 빠진 조건을 비판적으로 검토해줘."

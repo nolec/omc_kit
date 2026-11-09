@@ -1,5 +1,5 @@
 ---
-skill_name: omc-ceo-review
+name: omc-ceo-review
 description: "CEO·제품 관점에서 기능 범위 재검토. 트리거: 이게 맞는 방향이야, 범위 검토, 해야 하나, 지금 만들어야 해, 우선순위 점검. 모드: EXPAND/SELECTIVE/HOLD(기본)/REDUCE."
 ---
 

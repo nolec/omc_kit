@@ -1,0 +1,4 @@
+interface:
+  display_name: "OMC 대시보드"
+  short_description: "제공된 데이터로 로컬 대시보드를 만들고 동작을 검증합니다"
+  default_prompt: "$omc-dashboard 스킬로 제공한 데이터로 로컬 대시보드를 만들고 동작을 검증해줘."
