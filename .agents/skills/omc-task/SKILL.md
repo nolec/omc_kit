@@ -17,6 +17,10 @@ Tier별 허용 생략 외에는 단계를 건너뛰지 않습니다. 적용되�
 | 숨겨진 로컬 변경 | 영향 확인 후 영향받는 격리 준비만 중단 | 파일·Git 플래그·원문 보존; 자동 해제·폐기·커밋 포함 금지 |
 | 실제 화면 접근 불가 | 필수 화면은 미검증; 승인된 안전한 구현·정적 검수는 구분해 진행 | Draft PR은 별도 승인된 경우에만 공유; 자동 환경 수리·필수 검수 생략·작업 전체 또는 출하 준비 완료 주장 금지 |
 
+## 단순 운영 기록 정리
+
+코드·스킬·설정·검증 정책을 변경하지 않고, 이어갈 pending 구현 작업도 없이 기존 증거를 조회해 `state note`와 생성 요약만 정리하는 경우에 한정합니다. `directive` 역할로 독립 기록 정리를 수행하고 결과·근거·미수행 항목을 일반 한글로 보고합니다. 이 결과는 task 완료 영수증이나 구현·리뷰·출하 승인이 아니므로 `complete-task` 및 detached_v1 task 완료 발행을 적용하지 않습니다. 기존 실패 기록은 그대로 보존합니다. 이는 구현 RED 면제가 아닙니다. 소스·스킬·설정 변경은 기존 구현 진입과 완료 검사를 적용합니다. pending 작업의 남은 검증·완료 처리는 아래 명시적 `preserve` 경로를 유지하며, pending 유무가 불명확하면 조회부터 합니다. 과거 승인·RED를 복사하거나 기존 pipeline을 초기화해 이 경로로 바꾸지 않습니다.
+
 ## 0. Guard
 
 ### 사전 승인된 비교 실행의 진입
@@ -61,9 +65,7 @@ Guard 실행 전에 작업 성격을 분류합니다. 제품 코드 변경은 `i
 - 기존 정책상 RED 등록이 필요한 경우 FAIL 출력과 `red-done`을 등록한다. TDD 게이트는 해당 변경의 기존 요건으로 `python3 scripts/omc_tdd_check.py --staged`를 확인한다.
 - 사용자에게는 해당 Tier에 적용되는 체크포인트만 표시한다. 아래 단계 설명은 해당 의무가 있는 작업에 적용하며, 기존 CLI의 승인·완료 요건을 우회하거나 근거를 꾸며 생략하지 않는다.
 
-사용자에게 보여줄 단계: CONTRACT / RED / TDD GATE / Handoff | 시스템이 암묵적으로 처리: 자명한 재안내 / 중복 설명 / 단계 사이 반복 코칭 | 정상 최종 출력: 결과 → 변경 → 검증 → 다음 행동, 첫 3줄 안에 결론, 20줄 이하, 같은 사실 반복 0회, 다음 행동은 정확히 1개, Machine output contract 두 줄은 줄 수·중복·다음 행동 측정에서 제외, 내부 상태인 `사용자 선택 대기` 직접 노출 금지 | 진행 commentary는 최대 3회(시작 / 실제 RED 결과 / 최종 TDD GATE), 최종 답변에서 단계별 진행 로그를 재서술하지 않는다.
-
-안전 필수 항목: CONTRACT / RED / TDD GATE / Handoff는 압축해도 유지 | 작은 후속 수정도 해당 Tier의 Guard·CONTRACT·RED 적용 요건과 순서는 유지 | 범위 분리: 현재 dirty 변경과 이번 구현 범위를 섞지 않음
+사용자에게 보여줄 단계: CONTRACT / RED / TDD GATE / Handoff | 시스템이 암묵적으로 처리: 자명한 재안내 / 중복 설명 / 단계 사이 반복 코칭 | 정상 최종 출력: 결과 → 변경 → 검증 → 다음 행동, 첫 3줄 안에 결론, 20줄 이하, 같은 사실 반복 0회, 다음 행동은 정확히 1개, Machine output contract 두 줄은 줄 수·중복·다음 행동 측정에서 제외, 내부 상태인 `사용자 선택 대기` 직접 노출 금지 | 진행 commentary는 최대 3회(시작 / 실제 RED 결과 / 최종 TDD GATE), 최종 답변에서 단계별 진행 로그를 재서술하지 않는다. 안전 필수 항목: CONTRACT / RED / TDD GATE / Handoff는 압축해도 유지 | 작은 후속 수정도 해당 Tier의 Guard·CONTRACT·RED 적용 요건과 순서는 유지 | 범위 분리: 현재 dirty 변경과 이번 구현 범위를 섞지 않음
 
 ## PHASE 1 ▸ CONTRACT — 목표 / 범위 / DoD / 제약 / 사용자 컨펌: 컨펌 전 구현 파일을 수정하지 않습니다. 완료 판정 계약: CONTRACT에서 필수 검증의 대상·방법·통과 조건을 확정한다. 통제된 컴포넌트 검증과 실제 서비스 검증은 별개이며 필수 대상 대신 다른 화면·버전의 증거를 쓰면 증거 불일치다. 필수 검증 통과일 때만 전체 완료를 보고한다. 미실행·확인 불가는 구현됨·검증 미완료, 실패는 수정 필요, 증거 불일치는 재검증 필요로 보고한다. 브라우저 불필요가 계약상 명확하면 브라우저 미실행만으로 보류하지 않는다. 기존 실패는 동일 기준의 비교 근거가 있을 때만 신규 실패와 구분한다. 코드 승인과 전체 완료를 구분하며 미충족 검증·사유·다음 행동 한 가지를 명시한다. 이 안내는 물리적 차단을 보장하지 않는다. task의 필수 검증이 미충족이면 본문 완료 주장 금지, outcome=blocked 및 reason_code=verification_incomplete로 보고하고 충족한 경우에만 outcome=done을 사용한다. 검증을 수행할 수 없으면 통과로 추정하거나 필수 조건을 임의로 낮추지 않는다. 기존 기계 계약: VERDICT는 PROCEED 또는 BLOCK만 사용한다. PROCEED=>done,omc-review,false; BLOCK=>blocked,null,true (순서: outcome,next_skill,user_selection_needed). risk는 low/medium/high이고 user_selection_needed는 boolean으로 출력한다. 검증 상태 첫 문장: 최종 task 보고 첫 줄은 정확히 다음 상태 문장 하나다: 통과=필수 검증 통과·작업 완료; 미실행/확인 불가=구현됨·검증 미완료; 실패=검증 실패·수정 필요; 증거 불일치=증거 불일치·재검증 필요. 실패 > 증거 불일치 > 미실행 > 통과 순으로 판정한다. 구현 반영이 확인되지 않았으면 구현 여부 확인 불가·검증 미완료를 사용한다. 첫 줄에 괄호나 부분 완료 주장을 붙이지 않는다. blocked 보고에는 작업 완료/전체 완료/구현 완료라는 부분 완료 제목을 쓰지 말고 확인된 반영 사실은 별도 줄의 구현 상태: 반영됨으로 쓴다.
 
@@ -91,8 +93,6 @@ Handoff — 모든 단계가 끝나면 `$omc-review`로 넘깁니다.
 - 우선순위는 항상 `현재 병목 > 기본 파이프라인`; 주추천 1개만 제시, 우선순위: 구현 완료 + 게이트 통과면 `$omc-review`
 - 구현 완료 + 사용자가 일단 결과만 확인하려는 상태면 내부 라우팅은 사용자 선택 대기, 화면에는 `결과를 확인한 뒤 리뷰 진행 여부를 알려주세요.`
 - 실패 원인 불명 → `$omc-investigate`. 자동으로 진행하지는 않습니다.
-
----
 
 ## ⛔ 자동 진입 금지 — 이 스킬이 완료된 후 자동으로 다음 스킬을 실행하지 않고, 사용자가 명시적으로 다음 스킬을 요청할 때까지 멈추고 기다린다.
 
@@ -147,6 +147,7 @@ CLI와 수집기는 동일 승인 종류·공용 판정과 실제 반환 경로�
 릴리스 요청은 준비 담당 `directive`가 버전·문서 변경을 마친 최종 커밋·명시적 base·전체 경로를 고정하는 단계부터 시작합니다. `code_review`는 그 전체 후보를 검토하고, 준비 담당은 기존 `capture-review` → `seal-review-output` → `record-review`를 원래 승인 원문과 정확한 expected-path로 연결한 뒤 `validate-ship=READY`를 확인합니다. 같은 내용의 정상 커밋은 공식 동일성 검증을 사용하며, 추가 파일·amend·base 변경은 기존 승인을 임의 재사용하지 않습니다. 품질 설정은 명시적 새 proposal과 현재 설정을 비교합니다. 사용자 설정 승인을 받은 뒤 준비 담당이 `proposal-validate` → `proposal-apply` → `approve`를 연결하고 `status=ready`를 확인합니다. 설정 승인은 검사 실행 승인이 아니며 실행 횟수·마감도 확인합니다. 해시만으로 과거 문서의 의미를 추론하지 않고 원문이 없으면 UNKNOWN으로 남깁니다. 통합 읽기 전용 확인: `python3 scripts/omc_ship_preflight.py diagnose --target <source절대경로> --contract <고정preflight계약>`; 새 설정 제안은 `--proposal <명시적JSON> --proposal-sha256 <원문해시>`로 고정합니다. 격리 리뷰를 대조할 때만 `--review-target <격리저장소절대경로>`를 명시합니다. 이 명령은 후보·리뷰·품질 문제를 함께 표시하며 설정·승인·소스에 쓰거나 검사를 실행하지 않습니다. 격리 승인 일치는 원본의 READY를 대신하지 않습니다. 준비 담당은 두 readiness를 모두 확인한 뒤에만 기존 ship 절차에 인계합니다. ship의 `prepare/check` 안에서 source를 다시 봉인하거나 설정을 고치지 않습니다. 고정 후 코드·버전·문서·base·설정·근거가 바뀌면 관련 준비 결과를 무효화하고 해당 검토부터 다시 확인합니다. 과거 receipt·원문을 삭제하거나 포인터를 복사하지 않습니다. 준비 진단은 실행 토큰이 아니며 실제 실행 단계에서도 기존 결속 검사를 유지합니다. 작업 완료·커밋 완료·릴리스 준비 완료·검사 통과·설치 완료를 구분해 보고합니다. 준비가 남았으면 그 항목을 명시하고, 코드 완료를 출하 준비로 보고하지 않습니다. 실제 모델의 안내 준수와 사용자 개입 감소는 이 지침·fixture만으로 입증되지 않습니다.
 
 ## Machine output contract
+단순 운영 기록 정리 절의 보고 예외를 제외한 구현·기존 완료 경로에 적용합니다.
 별도 기록 모드 `detached_v1`을 명시적으로 사용한다. `omc-output/v1`의 stage/outcome/risk/next_skill/user_selection_needed/reason_code·VERDICT·기존 라우팅 의미는 바꾸지 않는다. `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT`는 내부 판정 원문에만 두고 사용자 최종 답변에 붙이지 않는다. 한글 판정·이유·검증·다음 행동만 표시한다.
 먼저 `python3 scripts/omc_output_contract.py capabilities`와 `python3 scripts/omc_workflow_validation.py capabilities`로 발행자·소비자의 지원을 각각 확인한다. 실행 전에 모드·현재 작업/세션·단계·보고 ID·마감과 명시 기록 경로를 고정한다. 문맥이 없으면 `prepare --target . --stage <단계> --report-id <새ID> --budget-sec <승인된남은초>`로 현재 상태에서 새 문맥을 만들고 반환된 context/path·SHA를 호출자 실행 메타데이터에 보존한다. 숫자 예산을 임의 연장하거나 이전 보고 ID를 재사용하지 않는다.
 일반 plan/review/critique/investigate/ship 선언은 내부 원문을 작업의 .omc 안에 저장한 뒤 `python3 scripts/omc_output_contract.py publish --target . --output-context <문맥경로> --output-context-sha256 <해시> --source-file <내부원문> --source-sha256 <해시>`로 발행한다. 이는 모델 선언이며 해시 일치가 검증 통과나 사용자 승인 진위를 인증하지 않는다.

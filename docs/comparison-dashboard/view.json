@@ -1998,7 +1998,7 @@
     "summary": "보완 후 12회 수집 완료 · 최종 보고 8회 · 시간 초과 4회 · 4조건 전체 검증 미충족"
   },
   "roadmap": {
-    "decision": "현재 · 캐시 정리 A 로컬 보완·계약 해시 회귀 승인 / 운용 B 보류 / 문서 최신화 · 2026-11-09",
+    "decision": "현재 · 0.6.5 로컬 릴리스·12곳 설치 완료 / 완료 소유권 보완 리뷰 승인 / 후속 변경 미릴리스 · 2026-11-11",
     "items": [
       {
         "completion_criterion": "C1 후보 실험·채택 판단·회귀 검증·리뷰 정리 완료; 사용자 효과는 별도 미입증.",
@@ -2164,43 +2164,46 @@
       "consumers_requeried": false
     },
     "documentation_commit_scope": [
+      "README.md",
       "docs/automatic_model_routing_roadmap.md",
       "docs/comparison-dashboard/README.md",
       "docs/comparison-dashboard/view.json",
-      "docs/comparison-dashboard/index.html"
+      "docs/comparison-dashboard/index.html",
+      "docs/omc_workflow.md"
     ],
-    "date": "2026-11-10",
-    "status": "현재 · 빠른 검사·진행 표시 구현·리뷰 승인 / 관련193개 통과 / 실제 성능·출하 적용 대기 · 2026-11-10",
-    "main_commit": "3f33e3a5c213522c310854af977e587baf64897a",
+    "date": "2026-11-11",
+    "status": "현재 · 0.6.5 로컬 릴리스·12곳 설치 완료 / 완료 소유권 보완 리뷰 승인 / 후속 변경 미릴리스 · 2026-11-11",
+    "main_commit": "d1045f8b851d01731fde46ae8bf330ac3c26549d",
     "main_commit_role": "갱신 이전 HEAD; 이번 커밋 ID는 Git 이력으로 확인",
     "latest_fields": {
-      "현재 상태": "소스 버전0.6.5, 갱신 전 HEAD는3f33e3a5c213522c310854af977e587baf64897a다. 빠른 계약 검사·진행 표시·제한된 병렬 비교 도구4파일의 구현과 두 차례 코드 리뷰를 마쳤다. 이번 커밋에는 승인된 코드4파일과 관련 문서·리뷰 예시 정합성 갱신을 포함하며 최종 커밋 ID는 Git 이력으로 확인한다.",
-      "보완 내용": "전체 선택 목록을 빠른 계약 검사와 나머지 직렬 검사로 나누고 누락·중복·불허 결과를 차단한다. quality CLI의 최종 JSON은 유지하고 stderr로 단계·경과를 전달한다. 공개 CLI 취소 시 소유 자식을 정리하며 생성/등록·준비 alarm 경계를 검증했다. 준비180초·비교각300초·정리60초의840초 마감을 적용한다. 전체 병렬 적용·통과 기록 재사용은 미구현이다.",
-      "검증": "최종 구현 관련193개 통과(45.38초), 격리 리뷰에서 동일193개 독립 통과(63.39초)다. 이전 원본 fast는3.23초에 문서 오류와 레거시 사본 불일치2개를 차단했다. 이번 최신화에서 리뷰 예시 형식을 파서 계약에 맞추고 로컬 레거시 사본2개를 백업·동기화한 뒤 코드·문서·스킬 통합350개가 통과했다(45.83초). 검사 범위가 겹치므로 합산하지 않으며 전체 출하 검사 통과로 해석하지 않는다.",
-      "Git·리뷰 범위": "코드 승인 범위는 scripts/omc_quality_gate.py, scripts/omc_test_suite.py, scripts/test_omc_quality_gate.py, scripts/test_omc_test_suite.py의4개다. 원본과 격리 후보의 동일 바이트·정확한 경로를 확인했다. 추가 문서·스킬 서식 갱신을 과거 코드 승인에 자동 포함하지 않는다. 기존 로그·실패·품질 설정·승인·evidence는 보존한다.",
-      "중단·설정": "3f33e3a5의 승인된 준비·check는 통과했고, 전체 검사1회에서6287통과·1실패·15제외(2726.59초)로 중단됐다. 실패는 test_omc_review_skill_empty_result_sections_are_parser_safe다. base_ref 전환과 고정 로컬 참조 생성은 이미 완료됐으며 현재 설정 해시는cb75f847471d93f644e89b704e4448b319260a6c349aa31c74736e4700d5ca81다. 기존 품질 설정의 전체 pytest 명령은 그대로이고 fast-first runner를 출하 게이트에 적용하지 않았다.",
-      "이력·보류": "실제4개 테스트 비교는 공유 브라우저·빌더 의존성 격리 사전조건을 확보하지 못해 비교0회·성능 미검증이다. 45분 전체 검사 단축·20분 달성·재사용 효과는 입증하지 않았다. Git 비추적 .agent plan/task 사본은 원본 백업 후 SSOT에 동기화했고 비추적 상태를 유지해 이번 커밋에는 포함하지 않는다. 이번 전체 검사·사용처 설치·push·태그·외부 릴리스0회, 0.6.5 재설치는0/12다. 기존 비교 HOLD·실제 홈 NOT_VERIFIED·UNKNOWN과 관찰 비활성은 유지한다.",
-      "근거": ".omc/tasks/quality-speed-v2-20261110/, .omc/tasks/quality-speed-v2-review-fix-20261110/의 RED·검증·완료 기록, .omc/reviews/quality-speed-v2-fix-20261110/의 고정 diff·독립193개 검사·승인 receipt, .omc/releases/0.6.5-3f33e3a5-20261110/의 전체 검사·기준 참조·설정 적용 기록을 대조했다. 기록은 로컬 근거이며 다른 checkout 자동 제공·장기 보존을 보장하지 않는다.",
-      "다음 작업": "이번 문서·코드를 로컬 커밋한 뒤 실제 성능 비교의 의존성 격리와 출하 정책 적용안을 별도로 검토한다. 최종 후보 전체 리뷰 결속·설정 및 실행 횟수/마감 승인 전에는 전체 검사·릴리스·12개 설치를 재개하지 않는다. 과거 소진된 전체 검사 승인을 자동 재사용하지 않는다."
+      "현재 상태": "0.6.5 고정 후보 d1045f8b851d01731fde46ae8bf330ac3c26549d의 로컬 릴리스와12개 사용처 재설치를 완료했다. 이후 상태 메모 보고 경로·완료 소유권 보완5파일은 구현·리뷰 승인됐으며 이번 문서 최신화와 함께 로컬 커밋한다. 새 커밋 ID는 Git 이력으로 확인하며 설치된 후보와 구분한다.",
+      "보완 내용": "단순 state note 정리는 pending 구현이 없고 코드·스킬·설정·검증 정책 변경이 없는 경우에만 일반 상태 보고로 처리한다. 구현 완료 영수증이 아니며 기존 RED 요건을 유지한다. 완료 작업 소유권 확인 실패 시 이전 pipeline의 필수 검사 평가를 중단해 무관한 오류 연쇄를 방지한다.",
+      "검증": "릴리스 전체 검사1회6318통과·실패0·생략0·정책제외15, 2603.07초(43분23초).12곳 모두 strict audit 통과, 업무 변경·index 보존, 소유 프로세스 종료 확인. 후속 보완은 관련231개 통과(237.87초), 별도 스킬 검사31개와 독립 리뷰 핵심15개 통과다. 검사는 중복되므로 합산하지 않는다. 이번 문서 작업에서는 전체 검사를 재실행하지 않는다.",
+      "Git·리뷰 범위": "후속 승인 범위는 scripts/omc_pipeline_guard.py, scripts/test_omc_task_completion_surface.py, scripts/test_omc_completion_reporting_contract.py, templates/.agents/skills/omc-task/SKILL.md, .agents/skills/omc-task/SKILL.md의5개다. 원본과 같은 내용의 격리 후보에 승인 receipt를 남겼다. 추가 문서6개는 표시 정합성 갱신이며 기존 코드 승인 범위를 자동 확대하지 않는다.",
+      "중단·설정": "이전 후보의18실패 및3f33e3a5의6287통과·1실패 이력은 보존한다. 최종 d1045f8b 검사는 통과했다. 품질 설정 해시 cb75f847471d93f644e89b704e4448b319260a6c349aa31c74736e4700d5ca81과 기존 전체 pytest 명령은 변경하지 않았다. fast-first runner의 출하 정책 적용은 아직 미수행이다.",
+      "이력·보류": "0.6.5 설치12/12는 d1045f8b 당시 결과다. 이후 보완은 아직 미릴리스·미설치다. 실제4개 테스트 성능 비교는 의존성 격리 미확보로 미검증이며 속도 개선을 주장하지 않는다. 원격 push·태그·GitHub/registry 게시는 수행하지 않았다. 기존 비교 HOLD·실제 홈 NOT_VERIFIED·UNKNOWN·관찰 비활성을 유지한다.",
+      "근거": ".omc/releases/0.6.5-d1045f8b-20261110/release-result.json, installations/results.json, process-closure.json; .omc/tasks/state-reconcile-fix-20261110/green.txt·skill-final.txt·preservation.json; .omc/state/review-snapshots/state-reconcile-review-result.json. 기록은 로컬 근거이며 다른 checkout 자동 제공이나 장기 보존을 보장하지 않는다.",
+      "다음 작업": "이번 승인 수정과 문서 정합성 갱신을 로컬 커밋한다. 후속 후보 릴리스는 별도 요청 시 최종 후보·전체 리뷰 결속·설정 적합성·검사 횟수와 마감을 확인한다. 실제 성능 비교와 fast-first 정책 적용은 별도 결정하며 기존 전체 검사 승인을 재사용하지 않는다."
     },
     "verification": {
-      "implementation_passed": 193,
-      "independent_review_passed": 193,
+      "implementation_passed": 231,
+      "independent_review_passed": 15,
       "counts_overlap": true,
       "real_fast_seconds": 3.226407833979465,
       "whole_suite_runs_this_update": 0,
       "performance_comparison_status": "UNVERIFIED",
       "comparison_calls": 0,
       "last_release_full_run": {
-        "candidate": "3f33e3a5",
-        "passed": 6287,
-        "failed": 1,
+        "candidate": "d1045f8b",
+        "passed": 6318,
+        "failed": 0,
+        "skipped": 0,
         "deselected": 15,
-        "seconds": 2726.59
+        "seconds": 2603.07
       },
-      "integrated_checks_passed": 350,
-      "integrated_checks_seconds": 45.83,
-      "legacy_local_mirrors_synced_after_backup": 2
+      "legacy_local_mirrors_synced_after_backup": 2,
+      "skill_contract_passed": 31,
+      "skill_contract_seconds": 0.58
     },
     "release_preparation": {
       "version": "0.6.5",
@@ -2211,20 +2214,114 @@
       "base_oid": "6cc02d4fad25220a1366224af39c958cf34fca2b",
       "proposal_applied": true,
       "fast_first_proposal_applied": false,
-      "final_candidate_binding": "PENDING_AFTER_NEW_COMMIT",
+      "final_candidate_binding": "D1045F8B_RELEASED_FOLLOWUP_PENDING",
       "latest_quality_command_runs": 1,
-      "latest_full_result": "BLOCKED_TEST_FAILURE",
-      "reinstalled_targets": 0,
+      "latest_full_result": "PASSED",
+      "reinstalled_targets": 12,
       "target_count": 12,
-      "ship_status": "NOT_READY"
+      "ship_status": "RELEASED_D1045F8B_FOLLOWUP_UNRELEASED"
     },
     "commit_status": {
-      "scope": "FOUR_APPROVED_CODE_FILES_AND_RELATED_DOCUMENTATION",
+      "scope": "FIVE_APPROVED_FILES_AND_SIX_DOCUMENTATION_FILES",
       "commit_id_authority": "git log -- docs/automatic_model_routing_roadmap.md",
       "push": "NOT_REQUESTED_IN_THIS_UPDATE"
     }
   },
   "current_update_history": [
+    {
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "comparison_state": "HOLD",
+      "actual_home": "NOT_VERIFIED",
+      "historical_preservation_revalidation": "UNKNOWN",
+      "existing_formal_holds": "PRESERVED",
+      "comparison_runs": 0,
+      "comparison_status": "NOT_RUN",
+      "descendant_termination": "NOT_VERIFIED",
+      "consumer_count_on_query_failure": null,
+      "recovery": {
+        "green": {
+          "status": "SEPARATE_ORIGINAL_BYTES_VERIFIED",
+          "bytes": 138,
+          "sha256": "76810fb032ab587ad99eb760fd00a0188b20c391032aafead2ae3e12da2257f9",
+          "restored_over_old_path": false
+        },
+        "red": {
+          "original_bytes": "UNCONFIRMED",
+          "semantic_record": "PYTHON_DICT_REPR"
+        },
+        "baseline": {
+          "original_bytes": "UNCONFIRMED",
+          "previous_hash_available": true
+        }
+      },
+      "formal_hold_reason": "PRIOR_PRESERVATION_FAILED",
+      "local_observation": {
+        "cohort_v3": "DISABLED",
+        "completion_observation": "OBSERVATION_INVALID",
+        "reason": "live_observation_not_enabled",
+        "consumers_requeried": false
+      },
+      "documentation_commit_scope": [
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/view.json",
+        "docs/comparison-dashboard/index.html"
+      ],
+      "date": "2026-11-10",
+      "status": "현재 · 빠른 검사·진행 표시 구현·리뷰 승인 / 관련193개 통과 / 실제 성능·출하 적용 대기 · 2026-11-10",
+      "main_commit": "3f33e3a5c213522c310854af977e587baf64897a",
+      "main_commit_role": "갱신 이전 HEAD; 이번 커밋 ID는 Git 이력으로 확인",
+      "latest_fields": {
+        "현재 상태": "소스 버전0.6.5, 갱신 전 HEAD는3f33e3a5c213522c310854af977e587baf64897a다. 빠른 계약 검사·진행 표시·제한된 병렬 비교 도구4파일의 구현과 두 차례 코드 리뷰를 마쳤다. 이번 커밋에는 승인된 코드4파일과 관련 문서·리뷰 예시 정합성 갱신을 포함하며 최종 커밋 ID는 Git 이력으로 확인한다.",
+        "보완 내용": "전체 선택 목록을 빠른 계약 검사와 나머지 직렬 검사로 나누고 누락·중복·불허 결과를 차단한다. quality CLI의 최종 JSON은 유지하고 stderr로 단계·경과를 전달한다. 공개 CLI 취소 시 소유 자식을 정리하며 생성/등록·준비 alarm 경계를 검증했다. 준비180초·비교각300초·정리60초의840초 마감을 적용한다. 전체 병렬 적용·통과 기록 재사용은 미구현이다.",
+        "검증": "최종 구현 관련193개 통과(45.38초), 격리 리뷰에서 동일193개 독립 통과(63.39초)다. 이전 원본 fast는3.23초에 문서 오류와 레거시 사본 불일치2개를 차단했다. 이번 최신화에서 리뷰 예시 형식을 파서 계약에 맞추고 로컬 레거시 사본2개를 백업·동기화한 뒤 코드·문서·스킬 통합350개가 통과했다(45.83초). 검사 범위가 겹치므로 합산하지 않으며 전체 출하 검사 통과로 해석하지 않는다.",
+        "Git·리뷰 범위": "코드 승인 범위는 scripts/omc_quality_gate.py, scripts/omc_test_suite.py, scripts/test_omc_quality_gate.py, scripts/test_omc_test_suite.py의4개다. 원본과 격리 후보의 동일 바이트·정확한 경로를 확인했다. 추가 문서·스킬 서식 갱신을 과거 코드 승인에 자동 포함하지 않는다. 기존 로그·실패·품질 설정·승인·evidence는 보존한다.",
+        "중단·설정": "3f33e3a5의 승인된 준비·check는 통과했고, 전체 검사1회에서6287통과·1실패·15제외(2726.59초)로 중단됐다. 실패는 test_omc_review_skill_empty_result_sections_are_parser_safe다. base_ref 전환과 고정 로컬 참조 생성은 이미 완료됐으며 현재 설정 해시는cb75f847471d93f644e89b704e4448b319260a6c349aa31c74736e4700d5ca81다. 기존 품질 설정의 전체 pytest 명령은 그대로이고 fast-first runner를 출하 게이트에 적용하지 않았다.",
+        "이력·보류": "실제4개 테스트 비교는 공유 브라우저·빌더 의존성 격리 사전조건을 확보하지 못해 비교0회·성능 미검증이다. 45분 전체 검사 단축·20분 달성·재사용 효과는 입증하지 않았다. Git 비추적 .agent plan/task 사본은 원본 백업 후 SSOT에 동기화했고 비추적 상태를 유지해 이번 커밋에는 포함하지 않는다. 이번 전체 검사·사용처 설치·push·태그·외부 릴리스0회, 0.6.5 재설치는0/12다. 기존 비교 HOLD·실제 홈 NOT_VERIFIED·UNKNOWN과 관찰 비활성은 유지한다.",
+        "근거": ".omc/tasks/quality-speed-v2-20261110/, .omc/tasks/quality-speed-v2-review-fix-20261110/의 RED·검증·완료 기록, .omc/reviews/quality-speed-v2-fix-20261110/의 고정 diff·독립193개 검사·승인 receipt, .omc/releases/0.6.5-3f33e3a5-20261110/의 전체 검사·기준 참조·설정 적용 기록을 대조했다. 기록은 로컬 근거이며 다른 checkout 자동 제공·장기 보존을 보장하지 않는다.",
+        "다음 작업": "이번 문서·코드를 로컬 커밋한 뒤 실제 성능 비교의 의존성 격리와 출하 정책 적용안을 별도로 검토한다. 최종 후보 전체 리뷰 결속·설정 및 실행 횟수/마감 승인 전에는 전체 검사·릴리스·12개 설치를 재개하지 않는다. 과거 소진된 전체 검사 승인을 자동 재사용하지 않는다."
+      },
+      "verification": {
+        "implementation_passed": 193,
+        "independent_review_passed": 193,
+        "counts_overlap": true,
+        "real_fast_seconds": 3.226407833979465,
+        "whole_suite_runs_this_update": 0,
+        "performance_comparison_status": "UNVERIFIED",
+        "comparison_calls": 0,
+        "last_release_full_run": {
+          "candidate": "3f33e3a5",
+          "passed": 6287,
+          "failed": 1,
+          "deselected": 15,
+          "seconds": 2726.59
+        },
+        "integrated_checks_passed": 350,
+        "integrated_checks_seconds": 45.83,
+        "legacy_local_mirrors_synced_after_backup": 2
+      },
+      "release_preparation": {
+        "version": "0.6.5",
+        "quality_status": "ready_configuration_only",
+        "config_sha256": "cb75f847471d93f644e89b704e4448b319260a6c349aa31c74736e4700d5ca81",
+        "existing_base_ref": "refs/omc/release-bases/6cc02d4fad25220a1366224af39c958cf34fca2b",
+        "source_ref_created": true,
+        "base_oid": "6cc02d4fad25220a1366224af39c958cf34fca2b",
+        "proposal_applied": true,
+        "fast_first_proposal_applied": false,
+        "final_candidate_binding": "PENDING_AFTER_NEW_COMMIT",
+        "latest_quality_command_runs": 1,
+        "latest_full_result": "BLOCKED_TEST_FAILURE",
+        "reinstalled_targets": 0,
+        "target_count": 12,
+        "ship_status": "NOT_READY"
+      },
+      "commit_status": {
+        "scope": "FOUR_APPROVED_CODE_FILES_AND_RELATED_DOCUMENTATION",
+        "commit_id_authority": "git log -- docs/automatic_model_routing_roadmap.md",
+        "push": "NOT_REQUESTED_IN_THIS_UPDATE"
+      }
+    },
     {
       "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
       "comparison_state": "HOLD",

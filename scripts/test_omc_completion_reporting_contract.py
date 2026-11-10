@@ -135,3 +135,14 @@ def test_twelve_installed_surfaces_use_detached_output(installed_omc_target):
                            '모델 선언','종료 코드1','전달 실패 코드2','manifest','구형으로 우회하지 않는다']:
                 assert marker in text,(name,marker)
             assert '기계 판정 두 줄을 최종 답변 끝에 그대로 복사' not in text
+
+
+@pytest.mark.parametrize('relative', ['templates/.agents/skills/omc-task/SKILL.md', '.agents/skills/omc-task/SKILL.md'])
+def test_task_limits_operational_note_report_to_nonimplementation(relative):
+    text = (ROOT/relative).read_text()
+    section = text.split('## 단순 운영 기록 정리', 1)[1].split('\n## ', 1)[0]
+    for marker in ('pending', '코드·스킬·설정', 'state note', '일반 한글',
+                   'complete-task', 'task 완료 영수증', '구현 RED 면제가 아닙니다',
+                   'preserve', '기존 실패 기록'):
+        assert marker in section
+    assert '단순 운영 기록 정리 절의 보고 예외' in text

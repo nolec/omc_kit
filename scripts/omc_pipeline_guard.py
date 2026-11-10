@@ -2427,6 +2427,15 @@ def _evaluate_completion_checks(root: Path, verification_file: Path, state: dict
             problems.append("완료 재개 역할 불일치: senior_coding + preserve는 완료 증거를 이어받을 수 없습니다. "
                             "코드 변경 없는 완료 재개는 비구현 역할과 명시적 preserve로 기존 작업 연결을 확인하세요. "
                             "승인·RED를 복사하거나 재등록하지 마세요")
+    # No owner means there is no current contract to evaluate.  In particular,
+    # a completed previous pipeline must not supply checks for a new note task.
+    if not sid:
+        if not problems:
+            problems.append("완료 대상 작업의 세션 연결을 확인할 수 없습니다: confirmed session 불일치")
+        return {"outcome": "blocked", "first": "구현 여부 확인 불가·검증 미완료",
+                "problems": problems, "reason_code": "verification_incomplete",
+                "registered": False, "test_assessment": None,
+                "visual_assessment": None, "home_assessment": None}
     if (state.get("contract_reset_reason") == "session_start"
             and not state.get("contract_confirmed") and not state.get("session_id")):
         problems.append("시작 훅에서 현재 CONTRACT 연결이 초기화됐습니다. 원본 증거 소실을 뜻하지 않습니다. "

@@ -1540,3 +1540,31 @@ def test_remaining_browser_verification_can_be_added_in_preserving_role(project)
     result = run(project, 'complete-task', '--verification-file', str(completed))
     assert result.returncode == 0, result.stdout + result.stderr
     assert {p: p.read_bytes() for p in paths} == before
+
+
+@pytest.mark.parametrize('defect', ['missing-pending', 'foreign-work', 'unconfirmed'])
+def test_owner_failure_stops_before_stale_checks(project, defect):
+    observer = preserved_work(project)
+    pipeline = project/'.omc/pipeline_session.json'
+    state = json.loads(pipeline.read_text())
+    state['required_checks'] = ['obsolete_pilot_check']
+    pipeline.write_text(json.dumps(state))
+    if defect == 'missing-pending':
+        (project/'.omc/state/pending-completion.json').unlink()
+    elif defect == 'foreign-work':
+        path = project/'.omc/state/sessions'/observer['session_id']/'session.json'
+        session = json.loads(path.read_text()); session['work_id'] = 'foreign'
+        path.write_text(json.dumps(session))
+    else:
+        path = project/'.omc/state/latest.json'
+        latest = json.loads(path.read_text()); latest['latest_confirmed_session_id'] = 'current'
+        path.write_text(json.dumps(latest))
+    before = {p: p.read_bytes() for p in project.rglob('*') if p.is_file() and '.git' not in p.parts}
+    result = run(project, 'complete-task', '--verification-file', str(project/'verification.json'))
+    assert result.returncode == 1
+    assert '완료 대상 작업의 세션 연결' in result.stdout
+    assert 'obsolete_pilot_check' not in result.stdout
+    assert 'CONTRACT 등록' not in result.stdout
+    assert 'RED 등록' not in result.stdout
+    assert 'tests:' not in result.stdout
+    assert {p: p.read_bytes() for p in before} == before
