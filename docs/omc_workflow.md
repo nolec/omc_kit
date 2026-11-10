@@ -222,3 +222,59 @@ except (OSError, ValueError, subprocess.CalledProcessError, IndexError) as exc:
 에이전트는 `maintenance-recovery-info --ready-file <실패 반환의 경로>`를 한 번 호출합니다. 최대 10초와 원래 TTL 남은 시간 중 짧은 시간만 기다리며, 성공 시 검증된 prefix 참조를 반환합니다. 그 결과로 `contract-done --required-checks <승인ID> --maintenance-recovery-file <상대경로> --maintenance-recovery-sha256 <SHA256>`을 한 번 호출합니다. 작업·launch·승인·기준·원본 state가 불일치하거나 반환 유실·이미 저장된 참조·삭제 이후·준비 시간 초과이면 자동 복구하지 않습니다. 기존 증거 삭제·덮어쓰기나 새 TTL로 재시작하는 절차는 없습니다.
 
 복구 완료는 operation/v2, state, 성공 반환과 같은 recovery descriptor를 사용합니다. 실패 prefix를 필수 preservation 검증의 `evidence_files`에도 연결하며, CLI와 수집기는 공통 판정과 실제 전체 로그의 prefix를 대조합니다. ready는 전달용 metadata이며 승인 증거가 아닙니다. 코드 보완 A의 통제된 회귀와 실제 실행기 운용 검증 B는 별도입니다. 현재 실제 provider의 종료 정보와 ready 왕복은 미확인이므로 운용 검증 B는 보류 상태입니다.
+
+## 릴리스 기준의 전용 로컬 참조
+
+릴리스 기준 커밋을 원격에 없는 `origin/...` 참조로 임시 보관하면 일반적인
+`fetch --prune`이 그 참조를 삭제할 수 있습니다. 원격 추적 참조를 수동 복원해
+재시도하는 대신 source 준비 단계에서 다음 전용 이름을 사용합니다.
+
+- 형태: `refs/omc/release-bases/<고정 base의 40자리 소문자 SHA-1>`.
+- 이름의 OID, preflight의 `expected_base_oid`, 실제 commit OID는 같아야 합니다.
+  기존 `origin/name`과 `refs/remotes/origin/name` 별칭은 계속 지원합니다.
+- 이 이름은 불변 저장소나 승인 인증 장치가 아닙니다. 등록된 모든 remote의
+  양의 fetch 목적지가 해당 정확한 참조와 일치하면 준비할 수 없습니다.
+  `+refs/*:refs/*` 같은 broad/mirror 설정과 해석할 수 없는 규칙은
+  `diagnose` 단계에서 설명하며, 설정을 자동 변경하지 않습니다.
+- 음의 refspec만으로 broad mapping을 안전하다고 취급하지 않습니다.
+  source-only fetch는 별도로 구분합니다. 외부의 임의 command-line refspec이나
+  직접 `update-ref`를 막지는 않으며, 이후 OID/설정 변화는 재검증에서 차단합니다.
+
+### source 준비의 생성·확인 절차
+
+이 절차는 구현·문서가 포함된 최종 커밋과 source 준비 범위가 승인된 뒤
+준비 담당이 수행합니다. ship의 `prepare/check` 안에서 원본을 수리하지 않습니다.
+명령은 셸 문자열 대신 인자 배열로 전달하며 `<...>`는 먼저 고정한 값입니다.
+
+1. base를 commit으로 해석하고 fetch 지원 조건을 읽기 전용으로 확인합니다.
+2. `git show-ref --verify --quiet <full-ref>`로 정확한 이름의 존재를 확인합니다.
+   종료0은 존재,1은 부재이며 다른 종료는 오류입니다. 존재하면
+   `git show-ref --verify --hash <full-ref>`와
+   `git rev-parse --verify <full-ref>^{commit}`의 결과를 고정 OID와 비교합니다.
+3. 없을 때만 `[git,update-ref,<full-ref>,<base-OID>,<40자리0>]`으로
+   compare-and-create합니다. 성공 후 정확 조회를 반복합니다. 경쟁 생성 실패 시
+   현재 값을 다시 읽어 동일 OID이면 변경 없이 확인하고, 다른 값/형태면 중단합니다.
+4. 기존 동일 OID는 재작성하지 않습니다. 다른 OID·비commit·prefix 충돌·조회 오류를
+   해결하려고 기존 참조를 삭제·이동하거나 덮어쓰지 않습니다.
+5. 생성/동일값 확인 결과와 실제 call/return, full ref/base OID, 관찰 fetch 설정을
+   기존 작업 근거에 보관합니다. clone은 전용 참조의 자동 전달을 가정하지 않으며
+   자기 대상 안에서 정확 조회 또는 같은 CAS 생성·검증을 수행합니다.
+
+### 검증과 출하 인계
+
+통제 fixture의 검증은 `prepare → capture/seal/record → quality approve → check →
+quality run`까지 수행하며, 양성 gate1회·음성 gate0회와 실제 종료·정리를 확인합니다.
+이 결과는 원본의 전체 출하 검사나 사용처 설치 완료가 아닙니다.
+
+인계 자료는 한 묶음으로 준비합니다: 최종 head/base/full ref·정확한 전체 변경 경로,
+생성 또는 동일값 확인 원문, 유효 fetch 설정, 리뷰 결속, 관련 검증·보존 결과,
+기존 설정 raw/정규화 해시와 `base_ref`만 다른 proposal, 남은 실행 승인·횟수·마감.
+최종 커밋이나 source 준비가 아직 없으면 그 항목을 미완료로 표시합니다.
+`docs/quality_gate_contract.md`와 `.github/workflows/omc-ci.yml` evidence와 품질 명령·범위·
+마감은 이 절차 때문에 변경하지 않습니다. evidence가 달라졌다면 단순 base_ref 변경으로
+보고하지 말고 실제 proposal 차이에 포함합니다.
+
+실제 source 설정 적용은 별도 승인된 `proposal-validate → proposal-apply → approve`
+절차를 따릅니다. 원본의 `validate-ship=READY`, quality `status=ready`, 고정 후보의
+`diagnose`와 실행 승인이 확인되기 전 ship T0를 시작하지 않습니다. 과거 시도·실패·
+시계·승인을 새 시도 기록으로 덮어쓰지 않습니다.

@@ -662,3 +662,47 @@ def test_supplied_ship_clock_is_not_reset_to_pass(subject, template, defect):
     assert subject['ship_t0_monotonic'] == 0
     assert not Path(subject['candidate']).exists()
     assert not Path(subject['marker']).exists()
+
+
+def local_release_subject(subject):
+    source = Path(subject['source'])
+    ref = 'refs/omc/release-bases/'+subject['base']
+    git(source,'update-ref',ref,subject['base'],'0'*40)
+    config_file=source/'.omc/quality-gates.json'
+    config=json.loads(config_file.read_text());config['base_ref']=ref
+    config['gates'][0]['argv']=['python3','-c',
+        "from pathlib import Path; Path('.omc/quality-calls.txt').write_text('called')"]
+    subject['marker']=str(Path(subject['candidate'])/'.omc/quality-calls.txt')
+    config_file.write_text(json.dumps(config))
+    config_sha=public('omc_quality_gate.py',['--target',str(source),'status'],codes=(1,))['config_sha256']
+    public('omc_quality_gate.py',['--target',str(source),'approve','--config-sha256',config_sha,'--allow-full'])
+    doc_path=Path(subject['preflight']);doc=json.loads(doc_path.read_text());doc.update(base_ref=ref,quality_config_sha256=digest(config_file));doc_path.write_text(json.dumps(doc));subject['config_sha256']=config_sha
+    return ref
+
+
+@pytest.mark.parametrize('template',TEMPLATES)
+def test_local_release_ref_public_flow_reaches_quality_once(subject,template,record_property):
+    local_release_subject(subject)
+    config=json.loads((Path(subject['source'])/'.omc/quality-gates.json').read_text())
+    assert config['gates'][0]['argv'][0]=='python3'
+    marker=Path(subject['marker'])
+    report=execute_flow(ROOT/template,subject)
+    assert report['status']=='passed',report
+    assert [r['id'] for r in report['calls']]==ORDER
+    assert len([r for r in report['calls'] if r['id']=='run'])==1
+    assert marker.read_text()=='called'
+    assert report['source_preserved']
+    record_property('requirements','R11,R12')
+
+
+@pytest.mark.parametrize('defect',['missing','changed','fetch'])
+def test_local_release_ref_public_flow_blocks_drift_without_quality(subject,defect):
+    ref=local_release_subject(subject)
+    source=Path(subject['source'])
+    if defect=='missing':git(source,'update-ref','-d',ref)
+    elif defect=='changed':git(source,'update-ref',ref,subject['head'])
+    else:git(source,'config','remote.other.fetch','+refs/*:refs/*')
+    report=execute_flow(ROOT/TEMPLATES[0],subject)
+    assert report['status']=='blocked',report
+    assert not any(r['id']=='run' for r in report['calls'])
+    assert not Path(subject['marker']).exists()

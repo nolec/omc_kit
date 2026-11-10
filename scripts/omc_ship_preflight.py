@@ -250,7 +250,7 @@ class Run:
                 self.cleanup_errors.append({'pid': p.pid, 'operation': 'cleanup', 'error': str(ex)})
                 e['confirmed'] = False
         return all(e.get('confirmed', False) for e in self.children)
-    def git(self, root, *args, cap=30):
+    def git(self, root, *args, cap=30, allowed=(0,), effective=False):
         self.work()
         names = [f'git-{len(self.commands):04d}.{s}' for s in ['stdout', 'stderr']]
         cmd = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false',
@@ -260,7 +260,7 @@ class Run:
         with self.record.file(names[0]) as out, self.record.file(names[1]) as err:
             self.raw_files.extend(names)
             try:
-                p = subprocess.Popen(cmd, cwd=root, env=self.env, stdin=subprocess.DEVNULL,
+                p = subprocess.Popen(cmd, cwd=root, env=_fetch_env() if effective else self.env, stdin=subprocess.DEVNULL,
                                      stdout=out, stderr=err, start_new_session=True)
                 e = {'process': p, 'pid': p.pid, 'pgid': p.pid, 'started': time.monotonic(), 'confirmed': False}
                 self.children.append(e)
@@ -278,7 +278,7 @@ class Run:
                 raise Blocked('git_execution_error', str(ex)) from ex
             out.flush()
             err.flush()
-            if p.returncode:
+            if p.returncode not in allowed:
                 err.seek(0, 2)
                 err.seek(max(0, err.tell()-8192))
                 row['stderr_tail'] = err.read().decode(errors='replace')
@@ -288,9 +288,131 @@ class Run:
         self.work()
         return raw
 
-def canonical(run, ref, root):
+LOCAL_BASE = 'refs/omc/release-bases/'
+
+
+def _fetch_env():
+    # Observe the caller's effective configuration without inheriting GIT_DIR/worktree routing.
+    allowed = {'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM',
+               'GIT_CONFIG_COUNT', 'GIT_CONFIG_PARAMETERS'}
+    env = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')
+           or k in allowed or k.startswith(('GIT_CONFIG_KEY_', 'GIT_CONFIG_VALUE_'))}
+    env.update(GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0')
+    return env
+
+
+def _observe_git(run, root, *args, allowed=(0,), effective=False):
+    if run is not None:
+        raw = run.git(root, *args, allowed=allowed, effective=effective)
+        return run.commands[-1]['exit_code'], raw
+    env = _fetch_env() if effective else {k: v for k, v in os.environ.items()
+                                         if not k.startswith('GIT_')}
+    if not effective:
+        env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull,
+                   GIT_CONFIG_NOSYSTEM='1', GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0')
+    try:
+        p = subprocess.run(['git', '--no-optional-locks', '-C', str(root), *args],
+                           env=env, capture_output=True, stdin=subprocess.DEVNULL, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise Blocked('git_execution_error', str(exc)) from exc
+    if p.returncode not in allowed:
+        raise Blocked('git_failed', p.stderr.decode(errors='replace')[-8192:])
+    return p.returncode, p.stdout
+
+
+def _exact_ref_oid(run, root, ref):
+    # for-each-ref is a prefix query; select only the complete returned name.
+    _, raw = _observe_git(run, root, 'for-each-ref', '--format=%(refname)%00%(objectname)', ref)
+    for row in raw.decode().splitlines():
+        name, oid = row.split('\0', 1)
+        if name == ref:
+            return oid
+    return None
+
+
+def _fetch_policy(run, root, ref):
+    if not ref.startswith(LOCAL_BASE):
+        return None
+    try:
+        code, raw = _observe_git(run, root, 'config', '--null', '--get-regexp',
+                                r'^remote\..*\.fetch$', allowed=(0, 1), effective=True)
+    except Blocked as exc:
+        if exc.reason != 'git_failed':
+            raise
+        raise Blocked('release_base_fetch_unsupported', '유효 fetch 설정을 읽을 수 없습니다: '+exc.detail) from exc
+    if code == 1:
+        if raw:
+            raise Blocked('release_base_fetch_unsupported', '빈 fetch 설정 조회 결과가 모호합니다')
+        return []
+    rules = []
+    def valid_source(value, negative=False):
+        if not negative and (value == 'HEAD' or re.fullmatch('[0-9a-f]{40}', value)):
+            return True
+        if negative and not value.startswith('refs/'):
+            return False
+        return _observe_git(run, root, 'check-ref-format', '--allow-onelevel', '--refspec-pattern', value,
+                            allowed=(0, 1))[0] == 0
+    for item in raw.split(b'\0'):
+        if not item:
+            continue
+        try:
+            key, spec = item.decode().split('\n', 1)
+        except (ValueError, UnicodeError) as exc:
+            raise Blocked('release_base_fetch_unsupported', 'fetch 설정 형식을 해석할 수 없습니다') from exc
+        rules.append((key, spec))
+        reason = 'source 준비에서 fetch 규칙을 확인하세요: '+key+'='+spec
+        if spec.startswith('^'):
+            value = spec[1:]
+            if ':' in value or not valid_source(value, negative=True):
+                raise Blocked('release_base_fetch_unsupported', reason)
+            continue  # Negative exclusions do not make a broad positive mapping safe.
+        value = spec[1:] if spec.startswith('+') else spec
+        source, sep, dest = value.partition(':')
+        if not valid_source(source) or ':' in dest:
+            raise Blocked('release_base_fetch_unsupported', reason)
+        if not sep or not dest:
+            if '*' in source:
+                raise Blocked('release_base_fetch_unsupported', reason)
+            continue
+        if (not dest.startswith('refs/') or source.count('*') != dest.count('*')
+                or _observe_git(run, root, 'check-ref-format', '--refspec-pattern', dest,
+                                allowed=(0, 1))[0] != 0):
+            raise Blocked('release_base_fetch_unsupported', reason)
+        if re.fullmatch(re.escape(dest).replace(r'\*', '.*'), ref):
+            raise Blocked('release_base_fetch_overlap', reason)
+    return rules
+
+
+def _local_base(run, root, ref, expected_base_oid=None):
+    match = re.fullmatch(re.escape(LOCAL_BASE)+r'([0-9a-f]{40})', ref)
+    if not match:
+        raise Blocked('invalid_base_ref', ref)
+    oid = match[1]
+    if expected_base_oid is not None and oid != expected_base_oid:
+        raise Blocked('release_base_oid_mismatch', '참조 이름과 고정 base OID가 다릅니다: '+ref)
+    policy = _fetch_policy(run, root, ref)
+    actual = _exact_ref_oid(run, root, ref)
+    if actual is None:
+        raise Blocked('release_base_missing', 'source 준비에서 고정 참조를 생성·확인하세요: '+ref)
+    if actual != oid:
+        raise Blocked('release_base_oid_mismatch', ref)
+    try:
+        _, commit = _observe_git(run, root, 'rev-parse', '--verify', ref+'^{commit}')
+    except Blocked as exc:
+        if exc.reason != 'git_failed':
+            raise
+        raise Blocked('release_base_oid_mismatch', ref) from exc
+    if commit.decode().strip() != oid:
+        raise Blocked('release_base_oid_mismatch', ref)
+    return policy
+
+
+def canonical(run, ref, root, expected_base_oid=None):
     if not isinstance(ref, str):
         raise Blocked('invalid_base_ref')
+    if ref.startswith(LOCAL_BASE):
+        _local_base(run, root, ref, expected_base_oid)
+        return ref
     if ref.startswith('origin/'):
         value = 'refs/remotes/' + ref
     elif ref.startswith('refs/remotes/origin/'):
@@ -380,6 +502,8 @@ def verify_head_files(run, root, head):
 
 
 def changed(run, root, doc, ref):
+    if ref.startswith(LOCAL_BASE):
+        _local_base(run, root, ref, doc['expected_base_oid'])
     if run.git(root, 'rev-parse', 'HEAD').decode().strip() != doc['expected_head_oid']:
         raise Blocked('candidate_mismatch')
     if run.git(root, 'rev-parse', '--verify', ref+'^{commit}').decode().strip() != doc['expected_base_oid']:
@@ -402,11 +526,11 @@ def config_bytes(run, root, doc, ref):
     raw = p.read_bytes()
     if sha(raw) != doc['quality_config_sha256']:
         raise Blocked('quality_config_mismatch')
-    if canonical(run, json.loads(raw)['base_ref'], root) != ref:
+    if canonical(run, json.loads(raw)['base_ref'], root, doc['expected_base_oid']) != ref:
         raise Blocked('config_base_ref_mismatch')
     return raw
 
-def freeze(run, root):
+def freeze(run, root, ref=None):
     files = {}
     names = [os.fsdecode(n) for n in run.git(root, 'ls-files', '-z').split(b'\0') if n]
     names += ['.git/index', '.omc/quality-gates.json']
@@ -424,7 +548,8 @@ def freeze(run, root):
             files[name] = {'sha256': sha(p.read_bytes()), 'mode': stat.S_IMODE(p.stat().st_mode)}
     return {'head': run.git(root, 'rev-parse', 'HEAD').decode().strip(), 'files': files,
             'root_identity': identity(root), 'git_identity': identity(root/'.git'),
-            'refs': run.git(root, 'for-each-ref', '--format=%(refname) %(objectname)').decode()}
+            'refs': run.git(root, 'for-each-ref', '--format=%(refname) %(objectname)').decode(),
+            'fetch_policy': _fetch_policy(run, root, ref) if ref else None}
 
 def load_contract(path):
     absolute(path)
@@ -463,11 +588,11 @@ def execute(run, args, result):
     if args.command == 'prepare':
         run.phase = 'source'
         independent(run, source)
-        ref = canonical(run, doc['base_ref'], source)
+        ref = canonical(run, doc['base_ref'], source, doc['expected_base_oid'])
         result['canonical_ref'] = ref
         result['changed_paths'] = changed(run, source, doc, ref)
         config = config_bytes(run, source, doc, ref)
-        before = freeze(run, source)
+        before = freeze(run, source, ref)
         run.record.write('source-before.json', json.dumps(before, ensure_ascii=False).encode())
         changed(run, source, doc, ref)
         config_bytes(run, source, doc, ref)
@@ -486,12 +611,20 @@ def execute(run, args, result):
             run.git(target, 'merge-base', '--is-ancestor', doc['expected_base_oid'], 'HEAD')
             run.phase = 'bind_ref'
             owned.verify()
-            existing = run.git(target, 'for-each-ref', '--format=%(objectname)', ref).decode().strip()
+            existing = _exact_ref_oid(run, target, ref)
             if existing and existing != doc['expected_base_oid']:
                 raise Blocked('existing_base_ref_mismatch')
             if not existing:
                 owned.verify()
-                run.git(target, 'update-ref', ref, doc['expected_base_oid'], '0'*40)
+                try:
+                    run.git(target, 'update-ref', ref, doc['expected_base_oid'], '0'*40)
+                except Blocked as exc:
+                    if exc.reason != 'git_failed':
+                        raise
+                    owned.verify()
+                    if _exact_ref_oid(run, target, ref) != doc['expected_base_oid']:
+                        raise
+
             owned.verify()
             run.phase = 'config'
             if directory is not None and not run.git(target, 'ls-tree', '-r', '--name-only', doc['expected_head_oid'], '--', '.omc').strip():
@@ -500,7 +633,7 @@ def execute(run, args, result):
             owned.verify()
             directory.write('quality-gates.json', config)
             verify_cloned_metadata(run, target, directory, doc['expected_head_oid'], config_created=True)
-            if freeze(run, source) != before:
+            if freeze(run, source, ref) != before:
                 raise Blocked('source_preservation_mismatch')
             changed(run, source, doc, ref)
             config_bytes(run, source, doc, ref)
@@ -517,13 +650,13 @@ def execute(run, args, result):
     else:
         run.phase = 'check'
         independent(run, target)
-        ref = canonical(run, doc['base_ref'], target)
+        ref = canonical(run, doc['base_ref'], target, doc['expected_base_oid'])
         result['canonical_ref'] = ref
-        before = freeze(run, target)
+        before = freeze(run, target, ref)
         run.record.write('target-before.json', json.dumps(before, ensure_ascii=False).encode())
         result['changed_paths'] = changed(run, target, doc, ref)
         config_bytes(run, target, doc, ref)
-        if before != freeze(run, target):
+        if before != freeze(run, target, ref):
             raise Blocked('target_preservation_mismatch')
         result['target_preserved'] = True
     run.work()
@@ -599,8 +732,8 @@ def _readiness_snapshot(root, doc, review_target=None):
         return review._current_receipt(target)
 
     config, config_sha = quality.load_config_snapshot(root)
-    base_ref = canonical(None, doc['base_ref'], root)
-    quality_ref = canonical(None, config['base_ref'], root)
+    base_ref = canonical(None, doc['base_ref'], root, doc['expected_base_oid'])
+    quality_ref = canonical(None, config['base_ref'], root, doc['expected_base_oid'])
     if quality_ref != base_ref:
         raise Blocked('config_base_ref_mismatch')
     working = review._candidate(root, base_commit=doc['expected_base_oid'],
@@ -608,6 +741,7 @@ def _readiness_snapshot(root, doc, review_target=None):
         review._working_entry(root, path=path, base_entry=base))
     snapshot = {'head': review._commit(root, 'HEAD'),
         'base_ref': base_ref, 'quality_base_ref': quality_ref,
+        'fetch_policy': _fetch_policy(None, root, base_ref),
         'base': review._commit(root, base_ref),
         'quality_base': review._commit(root, quality_ref),
         'working': working['candidate_scope_sha256'],
@@ -646,6 +780,8 @@ def diagnose(args):
         initial_readiness = _readiness_snapshot(root, doc, args.review_target)
     except (OSError, ValueError, KeyError, TypeError, Blocked) as exc:
         problems.append('readiness_snapshot_unavailable: ' + getattr(exc, 'reason', str(exc)))
+        if isinstance(exc, Blocked) and exc.reason.startswith('release_base_'):
+            actions.append('source 준비에서 고정 참조와 remote fetch 설정을 확인합니다: '+exc.reason)
     candidate = None
     try:
         candidate = review.build_commit_candidate(root, base_commit=doc['expected_base_oid'],

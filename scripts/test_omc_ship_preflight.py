@@ -1117,3 +1117,247 @@ def test_diagnose_and_prepare_accept_equivalent_canonical_refs(fixture, tmp_path
     prepared = invoke(fixture)
     assert prepared.returncode == 0, prepared.stdout+prepared.stderr
     assert json.loads(prepared.stdout)['status'] == 'baseline_verified'
+
+
+def local_release_fixture(fixture):
+    source, contract, target = fixture
+    doc = json.loads(contract.read_text())
+    ref = 'refs/omc/release-bases/' + doc['expected_base_oid']
+    git(source, 'update-ref', ref, doc['expected_base_oid'], '0'*40)
+    config = source / '.omc/quality-gates.json'
+    data = json.loads(config.read_text()); data['base_ref'] = ref
+    config.write_text(json.dumps(data))
+    replace_contract(fixture, base_ref=ref, quality_config_sha256=digest(config))
+    return ref
+
+
+def test_local_release_ref_prepare_check_preserves_source(fixture, record_property):
+    source, contract, target = fixture
+    ref = local_release_fixture(fixture)
+    before = {str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()}
+    result = invoke(fixture)
+    assert result.returncode == 0, result.stdout+result.stderr
+    assert json.loads(result.stdout)['status'] == 'baseline_verified'
+    assert git(target, 'show-ref', '--verify', '--hash', ref) == json.loads(contract.read_text())['expected_base_oid']
+    checked = invoke(fixture, 'check')
+    assert checked.returncode == 0, checked.stdout+checked.stderr
+    assert {str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()} == before
+    record_property('requirements', 'R01,R05,R06,R07')
+
+
+@pytest.mark.parametrize('spec', [
+    '+refs/heads/*:refs/remotes/upstream/*',
+    'refs/tags/*:refs/tags/*',
+    'refs/heads/main:refs/heads/vendor',
+    'HEAD',
+    'main:refs/remotes/upstream/main',
+    '^refs/heads/private/*',
+])
+def test_local_release_ref_accepts_disjoint_fetch(fixture, spec):
+    source, _, _ = fixture
+    local_release_fixture(fixture)
+    git(source, 'config', '--add', 'remote.upstream.fetch', spec)
+    result = invoke(fixture)
+    assert result.returncode == 0, result.stdout+result.stderr
+
+
+@pytest.mark.parametrize('scope', ['local', 'global', 'include'])
+@pytest.mark.parametrize('spec', ['+refs/*:refs/*', '+refs/omc/*:refs/omc/*', 'exact'])
+def test_local_release_ref_rejects_fetch_overlap_before_clone(fixture, tmp_path, scope, spec):
+    source, contract, target = fixture
+    ref = local_release_fixture(fixture)
+    if spec == 'exact': spec = 'refs/heads/main:' + ref
+    env = dict(os.environ)
+    if scope == 'local':
+        git(source, 'config', '--add', 'remote.other.fetch', spec)
+    else:
+        config = tmp_path / ('global.gitconfig' if scope == 'global' else 'included.gitconfig')
+        config.write_text('[remote "other"]\n\tfetch = '+spec+'\n')
+        if scope == 'global': env.update(GIT_CONFIG_GLOBAL=str(config), GIT_CONFIG_NOSYSTEM='1')
+        else: git(source, 'config', 'include.path', str(config))
+    result = invoke(fixture, env=env)
+    assert result.returncode == 1
+    assert json.loads(result.stdout)['reason_code'] == 'release_base_fetch_overlap', result.stdout
+    assert not target.exists()
+    assert all('clone' not in row['argv'] for row in json.loads(result.stdout)['commands'])
+
+
+@pytest.mark.parametrize('spec', [':refs/heads/deleted', 'refs/heads/*:refs/vendor/fixed',
+                                  '+^refs/heads/private/*', 'refs/heads/main:ambiguous',
+                                  'refs/heads/**:refs/vendor/**'])
+def test_local_release_ref_rejects_unsupported_fetch(fixture, spec):
+    source, _, target = fixture
+    local_release_fixture(fixture)
+    git(source, 'config', '--add', 'remote.other.fetch', spec)
+    result = invoke(fixture)
+    assert result.returncode == 1
+    assert json.loads(result.stdout)['reason_code'] == 'release_base_fetch_unsupported', result.stdout
+    assert not target.exists()
+
+
+@pytest.mark.parametrize('defect', ['name', 'missing', 'oid', 'prefix'])
+def test_local_release_ref_rejects_wrong_binding_before_clone(fixture, defect):
+    source, contract, target = fixture
+    ref = local_release_fixture(fixture)
+    doc = json.loads(contract.read_text())
+    if defect == 'name':
+        ref = 'refs/omc/release-bases/' + doc['expected_head_oid']
+        git(source, 'update-ref', ref, doc['expected_base_oid'])
+        config = source / '.omc/quality-gates.json'
+        data = json.loads(config.read_text()); data['base_ref'] = ref; config.write_text(json.dumps(data))
+        replace_contract(fixture, base_ref=ref, quality_config_sha256=digest(config))
+    elif defect == 'oid': git(source, 'update-ref', ref, doc['expected_head_oid'])
+    else:
+        git(source, 'update-ref', '-d', ref)
+        if defect == 'prefix': git(source, 'update-ref', ref+'/child', doc['expected_base_oid'])
+    result = invoke(fixture)
+    assert result.returncode == 1
+    assert json.loads(result.stdout)['reason_code'] == ('release_base_oid_mismatch' if defect in ('name','oid') else 'release_base_missing'), result.stdout
+    assert not target.exists()
+    if defect == 'prefix': assert git(source, 'show-ref', '--verify', '--hash', ref+'/child') == doc['expected_base_oid']
+
+
+def test_local_release_ref_survives_real_prune(fixture, tmp_path, record_property):
+    source, contract, target = fixture
+    ref = local_release_fixture(fixture)
+    origin = tmp_path/'origin.git'
+    subprocess.run(['git','clone','--bare',str(source),str(origin)],check=True,capture_output=True)
+    git(source,'remote','add','origin',str(origin))
+    stale = 'refs/remotes/origin/omc-release-065-base'
+    base = json.loads(contract.read_text())['expected_base_oid']
+    git(source,'update-ref',stale,base)
+    git(source,'fetch','--prune','origin')
+    assert subprocess.run(['git','show-ref','--verify','--quiet',stale],cwd=source).returncode == 1
+    assert git(source,'show-ref','--verify','--hash',ref) == base
+    result = invoke(fixture)
+    assert result.returncode == 0, result.stdout+result.stderr
+    git(target,'fetch','--prune','omc-source')
+    assert git(target,'show-ref','--verify','--hash',ref) == base
+    assert invoke(fixture,'check').returncode == 0
+    record_property('requirements','R08')
+
+
+def test_local_release_ref_broad_prune_is_reproduced_and_blocked(fixture, tmp_path, record_property):
+    source, _, target = fixture
+    ref = local_release_fixture(fixture)
+    origin = tmp_path/'origin.git'; probe = tmp_path/'mirror.git'
+    subprocess.run(['git','clone','--bare',str(source),str(origin)],check=True,capture_output=True)
+    subprocess.run(['git','clone','--mirror',str(origin),str(probe)],check=True,capture_output=True)
+    base = git(source,'show-ref','--verify','--hash',ref)
+    git(probe,'update-ref',ref,base)
+    git(probe,'fetch','--prune','origin')
+    assert subprocess.run(['git','show-ref','--verify','--quiet',ref],cwd=probe).returncode == 1
+    git(source,'config','remote.origin.fetch','+refs/*:refs/*')
+    result = invoke(fixture)
+    assert result.returncode == 1
+    assert json.loads(result.stdout)['reason_code'] == 'release_base_fetch_overlap',result.stdout
+    assert not target.exists()
+    record_property('requirements','R09')
+
+
+def test_local_release_ref_diagnose_reports_overlap_read_only(fixture, tmp_path):
+    source, contract, target = fixture
+    local_release_fixture(fixture)
+    _prepare_approved_diagnosis(fixture,tmp_path)
+    git(source,'config','remote.other.fetch','+refs/*:refs/*')
+    before = {str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()}
+    result = subprocess.run([sys.executable,str(CLI),'diagnose','--target',str(source),'--contract',str(contract)],capture_output=True,text=True)
+    doc = json.loads(result.stdout)
+    assert result.returncode == 1 and doc['status']=='blocked'
+    assert any('release_base_fetch_overlap' in p for p in doc['problems'])
+    assert doc['next_actions'],doc
+    assert {str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()} == before
+    assert not target.exists()
+
+
+@pytest.mark.parametrize('tail', ['ABCDEF0123456789ABCDEF0123456789ABCDEF0123','short','0'*40+'/child',''])
+def test_local_release_ref_rejects_invalid_name_shape(fixture, tail):
+    source, _, target=fixture
+    local_release_fixture(fixture)
+    config=source/'.omc/quality-gates.json';data=json.loads(config.read_text());data['base_ref']='refs/omc/release-bases/'+tail;config.write_text(json.dumps(data));replace_contract(fixture,base_ref=data['base_ref'],quality_config_sha256=digest(config))
+    result=invoke(fixture)
+    assert result.returncode==1
+    assert json.loads(result.stdout)['reason_code']=='invalid_base_ref'
+    assert not target.exists()
+
+
+def test_local_release_source_cas_and_noop_never_overwrites(fixture,record_property):
+    source,contract,_=fixture
+    doc=json.loads(contract.read_text());ref='refs/omc/release-bases/'+doc['expected_base_oid']
+    git(source,'update-ref',ref,doc['expected_base_oid'],'0'*40)
+    before=git(source,'show-ref','--verify','--hash',ref)
+    # The documented same-OID branch only reads. Even an erroneous second create cannot overwrite.
+    collision=subprocess.run(['git','update-ref',ref,doc['expected_head_oid'],'0'*40],cwd=source,capture_output=True)
+    assert collision.returncode!=0
+    assert git(source,'show-ref','--verify','--hash',ref)==before==doc['expected_base_oid']
+    record_property('requirements','R05')
+
+
+def test_local_release_detects_fetch_config_change_during_clone(fixture,tmp_path):
+    source,_,_=fixture
+    local_release_fixture(fixture)
+    config=source/'.git/config'
+    env=shim_env(tmp_path,"""
+if len(args)>6 and args[6]=='clone':
+    p=subprocess.run([real,*args]); assert p.returncode==0
+    with Path(%r).open('a') as f:f.write('\\n[remote "late"]\\n\\tfetch = +refs/*:refs/*\\n')
+    sys.exit(0)
+""" % str(config))
+    result=invoke(fixture,env=env)
+    assert result.returncode==1
+    assert json.loads(result.stdout)['reason_code']=='release_base_fetch_overlap',result.stdout
+    assert '+refs/*:refs/*' in config.read_text()
+
+
+@pytest.mark.parametrize('existing',['same','wrong','child'])
+def test_local_release_clone_exact_binding_never_adopts_prefix(fixture,tmp_path,existing):
+    source,contract,target=fixture
+    ref=local_release_fixture(fixture)
+    doc=json.loads(contract.read_text())
+    name=ref+'/child' if existing=='child' else ref
+    oid=doc['expected_head_oid'] if existing=='wrong' else doc['expected_base_oid']
+    env=shim_env(tmp_path,"""
+if len(args)>6 and args[6]=='clone':
+    p=subprocess.run([real,*args]); assert p.returncode==0
+    subprocess.run([real,'-C',%r,'update-ref',%r,%r],check=True)
+    sys.exit(0)
+""" % (str(target),name,oid))
+    before=git(source,'for-each-ref','--format=%(refname) %(objectname)')
+    result=invoke(fixture,env=env)
+    assert result.returncode==(0 if existing=='same' else 1),result.stdout+result.stderr
+    assert git(target,'show-ref','--verify','--hash',name)==oid
+    assert git(source,'for-each-ref','--format=%(refname) %(objectname)')==before
+
+
+@pytest.mark.parametrize('winner',['same','wrong'])
+def test_local_release_clone_cas_race_only_accepts_same_oid(fixture,tmp_path,winner):
+    _,contract,target=fixture
+    ref=local_release_fixture(fixture)
+    doc=json.loads(contract.read_text())
+    oid=doc['expected_base_oid'] if winner=='same' else doc['expected_head_oid']
+    env=shim_env(tmp_path,"""
+if len(args)>6 and args[6]=='update-ref' and os.getcwd()==%r:
+    subprocess.run([real,'update-ref',%r,%r],check=True)
+""" % (str(target),ref,oid))
+    result=invoke(fixture,env=env)
+    assert result.returncode==(0 if winner=='same' else 1),result.stdout+result.stderr
+    assert git(target,'show-ref','--verify','--hash',ref)==oid
+
+
+@pytest.mark.parametrize('drift',['missing','oid','fetch'])
+def test_local_release_ready_then_drift_blocks_before_clone(fixture,tmp_path,drift):
+    source,contract,target=fixture
+    ref=local_release_fixture(fixture)
+    _prepare_approved_diagnosis(fixture,tmp_path)
+    command=[sys.executable,str(CLI),'diagnose','--target',str(source),'--contract',str(contract)]
+    ready=subprocess.run(command,capture_output=True,text=True)
+    assert ready.returncode==0 and json.loads(ready.stdout)['status']=='ready',ready.stdout
+    if drift=='missing':git(source,'update-ref','-d',ref)
+    elif drift=='oid':git(source,'update-ref',ref,json.loads(contract.read_text())['expected_head_oid'])
+    else:git(source,'config','remote.late.fetch','+refs/*:refs/*')
+    before={str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()}
+    result=invoke(fixture)
+    assert result.returncode==1
+    assert json.loads(result.stdout)['reason_code']=={'missing':'release_base_missing','oid':'release_base_oid_mismatch','fetch':'release_base_fetch_overlap'}[drift],result.stdout
+    assert not target.exists()
+    assert {str(p.relative_to(source)):p.read_bytes() for p in source.rglob('*') if p.is_file()}==before

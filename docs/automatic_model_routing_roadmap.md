@@ -1,6 +1,17 @@
 # Automatic Model Routing Roadmap
 
-## 현재 · 완료 작업 동결 오판 보완·승인 후보 원본 통합 / 릴리스 최종 결속 준비 · 2026-11-10
+## 현재 · 전용 로컬 기준 참조 구현·리뷰 승인 / 관련424개 통과 / 설정 전환·릴리스 대기 · 2026-11-10
+
+- **현재 상태:** 소스 버전0.6.5이며 갱신 전 HEAD는54e4dae2c364eabc3bd47dc8c74964df07856ace다. 전용 로컬 릴리스 기준 참조의 구현·회귀·운용 문서4개를 원본에 반영하고 격리 리뷰 승인했다. 이번 커밋은 승인4개와 로드맵·대시보드4개, 총8개 파일이다. 새 커밋 ID는 Git 이력에서 확인한다.
+- **보완 내용:** refs/omc/release-bases/<고정40자리OID>를 지원하고 참조 이름·실제 commit·기대 base OID를 대조한다. 등록 remote의 유효 fetch 목적지를 로컬·글로벌·include 설정에서 확인해 겹침과 미지원 규칙을 사전 차단한다. 정확한 참조 조회·CAS 생성·동일 OID 경쟁 확인과 소실·변조·설정 변화 차단을 구현했다. 기존 origin 별칭은 유지하며 새 실행기·승인 계층은 추가하지 않았다.
+- **검증:** 수정 전 기준 관련3개 모듈377개 통과 후 신규 RED30실패·후속 RED3실패를 확인했다. 최종 고정본 관련3개 모듈424개 통과(351.72초), 격리 리뷰에서 신규 회귀47개 독립 통과(59.33초)다. 추가 공개 check 음성3개는 정확한 오류·정리·대상 보존을 확인했다. 47개와 선택 검사들은424개와 겹치므로 합산하지 않는다. CLI·문서 검증이며 실제 전체 출하 검사나 사용처 재설치 통과로 확대하지 않는다.
+- **Git·리뷰 범위:** 승인 범위는 scripts/omc_ship_preflight.py, scripts/test_omc_ship_preflight.py, scripts/test_omc_ship_entry_contract.py, docs/omc_workflow.md의4개다. 원본과 고정 격리 후보의 바이트·권한 일치를 확인했으며 범위 밖 추적1486개와 Git·품질 설정을 보존했다. 이번 추가 문서4개는 표시 정합성 갱신이며 기존 코드 승인 범위를 자동 확대하지 않는다. 새 최종 전체 출하 후보의 결속은 커밋 이후 별도 확인한다.
+- **중단·설정:** 54e4dae2의 최근 준비2회는 원격에 없는 origin/omc-release-065-base가 소실돼 clone 전에 중단됐고 전체 검사0회·재설치0/12다. 기본 fetch --prune의 가상 원격 추적 참조 삭제를 격리3/3 재현했으나 실제 원본 삭제 실행자는 미확인이다. 전용 로컬 참조도 broad refspec에서는 삭제될 수 있어 목적지 겹침을 차단한다. base_ref만 바꾼 proposal은 검증됐지만 원본 참조 생성·설정 적용/승인은 아직 수행하지 않았다.
+- **이력·보류:** 이전 전체 출하 검사1회의18실패·6154통과·15제외·1xfailed(2492.78초)와 기존 중단·시계·승인 원문은 보존한다. 이번 문서 갱신에서 전체 출하 검사·사용처 설치·push·태그·외부 릴리스를 실행하지 않았고 외부 배포 현황도 재조회하지 않았다. 기존 품질 evidence 두 파일과 명령·범위·마감은 동일하다. Kit v3 DISABLED·완료 관찰 미등록과 기존 UNKNOWN·HOLD를 유지한다.
+- **근거:** .omc/tasks/release-base-ref-v2-20261110/의 final-frozen.stdout/xml·final-pins.json·requirements-result.json·HANDOFF.md·완료 기록, .omc/reviews/release-base-ref-v2-20261110/의 metadata.json·고정 diff·review-tests.xml·승인 receipt, .omc/investigations/release-base-ref-disappearance-20261110/과 .omc/releases/0.6.5-54e4dae2-20261110/의 실패 기록을 대조했다. 로컬 기록이며 다른 checkout의 접근·영구 보존을 보장하지 않는다.
+- **다음 작업:** 로컬 커밋 후 최종 head·base·전체 경로·리뷰를 결속하고, 승인된 source 준비에서 전용 기준 참조를 생성·확인한 뒤 base_ref-only proposal의 적용·승인을 연결한다. 두 READY와 실행 승인·횟수·마감 확인 전 ship T0를 시작하지 않는다. 과거 시도를 자동 재시도하거나 이번 문서 최신화로 릴리스·12개 설치 완료를 선언하지 않는다.
+
+## 이전 이력 · 완료 작업 동결 오판 보완·승인 후보 원본 통합 / 릴리스 최종 결속 준비 · 2026-11-10
 
 - **현재 상태:** 소스 버전0.6.5, 통합 전 원본 HEAD6d3bf75e다. 승인된 격리 후보19개 파일과 문서4개를 원본에 통합했다. 그중 완료 작업 동결 판정의 후속 수정은 scripts/omc_edit_resume.py와 scripts/test_omc_edit_resume.py 두 파일이며 기존19개 승인과 구분해 검수한다. 이번 로컬 통합 커밋 ID는 Git 이력에서 확인한다.
 - **보완 내용:** pending-completion.json은 이전 커밋 완료 후 정상 제거된 상태였다. 남은 pipeline_session.json의8시간 경과만으로 동결하던 판정을 보완했다. 원래 소유 세션·요청 해시·완료 영수증·단일 부모 커밋·실제 변경 경로와 현재 HEAD의 이력을 대조해 완료된 작업만 구분한다. pending 존재·불일치·손상·활성 재개는 계속 차단하며 과거 승인을 재사용하지 않는다.
