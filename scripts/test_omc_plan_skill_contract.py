@@ -739,3 +739,10 @@ def _workflow_without_output_protocol(text):
 def test_plan_workflow_copies_require_detached_output_contract():
     for path in REQUIRED_PLAN_WORKFLOW_PATHS:
         _workflow_without_output_protocol(_read(path))
+
+
+def test_current_control_has_valid_name_and_identical_activation_metadata():
+    router=_read(REQUIRED_PLAN_SKILL_PATHS[0]);control=_read(ROOT/'scripts/fixtures/omc_plan_minimal_activation_control.md')
+    assert '\nname: omc-plan\n' in control
+    assert router.split('---',2)[1]==control.split('---',2)[1]
+    assert len(router.encode())<=420

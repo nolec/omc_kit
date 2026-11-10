@@ -86,7 +86,7 @@ class TestBlockExitCode(unittest.TestCase):
         import json, os, subprocess, tempfile
         with tempfile.TemporaryDirectory() as tmp:
             from pathlib import Path as P
-            root = P(tmp)
+            root = P(tmp).resolve()
             (root / ".omc" / "state").mkdir(parents=True)
             (root / ".omc" / "policy.json").write_text(
                 json.dumps({"enforce_confirm": True}), encoding="utf-8"
@@ -126,7 +126,7 @@ class TestBlockExitCode(unittest.TestCase):
         import json, os, subprocess, tempfile
         with tempfile.TemporaryDirectory() as tmp:
             from pathlib import Path as P
-            root = P(tmp)
+            root = P(tmp).resolve()
             (root / ".omc" / "state").mkdir(parents=True)
             (root / ".omc" / "policy.json").write_text(
                 json.dumps({"enforce_confirm": True}), encoding="utf-8"
@@ -162,7 +162,7 @@ class TestBlockExitCode(unittest.TestCase):
         import json, os, subprocess, tempfile
         with tempfile.TemporaryDirectory() as tmp:
             from pathlib import Path as P
-            root = P(tmp)
+            root = P(tmp).resolve()
             (root / ".omc" / "state").mkdir(parents=True)
             (root / ".omc" / "policy.json").write_text(
                 json.dumps({"enforce_confirm": True}), encoding="utf-8"
@@ -195,7 +195,7 @@ class TestBlockExitCode(unittest.TestCase):
         import json, tempfile
         with tempfile.TemporaryDirectory() as tmp:
             from pathlib import Path as P
-            root = P(tmp)
+            root = P(tmp).resolve()
             (root / ".omc" / "state").mkdir(parents=True)
             # latest.json에 session_id 설정
             latest = {
@@ -220,7 +220,7 @@ class TestBlockExitCode(unittest.TestCase):
         import json, tempfile
         with tempfile.TemporaryDirectory() as tmp:
             from pathlib import Path as P
-            root = P(tmp)
+            root = P(tmp).resolve()
             (root / ".omc" / "state").mkdir(parents=True)
             # pipeline_session에 stale session_id 미리 주입
             import sys
@@ -244,7 +244,7 @@ class TestBlockExitCode(unittest.TestCase):
         import json, os, subprocess, tempfile
         with tempfile.TemporaryDirectory() as tmp:
             from pathlib import Path as P
-            root = P(tmp)
+            root = P(tmp).resolve()
             (root / ".omc" / "state").mkdir(parents=True)
             (root / ".omc" / "policy.json").write_text(
                 json.dumps({"enforce_confirm": True}), encoding="utf-8"
@@ -288,7 +288,7 @@ class TestBlockExitCode(unittest.TestCase):
         import json, os, subprocess, tempfile
         with tempfile.TemporaryDirectory() as tmp:
             from pathlib import Path as P
-            root = P(tmp)
+            root = P(tmp).resolve()
             (root / ".omc" / "state").mkdir(parents=True)
             (root / ".omc" / "policy.json").write_text(
                 json.dumps({"enforce_confirm": True}), encoding="utf-8"
@@ -331,7 +331,7 @@ class TestBlockExitCode(unittest.TestCase):
         import json, os, subprocess, tempfile
         with tempfile.TemporaryDirectory() as tmp:
             from pathlib import Path as P
-            root = P(tmp)
+            root = P(tmp).resolve()
             (root / ".omc" / "state").mkdir(parents=True)
             (root / ".omc" / "policy.json").write_text(
                 json.dumps({"enforce_confirm": True}), encoding="utf-8"
@@ -393,7 +393,7 @@ def test_real_hook_preserves_guard_tier0_exemptions(tmp_path):
     import shutil
     root=tmp_path
     (root/'scripts').mkdir();(root/'.omc/state').mkdir(parents=True)
-    for name in ['omc_pipeline_guard.py','omc_native_red_evidence.py']:
+    for name in ['omc_pipeline_guard.py','omc_native_red_evidence.py','omc_edit_resume.py']:
         shutil.copy2(Path(__file__).parent/name,root/'scripts'/name)
     (root/'.omc/policy.json').write_text(json.dumps({'enforce_confirm':True}))
     (root/'.omc/state/latest.json').write_text(json.dumps({'latest_session_id':'s','latest_confirmed_session_id':'s','latest_confirmation':{'status':'confirmed'}}))
@@ -412,7 +412,7 @@ def test_tier0_invalid_clock_blocks_without_rewriting_state(tmp_path, clock):
     import shutil
     (tmp_path / 'scripts').mkdir()
     (tmp_path / '.omc/state').mkdir(parents=True)
-    for name in ['omc_pipeline_guard.py', 'omc_native_red_evidence.py']:
+    for name in ['omc_pipeline_guard.py', 'omc_native_red_evidence.py', 'omc_edit_resume.py']:
         shutil.copy2(Path(__file__).parent / name, tmp_path / 'scripts' / name)
     (tmp_path / '.omc/state/latest.json').write_text(json.dumps({
         'latest_session_id': 's', 'latest_confirmed_session_id': 's',
@@ -434,3 +434,8 @@ def test_tier0_invalid_clock_blocks_without_rewriting_state(tmp_path, clock):
         assert 'pipeline_ttl_expired' in result.stdout
         assert path.read_bytes() == before
         assert file.read_text() == 'export const value=1;'
+
+
+def test_clean_hook_fixture_dependency_surface(tmp_path):
+    # Public subprocess hook in a newly isolated root, not an import-only check.
+    test_real_hook_preserves_guard_tier0_exemptions(tmp_path.resolve())

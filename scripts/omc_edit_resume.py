@@ -7,6 +7,9 @@ local writers. No historical ledger is rewritten to revive its approval clock.
 from __future__ import annotations
 import argparse
 import contextlib
+import contextvars
+import errno
+import math
 import ctypes
 import fcntl
 import hashlib
@@ -88,6 +91,51 @@ def slot_path(root, work_id):
     return Path(root) / '.omc/edit-resumptions/slots' / (digest(work_id.encode()) + '.json')
 
 
+def committed_work_closed(root, state, pending_path):
+    """Recognize a consumed completion receipt without reviving its approval.
+
+    Local records are checked against Git and the original owning session.
+    Missing, changed or ambiguous evidence keeps the old lifecycle closed.
+    """
+    if pending_path.exists() or pending_path.is_symlink():
+        return False
+    sid = state.get('owner_session_id')
+    if not isinstance(sid, str) or not sid or '/' in sid or '\\' in sid or sid in ('.', '..'):
+        return False
+    owner = read(root, f'.omc/state/sessions/{sid}/session.json')
+    receipt = read(root, f'.omc/state/sessions/{sid}/completion.json')
+    from omc_state import _canonical_sha256
+    if (not isinstance(owner, dict) or not isinstance(receipt, dict)
+            or receipt.get('schema_version') != 2
+            or owner.get('session_id') != sid or receipt.get('session_id') != sid
+            or state.get('session_id') != sid
+            or owner.get('work_id') != state.get('owner_work_id')
+            or not owner.get('work_id')
+            or not isinstance(owner.get('role_ids'), list)
+            or 'senior_coding' not in owner['role_ids']
+            or not isinstance(owner.get('request'), str) or not owner['request'].strip()
+            or owner.get('confirmation', {}).get('status') != 'confirmed'
+            or receipt.get('request_sha256') != _canonical_sha256(owner.get('request'))
+            or receipt.get('work_class') != owner.get('work_class')
+            or receipt.get('work_class_locked_at') != owner.get('created_at')
+            or receipt.get('baseline_commit') != owner.get('git', {}).get('head')):
+        return False
+    base, head = receipt.get('baseline_commit'), receipt.get('followup_commit')
+    if any(not isinstance(oid, str) or len(oid) not in (40, 64)
+           or any(c not in '0123456789abcdef' for c in oid) for oid in (base, head)):
+        return False
+    try:
+        parents = git(root, 'rev-list', '--parents', '-n', '1', head).decode().split()
+        if parents != [head, base]:
+            return False
+        subprocess.run(['git', 'merge-base', '--is-ancestor', head, 'HEAD'],
+                       cwd=root, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        paths = git(root, 'diff-tree', '--no-commit-id', '--name-only', '-r', '-z', head).decode().rstrip('\0').split('\0')
+        return bool(paths and paths != [''] and paths == receipt.get('changed_paths'))
+    except (subprocess.SubprocessError, UnicodeError):
+        return False
+
+
 def frozen(root):
     """Freeze the active work; historical slots cannot freeze unrelated work."""
     marker = Path(root) / RETIREMENT_PENDING
@@ -108,7 +156,8 @@ def frozen(root):
             slot = slot_path(root, identified_work)
             if slot.exists() or slot.is_symlink():
                 return True
-        return bool(state and identified_work and time.time() - state.get('started_at', 0) > 28800)
+        return bool(state and identified_work and time.time() - state.get('started_at', 0) > 28800
+                    and not committed_work_closed(root, state, pending_path))
     except (OSError, ValueError, TypeError, AttributeError):
         return True  # Malformed governance is a closed state, not a CLI traceback.
 
@@ -536,20 +585,79 @@ def apply(root, name, content):
     load(root)
 
 
+_execution_trace = contextvars.ContextVar('omc_execution_trace', default=None)
+
+
+class _ExecutionTrace:
+    """Bounded diagnostic samples; never evidence of unmeasured member identity."""
+    def __init__(self, pgid=None):
+        self.pgid = pgid
+        self.events = []
+        self.bytes = 0
+        self.truncated = 0
+        self.record_errors = 0
+
+    def append(self, operation, **fields):
+        try:
+            now = time.monotonic()
+            if not math.isfinite(now):
+                raise ValueError('diagnostic_clock_unavailable')
+            row = {'operation': operation, 'monotonic': now, **fields}
+            size = len(json.dumps(row).encode())
+            # Reserve space for envelope/counters; no diagnostics can grow unbounded.
+            if len(self.events) >= 32 or self.bytes + size > 12000:
+                self.truncated += 1
+                return
+            self.events.append(row)
+            self.bytes += size
+        except Exception:
+            self.record_errors += 1
+
+    def payload(self):
+        return {'clock_domain': 'monotonic', 'owned_pid': self.pgid, 'owned_pgid': self.pgid,
+                'member_states': 'unknown', 'events': self.events,
+                'truncated': self.truncated, 'record_errors': self.record_errors}
+
+
+def _trace_event(operation, **fields):
+    trace = _execution_trace.get()
+    if trace is not None:
+        trace.append(operation, **fields)
+
+
+def _execution_audit(path, value):
+    trace = _execution_trace.get()
+    if trace is not None:
+        value = {**value, 'cleanup_trace': trace.payload()}
+    write_new(path, value)
+
+
 def _group_exists(pgid):
     try:
         os.killpg(pgid, 0)
+        _trace_event('killpg_query', pgid=pgid, signal=0, exists=True, errno=None)
         return True
-    except ProcessLookupError:
+    except ProcessLookupError as exc:
+        _trace_event('killpg_query', pgid=pgid, signal=0, exists=False, errno=exc.errno)
         return False
+    except OSError as exc:
+        _trace_event('killpg_query', pgid=pgid, signal=0, exists='unknown', errno=exc.errno)
+        raise
 
 
 def _wait_group_exit(child, seconds):
     end = time.monotonic() + seconds
     while True:
-        child.poll()  # Reap the direct child as well as checking the whole group.
-        if not _group_exists(child.pid):
-            return True
+        code = child.poll()  # Existing reap, no additional process queries.
+        _trace_event('direct_child_poll', pid=child.pid, returncode=code)
+        try:
+            if not _group_exists(child.pid):
+                return True
+        except OSError as exc:
+            if exc.errno != errno.EPERM:
+                raise
+            # Darwin can report EPERM while only unreaped zombies remain.
+            # Keep the observation unknown, reap/recheck within this same deadline.
         remaining = end - time.monotonic()
         if remaining <= 0:
             return False
@@ -562,9 +670,17 @@ def _stop_group(child):
         for sig in (signal.SIGTERM, signal.SIGKILL):
             try:
                 os.killpg(child.pid, sig)
-            except ProcessLookupError:
+                _trace_event('killpg_signal', pgid=child.pid, signal=int(sig), errno=None)
+            except ProcessLookupError as exc:
+                _trace_event('killpg_signal', pgid=child.pid, signal=int(sig), errno=exc.errno)
                 child.poll()
                 return not _group_exists(child.pid)
+            except OSError as exc:
+                _trace_event('killpg_signal', pgid=child.pid, signal=int(sig), errno=exc.errno)
+                if exc.errno != errno.EPERM:
+                    raise
+                # A zombie-only Darwin group can reject the signal as well.
+                # Only the subsequent absence query can confirm cleanup.
             if _wait_group_exit(child, 2):
                 return True
     except OSError:
@@ -573,6 +689,15 @@ def _stop_group(child):
 
 
 def supervise(root, argv, *, profile):
+    trace = _ExecutionTrace()
+    token = _execution_trace.set(trace)
+    try:
+        return _supervise(root, argv, profile=profile)
+    finally:
+        _execution_trace.reset(token)
+
+
+def _supervise(root, argv, *, profile):
     value = load(root)
     state = read(root, Path(value['generation']) / 'pipeline.json')
     if not state.get('contract_confirmed'):
@@ -594,6 +719,10 @@ def supervise(root, argv, *, profile):
         raise ValueError('termination_reserve_exhausted')
     timeout = min(120, value['deadline'] - now - 5)
     child = subprocess.Popen(argv, cwd=root, start_new_session=True)
+    trace = _execution_trace.get()
+    if trace is not None:
+        trace.pgid = child.pid  # start_new_session makes the owned child's PID its PGID.
+    _trace_event('owned_child_started', pid=child.pid, pgid=child.pid)
     audit = Path(root) / value['generation'] / 'executions' / (uuid.uuid4().hex + '.json')
     try:
         boot, now = clock()
@@ -605,32 +734,32 @@ def supervise(root, argv, *, profile):
         code = child.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         stopped = _stop_group(child)
-        write_new(audit, {'status':'incomplete', 'termination':'observed' if stopped else 'unknown',
+        _execution_audit(audit, {'status':'incomplete', 'termination':'observed' if stopped else 'unknown',
                           'argv':argv, 'returncode':child.returncode, 'reason':'timeout'})
         raise ValueError('supervised_execution_timeout' if stopped else 'termination_unconfirmed')
     except (OSError, ValueError, subprocess.SubprocessError):
         stopped = _stop_group(child)
-        write_new(audit, {'status':'incomplete', 'termination':'observed' if stopped else 'unknown',
+        _execution_audit(audit, {'status':'incomplete', 'termination':'observed' if stopped else 'unknown',
                           'argv':argv, 'returncode':child.returncode, 'reason':'execution_unverifiable'})
         raise
     try:
         descendants = _group_exists(child.pid)
     except OSError as exc:
         stopped = _stop_group(child)
-        write_new(audit, {'status':'incomplete', 'termination':'observed' if stopped else 'unknown',
+        _execution_audit(audit, {'status':'incomplete', 'termination':'observed' if stopped else 'unknown',
                           'argv':argv, 'returncode':code, 'reason':'process_group_unverifiable'})
         raise ValueError('process_group_unverifiable') from exc
     if descendants:
         stopped = _stop_group(child)
-        write_new(audit, {'status':'incomplete', 'termination':'observed' if stopped else 'unknown',
+        _execution_audit(audit, {'status':'incomplete', 'termination':'observed' if stopped else 'unknown',
                           'argv':argv, 'returncode':code, 'reason':'leftover_descendants'})
         raise ValueError('leftover_descendants_terminated' if stopped else 'termination_unconfirmed')
     try:
         load(root)
     except (OSError, ValueError):
-        write_new(audit, {'status':'incomplete', 'argv':argv, 'returncode':code})
+        _execution_audit(audit, {'status':'incomplete', 'argv':argv, 'returncode':code})
         raise
-    write_new(audit, {'status':'passed' if code==0 else 'failed', 'argv':argv, 'returncode':code})
+    _execution_audit(audit, {'status':'passed' if code==0 else 'failed', 'argv':argv, 'returncode':code})
     return code
 
 

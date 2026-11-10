@@ -70,8 +70,9 @@ def _protocol_v2():
     protocol["schema_version"] = 2
     protocol["activation_cost"] = {
         "control": "minimal_native_skill",
-        "control_skill_sha256": (
-            "5e23c4c8f68bc5c806bf55721d29c45d087982cd262eb4f3ac15bee60212eae7"
+        # A new test protocol pins today's input; historical frozen profiles stay immutable.
+        "control_skill_sha256": runtime._sha256_text(
+            runtime.MINIMAL_ACTIVATION_CONTROL_PATH.read_text(encoding="utf-8")
         ),
         "router_projection": "bare_general_workflow_reference",
         "raw_native_policy": "report_only",
@@ -6551,3 +6552,23 @@ def test_runtime_provenance_rejects_batch_not_bound_to_current_inputs():
             gold_document=gold,
             confirmatory_manifest=confirmatory_manifest,
         )
+
+
+def test_current_activation_fixture_pins_current_control_without_rewriting_frozen_profile():
+    import hashlib
+    current=hashlib.sha256(runtime.MINIMAL_ACTIVATION_CONTROL_PATH.read_bytes()).hexdigest()
+    assert _protocol_v2()['activation_cost']['control_skill_sha256']==current
+    assert current!='5e23c4c8f68bc5c806bf55721d29c45d087982cd262eb4f3ac15bee60212eae7'
+
+
+def test_historical_control_hash_is_not_silently_migrated(tmp_path,monkeypatch):
+    protocol=_protocol_v2();old='5e23c4c8f68bc5c806bf55721d29c45d087982cd262eb4f3ac15bee60212eae7'
+    protocol['activation_cost']['control_skill_sha256']=old
+    skill=tmp_path/'omc-plan/SKILL.md';skill.parent.mkdir()
+    skill.write_text(Path('.agents/skills/omc-plan/SKILL.md').read_text())
+    reference=skill.parent/'references/workflow.md';reference.parent.mkdir()
+    reference.write_text(Path('.agents/skills/omc-plan/references/workflow.md').read_text())
+    calls=[];monkeypatch.setattr(runtime,'execute_provider',lambda **kw:calls.append(kw))
+    with pytest.raises(ValueError,match='minimal activation control skill hash mismatch'):
+        runtime.run_activation_probe(protocol=protocol,skill_path=skill,codex_binary='codex',model='gpt-test',reasoning_effort='low',output_schema=Path(runtime.__file__).parent/'fixtures/omc_plan_output_schema.json',artifact_root=tmp_path/'probe')
+    assert calls==[] and protocol['activation_cost']['control_skill_sha256']==old

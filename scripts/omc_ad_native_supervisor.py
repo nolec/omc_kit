@@ -205,15 +205,23 @@ def assess_phase_evidence(args, origin, span):
         return statuses,'unknown',str(exc)
 
 
+def absolute_span(origin, deadline, now):
+    """Validate the constructed absolute cap before normalizing subtraction error."""
+    try:
+        cap = origin + 1800.0
+        if (not all(math.isfinite(v) for v in (origin, deadline, now, cap))
+                or not origin <= now < deadline <= cap):
+            raise ValueError('invalid absolute deadline')
+        return min(deadline - origin, 1800.0)
+    except (TypeError, OverflowError):
+        raise ValueError('invalid absolute deadline')
+
+
 def supervise_absolute(args):
     """Parent watchdog covers worker setup, legacy execution, custody and seal."""
     origin=args.origin_monotonic; deadline=args.deadline_monotonic
-    try:
-        span=deadline-origin
-        now=time.monotonic()
-        if (not all(math.isfinite(v) for v in (origin,deadline,span)) or not 0<span<=1800
-                or not args.run_id or not args.run_id.strip() or origin>now or deadline<=now):raise ValueError('invalid absolute deadline')
-    except (TypeError,OverflowError):raise ValueError('invalid absolute deadline')
+    span=absolute_span(origin, deadline, time.monotonic())
+    if not args.run_id or not args.run_id.strip():raise ValueError('invalid absolute deadline')
     cwd=args.cwd.resolve(strict=True); output=Path(os.path.abspath(args.output))
     if any(p.is_symlink() for p in [output,*output.parents]):raise ValueError('output symlink')
     for record in (args.child_pid_file,args.child_exit_file):owned_path(cwd,record)

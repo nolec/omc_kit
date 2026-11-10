@@ -21,10 +21,10 @@ import install
 from omc_source_hash import source_sha256
 
 
-def test_source_kit_release_version_is_0_6_4() -> None:
+def test_source_kit_release_version_is_0_6_5() -> None:
     assert (Path(__file__).resolve().parents[1] / "VERSION").read_text(
         encoding="utf-8"
-    ).strip() == "0.6.4"
+    ).strip() == "0.6.5"
 
 
 def _sha256(path: Path) -> str:
@@ -596,3 +596,13 @@ def test_readme_separates_agent_skill_workflow_from_research_cli():
     assert "`$omc-ship`" in text
     assert "내부 research 명령" in text
     assert "관찰 표본에 포함하지 않습니다" in text
+
+
+def test_release_contract_names_current_source_version():
+    root=Path(__file__).resolve().parents[1]
+    version=(root/'VERSION').read_text().strip()
+    assert version=='0.6.5'
+    p=subprocess.run([sys.executable,str(root/'scripts/omc.py'),'version','--target',str(root),'--json'],capture_output=True,text=True,timeout=10)
+    assert p.returncode==0,p.stderr
+    assert json.loads(p.stdout)['source_version']==version
+    assert omc_version.capture_source_identity(root).version==version

@@ -40,20 +40,12 @@ Guard 실행 전에 작업 성격을 분류합니다. 제품 코드 변경은 `i
 
 새 자연 작업은 `start`, 같은 작업의 리뷰 수정은 pending receipt의 `work_id`와 함께 `continue`, 승인된 기존 변경의 문서 정리·로컬 커밋만 수행하면 `preserve`를 사용합니다. `preserve`는 기존 pending 작업이 없으면 실패합니다. 같은 baseline이라는 이유만으로 `work_id`를 추론하거나 다른 작업에 재사용하지 않습니다.
 
-### 코드 변경 없는 검증·완료 기록 재개
-
-위 `senior_coding` 명령은 구현 진입용입니다. 기존 승인·RED를 사용해 남은 검증이나 완료 기록만 이어갈 때는 `senior_coding + preserve`를 사용하지 않습니다. 읽기 검토는 기존 보존 역할을 사용하고, 검증 실행·완료 발행은 비구현 역할로 명시적으로 연결합니다:
+### 코드 변경 없는 검증·완료 기록 재개 — 위 `senior_coding` 명령은 구현 진입용입니다. 기존 승인·RED를 사용해 남은 검증이나 완료 기록만 이어갈 때는 `senior_coding + preserve`를 사용하지 않습니다. 읽기 검토는 기존 보존 역할을 사용하고, 검증 실행·완료 발행은 비구현 역할로 명시적으로 연결합니다:
 
 `python3 scripts/omc.py state sync-session --target . --mode autopilot --title "omc-task" --request "<승인된 같은 작업의 남은 검증·완료 기록 재개>" --roles directive --completion-action preserve`
 
-기존 pending 작업·work_id·baseline·승인 기준·코드 상태가 일치하는지 확인한 뒤 원래 소유 세션의 검증 기록을 사용합니다. 역할 전환 자체가 승인·검증 성공을 뜻하지 않습니다. 코드 수정이 필요하면 이 경로를 중단하고 기존 work_id를 명시한 구현 `continue`로 별도 진입합니다.
-
-인계 없는 session_start는 CONTRACT 연결을 초기화합니다. `preserve`만으로 초기화된 승인을 복원할 수 없습니다. 인계는 기존 승인된 실행 경로에서 발급·소비하고, 지원되지 않는 일반 재개에서는 원본을 보존한 채 차단 사유를 보고합니다. 새 세션에 승인·RED를 복사하거나 재등록해 통과시키지 않습니다.
-
-8시간 만료는 역할 변경으로 연장하지 않습니다. 기존 명시적 완료 재승인 경로의 조건과 사용자 승인을 확인하며, 실패·미실행 검증은 재승인으로 통과하지 않습니다. 기능 검증 결과와 완료 기록 처리 결과를 구분해 보고합니다.
-
-실패하면 세션 확인 또는 confirm부터 처리하고 중단합니다.
-Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`으로 저장소 밖 사용자 custody를 한 번 생성하고 `preflight`로 확인합니다. Guard는 이 설정을 자동 로드해 세션 생성 즉시 lock을 봉인합니다. CI처럼 환경변수가 필요한 곳은 `OMC_REQUIRE_WORK_CLASS_LOCK=1`, 외부 `OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE`, pinned `OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY`를 함께 설정합니다. 등록 저장소의 새 implementation session은 Guard가 `live-start`를 자동 실행합니다. `COLLECTING`이면 최초 완료 보고 직전 보고·검증 원문을 외부 임시 파일에 보존해 `python3 scripts/omc_completion_observation.py live-capture --target . --report <임시보고> --verification-output <임시검증> [--unrun <항목>]`으로 기록합니다. 자동 start 실패는 제품 작업을 차단하지 않고 failure receipt를 남기며 해당 표본만 무효화합니다. 미등록 저장소는 관찰을 시작하지 않습니다. 사용자에게 원문 복사를 요구하지 않고 `commit_bound=false` snapshot을 signed completion receipt나 Pilot 근거로 사용하지 않습니다.
+기존 pending 작업·work_id·baseline·승인 기준·코드 상태가 일치하는지 확인한 뒤 원래 소유 세션의 검증 기록을 사용합니다. 역할 전환 자체가 승인·검증 성공을 뜻하지 않습니다. 코드 수정이 필요하면 이 경로를 중단하고 기존 work_id를 명시한 구현 `continue`로 별도 진입합니다.  인계 없는 session_start는 CONTRACT 연결을 초기화합니다. `preserve`만으로 초기화된 승인을 복원할 수 없습니다. 인계는 기존 승인된 실행 경로에서 발급·소비하고, 지원되지 않는 일반 재개에서는 원본을 보존한 채 차단 사유를 보고합니다. 새 세션에 승인·RED를 복사하거나 재등록해 통과시키지 않습니다.  8시간 만료는 역할 변경으로 연장하지 않습니다. 기존 명시적 완료 재승인 경로의 조건과 사용자 승인을 확인하며, 실패·미실행 검증은 재승인으로 통과하지 않습니다. 기능 검증 결과와 완료 기록 처리 결과를 구분해 보고합니다.
+실패하면 세션 확인 또는 confirm부터 처리하고 중단합니다. Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`으로 저장소 밖 사용자 custody를 한 번 생성하고 `preflight`로 확인합니다. Guard는 이 설정을 자동 로드해 세션 생성 즉시 lock을 봉인합니다. CI처럼 환경변수가 필요한 곳은 `OMC_REQUIRE_WORK_CLASS_LOCK=1`, 외부 `OMC_WORK_CLASS_LOCK_PRIVATE_KEY_FILE`, pinned `OMC_TRUSTED_WORK_CLASS_LOCK_PUBLIC_KEY`를 함께 설정합니다. 등록 저장소의 새 implementation session은 Guard가 `live-start`를 자동 실행합니다. `COLLECTING`이면 최초 완료 보고 직전 보고·검증 원문을 외부 임시 파일에 보존해 `python3 scripts/omc_completion_observation.py live-capture --target . --report <임시보고> --verification-output <임시검증> [--unrun <항목>]`으로 기록합니다. 자동 start 실패는 제품 작업을 차단하지 않고 failure receipt를 남기며 해당 표본만 무효화합니다. 미등록 저장소는 관찰을 시작하지 않습니다. 사용자에게 원문 복사를 요구하지 않고 `commit_bound=false` snapshot을 signed completion receipt나 Pilot 근거로 사용하지 않습니다.
 
 ## Tier별 필수 체크
 
@@ -73,14 +65,11 @@ Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`�
 
 안전 필수 항목: CONTRACT / RED / TDD GATE / Handoff는 압축해도 유지 | 작은 후속 수정도 해당 Tier의 Guard·CONTRACT·RED 적용 요건과 순서는 유지 | 범위 분리: 현재 dirty 변경과 이번 구현 범위를 섞지 않음
 
-## PHASE 1 ▸ CONTRACT — 목표 / 범위 / DoD / 제약 / 사용자 컨펌:
-- 컨펌 전 구현 파일을 수정하지 않습니다. 완료 판정 계약: CONTRACT에서 필수 검증의 대상·방법·통과 조건을 확정한다. 통제된 컴포넌트 검증과 실제 서비스 검증은 별개이며 필수 대상 대신 다른 화면·버전의 증거를 쓰면 증거 불일치다. 필수 검증 통과일 때만 전체 완료를 보고한다. 미실행·확인 불가는 구현됨·검증 미완료, 실패는 수정 필요, 증거 불일치는 재검증 필요로 보고한다. 브라우저 불필요가 계약상 명확하면 브라우저 미실행만으로 보류하지 않는다. 기존 실패는 동일 기준의 비교 근거가 있을 때만 신규 실패와 구분한다. 코드 승인과 전체 완료를 구분하며 미충족 검증·사유·다음 행동 한 가지를 명시한다. 이 안내는 물리적 차단을 보장하지 않는다. task의 필수 검증이 미충족이면 본문 완료 주장 금지, outcome=blocked 및 reason_code=verification_incomplete로 보고하고 충족한 경우에만 outcome=done을 사용한다. 검증을 수행할 수 없으면 통과로 추정하거나 필수 조건을 임의로 낮추지 않는다. 기존 기계 계약: VERDICT는 PROCEED 또는 BLOCK만 사용한다. PROCEED=>done,omc-review,false; BLOCK=>blocked,null,true (순서: outcome,next_skill,user_selection_needed). risk는 low/medium/high이고 user_selection_needed는 boolean으로 출력한다. 검증 상태 첫 문장: 최종 task 보고 첫 줄은 정확히 다음 상태 문장 하나다: 통과=필수 검증 통과·작업 완료; 미실행/확인 불가=구현됨·검증 미완료; 실패=검증 실패·수정 필요; 증거 불일치=증거 불일치·재검증 필요. 실패 > 증거 불일치 > 미실행 > 통과 순으로 판정한다. 구현 반영이 확인되지 않았으면 구현 여부 확인 불가·검증 미완료를 사용한다. 첫 줄에 괄호나 부분 완료 주장을 붙이지 않는다. blocked 보고에는 작업 완료/전체 완료/구현 완료라는 부분 완료 제목을 쓰지 말고 확인된 반영 사실은 별도 줄의 구현 상태: 반영됨으로 쓴다.
+## PHASE 1 ▸ CONTRACT — 목표 / 범위 / DoD / 제약 / 사용자 컨펌: 컨펌 전 구현 파일을 수정하지 않습니다. 완료 판정 계약: CONTRACT에서 필수 검증의 대상·방법·통과 조건을 확정한다. 통제된 컴포넌트 검증과 실제 서비스 검증은 별개이며 필수 대상 대신 다른 화면·버전의 증거를 쓰면 증거 불일치다. 필수 검증 통과일 때만 전체 완료를 보고한다. 미실행·확인 불가는 구현됨·검증 미완료, 실패는 수정 필요, 증거 불일치는 재검증 필요로 보고한다. 브라우저 불필요가 계약상 명확하면 브라우저 미실행만으로 보류하지 않는다. 기존 실패는 동일 기준의 비교 근거가 있을 때만 신규 실패와 구분한다. 코드 승인과 전체 완료를 구분하며 미충족 검증·사유·다음 행동 한 가지를 명시한다. 이 안내는 물리적 차단을 보장하지 않는다. task의 필수 검증이 미충족이면 본문 완료 주장 금지, outcome=blocked 및 reason_code=verification_incomplete로 보고하고 충족한 경우에만 outcome=done을 사용한다. 검증을 수행할 수 없으면 통과로 추정하거나 필수 조건을 임의로 낮추지 않는다. 기존 기계 계약: VERDICT는 PROCEED 또는 BLOCK만 사용한다. PROCEED=>done,omc-review,false; BLOCK=>blocked,null,true (순서: outcome,next_skill,user_selection_needed). risk는 low/medium/high이고 user_selection_needed는 boolean으로 출력한다. 검증 상태 첫 문장: 최종 task 보고 첫 줄은 정확히 다음 상태 문장 하나다: 통과=필수 검증 통과·작업 완료; 미실행/확인 불가=구현됨·검증 미완료; 실패=검증 실패·수정 필요; 증거 불일치=증거 불일치·재검증 필요. 실패 > 증거 불일치 > 미실행 > 통과 순으로 판정한다. 구현 반영이 확인되지 않았으면 구현 여부 확인 불가·검증 미완료를 사용한다. 첫 줄에 괄호나 부분 완료 주장을 붙이지 않는다. blocked 보고에는 작업 완료/전체 완료/구현 완료라는 부분 완료 제목을 쓰지 말고 확인된 반영 사실은 별도 줄의 구현 상태: 반영됨으로 쓴다.
 
-## PHASE 2 ▸ DESIGN — 입력/출력 계약 / 실패·에러 정책 / 영향받는 파일:
-- decision / risk / next_action: 구현 상태 / 변경 위험도 / 다음 스킬 1개; 공통 결정표: stage=task / outcome=blocked|done / user_selection_needed=yes|no; 계약이 약한 작업도 빈칸 없이 적고, 작은 후속 수정도 영향 파일과 실패 정책은 생략하지 않습니다.
+## PHASE 2 ▸ DESIGN — 입력/출력 계약 / 실패·에러 정책 / 영향받는 파일: decision / risk / next_action: 구현 상태 / 변경 위험도 / 다음 스킬 1개; 공통 결정표: stage=task / outcome=blocked|done / user_selection_needed=yes|no; 계약이 약한 작업도 빈칸 없이 적고, 작은 후속 수정도 영향 파일과 실패 정책은 생략하지 않습니다.
 
-## PHASE 3 ▸ RED — 테스트 파일 / 테스트 케이스 / 실제 FAIL 출력: `python3 scripts/omc_pipeline_guard.py red-done <테스트파일> --evidence-file <RED근거JSON>`
-- FAIL 출력과 `red-done` 등록 없이 구현 파일을 만들지 않습니다.
+## PHASE 3 ▸ RED — 테스트 파일 / 테스트 케이스 / 실제 FAIL 출력: `python3 scripts/omc_pipeline_guard.py red-done <테스트파일> --evidence-file <RED근거JSON>` — FAIL 출력과 `red-done` 등록 없이 구현 파일을 만들지 않습니다.
 
 ## PHASE 4 ▸ GREEN — 구현 파일 / 핵심 변경 / 테스트 PASS / 기존 회귀 없음: 최소 구현만 먼저 합니다.
 
@@ -90,28 +79,22 @@ Prospective 수집은 `python3 scripts/omc_work_class_lock.py init --target .`�
 
 ## PHASE 7 ▸ COMPOUND ENGINEERING — `python3 scripts/omc_lesson.py add -i`로 교훈 기록. 막히면 `교훈 없음`을 명시합니다.
 
-## Handoff — 모든 단계가 끝나면 `$omc-review`로 넘깁니다.
+Handoff — 모든 단계가 끝나면 `$omc-review`로 넘깁니다.
 
 
-## 완료 보고 생성 게이트
-
-실행 기록과 native 호출 영수증은 별개입니다. 영수증이 없으면 `python3 scripts/omc_native_red_evidence.py diagnose --target .`로 읽기 전용 진단을 확인합니다. `receipts`의 배열 형식은 유지합니다. 명령은 한 줄로 단독 실행하며 끝의 `2>&1` 한 개만 허용합니다. 기록 삭제·덮어쓰기나 runner 중첩 재실행은 하지 않습니다. 최종 공식 상태는 `complete-task` 출력 그대로 사용하고, 수집 결과의 `report-comparison.txt`에서 공식 판정과 모델 원문의 상태 불일치를 별도로 확인합니다. 이 안내는 모델 준수나 실제 실행 성공을 보장하지 않습니다.
+## 완료 보고 생성 게이트 — 실행 기록과 native 호출 영수증은 별개입니다. 영수증이 없으면 `python3 scripts/omc_native_red_evidence.py diagnose --target .`로 읽기 전용 진단을 확인합니다. `receipts`의 배열 형식은 유지합니다. 명령은 한 줄로 단독 실행하며 끝의 `2>&1` 한 개만 허용합니다. 기록 삭제·덮어쓰기나 runner 중첩 재실행은 하지 않습니다. 최종 공식 상태는 `complete-task` 출력 그대로 사용하고, 수집 결과의 `report-comparison.txt`에서 공식 판정과 모델 원문의 상태 불일치를 별도로 확인합니다. 이 안내는 모델 준수나 실제 실행 성공을 보장하지 않습니다.
 
 승인된 기준을 `approve-checks --file <JSON>`으로 등록하고 CONTRACT에 같은 검증 ID를 고정합니다. RED는 기존 실패와 구분한 실제 새 실패를 `red-done <테스트파일> --evidence-file <RED근거JSON>`으로 등록합니다. 검증 직전 `verification-template`을 생성해 실행 결과를 기록하고 `complete-task --verification-file <내부 경로>`의 상태·기계 판정을 그대로 사용합니다. 필수 검증을 임의 제외하지 않습니다. 승인 기준에 `validation_commands_policy_sha256`가 있으면 `checks.tests.validation_receipt`에 고정 tests 실행이 반환한 `{path, sha256}`를 연결합니다. 설명문이나 `status=passed`로 원문 판정을 바꾸지 않습니다. 누락·구분 불가·대상/해시/상태 불일치는 완료로 인정하지 않습니다. 이 연결이 없는 일반 작업은 기존 형식을 유지합니다. 실행 전 필수 상세: [승인 기준·RED JSON·스냅샷·폴더 링크 정책](references/verification.md)을 읽습니다. 기록은 실행 진위·요구의 의미 관련성 인증이 아니며, 정상 내부 폴더 링크는 결속하고 외부·순환·검사 제외 링크는 거부합니다.
 
 ## 다음 추천
 
-- 우선순위는 항상 `현재 병목 > 기본 파이프라인`
-- 주추천 1개만 제시, 우선순위: 구현 완료 + 게이트 통과면 `$omc-review`
+- 우선순위는 항상 `현재 병목 > 기본 파이프라인`; 주추천 1개만 제시, 우선순위: 구현 완료 + 게이트 통과면 `$omc-review`
 - 구현 완료 + 사용자가 일단 결과만 확인하려는 상태면 내부 라우팅은 사용자 선택 대기, 화면에는 `결과를 확인한 뒤 리뷰 진행 여부를 알려주세요.`
-- 실패 원인 불명 → `$omc-investigate`
-- 자동으로 진행하지는 않습니다.
+- 실패 원인 불명 → `$omc-investigate`. 자동으로 진행하지는 않습니다.
 
 ---
 
-## ⛔ 자동 진입 금지
-
-이 스킬이 완료된 후 자동으로 다음 스킬을 실행하지 않고, 사용자가 명시적으로 다음 스킬을 요청할 때까지 멈추고 기다린다.
+## ⛔ 자동 진입 금지 — 이 스킬이 완료된 후 자동으로 다음 스킬을 실행하지 않고, 사용자가 명시적으로 다음 스킬을 요청할 때까지 멈추고 기다린다.
 
 
 ## 최종 보고와 작업 기록의 구분 — PHASE 7 기록은 최종 답변에 붙이지 않습니다. 단계별 기록과 교훈은 작업 중 처리하고, 사용자 최종 보고는 상태·변경·검증·다음 행동만 간결하게 작성합니다. complete-task의 별도 기록을 먼저 검증하고 한글 stdout만 최종 답변에 제공합니다. 기계 판정은 불변 기록으로 보존합니다. 이 최종 보고 계약이 위 단계별 양식보다 우선합니다.
@@ -158,42 +141,10 @@ CLI와 수집기는 동일 승인 종류·공용 판정과 실제 반환 경로�
 
 
 ## 승인된 비구현 캐시 정리의 완료 경로
-
-최초 승인 기준에 `completion_kind=verified_nonimplementation`과 `maintenance` 정책을 고정한 캐시 정리만 `complete-maintenance`를 사용합니다. 종류 생략·구현 작업은 계속 `complete-task`와 실제 RED를 요구합니다. work_class로 면제를 선택하지 않습니다. 이 기능 자체의 수정도 구현 경로를 따릅니다.
-
-정책은 `profile=cache_cleanup`, `.pytest_cache`·`scripts/__pycache__`의 승인된 부분집합 `allowed_paths`, 보존 파일 `protected_files`, 내부 `.omc/`의 `evidence_root`입니다. 같은 작업의 개정·역할 전환으로 종류·정책을 바꾸거나 기준을 갱신하지 않습니다. 최초 `contract-done --required-checks <승인ID>`가 기준을 한 번 고정하며, 성공 안내 뒤 `maintenance_baseline_registered` JSON을 반환합니다. 별도 기준 등록·삭제 실행기는 없습니다.
-
-기존 dirty 파일은 실제 내용·권한·HEAD·원본 인덱스로 보존하고 그 이후 변경은 차단합니다. 삭제는 승인 절대경로를 정렬한 단일 `/bin/rm -rf -- <경로...>` 호출만 지원하며, 직후 `python3 -c <omc_pipeline_guard.MAINTENANCE_POSTCHECK> <동일 경로...>`의 lstat 부재 확인이 필요합니다. 호출 전에 임의 Python 본문·wrapper·명령 연결로 바꾸지 않습니다.
-
-실제 Bash JSONL의 CONTRACT 반환→삭제 호출/반환→직후 확인 호출/반환 prefix를 완료 호출 전에 내부 일반 파일로 공급합니다. `omc-maintenance-operation/v1`은 작업·세션·승인 해시, 기준·prefix 참조와 해시, 삭제·확인 call ID를 결속합니다. 검증 JSON의 `maintenance_operation_ref: {path, sha256}`와 각 필수 검사 `evidence_files: [{path, sha256}]`를 연결한 뒤 `complete-maintenance --verification-file <내부 JSON> --output-mode detached_v1 --output-context <문맥> --output-context-sha256 <해시>`로 판정합니다. 일반 publish의 모델 선언은 완료 근거가 아닙니다.
-
-직후 부재 확인이 성공해야 제거 또는 NO_OP로 인정합니다. 삭제 실패·부분 실패, 확인 누락·권한 오류, 지원하지 않는 provider·메타데이터는 차단합니다. 이후 캐시 재생성은 기존 제거량에 더하지 않습니다. 수집기는 같은 판정과 실제 전체 로그의 prefix를 대조합니다. 로컬 기록 대조는 악의적 로컬 작성자나 커널 수준 실행 진위를 인증하지 않습니다. 캐시 정리 완료를 기존 dirty 구현·리뷰·출하 승인으로 전용하거나 과거 BLOCK에 소급 적용하지 않습니다.
-
-### 등록 실패의 제한된 복구 · baseline/v2와 operation/v2
-
-실행기가 `OMC_MAINTENANCE_READY_FILE`과 launch별 control을 준비한 경우에만 이 복구 경로를 사용합니다. 최초 `contract-done`이 기준 게시 후 state 저장에 실패하고, 실제 반환에 `status=maintenance_registration_failed`, `failure_stage=state_save`, `ready_file`이 있어야 합니다. 호출·반환 유실, state 훼손·만료, 이미 저장된 기준 참조, 삭제 이후는 자동 복구하지 않습니다.
-
-1. 부모 수집기가 실패 반환까지의 원본 prefix를 불변 게시한 뒤 ready를 게시합니다. 에이전트가 원본 로그·종료 코드·ready를 직접 작성하거나 덮어쓰지 않습니다.
-2. `python3 scripts/omc_pipeline_guard.py maintenance-recovery-info --ready-file <실패 반환의 ready_file>`을 한 번 호출합니다. 최대10초와 원래 TTL 남은 시간 중 짧은 시간만 기다립니다. 실패·시간 초과·다른 작업/launch/기준이면 멈추고 재시도·삭제를 하지 않습니다.
-3. info가 종료0으로 반환한 `prefix_ref.path`와 `prefix_ref.sha256`을 그대로 사용해 `python3 scripts/omc_pipeline_guard.py contract-done --required-checks <같은 승인ID목록> --maintenance-recovery-file <prefix_ref.path> --maintenance-recovery-sha256 <prefix_ref.sha256>`을 한 번 호출합니다. 성공 receipt를 확인한 뒤에만 승인된 정리 절차를 진행합니다.
-4. 복구는 원본 state·기준·TTL과 최초 CONTRACT 해시를 보존합니다. 새 baseline/v2에는 원본 state 해시·시작 시점·계약 해시·launch control을 고정하며 다른 계약 본문으로 복구하지 않습니다. 해시가 없는 과거 기준을 자동 변환하거나 새 TTL로 보정하지 않습니다.
-5. 복구 작업은 `omc-maintenance-operation/v2`에 동일한 recovery descriptor와 `recovered_contract_call_id`를 연결합니다. 실패 prefix를 필수 preservation 검증의 `evidence_files`에도 연결해야 합니다. CLI와 수집기는 실패 CONTRACT→info→복구 CONTRACT→삭제·직후 확인의 실제 전체 로그와 파일 해시를 대조합니다. 복구 없는 작업의 operation/v1과 구형 기준의 기존 완료 검증은 유지합니다.
-
-ready는 전달용 metadata이며 승인·완료 증거가 아닙니다. 코드 보완 A의 통제된 테스트와 실제 실행기 운용 검증 B를 구분하며, 실제 provider의 필수 로그·종료 정보·ready 왕복 확인 전에는 B 보류를 유지합니다.
-
-
+캐시 정리는 최초 승인에 `completion_kind=verified_nonimplementation`·`maintenance`·`profile=cache_cleanup`이 고정된 경우만 `complete-maintenance`를 사용한다. 구현 RED 면제가 아니다. 실행 전 `references/verification.md`의 「승인된 비구현 캐시 정리의 완료 경로」와 「등록 실패의 제한된 복구 · baseline/v2와 operation/v2」를 반드시 읽고 기준·소유권·실제 prefix·해시·실패 중단 조건을 그대로 적용한다. 승인·기준·ready·TTL·원문을 임의 복구하거나 소급 변경하지 않는다.
 
 ## 최종 후보 준비 — 릴리스 의도가 있을 때
-
-릴리스 요청은 준비 담당 `directive`가 버전·문서 변경을 마친 최종 커밋·명시적 base·전체 경로를 고정하는 단계부터 시작합니다. `code_review`는 그 전체 후보를 검토하고, 준비 담당은 기존 `capture-review` → `seal-review-output` → `record-review`를 원래 승인 원문과 정확한 expected-path로 연결한 뒤 `validate-ship=READY`를 확인합니다. 같은 내용의 정상 커밋은 공식 동일성 검증을 사용하며, 추가 파일·amend·base 변경은 기존 승인을 임의 재사용하지 않습니다.
-
-품질 설정은 명시적 새 proposal과 현재 설정을 비교합니다. 사용자 설정 승인을 받은 뒤 준비 담당이 `proposal-validate` → `proposal-apply` → `approve`를 연결하고 `status=ready`를 확인합니다. 설정 승인은 검사 실행 승인이 아니며 실행 횟수·마감도 확인합니다. 해시만으로 과거 문서의 의미를 추론하지 않고 원문이 없으면 UNKNOWN으로 남깁니다.
-
-통합 읽기 전용 확인: `python3 scripts/omc_ship_preflight.py diagnose --target <source절대경로> --contract <고정preflight계약>`; 새 설정 제안은 `--proposal <명시적JSON> --proposal-sha256 <원문해시>`로 고정합니다. 격리 리뷰를 대조할 때만 `--review-target <격리저장소절대경로>`를 명시합니다. 이 명령은 후보·리뷰·품질 문제를 함께 표시하며 설정·승인·소스에 쓰거나 검사를 실행하지 않습니다. 격리 승인 일치는 원본의 READY를 대신하지 않습니다.
-
-준비 담당은 두 readiness를 모두 확인한 뒤에만 기존 ship 절차에 인계합니다. ship의 `prepare/check` 안에서 source를 다시 봉인하거나 설정을 고치지 않습니다. 고정 후 코드·버전·문서·base·설정·근거가 바뀌면 관련 준비 결과를 무효화하고 해당 검토부터 다시 확인합니다. 과거 receipt·원문을 삭제하거나 포인터를 복사하지 않습니다. 준비 진단은 실행 토큰이 아니며 실제 실행 단계에서도 기존 결속 검사를 유지합니다.
-
-작업 완료·커밋 완료·릴리스 준비 완료·검사 통과·설치 완료를 구분해 보고합니다. 준비가 남았으면 그 항목을 명시하고, 코드 완료를 출하 준비로 보고하지 않습니다. 실제 모델의 안내 준수와 사용자 개입 감소는 이 지침·fixture만으로 입증되지 않습니다.
+릴리스 요청은 준비 담당 `directive`가 버전·문서 변경을 마친 최종 커밋·명시적 base·전체 경로를 고정하는 단계부터 시작합니다. `code_review`는 그 전체 후보를 검토하고, 준비 담당은 기존 `capture-review` → `seal-review-output` → `record-review`를 원래 승인 원문과 정확한 expected-path로 연결한 뒤 `validate-ship=READY`를 확인합니다. 같은 내용의 정상 커밋은 공식 동일성 검증을 사용하며, 추가 파일·amend·base 변경은 기존 승인을 임의 재사용하지 않습니다. 품질 설정은 명시적 새 proposal과 현재 설정을 비교합니다. 사용자 설정 승인을 받은 뒤 준비 담당이 `proposal-validate` → `proposal-apply` → `approve`를 연결하고 `status=ready`를 확인합니다. 설정 승인은 검사 실행 승인이 아니며 실행 횟수·마감도 확인합니다. 해시만으로 과거 문서의 의미를 추론하지 않고 원문이 없으면 UNKNOWN으로 남깁니다. 통합 읽기 전용 확인: `python3 scripts/omc_ship_preflight.py diagnose --target <source절대경로> --contract <고정preflight계약>`; 새 설정 제안은 `--proposal <명시적JSON> --proposal-sha256 <원문해시>`로 고정합니다. 격리 리뷰를 대조할 때만 `--review-target <격리저장소절대경로>`를 명시합니다. 이 명령은 후보·리뷰·품질 문제를 함께 표시하며 설정·승인·소스에 쓰거나 검사를 실행하지 않습니다. 격리 승인 일치는 원본의 READY를 대신하지 않습니다. 준비 담당은 두 readiness를 모두 확인한 뒤에만 기존 ship 절차에 인계합니다. ship의 `prepare/check` 안에서 source를 다시 봉인하거나 설정을 고치지 않습니다. 고정 후 코드·버전·문서·base·설정·근거가 바뀌면 관련 준비 결과를 무효화하고 해당 검토부터 다시 확인합니다. 과거 receipt·원문을 삭제하거나 포인터를 복사하지 않습니다. 준비 진단은 실행 토큰이 아니며 실제 실행 단계에서도 기존 결속 검사를 유지합니다. 작업 완료·커밋 완료·릴리스 준비 완료·검사 통과·설치 완료를 구분해 보고합니다. 준비가 남았으면 그 항목을 명시하고, 코드 완료를 출하 준비로 보고하지 않습니다. 실제 모델의 안내 준수와 사용자 개입 감소는 이 지침·fixture만으로 입증되지 않습니다.
 
 ## Machine output contract
 별도 기록 모드 `detached_v1`을 명시적으로 사용한다. `omc-output/v1`의 stage/outcome/risk/next_skill/user_selection_needed/reason_code·VERDICT·기존 라우팅 의미는 바꾸지 않는다. `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT`는 내부 판정 원문에만 두고 사용자 최종 답변에 붙이지 않는다. 한글 판정·이유·검증·다음 행동만 표시한다.

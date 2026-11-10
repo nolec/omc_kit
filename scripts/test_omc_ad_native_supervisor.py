@@ -1515,3 +1515,56 @@ def test_relay_trace_required_header_and_native_stream(tmp_path):
                 SimpleNamespace(ack_deadline=None,pending=None,error=None))
             assert result['status']=='unknown', (event,change,result)
     path.write_bytes(original)
+
+
+@pytest.mark.parametrize('edge,valid', [('cap',True),('below',True),('above',False),('zero',False),('expired',False),('future',False),('nan',False),('inf',False)])
+def test_absolute_deadline_canonical_ulp_contract(edge,valid):
+    import math
+    import omc_ad_native_supervisor as m
+    origin=260345.234567892;deadline=origin+1800.;now=origin+.01
+    if edge=='below':deadline=math.nextafter(deadline,-math.inf)
+    if edge=='above':deadline=math.nextafter(deadline,math.inf)
+    if edge=='zero':deadline=origin
+    if edge=='expired':now=deadline
+    if edge=='future':now=origin-1
+    if edge=='nan':now=float('nan')
+    if edge=='inf':origin=float('inf')
+    assert hasattr(m,'absolute_span'), 'canonical deadline validation is missing'
+    if valid:assert 0<m.absolute_span(origin,deadline,now)<=1800
+    else:
+        with pytest.raises(ValueError):m.absolute_span(origin,deadline,now)
+
+
+@pytest.mark.parametrize('edge', ['cap','below','above'])
+def test_public_absolute_canonical_cap_boundary(tmp_path,edge):
+    import math
+    origin=260345.234567892;deadline=origin+1800.
+    if edge=='above':deadline=math.nextafter(deadline,math.inf)
+    if edge=='below':deadline=math.nextafter(deadline,-math.inf)
+    prompt=tmp_path/'prompt';prompt.write_text('synthetic input')
+    # Test-only clock in the actual CLI process; real fork/child/stream path remains.
+    shim=("import sys,time;sys.path.insert(0,"+repr(str(ROOT/'scripts'))+");"
+          "import omc_ad_native_supervisor as m;old=time.monotonic;start=old();"
+          "time.monotonic=lambda:"+repr(origin+.01)+"+old()-start;raise SystemExit(m.main())")
+    argv=[sys.executable,'-c',shim,'--cwd',str(tmp_path),'--output',str(tmp_path/'out'),
+          '--prompt',str(prompt),'--child-pid-file',str(tmp_path/'child.pid'),
+          '--child-exit-file',str(tmp_path/'child.exit'),'--origin-monotonic',str(origin),
+          '--deadline-monotonic',str(deadline),'--run-id','ulp-public','--',
+          '/bin/sh','-c',RECORDER,'native-launch',sys.executable,'-c',
+          f'import sys;sys.stdin.read();print({SUCCESS!r},end="")']
+    result=subprocess.run(argv,capture_output=True,timeout=8)
+    if edge=='above':
+        assert result.returncode!=0 and b'invalid absolute deadline' in result.stderr
+        assert not (tmp_path/'out').exists() and not (tmp_path/'child.pid').exists()
+    else:
+        record=json.loads((tmp_path/'out/result.json').read_text())
+        assert record['process_result']=='normal' and record['cleanup_result']=='confirmed'
+        assert record['full_contract_pass'] is False # No phase evidence manufactured.
+
+
+@pytest.mark.parametrize('field', ['origin','deadline','now'])
+@pytest.mark.parametrize('bad',[float('nan'),float('inf'),-float('inf')])
+def test_absolute_deadline_rejects_each_nonfinite_input(field,bad):
+    import omc_ad_native_supervisor as m
+    values={'origin':100.,'deadline':1900.,'now':101.};values[field]=bad
+    with pytest.raises(ValueError):m.absolute_span(values['origin'],values['deadline'],values['now'])

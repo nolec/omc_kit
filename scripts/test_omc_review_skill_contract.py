@@ -404,3 +404,10 @@ def test_tracked_antigravity_review_matches_current_template():
     template = ROOT / 'templates/.agents/skills/omc-review/SKILL.md'
     assert deployed.read_bytes() == template.read_bytes()
     assert deployed.stat().st_mode & 0o777 == template.stat().st_mode & 0o777
+
+
+def test_review_source_preparation_keeps_budget_and_full_contract():
+    text=_workflow_without_output_protocol(_read(REQUIRED_REVIEW_SKILL_PATHS[0]))
+    assert len([line for line in text.splitlines() if line.strip()])<=57
+    for marker in ('capture-review','seal-review-output','record-review','validate-ship'):
+        assert marker in _read(REQUIRED_REVIEW_SKILL_PATHS[0])

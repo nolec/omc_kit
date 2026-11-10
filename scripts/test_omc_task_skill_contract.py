@@ -152,20 +152,34 @@ def test_ignored_live_agent_skill_path_is_optional(tmp_path: Path):
     }
 
 
+def _task_sections(text):
+    sections = {'core': [], 'transfer': [], 'prebound': []}
+    current = 'core'
+    fence = None
+    for line in text.splitlines():
+        marker = re.match(r'^(`{3,}|~{3,})(.*)$', line)
+        if marker:
+            run, tail = marker.groups()
+            if fence is None: fence = (run[0], len(run))
+            elif run[0] == fence[0] and len(run) >= fence[1] and not tail.strip(): fence = None
+        if fence is None and re.match(r'^#{1,3} ', line):
+            current = ('transfer' if line == '## 검증된 동일 커밋 이관의 별도 완료 경로'
+                       else 'prebound' if line == '### 사전 승인된 비교 실행의 진입'
+                       else 'core')
+        sections[current].append(line)
+    return tuple('\n'.join(sections[key]) for key in ('core', 'transfer', 'prebound'))
+
+
 def test_task_skill_stays_short_enough_to_scan():
     text = _workflow_without_output_protocol(_read(REQUIRED_TASK_SKILL_PATHS[0]))
-    core, separator, transfer = text.partition('\n## 검증된 동일 커밋 이관의 별도 완료 경로')
-    assert separator and len([line for line in transfer.splitlines() if line.strip()]) <= 36
+    core, transfer, prebound = _task_sections(text)
+    assert transfer and len([line for line in transfer.splitlines() if line.strip()]) <= 36
     for marker in ('complete-transfer', 'register-transfer', 'RED', '보존'):
         assert marker in transfer
-    comparison, separator, general = core.partition('### 일반 작업의 진입')
-    intro, separator2, prebound = comparison.partition('### 사전 승인된 비교 실행의 진입')
-    assert separator and separator2
-    assert len([line for line in prebound.splitlines() if line.strip()]) <= 12
+    assert prebound and len([line for line in prebound.splitlines() if line.strip()]) <= 12
     for marker in ('task-context', 'policy_sha256', 'basis_sha256', '실패는 중단'):
         assert marker in prebound
-    workflow = intro + general
-    assert len([line for line in workflow.splitlines() if line.strip()]) <= MAX_NON_EMPTY_LINES
+    assert len([line for line in core.splitlines() if line.strip()]) <= MAX_NON_EMPTY_LINES
 
 
 def test_task_skill_preserves_required_execution_order():
@@ -275,3 +289,12 @@ def _workflow_without_output_protocol(text):
 def test_task_copies_require_detached_output_contract():
     for path in REQUIRED_TASK_SKILL_PATHS:
         _workflow_without_output_protocol(_read(path))
+
+
+def test_task_peer_heading_sections_do_not_hide_later_core_requirements():
+    assert '_task_sections' in globals(), 'peer heading partition is missing'
+    text='intro\n## 검증된 동일 커밋 이관의 별도 완료 경로\ntransfer\n```bash\n# comment\ncomplete-transfer\n```\n## 승인된 비구현 캐시 정리의 완료 경로\nmaintenance\n'
+    core,transfer,prebound=_task_sections(text)
+    assert 'maintenance' in core and 'transfer' not in core
+    assert 'transfer' in transfer and 'maintenance' not in transfer
+    assert '# comment' in transfer and 'complete-transfer' in transfer

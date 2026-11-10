@@ -7,17 +7,165 @@ import sys
 import pytest
 
 # The standard pytest collector loads the synthetic hook; no external -p required.
-pytest_plugins = ['omc_termination_observer']
+pytest_plugins = ['omc_termination_observer', 'pytester']
 
 ROOT=Path(__file__).resolve().parents[1]
 SCRIPT=ROOT/'scripts/omc_termination_observer.py'
-BASIS=ROOT/'.omc/file-link/abi-basis.json'
 
 
-def public(tmp_path, exercise=None):
+
+def build_abi_basis(folder):
+    """One bounded compiler preparation; a consumer starts only after publication."""
+    import ctypes
+    import hashlib
+    import math
+    import os
+    import platform
+    import selectors
+    import shlex
+    import signal
+    import time
+    folder=Path(folder).resolve();folder.mkdir(parents=True,exist_ok=True)
+    t0=time.monotonic();work_end=t0+20;cleanup_end=t0+25;publish_end=t0+30
+    calls=[];output_bytes=0;cleanup_remaining=5.0;compiler=Path('/usr/bin/clang').resolve(strict=True)
+    def pin(path):
+        if time.monotonic()>=work_end:raise TimeoutError('ABI work deadline')
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    compiler_pin=pin(compiler)
+    def cleanup_owned(child,row):
+        nonlocal cleanup_remaining
+        row.update(owned_pid=child.pid,owned_pgid=child.pid)
+        started=time.monotonic();group_absent=False;observed=False
+        end=min(cleanup_end,started+cleanup_remaining)
+        def remaining():
+            now=time.monotonic()
+            if not math.isfinite(now):raise RuntimeError('ABI cleanup clock unconfirmed')
+            return end-now
+        def complete():
+            nonlocal group_absent
+            reaped=child.poll() is not None
+            if not group_absent:
+                try:os.killpg(child.pid,0)
+                except ProcessLookupError:group_absent=True
+                except OSError as exc:
+                    row['group_query_errno']=exc.errno # Unknown is never absence.
+            return reaped and group_absent
+        try:
+            if remaining()>0:observed=complete()
+            for sig,seconds in ((signal.SIGTERM,2.0),(signal.SIGKILL,5.0)):
+                if observed or remaining()<=0:break
+                if not group_absent:
+                    try:os.killpg(child.pid,sig)
+                    except ProcessLookupError:group_absent=True
+                    except OSError as exc:
+                        row.setdefault('signal_errors',[]).append({'target':'group','signal':int(sig),'errno':exc.errno})
+                # Retained Popen handle also owns a live parent that changed group.
+                if child.poll() is None:
+                    try:child.send_signal(sig)
+                    except ProcessLookupError:pass
+                    except OSError as exc:
+                        row.setdefault('signal_errors',[]).append({'target':'parent','signal':int(sig),'errno':exc.errno})
+                phase_end=min(end,time.monotonic()+seconds)
+                while remaining()>0:
+                    if complete():observed=True;break
+                    left=phase_end-time.monotonic()
+                    if left<=0:break
+                    time.sleep(min(.01,left))
+            row['group_termination']='observed' if observed else 'unconfirmed'
+            if not observed:raise RuntimeError('ABI compiler group termination unconfirmed')
+        finally:
+            finished=time.monotonic()
+            elapsed=finished-started
+            if not math.isfinite(elapsed) or elapsed<0:
+                cleanup_remaining=0;row['cleanup_elapsed']=None
+            else:
+                cleanup_remaining=max(0,cleanup_remaining-elapsed);row['cleanup_elapsed']=elapsed
+            row.update(end=finished,returncode=child.returncode,reaped=child.returncode is not None)
+
+    def invoke(argv):
+        nonlocal output_bytes
+        if not math.isfinite(time.monotonic()) or time.monotonic()>=work_end:
+            raise TimeoutError('ABI work deadline')
+        row={'argv':argv,'cwd':str(folder),'start':time.monotonic(),'stdout':'','stderr':''}
+        calls.append(row)
+        child=subprocess.Popen(argv,cwd=folder,env={'PATH':'/usr/bin:/bin','LC_ALL':'C'},
+                               start_new_session=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        selector=None;chunks={'stdout':bytearray(),'stderr':bytearray()}
+        try:
+            selector=selectors.DefaultSelector()
+            for key in chunks:
+                pipe=getattr(child,key);os.set_blocking(pipe.fileno(),False)
+                selector.register(pipe,selectors.EVENT_READ,key)
+            while selector.get_map():
+                remaining=work_end-time.monotonic()
+                if remaining<=0:raise TimeoutError('ABI work deadline')
+                for item,_ in selector.select(min(.05,remaining)):
+                    data=os.read(item.fd,4096)
+                    if not data:selector.unregister(item.fileobj);continue
+                    output_bytes+=len(data)
+                    if output_bytes>65536:raise ValueError('ABI output limit')
+                    chunks[item.data].extend(data)
+            code=child.wait(timeout=max(.001,work_end-time.monotonic()))
+            if code:raise ValueError('ABI compiler/discovery failed: '+str(code))
+            row['returncode']=code
+            return bytes(chunks['stdout'])
+        finally:
+            try:
+                if selector is not None:selector.close()
+            finally:
+                try:
+                    cleanup_owned(child,row)
+                finally:
+                    for key,value in chunks.items():row[key]=bytes(value).decode('utf-8','replace')
+                    child.stdout.close();child.stderr.close()
+    source=folder/'abi.c';deps=folder/'abi.d'
+    try:
+        if sys.platform!='darwin':raise RuntimeError('macOS ABI fixture requires current supported host')
+        sdk=Path(invoke(['/usr/bin/xcrun','--show-sdk-path']).decode().strip()).resolve(strict=True)
+        arch=platform.machine();m=_load_observer()
+        fields=[{'name':n,'offset':getattr(m.BSDInfo,n).offset,'width':ctypes.sizeof(t)} for n,t in m._FIELDS]
+        code=['#include <stddef.h>','#include <sys/proc_info.h>',
+              f'_Static_assert(sizeof(struct proc_bsdinfo)=={ctypes.sizeof(m.BSDInfo)},"size");',
+              f'_Static_assert(_Alignof(struct proc_bsdinfo)=={ctypes.alignment(m.BSDInfo)},"alignment");']
+        for row in fields:
+            n=row['name'];code += [f'_Static_assert(offsetof(struct proc_bsdinfo,{n})=={row["offset"]},"offset {n}");',
+                                   f'_Static_assert(sizeof(((struct proc_bsdinfo*)0)->{n})=={row["width"]},"width {n}");']
+        with source.open('x') as f:f.write('\n'.join(code)+'\n')
+        source_pin=pin(source);flags=[str(compiler),'-isysroot',str(sdk),'-arch',arch]
+        def closure(raw):
+            paths=shlex.split(raw.decode().replace('\\\n',' ').split(':',1)[1])
+            return sorted({str(Path(p).resolve(strict=True)) for p in paths if Path(p).resolve()!=source})
+        headers=closure(invoke(flags+['-M',str(source)]));before={p:pin(p) for p in headers}
+        invoke(flags+['-fsyntax-only','-MD','-MF',str(deps),str(source)])
+        if closure(deps.read_bytes())!=headers:raise ValueError('ABI header closure changed')
+        if before!={p:pin(p) for p in headers} or source_pin!=pin(source) or compiler_pin!=pin(compiler):
+            raise ValueError('ABI compiler/header/source changed')
+        basis={'status':'passed','architecture':arch,'structure_size':ctypes.sizeof(m.BSDInfo),
+               'structure_alignment':ctypes.alignment(m.BSDInfo),'fields':fields,'headers':before,
+               'compiler':str(compiler),'compiler_sha256':compiler_pin,'sdk':str(sdk),
+               'source_sha256':source_pin,'calls':calls,'output_bytes':output_bytes}
+        if time.monotonic()>=work_end:raise TimeoutError('ABI work deadline')
+        path=folder/'abi-basis.json'
+        if time.monotonic()>=publish_end:raise TimeoutError('ABI publication deadline')
+        with path.open('x') as f:json.dump(basis,f);f.flush();os.fsync(f.fileno())
+        if time.monotonic()>=publish_end:raise TimeoutError('ABI publication unconfirmed')
+        return path
+    except Exception as exc:
+        if time.monotonic()<publish_end:
+            with (folder/'abi-failure.json').open('x') as f:
+                json.dump({'status':'failed','error':type(exc).__name__+': '+str(exc),'calls':calls},f)
+        raise
+
+
+@pytest.fixture(scope='module')
+def abi_basis(tmp_path_factory):
+    return build_abi_basis(tmp_path_factory.mktemp('native-abi'))
+
+
+def public(tmp_path, exercise=None, *, abi_basis=None):
     out=tmp_path/'out'
     cmd=[sys.executable,'-B',str(SCRIPT),'--output',str(out)]
-    cmd+=['--exercise',exercise] if exercise else ['--file-register','--abi-basis',str(BASIS)]
+    cmd+=['--exercise',exercise] if exercise else ['--file-register','--abi-basis',str(abi_basis)]
     p=subprocess.run(cmd,cwd=ROOT,capture_output=True,text=True,timeout=15)
     assert (out/'result.json').is_file(),(p.returncode,p.stdout,p.stderr)
     return p,json.loads((out/'result.json').read_text()),out
@@ -30,8 +178,8 @@ def test_public_help_declares_file_registration():
     assert '--file-register' in p.stdout, 'valid CLI does not expose the required file-registration entry'
 
 
-def test_one_real_consumer_registers_and_is_reaped(tmp_path):
-    p,d,out=public(tmp_path)
+def test_one_real_consumer_registers_and_is_reaped(tmp_path, abi_basis):
+    p,d,out=public(tmp_path, abi_basis=abi_basis)
     assert p.returncode==0,(p.stdout,p.stderr,d)
     assert d['status']=='registered' and d['consumer_count']==1
     creator=json.loads((out/'creator-result.json').read_text())
@@ -160,7 +308,7 @@ def test_actual_manager_expired_request_cannot_publish_ack_or_revive(tmp_path):
 
 @pytest.fixture
 def synthetic_trace_case(request):
-    """The outer pytest call is the only surface; no nested pytest/process."""
+    """Real pytest hook surface; nested pytest is in-process only, no OS process."""
     from types import SimpleNamespace
     import omc_termination_observer as observer
     state={'events':[],'calls':[],'sink_fails':False,'answer':object(),'error':None}
@@ -210,12 +358,34 @@ def test_synthetic_trace_surface_record_failure_is_separate(synthetic_trace_case
     assert state['binding'].record_errors[0]['errno']==28
 
 
-@pytest.mark.xfail(raises=RuntimeError,strict=True,reason='intentional test body exception; fixture teardown checks hook finally restoration')
-def test_synthetic_trace_surface_restores_after_body_exception(synthetic_trace_case):
-    m,ns,state,_=synthetic_trace_case
-    assert hasattr(m,'TraceBinding'),'synthetic pytest installation capability missing'
+def test_synthetic_trace_surface_restores_after_body_exception(pytester, monkeypatch):
+    """Outer PASS requires one exact inner body failure and actual hook restoration."""
+    import inspect
+    import omc_termination_observer as observer_plugin
+    from types import SimpleNamespace
+    proof=SimpleNamespace(error=RuntimeError('intentional body failure'),state=None,namespace=None,originals=None,reports=[])
+    class ProofPlugin:
+        def pytest_runtest_makereport(self, item, call):
+            if call.when=='call':
+                proof.reports.append(call.excinfo.value if call.excinfo else None)
+    # Share only this test's object; no process, signal or native dependency is invoked.
+    monkeypatch.setattr(sys,'_omc_trace_proof',proof,raising=False)
+    fixture=inspect.getsource(synthetic_trace_case.__wrapped__)
+    inner = "import pytest,sys\n"+fixture+"\n"+"""
+def test_synthetic_trace_inner_body(synthetic_trace_case):
+    m,ns,state,originals=synthetic_trace_case
+    proof=sys._omc_trace_proof
     assert state['binding'].active
-    raise RuntimeError('intentional body failure')
+    proof.state=state;proof.namespace=ns;proof.originals=originals
+    raise proof.error
+"""
+    pytester.makepyfile(test_omc_termination_observer=inner)
+    result=pytester.runpytest_inprocess('-q','--import-mode=importlib',plugins=[ProofPlugin(),observer_plugin])
+    result.assert_outcomes(failed=1,passed=0,errors=0,skipped=0,xfailed=0,xpassed=0)
+    assert proof.reports==[proof.error] and proof.reports[0] is proof.error
+    assert proof.state is not None and not proof.state['binding'].active
+    assert all(getattr(proof.namespace,n) is value for n,value in proof.originals.items())
+    assert not hasattr(proof.namespace,'_omc_trace_owner')
 
 
 def test_synthetic_trace_surface_duplicate_install_rejected(synthetic_trace_case):
@@ -485,3 +655,179 @@ def test_synthetic_clock_fix_monitor_fault_remains_unknown_after_target_reaped()
     t[0]=10.5;c.step('monitor_failed')
     t[0]=10.6;v=c.step('reap_monitor',identity_matches=True,reaped=True,returncode=0)
     assert v['status']=='UNKNOWN' and v['target_reap_owner'] is None
+
+
+def test_clean_clone_abi_fixture_is_compiler_verified(tmp_path):
+    assert 'build_abi_basis' in globals(), 'clean-clone ABI fixture builder missing'
+    basis=build_abi_basis(tmp_path)
+    value=json.loads(basis.read_text())
+    assert value['status']=='passed' and value['headers']
+    _load_observer().load_abi(basis)
+
+
+def test_body_exception_regression_has_no_outer_xfail():
+    marks=getattr(test_synthetic_trace_surface_restores_after_body_exception,'pytestmark',[])
+    assert all(mark.name!='xfail' for mark in marks)
+
+
+@pytest.mark.parametrize('fault',['missing','arch','field','header','size'])
+def test_explicit_abi_input_faults_fail_closed(tmp_path,abi_basis,fault):
+    m=_load_observer();value=json.loads(abi_basis.read_bytes());path=tmp_path/'bad.json'
+    if fault=='arch':value['architecture']='wrong-architecture'
+    if fault=='field':value['fields'][0]['offset']+=1
+    if fault=='size':value['structure_size']+=1
+    if fault=='header':value['headers'][next(iter(value['headers']))]='0'*64
+    if fault!='missing':path.write_text(json.dumps(value))
+    with pytest.raises((FileNotFoundError,ValueError)):m.load_abi(path)
+
+
+@pytest.mark.parametrize('fault',['nonzero','output','deadline'])
+def test_abi_compiler_faults_never_publish_passed_basis(tmp_path,monkeypatch,fault):
+    import os,time
+    real_popen=subprocess.Popen;real_clock=time.monotonic;spawned=[];shift=[False]
+    def launch(argv,**kwargs):
+        if Path(argv[0]).name=='clang':
+            code={'nonzero':'raise SystemExit(7)',
+                  'output':'import sys,time;sys.stdout.write("x"*70000);sys.stdout.flush();time.sleep(30)',
+                  'deadline':'import time;time.sleep(30)'}[fault]
+            child=real_popen([sys.executable,'-c',code],**kwargs);spawned.append(child)
+            if fault=='deadline':shift[0]=True
+            return child
+        return real_popen(argv,**kwargs)
+    monkeypatch.setattr(subprocess,'Popen',launch)
+    monkeypatch.setattr(time,'monotonic',lambda:real_clock()+(21 if shift[0] else 0))
+    with pytest.raises((ValueError,TimeoutError)):build_abi_basis(tmp_path)
+    assert not (tmp_path/'abi-basis.json').exists()
+    failure=json.loads((tmp_path/'abi-failure.json').read_text())
+    assert failure['status']=='failed' and spawned and all(c.poll() is not None for c in spawned)
+    for c in spawned:
+        with pytest.raises(ProcessLookupError):os.killpg(c.pid,0)
+
+
+def test_abi_header_change_between_compile_and_publish_is_unverified(tmp_path,monkeypatch,abi_basis):
+    target=Path(next(iter(json.loads(abi_basis.read_bytes())['headers'])))
+    read=Path.read_bytes;count=[0]
+    def changed(path):
+        raw=read(path)
+        if path==target:
+            count[0]+=1
+            if count[0]>1:return raw+b'\n/* injected changed header */'
+        return raw
+    monkeypatch.setattr(Path,'read_bytes',changed)
+    with pytest.raises(ValueError,match='ABI compiler/header/source changed'):build_abi_basis(tmp_path)
+    assert not (tmp_path/'abi-basis.json').exists()
+    assert json.loads((tmp_path/'abi-failure.json').read_text())['status']=='failed'
+
+
+@pytest.mark.parametrize('exit_code,force_work_timeout', [(0,False),(7,False),(0,True)])
+def test_abi_parent_exit_never_leaves_owned_descendants(tmp_path,monkeypatch,exit_code,force_work_timeout):
+    import os,signal,time
+    real_popen=subprocess.Popen;real_clock=time.monotonic;owners=[];shift=[False]
+    child_file=tmp_path/'descendant.pid'
+    def launch(argv,**kwargs):
+        if Path(argv[0]).name=='clang':
+            # The descendant ignores TERM so cleanup must verify group-wide KILL.
+            code=("import subprocess,sys,time;from pathlib import Path;"
+                  "p=subprocess.Popen([sys.executable,'-c',"
+                  "'import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);print(\\\"ready\\\",flush=True);time.sleep(10)'],"
+                  "stdout=subprocess.PIPE,stderr=subprocess.DEVNULL);"
+                  "assert p.stdout.readline()==b'ready\\n';"
+                  "Path("+repr(str(child_file))+").write_text(str(p.pid));"
+                  "p.stdout.close();print('dependency output',flush=True);"
+                  "raise SystemExit("+str(exit_code)+")")
+            owner=real_popen([sys.executable,'-c',code],**kwargs);owners.append(owner)
+            if force_work_timeout:
+                # Advance only after the owned parent exits; force the existing
+                # work timeout path without spending the real 20s preparation.
+                owner.wait(timeout=2);shift[0]=True
+            return owner
+        return real_popen(argv,**kwargs)
+    monkeypatch.setattr(subprocess,'Popen',launch)
+    monkeypatch.setattr(time,'monotonic',lambda:real_clock()+(21 if shift[0] else 0))
+    try:
+        with pytest.raises(Exception):build_abi_basis(tmp_path/'fixture')
+        assert owners and child_file.exists()
+        failure=json.loads((tmp_path/'fixture/abi-failure.json').read_text())
+        assert failure['status']=='failed' and not (tmp_path/'fixture/abi-basis.json').exists()
+        assert all(p.poll() is not None for p in owners)
+        for p in owners:
+            with pytest.raises(ProcessLookupError):os.killpg(p.pid,0)
+        compiler=failure['calls'][-1]
+        assert compiler['group_termination']=='observed' and compiler['reaped']
+        assert sum(call['cleanup_elapsed'] for call in failure['calls'])<=5.05
+    finally:
+        # A RED must leave no process behind; don't alter the fixture's evidence.
+        for p in owners:
+            try:os.killpg(p.pid,signal.SIGKILL)
+            except ProcessLookupError:pass
+            p.wait(timeout=2)
+        until=real_clock()+2
+        while owners and real_clock()<until:
+            try:os.killpg(owners[0].pid,0)
+            except ProcessLookupError:break
+            except PermissionError:pass
+            time.sleep(.01)
+
+
+def test_abi_unobservable_cleanup_is_bounded_and_closes_parent_streams(tmp_path,monkeypatch):
+    import os,time
+    real_popen=subprocess.Popen;real_clock=time.monotonic;real_sleep=time.sleep
+    offset=[0.0];owners=[]
+    def launch(*args,**kwargs):
+        child=real_popen(*args,**kwargs);owners.append(child);return child
+    def advance(seconds):offset[0]+=seconds;real_sleep(.0001)
+    def denied(*args):raise PermissionError(13,'injected group visibility failure')
+    monkeypatch.setattr(subprocess,'Popen',launch)
+    monkeypatch.setattr(time,'monotonic',lambda:real_clock()+offset[0])
+    monkeypatch.setattr(time,'sleep',advance)
+    monkeypatch.setattr(os,'killpg',denied)
+    with pytest.raises(RuntimeError,match='group termination unconfirmed'):build_abi_basis(tmp_path)
+    failure=json.loads((tmp_path/'abi-failure.json').read_text())
+    assert failure['status']=='failed' and not (tmp_path/'abi-basis.json').exists()
+    row=failure['calls'][-1]
+    assert row['group_termination']=='unconfirmed' and row['group_query_errno']==13
+    assert 4.99<=sum(call['cleanup_elapsed'] for call in failure['calls'])<=5.05
+    assert owners and all(child.returncode is not None and child.stdout.closed and child.stderr.closed for child in owners)
+
+
+@pytest.mark.parametrize('stage',['create','close'])
+def test_abi_selector_failure_still_cleans_owned_group(tmp_path,monkeypatch,stage):
+    import os,signal,time,selectors
+    real_popen=subprocess.Popen;real_selector=selectors.DefaultSelector;owners=[]
+    ready=tmp_path/'ready';child_file=tmp_path/'child.pid'
+    child_code='import signal,time;from pathlib import Path;signal.signal(signal.SIGTERM,signal.SIG_IGN);Path('+repr(str(ready))+').write_text("ready");time.sleep(10)'
+    parent_code=('import subprocess,sys,time;from pathlib import Path;'
+                 'p=subprocess.Popen([sys.executable,"-c",'+repr(child_code)+'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);'
+                 '\nwhile not Path('+repr(str(ready))+').exists():time.sleep(.001)\n'
+                 'Path('+repr(str(child_file))+').write_text(str(p.pid));print("discovery output",flush=True)')
+    def launch(argv,**kwargs):
+        p=real_popen([sys.executable,'-c',parent_code],**kwargs);owners.append(p);p.wait(timeout=2);return p
+    class BrokenClose:
+        def __init__(self):self.inner=real_selector()
+        def __getattr__(self,name):return getattr(self.inner,name)
+        def close(self):self.inner.close();raise OSError(5,'injected selector close failure')
+    def broken_create():raise OSError(24,'injected selector allocation failure')
+    monkeypatch.setattr(subprocess,'Popen',launch)
+    monkeypatch.setattr(selectors,'DefaultSelector',broken_create if stage=='create' else BrokenClose)
+    observed=False
+    try:
+        with pytest.raises(OSError):build_abi_basis(tmp_path/'fixture')
+        assert owners and child_file.exists()
+        for p in owners:
+            with pytest.raises(ProcessLookupError):os.killpg(p.pid,0)
+        observed=True
+        assert all(p.returncode is not None and p.stdout.closed and p.stderr.closed for p in owners)
+        row=json.loads((tmp_path/'fixture/abi-failure.json').read_text())['calls'][-1]
+        assert row['group_termination']=='observed' and row['reaped']
+    finally:
+        if not observed:
+            for p in owners:
+                try:os.killpg(p.pid,signal.SIGKILL)
+                except ProcessLookupError:pass
+                p.wait(timeout=2);p.stdout.close();p.stderr.close()
+        until=time.monotonic()+2
+        while owners and time.monotonic()<until:
+            try:os.killpg(owners[0].pid,0)
+            except ProcessLookupError:break
+            except PermissionError:pass
+            time.sleep(.01)

@@ -419,6 +419,10 @@ def test_supervisor_rejects_and_cleans_children_after_parent_success(expired,mon
     assert not (root/'.omc/leftover-marker').exists()
     assert audits and all(a['status']=='incomplete' for a in audits)
     assert audits[-1]['termination']=='observed'
+    trace=audits[-1]['cleanup_trace']
+    assert trace['owned_pid']==trace['owned_pgid'] and trace['member_states']=='unknown'
+    assert any(e['operation']=='killpg_signal' for e in trace['events'])
+    assert trace['clock_domain']=='monotonic' and len(trace['events'])<=32
 
 
 def test_supervisor_accepts_parent_and_children_that_finish(expired,monkeypatch):
@@ -445,6 +449,7 @@ def test_supervisor_does_not_pass_unverifiable_group_exit(expired,monkeypatch):
     value=resume.load(root)
     audits=[json.loads(p.read_text()) for p in (root/value['generation']/'executions').glob('*.json')]
     assert audits[-1]['status']=='incomplete' and audits[-1]['termination']=='unknown'
+    assert any(e['operation']=='killpg_query' and e['exists']=='unknown' for e in audits[-1]['cleanup_trace']['events'])
 
 
 @pytest.fixture
@@ -756,3 +761,225 @@ def test_commit_review_invalid_resume_output_context_is_closed(expired, monkeypa
     assert result.returncode == 2, result.stdout + result.stderr
     assert 'Traceback' not in result.stderr
     assert not list((root / '.omc/state/output-records').rglob('manifest.json'))
+
+
+def test_cleanup_trace_preserves_query_errno_and_is_bounded(monkeypatch):
+    assert hasattr(resume,'_ExecutionTrace'), 'bounded cleanup trace is missing'
+    trace=resume._ExecutionTrace(1234)
+    token=resume._execution_trace.set(trace)
+    def denied(*args):raise PermissionError(13,'denied')
+    monkeypatch.setattr(resume.os,'killpg',denied)
+    try:
+        with pytest.raises(PermissionError):resume._group_exists(1234)
+        for _ in range(100):resume._trace_event('sample',pid=1234)
+    finally:resume._execution_trace.reset(token)
+    value=trace.payload()
+    assert len(value['events'])<=32 and value['truncated']>0
+    assert len(json.dumps(value).encode())<=16384
+    row=value['events'][0]
+    assert row['operation']=='killpg_query' and row['errno']==13 and row['exists']=='unknown'
+    assert value['clock_domain']=='monotonic' and value['owned_pgid']==1234
+
+
+def test_cleanup_diagnostic_clock_failure_does_not_change_query_result(monkeypatch):
+    trace=resume._ExecutionTrace(5678);token=resume._execution_trace.set(trace)
+    monkeypatch.setattr(resume.os,'killpg',lambda *args:None)
+    monkeypatch.setattr(resume.time,'monotonic',lambda:float('nan'))
+    try:assert resume._group_exists(5678) is True
+    finally:resume._execution_trace.reset(token)
+    assert trace.payload()['record_errors']==1 and trace.payload()['events']==[]
+
+
+def test_cleanup_signal_errno_preserves_unknown_and_no_extra_queries(monkeypatch):
+    from types import SimpleNamespace
+    trace=resume._ExecutionTrace(4321);token=resume._execution_trace.set(trace);calls=[]
+    def denied(pgid,sig):calls.append((pgid,sig));raise PermissionError(13,'denied')
+    monkeypatch.setattr(resume.os,'killpg',denied)
+    try:assert resume._stop_group(SimpleNamespace(pid=4321)) is False
+    finally:resume._execution_trace.reset(token)
+    assert len(calls)==1
+    assert trace.events[0]['operation']=='killpg_signal' and trace.events[0]['errno']==13
+
+
+@pytest.mark.parametrize('signal_eperm', [False, True])
+def test_cleanup_transient_eperm_rechecks_before_confirming_absence(monkeypatch,signal_eperm):
+    from types import SimpleNamespace
+    import errno
+    ticks=[0.0];queries=[];signals=[];polls=[]
+    monkeypatch.setattr(resume.time,'monotonic',lambda:ticks[0])
+    monkeypatch.setattr(resume.time,'sleep',lambda seconds:ticks.__setitem__(0,ticks[0]+seconds))
+    def killpg(pgid,sig):
+        assert pgid==4321
+        if sig:
+            signals.append(sig)
+            if signal_eperm:raise PermissionError(errno.EPERM,'transient zombie group')
+        else:
+            queries.append(ticks[0])
+            if len(queries)==1:raise PermissionError(errno.EPERM,'transient zombie group')
+            raise ProcessLookupError(errno.ESRCH,'group reaped')
+    monkeypatch.setattr(resume.os,'killpg',killpg)
+    def poll():polls.append(ticks[0]);return 0
+    assert resume._stop_group(SimpleNamespace(pid=4321,poll=poll)) is True
+    assert len(queries)==2 and len(polls)>=2 and signals==[resume.signal.SIGTERM]
+    assert 0<ticks[0]<=.02, 'EPERM must not itself prove absence'
+
+
+@pytest.mark.parametrize('signal_eperm', [False, True])
+def test_cleanup_persistent_eperm_remains_unknown_with_original_budget(monkeypatch,signal_eperm):
+    from types import SimpleNamespace
+    import errno
+    ticks=[0.0];signals=[];queries=[]
+    monkeypatch.setattr(resume.time,'monotonic',lambda:ticks[0])
+    monkeypatch.setattr(resume.time,'sleep',lambda seconds:ticks.__setitem__(0,ticks[0]+seconds))
+    def denied(pgid,sig):
+        if sig:
+            signals.append((sig,ticks[0]))
+            if signal_eperm:raise PermissionError(errno.EPERM,'denied')
+        else:
+            queries.append(ticks[0]);raise PermissionError(errno.EPERM,'denied')
+    monkeypatch.setattr(resume.os,'killpg',denied)
+    assert resume._stop_group(SimpleNamespace(pid=1234,poll=lambda:0)) is False
+    assert [sig for sig,_ in signals]==[resume.signal.SIGTERM,resume.signal.SIGKILL]
+    assert 1.99<=signals[1][1]<=2 and 3.99<=ticks[0]<=4.001
+    assert len(queries)>2 # Repeated errors must not restart a phase deadline.
+
+
+def test_cleanup_native_poll_to_query_zombie_race_is_reaped():
+    """Force exit after a stale poll result, without editing the production clock."""
+    import ctypes
+    child=subprocess.Popen([sys.executable,'-c','import time;print("ready",flush=True);time.sleep(5)'],
+                           start_new_session=True,stdout=subprocess.PIPE)
+    import selectors
+    ready=selectors.DefaultSelector();ready.register(child.stdout,selectors.EVENT_READ)
+    try:
+        assert ready.select(2) and child.stdout.readline()==b'ready\n'
+        lib=ctypes.CDLL(None,use_errno=True)
+        lib.waitid.argtypes=[ctypes.c_uint,ctypes.c_uint,ctypes.c_void_p,ctypes.c_int]
+        class Owned:
+            pid=child.pid
+            def poll(self):
+                stale=child.poll()
+                if stale is None:
+                    until=time.monotonic()+1
+                    while True:
+                        info=ctypes.create_string_buffer(128)
+                        code=lib.waitid(os.P_PID,child.pid,info,os.WEXITED|os.WNOWAIT|os.WNOHANG)
+                        assert code==0,ctypes.get_errno()
+                        if any(info.raw):break
+                        assert time.monotonic()<until;time.sleep(.001)
+                return stale
+        assert resume._stop_group(Owned()) is True
+        assert child.returncode is not None
+        with pytest.raises(ProcessLookupError):os.killpg(child.pid,0)
+    finally:
+        ready.close();child.stdout.close()
+        if child.poll() is None:
+            child.kill();child.wait(timeout=2)
+
+
+@pytest.mark.parametrize('number',[5,13])
+def test_cleanup_other_query_errors_do_not_become_absence(monkeypatch,number):
+    from types import SimpleNamespace
+    calls=[]
+    def failed(pgid,sig):
+        calls.append(sig)
+        if not sig:raise OSError(number,'unverifiable')
+    monkeypatch.setattr(resume.os,'killpg',failed)
+    assert resume._stop_group(SimpleNamespace(pid=1234,poll=lambda:0)) is False
+    assert calls==[resume.signal.SIGTERM,0]
+
+
+def test_cleanup_live_group_after_eperm_still_requires_kill_and_absence(monkeypatch):
+    from types import SimpleNamespace
+    import errno
+    ticks=[0.0];signals=[];query_count=[0]
+    monkeypatch.setattr(resume.time,'monotonic',lambda:ticks[0])
+    monkeypatch.setattr(resume.time,'sleep',lambda seconds:ticks.__setitem__(0,ticks[0]+seconds))
+    def group(pgid,sig):
+        if sig:signals.append(sig);return
+        query_count[0]+=1
+        if query_count[0]==1:raise PermissionError(errno.EPERM,'unconfirmed')
+        if resume.signal.SIGKILL in signals:raise ProcessLookupError(errno.ESRCH,'absent')
+        # Direct parent exit does not prove that its surviving group is absent.
+    monkeypatch.setattr(resume.os,'killpg',group)
+    assert resume._stop_group(SimpleNamespace(pid=1234,poll=lambda:0)) is True
+    assert signals==[resume.signal.SIGTERM,resume.signal.SIGKILL] and 1.99<=ticks[0]<=2.001
+
+
+def test_cleanup_signal_esrch_does_not_resignal_a_reappearing_group(monkeypatch):
+    from types import SimpleNamespace
+    import errno
+    signals=[]
+    def replaced(pgid,sig):
+        if sig:
+            signals.append(sig);raise ProcessLookupError(errno.ESRCH,'owned group gone')
+        # The old group was absent at signal time; this later group is unowned.
+    monkeypatch.setattr(resume.os,'killpg',replaced)
+    # Fail without waiting in the broken version, so this regression is bounded.
+    monkeypatch.setattr(resume,'_wait_group_exit',lambda *args:False)
+    assert resume._stop_group(SimpleNamespace(pid=4321,poll=lambda:0)) is False
+    assert signals==[resume.signal.SIGTERM]
+
+
+def _commit_completed_work(root, session):
+    state = resume.original(root)
+    state['started_at'] = time.time()
+    (root / '.omc/pipeline_session.json').write_text(json.dumps(state))
+    (root / 'app.py').write_text('value = 2\n')
+    subprocess.run(['git', 'add', 'app.py'], cwd=root, check=True)
+    subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false',
+                    '-c', 'user.name=Fixture', '-c', 'user.email=fixture@localhost',
+                    'commit', '-qm', 'completed work'], cwd=root, check=True)
+    result = omc_state.record_completion_receipt(root)
+    assert result['status'] == 'ok', result
+    state['started_at'] = time.time() - 28801
+    (root / '.omc/pipeline_session.json').write_text(json.dumps(state))
+    return root / '.omc/state/sessions' / session['session_id'] / 'completion.json'
+
+
+def test_completed_commit_does_not_freeze_after_pipeline_expiry(retiring):
+    root, session = retiring
+    _commit_completed_work(root, session)
+    before = _state_bytes(root)
+    index = (root / '.git/index').read_bytes()
+    assert not resume.frozen(root)
+    assert _state_bytes(root) == before
+    assert (root / '.git/index').read_bytes() == index
+    new = omc_state.record_session(root, mode='autopilot', title='next task',
+        request='independent next work', role_ids=['senior_coding'], confirmed=True,
+        work_class='implementation', completion_action='start')
+    assert new['work_id'] != session['work_id']
+
+
+def test_completed_commit_allows_descendant_head(retiring):
+    root, session = retiring
+    _commit_completed_work(root, session)
+    subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'commit.gpgsign=false',
+                    '-c', 'user.name=Fixture', '-c', 'user.email=fixture@localhost',
+                    'commit', '--allow-empty', '-qm', 'later commit'], cwd=root, check=True)
+    assert not resume.frozen(root)
+
+
+@pytest.mark.parametrize('damage', ['missing', 'request', 'session', 'paths', 'base',
+                                   'followup', 'pending', 'owner', 'symlink', 'shape'])
+def test_completed_commit_invalid_evidence_stays_frozen(retiring, damage):
+    root, session = retiring
+    path = _commit_completed_work(root, session)
+    receipt = json.loads(path.read_bytes())
+    if damage == 'missing':
+        path.unlink()
+    elif damage == 'pending':
+        (root / '.omc/state/pending-completion.json').write_text('{}')
+    elif damage == 'owner':
+        state = resume.original(root); state['owner_work_id'] = 'other'
+        (root / '.omc/pipeline_session.json').write_text(json.dumps(state))
+    elif damage == 'symlink':
+        other = root / 'receipt.json'; path.rename(other); path.symlink_to(other)
+    else:
+        key, value = {'request': ('request_sha256', 'bad'), 'session': ('session_id', 'other'),
+                      'paths': ('changed_paths', ['other.py']), 'base': ('baseline_commit', '0'*40),
+                      'followup': ('followup_commit', '0'*40), 'shape': ('schema_version', 999)}[damage]
+        receipt[key] = value; path.write_text(json.dumps(receipt))
+    before = _state_bytes(root)
+    assert resume.frozen(root)
+    assert _state_bytes(root) == before
