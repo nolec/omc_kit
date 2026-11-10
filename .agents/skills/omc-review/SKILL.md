@@ -29,14 +29,17 @@ C4 API·consumer 계약 / C5 새 로직 테스트·검증 / C6 성능·메모리
 - Diff-local P1: 동적 값 이중 읽기 / 식별자→순서 매핑 / 측정값 없는 정책 성공 / 필수 메타데이터 조건부 검증을 확인한다.
 ## Step 2. REVIEW RESULT
 ```text
-[치명] - 없음 또는 `[파일:라인] evidence_class: behavioral_direct | evidence: 직접 인과와 관찰 영향 | 수정 방향`
-[중대] - 없음 또는 `[파일:라인] evidence_class: behavioral_direct | evidence: 직접 인과와 관찰 영향 | 수정 방향`
-[경미] - 없음 또는 `[파일:라인] evidence_class: behavioral_direct | evidence: 직접 인과와 관찰 영향 | 개선 방향`
-[제안] - 없음 또는 `[파일:라인] evidence_class: test_quality_only | evidence: 선택 개선 근거`
+[치명]
+- 없음 또는 `[파일:라인] evidence_class: behavioral_direct | evidence: 직접 인과와 관찰 영향 | 수정 방향`
+[중대]
+- 없음 또는 `[파일:라인] evidence_class: behavioral_direct | evidence: 직접 인과와 관찰 영향 | 수정 방향`
+[경미]
+- 없음 또는 `[파일:라인] evidence_class: behavioral_direct | evidence: 직접 인과와 관찰 영향 | 개선 방향`
+[제안]
+- 없음 또는 `[파일:라인] evidence_class: test_quality_only | evidence: 선택 개선 근거`
 [확인 필요] - 없음 또는 `[파일:라인] evidence_class: context_needed|unresolved | evidence: 필요한 검증`
 검증 커맨드: ...
-판정: BLOCK / REVISE / APPROVE WITH NOTES / APPROVE
-판정: 한글로 한 번만 표시; VERDICT는 별도 기록
+판정: 한글로 한 번만 표시(BLOCK / REVISE / APPROVE WITH NOTES / APPROVE); VERDICT는 별도 기록
 decision: REVISE / APPROVE (판정 결과) | risk: HIGH / MED / LOW (리스크 요약) | next_action: 다음 스킬 1개 | 공통 결정표: stage=review / outcome=approved|blocked / user_selection_needed=yes|no / ship_intent_explicit=yes|no
 ```
 - 강한 finding은 `evidence_class: behavioral_direct`와 비어 있지 않은 `evidence:`가 필수다. 가설은 `[확인 필요]`로 내린다. 판정 규칙: 치명=BLOCK, 중대=REVISE, 경미/제안만=APPROVE WITH NOTES, 없음=APPROVE. REVISE/BLOCK면 수정 방향 포함.

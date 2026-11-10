@@ -461,6 +461,12 @@ def _declared_executables(
     return executables, working_directories
 
 
+def _run_gate_process(argv, *, cwd, timeout, phase):
+    from omc_test_suite import execute, owned_process_signals
+    with owned_process_signals():
+        return execute(argv, cwd, timeout, phase=phase, prefix="OMC_QUALITY_PROGRESS")
+
+
 def run(root: Path) -> dict[str, Any]:
     config, config_sha256 = load_config_snapshot(root)
     current = _status_for_snapshot(root, config, config_sha256)
@@ -539,15 +545,8 @@ def run(root: Path) -> dict[str, Any]:
             )
             continue
         try:
-            completed = subprocess.run(
-                argv,
-                cwd=root,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                errors="replace",
-                timeout=gate["timeout_sec"],
-                check=False,
+            completed = _run_gate_process(
+                argv, cwd=root, timeout=gate["timeout_sec"], phase=gate["id"],
             )
             gate_status = "passed" if completed.returncode == 0 else "failed"
             result = {

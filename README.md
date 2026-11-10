@@ -1,5 +1,10 @@
 # OMC - Orchestrated Multi-agent Craft
 
+## 최근 유지보수 · 2026-11-10
+
+빠른 검사 runner와 검사 진행 표시를 구현했고, 취소 시 자식 정리·준비 마감 차단을 포함한 관련 회귀193개를 독립 리뷰에서도 재확인했다. 관련 문서·스킬 정합성까지 포함한 통합350개 검수도 통과했다(범위 중복, 합산 금지). 이는 전체 검사 시간 단축의 실측 결과가 아니다. 실제4개 테스트 비교는 의존성 격리 미확보로 미검증이며, 현재 출하 게이트의 전체 검사 명령과12개 사용처 설치 상태는 그대로다. 사용법과 한계는 [OMC Workflow](docs/omc_workflow.md#빠른-계약-검사와-진행-표시--2026-11-10), 최신 실행 상태는 [로드맵](docs/automatic_model_routing_roadmap.md)을 따른다.
+
+
 OMC는 Codex·Claude Code·Gemini·Cursor 같은 AI coding executor를 대체하지 않습니다. 여러 저장소를 운영하는 개발자가 AI가 만든 변경을 **요구사항 → 검증 → review → ship**까지 같은 candidate로 통제하도록 돕는 engineering control plane입니다.
 
 executor가 코드를 만들면, OMC는 무엇을 검증·review했는지, 사람이 어디서 판단해야 하는지, 실제 ship 대상이 그 변경과 같은지를 receipt와 재검증으로 보존합니다.

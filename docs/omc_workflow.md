@@ -278,3 +278,21 @@ quality run`까지 수행하며, 양성 gate1회·음성 gate0회와 실제 종�
 절차를 따릅니다. 원본의 `validate-ship=READY`, quality `status=ready`, 고정 후보의
 `diagnose`와 실행 승인이 확인되기 전 ship T0를 시작하지 않습니다. 과거 시도·실패·
 시계·승인을 새 시도 기록으로 덮어쓰지 않습니다.
+
+
+## 빠른 계약 검사와 진행 표시 · 2026-11-10
+
+```bash
+# 검사 실행 없이 현행 marker의 선택·fast/rest 분할만 기록
+python3 scripts/omc_test_suite.py inventory --target .
+# 명시적으로 승인된 검증에 사용: fast 실패 시 rest 실행0회
+python3 scripts/omc_test_suite.py run --target .
+```
+
+runner는 현재 `not slow and not historical_evidence and not red_scaffold` 선택 전체를 유지한다. 기본 fast는 review runner·review/task/plan 스킬 계약4개 모듈이고 나머지는 직렬이다. 수집+fast 기본60초, 전체 기본3600초의 남은 시간을 사용하며 skip·xfail·수집 오류·누락은 차단한다. record-dir 생략 시 매번 `.omc/test-suite/<고유ID>`를 생성하고 원문·JUnit·선택 목록을 남긴다. 이 명령 예시는 전체 검사 실행 권한을 부여하지 않는다.
+
+quality CLI의 stdout은 최종 JSON 하나이며, stderr의 `OMC_QUALITY_PROGRESS`가 단계 시작·5초 간격 경과·종료를 알린다. 진행은 통과 판정이 아니고 임의 자식 출력·환경값을 노출하지 않는다. 공개 CLI 취소 시 소유 그룹을 종료하며 생성/등록 경계와 자식의 정상 TERM 정리를 검증했다.
+
+pilot은 최대2개 작업 프로세스의 별도 실험이다. 준비(snapshot·수집·양쪽 clone)180초, 직렬/병렬각300초, 마지막 정리60초로 최대840초이며 마감 후 비교 호출은 차단한다. 공유 브라우저·빌더 의존성의 격리가 증명되지 않은 실제4개 테스트는 실행0회·성능 미검증이다. 전체 suite 병렬 적용·통과 기록 재사용은 미구현이다.
+
+현재 `.omc/quality-gates.json`과 `docs/quality_gate_contract.md`의 출하 명령은 기존 전체 pytest다. fast-first 정책 제안은 `.omc/tasks/quality-speed-v2-20261110/quality-proposal.json`과 제안 문서에 보존했고 적용하지 않았다. 정책·evidence 변경은 새 후보와 proposal/CAS/정식 승인으로 연결한다. 현재 코드 리뷰 승인이나 로컬 커밋을 전체 출하 검사·릴리스·재설치 통과로 해석하지 않는다.

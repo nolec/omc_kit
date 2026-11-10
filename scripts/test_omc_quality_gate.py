@@ -611,7 +611,7 @@ def test_timeout_bytes_are_returned_as_blocked_json(tmp_path: Path, monkeypatch,
             stderr=b"warning\xff",
         )
 
-    monkeypatch.setattr(module.subprocess, "run", timeout)
+    monkeypatch.setattr(module, "_run_gate_process", timeout)
 
     assert module.main(["--target", str(tmp_path), "run"]) == 1
     result = json.loads(capsys.readouterr().out)
@@ -1436,7 +1436,7 @@ def test_malformed_baseline_keeps_actual_cli_result(tmp_path, identity, saved_re
     path.write_text(json.dumps({"schema": "omc-failure-baseline/v1", "identity": identity, "report": saved_report}))
     result = subprocess.run(["python3", str(MODULE_PATH), "--target", str(tmp_path), "run"], capture_output=True, text=True)
     assert result.returncode == gate_exit
-    assert not result.stderr
+    assert all(line.startswith("OMC_QUALITY_PROGRESS ") for line in result.stderr.splitlines())
     report = json.loads(result.stdout)
     assert report["status"] == ("passed" if gate_exit == 0 else "blocked")
     assert report["diagnosis"]["status"] == "unknown"
@@ -1627,3 +1627,64 @@ def test_compare_proposal_only_reports_unchanged_for_identical_config(tmp_path, 
     result = module.compare_proposal(tmp_path, proposal)
     assert result['status'] == ('approval_required' if metadata_change else 'unchanged')
     assert (result['current_config_sha256'] == result['proposed_config_sha256']) is (not metadata_change)
+
+
+def test_public_quality_progress_arrives_before_child_exit(tmp_path):
+    import os
+    import selectors
+    import sys
+    root = tmp_path / "repo";root.mkdir()
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    module = _load_module()
+    _write_config(root, argv=[sys.executable, "-c", "import time; time.sleep(2); print('done')"], scope="full")
+    config_path=root/".omc/quality-gates.json"
+    config=json.loads(config_path.read_text());config["base_ref"]="HEAD";config_path.write_text(json.dumps(config))
+    subprocess.run(["git","-C",str(root),"-c","core.hooksPath=/dev/null","-c","user.name=T","-c","user.email=t@example.test","commit","--allow-empty","-qm","base"],check=True)
+    module.approve(root, expected_config_sha256=module.load_config_snapshot(root)[1], allow_full=True)
+    p=subprocess.Popen([sys.executable,str(MODULE_PATH),"--target",str(root),"run"],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    try:
+        selector=selectors.DefaultSelector();selector.register(p.stderr,selectors.EVENT_READ)
+        assert selector.select(timeout=1), "no progress before child completion"
+        line=p.stderr.readline();assert b"OMC_QUALITY_PROGRESS" in line
+        assert p.poll() is None
+        stdout,stderr=p.communicate(timeout=10)
+        assert p.returncode==0,stderr
+        value=json.loads(stdout);assert value["status"]=="passed"
+        assert value["gates"][0]["stdout"]=="done\n"
+    finally:
+        if p.poll() is None:p.kill();p.wait()
+
+
+@pytest.mark.parametrize('cancel_signal', ['SIGTERM', 'SIGINT'])
+def test_public_quality_cancellation_reaps_owned_group(tmp_path, cancel_signal):
+    import os
+    import signal
+    import sys
+    import time
+    root=tmp_path/'repo';root.mkdir()
+    subprocess.run(['git','init','-q',str(root)],check=True)
+    subprocess.run(['git','-C',str(root),'-c','core.hooksPath=/dev/null','-c','user.name=T',
+        '-c','user.email=t@example.test','commit','--allow-empty','-qm','base'],check=True)
+    # Ignoring TERM forces the owned-group escalation path, not just parent exit.
+    code="import os,signal,time;from pathlib import Path;signal.signal(signal.SIGTERM,signal.SIG_IGN);Path('owned-pid').write_text(str(os.getpid()));time.sleep(1);Path('continued-after-cancel').write_text('bad')"
+    module=_load_module();config=_write_config(root,argv=[sys.executable,'-c',code],scope='full')
+    data=json.loads(config.read_text());data['base_ref']='HEAD';config.write_text(json.dumps(data))
+    module.approve(root,expected_config_sha256=module.load_config_snapshot(root)[1],allow_full=True)
+    p=subprocess.Popen([sys.executable,str(MODULE_PATH),'--target',str(root),'run'],
+        stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
+    try:
+        deadline=time.monotonic()+5
+        while not (root/'owned-pid').exists() and p.poll() is None and time.monotonic()<deadline:time.sleep(.01)
+        assert (root/'owned-pid').exists()
+        os.kill(p.pid,getattr(signal,cancel_signal))
+        stdout,stderr=p.communicate(timeout=5)
+        assert p.returncode != 0
+        time.sleep(1.2)  # Prove the child cannot perform its delayed write.
+        assert not (root/'continued-after-cancel').exists(), 'owned child continued after CLI cancellation'
+        # Require that pipes close because the owned child actually exited.
+        assert '"status": "passed"' not in stdout.decode()
+    finally:
+        if p.poll() is None:p.kill();p.wait()
+        if (root/'owned-pid').exists():
+            try:os.kill(int((root/'owned-pid').read_text()),signal.SIGKILL)
+            except ProcessLookupError:pass
