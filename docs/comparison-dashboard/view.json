@@ -2171,21 +2171,21 @@
       "docs/comparison-dashboard/index.html"
     ],
     "date": "2026-11-11",
-    "status": "현재 · 단일 승인 V0 구현·재검토 승인 / 실제 Codex 3경로 확인 / 미릴리스·미설치 · 2026-11-11",
-    "main_commit": "f51fde992cc7b8c19859b5ca5e1f3254659f87c0",
-    "main_commit_role": "갱신 이전 HEAD; 이번 커밋 ID는 Git 이력으로 확인",
+    "status": "현재 · 완료 기록 상태 분류·훅 안내 개선 승인 / 관련296개 통과 / 다중 커밋 연결 대기 · 2026-11-11",
+    "main_commit": "11d99fd65871ed865c13e3732ca9569524514df6",
+    "main_commit_role": "이번 갱신 이전 HEAD; 기능·문서 실제 커밋은 Git 이력 확인",
     "latest_fields": {
-      "현재 상태": "단일 승인 V0의 R1~R8 구현과 중대4건 수정을 완료하고20파일 고정 후보를 재검토 승인했다. 완료 작업 재진입42116a1d·명시 모델afbf6c20·단일 승인 실행e223e1f6을 기능별 로컬 커밋했다. 상태 문서5파일은 별도 커밋하며 그 ID는 Git 이력으로 확인한다.",
-      "보완 내용": "Codex·Python/pytest·기존 파일 수정에 한정해 승인된 범위와 예산 안에서 실제 RED→구현→검증→독립 검사→리뷰→최대2회 수정→격리 후보 생성을 연결한다. pytest 실행 결과·RED 전후 파일 보존·저장소별 승인 소비·클래스별 테스트 식별을 검증한다. 전역 모델 설정은 보존하며 gpt-6.1-sol을 명시할 수 있다.",
-      "검증": "수정 후 관련 pytest124개 통과, 고정 후보 재검토에서도124개 통과(57.03초). 중복 합산하지 않는다. 실제 Codex 정상1회 구현·검증수정2회 구현·리뷰수정2회 구현 경로가 candidate_ready에 도달했다. 후자의 두 경로는 통제된 오류 주입이며 자연 작업 품질·개입 감소 근거가 아니다. 기존 출력 계약 테스트 실패1건은 baseline에서도 재현된다.",
-      "Git·리뷰 범위": "기존 승인20파일과 문서 최신화5파일을 구분한다. 동일 에이전트 재검토이며 외부 독립 코드 리뷰가 아니다. 새 문서 변경은 기존 승인 범위에 자동 포함하지 않는다. .omc 실행 원문·기존 비추적 자료는 커밋에 포함하지 않고 보존한다.",
-      "중단·설정": "BLOCK·범위 이탈·만료·기록 불일치·인증 실패는 중단한다. 실패한 승인도 자동 재사용하지 않으며 provider fallback·자동 로그인·자동 재개를 허용하지 않는다. 원본 반영·push·PR·설치·릴리스는 별도 요청이다.",
-      "이력·보류": "설치된0.6.5는 d1045f8b 당시12/12 결과다. f51fde99 후속과 이번 V0는 미릴리스·미설치다. 기존 비교 HOLD·실제 홈 NOT_VERIFIED·보존 UNKNOWN·관찰 비활성을 유지한다. oh-my-claudecode 대비 생산성 우위와 사용자 개입 감소는 미검증이다.",
-      "근거": ".omc/tasks/single-approval-review-fixes/의 RED·GREEN·regression·live/summary.json과 작업 완료 기록; 격리 리뷰 /private/tmp/omc-r1-r8-review-fixed-20261111의20파일 snapshot·승인 receipt. 로컬 임시 근거의 다른 checkout 제공·장기 보존은 보장하지 않는다.",
-      "다음 작업": "기능별 로컬 커밋 결과를 확인한다. 실제 업무 비교는 별도 승인 작업으로 남기며 릴리스 전 최종 후보 전체 리뷰 결속·품질 설정·실행 예산을 별도로 준비한다."
+      "현재 상태": "경고부 계획 판정 지원은11d99fd6, 완료 기록1차 개선6파일은656dfe17로 로컬 커밋했다. 기능 커밋에6파일 전체의 완료 기록이 정상 연결됐다. 상태 문서5파일은 별도 커밋하며 ID는 Git 이력으로 확인한다. 소스는0.6.5 후속이며 미릴리스·미설치다.",
+      "보완 내용": "완료 수집 전용 엄격 읽기로 대기 기록 없음·JSON 손상·필드 오류·세션/커밋 불일치·읽기 실패를 구분한다. 없음은 no_pending_completion·종료0, 오류는 구조화 reason_code·종료1이다. post-commit은 Git 성공과 기록 실패를 구분하고 기존 사용자 훅 종료 상태를 유지한다. 공용 JSON 읽기 함수는 보존했다.",
+      "검증": "신규 RED13건 중12실패로 미지원 경로를 재현한 뒤 기존 단일 커밋·재진입·완료 관찰을 포함한296개가 통과했다(328.08초). 격리 리뷰에서 관련65개 재실행 통과(29.32초). 검사는 중복되므로 합산하지 않는다. native/Husky 실제 post-commit과 공개 CLI를 검증했고 권한 오류는 단위 주입이다. 셸 문법·공백·TDD 검사도 통과했다.",
+      "Git·리뷰 범위": "코드·테스트·훅·지침6파일은 같은 바이트의 고정 격리 후보로 승인했다. 동일 에이전트 재검토이며 외부 독립 코드 리뷰가 아니다. 상태 문서5파일은 별도 정합성 변경으로 기존 코드 승인에 자동 포함하지 않는다. 기존 실행 원문·과거 완료 영수증·비추적 자료는 보존한다.",
+      "중단·설정": "기록 실패가 Git 커밋을 취소하지 않는다. 실패 시 커밋을 재실행하거나 대기 기록을 임의 복원하지 않는다. 사용자 홈·품질 설정·설치 상태는 변경하지 않았다. 경고부 판정 PROCEED WITH CAUTION은 원문과 사용자 선택 조건을 보존한다.",
+      "이력·보류": "다중 커밋 전체 연결·등록·수동 기록 복구는2차 설계이며 미구현이다. 첫 커밋의 완료 기록을 전체 묶음 완료로 보고하지 않는다. 설치된0.6.5의12/12는d1045f8b 당시 이력이다. 후속 V0·이번 개선은 미릴리스·미설치다. 비교 HOLD·실제 홈 NOT_VERIFIED·보존 UNKNOWN·관찰 비활성과 제품 효과 미입증을 유지한다.",
+      "근거": ".omc/tasks/completion-classification-a/의 승인 기준·RED·최종296개 검사·candidate SHA; .omc/state/output-records/96cd989989cb4d3582a01d01af47d0de/의 작업 완료·리뷰 출력; /private/tmp/omc-completion-a-review-20261111의65개 검사·고정6파일 승인. 로컬·임시 근거의 장기 보존과 다른 checkout 제공은 보장하지 않는다.",
+      "다음 작업": "승인된1차 기능과 상태 문서를 각각 로컬 커밋하고 완료 기록 연결·정상 생략을 확인한다. 2차 다중 커밋 지원은 소비자별 회귀 범위를 확정한 별도 계획과 승인 후 진행한다. 설치·릴리스·push는 별도 요청이다."
     },
     "verification": {
-      "implementation_passed": 124,
+      "implementation_passed": 296,
       "independent_review_passed": null,
       "counts_overlap": true,
       "real_fast_seconds": 3.226407833979465,
@@ -2203,7 +2203,7 @@
       "legacy_local_mirrors_synced_after_backup": 2,
       "skill_contract_passed": 31,
       "skill_contract_seconds": 0.58,
-      "same_agent_review_passed": 124
+      "same_agent_review_passed": 65
     },
     "release_preparation": {
       "version": "0.6.5",
@@ -2222,7 +2222,7 @@
       "ship_status": "RELEASED_D1045F8B_FOLLOWUP_UNRELEASED"
     },
     "commit_status": {
-      "scope": "20_REVIEWED_FILES_AND_5_STATUS_DOCUMENTS",
+      "scope": "6_APPROVED_FEATURE_FILES_AND_5_STATUS_DOCUMENTS",
       "commit_id_authority": "git log -- docs/automatic_model_routing_roadmap.md",
       "push": "NOT_REQUESTED_IN_THIS_UPDATE"
     },
@@ -2245,9 +2245,136 @@
       "closed_work_resume": "42116a1d6a0f26863720e6e59c277cc8e0ae3d76",
       "explicit_codex_model": "afbf6c2087f79ea70db062d976697ecb13090018",
       "single_approval_v0": "e223e1f6"
+    },
+    "completion_classification_a": {
+      "status": "COMMITTED_UNRELEASED",
+      "scope_files": 6,
+      "regression_passed": 296,
+      "review_passed": 65,
+      "multi_commit_linkage": "NOT_IMPLEMENTED",
+      "record_reconciliation": "NOT_IMPLEMENTED",
+      "commit": "656dfe173352f69237b1feb35e9224662c021c14",
+      "completion_receipt": ".omc/state/sessions/20261111T172812-7cd82112/completion.json"
     }
   },
   "current_update_history": [
+    {
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "comparison_state": "HOLD",
+      "actual_home": "NOT_VERIFIED",
+      "historical_preservation_revalidation": "UNKNOWN",
+      "existing_formal_holds": "PRESERVED",
+      "comparison_runs": 0,
+      "comparison_status": "NOT_RUN",
+      "descendant_termination": "NOT_VERIFIED",
+      "consumer_count_on_query_failure": null,
+      "recovery": {
+        "green": {
+          "status": "SEPARATE_ORIGINAL_BYTES_VERIFIED",
+          "bytes": 138,
+          "sha256": "76810fb032ab587ad99eb760fd00a0188b20c391032aafead2ae3e12da2257f9",
+          "restored_over_old_path": false
+        },
+        "red": {
+          "original_bytes": "UNCONFIRMED",
+          "semantic_record": "PYTHON_DICT_REPR"
+        },
+        "baseline": {
+          "original_bytes": "UNCONFIRMED",
+          "previous_hash_available": true
+        }
+      },
+      "formal_hold_reason": "PRIOR_PRESERVATION_FAILED",
+      "local_observation": {
+        "cohort_v3": "DISABLED",
+        "completion_observation": "OBSERVATION_INVALID",
+        "reason": "live_observation_not_enabled",
+        "consumers_requeried": false
+      },
+      "documentation_commit_scope": [
+        "README.md",
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/view.json",
+        "docs/comparison-dashboard/index.html"
+      ],
+      "date": "2026-11-11",
+      "status": "현재 · 단일 승인 V0 구현·재검토 승인 / 실제 Codex 3경로 확인 / 미릴리스·미설치 · 2026-11-11",
+      "main_commit": "f51fde992cc7b8c19859b5ca5e1f3254659f87c0",
+      "main_commit_role": "갱신 이전 HEAD; 이번 커밋 ID는 Git 이력으로 확인",
+      "latest_fields": {
+        "현재 상태": "단일 승인 V0의 R1~R8 구현과 중대4건 수정을 완료하고20파일 고정 후보를 재검토 승인했다. 완료 작업 재진입42116a1d·명시 모델afbf6c20·단일 승인 실행e223e1f6을 기능별 로컬 커밋했다. 상태 문서5파일은 별도 커밋하며 그 ID는 Git 이력으로 확인한다.",
+        "보완 내용": "Codex·Python/pytest·기존 파일 수정에 한정해 승인된 범위와 예산 안에서 실제 RED→구현→검증→독립 검사→리뷰→최대2회 수정→격리 후보 생성을 연결한다. pytest 실행 결과·RED 전후 파일 보존·저장소별 승인 소비·클래스별 테스트 식별을 검증한다. 전역 모델 설정은 보존하며 gpt-6.1-sol을 명시할 수 있다.",
+        "검증": "수정 후 관련 pytest124개 통과, 고정 후보 재검토에서도124개 통과(57.03초). 중복 합산하지 않는다. 실제 Codex 정상1회 구현·검증수정2회 구현·리뷰수정2회 구현 경로가 candidate_ready에 도달했다. 후자의 두 경로는 통제된 오류 주입이며 자연 작업 품질·개입 감소 근거가 아니다. 기존 출력 계약 테스트 실패1건은 baseline에서도 재현된다.",
+        "Git·리뷰 범위": "기존 승인20파일과 문서 최신화5파일을 구분한다. 동일 에이전트 재검토이며 외부 독립 코드 리뷰가 아니다. 새 문서 변경은 기존 승인 범위에 자동 포함하지 않는다. .omc 실행 원문·기존 비추적 자료는 커밋에 포함하지 않고 보존한다.",
+        "중단·설정": "BLOCK·범위 이탈·만료·기록 불일치·인증 실패는 중단한다. 실패한 승인도 자동 재사용하지 않으며 provider fallback·자동 로그인·자동 재개를 허용하지 않는다. 원본 반영·push·PR·설치·릴리스는 별도 요청이다.",
+        "이력·보류": "설치된0.6.5는 d1045f8b 당시12/12 결과다. f51fde99 후속과 이번 V0는 미릴리스·미설치다. 기존 비교 HOLD·실제 홈 NOT_VERIFIED·보존 UNKNOWN·관찰 비활성을 유지한다. oh-my-claudecode 대비 생산성 우위와 사용자 개입 감소는 미검증이다.",
+        "근거": ".omc/tasks/single-approval-review-fixes/의 RED·GREEN·regression·live/summary.json과 작업 완료 기록; 격리 리뷰 /private/tmp/omc-r1-r8-review-fixed-20261111의20파일 snapshot·승인 receipt. 로컬 임시 근거의 다른 checkout 제공·장기 보존은 보장하지 않는다.",
+        "다음 작업": "기능별 로컬 커밋 결과를 확인한다. 실제 업무 비교는 별도 승인 작업으로 남기며 릴리스 전 최종 후보 전체 리뷰 결속·품질 설정·실행 예산을 별도로 준비한다."
+      },
+      "verification": {
+        "implementation_passed": 124,
+        "independent_review_passed": null,
+        "counts_overlap": true,
+        "real_fast_seconds": 3.226407833979465,
+        "whole_suite_runs_this_update": 0,
+        "performance_comparison_status": "UNVERIFIED",
+        "comparison_calls": 0,
+        "last_release_full_run": {
+          "candidate": "d1045f8b",
+          "passed": 6318,
+          "failed": 0,
+          "skipped": 0,
+          "deselected": 15,
+          "seconds": 2603.07
+        },
+        "legacy_local_mirrors_synced_after_backup": 2,
+        "skill_contract_passed": 31,
+        "skill_contract_seconds": 0.58,
+        "same_agent_review_passed": 124
+      },
+      "release_preparation": {
+        "version": "0.6.5",
+        "quality_status": "ready_configuration_only",
+        "config_sha256": "cb75f847471d93f644e89b704e4448b319260a6c349aa31c74736e4700d5ca81",
+        "existing_base_ref": "refs/omc/release-bases/6cc02d4fad25220a1366224af39c958cf34fca2b",
+        "source_ref_created": true,
+        "base_oid": "6cc02d4fad25220a1366224af39c958cf34fca2b",
+        "proposal_applied": true,
+        "fast_first_proposal_applied": false,
+        "final_candidate_binding": "FOLLOWUP_UNRELEASED",
+        "latest_quality_command_runs": 1,
+        "latest_full_result": "PASSED",
+        "reinstalled_targets": 12,
+        "target_count": 12,
+        "ship_status": "RELEASED_D1045F8B_FOLLOWUP_UNRELEASED"
+      },
+      "commit_status": {
+        "scope": "20_REVIEWED_FILES_AND_5_STATUS_DOCUMENTS",
+        "commit_id_authority": "git log -- docs/automatic_model_routing_roadmap.md",
+        "push": "NOT_REQUESTED_IN_THIS_UPDATE"
+      },
+      "single_approval_v0": {
+        "status": "IMPLEMENTED_REVIEWED_UNRELEASED",
+        "real_codex_paths": [
+          "normal",
+          "verification_repair",
+          "review_repair"
+        ],
+        "controlled_injection_paths": [
+          "verification_repair",
+          "review_repair"
+        ],
+        "product_effect": "NOT_PROVEN",
+        "reviewer_independence": "SAME_AGENT",
+        "known_baseline_failures": 1
+      },
+      "feature_commits": {
+        "closed_work_resume": "42116a1d6a0f26863720e6e59c277cc8e0ae3d76",
+        "explicit_codex_model": "afbf6c2087f79ea70db062d976697ecb13090018",
+        "single_approval_v0": "e223e1f6"
+      }
+    },
     {
       "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
       "comparison_state": "HOLD",
