@@ -1,6 +1,17 @@
 # Automatic Model Routing Roadmap
 
-## 현재 · 발행 실패 설명·초안 전달 개선 승인 / 관련344개 통과·기존 실패1개 / 복구·다중 커밋 대기 · 2026-11-11
+## 현재 · 0.7.0 전체 검사 실패 이력 보존 / 회귀 수정·관련 검증 통과 / 재릴리스 대기 · 2026-11-11
+
+- **현재 상태:** 0.7.0 후보0b1c6524의 전체 검사1회는 실패해 릴리스·재설치를 중단했다. 이후 회귀 수정27개 파일을 기능 커밋 4d3d3cc2으로 커밋했고 27파일 전체의 완료 기록이 정상 연결됐다. 설치된0.6.5의12/12는d1045f8b 당시 이력이며 이번 설치는0곳이다.
+- **보완 내용:** 유효한 pending의 기준 HEAD와 현재 HEAD가 같으면 no_followup_commit으로 정상 생략하고 원본을 보존한다. 실제 Git 실패·손상·세션/커밋 불일치와 다중 커밋은 오류를 유지한다. 버전 기대값은0.7.0으로 맞추고 스킬 조건부 상세를 참조로 분리했다. 기존 길이 제한과 공통 기계 계약을 유지하며 리뷰의 preserve 참조 문구도 명시적 링크로 보완했다.
+- **검증:** 실패 후보 전체 검사:6403개 통과·8개 실패·정책 제외15개·2852.07초. 수정 후 관련 회귀404개와 설치 회귀21개가 통과했고 strict 감사·TDD·공백 검사도 통과했다. 리뷰의 독립 재실행은 핵심CLI7개 통과다. 서로 다른 실행 결과를 합산하거나 관련 검증을 새 전체 검사 통과로 대체하지 않는다.
+- **Git·리뷰 범위:** 통합4파일은488f0a06, 릴리스노트는0b1c6524에 커밋돼 있다. 후속 회귀 수정27파일은 격리 후보에서 코드 승인·경미한 문서 보완 제안을 받았다. 이번 상태 문서5파일은 별도 커밋이며 기능 승인 범위와 구분한다. 동일 에이전트 재검토이며 외부 독립 리뷰가 아니다.
+- **중단·설정:** 승인된 전체 검사1회가 실패해 자동 재실행하지 않았다. 품질 설정은 보존됐다. storefront 로컬 수정은 백업했고 원본 SHA·권한 보존을 확인했으며 교체하지 않았다. 준비 READY·코드 승인·검사 통과·설치 완료는 별개다.
+- **이력·보류:** 기존 비교 HOLD·실제 홈 NOT_VERIFIED·역사적 보존 UNKNOWN·관찰 비활성·효과 미검증을 유지한다. 2차 다중 커밋 전체 연결·기록 복구, 명시 재발행·과거 조회는 미구현이다.
+- **근거:** .omc/tasks/release070-repair/의RED·validation-final.txt·install-validation-final.txt·strict-audit-final.json·integrity.json; .omc/investigations/release070-eight-failures/; /private/tmp/omc-release070-k_xt_n6y의 전체 검사·백업·실패 원문. 로컬·임시 근거의 장기 보존은 보장하지 않는다.
+- **다음 작업:** 새 최종 후보의전체 경로·리뷰·품질 설정을 다시 결속하고, 새 전체 검사 횟수·시간 승인을 확인한다. 전체 검사 통과 후에만12곳 재설치를 진행하며 storefront는 단일 충돌·백업·동시 작업 배제 조건을 다시 확인한다. 이번 정합성 정리에서 릴리스·설치·push는 수행하지 않는다.
+
+## 이전 이력 · 발행 실패 설명·초안 전달 개선 승인 / 관련344개 통과·기존 실패1개 / 복구·다중 커밋 대기 · 2026-11-11
 
 - **현재 상태:** 완료 기록1차 개선은656dfe17과 상태 문서69cab00d에 커밋돼 있다. 발행 실패 대응6파일은f549aaa4로 로컬 커밋했고6파일 전체의 완료 기록이 정상 연결됐다. 상태 문서5파일은 별도 커밋하며 ID는 Git 이력으로 확인한다. 소스는0.6.5 후속으로 미릴리스·미설치다. 0.7.0 릴리스 후보를 준비하며 전체 품질 검사·이번 재설치는 아직 실행하지 않았다.
 - **보완 내용:** 분석·원문·요약을 먼저 저장하고 발행 직전에 prepare하도록 plan/critique-plan 지침을 보완했다. 명시한 요약이 같은 세션·작업·후보·참조와 결속된 경우에만 실패 stderr에서 공식 판정 전달 미확인과 작성 초안을 구분한다. 최대12줄·1200자이며 빈 값/초과는 절단 없이 원문 위치를 안내한다. 정상 발행은 요약 크기 때문에 차단하지 않는다.
@@ -258,7 +269,7 @@
 - 설치 결과: 실제 프로젝트 12곳 모두 installed_version 0.6.3·source_revision 3d716da4a4f51d06e9fc90735598d2bba822f445와 엄격 감사 verification_status=ok를 확인했다. 대상: ai-cs · codex-chat · marketing · marketing-project · research-auto · sellerhub-accounts-fe-restored · market-reasoning-engine · okx-maker-grid-bot-wind · sixshop3-storefront-fe · sixshop2 · sixshop2-landing · sixshop3-partner-center-fe. 기존 제외였던 marketing-project도 포함했다. 설치 원장의 임시 검증 대상 18곳과 개발용 워크트리는 재설치 대상에서 구분했다. 원격 push·태그·GitHub release는 실행하지 않았다.
 - 로컬 변경과 보존: 사용자의 표준판 강제 적용 지시에 따라 codex-chat·market-reasoning-engine의 omc_guard.py·omc_pipeline_guard.py 로컬 수정은 원문·권한과 이전 receipt를 백업한 뒤 표준판으로 교체했다. 로컬 문서 작업 보호 기능을 표준판이 모두 대체한다고 주장하지 않는다. storefront·marketing-project의 AGENTS.md는 OMC 블록만 병합하고 프로젝트 지침을 보존했다. 12곳의 Git 인덱스 원문·엔트리·플래그, 기존 기록과 업무 파일의 보존을 확인했다. 기존 원본 작업·별도 후보·스테이징·검증 원문·로컬 제외 설정을 정리하거나 삭제하지 않았다. 설치 백업: /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/consumers.
 - 입력 격리와 보관: 광고 입력은 34078b6f923587b03c0fbac3d7a5a3c4bf5c0cfc의 독립 Git 복제본이고 node_modules도 설치·다운로드 없이 독립 복제했다. 격리 입력·의존성과 OMC source/candidate의 보존 및 소유 프로세스 종료를 확인했다. 원본 storefront Git 변화는 별도 관측이며 전역 원문 불변이나 변경 주체 확정으로 해석하지 않는다. 명시 보관 입력 175,962,653바이트가 64MiB를 넘어 partial_originals_retained로 남겼고 원문은 보존했다. 완전한 묶음 보관으로 표시하지 않는다.
-- 기존 실패와 미검증: 4ef0e26의 5,790개 통과·1개 실패 이력은 당시 실패로 유지하고, 보완 후 ffd52da와 최종 3d716da의 통과를 별도 실행으로 기록한다. 문서 범위 후보의 기존 통합 337개 통과·1개 실패·설치 준비 오류 2개를 이번 출하 통과로 면제하지 않는다. 실제 홈 연동, 동일 조건의 유효한 양쪽 Claude 대표 업무 비교, C3 사용자 이해, 사용자 개입 감소·생산성·경쟁 우위는 미검증이다. 과거 광고 추적 4개 실패·클릭/숨김 통합 미검증과 자식 종료 unconfirmed 원문도 소급 변경하지 않는다. 설치 감사는 기존 관찰 정책의 재활성화나 관찰 유효성 복구가 아니다.
+- 기존 실패와 미검증: 4ef0e26의 5,790개 통과·1개 실패 이력은 당시 실패로 유지하고, 보완 후 ffd52da와 최종 3d716da의 통과를 별도 실행으로 커밋했고 27파일 전체의 완료 기록이 정상 연결됐다. 문서 범위 후보의 기존 통합 337개 통과·1개 실패·설치 준비 오류 2개를 이번 출하 통과로 면제하지 않는다. 실제 홈 연동, 동일 조건의 유효한 양쪽 Claude 대표 업무 비교, C3 사용자 이해, 사용자 개입 감소·생산성·경쟁 우위는 미검증이다. 과거 광고 추적 4개 실패·클릭/숨김 통합 미검증과 자식 종료 unconfirmed 원문도 소급 변경하지 않는다. 설치 감사는 기존 관찰 정책의 재활성화나 관찰 유효성 복구가 아니다.
 - 다음 작업: 릴리스·재설치 단계는 종료했다. 다음은 동일 조건 대표 업무 비교의 재개 여부와 고정 입력·필수 검증·실행 횟수·시간·종료 조건을 별도 결정한다. 실제 홈 연동은 별도 미검증이며, 비교 HOLD를 자동 해제하거나 모델·비교를 재실행하지 않는다.
 - 근거: /var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/result.json; /var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/quality-run.return.json; /var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/independent-consumption.json; /var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-063-final-ship-tt9m8308/archive.json; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/local-release.json; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/result.json; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/deployment/main-ready.stdout; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/final-independent-verification.json; /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-release-063-cwd8edx2/user-execution-approval.json. 로컬 임시 경로의 원문과 백업이며 다른 checkout 자동 접근이나 장기 보존을 보장하지 않는다.
 
