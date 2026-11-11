@@ -1238,3 +1238,266 @@ def test_safe_cli_marks_promotion_failure_as_blocked_stage(
         "review": {"status": "completed"},
         "promotion": {"status": "blocked"},
     }
+
+
+def test_single_approval_has_separate_bounded_entrypoint():
+    assert callable(getattr(safe, '_run_single_approval', None))
+
+
+@pytest.mark.parametrize('revisions', [True, -1, 3])
+def test_single_approval_rejects_unapproved_revision_budget(revisions):
+    policy = {
+        'allowed_paths': ['app.py', 'test_app.py'], 'test_paths': ['test_app.py'],
+        'verification_commands': [['python3', '-m', 'pytest', 'test_app.py', '-q']],
+        'red_case_id': 'test_app.py::test_value', 'max_time_sec': 120,
+        'max_revisions': revisions, 'approval_expires_epoch': 4000000000,
+        'verifier_path': '/private/tmp/approved-verifier.py', 'verifier_sha256': 'c' * 64,
+    }
+    with pytest.raises(mission.MissionError):
+        mission.validate_single_execution(policy)
+
+
+def _single_fixture(tmp_path, monkeypatch):
+    source = tmp_path / 'single-source'
+    source.mkdir()
+    _git(source, 'init', '-q')
+    _git(source, 'config', 'user.name', 'Fixture')
+    _git(source, 'config', 'user.email', 'fixture@localhost')
+    (source / 'app.py').write_text('value = 1\n')
+    (source / 'test_app.py').write_text('def test_baseline():\n    assert True\n')
+    _git(source, 'add', '.')
+    _git(source, 'commit', '-qm', 'baseline')
+    verifier = tmp_path / 'oracle.py'
+    verifier.write_text("import pathlib,sys\nns={}\nexec((pathlib.Path(sys.argv[1])/'app.py').read_text(),ns)\nassert ns['value']==2\n")
+    commands = [[sys.executable, '-B', '-m', 'pytest', '-p', 'no:cacheprovider', 'test_app.py', '-q']]
+    policy = {'allowed_paths': ['app.py', 'test_app.py'], 'test_paths': ['test_app.py'],
+              'verification_commands': commands, 'red_case_id': 'test_app.py::test_value',
+              'max_time_sec': 60, 'max_revisions': 2, 'approval_expires_epoch': time.time()+600,
+              'verifier_path': str(verifier), 'verifier_sha256': hashlib.sha256(verifier.read_bytes()).hexdigest()}
+    packet = mission.freeze_mission_packet(tmp_path/'mission-single.json', {
+        'schema_version': 'omc-autopilot-mission/v2', 'request_sha256': hashlib.sha256(b'fix value').hexdigest(),
+        'base_commit': _git(source, 'rev-parse', 'HEAD'), 'outcome': 'value is 2',
+        'deliverables': ['fixed value'], 'definition_of_done': ['value is 2'], 'non_goals': ['publish'],
+        'validation': {'max_total_rounds': 3, 'max_revisions_per_issue': 2}, 'execution': policy})
+    receipt = mission.build_mission_approval_receipt(decision_id='explicit-user-approval',session_id='authorizing-session',packet=packet)
+    approval_path=tmp_path/'approval-single.json';approval_path.write_text(json.dumps(receipt))
+    contract_path=_freeze_contract(source,tmp_path,allowed_paths=policy['allowed_paths'],verification_commands=commands,instruction='fix value')
+    doc=json.loads(contract_path.read_text());doc.pop('contract_sha256')
+    doc.update(schema_version=workspace.WORK_CONTRACT_SCHEMA_VERSION_V2,change_class='implementation',test_policy='required',promotion_policy='isolated_candidate_only',
+        mission_packet_path='mission-single.json',mission_packet_sha256=packet['packet_sha256'],
+        mission_approval_path=approval_path.name,mission_approval_sha256=hashlib.sha256(approval_path.read_bytes()).hexdigest(),
+        mission_approval_session_id='authorizing-session')
+    final=tmp_path/'single-contract.json';workspace.freeze_work_contract(final,doc)
+    # Unit tests exercise real child checks; OS confinement has separate tests.
+    monkeypatch.setattr(safe,'_confined_verification_command',lambda root,argv:argv)
+    return source,final
+
+
+@pytest.mark.parametrize('mode', ['normal','test_repair','review_repair','exhausted','review_block','oracle_repair'])
+def test_single_approval_runs_real_checks_and_bounded_repairs(tmp_path,monkeypatch,mode):
+    source,contract=_single_fixture(tmp_path,monkeypatch)
+    task_calls=[];review_calls=[]
+    def task(root,prompt):
+        task_calls.append(root)
+        with (root/'.omc/cost_log.jsonl').open('a') as telemetry:
+            telemetry.write('{"executor":"codex"}\n')
+        if '[OMC RED ONLY]' in prompt:
+            (root/'test_app.py').write_text("from pathlib import Path\ndef test_baseline():\n    assert True\ndef test_value():\n    ns={}\n    exec(Path('app.py').read_text(),ns)\n    assert ns['value']==2\n")
+        else:
+            number=len(task_calls)-1
+            value=1 if mode=='exhausted' or (mode in ['test_repair','oracle_repair'] and number==1) else 2
+            (root/'app.py').write_text(f'value = {value}\n')
+            if mode=='oracle_repair':
+                # A weak test must not defeat the parent-owned independent oracle.
+                (root/'test_app.py').write_text('def test_baseline():\n    assert True\ndef test_value():\n    assert True\n')
+            if number>1:
+                assert 'candidate_snapshot_sha256' in prompt
+        return 0,'VERDICT: PROCEED'
+    def review(root,prompt):
+        review_calls.append(root)
+        digest=re.search(r'REVIEW_PACKET_SHA256: ([0-9a-f]{64})',prompt).group(1)
+        verdict='BLOCK' if mode=='review_block' else 'REVISE' if mode=='review_repair' and len(review_calls)==1 else 'APPROVE'
+        return 0,f'Please fix the value if needed.\nREVIEW_PACKET_SHA256: {digest}\nVERDICT: {verdict}'
+    before=workspace.source_identity(source)
+    result=safe.run_safe_pipeline(source=source,contract_path=contract,instruction='fix value',task_runner=task,review_runner=review,workspace_parent=tmp_path/'runs')
+    if mode in ['exhausted','review_block']:
+        assert result['status']=='blocked',result
+        assert result['reason_code']==('revision_budget_exhausted' if mode=='exhausted' else 'review_rejected'),result
+    else:
+        assert result['status']=='candidate_ready',result
+        assert result['source_modified'] is False
+        assert _git(Path(result['isolated_workspace']),'rev-parse','HEAD')==result['candidate_commit']
+    assert len(set(task_calls))==1
+    assert len(task_calls)<=4  # one RED + initial implementation + at most two repairs
+    assert workspace.source_identity(source)==before
+    assert not _git(source,'branch','--list','codex/safe-candidate')
+
+
+@pytest.mark.parametrize('failure', ['expired','scope','oracle','registration','gate','commit','verifier_write','governance'])
+def test_single_approval_failures_never_return_success(tmp_path,monkeypatch,failure):
+    source,path=_single_fixture(tmp_path,monkeypatch)
+    calls=[]
+    if failure in ['expired','scope']:
+        original=mission.load_mission_packet
+        def changed(p):
+            packet=original(p)
+            if failure=='expired':packet['execution']['approval_expires_epoch']=time.time()-1
+            else:packet['execution']['allowed_paths']=['other.py']
+            return packet
+        # Internal branch receives a validated packet from the existing loader;
+        # exercise runtime checks directly, not a forged approval in production.
+        packet=original(tmp_path/'mission-single.json')
+        if failure=='expired':packet['execution']['approval_expires_epoch']=time.time()-1
+        else:packet['execution']['allowed_paths']=['other.py']
+        args=dict(source=source,contract=workspace.load_work_contract(path),packet=packet,
+            approval=json.loads((tmp_path/'approval-single.json').read_text()),instruction='fix value',
+            task_runner=lambda *a:calls.append(a),review_runner=lambda *a:calls.append(a),workspace_parent=tmp_path/'runs',deadline_monotonic=None)
+        result=safe._run_single_approval(**args)
+        assert result['status']=='blocked' and not calls
+        return
+    if failure=='oracle':(tmp_path/'oracle.py').write_text('raise SystemExit(0)')
+    if failure=='registration':monkeypatch.setattr(safe.workspace,'materialize_isolated_clone',lambda *a:(_ for _ in ()).throw(workspace.AutopilotWorkspaceError('fixture registration failure')))
+    if failure=='gate':
+        import omc_pipeline_guard as gate
+        monkeypatch.setattr(gate,'_evaluate_implementation_completion',lambda *a:{'outcome':'blocked'})
+    if failure=='commit':monkeypatch.setattr(safe,'_commit_candidate',lambda *a:(_ for _ in ()).throw(workspace.AutopilotWorkspaceError('candidate_git_command_failed')))
+    def task(root,prompt):
+        calls.append(root)
+        if '[OMC RED ONLY]' in prompt:
+            (root/'test_app.py').write_text("from pathlib import Path\ndef test_baseline():\n    assert True\ndef test_value():\n    ns={}\n    exec(Path('app.py').read_text(),ns)\n    assert ns['value']==2\n")
+        else:
+            (root/'app.py').write_text('value = 2\n')
+            if failure=='governance':(root/'.omc/pipeline_session.json').write_text('{}')
+        return 0,'VERDICT: PROCEED'
+    def review(root,prompt):
+        digest=re.search(r'REVIEW_PACKET_SHA256: ([0-9a-f]{64})',prompt).group(1)
+        if failure=='verifier_write':
+            (root.parent/'verifier.py').chmod(0o600)
+            (root.parent/'verifier.py').write_text('pass')
+        return 0,f'REVIEW_PACKET_SHA256: {digest}\nVERDICT: APPROVE'
+    before=workspace.source_identity(source)
+    result=safe.run_safe_pipeline(source=source,contract_path=path,instruction='fix value',task_runner=task,review_runner=review,workspace_parent=tmp_path/'runs')
+    assert result['status']=='blocked',result
+    assert workspace.source_identity(source)==before
+
+
+def test_single_approval_same_run_is_not_replayed(tmp_path,monkeypatch):
+    source,path=_single_fixture(tmp_path,monkeypatch)
+    runs=tmp_path/'runs';runs.mkdir();(runs/'safe-run-001').mkdir()
+    calls=[]
+    result=safe.run_safe_pipeline(source=source,contract_path=path,instruction='fix value',
+        task_runner=lambda *a:calls.append(a),review_runner=lambda *a:calls.append(a),workspace_parent=runs)
+    assert result['reason_code']=='single_approval_already_started' and not calls
+
+
+def test_single_approval_cli_freezes_isolated_candidate_policy(tmp_path,monkeypatch):
+    source,path=_single_fixture(tmp_path,monkeypatch)
+    packet=mission.load_mission_packet(tmp_path/'mission-single.json')
+    code=autopilot.cmd_freeze_work_contract(source,instruction='fix value',run_id='cli-run',
+        allowed_paths=packet['execution']['allowed_paths'],allowed_operations=['modify'],
+        change_class='implementation',test_policy='required',verification_commands=packet['execution']['verification_commands'],
+        mode='lite',branch='codex/unused-isolated',output=tmp_path/'cli-contract.json',
+        mission_packet_path=tmp_path/'mission-single.json',mission_approval_path=tmp_path/'approval-single.json',
+        mission_approval_session_id='authorizing-session')
+    assert code==0
+    assert workspace.load_work_contract(tmp_path/'cli-contract.json')['promotion_policy']=='isolated_candidate_only'
+
+
+def test_single_approval_rejects_deleting_baseline_test(tmp_path,monkeypatch):
+    source,path=_single_fixture(tmp_path,monkeypatch)
+    def task(root,prompt):
+        (root/'test_app.py').write_text('def test_value():\n    assert False\n')
+        return 0,'VERDICT: PROCEED'
+    result=safe.run_safe_pipeline(source=source,contract_path=path,instruction='fix value',
+        task_runner=task,review_runner=lambda *a:pytest.fail('review must not run'),workspace_parent=tmp_path/'runs')
+    assert result['reason_code']=='baseline_tests_changed'
+
+
+def test_single_approval_rejects_changed_contract_before_provider(tmp_path,monkeypatch):
+    source,path=_single_fixture(tmp_path,monkeypatch)
+    calls=[]
+    result=safe.run_safe_pipeline(source=source,contract_path=path,instruction='fix value',
+        task_runner=lambda *a:calls.append(a),review_runner=lambda *a:calls.append(a),
+        workspace_parent=tmp_path/'runs',expected_contract_sha256='0'*64)
+    assert result['reason_code']=='work_contract_changed_before_execution'
+    assert not calls
+
+
+def _review_fix_runner(mode, calls):
+    def task(root, prompt):
+        red = '[OMC RED ONLY]' in prompt
+        calls.append('red' if red else 'implementation')
+        test = root / 'test_app.py'
+        if red:
+            if mode == 'red_mutation':
+                body = "\nfrom pathlib import Path\ndef test_value():\n    Path('app.py').write_text('value = 2\\n')\n    assert False\n"
+            else:
+                body = "\nfrom pathlib import Path\ndef test_value():\n    ns={}\n    exec(Path('app.py').read_text(),ns)\n    assert ns['value']==2\n"
+            test.write_text(test.read_text() + body)
+        else:
+            (root / 'app.py').write_text('value = 2\n')
+            if mode == 'skip':
+                test.write_text("import pytest\npytestmark=pytest.mark.skip(reason='disabled')\n" + test.read_text())
+        return 0, 'VERDICT: PROCEED'
+    return task
+
+
+def _review_fix_approve(root, prompt):
+    digest = re.search(r'REVIEW_PACKET_SHA256: ([0-9a-f]{64})', prompt).group(1)
+    return 0, f'REVIEW_PACKET_SHA256: {digest}\nVERDICT: APPROVE'
+
+
+def test_review_fix_all_skipped_is_not_success(tmp_path, monkeypatch):
+    source, path = _single_fixture(tmp_path, monkeypatch)
+    calls = []
+    result = safe.run_safe_pipeline(source=source, contract_path=path, instruction='fix value',
+        task_runner=_review_fix_runner('skip', calls), review_runner=_review_fix_approve,
+        workspace_parent=tmp_path/'runs')
+    assert result['status'] == 'blocked', result
+    assert result['reason_code'] == 'revision_budget_exhausted', result
+    assert all(a['error'] == 'required_tests_not_passed' for a in result['attempts'])
+
+
+def test_review_fix_red_command_cannot_modify_implementation(tmp_path, monkeypatch):
+    source, path = _single_fixture(tmp_path, monkeypatch)
+    calls = []
+    result = safe.run_safe_pipeline(source=source, contract_path=path, instruction='fix value',
+        task_runner=_review_fix_runner('red_mutation', calls), review_runner=_review_fix_approve,
+        workspace_parent=tmp_path/'runs')
+    assert result['reason_code'] == 'red_verification_side_effect_detected', result
+    assert calls == ['red']
+
+
+def test_review_fix_same_approval_cannot_restart_with_new_run_id(tmp_path, monkeypatch):
+    source, path = _single_fixture(tmp_path, monkeypatch)
+    calls = []
+    args = dict(source=source, instruction='fix value', task_runner=_review_fix_runner('normal', calls),
+                review_runner=_review_fix_approve, workspace_parent=tmp_path/'runs')
+    first = safe.run_safe_pipeline(contract_path=path, **args)
+    assert first['status'] == 'candidate_ready', first
+    doc = json.loads(path.read_text())
+    doc.pop('contract_sha256')
+    doc['run_id'] = 'new-run-same-approval'
+    second_path = tmp_path / 'second-contract.json'
+    workspace.freeze_work_contract(second_path, doc)
+    args['workspace_parent'] = tmp_path/'different-runs'
+    second = safe.run_safe_pipeline(contract_path=second_path, **args)
+    assert second['reason_code'] == 'single_approval_already_consumed', second
+    assert calls == ['red', 'implementation']
+
+
+def test_review_fix_qualified_test_names_remain_distinct(tmp_path, monkeypatch):
+    original_git = _git
+    def class_baseline(root, *args):
+        if args == ('commit', '-qm', 'baseline'):
+            (root/'test_app.py').write_text('class TestOne:\n    def test_valid(self):\n        assert True\nclass TestTwo:\n    def test_valid(self):\n        assert True\n')
+            original_git(root, 'add', 'test_app.py')
+        return original_git(root, *args)
+    monkeypatch.setattr(sys.modules[__name__], '_git', class_baseline)
+    source, path = _single_fixture(tmp_path, monkeypatch)
+    calls = []
+    result = safe.run_safe_pipeline(source=source, contract_path=path, instruction='fix value',
+        task_runner=_review_fix_runner('normal', calls), review_runner=_review_fix_approve,
+        workspace_parent=tmp_path/'runs')
+    assert result['status'] == 'candidate_ready', result
+    assert calls == ['red', 'implementation']

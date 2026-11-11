@@ -4693,6 +4693,8 @@ def _run_pipeline_step(
     isolated: bool = False,
     sandbox_mode: str = "workspace-write",
     allow_fallback: bool = True,
+    strict_workspace: bool = False,
+    model_override: str | None = None,
 ) -> tuple[int, str]:
     """단일 파이프라인 스텝을 LLM으로 실행하고 (returncode, output)을 반환한다.
 
@@ -4751,6 +4753,10 @@ def _run_pipeline_step(
         ]
         if not allow_fallback:
             cmd.append("--disable-fallback")
+        if strict_workspace:
+            cmd.append('--strict-workspace')
+        if model_override:
+            cmd.extend(['--codex-model', model_override])
         if step_name in {"review", "safe_review", "critique", "safe_critique"}:
             cmd += ["--task-kind", "review"]
         else:
@@ -4893,6 +4899,22 @@ def cmd_safe_pipeline(
         print("[SAFE PIPELINE] blocked: executor_confinement_unsupported", file=sys.stderr)
         return 1
 
+    try:
+        approved_mission = omc_mission.load_mission_packet(
+            contract_path.parent / contract['mission_packet_path']
+        ) if contract.get('schema_version') == autopilot_workspace.WORK_CONTRACT_SCHEMA_VERSION_V2 else None
+        if approved_mission is not None and approved_mission['packet_sha256'] != contract['mission_packet_sha256']:
+            print('[SAFE PIPELINE] blocked: mission_packet_contract_mismatch', file=sys.stderr)
+            return 1
+        if approved_mission is not None and approved_mission['schema_version'] == omc_mission.SINGLE_APPROVAL_SCHEMA_VERSION:
+            policy = approved_mission['execution']
+            max_time = min(max_time, policy['max_time_sec'], int(policy['approval_expires_epoch'] - time.time()))
+            if max_time < 1:
+                print('[SAFE PIPELINE] blocked: single_approval_deadline_exceeded', file=sys.stderr)
+                return 1
+    except (KeyError, OSError, ValueError, omc_mission.MissionError) as exc:
+        print(f'[SAFE PIPELINE] blocked: {exc}', file=sys.stderr)
+        return 1
     deadline_monotonic = time.monotonic() + max_time
     stage_count = 3 if contract["pipeline_mode"] == "full" else 2
     stage_timeout = max(1, max_time // stage_count)
@@ -4916,6 +4938,8 @@ def cmd_safe_pipeline(
             isolated=True,
             sandbox_mode="workspace-write",
             allow_fallback=False,
+            strict_workspace=bool(approved_mission is not None and approved_mission['schema_version'] == omc_mission.SINGLE_APPROVAL_SCHEMA_VERSION),
+            model_override=(approved_mission.get('execution', {}).get('codex_model') if approved_mission else None),
         )
 
     def run_review(workspace_root: Path, prompt: str) -> tuple[int, str]:
@@ -4931,6 +4955,7 @@ def cmd_safe_pipeline(
             isolated=True,
             sandbox_mode="read-only",
             allow_fallback=False,
+            model_override=(approved_mission.get('execution', {}).get('codex_model') if approved_mission else None),
         )
 
     def run_critique(workspace_root: Path, prompt: str) -> tuple[int, str]:
@@ -4963,6 +4988,7 @@ def cmd_safe_pipeline(
         review_runner=run_review,
         workspace_parent=runs_parent,
         deadline_monotonic=deadline_monotonic,
+        expected_contract_sha256=contract['contract_sha256'],
     )
     completed_stages = set(result.get("completed_stages") or [])
     stage_order = ["task", "verification"]
@@ -4970,6 +4996,8 @@ def cmd_safe_pipeline(
         stage_order.append("critique")
     stage_order.append("review")
     stage_order.append("promotion")
+    if approved_mission is not None and approved_mission['schema_version'] == omc_mission.SINGLE_APPROVAL_SCHEMA_VERSION:
+        stage_order = ['red', 'task', 'verification', 'independent_verification', 'review', 'completion_gate', 'candidate']
     blocked_stage = next(
         (stage for stage in stage_order if stage not in completed_stages),
         None,
@@ -4989,7 +5017,8 @@ def cmd_safe_pipeline(
     persisted = {
         **result,
         "instruction": instruction,
-        "branch": result.get("candidate_branch") or contract["candidate_branch"],
+        "branch": (None if contract['promotion_policy'] == 'isolated_candidate_only'
+                   else result.get("candidate_branch") or contract["candidate_branch"]),
         "mode": contract["pipeline_mode"],
         "safe_execution": True,
         "work_contract_sha256": contract["contract_sha256"],
@@ -4997,6 +5026,9 @@ def cmd_safe_pipeline(
     }
     _save_pipeline_result(root, persisted)
     if result.get("status") == "candidate_ready":
+        if contract['promotion_policy'] == 'isolated_candidate_only':
+            print(f"[SAFE PIPELINE] isolated candidate ready: {result.get('isolated_workspace')} ({result.get('candidate_commit')})")
+            return 0
         print(
             "[SAFE PIPELINE] candidate ready: "
             f"{result.get('candidate_branch')} ({result.get('candidate_commit')})"
@@ -5073,7 +5105,7 @@ def cmd_freeze_work_contract(
         "executor": "codex",
         "required_capabilities": ["workspace_write_confined"],
         "candidate_branch": branch,
-        "promotion_policy": "branch_ref_only",
+        "promotion_policy": ("isolated_candidate_only" if packet['schema_version'] == omc_mission.SINGLE_APPROVAL_SCHEMA_VERSION else "branch_ref_only"),
         "mission_packet_path": packet_relative.as_posix(),
         "mission_packet_sha256": packet["packet_sha256"],
         "mission_approval_path": approval_relative.as_posix(),

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import ast
 import json
 import os
 import platform
@@ -13,6 +14,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -24,6 +26,43 @@ import omc_mission as mission
 
 Runner = Callable[[Path, str], tuple[int, str]]
 VERIFICATION_MAX_OUTPUT_BYTES = 1024 * 1024
+_PYTEST_REPORT_PREFIX = 'OMC_PYTEST_REPORT:'
+_PYTEST_REPORTER = '''import json
+_reports = []
+def pytest_runtest_logreport(report):
+    _reports.append({'nodeid': report.nodeid, 'when': report.when, 'outcome': report.outcome})
+def pytest_terminal_summary(terminalreporter):
+    terminalreporter.write_line('OMC_PYTEST_REPORT:' + json.dumps(_reports, sort_keys=True))
+'''
+
+
+def _is_pytest_command(argv: list[str]) -> bool:
+    return (Path(argv[0]).name in {'pytest', 'py.test'}
+            or any(argv[i:i + 2] == ['-m', 'pytest'] for i in range(len(argv) - 1)))
+
+
+def _pytest_report(output: str) -> list[dict[str, str]] | None:
+    lines = [line[len(_PYTEST_REPORT_PREFIX):] for line in output.splitlines()
+             if line.startswith(_PYTEST_REPORT_PREFIX)]
+    if len(lines) != 1:
+        return None
+    try:
+        rows = json.loads(lines[0])
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(rows, list) or any(
+        not isinstance(row, dict) or set(row) != {'nodeid', 'when', 'outcome'}
+        or not isinstance(row['nodeid'], str) or not row['nodeid']
+        or row['when'] not in {'setup', 'call', 'teardown'}
+        or row['outcome'] not in {'passed', 'failed', 'skipped'} for row in rows
+    ):
+        return None
+    return rows
+
+
+def _pytest_cases(checks: list[dict[str, Any]], outcome: str) -> set[str]:
+    return {row['nodeid'] for check in checks for row in check.get('pytest_report', [])
+            if row['when'] == 'call' and row['outcome'] == outcome}
 
 
 def _sha256_text(value: str) -> str:
@@ -274,6 +313,8 @@ def _run_verification(
     *,
     deadline_monotonic: float,
     max_output_bytes: int = VERIFICATION_MAX_OUTPUT_BYTES,
+    capture_output: bool = False,
+    pytest_plugin: Path | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     receipts: list[dict[str, Any]] = []
     runtime_parent, runtime_error = _prepare_verification_runtime(root)
@@ -307,13 +348,19 @@ def _run_verification(
             prefix="command-", dir=runtime_parent
         ) as raw_runtime:
             runtime_root = Path(raw_runtime)
+            environment = _verification_environment(runtime_root)
+            report_required = pytest_plugin is not None and _is_pytest_command(argv)
+            if report_required:
+                environment.update(PYTEST_PLUGINS=pytest_plugin.stem,
+                                   PYTHONPATH=str(pytest_plugin.parent),
+                                   PYTHONDONTWRITEBYTECODE='1')
             try:
                 process = subprocess.Popen(
                     command,
                     cwd=root,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    env=_verification_environment(runtime_root),
+                    env=environment,
                     start_new_session=True,
                 )
                 (
@@ -375,8 +422,16 @@ def _run_verification(
                 "argv": argv,
                 "exit_code": process.returncode,
                 "output_sha256": _sha256_text(output),
+                **({'output': output} if capture_output else {}),
             }
         )
+        if report_required:
+            rows = _pytest_report(stdout)
+            if rows is None:
+                return receipts, 'pytest_report_missing_or_invalid'
+            receipts[-1]['pytest_report'] = rows
+            if process.returncode not in {0, 1}:
+                return receipts, 'pytest_execution_failed'
         if process.returncode != 0:
             return receipts, "verification_failed"
     return receipts, None
@@ -488,7 +543,8 @@ def _terminal_packet_verdict(output: str, packet_digest: str) -> str | None:
 
 
 def _run_readonly_stage(
-    *, root: Path, prompt: str, runner: Runner, packet_digest: str, stage: str
+    *, root: Path, prompt: str, runner: Runner, packet_digest: str, stage: str,
+    capture_output: bool = False,
 ) -> tuple[dict[str, Any] | None, str | None]:
     before = workspace.snapshot_workspace(root)
     git_control_before = (
@@ -510,7 +566,383 @@ def _run_readonly_stage(
     verdict = _terminal_packet_verdict(output, packet_digest)
     if verdict is None:
         return None, f"{stage}_evidence_unbound"
-    return {"verdict": verdict, "output_sha256": _sha256_text(output)}, None
+    return {"verdict": verdict, "output_sha256": _sha256_text(output),
+            **({'output': output} if capture_output else {})}, None
+
+
+def _run_single_approval(
+    *, source: Path, contract: dict[str, Any], packet: dict[str, Any],
+    approval: dict[str, Any], instruction: str, task_runner: Runner,
+    review_runner: Runner, workspace_parent: Path,
+    deadline_monotonic: float | None,
+) -> dict[str, Any]:
+    """One implementation workspace, bounded repairs, independent Python oracle.
+
+    This is opt-in through a v2 mission. Legacy execution and approval rules
+    are unchanged. Governance is written by the parent, never by the executor.
+    """
+    import contextlib
+    import io
+    import omc_state
+    import omc_pipeline_guard as gate
+
+    try:
+        policy = mission.validate_single_execution(packet['execution'])
+    except (KeyError, TypeError, mission.MissionError) as exc:
+        return _result('blocked', str(exc), completed_stages=[])
+    started = time.monotonic()
+    remaining_approval = policy['approval_expires_epoch'] - time.time()
+    deadline = min(started + policy['max_time_sec'], started + remaining_approval,
+                   deadline_monotonic if deadline_monotonic is not None else float('inf'))
+    # Leave bounded time for capturing the terminal result and cleanup.
+    execute_until = deadline - min(2.0, policy['max_time_sec'] / 10)
+    stages: list[str] = []
+    attempts: list[dict[str, Any]] = []
+    isolated = None
+    run_root = None
+
+    def finish(status, reason, **values):
+        result = _result(status, reason, completed_stages=list(stages),
+                         attempts=list(attempts), isolated_workspace=str(isolated) if isolated else None,
+                         **values)
+        if run_root is not None:
+            try:
+                _write_immutable_packet(run_root / 'result.json', result)
+            except workspace.AutopilotWorkspaceError:
+                return _result('blocked', 'result_delivery_failed', completed_stages=list(stages),
+                               isolated_workspace=str(isolated))
+        return result
+
+    def check_time():
+        if time.monotonic() >= execute_until or time.time() >= policy['approval_expires_epoch']:
+            raise workspace.AutopilotWorkspaceError('single_approval_deadline_exceeded')
+
+    def guarded_call(function, *args, **kwargs):
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = function(*args, **kwargs)
+        if code:
+            raise workspace.AutopilotWorkspaceError('single_approval_registration_failed')
+
+    def governance():
+        return {str(p.relative_to(isolated)): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in (isolated / '.omc').rglob('*')
+                if p.is_file() and p != isolated / '.omc/cost_log.jsonl'}
+
+    def oracle_original():
+        verifier = Path(policy['verifier_path'])
+        # Refuse symlink components and all mutable candidate locations.
+        if any(p.is_symlink() for p in (verifier, *verifier.parents)):
+            raise workspace.AutopilotWorkspaceError('independent_verifier_symlink')
+        if not verifier.is_file():
+            raise workspace.AutopilotWorkspaceError('independent_verifier_mismatch')
+        raw = verifier.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != policy['verifier_sha256']:
+            raise workspace.AutopilotWorkspaceError('independent_verifier_mismatch')
+        if verifier == source or source in verifier.parents or workspace_parent.resolve() in verifier.parents:
+            raise workspace.AutopilotWorkspaceError('independent_verifier_inside_workspace')
+        return raw
+
+    try:
+        check_time()
+        if (contract['promotion_policy'] != 'isolated_candidate_only'
+                or contract['change_class'] != 'implementation'
+                or contract['pipeline_mode'] != 'lite'
+                or contract['test_policy'] != 'required'
+                or contract['allowed_operations'] != ['modify']
+                or contract['allowed_paths'] != policy['allowed_paths']
+                or contract['verification_commands'] != policy['verification_commands']):
+            return finish('blocked', 'single_approval_scope_mismatch')
+        verifier_bytes = oracle_original()
+        if workspace_parent.is_symlink():
+            return finish('blocked', 'workspace_parent_symlink')
+        workspace_parent.mkdir(parents=True, exist_ok=True)
+        claimed = workspace_parent / contract['run_id']
+        try:
+            claimed.mkdir(mode=0o700)
+        except FileExistsError:
+            return finish('blocked', 'single_approval_already_started')
+        run_root = claimed
+        os.chmod(run_root, 0o700)
+        # A run name or runtime directory is not the approval identity. Store
+        # consumption in the repository's common Git metadata so worktrees and
+        # alternate run roots cannot reset the same approval's execution budget.
+        common = Path(workspace._git(source, 'rev-parse', '--git-common-dir').stdout.strip())
+        common = (common if common.is_absolute() else source / common).resolve()
+        claims = common / 'omc-single-approval-claims'
+        if claims.is_symlink():
+            return finish('blocked', 'approval_claims_untrusted')
+        claims.mkdir(mode=0o700, exist_ok=True)
+        approval_key = _sha256_text(json.dumps({
+            'session_id': contract['mission_approval_session_id'],
+            'decision_id': approval['decision_id'],
+        }, sort_keys=True))
+        try:
+            _write_immutable_packet(claims / (approval_key + '.json'), {
+                'schema_version': 'omc-single-approval-consumed/v1',
+                'approval_session_id': contract['mission_approval_session_id'],
+                'decision_id': approval['decision_id'],
+                'mission_packet_sha256': packet['packet_sha256'],
+                'receipt_sha256': approval['receipt_sha256'],
+                'run_id': contract['run_id'], 'run_root': str(run_root),
+            })
+        except workspace.AutopilotWorkspaceError as exc:
+            if str(exc) == 'review_packet_already_exists':
+                return finish('blocked', 'single_approval_already_consumed')
+            raise
+        pytest_plugin = run_root / ('omc_pytest_probe_' + contract['contract_sha256'][:16] + '.py')
+        pytest_plugin.write_text(_PYTEST_REPORTER)
+        os.chmod(pytest_plugin, 0o400)
+        reporter_sha256 = _sha256_text(_PYTEST_REPORTER)
+
+        def verify(root, commands):
+            if hashlib.sha256(pytest_plugin.read_bytes()).hexdigest() != reporter_sha256:
+                raise workspace.AutopilotWorkspaceError('pytest_reporter_changed')
+            checks, error = _run_verification(root, commands,
+                deadline_monotonic=execute_until, capture_output=True, pytest_plugin=pytest_plugin)
+            if hashlib.sha256(pytest_plugin.read_bytes()).hexdigest() != reporter_sha256:
+                raise workspace.AutopilotWorkspaceError('pytest_reporter_changed')
+            return checks, error
+
+        oracle = run_root / 'verifier.py'
+        oracle.write_bytes(verifier_bytes)
+        os.chmod(oracle, 0o400)
+        isolated = workspace.materialize_isolated_clone(source, run_root / 'implementation', contract)
+        for relative in policy['allowed_paths']:
+            path = isolated / relative
+            if not path.is_file() or any(p.is_symlink() for p in (path, *path.parents)):
+                raise workspace.AutopilotWorkspaceError('single_approval_existing_file_required')
+        control = workspace.snapshot_git_control_plane(isolated)
+        before = workspace.snapshot_workspace(isolated)
+        def test_nodes():
+            nodes = {}
+            for relative in policy['test_paths']:
+                tree = ast.parse((isolated / relative).read_text())
+                def collect(statements, prefix=()):
+                    for node in statements:
+                        if isinstance(node, ast.ClassDef):
+                            collect(node.body, (*prefix, node.name))
+                        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith('test_'):
+                            key = (relative, *prefix, node.name)
+                            if key in nodes:
+                                raise workspace.AutopilotWorkspaceError('duplicate_test_name')
+                            nodes[key] = ast.dump(node, include_attributes=False)
+                collect(tree.body)
+            return nodes
+        retained_tests = test_nodes()
+
+        def check_retained_tests():
+            current = test_nodes()
+            if any(current.get(key) != value for key, value in retained_tests.items()):
+                raise workspace.AutopilotWorkspaceError('baseline_tests_changed')
+        with contextlib.redirect_stdout(io.StringIO()):
+            omc_state.init_state(isolated)
+            session = omc_state.record_session(
+                isolated, mode='autopilot', title='single approved work', request=instruction,
+                role_ids=['senior_coding'], confirmed=True, work_class='implementation',
+                completion_action='start')
+        # Approval session is the authorizing context; execution session is new.
+        _write_immutable_packet(run_root / 'approval-link.json', {
+            'approval_session_id': contract['mission_approval_session_id'],
+            'execution_session_id': session['session_id'], 'work_id': session['work_id'],
+            'mission_packet_sha256': packet['packet_sha256'],
+            'work_contract_sha256': contract['contract_sha256'],
+            'approval_receipt_sha256': approval['receipt_sha256'],
+        })
+        metadata = isolated / '.omc/state/single-approval'
+        metadata.mkdir(parents=True)
+        methods = {'tests': json.dumps(policy['verification_commands']),
+                   'oracle': policy['verifier_sha256'], 'review': packet['packet_sha256']}
+        checks = [{'id': name, 'target': ','.join(policy['allowed_paths']),
+                   'method': methods[name], 'pass_condition': 'passed', 'target_version': contract['base_commit']}
+                  for name in ('tests', 'oracle', 'review')]
+        proposal = metadata / 'checks.json'
+        proposal.write_text(json.dumps({'session_id': session['session_id'], 'revision': 1,
+            'request': instruction, 'approval_reference': approval['decision_id'], 'checks': checks}))
+        guarded_call(gate.cmd_approve_checks, isolated, proposal)
+        guarded_call(gate.cmd_contract_done, isolated, required_checks='tests,oracle,review')
+        governance_expected = governance()
+        baseline_workspace = workspace.snapshot_workspace(isolated)
+        # Approved commands must work at baseline; pre-existing failures are not RED.
+        baseline, error = verify(isolated, policy['verification_commands'])
+        _write_immutable_packet(run_root / 'baseline.json', {'checks': baseline, 'error': error})
+        if error:
+            return finish('blocked', 'baseline_' + error)
+        required_cases = _pytest_cases(baseline, 'passed')
+        if not required_cases:
+            return finish('blocked', 'baseline_no_passed_tests')
+        if workspace.snapshot_workspace(isolated) != baseline_workspace or governance() != governance_expected:
+            return finish('blocked', 'baseline_side_effect_detected')
+        workspace.validate_git_control_plane(isolated, control)
+        red_prompt = (_task_prompt(contract, instruction, mission.build_stage_briefing(packet, stage='task'))
+                      + '\n[OMC RED ONLY] 기존 테스트 파일에 요구사항 재현 테스트만 추가하세요. 구현 파일·검증 기준·내부 기록은 수정하지 마세요. 검증은 부모가 실행하므로 테스트를 직접 실행하지 마세요. 캐시 등 새 파일도 만들지 마세요.')
+        check_time()
+        rc, output = task_runner(isolated, red_prompt)
+        _write_immutable_packet(run_root / 'red-task.json', {'returncode': rc, 'output': output})
+        if rc or _terminal_verdict(output) != 'PROCEED':
+            return finish('blocked', 'red_task_failed')
+        workspace.validate_git_control_plane(isolated, control)
+        if governance() != governance_expected:
+            return finish('blocked', 'governance_changed')
+        check_retained_tests()
+        red_delta = workspace.compute_workspace_delta(before, workspace.snapshot_workspace(isolated))
+        # Parent-owned governance was not in the baseline snapshot.
+        red_delta = [d for d in red_delta if not d['path'].startswith('.omc/')]
+        if not red_delta or any(d['path'] not in policy['test_paths'] or d['operation'] != 'modify' for d in red_delta):
+            return finish('blocked', 'red_scope_violation')
+        red_snapshot = workspace.snapshot_workspace(isolated)
+        red_checks, red_error = verify(isolated, policy['verification_commands'])
+        if workspace.snapshot_workspace(isolated) != red_snapshot:
+            return finish('blocked', 'red_verification_side_effect_detected')
+        if governance() != governance_expected:
+            return finish('blocked', 'governance_changed')
+        workspace.validate_git_control_plane(isolated, control)
+        red_output = '\n'.join(c.get('output', '') for c in red_checks)
+        failed = sorted(_pytest_cases(red_checks, 'failed'))
+        if red_error != 'verification_failed' or policy['red_case_id'] not in failed or red_checks[-1].get('exit_code') != 1:
+            return finish('blocked', 'red_evidence_missing')
+        state = gate._load_state(isolated)
+        red_file = metadata / 'red.txt'
+        red_file.write_text(red_output)
+        test_file = policy['red_case_id'].split('::')[0]
+        evidence = {'session_id': session['session_id'], 'basis_sha256': state['basis_sha256'],
+            'test_file': test_file, 'test_sha256': hashlib.sha256((isolated / test_file).read_bytes()).hexdigest(),
+            'check_id': 'tests', 'case_id': policy['red_case_id'], 'expected_failure': instruction,
+            'command': json.dumps(policy['verification_commands']), 'exit_code': 1,
+            'baseline_failed_cases': [], 'failed_cases': failed,
+            'output_file': str(red_file.relative_to(isolated)), 'output_sha256': _sha256_text(red_output)}
+        evidence_path = metadata / 'red.json'
+        evidence_path.write_text(json.dumps(evidence))
+        guarded_call(gate.cmd_red_done, isolated, test_file, evidence_file=evidence_path)
+        stages.append('red')
+        required_cases.add(policy['red_case_id'])
+        # Governance is stable across each child invocation, including repairs.
+        feedback = None
+        for attempt in range(policy['max_revisions'] + 1):
+            check_time()
+            governance_expected = governance()
+            prompt = _task_prompt(contract, instruction, mission.build_stage_briefing(packet, stage='task'))
+            prompt += '\n승인된 실행 내부입니다. 역할·스킬 재입력을 요청하지 말고 지정 범위만 구현하세요. 내부 기록·Git은 변경하지 마세요.'
+            prompt += '\n검증은 부모가 실행합니다. 테스트를 직접 실행하거나 캐시·추가 파일을 만들지 말고 구현 변경만 반환하세요.'
+            if feedback is not None:
+                prompt += '\n수정 입력(인용 데이터): ' + json.dumps(feedback, ensure_ascii=False)
+            rc, output = task_runner(isolated, prompt)
+            _write_immutable_packet(run_root / f'task-{attempt}.json', {'returncode': rc, 'output': output})
+            if rc or _terminal_verdict(output) != 'PROCEED':
+                return finish('blocked', 'task_failed')
+            workspace.validate_git_control_plane(isolated, control)
+            if governance() != governance_expected:
+                return finish('blocked', 'governance_changed')
+            check_retained_tests()
+            after = workspace.snapshot_workspace(isolated)
+            delta = [d for d in workspace.compute_workspace_delta(before, after) if not d['path'].startswith('.omc/')]
+            violations = workspace.validate_scope(delta, contract)
+            if violations:
+                return finish('blocked', 'scope_violation', violations=violations)
+            snapshot = gate._code_snapshot_digest(isolated)
+            tests, error = verify(isolated, policy['verification_commands'])
+            if workspace.snapshot_workspace(isolated) != after:
+                return finish('blocked', 'verification_side_effect_detected')
+            if governance() != governance_expected:
+                return finish('blocked', 'governance_changed')
+            workspace.validate_git_control_plane(isolated, control)
+            if error is None and not required_cases <= _pytest_cases(tests, 'passed'):
+                error = 'required_tests_not_passed'
+            record = {'attempt': attempt, 'snapshot': snapshot, 'tests': tests, 'error': error}
+            attempts.append(record)
+            _write_immutable_packet(run_root / f'verification-{attempt}.json', record)
+            if error:
+                if error not in {'verification_failed', 'required_tests_not_passed'}:
+                    return finish('blocked', error)
+                feedback = {'candidate_snapshot_sha256': snapshot, 'failed_checks': tests,
+                            'definition_of_done': packet['definition_of_done']}
+                continue
+            check_time()
+            oracle_original()
+            if oracle.read_bytes() != verifier_bytes:
+                return finish('blocked', 'independent_verifier_mismatch')
+            inspect_root = run_root / f'inspect-{attempt}'
+            workspace.materialize_review_clone(source, inspect_root, contract['base_commit'])
+            for d in delta:
+                target = inspect_root / d['path']
+                target.write_bytes((isolated / d['path']).read_bytes())
+                os.chmod(target, (isolated / d['path']).stat().st_mode & 0o777)
+            inspection_before = workspace.snapshot_workspace(inspect_root)
+            inspection_git = workspace.snapshot_git_control_plane(inspect_root)
+            oracle_checks, oracle_error = _run_verification(inspect_root,
+                [[sys.executable, '-B', str(oracle), str(inspect_root)]],
+                deadline_monotonic=execute_until, capture_output=True)
+            oracle_original()
+            if oracle.read_bytes() != verifier_bytes:
+                return finish('blocked', 'independent_verifier_mismatch')
+            if workspace.snapshot_workspace(inspect_root) != inspection_before:
+                return finish('blocked', 'independent_verifier_side_effect')
+            workspace.validate_git_control_plane(inspect_root, inspection_git)
+            _write_immutable_packet(run_root / f'oracle-{attempt}.json', {'checks': oracle_checks, 'error': oracle_error})
+            if oracle_error:
+                if oracle_error != 'verification_failed':
+                    return finish('blocked', oracle_error)
+                feedback = {'candidate_snapshot_sha256': snapshot, 'independent_checks': oracle_checks,
+                            'definition_of_done': packet['definition_of_done']}
+                continue
+            check_time()
+            review_packet = {'schema_version': 'omc-single-review/v1', 'base_commit': contract['base_commit'],
+                'candidate_snapshot_sha256': snapshot, 'delta': delta,
+                'patch': workspace._git(isolated, 'diff', '--binary', 'HEAD').stdout,
+                'tests': tests, 'oracle': oracle_checks, 'mission_packet_sha256': packet['packet_sha256']}
+            review_digest = hashlib.sha256(json.dumps(review_packet, sort_keys=True).encode()).hexdigest()
+            review_packet['packet_sha256'] = review_digest
+            _write_immutable_packet(run_root / f'review-{attempt}.json', review_packet)
+            prompt = _review_prompt(review_packet, mission.build_stage_briefing(packet, stage='review'))
+            prompt = prompt.replace('VERDICT: APPROVE 또는 VERDICT: BLOCK', 'VERDICT: APPROVE 또는 VERDICT: REVISE 또는 VERDICT: BLOCK')
+            review, error = _run_readonly_stage(root=inspect_root, prompt=prompt, runner=review_runner,
+                                               packet_digest=review_digest, stage='review', capture_output=True)
+            if error or review is None:
+                return finish('blocked', error or 'review_failed')
+            oracle_original()
+            if oracle.read_bytes() != verifier_bytes:
+                return finish('blocked', 'independent_verifier_mismatch')
+            _write_immutable_packet(run_root / f'review-result-{attempt}.json', review)
+            if review['verdict'] == 'REVISE':
+                feedback = {'candidate_snapshot_sha256': snapshot, 'review': review,
+                            'definition_of_done': packet['definition_of_done']}
+                continue
+            if review['verdict'] != 'APPROVE':
+                return finish('blocked', 'review_rejected')
+            check_time()
+            if gate._code_snapshot_digest(isolated) != snapshot:
+                return finish('blocked', 'candidate_changed_after_review')
+            workspace.validate_git_control_plane(isolated, control)
+            _run_candidate_git(isolated, 'add', '--', *policy['allowed_paths'])
+            guarded_call(gate.cmd_verification_template, isolated)
+            state = gate._load_state(isolated)
+            basis = gate._load_approved_basis(isolated, session['session_id'])
+            verification = {'session_id': session['session_id'], 'basis_sha256': state['basis_sha256'],
+                'implementation': {'status': 'applied', 'evidence': snapshot},
+                'checks': {c['id']: {'status': 'passed', 'evidence': str(run_root),
+                    'definition_sha256': gate._check_digest(c), 'code_snapshot_sha256': snapshot} for c in basis['checks']}}
+            verification_file = metadata / 'verification.json'
+            verification_file.write_text(json.dumps(verification))
+            evaluation = gate._evaluate_implementation_completion(isolated, verification_file)
+            _write_immutable_packet(run_root / 'completion-gate.json', evaluation)
+            if evaluation['outcome'] != 'done':
+                return finish('blocked', 'completion_gate_failed')
+            stages.extend(['task', 'verification', 'independent_verification', 'review', 'completion_gate'])
+            candidate = _commit_candidate(isolated, delta)
+            workspace.validate_candidate_scope(isolated=isolated, contract=contract,
+                                               candidate_commit=candidate, expected_delta=delta)
+            if gate._code_snapshot_digest(isolated) != snapshot:
+                return finish('blocked', 'candidate_commit_mismatch')
+            if workspace.source_identity(source) != contract['source_identity']:
+                return finish('blocked', 'source_identity_drift')
+            if time.monotonic() >= deadline:
+                return finish('blocked', 'single_approval_deadline_exceeded')
+            stages.append('candidate')
+            return finish('candidate_ready', None, candidate_commit=candidate,
+                          candidate_snapshot_sha256=snapshot, source_modified=False)
+        return finish('blocked', 'revision_budget_exhausted')
+    except (OSError, ValueError, KeyError, TypeError, SyntaxError, workspace.AutopilotWorkspaceError,
+            mission.MissionError, subprocess.SubprocessError) as exc:
+        return finish('blocked', str(exc))
 
 
 def run_safe_pipeline(
@@ -523,9 +955,12 @@ def run_safe_pipeline(
     workspace_parent: Path,
     critique_runner: Runner | None = None,
     deadline_monotonic: float | None = None,
+    expected_contract_sha256: str | None = None,
 ) -> dict[str, Any]:
     source = source.resolve()
     contract = workspace.load_work_contract(contract_path)
+    if expected_contract_sha256 is not None and contract['contract_sha256'] != expected_contract_sha256:
+        return _result('blocked', 'work_contract_changed_before_execution', completed_stages=[])
     completed_stages: list[str] = []
 
     def finish(status: str, reason_code: str | None, **values: Any) -> dict[str, Any]:
@@ -569,6 +1004,15 @@ def run_safe_pipeline(
             return finish("blocked", "mission_base_commit_mismatch")
     if workspace.source_identity(source) != contract["source_identity"]:
         return finish("blocked", "source_identity_drift")
+    if mission_packet is not None and mission_packet['schema_version'] == mission.SINGLE_APPROVAL_SCHEMA_VERSION:
+        return _run_single_approval(
+            source=source, contract=contract, packet=mission_packet,
+            approval=mission_receipt, instruction=instruction,
+            task_runner=task_runner, review_runner=review_runner,
+            workspace_parent=workspace_parent, deadline_monotonic=deadline_monotonic,
+        )
+    if contract['promotion_policy'] != 'branch_ref_only':
+        return finish('blocked', 'single_approval_mission_required')
     if contract["pipeline_mode"] == "full" and critique_runner is None:
         return finish("blocked", "full_critique_runner_missing")
 

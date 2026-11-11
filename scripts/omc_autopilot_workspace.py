@@ -192,8 +192,10 @@ def validate_work_contract(payload: object, *, require_digest: bool = False) -> 
     branch = str(payload.get("candidate_branch") or "")
     if not branch.startswith("codex/") or ".." in branch or branch.endswith("/"):
         raise AutopilotWorkspaceError("candidate_branch_invalid")
-    if payload.get("promotion_policy") != "branch_ref_only":
+    if payload.get("promotion_policy") not in {"branch_ref_only", "isolated_candidate_only"}:
         raise AutopilotWorkspaceError("promotion_policy_invalid")
+    if payload.get('promotion_policy') == 'isolated_candidate_only' and schema_version != WORK_CONTRACT_SCHEMA_VERSION_V2:
+        raise AutopilotWorkspaceError('single_approval_mission_required')
     normalized = dict(payload)
     normalized["allowed_paths"] = normalized_paths
     if schema_version == WORK_CONTRACT_SCHEMA_VERSION_V2:

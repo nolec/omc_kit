@@ -87,3 +87,22 @@ def test_stage_briefing_is_stable_and_contains_only_frozen_mission() -> None:
         "critique",
         "review",
     }
+
+
+def test_single_approval_mission_binds_execution_limits_and_verifier():
+    packet = _packet()
+    packet['schema_version'] = 'omc-autopilot-mission/v2'
+    packet['validation']['max_total_rounds'] = 3
+    packet['execution'] = {
+        'allowed_paths': ['app.py', 'test_app.py'], 'test_paths': ['test_app.py'],
+        'verification_commands': [['python3', '-m', 'pytest', 'test_app.py', '-q']],
+        'red_case_id': 'test_app.py::test_value', 'max_time_sec': 120,
+        'max_revisions': 2, 'approval_expires_epoch': 4000000000,
+        'verifier_path': '/private/tmp/approved-verifier.py', 'verifier_sha256': 'c' * 64,
+    }
+    frozen = mission.validate_mission_packet(packet)
+    assert frozen['execution'] == packet['execution']
+    changed = dict(frozen)
+    changed['execution'] = {**frozen['execution'], 'max_revisions': 3}
+    with pytest.raises(mission.MissionError):
+        mission.validate_mission_packet(changed, require_digest=True)

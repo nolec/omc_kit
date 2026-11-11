@@ -364,3 +364,30 @@ autopilot pipeline은 --output-execution <내부JSON> --output-execution-sha256 
 검증 범위는 공개CLI·합성native event·임시설치이며 실제 모델의 자유응답 준수·실제 홈·업무 효과는 미검증이다.
 
 종료 계층을 구분한다. 일반 모델 선언 publish는 판정이 보류/수정 필요여도 발행이 정상적이면0이며, 자동 실행기의 바깥 provider 정상 반환도0을 유지한다. 내부 완료 가드의 업무 차단1과 혼동하지 않는다. 수집기는 완료 CLI의0/1·실행기의 provider0·전달오류2를 각 호출 계층별로 대조한다.
+
+
+## 단일 승인 V0: 격리 후보까지만
+
+`omc-autopilot-mission/v2`는 Codex·Python/pytest·기존 파일 수정 전용 opt-in이다. v1 mission과 기존 pipeline의 동작은 유지한다. 독립 Python 검수기를 준비할 수 없는 작업, 새 파일·삭제·API 변경·여러 실행기·중단 후 자동 재개는 지원하지 않는다.
+
+준비 담당은 `omc_mission.freeze_mission_packet`으로 요청 해시·base·목표·DoD·비목표와 `execution`을 고정하고 사용자의 실제 승인 이후에만 `build_mission_approval_receipt`를 호출한다. 이 로컬 receipt와 해시는 인간 승인 진위를 인증하는 수단이 아니다. 승인의 session ID와 새 격리 실행 session ID는 다르며 부모가 둘을 결속한다. 사용자가 역할·스킬 이름·내부 JSON을 직접 조립하지 않도록 준비 담당이 처리한다.
+
+`execution` 필드: `allowed_paths`(정확한 기존 .py 파일), `test_paths`(그 일부인 기존 test_*.py), `verification_commands`(argv 배열 목록), `red_case_id`(pytest 실패 ID), `max_time_sec`(1~7200), `max_revisions`(0~2), `approval_expires_epoch`(절대 만료), `verifier_path`(작업 밖의 독립 Python 검수 원본), `verifier_sha256`. 선택 필드 `codex_model`은 승인 시 고정한 명시 모델이며 전역 모델 프로필을 변경하지 않고 task/review에 동일하게 전달한다. `validation.max_total_rounds`는 최초 구현+수정 횟수와 같아야 한다. 수정 횟수는 이슈별로 갱신하지 않으며 독립 검사 실패도 같은 총한도를 소비한다.
+
+기존 `freeze-work-contract`에 같은 mission·승인 receipt·범위·검증 명령을 전달하면 `isolated_candidate_only` 정책을 고정한다. 실행은 `pipeline --work-contract <고정계약> --instruction <동일요청> --branch <내부후보명> --executor codex --max-time <승인한도>`로 진입한다. CLI의 시간이 더 커도 승인 시간을 늘리지 않는다. source는 clean base여야 하며 정책이 다르면 실행 전 차단한다. 생성된 run 디렉터리는 한 번만 사용하며 오류를 이유로 기존 run 기록을 지우거나 덮어쓰지 않는다.
+
+부모가 baseline 검사를 확인한 뒤 테스트만 수정하는 RED 호출→실제 실패 등록→구현→검증→독립 검사→리뷰를 연결한다. 기존 테스트 함수는 삭제·약화하지 못하며, RED의 과거 원문은 수정 후에도 보존한다. 검증 실패·명시적 REVISE만 수정으로 돌아간다. BLOCK·모호한 판정·승인/기록 불일치·범위 위반·만료·인증 실패는 중단한다. 모델·provider·로그인을 자동 변경하지 않는다.
+
+구현 작업 폴더는 하나이며 리뷰/독립 검수는 별도 복제본에서 수행한다. 단일 승인 작업의 Codex 명령은 `/tmp` 및 TMPDIR의 기본 쓰기 허용을 제외한다. 독립 검수 원본은 구현·검수 폴더 밖 읽기 전용 파일로 보존하며, 검사 프로세스가 끝난 후 부모가 결과와 전후 해시를 확인한다. OS sandbox가 없으면 검사를 생략하지 않고 차단한다. 신뢰된 부모 실행기와 같은 로컬 사용자의 악의적 직접 변조까지 인증하는 격리는 아니다.
+
+완료 가드 통과 이후 후보 커밋 생성·내용 일치·불변 전체 결과 저장까지 통과해야 `candidate_ready`다. 후보는 격리 폴더에만 남기며 원본 브랜치·작업 파일·원본 index를 변경하지 않는다. 완료 가드 성공 뒤 후보 생성 실패는 별도 blocked 결과이며 과거 성공 원문을 고치지 않는다. 결과 저장/표시 실패는 성공 전달로 계산하지 않으며 상태 재조회는 기록을 읽고 작업을 재실행하지 않는다.
+
+자동 테스트 통과는 실제 모델 준수나 사용자 개입 감소의 증거가 아니다. 첫 실제 Codex 실행은 기존 모델 라우팅의 gpt-5.4-mini가 ChatGPT 계정에서 지원되지 않아 RED 모델 호출이 실패했다. 사용자 승인 후 전역 설정을 보존하는 명시 모델 실행 경로를 추가했다. 실패 원문은 보존했다. 이후 gpt-6.1-sol을 명시한 실제 정상 경로와 통제된 검증 실패/리뷰 REVISE 경로가 격리 후보 생성까지 통과했다. 통제된 오류 주입 시험이며 자연 작업 생산성·사용자 개입 감소의 증거는 아니다. 전역 모델 프로필은 변경하지 않았다.
+
+
+### 단일 승인 V0 리뷰 수정 경계
+
+- pytest 종료 코드만으로 통과를 기록하지 않는다. 부모가 보존한 읽기 전용 pytest 보고 플러그인으로 node ID·setup/call/teardown·결과를 수집하고, baseline에서 실제 통과한 케이스 및 RED 케이스가 수정 후에도 실행·통과했는지 대조한다. 새 skip·누락은 수정 예산 안에서 재검증하며 보고 누락·수집 오류는 차단한다. 같은 pytest 프로세스 내부의 로컬 이벤트 기록이며 악의적인 테스트 코드에 대한 실행 진위 인증은 아니다.
+- RED 검사 명령 직전과 직후 작업 파일 snapshot을 비교한다. 구현·테스트 등 작업 파일이 검사 실행 중 바뀌면 RED 근거를 등록하지 않는다. 승인·Git 상태 검사는 별도로 유지한다.
+- 승인 소비는 run ID나 임시 run 폴더가 아니라 Git 공용 metadata의 `omc-single-approval-claims`에 승인 session ID·decision ID를 결속해 한 번 기록한다. run ID·run 폴더·worktree를 바꿔도 같은 저장소의 소비된 승인을 재사용하지 못한다. 실패해도 소비 기록과 원문을 보존하며 새 실행은 명시적 새 승인이 필요하다. 원본 작업 파일·브랜치·인덱스는 변경하지 않고 이 승인 metadata만 추가한다. 독립적인 저장소 복제본 사이의 전역 승인 인증을 제공하는 원장은 아니다.
+- 테스트 함수 AST 보존 시 파일·클래스 경로·함수명을 함께 식별한다. 서로 다른 클래스에서 같은 메서드 이름을 쓰는 정상 pytest 케이스를 중복으로 오인하지 않는다. 최종 실행 여부는 AST가 아니라 실제 pytest node ID 결과로 확인한다.
