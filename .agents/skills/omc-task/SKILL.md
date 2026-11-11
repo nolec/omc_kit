@@ -9,6 +9,8 @@ Tier별 허용 생략 외에는 단계를 건너뛰지 않습니다. 적용되�
 
 ## 작업별 검증과 준비 확인
 
+- 로컬 커밋 전에는 pre-commit의 승인·TDD 검사뿐 아니라 post-commit의 완료 기록 소비 조건도 확인한다. 현재 완료 연결은 단일 커밋 기준이며, 기능별 다중 커밋의 전체 작업 연결은 지원하지 않는다. 대기 기록 없음(`no_pending_completion`)은 정상 생략이다. 손상·불일치·읽기 실패는 `state complete`의 구조화 오류와 종료1로 구분한다. post-commit 기록 실패에도 Git 커밋은 이미 생성됐으므로 Git 성공·기록 실패·검증 결과를 별도로 보고하고 커밋을 다시 실행하지 않는다. 이 안내가 에이전트 준수나 다중 커밋 지원을 보장하지는 않는다.
+
 - 변경 범위와 필수 검수를 먼저 정한다. 기존 품질 설정의 명령·대상·범위를 이번 작업과 대조하고, 지정 검사 파일이 해당 기준에 존재하는지 확인한다. 기준은 초기 HEAD 또는 명시된 기준 스냅샷이며, 최종 커밋을 먼저 만들라는 요구가 아니다. 검증 시에는 최종 후보와 결과를 다시 연결한다. 일반 git status만으로 준비 완료를 판단하지 않는다. 관련 입력과 AGENTS.md 등의 skip-worktree·assume-unchanged 여부 및 실제 파일/기준 차이를 읽기 전용으로 확인하고 필요한 서버·화면 접근도 점검한다. 준비 확인은 수정 후 실제 화면 검수를 대체하지 않는다. 계속 진행할 수 있는 것은 범위·안전·입력 무결성에 영향이 없다고 확인한 독립 작업만이다. 부족한 환경을 자동으로 수리하거나 권한을 확대하지 않는다. 설정 승인됨 / 코드 리뷰 승인됨 / 검사 통과 / 실제 화면 확인은 별개 사실이다. 해당하는 근거와 미확인 항목을 구분하며, ready만으로 이번 작업 적합성이나 검사 통과를 주장하지 않는다. 별도 고정 출력 양식이나 새 가드를 추가하는 규칙은 아니다. 부족한 승인은 설정 적용·검사 대상·횟수·시간·중단 조건을 한 번에 제시한다. 이미 승인된 범위는 재확인하지 않는다. 각 단계의 승인 기록은 유지하며, 실행 오류를 자동 재시도 승인으로 해석하지 않는다. 이 안내와 지침 회귀는 실제 모델 준수나 사용자 개입 감소의 증거가 아니다.
 
 | 발견 사항 | 중단·진행할 범위 | 보존·금지 행동 |
@@ -146,8 +148,9 @@ CLI와 수집기는 동일 승인 종류·공용 판정과 실제 반환 경로�
 ## 최종 후보 준비 — 릴리스 의도가 있을 때
 릴리스 요청은 준비 담당 `directive`가 버전·문서 변경을 마친 최종 커밋·명시적 base·전체 경로를 고정하는 단계부터 시작합니다. `code_review`는 그 전체 후보를 검토하고, 준비 담당은 기존 `capture-review` → `seal-review-output` → `record-review`를 원래 승인 원문과 정확한 expected-path로 연결한 뒤 `validate-ship=READY`를 확인합니다. 같은 내용의 정상 커밋은 공식 동일성 검증을 사용하며, 추가 파일·amend·base 변경은 기존 승인을 임의 재사용하지 않습니다. 품질 설정은 명시적 새 proposal과 현재 설정을 비교합니다. 사용자 설정 승인을 받은 뒤 준비 담당이 `proposal-validate` → `proposal-apply` → `approve`를 연결하고 `status=ready`를 확인합니다. 설정 승인은 검사 실행 승인이 아니며 실행 횟수·마감도 확인합니다. 해시만으로 과거 문서의 의미를 추론하지 않고 원문이 없으면 UNKNOWN으로 남깁니다. 통합 읽기 전용 확인: `python3 scripts/omc_ship_preflight.py diagnose --target <source절대경로> --contract <고정preflight계약>`; 새 설정 제안은 `--proposal <명시적JSON> --proposal-sha256 <원문해시>`로 고정합니다. 격리 리뷰를 대조할 때만 `--review-target <격리저장소절대경로>`를 명시합니다. 이 명령은 후보·리뷰·품질 문제를 함께 표시하며 설정·승인·소스에 쓰거나 검사를 실행하지 않습니다. 격리 승인 일치는 원본의 READY를 대신하지 않습니다. 준비 담당은 두 readiness를 모두 확인한 뒤에만 기존 ship 절차에 인계합니다. ship의 `prepare/check` 안에서 source를 다시 봉인하거나 설정을 고치지 않습니다. 고정 후 코드·버전·문서·base·설정·근거가 바뀌면 관련 준비 결과를 무효화하고 해당 검토부터 다시 확인합니다. 과거 receipt·원문을 삭제하거나 포인터를 복사하지 않습니다. 준비 진단은 실행 토큰이 아니며 실제 실행 단계에서도 기존 결속 검사를 유지합니다. 작업 완료·커밋 완료·릴리스 준비 완료·검사 통과·설치 완료를 구분해 보고합니다. 준비가 남았으면 그 항목을 명시하고, 코드 완료를 출하 준비로 보고하지 않습니다. 실제 모델의 안내 준수와 사용자 개입 감소는 이 지침·fixture만으로 입증되지 않습니다.
 
-## Machine output contract
 단순 운영 기록 정리 절의 보고 예외를 제외한 구현·기존 완료 경로에 적용합니다.
+
+## Machine output contract
 별도 기록 모드 `detached_v1`을 명시적으로 사용한다. `omc-output/v1`의 stage/outcome/risk/next_skill/user_selection_needed/reason_code·VERDICT·기존 라우팅 의미는 바꾸지 않는다. `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT`는 내부 판정 원문에만 두고 사용자 최종 답변에 붙이지 않는다. 한글 판정·이유·검증·다음 행동만 표시한다.
 먼저 `python3 scripts/omc_output_contract.py capabilities`와 `python3 scripts/omc_workflow_validation.py capabilities`로 발행자·소비자의 지원을 각각 확인한다. 실행 전에 모드·현재 작업/세션·단계·보고 ID·마감과 명시 기록 경로를 고정한다. 문맥이 없으면 `prepare --target . --stage <단계> --report-id <새ID> --budget-sec <승인된남은초>`로 현재 상태에서 새 문맥을 만들고 반환된 context/path·SHA를 호출자 실행 메타데이터에 보존한다. 숫자 예산을 임의 연장하거나 이전 보고 ID를 재사용하지 않는다.
 일반 plan/review/critique/investigate/ship 선언은 내부 원문을 작업의 .omc 안에 저장한 뒤 `python3 scripts/omc_output_contract.py publish --target . --output-context <문맥경로> --output-context-sha256 <해시> --source-file <내부원문> --source-sha256 <해시>`로 발행한다. 이는 모델 선언이며 해시 일치가 검증 통과나 사용자 승인 진위를 인증하지 않는다.
