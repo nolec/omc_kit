@@ -7,6 +7,8 @@
 그 이후 완료 작업 소유권 실패의 오류 연쇄를 차단하고, 단순 상태 메모 보고와 구현 완료 판정을 구분하는5파일 보완을 리뷰 승인했다. 관련231개·독립 핵심15개 검사가 통과했으며 중복 합산하지 않는다. 이 후속 보완은 아직 미릴리스·미설치다. fast-first 출하 정책 적용과 실제 성능 비교는 미수행이다. 상세 근거와 보류는 [로드맵](docs/automatic_model_routing_roadmap.md), 운용 경계는 [OMC Workflow](docs/omc_workflow.md)를 따른다.
 
 
+단일 승인 V0는 **Codex·Python/pytest·기존 파일 수정**에 한해 RED→구현→검증→독립 검사→리뷰→최대2회 수정→격리 후보 생성을 연결한다. R1~R8과 중대4건 보완을20파일 후보로 재검토 승인했으며 관련124개 검사가 통과했다. 실제 Codex 정상·검증수정·리뷰수정 경로를 확인했지만 수정 경로는 통제된 오류 주입이다. 동일 에이전트 리뷰이며 생산성·개입 감소는 미검증이다. 이번 변경은 미릴리스·미설치이고 전역 모델 설정은 보존한다.
+
 OMC는 Codex·Claude Code·Gemini·Cursor 같은 AI coding executor를 대체하지 않습니다. 여러 저장소를 운영하는 개발자가 AI가 만든 변경을 **요구사항 → 검증 → review → ship**까지 같은 candidate로 통제하도록 돕는 engineering control plane입니다.
 
 executor가 코드를 만들면, OMC는 무엇을 검증·review했는지, 사람이 어디서 판단해야 하는지, 실제 ship 대상이 그 변경과 같은지를 receipt와 재검증으로 보존합니다.
