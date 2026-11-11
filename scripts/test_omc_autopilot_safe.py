@@ -1257,7 +1257,7 @@ def test_single_approval_rejects_unapproved_revision_budget(revisions):
         mission.validate_single_execution(policy)
 
 
-def _single_fixture(tmp_path, monkeypatch):
+def _single_fixture(tmp_path, monkeypatch, instruction='fix value'):
     source = tmp_path / 'single-source'
     source.mkdir()
     _git(source, 'init', '-q')
@@ -1275,13 +1275,13 @@ def _single_fixture(tmp_path, monkeypatch):
               'max_time_sec': 60, 'max_revisions': 2, 'approval_expires_epoch': time.time()+600,
               'verifier_path': str(verifier), 'verifier_sha256': hashlib.sha256(verifier.read_bytes()).hexdigest()}
     packet = mission.freeze_mission_packet(tmp_path/'mission-single.json', {
-        'schema_version': 'omc-autopilot-mission/v2', 'request_sha256': hashlib.sha256(b'fix value').hexdigest(),
+        'schema_version': 'omc-autopilot-mission/v2', 'request_sha256': hashlib.sha256(instruction.encode()).hexdigest(),
         'base_commit': _git(source, 'rev-parse', 'HEAD'), 'outcome': 'value is 2',
         'deliverables': ['fixed value'], 'definition_of_done': ['value is 2'], 'non_goals': ['publish'],
         'validation': {'max_total_rounds': 3, 'max_revisions_per_issue': 2}, 'execution': policy})
     receipt = mission.build_mission_approval_receipt(decision_id='explicit-user-approval',session_id='authorizing-session',packet=packet)
     approval_path=tmp_path/'approval-single.json';approval_path.write_text(json.dumps(receipt))
-    contract_path=_freeze_contract(source,tmp_path,allowed_paths=policy['allowed_paths'],verification_commands=commands,instruction='fix value')
+    contract_path=_freeze_contract(source,tmp_path,allowed_paths=policy['allowed_paths'],verification_commands=commands,instruction=instruction)
     doc=json.loads(contract_path.read_text());doc.pop('contract_sha256')
     doc.update(schema_version=workspace.WORK_CONTRACT_SCHEMA_VERSION_V2,change_class='implementation',test_policy='required',promotion_policy='isolated_candidate_only',
         mission_packet_path='mission-single.json',mission_packet_sha256=packet['packet_sha256'],
@@ -1501,3 +1501,126 @@ def test_review_fix_qualified_test_names_remain_distinct(tmp_path, monkeypatch):
         workspace_parent=tmp_path/'runs')
     assert result['status'] == 'candidate_ready', result
     assert calls == ['red', 'implementation']
+
+
+def _freeze_single_through_cli(tmp_path, monkeypatch, instruction):
+    source, _ = _single_fixture(tmp_path, monkeypatch, instruction=instruction)
+    packet = mission.load_mission_packet(tmp_path / 'mission-single.json')
+    contract = tmp_path / 'public-cli-contract.json'
+    argv = ['omc_autopilot.py', '--target', str(source), 'freeze-work-contract',
+            '--instruction', instruction, '--run-id', 'public-cli-raw-request',
+            '--allowed-path', 'app.py', '--allowed-path', 'test_app.py',
+            '--allowed-operation', 'modify', '--change-class', 'implementation',
+            '--test-policy', 'required', '--mode', 'lite',
+            '--branch', 'codex/public-cli-request', '--output', str(contract),
+            '--mission-packet', str(tmp_path / 'mission-single.json'),
+            '--mission-approval', str(tmp_path / 'approval-single.json'),
+            '--mission-approval-session-id', 'authorizing-session',
+            '--verify-command-json', json.dumps(packet['execution']['verification_commands'][0])]
+    monkeypatch.setattr(sys, 'argv', argv)
+    assert autopilot.main() == 0
+    assert workspace.load_work_contract(contract)['instruction_sha256'] == hashlib.sha256(instruction.encode()).hexdigest()
+    return source, contract
+
+
+def _public_pipeline_argv(source, contract, instruction):
+    return ['omc_autopilot.py', '--target', str(source), 'pipeline',
+            '--instruction', instruction, '--work-contract', str(contract),
+            '--branch', 'codex/public-cli-request', '--executor', 'codex',
+            '--max-time', '60']
+
+
+@pytest.mark.parametrize('instruction', [
+    '한글 value 수정 요청입니다\n',
+    '한글 value 수정 요청입니다\r\n',
+    '  한글 value 수정 요청입니다  ',
+    '\n한글 value 수정 요청입니다\n\n',
+], ids=['lf', 'crlf', 'spaces', 'multiline'])
+def test_public_cli_contract_preserves_approved_request_bytes(tmp_path, monkeypatch, instruction):
+    source, contract = _freeze_single_through_cli(tmp_path, monkeypatch, instruction)
+    before = workspace.source_identity(source)
+    index_before = (source / '.git/index').read_bytes()
+    files_before = {name: (source / name).read_bytes() for name in ('app.py', 'test_app.py')}
+    pins = {p: p.read_bytes() for p in (contract, tmp_path / 'mission-single.json', tmp_path / 'approval-single.json')}
+    calls = []
+    def provider(root, step, prompt, *args, **kwargs):
+        calls.append(step)
+        if step == 'safe_review':
+            digest = re.search(r'REVIEW_PACKET_SHA256: ([0-9a-f]{64})', prompt).group(1)
+            return 0, f'REVIEW_PACKET_SHA256: {digest}\nVERDICT: APPROVE'
+        if '[OMC RED ONLY]' in prompt:
+            (root / 'test_app.py').write_text("from pathlib import Path\ndef test_baseline():\n    assert True\ndef test_value():\n    ns={}\n    exec(Path('app.py').read_text(),ns)\n    assert ns['value']==2\n")
+        else:
+            (root / 'app.py').write_text('value = 2\n')
+        return 0, 'VERDICT: PROCEED'
+    monkeypatch.setattr(autopilot, '_run_pipeline_step', provider)
+    monkeypatch.setenv('OMC_AUTOPILOT_SAFE_RUNS', str(tmp_path / 'public-runs'))
+    monkeypatch.setattr(sys, 'argv', _public_pipeline_argv(source, contract, instruction))
+    code = autopilot.main()
+    result = json.loads((source / '.omc/pipeline_run_result.json').read_text())
+    assert code == 0 and result['status'] == 'candidate_ready', result
+    assert result['instruction'] == instruction
+    assert calls == ['safe_task', 'safe_task', 'safe_review']
+    # The public CLI appends .omc reports; business files, HEAD and index stay fixed.
+    assert _git(source, 'rev-parse', 'HEAD') == before['head']
+    assert (source / '.git/index').read_bytes() == index_before
+    assert all((source / name).read_bytes() == raw for name, raw in files_before.items())
+    assert not _git(source, 'status', '--porcelain', '--untracked-files=no')
+    assert all(name.startswith('.omc/') for name in _git(source, 'ls-files', '--others', '--exclude-standard').splitlines())
+    assert all(p.read_bytes() == raw for p, raw in pins.items())
+
+
+@pytest.mark.parametrize('change', ['body', 'trailing-newline', 'leading-space', 'receipt', 'mission'])
+def test_public_cli_contract_rejects_changed_request_before_provider(tmp_path, monkeypatch, change):
+    instruction = '한글 value 수정 요청입니다'
+    source, contract = _freeze_single_through_cli(tmp_path, monkeypatch, instruction)
+    submitted = instruction
+    if change == 'body':
+        submitted += ' 다른 작업'
+    elif change == 'trailing-newline':
+        submitted += '\n'
+    elif change == 'leading-space':
+        submitted = ' ' + submitted
+    else:
+        path = tmp_path / ('approval-single.json' if change == 'receipt' else 'mission-single.json')
+        payload = json.loads(path.read_text())
+        if change == 'receipt':
+            payload['binding']['session_id'] = 'different-session'
+        else:
+            payload['request_sha256'] = 'f' * 64
+        path.write_text(json.dumps(payload))
+    calls = []
+    monkeypatch.setattr(autopilot, '_run_pipeline_step', lambda *a, **k: calls.append(a))
+    monkeypatch.setenv('OMC_AUTOPILOT_SAFE_RUNS', str(tmp_path / 'public-runs'))
+    monkeypatch.setattr(sys, 'argv', _public_pipeline_argv(source, contract, submitted))
+    assert autopilot.main() == 1
+    assert not calls
+    if change not in {'receipt', 'mission'}:
+        result = json.loads((source / '.omc/pipeline_run_result.json').read_text())
+        assert result['reason_code'] == 'instruction_identity_mismatch', result
+
+
+@pytest.mark.parametrize('instruction', ['', ' \t\r\n', ' 짧음 '])
+@pytest.mark.parametrize('contract_mode', [False, True])
+def test_public_cli_empty_or_short_request_never_calls_pipeline(tmp_path, monkeypatch, instruction, contract_mode):
+    calls = []
+    monkeypatch.setattr(autopilot, 'cmd_safe_pipeline', lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(autopilot, 'cmd_pipeline', lambda *a, **k: calls.append(a))
+    argv = ['omc_autopilot.py', '--target', str(tmp_path), 'pipeline', '--instruction', instruction]
+    if contract_mode:
+        argv += ['--work-contract', str(tmp_path / 'not-read.json')]
+    monkeypatch.setattr(sys, 'argv', argv)
+    assert autopilot.main() == 1
+    assert not calls
+
+
+def test_public_cli_without_contract_retains_legacy_strip(tmp_path, monkeypatch):
+    observed = []
+    def normal(root, **kwargs):
+        observed.append(kwargs['instruction'])
+        return 0
+    monkeypatch.setattr(autopilot, 'cmd_pipeline', normal)
+    monkeypatch.setattr(sys, 'argv', ['omc_autopilot.py', '--target', str(tmp_path),
+        'pipeline', '--instruction', ' \n한글 value 수정 요청입니다\r\n '])
+    assert autopilot.main() == 0
+    assert observed == ['한글 value 수정 요청입니다']

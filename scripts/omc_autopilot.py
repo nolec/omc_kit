@@ -6566,17 +6566,17 @@ def main() -> int:
         if args.skip_pr and not args.benchmark:
             print("[PIPELINE] ❌ --skip-pr는 --benchmark과 함께 사용해야 합니다", file=sys.stderr)
             return 1
-        args.instruction = args.instruction.strip()
-        if not args.instruction:
+        checked_instruction = args.instruction.strip()
+        if not checked_instruction:
             print("[PIPELINE] ❌ --instruction이 비어있습니다.", file=sys.stderr)
             return 1
         args.branch = args.branch.strip()
         if not args.branch:
             print("[PIPELINE] ❌ --branch가 비어있습니다.", file=sys.stderr)
             return 1
-        if len(args.instruction) < 10 and not args.force:
+        if len(checked_instruction) < 10 and not args.force:
             print(
-                f"[PIPELINE] ⚠️  지시문이 너무 짧습니다 ({len(args.instruction)}자).\n"
+                f"[PIPELINE] ⚠️  지시문이 너무 짧습니다 ({len(checked_instruction)}자).\n"
                 "           구체적인 지시문을 작성하거나 --force로 강제 실행하세요.",
                 file=sys.stderr,
             )
@@ -6608,7 +6608,7 @@ def main() -> int:
             )
         return cmd_pipeline(
             root,
-            instruction=args.instruction,
+            instruction=checked_instruction,
             branch=args.branch,
             executor_pref=args.executor,
             max_time=args.max_time,
