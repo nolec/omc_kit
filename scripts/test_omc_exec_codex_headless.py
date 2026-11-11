@@ -811,3 +811,20 @@ def test_reasoning_capability_cache_does_not_cross_binary_boundaries(monkeypatch
     )
 
     assert omc_exec._codex_supports_reasoning_effort() is False
+
+
+def test_single_approval_codex_excludes_writable_temporary_roots(tmp_path):
+    import omc_exec
+    command = omc_exec._codex_headless_command(tmp_path, 'bounded task', tmp_path/'answer.txt',
+                                              strict_workspace=True)
+    assert 'sandbox_workspace_write.exclude_slash_tmp=true' in command
+    assert 'sandbox_workspace_write.exclude_tmpdir_env_var=true' in command
+    legacy = omc_exec._codex_headless_command(tmp_path, 'legacy task', tmp_path/'legacy.txt')
+    assert 'sandbox_workspace_write.exclude_slash_tmp=true' not in legacy
+
+
+def test_codex_explicit_model_does_not_rewrite_global_profiles(tmp_path):
+    before = dict(omc_exec._CODEX_MODEL_MAP['mini_default'])
+    command = omc_exec._codex_headless_command(tmp_path,'approved task',tmp_path/'out.txt',model_override='gpt-6.1-sol')
+    assert command[command.index('--model')+1]=='gpt-6.1-sol'
+    assert omc_exec._CODEX_MODEL_MAP['mini_default']==before

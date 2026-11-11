@@ -669,10 +669,14 @@ def _codex_headless_command(
     model_profile: str = "mini_default",
     allow_reasoning_effort: bool = True,
     sandbox_mode: str = "workspace-write",
+    strict_workspace: bool = False,
+    model_override: str | None = None,
 ) -> list[str]:
     if sandbox_mode not in {"workspace-write", "read-only"}:
         raise ValueError(f"unsupported Codex sandbox mode: {sandbox_mode}")
     profile = _resolve_codex_profile_settings(model_profile)
+    if model_override is not None and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', model_override):
+        raise ValueError('codex_model_override_invalid')
     cmd = [
         _resolve_codex_binary(),
         "exec",
@@ -687,11 +691,14 @@ def _codex_headless_command(
         "-o",
         str(output_path),
         "--model",
-        str(profile["model"]),
+        str(model_override or profile["model"]),
     ]
     reasoning_effort = profile.get("reasoning_effort")
     if allow_reasoning_effort and isinstance(reasoning_effort, str) and reasoning_effort.strip():
         cmd += ["--reasoning-effort", reasoning_effort]
+    if strict_workspace:
+        cmd += ['-c', 'sandbox_workspace_write.exclude_slash_tmp=true',
+                '-c', 'sandbox_workspace_write.exclude_tmpdir_env_var=true']
     cmd.append(prompt_text)
     return cmd
 
@@ -900,6 +907,7 @@ def _record_headless_cost(
     model_profile: str,
     task_kind: str,
     receipt_id: str | None = None,
+    model_override: str | None = None,
 ) -> dict[str, Any] | None:
     task_label = f"{task_kind or 'task'}: headless"
     try:
@@ -909,7 +917,7 @@ def _record_headless_cost(
             session_id=receipt_id,
             task_title=task_label,
             llm_json=raw_output,
-            model=_resolve_executor_model(executor, model_profile),
+            model=model_override or _resolve_executor_model(executor, model_profile),
         )
     except Exception as exc:
         print(f"[WARN] cost record failed: {exc}", file=sys.stderr)
@@ -1019,6 +1027,8 @@ def _run_codex_headless(
     allow_fallback: bool = True,
     receipt_id: str | None = None,
     sandbox_mode: str = "workspace-write",
+    strict_workspace: bool = False,
+    model_override: str | None = None,
 ) -> int:
     if sandbox_mode not in {"workspace-write", "read-only"}:
         raise ValueError(f"unsupported Codex sandbox mode: {sandbox_mode}")
@@ -1044,6 +1054,8 @@ def _run_codex_headless(
             model_profile=model_profile,
             allow_reasoning_effort=_codex_supports_reasoning_effort(),
             sandbox_mode=sandbox_mode,
+            **({'strict_workspace': True} if strict_workspace else {}),
+            **({'model_override': model_override} if model_override else {}),
         )
         try:
             proc = subprocess.run(
@@ -1062,6 +1074,7 @@ def _run_codex_headless(
                 model_profile=model_profile,
                 task_kind=task_kind,
                 receipt_id=receipt_id,
+                **({'model_override': model_override} if model_override else {}),
             )
             partial_output = ""
             if isinstance(getattr(exc, "stdout", None), (bytes, str)):
@@ -1122,6 +1135,7 @@ def _run_codex_headless(
             model_profile=model_profile,
             task_kind=task_kind,
             receipt_id=receipt_id,
+            **({'model_override': model_override} if model_override else {}),
         )
         combined_output = "\n".join(part for part in [proc.stdout, proc.stderr] if part)
         fallback_executor = None
@@ -1390,6 +1404,9 @@ def main() -> int:
         default=int(os.environ.get("OMC_EXEC_TIMEOUT_SEC", _DEFAULT_HEADLESS_TIMEOUT_SEC)),
         help="Timeout for headless execution mode.",
     )
+    ap.add_argument('--strict-workspace', action='store_true',
+                    help='단일 승인 작업: 임시 폴더 쓰기와 자동 로그인·provider fallback 금지')
+    ap.add_argument('--codex-model', default=None, help='명시적으로 승인한 Codex 모델; 전역 프로필은 변경하지 않음')
     ap.add_argument(
         "--fresh-context",
         action="store_true",
@@ -1422,6 +1439,9 @@ def main() -> int:
         raise FileNotFoundError(prompt_path)
 
     executor = _detect_executor(args.executor)
+    if (args.strict_workspace or args.codex_model) and (executor != 'codex' or args.execution_mode != 'headless'):
+        print('[!] strict-workspace는 Codex headless에서만 지원합니다.')
+        return 2
     if args.execution_mode == "interactive" and not _is_tty_available():
         args.execution_mode = "headless"
     if args.fresh_context:
@@ -1447,6 +1467,9 @@ def main() -> int:
 
         # 1. Auth Check & Auto Login
         if not _check_codex_auth():
+            if args.strict_workspace:
+                print('[!] 단일 승인 실행의 Codex 인증이 없습니다. 자동 로그인하지 않습니다.')
+                return 1
             print("\n[!] Codex authentication failed. Attempting login...")
             try:
                 subprocess.run([_resolve_codex_binary(), "login"], check=True)
@@ -1463,6 +1486,10 @@ def main() -> int:
             }
             if args.disable_fallback:
                 headless_kwargs["allow_fallback"] = False
+            if args.strict_workspace:
+                headless_kwargs.update(strict_workspace=True, allow_fallback=False)
+            if args.codex_model:
+                headless_kwargs.update(model_override=args.codex_model, allow_fallback=False)
             if args.sandbox_mode != "workspace-write":
                 headless_kwargs["sandbox_mode"] = args.sandbox_mode
             return _run_codex_headless(project_root, prompt_text, **headless_kwargs)
