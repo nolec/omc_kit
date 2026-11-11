@@ -983,3 +983,48 @@ def test_completed_commit_invalid_evidence_stays_frozen(retiring, damage):
     before = _state_bytes(root)
     assert resume.frozen(root)
     assert _state_bytes(root) == before
+
+
+def test_completed_commit_stays_closed_after_session_start(retiring):
+    root, session = retiring
+    _commit_completed_work(root, session)
+    assert guard.cmd_session_start(root) == 0
+    state = resume.original(root)
+    assert state['session_id'] == ''
+    assert state['contract_confirmed'] is False
+    assert state['contract_hash'] == ''
+    before = _state_bytes(root)
+    index = (root / '.git/index').read_bytes()
+    assert not resume.frozen(root)
+    assert _state_bytes(root) == before
+    assert (root / '.git/index').read_bytes() == index
+    new = omc_state.record_session(root, mode='autopilot', title='next task',
+        request='independent work after session start', role_ids=['senior_coding'],
+        confirmed=True, work_class='implementation', completion_action='start')
+    assert new['work_id'] != session['work_id']
+    assert resume.original(root)['contract_confirmed'] is False
+
+
+@pytest.mark.parametrize('damage', ['foreign_session', 'missing_reset_reason',
+                                 'approval_flag', 'approval_hash', 'receipt_paths'])
+def test_completed_commit_reset_does_not_accept_invalid_binding(retiring, damage):
+    root, session = retiring
+    receipt_path = _commit_completed_work(root, session)
+    assert guard.cmd_session_start(root) == 0
+    state = resume.original(root)
+    if damage == 'foreign_session':
+        state['session_id'] = 'unrelated-session'
+    elif damage == 'missing_reset_reason':
+        state.pop('contract_reset_reason')
+    elif damage == 'approval_flag':
+        state['contract_confirmed'] = True
+    elif damage == 'approval_hash':
+        state['contract_hash'] = 'unrelated-contract'
+    else:
+        receipt = json.loads(receipt_path.read_text())
+        receipt['changed_paths'] = ['other.py']
+        receipt_path.write_text(json.dumps(receipt))
+    (root / '.omc/pipeline_session.json').write_text(json.dumps(state))
+    before = _state_bytes(root)
+    assert resume.frozen(root)
+    assert _state_bytes(root) == before

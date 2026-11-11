@@ -105,10 +105,18 @@ def committed_work_closed(root, state, pending_path):
     owner = read(root, f'.omc/state/sessions/{sid}/session.json')
     receipt = read(root, f'.omc/state/sessions/{sid}/completion.json')
     from omc_state import _canonical_sha256
+    # Session start clears active approval, not the historical completion owner.
+    # Recognize only that exact reset shape; never revive its CONTRACT approval.
+    approval_reset = (
+        state.get('session_id') == ''
+        and state.get('contract_reset_reason') == 'session_start'
+        and state.get('contract_confirmed') is False
+        and state.get('contract_hash') == ''
+    )
     if (not isinstance(owner, dict) or not isinstance(receipt, dict)
             or receipt.get('schema_version') != 2
             or owner.get('session_id') != sid or receipt.get('session_id') != sid
-            or state.get('session_id') != sid
+            or (state.get('session_id') != sid and not approval_reset)
             or owner.get('work_id') != state.get('owner_work_id')
             or not owner.get('work_id')
             or not isinstance(owner.get('role_ids'), list)
