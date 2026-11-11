@@ -751,7 +751,7 @@ def _assert_failure_directory(root, directory):
         os.close(current)
 
 
-def _write_failure_diagnostic(root, context, context_pin, raw, phase, code):
+def _write_failure_diagnostic(root, context, context_pin, raw, phase, code, *, allow_expired=False):
     """Use directory descriptors: input identities never select a write path."""
     root = Path(root).absolute()
     if '..' in root.parts:
@@ -769,7 +769,7 @@ def _write_failure_diagnostic(root, context, context_pin, raw, phase, code):
             os.close(directory); directory = child
         # A diagnostic is not a publication or completion receipt. A failed or
         # unverified context never gets here; its only evidence is native stderr.
-        _context(root, context)
+        _context(root, context, live_deadline=not allow_expired)
         _assert_failure_directory(root, directory)
         data = _json_bytes({
             'schema_version': 'omc-output-failure/v1', 'kind': 'failure_diagnostic',
@@ -778,6 +778,8 @@ def _write_failure_diagnostic(root, context, context_pin, raw, phase, code):
             'context_sha256': context_pin,
             'source_sha256': _sha(raw.encode('utf-8')) if isinstance(raw, str) else None,
             'source_status': 'observed' if isinstance(raw, str) else 'unavailable',
+            **({'deadline_checked': False, 'draft_status': 'validated_for_failure_explanation'}
+               if allow_expired else {}),
         })
         name = uuid.uuid4().hex + '.json'
         _assert_failure_directory(root, directory)
@@ -788,7 +790,7 @@ def _write_failure_diagnostic(root, context, context_pin, raw, phase, code):
             stream.write(data); stream.flush(); os.fsync(stream.fileno())
         _assert_failure_directory(root, directory)
         # If storage crossed the deadline, do not claim diagnostic delivery.
-        _context(root, context)
+        _context(root, context, live_deadline=not allow_expired)
         _assert_failure_directory(root, directory)
     finally:
         os.close(directory)
@@ -813,41 +815,101 @@ def _choice_guidance(exc):
     return label + (' 허용값: ' + ', '.join(allowed) + '.' if allowed else '')
 
 
-def _emit_failure(root, context_path, context_pin, raw, phase, exc):
+def _failure_draft(root, context_path, context_pin, raw, draft, phase):
+    """Explain an unconfirmed delivery; never create a verdict or authority."""
+    context = load_output_context(root, context_path, context_pin, live_deadline=False)
+    if context['stage'] not in {'plan', 'critique-plan'} or context.get('draft_binding') != _current_binding(root):
+        raise OutputContractError('draft_identity_or_binding_mismatch')
+    if parse_envelope(raw)['stage'] != context['stage']:
+        raise OutputContractError('draft_stage_mismatch')
+    source = _local_file(root, draft['source_file'])
+    if _read_pinned(root, source, draft['source_pin']).decode('utf-8') != raw:
+        raise OutputContractError('draft_source_mismatch')
+    summary = _local_file(root, draft['summary_file'])
+    if not any(_local_file(root, ref['path']) == summary and ref['sha256'] == draft['summary_pin']
+               for ref in context['references']):
+        raise OutputContractError('draft_summary_reference_missing')
+    text = _read_pinned(root, summary, draft['summary_pin']).decode('utf-8')
+    state = '확인 불가'
+    if phase == 'preflight':
+        state = '이번 호출은 발행 전 검증에서 중단됨; 기존 기록 상태는 확인 불가'
+    manifest = record_path(root, context)
+    if manifest.exists():
+        try:
+            read_record(root, manifest, _sha(_local_file(root, manifest).read_bytes()), context)
+            state = '발행됨·전달 미확인'
+        except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+            state = '확인 불가'
+    lines = ['공식 판정 전달 미확인', '기록 상태: ' + state]
+    if text.strip() and len(text) <= 1200 and len(text.splitlines()) <= 12:
+        # Indent every line so draft text cannot impersonate the status header.
+        lines += ['작성 초안·공식 승인 아님', *['  ' + line for line in text.splitlines()], '초안 끝·공식 판정 전달 미확인']
+    else:
+        lines.append('요약이 비어 있거나 12줄·1,200자를 초과해 본문을 표시하지 않습니다.')
+    lines += ['원문 위치: ' + str(source), '자동 후속 진행을 보류합니다.']
+    return '\n'.join(lines), context
+
+
+def _emit_failure(root, context_path, context_pin, raw, phase, exc, *, draft=None):
     code = _failure_code(exc, phase)
+    explanation = None
+    verified_context = None
+    if draft is not None and isinstance(raw, str):
+        try:
+            explanation, verified_context = _failure_draft(root, context_path, context_pin, raw, draft, phase)
+        except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+            pass
     saved = False
     try:
-        context = load_output_context(root, context_path, context_pin)
-        _write_failure_diagnostic(root, context, context_pin, raw, phase, code)
+        context = verified_context or load_output_context(root, context_path, context_pin)
+        if verified_context is not None:
+            _write_failure_diagnostic(root, context, context_pin, raw, phase, code, allow_expired=True)
+        else:
+            _write_failure_diagnostic(root, context, context_pin, raw, phase, code)
         saved = True
     except (OSError, ValueError, TypeError, KeyError, UnicodeError):
         # Invalid JSON/hash/session/deadline, unsafe target or a storage error:
         # never invent identity, renew the deadline or replace a sealed record.
         pass
     try:
+        if explanation is not None:
+            # Diagnostics can perform I/O: recheck identity and bytes before
+            # exposing a draft after that boundary as well.
+            try:
+                explanation, _ = _failure_draft(root, context_path, context_pin, raw, draft, phase)
+            except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+                explanation = None
         guidance = _choice_guidance(exc)
         message = ('기록 발행 전 형식 검증에서 거부됐습니다. ' + guidance + ' 원문을 보존하고 후속 진행을 보류합니다. '
                    if guidance else '기록 전달을 확인하지 못했습니다. 원문을 보존하고 후속 진행을 보류합니다. ')
-        print(message + f'[오류 코드: {code}; 별도 오류 기록: {"보존됨" if saved else "확인 불가"}]',
+        print((explanation or message) + f'\n[오류 코드: {code}; 별도 오류 기록: {"보존됨" if saved else "확인 불가"}]',
               file=sys.stderr)
     except OSError:
         pass
     return 2
 
 
-def emit_record(root, context_path, context_pin, raw, *, source_kind='model_declared', _authority=None, _gate_verification=None):
+def emit_record(root, context_path, context_pin, raw, *, source_kind='model_declared', _authority=None, _gate_verification=None, draft=None):
+    phase = 'publication_or_delivery'
     try:
+        if draft is not None and source_kind == 'model_declared':
+            phase = 'preflight'
+            preflight_record(root, context_path, context_pin, raw)
+            phase = 'publication'
         ref=_publish(root,context_path,context_pin,raw,source_kind=source_kind,authority=_authority,gate_verification=_gate_verification)
+        if draft is not None: phase = 'readback'
         context=load_output_context(root,context_path,context_pin)
         doc=read_record(root,ref['path'],ref['sha256'],context)
         _context(root,context)
+        if draft is not None: phase = 'display'
         _write_display(doc['display'])
         # A valid model declaration is a successful publication even for REVISE.
         # Only the completion gate owns the legacy business 0/1 exit contract.
         return 1 if source_kind=='completion_gate' and doc['machine_payload']['outcome']=='blocked' else 0
     except (OSError,ValueError,TypeError,KeyError,UnicodeError) as exc:
         # Publication may already have succeeded. Never rewrite its verdict/status.
-        return _emit_failure(root, context_path, context_pin, raw, 'publication_or_delivery', exc)
+        return _emit_failure(root, context_path, context_pin, raw, phase, exc,
+                             draft=draft if source_kind == 'model_declared' else None)
 
 
 def output_cli(argv=None):
@@ -867,6 +929,8 @@ def output_cli(argv=None):
         entry.add_argument('--output-context-sha256',required=True)
         entry.add_argument('--source-file',type=Path,required=True)
         entry.add_argument('--source-sha256',required=True)
+        entry.add_argument('--draft-summary-file',type=Path)
+        entry.add_argument('--draft-summary-sha256')
     args=parser.parse_args(argv)
     if args.command=='capabilities':
         print(json.dumps(capabilities()));return 0
@@ -882,6 +946,8 @@ def output_cli(argv=None):
                      'report_id':args.report_id,'created_epoch':created,'budget_sec':args.budget_sec,'deadline_epoch':created+args.budget_sec,
                      'native_call_reference':{'invocation_id':args.report_id},
                      'references':[{'path':str(_local_file(root,p)),'sha256':_sha(_local_file(root,p).read_bytes()),'purpose':'explicit_evidence'} for p in args.reference]}
+            if args.reference:
+                context['draft_binding'] = _current_binding(root)
             from omc_edit_resume import frozen, load
             if frozen(root):
                 resume=load(root);context['edit_resume']={'grant_id':resume['grant_id'],'generation':resume['generation']}
@@ -908,7 +974,10 @@ def output_cli(argv=None):
     except (OSError,ValueError,UnicodeError) as exc:
         return _emit_failure(args.target, args.output_context, args.output_context_sha256,
                              None, 'source_read', exc)
-    return emit_record(args.target,args.output_context,args.output_context_sha256,raw)
+    draft = ({'source_file': args.source_file, 'source_pin': args.source_sha256,
+              'summary_file': args.draft_summary_file, 'summary_pin': args.draft_summary_sha256}
+             if args.draft_summary_file is not None and args.draft_summary_sha256 else None)
+    return emit_record(args.target,args.output_context,args.output_context_sha256,raw,draft=draft)
 
 
 if __name__=='__main__':

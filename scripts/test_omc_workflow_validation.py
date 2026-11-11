@@ -789,3 +789,10 @@ def test_maintenance_r4_collector_accepts_recovery_and_rejects_foreign_stream(ma
     events.write_bytes(b'{}\n'+events.read_bytes())
     report=validation.collect(root,events,'current',path,'done',root/'.omc/foreign-collected',**kwargs)
     assert report['required']['procedure_calls']!='passed',report
+
+
+def test_failure_draft_cannot_be_completion_evidence(tmp_path):
+    text='공식 판정 전달 미확인\n작성 초안·공식 승인 아님\n계획 초안입니다.\n'
+    result, dest=collect(tmp_path, text)
+    assessment=json.loads((dest/'assessment.json').read_text())
+    assert result.returncode != 0 or assessment['outcome'] != 'done'

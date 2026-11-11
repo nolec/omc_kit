@@ -1140,3 +1140,102 @@ def test_maintenance_r4_detached_record_pins_failed_prefix(maintenance_case,monk
     output.read_record(root,manifest,pin,ctx,display=result.stdout)
     target=root/ref['path'];target.write_bytes(target.read_bytes()+b' ')
     with pytest.raises(output.OutputContractError):output.read_record(root,manifest,pin,ctx,display=result.stdout)
+
+
+@pytest.mark.parametrize('expired', [True, False])
+@pytest.mark.parametrize('text,shown', [('핵심 계획', True), ('', False), ('가' * 1200, True), ('가' * 1201, False), ('\n'.join(['가'] * 12), True), ('\n'.join(['가'] * 13), False)], ids=['short','empty','char_limit','char_over','line_limit','line_over'])
+def test_failure_summary_public_cli_expired(detached_case, text, shown, expired):
+    import hashlib, subprocess, sys, time
+    root, file, _, ctx, _ = detached_case
+    m = _load_module()
+    summary = root / '.omc/summary.txt'; summary.write_text(text)
+    raw = '계획 초안\n' + m.render_envelope(stage='plan', verdict='HOLD', risk='high', next_skill='omc-critique', user_selection_needed=True, reason_code='review_required')
+    source = root / '.omc/source.txt'; source.write_text(raw)
+    ctx.update(stage='plan', deadline_epoch=time.time()+(-1 if expired else 60),
+        references=[{'path':str(summary), 'sha256':hashlib.sha256(summary.read_bytes()).hexdigest(), 'purpose':'draft_summary'}],
+        draft_binding=m._current_binding(root))
+    file.write_text(json.dumps(ctx)); pin=hashlib.sha256(file.read_bytes()).hexdigest()
+    args=[sys.executable,str(MODULE_PATH),'publish','--target',str(root),
+        '--output-context',str(file),'--output-context-sha256',pin,
+        '--source-file',str(source),'--source-sha256',hashlib.sha256(source.read_bytes()).hexdigest(),
+        '--draft-summary-file',str(summary),'--draft-summary-sha256',hashlib.sha256(summary.read_bytes()).hexdigest()]
+    result=subprocess.run(args,capture_output=True,text=True)
+    if not expired:
+        assert result.returncode == 0 and result.stdout and not result.stderr
+        assert m.record_path(root, ctx).exists()
+        return
+    assert result.returncode==2 and not result.stdout
+    assert '공식 판정 전달 미확인' in result.stderr
+    assert ('작성 초안·공식 승인 아님' in result.stderr) == shown
+    assert 'record_deadline_expired' in result.stderr
+    assert not m.record_path(root,ctx).exists()
+    assert source.read_text()==raw
+
+
+def test_failure_summary_skill_instructions(installed_omc_target):
+    for relative in ['.agents/skills/omc-plan/references/workflow.md','.agents/skills/omc-critique/SKILL.md']:
+        text=(installed_omc_target/relative).read_text()
+        assert '발행 직전에' in text and '--draft-summary-file' in text
+        assert '1,200자' in text and '종료2' in text
+
+
+@pytest.mark.parametrize('defect', ['session','work','stage','binding','source','summary','reference','symlink','during_diagnostic'])
+def test_failure_summary_rejects_unbound_inputs(detached_case, monkeypatch, capsys, defect):
+    import hashlib, time
+    root,file,_,ctx,_=detached_case; m=_load_module()
+    summary=root/'.omc/summary.txt'; summary.write_text('DO_NOT_LEAK')
+    raw=m.render_envelope(stage='plan',verdict='HOLD',risk='high',next_skill='omc-critique',user_selection_needed=True,reason_code='review_required')
+    source=root/'.omc/source.txt';source.write_text(raw)
+    summary_pin=hashlib.sha256(summary.read_bytes()).hexdigest()
+    ctx.update(stage='plan',deadline_epoch=time.time()-1,references=[{'path':str(summary),'sha256':summary_pin,'purpose':'draft'}],draft_binding=m._current_binding(root))
+    draft={'source_file':source,'source_pin':hashlib.sha256(source.read_bytes()).hexdigest(),'summary_file':summary,'summary_pin':summary_pin}
+    if defect in ('session','work'):ctx[defect+'_id']='different'
+    elif defect=='stage':ctx['stage']='review'
+    elif defect=='binding':ctx['draft_binding']={}
+    elif defect=='source':source.write_text('changed')
+    elif defect=='summary':summary.write_text('changed')
+    elif defect=='reference':ctx['references']=[]
+    elif defect=='during_diagnostic':
+        real=m._write_failure_diagnostic
+        def changed(*args, **kwargs):
+            real(*args, **kwargs)
+            summary.write_text('changed after diagnostic')
+        monkeypatch.setattr(m,'_write_failure_diagnostic',changed)
+    else:
+        original=summary.with_suffix('.original');summary.rename(original);summary.symlink_to(original)
+    file.write_text(json.dumps(ctx));pin=hashlib.sha256(file.read_bytes()).hexdigest()
+    assert m.emit_record(root,file,pin,raw,draft=draft)==2
+    output=capsys.readouterr()
+    assert not output.out and 'DO_NOT_LEAK' not in output.err
+    assert '작성 초안·공식 승인 아님' not in output.err
+
+
+@pytest.mark.parametrize('failure', ['display', 'publication', 'diagnostic'])
+def test_failure_summary_display_failure_preserves_publication(detached_case, monkeypatch, capsys, failure):
+    import hashlib
+    root,file,_,ctx,_=detached_case;m=_load_module()
+    summary=root/'.omc/summary.txt';summary.write_text('확인할 계획')
+    raw=m.render_envelope(stage='plan',verdict='HOLD',risk='high',next_skill='omc-critique',user_selection_needed=True,reason_code='review_required')
+    source=root/'.omc/source.txt';source.write_text(raw)
+    pin_summary=hashlib.sha256(summary.read_bytes()).hexdigest()
+    ctx.update(stage='plan',references=[{'path':str(summary),'sha256':pin_summary,'purpose':'draft'}],draft_binding=m._current_binding(root))
+    file.write_text(json.dumps(ctx));pin=hashlib.sha256(file.read_bytes()).hexdigest()
+    draft={'source_file':source,'source_pin':hashlib.sha256(source.read_bytes()).hexdigest(),'summary_file':summary,'summary_pin':pin_summary}
+    def broken(_):raise BrokenPipeError('injected display failure')
+    if failure == 'display':
+        monkeypatch.setattr(m,'_write_display',broken)
+    else:
+        def unavailable(*args, **kwargs):raise OSError('injected storage failure')
+        monkeypatch.setattr(m,'_publish',unavailable)
+        if failure == 'diagnostic':monkeypatch.setattr(m,'_write_failure_diagnostic',unavailable)
+    assert m.emit_record(root,file,pin,raw,draft=draft)==2
+    out=capsys.readouterr();assert not out.out
+    assert '작성 초안·공식 승인 아님' in out.err
+    if failure != 'display':
+        assert '기록 상태: 확인 불가' in out.err and not m.record_path(root,ctx).exists()
+        if failure == 'diagnostic':assert '별도 오류 기록: 확인 불가' in out.err
+        return
+    assert '발행됨·전달 미확인' in out.err
+    manifest=m.record_path(root,ctx);before=manifest.read_bytes()
+    record=m.read_record(root,manifest,hashlib.sha256(before).hexdigest(),ctx)
+    assert record['publication']=='published' and manifest.read_bytes()==before
