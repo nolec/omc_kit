@@ -370,3 +370,15 @@ def test_reinstall_preserves_committed_retirement_archive(tmp_path, monkeypatch,
     assert json.loads((archive / 'completed.json').read_text()) == receipt
     assert json.loads((archive / 'manifest.json').read_text()) == manifest
     assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=target) == head
+
+
+def test_installed_conditional_skill_references_match_ssot(installed_omc_target):
+    for skill, reference in [('omc-autopilot', 'single-approval-v0.md'),
+                             ('omc-task', 'verification.md'),
+                             ('omc-review', 'release-and-mission.md')]:
+        source = ROOT / 'templates/.agents/skills' / skill / 'references' / reference
+        for directory in ('.agents', '.agent'):
+            installed = installed_omc_target / directory / 'skills' / skill / 'references' / reference
+            assert installed.read_bytes() == source.read_bytes()
+            text = (installed.parent.parent / 'SKILL.md').read_text()
+            assert 'references/' + reference in text and '먼저 읽' in text

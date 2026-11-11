@@ -298,3 +298,16 @@ def test_task_peer_heading_sections_do_not_hide_later_core_requirements():
     assert 'maintenance' in core and 'transfer' not in core
     assert 'transfer' in transfer and 'maintenance' not in transfer
     assert '# comment' in transfer and 'complete-transfer' in transfer
+
+
+def test_release_preparation_details_are_required_reference():
+    for path in REQUIRED_TASK_SKILL_PATHS:
+        text = _read(path)
+        assert '최종 후보 준비' in text and 'references/verification.md' in text
+        assert '릴리스 의도' in text and '먼저 읽' in text
+        detail = (path.parent / 'references/verification.md').read_text().split('## 최종 후보 준비 — 릴리스 의도가 있을 때', 1)[1]
+        for marker in ('최종 커밋', 'expected-path', 'validate-ship=READY',
+                       '설정 승인은 검사 실행 승인이 아니며', '해시만으로 과거 문서',
+                       'prepare/check', '과거 receipt·원문을 삭제하거나 포인터를 복사',
+                       '실제 모델의 안내 준수'):
+            assert marker in detail

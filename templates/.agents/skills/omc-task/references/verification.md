@@ -149,3 +149,17 @@ CLI의 상태·기계 판정·종료 코드와 수집기 판정은 같은 공용
 5. 복구 작업은 `omc-maintenance-operation/v2`에 동일한 recovery descriptor와 `recovered_contract_call_id`를 연결합니다. 실패 prefix를 필수 preservation 검증의 `evidence_files`에도 연결해야 합니다. CLI와 수집기는 실패 CONTRACT→info→복구 CONTRACT→삭제·직후 확인의 실제 전체 로그와 파일 해시를 대조합니다. 복구 없는 작업의 operation/v1과 구형 기준의 기존 완료 검증은 유지합니다.
 
 ready는 전달용 metadata이며 승인·완료 증거가 아닙니다. 코드 보완 A의 통제된 테스트와 실제 실행기 운용 검증 B를 구분하며, 실제 provider의 필수 로그·종료 정보·ready 왕복 확인 전에는 B 보류를 유지합니다.
+
+
+## 최종 후보 준비 — 릴리스 의도가 있을 때
+릴리스 요청은 준비 담당 `directive`가 버전·문서 변경을 마친 최종 커밋·명시적 base·전체 경로를 고정하는 단계부터 시작합니다. `code_review`는 그 전체 후보를 검토하고, 준비 담당은 기존 `capture-review` → `seal-review-output` → `record-review`를 원래 승인 원문과 정확한 expected-path로 연결한 뒤 `validate-ship=READY`를 확인합니다. 같은 내용의 정상 커밋은 공식 동일성 검증을 사용하며, 추가 파일·amend·base 변경은 기존 승인을 임의 재사용하지 않습니다. 품질 설정은 명시적 새 proposal과 현재 설정을 비교합니다. 사용자 설정 승인을 받은 뒤 준비 담당이 `proposal-validate` → `proposal-apply` → `approve`를 연결하고 `status=ready`를 확인합니다. 설정 승인은 검사 실행 승인이 아니며 실행 횟수·마감도 확인합니다. 해시만으로 과거 문서의 의미를 추론하지 않고 원문이 없으면 UNKNOWN으로 남깁니다. 통합 읽기 전용 확인: `python3 scripts/omc_ship_preflight.py diagnose --target <source절대경로> --contract <고정preflight계약>`; 새 설정 제안은 `--proposal <명시적JSON> --proposal-sha256 <원문해시>`로 고정합니다. 격리 리뷰를 대조할 때만 `--review-target <격리저장소절대경로>`를 명시합니다. 이 명령은 후보·리뷰·품질 문제를 함께 표시하며 설정·승인·소스에 쓰거나 검사를 실행하지 않습니다. 격리 승인 일치는 원본의 READY를 대신하지 않습니다. 준비 담당은 두 readiness를 모두 확인한 뒤에만 기존 ship 절차에 인계합니다. ship의 `prepare/check` 안에서 source를 다시 봉인하거나 설정을 고치지 않습니다. 고정 후 코드·버전·문서·base·설정·근거가 바뀌면 관련 준비 결과를 무효화하고 해당 검토부터 다시 확인합니다. 과거 receipt·원문을 삭제하거나 포인터를 복사하지 않습니다. 준비 진단은 실행 토큰이 아니며 실제 실행 단계에서도 기존 결속 검사를 유지합니다. 작업 완료·커밋 완료·릴리스 준비 완료·검사 통과·설치 완료를 구분해 보고합니다. 준비가 남았으면 그 항목을 명시하고, 코드 완료를 출하 준비로 보고하지 않습니다. 실제 모델의 안내 준수와 사용자 개입 감소는 이 지침·fixture만으로 입증되지 않습니다.
+
+
+
+## 단순 운영 기록 정리
+
+코드·스킬·설정·검증 정책을 변경하지 않고, 이어갈 pending 구현 작업도 없이 기존 증거를 조회해 `state note`와 생성 요약만 정리하는 경우에 한정합니다. `directive` 역할로 독립 기록 정리를 수행하고 결과·근거·미수행 항목을 일반 한글로 보고합니다. 단순 운영 기록 정리 절의 보고 예외이며 task 완료 영수증이나 구현·리뷰·출하 승인이 아니므로 `complete-task` 및 detached_v1 task 완료 발행을 적용하지 않습니다. 기존 실패 기록은 그대로 보존합니다. 이는 구현 RED 면제가 아닙니다. 소스·스킬·설정 변경은 기존 구현 진입과 완료 검사를 적용합니다. pending 작업의 남은 검증·완료 처리는 [SKILL.md의 코드 변경 없는 검증·완료 기록 재개 안내](../SKILL.md#일반-작업의-진입)에 있는 명시적 `preserve` 경로를 따르며, pending 유무가 불명확하면 조회부터 합니다. 과거 승인·RED를 복사하거나 기존 pipeline을 초기화해 이 경로로 바꾸지 않습니다.
+
+
+## 승인된 단일 작업 V0 내부 호출
+검증된 `omc-autopilot-mission/v2` 실행기 내부에서는 단계 전환을 부모 실행기가 담당합니다. 범위·CONTRACT·RED·완료 가드는 그대로 적용하며 개별 스킬이 receipt를 생성·수정하지 않습니다. 일반 대화와 미검증 실행에는 기존 자동 진입 금지 규칙을 유지합니다.

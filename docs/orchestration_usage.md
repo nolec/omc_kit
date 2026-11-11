@@ -396,7 +396,7 @@ autopilot pipeline은 --output-execution <내부JSON> --output-execution-sha256 
 
 커밋 전에는 pre-commit 승인·TDD와 post-commit 완료 기록 소비 조건을 함께 확인한다. 현재 완료 연결은 단일 커밋 기준이다. 기능별 다중 커밋의 전체 작업 연결은 아직 지원하지 않으며 첫 커밋의 완료 기록을 전체 묶음 완료로 보고하지 않는다.
 
-`python3 scripts/omc.py state complete --target .`는 대기 기록이 없으면 `status=skipped`, `reason_code=no_pending_completion`, 종료0으로 정상 생략한다. 정상 수집도 종료0이다. 손상 JSON·잘못된 필드·세션/커밋 불일치·읽기 실패는 `status=error`와 구체적 `reason_code`, 종료1을 반환한다. 모호한 링크 입력은 정상 없음으로 취급하지 않는다. 이 엄격한 읽기는 완료 수집에 한정하며 공용 상태 읽기 계약은 유지한다.
+`python3 scripts/omc.py state complete --target .`는 대기 기록이 없으면 `status=skipped`, `reason_code=no_pending_completion`, 종료0으로 정상 생략한다. 정상 수집도 종료0이다. 유효한 대기 기록의 기준 커밋과 현재 HEAD가 같으면 아직 후속 커밋이 없는 정상 상태로 `status=skipped`, `reason_code=no_followup_commit`, 종료0을 반환하고 pending 원본을 보존한다. 부모 없는 기준 커밋에도 동일하게 적용한다. 손상 JSON·잘못된 필드·세션/커밋 불일치·읽기 실패는 `status=error`와 구체적 `reason_code`, 종료1을 반환한다. 모호한 링크 입력은 정상 없음으로 취급하지 않는다. 이 엄격한 읽기는 완료 수집에 한정하며 공용 상태 읽기 계약은 유지한다.
 
 post-commit의 오류는 이미 생성된 Git 커밋을 취소하지 않는다. `Git 커밋 성공, OMC 완료 기록 실패` 안내와 원문을 보존하고 Git 성공·기록 상태·테스트 결과를 각각 보고한다. 커밋을 다시 실행하거나 과거 영수증·대기 기록을 임의 복원하지 않는다. 기존 사용자 post-commit의 종료 상태는 유지한다. 기록 복구와 다중 커밋 등록/연결은 후속 설계이며 자동 재개하지 않는다.
 

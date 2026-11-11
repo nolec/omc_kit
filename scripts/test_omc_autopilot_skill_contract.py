@@ -280,3 +280,16 @@ def test_valid_autopilot_output_fixture_has_required_structure():
 def test_invalid_autopilot_output_fixture_exposes_weak_gate():
     failures = _validate_autopilot_output(INVALID_AUTOPILOT_SAMPLE)
     assert {"confirmation", "readonly", "dirty", "command"}.issubset(set(failures))
+
+
+def test_single_approval_details_are_explicitly_loaded_from_reference():
+    for path in REQUIRED_SKILL_PATHS:
+        text = _read(path)
+        assert '명시적으로 선택한 경우만' in text
+        assert 'references/single-approval-v0.md' in text and '먼저 읽' in text
+        detail = (path.parent / 'references/single-approval-v0.md').read_text()
+        for marker in ('Codex·Python/pytest', '일반 autopilot과 자동 전환하지 않는다',
+                       'omc-autopilot-mission/v2', 'isolated_candidate_only',
+                       'CONTRACT→실제 RED', '수정 최대 2회', 'BLOCK',
+                       '범위·검증·예산 확대에는 새 승인', '원본 반영·원본 브랜치 생성·PR·배포는 하지 않는다'):
+            assert marker in detail

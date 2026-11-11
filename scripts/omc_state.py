@@ -528,13 +528,22 @@ def record_completion_receipt(project_root: Path) -> dict[str, object]:
             return failure('pending completion is invalid', 'pending_lineage_invalid')
 
         followup_result = run_git("rev-parse", "--verify", "HEAD^{commit}")
-        baseline_result = run_git("rev-parse", "--verify", "HEAD^1^{commit}")
-        if followup_result.returncode != 0 or baseline_result.returncode != 0:
+        if followup_result.returncode != 0:
             return failure('git commit cannot be resolved', 'completion_git_unresolved')
         followup = followup_result.stdout.strip()
-        baseline = baseline_result.stdout.strip()
         session_head = run_git("rev-parse", "--verify", f"{git['head']}^{{commit}}")
-        if session_head.returncode != 0 or session_head.stdout.strip() != baseline:
+        if session_head.returncode != 0:
+            return failure('pending completion does not match commit parent', 'completion_parent_mismatch')
+        # A valid unchanged baseline is ordinary absence, including a root commit.
+        # Keep the pending work available for its eventual followup commit.
+        if followup == session_head.stdout.strip():
+            return {'status': 'skipped', 'reason': 'no followup commit',
+                    'reason_code': 'no_followup_commit'}
+        baseline_result = run_git("rev-parse", "--verify", "HEAD^1^{commit}")
+        if baseline_result.returncode != 0:
+            return failure('git commit cannot be resolved', 'completion_git_unresolved')
+        baseline = baseline_result.stdout.strip()
+        if session_head.stdout.strip() != baseline:
             return failure('pending completion does not match commit parent', 'completion_parent_mismatch')
         receipt_path = session_path.parent / "completion.json"
         if receipt_path.exists():

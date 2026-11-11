@@ -411,3 +411,14 @@ def test_review_source_preparation_keeps_budget_and_full_contract():
     assert len([line for line in text.splitlines() if line.strip()])<=57
     for marker in ('capture-review','seal-review-output','record-review','validate-ship'):
         assert marker in _read(REQUIRED_REVIEW_SKILL_PATHS[0])
+
+
+def test_conditional_review_preparation_and_mission_require_full_reference():
+    for path in REQUIRED_REVIEW_SKILL_PATHS:
+        text = _read(path)
+        assert 'references/release-and-mission.md' in text and '먼저 읽고' in text
+        detail = (path.parent / 'references/release-and-mission.md').read_text()
+        for marker in ('expected-path', 'validate-ship=READY', 'proposal-validate',
+                       '설정 승인은 검사 실행 승인이 아니며', 'prepare/check',
+                       '단일 작업 V0', '부모 실행기', '완료 가드', '자동 진입 금지'):
+            assert marker in detail

@@ -140,7 +140,10 @@ def test_twelve_installed_surfaces_use_detached_output(installed_omc_target):
 @pytest.mark.parametrize('relative', ['templates/.agents/skills/omc-task/SKILL.md', '.agents/skills/omc-task/SKILL.md'])
 def test_task_limits_operational_note_report_to_nonimplementation(relative):
     text = (ROOT/relative).read_text()
-    section = text.split('## 단순 운영 기록 정리', 1)[1].split('\n## ', 1)[0]
+    assert 'references/verification.md#단순-운영-기록-정리' in text
+    assert '먼저 읽고' in text
+    reference = (ROOT/relative).parent/'references/verification.md'
+    section = reference.read_text().split('## 단순 운영 기록 정리', 1)[1].split('\n## ', 1)[0]
     for marker in ('pending', '코드·스킬·설정', 'state note', '일반 한글',
                    'complete-task', 'task 완료 영수증', '구현 RED 면제가 아닙니다',
                    'preserve', '기존 실패 기록'):

@@ -393,16 +393,33 @@ def test_confirm_legacy_coding_session_skips_pending_completion_safely(
     assert not (target / ".omc" / "state" / "pending_completion.json").exists()
 
 
-def test_state_complete_skips_completion_receipt_without_followup_commit(tmp_path: Path):
+@pytest.mark.parametrize('prior_commit', [False, True])
+def test_state_complete_skips_completion_receipt_without_followup_commit(tmp_path: Path, prior_commit):
     target = tmp_path / "repo"
     _init_git_repo(target)
+    if prior_commit:
+        _git(target, 'commit', '--allow-empty', '-qm', 'prior baseline')
     session_id = _sync_task_session(target)
+    pending = target / '.omc/state/pending-completion.json'
+    before = pending.read_bytes()
 
     result = _run("state", "complete", "--target", str(target))
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert json.loads(result.stdout)['status'] == 'skipped'
+    assert json.loads(result.stdout)['reason_code'] == 'no_followup_commit'
+    assert pending.read_bytes() == before
+    again = _run('state', 'complete', '--target', str(target))
+    assert again.returncode == 0 and json.loads(again.stdout) == json.loads(result.stdout)
+    assert pending.read_bytes() == before
 
     receipt_path = target / ".omc" / "state" / "sessions" / session_id / "completion.json"
     assert not receipt_path.exists()
+    (target / 'app.py').write_text('value = 2\n')
+    _git(target, 'add', 'app.py')
+    _git(target, 'commit', '-qm', 'actual followup')
+    completed = _run('state', 'complete', '--target', str(target))
+    assert completed.returncode == 0 and json.loads(completed.stdout)['status'] == 'ok'
+    assert receipt_path.is_file() and not pending.exists()
 
 
 def test_state_complete_skips_ambiguous_multi_commit_completion(tmp_path: Path):
@@ -415,8 +432,13 @@ def test_state_complete_skips_ambiguous_multi_commit_completion(tmp_path: Path):
         _git(target, "add", "app.py")
         _git(target, "commit", "-qm", f"task step {value}")
 
+    pending = target / '.omc/state/pending-completion.json'
+    before = pending.read_bytes()
     result = _run("state", "complete", "--target", str(target))
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1, result.stdout + result.stderr
+    value = json.loads(result.stdout)
+    assert value['status'] == 'error' and value['reason_code'] == 'completion_parent_mismatch'
+    assert pending.read_bytes() == before
 
     receipt_path = target / ".omc" / "state" / "sessions" / session_id / "completion.json"
     assert not receipt_path.exists()
@@ -2345,3 +2367,30 @@ def test_guidance_preserves_existing_task_and_review_contracts():
         except AssertionError as error:
             failures.append(f"{check.__name__}: {error}")
     assert not failures, "\n".join(failures)
+
+
+@pytest.mark.parametrize('damage', ['json', 'fields', 'session_request', 'missing_head'])
+def test_unchanged_head_does_not_hide_invalid_completion_evidence(tmp_path, damage):
+    target = tmp_path / 'repo'
+    _init_git_repo(target)
+    sid = _sync_task_session(target)
+    pending = target / '.omc/state/pending-completion.json'
+    if damage == 'json':
+        pending.write_text('{')
+    elif damage == 'fields':
+        value = json.loads(pending.read_text()); value['unexpected'] = True
+        pending.write_text(json.dumps(value))
+    elif damage == 'session_request':
+        path = target / '.omc/state/sessions' / sid / 'session.json'
+        value = json.loads(path.read_text()); value['request'] = 'changed request'
+        path.write_text(json.dumps(value))
+    else:
+        # A missing actual HEAD is an error, unlike an unchanged valid root HEAD.
+        _git(target, 'update-ref', '-d', 'HEAD')
+    before = pending.read_bytes()
+    result = _run('state', 'complete', '--target', str(target))
+    value = json.loads(result.stdout)
+    assert result.returncode == 1 and value['status'] == 'error'
+    assert value['reason_code'] != 'no_followup_commit'
+    assert pending.read_bytes() == before
+    assert not (target / '.omc/state/sessions' / sid / 'completion.json').exists()

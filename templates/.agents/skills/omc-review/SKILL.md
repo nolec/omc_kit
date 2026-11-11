@@ -57,8 +57,9 @@ decision: REVISE / APPROVE (판정 결과) | risk: HIGH / MED / LOW (리스크 �
 기계 기록의 단계: stage=review. 아래 별도 기록 규칙이 이전 출력 예시보다 우선한다.
 
 
-## 최종 후보 준비 — 릴리스 의도가 있을 때
-릴리스 요청은 준비 담당 `directive`가 버전·문서 변경을 마친 최종 커밋·명시적 base·전체 경로를 고정하는 단계부터 시작합니다. `code_review`는 그 전체 후보를 검토하고, 준비 담당은 기존 `capture-review` → `seal-review-output` → `record-review`를 원래 승인 원문과 정확한 expected-path로 연결한 뒤 `validate-ship=READY`를 확인합니다. 같은 내용의 정상 커밋은 공식 동일성 검증을 사용하며, 추가 파일·amend·base 변경은 기존 승인을 임의 재사용하지 않습니다. 품질 설정은 명시적 새 proposal과 현재 설정을 비교합니다. 사용자 설정 승인을 받은 뒤 준비 담당이 `proposal-validate` → `proposal-apply` → `approve`를 연결하고 `status=ready`를 확인합니다. 설정 승인은 검사 실행 승인이 아니며 실행 횟수·마감도 확인합니다. 해시만으로 과거 문서의 의미를 추론하지 않고 원문이 없으면 UNKNOWN으로 남깁니다. 통합 읽기 전용 확인: `python3 scripts/omc_ship_preflight.py diagnose --target <source절대경로> --contract <고정preflight계약>`; 새 설정 제안은 `--proposal <명시적JSON> --proposal-sha256 <원문해시>`로 고정합니다. 격리 리뷰를 대조할 때만 `--review-target <격리저장소절대경로>`를 명시합니다. 이 명령은 후보·리뷰·품질 문제를 함께 표시하며 설정·승인·소스에 쓰거나 검사를 실행하지 않습니다. 격리 승인 일치는 원본의 READY를 대신하지 않습니다. 준비 담당은 두 readiness를 모두 확인한 뒤에만 기존 ship 절차에 인계합니다. ship의 `prepare/check` 안에서 source를 다시 봉인하거나 설정을 고치지 않습니다. 고정 후 코드·버전·문서·base·설정·근거가 바뀌면 관련 준비 결과를 무효화하고 해당 검토부터 다시 확인합니다. 과거 receipt·원문을 삭제하거나 포인터를 복사하지 않습니다. 준비 진단은 실행 토큰이 아니며 실제 실행 단계에서도 기존 결속 검사를 유지합니다. 작업 완료·커밋 완료·릴리스 준비 완료·검사 통과·설치 완료를 구분해 보고합니다. 준비가 남았으면 그 항목을 명시하고, 코드 완료를 출하 준비로 보고하지 않습니다. 실제 모델의 안내 준수와 사용자 개입 감소는 이 지침·fixture만으로 입증되지 않습니다.
+릴리스 의도가 있으면 [최종 후보 준비](references/release-and-mission.md#최종-후보-준비--릴리스-의도가-있을-때)를 먼저 읽고 `omc_ship_preflight.py diagnose`와 `validate-ship`으로 결속을 확인한다. READY는 전체 검사 통과가 아니다.
+
+검증된 `omc-autopilot-mission/v2` 내부에서만 [승인된 단일 작업 V0 내부 호출](references/release-and-mission.md#승인된-단일-작업-v0-내부-호출)을 먼저 읽고 부모 실행기의 단계 전환을 따른다. 일반 대화의 자동 진입 금지는 유지한다.
 
 ## Machine output contract
 별도 기록 모드 `detached_v1`을 명시적으로 사용한다. `omc-output/v1`의 stage/outcome/risk/next_skill/user_selection_needed/reason_code·VERDICT·기존 라우팅 의미는 바꾸지 않는다. `<!-- OMC_OUTPUT: {JSON} -->`과 `VERDICT`는 내부 판정 원문에만 두고 사용자 최종 답변에 붙이지 않는다. 한글 판정·이유·검증·다음 행동만 표시한다.
@@ -68,6 +69,3 @@ decision: REVISE / APPROVE (판정 결과) | risk: HIGH / MED / LOW (리스크 �
 사용자 최종 답변은 발행 CLI의 한글 stdout과 같은 바이트로 제공한다. 경로/해시는 사용자 답변 꼬리표 대신 호출 인자와 실행 메타데이터로 전달한다. 수집기는 명시 manifest 경로/해시·현재 상태·native 호출/반환·실제 최종 원문을 독립 대조한다. CLI 표시 검사·수집기 fixture·실제 모델의 자유 응답 준수는 별도 증거다.
 업무 차단 종료 코드1도 정상 판정으로 기록한다. 전달 실패 코드2는 업무 실패와 다르다. 저장·봉인·출력 실패 시 한글 오류만 알리고 완료/승인·자동 후속·구형 fallback을 금지한다. 실패 기록도 저장할 수 없으면 stderr·종료 원문만 보존한다. 봉인 후 표시 실패를 이유로 기존 manifest나 verdict를 수정하지 않는다.
 구형 legacy_inline으로 시작한 입력만 기존 parser로 읽는다. 신형 기록 누락·변조·다른 세션·모드 혼합·표시 불일치는 보류하며 구형으로 우회하지 않는다. 구형 도구에서 신형 안내를 실행할 수 없으면 호출 전에 한글 지원 불가를 알린다. 이 안내는 플랫폼 화면 숨김이나 모델 준수를 물리적으로 보장하지 않는다.
-
-## 승인된 단일 작업 V0 내부 호출
-검증된 `omc-autopilot-mission/v2` 실행기 내부에서는 단계 전환을 부모 실행기가 담당합니다. 범위·CONTRACT·RED·완료 가드는 그대로 적용하며 개별 스킬이 receipt를 생성·수정하지 않습니다. 일반 대화와 미검증 실행에는 기존 자동 진입 금지 규칙을 유지합니다.
