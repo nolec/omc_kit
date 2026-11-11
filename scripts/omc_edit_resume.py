@@ -91,7 +91,7 @@ def slot_path(root, work_id):
     return Path(root) / '.omc/edit-resumptions/slots' / (digest(work_id.encode()) + '.json')
 
 
-def committed_work_closed(root, state, pending_path):
+def committed_work_closed(root, state, pending_path, *, require_ancestor=True):
     """Recognize a consumed completion receipt without reviving its approval.
 
     Local records are checked against Git and the original owning session.
@@ -136,8 +136,9 @@ def committed_work_closed(root, state, pending_path):
         parents = git(root, 'rev-list', '--parents', '-n', '1', head).decode().split()
         if parents != [head, base]:
             return False
-        subprocess.run(['git', 'merge-base', '--is-ancestor', head, 'HEAD'],
-                       cwd=root, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if require_ancestor:
+            subprocess.run(['git', 'merge-base', '--is-ancestor', head, 'HEAD'],
+                           cwd=root, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         paths = git(root, 'diff-tree', '--no-commit-id', '--name-only', '-r', '-z', head).decode().rstrip('\0').split('\0')
         return bool(paths and paths != [''] and paths == receipt.get('changed_paths'))
     except (subprocess.SubprocessError, UnicodeError):
@@ -171,7 +172,7 @@ def frozen(root):
 
 
 def retire_expired_work(root, work_id, *, approval_reference):
-    """Explicitly detach unfinished work, preserving bytes and never granting approval.
+    """Explicitly detach expired work, preserving bytes and never granting approval.
 
     The pending marker freezes partial transitions. Repeating the same request
     can finish the moves, but changed evidence must be investigated separately.
@@ -202,12 +203,30 @@ def retire_expired_work(root, work_id, *, approval_reference):
             manifest = read(root, manifest_path)
         else:
             state = original(root)
-            pending = read(root, '.omc/state/pending-completion.json')
+            pending_path = local(root, '.omc/state/pending-completion.json', exists=False)
             latest = read(root, '.omc/state/latest.json')
-            if (state.get('owner_work_id') != work_id or pending.get('work_id') != work_id
-                    or state.get('session_id') not in pending.get('session_ids', [])
-                    or latest.get('latest_session_id') != pending.get('session_id')
-                    or latest.get('latest_confirmed_session_id') != pending.get('session_id')):
+            retired_paths = list(RETIREMENT_PATHS)
+            evidence_paths = []
+            previous_work_status = 'EXPIRED_UNFINISHED'
+            if pending_path.exists():
+                pending = read(root, pending_path)
+                owner = pending.get('session_id')
+                valid_owner = (pending.get('work_id') == work_id
+                               and state.get('session_id') in pending.get('session_ids', []))
+            else:
+                # Explicit retirement only: do not loosen automatic completion or
+                # reuse approval after switching away from the recorded commit.
+                valid_owner = committed_work_closed(root, state, pending_path,
+                                                    require_ancestor=False)
+                owner = state.get('owner_session_id')
+                retired_paths.remove('.omc/state/pending-completion.json')
+                if valid_owner:
+                    evidence_paths = [f'.omc/state/sessions/{owner}/session.json',
+                                      f'.omc/state/sessions/{owner}/completion.json']
+                previous_work_status = 'EXPIRED_COMMITTED'
+            if (not valid_owner or state.get('owner_work_id') != work_id
+                    or latest.get('latest_session_id') != owner
+                    or latest.get('latest_confirmed_session_id') != owner):
                 raise ValueError('retirement_owner_mismatch')
             if not time.time() - state.get('started_at', time.time()) > 28800:
                 raise ValueError('retirement_requires_expired_work')
@@ -221,7 +240,7 @@ def retire_expired_work(root, work_id, *, approval_reference):
                 run = read(root, f".omc/state/runs/{latest['active_run_id']}.json")
                 if run.get('status') == 'running':
                     raise ValueError('retirement_active_run_unresolved')
-            names = [*RETIREMENT_PATHS]
+            names = [*retired_paths, *evidence_paths]
             for name in ('.omc/project-memory.json', '.omc/notepad.md', '.omc/summary.md'):
                 if (root / name).exists():
                     names.append(name)
@@ -242,8 +261,8 @@ def retire_expired_work(root, work_id, *, approval_reference):
                 pins[name] = {'sha256': digest(raw), 'mode': mode}
             manifest = {'schema_version': 1, 'root': str(root), 'work_id': work_id,
                         'approval_reference': approval_reference,
-                        'previous_work_status': 'EXPIRED_UNFINISHED',
-                        'retired_paths': list(RETIREMENT_PATHS), 'files': pins}
+                        'previous_work_status': previous_work_status,
+                        'retired_paths': retired_paths, 'files': pins}
             write_new(archive / 'manifest.json', manifest)
             # Persist the copies before publishing the fail-closed transition marker.
             for directory in sorted((p for p in archive.rglob('*') if p.is_dir()),
@@ -258,8 +277,30 @@ def retire_expired_work(root, work_id, *, approval_reference):
                           'archive': str(archive.relative_to(root)),
                           'manifest_sha256': digest((archive / 'manifest.json').read_bytes())}
             write_new(marker, descriptor)
+        if manifest.get('previous_work_status') not in ('EXPIRED_UNFINISHED', 'EXPIRED_COMMITTED'):
+            raise ValueError('retirement_manifest_invalid')
+        expected_paths = list(RETIREMENT_PATHS)
+        if manifest.get('previous_work_status') == 'EXPIRED_COMMITTED':
+            expected_paths.remove('.omc/state/pending-completion.json')
+            # A pending record created during an interrupted retirement is drift.
+            pending_path = local(root, '.omc/state/pending-completion.json', exists=False)
+            if pending_path.exists():
+                raise ValueError('retirement_evidence_changed')
         if (manifest.get('root') != str(root) or manifest.get('work_id') != work_id
-                or manifest.get('retired_paths') != list(RETIREMENT_PATHS)):
+                or manifest.get('retired_paths') != expected_paths):
+            raise ValueError('retirement_manifest_invalid')
+        required_files = set(expected_paths)
+        if manifest['previous_work_status'] == 'EXPIRED_COMMITTED':
+            prior = read(root, archive / 'snapshots/.omc/pipeline_session.json')
+            owner = prior.get('owner_session_id')
+            if not isinstance(owner, str) or not owner or '/' in owner or '\\' in owner or owner in ('.', '..'):
+                raise ValueError('retirement_manifest_invalid')
+            required_files.update(f'.omc/state/sessions/{owner}/{name}.json'
+                                  for name in ('session', 'completion'))
+        optional_files = {'.omc/project-memory.json', '.omc/notepad.md', '.omc/summary.md'}
+        if (not isinstance(manifest.get('files'), dict)
+                or not required_files.issubset(manifest['files'])
+                or set(manifest['files']) - required_files - optional_files):
             raise ValueError('retirement_manifest_invalid')
         # Validate the full transition before moving any remaining active pointer.
         for name, pin in manifest['files'].items():
@@ -269,7 +310,7 @@ def retire_expired_work(root, work_id, *, approval_reference):
             if any(digest(p.read_bytes()) != pin['sha256']
                    or stat.S_IMODE(p.stat().st_mode) != pin['mode'] for p in (snapshot, path)):
                 raise ValueError('retirement_evidence_changed')
-        for name in RETIREMENT_PATHS:
+        for name in manifest['retired_paths']:
             active = local(root, name, exists=False)
             retired = local(root, archive / 'originals' / name, exists=False)
             if active.exists():
@@ -281,8 +322,8 @@ def retire_expired_work(root, work_id, *, approval_reference):
             fsync_file(retired.parent)
             fsync_file(active.parent)
         receipt = {'archive': str(archive.relative_to(root)), 'work_id': work_id,
-                   'previous_work_status': 'EXPIRED_UNFINISHED',
-                   'retired_paths': list(RETIREMENT_PATHS), 'new_work_started': False}
+                   'previous_work_status': manifest['previous_work_status'],
+                   'retired_paths': manifest['retired_paths'], 'new_work_started': False}
         completed = archive / 'completed.json'
         if completed.exists():
             if read(root, completed) != receipt:

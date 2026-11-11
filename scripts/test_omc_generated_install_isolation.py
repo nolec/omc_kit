@@ -314,3 +314,59 @@ def test_installed_completion_resume_keeps_evidence_and_reset_boundary(installed
     assert result.returncode == 1
     assert '시작 훅에서 현재 CONTRACT 연결이 초기화됐습니다' in result.stdout
     assert {p: p.read_bytes() for p in paths} == before
+
+
+@pytest.mark.parametrize('extra_conflict', [False, True])
+def test_reinstall_preserves_committed_retirement_archive(tmp_path, monkeypatch, extra_conflict):
+    import install
+    from omc_install_audit import audit_target
+    monkeypatch.setenv('OMC_INSTALLATION_REGISTRY_DIR', str(tmp_path / 'registry'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
+    from test_omc_edit_resume import retiring, _commit_completed_work, _retire
+    target, session = retiring.__wrapped__(tmp_path)
+    _commit_completed_work(target, session)
+    receipt = _retire(target, session)
+    archive = target / receipt['archive']
+    manifest = json.loads((archive / 'manifest.json').read_text())
+    assert receipt['previous_work_status'] == 'EXPIRED_COMMITTED'
+    env = {**os.environ, 'GIT_OPTIONAL_LOCKS': '0'}
+    command = [sys.executable, str(ROOT / 'scripts/install.py'), '--target', str(target)]
+    def run(*args):
+        result = subprocess.run([*command, *args], cwd=ROOT, env=env,
+                                capture_output=True, text=True, timeout=60)
+        return result
+    business = target / 'business.txt'
+    business.write_text('preserve business work')
+    protected = [business, target / '.git/index',
+                 *[p for p in archive.rglob('*') if p.is_file()],
+                 *[p for p in (target / '.omc/state/sessions').rglob('*.json')]]
+    before = {p: (p.read_bytes(), p.stat().st_mode & 0o777) for p in protected}
+    head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=target)
+    first = run()
+    assert first.returncode == 0, first.stdout + first.stderr
+    local = target / 'scripts/omc_edit_resume.py'
+    local.write_bytes(local.read_bytes() + b'\n# consumer local retirement change\n')
+    backup = tmp_path / 'consumer-local-backup.py'
+    shutil.copy2(local, backup)
+    if extra_conflict:
+        (target / 'scripts/omc_guard.py').write_text('# unrelated local change\n')
+    classification = install._classify_auto_update(ROOT, target)
+    expected = {'scripts/omc_edit_resume.py'}
+    if extra_conflict:
+        expected.add('scripts/omc_guard.py')
+    assert classification['status'] == 'local_conflict'
+    assert set(classification['conflicts']) == expected
+    blocked = run('--auto-update')
+    assert blocked.returncode != 0
+    assert local.read_bytes() == backup.read_bytes()
+    if not extra_conflict:
+        # Explicit fixture authorization covers this exact single conflict only.
+        updated = run('--force')
+        assert updated.returncode == 0, updated.stdout + updated.stderr
+        assert local.read_bytes() == (ROOT / 'scripts/omc_edit_resume.py').read_bytes()
+        audit = audit_target(target, trusted_source_root=ROOT)
+        assert audit['verification_status'] == 'ok', audit
+    assert {p: (p.read_bytes(), p.stat().st_mode & 0o777) for p in protected} == before
+    assert json.loads((archive / 'completed.json').read_text()) == receipt
+    assert json.loads((archive / 'manifest.json').read_text()) == manifest
+    assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=target) == head

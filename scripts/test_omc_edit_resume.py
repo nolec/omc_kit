@@ -1028,3 +1028,97 @@ def test_completed_commit_reset_does_not_accept_invalid_binding(retiring, damage
     before = _state_bytes(root)
     assert resume.frozen(root)
     assert _state_bytes(root) == before
+
+
+@pytest.mark.parametrize('reset', [False, True])
+@pytest.mark.parametrize('off_branch', [False, True])
+def test_retire_expired_committed_preserves_evidence(retiring, reset, off_branch):
+    root, session = retiring
+    receipt_path = _commit_completed_work(root, session)
+    if reset:
+        assert guard.cmd_session_start(root) == 0
+    if off_branch:
+        base = json.loads(receipt_path.read_text())['baseline_commit']
+        subprocess.run(['git', 'checkout', '--detach', base], cwd=root, check=True,
+                       capture_output=True)
+        assert resume.frozen(root)
+    before = _state_bytes(root)
+    index = (root / '.git/index').read_bytes()
+    head = resume.git(root, 'rev-parse', 'HEAD')
+    result = call(root, 'omc_edit_resume.py', 'retire-expired-work',
+                  '--work-id', session['work_id'], '--approval-reference', 'fixture user approval')
+    assert result.returncode == 0, result.stdout + result.stderr
+    receipt = json.loads(result.stdout)
+    assert receipt['previous_work_status'] == 'EXPIRED_COMMITTED'
+    assert '.omc/state/pending-completion.json' not in receipt['retired_paths']
+    archive = root / receipt['archive']
+    for name, raw in before.items():
+        path = archive / 'originals' / name if name in receipt['retired_paths'] else root / name
+        assert path.read_bytes() == raw
+    assert receipt_path.exists()
+    assert (archive / 'snapshots' / receipt_path.relative_to(root)).read_bytes() == receipt_path.read_bytes()
+    assert (root / '.git/index').read_bytes() == index
+    assert resume.git(root, 'rev-parse', 'HEAD') == head
+    assert not resume.frozen(root)
+
+
+@pytest.mark.parametrize('damage', ['pending', 'evidence', 'status', 'missing_pin'])
+def test_committed_retirement_interruption_rejects_changed_evidence(retiring, monkeypatch, damage):
+    root, session = retiring
+    receipt_path = _commit_completed_work(root, session)
+    rename = resume.os.rename
+    def interrupt(source, destination):
+        if str(source).endswith('latest.json'):
+            raise OSError('interrupted committed retirement')
+        return rename(source, destination)
+    monkeypatch.setattr(resume.os, 'rename', interrupt)
+    with pytest.raises(OSError, match='interrupted committed retirement'):
+        _retire(root, session)
+    monkeypatch.setattr(resume.os, 'rename', rename)
+    if damage == 'pending':
+        (root / '.omc/state/pending-completion.json').write_text('{}')
+    elif damage == 'evidence':
+        receipt_path.write_text('{}')
+    else:
+        marker = root / resume.RETIREMENT_PENDING
+        descriptor = json.loads(marker.read_text())
+        manifest_path = root / descriptor['archive'] / 'manifest.json'
+        manifest = json.loads(manifest_path.read_text())
+        if damage == 'status':
+            manifest['previous_work_status'] = 'UNKNOWN'
+        else:
+            manifest['files'].pop(str(receipt_path.relative_to(root)))
+        manifest_path.write_text(json.dumps(manifest))
+        descriptor['manifest_sha256'] = resume.digest(manifest_path.read_bytes())
+        marker.write_text(json.dumps(descriptor))
+    before = _state_bytes(root)
+    with pytest.raises(ValueError, match='retirement_(evidence_changed|manifest_invalid)'):
+        _retire(root, session)
+    assert _state_bytes(root) == before
+
+
+@pytest.mark.parametrize('point', ['completion', 'fsync'])
+def test_committed_retirement_interruption_resumes(retiring, monkeypatch, point):
+    root, session = retiring
+    _commit_completed_work(root, session)
+    real = resume.write_new
+    real_fsync = resume.fsync_file
+    def interrupt_fsync(path):
+        if '/originals/' in str(path):
+            raise OSError('interrupted completion publication')
+        return real_fsync(path)
+    def interrupt(path, value):
+        if point == 'completion' and str(path).endswith('completed.json'):
+            raise OSError('interrupted completion publication')
+        return real(path, value)
+    monkeypatch.setattr(resume, 'write_new', interrupt)
+    if point == 'fsync':
+        monkeypatch.setattr(resume, 'fsync_file', interrupt_fsync)
+    with pytest.raises(OSError, match='interrupted completion publication'):
+        _retire(root, session)
+    assert resume.frozen(root)
+    monkeypatch.setattr(resume, 'write_new', real)
+    monkeypatch.setattr(resume, 'fsync_file', real_fsync)
+    result = _retire(root, session)
+    assert result['previous_work_status'] == 'EXPIRED_COMMITTED'
+    assert not resume.frozen(root)
