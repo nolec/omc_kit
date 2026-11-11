@@ -12,7 +12,7 @@ _ENVELOPE_PREFIX = "OMC_OUTPUT:"
 _HIDDEN_ENVELOPE_PREFIX = "<!-- OMC_OUTPUT:"
 _HIDDEN_ENVELOPE_SUFFIX = "-->"
 _VERDICT_RE = re.compile(
-    r"^VERDICT\s*:\s*(APPROVE WITH NOTES|PROCEED|APPROVE|BLOCK|REVISE|HOLD)\s*$",
+    r"^VERDICT\s*:\s*(PROCEED WITH CAUTION|APPROVE WITH NOTES|PROCEED|APPROVE|BLOCK|REVISE|HOLD)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _STAGE_VERDICTS = {
@@ -33,6 +33,7 @@ _STAGE_VERDICTS = {
     },
     "critique-plan": {
         "PROCEED": "ready",
+        "PROCEED WITH CAUTION": "ready",
         "HOLD": "unresolved",
         "REVISE": "unresolved",
     },
@@ -75,6 +76,7 @@ _LEGACY_DEFAULTS = {
     ("review", "REVISE"): ("medium", "omc-task", False, "legacy_verdict_only"),
     ("review", "BLOCK"): ("high", None, True, "legacy_verdict_only"),
     ("critique-plan", "PROCEED"): ("low", "omc-task", False, None),
+    ("critique-plan", "PROCEED WITH CAUTION"): ("medium", "omc-task", True, None),
     ("critique-plan", "HOLD"): ("high", "omc-plan", True, "legacy_verdict_only"),
     ("critique-plan", "REVISE"): ("medium", "omc-plan", True, "legacy_verdict_only"),
     ("critique-code", "PROCEED"): ("low", "omc-review", False, None),
@@ -95,6 +97,7 @@ _ROUTING_POLICY = {
     ("review", "REVISE"): ("omc-task", False),
     ("review", "BLOCK"): (None, True),
     ("critique-plan", "PROCEED"): ("omc-task", False),
+    ("critique-plan", "PROCEED WITH CAUTION"): ("omc-task", True),
     ("critique-plan", "HOLD"): ("omc-plan", True),
     ("critique-plan", "REVISE"): ("omc-plan", True),
     ("critique-code", "PROCEED"): ("omc-review", False),
@@ -423,6 +426,7 @@ import uuid
 RECORD_SCHEMA = 'omc-output-record/v1'
 _GATE_AUTHORITY = object()
 _VERDICT_KO = {'PROCEED':'진행 가능','HOLD':'보류','REVISE':'수정 필요',
+               'PROCEED WITH CAUTION':'주의사항 확인 후 진행 가능',
                'BLOCK':'보류','APPROVE':'승인','APPROVE WITH NOTES':'승인·보완 제안 있음'}
 
 

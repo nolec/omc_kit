@@ -12,6 +12,52 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "scripts" / "omc_output_contract.py"
 
 
+def test_caution_verdict_preserves_explicit_user_selection():
+    module = _load_module()
+    raw = module.render_envelope(
+        stage='critique-plan', verdict='PROCEED WITH CAUTION', risk='medium',
+        next_skill='omc-task', user_selection_needed=True,
+    )
+    parsed = module.parse_envelope(raw)
+    assert parsed['verdict'] == 'PROCEED WITH CAUTION'
+    assert parsed['outcome'] == 'ready'
+    assert parsed['user_selection_needed'] is True
+    with pytest.raises(module.OutputContractError):
+        module.render_envelope(stage='critique-plan', verdict='PROCEED WITH CAUTION',
+            risk='medium', next_skill='omc-task', user_selection_needed=False)
+    with pytest.raises(module.OutputContractError):
+        module.render_envelope(stage='plan', verdict='PROCEED WITH CAUTION',
+            risk='medium', next_skill='omc-task', user_selection_needed=True)
+
+
+def test_caution_verdict_publication_and_consumer(detached_case):
+    import hashlib
+    import subprocess
+    import sys
+    root, file, pin, ctx, _ = detached_case
+    module = _load_module()
+    ctx['stage'] = 'critique-plan'
+    file.write_text(json.dumps(ctx))
+    pin = hashlib.sha256(file.read_bytes()).hexdigest()
+    raw = '경미한 주의사항을 확인하세요.\n' + module.render_envelope(
+        stage='critique-plan', verdict='PROCEED WITH CAUTION', risk='medium',
+        next_skill='omc-task', user_selection_needed=True)
+    source = root / '.omc/caution.txt'
+    source.write_text(raw)
+    result = subprocess.run([sys.executable, str(MODULE_PATH), 'publish', '--target', str(root),
+        '--output-context', str(file), '--output-context-sha256', pin,
+        '--source-file', str(source), '--source-sha256', hashlib.sha256(source.read_bytes()).hexdigest()],
+        capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert '판정: 주의사항 확인 후 진행 가능' in result.stdout
+    assert 'VERDICT:' not in result.stdout
+    manifest = module.record_path(root, ctx)
+    record = module.read_record(root, manifest, hashlib.sha256(manifest.read_bytes()).hexdigest(), ctx,
+        display=result.stdout)
+    assert record['verdict'] == 'PROCEED WITH CAUTION'
+    assert record['machine_payload']['user_selection_needed'] is True
+
+
 def _load_module():
     spec = importlib.util.spec_from_file_location("omc_output_contract", MODULE_PATH)
     assert spec and spec.loader
