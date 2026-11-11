@@ -412,9 +412,47 @@ def _git_info(project_root: Path) -> dict[str, object]:
     }
 
 
+def _read_completion_object(path: Path) -> tuple[dict | None, str | None]:
+    """Strict reads for completion collection only; preserve ambiguous inputs."""
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return None, 'missing'
+    except OSError:
+        return None, 'read_failed'
+    if not stat.S_ISREG(mode):
+        return None, 'input_invalid'
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, 'rb') as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                return None, 'input_invalid'
+            raw = stream.read()
+    except OSError:
+        return None, 'read_failed'
+    try:
+        value = json.loads(raw)
+    except (ValueError, UnicodeError):
+        return None, 'json_invalid'
+    if not isinstance(value, dict):
+        return None, 'fields_invalid'
+    return value, None
+
+
 def record_completion_receipt(project_root: Path) -> dict[str, object]:
     """Bind HEAD to the explicitly pending coding session in constant time."""
     with _omc_lock(project_root):
+        def failure(reason: str, code: str) -> dict[str, object]:
+            return {'status': 'error', 'reason': reason, 'reason_code': code}
+
+        pending_path = _pending_completion_path(project_root)
+        pending, read_error = _read_completion_object(pending_path)
+        if read_error == 'missing':
+            return {'status': 'skipped', 'reason': 'no pending completion',
+                    'reason_code': 'no_pending_completion'}
+        if read_error:
+            return failure('pending completion cannot be read', 'pending_' + read_error)
+
         def run_git(*args: str, text: bool = True) -> subprocess.CompletedProcess:
             return subprocess.run(
                 ["git", "-C", str(project_root), *args],
@@ -423,15 +461,6 @@ def record_completion_receipt(project_root: Path) -> dict[str, object]:
                 text=text,
             )
 
-        followup_result = run_git("rev-parse", "--verify", "HEAD^{commit}")
-        baseline_result = run_git("rev-parse", "--verify", "HEAD^1^{commit}")
-        if followup_result.returncode != 0 or baseline_result.returncode != 0:
-            return {"status": "skipped", "reason": "git commit cannot be resolved"}
-        followup = followup_result.stdout.strip()
-        baseline = baseline_result.stdout.strip()
-
-        pending_path = _pending_completion_path(project_root)
-        pending = _read_json(pending_path, {})
         pending_v1_fields = {
             "schema_version",
             "session_id",
@@ -452,16 +481,19 @@ def record_completion_receipt(project_root: Path) -> dict[str, object]:
             )
         )
         if (
-            pending_schema not in {1, 2, 3}
+            type(pending_schema) is not int or pending_schema not in {1, 2, 3}
             or set(pending) != expected_pending_fields
         ):
-            return {"status": "skipped", "reason": "pending completion is invalid"}
+            return failure('pending completion is invalid', 'pending_fields_invalid')
 
         session_id = pending.get("session_id")
-        if not isinstance(session_id, str):
-            return {"status": "skipped", "reason": "pending completion is invalid"}
+        if (not isinstance(session_id, str) or not session_id or session_id in {'.', '..'}
+                or '/' in session_id or '\\' in session_id):
+            return failure('pending completion is invalid', 'pending_fields_invalid')
         session_path = _session_path(project_root, session_id)
-        session = _read_json(session_path, {})
+        session, read_error = _read_completion_object(session_path)
+        if read_error:
+            return failure('completion session cannot be read', 'session_' + read_error)
         confirmation = session.get("confirmation")
         role_ids = session.get("role_ids")
         request = session.get("request")
@@ -480,24 +512,30 @@ def record_completion_receipt(project_root: Path) -> dict[str, object]:
             or git.get("head") != pending.get("baseline_head")
             or _canonical_sha256(request) != pending.get("request_sha256")
         ):
-            return {"status": "skipped", "reason": "pending completion does not match session"}
+            return failure('pending completion does not match session', 'pending_session_mismatch')
         if pending_schema in {2, 3} and (
             work_class not in _COMPLETION_WORK_CLASSES
             or work_class != pending.get("work_class")
             or not isinstance(work_class_locked_at, str)
             or work_class_locked_at != pending.get("work_class_locked_at")
         ):
-            return {"status": "skipped", "reason": "pending completion does not match session"}
+            return failure('pending completion does not match session', 'pending_session_mismatch')
         if pending_schema == 3 and not _pending_completion_matches_session(
             project_root,
             pending,
             current_head=pending.get("baseline_head"),
         ):
-            return {"status": "skipped", "reason": "pending completion is invalid"}
+            return failure('pending completion is invalid', 'pending_lineage_invalid')
 
+        followup_result = run_git("rev-parse", "--verify", "HEAD^{commit}")
+        baseline_result = run_git("rev-parse", "--verify", "HEAD^1^{commit}")
+        if followup_result.returncode != 0 or baseline_result.returncode != 0:
+            return failure('git commit cannot be resolved', 'completion_git_unresolved')
+        followup = followup_result.stdout.strip()
+        baseline = baseline_result.stdout.strip()
         session_head = run_git("rev-parse", "--verify", f"{git['head']}^{{commit}}")
         if session_head.returncode != 0 or session_head.stdout.strip() != baseline:
-            return {"status": "skipped", "reason": "pending completion does not match commit parent"}
+            return failure('pending completion does not match commit parent', 'completion_parent_mismatch')
         receipt_path = session_path.parent / "completion.json"
         if receipt_path.exists():
             return {"status": "skipped", "reason": "completion receipt already exists"}
@@ -511,7 +549,7 @@ def record_completion_receipt(project_root: Path) -> dict[str, object]:
             text=False,
         )
         if changed_result.returncode != 0:
-            return {"status": "skipped", "reason": "changed paths cannot be resolved"}
+            return failure('changed paths cannot be resolved', 'completion_paths_unresolved')
         changed_paths = sorted(
             path.decode("utf-8")
             for path in changed_result.stdout.split(b"\0")
@@ -4047,8 +4085,13 @@ def main() -> int:
         return 0
 
     if args.command == "complete":
-        print(json.dumps(record_completion_receipt(omc_utils.project_root(args.target)), ensure_ascii=False, indent=2))
-        return 0
+        try:
+            result = record_completion_receipt(omc_utils.project_root(args.target))
+        except (OSError, ValueError, TypeError, UnicodeError):
+            result = {'status': 'error', 'reason': 'completion record collection failed',
+                      'reason_code': 'completion_collection_failed'}
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1 if result['status'] == 'error' else 0
 
     if args.command in {"capture-start", "capture-verify", "capture-finish"}:
         try:

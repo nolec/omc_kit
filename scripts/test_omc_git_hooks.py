@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent))
 
 from omc_git_hooks import resolve_completion_hook
@@ -271,6 +273,52 @@ class TestCompletionHookExecution(unittest.TestCase):
                 self.assertEqual(receipt["followup_commit"], followup)
                 self.assertEqual(receipt["request_sha256"], lock["request_sha256"])
                 self.assertFalse((repo / ".omc" / "state" / "pending-completion.json").exists())
+
+
+@pytest.mark.parametrize('backend', ['native', 'husky'])
+@pytest.mark.parametrize('case', ['missing', 'invalid'])
+def test_completion_classification_real_hook(tmp_path, backend, case):
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    _git(repo, 'init', '-q')
+    _git(repo, 'config', 'user.email', 'hooks@example.com')
+    _git(repo, 'config', 'user.name', 'Hooks')
+    (repo / 'notes.md').write_text('before\n')
+    _git(repo, 'add', 'notes.md'); _git(repo, 'commit', '-qm', 'baseline')
+    before = _git(repo, 'rev-parse', 'HEAD').stdout.strip()
+    if backend == 'husky':
+        _git(repo, 'config', 'core.hooksPath', '.husky/_')
+        dispatcher = repo / '.husky/_/post-commit'
+        dispatcher.parent.mkdir(parents=True)
+        dispatcher.write_text('#!/bin/sh\nexec sh "$(dirname "$0")/../post-commit" "$@"\n')
+        dispatcher.chmod(0o755)
+    env = {**os.environ, 'OMC_INSTALLATION_REGISTRY_DIR': str(tmp_path / 'registry'),
+           'XDG_CONFIG_HOME': str(tmp_path / 'config')}
+    installed = subprocess.run([sys.executable, str(ROOT / 'scripts/install.py'),
+        '--target', str(repo), '--force'], env=env, capture_output=True, text=True)
+    assert installed.returncode == 0, installed.stdout + installed.stderr
+    hook = resolve_completion_hook(repo).install_hook_path
+    original = hook.with_name('post-commit.omc-original')
+    original.write_text('#!/bin/sh\nexit 7\n')
+    original.chmod(0o755)
+    pending = repo / '.omc/state/pending-completion.json'
+    if case == 'invalid': pending.parent.mkdir(parents=True, exist_ok=True); pending.write_text('{')
+    (repo / 'notes.md').write_text('after\n'); _git(repo, 'add', 'notes.md')
+    result = subprocess.run(['git', 'commit', '--no-verify', '-qm', 'change'],
+        cwd=repo, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _git(repo, 'rev-parse', 'HEAD').stdout.strip() != before
+    assert _git(repo, 'show', 'HEAD:notes.md').stdout == 'after\n'
+    if case == 'missing':
+        assert 'no_pending_completion' in result.stdout + result.stderr
+        assert '완료 기록 실패' not in result.stderr
+    else:
+        assert 'Git 커밋 성공, OMC 완료 기록 실패' in result.stderr
+        assert 'pending_json_invalid' in result.stdout + result.stderr
+        assert pending.read_text() == '{'
+    hook_result = subprocess.run(['sh', str(hook)], cwd=repo, env=env,
+        capture_output=True, text=True)
+    assert hook_result.returncode == 7
 
 
 if __name__ == "__main__":

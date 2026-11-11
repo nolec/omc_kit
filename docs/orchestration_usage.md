@@ -391,3 +391,13 @@ autopilot pipeline은 --output-execution <내부JSON> --output-execution-sha256 
 - RED 검사 명령 직전과 직후 작업 파일 snapshot을 비교한다. 구현·테스트 등 작업 파일이 검사 실행 중 바뀌면 RED 근거를 등록하지 않는다. 승인·Git 상태 검사는 별도로 유지한다.
 - 승인 소비는 run ID나 임시 run 폴더가 아니라 Git 공용 metadata의 `omc-single-approval-claims`에 승인 session ID·decision ID를 결속해 한 번 기록한다. run ID·run 폴더·worktree를 바꿔도 같은 저장소의 소비된 승인을 재사용하지 못한다. 실패해도 소비 기록과 원문을 보존하며 새 실행은 명시적 새 승인이 필요하다. 원본 작업 파일·브랜치·인덱스는 변경하지 않고 이 승인 metadata만 추가한다. 독립적인 저장소 복제본 사이의 전역 승인 인증을 제공하는 원장은 아니다.
 - 테스트 함수 AST 보존 시 파일·클래스 경로·함수명을 함께 식별한다. 서로 다른 클래스에서 같은 메서드 이름을 쓰는 정상 pytest 케이스를 중복으로 오인하지 않는다. 최종 실행 여부는 AST가 아니라 실제 pytest node ID 결과로 확인한다.
+
+## 완료 기록 수집 상태와 로컬 커밋
+
+커밋 전에는 pre-commit 승인·TDD와 post-commit 완료 기록 소비 조건을 함께 확인한다. 현재 완료 연결은 단일 커밋 기준이다. 기능별 다중 커밋의 전체 작업 연결은 아직 지원하지 않으며 첫 커밋의 완료 기록을 전체 묶음 완료로 보고하지 않는다.
+
+`python3 scripts/omc.py state complete --target .`는 대기 기록이 없으면 `status=skipped`, `reason_code=no_pending_completion`, 종료0으로 정상 생략한다. 정상 수집도 종료0이다. 손상 JSON·잘못된 필드·세션/커밋 불일치·읽기 실패는 `status=error`와 구체적 `reason_code`, 종료1을 반환한다. 모호한 링크 입력은 정상 없음으로 취급하지 않는다. 이 엄격한 읽기는 완료 수집에 한정하며 공용 상태 읽기 계약은 유지한다.
+
+post-commit의 오류는 이미 생성된 Git 커밋을 취소하지 않는다. `Git 커밋 성공, OMC 완료 기록 실패` 안내와 원문을 보존하고 Git 성공·기록 상태·테스트 결과를 각각 보고한다. 커밋을 다시 실행하거나 과거 영수증·대기 기록을 임의 복원하지 않는다. 기존 사용자 post-commit의 종료 상태는 유지한다. 기록 복구와 다중 커밋 등록/연결은 후속 설계이며 자동 재개하지 않는다.
+
+검증은 격리 저장소의 공개 CLI와 native/Husky 실제 post-commit을 대상으로 한다. 권한 오류는 읽기 경계에 PermissionError를 주입한 단위 검증이며 실제 계정 권한 제한이나 자연 작업 준수의 증거는 아니다. 사용처 설치·배포는 별도 요청으로 수행한다.

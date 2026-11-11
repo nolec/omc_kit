@@ -690,7 +690,8 @@ def test_completion_receipt_rejects_inconsistent_v3_lineage(tmp_path: Path):
 
     result = omc_state.record_completion_receipt(target)
 
-    assert result == {"status": "skipped", "reason": "pending completion is invalid"}
+    assert result == {"status": "error", "reason": "pending completion is invalid",
+                      "reason_code": "pending_lineage_invalid"}
     session_dir = target / ".omc" / "state" / "sessions" / session["session_id"]
     assert not (session_dir / "completion-lineage.json").exists()
 
@@ -1239,3 +1240,53 @@ def test_sync_require_rejects_group_readable_work_class_lock_key(
     assert result.returncode != 0
     assert "permissions must be 0600" in result.stderr
     assert not (target / ".omc" / "state" / "latest.json").exists()
+
+
+@pytest.mark.parametrize('case,reason', [
+    ('missing', 'no_pending_completion'), ('json', 'pending_json_invalid'),
+    ('list', 'pending_fields_invalid'), ('fields', 'pending_fields_invalid'),
+    ('symlink', 'pending_input_invalid'), ('permission', 'pending_read_failed'),
+])
+def test_completion_classification_pending_inputs(tmp_path, monkeypatch, case, reason):
+    target = tmp_path / 'repo'
+    _init_git_repo(target)
+    pending = target / '.omc/state/pending-completion.json'
+    pending.parent.mkdir(parents=True)
+    if case == 'json': pending.write_text('{')
+    elif case == 'list': pending.write_text('[]')
+    elif case == 'fields': pending.write_text('{}')
+    elif case == 'symlink': pending.symlink_to(target / 'missing.json')
+    elif case == 'permission':
+        pending.write_text('{}')
+        original = os.open
+        def denied(path, *args, **kwargs):
+            if Path(path) == pending: raise PermissionError('injected read denial')
+            return original(path, *args, **kwargs)
+        monkeypatch.setattr(os, 'open', denied)
+    before = pending.read_bytes() if case in ('json', 'list', 'fields') else None
+    result = omc_state.record_completion_receipt(target)
+    assert result['status'] == ('skipped' if case == 'missing' else 'error')
+    assert result['reason_code'] == reason
+    if before is not None: assert pending.read_bytes() == before
+
+
+@pytest.mark.parametrize('case,expected_code', [('missing', 0), ('invalid', 1), ('mismatch', 1)])
+def test_completion_classification_public_cli(tmp_path, case, expected_code):
+    target = tmp_path / 'repo'
+    _init_git_repo(target)
+    if case == 'mismatch':
+        omc_state.record_session(target, mode='autopilot', title='test', request='implement',
+            role_ids=['senior_coding'], work_class='implementation',
+            completion_action='start', confirmed=True)
+        pending = target / '.omc/state/pending-completion.json'
+        data = json.loads(pending.read_text()); data['request_sha256'] = '0' * 64
+        pending.write_text(json.dumps(data))
+    elif case == 'invalid':
+        pending = target / '.omc/state/pending-completion.json'
+        pending.parent.mkdir(parents=True); pending.write_text('{')
+    result = subprocess.run([sys.executable, str(OMC), 'state', 'complete', '--target', str(target)],
+        capture_output=True, text=True)
+    assert result.returncode == expected_code, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload['status'] == ('skipped' if case == 'missing' else 'error')
+    if case != 'missing': assert pending.exists()
