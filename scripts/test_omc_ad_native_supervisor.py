@@ -773,32 +773,40 @@ def test_current_core_absolute_public_four_surfaces(tmp_path,current_frozen_core
         assert legacy['normal_terminal_result_count']==0 and legacy['wrapper_exit_code']==0
 
 
-def absolute_fault_invoke(tmp_path, fault):
+def absolute_fault_invoke(tmp_path, fault, *, identity_delay=0, deadline_probe=False):
     """Real public main/fork/recording; replace only the failing OS operation."""
     runtime=tmp_path/'.omc';runtime.mkdir(exist_ok=True)
     prompt=tmp_path/'fault-prompt';prompt.write_text('no provider')
     output=tmp_path/'fault-output'
+    # Permission propagation needs time for real /bin/ps observations. Keep the
+    # compressed 120ms cleanup only for explicit deadline-exhaustion probes.
+    span = 300 if fault.startswith('kill') and not deadline_probe else 18
     origin=time.monotonic()
     argv=['--cwd',str(tmp_path),'--output',str(output),'--prompt',str(prompt),
           '--child-pid-file',str(runtime/'pid'),'--child-exit-file',str(runtime/'exit'),
-          '--origin-monotonic',str(origin),'--deadline-monotonic',str(origin+18),
+          '--origin-monotonic',str(origin),'--deadline-monotonic',str(origin+span),
           '--run-id','fault-'+fault,'--','/bin/sh','-c',RECORDER,'native-launch',
           sys.executable,'-c',
           (f'import signal,time;from pathlib import Path;signal.signal(signal.SIGTERM,signal.SIG_IGN);Path({str(runtime/"ready")!r}).write_text("ready");time.sleep(30)'
            if fault.startswith('kill') else f'import sys;sys.stdin.read();print({SUCCESS!r},end="")')]
     shim=r'''
-import sys,os,signal,errno,json,time
+import sys,os,signal,errno,json,time,hashlib
 from pathlib import Path
 sys.path.insert(0,sys.argv.pop(1))
 import omc_ad_native_supervisor as m
-fault=sys.argv.pop(1); parent=os.getpid(); fired=False; interrupted=False
+fault=sys.argv.pop(1); delay=float(sys.argv.pop(1)); parent=os.getpid(); fired=False; interrupted=False
+attempts=[]; query_delays=[]
 output=Path(sys.argv[sys.argv.index('--output')+1]); oldwait=os.waitpid
 oldkill=os.kill; oldkillpg=os.killpg; oldopen=Path.open; oldfork=os.fork; oldunlink=os.unlink; worker=None
 
 def fork():
     global worker
     pid=oldfork()
-    if pid:worker=pid
+    if pid:
+        worker=pid
+        token=m.process_identity(pid,False)
+        if token:
+            with oldopen(output.parent/'.omc/test-worker.json','w') as stream:json.dump(token,stream)
     return pid
 
 def denied(operation,target):
@@ -816,14 +824,25 @@ def wait(pid,flags):
             except (OSError,ValueError,KeyError):ready=False
             if ready and (output.parent/'.omc/ready').is_file():
                 interrupted=True
+                # Publish test-owned member tokens before SIGTERM can remove leader.
+                groups=json.loads(marker.read_bytes())['groups']
+                custody=[{**row,'members':m.group_members(row['pgid'])} for row in groups
+                         if m.process_identity(row['pid'])==row]
+                temp=output.parent/'.omc/test-groups.pending'
+                with oldopen(temp,'x') as stream:json.dump(custody,stream)
+                os.replace(temp,output.parent/'.omc/test-groups.json')
                 oldkill(parent,signal.SIGTERM)
     return oldwait(pid,flags)
 
 def kill(pid,sig):
+    if os.getpid()==parent and sig in (signal.SIGTERM,signal.SIGKILL):
+        attempts.append({'operation':'kill','signal':int(sig),'time':time.monotonic()})
     if os.getpid()==parent and fault=='kill' and sig==signal.SIGTERM:denied('kill',pid)
     return oldkill(pid,sig)
 
 def killpg(pid,sig):
+    if os.getpid()==parent and sig in (signal.SIGTERM,signal.SIGKILL):
+        attempts.append({'operation':'killpg','signal':int(sig),'time':time.monotonic()})
     if os.getpid()==parent and fault in ('killpg-term','killpg-kill') and sig==(
             signal.SIGTERM if fault=='killpg-term' else signal.SIGKILL):denied('killpg',pid)
     return oldkillpg(pid,sig)
@@ -863,19 +882,104 @@ def unlink(path,*args,**kwargs):
         denied('unlink',path)
     return oldunlink(path,*args,**kwargs)
 
+real_identity=m.process_identity
+def delayed_identity(pid,leader=True):
+    answer=real_identity(pid,leader)
+    if os.getpid()==parent and interrupted and delay:
+        start=time.monotonic();time.sleep(delay)
+        query_delays.append({'start':start,'end':time.monotonic()})
+    return answer
+m.process_identity=delayed_identity
 os.fork=fork;os.waitpid=wait;os.kill=kill;os.killpg=killpg;os.unlink=unlink;Path.open=opened
 try: raise SystemExit(m.main())
 finally:
-    # Test-owned cleanup only, after the immutable result; never changes its verdict.
+    # Test cleanup is separate from the product's immutable verdict and deadline.
     if os.getpid()==parent:
-        try: rows=json.loads((output/'worker/ownership.json').read_bytes())['groups']
-        except (OSError,ValueError,KeyError):rows=[]
+        m.process_identity=real_identity
+        os.kill=oldkill;os.killpg=oldkillpg;os.waitpid=oldwait
+        pins={p.name:hashlib.sha256(p.read_bytes()).hexdigest()
+              for p in output.iterdir() if p.is_file()}
+        try:rows=json.loads((output/'result.json').read_bytes())['owned_groups']
+        except (OSError,ValueError,KeyError):
+            try:rows=json.loads((output/'worker/ownership.json').read_bytes())['groups']
+            except (OSError,ValueError,KeyError):rows=[]
         for row in rows:
-            try:oldkillpg(row['pgid'],signal.SIGKILL)
-            except ProcessLookupError:pass
+            token={k:row[k] for k in ('pid','pgid','started')}
+            known=(real_identity(row['pid'])==token or any(
+                real_identity(member['pid'],False)==member for member in row.get('members',[])))
+            if known:
+                try:oldkillpg(row['pgid'],signal.SIGKILL)
+                except ProcessLookupError:pass
+        reaped=worker is None
+        if worker:
+            try:
+                pid,_=oldwait(worker,os.WNOHANG)
+                if not pid:
+                    oldkill(worker,signal.SIGKILL);oldwait(worker,0)
+                reaped=True
+            except ChildProcessError:reaped=True
+        until=time.monotonic()+2
+        while any(not m.group_gone(row['pgid']) for row in rows) and time.monotonic()<until:
+            time.sleep(.01)
+        cleanup={'worker_reaped':reaped,'groups_gone':all(m.group_gone(row['pgid']) for row in rows)}
+        unchanged=all((output/name).is_file() and hashlib.sha256((output/name).read_bytes()).hexdigest()==sha
+                      for name,sha in pins.items())
+        with oldopen(output.parent/'.omc/test-fault-state.json','w') as stream:
+            json.dump({'fault_fired':fired,'interrupted':interrupted,'attempts':attempts,
+                       'query_delays':query_delays,'cleanup':cleanup,'result_files_unchanged':unchanged},stream)
+
 '''
-    p=subprocess.run([sys.executable,'-c',shim,str(ROOT/'scripts'),fault,*argv],
-                     capture_output=True,timeout=23)
+    try:
+        p=subprocess.run([sys.executable,'-c',shim,str(ROOT/'scripts'),fault,str(identity_delay),*argv],
+                         capture_output=True,timeout=23)
+    except subprocess.TimeoutExpired:
+        import omc_ad_native_supervisor as supervisor
+        cleanup_end=time.monotonic()+2
+        # A dead leader is not proof that its group is gone. Use only tokens
+        # published by this fixture before interruption, never a fresh PID alone.
+        try:rows=json.loads((runtime/'test-groups.json').read_bytes())
+        except (OSError,ValueError,KeyError):
+            try:rows=json.loads((output/'worker/ownership.json').read_bytes())['groups']
+            except (OSError,ValueError,KeyError):rows=[]
+        signals=[];errors=[]
+        for row in rows:
+            if time.monotonic()>=cleanup_end:break
+            token={k:row[k] for k in ('pid','pgid','started')}
+            known=(supervisor.process_identity(row['pid'])==token or any(
+                supervisor.process_identity(member['pid'],False)==member
+                for member in row.get('members',[])))
+            if known and time.monotonic()<cleanup_end:
+                try:
+                    os.killpg(row['pgid'],signal.SIGKILL)
+                    signals.append({'kind':'pgid','target':row['pgid']})
+                except ProcessLookupError:pass
+                except OSError as exc:errors.append(str(exc))
+        token_path=runtime/'test-worker.json'
+        token=json.loads(token_path.read_bytes()) if token_path.exists() else None
+        if token and time.monotonic()<cleanup_end:
+            current=supervisor.process_identity(token['pid'],False)
+            if current and current['started']==token['started'] and time.monotonic()<cleanup_end:
+                try:
+                    os.kill(token['pid'],signal.SIGKILL)
+                    signals.append({'kind':'pid','target':token['pid']})
+                except ProcessLookupError:pass
+                except OSError as exc:errors.append(str(exc))
+        def observed():
+            current=supervisor.process_identity(token['pid'],False) if token else None
+            worker_gone=bool(token) and (current is None or current['started']!=token['started'])
+            return all(supervisor.group_gone(row['pgid']) for row in rows),worker_gone
+        groups_gone,worker_gone=observed()
+        while not (groups_gone and worker_gone) and time.monotonic()<cleanup_end:
+            time.sleep(.01);groups_gone,worker_gone=observed()
+        observed_at=time.monotonic()
+        (runtime/'test-timeout-cleanup.json').write_text(json.dumps({
+            'groups_gone':groups_gone,'worker_gone':worker_gone,'signals':signals,
+            'confirmed':bool(rows) and groups_gone and worker_gone and not errors and observed_at<=cleanup_end,
+            'errors':errors,'deadline':cleanup_end,'observed':observed_at}))
+        raise  # Preserve the original timeout even when test-owned cleanup succeeds.
+    state=json.loads((runtime/'test-fault-state.json').read_bytes())
+    assert state['cleanup']=={'worker_reaped':True,'groups_gone':True},state
+    assert state['result_files_unchanged'],state
     return p,output,origin
 
 
@@ -898,7 +1002,10 @@ def test_absolute_runtime_permission_error_public_result(tmp_path,fault,operatio
     else:assert row['target'] in [g['pgid'] for g in result['owned_groups']]
     assert row['exception_type']=='PermissionError' and row['monotonic']>=origin
     if fault.startswith('kill'):assert row['signal']==int(signal.SIGKILL if fault=='killpg-kill' else signal.SIGTERM)
-    assert result['cleanup_deadline_monotonic']<=min(result['stop_monotonic']+.12,origin+17.72)
+    span=result['span_seconds']
+    assert result['cleanup_deadline_monotonic']<=min(result['stop_monotonic']+12*span/1800,origin+1772*span/1800)
+    state=json.loads((tmp_path/'.omc/test-fault-state.json').read_bytes())
+    assert state['fault_fired'],state
     assert time.monotonic()<origin+19
     assert b'supervisor_runtime_error:' in p.stderr
     assert (output/'seal.json').is_file()
@@ -1568,3 +1675,93 @@ def test_absolute_deadline_rejects_each_nonfinite_input(field,bad):
     import omc_ad_native_supervisor as m
     values={'origin':100.,'deadline':1900.,'now':101.};values[field]=bad
     with pytest.raises(ValueError):m.absolute_span(values['origin'],values['deadline'],values['now'])
+
+
+def test_sigkill_permission_fault_is_exercised_after_identity_latency(tmp_path):
+    import omc_ad_native_supervisor as supervisor
+    p, output, _ = absolute_fault_invoke(tmp_path, 'killpg-kill', identity_delay=.14)
+    assert p.returncode == 1
+    state = json.loads((tmp_path/'.omc/test-fault-state.json').read_bytes())
+    assert state['fault_fired'] and state['query_delays'],state
+    result = supervisor.read_absolute_result(output/'result.json', 'fault-killpg-kill')
+    assert any(row['operation']=='killpg' and row['signal']==int(signal.SIGKILL)
+               for row in result['runtime_errors']), result
+
+
+@pytest.mark.parametrize('identity_delay', [.09, .14])
+def test_identity_latency_exhausts_deadline_without_permission_fault(tmp_path, identity_delay):
+    import omc_ad_native_supervisor as supervisor
+    p, output, origin = absolute_fault_invoke(tmp_path, 'killpg-kill',
+        identity_delay=identity_delay, deadline_probe=True)
+    assert p.returncode == 1
+    result = supervisor.read_absolute_result(output/'result.json', 'fault-killpg-kill')
+    state = json.loads((tmp_path/'.omc/test-fault-state.json').read_bytes())
+    assert state['interrupted'] and state['query_delays'] and not state['fault_fired'],state
+    assert result['status'] == 'incomplete_or_failed' and result['full_contract_pass'] is False
+    assert result['cleanup_result'] == 'unconfirmed' and not result['runtime_errors']
+    assert result['span_seconds'] == 18
+    end = result['cleanup_deadline_monotonic']
+    assert end <= min(result['stop_monotonic'] + .12, origin + 17.72)
+    assert any(event['end'] >= end for event in state['query_delays']),state
+    assert all(event['time'] < end for event in state['attempts']),state
+    assert not any(event['signal'] == int(signal.SIGKILL) for event in state['attempts'])
+    assert not any(event['signal'] == int(signal.SIGKILL) for event in result['signals_sent'])
+    assert not any(row['operation']=='killpg' for row in result['runtime_errors'])
+
+
+def test_outer_timeout_cleans_members_after_group_leader_exits(tmp_path, monkeypatch):
+    import omc_ad_native_supervisor as supervisor
+    real_run = subprocess.run
+    def force_timeout(argv, *args, **kwargs):
+        if isinstance(argv, list) and len(argv)>2 and 'import omc_ad_native_supervisor as m' in str(argv[2]):
+            argv=list(argv)
+            # Independent fixture custody, captured before SIGTERM removes leader.
+            argv[2]=argv[2].replace('                oldkill(parent,signal.SIGTERM)',
+                "                with oldopen(output.parent/'.omc/regression-groups.json','w') as stream:json.dump([{**row,'members':m.group_members(row['pgid'])} for row in json.loads(marker.read_bytes())['groups']],stream)\n                oldkill(parent,signal.SIGTERM)")
+            kwargs['timeout']=.6
+        return real_run(argv,*args,**kwargs)
+    monkeypatch.setattr(subprocess,'run',force_timeout)
+    rows=[]
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            absolute_fault_invoke(tmp_path,'killpg-kill')
+        rows=json.loads((tmp_path/'.omc/regression-groups.json').read_bytes())
+        assert rows and any(row['members'] for row in rows)
+        assert all(supervisor.group_gone(row['pgid']) for row in rows), rows
+        cleanup=json.loads((tmp_path/'.omc/test-timeout-cleanup.json').read_bytes())
+        assert cleanup['confirmed'] and cleanup['groups_gone'] and cleanup['worker_gone'],cleanup
+        assert cleanup['observed']<=cleanup['deadline'],cleanup
+    finally:
+        if not rows and (tmp_path/'.omc/regression-groups.json').exists():
+            rows=json.loads((tmp_path/'.omc/regression-groups.json').read_bytes())
+        # Regression-owned cleanup also runs when testing the broken baseline.
+        for row in rows:
+            if any(supervisor.process_identity(m['pid'],False)==m for m in row['members']):
+                try:os.killpg(row['pgid'],signal.SIGKILL)
+                except ProcessLookupError:pass
+        end=time.monotonic()+2
+        while any(not supervisor.group_gone(row['pgid']) for row in rows) and time.monotonic()<end:
+            time.sleep(.01)
+
+
+def test_outer_timeout_never_signals_reused_member_or_worker_identity(tmp_path, monkeypatch):
+    import omc_ad_native_supervisor as supervisor
+    member={'pid':900003,'pgid':900001,'started':'original member'}
+    owner={'pid':900001,'pgid':900001,'started':'original leader','members':[member]}
+    timeout=subprocess.TimeoutExpired(['synthetic fixture'],.1)
+    def interrupted_run(*args,**kwargs):
+        runtime=tmp_path/'.omc'
+        (runtime/'test-groups.json').write_text(json.dumps([owner]))
+        (runtime/'test-worker.json').write_text(json.dumps({'pid':900005,'pgid':900005,'started':'original worker'}))
+        raise timeout
+    monkeypatch.setattr(subprocess,'run',interrupted_run)
+    monkeypatch.setattr(supervisor,'process_identity',lambda pid,leader=True:{'pid':pid,'pgid':900001,'started':'reused process'})
+    monkeypatch.setattr(supervisor,'group_gone',lambda pgid:False)
+    signals=[]
+    monkeypatch.setattr(os,'killpg',lambda *args:signals.append(args))
+    monkeypatch.setattr(os,'kill',lambda *args:signals.append(args))
+    with pytest.raises(subprocess.TimeoutExpired) as result:
+        absolute_fault_invoke(tmp_path,'killpg-kill')
+    assert result.value is timeout and not signals
+    cleanup=json.loads((tmp_path/'.omc/test-timeout-cleanup.json').read_bytes())
+    assert not cleanup['confirmed'] and not cleanup['groups_gone'] and not cleanup['signals']
