@@ -69,3 +69,30 @@ decision: REVISE / APPROVE (판정 결과) | risk: HIGH / MED / LOW (리스크 �
 사용자 최종 답변은 발행 CLI의 한글 stdout과 같은 바이트로 제공한다. 경로/해시는 사용자 답변 꼬리표 대신 호출 인자와 실행 메타데이터로 전달한다. 수집기는 명시 manifest 경로/해시·현재 상태·native 호출/반환·실제 최종 원문을 독립 대조한다. CLI 표시 검사·수집기 fixture·실제 모델의 자유 응답 준수는 별도 증거다.
 업무 차단 종료 코드1도 정상 판정으로 기록한다. 전달 실패 코드2는 업무 실패와 다르다. 저장·봉인·출력 실패 시 한글 오류만 알리고 완료/승인·자동 후속·구형 fallback을 금지한다. 실패 기록도 저장할 수 없으면 stderr·종료 원문만 보존한다. 봉인 후 표시 실패를 이유로 기존 manifest나 verdict를 수정하지 않는다.
 구형 legacy_inline으로 시작한 입력만 기존 parser로 읽는다. 신형 기록 누락·변조·다른 세션·모드 혼합·표시 불일치는 보류하며 구형으로 우회하지 않는다. 구형 도구에서 신형 안내를 실행할 수 없으면 호출 전에 한글 지원 불가를 알린다. 이 안내는 플랫폼 화면 숨김이나 모델 준수를 물리적으로 보장하지 않는다.
+
+## Codex 판정 생성 예제
+기계 판정은 아래 예제를 prepare보다 먼저 실행해 생성하고 반환한 두 줄만 내부 원문에 붙인다. 예제의 capabilities 호출은 공통 절의 발행자 지원 확인을 겸하며 중복 실행하지 않는다. CLI 절대경로와 생성 옵션을 인자로 전달하며, `next_skill`·`outcome`을 직접 입력하지 않는다. review 승인에는 `--user-selection-needed true|false`를 명시한다. 미지원 시 생성·prepare·publish를 호출하지 않고 자동 보정·재발행하지 않는다.
+<!-- OMC_DECISION_CALL:BEGIN -->
+```python
+import json, subprocess, sys
+from pathlib import Path
+try:
+    cli = str(Path(sys.argv[1]).resolve(strict=True))
+    probe = subprocess.run([sys.executable, '-B', cli, 'capabilities'], capture_output=True, text=True, timeout=10)
+    if probe.returncode: raise ValueError('capabilities failed')
+    cap = json.loads(probe.stdout)
+    if (not isinstance(cap, dict) or cap.get('schema_version') != 'omc-output-record/v1'
+            or cap.get('render_decision') is not True
+            or not isinstance(cap.get('output_modes'), list) or 'detached_v1' not in cap['output_modes']):
+        print('이 실행기는 render-decision 또는 detached_v1을 지원하지 않습니다. CLI 경로를 확인하세요.', file=sys.stderr)
+        raise SystemExit(2)
+    result = subprocess.run([sys.executable, '-B', cli, 'render-decision', *sys.argv[2:]], capture_output=True, text=True, timeout=10)
+    if result.returncode:
+        sys.stderr.write(result.stderr)
+        raise SystemExit(result.returncode)
+    sys.stdout.write(result.stdout)
+except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+    print('지원 정보 확인 또는 판정 생성 실행을 확인하지 못했습니다. 원문을 보존합니다.', file=sys.stderr)
+    raise SystemExit(2)
+```
+<!-- OMC_DECISION_CALL:END -->

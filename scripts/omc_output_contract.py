@@ -273,6 +273,35 @@ def _validate_payload(payload: dict[str, Any], verdict: str) -> dict[str, Any]:
     }
 
 
+_SELECTION_UNSET = object()
+
+
+def render_decision(*, stage: str, verdict: str, risk: str,
+                    reason_code: str | None = None,
+                    user_selection_needed=_SELECTION_UNSET) -> str:
+    """Derive policy-owned fields for model declarations; grant no authority."""
+    stage, verdict = str(stage).strip().lower(), str(verdict).strip().upper()
+    outcome_for(stage, verdict)
+    if stage == 'task':
+        raise OutputContractError('task requires the completion gate')
+    if reason_code is not None and (not isinstance(reason_code,str) or not reason_code.strip()):
+        raise OutputContractError('reason_code must be a non-empty string or null')
+    supplied = user_selection_needed is not _SELECTION_UNSET
+    if supplied and not isinstance(user_selection_needed,bool):
+        raise OutputContractError('user_selection_needed must be boolean')
+    next_skill, expected = _routing_for(stage,verdict,reason_code)
+    if expected is None:
+        if not supplied:
+            raise OutputContractError('user_selection_needed is required for this decision')
+        selection = user_selection_needed
+    else:
+        if supplied and user_selection_needed is not expected:
+            raise OutputContractError('user_selection_needed conflicts with stage routing policy')
+        selection = expected
+    return render_envelope(stage=stage,verdict=verdict,risk=risk,reason_code=reason_code,
+                           next_skill=next_skill,user_selection_needed=selection)
+
+
 def render_envelope(
     *,
     stage: str,
@@ -431,7 +460,7 @@ _VERDICT_KO = {'PROCEED':'진행 가능','HOLD':'보류','REVISE':'수정 필요
 
 
 def capabilities():
-    return {'schema_version':RECORD_SCHEMA,'output_modes':['legacy_inline','detached_v1']}
+    return {'schema_version':RECORD_SCHEMA,'output_modes':['legacy_inline','detached_v1'], 'render_decision':True}
 
 
 def _sha(data):
@@ -916,6 +945,12 @@ def output_cli(argv=None):
     parser=argparse.ArgumentParser(description='OMC 별도 기록과 한글 판정')
     sub=parser.add_subparsers(dest='command',required=True)
     sub.add_parser('capabilities')
+    decision=sub.add_parser('render-decision',help='규칙에서 파생 필드를 계산하는 순수 판정 생성기')
+    decision.add_argument('--stage',choices=[s for s in _STAGE_VERDICTS if s!='task'],required=True)
+    decision.add_argument('--verdict',required=True)
+    decision.add_argument('--risk',choices=sorted(_RISKS),required=True)
+    decision.add_argument('--reason-code')
+    decision.add_argument('--user-selection-needed',choices=['true','false'],default=argparse.SUPPRESS)
     prep=sub.add_parser('prepare')
     prep.add_argument('--target',type=Path,required=True)
     prep.add_argument('--stage',choices=list(_STAGE_VERDICTS),required=True)
@@ -934,6 +969,16 @@ def output_cli(argv=None):
     args=parser.parse_args(argv)
     if args.command=='capabilities':
         print(json.dumps(capabilities()));return 0
+    if args.command=='render-decision':
+        try:
+            options=({'user_selection_needed':args.user_selection_needed=='true'}
+                     if hasattr(args,'user_selection_needed') else {})
+            print(render_decision(stage=args.stage,verdict=args.verdict,risk=args.risk,
+                                  reason_code=args.reason_code,**options))
+            return 0
+        except OutputContractError as exc:
+            print('판정 생성 입력을 확인하세요: '+str(exc),file=sys.stderr)
+            return 2
     if args.command=='prepare':
         try:
             root=args.target.resolve()

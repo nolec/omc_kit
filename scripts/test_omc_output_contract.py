@@ -1239,3 +1239,75 @@ def test_failure_summary_display_failure_preserves_publication(detached_case, mo
     manifest=m.record_path(root,ctx);before=manifest.read_bytes()
     record=m.read_record(root,manifest,hashlib.sha256(before).hexdigest(),ctx)
     assert record['publication']=='published' and manifest.read_bytes()==before
+
+
+# Reuse the existing literal oracle, never the production routing resolver.
+_DECISION_CASES = [row for row in test_detached_all_stage_mappings_remain_unchanged.pytestmark[0].args[1]
+                   if row[0] != 'task'] + [
+    ('plan','HOLD','review_required','omc-critique',True),
+    ('review','APPROVE',None,None,False),('review','APPROVE WITH NOTES',None,None,False)]
+
+
+@pytest.mark.parametrize('stage,verdict,reason,next_skill,selection',_DECISION_CASES)
+def test_decision_derived_fields_match_fixed_oracle(stage,verdict,reason,next_skill,selection):
+    m=_load_module();kw={'user_selection_needed':selection} if stage=='review' and verdict.startswith('APPROVE') else {}
+    parsed=m.parse_envelope(m.render_decision(stage=stage,verdict=verdict,risk='low',reason_code=reason,**kw))
+    assert (parsed['next_skill'],parsed['user_selection_needed'])==(next_skill,selection)
+    assert parsed['verdict']==verdict and parsed['stage']==stage
+
+
+@pytest.mark.parametrize('value',[None,0,1,'false'])
+def test_decision_requires_real_review_selection_bool(value):
+    m=_load_module()
+    with pytest.raises(m.OutputContractError):m.render_decision(stage='review',verdict='APPROVE',risk='low',user_selection_needed=value)
+
+
+def test_decision_rejects_missing_selection_conflict_and_task():
+    m=_load_module()
+    for kw in [dict(stage='review',verdict='APPROVE'),dict(stage='review',verdict='REVISE',reason_code='fixture',user_selection_needed=True),dict(stage='task',verdict='PROCEED')]:
+        with pytest.raises(m.OutputContractError):m.render_decision(risk='low',**kw)
+    # The existing explicit interface must still reject the old mistake.
+    with pytest.raises(m.OutputContractError,match='next_skill conflicts'):
+        m.render_envelope(stage='review',verdict='APPROVE',risk='low',next_skill='omc-ship',user_selection_needed=True)
+
+
+def _decision_cli(root,*args):
+    import subprocess,sys
+    return subprocess.run([sys.executable,'-B',str(MODULE_PATH),*args],cwd=root,text=True,capture_output=True,timeout=10)
+
+
+@pytest.mark.parametrize('stage,verdict,reason,next_skill,selection',_DECISION_CASES)
+def test_decision_public_cli_publication_surface(detached_case,stage,verdict,reason,next_skill,selection):
+    import hashlib
+    root,*_=detached_case;m=_load_module();before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    args=['render-decision','--stage',stage,'--verdict',verdict,'--risk','low']
+    if reason:args+=['--reason-code',reason]
+    if stage=='review' and verdict.startswith('APPROVE'):args+=['--user-selection-needed',str(selection).lower()]
+    result=_decision_cli(root,*args);assert result.returncode==0,result.stderr
+    assert {p:p.read_bytes() for p in root.rglob('*') if p.is_file()}==before
+    payload=m.parse_envelope(result.stdout);assert (payload['next_skill'],payload['user_selection_needed'])==(next_skill,selection)
+    prep=_decision_cli(root,'prepare','--target',str(root),'--stage',stage,'--report-id','decision','--budget-sec','60')
+    assert prep.returncode==0,prep.stderr
+    meta=json.loads(prep.stdout);source=root/'.omc/decision.txt';source.write_text('결과 근거: fixture\n'+result.stdout)
+    published=_decision_cli(root,'publish','--target',str(root),'--output-context',meta['output_context'],'--output-context-sha256',meta['output_context_sha256'],'--source-file',str(source),'--source-sha256',hashlib.sha256(source.read_bytes()).hexdigest());assert published.returncode==0,published.stderr
+    context=m.load_output_context(root,meta['output_context'],meta['output_context_sha256']);manifest=Path(meta['record_path'])
+    record=m.read_record(root,manifest,hashlib.sha256(manifest.read_bytes()).hexdigest(),context,display=published.stdout)
+    assert record['verdict']==verdict and record['machine_payload']=={k:v for k,v in payload.items() if k!='verdict'}
+
+
+@pytest.mark.parametrize('extra',[
+    ['--stage','task','--verdict','PROCEED'],['--stage','unknown','--verdict','PROCEED'],
+    ['--stage','review','--verdict','APPROVE'],
+    ['--stage','review','--verdict','APPROVE','--user-selection-needed','null'],
+    ['--stage','review','--verdict','REVISE','--reason-code','fixture','--user-selection-needed','true'],
+    ['--stage','review','--verdict','APPROVE','--user-selection-needed','true','--next-skill','omc-ship'],
+    ['--stage','investigate','--verdict','PROCEED','--reason-code','unknown'],
+])
+def test_decision_public_cli_rejects_without_state_writes(tmp_path,extra):
+    before=list(tmp_path.iterdir());r=_decision_cli(tmp_path,'render-decision','--risk','low',*extra)
+    assert r.returncode==2 and not r.stdout and list(tmp_path.iterdir())==before
+
+
+def test_decision_capability_is_additive():
+    m=_load_module();v=m.capabilities();assert v['render_decision'] is True
+    assert v['schema_version']=='omc-output-record/v1' and v['output_modes']==['legacy_inline','detached_v1']
