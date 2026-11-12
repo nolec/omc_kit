@@ -133,8 +133,8 @@ def test_ship_skill_paths_are_identical():
         required_paths=REQUIRED_SHIP_SKILL_PATHS,
         optional_paths=OPTIONAL_SHIP_SKILL_PATHS,
     )
-    canonical = _shared_source_text(texts[".agents/skills/omc-ship/SKILL.md"])
-    mismatched = [name for name, text in texts.items() if _shared_source_text(text) != canonical]
+    canonical = texts[".agents/skills/omc-ship/SKILL.md"]
+    mismatched = [name for name, text in texts.items() if text != canonical]
     assert not mismatched, f"omc-ship skill copies differ: {mismatched}"
 
 
@@ -431,5 +431,12 @@ def test_source_staging_example_unsupported_stops_before_prepare(tmp_path):
     assert not (tmp_path/'.omc').exists()
 
 
-def _shared_source_text(text):
-    return text.split("\n## Codex ",1)[0].rstrip()
+def test_ship_copy_check_rejects_changed_codex_appendix(monkeypatch):
+    canonical = (ROOT/'templates/.agents/skills/omc-ship/SKILL.md').read_text()
+    assert '\n## Codex ' in canonical
+    texts = {'.agents/skills/omc-ship/SKILL.md': canonical,
+             'templates/.agents/skills/omc-ship/SKILL.md': canonical,
+             '.agent/skills/omc-ship/SKILL.md': canonical + '\nchanged appendix\n'}
+    monkeypatch.setattr(__import__(__name__), '_collect_ship_skill_texts', lambda **kwargs: texts)
+    with pytest.raises(AssertionError, match='skill copies differ'):
+        test_ship_skill_paths_are_identical()

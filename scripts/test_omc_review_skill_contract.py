@@ -186,8 +186,8 @@ def test_review_skill_paths_are_identical():
         required_paths=REQUIRED_REVIEW_SKILL_PATHS,
         optional_paths=OPTIONAL_REVIEW_SKILL_PATHS,
     )
-    canonical = _shared_review_text(texts[".agents/skills/omc-review/SKILL.md"])
-    mismatched = [name for name, text in texts.items() if _shared_review_text(text) != canonical]
+    canonical = texts[".agents/skills/omc-review/SKILL.md"]
+    mismatched = [name for name, text in texts.items() if text != canonical]
     assert not mismatched, f"omc-review skill copies differ: {mismatched}"
 
 
@@ -410,7 +410,7 @@ def test_review_copies_require_detached_output_contract():
 def test_tracked_antigravity_review_matches_current_template():
     deployed = ROOT / '.agent/skills/omc-review/SKILL.md'
     template = ROOT / 'templates/.agents/skills/omc-review/SKILL.md'
-    assert _shared_review_text(deployed.read_text()) == _shared_review_text(template.read_text())
+    assert deployed.read_bytes() == template.read_bytes()
     assert deployed.stat().st_mode & 0o777 == template.stat().st_mode & 0o777
 
 
@@ -476,11 +476,6 @@ def test_review_example_rejects_unsupported_protocol(tmp_path,kind):
     assert not (tmp_path/'.omc').exists()
 
 
-def _shared_review_text(text):
-    """The shared contract stays identical; only the bounded Codex example differs."""
-    return text.split('\n## Codex 판정 생성 예제\n',1)[0].rstrip()
-
-
 def _source_example():
     text=(ROOT/'templates/.agents/skills/omc-review/SKILL.md').read_text()
     match=re.search(r'<!-- OMC_SOURCE_CALL:BEGIN -->\s*```python\n(.*?)\n```\s*<!-- OMC_SOURCE_CALL:END -->',text,re.S)
@@ -516,3 +511,14 @@ def test_source_staging_example_unsupported_stops_before_prepare(tmp_path):
     assert r.returncode==2 and not r.stdout and '지원' in r.stderr
     assert [json.loads(x) for x in log.read_text().splitlines()]==[['capabilities']]
     assert not (tmp_path/'.omc').exists()
+
+
+def test_review_copy_check_rejects_changed_codex_appendix(monkeypatch):
+    canonical = (ROOT/'templates/.agents/skills/omc-review/SKILL.md').read_text()
+    assert '\n## Codex ' in canonical
+    texts = {'.agents/skills/omc-review/SKILL.md': canonical,
+             'templates/.agents/skills/omc-review/SKILL.md': canonical,
+             '.agent/skills/omc-review/SKILL.md': canonical + '\nchanged appendix\n'}
+    monkeypatch.setattr(__import__(__name__), '_collect_review_skill_texts', lambda **kwargs: texts)
+    with pytest.raises(AssertionError, match='skill copies differ'):
+        test_review_skill_paths_are_identical()
