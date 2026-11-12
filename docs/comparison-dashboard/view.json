@@ -2164,26 +2164,24 @@
       "consumers_requeried": false
     },
     "documentation_commit_scope": [
-      "README.md",
       "docs/automatic_model_routing_roadmap.md",
       "docs/comparison-dashboard/README.md",
       "docs/comparison-dashboard/view.json",
-      "docs/comparison-dashboard/index.html",
-      "docs/releases/0.7.0.md"
+      "docs/comparison-dashboard/index.html"
     ],
-    "date": "2026-11-11",
-    "status": "현재 · 0.7.0 로컬 릴리스·12곳 재설치 완료 / 후속 문서 정합성 최신화 · 2026-11-11",
-    "main_commit": "c0611fd4ca54a7e5268785de8dd9a5b622375ce9",
-    "main_commit_role": "설치된0.7.0 제품 후보; 후속 문서6파일은 미커밋",
+    "date": "2026-11-12",
+    "status": "현재 · 만료 작업 명시 보관·문서 커밋 경로 연결 / 제품 보완은 격리 후보 · 2026-11-12",
+    "main_commit": "3f4ee155f75bab041ad4089f10ac6189a3f29be3",
+    "main_commit_role": "이번 문서 커밋 이전 기준 HEAD; 설치 기준 c0611fd와 구분",
     "latest_fields": {
-      "현재 상태": "0.7.0 제품 후보 c0611fd4ca54a7e5268785de8dd9a5b622375ce9의 로컬 릴리스와 12곳 재설치·strict 감사를 완료했다. 기존 업무 파일·Git index·HEAD 보존을 확인했다. 이번 후속 작업은 문서6파일의 정합성 최신화이며 커밋·전체 재검사·재설치는 실행하지 않았다.",
-      "보완 내용": "권한 오류 주입과 마감 소진 테스트를 분리하고, 외부 timeout에서 leader 종료 후에도 보존한 member 신원으로 소유 그룹을 정리·종료 확인한다. 제품 마감·품질 설정은 변경하지 않았다.",
-      "검증": "최종 전체 검사 1회: 6,425개 통과·실패0·오류0·skip0·정책 제외15개·2,736.62초. 12곳 모두 동일 source SHA와 strict 감사·파일/index/HEAD 보존을 확인했다. 관련·반복 검사 수는 전체 통과 수에 합산하지 않는다.",
-      "Git·리뷰 범위": "설치된 제품 기준은 c0611fd이며 후속 문서6파일은 별도 미커밋 변경이다. 동일 에이전트의 격리 재검토이며 외부 독립 리뷰가 아니다.",
-      "중단·설정": "이전 실패2회는 0b1c6524:6403통과/8실패, 182e113f:6419통과/1실패다. 새 승인으로 최종 후보 검사를 실행해 통과했다. storefront 로컬 수정은 백업 후 통합본으로 교체했다. 원격 push·태그·공개 릴리스는 미실행이다.",
-      "이력·보류": "비교 HOLD·실제 홈 NOT_VERIFIED·역사적 보존 UNKNOWN·관찰 비활성·제품 효과 미검증을 유지한다. 다중 커밋 전체 연결·기록 복구와 명시 재발행·과거 조회는 미구현이다. 이전0.6.5 설치와 실패 당시 기록은 이력으로 보존한다.",
-      "근거": ".omc/releases/0.7.0-final-20261111/result.json 및 installation-results.json. 원문·백업: /private/tmp/omc-release070-final-n28qi5_t/quality-archive, installations, storefront-local-backup. 로컬·임시 근거의 장기 보존은 보장하지 않는다.",
-      "다음 작업": "릴리스·재설치는 종료했다. 이번 문서 정합성 검증 후 omc-review로 문서6파일을 검토한다. 문서 변경만으로 재릴리스·재설치를 요구하거나 기존 비교 보류를 해제하지 않는다."
+      "현재 상태": "원본의 만료 작업 a728f7005f1c4348954ce3e71c13fa3b를 EXPIRED_UNFINISHED로 명시 보관하고, 별도 directive 문서 작업을 등록했다. 과거 작업을 완료로 바꾸거나 승인 기한을 연장하지 않았다.",
+      "보완 내용": "검증 부산물 외부 격리·실행 전 준비 확인 V0의 기존 4파일 스테이징은 보존한다. T0 출력 문맥 보완, T1 제한 재개, 후속 보관·문서 커밋 연결 코드는 격리 후보이며 원본 제품 파일 교체·재설치는 하지 않았다. 이번 운용은 검토된 격리 실행기에 원본 경로를 명시해 수행한다.",
+      "검증": "T1 이력·슬롯 보완 전체 회귀 321개·별도 리뷰 52개 통과. 후속 보관·문서 커밋 연결 전체 회귀 340개·별도 리뷰 19개 통과. 실제 pre/post-commit 템플릿으로 문서만 커밋하고 기존 index 항목·숨김 플래그를 보존했다. 각 실행 수는 합산하지 않으며 사용자 개입 감소나 경쟁 우위의 증거로 사용하지 않는다.",
+      "Git·리뷰 범위": "이번 로컬 커밋 대상은 로드맵과 비교 대시보드 Markdown·JSON·HTML 4파일이다. 기존 스테이징의 docs/orchestration_usage.md 및 Python 3파일은 커밋에서 제외한다. 후속 구현 4파일은 고정 후보 리뷰 승인 상태이며 외부 독립 리뷰가 아닌 별도 격리 환경 재검증이다.",
+      "중단·설정": "원래 훅을 그대로 호출하고 검토된 문서 범위 가드를 추가한다. 승인한 문서 외 변경, 보호 파일·index·플래그 변경은 거부하며 재개 grant의 커밋 금지는 유지한다. 원본 운영 작업의 분리와 제품 기능 설치는 별개다.",
+      "이력·보류": "설치 기준 0.7.0/c0611fd의 12곳 재설치는 과거 완료 이력으로 유지한다. 새 제품 보완은 미릴리스·미설치다. 실제 비교·업무 효과·경쟁 우위는 HOLD/NOT_RUN 상태를 유지한다.",
+      "근거": "격리 후보 /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-resume-t1-jcv2n3e7/repo/.omc/tasks/document-handoff 및 .omc/reviews/document-handoff. 원본 보관 .omc/edit-resumptions/retirements/cba6fbeafcb34589a1784253c8ab8559. 기존 스테이징 백업 /private/var/folders/_2/f71ynpqx1mq5m90zxl0ggtrm0000gn/T/omc-docs-resume-backup-y6tijv4p. 임시 경로의 장기 보존은 보장하지 않는다.",
+      "다음 작업": "제품 코드 원본 반영·릴리스·재설치는 별도 후속 범위로 남긴다. 이번 문서 커밋으로 기존 비교 보류를 해제하지 않는다."
     },
     "verification": {
       "implementation_passed": 404,
@@ -2227,7 +2225,7 @@
       "ship_status": "RELEASED_AND_REINSTALLED_LOCALLY",
       "full_after_repair_runs": 2
     },
-    "commit_status": "제품 c0611fd 커밋·설치 완료; 후속 문서6파일 미커밋",
+    "commit_status": "문서4파일만 로컬 커밋 대상; 기존4파일 스테이징 보존",
     "single_approval_v0": {
       "status": "IMPLEMENTED_REVIEWED_UNRELEASED",
       "real_codex_paths": [
@@ -2326,6 +2324,16 @@
           "failed": 1
         }
       ]
+    },
+    "document_handoff": {
+      "previous_work_status": "EXPIRED_UNFINISHED",
+      "archive": ".omc/edit-resumptions/retirements/cba6fbeafcb34589a1784253c8ab8559",
+      "source_product_applied": false,
+      "reinstalled": false,
+      "full_regression_passed": 340,
+      "review_regression_passed": 19,
+      "execution": "reviewed isolated executor targeting original repository",
+      "staging_policy": "preserve existing 4 files; commit only approved documentation paths"
     }
   },
   "current_update_history": [
@@ -9130,6 +9138,205 @@
         "document_review_approval_is_not_task_or_ship_completion": true
       },
       "history_note": "0.6.1 릴리스 이전 2026-10-20 출하 준비 당시 상태 보존"
+    },
+    {
+      "goal": "oh-my-claudecode의 강점을 흡수해 실제 업무를 정확하고 적은 개입으로 끝내는 OMC를 만든다.",
+      "comparison_state": "HOLD",
+      "actual_home": "NOT_VERIFIED",
+      "historical_preservation_revalidation": "UNKNOWN",
+      "existing_formal_holds": "PRESERVED",
+      "comparison_runs": 0,
+      "comparison_status": "NOT_RUN",
+      "descendant_termination": "NOT_VERIFIED",
+      "consumer_count_on_query_failure": null,
+      "recovery": {
+        "green": {
+          "status": "SEPARATE_ORIGINAL_BYTES_VERIFIED",
+          "bytes": 138,
+          "sha256": "76810fb032ab587ad99eb760fd00a0188b20c391032aafead2ae3e12da2257f9",
+          "restored_over_old_path": false
+        },
+        "red": {
+          "original_bytes": "UNCONFIRMED",
+          "semantic_record": "PYTHON_DICT_REPR"
+        },
+        "baseline": {
+          "original_bytes": "UNCONFIRMED",
+          "previous_hash_available": true
+        }
+      },
+      "formal_hold_reason": "PRIOR_PRESERVATION_FAILED",
+      "local_observation": {
+        "cohort_v3": "DISABLED",
+        "completion_observation": "OBSERVATION_INVALID",
+        "reason": "live_observation_not_enabled",
+        "consumers_requeried": false
+      },
+      "documentation_commit_scope": [
+        "README.md",
+        "docs/automatic_model_routing_roadmap.md",
+        "docs/comparison-dashboard/README.md",
+        "docs/comparison-dashboard/view.json",
+        "docs/comparison-dashboard/index.html",
+        "docs/releases/0.7.0.md"
+      ],
+      "date": "2026-11-11",
+      "status": "현재 · 0.7.0 로컬 릴리스·12곳 재설치 완료 / 후속 문서 정합성 최신화 · 2026-11-11",
+      "main_commit": "c0611fd4ca54a7e5268785de8dd9a5b622375ce9",
+      "main_commit_role": "설치된0.7.0 제품 후보; 후속 문서6파일은 미커밋",
+      "latest_fields": {
+        "현재 상태": "0.7.0 제품 후보 c0611fd4ca54a7e5268785de8dd9a5b622375ce9의 로컬 릴리스와 12곳 재설치·strict 감사를 완료했다. 기존 업무 파일·Git index·HEAD 보존을 확인했다. 이번 후속 작업은 문서6파일의 정합성 최신화이며 커밋·전체 재검사·재설치는 실행하지 않았다.",
+        "보완 내용": "권한 오류 주입과 마감 소진 테스트를 분리하고, 외부 timeout에서 leader 종료 후에도 보존한 member 신원으로 소유 그룹을 정리·종료 확인한다. 제품 마감·품질 설정은 변경하지 않았다.",
+        "검증": "최종 전체 검사 1회: 6,425개 통과·실패0·오류0·skip0·정책 제외15개·2,736.62초. 12곳 모두 동일 source SHA와 strict 감사·파일/index/HEAD 보존을 확인했다. 관련·반복 검사 수는 전체 통과 수에 합산하지 않는다.",
+        "Git·리뷰 범위": "설치된 제품 기준은 c0611fd이며 후속 문서6파일은 별도 미커밋 변경이다. 동일 에이전트의 격리 재검토이며 외부 독립 리뷰가 아니다.",
+        "중단·설정": "이전 실패2회는 0b1c6524:6403통과/8실패, 182e113f:6419통과/1실패다. 새 승인으로 최종 후보 검사를 실행해 통과했다. storefront 로컬 수정은 백업 후 통합본으로 교체했다. 원격 push·태그·공개 릴리스는 미실행이다.",
+        "이력·보류": "비교 HOLD·실제 홈 NOT_VERIFIED·역사적 보존 UNKNOWN·관찰 비활성·제품 효과 미검증을 유지한다. 다중 커밋 전체 연결·기록 복구와 명시 재발행·과거 조회는 미구현이다. 이전0.6.5 설치와 실패 당시 기록은 이력으로 보존한다.",
+        "근거": ".omc/releases/0.7.0-final-20261111/result.json 및 installation-results.json. 원문·백업: /private/tmp/omc-release070-final-n28qi5_t/quality-archive, installations, storefront-local-backup. 로컬·임시 근거의 장기 보존은 보장하지 않는다.",
+        "다음 작업": "릴리스·재설치는 종료했다. 이번 문서 정합성 검증 후 omc-review로 문서6파일을 검토한다. 문서 변경만으로 재릴리스·재설치를 요구하거나 기존 비교 보류를 해제하지 않는다."
+      },
+      "verification": {
+        "implementation_passed": 404,
+        "install_tests_passed": 21,
+        "same_agent_review_passed": 7,
+        "counts_overlap": true,
+        "whole_suite_runs_this_update": 0,
+        "latest_full_attempt": {
+          "candidate": "c0611fd4ca54a7e5268785de8dd9a5b622375ce9",
+          "passed": 6425,
+          "failed": 0,
+          "skipped": 0,
+          "deselected": 15,
+          "seconds": 2736.62
+        },
+        "last_successful_release_full_run": {
+          "candidate": "c0611fd4ca54a7e5268785de8dd9a5b622375ce9",
+          "passed": 6425,
+          "failed": 0,
+          "skipped": 0,
+          "deselected": 15,
+          "seconds": 2736.62
+        },
+        "performance_comparison_status": "UNVERIFIED",
+        "comparison_calls": 0
+      },
+      "release_preparation": {
+        "version": "0.7.0",
+        "quality_status": "ready_configuration_only",
+        "config_sha256": "cb75f847471d93f644e89b704e4448b319260a6c349aa31c74736e4700d5ca81",
+        "existing_base_ref": "refs/omc/release-bases/6cc02d4fad25220a1366224af39c958cf34fca2b",
+        "source_ref_created": true,
+        "base_oid": "6cc02d4fad25220a1366224af39c958cf34fca2b",
+        "proposal_applied": true,
+        "fast_first_proposal_applied": false,
+        "final_candidate_binding": "c0611fd4ca54a7e5268785de8dd9a5b622375ce9",
+        "latest_quality_command_runs": 1,
+        "latest_full_result": "PASSED",
+        "reinstalled_targets": 12,
+        "target_count": 12,
+        "ship_status": "RELEASED_AND_REINSTALLED_LOCALLY",
+        "full_after_repair_runs": 2
+      },
+      "commit_status": "제품 c0611fd 커밋·설치 완료; 후속 문서6파일 미커밋",
+      "single_approval_v0": {
+        "status": "IMPLEMENTED_REVIEWED_UNRELEASED",
+        "real_codex_paths": [
+          "normal",
+          "verification_repair",
+          "review_repair"
+        ],
+        "controlled_injection_paths": [
+          "verification_repair",
+          "review_repair"
+        ],
+        "product_effect": "NOT_PROVEN",
+        "reviewer_independence": "SAME_AGENT",
+        "known_baseline_failures": 1
+      },
+      "feature_commits": {
+        "closed_work_resume": "42116a1d6a0f26863720e6e59c277cc8e0ae3d76",
+        "explicit_codex_model": "afbf6c2087f79ea70db062d976697ecb13090018",
+        "single_approval_v0": "e223e1f6",
+        "release_070_repair": "4d3d3cc25d81db70bd4df8350da806d93e1babf9"
+      },
+      "completion_classification_a": {
+        "status": "COMMITTED_UNRELEASED",
+        "scope_files": 6,
+        "regression_passed": 296,
+        "review_passed": 65,
+        "multi_commit_linkage": "NOT_IMPLEMENTED",
+        "record_reconciliation": "NOT_IMPLEMENTED",
+        "commit": "656dfe173352f69237b1feb35e9224662c021c14",
+        "completion_receipt": ".omc/state/sessions/20261111T172812-7cd82112/completion.json"
+      },
+      "publication_failure_a": {
+        "status": "COMMITTED_UNRELEASED",
+        "scope_files": 6,
+        "regression_passed": 344,
+        "baseline_failed": 1,
+        "review_passed": 26,
+        "republish": "NOT_IMPLEMENTED",
+        "historical_delivery": "NOT_IMPLEMENTED",
+        "model_compliance": "NOT_PROVEN",
+        "commit": "f549aaa43378073e0e5aae2fd87c682071c0cff5",
+        "completion_receipt": ".omc/state/sessions/20261111T181611-1ad7eefe/completion.json"
+      },
+      "release_070_preparation": {
+        "status": "FULL_QUALITY_FAILED_REPAIR_VALIDATED_NOT_RERUN",
+        "failed_candidate": "0b1c6524e6300536a3d8ba72d3d16ee9f73de45a",
+        "full_quality_runs": 1,
+        "passed": 6403,
+        "failed": 8,
+        "policy_deselected": 15,
+        "repair_related_passed": 404,
+        "repair_install_tests_passed": 21,
+        "full_quality_after_repair_runs": 0,
+        "reinstalled_targets": 0,
+        "previous_installed_version": "0.6.5",
+        "storefront_backup_created": true,
+        "storefront_replaced": false,
+        "historical_scope": "0b1c6524 당시 실패 기록; 현재 판정은 release_preparation과 verification 참조"
+      },
+      "release_070_repair": {
+        "commit": "4d3d3cc25d81db70bd4df8350da806d93e1babf9",
+        "files": 27,
+        "review": "APPROVE_WITH_NOTES",
+        "minor_reference_clarified": true,
+        "scope": "related_regression_only_not_full_release",
+        "completion_receipt": "BOUND_ALL_27_PATHS",
+        "historical_scope": "4d3d3cc2 당시 관련 검증 기록; 현재 설치 결과와 구분"
+      },
+      "release_070_final": {
+        "status": "released_and_reinstalled_locally",
+        "version": "0.7.0",
+        "candidate": "c0611fd4ca54a7e5268785de8dd9a5b622375ce9",
+        "quality_runs": 1,
+        "passed": 6425,
+        "failed": 0,
+        "skipped": 0,
+        "deselected": 15,
+        "seconds": 2736.62,
+        "reinstalled_targets": 12,
+        "strict_audit_passed_targets": 12,
+        "existing_project_files_index_head_preserved": true,
+        "storefront_backed_up_and_replaced": true,
+        "backup": "/private/tmp/omc-release070-final-n28qi5_t/storefront-local-backup/omc_edit_resume.py",
+        "source_sha256": "f0bdeba882320ae3709246d4b7d5a5f46633e6a77aa4a3eea036d93179fb03ca",
+        "push_tag_publication": false,
+        "control": "/private/tmp/omc-release070-final-n28qi5_t",
+        "failed_attempts": [
+          {
+            "candidate": "0b1c6524",
+            "passed": 6403,
+            "failed": 8
+          },
+          {
+            "candidate": "182e113f",
+            "passed": 6419,
+            "failed": 1
+          }
+        ]
+      },
+      "historical": true
     }
   ],
   "c3_validation_plan": {
