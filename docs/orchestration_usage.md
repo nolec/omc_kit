@@ -418,3 +418,14 @@ pending 완료 기록이 남은 작업은 `EXPIRED_UNFINISHED`, 이미 소비된
 중단된 정리는 같은 작업ID와 승인 근거로 재개합니다. 새 pending 기록, 변경된 증거 또는 알 수 없는 보관 상태가 발견되면 중단하며 원장을 수리하거나 승인을 복사하지 않습니다.
 
 소비자에 관리 파일 로컬 수정이 있으면 자동 업데이트는 충돌로 중단됩니다. 통합 후에도 충돌이 자동으로 사라지지는 않습니다. 전체 충돌 목록과 원본 SHA·권한을 확인하고 별도 백업한 뒤, 해당 파일 덮어쓰기 승인을 받은 유지보수 구간에서만 기존 `--force` 설치를 사용합니다. 추가 충돌이나 동시 작업이 있으면 덮어쓰지 않습니다. 과거 정리 보관 영역은 설치 전후 바이트·권한 보존 및 JSON 읽기를 별도로 확인합니다. 격리 테스트 통과는 운영 소비자 설치나 릴리스 완료를 뜻하지 않습니다.
+
+
+### 단일 승인 V0: 실행 전 정적 준비 확인
+
+`python3 scripts/omc_autopilot.py --target <source> check-work-contract --instruction <승인 원문> --work-contract <계약> --workspace-parent <실행 부모>`는 모델·baseline·승인 소비·clone·run 생성 없이 검사합니다. READY_STATIC(종료0)은 정적 조건만 통과했다는 뜻이며 실행 권한이 아닙니다. BLOCKED는 계약/설정 충돌, UNVERIFIED는 해석 불가(각 종료1), 입출력 오류는 종료2입니다. 실제 실행도 승인 소비 전에 같은 검사를 다시 수행합니다.
+
+직접 pytest/py.test 또는 Python -m pytest argv를 지원합니다. 기본 설정 및 HEAD와 동일한 tracked 설정의 명시 -c를 읽습니다. 명시 cache_dir·--basetemp는 이미 외부 경로여도 충돌이며, 래퍼·응답파일·알 수 없는 옵션·저장소 밖/ignored/미추적 설정은 미확인으로 보류합니다. conftest/plugin은 준비 확인에서 실행하지 않습니다. Git 조회는 자식 프로세스에만 optional locks를 끕니다.
+
+V0 baseline·RED·수정 후 검사·독립 검수는 업무 폴더 밖 호출별 소유 runtime을 사용합니다. HOME/TMPDIR/XDG_CACHE_HOME, bytecode 금지와 부모 PYTEST_ADDOPTS의 cache_dir/basetemp를 주입하며 승인 argv와 cacheprovider 선택은 유지합니다. 기존 업무 캐시를 삭제하거나 snapshot에서 포괄 제외하지 않습니다. 해당 업무 폴더와 해당 runtime만 쓰기 허용하며 종료·실패·timeout에 scratch를 정리합니다. 부모 보고 플러그인은 테스트 수집 전에 실효 경로를 확인합니다. 동적 plugin의 설정 단계 전체 부작용을 사전 증명하지는 않으며 기존 snapshot·oracle 검사는 유지합니다.
+
+macOS는 실제 sandbox 검증, Linux는 bwrap 구성 회귀를 구분해 기록합니다. 정적 준비 통과·통제된 provider 대역의 전체 경로 통과는 실제 모델 실행 성공이나 성능 개선을 의미하지 않습니다.
