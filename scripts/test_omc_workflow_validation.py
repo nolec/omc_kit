@@ -129,10 +129,21 @@ def collect(tmp_path, text, registered=True, external=False, expected="blocked",
         if detached_defect=='model_source':
             doc=json.loads(mp.read_bytes());doc['source_kind']='model_declared';mp.write_text(json.dumps(doc));mh=hashlib.sha256(mp.read_bytes()).hexdigest()
             detached_meta=(cp,pin,mp,mh,command,actual.stdout)
-        if detached_defect == 'plan_record':
+        if detached_defect in {'plan_record', 'observation_record'}:
             from omc_output_contract import render_envelope
             ctx.update(stage='plan', report_id='plan-declaration')
             cp = root/'.omc/plan-context.json'; cp.write_text(json.dumps(ctx))
+            if detached_defect == 'observation_record':
+                pipeline=json.loads((root/'.omc/pipeline_session.json').read_text())
+                pipeline.update(owner_work_id='s',owner_session_id='s',started_at=time.time()-28900)
+                (root/'.omc/pipeline_session.json').write_text(json.dumps(pipeline))
+                (root/'.omc/state/pending-completion.json').write_text(json.dumps({'work_id':'s','session_ids':['s']}))
+                folder=root/'.omc/state/sessions/s';folder.mkdir(parents=True,exist_ok=True)
+                (folder/'session.json').write_text(json.dumps({'session_id':'s','work_id':'s','role_ids':['senior_coding'],'confirmation':{'status':'confirmed'}}))
+                prepared=subprocess.run([sys.executable,str(SCRIPT.with_name('omc_output_contract.py')),'prepare',
+                    '--target',str(root),'--stage','plan','--report-id','observation-collector','--budget-sec','60'],capture_output=True,text=True)
+                assert prepared.returncode==0,prepared.stderr
+                meta=json.loads(prepared.stdout);cp=Path(meta['output_context']);ctx=json.loads(cp.read_bytes())
             pin = hashlib.sha256(cp.read_bytes()).hexdigest()
             source = root/'.omc/plan-source.txt'
             source.write_text('계획 검토 요청\n' + render_envelope(
@@ -164,7 +175,7 @@ def collect(tmp_path, text, registered=True, external=False, expected="blocked",
         events += [{'type':'assistant','message':{'content':[{'type':'tool_use','id':str(i),'name':'Bash','input':{'command':cmd}}]}}, {'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':str(i),'content':output}]}}]
     if detached:
         events[-1]['message']['content'][0]['exit_code'] = (2 if detached_defect == 'delivery_exit'
-            else 0 if expected == 'done' or detached_defect == 'plan_record' else 1)
+            else 0 if expected == 'done' or detached_defect in {'plan_record','observation_record'} else 1)
         events[-1]['message']['content'][0]['is_error'] = events[-1]['message']['content'][0]['exit_code'] != 0
     events += [{'type':'result','subtype':'success','result':text}]
     source=tmp_path/'events.jsonl';source.write_text('\n'.join(json.dumps(e) for e in events))
@@ -796,3 +807,11 @@ def test_failure_draft_cannot_be_completion_evidence(tmp_path):
     result, dest=collect(tmp_path, text)
     assessment=json.loads((dest/'assessment.json').read_text())
     assert result.returncode != 0 or assessment['outcome'] != 'done'
+
+
+def test_observation_public_collector_cannot_complete_task(tmp_path):
+    result,dest=collect(tmp_path,'unused',detached=True,detached_defect='observation_record')
+    assessment=json.loads((dest/'assessment.json').read_bytes())
+    assert result.returncode==1
+    assert assessment['required']['truthful_final']!='passed'
+    assert assessment['recompare_entry']=='hold'

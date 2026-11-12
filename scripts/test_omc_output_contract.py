@@ -1241,6 +1241,131 @@ def test_failure_summary_display_failure_preserves_publication(detached_case, mo
     assert record['publication']=='published' and manifest.read_bytes()==before
 
 
+def _frozen_observation_root(root):
+    import time, subprocess
+    state=root/'.omc/state';state.mkdir(parents=True)
+    (state/'latest.json').write_text(json.dumps({'latest_confirmed_session_id':'reader','latest_session_id':'reader'}))
+    for sid,roles in [('reader',['analysis']),('owner',['senior_coding'])]:
+        folder=state/'sessions'/sid;folder.mkdir(parents=True)
+        (folder/'session.json').write_text(json.dumps({'session_id':sid,'work_id':'work','role_ids':roles,'confirmation':{'status':'confirmed'}}))
+    (state/'pending-completion.json').write_text(json.dumps({'work_id':'work','session_ids':['owner']}))
+    (root/'.omc/pipeline_session.json').write_text(json.dumps({'session_id':'owner','owner_session_id':'owner','owner_work_id':'work','started_at':time.time()-28900}))
+    subprocess.run(['git','init','-q'],cwd=root,check=True)
+    (root/'app.py').write_text('value=1\n');subprocess.run(['git','add','app.py'],cwd=root,check=True)
+    subprocess.run(['git','-c','user.name=Fixture','-c','user.email=fixture@localhost','commit','-qm','base'],cwd=root,check=True,capture_output=True)
+
+
+def _observation_prepare(root,stage='plan',report='observation'):
+    import subprocess,sys
+    return subprocess.run([sys.executable,str(MODULE_PATH),'prepare','--target',str(root),
+        '--stage',stage,'--report-id',report,'--budget-sec','60'],capture_output=True,text=True)
+
+
+@pytest.mark.parametrize('stage',['plan','critique-plan'])
+def test_observation_frozen_publication_and_preservation(tmp_path,stage):
+    import hashlib,subprocess,sys
+    root=tmp_path/'work';root.mkdir();_frozen_observation_root(root)
+    protected=[root/'.git/index',root/'.git/HEAD',*list((root/'.omc/state').rglob('*.json')),root/'.omc/pipeline_session.json',root/'app.py']
+    before={p:p.read_bytes() for p in protected}
+    prepared=_observation_prepare(root,stage)
+    assert prepared.returncode==0,prepared.stderr
+    meta=json.loads(prepared.stdout);m=_load_module()
+    ctx=m.load_output_context(root,meta['output_context'],meta['output_context_sha256'])
+    assert ctx['context_kind']=='observation_only'
+    raw='관찰용 계획\n'+m.render_envelope(stage=stage,verdict='HOLD',risk='high',next_skill='omc-plan',user_selection_needed=True,reason_code='scope_unclear' if stage=='plan' else 'fixture')
+    src=root/'.omc/source.txt';src.write_text(raw)
+    result=subprocess.run([sys.executable,str(MODULE_PATH),'publish','--target',str(root),'--output-context',meta['output_context'],'--output-context-sha256',meta['output_context_sha256'],'--source-file',str(src),'--source-sha256',hashlib.sha256(src.read_bytes()).hexdigest()],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    manifest=m.record_path(root,ctx)
+    assert 'output-observations' in str(manifest)
+    doc=m.read_record(root,manifest,hashlib.sha256(manifest.read_bytes()).hexdigest(),ctx,display=result.stdout)
+    assert doc['source_kind']=='model_declared'
+    assert all(p.read_bytes()==data for p,data in before.items())
+    duplicate=_observation_prepare(root,stage)
+    assert duplicate.returncode==2
+
+
+@pytest.mark.parametrize('stage',['task','review','ship','investigate'])
+def test_observation_frozen_execution_stages_still_rejected(tmp_path,stage):
+    root=tmp_path/'work';root.mkdir();_frozen_observation_root(root)
+    result=_observation_prepare(root,stage)
+    assert result.returncode==2
+    assert 'resume_context_required' in result.stderr
+
+
+@pytest.mark.parametrize('defect',['malformed','different_work','retirement','slot_symlink'])
+def test_observation_bad_governance_has_structured_prepare_error(tmp_path,defect):
+    import omc_edit_resume as resume
+    root=tmp_path/'work';root.mkdir();_frozen_observation_root(root)
+    if defect=='malformed':(root/'.omc/pipeline_session.json').write_text('bad')
+    elif defect=='different_work':(root/'.omc/state/pending-completion.json').write_text(json.dumps({'work_id':'other'}))
+    elif defect=='retirement':
+        marker=root/resume.RETIREMENT_PENDING;marker.parent.mkdir(parents=True);marker.write_text('{}')
+    else:
+        slot=resume.slot_path(root,'work');slot.parent.mkdir(parents=True);slot.symlink_to(root/'app.py')
+    result=_observation_prepare(root)
+    assert result.returncode==2
+    assert 'reason_code:' in result.stderr and '다음 행동:' in result.stderr
+
+
+@pytest.mark.parametrize('defect',['code','index','lifecycle','context_hash','deadline','stage','issuer'])
+def test_observation_binding_and_authority_fail_closed(tmp_path,defect):
+    import hashlib,time
+    root=tmp_path/'work';root.mkdir();_frozen_observation_root(root)
+    prepared=_observation_prepare(root);assert prepared.returncode==0,prepared.stderr
+    meta=json.loads(prepared.stdout);m=_load_module();file=Path(meta['output_context'])
+    ctx=json.loads(file.read_bytes());pin=meta['output_context_sha256']
+    raw='계획\n'+m.render_envelope(stage='plan',verdict='HOLD',risk='high',next_skill='omc-plan',user_selection_needed=True,reason_code='scope_unclear')
+    if defect=='code':(root/'app.py').write_text('value=2\n')
+    elif defect=='index':(root/'.git/index').write_bytes((root/'.git/index').read_bytes()+b'changed')
+    elif defect=='lifecycle':(root/'.omc/pipeline_session.json').write_text('{}')
+    elif defect=='context_hash':pin='0'*64
+    elif defect=='deadline':ctx['deadline_epoch']=time.time()-1
+    elif defect=='stage':ctx['stage']='task'
+    if defect in {'deadline','stage'}:
+        file=root/'.omc/altered-context.json';file.write_text(json.dumps(ctx));pin=hashlib.sha256(file.read_bytes()).hexdigest()
+    with pytest.raises((m.OutputContractError,OSError,ValueError)):
+        m.publish_record(root,file,pin,raw,source_kind='legacy_normalized' if defect=='issuer' else 'model_declared')
+
+
+def test_observation_readable_expired_slot_only_reports(tmp_path):
+    import omc_edit_resume as resume
+    root=tmp_path/'work';root.mkdir();_frozen_observation_root(root)
+    gen='.omc/edit-resumptions/generations/expired'
+    (root/gen).mkdir(parents=True);(root/gen/'pipeline.json').write_text('{}')
+    slot=resume.slot_path(root,'work');slot.parent.mkdir(parents=True)
+    slot.write_text(json.dumps({'grant_id':'past','generation':gen,'boot':'past-boot','t0':0,'deadline':1,'binding':{'root':str(root.resolve()),'work_id':'work'}}))
+    assert _observation_prepare(root).returncode==0
+    assert _observation_prepare(root,'task','cannot-resume').returncode==2
+
+
+@pytest.mark.parametrize('confirmation',[None,'confirmed',[],True])
+def test_observation_nested_confirmation_rejected_publicly(tmp_path,confirmation):
+    root=tmp_path/'work';root.mkdir();_frozen_observation_root(root)
+    session=root/'.omc/state/sessions/reader/session.json'
+    data=json.loads(session.read_text());data['confirmation']=confirmation;session.write_text(json.dumps(data))
+    before={p:p.read_bytes() for p in (root/'.omc').rglob('*.json')}
+    result=_observation_prepare(root)
+    assert result.returncode==2,result.stderr
+    assert 'observation_session_binding_invalid' in result.stderr
+    assert '다음 행동:' in result.stderr and 'Traceback' not in result.stderr
+    assert all(p.read_bytes()==raw for p,raw in before.items())
+    assert not (root/'.omc/state/output-observations').exists()
+
+
+@pytest.mark.parametrize('members',[None,'owner',{'owner':True},['owner','owner'],['owner',None]])
+def test_observation_nested_lineage_rejected_publicly(tmp_path,members):
+    root=tmp_path/'work';root.mkdir();_frozen_observation_root(root)
+    pending=root/'.omc/state/pending-completion.json'
+    data=json.loads(pending.read_text());data['session_ids']=members;pending.write_text(json.dumps(data))
+    before=pending.read_bytes();result=_observation_prepare(root)
+    assert result.returncode==2,result.stderr
+    assert 'observation_work_binding_invalid' in result.stderr
+    assert '다음 행동:' in result.stderr and 'Traceback' not in result.stderr
+    assert pending.read_bytes()==before
+    assert not (root/'.omc/state/output-observations').exists()
+
+
 # Reuse the existing literal oracle, never the production routing resolver.
 _DECISION_CASES = [row for row in test_detached_all_stage_mappings_remain_unchanged.pytestmark[0].args[1]
                    if row[0] != 'task'] + [

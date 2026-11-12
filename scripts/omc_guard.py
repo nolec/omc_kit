@@ -232,6 +232,72 @@ def _run_tdd_check(project_root: Path, command_name: str) -> int:
 _TDD_REQUIRED_COMMANDS = ("git commit", "ship", "deploy")
 
 
+def _document_snapshot(root, paths):
+    """Preserve the real index even while commit --only supplies a temporary one."""
+    import omc_edit_resume as resume
+    env = dict(os.environ);env.pop('GIT_INDEX_FILE',None)
+    def git(*args):
+        return subprocess.check_output(['git','--no-optional-locks',*args],cwd=root,env=env)
+    tracked=set(git('ls-files','-z').decode().split('\0'))
+    if not paths or len(set(paths)) != len(paths):
+        raise ValueError('document_scope_required')
+    for name in paths:
+        if (not isinstance(name,str) or name not in tracked or not name.startswith('docs/') or any(ord(c)<32 for c in name)
+                or Path(name).suffix not in {'.md','.json','.html'}):
+            raise ValueError('document_scope_invalid')
+        resume.local(root,name)
+    lines=git('ls-files','--stage').decode().splitlines()
+    flags=git('ls-files','-v','-z').decode().split('\0')
+    return {'head':git('rev-parse','HEAD').decode().strip(),
+            'inventory':resume.inventory(root,paths),
+            'index':[line for line in lines if line.split('\t',1)[1] not in paths],
+            'flags':[line for line in flags if line and line[2:] not in paths]}
+
+
+def _check_document_scope(root, command_name):
+    import omc_edit_resume as resume
+    latest=_latest(root);sid=latest.get('latest_confirmed_session_id')
+    if not isinstance(sid,str) or not resume._session_identifier(sid):
+        if latest.get('latest_skill') == 'omc-document-commit':
+            raise ValueError('document_session_invalid')
+        return
+    path=root/'.omc/state/sessions'/sid/'document-scope.json'
+    if not path.exists():
+        if latest.get('latest_skill') == 'omc-document-commit':
+            raise ValueError('document_scope_missing')
+        return
+    value=resume.read(root,path)
+    if value.get('session_id') != sid or value.get('snapshot') != _document_snapshot(root,value['paths']):
+        raise ValueError('document_preservation_changed')
+    if command_name not in {'task','git commit'}:
+        raise ValueError('document_command_not_allowed')
+    if command_name == 'git commit':
+        staged=subprocess.check_output(['git','--no-optional-locks','diff','--cached','--name-only','-z'],cwd=root).decode().split('\0')
+        if not set(staged)-{''} or set(staged)-{''}-set(value['paths']):
+            raise ValueError('document_commit_scope_mismatch: use git commit --only with approved paths')
+
+
+def _frozen_task_guard(project_root, *, command_name, work_id=None):
+    import omc_edit_resume as resume
+    if not resume.frozen(project_root):
+        return None
+    if os.environ.get(resume.ENV):
+        try:
+            value=resume.load(project_root)
+            if command_name != 'task' or (work_id is not None and work_id != value['binding']['work_id']):
+                raise ValueError('resume_command_not_allowed')
+            print('[OMC-GUARD] 제한 재개: task 범위만 허용; 기존 세션·승인·기한 보존')
+            return 0
+        except (OSError,ValueError,KeyError,TypeError,AttributeError) as exc:
+            reason = 'resume_state_invalid' if isinstance(exc,AttributeError) else str(exc)
+            print('[OMC-GUARD] 동결 재개 거부: '+reason)
+            return 6
+    diagnostic=resume.diagnose(project_root)
+    print('[OMC-GUARD] 동결 상태: '+json.dumps(diagnostic,ensure_ascii=False))
+    print('다음 행동: 상태가 expired이면 propose-edit-resume으로 범위와 해시를 확인한 뒤 명시 승인하세요. 상태 손상·부분 보관은 먼저 조사합니다.')
+    return 6
+
+
 def require_confirmation(project_root: Path, *, command_name: str, scope: str = "auto") -> int:
     if _is_destructive_command(command_name) and ALLOW_DESTRUCTIVE_FLAG not in command_name:
         print(
@@ -248,6 +314,15 @@ def require_confirmation(project_root: Path, *, command_name: str, scope: str = 
         )
         return 5
 
+    if _resolved_scope(command_name,scope) == 'mutate':
+        frozen_result=_frozen_task_guard(project_root,command_name=command_name)
+        if frozen_result is not None:
+            return frozen_result
+    try:
+        _check_document_scope(project_root,command_name)
+    except (OSError,ValueError,KeyError,TypeError) as exc:
+        print('[OMC-GUARD] 문서 보존 범위 거부: '+str(exc))
+        return 6
     policy = _policy(project_root)
     if not bool(policy.get("enforce_confirm", True)):
         print(f"[OMC-GUARD] bypassed by policy: `{command_name}`")
@@ -364,6 +439,7 @@ def _parser() -> argparse.ArgumentParser:
         default="start",
     )
     sync_require.add_argument("--work-id")
+    sync_require.add_argument("--document-path",action="append",help="Explicit existing document paths; preserve unrelated dirty/index state.")
     sync_require.add_argument(
         "--for",
         dest="command_name",
@@ -399,12 +475,28 @@ def main() -> int:
         role_ids = [x.strip() for x in args.roles.split(",") if x.strip()]
         if "senior_coding" in role_ids and args.work_class is None:
             raise ValueError("work class is required for a senior_coding session")
+        document_snapshot = None
+        if args.document_path:
+            if (project_root/'.omc/state/pending-completion.json').exists():
+                raise ValueError('document_requires_work_separation')
+            if (role_ids != ['directive'] or args.work_class is not None
+                    or args.completion_action != 'start' or args.command_name != 'task'):
+                raise ValueError('document_session_scope_invalid')
+            document_snapshot = _document_snapshot(project_root,args.document_path)
         if (
             args.work_class == "document_only"
             and args.completion_action == "start"
             and _obvious_source_changes(project_root)
         ):
             raise ValueError("work_class_scope_conflict: document_only includes source changes")
+        import omc_edit_resume as resume
+        if resume.frozen(project_root):
+            if os.environ.get(resume.ENV) and (role_ids != ['senior_coding']
+                    or args.work_class != 'implementation' or args.completion_action != 'continue'
+                    or not args.work_id):
+                print('[OMC-GUARD] 동결 재개 요청 범위 불일치')
+                return 6
+            return _frozen_task_guard(project_root,command_name=args.command_name,work_id=args.work_id)
         lock_private_key = (
             _prospective_work_class_lock(project_root)
             if "senior_coding" in role_ids
@@ -413,7 +505,7 @@ def main() -> int:
         session = omc_state.record_session(
             project_root,
             mode=args.mode,
-            title=args.title,
+            title="omc-document-commit" if document_snapshot is not None else args.title,
             request=args.request,
             role_ids=role_ids,
             work_class=args.work_class,
@@ -424,6 +516,12 @@ def main() -> int:
                 "guard.sync_require" if lock_private_key is None else None
             ),
         )
+        if document_snapshot is not None:
+            if document_snapshot != _document_snapshot(project_root,args.document_path):
+                raise ValueError('document_preparation_changed')
+            from omc_edit_resume import write_new
+            write_new(project_root/'.omc/state/sessions'/session['session_id']/'document-scope.json',
+                      {'session_id':session['session_id'],'paths':args.document_path,'snapshot':document_snapshot})
         if lock_private_key is not None:
             import omc_plan_candidate_universe as candidate_universe
 

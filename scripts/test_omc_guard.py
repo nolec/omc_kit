@@ -1290,3 +1290,21 @@ def test_completion_classification_public_cli(tmp_path, case, expected_code):
     payload = json.loads(result.stdout)
     assert payload['status'] == ('skipped' if case == 'missing' else 'error')
     if case != 'missing': assert pending.exists()
+
+
+def test_t1_sync_frozen_work_returns_diagnosis_without_new_session(tmp_path):
+    import time
+    root=tmp_path/'frozen';_init_git_repo(root);omc_state.init_state(root)
+    session=omc_state.record_session(root,mode='autopilot',title='fixture',request='frozen work',
+        role_ids=['senior_coding'],confirmed=True,work_class='implementation',completion_action='start')
+    pipeline=root/'.omc/pipeline_session.json'
+    pipeline.write_text(json.dumps({'session_id':session['session_id'],'owner_work_id':session['work_id'],
+                                    'started_at':time.time()-28900}))
+    before=(root/'.omc/state/latest.json').read_bytes();members=list((root/'.omc/state/sessions').iterdir())
+    result=subprocess.run([sys.executable,str(GUARD),'sync-require','--target',str(root),'--mode','autopilot',
+        '--title','repair','--request','same repair','--roles','senior_coding','--work-class','implementation',
+        '--completion-action','continue','--work-id',session['work_id'],'--for','task'],capture_output=True,text=True)
+    assert result.returncode!=0
+    assert '동결' in result.stdout and 'Traceback' not in result.stderr
+    assert (root/'.omc/state/latest.json').read_bytes()==before
+    assert list((root/'.omc/state/sessions').iterdir())==members

@@ -21,10 +21,10 @@ import install
 from omc_source_hash import source_sha256
 
 
-def test_source_kit_release_version_is_0_7_0() -> None:
+def test_source_kit_release_version_is_0_7_2() -> None:
     assert (Path(__file__).resolve().parents[1] / "VERSION").read_text(
         encoding="utf-8"
-    ).strip() == "0.7.0"
+    ).strip() == "0.7.2"
 
 
 def _sha256(path: Path) -> str:
@@ -601,7 +601,7 @@ def test_readme_separates_agent_skill_workflow_from_research_cli():
 def test_release_contract_names_current_source_version():
     root=Path(__file__).resolve().parents[1]
     version=(root/'VERSION').read_text().strip()
-    assert version=='0.7.0'
+    assert version=='0.7.2'
     assert (root/'docs/releases'/f'{version}.md').is_file()
     p=subprocess.run([sys.executable,str(root/'scripts/omc.py'),'version','--target',str(root),'--json'],capture_output=True,text=True,timeout=10)
     assert p.returncode==0,p.stderr
